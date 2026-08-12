@@ -18,6 +18,13 @@ function mountFooter() {
   return /** @type {HTMLElement} */ (document.querySelector('.ask-popup__footer'))
 }
 
+/** The footer AND the composer the tokens live in — the bound (non-headless) model. */
+function mountComposer() {
+  const footer = mountFooter()
+  const textarea = /** @type {HTMLTextAreaElement} */ (document.querySelector('.ask-popup__input'))
+  return { footer, textarea }
+}
+
 const chips = () => Array.from(document.querySelectorAll('.ask-chip'))
 const hint = () => /** @type {HTMLElement} */ (document.querySelector('.ask-popup__hint'))
 
@@ -64,7 +71,7 @@ describe('ComposerAttachments — the model', () => {
   })
 })
 
-describe('ComposerAttachments — send-time reconciliation', () => {
+describe('ComposerAttachments — reconciliation against the message text', () => {
   /** @type {ComposerAttachments} */ let model
 
   beforeEach(() => { model = new ComposerAttachments(mountFooter()) })
@@ -170,5 +177,195 @@ describe('ComposerAttachments — the chip row in the existing footer', () => {
     expect(() => { headless.add(AUTH); headless.remove(AUTH.uri); headless.clear() }).not.toThrow()
     headless.add(RETRY)
     expect(headless.manifest()).toEqual([{ uri: 'container:1a2b', title: 'Retry RFC' }])
+    // With no composer bound there is no token to delete and nothing to consume.
+    expect(headless.detachAt(0)).toBe(false)
+  })
+})
+
+// ── The chip is a VIEW of the tokens (#74 P6) ────────────────────────────────
+//
+// The defect these pin: reconciliation used to run ONLY at send, so a chip could
+// sit there claiming "attached" over a token the user had already broken, and the
+// attachment was dropped silently at send. The chip now follows the text on every
+// edit, and the two deletion gestures — Backspace at the token's right edge, and
+// the chip's ✕ — each remove BOTH halves.
+
+describe('ComposerAttachments — atomic token deletion', () => {
+  /** @type {HTMLTextAreaElement} */ let ta
+  /** @type {ComposerAttachments} */ let model
+
+  beforeEach(() => {
+    const composer = mountComposer()
+    ta = composer.textarea
+    model = new ComposerAttachments(composer.footer, ta)
+  })
+  afterEach(() => { document.body.innerHTML = '' })
+
+  /** Puts the caret at the right edge of `token` and returns that index. */
+  function caretAfter(token) {
+    const at = ta.value.indexOf(token) + token.length
+    ta.setSelectionRange(at, at)
+    return at
+  }
+
+  it('deletes the WHOLE token and its chip in one press', () => {
+    model.add(AUTH)
+    ta.value = 'How does @Auth Design handle this?'
+    model.reconcile(ta.value)
+    expect(chips().length).toBe(1)
+
+    expect(model.detachAt(caretAfter('@Auth Design'))).toBe(true)
+    // The token AND the gap it sat in go: deleting a word must not leave a hole.
+    expect(ta.value).toBe('How does handle this?')
+    expect(chips().length).toBe(0)
+    expect(model.manifest()).toEqual([])
+  })
+
+  it('leaves the caret where the token started', () => {
+    model.add(AUTH)
+    ta.value = 'How does @Auth Design handle this?'
+    model.reconcile(ta.value)
+    model.detachAt(caretAfter('@Auth Design'))
+    expect(ta.selectionStart).toBe(9)
+    expect(ta.selectionEnd).toBe(9)
+  })
+
+  it('does NOTHING when the caret is not at a token edge — an ordinary Backspace', () => {
+    model.add(AUTH)
+    ta.value = 'How does @Auth Design handle this?'
+    model.reconcile(ta.value)
+
+    expect(model.detachAt(5)).toBe(false)                    // mid-word
+    expect(model.detachAt(ta.value.length)).toBe(false)      // end of the message
+    expect(model.detachAt(ta.value.indexOf('@Auth Design'))).toBe(false)  // LEFT edge
+    expect(ta.value).toBe('How does @Auth Design handle this?')
+    expect(chips().length).toBe(1)
+  })
+
+  it('does not fire on text that merely LOOKS like a token (nothing was accepted)', () => {
+    ta.value = 'ask @Auth Design about it'
+    expect(model.detachAt('ask @Auth Design'.length)).toBe(false)
+    expect(ta.value).toBe('ask @Auth Design about it')
+  })
+
+  it('DUPLICATE TITLES: deleting the first token leaves the OTHER attachment attached', () => {
+    model.add({ uri: 'container:aaa', title: 'Notes', detail: 'design/' })
+    model.add({ uri: 'container:bbb', title: 'Notes', detail: 'journal/' })
+    ta.value = '@Notes and @Notes differ'
+    model.reconcile(ta.value)
+    expect(chips().length).toBe(2)
+
+    expect(model.detachAt('@Notes'.length)).toBe(true)
+    expect(ta.value).toBe('and @Notes differ')
+    // Detaching DEMOTES: the surviving token pairs with the one the user did not
+    // touch, not with the one whose text just went.
+    expect(model.manifest()).toEqual([{ uri: 'container:bbb', title: 'Notes' }])
+    expect(chips().map((c) => c.getAttribute('title'))).toEqual(['journal/'])
+  })
+})
+
+describe('ComposerAttachments — the ✕ removes the text token too', () => {
+  /** @type {HTMLTextAreaElement} */ let ta
+  /** @type {ComposerAttachments} */ let model
+
+  beforeEach(() => {
+    const composer = mountComposer()
+    ta = composer.textarea
+    model = new ComposerAttachments(composer.footer, ta)
+  })
+  afterEach(() => { document.body.innerHTML = '' })
+
+  it('deletes the @Title echo from the message, not just the chip', () => {
+    model.add(AUTH)
+    model.add(RETRY)
+    ta.value = 'compare @Auth Design with @Retry RFC please'
+    model.reconcile(ta.value)
+
+    const remove = /** @type {HTMLElement} */ (chips()[0].querySelector('.ask-chip__remove'))
+    remove.click()
+
+    expect(ta.value).toBe('compare with @Retry RFC please')
+    expect(model.manifest()).toEqual([{ uri: 'container:1a2b', title: 'Retry RFC' }])
+    expect(chips().length).toBe(1)
+  })
+
+  it('DUPLICATE TITLES: the ✕ takes exactly that chip and exactly one token', () => {
+    model.add({ uri: 'container:aaa', title: 'Notes', detail: 'design/' })
+    model.add({ uri: 'container:bbb', title: 'Notes', detail: 'journal/' })
+    ta.value = 'how do @Notes and @Notes differ?'
+    model.reconcile(ta.value)
+
+    const remove = /** @type {HTMLElement} */ (chips()[0].querySelector('.ask-chip__remove'))
+    remove.click()
+
+    expect(ta.value).toBe('how do and @Notes differ?')
+    expect(model.manifest()).toEqual([{ uri: 'container:bbb', title: 'Notes' }])
+  })
+
+  it('still detaches when the token is already gone from the message', () => {
+    model.add(AUTH)
+    ta.value = 'no token here'
+    const remove = /** @type {HTMLElement} */ (chips()[0].querySelector('.ask-chip__remove'))
+    remove.click()
+    expect(ta.value).toBe('no token here')
+    expect(model.manifest()).toEqual([])
+  })
+})
+
+describe('ComposerAttachments — a token that comes back re-attaches', () => {
+  /** @type {HTMLTextAreaElement} */ let ta
+  /** @type {ComposerAttachments} */ let model
+
+  beforeEach(() => {
+    const composer = mountComposer()
+    ta = composer.textarea
+    model = new ComposerAttachments(composer.footer, ta)
+  })
+  afterEach(() => { document.body.innerHTML = '' })
+
+  it('UNDO restores the chip — matching is on the title text, so the pool re-pairs', () => {
+    model.add(AUTH)
+    ta.value = 'How does @Auth Design handle this?'
+    model.reconcile(ta.value)
+    expect(chips().length).toBe(1)
+
+    // Selected through the token and deleted (or cut, or pasted over).
+    ta.value = 'How does handle this?'
+    expect(model.reconcile(ta.value)).toEqual([])
+    expect(chips().length).toBe(0)
+
+    // …and undone.
+    ta.value = 'How does @Auth Design handle this?'
+    expect(model.reconcile(ta.value)).toEqual([{ uri: 'container:9f2b', title: 'Auth Design' }])
+    expect(chips().length).toBe(1)
+    expect(chips()[0].getAttribute('data-uri')).toBe('container:9f2b')
+  })
+
+  it('undoing an atomic Backspace brings the chip back with it', () => {
+    model.add(AUTH)
+    ta.value = '@Auth Design summarise'
+    model.reconcile(ta.value)
+    expect(model.detachAt('@Auth Design'.length)).toBe(true)
+    expect(chips().length).toBe(0)
+
+    ta.value = '@Auth Design summarise'
+    model.reconcile(ta.value)
+    expect(chips().length).toBe(1)
+  })
+
+  it('clear() forgets the pool — a title typed after a send does not resurrect a chip', () => {
+    model.add(AUTH)
+    model.clear()
+    expect(model.reconcile('@Auth Design')).toEqual([])
+    expect(chips().length).toBe(0)
+  })
+
+  it('re-accepting a document whose token was deleted attaches it again', () => {
+    model.add(AUTH)
+    ta.value = 'nothing here'
+    model.reconcile(ta.value)
+    expect(model.size).toBe(0)
+    expect(model.add(AUTH)).toBe(true)
+    expect(model.size).toBe(1)
   })
 })

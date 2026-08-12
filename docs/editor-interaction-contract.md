@@ -429,14 +429,19 @@ buttons including the n/N stats refresh) via
 these OPEN it (conventional "start searching") rather than silently advancing a
 hidden search. Replace… slots into the same Find submenu when #61 lands.
 
-## Composer trigger picker (revised 2026-08-12, #74 P4/P5)
+## Composer trigger picker (revised 2026-08-12, #74 P4/P5/P6)
 
 The Ask panel's textarea is chrome, not an editor surface — none of the key
-matrix above applies to it. It has exactly one interception, and `TriggerPopover`
-(`frontend/src/static/shell/trigger-popover.js`) owns all of it: a
-capture-phase `keydown` on the textarea, active **only while the picker is
-open**. When the picker is closed every key falls through to the panel's own
-Enter-sends / Escape-dismisses handler, unchanged.
+matrix above applies to it. Two owners intercept keys there, and nothing else
+does:
+
+- **`TriggerPopover`** (`frontend/src/static/shell/trigger-popover.js`) — a
+  capture-phase `keydown`, active **only while the picker is open**;
+- **`AskPanel`** (`frontend/src/static/shell/ask-panel.js`) — the bubble-phase
+  `keydown` that already owned Enter/Escape, and now owns **Backspace at an
+  attachment token's right edge** as well.
+
+Everything else falls through to the browser's own text editing, unchanged.
 
 | Key | While the picker is open |
 |---|---|
@@ -448,6 +453,12 @@ Enter-sends / Escape-dismisses handler, unchanged.
 
 Accept and dismiss both `stopImmediatePropagation`, which is what keeps a
 completion from also sending the message.
+
+| Key | In the composer, picker open or shut |
+|---|---|
+| Enter (no Shift) | send |
+| Escape | dismiss the panel |
+| **Backspace** | **when the caret sits at the right edge of an accepted `@Title` token and nothing is selected: deletes the WHOLE token, its trailing gap, and its chip.** Anywhere else — including over a selection, and with any of Ctrl/Cmd/Alt held — it falls through as an ordinary Backspace |
 
 **Two triggers, one picker.** `/` (slash commands) and `@` (document mentions)
 are PROVIDERS on the one popover, not two popovers: the keyboard model, the
@@ -487,8 +498,50 @@ Typing forward stays abandoned; backspacing to a shorter prefix re-arms it, so a
 typo is recoverable. A blank prefix is never recorded — a bare `@` has asked
 nothing.
 
+The record is **forgotten when the composer clears** (`TriggerPopover.reset()`,
+called from the panel's `#clearComposer`). It is keyed to an index in text that a
+send has just destroyed, and a document *created* mid-session would otherwise
+stay unfindable behind a prefix that went dry before it existed.
+
 **An attachment exists only if a candidate is ACCEPTED.** `@` followed by prose
 that matches nothing stays plain text: no chip, no best guess, no auto-attach.
+
+### The chip is a view of the token (#74 P6)
+
+**The `@Title` tokens in the message are the truth; the chips are that data
+drawn.** The text is what you edit — there is no second place to edit it. The
+invariant is one-way and is what makes a silent drop impossible:
+
+> **A chip implies a token. A token does not imply a chip.**
+
+So `@Auth Design` typed as prose and never accepted is just prose (above), while
+a chip can never outlive the token it claims to represent. Reconciliation runs on
+**every composer `input`**, not at send: breaking a token removes its chip the
+moment it stops matching, rather than the UI claiming "attached" until send drops
+the attachment with no answer and no explanation.
+
+| Gesture | What it does |
+|---|---|
+| Backspace at a token's right edge | deletes the whole token, its gap, and its chip (the table above) |
+| select-through-and-delete, cut, paste-over, retype | the chip goes as soon as the token stops matching |
+| the chip's ✕ | deletes the `@Title` token from the message as well — the same disagreement pointing the other way |
+| undo, or retyping the title | **re-attaches**: matching is on exact title text, and every candidate accepted since the composer was last cleared is retained, so the chip comes back with its token |
+
+Two consequences worth naming:
+
+- **A send forgets everything.** `clear()` empties the retained pool, so a title
+  typed after a send is prose, not a resurrected attachment.
+- **Detaching demotes.** With two attachments sharing a title (`@Notes and
+  @Notes`), deleting one token must drop exactly one chip *and leave the right
+  one*. The detached attachment moves to the back of the pool before the pairing
+  is redone, so the surviving token pairs with the attachment the user did not
+  touch.
+
+Programmatic edits to the composer text (the two deletion gestures) go through
+`TriggerPopover.applyOwnEdit()` — the **same** `#completing` guard acceptance
+uses, so the `input` they fire is understood as ours: it neither reopens the
+picker on the token just deleted nor records an abandonment for text that no
+longer exists.
 
 ## Deferred (recorded, not shipped)
 

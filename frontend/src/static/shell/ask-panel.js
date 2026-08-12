@@ -71,8 +71,15 @@ export class AskPanel {
     this.#textarea = this.#panel.querySelector('.ask-popup__input')
     this.#label = this.#panel.querySelector('.ask-popup__label')
     // The attachment model comes first: the `@` provider's accept-sink writes
-    // into it, so it must exist before the picker can offer anything.
-    this.#attachments = new ComposerAttachments(this.#panel.querySelector('.ask-popup__footer'))
+    // into it, so it must exist before the picker can offer anything. It takes
+    // the composer too — the `@Title` tokens live there and the chips are a VIEW
+    // of them (#74 P6) — and the gate through which it edits that text. The gate
+    // is late-bound because the picker it defers to is built below.
+    this.#attachments = new ComposerAttachments(
+      this.#panel.querySelector('.ask-popup__footer'),
+      this.#textarea,
+      (edit) => this.#applyOwnEdit(edit),
+    )
     // ONE picker, two triggers (#74 P4): `/` enumerates the boot-shipped command
     // list, `@` round-trips the library through the session plane. The popover
     // owns the keyboard/positioning; each provider owns only its own trigger.
@@ -187,10 +194,54 @@ export class AskPanel {
     if (closeBtn) closeBtn.addEventListener('click', () => this.#dismiss())
 
     textarea.addEventListener('keydown', (e) => {
+      // ATOMIC TOKEN DELETION (#74 P6). Backspace at the right edge of an
+      // accepted `@Title` takes the WHOLE token and its chip, which is what makes
+      // the half-broken `@Auth Desig` state unreachable by the ordinary gesture.
+      // Anywhere else it falls straight through — the key is only ever borrowed.
+      if (e.key === 'Backspace' && !e.ctrlKey && !e.metaKey && !e.altKey && this.#detachTokenAtCaret()) {
+        e.preventDefault()
+        return
+      }
       // Ctrl+Shift+A (jump back out) is the global hotkey — only Enter/Escape are box-local.
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.#send() }
       if (e.key === 'Escape') { e.preventDefault(); this.#dismiss() }
     })
+
+    // LIVE RECONCILIATION (#74 P6): the chips are a VIEW of the `@Title` tokens
+    // in the message, so every edit path — typing, selecting through a token and
+    // deleting, cut, paste-over, undo — redraws them. Reconciling only at send
+    // was the defect: the UI claimed "attached" right up until it silently
+    // wasn't.
+    textarea.addEventListener('input', () => this.#reconcileChips())
+  }
+
+  /** Re-derives the chips from the message as written. */
+  #reconcileChips() {
+    if (this.#textarea && this.#attachments) this.#attachments.reconcile(this.#textarea.value)
+  }
+
+  /**
+   * Deletes the whole attachment token the caret sits at the right edge of.
+   * A SELECTION deletes itself — Backspace over one is not a token gesture.
+   * @returns {boolean} whether the keypress was consumed
+   */
+  #detachTokenAtCaret() {
+    const textarea = this.#textarea
+    if (!textarea || !this.#attachments) return false
+    if (textarea.selectionStart !== textarea.selectionEnd) return false
+    return this.#attachments.detachAt(textarea.selectionStart)
+  }
+
+  /**
+   * Performs a programmatic edit of the composer text as OUR write: the picker
+   * ignores the `input` it fires, so deleting a token neither reopens the picker
+   * on the deleted token nor disturbs the abandonment record. Same guard
+   * acceptance uses — there is one notion of "our own edit", not two.
+   * @param {() => void} edit
+   */
+  #applyOwnEdit(edit) {
+    if (this.#hintPopover) this.#hintPopover.applyOwnEdit(edit)
+    else edit()
   }
 
   /** Reflects the persisted View-menu toggle onto the panel's open state. */
@@ -287,10 +338,14 @@ export class AskPanel {
     this.#clearComposer()
   }
 
-  /** Resets the composer after a send: the box, the chips, the focus coordinate. */
+  /** Resets the composer after a send: the box, the chips, the picker's memory of
+   *  the token the user walked away from, the focus coordinate. The abandonment
+   *  record is keyed to an index in text that no longer exists, and outliving the
+   *  send would keep a document created mid-session unfindable (#74 P6). */
   #clearComposer() {
     if (this.#textarea) this.#textarea.value = ''
     if (this.#attachments) this.#attachments.clear()
+    if (this.#hintPopover) this.#hintPopover.reset()
     if (this.#panel && !this.#pinned) this.#panel.classList.remove('is-open')
     this.#focusReturn = null
   }

@@ -558,4 +558,57 @@ describe('TriggerPopover — the dry stop', () => {
     expect(visible()).toBe(true)
     popover.destroy()
   })
+
+  // ── The two seams the composer drives the abandonment record through ───────
+  //
+  // reset() is the composer CLEARING (a send): the record's (index, prefix) then
+  // describes text that no longer exists. applyOwnEdit() is the composer EDITING
+  // ITSELF (deleting an attachment's token): the `input` that fires is ours, not
+  // the user's — the same guard acceptance already uses, not a second one.
+
+  it('reset() forgets the abandonment record, so a prefix that went dry asks again', async () => {
+    const { textarea, search, popover } = mount(['Auth Design'])
+
+    type(textarea, '@zzz')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(visible()).toBe(false)               // dry → abandoned
+
+    search.mockClear()
+    type(textarea, '@zzz')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(search).not.toHaveBeenCalled()       // still abandoned, as designed
+
+    popover.reset()                             // the composer cleared (a send)
+    type(textarea, '@zzz')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(search).toHaveBeenCalledWith('zzz', undefined)
+    popover.destroy()
+  })
+
+  it('applyOwnEdit() makes a programmatic edit OURS: no query, and the record is untouched', async () => {
+    const { textarea, search, popover } = mount(['Auth Design'])
+
+    type(textarea, '@auth')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(visible()).toBe(true)
+
+    search.mockClear()
+    // What a token deletion does: rewrite the value, move the caret, fire input.
+    popover.applyOwnEdit(() => {
+      textarea.value = 'ask @auth'
+      textarea.setSelectionRange(9, 9)
+      textarea.dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+    await vi.advanceTimersByTimeAsync(50)
+    expect(search).not.toHaveBeenCalled()
+    // DEAF IS NOT CLOSED. A list left open over text the edit just rewrote would
+    // complete Enter into a span that no longer exists.
+    expect(visible()).toBe(false)
+
+    // Nothing was recorded as abandoned by it: the user typing on still queries.
+    type(textarea, 'ask @author')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(search).toHaveBeenCalledWith('author', undefined)
+    popover.destroy()
+  })
 })

@@ -237,13 +237,38 @@ export class TriggerPopover {
   #acceptCandidate(candidate) {
     const token = this.#token
     if (!token) return
+    this.applyOwnEdit(() => token.provider.accept(candidate, token, this.#textarea))
+    this.#abandon(this.#tokenAtCaret())
+  }
+
+  /**
+   * Runs `edit` as OUR write rather than the user's typing: the `input` it fires
+   * is ignored here, so a programmatic change to the composer text neither
+   * reopens the picker on what it just wrote nor records an abandonment for a
+   * token that no longer exists.
+   *
+   * ONE notion of "our own edit", not a second guard per caller: acceptance
+   * writing a completion back and the composer deleting an attachment's token
+   * (#74 P6) are the same problem, so they share `#completing`. Re-entrant, so a
+   * nested edit cannot un-suppress the outer one.
+   *
+   * DEAF IS NOT CLOSED, so it also CLOSES the picker. Suppressing the echo alone
+   * left an open list of candidates for a token the edit had just deleted — and
+   * `#token` still describing where that token used to be, so Enter would have
+   * written a completion into a span that no longer existed. Any programmatic
+   * edit invalidates what the picker is showing, because the text it was
+   * answering moved underneath it.
+   * @param {() => void} edit
+   */
+  applyOwnEdit(edit) {
+    const outer = this.#completing
     this.#completing = true
     try {
-      token.provider.accept(candidate, token, this.#textarea)
+      edit()
     } finally {
-      this.#completing = false
+      this.#completing = outer
     }
-    this.#abandon(this.#tokenAtCaret())
+    this.#abandon(null)   // closes, drops the stale token, invalidates answers in flight
   }
 
   // ── Abandonment ────────────────────────────────────────────────────────────
@@ -278,6 +303,18 @@ export class TriggerPopover {
   #isAbandoned(token) {
     const dry = this.#abandoned
     return !!dry && token.start === dry.start && token.prefix.startsWith(dry.prefix)
+  }
+
+  /**
+   * Forgets the abandonment record and closes the picker — the composer has been
+   * CLEARED, so the record's (index, prefix) describes text that no longer
+   * exists. Harmless while the library only grows (a dry prefix stays dry), but a
+   * document CREATED mid-session would otherwise stay unfindable behind a record
+   * taken before it existed, until the user happened to backspace.
+   */
+  reset() {
+    this.#abandoned = null
+    this.#abandon(null)     // closes, invalidates any answer in flight, records nothing
   }
 
   #render() {

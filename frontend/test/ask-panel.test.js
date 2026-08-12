@@ -441,6 +441,139 @@ describe('AskPanel — @ attachments (#74 P4)', () => {
       [{ uri: 'container:9f2b', title: 'Auth Design' }])
   })
 
+  // ── The chip is a VIEW of the tokens (#74 P6) ───────────────────────────────
+  //
+  // Reconciliation used to run only at send, so a broken token was discovered
+  // when it was too late to say so: the attachment vanished silently. The chips
+  // now track the text on every edit, and the two deletion gestures each take
+  // both halves.
+
+  it('LIVE RECONCILE: breaking the token drops the chip immediately, not at send', async () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom({ open: true })
+    new AskPanel(fakeWorkspace(fakeEditor()), undefined, undefined, fakeMentions([AUTH]))
+    const ta = el.querySelector('.ask-popup__input')
+
+    await pickMention(ta, 'How does ', ' work?')
+    expect(el.querySelectorAll('.ask-chip').length).toBe(1)
+
+    // One character out of the title — this is the state the old code claimed
+    // was still attached right up until send silently dropped it.
+    ta.value = 'How does @Auth Desig work?'
+    ta.dispatchEvent(new window.Event('input', { bubbles: true }))
+
+    expect(el.querySelectorAll('.ask-chip').length).toBe(0)
+    expect(el.querySelector('.ask-popup__hint').style.display).not.toBe('none')
+  })
+
+  it('UNDO re-attaches: the token coming back brings its chip and its manifest entry', async () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom({ open: true })
+    const editor = fakeEditor()
+    new AskPanel(fakeWorkspace(editor), undefined, undefined, fakeMentions([AUTH]))
+    const ta = el.querySelector('.ask-popup__input')
+
+    await pickMention(ta, 'How does ', ' work?')
+    ta.value = 'How does work?'
+    ta.dispatchEvent(new window.Event('input', { bubbles: true }))
+    expect(el.querySelectorAll('.ask-chip').length).toBe(0)
+
+    ta.value = 'How does @Auth Design work?'
+    ta.dispatchEvent(new window.Event('input', { bubbles: true }))
+    expect(el.querySelectorAll('.ask-chip').length).toBe(1)
+
+    el.querySelector('.ask-popup__send').click()
+    expect(editor.askAi.mock.calls[0][0].attachments).toEqual([{ uri: 'container:9f2b', title: 'Auth Design' }])
+  })
+
+  it('BACKSPACE at the token’s right edge deletes the whole token and its chip', async () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom({ open: true })
+    new AskPanel(fakeWorkspace(fakeEditor()), undefined, undefined, fakeMentions([AUTH]))
+    const ta = el.querySelector('.ask-popup__input')
+
+    await pickMention(ta, 'How does ', ' work?')
+    const edge = ta.value.indexOf('@Auth Design') + '@Auth Design'.length
+    ta.setSelectionRange(edge, edge)
+
+    const e = new window.KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true })
+    ta.dispatchEvent(e)
+
+    expect(e.defaultPrevented).toBe(true)     // the composer consumed it
+    expect(ta.value).toBe('How does work?')
+    expect(el.querySelectorAll('.ask-chip').length).toBe(0)
+    // …and no picker is left open over the token that just went. Observed in the
+    // real app before this was fixed: the list stayed up listing the deleted
+    // document, and Enter would have completed into a span that no longer existed.
+    const picker = /** @type {HTMLElement} */ (document.querySelector('.command-hint-popover'))
+    expect(picker.style.display).toBe('none')
+  })
+
+  it('BACKSPACE anywhere else falls through as an ordinary keypress', async () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom({ open: true })
+    new AskPanel(fakeWorkspace(fakeEditor()), undefined, undefined, fakeMentions([AUTH]))
+    const ta = el.querySelector('.ask-popup__input')
+
+    await pickMention(ta, 'How does ', ' work?')
+    const before = ta.value
+    ta.setSelectionRange(before.length, before.length)
+
+    const e = new window.KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true })
+    ta.dispatchEvent(e)
+
+    expect(e.defaultPrevented).toBe(false)
+    expect(ta.value).toBe(before)
+    expect(el.querySelectorAll('.ask-chip').length).toBe(1)
+  })
+
+  it('the ✕ removes the @Title token from the message as well as the chip', async () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom({ open: true })
+    const editor = fakeEditor()
+    new AskPanel(fakeWorkspace(editor), undefined, undefined, fakeMentions([AUTH]))
+    const ta = el.querySelector('.ask-popup__input')
+
+    await pickMention(ta, 'How does ', ' work?')
+    el.querySelector('.ask-chip__remove').click()
+
+    expect(ta.value).toBe('How does work?')
+    expect(el.querySelectorAll('.ask-chip').length).toBe(0)
+    el.querySelector('.ask-popup__send').click()
+    expect(editor.askAi.mock.calls[0][0].attachments).toEqual([])
+  })
+
+  it('a send RESETS the abandonment record — a prefix that went dry is asked again', async () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom({ open: true })
+    const mentions = fakeMentions([])          // the library answers nothing
+    new AskPanel(fakeWorkspace(fakeEditor()), undefined, undefined, mentions)
+    const ta = el.querySelector('.ask-popup__input')
+
+    const typeAt = (value) => {
+      ta.value = value
+      ta.setSelectionRange(value.length, value.length)
+      ta.dispatchEvent(new window.Event('input', { bubbles: true }))
+    }
+
+    typeAt('@zzz')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(mentions.search).toHaveBeenCalledTimes(1)   // dry → abandoned
+
+    mentions.search.mockClear()
+    typeAt('@zzz')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(mentions.search).not.toHaveBeenCalled()
+
+    // A document created mid-session would stay unfindable behind that record.
+    ta.value = 'ship it'
+    el.querySelector('.ask-popup__send').click()
+
+    typeAt('@zzz')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(mentions.search).toHaveBeenCalledTimes(1)
+  })
+
   it('with no MentionService the panel still works — @ simply never opens a picker', () => {
     const el = mountPanelDom({ open: true })
     const editor = fakeEditor()
