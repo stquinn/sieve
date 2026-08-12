@@ -18,7 +18,7 @@ type ServiceProvider struct {
 	Store       store.Store
 	Library     services.LibraryService
 	Documents   *services.DocumentService
-	Nodes       *services.Router
+	Nodes       *editor.Router
 	Assets      *services.AssetService
 	State       *services.StateService
 	Prompts     *ai.PromptService
@@ -50,7 +50,7 @@ func (s *ServiceProvider) BlockServices() block.BlockServices {
 // composition root — the only place that knows both the ports and the concretes.
 var (
 	_ block.DocumentsPort   = (*services.DocumentService)(nil)
-	_ block.NodesPort       = (*services.Router)(nil)
+	_ block.NodesPort       = (*editor.Router)(nil)
 	_ block.AssetsPort      = (*services.AssetService)(nil)
 	_ block.StatePort       = (*services.StateService)(nil)
 	_ block.LinkPreviewPort = (*services.LinkPreviewService)(nil)
@@ -72,7 +72,13 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	// because MCP get_note covers filed library documents and nothing else. Chats
 	// and Things register here as the MCP grows verbs for them, and nothing
 	// outside Go learns what kinds exist.
-	s.Nodes = services.NewRouter(services.NewNotesSource(s.Documents))
+	//
+	// It lives in editor/ for the same reason the identity sweeper does: the
+	// grammar already spells block: addresses, and resolving one to a real
+	// SieveBlock needs both the block codec and the document service. services/
+	// cannot import block/ (the edge runs block → ai → command → services), so
+	// editor/ — the only package that sees both — is where it belongs.
+	s.Nodes = editor.NewRouter(editor.NewNotesSource(s.Documents))
 	s.Assets = services.NewAssetService(store)
 	s.State, err = services.NewStateService(store, storePath, themesFS)
 	if err != nil {

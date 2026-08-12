@@ -20,7 +20,7 @@ type DocumentsPort interface {
 	Save(d domain.Document) (domain.Document, error)
 }
 
-// NodesPort is the address surface processors use: the Router (services.Router),
+// NodesPort is the address surface processors use: the Router (editor.Router),
 // a registry federating one source per container kind. Resolve turns an address
 // into the Node it points at; Search enumerates what is addressable at all. Two
 // faces of ONE registry, which is what enforces the invariant that a source may

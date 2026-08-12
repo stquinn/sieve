@@ -20,7 +20,8 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 | **Block model + codec + registry + ports** | `sieve/block/` (SieveBlock, DocumentCodec, RegionScanner, ShadowDocument, ports.go, processor_registry.go) |
 | **Block processors** (8 concrete flavours) | `sieve/block/processors/` (code, diagram, log, prose, smart-image/card, web-clip, ai-block) |
 | **Domain leaf types** (persistent) | `sieve/domain/` (Document, Buffer, Note, Session, Settings, Categories, ImageAsset, FilingRecommendation, ImageDesc, LinkPreviewResult) |
-| **Services** (persistence + editor) | `sieve/services/` (DocumentService, AssetService, StateService, JobTracker, LinkPreviewService, LibraryService, EditorService) |
+| **Services** (persistence) | `sieve/services/` (DocumentService, AssetService, StateService, JobTracker, JobEngine, LinkPreviewService, LibraryService, PlantumlService) |
+| **Editor** (the only package that sees both `block/` and `services/`) | `sieve/editor/` (EditorService, Router + NotesSource = address → Node, IdentitySweeper) |
 | **AI subsystem** | `sieve/ai/` (AIService, cli.go=RunCLI [future API-backend swap point], prompts, eval helpers, image_localise) |
 | HTTP router assembly (App-bound: index + /sse + /static wiring) | `handlers.go` (root, `apiHandler`) |
 | Request-handler registration (builds & mounts all handlers) | `requesthandlers/registry.go` (`Registry.Mount`) |

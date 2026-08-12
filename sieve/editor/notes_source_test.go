@@ -1,4 +1,4 @@
-package services
+package editor
 
 import (
 	"errors"
@@ -6,10 +6,14 @@ import (
 	"testing"
 
 	"sieve/sieve/domain"
+	"sieve/sieve/services"
 )
 
 // seedFiledNote creates a buffer, stamps metadata, and files it into the library.
-func seedFiledNote(t *testing.T, ds *DocumentService, title, folder string, tags []string, summary, body string) domain.Document {
+// Deliberately a second copy of the services-package fixture: an unexported test
+// helper cannot cross a package boundary, and exporting one so tests can share it
+// would put fixture code in the production API.
+func seedFiledNote(t *testing.T, ds *services.DocumentService, title, folder string, tags []string, summary, body string) domain.Document {
 	t.Helper()
 	doc, err := ds.New()
 	if err != nil {
@@ -38,7 +42,7 @@ func seedFiledNote(t *testing.T, ds *DocumentService, title, folder string, tags
 	return filed
 }
 
-func newTestNotesSource(t *testing.T) (*NotesSource, *DocumentService) {
+func newTestNotesSource(t *testing.T) (*NotesSource, *services.DocumentService) {
 	t.Helper()
 	ds, _ := newTestDocumentService(t)
 	return NewNotesSource(ds), ds

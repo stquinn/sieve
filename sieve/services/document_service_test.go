@@ -24,6 +24,36 @@ func newTestDocumentService(t *testing.T) (*DocumentService, *filestore.FileStor
 	return ds, fs
 }
 
+// seedFiledNote creates a buffer, stamps metadata, and files it into the library.
+func seedFiledNote(t *testing.T, ds *DocumentService, title, folder string, tags []string, summary, body string) domain.Document {
+	t.Helper()
+	doc, err := ds.New()
+	if err != nil {
+		t.Fatalf("New buffer: %v", err)
+	}
+	m := doc.Meta()
+	m.SetDisplayName(title)
+	s := summary
+	m.SetSummary(&s)
+	m.SetTags(tags)
+	fn := domain.ToKebab(title) // distinct filenames; the fallback is a shared timestamp
+	m.SetFilename(&fn)
+	if folder != "" {
+		f := folder
+		m.SetAiFolderSuggestion(&f)
+	}
+	doc.SetBody([]byte(body))
+	doc, err = ds.Save(doc)
+	if err != nil {
+		t.Fatalf("Save buffer: %v", err)
+	}
+	filed, err := ds.File(doc)
+	if err != nil {
+		t.Fatalf("File note %q: %v", title, err)
+	}
+	return filed
+}
+
 func TestDocumentService_FilePromotesBufferAndAssets(t *testing.T) {
 	ds, fs := newTestDocumentService(t)
 

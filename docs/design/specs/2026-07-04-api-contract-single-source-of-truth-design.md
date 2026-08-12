@@ -196,7 +196,7 @@ the `@`-mention picker).
 ```
 
 A candidate is `domain.Candidate` verbatim (`uri`, `title`, `kind`, `detail`),
-served by `services.Router.Search` — the enumeration face of the same registry
+served by `editor.Router.Search` — the enumeration face of the same registry
 that resolves addresses.
 
 - **Why not a command.** A typeahead needs a sub-100ms answer with no JobEngine

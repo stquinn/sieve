@@ -1,4 +1,4 @@
-package services
+package editor
 
 import (
 	"fmt"
@@ -9,6 +9,7 @@ import (
 	"sieve/ident"
 	"sieve/logger"
 	"sieve/sieve/domain"
+	"sieve/sieve/services"
 )
 
 // NotesSource is the Router's face on the library: filed documents, offered as
@@ -20,11 +21,11 @@ import (
 // library) and never resolved (Resolve refuses a non-note), even though
 // DocumentService.LoadByUUID would happily find one.
 type NotesSource struct {
-	documents *DocumentService
+	documents *services.DocumentService
 }
 
 // NewNotesSource builds the library source over the document service.
-func NewNotesSource(documents *DocumentService) *NotesSource {
+func NewNotesSource(documents *services.DocumentService) *NotesSource {
 	return &NotesSource{documents: documents}
 }
 
@@ -96,7 +97,7 @@ func (s *NotesSource) nodeOf(addr domain.Address, doc domain.Document) domain.No
 }
 
 // candidateOf projects a search hit into an offer.
-func (s *NotesSource) candidateOf(r SearchResult) domain.Candidate {
+func (s *NotesSource) candidateOf(r services.SearchResult) domain.Candidate {
 	return domain.Candidate{
 		URI:    domain.NewContainerAddress(r.ID).String(),
 		Title:  r.Name,
@@ -108,7 +109,7 @@ func (s *NotesSource) candidateOf(r SearchResult) domain.Candidate {
 // detailOf builds the picker's disambiguation line: the folder first (two notes
 // may legitimately share a title — the folder is what tells them apart), then
 // whatever snippet the match produced.
-func (s *NotesSource) detailOf(r SearchResult) string {
+func (s *NotesSource) detailOf(r services.SearchResult) string {
 	var parts []string
 	if folder := s.folderOf(r.Path); folder != "" {
 		parts = append(parts, folder)

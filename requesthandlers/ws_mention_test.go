@@ -8,7 +8,7 @@ import (
 
 	"sieve/sieve"
 	"sieve/sieve/domain"
-	"sieve/sieve/services"
+	"sieve/sieve/editor"
 )
 
 // stubSource is a NodeSource double: it records what the Router asked for and
@@ -41,7 +41,7 @@ func newWsTestServerWithNodes(t *testing.T) (*httptest.Server, *sieve.ServicePro
 		{URI: "container:9f2b", Title: "Auth Design", Kind: "note", Detail: "design/ · #auth"},
 		{URI: "container:7a1c", Title: "Auth Retry RFC", Kind: "note", Detail: "rfc/"},
 	}}
-	sp.Nodes = services.NewRouter(src)
+	sp.Nodes = editor.NewRouter(src)
 	return srv, sp, src
 }
 
