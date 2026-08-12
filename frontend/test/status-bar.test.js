@@ -103,14 +103,63 @@ describe('StatusBar (P4.D)', () => {
     expect(dot.classList.contains('bg-tn-green')).toBe(true)
   })
 
-  it('editor:blockhover writes the block id (null clears)', () => {
+  // Block ids are UUIDs (#75). The slot shows kind + the id's TAIL: a UUIDv7 leads
+  // with a millisecond timestamp, so every block minted in one session shares its
+  // head and a head-truncated readout is uniform noise.
+  it('editor:blockhover writes kind and the id TAIL, not the head', () => {
     mountStatusDom()
     new StatusBar(fakeWorkspace())
-    document.dispatchEvent(new CustomEvent('editor:blockhover', { detail: { id: 'blk-7', kind: 'code' } }))
+    const uuid = '019ff755-fcdc-7c95-9a2e-aa791ea970cb'
+    document.dispatchEvent(new CustomEvent('editor:blockhover', { detail: { id: uuid, kind: 'code' } }))
     const slot = document.querySelector('.status-bar__blockid')
-    expect(slot.textContent).toBe('blk-7')
+    expect(slot.textContent).toContain('code·')
+    expect(slot.textContent).toContain('a970cb')
+    expect(slot.textContent).not.toContain('019ff755')
+    // The full id stays reachable for copy/report.
+    expect(slot.title).toContain(uuid)
+  })
+
+  it('a short legacy handle is shown verbatim — truncating it would lose signal', () => {
+    mountStatusDom()
+    new StatusBar(fakeWorkspace())
+    document.dispatchEvent(new CustomEvent('editor:blockhover', { detail: { id: 'pr-3f2a', kind: 'prose' } }))
+    expect(document.querySelector('.status-bar__blockid').textContent).toContain('pr-3f2a')
+  })
+
+  // The readout must SURVIVE the pointer leaving the block: the slot is
+  // click-to-copy, and one that blanked on mouse-out could never be reached.
+  it('a null hover keeps the last readout so the slot stays clickable', () => {
+    mountStatusDom()
+    new StatusBar(fakeWorkspace())
+    const uuid = '019ff755-fcdc-7c95-9a2e-aa791ea970cb'
+    document.dispatchEvent(new CustomEvent('editor:blockhover', { detail: { id: uuid, kind: 'code' } }))
+    const slot = document.querySelector('.status-bar__blockid')
+    const painted = slot.textContent
     document.dispatchEvent(new CustomEvent('editor:blockhover', { detail: null }))
-    expect(slot.textContent).toBe('')
+    expect(slot.textContent).toBe(painted)
+  })
+
+  it('clicking the slot copies the FULL id, not the displayed tail', async () => {
+    mountStatusDom()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    new StatusBar(fakeWorkspace())
+    const uuid = '019ff755-fcdc-7c95-9a2e-aa791ea970cb'
+    document.dispatchEvent(new CustomEvent('editor:blockhover', { detail: { id: uuid, kind: 'code' } }))
+    document.querySelector('.status-bar__blockid').click()
+    await Promise.resolve()
+    expect(writeText).toHaveBeenCalledWith(uuid)
+    vi.unstubAllGlobals()
+  })
+
+  it('clicking with nothing hovered copies nothing', () => {
+    mountStatusDom()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    new StatusBar(fakeWorkspace())
+    document.querySelector('.status-bar__blockid').click()
+    expect(writeText).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
   })
 
   it('RE-POINTS on onActiveTabChanged: the new editor drives stats, the old one is dropped', () => {

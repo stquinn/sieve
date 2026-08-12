@@ -29,6 +29,8 @@ export class StatusBar {
   #statsSlot = null
   /** @type {(() => void)|null} unsubscribe from the ACTIVE editor's onEvent stream */
   #unsubEditor = null
+  /** @type {string} full id of the last hovered block — what click-to-copy yields */
+  #hoveredBlockId = ''
 
   /** @param {import('./workspace.js').SieveWorkspace} ws */
   constructor(ws) {
@@ -41,6 +43,7 @@ export class StatusBar {
     // here — the consumers moved out of index.html.
     document.addEventListener('sieve:meta-dirty', (e) => this.#onDirty(/** @type {CustomEvent} */ (e).detail))
     document.addEventListener('editor:blockhover', (e) => this.#onBlockHover(/** @type {CustomEvent} */ (e).detail))
+    if (this.#blockIdSlot) this.#blockIdSlot.addEventListener('click', () => this.#copyBlockId())
     // Reflect the active editor's stats stream; re-point on tab change.
     this.#ws.onActiveTabChanged((tab) => this.#pointAt(tab))
     this.#pointAt(this.#ws.activeTab)
@@ -109,12 +112,62 @@ export class StatusBar {
   }
 
   /**
-   * Writes the hovered block id into the __blockid slot (verbatim from the retired
-   * index.html consumer — id only, kind commented out there).
+   * Writes the hovered block's kind and id-tail into the __blockid slot.
+   *
+   * Block ids became UUIDs in #75, which broke the old verbatim readout twice
+   * over. The slot ellipsises, so a 36-char id truncated to its HEAD — and a
+   * UUIDv7 leads with a millisecond timestamp, so every block minted in one
+   * session shares that prefix and the readout became uniform noise. The
+   * discriminating half is the tail, so that is what is shown. Kind is shown
+   * explicitly too: it used to ride along free in the `pr-`/`co-` prefix, and
+   * opaque ids carry no kind at all.
+   *
+   * The last value PERSISTS when the pointer leaves the block (the old consumer
+   * blanked it). It has to: the slot is click-to-copy, and a readout that
+   * cleared on mouse-out could never be reached to click.
    * @param {{ id?: string, kind?: string }|null} detail
    */
   #onBlockHover(detail) {
     if (!this.#blockIdSlot) return
-    this.#blockIdSlot.textContent = detail ? (detail.id || '') : ''
+    const id = (detail && detail.id) || ''
+    if (!id) return // keep the last readout — see above
+    this.#hoveredBlockId = id
+    const kind = (detail && detail.kind) || ''
+    this.#blockIdSlot.textContent = (kind ? kind + '·' : '') + this.#idTail(id) + ' ⧉'
+    this.#blockIdSlot.title = id + ' (click to copy)'
+    this.#blockIdSlot.style.cursor = 'pointer'
+  }
+
+  /**
+   * The distinguishing tail of a block id: the last 6 chars of a UUID. Ids short
+   * enough to read whole (a legacy handle in a document not yet migrated, a
+   * transient `tok-…`) are returned verbatim — truncating those would lose
+   * information rather than noise.
+   * @param {string} id
+   * @returns {string}
+   */
+  #idTail(id) {
+    return id.length <= 12 ? id : id.slice(-6)
+  }
+
+  /**
+   * Copies the FULL id of the last hovered block, flashing the slot to confirm.
+   * The full id is what is useful off-screen (a bug report, a ref, and in time a
+   * block: coordinate) — the tail is only ever a legible stand-in.
+   */
+  async #copyBlockId() {
+    const slot = this.#blockIdSlot
+    if (!slot || !this.#hoveredBlockId) return
+    try {
+      await navigator.clipboard.writeText(this.#hoveredBlockId)
+    } catch (err) {
+      return // clipboard denied — say nothing rather than flash a false success
+    }
+    const restore = slot.textContent
+    slot.textContent = 'copied'
+    window.setTimeout(() => {
+      // Only restore if nothing else repainted the slot in the meantime.
+      if (slot.textContent === 'copied') slot.textContent = restore
+    }, 900)
   }
 }
