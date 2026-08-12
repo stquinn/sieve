@@ -234,3 +234,114 @@ describe('AiBlockRenderer — the attachment chip row', () => {
     expect(row.className).toContain('sieve-block__footer')
   })
 })
+
+// ── The question's @mentions (#74) ───────────────────────────────────────────
+// The literal `@Auth Design` inside the rendered question is marked with the
+// SAME accent its footer chip carries, so the inline mention and the chip read
+// as one object. Only titles this block actually attached are marked — the data
+// is the matcher, never a `@\w+` regex.
+
+describe('AiBlockRenderer — @mentions inside the question', () => {
+  /** @type {HTMLStyleElement} */ let rootVars
+
+  beforeAll(() => {
+    clearInjectedStyles();
+    /** @type {any} */ (globalThis).TipTap = /** @type {any} */ (globalThis).TipTap || {}
+    Object.assign(/** @type {any} */ (globalThis).TipTap, { MarkdownIt })
+  })
+  afterAll(() => { delete /** @type {any} */ (globalThis).TipTap.MarkdownIt })
+  beforeEach(() => { rootVars = installBareThemeVars() })
+  afterEach(() => { rootVars.remove(); document.body.innerHTML = '' })
+
+  /** @param {Element|null} title */
+  const mentions = (title) => Array.from(title?.querySelectorAll('.ai-block__mention') || []).map((m) => m.textContent)
+  /** @param {HTMLElement} dom */
+  const heading = (dom) => dom.querySelector('.sieve-block__heading')
+
+  it('marks the attached title where it appears in the question, prose untouched', () => {
+    const { dom } = mount({
+      ...REPRESENTATIVE_ATTRS,
+      question: 'How does @Auth Design handle retries?',
+      attachments: [{ uri: 'container:9f2b', title: 'Auth Design' }],
+    })
+    const title = heading(dom)
+    expect(mentions(title)).toEqual(['@Auth Design'])
+    expect(title?.textContent?.trim()).toBe('How does @Auth Design handle retries?')
+  })
+
+  it('marks every occurrence — two attachments sharing a title mark both tokens', () => {
+    const { dom } = mount({
+      ...REPRESENTATIVE_ATTRS,
+      question: 'Does @Notes agree with @Notes?',
+      attachments: [{ uri: 'container:aaa', title: 'Notes' }, { uri: 'container:bbb', title: 'Notes' }],
+    })
+    expect(mentions(heading(dom))).toEqual(['@Notes', '@Notes'])
+  })
+
+  it('marks NOTHING that is not attached — an email, an unattached name, a stray @', () => {
+    const { dom } = mount({
+      ...REPRESENTATIVE_ATTRS,
+      question: 'Mail stephen@example.com, ask @Retry RFC, mind the @ sign',
+      attachments: [{ uri: 'container:9f2b', title: 'Auth Design' }],
+    })
+    expect(mentions(heading(dom))).toEqual([])
+  })
+
+  it('does not disturb the question\'s markdown rendering, and skips code spans', () => {
+    const { dom } = mount({
+      ...REPRESENTATIVE_ATTRS,
+      question: '**Compare** `@Auth Design` with @Auth Design',
+      attachments: [{ uri: 'container:9f2b', title: 'Auth Design' }],
+    })
+    const title = heading(dom)
+    expect(title?.querySelector('strong')?.textContent).toBe('Compare')
+    expect(title?.querySelector('code')?.textContent).toBe('@Auth Design')
+    expect(mentions(title)).toEqual(['@Auth Design'])
+    expect(title?.querySelector('code')?.querySelector('.ai-block__mention')).toBeNull()
+  })
+
+  it('an HTML-shaped title renders as INERT TEXT — no node is ever built from it (SEC-B #48)', () => {
+    const evil = '<img src=x onerror="alert(1)">'
+    const { dom } = mount({
+      ...REPRESENTATIVE_ATTRS,
+      question: 'What does @' + evil + ' say?',
+      attachments: [{ uri: 'container:evil', title: evil }],
+    })
+    document.body.appendChild(dom)
+    const title = heading(dom)
+    expect(dom.querySelector('img')).toBeNull()
+    expect(document.querySelectorAll('img').length).toBe(0)
+    expect(mentions(title)).toEqual(['@' + evil])
+    expect(title?.textContent?.trim()).toBe('What does @' + evil + ' say?')
+  })
+
+  it('only the QUESTION is marked — the answer is prose the AI wrote', () => {
+    const { dom } = mount({
+      ...REPRESENTATIVE_ATTRS,
+      question: 'Summarise @Auth Design',
+      response: 'The @Auth Design note says retries are capped.',
+      attachments: [{ uri: 'container:9f2b', title: 'Auth Design' }],
+    })
+    expect(mentions(heading(dom))).toEqual(['@Auth Design'])
+    expect(dom.querySelectorAll('.sieve-block__content .ai-block__mention').length).toBe(0)
+  })
+
+  it('update() marks the question when the server\'s attachments arrive after the block', () => {
+    const { renderer, dom } = mount({ ...REPRESENTATIVE_ATTRS, status: 'PENDING', question: 'Summarise @Auth Design' })
+    expect(mentions(heading(dom))).toEqual([])
+
+    renderer.update(blk({
+      ...REPRESENTATIVE_ATTRS,
+      question: 'Summarise @Auth Design',
+      attachments: [{ uri: 'container:9f2b', title: 'Auth Design' }],
+    }))
+    expect(mentions(heading(dom))).toEqual(['@Auth Design'])
+  })
+
+  it('a question with no attachments renders exactly as it did before the marking existed', () => {
+    const { dom } = mount({ ...REPRESENTATIVE_ATTRS, question: 'What about @Auth Design?' })
+    const title = heading(dom)
+    expect(mentions(title)).toEqual([])
+    expect(title?.textContent?.trim()).toBe('What about @Auth Design?')
+  })
+})

@@ -48,6 +48,10 @@
 // chip.
 
 import { esc } from '../block/renderers/html-escape.js'
+// The token rule is SHARED with the ai-block, which marks the same `@Title`
+// tokens in the question it renders (#74). Two copies of "what counts as a
+// mention" would let a chip and its inline mark describe different text.
+import { MentionTokens } from '../block/renderers/mention-tokens.js'
 
 /**
  * A candidate as the picker offers it. `kind`/`detail` are display-only: they
@@ -234,7 +238,9 @@ export class ComposerAttachments {
    * Pairs each pooled attachment with the `@Title` token carrying it, walking the
    * pool in order and handing each attachment the next unspoken-for token of its
    * title. An attachment with no token left is simply absent from the result —
-   * which is precisely what "not attached" means.
+   * which is precisely what "not attached" means. What IS a token is
+   * MentionTokens' rule: at the start or after whitespace, so "mail me@Auth
+   * Design" is an address.
    * @param {string} text
    * @returns {TokenPair[]}
    */
@@ -243,32 +249,12 @@ export class ComposerAttachments {
     const spent = new Map()
     /** @type {TokenPair[]} */ const pairs = []
     for (const item of this.#known) {
-      const spans = ComposerAttachments.#tokenSpans(text, item.title)
+      const spans = MentionTokens.spans(text, item.title)
       const nth = spent.get(item.title) || 0
       spent.set(item.title, nth + 1)
       if (nth < spans.length) pairs.push({ item: item, start: spans[nth].start, end: spans[nth].end })
     }
     return pairs
-  }
-
-  /**
-   * Every place `@title` appears in `text` AS A TOKEN — at the start or after
-   * whitespace, so "mail me@Auth Design" is an address, not a mention.
-   * @param {string} text @param {string} title
-   * @returns {Array<{start: number, end: number}>} in text order
-   */
-  static #tokenSpans(text, title) {
-    /** @type {Array<{start: number, end: number}>} */ const spans = []
-    if (!title) return spans
-    const needle = '@' + title
-    const haystack = text || ''
-    let idx = haystack.indexOf(needle)
-    while (idx !== -1) {
-      const before = idx > 0 ? haystack.charAt(idx - 1) : ''
-      if (before === '' || /\s/.test(before)) spans.push({ start: idx, end: idx + needle.length })
-      idx = haystack.indexOf(needle, idx + needle.length)
-    }
-    return spans
   }
 
   /** @returns {string} the message as written ('' when headless) */

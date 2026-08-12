@@ -23,6 +23,7 @@ import { BlockRenderer } from './block-renderer.js'
 import { aiBlockStyles } from './ai-block-renderer.styles.js'
 import { isJobStale } from './job-status.js'
 import { esc } from './html-escape.js'
+import { MentionTokens } from './mention-tokens.js'
 
 /** One attachment as it is persisted (#74): the address is the truth, the title
  *  a render cache — kind/summary are resolved server-side at job time.
@@ -54,7 +55,7 @@ export class AiBlockRenderer extends BlockRenderer {
   /** The question TITLE (base stamps sieve-block__heading + hides when empty). @returns {HTMLElement} */
   buildTitle() {
     this.#titleEl = document.createElement('div')
-    this.fillTitleSlot(this.#titleEl, /** @type {AiBlockAttrs} */ (this.block.payload).question)
+    this.#fillQuestion(/** @type {AiBlockAttrs} */ (this.block.payload))
     return this.#titleEl
   }
 
@@ -124,11 +125,27 @@ export class AiBlockRenderer extends BlockRenderer {
     const attrs = /** @type {AiBlockAttrs} */ (block.payload)
     this.#syncRoot(attrs)
     this.#renderBadge(attrs)
-    if (this.#titleEl) this.fillTitleSlot(this.#titleEl, attrs.question)
+    this.#fillQuestion(attrs)
     this.#fillAttachments(attrs)
     // Body patch is REF-GUARDED — a claimed (externally managed) body recorded
     // no #contentEl, so PM's body is left alone with no update() override needed.
     if (this.#contentEl) this.fillBody(this.#contentEl, this.bodyMarkdown())
+  }
+
+  /**
+   * Renders the question AND marks the `@Title` tokens it attached, in that
+   * order: the marking works on the RENDERED prose, so the markdown rendering of
+   * the question is untouched by it. The literal `@Auth Design` reading in the
+   * accent its footer chip carries is what says "that name in the sentence and
+   * that chip are one object" — and only the titles the block actually attached
+   * are marked, so an email address or a stray `@` stays prose.
+   * @param {AiBlockAttrs} attrs
+   */
+  #fillQuestion(attrs) {
+    const el = this.#titleEl
+    if (!el) return
+    this.fillTitleSlot(el, attrs.question)
+    MentionTokens.mark(el, AiBlockRenderer.#attachmentsOf(attrs).map((a) => a && a.title), 'ai-block__mention')
   }
 
   /**
@@ -139,10 +156,20 @@ export class AiBlockRenderer extends BlockRenderer {
   #fillAttachments(attrs) {
     const row = this.#attachmentsEl
     if (!row) return
-    const list = Array.isArray(attrs.attachments) ? attrs.attachments : []
+    const list = AiBlockRenderer.#attachmentsOf(attrs)
     row.innerHTML = ''
     row.style.display = list.length ? 'flex' : 'none'
     for (const attachment of list) row.appendChild(this.#attachmentChip(attachment))
+  }
+
+  /**
+   * This turn's attachments, tolerantly: an absent or malformed attr is the
+   * empty list. The one place the attr's shape is trusted.
+   * @param {AiBlockAttrs} attrs
+   * @returns {AiBlockAttachment[]}
+   */
+  static #attachmentsOf(attrs) {
+    return Array.isArray(attrs.attachments) ? attrs.attachments : []
   }
 
   /**

@@ -163,6 +163,21 @@ export const aiBlockStyles = /* css */ `
     to { transform: rotate(360deg); }
   }
 
+  /* An @Title the question attached (#74) — the INLINE half of its footer chip.
+     Same accent as .ai-block__attachment below, deliberately: the name in the
+     sentence and the chip under the answer are one object, and the tint is what
+     says so. Tinted rather than coloured-only so it reads as a mark in both
+     themes; box-decoration-break keeps the pill's ends when a long title wraps. */
+  .ai-block__mention {
+    border-radius: 3px;
+    padding: 0 2px;
+    background: color-mix(in srgb, var(--theme-accentPrimary) 14%, transparent);
+    color: var(--theme-accentPrimary);
+    font-weight: 500;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+
   /* ── Attachment chips (#74) — the FOOTER region ────────────────────────────
      The documents this turn's question attached. Deliberately quiet: they are
      provenance, not content, so they sit under the answer at badge weight and
