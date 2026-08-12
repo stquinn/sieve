@@ -4,6 +4,26 @@ import (
 	"testing"
 )
 
+// TestNewUUID_IsVersion7 pins the minted form to UUIDv7 (time-ordered), which is
+// what makes document keys sort chronologically.
+func TestNewUUID_IsVersion7(t *testing.T) {
+	id := newUUID()
+	if len(id) != 36 || id[14] != '7' {
+		t.Fatalf("newUUID() = %q, want canonical UUIDv7", id)
+	}
+}
+
+// TestLooksLikeUUID_RejectsShortHandles guards the predicate that decides whether
+// an id has already been migrated: a legacy block handle must answer no.
+func TestLooksLikeUUID_RejectsShortHandles(t *testing.T) {
+	if looksLikeUUID("pr-3f2a") {
+		t.Fatal("looksLikeUUID accepted a legacy block handle")
+	}
+	if !looksLikeUUID(newUUID()) {
+		t.Fatal("looksLikeUUID rejected a freshly minted id")
+	}
+}
+
 // TestParseFrontmatterBasic verifies that parseFrontmatter correctly splits a
 // YAML frontmatter seed body (used by createMeta and the migration tool).
 func TestParseFrontmatterBasic(t *testing.T) {

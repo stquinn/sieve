@@ -38,7 +38,6 @@ package filestore
 
 import (
 	"bytes"
-	"crypto/rand"
 	"fmt"
 	"net/http"
 	"os"
@@ -49,6 +48,7 @@ import (
 	"sync"
 	"time"
 
+	"sieve/ident"
 	"sieve/logger"
 	"sieve/store"
 )
@@ -850,18 +850,14 @@ func (fs *FileStore) stampCreate(meta map[string]string) {
 }
 
 // looksLikeUUID returns true for strings in the 8-4-4-4-12 hex UUID format.
-func looksLikeUUID(s string) bool {
-	return len(s) == 36 && s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-'
-}
+// Retained as a named helper because it reads as a domain predicate at its call
+// sites; the definition of "is a uuid" lives in ident.
+func looksLikeUUID(s string) bool { return ident.Valid(s) }
 
-func newUUID() string {
-	var b [16]byte
-	rand.Read(b[:])
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
-}
+// newUUID mints a document key. Existing v4 keys on disk stay valid — v4 and v7
+// are the same 128 bits in the same canonical form, and nothing reads the
+// version nibble.
+func newUUID() string { return ident.New() }
 
 // ── Meta helpers ──────────────────────────────────────────────────────────────
 
