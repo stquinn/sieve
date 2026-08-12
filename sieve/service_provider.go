@@ -110,6 +110,10 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	s.Commands.Register(command.NewNowCommand())
 	s.Commands.Register(command.NewStatsCommand(s.Documents))
 	s.Commands.Register(command.NewUUIDCommand())
+	// The sweeper lives in editor/ because only that package sees both the block
+	// codec and the document service; command/ cannot import block/ at all.
+	s.Commands.Register(command.NewMigrateIDsCommand(
+		editor.NewIdentitySweeper(s.Documents, block.NewDocumentCodec(block.GlobalRegistry()))))
 	s.Commands.Register(command.NewHashCommand(s.Documents))
 	s.Commands.Register(command.NewBase64Command(s.Documents))
 	s.Commands.Register(command.NewEnvCommand())
