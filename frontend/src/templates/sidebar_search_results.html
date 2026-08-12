@@ -51,6 +51,7 @@
         </div>
         
         <div class="store-search__item-badges" style="margin-bottom: 6px; justify-content: flex-start; gap: 6px;">
+          {{if .IsTitleMatch}}<span class="store-search__badge">Title</span>{{end}}
           {{if .IsTagMatch}}<span class="store-search__badge">Tag Match</span>{{end}}
           {{if .IsSummaryMatch}}<span class="store-search__badge">Summary</span>{{end}}
           {{if .IsBodyMatch}}<span class="store-search__badge store-search__badge--text">Content</span>{{end}}

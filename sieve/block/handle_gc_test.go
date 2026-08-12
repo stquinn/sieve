@@ -63,3 +63,35 @@ func TestGCAliases_IsPure(t *testing.T) {
 		t.Fatalf("stale alias not GC'd: %+v", got[0].Aliases)
 	}
 }
+
+// `ref` is the document-local chain and NOTHING else. Attachments are global
+// addresses living in their own attr, so the ref machinery — outgoingRefs, the
+// GC, and by extension the INTERIOR/LEAF chain classification built on them —
+// must not see a coordinate, and must not prune one either.
+func TestRefSemanticsUnchangedByAttachments(t *testing.T) {
+	b := SieveBlock{ID: "ai-c71e", Kind: "ai-block", Attrs: map[string]interface{}{
+		"ref": "pr-a,blk-gone",
+		AttachmentsAttr: []interface{}{
+			map[string]interface{}{"uri": "container:9f2b", "title": "Auth Design"},
+		},
+	}}
+
+	if got := b.outgoingRefs(); strings.Join(got, ",") != "pr-a,blk-gone" {
+		t.Fatalf("outgoingRefs saw something other than the local chain: %v", got)
+	}
+
+	kept := b.gcRefs(map[string]bool{"pr-a": true})
+	if strings.Join(kept, ",") != "pr-a" {
+		t.Fatalf("gcRefs = %v, want [pr-a] — no coordinate may enter the ref set", kept)
+	}
+	for _, r := range kept {
+		if strings.Contains(r, ":") {
+			t.Fatalf("gcRefs returned a coordinate: %q", r)
+		}
+	}
+
+	// The GC prunes refs; it neither walks nor drops attachments.
+	if got := b.Attachments(); len(got) != 1 || got[0].URI != "container:9f2b" {
+		t.Fatalf("attachments disturbed by ref GC: %+v", got)
+	}
+}

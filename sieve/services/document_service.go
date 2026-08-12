@@ -371,14 +371,19 @@ func (ds *DocumentService) Search(query string) ([]SearchResult, error) {
 	for _, ms := range flattenDocs(storables) {
 
 		meta := ms.Meta()
+		title := domain.NewDocumentMeta(ms.Meta(), ms.SetMeta).DisplayName()
 		body := string(ms.Body())
 		bodyLower := strings.ToLower(body)
 
+		// Title matching is what makes a note findable by NAME (the @-mention
+		// picker is name-keyed): without it "Auth Design" only surfaced when that
+		// string also happened to appear in the body.
+		isTitleMatch := strings.Contains(strings.ToLower(title), queryLower)
 		isTagMatch := strings.Contains(strings.ToLower(meta["tags"]), queryLower)
 		isSummaryMatch := strings.Contains(strings.ToLower(meta["summary"]), queryLower)
 		isBodyMatch := strings.Contains(bodyLower, queryLower)
 
-		if !isTagMatch && !isSummaryMatch && !isBodyMatch {
+		if !isTitleMatch && !isTagMatch && !isSummaryMatch && !isBodyMatch {
 			continue
 		}
 
@@ -405,7 +410,8 @@ func (ds *DocumentService) Search(query string) ([]SearchResult, error) {
 		results = append(results, SearchResult{
 			ID:             meta["uuid"],
 			Path:           ms.ExternalRef(),
-			Name:           domain.NewDocumentMeta(ms.Meta(), ms.SetMeta).DisplayName(),
+			Name:           title,
+			IsTitleMatch:   isTitleMatch,
 			IsTagMatch:     isTagMatch,
 			IsSummaryMatch: isSummaryMatch,
 			IsBodyMatch:    isBodyMatch,
@@ -613,6 +619,7 @@ type SearchResult struct {
 	ID             string `json:"id"`
 	Path           string `json:"path"`
 	Name           string `json:"name"`
+	IsTitleMatch   bool   `json:"isTitleMatch"`
 	IsTagMatch     bool   `json:"isTagMatch"`
 	IsSummaryMatch bool   `json:"isSummaryMatch"`
 	IsBodyMatch    bool   `json:"isBodyMatch"`

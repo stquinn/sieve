@@ -42,6 +42,18 @@ func (p *AIBlockProcessor) InitAttrs(id string, overrides map[string]interface{}
 		}
 		attrs[k] = v
 	}
+	// Attachments arrive from the composer as a loose wire list. This is the door:
+	// decode normalises them to uri + title in the canonical attrs form (a chip's
+	// kind/summary are transient — resolved fresh through the Router at job time),
+	// and an empty list carries no attr at all, so an attachment-less block
+	// persists exactly as it did before the attr existed.
+	if _, ok := attrs[block.AttachmentsAttr]; ok {
+		if list := block.DecodeAttachments(attrs[block.AttachmentsAttr]).AttrValue(); len(list) > 0 {
+			attrs[block.AttachmentsAttr] = list
+		} else {
+			delete(attrs, block.AttachmentsAttr)
+		}
+	}
 	return attrs
 }
 

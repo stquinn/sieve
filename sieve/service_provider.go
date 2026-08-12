@@ -18,6 +18,7 @@ type ServiceProvider struct {
 	Store       store.Store
 	Library     services.LibraryService
 	Documents   *services.DocumentService
+	Nodes       *services.Router
 	Assets      *services.AssetService
 	State       *services.StateService
 	Prompts     *ai.PromptService
@@ -37,6 +38,7 @@ func (s *ServiceProvider) BlockServices() block.BlockServices {
 	return block.BlockServices{
 		AI:          s.AI,
 		Documents:   s.Documents,
+		Nodes:       s.Nodes,
 		Assets:      s.Assets,
 		LinkPreview: s.LinkPreview,
 		State:       s.State,
@@ -48,6 +50,7 @@ func (s *ServiceProvider) BlockServices() block.BlockServices {
 // composition root — the only place that knows both the ports and the concretes.
 var (
 	_ block.DocumentsPort   = (*services.DocumentService)(nil)
+	_ block.NodesPort       = (*services.Router)(nil)
 	_ block.AssetsPort      = (*services.AssetService)(nil)
 	_ block.StatePort       = (*services.StateService)(nil)
 	_ block.LinkPreviewPort = (*services.LinkPreviewService)(nil)
@@ -63,6 +66,13 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 		logger.Error("buffers init failed", "err", err)
 		return
 	}
+	// The Router: address → Node. Registering a source is the ONE line that makes
+	// a container kind mentionable, and the invariant it carries is that a source
+	// may only offer what the AI can dereference — so v1 registers notes only,
+	// because MCP get_note covers filed library documents and nothing else. Chats
+	// and Things register here as the MCP grows verbs for them, and nothing
+	// outside Go learns what kinds exist.
+	s.Nodes = services.NewRouter(services.NewNotesSource(s.Documents))
 	s.Assets = services.NewAssetService(store)
 	s.State, err = services.NewStateService(store, storePath, themesFS)
 	if err != nil {

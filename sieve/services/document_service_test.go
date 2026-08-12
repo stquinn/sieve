@@ -88,3 +88,55 @@ func TestDocumentService_FilePromotesBufferAndAssets(t *testing.T) {
 	}
 	_ = newExtRef
 }
+
+// Search matched tags, summary and body but NOT the display name, so a note
+// called "Auth Design" was findable only if that string also appeared in its
+// body — which a name-keyed @-picker cannot live with.
+func TestDocumentService_SearchMatchesDisplayName(t *testing.T) {
+	ds, _ := newTestDocumentService(t)
+	note := seedFiledNote(t, ds, "Auth Design", "", []string{"security"},
+		"Token exchange rules.", "# Heading\n\nThe body never says the title.")
+
+	results, err := ds.Search("auth design")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want the Auth note: %+v", len(results), results)
+	}
+	got := results[0]
+	if got.ID != note.UUID() {
+		t.Errorf("id = %q, want %q", got.ID, note.UUID())
+	}
+	if !got.IsTitleMatch {
+		t.Errorf("IsTitleMatch = false for a display-name hit: %+v", got)
+	}
+	if got.IsBodyMatch || got.IsSummaryMatch || got.IsTagMatch {
+		t.Errorf("only the title matched, got %+v", got)
+	}
+}
+
+// The existing match kinds keep their own flags — a title match is an addition,
+// not a replacement.
+func TestDocumentService_SearchKeepsBodySummaryAndTagMatches(t *testing.T) {
+	ds, _ := newTestDocumentService(t)
+	seedFiledNote(t, ds, "Notes", "", []string{"security"}, "Token exchange rules.",
+		"# Notes\n\nA sentence about goroutines.")
+
+	for _, tc := range []struct {
+		query string
+		check func(SearchResult) bool
+	}{
+		{"goroutines", func(r SearchResult) bool { return r.IsBodyMatch }},
+		{"token exchange", func(r SearchResult) bool { return r.IsSummaryMatch }},
+		{"security", func(r SearchResult) bool { return r.IsTagMatch }},
+	} {
+		results, err := ds.Search(tc.query)
+		if err != nil {
+			t.Fatalf("Search(%q): %v", tc.query, err)
+		}
+		if len(results) != 1 || !tc.check(results[0]) {
+			t.Errorf("Search(%q) = %+v, want the note flagged with its own match kind", tc.query, results)
+		}
+	}
+}
