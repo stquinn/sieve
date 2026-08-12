@@ -1990,6 +1990,62 @@ pre.tiptap-code-block code {
   opacity: 0.6;
 }
 
+/* ── Composer attachment chips (#74) ─────────────────────────────────────────
+   NO NEW ROW: the chips take the footer's LEFT region, the one the hint had, and
+   displace it while any attachment is present (ComposerAttachments toggles the
+   hint's display). min-width:0 + overflow-x lets a long set scroll sideways
+   instead of growing the footer — its height feeds ui/layout.js's
+   askPanelMinHeight, so a wrapping row would shove the composer's floor around. */
+.ask-panel .ask-popup__chips {
+  display: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 6px;
+  align-items: center;
+  overflow-x: auto;
+  margin-right: 12px;
+  scrollbar-width: none;
+}
+
+.ask-panel .ask-popup__chips::-webkit-scrollbar { display: none; }
+
+.ask-panel .ask-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  max-width: 14rem;
+  padding: 3px 4px 3px 9px;
+  border: 1px solid var(--theme-border2);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--theme-accentPrimary) 10%, transparent);
+  color: var(--theme-accentPrimary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ask-panel .ask-chip__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ask-panel .ask-chip__remove {
+  background: none;
+  border: none;
+  padding: 0 4px;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.6;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.ask-panel .ask-chip__remove:hover {
+  opacity: 1;
+  color: var(--theme-accentRed);
+}
+
 .ask-panel .ask-popup__send {
   background: var(--theme-accentPrimary);
   border: none;

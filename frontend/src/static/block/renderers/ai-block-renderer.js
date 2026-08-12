@@ -22,8 +22,13 @@
 import { BlockRenderer } from './block-renderer.js'
 import { aiBlockStyles } from './ai-block-renderer.styles.js'
 import { isJobStale } from './job-status.js'
+import { esc } from './html-escape.js'
 
-/** @typedef {{ id?: string, ref?: string, type?: 'ASK'|'EXPLAIN'|'BTW', status?: string, createdAt?: string, question?: string, response?: string|null, error?: string|null, model?: string|null, supportsEmbedding?: boolean }} AiBlockAttrs */
+/** One attachment as it is persisted (#74): the address is the truth, the title
+ *  a render cache — kind/summary are resolved server-side at job time.
+ * @typedef {{ uri: string, title?: string }} AiBlockAttachment */
+
+/** @typedef {{ id?: string, ref?: string, type?: 'ASK'|'EXPLAIN'|'BTW', status?: string, createdAt?: string, question?: string, response?: string|null, error?: string|null, model?: string|null, supportsEmbedding?: boolean, attachments?: AiBlockAttachment[] }} AiBlockAttrs */
 
 export class AiBlockRenderer extends BlockRenderer {
   static styles = aiBlockStyles
@@ -32,6 +37,8 @@ export class AiBlockRenderer extends BlockRenderer {
   /** @type {HTMLElement|null} */ #badge = null
   /** @type {HTMLElement|null} */ #titleEl = null
   /** @type {HTMLElement|null} */ #contentEl = null
+  /** @type {HTMLElement|null} the attachment chip row (the FOOTER region) */ #attachmentsEl = null
+  /** @type {Array<(uri: string) => void>} open-the-target listeners */ #openListeners = []
 
   /** The status badge — this kind's HEADER region. Also stamps the kind's own
    *  data-ai-ref on the root (the base stamps data-id). @returns {HTMLElement} */
@@ -62,6 +69,39 @@ export class AiBlockRenderer extends BlockRenderer {
   }
 
   /**
+   * The ATTACHMENTS the question carried, as chips — the FOOTER region, and its
+   * first consumer. Same place the composer puts them, so a question as it was
+   * sent and the answer that came back read alike.
+   *
+   * The row is built ALWAYS and hidden when empty, rather than conditionally
+   * returned: a block created before its server truth arrives has no attachments
+   * yet, and a region that was never built cannot appear on the update() that
+   * brings them.
+   * @returns {HTMLElement}
+   */
+  buildFooter() {
+    this.#attachmentsEl = document.createElement('div')
+    this.#attachmentsEl.className = 'ai-block__attachments'
+    // setAttribute, not the IDL property: the ATTRIBUTE is what ProseMirror's
+    // DOM parser and the read-only guard read (and what jsdom reflects).
+    this.#attachmentsEl.setAttribute('contenteditable', 'false')
+    this.#fillAttachments(/** @type {AiBlockAttrs} */ (this.block.payload))
+    return this.#attachmentsEl
+  }
+
+  /**
+   * Registers interest in "the user clicked an attachment chip", handing back the
+   * address. A renderer never opens a document itself — it is lens-blind and has
+   * no idea what a workspace is; the NodeView adapter that holds it does.
+   * @param {(uri: string) => void} fn
+   * @returns {() => void} unsubscribe
+   */
+  onOpenAttachment(fn) {
+    this.#openListeners.push(fn)
+    return () => { this.#openListeners = this.#openListeners.filter((l) => l !== fn) }
+  }
+
+  /**
    * The markdown the BODY shows — response when complete, else a status line —
    * derived from THIS instance's envelope. The renderer OWNS this mapping; the
    * editor-lens seam reads it from a FRESH scratch instance per pass (contract
@@ -85,9 +125,63 @@ export class AiBlockRenderer extends BlockRenderer {
     this.#syncRoot(attrs)
     this.#renderBadge(attrs)
     if (this.#titleEl) this.fillTitleSlot(this.#titleEl, attrs.question)
+    this.#fillAttachments(attrs)
     // Body patch is REF-GUARDED — a claimed (externally managed) body recorded
     // no #contentEl, so PM's body is left alone with no update() override needed.
     if (this.#contentEl) this.fillBody(this.#contentEl, this.bodyMarkdown())
+  }
+
+  /**
+   * Redraws the chip row from the envelope. Empty → the row hides entirely, so a
+   * block that attached nothing looks exactly as it did before the attr existed.
+   * @param {AiBlockAttrs} attrs
+   */
+  #fillAttachments(attrs) {
+    const row = this.#attachmentsEl
+    if (!row) return
+    const list = Array.isArray(attrs.attachments) ? attrs.attachments : []
+    row.innerHTML = ''
+    row.style.display = list.length ? 'flex' : 'none'
+    for (const attachment of list) row.appendChild(this.#attachmentChip(attachment))
+  }
+
+  /**
+   * One chip. DANGLING IS A NORMAL STATE, not an error: an attachment whose
+   * cached title is gone (nothing was ever cached, or the persisted entry
+   * predates titles) renders greyed with a missing marker and the bare address,
+   * so the chip is still identifiable and still clickable.
+   * @param {AiBlockAttachment} attachment
+   * @returns {HTMLElement}
+   */
+  #attachmentChip(attachment) {
+    const uri = (attachment && attachment.uri || '').trim()
+    const title = (attachment && attachment.title || '').trim()
+    const missing = !title
+
+    const chip = document.createElement('span')
+    chip.className = 'ai-block__attachment' + (missing ? ' ai-block__attachment--missing' : '')
+    chip.setAttribute('data-uri', uri)
+    chip.setAttribute('title', missing ? 'Attached document is no longer available: ' + uri : uri)
+    chip.innerHTML =
+      '<span class="ai-block__attachment-icon" aria-hidden="true">' + (missing ? '&#9888;' : '&#128196;') + '</span>' +
+      '<span class="ai-block__attachment-label">' + esc(title || uri) + '</span>'
+
+    chip.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      this.#openAttachment(uri)
+    })
+    // The block is a read-only container; a chip must never start a drag/selection.
+    chip.addEventListener('mousedown', (e) => e.preventDefault())
+    return chip
+  }
+
+  /** @param {string} uri */
+  #openAttachment(uri) {
+    if (!uri) return
+    for (const fn of this.#openListeners) {
+      try { fn(uri) } catch (e) { console.error('[ai-block] open-attachment listener threw', e) }
+    }
   }
 
   /** @param {AiBlockAttrs} attrs */

@@ -223,4 +223,29 @@ describe('CommandService', () => {
     expect(fakeWs.sent[0].family).toBe('')
     expect(fakeWs.sent[0].cmd).toBe('legacy')
   })
+
+  it('attachments ride as a TOP-LEVEL sibling of context, never inside it (#74)', async () => {
+    workspace.open()
+    await new Promise(r => setTimeout(r, 10))
+
+    service.dispatch('btw', 'hello', { docId: 'doc-1' }, undefined, [
+      { uri: 'container:9f2b', title: 'Auth Design' },
+    ])
+
+    const sent = fakeWs.sent[0]
+    // Go's commandEnvelope reads `attachments` as its own field and its
+    // Context.Attachments is json:"-" — an attachments key nested inside the
+    // lens-authored context would be silently dropped.
+    expect(sent.attachments).toEqual([{ uri: 'container:9f2b', title: 'Auth Design' }])
+    expect(sent.context).toEqual({ docId: 'doc-1' })
+    expect(sent.context.attachments).toBeUndefined()
+  })
+
+  it('a dispatch with no attachments still carries the field, empty', async () => {
+    workspace.open()
+    await new Promise(r => setTimeout(r, 10))
+
+    service.dispatch('btw', 'hello', {})
+    expect(fakeWs.sent[0].attachments).toEqual([])
+  })
 })

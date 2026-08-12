@@ -16,6 +16,7 @@ import { BlockService } from '../block/block-service.js'
 import { DocumentService } from '../block/document-service.js'
 import { WorkspaceService } from '../block/workspace-service.js'
 import { CommandService } from '../block/command-service.js'
+import { MentionService } from '../block/mention-service.js'
 import { CommandBadges } from './command-badges.js'
 import { AskPanel } from './ask-panel.js'
 import { InsertDialogs } from './insert-dialogs.js'
@@ -81,6 +82,10 @@ export class SieveWorkspace {
   /** @type {CommandService} the workspace command plane's slash-command tenant. */
   #commandService
 
+  /** @type {MentionService} the plane's `@`-picker tenant (#74 P4) — the second
+   * tenant of the session socket and the first non-command one. */
+  #mentionService
+
   /**
    * @param {import('../block/block-service.js').BlockServiceOptions} [serviceOptions]
    *   — the BlockService test seams (socketFactory / wsUrlFor). EMPTY in prod:
@@ -94,6 +99,7 @@ export class SieveWorkspace {
     this.#commandService = new CommandService(this.#workspaceService, {
       commands: typeof window !== 'undefined' ? /** @type {any} */ (window).__sieveCommands || [] : [],
     })
+    this.#mentionService = new MentionService(this.#workspaceService)
   }
 
   /** The BlockService singleton (handed down; renderers/adapters consume it). */
@@ -108,6 +114,9 @@ export class SieveWorkspace {
 
   /** The CommandService singleton (workspace slash-command protocol peer). */
   get commandService() { return this.#commandService }
+
+  /** The MentionService singleton (the `@` picker's protocol peer). */
+  get mentionService() { return this.#mentionService }
 
   // ── Tab management ────────────────────────────────────────────────────────────
 
@@ -791,7 +800,7 @@ export class SieveWorkspace {
    */
   bootChrome() {
     if (!this.#commandBadges) this.#commandBadges = new CommandBadges()
-    if (!this.#askPanel) this.#askPanel = new AskPanel(this, this.#commandService, this.#commandBadges)
+    if (!this.#askPanel) this.#askPanel = new AskPanel(this, this.#commandService, this.#commandBadges, this.#mentionService)
     if (!this.#insertDialogs) this.#insertDialogs = new InsertDialogs(this)
     if (!this.#searchOverlay) this.#searchOverlay = new SearchOverlay(this)
     if (!this.#statusBar) this.#statusBar = new StatusBar(this)

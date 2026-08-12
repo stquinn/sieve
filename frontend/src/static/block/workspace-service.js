@@ -102,6 +102,29 @@ export class WorkspaceService {
     }
   }
 
+  // ── Correlation ────────────────────────────────────────────────────────────
+
+  /**
+   * Mints a correlation id for a request/reply exchange on this plane.
+   *
+   * IT LIVES HERE, NOT ON A TENANT: correlation is a PLANE convention (Go's
+   * `replyTo` answers every correlated session frame requester-affinely,
+   * whatever the frame word), so commands and mentions must not each invent
+   * their own scheme. `c-` + a UUID so an id minted in one page session can
+   * never collide with one from a PRIOR session — the Go JobEngine may still
+   * hold a queued job keyed by an old id after a reload, and a resetting counter
+   * ('c-1', 'c-2', …) would let a cancel/result land on the wrong job.
+   * crypto.randomUUID is the primary; the Math.random fallback keeps the
+   * non-secure/test env working (uniqueness, not crypto strength, is the need).
+   * @returns {string}
+   */
+  newCorrelationId() {
+    const c = typeof crypto !== 'undefined' ? crypto : null
+    if (c && typeof c.randomUUID === 'function') return 'c-' + c.randomUUID()
+    const rand = () => Math.floor(Math.random() * 0x100000000).toString(16).padStart(8, '0')
+    return 'c-' + rand() + rand() + '-' + Date.now().toString(16)
+  }
+
   // ── Channel lifecycle ──────────────────────────────────────────────────────
 
   /**

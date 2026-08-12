@@ -21,17 +21,24 @@
 // Dual-use ES module: imported by workspace.js (which constructs it). No window.*
 // export — the singleton is reached via window.sieveWorkspace.askPanel.
 
-import { CommandHintPopover } from './command-hint-popover.js'
+import { TriggerPopover } from './trigger-popover.js'
+import { SlashCommandProvider, MentionProvider } from './trigger-providers.js'
+import { ComposerAttachments } from './composer-attachments.js'
 
 export class AskPanel {
   /** @type {import('./workspace.js').SieveWorkspace} */
   #ws
   /** @type {import('../block/command-service.js').CommandService|null} */
   #commandService = null
+  /** @type {import('../block/mention-service.js').MentionService|null} */
+  #mentionService = null
   /** @type {import('./command-badges.js').CommandBadges|null} */
   #badges = null
-  /** @type {CommandHintPopover|null} */
+  /** @type {TriggerPopover|null} */
   #hintPopover = null
+  /** @type {ComposerAttachments|null} what the message being written has attached
+   *  (#74). PANEL STATE — the chips are UI, the manifest is what send carries. */
+  #attachments = null
   /** @type {HTMLElement|null} the structural #ask-panel (null → all methods no-op) */
   #panel = null
   /** @type {HTMLTextAreaElement|null} */
@@ -51,18 +58,31 @@ export class AskPanel {
    * @param {import('./workspace.js').SieveWorkspace} ws
    * @param {import('../block/command-service.js').CommandService} [commandService]
    * @param {import('./command-badges.js').CommandBadges} [badges]
+   * @param {import('../block/mention-service.js').MentionService} [mentionService]
    */
-  constructor(ws, commandService, badges) {
+  constructor(ws, commandService, badges, mentionService) {
     this.#ws = ws
     this.#commandService = commandService || (ws && /** @type {any} */ (ws).commandService) || null
+    this.#mentionService = mentionService || (ws && /** @type {any} */ (ws).mentionService) || null
     this.#badges = badges || (ws && /** @type {any} */ (ws).commandBadges) || null
     this.#panel = document.getElementById('ask-panel')
     this.#pinned = !!window.initAskPanelPinned
     if (!this.#panel) return
     this.#textarea = this.#panel.querySelector('.ask-popup__input')
     this.#label = this.#panel.querySelector('.ask-popup__label')
-    if (this.#textarea && this.#commandService) {
-      this.#hintPopover = new CommandHintPopover(this.#textarea, this.#commandService)
+    // The attachment model comes first: the `@` provider's accept-sink writes
+    // into it, so it must exist before the picker can offer anything.
+    this.#attachments = new ComposerAttachments(this.#panel.querySelector('.ask-popup__footer'))
+    // ONE picker, two triggers (#74 P4): `/` enumerates the boot-shipped command
+    // list, `@` round-trips the library through the session plane. The popover
+    // owns the keyboard/positioning; each provider owns only its own trigger.
+    if (this.#textarea) {
+      const providers = []
+      if (this.#commandService) providers.push(new SlashCommandProvider(this.#commandService))
+      if (this.#mentionService) {
+        providers.push(new MentionProvider(this.#mentionService, (c) => this.#attachments?.add(c)))
+      }
+      if (providers.length) this.#hintPopover = new TriggerPopover(this.#textarea, providers)
     }
     this.#wireDom()
     this.#wirePinToggle()
@@ -226,6 +246,17 @@ export class AskPanel {
     const val = this.#textarea.value.trim()
     if (!val) return
 
+    // SEND-TIME RECONCILIATION (#74 P4): an attachment whose `@Title` token the
+    // user deleted from the message is dropped here — deleting the text is a
+    // legitimate way to detach. Both send paths carry the SAME manifest shape.
+    //
+    // ONE call site, ahead of the branch, deliberately: the two send paths must
+    // not be able to reconcile differently. It prunes the model, so a send that
+    // then aborts (no active editor) leaves the chips agreeing with the text
+    // that is still in the box — which is the state the user would have seen
+    // anyway, not a loss.
+    const attachments = this.#attachments ? this.#attachments.reconcile(this.#textarea.value) : []
+
     if (val.startsWith('/')) {
       const cs = this.#commandService || (this.#ws && /** @type {any} */ (this.#ws).commandService)
       if (cs) {
@@ -236,14 +267,14 @@ export class AskPanel {
           // handle (handle.onResult) and owns the answer lifecycle. There is no
           // editor.handleCommandResult seam — command results land in the badge/
           // popup, never back in the editor doc.
-          const handle = cs.dispatch(resolved.cmd.name, resolved.args, context)
+          // attachments ride as a TOP-LEVEL sibling of context on the frame, not
+          // inside it — Go reads them as their own field (see CommandService).
+          const handle = cs.dispatch(resolved.cmd.name, resolved.args, context, undefined, attachments)
           const badges = this.#badges || (this.#ws && /** @type {any} */ (this.#ws).commandBadges)
           if (badges) {
             badges.track(handle, { cmd: resolved.cmd.name, text: resolved.args })
           }
-          this.#textarea.value = ''
-          if (this.#panel && !this.#pinned) this.#panel.classList.remove('is-open')
-          this.#focusReturn = null
+          this.#clearComposer()
           return
         }
       }
@@ -252,8 +283,14 @@ export class AskPanel {
     const ed = this.#activeEditor()
     if (!ed) return
     const context = this.#lastContext || ed.getSelectionContext()
-    ed.askAi({ type: 'ask', question: val, context })
-    this.#textarea.value = ''
+    ed.askAi({ type: 'ask', question: val, context, attachments })
+    this.#clearComposer()
+  }
+
+  /** Resets the composer after a send: the box, the chips, the focus coordinate. */
+  #clearComposer() {
+    if (this.#textarea) this.#textarea.value = ''
+    if (this.#attachments) this.#attachments.clear()
     if (this.#panel && !this.#pinned) this.#panel.classList.remove('is-open')
     this.#focusReturn = null
   }

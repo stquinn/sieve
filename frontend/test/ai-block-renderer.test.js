@@ -146,3 +146,91 @@ describe('AiBlockRenderer (Phase 3 — bare-page DoD)', () => {
     expect(() => renderer.destroy()).not.toThrow()
   })
 })
+
+// ── Attachments (#74 P4) ─────────────────────────────────────────────────────
+// The ai-block renders the documents its question attached, as chips in the
+// FOOTER region — the same place the composer puts them, so a sent question and
+// the answer that came back read alike.
+
+describe('AiBlockRenderer — the attachment chip row', () => {
+  /** @type {HTMLStyleElement} */ let rootVars
+
+  beforeAll(() => {
+    clearInjectedStyles();
+    /** @type {any} */ (globalThis).TipTap = /** @type {any} */ (globalThis).TipTap || {}
+    Object.assign(/** @type {any} */ (globalThis).TipTap, { MarkdownIt })
+  })
+  afterAll(() => { delete /** @type {any} */ (globalThis).TipTap.MarkdownIt })
+  beforeEach(() => { rootVars = installBareThemeVars() })
+  afterEach(() => { rootVars.remove(); document.body.innerHTML = '' })
+
+  const withAttachments = (attachments) => ({ ...REPRESENTATIVE_ATTRS, attachments })
+
+  it('renders one chip per attachment, labelled with the cached title', () => {
+    const { dom } = mount(withAttachments([
+      { uri: 'container:9f2b', title: 'Auth Design' },
+      { uri: 'container:1a2b', title: 'Retry RFC' },
+    ]))
+    const chips = dom.querySelectorAll('.ai-block__attachment')
+    expect(chips.length).toBe(2)
+    expect(chips[0].textContent).toContain('Auth Design')
+    expect(chips[0].getAttribute('data-uri')).toBe('container:9f2b')
+    expect(chips[1].textContent).toContain('Retry RFC')
+  })
+
+  it('duplicate titles stay two distinct chips — the ADDRESS is the identity', () => {
+    const { dom } = mount(withAttachments([
+      { uri: 'container:aaa', title: 'Notes' },
+      { uri: 'container:bbb', title: 'Notes' },
+    ]))
+    const chips = dom.querySelectorAll('.ai-block__attachment')
+    expect(Array.from(chips).map((c) => c.getAttribute('data-uri'))).toEqual(['container:aaa', 'container:bbb'])
+  })
+
+  it('an ai-block with no attachments renders no row at all (absent IS the empty case)', () => {
+    const { dom } = mount(REPRESENTATIVE_ATTRS)
+    expect(dom.querySelectorAll('.ai-block__attachment').length).toBe(0)
+    const row = dom.querySelector('.ai-block__attachments')
+    expect(/** @type {HTMLElement} */ (row).style.display).toBe('none')
+  })
+
+  it('a chip with nothing left to show renders MISSING — dangling is a normal state', () => {
+    const { dom } = mount(withAttachments([{ uri: 'container:gone' }]))
+    const chip = /** @type {HTMLElement} */ (dom.querySelector('.ai-block__attachment'))
+    expect(chip.className).toContain('ai-block__attachment--missing')
+    // Falls back to the address so the chip is still identifiable, never blank.
+    expect(chip.textContent).toContain('container:gone')
+  })
+
+  it('clicking a chip reports the address to whoever registered for it (no window reach)', () => {
+    const { renderer, dom } = mount(withAttachments([{ uri: 'container:9f2b', title: 'Auth Design' }]))
+    /** @type {string[]} */ const opened = []
+    const off = renderer.onOpenAttachment((uri) => opened.push(uri))
+
+    const chip = /** @type {HTMLElement} */ (dom.querySelector('.ai-block__attachment'))
+    chip.click()
+    expect(opened).toEqual(['container:9f2b'])
+
+    off()
+    chip.click()
+    expect(opened).toEqual(['container:9f2b'])   // unsubscribed
+  })
+
+  it('update() re-fills the chip row in place when server truth arrives', () => {
+    const { renderer, dom } = mount(REPRESENTATIVE_ATTRS)
+    const rowBefore = dom.querySelector('.ai-block__attachments')
+    expect(dom.querySelectorAll('.ai-block__attachment').length).toBe(0)
+
+    renderer.update(blk(withAttachments([{ uri: 'container:9f2b', title: 'Auth Design' }])))
+
+    expect(dom.querySelector('.ai-block__attachments')).toBe(rowBefore)  // same element
+    expect(dom.querySelectorAll('.ai-block__attachment').length).toBe(1)
+  })
+
+  it('the row is not editable — it is chrome inside a PM-managed block', () => {
+    const { dom } = mount(withAttachments([{ uri: 'container:9f2b', title: 'Auth Design' }]))
+    const row = /** @type {HTMLElement} */ (dom.querySelector('.ai-block__attachments'))
+    expect(row.getAttribute('contenteditable')).toBe('false')
+    expect(row.className).toContain('sieve-block__footer')
+  })
+})

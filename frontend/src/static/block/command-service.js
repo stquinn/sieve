@@ -110,20 +110,6 @@ export class CommandService {
     }
   }
 
-  // Collision-resistant correlation id. `c-` + a UUID so an id minted in one
-  // page session can never collide with one from a PRIOR session — the Go
-  // JobEngine may still hold a queued job keyed by an old id after a reload, and
-  // a resetting counter ('c-1', 'c-2', …) would let Cancel/result correlation
-  // land on the wrong job. crypto.randomUUID is the primary; the Math.random
-  // fallback keeps the non-secure/test env working (uniqueness, not crypto
-  // strength, is what the correlation needs).
-  static #newCid() {
-    const c = typeof crypto !== 'undefined' ? crypto : null
-    if (c && typeof c.randomUUID === 'function') return 'c-' + c.randomUUID()
-    const rand = () => Math.floor(Math.random() * 0x100000000).toString(16).padStart(8, '0')
-    return 'c-' + rand() + rand() + '-' + Date.now().toString(16)
-  }
-
   /**
    * Returns registered command descriptors available for autocomplete/hinting.
    * @returns {CommandDescriptor[]}
@@ -157,10 +143,13 @@ export class CommandService {
    * @param {string} text
    * @param {Record<string, any>} context
    * @param {(res: CommandResult) => void} [onResult]
+   * @param {Array<{uri: string, title?: string}>} [attachments]
+   *   — the composer's attachment manifest for THIS invocation. See the frame
+   *   assembly below for why it is not folded into `context`.
    * @returns {DispatchHandle}
    */
-  dispatch(commandName, text, context, onResult) {
-    const cid = CommandService.#newCid()
+  dispatch(commandName, text, context, onResult, attachments) {
+    const cid = this.#workspace.newCorrelationId()
 
     /** @type {Set<(res: CommandResult) => void>} */
     const listeners = new Set()
@@ -174,13 +163,19 @@ export class CommandService {
     // assumption: look it up and send it so Go can integrity-check the invocation.
     // Missing descriptor / no family → omit it (empty), matching Go's tolerant floor.
     const descriptor = this.#commands.find((c) => c.name.toLowerCase() === commandName.toLowerCase())
+    // `attachments` is a TOP-LEVEL SIBLING of `context`, never a key inside it.
+    // Go's commandEnvelope reads it as its own field and its Context.Attachments
+    // is `json:"-"`, so an attachments key smuggled into the lens-authored
+    // context JSON is silently ignored — context is lens-authored, attachments
+    // are composer-authored, and the wire keeps them apart on purpose.
     const frame = {
       type: 'command',
       family: (descriptor && descriptor.family) || '',
       cmd: commandName,
       args: { text: text },
       correlationId: cid,
-      context: context || {}
+      context: context || {},
+      attachments: attachments || []
     }
 
     this.#workspace.send(frame)

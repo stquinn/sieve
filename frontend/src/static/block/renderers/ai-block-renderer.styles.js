@@ -163,6 +163,72 @@ export const aiBlockStyles = /* css */ `
     to { transform: rotate(360deg); }
   }
 
+  /* ── Attachment chips (#74) — the FOOTER region ────────────────────────────
+     The documents this turn's question attached. Deliberately quiet: they are
+     provenance, not content, so they sit under the answer at badge weight and
+     scroll sideways rather than reflowing the block. */
+  .ai-block__attachments {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
+    align-items: center;
+    overflow-x: auto;
+    margin-top: 0.9rem;
+    padding-top: 0.6rem;
+    border-top: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 15%, transparent);
+    scrollbar-width: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .ai-block__attachments::-webkit-scrollbar { display: none; }
+
+  .ai-block__attachment {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex: 0 0 auto;
+    max-width: 15rem;
+    padding: 2px 8px;
+    border: 1px solid var(--theme-border2);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--theme-accentPrimary) 8%, transparent);
+    color: var(--theme-accentPrimary);
+    font-family: var(--theme-uiFont);
+    font-size: calc(var(--doc-size) * 0.72);
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+
+  .ai-block__attachment:hover {
+    background: color-mix(in srgb, var(--theme-accentPrimary) 18%, transparent);
+    border-color: var(--theme-accentPrimary);
+  }
+
+  .ai-block__attachment-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Dangling is a NORMAL state, not an error: greyed, marked, still readable. */
+  .ai-block__attachment--missing {
+    color: var(--theme-muted);
+    background: transparent;
+    border-style: dashed;
+  }
+
+  .ai-block__attachment--missing:hover {
+    background: color-mix(in srgb, var(--theme-muted) 12%, transparent);
+    border-color: var(--theme-muted);
+  }
+
+  .ai-block__attachment::selection,
+  .ai-block__attachment-label::selection {
+    background: transparent;
+    color: inherit;
+  }
+
   /* A literal \`---\` inside a response is a real markdown hr; render it subtly. */
   .ai-block hr {
     border: none;

@@ -798,10 +798,13 @@ export class AbstractEditor {
    * the pending sync so Go's shadow is current, creates the ai-block, and collapses
    * the caret to the target end. EXPLAIN with no inline target (markdown) is a no-op
    * (the former target-prep abort); ASK still works in markdown.
-   * @param {{ type: 'ask'|'explain', question?: string, context?: import('./selection-model.js').SelectionContext }} job
+   * @param {{ type: 'ask'|'explain', question?: string, context?: import('./selection-model.js').SelectionContext, attachments?: Array<{uri: string, title?: string}> }} job
+   *   `attachments` (#74) is the composer's manifest — addresses of other Sieve
+   *   documents offered as context for THIS turn. It is a plain attr on the
+   *   ai-block; `ref` (the document-local chain) is untouched by it.
    * @returns {Promise<void>}
    */
-  askAi({ type, question, context }) {
+  askAi({ type, question, context, attachments }) {
     // EXPLAIN needs an inline target; markdown mode has none → nothing to explain.
     if (type === 'explain' && this.mode === EditorMode.MARKDOWN) return Promise.resolve()
     const ctx = context || this.getSelectionContext()
@@ -828,7 +831,13 @@ export class AbstractEditor {
       ed.commands.focus()
     }
     const done = this.flushSave()
-      .then(() => { this.createBlock('ai-block', { type: blockType, ref: ref, question: question || '' }, anchorId) })
+      .then(() => {
+        const attrs = /** @type {Record<string, any>} */ ({ type: blockType, ref: ref, question: question || '' })
+        // Absent IS the empty case (Go's InitAttrs deletes an empty list), so an
+        // attachment-less ask puts exactly the bytes on the wire it always did.
+        if (attachments && attachments.length) attrs.attachments = attachments
+        this.createBlock('ai-block', attrs, anchorId)
+      })
       .catch((err) => { console.error('[editor] askAi flush error:', err) })
     // Editor owns its cursor: collapse focus to the target end (right where the
     // answer lands) — the former Ask-panel post-send hop, folded into the seam.

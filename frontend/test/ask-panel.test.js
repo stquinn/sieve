@@ -39,6 +39,12 @@ function mountPanelDom({ open = false } = {}) {
   return document.getElementById('ask-panel')
 }
 
+// A fake MentionService: the plane tenant the `@` provider talks to. The panel
+// only ever hands it to the provider — it never speaks the wire itself (#49).
+function fakeMentions(candidates) {
+  return { search: vi.fn(() => Promise.resolve(candidates || [])) }
+}
+
 // A fake editor exposing exactly the surface the AskPanel touches. P4.E: the
 // panel reaches TipTap ONLY through editor methods now — the fake deliberately
 // has NO `tiptap` handle, so any reach would read undefined and fail loudly.
@@ -209,7 +215,7 @@ describe('AskPanel — F1 send targets the ACTIVE editor with the LIVE question'
     const ta = el.querySelector('.ask-popup__input')
     ta.value = 'why is the sky blue?'
     el.querySelector('.ask-popup__send').click()
-    expect(editor.askAi).toHaveBeenCalledWith({ type: 'ask', question: 'why is the sky blue?', context: editor._context })
+    expect(editor.askAi).toHaveBeenCalledWith({ type: 'ask', question: 'why is the sky blue?', context: editor._context, attachments: [] })
     expect(ta.value).toBe('')   // cleared after send
   })
 
@@ -233,7 +239,7 @@ describe('AskPanel — F1 send targets the ACTIVE editor with the LIVE question'
     el.querySelector('.ask-popup__input').value = 'q'
     el.querySelector('.ask-popup__send').click()
     expect(first.askAi).not.toHaveBeenCalled()
-    expect(second.askAi).toHaveBeenCalledWith({ type: 'ask', question: 'q', context: second._context })
+    expect(second.askAi).toHaveBeenCalledWith({ type: 'ask', question: 'q', context: second._context, attachments: [] })
   })
 
   it('send is DUMB UI: it passes the question + context to askAi and touches no tiptap/position seam', () => {
@@ -244,7 +250,7 @@ describe('AskPanel — F1 send targets the ACTIVE editor with the LIVE question'
     el.querySelector('.ask-popup__send').click()
     // The editor owns EVERYTHING doc-facing inside askAi — the panel only hands over
     // the question + the context it rendered. No target-prep, no applyPosition.
-    expect(editor.askAi).toHaveBeenCalledWith({ type: 'ask', question: 'q', context: editor._context })
+    expect(editor.askAi).toHaveBeenCalledWith({ type: 'ask', question: 'q', context: editor._context, attachments: [] })
     expect(editor.askAi).toHaveBeenCalledTimes(1)
   })
 
@@ -254,7 +260,7 @@ describe('AskPanel — F1 send targets the ACTIVE editor with the LIVE question'
     new AskPanel(fakeWorkspace(editor))
     el.querySelector('.ask-popup__input').value = 'q'
     el.querySelector('.ask-popup__send').click()
-    expect(editor.askAi).toHaveBeenCalledWith({ type: 'ask', question: 'q', context: editor._context })
+    expect(editor.askAi).toHaveBeenCalledWith({ type: 'ask', question: 'q', context: editor._context, attachments: [] })
   })
 
   it('D-5 anti-race: send acts on the context the panel CAPTURED (open/label), not a re-read at send', () => {
@@ -331,12 +337,130 @@ describe('AskPanel — GLOW DROPPED (P4.B)', () => {
   })
 })
 
+describe('AskPanel — @ attachments (#74 P4)', () => {
+  const AUTH = { uri: 'container:9f2b', title: 'Auth Design', kind: 'note', detail: 'design/' }
+  const RETRY = { uri: 'container:1a2b', title: 'Retry RFC', kind: 'note', detail: 'rfc/' }
+
+  /** Drives the picker: type `@au`, wait out the debounce, accept with Enter. */
+  async function pickMention(ta, before, after) {
+    ta.value = before + '@au' + after
+    const caret = (before + '@au').length
+    ta.setSelectionRange(caret, caret)
+    ta.dispatchEvent(new window.Event('input', { bubbles: true }))
+    await vi.advanceTimersByTimeAsync(300)
+    ta.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  }
+
+  it('picking a candidate echoes @Title into the message AND adds a chip to the footer', async () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom({ open: true })
+    const panel = new AskPanel(fakeWorkspace(fakeEditor()), undefined, undefined, fakeMentions([AUTH]))
+    const ta = el.querySelector('.ask-popup__input')
+
+    await pickMention(ta, 'How does ', ' handle this?')
+
+    expect(ta.value).toBe('How does @Auth Design handle this?')
+    const chips = el.querySelectorAll('.ask-chip')
+    expect(chips.length).toBe(1)
+    expect(chips[0].getAttribute('data-uri')).toBe('container:9f2b')
+    // The chips displace the hint while an attachment is present.
+    expect(el.querySelector('.ask-popup__hint').style.display).toBe('none')
+    expect(panel).toBeTruthy()
+  })
+
+  it('send carries the manifest to askAi and then clears the chips', async () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom({ open: true })
+    const editor = fakeEditor()
+    new AskPanel(fakeWorkspace(editor), undefined, undefined, fakeMentions([AUTH]))
+    const ta = el.querySelector('.ask-popup__input')
+
+    await pickMention(ta, 'How does ', ' handle retries?')
+    el.querySelector('.ask-popup__send').click()
+
+    expect(editor.askAi).toHaveBeenCalledWith({
+      type: 'ask',
+      question: 'How does @Auth Design handle retries?',
+      context: editor._context,
+      attachments: [{ uri: 'container:9f2b', title: 'Auth Design' }],
+    })
+    expect(el.querySelectorAll('.ask-chip').length).toBe(0)
+    expect(el.querySelector('.ask-popup__hint').style.display).not.toBe('none')
+  })
+
+  it('SEND-TIME RECONCILIATION: an attachment whose @Title was deleted is dropped', async () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom({ open: true })
+    const editor = fakeEditor()
+    new AskPanel(fakeWorkspace(editor), undefined, undefined, fakeMentions([AUTH]))
+    const ta = el.querySelector('.ask-popup__input')
+
+    await pickMention(ta, '', '')
+    expect(el.querySelectorAll('.ask-chip').length).toBe(1)
+
+    // The user rewrites the message, deleting the token but not the chip.
+    ta.value = 'never mind, generic question'
+    el.querySelector('.ask-popup__send').click()
+
+    expect(editor.askAi).toHaveBeenCalledWith({
+      type: 'ask', question: 'never mind, generic question', context: editor._context, attachments: [],
+    })
+  })
+
+  it('the ✕ on a chip detaches it before send', async () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom({ open: true })
+    const editor = fakeEditor()
+    new AskPanel(fakeWorkspace(editor), undefined, undefined, fakeMentions([AUTH]))
+    const ta = el.querySelector('.ask-popup__input')
+
+    await pickMention(ta, '', ' explain')
+    el.querySelector('.ask-chip__remove').click()
+    expect(el.querySelectorAll('.ask-chip').length).toBe(0)
+
+    el.querySelector('.ask-popup__send').click()
+    expect(editor.askAi.mock.calls[0][0].attachments).toEqual([])
+  })
+
+  it('a slash command carries the SAME manifest shape (attachments are not Ask-only)', async () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom({ open: true })
+    const mockCs = {
+      list: () => [{ name: 'btw', description: 'by the way' }],
+      resolve: vi.fn(() => ({ cmd: { name: 'btw' }, args: 'about @Auth Design' })),
+      dispatch: vi.fn(() => ({ correlationId: 'c-x', onResult: vi.fn(), cancel: vi.fn() })),
+    }
+    new AskPanel(fakeWorkspace(fakeEditor()), mockCs, undefined, fakeMentions([AUTH]))
+    const ta = el.querySelector('.ask-popup__input')
+
+    await pickMention(ta, '/btw about ', '')
+    el.querySelector('.ask-popup__send').click()
+
+    expect(mockCs.dispatch).toHaveBeenCalledWith(
+      'btw', 'about @Auth Design', expect.anything(), undefined,
+      [{ uri: 'container:9f2b', title: 'Auth Design' }])
+  })
+
+  it('with no MentionService the panel still works — @ simply never opens a picker', () => {
+    const el = mountPanelDom({ open: true })
+    const editor = fakeEditor()
+    new AskPanel(fakeWorkspace(editor))
+    const ta = el.querySelector('.ask-popup__input')
+    ta.value = 'plain @question'
+    ta.dispatchEvent(new window.Event('input', { bubbles: true }))
+    el.querySelector('.ask-popup__send').click()
+    expect(editor.askAi.mock.calls[0][0].attachments).toEqual([])
+  })
+})
+
 describe('AskPanel — Slash command routing (#55)', () => {
   it('dispatches valid slash command via commandService and clears box', () => {
     const el = mountPanelDom({ open: true })
     const editor = fakeEditor()
     const ws = fakeWorkspace(editor)
     const mockCs = {
+      // list() is part of the CommandService contract the `/` provider consumes.
+      list: () => [{ name: 'btw', description: 'Ask btw' }],
       resolve: vi.fn((input) => input.startsWith('/btw') ? { cmd: { name: 'btw', description: 'Ask btw' }, args: 'what is X' } : null),
       // Returns a dispatch handle; the badge (not the panel) wires onResult.
       dispatch: vi.fn(() => ({ correlationId: 'c-x', onResult: vi.fn(), cancel: vi.fn() }))
@@ -349,7 +473,7 @@ describe('AskPanel — Slash command routing (#55)', () => {
     expect(mockCs.resolve).toHaveBeenCalledWith('/btw what is X')
     // Dispatched with NO onResult callback — the dead editor.handleCommandResult
     // seam was removed; the badge owns the result lifecycle via handle.onResult.
-    expect(mockCs.dispatch).toHaveBeenCalledWith('btw', 'what is X', expect.anything())
+    expect(mockCs.dispatch).toHaveBeenCalledWith('btw', 'what is X', expect.anything(), undefined, [])
     expect(editor.askAi).not.toHaveBeenCalled()
     expect(ta.value).toBe('')
   })
@@ -359,6 +483,7 @@ describe('AskPanel — Slash command routing (#55)', () => {
     const el = mountPanelDom({ open: true })
     const ws = fakeWorkspace(fakeEditor())
     const mockCs = {
+      list: () => [{ name: 'btw', description: 'Ask btw' }],
       resolve: vi.fn(() => ({ cmd: { name: 'btw', description: 'Ask btw' }, args: 'x' })),
       dispatch: vi.fn(() => ({ correlationId: 'c-x', onResult: vi.fn(), cancel: vi.fn() }))
     }

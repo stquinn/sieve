@@ -76,6 +76,16 @@ import { AiBlockRenderer } from '../../../block/renderers/ai-block-renderer.js'
       question: { default: '',    parseHTML: function (el) { return el.getAttribute('data-question') || '' } },
       response: { default: null,  parseHTML: function (el) { return el.getAttribute('data-response') || null } },
       error:    { default: null,  parseHTML: function (el) { return el.getAttribute('data-error') || null } },
+      // Attachments (#74) are a LIST, so they ride the data-* costume as JSON —
+      // every other attr here is a scalar String()s cleanly. The renderer reads
+      // them off the BlockService truth-mirror in the ordinary case; this is the
+      // PM-resurrect fallback, and it must not lose them silently.
+      attachments: {
+        default: [],
+        parseHTML: function (el) {
+          try { return JSON.parse(el.getAttribute('data-attachments') || '[]') } catch (e) { return [] }
+        }
+      },
     },
 
     getIcon: function(node) { return window.SieveIcons && window.SieveIcons.sparkle },
@@ -96,6 +106,7 @@ import { AiBlockRenderer } from '../../../block/renderers/ai-block-renderer.js'
         question: data.question || '',
         response: data.response || null,
         error:    data.error    || null,
+        attachments: JSON.stringify(data.attachments || []),
       }
     },
 
@@ -118,6 +129,17 @@ import { AiBlockRenderer } from '../../../block/renderers/ai-block-renderer.js'
       var renderer = new AiBlockRenderer(sieveBlockFor(node, undefined, ctx && ctx.blockService), ctx.blockService || null, handleBuild)
       var dom = renderer.render()
       var contentDOM = bodyContainer   // the claimed body container PM binds as its contentDOM
+
+      // Click-to-open on an attachment chip (#74). The RENDERER reports the
+      // address and knows nothing else — opening a document is a workspace verb,
+      // so the reach lives here, in the adapter, exactly as this layer already
+      // reaches window.sieveWorkspace for the image-copy path.
+      renderer.onOpenAttachment(function (uri) {
+        var prefix = 'container:'
+        if (uri.indexOf(prefix) !== 0) return
+        var uuid = uri.slice(prefix.length).split('@')[0]   // '@v{n}' is reserved, not implemented
+        if (uuid && window.sieveWorkspace) window.sieveWorkspace.open(uuid)
+      })
       // The renderer's verbs (retry) leave through the BlockService, the wire
       // owner (the ai-block body is server-written — no outbound content
       // channel; issue #49 Phase 1 retired the v1 appliers).

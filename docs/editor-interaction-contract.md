@@ -429,6 +429,42 @@ buttons including the n/N stats refresh) via
 these OPEN it (conventional "start searching") rather than silently advancing a
 hidden search. Replace… slots into the same Find submenu when #61 lands.
 
+## Composer trigger picker (revised 2026-08-12, #74 P4)
+
+The Ask panel's textarea is chrome, not an editor surface — none of the key
+matrix above applies to it. It has exactly one interception, and `TriggerPopover`
+(`frontend/src/static/shell/trigger-popover.js`) owns all of it: a
+capture-phase `keydown` on the textarea, active **only while the picker is
+open**. When the picker is closed every key falls through to the panel's own
+Enter-sends / Escape-dismisses handler, unchanged.
+
+| Key | While the picker is open |
+|---|---|
+| ↓ / ↑ | move the selection (wraps; scrolls the active row into view — #63) |
+| Tab | accept the selected candidate |
+| Enter (no Shift) | accept the selected candidate — the panel's send is **not** reached |
+| Shift+Enter | falls through (newline), picker stays open |
+| Escape | dismiss the picker only — the panel stays open |
+
+Accept and dismiss both `stopImmediatePropagation`, which is what keeps a
+completion from also sending the message.
+
+**Two triggers, one picker.** `/` (slash commands) and `@` (document mentions)
+are PROVIDERS on the one popover, not two popovers: the keyboard model, the
+positioning and the dismissal are written once. A provider contributes only its
+trigger character, its boundary rule, its candidate search and what accepting
+does. There is no key handling in a provider.
+
+**Boundary rules** (the only place the two triggers differ, and the reason the
+scan is a token-under-caret walk rather than a `value.startsWith()` test):
+
+- `/` opens only at **position 0** — a command is a whole-line verb.
+- `@` opens at the start of the text **or after whitespace**, anywhere in the
+  message, so `me@example` is an address and never a mention.
+
+Both close as soon as whitespace separates the caret from the trigger, which is
+why an accepted `@Auth Design` does not immediately re-open the picker.
+
 ## Deferred (recorded, not shipped)
 
 - Bracket/quote auto-pairing in code blocks (`autoPair` policy flag) —
