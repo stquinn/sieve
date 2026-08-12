@@ -15,7 +15,7 @@ func TestBtwBuild_DetachedAiBlockShape(t *testing.T) {
 	aiSvc := newSmartTestService(t, cap)
 	c := NewBtwCommand(aiSvc, nil)
 
-	job, err := c.Build("what is SRP", command.NewContext(nil))
+	job, err := c.Build("what is SRP", command.NewContext(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestBtwBuild_MetaOnlyContext(t *testing.T) {
 	}
 
 	c := NewBtwCommand(aiSvc, docs)
-	ctx := command.NewContext([]byte(`{"docUuid":"` + doc.UUID() + `"}`))
+	ctx := command.NewContext([]byte(`{"docUuid":"`+doc.UUID()+`"}`), nil)
 	job, err := c.Build("question", ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func TestBtwBuild_MissingDocTolerated(t *testing.T) {
 	}
 
 	c := NewBtwCommand(aiSvc, docs)
-	ctx := command.NewContext([]byte(`{"docUuid":"non-existent-uuid"}`))
+	ctx := command.NewContext([]byte(`{"docUuid":"non-existent-uuid"}`), nil)
 	job, err := c.Build("question", ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func TestBtwBuild_TierDumbFailsFast(t *testing.T) {
 	}
 
 	c := NewBtwCommand(aiSvc, nil)
-	_, err := c.Build("question", command.NewContext(nil))
+	_, err := c.Build("question", command.NewContext(nil, nil))
 	if err == nil || !strings.Contains(err.Error(), "unavailable") {
 		t.Fatalf("expected fail fast error for dumb tier, got %v", err)
 	}

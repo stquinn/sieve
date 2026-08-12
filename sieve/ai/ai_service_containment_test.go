@@ -13,6 +13,7 @@ import (
 type fakeMCPEndpoint struct{ url, token string }
 
 func (f fakeMCPEndpoint) Endpoint() (string, string) { return f.url, f.token }
+func (f fakeMCPEndpoint) Ready() bool                { return f.url != "" }
 
 func hasName(xs []string, want string) bool {
 	for _, x := range xs {

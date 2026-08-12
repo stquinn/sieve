@@ -1,37 +1,33 @@
 package block
 
-import "strings"
+import (
+	"strings"
+
+	"sieve/sieve/domain"
+)
 
 // AttachmentsAttr is the attrs-bag key the attachment list lives under.
 const AttachmentsAttr = "attachments"
 
-// Attachment is one entry of a block's `attachments` attr — a live edge to
-// another Node in the system, persisted as:
+// Attachments is a block's ordered attachment list — the `attachments` attr,
+// persisted as:
 //
 //	attachments:
 //	    - uri: container:9f2b-…
 //	      title: Auth Design
 //
-// URI IS THE TRUTH. TITLE IS A RENDER CACHE, never read back as truth: kind and
-// summary are resolved fresh through the Router at job time, so a stale title
-// can reach a chip but can never reach the model. It exists so a chip whose
-// target was deleted still reads "Auth Design" instead of a bare address —
-// dangling is a normal state, not an error.
+// The VALUE is domain.Attachment (it has a second carrier — the command
+// envelope — and `command` cannot import `block`). What this type owns is the
+// translation between the loosely-typed attrs bag (what YAML and the wire hand
+// over) and the typed form, so no caller reaches into Attrs["attachments"] and
+// casts; and the rendering of a turn's attachments into the prompt.
 //
 // An attachment is NOT a ref. `ref` stays the document-local chain the ai-block
 // walks (resolveChain) and the GC prunes (outgoingRefs/gcRefs); an attachment is
 // a global address that nothing walks and nothing GCs. One field could not be
 // both — a three-turn chain where each turn attached different documents is
 // where that breaks.
-type Attachment struct {
-	URI   string `json:"uri" yaml:"uri"`
-	Title string `json:"title,omitempty" yaml:"title,omitempty"`
-}
-
-// Attachments is a block's ordered attachment list. It owns the translation
-// between the loosely-typed attrs bag (what YAML and the wire hand over) and the
-// typed form, so no caller reaches into Attrs["attachments"] and casts.
-type Attachments []Attachment
+type Attachments []domain.Attachment
 
 // DecodeAttachments is the Attachments constructor: it reads whatever the attrs
 // bag holds. A YAML parse and the JSON wire both produce []interface{} of
@@ -51,7 +47,7 @@ func DecodeAttachments(v any) Attachments {
 		for _, a := range list {
 			raw = append(raw, a)
 		}
-	case []Attachment:
+	case []domain.Attachment:
 		raw = make([]any, 0, len(list))
 		for _, a := range list {
 			raw = append(raw, a)
@@ -64,8 +60,7 @@ func DecodeAttachments(v any) Attachments {
 
 	out := make(Attachments, 0, len(raw))
 	for _, entry := range raw {
-		var a Attachment
-		if a.decodeFrom(entry) {
+		if a, ok := out.decodeEntry(entry); ok {
 			out = append(out, a)
 		}
 	}
@@ -75,24 +70,26 @@ func DecodeAttachments(v any) Attachments {
 	return out
 }
 
-// decodeFrom fills a from one loosely-typed entry, reporting whether it carried
-// a usable address.
-func (a *Attachment) decodeFrom(entry any) bool {
+// decodeEntry reads one loosely-typed entry, reporting whether it carried a
+// usable address. domain.Attachment.Normalised is the shared door — the command
+// envelope runs its own input through the same one.
+func (a Attachments) decodeEntry(entry any) (domain.Attachment, bool) {
+	var out domain.Attachment
 	switch e := entry.(type) {
-	case Attachment:
-		a.URI, a.Title = strings.TrimSpace(e.URI), strings.TrimSpace(e.Title)
+	case domain.Attachment:
+		out = e
 	case map[string]any:
-		a.URI, a.Title = a.stringField(e["uri"]), a.stringField(e["title"])
+		out = domain.Attachment{URI: a.stringField(e["uri"]), Title: a.stringField(e["title"])}
 	case map[string]string:
-		a.URI, a.Title = strings.TrimSpace(e["uri"]), strings.TrimSpace(e["title"])
+		out = domain.Attachment{URI: e["uri"], Title: e["title"]}
 	default:
-		return false
+		return domain.Attachment{}, false
 	}
-	return a.URI != ""
+	return out.Normalised()
 }
 
 // stringField is the nil-safe read of one loosely-typed field.
-func (a *Attachment) stringField(v any) string {
+func (a Attachments) stringField(v any) string {
 	s, _ := v.(string)
 	return strings.TrimSpace(s)
 }

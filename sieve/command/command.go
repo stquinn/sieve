@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"sieve/sieve/domain"
 	"sieve/sieve/services"
 )
 
@@ -25,26 +26,52 @@ const (
 	FamilyUtil = "util" // deterministic local utilities producing command-result blocks
 )
 
-// Context is the Go-side read of the lens-authored SelectionContext: a typed
-// core + the full tolerant bag. Commands read fields OPPORTUNISTICALLY and
-// never require them; a bad or absent context decodes to the empty floor.
+// Context is everything a command knows about its invocation site. Commands read
+// fields OPPORTUNISTICALLY and never require them; a bad or absent context
+// decodes to the empty floor.
+//
+// It has TWO AUTHORS, and the distinction is load-bearing:
+//
+//   - The lens authors the SelectionContext half (DocUUID, SelectedText,
+//     BlockID(s), Raw) — a typed core plus the full tolerant bag, decoded from
+//     the envelope's `context` JSON.
+//   - The COMPOSER authors Attachments. They arrive as their own envelope field
+//     (`attachments`) because `@` is a composer affordance, not a property of
+//     the selection — and they are NEVER read out of the context JSON, so a lens
+//     cannot forge one.
+//
+// Attachments land here rather than on a new Build parameter precisely because
+// Context is already "what the command knows about its invocation site" and
+// every command takes it — so every command can have them without a single
+// existing Build signature changing.
 type Context struct {
 	DocUUID      string                 `json:"docUuid"`
 	SelectedText string                 `json:"selectedText"`
 	BlockID      string                 `json:"blockId"`
 	BlockIDs     []string               `json:"blockIds"`
 	Raw          map[string]interface{} // everything the lens sent, untyped
+	// Attachments is composer-authored and json:"-" ON PURPOSE: the field above
+	// this comment is filled from the envelope, never from the context JSON.
+	Attachments []domain.Attachment `json:"-"`
 }
 
-func NewContext(raw json.RawMessage) Context {
+// NewContext decodes the lens-authored context JSON and attaches the
+// composer-authored attachment list. Attachments go through
+// domain.Attachment.Normalised — the same door the block attr path uses — so an
+// address-less entry never reaches a command.
+func NewContext(raw json.RawMessage, attachments []domain.Attachment) Context {
 	ctx := Context{Raw: make(map[string]interface{})}
-	if len(raw) == 0 {
-		return ctx
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &ctx.Raw)
+		_ = json.Unmarshal(raw, &ctx)
+		if ctx.Raw == nil {
+			ctx.Raw = make(map[string]interface{})
+		}
 	}
-	_ = json.Unmarshal(raw, &ctx.Raw)
-	_ = json.Unmarshal(raw, &ctx)
-	if ctx.Raw == nil {
-		ctx.Raw = make(map[string]interface{})
+	for _, a := range attachments {
+		if normalised, ok := a.Normalised(); ok {
+			ctx.Attachments = append(ctx.Attachments, normalised)
+		}
 	}
 	return ctx
 }
@@ -170,7 +197,13 @@ func (r *Registry) lookup(name string) Command {
 // registered command's Family() short-circuits to ERROR before Build, so the
 // job is never submitted. An empty expectedFamily skips the check (tolerant
 // floor, consistent with the plane's opportunistic-context principle).
-func (r *Registry) Dispatch(cmd, expectedFamily, text string, rawCtx json.RawMessage, correlationID string, emit func(Outcome)) {
+//
+// ctx arrives already built (NewContext) rather than as raw JSON: the envelope
+// has TWO context-bearing fields — the lens-authored `context` and the
+// composer-authored `attachments` — and assembling them at the wire edge keeps
+// "where a Context comes from" in one place instead of splitting it across the
+// dispatcher's parameter list.
+func (r *Registry) Dispatch(cmd, expectedFamily, text string, ctx Context, correlationID string, emit func(Outcome)) {
 	c := r.lookup(cmd)
 	if c == nil {
 		emit(Outcome{Status: StatusError, Err: "unknown command: /" + cmd})
@@ -181,7 +214,7 @@ func (r *Registry) Dispatch(cmd, expectedFamily, text string, rawCtx json.RawMes
 			"family mismatch for /%s: sent %q, registered %q", cmd, expectedFamily, c.Family())})
 		return
 	}
-	job, err := c.Build(text, NewContext(rawCtx))
+	job, err := c.Build(text, ctx)
 	if err != nil {
 		emit(Outcome{Status: StatusError, Err: err.Error()})
 		return

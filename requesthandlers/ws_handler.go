@@ -12,6 +12,7 @@ import (
 	"sieve/sieve"
 	"sieve/sieve/block"
 	"sieve/sieve/command"
+	"sieve/sieve/domain"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -533,25 +534,48 @@ func (h *WsHandler) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 			h.handleCommand(ch, raw)
 		case "command-cancel":
 			h.handleCommandCancel(raw)
+		case "mention-query":
+			h.handleMentionQuery(ch, raw)
 		}
 	}
 }
 
 type commandEnvelope struct {
-	Family        string          `json:"family"`
-	Cmd           string          `json:"cmd"`
-	Args          struct{ Text string `json:"text"` } `json:"args"`
+	Family string `json:"family"`
+	Cmd    string `json:"cmd"`
+	Args   struct {
+		Text string `json:"text"`
+	} `json:"args"`
 	CorrelationID string          `json:"correlationId"`
 	Context       json.RawMessage `json:"context"`
+	// Attachments ride EVERY command, not just the AI family. `@` is a composer
+	// affordance and the composer is the same textarea that dispatches `/`
+	// commands, so the wire carries them unconditionally; what a backend does
+	// with them is that backend's problem. They are a SIBLING of Context, never
+	// part of it: Context is lens-authored, these are composer-authored.
+	Attachments []domain.Attachment `json:"attachments"`
 }
 
-// handleCommand dispatches a command frame. Results are REQUESTER-AFFINE per
-// the ownership rule (acks→requester, render-backs→registered owner): a
-// correlated command-result is ack-shaped, so emit replies on the socket the
-// command arrived on — the registered __session__ owner may have changed
-// mid-job (a dev-server tab registering beside the app window silently deposes
-// it; that stole two live /btw answers on 2026-07-26). Only when the requester
-// is gone (reconnect) does emit fall back to the current session owner.
+// replyTo sends a correlated reply REQUESTER-AFFINELY, per the ownership rule
+// (acks→requester, render-backs→registered owner). Every correlated session
+// reply is ack-shaped, so it goes back on the socket the request arrived on: the
+// registered __session__ owner may have changed since (a dev-server tab
+// registering beside the app window silently deposes it — that stole two live
+// /btw answers on 2026-07-26). Only when the requester is gone (reconnect) does
+// it fall back to the current session owner, so a long-running reply still lands
+// somewhere useful.
+//
+// EVERY session-frame handler must reply through here. Reaching for
+// sendTo(sessionChannelKey) directly is precisely the bug.
+func (h *WsHandler) replyTo(requester *wsConn, frame interface{}) {
+	if requester != nil && !requester.closed.Load() {
+		requester.write(frame)
+		return
+	}
+	h.sendTo(sessionChannelKey, frame)
+}
+
+// handleCommand dispatches a command frame, replying requester-affinely.
 func (h *WsHandler) handleCommand(requester *wsConn, raw []byte) {
 	var env commandEnvelope
 	if err := json.Unmarshal(raw, &env); err != nil || env.CorrelationID == "" {
@@ -570,11 +594,7 @@ func (h *WsHandler) handleCommand(requester *wsConn, raw []byte) {
 		if o.Err != "" {
 			frame["error"] = o.Err
 		}
-		if requester != nil && !requester.closed.Load() {
-			requester.write(frame)
-			return
-		}
-		h.sendTo(sessionChannelKey, frame)
+		h.replyTo(requester, frame)
 	}
 	reg := h.ServiceProvider.Commands
 	if reg == nil {
@@ -584,7 +604,61 @@ func (h *WsHandler) handleCommand(requester *wsConn, raw []byte) {
 	// Family is passed as an INTEGRITY expectation, not a policy gate: Dispatch
 	// validates it against the registered command's declared Family() and emits
 	// an ERROR on mismatch. An empty family skips the check (tolerant floor).
-	reg.Dispatch(env.Cmd, env.Family, env.Args.Text, env.Context, env.CorrelationID, emit)
+	//
+	// The Context is assembled HERE, at the wire edge, from BOTH of the
+	// envelope's context-bearing fields — the lens-authored `context` JSON and
+	// the composer-authored `attachments` list.
+	reg.Dispatch(env.Cmd, env.Family, env.Args.Text,
+		command.NewContext(env.Context, env.Attachments), env.CorrelationID, emit)
+}
+
+// Mention query budget. The limit is client-supplied, so it is floored (an
+// absent limit is still a useful query) and capped (an unbounded limit is an
+// unbounded library scan on the UI's own socket).
+const (
+	mentionDefaultLimit = 8
+	mentionMaxLimit     = 25
+)
+
+// handleMentionQuery answers the `@`-picker's typeahead from the Router's
+// enumeration face.
+//
+// It is a SIBLING FRAME TYPE, not a command: a typeahead needs a sub-100ms
+// answer with no JobEngine job, no worker pool and no result block, none of
+// which the command envelope's PENDING/COMPLETE lifecycle can give it. It rides
+// the same session socket because two sockets on one session is the shape that
+// produced silent-dead-UI on document channels (6e2ccfc).
+//
+// A mention-result is correlated and therefore ack-shaped: it replies through
+// replyTo, so a second tab cannot silently steal this tab's typeahead.
+func (h *WsHandler) handleMentionQuery(requester *wsConn, raw []byte) {
+	var msg struct {
+		Q             string `json:"q"`
+		Limit         int    `json:"limit"`
+		CorrelationID string `json:"correlationId"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil || msg.CorrelationID == "" {
+		return
+	}
+	limit := msg.Limit
+	if limit <= 0 {
+		limit = mentionDefaultLimit
+	}
+	if limit > mentionMaxLimit {
+		limit = mentionMaxLimit
+	}
+
+	// Never null: the picker renders a list, and a null is an undefined-length
+	// crash rather than "no matches".
+	candidates := []domain.Candidate{}
+	if h.ServiceProvider.Nodes != nil {
+		candidates = append(candidates, h.ServiceProvider.Nodes.Search(msg.Q, limit)...)
+	}
+	h.replyTo(requester, map[string]interface{}{
+		"type":          "mention-result",
+		"correlationId": msg.CorrelationID,
+		"candidates":    candidates,
+	})
 }
 
 func (h *WsHandler) handleCommandCancel(raw []byte) {
@@ -598,4 +672,3 @@ func (h *WsHandler) handleCommandCancel(raw []byte) {
 		h.ServiceProvider.Commands.Cancel(msg.CorrelationID)
 	}
 }
-

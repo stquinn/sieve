@@ -152,3 +152,88 @@ Target: ≤ 30 operational routes after consolidation (excluding the ~20 fragmen
 ### Split (2026-07-07)
 
 The dev API test ground (`/api/docs`) is tracked separately in issue #20 — it is pure tooling, a consumer of the finished contract, and no phase of this work depends on it.
+
+---
+
+## Amendment 2026-08-12 — the session channel's frame vocabulary (#74 P3)
+
+The `sieve/protocol` package does not exist yet, so this section is the contract
+of record for the **session channel** (`/api/ws?session=1`, Go's `__session__`
+sentinel) until phase 1 lands and these become `ProtocolRegistry` entries. Every
+frame below is registered when it does; nothing here is a new convention.
+
+The session channel is **not** a second document channel. It carries workspace
+traffic — request/reply, no shadow, no claim-on-write — and it has **many
+tenants**: the frontend's `WorkspaceService` owns the one socket and routes
+inbound frames by their `type` word to the tenant claiming it (`CommandService`,
+the `@`-mention picker).
+
+### Client → server
+
+| Type | Payload | Purpose |
+|---|---|---|
+| `ping` | — | Liveness; answered with `pong`. |
+| `command` | `family`, `cmd`, `args.text`, `context`, **`attachments`**, `correlationId` | Dispatch a slash command. |
+| `command-cancel` | `correlationId` | Cancel an in-flight command. |
+| `mention-query` | `q`, `limit?`, `correlationId` | `@`-picker typeahead. |
+
+### Server → client
+
+| Type | Payload | Purpose |
+|---|---|---|
+| `pong` | — | Liveness reply. |
+| `command-result` | `correlationId`, `cmd`, `status` (`PENDING`/`COMPLETE`/`ERROR`), `block?`, `error?` | Command lifecycle. |
+| `mention-result` | `correlationId`, `candidates[]` | Typeahead answer. |
+
+### `mention-query` / `mention-result`
+
+```
+→ {"type":"mention-query","q":"auth","limit":8,"correlationId":"c-…"}
+
+← {"type":"mention-result","correlationId":"c-…",
+   "candidates":[{"uri":"container:9f2b-…","title":"Auth Design",
+                  "kind":"note","detail":"design/ · #auth"}]}
+```
+
+A candidate is `domain.Candidate` verbatim (`uri`, `title`, `kind`, `detail`),
+served by `services.Router.Search` — the enumeration face of the same registry
+that resolves addresses.
+
+- **Why not a command.** A typeahead needs a sub-100ms answer with no JobEngine
+  job, no worker pool and no result block, none of which the command envelope's
+  PENDING/COMPLETE lifecycle provides. It is a *sibling frame type on the same
+  socket*, not a command family. A second socket was the other option and is the
+  shape that produced silent-dead-UI on document channels (`6e2ccfc`).
+- **`limit` is floored and capped** server-side (8 default, 25 max): it is
+  client-supplied, and an unbounded limit is an unbounded library scan on the
+  UI's own socket.
+- **`candidates` is never null** — an empty list is "no matches".
+
+### `attachments` on the command envelope
+
+```json
+{"type":"command","family":"ai","cmd":"btw","args":{"text":"… @Auth Design …"},
+ "context":{…},
+ "attachments":[{"uri":"container:9f2b-…","title":"Auth Design"}],
+ "correlationId":"c-…"}
+```
+
+`attachments` is a **sibling of `context`, never part of it**. `context` is
+lens-authored (the SelectionContext); attachments are composer-authored, because
+`@` is a composer affordance and the composer is the same textarea that
+dispatches `/`. The two are assembled into one `command.Context` at the wire edge
+(`WsHandler.handleCommand` → `command.NewContext`), and `Context.Attachments` is
+`json:"-"` so an `attachments` key smuggled into the context JSON can never be
+read as one.
+
+Every command carries the field; interpreting it is each command's own business.
+
+### Correlated session replies are requester-affine
+
+Both `command-result` and `mention-result` are ack-shaped, so both go back on the
+socket the request arrived on (`WsHandler.replyTo`), falling back to the current
+`__session__` owner only once the requester is gone. Replying via
+`sendTo(sessionChannelKey)` instead is the 2026-07-26 stolen-`/btw` bug: a second
+tab registering `__session__` deposes the requester and silently swallows its
+answers. Pinned by `TestWS_Command_ResultRoutesToRequester_NotChannelOwner` and
+`TestWS_MentionResult_RoutesToRequester_NotChannelOwner`.

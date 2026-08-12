@@ -215,6 +215,33 @@ func wrapAllowList(flag, csv, continuationIndent string) string {
 	return b.String()
 }
 
+// cliBackend is one CLI's argument renderer plus the capabilities of that CLI
+// that callers outside the renderer need to know about. rendersMCP is the one
+// such capability today: the AI prompt path asks it to decide whether a document
+// attachment can be delivered as a MANIFEST (the model fetches bodies itself
+// through MCP get_note) or must have its body injected. Declaring it on the
+// backend keeps the answer beside the code that makes it true.
+type cliBackend interface {
+	buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, model, prompt string) []string
+	// rendersMCP reports whether this backend can inject MCP servers into a call
+	// at all — independent of whether any server is configured.
+	rendersMCP() bool
+}
+
+// backendFor selects the adapter for a dialect. A dialect with no adapter is
+// nil: unknown CLIs render no args, exactly as before.
+func backendFor(dialect string) cliBackend {
+	switch {
+	case strings.Contains(dialect, "claude"):
+		return claudeBackend{}
+	case strings.Contains(dialect, "agy"):
+		return agyBackend{}
+	case strings.Contains(dialect, "copilot"):
+		return copilotBackend{}
+	}
+	return nil
+}
+
 // buildBaseArgs selects the per-backend adapter and renders the containment
 // profile to that CLI's arguments. Dropping the former --dangerously-skip-
 // permissions / --yolo re-arms each CLI's native path gate; the typed tool
@@ -222,15 +249,11 @@ func wrapAllowList(flag, csv, continuationIndent string) string {
 // rule, copilot on the --add-dir path axis), so reads confine to cwd + the
 // --add-dir grants and no bare filesystem-wide allow entry leaks. #41.
 func buildBaseArgs(dialect string, model string, prompt string, profile domain.ContainmentProfile, cwd, libraryDir string) []string {
-	switch {
-	case strings.Contains(dialect, "claude"):
-		return claudeBackend{}.buildArgs(profile, cwd, libraryDir, model, prompt)
-	case strings.Contains(dialect, "agy"):
-		return agyBackend{}.buildArgs(profile, cwd, libraryDir, model, prompt)
-	case strings.Contains(dialect, "copilot"):
-		return copilotBackend{}.buildArgs(profile, cwd, libraryDir, model, prompt)
+	b := backendFor(dialect)
+	if b == nil {
+		return nil
 	}
-	return nil
+	return b.buildArgs(profile, cwd, libraryDir, model, prompt)
 }
 
 // fileScopeDirs is the set of directories a file-type tool grant is scoped to:
@@ -322,6 +345,8 @@ func splitConstraint(s string) []string {
 // mcp-config is deliberately never passed so the user's inherited approvals load.
 type claudeBackend struct{}
 
+func (claudeBackend) rendersMCP() bool { return true }
+
 func (claudeBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, model, _ string) []string {
 	args := []string{"--print", "--no-session-persistence"}
 	for _, dir := range profile.AddDirs(libraryDir) {
@@ -349,6 +374,8 @@ func (claudeBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDi
 // confines where), network grants route to the URL axis (never --allow-tool),
 // and --deny-tool shell,write hard-blocks writes (opt-in).
 type copilotBackend struct{}
+
+func (copilotBackend) rendersMCP() bool { return true }
 
 func (copilotBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, model, _ string) []string {
 	args := []string{"--prompt", "", "--silent"}
@@ -405,6 +432,11 @@ func copilotToolAxes(profile domain.ContainmentProfile) (toolNames, urlArgs []st
 // any allowlist/MCP logic. agy does NOT read STDIN — --print takes the prompt as
 // its trailing argument.
 type agyBackend struct{}
+
+// rendersMCP is false: agy has no per-call inject flag, so nothing this app can
+// pass will give the model an MCP tool. Callers that would point the model at
+// MCP (the attachment manifest's get_note) must fall back to injecting content.
+func (agyBackend) rendersMCP() bool { return false }
 
 func (agyBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, model, prompt string) []string {
 	var args []string

@@ -88,11 +88,21 @@ func (p *AIBlockProcessor) aiBlockLabel(blk *block.SieveBlock) string {
 }
 
 // qaHeader renders the QUESTION-side of this block's Q&A WITHOUT its own answer:
-// "EXPLAIN NODE: <ref>" or "QUESTION ABOUT: <ref>\n<question>". It is the ACTION
+// "EXPLAIN NODE: <ref>" or "QUESTION ABOUT: <ref>\n<question>", followed by this
+// turn's ATTACHED DOCUMENTS section when it has one. It is the ACTION
 // assembly — the block being asked must never carry its own prior `response`, or a
 // retry (where the doc snapshot already holds a stale answer) biases the new answer.
 // BuildContext (THREAD / ref-chain / target callers) calls this then appends the
 // answer, because the conversation history MUST keep prior answers.
+//
+// THIS IS THE ATTACHMENTS SEAM, and it is the only one that is per-TURN.
+// Attachments are a property of a question, and qaHeader is the one place a
+// question is rendered — the ACTION reaches it directly and every THREAD entry
+// reaches it through BuildContext. Rendering in DescribeJob instead would emit
+// the section once, for the newest turn only, losing exactly the thing the
+// design is for: which turn brought which document in. And the position falls
+// out for free — QUESTION, then ATTACHED DOCUMENTS, then the answer BuildContext
+// appends.
 func (p *AIBlockProcessor) qaHeader(blk block.SieveBlock) string {
 	q, _ := blk.Attrs["question"].(string)
 	t, _ := blk.Attrs["type"].(string)
@@ -113,7 +123,24 @@ func (p *AIBlockProcessor) qaHeader(blk block.SieveBlock) string {
 			sb.WriteString(strings.TrimSpace(q))
 		}
 	}
+	if section := blk.Attachments().PromptSection(p.svc.Nodes, p.attachmentDelivery()); section != "" {
+		sb.WriteString("\n\n")
+		sb.WriteString(section)
+	}
 	return sb.String()
+}
+
+// attachmentDelivery asks the configured backend how attachments can reach the
+// model. The MANIFEST is the primary form; bodies are injected only when the
+// backend demonstrably renders no MCP (agy), because then there is no get_note
+// to point at and the ask would otherwise answer from the title alone. An
+// unwired AI service (tests, an uninitialised provider) keeps the primary form —
+// "we don't know" is not evidence of a missing tool.
+func (p *AIBlockProcessor) attachmentDelivery() block.AttachmentDelivery {
+	if p.svc.AI != nil && !p.svc.AI.RendersMCP() {
+		return block.DeliverByBody
+	}
+	return block.DeliverByManifest
 }
 
 // BuildContext returns a Q&A summary for when this block appears in another block's
@@ -205,6 +232,42 @@ func (p *AIBlockProcessor) buildTargets(targets []string, doc block.DocView) str
 	return block.MergeContexts(ctxs).String()
 }
 
+// buildPrompt assembles the three prompt slots from the immutable job snapshot,
+// splitting the ref graph by GEOMETRY (resolveChain):
+//
+//   - content — the TARGET: the terminal MANY of leaf nodes, the material being
+//     asked about.
+//   - history — the THREAD: the interior nodes oldest-first, each rendered as
+//     its own Q&A entry (NOT merged — distinct entries keeping their own
+//     trailers, and their own attachments).
+//   - question — the ACTION: this block's own question-side. It must NOT carry
+//     its own prior `response`: on a retry the doc snapshot already holds a
+//     stale answer, and leaking it into the ACTION biases the new one. The NODE
+//     ID header is preserved via NodeIDs.
+//
+// Split out of DescribeJob so the assembled prompt is assertable without running
+// a job or reaching a CLI.
+func (p *AIBlockProcessor) buildPrompt(blk *block.SieveBlock, doc block.DocView) (content, history, question string) {
+	ref, _ := blk.Attrs["ref"].(string)
+	targets, threadIDs := p.resolveChain(blk.ID, ref, doc)
+
+	content = p.buildTargets(targets, doc)
+
+	seen := map[string]bool{blk.ID: true}
+	var historyParts []string
+	for _, id := range threadIDs {
+		// THREAD resolution is untouched (nil filter): interior nodes are ai-blocks
+		// resolved by id — the conversation history must keep prior answers verbatim.
+		if ctx := block.BuildContextForID(id, doc, seen, nil); !ctx.IsEmpty() {
+			historyParts = append(historyParts, ctx.String())
+		}
+	}
+	history = strings.Join(historyParts, "\n\n---\n\n")
+
+	question = block.AIContext{NodeIDs: []string{blk.ID}, Content: p.qaHeader(*blk)}.String()
+	return content, history, question
+}
+
 // DescribeJob builds the prompt by walking this block's point-to-point ref graph and
 // splitting it by GEOMETRY (resolveChain): the terminal MANY of leaf nodes is the
 // TARGET (the content being asked about), the interior nodes are the THREAD (prior
@@ -218,33 +281,9 @@ func (p *AIBlockProcessor) buildTargets(targets []string, doc block.DocView) str
 func (p *AIBlockProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJob {
 	blk := jctx.Block
 	uuid := jctx.UUID
-	ref, _ := blk.Attrs["ref"].(string)
 	blockType, _ := blk.Attrs["type"].(string)
 
-	targets, threadIDs := p.resolveChain(blk.ID, ref, jctx.Doc)
-
-	// TARGET: the terminal MANY, each member rendered and grouped.
-	content := p.buildTargets(targets, jctx.Doc)
-
-	// THREAD: the interior nodes, oldest-first, each rendered as its own Q&A entry
-	// (NOT merged — distinct entries, each keeping its own trailer).
-	seen := map[string]bool{blk.ID: true}
-	var historyParts []string
-	for _, id := range threadIDs {
-		// THREAD resolution is untouched (nil filter): interior nodes are ai-blocks
-		// resolved by id — the conversation history must keep prior answers verbatim.
-		if ctx := block.BuildContextForID(id, jctx.Doc, seen, nil); !ctx.IsEmpty() {
-			historyParts = append(historyParts, ctx.String())
-		}
-	}
-	history := strings.Join(historyParts, "\n\n---\n\n")
-
-	// ACTION: this block's own question — the QUESTION-side only. It must NOT carry
-	// its own prior `response`: on a retry the doc snapshot already holds a stale
-	// answer, and leaking it into the ACTION biases the new answer (BuildContext's
-	// answer trailer is for THREAD/ref-chain history, not the block being asked). The
-	// NODE ID header is preserved via NodeIDs.
-	questionCtx := block.AIContext{NodeIDs: []string{blk.ID}, Content: p.qaHeader(*blk)}.String()
+	content, history, questionCtx := p.buildPrompt(blk, jctx.Doc)
 
 	isExplain := blockType == "EXPLAIN"
 	return &block.ProcessorJob{
