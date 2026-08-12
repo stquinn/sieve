@@ -35,6 +35,8 @@ func (c *TodoCommand) Build(text string, ctx command.Context) (command.Job, erro
 		"type":      "TODO",
 		"ref":       "",
 	}
+	// Recorded on the block from the PENDING envelope onward — see BtwCommand.
+	ctx.Attachments.StampAttrs(attrs)
 	pending := &command.Block{Kind: "ai-block", Attrs: attrs}
 	return command.Job{
 		Label:   "/todo",
@@ -45,7 +47,7 @@ func (c *TodoCommand) Build(text string, ctx command.Context) (command.Job, erro
 			if strings.TrimSpace(text) != "" {
 				prompt += "\n\nUser request filter: " + text
 			}
-			resp, err := c.ai.RunBtw(prompt, ctx.SelectedText, title, summary, ctx.DocUUID)
+			resp, err := c.ai.RunBtw(ctx.Attachments.AppendTo(prompt), ctx.SelectedText, title, summary, ctx.DocUUID)
 			if err != nil {
 				return command.Block{}, err
 			}

@@ -26,11 +26,6 @@ import (
 // so the profile renders without MCP flags. The internal MCP server satisfies it.
 type MCPEndpoint interface {
 	Endpoint() (url, token string)
-	// Ready answers the same question as Endpoint's URL half — is a server
-	// actually reachable — WITHOUT minting a bearer. Endpoint issues a token as a
-	// side effect and the server keeps every one it issues, so a mere capability
-	// question (RendersMCP) must never go through it.
-	Ready() bool
 }
 
 // AIService owns all AI evaluation and filing operations. It resolves prompt
@@ -98,38 +93,6 @@ func (s *AIService) savedProfile() domain.ContainmentProfile {
 		return domain.DefaultContainmentProfile() // defensive: never render an empty profile
 	}
 	return p
-}
-
-// RendersMCP reports whether a call made right now would actually hand the model
-// the builtin Sieve MCP server — i.e. whether it can retrieve a document for
-// itself with get_note.
-//
-// It is the seam the attachment manifest hangs off: the manifest names documents
-// and tells the model to fetch what it needs, which is only truthful when there
-// is a tool to fetch WITH. Two things have to hold, and each fails
-// independently: the configured backend must be able to inject MCP at all (agy
-// cannot — no per-call flag), and the builtin server must be live (no listener,
-// no URL, no injection).
-//
-// A nil or half-built service is the unconfigured floor — false, never a panic.
-// It goes through Ready() rather than profile(), because profile() mints a
-// bearer token the server then keeps: a capability question must have no
-// side effects.
-func (s *AIService) RendersMCP() bool {
-	if s == nil || s.state == nil || s.mcp == nil || !s.mcp.Ready() {
-		return false
-	}
-	_, dialect := s.state.LoadSettings().ResolveCLI()
-	backend := backendFor(dialect)
-	if backend == nil || !backend.rendersMCP() {
-		return false
-	}
-	for _, server := range s.savedProfile().McpServers {
-		if server.Builtin {
-			return true
-		}
-	}
-	return false
 }
 
 // EvaluateAndFileDoc runs the full evaluate-and-file pipeline for the document

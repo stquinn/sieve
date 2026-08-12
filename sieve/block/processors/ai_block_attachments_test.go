@@ -107,8 +107,8 @@ func TestAIBlock_NoAttachmentsPersistsNoAttr(t *testing.T) {
 }
 
 // Attachments arrive from the composer as a loose wire list. InitAttrs is the
-// door: only uri + title persist (a chip's kind/summary are transient — they are
-// resolved fresh through the Router at job time), and an empty list is no attr.
+// door: only uri + title persist (a chip's decoration is transient), and an
+// empty list is no attr.
 func TestAIBlockInitAttrs_NormalisesAttachments(t *testing.T) {
 	p := &AIBlockProcessor{}
 
@@ -117,7 +117,7 @@ func TestAIBlockInitAttrs_NormalisesAttachments(t *testing.T) {
 		"attachments": []interface{}{
 			map[string]interface{}{
 				"uri": "container:9f2b", "title": "Auth Design",
-				"kind": "note", "summary": "resolved fresh, never persisted",
+				"kind": "note", "summary": "decoration, never persisted",
 			},
 			map[string]interface{}{"title": "no address"},
 		},

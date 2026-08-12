@@ -52,7 +52,7 @@ type Context struct {
 	Raw          map[string]interface{} // everything the lens sent, untyped
 	// Attachments is composer-authored and json:"-" ON PURPOSE: the field above
 	// this comment is filled from the envelope, never from the context JSON.
-	Attachments []domain.Attachment `json:"-"`
+	Attachments domain.Attachments `json:"-"`
 }
 
 // NewContext decodes the lens-authored context JSON and attaches the

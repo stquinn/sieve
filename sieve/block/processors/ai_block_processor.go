@@ -2,6 +2,7 @@ package processors
 
 import (
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"strings"
 	"time"
 )
@@ -42,15 +43,11 @@ func (p *AIBlockProcessor) InitAttrs(id string, overrides map[string]interface{}
 	}
 	// Attachments arrive from the composer as a loose wire list. This is the door:
 	// decode normalises them to uri + title in the canonical attrs form (a chip's
-	// kind/summary are transient — resolved fresh through the Router at job time),
-	// and an empty list carries no attr at all, so an attachment-less block
-	// persists exactly as it did before the attr existed.
+	// other fields are transient and never persist), and an empty list carries no
+	// attr at all, so an attachment-less block persists exactly as it did before
+	// the attr existed.
 	if _, ok := attrs[block.AttachmentsAttr]; ok {
-		if list := block.DecodeAttachments(attrs[block.AttachmentsAttr]).AttrValue(); len(list) > 0 {
-			attrs[block.AttachmentsAttr] = list
-		} else {
-			delete(attrs, block.AttachmentsAttr)
-		}
+		domain.DecodeAttachments(attrs[block.AttachmentsAttr]).StampAttrs(attrs)
 	}
 	return attrs
 }
@@ -121,24 +118,7 @@ func (p *AIBlockProcessor) qaHeader(blk block.SieveBlock) string {
 			sb.WriteString(strings.TrimSpace(q))
 		}
 	}
-	if section := blk.Attachments().PromptSection(p.svc.Nodes, p.attachmentDelivery()); section != "" {
-		sb.WriteString("\n\n")
-		sb.WriteString(section)
-	}
-	return sb.String()
-}
-
-// attachmentDelivery asks the configured backend how attachments can reach the
-// model. The MANIFEST is the primary form; bodies are injected only when the
-// backend demonstrably renders no MCP (agy), because then there is no get_note
-// to point at and the ask would otherwise answer from the title alone. An
-// unwired AI service (tests, an uninitialised provider) keeps the primary form —
-// "we don't know" is not evidence of a missing tool.
-func (p *AIBlockProcessor) attachmentDelivery() block.AttachmentDelivery {
-	if p.svc.AI != nil && !p.svc.AI.RendersMCP() {
-		return block.DeliverByBody
-	}
-	return block.DeliverByManifest
+	return blk.Attachments().AppendTo(sb.String())
 }
 
 // BuildContext returns a Q&A summary for when this block appears in another block's

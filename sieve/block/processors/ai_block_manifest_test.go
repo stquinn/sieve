@@ -1,48 +1,29 @@
 package processors
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
-	"sieve/sieve/ai"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
-	"sieve/sieve/services"
-	"sieve/store/filestore"
 )
 
-// stubNodes is a NodesPort double: a uri → Node table, everything else dangling.
-type stubNodes struct{ nodes map[string]domain.Node }
-
-func (s stubNodes) Resolve(uri string) (domain.Node, error) {
-	if n, ok := s.nodes[uri]; ok {
-		return n, nil
-	}
-	return domain.Node{}, fmt.Errorf("%w: %s", domain.ErrNodeNotFound, uri)
-}
-
-func (s stubNodes) Search(string, int) []domain.Candidate { return nil }
-
-func libraryOfThree() stubNodes {
-	return stubNodes{nodes: map[string]domain.Node{
-		"container:aaa": {URI: "container:aaa", UUID: "uuid-aaa", Kind: "note", Title: "Auth Design", Summary: "Token exchange."},
-		"container:bbb": {URI: "container:bbb", UUID: "uuid-bbb", Kind: "note", Title: "Retry RFC", Summary: "Backoff rules."},
-		"container:ccc": {URI: "container:ccc", UUID: "uuid-ccc", Kind: "note", Title: "Rate Limits", Summary: "Quota tiers."},
-	}}
-}
+// Three library documents, named by address. NOTHING resolves them: a manifest
+// is rendered from what the attachment already carries, so these titles are the
+// ones the block persisted and these uuids are read straight out of the uris.
+const (
+	authURI  = "container:aaaaaaaa-1a2b-4c5d-8e9f-a1b2c3d4e5f6"
+	retryURI = "container:bbbbbbbb-1a2b-4c5d-8e9f-a1b2c3d4e5f6"
+	rateURI  = "container:cccccccc-1a2b-4c5d-8e9f-a1b2c3d4e5f6"
+)
 
 // aiBlockWithAttachments builds one chain turn.
-func aiBlockWithAttachments(id, ref, question, response string, uris ...string) block.SieveBlock {
+func aiBlockWithAttachments(id, ref, question, response string, atts ...domain.Attachment) block.SieveBlock {
 	blk := block.NewSieveBlock("ai-block", id, map[string]interface{}{
 		"id": id, "ref": ref, "type": "ASK",
 		"status": block.BlockStatusComplete, "question": question, "response": response,
 	})
-	var list block.Attachments
-	for _, uri := range uris {
-		list = append(list, domain.Attachment{URI: uri, Title: "cached " + uri})
-	}
-	blk.SetAttachments(list)
+	blk.SetAttachments(atts)
 	return blk
 }
 
@@ -53,7 +34,7 @@ func aiBlockWithAttachments(id, ref, question, response string, uris ...string) 
 // where that breaks.
 func TestAIBlock_ThreeTurnChain_EachTurnRendersItsOwnManifest(t *testing.T) {
 	resetRegistry()
-	svc := block.BlockServices{Nodes: libraryOfThree()}
+	svc := block.BlockServices{}
 	block.RegisterProcessor(NewAIBlockProcessor(svc))
 	t.Cleanup(resetRegistry)
 
@@ -61,9 +42,9 @@ func TestAIBlock_ThreeTurnChain_EachTurnRendersItsOwnManifest(t *testing.T) {
 	codec := block.NewDocumentCodec(block.GlobalRegistry())
 	seed := []block.SieveBlock{
 		block.NewSieveBlock(block.KindProse, "pr-1", map[string]interface{}{"content": "the grass is green"}),
-		aiBlockWithAttachments("ab-1", "doc", "turn one?", "answer one", "container:aaa"),
-		aiBlockWithAttachments("ab-2", "ab-1", "turn two?", "answer two", "container:bbb"),
-		aiBlockWithAttachments("ab-3", "ab-2", "turn three?", "", "container:ccc"),
+		aiBlockWithAttachments("ab-1", "doc", "turn one?", "answer one", domain.Attachment{URI: authURI, Title: "Auth Design"}),
+		aiBlockWithAttachments("ab-2", "ab-1", "turn two?", "answer two", domain.Attachment{URI: retryURI, Title: "Retry RFC"}),
+		aiBlockWithAttachments("ab-3", "ab-2", "turn three?", "", domain.Attachment{URI: rateURI, Title: "Rate Limits"}),
 	}
 	body, err := codec.Serialize(seed)
 	if err != nil {
@@ -116,26 +97,28 @@ func TestAIBlock_ThreeTurnChain_EachTurnRendersItsOwnManifest(t *testing.T) {
 	}
 }
 
-// A dangling attachment renders the entry as unavailable rather than failing the
-// job — the ask still runs, and the model is told which document it cannot see.
-func TestAIBlock_DanglingAttachment_RendersUnavailableAndStillAsks(t *testing.T) {
+// An attachment whose address no verb can dereference renders the entry as
+// unavailable rather than failing the job — the ask still runs, and the model is
+// told which document it cannot see.
+func TestAIBlock_UndereferenceableAttachment_RendersUnavailableAndStillAsks(t *testing.T) {
 	resetRegistry()
-	svc := block.BlockServices{Nodes: libraryOfThree()}
+	svc := block.BlockServices{}
 	block.RegisterProcessor(NewAIBlockProcessor(svc))
 	t.Cleanup(resetRegistry)
 
 	p := NewAIBlockProcessor(svc)
-	blk := aiBlockWithAttachments("ab-1", "doc", "still answerable?", "", "container:gone")
+	blk := aiBlockWithAttachments("ab-1", "doc", "still answerable?", "",
+		domain.Attachment{URI: "block:not-a-uuid", Title: "Some Block"})
 	_, _, question := p.buildPrompt(&blk, block.DocView{})
 
 	if !strings.Contains(question, "still answerable?") {
 		t.Fatalf("the question survived nothing:\n%s", question)
 	}
 	if !strings.Contains(question, "\"unavailable\": true") {
-		t.Fatalf("dangling attachment not marked unavailable:\n%s", question)
+		t.Fatalf("undereferenceable attachment not marked unavailable:\n%s", question)
 	}
-	if !strings.Contains(question, "cached container:gone") {
-		t.Errorf("the cached title is what labels a dangling entry:\n%s", question)
+	if !strings.Contains(question, "Some Block") {
+		t.Errorf("the persisted title is what labels the entry:\n%s", question)
 	}
 }
 
@@ -143,10 +126,10 @@ func TestAIBlock_DanglingAttachment_RendersUnavailableAndStillAsks(t *testing.T)
 // existed — the whole feature is invisible until someone uses it.
 func TestAIBlock_NoAttachments_PromptUnchanged(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor(NewAIBlockProcessor(block.BlockServices{Nodes: libraryOfThree()}))
+	block.RegisterProcessor(NewAIBlockProcessor(block.BlockServices{}))
 	t.Cleanup(resetRegistry)
 
-	p := NewAIBlockProcessor(block.BlockServices{Nodes: libraryOfThree()})
+	p := NewAIBlockProcessor(block.BlockServices{})
 	blk := block.NewSieveBlock("ai-block", "ab-1", map[string]interface{}{
 		"id": "ab-1", "ref": "doc", "type": "ASK", "question": "plain question?",
 	})
@@ -157,91 +140,5 @@ func TestAIBlock_NoAttachments_PromptUnchanged(t *testing.T) {
 	}
 	if question != (block.AIContext{NodeIDs: []string{"ab-1"}, Content: "QUESTION ABOUT: doc\nplain question?"}).String() {
 		t.Fatalf("the attachment-less prompt changed shape:\n%q", question)
-	}
-}
-
-// The delivery mode is a BACKEND capability, not a per-block choice: the manifest
-// is the primary form, and bodies are injected only when the configured backend
-// demonstrably renders no MCP (agy) — there is no get_note to point at.
-func TestAIBlock_DeliveryDefaultsToManifestWhenNoAIServiceIsWired(t *testing.T) {
-	p := NewAIBlockProcessor(block.BlockServices{Nodes: libraryOfThree()})
-	if got := p.attachmentDelivery(); got != block.DeliverByManifest {
-		t.Fatalf("delivery = %v, want DeliverByManifest", got)
-	}
-}
-
-// liveMCP is a wired, reachable builtin MCP endpoint. NOTHING here execs a CLI:
-// the delivery decision is answered from settings + the rendered profile alone.
-type liveMCP struct{}
-
-func (liveMCP) Endpoint() (string, string) { return "http://127.0.0.1:9/mcp", "tok" }
-func (liveMCP) Ready() bool                { return true }
-
-// aiServiceForCLI wires a real AIService configured for one CLI dialect.
-func aiServiceForCLI(t *testing.T, cli string) *ai.AIService {
-	t.Helper()
-	root := t.TempDir()
-	fs, err := filestore.NewFileStore(root, "testhost")
-	if err != nil {
-		t.Fatalf("NewFileStore: %v", err)
-	}
-	state, err := services.NewStateService(fs, "", nil)
-	if err != nil {
-		t.Fatalf("NewStateService: %v", err)
-	}
-	settings := domain.DefaultSettings()
-	settings.CLI = cli
-	settings.AI.Containment = domain.LoadContainmentProfile(domain.DefaultContainmentProfile())
-	if err := state.SaveSettings(settings); err != nil {
-		t.Fatalf("SaveSettings: %v", err)
-	}
-	prompts, err := ai.NewPromptService(fs)
-	if err != nil {
-		t.Fatalf("NewPromptService: %v", err)
-	}
-	documents, err := services.NewDocumentService(fs)
-	if err != nil {
-		t.Fatalf("NewDocumentService: %v", err)
-	}
-	svc := ai.NewAIService(state, prompts, documents, root)
-	svc.SetMCPEndpoint(liveMCP{})
-	return svc
-}
-
-// End to end for the agy fallback: agy's arg renderer returns before any MCP
-// logic, so a manifest would name a verb the model cannot call. The prompt must
-// carry the resolved BODY instead — otherwise the ask answers from the title.
-func TestAIBlock_AgyBackend_InjectsBodiesInsteadOfTheManifest(t *testing.T) {
-	nodes := stubNodes{nodes: map[string]domain.Node{
-		"container:aaa": {
-			URI: "container:aaa", UUID: "uuid-aaa", Kind: "note", Title: "Auth Design",
-			Summary: "Token exchange.", Body: "# Auth Design\n\nTokens rotate every 15 minutes.",
-		},
-	}}
-
-	agy := NewAIBlockProcessor(block.BlockServices{Nodes: nodes, AI: aiServiceForCLI(t, "agy")})
-	if got := agy.attachmentDelivery(); got != block.DeliverByBody {
-		t.Fatalf("agy delivery = %v, want DeliverByBody", got)
-	}
-	blk := aiBlockWithAttachments("ab-1", "doc", "how do tokens rotate?", "", "container:aaa")
-	_, _, question := agy.buildPrompt(&blk, block.DocView{})
-	if !strings.Contains(question, "Tokens rotate every 15 minutes.") {
-		t.Fatalf("agy prompt carries no body:\n%s", question)
-	}
-	if strings.Contains(question, "get_note") {
-		t.Errorf("agy prompt names a verb the model cannot call:\n%s", question)
-	}
-
-	// The same block on an MCP-capable backend gets the manifest instead.
-	claude := NewAIBlockProcessor(block.BlockServices{Nodes: nodes, AI: aiServiceForCLI(t, "claude")})
-	if got := claude.attachmentDelivery(); got != block.DeliverByManifest {
-		t.Fatalf("claude delivery = %v, want DeliverByManifest", got)
-	}
-	_, _, question = claude.buildPrompt(&blk, block.DocView{})
-	if strings.Contains(question, "Tokens rotate every 15 minutes.") {
-		t.Errorf("an MCP-capable backend must not pay for the body:\n%s", question)
-	}
-	if !strings.Contains(question, "get_note") {
-		t.Errorf("manifest lost its retrieval verb:\n%s", question)
 	}
 }

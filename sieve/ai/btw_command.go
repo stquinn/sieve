@@ -44,13 +44,17 @@ func (c *BtwCommand) Build(text string, ctx command.Context) (command.Job, error
 		"type":      "BTW",
 		"ref":       "", // detached: no target graph
 	}
+	// What the turn was given, recorded on the block from the PENDING envelope
+	// onward: it is what renders the chip row (in the document and in the popup,
+	// which hosts the same renderer) and what a later read of the block shows.
+	ctx.Attachments.StampAttrs(attrs)
 	pending := &command.Block{Kind: "ai-block", Attrs: attrs}
 	return command.Job{
 		Label:   c.label(text),
 		Pending: pending,
 		Work: func() (command.Block, error) {
 			title, summary := c.docMeta(ctx.DocUUID)
-			resp, err := c.ai.RunBtw(text, ctx.SelectedText, title, summary, ctx.DocUUID)
+			resp, err := c.ai.RunBtw(ctx.Attachments.AppendTo(text), ctx.SelectedText, title, summary, ctx.DocUUID)
 			if err != nil {
 				return command.Block{}, err
 			}

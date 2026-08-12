@@ -215,17 +215,11 @@ func wrapAllowList(flag, csv, continuationIndent string) string {
 	return b.String()
 }
 
-// cliBackend is one CLI's argument renderer plus the capabilities of that CLI
-// that callers outside the renderer need to know about. rendersMCP is the one
-// such capability today: the AI prompt path asks it to decide whether a document
-// attachment can be delivered as a MANIFEST (the model fetches bodies itself
-// through MCP get_note) or must have its body injected. Declaring it on the
-// backend keeps the answer beside the code that makes it true.
+// cliBackend is one CLI's argument renderer: everything that differs between
+// dialects lives behind this one method, and nothing outside the renderer needs
+// to know which dialect is configured.
 type cliBackend interface {
 	buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, model, prompt string) []string
-	// rendersMCP reports whether this backend can inject MCP servers into a call
-	// at all — independent of whether any server is configured.
-	rendersMCP() bool
 }
 
 // backendFor selects the adapter for a dialect. A dialect with no adapter is
@@ -345,8 +339,6 @@ func splitConstraint(s string) []string {
 // mcp-config is deliberately never passed so the user's inherited approvals load.
 type claudeBackend struct{}
 
-func (claudeBackend) rendersMCP() bool { return true }
-
 func (claudeBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, model, _ string) []string {
 	args := []string{"--print", "--no-session-persistence"}
 	for _, dir := range profile.AddDirs(libraryDir) {
@@ -374,8 +366,6 @@ func (claudeBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDi
 // confines where), network grants route to the URL axis (never --allow-tool),
 // and --deny-tool shell,write hard-blocks writes (opt-in).
 type copilotBackend struct{}
-
-func (copilotBackend) rendersMCP() bool { return true }
 
 func (copilotBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, model, _ string) []string {
 	args := []string{"--prompt", "", "--silent"}
@@ -429,14 +419,11 @@ func copilotToolAxes(profile domain.ContainmentProfile) (toolNames, urlArgs []st
 // per-tool allow/deny flag and no per-call --mcp-config inject flag, so under the
 // uniform fail-closed rule its column is empty for every tool grant: it emits no
 // tool names and relies on --add-dir + --mode plan. The renderer returns BEFORE
-// any allowlist/MCP logic. agy does NOT read STDIN — --print takes the prompt as
-// its trailing argument.
+// any allowlist/MCP logic — which also means a model on agy cannot call get_note,
+// so it is told which documents were attached and answers without their
+// contents. agy does NOT read STDIN — --print takes the prompt as its trailing
+// argument.
 type agyBackend struct{}
-
-// rendersMCP is false: agy has no per-call inject flag, so nothing this app can
-// pass will give the model an MCP tool. Callers that would point the model at
-// MCP (the attachment manifest's get_note) must fall back to injecting content.
-func (agyBackend) rendersMCP() bool { return false }
 
 func (agyBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, model, prompt string) []string {
 	var args []string

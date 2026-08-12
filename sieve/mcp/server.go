@@ -106,16 +106,6 @@ func (s *Server) Endpoint() (url, token string) {
 	return base + "/mcp", tok
 }
 
-// Ready reports whether a listener has bound — the same condition Endpoint's URL
-// half answers, WITHOUT issuing a token. Callers asking a pure capability
-// question ("can a contained CLI reach MCP at all?") use this, so merely asking
-// never adds to the accepted token accumulation above.
-func (s *Server) Ready() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.baseURL != ""
-}
-
 func (s *Server) issueToken() string {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {

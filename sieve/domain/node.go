@@ -19,10 +19,10 @@ type Node struct {
 	Kind    string // the source's own noun: "note"
 	Title   string
 	Summary string
-	// Body is the resolved content. The prompt path is a MANIFEST, not an
-	// injection — it emits kind/title/uuid/summary and lets the model fetch the
-	// body through MCP if it warrants it. Body exists for the one backend that
-	// exposes no MCP (agy), where injecting is the only way the ask answers.
+	// Body is the resolved content. NO prompt path reads it: an attachment is
+	// rendered as a MANIFEST — title + uuid, straight off the attachment — and the
+	// model fetches what it wants through MCP. It is here for a consumer that
+	// genuinely needs the content of an address it resolved.
 	Body string
 }
 
