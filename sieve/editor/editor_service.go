@@ -168,6 +168,16 @@ func (es *EditorService) open(uuid string, notifySaved func(), recoverStuck bool
 	es.shadows[uuid] = shadow
 	es.mu.Unlock()
 
+	// A document whose block ids were just upgraded (#75) owes disk a rewrite NOW,
+	// not whenever the autosave next fires: until it lands, a reopen would mint
+	// different ids, so any address taken from this document — including a block id
+	// captured by a dispatched job — would stop resolving.
+	if shadow.MigratedOnLoad() {
+		if err := es.flushShadow(shadow, "identity-migration"); err != nil {
+			logger.Warn("editor: identity migration failed to persist", "uuid", uuid, "err", err)
+		}
+	}
+
 	// Reset any DISPATCHED blocks that pre-date this session — they are stuck
 	// (server crash or restart). Re-queue them so they run again on reconnect.
 	// Skipped for transient background opens (recoverStuck=false): they must not

@@ -29,3 +29,18 @@ func resetRegistry() {
 	block.ResetRegistry()
 	block.RegisterProcessor(&ProseProcessor{})
 }
+
+// blockIDOfKind returns the id of the first block of the given kind in the open
+// shadow. Fixtures are written with readable legacy handles ("co-1", "pr-aaaa")
+// but NewShadow upgrades those to UUIDs on load (#75), so a test that needs to
+// address a fixture block asks the shadow for its id rather than naming one.
+func blockIDOfKind(t *testing.T, shadow *block.ShadowDocument, kind string) string {
+	t.Helper()
+	for _, b := range shadow.SnapshotBlocks() {
+		if b.Kind == kind {
+			return b.ID
+		}
+	}
+	t.Fatalf("no %q block in shadow", kind)
+	return ""
+}

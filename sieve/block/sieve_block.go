@@ -150,6 +150,27 @@ func (b SieveBlock) cloneDeep() SieveBlock {
 	return cp
 }
 
+// reidentify returns a copy of b carrying newID on BOTH sides of the id
+// invariant — the ID field AND Attrs["id"]. Writing only one side reintroduces
+// the id-less-block bug: the WYSIWYG wire (buildSieveBlockHTML) and the fenced
+// serializer (SerializeYaml(Attrs)) both read the id out of Attrs, never off ID,
+// so a half-written id drops the block on load and on save. Aliases ride along.
+func (b SieveBlock) reidentify(newID string) SieveBlock {
+	cp := b.cloneDeep()
+	cp.ID = newID
+	cp.Attrs["id"] = newID
+	return cp
+}
+
+// withRefs returns a copy of b whose outgoing ref list is refs, in the
+// comma-separated Attrs["ref"] form outgoingRefs tokenizes. Mirrors outgoingRefs
+// for the write direction.
+func (b SieveBlock) withRefs(refs []string) SieveBlock {
+	cp := b.cloneDeep()
+	cp.Attrs["ref"] = strings.Join(refs, ",")
+	return cp
+}
+
 // The document is an ordered []SieveBlock — the in-memory form the serialization
 // spine round-trips against markdown. There is no wrapper type: ShadowDocument
 // holds the slice directly (no nested "document inside a document").

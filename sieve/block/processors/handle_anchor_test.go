@@ -79,12 +79,20 @@ func TestHandles_IsolatedEditKeepsHandle(t *testing.T) {
 	// Edit the first prose block's content through the PUBLIC block op (update-block
 	// carries prose content in attrs.content, like every kind) — no poking internals.
 	shadow := block.NewShadow("u", md, block.NewDocumentCodec(block.GlobalRegistry()), 0, nil)
-	if err := shadow.ApplyOp(block.BlockOp{Type: "update-block", BlockID: "pr-aaaa", Attrs: map[string]interface{}{"content": "Edited text."}}); err != nil {
+	// Legacy short handles are upgraded to UUIDs on load (#75), so read the ids
+	// back instead of naming them. The property under test is unchanged: an
+	// isolated edit keeps its OWN handle and leaves its sibling's alone.
+	blocks := shadow.SnapshotBlocks()
+	if len(blocks) != 2 {
+		t.Fatalf("want 2 blocks, got %d", len(blocks))
+	}
+	first, second := blocks[0].ID, blocks[1].ID
+	if err := shadow.ApplyOp(block.BlockOp{Type: "update-block", BlockID: first, Attrs: map[string]interface{}{"content": "Edited text."}}); err != nil {
 		t.Fatalf("apply op: %v", err)
 	}
 	out := shadow.ContentForSave()
-	want := "<!--s:pr-aaaa-->\nEdited text.\n<!--/s:pr-aaaa-->\n\n" +
-		"<!--s:pr-bbbb-->\nUntouched.\n<!--/s:pr-bbbb-->"
+	want := "<!--s:" + first + "-->\nEdited text.\n<!--/s:" + first + "-->\n\n" +
+		"<!--s:" + second + "-->\nUntouched.\n<!--/s:" + second + "-->"
 	if out != want {
 		t.Fatalf("edited block lost handle:\n got: %q\nwant: %q", out, want)
 	}
