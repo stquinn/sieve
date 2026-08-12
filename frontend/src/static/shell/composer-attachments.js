@@ -34,7 +34,15 @@
 //     chip. `@Auth Design` typed as prose and never accepted is just prose — but
 //     a chip can never outlive its token, which is exactly the silent drop.
 //
-// DETACHING DEMOTES. Removing an attachment moves it to the BACK of the pool
+// THE ✕ FORGETS; EDITING THE TEXT DOES NOT. Both gestures take the chip and its
+// token, and they differ only in INTENT — which is the whole difference. The ✕
+// says "I do not want this attached", so its document leaves `#known` and
+// writing that title again is ordinary prose; a text edit says "I am editing my
+// sentence", so its document stays pooled and the token coming back (Ctrl+Z, a
+// retype) re-attaches it. Forgetting is by URI, never by title: with two "Notes"
+// attached, ✕ on one leaves the other's token resolving to the other document.
+//
+// DETACHING DEMOTES. An attachment the text lost moves to the BACK of the pool
 // before the pairing is redone, so a remaining identical `@Notes` pairs with the
 // attachment the user did not touch rather than sliding onto the deleted one's
 // chip.
@@ -74,8 +82,9 @@ import { esc } from '../block/renderers/html-escape.js'
 
 export class ComposerAttachments {
   /** @type {Attachment[]} THE POOL: every candidate accepted since the composer
-   *  was last cleared, insertion-ordered. Nothing leaves it but clear() — that is
-   *  what lets an undone deletion re-attach instead of being lost. */ #known = []
+   *  was last cleared, insertion-ordered. Only clear() and the chip's ✕ take
+   *  anything out of it — a document the TEXT lost stays, which is what lets an
+   *  undone deletion re-attach instead of being lost. */ #known = []
   /** @type {Attachment[]} THE VIEW: the subset a `@Title` token carries right
    *  now. The chips, and what send carries. */ #attached = []
   /** @type {HTMLElement|null} the chip row (null → headless: model-only, all verbs still work) */ #row = null
@@ -145,7 +154,7 @@ export class ComposerAttachments {
     })
     // Newest last in BOTH lists, so the pool order the pairing walks and the chip
     // order the user sees are the same order.
-    this.#known = this.#known.filter((a) => a.uri !== uri).concat([item])
+    this.#retain(item)
     this.#attached = this.#attached.concat([item])
     this.#render()
     return true
@@ -155,14 +164,21 @@ export class ComposerAttachments {
    * Detaches by address — the ✕ on a chip. It removes the `@Title` echo from the
    * message as well: leaving the token behind is the same chip/text disagreement
    * as a stale chip, just pointing the other way.
+   *
+   * And it FORGETS the document. The ✕ is an explicit refusal, so it must be
+   * final: were the document left pooled, writing its title again later — `as
+   * @Auth Design says…` — would silently re-attach what the user had removed.
+   * Accepting it from the picker again is how it comes back.
    * @param {string} uri
    */
   remove(uri) {
-    // The pool is the superset — nothing leaves it but clear() — so looking there
-    // finds an attachment whether it is currently attached or not.
+    // The pool is the superset, so looking there finds an attachment whether it
+    // is currently attached or not. Pair BEFORE forgetting: #pairs walks #known.
     const item = this.#known.find((a) => a.uri === uri)
     if (!item) return
-    this.#detach(item, this.#pairs(this.#text()).find((p) => p.item.uri === uri) || null)
+    const pair = this.#pairs(this.#text()).find((p) => p.item.uri === uri) || null
+    this.#known = this.#known.filter((a) => a.uri !== uri)
+    this.#drop(item, pair)
   }
 
   /**
@@ -170,6 +186,9 @@ export class ComposerAttachments {
    * document's `@Title` token, that whole token — not one character of it — goes,
    * and its chip with it. This is what makes the half-broken `@Auth Desig` state
    * unreachable by the ordinary gesture.
+   *
+   * It is still a TEXT edit, so the document stays pooled and typing the title
+   * back re-attaches it — that is what lets undo restore the chip.
    * @param {number} caret
    * @returns {boolean} whether a token was deleted (i.e. whether the caller's
    *   keypress was consumed)
@@ -178,7 +197,8 @@ export class ComposerAttachments {
     if (!this.#textarea) return false
     const pair = this.#pairs(this.#text()).find((p) => p.end === caret)
     if (!pair) return false
-    this.#detach(pair.item, pair)
+    this.#retain(pair.item)   // a text edit is not a refusal: undo re-attaches
+    this.#drop(pair.item, pair)
     return true
   }
 
@@ -255,15 +275,25 @@ export class ComposerAttachments {
   #text() { return this.#textarea ? this.#textarea.value : '' }
 
   /**
-   * Drops `item` from the view, DEMOTES it to the back of the pool, and cuts its
-   * token out of the message. The demotion is what keeps duplicate titles honest:
-   * with `@Notes and @Notes` and the first token deleted, the survivor must pair
-   * with the attachment the user did not touch.
+   * Puts `item` at the BACK of the pool, adding it if it is new. Pool order is
+   * the order `#pairs` hands out tokens, so touching an attachment sends it to
+   * the last identical `@Notes` — which is what keeps duplicate titles honest:
+   * with the first token deleted, the survivor must pair with the attachment the
+   * user did not touch.
+   * @param {Attachment} item
+   */
+  #retain(item) {
+    this.#known = this.#known.filter((a) => a.uri !== item.uri).concat([item])
+  }
+
+  /**
+   * Takes `item` off the chip row and cuts its token out of the message. The
+   * caller has already settled its fate in the POOL — retained or forgotten is
+   * the only thing the two removal gestures disagree about.
    * @param {Attachment} item
    * @param {{start: number, end: number}|null} span its token, if it still has one
    */
-  #detach(item, span) {
-    this.#known = this.#known.filter((a) => a.uri !== item.uri).concat([item])
+  #drop(item, span) {
     this.#attached = this.#attached.filter((a) => a.uri !== item.uri)
     this.#render()
     if (span) this.#cut(span.start, span.end)

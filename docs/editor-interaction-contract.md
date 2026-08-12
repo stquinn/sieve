@@ -524,18 +524,36 @@ the attachment with no answer and no explanation.
 |---|---|
 | Backspace at a token's right edge | deletes the whole token, its gap, and its chip (the table above) |
 | select-through-and-delete, cut, paste-over, retype | the chip goes as soon as the token stops matching |
-| the chip's ✕ | deletes the `@Title` token from the message as well — the same disagreement pointing the other way |
-| undo, or retyping the title | **re-attaches**: matching is on exact title text, and every candidate accepted since the composer was last cleared is retained, so the chip comes back with its token |
+| the chip's ✕ | deletes the `@Title` token from the message as well — the same disagreement pointing the other way — and **forgets the document** (below) |
+| undo, or retyping the title | **re-attaches** *unless the document was ✕'d*: matching is on exact title text, and every candidate accepted since the composer was last cleared is retained, so the chip comes back with its token |
 
-Two consequences worth naming:
+**The ✕ forgets; editing the text does not.** Both gestures remove the chip and
+its token and differ only in INTENT, which is the whole difference. ✕ means "I do
+not want this attached", so it is final: its document leaves the retained pool and
+writing that title again later — `as @Auth Design says…` — is ordinary prose, not
+a silent re-attach of what the user just refused. Every text edit, atomic
+Backspace included, means "I am editing my sentence", so its document stays
+pooled and the token coming back re-attaches it. A ✕'d document returns the
+normal way: accept it from the `@` picker again. Forgetting is per-URI, never
+per-title — with two "Notes" attached, ✕ on one cuts only its token and leaves
+the survivor resolving to the other document.
+
+**Only text edits are undoable.** Ctrl+Z restores any chip whose token an
+ordinary edit removed, because the browser's native undo stack holds that edit
+and reconciliation follows the restored text. It does **not** restore the two
+programmatic gestures — atomic Backspace and the chip's ✕ — because they assign
+`textarea.value`, which never enters that stack. Deliberate: routing them through
+`document.execCommand` to buy undo is not worth depending on a deprecated API.
+
+Two more consequences worth naming:
 
 - **A send forgets everything.** `clear()` empties the retained pool, so a title
   typed after a send is prose, not a resurrected attachment.
 - **Detaching demotes.** With two attachments sharing a title (`@Notes and
   @Notes`), deleting one token must drop exactly one chip *and leave the right
-  one*. The detached attachment moves to the back of the pool before the pairing
-  is redone, so the surviving token pairs with the attachment the user did not
-  touch.
+  one*. The detached attachment moves to the back of the pool (or leaves it, for
+  a ✕) before the pairing is redone, so the surviving token pairs with the
+  attachment the user did not touch.
 
 Programmatic edits to the composer text (the two deletion gestures) go through
 `TriggerPopover.applyOwnEdit()` — the **same** `#completing` guard acceptance

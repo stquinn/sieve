@@ -312,6 +312,78 @@ describe('ComposerAttachments — the ✕ removes the text token too', () => {
   })
 })
 
+// The ✕ and a text edit are the SAME mechanism but not the same intent: ✕ says
+// "I do not want this attached", editing says "I am editing my sentence". So ✕
+// forgets the document out of the pool and a text edit does not — which is also
+// what keeps Ctrl+Z able to restore a chip a keystroke removed.
+describe('ComposerAttachments — the ✕ forgets, a text edit does not', () => {
+  /** @type {HTMLTextAreaElement} */ let ta
+  /** @type {ComposerAttachments} */ let model
+
+  beforeEach(() => {
+    const composer = mountComposer()
+    ta = composer.textarea
+    model = new ComposerAttachments(composer.footer, ta)
+  })
+  afterEach(() => { document.body.innerHTML = '' })
+
+  /** Clicks the ✕ on the nth chip. */
+  const removeChip = (n = 0) =>
+    /** @type {HTMLElement} */ (chips()[n].querySelector('.ask-chip__remove')).click()
+
+  it('the ✕ FORGETS: writing the same title afterwards stays plain prose', () => {
+    model.add(AUTH)
+    ta.value = 'How does @Auth Design handle this?'
+    model.reconcile(ta.value)
+    removeChip()
+    expect(model.size).toBe(0)
+
+    // The whole point: a removal is FINAL. Without forgetting, this silently
+    // re-attaches the document the user just refused.
+    ta.value = 'as @Auth Design says…'
+    expect(model.reconcile(ta.value)).toEqual([])
+    expect(chips().length).toBe(0)
+  })
+
+  it('an atomic Backspace does NOT forget — the same title typed back re-attaches', () => {
+    model.add(AUTH)
+    ta.value = 'How does @Auth Design handle this?'
+    model.reconcile(ta.value)
+    expect(model.detachAt('How does @Auth Design'.length)).toBe(true)
+    expect(model.size).toBe(0)
+
+    ta.value = 'as @Auth Design says…'
+    expect(model.reconcile(ta.value)).toEqual([{ uri: 'container:9f2b', title: 'Auth Design' }])
+  })
+
+  it("a ✕'d document attaches again when accepted from the picker a second time", () => {
+    model.add(AUTH)
+    ta.value = '@Auth Design'
+    model.reconcile(ta.value)
+    removeChip()
+
+    expect(model.add(AUTH)).toBe(true)
+    expect(model.reconcile('@Auth Design')).toEqual([{ uri: 'container:9f2b', title: 'Auth Design' }])
+  })
+
+  it('DUPLICATE TITLES: ✕ forgets only the removed uri, and the survivor keeps the OTHER document', () => {
+    model.add({ uri: 'container:aaa', title: 'Notes', detail: 'design/' })
+    model.add({ uri: 'container:bbb', title: 'Notes', detail: 'journal/' })
+    ta.value = 'how do @Notes and @Notes differ?'
+    model.reconcile(ta.value)
+
+    removeChip()                                          // ✕ on design/ (aaa)
+    expect(ta.value).toBe('how do and @Notes differ?')
+    expect(model.manifest()).toEqual([{ uri: 'container:bbb', title: 'Notes' }])
+
+    // Forgetting is per-URI, not per-title: bbb is untouched, so putting a second
+    // @Notes back gives ONE chip — bbb's — not two.
+    ta.value = 'how do @Notes and @Notes differ?'
+    expect(model.reconcile(ta.value)).toEqual([{ uri: 'container:bbb', title: 'Notes' }])
+    expect(chips().map((c) => c.getAttribute('title'))).toEqual(['journal/'])
+  })
+})
+
 describe('ComposerAttachments — a token that comes back re-attaches', () => {
   /** @type {HTMLTextAreaElement} */ let ta
   /** @type {ComposerAttachments} */ let model
