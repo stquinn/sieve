@@ -32,11 +32,32 @@ cannot be enumerated.
 chronologically. Existing document uuids are untouched: they are already UUIDs and
 already globally unique, and nothing validates the version nibble.
 
-Block ids migrate to UUID with the existing short handle retained as a
-**permanent alias**. `SieveBlock.Aliases` already exists, and `answersTo()`
-already resolves a ref against the primary ID *or* any alias. Keeping the old
-handle forever means no reference is ever rewritten to stay working — including
-references we cannot see, in libraries that are not attached at migration time.
+Block ids migrate to UUID. Migration mints a new id per block and **rewrites
+in-document refs**; it creates **no aliases**.
+
+The issue proposed retaining each old short handle as a permanent alias, as a
+safety net for referrers we cannot see. That net turns out to be unnecessary,
+because no such referrer can exist. A block id is persisted in exactly one place
+today — its own document:
+
+- `sieve/domain/` (Document, Session, Tab, meta) carries no block-id field.
+- `StateService`, `JobTracker` and `JobEngine` carry none.
+- `BlockID` appears in five non-test files, all in-memory or on the WS wire
+  (`command.Context.BlockID` is the ephemeral frontend selection context).
+- `content_link.go` extracts `https?://` links only, so a block id never lands
+  inside prose content.
+
+`Attrs["ref"]` is therefore the **complete** referrer set, and rewriting it
+in-document is exhaustive and verifiable by round-trip. This is the issue's own
+sequencing argument turned around: precisely *because* no cross-document block
+reference exists yet, the migration needs no safety net. It is also why the work
+cannot be deferred — the first stored cross-document reference makes this
+paragraph false.
+
+Dropping migration aliases keeps one uniform rule for every kind, rather than
+"prose upgrades, structured aliases", and removes the design's messiest corner:
+resolving a legacy duplicate short handle across two blocks that would both claim
+it as an alias.
 
 ### Identity versus naming
 
@@ -54,11 +75,15 @@ so the rule cannot be expressed wrongly.
 
 ### Aliases are durable by intent
 
-An alias is only ever *given* to a block by a deliberate mechanism: this
-migration, a future UI affordance, a domain-meaningful name. Nothing accumulates
-aliases automatically — the prose-merge path that once did was cut on 2026-06-19
-(`prose-markers.js:9`). There is therefore no unbounded growth to collect against,
-and `gcAliases` (which is unwired dead code, called only from tests) is deleted.
+An alias is only ever *given* to a block by a deliberate mechanism — a future UI
+affordance, a domain-meaningful name. Nothing accumulates aliases automatically:
+the prose-merge path that once did was cut on 2026-06-19 (`prose-markers.js:9`),
+and migration creates none. There is therefore no unbounded growth to collect
+against, and `gcAliases` (unwired dead code, called only from tests) is deleted.
+
+After this change **nothing writes an alias at all**. The mechanism is kept, and
+its persistence bug fixed (§3), because the identity-versus-naming split above is
+the durable design and the alias UI is its first consumer.
 
 **No auto-mint.** New blocks get a UUID and nothing else. A short handle
 alongside it would give two spellings for one thing and recreate a collision
@@ -90,29 +115,48 @@ processors become dead and are deleted — with no auto-mint, nothing needs a ki
 prefix. **No production code infers a block's kind from its id prefix** (verified);
 only two tests assert `HasPrefix(id, "pr-")`, and they are rewritten.
 
-### 2. Migration — on the codec, invisible to callers
+### 2. Migration — an explicit migrator on the load path
 
-`DocumentCodec.Deserialize` gains a post-pass, so every parse path migrates
-identically and idempotently:
+Migration is **not** embedded in `DocumentCodec.Deserialize`. `Deserialize` is a
+pure parse, and making it mint identity as a side effect of reading would mean
+read-only parses (`findBlockByID`'s markdown fallback, AI context building,
+snapshot re-parse) mint ids that nothing persists and nothing can look up — with
+no alias fallback, an old handle stops resolving the moment a block is renamed.
 
-1. A block whose ID is not a valid UUID gets one minted; the old id is appended
-   to `Aliases`.
-2. In-document `Attrs["ref"]` tokens are rewritten through the old→new map.
-   Tokens that do not resolve in-document are left alone — they may target
-   another library.
-3. A uniqueness guard over primary IDs, indexed by `collectHandles`, **repairs and
-   logs**: a duplicate is re-minted with a warning. Post-migration a duplicate can
-   only mean corruption or a hand-edit, and a thinking tool must not refuse to open
-   a note over one.
-4. Duplicate *aliases* across blocks — the legacy short-id collision this issue
-   exists to fix — resolve first-wins in document order. The later block drops the
-   ambiguous handle and logs.
+Instead a `BlockIdentityMigrator` owns the transform, called where a document is
+loaded into a `ShadowDocument` (`NewShadow`) and by `/migrate-ids`. Minting
+happens only where a save can follow.
 
-`findBlockByID` changes from `b.ID == id` to matching `b.answersTo()`. This is
-required, not incidental: without it, a lookup by old handle fails the moment
-migration renames the block.
+```go
+func (m BlockIdentityMigrator) Migrate(blocks []SieveBlock) ([]SieveBlock, bool)
+```
 
-Documents persist on their next normal save. FileStore versioning is the rollback.
+Pass 1 assigns every block a unique id, recording old→new:
+
+- ID is not a valid UUID → mint one, record `rename[old] = new` **first-wins**, so
+  a legacy duplicate short handle binds to the first block in document order.
+- ID is a valid UUID already seen in this document → mint a replacement and log a
+  warning, recording **no** rename entry: refs naming that UUID belong to the
+  first, legitimate holder. This is the uniqueness guard, and it **repairs and
+  logs** rather than refusing to load — post-migration a duplicate can only mean
+  corruption or a hand-edit, and a thinking tool must not refuse to open a note
+  over one.
+
+Pass 2 rewrites `Attrs["ref"]` through the rename map. Tokens absent from the map
+are left alone.
+
+Re-identifying a block must honour the **two-sided id invariant** that
+`NewSieveBlock` enforces: the id lives on both the `ID` field and `Attrs["id"]`,
+because the WYSIWYG wire and the fenced serializer both read it out of `Attrs`.
+Writing only one side reintroduces the id-less-block bug.
+
+`Migrate` returns `changed`; when true, `NewShadow` arms the autosave debounce so
+the upgrade is written once. Without that, a document's ids would differ on every
+open until the user happened to type something. FileStore versioning is the
+rollback.
+
+Documents never opened keep their short ids — still valid, just not externally
+addressable — until `/migrate-ids` (§5) sweeps them.
 
 ### 3. Fenced blocks must persist aliases
 
@@ -124,8 +168,13 @@ The serializer injects an `aliases:` key into the YAML from the struct field; th
 deserializer lifts it back into `SieveBlock.Aliases` and removes it from `Attrs`,
 so no stale second copy can diverge from `Merge`.
 
-(`id` currently lives in both `Attrs` and the struct field. That divergence
-predates this issue and is out of scope.)
+Aliases are deliberately *not* mirrored into `Attrs` the way `id` is. The `id`
+mirror is safe because `Merge` never changes `ID`; `Merge` **does** replace
+`Aliases`, so a mirrored copy would silently go stale.
+
+No writer exists for aliases after this change (§Decision), so this fixes no live
+data loss. It is in scope because it is ten lines, and because a silent
+drop-on-save would otherwise ambush whoever builds the alias UI.
 
 ### 4. The coordinate grammar — `domain.Address`
 
@@ -213,10 +262,14 @@ intent.
 
 - `ident`: mints valid v7, monotonic across calls, `Valid` accepts v4 and v7 and
   rejects malformed input.
-- Migration: fixture document with short ids round-trips to UUIDs with old handles
-  preserved as aliases; a **second** pass is a no-op (idempotence); refs are
-  rewritten; a fixture with duplicate short ids repairs first-wins.
-- Guard: duplicate primary ids are re-minted, and the document still loads.
+- Migration: a fixture with short ids upgrades to UUIDs; a **second** pass is a
+  no-op and reports `changed == false` (idempotence); refs are rewritten to the
+  new ids; a fixture with duplicate short ids binds refs first-wins; `Attrs["id"]`
+  tracks the `ID` field on every re-identified block.
+- Guard: a duplicate UUID is re-minted, the document still loads, and refs naming
+  it still resolve to the first holder.
+- `Deserialize` stays pure: parsing a document with short ids leaves them
+  untouched.
 - Fenced alias round-trip: serialize → deserialize preserves `Aliases` and leaves
   `Attrs` free of an `aliases` key.
 - Prose alias round-trip: existing marker tests continue to pass.
