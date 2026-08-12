@@ -1,6 +1,6 @@
 # Block ids become UUIDs — short handles demoted to permanent aliases
 
-**Status:** Draft
+**Status:** Implemented
 **Tracked:** #75
 **Date:** 2026-08-12
 
@@ -150,10 +150,15 @@ Re-identifying a block must honour the **two-sided id invariant** that
 because the WYSIWYG wire and the fenced serializer both read it out of `Attrs`.
 Writing only one side reintroduces the id-less-block bug.
 
-`Migrate` returns `changed`; when true, `NewShadow` arms the autosave debounce so
-the upgrade is written once. Without that, a document's ids would differ on every
-open until the user happened to type something. FileStore versioning is the
-rollback.
+`Migrate` returns `changed`. When true, `EditorService.open` flushes the document
+**synchronously** — not merely arming the autosave debounce, which implementation
+showed to be insufficient. `applyJobUpdate` transiently reopens a *closed*
+document to apply a finished job's result, and the job carries the block id it
+was dispatched with; if the upgrade were still sitting in memory behind a 30s
+timer, that reopen would re-mint different ids and the result would be applied to
+a block that no longer exists. `ShadowDocument.MigratedOnLoad` carries the signal;
+`NewShadow` still arms the debounce as a fallback for callers that construct a
+shadow directly. FileStore versioning is the rollback.
 
 Documents never opened keep their short ids — still valid, just not externally
 addressable — until `/migrate-ids` (§5) sweeps them.
@@ -230,16 +235,31 @@ bare `block:{alias}`, so an alias can never leave its container.
 
 ### 5. `/migrate-ids` — the explicit sweep
 
-Migration is lazy: a document migrates when it is parsed. A document never opened
+Migration is lazy: a document migrates when it is opened. A document never opened
 keeps its short ids — still valid, but not externally addressable. `/migrate-ids`
-closes that gap: a `FamilyUtil` command alongside `/uuid`, walking every document
-in the attached library, parsing (which migrates) and saving what changed. It
-returns a `command-result` block with counts — documents scanned, documents
-migrated, blocks re-identified, collisions repaired.
+closes that gap, walking every document, migrating, and saving only what changed
+(so a clean library produces no version churn). It returns a `command-result`
+block with counts — scanned, migrated, blocks re-identified — and *lists* any
+document it had to skip, since a silently dropped document reads as "covered
+everything" when it was not.
 
 Chosen over a menu item because it needs no Wails menu surgery (post-startup menu
 rebuilds are a known Linux crash source here) and it fits the workspace command
 plane direction.
+
+**Placement is forced by the import graph.** `command/` cannot import `block/` —
+`block → ai → command` is an existing edge — and neither can `services/`, because
+that same chain continues `command → services`. So the sweep itself lives in
+`editor.IdentitySweeper`, the only package that sees both the codec and the
+document service, behind a `command.IdentitySweeper` port whose result type
+(`domain.IdentitySweepResult`) sits in the leaf both sides already share.
+
+**The sweep covers buffers, not just filed notes.** `DocumentService.List` returns
+only `LibraryCategory`, which is right for the sidebar and wrong here: Sieve is
+scratchpad-first, so most documents at any moment are unfiled `WorkingCopy`
+buffers. A sweep built on `List` would have left the majority of blocks
+unaddressable. `DocumentService.AllUUIDs` was added for this, sweeping both
+categories — the same pair `AssetService` and the store migration already use.
 
 ### 6. `handle_gc.go`
 
