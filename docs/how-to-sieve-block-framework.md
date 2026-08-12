@@ -9,7 +9,7 @@
 > ("`GenerateBlockID("web-clip")` → `"we-a3f9"`… Do not use longer IDs"). Block
 > ids are now UUIDv7, minted by `ident.New`; `GenerateBlockID` and the per-kind
 > `IDPrefix` methods no longer exist. See
-> `docs/design/specs/2026-08-12-block-ids-become-uuids-design.md`.
+> `docs/design/archive/specs/2026-08-12-block-ids-become-uuids-design.md`.
 
 # How to Build a Sieve Block
 

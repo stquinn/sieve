@@ -1,7 +1,18 @@
+> **STATUS: DONE** — shipped 2026-08-12 (#75 closed). All block ids are UUIDv7;
+> the coordinate grammar (`domain.Address`) is built and tested but deliberately
+> unadopted — #74 is its first consumer. Archived 2026-08-12.
+>
+> **Two decisions changed during implementation** and the body below reflects the
+> final design, not the issue text: migration creates **no aliases** (in-document
+> `ref` rewriting is provably exhaustive, so the safety net was unnecessary), and
+> the migrator sits on the **load path** rather than inside `Deserialize`, flushed
+> synchronously at open. The title's "permanent aliases" is the superseded
+> framing, kept so the issue and this file still match by name.
+
 # Block ids become UUIDs — short handles demoted to permanent aliases
 
 **Status:** Implemented
-**Tracked:** #75
+**Tracked:** #75 (closed)
 **Date:** 2026-08-12
 
 ## Problem
