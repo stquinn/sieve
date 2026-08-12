@@ -16,6 +16,24 @@
 // (shell/trigger-providers.js) calls search() and never sees a socket. The
 // TYPING CADENCE is not this class's business either — debouncing belongs to the
 // provider that watches the keyboard; this one round-trips whatever it is asked.
+//
+// TWO VERBS, ONE ROUTER. `search` asks what COULD be mentioned; `resolve` asks
+// what a mention MEANS. They are the two faces of Go's one editor.Router
+// (enumeration and navigation), so they belong to its one JS peer rather than to
+// two tenants that would each invent a correlation scheme over the same wire.
+// The consumer of the second is not the picker but a rendered mention — the
+// ai-block's attachment chip — which is still a mention: the persisted form of
+// one. (If a non-mention consumer ever needs an address resolved — a smart link,
+// a status-bar id — that is the trigger to rename this class for what it has
+// become, an address peer, rather than to grow a third tenant.)
+//
+// JS NEVER DECODES A COORDINATE. That is the rule `resolve` exists to keep. The
+// grammar is Go's (#75) and a second implementation in JavaScript both drifts
+// and fails silently: the retired chip handler tested for a `container:` prefix
+// and returned early on everything else, so a `block:{container}/{handle}`
+// address — legal, and what #80 wants — made the chip do nothing at all. So a
+// uri travels through here as an OPAQUE string, and what comes back is already
+// actionable: a uuid to open and a block id to reveal.
 
 import { ContractViolation } from './sieve-block.js'
 
@@ -31,6 +49,23 @@ import { ContractViolation } from './sieve-block.js'
  */
 
 /**
+ * WHERE A COORDINATE OPENS — Go's `domain.OpenTarget` as it arrives on the wire,
+ * and the ONLY thing the frontend is allowed to know about an address. `uuid` is
+ * the document to open; `blockId` is the block to reveal inside it (empty for a
+ * whole container). `found` false means Go refused or found nothing, and `error`
+ * says which — a click that fails must say so, which is exactly what the JS
+ * prefix-guard this replaces could not do.
+ * @typedef {object} MentionTarget
+ * @property {string} uri      the address it was resolved from, echoed back
+ * @property {boolean} found
+ * @property {string} uuid
+ * @property {string} blockId
+ * @property {string} kind
+ * @property {string} title
+ * @property {string} error
+ */
+
+/**
  * @typedef {object} MentionServiceOptions
  * @property {number} [timeoutMs]
  *   — how long an unanswered query waits before it settles EMPTY. It never
@@ -40,7 +75,7 @@ import { ContractViolation } from './sieve-block.js'
  */
 
 /** The inbound frame vocabulary this tenant claims on the plane. */
-const MENTION_FRAMES = Object.freeze(['mention-result'])
+const MENTION_FRAMES = Object.freeze(['mention-result', 'mention-resolved'])
 
 /** Go floors an absent limit at 8 and caps it at 25; we send its floor. */
 const DEFAULT_LIMIT = 8
@@ -50,7 +85,10 @@ const DEFAULT_TIMEOUT_MS = 4000
 
 export class MentionService {
   /** @type {import('./workspace-service.js').WorkspaceService} the session-channel wire owner */ #workspace
-  /** @type {Map<string, {resolve: (c: MentionCandidate[]) => void, timer: ReturnType<typeof setTimeout>}>} correlationId → the waiting query */ #pending = new Map()
+  /** @type {Map<string, {settle: (answer: any) => void, timer: ReturnType<typeof setTimeout>}>}
+   *  correlationId → the waiting request. One map for BOTH verbs: correlation is
+   *  the plane's scheme, so an id is unique whatever asked for it, and the
+   *  waiting promise is what knows the shape of its own answer. */ #pending = new Map()
   /** @type {number} */ #timeoutMs
   /** @type {number} */ #defaultLimit
 
@@ -77,19 +115,23 @@ export class MentionService {
   get frameTypes() { return MENTION_FRAMES }
 
   /**
-   * Inbound `mention-result` delivery. Go guarantees `candidates` is an array
-   * and never null; the Array.isArray guard is the door for a malformed frame,
-   * so the picker gets a list to render in every case. An unknown correlation id
-   * is dropped (a reply to a superseded or timed-out query).
+   * Inbound delivery for both claimed words. Go guarantees `candidates` is an
+   * array and never null; the Array.isArray guard is the door for a malformed
+   * frame, so the picker gets a list to render in every case. An unknown
+   * correlation id is dropped (a reply to a superseded or timed-out request).
    * @param {Record<string, any>} msg
    */
   onFrame(msg) {
     const cid = msg && msg.correlationId
     if (!cid) return
+    if (msg.type === 'mention-resolved') {
+      this.#settle(cid, MentionService.#targetOf(msg))
+      return
+    }
     this.#settle(cid, Array.isArray(msg.candidates) ? msg.candidates : [])
   }
 
-  // ── The picker's one verb ──────────────────────────────────────────────────
+  // ── The two verbs ──────────────────────────────────────────────────────────
 
   /**
    * Asks Go what `query` could mention. Resolves with the candidates, or with an
@@ -99,31 +141,78 @@ export class MentionService {
    * @returns {Promise<MentionCandidate[]>}
    */
   search(query, limit) {
+    return this.#request({
+      type: 'mention-query',
+      q: query || '',
+      limit: limit || this.#defaultLimit,
+    }, [])
+  }
+
+  /**
+   * Asks Go WHERE a coordinate opens. `uri` is opaque here — it is not parsed,
+   * split or prefix-tested on the way out, because the grammar is Go's.
+   *
+   * Resolves with the target (which may itself say `found: false`, the honest
+   * answer for a deleted or refused address), or with null when the address is
+   * empty or the round-trip times out. It NEVER rejects.
+   * @param {string} uri
+   * @returns {Promise<MentionTarget|null>}
+   */
+  resolve(uri) {
+    const address = (uri || '').trim()
+    if (!address) return Promise.resolve(null)
+    return this.#request({ type: 'mention-resolve', uri: address }, null)
+  }
+
+  /**
+   * Puts a correlated frame on the plane and hands back the promise of its
+   * reply. `onTimeout` is what that promise settles with when none arrives —
+   * every verb here answers, because a caller left waiting for ever is the
+   * silent failure this class exists to make impossible.
+   * @template T
+   * @param {Record<string, any>} frame  the verb's own fields (no correlation id)
+   * @param {T} onTimeout
+   * @returns {Promise<T>}
+   */
+  #request(frame, onTimeout) {
     const cid = this.#workspace.newCorrelationId()
-    return new Promise((resolve) => {
+    return new Promise((settle) => {
       this.#pending.set(cid, {
-        resolve: resolve,
-        timer: setTimeout(() => this.#settle(cid, []), this.#timeoutMs),
+        settle: settle,
+        timer: setTimeout(() => this.#settle(cid, onTimeout), this.#timeoutMs),
       })
-      this.#workspace.send({
-        type: 'mention-query',
-        q: query || '',
-        limit: limit || this.#defaultLimit,
-        correlationId: cid,
-      })
+      this.#workspace.send(Object.assign({}, frame, { correlationId: cid }))
     })
   }
 
   /**
-   * Settles one waiting query exactly once (the timeout and the reply race; the
-   * map entry is the token that decides).
-   * @param {string} cid @param {MentionCandidate[]} candidates
+   * Normalizes a `mention-resolved` frame into a total MentionTarget, so a
+   * consumer never has to tell an absent key from an empty one.
+   * @param {Record<string, any>} msg
+   * @returns {MentionTarget}
    */
-  #settle(cid, candidates) {
+  static #targetOf(msg) {
+    return {
+      uri: msg.uri || '',
+      found: msg.found === true,
+      uuid: msg.uuid || '',
+      blockId: msg.blockId || '',
+      kind: msg.kind || '',
+      title: msg.title || '',
+      error: msg.error || '',
+    }
+  }
+
+  /**
+   * Settles one waiting request exactly once (the timeout and the reply race;
+   * the map entry is the token that decides).
+   * @param {string} cid @param {any} answer
+   */
+  #settle(cid, answer) {
     const entry = this.#pending.get(cid)
     if (!entry) return
     this.#pending.delete(cid)
     clearTimeout(entry.timer)
-    entry.resolve(candidates)
+    entry.settle(answer)
   }
 }

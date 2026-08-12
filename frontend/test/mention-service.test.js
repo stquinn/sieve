@@ -55,7 +55,7 @@ describe('MentionService — the mention tenant of the session plane', () => {
     const mentions = new MentionService(plane)
     // The command tenant registers the sibling word; neither registration throws.
     expect(() => new CommandService(plane, { commands: [] })).not.toThrow()
-    expect(mentions.frameTypes).toEqual(['mention-result'])
+    expect(mentions.frameTypes).toEqual(['mention-result', 'mention-resolved'])
 
     const answer = mentions.search('auth', 5)
     await new Promise((r) => setTimeout(r, 10))
@@ -124,5 +124,115 @@ describe('MentionService — the mention tenant of the session plane', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+// ── resolve: the address's OTHER question (#74) ───────────────────────────────
+//
+// search asks what COULD be mentioned; resolve asks what a mention MEANS. Both
+// are faces of Go's ONE Router, so they are faces of its one JS peer — and the
+// whole point of the verb is that JS never decodes a coordinate itself. These
+// tests therefore assert the uri travels OPAQUELY and the answer arrives
+// pre-digested: a uuid to open, a block id to reveal.
+describe('MentionService — resolve: what does this coordinate open?', () => {
+  /** @type {FakeWebSocket[]} */ let sockets
+  /** @type {WorkspaceService} */ let plane
+
+  beforeEach(() => {
+    sockets = []
+    plane = new WorkspaceService({
+      socketFactory: (url) => {
+        const ws = new FakeWebSocket(url)
+        sockets.push(ws)
+        return /** @type {any} */ (ws)
+      },
+      wsUrl: () => 'ws://test/api/ws?session=1',
+    })
+  })
+
+  it('claims mention-resolved alongside mention-result — one tenant, one vocabulary', () => {
+    const mentions = new MentionService(plane)
+    expect(mentions.frameTypes).toEqual(['mention-result', 'mention-resolved'])
+  })
+
+  it('sends the address UNPARSED and returns what Go says it opens', async () => {
+    const mentions = new MentionService(plane)
+    const answer = mentions.resolve('container:9f2b')
+    await new Promise((r) => setTimeout(r, 10))
+
+    const frame = sockets[0].sent[0]
+    expect(frame.type).toBe('mention-resolve')
+    expect(frame.uri).toBe('container:9f2b')      // opaque: never split, never prefix-tested
+    expect(typeof frame.correlationId).toBe('string')
+
+    sockets[0].receive({
+      type: 'mention-resolved',
+      correlationId: frame.correlationId,
+      uri: 'container:9f2b',
+      found: true, uuid: '9f2b', blockId: '', kind: 'note', title: 'Auth Design',
+    })
+    expect(await answer).toEqual({
+      uri: 'container:9f2b', found: true, uuid: '9f2b', blockId: '',
+      kind: 'note', title: 'Auth Design', error: '',
+    })
+  })
+
+  it('carries the block id through for an address that names one', async () => {
+    const mentions = new MentionService(plane)
+    const answer = mentions.resolve('block:9f2b/b7')
+    await new Promise((r) => setTimeout(r, 10))
+    sockets[0].receive({
+      type: 'mention-resolved', correlationId: sockets[0].sent[0].correlationId,
+      uri: 'block:9f2b/b7', found: true, uuid: '9f2b', blockId: 'b7', kind: 'note', title: 'Auth Design',
+    })
+    const target = await answer
+    expect(target && target.uuid).toBe('9f2b')
+    expect(target && target.blockId).toBe('b7')
+  })
+
+  it('an unresolvable address resolves to found:false with the reason Go gave', async () => {
+    const mentions = new MentionService(plane)
+    const answer = mentions.resolve('container:gone')
+    await new Promise((r) => setTimeout(r, 10))
+    sockets[0].receive({
+      type: 'mention-resolved', correlationId: sockets[0].sent[0].correlationId,
+      uri: 'container:gone', found: false, error: 'node: address resolves to nothing',
+    })
+    const target = await answer
+    expect(target && target.found).toBe(false)
+    expect(target && target.error).toBe('node: address resolves to nothing')
+  })
+
+  it('an empty address never reaches the wire', async () => {
+    const mentions = new MentionService(plane)
+    expect(await mentions.resolve('')).toBe(null)
+    expect(sockets.length).toBe(0)
+  })
+
+  it('never rejects: an unanswered resolve settles null on timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      const mentions = new MentionService(plane, { timeoutMs: 50 })
+      const answer = mentions.resolve('container:slow')
+      vi.advanceTimersByTime(60)
+      expect(await answer).toBe(null)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('correlates against a concurrent search — the verbs share one scheme, not one reply', async () => {
+    const mentions = new MentionService(plane)
+    const search = mentions.search('auth')
+    const resolve = mentions.resolve('container:9f2b')
+    await new Promise((r) => setTimeout(r, 10))
+    const [q, r] = sockets[0].sent
+
+    sockets[0].receive({ type: 'mention-resolved', correlationId: r.correlationId, uri: 'container:9f2b', found: true, uuid: '9f2b' })
+    sockets[0].receive({ type: 'mention-result', correlationId: q.correlationId, candidates: [{ uri: 'container:1', title: 'One' }] })
+
+    expect(await search).toEqual([{ uri: 'container:1', title: 'One' }])
+    const target = await resolve
+    expect(target && target.uuid).toBe('9f2b')
   })
 })

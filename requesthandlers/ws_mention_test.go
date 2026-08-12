@@ -13,9 +13,13 @@ import (
 
 // stubSource is a NodeSource double: it records what the Router asked for and
 // answers from a fixed offer list. No store, no disk — a typeahead's contract is
-// query in, candidates out.
+// query in, candidates out. `nodes` is the dereference half (the resolve
+// round-trip's input); it stays empty for the enumeration tests, where every
+// address is dangling by design.
 type stubSource struct {
 	offers    []domain.Candidate
+	nodes     map[string]domain.Node
+	resolved  []string
 	lastQuery string
 	lastLimit int
 }
@@ -31,6 +35,10 @@ func (s *stubSource) Search(query string, limit int) []domain.Candidate {
 }
 
 func (s *stubSource) Resolve(uri string) (domain.Node, error) {
+	s.resolved = append(s.resolved, uri)
+	if node, ok := s.nodes[uri]; ok {
+		return node, nil
+	}
 	return domain.Node{}, domain.ErrNodeNotFound
 }
 

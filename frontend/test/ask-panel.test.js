@@ -14,6 +14,8 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { AskPanel } from '../src/static/shell/ask-panel.js'
+import { CommandService } from '../src/static/block/command-service.js'
+import { WorkspaceService } from '../src/static/block/workspace-service.js'
 // GLOW DROPPED (P4.B) regression guard: ask-panel.js does NOT import these — the
 // mock exists purely as a trip-wire so a future re-coupling would be caught here.
 vi.mock('../src/static/ai/ai-target-decoration.js', () => ({
@@ -583,6 +585,203 @@ describe('AskPanel — @ attachments (#74 P4)', () => {
     ta.dispatchEvent(new window.Event('input', { bubbles: true }))
     el.querySelector('.ask-popup__send').click()
     expect(editor.askAi.mock.calls[0][0].attachments).toEqual([])
+  })
+})
+
+// ── The header shows the SUBJECT; the footer shows the CONTEXT (#74) ──────────
+//
+// "Ask About Document" stopped being true the moment `/btw` could be typed into
+// the same box: you are not asking ABOUT the target, you are invoking a command
+// that merely receives it. So the header is a VIEW OF THE COMPOSER TEXT — derived
+// live, exactly as the attachment chips are — and it names the command as soon
+// as the text resolves to a known one.
+describe('AskPanel — the header names the verb once one is typed', () => {
+  const label = (el) => el.querySelector('.ask-popup__label').textContent
+
+  /** The REAL CommandService over a plane whose socket is never opened (nothing
+   *  here dispatches): resolution is the behaviour under test, so mocking
+   *  `resolve` would be testing the mock's idea of "known command". */
+  function realCommands() {
+    return new CommandService(new WorkspaceService({
+      socketFactory: () => /** @type {any} */ ({ send() {}, close() {} }),
+      wsUrl: () => 'ws://test/api/ws?session=1',
+    }), { commands: [{ name: 'btw', description: 'Ask btw', family: 'ai' }] })
+  }
+
+  /** @param {HTMLElement} el @param {string} value */
+  function type(el, value) {
+    const ta = /** @type {HTMLTextAreaElement} */ (el.querySelector('.ask-popup__input'))
+    ta.value = value
+    ta.setSelectionRange(value.length, value.length)
+    ta.dispatchEvent(new window.Event('input', { bubbles: true }))
+  }
+
+  it('swaps to the command the moment the text resolves to a KNOWN one, and reverts', () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom()
+    const panel = new AskPanel(fakeWorkspace(fakeEditor({ kind: 'document', ref: 'doc', label: 'Document' })), realCommands())
+    panel.open()
+    vi.runAllTimers()
+    expect(label(el)).toBe('Ask About Document')
+
+    type(el, '/btw')
+    expect(label(el)).toBe('/btw')
+
+    // The token goes; the header goes back with it — no send, no selection event.
+    type(el, '/bt')
+    expect(label(el)).toBe('Ask About Document')
+  })
+
+  it('does NOT flicker through the prefixes of a command as it is typed', () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom()
+    const panel = new AskPanel(fakeWorkspace(fakeEditor({ kind: 'document', ref: 'doc', label: 'Document' })), realCommands())
+    panel.open()
+    vi.runAllTimers()
+
+    for (const prefix of ['/', '/b', '/bt']) {
+      type(el, prefix)
+      expect(label(el)).toBe('Ask About Document')
+    }
+    type(el, '/btw')
+    expect(label(el)).toBe('/btw')
+  })
+
+  it('keeps naming the command while its arguments are typed', () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom()
+    const panel = new AskPanel(fakeWorkspace(fakeEditor()), realCommands())
+    panel.open()
+    vi.runAllTimers()
+    type(el, '/btw what did I miss')
+    expect(label(el)).toBe('/btw')
+  })
+
+  it('an unknown slash word is not a verb — the header still describes the target', () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom()
+    const panel = new AskPanel(fakeWorkspace(fakeEditor({ kind: 'block', ref: 'co-1', label: 'Code Block' })), realCommands())
+    panel.open()
+    vi.runAllTimers()
+    type(el, '/nosuchcommand')
+    expect(label(el)).toBe('Ask About Code Block')
+  })
+
+  it('a selection change does not stomp the command header', () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom()
+    const editor = fakeEditor({ kind: 'document', ref: 'doc', label: 'Document' })
+    const ws = fakeWorkspace(editor)
+    const panel = new AskPanel(ws, realCommands())
+    panel.open()
+    type(el, '/btw')
+
+    editor.getSelectionContext = () => ({ target: { kind: 'selection', ref: 'pr-1', label: 'Paragraph' } })
+    ws.emit({ target: { kind: 'selection', ref: 'pr-1', label: 'Paragraph' } })
+    vi.runAllTimers()
+
+    expect(label(el)).toBe('/btw')          // subject: still the command
+    expect(el.querySelector('.ask-target-chip__label').textContent).toBe('Paragraph')  // context: live
+  })
+
+  it('the header reverts after a send clears the composer', () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom({ open: true })
+    const editor = fakeEditor({ kind: 'document', ref: 'doc', label: 'Document' })
+    const cs = realCommands()
+    vi.spyOn(cs, 'dispatch').mockReturnValue(/** @type {any} */ ({ correlationId: 'c-1', onResult: vi.fn(), cancel: vi.fn() }))
+    const panel = new AskPanel(fakeWorkspace(editor), cs)
+    panel.open()
+    vi.runAllTimers()
+    type(el, '/btw what did I miss')
+    expect(label(el)).toBe('/btw')
+
+    el.querySelector('.ask-popup__send').click()
+    expect(label(el)).toBe('Ask About Document')
+  })
+
+  it('with no CommandService the header is unchanged by a slash', () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom()
+    const panel = new AskPanel(fakeWorkspace(fakeEditor({ kind: 'document', ref: 'doc', label: 'Document' })))
+    panel.open()
+    vi.runAllTimers()
+    type(el, '/btw')
+    expect(label(el)).toBe('Ask About Document')
+  })
+})
+
+// ── The target renders as chips in the footer (#74) ───────────────────────────
+//
+// A target chip is NOT an attachment: the editor owns the selection and the
+// panel merely draws it, so it carries no ✕ (the cross keeps exactly one
+// meaning — drop an attachment) and it never reaches the manifest.
+describe('AskPanel — the footer shows what the message will act on', () => {
+  const targetChips = (el) => el.querySelectorAll('.ask-target-chip')
+
+  it('renders ONE view-only chip for the target, with no remove affordance', () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom()
+    const panel = new AskPanel(fakeWorkspace(fakeEditor({ kind: 'block', ref: 'co-1', label: 'Code Block' })))
+    panel.open()
+    vi.runAllTimers()
+
+    const chips = targetChips(el)
+    expect(chips.length).toBe(1)
+    expect(chips[0].querySelector('.ask-target-chip__label').textContent).toBe('Code Block')
+    expect(chips[0].querySelector('button')).toBe(null)          // no ✕: the editor owns the selection
+    expect(el.querySelectorAll('.ask-chip').length).toBe(0)      // and it is not an attachment chip
+  })
+
+  it('tracks the selection stream', () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom()
+    const editor = fakeEditor({ kind: 'document', ref: 'doc', label: 'Document' })
+    const ws = fakeWorkspace(editor)
+    const panel = new AskPanel(ws)
+    panel.open()
+    vi.runAllTimers()
+    expect(targetChips(el)[0].textContent).toContain('Document')
+
+    editor.getSelectionContext = () => ({ target: { kind: 'selection', ref: 'pr-1', label: '“retry policy”' } })
+    ws.emit({ target: { kind: 'selection', ref: 'pr-1', label: '“retry policy”' } })
+    vi.runAllTimers()
+    expect(targetChips(el)[0].textContent).toContain('“retry policy”')
+  })
+
+  it('is NOT an attachment: it never reaches the manifest, and a send leaves it standing', async () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom({ open: true })
+    const editor = fakeEditor({ kind: 'document', ref: 'doc', label: 'Document' })
+    const panel = new AskPanel(fakeWorkspace(editor), undefined, undefined,
+      fakeMentions([{ uri: 'container:9f2b', title: 'Auth Design', kind: 'note', detail: 'design/' }]))
+    panel.open()
+    vi.runAllTimers()
+
+    const ta = /** @type {HTMLTextAreaElement} */ (el.querySelector('.ask-popup__input'))
+    ta.value = 'How does @au'
+    ta.setSelectionRange(ta.value.length, ta.value.length)
+    ta.dispatchEvent(new window.Event('input', { bubbles: true }))
+    await vi.advanceTimersByTimeAsync(300)
+    ta.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+
+    // One of each in the footer, told apart by class — and only one is removable.
+    expect(targetChips(el).length).toBe(1)
+    expect(el.querySelectorAll('.ask-chip').length).toBe(1)
+    expect(el.querySelectorAll('.ask-chip__remove').length).toBe(1)
+
+    el.querySelector('.ask-popup__send').click()
+    expect(editor.askAi.mock.calls[0][0].attachments).toEqual([{ uri: 'container:9f2b', title: 'Auth Design' }])
+    // The attachment chip clears with the message; the target belongs to the
+    // editor, so it is still there.
+    expect(el.querySelectorAll('.ask-chip').length).toBe(0)
+    expect(targetChips(el).length).toBe(1)
+  })
+
+  it('renders nothing before the panel has a context', () => {
+    const el = mountPanelDom()
+    new AskPanel(fakeWorkspace(null))
+    expect(targetChips(el).length).toBe(0)
   })
 })
 

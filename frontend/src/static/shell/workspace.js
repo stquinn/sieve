@@ -195,6 +195,34 @@ export class SieveWorkspace {
   }
 
   /**
+   * Opens what a Sieve COORDINATE points at — the verb behind clicking a mention
+   * (an ai-block attachment chip today, a block reference next).
+   *
+   * `uri` is OPAQUE to every line of this file. Go owns the address grammar
+   * (#75): which schemes exist, what a version pin means, how a block address
+   * names its container. Asking rather than parsing is the whole point — the JS
+   * decode this replaces recognised `container:` and returned early on anything
+   * else, so a legal `block:{container}/{handle}` address made the chip do
+   * nothing, silently. What comes back is already actionable, and an address
+   * that resolves to nothing SAYS so.
+   *
+   * `target.blockId` (the block to reveal inside the document) rides the answer
+   * but has no consumer yet — revealing one is #80's half. It is deliberately
+   * not faked here: opening the container is the honest subset.
+   * @param {string} uri
+   * @returns {Promise<boolean>} whether a document was opened
+   */
+  async openAddress(uri) {
+    const target = await this.#mentionService.resolve(uri)
+    if (!target || !target.found || !target.uuid) {
+      if (uri) console.warn('[workspace] address opens nothing:', uri, target && target.error)
+      return false
+    }
+    await this.open(target.uuid)
+    return true
+  }
+
+  /**
    * Creates a new untitled note and opens it: POST /api/note/new, tabbar swap.
    * @returns {Promise<any>}
    */

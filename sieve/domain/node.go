@@ -26,6 +26,28 @@ type Node struct {
 	Body string
 }
 
+// OpenTarget is where a coordinate NAVIGATES — the other question an address
+// answers, beside "what is there" (Node). It names the container to bring up
+// and, when the address qualifies one, the block to reveal inside it.
+//
+// It exists so that NO consumer takes an address apart itself. The frontend
+// holds coordinates as opaque strings and asks for one of these; what it gets
+// back is a uuid it can open and a block id it can reveal, with the scheme, the
+// pin rule and the container/handle split all decided in Go. A JS-side decode
+// of the same grammar is a second implementation that drifts, and its failure
+// mode is silence: an unrecognised form falls through the guard and the click
+// does nothing.
+//
+// Same reason as Node for living in the leaf: editor.Router produces one and
+// requesthandlers puts it on the wire, and domain/ is the package both can name.
+type OpenTarget struct {
+	URI     string // the address it was derived from
+	UUID    string // the container to open
+	BlockID string // the block to reveal inside it; empty for a whole container
+	Kind    string // the container's own noun: "note"
+	Title   string
+}
+
 // Candidate is one offer from a source's enumeration face: what the picker shows
 // and what an accepted mention persists. The invariant behind it is that a
 // source may only offer what it can also dereference.

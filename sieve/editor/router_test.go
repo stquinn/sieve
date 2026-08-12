@@ -179,3 +179,110 @@ func TestRouter_SearchIgnoresEmptyQueries(t *testing.T) {
 		t.Errorf("no source should have been asked, got %v", notes.searched)
 	}
 }
+
+// ── Target: the NAVIGATION face (#74) ────────────────────────────────────────
+//
+// Resolve answers "what is at this address"; Target answers "where does it
+// open". The second question is the frontend's, and it is asked here so that no
+// consumer ever takes an address apart itself.
+
+func TestRouter_TargetOfAContainerAddressIsThatContainer(t *testing.T) {
+	uri := "container:" + testContainerUUID
+	notes := &fakeSource{name: "notes", nodes: map[string]domain.Node{
+		uri: {URI: uri, UUID: testContainerUUID, Kind: "note", Title: "Auth Design"},
+	}}
+	r := NewRouter(notes)
+
+	target, err := r.Target(uri)
+	if err != nil {
+		t.Fatalf("Target: %v", err)
+	}
+	if target.UUID != testContainerUUID || target.BlockID != "" {
+		t.Errorf("target = %+v, want the container and no block", target)
+	}
+	if target.URI != uri || target.Title != "Auth Design" || target.Kind != "note" {
+		t.Errorf("target = %+v, want the resolved node's identity carried", target)
+	}
+}
+
+// A block: coordinate opens its CONTAINER and names the block to reveal. The
+// block scheme never reaches a source — nothing dereferences it yet — so what
+// the source is asked for is the container address.
+func TestRouter_TargetOfAQualifiedBlockAddressOpensItsContainer(t *testing.T) {
+	containerURI := "container:" + testContainerUUID
+	notes := &fakeSource{name: "notes", nodes: map[string]domain.Node{
+		containerURI: {URI: containerURI, UUID: testContainerUUID, Kind: "note", Title: "Auth Design"},
+	}}
+	r := NewRouter(notes)
+
+	target, err := r.Target("block:" + testContainerUUID + "/" + testBlockUUID)
+	if err != nil {
+		t.Fatalf("Target: %v", err)
+	}
+	if target.UUID != testContainerUUID || target.BlockID != testBlockUUID {
+		t.Errorf("target = %+v, want container + block", target)
+	}
+	if len(notes.resolved) != 1 || notes.resolved[0] != containerURI {
+		t.Errorf("the source was asked for %v, want only the container address", notes.resolved)
+	}
+}
+
+// An ALIAS handle is carried through untouched: it is local to its container, so
+// only the container that opens can resolve it.
+func TestRouter_TargetCarriesAnAliasHandleThrough(t *testing.T) {
+	containerURI := "container:" + testContainerUUID
+	notes := &fakeSource{name: "notes", nodes: map[string]domain.Node{
+		containerURI: {URI: containerURI, UUID: testContainerUUID},
+	}}
+	r := NewRouter(notes)
+
+	target, err := r.Target("block:" + testContainerUUID + "/intro")
+	if err != nil {
+		t.Fatalf("Target: %v", err)
+	}
+	if target.BlockID != "intro" {
+		t.Errorf("blockId = %q, want the alias carried through", target.BlockID)
+	}
+}
+
+// A BARE block:{uuid} names a block without naming where it lives, and nothing
+// indexes blocks across containers — so there is no document to open. Refusing
+// is the honest answer; guessing is not.
+func TestRouter_TargetOfABareBlockAddressIsRefused(t *testing.T) {
+	notes := &fakeSource{name: "notes"}
+	r := NewRouter(notes)
+
+	_, err := r.Target("block:" + testBlockUUID)
+	if !errors.Is(err, ErrNoContainer) {
+		t.Fatalf("err = %v, want ErrNoContainer", err)
+	}
+	if len(notes.resolved) != 0 {
+		t.Errorf("no source should have been asked, calls = %v", notes.resolved)
+	}
+}
+
+// The pin refusal is Resolve's, and Target inherits it rather than restating it:
+// there is exactly one place that decides what @v{n} means.
+func TestRouter_TargetOfAPinnedAddressIsRefused(t *testing.T) {
+	r := NewRouter(&fakeSource{name: "notes"})
+
+	if _, err := r.Target("container:" + testContainerUUID + "@v2"); !errors.Is(err, ErrVersionPinUnsupported) {
+		t.Fatalf("err = %v, want ErrVersionPinUnsupported", err)
+	}
+	if _, err := r.Target("block:" + testContainerUUID + "@v2/" + testBlockUUID); !errors.Is(err, ErrVersionPinUnsupported) {
+		t.Fatalf("pinned block address err = %v, want ErrVersionPinUnsupported", err)
+	}
+}
+
+// Dangling and malformed keep their own sentinels through Target, so a caller
+// can still tell "deleted" from "never was an address".
+func TestRouter_TargetSurfacesTheGrammarAndDanglingSentinels(t *testing.T) {
+	r := NewRouter(&fakeSource{name: "notes"})
+
+	if _, err := r.Target("container:" + testMissingUUID); !errors.Is(err, domain.ErrNodeNotFound) {
+		t.Fatalf("err = %v, want ErrNodeNotFound", err)
+	}
+	if _, err := r.Target("not-an-address"); !errors.Is(err, domain.ErrBadAddress) {
+		t.Fatalf("err = %v, want ErrBadAddress", err)
+	}
+}

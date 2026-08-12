@@ -24,6 +24,7 @@
 import { TriggerPopover } from './trigger-popover.js'
 import { SlashCommandProvider, MentionProvider } from './trigger-providers.js'
 import { ComposerAttachments } from './composer-attachments.js'
+import { TargetChips } from './target-chips.js'
 
 export class AskPanel {
   /** @type {import('./workspace.js').SieveWorkspace} */
@@ -39,6 +40,10 @@ export class AskPanel {
   /** @type {ComposerAttachments|null} what the message being written has attached
    *  (#74). PANEL STATE — the chips are UI, the manifest is what send carries. */
   #attachments = null
+  /** @type {TargetChips|null} the footer's view of what the message will ACT ON
+   *  (#74). A separate concern from #attachments and deliberately so: the editor
+   *  owns the selection this draws, so it never enters a manifest. */
+  #targetChips = null
   /** @type {HTMLElement|null} the structural #ask-panel (null → all methods no-op) */
   #panel = null
   /** @type {HTMLTextAreaElement|null} */
@@ -70,7 +75,11 @@ export class AskPanel {
     if (!this.#panel) return
     this.#textarea = this.#panel.querySelector('.ask-popup__input')
     this.#label = this.#panel.querySelector('.ask-popup__label')
-    // The attachment model comes first: the `@` provider's accept-sink writes
+    // The target row is built FIRST so it lands left of the attachment chips:
+    // what the message acts on, then what it drags along. It is view-only and
+    // holds no model — the editor owns the selection it draws.
+    this.#targetChips = new TargetChips(this.#panel.querySelector('.ask-popup__footer'))
+    // The attachment model comes next: the `@` provider's accept-sink writes
     // into it, so it must exist before the picker can offer anything. It takes
     // the composer too — the `@Title` tokens live there and the chips are a VIEW
     // of them (#74 P6) — and the gate through which it edits that text. The gate
@@ -123,6 +132,9 @@ export class AskPanel {
     // keeps it in lock-step with the label thereafter.
     this.#lastContext = this.#focusReturn
     this.#panel.classList.add('is-open')
+    // Paint what we already know before the debounced pull confirms it: the
+    // target chip must not arrive 100ms after the panel it belongs to.
+    this.#renderSubject()
     this.#refreshLabel()
     const ta = this.#textarea
     setTimeout(() => ta.focus(), 50)
@@ -211,8 +223,13 @@ export class AskPanel {
     // in the message, so every edit path — typing, selecting through a token and
     // deleting, cut, paste-over, undo — redraws them. Reconciling only at send
     // was the defect: the UI claimed "attached" right up until it silently
-    // wasn't.
-    textarea.addEventListener('input', () => this.#reconcileChips())
+    // wasn't. The HEADER is derived from the same text on the same event and for
+    // the same reason (#74): a label set once when the panel opened would go on
+    // saying "Ask About …" over a `/btw` the user has already typed.
+    textarea.addEventListener('input', () => {
+      this.#reconcileChips()
+      this.#renderSubject()
+    })
   }
 
   /** Re-derives the chips from the message as written. */
@@ -309,7 +326,7 @@ export class AskPanel {
     const attachments = this.#attachments ? this.#attachments.reconcile(this.#textarea.value) : []
 
     if (val.startsWith('/')) {
-      const cs = this.#commandService || (this.#ws && /** @type {any} */ (this.#ws).commandService)
+      const cs = this.#commands()
       if (cs) {
         const resolved = cs.resolve(val)
         if (resolved) {
@@ -348,6 +365,10 @@ export class AskPanel {
     if (this.#hintPopover) this.#hintPopover.reset()
     if (this.#panel && !this.#pinned) this.#panel.classList.remove('is-open')
     this.#focusReturn = null
+    // The header is a view of the text, and the text is gone: an emptied composer
+    // names no command, so the subject goes back to being the target. (The target
+    // chip stays — the selection outlives the message.)
+    this.#renderSubject()
   }
 
   /**
@@ -361,20 +382,61 @@ export class AskPanel {
   }
 
   /**
-   * Debounced label re-render from the live target label (pull at refresh, F2). It
-   * also STORES the rendered context as #lastContext, so #send acts on exactly the
-   * context whose label is on screen (D-5: send == shown).
+   * Debounced re-render from the live target (pull at refresh, F2). It also
+   * STORES the pulled context as #lastContext, so #send acts on exactly the
+   * context the panel is describing (D-5: send == shown).
    */
   #refreshLabel() {
     if (!this.#panel || !this.#label) return
     if (!this.#panel.classList.contains('is-open')) return
     if (this.#labelTimeout) clearTimeout(this.#labelTimeout)
     this.#labelTimeout = setTimeout(() => {
-      const ctx = this.#ws.getSelectionContext()
-      this.#lastContext = ctx
-      const t = ctx && ctx.target
-      if (!t || !this.#label) return
-      this.#label.textContent = t.label === 'Follow-up' ? 'Ask Follow-up' : 'Ask About ' + t.label
+      this.#lastContext = this.#ws.getSelectionContext()
+      this.#renderSubject()
     }, 100)
+  }
+
+  /**
+   * Renders the two things the panel says about a send: the HEADER (the SUBJECT —
+   * the command being invoked, or Ask and what it is about) and the footer's
+   * target chip (the CONTEXT that subject will receive).
+   *
+   * Both are DERIVED, never set-and-left. The header is a view of the composer
+   * text exactly as the attachment chips are, so it names a command the moment
+   * the text resolves to one and reverts the moment that token goes — no send,
+   * no selection event needed. It swaps only on an EXACT match against a known
+   * command, or it would flicker through `/b`, `/bt` on the way to `/btw`.
+   *
+   * The target chip is drawn from #lastContext (the context a send would carry),
+   * never a live re-read, so what is on screen and what would be sent cannot
+   * disagree.
+   */
+  #renderSubject() {
+    if (!this.#panel || !this.#label) return
+    const cmd = this.#activeCommand()
+    const target = this.#lastContext && this.#lastContext.target
+    if (cmd) {
+      this.#label.textContent = '/' + cmd.name
+    } else if (target) {
+      this.#label.textContent = target.label === 'Follow-up' ? 'Ask Follow-up' : 'Ask About ' + target.label
+    }
+    if (this.#targetChips) this.#targetChips.show(this.#lastContext)
+  }
+
+  /**
+   * The KNOWN command the composer names right now, or null. Resolution is the
+   * CommandService's — one place decides what a command is, and "known" means
+   * exactly what dispatch means by it.
+   * @returns {import('../block/command-service.js').CommandDescriptor|null}
+   */
+  #activeCommand() {
+    const cs = this.#commands()
+    const resolved = cs && this.#textarea ? cs.resolve(this.#textarea.value) : null
+    return resolved ? resolved.cmd : null
+  }
+
+  /** @returns {import('../block/command-service.js').CommandService|null} the injected service, or the workspace's */
+  #commands() {
+    return this.#commandService || (this.#ws && /** @type {any} */ (this.#ws).commandService) || null
   }
 }

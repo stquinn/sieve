@@ -2,6 +2,7 @@ package requesthandlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -536,6 +537,8 @@ func (h *WsHandler) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 			h.handleCommandCancel(raw)
 		case "mention-query":
 			h.handleMentionQuery(ch, raw)
+		case "mention-resolve":
+			h.handleMentionResolve(ch, raw)
 		}
 	}
 }
@@ -659,6 +662,64 @@ func (h *WsHandler) handleMentionQuery(requester *wsConn, raw []byte) {
 		"correlationId": msg.CorrelationID,
 		"candidates":    candidates,
 	})
+}
+
+// handleMentionResolve answers "where does this coordinate open?" from the
+// Router's navigation face — the sibling of handleMentionQuery's enumeration.
+//
+// IT EXISTS SO THE FRONTEND HOLDS COORDINATES AS OPAQUE STRINGS. The click on an
+// attachment chip used to decode `container:{uuid}` in JavaScript, which is a
+// second implementation of a grammar Go owns (#75) and fails SILENTLY on every
+// form it does not know: a `block:{container}/{handle}` address fell through the
+// guard and the chip did nothing, with no error anywhere. So the reply carries
+// what JS can ACT on — a uuid to open, a block id to reveal — and never anything
+// it would have to parse.
+//
+// An unresolvable address is an ANSWER (found:false + a reason), not a dropped
+// frame: a request with no reply is the same silence in a slower costume. Like
+// mention-result this is correlated and therefore ack-shaped, so it replies
+// through replyTo — requester-affinely.
+func (h *WsHandler) handleMentionResolve(requester *wsConn, raw []byte) {
+	var msg struct {
+		URI           string `json:"uri"`
+		CorrelationID string `json:"correlationId"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil || msg.CorrelationID == "" {
+		return
+	}
+	// Every key is present in every reply, resolvable or not: a consumer reading
+	// `frame.uuid` must never have to tell "absent" from "empty".
+	frame := map[string]interface{}{
+		"type":          "mention-resolved",
+		"correlationId": msg.CorrelationID,
+		"uri":           msg.URI,
+		"found":         false,
+		"uuid":          "",
+		"blockId":       "",
+		"kind":          "",
+		"title":         "",
+	}
+	switch target, err := h.resolveTarget(msg.URI); {
+	case err != nil:
+		frame["error"] = err.Error()
+	default:
+		frame["found"] = true
+		frame["uuid"] = target.UUID
+		frame["blockId"] = target.BlockID
+		frame["kind"] = target.Kind
+		frame["title"] = target.Title
+	}
+	h.replyTo(requester, frame)
+}
+
+// resolveTarget asks the Router where an address opens, treating an unwired
+// Router as a refusal rather than a panic — the same unconfigured floor
+// handleMentionQuery answers an empty list on.
+func (h *WsHandler) resolveTarget(uri string) (domain.OpenTarget, error) {
+	if h.ServiceProvider.Nodes == nil {
+		return domain.OpenTarget{}, errors.New("address resolution is unavailable")
+	}
+	return h.ServiceProvider.Nodes.Target(uri)
 }
 
 func (h *WsHandler) handleCommandCancel(raw []byte) {

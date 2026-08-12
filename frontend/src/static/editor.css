@@ -1990,26 +1990,43 @@ pre.tiptap-code-block code {
   opacity: 0.6;
 }
 
-/* ── Composer attachment chips (#74) ─────────────────────────────────────────
+/* ── Composer chips: attachments and target (#74) ────────────────────────────
+   BOTH ROWS ARE COORDINATE CHIPS and are styled as ONE species from one set of
+   rules. An attachment chip holds a coordinate pointing at another document; a
+   target chip holds the local target. They differ in SCOPE and in whether you
+   can remove one — nothing else. Two independent style blocks drifted apart
+   once already (the target chip came out unreadably faint), so the shared
+   appearance lives in a shared selector list and each variant carries only its
+   delta.
+
    NO NEW ROW: the chips take the footer's LEFT region, the one the hint had, and
-   displace it while any attachment is present (ComposerAttachments toggles the
-   hint's display). min-width:0 + overflow-x lets a long set scroll sideways
-   instead of growing the footer — its height feeds ui/layout.js's
-   askPanelMinHeight, so a wrapping row would shove the composer's floor around. */
+   the attachment row displaces the hint while any attachment is present
+   (ComposerAttachments toggles the hint's display). min-width:0 + overflow-x
+   lets a long set scroll sideways instead of growing the footer — its height
+   feeds ui/layout.js's askPanelMinHeight, so a wrapping row would shove the
+   composer's floor around. */
+.ask-panel .ask-popup__target,
 .ask-panel .ask-popup__chips {
   display: none;
-  flex: 1 1 auto;
   min-width: 0;
   gap: 6px;
   align-items: center;
   overflow-x: auto;
-  margin-right: 12px;
   scrollbar-width: none;
 }
 
+/* The target names ONE thing and yields its width; attachments take the rest. */
+.ask-panel .ask-popup__target { flex: 0 1 auto; margin-right: 8px; }
+.ask-panel .ask-popup__chips  { flex: 1 1 auto; margin-right: 12px; }
+
+.ask-panel .ask-popup__target::-webkit-scrollbar,
 .ask-panel .ask-popup__chips::-webkit-scrollbar { display: none; }
 
-.ask-panel .ask-chip {
+/* THE ONE CHIP APPEARANCE. Same padding, radius, type scale and accent for both
+   kinds — if the footer's two rows did not read as the same object, the styling
+   would have failed whatever the tests say. */
+.ask-panel .ask-chip,
+.ask-panel .ask-target-chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -2024,7 +2041,18 @@ pre.tiptap-code-block code {
   line-height: 1.4;
 }
 
-.ask-panel .ask-chip__label {
+/* THE TARGET VARIANT: outlined rather than filled, and the ✕'s padding given
+   back. That — plus the leading ◎ and the ABSENCE of a remove button — is the
+   whole difference. It is never said with contrast: a chip faded until it cannot
+   be read has stopped being a chip. */
+.ask-panel .ask-target-chip {
+  padding-right: 9px;
+  background: transparent;
+  border-color: color-mix(in srgb, var(--theme-accentPrimary) 45%, transparent);
+}
+
+.ask-panel .ask-chip__label,
+.ask-panel .ask-target-chip__label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

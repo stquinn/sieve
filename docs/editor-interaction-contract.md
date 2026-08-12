@@ -561,6 +561,46 @@ uses, so the `input` they fire is understood as ours: it neither reopens the
 picker on the token just deleted nor records an abandonment for text that no
 longer exists.
 
+### The header shows the subject; the footer shows the context (#74)
+
+**The panel header is a view of the composer text**, derived on the same `input`
+event and for the same reason as the chips: a label set when the panel opened
+goes on claiming "Ask About Document" over a `/btw` the user has already typed.
+You are not asking *about* the target there — you are invoking a command that
+merely receives it.
+
+| Composer text | Header |
+|---|---|
+| anything that is not a known command | `Ask About <target label>` (or `Ask Follow-up`) — unchanged |
+| an **exact** match against a known command, args or not (`/btw`, `/btw what did I miss`) | `/btw` |
+| a partial or unknown slash word (`/b`, `/bt`, `/nosuch`) | the target label — **no** swap |
+
+The exact-match rule is what stops the header flickering through `/b`, `/bt` on
+the way to `/btw`; "known" is `CommandService.resolve()`, the same predicate
+dispatch uses, so a header can never name a command a send would not run. It
+reverts the moment the token goes — no send, no selection event required — and a
+selection change never stomps it: the two are different questions.
+
+**The target renders as a chip in the footer**, left of the attachment chips, so
+that a message aimed at a command still shows what it will act on.
+
+- **View-only.** The editor owns the selection; the panel draws it. A target chip
+  has **no ✕** — the cross keeps exactly one meaning in this footer, *drop an
+  attachment* — and the difference is said with the missing button and an
+  outline-instead-of-fill, never with contrast.
+- **Not an attachment.** It never enters the manifest or the persisted attrs, and
+  a send leaves it standing: the selection outlives the message. Both are
+  coordinate chips and share one appearance (`.ask-chip, .ask-target-chip`) —
+  one points at another document, one at the local target.
+- **One chip today.** It carries `SelectionContext.target.label`, the string the
+  header used to show. A chip **per block** of a multi-block selection is
+  deliberately *not* shipped: `blockIds` are ids and `blockKind` is the primary
+  block only, so per-block labels would need a new per-block noun rule, a new
+  `SelectionContext` field and a ruling on whether label churn belongs in the
+  meaningful diff — and `blockIds` is the selection SPAN, not the target extent,
+  so a caret in flowing text (target: the whole document) would chip the one
+  paragraph it sits in and misdescribe what a send does. Tracked separately.
+
 ## Deferred (recorded, not shipped)
 
 - Bracket/quote auto-pairing in code blocks (`autoPair` policy flag) —

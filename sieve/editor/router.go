@@ -51,6 +51,11 @@ var (
 	// yet, so the only thing the router could return for a pinned address is
 	// current content — a snapshot that isn't one.
 	ErrVersionPinUnsupported = errors.New("router: version pinning is not implemented")
+	// ErrNoContainer refuses a bare block:{uuid} as a NAVIGATION target: it names
+	// a block without naming where it lives, and nothing indexes blocks across
+	// containers, so there is no document to open. The container-qualified form
+	// is the one that navigates. Refusing is honest; guessing is not.
+	ErrNoContainer = errors.New("router: a bare block address names no container to open")
 )
 
 // NewRouter builds the registry over its sources, in offer order.
@@ -100,6 +105,44 @@ func (r *Router) Resolve(uri string) (domain.Node, error) {
 		}
 	}
 	return domain.Node{}, fmt.Errorf("%w: %s", domain.ErrNodeNotFound, uri)
+}
+
+// Target answers WHERE a coordinate opens: the container to bring up, plus the
+// block to reveal inside it when the address names one.
+//
+// It is the NAVIGATION face, and it is a different question from Resolve's. A
+// block: address cannot be dereferenced — no source reaches inside a document
+// yet — but it can still be NAVIGATED, because the container segment it carries
+// is a container address the sources do answer for. So the split is not a
+// loophole in Resolve's refusal: opening a document and reading a block out of
+// one are different capabilities, and only the first is claimed here.
+//
+// Every refusal below is inherited rather than restated — the grammar's
+// (ParseAddress), the pin's and the dangling case's are all Resolve's own — so
+// there stays exactly one place that decides what an address means. The only
+// judgement this method adds is ErrNoContainer.
+func (r *Router) Target(uri string) (domain.OpenTarget, error) {
+	addr, err := domain.ParseAddress(uri)
+	if err != nil {
+		return domain.OpenTarget{}, err
+	}
+	if addr.Container == "" {
+		return domain.OpenTarget{}, fmt.Errorf("%w: %s", ErrNoContainer, uri)
+	}
+	// The pin is carried onto the container address deliberately, NOT dropped: a
+	// pinned address must be refused, and Resolve is what refuses it.
+	container := domain.Address{Scheme: domain.SchemeContainer, Container: addr.Container, Version: addr.Version}
+	node, err := r.Resolve(container.String())
+	if err != nil {
+		return domain.OpenTarget{}, err
+	}
+	return domain.OpenTarget{
+		URI:     uri,
+		UUID:    node.UUID,
+		BlockID: addr.Block, // empty for a container address; an alias stays an alias
+		Kind:    node.Kind,
+		Title:   node.Title,
+	}, nil
 }
 
 // Search fans the query out over every registered source and returns what is

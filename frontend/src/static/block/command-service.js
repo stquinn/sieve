@@ -141,7 +141,9 @@ export class CommandService {
    * lazily on the first send.
    * @param {string} commandName
    * @param {string} text
-   * @param {Record<string, any>} context
+   * @param {Record<string, any>|null} context
+   *   — the lens-authored context, or null when there is none (an empty object
+   *   goes on the wire either way; the frame assembly below is what decides).
    * @param {(res: CommandResult) => void} [onResult]
    * @param {Array<{uri: string, title?: string}>} [attachments]
    *   — the composer's attachment manifest for THIS invocation. See the frame
