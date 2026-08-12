@@ -25,8 +25,10 @@ import { isJobStale } from './job-status.js'
 import { esc } from './html-escape.js'
 import { MentionTokens } from './mention-tokens.js'
 
-/** One attachment as it is persisted (#74): the address is the truth, the title
- *  a render cache — kind/summary are resolved server-side at job time.
+/** One attachment as it is persisted (#74): the address is the truth and the
+ *  title is what labels it. Nothing else is stored, and nothing is resolved to
+ *  build the prompt — the model is given the address and dereferences it itself
+ *  (MCP `get_by_uri`) if it decides it needs the contents.
  * @typedef {{ uri: string, title?: string }} AiBlockAttachment */
 
 /** @typedef {{ id?: string, ref?: string, type?: 'ASK'|'EXPLAIN'|'BTW', status?: string, createdAt?: string, question?: string, response?: string|null, error?: string|null, model?: string|null, supportsEmbedding?: boolean, attachments?: AiBlockAttachment[] }} AiBlockAttrs */

@@ -10,19 +10,19 @@ import "errors"
 // renderer) never learns which service answered or what it stores. That is what
 // lets chats and Things register later without touching a single consumer.
 //
-// Node is a return type of block.NodesPort, so it lives in the leaf — block/
-// must be able to name it without importing services/ (same reason as
-// LinkPreviewResult).
+// It lives in the leaf because its producer and its consumer must not have to
+// know each other: editor.Router builds one, mcp's get_by_uri returns one, and
+// domain/ is the package both can name (same reason as LinkPreviewResult).
 type Node struct {
 	URI     string // the address it was resolved from
-	UUID    string // the target's identity — literally MCP get_note's argument
+	UUID    string // the target's identity
 	Kind    string // the source's own noun: "note"
 	Title   string
 	Summary string
-	// Body is the resolved content. NO prompt path reads it: an attachment is
-	// rendered as a MANIFEST — title + uuid, straight off the attachment — and the
-	// model fetches what it wants through MCP. It is here for a consumer that
-	// genuinely needs the content of an address it resolved.
+	// Body is the resolved content, and MCP get_by_uri is what returns it. No
+	// PROMPT path reads it: an attachment renders as a MANIFEST — title + uri,
+	// straight off the attachment — and the model dereferences what it decides it
+	// needs, which is precisely the call that lands here.
 	Body string
 }
 

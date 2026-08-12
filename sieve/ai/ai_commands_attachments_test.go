@@ -81,8 +81,12 @@ func familyManifestEntries(t *testing.T, prompt string) []map[string]any {
 
 // THE gap this closes: attachments rode the envelope and did nothing. Every
 // AI-family command now renders ONE ATTACHED DOCUMENTS section naming this
-// turn's documents, with the uuid the model would fetch by and never the
-// storage coordinate.
+// turn's documents by the coordinate get_by_uri takes — the same string the
+// block persisted, so nothing anywhere translates.
+//
+// There is ONE renderer (domain.Attachments.PromptSection), asserted at the
+// renderer in domain and HERE through a real command, so the ai-block path and
+// the command path cannot drift into two wordings.
 func TestAIFamily_RendersOneManifestSectionForItsAttachments(t *testing.T) {
 	for _, tc := range aiFamily() {
 		t.Run(tc.name, func(t *testing.T) {
@@ -95,11 +99,8 @@ func TestAIFamily_RendersOneManifestSectionForItsAttachments(t *testing.T) {
 			if n := strings.Count(prompt, "ATTACHED DOCUMENTS"); n != 1 {
 				t.Fatalf("rendered %d sections, want exactly 1:\n%s", n, prompt)
 			}
-			if !strings.Contains(prompt, "get_note") {
+			if !strings.Contains(prompt, "get_by_uri") {
 				t.Errorf("the manifest must name the retrieval verb:\n%s", prompt)
-			}
-			if strings.Contains(prompt, "container:") {
-				t.Errorf("the coordinate leaked into the prompt:\n%s", prompt)
 			}
 
 			// Attachments are a property of the QUESTION, so the section sits with
@@ -113,10 +114,12 @@ func TestAIFamily_RendersOneManifestSectionForItsAttachments(t *testing.T) {
 			if len(entries) != 2 {
 				t.Fatalf("entries = %+v, want both attachments", entries)
 			}
-			if entries[0]["title"] != "Auth Design" || entries[0]["uuid"] != "aaaaaaaa-1a2b-4c5d-8e9f-a1b2c3d4e5f6" {
+			// The entry's uri is the persisted coordinate, byte-for-byte — the
+			// same string the result block stores and the model passes back.
+			if entries[0]["title"] != "Auth Design" || entries[0]["uri"] != authURI {
 				t.Errorf("entry[0] = %+v", entries[0])
 			}
-			if entries[1]["title"] != "Retry RFC" || entries[1]["uuid"] != "bbbbbbbb-1a2b-4c5d-8e9f-a1b2c3d4e5f6" {
+			if entries[1]["title"] != "Retry RFC" || entries[1]["uri"] != retryURI {
 				t.Errorf("entry[1] = %+v", entries[1])
 			}
 		})
@@ -169,7 +172,7 @@ func TestAIFamily_UndereferenceableAttachmentDegradesRatherThanFailing(t *testin
 			if len(entries) != 1 || entries[0]["unavailable"] != true || entries[0]["title"] != "Deleted Doc" {
 				t.Fatalf("degraded entry = %+v", entries)
 			}
-			if _, hasUUID := entries[0]["uuid"]; hasUUID {
+			if _, hasURI := entries[0]["uri"]; hasURI {
 				t.Errorf("an unavailable entry has nothing to fetch: %+v", entries[0])
 			}
 		})

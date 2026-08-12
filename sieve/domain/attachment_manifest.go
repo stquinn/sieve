@@ -24,10 +24,10 @@ const attachmentPreamble = "The user attached these documents from their Sieve l
 // documents), so a five-turn chain each carrying a swagger file is unaffordable
 // before it is useful, while a manifest costs two lines per document and lets
 // the model fetch only what it decides it needs. A backend whose model cannot
-// call get_note simply answers without the contents — it is still told what it
+// call get_by_uri simply answers without the contents — it is still told what it
 // was given, and nothing in this path branches on which backend is configured.
-const attachmentFooter = "To read a document's full markdown body, call the sieve MCP tool `get_note` with\n" +
-	"its uuid. Read only the ones you actually need."
+const attachmentFooter = "To read a document's full markdown body, call the sieve MCP tool `get_by_uri`\n" +
+	"with its uri exactly as listed above. Read only the ones you actually need."
 
 // manifestEntry is one document as the model sees it. JSON rather than prose
 // because the entry shape must GROW: an imported thing (#38) should be a new
@@ -35,13 +35,14 @@ const attachmentFooter = "To read a document's full markdown body, call the siev
 //
 // Both fields come STRAIGHT off the attachment — nothing is fetched to render a
 // manifest. `title` is what binds "@Auth Design" in the question text back to an
-// entry, and `uuid` is literally get_note's argument, read out of the address by
-// ParseAddress. The COORDINATE itself never appears: it is a storage address, and
-// putting it in the prompt would mean teaching the model a URI scheme for no
-// benefit.
+// entry, and `uri` is the COORDINATE VERBATIM: the string the block persisted,
+// the string the model is shown, and the string get_by_uri takes are one string,
+// so no step in the chain translates. That is also what generalises — a uuid can
+// only ever name a whole note, while an address grows a block segment
+// (block:{container}/{handle}) with no new verb and no new entry shape.
 type manifestEntry struct {
 	Title string `json:"title"`
-	UUID  string `json:"uuid,omitempty"`
+	URI   string `json:"uri,omitempty"`
 	// Unavailable marks an address there is no verb to dereference — today,
 	// anything that is not a container. It is a NORMAL state, not an error: the
 	// entry still renders (labelled by its title) and the job still runs.
@@ -53,9 +54,9 @@ type manifestEntry struct {
 // what it was before the attr existed.
 //
 // The persisted title IS the manifest title. For a document renamed since it was
-// attached the model reads the name it had at the time, paired with a uuid that
-// still resolves — which for a historical turn is the more faithful record, not
-// a stale one.
+// attached the model reads the name it had at the time, paired with a coordinate
+// that still resolves — which for a historical turn is the more faithful record,
+// not a stale one.
 //
 // Titles are USER TEXT. #42's safety rule — data sections, "never spliced into
 // instruction sentences" — is satisfied by construction: every user string goes
@@ -118,12 +119,16 @@ func (a Attachments) StampAttrs(attrs map[string]interface{}) {
 // manifestEntry renders one attachment as the model sees it. An address the
 // grammar rejects, or one no verb can dereference, degrades to a title labelled
 // unavailable: additive context must never fail the job the user asked for.
+//
+// The address is PARSED but not rewritten: parsing is the check for "is there a
+// verb behind this", and what the entry carries is a.URI itself, so the model is
+// handed back the exact string the attachment stores.
 func (a Attachment) manifestEntry() manifestEntry {
 	addr, err := ParseAddress(a.URI)
 	if err != nil || addr.Scheme != SchemeContainer {
 		return manifestEntry{Title: a.Title, Unavailable: true}
 	}
-	return manifestEntry{Title: a.Title, UUID: addr.Container}
+	return manifestEntry{Title: a.Title, URI: a.URI}
 }
 
 // encode renders the entries as indented JSON with HTML escaping OFF — a title

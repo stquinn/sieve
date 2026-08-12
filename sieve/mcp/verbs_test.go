@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"sieve/sieve/editor"
 	"sieve/sieve/services"
 	"sieve/store/filestore"
 )
@@ -13,15 +14,7 @@ import (
 // temp library, seeded with a few filed notes across folders.
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
-	fs, err := filestore.NewFileStore(t.TempDir(), "testhost")
-	if err != nil {
-		t.Fatalf("NewFileStore: %v", err)
-	}
-	ds, err := services.NewDocumentService(fs)
-	if err != nil {
-		t.Fatalf("NewDocumentService: %v", err)
-	}
-
+	s, ds := newTestServerWithDocs(t)
 	seedNote(t, ds, "Go Concurrency", "programming", "go-concurrency",
 		[]string{"go", "concurrency"}, "goroutines and channels",
 		"# Go Concurrency\n\nUse channels for coordination.")
@@ -31,8 +24,24 @@ func newTestServer(t *testing.T) *Server {
 	seedNote(t, ds, "Grocery List", "", "grocery-list",
 		[]string{"personal"}, "weekly shop",
 		"# Grocery List\n\nmilk, eggs")
+	return s
+}
 
-	return NewServer(ds)
+// newTestServerWithDocs builds an EMPTY library and wires the server exactly as
+// the composition root does — the real editor.Router over the real notes source
+// — so the address verb is exercised through the resolver it actually ships
+// with, refusals and all, rather than a fake that could agree with itself.
+func newTestServerWithDocs(t *testing.T) (*Server, *services.DocumentService) {
+	t.Helper()
+	fs, err := filestore.NewFileStore(t.TempDir(), "testhost")
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	ds, err := services.NewDocumentService(fs)
+	if err != nil {
+		t.Fatalf("NewDocumentService: %v", err)
+	}
+	return NewServer(ds, editor.NewRouter(editor.NewNotesSource(ds))), ds
 }
 
 // seedNote creates a buffer, stamps metadata, and files it into folder.

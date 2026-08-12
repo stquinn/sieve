@@ -38,7 +38,6 @@ func (s *ServiceProvider) BlockServices() block.BlockServices {
 	return block.BlockServices{
 		AI:          s.AI,
 		Documents:   s.Documents,
-		Nodes:       s.Nodes,
 		Assets:      s.Assets,
 		LinkPreview: s.LinkPreview,
 		State:       s.State,
@@ -46,11 +45,12 @@ func (s *ServiceProvider) BlockServices() block.BlockServices {
 	}
 }
 
-// Compile-time proof the concrete services satisfy the block ports. Lives at the
-// composition root — the only place that knows both the ports and the concretes.
+// Compile-time proof the concrete services satisfy the ports their consumers
+// declare. Lives at the composition root — the only place that knows both the
+// ports and the concretes.
 var (
 	_ block.DocumentsPort   = (*services.DocumentService)(nil)
-	_ block.NodesPort       = (*editor.Router)(nil)
+	_ mcp.NodeResolver      = (*editor.Router)(nil)
 	_ block.AssetsPort      = (*services.AssetService)(nil)
 	_ block.StatePort       = (*services.StateService)(nil)
 	_ block.LinkPreviewPort = (*services.LinkPreviewService)(nil)
@@ -69,9 +69,9 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	// The Router: address → Node. Registering a source is the ONE line that makes
 	// a container kind mentionable, and the invariant it carries is that a source
 	// may only offer what the AI can dereference — so v1 registers notes only,
-	// because MCP get_note covers filed library documents and nothing else. Chats
-	// and Things register here as the MCP grows verbs for them, and nothing
-	// outside Go learns what kinds exist.
+	// because that is what MCP get_by_uri reaches through this very Router. Chats
+	// and Things become mentionable the day a source for them is registered here,
+	// and nothing outside Go learns what kinds exist.
 	//
 	// It lives in editor/ for the same reason the identity sweeper does: the
 	// grammar already spells block: addresses, and resolving one to a real
@@ -95,7 +95,12 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	// injected into contained CLI calls. Its runtime URL (the localhost listener
 	// port) is set from main once the listener binds; the AI service pulls the
 	// URL + a per-call bearer token from it at profile-render time.
-	s.MCP = mcp.NewServer(s.Documents)
+	//
+	// The Router goes in as mcp.NodeResolver — the one-method interface the MCP
+	// package declares for itself — so get_by_uri dereferences coordinates through
+	// the same registry the @ picker offers them from, and mcp/ never learns that
+	// editor/ exists beyond this line.
+	s.MCP = mcp.NewServer(s.Documents, s.Nodes)
 	s.AI.SetMCPEndpoint(s.MCP)
 	s.Commands = command.NewRegistry()
 	s.LinkPreview = services.NewLinkPreviewService()

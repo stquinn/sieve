@@ -25,15 +25,14 @@ func manifestEntries(t *testing.T, section string) []map[string]any {
 }
 
 // The manifest names each document and points at the verb that reads it. Nothing
-// is fetched to render one: title comes off the attachment, uuid out of its
-// address.
+// is fetched to render one: title and uri both come straight off the attachment.
 func TestAttachments_PromptSection_NamesEachDocumentAndTheRetrievalVerb(t *testing.T) {
 	section := Attachments{{URI: authDesignURI, Title: "Auth Design"}}.PromptSection()
 
 	if !strings.Contains(section, "ATTACHED DOCUMENTS") {
 		t.Fatalf("section is not labelled:\n%s", section)
 	}
-	if !strings.Contains(section, "get_note") {
+	if !strings.Contains(section, "get_by_uri") {
 		t.Errorf("the manifest must name the retrieval verb:\n%s", section)
 	}
 
@@ -41,18 +40,25 @@ func TestAttachments_PromptSection_NamesEachDocumentAndTheRetrievalVerb(t *testi
 	if len(entries) != 1 {
 		t.Fatalf("entries = %+v, want 1", entries)
 	}
-	if entries[0]["title"] != "Auth Design" || entries[0]["uuid"] != "9f2b3c4d-1a2b-4c5d-8e9f-a1b2c3d4e5f6" {
+	if entries[0]["title"] != "Auth Design" || entries[0]["uri"] != authDesignURI {
 		t.Fatalf("entry = %+v", entries[0])
 	}
 }
 
-// The coordinate never leaves the document: it is a storage address, and putting
-// it in the prompt would teach the model a URI scheme for no benefit. uuid — the
-// argument get_note actually takes — is what ParseAddress reads out of it.
-func TestAttachments_PromptSection_EmitsTheUUIDNeverTheCoordinate(t *testing.T) {
+// THE point of the manifest: what is persisted, what the model is shown and what
+// get_by_uri takes are ONE string. The entry carries the coordinate verbatim —
+// not a uuid dug out of it — so no step anywhere translates between the two, and
+// a richer address (block:{container}/{handle}) needs no new verb and no new
+// entry shape.
+func TestAttachments_PromptSection_EmitsTheCoordinateVerbatim(t *testing.T) {
 	section := Attachments{{URI: authDesignURI, Title: "Auth Design"}}.PromptSection()
-	if strings.Contains(section, "container:") {
-		t.Fatalf("the coordinate leaked into the prompt:\n%s", section)
+
+	entries := manifestEntries(t, section)
+	if entries[0]["uri"] != authDesignURI {
+		t.Fatalf("the entry must carry the persisted coordinate, got %+v", entries[0])
+	}
+	if _, hasUUID := entries[0]["uuid"]; hasUUID {
+		t.Errorf("a bare uuid is a translation step the address grammar removed: %+v", entries[0])
 	}
 }
 
@@ -72,7 +78,7 @@ func TestAttachments_PromptSection_UndereferenceableRendersUnavailable(t *testin
 	if entries[1]["unavailable"] != true || entries[1]["title"] != "Some Block" {
 		t.Fatalf("undereferenceable entry = %+v", entries[1])
 	}
-	if _, hasUUID := entries[1]["uuid"]; hasUUID {
+	if _, hasURI := entries[1]["uri"]; hasURI {
 		t.Errorf("an unavailable entry has nothing to fetch: %+v", entries[1])
 	}
 }

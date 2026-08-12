@@ -39,6 +39,12 @@ type UUIDInput struct {
 	UUID string `json:"uuid" jsonschema:"the note's uuid"`
 }
 
+// URIInput is the argument set for get_by_uri: a Sieve coordinate, copied
+// verbatim from wherever the model was given it.
+type URIInput struct {
+	URI string `json:"uri" jsonschema:"a Sieve coordinate, e.g. container:{uuid}; copy it exactly as it was given (an attachment manifest lists them) rather than constructing one"`
+}
+
 // NoteSummary is one search hit: metadata only, never a body.
 type NoteSummary struct {
 	UUID     string   `json:"uuid"`
@@ -70,10 +76,25 @@ type NoteMeta struct {
 	DensitySignals []string `json:"density_signals"`
 }
 
-// NoteContent is metadata plus the markdown body — the only content-bearing verb.
+// NoteContent is metadata plus the markdown body, as get_note returns it.
 type NoteContent struct {
 	Meta NoteMeta `json:"meta"`
 	Body string   `json:"body"`
+}
+
+// NodeContent is what an address resolved to, as get_by_uri returns it: the
+// wire projection of domain.Node.
+//
+// Kind-AGNOSTIC on purpose. It says what the thing calls itself rather than
+// assuming a note, so the day a source for chats or Things registers behind the
+// Router the verb keeps working and its output shape does not move.
+type NodeContent struct {
+	URI     string `json:"uri"`  // the coordinate it was resolved from
+	UUID    string `json:"uuid"` // the target's identity
+	Kind    string `json:"kind"` // the source's own noun, e.g. "note"
+	Title   string `json:"title"`
+	Summary string `json:"summary"`
+	Body    string `json:"body"`
 }
 
 // FolderFacet / TagFacet / Facets are the orientation view.
@@ -100,11 +121,13 @@ type Facets struct {
 // V1 SCOPE / KNOWN LIMITATIONS (accepted for now; long-term not ideal):
 //   - METADATA ONLY, never body — search leans entirely on AI-generated
 //     summaries/tags, so a note whose body says the thing but whose metadata
-//     doesn't will not surface. get_note remains the only body-bearing verb.
+//     doesn't will not surface. Bodies come only from the two body-bearing
+//     verbs (get_note, get_by_uri), never from a search.
 //   - FILED NOTES ONLY (LibraryCategory) — buffers are excluded, and they carry
 //     no metadata anyway, so they'd be unfindable by a metadata match even if
 //     included. The AI can still reach the active buffer as direct context and
 //     read buffer files via the library --add-dir grant.
+//
 // The long-term fix for both is a real full-text index (#37): body-aware search
 // that can also span buffers, replacing this metadata-only, notes-only scan.
 func (s *Server) search(_ context.Context, _ *mcpsdk.CallToolRequest, in SearchInput) (*mcpsdk.CallToolResult, SearchResults, error) {
@@ -154,11 +177,12 @@ func (s *Server) getMeta(_ context.Context, _ *mcpsdk.CallToolRequest, in UUIDIn
 	return nil, meta, nil
 }
 
-// getNote returns metadata plus the markdown body — the visible bulk-read verb.
-// Logged at Info so every whole-note read the AI performs is auditable at this
-// single Sieve-owned boundary.
+// getNote returns metadata plus the markdown body for a note named by uuid — one
+// of the two body-bearing verbs. Every read it performs is recorded as a
+// bodyRead, which is what keeps bulk-read auditable at one boundary.
 func (s *Server) getNote(_ context.Context, _ *mcpsdk.CallToolRequest, in UUIDInput) (*mcpsdk.CallToolResult, NoteContent, error) {
-	doc, err := s.documents.LoadByUUID(strings.TrimSpace(in.UUID))
+	uuid := strings.TrimSpace(in.UUID)
+	doc, err := s.documents.LoadByUUID(uuid)
 	if err != nil {
 		logger.Warn("sieve mcp: get_note not found", "uuid", in.UUID, "err", err)
 		return nil, NoteContent{}, fmt.Errorf("get_note: %w", err)
@@ -166,8 +190,57 @@ func (s *Server) getNote(_ context.Context, _ *mcpsdk.CallToolRequest, in UUIDIn
 	n := scannedNote{uuid: doc.UUID(), folder: s.folderOf(doc), doc: doc}
 	body := string(doc.Body())
 	meta := s.metaOf(n)
-	logger.Info("sieve mcp: get_note (body read)", "uuid", in.UUID, "title", meta.Title, "bytes", len(body))
+	// The audit names the document that was ACTUALLY read (doc.UUID()), not the
+	// string that was asked for, so the trail cannot be skewed by a sloppy arg.
+	s.audit.record(bodyRead{
+		verb:  "get_note",
+		uuid:  n.uuid,
+		uri:   domain.NewContainerAddress(n.uuid).String(),
+		title: meta.Title,
+		bytes: len(body),
+	})
 	return nil, NoteContent{Meta: meta, Body: body}, nil
+}
+
+// getByURI is the Router exposed as a tool: it dereferences a Sieve coordinate
+// and returns what that address names, body included — the second body-bearing
+// verb, audited identically to get_note.
+//
+// It CHECKS NOTHING about the address. Grammar, resolvable schemes, version pins
+// and dangling targets are all the Router's judgements, and re-deciding any of
+// them here would create a second opinion about what a coordinate means. The
+// refusals are surfaced as tool errors, wrapped so the model sees which verb
+// refused and why.
+//
+// This is what generalises past get_note: get_note can only ever name a whole
+// note, while a coordinate grows with the address grammar — block:{container}/
+// {handle} resolves through the same verb the day a source answers for it.
+func (s *Server) getByURI(_ context.Context, _ *mcpsdk.CallToolRequest, in URIInput) (*mcpsdk.CallToolResult, NodeContent, error) {
+	uri := strings.TrimSpace(in.URI)
+	if s.nodes == nil {
+		logger.Error("sieve mcp: get_by_uri has no resolver wired", "uri", uri)
+		return nil, NodeContent{}, fmt.Errorf("get_by_uri %q: no resolver is wired", uri)
+	}
+	node, err := s.nodes.Resolve(uri)
+	if err != nil {
+		logger.Warn("sieve mcp: get_by_uri refused", "uri", uri, "err", err)
+		return nil, NodeContent{}, fmt.Errorf("get_by_uri %q: %w", uri, err)
+	}
+	s.audit.record(bodyRead{
+		verb:  "get_by_uri",
+		uuid:  node.UUID,
+		uri:   node.URI,
+		title: node.Title,
+		bytes: len(node.Body),
+	})
+	return nil, NodeContent{
+		URI:     node.URI,
+		UUID:    node.UUID,
+		Kind:    node.Kind,
+		Title:   node.Title,
+		Summary: node.Summary,
+		Body:    node.Body,
+	}, nil
 }
 
 // listFacets aggregates folders (with note counts) and tags (with counts) — the

@@ -95,8 +95,8 @@ func TestNotesSource_DeletedAddressDangles(t *testing.T) {
 }
 
 // THE source invariant: a source may only offer what the AI can dereference, and
-// MCP get_note covers filed library documents only. An unfiled buffer is neither
-// offered nor resolved — even though DocumentService.LoadByUUID would find it.
+// this source answers for filed library documents only. An unfiled buffer is
+// neither offered nor resolved — even though DocumentService.LoadByUUID finds it.
 func TestNotesSource_RefusesBuffers(t *testing.T) {
 	src, ds := newTestNotesSource(t)
 	buf, err := ds.New()

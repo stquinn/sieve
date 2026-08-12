@@ -12,10 +12,10 @@ import (
 // (Search) and what it can DEREFERENCE (Resolve).
 //
 // THE INVARIANT a source signs up to is that those two agree — it may only offer
-// candidates that can actually be dereferenced downstream. That is why v1
-// registers notes only: MCP get_note reads filed library documents and nothing
-// else, so a buffer, a chat or a Thing must not appear in a picker until the
-// verb behind it exists.
+// candidates that can actually be dereferenced downstream. Since MCP get_by_uri
+// dereferences through this very Router, the invariant is now self-enforcing at
+// the registry: a buffer, a chat or a Thing appears in a picker exactly when a
+// source that resolves it is registered, and not before.
 //
 // Resolve must report a target it does not hold as domain.ErrNodeNotFound; any
 // other error is a real failure and stops the federation.

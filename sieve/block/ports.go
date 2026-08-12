@@ -20,25 +20,6 @@ type DocumentsPort interface {
 	Save(d domain.Document) (domain.Document, error)
 }
 
-// NodesPort is the address surface processors use: the Router (editor.Router),
-// a registry federating one source per container kind. Resolve turns an address
-// into the Node it points at; Search enumerates what is addressable at all. Two
-// faces of ONE registry, which is what enforces the invariant that a source may
-// only offer candidates that can actually be dereferenced.
-//
-// NOT folded into DocumentsPort: the Router is not the document store. Documents
-// are merely what the v1 notes source happens to sit on, and chats or Things
-// register beside it without any consumer changing. Absorbing this into
-// DocumentsPort would make DocumentService the federator and pin the block layer
-// to documents — exactly what the registry exists to avoid.
-//
-// A dangling address (deleted target, never-addressable buffer) is
-// domain.ErrNodeNotFound, not a panic: callers render the cached title instead.
-type NodesPort interface {
-	Resolve(uri string) (domain.Node, error)
-	Search(query string, limit int) []domain.Candidate
-}
-
 // AssetsPort is the binary-asset persistence surface processors use.
 type AssetsPort interface {
 	Save(category store.Category, parentContext, assetID string, data []byte) (*domain.ImageAsset, error)

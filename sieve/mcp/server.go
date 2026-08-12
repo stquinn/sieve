@@ -26,10 +26,16 @@ import (
 // (methods over the services), the SDK server + HTTP handler, and the per-run
 // bearer-token registry that authenticates the CLI Sieve launches.
 //
-// Read-only v1: search, get_meta, get_note, list_facets. Bodies are returned
-// only by get_note, so bulk-read is visible at a single Sieve-owned boundary.
+// Read-only v1: search, get_meta, get_note, get_by_uri, list_facets. TWO verbs
+// return bodies — get_note names its target by uuid, get_by_uri by coordinate —
+// and both record the SAME bodyRead audit through one auditor, so bulk-read is
+// still visible at a single Sieve-owned boundary though there are now two doors
+// through it. Adding a body-bearing verb without that record would be the change
+// that quietly ends the property.
 type Server struct {
 	documents *services.DocumentService
+	nodes     NodeResolver    // address → Node; the concrete Router is injected at the root
+	audit     bodyReadAuditor // every body read, recorded at one place
 
 	sdk     *mcpsdk.Server
 	handler http.Handler // StreamableHTTPHandler, built once
@@ -39,12 +45,15 @@ type Server struct {
 	tokens  map[string]struct{} // valid per-run bearer tokens
 }
 
-// NewServer builds the Sieve MCP over the document service, registers the four
-// read-only verbs, and prepares the streamable HTTP handler. The base URL is not
-// known yet (the listener binds after construction) — SetBaseURL supplies it.
-func NewServer(documents *services.DocumentService) *Server {
+// NewServer builds the Sieve MCP over the document service and the node
+// resolver, registers the read-only verbs, and prepares the streamable HTTP
+// handler. The base URL is not known yet (the listener binds after construction)
+// — SetBaseURL supplies it.
+func NewServer(documents *services.DocumentService, nodes NodeResolver) *Server {
 	s := &Server{
 		documents: documents,
+		nodes:     nodes,
+		audit:     logAuditor{},
 		tokens:    make(map[string]struct{}),
 	}
 
@@ -64,8 +73,13 @@ func NewServer(documents *services.DocumentService) *Server {
 	}, s.getMeta)
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
 		Name:        "get_note",
-		Description: "Return one note by uuid: its metadata plus the full markdown body. This is the only verb that returns note content.",
+		Description: "Return one note by uuid: its metadata plus the full markdown body. Use this when you have a bare uuid; use get_by_uri when you were given a Sieve uri.",
 	}, s.getNote)
+	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
+		Name: "get_by_uri",
+		Description: "Return whatever a Sieve uri points at: its title, metadata and full markdown body. " +
+			"Pass the uri exactly as it appears in an ATTACHED DOCUMENTS manifest (e.g. container:{uuid}) — copy it, never construct one.",
+	}, s.getByURI)
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
 		Name:        "list_facets",
 		Description: "Return the knowledge base's orientation facets: folders with note counts and tags with counts.",

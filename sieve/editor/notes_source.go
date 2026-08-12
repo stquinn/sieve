@@ -16,10 +16,11 @@ import (
 // candidates and resolved as Nodes.
 //
 // NOTES ONLY, deliberately. The source invariant is that it may only offer what
-// the AI can dereference, and MCP get_note covers filed library documents and
-// nothing else — so an unfiled buffer is never offered (Search enumerates the
-// library) and never resolved (Resolve refuses a non-note), even though
-// DocumentService.LoadByUUID would happily find one.
+// the AI can dereference, and what the AI dereferences (MCP get_by_uri) comes
+// back through here — so an unfiled buffer is never offered (Search enumerates
+// the library) and never resolved (Resolve refuses a non-note), even though
+// DocumentService.LoadByUUID would happily find one. Offering one would put a
+// chip in the picker whose address answers nothing.
 type NotesSource struct {
 	documents *services.DocumentService
 }

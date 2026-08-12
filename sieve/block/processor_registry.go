@@ -426,7 +426,6 @@ type BlockServices struct {
 	// is fine. So AIPort was inverting an edge that never needed inverting.
 	AI          *ai.AIService
 	Documents   DocumentsPort
-	Nodes       NodesPort
 	Assets      AssetsPort
 	LinkPreview LinkPreviewPort
 	State       StatePort

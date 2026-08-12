@@ -54,8 +54,9 @@ import { esc } from '../block/renderers/html-escape.js'
 import { MentionTokens } from '../block/renderers/mention-tokens.js'
 
 /**
- * A candidate as the picker offers it. `kind`/`detail` are display-only: they
- * are resolved fresh server-side at job time and NEVER persisted.
+ * A candidate as the picker offers it. `kind`/`detail` are display-only — they
+ * exist to tell two same-titled offers apart while choosing — and are NEVER
+ * persisted: only `{uri, title}` leaves the composer.
  * @typedef {import('../block/mention-service.js').MentionCandidate} MentionCandidate
  */
 
@@ -127,9 +128,12 @@ export class ComposerAttachments {
   get size() { return this.#attached.length }
 
   /**
-   * The persisted shape: `{uri, title}` and nothing else. `kind` and `summary`
-   * are the Router's to resolve at job time — a chip must never be able to
-   * smuggle a stale one into storage.
+   * The persisted shape: `{uri, title}` and nothing else.
+   *
+   * NOTHING is resolved on the way to the model — the prompt's manifest is
+   * rendered from these two fields alone. So anything richer a chip is holding
+   * (`kind`, `detail`, a summary) is picker dressing that must not reach
+   * storage, where it could only ever go stale.
    * @returns {AttachmentEntry[]}
    */
   manifest() {
