@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"sieve/sieve"
+	"sieve/sieve/block"
 	"sieve/sieve/domain"
 	"sieve/store"
 
@@ -76,8 +77,13 @@ type versionViewData struct {
 }
 
 type assetViewData struct {
-	SrcURL   string
-	Name     string
+	SrcURL string
+	// Name is what the tab SHOWS: the name the owning block knows the asset by,
+	// falling back to the stored filename when no block claims it.
+	Name string
+	// FileName is the name on disk — a uuid stem. Kept for the tooltip, because
+	// it is what you need when reading the document directory by hand.
+	FileName string
 	MimeType string
 	IsImage  bool
 }
@@ -195,7 +201,7 @@ func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanel
 		}
 		data.Meta = toMetaView(b)
 		data.Versions = toVersionViews(b.Versions(), b.UUID())
-		data.Assets = toAssetViews(b.Storable().Owns())
+		data.Assets = toAssetViews(b.Storable().Owns(), h.assetLabels(b))
 		data.HasAssets = len(data.Assets) > 0
 		return data
 	}
@@ -280,7 +286,35 @@ func toVersionViews(refs []store.VersionRef, uuidEnc string) []versionViewData {
 	return out
 }
 
-func toAssetViews(storables []store.Storable) []assetViewData {
+// assetLabels maps an asset's block id to the name its block knows it by.
+//
+// An asset is stored as <blockID><ext> so that a file cannot overwrite the
+// content.md or meta.json sitting beside it — which leaves the Assets tab
+// listing uuids, and two JSON files indistinguishable. The block holds the real
+// name, so the tab reads it back from there.
+//
+// Kind-agnostic ON PURPOSE: it asks every block for the same attrs rather than
+// switching on kind, so a future kind that names its asset is labelled without
+// touching this. A label is a nicety, so a document that will not parse yields no
+// labels rather than failing the panel.
+func (h *MetaHandler) assetLabels(d domain.Document) map[string]string {
+	blocks, err := block.NewDocumentCodec(block.GlobalRegistry()).Deserialize(string(d.Body()))
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]string, len(blocks))
+	for _, blk := range blocks {
+		for _, key := range []string{"title", "alt"} {
+			if v, _ := blk.Attrs[key].(string); strings.TrimSpace(v) != "" {
+				out[blk.ID] = strings.TrimSpace(v)
+				break
+			}
+		}
+	}
+	return out
+}
+
+func toAssetViews(storables []store.Storable, labels map[string]string) []assetViewData {
 	var out []assetViewData
 	for _, s := range storables {
 		if as, ok := s.(store.AssetStorable); ok {
@@ -296,9 +330,14 @@ func toAssetViews(storables []store.Storable) []assetViewData {
 					mt = "application/octet-stream"
 				}
 			}
+			label := labels[as.BlkID()]
+			if strings.TrimSpace(label) == "" {
+				label = name
+			}
 			out = append(out, assetViewData{
 				SrcURL:   ref,
-				Name:     name,
+				Name:     label,
+				FileName: name,
 				MimeType: mt,
 				IsImage:  strings.HasPrefix(mt, "image/"),
 			})
