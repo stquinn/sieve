@@ -164,9 +164,9 @@ export const aiBlockStyles = /* css */ `
   }
 
   /* An @Title the question attached (#74) — the INLINE half of its footer chip.
-     Same accent as .ai-block__attachment below, deliberately: the name in the
-     sentence and the chip under the answer are one object, and the tint is what
-     says so. Tinted rather than coloured-only so it reads as a mark in both
+     Same accent as the AttachmentChip in the footer row below, deliberately: the
+     name in the sentence and the chip under the answer are one object, and the
+     tint is what says so. Tinted rather than coloured-only so it reads as a mark in both
      themes; box-decoration-break keeps the pill's ends when a long title wraps. */
   .ai-block__mention {
     border-radius: 3px;
@@ -181,8 +181,18 @@ export const aiBlockStyles = /* css */ `
   /* ── Attachment chips (#74) — the FOOTER region ────────────────────────────
      The documents this turn's question attached. Deliberately quiet: they are
      provenance, not content, so they sit under the answer at badge weight and
-     scroll sideways rather than reflowing the block. */
+     scroll sideways rather than reflowing the block.
+
+     THE ROW IS AI-BLOCK'S; THE CHIP IS NOT (#38). The chips inside are
+     AttachmentChip (block/renderers/attachment-chip.js) and carry their own
+     appearance — this rule set owns only the strip that holds them. The one
+     thing the ROW says about its chips is how far they may run: a chip under an
+     answer is a compact provenance mark, so it ellipsises at 15rem. The
+     attachment BLOCK deliberately lifts that clamp (its chip is the block's
+     whole identity), which is exactly why the clamp is the row's to set and not
+     the chip's to assume. */
   .ai-block__attachments {
+    --chip-max-width: 15rem;
     display: flex;
     flex-wrap: nowrap;
     gap: 6px;
@@ -197,52 +207,6 @@ export const aiBlockStyles = /* css */ `
   }
 
   .ai-block__attachments::-webkit-scrollbar { display: none; }
-
-  .ai-block__attachment {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    flex: 0 0 auto;
-    max-width: 15rem;
-    padding: 2px 8px;
-    border: 1px solid var(--theme-border2);
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--theme-accentPrimary) 8%, transparent);
-    color: var(--theme-accentPrimary);
-    font-family: var(--theme-uiFont);
-    font-size: calc(var(--doc-size) * 0.72);
-    cursor: pointer;
-    transition: background 0.15s ease, border-color 0.15s ease;
-  }
-
-  .ai-block__attachment:hover {
-    background: color-mix(in srgb, var(--theme-accentPrimary) 18%, transparent);
-    border-color: var(--theme-accentPrimary);
-  }
-
-  .ai-block__attachment-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /* Dangling is a NORMAL state, not an error: greyed, marked, still readable. */
-  .ai-block__attachment--missing {
-    color: var(--theme-muted);
-    background: transparent;
-    border-style: dashed;
-  }
-
-  .ai-block__attachment--missing:hover {
-    background: color-mix(in srgb, var(--theme-muted) 12%, transparent);
-    border-color: var(--theme-muted);
-  }
-
-  .ai-block__attachment::selection,
-  .ai-block__attachment-label::selection {
-    background: transparent;
-    color: inherit;
-  }
 
   /* A literal \`---\` inside a response is a real markdown hr; render it subtly. */
   .ai-block hr {

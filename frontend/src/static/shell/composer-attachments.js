@@ -46,6 +46,12 @@
 // before the pairing is redone, so a remaining identical `@Notes` pairs with the
 // attachment the user did not touch rather than sliding onto the deleted one's
 // chip.
+//
+// THE CHIP IS THE SHARED VOCABULARY, DRAWN LOCALLY. A block draws it with the
+// AttachmentChip component; the composer cannot — it is not a block, so it
+// carries no block styles. The `--chip-*` TOKENS are what unify the two instead
+// (editor.css `:root`), so change what a chip looks like in the tokens, never in
+// one of the two components.
 
 import { esc } from '../block/renderers/html-escape.js'
 // The token rule is SHARED with the ai-block, which marks the same `@Title`

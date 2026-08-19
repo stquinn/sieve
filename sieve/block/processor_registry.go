@@ -430,6 +430,9 @@ type BlockServices struct {
 	LinkPreview LinkPreviewPort
 	State       StatePort
 	Plantuml    PlantumlPort
+	// Nodes dereferences a Sieve coordinate. It is injected rather than reached
+	// for because the resolver lives in editor/, which imports this package.
+	Nodes NodesPort
 }
 
 var (

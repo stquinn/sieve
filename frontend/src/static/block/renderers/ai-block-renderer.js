@@ -22,8 +22,10 @@
 import { BlockRenderer } from './block-renderer.js'
 import { aiBlockStyles } from './ai-block-renderer.styles.js'
 import { isJobStale } from './job-status.js'
-import { esc } from './html-escape.js'
 import { MentionTokens } from './mention-tokens.js'
+// The chip is SHARED look-and-feel, not ai-block's: the footer chip, the
+// composer chip and the attachment block are one visual object.
+import { AttachmentChip } from './attachment-chip.js'
 
 /** One attachment as it is persisted (#74): the address is the truth and the
  *  title is what labels it. Nothing else is stored, and nothing is resolved to
@@ -175,7 +177,9 @@ export class AiBlockRenderer extends BlockRenderer {
   }
 
   /**
-   * One chip. DANGLING IS A NORMAL STATE, not an error: an attachment whose
+   * One chip, drawn by the SHARED component — what is ai-block's here is only
+   * the MAPPING: which of this kind's fields is the label, and what makes one
+   * dangling. DANGLING IS A NORMAL STATE, not an error: an attachment whose
    * cached title is gone (nothing was ever cached, or the persisted entry
    * predates titles) renders greyed with a missing marker and the bare address,
    * so the chip is still identifiable and still clickable.
@@ -185,24 +189,14 @@ export class AiBlockRenderer extends BlockRenderer {
   #attachmentChip(attachment) {
     const uri = (attachment && attachment.uri || '').trim()
     const title = (attachment && attachment.title || '').trim()
-    const missing = !title
-
-    const chip = document.createElement('span')
-    chip.className = 'ai-block__attachment' + (missing ? ' ai-block__attachment--missing' : '')
-    chip.setAttribute('data-uri', uri)
-    chip.setAttribute('title', missing ? 'Attached document is no longer available: ' + uri : uri)
-    chip.innerHTML =
-      '<span class="ai-block__attachment-icon" aria-hidden="true">' + (missing ? '&#9888;' : '&#128196;') + '</span>' +
-      '<span class="ai-block__attachment-label">' + esc(title || uri) + '</span>'
-
-    chip.addEventListener('click', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      this.#openAttachment(uri)
+    const chip = new AttachmentChip({
+      uri: uri,
+      label: title,
+      missing: !title,
+      tooltip: title ? uri : 'Attached document is no longer available: ' + uri,
     })
-    // The block is a read-only container; a chip must never start a drag/selection.
-    chip.addEventListener('mousedown', (e) => e.preventDefault())
-    return chip
+    chip.onActivate((address) => this.#openAttachment(address))
+    return chip.element
   }
 
   /** @param {string} uri */

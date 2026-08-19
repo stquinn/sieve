@@ -6,9 +6,15 @@
 // command-hint-popover.test.js. Only the CONSTRUCTION line changed (the popover
 // takes providers now instead of hard-coding CommandService), which is the whole
 // point of the generalisation: `/` must look exactly as it did.
+//
+// The construction line moved ONCE MORE for the TriggerHost seam (#38): the
+// popover takes a host instead of a textarea, and the scan moved to the provider
+// family that owns the token. Every assertion below is otherwise untouched —
+// same reason as last time. The seam itself is pinned in trigger-host.test.js.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { TriggerPopover } from '../src/static/shell/trigger-popover.js'
 import { SlashCommandProvider, MentionProvider, TriggerProvider } from '../src/static/shell/trigger-providers.js'
+import { TextareaHost } from '../src/static/shell/trigger-host.js'
 import { ContractViolation } from '../src/static/block/sieve-block.js'
 
 function mountDom() {
@@ -48,7 +54,7 @@ describe('TriggerPopover — slash trigger (behaviour unchanged)', () => {
       { name: 'btw', description: 'Ask by the way' },
       { name: 'buffer', description: 'Buffer doc' }
     ]
-    popover = new TriggerPopover(textarea, [new SlashCommandProvider({ list: () => commands })])
+    popover = new TriggerPopover(new TextareaHost(textarea), [new SlashCommandProvider({ list: () => commands })])
   })
 
   afterEach(() => {
@@ -148,7 +154,7 @@ describe('TriggerPopover — the provider registry', () => {
     const { textarea } = mountDom()
     const listCommands = vi.fn(() => [{ name: 'btw', description: 'by the way' }])
     const searchNotes = vi.fn(() => Promise.resolve([{ uri: 'container:1', title: 'Auth Design', detail: 'design/' }]))
-    const popover = new TriggerPopover(textarea, [
+    const popover = new TriggerPopover(new TextareaHost(textarea), [
       new SlashCommandProvider({ list: listCommands }),
       new MentionProvider({ search: searchNotes }, undefined, { debounceMs: 1 }),
     ])
@@ -171,12 +177,12 @@ describe('TriggerPopover — the provider registry', () => {
     const { textarea } = mountDom()
     const a = new SlashCommandProvider({ list: () => [] })
     const b = new SlashCommandProvider({ list: () => [] })
-    expect(() => new TriggerPopover(textarea, [a, b])).toThrow(ContractViolation)
+    expect(() => new TriggerPopover(new TextareaHost(textarea), [a, b])).toThrow(ContractViolation)
   })
 
   it('rejects a provider that is not a TriggerProvider', () => {
     const { textarea } = mountDom()
-    expect(() => new TriggerPopover(textarea, [/** @type {any} */ ({ trigger: '#' })])).toThrow(ContractViolation)
+    expect(() => new TriggerPopover(new TextareaHost(textarea), [/** @type {any} */ ({ trigger: '#' })])).toThrow(ContractViolation)
   })
 
   it('the abstract provider refuses to be used directly', () => {
@@ -190,19 +196,19 @@ describe('TriggerPopover — the provider registry', () => {
 
 // ── The token-under-caret scan ───────────────────────────────────────────────
 
-describe('TriggerPopover.scanToken — the token under the caret', () => {
+describe('TriggerProvider.scanToken — the token under the caret', () => {
   const providers = () => new Map([
     ['/', new SlashCommandProvider({ list: () => [] })],
     ['@', new MentionProvider({ search: () => [] })],
   ])
 
   it('finds a slash token only at position 0', () => {
-    expect(TriggerPopover.scanToken('/bt', 3, providers())?.prefix).toBe('bt')
-    expect(TriggerPopover.scanToken('x/bt', 4, providers())).toBeNull()
+    expect(TriggerProvider.scanToken('/bt', 3, providers())?.prefix).toBe('bt')
+    expect(TriggerProvider.scanToken('x/bt', 4, providers())).toBeNull()
   })
 
   it('finds an @ token MID-TEXT, after a space', () => {
-    const token = TriggerPopover.scanToken('How does @auth', 14, providers())
+    const token = TriggerProvider.scanToken('How does @auth', 14, providers())
     expect(token?.prefix).toBe('auth')
     expect(token?.start).toBe(9)
     expect(token?.end).toBe(14)
@@ -210,12 +216,12 @@ describe('TriggerPopover.scanToken — the token under the caret', () => {
   })
 
   it('finds an @ token at position 0', () => {
-    expect(TriggerPopover.scanToken('@au', 3, providers())?.prefix).toBe('au')
+    expect(TriggerProvider.scanToken('@au', 3, providers())?.prefix).toBe('au')
   })
 
   it('picks the @ NEAREST the caret when there are several', () => {
     const text = '@one and @two'
-    const token = TriggerPopover.scanToken(text, text.length, providers())
+    const token = TriggerProvider.scanToken(text, text.length, providers())
     expect(token?.prefix).toBe('two')
     expect(token?.start).toBe(9)
   })
@@ -223,16 +229,16 @@ describe('TriggerPopover.scanToken — the token under the caret', () => {
   it('scans from the CARET, not the end of the text', () => {
     const text = '@one and @two'
     // Caret parked just after "@on".
-    expect(TriggerPopover.scanToken(text, 3, providers())?.prefix).toBe('on')
+    expect(TriggerProvider.scanToken(text, 3, providers())?.prefix).toBe('on')
   })
 
   it('refuses an @ glued to a preceding word (an email address is not a mention)', () => {
-    expect(TriggerPopover.scanToken('me@example', 10, providers())).toBeNull()
+    expect(TriggerProvider.scanToken('me@example', 10, providers())).toBeNull()
   })
 
   it('returns null when there is no trigger at all', () => {
-    expect(TriggerPopover.scanToken('plain words', 11, providers())).toBeNull()
-    expect(TriggerPopover.scanToken('', 0, providers())).toBeNull()
+    expect(TriggerProvider.scanToken('plain words', 11, providers())).toBeNull()
+    expect(TriggerProvider.scanToken('', 0, providers())).toBeNull()
   })
 })
 
@@ -243,37 +249,37 @@ describe('TriggerPopover.scanToken — the token under the caret', () => {
 // about the text typed since. `/` overrides the first, `@` overrides the second
 // — neither is an if-branch in the scanner.
 
-describe('TriggerPopover.scanToken — token span (a provider trait)', () => {
+describe('TriggerProvider.scanToken — token span (a provider trait)', () => {
   const providers = () => new Map([
     ['/', new SlashCommandProvider({ list: () => [] })],
     ['@', new MentionProvider({ search: () => [] })],
   ])
 
   it('a mention token SURVIVES spaces — a title is several words', () => {
-    expect(TriggerPopover.scanToken('@sprite sheet', 13, providers())?.prefix).toBe('sprite sheet')
-    const token = TriggerPopover.scanToken('ask @sprite sheet an', 20, providers())
+    expect(TriggerProvider.scanToken('@sprite sheet', 13, providers())?.prefix).toBe('sprite sheet')
+    const token = TriggerProvider.scanToken('ask @sprite sheet an', 20, providers())
     expect(token?.prefix).toBe('sprite sheet an')
     expect(token?.start).toBe(4)
   })
 
   it('a mention token still stops at a NEWLINE — a token never crosses a line', () => {
-    expect(TriggerPopover.scanToken('@sprite\nsheet', 13, providers())).toBeNull()
+    expect(TriggerProvider.scanToken('@sprite\nsheet', 13, providers())).toBeNull()
   })
 
   it('a mention token stops after four words (the runaway backstop)', () => {
-    expect(TriggerPopover.scanToken('@one two three four', 19, providers())?.prefix).toBe('one two three four')
-    expect(TriggerPopover.scanToken('@one two three four five', 24, providers())).toBeNull()
+    expect(TriggerProvider.scanToken('@one two three four', 19, providers())?.prefix).toBe('one two three four')
+    expect(TriggerProvider.scanToken('@one two three four five', 24, providers())).toBeNull()
   })
 
   it('a mention token stops after sixty characters (the runaway backstop)', () => {
     const sixty = 'x'.repeat(60)
-    expect(TriggerPopover.scanToken('@' + sixty, 61, providers())?.prefix).toBe(sixty)
-    expect(TriggerPopover.scanToken('@' + sixty + 'x', 62, providers())).toBeNull()
+    expect(TriggerProvider.scanToken('@' + sixty, 61, providers())?.prefix).toBe(sixty)
+    expect(TriggerProvider.scanToken('@' + sixty + 'x', 62, providers())).toBeNull()
   })
 
   it('a slash token still TERMINATES at whitespace (byte-identical to before)', () => {
-    expect(TriggerPopover.scanToken('/btw ', 5, providers())).toBeNull()
-    expect(TriggerPopover.scanToken('/btw hello', 10, providers())).toBeNull()
+    expect(TriggerProvider.scanToken('/btw ', 5, providers())).toBeNull()
+    expect(TriggerProvider.scanToken('/btw hello', 10, providers())).toBeNull()
   })
 
   // ── The `/` start-of-line invariant (#74 P5) ───────────────────────────────
@@ -287,20 +293,20 @@ describe('TriggerPopover.scanToken — token span (a provider trait)', () => {
   it('a mid-sentence slash never triggers, at ANY caret position', () => {
     const text = 'what about /btw'
     for (let caret = 0; caret <= text.length; caret++) {
-      expect(TriggerPopover.scanToken(text, caret, providers())).toBeNull()
+      expect(TriggerProvider.scanToken(text, caret, providers())).toBeNull()
     }
   })
 
   it('but the caret moved back INSIDE the command name still completes it', () => {
     // The one intentional difference from the old popover: editing the command
     // name re-offers the picker, because the token under the caret is the command.
-    expect(TriggerPopover.scanToken('/btw hello', 3, providers())?.prefix).toBe('bt')
+    expect(TriggerProvider.scanToken('/btw hello', 3, providers())?.prefix).toBe('bt')
   })
 
   it('the start-of-line rule does NOT leak onto @, which is a mid-text trigger', () => {
     const text = 'what about @btw'
-    expect(TriggerPopover.scanToken(text, text.length, providers())?.prefix).toBe('btw')
-    expect(TriggerPopover.scanToken('what about @btw docs', 20, providers())?.prefix).toBe('btw docs')
+    expect(TriggerProvider.scanToken(text, text.length, providers())?.prefix).toBe('btw')
+    expect(TriggerProvider.scanToken('what about @btw docs', 20, providers())?.prefix).toBe('btw docs')
   })
 })
 
@@ -315,7 +321,7 @@ describe('MentionProvider — the debounced, mid-text trigger', () => {
     const search = vi.fn(() => Promise.resolve([
       { uri: 'container:9f2b', title: 'Auth Design', kind: 'note', detail: 'design/ · #auth' },
     ]))
-    const popover = new TriggerPopover(textarea, [new MentionProvider({ search }, undefined, { debounceMs: 40 })])
+    const popover = new TriggerPopover(new TextareaHost(textarea), [new MentionProvider({ search }, undefined, { debounceMs: 40 })])
 
     type(textarea, 'how does @a')
     type(textarea, 'how does @au')
@@ -337,7 +343,7 @@ describe('MentionProvider — the debounced, mid-text trigger', () => {
     vi.useFakeTimers()
     const { textarea } = mountDom()
     const search = vi.fn(() => Promise.resolve([]))
-    const popover = new TriggerPopover(textarea, [new MentionProvider({ search }, undefined, { debounceMs: 5 })])
+    const popover = new TriggerPopover(new TextareaHost(textarea), [new MentionProvider({ search }, undefined, { debounceMs: 5 })])
 
     type(textarea, 'hello @')
     await vi.advanceTimersByTimeAsync(20)
@@ -351,7 +357,7 @@ describe('MentionProvider — the debounced, mid-text trigger', () => {
     const { textarea } = mountDom()
     const candidate = { uri: 'container:9f2b', title: 'Auth Design', kind: 'note', detail: 'design/' }
     const attached = []
-    const popover = new TriggerPopover(textarea, [
+    const popover = new TriggerPopover(new TextareaHost(textarea), [
       new MentionProvider({ search: () => Promise.resolve([candidate]) }, (c) => attached.push(c), { debounceMs: 1 }),
     ])
 
@@ -375,7 +381,7 @@ describe('MentionProvider — the debounced, mid-text trigger', () => {
     const { textarea } = mountDom()
     /** @type {Array<(v: any) => void>} */ const resolvers = []
     const search = vi.fn(() => new Promise((resolve) => resolvers.push(resolve)))
-    const popover = new TriggerPopover(textarea, [new MentionProvider({ search }, undefined, { debounceMs: 1 })])
+    const popover = new TriggerPopover(new TextareaHost(textarea), [new MentionProvider({ search }, undefined, { debounceMs: 1 })])
 
     type(textarea, '@aa')
     await vi.advanceTimersByTimeAsync(5)
@@ -419,7 +425,7 @@ describe('TriggerPopover — the dry stop', () => {
     vi.useFakeTimers()
     const { textarea } = mountDom()
     const search = library(titles)
-    const popover = new TriggerPopover(textarea, [
+    const popover = new TriggerPopover(new TextareaHost(textarea), [
       new MentionProvider({ search }, onAccept, { debounceMs: 1 }),
     ])
     return { textarea, search, popover }

@@ -151,6 +151,13 @@ describe('AiBlockRenderer (Phase 3 — bare-page DoD)', () => {
 // The ai-block renders the documents its question attached, as chips in the
 // FOOTER region — the same place the composer puts them, so a sent question and
 // the answer that came back read alike.
+//
+// The ROW (.ai-block__attachments) is ai-block's; the CHIP inside it is the
+// shared AttachmentChip (#38), so the assertions below name
+// `.sieve-attachment-chip` — the component owns its class the way it owns its
+// styles. What is tested HERE is ai-block's MAPPING onto it (which field labels
+// a chip, what makes one dangling, when the row hides); the component's own
+// contract is attachment-chip.test.js.
 
 describe('AiBlockRenderer — the attachment chip row', () => {
   /** @type {HTMLStyleElement} */ let rootVars
@@ -171,7 +178,7 @@ describe('AiBlockRenderer — the attachment chip row', () => {
       { uri: 'container:9f2b', title: 'Auth Design' },
       { uri: 'container:1a2b', title: 'Retry RFC' },
     ]))
-    const chips = dom.querySelectorAll('.ai-block__attachment')
+    const chips = dom.querySelectorAll('.sieve-attachment-chip')
     expect(chips.length).toBe(2)
     expect(chips[0].textContent).toContain('Auth Design')
     expect(chips[0].getAttribute('data-uri')).toBe('container:9f2b')
@@ -183,21 +190,21 @@ describe('AiBlockRenderer — the attachment chip row', () => {
       { uri: 'container:aaa', title: 'Notes' },
       { uri: 'container:bbb', title: 'Notes' },
     ]))
-    const chips = dom.querySelectorAll('.ai-block__attachment')
+    const chips = dom.querySelectorAll('.sieve-attachment-chip')
     expect(Array.from(chips).map((c) => c.getAttribute('data-uri'))).toEqual(['container:aaa', 'container:bbb'])
   })
 
   it('an ai-block with no attachments renders no row at all (absent IS the empty case)', () => {
     const { dom } = mount(REPRESENTATIVE_ATTRS)
-    expect(dom.querySelectorAll('.ai-block__attachment').length).toBe(0)
+    expect(dom.querySelectorAll('.sieve-attachment-chip').length).toBe(0)
     const row = dom.querySelector('.ai-block__attachments')
     expect(/** @type {HTMLElement} */ (row).style.display).toBe('none')
   })
 
   it('a chip with nothing left to show renders MISSING — dangling is a normal state', () => {
     const { dom } = mount(withAttachments([{ uri: 'container:gone' }]))
-    const chip = /** @type {HTMLElement} */ (dom.querySelector('.ai-block__attachment'))
-    expect(chip.className).toContain('ai-block__attachment--missing')
+    const chip = /** @type {HTMLElement} */ (dom.querySelector('.sieve-attachment-chip'))
+    expect(chip.className).toContain('sieve-attachment-chip--missing')
     // Falls back to the address so the chip is still identifiable, never blank.
     expect(chip.textContent).toContain('container:gone')
   })
@@ -207,7 +214,7 @@ describe('AiBlockRenderer — the attachment chip row', () => {
     /** @type {string[]} */ const opened = []
     const off = renderer.onOpenAttachment((uri) => opened.push(uri))
 
-    const chip = /** @type {HTMLElement} */ (dom.querySelector('.ai-block__attachment'))
+    const chip = /** @type {HTMLElement} */ (dom.querySelector('.sieve-attachment-chip'))
     chip.click()
     expect(opened).toEqual(['container:9f2b'])
 
@@ -219,12 +226,12 @@ describe('AiBlockRenderer — the attachment chip row', () => {
   it('update() re-fills the chip row in place when server truth arrives', () => {
     const { renderer, dom } = mount(REPRESENTATIVE_ATTRS)
     const rowBefore = dom.querySelector('.ai-block__attachments')
-    expect(dom.querySelectorAll('.ai-block__attachment').length).toBe(0)
+    expect(dom.querySelectorAll('.sieve-attachment-chip').length).toBe(0)
 
     renderer.update(blk(withAttachments([{ uri: 'container:9f2b', title: 'Auth Design' }])))
 
     expect(dom.querySelector('.ai-block__attachments')).toBe(rowBefore)  // same element
-    expect(dom.querySelectorAll('.ai-block__attachment').length).toBe(1)
+    expect(dom.querySelectorAll('.sieve-attachment-chip').length).toBe(1)
   })
 
   it('the row is not editable — it is chrome inside a PM-managed block', () => {

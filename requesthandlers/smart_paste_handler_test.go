@@ -1,6 +1,7 @@
 package requesthandlers
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -103,6 +104,31 @@ func TestSmartPasteRoute_ResultUnion(t *testing.T) {
 		}
 		if got["html"] != "" {
 			t.Errorf("block result must carry no content fragment: %v", got)
+		}
+	})
+
+	// #38: a DROPPED FILE takes the same route a paste does — the surface reads it
+	// as a data URI, stamps the filename in the entry's context, and the registry
+	// routes it. This exercises the whole creation path end to end, over the real
+	// bytes the frontend sends.
+	t.Run("a dropped file becomes an attachment", func(t *testing.T) {
+		block.RegisterProcessor(processors.NewAttachmentProcessor(block.BlockServices{
+			Documents: ds, Assets: services.NewAssetService(fs),
+		}))
+		t.Cleanup(func() { block.UnregisterProcessor("attachment") })
+
+		payload := base64.StdEncoding.EncodeToString([]byte("openapi: 3.0.0\n"))
+		got := post(t, `[{"mimeType":"text/yaml","content":"data:text/yaml;base64,`+payload+`","context":{"filename":"swagger.yml"}}]`)
+		if got["outcome"] != "block" {
+			t.Fatalf("outcome: got %q, want block (%v)", got["outcome"], got)
+		}
+		if got["kind"] != "attachment" {
+			t.Errorf("kind: got %q, want attachment", got["kind"])
+		}
+		// The chip's label rides in the serialized block, so the drop is only
+		// complete if the original filename survived the whole round trip.
+		if !strings.Contains(got["rawYaml"], "swagger.yml") {
+			t.Errorf("rawYaml must carry the dropped filename as the title: %q", got["rawYaml"])
 		}
 	})
 

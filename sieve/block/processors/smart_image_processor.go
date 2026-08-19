@@ -2,7 +2,6 @@ package processors
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -13,7 +12,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -34,12 +32,17 @@ var errEntryNotImage = errors.New("entry is not an image this processor ingests"
 // src already set. RunJob is AI-only: it calls DescribeImage on the saved file.
 type SmartImageProcessor struct {
 	svc                      block.BlockServices
-	block.FencedSerializer   // one shared YAML serialization — free
-	block.FencedDeserializer // its mirror — recognise+parse the fenced form
+	assets                   documentAssets // where ingested bytes land
+	block.FencedSerializer                  // one shared YAML serialization — free
+	block.FencedDeserializer                // its mirror — recognise+parse the fenced form
 }
 
 func NewSmartImageProcessor(svc block.BlockServices) *SmartImageProcessor {
-	return &SmartImageProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: "smart-image"}}
+	return &SmartImageProcessor{
+		svc:                svc,
+		assets:             documentAssets{svc: svc, kind: "smart-image"},
+		FencedDeserializer: block.FencedDeserializer{Kind: "smart-image"},
+	}
 }
 
 func (p *SmartImageProcessor) Kind() string { return p.FencedDeserializer.Kind }
@@ -148,13 +151,21 @@ func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid strin
 				logger.Warn("smart-image: entry is not a usable image", "block", blockID, "bytes", len(data))
 				return nil
 			}
-			if src, err = p.saveAsset(uuid, blockID, data); err != nil {
+			if src, err = p.assets.save(uuid, blockID, data); err != nil {
 				logger.Warn("smart-image: transform save failed", "block", blockID, "err", err)
 				return nil
 			}
 		}
 
 		attrs := map[string]interface{}{"src": src}
+		// The name the file arrived under, when it arrived as a file at all. The
+		// asset is stored as <blockID>.<ext> so nothing on disk remembers it, and
+		// without this an image is identifiable only by its AI description — which
+		// is a description, not an identity. A clipboard paste has no filename and
+		// correctly stamps none.
+		if name, _ := e.Context["filename"].(string); strings.TrimSpace(name) != "" {
+			attrs["title"] = strings.TrimSpace(name)
+		}
 		if width > 0 {
 			attrs["width"] = strconv.Itoa(width)
 		}
@@ -173,7 +184,7 @@ func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid strin
 func (p *SmartImageProcessor) acquire(e block.ContentEntry, blockID string) (data []byte, ref string, err error) {
 	// Data URI (paste from clipboard) — raster OR svg; naturalSize sniffs which.
 	if strings.HasPrefix(e.MIMEType, "image/") && strings.HasPrefix(e.Content, "data:image/") {
-		raw, err := p.decodeDataURI(e.Content)
+		raw, err := e.DecodeDataURI()
 		if err != nil {
 			return nil, "", fmt.Errorf("data URI decode: %w", err)
 		}
@@ -415,40 +426,9 @@ func extractHTMLImageSrc(html string) string {
 	return rest[:end]
 }
 
-// decodeDataURI reads the bytes carried by a `data:` URI. The metadata half declares
-// the payload encoding, so both shapes a clipboard produces are honoured: `;base64`
-// (raster paste, and most SVG sources) and a percent-encoded text payload (the shape
-// an SVG data URI takes when it is not base64'd). It ACQUIRES only — the bytes are
-// validated by naturalSize and stored by saveAsset, both in Transform.
-func (p *SmartImageProcessor) decodeDataURI(dataURI string) ([]byte, error) {
-	meta, payload, ok := strings.Cut(dataURI, ",")
-	if !ok {
-		return nil, errors.New("invalid data URI: no comma separator")
-	}
-
-	if !strings.Contains(meta, ";base64") {
-		text, err := url.PathUnescape(payload)
-		if err != nil {
-			return nil, fmt.Errorf("percent-decode: %w", err)
-		}
-		return []byte(text), nil
-	}
-
-	// Clipboard sources wrap the payload; whitespace is not part of the alphabet.
-	b64 := strings.NewReplacer("\n", "", "\r", "", "\t", "", " ", "").Replace(payload)
-	raw, err := base64.StdEncoding.DecodeString(b64)
-	if err == nil {
-		return raw, nil
-	}
-	if urlAlphabet, urlErr := base64.URLEncoding.DecodeString(b64); urlErr == nil {
-		return urlAlphabet, nil
-	}
-	return nil, fmt.Errorf("base64 decode (%d chars): %w", len(b64), err)
-}
-
 // downloadImage fetches the bytes at imageURL. Like every other acquisition path it
 // only ACQUIRES: it does not decide validity (naturalSize does) and does not persist
-// (saveAsset does), so a downloaded image is measured and stored by exactly the same
+// (documentAssets does), so a downloaded image is measured and stored by exactly the same
 // rule as a pasted one. The timeout and size limit mirror SmartCardProcessor's fetch.
 func (p *SmartImageProcessor) downloadImage(imageURL, blockID string) ([]byte, error) {
 	logger.Info("smart-image: downloading", "block", blockID, "url", imageURL)
@@ -465,33 +445,6 @@ func (p *SmartImageProcessor) downloadImage(imageURL, blockID string) ([]byte, e
 	return io.ReadAll(io.LimitReader(resp.Body, 5*1024*1024))
 }
 
-func (p *SmartImageProcessor) saveAsset(uuid, blockID string, data []byte) (string, error) {
-	cat := domain.WorkingCopy
-	var doc domain.Document
-	if d, err := p.svc.Documents.LoadByUUID(uuid); err == nil {
-		doc = d
-		if doc.Kind() == domain.KindNote {
-			cat = domain.LibraryCategory
-		}
-	}
-
-	logger.Info("smart-image: saving asset", "block", blockID, "uuid", uuid, "bytes", len(data))
-	asset, err := p.svc.Assets.Save(cat, uuid, blockID, data)
-	if err != nil {
-		return "", err
-	}
-
-	if doc != nil {
-		doc.Storable().AttachAsset(asset.Storable())
-		if _, err := p.svc.Documents.Save(doc); err != nil {
-			// Non-fatal: asset is saved; attachment metadata will be missing
-			logger.Warn("smart-image: doc save after attach failed", "block", blockID, "err", err)
-		}
-	}
-
-	return asset.ExternalRef(), nil
-}
-
 func (p *SmartImageProcessor) MarkdownRepresentation(blk block.SieveBlock, uuid string) string {
 	src, _ := blk.Attrs["src"].(string)
 	if src == "" {
@@ -501,22 +454,7 @@ func (p *SmartImageProcessor) MarkdownRepresentation(blk block.SieveBlock, uuid 
 	if strings.TrimSpace(alt) == "" {
 		alt, _ = blk.Attrs["summary"].(string)
 	}
-	return "![" + strings.TrimSpace(alt) + "](" + p.assetURL(uuid, src) + ")"
-}
-
-// assetURL builds the served URL the document renders: /sieve/<uuid>/<filename>. A
-// stored smart-image src is always a local asset filename (Transform downloads/renders
-// everything to disk), so this only needs to prefix it with the asset route — the
-// markdown must carry a working URL, since prose-embedded images render as a plain
-// <img> (the NodeView's resolveSrc never runs on them). The .assets/ strip + basename
-// are defensive against an older/path-qualified src.
-func (p *SmartImageProcessor) assetURL(uuid, src string) string {
-	if src == "" {
-		return ""
-	}
-	src = strings.TrimPrefix(src, ".assets/")
-	if i := strings.LastIndex(src, "/"); i >= 0 {
-		src = src[i+1:]
-	}
-	return "/sieve/" + uuid + "/" + src
+	// A working URL, not the stored src: prose-embedded images render as a plain
+	// <img>, so the NodeView's resolveSrc never runs on them.
+	return "![" + strings.TrimSpace(alt) + "](" + p.assets.url(uuid, src) + ")"
 }

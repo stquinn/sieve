@@ -23,6 +23,7 @@ Object.assign(/** @type {any} */ (globalThis).TipTap, {
 
 const KINDS = [
   'ai-block',
+  'attachment',
   'code',
   'diagram',
   'log',

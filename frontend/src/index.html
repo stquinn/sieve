@@ -92,7 +92,7 @@
                  this host on the first present (the inner button DOM was removed). The hidden image-input
                  stays here (the toolbar image button + the cross-file upload handler both reach it by id). -->
             <div id="editor-toolbar"></div>
-            <input id="tb-image-input" type="file" accept="image/*" style="display:none">
+            <input id="tb-attach-input" type="file" style="display:none">
 
             <!-- Table toolbar — appears below main toolbar when cursor is inside a table -->
             <div id="table-toolbar">
@@ -251,6 +251,7 @@
     <script type="module" src="/static/editor/surfaces/node-views/web-clip-node-view.js"></script>
     <script type="module" src="/static/editor/surfaces/node-views/smart-image-node-view.js"></script>
     <script type="module" src="/static/editor/surfaces/node-views/smart-card-node-view.js"></script>
+    <script type="module" src="/static/editor/surfaces/node-views/attachment-node-view.js"></script>
     <script type="module" src="/static/editor/surfaces/node-views/diagram-node-view.js"></script>
     <script type="module" src="/static/block/prose-markers.js"></script>
     <script type="module" src="/static/block/block-render.js"></script>
@@ -620,10 +621,27 @@
           tableToolbar.addEventListener('click', handleTableToolbarClick);
         }
 
-        // ── Toolbar image upload ────────────────────────────────────────────────
-        document.getElementById('tb-image-input')?.addEventListener('change', function(e) {
+        // ── Toolbar file attach ─────────────────────────────────────────────────
+        // No kind is named here: the entry carries the file's mime type and Go's
+        // paste-match registry routes it (image/* -> smart-image, else attachment).
+        // 25MB, mirroring MaxAttachmentBytes in sieve/block/processors (the
+        // authority) and MAX_ATTACHMENT_BYTES in wysiwyg-surface.js (the drop
+        // path). Three copies because this inline script is not a module and
+        // importing the surface would drag ProseMirror in; #84 makes the ceiling a
+        // setting, at which point all three read one place.
+        var TB_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+        document.getElementById('tb-attach-input')?.addEventListener('change', function(e) {
           var file = e.target.files && e.target.files[0];
           if (!file) return;
+          // Refused BEFORE the read, so an enormous file never enters memory, and
+          // never silently: the message names the file, its size and the limit.
+          if (file.size > TB_MAX_ATTACHMENT_BYTES) {
+            var mb = function(n) { return (n / (1024 * 1024)).toFixed(1) + ' MB'; };
+            window.alert('"' + file.name + '" is ' + mb(file.size) + ' \u2014 larger than the '
+              + mb(TB_MAX_ATTACHMENT_BYTES) + ' limit for an attached file, so it was not attached.');
+            e.target.value = '';
+            return;
+          }
           var mount = document.getElementById('tiptap-mount');
           var uuid = mount && mount.getAttribute('data-uuid');
           // Only proceed when a real document (not a prompt) is active
@@ -637,8 +655,11 @@
             fetch('/api/editor/smart-paste', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ uuid: uuid, entries: [{ mimeType: file.type, content: ev.target.result }], index: imgIndex }),
-            }).catch(function(err) { console.error('[toolbar] image upload failed', err); });
+              // context.filename is what says "this came from a FILE" rather than
+              // "this is pasted text" — the attachment processor requires it, and
+              // without it a picked .yml is claimed by nobody and does nothing.
+              body: JSON.stringify({ uuid: uuid, entries: [{ mimeType: file.type, content: ev.target.result, context: { filename: file.name } }], index: imgIndex }),
+            }).catch(function(err) { console.error('[toolbar] file attach failed', err); });
           };
           reader.readAsDataURL(file);
           e.target.value = '';

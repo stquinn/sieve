@@ -172,14 +172,61 @@ workspace.onSelectionUpdate((ctx) => this.#refresh(ctx))   // ✓
 workspace.onSelectionUpdate(this.#refresh)                 // ✗ detached this
 ```
 
-## 8. Enforcement (build steps are allowed — use them)
+## 8. Comments: git is the archaeology
+
+**A comment explains what the code does and, where it is not obvious, why it is
+that way. It is not an essay about what came before.** The source history already
+holds that, holds it accurately, and holds it without rotting.
+
+**Keep:**
+
+- **The trap** — a constraint that makes the obvious implementation wrong.
+  *"`bytes` is stored as a STRING: attrs round-trip through JSON on paste and
+  yaml.v3 writes a large float in exponent form, so a numeric attr silently
+  becomes `1e+08` on the second save."* Without it the next author "fixes" the
+  type and reintroduces the bug.
+- **The why-not** — an alternative that was tried and fails.
+- **JSDoc types** (`@typedef` / `@param` / `@returns` / `@property`). These are
+  load-bearing under `// @ts-check`; they are contract, not commentary.
+
+**Delete:**
+
+- **Archaeology.** What used to live here, what moved out, which phase did it,
+  what a sibling file implements. `git log -p` answers all of it and stays true.
+- **Phase codes as the sole referent** — `P3.C`, `D-r.7`, `P4.F`. They point at
+  plan documents that are archived or gone. An issue number attached to a
+  sentence that stands on its own is fine (`#38`); a bare code is not.
+- **Restatement** — anything a competent reader takes straight from the code.
+- **Ceremonial banners** around trivial code.
+
+**The test for any comment: would a competent reader get this WRONG without it?**
+If no, delete it.
+
+### Worked example
+
+`ai/ai-target.js` carried 21 lines of comment over 5 lines of code. Most of it
+recorded that `resolveAiTarget` *used to* live there and which phase moved it —
+true, useless to a reader, and already in git. What earns its place is only the
+part explaining why the position is `sel.$to.after(1)` rather than `sel.to`: an
+answer must land as a SIBLING of the enclosing top-level block instead of
+splitting the paragraph.
+
+Note the failure mode that produced files like it: *"match the surrounding
+comment density"* propagates the worst example in the file's neighbourhood.
+Match the surrounding *idiom*; judge comments one at a time against the test
+above.
+
+Although this document is the normative one for JavaScript, this section is
+language-neutral and applies to the Go equally.
+
+## 9. Enforcement (build steps are allowed — use them)
 
 - `// @ts-check` per file + `tsc --noEmit` in CI: machine-checks every JSDoc
   contract without emitting anything or requiring TypeScript authorship.
 - ESLint with a minimal config (`no-var`, `eqeqeq`, `prefer-const`,
   `no-implicit-globals`): the discipline becomes enforced, not aspirational.
 
-## 9. What dies (quarantined debt, not precedent — X-C, epic #31)
+## 10. What dies (quarantined debt, not precedent — X-C, epic #31)
 
 | Anti-pattern | Replacement |
 |---|---|

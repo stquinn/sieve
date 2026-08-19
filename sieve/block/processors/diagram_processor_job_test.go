@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +53,12 @@ func (r *recordingAssets) Save(_ store.Category, _, assetID string, data []byte)
 	r.saves++
 	r.lastData = data
 	return &domain.ImageAsset{S: fakeAssetStorable{ref: assetID + ".svg"}}, nil
+}
+
+// ServeAssetData satisfies the read half of AssetsPort. The diagram job only ever
+// writes, so a read here means the job did something it should not.
+func (r *recordingAssets) ServeAssetData(docUUID, filename string) ([]byte, error) {
+	return nil, fmt.Errorf("recordingAssets: unexpected read of %s/%s", docUUID, filename)
 }
 
 // fakeDocuments errors on LoadByUUID so saveAsset skips the doc-attach branch —
