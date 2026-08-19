@@ -42,6 +42,11 @@ func (s *ServiceProvider) BlockServices() block.BlockServices {
 		LinkPreview: s.LinkPreview,
 		State:       s.State,
 		Plantuml:    s.Plantuml,
+		// The Router goes in as block.NodesPort — the one-method interface the
+		// block package declares for itself — so a processor holding a coordinate
+		// dereferences it through the same registry the @ picker offers from and
+		// MCP get_by_uri reads through, and block/ never learns editor/ exists.
+		Nodes: s.Nodes,
 	}
 }
 
@@ -55,6 +60,7 @@ var (
 	_ block.StatePort       = (*services.StateService)(nil)
 	_ block.LinkPreviewPort = (*services.LinkPreviewService)(nil)
 	_ block.PlantumlPort    = (*services.PlantumlService)(nil)
+	_ block.NodesPort       = (*editor.Router)(nil)
 )
 
 func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.FS) {
@@ -145,6 +151,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	block.RegisterProcessor(processors.NewDiagramProcessor(svc))
 	block.RegisterProcessor(processors.NewSmartImageProcessor(svc))
 	block.RegisterProcessor(processors.NewSmartCardProcessor(svc))
+	block.RegisterProcessor(processors.NewAttachmentProcessor(svc))
 	block.RegisterProcessor(processors.NewWebClipBlockProcessor(svc))
 	block.RegisterProcessor(processors.NewLogProcessor(svc))
 	block.RegisterProcessor(processors.NewCodeBlockProcessor(svc))

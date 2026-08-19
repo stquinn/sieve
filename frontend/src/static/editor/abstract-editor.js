@@ -52,6 +52,11 @@ import { resolveEntriesForKind } from '../block/sieve-block-extension.js'
  * @property {(msg: object) => void} [onServerMessage]
  *   — routing for messages the channel delegate does not consume (error,
  *   block-extracted, unawaited mode replies, …)
+ * @property {object} [mentionService]
+ *   — the session plane's `@`-picker tenant (#74 P4), handed down by the same
+ *   composition root as documentService so the WYSIWYG surface can host the
+ *   picker in the document (#38). OPTIONAL: without it the editor simply has no
+ *   `@` picker — the affordance is absent, nothing is broken.
  */
 
 export class AbstractEditor {
@@ -91,6 +96,12 @@ export class AbstractEditor {
 
   /** @type {boolean} whether this editor declared a live channel (connect: true) */
   #connected = false
+
+  /** @type {object|null} the `@` picker's protocol peer (#38). Held, never
+   * called from here: the WYSIWYG surface hosts the picker and this is the
+   * composition root's handle reaching it — the same route documentService
+   * takes to the surface's block ops. */
+  #mentionService = null
 
   /** @type {(msg: object) => void} */
   #onServerMessage
@@ -135,6 +146,7 @@ export class AbstractEditor {
     // field is fine; the model already fires only on a meaningful change.
     this.#selectionModel.onUpdate((ctx) => this.#emitEvent({ type: 'selection-update', context: ctx }))
     this.#documentService = options.documentService || null
+    this.#mentionService = options.mentionService || null
     this.#onServerMessage = options.onServerMessage || (() => {})
     this.#connected = options.connect === true && !!this.#documentService
     if (options.connect === true && !this.#documentService) {
@@ -173,6 +185,10 @@ export class AbstractEditor {
    * service pair is constructed together in the composition root), so the
    * surface's pane-stamping is unchanged. Null in bare constructions. */
   get blockService() { return this.#documentService ? this.#documentService.blockService : null }
+
+  /** The `@` picker's protocol peer (#38), or null in bare constructions. The
+   * WYSIWYG surface reads it to host the picker over its own caret. */
+  get mentionService() { return this.#mentionService }
 
   /** @returns {AbstractSurface|null} The mounted input surface, or null. */
   get surface() { return this.#surface }

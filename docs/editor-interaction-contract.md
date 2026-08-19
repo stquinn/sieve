@@ -22,6 +22,12 @@ regression pass. Source spec:
 | ai-block | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a |
 | web-clip | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a |
 | smart-image | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a |
+| attachment | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a |
+
+**THE WHOLE MATRIX IS OVERRIDDEN WHILE A TRIGGER PICKER IS OPEN (#38).** ↑, ↓,
+Tab, Enter and Escape belong to the picker in every context above, in the
+editor exactly as in the composer — see *Trigger picker* below for the rule and
+for why the mechanism is precedence rather than a policy flag.
 
 **Two chords, one meaning each (decided 2026-07-04):**
 
@@ -151,6 +157,18 @@ a `Partial` of it as `interactionPolicy`, and `policyFor` merges the two.
 | `expandPairOnEnter` | Enter inside an empty pair expands to a block |
 | `blockTextSubstitution` | cancel OS text substitution (macOS smart dashes/quotes) |
 | `literalGlyphs` | no ligature shaping — every character renders as itself |
+| `suppressTriggers` | `@`/`/` pickers never arm in this block's text |
+
+**`suppressTriggers` (added 2026-08-19, #38) is in `CODE_TEXT_POLICY`**, so one
+line covers `code` AND `diagram` and every code-ish kind that spreads the preset
+after them. `@Override`, `@media` and `@Component` sit at a line start after
+whitespace, so they satisfy the `@` trigger's boundary rule and would open the
+picker only to flash shut when the library search came back dry. Eligibility is
+an INTERACTION POLICY decision and not a host judgement: a host that adjudicated
+it would be a second declaration mechanism beside `interactionPolicy`. The
+chip-like kinds need nothing — `ai-block`, `web-clip`, `smart-image`,
+`smart-card` and `attachment` are all `caretStop: true`, so no caret enters their
+text and no trigger can arm there in the first place.
 
 **`CODE_TEXT_POLICY` is a declaration-time preset, not a genre.** Kinds whose
 content is literal source text spread it (`{ ...CODE_TEXT_POLICY }`) and
@@ -229,8 +247,8 @@ place appearance reads the policy, deliberately kept to a single site.
    column preserved. From below: LAST line. Never a NodeSelection, never
    skipped.
 3. Leaving a block never modifies its content (no phantom newlines).
-4. Read-only blocks (web-clip, ai-block, diagram-render, smart-image) are a
-   single caret stop: arrow onto → whole-block selection; arrow again → past
+4. Read-only blocks (web-clip, ai-block, diagram-render, smart-image,
+   smart-card, attachment) are a single caret stop: arrow onto → whole-block selection; arrow again → past
    it. Enter or Shift+Enter while selected inserts a paragraph after (this is
    how prose is added between two adjacent read-only blocks).
 5. Click-to-own-selection (framework-uniform, every kind): a click anywhere in
@@ -249,6 +267,22 @@ place appearance reads the policy, deliberately kept to a single site.
 6. Typing always goes somewhere visible after entering a block.
 7. Diagram edit↔render round-trip restores cursor position (block-start if
    content changed).
+8. **Double click OPENS an attachment block** (#38, 2026-08-19). Single click on
+   it is rule 5 unchanged — it selects the block, because a block sits in the
+   editing flow and must behave like one. The ai-block's FOOTER chip stays
+   single-click to open: it is not in that flow (it is provenance under an
+   answer), and the two differing is deliberate rather than an accident.
+   What opening means is decided by ONE rule, off the block's single address:
+   - points (`uri`) → the container, via `window.sieveWorkspace.openAddress`
+     (`MentionService.resolve` → the Router) — the same path ai-block chips take.
+   - holds (`src`) → the `sieve:attachment-open-asset` INTENT on `document`,
+     answered on desktop by revealing the document directory in the OS file
+     manager. The renderer names no mechanism, so a hosted build answers the
+     same gesture differently without the block changing.
+
+   The chevron ON the chip is not an open gesture: it reveals `summary` in
+   place, and it swallows the double click that lands on it. Reading the asset
+   inside Sieve is its job, which is what lets opening stay this simple.
 
 ## Block insertion placement (decided 2026-07-04)
 
@@ -429,7 +463,18 @@ buttons including the n/N stats refresh) via
 these OPEN it (conventional "start searching") rather than silently advancing a
 hidden search. Replace… slots into the same Find submenu when #61 lands.
 
-## Composer trigger picker (revised 2026-08-12, #74 P4/P5/P6)
+## Trigger picker (revised 2026-08-19, #74 P4/P5/P6 + #38)
+
+**ONE picker, two hosts.** The `@`/`/` picker is a single `TriggerPopover` over a
+`TriggerHost`: the composer's is its textarea (`TextareaHost`, a panel-anchored
+placement), the document's is a ProseMirror caret (`ProseMirrorHost`, a
+caret-anchored one). The keyboard model, the token scan, the abandonment state
+machine and the scroll-into-view fix are written ONCE and are identical in both
+— which is the point, and the reason a second popover was refused. What differs
+is stated where it differs: the composer's half is the rest of this section, the
+document's is *The same picker in the document* at the end of it.
+
+### In the composer
 
 The Ask panel's textarea is chrome, not an editor surface — none of the key
 matrix above applies to it. Two owners intercept keys there, and nothing else
@@ -600,6 +645,71 @@ that a message aimed at a command still shows what it will act on.
   meaningful diff — and `blockIds` is the selection SPAN, not the target extent,
   so a caret in flowing text (target: the whole document) would chip the one
   paragraph it sits in and misdescribe what a send does. Tracked separately.
+
+### The same picker in the document (#38)
+
+The editor hosts the SAME popover, with `@` only: `/` is a composer verb (a slash
+command runs against the message being written, and a document has no message).
+
+**Where the picker's keys sit in the precedence order.** The popover binds
+`keydown` in the CAPTURE phase on `view.dom`. ProseMirror installs exactly one
+BUBBLE-phase listener on that same element and dispatches every keymap from
+inside it — core, the pre-core `editorProps` Enter family, and the priority-50
+interaction-policy backstop alike. A capture listener on the same element
+therefore runs first, and the popover's `preventDefault()` +
+`stopImmediatePropagation()` mean ProseMirror never sees the key at all. So the
+picker's claim on the keyboard is a PRECEDENCE fact, not a policy flag, and no
+kind declares anything for it.
+
+| Key | While the picker is open in the editor |
+|---|---|
+| ↓ / ↑ | move the selection — the caret does not move, and no block's arrow behaviour (caret stops included) is reached |
+| Tab / Shift+Tab | accept the selected candidate. Shift+Tab is matched as Tab **or** `ISO_Left_Tab` **or** keyCode 9 — WebKitGTK reports the X11 keysym where Chrome says 'Tab', and matching the name alone let Shift+Tab fall through to the policy's Tab backstop |
+| Enter (no Shift) | accept — the paragraph is **not** split, and `policyEnterKeydown` is never reached |
+| Shift+Enter | falls through: the universal block escape keeps its meaning even with a list up |
+| Escape | **abandon the token** — the picker closes, the text is left exactly as typed, and **the block-escape behaviour behind it is not reached**. It does not merely hide: a picker the user dismissed must not reappear on the next keystroke |
+| anything else | falls straight through to the editor |
+
+A SHUT picker intercepts nothing whatsoever — every key above behaves as the
+matrix at the top of this document says.
+
+**The picker never arms where `suppressTriggers` is declared** (Policy
+declaration, above), so a `@Override` in a code or diagram block is text.
+Elsewhere the token rules are the composer's, unchanged: `@` keeps the default
+boundary (so `me@example` is an address), spans up to 4 words / 60 chars, and
+abandons on Escape, on going dry, and on acceptance.
+
+**Accepting makes a BLOCK, not text.** This is the one behaviour that genuinely
+differs between the two hosts, and it differs because the hosts do: a textarea
+has nowhere to put a block, so the composer echoes `@Title` and draws a chip
+beside it; a document does, so the token is deleted and an `attachment` block
+carrying the `uri` takes its place. There is no `@Title` text left behind to
+reconcile — the chip in the document IS the reference.
+
+**Where it lands is the ordinary rule, not a new one**: the caret is left where
+the token was, so a line the token had to itself becomes the block, and a line
+with prose still on it puts the block on the next one (Block insertion
+placement, above).
+
+### Gestures on a block chip (#38)
+
+| Gesture | On an `attachment` block | On the ai-block's FOOTER chip |
+|---|---|---|
+| single click | selects the block, like any other block | opens the coordinate |
+| double click | opens: a `uri` opens its container, a `src` reveals the file where it lives | — |
+
+The two differ deliberately and it is recorded here so it does not later read as
+an accident. A block sits in the editing flow, so a single click must place the
+caret and select it exactly as it would for any other block — which leaves
+double click for opening. The ai-block's footer chip is NOT in that flow (there
+is no caret in it and nothing to select), so single click can mean open there
+without ambiguity.
+
+Reading the asset is the chevron's job rather than double click's: expanding
+shows the summary, and for a text asset a preview. The open gesture is an INTENT
+the renderer emits, never a call to a mechanism — the desktop build answers it by
+revealing in the OS file manager, and a hosted build answers it differently
+without reopening the contract.
 
 ## Deferred (recorded, not shipped)
 

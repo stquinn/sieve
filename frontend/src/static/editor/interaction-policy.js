@@ -52,6 +52,7 @@ import { ProseLink } from './surfaces/prose-link.js'
  * @property {boolean} expandPairOnEnter
  * @property {boolean} blockTextSubstitution
  * @property {boolean} literalGlyphs
+ * @property {boolean} suppressTriggers
  */
 
 // EVERY field is a DISCRETE BEHAVIOUR a kind opts into by name. There is
@@ -85,6 +86,7 @@ export var DEFAULT_POLICY = {
   expandPairOnEnter: false,   // Enter inside an empty pair → opener / indented blank line / closer
   blockTextSubstitution: false, // cancel OS text substitution (macOS smart dashes/quotes) in this block
   literalGlyphs: false,       // render every character distinctly — no ligature shaping ('--' ≠ '–')
+  suppressTriggers: false,    // `@`/`/` pickers never arm in this block's text
 }
 
 // CODE_TEXT_POLICY — the "yep, this is code" preset: the whole bundle of
@@ -107,6 +109,12 @@ export var CODE_TEXT_POLICY = Object.freeze({
   expandPairOnEnter: true,
   blockTextSubstitution: true,
   literalGlyphs: true,
+  // `@Override`, `@media`, `@Component` sit at a line start after whitespace, so
+  // they satisfy the `@` trigger's boundary rule and would open the picker only
+  // to flash shut when the library search comes back dry. ONE line here covers
+  // code AND diagram (both spread this preset) and every code-ish kind after
+  // them — which is what a preset is for. Read by triggersSuppressed() below.
+  suppressTriggers: true,
 })
 
 // PAIRS — the ONE table every pair behaviour reads (surround, autoclose,
@@ -428,6 +436,27 @@ export function resolveContext(state, view) {
     nodeSelectionTypeName: nodeSelName,
     mode: mode || null,
   })
+}
+
+/**
+ * THE READER FOR `suppressTriggers` — does the caret sit in text where a `@`/`/`
+ * picker must not arm? Asked by the editor's TriggerHost port before it hands
+ * the popover any text to scan (shell/trigger-host.js), so the picker never even
+ * sees the inside of a code or diagram block.
+ *
+ * ELIGIBILITY IS A POLICY DECISION, NOT A HOST JUDGEMENT. A host that decided
+ * this for itself would be a second declaration mechanism standing beside
+ * `interactionPolicy` — the exact thing this file's header warns against — so it
+ * is resolved through the SAME resolveContext the arrows, Tab, Enter and Home
+ * go through, and a kind opts in by naming the flag like any other.
+ *
+ * The chip-like kinds need nothing: ai-block, web-clip, smart-image, smart-card
+ * and attachment are all `caretStop: true`, so no caret enters their text and no
+ * trigger can arm there in the first place.
+ * @param {any} state @param {any} [view] @returns {boolean}
+ */
+export function triggersSuppressed(state, view) {
+  return !!resolveContext(state, view).policy.suppressTriggers
 }
 
 // Block-local text + offsets for raw-text transforms.

@@ -43,6 +43,13 @@ import { BlockChrome, getBlockSelectionRange } from '../block-chrome.js'
 import { AiTargetDecoration } from '../../ai/ai-target-decoration.js'
 import { Search, SelectionHighlight, HighlightMark, AiShortcuts } from '../extensions.js'
 import { policyEnterKeydown, buildInteractionPolicyExtension } from '../interaction-policy.js'
+// The `@` picker, hosted HERE (#38). The popover, the providers and the host
+// family are shell's — one picker for the whole app, never a second one for the
+// editor — and this surface contributes the one thing they cannot have: a port
+// onto a live ProseMirror caret. Nothing PM crosses back out through it.
+import { TriggerPopover } from '../../shell/trigger-popover.js'
+import { MentionProvider } from '../../shell/trigger-providers.js'
+import { ProseMirrorHost, CaretPlacement } from '../../shell/trigger-host.js'
 import {
   getSieveNodes, getSieveBlockLabel, serializeNode, sieveBlockAttrs,
   sieveBlockEntries, rendererFor,
@@ -55,6 +62,7 @@ import { seedBaseline, computeBlockSync } from '../../block/block-sync.js'
 import { docPosForBlockIndex, blockIndexAfter } from './block-position.js'
 import { reloadReplacement } from './render-empty.js'
 import { caretInRawTextBlock } from '../paste-context.js'
+import { CaretTriggerPort } from './caret-trigger-port.js'
 
 // The formatting command spec (P4.D): each entry is one ToolbarButton the WYSIWYG
 // surface contributes to the editor toolbar. `icon` is a SieveIcons key; `cmd`
@@ -193,6 +201,15 @@ export class WysiwygSurface extends AbstractSurface {
 
   /** @type {ReturnType<typeof setTimeout>|null} scroll-report debounce (issue #51) */
   #scrollTimer = null
+
+  /**
+   * The `@` picker hosted in this document (#38) — the SAME TriggerPopover the
+   * Ask panel runs, over a ProseMirrorHost and a caret-anchored placement. Null
+   * when the editor was built without a MentionService (bare / vitest mounts):
+   * the picker is an affordance, never a requirement to edit.
+   * @type {TriggerPopover|null}
+   */
+  #triggerPicker = null
 
   /**
    * @param {AbstractEditor} host — the parent editor (supplies uuid + the public API)
@@ -708,6 +725,9 @@ export class WysiwygSurface extends AbstractSurface {
       }
       this.#scroller.addEventListener('scroll', this.#onScroll, { passive: true })
     }
+
+    // The `@` picker (#38) — last, because it ports onto the live view.
+    this.#mountTriggerPicker()
   }
 
   /**
@@ -716,6 +736,10 @@ export class WysiwygSurface extends AbstractSurface {
    * innerHTML='' swap) and the window.__tiptap handle.
    */
   unmount() {
+    // Before the view dies: the picker's subscriptions are ON it, and its
+    // popover element lives on document.body where an orphan would survive the
+    // remount and stack.
+    if (this.#triggerPicker) { this.#triggerPicker.destroy(); this.#triggerPicker = null }
     if (this.#syncTimer) { clearTimeout(this.#syncTimer); this.#syncTimer = null }
     if (this.#onDocSelectionChange) {
       document.removeEventListener('selectionchange', this.#onDocSelectionChange)
@@ -771,6 +795,36 @@ export class WysiwygSurface extends AbstractSurface {
     this.#syncTimer = null
     const ed = this.editorPane
     if (ed) this.#syncDocument(ed)
+  }
+
+  // ── The `@` picker's host (#38) ────────────────────────────────────────────
+
+  /**
+   * Wires the picker over the live view. Silent no-op without a MentionService —
+   * a bare/vitest mount edits perfectly well without an `@` picker, and a missing
+   * OPTIONAL service must never be a mount failure.
+   *
+   * The surface contributes exactly one thing the trigger family cannot have: a
+   * port onto a live ProseMirror caret (CaretTriggerPort, which owns that whole
+   * job). The popover, the host and the provider are shell's — ONE picker for the
+   * whole app, never a second one for the editor.
+   *
+   * ONLY `@` is registered. `/` is a COMPOSER verb: a slash command runs against
+   * the message being written, and a document has no message. The popover takes
+   * whatever providers its host is given, which is exactly why that is a wiring
+   * decision here rather than a fork inside the picker.
+   */
+  #mountTriggerPicker() {
+    // Idempotent: a re-mount without an unmount would otherwise leave the old
+    // picker's element on document.body and its subscriptions on a dead view.
+    if (this.#triggerPicker) { this.#triggerPicker.destroy(); this.#triggerPicker = null }
+    const editorPane = this.#editorPane
+    const mentions = /** @type {any} */ (this.#host).mentionService
+    if (!editorPane || !mentions) return
+    const port = new CaretTriggerPort(editorPane, this.#host, () => this.flushPending())
+    this.#triggerPicker = new TriggerPopover(
+      new ProseMirrorHost(port), [new MentionProvider(mentions)], new CaretPlacement(),
+    )
   }
 
   // ── Smart paste / drop (P4.A: moved off editor.js's IIFE) ──────────────────────
@@ -1652,8 +1706,16 @@ export class WysiwygSurface extends AbstractSurface {
             status:          parsed.status   || node.attrs.status,
           })
           Object.keys(parsed).forEach(function (k) {
-            // Safely apply keys that exist in the existing node.attrs schema mapping
-            if (k !== 'id' && k !== 'status' && (k in node.attrs)) {
+            // Safely apply keys that exist in the existing node.attrs schema mapping.
+            // `kind` is refused alongside id/status: BASE_ATTRS declares it on EVERY
+            // sieve-* node as the block's own kind, so a processor attrs bag that
+            // happens to carry a `kind` key would silently retype the node the moment
+            // a job completed. A block's kind changes by replace-block and never by an
+            // attrs update, so there is no case where copying it is correct. (#38 —
+            // found when the attachment kind stored an asset's kind under that name;
+            // the attr was renamed to targetKind AND this guard added, because the
+            // rename fixes one kind and the guard fixes the class.)
+            if (k !== 'id' && k !== 'status' && k !== 'kind' && (k in node.attrs)) {
               nextAttrs[k] = parsed[k]
             }
           })

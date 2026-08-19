@@ -72,10 +72,20 @@ distinction between a *document* and *a file a document holds*.
 | `src` | smart-image | asset filename in the document directory — the block **holds** a file |
 | `uri` | new | `container:{uuid}` — the block **points** at another Sieve container |
 | `title` | smart-card | the card's name |
-| `kind` | smart-card `siteName` | `note` for a citation; the mime family for a file |
+| `targetKind` | smart-card `siteName` | `note` for a citation; the mime family for a file. NEVER `kind` — see below |
 | `summary` | smart-card `description` | one line under the title |
 | `bytes`, `mime` | new | so a held file's card reads "OpenAPI · 412 KB" |
 | `status`, `error`, `createdAt`, `completedAt`, `supportsEmbedding` | both | standard block lifecycle |
+
+**`targetKind`, never `kind`.** `kind` is RESERVED: `BASE_ATTRS`
+(`sieve-block-extension.js`) declares it on every `sieve-*` node as the BLOCK's
+kind. A processor attr of that name collides SILENTLY —
+`WysiwygSurface#applyBlockAttrsUpdated` copies any wire key present in
+`node.attrs`, so a completing job would retype the node. This spec first named the
+attr `kind` and was wrong. Both halves are fixed: the attr is renamed, AND that
+handler now refuses `kind` outright alongside `id`/`status`, since a block's kind
+changes by `replace-block` and never by an attrs update. The rename fixes this
+kind; the guard fixes the class.
 
 `uri` holds `container:` addresses only. `block:` is legal grammar but
 `Router.Resolve` answers for containers alone, and nothing here needs more.
@@ -89,7 +99,7 @@ returns `nil`, and the block is born `COMPLETE`.** Otherwise:
   stamp `bytes`, extract text for `summary`. Shape of `SmartImageProcessor`'s
   describe job, without the CLI call.
 - **`uri` set** → resolve job: `Router.Resolve(uri)` → `domain.Node` → stamp
-  `title` / `kind` / `summary`. Shape of `SmartCardProcessor`'s OG fetch, with the
+  `title` / `targetKind` / `summary`. Shape of `SmartCardProcessor`'s OG fetch, with the
   Router in `LinkPreview`'s seat.
 
 Unlike a composer chip — whose title is deliberately **frozen** at attach time,

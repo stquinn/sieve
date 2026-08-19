@@ -23,6 +23,7 @@
 
 import { TriggerPopover } from './trigger-popover.js'
 import { SlashCommandProvider, MentionProvider } from './trigger-providers.js'
+import { TextareaHost, PanelPlacement } from './trigger-host.js'
 import { ComposerAttachments } from './composer-attachments.js'
 import { TargetChips } from './target-chips.js'
 
@@ -91,14 +92,21 @@ export class AskPanel {
     )
     // ONE picker, two triggers (#74 P4): `/` enumerates the boot-shipped command
     // list, `@` round-trips the library through the session plane. The popover
-    // owns the keyboard/positioning; each provider owns only its own trigger.
+    // owns the keyboard model; each provider owns only its own trigger; and the
+    // HOST owns the surface it all happens in (#38) — the composer's is its
+    // textarea, placed as an extension of the panel above it. The editor hosts
+    // the SAME popover with a host and a placement of its own.
     if (this.#textarea) {
       const providers = []
       if (this.#commandService) providers.push(new SlashCommandProvider(this.#commandService))
       if (this.#mentionService) {
         providers.push(new MentionProvider(this.#mentionService, (c) => this.#attachments?.add(c)))
       }
-      if (providers.length) this.#hintPopover = new TriggerPopover(this.#textarea, providers)
+      if (providers.length) {
+        this.#hintPopover = new TriggerPopover(
+          new TextareaHost(this.#textarea), providers, new PanelPlacement(),
+        )
+      }
     }
     this.#wireDom()
     this.#wirePinToggle()

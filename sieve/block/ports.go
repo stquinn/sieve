@@ -20,9 +20,39 @@ type DocumentsPort interface {
 	Save(d domain.Document) (domain.Document, error)
 }
 
-// AssetsPort is the binary-asset persistence surface processors use.
+// AssetsPort is the binary-asset surface processors use. It carries BOTH halves
+// of an asset's life, not just the write: a kind that INGESTS a file has to read
+// the bytes back to say anything about them (the attachment kind stamps size,
+// mime and a text excerpt from them), and a write-only port would have forced
+// that read onto the raw store — past the seam that keeps processors stubbable.
 type AssetsPort interface {
 	Save(category store.Category, parentContext, assetID string, data []byte) (*domain.ImageAsset, error)
+	ServeAssetData(docUUID, filename string) ([]byte, error)
+}
+
+// NodesPort is the address-resolution surface processors use: one method,
+// coordinate -> Node. editor.Router is the implementation and the composition
+// root injects it.
+//
+// This port is not the same KIND of seam as its siblings. The others keep
+// processors off concrete services and make them stubbable; this one is
+// load-bearing structure, because block/ CANNOT import editor/ at all — editor
+// imports block, so the reverse edge closes a cycle. The CONSUMER therefore
+// declares the interface, exactly as mcp.NodeResolver does for the same
+// resolver, and block/ depends on "something that dereferences an address"
+// rather than on all of editor/ (which would drag the codec, the identity
+// sweeper and the editor service in behind it).
+//
+// The Router's REFUSALS are part of this contract and are the caller's to
+// interpret — there is exactly one place that decides what a coordinate means:
+//
+//	domain.ErrBadAddress   the string is not a coordinate at all
+//	domain.ErrNodeNotFound a well-formed address nothing holds (deleted, unfiled)
+//
+// ErrNodeNotFound is DANGLING, which is a normal state a block renders (a cached
+// face with a missing marker), never a failure it reports.
+type NodesPort interface {
+	Resolve(uri string) (domain.Node, error)
 }
 
 // StatePort is the settings-read surface processors use.
