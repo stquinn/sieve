@@ -81,11 +81,23 @@ type assetViewData struct {
 	// Name is what the tab SHOWS: the name the owning block knows the asset by,
 	// falling back to the stored filename when no block claims it.
 	Name string
-	// FileName is the name on disk — a uuid stem. Kept for the tooltip, because
-	// it is what you need when reading the document directory by hand.
+	// Detail is what the block says the asset IS, when that differs from its name
+	// — an image's description, an attachment's excerpt.
+	Detail string
+	// FileName is the name on disk — a uuid stem. Tooltip only: it is what you
+	// need when reading the document directory by hand, and nothing else.
 	FileName string
 	MimeType string
 	IsImage  bool
+}
+
+// assetLabel is what a block knows about the asset it owns: what to call it, and
+// what it is. Two fields because a name and a description are different
+// questions — an image answers the second well and the first only if it arrived
+// as a file.
+type assetLabel struct {
+	Name   string
+	Detail string
 }
 
 func (h *MetaHandler) handleMeta(w http.ResponseWriter, r *http.Request) {
@@ -297,24 +309,31 @@ func toVersionViews(refs []store.VersionRef, uuidEnc string) []versionViewData {
 // switching on kind, so a future kind that names its asset is labelled without
 // touching this. A label is a nicety, so a document that will not parse yields no
 // labels rather than failing the panel.
-func (h *MetaHandler) assetLabels(d domain.Document) map[string]string {
+func (h *MetaHandler) assetLabels(d domain.Document) map[string]assetLabel {
 	blocks, err := block.NewDocumentCodec(block.GlobalRegistry()).Deserialize(string(d.Body()))
 	if err != nil {
 		return nil
 	}
-	out := make(map[string]string, len(blocks))
+	out := make(map[string]assetLabel, len(blocks))
 	for _, blk := range blocks {
-		for _, key := range []string{"title", "alt"} {
-			if v, _ := blk.Attrs[key].(string); strings.TrimSpace(v) != "" {
-				out[blk.ID] = strings.TrimSpace(v)
+		str := func(key string) string {
+			v, _ := blk.Attrs[key].(string)
+			return strings.TrimSpace(v)
+		}
+		label := assetLabel{Name: str("title")}
+		for _, key := range []string{"alt", "summary"} {
+			if label.Detail = str(key); label.Detail != "" {
 				break
 			}
+		}
+		if label.Name != "" || label.Detail != "" {
+			out[blk.ID] = label
 		}
 	}
 	return out
 }
 
-func toAssetViews(storables []store.Storable, labels map[string]string) []assetViewData {
+func toAssetViews(storables []store.Storable, labels map[string]assetLabel) []assetViewData {
 	var out []assetViewData
 	for _, s := range storables {
 		if as, ok := s.(store.AssetStorable); ok {
@@ -331,12 +350,21 @@ func toAssetViews(storables []store.Storable, labels map[string]string) []assetV
 				}
 			}
 			label := labels[as.BlkID()]
-			if strings.TrimSpace(label) == "" {
-				label = name
+			shown := label.Name
+			if shown == "" {
+				// No name, so the description carries the row rather than a uuid.
+				shown = label.Detail
+			}
+			detail := label.Detail
+			if shown == "" {
+				shown, detail = name, ""
+			} else if detail == shown {
+				detail = ""
 			}
 			out = append(out, assetViewData{
 				SrcURL:   ref,
-				Name:     label,
+				Name:     shown,
+				Detail:   detail,
 				FileName: name,
 				MimeType: mt,
 				IsImage:  strings.HasPrefix(mt, "image/"),

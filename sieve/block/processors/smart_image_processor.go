@@ -33,8 +33,8 @@ var errEntryNotImage = errors.New("entry is not an image this processor ingests"
 type SmartImageProcessor struct {
 	svc                      block.BlockServices
 	assets                   documentAssets // where ingested bytes land
-	block.FencedSerializer   // one shared YAML serialization — free
-	block.FencedDeserializer // its mirror — recognise+parse the fenced form
+	block.FencedSerializer                  // one shared YAML serialization — free
+	block.FencedDeserializer                // its mirror — recognise+parse the fenced form
 }
 
 func NewSmartImageProcessor(svc block.BlockServices) *SmartImageProcessor {
@@ -158,6 +158,14 @@ func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid strin
 		}
 
 		attrs := map[string]interface{}{"src": src}
+		// The name the file arrived under, when it arrived as a file at all. The
+		// asset is stored as <blockID>.<ext> so nothing on disk remembers it, and
+		// without this an image is identifiable only by its AI description — which
+		// is a description, not an identity. A clipboard paste has no filename and
+		// correctly stamps none.
+		if name, _ := e.Context["filename"].(string); strings.TrimSpace(name) != "" {
+			attrs["title"] = strings.TrimSpace(name)
+		}
 		if width > 0 {
 			attrs["width"] = strconv.Itoa(width)
 		}

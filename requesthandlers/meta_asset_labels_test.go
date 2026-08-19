@@ -25,9 +25,9 @@ func TestAssetViews_labelledByTheirOwningBlock(t *testing.T) {
 		fakeAsset{ref: "store/doc/01a01bcd-273b.json", blkID: "01a01bcd-273b"},
 		fakeAsset{ref: "store/doc/01a01bcd-3ec8.json", blkID: "01a01bcd-3ec8"},
 	}
-	labels := map[string]string{
-		"01a01bcd-273b": "swagger.yml",
-		"01a01bcd-3ec8": "payments-fixture.json",
+	labels := map[string]assetLabel{
+		"01a01bcd-273b": {Name: "swagger.yml"},
+		"01a01bcd-3ec8": {Name: "payments-fixture.json"},
 	}
 
 	views := toAssetViews(assets, labels)
@@ -52,13 +52,44 @@ func TestAssetViews_unclaimedAssetKeepsItsFilename(t *testing.T) {
 	// it never matches) — the row must still be identifiable, not blank.
 	views := toAssetViews(
 		[]store.Storable{fakeAsset{ref: "store/doc/01a01bcd-9f2b-img.png", blkID: "01a01bcd-9f2b-img"}},
-		map[string]string{"01a01bcd-9f2b": "Auth Design"},
+		map[string]assetLabel{"01a01bcd-9f2b": {Name: "Auth Design"}},
 	)
 	if len(views) != 1 {
 		t.Fatalf("views: got %d, want 1", len(views))
 	}
 	if views[0].Name != "01a01bcd-9f2b-img.png" {
 		t.Errorf("Name: got %q, want the filename fallback", views[0].Name)
+	}
+}
+
+func TestAssetViews_describedImageKeepsBothNameAndDescription(t *testing.T) {
+	// An image that arrived as a file has BOTH: the name it came under and the AI's
+	// description of it. The description must not displace the name — a description
+	// says what a thing is, never which one it is.
+	views := toAssetViews(
+		[]store.Storable{fakeAsset{ref: "store/doc/01a01bcd-273b.png", blkID: "01a01bcd-273b"}},
+		map[string]assetLabel{"01a01bcd-273b": {Name: "diagram.png", Detail: "A dark-themed editor screenshot"}},
+	)
+	if views[0].Name != "diagram.png" {
+		t.Errorf("Name: got %q, want the filename it arrived under", views[0].Name)
+	}
+	if views[0].Detail != "A dark-themed editor screenshot" {
+		t.Errorf("Detail: got %q, want the description", views[0].Detail)
+	}
+}
+
+func TestAssetViews_pastedImageFallsBackToItsDescription(t *testing.T) {
+	// A clipboard paste has no filename, so there is nothing to name it but the
+	// description — which still beats showing a uuid.
+	views := toAssetViews(
+		[]store.Storable{fakeAsset{ref: "store/doc/01a01bcd-9f2b.png", blkID: "01a01bcd-9f2b"}},
+		map[string]assetLabel{"01a01bcd-9f2b": {Detail: "A dark-themed editor screenshot"}},
+	)
+	if views[0].Name != "A dark-themed editor screenshot" {
+		t.Errorf("Name: got %q, want the description as the fallback", views[0].Name)
+	}
+	if views[0].Detail != "" {
+		t.Errorf("Detail: got %q, want it empty rather than repeating the name", views[0].Detail)
 	}
 }
 
