@@ -5,34 +5,21 @@
 // design: docs/design/specs/2026-08-19-attachment-block-design.md).
 //
 // Owns look-and-feel ONLY, and there is deliberately very little of it: the
-// block IS an attachment chip — Sieve already has a vocabulary for "this is an
-// attachment", and a second one for the same idea would make the two read as
-// different objects. So this class COMPOSES AttachmentChip (the shared
-// component, a sibling in this directory) inside a block-level wrapper that
-// shrink-wraps it, adds the chevron that reveals `summary`, and stops there. No
-// card shell, no header bar, no toolbar.
+// block IS an attachment chip, so this class COMPOSES AttachmentChip inside a
+// block-level wrapper that shrink-wraps it, adds the chevron that reveals
+// `summary`, and stops there. No card shell, no header bar, no toolbar.
 //
 // Zero ProseMirror/editor/window.* dependencies: it mounts identically in the
-// note editor's NodeView adapter (editor/surfaces/node-views/attachment-node-view.js,
-// by composition) and on a bare page.
+// note editor's NodeView adapter and on a bare page.
 //
 // ── THE ONE GESTURE IT OWNS ─────────────────────────────────────────────────
 // SINGLE click is NOT handled here. A block sits in the editing flow, so a
 // single click must place the caret and select it like any other block — that is
 // the shared interaction policy's job, and a handler here would fight it.
 // DOUBLE click opens, and this class fans out an INTENT (`onOpen`) carrying the
-// block's target; it never names a mechanism. Navigating to a container and
-// revealing a file are decisions for whoever holds this renderer — the desktop
-// adapter answers one way, a hosted build must be able to answer differently
-// without touching this file. Same seam as `sieve:ai-ask`/`sieve:ai-explain`.
-//
-// ── WHY THE ATTR IS `targetKind` AND NOT `kind` ─────────────────────────────
-// `kind` is RESERVED: BASE_ATTRS (sieve-block-extension.js) declares it on every
-// sieve-* node as the BLOCK's kind. A processor attr of the same name collides,
-// and the collision is silent — WysiwygSurface#applyBlockAttrsUpdated copies any
-// wire key present in node.attrs, so Go's "yaml" would overwrite the node's own
-// "attachment" the moment a job completed. The attr is therefore named for what
-// it describes: the kind of the thing this block points at or holds.
+// block's target; it never names a mechanism, so a hosted build can answer
+// differently from the desktop one without touching this file. Same seam as
+// `sieve:ai-ask`/`sieve:ai-explain`.
 
 import { BlockRenderer } from './block-renderer.js'
 import { attachmentStyles } from './attachment-renderer.styles.js'
@@ -69,7 +56,7 @@ export class AttachmentRenderer extends BlockRenderer {
   static styles = attachmentStyles
   static rootClass = 'attachment-block'
 
-  /** Disclosure glyphs. A GLYPH SWAP, never a CSS transform — see the styles header. */
+  /** Disclosure glyphs. A GLYPH SWAP, never a CSS transform — see the styles file. */
   static #CHEVRON = Object.freeze({ COLLAPSED: '▸', EXPANDED: '▾' })
 
   /** The label a block with no title, no file and no coordinate still wears. */
@@ -83,8 +70,8 @@ export class AttachmentRenderer extends BlockRenderer {
   /**
    * THE address rule, in one place, mirroring the processor's own `address()`:
    * exactly one of src/uri is ever set, and the (illegal) both-set case resolves
-   * to `uri` — arbitrarily, but FIXEDLY and identically on both sides of the
-   * wire, so a block cannot mean one thing to Go and another to the reader.
+   * to `uri` — arbitrarily, but identically on both sides of the wire, so a block
+   * cannot mean one thing to Go and another to the reader.
    * @param {AttachmentPayload} payload
    * @returns {AttachmentTarget|null} null when the block addresses nothing
    */
@@ -114,9 +101,9 @@ export class AttachmentRenderer extends BlockRenderer {
   }
 
   /**
-   * The bare asset name from a stored src. Mirrors the processor's `filename`:
-   * a src is always a filename in the document directory, and the `.assets/`
-   * strip plus the basename are defensive against a path-qualified one.
+   * The bare asset name from a stored src. Mirrors the processor's `filename`.
+   * A src is always a filename in the document directory; the `.assets/` strip
+   * and the basename are defensive against a path-qualified one.
    * @param {string} src
    * @returns {string}
    */
@@ -130,7 +117,7 @@ export class AttachmentRenderer extends BlockRenderer {
    * A stored byte count as a reader sees it — "412 KB". Mirrors the processor's
    * `humanSize` exactly (1024-based, one decimal below 10) so the chip and the
    * AI context state the same size. `bytes` is a STRING attr, so a value that
-   * will not parse renders nothing rather than a lie.
+   * will not parse renders nothing rather than a wrong number.
    * @param {string|number} [bytes]
    * @returns {string}
    */
@@ -181,9 +168,8 @@ export class AttachmentRenderer extends BlockRenderer {
 
   /**
    * Registers interest in "the user opened this attachment", handing back what
-   * the block addresses. The renderer NEVER opens anything itself: it is
-   * lens-blind, has no idea what a workspace or a file manager is, and naming
-   * either here would harden the desktop into the block.
+   * the block addresses. The renderer NEVER opens anything itself — naming a
+   * workspace or a file manager here would harden the desktop into the block.
    * @param {(target: AttachmentTarget) => void} fn
    * @returns {() => void} unsubscribe
    */
@@ -241,9 +227,9 @@ export class AttachmentRenderer extends BlockRenderer {
 
   /**
    * Redraws the chip and the summary from the envelope. The whole line is
-   * rebuilt rather than patched: a chip is a value drawn, not a live object
-   * (AttachmentChip is immutable once built), and the disclosure state lives on
-   * THIS object, so it survives the redraw a render-back triggers.
+   * rebuilt rather than patched because AttachmentChip is immutable once built;
+   * the disclosure state lives on THIS object, so it survives the redraw a
+   * render-back triggers.
    * @param {AttachmentPayload} payload
    */
   #draw(payload) {
@@ -329,11 +315,9 @@ export class AttachmentRenderer extends BlockRenderer {
   }
 
   /**
-   * The kind of the thing this block points at or holds — "note" for a
-   * citation, the mime family ("yaml", "pdf") for a held file.
-   *
-   * It reads `targetKind` rather than `kind` because `kind` is reserved by the
-   * framework for the BLOCK's kind; see the file header for what collided.
+   * The kind of the thing this block points at or holds — "note" for a citation,
+   * the mime family ("yaml", "pdf") for a held file. The attr is `targetKind`
+   * because `kind` is reserved for the BLOCK's kind (see the NodeView adapter).
    * @param {AttachmentPayload} payload
    * @returns {string}
    */
@@ -342,15 +326,11 @@ export class AttachmentRenderer extends BlockRenderer {
   }
 
   /**
-   * DANGLING IS A NORMAL STATE, not a job failure. The processor settles a
-   * reference whose target is gone as COMPLETE with a non-empty `error`,
-   * deliberately KEEPING the cached face — that pair, not the ERROR status, is
-   * what greys a chip. Testing status here instead would miss every dangling
-   * block there is.
-   *
-   * A job that genuinely broke also leaves an `error`, and such a block is
-   * equally un-openable, so ONE predicate covers both: an attachment with
-   * something wrong with it says so, and still shows whatever it last knew.
+   * DANGLING IS A NORMAL STATE, not a job failure: the processor settles a
+   * reference whose target is gone as COMPLETE with a non-empty `error`, keeping
+   * the cached face. So it is the ERROR TEXT that greys a chip — testing `status`
+   * here instead would miss every dangling block there is. A job that genuinely
+   * broke leaves an error too, and ONE predicate is right for both.
    * @param {AttachmentPayload} payload
    * @returns {boolean}
    */
@@ -371,6 +351,4 @@ export class AttachmentRenderer extends BlockRenderer {
     return src ? AttachmentRenderer.filenameOf(src) : ''
   }
 
-  // destroy(): base no-op is correct — this class owns no timers/observers, and
-  // its listeners live on DOM it owns.
 }

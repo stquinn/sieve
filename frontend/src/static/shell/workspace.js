@@ -389,9 +389,8 @@ export class SieveWorkspace {
       // (NoteEditor) opens its channel through documentService at construction,
       // registering itself as the channel delegate — no separate per-document
       // handle registration remains (the v1 seam is retired).
-      // The service pair AND the `@` picker's peer (#38) ride the editor options:
-      // one composition root hands down every plane tenant an editor's surfaces
-      // may need, so no surface ever reaches a singleton for one.
+      // Every plane tenant an editor's surfaces may need rides the options from
+      // this one composition root, so no surface reaches a singleton for one.
       tab.attachEditor(tab.createEditor(uuid, Object.assign(
         { documentService: this.#documentService, mentionService: this.#mentionService }, options,
       )))

@@ -92,10 +92,9 @@ export class AskPanel {
     )
     // ONE picker, two triggers (#74 P4): `/` enumerates the boot-shipped command
     // list, `@` round-trips the library through the session plane. The popover
-    // owns the keyboard model; each provider owns only its own trigger; and the
-    // HOST owns the surface it all happens in (#38) — the composer's is its
-    // textarea, placed as an extension of the panel above it. The editor hosts
-    // the SAME popover with a host and a placement of its own.
+    // owns the keyboard model, each provider owns only its own trigger, and the
+    // HOST owns the surface — here the textarea, placed as an extension of the
+    // panel above it.
     if (this.#textarea) {
       const providers = []
       if (this.#commandService) providers.push(new SlashCommandProvider(this.#commandService))

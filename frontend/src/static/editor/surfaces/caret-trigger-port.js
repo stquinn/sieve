@@ -2,22 +2,14 @@
 // caret-trigger-port.js — CaretTriggerPort: what a live ProseMirror caret can
 // answer for the `@` picker hosted in the document (#38).
 //
-// THE HOST IS SHELL'S, THE PORT IS THE SURFACE'S. `ProseMirrorHost`
-// (shell/trigger-host.js) belongs to the TriggerPopover/TriggerProvider/
-// TriggerHost family and must be constructible where the popover is, so it
-// touches no PM API at all; this class is the half that does. The split is the
-// package rule stated as code: editor/surfaces/ is THE PM package, and nothing
-// PM crosses out of it — what leaves here is a rect, a string, an offset.
+// This is the PM half of shell's `ProseMirrorHost`: editor/surfaces/ is THE PM
+// package and nothing PM crosses out of it — what leaves here is a rect, a
+// string, an offset.
 //
 // SelectionModel is deliberately NOT the source for any of it. It is a DOCUMENT
-// coordinate and never a PM node ("the PM/DOM split is insulated inside the
-// surface"), so it can say which block the caret is in but not where that is in
-// pixels, nor what text surrounds it. Both come from the view.
-//
-// It is a CLASS, not four closures on the surface, because it is a cohesive
-// thing with its own data (the pane, the editor, the flush) and because a test
-// can then drive the SHIPPED port against a real TipTap editor rather than a
-// re-typed copy of it.
+// coordinate and never a PM node, so it can say which block the caret is in but
+// not where that is in pixels, nor what text surrounds it. Both come from the
+// view.
 
 import { T } from './tiptap-vendor.js'
 import { triggersSuppressed } from '../interaction-policy.js'
@@ -46,15 +38,13 @@ export class CaretTriggerPort {
 
   /**
    * The caret's own textblock and the offset within it — the two halves of a
-   * token scan, read from ONE state so they cannot straddle a transaction.
+   * token scan, read from ONE state so they cannot straddle a transaction. Null
+   * means there is nothing here to scan.
    *
-   * Null means "there is nothing here to scan", and it answers four cases at
-   * once: no live view, a ranged or node selection (no caret), a parent that is
-   * not a textblock, and — the policy one — a block whose kind declares
-   * `suppressTriggers`, which is why `@Override` inside a code or diagram block
-   * never arms the picker. That last one is asked of `interaction-policy.js`
-   * rather than decided here: eligibility is a POLICY decision, and a port that
-   * judged it would be a second declaration mechanism beside `interactionPolicy`.
+   * The last guard is why `@Override` inside a code or diagram block never arms
+   * the picker, and it is ASKED of `interaction-policy.js` rather than decided
+   * here: judging eligibility would be a second declaration mechanism beside
+   * `interactionPolicy`.
    * @returns {{text: string, caret: number}|null}
    */
   caretText() {
@@ -69,11 +59,10 @@ export class CaretTriggerPort {
   }
 
   /**
-   * The caret in viewport pixels, via `view.coordsAtPos` — the same measurement
-   * block-chrome already places gutter decorations with. Null (the host falls
-   * back to the editor's own box) when the view cannot answer: coordsAtPos
-   * throws for a position it has no DOM for, which happens mid-teardown and
-   * inside a detached node view, and a picker is never worth an exception.
+   * The caret in viewport pixels. Null (the host falls back to the editor's own
+   * box) when the view cannot answer: `coordsAtPos` THROWS for a position it has
+   * no DOM for, which happens mid-teardown and inside a detached node view, and
+   * a picker is never worth an exception.
    * @returns {DOMRect|null}
    */
   caretRect() {
@@ -93,10 +82,8 @@ export class CaretTriggerPort {
   }
 
   /**
-   * Substitutes over a BLOCK-LOCAL range as one TRACKED transaction. Block-local
-   * because that is the coordinate the scan produced; tracked because it is the
-   * user's own edit — a completion has to be one Ctrl+Z away, exactly as it is
-   * in the composer.
+   * Substitutes over a BLOCK-LOCAL range — the coordinate the scan produced — as
+   * one TRACKED transaction, so a completion is one Ctrl+Z away.
    * @param {number} start @param {number} end @param {string} text
    */
   replaceRange(start, end, text) {
@@ -116,20 +103,15 @@ export class CaretTriggerPort {
   /**
    * ACCEPTANCE, THE DOCUMENT VERSION: the token goes and a block takes its place.
    *
-   * THE BACKEND IS THE SOURCE OF TRUTH and this obeys it exactly (CLAUDE.md's
-   * non-obvious rules): nothing here computes a document position or splices a
-   * node in. It deletes the token as an ordinary tracked prose edit, flushes so
-   * Go's shadow holds that deletion BEFORE the create arrives on the same
-   * socket, and then asks the EDITOR to create — which owns the id→index math,
-   * resolves the index from the caret, and renders the server's authoritative
-   * node back at the server's index. No `softReloadContent`, so undo survives.
+   * The FLUSH is load-bearing — Go's shadow must hold the token deletion before
+   * the create arrives on the same socket. The create itself is the editor's,
+   * because it owns the id→index math and renders the server's authoritative
+   * node back at the server's index; nothing here computes a document position.
    *
-   * The placement rule falls out of that rather than being restated: the caret
-   * is left where the token was, so a line the token had to itself is now an
-   * empty paragraph and gets consumed — the block becomes that node — while a
-   * line with prose still on it puts the block on the next one. That is the rule
-   * every Sieve block already follows, which is why the anchor argument is
-   * OMITTED: passing an index here would take the math off the one owner of it.
+   * The anchor argument is OMITTED deliberately: the caret is left where the
+   * token was, so the standard placement rule (consume an empty paragraph, else
+   * the next line) already lands the block correctly, and passing an index would
+   * take that math off its one owner.
    * @param {number} start @param {number} end
    * @param {string} kind @param {Record<string, any>} attrs
    */
@@ -140,10 +122,9 @@ export class CaretTriggerPort {
   }
 
   /**
-   * DOC CHANGES ONLY, which is a textarea's `input` exactly: a caret MOVE must
-   * not arm the picker. Clicking into an `@` written months ago and having a
-   * picker open on it is the ambush the abandonment machine exists to prevent,
-   * and a document — unlike a two-line message — is full of legitimate `@`s.
+   * DOC CHANGES ONLY — a caret MOVE must not arm the picker. Clicking into an
+   * `@` written months ago and having a picker open on it is an ambush, and a
+   * document is full of legitimate `@`s.
    * @param {() => void} fn @returns {() => void}
    */
   onDocChange(fn) {

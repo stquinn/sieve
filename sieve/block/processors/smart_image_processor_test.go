@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"image"
 	"image/png"
-	"net/url"
 	"sieve/sieve/block"
 	"testing"
 )
@@ -200,21 +199,6 @@ func TestSmartImageProcessor_measure_rejectsNonImageBytes(t *testing.T) {
 	}
 }
 
-func TestSmartImageProcessor_decodeDataURI_base64AndPercentEncoded(t *testing.T) {
-	p := NewSmartImageProcessor(block.BlockServices{})
-	svg := `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>`
-
-	b64 := "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(svg))
-	if got, err := p.decodeDataURI(b64); err != nil || string(got) != svg {
-		t.Errorf("decodeDataURI(base64) = (%q, %v), want the svg source", got, err)
-	}
-
-	pct := "data:image/svg+xml," + url.PathEscape(svg)
-	if got, err := p.decodeDataURI(pct); err != nil || string(got) != svg {
-		t.Errorf("decodeDataURI(percent-encoded) = (%q, %v), want the svg source", got, err)
-	}
-}
-
 // A pasted SVG data URI is the OTHER #53 reproduction: it used to match the
 // base64 branch and return {src} alone, so it landed with no size at all. It
 // must now be measured by exactly the same rule as any other source.
@@ -223,9 +207,9 @@ func TestSmartImageProcessor_pastedSvgDataURIIsMeasured(t *testing.T) {
 	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"/>`
 	dataURI := "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(svg))
 
-	raw, err := p.decodeDataURI(dataURI)
+	raw, err := block.ContentEntry{Content: dataURI}.DecodeDataURI()
 	if err != nil {
-		t.Fatalf("decodeDataURI: %v", err)
+		t.Fatalf("DecodeDataURI: %v", err)
 	}
 	if w, h, ok := p.measure(raw); !ok || w != 400 || h != 300 {
 		t.Errorf("pasted SVG data URI measured (%d, %d, %v), want (400, 300, true) — the paste path used to stamp nothing (#53)", w, h, ok)

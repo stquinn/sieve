@@ -146,12 +146,25 @@ change carried by this work.
 
 Four paths, all existing patterns:
 
-| path | sets | mechanism |
-|------|------|-----------|
-| file drop / picker | `src` | #68's non-image case — image drop → `smart-image`, anything else → `attachment`; same `WysiwygSurface` drop handling, same `createBlock` seam |
-| `@` in the editor | `uri` | the trigger-popover family, hosted in the editor — see below |
-| paste a coordinate | `uri` | claimed as `ActionTransform` in `IsSupportedContent`, mirroring how web-clip claims a pasted link |
-| slash command | either | the keyboard path |
+| path | sets | mechanism | state |
+|------|------|-----------|-------|
+| toolbar file picker | `src` | the paperclip (`tb-attach-btn`). It names NO kind: it posts a `ContentEntry` carrying the bytes and mime type, and paste-match routes `image/*` to `smart-image` and everything else here. Adding a kind extends the button without touching it. | works |
+| file drop | `src` | same registry, via `WysiwygSurface`'s drop handler | **blocked — #86** |
+| `@` in the editor | `uri` | the trigger-popover family, hosted in the editor — see below | works |
+| paste a coordinate | `uri` | claimed as `ActionTransform` in `IsSupportedContent`, mirroring how web-clip claims a pasted link | works |
+| slash command | either | the keyboard path | not built |
+
+**Drag-and-drop of an OS file does not work on Linux/WebKitGTK, and never did**
+— for images either, so this is not a limitation of this design. WebKit
+materialises no `File` for a file-manager drag; the page receives only a
+`file:///…` path, so the frontend cannot read the bytes by any route. #86 tracks
+the real fix (Wails' native `OnFileDrop`, which reads the path in Go). Copy/paste
+of a file fails for the same reason and is recorded there too. The picker is
+unaffected because a file input produces a genuine `File`.
+
+**A held file is capped at 25MB** on both sides, refused with a message naming the
+file, its size and the limit — never silently. #84 makes the ceiling a setting;
+the constant is a default, not a law.
 
 **Where the block lands** is the rule every Sieve block already follows, so there
 is nothing new for `docs/editor-interaction-contract.md` to learn: on an empty

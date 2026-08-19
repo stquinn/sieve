@@ -42,10 +42,9 @@ func (s *ServiceProvider) BlockServices() block.BlockServices {
 		LinkPreview: s.LinkPreview,
 		State:       s.State,
 		Plantuml:    s.Plantuml,
-		// The Router goes in as block.NodesPort — the one-method interface the
-		// block package declares for itself — so a processor holding a coordinate
-		// dereferences it through the same registry the @ picker offers from and
-		// MCP get_by_uri reads through, and block/ never learns editor/ exists.
+		// The Router, as the one-method interface block/ declares for itself: a
+		// processor holding a coordinate dereferences it through the same registry
+		// the @ picker and MCP get_by_uri read through.
 		Nodes: s.Nodes,
 	}
 }

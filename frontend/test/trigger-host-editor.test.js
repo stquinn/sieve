@@ -514,13 +514,24 @@ describe('CaretPlacement — anchored to the caret, flipping when it must', () =
     expect(el.style.top).toBe('999px')
   })
 
-  it('is NARROW, and never runs off the right edge', () => {
+  it('sizes to its CONTENT, bounded by the editor column', () => {
+    // The list is as wide as its longest title or as wide as the editor,
+    // whichever is shorter. A fixed cap wrapped ordinary document titles onto
+    // four lines, which is the defect this replaced.
+    const el = document.createElement('div')
+    new CaretPlacement().place(el, new RectHost({ left: 120, top: 40, bottom: 60, right: 121 }))
+    expect(el.style.width).toBe('max-content')
+    expect(parseInt(el.style.maxWidth, 10)).toBeGreaterThan(0)
+  })
+
+  it('never runs off the right edge', () => {
     const { w } = viewport()
     const el = document.createElement('div')
     new CaretPlacement().place(el, new RectHost({ left: w - 5, top: 100, bottom: 120, right: w - 4 }))
-    const width = parseInt(el.style.width, 10)
-    expect(width).toBeLessThanOrEqual(320)
-    expect(parseInt(el.style.left, 10) + width).toBeLessThanOrEqual(w - 8)
+    // offsetWidth is 0 without layout, so the clamp falls back to maxWidth —
+    // the widest the list could possibly be, which is the safe bound to test.
+    const bound = parseInt(el.style.maxWidth, 10)
+    expect(parseInt(el.style.left, 10) + bound).toBeLessThanOrEqual(w - 8)
   })
 })
 

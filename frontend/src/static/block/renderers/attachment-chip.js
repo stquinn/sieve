@@ -2,31 +2,22 @@
 // attachment-chip.js — AttachmentChip: the "this is an attachment" chip, as one
 // component. A sibling of StatusBadge and LineGutter in block/renderers/ — a
 // shared piece of look-and-feel with no PM, no editor, no window.* and no idea
-// what a document is (docs/design/specs/2026-08-19-attachment-block-design.md,
-// "The chip is now a shared component").
+// what a document is.
 //
-// WHY IT EXISTS. The vocabulary had two implementations — `.ai-block__attachment`
-// (carried renderer styles) and `.ask-popup__chips` (shell CSS) — and the
-// `attachment` block is the third. Three is where it gets extracted rather than
-// copied a third time, which is also when the two existing copies had already
-// drifted (8% vs 10% tint, 15rem vs 14rem clamp, one with a `cursor` and one
-// without) with nobody able to say which was the intended chip.
+// IT IS NOT THE ROW THAT HOLDS CHIPS. A caller owns its own layout — the
+// ai-block footer's scrolling strip, the composer footer's hint-displacing
+// region, the attachment block's shrink-wrapping wrapper — and sets
+// `--chip-max-width` on it if its chips clamp. The chip itself is only ever as
+// wide as it needs to be.
 //
-// WHAT IT IS NOT. It is not the ROW that holds chips. A caller owns its own
-// layout — the ai-block footer's scrolling border-topped strip, the composer
-// footer's hint-displacing region, the attachment block's shrink-wrapping
-// wrapper — and sets `--chip-max-width` on it if its chips clamp. The chip
-// itself is only ever as wide as it needs to be.
-//
-// THE COMPOSER IS DELIBERATELY NOT A CONSUMER. It is not a block, so it carries
+// THE COMPOSER IS DELIBERATELY NOT A CONSUMER: it is not a block, so it carries
 // no block styles, and importing a renderer into the shell would cross the
-// shell/renderer boundary. It keeps its own component (it has a ✕ affordance and
-// a fixed-height footer constraint this chip has no business knowing about) and
-// unifies with it on the `--chip-*` TOKENS instead — see attachment-chip.styles.js.
+// shell/renderer boundary. It keeps its own component (a ✕ affordance and a
+// fixed-height footer constraint this chip has no business knowing about) and
+// unifies with this one on the `--chip-*` TOKENS instead.
 //
 // IMMUTABLE ONCE BUILT. Both callers redraw their whole row from the model on
-// every change (the model and its chips are one type), so there is no patch path
-// to maintain and none is offered. A chip is a value drawn, not a live object.
+// every change, so there is no patch path to maintain and none is offered.
 
 import { rendererStyles } from './renderer-style-registry.js'
 import { attachmentChipStyles } from './attachment-chip.styles.js'
@@ -52,8 +43,8 @@ export class AttachmentChip {
   /** CSS text using ONLY `--theme-` and `--chip-` vars for colour. */
   static styles = attachmentChipStyles
 
-  /** The root class every chip carries — the selector its styles hang off, and
-   *  the hook a row uses to reach its own chips. */
+  /** The selector this chip's styles hang off, and a row's hook to reach its
+   *  own chips. */
   static ROOT_CLASS = 'sieve-attachment-chip'
 
   /** 📄 — a source the document holds or points at. */
@@ -104,8 +95,8 @@ export class AttachmentChip {
 
   /**
    * Registers interest in "the user activated this chip", handing back the
-   * address. The chip never opens anything itself — it is lens-blind and has no
-   * idea what a workspace is; whoever built it does.
+   * address. The chip never opens anything itself — it has no idea what a
+   * workspace is; whoever built it does.
    * @param {(uri: string) => void} fn
    * @returns {() => void} unsubscribe
    */
@@ -124,8 +115,7 @@ export class AttachmentChip {
 
   /**
    * One inner span. textContent, never innerHTML: a title arrives from a
-   * document nobody here wrote, and there is no markup in a chip to justify the
-   * escaping round-trip.
+   * document nobody here wrote, and a chip has no markup to justify escaping.
    * @param {string} part BEM element suffix
    * @param {string} text
    * @param {boolean} [decorative] hide it from assistive tech

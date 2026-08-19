@@ -47,15 +47,11 @@
 // attachment the user did not touch rather than sliding onto the deleted one's
 // chip.
 //
-// THE CHIP IS THE SHARED VOCABULARY, DRAWN LOCALLY (#38). A block draws it with
-// AttachmentChip (block/renderers/attachment-chip.js); this one cannot — the
-// composer is not a block, so it carries no block styles, and importing a
-// renderer into the shell would cross the shell/renderer boundary. It also has a
-// ✕ and a fixed-height footer constraint no block chip has. So the COMPONENT
-// stays here and the TOKENS are what unify: `.ask-chip` (editor.css) draws its
-// radius, tint, border and sizing from the same `--chip-*` set AttachmentChip
-// reads, and overrides only what a composer chip genuinely differs on. Change
-// what a chip looks like in the tokens, never in one of the two components.
+// THE CHIP IS THE SHARED VOCABULARY, DRAWN LOCALLY. A block draws it with the
+// AttachmentChip component; the composer cannot — it is not a block, so it
+// carries no block styles. The `--chip-*` TOKENS are what unify the two instead
+// (editor.css `:root`), so change what a chip looks like in the tokens, never in
+// one of the two components.
 
 import { esc } from '../block/renderers/html-escape.js'
 // The token rule is SHARED with the ai-block, which marks the same `@Title`

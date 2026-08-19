@@ -98,9 +98,8 @@ export class AbstractEditor {
   #connected = false
 
   /** @type {object|null} the `@` picker's protocol peer (#38). Held, never
-   * called from here: the WYSIWYG surface hosts the picker and this is the
-   * composition root's handle reaching it — the same route documentService
-   * takes to the surface's block ops. */
+   * called from here: the WYSIWYG surface hosts the picker, and this is the
+   * composition root's handle reaching it. */
   #mentionService = null
 
   /** @type {(msg: object) => void} */
@@ -186,8 +185,7 @@ export class AbstractEditor {
    * surface's pane-stamping is unchanged. Null in bare constructions. */
   get blockService() { return this.#documentService ? this.#documentService.blockService : null }
 
-  /** The `@` picker's protocol peer (#38), or null in bare constructions. The
-   * WYSIWYG surface reads it to host the picker over its own caret. */
+  /** The `@` picker's protocol peer, or null in bare constructions. */
   get mentionService() { return this.#mentionService }
 
   /** @returns {AbstractSurface|null} The mounted input surface, or null. */

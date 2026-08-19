@@ -6,43 +6,18 @@
 // `<name>.styles.js` sibling (`export const <name>Styles = /* css */ \`…\``,
 // Lit-style), imported into the class's `static styles`.
 //
-// Carried VERBATIM (values, not just rules) from ai-block-renderer.styles.js's
-// former `.ai-block__attachment*` set — this is a de-duplication, not a
-// redesign, so every declaration below computes to what the ai-block footer
-// already drew (docs/design/specs/2026-08-19-attachment-block-design.md,
-// "The chip is now a shared component").
-//
 // ── THE TOKENS ARE NOT DEFINED HERE ─────────────────────────────────────────
-// The `--chip-*` custom properties this sheet reads are owned by ONE place:
-// editor.css's `:root` block, next to the theme palette. That is deliberate and
-// it is the whole point of the extraction.
+// The `--chip-*` custom properties this sheet reads are owned by editor.css's
+// `:root`, next to the theme palette, so that the composer's chips — which
+// cannot consume this class — draw the same appearance from the same numbers.
+// That file's header states the contract; this one only reads it.
 //
-// The composer's chips (`.ask-chip` / `.ask-target-chip`, shell CSS) are the
-// third caller of this vocabulary and CANNOT consume this class: the composer is
-// not a block, so it carries no block styles, and importing a renderer into the
-// shell would cross the shell/renderer boundary. So the TOKENS are unified where
-// the COMPONENTS cannot be — the radius, the tint strength, the border colour,
-// the gap, the padding and the clamp live in one `:root` block that both this
-// sheet and the composer's rules draw from. A caller that differs (the
-// composer's ✕ padding, its 14rem clamp) overrides the token on its own
-// selector rather than redeclaring the appearance.
-//
-// This is the same document-level-custom-property dependency renderers already
-// have: `--doc-size` is defined on `.editor-panel` (editor.css), not by any
-// renderer, and the ai-block chip has read it through `calc()` since #74.
-//
-// The `color-mix()` is written HERE rather than pre-mixed into a token, because
-// a custom property containing `var()` is substituted where it is DECLARED and
-// inherits already-resolved — a `--chip-tint` defined at `:root` would freeze at
-// `:root`'s accent and ignore the override two lines below. The token is the
-// STRENGTH; the mix belongs to whatever paints.
-//
-// ── THE MISSING VARIANT IS TWO TOKEN OVERRIDES ──────────────────────────────
-// Dangling used to be four declarations across two rules (colour, background,
-// border-style, and a hover rule restating the tint at 12%). Re-pointing
-// `--chip-accent` at `--theme-muted` and dropping the hover strength to 12%
-// makes the base rules compute the greyed variant on their own — same pixels,
-// one place that knows what a chip looks like.
+// The one thing to know while editing HERE: the `color-mix()` stays in the rule
+// that paints rather than being pre-mixed into a token, because a custom
+// property containing `var()` resolves where it is DECLARED. A `--chip-tint`
+// defined at `:root` would freeze at `:root`'s accent and ignore the `--missing`
+// override two rules below. The token is the STRENGTH; the mix belongs to
+// whatever paints.
 
 export const attachmentChipStyles = /* css */ `
   .sieve-attachment-chip {
@@ -86,8 +61,8 @@ export const attachmentChipStyles = /* css */ `
   }
 
   /* Dangling is a NORMAL state, not an error: greyed, marked, still readable.
-     The accent swap is what greys it — including the hover tint, which is mixed
-     from the same variable. */
+     Re-pointing the accent is what greys it — including the hover tint, which is
+     mixed from that same variable. */
   .sieve-attachment-chip--missing {
     --chip-accent: var(--theme-muted);
     --chip-tint-strength-hover: 12%;

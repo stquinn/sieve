@@ -4,36 +4,17 @@
 // PLACEMENT strategy — in the composer, as a visual extension of the Ask Panel —
 // and handles keyboard navigation (ArrowUp, ArrowDown, Tab, Enter, Escape).
 //
-// GENERALISED FROM CommandHintPopover (#74 P4). It used to hard-code three
-// things: the `/` character, `commandService.list()`, and `'/' + name + ' '` on
-// accept. Those three are now a PROVIDER (shell/trigger-providers.js) and the
-// popover keeps only what every trigger shares — the keyboard model, the
-// scroll-into-view fix (#63), the dismissal, and the token lifecycle. Two
-// providers are registered by the Ask panel: `/` → CommandService (behaviour
-// unchanged) and `@` → mentions.
+// It keeps only what EVERY trigger shares — the keyboard model, the
+// scroll-into-view fix (#63), the dismissal and the token lifecycle. The
+// trigger-specific half is a PROVIDER (trigger-providers.js) and the surface is
+// a HOST (trigger-host.js), so THE POPOVER NEVER KNOWS WHAT TEXT IS: it asks the
+// host for a token and hands the host a candidate. That is what lets the same
+// picker sit in the composer's textarea and in the editor's document.
 //
-// GENERALISED AGAIN OVER ITS SURFACE (#38). It used to hard-code a textarea in
-// four places — the value and caret it scanned, the three listeners it wired,
-// the element it handed to `accept`, and the `#ask-panel` it positioned against.
-// Those are now a HOST (shell/trigger-host.js) and a PLACEMENT strategy, so the
-// same picker can be hosted inside the editor without a second popover starting
-// the keyboard model, the dry stop and the #63 fix over again. THE POPOVER NO
-// LONGER KNOWS WHAT TEXT IS: it asks the host for a token and hands the host a
-// candidate.
-//
-// ONE MECHANISM, NOT TWO CATEGORIES. The scan (TriggerProvider.scanToken) does
-// not branch on "commands start the line, mentions appear mid-text": it walks
-// back from the caret to the nearest trigger character and asks THAT provider
-// two predicates — one about each side of the trigger. `acceptsBoundary` judges
-// what precedes it (`/`'s rule is "index 0"; `@`'s is "start of text or after
-// whitespace"); `acceptsPrefix` judges how far the token runs past it (`/` ends
-// at the first whitespace; `@` spans words, because a document title is
-// several). Same code path, different predicates.
-//
-// THE TOKEN CAN BE ABANDONED (#74 P5). A sticky token needs a way to stop, or an
-// `@` typed in an ordinary sentence would query on every keystroke and ambush
-// the typist with a picker that swallows Enter. Going dry, Escape and acceptance
-// all abandon the token under the caret; typing FORWARD from an abandoned prefix
+// THE TOKEN CAN BE ABANDONED. A sticky token needs a way to stop, or an `@`
+// typed in an ordinary sentence would query on every keystroke and ambush the
+// typist with a picker that swallows Enter. Going dry, Escape and acceptance all
+// abandon the token under the caret; typing FORWARD from an abandoned prefix
 // stays closed, backspacing to a shorter one re-arms it.
 
 import { ContractViolation } from '../block/sieve-block.js'
@@ -147,17 +128,13 @@ export class TriggerPopover {
     this.#unsubscribes.push(this.#host.onKeyDown((e) => this.#handleKeyDown(e)))
     this.#unsubscribes.push(this.#host.onDismiss(() => this.#handleDismiss()))
 
-    // AN OPEN LIST HAS TO SURVIVE THE PAGE MOVING UNDER IT (#38). Every keystroke
-    // re-places it (render → show), which was enough while the only placement was
-    // anchored to a panel that never moves. A CARET-anchored one detaches the
-    // moment the document scrolls without a keystroke — a wheel, a touchpad, a
-    // scrollIntoView from something else. Re-placing costs one measurement and is
-    // correct for both placements, so it is wired here rather than made a
-    // placement's private business.
+    // AN OPEN LIST HAS TO SURVIVE THE PAGE MOVING UNDER IT. A keystroke re-places
+    // it, but a CARET-anchored list detaches the moment the document scrolls
+    // without one — a wheel, a touchpad, a scrollIntoView from something else.
     //
-    // CAPTURE on window, because `scroll` does not bubble: a listener on the
-    // window in the capture phase is the one form that hears an INNER scroller
-    // (the editor's own #htmx-editor) as well as the page.
+    // CAPTURE on window, because `scroll` does not bubble: a window listener in
+    // the capture phase is the one form that hears an INNER scroller (the
+    // editor's own #htmx-editor) as well as the page.
     const reposition = () => {
       if (this.#popoverEl && this.#popoverEl.style.display !== 'none') {
         this.#placement.place(this.#popoverEl, this.#host)
@@ -262,10 +239,8 @@ export class TriggerPopover {
    * under the caret.
    *
    * That last step is not bookkeeping: a completed `@Sprite Sheet Analysis ` is
-   * still a legal sticky token, and it matches the very candidate just accepted,
-   * so without abandoning it the picker would re-open on top of its own result.
-   * The `#completing` flag suppresses the write-back's `input` echo entirely, so
-   * the round-trip is never even asked for.
+   * still a legal sticky token matching the very candidate just accepted, so
+   * without abandoning it the picker would re-open on top of its own result.
    * @param {any} candidate
    */
   #acceptCandidate(candidate) {
@@ -283,15 +258,13 @@ export class TriggerPopover {
    *
    * ONE notion of "our own edit", not a second guard per caller: acceptance
    * writing a completion back and the composer deleting an attachment's token
-   * (#74 P6) are the same problem, so they share `#completing`. Re-entrant, so a
-   * nested edit cannot un-suppress the outer one.
+   * are the same problem, so they share `#completing`. Re-entrant, so a nested
+   * edit cannot un-suppress the outer one.
    *
    * DEAF IS NOT CLOSED, so it also CLOSES the picker. Suppressing the echo alone
-   * left an open list of candidates for a token the edit had just deleted — and
-   * `#token` still describing where that token used to be, so Enter would have
-   * written a completion into a span that no longer existed. Any programmatic
-   * edit invalidates what the picker is showing, because the text it was
-   * answering moved underneath it.
+   * left an open list answering a token the edit had just deleted, with `#token`
+   * still describing where that token used to be — so Enter wrote a completion
+   * into a span that no longer existed.
    * @param {() => void} edit
    */
   applyOwnEdit(edit) {
@@ -385,22 +358,24 @@ export class TriggerPopover {
       this.#popoverEl?.appendChild(row)
     })
 
-    // Keyboard navigation has to carry the viewport with it (#63). Two things
-    // conspire without this: #render() clears innerHTML, which resets the
-    // container's scrollTop to 0, and nothing ever scrolls the active row into
-    // view — so arrowing past the visible rows left the selection below the fold,
-    // appearing to slide under the ask panel (the popover is anchored bottom-up
-    // against the panel's top edge). The wheel worked only because it doesn't
-    // re-render. 'nearest' scrolls the minimum needed, so it stays still while
-    // the selection is already visible instead of recentring on every keypress.
+    // Keyboard navigation has to carry the viewport with it (#63): #render()
+    // clears innerHTML, which resets scrollTop to 0, so arrowing past the visible
+    // rows leaves the selection below the fold. 'nearest' scrolls the minimum
+    // needed, so the list stays still while the selection is already visible
+    // instead of recentring on every keypress.
     const activeEl = this.#popoverEl.querySelector('.command-hint-item.is-active')
     if (activeEl) activeEl.scrollIntoView({ block: 'nearest' })
   }
 
   show() {
     if (this.#popoverEl) {
-      this.#placement.place(this.#popoverEl, this.#host)
+      // Visible BEFORE placing: a display:none element has no box, so a placement
+      // that wants to size itself to its content (CaretPlacement) measures zero
+      // and has to fall back to a fixed cap. Both statements are synchronous, so
+      // no frame is painted between them and the pre-placement position is never
+      // seen.
       this.#popoverEl.style.display = 'block'
+      this.#placement.place(this.#popoverEl, this.#host)
     }
   }
 
@@ -412,11 +387,10 @@ export class TriggerPopover {
    * Drops every subscription and the popover element.
    *
    * IT ALSO INVALIDATES ANSWERS IN FLIGHT, which is not tidiness: a search is a
-   * round-trip, and a host can go away while one is out — a tab switch or a mode
-   * flip destroys the surface mid-typeahead. Unsubscribing does not reach a
-   * promise that has already been handed a `.then`, so without bumping the
-   * sequence the late answer would render a list and ask a torn-down host where
-   * to place it. Clearing the element is the second half of the same guard.
+   * round-trip and a host can go away while one is out (a tab switch, a mode
+   * flip). Unsubscribing does not reach a promise already handed a `.then`, so
+   * without bumping the sequence the late answer would render a list and ask a
+   * torn-down host where to place it.
    */
   destroy() {
     for (const unsubscribe of this.#unsubscribes) unsubscribe()

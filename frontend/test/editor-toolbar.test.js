@@ -310,20 +310,32 @@ describe('EditorToolbar composition (P4.D)', () => {
     expect(ed.createBlock).not.toHaveBeenCalled()
   })
 
-  it('the image insert button calls editor.captureImageInsert then clicks the file input', () => {
+  it('the attach button calls editor.captureImageInsert then clicks the file input', () => {
     const host = mountHost()
     const input = document.createElement('input')
-    input.id = 'tb-image-input'
+    input.id = 'tb-attach-input'
     document.body.appendChild(input)
     const clicked = vi.fn()
     input.addEventListener('click', clicked)
     const ed = fakeEditor({ mode: 'wysiwyg', surface: { toolbarContents: () => [] } })
     new EditorToolbar(ed, host).mount()
-    // The image button is the 4th button in the insert group (code, diagram, clip, image).
-    const imageBtn = host.querySelectorAll('.tb-group')[1].querySelectorAll('button')[3]
-    imageBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    // The attach button is the 4th in the insert group (code, diagram, clip, attach).
+    const attachBtn = host.querySelectorAll('.tb-group')[1].querySelectorAll('button')[3]
+    attachBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     expect(ed.captureImageInsert).toHaveBeenCalledTimes(1)
     expect(clicked).toHaveBeenCalledTimes(1)
+  })
+
+  it('names no block kind — the paste-match registry routes the file', () => {
+    // ONE affordance for every file type. The button hands bytes + a mime type to
+    // smart-paste; an image becomes a smart-image and anything else an attachment.
+    // A kind named here would be a second router that drifts from the registry.
+    const host = mountHost()
+    const ed = fakeEditor({ mode: 'wysiwyg', surface: { toolbarContents: () => [] } })
+    new EditorToolbar(ed, host).mount()
+    const attachBtn = host.querySelectorAll('.tb-group')[1].querySelectorAll('button')[3]
+    attachBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(ed.createBlock).not.toHaveBeenCalled()
   })
 
   it('a null host makes every method a safe no-op', () => {

@@ -39,9 +39,7 @@ type AssetsPort interface {
 // load-bearing structure, because block/ CANNOT import editor/ at all — editor
 // imports block, so the reverse edge closes a cycle. The CONSUMER therefore
 // declares the interface, exactly as mcp.NodeResolver does for the same
-// resolver, and block/ depends on "something that dereferences an address"
-// rather than on all of editor/ (which would drag the codec, the identity
-// sweeper and the editor service in behind it).
+// resolver.
 //
 // The Router's REFUSALS are part of this contract and are the caller's to
 // interpret — there is exactly one place that decides what a coordinate means:

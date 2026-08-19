@@ -111,9 +111,8 @@ export var CODE_TEXT_POLICY = Object.freeze({
   literalGlyphs: true,
   // `@Override`, `@media`, `@Component` sit at a line start after whitespace, so
   // they satisfy the `@` trigger's boundary rule and would open the picker only
-  // to flash shut when the library search comes back dry. ONE line here covers
-  // code AND diagram (both spread this preset) and every code-ish kind after
-  // them — which is what a preset is for. Read by triggersSuppressed() below.
+  // to flash shut when the library search comes back dry. One line here covers
+  // code AND diagram, both of which spread this preset.
   suppressTriggers: true,
 })
 
@@ -440,15 +439,10 @@ export function resolveContext(state, view) {
 
 /**
  * THE READER FOR `suppressTriggers` — does the caret sit in text where a `@`/`/`
- * picker must not arm? Asked by the editor's TriggerHost port before it hands
- * the popover any text to scan (shell/trigger-host.js), so the picker never even
- * sees the inside of a code or diagram block.
- *
- * ELIGIBILITY IS A POLICY DECISION, NOT A HOST JUDGEMENT. A host that decided
- * this for itself would be a second declaration mechanism standing beside
- * `interactionPolicy` — the exact thing this file's header warns against — so it
- * is resolved through the SAME resolveContext the arrows, Tab, Enter and Home
- * go through, and a kind opts in by naming the flag like any other.
+ * picker must not arm? Asked by the editor's caret port before it hands the
+ * popover any text to scan, so the picker never sees the inside of a code or
+ * diagram block. Resolved through the SAME resolveContext the arrows, Tab, Enter
+ * and Home go through, so a kind opts in by naming the flag like any other.
  *
  * The chip-like kinds need nothing: ai-block, web-clip, smart-image, smart-card
  * and attachment are all `caretStop: true`, so no caret enters their text and no

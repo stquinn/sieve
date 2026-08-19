@@ -43,10 +43,8 @@ import { BlockChrome, getBlockSelectionRange } from '../block-chrome.js'
 import { AiTargetDecoration } from '../../ai/ai-target-decoration.js'
 import { Search, SelectionHighlight, HighlightMark, AiShortcuts } from '../extensions.js'
 import { policyEnterKeydown, buildInteractionPolicyExtension } from '../interaction-policy.js'
-// The `@` picker, hosted HERE (#38). The popover, the providers and the host
-// family are shell's — one picker for the whole app, never a second one for the
-// editor — and this surface contributes the one thing they cannot have: a port
-// onto a live ProseMirror caret. Nothing PM crosses back out through it.
+// The `@` picker, hosted HERE (#38) but OWNED by shell — one picker for the
+// whole app. This surface contributes only a port onto a live ProseMirror caret.
 import { TriggerPopover } from '../../shell/trigger-popover.js'
 import { MentionProvider } from '../../shell/trigger-providers.js'
 import { ProseMirrorHost, CaretPlacement } from '../../shell/trigger-host.js'
@@ -134,6 +132,22 @@ const NATIVE_UNIT_LABEL = Object.freeze({
   bulletList: 'List', orderedList: 'List', taskList: 'Task List',
   table: 'Table', image: 'Image', horizontalRule: 'Divider',
 })
+
+/**
+ * The largest file a drop will carry into a document — the CLIENT half of a
+ * ceiling Go enforces too (`MaxAttachmentBytes`, attachment_processor.go). The
+ * two halves do different jobs: this one keeps a huge file out of the renderer's
+ * memory entirely and is what can name the file and its size to the user; Go's
+ * exists because a server must not trust a client.
+ *
+ * The number is chosen against the path a held file actually takes — file →
+ * base64 (×1.33) → JSON body → decode → disk — which holds roughly three copies
+ * of it at once. 5MB (smart-image's remote-fetch cap) would reject an ordinary
+ * PDF spec, which is the material this exists for; past about 25MB,
+ * base64-in-a-JSON-body is the wrong mechanism and the honest answer is a
+ * streaming upload rather than a larger constant. Keep the two halves equal.
+ */
+export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
 /**
  * @typedef {import('../abstract-editor.js').AbstractEditor} AbstractEditor
@@ -804,11 +818,6 @@ export class WysiwygSurface extends AbstractSurface {
    * a bare/vitest mount edits perfectly well without an `@` picker, and a missing
    * OPTIONAL service must never be a mount failure.
    *
-   * The surface contributes exactly one thing the trigger family cannot have: a
-   * port onto a live ProseMirror caret (CaretTriggerPort, which owns that whole
-   * job). The popover, the host and the provider are shell's — ONE picker for the
-   * whole app, never a second one for the editor.
-   *
    * ONLY `@` is registered. `/` is a COMPOSER verb: a slash command runs against
    * the message being written, and a document has no message. The popover takes
    * whatever providers its host is given, which is exactly why that is a wiring
@@ -1097,21 +1106,39 @@ export class WysiwygSurface extends AbstractSurface {
       var self = this
       var promises = []
       var hasFiles = false
+      var refused = false
       if (event.dataTransfer.items) {
         Array.from(event.dataTransfer.items).forEach(function(item) {
           if (item.kind === 'file') {
             var file = item.getAsFile()
-            if (file && file.type.startsWith('image/')) {
-              hasFiles = true
-              promises.push(new Promise(function(resolve) {
-                var reader = new FileReader()
-                reader.onload = function(e) {
-                  resolve({ mimeType: file.type, content: /** @type {any} */ (e.target).result })
-                }
-                reader.onerror = function() { resolve(null) }
-                reader.readAsDataURL(file)
-              }))
+            if (!file) return
+            // EVERY file, not only images (#38). The kind is Go's decision, not
+            // this handler's: the entry carries the bytes and the mime type, and
+            // the paste-match registry routes image/* to smart-image and
+            // everything else to attachment. A new kind extends the routing
+            // without touching this code.
+            if (file.size > MAX_ATTACHMENT_BYTES) {
+              WysiwygSurface.#refuseOversizedFile(file)
+              refused = true
+              return
             }
+            hasFiles = true
+            promises.push(new Promise(function(resolve) {
+              var reader = new FileReader()
+              reader.onload = function(e) {
+                resolve({
+                  mimeType: file.type,
+                  content: /** @type {any} */ (e.target).result,
+                  // readAsDataURL carries the bytes and NOTHING else — not even
+                  // what the file was called. The name rides in the entry's
+                  // context, which is what lets the chip label itself
+                  // "swagger.yml" rather than the id the asset is stored under.
+                  context: { filename: file.name },
+                })
+              }
+              reader.onerror = function() { resolve(null) }
+              reader.readAsDataURL(file)
+            }))
           } else if (item.kind === 'string') {
             promises.push(new Promise(function(resolve) {
               item.getAsString(function(str) {
@@ -1122,12 +1149,60 @@ export class WysiwygSurface extends AbstractSurface {
         })
       }
 
-      if (!hasFiles) return false
+      // FALLBACK: the FileList directly. A drag from a Linux file manager (KDE
+      // Dolphin) arrives as `text/uri-list`, and WebKitGTK does not always
+      // surface a matching `kind: 'file'` item for it — but it may still populate
+      // dataTransfer.files. Reading both is the difference between a drop working
+      // and ProseMirror silently inserting the path as text.
+      if (!hasFiles && event.dataTransfer.files && event.dataTransfer.files.length) {
+        Array.from(event.dataTransfer.files).forEach(function(file) {
+          if (!file) return
+          if (file.size > MAX_ATTACHMENT_BYTES) {
+            WysiwygSurface.#refuseOversizedFile(file)
+            refused = true
+            return
+          }
+          hasFiles = true
+          promises.push(new Promise(function(resolve) {
+            var reader = new FileReader()
+            reader.onload = function(e) {
+              resolve({
+                mimeType: file.type,
+                content: /** @type {any} */ (e.target).result,
+                context: { filename: file.name },
+              })
+            }
+            reader.onerror = function() { resolve(null) }
+            reader.readAsDataURL(file)
+          }))
+        })
+      }
+
+      if (!hasFiles && !refused && event.dataTransfer.types && event.dataTransfer.types.length) {
+        // A drop carrying data but no readable file. Say what arrived rather than
+        // failing mute — the shapes differ per desktop and per WebKit build, and
+        // guessing at them costs a rebuild each time.
+        console.warn('[sieve] drop produced no readable file. types=',
+          Array.from(event.dataTransfer.types).join(','),
+          'items=', event.dataTransfer.items
+            ? Array.from(event.dataTransfer.items).map(function (i) { return i.kind + ':' + i.type }).join(',')
+            : '(none)',
+          'files=', event.dataTransfer.files ? event.dataTransfer.files.length : '(none)')
+      }
+
+      if (!hasFiles) {
+        if (!refused) return false
+        // A refused drop is still HANDLED. The user has been told why, and letting
+        // the browser take the file natively would navigate the app away from the
+        // document it was dropped into.
+        event.preventDefault()
+        return true
+      }
 
       var pos = this.#editorPane.view.posAtCoords({ left: event.clientX, top: event.clientY })
       var insertPos = pos ? pos.pos : this.#editorPane.state.selection.to
-      // PEEK (issue #33): drops always match server-side today (images only), but the
-      // eager delete is the same latent hazard — defer the anchor consume to matched.
+      // PEEK (issue #33): a dropped file always matches server-side, but the eager
+      // delete is the same latent hazard — defer the anchor consume to matched.
       var peek = this.#host.peekInsertIndexAt(insertPos)
 
       event.preventDefault()
@@ -1144,11 +1219,11 @@ export class WysiwygSurface extends AbstractSurface {
             // No `replay`: a drop's payload is not the clipboard, so a `none` outcome
             // has nothing to put back — PM already declined it natively.
             //
-            // The content outcome is not reachable TODAY: the `!hasFiles` guard above
-            // means only dropped IMAGE FILES reach the round-trip (a dragged URL
-            // returns false and PM drops it natively), and an image always claims
-            // smart-image. Drop reads the union the same way paste does rather than
-            // silently discarding an outcome if that guard ever widens.
+            // Drop reads the union the same way paste does. The `!hasFiles` guard
+            // above means only dropped FILES reach the round-trip (a dragged URL
+            // returns false and PM drops it natively), and a file always claims some
+            // kind — but reading the whole union costs nothing and is what kept this
+            // path correct when the guard widened from images to every file.
             self.#applyPasteResult(result, { anchor: peek.anchor, at: insertPos })
           })
           .catch(function (err) {
@@ -1158,6 +1233,35 @@ export class WysiwygSurface extends AbstractSurface {
       return true
     }
     return false
+  }
+
+  /**
+   * A refused file must SAY SO, and say which file and by how much. The failure
+   * this replaces is the one that reads as a broken app: a drop that produces
+   * nothing at all, with the reason only in a console the user never opens.
+   *
+   * window.alert is the channel this codebase already uses to tell a user an
+   * operation failed (workspace.js, smart-image-node-view.js). It is blunt, but
+   * inventing a second notification vocabulary for one message would be worse.
+   * @param {File} file
+   */
+  static #refuseOversizedFile(file) {
+    console.warn('[editor.js] drop refused: over the attachment size limit', file.name, file.size)
+    window.alert(
+      '"' + file.name + '" is ' + WysiwygSurface.#megabytes(file.size) + ' — larger than the '
+      + WysiwygSurface.#megabytes(MAX_ATTACHMENT_BYTES) + ' limit for an attached file, so it was not attached.'
+    )
+  }
+
+  /**
+   * A byte count as the refusal message states it. Deliberately coarse and
+   * deliberately NOT AttachmentRenderer.humanSize: this is one sentence about one
+   * failure, and importing a renderer into the surface to phrase it would tie the
+   * PM layer to the look-and-feel layer for a string.
+   * @param {number} bytes @returns {string}
+   */
+  static #megabytes(bytes) {
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
   }
 
   // ── Selection feed (P3.A: the SelectionModel raw source) ───────────────────────
@@ -1708,13 +1812,9 @@ export class WysiwygSurface extends AbstractSurface {
           Object.keys(parsed).forEach(function (k) {
             // Safely apply keys that exist in the existing node.attrs schema mapping.
             // `kind` is refused alongside id/status: BASE_ATTRS declares it on EVERY
-            // sieve-* node as the block's own kind, so a processor attrs bag that
-            // happens to carry a `kind` key would silently retype the node the moment
-            // a job completed. A block's kind changes by replace-block and never by an
-            // attrs update, so there is no case where copying it is correct. (#38 —
-            // found when the attachment kind stored an asset's kind under that name;
-            // the attr was renamed to targetKind AND this guard added, because the
-            // rename fixes one kind and the guard fixes the class.)
+            // sieve-* node as the block's own kind, so a processor attrs bag carrying
+            // a `kind` key would silently retype the node the moment a job completed.
+            // A block's kind changes by replace-block and never by an attrs update.
             if (k !== 'id' && k !== 'status' && k !== 'kind' && (k in node.attrs)) {
               nextAttrs[k] = parsed[k]
             }

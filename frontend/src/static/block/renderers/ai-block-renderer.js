@@ -23,9 +23,8 @@ import { BlockRenderer } from './block-renderer.js'
 import { aiBlockStyles } from './ai-block-renderer.styles.js'
 import { isJobStale } from './job-status.js'
 import { MentionTokens } from './mention-tokens.js'
-// The chip is SHARED look-and-feel, not ai-block's (#38): the footer chip, the
-// composer chip and the attachment block are one visual object, and a second
-// implementation of it is how the first two drifted apart.
+// The chip is SHARED look-and-feel, not ai-block's: the footer chip, the
+// composer chip and the attachment block are one visual object.
 import { AttachmentChip } from './attachment-chip.js'
 
 /** One attachment as it is persisted (#74): the address is the truth and the
@@ -178,12 +177,12 @@ export class AiBlockRenderer extends BlockRenderer {
   }
 
   /**
-   * One chip, drawn by the SHARED component (#38). DANGLING IS A NORMAL STATE,
-   * not an error: an attachment whose cached title is gone (nothing was ever
-   * cached, or the persisted entry predates titles) renders greyed with a
-   * missing marker and the bare address, so the chip is still identifiable and
-   * still clickable. What is ai-block's here is only the MAPPING — which of this
-   * kind's fields is the label, and what makes one dangling.
+   * One chip, drawn by the SHARED component — what is ai-block's here is only
+   * the MAPPING: which of this kind's fields is the label, and what makes one
+   * dangling. DANGLING IS A NORMAL STATE, not an error: an attachment whose
+   * cached title is gone (nothing was ever cached, or the persisted entry
+   * predates titles) renders greyed with a missing marker and the bare address,
+   * so the chip is still identifiable and still clickable.
    * @param {AiBlockAttachment} attachment
    * @returns {HTMLElement}
    */

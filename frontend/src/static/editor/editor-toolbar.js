@@ -187,7 +187,7 @@ export class EditorToolbar {
   /**
    * The editor-level groups — persistent across surface swaps (built once). These
    * are the buttons that survive a flip: mode-toggle (the only way back from
-   * markdown), insert (code/diagram/web-clip/image), AI-query (explain/ask), help.
+   * markdown), insert (code/diagram/web-clip/attach), AI-query (explain/ask), help.
    * Each carries its OWN click closure — no delegation, no window.__tiptap hop for
    * the editor verbs (they call the editor / workspace directly).
    * @returns {ButtonGroup[]}
@@ -204,7 +204,7 @@ export class EditorToolbar {
     const modeGroup = new ButtonGroup([this.#modeButton])
 
     // Insert: code + diagram (create-block via the editor's create path), web-clip
-    // (workspace dialog), image (capture-insert + hidden file input click).
+    // (workspace dialog), attach-a-file (capture-insert + hidden file input click).
     const insertGroup = new ButtonGroup([
       new ToolbarButton({
         iconHtml: EditorToolbar.#kindIcon('code'), title: 'Insert code block',
@@ -219,19 +219,19 @@ export class EditorToolbar {
         onClick: () => { const w = ws(); w && w.openWebClipDialog() },
       }),
       new ToolbarButton({
-        id: 'tb-image-btn', iconHtml: EditorToolbar.#kindIcon('smart-image'), title: 'Insert image from file',
-        onClick: () => this.#insertImage(),
+        id: 'tb-attach-btn', iconHtml: EditorToolbar.#icon('paperclip'), title: 'Attach a file',
+        onClick: () => this.#attachFile(),
       }),
     ])
 
     // AI-query: explain + ask (the workspace AskPanel child). data-icon parity via SieveIcons.
     const aiGroup = new ButtonGroup([
       new ToolbarButton({
-        id: 'tb-explain-btn', iconHtml: EditorToolbar.#icon('info'), title: 'Explain',
+        id: 'tb-explain-btn', iconHtml: EditorToolbar.#icon('explain'), title: 'Explain',
         onClick: () => { const w = ws(); w && w.askPanel && w.askPanel.explainActive() },
       }),
       new ToolbarButton({
-        id: 'tb-ask-btn', iconHtml: EditorToolbar.#icon('sparkle'), title: 'Ask',
+        id: 'tb-ask-btn', iconHtml: EditorToolbar.#icon('ask'), title: 'Ask',
         onClick: () => { const w = ws(); w && w.askPanel && w.askPanel.open() },
       }),
     ], { className: 'tb-ai-query' })
@@ -262,10 +262,18 @@ export class EditorToolbar {
     this.#editor.createBlock(kind, {})
   }
 
-  /** Toolbar image insert — capture the caret block index (pre-dialog) then click the hidden file input. */
-  #insertImage() {
+  /**
+   * Attach a file. ONE affordance for every file type: the button never names a
+   * block kind — it hands bytes and a mime type to smart-paste, and the paste-match
+   * registry decides, so an image becomes a smart-image and anything else an
+   * attachment. Adding a kind extends this button without touching it.
+   *
+   * The caret block index is captured BEFORE the dialog opens, because opening it
+   * blurs the editor and the caret would re-derive to the end of the document.
+   */
+  #attachFile() {
     this.#editor.captureImageInsert()
-    const input = document.getElementById('tb-image-input')
+    const input = document.getElementById('tb-attach-input')
     if (input) /** @type {HTMLInputElement} */ (input).click()
   }
 

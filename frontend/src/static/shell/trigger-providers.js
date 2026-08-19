@@ -13,20 +13,11 @@
 //   render(item)       the row's content
 //   accept(item, …)    what accepting DOES, performed against the HOST
 //
-// THE SCAN LIVES HERE (scanToken), on the type whose two predicates decide it and
-// whose TriggerToken it mints. A host runs it over its own text; the popover
-// never sees text at all, which is what lets the same picker sit in a textarea
-// today and a ProseMirror document tomorrow.
+// THE SCAN LIVES HERE (scanToken), on the type whose two predicates decide it
+// and whose TriggerToken it mints. A HOST runs it over its own text; the popover
+// never sees text at all.
 //
-// THE TWO PREDICATES ARE ONE PER SIDE OF THE TRIGGER, and each trigger overrides
-// exactly one of them — that symmetry is why the scanner has no if-branch in it:
-//   • `/` overrides the BOUNDARY rule (a command is a whole-line verb, so only
-//     position 0 counts) and keeps the default span (a token ends at whitespace);
-//   • `@` keeps the default boundary (start of text or after whitespace, so
-//     `me@example` is an address) and overrides the SPAN, because a document
-//     title is several words: `@sprite sheet an` is still one token.
-//
-// `@` also CANNOT ENUMERATE AT BOOT — the library is unbounded, so search() is a
+// `@` CANNOT ENUMERATE AT BOOT — the library is unbounded, so search() is a
 // debounced round-trip returning a promise, where the command list is a
 // boot-shipped array returned synchronously.
 //
@@ -59,14 +50,17 @@ export class TriggerProvider {
    * claiming it whether both sides hold: `acceptsBoundary` for what precedes the
    * trigger, `acceptsPrefix` for how far the token may run past it.
    *
-   * THE NEAREST TRIGGER CLAIMS THE SCAN. Whichever way it answers, the walk
-   * stops there: a `/` in the middle of a word is a rejected token, never an
-   * invitation to keep looking for an earlier `@` that would then swallow it.
+   * ONE MECHANISM, NOT TWO CATEGORIES — there is no branch on "commands start the
+   * line, mentions appear mid-text". Each trigger overrides exactly ONE of the
+   * two predicates: `/` overrides the BOUNDARY (a command is a whole-line verb,
+   * so only position 0 counts) and keeps the default span (a token ends at
+   * whitespace); `@` keeps the default boundary (start of text or after
+   * whitespace, so `me@example` is an address) and overrides the SPAN, because a
+   * document title is several words — `@sprite sheet an` is still one token.
    *
-   * Static and public because it is the piece worth pinning in tests directly.
-   * It lives on the provider family — it mints a TriggerToken out of nothing but
-   * the two provider predicates — and a HOST calls it over its own text, which
-   * is what keeps the popover from having to know what text is.
+   * THE NEAREST TRIGGER CLAIMS THE SCAN. Whichever way it answers, the walk stops
+   * there: a `/` in the middle of a word is a rejected token, never an invitation
+   * to keep looking for an earlier `@` that would then swallow it.
    * @param {string} value @param {number} caret
    * @param {Map<string, TriggerProvider>} providers
    * @returns {TriggerToken|null}

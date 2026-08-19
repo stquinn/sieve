@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"sieve/logger"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
 )
@@ -25,6 +26,28 @@ const attachmentSummaryChars = 200
 // minified JSON, say) gets no excerpt rather than a mid-rune slice — an honest
 // blank, and the chip still names the file and states its size.
 const attachmentExcerptBytes = 4096
+
+// MaxAttachmentBytes is the largest file this kind will hold, and the BACKSTOP
+// half of a ceiling the frontend also enforces before it reads a file at all.
+// Both halves exist on purpose: the client one keeps a huge file from ever
+// entering the renderer's memory, and this one does not trust a client.
+//
+// The number is chosen against the path a held file actually takes — file →
+// base64 (×1.33) → JSON body → decode → disk — which holds roughly three copies
+// of it at once. 5MB (smart-image's remote-fetch cap) would reject an ordinary
+// PDF spec, which is exactly the material this kind exists for; past about 25MB,
+// base64-in-a-JSON-body is the wrong mechanism and the honest answer is a
+// streaming upload rather than a larger constant.
+//
+// Model context is NOT the constraint: the bytes never reach a prompt. The CLI's
+// cwd is the document directory, so the model opens the file itself.
+const MaxAttachmentBytes = 25 * 1024 * 1024
+
+// attachmentMaxExtLen bounds the suffix a stored asset inherits from a dropped
+// filename, dot included. Long enough for the longest real one a thinking tool
+// meets (.markdown), short enough that a filename ending in a sentence with a full
+// stop contributes no extension at all.
+const attachmentMaxExtLen = 12
 
 // AttachmentProcessor handles the 'attachment' Kind — a chip that either HOLDS a
 // file the document is about, or POINTS at another Sieve container.
@@ -47,12 +70,17 @@ const attachmentExcerptBytes = 4096
 // textarea having nowhere to put a block; this is a block in a container).
 type AttachmentProcessor struct {
 	svc                      block.BlockServices
+	assets                   documentAssets // where a dropped file's bytes land
 	block.FencedSerializer   // one shared YAML serialization — free
 	block.FencedDeserializer // its mirror — recognise+parse the fenced form
 }
 
 func NewAttachmentProcessor(svc block.BlockServices) *AttachmentProcessor {
-	return &AttachmentProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: "attachment"}}
+	return &AttachmentProcessor{
+		svc:                svc,
+		assets:             documentAssets{svc: svc, kind: "attachment"},
+		FencedDeserializer: block.FencedDeserializer{Kind: "attachment"},
+	}
 }
 
 func (p *AttachmentProcessor) Kind() string { return p.FencedDeserializer.Kind }
@@ -88,12 +116,11 @@ func (p *AttachmentProcessor) InitAttrs(id string, overrides map[string]interfac
 	// this guard for their own empty-address case and this kind inherits it
 	// verbatim — get the two out of step and the block hangs PENDING forever.
 	//
-	// It is decided AFTER the overrides and it OVERRULES them, so the predicate is
-	// exact in both directions. A copied attachment pastes its whole cached face,
-	// status included, and a COMPLETE block with an address would describe a job
-	// nothing ever dispatches. Re-arming it is also the right answer on its own
-	// terms: a block is a LIVE reference, so a pasted one resolves afresh rather
-	// than inheriting whatever the original last saw.
+	// It is decided AFTER the overrides and it OVERRULES them: a copied attachment
+	// pastes its whole cached face, status included, and a COMPLETE block with an
+	// address would describe a job nothing ever dispatches. Re-arming is also right
+	// on its own terms — a block is a LIVE reference, so a pasted one resolves
+	// afresh rather than inheriting whatever the original last saw.
 	src, uri := p.address(attrs)
 	if src == "" && uri == "" {
 		attrs["status"] = block.BlockStatusComplete
@@ -119,10 +146,11 @@ func (p *AttachmentProcessor) address(attrs map[string]interface{}) (src, uri st
 	return src, ""
 }
 
-// IsSupportedContent claims a copied attachment (round-trip: paste + extract) and
-// a pasted Sieve coordinate as a TRANSFORM, mirroring how web-clip claims a
-// pasted link. A file never arrives through this path — a drop is #68's non-image
-// case, which creates the block with src already set.
+// IsSupportedContent claims the three ways content becomes an attachment: a copied
+// attachment (round-trip: paste + extract), a pasted Sieve coordinate as a
+// TRANSFORM (mirroring how web-clip claims a pasted link), and a DROPPED FILE as a
+// plain paste — a drop runs the same paste-match pipeline a paste does, and this is
+// the kind that takes the files nobody else wants.
 func (p *AttachmentProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
@@ -131,8 +159,49 @@ func (p *AttachmentProcessor) IsSupportedContent(entries []block.ContentEntry) b
 		if _, ok := p.pastedCoordinate(e); ok {
 			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionTransform}}
 		}
+		// Paste alone: a dropped file is a CREATION, and offering it in the extract
+		// menu would be offering to transform a block into a file it never held.
+		if _, ok := p.droppedFile(e); ok {
+			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste}}
+		}
 	}
 	return block.SupportedActions{Kind: p.Kind()}
+}
+
+// droppedFile reports the ORIGINAL FILENAME an entry carries when it is a dropped
+// file this kind will hold.
+//
+// A drop arrives as a data URI (the surface reads the file with
+// FileReader.readAsDataURL) with the filename in Context, because the URI carries
+// the bytes and NOTHING ELSE — not even what the file was called. Both halves are
+// required: a data URI with no filename is some other source's payload, and a
+// filename with no data URI carries no bytes to hold.
+//
+// IMAGES ARE REFUSED, and that refusal is the whole reason this kind and
+// smart-image can coexist. smart-image claims image/* and does the job properly —
+// sizing, description, the lightbox. Claiming them here too would leave which of
+// the two wins decided by registration order alone; refusing makes the answer
+// order-independent, which is what the paste-match tests pin.
+func (p *AttachmentProcessor) droppedFile(e block.ContentEntry) (string, bool) {
+	if !e.IsDataURI() || p.declaresImage(e) {
+		return "", false
+	}
+	name, _ := e.Context["filename"].(string)
+	// A filename is a LABEL here, never a path: the stored asset is named after the
+	// block, so anything a directory component could mean is already irrelevant.
+	name = filepath.Base(strings.TrimSpace(name))
+	if name == "." || name == string(filepath.Separator) {
+		return "", false
+	}
+	return name, true
+}
+
+// declaresImage reads BOTH statements an entry makes about its format — the OS's
+// type and the data URI's own media type. An image dropped from a filesystem that
+// has no type for it would otherwise arrive untyped and be claimed here.
+func (p *AttachmentProcessor) declaresImage(e block.ContentEntry) bool {
+	return strings.HasPrefix(e.MIMEType, "image/") ||
+		strings.HasPrefix(strings.TrimSpace(e.Content), "data:image/")
 }
 
 // pastedCoordinate reports the CANONICAL address a content entry carries, if any.
@@ -162,8 +231,68 @@ func (p *AttachmentProcessor) Transform(entries []block.ContentEntry, uuid, bloc
 			// that only fails later, at resolve time.
 			return map[string]interface{}{"uri": uri}
 		}
+		if name, ok := p.droppedFile(e); ok {
+			return p.holdDroppedFile(e, name, uuid, blockID)
+		}
 	}
 	return nil
+}
+
+// holdDroppedFile stores a dropped file and returns the attrs the block is born
+// with. It mirrors smart-image's paste: the bytes are persisted SYNCHRONOUSLY so
+// the block exists with src already set, and the ingest job — which reads them
+// back off disk — needs nothing from here beyond that src.
+//
+// Only two attrs are seeded, because everything else the chip wears is derived
+// from the bytes themselves and the job is the one that reads them.
+//
+// A failure returns nil, which means NO BLOCK. That is deliberate: an attachment
+// with no src is born COMPLETE (InitAttrs' own guard), so a half-made one would
+// sit in the document as a blank chip nothing ever fills in.
+func (p *AttachmentProcessor) holdDroppedFile(e block.ContentEntry, filename, uuid, blockID string) map[string]interface{} {
+	data, err := e.DecodeDataURI()
+	if err != nil {
+		logger.Warn("attachment: dropped file decode failed", "block", blockID, "file", filename, "err", err)
+		return nil
+	}
+	if len(data) > MaxAttachmentBytes {
+		logger.Warn("attachment: dropped file over the size limit",
+			"block", blockID, "file", filename, "bytes", len(data), "limit", MaxAttachmentBytes)
+		return nil
+	}
+	src, err := p.assets.save(uuid, blockID+p.assetExt(filename), data)
+	if err != nil {
+		logger.Warn("attachment: dropped file save failed", "block", blockID, "file", filename, "err", err)
+		return nil
+	}
+	// title is the file the USER dropped; src names the file on disk, and the two
+	// are deliberately different (see assetExt).
+	return map[string]interface{}{"src": src, "title": filename}
+}
+
+// assetExt is the extension the STORED asset inherits from the dropped file.
+//
+// The stored asset is named after the BLOCK, not after the drop: a document
+// directory holds content.md and meta.json beside its assets, so a file free to
+// name itself could overwrite the document it was dropped into. The extension is
+// the one part worth keeping — the ingest job sniffs mime from it, and the store's
+// own fallback is magic bytes, which cannot tell YAML from any other text.
+//
+// Anything that is not a short alphanumeric suffix returns "", and the store then
+// derives one from the bytes: an honest ".txt" beats trusting a drag-and-drop
+// filename to be a safe path component.
+func (p *AttachmentProcessor) assetExt(filename string) string {
+	ext := filepath.Ext(filename)
+	if len(ext) < 2 || len(ext) > attachmentMaxExtLen {
+		return ""
+	}
+	for _, r := range ext[1:] {
+		alnum := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+		if !alnum {
+			return ""
+		}
+	}
+	return strings.ToLower(ext)
 }
 
 func (p *AttachmentProcessor) OnChange(_ *block.SieveBlock) {}
@@ -257,7 +386,7 @@ type heldAsset struct {
 // that actually needs them. So this runs on the DEFAULT pool and never queues
 // behind AI work.
 func (p *AttachmentProcessor) ingestJob(uuid, src string) *block.ProcessorJob {
-	filename := p.filename(src)
+	filename := p.assets.filename(src)
 	return &block.ProcessorJob{
 		Category: block.CategoryDefault,
 		Label:    "Reading " + filename,
@@ -299,13 +428,6 @@ func (p *AttachmentProcessor) ingestJob(uuid, src string) *block.ProcessorJob {
 			b.Attrs["completedAt"] = time.Now().UTC().Format(time.RFC3339)
 		},
 	}
-}
-
-// filename recovers the bare asset name from a stored src. A src is always a
-// filename in the document directory; the .assets/ strip and the basename are
-// defensive against a path-qualified one, mirroring smart-image's assetURL.
-func (p *AttachmentProcessor) filename(src string) string {
-	return filepath.Base(strings.TrimPrefix(strings.TrimSpace(src), ".assets/"))
 }
 
 // sniffMIME decides what a held file IS. The extension table below is consulted
@@ -471,7 +593,7 @@ func (p *AttachmentProcessor) BuildContext(blk block.SieveBlock, doc block.DocVi
 		// document directory, so a relative path resolves — exactly how
 		// AIService.DescribeImage already reaches an image. No MCP verb, no address
 		// scheme of its own, no containment change.
-		sb.WriteString("Attachment: " + p.filename(src) + "\n")
+		sb.WriteString("Attachment: " + p.assets.filename(src) + "\n")
 		// Its address is the BLOCK'S OWN: the block is the addressable thing, as
 		// smart-image is, so a held asset is reached by the ordinary block grammar.
 		// Built through domain.Address rather than concatenated, so no scheme is
@@ -558,11 +680,10 @@ func (p *AttachmentProcessor) MarkdownRepresentation(blk block.SieveBlock, uuid 
 		}
 		return "[" + title + "](" + uri + ")"
 	case src != "":
-		name := p.filename(src)
 		if title == "" {
-			title = name
+			title = p.assets.filename(src)
 		}
-		return "[" + title + "](/sieve/" + uuid + "/" + name + ")"
+		return "[" + title + "](" + p.assets.url(uuid, src) + ")"
 	}
 	return ""
 }
