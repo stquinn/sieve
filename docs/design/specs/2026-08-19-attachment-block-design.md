@@ -234,6 +234,20 @@ an editor both read as inline, the way Notion's `/` menu is caret-anchored:
 
 Plus a density class on the root for row terseness. Everything else is untouched.
 
+**`CaretPlacement` was the one part of this design that could not be settled on
+paper, and it was validated in the running app (2026-08-19).** happy-dom has no
+layout, so every rect in its tests is synthetic; caret anchoring, scroll-while-open
+and the flip both survive real WebKitGTK. Two things made it work that are worth
+keeping if it is ever rewritten: it uses `left`/`top`/`bottom` only and NO
+transforms, which side-steps the WebKit contentEditable-repaint trap rather than
+mitigating it; and it re-places on `scroll` (capture, so an inner scroller is
+heard) and `resize` while open, without which an open list detaches from the caret
+the moment the document scrolls without a keystroke.
+
+Its width is CONTENT-SIZED, bounded by the editor column — a fixed cap wrapped
+ordinary document titles over four lines. That needs `show()` to make the popover
+visible BEFORE placing it, since a `display: none` element measures zero.
+
 #### Typing a literal `@`
 
 A document is full of legitimate `@`s — email addresses, handles, `@Override`,
