@@ -1,7 +1,7 @@
 // attachment-node-view.js — Sieve NodeView ADAPTER for the 'attachment' kind
 // (the PM half of the renderer/NodeView split; NORMATIVE contract:
 // docs/design/archive/specs/2026-07-21-block-renderer-contract.md; the kind's
-// design: docs/design/specs/2026-08-19-attachment-block-design.md).
+// design: docs/design/archive/specs/2026-08-19-attachment-block-design.md).
 //
 // Look-and-feel — the chip, its detail text, the chevron and the summary it
 // reveals — lives in AttachmentRenderer, which this file HOLDS by COMPOSITION.

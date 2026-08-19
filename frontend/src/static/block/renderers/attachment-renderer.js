@@ -2,7 +2,7 @@
 // attachment-renderer.js — AttachmentRenderer: the renderer half of the
 // 'attachment' kind's renderer/NodeView split (NORMATIVE contract:
 // docs/design/archive/specs/2026-07-21-block-renderer-contract.md; the kind's
-// design: docs/design/specs/2026-08-19-attachment-block-design.md).
+// design: docs/design/archive/specs/2026-08-19-attachment-block-design.md).
 //
 // Owns look-and-feel ONLY, and there is deliberately very little of it: the
 // block IS an attachment chip, so this class COMPOSES AttachmentChip inside a

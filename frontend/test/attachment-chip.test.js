@@ -1,6 +1,6 @@
 // @ts-check
 // attachment-chip.test.js — the shared attachment-chip vocabulary (#38,
-// docs/design/specs/2026-08-19-attachment-block-design.md, "The chip is now a
+// docs/design/archive/specs/2026-08-19-attachment-block-design.md, "The chip is now a
 // shared component"). AttachmentChip is a sibling of StatusBadge and LineGutter:
 // PM-free, lens-blind, spec in → element out.
 //

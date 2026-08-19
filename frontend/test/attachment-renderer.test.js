@@ -1,6 +1,6 @@
 // @ts-check
 // attachment-renderer.test.js — the 'attachment' kind's look-and-feel class
-// (#38, docs/design/specs/2026-08-19-attachment-block-design.md). Bare-page
+// (#38, docs/design/archive/specs/2026-08-19-attachment-block-design.md). Bare-page
 // protocol: render() alone yields the complete block, with no ProseMirror, no
 // editor and no window.* in sight.
 //

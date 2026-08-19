@@ -1,3 +1,28 @@
+> **STATUS: DONE** — shipped 2026-08-19 (#38 closed). Archived 2026-08-19.
+>
+> **What shipped:** the `attachment` kind (one processor, one renderer), created
+> by the toolbar paperclip, an `@`-mention in the editor, or a pasted coordinate;
+> the `TriggerHost` seam that put the composer's picker into the document; and the
+> `AttachmentChip` extraction across all three of its callers.
+>
+> **What did NOT ship, and why it is not a limitation of this design:** OS file
+> **drag-and-drop**. WebKitGTK materialises no `File` for a file-manager drag — the
+> page receives only a `file:///…` path — so the frontend cannot read the bytes by
+> any route. This has never worked in Sieve on Linux, for images either. Tracked by
+> **#86** (Wails' native `OnFileDrop`, reading the path in Go). The picker is
+> unaffected because a file input produces a genuine `File`.
+>
+> **Two decisions changed during implementation.** The attrs table originally named
+> an attr `kind`, which is RESERVED by `BASE_ATTRS` for the block's own kind — it is
+> `targetKind`, and `applyBlockAttrsUpdated` now refuses `kind` outright so the
+> class of bug cannot recur. And `CaretPlacement`, written up here as the one part
+> that could not be settled on paper, was validated in the running app.
+>
+> **Follow-ups opened from testing this:** #84 (the size ceiling becomes a
+> setting), #85 (extract a code block from a held file), #86, #87 (the Spectacle
+> clipboard delivers nothing to WebKitGTK). #83 (an unauthenticated production
+> listener) was found while reasoning about how an asset reaches the AI.
+
 # The attachment block — a chip that holds a file or points at a coordinate
 
 **Status:** Designed
