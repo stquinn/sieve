@@ -1158,12 +1158,15 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /**
-   * True when a DataTransfer offers NOTHING AT ALL — the #87 signal.
+   * True when a DataTransfer offers nothing THE PAGE CAN READ — the #87 signal.
    *
-   * The named flavours are asked for as well as the three collections, and that is
-   * the point rather than belt-and-braces: a transfer that answers `getData` while
-   * exposing no `types` still HAS content, and must take the ordinary pipeline.
-   * Only a genuinely empty offer means "the webview could not read this clipboard".
+   * Not "no types": WebKitGTK advertises flavours whose content it then refuses to
+   * hand over (a file-manager COPY lists text/uri-list while every `getData`
+   * answers ''), and its string items only deliver after the handler returns, when
+   * the store is already empty. An advertised-but-unreadable offer is exactly the
+   * native-read signal. A `kind: 'file'` item or a populated `files` list is a real
+   * readable File (a browser image copy) and takes the ordinary pipeline, as does
+   * any flavour `getData` actually answers.
    * @param {DataTransfer} transfer
    * @returns {boolean}
    */
@@ -1171,9 +1174,8 @@ export class WysiwygSurface extends AbstractSurface {
     for (const flavour of ['text/plain', 'text/html', 'text/uri-list', 'sieve/slice']) {
       if (transfer.getData(flavour)) return false
     }
-    return (!transfer.types || transfer.types.length === 0)
-      && (!transfer.items || transfer.items.length === 0)
-      && (!transfer.files || transfer.files.length === 0)
+    if (transfer.files && transfer.files.length) return false
+    return !Array.from(transfer.items || []).some((i) => i.kind === 'file')
   }
 
   /**
@@ -1274,8 +1276,27 @@ export class WysiwygSurface extends AbstractSurface {
    * @returns {Promise<string|null>}
    */
   static #readUriList(dataTransfer) {
-    const sync = dataTransfer.getData('text/uri-list')
+    // Sync lenses, most faithful first. WebKitGTK answers '' for text/uri-list on
+    // a real drag; `URL` is the legacy alias for its first entry, and KDE puts the
+    // bare path on text/plain. The drag data store empties when the handler
+    // returns (HTML spec), so anything async is a last resort that WebKitGTK
+    // answers empty — the sync lenses are the ones that matter.
+    const probes = {}
+    for (const flavour of ['text/uri-list', 'URL', 'text/plain', 'text/html']) {
+      try { probes[flavour] = dataTransfer.getData(flavour) || '' } catch (e) { probes[flavour] = '' }
+    }
+    const sync = WysiwygSurface.#asUriList(probes['text/uri-list'])
+      || WysiwygSurface.#asUriList(probes['URL'])
+      || WysiwygSurface.#asUriList(probes['text/plain'])
     if (sync) return Promise.resolve(sync)
+    // Every sync lens empty: dump the evidence before trying the async read, so a
+    // failing platform names its own successor fix.
+    console.warn('[wysiwyg-surface] drop sync probes all empty', {
+      lens: Object.fromEntries(Object.entries(probes).map(([k, v]) => [k, v.length])),
+      html: (probes['text/html'] || '').slice(0, 120),
+      items: Array.from(dataTransfer.items || []).map((i) => i.kind + ':' + i.type).join(','),
+      files: dataTransfer.files ? dataTransfer.files.length : -1,
+    })
     const item = Array.from(dataTransfer.items || []).find(
       (i) => i.kind === 'string' && i.type === 'text/uri-list'
     )
@@ -1289,6 +1310,24 @@ export class WysiwygSurface extends AbstractSurface {
         resolve(str || null)
       })
     })
+  }
+
+  /**
+   * Content normalised into a `text/uri-list`, or null when it holds nothing
+   * list-like: URI lines pass through verbatim, and a BARE absolute path (KDE's
+   * text/plain flavour) becomes the file URI it means. Go still owns validation —
+   * scheme, host, existence — this only translates spellings.
+   * @param {string} content
+   * @returns {string|null}
+   */
+  static #asUriList(content) {
+    if (!content) return null
+    const lines = content.split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '' && !line.startsWith('#'))
+      .map((line) => (line.startsWith('/') ? 'file://' + encodeURI(line).replace(/#/g, '%23') : line))
+      .filter((line) => /^[a-z][a-z0-9+.-]*:/i.test(line))
+    return lines.length ? lines.join('\r\n') + '\r\n' : null
   }
 
   /**

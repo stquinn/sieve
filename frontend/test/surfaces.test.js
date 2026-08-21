@@ -938,6 +938,28 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     // The REGRESSION GUARD on the emptiness test. A DataTransfer that answers
     // getData while exposing no `types` still HAS content — reading the
     // collections alone would send every such paste to Go with nothing on it.
+    // THE DOLPHIN-COPY SHAPE: flavours advertised, every getData '', no file
+    // items. Advertised-but-unreadable is the native-read signal — Go asks GTK
+    // for the uris itself.
+    it('a copied file the page cannot read — types advertised, nothing readable — goes native', async () => {
+      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 4, anchor: null })) })
+      host.documentService.nativeClipboardPaste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
+      const { props } = mountPaste(host, 'doc-1')
+      const event = {
+        clipboardData: {
+          types: ['text/uri-list', 'text/plain'],
+          getData: () => '',
+          items: [{ kind: 'string', type: 'text/uri-list', getAsString: () => {} }],
+          files: [],
+        },
+        target: {}, preventDefault: vi.fn(),
+      }
+      expect(props.handlePaste({}, event)).toBe(true)
+      await new Promise((r) => setTimeout(r, 0))
+      expect(host.documentService.nativeClipboardPaste).toHaveBeenCalledWith('doc-1', { index: 4 })
+      expect(host.documentService.smartPaste).not.toHaveBeenCalled()
+    })
+
     it('a clipboard that answers getData but lists no types is NOT empty', async () => {
       const host = wyHost()
       const { props } = mountPaste(host, 'doc-1')
