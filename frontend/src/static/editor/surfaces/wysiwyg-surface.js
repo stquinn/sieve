@@ -1221,10 +1221,15 @@ export class WysiwygSurface extends AbstractSurface {
     const ds = this.#host.documentService
     if (!ds) return true // disconnected editor: drop (socketless parity)
     const pane = this.#editorPane
-    listRead.then((uriList) => {
-      if (uriList !== null && WysiwygSurface.#namesAFile(uriList)) {
+    listRead.then((read) => {
+      // The frontend recognises, never parses: `file:` in a uri-list line or in an
+      // anchor's href is the claim-vs-replay call, and Go owns the extraction.
+      const isFileDrop = read !== null && (read.mime === 'text/uri-list'
+        ? WysiwygSurface.#namesAFile(read.content)
+        : /href\s*=\s*["']file:/i.test(read.content))
+      if (isFileDrop) {
         ds.nativeDropPaste(this.#uuid, {
-          entries: [{ mimeType: 'text/uri-list', content: uriList }],
+          entries: [{ mimeType: read.mime, content: read.content }],
           index: peek.index,
         })
           // A drop carries its own coordinate, so Go's block lands at the DROP
@@ -1235,14 +1240,16 @@ export class WysiwygSurface extends AbstractSurface {
           .catch((err) => { console.error('[wysiwyg-surface] native file drop failed', err) })
         return
       }
-      // A dragged LINK rides the same flavour, and by the time that is knowable the
-      // drop is already claimed — so the old outcome is replayed by hand: the URIs
-      // land as text where PM would have put them. Comments and blanks (RFC 2483)
-      // name nothing and are not content.
-      const replay = uriList === null ? '' : uriList.split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line !== '' && !line.startsWith('#'))
-        .join('\n')
+      // A dragged LINK rides the same flavours, and by the time that is knowable
+      // the drop is already claimed — so the old outcome is replayed by hand where
+      // PM would have put it (insertContentAt takes the html as-is). Comments and
+      // blanks (RFC 2483) name nothing and are not content.
+      const replay = read === null ? '' : (read.mime === 'text/html'
+        ? read.content
+        : read.content.split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line !== '' && !line.startsWith('#'))
+          .join('\n'))
       if (replay !== '') {
         pane.commands.insertContentAt(insertPos, replay)
         return
@@ -1270,10 +1277,11 @@ export class WysiwygSurface extends AbstractSurface {
   /**
    * The `text/uri-list` content of this drop, read the way WebKitGTK can answer:
    * synchronous `getData` when the platform backs it (Blink, tests), else the
-   * async items API. Resolves null when neither yields content — a claimed drop
-   * with an unreadable list, which the caller logs and drops.
+   * async items API. Resolves the lens that answered ({mime, content}) or null
+   * when none did — a claimed drop with unreadable content, which the caller logs
+   * and drops.
    * @param {DataTransfer} dataTransfer
-   * @returns {Promise<string|null>}
+   * @returns {Promise<{mime: string, content: string}|null>}
    */
   static #readUriList(dataTransfer) {
     // Sync lenses, most faithful first. WebKitGTK answers '' for text/uri-list on
@@ -1288,12 +1296,15 @@ export class WysiwygSurface extends AbstractSurface {
     const sync = WysiwygSurface.#asUriList(probes['text/uri-list'])
       || WysiwygSurface.#asUriList(probes['URL'])
       || WysiwygSurface.#asUriList(probes['text/plain'])
-    if (sync) return Promise.resolve(sync)
+    if (sync) return Promise.resolve({ mime: 'text/uri-list', content: sync })
+    // WebKitGTK's ONE readable drop lens on a real drag (#86, measured): the list
+    // flavours all answer '' while text/html survives, carrying each file URI as
+    // an anchor's href. Forwarded VERBATIM — Go owns the extraction.
+    if (probes['text/html']) return Promise.resolve({ mime: 'text/html', content: probes['text/html'] })
     // Every sync lens empty: dump the evidence before trying the async read, so a
     // failing platform names its own successor fix.
     console.warn('[wysiwyg-surface] drop sync probes all empty', {
       lens: Object.fromEntries(Object.entries(probes).map(([k, v]) => [k, v.length])),
-      html: (probes['text/html'] || '').slice(0, 120),
       items: Array.from(dataTransfer.items || []).map((i) => i.kind + ':' + i.type).join(','),
       files: dataTransfer.files ? dataTransfer.files.length : -1,
     })
@@ -1307,7 +1318,7 @@ export class WysiwygSurface extends AbstractSurface {
       const guard = setTimeout(() => resolve(null), 1500)
       item.getAsString((str) => {
         clearTimeout(guard)
-        resolve(str || null)
+        resolve(str ? { mime: 'text/uri-list', content: str } : null)
       })
     })
   }

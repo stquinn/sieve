@@ -80,11 +80,58 @@ func (es *EditorService) HandleNativeDrop(uuid string, entries []block.ContentEn
 func (es *EditorService) droppedFiles(entries []block.ContentEntry) []droppedFile {
 	var files []droppedFile
 	for _, e := range entries {
-		if base, _, err := mime.ParseMediaType(e.MIMEType); err == nil && base == "text/uri-list" {
+		base, _, err := mime.ParseMediaType(e.MIMEType)
+		if err != nil {
+			continue
+		}
+		switch base {
+		case "text/uri-list":
 			files = append(files, uriList(e.Content).files()...)
+		case "text/html":
+			// WebKitGTK's one readable drop lens (#86): getData answers '' for
+			// text/uri-list, URL and text/plain on a real drag, and the store is
+			// empty before any async read runs — but text/html survives, carrying
+			// the file URI as an anchor's href. The frontend forwards it verbatim;
+			// the extraction lives here with the rest of the path handling.
+			files = append(files, anchorHrefs(e.Content).files()...)
 		}
 	}
 	return files
+}
+
+// anchorHrefs is a `text/html` drop payload — anchors whose hrefs are the URIs
+// the drag carried, one per dragged file, entity-encoded as HTML demands.
+type anchorHrefs string
+
+// files reports the local paths this markup's hrefs name, in document order,
+// under the same rules as a uri-list: only local `file:` URIs count.
+func (h anchorHrefs) files() []droppedFile {
+	var uris []string
+	rest := string(h)
+	for {
+		i := strings.Index(rest, "href=")
+		if i == -1 {
+			break
+		}
+		rest = rest[i+len("href="):]
+		if rest == "" {
+			break
+		}
+		quote := rest[0]
+		if quote != '"' && quote != '\'' {
+			continue
+		}
+		rest = rest[1:]
+		end := strings.IndexByte(rest, quote)
+		if end == -1 {
+			break
+		}
+		// &amp; is the one entity legal inside a URI-valued attribute that changes
+		// its meaning when left encoded.
+		uris = append(uris, strings.ReplaceAll(rest[:end], "&amp;", "&"))
+		rest = rest[end+1:]
+	}
+	return uriList(strings.Join(uris, "\r\n")).files()
 }
 
 // attachmentCeiling is the live ceiling for files this drop may read — the

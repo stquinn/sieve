@@ -364,3 +364,70 @@ func TestHandleNativeDrop_UnopenedDocumentIsNothing(t *testing.T) {
 		t.Errorf("outcome = %q, want nothing", res.Outcome)
 	}
 }
+
+// The html lens is WebKitGTK's ONE readable drop flavour (#86): the drag's file
+// URIs arrive as anchor hrefs inside styled markup, entity-encoded. Extraction
+// follows uri-list rules — local file: URIs only, document order.
+func TestAnchorHrefs_ExtractsLocalFileURIs(t *testing.T) {
+	cases := []struct {
+		name string
+		html string
+		want []droppedFile
+	}{
+		{
+			name: "one styled anchor, double quotes",
+			html: `<a style="caret-color: rgb(0, 0, 0); color: rgb(0, 0, 238);" href="file:///home/u/report.pdf">report.pdf</a>`,
+			want: []droppedFile{"/home/u/report.pdf"},
+		},
+		{
+			name: "several anchors keep drag order",
+			html: `<a href="file:///a.png">a</a> <a href='file:///b.pdf'>b</a>`,
+			want: []droppedFile{"/a.png", "/b.pdf"},
+		},
+		{
+			name: "percent escapes decode and &amp; means &",
+			html: `<a href="file:///home/u/a%20file.pdf?x=1&amp;y=2">a file</a>`,
+			want: []droppedFile{"/home/u/a file.pdf"},
+		},
+		{
+			name: "a dragged browser link is not a file",
+			html: `<a href="https://example.com/page">Example</a>`,
+			want: nil,
+		},
+		{
+			name: "markup with no anchors names nothing",
+			html: `<p>just prose</p>`,
+			want: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := anchorHrefs(tc.html).files()
+			if len(got) != len(tc.want) {
+				t.Fatalf("files() = %q, want %q", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("files()[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// The frame may carry the html lens instead of a uri-list, and the ingestion
+// treats them identically from that point on.
+func TestHandleNativeDrop_HTMLEntryReachesTheSameIngestion(t *testing.T) {
+	es, uuid := newDropEditor(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(path, []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res := es.HandleNativeDrop(uuid, []block.ContentEntry{
+		{MIMEType: "text/html", Content: `<a href="file://` + path + `">notes.txt</a>`},
+	}, 0)
+	if res.Outcome != block.OutcomeBlock {
+		t.Fatalf("outcome = %q, want block", res.Outcome)
+	}
+}

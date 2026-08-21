@@ -1075,6 +1075,33 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     expect(ed.commands.insertContentAt).not.toHaveBeenCalled()
   })
 
+  // THE MEASURED WebKitGTK SHAPE (2026-08-21, real Dolphin drag): every list
+  // flavour answers '' and only text/html survives, carrying the file URI as a
+  // styled anchor's href. The html is forwarded VERBATIM — Go extracts.
+  it('WebKitGTK drop where only text/html answers → the html rides the frame', async () => {
+    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
+    host.documentService.nativeDropPaste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
+    const { ed, props } = mountPaste(host, 'doc-1')
+    ed.view.posAtCoords = () => ({ pos: 12 })
+    ed.state.selection = { to: 0 }
+    const html = '<a style="caret-color: rgb(0, 0, 0);" href="file:///home/u/report.pdf">report.pdf</a>'
+    const event = {
+      dataTransfer: {
+        types: ['text/uri-list', 'text/html'],
+        getData: (mime) => (mime === 'text/html' ? html : ''),
+        items: [{ kind: 'string', type: 'text/uri-list', getAsString: () => {} }],
+      },
+      clientX: 1, clientY: 1, preventDefault: vi.fn(),
+    }
+    expect(props.handleDrop({}, event, null, false)).toBe(true)
+    expect(event.preventDefault).toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', {
+      entries: [{ mimeType: 'text/html', content: html }],
+      index: 9,
+    })
+  })
+
   // THE #86 REGRESSION: on a real WebKitGTK drag, getData('text/uri-list') answers
   // '' while `types` advertises the flavour and a string ITEM carries the list.
   // The claim must not depend on getData, and the content must come off the item.
