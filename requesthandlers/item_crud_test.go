@@ -85,6 +85,72 @@ func do(t *testing.T, method, url, contentType, body string) (int, string) {
 	return resp.StatusCode, string(got)
 }
 
+// #89 — the folder delete dialog used to claim the folder "must be empty" while
+// the delete was os.RemoveAll. A confirmation that cannot name what it destroys
+// is not a confirmation, so the copy counts what goes and the button is gated
+// behind typing the folder name.
+func TestSidebarDialog_FolderDeleteNamesWhatItDestroys(t *testing.T) {
+	srv, sp := newItemServer(t)
+	folder, _ := seedNotesInFolder(t, srv, sp, "Doomed", "First", "Second")
+
+	status, body := do(t, http.MethodGet, srv.URL+"/ui/views/sidebar/dialog/delete?id="+folder+"&name=Doomed&type=folder", "", "")
+	if status != http.StatusOK {
+		t.Fatalf("status %d", status)
+	}
+	if strings.Contains(body, "must be empty") {
+		t.Error("the dialog still claims the folder must be empty")
+	}
+	for _, want := range []string{"also deletes", "2</strong> note", "to confirm", "delete-confirm-input", "disabled"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dialog does not contain %q: %s", want, body)
+		}
+	}
+}
+
+// An EMPTY folder is the case the original wording described, and it must not be
+// gated — nothing is at stake, so asking the user to type a name would be noise.
+func TestSidebarDialog_EmptyFolderDeleteIsNotGated(t *testing.T) {
+	srv, sp := newItemServer(t)
+	if err := sp.Documents.NewFolder("Vacant"); err != nil {
+		t.Fatalf("NewFolder: %v", err)
+	}
+	folder := folderID(t, sp, "Vacant")
+
+	status, body := do(t, http.MethodGet, srv.URL+"/ui/views/sidebar/dialog/delete?id="+folder+"&name=Vacant&type=folder", "", "")
+	if status != http.StatusOK {
+		t.Fatalf("status %d", status)
+	}
+	if !strings.Contains(body, "It is empty") {
+		t.Errorf("empty folder dialog does not say so: %s", body)
+	}
+	if strings.Contains(body, "delete-confirm-input") {
+		t.Error("an empty folder delete should not ask the user to type the name")
+	}
+}
+
+// A folder that cannot be read must not fall back to the empty wording — that is
+// the LEAST alarming copy, and it would appear exactly when the app is least
+// sure what it is about to destroy.
+func TestSidebarDialog_UnknownFolderIsRefusedNotDescribedAsEmpty(t *testing.T) {
+	srv, _ := newItemServer(t)
+	status, body := do(t, http.MethodGet, srv.URL+"/ui/views/sidebar/dialog/delete?id=nosuchfolder&name=Ghost&type=folder", "", "")
+	if status != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 (body %q)", status, body)
+	}
+}
+
+// A NOTE delete is unchanged: one document, no enumeration, no gate.
+func TestSidebarDialog_NoteDeleteIsUngated(t *testing.T) {
+	srv, _ := newItemServer(t)
+	status, body := do(t, http.MethodGet, srv.URL+"/ui/views/sidebar/dialog/delete?id=n1&name=Draft&type=note", "", "")
+	if status != http.StatusOK {
+		t.Fatalf("status %d", status)
+	}
+	if !strings.Contains(body, "Delete Note") || strings.Contains(body, "delete-confirm-input") {
+		t.Errorf("note delete dialog changed shape: %s", body)
+	}
+}
+
 // folderID finds a folder by display name in the listed tree.
 func folderID(t *testing.T, sp *sieve.ServiceProvider, name string) string {
 	t.Helper()
@@ -503,11 +569,12 @@ func TestSessionToggle_EveryPanelFlipsItsOwnFlag(t *testing.T) {
 // The three dialogs are one route: the kind picks the template, an unknown kind
 // is refused rather than answered with an empty dialog.
 func TestSidebarDialog_KindPicksTheTemplate(t *testing.T) {
-	srv, _ := newItemServer(t)
+	srv, sp := newItemServer(t)
+	folder, _ := seedNotesInFolder(t, srv, sp, "Doomed", "First")
 
 	for _, dialog := range []struct{ kind, query, want string }{
 		{"rename", "?id=n1&name=Draft&type=note", "Rename Note"},
-		{"delete", "?id=n1&name=Draft&type=folder", "Delete Folder"},
+		{"delete", "?id=" + folder + "&name=Doomed&type=folder", "Delete Folder"},
 		{"create-folder", "?parentId=f1", "Create New Folder"},
 	} {
 		status, body := do(t, http.MethodGet, srv.URL+"/ui/views/sidebar/dialog/"+dialog.kind+dialog.query, "", "")

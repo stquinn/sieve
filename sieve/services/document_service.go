@@ -106,6 +106,47 @@ func (ns *DocumentService) DeleteFolder(id string) ([]string, error) {
 	return deleted, nil
 }
 
+// FolderContents is what a folder delete would destroy, counted before it is
+// destroyed. Both counts reach all the way down: a sub-folder's documents go
+// just as thoroughly as the ones sitting directly in the folder.
+type FolderContents struct {
+	Notes   int
+	Folders int
+}
+
+// IsEmpty reports whether deleting the folder would take nothing with it — the
+// only case the delete dialog's original "it must be empty" wording described.
+func (c FolderContents) IsEmpty() bool { return c.Notes == 0 && c.Folders == 0 }
+
+// FolderContents counts what lives beneath a folder, so a delete can say what it
+// is about to take. The delete itself is os.RemoveAll and enumerates nothing, so
+// the caller has to ask FIRST — afterwards there is nothing left to count.
+func (ns *DocumentService) FolderContents(id string) (FolderContents, error) {
+	folder, err := ns.store.LoadFolder(domain.LibraryCategory, id)
+	if err != nil {
+		return FolderContents{}, err
+	}
+	return countBeneath(folder.Owns()), nil
+}
+
+// countBeneath walks a folder's children, counting documents and sub-folders at
+// every depth.
+func countBeneath(children []store.Storable) FolderContents {
+	var c FolderContents
+	for _, child := range children {
+		switch child := child.(type) {
+		case store.MetaStorable:
+			c.Notes++
+		case store.FolderStorable:
+			c.Folders++
+			beneath := countBeneath(child.Owns())
+			c.Notes += beneath.Notes
+			c.Folders += beneath.Folders
+		}
+	}
+	return c
+}
+
 // Delete removes the note and its entire version history from the Store.
 func (ns *DocumentService) RenameFolder(id string, newName string) error {
 	folder, err := ns.store.LoadFolder(domain.LibraryCategory, id)

@@ -220,3 +220,66 @@ func TestDocumentService_DeleteFolderStopsResolvingTheUUIDsItTook(t *testing.T) 
 		}
 	}
 }
+
+// #89 — the delete dialog promised the folder "must be empty" while the delete
+// was os.RemoveAll. Telling the truth means counting what goes BEFORE it goes,
+// and the count has to reach through sub-folders: those documents are destroyed
+// just as thoroughly as the ones sitting directly in the folder.
+func TestDocumentService_FolderContents_CountsEverythingBeneath(t *testing.T) {
+	ds, _ := newTestDocumentService(t)
+
+	seedFiledNote(t, ds, "Top One", "Doomed", nil, "", "body")
+	seedFiledNote(t, ds, "Top Two", "Doomed", nil, "", "body")
+	seedFiledNote(t, ds, "Buried", "Doomed/Deeper", nil, "", "body")
+
+	folderID := func(name string) string {
+		entries, err := ds.List()
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		var walk func([]NoteEntry) string
+		walk = func(es []NoteEntry) string {
+			for _, e := range es {
+				if e.IsDir && e.Name == name {
+					return e.ID
+				}
+				if found := walk(e.Children); found != "" {
+					return found
+				}
+			}
+			return ""
+		}
+		id := walk(entries)
+		if id == "" {
+			t.Fatalf("folder %q is not in the tree", name)
+		}
+		return id
+	}
+
+	got, err := ds.FolderContents(folderID("Doomed"))
+	if err != nil {
+		t.Fatalf("FolderContents: %v", err)
+	}
+	if got.Notes != 3 {
+		t.Errorf("Notes = %d, want 3 (two here, one a level down)", got.Notes)
+	}
+	if got.Folders != 1 {
+		t.Errorf("Folders = %d, want 1 (Deeper)", got.Folders)
+	}
+	if got.IsEmpty() {
+		t.Error("IsEmpty() on a folder holding three notes")
+	}
+
+	// An empty folder is the case the old copy described, and it must still read
+	// as empty rather than as "deletes 0 notes".
+	if err := ds.NewFolder("Vacant"); err != nil {
+		t.Fatalf("NewFolder: %v", err)
+	}
+	empty, err := ds.FolderContents(folderID("Vacant"))
+	if err != nil {
+		t.Fatalf("FolderContents(empty): %v", err)
+	}
+	if !empty.IsEmpty() || empty.Notes != 0 || empty.Folders != 0 {
+		t.Errorf("empty folder counted as %+v", empty)
+	}
+}
