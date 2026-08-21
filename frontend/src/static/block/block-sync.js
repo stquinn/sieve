@@ -184,3 +184,51 @@ export function computeBlockSync(curr, prev) {
   }
   return { ops: ops, next: next }
 }
+
+/**
+ * computeOrderOp is the ORDER half of the observer (#94). computeBlockSync is an
+ * id-keyed diff — a block's signature is kind + content + aliases, and nothing in
+ * it is positional — so a drag-handle reorder changed no signature, added no id
+ * and removed none. The batch came out empty and the reorder was lost on the next
+ * load. Order is its own fact and needs its own op.
+ *
+ * It reports the COMPLETE id order rather than a sequence of moves, because
+ * installing a whole order is idempotent: a duplicated or late frame lands the
+ * document in the same place. Go refuses anything that is not a permutation of
+ * what it holds (ShadowDocument.setOrder), since a list missing one id is
+ * indistinguishable from a mass delete — which is why this holds off whenever the
+ * client cannot yet name every block the server has:
+ *
+ *   - the same tick creates or deletes (the sets are still moving), or
+ *   - some node is id-less / in flight (Go mints ids; a token is not one).
+ *
+ * In both cases the baseline is left STALE deliberately, so the next quiet tick
+ * still sees a difference and sends the order then.
+ *
+ * @param {Array<{id?: string, token?: string}>} curr top-level blocks in document order
+ * @param {string[]|null} prevIds the id order as of the last reported sync; null seeds
+ * @param {Array<{type: string}>} ops the batch computeBlockSync produced this same tick
+ * @returns {{op: {type: string, order: string[]}|null, next: string[]|null}}
+ */
+export function computeOrderOp(curr, prevIds, ops) {
+  var blocks = curr || []
+  var ids = []
+  for (var i = 0; i < blocks.length; i++) {
+    var b = blocks[i]
+    if (!b || !b.id) return { op: null, next: prevIds }   // id-less / in flight
+    ids.push(b.id)
+  }
+  for (var j = 0; j < (ops || []).length; j++) {
+    var t = ops[j] && ops[j].type
+    if (t === 'create-block' || t === 'delete-block') return { op: null, next: prevIds }
+  }
+  if (!prevIds) return { op: null, next: ids }            // first call: seed only
+  if (prevIds.length === ids.length) {
+    var same = true
+    for (var k = 0; k < ids.length; k++) {
+      if (ids[k] !== prevIds[k]) { same = false; break }
+    }
+    if (same) return { op: null, next: ids }
+  }
+  return { op: { type: 'set-order', order: ids }, next: ids }
+}

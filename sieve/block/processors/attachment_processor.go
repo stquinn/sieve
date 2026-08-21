@@ -27,21 +27,29 @@ const attachmentSummaryChars = 200
 // blank, and the chip still names the file and states its size.
 const attachmentExcerptBytes = 4096
 
-// MaxAttachmentBytes is the largest file this kind will hold, and the BACKSTOP
+// maxAttachmentBytes is the largest file this kind will hold, and the BACKSTOP
 // half of a ceiling the frontend also enforces before it reads a file at all.
 // Both halves exist on purpose: the client one keeps a huge file from ever
 // entering the renderer's memory, and this one does not trust a client.
 //
-// The number is chosen against the path a held file actually takes — file →
-// base64 (×1.33) → JSON body → decode → disk — which holds roughly three copies
-// of it at once. 5MB (smart-image's remote-fetch cap) would reject an ordinary
-// PDF spec, which is exactly the material this kind exists for; past about 25MB,
-// base64-in-a-JSON-body is the wrong mechanism and the honest answer is a
-// streaming upload rather than a larger constant.
-//
-// Model context is NOT the constraint: the bytes never reach a prompt. The CLI's
-// cwd is the document directory, so the model opens the file itself.
-const MaxAttachmentBytes = 25 * 1024 * 1024
+// The limit is a SETTING (max_attachment_bytes, #84) because it is a judgement
+// about the user's machine and content, not a property of the code — see
+// domain.DefaultMaxAttachmentBytes for how the default is chosen. A processor
+// built without a state port (test constructions) falls back to that default
+// rather than to no ceiling at all.
+func (p *AttachmentProcessor) maxAttachmentBytes() int {
+	if p.svc.State == nil {
+		return domain.DefaultMaxAttachmentBytes
+	}
+	return p.svc.State.LoadSettings().AttachmentCeilingBytes()
+}
+
+// maxMaterialisedTextBytes caps the held file this kind will hand over as content
+// for another block to be built from. It sits FAR below MaxAttachmentBytes on
+// purpose: extracted content becomes editable ProseMirror document content, and a
+// document carrying a 25MB code block is unusable. Past this the file stays a chip,
+// which is what the kind is for.
+const maxMaterialisedTextBytes = 256 * 1024
 
 // attachmentMaxExtLen bounds the suffix a stored asset inherits from a dropped
 // filename, dot included. Long enough for the longest real one a thinking tool
@@ -255,9 +263,9 @@ func (p *AttachmentProcessor) holdDroppedFile(e block.ContentEntry, filename, uu
 		logger.Warn("attachment: dropped file decode failed", "block", blockID, "file", filename, "err", err)
 		return nil
 	}
-	if len(data) > MaxAttachmentBytes {
+	if limit := p.maxAttachmentBytes(); len(data) > limit {
 		logger.Warn("attachment: dropped file over the size limit",
-			"block", blockID, "file", filename, "bytes", len(data), "limit", MaxAttachmentBytes)
+			"block", blockID, "file", filename, "bytes", len(data), "limit", limit)
 		return nil
 	}
 	src, err := p.assets.save(uuid, blockID+p.assetExt(filename), data)
@@ -567,6 +575,56 @@ func (p *AttachmentProcessor) clip(s string, n int) string {
 	return strings.TrimSpace(string([]rune(s)[:n])) + "…"
 }
 
+// MaterialiseContent hands a held file's text over as ordinary content
+// (block.ContentMaterialiser), so the kinds that RECOGNISE content can see what this
+// block is holding — a file's bytes live in the document directory and reach nobody
+// otherwise. What the text IS (code, a log, prose) is entirely theirs to say; this
+// kind only decides whether the bytes are fit to hand over at all.
+//
+// The view is text/plain and NOT the stamped mime, deliberately: that mime came from
+// the dropped filename's extension, and offering it would let a file NAME decide
+// what only its content can.
+func (p *AttachmentProcessor) MaterialiseContent(uuid string, attrs map[string]interface{}) []block.ContentEntry {
+	src, uri := p.address(attrs)
+	if src == "" || uri != "" {
+		return nil // a citation holds no bytes of its own
+	}
+	mimeType, _ := attrs["mime"].(string)
+	if !p.isPlainText(mimeType) {
+		return nil
+	}
+	// The stamped size is consulted BEFORE the read, so an oversized file is never
+	// loaded merely to be refused; the length is checked again after, because the
+	// attr is only a claim about what is on disk.
+	if n, known := p.storedBytes(attrs); !known || n > maxMaterialisedTextBytes {
+		return nil
+	}
+	if p.svc.Assets == nil {
+		return nil
+	}
+	data, err := p.svc.Assets.ServeAssetData(uuid, p.assets.filename(src))
+	if err != nil {
+		logger.Warn("attachment: held file unreadable", "uuid", uuid, "src", src, "err", err)
+		return nil
+	}
+	if len(data) > maxMaterialisedTextBytes || !utf8.Valid(data) {
+		return nil // the mime type lied, or the file grew: hand over nothing
+	}
+	return []block.ContentEntry{{MIMEType: "text/plain", Content: string(data)}}
+}
+
+// storedBytes reads the byte count stamped at ingest. It is a STRING attr (see the
+// ingest job's Apply for why), so an absent or unparseable one means "nothing is
+// known about these bytes yet" rather than a file of length zero.
+func (p *AttachmentProcessor) storedBytes(attrs map[string]interface{}) (int64, bool) {
+	raw, _ := attrs["bytes"].(string)
+	n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
+}
+
 // BuildContext contributes the same two facts for both halves of the kind — WHAT
 // this is and WHERE it lives — which is precisely why holding and pointing are
 // one block rather than two. Nothing on the prompt path branches on it, and the
@@ -638,13 +696,11 @@ func (p *AttachmentProcessor) typeLine(attrs map[string]interface{}) string {
 	return strings.Join(parts, " · ")
 }
 
-// humanSize renders the stored byte count for a reader. bytes is a string attr
-// (see the ingest job's Apply for why), so a value that will not parse renders
-// nothing rather than a lie.
+// humanSize renders the stored byte count for a reader. A size nobody has stamped
+// yet renders nothing rather than a lie.
 func (p *AttachmentProcessor) humanSize(attrs map[string]interface{}) string {
-	raw, _ := attrs["bytes"].(string)
-	n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
-	if err != nil || n < 0 {
+	n, known := p.storedBytes(attrs)
+	if !known {
 		return ""
 	}
 	const unit = 1024

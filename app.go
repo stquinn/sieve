@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+	"sieve/nativedrop"
 	"strings"
 	"sync"
 	"time"
@@ -40,12 +41,13 @@ type App struct {
 	State           *services.StateService
 	Prompts         *ai.PromptService
 
-	library   services.LibraryService // owns library discovery, recents, naming
-	themesFS  fs.FS
-	broadcast *requesthandlers.WorkspaceBroadcast
-	watcher   *watcher.NotesWatcher
-	closing   bool
-	mu        sync.Mutex
+	library    services.LibraryService // owns library discovery, recents, naming
+	themesFS   fs.FS
+	broadcast  *requesthandlers.WorkspaceBroadcast
+	watcher    *watcher.NotesWatcher
+	closing    bool
+	closeAcked bool // the page answered app:closing — the close watchdog stands down
+	mu         sync.Mutex
 
 	DevServerPort int
 }
@@ -103,6 +105,16 @@ func (a *App) startup(ctx context.Context) {
 
 	isFirstStartup := a.ctx == nil
 	a.ctx = ctx
+
+	if isFirstStartup {
+		// GTK's view of a file drop, feeding the bucket the frontend's empty
+		// native-drop redeem draws from (#86). Registered ONCE: startup re-runs on
+		// every vault switch.
+		runtime.OnFileDrop(ctx, func(x, y int, paths []string) {
+			logger.Info("[sieve] native drop caught", "files", len(paths))
+			nativedrop.Default.Put(paths)
+		})
+	}
 
 	abs, _ := filepath.Abs(a.storePath)
 	logger.Info("startup", "vault_raw", a.storePath, "vault_abs", abs)
@@ -257,7 +269,27 @@ func (a *App) beforeClose(ctx context.Context) bool {
 	}
 	logger.Info("beforeClose: vetoing and requesting flush")
 	runtime.EventsEmit(ctx, "app:closing")
+	// The veto needs a LIVENESS answer, not a completion one: an alive page acks
+	// immediately (ClosingAck) and may then legitimately wait on active jobs as
+	// long as it likes — but a webview that navigated away from the app page has
+	// no bindings and can never ack, and an unanswered veto is an unkillable
+	// window. Only the silent case is forced; Quit's own path still runs
+	// FlushAll, so nothing Go holds is lost on that route.
+	go func() {
+		time.Sleep(3 * time.Second)
+		if !a.closing && !a.closeAcked {
+			logger.Warn("beforeClose: page never acknowledged app:closing — forcing quit")
+			a.Quit()
+		}
+	}()
 	return true
+}
+
+// ClosingAck is the page's "I heard the close request and own the shutdown from
+// here" — called from the app:closing handler BEFORE any waiting it chooses to
+// do, so the beforeClose watchdog stands down.
+func (a *App) ClosingAck() {
+	a.closeAcked = true
 }
 
 func (a *App) Quit() {
@@ -280,20 +312,21 @@ func (a *App) Quit() {
 // ── Store info ────────────────────────────────────────────────────────────────
 
 type StoreInfo struct {
-	Root               string          `json:"root"`
-	Hostname           string          `json:"hostname"`
-	BuffersPath        string          `json:"buffersPath"`
-	NotesPath          string          `json:"notesPath"`
-	IsNew              bool            `json:"isNew"`
-	Tier               domain.Tier     `json:"tier"`
-	Cli                string          `json:"cli"`
-	Debug              bool            `json:"debug"`
-	AutosaveDebounce   int             `json:"autosaveDebounce"`
-	ThemeName          string          `json:"themeName"`
+	Root               string           `json:"root"`
+	Hostname           string           `json:"hostname"`
+	BuffersPath        string           `json:"buffersPath"`
+	NotesPath          string           `json:"notesPath"`
+	IsNew              bool             `json:"isNew"`
+	Tier               domain.Tier      `json:"tier"`
+	Cli                string           `json:"cli"`
+	Debug              bool             `json:"debug"`
+	AutosaveDebounce   int              `json:"autosaveDebounce"`
+	ThemeName          string           `json:"themeName"`
 	ThemeVars          domain.ThemeVars `json:"themeVars"`
-	MaxHistoryVersions int             `json:"maxHistoryVersions"`
-	CLITimeoutLong     int             `json:"cliTimeoutLong"`
-	ShowPrompts        bool            `json:"showPrompts"`
+	MaxHistoryVersions int              `json:"maxHistoryVersions"`
+	CLITimeoutLong     int              `json:"cliTimeoutLong"`
+	MaxAttachmentBytes int              `json:"maxAttachmentBytes"`
+	ShowPrompts        bool             `json:"showPrompts"`
 }
 
 func (a *App) getStoreInfo() StoreInfo {
@@ -321,6 +354,7 @@ func (a *App) getStoreInfo() StoreInfo {
 		ThemeVars:          domain.LoadTheme(liveSettings.Theme, a.loadThemeOverride(liveSettings.Theme), a.themesFS),
 		MaxHistoryVersions: liveSettings.MaxHistoryVersions,
 		CLITimeoutLong:     liveSettings.CLITimeoutLong,
+		MaxAttachmentBytes: liveSettings.MaxAttachmentBytes,
 		ShowPrompts:        a.State.LoadSession().ShowPrompts,
 	}
 }
@@ -627,4 +661,3 @@ func migrateSettings(oldPath, newPath string) {
 	os.Remove(oldPath)
 	logger.Info("migrated settings.json (cli merge)", "from", oldPath, "to", newPath)
 }
-

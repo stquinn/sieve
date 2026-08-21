@@ -305,6 +305,22 @@ const (
 	// PasteKindSlice reconstructs a copied multi-block selection: an ordered list
 	// of per-block view sets, each paste-matched and created with a fresh id.
 	PasteKindSlice PasteKind = "slice"
+	// PasteKindNativeDrop ingests files dragged in from the desktop. It exists
+	// because a WebKitGTK webview never materialises a readable File for a
+	// file-manager drag — all the page receives is the `text/uri-list` the OS put
+	// on the drag, so the bytes can only be read by the server.
+	//
+	// It reuses Entries, carrying that one view verbatim: the client forwards what
+	// the DataTransfer gave it and interprets nothing.
+	PasteKindNativeDrop PasteKind = "native-drop"
+	// PasteKindNativeClipboard asks the server to read the OS clipboard itself.
+	//
+	// It exists because WebKitGTK hands the page a paste event whose DataTransfer
+	// is COMPLETELY EMPTY for a screenshot copied by a normal desktop tool — no
+	// types, no items, no files (#87) — while any ordinary GTK process reads the
+	// same offer fine. That emptiness is the whole signal, which is why this kind
+	// carries no Entries: there is nothing for the client to forward.
+	PasteKindNativeClipboard PasteKind = "native-clipboard"
 )
 
 // PasteFrame hands a clipboard to the server to make sense of. Which of Entries
@@ -313,8 +329,8 @@ const (
 type PasteFrame struct {
 	Type    string                 `json:"type"`
 	OpID    string                 `json:"opId,omitempty" doc:"echoed on the paste-ack"`
-	Kind    PasteKind              `json:"kind" doc:"smart | slice"`
-	Entries []block.ContentEntry   `json:"entries,omitempty" doc:"smart only: the clipboard's views"`
+	Kind    PasteKind              `json:"kind" doc:"smart | slice | native-drop | native-clipboard. SECURITY: native-drop and native-clipboard make the server read files the NATIVE side caught (the drop bucket) or the OS clipboard names — never paths from the wire, so the wire carries the GESTURE, not a filesystem address. The socket upgrade's origin allow-list keeps foreign pages from sending these; auth-on-upgrade (#83) must cover this channel."`
+	Entries []block.ContentEntry   `json:"entries,omitempty" doc:"smart: the clipboard's views. native-drop: absent — the server takes the paths from the native drop bucket the OS-level catch fed (Wails OnFileDrop); the page's own view of a drop is never consulted. native-clipboard: absent — the server reads the clipboard itself"`
 	Slice   [][]block.ContentEntry `json:"slice,omitempty" doc:"slice only: one view set per copied block, in order"`
 	Index   int                    `json:"index" doc:"document position for the first created block; -1 appends, and is the default when the key is absent"`
 }

@@ -103,9 +103,13 @@ var tier1 = []struct {
 	{regexp.MustCompile(`\bextends\s+(?:StatefulWidget|StatelessWidget|State)\b`), "dart"},
 	// Python
 	{regexp.MustCompile(`(?m)^\s*def\s+\w+\s*\(.*\)\s*:`), "python"},
-	// SQL
-	{regexp.MustCompile(`(?i)(?m)^\s*SELECT\s+.+\bFROM\b`), "sql"},
-	{regexp.MustCompile(`(?i)(?m)^\s*(?:INSERT\s+INTO|CREATE\s+TABLE|DROP\s+TABLE|ALTER\s+TABLE)\b`), "sql"},
+	// SQL. The opening keyword alone only says MAYBE — SELECT, UPDATE and DELETE
+	// are ordinary English verbs — so this row defers to sqlStatements, which
+	// decides. Its position in the order is the point of the row: SQL is weighed
+	// after the languages that announce themselves (a Go file holding a query is
+	// Go), and before markdown, whose own rules would otherwise claim a script
+	// that happens to contain a list.
+	{sqlOpeningRe, sqlCandidate},
 	// Bash shebang
 	{regexp.MustCompile(`^#!.*(?:bash|sh|zsh)\b`), "bash"},
 	// TypeScript (must be before JS — more specific)
@@ -181,8 +185,12 @@ func LooksLikeCode(source string) bool {
 		}
 	}
 
+	// SQL is structurally invisible to the counters above — a query has no braces,
+	// and a single statement has one semicolon at most — so its shape is asked for
+	// directly.
 	// indented > 40% of lines  →  indented*10 > len(lines)*4
-	return braceCount > 2 || semicolonCount > 2 || anyWeakSignal || indented*10 > len(lines)*4
+	return braceCount > 2 || semicolonCount > 2 || anyWeakSignal ||
+		indented*10 > len(lines)*4 || sqlStatements.matches(trimmed)
 }
 
 // IsConfidentLanguage reports whether lang names a specific programming language
@@ -227,8 +235,14 @@ func DetectByHeuristics(source, hint string) (string, bool) {
 
 	// Tier 1: single unambiguous match
 	for _, rule := range tier1 {
-		if rule.lang == "json_candidate" {
+		switch rule.lang {
+		case "json_candidate":
 			continue // handled above
+		case sqlCandidate:
+			if rule.re.MatchString(trimmed) && sqlStatements.confirms(trimmed) {
+				return "sql", true
+			}
+			continue
 		}
 		if rule.re.MatchString(trimmed) {
 			return rule.lang, true

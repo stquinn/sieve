@@ -1,10 +1,21 @@
 {{define "delete.html"}}
+{{- $folder := eq .Type "folder" -}}
+{{- $guarded := and $folder (not .Contents.IsEmpty) -}}
 <div class="delete-modal" style="padding: 1.5rem; background: var(--theme-bgDark); border-radius: 8px;">
-  <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-accentRed); margin-bottom: 1rem;">Delete {{if eq .Type "folder"}}Folder{{else}}Note{{end}}</h3>
-  
+  <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-accentRed); margin-bottom: 1rem;">Delete {{if $folder}}Folder{{else}}Note{{end}}</h3>
+
   <p style="font-size: 0.875rem; color: var(--theme-text); margin-bottom: 1.5rem; line-height: 1.4;">
-    Are you sure you want to delete <strong>{{.Name}}</strong>? 
-    {{if eq .Type "folder"}}It must be empty.{{else}}This cannot be undone.{{end}}
+    {{- if $guarded}}
+    Deleting <strong>{{.Name}}</strong> also deletes
+    {{- with .Contents.Notes}} <strong>{{.}}</strong> note{{if ne . 1}}s{{end}}{{end}}
+    {{- if and .Contents.Notes .Contents.Folders}} and{{end}}
+    {{- with .Contents.Folders}} <strong>{{.}}</strong> sub-folder{{if ne . 1}}s{{end}}{{end}}
+    inside it, along with every version and asset they hold. This cannot be undone.
+    {{- else if $folder}}
+    Are you sure you want to delete <strong>{{.Name}}</strong>? It is empty. This cannot be undone.
+    {{- else}}
+    Are you sure you want to delete <strong>{{.Name}}</strong>? This cannot be undone.
+    {{- end}}
   </p>
 
   <!-- Both deletions answer with the same fragment and so share a target: the
@@ -16,7 +27,7 @@
        reconciles against it, which is the only signal that reaches a note open
        in a BACKGROUND tab. -->
   <form
-    {{if eq .Type "folder"}}
+    {{if $folder}}
       hx-delete="/api/folder/{{.ID}}"
     {{else}}
       hx-delete="/api/note/{{.ID}}"
@@ -24,21 +35,48 @@
     hx-target="#htmx-tabbar"
     hx-swap="innerHTML"
     onsubmit="document.getElementById('delete-dialog').close()"
-    style="display: flex; justify-content: flex-end; gap: 1rem;"
+    style="display: flex; flex-direction: column; gap: 1rem;"
   >
-    <button 
-      type="button" 
-      onclick="document.getElementById('delete-dialog').close()" 
-      style="padding: 0.5rem 1.25rem; font-size: 0.875rem; font-weight: 500; color: var(--theme-textDim); background: transparent; border: none; cursor: pointer;"
-    >
-      Cancel
-    </button>
-    <button 
-      type="submit" 
-      style="padding: 0.5rem 1.25rem; font-size: 0.875rem; font-weight: bold; color: #ffffff; background: var(--theme-accentRed); border-radius: 0.5rem; border: none; cursor: pointer;"
-    >
-      Delete
-    </button>
+    {{- if $guarded}}
+    <!-- A non-empty folder delete is irreversible and destroys documents the
+         confirmation does not show, so it asks for the name rather than a
+         reflex click. Two paths reach the delete and both are gated: clicking
+         (the button is disabled) and Enter in this field, which the browser
+         would otherwise turn into an implicit submit. Cancel and the dialog's
+         own dismissal are untouched. -->
+    <label style="font-size: 0.8125rem; color: var(--theme-textDim); display: flex; flex-direction: column; gap: 0.375rem;">
+      Type <strong style="color: var(--theme-text); font-family: var(--theme-monoFont);">{{.Name}}</strong> to confirm
+      <input
+        type="text"
+        id="delete-confirm-input"
+        data-expected="{{.Name}}"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+        onkeydown="if (event.key === 'Enter' &amp;&amp; document.getElementById('delete-confirm-btn').disabled) { event.preventDefault(); event.stopPropagation(); }"
+        oninput="(function(i){var b=document.getElementById('delete-confirm-btn');b.disabled = i.value !== i.dataset.expected;b.style.opacity = b.disabled ? '0.45' : '1';b.style.cursor = b.disabled ? 'not-allowed' : 'pointer';})(this)"
+        style="padding: 0.5rem 0.625rem; font-size: 0.875rem; color: var(--theme-text); background: var(--theme-bgAlt); border: 1px solid var(--theme-border2); border-radius: 0.375rem; outline: none;"
+      />
+    </label>
+    {{- end}}
+
+    <div style="display: flex; justify-content: flex-end; gap: 1rem;">
+      <button
+        type="button"
+        onclick="document.getElementById('delete-dialog').close()"
+        style="padding: 0.5rem 1.25rem; font-size: 0.875rem; font-weight: 500; color: var(--theme-textDim); background: transparent; border: none; cursor: pointer;"
+      >
+        Cancel
+      </button>
+      <button
+        type="submit"
+        id="delete-confirm-btn"
+        {{if $guarded}}disabled{{end}}
+        style="padding: 0.5rem 1.25rem; font-size: 0.875rem; font-weight: bold; color: #ffffff; background: var(--theme-accentRed); border-radius: 0.5rem; border: none; cursor: {{if $guarded}}not-allowed{{else}}pointer{{end}}; opacity: {{if $guarded}}0.45{{else}}1{{end}};"
+      >
+        {{if $guarded}}Delete everything{{else}}Delete{{end}}
+      </button>
+    </div>
   </form>
 </div>
 {{end}}

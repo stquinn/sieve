@@ -39,17 +39,19 @@ type ContainerSavedNotifier interface {
 // EditorService is the Go-side editor model. It holds one ShadowDocument per
 // open document and coordinates all save operations. DocumentService owns disk.
 type EditorService struct {
-	documents *services.DocumentService
-	codec     *block.DocumentCodec
-	services  block.BlockServices
-	jobs      *services.JobTracker // not a processor concern; EditorService tracks job spinners directly
-	engine    *services.JobEngine
-	ai        docFiler // synchronous AI brain; document-lifecycle jobs call it inside their Work
-	debounce  time.Duration
-	mu        sync.RWMutex
-	shadows   map[string]*block.ShadowDocument
-	listener  block.BlockLifecycleListener
-	saved     ContainerSavedNotifier
+	documents    *services.DocumentService
+	codec        *block.DocumentCodec
+	services     block.BlockServices
+	jobs         *services.JobTracker // not a processor concern; EditorService tracks job spinners directly
+	engine       *services.JobEngine
+	ai           docFiler // synchronous AI brain; document-lifecycle jobs call it inside their Work
+	debounce     time.Duration
+	mu           sync.RWMutex
+	shadows      map[string]*block.ShadowDocument
+	listener     block.BlockLifecycleListener
+	saved        ContainerSavedNotifier
+	clipboard    NativeClipboardPort // reads the OS clipboard the webview cannot (#87)
+	pendingDrops PendingDropSource   // the native drop bucket the webview cannot see (#86)
 	// jobsWG tracks every dispatched block-job goroutine (DispatchJobIfNeeded's
 	// `go RunJob`). It is the drain a retiring service (CloseAll) and callers that
 	// must settle dispatched work (WaitForJobs) wait on — a job's completion writes
@@ -763,6 +765,14 @@ func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry, 
 	return block.PasteBlock(matchKind, id, raw)
 }
 
+// DetectExtractions composes the offer set for a source in this document. It is the
+// document-scoped half of block.DetectExtractions: content a source merely HOLDS
+// lives in the document directory, so only a caller that knows the uuid can put it
+// in front of the recognisers.
+func (es *EditorService) DetectExtractions(uuid, sourceKind string, entries []block.ContentEntry) []block.SupportedActions {
+	return block.DetectExtractions(sourceKind, block.MaterialiseEntries(uuid, entries))
+}
+
 // CreateBlockFromEntries applies a recognised action. PASTE/EXTRACT create a new block;
 // TRANSFORM replaces sourceID in place (preserving its document position). The frontend
 // posted the operation — the backend does not re-derive it. For TRANSFORM, sourceID is
@@ -772,6 +782,9 @@ func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []blo
 	if processor == nil {
 		return "", "", fmt.Errorf("no processor registered for kind %q", kind)
 	}
+	// The offer being played back may have stood on content a source is holding, so
+	// the playback must see exactly what detection saw.
+	entries = block.MaterialiseEntries(uuid, entries)
 
 	if action == block.ActionTransform || action == block.ActionUndoSmartPaste {
 		return es.transformInPlace(uuid, kind, processor, entries, sourceID, action)

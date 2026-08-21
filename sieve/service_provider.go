@@ -2,7 +2,9 @@ package sieve
 
 import (
 	"io/fs"
+	"sieve/clipboard"
 	"sieve/logger"
+	"sieve/nativedrop"
 	"sieve/sieve/ai"
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
@@ -160,6 +162,11 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
 	s.Editor = editor.NewEditorService(s.Documents, block.NewDocumentCodec(block.GlobalRegistry()), autosave)
 	s.Editor.SetServices(s.BlockServices())
+	// The OS clipboard, read outside the webview. On a cgo-off build this is the
+	// package's no-op half, so a native-clipboard paste answers "nothing" rather
+	// than failing.
+	s.Editor.SetNativeClipboard(clipboard.New())
+	s.Editor.SetPendingDrops(nativedrop.Default)
 	if s.SavedNotifier != nil {
 		s.Editor.SetSavedNotifier(s.SavedNotifier)
 	}

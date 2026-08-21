@@ -199,8 +199,8 @@ PasteFrame hands a clipboard to the server to make sense of.
 |---|---|---|---|
 | `type` | `string` | yes |  |
 | `opId` | `string` | no | echoed on the paste-ack |
-| `kind` | `protocol.PasteKind` | yes | smart \| slice |
-| `entries` | `[]block.ContentEntry` | no | smart only: the clipboard's views |
+| `kind` | `protocol.PasteKind` | yes | smart \| slice \| native-drop \| native-clipboard. SECURITY: native-drop and native-clipboard make the server read files the NATIVE side caught (the drop bucket) or the OS clipboard names — never paths from the wire, so the wire carries the GESTURE, not a filesystem address. The socket upgrade's origin allow-list keeps foreign pages from sending these; auth-on-upgrade (#83) must cover this channel. |
+| `entries` | `[]block.ContentEntry` | no | smart: the clipboard's views. native-drop: absent — the server takes the paths from the native drop bucket the OS-level catch fed (Wails OnFileDrop); the page's own view of a drop is never consulted. native-clipboard: absent — the server reads the clipboard itself |
 | `slice` | `[][]block.ContentEntry` | no | slice only: one view set per copied block, in order |
 | `index` | `int` | yes | document position for the first created block; -1 appends, and is the default when the key is absent |
 
@@ -659,6 +659,7 @@ BlockOp is a granular mutation of the BlockDoc tree, carried over the wire (Stag
 | `index` | `int` | yes |  |
 | `parentId` | `string` | no |  |
 | `token` | `string` | no |  |
+| `order` | `[]string` | no | set-order only: the complete top-level block id order to install |
 
 ### `block.ContentEntry`
 

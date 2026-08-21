@@ -10,6 +10,7 @@ import (
 
 	"sieve/ident"
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"sieve/sieve/services"
 )
 
@@ -250,16 +251,58 @@ func TestAttachmentProcessor_Transform_refusesAFileOverTheSizeLimit(t *testing.T
 	}
 	p := NewAttachmentProcessor(block.BlockServices{Documents: ds, Assets: services.NewAssetService(fs, "")})
 
-	over := dropped("application/pdf", "huge.pdf", strings.Repeat("x", MaxAttachmentBytes+1))
+	over := dropped("application/pdf", "huge.pdf", strings.Repeat("x", domain.DefaultMaxAttachmentBytes+1))
 	if o := p.Transform([]block.ContentEntry{over}, doc.UUID(), ident.New(), block.ActionPaste); o != nil {
-		t.Errorf("Transform must refuse a file over MaxAttachmentBytes; got %v", o)
+		t.Errorf("Transform must refuse a file over the ceiling; got %v", o)
 	}
 
 	// …and the boundary itself is INSIDE the limit, so a file at exactly the
 	// ceiling still attaches.
-	at := dropped("application/pdf", "big.pdf", strings.Repeat("x", MaxAttachmentBytes))
+	at := dropped("application/pdf", "big.pdf", strings.Repeat("x", domain.DefaultMaxAttachmentBytes))
 	if o := p.Transform([]block.ContentEntry{at}, doc.UUID(), ident.New(), block.ActionPaste); o == nil {
-		t.Error("a file of exactly MaxAttachmentBytes must still attach")
+		t.Error("a file of exactly the ceiling must still attach")
+	}
+}
+
+// #84 — the ceiling is a judgement about the user's machine and content, not a
+// property of the code, so max_attachment_bytes moves it. The setting is the
+// BACKSTOP's ceiling too: a client that ignores its own pre-check still meets it.
+func TestAttachmentProcessor_Transform_honoursTheConfiguredCeiling(t *testing.T) {
+	ds, fs := newTestDocumentService(t)
+	doc, err := ds.New()
+	if err != nil {
+		t.Fatalf("new document: %v", err)
+	}
+	settings := domain.DefaultSettings()
+	settings.MaxAttachmentBytes = 64
+	p := NewAttachmentProcessor(block.BlockServices{
+		Documents: ds,
+		Assets:    services.NewAssetService(fs, ""),
+		State:     fakeState{settings: settings},
+	})
+
+	over := dropped("application/pdf", "small-but-over.pdf", strings.Repeat("x", 65))
+	if o := p.Transform([]block.ContentEntry{over}, doc.UUID(), ident.New(), block.ActionPaste); o != nil {
+		t.Errorf("a LOWERED ceiling must refuse a file the default would have taken; got %v", o)
+	}
+	under := dropped("application/pdf", "tiny.pdf", strings.Repeat("x", 64))
+	if o := p.Transform([]block.ContentEntry{under}, doc.UUID(), ident.New(), block.ActionPaste); o == nil {
+		t.Error("a file at exactly the configured ceiling must still attach")
+	}
+}
+
+// A settings.json with no max_attachment_bytes — or a zero one — must not read as
+// "no files allowed"; the ceiling falls back to the default.
+func TestAttachmentProcessor_UnsetCeilingFallsBackToTheDefault(t *testing.T) {
+	p := NewAttachmentProcessor(block.BlockServices{State: fakeState{settings: domain.Settings{}}})
+	if got := p.maxAttachmentBytes(); got != domain.DefaultMaxAttachmentBytes {
+		t.Errorf("unset ceiling = %d, want the default %d", got, domain.DefaultMaxAttachmentBytes)
+	}
+	// A processor with no state port at all (bare test constructions) is the same
+	// case: a default ceiling, never an absent one.
+	bare := NewAttachmentProcessor(block.BlockServices{})
+	if got := bare.maxAttachmentBytes(); got != domain.DefaultMaxAttachmentBytes {
+		t.Errorf("state-less ceiling = %d, want the default %d", got, domain.DefaultMaxAttachmentBytes)
 	}
 }
 

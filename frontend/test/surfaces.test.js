@@ -68,6 +68,7 @@ vi.mock('../src/static/block/block-selection.js', () => ({
 vi.mock('../src/static/block/block-sync.js', () => ({
   seedBaseline: vi.fn((triples) => { const m = {}; triples.forEach((t) => { if (t.id) m[t.id] = t.content }); return m }),
   computeBlockSync: vi.fn(() => ({ next: {}, ops: [] })),
+  computeOrderOp: vi.fn(() => ({ op: null, next: null })),
 }))
 vi.mock('../src/static/editor/surfaces/block-position.js', () => ({
   docPosForBlockIndex: vi.fn(() => 7),
@@ -79,12 +80,12 @@ vi.mock('../src/static/editor/paste-context.js', () => ({
 
 import { AbstractSurface, SurfaceEvent } from '../src/static/editor/surfaces/abstract-surface.js'
 import { MarkdownSurface } from '../src/static/editor/surfaces/markdown-surface.js'
-import { WysiwygSurface, MAX_ATTACHMENT_BYTES } from '../src/static/editor/surfaces/wysiwyg-surface.js'
+import { WysiwygSurface } from '../src/static/editor/surfaces/wysiwyg-surface.js'
 import { buildBlocksHTML } from '../src/static/block/block-render.js'
 import { SieveBlock } from '../src/static/block/sieve-block.js'
 import { getBlockSelectionRange } from '../src/static/editor/block-chrome.js'
 import { BlockSelection } from '../src/static/block/block-selection.js'
-import { computeBlockSync } from '../src/static/block/block-sync.js'
+import { computeBlockSync, computeOrderOp } from '../src/static/block/block-sync.js'
 import { docPosForBlockIndex, blockIndexAfter } from '../src/static/editor/surfaces/block-position.js'
 import { caretInRawTextBlock } from '../src/static/editor/paste-context.js'
 import { schema as fxSchema, build, docWithCaret, docWithCaretAt, docWithRange, docWithNodeSelection } from './helpers/editor-fixture.js'
@@ -287,8 +288,11 @@ function wyHost(overrides = {}) {
     documentService: {
       createBlock: vi.fn(),
       deleteBlock: vi.fn(),
+      setBlockOrder: vi.fn(),
       pasteSlice: vi.fn(() => Promise.resolve({})),
       smartPaste: vi.fn(() => Promise.resolve({ outcome: 'none' })),
+      nativeDropPaste: vi.fn(() => Promise.resolve({ outcome: 'none' })),
+      nativeClipboardPaste: vi.fn(() => Promise.resolve({ outcome: 'none' })),
     },
     blockService: { updateAttributes: vi.fn() },
     flushSave: vi.fn(),
@@ -488,6 +492,9 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     // These mounts hold a single block b1; the debounced sync emits its update-block
     // op (the recording bundle's old computeBlockSync default, now the mocked import).
     vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [{ type: 'update-block', blockId: 'b1' }] })
+    // Order is quiet unless a test says otherwise — reset so one test's reorder
+    // cannot leak a set-order into the next.
+    vi.mocked(computeOrderOp).mockReturnValue({ op: null, next: null })
   })
 
   function mountWy() {
@@ -585,6 +592,52 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     expect(host.onSurfaceEvent).toHaveBeenCalledWith(SurfaceEvent.TRANSACTION)
     ed.view.dom.dispatchEvent(new Event('focusin'))
     expect(host.onSurfaceEvent).toHaveBeenCalledWith(SurfaceEvent.FOCUS_CHANGED)
+  })
+
+  it('a body-projection transaction reports doc-projected, never doc-changed (#90)', () => {
+    // The NodeView body projection (sieve-block-extension syncMdInto) dispatches a
+    // DEFERRED transaction that materialises the server's own body markdown into
+    // contentDOM — after the mount's suppression window has closed. It changes the
+    // doc, so PM reports it, but nothing the USER authored changed: reporting it as
+    // doc-changed made every freshly opened document show the dirty dot before a
+    // keystroke. It is still a content change, so stats must still see it.
+    const { host, ed } = mountWy()
+    const projection = { getMeta: (k) => (k === 'sieve-md-sync' ? true : undefined) }
+    ed.options.onUpdate({ editor: ed, transaction: projection })
+    expect(host.onSurfaceEvent).toHaveBeenCalledWith(SurfaceEvent.DOC_PROJECTED)
+    expect(host.onSurfaceEvent).not.toHaveBeenCalledWith(SurfaceEvent.DOC_CHANGED)
+  })
+
+  it('a user transaction still reports doc-changed even though both carry a transaction', () => {
+    const { host, ed } = mountWy()
+    const userTr = { getMeta: () => undefined }
+    ed.options.onUpdate({ editor: ed, transaction: userTr })
+    expect(host.onSurfaceEvent).toHaveBeenCalledWith(SurfaceEvent.DOC_CHANGED)
+    expect(host.onSurfaceEvent).not.toHaveBeenCalledWith(SurfaceEvent.DOC_PROJECTED)
+  })
+
+  it('a reorder submits ONE set-order op through DocumentService, after the batch (#94)', () => {
+    // The observer's signature is positionless, so order is reported separately —
+    // and LAST, because set-order installs a COMPLETE order and must land after
+    // this tick's creates and deletes have moved the server's set.
+    vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [{ type: 'delete-block', blockId: 'gone' }] })
+    vi.mocked(computeOrderOp).mockReturnValue({ op: { type: 'set-order', order: ['b1', 'b2'] }, next: ['b1', 'b2'] })
+    const { host, ed } = mountWy()
+    ed.options.onUpdate({ editor: ed })
+    vi.advanceTimersByTime(500)
+    expect(host.documentService.setBlockOrder).toHaveBeenCalledWith('doc-1', ['b1', 'b2'])
+    expect(host.documentService.deleteBlock.mock.invocationCallOrder[0])
+      .toBeLessThan(host.documentService.setBlockOrder.mock.invocationCallOrder[0])
+  })
+
+  it('sends nothing when neither content nor order moved', () => {
+    vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [] })
+    vi.mocked(computeOrderOp).mockReturnValue({ op: null, next: ['b1'] })
+    const { host, ed } = mountWy()
+    ed.options.onUpdate({ editor: ed })
+    vi.advanceTimersByTime(500)
+    expect(host.documentService.setBlockOrder).not.toHaveBeenCalled()
+    expect(host.blockService.updateAttributes).not.toHaveBeenCalled()
   })
 
   it('flushPending fires the pending sync immediately, exactly once', () => {
@@ -798,58 +851,243 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     expect(host.documentService.pasteSlice).toHaveBeenCalledWith('doc-1', { slice, index: 7 })
   })
 
-  it('handleSmartDrop: image file → PEEKS insertIndexAt(dropPos) (side-effect-free), POSTs, returns true', async () => {
-    // happy-dom's FileReader rejects on a non-Blob stub file, leaking an unhandled
-    // rejection AFTER this test's synchronous assertions pass. This test asserts only
-    // the sync drop path, so stub a no-op reader (its Promise stays pending, never rejects).
-    const OrigFileReader = globalThis.FileReader
-    globalThis.FileReader = class { readAsDataURL() {} }
-    try {
-    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
-    host.documentService.smartPaste.mockReturnValue(Promise.resolve({ outcome: 'block', kind: 'smart-image', id: 'si-1' }))
+  // ── The NATIVE CLIPBOARD (#87) ───────────────────────────────────────────────
+  // Two paste shapes the page can see but cannot READ. A file-manager COPY offers
+  // the same `text/uri-list` a desktop drag does, so it takes the drop verb; and a
+  // screenshot copied by an ordinary desktop tool arrives as a DataTransfer that
+  // exists and is completely empty, which no handler can salvage — so the
+  // emptiness is the signal and Go reads the clipboard itself.
+  describe('the native clipboard (#87)', () => {
+    // A clipboard as WebKitGTK hands one over for a Spectacle screenshot.
+    function emptyClip() {
+      return { getData: () => '', types: [], items: [], files: [] }
+    }
+    function uriListClip(list) {
+      return {
+        getData: (mime) => (mime === 'text/uri-list' ? list : ''),
+        types: ['text/uri-list'], items: [], files: [],
+      }
+    }
+
+    it('an EMPTY DataTransfer → nativeClipboardPaste at the PEEKED caret index, and the gesture is claimed', async () => {
+      const anchor = { id: 'p-1', token: '' }
+      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 4, anchor })) })
+      host.documentService.nativeClipboardPaste.mockReturnValue(
+        Promise.resolve({ outcome: 'block', kind: 'smart-image', id: 'si-1' }))
+      const { ed, props } = mountPaste(host, 'doc-1')
+      const event = { clipboardData: emptyClip(), target: {}, preventDefault: vi.fn() }
+
+      expect(props.handlePaste({}, event)).toBe(true)
+      expect(event.preventDefault).toHaveBeenCalled()
+      expect(host.insertIndexForBlock).not.toHaveBeenCalled() // no EAGER consume
+      await new Promise((r) => setTimeout(r, 0))
+      // NO clipboard rides the frame: there was none to send, and that is the point.
+      expect(host.documentService.nativeClipboardPaste).toHaveBeenCalledWith('doc-1', { index: 4 })
+      expect(host.documentService.smartPaste).not.toHaveBeenCalled()
+      expect(host.consumeInsertAnchor).toHaveBeenCalledWith(anchor)
+      expect(ed.commands.insertContent).not.toHaveBeenCalled()
+    })
+
+    it('an empty clipboard the server makes nothing of consumes no anchor and replays nothing', async () => {
+      const anchor = { id: 'p-1', token: '' }
+      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 0, anchor })) })
+      host.documentService.nativeClipboardPaste.mockReturnValue(Promise.resolve({ outcome: 'none' }))
+      const { ed, props } = mountPaste(host, 'doc-1')
+
+      props.handlePaste({}, { clipboardData: emptyClip(), target: {}, preventDefault: vi.fn() })
+      await new Promise((r) => setTimeout(r, 0))
+      expect(host.consumeInsertAnchor).not.toHaveBeenCalled() // blank line preserved
+      // The page never held the content, so there is nothing to put back.
+      expect(ed.commands.insertContent).not.toHaveBeenCalled()
+    })
+
+    it('a COPIED FILE the page can name still goes to the NATIVE clipboard read', async () => {
+      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 4, anchor: null })) })
+      host.documentService.nativeClipboardPaste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
+      const { props } = mountPaste(host, 'doc-1')
+      const event = { clipboardData: uriListClip('file:///home/u/report.pdf\r\n'), target: {}, preventDefault: vi.fn() }
+      expect(props.handlePaste({}, event)).toBe(true)
+      await new Promise((r) => setTimeout(r, 0))
+      // One backend mechanism for every native gesture: the page's list is only
+      // the recogniser; Go asks GTK for the clipboard's own uris.
+      expect(host.documentService.nativeClipboardPaste).toHaveBeenCalledWith('doc-1', { index: 4 })
+      expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
+    })
+
+    it('a copied http URL is not a file — the ordinary pipeline still gets it', async () => {
+      const host = wyHost()
+      const { props } = mountPaste(host, 'doc-1')
+      const strItem = { kind: 'string', type: 'text/uri-list', getAsString: (cb) => cb('https://example.com/page') }
+      const event = {
+        clipboardData: Object.assign(uriListClip('https://example.com/page\r\n'), { items: [strItem] }),
+        target: {}, preventDefault: vi.fn(),
+      }
+
+      expect(props.handlePaste({}, event)).toBe(true)
+      await new Promise((r) => setTimeout(r, 0))
+      expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
+      expect(host.documentService.nativeClipboardPaste).not.toHaveBeenCalled()
+      expect(host.documentService.smartPaste).toHaveBeenCalled()
+    })
+
+    // The REGRESSION GUARD on the emptiness test. A DataTransfer that answers
+    // getData while exposing no `types` still HAS content — reading the
+    // collections alone would send every such paste to Go with nothing on it.
+    // THE DOLPHIN-COPY SHAPE: flavours advertised, every getData '', no file
+    // items. Advertised-but-unreadable is the native-read signal — Go asks GTK
+    // for the uris itself.
+    it('a copied file the page cannot read — types advertised, nothing readable — goes native', async () => {
+      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 4, anchor: null })) })
+      host.documentService.nativeClipboardPaste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
+      const { props } = mountPaste(host, 'doc-1')
+      const event = {
+        clipboardData: {
+          types: ['text/uri-list', 'text/plain'],
+          getData: () => '',
+          items: [{ kind: 'string', type: 'text/uri-list', getAsString: () => {} }],
+          files: [],
+        },
+        target: {}, preventDefault: vi.fn(),
+      }
+      expect(props.handlePaste({}, event)).toBe(true)
+      await new Promise((r) => setTimeout(r, 0))
+      expect(host.documentService.nativeClipboardPaste).toHaveBeenCalledWith('doc-1', { index: 4 })
+      expect(host.documentService.smartPaste).not.toHaveBeenCalled()
+    })
+
+    it('a clipboard that answers getData but lists no types is NOT empty', async () => {
+      const host = wyHost()
+      const { props } = mountPaste(host, 'doc-1')
+      const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('hello') }
+      const event = {
+        clipboardData: Object.assign(clip({ text: 'hello' }), { items: [strItem] }),
+        target: {}, preventDefault: vi.fn(),
+      }
+
+      expect(props.handlePaste({}, event)).toBe(true)
+      await new Promise((r) => setTimeout(r, 0))
+      expect(host.documentService.nativeClipboardPaste).not.toHaveBeenCalled()
+      expect(host.documentService.smartPaste).toHaveBeenCalled()
+    })
+
+    it('a paste into a prompt pseudo-document is left to PM (no block tree to create into)', () => {
+      const host = wyHost()
+      const { props } = mountPaste(host, 'prompt:p')
+      expect(props.handlePaste({}, { clipboardData: emptyClip(), target: {}, preventDefault: vi.fn() })).toBe(false)
+      expect(host.documentService.nativeClipboardPaste).not.toHaveBeenCalled()
+      expect(props.handlePaste({}, {
+        clipboardData: uriListClip('file:///a.png\r\n'), target: {}, preventDefault: vi.fn(),
+      })).toBe(false)
+      expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
+    })
+  })
+
+  // ── The DROP path (#86) ──────────────────────────────────────────────────────
+  // WebKitGTK hands the page no readable File for a file-manager drag — only the
+  // `text/uri-list` the OS put on the drag — so the surface owns the GESTURE and
+  // the PLACEMENT and Go does the reading. These pin that split: what counts as a
+  // desktop file drag, that the uri-list is forwarded verbatim, and that the
+  // union is read exactly as the paste path reads it.
+
+  // The ONE drop mechanism: every external drop is the GESTURE paging the
+  // backend — the frame carries only the index, and Go redeems the native drop
+  // bucket (Wails OnFileDrop). The page's view of the drop is never consulted;
+  // dt models it only to prove that NOTHING in it matters.
+  function dt(uriList = '') {
+    return {
+      types: uriList !== '' ? ['text/uri-list', 'text/html'] : ['text/plain'],
+      getData: (mime) => (mime === 'text/uri-list' ? uriList : ''),
+      items: [],
+    }
+  }
+
+  function dropUriList(host, uriList, result) {
+    host.documentService.nativeDropPaste.mockReturnValue(Promise.resolve(result || { outcome: 'none' }))
     const { ed, props } = mountPaste(host, 'doc-1')
-    // The surface reads posAtCoords + selection.to off the live editor.
     ed.view.posAtCoords = () => ({ pos: 12 })
     ed.state.selection = { to: 0 }
-    const fileItem = { kind: 'file', getAsFile: () => ({ type: 'image/png', name: 'x.png' }) }
-    const dt = { items: [fileItem] }
-    const event = { dataTransfer: dt, clientX: 1, clientY: 1, preventDefault: vi.fn() }
-    const handled = props.handleDrop({}, event, null, false)
+    const event = { dataTransfer: dt(uriList), clientX: 1, clientY: 1, preventDefault: vi.fn() }
+    return { ed, handled: props.handleDrop({}, event, null, false), event }
+  }
+
+  it('an external drop PEEKS insertIndexAt(dropPos), redeems the bucket with what it read as the hint', async () => {
+    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
+    const list = 'file:///home/u/swagger.yml\r\n'
+    const { handled, event } = dropUriList(host, list, { outcome: 'block' })
     expect(handled).toBe(true)
     expect(host.peekInsertIndexAt).toHaveBeenCalledWith(12)
     expect(host.insertIndexForBlockAt).not.toHaveBeenCalled() // no EAGER consume on drop
+    // Without this PM inserts the file:/// path as text — the whole #86 symptom.
     expect(event.preventDefault).toHaveBeenCalled()
-    } finally { globalThis.FileReader = OrigFileReader }
+    await new Promise((r) => setTimeout(r, 0))
+    // The bucket is the source; readable text rides only as the bucket-miss hint.
+    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', {
+      entries: [{ mimeType: 'text/uri-list', content: list }],
+      index: 9,
+    })
+    expect(host.documentService.smartPaste).not.toHaveBeenCalled()
+  })
+
+  it('a drop whose DataTransfer is COMPLETELY unreadable redeems with an empty hint', async () => {
+    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
+    const { handled, event } = dropUriList(host, '', { outcome: 'block' })
+    expect(handled).toBe(true)
+    expect(event.preventDefault).toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', { entries: [], index: 9 })
+  })
+
+  it('an internal PM drag (moved, or view.dragging) is never claimed', () => {
+    const host = wyHost()
+    const { ed, props } = mountPaste(host, 'doc-1')
+    const event = { dataTransfer: { types: [], getData: () => '', items: [] }, clientX: 1, clientY: 1, preventDefault: vi.fn() }
+    expect(props.handleDrop({}, event, { content: [] }, true)).toBe(false)
+    ed.view.dragging = { slice: {}, move: false }
+    expect(props.handleDrop({}, event, { content: [] }, false)).toBe(false)
+    expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
+  })
+
+  // THE TRAP that shipped path-as-text: PM parses an external drop's text into a
+  // slice too, so a non-null slice must NOT read as "internal" — and that slice
+  // is ALSO the one readable view of a VSCode-style drop (WebKitGTK starves
+  // getData for every flavour; PM got the text through WebKit's internal
+  // channel), so its text rides the frame as the page hint.
+  it('an external drop only the SLICE could read → claimed, slice text is the hint', async () => {
+    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
+    host.documentService.nativeDropPaste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
+    const { ed, props } = mountPaste(host, 'doc-1')
+    ed.view.posAtCoords = () => ({ pos: 12 })
+    ed.view.dragging = null
+    ed.state.selection = { to: 0 }
+    const slice = { content: { size: 30, textBetween: () => '/home/u/dragged/handler.go' } }
+    const event = { dataTransfer: { types: ['text/plain'], getData: () => '', items: [] }, clientX: 1, clientY: 1, preventDefault: vi.fn() }
+    expect(props.handleDrop({}, event, slice, false)).toBe(true)
+    expect(event.preventDefault).toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', {
+      entries: [{ mimeType: 'text/plain', content: '/home/u/dragged/handler.go' }],
+      index: 9,
+    })
+  })
+
+  it('a drop into a prompt pseudo-document is left to PM (no block tree to create into)', () => {
+    const host = wyHost()
+    host.documentService.nativeDropPaste.mockReturnValue(Promise.resolve({ outcome: 'none' }))
+    const { props } = mountPaste(host, 'prompt:p')
+    const event = { dataTransfer: dt('file:///a.png\r\n'), clientX: 1, clientY: 1, preventDefault: vi.fn() }
+    expect(props.handleDrop({}, event, null, false)).toBe(false)
+    expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
   })
 
   // The drop handler reads the SAME union as paste, so its branch selection is
-  // pinned the same way. A resolving FileReader stub is needed here (unlike the
-  // sync-path test above) because these assertions live past the await.
+  // pinned the same way.
   describe('handleSmartDrop consumes the paste union', () => {
-    let OrigFileReader
-    beforeEach(() => {
-      OrigFileReader = globalThis.FileReader
-      globalThis.FileReader = class {
-        readAsDataURL() { setTimeout(() => this.onload({ target: { result: 'data:image/png;base64,AA==' } }), 0) }
-      }
-    })
-    afterEach(() => { globalThis.FileReader = OrigFileReader })
-
-    function drop(host, result) {
-      host.documentService.smartPaste.mockReturnValue(Promise.resolve(result))
-      const { ed, props } = mountPaste(host, 'doc-1')
-      ed.view.posAtCoords = () => ({ pos: 12 })
-      ed.state.selection = { to: 0 }
-      const fileItem = { kind: 'file', getAsFile: () => ({ type: 'image/png', name: 'x.png' }) }
-      const event = { dataTransfer: { items: [fileItem] }, clientX: 1, clientY: 1, preventDefault: vi.fn() }
-      expect(props.handleDrop({}, event, null, false)).toBe(true)
-      return ed
-    }
+    const LIST = 'file:///home/u/x.png\r\n'
 
     it('outcome:block → consumes the anchor, inserts nothing locally', async () => {
       const anchor = { id: 'p-1', token: '' }
       const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor })) })
-      const ed = drop(host, { outcome: 'block', kind: 'smart-image', id: 'si-1' })
+      const { ed } = dropUriList(host, LIST, { outcome: 'block', kind: 'smart-image', id: 'si-1' })
       await new Promise((r) => setTimeout(r, 0))
       expect(host.consumeInsertAnchor).toHaveBeenCalledWith(anchor)
       expect(ed.commands.insertContentAt).not.toHaveBeenCalled()
@@ -859,7 +1097,7 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
       const anchor = { id: 'p-1', token: '' }
       const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor })) })
       const frag = '<a href="https://example.com">Example Domain</a>'
-      const ed = drop(host, { outcome: 'content', html: frag })
+      const { ed } = dropUriList(host, LIST, { outcome: 'content', html: frag })
       await new Promise((r) => setTimeout(r, 0))
       expect(host.clearInsertPos).toHaveBeenCalled()
       // 12 is posAtCoords — the DROP coordinate, never the caret.
@@ -868,118 +1106,15 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
       expect(ed.commands.scrollIntoView).toHaveBeenCalled()
     })
 
+    // A drag naming a file this machine no longer has answers `none`. The caret's
+    // empty paragraph must survive it — which is what the PEEK is for.
     it('outcome:none → never touches the document (a drop has no clipboard to replay)', async () => {
       const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: { id: 'p-1', token: '' } })) })
-      const ed = drop(host, { outcome: 'none' })
+      const { ed } = dropUriList(host, LIST, { outcome: 'none' })
       await new Promise((r) => setTimeout(r, 0))
       expect(ed.commands.insertContentAt).not.toHaveBeenCalled()
       expect(ed.commands.insertContent).not.toHaveBeenCalled()
       expect(host.consumeInsertAnchor).not.toHaveBeenCalled()
-    })
-  })
-
-  it('handleSmartDrop with no files → returns false (native drop)', () => {
-    const { props } = mountPaste(wyHost(), 'doc-1')
-    const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('t') }
-    const event = { dataTransfer: { items: [strItem] }, clientX: 1, clientY: 1, preventDefault: vi.fn() }
-    expect(props.handleDrop({}, event, null, false)).toBe(false)
-  })
-
-  // ── Dropping a file that is not an image (#38) ───────────────────────────────
-  // The handler used to throw every non-image file away before Go saw it, which
-  // is why a document could hold an image and nothing else. It now hands EVERY
-  // file to smart-paste and lets the registry pick the kind, so the routing lives
-  // in one place (Go) rather than being pre-decided by a mime test here.
-  describe('handleSmartDrop hands every file to Go (#38)', () => {
-    let OrigFileReader
-    let OrigAlert
-    beforeEach(() => {
-      OrigFileReader = globalThis.FileReader
-      globalThis.FileReader = class {
-        readAsDataURL(file) {
-          setTimeout(() => this.onload({ target: { result: 'data:' + (file.type || 'application/octet-stream') + ';base64,AA==' } }), 0)
-        }
-      }
-      OrigAlert = window.alert
-      window.alert = vi.fn()
-    })
-    afterEach(() => { globalThis.FileReader = OrigFileReader; window.alert = OrigAlert })
-
-    function fileItem(file) { return { kind: 'file', getAsFile: () => file } }
-
-    function dropFiles(host, files) {
-      host.documentService.smartPaste.mockReturnValue(Promise.resolve({ outcome: 'block', kind: 'attachment', id: 'at-1' }))
-      const { ed, props } = mountPaste(host, 'doc-1')
-      ed.view.posAtCoords = () => ({ pos: 12 })
-      ed.state.selection = { to: 0 }
-      const event = { dataTransfer: { items: files.map(fileItem) }, clientX: 1, clientY: 1, preventDefault: vi.fn() }
-      return { handled: props.handleDrop({}, event, null, false), event }
-    }
-
-    it('a dropped yaml file is POSTed with its ORIGINAL FILENAME in the entry context', async () => {
-      const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
-      const { handled } = dropFiles(host, [{ type: 'text/yaml', name: 'swagger.yml', size: 4096 }])
-      expect(handled).toBe(true)
-      await new Promise((r) => setTimeout(r, 0))
-      expect(host.documentService.smartPaste).toHaveBeenCalledWith('doc-1', {
-        entries: [{
-          mimeType: 'text/yaml',
-          content: 'data:text/yaml;base64,AA==',
-          // readAsDataURL carries the bytes and nothing else; without this the chip
-          // could only label itself with the id the asset is stored under.
-          context: { filename: 'swagger.yml' },
-        }],
-        index: 9,
-      })
-    })
-
-    it('an image drop carries the filename too — one rule for every file, no per-kind branch here', async () => {
-      const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
-      dropFiles(host, [{ type: 'image/png', name: 'shot.png', size: 2048 }])
-      await new Promise((r) => setTimeout(r, 0))
-      expect(host.documentService.smartPaste).toHaveBeenCalledWith('doc-1', expect.objectContaining({
-        entries: [expect.objectContaining({ mimeType: 'image/png', context: { filename: 'shot.png' } })],
-      }))
-    })
-
-    // The failure being designed out is the SILENT one: before this, an over-large
-    // drop did nothing at all and said nothing about why.
-    it('a file over the ceiling is REFUSED OUT LOUD — named, sized, and never read into memory', async () => {
-      const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
-      const { handled, event } = dropFiles(host, [{ type: 'video/mp4', name: 'huge.mp4', size: 500 * 1024 * 1024 }])
-      // Handled, not ignored: the browser must not navigate away to the file.
-      expect(handled).toBe(true)
-      expect(event.preventDefault).toHaveBeenCalled()
-      const msg = vi.mocked(window.alert).mock.calls[0][0]
-      expect(msg).toContain('huge.mp4')    // WHICH file
-      expect(msg).toContain('500.0 MB')    // how big it actually is
-      expect(msg).toContain('25.0 MB')     // and what the limit is
-      // Never read: the FileReader stub would have resolved an entry.
-      await new Promise((r) => setTimeout(r, 0))
-      expect(host.documentService.smartPaste).not.toHaveBeenCalled()
-    })
-
-    // The ceiling is a >, not a >=: a file of exactly the limit is within it, and
-    // this is the pair Go's backstop test asserts on its own side.
-    it('a file of exactly the ceiling still attaches', async () => {
-      const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
-      dropFiles(host, [{ type: 'application/pdf', name: 'big.pdf', size: MAX_ATTACHMENT_BYTES }])
-      expect(window.alert).not.toHaveBeenCalled()
-      await new Promise((r) => setTimeout(r, 0))
-      expect(host.documentService.smartPaste).toHaveBeenCalled()
-    })
-
-    it('an over-size file among several does not cost the others their drop', async () => {
-      const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
-      dropFiles(host, [
-        { type: 'video/mp4', name: 'huge.mp4', size: 500 * 1024 * 1024 },
-        { type: 'text/yaml', name: 'swagger.yml', size: 4096 },
-      ])
-      expect(window.alert).toHaveBeenCalledTimes(1)
-      await new Promise((r) => setTimeout(r, 0))
-      expect(host.documentService.smartPaste).toHaveBeenCalledWith('doc-1', expect.objectContaining({
-        entries: [expect.objectContaining({ context: { filename: 'swagger.yml' } })],
-      }))
     })
   })
 

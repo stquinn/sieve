@@ -288,15 +288,21 @@ export class AbstractEditor {
    * dirty. The retired legacyChromeFanout dispatched sieve:meta-dirty{dirty:true} on
    * doc-changed; the container-saved reaction (#markSaved) dispatches the
    * {dirty:false} counterpart + clearDirty(). Consumers: StatusBar #onDirty (the meta-dirty-dot +
-   * status-bar save slot). doc-changed does NOT fire on initial content load, so a
-   * freshly loaded document stays green until the first real edit.
+   * status-bar save slot). A freshly loaded document stays green until the first
+   * real edit: the initial render is suppressed at the surface, and the deferred
+   * body projection that follows it reports doc-projected, which refreshes stats
+   * only (issue #90).
    * @param {SurfaceEventMsg} event
    */
   onSurfaceEvent(event) {
     this.#feedSelectionModel(event)
     this.#emitEvent(event)
-    if (event && event.type === 'doc-changed') {
-      this.#emitStats()
+    const type = event && event.type
+    // Both kinds of content change refresh what MEASURES the document; only an
+    // authored one dirties it. doc-projected is the framework writing the server's
+    // own truth into the doc (SurfaceEvent.DOC_PROJECTED) — see issue #90.
+    if (type === 'doc-changed' || type === 'doc-projected') this.#emitStats()
+    if (type === 'doc-changed') {
       this.markDirty()
       document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
     }

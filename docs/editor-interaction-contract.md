@@ -355,7 +355,55 @@ URL and every processor declines — zero offers, silently.
 | Raw-text block (code/diagram-edit) | anything | literal text (PM `code: true` on the node — NOT a policy read; the old `rawText` flag claimed this and never implemented it) |
 | Anywhere | `sieve/slice` (>1) | Go paste-slice reconstructs blocks |
 | Anywhere | ```` ```ai-block ```` fence | ai-block re-import |
+| Anywhere | a `text/uri-list` of `file:` URIs (a file-manager COPY) | Forwarded verbatim as a `native-drop` paste and read by Go — the same ingestion a desktop drag takes, at the CARET index rather than a drop coordinate. |
+| Anywhere | **nothing at all** (see below) | `native-clipboard`: Go reads the OS clipboard itself. |
 | Log block | anything | consumed (read-only) |
+
+### The empty clipboard (2026-08-21, #87)
+
+WebKitGTK delivers a paste event whose `DataTransfer` **exists and is completely
+empty** — no types, no items, no files — for a screenshot copied by an ordinary
+desktop tool, while any normal GTK process reads the same offer fine. Nothing the
+page can do salvages that, so **the emptiness is the signal**: the surface claims
+the gesture, peeks the caret index, and sends a `native-clipboard` paste carrying
+no clipboard at all. Go reads the OS clipboard natively (GTK, in the UI process,
+outside the webview's sandboxed proxy) and probes it in one order — a raster
+image first, then a file-copy's uri-list — feeding whichever it finds to the
+pipeline that already exists.
+
+"Empty" is judged conservatively: a transfer that answers `getData` while
+exposing no `types` still HAS content and takes the ordinary pipeline. Only a
+genuinely empty offer routes natively, and a clipboard the server makes nothing
+of answers `none` — leaving the caret's blank line where it was, with nothing to
+replay, because the page never held the content.
+
+## Drop matrix (revised 2026-08-21, #86)
+
+External drops have ONE mechanism on every platform, and it is the same ethos
+as the empty-clipboard paste (#87): the gesture pages the backend. The page's
+own view of a drop is NEVER consulted — WebKitGTK starves it and every source
+app starves it differently (measured 2026-08-21: Dolphin leaves one readable
+lens with the URI as a style-only anchor's text, VSCode a dialect the page
+cannot see at all, and async reads land after the store is emptied). Instead
+the OS-level catch (Wails `OnFileDrop`) feeds the native drop bucket
+(`nativedrop.Default`), and the surface's claim sends a `native-drop` frame
+carrying ONLY the index: "there was a drop at this position — take it from the
+bucket and place it here". The redeem waits briefly because the DOM's frame and
+the native callback race on one gesture. Multi-file drags are one callback, one
+frame, several blocks in drag order.
+
+| Drop | Outcome |
+|---|---|
+| Any external file drag, any source app | Claimed; `native-drop` frame with the index only; **Go redeems the bucket** and ingests — one block per file, the registry picking each kind as for any paste. |
+| External text or link drag | Claimed, and the bucket holds no file — nothing happens. External text/link drag-in is NOT a supported gesture (copy-paste covers it); WebKitGTK never let the page read these anyway. |
+| Internal PM drag (`slice`/`moved` set) | Not claimed — PM handles it natively (block reorder, moved selections). |
+| Into a prompt pseudo-document | Not claimed — a prompt is a plain file with no block tree. |
+
+Placement follows the block-insertion rule above, at the DROP coordinate rather
+than the caret: the index is PEEKED (side-effect-free) before the round trip and
+the empty-paragraph anchor is consumed only once Go confirms a block — a drag
+naming a file this machine no longer has answers `none`, and the caret's blank
+line has to survive that.
 
 ## App-Level Chords
 

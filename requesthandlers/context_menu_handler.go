@@ -7,6 +7,7 @@ import (
 	"sieve/logger"
 	"sieve/sieve"
 	"sieve/sieve/domain"
+	"sieve/sieve/services"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -49,12 +50,18 @@ func (h *ContextMenuHandler) handleIntent(w http.ResponseWriter, r *http.Request
 	id := r.URL.Query().Get("id")
 	value := r.URL.Query().Get("value")
 
+	// A failed load used to fall THROUGH: the intent was silently not written, and
+	// the tab loop below then dereferenced the nil document — so a request naming
+	// an unknown uuid that also matched an open tab id crashed the handler (#92).
+	// Nothing was ever accomplished down that path, so say so instead.
 	doc, err := h.ServiceProvider.Documents.LoadByUUID(id)
-	if err == nil {
-		if _, err := h.ServiceProvider.Documents.SetUserIntent(doc, value); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if _, err := h.ServiceProvider.Documents.SetUserIntent(doc, value); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	session := h.ServiceProvider.State.LoadSession()
 	for i := range session.Tabs {
@@ -191,11 +198,26 @@ func (h *ContextMenuHandler) handleDialog(w http.ResponseWriter, r *http.Request
 		Name     string
 		Type     string
 		ParentID string
+		// Contents is what a folder delete would take with it (#89). The delete is
+		// os.RemoveAll and enumerates nothing, so the dialog has to be told before
+		// it asks — a confirmation that cannot name what it destroys is not one.
+		Contents services.FolderContents
 	}{
 		ID:       query.Get("id"),
 		Name:     query.Get("name"),
 		Type:     query.Get("type"),
 		ParentID: query.Get("parentId"),
+	}
+	if name == "delete.html" && data.Type == "folder" {
+		// A folder that cannot be read is still deletable, and the zero count reads
+		// as empty — which is the LEAST alarming wording. Refuse rather than
+		// under-state what is at stake.
+		contents, err := h.ServiceProvider.Documents.FolderContents(data.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		data.Contents = contents
 	}
 	if err := h.Tmpl.ExecuteTemplate(w, name, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

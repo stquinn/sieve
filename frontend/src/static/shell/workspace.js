@@ -23,6 +23,7 @@ import { AskPanel } from './ask-panel.js'
 import { InsertDialogs } from './insert-dialogs.js'
 import { SearchOverlay } from './search-overlay.js'
 import { StatusBar } from './status-bar.js'
+import { SidebarView } from './sidebar-view.js'
 
 export class SieveWorkspace {
   /** @type {Map<string, SieveTab>} uuid → Tab */
@@ -872,6 +873,9 @@ export class SieveWorkspace {
   /** @type {StatusBar|null} the status-bar child (P4.D — stats/dirty/blockid slots) */
   #statusBar = null
 
+  /** @type {SidebarView|null} keeps the sidebar's tree/search mode across invalidations (#93) */
+  #sidebarView = null
+
   /**
    * Constructs the Workspace-owned chrome children (P4.B: the Ask panel; P4.C: the
    * insert dialogs + search overlay; P4.D: the status bar). Called once at module
@@ -885,6 +889,7 @@ export class SieveWorkspace {
     if (!this.#insertDialogs) this.#insertDialogs = new InsertDialogs(this)
     if (!this.#searchOverlay) this.#searchOverlay = new SearchOverlay(this)
     if (!this.#statusBar) this.#statusBar = new StatusBar(this)
+    if (!this.#sidebarView) this.#sidebarView = new SidebarView().attach()
   }
 
   /**

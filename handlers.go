@@ -143,27 +143,32 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		ActiveUUID       string
 		AutosaveDebounce int
 		CLITimeoutLong   int
-		DevServerPort    int
-		Commands         template.JS
+		// MaxAttachmentBytes is the user's attachment ceiling (#84). The client
+		// enforces it before it reads a file at all, so it has to know the number
+		// Go would enforce — not a constant of its own that can drift from it.
+		MaxAttachmentBytes int
+		DevServerPort      int
+		Commands           template.JS
 	}{
-		StoreRoot:        info.Root,
-		ThemeName:        info.ThemeName,
-		Tier:             tierStr,
-		SidebarWidth:     session.SidebarWidth,
-		MetaWidth:        session.MetaWidth,
-		ShowSidebar:      session.ShowSidebar,
-		ShowMeta:         session.ShowMeta,
-		ShowPrompts:      session.ShowPrompts,
-		ShowToolbar:      session.ShowToolbar,
-		ShowAskPanel:     session.ShowAskPanel,
-		ShowLineNumbers:  session.ShowLineNumbers,
-		PromptsHeight:    session.PromptsHeight,
-		AskPanelHeight:   session.AskPanelHeight,
-		ActiveUUID:       activeUUID,
-		AutosaveDebounce: info.AutosaveDebounce,
-		CLITimeoutLong:   info.CLITimeoutLong,
-		DevServerPort:    h.app.DevServerPort,
-		Commands:         template.JS(commandsJSON),
+		StoreRoot:          info.Root,
+		ThemeName:          info.ThemeName,
+		Tier:               tierStr,
+		SidebarWidth:       session.SidebarWidth,
+		MetaWidth:          session.MetaWidth,
+		ShowSidebar:        session.ShowSidebar,
+		ShowMeta:           session.ShowMeta,
+		ShowPrompts:        session.ShowPrompts,
+		ShowToolbar:        session.ShowToolbar,
+		ShowAskPanel:       session.ShowAskPanel,
+		ShowLineNumbers:    session.ShowLineNumbers,
+		PromptsHeight:      session.PromptsHeight,
+		AskPanelHeight:     session.AskPanelHeight,
+		ActiveUUID:         activeUUID,
+		AutosaveDebounce:   info.AutosaveDebounce,
+		CLITimeoutLong:     info.CLITimeoutLong,
+		MaxAttachmentBytes: info.MaxAttachmentBytes,
+		DevServerPort:      h.app.DevServerPort,
+		Commands:           template.JS(commandsJSON),
 	}
 
 	if data.ThemeName == "" {

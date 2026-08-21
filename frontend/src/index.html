@@ -43,7 +43,7 @@
 </head>
 <body>
     {{if .StoreRoot}}
-    <div id="app-root" class="theme-{{.ThemeName}} tier-{{.Tier}}" style="--sidebar-w: {{if .ShowSidebar}}{{.SidebarWidth}}{{else}}0{{end}}px; --meta-w: {{if .ShowMeta}}{{.MetaWidth}}{{else}}0{{end}}px;">
+    <div id="app-root" class="theme-{{.ThemeName}} tier-{{.Tier}}" style="--sidebar-w: {{if .ShowSidebar}}{{.SidebarWidth}}{{else}}0{{end}}px; --meta-w: {{if .ShowMeta}}{{.MetaWidth}}{{else}}0{{end}}px; --wails-drop-target: drop;">
         
         <div id="sidebar-wrapper" style="width: var(--sidebar-w); display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; border-right: 1px solid var(--theme-border);">
             <div id="htmx-sidebar" class="sidebar" style="flex: 1; min-height: 0; border-right: none; display: flex; flex-direction: column;" hx-get="/ui/views/sidebar" hx-trigger="load, sieve:invalidate-session from:document, sieve:invalidate-notes from:document, session:changed from:body, notes:changed from:body"></div>
@@ -274,6 +274,10 @@
 
     <script>
     window.__sieveDevServerPort = {{.DevServerPort}};
+    // The user's attachment ceiling (#84). The drop path refuses an over-limit
+    // file BEFORE it reads it, so it has to know the number Go would enforce
+    // rather than carry a constant of its own that can drift from the setting.
+    window.__sieveMaxAttachmentBytes = {{.MaxAttachmentBytes}};
 
     window.isMod = function(e) {
         if (!e) return false;
@@ -631,21 +635,22 @@
         // ── Toolbar file attach ─────────────────────────────────────────────────
         // No kind is named here: the entry carries the file's mime type and Go's
         // paste-match registry routes it (image/* -> smart-image, else attachment).
-        // 25MB, mirroring MaxAttachmentBytes in sieve/block/processors (the
-        // authority) and MAX_ATTACHMENT_BYTES in wysiwyg-surface.js (the drop
-        // path). Three copies because this inline script is not a module and
-        // importing the surface would drag ProseMirror in; #84 makes the ceiling a
-        // setting, at which point all three read one place.
-        var TB_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+        // The ceiling is the user's `max_attachment_bytes` setting (#84), published
+        // by the index template; the fallback mirrors domain.DefaultMaxAttachmentBytes.
+        // Read PER CHECK, not captured at load: settings change under a running window.
+        var tbAttachmentCeiling = function() {
+          var configured = Number(window.__sieveMaxAttachmentBytes);
+          return (isFinite(configured) && configured > 0) ? configured : 25 * 1024 * 1024;
+        };
         document.getElementById('tb-attach-input')?.addEventListener('change', function(e) {
           var file = e.target.files && e.target.files[0];
           if (!file) return;
           // Refused BEFORE the read, so an enormous file never enters memory, and
           // never silently: the message names the file, its size and the limit.
-          if (file.size > TB_MAX_ATTACHMENT_BYTES) {
+          if (file.size > tbAttachmentCeiling()) {
             var mb = function(n) { return (n / (1024 * 1024)).toFixed(1) + ' MB'; };
             window.alert('"' + file.name + '" is ' + mb(file.size) + ' \u2014 larger than the '
-              + mb(TB_MAX_ATTACHMENT_BYTES) + ' limit for an attached file, so it was not attached.');
+              + mb(tbAttachmentCeiling()) + ' limit for an attached file, so it was not attached.');
             e.target.value = '';
             return;
           }
@@ -678,9 +683,23 @@
           e.target.value = '';
         });
 
+        // A drop anywhere the page has NOT claimed must never navigate the
+        // webview — WebKit's default for browser-recognisable content would turn
+        // the app shell into a file viewer (identical in dev and production).
+        // The editor's own drop handling runs on its target first; this is the
+        // page's last line, and calling preventDefault again on an
+        // already-claimed drop is harmless.
+        document.addEventListener('dragover', function(e) { e.preventDefault(); });
+        document.addEventListener('drop', function(e) { e.preventDefault(); });
+
         if (window.runtime && window.runtime.EventsOn) {
             window.runtime.EventsOn('app:closing', function() {
                 console.log('[stash] App closing, vetoed natively to allow flush.');
+                // Liveness ack FIRST: tells Go's close watchdog a real app page
+                // owns the shutdown (it may wait on jobs below as long as it
+                // likes). A navigated-away page cannot make this call, which is
+                // exactly when the watchdog should force the close instead.
+                window.go?.main?.App?.ClosingAck?.();
                 window.sieveWorkspace?.flushSave();
                 
                 function checkAndQuit() {

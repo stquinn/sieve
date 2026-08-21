@@ -251,11 +251,12 @@ export class DocumentService {
 
   // ── Paste pipelines (document-addressed — create blocks in a doc) ────────────
 
-  // ONE FRAME, TWO KINDS. `paste` carries a `kind` discriminant deciding which of
-  // its payload fields is meaningful — `entries` for smart, `slice` for slice —
-  // because "what should the server make of this clipboard" is one question with
-  // one answer shape. Reading both fields regardless is how a discriminated union
-  // rots into a bag of optional flags.
+  // ONE FRAME, FOUR KINDS. `paste` carries a `kind` discriminant deciding what
+  // the server makes of its payload — `entries` as a clipboard for smart, `slice`
+  // for slice, `entries` as a uri-list for native-drop, and NOTHING AT ALL for
+  // native-clipboard — because "what should the server make of this" is one
+  // question with one answer shape. Reading the fields regardless of kind is how a
+  // discriminated union rots into a bag of optional flags.
 
   /**
    * Reconstruct a multi-block clipboard slice server-side: Go runs FirstPasteMatch
@@ -310,6 +311,46 @@ export class DocumentService {
     }, 'paste smart', PASTE_ACK_TIMEOUT_MS)
   }
 
+  /**
+   * Tell Go a file drop LANDED at `payload.index` and to take it from the native
+   * drop bucket — the OS-level catch (Wails OnFileDrop) that sees every source
+   * app identically. `payload.entries` is the page's readable text, a HINT Go
+   * consults only when the bucket misses (VSCode-style sources never offer a
+   * file URI at any layer). Answers the same `PasteResult` union `smartPaste`
+   * does; a drop neither the bucket nor the hint can answer resolves `none`.
+   * @param {string} uuid @param {{entries: object[], index: number}} payload
+   * @returns {Promise<{outcome?: string, kind?: string, id?: string, rawYaml?: string, html?: string, error?: string}>}
+   */
+  nativeDropPaste(uuid, payload) {
+    return this.#blockService._awaitReply(uuid, {
+      type: DocumentFrame.PASTE,
+      kind: 'native-drop',
+      entries: payload.entries,
+      index: payload.index,
+    }, 'paste native-drop', PASTE_ACK_TIMEOUT_MS)
+  }
+
+  /**
+   * Ask Go to read the OS clipboard itself and make a block of whatever is on it,
+   * at `payload.index`. Answers the same `PasteResult` union `smartPaste` does; a
+   * clipboard holding nothing the server can use answers `none`.
+   *
+   * THIS FRAME CARRIES NO CLIPBOARD, AND THAT IS THE POINT. WebKitGTK hands the
+   * page a paste event whose `DataTransfer` is completely empty for a screenshot
+   * copied by an ordinary desktop tool — no types, no items, no files (#87) — so
+   * there is nothing to forward and the emptiness IS the signal. The page keeps
+   * the gesture and the caret; the server reads the clipboard.
+   * @param {string} uuid @param {{index: number}} payload
+   * @returns {Promise<{outcome?: string, kind?: string, id?: string, rawYaml?: string, html?: string, error?: string}>}
+   */
+  nativeClipboardPaste(uuid, payload) {
+    return this.#blockService._awaitReply(uuid, {
+      type: DocumentFrame.PASTE,
+      kind: 'native-clipboard',
+      index: payload.index,
+    }, 'paste native-clipboard', PASTE_ACK_TIMEOUT_MS)
+  }
+
   // ── Membership verbs (add/remove — never target an existing block's state) ──
 
   /**
@@ -359,5 +400,17 @@ export class DocumentService {
    */
   deleteBlock(uuid, blockId) {
     return this.#blockService._awaitAck(uuid, { type: DocumentFrame.BLOCK_OP, uuid: uuid, op: { type: 'delete-block', blockId: blockId } }, 'delete-block ' + blockId)
+  }
+
+  /**
+   * MEMBERSHIP: install the document's top-level block ORDER (#94). `order` must
+   * name every block the server holds, in the new order — Go refuses a partial
+   * list, which would otherwise read as a mass delete.
+   * Returns the block-op ack RESULT {ok, error?} (resolves, never rejects).
+   * @param {string} uuid @param {string[]} order
+   * @returns {Promise<{ok: boolean, error?: string}>}
+   */
+  setBlockOrder(uuid, order) {
+    return this.#blockService._awaitAck(uuid, { type: DocumentFrame.BLOCK_OP, uuid: uuid, op: { type: 'set-order', order: order } }, 'set-order ' + order.length + ' blocks')
   }
 }
