@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
@@ -368,12 +369,18 @@ func TestHandleNativeDrop_UnopenedDocumentIsNothing(t *testing.T) {
 // The html lens is WebKitGTK's ONE readable drop flavour (#86): the drag's file
 // URIs arrive as anchor hrefs inside styled markup, entity-encoded. Extraction
 // follows uri-list rules — local file: URIs only, document order.
-func TestAnchorHrefs_ExtractsLocalFileURIs(t *testing.T) {
+func TestDropMarkup_ExtractsLocalFileURIs(t *testing.T) {
 	cases := []struct {
 		name string
 		html string
 		want []droppedFile
 	}{
+		{
+			// The MEASURED WebKitGTK shape: style-only anchor, URI as TEXT, no href.
+			name: "the URI as anchor text with no href at all",
+			html: `<a style="caret-color: rgb(0, 0, 0); color: rgb(0, 0, 0); font-weight: 400;">file:///home/stephen/Documents/rainfall_tracking.yaml</a>`,
+			want: []droppedFile{"/home/stephen/Documents/rainfall_tracking.yaml"},
+		},
 		{
 			name: "one styled anchor, double quotes",
 			html: `<a style="caret-color: rgb(0, 0, 0); color: rgb(0, 0, 238);" href="file:///home/u/report.pdf">report.pdf</a>`,
@@ -402,7 +409,7 @@ func TestAnchorHrefs_ExtractsLocalFileURIs(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := anchorHrefs(tc.html).files()
+			got := dropMarkup(tc.html).files()
 			if len(got) != len(tc.want) {
 				t.Fatalf("files() = %q, want %q", got, tc.want)
 			}
@@ -426,6 +433,59 @@ func TestHandleNativeDrop_HTMLEntryReachesTheSameIngestion(t *testing.T) {
 	}
 	res := es.HandleNativeDrop(uuid, []block.ContentEntry{
 		{MIMEType: "text/html", Content: `<a href="file://` + path + `">notes.txt</a>`},
+	}, 0)
+	if res.Outcome != block.OutcomeBlock {
+		t.Fatalf("outcome = %q, want block", res.Outcome)
+	}
+}
+
+// The bucket redeem: a frame with NO readable entries means "the drop happened,
+// the page could read none of it — GTK caught the paths" (#86). Same ethos as
+// the empty-clipboard paste, one gesture over.
+type fakeDropBucket struct{ paths []string }
+
+func (f *fakeDropBucket) TakeDrop(time.Duration) []string { return f.paths }
+
+func TestHandleNativeDrop_EmptyEntriesRedeemTheNativeBucket(t *testing.T) {
+	es, uuid := newDropEditor(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(path, []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	es.SetPendingDrops(&fakeDropBucket{paths: []string{path}})
+
+	res := es.HandleNativeDrop(uuid, nil, 0)
+	if res.Outcome != block.OutcomeBlock {
+		t.Fatalf("outcome = %q, want block", res.Outcome)
+	}
+}
+
+func TestHandleNativeDrop_EmptyEntriesEmptyBucketIsNothing(t *testing.T) {
+	es, uuid := newDropEditor(t)
+	es.SetPendingDrops(&fakeDropBucket{})
+	if res := es.HandleNativeDrop(uuid, nil, 0); res.Outcome != block.OutcomeNothing {
+		t.Fatalf("outcome = %q, want nothing", res.Outcome)
+	}
+}
+
+// Entries that DID name files win over the bucket — the fast path for platforms
+// whose webview can read its own drops.
+func TestHandleNativeDrop_ReadableEntriesSkipTheBucket(t *testing.T) {
+	es, uuid := newDropEditor(t)
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.txt")
+	if err := os.WriteFile(real, []byte("real\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	decoy := filepath.Join(dir, "decoy.txt")
+	if err := os.WriteFile(decoy, []byte("decoy\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	es.SetPendingDrops(&fakeDropBucket{paths: []string{decoy}})
+
+	res := es.HandleNativeDrop(uuid, []block.ContentEntry{
+		{MIMEType: "text/uri-list", Content: "file://" + real + "\r\n"},
 	}, 0)
 	if res.Outcome != block.OutcomeBlock {
 		t.Fatalf("outcome = %q, want block", res.Outcome)

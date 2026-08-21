@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+	"sieve/nativedrop"
 	"strings"
 	"sync"
 	"time"
@@ -103,6 +104,15 @@ func (a *App) startup(ctx context.Context) {
 
 	isFirstStartup := a.ctx == nil
 	a.ctx = ctx
+
+	if isFirstStartup {
+		// GTK's view of a file drop, feeding the bucket the frontend's empty
+		// native-drop redeem draws from (#86). Registered ONCE: startup re-runs on
+		// every vault switch.
+		runtime.OnFileDrop(ctx, func(x, y int, paths []string) {
+			nativedrop.Default.Put(paths)
+		})
+	}
 
 	abs, _ := filepath.Abs(a.storePath)
 	logger.Info("startup", "vault_raw", a.storePath, "vault_abs", abs)

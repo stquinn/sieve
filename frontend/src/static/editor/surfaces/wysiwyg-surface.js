@@ -628,7 +628,7 @@ export class WysiwygSurface extends AbstractSurface {
           // which has already run.) See docs/editor-interaction-contract.md.
         },
         handlePaste: function (_view, event) { return self.#handleSmartPaste(event) },
-        handleDrop: function (_view, event, slice, moved) { return self.#handleSmartDrop(event) },
+        handleDrop: function (_view, event, slice, moved) { return self.#handleSmartDrop(event, slice, moved) },
         handleKeyDown: function (view, event) {
           if (event.key === 's' && window.isMod(event)) {
             event.preventDefault()
@@ -1193,16 +1193,17 @@ export class WysiwygSurface extends AbstractSurface {
    * @param {DragEvent} event
    * @returns {boolean} true when handled (native drop suppressed)
    */
-  #handleSmartDrop(event) {
+  #handleSmartDrop(event, slice, moved) {
     if (!event.dataTransfer || !this.#editorPane) return false
     // The prompt pseudo-document is a plain file with no block tree to create into.
     if (!this.#uuid || this.#uuid.startsWith('prompt:')) return false
-    // The claim must be SYNCHRONOUS (preventDefault only works inside the handler),
-    // but on WebKitGTK the list's CONTENT is not: getData('text/uri-list') answers
-    // '' on a real drag even while `types` advertises the flavour and a string item
-    // carries it (#86 — same platform pathology as the empty clipboard, #87). So
-    // the claim reads `types` and the content is read async via the items API.
-    if (!WysiwygSurface.#carriesUriList(event.dataTransfer)) return false
+    // Internal PM drags — a block reorder, a moved selection — are PM's own and
+    // never claimed. Everything EXTERNAL is: WebKitGTK starves the page of drop
+    // content and each source app starves it differently (#86 — Dolphin offers a
+    // uri-list the page cannot read, VSCode a dialect it cannot even see), so no
+    // flavour test can decide. The gesture is the claim; what the drop WAS is
+    // settled after the read — and when nothing is readable, by the native bucket.
+    if (slice || moved) return false
 
     const coords = this.#editorPane.view.posAtCoords({ left: event.clientX, top: event.clientY })
     const insertPos = coords ? coords.pos : this.#editorPane.state.selection.to
@@ -1221,58 +1222,45 @@ export class WysiwygSurface extends AbstractSurface {
     const ds = this.#host.documentService
     if (!ds) return true // disconnected editor: drop (socketless parity)
     const pane = this.#editorPane
+    const sendRedeem = (entries) => ds.nativeDropPaste(this.#uuid, { entries, index: peek.index })
+      // A drop carries its own coordinate, so Go's block lands at the DROP
+      // position rather than the caret (the caret is wherever the user last
+      // typed). No `replay`: a drop's payload is not a clipboard, so `none` has
+      // nothing to put back.
+      .then((result) => this.#applyPasteResult(result, { anchor: peek.anchor, at: insertPos }))
+      .catch((err) => { console.error('[wysiwyg-surface] native file drop failed', err) })
     listRead.then((read) => {
-      // The frontend recognises, never parses: `file:` in a uri-list line or in an
-      // anchor's href is the claim-vs-replay call, and Go owns the extraction.
-      const isFileDrop = read !== null && (read.mime === 'text/uri-list'
+      // The frontend recognises, never parses: `file:` in the content is the
+      // claim-vs-replay call, and Go owns the extraction.
+      if (read !== null && (read.mime === 'text/uri-list'
         ? WysiwygSurface.#namesAFile(read.content)
-        : /href\s*=\s*["']file:/i.test(read.content))
-      if (isFileDrop) {
-        ds.nativeDropPaste(this.#uuid, {
-          entries: [{ mimeType: read.mime, content: read.content }],
-          index: peek.index,
-        })
-          // A drop carries its own coordinate, so Go's block lands at the DROP
-          // position rather than the caret (the caret is wherever the user last
-          // typed). No `replay`: a drop's payload is not a clipboard, so `none`
-          // has nothing to put back.
-          .then((result) => this.#applyPasteResult(result, { anchor: peek.anchor, at: insertPos }))
-          .catch((err) => { console.error('[wysiwyg-surface] native file drop failed', err) })
+        : /\bfile:\/\//i.test(read.content))) {
+        sendRedeem([{ mimeType: read.mime, content: read.content }])
         return
       }
-      // A dragged LINK rides the same flavours, and by the time that is knowable
-      // the drop is already claimed — so the old outcome is replayed by hand where
-      // PM would have put it (insertContentAt takes the html as-is). Comments and
-      // blanks (RFC 2483) name nothing and are not content.
-      const replay = read === null ? '' : (read.mime === 'text/html'
-        ? read.content
-        : read.content.split('\n')
+      // Readable but not a file — a dragged link, a dragged selection. The claim
+      // already happened, so the old outcome is replayed by hand where PM would
+      // have put it (insertContentAt takes html as-is). Comments and blanks
+      // (RFC 2483) name nothing and are not content.
+      const replay = read === null ? '' : (read.mime === 'text/uri-list'
+        ? read.content.split('\n')
           .map((line) => line.trim())
           .filter((line) => line !== '' && !line.startsWith('#'))
-          .join('\n'))
+          .join('\n')
+        : read.content)
       if (replay !== '') {
         pane.commands.insertContentAt(insertPos, replay)
         return
       }
-      console.warn('[wysiwyg-surface] uri-list drop with unreadable content — dropped', {
-        types: Array.from(event.dataTransfer.types || []).join(','),
-      })
+      // Nothing readable at all — the WebKitGTK signature, whatever the source
+      // app. The gesture was real: redeem with NO entries, which tells Go "take
+      // it from the native drop bucket and place it at this index" (#86), the
+      // exact ethos of the empty-clipboard paste (#87).
+      sendRedeem([])
     })
     return true
   }
 
-  /**
-   * Whether this drop advertises a `text/uri-list` — the SYNCHRONOUS claim test.
-   * `dataTransfer.files` and `kind: 'file'` items are deliberately NOT consulted:
-   * WebKitGTK leaves both empty for a file-manager drag (#86), so a branch reading
-   * them would only ever fire on some other platform and would send bytes down a
-   * wire that expects paths.
-   * @param {DataTransfer} dataTransfer
-   * @returns {boolean}
-   */
-  static #carriesUriList(dataTransfer) {
-    return Array.from(dataTransfer.types || []).includes('text/uri-list')
-  }
 
   /**
    * The `text/uri-list` content of this drop, read the way WebKitGTK can answer:
@@ -1297,10 +1285,14 @@ export class WysiwygSurface extends AbstractSurface {
       || WysiwygSurface.#asUriList(probes['URL'])
       || WysiwygSurface.#asUriList(probes['text/plain'])
     if (sync) return Promise.resolve({ mime: 'text/uri-list', content: sync })
-    // WebKitGTK's ONE readable drop lens on a real drag (#86, measured): the list
-    // flavours all answer '' while text/html survives, carrying each file URI as
-    // an anchor's href. Forwarded VERBATIM — Go owns the extraction.
+    // The one lens a WebKitGTK Dolphin drag leaves readable (#86, measured): the
+    // list flavours all answer '' while text/html survives, carrying the file URI
+    // in an anchor. Forwarded VERBATIM — Go owns the extraction.
     if (probes['text/html']) return Promise.resolve({ mime: 'text/html', content: probes['text/html'] })
+    // Readable plain text that is NOT uri-shaped (a dragged selection on a
+    // platform whose webview reads its own drops) — content for the replay
+    // branch, never for Go.
+    if (probes['text/plain']) return Promise.resolve({ mime: 'text/plain', content: probes['text/plain'] })
     // Every sync lens empty: dump the evidence before trying the async read, so a
     // failing platform names its own successor fix.
     console.warn('[wysiwyg-surface] drop sync probes all empty', {

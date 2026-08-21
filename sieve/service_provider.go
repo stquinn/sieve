@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"sieve/clipboard"
 	"sieve/logger"
+	"sieve/nativedrop"
 	"sieve/sieve/ai"
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
@@ -165,6 +166,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	// package's no-op half, so a native-clipboard paste answers "nothing" rather
 	// than failing.
 	s.Editor.SetNativeClipboard(clipboard.New())
+	s.Editor.SetPendingDrops(nativedrop.Default)
 	if s.SavedNotifier != nil {
 		s.Editor.SetSavedNotifier(s.SavedNotifier)
 	}

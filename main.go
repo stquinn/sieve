@@ -320,7 +320,13 @@ func main() {
 		MinWidth:                 800,
 		MinHeight:                500,
 		EnableDefaultContextMenu: true,
-		BackgroundColour:         &options.RGBA{R: 26, G: 27, B: 38, A: 1},
+		// EnableFileDrop feeds nativedrop.Default via OnFileDrop; DisableWebViewDrop
+		// stays FALSE — it maps to gtk_drag_dest_unset, which would also kill the
+		// DOM drop event the frontend's claim and internal PM drags depend on.
+		DragAndDrop: &options.DragAndDrop{
+			EnableFileDrop: true,
+		},
+		BackgroundColour: &options.RGBA{R: 26, G: 27, B: 38, A: 1},
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: "sieve-app-6f3a2b1c",
 			OnSecondInstanceLaunch: func(_ options.SecondInstanceData) {

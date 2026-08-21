@@ -8,11 +8,33 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"sieve/logger"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
 )
+
+// PendingDropSource is the native drop BUCKET: the paths of the most recent OS
+// file drop, caught at the GTK layer (Wails OnFileDrop), waited on briefly
+// because the DOM's redeem and GTK's callback race on the same gesture. An
+// interface for the same reason NativeClipboardPort is one: the concrete bucket
+// lives above this package, and tests supply fakes.
+type PendingDropSource interface {
+	TakeDrop(maxWait time.Duration) []string
+}
+
+// pendingDropWait bounds how long a redeem waits for GTK's half of the gesture.
+const pendingDropWait = 2 * time.Second
+
+// SetPendingDrops registers the native drop bucket. Nil means a frame with no
+// readable entries redeems nothing, which is what tests and non-desktop builds
+// get.
+func (es *EditorService) SetPendingDrops(s PendingDropSource) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	es.pendingDrops = s
+}
 
 // HandleNativeDrop ingests files named by a `text/uri-list`, one block per file.
 //
@@ -47,9 +69,25 @@ func (es *EditorService) HandleNativeDrop(uuid string, entries []block.ContentEn
 		index = len(shadow.SnapshotBlocks())
 	}
 
+	files := es.droppedFiles(entries)
+	if len(files) == 0 {
+		// No entry named a file — the webview could read nothing of the drop (its
+		// lenses starve on WebKitGTK, and each source app starves them differently:
+		// #86). The gesture is still real, so ask the native bucket for the paths
+		// GTK caught.
+		es.mu.RLock()
+		bucket := es.pendingDrops
+		es.mu.RUnlock()
+		if bucket != nil {
+			for _, p := range bucket.TakeDrop(pendingDropWait) {
+				files = append(files, droppedFile(p))
+			}
+		}
+	}
+
 	ceiling := es.attachmentCeiling()
 	created := 0
-	for _, f := range es.droppedFiles(entries) {
+	for _, f := range files {
 		entry, ok := f.entry(ceiling)
 		if !ok {
 			continue
@@ -93,43 +131,37 @@ func (es *EditorService) droppedFiles(entries []block.ContentEntry) []droppedFil
 			// empty before any async read runs — but text/html survives, carrying
 			// the file URI as an anchor's href. The frontend forwards it verbatim;
 			// the extraction lives here with the rest of the path handling.
-			files = append(files, anchorHrefs(e.Content).files()...)
+			files = append(files, dropMarkup(e.Content).files()...)
 		}
 	}
 	return files
 }
 
-// anchorHrefs is a `text/html` drop payload — anchors whose hrefs are the URIs
-// the drag carried, one per dragged file, entity-encoded as HTML demands.
-type anchorHrefs string
+// dropMarkup is a `text/html` drop payload. The URI may live in an anchor's
+// href OR as the anchor's TEXT — WebKitGTK writes the latter for a Dolphin drag
+// (measured: a style-only <a> whose text is the file:/// URI, no href at all) —
+// so the scan is for file: URIs anywhere in the markup, not for attributes.
+type dropMarkup string
 
-// files reports the local paths this markup's hrefs name, in document order,
-// under the same rules as a uri-list: only local `file:` URIs count.
-func (h anchorHrefs) files() []droppedFile {
+// files reports the local paths this markup names, in document order, under the
+// same rules as a uri-list: only local `file:` URIs count.
+func (h dropMarkup) files() []droppedFile {
 	var uris []string
 	rest := string(h)
 	for {
-		i := strings.Index(rest, "href=")
+		i := strings.Index(rest, "file:")
 		if i == -1 {
 			break
 		}
-		rest = rest[i+len("href="):]
-		if rest == "" {
-			break
-		}
-		quote := rest[0]
-		if quote != '"' && quote != '\'' {
-			continue
-		}
-		rest = rest[1:]
-		end := strings.IndexByte(rest, quote)
+		tail := rest[i:]
+		end := strings.IndexAny(tail, " \t\r\n\"'<>")
 		if end == -1 {
-			break
+			end = len(tail)
 		}
-		// &amp; is the one entity legal inside a URI-valued attribute that changes
-		// its meaning when left encoded.
-		uris = append(uris, strings.ReplaceAll(rest[:end], "&amp;", "&"))
-		rest = rest[end+1:]
+		// &amp; is the one entity legal inside a URI in markup that changes its
+		// meaning when left encoded.
+		uris = append(uris, strings.ReplaceAll(tail[:end], "&amp;", "&"))
+		rest = tail[end:]
 	}
 	return uriList(strings.Join(uris, "\r\n")).files()
 }

@@ -200,7 +200,7 @@ PasteFrame hands a clipboard to the server to make sense of.
 | `type` | `string` | yes |  |
 | `opId` | `string` | no | echoed on the paste-ack |
 | `kind` | `protocol.PasteKind` | yes | smart \| slice \| native-drop \| native-clipboard. SECURITY: native-drop makes the server READ LOCAL FILES named by the entries' file:// URIs, and native-clipboard makes it READ THE OS CLIPBOARD (and any local file that clipboard names), so this wire carries a filesystem-read capability. It is only acceptable because the socket upgrade enforces an origin allow-list that admits the app's own window and refuses foreign browser origins; auth-on-upgrade (#83) must cover this channel. |
-| `entries` | `[]block.ContentEntry` | no | smart: the clipboard's views. native-drop: the single text/uri-list view the OS put on the drag. native-clipboard: absent — the server reads the clipboard itself |
+| `entries` | `[]block.ContentEntry` | no | smart: the clipboard's views. native-drop: whatever view of the drag the page could read (a text/uri-list, or the text/html WebKitGTK leaves readable) — or EMPTY, meaning the page could read nothing and the server takes the paths from the native drop bucket GTK fed (OnFileDrop). native-clipboard: absent — the server reads the clipboard itself |
 | `slice` | `[][]block.ContentEntry` | no | slice only: one view set per copied block, in order |
 | `index` | `int` | yes | document position for the first created block; -1 appends, and is the default when the key is absent |
 

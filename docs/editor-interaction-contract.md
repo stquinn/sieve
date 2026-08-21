@@ -379,20 +379,26 @@ replay, because the page never held the content.
 
 ## Drop matrix (revised 2026-08-21, #86)
 
-A drop is CLAIMED by flavour — `dataTransfer.types` advertising `text/uri-list`
-— and ROUTED by URI scheme after an async read. Two platform facts force that
-split: WebKitGTK leaves `dataTransfer.files` and `kind: 'file'` items empty for
-a file-manager drag (the page gets nothing but a `file:///…` string), and its
-synchronous `getData('text/uri-list')` answers `''` on a real drag even while a
-string ITEM carries the list — so the claim (which must happen inside the
-handler, where `preventDefault` still works) cannot depend on content, and the
-content comes off the items API afterwards.
+An EXTERNAL drop is claimed by the GESTURE, not by flavour, because no flavour
+test can decide: WebKitGTK starves the page of drop content and every source
+app starves it differently (measured 2026-08-21 — Dolphin: all list flavours
+answer `''` while `text/html` survives with the URI as a style-only anchor's
+TEXT; VSCode: a dialect the page cannot see at all; and string items only
+deliver after the handler returns, when the store is already empty). Internal
+PM drags (a block reorder, a moved selection) are identified by `slice`/`moved`
+and never claimed. After the claim, routing is by what was READABLE — and when
+nothing was, by the native drop bucket: GTK catches every OS file drop via
+Wails' `OnFileDrop` (`nativedrop.Default`), and a `native-drop` frame with NO
+entries means "take the paths from the bucket and place them at this index" —
+the exact ethos of the empty-clipboard paste (#87).
 
-| Dragged from | Arrives as | Outcome |
+| External drop | Readable as | Outcome |
 |---|---|---|
-| The desktop (file manager) | `text/uri-list` of `file:` URIs | Claimed; the list is sent verbatim as a `native-drop` paste; **Go reads the files** and makes one block per file, in drag order, from the drop position. Kind is the paste registry's decision as always — `image/*` to smart-image, everything else to attachment. |
-| A browser (a link) | `text/uri-list` of an `http(s)` URI | Claimed (indistinguishable from a file drop until the async read), then the URI is REPLAYED as text at the drop position — the outcome PM native handling used to produce. |
-| Within the document, or any text drag | no `text/uri-list` flavour | Not claimed — PM handles it natively. |
+| Any file drag, page could read a lens | `file:` URIs in a uri-list or in html | Claimed; the view is sent VERBATIM as a `native-drop` paste; **Go extracts and reads** — one block per file, in drag order, from the drop position; the registry picks each kind as for any paste. |
+| Any file drag, page could read nothing | — | Claimed; `native-drop` with EMPTY entries; **Go redeems the native bucket** (short wait absorbs the DOM-vs-GTK race) and ingests identically. |
+| A dragged link or text selection, readable | an `http(s)` URI, prose | Claimed (unknowable until read), then REPLAYED as content at the drop position — the outcome PM native handling used to produce. |
+| A dragged link or text selection, unreadable | — | Claimed; the empty redeem finds no files in the bucket and nothing happens. (WebKitGTK never let the page read these anyway.) |
+| Internal PM drag | `slice`/`moved` set | Not claimed — PM handles it natively. |
 | Into a prompt pseudo-document | anything | Not claimed — a prompt is a plain file with no block tree. |
 
 Placement follows the block-insertion rule above, at the DROP coordinate rather

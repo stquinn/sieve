@@ -1058,20 +1058,51 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     expect(ed.commands.insertContentAt).toHaveBeenCalledWith(12, 'https://example.com/page')
   })
 
-  it('a dragged selection of text (no uri-list at all) → returns false, nothing sent, nothing prevented', () => {
-    const host = wyHost()
+  it('an external drop with NOTHING readable → claimed, redeemed with EMPTY entries (the bucket)', async () => {
+    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
     const { handled, event } = dropUriList(host, '')
-    expect(handled).toBe(false)
-    expect(event.preventDefault).not.toHaveBeenCalled()
+    expect(handled).toBe(true)
+    expect(event.preventDefault).toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 0))
+    // Empty entries mean "take it from the native drop bucket, place at index".
+    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', { entries: [], index: 9 })
+  })
+
+  it('a readable dragged text selection → claimed and replayed as content', async () => {
+    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
+    host.documentService.nativeDropPaste.mockReturnValue(Promise.resolve({ outcome: 'none' }))
+    const { ed, props } = mountPaste(host, 'doc-1')
+    ed.view.posAtCoords = () => ({ pos: 12 })
+    ed.state.selection = { to: 0 }
+    const event = {
+      dataTransfer: {
+        types: ['text/plain'],
+        getData: (mime) => (mime === 'text/plain' ? 'just some dragged words' : ''),
+        items: [],
+      },
+      clientX: 1, clientY: 1, preventDefault: vi.fn(),
+    }
+    expect(props.handleDrop({}, event, null, false)).toBe(true)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
+    expect(ed.commands.insertContentAt).toHaveBeenCalledWith(12, 'just some dragged words')
+  })
+
+  it('an internal PM drag (slice/moved) is never claimed', () => {
+    const host = wyHost()
+    const { props } = mountPaste(host, 'doc-1')
+    const event = { dataTransfer: { types: [], getData: () => '', items: [] }, clientX: 1, clientY: 1, preventDefault: vi.fn() }
+    expect(props.handleDrop({}, event, { content: [] }, false)).toBe(false)
+    expect(props.handleDrop({}, event, null, true)).toBe(false)
     expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
   })
 
-  it('a comment-only uri-list → claimed but nothing sent and nothing inserted', async () => {
+  it('a comment-only uri-list names nothing → falls through to the bucket redeem', async () => {
     const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
     const { ed, handled } = dropUriList(host, '# nothing here\r\n')
     expect(handled).toBe(true)
     await new Promise((r) => setTimeout(r, 0))
-    expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
+    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', { entries: [], index: 9 })
     expect(ed.commands.insertContentAt).not.toHaveBeenCalled()
   })
 
@@ -1084,7 +1115,7 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     const { ed, props } = mountPaste(host, 'doc-1')
     ed.view.posAtCoords = () => ({ pos: 12 })
     ed.state.selection = { to: 0 }
-    const html = '<a style="caret-color: rgb(0, 0, 0);" href="file:///home/u/report.pdf">report.pdf</a>'
+    const html = '<a style="caret-color: rgb(0, 0, 0); font-weight: 400;">file:///home/u/report.pdf</a>'
     const event = {
       dataTransfer: {
         types: ['text/uri-list', 'text/html'],
