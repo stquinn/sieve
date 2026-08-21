@@ -587,6 +587,28 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     expect(host.onSurfaceEvent).toHaveBeenCalledWith(SurfaceEvent.FOCUS_CHANGED)
   })
 
+  it('a body-projection transaction reports doc-projected, never doc-changed (#90)', () => {
+    // The NodeView body projection (sieve-block-extension syncMdInto) dispatches a
+    // DEFERRED transaction that materialises the server's own body markdown into
+    // contentDOM — after the mount's suppression window has closed. It changes the
+    // doc, so PM reports it, but nothing the USER authored changed: reporting it as
+    // doc-changed made every freshly opened document show the dirty dot before a
+    // keystroke. It is still a content change, so stats must still see it.
+    const { host, ed } = mountWy()
+    const projection = { getMeta: (k) => (k === 'sieve-md-sync' ? true : undefined) }
+    ed.options.onUpdate({ editor: ed, transaction: projection })
+    expect(host.onSurfaceEvent).toHaveBeenCalledWith(SurfaceEvent.DOC_PROJECTED)
+    expect(host.onSurfaceEvent).not.toHaveBeenCalledWith(SurfaceEvent.DOC_CHANGED)
+  })
+
+  it('a user transaction still reports doc-changed even though both carry a transaction', () => {
+    const { host, ed } = mountWy()
+    const userTr = { getMeta: () => undefined }
+    ed.options.onUpdate({ editor: ed, transaction: userTr })
+    expect(host.onSurfaceEvent).toHaveBeenCalledWith(SurfaceEvent.DOC_CHANGED)
+    expect(host.onSurfaceEvent).not.toHaveBeenCalledWith(SurfaceEvent.DOC_PROJECTED)
+  })
+
   it('flushPending fires the pending sync immediately, exactly once', () => {
     vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [{ type: 'update-block', blockId: 'b1', kind: 'prose', attrs: { content: 'x' } }] })
     const { s, host, ed } = mountWy()

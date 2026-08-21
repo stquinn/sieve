@@ -38,6 +38,14 @@
 export const SurfaceEvent = Object.freeze({
   /** The document content changed (a user edit settled into the surface). */
   DOC_CHANGED: Object.freeze({ type: 'doc-changed' }),
+  /**
+   * The document content changed WITHOUT the user authoring anything: the
+   * framework projected the server's own truth into the doc (the NodeView body
+   * projection, sieve-block-extension's syncMdInto). It grows the document, so
+   * anything measuring it must follow — but it is not an edit, and treating it as
+   * one showed the dirty dot on every freshly opened note (issue #90).
+   */
+  DOC_PROJECTED: Object.freeze({ type: 'doc-projected' }),
   /** The selection/caret moved. */
   SELECTION_CHANGED: Object.freeze({ type: 'selection-changed' }),
   /** A ProseMirror transaction applied (selection may or may not have moved). */

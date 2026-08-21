@@ -671,12 +671,19 @@ export class WysiwygSurface extends AbstractSurface {
       },
       onUpdate: function (p) {
         if (!initialized || suppressUpdate) return
+        // A body projection (sieve-block-extension's syncMdInto) reaches here as a
+        // real doc change, because it IS one — but it is the framework writing the
+        // server's own body markdown into contentDOM, deferred past the mount's
+        // suppression window, so no user authored it. It reports as DOC_PROJECTED,
+        // which refreshes what measures the doc without dirtying it (#90).
+        var tr = p && p.transaction
+        var projected = !!(tr && tr.getMeta && tr.getMeta('sieve-md-sync'))
         // Stage D.3: the thin observer. We no longer serialize the whole document
         // on every keystroke — onUpdate only reports the change and (re)arms a
         // debounce. The actual diff + wire send happens once typing settles, in
         // syncDocument, which emits granular block-ops (id-less nodes are
         // skipped until minted — no whole-document fallback).
-        self.#host.onSurfaceEvent(SurfaceEvent.DOC_CHANGED)
+        self.#host.onSurfaceEvent(projected ? SurfaceEvent.DOC_PROJECTED : SurfaceEvent.DOC_CHANGED)
         if (self.#syncTimer) clearTimeout(self.#syncTimer)
         self.#syncTimer = setTimeout(function () {
           self.#syncTimer = null

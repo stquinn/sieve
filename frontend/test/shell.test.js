@@ -488,6 +488,27 @@ describe('AbstractEditor surface events + domain API (P2.B / P4.F)', () => {
     }
   })
 
+  it('a doc-projected refreshes stats but leaves the editor CLEAN (#90)', () => {
+    // The NodeView body projection materialises the server's own body markdown into
+    // the doc after the mount's suppression window closes. It grows the document —
+    // so the word count must follow it — but the user has authored nothing, and
+    // dirtying here is what made every freshly opened note show the dirty dot.
+    const { ed } = rig()
+    const seen = []
+    ed.onEvent((ev) => seen.push(ev.type))
+    let metaFired = false
+    const handler = () => { metaFired = true }
+    document.addEventListener('sieve:meta-dirty', handler)
+    try {
+      ed.onSurfaceEvent({ type: 'doc-projected' })
+      expect(ed.isDirty).toBe(false)
+      expect(metaFired).toBe(false)
+      expect(seen).toEqual(['doc-projected', 'stats'])
+    } finally {
+      document.removeEventListener('sieve:meta-dirty', handler)
+    }
+  })
+
   it('a throwing listener does not break the other registrants', () => {
     const { ed } = rig()
     const seen = []
