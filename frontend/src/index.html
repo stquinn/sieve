@@ -695,6 +695,11 @@
         if (window.runtime && window.runtime.EventsOn) {
             window.runtime.EventsOn('app:closing', function() {
                 console.log('[stash] App closing, vetoed natively to allow flush.');
+                // Liveness ack FIRST: tells Go's close watchdog a real app page
+                // owns the shutdown (it may wait on jobs below as long as it
+                // likes). A navigated-away page cannot make this call, which is
+                // exactly when the watchdog should force the close instead.
+                window.go?.main?.App?.ClosingAck?.();
                 window.sieveWorkspace?.flushSave();
                 
                 function checkAndQuit() {

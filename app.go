@@ -41,12 +41,13 @@ type App struct {
 	State           *services.StateService
 	Prompts         *ai.PromptService
 
-	library   services.LibraryService // owns library discovery, recents, naming
-	themesFS  fs.FS
-	broadcast *requesthandlers.WorkspaceBroadcast
-	watcher   *watcher.NotesWatcher
-	closing   bool
-	mu        sync.Mutex
+	library    services.LibraryService // owns library discovery, recents, naming
+	themesFS   fs.FS
+	broadcast  *requesthandlers.WorkspaceBroadcast
+	watcher    *watcher.NotesWatcher
+	closing    bool
+	closeAcked bool // the page answered app:closing — the close watchdog stands down
+	mu         sync.Mutex
 
 	DevServerPort int
 }
@@ -268,18 +269,27 @@ func (a *App) beforeClose(ctx context.Context) bool {
 	}
 	logger.Info("beforeClose: vetoing and requesting flush")
 	runtime.EventsEmit(ctx, "app:closing")
-	// The flush request is a DEADLINE, not a promise: a webview that navigated
-	// away from the app page cannot answer app:closing, and an unanswered veto is
-	// an unkillable window. Quit's own path still runs FlushAll, so nothing Go
-	// holds is lost on the forced route.
+	// The veto needs a LIVENESS answer, not a completion one: an alive page acks
+	// immediately (ClosingAck) and may then legitimately wait on active jobs as
+	// long as it likes — but a webview that navigated away from the app page has
+	// no bindings and can never ack, and an unanswered veto is an unkillable
+	// window. Only the silent case is forced; Quit's own path still runs
+	// FlushAll, so nothing Go holds is lost on that route.
 	go func() {
 		time.Sleep(3 * time.Second)
-		if !a.closing {
-			logger.Warn("beforeClose: page never answered app:closing — forcing quit")
+		if !a.closing && !a.closeAcked {
+			logger.Warn("beforeClose: page never acknowledged app:closing — forcing quit")
 			a.Quit()
 		}
 	}()
 	return true
+}
+
+// ClosingAck is the page's "I heard the close request and own the shutdown from
+// here" — called from the app:closing handler BEFORE any waiting it chooses to
+// do, so the beforeClose watchdog stands down.
+func (a *App) ClosingAck() {
+	a.closeAcked = true
 }
 
 func (a *App) Quit() {
