@@ -49,12 +49,18 @@ func (h *ContextMenuHandler) handleIntent(w http.ResponseWriter, r *http.Request
 	id := r.URL.Query().Get("id")
 	value := r.URL.Query().Get("value")
 
+	// A failed load used to fall THROUGH: the intent was silently not written, and
+	// the tab loop below then dereferenced the nil document — so a request naming
+	// an unknown uuid that also matched an open tab id crashed the handler (#92).
+	// Nothing was ever accomplished down that path, so say so instead.
 	doc, err := h.ServiceProvider.Documents.LoadByUUID(id)
-	if err == nil {
-		if _, err := h.ServiceProvider.Documents.SetUserIntent(doc, value); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if _, err := h.ServiceProvider.Documents.SetUserIntent(doc, value); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	session := h.ServiceProvider.State.LoadSession()
 	for i := range session.Tabs {

@@ -15,6 +15,7 @@ import (
 
 	"sieve/sieve"
 	"sieve/sieve/ai"
+	"sieve/sieve/domain"
 	"sieve/sieve/protocol"
 	"sieve/sieve/services"
 	"sieve/store"
@@ -520,6 +521,28 @@ func TestSidebarDialog_KindPicksTheTemplate(t *testing.T) {
 
 	if status, _ := do(t, http.MethodGet, srv.URL+"/ui/views/sidebar/dialog/nonesuch", "", ""); status != http.StatusNotFound {
 		t.Errorf("unknown dialog status = %d, want 404", status)
+	}
+}
+
+// #92 — handleIntent used to ignore LoadByUUID's error and fall through, so an
+// unknown uuid wrote nothing and then got dereferenced by the tab loop. The
+// crash needed the uuid to also match an open tab id; the silent no-op needed
+// nothing at all. Both are the same missing check.
+func TestSidebarIntent_UnknownUUIDIs404NotACrash(t *testing.T) {
+	srv, sp := newItemServer(t)
+
+	// Park the unknown uuid in the session as an open tab — the arrangement that
+	// used to reach the nil dereference rather than merely doing nothing.
+	ghost := "019ff000-0000-7000-8000-00000000dead"
+	session := sp.State.LoadSession()
+	session.Tabs = append(session.Tabs, domain.Tab{ID: ghost, DisplayName: "Ghost"})
+	if err := sp.State.SaveSession(session); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+
+	status, body := do(t, http.MethodPost, srv.URL+"/api/sidebar/intent?id="+ghost+"&value=keep", "", "")
+	if status != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 (body %q)", status, body)
 	}
 }
 
