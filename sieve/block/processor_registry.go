@@ -69,6 +69,36 @@ func (e ContentEntry) NestedParentID() (string, bool) {
 	return "", false
 }
 
+// HolderID reports the id of the block whose HELD content this entry carries —
+// content a source refers to but does not carry in its attrs, read server-side by
+// MaterialiseEntries. ok is false for an ordinary entry.
+//
+// The holder is what makes the content reachable at all, so an offer that stands
+// only on a held entry can never replace it; see DetectExtractions.
+func (e ContentEntry) HolderID() (string, bool) {
+	if e.Context == nil {
+		return "", false
+	}
+	if s, isStr := e.Context["holderId"].(string); isStr && s != "" {
+		return s, true
+	}
+	return "", false
+}
+
+// heldBy returns a copy of this entry stamped as content blockID holds. The
+// FRAMEWORK stamps it, never the processor that produced the content: the
+// source-survives rule it triggers is the framework's invariant, and a materialiser
+// must not be able to forget it.
+func (e ContentEntry) heldBy(blockID string) ContentEntry {
+	ctx := make(map[string]interface{}, len(e.Context)+1)
+	for k, v := range e.Context {
+		ctx[k] = v
+	}
+	ctx["holderId"] = blockID
+	e.Context = ctx
+	return e
+}
+
 func (e ContentEntry) IsSieveType(p BlockProcessor) bool {
 	kind, _, ok := e.SieveAttrs()
 	return ok && kind == p.Kind()
@@ -512,6 +542,54 @@ type RawContenter interface {
 	RawContent(blk SieveBlock) string
 }
 
+// ContentMaterialiser is the optional interface a processor implements when its
+// block HOLDS content its attrs do not carry — an attachment's file, which lives in
+// the document directory and is readable only from Go. The frontend cannot send such
+// content, so without this every recogniser is blind to it.
+//
+// The implementer's whole job is handing the bytes over as ordinary content: whether
+// they are fit to hand over at all (readable, textual, small enough to edit) is its
+// decision, and what any kind then makes of them is emphatically not.
+type ContentMaterialiser interface {
+	MaterialiseContent(uuid string, attrs map[string]interface{}) []ContentEntry
+}
+
+// MaterialiseEntries returns entries plus whatever content the blocks they describe
+// are holding out of band, each stamped with its holder. Every sieve/<kind> view is
+// offered to its own processor, so a kind that holds content is recognised through
+// the ordinary registry walk and no caller needs to know which kinds hold anything.
+//
+// Nothing is cached: the bytes are on disk and the block is a live reference to
+// them, so a cached copy would extract content the file no longer has.
+func MaterialiseEntries(uuid string, entries []ContentEntry) []ContentEntry {
+	var held []ContentEntry
+	for _, e := range entries {
+		kind, attrs, ok := e.SieveAttrs()
+		if !ok {
+			continue
+		}
+		m, isMaterialiser := GetProcessor(kind).(ContentMaterialiser)
+		if !isMaterialiser {
+			continue
+		}
+		// No id, no holder to stamp — and the survives-rule the stamp triggers is
+		// the only thing that keeps an extraction from replacing its own source.
+		holder, _ := attrs["id"].(string)
+		if holder == "" {
+			continue
+		}
+		for _, c := range m.MaterialiseContent(uuid, attrs) {
+			held = append(held, c.heldBy(holder))
+		}
+	}
+	if len(held) == 0 {
+		return entries
+	}
+	out := make([]ContentEntry, 0, len(entries)+len(held))
+	out = append(out, entries...)
+	return append(out, held...)
+}
+
 // MarkdownContenter is the optional interface a processor implements when a given
 // block's raw content can itself BE document markdown (e.g. a code block whose
 // language is markdown). Prose embedding ("Embed in Document") consults it to
@@ -587,12 +665,19 @@ func DetectExtractions(sourceKind string, entries []ContentEntry) []SupportedAct
 	// replace the parent and clobber it (defect #1, data loss). Demote every offer to
 	// additive-only when any entry carries a parentId.
 	nested := false
+	// unheld is the entry set MINUS content a source is merely holding — what an
+	// in-place TRANSFORM would still have to work from once the source it replaced
+	// (and the file that reached it) is gone.
+	unheld := make([]ContentEntry, 0, len(entries))
 	for _, e := range entries {
 		if _, ok := e.NestedParentID(); ok {
 			nested = true
-			break
+		}
+		if _, isHeld := e.HolderID(); !isHeld {
+			unheld = append(unheld, e)
 		}
 	}
+	anyHeld := len(unheld) < len(entries)
 
 	var offers []SupportedActions
 	for _, pm := range pasteMatchers {
@@ -605,12 +690,24 @@ func DetectExtractions(sourceKind string, entries []ContentEntry) []SupportedAct
 				continue
 			}
 		}
-		if sa := pm.Processor.IsSupportedContent(entries); sa.Has(ActionExtract) || sa.Has(ActionTransform) {
-			if nested {
-				sa = sa.asAdditive()
-			}
-			offers = append(offers, sa)
+		sa := pm.Processor.IsSupportedContent(entries)
+		if !sa.Has(ActionExtract) && !sa.Has(ActionTransform) {
+			continue
 		}
+		if nested {
+			sa = sa.asAdditive()
+		}
+		// An offer that stands ONLY on content the source is holding must be
+		// additive: an in-place TRANSFORM would replace the very block the content
+		// was read out of, destroying the extraction's own source. Asking the
+		// processor again without the held entries is what tells the two apart —
+		// an offer that survives that (prose embedding an attachment as a link)
+		// keeps its transform.
+		if anyHeld && sa.Has(ActionTransform) &&
+			!pm.Processor.IsSupportedContent(unheld).Has(ActionTransform) {
+			sa = sa.asAdditive()
+		}
+		offers = append(offers, sa)
 	}
 	return offers
 }

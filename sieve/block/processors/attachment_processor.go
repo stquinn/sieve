@@ -44,6 +44,13 @@ func (p *AttachmentProcessor) maxAttachmentBytes() int {
 	return p.svc.State.LoadSettings().AttachmentCeilingBytes()
 }
 
+// maxMaterialisedTextBytes caps the held file this kind will hand over as content
+// for another block to be built from. It sits FAR below MaxAttachmentBytes on
+// purpose: extracted content becomes editable ProseMirror document content, and a
+// document carrying a 25MB code block is unusable. Past this the file stays a chip,
+// which is what the kind is for.
+const maxMaterialisedTextBytes = 256 * 1024
+
 // attachmentMaxExtLen bounds the suffix a stored asset inherits from a dropped
 // filename, dot included. Long enough for the longest real one a thinking tool
 // meets (.markdown), short enough that a filename ending in a sentence with a full
@@ -568,6 +575,56 @@ func (p *AttachmentProcessor) clip(s string, n int) string {
 	return strings.TrimSpace(string([]rune(s)[:n])) + "…"
 }
 
+// MaterialiseContent hands a held file's text over as ordinary content
+// (block.ContentMaterialiser), so the kinds that RECOGNISE content can see what this
+// block is holding — a file's bytes live in the document directory and reach nobody
+// otherwise. What the text IS (code, a log, prose) is entirely theirs to say; this
+// kind only decides whether the bytes are fit to hand over at all.
+//
+// The view is text/plain and NOT the stamped mime, deliberately: that mime came from
+// the dropped filename's extension, and offering it would let a file NAME decide
+// what only its content can.
+func (p *AttachmentProcessor) MaterialiseContent(uuid string, attrs map[string]interface{}) []block.ContentEntry {
+	src, uri := p.address(attrs)
+	if src == "" || uri != "" {
+		return nil // a citation holds no bytes of its own
+	}
+	mimeType, _ := attrs["mime"].(string)
+	if !p.isPlainText(mimeType) {
+		return nil
+	}
+	// The stamped size is consulted BEFORE the read, so an oversized file is never
+	// loaded merely to be refused; the length is checked again after, because the
+	// attr is only a claim about what is on disk.
+	if n, known := p.storedBytes(attrs); !known || n > maxMaterialisedTextBytes {
+		return nil
+	}
+	if p.svc.Assets == nil {
+		return nil
+	}
+	data, err := p.svc.Assets.ServeAssetData(uuid, p.assets.filename(src))
+	if err != nil {
+		logger.Warn("attachment: held file unreadable", "uuid", uuid, "src", src, "err", err)
+		return nil
+	}
+	if len(data) > maxMaterialisedTextBytes || !utf8.Valid(data) {
+		return nil // the mime type lied, or the file grew: hand over nothing
+	}
+	return []block.ContentEntry{{MIMEType: "text/plain", Content: string(data)}}
+}
+
+// storedBytes reads the byte count stamped at ingest. It is a STRING attr (see the
+// ingest job's Apply for why), so an absent or unparseable one means "nothing is
+// known about these bytes yet" rather than a file of length zero.
+func (p *AttachmentProcessor) storedBytes(attrs map[string]interface{}) (int64, bool) {
+	raw, _ := attrs["bytes"].(string)
+	n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
+}
+
 // BuildContext contributes the same two facts for both halves of the kind — WHAT
 // this is and WHERE it lives — which is precisely why holding and pointing are
 // one block rather than two. Nothing on the prompt path branches on it, and the
@@ -639,13 +696,11 @@ func (p *AttachmentProcessor) typeLine(attrs map[string]interface{}) string {
 	return strings.Join(parts, " · ")
 }
 
-// humanSize renders the stored byte count for a reader. bytes is a string attr
-// (see the ingest job's Apply for why), so a value that will not parse renders
-// nothing rather than a lie.
+// humanSize renders the stored byte count for a reader. A size nobody has stamped
+// yet renders nothing rather than a lie.
 func (p *AttachmentProcessor) humanSize(attrs map[string]interface{}) string {
-	raw, _ := attrs["bytes"].(string)
-	n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
-	if err != nil || n < 0 {
+	n, known := p.storedBytes(attrs)
+	if !known {
 		return ""
 	}
 	const unit = 1024

@@ -763,6 +763,14 @@ func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry, 
 	return block.PasteBlock(matchKind, id, raw)
 }
 
+// DetectExtractions composes the offer set for a source in this document. It is the
+// document-scoped half of block.DetectExtractions: content a source merely HOLDS
+// lives in the document directory, so only a caller that knows the uuid can put it
+// in front of the recognisers.
+func (es *EditorService) DetectExtractions(uuid, sourceKind string, entries []block.ContentEntry) []block.SupportedActions {
+	return block.DetectExtractions(sourceKind, block.MaterialiseEntries(uuid, entries))
+}
+
 // CreateBlockFromEntries applies a recognised action. PASTE/EXTRACT create a new block;
 // TRANSFORM replaces sourceID in place (preserving its document position). The frontend
 // posted the operation — the backend does not re-derive it. For TRANSFORM, sourceID is
@@ -772,6 +780,9 @@ func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []blo
 	if processor == nil {
 		return "", "", fmt.Errorf("no processor registered for kind %q", kind)
 	}
+	// The offer being played back may have stood on content a source is holding, so
+	// the playback must see exactly what detection saw.
+	entries = block.MaterialiseEntries(uuid, entries)
 
 	if action == block.ActionTransform || action == block.ActionUndoSmartPaste {
 		return es.transformInPlace(uuid, kind, processor, entries, sourceID, action)

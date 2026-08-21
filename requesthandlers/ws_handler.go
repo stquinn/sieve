@@ -653,7 +653,7 @@ func (h *WsHandler) handleDetectExtractions(f inboundFrame) {
 		return
 	}
 	f.reply(protocol.NewDetectExtractionsResultFrame(msg.OpID,
-		block.DetectExtractions(msg.SourceKind, msg.Entries)))
+		h.ServiceProvider.Editor.DetectExtractions(f.uuid, msg.SourceKind, msg.Entries)))
 }
 
 // handleExport serves clean whole-document markdown. THIS handler owns the
