@@ -41,10 +41,7 @@ func (p *AttachmentProcessor) maxAttachmentBytes() int {
 	if p.svc.State == nil {
 		return domain.DefaultMaxAttachmentBytes
 	}
-	if configured := p.svc.State.LoadSettings().MaxAttachmentBytes; configured > 0 {
-		return configured
-	}
-	return domain.DefaultMaxAttachmentBytes
+	return p.svc.State.LoadSettings().AttachmentCeilingBytes()
 }
 
 // attachmentMaxExtLen bounds the suffix a stored asset inherits from a dropped

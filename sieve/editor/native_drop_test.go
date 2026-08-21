@@ -9,6 +9,7 @@ import (
 
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
+	"sieve/sieve/domain"
 	"sieve/sieve/services"
 	"sieve/store/filestore"
 )
@@ -86,7 +87,7 @@ func TestDroppedFile_EntryCarriesTheBytesAndTheFilename(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entry, ok := droppedFile(path).entry()
+	entry, ok := droppedFile(path).entry(domain.DefaultMaxAttachmentBytes)
 	if !ok {
 		t.Fatal("a readable regular file must produce an entry")
 	}
@@ -117,7 +118,7 @@ func TestDroppedFile_EntryTypesAnImageBothWays(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entry, ok := droppedFile(path).entry()
+	entry, ok := droppedFile(path).entry(domain.DefaultMaxAttachmentBytes)
 	if !ok {
 		t.Fatal("a readable png must produce an entry")
 	}
@@ -138,7 +139,7 @@ func TestDroppedFile_ExtensionlessFileIsTypedFromItsBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entry, ok := droppedFile(path).entry()
+	entry, ok := droppedFile(path).entry(domain.DefaultMaxAttachmentBytes)
 	if !ok {
 		t.Fatal("an extensionless file must still produce an entry")
 	}
@@ -147,16 +148,52 @@ func TestDroppedFile_ExtensionlessFileIsTypedFromItsBytes(t *testing.T) {
 	}
 }
 
+// A file too big to hold is SKIPPED WITHOUT BEING READ. The size is asked of the
+// filesystem, not of the bytes, which is what keeps a huge drop out of memory —
+// the front half of the ceiling the browser used to enforce before Go did the
+// reading. AttachmentProcessor's own check remains the backstop, so the two
+// halves must name the SAME constant.
+//
+// Both files here are SPARSE (truncate, never written), so the ceiling is
+// exercised at full size for the cost of an inode: a guard that regressed into
+// reading first would have to move 25MB to fail this.
+func TestDroppedFile_OverTheCeilingIsSkippedWithoutBeingRead(t *testing.T) {
+	sparse := func(name string, size int64) droppedFile {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), name)
+		f, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Truncate(size); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return droppedFile(path)
+	}
+
+	if _, ok := sparse("huge.pdf", domain.DefaultMaxAttachmentBytes+1).entry(domain.DefaultMaxAttachmentBytes); ok {
+		t.Error("a file over the ceiling must produce no entry")
+	}
+	// The ceiling is a >, not a >=, and this is the pair to the backstop's own
+	// boundary test: a file of exactly the limit is within it.
+	if _, ok := sparse("big.pdf", domain.DefaultMaxAttachmentBytes).entry(domain.DefaultMaxAttachmentBytes); !ok {
+		t.Error("a file of exactly the ceiling must still produce an entry")
+	}
+}
+
 // A path the drop named but the filesystem does not have is SKIPPED, not fatal:
 // the file may have been moved between the drag starting and the drop landing.
 func TestDroppedFile_UnreadablePathsProduceNoEntry(t *testing.T) {
 	dir := t.TempDir()
-	if _, ok := droppedFile(filepath.Join(dir, "gone.pdf")).entry(); ok {
+	if _, ok := droppedFile(filepath.Join(dir, "gone.pdf")).entry(domain.DefaultMaxAttachmentBytes); ok {
 		t.Error("a missing file must produce no entry")
 	}
 	// A directory is a path the OS will happily put on a drag, and reading one is
 	// not an error on every platform.
-	if _, ok := droppedFile(dir).entry(); ok {
+	if _, ok := droppedFile(dir).entry(domain.DefaultMaxAttachmentBytes); ok {
 		t.Error("a directory must produce no entry")
 	}
 }

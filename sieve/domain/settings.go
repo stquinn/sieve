@@ -69,11 +69,16 @@ const DefaultMaxAttachmentBytes = 25 * 1024 * 1024
 // setting is stored in bytes so nothing downstream has to convert, and the
 // settings panel is the one place that has to speak megabytes.
 func (s Settings) MaxAttachmentMB() int {
-	bytes := s.MaxAttachmentBytes
-	if bytes <= 0 {
-		bytes = DefaultMaxAttachmentBytes
+	return s.AttachmentCeilingBytes() / (1024 * 1024)
+}
+
+// AttachmentCeilingBytes is the attachment ceiling with the default applied —
+// the ONE normalisation point, so every consumer refuses at the same number.
+func (s Settings) AttachmentCeilingBytes() int {
+	if s.MaxAttachmentBytes <= 0 {
+		return DefaultMaxAttachmentBytes
 	}
-	return bytes / (1024 * 1024)
+	return s.MaxAttachmentBytes
 }
 
 // AISettings groups AI-subsystem settings under a nested "ai" object.

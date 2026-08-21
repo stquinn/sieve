@@ -11,6 +11,7 @@ import (
 
 	"sieve/logger"
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 )
 
 // HandleNativeDrop ingests files dragged in from the desktop, one block per file.
@@ -41,9 +42,10 @@ func (es *EditorService) HandleNativeDrop(uuid string, entries []block.ContentEn
 		index = len(shadow.SnapshotBlocks())
 	}
 
+	ceiling := es.attachmentCeiling()
 	created := 0
 	for _, f := range es.droppedFiles(entries) {
-		entry, ok := f.entry()
+		entry, ok := f.entry(ceiling)
 		if !ok {
 			continue
 		}
@@ -78,6 +80,16 @@ func (es *EditorService) droppedFiles(entries []block.ContentEntry) []droppedFil
 		}
 	}
 	return files
+}
+
+// attachmentCeiling is the live ceiling for files this drop may read — the
+// user's setting when the editor is wired with a state port, the default in
+// constructions (tests) that have none.
+func (es *EditorService) attachmentCeiling() int {
+	if es.services.State == nil {
+		return domain.DefaultMaxAttachmentBytes
+	}
+	return es.services.State.LoadSettings().AttachmentCeilingBytes()
 }
 
 // uriList is a `text/uri-list` payload as a desktop file drag delivers it: one
@@ -127,14 +139,22 @@ type droppedFile string
 // called — so AttachmentProcessor.droppedFile refuses an entry it cannot name,
 // and the chip would have nothing to label itself with.
 //
-// There is deliberately no size ceiling here: AttachmentProcessor owns the one
-// ceiling a held file meets, and a second number here would be a second policy
-// to keep in step with it.
-func (f droppedFile) entry() (block.ContentEntry, bool) {
+// The size is asked BEFORE the bytes are, and that ordering is the point: this
+// is the front half of the ceiling the browser used to enforce — keeping a file
+// too big to hold out of memory entirely — and AttachmentProcessor's own check
+// stays the backstop that does not trust a client. The ceiling is the user's
+// setting (#84), normalised in ONE place (Settings.AttachmentCeilingBytes) so
+// both halves refuse at the same number.
+func (f droppedFile) entry(ceiling int) (block.ContentEntry, bool) {
 	path := string(f)
 	info, err := os.Stat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		logger.Warn("native-drop: not a readable file", "path", path, "err", err)
+		return block.ContentEntry{}, false
+	}
+	if info.Size() > int64(ceiling) {
+		logger.Warn("native-drop: file over the attachment ceiling — not read",
+			"path", path, "bytes", info.Size(), "limit", ceiling)
 		return block.ContentEntry{}, false
 	}
 	data, err := os.ReadFile(path)
