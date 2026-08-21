@@ -25,7 +25,11 @@ type PendingDropSource interface {
 }
 
 // pendingDropWait bounds how long a redeem waits for GTK's half of the gesture.
-const pendingDropWait = 2 * time.Second
+// The callback, when it fires at all, lands within milliseconds of the DOM's
+// frame (they are one gesture); the wait only ever runs its full length for
+// sources GTK cannot see (VSCode), where the page hint takes over — so this is
+// the LAG such drops feel, and it stays short.
+const pendingDropWait = 500 * time.Millisecond
 
 // SetPendingDrops registers the native drop bucket. Nil means a frame with no
 // readable entries redeems nothing, which is what tests and non-desktop builds
@@ -50,17 +54,25 @@ func (es *EditorService) SetPendingDrops(s PendingDropSource) {
 // SECURITY: the bucket is fed ONLY by the native drop callback, so the files
 // read here are exactly the files the user just dropped — no path ever crosses
 // the wire.
-func (es *EditorService) HandleNativeDrop(uuid string, index int) block.PasteResult {
+func (es *EditorService) HandleNativeDrop(uuid string, entries []block.ContentEntry, index int) block.PasteResult {
 	es.mu.RLock()
 	bucket := es.pendingDrops
 	es.mu.RUnlock()
-	if bucket == nil {
-		logger.Warn("native files: no drop bucket wired — drop dropped")
-		return block.PasteNothing()
-	}
+
 	var files []droppedFile
-	for _, p := range bucket.TakeDrop(pendingDropWait) {
-		files = append(files, droppedFile(p))
+	if bucket != nil {
+		for _, p := range bucket.TakeDrop(pendingDropWait) {
+			files = append(files, droppedFile(p))
+		}
+	}
+	// BUCKET FIRST, page hint second: some source apps (VSCode) never offer a
+	// file URI at ANY layer — GTK included, so OnFileDrop cannot catch them — and
+	// put the bare path on plain text instead. When the native side missed the
+	// drop, whatever text the page could read is the only address there is.
+	// os.Stat is the validator: text naming no real file ingests nothing.
+	if len(files) == 0 {
+		files = pageHint(entries).files()
+		logger.Info("native drop: bucket empty, using page hint", "entries", len(entries), "files", len(files))
 	}
 	return es.ingestFiles(uuid, files, index)
 }
@@ -105,6 +117,30 @@ func (es *EditorService) ingestFiles(uuid string, files []droppedFile, index int
 	// be consumed against, so none is named; the outcome alone says the server
 	// took the drop.
 	return block.PasteBlock("", "", "")
+}
+
+// pageHint is what the page could read of a drop the native side missed: a
+// text/uri-list, or plain text carrying bare absolute paths (VSCode's dialect).
+type pageHint []block.ContentEntry
+
+// files reports the local paths the hint names. Bare `/abs/path` lines are
+// accepted alongside file: URIs — a path is only ever ingested after os.Stat
+// says it is a real regular file, so loose text costs nothing.
+func (h pageHint) files() []droppedFile {
+	var out []droppedFile
+	for _, e := range h {
+		for _, line := range strings.Split(e.Content, "\n") {
+			line = strings.TrimSpace(line)
+			switch {
+			case line == "" || strings.HasPrefix(line, "#"):
+			case strings.HasPrefix(line, "/"):
+				out = append(out, droppedFile(line))
+			default:
+				out = append(out, uriList(line).files()...)
+			}
+		}
+	}
+	return out
 }
 
 // attachmentCeiling is the live ceiling for files a native gesture may read —

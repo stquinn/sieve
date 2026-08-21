@@ -1221,9 +1221,25 @@ export class WysiwygSurface extends AbstractSurface {
 
     const ds = this.#host.documentService
     if (!ds) return true // disconnected editor: drop (socketless parity)
-    // The frame carries ONLY the index: "there was a drop at this position and I
-    // could read none of it — take it from the native drop bucket".
-    ds.nativeDropPaste(this.#uuid, { index: peek.index })
+    // The frame means "there was a drop at this position — take it from the
+    // native drop bucket", plus whatever text the page could read as a HINT: some
+    // source apps (VSCode) never offer a file URI at any layer, GTK included, so
+    // the bucket misses them and a bare path on text/plain is the only address
+    // there is. Go consults the hint ONLY when the bucket is empty.
+    const hint = []
+    for (const flavour of ['text/uri-list', 'text/plain']) {
+      const v = event.dataTransfer.getData(flavour)
+      if (v) hint.push({ mimeType: flavour, content: v })
+    }
+    // WebKitGTK starves getData for EVERY flavour — but PM parsed the drop into
+    // `slice` through WebKit's INTERNAL channel (which is how path-as-text ever
+    // got inserted at all), so the slice's text is the one readable view of a
+    // VSCode-style drop the platform allows.
+    if (hint.length === 0 && slice && slice.content && slice.content.size) {
+      const text = slice.content.textBetween(0, slice.content.size, '\n', '\n').trim()
+      if (text) hint.push({ mimeType: 'text/plain', content: text })
+    }
+    ds.nativeDropPaste(this.#uuid, { entries: hint, index: peek.index })
       .then((result) => this.#applyPasteResult(result, { anchor: peek.anchor, at: insertPos }))
       .catch((err) => { console.error('[wysiwyg-surface] native file drop failed', err) })
     return true

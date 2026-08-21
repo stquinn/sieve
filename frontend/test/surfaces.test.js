@@ -1010,28 +1010,31 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     return { ed, handled: props.handleDrop({}, event, null, false), event }
   }
 
-  it('an external drop PEEKS insertIndexAt(dropPos) and redeems by INDEX ALONE', async () => {
+  it('an external drop PEEKS insertIndexAt(dropPos), redeems the bucket with what it read as the hint', async () => {
     const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
-    const { handled, event } = dropUriList(host, 'file:///home/u/swagger.yml\r\n', { outcome: 'block' })
+    const list = 'file:///home/u/swagger.yml\r\n'
+    const { handled, event } = dropUriList(host, list, { outcome: 'block' })
     expect(handled).toBe(true)
     expect(host.peekInsertIndexAt).toHaveBeenCalledWith(12)
     expect(host.insertIndexForBlockAt).not.toHaveBeenCalled() // no EAGER consume on drop
     // Without this PM inserts the file:/// path as text — the whole #86 symptom.
     expect(event.preventDefault).toHaveBeenCalled()
     await new Promise((r) => setTimeout(r, 0))
-    // ONLY the index rides the frame: no entries, no paths, nothing of the page's
-    // view of the drop. Go takes the paths from the native bucket.
-    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', { index: 9 })
+    // The bucket is the source; readable text rides only as the bucket-miss hint.
+    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', {
+      entries: [{ mimeType: 'text/uri-list', content: list }],
+      index: 9,
+    })
     expect(host.documentService.smartPaste).not.toHaveBeenCalled()
   })
 
-  it('a drop whose DataTransfer is COMPLETELY unreadable redeems identically', async () => {
+  it('a drop whose DataTransfer is COMPLETELY unreadable redeems with an empty hint', async () => {
     const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
     const { handled, event } = dropUriList(host, '', { outcome: 'block' })
     expect(handled).toBe(true)
     expect(event.preventDefault).toHaveBeenCalled()
     await new Promise((r) => setTimeout(r, 0))
-    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', { index: 9 })
+    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', { entries: [], index: 9 })
   })
 
   it('an internal PM drag (moved, or view.dragging) is never claimed', () => {
@@ -1045,19 +1048,26 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
   })
 
   // THE TRAP that shipped path-as-text: PM parses an external drop's text into a
-  // slice too, so a non-null slice must NOT read as "internal".
-  it('an external drop PM managed to parse into a slice is still claimed', async () => {
+  // slice too, so a non-null slice must NOT read as "internal" — and that slice
+  // is ALSO the one readable view of a VSCode-style drop (WebKitGTK starves
+  // getData for every flavour; PM got the text through WebKit's internal
+  // channel), so its text rides the frame as the page hint.
+  it('an external drop only the SLICE could read → claimed, slice text is the hint', async () => {
     const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
     host.documentService.nativeDropPaste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
     const { ed, props } = mountPaste(host, 'doc-1')
     ed.view.posAtCoords = () => ({ pos: 12 })
     ed.view.dragging = null
     ed.state.selection = { to: 0 }
+    const slice = { content: { size: 30, textBetween: () => '/home/u/dragged/handler.go' } }
     const event = { dataTransfer: { types: ['text/plain'], getData: () => '', items: [] }, clientX: 1, clientY: 1, preventDefault: vi.fn() }
-    expect(props.handleDrop({}, event, { content: ['file:///path parsed as text'] }, false)).toBe(true)
+    expect(props.handleDrop({}, event, slice, false)).toBe(true)
     expect(event.preventDefault).toHaveBeenCalled()
     await new Promise((r) => setTimeout(r, 0))
-    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', { index: 9 })
+    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', {
+      entries: [{ mimeType: 'text/plain', content: '/home/u/dragged/handler.go' }],
+      index: 9,
+    })
   })
 
   it('a drop into a prompt pseudo-document is left to PM (no block tree to create into)', () => {

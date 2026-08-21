@@ -314,17 +314,18 @@ export class DocumentService {
   /**
    * Tell Go a file drop LANDED at `payload.index` and to take it from the native
    * drop bucket — the OS-level catch (Wails OnFileDrop) that sees every source
-   * app identically. The frame carries ONLY the index: the page's view of a drop
-   * is never consulted (#86), so no entries, no paths, nothing to size-check.
-   * Answers the same `PasteResult` union `smartPaste` does; a drop the bucket
-   * cannot answer resolves `none`.
-   * @param {string} uuid @param {{index: number}} payload
+   * app identically. `payload.entries` is the page's readable text, a HINT Go
+   * consults only when the bucket misses (VSCode-style sources never offer a
+   * file URI at any layer). Answers the same `PasteResult` union `smartPaste`
+   * does; a drop neither the bucket nor the hint can answer resolves `none`.
+   * @param {string} uuid @param {{entries: object[], index: number}} payload
    * @returns {Promise<{outcome?: string, kind?: string, id?: string, rawYaml?: string, html?: string, error?: string}>}
    */
   nativeDropPaste(uuid, payload) {
     return this.#blockService._awaitReply(uuid, {
       type: DocumentFrame.PASTE,
       kind: 'native-drop',
+      entries: payload.entries,
       index: payload.index,
     }, 'paste native-drop', PASTE_ACK_TIMEOUT_MS)
   }

@@ -266,7 +266,7 @@ func TestHandleNativeDrop_OneBlockPerFileInDragOrder(t *testing.T) {
 		writeDropped(t, "second.pdf", "%PDF-1.4 second"),
 	)})
 
-	res := es.HandleNativeDrop(uuid, 0)
+	res := es.HandleNativeDrop(uuid, nil, 0)
 	if !res.IsBlock() {
 		t.Fatalf("a drop that created blocks must report the block outcome, got %q", res.Outcome)
 	}
@@ -295,12 +295,12 @@ func TestHandleNativeDrop_OneBlockPerFileInDragOrder(t *testing.T) {
 func TestHandleNativeDrop_NegativeIndexAppends(t *testing.T) {
 	es, uuid := newDropEditor(t)
 	es.SetPendingDrops(&fakeDropBucket{paths: dropPaths(writeDropped(t, "first.yml", "openapi: 3.0.0"))})
-	if res := es.HandleNativeDrop(uuid, 0); !res.IsBlock() {
+	if res := es.HandleNativeDrop(uuid, nil, 0); !res.IsBlock() {
 		t.Fatalf("setup drop failed: %q", res.Outcome)
 	}
 
 	es.SetPendingDrops(&fakeDropBucket{paths: dropPaths(writeDropped(t, "second.yml", "openapi: 3.1.0"))})
-	if res := es.HandleNativeDrop(uuid, -1); !res.IsBlock() {
+	if res := es.HandleNativeDrop(uuid, nil, -1); !res.IsBlock() {
 		t.Fatalf("append drop failed: %q", res.Outcome)
 	}
 
@@ -321,7 +321,7 @@ func TestHandleNativeDrop_SkipsUnreadableFiles(t *testing.T) {
 		dropPaths(writeDropped(t, "here.yml", "openapi: 3.0.0"))...,
 	)})
 
-	if res := es.HandleNativeDrop(uuid, 0); !res.IsBlock() {
+	if res := es.HandleNativeDrop(uuid, nil, 0); !res.IsBlock() {
 		t.Fatalf("the readable file must still land, got %q", res.Outcome)
 	}
 	blocks := es.shadows[uuid].SnapshotBlocks()
@@ -346,7 +346,7 @@ func TestHandleNativeDrop_NothingRedeemableIsNothing(t *testing.T) {
 	for name, bucket := range cases {
 		t.Run(name, func(t *testing.T) {
 			es.SetPendingDrops(bucket)
-			if res := es.HandleNativeDrop(uuid, 0); res.Outcome != block.OutcomeNothing {
+			if res := es.HandleNativeDrop(uuid, nil, 0); res.Outcome != block.OutcomeNothing {
 				t.Errorf("outcome = %q, want nothing", res.Outcome)
 			}
 		})
@@ -361,7 +361,55 @@ func TestHandleNativeDrop_NothingRedeemableIsNothing(t *testing.T) {
 func TestHandleNativeDrop_UnopenedDocumentIsNothing(t *testing.T) {
 	es, _ := newDropEditor(t)
 	es.SetPendingDrops(&fakeDropBucket{paths: dropPaths(writeDropped(t, "a.yml", "x: 1"))})
-	if res := es.HandleNativeDrop("no-such-uuid", 0); res.Outcome != block.OutcomeNothing {
+	if res := es.HandleNativeDrop("no-such-uuid", nil, 0); res.Outcome != block.OutcomeNothing {
 		t.Errorf("outcome = %q, want nothing", res.Outcome)
+	}
+}
+
+
+// The page hint: consulted ONLY on a bucket miss — VSCode-style sources never
+// offer a file URI at any layer, so the bare path the page read is the only
+// address there is. Stat validates; loose text ingests nothing.
+func TestHandleNativeDrop_BucketMissUsesThePageHint(t *testing.T) {
+	es, uuid := newDropEditor(t)
+	es.SetPendingDrops(&fakeDropBucket{})
+	path := strings.TrimPrefix(writeDropped(t, "handler.go", "package x\n"), "file://")
+
+	res := es.HandleNativeDrop(uuid, []block.ContentEntry{
+		{MIMEType: "text/plain", Content: path + "\n"},
+	}, 0)
+	if res.Outcome != block.OutcomeBlock {
+		t.Fatalf("outcome = %q, want block", res.Outcome)
+	}
+}
+
+func TestHandleNativeDrop_BucketWinsOverTheHint(t *testing.T) {
+	es, uuid := newDropEditor(t)
+	real := strings.TrimPrefix(writeDropped(t, "from-bucket.txt", "bucket\n"), "file://")
+	decoy := strings.TrimPrefix(writeDropped(t, "from-hint.txt", "hint\n"), "file://")
+	es.SetPendingDrops(&fakeDropBucket{paths: []string{real}})
+
+	if res := es.HandleNativeDrop(uuid, []block.ContentEntry{
+		{MIMEType: "text/plain", Content: decoy + "\n"},
+	}, 0); !res.IsBlock() {
+		t.Fatalf("want block, got %q", res.Outcome)
+	}
+	blocks := es.shadows[uuid].SnapshotBlocks()
+	if len(blocks) != 1 {
+		t.Fatalf("want ONE block (the bucket's), got %d", len(blocks))
+	}
+	if title, _ := blocks[0].Attrs["title"].(string); title != "from-bucket.txt" {
+		t.Errorf("title = %q, want from-bucket.txt (bucket first)", title)
+	}
+}
+
+func TestHandleNativeDrop_LooseHintTextIngestsNothing(t *testing.T) {
+	es, uuid := newDropEditor(t)
+	es.SetPendingDrops(&fakeDropBucket{})
+	res := es.HandleNativeDrop(uuid, []block.ContentEntry{
+		{MIMEType: "text/plain", Content: "/no/such/file at all\nplain prose\n"},
+	}, 0)
+	if res.Outcome != block.OutcomeNothing {
+		t.Fatalf("outcome = %q, want nothing", res.Outcome)
 	}
 }

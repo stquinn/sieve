@@ -622,7 +622,7 @@ func (h *WsHandler) handlePaste(f inboundFrame) {
 		// bytes off disk. See PasteKindNativeDrop for why that capability is on this
 		// wire at all, and allowOrigin for what keeps it off a foreign page's.
 		f.reply(protocol.NewPasteAckFrame(msg.OpID,
-			h.ServiceProvider.Editor.HandleNativeDrop(f.uuid, msg.Index)))
+			h.ServiceProvider.Editor.HandleNativeDrop(f.uuid, msg.Entries, msg.Index)))
 		return
 	}
 
