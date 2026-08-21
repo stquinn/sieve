@@ -168,21 +168,9 @@ func (fs *FileStore) CreateOrLoadFolder(category store.Category, name string) (s
 	}
 	name = strings.TrimPrefix(name, category.Key+"/")
 	logger.Debug("CreateOrLoadFolder: %s, %s", category, name)
-	dir := fs.docDir(category, name)
 
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, fmt.Errorf("filestore: create folder %s: %w", name, err)
-		}
-		mp := filepath.Join(dir, ".meta")
-		if _, statErr := os.Stat(mp); os.IsNotExist(statErr) {
-			fm := &folderMeta{
-				UUID:    newUUID(),
-				Type:    "folder",
-				Created: time.Now().Format("2006-01-02T15:04:05"),
-			}
-			_ = writeFolderMetaToPath(mp, fm)
-		}
+	if err := fs.ensureFolderChain(category, name); err != nil {
+		return nil, err
 	}
 
 	folder, err := fs.scanFolder(category, name)
@@ -191,6 +179,45 @@ func (fs *FileStore) CreateOrLoadFolder(category store.Category, name string) (s
 	}
 	fs.indexSet(folder.Key(), folder)
 	return folder, nil
+}
+
+// ensureFolderChain makes every segment of name a real Sieve folder node.
+// os.MkdirAll happily creates missing ancestors for a multi-segment path, but
+// a directory without a .meta is invisible to both scanners — so each
+// ancestor needs its own .meta, not just the leaf.
+func (fs *FileStore) ensureFolderChain(category store.Category, name string) error {
+	built := ""
+	for _, seg := range strings.Split(name, "/") {
+		if built == "" {
+			built = seg
+		} else {
+			built = built + "/" + seg
+		}
+		if err := fs.ensureFolderMeta(category, built); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureFolderMeta guarantees a folder directory and its .meta exist at key.
+// An existing .meta is left untouched so a repeat call over an already-real
+// ancestor loads it instead of minting a new UUID for it.
+func (fs *FileStore) ensureFolderMeta(category store.Category, key string) error {
+	dir := fs.docDir(category, key)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("filestore: create folder %s: %w", key, err)
+	}
+	mp := filepath.Join(dir, ".meta")
+	if _, err := os.Stat(mp); err == nil {
+		return nil
+	}
+	fm := &folderMeta{
+		UUID:    newUUID(),
+		Type:    "folder",
+		Created: time.Now().Format("2006-01-02T15:04:05"),
+	}
+	return writeFolderMetaToPath(mp, fm)
 }
 
 func (fs *FileStore) LoadFolder(category store.Category, name string) (store.FolderStorable, error) {

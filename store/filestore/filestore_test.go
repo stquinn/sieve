@@ -576,6 +576,100 @@ func TestRenameFolderContainingANote(t *testing.T) {
 	}
 }
 
+// CreateOrLoadFolder("parent/child") must make every ancestor a real Sieve
+// node: os.MkdirAll silently creates intermediate directories, and a
+// directory without a .meta is invisible to both scanners (#72).
+func TestCreateOrLoadFolderNestedPathIsFullyVisible(t *testing.T) {
+	fs := newTestStore(t)
+
+	folder, err := fs.CreateOrLoadFolder(testLibrary, "parent/child")
+	if err != nil {
+		t.Fatalf("CreateOrLoadFolder: %v", err)
+	}
+	note := mustCreate(t, fs, testLibrary, "a-note", nil)
+	if _, err := fs.Reparent(note, folder); err != nil {
+		t.Fatalf("Reparent: %v", err)
+	}
+
+	items, err := fs.List(testLibrary, "")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var parent store.FolderStorable
+	for _, item := range items {
+		if f, ok := item.(store.FolderStorable); ok && f.Name() == "parent" {
+			parent = f
+		}
+	}
+	if parent == nil {
+		t.Fatalf("List root items = %v, want \"parent\" folder among them", items)
+	}
+
+	children := parent.Owns()
+	if len(children) != 1 {
+		t.Fatalf("parent owns %d children, want 1 (child folder)", len(children))
+	}
+	child, ok := children[0].(store.FolderStorable)
+	if !ok || child.Name() != "child" {
+		t.Fatalf("parent's child = %+v, want folder named \"child\"", children[0])
+	}
+	if len(child.Owns()) != 1 {
+		t.Fatalf("child owns %d items, want 1 (the reparented note)", len(child.Owns()))
+	}
+}
+
+// A repeat CreateOrLoadFolder over an existing ancestor must load, not
+// re-identify — the .meta UUID minted for "parent" the first time round must
+// survive a second call that walks through it.
+func TestCreateOrLoadFolderNestedPathIsIdempotent(t *testing.T) {
+	fs := newTestStore(t)
+
+	if _, err := fs.CreateOrLoadFolder(testLibrary, "parent/child"); err != nil {
+		t.Fatalf("CreateOrLoadFolder(parent/child) #1: %v", err)
+	}
+	items, err := fs.List(testLibrary, "")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var parentBefore store.FolderStorable
+	for _, item := range items {
+		if f, ok := item.(store.FolderStorable); ok && f.Name() == "parent" {
+			parentBefore = f
+		}
+	}
+	if parentBefore == nil {
+		t.Fatalf("List root items = %v, want \"parent\" folder among them", items)
+	}
+	parentUUIDBefore := parentBefore.Key()
+	if parentUUIDBefore == "" {
+		t.Fatal("parent folder key must not be empty")
+	}
+
+	if _, err := fs.CreateOrLoadFolder(testLibrary, "parent/other"); err != nil {
+		t.Fatalf("CreateOrLoadFolder(parent/other) #2: %v", err)
+	}
+
+	items, err = fs.List(testLibrary, "")
+	if err != nil {
+		t.Fatalf("List after second call: %v", err)
+	}
+	var parentAfter store.FolderStorable
+	for _, item := range items {
+		if f, ok := item.(store.FolderStorable); ok && f.Name() == "parent" {
+			parentAfter = f
+		}
+	}
+	if parentAfter == nil {
+		t.Fatal("\"parent\" folder missing from List after second CreateOrLoadFolder call")
+	}
+	if parentAfter.Key() != parentUUIDBefore {
+		t.Errorf("parent folder key changed from %q to %q — ancestor was re-identified instead of loaded", parentUUIDBefore, parentAfter.Key())
+	}
+	if len(parentAfter.Owns()) != 2 {
+		t.Fatalf("parent owns %d children, want 2 (child, other)", len(parentAfter.Owns()))
+	}
+}
+
 // ── RetrieveVersion ───────────────────────────────────────────────────────────
 
 func TestRetrieveVersionRoundTrip(t *testing.T) {

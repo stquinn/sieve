@@ -113,15 +113,8 @@ func (fs *FileStore) migrateCategory(cat store.Category) error {
 		}
 		subDir := filepath.Join(catDir, e.Name())
 
-		// Ensure sub-folder has a .meta file.
-		subMetaPath := filepath.Join(subDir, ".meta")
-		if _, err := os.Stat(subMetaPath); os.IsNotExist(err) {
-			fm := &folderMeta{
-				UUID:    newUUID(),
-				Type:    "folder",
-				Created: time.Now().Format("2006-01-02T15:04:05"),
-			}
-			_ = writeFolderMetaToPath(subMetaPath, fm)
+		if err := fs.ensureFolderMeta(cat, e.Name()); err != nil {
+			logger.Error("filestore: migrate ensure folder meta %s: %v", e.Name(), err)
 		}
 
 		subMatches, _ := filepath.Glob(filepath.Join(subDir, "*.md"))
