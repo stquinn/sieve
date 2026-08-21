@@ -1124,8 +1124,12 @@ export class WysiwygSurface extends AbstractSurface {
     if (!event.dataTransfer || !this.#editorPane) return false
     // The prompt pseudo-document is a plain file with no block tree to create into.
     if (!this.#uuid || this.#uuid.startsWith('prompt:')) return false
-    const uriList = WysiwygSurface.#desktopFileDrag(event.dataTransfer)
-    if (uriList === null) return false
+    // The claim must be SYNCHRONOUS (preventDefault only works inside the handler),
+    // but on WebKitGTK the list's CONTENT is not: getData('text/uri-list') answers
+    // '' on a real drag even while `types` advertises the flavour and a string item
+    // carries it (#86 — same platform pathology as the empty clipboard, #87). So
+    // the claim reads `types` and the content is read async via the items API.
+    if (!WysiwygSurface.#carriesUriList(event.dataTransfer)) return false
 
     const coords = this.#editorPane.view.posAtCoords({ left: event.clientX, top: event.clientY })
     const insertPos = coords ? coords.pos : this.#editorPane.state.selection.to
@@ -1133,48 +1137,102 @@ export class WysiwygSurface extends AbstractSurface {
     // still has answers `none`, and the caret's empty paragraph must survive that.
     const peek = this.#host.peekInsertIndexAt(insertPos)
 
+    // getAsString callbacks only register while the DataTransfer is live — start
+    // the read BEFORE the handler returns.
+    const listRead = WysiwygSurface.#readUriList(event.dataTransfer)
+
     // Claim the drop BEFORE the round trip. Without this PM inserts the `file:///…`
     // path as text, which is the whole reported symptom.
     event.preventDefault()
 
     const ds = this.#host.documentService
     if (!ds) return true // disconnected editor: drop (socketless parity)
-    ds.nativeDropPaste(this.#uuid, {
-      entries: [{ mimeType: 'text/uri-list', content: uriList }],
-      index: peek.index,
+    const pane = this.#editorPane
+    listRead.then((uriList) => {
+      if (uriList !== null && WysiwygSurface.#namesAFile(uriList)) {
+        ds.nativeDropPaste(this.#uuid, {
+          entries: [{ mimeType: 'text/uri-list', content: uriList }],
+          index: peek.index,
+        })
+          // A drop carries its own coordinate, so Go's block lands at the DROP
+          // position rather than the caret (the caret is wherever the user last
+          // typed). No `replay`: a drop's payload is not a clipboard, so `none`
+          // has nothing to put back.
+          .then((result) => this.#applyPasteResult(result, { anchor: peek.anchor, at: insertPos }))
+          .catch((err) => { console.error('[wysiwyg-surface] native file drop failed', err) })
+        return
+      }
+      // A dragged LINK rides the same flavour, and by the time that is knowable the
+      // drop is already claimed — so the old outcome is replayed by hand: the URIs
+      // land as text where PM would have put them. Comments and blanks (RFC 2483)
+      // name nothing and are not content.
+      const replay = uriList === null ? '' : uriList.split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line !== '' && !line.startsWith('#'))
+        .join('\n')
+      if (replay !== '') {
+        pane.commands.insertContentAt(insertPos, replay)
+        return
+      }
+      console.warn('[wysiwyg-surface] uri-list drop with unreadable content — dropped', {
+        types: Array.from(event.dataTransfer.types || []).join(','),
+      })
     })
-      // A drop carries its own coordinate, so Go's block lands at the DROP position
-      // rather than the caret (the caret is wherever the user last typed). No
-      // `replay`: a drop's payload is not a clipboard, so `none` has nothing to put
-      // back.
-      .then((result) => this.#applyPasteResult(result, { anchor: peek.anchor, at: insertPos }))
-      .catch((err) => { console.error('[wysiwyg-surface] native file drop failed', err) })
     return true
   }
 
   /**
-   * The `text/uri-list` of a drag that came from the DESKTOP, or null when this
-   * drop is not one.
-   *
-   * The test is the URI SCHEME, not the flavour: a link dragged out of a browser
-   * puts its http URL on this same `text/uri-list`, and that is content to paste
-   * rather than a file to read. `dataTransfer.files` and `kind: 'file'` items are
-   * deliberately NOT consulted — WebKitGTK leaves both empty for a file-manager
-   * drag (#86), so a branch reading them would only ever fire on some other
-   * platform and would send bytes down a wire that expects paths.
+   * Whether this drop advertises a `text/uri-list` — the SYNCHRONOUS claim test.
+   * `dataTransfer.files` and `kind: 'file'` items are deliberately NOT consulted:
+   * WebKitGTK leaves both empty for a file-manager drag (#86), so a branch reading
+   * them would only ever fire on some other platform and would send bytes down a
+   * wire that expects paths.
    * @param {DataTransfer} dataTransfer
-   * @returns {string|null}
+   * @returns {boolean}
    */
-  static #desktopFileDrag(dataTransfer) {
-    const list = dataTransfer.getData('text/uri-list')
-    if (!list) return null
-    // Blank lines and `#` comments are legal in the format (RFC 2483 §5) and name
-    // nothing.
-    const namesAFile = list.split('\n').some((line) => {
+  static #carriesUriList(dataTransfer) {
+    return Array.from(dataTransfer.types || []).includes('text/uri-list')
+  }
+
+  /**
+   * The `text/uri-list` content of this drop, read the way WebKitGTK can answer:
+   * synchronous `getData` when the platform backs it (Blink, tests), else the
+   * async items API. Resolves null when neither yields content — a claimed drop
+   * with an unreadable list, which the caller logs and drops.
+   * @param {DataTransfer} dataTransfer
+   * @returns {Promise<string|null>}
+   */
+  static #readUriList(dataTransfer) {
+    const sync = dataTransfer.getData('text/uri-list')
+    if (sync) return Promise.resolve(sync)
+    const item = Array.from(dataTransfer.items || []).find(
+      (i) => i.kind === 'string' && i.type === 'text/uri-list'
+    )
+    if (!item) return Promise.resolve(null)
+    return new Promise((resolve) => {
+      // getAsString's callback is at the platform's mercy; a drop must never wedge
+      // the editor waiting on it.
+      const guard = setTimeout(() => resolve(null), 1500)
+      item.getAsString((str) => {
+        clearTimeout(guard)
+        resolve(str || null)
+      })
+    })
+  }
+
+  /**
+   * Whether a `text/uri-list` names at least one LOCAL file. The test is the URI
+   * SCHEME: a link dragged out of a browser puts its http URL on this same
+   * flavour, and that is content to paste rather than a file to read. Blank lines
+   * and `#` comments are legal in the format (RFC 2483 §5) and name nothing.
+   * @param {string} list
+   * @returns {boolean}
+   */
+  static #namesAFile(list) {
+    return list.split('\n').some((line) => {
       const uri = line.trim()
       return uri !== '' && !uri.startsWith('#') && uri.toLowerCase().startsWith('file:')
     })
-    return namesAFile ? list : null
   }
 
   // ── Selection feed (P3.A: the SelectionModel raw source) ───────────────────────

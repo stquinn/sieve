@@ -857,9 +857,15 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
   // desktop file drag, that the uri-list is forwarded verbatim, and that the
   // union is read exactly as the paste path reads it.
 
-  // dt builds the DataTransfer shape the handler actually consults: getData alone.
-  function dt(uriList = '') {
-    return { getData: (mime) => (mime === 'text/uri-list' ? uriList : '') }
+  // dt builds the DataTransfer shape the handler consults: `types` decides the
+  // CLAIM synchronously; content arrives via getData where the platform backs it,
+  // else via the async items API (the WebKitGTK case, #86).
+  function dt(uriList = '', opts = {}) {
+    return {
+      types: uriList !== '' ? ['text/uri-list', 'text/html'] : ['text/plain'],
+      getData: (mime) => (mime === 'text/uri-list' && !opts.emptyGetData ? uriList : ''),
+      items: opts.items || [],
+    }
   }
 
   function dropUriList(host, uriList, result) {
@@ -902,23 +908,60 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     }))
   })
 
-  // A drop this surface does not claim is ProseMirror's to handle natively. The
-  // scheme is what decides — a dragged link arrives on the SAME uri-list flavour.
-  describe('handleSmartDrop leaves everything that is not a desktop file drag alone', () => {
-    const cases = {
-      'a dragged link (http, not file)': 'https://example.com/page\r\n',
-      'a dragged selection of text (no uri-list at all)': '',
-      'a comment-only uri-list': '# nothing here\r\n',
+  // The CLAIM is by flavour (`types`), because content is not synchronously
+  // readable on WebKitGTK — so everything advertising a uri-list is claimed, and
+  // what is not a file is replayed as text after the async read.
+  it('a dragged link (http, not file) → claimed, replayed as text at the drop position, nothing sent', async () => {
+    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
+    const { ed, handled, event } = dropUriList(host, 'https://example.com/page\r\n')
+    expect(handled).toBe(true)
+    expect(event.preventDefault).toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
+    expect(ed.commands.insertContentAt).toHaveBeenCalledWith(12, 'https://example.com/page')
+  })
+
+  it('a dragged selection of text (no uri-list at all) → returns false, nothing sent, nothing prevented', () => {
+    const host = wyHost()
+    const { handled, event } = dropUriList(host, '')
+    expect(handled).toBe(false)
+    expect(event.preventDefault).not.toHaveBeenCalled()
+    expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
+  })
+
+  it('a comment-only uri-list → claimed but nothing sent and nothing inserted', async () => {
+    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
+    const { ed, handled } = dropUriList(host, '# nothing here\r\n')
+    expect(handled).toBe(true)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
+    expect(ed.commands.insertContentAt).not.toHaveBeenCalled()
+  })
+
+  // THE #86 REGRESSION: on a real WebKitGTK drag, getData('text/uri-list') answers
+  // '' while `types` advertises the flavour and a string ITEM carries the list.
+  // The claim must not depend on getData, and the content must come off the item.
+  it('WebKitGTK-shaped drop (getData empty, async string item) still reaches Go', async () => {
+    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
+    host.documentService.nativeDropPaste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
+    const { ed, props } = mountPaste(host, 'doc-1')
+    ed.view.posAtCoords = () => ({ pos: 12 })
+    ed.state.selection = { to: 0 }
+    const list = 'file:///home/u/swagger.yml\r\n'
+    const event = {
+      dataTransfer: dt(list, {
+        emptyGetData: true,
+        items: [{ kind: 'string', type: 'text/uri-list', getAsString: (cb) => cb(list) }],
+      }),
+      clientX: 1, clientY: 1, preventDefault: vi.fn(),
     }
-    for (const [name, list] of Object.entries(cases)) {
-      it(name + ' → returns false, nothing sent, nothing prevented', () => {
-        const host = wyHost()
-        const { handled, event } = dropUriList(host, list)
-        expect(handled).toBe(false)
-        expect(event.preventDefault).not.toHaveBeenCalled()
-        expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
-      })
-    }
+    expect(props.handleDrop({}, event, null, false)).toBe(true)
+    expect(event.preventDefault).toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', {
+      entries: [{ mimeType: 'text/uri-list', content: list }],
+      index: 9,
+    })
   })
 
   it('a drop into a prompt pseudo-document is left to PM (no block tree to create into)', () => {

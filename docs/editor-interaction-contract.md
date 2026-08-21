@@ -359,16 +359,20 @@ URL and every processor declines — zero offers, silently.
 
 ## Drop matrix (revised 2026-08-21, #86)
 
-A drop is recognised by the URI SCHEME on its `text/uri-list`, never by
-`dataTransfer.files` or `kind: 'file'` items: WebKitGTK leaves both empty for a
-file-manager drag and hands the page nothing but a `file:///…` string, so a
-handler reading them can only ever fire on some other platform.
+A drop is CLAIMED by flavour — `dataTransfer.types` advertising `text/uri-list`
+— and ROUTED by URI scheme after an async read. Two platform facts force that
+split: WebKitGTK leaves `dataTransfer.files` and `kind: 'file'` items empty for
+a file-manager drag (the page gets nothing but a `file:///…` string), and its
+synchronous `getData('text/uri-list')` answers `''` on a real drag even while a
+string ITEM carries the list — so the claim (which must happen inside the
+handler, where `preventDefault` still works) cannot depend on content, and the
+content comes off the items API afterwards.
 
 | Dragged from | Arrives as | Outcome |
 |---|---|---|
-| The desktop (file manager) | `text/uri-list` of `file:` URIs | The surface claims the drop and sends the list verbatim as a `native-drop` paste; **Go reads the files** and makes one block per file, in drag order, from the drop position. Kind is the paste registry's decision as always — `image/*` to smart-image, everything else to attachment. |
-| A browser (a link) | `text/uri-list` of an `http(s)` URI | Not claimed — PM handles it. A link is content to paste, not a file to read. |
-| Within the document, or any text drag | no `file:` URI | Not claimed — PM handles it natively. |
+| The desktop (file manager) | `text/uri-list` of `file:` URIs | Claimed; the list is sent verbatim as a `native-drop` paste; **Go reads the files** and makes one block per file, in drag order, from the drop position. Kind is the paste registry's decision as always — `image/*` to smart-image, everything else to attachment. |
+| A browser (a link) | `text/uri-list` of an `http(s)` URI | Claimed (indistinguishable from a file drop until the async read), then the URI is REPLAYED as text at the drop position — the outcome PM native handling used to produce. |
+| Within the document, or any text drag | no `text/uri-list` flavour | Not claimed — PM handles it natively. |
 | Into a prompt pseudo-document | anything | Not claimed — a prompt is a plain file with no block tree. |
 
 Placement follows the block-insertion rule above, at the DROP coordinate rather
