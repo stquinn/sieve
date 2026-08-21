@@ -251,12 +251,12 @@ export class DocumentService {
 
   // ── Paste pipelines (document-addressed — create blocks in a doc) ────────────
 
-  // ONE FRAME, THREE KINDS. `paste` carries a `kind` discriminant deciding what
+  // ONE FRAME, FOUR KINDS. `paste` carries a `kind` discriminant deciding what
   // the server makes of its payload — `entries` as a clipboard for smart, `slice`
-  // for slice, `entries` as a uri-list for native-drop — because "what should the
-  // server make of this" is one question with one answer shape. Reading the fields
-  // regardless of kind is how a discriminated union rots into a bag of optional
-  // flags.
+  // for slice, `entries` as a uri-list for native-drop, and NOTHING AT ALL for
+  // native-clipboard — because "what should the server make of this" is one
+  // question with one answer shape. Reading the fields regardless of kind is how a
+  // discriminated union rots into a bag of optional flags.
 
   /**
    * Reconstruct a multi-block clipboard slice server-side: Go runs FirstPasteMatch
@@ -332,6 +332,27 @@ export class DocumentService {
       entries: payload.entries,
       index: payload.index,
     }, 'paste native-drop', PASTE_ACK_TIMEOUT_MS)
+  }
+
+  /**
+   * Ask Go to read the OS clipboard itself and make a block of whatever is on it,
+   * at `payload.index`. Answers the same `PasteResult` union `smartPaste` does; a
+   * clipboard holding nothing the server can use answers `none`.
+   *
+   * THIS FRAME CARRIES NO CLIPBOARD, AND THAT IS THE POINT. WebKitGTK hands the
+   * page a paste event whose `DataTransfer` is completely empty for a screenshot
+   * copied by an ordinary desktop tool — no types, no items, no files (#87) — so
+   * there is nothing to forward and the emptiness IS the signal. The page keeps
+   * the gesture and the caret; the server reads the clipboard.
+   * @param {string} uuid @param {{index: number}} payload
+   * @returns {Promise<{outcome?: string, kind?: string, id?: string, rawYaml?: string, html?: string, error?: string}>}
+   */
+  nativeClipboardPaste(uuid, payload) {
+    return this.#blockService._awaitReply(uuid, {
+      type: DocumentFrame.PASTE,
+      kind: 'native-clipboard',
+      index: payload.index,
+    }, 'paste native-clipboard', PASTE_ACK_TIMEOUT_MS)
   }
 
   // ── Membership verbs (add/remove — never target an existing block's state) ──

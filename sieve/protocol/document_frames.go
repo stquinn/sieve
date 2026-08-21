@@ -313,6 +313,14 @@ const (
 	// It reuses Entries, carrying that one view verbatim: the client forwards what
 	// the DataTransfer gave it and interprets nothing.
 	PasteKindNativeDrop PasteKind = "native-drop"
+	// PasteKindNativeClipboard asks the server to read the OS clipboard itself.
+	//
+	// It exists because WebKitGTK hands the page a paste event whose DataTransfer
+	// is COMPLETELY EMPTY for a screenshot copied by a normal desktop tool — no
+	// types, no items, no files (#87) — while any ordinary GTK process reads the
+	// same offer fine. That emptiness is the whole signal, which is why this kind
+	// carries no Entries: there is nothing for the client to forward.
+	PasteKindNativeClipboard PasteKind = "native-clipboard"
 )
 
 // PasteFrame hands a clipboard to the server to make sense of. Which of Entries
@@ -321,8 +329,8 @@ const (
 type PasteFrame struct {
 	Type    string                 `json:"type"`
 	OpID    string                 `json:"opId,omitempty" doc:"echoed on the paste-ack"`
-	Kind    PasteKind              `json:"kind" doc:"smart | slice | native-drop. SECURITY: native-drop makes the server READ LOCAL FILES named by the entries' file:// URIs, so this wire carries a filesystem-read capability. It is only acceptable because the socket upgrade enforces an origin allow-list that admits the app's own window and refuses foreign browser origins; auth-on-upgrade (#83) must cover this channel."`
-	Entries []block.ContentEntry   `json:"entries,omitempty" doc:"smart: the clipboard's views. native-drop: the single text/uri-list view the OS put on the drag"`
+	Kind    PasteKind              `json:"kind" doc:"smart | slice | native-drop | native-clipboard. SECURITY: native-drop makes the server READ LOCAL FILES named by the entries' file:// URIs, and native-clipboard makes it READ THE OS CLIPBOARD (and any local file that clipboard names), so this wire carries a filesystem-read capability. It is only acceptable because the socket upgrade enforces an origin allow-list that admits the app's own window and refuses foreign browser origins; auth-on-upgrade (#83) must cover this channel."`
+	Entries []block.ContentEntry   `json:"entries,omitempty" doc:"smart: the clipboard's views. native-drop: the single text/uri-list view the OS put on the drag. native-clipboard: absent — the server reads the clipboard itself"`
 	Slice   [][]block.ContentEntry `json:"slice,omitempty" doc:"slice only: one view set per copied block, in order"`
 	Index   int                    `json:"index" doc:"document position for the first created block; -1 appends, and is the default when the key is absent"`
 }

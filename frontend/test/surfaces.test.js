@@ -292,6 +292,7 @@ function wyHost(overrides = {}) {
       pasteSlice: vi.fn(() => Promise.resolve({})),
       smartPaste: vi.fn(() => Promise.resolve({ outcome: 'none' })),
       nativeDropPaste: vi.fn(() => Promise.resolve({ outcome: 'none' })),
+      nativeClipboardPaste: vi.fn(() => Promise.resolve({ outcome: 'none' })),
     },
     blockService: { updateAttributes: vi.fn() },
     flushSave: vi.fn(),
@@ -848,6 +849,120 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     expect(event.preventDefault).toHaveBeenCalled()
     expect(host.clearInsertPos).toHaveBeenCalled()
     expect(host.documentService.pasteSlice).toHaveBeenCalledWith('doc-1', { slice, index: 7 })
+  })
+
+  // ── The NATIVE CLIPBOARD (#87) ───────────────────────────────────────────────
+  // Two paste shapes the page can see but cannot READ. A file-manager COPY offers
+  // the same `text/uri-list` a desktop drag does, so it takes the drop verb; and a
+  // screenshot copied by an ordinary desktop tool arrives as a DataTransfer that
+  // exists and is completely empty, which no handler can salvage — so the
+  // emptiness is the signal and Go reads the clipboard itself.
+  describe('the native clipboard (#87)', () => {
+    // A clipboard as WebKitGTK hands one over for a Spectacle screenshot.
+    function emptyClip() {
+      return { getData: () => '', types: [], items: [], files: [] }
+    }
+    function uriListClip(list) {
+      return {
+        getData: (mime) => (mime === 'text/uri-list' ? list : ''),
+        types: ['text/uri-list'], items: [], files: [],
+      }
+    }
+
+    it('an EMPTY DataTransfer → nativeClipboardPaste at the PEEKED caret index, and the gesture is claimed', async () => {
+      const anchor = { id: 'p-1', token: '' }
+      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 4, anchor })) })
+      host.documentService.nativeClipboardPaste.mockReturnValue(
+        Promise.resolve({ outcome: 'block', kind: 'smart-image', id: 'si-1' }))
+      const { ed, props } = mountPaste(host, 'doc-1')
+      const event = { clipboardData: emptyClip(), target: {}, preventDefault: vi.fn() }
+
+      expect(props.handlePaste({}, event)).toBe(true)
+      expect(event.preventDefault).toHaveBeenCalled()
+      expect(host.insertIndexForBlock).not.toHaveBeenCalled() // no EAGER consume
+      await new Promise((r) => setTimeout(r, 0))
+      // NO clipboard rides the frame: there was none to send, and that is the point.
+      expect(host.documentService.nativeClipboardPaste).toHaveBeenCalledWith('doc-1', { index: 4 })
+      expect(host.documentService.smartPaste).not.toHaveBeenCalled()
+      expect(host.consumeInsertAnchor).toHaveBeenCalledWith(anchor)
+      expect(ed.commands.insertContent).not.toHaveBeenCalled()
+    })
+
+    it('an empty clipboard the server makes nothing of consumes no anchor and replays nothing', async () => {
+      const anchor = { id: 'p-1', token: '' }
+      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 0, anchor })) })
+      host.documentService.nativeClipboardPaste.mockReturnValue(Promise.resolve({ outcome: 'none' }))
+      const { ed, props } = mountPaste(host, 'doc-1')
+
+      props.handlePaste({}, { clipboardData: emptyClip(), target: {}, preventDefault: vi.fn() })
+      await new Promise((r) => setTimeout(r, 0))
+      expect(host.consumeInsertAnchor).not.toHaveBeenCalled() // blank line preserved
+      // The page never held the content, so there is nothing to put back.
+      expect(ed.commands.insertContent).not.toHaveBeenCalled()
+    })
+
+    it('a COPIED FILE rides the drop verb verbatim, at the CARET index', async () => {
+      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 6, anchor: null })) })
+      const list = 'file:///home/u/swagger.yml\r\n'
+      host.documentService.nativeDropPaste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
+      const { props } = mountPaste(host, 'doc-1')
+      const event = { clipboardData: uriListClip(list), target: {}, preventDefault: vi.fn() }
+
+      expect(props.handlePaste({}, event)).toBe(true)
+      await new Promise((r) => setTimeout(r, 0))
+      // A copy has no drop coordinate: the caret's peeked index, not posAtCoords.
+      expect(host.peekInsertIndexAt).not.toHaveBeenCalled()
+      expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', {
+        entries: [{ mimeType: 'text/uri-list', content: list }],
+        index: 6,
+      })
+      expect(host.documentService.nativeClipboardPaste).not.toHaveBeenCalled()
+    })
+
+    it('a copied http URL is not a file — the ordinary pipeline still gets it', async () => {
+      const host = wyHost()
+      const { props } = mountPaste(host, 'doc-1')
+      const strItem = { kind: 'string', type: 'text/uri-list', getAsString: (cb) => cb('https://example.com/page') }
+      const event = {
+        clipboardData: Object.assign(uriListClip('https://example.com/page\r\n'), { items: [strItem] }),
+        target: {}, preventDefault: vi.fn(),
+      }
+
+      expect(props.handlePaste({}, event)).toBe(true)
+      await new Promise((r) => setTimeout(r, 0))
+      expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
+      expect(host.documentService.nativeClipboardPaste).not.toHaveBeenCalled()
+      expect(host.documentService.smartPaste).toHaveBeenCalled()
+    })
+
+    // The REGRESSION GUARD on the emptiness test. A DataTransfer that answers
+    // getData while exposing no `types` still HAS content — reading the
+    // collections alone would send every such paste to Go with nothing on it.
+    it('a clipboard that answers getData but lists no types is NOT empty', async () => {
+      const host = wyHost()
+      const { props } = mountPaste(host, 'doc-1')
+      const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('hello') }
+      const event = {
+        clipboardData: Object.assign(clip({ text: 'hello' }), { items: [strItem] }),
+        target: {}, preventDefault: vi.fn(),
+      }
+
+      expect(props.handlePaste({}, event)).toBe(true)
+      await new Promise((r) => setTimeout(r, 0))
+      expect(host.documentService.nativeClipboardPaste).not.toHaveBeenCalled()
+      expect(host.documentService.smartPaste).toHaveBeenCalled()
+    })
+
+    it('a paste into a prompt pseudo-document is left to PM (no block tree to create into)', () => {
+      const host = wyHost()
+      const { props } = mountPaste(host, 'prompt:p')
+      expect(props.handlePaste({}, { clipboardData: emptyClip(), target: {}, preventDefault: vi.fn() })).toBe(false)
+      expect(host.documentService.nativeClipboardPaste).not.toHaveBeenCalled()
+      expect(props.handlePaste({}, {
+        clipboardData: uriListClip('file:///a.png\r\n'), target: {}, preventDefault: vi.fn(),
+      })).toBe(false)
+      expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
+    })
   })
 
   // ── The DROP path (#86) ──────────────────────────────────────────────────────

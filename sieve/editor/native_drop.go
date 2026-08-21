@@ -14,12 +14,17 @@ import (
 	"sieve/sieve/domain"
 )
 
-// HandleNativeDrop ingests files dragged in from the desktop, one block per file.
+// HandleNativeDrop ingests files named by a `text/uri-list`, one block per file.
 //
 // It exists because a WebKitGTK webview never materialises a readable File for a
 // file-manager drag: all the page receives is the `text/uri-list` the OS put on
 // the drag, so the bytes can only be read here. The frontend forwards that view
 // verbatim and decides nothing beyond WHERE the drop landed.
+//
+// It is also where a COPIED file lands (HandleNativeClipboard, #87): a file
+// manager offers the same uri-list either way, and "the entries name local files"
+// is the whole of what this reads — the gesture that produced them is not its
+// business.
 //
 // SECURITY: this reads local files named by a wire frame, so the document socket
 // carries a filesystem-read capability. WsHandler's origin allow-list is what
@@ -35,7 +40,7 @@ func (es *EditorService) HandleNativeDrop(uuid string, entries []block.ContentEn
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
 	if shadow == nil {
-		logger.Warn("native-drop: no open document", "uuid", uuid)
+		logger.Warn("native files: no open document", "uuid", uuid)
 		return block.PasteNothing()
 	}
 	if index < 0 {
@@ -54,7 +59,7 @@ func (es *EditorService) HandleNativeDrop(uuid string, entries []block.ContentEn
 		// attachment. Created at index+created, so the blocks land in drag order.
 		res := es.HandlePaste(uuid, []block.ContentEntry{entry}, index+created)
 		if !res.IsBlock() {
-			logger.Warn("native-drop: file produced no block", "uuid", uuid, "outcome", res.Outcome)
+			logger.Warn("native files: file produced no block", "uuid", uuid, "outcome", res.Outcome)
 			continue
 		}
 		created++
@@ -149,17 +154,17 @@ func (f droppedFile) entry(ceiling int) (block.ContentEntry, bool) {
 	path := string(f)
 	info, err := os.Stat(path)
 	if err != nil || !info.Mode().IsRegular() {
-		logger.Warn("native-drop: not a readable file", "path", path, "err", err)
+		logger.Warn("native files: not a readable file", "path", path, "err", err)
 		return block.ContentEntry{}, false
 	}
 	if info.Size() > int64(ceiling) {
-		logger.Warn("native-drop: file over the attachment ceiling — not read",
+		logger.Warn("native files: file over the attachment ceiling — not read",
 			"path", path, "bytes", info.Size(), "limit", ceiling)
 		return block.ContentEntry{}, false
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		logger.Warn("native-drop: read failed", "path", path, "err", err)
+		logger.Warn("native files: read failed", "path", path, "err", err)
 		return block.ContentEntry{}, false
 	}
 	mimeType := f.mimeType(data)

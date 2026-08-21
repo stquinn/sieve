@@ -1043,6 +1043,32 @@ export class WysiwygSurface extends AbstractSurface {
       }
     }
 
+    // ── 1c. Native clipboard — what the page cannot read (#87) ──────────────────
+    // Two shapes leave through Go, and both are gestures the webview can see but
+    // not READ. The prompt pseudo-document is excluded from both: it is a plain
+    // file with no block tree to create into.
+    if (this.#uuid && !this.#uuid.startsWith('prompt:')) {
+      // A COPIED FILE, which arrives on the same `text/uri-list` a desktop drag
+      // does — so it takes the same route, verbatim, at the CARET rather than a
+      // drop coordinate.
+      const uriList = WysiwygSurface.#localFileURIs(event.clipboardData)
+      if (uriList !== null) {
+        return this.#pasteThroughGo(event, (ds, index) => ds.nativeDropPaste(this.#uuid, {
+          entries: [{ mimeType: 'text/uri-list', content: uriList }],
+          index,
+        }), 'native file paste')
+      }
+      // A CLIPBOARD THE PAGE CANNOT SEE AT ALL. WebKitGTK delivers a paste event
+      // whose DataTransfer is completely empty for a screenshot copied by an
+      // ordinary desktop tool — no types, no items, no files — while any normal
+      // GTK process reads the same offer fine (#87). That emptiness is the only
+      // signal there is, so it is the trigger, and Go reads the clipboard itself.
+      if (WysiwygSurface.#offersNothing(event.clipboardData)) {
+        return this.#pasteThroughGo(event,
+          (ds, index) => ds.nativeClipboardPaste(this.#uuid, { index }), 'native clipboard paste')
+      }
+    }
+
     // ── 2. Smart-paste pipeline (including images) ────────────────────────────────
     // Collect all clipboard entries. For files, we use FileReader to get base64.
     if (this.#uuid && !this.#uuid.startsWith('prompt:')) {
@@ -1103,6 +1129,51 @@ export class WysiwygSurface extends AbstractSurface {
     }
 
     return false
+  }
+
+  /**
+   * Claims a paste whose content the page cannot read and hands the gesture to Go,
+   * at the CARET.
+   *
+   * The two native paste shapes differ only in which verb they call, so everything
+   * around it lives here once: PEEK the block index (side-effect-free, issue #33 —
+   * a paste the server makes nothing of must leave the caret's empty paragraph
+   * intact), claim the gesture before the round trip, and play the union back.
+   * There is deliberately no `replay`: the page never held the content, so a
+   * `none` outcome has nothing to put back.
+   * @param {ClipboardEvent} event
+   * @param {(ds: any, index: number) => Promise<any>} send
+   * @param {string} label named in the failure log
+   * @returns {boolean} always true — the gesture is claimed either way
+   */
+  #pasteThroughGo(event, send, label) {
+    const peek = this.#host.peekInsertIndexForBlock()
+    event.preventDefault()
+    const ds = this.#host.documentService
+    if (!ds) return true // disconnected editor: paste suppressed, drop (socketless parity)
+    send(ds, peek.index)
+      .then((result) => this.#applyPasteResult(result, { anchor: peek.anchor }))
+      .catch((err) => { console.error('[wysiwyg-surface] ' + label + ' failed', err) })
+    return true
+  }
+
+  /**
+   * True when a DataTransfer offers NOTHING AT ALL — the #87 signal.
+   *
+   * The named flavours are asked for as well as the three collections, and that is
+   * the point rather than belt-and-braces: a transfer that answers `getData` while
+   * exposing no `types` still HAS content, and must take the ordinary pipeline.
+   * Only a genuinely empty offer means "the webview could not read this clipboard".
+   * @param {DataTransfer} transfer
+   * @returns {boolean}
+   */
+  static #offersNothing(transfer) {
+    for (const flavour of ['text/plain', 'text/html', 'text/uri-list', 'sieve/slice']) {
+      if (transfer.getData(flavour)) return false
+    }
+    return (!transfer.types || transfer.types.length === 0)
+      && (!transfer.items || transfer.items.length === 0)
+      && (!transfer.files || transfer.files.length === 0)
   }
 
   /**
@@ -1233,6 +1304,22 @@ export class WysiwygSurface extends AbstractSurface {
       const uri = line.trim()
       return uri !== '' && !uri.startsWith('#') && uri.toLowerCase().startsWith('file:')
     })
+  }
+
+  /**
+   * The `text/uri-list` of a transfer that names LOCAL FILES, or null. Read by the
+   * COPY-paste branch (a file manager offers the same list a drag carries). This
+   * is the synchronous getData view, which WebKitGTK may answer with '' — that is
+   * fine HERE: an unreadable copied-file paste falls through to the
+   * `native-clipboard` read, where Go asks GTK for the uris itself. Only the DROP
+   * path needs the async items read, because a drop has no native fallback.
+   * @param {DataTransfer} transfer
+   * @returns {string|null}
+   */
+  static #localFileURIs(transfer) {
+    const list = transfer.getData('text/uri-list')
+    if (!list) return null
+    return WysiwygSurface.#namesAFile(list) ? list : null
   }
 
   // ── Selection feed (P3.A: the SelectionModel raw source) ───────────────────────

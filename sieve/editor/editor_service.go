@@ -50,6 +50,7 @@ type EditorService struct {
 	shadows   map[string]*block.ShadowDocument
 	listener  block.BlockLifecycleListener
 	saved     ContainerSavedNotifier
+	clipboard NativeClipboardPort // reads the OS clipboard the webview cannot (#87)
 	// jobsWG tracks every dispatched block-job goroutine (DispatchJobIfNeeded's
 	// `go RunJob`). It is the drain a retiring service (CloseAll) and callers that
 	// must settle dispatched work (WaitForJobs) wait on — a job's completion writes

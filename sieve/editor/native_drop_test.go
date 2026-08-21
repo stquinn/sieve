@@ -217,6 +217,7 @@ func newDropEditor(t *testing.T) (*EditorService, string) {
 	block.RegisterProcessor(processors.NewAttachmentProcessor(svc))
 
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+	es.SetServices(svc)
 	es.SetLifecycleListener(&mockLifecycleListener{})
 	doc, _ := ds.New()
 	doc.SetBody([]byte(""))

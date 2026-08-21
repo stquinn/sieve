@@ -626,6 +626,16 @@ func (h *WsHandler) handlePaste(f inboundFrame) {
 		return
 	}
 
+	if msg.Kind == protocol.PasteKindNativeClipboard {
+		// The frame carries no clipboard: the page's DataTransfer was empty, which is
+		// exactly the signal (#87), so the server reads the OS clipboard itself. See
+		// PasteKindNativeClipboard for why that capability is on this wire at all, and
+		// allowOrigin for what keeps it off a foreign page's.
+		f.reply(protocol.NewPasteAckFrame(msg.OpID,
+			h.ServiceProvider.Editor.HandleNativeClipboard(f.uuid, msg.Index)))
+		return
+	}
+
 	if msg.Kind == protocol.PasteKindSlice {
 		if _, err := h.ServiceProvider.Editor.HandlePasteSlice(f.uuid, msg.Slice, msg.Index); err != nil {
 			logger.Warn("ws: paste slice failed", "uuid", f.uuid, "err", err)

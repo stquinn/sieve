@@ -355,7 +355,27 @@ URL and every processor declines — zero offers, silently.
 | Raw-text block (code/diagram-edit) | anything | literal text (PM `code: true` on the node — NOT a policy read; the old `rawText` flag claimed this and never implemented it) |
 | Anywhere | `sieve/slice` (>1) | Go paste-slice reconstructs blocks |
 | Anywhere | ```` ```ai-block ```` fence | ai-block re-import |
+| Anywhere | a `text/uri-list` of `file:` URIs (a file-manager COPY) | Forwarded verbatim as a `native-drop` paste and read by Go — the same ingestion a desktop drag takes, at the CARET index rather than a drop coordinate. |
+| Anywhere | **nothing at all** (see below) | `native-clipboard`: Go reads the OS clipboard itself. |
 | Log block | anything | consumed (read-only) |
+
+### The empty clipboard (2026-08-21, #87)
+
+WebKitGTK delivers a paste event whose `DataTransfer` **exists and is completely
+empty** — no types, no items, no files — for a screenshot copied by an ordinary
+desktop tool, while any normal GTK process reads the same offer fine. Nothing the
+page can do salvages that, so **the emptiness is the signal**: the surface claims
+the gesture, peeks the caret index, and sends a `native-clipboard` paste carrying
+no clipboard at all. Go reads the OS clipboard natively (GTK, in the UI process,
+outside the webview's sandboxed proxy) and probes it in one order — a raster
+image first, then a file-copy's uri-list — feeding whichever it finds to the
+pipeline that already exists.
+
+"Empty" is judged conservatively: a transfer that answers `getData` while
+exposing no `types` still HAS content and takes the ordinary pipeline. Only a
+genuinely empty offer routes natively, and a clipboard the server makes nothing
+of answers `none` — leaving the caret's blank line where it was, with nothing to
+replay, because the page never held the content.
 
 ## Drop matrix (revised 2026-08-21, #86)
 
