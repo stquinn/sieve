@@ -268,6 +268,17 @@ func (a *App) beforeClose(ctx context.Context) bool {
 	}
 	logger.Info("beforeClose: vetoing and requesting flush")
 	runtime.EventsEmit(ctx, "app:closing")
+	// The flush request is a DEADLINE, not a promise: a webview that navigated
+	// away from the app page cannot answer app:closing, and an unanswered veto is
+	// an unkillable window. Quit's own path still runs FlushAll, so nothing Go
+	// holds is lost on the forced route.
+	go func() {
+		time.Sleep(3 * time.Second)
+		if !a.closing {
+			logger.Warn("beforeClose: page never answered app:closing — forcing quit")
+			a.Quit()
+		}
+	}()
 	return true
 }
 

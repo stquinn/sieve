@@ -683,6 +683,15 @@
           e.target.value = '';
         });
 
+        // A drop anywhere the page has NOT claimed must never navigate the
+        // webview — WebKit's default for browser-recognisable content would turn
+        // the app shell into a file viewer (identical in dev and production).
+        // The editor's own drop handling runs on its target first; this is the
+        // page's last line, and calling preventDefault again on an
+        // already-claimed drop is harmless.
+        document.addEventListener('dragover', function(e) { e.preventDefault(); });
+        document.addEventListener('drop', function(e) { e.preventDefault(); });
+
         if (window.runtime && window.runtime.EventsOn) {
             window.runtime.EventsOn('app:closing', function() {
                 console.log('[stash] App closing, vetoed natively to allow flush.');
