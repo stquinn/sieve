@@ -1196,13 +1196,18 @@ export class WysiwygSurface extends AbstractSurface {
     // The prompt pseudo-document is a plain file with no block tree to create into.
     if (!this.#uuid || this.#uuid.startsWith('prompt:')) return false
     // Internal PM drags — a block reorder, a moved selection — are PM's own and
-    // never claimed. Every EXTERNAL drop is: the ONE drop mechanism on every
-    // platform is the gesture paging the backend, exactly as the empty-clipboard
-    // paste does (#87). The page's own view of the drop is never consulted —
-    // WebKitGTK starves it and every source app starves it differently (#86) —
-    // so external text/link drag-in is not a supported gesture; the OS-level
-    // catch (Wails OnFileDrop) feeds the native drop bucket the server redeems.
-    if (slice || moved) return false
+    // never claimed. THE TRAP: `slice` is NOT the discriminator — PM parses any
+    // droppable content into a slice, including an external drop's path text, so
+    // gating on it hands every external drop back to PM. A drag that ORIGINATED
+    // in this editor is what `view.dragging` marks (and `moved` covers the
+    // move-flavour); everything else is external. Every external drop is the ONE
+    // drop mechanism on every platform: the gesture pages the backend, exactly
+    // as the empty-clipboard paste does (#87). The page's own view of the drop
+    // is never consulted — WebKitGTK starves it and every source app starves it
+    // differently (#86) — so external text/link drag-in is not a supported
+    // gesture; the OS-level catch (Wails OnFileDrop) feeds the native drop
+    // bucket the server redeems.
+    if (moved || this.#editorPane.view.dragging) return false
 
     const coords = this.#editorPane.view.posAtCoords({ left: event.clientX, top: event.clientY })
     const insertPos = coords ? coords.pos : this.#editorPane.state.selection.to
