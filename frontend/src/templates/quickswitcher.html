@@ -3,7 +3,7 @@
   <input 
     type="text" 
     name="q"
-    hx-get="/api/search" 
+    hx-get="/ui/views/search"
     hx-trigger="input changed delay:50ms, keyup[key=='Enter']" 
     hx-target="#quick-switch-list" 
     hx-swap="innerHTML"
@@ -64,7 +64,7 @@
        input.focus();
        const htmx = window.htmx;
        if (htmx) {
-         htmx.ajax('GET', '/api/search?q=', { target: '#quick-switch-list', swap: 'innerHTML' });
+         htmx.ajax('GET', '/ui/views/search?q=', { target: '#quick-switch-list', swap: 'innerHTML' });
        }
     }
   }, 100);

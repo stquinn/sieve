@@ -1,7 +1,12 @@
 package services
 
 import (
+	"bytes"
 	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"sieve/sieve/domain"
 	"sieve/store"
@@ -15,12 +20,15 @@ import (
 // derived from the filesystem layout by FileStore. It is not a precondition
 // for the asset to exist or be valid.
 type AssetService struct {
-	st store.Store
+	st       store.Store
+	rootPath string
 }
 
-// NewAssetService creates an AssetService backed by st.
-func NewAssetService(st store.Store) *AssetService {
-	return &AssetService{st: st}
+// NewAssetService creates an AssetService backed by st. rootPath is the library
+// root; it bounds ServeStoreFile. An empty rootPath disables that method — the
+// service is otherwise fully usable.
+func NewAssetService(st store.Store, rootPath string) *AssetService {
+	return &AssetService{st: st, rootPath: rootPath}
 }
 
 // ServeAssetData returns the raw bytes of the asset identified by (docUUID,
@@ -65,4 +73,47 @@ func (as *AssetService) Save(category store.Category, parentContext string, asse
 		return nil, fmt.Errorf("asset: save %s for %s: %w", assetID, parentContext, err)
 	}
 	return &domain.ImageAsset{S: s}, nil
+}
+
+// ServeStoreFile reads a file addressed relative to the library root. It backs
+// relative markdown image sources, which name a path on disk rather than a
+// stored asset, so it reads the filesystem directly instead of going through
+// the Store.
+//
+// relPath is attacker-controlled (it arrives from a URL), so the resolved path
+// is required to stay inside the root: cleaning alone is not enough, because
+// Clean preserves leading "..".
+func (as *AssetService) ServeStoreFile(relPath string) ([]byte, error) {
+	if as.rootPath == "" {
+		return nil, fmt.Errorf("asset: store not initialised")
+	}
+	root, err := filepath.Abs(as.rootPath)
+	if err != nil {
+		return nil, fmt.Errorf("asset: resolve store root: %w", err)
+	}
+	full := filepath.Join(root, filepath.Clean(filepath.FromSlash(relPath)))
+	if !strings.HasPrefix(full+string(filepath.Separator), root+string(filepath.Separator)) {
+		return nil, fmt.Errorf("asset: %q escapes the store root", relPath)
+	}
+	info, err := os.Stat(full)
+	if err != nil {
+		return nil, fmt.Errorf("asset: stat %q: %w", relPath, err)
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("asset: %q is a directory", relPath)
+	}
+	return os.ReadFile(full)
+}
+
+// DetectContentType names the media type of asset bytes. It corrects the one
+// case http.DetectContentType gets wrong for us: an SVG sniffs as text/xml or
+// text/plain, and a browser will not render it as an image under either.
+func (as *AssetService) DetectContentType(data []byte) string {
+	ct := http.DetectContentType(data)
+	if strings.HasPrefix(ct, "text/xml") || strings.HasPrefix(ct, "text/plain") {
+		if bytes.Contains(data, []byte("<svg")) {
+			return "image/svg+xml"
+		}
+	}
+	return ct
 }

@@ -131,7 +131,7 @@ describe('AskPanel — DOM wiring + open/close/toggle', () => {
       const el = mountPanelDom({ open: true })
       new AskPanel(fakeWorkspace(fakeEditor()))
       el.querySelector('.ask-popup__close').click()
-      expect(ajax).toHaveBeenCalledWith('POST', '/api/session/askpanel/toggle', { swap: 'none' })
+      expect(ajax).toHaveBeenCalledWith('POST', '/api/session/toggle/askpanel', { swap: 'none' })
     } finally {
       window.htmx = undefined
     }
@@ -604,7 +604,7 @@ describe('AskPanel — the header names the verb once one is typed', () => {
   function realCommands() {
     return new CommandService(new WorkspaceService({
       socketFactory: () => /** @type {any} */ ({ send() {}, close() {} }),
-      wsUrl: () => 'ws://test/api/ws?session=1',
+      wsUrl: () => 'ws://test/api/ws/workspace',
     }), { commands: [{ name: 'btw', description: 'Ask btw', family: 'ai' }] })
   }
 

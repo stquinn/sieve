@@ -47,6 +47,10 @@ func (m *mockStore) Delete(s store.Storable) error {
 	return nil
 }
 
+// This mock keys everything by category and key, so there is no uuid resolution
+// left over to forget.
+func (m *mockStore) ForgetUUIDs(uuids []string) {}
+
 func (m *mockStore) PrepareCategory(cat store.Category) error { return nil }
 
 // Unimplemented methods to satisfy Store interface

@@ -10,14 +10,16 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"sieve/store"
 )
 
 var remoteImgPattern = regexp.MustCompile(`!\[([^\]]*)\]\((https?://[^)]+)\)`)
 
 // localiseImages scans content for remote image URLs, fetches each one with a
-// plain HTTP GET, saves to docDir, and rewrites the URL to /sieve/{docUUID}/filename
-// so it is served by the internal asset handler. Images that fail to fetch are
-// left with their original remote URL.
+// plain HTTP GET, saves to docDir, and rewrites the URL to store.AssetURL(docUUID,
+// filename) so it is served by the internal asset handler. Images that fail to
+// fetch are left with their original remote URL.
 func localiseImages(content, docDir, docUUID string) string {
 	return remoteImgPattern.ReplaceAllStringFunc(content, func(match string) string {
 		m := remoteImgPattern.FindStringSubmatch(match)
@@ -30,7 +32,7 @@ func localiseImages(content, docDir, docUUID string) string {
 			return match
 		}
 		filename := filepath.Base(localPath)
-		return fmt.Sprintf("![%s](/sieve/%s/%s)", alt, docUUID, filename)
+		return fmt.Sprintf("![%s](%s)", alt, store.AssetURL(docUUID, filename))
 	})
 }
 

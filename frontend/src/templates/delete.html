@@ -7,15 +7,23 @@
     {{if eq .Type "folder"}}It must be empty.{{else}}This cannot be undone.{{end}}
   </p>
 
-  <form 
+  <!-- Both deletions answer with the same fragment and so share a target: the
+       tab strip, with the sidebar and the editor mount riding out-of-band. A
+       folder is not "just the tree" — it takes every document under it, any of
+       which may be the open note, so both responses have to hand back an editor
+       to mount. Neither form prunes any browser-side identity: the server
+       broadcasts container-deleted on the workspace wire and every client
+       reconciles against it, which is the only signal that reaches a note open
+       in a BACKGROUND tab. -->
+  <form
     {{if eq .Type "folder"}}
-      hx-post="/api/sidebar/delete-folder?id={{.ID}}"
+      hx-delete="/api/folder/{{.ID}}"
     {{else}}
-      hx-post="/api/sidebar/delete-note?id={{.ID}}"
+      hx-delete="/api/note/{{.ID}}"
     {{end}}
-    hx-target="#htmx-sidebar"
+    hx-target="#htmx-tabbar"
     hx-swap="innerHTML"
-    onsubmit="document.getElementById('delete-dialog').close(); if ('{{.Type}}' === 'note') { window.sieveWorkspace.close('{{.ID}}'); }"
+    onsubmit="document.getElementById('delete-dialog').close()"
     style="display: flex; justify-content: flex-end; gap: 1rem;"
   >
     <button 

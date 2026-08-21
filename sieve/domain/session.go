@@ -122,3 +122,21 @@ func (s *Session) CloseTabs(ids []string) []string {
 	}
 	return filed
 }
+
+// SetFolderOpen records a folder as expanded or collapsed in the tree. It
+// answers the caller's intent rather than flipping what it finds, so two
+// clients disagreeing about a folder converge instead of alternating, and a
+// retried request lands where the first one did.
+func (s *Session) SetFolderOpen(id string, open bool) {
+	for i, f := range s.OpenFolders {
+		if f == id {
+			if !open {
+				s.OpenFolders = append(s.OpenFolders[:i], s.OpenFolders[i+1:]...)
+			}
+			return
+		}
+	}
+	if open {
+		s.OpenFolders = append(s.OpenFolders, id)
+	}
+}

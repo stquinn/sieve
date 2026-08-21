@@ -95,7 +95,7 @@ func TestHandleBlockOp_structuredUpdateMergesRunsOnChangeAndNotifies(t *testing.
 	doc.SetBody([]byte("```probe\nid: pb-1\nkeep: original\nstatus: COMPLETE\n```"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 
@@ -143,7 +143,7 @@ func TestHandleBlockOp_proseUpdateUsesAttrsContentAndKeepsAliases(t *testing.T) 
 	doc.SetBody([]byte("seed"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 
@@ -208,7 +208,7 @@ func TestHandleBlockOp_proseCreateNotifiesLikeEveryKind(t *testing.T) {
 	doc.SetBody([]byte("seed"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 
@@ -247,7 +247,7 @@ func TestEditorService_HandleBlockOp_UpdatesAndPersists(t *testing.T) {
 	doc.SetBody([]byte("Intro.\n\n```code\nid: co-1\nsource: x = 1\n```"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 

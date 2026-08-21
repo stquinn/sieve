@@ -58,8 +58,8 @@ A new package `sieve/protocol` is the one place the wire contract is defined:
 | Artifact | Content |
 |---|---|
 | `docs/API.md` | WS message tables (direction, type, payload fields, purpose), SSE event table, JSON endpoint schemas, **HTMX route inventory** (from `chi.Walk` over the real router: method, path, handler, response kind) |
-| `openapi.yaml` | The JSON endpoints |
-| `asyncapi.yaml` | WS + SSE channels/messages |
+| `docs/openapi.yaml` | The JSON endpoints |
+| `docs/asyncapi.yaml` | WS + SSE channels/messages |
 | `frontend/src/static/generated/protocol.js` | Plain ES module exporting message-type and SSE-event constants; `editor.js` switches its string literals to these |
 
 ### Dev API test ground
@@ -209,6 +209,14 @@ that resolves addresses.
   UI's own socket.
 - **`candidates` is never null** — an empty list is "no matches".
 
+> **Vocabulary note (2026-08-20):** two frame pairs postdate this amendment and
+> are part of the same channel contract: `mention-resolve` →
+> `mention-resolved` (resolve an address/coordinate to a concrete target;
+> `found:false` when it isn't one). The channel itself is renamed — see the
+> 2026-08-20 amendment: it is the **workspace channel**; "session" survives
+> only in the `/api/session/*` HTTP namespace, where it means `domain.Session`
+> (tab/panel state), a different concept.
+
 ### `attachments` on the command envelope
 
 ```json
@@ -237,3 +245,284 @@ socket the request arrived on (`WsHandler.replyTo`), falling back to the current
 tab registering `__session__` deposes the requester and silently swallows its
 answers. Pinned by `TestWS_Command_ResultRoutesToRequester_NotChannelOwner` and
 `TestWS_MentionResult_RoutesToRequester_NotChannelOwner`.
+
+---
+
+## Amendment 2026-08-20 — Surface reorganisation: context roots, REST consolidation, push-channel unification
+
+### Drift correction
+
+The problem statement above describes a world that no longer exists: one WS
+`switch` mirrored by `onmessage` branches in `editor.js`. Reality is two WS
+protocols multiplexed on `/api/ws` (disambiguated by `?session=1`), five
+protocol-service classes owning the JS side (`block-service`,
+`document-service`, `workspace-service`, `command-service`,
+`mention-service`), correlation-id routing that already bypasses type-string
+matching for the entire ack family, and ~65 HTTP entry points — four of which
+(`/theme.css`, `/sieve-image-proxy`, `/stash/*`, a store-root catch-all) are
+intercepted in `main.go`'s pre-chi `muxHandler` and would be **invisible to
+the `chi.Walk` route inventory this spec's generator relies on**. Three broken
+wire contracts are live today (a JS listener for `ai:block-resolved` that
+nothing emits; a `sse:settings:changed` listener that can never fire because
+Go signals settings changes via an `HX-Trigger` header; `block-extracted`
+emitted by Go and silently dropped by every client) — the concrete version of
+the "a typo fails silently" this spec opened with.
+
+### Context roots: `/api` and `/ui`
+
+The surface partitions into two roots, by **semantics, not response format**:
+
+- **`/ui/*` — safe, idempotent, GET-only: views and bytes.** HTMX fragments
+  (`/ui/views/{concern}/…`), static files (`/ui/static/*`), `/ui/theme.css`,
+  document assets (`/ui/assets/{uuid}/{filename}`), the image proxy
+  (`/ui/image-proxy`), and the relative-file fallback (`/ui/files/*`).
+- **`/api/*` — operations and protocols.** Every mutation, typed JSON reads,
+  and the wires (`/api/ws/document/{uuid}`, `/api/ws/workspace`).
+
+The rule an operation follows is *what it does*, not *what it returns*: HTMX
+operations that respond with fragments or OOB `<style>` swaps (session
+toggles, sidebar mutations) stay under `/api`. The registry registers only
+typed-payload endpoints (a request or response with a real Go type); a
+pure-hypermedia operation appears solely via the `chi.Walk` route inventory,
+which is truthful by construction and would drift if the registry tried to
+mirror it by hand. `/ui` is uniformly safe to GET and cache. `GET /api/library/switch-layout` is revealed by this
+rule to be a *read* (renders current session state as styles) and moves to
+`/ui/views/session/layout`, dissolving its misfiled-prefix problem. `/mcp`
+stays at root — a third protocol face for external agents, neither UI nor app
+API. `/` remains index + SPA fallback.
+
+### The pre-chi `muxHandler` is removed; chi becomes the sole router
+
+`/theme.css` and `/sieve-image-proxy` move into chi under `/ui/`. The
+`/stash/*` rewrite and its raw-disk `storeHandler` are deleted (no live
+caller; only a stale pre-rename `frontend/dist` bundle references them). The
+store-root catch-all becomes `/ui/files/*`, served through `AssetService` —
+one disk-serving implementation, traversal-guarded, instead of three. With
+the interception layer empty, `muxHandler` is deleted and **`chi.Walk` sees
+the whole surface**, un-breaking the generator design. Trap carried into the
+plan: relative `<img>` srcs in imported markdown resolve against the page
+URL, so the renderer must rewrite relative srcs to `/ui/files/…` at render
+time — one rewrite point, located during implementation.
+
+**Coordination with #83 (not handled here):** the localhost listener in
+`main.go` serves this same mux in production, unauthenticated — that is #83's
+security finding, and its fix scopes the listener to `/mcp` only (the
+contained CLI's reach into the internal MCP; deleting the listener outright
+breaks #36's containment). Phase 2's `muxHandler` removal changes what that
+listener serves, so the two changes must land in a conscious order: the
+listener must never be left pointing at the full chi router. #83 owns the
+listener fix; phase 2 must not regress it.
+
+### Consolidation mapping (supersedes the 2026-07-07 mapping)
+
+| Change | Shape |
+|---|---|
+| Item CRUD → resource + verb REST | `DELETE /api/note/{id}`, `DELETE /api/folder/{id}`, `PATCH /api/note/{id}` `{"name":…}`, `PATCH /api/folder/{id}`, `POST /api/note` (was `/api/note/new`), `POST /api/folder` (was `create-folder`). Retires the four rename/delete POSTs. The folder open/close toggle hidden in `POST /api/sidebar?toggle=` becomes `PATCH /api/folder/{id}` `{"open":…}` — folder state is a folder property. |
+| Deletion duplicate — direction corrected | The 2026-07-07 mapping had this backwards: `DELETE /api/note/{id}` has **no live caller**; the flow is `context-menu.js` → `GET delete-prompt` dialog → `delete.html` confirm → `POST /api/sidebar/delete-note`. The DELETE verb is correct, so the *template's confirm action* is rewired to it and the POST retires. Both callers move: `context-menu.js` to the consolidated dialog view, `delete.html` to `hx-delete`. |
+| Session panel toggles 6→1 | `POST /api/session/toggle/{panel}` (unchanged from 2026-07-07) |
+| Dialog GETs → views | `GET /ui/views/sidebar/dialog/{kind}` (kind = create-folder, delete, rename); `restore-prompt` stays in meta's view namespace as `/ui/views/meta/dialog/restore` |
+| AI job triggers 3→1 | `POST /api/jobs/{kind}/{id}` (unchanged from 2026-07-07) |
+| Paste 2→1 | `POST /api/document/paste` with `{"kind":"smart"\|"slice"}` discriminant |
+| `editor` → `document` namespace | `/api/editor/*` → `/api/document/*` (load, save, export, paste) — same vocabulary alignment as the wires; a rename, cheap while every caller is already being touched. The stray root-level `POST /api/detect-extractions` joins it as `/api/document/detect-extractions` |
+| Dead routes deleted | `POST /api/session/refresh` (zero callers), `/stash/*` (+ `storeHandler`) |
+
+Naming trap recorded for the views migration: `*-prompt` means "confirm
+dialog" in five routes and "AI Prompt domain object" in two
+(`/api/sidebar/revert-prompt`, `/api/prompts`) — the dialog consolidation
+retires the overloaded sense; `revert-prompt` keeps its pending-rename
+TECH-DEBT entry.
+
+### Wires: split paths, canonical names
+
+`GET /api/ws/document/{uuid}` and `GET /api/ws/workspace` replace the
+query-param multiplex. **Workspace** and **document** are the canonical
+channel names everywhere: the Go side's "session WS" identifiers
+(`handleSessionWS`, the `__session__` sentinel) are renamed during phase 1's
+registry refactor. "Editor" names the UI component consuming the document
+wire, never the wire. Frame vocabularies are unchanged — the "wire format
+unchanged" guarantee always meant the frames, not the URL.
+
+### Push-channel unification: SSE retires onto the workspace wire
+
+Invalidation is workspace traffic — "a note changed, refresh your view" is
+the shell talking to itself — and `jobs:changed` is already protocol traffic
+in an SSE costume (a data-bearing snapshot consumed programmatically by JS,
+for jobs dispatched *on the workspace wire*). The SSE channel is retired:
+
+- The workspace wire gains a **server→client broadcast family**, fanned out
+  to every connected workspace socket (a broadcast primitive in `WsHandler`
+  replacing the SSE hub's role):
+  - `invalidate` — ONE frame type, topic as data:
+    `{"type":"invalidate","topic":"notes|session|prompts|library|intent"}`.
+    Each topic is a registry entry; new topics are data, not new frame types.
+  - `jobs-changed` — keeps its snapshot payload, delivered where job
+    commands live.
+  - `container-deleted` — **added 2026-08-21.** Reconciliation NEWS, past
+    tense: `{"type":"container-deleted","uuid":"…"}` says the container is
+    already gone and each client drops whatever it still holds for that uuid
+    (its tab bookkeeping, its editor, that editor's document socket). It
+    carries a uuid rather than a topic because nothing is refetched — what
+    went stale is the client's own state, not a view — and it is the only
+    signal that reaches a document open in a BACKGROUND tab or another
+    window, neither of which the delete's HTTP response can swap. A folder
+    delete takes every document beneath it, so it emits one frame per
+    contained container.
+    **CONTAINER, not "document":** `container:{uuid}` is the coordinate
+    system's address for a block-holding document, more container kinds are
+    coming, and the frame is kind-agnostic — it names a uuid and nothing that
+    would let a client care what kind it was.
+  - `container-saved` — **added 2026-08-21**, and with it the invariant that
+    decides where a save belongs: *a save is a FACT, not a reply.* An earlier
+    draft of this bullet overstated it as "the workspace channel carries
+    facts" — it does not carry only facts. It also carries the `command` and
+    `mention-query`/`mention-resolve` request-reply conversations, which are
+    correlated exchanges answered requester-affinely. What the workspace
+    channel is, precisely, is the channel every client is on; what makes a save
+    belong on it is that a save is news to all of them rather than an answer
+    owed to one. A save is a fact about a container, not the outcome of one
+    client's request, so
+    `{"type":"container-saved","uuid":"…","version":n}` is broadcast from the
+    server-side persistence points (two until #32 channels prompts:
+    `EditorService.flushShadow` for every document, and the prompt's HTTP save,
+    which has no shadow to funnel through) and `flush` becomes a no-reply
+    inbound document frame. `flush-ack` is **deleted** — both its roles, the
+    request-correlated reply and the unsolicited debounce signal, are the same
+    fact said twice on the wrong wire. Explicit flush, debounce autosave, job
+    saves, and the prompt pseudo-document's HTTP save all emit the identical
+    frame, which is how a prompt gains a saved-signal for the first time. The
+    `version` makes the fact ORDERABLE, so a client waiting for its own save to
+    land can tell it from a debounce write that was already in flight; a
+    container with no version history (a prompt is a plain file) reports 0.
+    A FAILED save emits nothing: the document stays dirty, which is the honest
+    signal, and the server logs why.
+- **Encapsulation boundary:** the transport is workspace-owned
+  (`WorkspaceService` already owns the socket); an invalidation tenant
+  converts frames into **document-level DOM events**
+  (`sieve:invalidate-{topic}`). Consumers stay transport-blind per #49 —
+  including the sidebar, which the component model makes a *sibling* of the
+  Workspace, not a part of it: it listens to page-global DOM events
+  (`hx-trigger="sieve:invalidate-notes from:document"` — the tenant
+  dispatches on `document`, and an event dispatched there never reaches
+  `body`, so `from:document` is load-bearing, verified empirically during
+  implementation) and never touches the wire. Global consumption is
+  preserved; only the plumbing is encapsulated.
+- **Hypermedia stays HTTP:** the refetches remain plain `hx-get` requests;
+  only the nudge transport moves.
+- **Reconnect resync:** on workspace socket (re)connect the client treats it
+  as a blanket invalidate and refetches all shell views — healing missed
+  events, which the SSE hub (no event-id replay) never did.
+- **Retired outright:** the `sse/` package, `/sse`, the htmx SSE extension
+  from the bundle, and the Wails-native `runtime.EventsEmit("notes:changed")`
+  duplicate (after verifying nothing native listens) — the triple-transport
+  `notes:changed` loses two of its three transports.
+
+**Two signals, one subject (corrected 2026-08-21).** An earlier draft of the
+bullet above claimed `notes:changed` "collapses to one path". It does not, and
+should not. A mutating handler emits BOTH the broadcast fact and an
+`HX-Trigger: {topic}:changed` header on its own response, and the two answer
+different questions: *"someone changed this"* reaches every client
+asynchronously, while *"your own request changed this"* reaches the one client
+that clicked, synchronously with the response that did it. Keeping only the
+broadcast would make a panel lag its own click by a wire round trip; keeping
+only the header would leave every other window stale. A duplicate refetch is
+much cheaper than either failure, so both are listened for — see the doctrine
+comments at `requesthandlers/context_menu_handler.go` (`notesChanged`) and
+`Workspace.startTabbar` in `workspace.js`.
+
+**Known asymmetry:** the prompt editor's re-init-in-place
+(`Workspace.bootEditorLifecycle`) listens for the HEADER events
+(`prompts:changed`, `notes:changed`) only — `sieve:invalidate-prompts` does
+not re-init it. This is deliberate: re-init replaces a live editor, so doing it
+on a broadcast would let another window's prompt edit yank the buffer out from
+under someone mid-keystroke. Revisit if the header path ever retires, because
+then the re-init would have no trigger at all.
+- **Dead-wire culls:** the `ai:block-resolved` relay div and the
+  `sse:settings:changed` listener in `diagram-renderer.js` are removed.
+  `block-extracted` stops being emitted — every client has silently dropped
+  it for months with no observed breakage; if the additive-hint need
+  returns, it returns through the registry.
+
+### The channel razor: endpoint → wire migration (added 2026-08-20, evidence-driven)
+
+A code audit of the operational endpoints found most of the document-family
+HTTP surface duplicating the wires it coexists with: the paste endpoints'
+responses are provably ignored by the renderer (the `insert-block` WS push is
+the authoritative signal); HTTP save is unreachable for note documents
+(`DocumentService.save()` prefers the `enter-wysiwyg` handshake whenever a
+channel is open, and `NoteEditor` always opens one); the AI-trigger acks are
+discarded (`fetch` with no `.then()`); `GET /api/jobs` self-describes in a
+comment as accepted debt. The rule that decides where an operation lives:
+
+- **Document wire** — operations that participate in an *open editing
+  session's* state (they need the shadow, the claim, or render-backs).
+- **Workspace commands** — operations on the workspace's world (library,
+  filing, jobs) that reference documents *by address*; meaningful on closed
+  documents. "Which document" is an argument, not a channel.
+- **HTTP** — hypermedia (fragments, OOB swaps) and genuine byte serving.
+
+Applied: the document wire gains `load`, `paste` (ack = `block.PasteResult`,
+replacing smart-paste/paste-slice HTTP), `detect-extractions`, `export`
+(it is "Copy as Markdown" consumed by a clipboard call, not a download), and
+`focus` (fire-and-forget dwell ping). The **filing family** — smartFile,
+smartMetadata, keepAndFile — becomes registered `family=ai` commands
+(`command.Command` impls wrapping the same `EditorService` methods; the
+pattern `BtwCommand` already set). `GET /api/jobs` is deleted: the workspace
+connect-time resync includes a `jobs-changed` broadcast, so the snapshot is
+pushed, never polled. `POST /api/session/scroll` becomes a fire-and-forget
+`session-scroll` workspace frame. `POST /api/document/save` survives as the
+ONLY document HTTP operation, for channel-less prompt pseudo-docs
+exclusively (follow-up recorded: give prompts a channel and delete it).
+The `/api/document/*` namespace is otherwise never minted.
+
+**Explicitly out of scope of this migration:** block-scoped AI
+(describe-image, recognise-code, Ask/Explain ai-blocks) — those are
+processor-declared jobs on blocks of an open document and already live
+correctly on the document wire (`retry-block-job`, `block-attrs-updated`).
+The razor keeps them there.
+
+### Execution model: target-state-first on a dedicated branch (2026-08-20)
+
+The work runs on one branch with no other users of the app on it. **Interim
+consistency between phases is explicitly not a requirement** — main holds
+current state, the branch heads straight for target state, and phases below
+are a build order, not compatibility stages. This deletes a class of
+migration machinery the 2026-07-07 phasing implied: no wire-identical interim
+refactor, no SSE constants passing through the protocol package on their way
+to retirement, no registry entries or golden tests for frames and routes that
+do not exist in the target. The registry is written **once, as the target
+contract**; wire-fidelity tests pin the target, and the document/workspace
+frame vocabularies carry over because they are already right, not because a
+guarantee forbids touching them.
+
+1. **Define the target contract** — `sieve/protocol` written directly as the
+   target: all document-wire and workspace-wire frames (including
+   `invalidate`/`jobs-changed`; SSE never enters the package), target JSON
+   endpoint structs, target route table, `ProtocolRegistry` + registry-driven
+   dispatch. Workspace/document naming canonicalised in Go here.
+   **Self-documenting (2026-08-20 refinement):** prose lives at the
+   declaration site, not in the registry — a godoc comment on every
+   frame/endpoint struct (extracted by the generator via stdlib
+   `go/doc`/`go/ast`) and `doc:"…"` struct tags on non-obvious fields (read
+   via reflection). The registry carries wire metadata only; a registered
+   type without a godoc comment fails `go generate` loudly. `go doc
+   sieve/sieve/protocol` renders the human-readable contract natively —
+   the Go equivalent of Java's annotation-driven doc generation.
+2. **Backend to target** — route moves, REST CRUD, `muxHandler` deletion, WS
+   path split, SSE retirement + `WsHandler` broadcast primitive, dead-route
+   and dead-wire deletion. The app may be broken against the old frontend
+   mid-phase; that is accepted on the branch.
+3. **Frontend to target** — the five protocol services, all `hx-*`/`fetch()`
+   callers, the native-menu `htmx.ajax` calls in `main.go`, and the new
+   invalidation tenant, all moved to target routes/frames in one sweep.
+4. **Generation + contract tests** — `tools/protocolgen`, the four artifacts,
+   the five protocol services switch literals to generated constants,
+   generated-files-current + registry-completeness + `httptest` contract
+   tests. End-to-end validation in the running app closes the branch.
+5. **`CLAUDE.md` upkeep rules** + doc updates.
+
+The 2026-07-07 guardrail (≤30 operational `/api` routes, no generic RPC)
+stands. The legacy plan file
+(`docs/design/plans/2026-07-04-api-contract-ssot.md`) is historical input
+only — it predates the protocol services, the idiomatic-JS discipline, and
+this execution model; phases are drafted as Forgejo issues at execution
+time.

@@ -53,12 +53,12 @@ func newWsTestServerWithNodes(t *testing.T) (*httptest.Server, *sieve.ServicePro
 	return srv, sp, src
 }
 
-// The typeahead round-trip: a mention-query frame on the SESSION wire comes back
+// The typeahead round-trip: a mention-query frame on the WORKSPACE wire comes back
 // as a correlated mention-result. Not a Command — no JobEngine job, no result
 // block, no PENDING/COMPLETE pair; a sibling frame type on the same socket.
 func TestWS_MentionQuery_RoundTripsCandidates(t *testing.T) {
 	srv, _, src := newWsTestServerWithNodes(t)
-	conn := dialSessionWS(t, srv)
+	conn := dialWorkspaceWS(t, srv)
 	defer conn.Close()
 
 	if err := conn.WriteJSON(map[string]interface{}{
@@ -90,7 +90,7 @@ func TestWS_MentionQuery_RoundTripsCandidates(t *testing.T) {
 // scan on the UI's socket.
 func TestWS_MentionQuery_LimitIsFlooredAndCapped(t *testing.T) {
 	srv, _, src := newWsTestServerWithNodes(t)
-	conn := dialSessionWS(t, srv)
+	conn := dialWorkspaceWS(t, srv)
 	defer conn.Close()
 
 	if err := conn.WriteJSON(map[string]interface{}{"type": "mention-query", "q": "auth", "correlationId": "c-m2"}); err != nil {
@@ -115,7 +115,7 @@ func TestWS_MentionQuery_LimitIsFlooredAndCapped(t *testing.T) {
 func TestWS_MentionQuery_NoMatchesRepliesWithAnEmptyList(t *testing.T) {
 	srv, _, src := newWsTestServerWithNodes(t)
 	src.offers = nil
-	conn := dialSessionWS(t, srv)
+	conn := dialWorkspaceWS(t, srv)
 	defer conn.Close()
 
 	if err := conn.WriteJSON(map[string]interface{}{"type": "mention-query", "q": "zzz", "correlationId": "c-m4"}); err != nil {
@@ -129,17 +129,17 @@ func TestWS_MentionQuery_NoMatchesRepliesWithAnEmptyList(t *testing.T) {
 }
 
 // TestWS_MentionResult_RoutesToRequester_NotChannelOwner is the mention half of
-// the 2026-07-26 stolen-/btw incident: a second session socket registering
-// __session__ deposes the requester as owner. A mention-result is ack-shaped, so
-// it is REQUESTER-AFFINE — reaching for sendTo(sessionChannelKey) here would
+// the 2026-07-26 stolen-/btw incident: a second workspace socket registering
+// __workspace__ deposes the requester as owner. A mention-result is ack-shaped, so
+// it is REQUESTER-AFFINE — reaching for sendTo(workspaceChannelKey) here would
 // silently hand one tab's typeahead replies to another.
 func TestWS_MentionResult_RoutesToRequester_NotChannelOwner(t *testing.T) {
 	srv, _, _ := newWsTestServerWithNodes(t)
-	requester := dialSessionWS(t, srv)
+	requester := dialWorkspaceWS(t, srv)
 	defer requester.Close()
 
-	// A second session socket connects and takes over __session__ BEFORE the query.
-	thief := dialSessionWS(t, srv)
+	// A second workspace socket connects and takes over __workspace__ BEFORE the query.
+	thief := dialWorkspaceWS(t, srv)
 	defer thief.Close()
 	if err := thief.WriteJSON(map[string]string{"type": "ping"}); err != nil {
 		t.Fatal(err)
@@ -172,7 +172,7 @@ func TestWS_MentionResult_RoutesToRequester_NotChannelOwner(t *testing.T) {
 func TestWS_MentionQuery_NoRouterStillReplies(t *testing.T) {
 	srv, sp, _, _ := newWsTestServer(t)
 	sp.Nodes = nil
-	conn := dialSessionWS(t, srv)
+	conn := dialWorkspaceWS(t, srv)
 	defer conn.Close()
 
 	if err := conn.WriteJSON(map[string]interface{}{"type": "mention-query", "q": "auth", "correlationId": "c-m5"}); err != nil {

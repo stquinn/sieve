@@ -17,6 +17,7 @@ import { DocumentService } from '../block/document-service.js'
 import { WorkspaceService } from '../block/workspace-service.js'
 import { CommandService } from '../block/command-service.js'
 import { MentionService } from '../block/mention-service.js'
+import { InvalidationService } from '../block/invalidation-service.js'
 import { CommandBadges } from './command-badges.js'
 import { AskPanel } from './ask-panel.js'
 import { InsertDialogs } from './insert-dialogs.js'
@@ -86,6 +87,11 @@ export class SieveWorkspace {
    * tenant of the session socket and the first non-command one. */
   #mentionService
 
+  /** @type {InvalidationService} the plane's push tenant. Held only so it stays
+   * alive: it claims its frames and republishes them as DOM events, and nothing
+   * here ever calls it. */
+  #invalidationService
+
   /**
    * @param {import('../block/block-service.js').BlockServiceOptions} [serviceOptions]
    *   — the BlockService test seams (socketFactory / wsUrlFor). EMPTY in prod:
@@ -100,6 +106,10 @@ export class SieveWorkspace {
       commands: typeof window !== 'undefined' ? /** @type {any} */ (window).__sieveCommands || [] : [],
     })
     this.#mentionService = new MentionService(this.#workspaceService)
+    // Constructed with its siblings, and before anything can open the socket
+    // lazily: the server pushes the jobs snapshot the instant a socket connects,
+    // and a tenant registering later would have that first frame dropped.
+    this.#invalidationService = new InvalidationService(this.#workspaceService)
   }
 
   /** The BlockService singleton (handed down; renderers/adapters consume it). */
@@ -223,11 +233,11 @@ export class SieveWorkspace {
   }
 
   /**
-   * Creates a new untitled note and opens it: POST /api/note/new, tabbar swap.
+   * Creates a new untitled note and opens it: POST /api/note, tabbar swap.
    * @returns {Promise<any>}
    */
   newNote() {
-    return this.#ajax('POST', '/api/note/new')
+    return this.#ajax('POST', '/api/note')
   }
 
   /**
@@ -318,13 +328,13 @@ export class SieveWorkspace {
   }
 
   /**
-   * Fetches and renders the tab strip: GET /api/tabs, tabbar swap. The boot +
-   * SSE refetch entry point (P2.D relocated this off the #htmx-tabbar div's
-   * hx-get/hx-trigger).
+   * Fetches and renders the tab strip: GET /ui/views/tabs, tabbar swap. The
+   * boot + invalidation refetch entry point — the #htmx-tabbar div carries no
+   * hx-get/hx-trigger of its own.
    * @returns {Promise<any>}
    */
   loadTabs() {
-    return this.#ajax('GET', '/api/tabs')
+    return this.#ajax('GET', '/ui/views/tabs')
   }
 
   /**
@@ -458,12 +468,14 @@ export class SieveWorkspace {
     this.#documentService.load(uuid)
       .then((data) => {
         if (this.#currentUuid !== uuid) return // a later init superseded this load
-        window.SieveAI?.loadActiveJobs()
 
         const isMarkdown = wantMode === 'markdown' || data.meta.mode === 'markdown' || uuid.startsWith('prompt:')
 
         const ed = this.activeEditor
         if (!ed) return
+        // Before the content mounts: the editor's saved-fact baseline is the
+        // version this load served, and a save can land the moment it mounts.
+        ed.seedVersion(data.version)
         // The editor owns its root (#tiptap-mount); the surface owns the DOM under
         // it. presentSurface unmounts any previous surface first.
         ed.presentSurface(
@@ -550,6 +562,16 @@ export class SieveWorkspace {
   }
 
   /**
+   * Saves the active editor and resolves once the save has LANDED — for a caller
+   * whose next step reads the document from disk over another wire. See
+   * AbstractEditor.saveAndSettle.
+   * @returns {Promise<void>}
+   */
+  saveAndSettle() {
+    return this.activeEditor ? this.activeEditor.saveAndSettle() : Promise.resolve()
+  }
+
+  /**
    * Registers the app-level editor DOM listeners (moved from editor.js's IIFE
    * body in P4.F). Called once at module load next to startTabbar()/bootChrome().
    * The listeners read the active editor via this.activeEditor. The residual
@@ -572,6 +594,41 @@ export class SieveWorkspace {
       if (this.#currentUuid?.startsWith('prompt:')) {
         this.initEditor(this.#currentMountEl, this.#currentUuid, this.activeEditor?.mode)
       }
+    })
+
+    // RECONCILIATION, not an operation: the server broadcasts that a container is
+    // already gone, and everything this workspace still holds for it goes with
+    // it — the editor (whose destroy closes its document socket) and then the tab
+    // bookkeeping. Deleting a BACKGROUND note reaches no element the delete's own
+    // response swaps, which is why the news arrives on the workspace wire rather
+    // than in that response.
+    //
+    // Tearing down a MOUNTED editor here is the ORDINARY path, not the edge case:
+    // the delete handler emits the frame before it renders, so on loopback this
+    // listener normally runs first and the active note's live editor is the one
+    // it destroys. That is safe because destroy() performs exactly the unmount
+    // and channel-close activateDocument performs when a tab is switched away
+    // from; the response's OOB editor swap then re-inits a clean mount for the
+    // new active tab. The one thing activateDocument does that this deliberately
+    // does not is flush the scroll coordinate — there is no document left to
+    // restore it into.
+    //
+    // The reverse order needs no negotiation either: it is idempotent by
+    // construction. An unknown uuid is nothing to do, and a tab whose editor the
+    // swap already destroyed (activateDocument detached it) has no editor left.
+    // The display-race invariant that makes activateDocument the single teardown
+    // site does not bind here — the news is that the document ceased to exist,
+    // so there is no view left worth protecting from a flicker.
+    document.addEventListener('sieve:container-deleted', (e) => {
+      const uuid = /** @type {CustomEvent} */ (e).detail?.uuid
+      if (!uuid) return
+      const tab = this.getTab(uuid)
+      if (!tab) return
+      if (tab.editor) {
+        tab.editor.destroy()
+        tab.detachEditor()
+      }
+      this.closeTab(uuid)
     })
 
     // Global capture for Ctrl/Cmd+Click on any link in the app → open externally
@@ -785,8 +842,7 @@ export class SieveWorkspace {
   /**
    * Pulls a tab's current scroll coordinate (via its editor's SelectionContext
    * — a PULL, never a push, per the issue #51 design) and persists it to
-   * session.json: POST /api/session/scroll, the existing session-endpoint
-   * pattern (ui/layout.js's /api/session/layout). Fire-and-forget — scroll is
+   * session.json over the workspace channel. Fire-and-forget — scroll is
    * caret-class state, not worth a save-suppression or a swap response.
    * No-op when the tab has no editor or never reported a scroll (ctx.scroll
    * null — nothing pulled yet, e.g. the user never scrolled this session).
@@ -796,14 +852,7 @@ export class SieveWorkspace {
     if (this.#scrollPersistTimer) { clearTimeout(this.#scrollPersistTimer); this.#scrollPersistTimer = null }
     const ctx = tab.editor ? tab.editor.getSelectionContext() : null
     if (!ctx || ctx.scroll == null) return
-    const params = new URLSearchParams()
-    params.append('id', tab.uuid)
-    params.append('scroll', String(ctx.scroll))
-    fetch('/api/session/scroll', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: params.toString(),
-    }).catch(() => {})
+    this.#workspaceService.persistScroll(tab.uuid, ctx.scroll)
   }
 
   // ── Workspace-owned chrome children (P4.B: Ask panel; P4.C: dialogs + search) ─
@@ -838,6 +887,24 @@ export class SieveWorkspace {
     if (!this.#statusBar) this.#statusBar = new StatusBar(this)
   }
 
+  /**
+   * Dials the workspace channel, which is the page's ONLY way to hear the server
+   * speak: every invalidation and the jobs snapshot arrive on it, and a page that
+   * never dials sits on views nothing will ever refresh.
+   *
+   * It must be dialled EXPLICITLY at boot. WorkspaceService.open() is otherwise
+   * reached only from send(), so a page where nobody runs a command, resolves a
+   * mention or scrolls a tab would hear nothing at all — a stale sidebar with no
+   * error anywhere to explain it.
+   *
+   * Called after the constructor has registered every tenant, because the server
+   * speaks first: the jobs snapshot is written the instant the socket connects,
+   * and a tenant registering after that would have it dropped as unclaimed.
+   */
+  bootPushChannel() {
+    this.#workspaceService.open()
+  }
+
   /** @returns {CommandBadges|null} */
   get commandBadges() { return this.#commandBadges }
 
@@ -850,15 +917,21 @@ export class SieveWorkspace {
   /** @returns {SearchOverlay|null} the document search overlay child (P4.C) */
   get searchOverlay() { return this.#searchOverlay }
 
-  // ── Tabbar boot + SSE ownership (P2.D — relocated off the #htmx-tabbar div) ──
+  // ── Tabbar boot + refresh ownership (the #htmx-tabbar div carries none) ─────
 
   /**
-   * Boots the tab strip and subscribes to the out-of-band refresh signals the
-   * div's hx-trigger carried before P2.D. The Workspace now OWNS the tabbar
-   * render (loadTabs). MECHANISM: htmx's SSE extension fires `sse:*` as bubbling
-   * CustomEvents on the divs that declare `hx-trigger="sse:…"` (sidebar/prompts/
-   * meta still do), so a document-level listener receives them. The `… from:body`
-   * body events (session:changed / notes:changed) likewise bubble to document.
+   * Boots the tab strip and subscribes to the out-of-band refresh signals every
+   * other panel declares as an hx-trigger; the Workspace OWNS the tabbar render
+   * (loadTabs), so its mount has no attributes of its own to carry them.
+   *
+   * TWO SIGNALS, ONE SUBJECT: the invalidation push (`sieve:invalidate-*`,
+   * dispatched on `document`, reaching every client) and the HX-Trigger response
+   * event (`session:changed` / `notes:changed`, which bubbles to `document` and
+   * reaches only the client that made the request, immediately). Both are
+   * listened for because they answer different questions — "someone changed
+   * this" and "your own request changed this" — and a duplicate refetch is
+   * cheaper than a strip that lags its own click.
+   *
    * Idempotent-safe to call once at module load; guards on #htmx-tabbar existing.
    */
   startTabbar() {
@@ -869,8 +942,8 @@ export class SieveWorkspace {
       boot()
     }
     const refresh = () => this.loadTabs()
-    document.addEventListener('sse:session:changed', refresh)
-    document.addEventListener('sse:notes:changed', refresh)
+    document.addEventListener('sieve:invalidate-session', refresh)
+    document.addEventListener('sieve:invalidate-notes', refresh)
     document.addEventListener('session:changed', refresh)
     document.addEventListener('notes:changed', refresh)
   }
@@ -882,8 +955,19 @@ export class SieveWorkspace {
 const workspace = new SieveWorkspace()
 window.sieveWorkspace = workspace
 
-// P2.D: the Workspace owns the tab strip render. Boot it + subscribe to the SSE
-// refresh signals here (module load — this is the deferred module, so the DOM
+// The Workspace owns the tab strip render. Boot it + subscribe to the refresh
+// signals here (module load — this is the deferred module, so the DOM
 // mount exists or DOMContentLoaded is still pending, both handled). Guarded so
 // vitest (which imports the class without a real document tab mount) is unaffected.
-if (typeof document !== 'undefined') { workspace.startTabbar(); workspace.bootChrome(); workspace.bootEditorLifecycle() }
+//
+// The push channel is dialled LAST: its first frame arrives the moment the socket
+// connects, and the consumers of that frame are the DOM listeners the three boots
+// above install. Dialling first would publish the jobs snapshot and the connect
+// resync into a page where nothing is listening yet. It is dialled only where a
+// socket can exist: the headless DOM vitest imports this module under HAS a
+// document but no WebSocket, and importing a module must not fail for want of a
+// wire nothing in a unit test speaks.
+if (typeof document !== 'undefined') {
+  workspace.startTabbar(); workspace.bootChrome(); workspace.bootEditorLifecycle()
+  if (typeof WebSocket === 'function') workspace.bootPushChannel()
+}

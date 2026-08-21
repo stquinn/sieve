@@ -1,16 +1,20 @@
 // @ts-check
 // block-channel.js — BlockChannel: one document's live wire: the socket, its
 // pending queue, awaiters, timers and reconnect state.
-// Transport semantics preserved: null onclose before close in teardown, pending-queue
-// replay on open, 45s pong watchdog, 15s ping interval, 1s→30s exponential backoff,
-// 5s await timeout, awaiter-consumed replies with late replies dropped.
+// Transport contract: null onclose before close in teardown (a deliberate close must
+// not schedule a reconnect), pending-queue replay on open, 45s pong watchdog, 15s ping
+// interval, 1s→30s exponential backoff, 5s await timeout (per-call override via
+// awaitReply/awaitAck's timeoutMs — see document-service.js's paste verbs), awaiter-
+// consumed replies with late replies dropped.
+
+import { DocumentFrame } from '../generated/protocol.js'
 
 /**
  * @typedef {object} ChannelDelegate  the per-document inbound router (the live editor)
  * @property {(msg: Record<string, any>) => void} applyServerOp   server render-back ops (insert-block / replace-block / block-attrs-updated)
- * @property {(msg: Record<string, any>) => void} onFlushAck      flush-ack side effects (dirty-clear + chrome events live editor-side)
- * @property {(msg: Record<string, any>) => void} onMessage       everything else (error, block-extracted, unawaited mode replies)
+ * @property {(msg: Record<string, any>) => void} onMessage       everything else (error, unawaited mode replies)
  * @property {(afterBlockId?: string) => number}  resolveInsertIndex  id→index resolution for createBlock (the lens owns index math)
+ * @property {() => void} [onOpen]  the socket reached OPEN — fires on the FIRST connect and on every reconnect alike, because a consumer that resyncs cannot tell the two apart and must not try
  */
 
 // WebSocket.readyState OPEN, fixed at 1 by the WHATWG spec. Referenced directly
@@ -19,7 +23,7 @@ const WS_OPEN = 1
 
 // Server-op render-backs the active surface applies (backend is the document
 // source of truth; the placement semantics live in the surfaces).
-const SURFACE_OPS = Object.freeze(['insert-block', 'replace-block', 'block-attrs-updated'])
+const SURFACE_OPS = Object.freeze([DocumentFrame.INSERT_BLOCK, DocumentFrame.REPLACE_BLOCK, DocumentFrame.BLOCK_ATTRS_UPDATED])
 
 export class BlockChannel {
   /** @type {(url: string) => WebSocket} */ #socketFactory
@@ -66,6 +70,10 @@ export class BlockChannel {
       this.#pending.forEach((m) => ws.send(m))
       this.#pending = []
 
+      // AFTER the replay: a queued request is older than this connection, so it
+      // must not be overtaken by whatever the open hook sends.
+      if (this.#delegate.onOpen) this.#delegate.onOpen()
+
       if (this.#pingInterval) clearInterval(this.#pingInterval)
       this.#pingInterval = setInterval(() => {
         if (Date.now() - this.#lastPong > 45000) {
@@ -74,7 +82,7 @@ export class BlockChannel {
           return
         }
         if (this.#ws && this.#ws.readyState === WS_OPEN) {
-          this.#ws.send(JSON.stringify({ type: 'ping' }))
+          this.#ws.send(JSON.stringify({ type: DocumentFrame.PING }))
         }
       }, 15000)
     }
@@ -110,14 +118,10 @@ export class BlockChannel {
   /** @param {{data?: string}} event */
   #handleMessage(event) {
     const msg = JSON.parse(event.data || '{}')
-    if (msg.type === 'pong') {
+    if (msg.type === DocumentFrame.PONG) {
       this.#lastPong = Date.now()
       return
     }
-    if (msg.type === 'flush-ack') {
-      this.#delegate.onFlushAck(msg)
-    }
-
     if (msg.opId !== undefined) {
       const settle = this.#awaiters.get(msg.opId)
       if (settle) {
@@ -145,23 +149,34 @@ export class BlockChannel {
     }
   }
 
-  awaitReply(opId, msg, label) {
+  /**
+   * @param {string} opId @param {Record<string, any>} msg @param {string} [label]
+   * @param {number} [timeoutMs] per-call ceiling; defaults to the standard 5s.
+   *   A caller whose server-side counterpart can legitimately run past 5s (e.g.
+   *   document-service's paste verbs — Go's paste path downloads images
+   *   synchronously) must raise this, or the ack outlives the awaiter.
+   */
+  awaitReply(opId, msg, label, timeoutMs) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#awaiters.delete(opId)
         reject(new Error('ws timeout: ' + (label || opId)))
-      }, 5000)
+      }, timeoutMs || 5000)
       this.#awaiters.set(opId, (m) => { clearTimeout(timer); resolve(m) })
       this.send(Object.assign({}, msg, { opId: opId }))
     })
   }
 
-  awaitAck(opId, msg, label) {
+  /**
+   * @param {string} opId @param {Record<string, any>} msg @param {string} [label]
+   * @param {number} [timeoutMs] per-call ceiling; defaults to the standard 5s (see awaitReply).
+   */
+  awaitAck(opId, msg, label, timeoutMs) {
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.#awaiters.delete(opId)
         resolve({ ok: false, error: 'ws timeout: ' + (label || opId) })
-      }, 5000)
+      }, timeoutMs || 5000)
       this.#awaiters.set(opId, (m) => { clearTimeout(timer); resolve({ ok: m.ok === true, error: m.error }) })
       this.send(Object.assign({}, msg, { opId: opId }))
     })

@@ -17,9 +17,9 @@ type SearchHandler struct {
 }
 
 func (h *SearchHandler) RegisterPaths(r chi.Router) {
-	r.Get("/api/search", h.handleSearch)
-	r.Get("/api/search-prompt", h.handleSearchPrompt)
-	r.Get("/api/sidebar/search", h.handleSidebarSearch)
+	r.Get("/ui/views/search", h.handleSearch)
+	r.Get("/ui/views/search/dialog", h.handleSearchPrompt)
+	r.Get("/ui/views/sidebar/search", h.handleSidebarSearch)
 }
 
 func (h *SearchHandler) handleSidebarSearch(w http.ResponseWriter, r *http.Request) {

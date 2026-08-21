@@ -65,7 +65,7 @@
 //
 // Adding a new block kind:
 //   1. Create editor/surfaces/node-views/<kind>-node-view.js implementing the adapter above.
-//   2. Add <script type="module" src="/static/editor/surfaces/node-views/<kind>-node-view.js">
+//   2. Add <script type="module" src="/ui/static/editor/surfaces/node-views/<kind>-node-view.js">
 //      to index.html AFTER block/sieve-block-extension.js (the node-view registers at
 //      its own top level; the registry must exist first).
 
@@ -386,7 +386,11 @@ class NodeViewRegistry {
         })
       })
       window.SieveContextMenu.appendItems(extraItems)
-    }).catch(function () {})
+      // Discovery is an OFFER: a document with no channel answers none, so the
+      // only way here is a wire timeout or a broken menu build. Neither should
+      // take the menu down — the base items are already open — but neither is
+      // "nothing to extract" either, so it is said out loud rather than eaten.
+    }).catch(function (err) { console.warn('[sieve-block] extraction offers unavailable', err) })
   }
 
   // extractContentEntryFromEditor inspects whatever DOM element was clicked

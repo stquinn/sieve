@@ -8,6 +8,7 @@ import (
 	"sieve/logger"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
+	"sieve/store"
 )
 
 // documentAssets writes a block's binary payload into the document that holds it.
@@ -87,5 +88,5 @@ func (a documentAssets) url(uuid, src string) string {
 	if name == "" {
 		return ""
 	}
-	return "/sieve/" + uuid + "/" + name
+	return store.AssetURL(uuid, name)
 }

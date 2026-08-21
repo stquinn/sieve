@@ -3,8 +3,8 @@
   class="status-chip status-chip--library"
   title="Current library — click to switch"
   onclick="window.sieveSelectLibrary()"
-  hx-get="/api/library/current"
-  hx-trigger="sse:library:changed"
+  hx-get="/ui/views/library/current"
+  hx-trigger="sieve:invalidate-library from:document"
   hx-target="#library-chip"
   hx-swap="outerHTML">
   <span class="lib-dot"></span>{{.Name}}

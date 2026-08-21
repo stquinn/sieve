@@ -109,7 +109,7 @@ func TestDocumentService_FilePromotesBufferAndAssets(t *testing.T) {
 	}
 
 	// In the document-as-directory model, asset URLs are UUID-stable:
-	// /sieve/{uuid}/{filename} — the UUID doesn't change on Move/Rename, so
+	// /ui/assets/{uuid}/{filename} — the UUID doesn't change on Move/Rename, so
 	// the asset reference in the body is preserved as-is. The old and new
 	// ExternalRefs are identical.
 	newExtRef := newOwns[0].ExternalRef()
@@ -167,6 +167,56 @@ func TestDocumentService_SearchKeepsBodySummaryAndTagMatches(t *testing.T) {
 		}
 		if len(results) != 1 || !tc.check(results[0]) {
 			t.Errorf("Search(%q) = %+v, want the note flagged with its own match kind", tc.query, results)
+		}
+	}
+}
+
+// A folder delete erases every document beneath it in one filesystem call that
+// names only the folder, so nothing sweeps those documents out of whatever the
+// store uses to resolve uuids. Until DeleteFolder forgets them, LoadByUUID
+// keeps handing back a storable for a document whose directory is gone — a
+// dangling read that succeeds, which is worse than the honest failure below.
+func TestDocumentService_DeleteFolderStopsResolvingTheUUIDsItTook(t *testing.T) {
+	ds, _ := newTestDocumentService(t)
+
+	buried := map[string]bool{}
+	for _, title := range []string{"First", "Second"} {
+		doc := seedFiledNote(t, ds, title, "Doomed", nil, "", "body")
+		if _, err := ds.LoadByUUID(doc.UUID()); err != nil {
+			t.Fatalf("seeded note %s does not resolve before the delete: %v", title, err)
+		}
+		buried[doc.UUID()] = true
+	}
+
+	entries, err := ds.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	folder := ""
+	for _, e := range entries {
+		if e.IsDir && e.Name == "Doomed" {
+			folder = e.ID
+		}
+	}
+	if folder == "" {
+		t.Fatal("the seeded folder is not in the tree")
+	}
+
+	deleted, err := ds.DeleteFolder(folder)
+	if err != nil {
+		t.Fatalf("DeleteFolder: %v", err)
+	}
+	got := map[string]bool{}
+	for _, uuid := range deleted {
+		got[uuid] = true
+	}
+	if len(got) != len(buried) {
+		t.Fatalf("DeleteFolder reported %v, want the two buried notes %v", got, buried)
+	}
+
+	for uuid := range buried {
+		if _, err := ds.LoadByUUID(uuid); err == nil {
+			t.Errorf("uuid %s still resolves after the folder that held it was deleted", uuid)
 		}
 	}
 }

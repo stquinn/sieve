@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"sieve/sieve/services"
 )
 
@@ -33,7 +34,7 @@ func TestSubmitBlockJob_AppliesThenFinishesOnSuccess(t *testing.T) {
 			b.Attrs["language"] = result.(string)
 		},
 	}
-	es.submitBlockJob(job, services.JobInfo{JobID: "b1", Label: "Refining…"}, blk, func(err error) {
+	es.submitBlockJob(job, domain.JobInfo{JobID: "b1", Label: "Refining…"}, blk, func(err error) {
 		mu.Lock()
 		order = append(order, "finish")
 		mu.Unlock()
@@ -65,7 +66,7 @@ func TestSubmitBlockJob_ErrorSkipsApply(t *testing.T) {
 		Work:     func() (any, error) { return nil, errors.New("boom") },
 		Apply:    func(any, *block.SieveBlock) { applied = true },
 	}
-	es.submitBlockJob(job, services.JobInfo{JobID: "b1", Label: "Boom…"}, blk, func(err error) { done <- err })
+	es.submitBlockJob(job, domain.JobInfo{JobID: "b1", Label: "Boom…"}, blk, func(err error) { done <- err })
 	select {
 	case err := <-done:
 		if err == nil {
@@ -89,7 +90,7 @@ func TestSubmitBlockJob_panicsOnEmptyLabel(t *testing.T) {
 		}
 	}()
 	// meta.Label is empty — a submitted ProcessorJob must declare a non-empty Label.
-	es.submitBlockJob(job, services.JobInfo{JobID: "b1", Label: ""}, blk, func(error) {})
+	es.submitBlockJob(job, domain.JobInfo{JobID: "b1", Label: ""}, blk, func(error) {})
 }
 
 func TestSubmitBlockJob_NilWorkStillApplies(t *testing.T) {
@@ -97,7 +98,7 @@ func TestSubmitBlockJob_NilWorkStillApplies(t *testing.T) {
 	blk := &block.SieveBlock{ID: "b1", Attrs: map[string]interface{}{}}
 	done := make(chan struct{})
 	job := block.ProcessorJob{Category: block.CategoryAI, Label: "Settling…", Apply: func(_ any, b *block.SieveBlock) { b.Attrs["applied"] = true }}
-	es.submitBlockJob(job, services.JobInfo{JobID: "b1", Label: "Settling…"}, blk, func(err error) {
+	es.submitBlockJob(job, domain.JobInfo{JobID: "b1", Label: "Settling…"}, blk, func(err error) {
 		if err != nil {
 			t.Errorf("nil Work should be success, got %v", err)
 		}

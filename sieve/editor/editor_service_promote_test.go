@@ -54,7 +54,7 @@ func TestEditorService_TransformToProse(t *testing.T) {
 	doc.SetBody([]byte("Before\n\n```test-md\nid: tm-0001\n```\n\nAfter"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
-	_ = es.Open(uuid, nil)
+	_ = es.Open(uuid)
 	es.UpdateMarkdown(uuid, "Before\n\n```test-md\nid: tm-0001\n```\n\nAfter")
 
 	// Replicate the retired PromoteBlock body: snapshot the block, build the

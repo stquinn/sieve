@@ -200,7 +200,7 @@ func (p *ProseProcessor) Transform(entries []block.ContentEntry, uuid string, bl
 
 // embedImageMarkdown turns an image entry into served image markdown by delegating to
 // the smart-image processor: its Transform saves the bytes (saveSVG/saveBase64) and
-// returns the asset src; its MarkdownRepresentation (uuid-aware) builds ![](/sieve/
+// returns the asset src; its MarkdownRepresentation (uuid-aware) builds ![](/ui/assets/
 // <uuid>/<file>). prose holds no AssetsPort — the registered smart-image instance does.
 // ok is false when there is no image entry or smart-image is absent/declines.
 func (p *ProseProcessor) embedImageMarkdown(entries []block.ContentEntry, uuid, blockID string, action block.Action) (string, bool) {

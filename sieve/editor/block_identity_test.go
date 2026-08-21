@@ -21,7 +21,7 @@ func TestOpen_MintsHandlelessProseIntoShadow(t *testing.T) {
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
 
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	shadow := es.shadows[uuid]
@@ -44,7 +44,7 @@ func TestOpen_PersistedHandleSurvivesReopen(t *testing.T) {
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
 
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open 1: %v", err)
 	}
 	first := es.shadows[uuid].Blocks[0].ID
@@ -53,7 +53,7 @@ func TestOpen_PersistedHandleSurvivesReopen(t *testing.T) {
 	}
 	es.Close(uuid)
 
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open 2: %v", err)
 	}
 	second := es.shadows[uuid].Blocks[0].ID
@@ -77,7 +77,7 @@ func TestOpen_MigratesLegacyBlockIDs(t *testing.T) {
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
 
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	defer waitJobs(t, es, uuid)
@@ -111,7 +111,7 @@ func TestOpen_MigrationPersistsImmediately(t *testing.T) {
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
 
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	inMemory := es.shadows[uuid].Blocks[0].ID
@@ -141,13 +141,13 @@ func TestOpen_Idempotent_ReusesShadow(t *testing.T) {
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
 
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open 1: %v", err)
 	}
 	shadow1 := es.shadows[uuid]
 	id1 := shadow1.Blocks[0].ID
 
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open 2: %v", err)
 	}
 	shadow2 := es.shadows[uuid]
@@ -170,7 +170,7 @@ func TestFrontendBlocks_ReturnsShadowMintedIDs(t *testing.T) {
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
 
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	blocks, ok := es.FrontendBlocks(uuid)

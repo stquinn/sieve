@@ -499,12 +499,12 @@ func TestAttachmentProcessor_MarkdownRepresentation(t *testing.T) {
 		{
 			name:  "held file links to its served asset",
 			attrs: map[string]interface{}{"src": "swagger.yml", "title": "swagger.yml"},
-			want:  "[swagger.yml](/sieve/doc/swagger.yml)",
+			want:  "[swagger.yml](/ui/assets/doc/swagger.yml)",
 		},
 		{
 			name:  "held file with no title falls back to the filename",
 			attrs: map[string]interface{}{"src": "swagger.yml"},
-			want:  "[swagger.yml](/sieve/doc/swagger.yml)",
+			want:  "[swagger.yml](/ui/assets/doc/swagger.yml)",
 		},
 		{
 			name:  "citation links to its coordinate",

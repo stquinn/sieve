@@ -27,7 +27,7 @@ func TestWS_Command_EnvelopeAttachmentsReachBuild(t *testing.T) {
 		},
 	})
 
-	conn := dialSessionWS(t, srv)
+	conn := dialWorkspaceWS(t, srv)
 	defer conn.Close()
 
 	if err := conn.WriteJSON(map[string]interface{}{
@@ -57,7 +57,7 @@ func TestWS_Command_EnvelopeAttachmentsReachBuild(t *testing.T) {
 // did before the field existed.
 func TestWS_Command_AttachmentsAreInertForCommandsThatIgnoreThem(t *testing.T) {
 	srv, _, _, _, gate := newWsTestServerWithCommands(t)
-	conn := dialSessionWS(t, srv)
+	conn := dialWorkspaceWS(t, srv)
 	defer conn.Close()
 
 	if err := conn.WriteJSON(map[string]interface{}{

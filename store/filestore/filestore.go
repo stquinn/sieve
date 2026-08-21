@@ -33,7 +33,7 @@
 // # Assets
 //
 // Assets are co-located inside the document directory and served via a
-// UUID-stable URL:  /sieve/{uuid}/{filename}
+// UUID-stable URL:  /ui/assets/{uuid}/{filename}
 package filestore
 
 import (
@@ -135,7 +135,7 @@ func (fs *FileStore) CreateAsset(cat store.Category, parentKey string, assetID s
 
 	var extRef string
 	if docUUID != "" {
-		extRef = "/sieve/" + docUUID + "/" + filename
+		extRef = store.AssetURL(docUUID, filename)
 	} else {
 		extRef = fs.externalRef(cat, ".assets/"+filename)
 	}
@@ -499,6 +499,22 @@ func (fs *FileStore) indexDel(uuid string) {
 	fs.indexMu.Unlock()
 }
 
+// ForgetUUIDs implements store.Store. Delete indexes-out only the storable it
+// was handed, and a folder storable carries no uuid of its own, so the
+// directory tree it removes takes documents out of the filesystem while their
+// entries stay in this index — LookupUUID would keep handing back a Storable
+// for a document whose directory is gone.
+func (fs *FileStore) ForgetUUIDs(uuids []string) {
+	if len(uuids) == 0 {
+		return
+	}
+	fs.indexMu.Lock()
+	for _, uuid := range uuids {
+		delete(fs.uuidIndex, uuid)
+	}
+	fs.indexMu.Unlock()
+}
+
 // LookupUUID returns the cached Storable for uuid. On a cache miss it rebuilds
 // the index from disk (should not happen in normal operation — every write path
 // calls indexSet). Returns nil, false when the UUID genuinely does not exist.
@@ -805,6 +821,18 @@ func (fs *FileStore) renameKey(s store.Storable, newKey string) (store.Storable,
 	}
 	if err := os.Rename(srcDir, dstDir); err != nil {
 		return nil, fmt.Errorf("filestore: rename %s → %s: %w", oldPath, newKey, err)
+	}
+
+	if _, isFolder := s.(*fileFolderStorable); isFolder {
+		// Folders have no Names history — folderMeta carries no Names field —
+		// and Load rejects anything whose .meta type isn't "document", so a
+		// folder is reloaded through the folder scan instead.
+		folder, err := fs.scanFolderNode(s.Category(), newKey)
+		if err != nil {
+			return nil, fmt.Errorf("filestore: rename reload folder %s: %w", newKey, err)
+		}
+		fs.indexSet(folder.Key(), folder)
+		return folder, nil
 	}
 
 	// Append new name to .meta names log.

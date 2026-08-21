@@ -14,31 +14,19 @@
 // mutable state on its own singleton keeps StatusBadge pure; StatusBadge and
 // every renderer just READ the liveness via isJobStale.
 //
-// SURVIVING FETCH: the module-load `GET /api/jobs` seed below is jobs
-// machinery, not #49 protocol wire — it is the one HTTP read the renderer
-// package still performs, intentionally left in place.
+// It NEVER asks: the server pushes the whole snapshot the moment the workspace
+// socket connects, and again on every change, so there is no seed to fetch and
+// no window in which this tracker is empty but the server is busy.
 
 class JobStatusTracker {
   /** @type {Set<string>} */ #active = new Set()
   /** @type {Set<string>} */ #queued = new Set()
 
   constructor() {
-    // Seed on construction from /api/jobs → {active:[...], queued:[...]}.
-    if (typeof fetch === 'function') {
-      fetch('/api/jobs')
-        .then((r) => r.json())
-        .then((data) => this.#replace(data))
-        .catch(() => {})
-    }
     // Full-snapshot listener: authoritative replacement of both tracked sets.
     if (typeof document !== 'undefined') {
-      document.addEventListener('sse:jobs:changed', (e) => {
-        try {
-          const detail = /** @type {any} */ (e).detail
-          const raw = detail && detail.data != null ? detail.data
-            : (typeof detail === 'string' ? detail : '{}')
-          this.#replace(JSON.parse(raw))
-        } catch (_) {}
+      document.addEventListener('sieve:jobs-changed', (e) => {
+        this.#replace(/** @type {any} */ (e).detail || {})
       })
     }
   }

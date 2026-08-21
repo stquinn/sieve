@@ -192,7 +192,7 @@ describe('DiagramRenderer.renderDiagramSvgEntry — engine-branched acquisition'
 
   it('plantuml with svgAsset fetches the same-origin asset and returns an image/svg+xml entry', async () => {
     stubFetch('<svg id="puml"></svg>')
-    const node = { attrs: { kind: 'diagram', diagramType: 'plantuml', svgAsset: '/sieve/uuid/di-x.svg', source: '@startuml' } }
+    const node = { attrs: { kind: 'diagram', diagramType: 'plantuml', svgAsset: '/ui/assets/doc-uuid/di-x.svg', source: '@startuml' } }
     const entry = await DiagramRenderer.renderDiagramSvgEntry(node, [])
     expect(entry).toEqual({ mimeType: 'image/svg+xml', content: '<svg id="puml"></svg>' })
   })
@@ -234,7 +234,7 @@ describe('DiagramRenderer — plantuml passive display branch', () => {
 
   it('COMPLETE fetches the svgAsset and inlines it into the panzoom wrap', async () => {
     stubFetch('<svg id="puml-live"></svg>')
-    const { dom } = mount({ id: 'di-c', source: '@startuml\nA->B\n@enduml', diagramType: 'plantuml', mode: 'render', status: 'COMPLETE', svgAsset: '/sieve/uuid/di-c.svg', createdAt: NOW() })
+    const { dom } = mount({ id: 'di-c', source: '@startuml\nA->B\n@enduml', diagramType: 'plantuml', mode: 'render', status: 'COMPLETE', svgAsset: '/ui/assets/doc-uuid/di-c.svg', createdAt: NOW() })
     document.body.appendChild(dom)
     await new Promise((r) => setTimeout(r, 0))
     const svg = dom.querySelector('.diagram-block__panzoom svg')

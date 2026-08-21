@@ -142,6 +142,15 @@ type Store interface {
 	// Delete removes s and its entire version history from the Store.
 	Delete(s Storable) error
 
+	// ForgetUUIDs drops any identity a Store still resolves for uuids whose
+	// storables it has already destroyed. Deleting a folder erases everything
+	// beneath it in ONE call that names only the folder, so a Store that
+	// resolves uuids from anything other than a live read of the tree is left
+	// answering for documents that no longer exist. The caller passes the uuids
+	// it collected before the delete; a Store that resolves from disk on every
+	// lookup implements this as a no-op.
+	ForgetUUIDs(uuids []string)
+
 	// List returns all Storables in category whose key begins with prefix. Pass
 	// an empty prefix to list the entire category. For FileStore, this scans
 	// the directory tree and reconstructs the ownership graph.

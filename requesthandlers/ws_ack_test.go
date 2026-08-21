@@ -138,67 +138,10 @@ func TestWS_BlockOp_NoOpIDGetsNoAck(t *testing.T) {
 	closeAndSettle(c)
 }
 
-// flush WITH an opId echoes it on the request-correlated flush-ack. A successful
-// flush ALSO fires the unsolicited background flush-ack (notifySaved) with NO opId
-// — the two paths coexist, and correlation keys on the opId one.
-func TestWS_FlushAck_EchoesOpID(t *testing.T) {
-	srv, _, _, uuid := newWsTestServer(t)
-	c := dialWS(t, srv, uuid)
-
-	flush := `{"type":"flush","opId":"op-42","uuid":"` + uuid + `"}`
-	if err := c.WriteMessage(websocket.TextMessage, []byte(flush)); err != nil {
-		t.Fatalf("write flush: %v", err)
-	}
-	// Drain flush-acks until the request-correlated one (opId op-42) arrives — the
-	// background notifySaved ack (no opId) may precede it.
-	deadline := time.Now().Add(2 * time.Second)
-	found := false
-	for !found {
-		_ = c.SetReadDeadline(deadline)
-		_, raw, err := c.ReadMessage()
-		if err != nil {
-			t.Fatalf("read flush-ack: %v", err)
-		}
-		var m map[string]interface{}
-		if err := json.Unmarshal(raw, &m); err != nil || m["type"] != "flush-ack" {
-			continue
-		}
-		if m["opId"] == "op-42" {
-			found = true
-		}
-	}
-
-	// A flush WITHOUT opId gets ONLY opId-less flush-acks (compat): collect every
-	// flush-ack in a short window and assert none carries an opId.
-	if err := c.WriteMessage(websocket.TextMessage, []byte(`{"type":"flush","uuid":"`+uuid+`"}`)); err != nil {
-		t.Fatalf("write flush 2: %v", err)
-	}
-	sawAck := false
-	end := time.Now().Add(500 * time.Millisecond)
-	for {
-		_ = c.SetReadDeadline(end)
-		_, raw, err := c.ReadMessage()
-		if err != nil {
-			break // read deadline reached — done collecting
-		}
-		var m map[string]interface{}
-		if err := json.Unmarshal(raw, &m); err != nil || m["type"] != "flush-ack" {
-			continue
-		}
-		sawAck = true
-		if _, has := m["opId"]; has {
-			t.Errorf("opId-less flush must get opId-less acks, got %v", m["opId"])
-		}
-	}
-	if !sawAck {
-		t.Errorf("expected at least one flush-ack for the opId-less flush")
-	}
-	closeAndSettle(c)
-}
-
-// extract-ack covers the TRANSFORM path, which emits NO block-extracted hint: the
-// ack is the only correlated reply, and it must arrive with the echoed opId.
-func TestWS_ExtractAck_TransformHasNoHintButAcks(t *testing.T) {
+// extract-ack covers the TRANSFORM path: the new block reaches the client as a
+// replace-block render-back, and the ack — the only correlated reply — follows
+// it with the echoed opId.
+func TestWS_ExtractAck_TransformRendersBackThenAcks(t *testing.T) {
 	srv, _, _, uuid := newWsTestServer(t)
 	c := dialWS(t, srv, uuid)
 
@@ -213,10 +156,10 @@ func TestWS_ExtractAck_TransformHasNoHintButAcks(t *testing.T) {
 	}
 	readUntil(t, c, "block-op-ack", 2*time.Second) // drain the create ack
 
-	// Transform it in place: operation=transform → replace-block render-back, NO
-	// block-extracted, but an extract-ack. Prose is the only self-registered
-	// processor in the WS harness (the rest need injected BlockServices); the ack
-	// mechanics are kind-blind, so a prose→prose transform exercises the path.
+	// Transform it in place: operation=transform → a replace-block render-back and
+	// an extract-ack. Prose is the only self-registered processor in the WS harness
+	// (the rest need injected BlockServices); the ack mechanics are kind-blind, so
+	// a prose→prose transform exercises the path.
 	entries := `[{"mimeType":"text/plain","content":"probe"}]`
 	extract := `{"type":"extract","opId":"op-tx","blockId":"` + srcID +
 		`","targetKind":"prose","operation":"transform","entries":` + entries + `,"index":-1}`
@@ -224,9 +167,10 @@ func TestWS_ExtractAck_TransformHasNoHintButAcks(t *testing.T) {
 		t.Fatalf("write extract: %v", err)
 	}
 
-	// Read every frame until the ack; assert no block-extracted appeared en route.
+	// Read every frame until the ack; the render-back must have arrived first —
+	// the ordering the client's correlation relies on.
 	deadline := time.Now().Add(2 * time.Second)
-	sawExtracted := false
+	sawReplace := false
 	for {
 		_ = c.SetReadDeadline(deadline)
 		_, raw, err := c.ReadMessage()
@@ -237,8 +181,11 @@ func TestWS_ExtractAck_TransformHasNoHintButAcks(t *testing.T) {
 		if err := json.Unmarshal(raw, &m); err != nil {
 			continue
 		}
-		if m["type"] == "block-extracted" {
-			sawExtracted = true
+		if m["type"] == "replace-block" {
+			sawReplace = true
+			if m["oldId"] != srcID {
+				t.Errorf("replace-block oldId = %v, want %s", m["oldId"], srcID)
+			}
 		}
 		if m["type"] == "extract-ack" {
 			if m["opId"] != "op-tx" {
@@ -250,8 +197,8 @@ func TestWS_ExtractAck_TransformHasNoHintButAcks(t *testing.T) {
 			break
 		}
 	}
-	if sawExtracted {
-		t.Errorf("a transform must NOT emit block-extracted, but one arrived")
+	if !sawReplace {
+		t.Errorf("a transform must render back with replace-block before its ack")
 	}
 	closeAndSettle(c)
 }

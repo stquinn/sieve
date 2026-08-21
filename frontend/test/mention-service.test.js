@@ -1,7 +1,7 @@
 // @ts-check
 // mention-service.test.js — the `@`-picker's protocol peer (#74 P4).
 //
-// MentionService is the SECOND tenant of the session channel and the first
+// MentionService is the SECOND tenant of the workspace channel and the first
 // non-command one: it claims `mention-result` and speaks `mention-query`. It is
 // the ONLY place the picker's typeahead touches the wire (#49 — surfaces and
 // providers stay transport-blind).
@@ -42,7 +42,7 @@ describe('MentionService — the mention tenant of the session plane', () => {
         sockets.push(ws)
         return /** @type {any} */ (ws)
       },
-      wsUrl: () => 'ws://test/api/ws?session=1',
+      wsUrl: () => 'ws://test/api/ws/workspace',
     })
   })
 
@@ -146,7 +146,7 @@ describe('MentionService — resolve: what does this coordinate open?', () => {
         sockets.push(ws)
         return /** @type {any} */ (ws)
       },
-      wsUrl: () => 'ws://test/api/ws?session=1',
+      wsUrl: () => 'ws://test/api/ws/workspace',
     })
   })
 

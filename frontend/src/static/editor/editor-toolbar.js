@@ -236,14 +236,13 @@ export class EditorToolbar {
       }),
     ], { className: 'tb-ai-query' })
 
-    // Help: HTMX /api/help (verbatim from the retired handleToolbarClick).
     const helpGroup = new ButtonGroup([
       new ToolbarButton({
         id: 'tb-help-btn', iconHtml: EditorToolbar.#icon('help'), title: 'Help',
         onClick: () => {
           const htmx = /** @type {any} */ (window).htmx
           if (!htmx) return
-          htmx.ajax('GET', '/api/help', { target: '#help-dialog-content', swap: 'innerHTML' })
+          htmx.ajax('GET', '/ui/views/help', { target: '#help-dialog-content', swap: 'innerHTML' })
             .then(() => { const dlg = /** @type {any} */ (document.getElementById('help-dialog')); dlg && dlg.showModal() })
         },
       }),

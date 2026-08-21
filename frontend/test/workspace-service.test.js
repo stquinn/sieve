@@ -1,7 +1,7 @@
 // @ts-check
-// workspace-service.test.js — the session-channel wire owner (#74 P1).
-// The point of the extraction is multi-tenancy on ONE socket: commands are no
-// longer the wire's only tenant, so ownership moves off CommandService.
+// workspace-service.test.js — the workspace-channel wire owner.
+// Multi-tenancy on ONE socket: commands are not the wire's only tenant, so the
+// socket belongs to the plane rather than to any one of them.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { WorkspaceService } from '../src/static/block/workspace-service.js'
 import { ContractViolation } from '../src/static/block/sieve-block.js'
@@ -38,7 +38,7 @@ function fakeTenant(frameTypes) {
   }
 }
 
-describe('WorkspaceService — the session-channel wire owner', () => {
+describe('WorkspaceService — the workspace-channel wire owner', () => {
   /** @type {FakeWebSocket[]} */ let sockets
   /** @type {WorkspaceService} */ let service
 
@@ -50,7 +50,7 @@ describe('WorkspaceService — the session-channel wire owner', () => {
         sockets.push(ws)
         return /** @type {any} */ (ws)
       },
-      wsUrl: () => 'ws://test/api/ws?session=1',
+      wsUrl: () => 'ws://test/api/ws/workspace',
     })
   })
 
@@ -156,6 +156,43 @@ describe('WorkspaceService — the session-channel wire owner', () => {
     await new Promise((r) => setTimeout(r, 10))
 
     expect(liveSocket().sent).toEqual([{ type: 'command', cmd: 'btw', correlationId: 'c-1' }])
+  })
+
+  it('tells every interested tenant the socket is up, and each of them exactly once', async () => {
+    const both = Object.assign(fakeTenant(['invalidate', 'jobs-changed']), { connects: 0, onConnect() { this.connects++ } })
+    const uninterested = fakeTenant(['command-result']) // declares no onConnect
+    service.registerTenant(both)
+    service.registerTenant(uninterested)
+    service.open()
+    await new Promise((r) => setTimeout(r, 10))
+
+    // Two claimed words, ONE announcement — the table keys on words, not tenants.
+    expect(both.connects).toBe(1)
+    expect(() => liveSocket().receive({ type: 'command-result' })).not.toThrow()
+  })
+
+  it('isolates a tenant that throws on connect — its siblings are still told', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const bad = { frameTypes: ['invalidate'], onFrame: () => {}, onConnect() { throw new Error('resync exploded') } }
+    const good = Object.assign(fakeTenant(['command-result']), { connects: 0, onConnect() { this.connects++ } })
+    service.registerTenant(bad)
+    service.registerTenant(good)
+    service.open()
+    await new Promise((r) => setTimeout(r, 10))
+
+    expect(good.connects).toBe(1)
+    spy.mockRestore()
+  })
+
+  it('persistScroll puts the fire-and-forget session-scroll frame on the wire', async () => {
+    service.persistScroll('tab-7', 420)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(liveSocket().sent).toEqual([{ type: 'session-scroll', id: 'tab-7', scroll: 420 }])
+  })
+
+  it('persistScroll with no tab sends nothing — an unnamed offset belongs to no tab', () => {
+    service.persistScroll('', 12)
+    expect(sockets.length).toBe(0)
   })
 
   it('close() tears the socket down; tenants outlive it and a later send re-opens', async () => {

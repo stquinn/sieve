@@ -22,7 +22,7 @@ func TestEditorService_ExportMarkdown_CallerOwnsFilter(t *testing.T) {
 	doc.SetBody([]byte("prose stays\n\n```code\nid: co-1\nlanguage: go\nsource: x := 1\nstatus: COMPLETE\n```"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	defer es.Close(uuid)

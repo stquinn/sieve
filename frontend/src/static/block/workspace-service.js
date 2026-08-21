@@ -1,16 +1,13 @@
 // @ts-check
 // workspace-service.js — WorkspaceService: the WIRE OWNER for the workspace
-// command plane's session channel (`/api/ws?session=1`, Go's `__session__`
-// sentinel), the sibling of block-service.js's per-uuid document channels.
+// channel (`GET /api/ws/workspace`), the sibling of block-service.js's per-uuid
+// document channels.
 //
-// Issue #74 P1 moved this ownership OFF CommandService. While slash commands
-// were the channel's only tenant, "the command service owns the socket" and
-// "the session channel has an owner" were the same sentence; `@`-mentions
-// (#74 P3, mention-query/mention-result) are the second tenant and the first
-// non-command one, which separates them. The alternative — a second socket on
-// the same session key — is exactly the shape that produced silent-dead-UI on
-// document channels (ownership guard 6e2ccfc, claim-on-write b8c209e). Hence
-// the invariant this class exists to hold: ONE socket, MANY tenants.
+// THE INVARIANT: ONE socket, MANY tenants. A second socket on the same workspace
+// key is exactly the shape that produced silent-dead-UI on document channels
+// (ownership guard 6e2ccfc, claim-on-write b8c209e) — Go answers a correlated
+// frame to the socket that asked, but a server-initiated broadcast reaches every
+// socket, so two would double-fire every invalidation as well.
 //
 // A tenant is a WorkspaceTenant: it declares the inbound frame `type` words it
 // speaks and receives exactly those. The routing table is a claim registry, not
@@ -19,25 +16,36 @@
 // dropped: the plane is open-ended by design (Go may grow vocabulary a build
 // ahead of the frontend), so an unclaimed word is news, not an error.
 //
+// The plane speaks NO vocabulary of its own with one exception, and the rule
+// behind it is worth stating because it decides where the next frame goes: a
+// frame with a REPLY needs somewhere to keep what is waiting for it, and that
+// somewhere is a tenant. An unanswered, uncorrelated frame has no such state, so
+// a tenant for it would be a class with one method and no fields. `session-scroll`
+// (persistScroll below) is the only such frame today.
+//
 // ONE instance, constructed in the Workspace composition root and handed to its
 // tenants by constructor injection (idiomatic-js §5 — never window.*).
 
 import { BlockChannel } from './block-channel.js'
 import { ContractViolation } from './sieve-block.js'
+import { WorkspaceFrame } from '../generated/protocol.js'
 
 /**
- * An outbound or inbound session frame. Shapes are owned by the tenants and by
- * Go's session dispatch (`requesthandlers/ws_handler.go`); this class reads only
- * `type`, which is the routing key.
- * @typedef {Record<string, any> & {type?: string}} WorkspaceFrame
+ * An outbound or inbound workspace frame. Shapes are owned by the tenants and by
+ * Go's workspace dispatch (`requesthandlers/ws_handler.go`); this class reads only
+ * `type`, which is the routing key. Named WorkspaceMessage, not WorkspaceFrame,
+ * because the generated `WorkspaceFrame` this module imports is the enum of type
+ * WORDS — one name for both would make every annotation ambiguous.
+ * @typedef {Record<string, any> & {type?: string}} WorkspaceMessage
  */
 
 /**
- * A tenant of the session channel — a protocol peer that speaks some of the
+ * A tenant of the workspace channel — a protocol peer that speaks some of the
  * plane's vocabulary. Structural, per idiomatic-js §2a: CommandService is one.
  * @typedef {object} WorkspaceTenant
  * @property {readonly string[]} frameTypes  the inbound frame `type` words this tenant claims
- * @property {(frame: WorkspaceFrame) => void} onFrame  delivery of a claimed frame
+ * @property {(frame: WorkspaceMessage) => void} onFrame  delivery of a claimed frame
+ * @property {() => void} [onConnect]  optional: the socket reached OPEN. Fires on the first connect and on every reconnect alike — a tenant resyncing cannot tell them apart, and a reconnect is precisely when it missed the most
  */
 
 /**
@@ -45,13 +53,13 @@ import { ContractViolation } from './sieve-block.js'
  * @property {(url: string) => WebSocket} [socketFactory]
  *   — injected for tests; defaults to `new WebSocket(url)`
  * @property {() => string} [wsUrl]
- *   — injected for tests; defaults to the /api/ws?session=1 URL
+ *   — injected for tests; defaults to the /api/ws/workspace URL
  */
 
 export class WorkspaceService {
   /** @type {(url: string) => WebSocket} */ #socketFactory
   /** @type {() => string} */ #wsUrl
-  /** @type {BlockChannel|null} the ONE session channel (null = not yet opened / closed) */ #channel = null
+  /** @type {BlockChannel|null} the ONE workspace channel (null = not yet opened / closed) */ #channel = null
   /** @type {Map<string, WorkspaceTenant>} frame type → the ONE tenant claiming it */ #tenants = new Map()
 
   /** @param {WorkspaceServiceOptions} [options] the test seams (empty in prod) */
@@ -60,14 +68,22 @@ export class WorkspaceService {
     this.#wsUrl = options.wsUrl || (() => WorkspaceService.#defaultUrl())
   }
 
-  /** @returns {string} the production session-channel URL */
+  /**
+   * The production workspace-channel URL. It takes no parameters: there is one
+   * workspace per window, so the mount path IS the identity.
+   *
+   * The dev-server host rewrite is load-bearing: WebKitGTK cannot carry a
+   * WebSocket upgrade over the app's custom scheme, so the wire always rides the
+   * loopback listener.
+   * @returns {string}
+   */
   static #defaultUrl() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
     let host = location.host
     if (typeof window !== 'undefined' && /** @type {any} */ (window).__sieveDevServerPort) {
       host = '127.0.0.1:' + /** @type {any} */ (window).__sieveDevServerPort
     }
-    return proto + '//' + host + '/api/ws?session=1'
+    return proto + '//' + host + '/api/ws/workspace'
   }
 
   // ── Tenancy ────────────────────────────────────────────────────────────────
@@ -108,7 +124,7 @@ export class WorkspaceService {
    * Mints a correlation id for a request/reply exchange on this plane.
    *
    * IT LIVES HERE, NOT ON A TENANT: correlation is a PLANE convention (Go's
-   * `replyTo` answers every correlated session frame requester-affinely,
+   * `replyTo` answers every correlated workspace frame requester-affinely,
    * whatever the frame word), so commands and mentions must not each invent
    * their own scheme. `c-` + a UUID so an id minted in one page session can
    * never collide with one from a PRIOR session — the Go JobEngine may still
@@ -128,12 +144,16 @@ export class WorkspaceService {
   // ── Channel lifecycle ──────────────────────────────────────────────────────
 
   /**
-   * Opens the session channel if it is not already open. IDEMPOTENT — this is
+   * Opens the workspace channel if it is not already open. IDEMPOTENT — this is
    * the one-socket invariant: unlike a per-uuid document channel there is
    * nothing to take over, so a second caller joins the live wire rather than
    * replacing it. send() calls this lazily, so nothing opens a socket merely by
-   * existing (parity with the pre-#74 behaviour, where the socket appeared on
-   * the first dispatch).
+   * existing.
+   *
+   * THE SERVER SPEAKS FIRST on this wire: a fresh socket is sent the jobs
+   * snapshot before it asks for anything. A tenant must therefore be registered
+   * before the socket opens, which is why every tenant registers in its own
+   * constructor rather than on first use.
    */
   open() {
     if (this.#channel) return
@@ -141,18 +161,18 @@ export class WorkspaceService {
       this.#socketFactory,
       this.#wsUrl,
       {
-        // The session channel carries no document traffic: no render-back ops,
-        // no flush acks, no index math. Everything inbound is a tenant frame.
+        // The workspace channel carries no document traffic: no render-back ops,
+        // no index math. Everything inbound is a tenant frame.
         applyServerOp: () => {},
-        onFlushAck: () => {},
         onMessage: (msg) => this.#route(msg),
         resolveInsertIndex: () => 0,
+        onOpen: () => this.#announceConnect(),
       },
       () => {},
     )
   }
 
-  /** Closes the session channel (no reconnect). Tenant claims are kept. */
+  /** Closes the workspace channel (no reconnect). Tenant claims are kept. */
   close() {
     if (!this.#channel) return
     this.#channel.close()
@@ -160,13 +180,27 @@ export class WorkspaceService {
   }
 
   /**
-   * Puts a frame on the session channel, opening it lazily. Frames sent before
+   * Puts a frame on the workspace channel, opening it lazily. Frames sent before
    * the socket is OPEN are queued by the channel and replayed on connect.
-   * @param {WorkspaceFrame} frame
+   * @param {WorkspaceMessage} frame
    */
   send(frame) {
     this.open()
     if (this.#channel) this.#channel.send(frame)
+  }
+
+  /**
+   * Persists one tab's scroll offset (frame frozen: {type:'session-scroll', id,
+   * scroll}). Fire-and-forget and unanswered — this is caret-class view state,
+   * not a shared UI change, so there is nothing to await and nothing to swap.
+   *
+   * It names its tab because the workspace channel is not bound to a document:
+   * the tab may be any tab, open document or not.
+   * @param {string} tabId @param {number} scroll  the pixel offset from the top
+   */
+  persistScroll(tabId, scroll) {
+    if (!tabId) return
+    this.send({ type: WorkspaceFrame.SESSION_SCROLL, id: tabId, scroll: scroll })
   }
 
   // ── Inbound routing ────────────────────────────────────────────────────────
@@ -175,7 +209,7 @@ export class WorkspaceService {
    * Delivers an inbound frame to the tenant claiming its `type`. Unclaimed (or
    * type-less) frames are dropped — see the header on why that is not an error.
    * A throwing tenant is isolated: the wire and its siblings survive.
-   * @param {WorkspaceFrame} frame
+   * @param {WorkspaceMessage} frame
    */
   #route(frame) {
     const type = frame && frame.type
@@ -188,6 +222,23 @@ export class WorkspaceService {
       tenant.onFrame(frame)
     } catch (e) {
       console.error('[workspace-service] tenant threw handling ' + type, e)
+    }
+  }
+
+  /**
+   * Tells every tenant that declares an interest that the socket is up, so it can
+   * resync whatever it may have missed while it was down. Each tenant is told
+   * ONCE however many frame words it claims (the table keys on words, tenants
+   * repeat across them), and a throwing tenant is isolated like an inbound one.
+   */
+  #announceConnect() {
+    for (const tenant of new Set(this.#tenants.values())) {
+      if (!tenant.onConnect) continue
+      try {
+        tenant.onConnect()
+      } catch (e) {
+        console.error('[workspace-service] tenant threw on connect', e)
+      }
     }
   }
 }

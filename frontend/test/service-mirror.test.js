@@ -113,50 +113,44 @@ describe('BlockService truth-mirror', () => {
 describe('DocumentService.load — typed shape (raw bridge retired)', () => {
   beforeEach(() => FakeSocket.reset())
 
-  /** @param {any} body */
-  function fetchLoad(body) {
-    global.fetch = vi.fn(() => /** @type {any} */ (Promise.resolve({ json: () => Promise.resolve(body) })))
+  /**
+   * Asks for the document over the channel and answers with a load-content frame
+   * carrying `content` at its TOP LEVEL — the embedded shape Go emits.
+   * @param {{documentService: any, sock: any, uuid: string}} rig @param {any} content
+   */
+  function driveLoad(rig, content) {
+    const pending = rig.documentService.load(rig.uuid)
+    rig.sock.driveMessage(Object.assign({ type: 'load-content', opId: lastOpId(rig.sock, 'load') }, content))
+    return pending
   }
 
   it('returns {body, blocks: SieveBlock[], meta:{mode}} — the raw key is gone, envelopes typed', async () => {
-    const prevFetch = global.fetch
-    fetchLoad({ body: 'B', mode: 'markdown', blocks: [{ id: 'l1', kind: 'code', attrs: { source: 'x' } }] })
-    try {
-      const { documentService } = serviceRig({ uuid: 'doc-1' })
-      const res = await documentService.load('doc-1')
-      expect(res).not.toHaveProperty('raw')
-      expect(res.body).toBe('B')
-      expect(res.meta.mode).toBe('markdown')
-      expect(res.blocks).toHaveLength(1)
-      expect(res.blocks[0]).toBeInstanceOf(SieveBlock)
-      expect(res.blocks[0].id).toBe('l1')
-      expect(res.blocks[0].kind).toBe('code')
-      expect(res.blocks[0].payload.source).toBe('x') // flat payload = the attrs bag + id/kind
-    } finally { global.fetch = prevFetch }
+    const rig = serviceRig({ uuid: 'doc-1' })
+    const res = await driveLoad(rig, { body: 'B', mode: 'markdown', blocks: [{ id: 'l1', kind: 'code', attrs: { source: 'x' } }] })
+    expect(res).not.toHaveProperty('raw')
+    expect(res.body).toBe('B')
+    expect(res.meta.mode).toBe('markdown')
+    expect(res.blocks).toHaveLength(1)
+    expect(res.blocks[0]).toBeInstanceOf(SieveBlock)
+    expect(res.blocks[0].id).toBe('l1')
+    expect(res.blocks[0].kind).toBe('code')
+    expect(res.blocks[0].payload.source).toBe('x') // flat payload = the attrs bag + id/kind
   })
 
   it('meta.mode defaults to wysiwyg when the wire omits it', async () => {
-    const prevFetch = global.fetch
-    fetchLoad({ body: '', blocks: [] })
-    try {
-      const { documentService } = serviceRig({ uuid: 'doc-1' })
-      const res = await documentService.load('doc-1')
-      expect(res.meta.mode).toBe('wysiwyg')
-      expect(res.blocks).toEqual([])
-    } finally { global.fetch = prevFetch }
+    const rig = serviceRig({ uuid: 'doc-1' })
+    const res = await driveLoad(rig, { body: '', blocks: [] })
+    expect(res.meta.mode).toBe('wysiwyg')
+    expect(res.blocks).toEqual([])
   })
 
   it('load seeds the truth-mirror — envelopeFor returns the typed envelope', async () => {
-    const prevFetch = global.fetch
-    fetchLoad({ body: 'B', mode: 'wysiwyg', blocks: [{ id: 'l1', kind: 'code', attrs: { source: 'x' } }] })
-    try {
-      const { service, documentService } = serviceRig({ uuid: 'doc-1' })
-      await documentService.load('doc-1')
-      const env = service.envelopeFor('l1')
-      expect(env).toBeInstanceOf(SieveBlock)
-      expect(env.kind).toBe('code')
-      expect(env.payload.source).toBe('x')
-    } finally { global.fetch = prevFetch }
+    const rig = serviceRig({ uuid: 'doc-1' })
+    await driveLoad(rig, { body: 'B', mode: 'wysiwyg', blocks: [{ id: 'l1', kind: 'code', attrs: { source: 'x' } }] })
+    const env = rig.service.envelopeFor('l1')
+    expect(env).toBeInstanceOf(SieveBlock)
+    expect(env.kind).toBe('code')
+    expect(env.payload.source).toBe('x')
   })
 })
 
@@ -206,77 +200,133 @@ describe('DocumentService.onBlockUpdated — document-scoped render-back stream'
   })
 })
 
-// ── issue #49 Phase 4: the three stray HTTP fetches now leave through the service
-// pair. The wire (URL, method, headers, body shape) is UNCHANGED — these assert the
-// frozen bytes at the service boundary (fetch stubbed; no real network).
-describe('BlockService.detectExtractions — capability discovery (POST /api/detect-extractions)', () => {
-  /** @param {any} body */
-  function stubFetch(body) {
-    const fetchMock = vi.fn(() => /** @type {any} */ (Promise.resolve({ json: () => Promise.resolve(body) })))
-    global.fetch = fetchMock
-    return fetchMock
-  }
+// ── The channel razor: discovery and the paste pipelines are document-wire frames.
+// These assert the FROZEN frames as they leave, and the reply shapes as they are
+// read back — no fetch, no URL, no network.
 
-  it('POSTs {sourceKind, entries} unchanged and resolves the offers array', async () => {
-    const prevFetch = global.fetch
+/** @param {import('./helpers/service-rig.js').FakeSocket} sock @param {string} reqType */
+function lastOpId(sock, reqType) {
+  const sent = sock.sentOfType(reqType)
+  return sent.length ? sent[sent.length - 1].opId : undefined
+}
+
+describe('BlockService.detectExtractions — capability discovery over the document wire', () => {
+  beforeEach(() => FakeSocket.reset())
+
+  it('sends {sourceKind, entries} and resolves the offers out of the reply KEY', async () => {
+    const { service, sock } = serviceRig({ uuid: 'doc-1' })
+    const entries = [{ kind: 'sieve/code', content: 'x=1' }]
     const offers = [{ kind: 'code', actions: ['extract'] }, { kind: 'prose', actions: ['transform'] }]
-    const fetchMock = stubFetch(offers)
-    try {
-      const { service } = serviceRig({ uuid: 'doc-1' })
-      const entries = [{ kind: 'sieve/code', content: 'x=1' }]
-      const res = await service.detectExtractions({ sourceKind: 'log', entries })
-      expect(res).toEqual(offers)
-      expect(fetchMock).toHaveBeenCalledWith('/api/detect-extractions', expect.objectContaining({ method: 'POST' }))
-      const opts = fetchMock.mock.calls[0][1]
-      expect(opts.headers).toEqual({ 'Content-Type': 'application/json' })
-      expect(JSON.parse(opts.body)).toEqual({ sourceKind: 'log', entries })
-    } finally { global.fetch = prevFetch }
+    const pending = service.detectExtractions({ sourceKind: 'log', entries })
+    expect(sock.sentOfType('detect-extractions')[0]).toEqual({
+      type: 'detect-extractions', sourceKind: 'log', entries, opId: lastOpId(sock, 'detect-extractions'),
+    })
+    sock.driveMessage({
+      type: 'detect-extractions-result', opId: lastOpId(sock, 'detect-extractions'), offers,
+    })
+    await expect(pending).resolves.toEqual(offers)
   })
 
-  it('propagates a rejection (network error) so the caller keeps its own catch (error parity)', async () => {
-    const prevFetch = global.fetch
-    global.fetch = /** @type {any} */ (vi.fn(() => Promise.reject(new Error('boom'))))
-    try {
-      const { service } = serviceRig({ uuid: 'doc-1' })
-      await expect(service.detectExtractions({ sourceKind: 'log', entries: [] })).rejects.toThrow('boom')
-    } finally { global.fetch = prevFetch }
+  it('resolves an EMPTY offer list with no channel — nothing to discover is an answer', async () => {
+    const { service } = serviceRig({ uuid: null })
+    await expect(service.detectExtractions({ sourceKind: 'log', entries: [] })).resolves.toEqual([])
   })
 })
 
-describe('DocumentService paste pipelines (issue #49 Phase 4)', () => {
-  it('pasteSlice POSTs {uuid, slice, index} unchanged and resolves the raw Response', async () => {
-    const prevFetch = global.fetch
-    const response = { ok: true }
-    const fetchMock = /** @type {any} */ (vi.fn(() => Promise.resolve(response)))
-    global.fetch = fetchMock
-    try {
-      const { documentService } = serviceRig({ uuid: 'doc-1' })
-      const slice = [{ kind: 'prose', content: 'a' }, { kind: 'code', content: 'b' }]
-      const res = await documentService.pasteSlice('doc-1', { slice, index: 3 })
-      expect(res).toBe(response) // fire-and-forget: the raw Response, not parsed
-      expect(fetchMock).toHaveBeenCalledWith('/api/editor/paste-slice', expect.objectContaining({ method: 'POST' }))
-      const opts = fetchMock.mock.calls[0][1]
-      expect(opts.headers).toEqual({ 'Content-Type': 'application/json' })
-      expect(JSON.parse(opts.body)).toEqual({ uuid: 'doc-1', slice, index: 3 })
-    } finally { global.fetch = prevFetch }
+describe('DocumentService paste pipelines — one frame, two kinds', () => {
+  beforeEach(() => FakeSocket.reset())
+
+  it('pasteSlice sends kind:slice with the slice, and the ack names no block', async () => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    // Wire shape is [][]block.ContentEntry (sieve/protocol/document_frames.go:328):
+    // one ENTRY-ARRAY per copied block, each entry {mimeType, content} — the same
+    // per-block view set wysiwyg-surface.js's sliceItems builds (lines 539-562).
+    // NOT a flat [{kind, content}] list.
+    const slice = [
+      [{ mimeType: 'sieve/prose', content: 'a' }],
+      [{ mimeType: 'sieve/code', content: 'b' }],
+    ]
+    const pending = documentService.pasteSlice('doc-1', { slice, index: 3 })
+    expect(sock.sentOfType('paste')[0]).toEqual({
+      type: 'paste', kind: 'slice', slice, index: 3, opId: lastOpId(sock, 'paste'),
+    })
+    sock.driveMessage({ type: 'paste-ack', opId: lastOpId(sock, 'paste'), outcome: 'block' })
+    const res = await pending
+    expect(res.outcome).toBe('block')
+    expect(res.id).toBeUndefined()
   })
 
-  it('smartPaste POSTs {uuid, entries, index} unchanged and resolves the parsed PasteResult', async () => {
-    const prevFetch = global.fetch
-    // Go answers a DISCRIMINATED UNION (#67): {outcome, …}. The service is a pure
-    // wire — it hands the parsed body through untouched, discriminator and all.
-    const body = { outcome: 'content', html: '<a href="https://x.test">X</a>' }
-    const fetchMock = /** @type {any} */ (vi.fn(() => Promise.resolve({ json: () => Promise.resolve(body) })))
-    global.fetch = fetchMock
+  it('smartPaste sends kind:smart with the entries and hands the PasteResult union through untouched', async () => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    const entries = [{ mimeType: 'text/plain', content: 'https://x.test' }]
+    const pending = documentService.smartPaste('doc-1', { entries, index: 4 })
+    expect(sock.sentOfType('paste')[0]).toEqual({
+      type: 'paste', kind: 'smart', entries, index: 4, opId: lastOpId(sock, 'paste'),
+    })
+    sock.driveMessage({
+      type: 'paste-ack', opId: lastOpId(sock, 'paste'),
+      outcome: 'content', html: '<a href="https://x.test">X</a>',
+    })
+    const res = await pending
+    expect(res.outcome).toBe('content')
+    expect(res.html).toBe('<a href="https://x.test">X</a>')
+  })
+
+  // Go's paste path is SYNCHRONOUS and smart-image acquire downloads with an 8s
+  // HTTP timeout (smart_image_processor.go:436-438) — a slow image paste's ack
+  // can legitimately land after the wire's DEFAULT 5s ceiling. Both paste verbs
+  // raise it to PASTE_ACK_TIMEOUT_MS (12s) so that ack is not dropped on the
+  // floor: an ack arriving after the default would have fired would leave
+  // #applyPasteResult never run and the insert anchor never consumed/cleared.
+  it('smartPaste and pasteSlice outlive the default 5s ceiling — an ack at 8s still lands', async () => {
+    vi.useFakeTimers()
+    try {
+      const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+      const pending = documentService.smartPaste('doc-1', { entries: [], index: 0 })
+      let settled = false
+      pending.then(() => { settled = true }, () => { settled = true })
+
+      // Past the default 5s: an unraised ceiling would have rejected by now.
+      await vi.advanceTimersByTimeAsync(5001)
+      expect(settled).toBe(false)
+
+      // An 8s-late ack (the server's image-download bound) still lands inside
+      // the 12s ceiling.
+      sock.driveMessage({
+        type: 'paste-ack', opId: lastOpId(sock, 'paste'), outcome: 'block', kind: 'smart-image', id: 'img-1',
+      })
+      const res = await pending
+      expect(res.outcome).toBe('block')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('pasteSlice rejects only past the RAISED 12s ceiling, not the wire default', async () => {
+    vi.useFakeTimers()
     try {
       const { documentService } = serviceRig({ uuid: 'doc-1' })
-      const entries = [{ mimeType: 'text/plain', content: 'https://x.test' }]
-      const res = await documentService.smartPaste('doc-1', { entries, index: 4 })
-      expect(res).toEqual(body) // preserved exactly — no reshaping in the service
-      expect(fetchMock).toHaveBeenCalledWith('/api/editor/smart-paste', expect.objectContaining({ method: 'POST' }))
-      const opts = fetchMock.mock.calls[0][1]
-      expect(opts.headers).toEqual({ 'Content-Type': 'application/json' })
-      expect(JSON.parse(opts.body)).toEqual({ uuid: 'doc-1', entries, index: 4 })
-    } finally { global.fetch = prevFetch }
+      const pending = documentService.pasteSlice('doc-1', { slice: [], index: 0 })
+      const assertion = expect(pending).rejects.toThrow('ws timeout: paste slice')
+      await vi.advanceTimersByTimeAsync(12000)
+      await assertion
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('DocumentService.focus — the dwell ping', () => {
+  beforeEach(() => FakeSocket.reset())
+
+  it('sends an unanswered {type:focus} and awaits nothing', () => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    expect(documentService.focus('doc-1')).toBeUndefined()
+    expect(sock.sentOfType('focus')).toEqual([{ type: 'focus' }])
+  })
+
+  it('drops for a channel-less document rather than throwing', () => {
+    const { documentService } = serviceRig({ uuid: null })
+    expect(() => documentService.focus('prompt:x')).not.toThrow()
   })
 })

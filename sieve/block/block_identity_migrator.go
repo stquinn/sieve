@@ -22,6 +22,8 @@ import (
 // block id — nothing outside a document persists one (domain/, StateService,
 // JobTracker and JobEngine carry no block-id field, and content links are
 // https-only) — so rewriting refs in-document is exhaustive and verifiable.
+//
+// It is one step of DocumentMigrator, the load-time pipeline callers run.
 type BlockIdentityMigrator struct{}
 
 // Migrate returns the tree with every id a unique UUID and every in-document ref

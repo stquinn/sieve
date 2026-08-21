@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"sieve/store"
 )
 
 const testDocUUID = "test-uuid-1234"
@@ -33,7 +35,7 @@ func TestLocaliseImages_RemoteImage_Success(t *testing.T) {
 	if strings.Contains(result, srv.URL) {
 		t.Error("remote URL should have been replaced")
 	}
-	expected := "/sieve/" + testDocUUID + "/"
+	expected := store.AssetURL(testDocUUID, "")
 	if !strings.Contains(result, expected) {
 		t.Errorf("expected %q path in result, got: %q", expected, result)
 	}

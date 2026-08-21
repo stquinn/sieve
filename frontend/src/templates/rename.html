@@ -4,9 +4,9 @@
   
   <form 
     {{if eq .Type "folder"}}
-      hx-post="/api/sidebar/rename-folder?id={{.ID}}"
+      hx-patch="/api/folder/{{.ID}}"
     {{else}}
-      hx-post="/api/sidebar/rename-note?id={{.ID}}"
+      hx-patch="/api/note/{{.ID}}"
     {{end}}
     hx-target="#htmx-sidebar"
     hx-swap="innerHTML"

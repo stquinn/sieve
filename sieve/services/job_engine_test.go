@@ -5,6 +5,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"sieve/sieve/domain"
 )
 
 // helper: a Work fn that tracks peak concurrency within its category.
@@ -35,7 +37,7 @@ func TestJobEngine_CapsConcurrencyPerCategory(t *testing.T) {
 		probe := concurrencyProbe(&active, &peak, 30*time.Millisecond)
 		eng.Submit(JobDescriptor{
 			Category:   "ai",
-			Meta:       JobInfo{JobID: string(rune('a' + i))},
+			Meta:       domain.JobInfo{JobID: string(rune('a' + i))},
 			Work:       probe,
 			OnFinished: func(any) { wg.Done() },
 			OnError:    func(error) { wg.Done() },
@@ -60,7 +62,7 @@ func TestJobEngine_UnknownCategoryUsesDefault(t *testing.T) {
 		probe := concurrencyProbe(&active, &peak, 30*time.Millisecond)
 		eng.Submit(JobDescriptor{
 			Category:   "exec", // not in sizes → default 2
-			Meta:       JobInfo{JobID: string(rune('a' + i))},
+			Meta:       domain.JobInfo{JobID: string(rune('a' + i))},
 			Work:       probe,
 			OnFinished: func(any) { wg.Done() },
 			OnError:    func(error) { wg.Done() },
@@ -74,9 +76,9 @@ func TestJobEngine_UnknownCategoryUsesDefault(t *testing.T) {
 
 func TestJobEngine_RunsEachJobOnceAndDrivesTracker(t *testing.T) {
 	var mu sync.Mutex
-	events := map[string]int{}
+	notifications := 0
 	tr := NewJobTracker()
-	tr.Broadcast = func(event, _ string) { mu.Lock(); events[event]++; mu.Unlock() }
+	tr.Notify = func() { mu.Lock(); notifications++; mu.Unlock() }
 	eng := NewJobEngine(map[string]int{"ai": 2}, 2, tr)
 
 	var ran int32
@@ -85,7 +87,7 @@ func TestJobEngine_RunsEachJobOnceAndDrivesTracker(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		eng.Submit(JobDescriptor{
 			Category:   "ai",
-			Meta:       JobInfo{JobID: string(rune('a' + i))},
+			Meta:       domain.JobInfo{JobID: string(rune('a' + i))},
 			Work:       func() (any, error) { atomic.AddInt32(&ran, 1); return nil, nil },
 			OnFinished: func(any) { wg.Done() },
 		})
@@ -94,11 +96,11 @@ func TestJobEngine_RunsEachJobOnceAndDrivesTracker(t *testing.T) {
 	if ran != 5 {
 		t.Fatalf("expected 5 runs, got %d", ran)
 	}
-	// each job emits at least an enqueue + activate + finish jobs:changed
+	// each job notifies at least on enqueue + activate + finish
 	mu.Lock()
 	defer mu.Unlock()
-	if events["jobs:changed"] < 5*3 {
-		t.Fatalf("expected >=15 jobs:changed events, got %d", events["jobs:changed"])
+	if notifications < 5*3 {
+		t.Fatalf("expected >=15 notifications, got %d", notifications)
 	}
 }
 
@@ -107,12 +109,12 @@ func TestJobEngine_PanicInWorkIsIsolated(t *testing.T) {
 	done := make(chan struct{}, 2)
 
 	eng.Submit(JobDescriptor{
-		Category: "ai", Meta: JobInfo{JobID: "boom"},
+		Category: "ai", Meta: domain.JobInfo{JobID: "boom"},
 		Work:    func() (any, error) { panic("kaboom") },
 		OnError: func(error) { done <- struct{}{} },
 	})
 	eng.Submit(JobDescriptor{
-		Category: "ai", Meta: JobInfo{JobID: "after"},
+		Category: "ai", Meta: domain.JobInfo{JobID: "after"},
 		Work:       func() (any, error) { return nil, nil },
 		OnFinished: func(any) { done <- struct{}{} },
 	})

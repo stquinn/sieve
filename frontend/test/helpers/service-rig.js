@@ -50,7 +50,6 @@ export class FakeSocket {
 export function fakeDelegate(overrides = {}) {
   return Object.assign({
     applyServerOp: vi.fn(),
-    onFlushAck: vi.fn(),
     onMessage: vi.fn(),
     resolveInsertIndex: vi.fn(() => -1),
   }, overrides)
@@ -68,7 +67,7 @@ export function serviceRig(opts = {}) {
   const uuid = opts.uuid === undefined ? 'doc-1' : opts.uuid
   const service = new BlockService({
     socketFactory: (url) => new FakeSocket(url),
-    wsUrlFor: (u) => 'ws://test/api/ws?uuid=' + u,
+    wsUrlFor: (u) => 'ws://test/api/ws/document/' + u,
   })
   const documentService = new DocumentService(service)
   const delegate = opts.delegate || fakeDelegate()

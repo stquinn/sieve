@@ -15,11 +15,12 @@ import (
 
 	"sieve/config"
 	"sieve/logger"
+	"sieve/requesthandlers"
 	"sieve/sieve"
 	"sieve/sieve/ai"
 	"sieve/sieve/domain"
+	"sieve/sieve/protocol"
 	"sieve/sieve/services"
-	"sieve/sse"
 	"sieve/store"
 	"sieve/store/filestore"
 	"sieve/watcher"
@@ -39,17 +40,23 @@ type App struct {
 	State           *services.StateService
 	Prompts         *ai.PromptService
 
-	library  services.LibraryService // owns library discovery, recents, naming
-	themesFS fs.FS
-	hub      *sse.Hub
-	watcher  *watcher.NotesWatcher
-	closing  bool
-	mu       sync.Mutex
+	library   services.LibraryService // owns library discovery, recents, naming
+	themesFS  fs.FS
+	broadcast *requesthandlers.WorkspaceBroadcast
+	watcher   *watcher.NotesWatcher
+	closing   bool
+	mu        sync.Mutex
 
 	DevServerPort int
 }
 
-func NewApp(storePath string, themesFS fs.FS, hub *sse.Hub, serviceProvider *sieve.ServiceProvider, library services.LibraryService) *App {
+// NewApp builds the Wails app backend. broadcast MUST be non-nil: startup and
+// the notes watcher both call a.broadcast.Invalidate unconditionally (startup
+// synchronously, the watcher from its own goroutine on every debounced fs
+// change), and WorkspaceBroadcast.Send dereferences its receiver — a nil
+// broadcast panics the watcher goroutine on the first notes edit, not at
+// construction time where it would be easy to see.
+func NewApp(storePath string, themesFS fs.FS, broadcast *requesthandlers.WorkspaceBroadcast, serviceProvider *sieve.ServiceProvider, library services.LibraryService) *App {
 	hostname, _ := os.Hostname()
 	if hostname == "" {
 		hostname = "localhost"
@@ -59,7 +66,7 @@ func NewApp(storePath string, themesFS fs.FS, hub *sse.Hub, serviceProvider *sie
 		storePath:       storePath,
 		hostname:        hostname,
 		themesFS:        themesFS,
-		hub:             hub,
+		broadcast:       broadcast,
 		ServiceProvider: serviceProvider,
 		library:         library,
 	}
@@ -195,7 +202,7 @@ func (a *App) startup(ctx context.Context) {
 	a.library.Attach(a.storePath, fs)
 	a.library.RecordSwitch(a.storePath)
 	a.ServiceProvider.Library = a.library
-	a.hub.Broadcast("library:changed", "")
+	a.broadcast.Invalidate(protocol.TopicLibrary)
 
 	logger.Info("store ready",
 		"root", a.storePath,
@@ -224,11 +231,8 @@ func (a *App) startup(ctx context.Context) {
 
 	// File-system watcher for notes.
 	w, err := watcher.New(a.notesDir(), func() {
-		logger.Debug("notes changed — emitting event")
-		runtime.EventsEmit(a.ctx, "notes:changed")
-		if a.hub != nil {
-			a.hub.Broadcast("notes:changed", "{}")
-		}
+		logger.Debug("notes changed — invalidating")
+		a.broadcast.Invalidate(protocol.TopicNotes)
 	})
 	if err != nil {
 		logger.Warn("could not start notes watcher", "err", err)

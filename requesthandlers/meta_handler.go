@@ -26,8 +26,8 @@ type MetaHandler struct {
 }
 
 func (h *MetaHandler) RegisterPaths(r chi.Router) {
-	r.Get("/api/meta", h.handleMeta)
-	r.Get("/api/meta/restore-prompt", h.handleRestorePrompt)
+	r.Get("/ui/views/meta", h.handleMeta)
+	r.Get("/ui/views/meta/dialog/restore", h.handleRestorePrompt)
 	r.Post("/api/meta/restore", h.handleRestore)
 }
 
@@ -175,7 +175,7 @@ func (h *MetaHandler) handleRestore(w http.ResponseWriter, r *http.Request) {
 	// restored BLOCKS (codec-parsed, marker ids intact) via the block-list path —
 	// NOT a frontend setContent re-parse, which can't read <!--s:ID--> markers and
 	// would re-mint ids, then persist that corruption on save-back. Send only the
-	// uuid; the frontend reloads blocks from /api/editor/load (now the fresh shadow).
+	// uuid; the frontend asks its document channel to load again (the fresh shadow).
 	_ = h.ServiceProvider.Editor.ReloadFromDisk(doc.UUID())
 
 	trigger, _ := json.Marshal(map[string]interface{}{

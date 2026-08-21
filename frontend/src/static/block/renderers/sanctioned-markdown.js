@@ -27,6 +27,7 @@
 // issue #48).
 
 import { T } from './vendor-libs.js'
+import { storeFileSrc } from './asset-urls.js'
 
 /** @type {any} */
 let _md = null
@@ -43,7 +44,27 @@ export function sanctionedMarkdownIt() {
   if (!T.MarkdownIt) return null
   _md = new T.MarkdownIt({ html: false })
   if (T.markdownItMark) _md.use(T.markdownItMark)
+  installStoreFileImageRule(_md)
   return _md
+}
+
+/**
+ * Points a relative image at the store's file route as it renders. A rendered
+ * fill is injected into the app shell, so `![](diagrams/flow.png)` would
+ * otherwise be resolved against the shell's own URL and 404. Only the RENDERED
+ * attribute changes — this instance never writes markdown back.
+ * @param {any} md the markdown-it instance to rule
+ */
+function installStoreFileImageRule(md) {
+  var inherited = md.renderer.rules.image
+  md.renderer.rules.image = function (tokens, idx, options, env, self) {
+    var attrs = tokens[idx].attrs || []
+    var i = tokens[idx].attrIndex('src')
+    if (i >= 0) attrs[i][1] = storeFileSrc(attrs[i][1])
+    return inherited
+      ? inherited(tokens, idx, options, env, self)
+      : self.renderToken(tokens, idx, options)
+  }
 }
 
 /**

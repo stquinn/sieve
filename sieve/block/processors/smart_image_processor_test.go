@@ -11,7 +11,7 @@ import (
 )
 
 // A stored smart-image src is a bare asset filename. MarkdownRepresentation must emit a
-// WORKING served URL (/sieve/<uuid>/<filename>) — not the bare filename — because the
+// WORKING served URL (/ui/assets/<uuid>/<filename>) — not the bare filename — because the
 // embedded markdown renders as a plain <img> with no NodeView resolveSrc to fix it.
 // (Regression: embedding a smart-image produced ![](im-82d3.png), which 404s.)
 func TestSmartImageProcessor_MarkdownRepresentation_servedURL(t *testing.T) {
@@ -19,9 +19,9 @@ func TestSmartImageProcessor_MarkdownRepresentation_servedURL(t *testing.T) {
 	blk := block.SieveBlock{Attrs: map[string]interface{}{"src": "im-82d3.png", "alt": "a sprite"}}
 
 	got := p.MarkdownRepresentation(blk, "doc-uuid-1")
-	want := "![a sprite](/sieve/doc-uuid-1/im-82d3.png)"
+	want := "![a sprite](/ui/assets/doc-uuid-1/im-82d3.png)"
 	if got != want {
-		t.Errorf("MarkdownRepresentation: got %q, want %q (must carry the served /sieve/<uuid>/ URL)", got, want)
+		t.Errorf("MarkdownRepresentation: got %q, want %q (must carry the served /ui/assets/<uuid>/ URL)", got, want)
 	}
 }
 
@@ -29,8 +29,8 @@ func TestSmartImageProcessor_MarkdownRepresentation_stripsAssetsPrefixAndPath(t 
 	p := NewSmartImageProcessor(block.BlockServices{})
 	blk := block.SieveBlock{Attrs: map[string]interface{}{"src": ".assets/im-9.png"}}
 
-	if got := p.MarkdownRepresentation(blk, "u1"); got != "![](/sieve/u1/im-9.png)" {
-		t.Errorf("got %q, want the basename under /sieve/u1/", got)
+	if got := p.MarkdownRepresentation(blk, "u1"); got != "![](/ui/assets/u1/im-9.png)" {
+		t.Errorf("got %q, want the basename under /ui/assets/u1/", got)
 	}
 }
 
@@ -93,6 +93,36 @@ func TestSmartImageProcessor_IsSupportedContent_plantumlFenceNotOffered(t *testi
 	got := p.IsSupportedContent(entries)
 	if got.Has(block.ActionPaste) || got.Has(block.ActionTransform) {
 		t.Error("a raw plantuml fence must not be offered as smart-image content")
+	}
+}
+
+// acquire's "already a local sieve asset" branch must recognise a reference under
+// EITHER route: the current one (everything minted going forward) and the one
+// that predates #19's route move (still present in documents nobody has
+// reopened since). Either way the image is a reference, not bytes to re-ingest.
+func TestSmartImageProcessor_acquire_recognisesCurrentAssetRoute(t *testing.T) {
+	p := NewSmartImageProcessor(block.BlockServices{})
+	entry := block.ContentEntry{Content: "/ui/assets/doc-uuid-1/im-1.png"}
+
+	_, ref, err := p.acquire(entry, "blk-1")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	if ref != "im-1.png" {
+		t.Errorf("ref = %q, want the bare filename im-1.png (already local, no re-ingest)", ref)
+	}
+}
+
+func TestSmartImageProcessor_acquire_recognisesLegacyAssetRoute(t *testing.T) {
+	p := NewSmartImageProcessor(block.BlockServices{})
+	entry := block.ContentEntry{Content: "/sieve/doc-uuid-1/im-1.png"}
+
+	_, ref, err := p.acquire(entry, "blk-1")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	if ref != "im-1.png" {
+		t.Errorf("ref = %q, want the bare filename im-1.png — pre-migration content must be recognised as local too", ref)
 	}
 }
 

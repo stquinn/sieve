@@ -1,17 +1,17 @@
 package services
 
 import (
-	"encoding/json"
-	"net/http/httptest"
 	"testing"
+
+	"sieve/sieve/domain"
 )
 
 func TestJobTracker_QueuedActiveFinishLifecycle(t *testing.T) {
-	var events []string
+	notifications := 0
 	tr := NewJobTracker()
-	tr.Broadcast = func(event, data string) { events = append(events, event) }
+	tr.Notify = func() { notifications++ }
 
-	tr.Enqueue(JobInfo{JobID: "j1", Label: "Refining…", Category: "ai"})
+	tr.Enqueue(domain.JobInfo{JobID: "j1", Label: "Refining…", Category: "ai"})
 	if got := tr.Queued(); len(got) != 1 || got[0].JobID != "j1" || got[0].State != "queued" {
 		t.Fatalf("after Enqueue, Queued()=%+v", got)
 	}
@@ -31,17 +31,17 @@ func TestJobTracker_QueuedActiveFinishLifecycle(t *testing.T) {
 	if len(tr.Active()) != 0 || len(tr.Queued()) != 0 {
 		t.Fatalf("after Finish, both lists should be empty")
 	}
-	for _, e := range events {
-		if e != "jobs:changed" {
-			t.Fatalf("new lifecycle must only emit jobs:changed, saw %q", e)
-		}
+	// Every transition notifies: the snapshot is pushed, never polled, so a
+	// transition nobody hears about is one the status bar never shows.
+	if notifications != 3 {
+		t.Fatalf("enqueue+activate+finish notified %d times, want 3", notifications)
 	}
 }
 
 func TestJobTracker_QueuedPreservesInsertionOrder(t *testing.T) {
 	tr := NewJobTracker()
 	for _, id := range []string{"a", "b", "c"} {
-		tr.Enqueue(JobInfo{JobID: id})
+		tr.Enqueue(domain.JobInfo{JobID: id})
 	}
 	got := tr.Queued()
 	if len(got) != 3 || got[0].JobID != "a" || got[1].JobID != "b" || got[2].JobID != "c" {
@@ -49,25 +49,19 @@ func TestJobTracker_QueuedPreservesInsertionOrder(t *testing.T) {
 	}
 }
 
-func TestJobTracker_ServeJobsShape(t *testing.T) {
+// The snapshot is what the workspace push carries: every active job and every
+// queued one, each in insertion order.
+func TestJobTracker_SnapshotShape(t *testing.T) {
 	tr := NewJobTracker()
-	tr.Enqueue(JobInfo{JobID: "q1"})
-	tr.Enqueue(JobInfo{JobID: "a1"})
+	tr.Enqueue(domain.JobInfo{JobID: "q1"})
+	tr.Enqueue(domain.JobInfo{JobID: "a1"})
 	tr.Activate("a1")
 
-	rec := httptest.NewRecorder()
-	tr.ServeJobs(rec, nil)
-	var body struct {
-		Active []JobInfo `json:"active"`
-		Queued []JobInfo `json:"queued"`
+	active, queued := tr.Active(), tr.Queued()
+	if len(active) != 1 || active[0].JobID != "a1" {
+		t.Fatalf("active=%+v", active)
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("ServeJobs body not JSON: %v", err)
-	}
-	if len(body.Active) != 1 || body.Active[0].JobID != "a1" {
-		t.Fatalf("active=%+v", body.Active)
-	}
-	if len(body.Queued) != 1 || body.Queued[0].JobID != "q1" {
-		t.Fatalf("queued=%+v", body.Queued)
+	if len(queued) != 1 || queued[0].JobID != "q1" {
+		t.Fatalf("queued=%+v", queued)
 	}
 }

@@ -27,6 +27,15 @@ type docFiler interface {
 	EvaluateAndFileDoc(id string, fileAfter, allowDiscard bool) (ai.FilingOutcome, error)
 }
 
+// ContainerSavedNotifier hears that a container's content reached disk. It is an
+// interface here because the publisher is the workspace broadcast, which lives
+// in requesthandlers — far above this package in the DAG — and because a save is
+// a fact about a container rather than a message to one client: whoever tells
+// the world is the composition root's choice, not this service's.
+type ContainerSavedNotifier interface {
+	ContainerSaved(uuid string, version int)
+}
+
 // EditorService is the Go-side editor model. It holds one ShadowDocument per
 // open document and coordinates all save operations. DocumentService owns disk.
 type EditorService struct {
@@ -40,6 +49,7 @@ type EditorService struct {
 	mu        sync.RWMutex
 	shadows   map[string]*block.ShadowDocument
 	listener  block.BlockLifecycleListener
+	saved     ContainerSavedNotifier
 	// jobsWG tracks every dispatched block-job goroutine (DispatchJobIfNeeded's
 	// `go RunJob`). It is the drain a retiring service (CloseAll) and callers that
 	// must settle dispatched work (WaitForJobs) wait on — a job's completion writes
@@ -70,6 +80,29 @@ func (es *EditorService) SetLifecycleListener(l block.BlockLifecycleListener) {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 	es.listener = l
+}
+
+// SetSavedNotifier registers who publishes the container-saved fact. Nil leaves
+// saves unannounced, which is what a test that does not care about the fact gets.
+func (es *EditorService) SetSavedNotifier(n ContainerSavedNotifier) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	es.saved = n
+}
+
+// notifySaved publishes the one fact a successful save produces. It is called
+// from flushShadow — the single chokepoint every document write funnels through
+// — so explicit flush, debounce autosave, a finished job's write and close-time
+// flush all announce the same thing in the same words. version is the one the
+// store stamped on THIS write, which is what makes the fact orderable against
+// the state a waiting client already knew.
+func (es *EditorService) notifySaved(uuid string, version int) {
+	es.mu.RLock()
+	n := es.saved
+	es.mu.RUnlock()
+	if n != nil {
+		n.ContainerSaved(uuid, version)
+	}
 }
 
 func (es *EditorService) notifyBlockCreated(uuid string, blk block.SieveBlock, index int, token string) {
@@ -115,28 +148,23 @@ func (es *EditorService) notifyBlockReplaced(uuid, oldID string, blk block.Sieve
 // assumed stuck (server crash, OOM) and reset to PENDING on reconnect.
 const dispatchedStuckThreshold = 10 * time.Minute
 
-// Open loads a document from disk and creates an in-memory ShadowDocument.
-// notifySaved is called (if non-nil) after each successful debounce flush so the
-// WebSocket connection can send a flush-ack to the client.
 // Open ensures a shadow for uuid (idempotent) and recovers stuck DISPATCHED
 // blocks — the user-open path. Background callers that must not trigger recovery
 // (a transient open to apply a job result) use open() with recoverStuck=false.
-func (es *EditorService) Open(uuid string, notifySaved func()) error {
-	return es.open(uuid, notifySaved, true)
+func (es *EditorService) Open(uuid string) error {
+	return es.open(uuid, true)
 }
 
 // open ensures a shadow for uuid. recoverStuck gates stuck-job recovery: a
 // transient background open passes false so it does NOT spawn recovery jobs —
 // that would both churn (the doc would reopen ~10s later) and RACE the immediate
 // Close. Recovery is a user-open concern.
-func (es *EditorService) open(uuid string, notifySaved func(), recoverStuck bool) error {
-	// Idempotent: reuse an already-open shadow (the HTTP load ensures-open before
-	// the WS connection does, so both share ONE identity — minted ids stay
-	// stable). Just rewire the post-flush callback for this caller.
+func (es *EditorService) open(uuid string, recoverStuck bool) error {
+	// Idempotent: reuse an already-open shadow, so every caller for a uuid shares
+	// ONE identity and minted ids stay stable.
 	es.mu.Lock()
-	if existing, ok := es.shadows[uuid]; ok {
+	if _, ok := es.shadows[uuid]; ok {
 		es.mu.Unlock()
-		existing.SetNotifySaved(notifySaved)
 		return nil
 	}
 	es.mu.Unlock()
@@ -148,21 +176,17 @@ func (es *EditorService) open(uuid string, notifySaved func(), recoverStuck bool
 	// Declare shadow before the closure so the closure can capture the variable.
 	var shadow *block.ShadowDocument
 	shadow = block.NewShadow(uuid, string(doc.Body()), es.codec, es.debounce, func() {
-		// notifySaved is posted inside flushShadow now (every save path notifies),
-		// so the debounce closure just flushes.
 		_ = es.flushShadow(shadow, "debounce")
 	})
-	shadow.SetNotifySaved(notifySaved)
 	// Handle minting now happens in NewShadow (the constructor invariant: no block
 	// without an id) and on every reparse — no separate mint pass needed here.
 
 	es.mu.Lock()
 	// Another goroutine may have opened the same uuid between the check above and
-	// here; if so, discard ours and reuse theirs (rewiring the callback).
-	if existing, ok := es.shadows[uuid]; ok {
+	// here; if so, discard ours and reuse theirs.
+	if _, ok := es.shadows[uuid]; ok {
 		es.mu.Unlock()
 		shadow.StopDebounce()
-		existing.SetNotifySaved(notifySaved)
 		return nil
 	}
 	es.shadows[uuid] = shadow
@@ -382,20 +406,19 @@ func (es *EditorService) flushShadow(shadow *block.ShadowDocument, source string
 			return nil
 		}
 		doc.SetBody([]byte(merged))
-		if _, err = es.documents.Save(doc); err != nil {
+		saved, err := es.documents.Save(doc)
+		if err != nil {
 			logger.Warn("editor: flush save failed", "uuid", shadow.UUID, "source", source, "err", err)
 			return err
 		}
-		logger.Info("editor: saved", "uuid", shadow.UUID, "source", source, "bytes", len(merged))
-		// Post the saved event on EVERY successful save — not just the debounce path.
+		logger.Info("editor: saved", "uuid", shadow.UUID, "source", source, "bytes", len(merged), "version", saved.Meta().Version())
+		// Publish the fact on EVERY successful save — not just the debounce path.
 		// flushShadow is the single chokepoint every saver funnels through (Flush,
-		// the debounce closure, FlushAll, applyJobUpdate), so notifying
-		// here makes "the frontend hears about the save" a property of the save itself.
-		// The data-loss-guard early-return above does NOT reach here, so a refused
-		// (non-)save correctly posts nothing.
-		if ns := shadow.GetNotifySaved(); ns != nil {
-			ns()
-		}
+		// the debounce closure, FlushAll, applyJobUpdate), so announcing here makes
+		// "the world hears about the save" a property of the save itself. Neither
+		// early return above reaches this line, so a failed write and a refused
+		// (data-loss-guard) one both announce nothing — the document stays dirty.
+		es.notifySaved(shadow.UUID, saved.Meta().Version())
 		return nil
 	})
 }
@@ -471,8 +494,8 @@ func (es *EditorService) SetJobs(j *services.JobTracker) {
 }
 
 // SetEngine injects the communal job engine. Post-construction (like SetJobs) so
-// the root can build it after the hub-wired JobTracker exists, and so the ~25
-// test constructors need no change.
+// the root can build it after the JobTracker (which main() wires up) exists, and
+// so the ~25 test constructors need no change.
 func (es *EditorService) SetEngine(e *services.JobEngine) { es.engine = e }
 
 // SetAI injects the synchronous AI brain. Post-construction (like SetEngine) so
@@ -506,7 +529,7 @@ func (es *EditorService) closeFilingAllowed() bool {
 func (es *EditorService) submitDocFiling(id, jobPrefix, label string, fileAfter, allowDiscard, spinTab bool) {
 	es.engine.Submit(services.JobDescriptor{
 		Category: block.CategoryAI,
-		Meta:     services.JobInfo{JobID: jobPrefix + id, Label: label, DocID: id, SpinTab: spinTab},
+		Meta:     domain.JobInfo{JobID: jobPrefix + id, Label: label, DocID: id, SpinTab: spinTab},
 		Work:     func() (any, error) { return es.ai.EvaluateAndFileDoc(id, fileAfter, allowDiscard) },
 		OnError: func(err error) {
 			logger.Warn("editor: document filing failed", "job", jobPrefix+id, "uuid", id, "err", err)
@@ -592,7 +615,7 @@ func (es *EditorService) KeepAndFile(uuid string) {
 // INVARIANT: every submitted job has a non-empty Label — a nil DescribeJob is
 // never submitted, and a non-nil ProcessorJob is real async work that MUST label
 // itself for the status bar. An empty Label is a processor programming error.
-func (es *EditorService) submitBlockJob(job block.ProcessorJob, meta services.JobInfo, blk *block.SieveBlock, onDone func(err error)) {
+func (es *EditorService) submitBlockJob(job block.ProcessorJob, meta domain.JobInfo, blk *block.SieveBlock, onDone func(err error)) {
 	if meta.Label == "" {
 		panic(fmt.Sprintf("submitBlockJob: block %q (kind via meta) has an empty Label — a submitted ProcessorJob must declare a non-empty Label", meta.JobID))
 	}
@@ -902,7 +925,7 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 		// Document is closed: open it transiently so the update flows through
 		// the ShadowDocument. recoverStuck=false — a background open must not spawn
 		// recovery jobs that race the Close below. Do NOT hold es.mu across open.
-		if err := es.open(uuid, nil, false); err != nil {
+		if err := es.open(uuid, false); err != nil {
 			logger.Warn("editor: job update failed to open doc transiently", "uuid", uuid, "err", err)
 			return
 		}
@@ -1018,7 +1041,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 		es.applyJobUpdate(uuid, blockID, kind, updates, deletes, "job-complete")
 	}
 
-	meta := services.JobInfo{JobID: blockID, Label: job.Label, DocID: uuid, SpinTab: false}
+	meta := domain.JobInfo{JobID: blockID, Label: job.Label, DocID: uuid, SpinTab: false}
 
 	if es.engine != nil {
 		es.submitBlockJob(*job, meta, blkCopy, finish)

@@ -61,6 +61,7 @@ import { docPosForBlockIndex, blockIndexAfter } from './block-position.js'
 import { reloadReplacement } from './render-empty.js'
 import { caretInRawTextBlock } from '../paste-context.js'
 import { CaretTriggerPort } from './caret-trigger-port.js'
+import { resolveImageSrc, storeFileSrc, storeFileRef } from '../../block/renderers/asset-urls.js'
 
 // The formatting command spec (P4.D): each entry is one ToolbarButton the WYSIWYG
 // surface contributes to the editor toolbar. `icon` is a SieveIcons key; `cmd`
@@ -382,7 +383,24 @@ export class WysiwygSurface extends AbstractSurface {
         // Per-renderer key handlers are forbidden; kinds declare interactionPolicy.
         buildInteractionPolicyExtension(T),
 
-        T.Image.configure({ inline: false, allowBase64: true, HTMLAttributes: { class: 'editor-image' } }),
+        // An ordinary markdown image may name a file by its path within the
+        // store (`![](diagrams/flow.png)`). The browser would resolve that
+        // against the app shell, so the src is pointed at the store's route on
+        // the way OUT to the DOM and read back to its relative form on the way
+        // IN from parsed HTML. Both halves are attribute-level on purpose: the
+        // node's attrs — which is what tiptap-markdown serialises — keep the
+        // path the document was written with, so rendering never rewrites disk.
+        T.Image.extend({
+          addAttributes: function () {
+            var parent = this.parent ? this.parent() : {}
+            return Object.assign({}, parent, {
+              src: Object.assign({}, parent.src, {
+                parseHTML: function (el) { return storeFileRef(el.getAttribute('src')) },
+                renderHTML: function (attrs) { return attrs.src ? { src: storeFileSrc(attrs.src) } : {} },
+              }),
+            })
+          },
+        }).configure({ inline: false, allowBase64: true, HTMLAttributes: { class: 'editor-image' } }),
         HighlightMark,
         SelectionHighlight,
         T.Extension.create({
@@ -457,16 +475,9 @@ export class WysiwygSurface extends AbstractSurface {
 
             // (1) Smart-image bitmap.
             if (sel && sel.node && sel.node.type.name === 'sieve-smart-image') {
-              var src = sel.node.attrs.src
-              if (!src) return false
-              if (src.startsWith('http://') || src.startsWith('https://')) {
-                src = window.location.origin + '/sieve-image-proxy?url=' + encodeURIComponent(src)
-              } else if (!src.startsWith('data:') && !src.startsWith('blob:') && !src.startsWith('/')) {
-                if (src.startsWith('.assets/')) src = src.substring(8)
-                src = '/sieve/' + uuid + '/' + src.split('/').pop()
-              }
+              if (!sel.node.attrs.src) return false
               event.preventDefault()
-              copyImageToClipboard(src)
+              copyImageToClipboard(resolveImageSrc(sel.node.attrs.src, uuid))
               return true
             }
 
@@ -1080,7 +1091,7 @@ export class WysiwygSurface extends AbstractSurface {
               self.#applyPasteResult(result, { anchor: peek.anchor, replay: html || text })
             })
             .catch(function (err) {
-              console.error('[editor.js] smart-paste fetch failed', err)
+              console.error('[wysiwyg-surface] smart paste failed', err)
               self.#host.clearInsertPos()
               if (self.#editorPane) {
                 self.#editorPane.commands.insertContent(text)
@@ -1227,7 +1238,7 @@ export class WysiwygSurface extends AbstractSurface {
             self.#applyPasteResult(result, { anchor: peek.anchor, at: insertPos })
           })
           .catch(function (err) {
-            console.error('[editor.js] smart-drop fetch failed', err)
+            console.error('[wysiwyg-surface] smart drop failed', err)
           })
       })
       return true

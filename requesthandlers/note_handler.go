@@ -2,7 +2,6 @@ package requesthandlers
 
 import (
 	"encoding/json"
-	"fmt"
 	"html/template"
 	"net/http"
 	"sieve/sieve"
@@ -19,18 +18,27 @@ type editorSwap struct {
 }
 
 type NoteHandler struct {
-	ServiceProvider    *sieve.ServiceProvider
-	Tmpl               *template.Template
-	EmitSessionChanged func()
+	ServiceProvider *sieve.ServiceProvider
+	Tmpl            *template.Template
+	// EmitContainerDeleted announces an accomplished deletion by uuid to every
+	// workspace socket, which is the only signal that reaches a client holding
+	// the document open — see handleNoteDelete.
+	EmitContainerDeleted func(uuid string)
+	EmitSessionChanged   func()
+	EmitNotesChanged     func()
 }
 
+// RegisterPaths mounts the note's own lifecycle — create, open, rename, delete —
+// plus the tab operations that follow from it. A note is a RESOURCE here: the
+// method says what happens to it, so there is one path per note rather than one
+// path per verb.
 func (h *NoteHandler) RegisterPaths(r chi.Router) {
+	r.Post("/api/note", h.handleNoteCreate)
 	r.Post("/api/note/open/{id}", h.handleNoteOpen)
-	r.Post("/api/note/new", h.handleNoteNew)
+	r.Patch("/api/note/{id}", h.handleNotePatch)
+	r.Delete("/api/note/{id}", h.handleNoteDelete)
 	r.Post("/api/tabs/close", h.handleTabsClose)
 	r.Post("/api/tabs/reorder", h.handleTabsReorder)
-	r.Delete("/api/note/{id}", h.handleNoteDelete)
-	r.Post("/api/note/focus/{id}", h.handleNoteFocus)
 }
 
 func (h *NoteHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +118,7 @@ func (h *NoteHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *NoteHandler) handleNoteNew(w http.ResponseWriter, r *http.Request) {
+func (h *NoteHandler) handleNoteCreate(w http.ResponseWriter, r *http.Request) {
 	newNote, err := h.ServiceProvider.Documents.New()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -249,6 +257,48 @@ func (h *NoteHandler) handleTabsReorder(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// handleNotePatch changes a note's properties — today its display name, which
+// is a rename on disk. It answers with the refreshed sidebar, because that is
+// the view the rename dialog swapped from.
+func (h *NoteHandler) handleNotePatch(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	req, err := requestBody{r}.notePatch()
+	if err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+
+	note, err := h.ServiceProvider.Documents.LoadByUUID(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	renamed, err := h.ServiceProvider.Documents.Rename(note, req.Name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	session := h.ServiceProvider.State.LoadSession()
+	for i := range session.Tabs {
+		if session.Tabs[i].ID == id {
+			session.Tabs[i].DisplayName = renamed.Meta().DisplayName()
+			break
+		}
+	}
+	_ = h.ServiceProvider.State.SaveSession(session)
+
+	if h.EmitNotesChanged != nil {
+		h.EmitNotesChanged()
+	}
+	w.Header().Set("HX-Trigger", "notes:changed")
+	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
+}
+
 func (h *NoteHandler) handleNoteDelete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	note, err := h.ServiceProvider.Documents.LoadByUUID(id)
@@ -261,68 +311,26 @@ func (h *NoteHandler) handleNoteDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session := h.ServiceProvider.State.LoadSession()
-
-	newTabs := []domain.Tab{}
-	for _, t := range session.Tabs {
-		if t.ID != id {
-			newTabs = append(newTabs, t)
-		}
-	}
-	session.Tabs = newTabs
-	if session.ActiveIdx >= len(session.Tabs) {
-		session.ActiveIdx = len(session.Tabs) - 1
-	}
-	if session.ActiveIdx < 0 && len(session.Tabs) > 0 {
-		session.ActiveIdx = 0
+	// The document is gone: that is news, broadcast to every workspace socket so
+	// each client can reconcile — drop the tab it still holds and destroy that
+	// tab's editor, closing its document socket. No swap in this response reaches
+	// a client holding the note open in the BACKGROUND, and a client in another
+	// window is not the requester at all.
+	if h.EmitContainerDeleted != nil {
+		h.EmitContainerDeleted(id)
 	}
 
-	if len(session.Tabs) == 0 {
-		newNote, _ := h.ServiceProvider.Documents.New()
-		session.Tabs = []domain.Tab{{
-			ID:          newNote.UUID(),
-			Mode:        "wysiwyg",
-			DisplayName: newNote.Meta().DisplayName(),
-			Status:      "unfiled",
-		}}
-		session.ActiveIdx = 0
-	}
-
-	_ = h.ServiceProvider.State.SaveSession(session)
-	if h.EmitSessionChanged != nil {
-		h.EmitSessionChanged()
-	}
-
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-	if err := h.Tmpl.ExecuteTemplate(w, "tabbar.html", session); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	fmt.Fprint(w, `<div id="htmx-sidebar" hx-swap-oob="true" class="sidebar" hx-get="/api/sidebar" hx-trigger="load"></div>`)
-
-	activeTab := session.Tabs[session.ActiveIdx]
-	if err := h.Tmpl.ExecuteTemplate(w, "editor.html", editorSwap{UUID: activeTab.ID, Mode: activeTab.Mode}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	h.deletionReconciler().reconcile(w, id)
 }
 
-func (h *NoteHandler) handleNoteFocus(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	if strings.HasPrefix(id, "prompt:") {
-		w.WriteHeader(http.StatusNoContent)
-		return
+// deletionReconciler builds the shared second half of a deletion from this
+// handler's own dependencies — the folder delete assembles the same seam from
+// its own, so neither owns it and the two answer identically.
+func (h *NoteHandler) deletionReconciler() deletionReconciler {
+	return deletionReconciler{
+		sp:                 h.ServiceProvider,
+		tmpl:               h.Tmpl,
+		emitSessionChanged: h.EmitSessionChanged,
+		emitNotesChanged:   h.EmitNotesChanged,
 	}
-
-	if note, err := h.ServiceProvider.Documents.LoadByUUID(id); err == nil {
-		h.ServiceProvider.Documents.IncrementFocusCount(note)
-	} else {
-		http.Error(w, "document not found", http.StatusNotFound)
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
 }

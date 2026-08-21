@@ -16,7 +16,7 @@ type LibraryHandler struct {
 }
 
 func (h *LibraryHandler) RegisterPaths(r chi.Router) {
-	r.Get("/api/library/current", h.handleLibraryCurrent)
+	r.Get("/ui/views/library/current", h.handleLibraryCurrent)
 }
 
 func (h *LibraryHandler) handleLibraryCurrent(w http.ResponseWriter, r *http.Request) {

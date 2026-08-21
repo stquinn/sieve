@@ -72,7 +72,7 @@ func (h *SettingsHandler) parseHeaders(raw string) map[string]string {
 }
 
 func (h *SettingsHandler) RegisterPaths(r chi.Router) {
-	r.Get("/api/settings", h.handleSettings)
+	r.Get("/ui/views/settings", h.handleSettings)
 	r.Post("/api/settings", h.handleSettingsSave)
 	r.Post("/api/settings/panel", h.handleSettingsPanel)
 	r.Post("/api/settings/editor-scale/step", h.handleEditorScaleStep)

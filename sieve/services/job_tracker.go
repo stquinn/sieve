@@ -1,37 +1,32 @@
 package services
 
 import (
-	"encoding/json"
-	"net/http"
 	"sync"
-)
 
-// JobInfo is the payload for jobs:changed SSE events and GET /api/jobs.
-type JobInfo struct {
-	JobID    string `json:"jobId"`
-	Label    string `json:"label"`
-	DocID    string `json:"docId,omitempty"`
-	SpinTab  bool   `json:"spinTab"`
-	State    string `json:"state,omitempty"`    // "queued" | "active"
-	Category string `json:"category,omitempty"`
-}
+	"sieve/sieve/domain"
+)
 
 // JobTracker is a thread-safe registry of in-flight AI jobs.
 type JobTracker struct {
-	Broadcast func(event, data string)
-	mu        sync.RWMutex
-	jobs      map[string]JobInfo
-	order     []string
+	// Notify is called after every transition. It is a bare notification rather
+	// than a payload because the frame this becomes is a protocol/ type, and
+	// protocol/ sits ABOVE this package in the import DAG: the tracker keeps the
+	// state, and whoever wires it reads Active()/Queued() to compose the push.
+	Notify func()
+
+	mu    sync.RWMutex
+	jobs  map[string]domain.JobInfo
+	order []string
 }
 
 func NewJobTracker() *JobTracker {
-	return &JobTracker{jobs: make(map[string]JobInfo)}
+	return &JobTracker{jobs: make(map[string]domain.JobInfo)}
 }
 
-func (t *JobTracker) Active() []JobInfo { return t.listByState("active") }
+func (t *JobTracker) Active() []domain.JobInfo { return t.listByState("active") }
 
-// Enqueue records a job as queued and broadcasts jobs:changed.
-func (t *JobTracker) Enqueue(info JobInfo) {
+// Enqueue records a job as queued and notifies.
+func (t *JobTracker) Enqueue(info domain.JobInfo) {
 	info.State = "queued"
 	t.mu.Lock()
 	if _, exists := t.jobs[info.JobID]; !exists {
@@ -39,10 +34,10 @@ func (t *JobTracker) Enqueue(info JobInfo) {
 	}
 	t.jobs[info.JobID] = info
 	t.mu.Unlock()
-	t.broadcastJobs()
+	t.notifyChanged()
 }
 
-// Activate transitions a queued job to active and broadcasts jobs:changed.
+// Activate transitions a queued job to active and notifies.
 func (t *JobTracker) Activate(jobID string) {
 	t.mu.Lock()
 	if info, ok := t.jobs[jobID]; ok {
@@ -50,10 +45,10 @@ func (t *JobTracker) Activate(jobID string) {
 		t.jobs[jobID] = info
 	}
 	t.mu.Unlock()
-	t.broadcastJobs()
+	t.notifyChanged()
 }
 
-// Finish removes a job and broadcasts jobs:changed.
+// Finish removes a job and notifies.
 func (t *JobTracker) Finish(jobID string) {
 	t.mu.Lock()
 	if _, ok := t.jobs[jobID]; ok {
@@ -66,16 +61,16 @@ func (t *JobTracker) Finish(jobID string) {
 		}
 	}
 	t.mu.Unlock()
-	t.broadcastJobs()
+	t.notifyChanged()
 }
 
 // Queued returns insertion-ordered jobs with State=="queued".
-func (t *JobTracker) Queued() []JobInfo { return t.listByState("queued") }
+func (t *JobTracker) Queued() []domain.JobInfo { return t.listByState("queued") }
 
-func (t *JobTracker) listByState(state string) []JobInfo {
+func (t *JobTracker) listByState(state string) []domain.JobInfo {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	out := []JobInfo{}
+	out := []domain.JobInfo{}
 	for _, id := range t.order {
 		if j := t.jobs[id]; j.State == state {
 			out = append(out, j)
@@ -84,18 +79,8 @@ func (t *JobTracker) listByState(state string) []JobInfo {
 	return out
 }
 
-func (t *JobTracker) broadcastJobs() {
-	if t.Broadcast == nil {
-		return
+func (t *JobTracker) notifyChanged() {
+	if t.Notify != nil {
+		t.Notify()
 	}
-	payload := map[string][]JobInfo{"active": t.listByState("active"), "queued": t.listByState("queued")}
-	data, _ := json.Marshal(payload)
-	t.Broadcast("jobs:changed", string(data))
-}
-
-// ServeJobs handles GET /api/jobs → {"active":[...],"queued":[...]}.
-func (t *JobTracker) ServeJobs(w http.ResponseWriter, r *http.Request) {
-	payload := map[string][]JobInfo{"active": t.listByState("active"), "queued": t.listByState("queued")}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(payload)
 }

@@ -14,6 +14,7 @@ import (
 	"sieve/sieve/block"
 	_ "sieve/sieve/block/processors" // ProseProcessor self-registers via init
 	"sieve/sieve/editor"
+	"sieve/sieve/protocol"
 	"sieve/sieve/services"
 	"sieve/store/filestore"
 )
@@ -24,6 +25,25 @@ import (
 // TECH-DEBT), so this exercises exactly what the app's webview exercises.
 func newWsTestServer(t *testing.T) (*httptest.Server, *sieve.ServiceProvider, *WsHandler, string) {
 	t.Helper()
+	return newWsTestServerWithDebounce(t, 0)
+}
+
+// newWsTestServerWithDebounce is newWsTestServer with the autosave delay chosen
+// by the caller (0 = the 30s production default). A test that must observe the
+// BACKGROUND flush — not one it asked for — needs the timer to fire inside its
+// own patience.
+func newWsTestServerWithDebounce(t *testing.T, debounce time.Duration) (*httptest.Server, *sieve.ServiceProvider, *WsHandler, string) {
+	t.Helper()
+	return newWsTestServerWithJobs(t, debounce, nil)
+}
+
+// newWsTestServerWithJobs is newWsTestServerWithDebounce for a test that needs
+// the workspace broadcast wired to a real JobsSource (jobs-changed frames) —
+// jobs is now a constructor argument on WorkspaceBroadcast, not a settable
+// field, so a caller who needs one must supply it here rather than poking
+// h.broadcast after the fact.
+func newWsTestServerWithJobs(t *testing.T, debounce time.Duration, jobs JobsSource) (*httptest.Server, *sieve.ServiceProvider, *WsHandler, string) {
+	t.Helper()
 	fs, err := filestore.NewFileStore(t.TempDir(), "testhost")
 	if err != nil {
 		t.Fatalf("NewFileStore: %v", err)
@@ -32,9 +52,17 @@ func newWsTestServer(t *testing.T) (*httptest.Server, *sieve.ServiceProvider, *W
 	if err != nil {
 		t.Fatalf("NewDocumentService: %v", err)
 	}
-	es := editor.NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
-	sp := &sieve.ServiceProvider{Documents: ds, Editor: es}
-	h := NewWsHandler(sp)
+	es := editor.NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), debounce)
+	st, err := services.NewStateService(fs, "", nil)
+	if err != nil {
+		t.Fatalf("NewStateService: %v", err)
+	}
+	sp := &sieve.ServiceProvider{Store: fs, Documents: ds, Editor: es, State: st}
+	h := NewWsHandler(sp, NewWorkspaceBroadcast(jobs))
+	// The same edge the composition root wires: a save announces itself to the
+	// workspace fan-out. Without it a test watching for container-saved would be
+	// watching a wire nothing publishes on.
+	es.SetSavedNotifier(h.broadcast)
 	r := chi.NewRouter()
 	h.RegisterPaths(r)
 	srv := httptest.NewServer(r)
@@ -63,7 +91,7 @@ func closeAndSettle(c *websocket.Conn) {
 
 func dialWS(t *testing.T, srv *httptest.Server, uuid string) *websocket.Conn {
 	t.Helper()
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/ws?uuid=" + uuid
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/ws/document/" + uuid
 	c, _, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
@@ -149,6 +177,12 @@ func TestWS_StaleTeardownMustNotEvictSuccessorChannel(t *testing.T) {
 func TestWS_StaleTeardownMustNotCloseSuccessorShadow(t *testing.T) {
 	srv, sp, _, uuid := newWsTestServer(t)
 
+	// The save barrier: a flush answers nothing on the document wire, so the
+	// workspace fact is how this test knows the write finished before it reads
+	// the store.
+	workspace := dialWorkspaceWS(t, srv)
+	defer workspace.Close()
+
 	a := dialWS(t, srv, uuid)
 	if err := a.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
 		t.Fatalf("write barrier A: %v", err)
@@ -171,7 +205,7 @@ func TestWS_StaleTeardownMustNotCloseSuccessorShadow(t *testing.T) {
 	if err := b.WriteMessage(websocket.TextMessage, []byte(flush)); err != nil {
 		t.Fatalf("write flush: %v", err)
 	}
-	expectMessage(t, b, `"flush-ack"`, 2*time.Second)
+	expectMessage(t, workspace, `"`+protocol.TypeContainerSaved+`"`, 2*time.Second)
 
 	// Sequence teardown BEFORE reading the store: close the shadow explicitly
 	// so the disk flush finishes synchronously and the read below doesn't race it.
@@ -260,6 +294,10 @@ func TestWS_NonMutatingFrameDoesNotClaim(t *testing.T) {
 func TestWS_ClaimComposesWithStaleTeardownGuard(t *testing.T) {
 	srv, sp, h, uuid := newWsTestServer(t)
 
+	// The save barrier — see TestWS_StaleTeardownMustNotCloseSuccessorShadow.
+	workspace := dialWorkspaceWS(t, srv)
+	defer workspace.Close()
+
 	b := dialWS(t, srv, uuid) // acting window (registers first)
 	if err := b.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
 		t.Fatalf("write barrier B: %v", err)
@@ -291,7 +329,7 @@ func TestWS_ClaimComposesWithStaleTeardownGuard(t *testing.T) {
 	if err := b.WriteMessage(websocket.TextMessage, []byte(`{"type":"flush","uuid":"`+uuid+`"}`)); err != nil {
 		t.Fatalf("write flush: %v", err)
 	}
-	expectMessage(t, b, `"flush-ack"`, 2*time.Second)
+	expectMessage(t, workspace, `"`+protocol.TypeContainerSaved+`"`, 2*time.Second)
 
 	sp.Editor.Close(uuid)
 

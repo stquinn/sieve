@@ -3,7 +3,7 @@
   <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1rem;">Create New Folder</h3>
   
   <form 
-    hx-post="/api/sidebar/create-folder?parentId={{.ParentID}}"
+    hx-post="/api/folder"
     hx-target="#htmx-sidebar"
     hx-swap="innerHTML"
     onsubmit="document.getElementById('rename-dialog').close()"

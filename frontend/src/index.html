@@ -8,13 +8,13 @@
          asks for them. Replaces a Google Fonts fetch of Inter that never
          resolved here (no TLS backend in WebKitGTK) and was referenced by
          nothing. See fonts.css. -->
-    <link rel="stylesheet" href="/static/fonts.css">
-    <link rel="stylesheet" href="/static/tailwind.css">
-    <link rel="stylesheet" href="/theme.css">
-    <link rel="stylesheet" href="/static/sidebar.css">
-    <link rel="stylesheet" href="/static/editor.css">
-    <link rel="stylesheet" href="/static/shell.css">
-    <link rel="stylesheet" href="/static/settings.css">
+    <link rel="stylesheet" href="/ui/static/fonts.css">
+    <link rel="stylesheet" href="/ui/static/tailwind.css">
+    <link rel="stylesheet" href="/ui/theme.css">
+    <link rel="stylesheet" href="/ui/static/sidebar.css">
+    <link rel="stylesheet" href="/ui/static/editor.css">
+    <link rel="stylesheet" href="/ui/static/shell.css">
+    <link rel="stylesheet" href="/ui/static/settings.css">
     <style id="layout-overrides-sidebar">
         #app-root { --sidebar-w: {{if .ShowSidebar}}{{.SidebarWidth}}{{else}}0{{end}}px !important; }
         #htmx-sidebar { display: {{if .ShowSidebar}}flex{{else}}none{{end}} !important; }
@@ -41,26 +41,22 @@
     </style>
     <style id="layout-overrides-linenumbers">{{if not .ShowLineNumbers}}.block-chrome-host, .tiptap::before { display: none !important; } .tiptap { padding-left: 1.25rem !important; }{{end}}</style>
 </head>
-<body hx-ext="sse" sse-connect="/sse">
-    <!-- Relay: makes HTMX SSE extension register EventSource listeners so events bubble to document as sse:* -->
-    <div id="ai-sse-relay" hx-trigger="sse:ai:block-resolved" style="display:none"></div>
-    <div id="jobs-changed-relay" hx-trigger="sse:jobs:changed" style="display:none"></div>
+<body>
     {{if .StoreRoot}}
     <div id="app-root" class="theme-{{.ThemeName}} tier-{{.Tier}}" style="--sidebar-w: {{if .ShowSidebar}}{{.SidebarWidth}}{{else}}0{{end}}px; --meta-w: {{if .ShowMeta}}{{.MetaWidth}}{{else}}0{{end}}px;">
         
         <div id="sidebar-wrapper" style="width: var(--sidebar-w); display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; border-right: 1px solid var(--theme-border);">
-            <div id="htmx-sidebar" class="sidebar" style="flex: 1; min-height: 0; border-right: none; display: flex; flex-direction: column;" hx-get="/api/sidebar" hx-trigger="load, sse:session:changed, sse:notes:changed, session:changed from:body, notes:changed from:body"></div>
+            <div id="htmx-sidebar" class="sidebar" style="flex: 1; min-height: 0; border-right: none; display: flex; flex-direction: column;" hx-get="/ui/views/sidebar" hx-trigger="load, sieve:invalidate-session from:document, sieve:invalidate-notes from:document, session:changed from:body, notes:changed from:body"></div>
             <div class="prompts-handle"></div>
-            <div id="prompts-panel" style="height: {{.PromptsHeight}}px; flex-shrink: 0;" hx-get="/api/prompts" hx-trigger="load, sse:prompts:changed, sse:notes:changed, prompts:changed from:body, notes:changed from:body"></div>
+            <div id="prompts-panel" style="height: {{.PromptsHeight}}px; flex-shrink: 0;" hx-get="/ui/views/prompts" hx-trigger="load, sieve:invalidate-prompts from:document, sieve:invalidate-notes from:document, prompts:changed from:body, notes:changed from:body"></div>
         </div>
         <div class="sidebar-handle"></div>
 
         <div id="right-panel">
-            <!-- P2.D: bare mount. The Workspace owns the tab strip render — it
-                 boots the first load and refetches on SSE session/notes changes
-                 (shell/workspace.js loadTabs). The hx-get/hx-trigger relocated
-                 off this div; the sidebar/prompts/meta divs still register the
-                 SSE EventSource listeners, so sse:* events bubble to document. -->
+            <!-- Bare mount: the Workspace owns the tab strip render — it boots the
+                 first load and refetches on session/notes invalidation
+                 (shell/workspace.js loadTabs), so this div carries no
+                 hx-get/hx-trigger of its own. -->
             <div id="htmx-tabbar" class="flex items-stretch bg-tn-bg-dark border-0 border-t border-b border-solid border-tn-border-2 h-[44px] shrink-0"></div>
 
             <dialog id="settings-dialog" style="background: transparent; border: none; padding: 0; outline: none;">
@@ -149,19 +145,19 @@
                 </div>
 
                 <div class="meta-handle"></div>
-                <div id="htmx-meta-panel" style="width: {{.MetaWidth}}px;" class="flex flex-col flex-shrink-0 overflow-hidden bg-tn-bg-dark border-l border-tn-border text-base" hx-get="/api/meta" hx-vals='js:{"tab": window.__metaActiveTab || "meta"}' hx-trigger="load, sse:session:changed, sse:notes:changed, session:changed from:body, notes:changed from:body"></div>
+                <div id="htmx-meta-panel" style="width: {{.MetaWidth}}px;" class="flex flex-col flex-shrink-0 overflow-hidden bg-tn-bg-dark border-l border-tn-border text-base" hx-get="/ui/views/meta" hx-vals='js:{"tab": window.__metaActiveTab || "meta"}' hx-trigger="load, sieve:invalidate-session from:document, sieve:invalidate-notes from:document, session:changed from:body, notes:changed from:body"></div>
             </div>
 
             <div class="status-bar">
                 <!-- Dedicated, non-overlapping slots: each owner writes only
                      into its own element, so no update can clobber another.
-                       __lib     — library chip       (GET /api/library/current)
+                       __lib     — library chip       (GET /ui/views/library/current)
                        __jobs    — AI job spinner      (ai-actions.js updateStatusBar)
                        __save    — save indicator      (editor:saved handler)
                        __blockid — hovered block kind·id (editor:blockhover handler)
                        __stats   — document stats       (editor:stats handler) -->
                 <div class="status-bar__left">
-                  <div class="status-bar__lib" hx-get="/api/library/current" hx-trigger="load" hx-swap="innerHTML"></div>
+                  <div class="status-bar__lib" hx-get="/ui/views/library/current" hx-trigger="load" hx-swap="innerHTML"></div>
                   <div class="status-bar__jobs"></div>
                   <div class="status-bar__command-badges"></div>
                 </div>
@@ -231,50 +227,50 @@
     {{end}}
 
     <!-- Scripts -->
-    <script src="/static/vendor/htmx-bundle.js"></script>
-    <script src="/static/vendor/tiptap.js"></script>
-    <script src="/static/vendor/js-yaml.js"></script>
-    <script src="/static/vendor/panzoom.min.js"></script>
-    <script src="/static/base/icons.js"></script>
-    <script type="module" src="/static/editor/extensions.js"></script>
-    <script type="module" src="/static/ai/ai-target.js"></script>
-    <script type="module" src="/static/editor/paste-context.js"></script>
-    <script type="module" src="/static/editor/block-chrome.js"></script>
-    <script type="module" src="/static/ai/ai-target-decoration.js"></script>
-    <script type="module" src="/static/block/block-kinds.js"></script>
-    <script type="module" src="/static/editor/interaction-policy.js"></script>
-    <script type="module" src="/static/block/action-label.js"></script>
-    <script type="module" src="/static/block/sieve-block-extension.js"></script>
-    <script type="module" src="/static/editor/surfaces/node-views/ai-block-node-view.js"></script>
-    <script type="module" src="/static/editor/surfaces/node-views/code-node-view.js"></script>
-    <script type="module" src="/static/editor/surfaces/node-views/log-node-view.js"></script>
-    <script type="module" src="/static/editor/surfaces/node-views/web-clip-node-view.js"></script>
-    <script type="module" src="/static/editor/surfaces/node-views/smart-image-node-view.js"></script>
-    <script type="module" src="/static/editor/surfaces/node-views/smart-card-node-view.js"></script>
-    <script type="module" src="/static/editor/surfaces/node-views/attachment-node-view.js"></script>
-    <script type="module" src="/static/editor/surfaces/node-views/diagram-node-view.js"></script>
-    <script type="module" src="/static/block/prose-markers.js"></script>
-    <script type="module" src="/static/block/block-render.js"></script>
-    <script type="module" src="/static/block/block-sync.js"></script>
-    <script type="module" src="/static/block/prose-block.js"></script>
-    <script type="module" src="/static/block/prose-group.js"></script>
-    <script type="module" src="/static/editor/surfaces/block-position.js"></script>
-    <script type="module" src="/static/editor/surfaces/render-empty.js"></script>
-    <script type="module" src="/static/base/globals.js"></script>
+    <script src="/ui/static/vendor/htmx-bundle.js"></script>
+    <script src="/ui/static/vendor/tiptap.js"></script>
+    <script src="/ui/static/vendor/js-yaml.js"></script>
+    <script src="/ui/static/vendor/panzoom.min.js"></script>
+    <script src="/ui/static/base/icons.js"></script>
+    <script type="module" src="/ui/static/editor/extensions.js"></script>
+    <script type="module" src="/ui/static/ai/ai-target.js"></script>
+    <script type="module" src="/ui/static/editor/paste-context.js"></script>
+    <script type="module" src="/ui/static/editor/block-chrome.js"></script>
+    <script type="module" src="/ui/static/ai/ai-target-decoration.js"></script>
+    <script type="module" src="/ui/static/block/block-kinds.js"></script>
+    <script type="module" src="/ui/static/editor/interaction-policy.js"></script>
+    <script type="module" src="/ui/static/block/action-label.js"></script>
+    <script type="module" src="/ui/static/block/sieve-block-extension.js"></script>
+    <script type="module" src="/ui/static/editor/surfaces/node-views/ai-block-node-view.js"></script>
+    <script type="module" src="/ui/static/editor/surfaces/node-views/code-node-view.js"></script>
+    <script type="module" src="/ui/static/editor/surfaces/node-views/log-node-view.js"></script>
+    <script type="module" src="/ui/static/editor/surfaces/node-views/web-clip-node-view.js"></script>
+    <script type="module" src="/ui/static/editor/surfaces/node-views/smart-image-node-view.js"></script>
+    <script type="module" src="/ui/static/editor/surfaces/node-views/smart-card-node-view.js"></script>
+    <script type="module" src="/ui/static/editor/surfaces/node-views/attachment-node-view.js"></script>
+    <script type="module" src="/ui/static/editor/surfaces/node-views/diagram-node-view.js"></script>
+    <script type="module" src="/ui/static/block/prose-markers.js"></script>
+    <script type="module" src="/ui/static/block/block-render.js"></script>
+    <script type="module" src="/ui/static/block/block-sync.js"></script>
+    <script type="module" src="/ui/static/block/prose-block.js"></script>
+    <script type="module" src="/ui/static/block/prose-group.js"></script>
+    <script type="module" src="/ui/static/editor/surfaces/block-position.js"></script>
+    <script type="module" src="/ui/static/editor/surfaces/render-empty.js"></script>
+    <script type="module" src="/ui/static/base/globals.js"></script>
     <!-- Shell skeleton (P1: Workspace/Tab/Editor component model). Dual-use ES
          modules: type="module" is MANDATORY — a plain <script> tag fails at
          parse on `export` silently and takes every dependent path down.
          Modules execute deferred (after classic scripts parse); editor.js only
          reads window.sieveWorkspace / window.SieveEditor at runtime (initEditor
          via DOMContentLoaded/htmx events), never at parse time, so ordering is safe. -->
-    <script type="module" src="/static/editor/editor-shell.js"></script>
-    <script type="module" src="/static/shell/tab.js"></script>
-    <script type="module" src="/static/shell/workspace.js"></script>
-    <script src="/static/ai/ai-actions.js"></script>
-    <script src="/static/ui/tabbar.js"></script>
-    <script src="/static/ui/sidebar.js"></script>
-    <script type="module" src="/static/editor/context-menu.js"></script>
-    <script src="/static/ui/layout.js"></script>
+    <script type="module" src="/ui/static/editor/editor-shell.js"></script>
+    <script type="module" src="/ui/static/shell/tab.js"></script>
+    <script type="module" src="/ui/static/shell/workspace.js"></script>
+    <script src="/ui/static/ai/ai-actions.js"></script>
+    <script src="/ui/static/ui/tabbar.js"></script>
+    <script src="/ui/static/ui/sidebar.js"></script>
+    <script type="module" src="/ui/static/editor/context-menu.js"></script>
+    <script src="/ui/static/ui/layout.js"></script>
 
     <script>
     window.__sieveDevServerPort = {{.DevServerPort}};
@@ -289,19 +285,19 @@
         if (treeInput) { treeInput.focus(); treeInput.select(); return; }
         var resultInput = document.querySelector('.store-search__input');
         if (resultInput) { resultInput.focus(); resultInput.select(); return; }
-        if (window.htmx) window.htmx.ajax('GET', '/api/sidebar/search?q=', { target: '#htmx-sidebar', swap: 'innerHTML' });
+        if (window.htmx) window.htmx.ajax('GET', '/ui/views/sidebar/search?q=', { target: '#htmx-sidebar', swap: 'innerHTML' });
     };
 
     document.body.addEventListener('settings:changed', function() {
         var dlg = document.getElementById('settings-dialog');
         if (dlg) dlg.close();
-        var link = document.querySelector('link[href^="/theme.css"]');
-        if (link) link.href = '/theme.css?t=' + new Date().getTime();
+        var link = document.querySelector('link[href^="/ui/theme.css"]');
+        if (link) link.href = '/ui/theme.css?t=' + new Date().getTime();
     });
 
-    // P4.D: the sieve:meta-dirty consumer (save dot + status-bar save slot) moved
-    // into the Workspace's StatusBar child (shell/status-bar.js). Its producer (the
-    // flush-ack) stays a DOM CustomEvent until P4.E/F.
+    // The sieve:meta-dirty consumer (save dot + status-bar save slot) lives in the
+    // Workspace's StatusBar child (shell/status-bar.js); its producer is the
+    // editor's own reaction to the container-saved fact.
 
     // Measure real tabbar height and expose as --tabbar-h for the gutter separator.
     // The active-tab -mb-[2px] trick makes the visual bottom slightly lower than
@@ -376,7 +372,7 @@
     window.__metaActiveTab = 'meta';
 
     function metaPanelUrl(uuid) {
-        return '/api/meta?uuid=' + encodeURIComponent(uuid) + '&tab=' + (window.__metaActiveTab || 'meta');
+        return '/ui/views/meta?uuid=' + encodeURIComponent(uuid) + '&tab=' + (window.__metaActiveTab || 'meta');
     }
 
     document.addEventListener('htmx:afterSettle', function(e) {
@@ -387,24 +383,33 @@
         }
     });
 
-    document.addEventListener('editor:saved', function(e) {
-        var uuid = e.detail && e.detail.uuid;
+    // Refetches the meta panel, but only when it is showing the document that
+    // changed and only when it is on screen. A null uuid means "some document's
+    // metadata changed and the signal does not say which" — the panel only ever
+    // shows the active one, so refreshing it is the whole of the correct answer.
+    function refreshMetaPanelFor(uuid) {
         var metaPanel = document.getElementById('htmx-meta-panel');
         var mount = document.getElementById('tiptap-mount');
         var activeUuid = mount ? mount.getAttribute('data-uuid') : null;
-        if (uuid && uuid === activeUuid && metaPanel && window.htmx && window.getComputedStyle(metaPanel).display !== 'none') {
-            window.htmx.ajax('GET', metaPanelUrl(uuid), { target: '#htmx-meta-panel', swap: 'innerHTML' });
-        }
+        if (!activeUuid || (uuid && uuid !== activeUuid)) return;
+        if (!metaPanel || !window.htmx || window.getComputedStyle(metaPanel).display === 'none') return;
+        window.htmx.ajax('GET', metaPanelUrl(activeUuid), { target: '#htmx-meta-panel', swap: 'innerHTML' });
+    }
+
+    document.addEventListener('editor:saved', function(e) {
+        refreshMetaPanelFor(e.detail && e.detail.uuid);
     });
 
+    // TWO SIGNALS, ONE SUBJECT (see Workspace.startTabbar): intent:changed is the
+    // HX-Trigger on the response, so the client that clicked sees its own change
+    // immediately; sieve:invalidate-intent is the broadcast fact, so every OTHER
+    // window hears it too. The push carries a topic and no uuid — topics are the
+    // vocabulary, uuids are not — hence the null.
     document.addEventListener('intent:changed', function(e) {
-        var uuid = e.detail && e.detail.uuid;
-        var metaPanel = document.getElementById('htmx-meta-panel');
-        var mount = document.getElementById('tiptap-mount');
-        var activeUuid = mount ? mount.getAttribute('data-uuid') : null;
-        if (uuid && uuid === activeUuid && metaPanel && window.htmx && window.getComputedStyle(metaPanel).display !== 'none') {
-            window.htmx.ajax('GET', metaPanelUrl(uuid), { target: '#htmx-meta-panel', swap: 'innerHTML' });
-        }
+        refreshMetaPanelFor(e.detail && e.detail.uuid);
+    });
+    document.addEventListener('sieve:invalidate-intent', function() {
+        refreshMetaPanelFor(null);
     });
 
 
@@ -448,14 +453,16 @@
         var bumpFocus = function() {
             if (window.__sieveActiveDocUuid !== uuid) return;
             if (Date.now() - window.__sieveLastActivity > IDLE_THRESHOLD_MS) return;
-            fetch('/api/note/focus/' + encodeURIComponent(uuid), { method: 'POST' })
-                .then(function() {
-                    var mp = document.getElementById('htmx-meta-panel');
-                    if (mp && window.getComputedStyle(mp).display !== 'none') {
-                        window.htmx.ajax('GET', metaPanelUrl(uuid), { target: '#htmx-meta-panel', swap: 'innerHTML' });
-                    }
-                })
-                .catch(console.error);
+            // The dwell ping is a document-wire frame the server never answers, so
+            // there is nothing to await: refresh the panel straight after sending.
+            // The count it shows is one ping behind until the next refresh, which
+            // is the honest cost of an unanswered signal and beneath noticing for
+            // a counter that moves every five minutes.
+            window.sieveWorkspace?.documentService?.focus(uuid);
+            var mp = document.getElementById('htmx-meta-panel');
+            if (mp && window.getComputedStyle(mp).display !== 'none') {
+                window.htmx.ajax('GET', metaPanelUrl(uuid), { target: '#htmx-meta-panel', swap: 'innerHTML' });
+            }
         };
         window.__sieveFocusTimer = setTimeout(bumpFocus, 30 * 1000);
         window.__sieveDwellInterval = setInterval(bumpFocus, 5 * 60 * 1000);
@@ -502,14 +509,14 @@
     // SIGSEGV handler, avoiding the "non-Go code set up signal handler" panic.
     async function sieveApplyLibrarySwitch() {
       // 1. Layout style overrides (sidebar/meta/toolbar/prompts visibility + widths).
-      await htmx.ajax('GET', '/api/library/switch-layout', { swap: 'none' });
+      await htmx.ajax('GET', '/ui/views/session/layout', { swap: 'none' });
 
       // 2. Refresh all library-specific panels in parallel.
       await Promise.all([
-        htmx.ajax('GET', '/api/sidebar',  { target: '#htmx-sidebar',   swap: 'innerHTML' }),
+        htmx.ajax('GET', '/ui/views/sidebar', { target: '#htmx-sidebar',    swap: 'innerHTML' }),
         window.sieveWorkspace.loadTabs(),
-        htmx.ajax('GET', '/api/meta',     { target: '#htmx-meta-panel', swap: 'innerHTML' }),
-        htmx.ajax('GET', '/api/prompts',  { target: '#prompts-panel',  swap: 'innerHTML' }),
+        htmx.ajax('GET', '/ui/views/meta',    { target: '#htmx-meta-panel', swap: 'innerHTML' }),
+        htmx.ajax('GET', '/ui/views/prompts', { target: '#prompts-panel',   swap: 'innerHTML' }),
       ]);
 
       // 3. Reinitialise editor for the new library's active document.
@@ -520,10 +527,10 @@
           mount.setAttribute('data-uuid', newUUID);
           mount.setAttribute('data-mode', 'wysiwyg');
           // Claim the mount BEFORE init (not delete) so a late htmx:load — e.g. the
-          // redundant /api/tabs reload fired by the sidebar afterSettle handler —
-          // cannot re-enter initEditor while our async /api/editor/load is in
-          // flight. Deleting the flag opened a window for a second editor to mount
-          // on top of this one, leaving artefacts from the old document.
+          // redundant tab-strip reload fired by the sidebar afterSettle handler —
+          // cannot re-enter initEditor while our async document load is in flight.
+          // Deleting the flag opened a window for a second editor to mount on top
+          // of this one, leaving artefacts from the old document.
           mount.dataset.editorInit = 'true';
           window.sieveWorkspace?.initEditor(mount, newUUID, 'wysiwyg');
         } else {
@@ -646,19 +653,25 @@
           var uuid = mount && mount.getAttribute('data-uuid');
           // Only proceed when a real document (not a prompt) is active
           if (!uuid || uuid.startsWith('prompt:') || !window.__tiptap) return;
+          var ds = window.sieveWorkspace && window.sieveWorkspace.documentService;
+          if (!ds) return;
           var reader = new FileReader();
           reader.onload = function(ev) {
             if (!ev.target || !ev.target.result) return;
             // Use the BLOCK INDEX captured BEFORE the file dialog opened (the dialog
             // blurred the editor, so re-deriving the caret now would land at the end).
             var imgIndex = (typeof window.__sieveCapturedInsertIndex === 'number') ? window.__sieveCapturedInsertIndex : -1;
-            fetch('/api/editor/smart-paste', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              // context.filename is what says "this came from a FILE" rather than
-              // "this is pasted text" — the attachment processor requires it, and
-              // without it a picked .yml is claimed by nobody and does nothing.
-              body: JSON.stringify({ uuid: uuid, entries: [{ mimeType: file.type, content: ev.target.result, context: { filename: file.name } }], index: imgIndex }),
+            // Reached through the Workspace rather than by importing the service:
+            // this inline script is not a module. The created block arrives on the
+            // document wire's insert-block render-back, so the ack is nothing to
+            // act on here — only a failure is.
+            //
+            // context.filename is what says "this came from a FILE" rather than
+            // "this is pasted text" — the attachment processor requires it, and
+            // without it a picked .yml is claimed by nobody and does nothing.
+            ds.smartPaste(uuid, {
+              entries: [{ mimeType: file.type, content: ev.target.result, context: { filename: file.name } }],
+              index: imgIndex,
             }).catch(function(err) { console.error('[toolbar] file attach failed', err); });
           };
           reader.readAsDataURL(file);

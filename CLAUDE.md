@@ -23,21 +23,21 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 | **Services** (persistence) | `sieve/services/` (DocumentService, AssetService, StateService, JobTracker, JobEngine, LinkPreviewService, LibraryService, PlantumlService) |
 | **Editor** (the only package that sees both `block/` and `services/`) | `sieve/editor/` (EditorService, Router + NotesSource = address → Node, IdentitySweeper) |
 | **AI subsystem** | `sieve/ai/` (AIService, cli.go=RunCLI [future API-backend swap point], prompts, eval helpers, image_localise) |
-| HTTP router assembly (App-bound: index + /sse + /static wiring) | `handlers.go` (root, `apiHandler`) |
-| Request-handler registration (builds & mounts all handlers) | `requesthandlers/registry.go` (`Registry.Mount`) |
+| **Wire contract (single source of truth)** | `sieve/protocol/` — frame + endpoint structs and the `Registry` (channel, direction, type, payload, method/path, response kind); the two WS wires are `GET /api/ws/document/{uuid}` and `GET /api/ws/workspace`. Generator + generated artifacts (`docs/API.md`, `docs/openapi.yaml`, `docs/asyncapi.yaml`, `frontend/src/static/generated/protocol.js`) live under `sieve/protocol/gen/` + `tools/protocolgen/`; rebuild via `go generate ./sieve/protocol` (see Build & Dev) |
+| HTTP router assembly (App-bound: index handler + embedded static FS, both passed into `Registry.Mount`) | `handlers.go` (root, `apiHandler`) |
+| Request-handler registration — the SOLE route-assembly site, so `chi.Walk` inventories the real surface | `requesthandlers/registry.go` (`Registry.Mount`) |
 | One file per HTTP concern | `requesthandlers/*.go` |
 | Go HTML templates (HTMX fragments) | `frontend/src/templates/*.html` |
 | Static JS/CSS | `frontend/src/static/` |
 | App entry point (Go template) | `frontend/src/index.html` |
 | TipTap editor component hierarchy | `frontend/src/static/editor/abstract-editor.js` (base) + `note-editor.js`/`prompt-editor.js` (concrete) + `editor-shell.js` (back-compat `window.SieveEditor` alias); mounted at `#tiptap-mount` |
-| **Protocol services (wire owners)** | `frontend/src/static/block/block-service.js` (owns the DOCUMENT wire: channel-per-uuid, opId ack correlation, routing index + id→SieveBlock truth-mirror) + `document-service.js` (load/save/raw-content family, export, paste pipelines) + `workspace-service.js` (owns the SESSION wire — one socket, many tenants: tenants claim inbound frame `type` words, unclaimed frames drop; #74 P1) + `command-service.js` (a TENANT of it: slash-command dispatch, correlation-id ack routing, cancellation) + `mention-service.js` (the second tenant: the `@` picker's `mention-query`/`mention-result` typeahead; #74 P4). Surfaces/editors are transport-blind — no fetch/WS outside these five for protocol traffic (#49) |
+| **Protocol services (wire owners)** | `frontend/src/static/block/block-service.js` (owns the DOCUMENT wire: channel-per-uuid, opId ack correlation, routing index + id→SieveBlock truth-mirror) + `document-service.js` (load/save/raw-content family, export, paste pipelines) + `workspace-service.js` (owns the WORKSPACE wire, `GET /api/ws/workspace` — one socket, many tenants: tenants claim inbound frame `type` words, unclaimed frames drop; #74 P1) + `command-service.js` (a TENANT of it: slash-command dispatch, correlation-id ack routing, cancellation) + `mention-service.js` (another tenant: the `@` picker's `mention-query`/`mention-result` typeahead; #74 P4) + `invalidation-service.js` (the workspace channel's push tenant: claims `invalidate`/`jobs-changed`/`container-deleted`, re-dispatches them as DOM events). Surfaces/editors are transport-blind — no fetch/WS outside these six for protocol traffic (#49) |
 | **Block renderer classes** (look-and-feel, PM-free) | `frontend/src/static/block/renderers/` — `BlockRenderer` base, `RendererStyleRegistry`, `StatusBadge`, `LineGutter`, one concrete renderer + sibling `*.styles.js` per migrated kind; shared utilities live here too (`html-escape.js`, `job-status.js`, `sanctioned-markdown.js`, `highlighting.js`, `vendor-libs.js` = bundled non-PM lib seam) |
 | NodeView PM adapters (thin, composition over a renderer) | `frontend/src/static/editor/surfaces/node-views/*-node-view.js` (moved+renamed from `processors/*-renderer.js` 2026-07-21 — they are NodeViews, and PM enters the JS graph only in surfaces) |
 | Custom TipTap extensions (vanilla JS) | `frontend/src/static/editor/extensions.js` |
 | Pre-built TipTap core bundle | `frontend/src/static/vendor/tiptap.js` |
 | **Identity (all ids)** | `ident/` (`New` = UUIDv7, `Valid`) — a leaf BELOW `store/` and `sieve/`, because `store/` cannot import `sieve/` |
 | Store abstraction + FileStore | `store/interfaces.go`, `store/filestore/` |
-| SSE hub | `sse/` (package `sse`: `Hub`, `NewHub`) |
 | File watcher | `watcher/` (package `watcher`: `NotesWatcher`, `New`) |
 | Tech debt register | `docs/TECH-DEBT.md` |
 | **Editor interaction contract (NORMATIVE)** | `docs/editor-interaction-contract.md` |
@@ -93,16 +93,24 @@ CI's `credits` job regenerates and diffs, failing
 the pipeline if a dep change lands without a regen; releases ship the committed artifact
 and never regenerate. Sieve itself is Apache-2.0 (`LICENSE` + `NOTICE` at root).
 
+**Wire contract:** `sieve/protocol/` is the single source of truth for every WS frame and typed
+JSON endpoint. Any change to one — a new frame, a changed field, a new endpoint — must regenerate
+its artifacts: `nix develop -c env CGO_ENABLED=0 go generate ./sieve/protocol` (the `CGO_ENABLED=0`
+must be set INSIDE `nix develop` — the devShell hook resets it to 1 on entry). This rebuilds
+`docs/API.md`, `docs/openapi.yaml`, `docs/asyncapi.yaml`, and `frontend/src/static/generated/protocol.js`.
+An artifacts-currency test fails the whole suite if the committed files drift from what the
+declarations now generate.
+
 **Embeds** (in `embeds.go` — go:embed paths are relative to the declaring file and cannot climb, so these stay at root and are threaded into `newAPIHandler`):
 - `//go:embed frontend/src/templates` → Go templates
-- `//go:embed frontend/src/static` → static files served at `/static/`
+- `//go:embed frontend/src/static` → static files served at `/ui/static/`
 - `//go:embed frontend/src/index.html` → app shell
 
 ---
 
 ## Architecture in One Paragraph
 
-`main.go` constructs the SSE hub (`sse.NewHub`, package `sse`) and the `App`, then builds the root `apiHandler` (`handlers.go`). `apiHandler` owns the chi router and the index/`/sse`/`/static` wiring (it stays in package main because it reads live `App` store state); it delegates registration of the per-concern `RequestHandler`s (one struct per concern in `requesthandlers/`) to `requesthandlers.Registry.Mount`. The file watcher lives in package `watcher` (`watcher.New`), constructed by `App` at startup. Handlers call `sieve.ServiceProvider` (the composition root, package `sieve`) which constructs the concrete services and wires them into `block.BlockServices` as **port interfaces**. The block model (`block/`: SieveBlock, DocumentCodec, RegionScanner, ShadowDocument) is a leaf that depends only on `domain/` — processors and services depend on it, never the reverse. `ai/` (AIService + CLI) implements `block.AIPort`. The Store abstraction (`store.Store`) is the only layer that touches disk — `filestore.FileStore` implements it. The frontend is HTMX: Go templates render HTML fragments on request; SSE events (`notes:changed`, `session:changed`, etc.) trigger HTMX swaps. TipTap runs as a class-based editor component (`AbstractEditor` + concrete `NoteEditor`/`PromptEditor`, `frontend/src/static/editor/`) mounted in `#tiptap-mount`.
+`main.go` constructs the `JobTracker`, the `WorkspaceBroadcast` (the workspace wire's fan-out primitive) and the `App`, then builds the root `apiHandler` (`handlers.go`). `apiHandler` owns the chi router and the index wiring (it stays in package main because it reads live `App` store state); it delegates registration of every route — the per-concern `RequestHandler`s (one struct per concern in `requesthandlers/`), `/ui/static/*`, `/mcp`, and `/` — to `requesthandlers.Registry.Mount`, the sole route-assembly site. The file watcher lives in package `watcher` (`watcher.New`), constructed by `App` at startup. Handlers call `sieve.ServiceProvider` (the composition root, package `sieve`) which constructs the concrete services and wires them into `block.BlockServices` as **port interfaces**. The block model (`block/`: SieveBlock, DocumentCodec, RegionScanner, ShadowDocument) is a leaf that depends only on `domain/` — processors and services depend on it, never the reverse. `ai/` (AIService + CLI) provides the concrete `*ai.AIService` held by `block.BlockServices.AI` (`AIPort` was deleted — see the DAG callout above). The Store abstraction (`store.Store`) is the only layer that touches disk — `filestore.FileStore` implements it. The frontend is HTMX: Go templates render HTML fragments on request; workspace broadcasts (`invalidate`, `jobs-changed`, `container-deleted`) re-dispatch as DOM events that trigger HTMX swaps. TipTap runs as a class-based editor component (`AbstractEditor` + concrete `NoteEditor`/`PromptEditor`, `frontend/src/static/editor/`) mounted in `#tiptap-mount`.
 
 ---
 
@@ -138,5 +146,6 @@ and never regenerate. Sieve itself is Apache-2.0 (`LICENSE` + `NOTICE` at root).
 - **No React** — Phase 9 is done. Do not introduce React, JSX.
 - ** Any npm dependencies must be Vanilla JS and discuss first.
 - **`window.sieve*` globals** — thin JS wrappers over Go HTTP calls (tech debt X-B); they exist in `frontend/src/index.html`. New work should use direct `hx-post`/`hx-get` attributes instead.
-- **SSE events** — `notes:changed`, `session:changed`, `prompts:changed`, `editor:saved`, `ai:progress`. Broadcast via `hub.broadcast(event, data)` in Go handlers.
+- **Workspace broadcasts, not SSE** — SSE is retired. `GET /api/ws/workspace` fans a broadcast to every connected socket via `WorkspaceBroadcast`: `invalidate` (topic-as-data — `notes`, `session`, `prompts`, `library`, `intent`), `jobs-changed` (the whole job snapshot, pushed on connect and on every change), and `container-deleted` (a container is gone; the client reconciles what it still holds for that uuid). The frontend's `InvalidationService` re-dispatches these as page-global DOM events on `document` — `sieve:invalidate-{topic}` and `sieve:jobs-changed` — and hypermedia refetch triggers read `hx-trigger="sieve:invalidate-{topic} from:document"` (`from:document` is load-bearing: an event dispatched on `document` never reaches `body`, so `from:body` silently never fires).
+- **Wire contract upkeep is mandatory** — any WS frame or typed JSON endpoint change goes through `sieve/protocol` (add/edit the struct + its godoc/`doc:"…"` tags) and then `nix develop -c env CGO_ENABLED=0 go generate ./sieve/protocol` (CGO_ENABLED=0 set INSIDE `nix develop` — the devShell hook resets it to 1 on entry). Go speaks frame types and topics only through `sieve/protocol` constants; JS speaks them only through the generated `frontend/src/static/generated/protocol.js` — a string literal on either side is how the wire drifts from the registry. The generated-artifacts-currency test fails the whole suite on drift, and the `sieve/protocol` contract test suite is part of the definition of done for any API-touching change.
 - **Editor interaction contract** — `docs/editor-interaction-contract.md` is NORMATIVE. New block kinds declare `interactionPolicy` (see `frontend/src/static/editor/interaction-policy.js` DEFAULT_POLICY); per-renderer `handleKeyDown` for Tab/Enter/Home/arrows is FORBIDDEN — the shared policy extension owns them (Tab = priority-50 backstop after native keymaps; Enter family = pre-core via editorProps; the module header explains why). Any interaction change MUST update the contract doc in the same change. Key chords: Shift+Enter = universal block escape; Mod+Enter = mode toggle for kinds declaring `modEnterTogglesMode` + `onModEnter`.

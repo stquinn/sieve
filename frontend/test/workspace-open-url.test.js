@@ -111,7 +111,10 @@ describe('SieveWorkspace.openAddress — Go decides what a coordinate opens', ()
       found: false, error: 'node: address resolves to nothing',
     })
     expect(await opened).toBe(false)
-    expect(ajax).not.toHaveBeenCalled()
+    // Named specifically: this module's Workspace singleton (created at import,
+    // subscribed to the invalidation events) refetches the tab strip when the
+    // fake socket connects, so "no ajax at all" would be asserting the harness.
+    expect(ajax).not.toHaveBeenCalledWith('POST', expect.stringContaining('/api/note/open/'), expect.anything())
   })
 
   it('an empty address opens nothing and never reaches the wire', async () => {

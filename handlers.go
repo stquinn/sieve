@@ -9,25 +9,22 @@ import (
 	"sieve/requesthandlers"
 	"sieve/sieve"
 	"sieve/sieve/domain"
-	"sieve/sieve/services"
-	"sieve/sse"
 
 	"github.com/go-chi/chi/v5"
 )
 
-// apiHandler owns the chi router, templates, SSE hub, and static files. It is
-// bound to *App (composition root) because handleIndex reads live store state,
-// so it stays in package main; the per-concern request handlers it mounts live
-// in the requesthandlers package (see requesthandlers.Registry).
+// apiHandler owns the chi router, templates and static files. It is bound to
+// *App (composition root) because handleIndex reads live store state, so it
+// stays in package main; the per-concern request handlers it mounts live in the
+// requesthandlers package (see requesthandlers.Registry).
 type apiHandler struct {
 	app    *App
-	hub    *sse.Hub
 	tmpl   *template.Template
 	static http.Handler
 	routes *chi.Mux
 }
 
-func newAPIHandler(app *App, hub *sse.Hub, sp *sieve.ServiceProvider) (*apiHandler, error) {
+func newAPIHandler(app *App, broadcast *requesthandlers.WorkspaceBroadcast, sp *sieve.ServiceProvider) (*apiHandler, error) {
 	tmpl, err := requesthandlers.NewTemplates(uiTemplates)
 	if err != nil {
 		return nil, err
@@ -40,45 +37,56 @@ func newAPIHandler(app *App, hub *sse.Hub, sp *sieve.ServiceProvider) (*apiHandl
 
 	h := &apiHandler{
 		app:    app,
-		hub:    hub,
 		tmpl:   tmpl,
 		static: http.FileServer(http.FS(staticFS)),
 	}
-	jobTracker := services.NewJobTracker()
-	jobTracker.Broadcast = hub.Broadcast
-	sp.Jobs = jobTracker
+	// The job tracker and its wiring into broadcast (constructor-injected, so it
+	// is set exactly once before any socket can dial in) live in main(), which
+	// builds both before this function runs — sp.Jobs already carries it here.
+	// /keep-and-file writes user_intent and the sidebar must show it NOW; the
+	// watcher notices the same write only after its debounce. command/ cannot name
+	// a topic, so it drives a port and gets the concrete here.
+	sp.Invalidator = broadcast
+	// A save is a workspace-wide fact, so the Editor's save chokepoint publishes
+	// through the same fan-out. Set here for the same reason Invalidator is: the
+	// port lives below this package and the concrete above it. Init reads it.
+	sp.SavedNotifier = broadcast
 	// NOTE: the JobEngine and the Editor's SetJobs/SetEngine/SetAI wiring live in
 	// ServiceProvider.Init (runs at Wails startup, AFTER this) — that is where
 	// State/AI/Editor exist. Doing it here nil-derefs: sp is an empty struct until
-	// Init. Init consumes sp.Jobs (the hub-wired tracker set just above).
+	// Init. Init consumes sp.Jobs (the tracker set just above).
 	r := chi.NewRouter()
 	requesthandlers.Registry{
 		ServiceProvider: sp,
 		Tmpl:            tmpl,
-		Broadcast:       hub.Broadcast,
-		Jobs:            jobTracker,
+		Broadcast:       broadcast,
 		Version:         version,
 		Credits:         thirdPartyLicenses,
+		Themes:          app.getThemesFS(),
+		MCP:             mcpRoute{sp: sp},
+		Static:          http.StripPrefix("/ui/static", h.static),
+		Index:           http.HandlerFunc(h.handleIndex),
 	}.Mount(r)
-	r.Get("/sse", h.hub.ServeHTTP)
-	// Internal Sieve MCP (read-only knowledge base). The server is built at
-	// Init (after this mount), so the route derefs sp.MCP live at request time
-	// — same pattern as the sp-holding request handlers. It authenticates via a
-	// per-run bearer token before delegating to the streamable MCP handler.
-	r.Handle("/mcp", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if sp.MCP == nil {
-			http.Error(w, "sieve mcp unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		sp.MCP.ServeHTTP(w, req)
-	}))
-	r.Handle("/static/*", http.StripPrefix("/static", h.static))
-	r.Get("/", h.handleIndex)
 
 	r.NotFound(h.handleIndex)
 	h.routes = r
 
 	return h, nil
+}
+
+// mcpRoute serves the internal Sieve MCP (read-only knowledge base). The server
+// is built at ServiceProvider.Init, after routing is assembled, so sp.MCP is
+// dereferenced live at request time — the same pattern the sp-holding request
+// handlers use. The MCP server itself authenticates the per-run bearer token
+// before answering.
+type mcpRoute struct{ sp *sieve.ServiceProvider }
+
+func (m mcpRoute) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if m.sp.MCP == nil {
+		http.Error(w, "sieve mcp unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	m.sp.MCP.ServeHTTP(w, r)
 }
 
 func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

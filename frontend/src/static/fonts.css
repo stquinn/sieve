@@ -1,5 +1,5 @@
 /* fonts.css — self-hosted webfaces, embedded in the binary via go:embed and
- * served from /static/fonts. Nothing here touches the network.
+ * served from /ui/static/fonts. Nothing here touches the network.
  *
  * Sieve previously pulled Inter from Google Fonts at runtime. That never worked
  * here (WebKitGTK has no TLS backend in this environment, so every launch logged
@@ -33,14 +33,14 @@
 /* ---- JetBrains Mono — editor + mono face in 12 of 13 themes ---- */
 @font-face {
   font-family: 'JetBrains Mono';
-  src: url('/static/fonts/JetBrainsMono-Variable.woff2') format('woff2');
+  src: url('/ui/static/fonts/JetBrainsMono-Variable.woff2') format('woff2');
   font-weight: 100 800;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'JetBrains Mono';
-  src: url('/static/fonts/JetBrainsMono-Italic-Variable.woff2') format('woff2');
+  src: url('/ui/static/fonts/JetBrainsMono-Italic-Variable.woff2') format('woff2');
   font-weight: 100 800;
   font-style: italic;
   font-display: swap;
@@ -49,28 +49,28 @@
 /* ---- Cascadia Code — first choice of the DEFAULT theme (sublime) ---- */
 @font-face {
   font-family: 'Cascadia Code';
-  src: url('/static/fonts/CascadiaCode-Regular.woff2') format('woff2');
+  src: url('/ui/static/fonts/CascadiaCode-Regular.woff2') format('woff2');
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Cascadia Code';
-  src: url('/static/fonts/CascadiaCode-Bold.woff2') format('woff2');
+  src: url('/ui/static/fonts/CascadiaCode-Bold.woff2') format('woff2');
   font-weight: 700;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Cascadia Code';
-  src: url('/static/fonts/CascadiaCode-Italic.woff2') format('woff2');
+  src: url('/ui/static/fonts/CascadiaCode-Italic.woff2') format('woff2');
   font-weight: 400;
   font-style: italic;
   font-display: swap;
 }
 @font-face {
   font-family: 'Cascadia Code';
-  src: url('/static/fonts/CascadiaCode-BoldItalic.woff2') format('woff2');
+  src: url('/ui/static/fonts/CascadiaCode-BoldItalic.woff2') format('woff2');
   font-weight: 700;
   font-style: italic;
   font-display: swap;
@@ -79,7 +79,7 @@
 /* ---- Fira Code — the second fallback every theme names ---- */
 @font-face {
   font-family: 'Fira Code';
-  src: url('/static/fonts/FiraCode-Variable.woff2') format('woff2');
+  src: url('/ui/static/fonts/FiraCode-Variable.woff2') format('woff2');
   font-weight: 300 700;
   font-style: normal;
   font-display: swap;
@@ -90,28 +90,28 @@
    Code's treatment. ---- */
 @font-face {
   font-family: 'Source Code Pro';
-  src: url('/static/fonts/SourceCodePro-Regular.woff2') format('woff2');
+  src: url('/ui/static/fonts/SourceCodePro-Regular.woff2') format('woff2');
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Source Code Pro';
-  src: url('/static/fonts/SourceCodePro-Bold.woff2') format('woff2');
+  src: url('/ui/static/fonts/SourceCodePro-Bold.woff2') format('woff2');
   font-weight: 700;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Source Code Pro';
-  src: url('/static/fonts/SourceCodePro-Italic.woff2') format('woff2');
+  src: url('/ui/static/fonts/SourceCodePro-Italic.woff2') format('woff2');
   font-weight: 400;
   font-style: italic;
   font-display: swap;
 }
 @font-face {
   font-family: 'Source Code Pro';
-  src: url('/static/fonts/SourceCodePro-BoldItalic.woff2') format('woff2');
+  src: url('/ui/static/fonts/SourceCodePro-BoldItalic.woff2') format('woff2');
   font-weight: 700;
   font-style: italic;
   font-display: swap;
@@ -120,28 +120,28 @@
 /* ---- IBM Plex Mono — no variable build upstream, four static faces ---- */
 @font-face {
   font-family: 'IBM Plex Mono';
-  src: url('/static/fonts/IBMPlexMono-Regular.woff2') format('woff2');
+  src: url('/ui/static/fonts/IBMPlexMono-Regular.woff2') format('woff2');
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'IBM Plex Mono';
-  src: url('/static/fonts/IBMPlexMono-Bold.woff2') format('woff2');
+  src: url('/ui/static/fonts/IBMPlexMono-Bold.woff2') format('woff2');
   font-weight: 700;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'IBM Plex Mono';
-  src: url('/static/fonts/IBMPlexMono-Italic.woff2') format('woff2');
+  src: url('/ui/static/fonts/IBMPlexMono-Italic.woff2') format('woff2');
   font-weight: 400;
   font-style: italic;
   font-display: swap;
 }
 @font-face {
   font-family: 'IBM Plex Mono';
-  src: url('/static/fonts/IBMPlexMono-BoldItalic.woff2') format('woff2');
+  src: url('/ui/static/fonts/IBMPlexMono-BoldItalic.woff2') format('woff2');
   font-weight: 700;
   font-style: italic;
   font-display: swap;
@@ -151,7 +151,7 @@
    synthesise an oblique if one is requested), so one @font-face only. ---- */
 @font-face {
   font-family: 'Inconsolata';
-  src: url('/static/fonts/Inconsolata-Variable.woff2') format('woff2');
+  src: url('/ui/static/fonts/Inconsolata-Variable.woff2') format('woff2');
   font-weight: 200 900;
   font-style: normal;
   font-display: swap;
@@ -163,14 +163,14 @@
    @font-face costs nothing at runtime). ---- */
 @font-face {
   font-family: 'Inter';
-  src: url('/static/fonts/Inter-Variable.woff2') format('woff2');
+  src: url('/ui/static/fonts/Inter-Variable.woff2') format('woff2');
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Inter';
-  src: url('/static/fonts/Inter-Italic-Variable.woff2') format('woff2');
+  src: url('/ui/static/fonts/Inter-Italic-Variable.woff2') format('woff2');
   font-weight: 100 900;
   font-style: italic;
   font-display: swap;
@@ -179,14 +179,14 @@
 /* ---- IBM Plex Sans — variable webfont (roman + italic); UI/prose sans ---- */
 @font-face {
   font-family: 'IBM Plex Sans';
-  src: url('/static/fonts/IBMPlexSans-Variable.woff2') format('woff2');
+  src: url('/ui/static/fonts/IBMPlexSans-Variable.woff2') format('woff2');
   font-weight: 100 700;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'IBM Plex Sans';
-  src: url('/static/fonts/IBMPlexSans-Italic-Variable.woff2') format('woff2');
+  src: url('/ui/static/fonts/IBMPlexSans-Italic-Variable.woff2') format('woff2');
   font-weight: 100 700;
   font-style: italic;
   font-display: swap;
@@ -195,14 +195,14 @@
 /* ---- Source Sans 3 — variable webfont (roman + italic); UI/prose sans ---- */
 @font-face {
   font-family: 'Source Sans 3';
-  src: url('/static/fonts/SourceSans3-Variable.woff2') format('woff2');
+  src: url('/ui/static/fonts/SourceSans3-Variable.woff2') format('woff2');
   font-weight: 200 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Source Sans 3';
-  src: url('/static/fonts/SourceSans3-Italic-Variable.woff2') format('woff2');
+  src: url('/ui/static/fonts/SourceSans3-Italic-Variable.woff2') format('woff2');
   font-weight: 200 900;
   font-style: italic;
   font-display: swap;
@@ -211,14 +211,14 @@
 /* ---- IBM Plex Serif — variable webfont (roman + italic); prose serif ---- */
 @font-face {
   font-family: 'IBM Plex Serif';
-  src: url('/static/fonts/IBMPlexSerif-Variable.woff2') format('woff2');
+  src: url('/ui/static/fonts/IBMPlexSerif-Variable.woff2') format('woff2');
   font-weight: 100 700;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'IBM Plex Serif';
-  src: url('/static/fonts/IBMPlexSerif-Italic-Variable.woff2') format('woff2');
+  src: url('/ui/static/fonts/IBMPlexSerif-Italic-Variable.woff2') format('woff2');
   font-weight: 100 700;
   font-style: italic;
   font-display: swap;
@@ -230,14 +230,14 @@
    under its actual upstream name rather than the newer one it predates. ---- */
 @font-face {
   font-family: 'Source Serif Pro';
-  src: url('/static/fonts/SourceSerifPro-Variable.woff2') format('woff2');
+  src: url('/ui/static/fonts/SourceSerifPro-Variable.woff2') format('woff2');
   font-weight: 200 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Source Serif Pro';
-  src: url('/static/fonts/SourceSerifPro-Italic-Variable.woff2') format('woff2');
+  src: url('/ui/static/fonts/SourceSerifPro-Italic-Variable.woff2') format('woff2');
   font-weight: 200 900;
   font-style: italic;
   font-display: swap;
@@ -248,14 +248,14 @@
    larger than the other variable faces here. ---- */
 @font-face {
   font-family: 'Merriweather';
-  src: url('/static/fonts/Merriweather-Variable.woff2') format('woff2');
+  src: url('/ui/static/fonts/Merriweather-Variable.woff2') format('woff2');
   font-weight: 300 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Merriweather';
-  src: url('/static/fonts/Merriweather-Italic-Variable.woff2') format('woff2');
+  src: url('/ui/static/fonts/Merriweather-Italic-Variable.woff2') format('woff2');
   font-weight: 300 900;
   font-style: italic;
   font-display: swap;

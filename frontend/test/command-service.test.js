@@ -1,6 +1,7 @@
 // @ts-check
 import { describe, it, expect, beforeEach } from 'vitest'
 import { CommandService } from '../src/static/block/command-service.js'
+import { ContractViolation } from '../src/static/block/sieve-block.js'
 import { WorkspaceService } from '../src/static/block/workspace-service.js'
 
 class FakeWebSocket {
@@ -50,7 +51,7 @@ describe('CommandService', () => {
 
   /**
    * Builds the plane + its command tenant, the way the composition root does
-   * (#74 P1: CommandService no longer owns a socket — it joins one).
+   * (CommandService does not own a socket — it joins one).
    * @param {any[]} cmds
    */
   const buildPlane = (cmds) => {
@@ -59,7 +60,7 @@ describe('CommandService', () => {
         fakeWs = new FakeWebSocket(url)
         return /** @type {any} */ (fakeWs)
       },
-      wsUrl: () => 'ws://test/api/ws?session=1'
+      wsUrl: () => 'ws://test/api/ws/workspace'
     })
     return { workspace: ws, service: new CommandService(ws, { commands: cmds }) }
   }
@@ -247,5 +248,39 @@ describe('CommandService', () => {
 
     service.dispatch('btw', 'hello', {})
     expect(fakeWs.sent[0].attachments).toEqual([])
+  })
+
+  describe('dispatchFiling — the ai family\'s three verbs', () => {
+    const filing = [
+      { name: 'file', description: 'File it', family: 'ai' },
+      { name: 'metadata', description: 'Re-evaluate', family: 'ai' },
+      { name: 'keep-and-file', description: 'Keep, then file', family: 'ai' },
+    ]
+
+    it.each(['file', 'metadata', 'keep-and-file'])('sends /%s in the ai family with the document in context.docUuid', async (verb) => {
+      const plane = buildPlane(filing)
+      plane.workspace.open()
+      await new Promise(r => setTimeout(r, 10))
+
+      plane.service.dispatchFiling(/** @type {any} */ (verb), 'doc-42')
+
+      const sent = fakeWs.sent[0]
+      expect(sent.cmd).toBe(verb)
+      expect(sent.family).toBe('ai')
+      // Go's FilingCommand.Build reads exactly this key; an omission is a refusal
+      // the caller never sees, since filing produces no result block either way.
+      expect(sent.context).toEqual({ docUuid: 'doc-42' })
+      expect(sent.args).toEqual({ text: '' })
+    })
+
+    it('refuses an unknown verb and a document-less invocation, loudly and before the wire', async () => {
+      const plane = buildPlane(filing)
+      plane.workspace.open()
+      await new Promise(r => setTimeout(r, 10))
+
+      expect(() => plane.service.dispatchFiling(/** @type {any} */ ('smartFile'), 'doc-42')).toThrow(ContractViolation)
+      expect(() => plane.service.dispatchFiling('file', '')).toThrow(ContractViolation)
+      expect(fakeWs.sent).toEqual([])
+    })
   })
 })

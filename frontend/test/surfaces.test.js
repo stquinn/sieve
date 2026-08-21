@@ -445,7 +445,9 @@ describe('WysiwygSurface.applyServerOp (P2.B call-shape, undo-sacred)', () => {
 // ── WysiwygSurface: mount / debounce / flushPending with a recording bundle ──
 
 function mountBundle(state) {
-  const ext = { configure: () => ({}), name: 'ext' }
+  // `extend` returns the same stub so an extended-then-configured extension
+  // (Image, whose src attribute is re-rendered) reads like every other one here.
+  const ext = { configure: () => ({}), extend: () => ext, name: 'ext' }
   let lastEditor = null
   const T = {
     Node: { create: (cfg) => cfg },

@@ -14,7 +14,7 @@ type TabHandler struct {
 }
 
 func (h *TabHandler) RegisterPaths(r chi.Router) {
-	r.Get("/api/tabs", h.handleTabs)
+	r.Get("/ui/views/tabs", h.handleTabs)
 }
 
 func (h *TabHandler) handleTabs(w http.ResponseWriter, r *http.Request) {

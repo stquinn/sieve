@@ -138,7 +138,7 @@ export class DiagramRenderer extends BlockRenderer {
   static #installThemeListener() {
     if (DiagramRenderer.#themeListenerInstalled) return
     DiagramRenderer.#themeListenerInstalled = true
-    document.addEventListener('sse:settings:changed', () => {
+    document.addEventListener('settings:changed', () => {
       // Re-init mermaid's theme variables FIRST (if it's loaded) so mermaid
       // instances re-render under the new theme. Plantuml instances nudge a
       // backend re-dispatch — which must happen even in a mermaid-free doc,
@@ -160,7 +160,7 @@ export class DiagramRenderer extends BlockRenderer {
     DiagramRenderer.#mermaidReady = new Promise((resolve, reject) => {
       if (DiagramRenderer.#mermaidGlobal()) { DiagramRenderer.#initMermaid(); resolve(); return }
       const s = document.createElement('script')
-      s.src = '/static/vendor/mermaid.min.js'
+      s.src = '/ui/static/vendor/mermaid.min.js'
       s.onload = () => { DiagramRenderer.#initMermaid(); resolve() }
       s.onerror = () => { DiagramRenderer.#mermaidReady = null; reject(new Error('Failed to load mermaid.min.js')) }
       document.head.appendChild(s)

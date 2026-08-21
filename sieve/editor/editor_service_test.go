@@ -26,7 +26,7 @@ func TestEditorService_ConcurrentFlush_NoRace(t *testing.T) {
 	doc.SetBody([]byte("# Doc\n\n```code\nid: co-1\nsource: x = 1\nstatus: COMPLETE\n```"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	defer es.Close(uuid)
@@ -63,7 +63,7 @@ func TestHandleBlockOp_structuredCreateInsertsAtIndex(t *testing.T) {
 	doc.SetBody([]byte("```code\nid: " + firstID + "\nsource: a\nstatus: COMPLETE\n```\n\n```code\nid: " + lastID + "\nsource: b\nstatus: COMPLETE\n```"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	// The code-block create dispatches an async job; wait for it to finish before the
@@ -110,7 +110,7 @@ func TestEditorService_FlushWritesToDisk(t *testing.T) {
 	}
 	uuid := doc.UUID()
 
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	es.UpdateMarkdown(uuid, "# Hello\n\n```ai-block\nid: ab-1234\nresponse: original\nstatus: COMPLETE\n```")
@@ -148,7 +148,7 @@ func TestEditorService_EnterMarkdownEmbedsBlocks(t *testing.T) {
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
 
-	_ = es.Open(uuid, nil)
+	_ = es.Open(uuid)
 	es.UpdateMarkdown(uuid, "# Doc\n\n```code\nid: cb-0001\nsource: old\nstatus: COMPLETE\n```")
 	es.UpdateBlock(uuid, block.SieveBlock{
 		Kind: "code",
@@ -185,7 +185,7 @@ func TestEditorService_CloseFlushesAndRemovesShadow(t *testing.T) {
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
 
-	_ = es.Open(uuid, nil)
+	_ = es.Open(uuid)
 	es.UpdateMarkdown(uuid, "# Hello\n\nEdited prose.")
 
 	es.Close(uuid)
@@ -218,7 +218,7 @@ func TestEditorService_FlushAllWritesAllShadows(t *testing.T) {
 		doc.SetBody([]byte("original"))
 		doc, _ = ds.Save(doc)
 		uuids = append(uuids, doc.UUID())
-		_ = es.Open(doc.UUID(), nil)
+		_ = es.Open(doc.UUID())
 		es.UpdateMarkdown(doc.UUID(), body)
 		_ = i
 	}
@@ -264,30 +264,96 @@ func TestEditorService_EnterWysiwyg_NoShadowIsNoop(t *testing.T) {
 	es.EnterWysiwyg("nonexistent-uuid") // must not panic
 }
 
-func TestEditorService_NotifySavedCalledAfterDebounce(t *testing.T) {
+// savedFact is one announcement, as the workspace would broadcast it.
+type savedFact struct {
+	uuid    string
+	version int
+}
+
+// recordingSaves is a ContainerSavedNotifier that hands each announcement to
+// whoever is waiting. Buffered, because a save fires from the debounce timer's
+// own goroutine and must never block on a reader.
+type recordingSaves struct{ facts chan savedFact }
+
+func newRecordingSaves() *recordingSaves { return &recordingSaves{facts: make(chan savedFact, 8)} }
+
+func (r *recordingSaves) ContainerSaved(uuid string, version int) {
+	r.facts <- savedFact{uuid: uuid, version: version}
+}
+
+// await returns the next announcement, or fails the test.
+func (r *recordingSaves) await(t *testing.T, within time.Duration) savedFact {
+	t.Helper()
+	select {
+	case fact := <-r.facts:
+		return fact
+	case <-time.After(within):
+		t.Fatalf("no container-saved announcement within %s", within)
+		return savedFact{}
+	}
+}
+
+func TestEditorService_AnnouncesTheSaveAfterDebounce(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
 	// Use a very short debounce so the test doesn't take long.
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 50*time.Millisecond)
+	saves := newRecordingSaves()
+	es.SetSavedNotifier(saves)
 
 	doc, _ := ds.New()
 	doc.SetBody([]byte("original"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
 
-	notified := make(chan struct{}, 1)
-	_ = es.Open(uuid, func() { notified <- struct{}{} })
+	_ = es.Open(uuid)
 	es.UpdateMarkdown(uuid, "updated content")
 
-	select {
-	case <-notified:
-		// good
-	case <-time.After(2 * time.Second):
-		t.Fatal("notifySaved was not called within 2s after debounce")
+	got := saves.await(t, 2*time.Second)
+	if got.uuid != uuid {
+		t.Errorf("announced uuid = %q, want %q", got.uuid, uuid)
 	}
 
 	reloaded, _ := ds.LoadByUUID(uuid)
+	// The version the fact carries is the one the write actually produced — the
+	// evidence a client compares against what it already knew. A number pulled
+	// from anywhere but the saved document would pass a uuid-only assertion.
+	if want := reloaded.Meta().Version(); got.version != want {
+		t.Errorf("announced version = %d, want the version on disk %d", got.version, want)
+	}
 	if !strings.Contains(string(reloaded.Body()), "updated content") {
 		t.Errorf("expected debounce to save content, got:\n%s", reloaded.Body())
+	}
+}
+
+// A save that never reached disk announces NOTHING: the absence is the signal,
+// because a client told "saved" over a refused write would clear a dirty flag
+// for content that is not there. The data-loss guard (empty content over a
+// non-empty document) is the refusal that is easiest to provoke.
+func TestEditorService_ARefusedSaveAnnouncesNothing(t *testing.T) {
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), time.Hour)
+	saves := newRecordingSaves()
+	es.SetSavedNotifier(saves)
+
+	doc, _ := ds.New()
+	doc.SetBody([]byte("content worth keeping"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+
+	_ = es.Open(uuid)
+	es.UpdateMarkdown(uuid, "   ")
+	if err := es.Flush(uuid); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	select {
+	case got := <-saves.facts:
+		t.Fatalf("a refused save announced %q; the document must stay dirty", got.uuid)
+	case <-time.After(200 * time.Millisecond):
+	}
+	reloaded, _ := ds.LoadByUUID(uuid)
+	if !strings.Contains(string(reloaded.Body()), "content worth keeping") {
+		t.Errorf("the guard let the empty overwrite through: %q", reloaded.Body())
 	}
 }
 
@@ -304,7 +370,7 @@ func TestEditorService_ReloadFromDisk_replacesStaleShadowAndPreservesIDs(t *test
 	doc.SetBody([]byte("<!--s:co-1-->\nalpha\n<!--/s:co-1-->"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
-	_ = es.Open(uuid, func() {})
+	_ = es.Open(uuid)
 
 	// The live shadow diverges (an edit not yet on disk).
 	es.UpdateMarkdown(uuid, "<!--s:co-1-->\nMANGLED\n<!--/s:co-1-->")
@@ -331,33 +397,36 @@ func TestEditorService_ReloadFromDisk_replacesStaleShadowAndPreservesIDs(t *test
 	}
 }
 
-// A DIRECT save (es.Flush — the path applyJobUpdate/FlushAll use)
-// must also post the saved event, so the frontend clears its dirty indicator after
-// an AI-job save, not only after a debounce flush. The notify is a property
-// of the save (flushShadow), not of the debounce timer.
-func TestEditorService_NotifySavedCalledAfterDirectFlush(t *testing.T) {
+// A DIRECT save (es.Flush — the path applyJobUpdate/FlushAll use) announces the
+// same fact, so the frontend clears its dirty indicator after an AI-job save, not
+// only after a debounce flush. The announcement is a property of the save
+// (flushShadow), not of the debounce timer.
+func TestEditorService_AnnouncesTheSaveAfterDirectFlush(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
-	// A long debounce so ONLY the direct Flush can fire the notify in this test.
+	// A long debounce so ONLY the direct Flush can fire the announcement here.
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), time.Hour)
+	saves := newRecordingSaves()
+	es.SetSavedNotifier(saves)
 
 	doc, _ := ds.New()
 	doc.SetBody([]byte("original"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
 
-	notified := make(chan struct{}, 1)
-	_ = es.Open(uuid, func() { notified <- struct{}{} })
+	_ = es.Open(uuid)
 	es.UpdateMarkdown(uuid, "updated content")
 
 	if err := es.Flush(uuid); err != nil {
 		t.Fatalf("Flush failed: %v", err)
 	}
 
-	select {
-	case <-notified:
-		// good — the direct Flush posted the saved event
-	case <-time.After(time.Second):
-		t.Fatal("notifySaved was not called after a direct Flush")
+	got := saves.await(t, time.Second)
+	if got.uuid != uuid {
+		t.Errorf("announced uuid = %q, want %q", got.uuid, uuid)
+	}
+	reloaded, _ := ds.LoadByUUID(uuid)
+	if want := reloaded.Meta().Version(); got.version != want {
+		t.Errorf("announced version = %d, want the version on disk %d", got.version, want)
 	}
 }
 
@@ -372,7 +441,7 @@ func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
 
-	_ = es.Open(uuid, nil)
+	_ = es.Open(uuid)
 	_ = es.EnterMarkdown(uuid)
 
 	// User edits block YAML directly in markdown mode
@@ -412,7 +481,7 @@ func TestEditorService_CreateBlock_code(t *testing.T) {
 	doc.SetBody([]byte("# Hello"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
-	_ = es.Open(uuid, nil)
+	_ = es.Open(uuid)
 	defer waitJobs(t, es, uuid)
 
 	id, rawYaml, err := es.CreateBlock(uuid, "code", nil, -1)
@@ -458,7 +527,7 @@ func TestEditorService_CreateBlock_withOverrides(t *testing.T) {
 	doc.SetBody([]byte("# Hello"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
-	_ = es.Open(uuid, nil)
+	_ = es.Open(uuid)
 	defer waitJobs(t, es, uuid)
 
 	id, rawYaml, err := es.CreateBlock(doc.UUID(), "code", map[string]interface{}{
@@ -484,7 +553,7 @@ func TestEditorService_HandlePaste_delegatesToCreateBlock(t *testing.T) {
 	doc.SetBody([]byte("# Hello"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
-	_ = es.Open(uuid, nil)
+	_ = es.Open(uuid)
 	defer waitJobs(t, es, uuid)
 
 	res := es.HandlePaste(uuid, []block.ContentEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\n```"}}, -1)
@@ -515,7 +584,7 @@ func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 	doc, _ := ds.New()
 	doc.SetBody([]byte("# Hello"))
 	doc, _ = ds.Save(doc)
-	_ = es.Open(doc.UUID(), nil)
+	_ = es.Open(doc.UUID())
 
 	res := es.HandlePaste(doc.UUID(), []block.ContentEntry{{MIMEType: "text/plain", Content: "just plain text"}}, -1)
 	if res.Outcome != block.OutcomeNothing {
@@ -533,7 +602,7 @@ func TestEditorService_HandlePaste_urlBecomesContent(t *testing.T) {
 	es.SetServices(block.BlockServices{LinkPreview: fakeLinkPreview{title: "Example Domain"}})
 	doc, _ := ds.New()
 	doc, _ = ds.Save(doc)
-	_ = es.Open(doc.UUID(), nil)
+	_ = es.Open(doc.UUID())
 
 	res := es.HandlePaste(doc.UUID(), []block.ContentEntry{{MIMEType: "text/plain", Content: "https://example.com"}}, -1)
 	if res.Outcome != block.OutcomeContent {
@@ -592,7 +661,7 @@ func TestHandleBlockOp_proseCreateMintsIdAndEchoesToken(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), time.Hour)
 	doc, _ := ds.New()
-	_ = es.Open(doc.UUID(), nil)
+	_ = es.Open(doc.UUID())
 
 	capListener := &tokenCaptureListener{}
 	es.SetLifecycleListener(capListener)
@@ -646,7 +715,7 @@ func TestHandleBlockOp_updateNotifySendsMergedSnapshotUnderLock(t *testing.T) {
 	doc.SetBody([]byte("```code\nid: co-1\nsource: x\nlanguage: go\nstatus: COMPLETE\n```"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	defer es.Close(uuid)
@@ -719,7 +788,7 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 	doc.SetBody([]byte("# Test"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
-	_ = es.Open(uuid, nil)
+	_ = es.Open(uuid)
 
 	// Create a block with initial attributes
 	initialAttrs := map[string]interface{}{
@@ -806,7 +875,7 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 	doc.SetBody([]byte("# Test"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
-	_ = es.Open(uuid, nil)
+	_ = es.Open(uuid)
 
 	initialAttrs := map[string]interface{}{
 		"status": block.BlockStatusDispatched,
@@ -826,7 +895,7 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 				Work: func() (any, error) {
 					// Simulate the user navigating away (Close) and back (Open) while the job runs
 					es.Close(uuid)
-					if errOpen := es.Open(uuid, nil); errOpen != nil {
+					if errOpen := es.Open(uuid); errOpen != nil {
 						t.Logf("Open error: %v", errOpen)
 					}
 					return nil, nil

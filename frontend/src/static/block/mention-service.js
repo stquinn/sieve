@@ -2,10 +2,9 @@
 // mention-service.js — MentionService: JS protocol peer for the `@` picker's
 // typeahead (#74 P4).
 //
-// A TENANT of the session channel, not its owner (the plane is
-// workspace-service.js): it claims the `mention-result` frame word and speaks
-// `mention-query`. It is the SECOND tenant and the first non-command one — the
-// reason wire ownership moved off CommandService in P1.
+// A TENANT of the workspace channel, not its owner (the plane is
+// workspace-service.js): it claims the `mention-result` and `mention-resolved`
+// frame words and speaks `mention-query` and `mention-resolve`.
 //
 // IT IS NOT A COMMAND. A typeahead needs a sub-100ms answer with no JobEngine
 // job, no worker pool and no result block, none of which the command envelope's
@@ -36,6 +35,7 @@
 // actionable: a uuid to open and a block id to reveal.
 
 import { ContractViolation } from './sieve-block.js'
+import { WorkspaceFrame } from '../generated/protocol.js'
 
 /**
  * One offer from Go's Router enumeration face (`domain.Candidate`). `uri` is the
@@ -75,7 +75,7 @@ import { ContractViolation } from './sieve-block.js'
  */
 
 /** The inbound frame vocabulary this tenant claims on the plane. */
-const MENTION_FRAMES = Object.freeze(['mention-result', 'mention-resolved'])
+const MENTION_FRAMES = Object.freeze([WorkspaceFrame.MENTION_RESULT, WorkspaceFrame.MENTION_RESOLVED])
 
 /** Go floors an absent limit at 8 and caps it at 25; we send its floor. */
 const DEFAULT_LIMIT = 8
@@ -84,7 +84,7 @@ const DEFAULT_LIMIT = 8
 const DEFAULT_TIMEOUT_MS = 4000
 
 export class MentionService {
-  /** @type {import('./workspace-service.js').WorkspaceService} the session-channel wire owner */ #workspace
+  /** @type {import('./workspace-service.js').WorkspaceService} the workspace-channel wire owner */ #workspace
   /** @type {Map<string, {settle: (answer: any) => void, timer: ReturnType<typeof setTimeout>}>}
    *  correlationId → the waiting request. One map for BOTH verbs: correlation is
    *  the plane's scheme, so an id is unique whatever asked for it, and the
@@ -94,7 +94,7 @@ export class MentionService {
 
   /**
    * @param {import('./workspace-service.js').WorkspaceService} workspace
-   *   — the session-channel wire owner (injected by the composition root).
+   *   — the workspace-channel wire owner (injected by the composition root).
    * @param {MentionServiceOptions} [options]
    */
   constructor(workspace, options = {}) {
@@ -124,7 +124,7 @@ export class MentionService {
   onFrame(msg) {
     const cid = msg && msg.correlationId
     if (!cid) return
-    if (msg.type === 'mention-resolved') {
+    if (msg.type === WorkspaceFrame.MENTION_RESOLVED) {
       this.#settle(cid, MentionService.#targetOf(msg))
       return
     }
@@ -142,7 +142,7 @@ export class MentionService {
    */
   search(query, limit) {
     return this.#request({
-      type: 'mention-query',
+      type: WorkspaceFrame.MENTION_QUERY,
       q: query || '',
       limit: limit || this.#defaultLimit,
     }, [])
@@ -161,7 +161,7 @@ export class MentionService {
   resolve(uri) {
     const address = (uri || '').trim()
     if (!address) return Promise.resolve(null)
-    return this.#request({ type: 'mention-resolve', uri: address }, null)
+    return this.#request({ type: WorkspaceFrame.MENTION_RESOLVE, uri: address }, null)
   }
 
   /**

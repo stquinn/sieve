@@ -186,8 +186,8 @@ func TestCreateAssetInfersPNG(t *testing.T) {
 		t.Errorf("encoding = %v, want Raw for PNG binary", as.Encoding())
 	}
 	// ExternalRef should use UUID-based URL scheme.
-	if !strings.HasPrefix(as.ExternalRef(), "/sieve/") {
-		t.Errorf("ExternalRef = %q, want /sieve/... prefix", as.ExternalRef())
+	if !strings.HasPrefix(as.ExternalRef(), store.AssetURLPrefix) {
+		t.Errorf("ExternalRef = %q, want %s... prefix", as.ExternalRef(), store.AssetURLPrefix)
 	}
 }
 
@@ -520,9 +520,59 @@ func TestRenameDoesNotChangeAssetURLs(t *testing.T) {
 	if originalRef == "" {
 		t.Fatal("originalRef must not be empty")
 	}
-	// Asset URLs use /sieve/{uuid}/... which is stable regardless of directory name.
-	if !strings.HasPrefix(originalRef, "/sieve/") {
-		t.Errorf("asset ExternalRef %q should use /sieve/... scheme", originalRef)
+	// Asset URLs use {prefix}{uuid}/... which is stable regardless of directory name.
+	if !strings.HasPrefix(originalRef, store.AssetURLPrefix) {
+		t.Errorf("asset ExternalRef %q should use %s... scheme", originalRef, store.AssetURLPrefix)
+	}
+}
+
+// A folder rename must be atomic from the caller's view: the directory move on
+// disk and the reload that refreshes the cache either both land or neither
+// does. renameKey used to reload the moved entity via Load, which rejects
+// anything whose .meta type isn't "document" — so a folder rename moved the
+// directory, then failed, leaving the tree cache pointed at the old key while
+// the note inside had already relocated on disk.
+func TestRenameFolderContainingANote(t *testing.T) {
+	fs := newTestStore(t)
+
+	folder, err := fs.CreateOrLoadFolder(testLibrary, "old-folder")
+	if err != nil {
+		t.Fatalf("CreateOrLoadFolder: %v", err)
+	}
+	note := mustCreate(t, fs, testLibrary, "old-folder/my-note", nil)
+	noteUUID := note.(store.MetaStorable).Meta()["uuid"]
+
+	renamed, err := fs.Rename(folder, "new-folder")
+	if err != nil {
+		t.Fatalf("Rename(folder): %v", err)
+	}
+
+	rf, ok := renamed.(store.FolderStorable)
+	if !ok {
+		t.Fatalf("renamed folder is %T, want store.FolderStorable", renamed)
+	}
+	if rf.Name() != "new-folder" {
+		t.Errorf("renamed folder name = %q, want %q", rf.Name(), "new-folder")
+	}
+
+	reloaded, err := fs.LoadFolder(testLibrary, "new-folder")
+	if err != nil {
+		t.Fatalf("LoadFolder(new-folder) after rename: %v", err)
+	}
+	if len(reloaded.Owns()) != 1 {
+		t.Fatalf("reloaded folder owns %d children, want 1", len(reloaded.Owns()))
+	}
+
+	loadedNote, err := fs.LoadByUUID(noteUUID)
+	if err != nil {
+		t.Fatalf("LoadByUUID(note) after folder rename: %v", err)
+	}
+	if !strings.HasPrefix(loadedNote.ExternalRef(), "store/new-folder/") {
+		t.Errorf("note ExternalRef after folder rename = %q, want prefix store/new-folder/", loadedNote.ExternalRef())
+	}
+
+	if _, err := fs.LoadFolder(testLibrary, "old-folder"); err == nil {
+		t.Error("old-folder path still resolves after rename")
 	}
 }
 

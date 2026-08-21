@@ -42,7 +42,6 @@
     "vitest": "^2.1.8"
   },
   "dependencies": {
-    "htmx-ext-sse": "^2.2.4",
     "js-yaml": "^4.1.1",
     "mermaid": "^11.4.0"
   }

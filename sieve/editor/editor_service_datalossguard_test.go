@@ -19,7 +19,7 @@ func TestEditorService_FlushDoesNotWipeNonEmptyDocWithEmptyContent(t *testing.T)
 	doc.SetBody([]byte("Important content the user wrote\n\nmore"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 

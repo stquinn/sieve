@@ -36,7 +36,7 @@ func newWsTestServerWithResolvableNodes(t *testing.T) (*httptest.Server, *sieve.
 // document uuid — having learned the grammar on its behalf.
 func TestWS_MentionResolve_AnswersWhereAContainerAddressOpens(t *testing.T) {
 	srv, _, _ := newWsTestServerWithResolvableNodes(t)
-	conn := dialSessionWS(t, srv)
+	conn := dialWorkspaceWS(t, srv)
 	defer conn.Close()
 
 	uri := domain.NewContainerAddress(resolveContainerUUID).String()
@@ -69,7 +69,7 @@ func TestWS_MentionResolve_AnswersWhereAContainerAddressOpens(t *testing.T) {
 // frontend still learns no grammar: it gets a uuid and a block id.
 func TestWS_MentionResolve_AQualifiedBlockAddressOpensItsContainer(t *testing.T) {
 	srv, _, _ := newWsTestServerWithResolvableNodes(t)
-	conn := dialSessionWS(t, srv)
+	conn := dialWorkspaceWS(t, srv)
 	defer conn.Close()
 
 	uri := "block:" + resolveContainerUUID + "/" + resolveBlockUUID
@@ -94,7 +94,7 @@ func TestWS_MentionResolve_AQualifiedBlockAddressOpensItsContainer(t *testing.T)
 // and a reason.
 func TestWS_MentionResolve_UnresolvableAddressesAnswerWithAReason(t *testing.T) {
 	srv, _, _ := newWsTestServerWithResolvableNodes(t)
-	conn := dialSessionWS(t, srv)
+	conn := dialWorkspaceWS(t, srv)
 	defer conn.Close()
 
 	cases := []struct{ name, uri string }{
@@ -125,14 +125,14 @@ func TestWS_MentionResolve_UnresolvableAddressesAnswerWithAReason(t *testing.T) 
 
 // The mention-resolved frame is correlated and therefore ack-shaped: it must go
 // back to the REQUESTER. The 2026-07-26 stolen-/btw incident is why — a second
-// session socket deposes the first as __session__ owner, and a handler reaching
-// for sendTo(sessionChannelKey) would hand this tab's answer to the other one.
+// workspace socket deposes the first as __workspace__ owner, and a handler reaching
+// for sendTo(workspaceChannelKey) would hand this tab's answer to the other one.
 func TestWS_MentionResolved_RoutesToRequester_NotChannelOwner(t *testing.T) {
 	srv, _, _ := newWsTestServerWithResolvableNodes(t)
-	requester := dialSessionWS(t, srv)
+	requester := dialWorkspaceWS(t, srv)
 	defer requester.Close()
 
-	thief := dialSessionWS(t, srv)
+	thief := dialWorkspaceWS(t, srv)
 	defer thief.Close()
 	if err := thief.WriteJSON(map[string]string{"type": "ping"}); err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestWS_MentionResolved_RoutesToRequester_NotChannelOwner(t *testing.T) {
 func TestWS_MentionResolve_NoRouterStillReplies(t *testing.T) {
 	srv, sp, _, _ := newWsTestServer(t)
 	sp.Nodes = nil
-	conn := dialSessionWS(t, srv)
+	conn := dialWorkspaceWS(t, srv)
 	defer conn.Close()
 
 	if err := conn.WriteJSON(map[string]interface{}{

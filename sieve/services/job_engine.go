@@ -3,6 +3,8 @@ package services
 import (
 	"fmt"
 	"sync"
+
+	"sieve/sieve/domain"
 )
 
 // queueBacklog is the per-pool buffer depth — a runaway backstop, not a tuning
@@ -14,7 +16,7 @@ const queueBacklog = 1024
 // engine routes on — it never switches on its meaning.
 type JobDescriptor struct {
 	Category   string
-	Meta       JobInfo
+	Meta       domain.JobInfo
 	Work       func() (any, error)
 	OnFinished func(result any)
 	OnError    func(err error)

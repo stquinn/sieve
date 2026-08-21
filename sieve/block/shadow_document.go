@@ -35,13 +35,14 @@ type ShadowDocument struct {
 	// Default false = WYSIWYG, the tree is authoritative. Derived, never persisted:
 	// Mode as a stored string retired in issue #49 Phase 2.
 	rawAuthoritative bool
-	// migratedOnLoad records that BlockIdentityMigrator changed an id while parsing
-	// this document, so the opener knows the tree owes disk a rewrite (#75).
+	// migratedOnLoad records that a DocumentMigrator step rewrote something while
+	// parsing this document — an id (#75) or an asset URL (#19) — so the opener
+	// knows the tree owes disk a rewrite.
 	migratedOnLoad bool
 	codec          *DocumentCodec
-	debounce     time.Duration
-	closed       bool // set by StopDebounce; prevents re-arming after Close
-	mu           sync.Mutex
+	debounce       time.Duration
+	closed         bool // set by StopDebounce; prevents re-arming after Close
+	mu             sync.Mutex
 	// flushMu serializes whole-document writes (WithFlushLock). It is SEPARATE from
 	// mu so a flush's disk I/O does not block tree mutations (which take mu): the
 	// slow part runs under flushMu only, the brief tree snapshot under mu. Scoped to
@@ -49,24 +50,6 @@ type ShadowDocument struct {
 	flushMu sync.Mutex
 	timer   *time.Timer
 	onFlush func()
-	// notifySaved is invoked after each successful debounce flush (flush-ack to
-	// the WS client). It is rewired when an already-open shadow is reused by a
-	// later Open (idempotent Open), so the debounce closure reads it live.
-	notifySaved func()
-}
-
-// SetNotifySaved rewires the post-flush callback (idempotent Open reuse).
-func (s *ShadowDocument) SetNotifySaved(fn func()) {
-	s.mu.Lock()
-	s.notifySaved = fn
-	s.mu.Unlock()
-}
-
-// GetNotifySaved reads the post-flush callback under lock for the debounce timer.
-func (s *ShadowDocument) GetNotifySaved() func() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.notifySaved
 }
 
 func NewShadow(uuid, body string, codec *DocumentCodec, debounce time.Duration, onFlush func()) *ShadowDocument {
@@ -77,11 +60,12 @@ func NewShadow(uuid, body string, codec *DocumentCodec, debounce time.Duration, 
 	if err != nil {
 		logger.Warn("editor: parse block doc failed", "uuid", uuid, "err", err)
 	}
-	// Lazy identity migration (#75): legacy short handles become UUIDs the first
-	// time a document is opened, and in-document refs follow. This is the load
-	// path — the one place minting can be followed by a save — which is why the
-	// migrator is not inside Deserialize.
-	blocks, migrated := BlockIdentityMigrator{}.Migrate(blocks)
+	// Lazy load-time migration (#75 ids, #19 asset routes): a legacy short
+	// handle becomes a UUID and in-document refs follow it; a legacy /sieve/…
+	// asset URL is rewritten to the current route. This is the load path — the
+	// one place minting/rewriting can be followed by a save — which is why
+	// DocumentMigrator is not run inside Deserialize.
+	blocks, migrated := DocumentMigrator{}.Migrate(blocks)
 	s := &ShadowDocument{
 		UUID:     uuid,
 		Blocks:   blocks,
@@ -91,22 +75,24 @@ func NewShadow(uuid, body string, codec *DocumentCodec, debounce time.Duration, 
 	}
 	if migrated {
 		// The upgrade MUST reach disk, or a legacy document would mint different
-		// ids on every open and any address taken from it would die — including a
-		// block id captured by a dispatched job, whose result would then be applied
-		// to a block that no longer exists. EditorService.open flushes synchronously
-		// on MigratedOnLoad; arming the debounce here is the fallback for callers
-		// that construct a shadow directly. Safe unlocked: nothing else holds s yet.
-		logger.Info("migrate: document identities upgraded", "uuid", uuid, "blocks", len(blocks))
+		// ids on every open (or keep serving a dead asset route) and any address
+		// taken from it would die — including a block id captured by a dispatched
+		// job, whose result would then be applied to a block that no longer
+		// exists. EditorService.open flushes synchronously on MigratedOnLoad;
+		// arming the debounce here is the fallback for callers that construct a
+		// shadow directly. Safe unlocked: nothing else holds s yet.
+		logger.Info("migrate: document upgraded on load", "uuid", uuid, "blocks", len(blocks))
 		s.migratedOnLoad = true
 		s.resetDebounce()
 	}
 	return s
 }
 
-// MigratedOnLoad reports that parsing this document upgraded at least one block
-// id (or repaired a duplicate). The opener uses it to force the rewrite to disk
-// immediately, so ids are stable from the first open rather than from whenever
-// the autosave next fires.
+// MigratedOnLoad reports that a load-time migration changed this document —
+// upgraded a block id, repaired a duplicate, or rewrote a legacy asset URL. The
+// opener uses it to force the rewrite to disk immediately, so ids and asset
+// routes are correct from the first open rather than from whenever the autosave
+// next fires.
 func (s *ShadowDocument) MigratedOnLoad() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

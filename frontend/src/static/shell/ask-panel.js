@@ -167,7 +167,7 @@ export class AskPanel {
    */
   #dismiss() {
     if (this.#pinned && window.htmx) {
-      window.htmx.ajax('POST', '/api/session/askpanel/toggle', { swap: 'none' })
+      window.htmx.ajax('POST', '/api/session/toggle/askpanel', { swap: 'none' })
     }
     this.close()
   }

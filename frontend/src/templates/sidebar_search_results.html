@@ -6,7 +6,7 @@
       Library Search
     </h3>
     <button class="store-search__close" title="Close Search" 
-      hx-get="/api/sidebar" 
+      hx-get="/ui/views/sidebar"
       hx-target="#htmx-sidebar" 
       hx-swap="innerHTML"
     >
@@ -25,7 +25,7 @@
         placeholder="Search library..." 
         class="store-search__input"
         style="padding-left: 28px;"
-        hx-get="/api/sidebar/search?list_only=true" 
+        hx-get="/ui/views/sidebar/search?list_only=true"
         hx-trigger="input changed delay:100ms, search" 
         hx-target="#search-results-list" 
         hx-swap="innerHTML"

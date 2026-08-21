@@ -237,7 +237,7 @@ func (r *Registry) Dispatch(cmd, expectedFamily, text string, ctx Context, corre
 
 	eng.Submit(services.JobDescriptor{
 		Category: Category,
-		Meta:     services.JobInfo{JobID: correlationID, Label: job.Label},
+		Meta:     domain.JobInfo{JobID: correlationID, Label: job.Label},
 		Work:     func() (any, error) { return job.Work() },
 		OnFinished: func(res any) {
 			out := Outcome{Status: StatusComplete}

@@ -8,6 +8,7 @@ import (
 
 	"sieve/sieve"
 	"sieve/sieve/command"
+	"sieve/sieve/protocol"
 	"sieve/sieve/services"
 )
 
@@ -57,7 +58,7 @@ func newWsTestServerWithCommands(t *testing.T) (*httptest.Server, *sieve.Service
 
 func TestWS_Command_PendingThenCompleteCorrelated(t *testing.T) {
 	srv, _, _, _, gate := newWsTestServerWithCommands(t)
-	conn := dialSessionWS(t, srv)
+	conn := dialWorkspaceWS(t, srv)
 	defer conn.Close()
 
 	cmdMsg := map[string]interface{}{
@@ -96,7 +97,7 @@ func TestWS_Command_PendingThenCompleteCorrelated(t *testing.T) {
 
 func TestWS_Command_ConcurrentCommandsRouteDisjointly(t *testing.T) {
 	srv, _, _, _, gate := newWsTestServerWithCommands(t)
-	conn := dialSessionWS(t, srv)
+	conn := dialWorkspaceWS(t, srv)
 	defer conn.Close()
 
 	cmd1 := map[string]interface{}{"type": "command", "family": "ai", "cmd": "fake", "args": map[string]string{"text": "first"}, "correlationId": "c-1"}
@@ -131,14 +132,14 @@ func TestWS_Command_ConcurrentCommandsRouteDisjointly(t *testing.T) {
 func TestWS_Command_DocChannelCloseDoesNotOrphan(t *testing.T) {
 	srv, _, _, docUUID, gate := newWsTestServerWithCommands(t)
 	docConn := dialWS(t, srv, docUUID)
-	sessionConn := dialSessionWS(t, srv)
-	defer sessionConn.Close()
+	workspaceConn := dialWorkspaceWS(t, srv)
+	defer workspaceConn.Close()
 
 	cmdMsg := map[string]interface{}{"type": "command", "family": "ai", "cmd": "fake", "args": map[string]string{"text": "orphan-test"}, "correlationId": "c-99"}
-	if err := sessionConn.WriteJSON(cmdMsg); err != nil {
+	if err := workspaceConn.WriteJSON(cmdMsg); err != nil {
 		t.Fatal(err)
 	}
-	_ = readFrame(t, sessionConn, 2*time.Second) // PENDING
+	_ = readFrame(t, workspaceConn, 2*time.Second) // PENDING
 
 	// Close the doc socket
 	closeAndSettle(docConn)
@@ -146,16 +147,18 @@ func TestWS_Command_DocChannelCloseDoesNotOrphan(t *testing.T) {
 	// Release the job
 	close(gate)
 
-	// Complete should still arrive on session socket
-	complete := readFrame(t, sessionConn, 2*time.Second)
+	// Complete should still arrive on workspace socket. readUntil, not readFrame:
+	// the doc socket's close flushed its shadow, and that save is now a
+	// container-saved broadcast this very socket also hears.
+	complete := readUntil(t, workspaceConn, protocol.TypeCommandResult, 2*time.Second)
 	if complete["correlationId"] != "c-99" || complete["status"] != "COMPLETE" {
-		t.Fatalf("session socket failed to receive complete after doc socket close: %+v", complete)
+		t.Fatalf("workspace socket failed to receive complete after doc socket close: %+v", complete)
 	}
 }
 
 func TestWS_Command_UnknownFamilyAndUnknownCmd(t *testing.T) {
 	srv, _, _, _, _ := newWsTestServerWithCommands(t)
-	conn := dialSessionWS(t, srv)
+	conn := dialWorkspaceWS(t, srv)
 	defer conn.Close()
 
 	badFamily := map[string]interface{}{"type": "command", "family": "unknown_fam", "cmd": "fake", "correlationId": "c-err1"}
@@ -179,7 +182,7 @@ func TestWS_Command_UnknownFamilyAndUnknownCmd(t *testing.T) {
 
 func TestWS_CommandCancel_SuppressesResult(t *testing.T) {
 	srv, _, _, _, gate := newWsTestServerWithCommands(t)
-	conn := dialSessionWS(t, srv)
+	conn := dialWorkspaceWS(t, srv)
 	defer conn.Close()
 
 	cmdMsg := map[string]interface{}{"type": "command", "family": "ai", "cmd": "fake", "args": map[string]string{"text": "cancel-me"}, "correlationId": "c-cancel"}
@@ -214,13 +217,13 @@ func TestWS_CommandCancel_SuppressesResult(t *testing.T) {
 }
 
 // TestWS_Command_ResultRoutesToRequester_NotChannelOwner pins the 2026-07-26
-// stolen-/btw incident: a second session socket (dev-server tab beside the app
-// window) registers __session__ mid-job and deposes the requester as owner.
+// stolen-/btw incident: a second workspace socket (dev-server tab beside the app
+// window) registers __workspace__ mid-job and deposes the requester as owner.
 // Command results are requester-affine — the answer must reach the socket the
 // command arrived on, not the current key owner; the thief hears nothing.
 func TestWS_Command_ResultRoutesToRequester_NotChannelOwner(t *testing.T) {
 	srv, _, _, _, gate := newWsTestServerWithCommands(t)
-	requester := dialSessionWS(t, srv)
+	requester := dialWorkspaceWS(t, srv)
 	defer requester.Close()
 
 	cmdMsg := map[string]interface{}{"type": "command", "family": "ai", "cmd": "fake", "args": map[string]string{"text": "mine"}, "correlationId": "c-steal"}
@@ -232,8 +235,8 @@ func TestWS_Command_ResultRoutesToRequester_NotChannelOwner(t *testing.T) {
 		t.Fatalf("expected PENDING on requester, got %+v", pending)
 	}
 
-	// A second session socket connects mid-job and takes over __session__.
-	thief := dialSessionWS(t, srv)
+	// A second workspace socket connects mid-job and takes over __workspace__.
+	thief := dialWorkspaceWS(t, srv)
 	defer thief.Close()
 	// ping/pong round-trip guarantees the thief's register has run server-side.
 	if err := thief.WriteJSON(map[string]string{"type": "ping"}); err != nil {

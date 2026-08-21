@@ -80,13 +80,30 @@ func (ns *DocumentService) Delete(n domain.Document) error {
 	return ns.store.Delete(n.Storable())
 }
 
-// Delete removes the note and its entire version history from the Store.
-func (ns *DocumentService) DeleteFolder(id string) error {
+// DeleteFolder removes the folder and everything beneath it — the Store deletes
+// the whole directory, subfolders included — and returns the uuid of every
+// document that went with it.
+//
+// Those uuids are the point of the return value: a deleted document is news the
+// rest of the app has to hear, and once the directory is gone there is nothing
+// left to enumerate, so they are collected BEFORE the delete.
+func (ns *DocumentService) DeleteFolder(id string) ([]string, error) {
 	folder, err := ns.store.LoadFolder(domain.LibraryCategory, id)
-	if err == nil {
-		return ns.store.Delete(folder)
+	if err != nil {
+		return nil, err
 	}
-	return err
+	var deleted []string
+	for _, doc := range flattenDocs(folder.Owns()) {
+		deleted = append(deleted, doc.Key())
+	}
+	if err := ns.store.Delete(folder); err != nil {
+		return nil, err
+	}
+	// The delete named only the folder, so every uuid beneath it would still
+	// resolve to a storable whose directory no longer exists. Same list, second
+	// use: the uuids collected above are exactly what has to stop resolving.
+	ns.store.ForgetUUIDs(deleted)
+	return deleted, nil
 }
 
 // Delete removes the note and its entire version history from the Store.

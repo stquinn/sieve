@@ -10,7 +10,7 @@
 //
 // Two producers stay DOM CustomEvents for now (their producers live inside the
 // frozen WS envelope / editor.js's remaining listeners — they retire in P4.E/F):
-// sieve:meta-dirty (the flush-ack save paint, abstract-editor #handleMessage) and
+// sieve:meta-dirty (the save paint, abstract-editor #markSaved) and
 // editor:blockhover (editor.js mouseover). Their CONSUMERS moved OUT of index.html
 // into this child — the single status-owner is relocated, not split.
 //
@@ -39,8 +39,8 @@ export class StatusBar {
     this.#blockIdSlot = document.querySelector('.status-bar__blockid')
     this.#statsSlot = document.querySelector('.status-bar__stats')
     // The dirty/save paint + block-id readout ride DOM CustomEvents whose producers
-    // are NOT yet migrated (frozen WS flush-ack; editor.js mouseover). Consume them
-    // here — the consumers moved out of index.html.
+    // are NOT yet migrated (the editor's own save reaction; editor.js mouseover).
+    // Consume them here — the consumers moved out of index.html.
     document.addEventListener('sieve:meta-dirty', (e) => this.#onDirty(/** @type {CustomEvent} */ (e).detail))
     document.addEventListener('editor:blockhover', (e) => this.#onBlockHover(/** @type {CustomEvent} */ (e).detail))
     if (this.#blockIdSlot) this.#blockIdSlot.addEventListener('click', () => this.#copyBlockId())

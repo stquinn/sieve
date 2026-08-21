@@ -2,10 +2,9 @@
 // block-service.js — BlockService: the sieve protocol's anti-corruption layer,
 // existing-block half (Block Renderer Contract,
 // docs/design/archive/specs/2026-07-21-block-renderer-contract.md §service pair),
-// and — since issue #49 Phase 1 — the WIRE OWNER. The WebSocket machinery that
-// lived in AbstractEditor (channel-per-uuid socket, pending queue, awaiters,
-// ping/pong watchdog, exponential-backoff reconnect) moved HERE verbatim:
-// today's behaviour behind tomorrow's boundary. Wire frame shapes are FROZEN.
+// and the WIRE OWNER for document channels: one socket per open document uuid,
+// with its pending queue, awaiters, ping/pong watchdog and exponential-backoff
+// reconnect (block-channel.js). Wire frame shapes are FROZEN.
 //
 // ONE instance, constructed in the Workspace composition root and handed down
 // (idiomatic-js §5 — never window.*). Renderers see THIS and only this: a
@@ -21,13 +20,13 @@
 //
 // The per-channel DELEGATE (registered by the editor via DocumentService.open)
 // receives the inbound routing: server render-back ops → applyServerOp,
-// flush-ack side effects → onFlushAck, everything else → onMessage; and
-// resolveInsertIndex is the ONE sanctioned PM-resolution callback (the lens
-// resolves indices, the service frames).
+// everything else → onMessage; and resolveInsertIndex is the ONE sanctioned
+// PM-resolution callback (the lens resolves indices, the service frames).
 
 import { SieveBlock, ContractViolation } from './sieve-block.js'
 import { updateBlockOp } from './block-sync.js'
 import { BlockChannel } from './block-channel.js'
+import { DocumentFrame } from '../generated/protocol.js'
 
 /**
  * @typedef {import('./block-channel.js').ChannelDelegate} ChannelDelegate
@@ -38,7 +37,7 @@ import { BlockChannel } from './block-channel.js'
  * @property {(url: string) => WebSocket} [socketFactory]
  *   — injected for tests; defaults to `new WebSocket(url)`
  * @property {(uuid: string) => string} [wsUrlFor]
- *   — injected for tests; defaults to the /api/ws URL for the uuid
+ *   — injected for tests; defaults to the document-channel URL for the uuid
  */
 
 export class BlockService {
@@ -61,12 +60,24 @@ export class BlockService {
    *  @returns {string} */
   #mintOpId() { return 'op-' + (++this.#opSeq) }
 
-  /** @param {string} uuid @returns {string} the production /api/ws URL */
+  /**
+   * The production document-channel URL. The uuid is a PATH segment;
+   * encodeURIComponent is kept as harmless hygiene, not a safety mechanism — chi
+   * routes document channels on RawPath, so an encoded handle (e.g. `prompt:x` →
+   * `prompt%3Ax`) arrives at Go STILL ENCODED, never decoded back to the raw `:`.
+   * It does not rescue a non-uuid handle carrying a `/` or `:`; only ident UUIDs
+   * ever open a document channel in practice.
+   *
+   * The dev-server host rewrite is load-bearing: WebKitGTK cannot carry a
+   * WebSocket upgrade over the app's custom scheme, so the wire always rides the
+   * loopback listener.
+   * @param {string} uuid @returns {string}
+   */
   static #defaultUrl(uuid) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
     let host = location.host
     if (/** @type {any} */ (window).__sieveDevServerPort) host = '127.0.0.1:' + /** @type {any} */ (window).__sieveDevServerPort
-    return proto + '//' + host + '/api/ws?uuid=' + encodeURIComponent(uuid)
+    return proto + '//' + host + '/api/ws/document/' + encodeURIComponent(uuid)
   }
 
   // ── Channel lifecycle (DocumentService.open/close front these) ─────────────
@@ -138,17 +149,17 @@ export class BlockService {
    * @param {string} uuid @param {Record<string, any>} msg
    */
   #mirrorFromMessage(uuid, msg) {
-    if (msg.type === 'insert-block' && msg.id) {
+    if (msg.type === DocumentFrame.INSERT_BLOCK && msg.id) {
       const kind = msg.kind || 'code'
       const block = new SieveBlock(kind, Object.assign({}, msg.attrs, { id: msg.id }))
       this.#blocks.set(msg.id, { uuid: uuid, kind: kind, block: block })
-    } else if (msg.type === 'replace-block' && msg.newId) {
+    } else if (msg.type === DocumentFrame.REPLACE_BLOCK && msg.newId) {
       const kind = msg.newKind || 'code'
       const block = new SieveBlock(kind, Object.assign({}, msg.attrs, { id: msg.newId }))
       // The old id entry stays for routing (undo can resurrect it); the new id
       // becomes the mirror's authoritative envelope for the replacement.
       this.#blocks.set(msg.newId, { uuid: uuid, kind: kind, block: block })
-    } else if (msg.type === 'block-attrs-updated' && msg.id) {
+    } else if (msg.type === DocumentFrame.BLOCK_ATTRS_UPDATED && msg.id) {
       const entry = this.#blocks.get(msg.id)
       if (!entry) return // unknown id → nothing to merge onto (no kind to author)
       const prior = entry.block ? entry.block.payload : {}
@@ -220,7 +231,7 @@ export class BlockService {
     const ch = this.#channels.get(entry.uuid)
     if (!ch) return Promise.resolve({ ok: false, error: 'dropped: no live channel for ' + entry.uuid })
     const op = updateBlockOp({ id: blockId, kind: entry.kind, attrs: patch, aliases: opts && opts.aliases })
-    return ch.awaitAck(this.#mintOpId(), { type: 'block-op', uuid: entry.uuid, op: op }, 'update-block ' + blockId)
+    return ch.awaitAck(this.#mintOpId(), { type: DocumentFrame.BLOCK_OP, uuid: entry.uuid, op: op }, 'update-block ' + blockId)
   }
 
   /**
@@ -240,19 +251,29 @@ export class BlockService {
    * Backend-declared extraction capability discovery: given a source kind and its
    * content entries, ask Go which (kind, actions) it can extract/transform into.
    * Blockid-adjacent (the existing-block half of the boundary — capabilities OF a
-   * block's content). The wire (POST /api/detect-extractions) is UNCHANGED; only
-   * the boundary moves — consumers stop speaking fetch/URLs. Resolves the offers
-   * array Go returns ([{kind, actions}]); the caller assembles the menu and owns
-   * its own catch (error parity — the caller's swallow stays where it was).
-   * @param {{sourceKind: string, entries: object[]}} payload
+   * block's content), which is why it lives here rather than on DocumentService,
+   * and why it rides the SAME channel resolution `extract` uses: discovery and the
+   * playback of what it discovered must reach the same document.
+   *
+   * Frame frozen: {type:'detect-extractions', sourceKind, entries, opId} →
+   * detect-extractions-result, whose offers ride an `offers` KEY (the reply is a
+   * frame, not the bare array the retired endpoint answered with). No channel →
+   * an empty offer list: nothing to discover is a legitimate answer, and the menu
+   * this feeds already renders none. REJECTS on the 5s timeout — the sole caller
+   * (sieve-block-extension.js) has NO catch today, so that rejection is currently
+   * unhandled there, parity with the old uncaught fetch it replaced; T7 may add one.
+   * @param {{sourceKind: string, entries: object[], blockId?: string}} payload
    * @returns {Promise<Array<{kind: string, actions: string[]}>>}
    */
   detectExtractions(payload) {
-    return fetch('/api/detect-extractions', {
-      method: 'POST',
-      body: JSON.stringify({ sourceKind: payload.sourceKind, entries: payload.entries }),
-      headers: { 'Content-Type': 'application/json' },
-    }).then(function (res) { return res.json() })
+    const ch = this.#channelForBlock(payload.blockId || '', 'detect-extractions')
+    if (!ch) return Promise.resolve([])
+    return ch.awaitReply(this.#mintOpId(), {
+      type: DocumentFrame.DETECT_EXTRACTIONS,
+      sourceKind: payload.sourceKind,
+      entries: payload.entries,
+    }, 'detect-extractions ' + payload.sourceKind)
+      .then((reply) => reply.offers || [])
   }
 
   /**
@@ -265,7 +286,26 @@ export class BlockService {
     if (!entry) { console.warn('[block-service] retry: unknown block id, dropped', blockId); return }
     const ch = this.#channels.get(entry.uuid)
     if (!ch) return
-    ch.send({ type: 'retry-block-job', uuid: entry.uuid, id: blockId })
+    ch.send({ type: DocumentFrame.RETRY_BLOCK_JOB, uuid: entry.uuid, id: blockId })
+  }
+
+  /**
+   * The document channel a blockId-addressed frame belongs on. An indexed id names
+   * its own document; an absent or unknown id falls back to the sole open channel,
+   * which is unambiguous exactly while ONE document is open. Two open channels and
+   * no id is a guess about which document to mutate — it warns and drops instead.
+   * @param {string} blockId @param {string} label  the verb, for the warning
+   * @returns {BlockChannel|null}
+   */
+  #channelForBlock(blockId, label) {
+    const entry = this.#entryFor(blockId)
+    const owned = entry ? this.#channels.get(entry.uuid) : null
+    if (owned) return owned
+    if (this.#channels.size === 1) return this.#channels.values().next().value || null
+    if (this.#channels.size > 1) {
+      console.warn('[block-service] ' + label + ': ambiguous channel for block', blockId, '— dropped')
+    }
+    return null
   }
 
   /**
@@ -273,28 +313,18 @@ export class BlockService {
    * context stamping, entry resolution — stays in AbstractEditor.extract; the
    * payload arrives fully prepared). Frame frozen: {type:'extract', blockId,
    * targetKind, operation, entries, index} — NO uuid; the server resolves the
-   * document from the channel. The channel is resolved via the blockId's index
-   * entry, falling back to the sole open channel when the id is absent or
-   * unindexed; ambiguity warns loudly and drops. Returns the extract-ack RESULT
-   * {ok, error?} (resolves, never rejects); the additive block-extracted hint
-   * still arrives separately on onMessage. Drops resolve {ok:false, error}.
+   * document from the channel. Returns the extract-ack RESULT {ok, error?}
+   * (resolves, never rejects); any block it creates arrives separately as an
+   * insert-block/replace-block render-back, which is the authoritative render
+   * signal. Drops resolve {ok:false, error}.
    * @param {{blockId?: string, targetKind: string, operation: string, entries: object[], index: number}} payload
    * @returns {Promise<{ok: boolean, error?: string}>}
    */
   extract(payload) {
-    const entry = this.#entryFor(payload.blockId || '')
-    let ch = entry ? this.#channels.get(entry.uuid) : null
-    if (!ch) {
-      if (this.#channels.size === 1) {
-        ch = this.#channels.values().next().value
-      } else if (this.#channels.size > 1) {
-        console.warn('[block-service] extract: ambiguous channel for block', payload.blockId, '— dropped')
-        return Promise.resolve({ ok: false, error: 'dropped: ambiguous channel' })
-      }
-    }
-    if (!ch) return Promise.resolve({ ok: false, error: 'dropped: no open channel' })
+    const ch = this.#channelForBlock(payload.blockId || '', 'extract')
+    if (!ch) return Promise.resolve({ ok: false, error: 'dropped: no unambiguous channel' })
     return ch.awaitAck(this.#mintOpId(), {
-      type: 'extract',
+      type: DocumentFrame.EXTRACT,
       blockId: payload.blockId,
       targetKind: payload.targetKind,
       operation: payload.operation,
@@ -343,15 +373,17 @@ export class BlockService {
   /**
    * Send + await a HANDSHAKE reply on a document's channel, correlated by a freshly
    * minted opId; channel-less uuids reject with the socketless error (awaits
-   * resolve-or-reject, never hang). REJECTS on 5s timeout — setMode's
-   * stay-on-failure depends on it.
-   * @param {string} uuid @param {object} msg @param {string} [label]
+   * resolve-or-reject, never hang). REJECTS on timeout (5s default) — setMode's
+   * stay-on-failure depends on it. `timeoutMs` raises the ceiling for a caller
+   * whose server-side counterpart can legitimately run long (document-service's
+   * paste verbs; see its PASTE_ACK_TIMEOUT_MS).
+   * @param {string} uuid @param {object} msg @param {string} [label] @param {number} [timeoutMs]
    * @returns {Promise<any>}
    */
-  _awaitReply(uuid, msg, label) {
+  _awaitReply(uuid, msg, label, timeoutMs) {
     const ch = this.#channels.get(uuid)
     if (!ch) return Promise.reject(new Error('editor has no live channel'))
-    return ch.awaitReply(this.#mintOpId(), msg, label)
+    return ch.awaitReply(this.#mintOpId(), msg, label, timeoutMs)
   }
 
   /**
@@ -360,13 +392,13 @@ export class BlockService {
    * ({ok:false, error:'dropped: …'}) and on timeout — and NEVER rejects, so a
    * fire-and-forget caller can ignore the promise safely. (createBlock / deleteBlock
    * route here.)
-   * @param {string} uuid @param {object} msg @param {string} [label]
+   * @param {string} uuid @param {object} msg @param {string} [label] @param {number} [timeoutMs]
    * @returns {Promise<{ok: boolean, error?: string}>}
    */
-  _awaitAck(uuid, msg, label) {
+  _awaitAck(uuid, msg, label, timeoutMs) {
     const ch = this.#channels.get(uuid)
     if (!ch) return Promise.resolve({ ok: false, error: 'dropped: no live channel for ' + uuid })
-    return ch.awaitAck(this.#mintOpId(), msg, label)
+    return ch.awaitAck(this.#mintOpId(), msg, label, timeoutMs)
   }
 
   /**

@@ -352,3 +352,33 @@ The ancestor of all four is `smart-link` itself: introduced 2026-05-02 (`e391458
 **What:** `docs/how-to-idiomatic-js.md` makes JSDoc types checkable via `tsc --noEmit` NORMATIVE for new JS, but there is no `typescript` dependency, no `tsconfig`, and no CI step. #67's new files (`prose-link.js`, `link-edit-dialog.js`) were verified with an ephemeral `npm i --no-save typescript` and a single-file run — a manual ritual that only happens when someone remembers.
 
 **Retires when:** typescript is a devDependency with a checked-in `tsconfig` (checkJs, noEmit) and a CI job, so the normative rule is enforced rather than aspirational. User approved wiring it into the flake + CI as a separate follow-up.
+
+## R-A: Pre-existing data races in the paste/flush path
+
+**Tracked:** register only (found by `go test -race` during #19 Task 5, verified pre-existing at `1c77f1d` — reproducible on that commit with no relation to the epic's own changes).
+
+**What:** `-race` flags concurrent access between `AttachmentProcessor.holdDroppedFile` (`sieve/block/processors/attachment_processor.go`) — which stages a dropped file's bytes onto the block's attrs synchronously on the request goroutine — and the async flush path (`EditorService.flushShadow`, `sieve/editor/editor_service.go`, which derives markdown and calls `Buffer.SetBody`/`Note.SetBody`, `sieve/domain/buffer.go` + `note.go`) running on the debounce goroutine. Both can touch the same block's attrs/body without a shared lock in the window between a drop landing and the next flush.
+
+**Why deferred:** #19 is a wire/route consolidation epic; this race predates it and is orthogonal to the surface reorganisation. Fixing shadow-document attr mutation locking mid-epic would widen the blast radius into `ShadowDocument`'s concurrency model, which #19 does not touch elsewhere.
+
+**Retires when:** the attach/flush interleave is guarded — either `holdDroppedFile` stages through the same `ShadowDocument` mutex `flushShadow` reads under, or the attach write is sequenced onto the same goroutine/queue the flush debounce runs on. Verify with `nix develop -c env CGO_ENABLED=1 go test -race ./sieve/editor/... ./sieve/block/processors/...` (races are timing-dependent — a clean run is not proof; reproduce with `-count=N` under load if in doubt).
+
+## M-A: `DocumentService.Move` swallows `store.Reparent`'s error
+
+**Tracked:** register only (found during #19 Task 13's review, carried to close-out).
+
+**What:** `DocumentService.Move` (`sieve/services/document_service.go`) calls `ds.store.Reparent(n.Storable(), folder)` and captures its error, but proceeds straight to type-asserting the returned `moved` value without checking it — a same-minute note-name collision (or any other `Reparent` failure) is masked: the caller sees either a confusing type-assertion failure on a nil/partial `moved`, or the mutation silently no-ops, never the actual collision reason.
+
+**Why deferred:** found as a byproduct of #19's folder-delete work (Task 13), not itself in that task's scope; fixing it means deciding the right user-facing error for a name collision, which is a product-facing call outside the wire-contract epic.
+
+**Retires when:** `Move` checks `err` from `Reparent` and returns it (wrapped with context) before touching `moved`. Verify with a regression test: `Move` into a folder that already holds a same-named note/folder returns a non-nil error, not a panic or silent no-op.
+
+## W-B: The file watcher never emits `container-deleted` for externally-deleted documents
+
+**Tracked:** register only (follow-up noted on Forgejo #88 close-out, #19 Task 5/13).
+
+**What:** `#19` gave in-app deletions a reconciliation broadcast (`protocol.ContainerDeletedFrame`, emitted by the delete handlers via `WorkspaceBroadcast.ContainerDeleted`) that every workspace client hears and reconciles against (drops its tab bookkeeping, editor, and document socket for that uuid). `watcher.NotesWatcher` (`watcher/watcher.go`), which notices on-disk changes made OUTSIDE the app (Finder/Nautilus, sync, a shell `rm`), still only calls its generic debounced `notify func()` — it does not distinguish a deletion from any other change and never emits `container-deleted`. A document deleted from outside the running app is picked up as a `notes` invalidation (the sidebar loses the entry) but a tab/editor already open on it is not reconciled, reproducing the #88 leak for the one path #19 didn't cover.
+
+**Why deferred:** #88's fix (Task 13) covers every deletion the app itself performs, which was the reliably-reached path; the watcher needs to distinguish "file removed" from "file changed" at the fs-event level first, which is a different (small) mechanism than the reconciliation frame itself.
+
+**Retires when:** `NotesWatcher` (or its caller) detects a removal specifically and emits `container-deleted` for the removed document's uuid(s) through the same `WorkspaceBroadcast.ContainerDeleted` the in-app delete handlers use — one reconciliation signal regardless of who deleted the file. Verify: delete a note's file from outside the app while it is open in a tab; the tab and its editor close without a manual reload.

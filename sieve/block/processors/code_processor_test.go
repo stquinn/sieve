@@ -223,7 +223,7 @@ func TestCodeBlockProcessor_IsBlock_htmlEntry(t *testing.T) {
 
 func TestCodeBlockProcessor_RunJob_ai(t *testing.T) {
 	ds, fs := newTestDocumentService(t)
-	assets := services.NewAssetService(fs)
+	assets := services.NewAssetService(fs, "")
 	state, err := services.NewStateService(fs, "", nil)
 	if err != nil {
 		t.Fatalf("NewStateService: %v", err)
@@ -298,7 +298,7 @@ func TestCodeBlockProcessor_RunJob_ai(t *testing.T) {
 // rather than overwrite it with the AI's non-answer.
 func TestCodeBlockProcessor_RunJob_aiNonAnswerKeepsHeuristic(t *testing.T) {
 	ds, fs := newTestDocumentService(t)
-	assets := services.NewAssetService(fs)
+	assets := services.NewAssetService(fs, "")
 	state, err := services.NewStateService(fs, "", nil)
 	if err != nil {
 		t.Fatalf("NewStateService: %v", err)
@@ -357,7 +357,7 @@ func TestCodeBlockProcessor_RunJob_aiNonAnswerKeepsHeuristic(t *testing.T) {
 
 func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 	ds, fs := newTestDocumentService(t)
-	assets := services.NewAssetService(fs)
+	assets := services.NewAssetService(fs, "")
 	state, err := services.NewStateService(fs, "", nil)
 	if err != nil {
 		t.Fatalf("NewStateService: %v", err)

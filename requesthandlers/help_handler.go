@@ -28,8 +28,8 @@ type CreditEntry struct {
 }
 
 func (h *HelpHandler) RegisterPaths(r chi.Router) {
-	r.Get("/api/help", h.handleHelp)
-	r.Get("/api/licenses", h.handleLicenses)
+	r.Get("/ui/views/help", h.handleHelp)
+	r.Get("/ui/views/licenses", h.handleLicenses)
 }
 
 func (h *HelpHandler) handleHelp(w http.ResponseWriter, r *http.Request) {

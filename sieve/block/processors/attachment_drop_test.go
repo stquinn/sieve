@@ -101,7 +101,7 @@ func TestAttachmentProcessor_Transform_savesADroppedFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new document: %v", err)
 	}
-	assets := services.NewAssetService(fs)
+	assets := services.NewAssetService(fs, "")
 	p := NewAttachmentProcessor(block.BlockServices{Documents: ds, Assets: assets})
 
 	body := "openapi: 3.0.0\ninfo:\n  title: Payments API\n"
@@ -145,7 +145,7 @@ func TestAttachmentProcessor_Transform_storedAssetKeepsTheExtension(t *testing.T
 	if err != nil {
 		t.Fatalf("new document: %v", err)
 	}
-	p := NewAttachmentProcessor(block.BlockServices{Documents: ds, Assets: services.NewAssetService(fs)})
+	p := NewAttachmentProcessor(block.BlockServices{Documents: ds, Assets: services.NewAssetService(fs, "")})
 
 	overrides := p.Transform(
 		[]block.ContentEntry{dropped("text/yaml", "swagger.yml", "openapi: 3.0.0")},
@@ -175,7 +175,7 @@ func TestAttachmentProcessor_droppedFileIsDescribedByItsIngestJob(t *testing.T) 
 	if err != nil {
 		t.Fatalf("new document: %v", err)
 	}
-	p := NewAttachmentProcessor(block.BlockServices{Documents: ds, Assets: services.NewAssetService(fs)})
+	p := NewAttachmentProcessor(block.BlockServices{Documents: ds, Assets: services.NewAssetService(fs, "")})
 
 	body := "openapi: 3.0.0\ninfo:\n  title: Payments API\n"
 	blockID := ident.New()
@@ -248,7 +248,7 @@ func TestAttachmentProcessor_Transform_refusesAFileOverTheSizeLimit(t *testing.T
 	if err != nil {
 		t.Fatalf("new document: %v", err)
 	}
-	p := NewAttachmentProcessor(block.BlockServices{Documents: ds, Assets: services.NewAssetService(fs)})
+	p := NewAttachmentProcessor(block.BlockServices{Documents: ds, Assets: services.NewAssetService(fs, "")})
 
 	over := dropped("application/pdf", "huge.pdf", strings.Repeat("x", MaxAttachmentBytes+1))
 	if o := p.Transform([]block.ContentEntry{over}, doc.UUID(), ident.New(), block.ActionPaste); o != nil {

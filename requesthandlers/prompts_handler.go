@@ -70,7 +70,7 @@ func (PromptVarDocs) For(t string) []PromptVarDef {
 }
 
 func (p *PromptsHandler) RegisterPaths(r chi.Router) {
-	r.Get("/api/prompts", p.handlePrompts)
+	r.Get("/ui/views/prompts", p.handlePrompts)
 }
 
 func (p *PromptsHandler) handlePrompts(w http.ResponseWriter, r *http.Request) {

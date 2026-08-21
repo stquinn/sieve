@@ -106,12 +106,12 @@ describe('LogRenderer (bare-page DoD)', () => {
     ] }
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ json: () => Promise.resolve(json) })))
 
-    const { dom } = mount({ id: 'lg-test', source: 'x', mode: 'explore', parsedAssetRef: 'parsed.json', resolvedAssetUrl: '/sieve/u/parsed.json', status: 'COMPLETE' })
+    const { dom } = mount({ id: 'lg-test', source: 'x', mode: 'explore', parsedAssetRef: 'parsed.json', resolvedAssetUrl: '/ui/assets/doc-uuid/parsed.json', status: 'COMPLETE' })
     document.body.appendChild(dom)
 
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(fetch).toHaveBeenCalledWith('/sieve/u/parsed.json')
+    expect(fetch).toHaveBeenCalledWith('/ui/assets/doc-uuid/parsed.json')
     // The renderer re-rendered its own header — the column buttons now exist.
     const colNames = Array.from(dom.querySelectorAll('.sieve-block__badge--clickable')).map((b) => b.textContent)
     expect(colNames).toEqual(['Date', 'Level', 'Thread', 'Logger'])

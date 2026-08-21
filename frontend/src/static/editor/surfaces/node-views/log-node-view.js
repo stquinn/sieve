@@ -17,6 +17,7 @@ import { T } from '../tiptap-vendor.js'
 import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
 import { MODE } from '../../../block/sieve-block.js'
 import { LogRenderer } from '../../../block/renderers/log-renderer.js'
+import { documentAssetUrl } from '../../../block/renderers/asset-urls.js'
 
 ;(function () {
   'use strict'
@@ -158,9 +159,7 @@ import { LogRenderer } from '../../../block/renderers/log-renderer.js'
       // LogRenderer as an envelope overlay field (alongside `source` as the
       // live PM text — the overlay keys are this kind's own knowledge).
       function resolveAssetUrl(ref) {
-        if (!ref) return ''
-        if (ref.startsWith('/')) return ref
-        return '/sieve/' + (ctx && ctx.getEditor() && ctx.getEditor().uuid || '') + '/' + ref.split('/').pop()
+        return documentAssetUrl(ctx && ctx.getEditor() && ctx.getEditor().uuid || '', ref)
       }
 
       // envelopeFor — the typed envelope for this NodeView's renderer.

@@ -1,7 +1,8 @@
-// ai-actions.js — Status bar driven by jobs:changed (full snapshot) SSE events from Go.
+// ai-actions.js — Status bar driven by the workspace channel's jobs-changed
+// push (a full snapshot, republished as the sieve:jobs-changed DOM event).
 // Exposes window.SieveAI namespace; maintains window.__sieveActiveJobs for the close-guard.
 (function() {
-  // activeJobs: jobId → {label, docId, spinTab}. Populated by SSE events and loadActiveJobs().
+  // activeJobs: jobId → {label, docId, spinTab}. Replaced wholesale on every push.
   var activeJobs = {};
   var queuedJobs = [];
   window.__sieveActiveJobs = 0;
@@ -74,7 +75,6 @@
   }
 
   // applyJobsSnapshot — replaces activeJobs/queuedJobs from a full server snapshot.
-  // Called by the sse:jobs:changed listener and by loadActiveJobs() on page load.
   function applyJobsSnapshot(payload) {
     // Clear spinners for jobs that are about to be removed.
     Object.keys(activeJobs).forEach(function(id) {
@@ -95,39 +95,34 @@
     updateStatusBar();
   }
 
-  // ── Full-snapshot listener (jobs:changed) — sole driver of status bar state ──
-  document.addEventListener('sse:jobs:changed', function(e) {
-    var raw = e.detail && e.detail.data != null ? e.detail.data : (typeof e.detail === 'string' ? e.detail : null);
-    if (!raw) return;
-    var payload; try { payload = JSON.parse(raw); } catch (_) { return; }
-    applyJobsSnapshot(payload);
+  // ── Full-snapshot listener — the SOLE driver of status bar state. The server
+  // sends one unprompted on connect, so there is nothing to seed on page load.
+  document.addEventListener('sieve:jobs-changed', function(e) {
+    applyJobsSnapshot(e.detail || {});
   });
 
-  function saveAndPost(url, id) {
-    var p = window.sieveWorkspace ? window.sieveWorkspace.flushSave() : Promise.resolve();
+  // saveAndDispatch saves the editor first and waits for the save to LAND,
+  // because filing reads what is ON DISK: the AI must judge the document the
+  // user is looking at, not the last save. The filing verb then rides the
+  // WORKSPACE channel — a different socket from the save, with no ordering
+  // between them — which is exactly why the wait is on the landed fact rather
+  // than on having sent the flush. Its result is not read here: the work happens
+  // in a job, and the job's progress is what repaints this bar.
+  function saveAndDispatch(verb, id) {
+    var p = window.sieveWorkspace ? window.sieveWorkspace.saveAndSettle() : Promise.resolve();
     p.then(function() {
       if (!id) {
         var mount = document.getElementById('tiptap-mount');
         if (mount) id = mount.getAttribute('data-uuid');
       }
-      if (id) {
-        fetch(url + id, { method: 'POST' });
-        // Go emits jobs:changed via SSE — status bar updates via applyJobsSnapshot.
-      }
+      var cs = window.sieveWorkspace && window.sieveWorkspace.commandService;
+      if (id && cs) cs.dispatchFiling(verb, id);
     });
   }
 
   window.SieveAI = {
-    // loadActiveJobs: called by editor.js on tab load to restore status bar state.
-    // Reads from /api/jobs → {active:[...], queued:[...]} and applies snapshot.
-    loadActiveJobs: function() {
-      fetch('/api/jobs')
-        .then(function(r) { return r.json(); })
-        .then(function(data) { applyJobsSnapshot(data); })
-        .catch(function() {});
-    },
-    smartFile:        function(id) { saveAndPost('/api/ai/smartFile/',    id); },
-    smartMetadata:    function(id) { saveAndPost('/api/ai/smartMetadata/', id); },
-    keepAndSmartFile: function(id) { saveAndPost('/api/ai/keepAndFile/',  id); }
+    smartFile:        function(id) { saveAndDispatch('file',          id); },
+    smartMetadata:    function(id) { saveAndDispatch('metadata',      id); },
+    keepAndSmartFile: function(id) { saveAndDispatch('keep-and-file', id); }
   };
 })();

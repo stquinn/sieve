@@ -2,8 +2,7 @@ package block
 
 // PasteOutcome discriminates what a paste round-trip actually did. It is the tag of
 // PasteResult: nothing else in the payload is meaningful without it, and the caller
-// (today the HTTP handler, tomorrow the command channel) switches on it rather than
-// inspecting which fields happen to be populated.
+// switches on it rather than inspecting which fields happen to be populated.
 type PasteOutcome string
 
 const (
@@ -22,9 +21,8 @@ const (
 )
 
 // PasteResult is what one paste did — a discriminated union, not a bag of optional
-// flags. It is deliberately transport-blind: the JSON tags are the wire contract for
-// POST /api/editor/smart-paste today, and the same value is what a future
-// command-channel paste would carry, so that migration is a transport swap.
+// flags. It is deliberately transport-blind: the JSON tags are the wire contract the
+// document channel's paste-ack carries, whichever kind of paste asked.
 //
 // Construct one through PasteBlock/PasteContent/PasteNothing — never as a literal,
 // so the discriminator is never left unset.

@@ -9,8 +9,9 @@ import (
 	"sieve/sieve/services"
 )
 
-// IdentitySweeper upgrades every document in the attached library to UUID block
-// ids (#75).
+// IdentitySweeper runs the load-time migration pipeline (block.DocumentMigrator
+// — UUID block ids per #75, asset routes per #19) over every document in the
+// attached library.
 //
 // Migration is otherwise LAZY: a document is upgraded when it is opened. That
 // leaves documents nobody has opened carrying legacy short handles — still valid
@@ -78,7 +79,7 @@ func (s *IdentitySweeper) sweepOne(uuid string) (bool, int, error) {
 	if err != nil {
 		return false, 0, fmt.Errorf("parse: %w", err)
 	}
-	after, changed := block.BlockIdentityMigrator{}.Migrate(before)
+	after, changed := block.DocumentMigrator{}.Migrate(before)
 	if !changed {
 		return false, 0, nil
 	}

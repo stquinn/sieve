@@ -71,13 +71,13 @@ describe('SmartImageRenderer (bare-page DoD)', () => {
   })
 
   it('render() builds the image wrapper + resizer + hidden badge, styled purely from --theme-* vars', () => {
-    const { dom } = mount({ id: 'im-a1b2', src: '/sieve/u/pic.png', alt: 'a cat', status: 'COMPLETE' })
+    const { dom } = mount({ id: 'im-a1b2', src: '/ui/assets/doc-uuid/pic.png', alt: 'a cat', status: 'COMPLETE' })
     document.body.appendChild(dom)
 
     expect(dom.className).toBe('image-block node-image')
     expect(dom.getAttribute('data-id')).toBe('im-a1b2')
     const img = /** @type {HTMLImageElement} */ (dom.querySelector('img'))
-    expect(img.src).toContain('/sieve/u/pic.png')
+    expect(img.src).toContain('/ui/assets/doc-uuid/pic.png')
     expect(img.alt).toBe('a cat')
     expect(dom.querySelector('.image-resizer')).toBeTruthy()
 
@@ -86,11 +86,11 @@ describe('SmartImageRenderer (bare-page DoD)', () => {
   })
 
   it('resolveSrc is a pure (src, uuid) function — proxies remote URLs, resolves relative asset paths, passes through data/blob/absolute URLs', () => {
-    expect(SmartImageRenderer.resolveSrc('https://example.com/x.png')).toContain('/sieve-image-proxy?url=')
+    expect(SmartImageRenderer.resolveSrc('https://example.com/x.png')).toContain('/ui/image-proxy?url=')
     expect(SmartImageRenderer.resolveSrc('data:image/png;base64,AAAA')).toBe('data:image/png;base64,AAAA')
     expect(SmartImageRenderer.resolveSrc('/already/absolute.png')).toBe('/already/absolute.png')
-    expect(SmartImageRenderer.resolveSrc('.assets/pic.png', 'doc-uuid')).toBe('/sieve/doc-uuid/pic.png')
-    expect(SmartImageRenderer.resolveSrc('pic.png', 'doc-uuid')).toBe('/sieve/doc-uuid/pic.png')
+    expect(SmartImageRenderer.resolveSrc('.assets/pic.png', 'doc-uuid')).toBe('/ui/assets/doc-uuid/pic.png')
+    expect(SmartImageRenderer.resolveSrc('pic.png', 'doc-uuid')).toBe('/ui/assets/doc-uuid/pic.png')
   })
 
   it('badge state: PENDING (fresh) shows "Processing…"', () => {

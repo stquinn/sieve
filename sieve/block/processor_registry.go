@@ -283,7 +283,7 @@ type BlockProcessor interface {
 	// MarkdownRepresentation renders the block as human/AI-facing markdown (e.g. a
 	// diagram → ```mermaid …```). Distinct from Serialize, which is the on-disk form.
 	// uuid is the document context — needed by asset-bearing kinds to build a served
-	// URL (/sieve/<uuid>/<filename>); kinds with no asset reference ignore it.
+	// URL (/ui/assets/<uuid>/<filename>); kinds with no asset reference ignore it.
 	MarkdownRepresentation(block SieveBlock, uuid string) string
 	// Serialize renders the block to its on-disk form. THIS is the whole point of
 	// the block-document model: each flavour owns how its kind persists, and the

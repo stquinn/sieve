@@ -16,8 +16,7 @@ type SideBarHandler struct {
 }
 
 func (s *SideBarHandler) RegisterPaths(r chi.Router) {
-	r.Get("/api/sidebar", s.handleSidebar)
-	r.Post("/api/sidebar", s.handleSidebar)
+	r.Get("/ui/views/sidebar", s.handleSidebar)
 }
 
 type sidebarEntry struct {
@@ -99,20 +98,5 @@ func (s *SideBarHandler) handleSidebar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if toggle := r.URL.Query().Get("toggle"); toggle != "" {
-		session := s.ServiceProvider.State.LoadSession()
-		session.OpenFolders = toggleFolder(session.OpenFolders, toggle)
-		_ = s.ServiceProvider.State.SaveSession(session)
-	}
-
 	RenderSidebar(w, s.ServiceProvider.Documents, s.ServiceProvider.State, s.Tmpl)
-}
-
-func toggleFolder(folders []string, id string) []string {
-	for i, f := range folders {
-		if f == id {
-			return append(folders[:i], folders[i+1:]...)
-		}
-	}
-	return append(folders, id)
 }

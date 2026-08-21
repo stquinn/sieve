@@ -203,7 +203,7 @@ func (fs *FileStore) migrateDocument(cat store.Category, mdPath string) error {
 		}
 		// Update body references.
 		oldRef := cat.Key + "/.assets/" + base
-		newRef := "/sieve/" + uuid + "/" + newFilename
+		newRef := store.AssetURL(uuid, newFilename)
 		newBody = bytes.ReplaceAll(newBody, []byte(oldRef), []byte(newRef))
 	}
 

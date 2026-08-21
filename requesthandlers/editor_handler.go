@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"sieve/sieve"
-	"sieve/sieve/block"
+	"sieve/sieve/protocol"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -15,7 +15,12 @@ import (
 type EditorHandler struct {
 	ServiceProvider *sieve.ServiceProvider
 	Tmpl            *template.Template
-	Broadcast       func(event, data string)
+	// EmitContainerSaved announces that a container's content reached disk. A
+	// prompt is the ONE container whose write does not funnel through
+	// EditorService's flush chokepoint — it has no shadow — so this is the second
+	// and only other emission site for the fact.
+	EmitContainerSaved func(uuid string, version int)
+	EmitPromptsChanged func()
 }
 
 type editorShellData struct {
@@ -23,14 +28,14 @@ type editorShellData struct {
 	Mode string
 }
 
+// RegisterPaths mounts the editor shell fragment and the CHANNEL-LESS document
+// pair. Loading, saving, exporting and pasting a note all ride its document
+// channel; a prompt pseudo-document opens none, so its read and its write stay
+// here.
 func (h *EditorHandler) RegisterPaths(r chi.Router) {
-	r.Get("/api/editor", h.handleEditorShell)
-	r.Get("/api/editor/load", h.handleEditorLoad)
-	r.Get("/api/editor/export", h.handleEditorExport)
-	r.Post("/api/editor/save", h.handleEditorSave)
-	r.Post("/api/editor/smart-paste", h.handleSmartPaste)
-	r.Post("/api/editor/paste-slice", h.handlePasteSlice)
-	r.Post("/api/detect-extractions", h.handleDetectExtractions)
+	r.Get("/ui/views/editor", h.handleEditorShell)
+	r.Get("/api/document/load", h.handleDocumentLoad)
+	r.Post("/api/document/save", h.handleDocumentSave)
 }
 
 func (h *EditorHandler) handleEditorShell(w http.ResponseWriter, r *http.Request) {
@@ -46,238 +51,79 @@ func (h *EditorHandler) handleEditorShell(w http.ResponseWriter, r *http.Request
 	}
 }
 
-func (h *EditorHandler) handleEditorLoad(w http.ResponseWriter, r *http.Request) {
+// handleDocumentLoad serves a PROMPT pseudo-document's content: it opens no
+// document channel, so it has no load frame to ask along. A note is refused
+// here rather than served twice — its channel is the one way it loads.
+func (h *EditorHandler) handleDocumentLoad(w http.ResponseWriter, r *http.Request) {
 	uuid := r.URL.Query().Get("uuid")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "application/json")
-
-	type loadResponse struct {
-		Body   string                `json:"body"`
-		Mode   string                `json:"mode"`
-		UUID   string                `json:"uuid"`
-		Scroll int                   `json:"scroll"`
-		Blocks []block.FrontendBlock `json:"blocks,omitempty"`
+	if !strings.HasPrefix(uuid, "prompt:") {
+		http.Error(w, "documents load over their document channel", http.StatusBadRequest)
+		return
 	}
-
-	// Scroll is a per-user VIEW property (CLAUDE.md: not document metadata), so
-	// it rides the session's Tab list (Tab.Scroll), keyed by uuid — the SAME id
-	// space a prompt tab uses ("prompt:name"). Zero for a tab never scrolled or
-	// never opened; the frontend treats 0 as "park at top", so no distinction is
-	// needed between the two.
-	scroll := h.tabScroll(uuid)
-
-	if strings.HasPrefix(uuid, "prompt:") {
-		name := strings.TrimPrefix(uuid, "prompt:")
-		if body, err := h.ServiceProvider.Prompts.GetPromptContent(name); err == nil {
-			json.NewEncoder(w).Encode(loadResponse{Body: body, Mode: "markdown", UUID: uuid, Scroll: scroll})
-			return
-		}
+	content, ok := documentContent{sp: h.ServiceProvider}.read(uuid)
+	if !ok {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-
-	if b, err := h.ServiceProvider.Documents.LoadByUUID(uuid); err == nil {
-		mode := b.Meta().All()["mode"]
-		if mode == "" {
-			mode = "wysiwyg"
-		}
-		body := string(b.Body())
-		resp := loadResponse{Body: body, Mode: mode, UUID: b.UUID(), Scroll: scroll}
-		// WYSIWYG renders from the block list (Stage D.2). Load THROUGH the shadow
-		// (identity step): ensure the shadow is open — minting prose handles — and
-		// return its blocks, so the editor and shadow share identity (anchors get a
-		// real data-id, the sync cache is seeded). Open is idempotent, so the WS
-		// connection that follows reuses this same shadow. Markdown mode keeps
-		// serving raw body only; the client never builds blocks there.
-		if mode != "markdown" {
-			_ = h.ServiceProvider.Editor.Open(uuid, nil)
-			if blocks, ok := h.ServiceProvider.Editor.FrontendBlocks(uuid); ok {
-				resp.Blocks = blocks
-			}
-		}
-		json.NewEncoder(w).Encode(resp)
-		return
-	}
-	json.NewEncoder(w).Encode(loadResponse{Body: "", Mode: "wysiwyg", UUID: ""})
-}
-
-// tabScroll looks up the saved scroll offset for a tab id in the current
-// session, or 0 when the tab has none (never opened / never scrolled — the
-// frontend treats both identically: park at top).
-func (h *EditorHandler) tabScroll(uuid string) int {
-	session := h.ServiceProvider.State.LoadSession()
-	for _, t := range session.Tabs {
-		if t.ID == uuid {
-			return t.Scroll
-		}
-	}
-	return 0
-}
-
-// handleEditorExport serves CLEAN whole-doc markdown for "Copy as Markdown":
-// every block surviving the filter renders via its MarkdownRepresentation
-// (EditorService.ExportMarkdown). THIS handler owns the exclusion policy — it
-// passes the closure dropping ai-blocks (prior Q&A is conversation, not document
-// content); another caller may filter differently. Prompt pseudo-docs have no
-// block tree, so they export their raw content verbatim.
-//
-// format selects the output format so the route survives future export targets
-// (html, pdf, …). Only "markdown" exists today; absent defaults to it, unknown
-// values are rejected rather than silently served as markdown.
-func (h *EditorHandler) handleEditorExport(w http.ResponseWriter, r *http.Request) {
-	uuid := r.URL.Query().Get("uuid")
-	if uuid == "" {
-		http.Error(w, "missing uuid", http.StatusBadRequest)
-		return
-	}
-	format := r.URL.Query().Get("format")
-	if format == "" {
-		format = "markdown"
-	}
-	if format != "markdown" {
-		http.Error(w, "unsupported format: "+format, http.StatusBadRequest)
-		return
-	}
-	w.Header().Set("Cache-Control", "no-store")
-
-	if strings.HasPrefix(uuid, "prompt:") {
-		name := strings.TrimPrefix(uuid, "prompt:")
-		body, err := h.ServiceProvider.Prompts.GetPromptContent(name)
-		if err != nil {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-		_, _ = w.Write([]byte(body))
-		return
-	}
-
-	md, err := h.ServiceProvider.Editor.ExportMarkdown(uuid, func(b block.SieveBlock) bool { return b.Kind != "ai-block" })
-	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	_, _ = w.Write([]byte(md))
-}
-
-func (h *EditorHandler) handleEditorSave(w http.ResponseWriter, r *http.Request) {
-	uuid := r.URL.Query().Get("uuid")
-	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(content)
+}
 
-	var req struct {
-		Body string `json:"body"`
-		Mode string `json:"mode"`
-	}
+// handleDocumentSave writes a PROMPT pseudo-document's buffer, the write half of
+// handleDocumentLoad's pair. A note is refused here for the same reason it is
+// refused there, and one sharper: its live shadow is the authority on its
+// content, so a raw store write behind that shadow's back is silently reverted
+// by the next flush.
+func (h *EditorHandler) handleDocumentSave(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+
+	var req protocol.DocumentSaveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-
-	// Update session tab mode if present
-	session := h.ServiceProvider.State.LoadSession()
-	for i, t := range session.Tabs {
-		if t.ID == uuid {
-			if req.Mode != "" {
-				session.Tabs[i].Mode = req.Mode
-			}
-			break
-		}
+	// The document travels as a query parameter, not a body field.
+	req.UUID = r.URL.Query().Get("uuid")
+	name, isPrompt := strings.CutPrefix(req.UUID, "prompt:")
+	if !isPrompt {
+		http.Error(w, "documents save over their document channel", http.StatusBadRequest)
+		return
 	}
-	_ = h.ServiceProvider.State.SaveSession(session)
 
-	if strings.HasPrefix(uuid, "prompt:") {
-		name := strings.TrimPrefix(uuid, "prompt:")
+	h.recordTabMode(req.UUID, req.Mode)
 
-		if err := h.ServiceProvider.Prompts.SavePrompt(name, req.Body); err == nil {
-			if h.Broadcast != nil {
-				h.Broadcast("prompts:changed", "{}")
-			}
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]int{"version": 0})
-			return
-		}
-
+	if err := h.ServiceProvider.Prompts.SavePrompt(name, req.Body); err != nil {
 		http.Error(w, "save failed", http.StatusInternalServerError)
 		return
 	}
+	// Version 0, here and in the response below, is the truth and not a placeholder:
+	// a prompt override is a plain file the store writes with no metadata and no
+	// version history, so there is no number to report. The saved-fact's listeners
+	// read 0 as "this container cannot order its saves".
+	if h.EmitContainerSaved != nil {
+		h.EmitContainerSaved(req.UUID, 0)
+	}
+	if h.EmitPromptsChanged != nil {
+		h.EmitPromptsChanged()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(protocol.DocumentSaveResponse{Version: 0})
+}
 
-	if b, err := h.ServiceProvider.Documents.LoadByUUID(uuid); err == nil {
-		b.SetBody([]byte(req.Body))
-		if req.Mode != "" {
-			b.Meta().SetMode(req.Mode)
-		}
-		if saved, err := h.ServiceProvider.Documents.Save(b); err == nil {
-			json.NewEncoder(w).Encode(map[string]int{"version": saved.Meta().Version()})
+// recordTabMode remembers which mode saved the tab, so the tab bar renders it
+// the same way on the next session restore. An empty mode, or a uuid no open tab
+// carries, leaves the session alone.
+func (h *EditorHandler) recordTabMode(uuid, mode string) {
+	if mode == "" || h.ServiceProvider.State == nil {
+		return
+	}
+	session := h.ServiceProvider.State.LoadSession()
+	for i, t := range session.Tabs {
+		if t.ID == uuid {
+			session.Tabs[i].Mode = mode
+			_ = h.ServiceProvider.State.SaveSession(session)
 			return
 		}
 	}
-
-	http.Error(w, "save failed", http.StatusInternalServerError)
-}
-
-func (h *EditorHandler) handleSmartPaste(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		UUID    string               `json:"uuid"`
-		Entries []block.ContentEntry `json:"entries"`
-		Index   int                  `json:"index"`
-	}
-	req.Index = -1 // default: append when no position is supplied
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UUID == "" {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-
-	// block.PasteResult IS the wire contract — the handler adds no shape of its own,
-	// so moving paste onto the command channel later is a transport swap.
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(h.ServiceProvider.Editor.HandlePaste(req.UUID, req.Entries, req.Index))
-}
-
-// handlePasteSlice reconstructs a copied multi-block selection server-side. The
-// slice is an ordered list of per-block ContentEntry sets; each is paste-matched +
-// created with a fresh backend id at cursorIndex+i. Returns the created blocks for
-// the frontend to render in one batch.
-func (h *EditorHandler) handlePasteSlice(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		UUID  string                 `json:"uuid"`
-		Slice [][]block.ContentEntry `json:"slice"`
-		Index int                    `json:"index"`
-	}
-	req.Index = -1
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UUID == "" {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-
-	blocks, err := h.ServiceProvider.Editor.HandlePasteSlice(req.UUID, req.Slice, req.Index)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if blocks == nil {
-		blocks = []block.FrontendBlock{}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(struct {
-		Blocks []block.FrontendBlock `json:"blocks"`
-	}{Blocks: blocks})
-}
-
-func (h *EditorHandler) handleDetectExtractions(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		SourceKind string               `json:"sourceKind"`
-		Entries    []block.ContentEntry `json:"entries"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	offers := block.DetectExtractions(req.SourceKind, req.Entries)
-	if offers == nil {
-		offers = []block.SupportedActions{}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(offers)
 }

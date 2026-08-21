@@ -19,6 +19,7 @@
 import { BlockRenderer } from './block-renderer.js'
 import { smartImageStyles } from './smart-image-renderer.styles.js'
 import { StatusBadge } from './status-badge.js'
+import { resolveImageSrc } from './asset-urls.js'
 
 /** @typedef {{ id?: string, src?: string, alt?: string, summary?: string, width?: string, height?: string, status?: string, createdAt?: string|null, error?: string, showSummary?: boolean }} SmartImagePayload */
 
@@ -32,13 +33,7 @@ export class SmartImageRenderer extends BlockRenderer {
    * @param {string} src @param {string} [uuid] @returns {string}
    */
   static resolveSrc(src, uuid) {
-    if (!src) return ''
-    if (src.startsWith('http://') || src.startsWith('https://')) {
-      return window.location.origin + '/sieve-image-proxy?url=' + encodeURIComponent(src)
-    }
-    if (src.startsWith('data:') || src.startsWith('blob:') || src.startsWith('/')) return src
-    if (src.startsWith('.assets/')) src = src.substring(8)
-    return '/sieve/' + (uuid || '') + '/' + src.split('/').pop()
+    return resolveImageSrc(src, uuid)
   }
 
   /** @type {HTMLImageElement|null} */ #img = null

@@ -73,7 +73,7 @@ func TestAIContext_String_skipsEmptyTagValuesAndTags(t *testing.T) {
 		NodeIDs: []string{"img-1"},
 		Content: "Image: x.png",
 		Tags: []Tag{
-			{Label: "ALT", Values: []string{""}},                 // all empty → dropped
+			{Label: "ALT", Values: []string{""}},                   // all empty → dropped
 			{Label: "Summary", Values: []string{"", "a real one"}}, // empty filtered, keep the real
 		},
 	}

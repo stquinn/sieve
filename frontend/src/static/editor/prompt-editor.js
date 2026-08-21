@@ -1,12 +1,14 @@
 // @ts-check
 // prompt-editor.js — the editor type for prompt: documents (P2.A, P2.B).
 // A prompt has NO live channel. Its mode is fixed 'markdown' (setMode inherits
-// the base no-op) and it saves through DocumentService.save — whose
-// channel-less routing IS the HTTP POST /api/editor/save the prompt path
-// always used (issue #49 Phase 1: the WS-vs-HTTP, note-vs-prompt split is
-// service-internal; this type just reads its surface body and asks the
-// service to save). The AI-reload save guard reads AbstractEditor's own
-// isSaveSuppressed (armed by softReload).
+// the base no-op) and it saves through DocumentService.save, whose channel-less
+// routing is the HTTP half the prompt path always used (issue #49 Phase 1: the
+// WS-vs-HTTP, note-vs-prompt split is service-internal; this type just reads
+// its surface body and asks the service to save). Its SAVED-SIGNAL is the base
+// class's: the HTTP handler broadcasts container-saved like every other writer,
+// so a prompt clears its dirty state by the same route a note does. The
+// AI-reload save guard reads AbstractEditor's own isSaveSuppressed (armed by
+// softReload).
 // Dual-use ES module: `export` for vitest imports; reached in the app via the
 // SieveTab.createEditor factory.
 
@@ -56,6 +58,26 @@ export class PromptEditor extends AbstractEditor {
     return new MarkdownSurface(this)
   }
 
+  /**
+   * A prompt has no channel, and the wire's export is channel-only — but it
+   * needs neither: a prompt IS its markdown buffer, so the surface holding it is
+   * the authority, and a fresher one than the last save. The server's export
+   * exists to FILTER (drop ai-blocks, reduce cards and clips to links) and a
+   * prompt contains none of those constructs, so asking it would only echo back
+   * bytes this editor is already holding.
+   * @returns {Promise<unknown>|void}
+   */
+  copyAsMarkdown() {
+    const md = (this.surface && this.surface.body) || ''
+    const rt = /** @type {any} */ (window).runtime
+    if (rt && rt.ClipboardSetText) return rt.ClipboardSetText(md)
+    // Guarded like the base's: a native menu click carries no DOM gesture and
+    // steals focus, so WebKit rejects navigator.clipboard. The browser API is
+    // only the non-Wails dev fallback, so a rejection is logged, not thrown.
+    return navigator.clipboard.writeText(md)
+      .catch((err) => { console.warn('export-markdown copy failed', err) })
+  }
+
   /** @returns {Promise<unknown>} */
   flushSave() {
     // Guard: an AI reload replaces the whole document; a save mid-reload would
@@ -69,13 +91,11 @@ export class PromptEditor extends AbstractEditor {
     // A prompt has no channel, so DocumentService.save routes to its HTTP POST
     // path. A bare construction (no service) resolves quietly — save parity
     // with every other disconnected verb.
+    // The dirty-clear is NOT chained here. A successful save announces itself as
+    // `container-saved` on the workspace wire, and AbstractEditor reacts to that
+    // for every editor type alike — so clearing it here as well would be a
+    // second, private saved-signal that a failed save could still fire.
     const saved = ds ? ds.save(this.uuid, body) : Promise.resolve()
-    return saved
-      .then(() => {
-        this.clearDirty()
-        document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: false } }))
-        document.dispatchEvent(new CustomEvent('editor:saved', { detail: { uuid: this.uuid } }))
-      })
-      .catch((err) => { console.error('[editor] save failed', err) })
+    return saved.catch((err) => { console.error('[editor] save failed', err) })
   }
 }

@@ -441,7 +441,7 @@ import { ProseLink } from './surfaces/prose-link.js'
     items.push({ type: 'divider' })
 
     items.push({ icon: IC.edit, label: 'Rename...', action: function () {
-      hx('GET', '/api/sidebar/rename-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&type=note',
+      hx('GET', '/ui/views/sidebar/dialog/rename?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&type=note',
         { target: '#rename-dialog-content', swap: 'innerHTML' }
       ).then(function () { document.getElementById('rename-dialog').showModal() })
     }})
@@ -449,7 +449,7 @@ import { ProseLink } from './surfaces/prose-link.js'
       window.sieveShowInFiles && window.sieveShowInFiles(id)
     }})
     items.push({ icon: IC.trash, label: 'Delete Note...', cls: 'ctx-item--danger', action: function () {
-      hx('GET', '/api/sidebar/delete-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&type=note',
+      hx('GET', '/ui/views/sidebar/dialog/delete?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&type=note',
         { target: '#delete-dialog-content', swap: 'innerHTML' }
       ).then(function () { document.getElementById('delete-dialog').showModal() })
     }})
@@ -466,7 +466,7 @@ import { ProseLink } from './surfaces/prose-link.js'
     if (name) items.push({ type: 'header', label: name })
 
     items.push({ icon: IC.edit, label: 'Rename...', action: function () {
-      hx('GET', '/api/sidebar/rename-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&type=folder',
+      hx('GET', '/ui/views/sidebar/dialog/rename?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&type=folder',
         { target: '#rename-dialog-content', swap: 'innerHTML' }
       ).then(function () { document.getElementById('rename-dialog').showModal() })
     }})
@@ -477,7 +477,7 @@ import { ProseLink } from './surfaces/prose-link.js'
     items.push({ type: 'divider' })
 
     items.push({ icon: IC.trash, label: 'Delete Folder...', cls: 'ctx-item--danger', action: function () {
-      hx('GET', '/api/sidebar/delete-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&type=folder',
+      hx('GET', '/ui/views/sidebar/dialog/delete?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&type=folder',
         { target: '#delete-dialog-content', swap: 'innerHTML' }
       ).then(function () { document.getElementById('delete-dialog').showModal() })
     }})

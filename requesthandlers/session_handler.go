@@ -11,30 +11,58 @@ import (
 )
 
 type SessionHandler struct {
-	ServiceProvider *sieve.ServiceProvider
-	Broadcast       func(event, data string)
+	ServiceProvider    *sieve.ServiceProvider
+	EmitPromptsChanged func()
 }
 
 func (h *SessionHandler) RegisterPaths(r chi.Router) {
-	r.Post("/api/session/sidebar/toggle", h.handleSidebarToggle)
-	r.Post("/api/session/meta/toggle", h.handleMetaToggle)
-	r.Post("/api/session/prompts/toggle", h.handlePromptsToggle)
-	r.Post("/api/session/toolbar/toggle", h.handleToolbarToggle)
-	r.Post("/api/session/linenumbers/toggle", h.handleLineNumbersToggle)
-	r.Post("/api/session/askpanel/toggle", h.handleAskPanelToggle)
+	r.Post("/api/session/toggle/{panel}", h.handlePanelToggle)
 	r.Post("/api/session/layout", h.handleSessionLayout)
-	r.Post("/api/session/scroll", h.handleSessionScroll)
-	r.Post("/api/session/refresh", h.handleSessionRefresh)
-	r.Get("/api/library/switch-layout", h.handleSwitchLayout)
+	r.Get("/ui/views/session/layout", h.handleSwitchLayout)
 }
 
-func (h *SessionHandler) handleSidebarToggle(w http.ResponseWriter, r *http.Request) {
+// handlePanelToggle flips one panel's visibility and answers with the OOB
+// <style> that shows or hides it. Which panel is a PARAMETER: the six panels
+// differ only in the flag they flip and the rules they emit, and six routes
+// doing that is six copies of one operation.
+func (h *SessionHandler) handlePanelToggle(w http.ResponseWriter, r *http.Request) {
 	session := h.ServiceProvider.State.LoadSession()
-	session.ShowSidebar = !session.ShowSidebar
+
+	var style string
+	switch panel := chi.URLParam(r, "panel"); panel {
+	case "sidebar":
+		session.ShowSidebar = !session.ShowSidebar
+		style = h.sidebarStyle(session)
+	case "meta":
+		session.ShowMeta = !session.ShowMeta
+		style = h.metaStyle(session)
+	case "prompts":
+		session.ShowPrompts = !session.ShowPrompts
+		style = h.promptsStyle(session)
+		if h.EmitPromptsChanged != nil {
+			h.EmitPromptsChanged()
+		}
+	case "toolbar":
+		session.ShowToolbar = !session.ShowToolbar
+		style = h.toolbarStyle(session)
+	case "linenumbers":
+		session.ShowLineNumbers = !session.ShowLineNumbers
+		style = h.lineNumbersStyle(session)
+	case "askpanel":
+		session.ShowAskPanel = !session.ShowAskPanel
+		style = h.askPanelStyle(session)
+	default:
+		http.Error(w, "unknown panel: "+panel, http.StatusNotFound)
+		return
+	}
 	_ = h.ServiceProvider.State.SaveSession(session)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<style id="layout-overrides-sidebar" hx-swap-oob="true">
+	fmt.Fprint(w, style)
+}
+
+func (h *SessionHandler) sidebarStyle(session domain.Session) string {
+	return fmt.Sprintf(`<style id="layout-overrides-sidebar" hx-swap-oob="true">
 		#app-root { --sidebar-w: %dpx !important; }
 		#htmx-sidebar { display: %s !important; }
 		.sidebar-handle { display: %s !important; }
@@ -43,13 +71,8 @@ func (h *SessionHandler) handleSidebarToggle(w http.ResponseWriter, r *http.Requ
 		map[bool]string{true: "block", false: "none"}[session.ShowSidebar])
 }
 
-func (h *SessionHandler) handleMetaToggle(w http.ResponseWriter, r *http.Request) {
-	session := h.ServiceProvider.State.LoadSession()
-	session.ShowMeta = !session.ShowMeta
-	_ = h.ServiceProvider.State.SaveSession(session)
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<style id="layout-overrides-meta" hx-swap-oob="true">
+func (h *SessionHandler) metaStyle(session domain.Session) string {
+	return fmt.Sprintf(`<style id="layout-overrides-meta" hx-swap-oob="true">
 		#app-root { --meta-w: %dpx !important; }
 		#htmx-meta-panel { display: %s !important; }
 		.meta-handle { display: %s !important; }
@@ -58,21 +81,12 @@ func (h *SessionHandler) handleMetaToggle(w http.ResponseWriter, r *http.Request
 		map[bool]string{true: "block", false: "none"}[session.ShowMeta])
 }
 
-func (h *SessionHandler) handlePromptsToggle(w http.ResponseWriter, r *http.Request) {
-	session := h.ServiceProvider.State.LoadSession()
-	session.ShowPrompts = !session.ShowPrompts
-	_ = h.ServiceProvider.State.SaveSession(session)
-
-	if h.Broadcast != nil {
-		h.Broadcast("prompts:changed", "{}")
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<style id="layout-overrides-prompts" hx-swap-oob="true">
+func (h *SessionHandler) promptsStyle(session domain.Session) string {
+	display := map[bool]string{true: "block", false: "none"}[session.ShowPrompts]
+	return fmt.Sprintf(`<style id="layout-overrides-prompts" hx-swap-oob="true">
 		#prompts-panel { display: %s; }
 		.prompts-handle { display: %s; }
-	</style>`, map[bool]string{true: "block", false: "none"}[session.ShowPrompts],
-		map[bool]string{true: "block", false: "none"}[session.ShowPrompts])
+	</style>`, display, display)
 }
 
 func (h *SessionHandler) handleSessionLayout(w http.ResponseWriter, r *http.Request) {
@@ -103,73 +117,31 @@ func (h *SessionHandler) handleSessionLayout(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleSessionScroll persists one tab's scroll offset (Tab.Scroll) — the
-// per-user VIEW coordinate a surface debounces up while the user scrolls, plus
-// the Workspace's pull at tab-deactivation/teardown (see selection-model.js's
-// scroll field + workspace.js #persistScroll). Silent: no broadcast, no swap
-// body — this is caret-class state, not a shared UI change. A tab id that no
-// longer exists in the session (closed mid-flight) is a harmless no-op.
-func (h *SessionHandler) handleSessionScroll(w http.ResponseWriter, r *http.Request) {
-	id := r.FormValue("id")
-	scroll, err := strconv.Atoi(r.FormValue("scroll"))
-	if id == "" || err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-
-	session := h.ServiceProvider.State.LoadSession()
-	for i, t := range session.Tabs {
-		if t.ID == id {
-			session.Tabs[i].Scroll = scroll
-			_ = h.ServiceProvider.State.SaveSession(session)
-			break
-		}
-	}
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *SessionHandler) handleToolbarToggle(w http.ResponseWriter, r *http.Request) {
-	session := h.ServiceProvider.State.LoadSession()
-	session.ShowToolbar = !session.ShowToolbar
-	_ = h.ServiceProvider.State.SaveSession(session)
-
-	display := "none"
-	toolbarH := "0px"
+// toolbarStyle carries the toolbar's visibility AND the CSS variable that
+// offsets the gutter separator, which moves with it.
+func (h *SessionHandler) toolbarStyle(session domain.Session) string {
+	display, toolbarH := "none", "0px"
 	if session.ShowToolbar {
-		display = "flex"
-		toolbarH = "36px"
+		display, toolbarH = "flex", "36px"
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// Update toolbar visibility and the CSS variable that offsets the gutter separator.
-	fmt.Fprintf(w, `<style id="layout-overrides-toolbar" hx-swap-oob="true">#editor-toolbar { display: %s; } #app-root { --toolbar-h: %s; }</style>`, display, toolbarH)
+	return fmt.Sprintf(`<style id="layout-overrides-toolbar" hx-swap-oob="true">#editor-toolbar { display: %s; } #app-root { --toolbar-h: %s; }</style>`, display, toolbarH)
 }
 
-func (h *SessionHandler) handleAskPanelToggle(w http.ResponseWriter, r *http.Request) {
-	session := h.ServiceProvider.State.LoadSession()
-	session.ShowAskPanel = !session.ShowAskPanel
-	_ = h.ServiceProvider.State.SaveSession(session)
+func (h *SessionHandler) lineNumbersStyle(session domain.Session) string {
+	return fmt.Sprintf(`<style id="layout-overrides-linenumbers" hx-swap-oob="true">%s</style>`,
+		lineNumberOverrideCSS(session.ShowLineNumbers))
+}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
+// askPanelStyle also dispatches the panel's state to JS: the panel's own
+// controller needs to know it opened, and a <style> cannot say so.
+func (h *SessionHandler) askPanelStyle(session domain.Session) string {
 	styleRule := ""
 	if session.ShowAskPanel {
 		styleRule = `#ask-panel { display: flex !important; position: relative; z-index: 20; border-top: 1px solid var(--theme-border2); }`
 	}
-
-	fmt.Fprintf(w, `<style id="layout-overrides-askpanel" hx-swap-oob="true">%s</style>
-<script id="askpanel-state-sync" hx-swap-oob="true">document.dispatchEvent(new CustomEvent('sieve:ask-panel-toggled', { detail: %t }))</script>`, styleRule, session.ShowAskPanel)
-}
-
-func (h *SessionHandler) handleSessionRefresh(w http.ResponseWriter, r *http.Request) {
-	themeName := h.ServiceProvider.State.LoadSettings().Theme
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<script hx-swap-oob="true">
-		var root = document.documentElement;
-		var themeName = "%s";
-		root.className = root.className.replace(/theme-\S+/, 'theme-' + themeName);
-	</script>`, themeName)
+	return fmt.Sprintf(`<style id="layout-overrides-askpanel" hx-swap-oob="true">%s</style>
+<script id="askpanel-state-sync" hx-swap-oob="true">document.dispatchEvent(new CustomEvent('sieve:ask-panel-toggled', { detail: %t }))</script>`,
+		styleRule, session.ShowAskPanel)
 }
 
 // lineNumberOverrideCSS returns the CSS that hides the editor line numbers and
@@ -182,15 +154,6 @@ func lineNumberOverrideCSS(show bool) string {
 		return ""
 	}
 	return `.tiptap > *::before, .tiptap::before { display: none !important; } .tiptap { padding-left: 1.25rem !important; }`
-}
-
-func (h *SessionHandler) handleLineNumbersToggle(w http.ResponseWriter, r *http.Request) {
-	session := h.ServiceProvider.State.LoadSession()
-	session.ShowLineNumbers = !session.ShowLineNumbers
-	_ = h.ServiceProvider.State.SaveSession(session)
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<style id="layout-overrides-linenumbers" hx-swap-oob="true">%s</style>`, lineNumberOverrideCSS(session.ShowLineNumbers))
 }
 
 // handleSwitchLayout returns OOB style-tag swaps for all layout CSS variables

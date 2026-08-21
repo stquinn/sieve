@@ -20,6 +20,7 @@ import (
 	"sieve/logger"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
+	"sieve/store"
 )
 
 // errEntryNotImage marks a content entry this processor does not ingest, so the
@@ -198,7 +199,9 @@ func (p *SmartImageProcessor) acquire(e block.ContentEntry, blockID string) (dat
 	s := strings.TrimSpace(e.Content)
 	if isImageURL(s) {
 		// Already a local sieve asset: reference the filename, ingest nothing.
-		if strings.Contains(s, "/sieve/") {
+		// Recognises both the current route and the pre-#19 one, since
+		// unmigrated persisted content can still carry the old form.
+		if store.ContainsAssetURL(s) {
 			filename := s[strings.LastIndex(s, "/")+1:]
 			if idx := strings.Index(filename, "?"); idx != -1 {
 				filename = filename[:idx]
@@ -389,7 +392,7 @@ func (p *SmartImageProcessor) DescribeJob(jctx block.JobContext) *block.Processo
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 func isImageURL(s string) bool {
-	if !strings.HasPrefix(s, "http://") && !strings.HasPrefix(s, "https://") && !strings.HasPrefix(s, "/") && !strings.Contains(s, "/sieve/") {
+	if !strings.HasPrefix(s, "http://") && !strings.HasPrefix(s, "https://") && !strings.HasPrefix(s, "/") && !store.ContainsAssetURL(s) {
 		return false
 	}
 	if strings.ContainsAny(s, " \t\n\r") {

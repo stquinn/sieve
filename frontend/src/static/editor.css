@@ -1,5 +1,5 @@
 /* ── Theme defaults (Tokyo Night) ────────────────────────────────────── */
-/* Overridden at boot by /theme.css served from Go.                       */
+/* Overridden at boot by /ui/theme.css served from Go.                    */
 /* Keys match exactly what the theme JSON files export.                   */
 
 :root {

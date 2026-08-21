@@ -3,7 +3,7 @@
 // Extracted as a separate ES module (not inline in the IIFE editor.js) so that
 // vitest can import and unit-test it without a live editor or DOM.
 
-// NOTE: no bare-specifier imports — this file is served raw from /static/ with no
+// NOTE: no bare-specifier imports — this file is served raw from /ui/static/ with no
 // bundler or import-map. Fragment is intentionally NOT imported; replaceWith()
 // already accepts a node array directly, so no Fragment wrapper is needed.
 

@@ -14,18 +14,25 @@ import (
 	"sieve/sieve/block"
 	"sieve/sieve/command"
 	"sieve/sieve/domain"
+	"sieve/sieve/protocol"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 )
 
-// WsHandler manages one persistent WebSocket connection per open document.
-// It dispatches incoming messages to EditorService and sends acks back.
+// WsHandler serves both WebSocket wires: one document channel per open document,
+// and the workspace channel the app window holds. Every inbound frame is
+// dispatched through protocol.Registry, so a type word the contract does not
+// carry ON THE ARRIVING CHANNEL cannot reach a handler at all.
 type WsHandler struct {
 	ServiceProvider *sieve.ServiceProvider
 	upgrader        websocket.Upgrader
+	registry        *protocol.Registry
+	broadcast       *WorkspaceBroadcast
+	documentFrames  map[string]frameHandler
+	workspaceFrames map[string]frameHandler
 	channelsMu      sync.RWMutex
-	channels        map[string]*wsConn // uuid -> the LATEST connection's channel
+	channels        map[string]*wsConn // uuid (or the workspace sentinel) -> the LATEST connection's channel
 }
 
 // wsConn identifies one live connection's write channel. The uuid's channel —
@@ -37,19 +44,64 @@ type wsConn struct {
 	write func(interface{})
 	// closed marks the conn's reader as torn down. Command emits check it to
 	// stay requester-affine (reply to the socket the command arrived on) while
-	// still falling back to the current session owner once the requester dies —
-	// without it, a co-claimant session socket (dev-server tab + app window)
-	// that re-registers __session__ mid-job silently swallows the reply.
+	// still falling back to the current workspace owner once the requester dies —
+	// without it, a co-claimant workspace socket (dev-server tab + app window)
+	// that re-registers the sentinel mid-job silently swallows the reply.
 	closed atomic.Bool
 }
 
-func NewWsHandler(sp *sieve.ServiceProvider) *WsHandler {
+// inboundFrame is one frame as it arrived: the bytes to decode, the connection
+// that sent it, and — on a document channel — the document that channel is bound
+// to. Handlers take nothing else, so one dispatch table serves both wires.
+type inboundFrame struct {
+	conn *wsConn
+	uuid string // empty on the workspace channel, which is bound to no document
+	raw  []byte
+}
+
+// reply writes a frame back on the connection this one arrived on.
+func (f inboundFrame) reply(frame interface{}) {
+	f.conn.write(frame)
+}
+
+// frameHandler serves one inbound frame type.
+type frameHandler func(inboundFrame)
+
+// NewWsHandler builds the handler for both wires. The broadcast comes from
+// outside because it outlives any one socket: the app holds it from startup and
+// pushes through it, while this handler is only what fills and empties it.
+func NewWsHandler(sp *sieve.ServiceProvider, broadcast *WorkspaceBroadcast) *WsHandler {
 	h := &WsHandler{
 		ServiceProvider: sp,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
-		channels: make(map[string]*wsConn),
+		registry:  protocol.NewRegistry(),
+		broadcast: broadcast,
+		channels:  make(map[string]*wsConn),
+	}
+	h.documentFrames = map[string]frameHandler{
+		protocol.TypePing:              h.handlePing,
+		protocol.TypeDocUpdate:         h.handleDocUpdate,
+		protocol.TypeFlush:             h.handleFlush,
+		protocol.TypeEnterMarkdown:     h.handleEnterMarkdown,
+		protocol.TypeEnterWysiwyg:      h.handleEnterWysiwyg,
+		protocol.TypeRetryBlockJob:     h.handleRetryBlockJob,
+		protocol.TypeExtract:           h.handleExtract,
+		protocol.TypeBlockOp:           h.handleBlockOp,
+		protocol.TypeLoad:              h.handleLoad,
+		protocol.TypePaste:             h.handlePaste,
+		protocol.TypeDetectExtractions: h.handleDetectExtractions,
+		protocol.TypeExport:            h.handleExport,
+		protocol.TypeFocus:             h.handleFocus,
+	}
+	h.workspaceFrames = map[string]frameHandler{
+		protocol.TypePing:           h.handlePing,
+		protocol.TypeCommand:        h.handleCommand,
+		protocol.TypeCommandCancel:  h.handleCommandCancel,
+		protocol.TypeMentionQuery:   h.handleMentionQuery,
+		protocol.TypeMentionResolve: h.handleMentionResolve,
+		protocol.TypeSessionScroll:  h.handleSessionScroll,
 	}
 	return h
 }
@@ -69,10 +121,12 @@ func (h *WsHandler) register(uuid string, c *wsConn) {
 // Reads (ping heartbeats, flush persistence) are excluded — a backgrounded
 // stale tab proving liveness or syncing to disk is not evidence a human edits
 // there, so it must not steal ownership from the real editor. transform rides
-// inside "extract" (via its Operation/Action), so it needs no separate case.
+// inside extract (via its Operation/Action), so it needs no separate case.
 func (h *WsHandler) isMutating(frameType string) bool {
 	switch frameType {
-	case "doc-update", "block-op", "extract", "retry-block-job", "enter-markdown", "enter-wysiwyg":
+	case protocol.TypeDocUpdate, protocol.TypeBlockOp, protocol.TypeExtract,
+		protocol.TypeRetryBlockJob, protocol.TypeEnterMarkdown, protocol.TypeEnterWysiwyg,
+		protocol.TypePaste:
 		return true
 	default:
 		return false
@@ -84,9 +138,9 @@ func (h *WsHandler) isMutating(frameType string) bool {
 // before the ack) flows to the acting connection rather than to a co-claimant
 // (dev-server tab + app window, reconnect/re-init races). It reuses register()'s
 // single map + lock — no second registry. It composes with the ownership-guarded
-// unregister (commit 6e2ccfc): once c is installed here, a deposed connection's
-// later death sees h.channels[uuid] != itself and touches neither the channel nor
-// the shadow. No-op — and silent — when c already owns uuid.
+// unregister: once c is installed here, a deposed connection's later death sees
+// h.channels[uuid] != itself and touches neither the channel nor the shadow.
+// No-op — and silent — when c already owns uuid.
 func (h *WsHandler) claimOnWrite(uuid string, c *wsConn) {
 	h.channelsMu.Lock()
 	deposed := h.channels[uuid] != nil && h.channels[uuid] != c
@@ -120,25 +174,118 @@ func (h *WsHandler) sendTo(uuid string, v interface{}) {
 	}
 }
 
-// sessionChannelKey is the reserved workspace channel — the session command
-// plane's seed (#55). It lives in the SAME channels map as the per-uuid doc
-// channels so sendTo() is the one render-back path; the sentinel can never
-// collide with a real uuid. No shadow, no claim-on-write: commands are
-// workspace traffic, not doc mutations.
-const sessionChannelKey = "__session__"
+// workspaceChannelKey is the reserved workspace channel's key. It lives in the
+// SAME channels map as the per-uuid document channels so sendTo() is the one
+// render-back path; the sentinel can never collide with a real uuid. No shadow,
+// no claim-on-write: workspace traffic is not a document mutation.
+const workspaceChannelKey = "__workspace__"
 
+// RegisterPaths mounts the two wires. Each has its own path, so which wire a
+// dial asks for is decided by chi before the upgrade rather than by inspecting
+// the query string afterwards.
 func (h *WsHandler) RegisterPaths(r chi.Router) {
-	r.Get("/api/ws", h.handleWS)
+	r.Get("/api/ws/document/{uuid}", h.handleDocumentWS)
+	r.Get("/api/ws/workspace", h.handleWorkspaceWS)
 }
 
-func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
-	sess := r.URL.Query().Get("session")
-	if sess == "1" || sess == "true" {
-		h.handleSessionWS(w, r)
+// wsWriteTimeout bounds every socket write. WorkspaceBroadcast.Send walks its
+// connection set and writes to each SEQUENTIALLY, from a JobEngine pool worker
+// or the fs-watcher goroutine (job transitions, notes/library invalidation) —
+// and /api/ws/workspace is reachable through the loopback bridge. With no
+// deadline, one peer that stops reading (a full TCP send buffer) blocks that
+// write forever, which blocks the rest of the fan-out AND parks the caller. A
+// peer that cannot take a frame within wsWriteTimeout is gone: failing its
+// connection beats parking a job worker or the watcher indefinitely. A var,
+// not a const, so a test can shrink it to force the timeout deterministically.
+var wsWriteTimeout = 5 * time.Second
+
+// writerFor returns conn's write func. gorilla/websocket allows one concurrent
+// writer, so every writer — the debounce goroutine, the read loop, a job
+// finishing — goes through this one mutex.
+func (h *WsHandler) writerFor(conn *websocket.Conn, channel protocol.Channel, uuid string) func(interface{}) {
+	var mu sync.Mutex
+	return func(v interface{}) {
+		data, err := json.Marshal(v)
+		if err != nil {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		_ = conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			logger.Debug("ws: write failed", "channel", channel, "uuid", uuid, "err", err)
+		}
+	}
+}
+
+// readLoop pumps one connection until it dies, dispatching every frame it reads.
+func (h *WsHandler) readLoop(conn *websocket.Conn, channel protocol.Channel, handlers map[string]frameHandler, c *wsConn, uuid string) {
+	for {
+		_, raw, err := conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		var msg struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			continue
+		}
+
+		// Claim-on-write: a mutating frame is evidence THIS connection is the one a
+		// human is editing through, so it re-registers as uuid's listener BEFORE the
+		// op runs — the op's synchronous render-back then lands here, not on a
+		// co-claimant that happened to register last. Reads/heartbeats never claim,
+		// and the workspace channel owns no document to claim.
+		if channel == protocol.ChannelDocument && h.isMutating(msg.Type) {
+			h.claimOnWrite(uuid, c)
+		}
+
+		h.dispatch(channel, handlers, msg.Type, inboundFrame{conn: c, uuid: uuid, raw: raw})
+	}
+}
+
+// dispatch routes one frame to its handler. The registry is the gate: a type
+// word it does not carry on THIS channel never reaches a handler, which refuses
+// a workspace frame arriving on a document socket for free.
+//
+// A refusal is an ANSWER, because a client given silence waits forever on a
+// reply that is never coming. The two refusals are worded apart on purpose:
+// "I don't know that word" and "I know it but serve nothing for it yet" are
+// different problems for whoever reads the log.
+func (h *WsHandler) dispatch(channel protocol.Channel, handlers map[string]frameHandler, frameType string, f inboundFrame) {
+	if entry, known := h.registry.Frame(channel, frameType); !known || entry.Direction != protocol.Inbound {
+		logger.Warn("ws: unknown inbound frame type", "channel", channel, "type", frameType, "uuid", f.uuid)
+		f.reply(protocol.NewErrorFrame(fmt.Sprintf("unknown %s frame type %q", channel, frameType)))
 		return
 	}
+	handler, served := handlers[frameType]
+	if !served {
+		logger.Warn("ws: registered frame type has no handler", "channel", channel, "type", frameType, "uuid", f.uuid)
+		f.reply(protocol.NewErrorFrame(fmt.Sprintf("%s frame %q is not handled yet", channel, frameType)))
+		return
+	}
+	handler(f)
+}
 
-	uuid := r.URL.Query().Get("uuid")
+// errCorrelationless is why a well-formed correlated frame is still unservable:
+// its answer would have nowhere to go, and the client is waiting for one.
+var errCorrelationless = errors.New("no correlation id")
+
+// refuse answers a frame the handler could not read. It is dispatch's third
+// refusal — "I know the word and serve it, but THIS payload is not one" — and it
+// replies on the arriving connection for the same reason the other two do:
+// silence leaves a client waiting forever on an answer that is never coming, and
+// a dropped mutation looks exactly like a slow one. It goes back on f.conn
+// rather than through replyTo because a refusal is immediate, so the requester
+// is by definition still there.
+func (h *WsHandler) refuse(f inboundFrame, frameType string, err error) {
+	logger.Warn("ws: unreadable frame payload", "type", frameType, "uuid", f.uuid, "err", err)
+	f.reply(protocol.NewErrorFrame(fmt.Sprintf("%s frame is unreadable: %v", frameType, err)))
+}
+
+func (h *WsHandler) handleDocumentWS(w http.ResponseWriter, r *http.Request) {
+	uuid := chi.URLParam(r, "uuid")
 	if uuid == "" {
 		http.Error(w, "uuid required", http.StatusBadRequest)
 		return
@@ -155,24 +302,7 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 		h.ServiceProvider.Editor.SetLifecycleListener(h)
 	}
 
-	// gorilla/websocket allows one concurrent writer — protect with a mutex so
-	// the debounce goroutine and the message-loop goroutine don't race.
-	var writeMu sync.Mutex
-	writeMsg := func(v interface{}) {
-		data, err := json.Marshal(v)
-		if err != nil {
-			return
-		}
-		writeMu.Lock()
-		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			logger.Debug("ws: write failed", "uuid", uuid, "err", err)
-		}
-		writeMu.Unlock()
-	}
-
-	notifySaved := func() {
-		writeMsg(map[string]string{"type": "flush-ack", "uuid": uuid})
-	}
+	writeMsg := h.writerFor(conn, protocol.ChannelDocument, uuid)
 
 	logger.Info("ws: connection established", "uuid", uuid)
 
@@ -183,6 +313,7 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 	// the channel closes the shadow. A stale connection whose successor already
 	// registered must not evict the successor's channel or close its shadow.
 	defer func() {
+		ch.closed.Store(true)
 		if h.unregister(uuid, ch) {
 			h.ServiceProvider.Editor.Close(uuid)
 		} else {
@@ -191,174 +322,116 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 		logger.Info("ws: connection closed", "uuid", uuid)
 	}()
 
-	if err := h.ServiceProvider.Editor.Open(uuid, notifySaved); err != nil {
+	if err := h.ServiceProvider.Editor.Open(uuid); err != nil {
 		logger.Warn("ws: could not open shadow", "uuid", uuid, "err", err)
 	}
 
-	for {
-		_, raw, err := conn.ReadMessage()
-		if err != nil {
-			break
-		}
-
-		var msg struct {
-			Type string `json:"type"`
-		}
-		if err := json.Unmarshal(raw, &msg); err != nil {
-			continue
-		}
-
-		// Claim-on-write: a mutating frame is evidence THIS connection is the one a
-		// human is editing through, so it re-registers as uuid's listener BEFORE the
-		// op runs — the op's synchronous render-back then lands here, not on a
-		// co-claimant that happened to register last. Reads/heartbeats never claim.
-		if h.isMutating(msg.Type) {
-			h.claimOnWrite(uuid, ch)
-		}
-
-		switch msg.Type {
-		case "ping":
-			writeMsg(map[string]string{"type": "pong"})
-		case "doc-update":
-			h.handleDocUpdate(uuid, raw)
-		case "flush":
-			h.handleFlush(writeMsg, uuid, raw)
-		case "enter-markdown":
-			h.handleEnterMarkdown(writeMsg, uuid, raw)
-		case "enter-wysiwyg":
-			h.handleEnterWysiwyg(uuid, raw, writeMsg)
-		case "retry-block-job":
-			h.handleRetryBlockJob(uuid, raw, writeMsg)
-		case "extract":
-			h.handleExtract(uuid, raw, writeMsg)
-		case "block-op":
-			h.handleBlockOp(uuid, raw, writeMsg)
-		}
-	}
+	h.readLoop(conn, protocol.ChannelDocument, h.documentFrames, ch, uuid)
 }
 
-// handleBlockOp applies one granular block operation (create/update/delete/move)
-// to the open document's authoritative block tree.
-func (h *WsHandler) handleBlockOp(uuid string, raw []byte, writeMsg func(interface{})) {
-	var msg struct {
-		// OpID is the client-minted request correlation handle (issue #49 Phase 2).
-		// It rides the OUTER envelope beside uuid — NOT inside BlockOp, which
-		// describes the mutation, not the request. Absent → no ack (compat).
-		OpID string        `json:"opId"`
-		Op   block.BlockOp `json:"op"`
-	}
-	if err := json.Unmarshal(raw, &msg); err != nil {
-		logger.Warn("ws: block-op decode failed", "uuid", uuid, "err", err)
+func (h *WsHandler) handleWorkspaceWS(w http.ResponseWriter, r *http.Request) {
+	conn, err := h.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		logger.Warn("ws: workspace upgrade failed", "err", err)
 		return
 	}
-	// Render-backs (insert-block / replace-block / block-attrs-updated) fire
-	// SYNCHRONOUSLY inside HandleBlockOp via the lifecycle listener, so the ack
-	// emitted after this call is strictly AFTER its render-back on the same socket.
-	err := h.ServiceProvider.Editor.HandleBlockOp(uuid, msg.Op)
+	defer conn.Close()
+
+	logger.Info("ws: workspace channel connected")
+
+	ch := &wsConn{write: h.writerFor(conn, protocol.ChannelWorkspace, "")}
+	h.register(workspaceChannelKey, ch)
+	h.broadcast.join(ch)
+	defer func() {
+		ch.closed.Store(true)
+		h.broadcast.leave(ch)
+		h.unregister(workspaceChannelKey, ch)
+		logger.Info("ws: workspace channel closed")
+	}()
+
+	// The job snapshot is PUSHED and nothing polls for it, so a socket is handed
+	// the current one before it reads anything: a client that connected after the
+	// last transition would otherwise show an empty status bar until the next.
+	ch.write(h.broadcast.jobsFrame())
+
+	h.readLoop(conn, protocol.ChannelWorkspace, h.workspaceFrames, ch, "")
+}
+
+// handlePing answers the liveness probe on either wire.
+func (h *WsHandler) handlePing(f inboundFrame) {
+	f.reply(protocol.NewPongFrame())
+}
+
+func (h *WsHandler) handleBlockOp(f inboundFrame) {
+	var msg protocol.BlockOpFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeBlockOp, err)
+		return
+	}
+	err := h.ServiceProvider.Editor.HandleBlockOp(f.uuid, msg.Op)
 	if err != nil {
-		logger.Warn("ws: block-op failed", "uuid", uuid, "op", msg.Op.Type, "block", msg.Op.BlockID, "err", err)
-		// The generic error frame is UNCHANGED (the pre-existing error path); the
-		// ack below carries the opId-correlated outcome.
-		writeMsg(map[string]interface{}{
-			"type":    "error",
-			"message": fmt.Sprintf("block-op %s failed: %v", msg.Op.Type, err),
-		})
+		logger.Warn("ws: block-op failed", "uuid", f.uuid, "op", msg.Op.Type, "block", msg.Op.BlockID, "err", err)
+		f.reply(protocol.NewErrorFrame(fmt.Sprintf("block-op %s failed: %v", msg.Op.Type, err)))
 	}
 	if msg.OpID != "" {
-		writeMsg(h.ackFrame("block-op-ack", msg.OpID, err))
+		f.reply(protocol.NewBlockOpAckFrame(msg.OpID, err))
 	}
 }
 
-// ackFrame builds a request-correlated ack ({type, opId, ok, error?}). A nil err
-// is ok:true; a non-nil err is ok:false plus its message. The block-op / extract
-// ack contract (issue #49 Phase 2): the ack IS the opId carrier, emitted after
-// the operation (and thus after any synchronous render-back).
-func (h *WsHandler) ackFrame(ackType, opID string, err error) map[string]interface{} {
-	ack := map[string]interface{}{"type": ackType, "opId": opID, "ok": err == nil}
-	if err != nil {
-		ack["error"] = err.Error()
-	}
-	return ack
-}
-
-// requestOpID reads the optional client-minted opId off a request envelope
-// (issue #49 Phase 2). Present only on reply-expecting frames; absent for
-// fire-and-forget frames (doc-update, retry, ping), whose replies carry no opId
-// and behave exactly as before.
-func (h *WsHandler) requestOpID(raw []byte) string {
-	var m struct {
-		OpID string `json:"opId"`
-	}
-	_ = json.Unmarshal(raw, &m)
-	return m.OpID
-}
-
-func (h *WsHandler) handleDocUpdate(uuid string, raw []byte) {
-	var msg struct {
-		Markdown string `json:"markdown"`
-	}
-	if err := json.Unmarshal(raw, &msg); err != nil {
+func (h *WsHandler) handleDocUpdate(f inboundFrame) {
+	var msg protocol.DocUpdateFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeDocUpdate, err)
 		return
 	}
-	h.ServiceProvider.Editor.UpdateMarkdown(uuid, msg.Markdown)
+	h.ServiceProvider.Editor.UpdateMarkdown(f.uuid, msg.Markdown)
 }
 
-// handleFlush is the REQUEST-correlated flush (echoes the request's opId, when
-// present). The unsolicited background flush-ack (notifySaved) is a separate path
-// with no request and thus no opId — it stays untouched.
-func (h *WsHandler) handleFlush(writeMsg func(interface{}), uuid string, raw []byte) {
-	_ = h.ServiceProvider.Editor.Flush(uuid)
-	ack := map[string]string{"type": "flush-ack", "uuid": uuid}
-	if opID := h.requestOpID(raw); opID != "" {
-		ack["opId"] = opID
-	}
-	writeMsg(ack)
+// handleFlush persists and answers nothing. The envelope is never decoded —
+// there is nothing under the type word to read, so a malformed one still
+// flushes, which is the whole point: persistence must not depend on the shape of
+// the request asking for it. A successful write announces itself to the whole
+// workspace as container-saved (EditorService's save chokepoint), so the
+// requester hears the news the same way every other client does.
+func (h *WsHandler) handleFlush(f inboundFrame) {
+	_ = h.ServiceProvider.Editor.Flush(f.uuid)
 }
 
-// handleEnterMarkdown embeds current block state into Markdown, sets mode = markdown,
-// and returns merged content to JS as the seed for the markdown editor. Echoes the
-// request's opId on the markdown-content reply when present (issue #49 Phase 2).
-func (h *WsHandler) handleEnterMarkdown(writeMsg func(interface{}), uuid string, raw []byte) {
-	merged := h.ServiceProvider.Editor.EnterMarkdown(uuid)
-	h.persistTabMode(uuid, "markdown")
-	reply := map[string]string{
-		"type":     "markdown-content",
-		"uuid":     uuid,
-		"markdown": merged,
+func (h *WsHandler) handleEnterMarkdown(f inboundFrame) {
+	var msg protocol.EnterMarkdownFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeEnterMarkdown, err)
+		return
 	}
-	if opID := h.requestOpID(raw); opID != "" {
-		reply["opId"] = opID
+	merged := h.ServiceProvider.Editor.EnterMarkdown(f.uuid)
+	h.persistTabMode(f.uuid, "markdown")
+	reply := protocol.NewMarkdownContentFrame(f.uuid, merged)
+	if msg.OpID != "" {
+		reply = reply.WithOpID(msg.OpID)
 	}
-	writeMsg(reply)
+	f.reply(reply)
 }
 
-// handleEnterWysiwyg picks up the latest markdown (the frontend's textarea value,
-// since a pending doc-update may not have flushed), re-parses shadow.Doc from it,
-// sets mode = wysiwyg, and returns the reparsed blocks so JS can render the
-// WYSIWYG editor immediately — symmetric to handleEnterMarkdown returning
-// markdown-content. Without the blocks the editor mounts empty until a tab switch
-// reloads via /api/editor/load.
-func (h *WsHandler) handleEnterWysiwyg(uuid string, raw []byte, writeMsg func(interface{})) {
-	// A pointer distinguishes "no markdown field" (other callers) from an
-	// intentionally-empty doc; only adopt the markdown when the field is present.
-	var msg struct {
-		Markdown *string `json:"markdown"`
+// handleEnterWysiwyg re-parses the shadow from the markdown the client holds,
+// sets mode = wysiwyg, and returns the reparsed blocks so JS can render
+// immediately — symmetric to handleEnterMarkdown returning markdown-content.
+func (h *WsHandler) handleEnterWysiwyg(f inboundFrame) {
+	var msg protocol.EnterWysiwygFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeEnterWysiwyg, err)
+		return
 	}
-	if err := json.Unmarshal(raw, &msg); err == nil && msg.Markdown != nil {
-		h.ServiceProvider.Editor.UpdateMarkdown(uuid, *msg.Markdown)
+	if msg.Markdown != nil {
+		h.ServiceProvider.Editor.UpdateMarkdown(f.uuid, *msg.Markdown)
 	}
-	h.ServiceProvider.Editor.EnterWysiwyg(uuid)
-	h.persistTabMode(uuid, "wysiwyg")
-	if blocks, ok := h.ServiceProvider.Editor.FrontendBlocks(uuid); ok {
-		reply := map[string]interface{}{
-			"type":   "wysiwyg-content",
-			"uuid":   uuid,
-			"blocks": blocks,
+	h.ServiceProvider.Editor.EnterWysiwyg(f.uuid)
+	h.persistTabMode(f.uuid, "wysiwyg")
+	if blocks, ok := h.ServiceProvider.Editor.FrontendBlocks(f.uuid); ok {
+		reply := protocol.NewWysiwygContentFrame(f.uuid, blocks)
+		if msg.OpID != "" {
+			reply = reply.WithOpID(msg.OpID)
 		}
-		if opID := h.requestOpID(raw); opID != "" {
-			reply["opId"] = opID
-		}
-		writeMsg(reply)
+		f.reply(reply)
 	}
 }
 
@@ -377,17 +450,20 @@ func (h *WsHandler) persistTabMode(uuid, mode string) {
 	_ = h.ServiceProvider.State.SaveSession(session)
 }
 
-func (h *WsHandler) handleRetryBlockJob(uuid string, raw []byte, writeMsg func(interface{})) {
-	var msg struct {
-		ID string `json:"id"`
+func (h *WsHandler) handleRetryBlockJob(f inboundFrame) {
+	var msg protocol.RetryBlockJobFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeRetryBlockJob, err)
+		return
 	}
-	if err := json.Unmarshal(raw, &msg); err != nil || msg.ID == "" {
+	if msg.ID == "" {
+		h.refuse(f, protocol.TypeRetryBlockJob, errors.New("no block id"))
 		return
 	}
 	// Reset both status and createdAt. The DISPATCHED notifyBlockUpdated that fires
 	// immediately will carry the fresh createdAt, so the frontend's isJobStale()
 	// won't fire and re-show "interrupted" instead of the spinner.
-	h.ServiceProvider.Editor.UpdateBlock(uuid, block.SieveBlock{
+	h.ServiceProvider.Editor.UpdateBlock(f.uuid, block.SieveBlock{
 		ID: msg.ID,
 		Attrs: map[string]interface{}{
 			"status":    block.BlockStatusPending,
@@ -395,229 +471,231 @@ func (h *WsHandler) handleRetryBlockJob(uuid string, raw []byte, writeMsg func(i
 			"error":     "",
 		},
 	})
-	h.ServiceProvider.Editor.DispatchJobIfNeeded(uuid, msg.ID)
+	h.ServiceProvider.Editor.DispatchJobIfNeeded(f.uuid, msg.ID)
 }
 
 // OnBlockCreated implements sieve.BlockLifecycleListener.
 func (h *WsHandler) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int, token string) {
-	h.sendTo(uuid, map[string]interface{}{
-		"type":     "insert-block",
-		"kind":     kind,
-		"id":       blockID,
-		"attrs":    attrs,
-		"index":    index,    // document position for the render-back insert
-		"markdown": markdown, // markdown-mode buffer only; WYSIWYG renders from attrs
-		"token":    token,    // transient correlation handle echoed for the pending-prose swap
-	})
+	h.sendTo(uuid, protocol.NewInsertBlockFrame(kind, blockID, attrs, index, markdown, token))
 }
 
 // OnBlockUpdated implements sieve.BlockLifecycleListener.
 func (h *WsHandler) OnBlockUpdated(uuid, blockID string, attrs map[string]interface{}) {
-	h.sendTo(uuid, map[string]interface{}{
-		"type":  "block-attrs-updated",
-		"id":    blockID,
-		"attrs": attrs,
-	})
+	h.sendTo(uuid, protocol.NewBlockAttrsUpdatedFrame(blockID, attrs))
 }
 
 // OnBlockReplaced implements block.BlockLifecycleListener.
 func (h *WsHandler) OnBlockReplaced(uuid, oldID, newKind, newID string, attrs map[string]interface{}, markdown string) {
-	h.sendTo(uuid, map[string]interface{}{
-		"type":    "replace-block",
-		"oldId":   oldID,
-		"newId":   newID,
-		"newKind": newKind,
-		"attrs":   attrs,
-		"newYaml": markdown,
-	})
+	h.sendTo(uuid, protocol.NewReplaceBlockFrame(oldID, newKind, newID, attrs, markdown))
 }
 
-func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interface{})) {
-	var p struct {
-		// OpID rides the OUTER envelope (issue #49 Phase 2), correlating the
-		// request. The transform path had no direct reply before; extract-ack is it.
-		OpID       string               `json:"opId"`
-		BlockID    string               `json:"blockId"`
-		TargetKind string               `json:"targetKind"`
-		Operation  string               `json:"operation"`
-		Entries    []block.ContentEntry `json:"entries"`
-		Index      int                  `json:"index"`
-	}
-	p.Index = -1 // default: append when the frontend doesn't specify a position
-	if err := json.Unmarshal(raw, &p); err != nil {
-		logger.Warn("ws: bad extract payload", "err", err)
+// Either way the created block reaches the client as a render-back
+// (insert-block, or replace-block for a transform); the ack only reports the
+// outcome.
+func (h *WsHandler) handleExtract(f inboundFrame) {
+	var p protocol.ExtractFrame
+	if err := json.Unmarshal(f.raw, &p); err != nil {
+		h.refuse(f, protocol.TypeExtract, err)
 		return
 	}
 
-	action := block.Action(p.Operation)
+	action := p.Operation
 	if action == "" {
-		action = block.ActionExtract // back-compat default: additive
+		action = block.ActionExtract
 	}
 
-	newID, rawYaml, err := h.ServiceProvider.Editor.CreateBlockFromEntries(
-		uuid, p.TargetKind, p.Entries, p.Index, action, p.BlockID)
+	_, _, err := h.ServiceProvider.Editor.CreateBlockFromEntries(
+		f.uuid, p.TargetKind, p.Entries, p.Index, action, p.BlockID)
 	if err != nil {
 		logger.Warn("ws: extract block failed", "err", err)
-		// Generic error frame UNCHANGED; the extract-ack below carries the opId.
-		writeMsg(map[string]interface{}{
-			"type":    "error",
-			"message": fmt.Sprintf("Failed to extract block: %v", err),
-		})
-		if p.OpID != "" {
-			writeMsg(h.ackFrame("extract-ack", p.OpID, err))
-		}
-		return
-	}
-
-	// TRANSFORM replaces in place — its render-back goes out via OnBlockReplaced
-	// ("replace-block"). Only the additive ops (paste/extract) need this caller hint
-	// to swap their local placeholder for the newly created block.
-	if action != block.ActionTransform {
-		writeMsg(map[string]interface{}{
-			"type":       "block-extracted",
-			"originalId": p.BlockID,
-			"newId":      newID,
-			"newKind":    p.TargetKind,
-			"newYaml":    rawYaml,
-		})
+		f.reply(protocol.NewErrorFrame(fmt.Sprintf("Failed to extract block: %v", err)))
 	}
 	if p.OpID != "" {
-		writeMsg(h.ackFrame("extract-ack", p.OpID, nil))
+		f.reply(protocol.NewExtractAckFrame(p.OpID, err))
 	}
 }
 
-func (h *WsHandler) handleSessionWS(w http.ResponseWriter, r *http.Request) {
-	conn, err := h.upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		logger.Warn("ws: session upgrade failed", "err", err)
+// handleLoad answers with the document this channel is bound to. Finding
+// nothing is an ANSWER too — empty content, which the client mounts as an empty
+// document — because the editor is already on screen waiting for one.
+func (h *WsHandler) handleLoad(f inboundFrame) {
+	var msg protocol.LoadFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeLoad, err)
 		return
 	}
-	defer conn.Close()
 
-	var writeMu sync.Mutex
-	writeMsg := func(v interface{}) {
-		data, err := json.Marshal(v)
-		if err != nil {
-			return
-		}
-		writeMu.Lock()
-		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			logger.Debug("ws: session write failed", "err", err)
-		}
-		writeMu.Unlock()
+	content, found := documentContent{sp: h.ServiceProvider}.read(f.uuid)
+	if !found {
+		content = protocol.DocumentContent{Mode: "wysiwyg"}
 	}
-
-	logger.Info("ws: session channel connected")
-
-	ch := &wsConn{write: writeMsg}
-	h.register(sessionChannelKey, ch)
-	defer func() {
-		ch.closed.Store(true)
-		h.unregister(sessionChannelKey, ch)
-		logger.Info("ws: session channel closed")
-	}()
-
-	for {
-		_, raw, err := conn.ReadMessage()
-		if err != nil {
-			break
-		}
-		var msg struct {
-			Type string `json:"type"`
-		}
-		if err := json.Unmarshal(raw, &msg); err != nil {
-			continue
-		}
-		switch msg.Type {
-		case "ping":
-			writeMsg(map[string]string{"type": "pong"})
-		case "command":
-			h.handleCommand(ch, raw)
-		case "command-cancel":
-			h.handleCommandCancel(raw)
-		case "mention-query":
-			h.handleMentionQuery(ch, raw)
-		case "mention-resolve":
-			h.handleMentionResolve(ch, raw)
-		}
+	reply := protocol.NewLoadContentFrame(content)
+	if msg.OpID != "" {
+		reply = reply.WithOpID(msg.OpID)
 	}
+	f.reply(reply)
 }
 
-type commandEnvelope struct {
-	Family string `json:"family"`
-	Cmd    string `json:"cmd"`
-	Args   struct {
-		Text string `json:"text"`
-	} `json:"args"`
-	CorrelationID string          `json:"correlationId"`
-	Context       json.RawMessage `json:"context"`
-	// Attachments ride EVERY command, not just the AI family. `@` is a composer
-	// affordance and the composer is the same textarea that dispatches `/`
-	// commands, so the wire carries them unconditionally; what a backend does
-	// with them is that backend's problem. They are a SIBLING of Context, never
-	// part of it: Context is lens-authored, these are composer-authored.
-	Attachments []domain.Attachment `json:"attachments"`
+// handlePaste hands a clipboard to the block registry to make sense of. Either
+// kind's created blocks arrive as insert-block render-backs — the authoritative
+// render signal — so the ack reports only what happened.
+func (h *WsHandler) handlePaste(f inboundFrame) {
+	var msg protocol.PasteFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypePaste, err)
+		return
+	}
+
+	if msg.Kind == protocol.PasteKindSlice {
+		if _, err := h.ServiceProvider.Editor.HandlePasteSlice(f.uuid, msg.Slice, msg.Index); err != nil {
+			logger.Warn("ws: paste slice failed", "uuid", f.uuid, "err", err)
+			f.reply(protocol.NewPasteFailedFrame(msg.OpID, err))
+			return
+		}
+		// A slice reconstruction creates several blocks and names none of them: the
+		// outcome alone says the server took the clipboard, and the empty identity
+		// is the point — there is no single block for a caret to be consumed
+		// against.
+		f.reply(protocol.NewPasteAckFrame(msg.OpID, block.PasteBlock("", "", "")))
+		return
+	}
+
+	f.reply(protocol.NewPasteAckFrame(msg.OpID,
+		h.ServiceProvider.Editor.HandlePaste(f.uuid, msg.Entries, msg.Index)))
+}
+
+// handleDetectExtractions answers which kinds would accept a selection. It
+// creates nothing, so it claims no listener ownership.
+func (h *WsHandler) handleDetectExtractions(f inboundFrame) {
+	var msg protocol.DetectExtractionsFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeDetectExtractions, err)
+		return
+	}
+	f.reply(protocol.NewDetectExtractionsResultFrame(msg.OpID,
+		block.DetectExtractions(msg.SourceKind, msg.Entries)))
+}
+
+// handleExport serves clean whole-document markdown. THIS handler owns the
+// exclusion policy — the closure dropping ai-blocks, because prior Q&A is
+// conversation rather than document content; another caller may filter
+// differently.
+func (h *WsHandler) handleExport(f inboundFrame) {
+	var msg protocol.ExportFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeExport, err)
+		return
+	}
+	format := msg.Format
+	if format == "" {
+		format = "markdown"
+	}
+	if format != "markdown" {
+		f.reply(protocol.NewErrorFrame(fmt.Sprintf("unsupported export format %q", format)))
+		return
+	}
+	md, err := h.ServiceProvider.Editor.ExportMarkdown(f.uuid,
+		func(b block.SieveBlock) bool { return b.Kind != "ai-block" })
+	if err != nil {
+		f.reply(protocol.NewErrorFrame(fmt.Sprintf("export failed: %v", err)))
+		return
+	}
+	f.reply(protocol.NewExportContentFrame(msg.OpID, format, md))
+}
+
+// handleFocus records that the user is dwelling on this document. It answers
+// nothing: the count is read from the meta panel, never from this frame.
+func (h *WsHandler) handleFocus(f inboundFrame) {
+	doc, err := h.ServiceProvider.Documents.LoadByUUID(f.uuid)
+	if err != nil {
+		logger.Debug("ws: focus for an unknown document", "uuid", f.uuid, "err", err)
+		return
+	}
+	h.ServiceProvider.Documents.IncrementFocusCount(doc)
+}
+
+// handleSessionScroll persists one tab's scroll offset. It lives on the
+// workspace wire because the tab it names may be any tab, open document or not,
+// and a SERVED frame answers nothing: this is caret-class state, so there is no
+// shared UI change to broadcast. A tab closed mid-flight is a harmless no-op —
+// but a frame that could not be read at all is refused out loud, like every
+// other unservable frame.
+func (h *WsHandler) handleSessionScroll(f inboundFrame) {
+	var msg protocol.SessionScrollFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeSessionScroll, err)
+		return
+	}
+	if msg.ID == "" {
+		h.refuse(f, protocol.TypeSessionScroll, errors.New("no tab id"))
+		return
+	}
+	if h.ServiceProvider.State == nil {
+		return
+	}
+	session := h.ServiceProvider.State.LoadSession()
+	for i, t := range session.Tabs {
+		if t.ID == msg.ID {
+			session.Tabs[i].Scroll = msg.Scroll
+			_ = h.ServiceProvider.State.SaveSession(session)
+			return
+		}
+	}
 }
 
 // replyTo sends a correlated reply REQUESTER-AFFINELY, per the ownership rule
-// (acks→requester, render-backs→registered owner). Every correlated session
+// (acks→requester, render-backs→registered owner). Every correlated workspace
 // reply is ack-shaped, so it goes back on the socket the request arrived on: the
-// registered __session__ owner may have changed since (a dev-server tab
+// registered workspace owner may have changed since (a dev-server tab
 // registering beside the app window silently deposes it — that stole two live
 // /btw answers on 2026-07-26). Only when the requester is gone (reconnect) does
-// it fall back to the current session owner, so a long-running reply still lands
-// somewhere useful.
+// it fall back to the current workspace owner, so a long-running reply still
+// lands somewhere useful.
 //
-// EVERY session-frame handler must reply through here. Reaching for
-// sendTo(sessionChannelKey) directly is precisely the bug.
+// EVERY workspace-frame handler must reply through here. Reaching for
+// sendTo(workspaceChannelKey) directly is precisely the bug.
 func (h *WsHandler) replyTo(requester *wsConn, frame interface{}) {
 	if requester != nil && !requester.closed.Load() {
 		requester.write(frame)
 		return
 	}
-	h.sendTo(sessionChannelKey, frame)
+	h.sendTo(workspaceChannelKey, frame)
 }
 
 // handleCommand dispatches a command frame, replying requester-affinely.
-func (h *WsHandler) handleCommand(requester *wsConn, raw []byte) {
-	var env commandEnvelope
-	if err := json.Unmarshal(raw, &env); err != nil || env.CorrelationID == "" {
+func (h *WsHandler) handleCommand(f inboundFrame) {
+	var env protocol.CommandFrame
+	if err := json.Unmarshal(f.raw, &env); err != nil {
+		h.refuse(f, protocol.TypeCommand, err)
+		return
+	}
+	if env.CorrelationID == "" {
+		h.refuse(f, protocol.TypeCommand, errCorrelationless)
 		return
 	}
 	emit := func(o command.Outcome) {
-		frame := map[string]interface{}{
-			"type":          "command-result",
-			"correlationId": env.CorrelationID,
-			"cmd":           env.Cmd,
-			"status":        o.Status,
-		}
+		frame := protocol.NewCommandResultFrame(env.CorrelationID, env.Cmd, o.Status)
 		if o.Block != nil {
-			frame["block"] = map[string]interface{}{"kind": o.Block.Kind, "attrs": o.Block.Attrs}
+			frame = frame.WithBlock(o.Block.Kind, o.Block.Attrs)
 		}
 		if o.Err != "" {
-			frame["error"] = o.Err
+			frame = frame.WithError(o.Err)
 		}
-		h.replyTo(requester, frame)
+		h.replyTo(f.conn, frame)
 	}
 	reg := h.ServiceProvider.Commands
 	if reg == nil {
 		emit(command.Outcome{Status: command.StatusError, Err: "commands unavailable"})
 		return
 	}
-	// Family is passed as an INTEGRITY expectation, not a policy gate: Dispatch
-	// validates it against the registered command's declared Family() and emits
-	// an ERROR on mismatch. An empty family skips the check (tolerant floor).
-	//
-	// The Context is assembled HERE, at the wire edge, from BOTH of the
-	// envelope's context-bearing fields — the lens-authored `context` JSON and
-	// the composer-authored `attachments` list.
+	// The Context is assembled HERE, at the wire edge, from BOTH of the envelope's
+	// context-bearing fields — the lens-authored `context` JSON and the
+	// composer-authored `attachments` list.
 	reg.Dispatch(env.Cmd, env.Family, env.Args.Text,
 		command.NewContext(env.Context, env.Attachments), env.CorrelationID, emit)
 }
 
-// Mention query budget. The limit is client-supplied, so it is floored (an
-// absent limit is still a useful query) and capped (an unbounded limit is an
-// unbounded library scan on the UI's own socket).
+// The client-supplied mention limit is floored and capped to these.
 const (
 	mentionDefaultLimit = 8
 	mentionMaxLimit     = 25
@@ -625,22 +703,14 @@ const (
 
 // handleMentionQuery answers the `@`-picker's typeahead from the Router's
 // enumeration face.
-//
-// It is a SIBLING FRAME TYPE, not a command: a typeahead needs a sub-100ms
-// answer with no JobEngine job, no worker pool and no result block, none of
-// which the command envelope's PENDING/COMPLETE lifecycle can give it. It rides
-// the same session socket because two sockets on one session is the shape that
-// produced silent-dead-UI on document channels (6e2ccfc).
-//
-// A mention-result is correlated and therefore ack-shaped: it replies through
-// replyTo, so a second tab cannot silently steal this tab's typeahead.
-func (h *WsHandler) handleMentionQuery(requester *wsConn, raw []byte) {
-	var msg struct {
-		Q             string `json:"q"`
-		Limit         int    `json:"limit"`
-		CorrelationID string `json:"correlationId"`
+func (h *WsHandler) handleMentionQuery(f inboundFrame) {
+	var msg protocol.MentionQueryFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeMentionQuery, err)
+		return
 	}
-	if err := json.Unmarshal(raw, &msg); err != nil || msg.CorrelationID == "" {
+	if msg.CorrelationID == "" {
+		h.refuse(f, protocol.TypeMentionQuery, errCorrelationless)
 		return
 	}
 	limit := msg.Limit
@@ -651,65 +721,31 @@ func (h *WsHandler) handleMentionQuery(requester *wsConn, raw []byte) {
 		limit = mentionMaxLimit
 	}
 
-	// Never null: the picker renders a list, and a null is an undefined-length
-	// crash rather than "no matches".
-	candidates := []domain.Candidate{}
+	var candidates []domain.Candidate
 	if h.ServiceProvider.Nodes != nil {
-		candidates = append(candidates, h.ServiceProvider.Nodes.Search(msg.Q, limit)...)
+		candidates = h.ServiceProvider.Nodes.Search(msg.Q, limit)
 	}
-	h.replyTo(requester, map[string]interface{}{
-		"type":          "mention-result",
-		"correlationId": msg.CorrelationID,
-		"candidates":    candidates,
-	})
+	h.replyTo(f.conn, protocol.NewMentionResultFrame(msg.CorrelationID, candidates))
 }
 
 // handleMentionResolve answers "where does this coordinate open?" from the
 // Router's navigation face — the sibling of handleMentionQuery's enumeration.
-//
-// IT EXISTS SO THE FRONTEND HOLDS COORDINATES AS OPAQUE STRINGS. The click on an
-// attachment chip used to decode `container:{uuid}` in JavaScript, which is a
-// second implementation of a grammar Go owns (#75) and fails SILENTLY on every
-// form it does not know: a `block:{container}/{handle}` address fell through the
-// guard and the chip did nothing, with no error anywhere. So the reply carries
-// what JS can ACT on — a uuid to open, a block id to reveal — and never anything
-// it would have to parse.
-//
-// An unresolvable address is an ANSWER (found:false + a reason), not a dropped
-// frame: a request with no reply is the same silence in a slower costume. Like
-// mention-result this is correlated and therefore ack-shaped, so it replies
-// through replyTo — requester-affinely.
-func (h *WsHandler) handleMentionResolve(requester *wsConn, raw []byte) {
-	var msg struct {
-		URI           string `json:"uri"`
-		CorrelationID string `json:"correlationId"`
-	}
-	if err := json.Unmarshal(raw, &msg); err != nil || msg.CorrelationID == "" {
+func (h *WsHandler) handleMentionResolve(f inboundFrame) {
+	var msg protocol.MentionResolveFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeMentionResolve, err)
 		return
 	}
-	// Every key is present in every reply, resolvable or not: a consumer reading
-	// `frame.uuid` must never have to tell "absent" from "empty".
-	frame := map[string]interface{}{
-		"type":          "mention-resolved",
-		"correlationId": msg.CorrelationID,
-		"uri":           msg.URI,
-		"found":         false,
-		"uuid":          "",
-		"blockId":       "",
-		"kind":          "",
-		"title":         "",
+	if msg.CorrelationID == "" {
+		h.refuse(f, protocol.TypeMentionResolve, errCorrelationless)
+		return
 	}
-	switch target, err := h.resolveTarget(msg.URI); {
-	case err != nil:
-		frame["error"] = err.Error()
-	default:
-		frame["found"] = true
-		frame["uuid"] = target.UUID
-		frame["blockId"] = target.BlockID
-		frame["kind"] = target.Kind
-		frame["title"] = target.Title
+	target, err := h.resolveTarget(msg.URI)
+	if err != nil {
+		h.replyTo(f.conn, protocol.NewMentionUnresolvedFrame(msg.CorrelationID, msg.URI, err))
+		return
 	}
-	h.replyTo(requester, frame)
+	h.replyTo(f.conn, protocol.NewMentionResolvedFrame(msg.CorrelationID, msg.URI, target))
 }
 
 // resolveTarget asks the Router where an address opens, treating an unwired
@@ -722,11 +758,14 @@ func (h *WsHandler) resolveTarget(uri string) (domain.OpenTarget, error) {
 	return h.ServiceProvider.Nodes.Target(uri)
 }
 
-func (h *WsHandler) handleCommandCancel(raw []byte) {
-	var msg struct {
-		CorrelationID string `json:"correlationId"`
+func (h *WsHandler) handleCommandCancel(f inboundFrame) {
+	var msg protocol.CommandCancelFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeCommandCancel, err)
+		return
 	}
-	if err := json.Unmarshal(raw, &msg); err != nil || msg.CorrelationID == "" {
+	if msg.CorrelationID == "" {
+		h.refuse(f, protocol.TypeCommandCancel, errCorrelationless)
 		return
 	}
 	if h.ServiceProvider.Commands != nil {

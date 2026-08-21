@@ -19,7 +19,7 @@ func TestHandlePaste_stampsSmartPaste_onDetectionOnly(t *testing.T) {
 	doc.SetBody([]byte(""))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { waitJobs(t, es, uuid) })
@@ -73,7 +73,7 @@ func newTestEditorServiceWithProseBlock(t *testing.T) (*EditorService, string) {
 	doc.SetBody([]byte(body))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
-	if err := es.Open(uuid, nil); err != nil {
+	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	// Sync the shadow markdown so the tree reflects the body.

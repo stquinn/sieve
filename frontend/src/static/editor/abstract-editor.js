@@ -14,7 +14,7 @@
 // concrete type that wants a live channel declares it at construction
 // (`connect: true` — NoteEditor): the constructor opens the document's channel
 // via documentService.open(uuid, delegate), registering THIS editor as the
-// channel's inbound router (applyServerOp / onFlushAck / onMessage) and index
+// channel's inbound router (applyServerOp / onMessage) and index
 // resolver (resolveInsertIndex — the ONE sanctioned PM-resolution callback).
 // The default is disconnected, so a bare editor (tests, PromptEditor) never
 // touches the network. Verbs on a disconnected editor are safe no-ops (sends)
@@ -51,7 +51,7 @@ import { resolveEntriesForKind } from '../block/sieve-block-extension.js'
  *   case every service-backed verb is a safe no-op.
  * @property {(msg: object) => void} [onServerMessage]
  *   — routing for messages the channel delegate does not consume (error,
- *   block-extracted, unawaited mode replies, …)
+ *   unawaited mode replies, …)
  * @property {object} [mentionService]
  *   — the session plane's `@`-picker tenant (#74 P4), handed down by the same
  *   composition root as documentService so the WYSIWYG surface can host the
@@ -131,6 +131,25 @@ export class AbstractEditor {
   #reloadInProgress = false
 
   /**
+   * The `sieve:container-saved` subscription, kept so destroy() can drop it. A
+   * torn-down editor that stayed subscribed would keep clearing dirty state for
+   * a uuid it no longer presents.
+   * @type {(e: Event) => void}
+   */
+  #onContainerSaved
+
+  /**
+   * The newest document version this editor has evidence of: seeded by the load
+   * that mounted the content, raised by every `container-saved` fact for this
+   * uuid. It is the baseline saveAndSettle compares against, so that a debounce
+   * write already in flight when the caller asked cannot be mistaken for the
+   * caller's own save. 0 means "no version known", which is also what a
+   * container with no version history (every prompt) reports forever.
+   * @type {number}
+   */
+  #version = 0
+
+  /**
    * @param {string}                uuid    — document uuid; the editor's fixed identity
    * @param {AbstractEditorOptions} [options]
    */
@@ -154,16 +173,25 @@ export class AbstractEditor {
       console.warn('[editor] connect declared without a documentService — staying disconnected')
     }
 
+    // The saved-signal, for EVERY editor type — a prompt has no channel and
+    // still gets one, because the fact rides the workspace wire rather than the
+    // document's. Subscribed before any surface mounts so a save that lands
+    // during the initial load is not missed.
+    this.#onContainerSaved = (e) => {
+      const detail = /** @type {CustomEvent} */ (e).detail
+      if (detail && detail.uuid === this.#uuid) this.#markSaved(Number(detail.version) || 0)
+    }
+    document.addEventListener('sieve:container-saved', this.#onContainerSaved)
+
     if (this.#connected && this.#documentService) {
       // Open the document's live channel, registering THIS editor as the
       // channel delegate: server render-back ops route to the active surface
-      // (applyServerOp), flush-ack side effects stay editor-side (#onFlushAck),
-      // everything else goes to the onServerMessage router, and the service's
-      // createBlock resolves indices through resolveInsertIndex (the lens owns
-      // ALL index math; the service only frames).
+      // (applyServerOp), everything else goes to the onServerMessage router,
+      // and the service's createBlock resolves indices through
+      // resolveInsertIndex (the lens owns ALL index math; the service only
+      // frames).
       this.#documentService.open(uuid, {
         applyServerOp: (msg) => this.applyServerOp(msg),
-        onFlushAck: (msg) => this.#onFlushAck(msg),
         onMessage: (msg) => this.#onServerMessage(msg),
         resolveInsertIndex: (afterBlockId) =>
           (afterBlockId != null) ? this.#indexAfterBlock(afterBlockId) : this.insertIndexForBlock(),
@@ -258,8 +286,8 @@ export class AbstractEditor {
    * emit on the editor stream. P4.D: a doc-changed also produces a `stats` event
    * (the retired editor.js dispatchStats — now editor-owned) and marks the document
    * dirty. The retired legacyChromeFanout dispatched sieve:meta-dirty{dirty:true} on
-   * doc-changed; the flush-ack (#handleMessage) dispatches the {dirty:false}
-   * counterpart + clearDirty(). Consumers: StatusBar #onDirty (the meta-dirty-dot +
+   * doc-changed; the container-saved reaction (#markSaved) dispatches the
+   * {dirty:false} counterpart + clearDirty(). Consumers: StatusBar #onDirty (the meta-dirty-dot +
    * status-bar save slot). doc-changed does NOT fire on initial content load, so a
    * freshly loaded document stays green until the first real edit.
    * @param {SurfaceEventMsg} event
@@ -458,19 +486,24 @@ export class AbstractEditor {
       .catch((err) => { console.warn('export-markdown copy failed', err) })
   }
 
-  // ── Channel delegate reactions (inbound routing registered at open) ───────────
+  // ── Saved-signal reaction ────────────────────────────────────────────────────
 
   /**
-   * Flush-ack side effects — the dirty-clear + chrome events, moved verbatim
-   * out of the transport (the service resolves any awaiter AND calls this, so
-   * the effects run for EVERY flush-ack: awaited (flushSave) or side-channel
-   * (EditorService's background notifySaved)).
-   * @param {{uuid?: string}} msg
+   * This document's content reached disk: drop the dirty state and tell the
+   * chrome. It runs for EVERY save — the one the user asked for, the debounce
+   * autosave, a finished job's write — because they are all the same fact, and
+   * the editor never learns which kind it was.
+   *
+   * The version only ever rises. Facts from two writers can arrive out of order
+   * (a job's write and a debounce write are separate goroutines), and adopting
+   * the lower of them would hand saveAndSettle a baseline older than the disk.
+   * @param {number} version the version this save produced, 0 if unversioned
    */
-  #onFlushAck(msg) {
+  #markSaved(version) {
+    if (version > this.#version) this.#version = version
     this.clearDirty()
     document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: false } }))
-    document.dispatchEvent(new CustomEvent('editor:saved', { detail: { uuid: msg.uuid } }))
+    document.dispatchEvent(new CustomEvent('editor:saved', { detail: { uuid: this.#uuid } }))
   }
 
   // ── Raw-content command (the markdown surface's outbound channel) ─────────────
@@ -1077,27 +1110,20 @@ export class AbstractEditor {
     const mode = this.mode
     if (mode !== 'wysiwyg' && mode !== 'markdown') return
     if (mode === 'wysiwyg' && !this.editorPane) return
+    if (!this.documentService) return // no transport: nothing to reload from
     this.#reloadInProgress = true
     // Pull the focus coordinate before the async fetch so caret is preserved
     // across the re-render (TRANSFORM, paste, extract, AI block resolve).
     const fctx = window.sieveWorkspace.getSelectionContext()
     try {
-      // Ride the service boundary when wired (types the wire blocks into
-      // envelopes + seeds the truth-mirror for any restored block ids — e.g. an
-      // editor:restore resurrecting blocks — so their next update routes). The
-      // wysiwyg render pipeline consumes those envelopes. Bare constructions (no
-      // service — degenerate/test only) keep the direct fetch; markdown mode
-      // reads only body, so the untyped blocks never reach the render pipeline.
-      let body, blocks
-      if (this.documentService) {
-        const loaded = await this.documentService.load(this.uuid)
-        body = loaded.body
-        blocks = loaded.blocks
-      } else {
-        const data = await (await fetch('/api/editor/load?uuid=' + encodeURIComponent(this.uuid))).json()
-        body = data.body || ''
-        blocks = data.blocks || []
-      }
+      // The load rides the service boundary, which types the wire blocks into
+      // envelopes and seeds the truth-mirror for any restored block ids (an
+      // editor:restore resurrecting blocks) so their next update routes. There
+      // is deliberately no fetch here for a service-less editor: the service
+      // owns the transport including its channel-less HTTP half, and a second
+      // spelling of the load route here would be a second contract to keep.
+      const { body, blocks, version } = await this.documentService.load(this.uuid)
+      this.seedVersion(version)
       const surface = this.#surface
       if (mode === 'wysiwyg' && this.editorPane && surface) {
         // Wysiwyg renders the backend's AUTHORITATIVE block list (markdown is NOT
@@ -1122,17 +1148,76 @@ export class AbstractEditor {
 
   /**
    * Flushes any pending debounced edit immediately so Go has the latest content
-   * (surface-owned: wysiwyg block-sync / markdown doc-update), then awaits the
-   * service's flush-ack (DocumentService.flush — a channel-less uuid resolves
-   * immediately). PromptEditor overrides this with the service's HTTP save path.
+   * (surface-owned: wysiwyg block-sync / markdown doc-update), then asks Go to
+   * persist. Both halves are FIRE-AND-FORGET: the save answers no request, it
+   * announces itself as `container-saved`, which #markSaved reacts to. The
+   * returned promise is already settled, and exists only so a caller can chain
+   * work after the frames are on the wire — Go serves one socket's frames in
+   * order, so what it sends next runs after this save. PromptEditor overrides
+   * this with the service's HTTP save path, which genuinely is awaited.
    * @returns {Promise<unknown>}
    */
   flushSave() {
     const s = this.#surface
     if (s) s.flushPending()
-    const flushed = this.#documentService ? this.#documentService.flush(this.uuid) : Promise.resolve({})
-    return flushed
-      .catch((err) => { console.warn('[editor] flush timeout, continuing:', err) })
+    if (this.#documentService) this.#documentService.flush(this.uuid)
+    return Promise.resolve()
+  }
+
+  /**
+   * Seeds the version this editor knows its content to be at, from the load that
+   * mounted that content. Without it the FIRST saveAndSettle of an editor's life
+   * has no baseline and would settle on any fact at all, including one for a
+   * write that predates the ask.
+   * @param {number} version 0 for a container that keeps no version history
+   */
+  seedVersion(version) {
+    this.#version = Number(version) || 0
+  }
+
+  /**
+   * Saves, and resolves when the save LANDS — this uuid's `container-saved`
+   * fact, not the request that provoked it. The one caller that needs this is
+   * work performed ELSEWHERE on what is on disk (filing, which rides the
+   * workspace wire): frames on two different sockets have no order between
+   * them, so "I sent a flush" is not "the bytes are down".
+   *
+   * "Lands" means a version NEWER than the one this editor already knew. A
+   * uuid match alone is not enough: a debounce write can already be in flight
+   * when the caller asks, and its fact would settle the wait against bytes that
+   * do not include the edits being flushed here. The one container that cannot
+   * offer that evidence is an unversioned one — a prompt is a plain file with no
+   * metadata, so its facts report version 0 — and for it the uuid is the whole
+   * signal, leaving the in-flight-debounce window open. That window is empty in
+   * practice: a prompt has no shadow and therefore no debounce timer; its only
+   * writer is the HTTP save this very call makes.
+   *
+   * The wait always RESOLVES, never rejects: a save the guard refused announces
+   * nothing, and the caller is better off proceeding late than not at all.
+   * @param {number} [graceMs] how long to wait for the fact before giving up on it
+   * @returns {Promise<void>}
+   */
+  saveAndSettle(graceMs = 3000) {
+    const knownVersion = this.#version
+    const landed = new Promise((resolve) => {
+      /** @type {ReturnType<typeof setTimeout>} */ let timer
+      const finish = () => {
+        clearTimeout(timer)
+        document.removeEventListener('sieve:container-saved', heard)
+        resolve()
+      }
+      const heard = (e) => {
+        const detail = /** @type {CustomEvent} */ (e).detail
+        if (!detail || detail.uuid !== this.#uuid) return
+        if (detail.version && detail.version <= knownVersion) return
+        finish()
+      }
+      timer = setTimeout(finish, graceMs)
+      document.addEventListener('sieve:container-saved', heard)
+    })
+    // Listen BEFORE asking: a loopback save can land inside the same tick.
+    this.flushSave()
+    return landed
   }
 
   // ── Teardown ─────────────────────────────────────────────────────────────────
@@ -1148,6 +1233,7 @@ export class AbstractEditor {
       this.#surface = null
     }
     this.#rootEl = null
+    document.removeEventListener('sieve:container-saved', this.#onContainerSaved)
     if (this.#connected && this.#documentService) this.#documentService.close(this.#uuid)
   }
 }

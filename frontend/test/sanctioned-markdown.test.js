@@ -55,6 +55,24 @@ describe('sanctioned-markdown', () => {
     expect(html).toBe('&lt;script&gt;alert(1)&lt;/script&gt;')
   })
 
+  it('points a relative image src at the store file route, and leaves every other src alone', async () => {
+    const { renderSanctionedMarkdown } = await import('../src/static/block/renderers/sanctioned-markdown.js')
+    // A rendered fill is injected into the app shell, so a relative src would
+    // otherwise be resolved against the shell's own URL and 404.
+    expect(renderSanctionedMarkdown('![d](diagrams/flow.png)'))
+      .toContain('src="/ui/files/diagrams/flow.png"')
+    expect(renderSanctionedMarkdown('![a](/ui/assets/doc-1/pic.png)'))
+      .toContain('src="/ui/assets/doc-1/pic.png"')
+    expect(renderSanctionedMarkdown('![r](https://example.com/x.png)'))
+      .toContain('src="https://example.com/x.png"')
+  })
+
+  it('keeps the image alt text markdown-it produced (the rule delegates, it does not re-render)', async () => {
+    const { renderSanctionedMarkdown } = await import('../src/static/block/renderers/sanctioned-markdown.js')
+    expect(renderSanctionedMarkdown('![the flow](diagrams/flow.png "t")'))
+      .toContain('alt="the flow"')
+  })
+
   it('sanctionedMarkdownIt() constructs the instance lazily and caches it (register the mark plugin exactly once)', async () => {
     const useSpy = vi.spyOn(MarkdownIt.prototype, 'use')
     const { sanctionedMarkdownIt } = await import('../src/static/block/renderers/sanctioned-markdown.js')

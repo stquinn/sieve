@@ -2,15 +2,15 @@
 // command-service.js — CommandService: JS protocol peer for workspace commands
 // — slash-command discovery, resolution, dispatch, and cancellation.
 //
-// A TENANT of the session channel, not its owner (issue #74 P1): the socket
-// belongs to WorkspaceService, which this class joins at construction by
-// claiming the `command-result` frame word. Everything below the vocabulary
-// line — correlation-id → callback tracking, the terminal-status sweep, the
+// A TENANT of the workspace channel, not its owner: the socket belongs to
+// WorkspaceService, which this class joins at construction by claiming the
+// `command-result` frame word. Everything below the vocabulary line —
+// correlation-id → callback tracking, the terminal-status sweep, the
 // command/command-cancel envelopes — stays here; everything at or below the
-// wire (URL, socket, reconnect, inbound demux) is the plane's. See
-// workspace-service.js's header for why ownership had to move.
+// wire (URL, socket, reconnect, inbound demux) is the plane's.
 
 import { ContractViolation } from './sieve-block.js'
+import { WorkspaceFrame, CommandFamily, CommandWords } from '../generated/protocol.js'
 
 /**
  * @typedef {object} CommandDescriptor
@@ -54,16 +54,27 @@ import { ContractViolation } from './sieve-block.js'
 
 /** The inbound frame vocabulary this tenant claims on the plane (frozen: it is
  *  handed out by the frameTypes getter). */
-const COMMAND_FRAMES = Object.freeze(['command-result'])
+const COMMAND_FRAMES = Object.freeze([WorkspaceFrame.COMMAND_RESULT])
+
+/**
+ * The AI filing verbs, as Go registers them in the `ai` family. Sourced from the
+ * generated CommandWords so a rename on the Go side cannot drift silently: the
+ * only thing a mismatch would produce is an ERROR result nobody is watching for.
+ */
+const FILING_VERBS = Object.freeze([
+  CommandWords[CommandFamily.AI].FILE,
+  CommandWords[CommandFamily.AI].METADATA,
+  CommandWords[CommandFamily.AI].KEEP_AND_FILE,
+])
 
 export class CommandService {
-  /** @type {import('./workspace-service.js').WorkspaceService} the session-channel wire owner */ #workspace
+  /** @type {import('./workspace-service.js').WorkspaceService} the workspace-channel wire owner */ #workspace
   /** @type {CommandDescriptor[]} */ #commands
   /** @type {Map<string, (res: CommandResult) => void>} correlationId -> onResult */ #correlations = new Map()
 
   /**
    * @param {import('./workspace-service.js').WorkspaceService} workspace
-   *   — the session-channel wire owner (injected by the composition root).
+   *   — the workspace-channel wire owner (injected by the composition root).
    * @param {CommandServiceOptions} [options]
    */
   constructor(workspace, options = {}) {
@@ -137,7 +148,7 @@ export class CommandService {
   }
 
   /**
-   * Dispatches a command over the session channel. The plane opens the wire
+   * Dispatches a command over the workspace channel. The plane opens the wire
    * lazily on the first send.
    * @param {string} commandName
    * @param {string} text
@@ -171,7 +182,7 @@ export class CommandService {
     // context JSON is silently ignored — context is lens-authored, attachments
     // are composer-authored, and the wire keeps them apart on purpose.
     const frame = {
-      type: 'command',
+      type: WorkspaceFrame.COMMAND,
       family: (descriptor && descriptor.family) || '',
       cmd: commandName,
       args: { text: text },
@@ -190,8 +201,33 @@ export class CommandService {
       cancel: () => {
         this.#correlations.delete(cid)
         listeners.clear()
-        this.#workspace.send({ type: 'command-cancel', correlationId: cid })
+        this.#workspace.send({ type: WorkspaceFrame.COMMAND_CANCEL, correlationId: cid })
       }
     }
+  }
+
+  /**
+   * Asks the AI to file a document — the `ai` family's three verbs, which the
+   * document's own menu invokes without the user ever typing a slash.
+   *
+   * It is a NAMED VERB rather than a raw dispatch call because the document is
+   * the whole argument and it travels in an easily-mistyped place: `docUuid`
+   * inside the lens-authored context, which is where Go's FilingCommand.Build
+   * reads it and where an omission is a refusal the caller never sees (filing
+   * produces no result block, so nothing appears either way). Both mistakes fail
+   * loudly here instead.
+   * @param {'file'|'metadata'|'keep-and-file'} verb
+   * @param {string} docUuid  the document to file
+   * @param {(res: CommandResult) => void} [onResult]
+   * @returns {DispatchHandle}
+   */
+  dispatchFiling(verb, docUuid, onResult) {
+    if (FILING_VERBS.indexOf(verb) < 0) {
+      throw new ContractViolation('CommandService.dispatchFiling: unknown filing verb: ' + verb)
+    }
+    if (!docUuid) {
+      throw new ContractViolation('CommandService.dispatchFiling: /' + verb + ' needs a document')
+    }
+    return this.dispatch(verb, '', { docUuid: docUuid }, onResult)
   }
 }

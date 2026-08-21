@@ -30,6 +30,14 @@ type ServiceProvider struct {
 	LinkPreview *services.LinkPreviewService
 	Plantuml    *services.PlantumlService
 	MCP         *mcp.Server
+	// Invalidator carries a command's "this changed" to the connected clients. It
+	// is set by the composition root before Init, because the push side lives
+	// above this package and a command may only name the port.
+	Invalidator command.NotesInvalidator
+	// SavedNotifier publishes "this container's content reached disk" to the
+	// connected clients. Set by the composition root before Init for the same
+	// reason Invalidator is, and handed to the Editor there.
+	SavedNotifier editor.ContainerSavedNotifier
 }
 
 // BlockServices returns the scoped dependency bag for block processors.
@@ -49,6 +57,42 @@ func (s *ServiceProvider) BlockServices() block.BlockServices {
 	}
 }
 
+// CommandSet returns every slash command the app registers, in registration
+// order. It is the ONE list: Init registers what this returns, and the protocol
+// generator enumerates the same call to publish the verbs — so a command added
+// here reaches the app and the generated artifacts together, or neither. A
+// command registered anywhere else exists on the wire and in no document.
+//
+// It is safe to call on a zero ServiceProvider, which is how the generator reads
+// the verbs without standing an app up: every constructor below only stores its
+// dependencies, so the commands answer Name(), Description() and Family()
+// honestly and would fail their own preconditions in Build — which the generator
+// never calls.
+func (s *ServiceProvider) CommandSet() []command.Command {
+	return []command.Command{
+		ai.NewBtwCommand(s.AI, s.Documents),
+		command.NewNowCommand(),
+		command.NewStatsCommand(s.Documents),
+		command.NewUUIDCommand(),
+		// The sweeper lives in editor/ because only that package sees both the block
+		// codec and the document service; command/ cannot import block/ at all.
+		command.NewMigrateIDsCommand(
+			editor.NewIdentitySweeper(s.Documents, block.NewDocumentCodec(block.GlobalRegistry()))),
+		command.NewHashCommand(s.Documents),
+		command.NewBase64Command(s.Documents),
+		command.NewEnvCommand(),
+		command.NewJWTCommand(),
+		ai.NewSummaryCommand(s.AI, s.Documents),
+		ai.NewTodoCommand(s.AI, s.Documents),
+		// The filing family. The EditorService goes in as command.DocumentFiler for
+		// the reason the sweeper goes in as IdentitySweeper: command/ cannot import
+		// editor/, so the port is declared where it is driven and satisfied here.
+		command.NewFileCommand(s.Editor, s.Documents),
+		command.NewMetadataCommand(s.Editor, s.Documents),
+		command.NewKeepAndFileCommand(s.Editor, s.Documents, s.Invalidator),
+	}
+}
+
 // Compile-time proof the concrete services satisfy the ports their consumers
 // declare. Lives at the composition root — the only place that knows both the
 // ports and the concretes.
@@ -60,6 +104,7 @@ var (
 	_ block.LinkPreviewPort = (*services.LinkPreviewService)(nil)
 	_ block.PlantumlPort    = (*services.PlantumlService)(nil)
 	_ block.NodesPort       = (*editor.Router)(nil)
+	_ command.DocumentFiler = (*editor.EditorService)(nil)
 )
 
 func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.FS) {
@@ -84,7 +129,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	// cannot import block/ (the edge runs block → ai → command → services), so
 	// editor/ — the only package that sees both — is where it belongs.
 	s.Nodes = editor.NewRouter(editor.NewNotesSource(s.Documents))
-	s.Assets = services.NewAssetService(store)
+	s.Assets = services.NewAssetService(store, storePath)
 	s.State, err = services.NewStateService(store, storePath, themesFS)
 	if err != nil {
 		logger.Error("state init failed", "err", err)
@@ -115,7 +160,10 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
 	s.Editor = editor.NewEditorService(s.Documents, block.NewDocumentCodec(block.GlobalRegistry()), autosave)
 	s.Editor.SetServices(s.BlockServices())
-	s.Editor.SetJobs(s.Jobs) // s.Jobs is the hub-wired tracker set by newAPIHandler before startup
+	if s.SavedNotifier != nil {
+		s.Editor.SetSavedNotifier(s.SavedNotifier)
+	}
+	s.Editor.SetJobs(s.Jobs) // s.Jobs is the tracker main() builds and wires into the broadcast before startup — no hub exists
 	// Communal JobEngine + Editor wiring. Built HERE (not in newAPIHandler) because
 	// it needs settings (State) and the Editor, which only exist after Init. The
 	// "ai" pool defaults to 3 (spec Global Constraint); explicit worker_pools config
@@ -132,20 +180,9 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	s.Editor.SetEngine(s.Engine)
 	s.Editor.SetAI(s.AI)
 	s.Commands.SetEngine(s.Engine)
-	s.Commands.Register(ai.NewBtwCommand(s.AI, s.Documents))
-	s.Commands.Register(command.NewNowCommand())
-	s.Commands.Register(command.NewStatsCommand(s.Documents))
-	s.Commands.Register(command.NewUUIDCommand())
-	// The sweeper lives in editor/ because only that package sees both the block
-	// codec and the document service; command/ cannot import block/ at all.
-	s.Commands.Register(command.NewMigrateIDsCommand(
-		editor.NewIdentitySweeper(s.Documents, block.NewDocumentCodec(block.GlobalRegistry()))))
-	s.Commands.Register(command.NewHashCommand(s.Documents))
-	s.Commands.Register(command.NewBase64Command(s.Documents))
-	s.Commands.Register(command.NewEnvCommand())
-	s.Commands.Register(command.NewJWTCommand())
-	s.Commands.Register(ai.NewSummaryCommand(s.AI, s.Documents))
-	s.Commands.Register(ai.NewTodoCommand(s.AI, s.Documents))
+	for _, cmd := range s.CommandSet() {
+		s.Commands.Register(cmd)
+	}
 	svc := s.BlockServices()
 	block.RegisterProcessor(processors.NewDiagramProcessor(svc))
 	block.RegisterProcessor(processors.NewSmartImageProcessor(svc))
