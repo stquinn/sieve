@@ -186,3 +186,29 @@ func TestCreateBlockFromEntries_extractCodeFromAttachment_keepsTheAttachment(t *
 		t.Errorf("the surviving attachment must still hold its file; src=%q", src)
 	}
 }
+
+// The file that motivated #85: a .sql attachment. The code kind recognises its
+// contents on their own — nothing on this path reads the ".sql" suffix.
+const heldSQL = "-- active customers\nSELECT id, name\nFROM customers\nWHERE active = 1;\n"
+
+func TestDetectExtractions_attachmentHoldingSQL_offersCodeExtract(t *testing.T) {
+	es, uuid, blockID := newEditorHoldingAttachment(t, "report.sql", []byte(heldSQL))
+	entries := attachmentEntries(t, es, uuid, blockID)
+
+	code, ok := offerFor(es.DetectExtractions(uuid, "attachment", entries), "code")
+	if !ok || !code.Has(block.ActionExtract) {
+		t.Fatalf("a .sql attachment must offer a code extraction; got %v ok=%v", code.Actions, ok)
+	}
+
+	codeID, _, err := es.CreateBlockFromEntries(uuid, "code", entries, 1, block.ActionExtract, blockID)
+	if err != nil {
+		t.Fatalf("CreateBlockFromEntries: %v", err)
+	}
+	extracted, _ := es.shadows[uuid].SnapshotBlock(codeID)
+	if lang, _ := extracted.Attrs["language"].(string); lang != "sql" {
+		t.Errorf("language: got %q, want sql", lang)
+	}
+	if _, survived := es.shadows[uuid].SnapshotBlock(blockID); !survived {
+		t.Error("the attachment must survive the extraction")
+	}
+}
