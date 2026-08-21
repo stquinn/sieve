@@ -635,21 +635,22 @@
         // ── Toolbar file attach ─────────────────────────────────────────────────
         // No kind is named here: the entry carries the file's mime type and Go's
         // paste-match registry routes it (image/* -> smart-image, else attachment).
-        // 25MB, mirroring MaxAttachmentBytes in sieve/block/processors (the
-        // authority) and MAX_ATTACHMENT_BYTES in wysiwyg-surface.js (the drop
-        // path). Three copies because this inline script is not a module and
-        // importing the surface would drag ProseMirror in; #84 makes the ceiling a
-        // setting, at which point all three read one place.
-        var TB_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+        // The ceiling is the user's `max_attachment_bytes` setting (#84), published
+        // by the index template; the fallback mirrors domain.DefaultMaxAttachmentBytes.
+        // Read PER CHECK, not captured at load: settings change under a running window.
+        var tbAttachmentCeiling = function() {
+          var configured = Number(window.__sieveMaxAttachmentBytes);
+          return (isFinite(configured) && configured > 0) ? configured : 25 * 1024 * 1024;
+        };
         document.getElementById('tb-attach-input')?.addEventListener('change', function(e) {
           var file = e.target.files && e.target.files[0];
           if (!file) return;
           // Refused BEFORE the read, so an enormous file never enters memory, and
           // never silently: the message names the file, its size and the limit.
-          if (file.size > TB_MAX_ATTACHMENT_BYTES) {
+          if (file.size > tbAttachmentCeiling()) {
             var mb = function(n) { return (n / (1024 * 1024)).toFixed(1) + ' MB'; };
             window.alert('"' + file.name + '" is ' + mb(file.size) + ' \u2014 larger than the '
-              + mb(TB_MAX_ATTACHMENT_BYTES) + ' limit for an attached file, so it was not attached.');
+              + mb(tbAttachmentCeiling()) + ' limit for an attached file, so it was not attached.');
             e.target.value = '';
             return;
           }

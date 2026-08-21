@@ -135,13 +135,6 @@ const NATIVE_UNIT_LABEL = Object.freeze({
 })
 
 /**
- * The DEFAULT largest file a drop will carry into a document — the fallback for
- * `WysiwygSurface.attachmentCeiling()` when the app has not published a configured one. Keep it
- * equal to Go's `domain.DefaultMaxAttachmentBytes`, which explains the number.
- */
-export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
-
-/**
  * @typedef {import('../abstract-editor.js').AbstractEditor} AbstractEditor
  */
 
@@ -1113,189 +1106,75 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /**
+   * A DROP is a native-file gesture the page can see but cannot READ.
+   *
+   * WebKitGTK never materialises a `File` for a file-manager drag: the whole drop
+   * arrives as the `text/uri-list` the OS put on it — a `file:///…` string — and no
+   * amount of reading `DataTransfer` produces bytes (#86). So this owns the GESTURE
+   * and the PLACEMENT only: it recognises a desktop file drag, resolves where the
+   * drop landed, and hands the uri-list to Go, which does the reading.
+   *
+   * Everything else is left to ProseMirror. A dragged link, a dragged selection of
+   * text — that is content PM already knows how to insert, and claiming it here
+   * would be taking work off the editor to do it worse.
    * @param {DragEvent} event
    * @returns {boolean} true when handled (native drop suppressed)
    */
   #handleSmartDrop(event) {
     if (!event.dataTransfer || !this.#editorPane) return false
+    // The prompt pseudo-document is a plain file with no block tree to create into.
+    if (!this.#uuid || this.#uuid.startsWith('prompt:')) return false
+    const uriList = WysiwygSurface.#desktopFileDrag(event.dataTransfer)
+    if (uriList === null) return false
 
-    if (this.#uuid && !this.#uuid.startsWith('prompt:')) {
-      var self = this
-      var promises = []
-      var hasFiles = false
-      var refused = false
-      if (event.dataTransfer.items) {
-        Array.from(event.dataTransfer.items).forEach(function(item) {
-          if (item.kind === 'file') {
-            var file = item.getAsFile()
-            if (!file) return
-            // EVERY file, not only images (#38). The kind is Go's decision, not
-            // this handler's: the entry carries the bytes and the mime type, and
-            // the paste-match registry routes image/* to smart-image and
-            // everything else to attachment. A new kind extends the routing
-            // without touching this code.
-            if (file.size > WysiwygSurface.attachmentCeiling()) {
-              WysiwygSurface.#refuseOversizedFile(file)
-              refused = true
-              return
-            }
-            hasFiles = true
-            promises.push(new Promise(function(resolve) {
-              var reader = new FileReader()
-              reader.onload = function(e) {
-                resolve({
-                  mimeType: file.type,
-                  content: /** @type {any} */ (e.target).result,
-                  // readAsDataURL carries the bytes and NOTHING else — not even
-                  // what the file was called. The name rides in the entry's
-                  // context, which is what lets the chip label itself
-                  // "swagger.yml" rather than the id the asset is stored under.
-                  context: { filename: file.name },
-                })
-              }
-              reader.onerror = function() { resolve(null) }
-              reader.readAsDataURL(file)
-            }))
-          } else if (item.kind === 'string') {
-            promises.push(new Promise(function(resolve) {
-              item.getAsString(function(str) {
-                resolve({ mimeType: item.type, content: str })
-              })
-            }))
-          }
-        })
-      }
+    const coords = this.#editorPane.view.posAtCoords({ left: event.clientX, top: event.clientY })
+    const insertPos = coords ? coords.pos : this.#editorPane.state.selection.to
+    // PEEK (issue #33), never an eager consume: a drag naming nothing this machine
+    // still has answers `none`, and the caret's empty paragraph must survive that.
+    const peek = this.#host.peekInsertIndexAt(insertPos)
 
-      // FALLBACK: the FileList directly. A drag from a Linux file manager (KDE
-      // Dolphin) arrives as `text/uri-list`, and WebKitGTK does not always
-      // surface a matching `kind: 'file'` item for it — but it may still populate
-      // dataTransfer.files. Reading both is the difference between a drop working
-      // and ProseMirror silently inserting the path as text.
-      if (!hasFiles && event.dataTransfer.files && event.dataTransfer.files.length) {
-        Array.from(event.dataTransfer.files).forEach(function(file) {
-          if (!file) return
-          if (file.size > WysiwygSurface.attachmentCeiling()) {
-            WysiwygSurface.#refuseOversizedFile(file)
-            refused = true
-            return
-          }
-          hasFiles = true
-          promises.push(new Promise(function(resolve) {
-            var reader = new FileReader()
-            reader.onload = function(e) {
-              resolve({
-                mimeType: file.type,
-                content: /** @type {any} */ (e.target).result,
-                context: { filename: file.name },
-              })
-            }
-            reader.onerror = function() { resolve(null) }
-            reader.readAsDataURL(file)
-          }))
-        })
-      }
+    // Claim the drop BEFORE the round trip. Without this PM inserts the `file:///…`
+    // path as text, which is the whole reported symptom.
+    event.preventDefault()
 
-      if (!hasFiles && !refused && event.dataTransfer.types && event.dataTransfer.types.length) {
-        // A drop carrying data but no readable file. Say what arrived rather than
-        // failing mute — the shapes differ per desktop and per WebKit build, and
-        // guessing at them costs a rebuild each time.
-        console.warn('[sieve] drop produced no readable file. types=',
-          Array.from(event.dataTransfer.types).join(','),
-          'items=', event.dataTransfer.items
-            ? Array.from(event.dataTransfer.items).map(function (i) { return i.kind + ':' + i.type }).join(',')
-            : '(none)',
-          'files=', event.dataTransfer.files ? event.dataTransfer.files.length : '(none)')
-      }
-
-      if (!hasFiles) {
-        if (!refused) return false
-        // A refused drop is still HANDLED. The user has been told why, and letting
-        // the browser take the file natively would navigate the app away from the
-        // document it was dropped into.
-        event.preventDefault()
-        return true
-      }
-
-      var pos = this.#editorPane.view.posAtCoords({ left: event.clientX, top: event.clientY })
-      var insertPos = pos ? pos.pos : this.#editorPane.state.selection.to
-      // PEEK (issue #33): a dropped file always matches server-side, but the eager
-      // delete is the same latent hazard — defer the anchor consume to matched.
-      var peek = this.#host.peekInsertIndexAt(insertPos)
-
-      event.preventDefault()
-
-      Promise.all(promises).then(function(results) {
-        var validEntries = results.filter(function(r) { return r !== null })
-        if (validEntries.length === 0) return
-        var ds = self.#host.documentService
-        if (!ds) return // disconnected editor: drop (socketless parity)
-        ds.smartPaste(self.#uuid, { entries: validEntries, index: peek.index })
-          .then(function (result) {
-            // A drop carries its own coordinate, so Go's content lands at the DROP
-            // position, not the caret (the caret is wherever the user last typed).
-            // No `replay`: a drop's payload is not the clipboard, so a `none` outcome
-            // has nothing to put back — PM already declined it natively.
-            //
-            // Drop reads the union the same way paste does. The `!hasFiles` guard
-            // above means only dropped FILES reach the round-trip (a dragged URL
-            // returns false and PM drops it natively), and a file always claims some
-            // kind — but reading the whole union costs nothing and is what kept this
-            // path correct when the guard widened from images to every file.
-            self.#applyPasteResult(result, { anchor: peek.anchor, at: insertPos })
-          })
-          .catch(function (err) {
-            console.error('[wysiwyg-surface] smart drop failed', err)
-          })
-      })
-      return true
-    }
-    return false
+    const ds = this.#host.documentService
+    if (!ds) return true // disconnected editor: drop (socketless parity)
+    ds.nativeDropPaste(this.#uuid, {
+      entries: [{ mimeType: 'text/uri-list', content: uriList }],
+      index: peek.index,
+    })
+      // A drop carries its own coordinate, so Go's block lands at the DROP position
+      // rather than the caret (the caret is wherever the user last typed). No
+      // `replay`: a drop's payload is not a clipboard, so `none` has nothing to put
+      // back.
+      .then((result) => this.#applyPasteResult(result, { anchor: peek.anchor, at: insertPos }))
+      .catch((err) => { console.error('[wysiwyg-surface] native file drop failed', err) })
+    return true
   }
 
   /**
-   * A refused file must SAY SO, and say which file and by how much. The failure
-   * this replaces is the one that reads as a broken app: a drop that produces
-   * nothing at all, with the reason only in a console the user never opens.
+   * The `text/uri-list` of a drag that came from the DESKTOP, or null when this
+   * drop is not one.
    *
-   * window.alert is the channel this codebase already uses to tell a user an
-   * operation failed (workspace.js, smart-image-node-view.js). It is blunt, but
-   * inventing a second notification vocabulary for one message would be worse.
-   * @param {File} file
+   * The test is the URI SCHEME, not the flavour: a link dragged out of a browser
+   * puts its http URL on this same `text/uri-list`, and that is content to paste
+   * rather than a file to read. `dataTransfer.files` and `kind: 'file'` items are
+   * deliberately NOT consulted — WebKitGTK leaves both empty for a file-manager
+   * drag (#86), so a branch reading them would only ever fire on some other
+   * platform and would send bytes down a wire that expects paths.
+   * @param {DataTransfer} dataTransfer
+   * @returns {string|null}
    */
-  static #refuseOversizedFile(file) {
-    console.warn('[editor.js] drop refused: over the attachment size limit', file.name, file.size)
-    window.alert(
-      '"' + file.name + '" is ' + WysiwygSurface.#megabytes(file.size) + ' — larger than the '
-      + WysiwygSurface.#megabytes(WysiwygSurface.attachmentCeiling()) + ' limit for an attached file, so it was not attached.'
-    )
-  }
-
-  /**
-   * A byte count as the refusal message states it. Deliberately coarse and
-   * deliberately NOT AttachmentRenderer.humanSize: this is one sentence about one
-   * failure, and importing a renderer into the surface to phrase it would tie the
-   * PM layer to the look-and-feel layer for a string.
-   * @param {number} bytes @returns {string}
-   */
-  /**
-   * The live attachment ceiling — the CLIENT half of a limit Go enforces too. The
-   * two halves do different jobs: this one keeps a huge file out of the renderer's
-   * memory entirely and is what can name the file and its size to the user; Go's
-   * exists because a server must not trust a client.
-   *
-   * The user owns the number (`max_attachment_bytes`, #84), so it is READ PER
-   * CHECK rather than captured at module load: settings change under a running
-   * window, and a stale ceiling would refuse a file the backend would have taken.
-   * The value reaches the page through the index template, like the autosave delay.
-   * @returns {number}
-   */
-  static attachmentCeiling() {
-    const configured = Number(/** @type {any} */ (window).__sieveMaxAttachmentBytes)
-    return Number.isFinite(configured) && configured > 0 ? configured : MAX_ATTACHMENT_BYTES
-  }
-
-  static #megabytes(bytes) {
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+  static #desktopFileDrag(dataTransfer) {
+    const list = dataTransfer.getData('text/uri-list')
+    if (!list) return null
+    // Blank lines and `#` comments are legal in the format (RFC 2483 §5) and name
+    // nothing.
+    const namesAFile = list.split('\n').some((line) => {
+      const uri = line.trim()
+      return uri !== '' && !uri.startsWith('#') && uri.toLowerCase().startsWith('file:')
+    })
+    return namesAFile ? list : null
   }
 
   // ── Selection feed (P3.A: the SelectionModel raw source) ───────────────────────

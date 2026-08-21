@@ -357,6 +357,26 @@ URL and every processor declines — zero offers, silently.
 | Anywhere | ```` ```ai-block ```` fence | ai-block re-import |
 | Log block | anything | consumed (read-only) |
 
+## Drop matrix (revised 2026-08-21, #86)
+
+A drop is recognised by the URI SCHEME on its `text/uri-list`, never by
+`dataTransfer.files` or `kind: 'file'` items: WebKitGTK leaves both empty for a
+file-manager drag and hands the page nothing but a `file:///…` string, so a
+handler reading them can only ever fire on some other platform.
+
+| Dragged from | Arrives as | Outcome |
+|---|---|---|
+| The desktop (file manager) | `text/uri-list` of `file:` URIs | The surface claims the drop and sends the list verbatim as a `native-drop` paste; **Go reads the files** and makes one block per file, in drag order, from the drop position. Kind is the paste registry's decision as always — `image/*` to smart-image, everything else to attachment. |
+| A browser (a link) | `text/uri-list` of an `http(s)` URI | Not claimed — PM handles it. A link is content to paste, not a file to read. |
+| Within the document, or any text drag | no `file:` URI | Not claimed — PM handles it natively. |
+| Into a prompt pseudo-document | anything | Not claimed — a prompt is a plain file with no block tree. |
+
+Placement follows the block-insertion rule above, at the DROP coordinate rather
+than the caret: the index is PEEKED (side-effect-free) before the round trip and
+the empty-paragraph anchor is consumed only once Go confirms a block — a drag
+naming a file this machine no longer has answers `none`, and the caret's blank
+line has to survive that.
+
 ## App-Level Chords
 
 **Ownership rule (NORMATIVE).** The native menu (`main.go` `buildMenu`) is the

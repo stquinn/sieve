@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -73,13 +76,14 @@ type frameHandler func(inboundFrame)
 func NewWsHandler(sp *sieve.ServiceProvider, broadcast *WorkspaceBroadcast) *WsHandler {
 	h := &WsHandler{
 		ServiceProvider: sp,
-		upgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool { return true },
-		},
-		registry:  protocol.NewRegistry(),
-		broadcast: broadcast,
-		channels:  make(map[string]*wsConn),
+		registry:        protocol.NewRegistry(),
+		broadcast:       broadcast,
+		channels:        make(map[string]*wsConn),
 	}
+	// Assigned rather than set in the literal because the gate is a method on the
+	// handler it guards. gorilla's zero-value CheckOrigin is same-origin-only,
+	// which would refuse the app's own custom-scheme window — see allowOrigin.
+	h.upgrader.CheckOrigin = h.allowOrigin
 	h.documentFrames = map[string]frameHandler{
 		protocol.TypePing:              h.handlePing,
 		protocol.TypeDocUpdate:         h.handleDocUpdate,
@@ -282,6 +286,73 @@ var errCorrelationless = errors.New("no correlation id")
 func (h *WsHandler) refuse(f inboundFrame, frameType string, err error) {
 	logger.Warn("ws: unreadable frame payload", "type", frameType, "uuid", f.uuid, "err", err)
 	f.reply(protocol.NewErrorFrame(fmt.Sprintf("%s frame is unreadable: %v", frameType, err)))
+}
+
+// allowOrigin is the upgrade gate on both wires: default-deny, admitting only
+// the app's own window and local non-browser clients.
+//
+// It is load-bearing rather than hygiene. The wires ride the loopback listener
+// (WebKitGTK cannot carry a WebSocket upgrade over the app's custom scheme), and
+// a loopback listener is reachable from any page the user happens to open in a
+// real browser — the classic cross-site-WebSocket hijack, which the same-origin
+// policy does NOT stop. The document wire creates blocks, serves whole documents
+// and, since native-drop, READS LOCAL FILES, so an allow-all check hands every
+// one of those to any web page the user visits.
+//
+// The three admitted shapes:
+//
+//   - NO Origin header. Not a browser: the contained AI CLI's MCP client, a test
+//     dialling with a bare client. A browser always sends one on a WS upgrade,
+//     so this cannot be a drive-by page. (It does leave a local process able to
+//     dial in — that is the gap auth-on-upgrade, #83, closes; this check is
+//     about the browser, which cannot forge an absent Origin.)
+//   - The `wails://` scheme. The app's own window: Wails serves the app from a
+//     custom scheme, and no web page can claim one. The WebKitGTK window sends
+//     `Origin: wails://wails` (measured, dev and production alike; the Linux and
+//     macOS start URL is `wails://wails/`), and the SCHEME is what is matched so
+//     a host of `wails.localhost:port` — the spelling Wails uses when it hands
+//     the webview an asset-server port — is admitted too. TRAP for a future
+//     Windows build: WebView2 serves the app from `http://wails.localhost`
+//     instead, which this refuses as written.
+//   - A LOOPBACK http(s) origin. `wails dev` serves the same app over
+//     127.0.0.1/localhost for a real browser, which is how the UI is driven under
+//     test. A page must already be served from this machine to hold one.
+//
+// Everything else is refused and logged with the origin that asked, because a
+// wrong entry here kills every wire in the app and the log line is the only way
+// to tell that apart from a dead socket.
+func (h *WsHandler) allowOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		logger.Warn("ws: refused upgrade (unparseable origin)", "origin", origin, "err", err)
+		return false
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "wails":
+		return true
+	case "http", "https":
+		if h.isLoopback(u.Hostname()) {
+			return true
+		}
+	}
+	logger.Warn("ws: refused upgrade (foreign origin)", "origin", origin, "path", r.URL.Path)
+	return false
+}
+
+// isLoopback reports whether host names this machine. The literal addresses are
+// matched as ADDRESSES, not strings, so every spelling of them ("127.1",
+// "[::1]") answers the same; "localhost" is matched by name because it is not an
+// address and resolving it here would make the gate depend on DNS.
+func (h *WsHandler) isLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (h *WsHandler) handleDocumentWS(w http.ResponseWriter, r *http.Request) {
@@ -536,13 +607,22 @@ func (h *WsHandler) handleLoad(f inboundFrame) {
 	f.reply(reply)
 }
 
-// handlePaste hands a clipboard to the block registry to make sense of. Either
+// handlePaste hands a clipboard to the block registry to make sense of. Every
 // kind's created blocks arrive as insert-block render-backs — the authoritative
 // render signal — so the ack reports only what happened.
 func (h *WsHandler) handlePaste(f inboundFrame) {
 	var msg protocol.PasteFrame
 	if err := json.Unmarshal(f.raw, &msg); err != nil {
 		h.refuse(f, protocol.TypePaste, err)
+		return
+	}
+
+	if msg.Kind == protocol.PasteKindNativeDrop {
+		// The entries name files rather than carrying them: the server reads the
+		// bytes off disk. See PasteKindNativeDrop for why that capability is on this
+		// wire at all, and allowOrigin for what keeps it off a foreign page's.
+		f.reply(protocol.NewPasteAckFrame(msg.OpID,
+			h.ServiceProvider.Editor.HandleNativeDrop(f.uuid, msg.Entries, msg.Index)))
 		return
 	}
 

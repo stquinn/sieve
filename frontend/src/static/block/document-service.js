@@ -251,11 +251,12 @@ export class DocumentService {
 
   // ── Paste pipelines (document-addressed — create blocks in a doc) ────────────
 
-  // ONE FRAME, TWO KINDS. `paste` carries a `kind` discriminant deciding which of
-  // its payload fields is meaningful — `entries` for smart, `slice` for slice —
-  // because "what should the server make of this clipboard" is one question with
-  // one answer shape. Reading both fields regardless is how a discriminated union
-  // rots into a bag of optional flags.
+  // ONE FRAME, THREE KINDS. `paste` carries a `kind` discriminant deciding what
+  // the server makes of its payload — `entries` as a clipboard for smart, `slice`
+  // for slice, `entries` as a uri-list for native-drop — because "what should the
+  // server make of this" is one question with one answer shape. Reading the fields
+  // regardless of kind is how a discriminated union rots into a bag of optional
+  // flags.
 
   /**
    * Reconstruct a multi-block clipboard slice server-side: Go runs FirstPasteMatch
@@ -308,6 +309,29 @@ export class DocumentService {
       entries: payload.entries,
       index: payload.index,
     }, 'paste smart', PASTE_ACK_TIMEOUT_MS)
+  }
+
+  /**
+   * Ingest files dragged in from the desktop: Go reads them off disk and runs each
+   * through the same paste pipeline, creating one block per file from
+   * `payload.index` on. Answers the same `PasteResult` union `smartPaste` does; a
+   * drag naming nothing readable answers `none`.
+   *
+   * THE ENTRIES NAME FILES, THEY DO NOT CARRY THEM. A WebKitGTK webview never
+   * materialises a readable `File` for a file-manager drag — all the page receives
+   * is the `text/uri-list` the OS put on the drag — so this forwards that one view
+   * verbatim and the server does the reading. That is also why there is no local
+   * size check to mirror `smartPaste`'s callers: nothing is read here to check.
+   * @param {string} uuid @param {{entries: object[], index: number}} payload
+   * @returns {Promise<{outcome?: string, kind?: string, id?: string, rawYaml?: string, html?: string, error?: string}>}
+   */
+  nativeDropPaste(uuid, payload) {
+    return this.#blockService._awaitReply(uuid, {
+      type: DocumentFrame.PASTE,
+      kind: 'native-drop',
+      entries: payload.entries,
+      index: payload.index,
+    }, 'paste native-drop', PASTE_ACK_TIMEOUT_MS)
   }
 
   // ── Membership verbs (add/remove — never target an existing block's state) ──

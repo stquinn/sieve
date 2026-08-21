@@ -305,6 +305,14 @@ const (
 	// PasteKindSlice reconstructs a copied multi-block selection: an ordered list
 	// of per-block view sets, each paste-matched and created with a fresh id.
 	PasteKindSlice PasteKind = "slice"
+	// PasteKindNativeDrop ingests files dragged in from the desktop. It exists
+	// because a WebKitGTK webview never materialises a readable File for a
+	// file-manager drag — all the page receives is the `text/uri-list` the OS put
+	// on the drag, so the bytes can only be read by the server.
+	//
+	// It reuses Entries, carrying that one view verbatim: the client forwards what
+	// the DataTransfer gave it and interprets nothing.
+	PasteKindNativeDrop PasteKind = "native-drop"
 )
 
 // PasteFrame hands a clipboard to the server to make sense of. Which of Entries
@@ -313,8 +321,8 @@ const (
 type PasteFrame struct {
 	Type    string                 `json:"type"`
 	OpID    string                 `json:"opId,omitempty" doc:"echoed on the paste-ack"`
-	Kind    PasteKind              `json:"kind" doc:"smart | slice"`
-	Entries []block.ContentEntry   `json:"entries,omitempty" doc:"smart only: the clipboard's views"`
+	Kind    PasteKind              `json:"kind" doc:"smart | slice | native-drop. SECURITY: native-drop makes the server READ LOCAL FILES named by the entries' file:// URIs, so this wire carries a filesystem-read capability. It is only acceptable because the socket upgrade enforces an origin allow-list that admits the app's own window and refuses foreign browser origins; auth-on-upgrade (#83) must cover this channel."`
+	Entries []block.ContentEntry   `json:"entries,omitempty" doc:"smart: the clipboard's views. native-drop: the single text/uri-list view the OS put on the drag"`
 	Slice   [][]block.ContentEntry `json:"slice,omitempty" doc:"slice only: one view set per copied block, in order"`
 	Index   int                    `json:"index" doc:"document position for the first created block; -1 appends, and is the default when the key is absent"`
 }

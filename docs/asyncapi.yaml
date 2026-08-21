@@ -1609,7 +1609,7 @@ components:
           $ref: '#/components/schemas/ProtocolPasteKind'
         entries:
           type: array
-          description: 'smart only: the clipboard''s views'
+          description: 'smart: the clipboard''s views. native-drop: the single text/uri-list view the OS put on the drag'
           items:
             $ref: '#/components/schemas/BlockContentEntry'
         slice:
