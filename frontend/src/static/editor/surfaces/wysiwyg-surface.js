@@ -1048,15 +1048,13 @@ export class WysiwygSurface extends AbstractSurface {
     // not READ. The prompt pseudo-document is excluded from both: it is a plain
     // file with no block tree to create into.
     if (this.#uuid && !this.#uuid.startsWith('prompt:')) {
-      // A COPIED FILE, which arrives on the same `text/uri-list` a desktop drag
-      // does — so it takes the same route, verbatim, at the CARET rather than a
-      // drop coordinate.
-      const uriList = WysiwygSurface.#localFileURIs(event.clipboardData)
-      if (uriList !== null) {
-        return this.#pasteThroughGo(event, (ds, index) => ds.nativeDropPaste(this.#uuid, {
-          entries: [{ mimeType: 'text/uri-list', content: uriList }],
-          index,
-        }), 'native file paste')
+      // A COPIED FILE the page can name: route it to the NATIVE clipboard read
+      // all the same — one backend mechanism for every native gesture. The list
+      // the page read is only the RECOGNISER; Go asks GTK for the clipboard's own
+      // uris and ingests those.
+      if (WysiwygSurface.#localFileURIs(event.clipboardData) !== null) {
+        return this.#pasteThroughGo(event,
+          (ds, index) => ds.nativeClipboardPaste(this.#uuid, { index }), 'native file paste')
       }
       // A CLIPBOARD THE PAGE CANNOT SEE AT ALL. WebKitGTK delivers a paste event
       // whose DataTransfer is completely empty for a screenshot copied by an
@@ -1198,22 +1196,19 @@ export class WysiwygSurface extends AbstractSurface {
     // The prompt pseudo-document is a plain file with no block tree to create into.
     if (!this.#uuid || this.#uuid.startsWith('prompt:')) return false
     // Internal PM drags — a block reorder, a moved selection — are PM's own and
-    // never claimed. Everything EXTERNAL is: WebKitGTK starves the page of drop
-    // content and each source app starves it differently (#86 — Dolphin offers a
-    // uri-list the page cannot read, VSCode a dialect it cannot even see), so no
-    // flavour test can decide. The gesture is the claim; what the drop WAS is
-    // settled after the read — and when nothing is readable, by the native bucket.
+    // never claimed. Every EXTERNAL drop is: the ONE drop mechanism on every
+    // platform is the gesture paging the backend, exactly as the empty-clipboard
+    // paste does (#87). The page's own view of the drop is never consulted —
+    // WebKitGTK starves it and every source app starves it differently (#86) —
+    // so external text/link drag-in is not a supported gesture; the OS-level
+    // catch (Wails OnFileDrop) feeds the native drop bucket the server redeems.
     if (slice || moved) return false
 
     const coords = this.#editorPane.view.posAtCoords({ left: event.clientX, top: event.clientY })
     const insertPos = coords ? coords.pos : this.#editorPane.state.selection.to
-    // PEEK (issue #33), never an eager consume: a drag naming nothing this machine
-    // still has answers `none`, and the caret's empty paragraph must survive that.
+    // PEEK (issue #33), never an eager consume: a drag the bucket cannot answer
+    // still resolves `none`, and the caret's empty paragraph must survive that.
     const peek = this.#host.peekInsertIndexAt(insertPos)
-
-    // getAsString callbacks only register while the DataTransfer is live — start
-    // the read BEFORE the handler returns.
-    const listRead = WysiwygSurface.#readUriList(event.dataTransfer)
 
     // Claim the drop BEFORE the round trip. Without this PM inserts the `file:///…`
     // path as text, which is the whole reported symptom.
@@ -1221,117 +1216,14 @@ export class WysiwygSurface extends AbstractSurface {
 
     const ds = this.#host.documentService
     if (!ds) return true // disconnected editor: drop (socketless parity)
-    const pane = this.#editorPane
-    const sendRedeem = (entries) => ds.nativeDropPaste(this.#uuid, { entries, index: peek.index })
-      // A drop carries its own coordinate, so Go's block lands at the DROP
-      // position rather than the caret (the caret is wherever the user last
-      // typed). No `replay`: a drop's payload is not a clipboard, so `none` has
-      // nothing to put back.
+    // The frame carries ONLY the index: "there was a drop at this position and I
+    // could read none of it — take it from the native drop bucket".
+    ds.nativeDropPaste(this.#uuid, { index: peek.index })
       .then((result) => this.#applyPasteResult(result, { anchor: peek.anchor, at: insertPos }))
       .catch((err) => { console.error('[wysiwyg-surface] native file drop failed', err) })
-    listRead.then((read) => {
-      // The frontend recognises, never parses: `file:` in the content is the
-      // claim-vs-replay call, and Go owns the extraction.
-      if (read !== null && (read.mime === 'text/uri-list'
-        ? WysiwygSurface.#namesAFile(read.content)
-        : /\bfile:\/\//i.test(read.content))) {
-        sendRedeem([{ mimeType: read.mime, content: read.content }])
-        return
-      }
-      // Readable but not a file — a dragged link, a dragged selection. The claim
-      // already happened, so the old outcome is replayed by hand where PM would
-      // have put it (insertContentAt takes html as-is). Comments and blanks
-      // (RFC 2483) name nothing and are not content.
-      const replay = read === null ? '' : (read.mime === 'text/uri-list'
-        ? read.content.split('\n')
-          .map((line) => line.trim())
-          .filter((line) => line !== '' && !line.startsWith('#'))
-          .join('\n')
-        : read.content)
-      if (replay !== '') {
-        pane.commands.insertContentAt(insertPos, replay)
-        return
-      }
-      // Nothing readable at all — the WebKitGTK signature, whatever the source
-      // app. The gesture was real: redeem with NO entries, which tells Go "take
-      // it from the native drop bucket and place it at this index" (#86), the
-      // exact ethos of the empty-clipboard paste (#87).
-      sendRedeem([])
-    })
     return true
   }
 
-
-  /**
-   * The `text/uri-list` content of this drop, read the way WebKitGTK can answer:
-   * synchronous `getData` when the platform backs it (Blink, tests), else the
-   * async items API. Resolves the lens that answered ({mime, content}) or null
-   * when none did — a claimed drop with unreadable content, which the caller logs
-   * and drops.
-   * @param {DataTransfer} dataTransfer
-   * @returns {Promise<{mime: string, content: string}|null>}
-   */
-  static #readUriList(dataTransfer) {
-    // Sync lenses, most faithful first. WebKitGTK answers '' for text/uri-list on
-    // a real drag; `URL` is the legacy alias for its first entry, and KDE puts the
-    // bare path on text/plain. The drag data store empties when the handler
-    // returns (HTML spec), so anything async is a last resort that WebKitGTK
-    // answers empty — the sync lenses are the ones that matter.
-    const probes = {}
-    for (const flavour of ['text/uri-list', 'URL', 'text/plain', 'text/html']) {
-      try { probes[flavour] = dataTransfer.getData(flavour) || '' } catch (e) { probes[flavour] = '' }
-    }
-    const sync = WysiwygSurface.#asUriList(probes['text/uri-list'])
-      || WysiwygSurface.#asUriList(probes['URL'])
-      || WysiwygSurface.#asUriList(probes['text/plain'])
-    if (sync) return Promise.resolve({ mime: 'text/uri-list', content: sync })
-    // The one lens a WebKitGTK Dolphin drag leaves readable (#86, measured): the
-    // list flavours all answer '' while text/html survives, carrying the file URI
-    // in an anchor. Forwarded VERBATIM — Go owns the extraction.
-    if (probes['text/html']) return Promise.resolve({ mime: 'text/html', content: probes['text/html'] })
-    // Readable plain text that is NOT uri-shaped (a dragged selection on a
-    // platform whose webview reads its own drops) — content for the replay
-    // branch, never for Go.
-    if (probes['text/plain']) return Promise.resolve({ mime: 'text/plain', content: probes['text/plain'] })
-    // Every sync lens empty: dump the evidence before trying the async read, so a
-    // failing platform names its own successor fix.
-    console.warn('[wysiwyg-surface] drop sync probes all empty', {
-      lens: Object.fromEntries(Object.entries(probes).map(([k, v]) => [k, v.length])),
-      items: Array.from(dataTransfer.items || []).map((i) => i.kind + ':' + i.type).join(','),
-      files: dataTransfer.files ? dataTransfer.files.length : -1,
-    })
-    const item = Array.from(dataTransfer.items || []).find(
-      (i) => i.kind === 'string' && i.type === 'text/uri-list'
-    )
-    if (!item) return Promise.resolve(null)
-    return new Promise((resolve) => {
-      // getAsString's callback is at the platform's mercy; a drop must never wedge
-      // the editor waiting on it.
-      const guard = setTimeout(() => resolve(null), 1500)
-      item.getAsString((str) => {
-        clearTimeout(guard)
-        resolve(str ? { mime: 'text/uri-list', content: str } : null)
-      })
-    })
-  }
-
-  /**
-   * Content normalised into a `text/uri-list`, or null when it holds nothing
-   * list-like: URI lines pass through verbatim, and a BARE absolute path (KDE's
-   * text/plain flavour) becomes the file URI it means. Go still owns validation —
-   * scheme, host, existence — this only translates spellings.
-   * @param {string} content
-   * @returns {string|null}
-   */
-  static #asUriList(content) {
-    if (!content) return null
-    const lines = content.split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line !== '' && !line.startsWith('#'))
-      .map((line) => (line.startsWith('/') ? 'file://' + encodeURI(line).replace(/#/g, '%23') : line))
-      .filter((line) => /^[a-z][a-z0-9+.-]*:/i.test(line))
-    return lines.length ? lines.join('\r\n') + '\r\n' : null
-  }
 
   /**
    * Whether a `text/uri-list` names at least one LOCAL file. The test is the URI

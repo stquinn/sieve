@@ -379,27 +379,25 @@ replay, because the page never held the content.
 
 ## Drop matrix (revised 2026-08-21, #86)
 
-An EXTERNAL drop is claimed by the GESTURE, not by flavour, because no flavour
-test can decide: WebKitGTK starves the page of drop content and every source
-app starves it differently (measured 2026-08-21 — Dolphin: all list flavours
-answer `''` while `text/html` survives with the URI as a style-only anchor's
-TEXT; VSCode: a dialect the page cannot see at all; and string items only
-deliver after the handler returns, when the store is already empty). Internal
-PM drags (a block reorder, a moved selection) are identified by `slice`/`moved`
-and never claimed. After the claim, routing is by what was READABLE — and when
-nothing was, by the native drop bucket: GTK catches every OS file drop via
-Wails' `OnFileDrop` (`nativedrop.Default`), and a `native-drop` frame with NO
-entries means "take the paths from the bucket and place them at this index" —
-the exact ethos of the empty-clipboard paste (#87).
+External drops have ONE mechanism on every platform, and it is the same ethos
+as the empty-clipboard paste (#87): the gesture pages the backend. The page's
+own view of a drop is NEVER consulted — WebKitGTK starves it and every source
+app starves it differently (measured 2026-08-21: Dolphin leaves one readable
+lens with the URI as a style-only anchor's text, VSCode a dialect the page
+cannot see at all, and async reads land after the store is emptied). Instead
+the OS-level catch (Wails `OnFileDrop`) feeds the native drop bucket
+(`nativedrop.Default`), and the surface's claim sends a `native-drop` frame
+carrying ONLY the index: "there was a drop at this position — take it from the
+bucket and place it here". The redeem waits briefly because the DOM's frame and
+the native callback race on one gesture. Multi-file drags are one callback, one
+frame, several blocks in drag order.
 
-| External drop | Readable as | Outcome |
-|---|---|---|
-| Any file drag, page could read a lens | `file:` URIs in a uri-list or in html | Claimed; the view is sent VERBATIM as a `native-drop` paste; **Go extracts and reads** — one block per file, in drag order, from the drop position; the registry picks each kind as for any paste. |
-| Any file drag, page could read nothing | — | Claimed; `native-drop` with EMPTY entries; **Go redeems the native bucket** (short wait absorbs the DOM-vs-GTK race) and ingests identically. |
-| A dragged link or text selection, readable | an `http(s)` URI, prose | Claimed (unknowable until read), then REPLAYED as content at the drop position — the outcome PM native handling used to produce. |
-| A dragged link or text selection, unreadable | — | Claimed; the empty redeem finds no files in the bucket and nothing happens. (WebKitGTK never let the page read these anyway.) |
-| Internal PM drag | `slice`/`moved` set | Not claimed — PM handles it natively. |
-| Into a prompt pseudo-document | anything | Not claimed — a prompt is a plain file with no block tree. |
+| Drop | Outcome |
+|---|---|
+| Any external file drag, any source app | Claimed; `native-drop` frame with the index only; **Go redeems the bucket** and ingests — one block per file, the registry picking each kind as for any paste. |
+| External text or link drag | Claimed, and the bucket holds no file — nothing happens. External text/link drag-in is NOT a supported gesture (copy-paste covers it); WebKitGTK never let the page read these anyway. |
+| Internal PM drag (`slice`/`moved` set) | Not claimed — PM handles it natively (block reorder, moved selections). |
+| Into a prompt pseudo-document | Not claimed — a prompt is a plain file with no block tree. |
 
 Placement follows the block-insertion rule above, at the DROP coordinate rather
 than the caret: the index is PEEKED (side-effect-free) before the round trip and

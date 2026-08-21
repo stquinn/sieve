@@ -110,6 +110,7 @@ func (a *App) startup(ctx context.Context) {
 		// native-drop redeem draws from (#86). Registered ONCE: startup re-runs on
 		// every vault switch.
 		runtime.OnFileDrop(ctx, func(x, y int, paths []string) {
+			logger.Info("[sieve] native drop caught", "files", len(paths))
 			nativedrop.Default.Put(paths)
 		})
 	}

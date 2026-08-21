@@ -64,7 +64,11 @@ func (es *EditorService) HandleNativeClipboard(uuid string, index int) block.Pas
 		return block.PasteNothing()
 	}
 	if base, _, err := mime.ParseMediaType(entries[0].MIMEType); err == nil && base == "text/uri-list" {
-		return es.HandleNativeDrop(uuid, entries, index)
+		var files []droppedFile
+		for _, e := range entries {
+			files = append(files, uriList(e.Content).files()...)
+		}
+		return es.ingestFiles(uuid, files, index)
 	}
 	return es.HandlePaste(uuid, entries, index)
 }

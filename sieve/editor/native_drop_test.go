@@ -241,20 +241,32 @@ func writeDropped(t *testing.T, name, body string) string {
 	return "file://" + path
 }
 
-// A drop of several files becomes several blocks, in drag order, starting at the
-// index the drop landed on.
+// The frame carries ONLY the index: the paths come from the native drop bucket
+// (Wails OnFileDrop), the ONE drop mechanism on every platform — the page's own
+// view of a drop is never consulted (#86). Same ethos as the empty-clipboard
+// paste (#87).
+type fakeDropBucket struct{ paths []string }
+
+func (f *fakeDropBucket) TakeDrop(time.Duration) []string { return f.paths }
+
+// dropPaths turns writeDropped's file URIs back into the bare paths GTK hands
+// OnFileDrop.
+func dropPaths(uris ...string) []string {
+	out := make([]string, len(uris))
+	for i, u := range uris {
+		out[i] = strings.TrimPrefix(u, "file://")
+	}
+	return out
+}
+
 func TestHandleNativeDrop_OneBlockPerFileInDragOrder(t *testing.T) {
 	es, uuid := newDropEditor(t)
-
-	list := strings.Join([]string{
+	es.SetPendingDrops(&fakeDropBucket{paths: dropPaths(
 		writeDropped(t, "first.yml", "openapi: 3.0.0"),
 		writeDropped(t, "second.pdf", "%PDF-1.4 second"),
-	}, "\r\n") + "\r\n"
+	)})
 
-	res := es.HandleNativeDrop(uuid, []block.ContentEntry{
-		{MIMEType: "text/uri-list", Content: list},
-	}, 0)
-
+	res := es.HandleNativeDrop(uuid, 0)
 	if !res.IsBlock() {
 		t.Fatalf("a drop that created blocks must report the block outcome, got %q", res.Outcome)
 	}
@@ -282,17 +294,13 @@ func TestHandleNativeDrop_OneBlockPerFileInDragOrder(t *testing.T) {
 // so a drop below the last block does not land at the top of the document.
 func TestHandleNativeDrop_NegativeIndexAppends(t *testing.T) {
 	es, uuid := newDropEditor(t)
-	first := writeDropped(t, "first.yml", "openapi: 3.0.0")
-	if res := es.HandleNativeDrop(uuid, []block.ContentEntry{
-		{MIMEType: "text/uri-list", Content: first + "\r\n"},
-	}, 0); !res.IsBlock() {
+	es.SetPendingDrops(&fakeDropBucket{paths: dropPaths(writeDropped(t, "first.yml", "openapi: 3.0.0"))})
+	if res := es.HandleNativeDrop(uuid, 0); !res.IsBlock() {
 		t.Fatalf("setup drop failed: %q", res.Outcome)
 	}
 
-	second := writeDropped(t, "second.yml", "openapi: 3.1.0")
-	if res := es.HandleNativeDrop(uuid, []block.ContentEntry{
-		{MIMEType: "text/uri-list", Content: second + "\r\n"},
-	}, -1); !res.IsBlock() {
+	es.SetPendingDrops(&fakeDropBucket{paths: dropPaths(writeDropped(t, "second.yml", "openapi: 3.1.0"))})
+	if res := es.HandleNativeDrop(uuid, -1); !res.IsBlock() {
 		t.Fatalf("append drop failed: %q", res.Outcome)
 	}
 
@@ -308,15 +316,12 @@ func TestHandleNativeDrop_NegativeIndexAppends(t *testing.T) {
 // One unreadable file among several does not cost the others their drop.
 func TestHandleNativeDrop_SkipsUnreadableFiles(t *testing.T) {
 	es, uuid := newDropEditor(t)
+	es.SetPendingDrops(&fakeDropBucket{paths: append(
+		[]string{filepath.Join(t.TempDir(), "gone.pdf")},
+		dropPaths(writeDropped(t, "here.yml", "openapi: 3.0.0"))...,
+	)})
 
-	list := strings.Join([]string{
-		"file://" + filepath.Join(t.TempDir(), "gone.pdf"),
-		writeDropped(t, "here.yml", "openapi: 3.0.0"),
-	}, "\r\n") + "\r\n"
-
-	if res := es.HandleNativeDrop(uuid, []block.ContentEntry{
-		{MIMEType: "text/uri-list", Content: list},
-	}, 0); !res.IsBlock() {
+	if res := es.HandleNativeDrop(uuid, 0); !res.IsBlock() {
 		t.Fatalf("the readable file must still land, got %q", res.Outcome)
 	}
 	blocks := es.shadows[uuid].SnapshotBlocks()
@@ -328,29 +333,26 @@ func TestHandleNativeDrop_SkipsUnreadableFiles(t *testing.T) {
 	}
 }
 
-// A drop naming nothing readable does NOTHING, which is the outcome that tells
-// the frontend to leave the caret's empty paragraph where it is.
-func TestHandleNativeDrop_NothingReadableIsNothing(t *testing.T) {
+// A drop the bucket cannot answer does NOTHING — the outcome that tells the
+// frontend to leave the caret's empty paragraph where it is.
+func TestHandleNativeDrop_NothingRedeemableIsNothing(t *testing.T) {
 	es, uuid := newDropEditor(t)
 
-	cases := map[string]string{
-		"a dragged link":      "https://example.com/page\r\n",
-		"a vanished file":     "file://" + filepath.Join(t.TempDir(), "gone.pdf") + "\r\n",
-		"an empty uri-list":   "",
-		"a comment-only list": "# nothing here\r\n",
+	cases := map[string]PendingDropSource{
+		"an empty bucket":            &fakeDropBucket{},
+		"a vanished file":            &fakeDropBucket{paths: []string{filepath.Join(t.TempDir(), "gone.pdf")}},
+		"no bucket wired (test/dev)": nil,
 	}
-	for name, list := range cases {
+	for name, bucket := range cases {
 		t.Run(name, func(t *testing.T) {
-			res := es.HandleNativeDrop(uuid, []block.ContentEntry{
-				{MIMEType: "text/uri-list", Content: list},
-			}, 0)
-			if res.Outcome != block.OutcomeNothing {
+			es.SetPendingDrops(bucket)
+			if res := es.HandleNativeDrop(uuid, 0); res.Outcome != block.OutcomeNothing {
 				t.Errorf("outcome = %q, want nothing", res.Outcome)
 			}
 		})
 	}
 	if got := len(es.shadows[uuid].SnapshotBlocks()); got != 0 {
-		t.Errorf("nothing readable must create no blocks, got %d", got)
+		t.Errorf("nothing redeemable must create no blocks, got %d", got)
 	}
 }
 
@@ -358,136 +360,8 @@ func TestHandleNativeDrop_NothingReadableIsNothing(t *testing.T) {
 // shadow — a socket can outlive the editor that owned it.
 func TestHandleNativeDrop_UnopenedDocumentIsNothing(t *testing.T) {
 	es, _ := newDropEditor(t)
-	res := es.HandleNativeDrop("no-such-uuid", []block.ContentEntry{
-		{MIMEType: "text/uri-list", Content: writeDropped(t, "a.yml", "x: 1") + "\r\n"},
-	}, 0)
-	if res.Outcome != block.OutcomeNothing {
+	es.SetPendingDrops(&fakeDropBucket{paths: dropPaths(writeDropped(t, "a.yml", "x: 1"))})
+	if res := es.HandleNativeDrop("no-such-uuid", 0); res.Outcome != block.OutcomeNothing {
 		t.Errorf("outcome = %q, want nothing", res.Outcome)
-	}
-}
-
-// The html lens is WebKitGTK's ONE readable drop flavour (#86): the drag's file
-// URIs arrive as anchor hrefs inside styled markup, entity-encoded. Extraction
-// follows uri-list rules — local file: URIs only, document order.
-func TestDropMarkup_ExtractsLocalFileURIs(t *testing.T) {
-	cases := []struct {
-		name string
-		html string
-		want []droppedFile
-	}{
-		{
-			// The MEASURED WebKitGTK shape: style-only anchor, URI as TEXT, no href.
-			name: "the URI as anchor text with no href at all",
-			html: `<a style="caret-color: rgb(0, 0, 0); color: rgb(0, 0, 0); font-weight: 400;">file:///home/stephen/Documents/rainfall_tracking.yaml</a>`,
-			want: []droppedFile{"/home/stephen/Documents/rainfall_tracking.yaml"},
-		},
-		{
-			name: "one styled anchor, double quotes",
-			html: `<a style="caret-color: rgb(0, 0, 0); color: rgb(0, 0, 238);" href="file:///home/u/report.pdf">report.pdf</a>`,
-			want: []droppedFile{"/home/u/report.pdf"},
-		},
-		{
-			name: "several anchors keep drag order",
-			html: `<a href="file:///a.png">a</a> <a href='file:///b.pdf'>b</a>`,
-			want: []droppedFile{"/a.png", "/b.pdf"},
-		},
-		{
-			name: "percent escapes decode and &amp; means &",
-			html: `<a href="file:///home/u/a%20file.pdf?x=1&amp;y=2">a file</a>`,
-			want: []droppedFile{"/home/u/a file.pdf"},
-		},
-		{
-			name: "a dragged browser link is not a file",
-			html: `<a href="https://example.com/page">Example</a>`,
-			want: nil,
-		},
-		{
-			name: "markup with no anchors names nothing",
-			html: `<p>just prose</p>`,
-			want: nil,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := dropMarkup(tc.html).files()
-			if len(got) != len(tc.want) {
-				t.Fatalf("files() = %q, want %q", got, tc.want)
-			}
-			for i := range got {
-				if got[i] != tc.want[i] {
-					t.Errorf("files()[%d] = %q, want %q", i, got[i], tc.want[i])
-				}
-			}
-		})
-	}
-}
-
-// The frame may carry the html lens instead of a uri-list, and the ingestion
-// treats them identically from that point on.
-func TestHandleNativeDrop_HTMLEntryReachesTheSameIngestion(t *testing.T) {
-	es, uuid := newDropEditor(t)
-	dir := t.TempDir()
-	path := filepath.Join(dir, "notes.txt")
-	if err := os.WriteFile(path, []byte("hello\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	res := es.HandleNativeDrop(uuid, []block.ContentEntry{
-		{MIMEType: "text/html", Content: `<a href="file://` + path + `">notes.txt</a>`},
-	}, 0)
-	if res.Outcome != block.OutcomeBlock {
-		t.Fatalf("outcome = %q, want block", res.Outcome)
-	}
-}
-
-// The bucket redeem: a frame with NO readable entries means "the drop happened,
-// the page could read none of it — GTK caught the paths" (#86). Same ethos as
-// the empty-clipboard paste, one gesture over.
-type fakeDropBucket struct{ paths []string }
-
-func (f *fakeDropBucket) TakeDrop(time.Duration) []string { return f.paths }
-
-func TestHandleNativeDrop_EmptyEntriesRedeemTheNativeBucket(t *testing.T) {
-	es, uuid := newDropEditor(t)
-	dir := t.TempDir()
-	path := filepath.Join(dir, "notes.txt")
-	if err := os.WriteFile(path, []byte("hello\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	es.SetPendingDrops(&fakeDropBucket{paths: []string{path}})
-
-	res := es.HandleNativeDrop(uuid, nil, 0)
-	if res.Outcome != block.OutcomeBlock {
-		t.Fatalf("outcome = %q, want block", res.Outcome)
-	}
-}
-
-func TestHandleNativeDrop_EmptyEntriesEmptyBucketIsNothing(t *testing.T) {
-	es, uuid := newDropEditor(t)
-	es.SetPendingDrops(&fakeDropBucket{})
-	if res := es.HandleNativeDrop(uuid, nil, 0); res.Outcome != block.OutcomeNothing {
-		t.Fatalf("outcome = %q, want nothing", res.Outcome)
-	}
-}
-
-// Entries that DID name files win over the bucket — the fast path for platforms
-// whose webview can read its own drops.
-func TestHandleNativeDrop_ReadableEntriesSkipTheBucket(t *testing.T) {
-	es, uuid := newDropEditor(t)
-	dir := t.TempDir()
-	real := filepath.Join(dir, "real.txt")
-	if err := os.WriteFile(real, []byte("real\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	decoy := filepath.Join(dir, "decoy.txt")
-	if err := os.WriteFile(decoy, []byte("decoy\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	es.SetPendingDrops(&fakeDropBucket{paths: []string{decoy}})
-
-	res := es.HandleNativeDrop(uuid, []block.ContentEntry{
-		{MIMEType: "text/uri-list", Content: "file://" + real + "\r\n"},
-	}, 0)
-	if res.Outcome != block.OutcomeBlock {
-		t.Fatalf("outcome = %q, want block", res.Outcome)
 	}
 }

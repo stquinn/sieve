@@ -36,28 +36,43 @@ func (es *EditorService) SetPendingDrops(s PendingDropSource) {
 	es.pendingDrops = s
 }
 
-// HandleNativeDrop ingests files named by a `text/uri-list`, one block per file.
+// HandleNativeDrop makes blocks out of the most recent OS file drop, at index.
 //
-// It exists because a WebKitGTK webview never materialises a readable File for a
-// file-manager drag: all the page receives is the `text/uri-list` the OS put on
-// the drag, so the bytes can only be read here. The frontend forwards that view
-// verbatim and decides nothing beyond WHERE the drop landed.
+// The frame that lands here carries ONLY the index: "there was a drop at this
+// position and the page could read none of it — take it from the native drop
+// bucket". That is the ONE drop mechanism on every platform (the ethos of the
+// empty-clipboard paste, #87): WebKitGTK starves the page of drop content and
+// every source app starves it differently, so the webview is never consulted —
+// GTK/Cocoa catches the drop (Wails OnFileDrop) and this redeems it. The wait
+// absorbs the race between the DOM's frame and the native callback, which land
+// in no guaranteed order.
 //
-// It is also where a COPIED file lands (HandleNativeClipboard, #87): a file
-// manager offers the same uri-list either way, and "the entries name local files"
-// is the whole of what this reads — the gesture that produced them is not its
-// business.
+// SECURITY: the bucket is fed ONLY by the native drop callback, so the files
+// read here are exactly the files the user just dropped — no path ever crosses
+// the wire.
+func (es *EditorService) HandleNativeDrop(uuid string, index int) block.PasteResult {
+	es.mu.RLock()
+	bucket := es.pendingDrops
+	es.mu.RUnlock()
+	if bucket == nil {
+		logger.Warn("native files: no drop bucket wired — drop dropped")
+		return block.PasteNothing()
+	}
+	var files []droppedFile
+	for _, p := range bucket.TakeDrop(pendingDropWait) {
+		files = append(files, droppedFile(p))
+	}
+	return es.ingestFiles(uuid, files, index)
+}
+
+// ingestFiles is the shared spine under both native gestures — a drop's bucket
+// and a copied file's clipboard uri-list: one block per file, in order, from
+// index, each through the ordinary paste route so the registry decides its kind.
 //
-// SECURITY: this reads local files named by a wire frame, so the document socket
-// carries a filesystem-read capability. WsHandler's origin allow-list is what
-// keeps a foreign page from opening that socket; auth-on-upgrade (#83) is the
-// other half and is not built yet.
-//
-// A file that cannot be read is skipped rather than failing the whole drop — a
-// drag of five files where one has since been moved should still land the four.
-// Every file skipped leaves the outcome as PasteNothing, which is exactly what a
-// drop of nothing readable did before it reached Go.
-func (es *EditorService) HandleNativeDrop(uuid string, entries []block.ContentEntry, index int) block.PasteResult {
+// A file that cannot be read is skipped rather than failing the whole batch — a
+// drop of five files where one has since been moved should still land the four.
+// Everything skipped leaves the outcome as PasteNothing.
+func (es *EditorService) ingestFiles(uuid string, files []droppedFile, index int) block.PasteResult {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
@@ -69,22 +84,6 @@ func (es *EditorService) HandleNativeDrop(uuid string, entries []block.ContentEn
 		index = len(shadow.SnapshotBlocks())
 	}
 
-	files := es.droppedFiles(entries)
-	if len(files) == 0 {
-		// No entry named a file — the webview could read nothing of the drop (its
-		// lenses starve on WebKitGTK, and each source app starves them differently:
-		// #86). The gesture is still real, so ask the native bucket for the paths
-		// GTK caught.
-		es.mu.RLock()
-		bucket := es.pendingDrops
-		es.mu.RUnlock()
-		if bucket != nil {
-			for _, p := range bucket.TakeDrop(pendingDropWait) {
-				files = append(files, droppedFile(p))
-			}
-		}
-	}
-
 	ceiling := es.attachmentCeiling()
 	created := 0
 	for _, f := range files {
@@ -92,9 +91,6 @@ func (es *EditorService) HandleNativeDrop(uuid string, entries []block.ContentEn
 		if !ok {
 			continue
 		}
-		// Each file takes the ordinary paste route, so the registry decides its kind
-		// exactly as it would for a paste: image/* to smart-image, everything else to
-		// attachment. Created at index+created, so the blocks land in drag order.
 		res := es.HandlePaste(uuid, []block.ContentEntry{entry}, index+created)
 		if !res.IsBlock() {
 			logger.Warn("native files: file produced no block", "uuid", uuid, "outcome", res.Outcome)
@@ -105,69 +101,14 @@ func (es *EditorService) HandleNativeDrop(uuid string, entries []block.ContentEn
 	if created == 0 {
 		return block.PasteNothing()
 	}
-	// A drop may create several blocks and therefore names none of them, for the
-	// reason a slice paste does not: there is no single block for the caret's
-	// empty-paragraph anchor to be consumed against. The outcome alone says the
-	// server took the drop.
+	// Several blocks mean no single one for the caret's empty-paragraph anchor to
+	// be consumed against, so none is named; the outcome alone says the server
+	// took the drop.
 	return block.PasteBlock("", "", "")
 }
 
-// droppedFiles reads the paths out of a drop's views. Only the `text/uri-list`
-// view names files; a native drag carries other flavours (`text/html`, a display
-// name) that describe the same drop without addressing it.
-func (es *EditorService) droppedFiles(entries []block.ContentEntry) []droppedFile {
-	var files []droppedFile
-	for _, e := range entries {
-		base, _, err := mime.ParseMediaType(e.MIMEType)
-		if err != nil {
-			continue
-		}
-		switch base {
-		case "text/uri-list":
-			files = append(files, uriList(e.Content).files()...)
-		case "text/html":
-			// WebKitGTK's one readable drop lens (#86): getData answers '' for
-			// text/uri-list, URL and text/plain on a real drag, and the store is
-			// empty before any async read runs — but text/html survives, carrying
-			// the file URI as an anchor's href. The frontend forwards it verbatim;
-			// the extraction lives here with the rest of the path handling.
-			files = append(files, dropMarkup(e.Content).files()...)
-		}
-	}
-	return files
-}
-
-// dropMarkup is a `text/html` drop payload. The URI may live in an anchor's
-// href OR as the anchor's TEXT — WebKitGTK writes the latter for a Dolphin drag
-// (measured: a style-only <a> whose text is the file:/// URI, no href at all) —
-// so the scan is for file: URIs anywhere in the markup, not for attributes.
-type dropMarkup string
-
-// files reports the local paths this markup names, in document order, under the
-// same rules as a uri-list: only local `file:` URIs count.
-func (h dropMarkup) files() []droppedFile {
-	var uris []string
-	rest := string(h)
-	for {
-		i := strings.Index(rest, "file:")
-		if i == -1 {
-			break
-		}
-		tail := rest[i:]
-		end := strings.IndexAny(tail, " \t\r\n\"'<>")
-		if end == -1 {
-			end = len(tail)
-		}
-		// &amp; is the one entity legal inside a URI in markup that changes its
-		// meaning when left encoded.
-		uris = append(uris, strings.ReplaceAll(tail[:end], "&amp;", "&"))
-		rest = tail[end:]
-	}
-	return uriList(strings.Join(uris, "\r\n")).files()
-}
-
-// attachmentCeiling is the live ceiling for files this drop may read — the
-// user's setting when the editor is wired with a state port, the default in
+// attachmentCeiling is the live ceiling for files a native gesture may read —
+// the user's setting when the editor is wired with a state port, the default in
 // constructions (tests) that have none.
 func (es *EditorService) attachmentCeiling() int {
 	if es.services.State == nil {

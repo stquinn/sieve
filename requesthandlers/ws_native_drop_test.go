@@ -13,10 +13,10 @@ import (
 	"sieve/sieve/services"
 )
 
-// A native drop is the one paste kind whose frame names files instead of
-// carrying them: a WebKitGTK webview never materialises a readable File for a
-// file-manager drag, so the page can forward only the `text/uri-list` the OS put
-// on the drag and the server reads the bytes.
+// A native drop's frame carries ONLY the index: the paths come from the native
+// drop bucket the OS-level catch fed (Wails OnFileDrop) — the page's view of a
+// drop is never consulted (#86). Multi-file drags arrive as one callback, so
+// several files are one gesture, one frame, several blocks.
 //
 // The block still arrives the way every other created block does — an
 // insert-block render-back — so this pins the ACK, which is what tells the
@@ -30,21 +30,19 @@ func TestWS_NativeDrop_ReadsTheFilesAndMakesBlocks(t *testing.T) {
 	t.Cleanup(func() { block.UnregisterProcessor("attachment") })
 
 	dir := t.TempDir()
-	var uris []string
+	var paths []string
 	for _, name := range []string{"swagger.yml", "notes.txt"} {
 		path := filepath.Join(dir, name)
 		if err := os.WriteFile(path, []byte("dropped "+name), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		uris = append(uris, "file://"+path)
+		paths = append(paths, path)
 	}
+	sp.Editor.SetPendingDrops(&wsFakeDropBucket{paths: paths})
 
 	c := dialWS(t, srv, uuid)
 	frame, err := json.Marshal(map[string]interface{}{
 		"type": "paste", "opId": "op-drop", "kind": "native-drop", "index": 0,
-		"entries": []map[string]interface{}{
-			{"mimeType": "text/uri-list", "content": strings.Join(uris, "\r\n") + "\r\n"},
-		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -82,20 +80,23 @@ func TestWS_NativeDrop_ReadsTheFilesAndMakesBlocks(t *testing.T) {
 	}
 }
 
-// A drop naming nothing readable answers `none`, which is what leaves the
-// caret's empty paragraph alone. It must not be an error frame: nothing failed —
-// the drag simply carried no file this machine has.
+// wsFakeDropBucket stands in for nativedrop.Default so the route is testable
+// without a real GTK drop.
+type wsFakeDropBucket struct{ paths []string }
+
+func (f *wsFakeDropBucket) TakeDrop(time.Duration) []string { return f.paths }
+
+// An unredeemable drop answers `none`, which is what leaves the caret's empty
+// paragraph alone. It must not be an error frame: nothing failed — the bucket
+// simply held no file this machine has.
 func TestWS_NativeDrop_NothingReadableIsNothing(t *testing.T) {
 	block.RegisterProcessor(&processors.ProseProcessor{})
-	srv, _, _, uuid := newWsTestServer(t)
+	srv, sp, _, uuid := newWsTestServer(t)
+	sp.Editor.SetPendingDrops(&wsFakeDropBucket{paths: []string{filepath.Join(t.TempDir(), "gone.pdf")}})
 
 	c := dialWS(t, srv, uuid)
 	frame, err := json.Marshal(map[string]interface{}{
 		"type": "paste", "opId": "op-drop", "kind": "native-drop", "index": 0,
-		"entries": []map[string]interface{}{{
-			"mimeType": "text/uri-list",
-			"content":  "file://" + filepath.Join(t.TempDir(), "gone.pdf") + "\r\n",
-		}},
 	})
 	if err != nil {
 		t.Fatal(err)

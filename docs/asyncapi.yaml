@@ -1609,7 +1609,7 @@ components:
           $ref: '#/components/schemas/ProtocolPasteKind'
         entries:
           type: array
-          description: 'smart: the clipboard''s views. native-drop: whatever view of the drag the page could read (a text/uri-list, or the text/html WebKitGTK leaves readable) — or EMPTY, meaning the page could read nothing and the server takes the paths from the native drop bucket GTK fed (OnFileDrop). native-clipboard: absent — the server reads the clipboard itself'
+          description: 'smart: the clipboard''s views. native-drop: absent — the server takes the paths from the native drop bucket the OS-level catch fed (Wails OnFileDrop); the page''s own view of a drop is never consulted. native-clipboard: absent — the server reads the clipboard itself'
           items:
             $ref: '#/components/schemas/BlockContentEntry'
         slice:

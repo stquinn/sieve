@@ -901,22 +901,17 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
       expect(ed.commands.insertContent).not.toHaveBeenCalled()
     })
 
-    it('a COPIED FILE rides the drop verb verbatim, at the CARET index', async () => {
-      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 6, anchor: null })) })
-      const list = 'file:///home/u/swagger.yml\r\n'
-      host.documentService.nativeDropPaste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
+    it('a COPIED FILE the page can name still goes to the NATIVE clipboard read', async () => {
+      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 4, anchor: null })) })
+      host.documentService.nativeClipboardPaste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
       const { props } = mountPaste(host, 'doc-1')
-      const event = { clipboardData: uriListClip(list), target: {}, preventDefault: vi.fn() }
-
+      const event = { clipboardData: uriListClip('file:///home/u/report.pdf\r\n'), target: {}, preventDefault: vi.fn() }
       expect(props.handlePaste({}, event)).toBe(true)
       await new Promise((r) => setTimeout(r, 0))
-      // A copy has no drop coordinate: the caret's peeked index, not posAtCoords.
-      expect(host.peekInsertIndexAt).not.toHaveBeenCalled()
-      expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', {
-        entries: [{ mimeType: 'text/uri-list', content: list }],
-        index: 6,
-      })
-      expect(host.documentService.nativeClipboardPaste).not.toHaveBeenCalled()
+      // One backend mechanism for every native gesture: the page's list is only
+      // the recogniser; Go asks GTK for the clipboard's own uris.
+      expect(host.documentService.nativeClipboardPaste).toHaveBeenCalledWith('doc-1', { index: 4 })
+      expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
     })
 
     it('a copied http URL is not a file — the ordinary pipeline still gets it', async () => {
@@ -994,14 +989,15 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
   // desktop file drag, that the uri-list is forwarded verbatim, and that the
   // union is read exactly as the paste path reads it.
 
-  // dt builds the DataTransfer shape the handler consults: `types` decides the
-  // CLAIM synchronously; content arrives via getData where the platform backs it,
-  // else via the async items API (the WebKitGTK case, #86).
-  function dt(uriList = '', opts = {}) {
+  // The ONE drop mechanism: every external drop is the GESTURE paging the
+  // backend — the frame carries only the index, and Go redeems the native drop
+  // bucket (Wails OnFileDrop). The page's view of the drop is never consulted;
+  // dt models it only to prove that NOTHING in it matters.
+  function dt(uriList = '') {
     return {
       types: uriList !== '' ? ['text/uri-list', 'text/html'] : ['text/plain'],
-      getData: (mime) => (mime === 'text/uri-list' && !opts.emptyGetData ? uriList : ''),
-      items: opts.items || [],
+      getData: (mime) => (mime === 'text/uri-list' ? uriList : ''),
+      items: [],
     }
   }
 
@@ -1014,78 +1010,28 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     return { ed, handled: props.handleDrop({}, event, null, false), event }
   }
 
-  it('handleSmartDrop: a desktop file drag PEEKS insertIndexAt(dropPos) (side-effect-free) and forwards the uri-list VERBATIM', async () => {
+  it('an external drop PEEKS insertIndexAt(dropPos) and redeems by INDEX ALONE', async () => {
     const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
-    const list = 'file:///home/u/swagger.yml\r\n'
-    const { handled, event } = dropUriList(host, list, { outcome: 'block', kind: 'attachment', id: 'at-1' })
-
+    const { handled, event } = dropUriList(host, 'file:///home/u/swagger.yml\r\n', { outcome: 'block' })
     expect(handled).toBe(true)
     expect(host.peekInsertIndexAt).toHaveBeenCalledWith(12)
     expect(host.insertIndexForBlockAt).not.toHaveBeenCalled() // no EAGER consume on drop
     // Without this PM inserts the file:/// path as text — the whole #86 symptom.
     expect(event.preventDefault).toHaveBeenCalled()
     await new Promise((r) => setTimeout(r, 0))
-    // The surface interprets nothing: the OS's own bytes, at the peeked index.
-    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', {
-      entries: [{ mimeType: 'text/uri-list', content: list }],
-      index: 9,
-    })
-    // The bytes never leave through the paste verb — Go reads them off disk.
+    // ONLY the index rides the frame: no entries, no paths, nothing of the page's
+    // view of the drop. Go takes the paths from the native bucket.
+    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', { index: 9 })
     expect(host.documentService.smartPaste).not.toHaveBeenCalled()
   })
 
-  it('several dropped files ride ONE frame — Go makes one block per line', async () => {
+  it('a drop whose DataTransfer is COMPLETELY unreadable redeems identically', async () => {
     const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
-    const list = 'file:///a.png\r\nfile:///b.pdf\r\n'
-    dropUriList(host, list, { outcome: 'block' })
-    await new Promise((r) => setTimeout(r, 0))
-    expect(host.documentService.nativeDropPaste).toHaveBeenCalledTimes(1)
-    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', expect.objectContaining({
-      entries: [{ mimeType: 'text/uri-list', content: list }],
-    }))
-  })
-
-  // The CLAIM is by flavour (`types`), because content is not synchronously
-  // readable on WebKitGTK — so everything advertising a uri-list is claimed, and
-  // what is not a file is replayed as text after the async read.
-  it('a dragged link (http, not file) → claimed, replayed as text at the drop position, nothing sent', async () => {
-    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
-    const { ed, handled, event } = dropUriList(host, 'https://example.com/page\r\n')
+    const { handled, event } = dropUriList(host, '', { outcome: 'block' })
     expect(handled).toBe(true)
     expect(event.preventDefault).toHaveBeenCalled()
     await new Promise((r) => setTimeout(r, 0))
-    expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
-    expect(ed.commands.insertContentAt).toHaveBeenCalledWith(12, 'https://example.com/page')
-  })
-
-  it('an external drop with NOTHING readable → claimed, redeemed with EMPTY entries (the bucket)', async () => {
-    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
-    const { handled, event } = dropUriList(host, '')
-    expect(handled).toBe(true)
-    expect(event.preventDefault).toHaveBeenCalled()
-    await new Promise((r) => setTimeout(r, 0))
-    // Empty entries mean "take it from the native drop bucket, place at index".
-    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', { entries: [], index: 9 })
-  })
-
-  it('a readable dragged text selection → claimed and replayed as content', async () => {
-    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
-    host.documentService.nativeDropPaste.mockReturnValue(Promise.resolve({ outcome: 'none' }))
-    const { ed, props } = mountPaste(host, 'doc-1')
-    ed.view.posAtCoords = () => ({ pos: 12 })
-    ed.state.selection = { to: 0 }
-    const event = {
-      dataTransfer: {
-        types: ['text/plain'],
-        getData: (mime) => (mime === 'text/plain' ? 'just some dragged words' : ''),
-        items: [],
-      },
-      clientX: 1, clientY: 1, preventDefault: vi.fn(),
-    }
-    expect(props.handleDrop({}, event, null, false)).toBe(true)
-    await new Promise((r) => setTimeout(r, 0))
-    expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
-    expect(ed.commands.insertContentAt).toHaveBeenCalledWith(12, 'just some dragged words')
+    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', { index: 9 })
   })
 
   it('an internal PM drag (slice/moved) is never claimed', () => {
@@ -1095,68 +1041,6 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     expect(props.handleDrop({}, event, { content: [] }, false)).toBe(false)
     expect(props.handleDrop({}, event, null, true)).toBe(false)
     expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
-  })
-
-  it('a comment-only uri-list names nothing → falls through to the bucket redeem', async () => {
-    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
-    const { ed, handled } = dropUriList(host, '# nothing here\r\n')
-    expect(handled).toBe(true)
-    await new Promise((r) => setTimeout(r, 0))
-    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', { entries: [], index: 9 })
-    expect(ed.commands.insertContentAt).not.toHaveBeenCalled()
-  })
-
-  // THE MEASURED WebKitGTK SHAPE (2026-08-21, real Dolphin drag): every list
-  // flavour answers '' and only text/html survives, carrying the file URI as a
-  // styled anchor's href. The html is forwarded VERBATIM — Go extracts.
-  it('WebKitGTK drop where only text/html answers → the html rides the frame', async () => {
-    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
-    host.documentService.nativeDropPaste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
-    const { ed, props } = mountPaste(host, 'doc-1')
-    ed.view.posAtCoords = () => ({ pos: 12 })
-    ed.state.selection = { to: 0 }
-    const html = '<a style="caret-color: rgb(0, 0, 0); font-weight: 400;">file:///home/u/report.pdf</a>'
-    const event = {
-      dataTransfer: {
-        types: ['text/uri-list', 'text/html'],
-        getData: (mime) => (mime === 'text/html' ? html : ''),
-        items: [{ kind: 'string', type: 'text/uri-list', getAsString: () => {} }],
-      },
-      clientX: 1, clientY: 1, preventDefault: vi.fn(),
-    }
-    expect(props.handleDrop({}, event, null, false)).toBe(true)
-    expect(event.preventDefault).toHaveBeenCalled()
-    await new Promise((r) => setTimeout(r, 0))
-    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', {
-      entries: [{ mimeType: 'text/html', content: html }],
-      index: 9,
-    })
-  })
-
-  // THE #86 REGRESSION: on a real WebKitGTK drag, getData('text/uri-list') answers
-  // '' while `types` advertises the flavour and a string ITEM carries the list.
-  // The claim must not depend on getData, and the content must come off the item.
-  it('WebKitGTK-shaped drop (getData empty, async string item) still reaches Go', async () => {
-    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
-    host.documentService.nativeDropPaste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
-    const { ed, props } = mountPaste(host, 'doc-1')
-    ed.view.posAtCoords = () => ({ pos: 12 })
-    ed.state.selection = { to: 0 }
-    const list = 'file:///home/u/swagger.yml\r\n'
-    const event = {
-      dataTransfer: dt(list, {
-        emptyGetData: true,
-        items: [{ kind: 'string', type: 'text/uri-list', getAsString: (cb) => cb(list) }],
-      }),
-      clientX: 1, clientY: 1, preventDefault: vi.fn(),
-    }
-    expect(props.handleDrop({}, event, null, false)).toBe(true)
-    expect(event.preventDefault).toHaveBeenCalled()
-    await new Promise((r) => setTimeout(r, 0))
-    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', {
-      entries: [{ mimeType: 'text/uri-list', content: list }],
-      index: 9,
-    })
   })
 
   it('a drop into a prompt pseudo-document is left to PM (no block tree to create into)', () => {

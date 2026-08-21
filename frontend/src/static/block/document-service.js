@@ -312,24 +312,19 @@ export class DocumentService {
   }
 
   /**
-   * Ingest files dragged in from the desktop: Go reads them off disk and runs each
-   * through the same paste pipeline, creating one block per file from
-   * `payload.index` on. Answers the same `PasteResult` union `smartPaste` does; a
-   * drag naming nothing readable answers `none`.
-   *
-   * THE ENTRIES NAME FILES, THEY DO NOT CARRY THEM. A WebKitGTK webview never
-   * materialises a readable `File` for a file-manager drag — all the page receives
-   * is the `text/uri-list` the OS put on the drag — so this forwards that one view
-   * verbatim and the server does the reading. That is also why there is no local
-   * size check to mirror `smartPaste`'s callers: nothing is read here to check.
-   * @param {string} uuid @param {{entries: object[], index: number}} payload
+   * Tell Go a file drop LANDED at `payload.index` and to take it from the native
+   * drop bucket — the OS-level catch (Wails OnFileDrop) that sees every source
+   * app identically. The frame carries ONLY the index: the page's view of a drop
+   * is never consulted (#86), so no entries, no paths, nothing to size-check.
+   * Answers the same `PasteResult` union `smartPaste` does; a drop the bucket
+   * cannot answer resolves `none`.
+   * @param {string} uuid @param {{index: number}} payload
    * @returns {Promise<{outcome?: string, kind?: string, id?: string, rawYaml?: string, html?: string, error?: string}>}
    */
   nativeDropPaste(uuid, payload) {
     return this.#blockService._awaitReply(uuid, {
       type: DocumentFrame.PASTE,
       kind: 'native-drop',
-      entries: payload.entries,
       index: payload.index,
     }, 'paste native-drop', PASTE_ACK_TIMEOUT_MS)
   }
