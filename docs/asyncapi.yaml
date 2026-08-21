@@ -740,6 +740,11 @@ components:
           type: string
         token:
           type: string
+        order:
+          type: array
+          description: 'set-order only: the complete top-level block id order to install'
+          items:
+            type: string
       required:
         - type
         - blockId

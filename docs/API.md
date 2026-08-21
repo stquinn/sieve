@@ -659,6 +659,7 @@ BlockOp is a granular mutation of the BlockDoc tree, carried over the wire (Stag
 | `index` | `int` | yes |  |
 | `parentId` | `string` | no |  |
 | `token` | `string` | no |  |
+| `order` | `[]string` | no | set-order only: the complete top-level block id order to install |
 
 ### `block.ContentEntry`
 

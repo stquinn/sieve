@@ -253,7 +253,7 @@ func (s *ShadowDocument) findBlock(id string) *SieveBlock {
 // BlockOp is a granular mutation of the BlockDoc tree, carried over the wire
 // (Stage C, spec §4). One op == one user-visible block change.
 type BlockOp struct {
-	Type    string `json:"type"` // "create-block","update-block","delete-block","move"
+	Type    string `json:"type"` // "create-block","update-block","delete-block","move","set-order"
 	BlockID string `json:"blockId"`
 	Kind    string `json:"kind,omitempty"`
 	// Attrs is the block's payload bag — uniform across kinds. Every kind's body
@@ -268,6 +268,12 @@ type BlockOp struct {
 	// token back on insert-block so the client can swap its pending node's token for
 	// the authoritative id. Never persisted.
 	Token string `json:"token,omitempty"`
+	// Order is the COMPLETE top-level block order a set-order op installs, newest
+	// first position to last. It is the whole order rather than a delta because
+	// applying it is idempotent: a duplicate or out-of-sequence frame lands the
+	// document in the same place, so the op is safe to send last in a batch that
+	// also created or deleted blocks.
+	Order []string `json:"order,omitempty" doc:"set-order only: the complete top-level block id order to install"`
 }
 
 // applyOpTo mutates the ordered block slice in place according to op. It returns
@@ -305,6 +311,9 @@ func (s *ShadowDocument) applyOpTo(op BlockOp) error {
 		}
 		return nil
 
+	case "set-order":
+		return s.setOrder(op.Order)
+
 	case "move", "reorder":
 		if op.ParentID != "" {
 			return fmt.Errorf("move: nesting into parent %q is Stage E (no Children yet)", op.ParentID)
@@ -319,6 +328,36 @@ func (s *ShadowDocument) applyOpTo(op BlockOp) error {
 	default:
 		return fmt.Errorf("unknown block op type %q", op.Type)
 	}
+}
+
+// setOrder rearranges the top-level blocks into exactly the given id order. It is
+// a PERMUTATION and refuses anything else: the op replaces the whole order, so a
+// list that omits a block, names an unknown one, or repeats one would silently
+// drop content — the difference between a reorder and a mass delete. Nothing is
+// mutated unless the whole order validates. ASSUMES s.mu is held by the caller.
+func (s *ShadowDocument) setOrder(order []string) error {
+	if len(order) != len(s.Blocks) {
+		return fmt.Errorf("set-order: names %d blocks, document has %d", len(order), len(s.Blocks))
+	}
+	byID := make(map[string]SieveBlock, len(s.Blocks))
+	for _, b := range s.Blocks {
+		byID[b.ID] = b
+	}
+	reordered := make([]SieveBlock, 0, len(order))
+	seen := make(map[string]bool, len(order))
+	for _, id := range order {
+		b, ok := byID[id]
+		if !ok {
+			return fmt.Errorf("set-order: block %q not found", id)
+		}
+		if seen[id] {
+			return fmt.Errorf("set-order: block %q named twice", id)
+		}
+		seen[id] = true
+		reordered = append(reordered, b)
+	}
+	s.Blocks = reordered
+	return nil
 }
 
 // removeBlock deletes the block with id from the tree rooted at *blocks,

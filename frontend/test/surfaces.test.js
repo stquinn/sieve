@@ -68,6 +68,7 @@ vi.mock('../src/static/block/block-selection.js', () => ({
 vi.mock('../src/static/block/block-sync.js', () => ({
   seedBaseline: vi.fn((triples) => { const m = {}; triples.forEach((t) => { if (t.id) m[t.id] = t.content }); return m }),
   computeBlockSync: vi.fn(() => ({ next: {}, ops: [] })),
+  computeOrderOp: vi.fn(() => ({ op: null, next: null })),
 }))
 vi.mock('../src/static/editor/surfaces/block-position.js', () => ({
   docPosForBlockIndex: vi.fn(() => 7),
@@ -84,7 +85,7 @@ import { buildBlocksHTML } from '../src/static/block/block-render.js'
 import { SieveBlock } from '../src/static/block/sieve-block.js'
 import { getBlockSelectionRange } from '../src/static/editor/block-chrome.js'
 import { BlockSelection } from '../src/static/block/block-selection.js'
-import { computeBlockSync } from '../src/static/block/block-sync.js'
+import { computeBlockSync, computeOrderOp } from '../src/static/block/block-sync.js'
 import { docPosForBlockIndex, blockIndexAfter } from '../src/static/editor/surfaces/block-position.js'
 import { caretInRawTextBlock } from '../src/static/editor/paste-context.js'
 import { schema as fxSchema, build, docWithCaret, docWithCaretAt, docWithRange, docWithNodeSelection } from './helpers/editor-fixture.js'
@@ -287,6 +288,7 @@ function wyHost(overrides = {}) {
     documentService: {
       createBlock: vi.fn(),
       deleteBlock: vi.fn(),
+      setBlockOrder: vi.fn(),
       pasteSlice: vi.fn(() => Promise.resolve({})),
       smartPaste: vi.fn(() => Promise.resolve({ outcome: 'none' })),
     },
@@ -488,6 +490,9 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     // These mounts hold a single block b1; the debounced sync emits its update-block
     // op (the recording bundle's old computeBlockSync default, now the mocked import).
     vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [{ type: 'update-block', blockId: 'b1' }] })
+    // Order is quiet unless a test says otherwise — reset so one test's reorder
+    // cannot leak a set-order into the next.
+    vi.mocked(computeOrderOp).mockReturnValue({ op: null, next: null })
   })
 
   function mountWy() {
@@ -607,6 +612,30 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     ed.options.onUpdate({ editor: ed, transaction: userTr })
     expect(host.onSurfaceEvent).toHaveBeenCalledWith(SurfaceEvent.DOC_CHANGED)
     expect(host.onSurfaceEvent).not.toHaveBeenCalledWith(SurfaceEvent.DOC_PROJECTED)
+  })
+
+  it('a reorder submits ONE set-order op through DocumentService, after the batch (#94)', () => {
+    // The observer's signature is positionless, so order is reported separately —
+    // and LAST, because set-order installs a COMPLETE order and must land after
+    // this tick's creates and deletes have moved the server's set.
+    vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [{ type: 'delete-block', blockId: 'gone' }] })
+    vi.mocked(computeOrderOp).mockReturnValue({ op: { type: 'set-order', order: ['b1', 'b2'] }, next: ['b1', 'b2'] })
+    const { host, ed } = mountWy()
+    ed.options.onUpdate({ editor: ed })
+    vi.advanceTimersByTime(500)
+    expect(host.documentService.setBlockOrder).toHaveBeenCalledWith('doc-1', ['b1', 'b2'])
+    expect(host.documentService.deleteBlock.mock.invocationCallOrder[0])
+      .toBeLessThan(host.documentService.setBlockOrder.mock.invocationCallOrder[0])
+  })
+
+  it('sends nothing when neither content nor order moved', () => {
+    vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [] })
+    vi.mocked(computeOrderOp).mockReturnValue({ op: null, next: ['b1'] })
+    const { host, ed } = mountWy()
+    ed.options.onUpdate({ editor: ed })
+    vi.advanceTimersByTime(500)
+    expect(host.documentService.setBlockOrder).not.toHaveBeenCalled()
+    expect(host.blockService.updateAttributes).not.toHaveBeenCalled()
   })
 
   it('flushPending fires the pending sync immediately, exactly once', () => {

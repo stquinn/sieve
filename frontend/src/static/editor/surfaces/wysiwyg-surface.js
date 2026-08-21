@@ -56,7 +56,7 @@ import { BlockSelection } from '../../block/block-selection.js'
 import { getBlockKind } from '../../block/block-kinds.js'
 import { SieveBlock } from '../../block/sieve-block.js'
 import { buildBlocksHTML, proseContent } from '../../block/block-render.js'
-import { seedBaseline, computeBlockSync } from '../../block/block-sync.js'
+import { seedBaseline, computeBlockSync, computeOrderOp } from '../../block/block-sync.js'
 import { docPosForBlockIndex, blockIndexAfter } from './block-position.js'
 import { reloadReplacement } from './render-empty.js'
 import { caretInRawTextBlock } from '../paste-context.js'
@@ -188,6 +188,14 @@ export class WysiwygSurface extends AbstractSurface {
    * @type {Record<string, string>|null}
    */
   #blockContentCache = null
+
+  /**
+   * Per-mount block-ORDER baseline: the top-level block ids as of the last
+   * reported sync (#94). Separate from #blockContentCache because a block's
+   * signature is deliberately positionless — order is its own fact.
+   * @type {string[]|null}
+   */
+  #blockOrderCache = null
 
   /** @type {ReturnType<typeof setTimeout>|null} 500ms observer debounce (formerly module docUpdateTimer) */
   #syncTimer = null
@@ -2022,6 +2030,9 @@ export class WysiwygSurface extends AbstractSurface {
     this.#blockContentCache = seedBaseline
       ? seedBaseline(triples)
       : {}
+    // The order baseline seeds from GO's list too, so the first reorder after a
+    // load is measured against what the server actually holds (#94).
+    this.#blockOrderCache = triples.filter(function (t) { return !!t.id }).map(function (t) { return t.id })
   }
 
   /**
@@ -2039,7 +2050,12 @@ export class WysiwygSurface extends AbstractSurface {
     if (!curr || !computeBlockSync) return
     var r = computeBlockSync(curr, this.#blockContentCache)
     this.#blockContentCache = r.next
-    if (r.ops.length) this.#submitOps(r.ops)
+    // Order rides LAST in the batch: it installs the COMPLETE order, so it must
+    // land after this tick's creates and deletes have moved the server's set.
+    var o = computeOrderOp(curr, this.#blockOrderCache, r.ops)
+    this.#blockOrderCache = o.next
+    var ops = o.op ? r.ops.concat([o.op]) : r.ops
+    if (ops.length) this.#submitOps(ops)
   }
 
   /**
@@ -2055,6 +2071,7 @@ export class WysiwygSurface extends AbstractSurface {
    * - update-block → BlockService.updateAttributes (kind resolves from the
    *   service's routing index; aliases lift to the op's top level).
    * - delete-block → DocumentService.deleteBlock (kind-agnostic).
+   * - set-order → DocumentService.setBlockOrder (the whole id order, #94).
    *
    * A host without the service pair (bare test constructions) drops the batch
    * — socketless parity with the retired editor no-op sends.
@@ -2073,6 +2090,8 @@ export class WysiwygSurface extends AbstractSurface {
         bs.updateAttributes(op.blockId, op.attrs, { aliases: op.aliases })
       } else if (op.type === 'delete-block') {
         ds.deleteBlock(this.#uuid, op.blockId)
+      } else if (op.type === 'set-order') {
+        ds.setBlockOrder(this.#uuid, op.order)
       }
     }
   }

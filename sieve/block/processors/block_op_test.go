@@ -273,3 +273,70 @@ func equalStrs(a, b []string) bool {
 	}
 	return true
 }
+
+// #94 — a drag-handle reorder is a document change like any other, and the
+// client reports it as ONE set-order op carrying the whole authoritative id
+// order. Applying the complete order is idempotent and self-correcting, which is
+// what makes it safe to send last in a batch that also created or deleted blocks.
+func TestBlockDoc_ApplyOp_SetOrder(t *testing.T) {
+	newDoc := func() *block.ShadowDocument {
+		return &block.ShadowDocument{Blocks: []block.SieveBlock{
+			{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "a"}},
+			{ID: "pr-2", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "b"}},
+			{ID: "pr-3", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "c"}},
+		}}
+	}
+	ids := func(s *block.ShadowDocument) string {
+		var out []string
+		for _, b := range s.Blocks {
+			out = append(out, b.ID)
+		}
+		return strings.Join(out, ",")
+	}
+
+	s := newDoc()
+	if err := s.ApplyOp(block.BlockOp{Type: "set-order", Order: []string{"pr-3", "pr-1", "pr-2"}}); err != nil {
+		t.Fatalf("set-order: %v", err)
+	}
+	if got := ids(s); got != "pr-3,pr-1,pr-2" {
+		t.Fatalf("order = %q, want pr-3,pr-1,pr-2", got)
+	}
+	// The blocks are MOVED, not rebuilt — content rides along with the identity.
+	if s.Blocks[0].Attrs["content"] != "c" {
+		t.Fatalf("block content lost in the reorder: %+v", s.Blocks[0].Attrs)
+	}
+
+	// Idempotent: replaying the same order is a no-op, so a stale duplicate frame
+	// cannot scramble the document.
+	if err := s.ApplyOp(block.BlockOp{Type: "set-order", Order: []string{"pr-3", "pr-1", "pr-2"}}); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if got := ids(s); got != "pr-3,pr-1,pr-2" {
+		t.Fatalf("replay changed the order: %q", got)
+	}
+}
+
+// A set-order that does not name every block must be REFUSED rather than
+// silently truncating the document — the op replaces the whole order, so a
+// partial list is the difference between a reorder and a mass delete.
+func TestBlockDoc_ApplyOp_SetOrderRejectsIncompleteOrUnknown(t *testing.T) {
+	newDoc := func() *block.ShadowDocument {
+		return &block.ShadowDocument{Blocks: []block.SieveBlock{
+			{ID: "pr-1", Kind: block.KindProse},
+			{ID: "pr-2", Kind: block.KindProse},
+		}}
+	}
+	for name, order := range map[string][]string{
+		"missing a block":  {"pr-2"},
+		"names an unknown": {"pr-1", "pr-2", "ghost"},
+		"duplicates one":   {"pr-1", "pr-1"},
+		"empty":            {},
+	} {
+		s := newDoc()
+		if err := s.ApplyOp(block.BlockOp{Type: "set-order", Order: order}); err == nil {
+			t.Errorf("%s: expected an error, got nil (blocks now %d)", name, len(s.Blocks))
+		} else if len(s.Blocks) != 2 {
+			t.Errorf("%s: refused op still mutated the document: %d blocks", name, len(s.Blocks))
+		}
+	}
+}

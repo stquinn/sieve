@@ -360,4 +360,16 @@ export class DocumentService {
   deleteBlock(uuid, blockId) {
     return this.#blockService._awaitAck(uuid, { type: DocumentFrame.BLOCK_OP, uuid: uuid, op: { type: 'delete-block', blockId: blockId } }, 'delete-block ' + blockId)
   }
+
+  /**
+   * MEMBERSHIP: install the document's top-level block ORDER (#94). `order` must
+   * name every block the server holds, in the new order — Go refuses a partial
+   * list, which would otherwise read as a mass delete.
+   * Returns the block-op ack RESULT {ok, error?} (resolves, never rejects).
+   * @param {string} uuid @param {string[]} order
+   * @returns {Promise<{ok: boolean, error?: string}>}
+   */
+  setBlockOrder(uuid, order) {
+    return this.#blockService._awaitAck(uuid, { type: DocumentFrame.BLOCK_OP, uuid: uuid, op: { type: 'set-order', order: order } }, 'set-order ' + order.length + ' blocks')
+  }
 }
