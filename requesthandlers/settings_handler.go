@@ -164,6 +164,14 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 			settings.MaxHistoryVersions = val
 		}
 	}
+	// The panel speaks megabytes; the setting is stored in bytes so nothing
+	// downstream has to convert. A blank or nonsense field leaves the ceiling
+	// alone — a zero would read as the default, silently undoing a raise.
+	if mbStr := r.FormValue("max_attachment_mb"); mbStr != "" {
+		if val, err := strconv.Atoi(mbStr); err == nil && val > 0 {
+			settings.MaxAttachmentBytes = val * 1024 * 1024
+		}
+	}
 	if longStr := r.FormValue("cli_timeout_long"); longStr != "" {
 		if val, err := strconv.Atoi(longStr); err == nil && val > 0 {
 			settings.CLITimeoutLong = val

@@ -280,20 +280,21 @@ func (a *App) Quit() {
 // ── Store info ────────────────────────────────────────────────────────────────
 
 type StoreInfo struct {
-	Root               string          `json:"root"`
-	Hostname           string          `json:"hostname"`
-	BuffersPath        string          `json:"buffersPath"`
-	NotesPath          string          `json:"notesPath"`
-	IsNew              bool            `json:"isNew"`
-	Tier               domain.Tier     `json:"tier"`
-	Cli                string          `json:"cli"`
-	Debug              bool            `json:"debug"`
-	AutosaveDebounce   int             `json:"autosaveDebounce"`
-	ThemeName          string          `json:"themeName"`
+	Root               string           `json:"root"`
+	Hostname           string           `json:"hostname"`
+	BuffersPath        string           `json:"buffersPath"`
+	NotesPath          string           `json:"notesPath"`
+	IsNew              bool             `json:"isNew"`
+	Tier               domain.Tier      `json:"tier"`
+	Cli                string           `json:"cli"`
+	Debug              bool             `json:"debug"`
+	AutosaveDebounce   int              `json:"autosaveDebounce"`
+	ThemeName          string           `json:"themeName"`
 	ThemeVars          domain.ThemeVars `json:"themeVars"`
-	MaxHistoryVersions int             `json:"maxHistoryVersions"`
-	CLITimeoutLong     int             `json:"cliTimeoutLong"`
-	ShowPrompts        bool            `json:"showPrompts"`
+	MaxHistoryVersions int              `json:"maxHistoryVersions"`
+	CLITimeoutLong     int              `json:"cliTimeoutLong"`
+	MaxAttachmentBytes int              `json:"maxAttachmentBytes"`
+	ShowPrompts        bool             `json:"showPrompts"`
 }
 
 func (a *App) getStoreInfo() StoreInfo {
@@ -321,6 +322,7 @@ func (a *App) getStoreInfo() StoreInfo {
 		ThemeVars:          domain.LoadTheme(liveSettings.Theme, a.loadThemeOverride(liveSettings.Theme), a.themesFS),
 		MaxHistoryVersions: liveSettings.MaxHistoryVersions,
 		CLITimeoutLong:     liveSettings.CLITimeoutLong,
+		MaxAttachmentBytes: liveSettings.MaxAttachmentBytes,
 		ShowPrompts:        a.State.LoadSession().ShowPrompts,
 	}
 }
@@ -627,4 +629,3 @@ func migrateSettings(oldPath, newPath string) {
 	os.Remove(oldPath)
 	logger.Info("migrated settings.json (cli merge)", "from", oldPath, "to", newPath)
 }
-

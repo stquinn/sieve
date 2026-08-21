@@ -29,14 +29,19 @@ type CustomLogParser struct {
 // Settings mirrors store/{hostname}/settings.json.
 // All fields are optional — missing keys fall back to defaults.
 type Settings struct {
-	CLI                string            `json:"cli,omitempty"`
-	CLIPath            string            `json:"cli_path,omitempty"`
-	Model              string            `json:"model,omitempty"`
-	CLITimeoutLong     int               `json:"cli_timeout_long,omitempty"`
-	AutosaveDebounce   int               `json:"autosave_debounce,omitempty"`
-	Debug              bool              `json:"debug,omitempty"`
-	Theme              string            `json:"theme,omitempty"`
-	MaxHistoryVersions int               `json:"max_history_versions,omitempty"`
+	CLI                string `json:"cli,omitempty"`
+	CLIPath            string `json:"cli_path,omitempty"`
+	Model              string `json:"model,omitempty"`
+	CLITimeoutLong     int    `json:"cli_timeout_long,omitempty"`
+	AutosaveDebounce   int    `json:"autosave_debounce,omitempty"`
+	Debug              bool   `json:"debug,omitempty"`
+	Theme              string `json:"theme,omitempty"`
+	MaxHistoryVersions int    `json:"max_history_versions,omitempty"`
+	// MaxAttachmentBytes is the largest file an attachment block will hold. It is
+	// a judgement about the user's machine and the user's content, not a property
+	// of the code — someone attaching 40MB PDFs on a workstation and someone on a
+	// small laptop want different answers. Zero or absent means the default.
+	MaxAttachmentBytes int               `json:"max_attachment_bytes,omitempty"`
 	CustomLogParsers   []CustomLogParser `json:"custom_log_parsers,omitempty"`
 	WorkerPools        map[string]int    `json:"worker_pools,omitempty"`
 	// PromptTimeouts overrides the CLI timeout (seconds) per prompt name. A
@@ -45,6 +50,30 @@ type Settings struct {
 	AI             AISettings      `json:"ai,omitempty"`
 	Diagram        DiagramSettings `json:"diagram,omitempty"`
 	LookAndFeel    LookAndFeel     `json:"look_and_feel"`
+}
+
+// DefaultMaxAttachmentBytes is the out-of-the-box attachment ceiling.
+//
+// The number is chosen against the path a held file actually takes — file →
+// base64 (x1.33) → JSON body → decode → disk — which holds roughly three copies
+// of it at once. 5MB (smart-image's remote-fetch cap) would reject an ordinary
+// PDF spec, which is exactly the material attachments exist for; past about 25MB
+// base64-in-a-JSON-body is the wrong mechanism, and raising this setting far
+// beyond it wants a streaming upload rather than a larger number.
+//
+// Model context is NOT the constraint: the bytes never reach a prompt. The CLI's
+// cwd is the document directory, so the model opens the file itself.
+const DefaultMaxAttachmentBytes = 25 * 1024 * 1024
+
+// MaxAttachmentMB is the attachment ceiling in the unit a person thinks in. The
+// setting is stored in bytes so nothing downstream has to convert, and the
+// settings panel is the one place that has to speak megabytes.
+func (s Settings) MaxAttachmentMB() int {
+	bytes := s.MaxAttachmentBytes
+	if bytes <= 0 {
+		bytes = DefaultMaxAttachmentBytes
+	}
+	return bytes / (1024 * 1024)
 }
 
 // AISettings groups AI-subsystem settings under a nested "ai" object.
@@ -296,6 +325,9 @@ func ParseSettings(data []byte) Settings {
 	if loaded.MaxHistoryVersions > 0 {
 		s.MaxHistoryVersions = loaded.MaxHistoryVersions
 	}
+	if loaded.MaxAttachmentBytes > 0 {
+		s.MaxAttachmentBytes = loaded.MaxAttachmentBytes
+	}
 	if len(loaded.CustomLogParsers) > 0 {
 		s.CustomLogParsers = loaded.CustomLogParsers
 	}
@@ -340,6 +372,7 @@ func DefaultSettings() Settings {
 		AutosaveDebounce:   30,
 		Theme:              "sublime",
 		MaxHistoryVersions: 200,
+		MaxAttachmentBytes: DefaultMaxAttachmentBytes,
 		WorkerPools:        map[string]int{}, // empty ⇒ every category uses the engine's defaultN
 		AI:                 AISettings{Containment: DefaultContainmentProfile()},
 		Diagram: DiagramSettings{

@@ -27,21 +27,25 @@ const attachmentSummaryChars = 200
 // blank, and the chip still names the file and states its size.
 const attachmentExcerptBytes = 4096
 
-// MaxAttachmentBytes is the largest file this kind will hold, and the BACKSTOP
+// maxAttachmentBytes is the largest file this kind will hold, and the BACKSTOP
 // half of a ceiling the frontend also enforces before it reads a file at all.
 // Both halves exist on purpose: the client one keeps a huge file from ever
 // entering the renderer's memory, and this one does not trust a client.
 //
-// The number is chosen against the path a held file actually takes — file →
-// base64 (×1.33) → JSON body → decode → disk — which holds roughly three copies
-// of it at once. 5MB (smart-image's remote-fetch cap) would reject an ordinary
-// PDF spec, which is exactly the material this kind exists for; past about 25MB,
-// base64-in-a-JSON-body is the wrong mechanism and the honest answer is a
-// streaming upload rather than a larger constant.
-//
-// Model context is NOT the constraint: the bytes never reach a prompt. The CLI's
-// cwd is the document directory, so the model opens the file itself.
-const MaxAttachmentBytes = 25 * 1024 * 1024
+// The limit is a SETTING (max_attachment_bytes, #84) because it is a judgement
+// about the user's machine and content, not a property of the code — see
+// domain.DefaultMaxAttachmentBytes for how the default is chosen. A processor
+// built without a state port (test constructions) falls back to that default
+// rather than to no ceiling at all.
+func (p *AttachmentProcessor) maxAttachmentBytes() int {
+	if p.svc.State == nil {
+		return domain.DefaultMaxAttachmentBytes
+	}
+	if configured := p.svc.State.LoadSettings().MaxAttachmentBytes; configured > 0 {
+		return configured
+	}
+	return domain.DefaultMaxAttachmentBytes
+}
 
 // attachmentMaxExtLen bounds the suffix a stored asset inherits from a dropped
 // filename, dot included. Long enough for the longest real one a thinking tool
@@ -255,9 +259,9 @@ func (p *AttachmentProcessor) holdDroppedFile(e block.ContentEntry, filename, uu
 		logger.Warn("attachment: dropped file decode failed", "block", blockID, "file", filename, "err", err)
 		return nil
 	}
-	if len(data) > MaxAttachmentBytes {
+	if limit := p.maxAttachmentBytes(); len(data) > limit {
 		logger.Warn("attachment: dropped file over the size limit",
-			"block", blockID, "file", filename, "bytes", len(data), "limit", MaxAttachmentBytes)
+			"block", blockID, "file", filename, "bytes", len(data), "limit", limit)
 		return nil
 	}
 	src, err := p.assets.save(uuid, blockID+p.assetExt(filename), data)

@@ -135,18 +135,9 @@ const NATIVE_UNIT_LABEL = Object.freeze({
 })
 
 /**
- * The largest file a drop will carry into a document — the CLIENT half of a
- * ceiling Go enforces too (`MaxAttachmentBytes`, attachment_processor.go). The
- * two halves do different jobs: this one keeps a huge file out of the renderer's
- * memory entirely and is what can name the file and its size to the user; Go's
- * exists because a server must not trust a client.
- *
- * The number is chosen against the path a held file actually takes — file →
- * base64 (×1.33) → JSON body → decode → disk — which holds roughly three copies
- * of it at once. 5MB (smart-image's remote-fetch cap) would reject an ordinary
- * PDF spec, which is the material this exists for; past about 25MB,
- * base64-in-a-JSON-body is the wrong mechanism and the honest answer is a
- * streaming upload rather than a larger constant. Keep the two halves equal.
+ * The DEFAULT largest file a drop will carry into a document — the fallback for
+ * `WysiwygSurface.attachmentCeiling()` when the app has not published a configured one. Keep it
+ * equal to Go's `domain.DefaultMaxAttachmentBytes`, which explains the number.
  */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
@@ -1143,7 +1134,7 @@ export class WysiwygSurface extends AbstractSurface {
             // the paste-match registry routes image/* to smart-image and
             // everything else to attachment. A new kind extends the routing
             // without touching this code.
-            if (file.size > MAX_ATTACHMENT_BYTES) {
+            if (file.size > WysiwygSurface.attachmentCeiling()) {
               WysiwygSurface.#refuseOversizedFile(file)
               refused = true
               return
@@ -1183,7 +1174,7 @@ export class WysiwygSurface extends AbstractSurface {
       if (!hasFiles && event.dataTransfer.files && event.dataTransfer.files.length) {
         Array.from(event.dataTransfer.files).forEach(function(file) {
           if (!file) return
-          if (file.size > MAX_ATTACHMENT_BYTES) {
+          if (file.size > WysiwygSurface.attachmentCeiling()) {
             WysiwygSurface.#refuseOversizedFile(file)
             refused = true
             return
@@ -1275,7 +1266,7 @@ export class WysiwygSurface extends AbstractSurface {
     console.warn('[editor.js] drop refused: over the attachment size limit', file.name, file.size)
     window.alert(
       '"' + file.name + '" is ' + WysiwygSurface.#megabytes(file.size) + ' — larger than the '
-      + WysiwygSurface.#megabytes(MAX_ATTACHMENT_BYTES) + ' limit for an attached file, so it was not attached.'
+      + WysiwygSurface.#megabytes(WysiwygSurface.attachmentCeiling()) + ' limit for an attached file, so it was not attached.'
     )
   }
 
@@ -1286,6 +1277,23 @@ export class WysiwygSurface extends AbstractSurface {
    * PM layer to the look-and-feel layer for a string.
    * @param {number} bytes @returns {string}
    */
+  /**
+   * The live attachment ceiling — the CLIENT half of a limit Go enforces too. The
+   * two halves do different jobs: this one keeps a huge file out of the renderer's
+   * memory entirely and is what can name the file and its size to the user; Go's
+   * exists because a server must not trust a client.
+   *
+   * The user owns the number (`max_attachment_bytes`, #84), so it is READ PER
+   * CHECK rather than captured at module load: settings change under a running
+   * window, and a stale ceiling would refuse a file the backend would have taken.
+   * The value reaches the page through the index template, like the autosave delay.
+   * @returns {number}
+   */
+  static attachmentCeiling() {
+    const configured = Number(/** @type {any} */ (window).__sieveMaxAttachmentBytes)
+    return Number.isFinite(configured) && configured > 0 ? configured : MAX_ATTACHMENT_BYTES
+  }
+
   static #megabytes(bytes) {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
   }

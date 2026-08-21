@@ -993,6 +993,45 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
       }))
     })
 
+    // #84 — the ceiling is the USER's number, published to the page by the index
+    // template. The pre-check reads it per drop rather than capturing it at module
+    // load, so a raised limit takes effect without the client refusing files the
+    // backend would happily have taken.
+    it('honours the configured ceiling, and names IT in the refusal', async () => {
+      window.__sieveMaxAttachmentBytes = 4 * 1024 * 1024
+      try {
+        const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
+        dropFiles(host, [{ type: 'application/pdf', name: 'spec.pdf', size: 8 * 1024 * 1024 }])
+        const msg = vi.mocked(window.alert).mock.calls[0][0]
+        expect(msg).toContain('spec.pdf')
+        expect(msg).toContain('4.0 MB')   // the CONFIGURED limit, not the default
+        await new Promise((r) => setTimeout(r, 0))
+        expect(host.documentService.smartPaste).not.toHaveBeenCalled()
+      } finally {
+        delete window.__sieveMaxAttachmentBytes
+      }
+    })
+
+    it('a RAISED ceiling lets through a file the default would have refused', async () => {
+      window.__sieveMaxAttachmentBytes = 200 * 1024 * 1024
+      try {
+        const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
+        dropFiles(host, [{ type: 'application/pdf', name: 'atlas.pdf', size: 60 * 1024 * 1024 }])
+        await new Promise((r) => setTimeout(r, 0))
+        expect(host.documentService.smartPaste).toHaveBeenCalled()
+      } finally {
+        delete window.__sieveMaxAttachmentBytes
+      }
+    })
+
+    it('falls back to the default when the page published nothing usable', () => {
+      for (const bogus of [undefined, 0, -1, 'lots', NaN]) {
+        window.__sieveMaxAttachmentBytes = bogus
+        expect(WysiwygSurface.attachmentCeiling()).toBe(MAX_ATTACHMENT_BYTES)
+      }
+      delete window.__sieveMaxAttachmentBytes
+    })
+
     // The failure being designed out is the SILENT one: before this, an over-large
     // drop did nothing at all and said nothing about why.
     it('a file over the ceiling is REFUSED OUT LOUD — named, sized, and never read into memory', async () => {

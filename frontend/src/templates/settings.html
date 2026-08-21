@@ -403,6 +403,15 @@ if (x &lt;= y) return "ok";</code>
         <input type="number" name="max_history_versions" value="{{.MaxHistoryVersions}}" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
       </div>
 
+      <!-- The ceiling is entered in MB and stored in bytes (max_attachment_bytes).
+           A file this size is held three times over on its way in — read, base64,
+           decoded — so the honest guidance is about the machine, not the disk. -->
+      <div style="margin-bottom: 1.5rem;">
+        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Max Attachment Size (MB)</label>
+        <input type="number" min="1" name="max_attachment_mb" value="{{.MaxAttachmentMB}}" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+        <p style="margin-top: 0.4rem; font-size: 0.75rem; color: var(--theme-textDim); line-height: 1.4;">The largest file an attachment block will hold. Attaching uses roughly three times the file's size in memory, so raise this against what your machine can spare. Past about 50MB the round trip itself is the wrong mechanism.</p>
+      </div>
+
       <div style="display: flex; align-items: center; gap: 0.75rem;">
         <input type="checkbox" id="debug-mode" name="debug" {{if .Debug}}checked{{end}} style="width: 1rem; height: 1rem; border-radius: 0.25rem; background: var(--theme-bg); border: 1px solid var(--theme-border);">
         <label for="debug-mode" style="font-size: 0.875rem; color: var(--theme-text);">Enable Debug Mode</label>
