@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -31,6 +33,24 @@ func TestAuth_RejectsWithoutToken(t *testing.T) {
 	}
 	if code := authProbe(t, s, "Bearer deadbeef"); code != http.StatusUnauthorized {
 		t.Errorf("unregistered token: status = %d, want 401", code)
+	}
+}
+
+// The WS upgrade credential (App.WSToken) and the MCP registry are disjoint in
+// BOTH directions: requesthandlers proves an MCP token cannot open a wire, and
+// this proves the mirror — a well-formed 64-hex credential that is valid
+// elsewhere in the process opens nothing here, because membership of THIS
+// server's set is the only thing that passes. Minted inline since the WS token
+// itself lives in package main; any non-member is equivalent by construction.
+func TestAuth_RejectsAForeignToken(t *testing.T) {
+	s := newTestServer(t)
+
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+	if code := authProbe(t, s, "Bearer "+hex.EncodeToString(buf)); code != http.StatusUnauthorized {
+		t.Errorf("foreign 64-hex token: status = %d, want 401", code)
 	}
 }
 
