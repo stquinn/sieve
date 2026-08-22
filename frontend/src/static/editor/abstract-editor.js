@@ -31,6 +31,7 @@ import { blockInsertPos } from '../ai/ai-target.js'
 import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter, blockIndexAt, docPosForBlockIndex } from './surfaces/block-position.js'
 import { buildAiContext, applyTargetHighlight } from './extensions.js'
 import { resolveEntriesForKind } from '../block/sieve-block-extension.js'
+import { AddressStatus } from '../block/address-status.js'
 
 /**
  * @typedef {import('./surfaces/abstract-surface.js').SurfaceEventMsg} SurfaceEventMsg
@@ -101,6 +102,10 @@ export class AbstractEditor {
    * called from here: the WYSIWYG surface hosts the picker, and this is the
    * composition root's handle reaching it. */
   #mentionService = null
+
+  /** @type {AddressStatus|null} built on demand over the mention peer; see the
+   * accessor for why it is the EDITOR that owns one. */
+  #addressStatus = null
 
   /** @type {(msg: object) => void} */
   #onServerMessage
@@ -215,6 +220,25 @@ export class AbstractEditor {
 
   /** The `@` picker's protocol peer, or null in bare constructions. */
   get mentionService() { return this.#mentionService }
+
+  /**
+   * What this editor has learned about whether the coordinates its blocks
+   * render still resolve — DERIVED from the mention peer exactly as
+   * blockService is derived from the document one. Null in bare constructions:
+   * with nothing to ask, a chip simply never learns its target is gone.
+   *
+   * IT IS OWNED HERE, not by the workspace, so its memory dies with the editor:
+   * reopening a document asks again, which is how a container that came back
+   * stops looking dangling. Built on demand because most editors render no
+   * coordinate at all.
+   * @returns {AddressStatus|null}
+   */
+  get addressStatus() {
+    if (!this.#addressStatus && this.#mentionService) {
+      this.#addressStatus = new AddressStatus(/** @type {any} */ (this.#mentionService))
+    }
+    return this.#addressStatus
+  }
 
   /** @returns {AbstractSurface|null} The mounted input surface, or null. */
   get surface() { return this.#surface }

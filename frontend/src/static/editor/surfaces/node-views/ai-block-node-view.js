@@ -127,6 +127,24 @@ import { AiBlockRenderer } from '../../../block/renderers/ai-block-renderer.js'
         return false
       }
       var renderer = new AiBlockRenderer(sieveBlockFor(node, undefined, ctx && ctx.blockService), ctx.blockService || null, handleBuild)
+
+      // Whether an attachment's target still EXISTS is the EDITOR's knowledge
+      // (#82): it holds the one cache, and that cache dying with it is what
+      // makes a reopened document ask again. Wired here for the same reason the
+      // chip click is — the adapter is the only layer that sees both sides.
+      //
+      // Deferred, not eager: the surface stamps sieveHost onto the pane only
+      // after the pane is built, so a NodeView created during that build finds
+      // nothing yet and the first update() is where it arrives.
+      var addressesWired = false
+      function wireAddresses() {
+        var addresses = ctx && ctx.addressStatus
+        if (addressesWired || !addresses) return
+        addressesWired = true
+        renderer.probeAttachmentsWith(addresses)
+      }
+      wireAddresses()
+
       var dom = renderer.render()
       var contentDOM = bodyContainer   // the claimed body container PM binds as its contentDOM
 
@@ -194,6 +212,7 @@ import { AiBlockRenderer } from '../../../block/renderers/ai-block-renderer.js'
         update: function (updatedNode) {
           if (updatedNode.type.name !== nodeTypeName) return false
           node = updatedNode
+          wireAddresses()
           renderer.update(sieveBlockFor(updatedNode, undefined, ctx && ctx.blockService))  // badge + question title; body is PM's (claimed region)
           return true
         },

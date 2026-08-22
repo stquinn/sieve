@@ -1,26 +1,57 @@
 // @ts-check
-// target-chips.test.js — TargetChips (#74): the footer's view of what the
+// target-chips.test.js — TargetChips (#74, #82): the footer's view of what the
 // message will ACT ON. The panel-level behaviour (when it is drawn, what it
 // tracks) lives in ask-panel.test.js; this pins the class's own contract — it
-// draws into the existing footer, it is view-only, and it is not an attachment.
+// draws into the existing footer, it is view-only, it is not an attachment, and
+// a SELECTION gets a chip per block labelled from the injected truth-mirror.
 
 import { describe, it, expect, beforeEach } from 'vitest'
 import { TargetChips } from '../src/static/shell/target-chips.js'
 import { ComposerAttachments } from '../src/static/shell/composer-attachments.js'
+import { SieveBlock } from '../src/static/block/sieve-block.js'
 
 /** The structural footer as index.html renders it (never rebuilt by the class). */
 function mountFooter() {
   document.body.innerHTML = `
     <div id="ask-panel">
       <div class="ask-popup__footer">
-        <span class="ask-popup__hint">Enter to send · Shift+Enter for new line</span>
         <button class="ask-popup__send">Send</button>
       </div>
     </div>`
   return /** @type {HTMLElement} */ (document.querySelector('.ask-popup__footer'))
 }
 
-const chips = () => document.querySelectorAll('.ask-target-chip')
+/**
+ * A stub truth-mirror: `blocks` maps id → envelope (or a bare kind string for an
+ * id the index knows but has no server envelope for). No wire, no globals.
+ * @param {Record<string, SieveBlock|string>} blocks
+ */
+function mirror(blocks) {
+  return {
+    envelopeFor: (id) => {
+      const entry = blocks[id]
+      return entry instanceof SieveBlock ? entry : null
+    },
+    kindFor: (id) => {
+      const entry = blocks[id]
+      if (typeof entry === 'string') return entry
+      return entry instanceof SieveBlock ? entry.kind : ''
+    },
+  }
+}
+
+/** A selection context spanning `ids`. */
+const selecting = (ids, label = '“retry policy”') => /** @type {any} */ ({
+  target: { kind: 'selection', ref: ids.join(','), label: label },
+  blockIds: ids,
+})
+
+const chips = () => Array.from(document.querySelectorAll('.ask-target-chip'))
+/** The chips' LABELS, without the leading kind glyph. */
+const labels = () => chips().map((c) => {
+  const label = c.querySelector('.ask-target-chip__label')
+  return label ? label.textContent : ''
+})
 
 describe('TargetChips', () => {
   /** @type {HTMLElement} */ let footer
@@ -54,7 +85,7 @@ describe('TargetChips', () => {
     new TargetChips(footer)
     new ComposerAttachments(footer)
     const order = Array.from(footer.children).map((c) => c.className.split(' ')[0])
-    expect(order).toEqual(['ask-popup__target', 'ask-popup__chips', 'ask-popup__hint', 'ask-popup__send'])
+    expect(order).toEqual(['ask-popup__target', 'ask-popup__chips', 'ask-popup__send'])
   })
 
   it('escapes a label — a selection snippet is user text', () => {
@@ -70,6 +101,7 @@ describe('TargetChips', () => {
     expect(() => target.show(/** @type {any} */ ({ target: { label: 'Document' } }))).not.toThrow()
     expect(target.size).toBe(1)   // the model still answers; there is just nothing to draw into
     expect(() => target.show(null)).not.toThrow()
+    expect(() => target.blockUpdated({ id: 'b1' })).not.toThrow()
     expect(target.size).toBe(0)
   })
 
@@ -77,5 +109,118 @@ describe('TargetChips', () => {
     const target = new TargetChips(footer)
     target.show(/** @type {any} */ ({ docUuid: 'u-1' }))
     expect(chips().length).toBe(0)
+  })
+})
+
+// ── The per-block row (#82) ──────────────────────────────────────────────────
+//
+// A range selection spans blocks the user picked out, so each earns a chip. The
+// LABELS are derived here, at paint time, from the injected truth-mirror —
+// nothing about them travels on the SelectionContext, which stays ids-only.
+describe('TargetChips — a chip per block of a SELECTION', () => {
+  /** @type {HTMLElement} */ let footer
+  beforeEach(() => { footer = mountFooter() })
+
+  it('labels each kind from its own payload key', () => {
+    const target = new TargetChips(footer, mirror({
+      p1: new SieveBlock('prose', { content: '## The migration plan is the interesting half of this' }),
+      c1: new SieveBlock('code', { language: 'go', source: 'func main() {}' }),
+      d1: new SieveBlock('diagram', { diagramType: 'mermaid', source: 'graph TD' }),
+    }))
+    target.show(selecting(['p1', 'c1', 'd1']))
+
+    expect(labels()).toEqual([
+      '“retry policy”', 'The migration plan is the…', 'go', 'mermaid',
+    ])
+  })
+
+  it('falls back to the KIND NAME when the payload carries no hint', () => {
+    const target = new TargetChips(footer, mirror({
+      l1: new SieveBlock('log', { source: '12:00 boot' }),
+      c1: new SieveBlock('code', { source: 'x = 1' }),          // no language yet
+      w1: new SieveBlock('web-clip', { title: '' }),
+    }))
+    target.show(selecting(['l1', 'c1', 'w1']))
+    expect(labels().slice(1)).toEqual(['log', 'code', 'web clip'])
+  })
+
+  it('a MIRROR MISS still draws a chip: the indexed kind, or the generic noun', () => {
+    // 'b1' is indexed but has no server envelope yet; 'b2' is unknown entirely.
+    const target = new TargetChips(footer, mirror({ b1: 'ai-block' }))
+    target.show(selecting(['b1', 'b2']))
+    expect(labels().slice(1)).toEqual(['ai block', 'block'])
+  })
+
+  it('with NO mirror injected the chips stand, unlabelled rather than absent', () => {
+    const target = new TargetChips(footer, null)
+    target.show(selecting(['b1', 'b2']))
+    expect(labels()).toEqual(['“retry policy”', 'block', 'block'])
+  })
+
+  it('is SELECTION-ONLY: a document target keeps the single chip', () => {
+    const target = new TargetChips(footer, mirror({ p1: new SieveBlock('prose', { content: 'Hello' }) }))
+    // The caret's block rides on blockIds for a document target too — it is the
+    // SPAN, not the target's extent, so a chip per block would misdescribe the send.
+    target.show(/** @type {any} */ ({ target: { kind: 'document', ref: 'doc', label: 'Document' }, blockIds: ['p1'] }))
+    expect(labels()).toEqual(['Document'])
+
+    target.show(/** @type {any} */ ({ target: { kind: 'block', ref: 'p1', label: 'Paragraph' }, blockIds: ['p1'] }))
+    expect(labels()).toEqual(['Paragraph'])
+  })
+
+  it('caps the row at four and counts the rest in ONE inert chip', () => {
+    const blocks = {}
+    const ids = ['b1', 'b2', 'b3', 'b4', 'b5', 'b6']
+    ids.forEach((id, i) => { blocks[id] = new SieveBlock('code', { language: 'lang' + i }) })
+    const target = new TargetChips(footer, mirror(blocks))
+    target.show(selecting(ids))
+
+    expect(labels()).toEqual(['“retry policy”', 'lang0', 'lang1', 'lang2', 'lang3', '+2 more'])
+    expect(target.size).toBe(6)
+    const more = /** @type {HTMLElement} */ (document.querySelector('.ask-target-chip--more'))
+    expect(more.querySelector('button')).toBe(null)
+    expect(more.getAttribute('title')).toBe('lang4, lang5')   // what it stands for
+  })
+
+  it('names only a readable few in the overflow tooltip — select-all must not build a mile of it', () => {
+    const ids = Array.from({ length: 40 }, (_, i) => 'b' + i)
+    const seen = []
+    const target = new TargetChips(footer, {
+      envelopeFor: (id) => { seen.push(id); return new SieveBlock('code', { language: id }) },
+      kindFor: () => 'code',
+    })
+    target.show(selecting(ids))
+
+    const more = /** @type {HTMLElement} */ (document.querySelector('.ask-target-chip--more'))
+    expect(more.textContent).toBe('+36 more')
+    expect(more.getAttribute('title')).toBe('b4, b5, b6, b7, …')
+    expect(seen.length).toBe(8)     // the four drawn, the four named — never all forty
+  })
+
+  it('repaints the chip whose block changed, and ONLY for a block it draws', () => {
+    let language = 'go'
+    const target = new TargetChips(footer, {
+      envelopeFor: () => new SieveBlock('code', { language }),
+      kindFor: () => 'code',
+    })
+    target.show(selecting(['b1']))
+    expect(labels()[1]).toBe('go')
+
+    language = 'rust'
+    target.blockUpdated({ id: 'other' })       // not in the selection: no repaint
+    expect(labels()[1]).toBe('go')
+
+    target.blockUpdated({ id: 'b1' })
+    expect(labels()[1]).toBe('rust')
+  })
+
+  it('escapes a derived label — a prose hint is user text', () => {
+    const target = new TargetChips(footer, mirror({
+      p1: new SieveBlock('prose', { content: '<img src=x onerror=1>' }),
+    }))
+    target.show(selecting(['p1']))
+    const label = /** @type {HTMLElement} */ (chips()[1].querySelector('.ask-target-chip__label'))
+    expect(label.querySelector('img')).toBe(null)
+    expect(label.textContent).toBe('<img src=x onerror=1>')
   })
 })
