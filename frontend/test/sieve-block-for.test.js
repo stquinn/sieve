@@ -1,6 +1,6 @@
 // @ts-check
 // sieve-block-for.test.js — issue #49 Phase 3: the sieveBlockFor seam's
-// MIRROR-FIRST flip. The node's id resolves the BlockService truth-mirror (what
+// MIRROR-FIRST flip. The node's id resolves the BlockService's block cache (what
 // Go holds); on a hit the mirror payload is the base with the kind-owned overlay
 // applied on top (overlay wins). On a miss (no service / no id / never-seeded id)
 // it falls back to SieveBlock.from(node) — the PM-resurrect path — which never

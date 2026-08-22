@@ -1,5 +1,5 @@
 // @ts-check
-// service-mirror.test.js — issue #49 Phase 3: the SERVICE-side truth-mirror.
+// service-mirror.test.js — issue #49 Phase 3: the SERVICE-side block cache.
 // BlockService.#blocks holds blockId → {uuid, kind, block: SieveBlock|null}; the
 // `block` slot is the last envelope Go authored, advanced ONLY by inbound server
 // truth (indexDocument + the render-back messages). DocumentService fronts the
@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { serviceRig, fakeDelegate, FakeSocket } from './helpers/service-rig.js'
 import { SieveBlock } from '../src/static/block/sieve-block.js'
 
-describe('BlockService truth-mirror', () => {
+describe('BlockService block cache', () => {
   beforeEach(() => FakeSocket.reset())
 
   it('indexDocument seeds the mirror from typed envelopes; envelopeFor returns them', () => {
@@ -153,7 +153,7 @@ describe('DocumentService.load — typed shape (raw bridge retired)', () => {
     expect(res.blocks).toEqual([])
   })
 
-  it('load seeds the truth-mirror — envelopeFor returns the typed envelope', async () => {
+  it('load seeds the block cache — envelopeFor returns the typed envelope', async () => {
     const rig = serviceRig({ uuid: 'doc-1' })
     await driveLoad(rig, { body: 'B', mode: 'wysiwyg', blocks: [{ id: 'l1', kind: 'code', attrs: { source: 'x' } }] })
     const env = rig.service.envelopeFor('l1')

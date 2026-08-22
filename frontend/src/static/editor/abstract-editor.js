@@ -1147,7 +1147,7 @@ export class AbstractEditor {
     const fctx = window.sieveWorkspace.getSelectionContext()
     try {
       // The load rides the service boundary, which types the wire blocks into
-      // envelopes and seeds the truth-mirror for any restored block ids (an
+      // envelopes and seeds the block cache for any restored block ids (an
       // editor:restore resurrecting blocks) so their next update routes. There
       // is deliberately no fetch here for a service-less editor: the service
       // owns the transport including its channel-less HTTP half, and a second

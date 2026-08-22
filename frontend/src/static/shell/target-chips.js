@@ -38,8 +38,8 @@
 // ids-only: a label changes without any id changing (rename a code block's
 // language and nothing about the selection moves), so a snapshot carrying labels
 // would either miss the change or need a second freshness rule fighting the
-// meaningful-diff convention. Instead the row asks the truth-mirror for each id
-// every time it paints — the mirror IS the freshness — and the mirror's own
+// meaningful-diff convention. Instead the row asks the block cache for each id
+// every time it paints — the cache IS the freshness — and the mirror's own
 // change signal (`blockUpdated`) repaints a chip whose block changed while the
 // selection stood still. The mirror arrives by CONSTRUCTOR INJECTION; this class
 // reaches for no global and opens no wire.
@@ -53,7 +53,7 @@ import { getSieveIcon } from '../block/block-kinds.js'
  */
 
 /**
- * The truth-mirror READ SEAM: block id → what the server last said that block
+ * The block-cache READ SEAM: block id → what the server last said that block
  * is. `BlockService` satisfies it as-is; a test stubs it with two functions.
  * @typedef {object} BlockMirror
  * @property {(blockId: string) => SieveBlock|null} envelopeFor  the last server-authored envelope, or null
@@ -101,7 +101,7 @@ export class TargetChips {
    *   before Send, which stays the footer's last child. Construct this BEFORE
    *   ComposerAttachments and the two rows land in reading order: what the
    *   message acts on, then what it drags along.
-   * @param {BlockMirror|null} [mirror] the truth-mirror read seam. Absent (a bare
+   * @param {BlockMirror|null} [mirror] the block-cache read seam. Absent (a bare
    *   construction, a headless test) the per-block chips fall back to their
    *   kind-less label rather than disappearing.
    */
@@ -138,7 +138,7 @@ export class TargetChips {
   }
 
   /**
-   * The truth-mirror advanced for `block`. Repaints only when that block is one
+   * The cached envelope advanced for `block`. Repaints only when that block is one
    * the row is currently drawing: a language or title change must reach its chip
    * without waiting for the caret to move, and a change anywhere else in the
    * document must not redraw a row that would come out identical.

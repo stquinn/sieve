@@ -14,9 +14,9 @@
 // insert-block / replace-block / block-attrs-updated render-backs passing
 // through (#mirrorFromMessage). The index is STICKY — deletes do not purge
 // (undo can resurrect a block that must still route). Since issue #49 Phase 3
-// the `block` slot IS the truth-mirror: the last envelope Go authored for the
-// id, advanced ONLY by inbound server truth (indexDocument + #mirrorFromMessage
-// — the one-writer rule), read by the sieveBlockFor seam's mirror-first lookup.
+// the `block` slot holds the last envelope Go authored for the id, advanced
+// ONLY by inbound server truth (indexDocument + #mirrorFromMessage — the
+// one-writer rule), read by the sieveBlockFor seam's mirror-first lookup.
 //
 // The per-channel DELEGATE (registered by the editor via DocumentService.open)
 // receives the inbound routing: server render-back ops → applyServerOp,
@@ -44,7 +44,7 @@ export class BlockService {
   /** @type {(url: string) => WebSocket} */ #socketFactory
   /** @type {(uuid: string) => string} */ #wsUrlFor
   /** @type {Map<string, BlockChannel>} uuid → live channel */ #channels = new Map()
-  /** @type {Map<string, {uuid: string, kind: string, block: SieveBlock|null}>} blockId → routing entry + the TRUTH-MIRROR envelope (STICKY — never purged on delete). `block` is the last envelope Go authored for this id; null when only the routing pair is known (raw-seeded / message-learned-without-mirror). ONE-WRITER RULE: written ONLY by indexDocument + #mirrorFromMessage (inbound server truth) — no outbound verb touches it. */ #blocks = new Map()
+  /** @type {Map<string, {uuid: string, kind: string, block: SieveBlock|null}>} blockId → routing entry + the cached envelope (STICKY — never purged on delete). `block` is the last envelope Go authored for this id; null when only the routing pair is known (raw-seeded / message-learned-without-mirror). ONE-WRITER RULE: written ONLY by indexDocument + #mirrorFromMessage (inbound server truth) — no outbound verb touches it. */ #blocks = new Map()
   /** @type {Map<string, Set<(block: SieveBlock) => void>>} uuid → onBlockUpdated listeners (document-scoped; fired after a block-attrs-updated mirror advance) */ #blockUpdateListeners = new Map()
   /** @type {number} monotonic opId source; per-BlockService so ids never collide across channels (correlation is uuid+opId, but a global counter also survives a takeover cleanly) */ #opSeq = 0
 
@@ -115,11 +115,11 @@ export class BlockService {
     this.#channels.delete(uuid)
   }
 
-  // ── Routing index + truth-mirror (one writer: inbound server truth) ─────────
+  // ── Routing index + block cache (one writer: inbound server truth) ─────────
 
   /**
-   * Seeds the blockId→{uuid, kind, block} index + TRUTH-MIRROR from a document's
-   * block list. The mirror stores the typed envelope itself (DocumentService.load
+   * Seeds the blockId→{uuid, kind, block} index + block cache from a document's
+   * block list. The cache stores the typed envelope itself (DocumentService.load
    * and .save hand SieveBlock[] through, already typed); a raw wire map (legacy
    * test seeding) records the routing pair with a null envelope — the next server
    * truth re-seeds it. Both carry .id/.kind (SieveBlock via getters); the 'prose'
@@ -139,7 +139,7 @@ export class BlockService {
   }
 
   /**
-   * Advances the truth-mirror from a server render-back passing through the
+   * Advances the cached envelope from a server render-back passing through the
    * channel — the SERVICE authors the envelope from the wire message (the
    * anti-corruption boundary). Runs BEFORE delegate.applyServerOp so the seam's
    * NodeView.update re-resolves the refreshed envelope. block-attrs-updated MERGES
@@ -170,7 +170,7 @@ export class BlockService {
   }
 
   /**
-   * The current truth-mirror envelope for a block id, or null (unknown id / a
+   * The current cached envelope for a block id, or null (unknown id / a
    * routing-only entry that never received server truth). Consumers: the
    * sieveBlockFor seam's mirror-first lookup.
    * @param {string} blockId @returns {SieveBlock|null}

@@ -78,7 +78,7 @@ import { AiBlockRenderer } from '../../../block/renderers/ai-block-renderer.js'
       error:    { default: null,  parseHTML: function (el) { return el.getAttribute('data-error') || null } },
       // Attachments (#74) are a LIST, so they ride the data-* costume as JSON —
       // every other attr here is a scalar String()s cleanly. The renderer reads
-      // them off the BlockService truth-mirror in the ordinary case; this is the
+      // them off the BlockService's block cache in the ordinary case; this is the
       // PM-resurrect fallback, and it must not lose them silently.
       attachments: {
         default: [],

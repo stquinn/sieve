@@ -3,7 +3,7 @@
 // message will ACT ON. The panel-level behaviour (when it is drawn, what it
 // tracks) lives in ask-panel.test.js; this pins the class's own contract — it
 // draws into the existing footer, it is view-only, it is not an attachment, and
-// a SELECTION gets a chip per block labelled from the injected truth-mirror.
+// a SELECTION gets a chip per block labelled from the injected block cache.
 
 import { describe, it, expect, beforeEach } from 'vitest'
 import { TargetChips } from '../src/static/shell/target-chips.js'
@@ -22,7 +22,7 @@ function mountFooter() {
 }
 
 /**
- * A stub truth-mirror: `blocks` maps id → envelope (or a bare kind string for an
+ * A stub block cache: `blocks` maps id → envelope (or a bare kind string for an
  * id the index knows but has no server envelope for). No wire, no globals.
  * @param {Record<string, SieveBlock|string>} blocks
  */
@@ -115,7 +115,7 @@ describe('TargetChips', () => {
 // ── The per-block row (#82) ──────────────────────────────────────────────────
 //
 // A range selection spans blocks the user picked out, so each earns a chip. The
-// LABELS are derived here, at paint time, from the injected truth-mirror —
+// LABELS are derived here, at paint time, from the injected block cache —
 // nothing about them travels on the SelectionContext, which stays ids-only.
 describe('TargetChips — a chip per block of a SELECTION', () => {
   /** @type {HTMLElement} */ let footer

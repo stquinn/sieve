@@ -72,7 +72,7 @@ export class DocumentService {
 
   /**
    * Subscribe to a document's block-attrs-updated render-backs. The listener
-   * fires AFTER the truth-mirror advance with the refreshed typed SieveBlock; the
+   * fires AFTER the cached envelope advances with the refreshed typed SieveBlock; the
    * returned function unsubscribes. Document-scoped per the contract — renderers
    * never subscribe (inbound stays update(block) via the lens).
    * @param {string} uuid @param {(block: SieveBlock) => void} listener
@@ -84,8 +84,8 @@ export class DocumentService {
 
   /**
    * Load a document: Go's codec did the splitting server-side (JS never parses
-   * a document); this verb types the wire block list into envelopes, seeds the
-   * BlockService's truth-mirror (indexDocument), and returns the TYPED shape only.
+   * a document); this verb types the wire block list into envelopes, seeds
+   * BlockService's block cache (indexDocument), and returns the TYPED shape only.
    * The surface render pipeline consumes the envelopes; payload is the sanctioned
    * wire costume for PM node materialization.
    *
@@ -205,7 +205,7 @@ export class DocumentService {
           // Type the raw wysiwyg-content reply into envelopes FIRST (the
           // anti-corruption boundary — the untyped wire block map never escapes
           // this service). Go's reparse can MINT ids (e.g. a paragraph split
-          // while in markdown mode); seeding the truth-mirror here means the
+          // while in markdown mode); seeding the block cache here means the
           // observer's first update to such a block routes instead of dropping.
           // The surface mounts from THESE envelopes (#flipTo → presentSurface).
           const blocks = this.#toEnvelopes(reply.blocks)

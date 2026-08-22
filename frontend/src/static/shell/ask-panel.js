@@ -84,7 +84,7 @@ export class AskPanel {
     // what the message acts on, then what it drags along. It is view-only and
     // holds no model — the editor owns the selection it draws. The BlockService
     // rides in as its read seam: a per-block chip's label is derived from the
-    // truth-mirror at paint time, so nothing about it travels on the selection.
+    // block cache at paint time, so nothing about it travels on the selection.
     this.#targetChips = new TargetChips(
       this.#panel.querySelector('.ask-popup__footer'),
       (ws && /** @type {any} */ (ws).blockService) || null,
