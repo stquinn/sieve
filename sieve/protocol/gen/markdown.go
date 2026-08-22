@@ -50,6 +50,7 @@ func (g *Generator) writeChannels(b *strings.Builder) error {
 		b.WriteString(g.docs.Summary(doc))
 		b.WriteString("\n\n")
 	}
+	g.writeSubprotocol(b)
 	for _, channel := range g.contract.Channels() {
 		address, err := g.contract.ChannelAddress(channel)
 		if err != nil {
@@ -79,6 +80,19 @@ func (g *Generator) writeChannels(b *strings.Builder) error {
 		}
 	}
 	return nil
+}
+
+// writeSubprotocol states how a wire is DIALLED, which the frame tables below
+// take for granted: a client that gets this wrong never reaches them.
+func (g *Generator) writeSubprotocol(b *strings.Builder) {
+	if g.contract.WSSubprotocol == "" {
+		return
+	}
+	b.WriteString(fmt.Sprintf("Subprotocol: `%s`.\n\n", g.contract.WSSubprotocol))
+	if doc := g.docs.ConstValue(g.contract.DeclaredIn, g.contract.WSSubprotocol); doc != "" {
+		b.WriteString(doc)
+		b.WriteString("\n\n")
+	}
 }
 
 // directionTitle names a direction from the CLIENT's point of view, which is who

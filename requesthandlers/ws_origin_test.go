@@ -3,10 +3,7 @@ package requesthandlers
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
-
-	"github.com/gorilla/websocket"
 
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
@@ -64,8 +61,9 @@ func TestWS_ForeignOriginCannotUpgrade(t *testing.T) {
 	block.RegisterProcessor(&processors.ProseProcessor{})
 	srv, _, _, uuid := newWsTestServer(t)
 
-	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/ws/document/" + uuid
-	_, resp, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Origin": []string{"https://evil.example"}})
+	wsURL := wsAddr(srv, "/api/ws/document/"+uuid)
+	// WITH a valid token: the two gates compose, and this one must still refuse.
+	_, resp, err := wsDialer().Dial(wsURL, http.Header{"Origin": []string{"https://evil.example"}})
 	if err == nil {
 		t.Fatal("a foreign origin must not reach the document wire")
 	}
@@ -74,7 +72,7 @@ func TestWS_ForeignOriginCannotUpgrade(t *testing.T) {
 	}
 
 	// The app's own window still connects — the gate must not be a blanket refusal.
-	c, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Origin": []string{"wails://wails"}})
+	c, _, err := wsDialer().Dial(wsURL, http.Header{"Origin": []string{"wails://wails"}})
 	if err != nil {
 		t.Fatalf("the app's own origin must still connect: %v", err)
 	}

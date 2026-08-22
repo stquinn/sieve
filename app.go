@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -50,6 +52,30 @@ type App struct {
 	mu         sync.Mutex
 
 	DevServerPort int
+	// WSToken authenticates an upgrade on either WebSocket wire (#83). It is
+	// minted per run, handed to the page in the app shell, and presented back as
+	// the second Sec-WebSocket-Protocol entry. In production it never transits
+	// TCP: the shell is served by Wails' in-process asset server, and the
+	// loopback bridge 404s `/`.
+	WSToken string
+}
+
+// mintWSToken gives this run the secret its two WebSocket wires are guarded by.
+// It must be called before the loopback listener binds — that listener is the
+// wires' only transport and any local process can reach it, so a wire that
+// starts serving before the token exists refuses every upgrade including the
+// app's own.
+//
+// UNEXPORTED deliberately: every exported method on App is bound into the
+// page's window.go.main.App surface, and a re-mint reachable from there would
+// refuse every upgrade that followed it.
+func (a *App) mintWSToken() error {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return fmt.Errorf("mint websocket token: %w", err)
+	}
+	a.WSToken = hex.EncodeToString(buf)
+	return nil
 }
 
 // NewApp builds the Wails app backend. broadcast MUST be non-nil: startup and

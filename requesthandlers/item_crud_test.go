@@ -60,7 +60,7 @@ func newItemServer(t *testing.T) (*httptest.Server, *sieve.ServiceProvider) {
 		EmitIntentChanged:    func() { broadcast.Invalidate(protocol.TopicIntent) },
 	}).RegisterPaths(r)
 	(&SessionHandler{ServiceProvider: sp}).RegisterPaths(r)
-	NewWsHandler(sp, broadcast).RegisterPaths(r)
+	NewWsHandler(sp, broadcast, testWSToken).RegisterPaths(r)
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 	return srv, sp

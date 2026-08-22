@@ -6,6 +6,11 @@
 // frame word as a literal anywhere else re-declares that contract, and a
 // re-declaration that drifts fails silently: the frame is simply never handled.
 
+/**
+ * @type {string}
+ */
+export const WS_SUBPROTOCOL = 'fixture.v1'
+
 /** Frame type words the document channel (`/api/ws/document/{uuid}`) carries. */
 export const DocumentFrame = Object.freeze({
   // client → server

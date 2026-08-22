@@ -46,6 +46,10 @@ type Contract struct {
 	// module builds asset URLs from it, so the concatenation Go serves and the one
 	// the browser requests come from one constant.
 	AssetURLPrefix string
+	// WSSubprotocol is the subprotocol both wires negotiate. The browser half
+	// dials with it, so it is published for the same reason the frame words are:
+	// a client that spells it as a literal has re-declared a contract Go owns.
+	WSSubprotocol string
 	// DeclaredIn is the import path whose package godoc opens the artifacts and
 	// whose constants name the topics. It is resolved by reflection rather than
 	// spelled out, so moving the package cannot leave the artifacts quoting a path
@@ -62,6 +66,7 @@ func NewContract() (Contract, error) {
 		Endpoints:      registry.Endpoints(),
 		Topics:         registry.Topics(),
 		AssetURLPrefix: store.AssetURLPrefix,
+		WSSubprotocol:  protocol.WSSubprotocol,
 		DeclaredIn:     reflect.TypeOf(protocol.PingFrame{}).PkgPath(),
 	}
 	if err := c.walkRoutes(); err != nil {

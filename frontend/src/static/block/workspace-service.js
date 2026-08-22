@@ -28,6 +28,7 @@
 
 import { BlockChannel } from './block-channel.js'
 import { ContractViolation } from './sieve-block.js'
+import { WsDial } from './ws-dial.js'
 import { WorkspaceFrame } from '../generated/protocol.js'
 
 /**
@@ -50,21 +51,21 @@ import { WorkspaceFrame } from '../generated/protocol.js'
 
 /**
  * @typedef {object} WorkspaceServiceOptions
- * @property {(url: string) => WebSocket} [socketFactory]
- *   — injected for tests; defaults to `new WebSocket(url)`
+ * @property {(url: string, protocols?: string[]) => WebSocket} [socketFactory]
+ *   — injected for tests; defaults to `new WebSocket(url, protocols)`
  * @property {() => string} [wsUrl]
  *   — injected for tests; defaults to the /api/ws/workspace URL
  */
 
 export class WorkspaceService {
-  /** @type {(url: string) => WebSocket} */ #socketFactory
+  /** @type {(url: string, protocols?: string[]) => WebSocket} */ #socketFactory
   /** @type {() => string} */ #wsUrl
   /** @type {BlockChannel|null} the ONE workspace channel (null = not yet opened / closed) */ #channel = null
   /** @type {Map<string, WorkspaceTenant>} frame type → the ONE tenant claiming it */ #tenants = new Map()
 
   /** @param {WorkspaceServiceOptions} [options] the test seams (empty in prod) */
   constructor(options = {}) {
-    this.#socketFactory = options.socketFactory || ((url) => new WebSocket(url))
+    this.#socketFactory = options.socketFactory || ((url, protocols) => new WebSocket(url, protocols))
     this.#wsUrl = options.wsUrl || (() => WorkspaceService.#defaultUrl())
   }
 
@@ -158,7 +159,9 @@ export class WorkspaceService {
   open() {
     if (this.#channel) return
     this.#channel = new BlockChannel(
-      this.#socketFactory,
+      // The channel owns the socket's LIFE; dialling it — url and credential
+      // alike — is the wire owner's business, so it is bound here.
+      (url) => this.#socketFactory(url, WsDial.protocols()),
       this.#wsUrl,
       {
         // The workspace channel carries no document traffic: no render-back ops,

@@ -7,9 +7,10 @@ import (
 	"sieve/sieve/protocol"
 )
 
-// ProtocolJS renders the browser half's copy of the vocabulary: the frame words
-// each wire speaks, the invalidation topics, the command words that ride the
-// command frame as data, and the served-asset URL shape.
+// ProtocolJS renders the browser half's copy of the vocabulary: the subprotocol
+// both wires are dialled with, the frame words each wire speaks, the
+// invalidation topics, the command words that ride the command frame as data,
+// and the served-asset URL shape.
 //
 // It exists so the two halves of every wire word have ONE origin. A JS literal
 // is a second declaration of a contract Go owns, and its failure mode is silence
@@ -24,6 +25,7 @@ func (g *Generator) ProtocolJS() ([]byte, error) {
 	b.WriteString("// frame word as a literal anywhere else re-declares that contract, and a\n")
 	b.WriteString("// re-declaration that drifts fails silently: the frame is simply never handled.\n\n")
 
+	g.writeWSSubprotocol(&b)
 	for _, channel := range g.contract.Channels() {
 		if err := g.writeFrameConstants(&b, channel); err != nil {
 			return nil, err
@@ -34,6 +36,22 @@ func (g *Generator) ProtocolJS() ([]byte, error) {
 	g.writeAssetBuilder(&b)
 
 	return []byte(b.String()), nil
+}
+
+func (g *Generator) writeWSSubprotocol(b *strings.Builder) {
+	if g.contract.WSSubprotocol == "" {
+		return
+	}
+	b.WriteString("/**\n")
+	if doc := g.docs.ConstValue(g.contract.DeclaredIn, g.contract.WSSubprotocol); doc != "" {
+		for _, line := range strings.Split(doc, "\n") {
+			b.WriteString(strings.TrimRight(" * "+line, " "))
+			b.WriteString("\n")
+		}
+	}
+	b.WriteString(" * @type {string}\n")
+	b.WriteString(" */\n")
+	b.WriteString(fmt.Sprintf("export const WS_SUBPROTOCOL = '%s'\n\n", g.contract.WSSubprotocol))
 }
 
 func (g *Generator) writeFrameConstants(b *strings.Builder, channel protocol.Channel) error {

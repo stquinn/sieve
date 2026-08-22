@@ -24,7 +24,7 @@ import (
 // dispatch-table key must be registered, inbound, on the channel that serves it.
 // The two halves live apart because each sits beside the thing it walks.
 func TestWS_EveryRegisteredInboundFrameIsServed(t *testing.T) {
-	h := NewWsHandler(nil, NewWorkspaceBroadcast(nil))
+	h := NewWsHandler(nil, NewWorkspaceBroadcast(nil), testWSToken)
 	reg := protocol.NewRegistry()
 	tables := map[protocol.Channel]map[string]frameHandler{
 		protocol.ChannelDocument:  h.documentFrames,

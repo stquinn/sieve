@@ -63,6 +63,7 @@ func newAPIHandler(app *App, broadcast *requesthandlers.WorkspaceBroadcast, sp *
 		Version:         version,
 		Credits:         thirdPartyLicenses,
 		Themes:          app.getThemesFS(),
+		WSToken:         app.WSToken,
 		MCP:             mcpRoute{sp: sp},
 		Static:          http.StripPrefix("/ui/static", h.static),
 		Index:           http.HandlerFunc(h.handleIndex),
@@ -148,7 +149,11 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		// Go would enforce — not a constant of its own that can drift from it.
 		MaxAttachmentBytes int
 		DevServerPort      int
-		Commands           template.JS
+		// WSToken is this run's WebSocket upgrade credential (#83). The shell is
+		// where the page learns it, because the shell is the one thing only the app
+		// is served — a local process that dials the wires cannot ask for it.
+		WSToken  string
+		Commands template.JS
 	}{
 		StoreRoot:          info.Root,
 		ThemeName:          info.ThemeName,
@@ -168,6 +173,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		CLITimeoutLong:     info.CLITimeoutLong,
 		MaxAttachmentBytes: info.MaxAttachmentBytes,
 		DevServerPort:      h.app.DevServerPort,
+		WSToken:            h.app.WSToken,
 		Commands:           template.JS(commandsJSON),
 	}
 

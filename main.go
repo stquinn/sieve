@@ -286,6 +286,14 @@ func main() {
 	jobTracker.Notify = broadcast.PushJobs
 	serviceProvider := &sieve.ServiceProvider{Jobs: jobTracker}
 	app := NewApp(storePath, themes, broadcast, serviceProvider, libSvc)
+	// Before the router is assembled: the WS upgrade gate is built with whatever
+	// the token is at Mount time, and the app shell is rendered with it. Without a
+	// token every upgrade — the app's own included — is refused, so a failure here
+	// is a dead UI rather than an open one, and it says so at startup.
+	if err := app.mintWSToken(); err != nil {
+		logger.Error("failed to mint the websocket token", "err", err)
+		os.Exit(1)
+	}
 	api, err := newAPIHandler(app, broadcast, serviceProvider)
 	if err != nil {
 		logger.Error("failed to init API handler", "err", err)

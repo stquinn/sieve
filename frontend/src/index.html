@@ -273,6 +273,10 @@
 
     <script>
     window.__sieveDevServerPort = {{.DevServerPort}};
+    // This run's WebSocket upgrade credential (#83). Both wires ride the loopback
+    // listener, which every local process can reach; presenting this on the
+    // handshake is what tells this page apart from one of them.
+    window.__sieveWsToken = "{{.WSToken}}";
     // The user's attachment ceiling (#84). The drop path refuses an over-limit
     // file BEFORE it reads it, so it has to know the number Go would enforce
     // rather than carry a constant of its own that can drift from the setting.

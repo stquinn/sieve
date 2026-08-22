@@ -116,5 +116,6 @@ func fixtureContract() Contract {
 			{Family: "other", Name: "elsewhere", Description: "A verb in a second family"},
 		},
 		AssetURLPrefix: "/ui/assets/",
+		WSSubprotocol:  "fixture.v1",
 	}
 }

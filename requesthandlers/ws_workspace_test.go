@@ -28,8 +28,7 @@ func dialWorkspaceWS(t *testing.T, srv *httptest.Server) *websocket.Conn {
 // the connect-time push itself.
 func dialWorkspaceWSRaw(t *testing.T, srv *httptest.Server) *websocket.Conn {
 	t.Helper()
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/ws/workspace"
-	c, _, err := websocket.DefaultDialer.Dial(url, nil)
+	c, _, err := wsDialer().Dial(wsAddr(srv, "/api/ws/workspace"), nil)
 	if err != nil {
 		t.Fatalf("dial workspace ws: %v", err)
 	}
@@ -78,8 +77,7 @@ func TestWS_WorkspaceChannel_SuccessorOwnsChannel(t *testing.T) {
 // so the bare prefix is simply not a route.
 func TestWS_DialAtBarePrefixIsNotAWire(t *testing.T) {
 	srv, _, _, _ := newWsTestServer(t)
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/ws"
-	_, resp, err := websocket.DefaultDialer.Dial(url, nil)
+	_, resp, err := websocket.DefaultDialer.Dial(wsAddr(srv, "/api/ws"), nil)
 	if err == nil {
 		t.Fatal("expected error for dial at the bare /api/ws prefix, got nil")
 	}
