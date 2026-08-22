@@ -783,6 +783,23 @@ describe('AskPanel — the footer shows what the message will act on', () => {
     new AskPanel(fakeWorkspace(null))
     expect(targetChips(el).length).toBe(0)
   })
+
+  it('does NOT displace the hint — only an ATTACHMENT does (#82)', () => {
+    // The target chip is effectively always present (there is nearly always a
+    // document open), so yielding the hint to it would remove "Enter to send"
+    // permanently rather than making room for something occasional. The hint
+    // belongs to ComposerAttachments, and it stays until a chip with a ✕ needs
+    // the space.
+    vi.useFakeTimers()
+    const el = mountPanelDom()
+    const panel = new AskPanel(fakeWorkspace(fakeEditor({ kind: 'document', ref: 'doc', label: 'Document' })))
+    panel.open()
+    vi.runAllTimers()
+
+    expect(targetChips(el).length).toBe(1)
+    expect(el.querySelectorAll('.ask-chip').length).toBe(0)
+    expect(el.querySelector('.ask-popup__hint').style.display).not.toBe('none')
+  })
 })
 
 describe('AskPanel — Slash command routing (#55)', () => {
