@@ -281,7 +281,7 @@ func (p *DiagramProcessor) themePreamble() string {
 	dark := p.isDarkTheme(vars)
 
 	text := p.themeVar(vars, "text", dark, "#e0e0e0", "#1a1a1a")
-	mono := p.themeVar(vars, "monoFont", dark, "monospace", "monospace")
+	mono := p.singleFontName(p.themeVar(vars, "monoFont", dark, "monospace", "monospace"))
 	border := p.themeVar(vars, "border2", dark, "#555555", "#bbbbbb")
 	bgAlt := p.themeVar(vars, "bgAlt", dark, "#2a2a2a", "#f2f2f2")
 
@@ -347,6 +347,20 @@ func (p *DiagramProcessor) themeVar(vars domain.ThemeVars, key string, dark bool
 		return darkFallback
 	}
 	return lightFallback
+}
+
+// singleFontName reduces a CSS font-family stack (e.g. `"Cascadia Code",
+// "JetBrains Mono", monospace`) to the one name PlantUML's DefaultFontName
+// accepts — it has no fallback-list concept, so every entry after the first
+// would otherwise render as literal, malformed skinparam text. An empty
+// first entry (blank stack) falls back to "monospace".
+func (p *DiagramProcessor) singleFontName(stack string) string {
+	first := strings.TrimSpace(strings.SplitN(stack, ",", 2)[0])
+	first = strings.Trim(first, `"'`)
+	if first == "" {
+		return "monospace"
+	}
+	return first
 }
 
 // relativeLuminance parses a #RGB or #RRGGBB hex colour and returns its

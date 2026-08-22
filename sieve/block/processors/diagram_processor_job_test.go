@@ -138,7 +138,7 @@ func TestDiagramProcessor_effectiveSource_darkPreamble(t *testing.T) {
 	got := p.effectiveSource("A -> B")
 	want := "skinparam backgroundColor transparent\n" +
 		"skinparam DefaultFontColor #c0caf5\n" +
-		"skinparam DefaultFontName \"JetBrains Mono\", \"Fira Code\", monospace\n" +
+		"skinparam DefaultFontName JetBrains Mono\n" +
 		"skinparam ArrowColor #3b4261\n" +
 		"skinparam ArrowFontColor #c0caf5\n" +
 		"skinparam ClassBackgroundColor #1e2030\n" +
@@ -173,7 +173,7 @@ func TestDiagramProcessor_effectiveSource_lightPreamble(t *testing.T) {
 	got := p.effectiveSource("A -> B")
 	want := "skinparam backgroundColor transparent\n" +
 		"skinparam DefaultFontColor #1a1b26\n" +
-		"skinparam DefaultFontName \"JetBrains Mono\", \"Fira Code\", monospace\n" +
+		"skinparam DefaultFontName JetBrains Mono\n" +
 		"skinparam ArrowColor #cbd0d8\n" +
 		"skinparam ArrowFontColor #1a1b26\n" +
 		"skinparam ClassBackgroundColor #f0f0f2\n" +
@@ -239,6 +239,31 @@ func TestDiagramProcessor_effectiveSource_missingVarsFallBackDark(t *testing.T) 
 		"X"
 	if got != want {
 		t.Errorf("missing vars must fall back to the dark constants; got %q", got)
+	}
+}
+
+// TestDiagramProcessor_singleFontName pins the CSS-stack-to-single-name
+// reduction: PlantUML's DefaultFontName takes exactly one font, so every
+// shipped theme's quoted, comma-separated monoFont stack must collapse to
+// its first usable entry.
+func TestDiagramProcessor_singleFontName(t *testing.T) {
+	p := NewDiagramProcessor(block.BlockServices{})
+	cases := []struct {
+		name, stack, want string
+	}{
+		{"double-quoted stack", `"Cascadia Code", "JetBrains Mono", monospace`, "Cascadia Code"},
+		{"single-quoted stack", `'Fira Code', monospace`, "Fira Code"},
+		{"bare name, no quotes", `monospace`, "monospace"},
+		{"leading/trailing whitespace", `  "JetBrains Mono" , monospace`, "JetBrains Mono"},
+		{"empty stack falls back", ``, "monospace"},
+		{"quotes-only entry falls back", `""`, "monospace"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := p.singleFontName(c.stack); got != c.want {
+				t.Errorf("singleFontName(%q) = %q, want %q", c.stack, got, c.want)
+			}
+		})
 	}
 }
 
