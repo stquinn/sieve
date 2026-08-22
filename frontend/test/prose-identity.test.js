@@ -56,3 +56,16 @@ describe('prose identity unification (blockId → id)', () => {
     expect(def.renderHTML({ id: 'pr-1', token: 'tok-x' })).toEqual({ 'data-id': 'pr-1', class: 'block-node' })
   })
 })
+
+// Prose is a block like any other, so it answers the kind registry's icon lookup
+// itself. Without its own getIcon it took the registry's generic fallback — the
+// CODE icon — and any surface drawing a kind marker (the Ask footer's per-block
+// chips, #82) called a paragraph a code block.
+describe('the prose kind declares its own icon', () => {
+  it('getSieveIcon("prose") is the prose glyph, not the code fallback', async () => {
+    const { getSieveIcon } = await import('../src/static/block/block-kinds.js')
+    window.SieveIcons = { code: '<svg id="code"/>', blockquote: '<svg id="prose"/>' }
+    expect(ProseBlock.kind).toBe('prose')
+    expect(getSieveIcon('prose')).toBe('<svg id="prose"/>')
+  })
+})

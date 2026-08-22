@@ -27,6 +27,15 @@ describe('BlockService truth-mirror', () => {
     expect(service.envelopeFor('r1')).toBeNull()
   })
 
+  it('kindFor answers where envelopeFor cannot: the routing index knows every id it holds (#82)', () => {
+    const { service } = serviceRig({ uuid: 'doc-1', blocks: [{ id: 'r1', kind: 'code' }] })
+    service.indexDocument('doc-1', [new SieveBlock('diagram', { id: 'd1' })])
+    expect(service.kindFor('r1')).toBe('code')     // routing-only: no envelope, but a kind
+    expect(service.kindFor('d1')).toBe('diagram')
+    expect(service.kindFor('nope')).toBe('')
+    expect(service.kindFor('')).toBe('')
+  })
+
   it('insert-block render-back authors an envelope (the service is the anti-corruption author)', () => {
     const { service, sock } = serviceRig({ uuid: 'doc-1' })
     sock.driveMessage({ type: 'insert-block', kind: 'code', id: 'i1', attrs: { source: 'a', status: 'PENDING' } })

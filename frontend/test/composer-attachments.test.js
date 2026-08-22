@@ -1,8 +1,8 @@
 // @ts-check
 // composer-attachments.test.js — the Ask composer's attachment model + chip row
 // (#74 P4). The model is PANEL STATE: it holds what the user attached, renders
-// the chips into the EXISTING .ask-popup__footer (displacing the hint), and
-// reconciles against the message text at send time.
+// the chips into the EXISTING .ask-popup__footer, and reconciles against the
+// message text at send time.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { ComposerAttachments } from '../src/static/shell/composer-attachments.js'
 
@@ -11,7 +11,6 @@ function mountFooter() {
     <div id="ask-panel" class="ask-panel">
       <textarea class="ask-popup__input"></textarea>
       <div class="ask-popup__footer">
-        <span class="ask-popup__hint">Enter to send · Shift+Enter for new line</span>
         <button class="ask-popup__send">Send</button>
       </div>
     </div>`
@@ -26,7 +25,6 @@ function mountComposer() {
 }
 
 const chips = () => Array.from(document.querySelectorAll('.ask-chip'))
-const hint = () => /** @type {HTMLElement} */ (document.querySelector('.ask-popup__hint'))
 
 const AUTH = { uri: 'container:9f2b', title: 'Auth Design', kind: 'note', detail: 'design/ · #auth' }
 const RETRY = { uri: 'container:1a2b', title: 'Retry RFC', kind: 'note', detail: 'rfc/' }
@@ -140,12 +138,12 @@ describe('ComposerAttachments — the chip row in the existing footer', () => {
     expect(footer.lastElementChild?.className).toBe('ask-popup__send')
   })
 
-  it('chips DISPLACE the hint while any attachment is present, and it returns when empty', () => {
-    expect(hint().style.display).not.toBe('none')
+  it('KNOWS NOTHING OF A HINT: the footer is chips + Send, and the chord lives in the placeholder (#82)', () => {
     model.add(AUTH)
-    expect(hint().style.display).toBe('none')
-    model.remove(AUTH.uri)
-    expect(hint().style.display).not.toBe('none')
+    const footer = /** @type {HTMLElement} */ (document.querySelector('.ask-popup__footer'))
+    expect(Array.from(footer.children).map((c) => c.className.split(' ')[0]))
+      .toEqual(['ask-popup__chips', 'ask-popup__send'])
+    expect(document.querySelector('.ask-popup__hint')).toBe(null)
   })
 
   it('renders one chip per attachment, carrying the uri (not the title) as identity', () => {

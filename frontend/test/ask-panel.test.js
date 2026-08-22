@@ -16,6 +16,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { AskPanel } from '../src/static/shell/ask-panel.js'
 import { CommandService } from '../src/static/block/command-service.js'
 import { WorkspaceService } from '../src/static/block/workspace-service.js'
+import { SieveBlock } from '../src/static/block/sieve-block.js'
 // GLOW DROPPED (P4.B) regression guard: ask-panel.js does NOT import these — the
 // mock exists purely as a trip-wire so a future re-coupling would be caught here.
 vi.mock('../src/static/ai/ai-target-decoration.js', () => ({
@@ -32,9 +33,8 @@ function mountPanelDom({ open = false } = {}) {
         <span class="ask-popup__label">Ask About Document</span>
         <button class="ask-popup__close" aria-label="Close" title="Close">&#10005;</button>
       </div>
-      <textarea class="ask-popup__input" placeholder="Ask a question…" spellcheck="false"></textarea>
+      <textarea class="ask-popup__input" placeholder="Ask a question… Enter sends · Shift+Enter for a new line" spellcheck="false"></textarea>
       <div class="ask-popup__footer">
-        <span class="ask-popup__hint">Enter to send</span>
         <button class="ask-popup__send">Send</button>
       </div>
     </div>`
@@ -365,8 +365,6 @@ describe('AskPanel — @ attachments (#74 P4)', () => {
     const chips = el.querySelectorAll('.ask-chip')
     expect(chips.length).toBe(1)
     expect(chips[0].getAttribute('data-uri')).toBe('container:9f2b')
-    // The chips displace the hint while an attachment is present.
-    expect(el.querySelector('.ask-popup__hint').style.display).toBe('none')
     expect(panel).toBeTruthy()
   })
 
@@ -387,7 +385,6 @@ describe('AskPanel — @ attachments (#74 P4)', () => {
       attachments: [{ uri: 'container:9f2b', title: 'Auth Design' }],
     })
     expect(el.querySelectorAll('.ask-chip').length).toBe(0)
-    expect(el.querySelector('.ask-popup__hint').style.display).not.toBe('none')
   })
 
   it('SEND-TIME RECONCILIATION: an attachment whose @Title was deleted is dropped', async () => {
@@ -465,7 +462,6 @@ describe('AskPanel — @ attachments (#74 P4)', () => {
     ta.dispatchEvent(new window.Event('input', { bubbles: true }))
 
     expect(el.querySelectorAll('.ask-chip').length).toBe(0)
-    expect(el.querySelector('.ask-popup__hint').style.display).not.toBe('none')
   })
 
   it('UNDO re-attaches: the token coming back brings its chip and its manifest entry', async () => {
@@ -784,21 +780,73 @@ describe('AskPanel — the footer shows what the message will act on', () => {
     expect(targetChips(el).length).toBe(0)
   })
 
-  it('does NOT displace the hint — only an ATTACHMENT does (#82)', () => {
-    // The target chip is effectively always present (there is nearly always a
-    // document open), so yielding the hint to it would remove "Enter to send"
-    // permanently rather than making room for something occasional. The hint
-    // belongs to ComposerAttachments, and it stays until a chip with a ✕ needs
-    // the space.
+  it('THE FOOTER IS CHIPS + SEND: nothing yields, because the chord hint is in the placeholder (#82)', () => {
+    // The chord used to be a footer span the chips displaced, which made the two
+    // rows fight over one slot AND took "Enter to send" away exactly when the
+    // composer was busiest. It is the composer's placeholder now, so the footer's
+    // whole contract is: the two chip rows, then Send.
     vi.useFakeTimers()
     const el = mountPanelDom()
     const panel = new AskPanel(fakeWorkspace(fakeEditor({ kind: 'document', ref: 'doc', label: 'Document' })))
     panel.open()
     vi.runAllTimers()
 
+    const footer = el.querySelector('.ask-popup__footer')
+    expect(Array.from(footer.children).map((c) => c.className.split(' ')[0]))
+      .toEqual(['ask-popup__target', 'ask-popup__chips', 'ask-popup__send'])
+    expect(el.querySelector('.ask-popup__hint')).toBe(null)
     expect(targetChips(el).length).toBe(1)
-    expect(el.querySelectorAll('.ask-chip').length).toBe(0)
-    expect(el.querySelector('.ask-popup__hint').style.display).not.toBe('none')
+  })
+
+  it('a SELECTION gets a chip per block, labelled from the workspace BlockService (#82)', () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom()
+    const ws = fakeWorkspace(fakeEditor({ kind: 'selection', ref: 'b1,b2', label: '“retry policy”' }))
+    ws._editor.getSelectionContext = () => ({
+      target: { kind: 'selection', ref: 'b1,b2', label: '“retry policy”' },
+      blockIds: ['b1', 'b2'],
+    })
+    ws.blockService = {
+      envelopeFor: (id) => (id === 'b2' ? new SieveBlock('code', { language: 'go' }) : null),
+      kindFor: (id) => (id === 'b1' ? 'prose' : 'code'),
+    }
+    const panel = new AskPanel(ws)
+    panel.open()
+    vi.runAllTimers()
+
+    const labels = Array.from(targetChips(el))
+      .map((c) => c.querySelector('.ask-target-chip__label').textContent)
+    expect(labels).toEqual(['“retry policy”', 'prose', 'go'])
+  })
+
+  it('repaints a chip when the block behind it changes under a still selection (#82)', () => {
+    vi.useFakeTimers()
+    const ws = fakeWorkspace(fakeEditor({ kind: 'selection', ref: 'b2', label: '“retry policy”' }))
+    ws._editor.getSelectionContext = () => ({
+      docUuid: 'u-1',
+      target: { kind: 'selection', ref: 'b2', label: '“retry policy”' },
+      blockIds: ['b2'],
+    })
+    let language = 'go'
+    /** @type {((block: any) => void)[]} */ const listeners = []
+    ws.blockService = {
+      envelopeFor: () => new SieveBlock('code', { language }),
+      kindFor: () => 'code',
+    }
+    ws.documentService = {
+      onBlockUpdated: (uuid, fn) => { listeners.push(fn); return () => {} },
+    }
+    const el = mountPanelDom()
+    const panel = new AskPanel(ws)
+    panel.open()
+    vi.runAllTimers()
+    const language1 = () => targetChips(el)[1].querySelector('.ask-target-chip__label').textContent
+    expect(language1()).toBe('go')
+
+    // The caret has not moved — only the block's own truth changed.
+    language = 'rust'
+    listeners.forEach((fn) => fn({ id: 'b2' }))
+    expect(language1()).toBe('rust')
   })
 })
 

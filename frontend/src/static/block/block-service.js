@@ -181,6 +181,17 @@ export class BlockService {
   }
 
   /**
+   * The indexed kind for a block id, or '' (unknown id). The routing index knows
+   * a kind for every id it holds — including one seeded raw, whose envelope slot
+   * is still null — so this answers where `envelopeFor` cannot.
+   * @param {string} blockId @returns {string}
+   */
+  kindFor(blockId) {
+    const entry = blockId && this.#blocks.get(blockId)
+    return (entry && entry.kind) || ''
+  }
+
+  /**
    * Resolve a block id to its routing entry, or null (unknown id → the caller
    * warns + drops: fire-and-forget parity — never throw mid-edit).
    * @param {string} blockId @returns {{uuid: string, kind: string, block: SieveBlock|null}|null}

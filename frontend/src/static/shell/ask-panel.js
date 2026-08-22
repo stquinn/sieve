@@ -59,6 +59,10 @@ export class AskPanel {
   #focusReturn = null
   /** @type {import('../editor/selection-model.js').SelectionContext|null} the context whose label is CURRENTLY shown — what send acts on (D-5: send == shown) */
   #lastContext = null
+  /** @type {string} the document whose block truth the target chips are watching */
+  #watchedUuid = ''
+  /** @type {(() => void)|null} unsubscribe for that watch */
+  #unwatchBlocks = null
 
   /**
    * @param {import('./workspace.js').SieveWorkspace} ws
@@ -78,8 +82,13 @@ export class AskPanel {
     this.#label = this.#panel.querySelector('.ask-popup__label')
     // The target row is built FIRST so it lands left of the attachment chips:
     // what the message acts on, then what it drags along. It is view-only and
-    // holds no model — the editor owns the selection it draws.
-    this.#targetChips = new TargetChips(this.#panel.querySelector('.ask-popup__footer'))
+    // holds no model — the editor owns the selection it draws. The BlockService
+    // rides in as its read seam: a per-block chip's label is derived from the
+    // truth-mirror at paint time, so nothing about it travels on the selection.
+    this.#targetChips = new TargetChips(
+      this.#panel.querySelector('.ask-popup__footer'),
+      (ws && /** @type {any} */ (ws).blockService) || null,
+    )
     // The attachment model comes next: the `@` provider's accept-sink writes
     // into it, so it must exist before the picker can offer anything. It takes
     // the composer too — the `@Title` tokens live there and the chips are a VIEW
@@ -428,6 +437,28 @@ export class AskPanel {
       this.#label.textContent = target.label === 'Follow-up' ? 'Ask Follow-up' : 'Ask About ' + target.label
     }
     if (this.#targetChips) this.#targetChips.show(this.#lastContext)
+    this.#watchBlocks(this.#lastContext ? this.#lastContext.docUuid : '')
+  }
+
+  /**
+   * Points the chips' freshness subscription at `uuid`, moving it on a tab
+   * switch and dropping it when nothing is open. The chips repaint on every
+   * selection change already; this covers the case where the SELECTION stands
+   * still and a block inside it changes — a code block's language, an ai-block's
+   * question — which no selection event would ever announce.
+   * @param {string} uuid
+   */
+  #watchBlocks(uuid) {
+    if ((uuid || '') === this.#watchedUuid) return
+    if (this.#unwatchBlocks) this.#unwatchBlocks()
+    this.#unwatchBlocks = null
+    this.#watchedUuid = uuid || ''
+    const docs = (this.#ws && /** @type {any} */ (this.#ws).documentService) || null
+    if (!this.#watchedUuid || !docs || !this.#targetChips) return
+    this.#unwatchBlocks = docs.onBlockUpdated(
+      this.#watchedUuid,
+      /** @param {any} block */ (block) => { if (this.#targetChips) this.#targetChips.blockUpdated(block) },
+    )
   }
 
   /**
