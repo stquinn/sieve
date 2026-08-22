@@ -264,30 +264,103 @@ func (p *DiagramProcessor) effectiveSource(source string) string {
 	return p.themePreamble() + "\n" + source
 }
 
-// themePreamble maps the app theme to a stock PlantUML preamble: a dark theme +
-// transparent background for dark app themes, transparent background only for
-// light ones. The floor is legibility — raw PlantUML (near-black on transparent)
-// is unreadable in dark themes. Full per-var fidelity is a deferred follow-up.
+// themePreamble maps the app's active theme onto a per-variable skinparam
+// block, so class/sequence/state/activity diagrams read as native to the app
+// rather than in PlantUML's stock black-on-white palette. "backgroundColor
+// transparent" stays a literal in both families — the SVG canvas itself has no
+// backing fill either way, so there is no theme var to source it from.
+//
+// Fallback policy: every value below is sourced from ActiveThemeVars(); a key
+// absent from the map falls back to a generic dark/light constant selected by
+// isDarkTheme. Every theme this app ships populates all four source keys, so
+// the fallback path is a defensive floor, not the common case — it exists so a
+// malformed or partial theme file degrades to *a* legible palette instead of
+// PlantUML's raw defaults.
 func (p *DiagramProcessor) themePreamble() string {
-	if p.isDarkTheme() {
-		return "!theme cyborg\nskinparam backgroundColor transparent"
+	vars := p.activeThemeVars()
+	dark := p.isDarkTheme(vars)
+
+	text := p.themeVar(vars, "text", dark, "#e0e0e0", "#1a1a1a")
+	mono := p.singleFontName(p.themeVar(vars, "monoFont", dark, "monospace", "monospace"))
+	border := p.themeVar(vars, "border2", dark, "#555555", "#bbbbbb")
+	bgAlt := p.themeVar(vars, "bgAlt", dark, "#2a2a2a", "#f2f2f2")
+
+	lines := []string{
+		"skinparam backgroundColor transparent",
+		"skinparam DefaultFontColor " + text,
+		"skinparam DefaultFontName " + mono,
+		"skinparam ArrowColor " + border,
+		"skinparam ArrowFontColor " + text,
+		"skinparam ClassBackgroundColor " + bgAlt,
+		"skinparam ClassBorderColor " + border,
+		"skinparam ClassFontColor " + text,
+		"skinparam ActivityBackgroundColor " + bgAlt,
+		"skinparam ActivityBorderColor " + border,
+		"skinparam ActivityDiamondBackgroundColor " + bgAlt,
+		"skinparam ActivityDiamondBorderColor " + border,
+		"skinparam StateBackgroundColor " + bgAlt,
+		"skinparam StateBorderColor " + border,
+		"skinparam ParticipantBackgroundColor " + bgAlt,
+		"skinparam ParticipantBorderColor " + border,
+		"skinparam ParticipantFontColor " + text,
+		"skinparam ActorBackgroundColor " + bgAlt,
+		"skinparam ActorBorderColor " + border,
+		"skinparam ActorFontColor " + text,
+		"skinparam NodeBackgroundColor " + bgAlt,
+		"skinparam NodeBorderColor " + border,
+		"skinparam SequenceLifeLineBorderColor " + border,
+		"skinparam NoteBackgroundColor " + bgAlt,
+		"skinparam NoteBorderColor " + border,
+		"skinparam NoteFontColor " + text,
 	}
-	return "skinparam backgroundColor transparent"
+	return strings.Join(lines, "\n")
+}
+
+// activeThemeVars fetches the current theme map, tolerating a nil State port
+// (test doubles that construct DiagramProcessor without one).
+func (p *DiagramProcessor) activeThemeVars() domain.ThemeVars {
+	if p.svc.State == nil {
+		return nil
+	}
+	return p.svc.State.ActiveThemeVars()
 }
 
 // isDarkTheme classifies the app theme from its background colour's relative
 // luminance (threshold 0.5). A missing/unparseable bg is treated as dark — this
-// app's default themes are dark.
-func (p *DiagramProcessor) isDarkTheme() bool {
-	var vars domain.ThemeVars
-	if p.svc.State != nil {
-		vars = p.svc.State.ActiveThemeVars()
-	}
+// app's default themes are dark. Its sole remaining job is choosing which
+// generic constants themeVar falls back to when a specific key is absent.
+func (p *DiagramProcessor) isDarkTheme(vars domain.ThemeVars) bool {
 	lum, ok := p.relativeLuminance(vars["bg"])
 	if !ok {
 		return true
 	}
 	return lum < 0.5
+}
+
+// themeVar reads key from vars, falling back to darkFallback/lightFallback
+// (selected by dark) when the key is absent or blank.
+func (p *DiagramProcessor) themeVar(vars domain.ThemeVars, key string, dark bool, darkFallback, lightFallback string) string {
+	if v, ok := vars[key]; ok && strings.TrimSpace(v) != "" {
+		return v
+	}
+	if dark {
+		return darkFallback
+	}
+	return lightFallback
+}
+
+// singleFontName reduces a CSS font-family stack (e.g. `"Cascadia Code",
+// "JetBrains Mono", monospace`) to the one name PlantUML's DefaultFontName
+// accepts — it has no fallback-list concept, so every entry after the first
+// would otherwise render as literal, malformed skinparam text. An empty
+// first entry (blank stack) falls back to "monospace".
+func (p *DiagramProcessor) singleFontName(stack string) string {
+	first := strings.TrimSpace(strings.SplitN(stack, ",", 2)[0])
+	first = strings.Trim(first, `"'`)
+	if first == "" {
+		return "monospace"
+	}
+	return first
 }
 
 // relativeLuminance parses a #RGB or #RRGGBB hex colour and returns its
