@@ -93,7 +93,7 @@ The load-bearing sentence, stated as law:
 > **Island → workspace → backend.** The lens talks to the workspace through defined
 > interfaces. The workspace talks to the backend. The lens never knows a backend exists.
 
-This is not a deployment choice — it is invariant across every deployment, and #95 is its
+This is not a deployment choice — it is invariant across every deployment, and #96 (né #95) is its
 keystone: the follower model is what *creates* the workspace interface the island stands
 on. In today's app the workspace is JS (`WorkspaceService` + `BlockService` owning the
 wires). In any future shell the workspace is that shell's code, and the island's
@@ -116,7 +116,7 @@ What the invariant buys — the bidirectional removability:
   insight; the boundary is where that sentence stops being commentary and becomes
   **enforceable structure**.
 
-The corollary for sequencing is blunt: **#95 stops being an encapsulation nicety and
+The corollary for sequencing is blunt: **#96 (né #95) stops being an encapsulation nicety and
 becomes the critical path of everything in this chapter.** Every hour spent completing the
 follower model is an hour of any future shell migration done early, without a line of
 that shell existing.
@@ -347,7 +347,7 @@ opens stays open, including the ones nobody has named yet."
 1. **The workspace is a host of hosts**, and the workspace boundary is the first host
    boundary that cannot assume a shared runtime — so its interfaces are wire-shaped.
 2. **Island → workspace → backend**, invariant across deployments. The lens is only the
-   lens. #95 is the keystone that creates the workspace interface.
+   lens. #96 (né #95) is the keystone that creates the workspace interface.
 3. **The boundary cuts both ways**: editor replaceable (blocks all the way up, by
    demotion rather than inversion) and workspace replaceable (toolkits, form factors).
    Lasagne is the mechanism of reuse.
