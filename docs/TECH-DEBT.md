@@ -183,13 +183,9 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 
 **Why deferred:** cosmetic test-infra flake, not a product bug; the suite is otherwise green. **Retires when:** the test stops the watcher / drains async writers before returning (so cleanup has no live handles), or uses a non-`t.TempDir` dir it removes explicitly after quiescing.
 
-## L-A: `renderBlocksIntoEditor` leaves stale content on an empty-blocks reload
+## L-A: `renderBlocksIntoEditor` leaves stale content on an empty-blocks reload — ✅ RETIRED 2026-08-22
 
-**Tracked:** Forgejo #23. The fix is already largely implemented — `frontend/src/static/base/render-empty.js` + `render-empty-reload.test.js`, and `softReloadContent` passes `allowEmpty:true`; #23 is a call-site audit + retirement.
-
-**What:** `renderBlocksIntoEditor` early-returns when the backend block list is empty (`if (!nodes.length) return` — "keep existing content rather than blow away on a transient empty parse"). Since `softReloadContent` and `editor:restore` now render via this path, reloading a doc that has legitimately become **empty** leaves the prior (stale) content on screen instead of clearing it. 
-
-**Why deferred:** an edge case — the live reload triggers (AI resolve, embed promote, version restore) don't empty a document in practice, and the old `setContent("")` behavior wasn't a guaranteed clear either (it rendered one empty paragraph). **Retires when:** `renderBlocksIntoEditor` distinguishes "no blocks parsed (transient/error → keep)" from "the document is genuinely empty (→ clear to one empty paragraph)", e.g. the caller passes an explicit `allowEmpty`/clear intent for a known-good reload.
+**RETIRED:** Forgejo #23 call-site audit found every current path into `reloadReplacement` (`frontend/src/static/editor/surfaces/render-empty.js`) already correct. `#renderBlocksIntoEditor`'s only two callers are `mount()` (guarded by `blocks.length`, so the empty branch never fires on a fresh instance) and `reloadFromBlocks()`, whose one caller — `AbstractEditor.softReload()`, the sole whole-doc-reload path (AI resolve / `editor:restore` / extract re-render) — always passes `{allowEmpty: true}`. No call site needed a fix; `render-empty-reload.test.js` already pins the decision table.
 
 ## D-L: Data-loss root cause (empty-overwrite) — PARKED, guard makes it non-fatal
 
