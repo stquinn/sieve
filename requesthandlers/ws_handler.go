@@ -1,6 +1,7 @@
 package requesthandlers
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,6 +33,7 @@ type WsHandler struct {
 	upgrader        websocket.Upgrader
 	registry        *protocol.Registry
 	broadcast       *WorkspaceBroadcast
+	token           string // the run's upgrade credential; empty refuses every dial
 	documentFrames  map[string]frameHandler
 	workspaceFrames map[string]frameHandler
 	channelsMu      sync.RWMutex
@@ -72,18 +74,25 @@ type frameHandler func(inboundFrame)
 
 // NewWsHandler builds the handler for both wires. The broadcast comes from
 // outside because it outlives any one socket: the app holds it from startup and
-// pushes through it, while this handler is only what fills and empties it.
-func NewWsHandler(sp *sieve.ServiceProvider, broadcast *WorkspaceBroadcast) *WsHandler {
+// pushes through it, while this handler is only what fills and empties it. token
+// is the run's upgrade credential, minted before the loopback listener binds —
+// see authorizeUpgrade.
+func NewWsHandler(sp *sieve.ServiceProvider, broadcast *WorkspaceBroadcast, token string) *WsHandler {
 	h := &WsHandler{
 		ServiceProvider: sp,
 		registry:        protocol.NewRegistry(),
 		broadcast:       broadcast,
+		token:           token,
 		channels:        make(map[string]*wsConn),
 	}
 	// Assigned rather than set in the literal because the gate is a method on the
 	// handler it guards. gorilla's zero-value CheckOrigin is same-origin-only,
 	// which would refuse the app's own custom-scheme window — see allowOrigin.
 	h.upgrader.CheckOrigin = h.allowOrigin
+	// Selecting the version word is what keeps the credential out of the
+	// handshake response: gorilla echoes only a protocol it was offered AND is
+	// listed here, so the token entry beside it can never come back.
+	h.upgrader.Subprotocols = []string{protocol.WSSubprotocol}
 	h.documentFrames = map[string]frameHandler{
 		protocol.TypePing:              h.handlePing,
 		protocol.TypeDocUpdate:         h.handleDocUpdate,
@@ -303,9 +312,9 @@ func (h *WsHandler) refuse(f inboundFrame, frameType string, err error) {
 //
 //   - NO Origin header. Not a browser: the contained AI CLI's MCP client, a test
 //     dialling with a bare client. A browser always sends one on a WS upgrade,
-//     so this cannot be a drive-by page. (It does leave a local process able to
-//     dial in — that is the gap auth-on-upgrade, #83, closes; this check is
-//     about the browser, which cannot forge an absent Origin.)
+//     so this cannot be a drive-by page. It does leave a local process able to
+//     dial in, because one can omit the header as easily as forge it — that is
+//     authorizeUpgrade's job, not this gate's.
 //   - The `wails://` scheme. The app's own window: Wails serves the app from a
 //     custom scheme, and no web page can claim one. The WebKitGTK window sends
 //     `Origin: wails://wails` (measured, dev and production alike; the Linux and
@@ -343,6 +352,53 @@ func (h *WsHandler) allowOrigin(r *http.Request) bool {
 	return false
 }
 
+// authorizeUpgrade is the SECOND upgrade gate, and the one that identifies the
+// peer. It composes with allowOrigin rather than replacing it: origin refuses a
+// drive-by browser page, which cannot forge an Origin header, while this refuses
+// every local process that is not the shell this run served — and a non-browser
+// process forges an Origin freely, so origin alone leaves the wires open to
+// anything else running as the user.
+//
+// The credential rides Sec-WebSocket-Protocol because the browser WebSocket API
+// cannot set a request header, and that list is the only thing it can put on the
+// handshake. A dial offers protocol.WSSubprotocol and the run's token; this
+// accepts the upgrade only if some offered entry IS the token.
+//
+// It answers 401 itself, BEFORE any upgrade, so a refusal is an HTTP response a
+// client can read rather than a socket that opens and dies.
+func (h *WsHandler) authorizeUpgrade(w http.ResponseWriter, r *http.Request) bool {
+	if h.offersToken(r) {
+		return true
+	}
+	// Security-relevant by definition: only the app's own page holds the token, so
+	// anything else reaching here is another local process trying the wires.
+	logger.Warn("ws: refused upgrade (no valid token)", "remote", r.RemoteAddr, "path", r.URL.Path)
+	http.Error(w, "unauthorized", http.StatusUnauthorized)
+	return false
+}
+
+// offersToken reports whether the handshake presents this run's token. The
+// header is a comma-separated list and may arrive as several header lines, so
+// both spellings are walked.
+//
+// An empty expected token refuses everything: a server that had none would
+// otherwise admit a dial offering the empty string, which is every dial that
+// sends a trailing comma.
+func (h *WsHandler) offersToken(r *http.Request) bool {
+	expected := []byte(h.token)
+	if len(expected) == 0 {
+		return false
+	}
+	for _, header := range r.Header.Values("Sec-WebSocket-Protocol") {
+		for _, offered := range strings.Split(header, ",") {
+			if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(offered)), expected) == 1 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // isLoopback reports whether host names this machine. The literal addresses are
 // matched as ADDRESSES, not strings, so every spelling of them ("127.1",
 // "[::1]") answers the same; "localhost" is matched by name because it is not an
@@ -359,6 +415,9 @@ func (h *WsHandler) handleDocumentWS(w http.ResponseWriter, r *http.Request) {
 	uuid := chi.URLParam(r, "uuid")
 	if uuid == "" {
 		http.Error(w, "uuid required", http.StatusBadRequest)
+		return
+	}
+	if !h.authorizeUpgrade(w, r) {
 		return
 	}
 
@@ -401,6 +460,10 @@ func (h *WsHandler) handleDocumentWS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *WsHandler) handleWorkspaceWS(w http.ResponseWriter, r *http.Request) {
+	if !h.authorizeUpgrade(w, r) {
+		return
+	}
+
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		logger.Warn("ws: workspace upgrade failed", "err", err)

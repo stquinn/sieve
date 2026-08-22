@@ -92,7 +92,7 @@ func TestWS_RegisteredFrameWithNoHandlerIsAnswered(t *testing.T) {
 // Every frame type the dispatch tables serve must be in the registry on the
 // channel it is served on — a handler the gate cannot open is dead code.
 func TestWS_EveryHandledFrameTypeIsRegistered(t *testing.T) {
-	h := NewWsHandler(nil, NewWorkspaceBroadcast(nil))
+	h := NewWsHandler(nil, NewWorkspaceBroadcast(nil), testWSToken)
 	reg := protocol.NewRegistry()
 	tables := map[protocol.Channel]map[string]frameHandler{
 		protocol.ChannelDocument:  h.documentFrames,

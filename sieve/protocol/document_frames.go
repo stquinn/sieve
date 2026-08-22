@@ -329,7 +329,7 @@ const (
 type PasteFrame struct {
 	Type    string                 `json:"type"`
 	OpID    string                 `json:"opId,omitempty" doc:"echoed on the paste-ack"`
-	Kind    PasteKind              `json:"kind" doc:"smart | slice | native-drop | native-clipboard. SECURITY: native-drop and native-clipboard make the server read files the NATIVE side caught (the drop bucket) or the OS clipboard names — never paths from the wire, so the wire carries the GESTURE, not a filesystem address. The socket upgrade's origin allow-list keeps foreign pages from sending these; auth-on-upgrade (#83) must cover this channel."`
+	Kind    PasteKind              `json:"kind" doc:"smart | slice | native-drop | native-clipboard. SECURITY: native-drop and native-clipboard make the server read files the NATIVE side caught (the drop bucket) or the OS clipboard names — never paths from the wire, so the wire carries the GESTURE, not a filesystem address. The socket upgrade gates keep these to the app's own page: an origin allow-list refuses a foreign browser page, and a per-run token refuses every other local process."`
 	Entries []block.ContentEntry   `json:"entries,omitempty" doc:"smart: the clipboard's views. native-drop: absent — the server takes the paths from the native drop bucket the OS-level catch fed (Wails OnFileDrop); the page's own view of a drop is never consulted. native-clipboard: absent — the server reads the clipboard itself"`
 	Slice   [][]block.ContentEntry `json:"slice,omitempty" doc:"slice only: one view set per copied block, in order"`
 	Index   int                    `json:"index" doc:"document position for the first created block; -1 appends, and is the default when the key is absent"`

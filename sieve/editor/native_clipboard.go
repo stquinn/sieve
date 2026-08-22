@@ -39,9 +39,10 @@ func (es *EditorService) SetNativeClipboard(c NativeClipboardPort) {
 // reads the clipboard for itself.
 //
 // SECURITY: this reads the user's clipboard, and a uri-list on it reads local
-// files, on the say-so of a wire frame. WsHandler's origin allow-list is what
-// keeps a foreign page from opening that socket; auth-on-upgrade (#83) is the
-// other half and is not built yet.
+// files, on the say-so of a wire frame. Two WsHandler gates keep that frame to
+// the app's own page: the origin allow-list refuses a foreign browser page, and
+// the upgrade token refuses every local process that is not the shell this run
+// served.
 //
 // What the clipboard turns out to hold decides nothing beyond which ingestion it
 // takes — both of them already exist. A copied FILE is the same ingestion a

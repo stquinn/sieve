@@ -13,6 +13,19 @@ Package protocol is the single source of truth for Sieve's wire contract: the fr
 
 Channel names a WebSocket wire.
 
+Subprotocol: `sieve.v1`.
+
+WSSubprotocol is the subprotocol a dial on either wire negotiates, and the
+server selects it on every accepted upgrade.
+
+It is half of a credential, not decoration. Both wires ride the loopback
+listener — WebKitGTK cannot carry an upgrade over the app's custom scheme —
+and any local process can reach that listener, so an upgrade must prove it
+comes from the shell this run served. The browser WebSocket API cannot set a
+request header, so the proof rides the one list it can send: a client offers
+this word FIRST and the run's token SECOND. The server answers with this word
+alone, so the token appears in no response header.
+
 ### `document` — `/api/ws/document/{uuid}`
 
 **Client → server**
@@ -199,7 +212,7 @@ PasteFrame hands a clipboard to the server to make sense of.
 |---|---|---|---|
 | `type` | `string` | yes |  |
 | `opId` | `string` | no | echoed on the paste-ack |
-| `kind` | `protocol.PasteKind` | yes | smart \| slice \| native-drop \| native-clipboard. SECURITY: native-drop and native-clipboard make the server read files the NATIVE side caught (the drop bucket) or the OS clipboard names — never paths from the wire, so the wire carries the GESTURE, not a filesystem address. The socket upgrade's origin allow-list keeps foreign pages from sending these; auth-on-upgrade (#83) must cover this channel. |
+| `kind` | `protocol.PasteKind` | yes | smart \| slice \| native-drop \| native-clipboard. SECURITY: native-drop and native-clipboard make the server read files the NATIVE side caught (the drop bucket) or the OS clipboard names — never paths from the wire, so the wire carries the GESTURE, not a filesystem address. The socket upgrade gates keep these to the app's own page: an origin allow-list refuses a foreign browser page, and a per-run token refuses every other local process. |
 | `entries` | `[]block.ContentEntry` | no | smart: the clipboard's views. native-drop: absent — the server takes the paths from the native drop bucket the OS-level catch fed (Wails OnFileDrop); the page's own view of a drop is never consulted. native-clipboard: absent — the server reads the clipboard itself |
 | `slice` | `[][]block.ContentEntry` | no | slice only: one view set per copied block, in order |
 | `index` | `int` | yes | document position for the first created block; -1 appends, and is the default when the key is absent |

@@ -28,6 +28,7 @@ type Registry struct {
 	Version         string       // release version (main.version, ldflags-injected)
 	Credits         []byte       // embedded third-party-licenses.json (tools/gencredits)
 	Themes          fs.FS        // embedded builtin themes, for /ui/theme.css
+	WSToken         string       // this run's WebSocket upgrade credential, minted at startup
 	MCP             http.Handler // the internal Sieve MCP transport
 	Static          http.Handler // the embedded static tree, prefix already stripped
 	Index           http.Handler // the app shell
@@ -97,7 +98,7 @@ func (reg Registry) Mount(r chi.Router) {
 				broadcast.Invalidate(protocol.TopicNotes)
 			},
 		},
-		NewWsHandler(sp, broadcast),
+		NewWsHandler(sp, broadcast, reg.WSToken),
 		&LibraryHandler{
 			Tmpl:            tmpl,
 			ServiceProvider: sp,

@@ -6,6 +6,21 @@
 // frame word as a literal anywhere else re-declares that contract, and a
 // re-declaration that drifts fails silently: the frame is simply never handled.
 
+/**
+ * WSSubprotocol is the subprotocol a dial on either wire negotiates, and the
+ * server selects it on every accepted upgrade.
+ *
+ * It is half of a credential, not decoration. Both wires ride the loopback
+ * listener — WebKitGTK cannot carry an upgrade over the app's custom scheme —
+ * and any local process can reach that listener, so an upgrade must prove it
+ * comes from the shell this run served. The browser WebSocket API cannot set a
+ * request header, so the proof rides the one list it can send: a client offers
+ * this word FIRST and the run's token SECOND. The server answers with this word
+ * alone, so the token appears in no response header.
+ * @type {string}
+ */
+export const WS_SUBPROTOCOL = 'sieve.v1'
+
 /** Frame type words the document channel (`/api/ws/document/{uuid}`) carries. */
 export const DocumentFrame = Object.freeze({
   // client → server

@@ -58,7 +58,7 @@ func newWsTestServerWithJobs(t *testing.T, debounce time.Duration, jobs JobsSour
 		t.Fatalf("NewStateService: %v", err)
 	}
 	sp := &sieve.ServiceProvider{Store: fs, Documents: ds, Editor: es, State: st}
-	h := NewWsHandler(sp, NewWorkspaceBroadcast(jobs))
+	h := NewWsHandler(sp, NewWorkspaceBroadcast(jobs), testWSToken)
 	// The same edge the composition root wires: a save announces itself to the
 	// workspace fan-out. Without it a test watching for container-saved would be
 	// watching a wire nothing publishes on.
@@ -91,8 +91,7 @@ func closeAndSettle(c *websocket.Conn) {
 
 func dialWS(t *testing.T, srv *httptest.Server, uuid string) *websocket.Conn {
 	t.Helper()
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/ws/document/" + uuid
-	c, _, err := websocket.DefaultDialer.Dial(url, nil)
+	c, _, err := wsDialer().Dial(wsAddr(srv, "/api/ws/document/"+uuid), nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

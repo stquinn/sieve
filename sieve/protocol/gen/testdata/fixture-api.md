@@ -9,6 +9,8 @@ describes and run `go generate ./sieve/protocol`.
 
 ## WebSocket channels
 
+Subprotocol: `fixture.v1`.
+
 ### `document` — `/api/ws/document/{uuid}`
 
 **Client → server**

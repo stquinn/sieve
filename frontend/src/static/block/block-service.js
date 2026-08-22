@@ -26,6 +26,7 @@
 import { SieveBlock, ContractViolation } from './sieve-block.js'
 import { updateBlockOp } from './block-sync.js'
 import { BlockChannel } from './block-channel.js'
+import { WsDial } from './ws-dial.js'
 import { DocumentFrame } from '../generated/protocol.js'
 
 /**
@@ -34,14 +35,14 @@ import { DocumentFrame } from '../generated/protocol.js'
 
 /**
  * @typedef {object} BlockServiceOptions
- * @property {(url: string) => WebSocket} [socketFactory]
- *   — injected for tests; defaults to `new WebSocket(url)`
+ * @property {(url: string, protocols?: string[]) => WebSocket} [socketFactory]
+ *   — injected for tests; defaults to `new WebSocket(url, protocols)`
  * @property {(uuid: string) => string} [wsUrlFor]
  *   — injected for tests; defaults to the document-channel URL for the uuid
  */
 
 export class BlockService {
-  /** @type {(url: string) => WebSocket} */ #socketFactory
+  /** @type {(url: string, protocols?: string[]) => WebSocket} */ #socketFactory
   /** @type {(uuid: string) => string} */ #wsUrlFor
   /** @type {Map<string, BlockChannel>} uuid → live channel */ #channels = new Map()
   /** @type {Map<string, {uuid: string, kind: string, block: SieveBlock|null}>} blockId → routing entry + the cached envelope (STICKY — never purged on delete). `block` is the last envelope Go authored for this id; null when only the routing pair is known (raw-seeded / message-learned-without-mirror). ONE-WRITER RULE: written ONLY by indexDocument + #mirrorFromMessage (inbound server truth) — no outbound verb touches it. */ #blocks = new Map()
@@ -51,7 +52,7 @@ export class BlockService {
   /** @param {BlockServiceOptions} [options]
    *    the test seams (empty in prod) */
   constructor(options = {}) {
-    this.#socketFactory = options.socketFactory || ((url) => new WebSocket(url))
+    this.#socketFactory = options.socketFactory || ((url, protocols) => new WebSocket(url, protocols))
     this.#wsUrlFor = options.wsUrlFor || ((uuid) => BlockService.#defaultUrl(uuid))
   }
 
@@ -96,7 +97,9 @@ export class BlockService {
     const existing = this.#channels.get(uuid)
     if (existing) existing.close()
     this.#channels.set(uuid, new BlockChannel(
-      this.#socketFactory,
+      // The channel owns the socket's LIFE; dialling it — url and credential
+      // alike — is the wire owner's business, so it is bound here.
+      (url) => this.#socketFactory(url, WsDial.protocols()),
       () => this.#wsUrlFor(uuid),
       delegate,
       (msg) => this.#mirrorFromMessage(uuid, msg),
