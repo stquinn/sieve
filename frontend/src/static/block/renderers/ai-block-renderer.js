@@ -26,6 +26,7 @@ import { MentionTokens } from './mention-tokens.js'
 // The chip is SHARED look-and-feel, not ai-block's: the footer chip, the
 // composer chip and the attachment block are one visual object.
 import { AttachmentChip } from './attachment-chip.js'
+import { AddressState } from '../address-status.js'
 
 /** One attachment as it is persisted (#74): the address is the truth and the
  *  title is what labels it. Nothing else is stored, and nothing is resolved to
@@ -44,6 +45,8 @@ export class AiBlockRenderer extends BlockRenderer {
   /** @type {HTMLElement|null} */ #contentEl = null
   /** @type {HTMLElement|null} the attachment chip row (the FOOTER region) */ #attachmentsEl = null
   /** @type {Array<(uri: string) => void>} open-the-target listeners */ #openListeners = []
+  /** @type {import('../address-status.js').AddressStatus|null} the oracle for
+   *  "is that document still there?" (null → a chip never learns it is dangling) */ #addresses = null
 
   /** The status badge — this kind's HEADER region. Also stamps the kind's own
    *  data-ai-ref on the root (the base stamps data-id). @returns {HTMLElement} */
@@ -107,6 +110,26 @@ export class AiBlockRenderer extends BlockRenderer {
   }
 
   /**
+   * Supplies the oracle that says whether an attachment's target still exists
+   * (#82). It is a BUSINESS collaborator, not transport: this class asks "is
+   * that document still there?" and never learns there is a socket, a frame or
+   * a correlation id behind the answer.
+   *
+   * It is INJECTED rather than constructed here for two reasons: the renderer
+   * contract fixes the constructor at (block, blockService, handleBuild), and
+   * the CACHE is the point — one oracle per editor is what keeps a redraw from
+   * costing a round trip. Passing it is optional in every lens; a bare page
+   * simply renders the cached faces, which is what it did before.
+   * @param {import('../address-status.js').AddressStatus|null} addresses
+   */
+  probeAttachmentsWith(addresses) {
+    this.#addresses = addresses || null
+    // Redraw so the call site may come either side of render() — the row
+    // guards on its own ref, so before it there is simply nothing to do.
+    this.#fillAttachments(/** @type {AiBlockAttrs} */ (this.block.payload))
+  }
+
+  /**
    * The markdown the BODY shows — response when complete, else a status line —
    * derived from THIS instance's envelope. The renderer OWNS this mapping; the
    * editor-lens seam reads it from a FRESH scratch instance per pass (contract
@@ -164,6 +187,31 @@ export class AiBlockRenderer extends BlockRenderer {
     row.innerHTML = ''
     row.style.display = list.length ? 'flex' : 'none'
     for (const attachment of list) row.appendChild(this.#attachmentChip(attachment))
+    this.#probeAttachments(list)
+  }
+
+  /**
+   * Asks, ONCE per address, whether each chip's target is still there, and
+   * redraws when an answer turns one dangling. Calling this from a draw pass is
+   * safe precisely because AddressStatus caps a probe at one per address for
+   * the editor's life: a row rebuilt on every keystroke adds no wire traffic.
+   *
+   * Only a DANGLING answer redraws. LIVE and UNKNOWN change no pixel, and
+   * redrawing on them would rebuild the row from inside its own rebuild for
+   * nothing.
+   * @param {AiBlockAttachment[]} list
+   */
+  #probeAttachments(list) {
+    const addresses = this.#addresses
+    if (!addresses) return
+    for (const attachment of list) {
+      const uri = (attachment && attachment.uri || '').trim()
+      if (!uri || addresses.stateOf(uri) !== AddressState.UNKNOWN) continue
+      addresses.check(uri).then((state) => {
+        if (state !== AddressState.DANGLING) return
+        this.#fillAttachments(/** @type {AiBlockAttrs} */ (this.block.payload))
+      })
+    }
   }
 
   /**
@@ -179,24 +227,40 @@ export class AiBlockRenderer extends BlockRenderer {
   /**
    * One chip, drawn by the SHARED component — what is ai-block's here is only
    * the MAPPING: which of this kind's fields is the label, and what makes one
-   * dangling. DANGLING IS A NORMAL STATE, not an error: an attachment whose
-   * cached title is gone (nothing was ever cached, or the persisted entry
-   * predates titles) renders greyed with a missing marker and the bare address,
-   * so the chip is still identifiable and still clickable.
+   * dangling. DANGLING IS A NORMAL STATE, not an error: the chip greys, keeps
+   * its cached title and stays clickable, so it is still identifiable.
+   *
+   * TWO ROUTES REACH THE ONE APPEARANCE. An attachment with no cached face at
+   * all (nothing was ever cached, or the entry predates titles) has only its
+   * address to show; one whose address Go says resolves to nothing has a face
+   * that outlived its document. Both are "orphaned but readable", so both wear
+   * the same chip rather than inventing a second vocabulary.
    * @param {AiBlockAttachment} attachment
    * @returns {HTMLElement}
    */
   #attachmentChip(attachment) {
     const uri = (attachment && attachment.uri || '').trim()
     const title = (attachment && attachment.title || '').trim()
+    const missing = !title || this.#isDangling(uri)
     const chip = new AttachmentChip({
       uri: uri,
       label: title,
-      missing: !title,
-      tooltip: title ? uri : 'Attached document is no longer available: ' + uri,
+      missing: missing,
+      tooltip: missing ? 'Attached document is no longer available: ' + uri : uri,
     })
     chip.onActivate((address) => this.#openAttachment(address))
     return chip.element
+  }
+
+  /**
+   * Has this coordinate been ANSWERED for, negatively? Unasked and unanswered
+   * both read false — a chip is normal until Go says otherwise, so a block never
+   * flickers through a dangling look on its way to a verdict.
+   * @param {string} uri
+   * @returns {boolean}
+   */
+  #isDangling(uri) {
+    return !!this.#addresses && this.#addresses.stateOf(uri) === AddressState.DANGLING
   }
 
   /** @param {string} uri */

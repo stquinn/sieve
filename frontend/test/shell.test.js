@@ -2817,7 +2817,7 @@ describe('AbstractEditor.softReload (P4.A)', () => {
     ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
     await ed.softReload()
     // The surface gets the service's TYPED envelopes — the same objects the
-    // truth-mirror was seeded with — not the raw wire block list.
+    // block cache was seeded with — not the raw wire block list.
     expect(ed.surface.reloaded.opts).toEqual({ allowEmpty: true })
     expect(ed.surface.reloaded.blocks.map((b) => b.id)).toEqual(['b1'])
     expect(setPosition).toHaveBeenCalledWith(ctx)

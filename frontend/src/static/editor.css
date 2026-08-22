@@ -1984,12 +1984,6 @@ pre.tiptap-code-block code {
   flex-shrink: 0;
 }
 
-.ask-panel .ask-popup__hint {
-  font-size: 12px;
-  color: var(--theme-textDim);
-  opacity: 0.6;
-}
-
 /* ── Chip tokens: the one definition of what a chip looks like (#38) ─────────
    THE VOCABULARY HAS THREE CALLERS AND ONE SET OF VALUES. `AttachmentChip`
    (block/renderers/attachment-chip.js) draws the ai-block footer's chips and the
@@ -2045,12 +2039,10 @@ pre.tiptap-code-block code {
    coordinate pointing at another document; a target chip holds the local target.
    They differ in SCOPE and in whether you can remove one — nothing else.
 
-   NO NEW ROW: the chips take the footer's LEFT region, the one the hint had, and
-   the attachment row displaces the hint while any attachment is present
-   (ComposerAttachments toggles the hint's display). min-width:0 + overflow-x
-   lets a long set scroll sideways instead of growing the footer — its height
-   feeds ui/layout.js's askPanelMinHeight, so a wrapping row would shove the
-   composer's floor around. */
+   NO NEW ROW: the chips take the footer's LEFT region and Send keeps the right.
+   min-width:0 + overflow-x lets a long set scroll sideways instead of growing
+   the footer — its height feeds ui/layout.js's askPanelMinHeight, so a wrapping
+   row would shove the composer's floor around. */
 .ask-panel .ask-popup__target,
 .ask-panel .ask-popup__chips {
   display: none;
@@ -2061,7 +2053,7 @@ pre.tiptap-code-block code {
   scrollbar-width: none;
 }
 
-/* The target names ONE thing and yields its width; attachments take the rest. */
+/* The target yields its width and scrolls; attachments take the rest. */
 .ask-panel .ask-popup__target { flex: 0 1 auto; margin-right: 8px; }
 .ask-panel .ask-popup__chips  { flex: 1 1 auto; margin-right: 12px; }
 
@@ -2102,6 +2094,27 @@ pre.tiptap-code-block code {
   padding-right: 9px;
   background: transparent;
   border-color: color-mix(in srgb, var(--chip-accent) 45%, transparent);
+}
+
+/* A SELECTION'S BLOCKS get a chip each, and each says its KIND with the kind
+   registry's own icon (getSieveIcon) rather than a second icon vocabulary
+   invented here. That glyph is the whole difference from the target chip beside
+   them — same species, same outline, never distinguished by contrast. */
+.ask-panel .ask-target-chip__icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.ask-panel .ask-target-chip--block .ask-target-chip__icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* The overflow chip is a COUNT, not a coordinate: no icon, and the accent
+   re-pointed at the dim text colour (which re-mixes its border too, since the
+   mix reads --chip-accent on this element). */
+.ask-panel .ask-target-chip--more {
+  --chip-accent: var(--theme-textDim);
 }
 
 .ask-panel .ask-chip__label,
@@ -2177,12 +2190,6 @@ pre.tiptap-code-block code {
   justify-content: space-between;
   padding: 8px 16px 10px;
   border-top: 1px solid var(--theme-border);
-}
-
-.ask-popup__hint {
-  font-size: 12px;
-  color: var(--theme-textDim);
-  opacity: 0.6;
 }
 
 .ask-popup__send {

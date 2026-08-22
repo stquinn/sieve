@@ -3,11 +3,11 @@
 // attached to the message being written, and the chip row that shows it (#74 P4).
 //
 // NO NEW ROW. The chips live in the EXISTING `.ask-popup__footer` (index.html),
-// which already holds the hint on the left and Send on the right. Chips take the
-// left region and DISPLACE the hint while any attachment is present; overflow
-// scrolls horizontally rather than growing the panel (the footer's height feeds
-// ui/layout.js's askPanelMinHeight, so a wrapping chip row would push the
-// composer's minimum height around).
+// whose whole contract is a chip region on the left and Send on the right (the
+// Enter/Shift+Enter chord is said in the composer's placeholder, not down here).
+// Overflow scrolls horizontally rather than growing the panel — the footer's
+// height feeds ui/layout.js's askPanelMinHeight, so a wrapping chip row would
+// push the composer's minimum height around.
 //
 // THE MODEL AND ITS CHIPS ARE ONE TYPE. The chips ARE this data drawn — there is
 // no second object that could disagree with it, and every mutation re-renders
@@ -99,7 +99,6 @@ export class ComposerAttachments {
   /** @type {Attachment[]} THE VIEW: the subset a `@Title` token carries right
    *  now. The chips, and what send carries. */ #attached = []
   /** @type {HTMLElement|null} the chip row (null → headless: model-only, all verbs still work) */ #row = null
-  /** @type {HTMLElement|null} the hint the chips displace */ #hint = null
   /** @type {HTMLTextAreaElement|null} the composer whose text is the truth (null
    *  → model-only: the token verbs no-op, the chip verbs still work) */ #textarea = null
   /** @type {(edit: () => void) => void} runs a programmatic composer edit */ #applyEdit
@@ -107,7 +106,7 @@ export class ComposerAttachments {
   /**
    * @param {HTMLElement|null} footerEl the structural `.ask-popup__footer`. The
    *   row is CREATED here (the panel's own DOM is never rebuilt) and inserted
-   *   before the hint, so Send stays the footer's last child.
+   *   before Send, which stays the footer's last child.
    * @param {HTMLTextAreaElement|null} [textarea] the composer. The tokens live in
    *   it, so every verb that removes an attachment removes its text too.
    * @param {((edit: () => void) => void)|null} [applyEdit] how to perform a
@@ -119,11 +118,13 @@ export class ComposerAttachments {
     this.#textarea = textarea || null
     this.#applyEdit = applyEdit || ((edit) => edit())
     if (!footerEl) return
-    this.#hint = footerEl.querySelector('.ask-popup__hint')
     const row = document.createElement('div')
     row.className = 'ask-popup__chips'
-    if (this.#hint) footerEl.insertBefore(row, this.#hint)
-    else footerEl.insertBefore(row, footerEl.firstChild)
+    // Send is the anchor, not the first child: TargetChips draws its own row into
+    // this same footer, and inserting at the front would put a row built LATER
+    // ahead of one built earlier. insertBefore(null) appends, so a footer with no
+    // Send still works.
+    footerEl.insertBefore(row, footerEl.querySelector('.ask-popup__send'))
     this.#row = row
     this.#render()
   }
@@ -320,9 +321,8 @@ export class ComposerAttachments {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  /** Redraws the chip row from the view and yields/restores the hint. */
+  /** Redraws the chip row from the view. */
   #render() {
-    if (this.#hint) this.#hint.style.display = this.#attached.length ? 'none' : ''
     const row = this.#row
     if (!row) return
     row.innerHTML = ''

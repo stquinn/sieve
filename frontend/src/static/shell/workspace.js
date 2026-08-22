@@ -464,7 +464,7 @@ export class SieveWorkspace {
 
     // Document load rides the service boundary (contract §service pair): the
     // service owns the HTTP call, types the block list into envelopes, and seeds
-    // the truth-mirror. The surface render pipeline consumes the envelopes; the
+    // the block cache. The surface render pipeline consumes the envelopes; the
     // untyped `raw` wire bridge is retired (issue #49 Phase 3).
     this.#documentService.load(uuid)
       .then((data) => {

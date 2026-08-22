@@ -189,6 +189,10 @@ export let ProseBlock
     // every apostrophe. Surround never indexes the block text, so it is safe
     // over marked-up ranges — it inserts around them, preserving bold/links.
     interactionPolicy: { surroundSelection: true },
+    // Prose is a block, so it answers getSieveIcon like every other kind. Without
+    // this it took the registry's generic fallback — the CODE icon — and any
+    // surface that draws a kind marker called a paragraph a code block.
+    getIcon: function () { return window.SieveIcons && window.SieveIcons.blockquote },
     // load: a block's verbatim markdown → native HTML.
     fromBlock: function (b, mdRender) { return renderProseContent(proseContent(b), mdRender) },
     // copy: a prose block's ContentEntry views for a slice — a `sieve/prose` view

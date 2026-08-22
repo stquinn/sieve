@@ -242,6 +242,134 @@ describe('AiBlockRenderer — the attachment chip row', () => {
   })
 })
 
+// ── Dangling attachments (#82) ───────────────────────────────────────────────
+// An attachment persists {uri, title} and nothing else, so a chip whose target
+// document was deleted goes on showing the cached title. Given an AddressStatus
+// the renderer ASKS, and greys the chip when the answer is "that resolves to
+// nothing" — keeping the title readable, because the point is "orphaned but
+// readable", never "error".
+//
+// The renderer stays transport-blind: what it holds is an oracle with a
+// remembered verdict and an ask; it never learns there is a socket behind one.
+
+describe('AiBlockRenderer — a chip whose target is gone', () => {
+  /** @type {HTMLStyleElement} */ let rootVars
+
+  beforeAll(() => {
+    clearInjectedStyles();
+    /** @type {any} */ (globalThis).TipTap = /** @type {any} */ (globalThis).TipTap || {}
+    Object.assign(/** @type {any} */ (globalThis).TipTap, { MarkdownIt })
+  })
+  afterAll(() => { delete /** @type {any} */ (globalThis).TipTap.MarkdownIt })
+  beforeEach(() => { rootVars = installBareThemeVars() })
+  afterEach(() => { rootVars.remove(); document.body.innerHTML = '' })
+
+  const AUTH = { uri: 'container:9f2b', title: 'Auth Design' }
+  const withAttachments = (attachments) => ({ ...REPRESENTATIVE_ATTRS, attachments })
+
+  /**
+   * A stub AddressStatus: the same two-method contract, no wire, and the same
+   * TIMING — a verdict lands only when the probe settles, which is what makes
+   * the no-flicker assertion below meaningful. It deliberately does NOT memoise
+   * its probes: capping them is the RENDERER's half of the discipline, and
+   * `probes` is how that is counted.
+   */
+  function fakeAddresses(answers) {
+    return {
+      probes: /** @type {string[]} */ ([]),
+      verdicts: new Map(),
+      stateOf(uri) { return this.verdicts.get(uri) || 'unknown' },
+      check(uri) {
+        this.probes.push(uri)
+        return Promise.resolve(answers[uri] || 'live').then((state) => {
+          this.verdicts.set(uri, state)
+          return state
+        })
+      },
+    }
+  }
+
+  /** Drains the microtask queue the probes and their redraws run on. */
+  const settled = () => new Promise((resume) => setTimeout(resume, 0))
+
+  const chipOf = (dom) => /** @type {HTMLElement} */ (dom.querySelector('.sieve-attachment-chip'))
+
+  it('renders NORMALLY until the answer arrives — a block never flickers through dangling', () => {
+    const { renderer, dom } = mount(withAttachments([AUTH]))
+    renderer.probeAttachmentsWith(/** @type {any} */ (fakeAddresses({ 'container:9f2b': 'dangling' })))
+    // Synchronously, before the probe settles: nothing has been answered yet.
+    expect(chipOf(dom).className).not.toContain('sieve-attachment-chip--missing')
+  })
+
+  it('greys the chip once the address answers DANGLING, keeping the cached title', async () => {
+    const { renderer, dom } = mount(withAttachments([AUTH]))
+    renderer.probeAttachmentsWith(/** @type {any} */ (fakeAddresses({ 'container:9f2b': 'dangling' })))
+    await settled()
+
+    const chip = chipOf(dom)
+    expect(chip.className).toContain('sieve-attachment-chip--missing')
+    expect(chip.textContent).toContain('Auth Design')          // orphaned but READABLE
+    expect(chip.getAttribute('title')).toContain('no longer available')
+    expect(chip.getAttribute('data-uri')).toBe('container:9f2b')   // and still clickable
+  })
+
+  it('leaves a LIVE address alone', async () => {
+    const { renderer, dom } = mount(withAttachments([AUTH]))
+    renderer.probeAttachmentsWith(/** @type {any} */ (fakeAddresses({ 'container:9f2b': 'live' })))
+    await settled()
+
+    const chip = chipOf(dom)
+    expect(chip.className).not.toContain('sieve-attachment-chip--missing')
+    expect(chip.getAttribute('title')).toBe('container:9f2b')
+  })
+
+  it('greys only the chip whose target is gone', async () => {
+    const { renderer, dom } = mount(withAttachments([AUTH, { uri: 'container:1a2b', title: 'Retry RFC' }]))
+    renderer.probeAttachmentsWith(/** @type {any} */ (fakeAddresses({ 'container:9f2b': 'dangling' })))
+    await settled()
+
+    const chips = dom.querySelectorAll('.sieve-attachment-chip')
+    expect(chips[0].className).toContain('sieve-attachment-chip--missing')
+    expect(chips[1].className).not.toContain('sieve-attachment-chip--missing')
+  })
+
+  it('a redraw asks NOTHING further — the verdict is remembered, not re-fetched', async () => {
+    const { renderer, dom } = mount(withAttachments([AUTH]))
+    const addresses = fakeAddresses({ 'container:9f2b': 'dangling' })
+    renderer.probeAttachmentsWith(/** @type {any} */ (addresses))
+    await settled()
+    expect(addresses.probes).toEqual(['container:9f2b'])
+
+    // Every keystroke inside the document redraws the block. None of them may
+    // reach the oracle again — that is the whole cost discipline.
+    for (let i = 0; i < 5; i++) renderer.update(blk(withAttachments([AUTH])))
+    await settled()
+
+    expect(addresses.probes).toEqual(['container:9f2b'])
+    expect(chipOf(dom).className).toContain('sieve-attachment-chip--missing')
+  })
+
+  it('an attachment arriving later is probed on the update that brings it', async () => {
+    const { renderer, dom } = mount(REPRESENTATIVE_ATTRS)
+    const addresses = fakeAddresses({ 'container:9f2b': 'dangling' })
+    renderer.probeAttachmentsWith(/** @type {any} */ (addresses))
+    expect(addresses.probes).toEqual([])         // nothing attached yet
+
+    renderer.update(blk(withAttachments([AUTH])))
+    await settled()
+
+    expect(addresses.probes).toEqual(['container:9f2b'])
+    expect(chipOf(dom).className).toContain('sieve-attachment-chip--missing')
+  })
+
+  it('without an oracle the row renders exactly as it did before #82', () => {
+    const { dom } = mount(withAttachments([AUTH]))
+    const chip = chipOf(dom)
+    expect(chip.className).not.toContain('sieve-attachment-chip--missing')
+    expect(chip.textContent).toContain('Auth Design')
+  })
+})
+
 // ── The question's @mentions (#74) ───────────────────────────────────────────
 // The literal `@Auth Design` inside the rendered question is marked with the
 // SAME accent its footer chip carries, so the inline mention and the chip read

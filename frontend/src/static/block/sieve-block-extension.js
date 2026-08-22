@@ -83,7 +83,7 @@ import { BlockSelection } from './block-selection.js'
 
 // sieveBlockFor — the SEAM's envelope constructor for adapters (envelope-first
 // flow, contract §typed block envelope). MIRROR-FIRST (issue #49 Phase 3): the
-// node's id resolves the BlockService truth-mirror (what Go holds); on a hit the
+// node's id resolves the BlockService's block cache (what Go holds); on a hit the
 // mirror payload is the base and the kind-owned live overlay is applied on top
 // (overlay wins). On a MISS — no service, no id, or an id the mirror never
 // received server truth for — it falls back to SieveBlock.from(node), the
@@ -549,6 +549,15 @@ class NodeViewRegistry {
             // pane by the surface (as sieveHost is). Renderers receive it at
             // construction; adapters register their v1 appliers with it.
             get blockService() { return editorPane.blockService || null },
+            // What the editor knows about whether the coordinates a block
+            // renders still resolve (#82). Reached through the HOST rather than
+            // a pane stamp, and read lazily like getEditor, because the surface
+            // stamps sieveHost only after the pane is built — a NodeView made
+            // during that build would capture nothing.
+            get addressStatus() {
+              var host = editorPane.sieveHost
+              return (host && host.addressStatus) || null
+            },
             updateAttributes: function (patch) {
               var bs = blockCtx.blockService
               if (bs) bs.updateAttributes(node.attrs.id, patch)
