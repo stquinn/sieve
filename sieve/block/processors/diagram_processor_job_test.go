@@ -107,30 +107,138 @@ func describe(p *DiagramProcessor, blk *block.SieveBlock) *block.ProcessorJob {
 	return p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "u1", Block: blk})
 }
 
-// ── Theme preamble ──────────────────────────────────────────────────────────
+// ── Theme preamble (Tier 1: per-variable skinparam fidelity) ────────────────
+
+// fullDarkThemeVars/fullLightThemeVars carry every key themePreamble reads
+// (mirrors Tokyo Night for the dark case; a synthetic light palette for the
+// light case — no shipped theme is light, see themes/*.json), so the golden
+// tests below pin real values rather than the fallback constants.
+func fullDarkThemeVars() domain.ThemeVars {
+	return domain.ThemeVars{
+		"bg":       "#1a1b26",
+		"bgAlt":    "#1e2030",
+		"border2":  "#3b4261",
+		"text":     "#c0caf5",
+		"monoFont": `"JetBrains Mono", "Fira Code", monospace`,
+	}
+}
+
+func fullLightThemeVars() domain.ThemeVars {
+	return domain.ThemeVars{
+		"bg":       "#ffffff",
+		"bgAlt":    "#f0f0f2",
+		"border2":  "#cbd0d8",
+		"text":     "#1a1b26",
+		"monoFont": `"JetBrains Mono", "Fira Code", monospace`,
+	}
+}
 
 func TestDiagramProcessor_effectiveSource_darkPreamble(t *testing.T) {
-	p := NewDiagramProcessor(block.BlockServices{State: darkState()})
+	p := NewDiagramProcessor(block.BlockServices{State: fakeState{theme: fullDarkThemeVars()}})
 	got := p.effectiveSource("A -> B")
-	want := "!theme cyborg\nskinparam backgroundColor transparent\nA -> B"
+	want := "skinparam backgroundColor transparent\n" +
+		"skinparam DefaultFontColor #c0caf5\n" +
+		"skinparam DefaultFontName \"JetBrains Mono\", \"Fira Code\", monospace\n" +
+		"skinparam ArrowColor #3b4261\n" +
+		"skinparam ArrowFontColor #c0caf5\n" +
+		"skinparam ClassBackgroundColor #1e2030\n" +
+		"skinparam ClassBorderColor #3b4261\n" +
+		"skinparam ClassFontColor #c0caf5\n" +
+		"skinparam ActivityBackgroundColor #1e2030\n" +
+		"skinparam ActivityBorderColor #3b4261\n" +
+		"skinparam ActivityDiamondBackgroundColor #1e2030\n" +
+		"skinparam ActivityDiamondBorderColor #3b4261\n" +
+		"skinparam StateBackgroundColor #1e2030\n" +
+		"skinparam StateBorderColor #3b4261\n" +
+		"skinparam ParticipantBackgroundColor #1e2030\n" +
+		"skinparam ParticipantBorderColor #3b4261\n" +
+		"skinparam ParticipantFontColor #c0caf5\n" +
+		"skinparam ActorBackgroundColor #1e2030\n" +
+		"skinparam ActorBorderColor #3b4261\n" +
+		"skinparam ActorFontColor #c0caf5\n" +
+		"skinparam NodeBackgroundColor #1e2030\n" +
+		"skinparam NodeBorderColor #3b4261\n" +
+		"skinparam SequenceLifeLineBorderColor #3b4261\n" +
+		"skinparam NoteBackgroundColor #1e2030\n" +
+		"skinparam NoteBorderColor #3b4261\n" +
+		"skinparam NoteFontColor #c0caf5\n" +
+		"A -> B"
 	if got != want {
 		t.Errorf("dark effective source:\n got %q\nwant %q", got, want)
 	}
 }
 
 func TestDiagramProcessor_effectiveSource_lightPreamble(t *testing.T) {
-	p := NewDiagramProcessor(block.BlockServices{State: lightState()})
+	p := NewDiagramProcessor(block.BlockServices{State: fakeState{theme: fullLightThemeVars()}})
 	got := p.effectiveSource("A -> B")
-	want := "skinparam backgroundColor transparent\nA -> B"
+	want := "skinparam backgroundColor transparent\n" +
+		"skinparam DefaultFontColor #1a1b26\n" +
+		"skinparam DefaultFontName \"JetBrains Mono\", \"Fira Code\", monospace\n" +
+		"skinparam ArrowColor #cbd0d8\n" +
+		"skinparam ArrowFontColor #1a1b26\n" +
+		"skinparam ClassBackgroundColor #f0f0f2\n" +
+		"skinparam ClassBorderColor #cbd0d8\n" +
+		"skinparam ClassFontColor #1a1b26\n" +
+		"skinparam ActivityBackgroundColor #f0f0f2\n" +
+		"skinparam ActivityBorderColor #cbd0d8\n" +
+		"skinparam ActivityDiamondBackgroundColor #f0f0f2\n" +
+		"skinparam ActivityDiamondBorderColor #cbd0d8\n" +
+		"skinparam StateBackgroundColor #f0f0f2\n" +
+		"skinparam StateBorderColor #cbd0d8\n" +
+		"skinparam ParticipantBackgroundColor #f0f0f2\n" +
+		"skinparam ParticipantBorderColor #cbd0d8\n" +
+		"skinparam ParticipantFontColor #1a1b26\n" +
+		"skinparam ActorBackgroundColor #f0f0f2\n" +
+		"skinparam ActorBorderColor #cbd0d8\n" +
+		"skinparam ActorFontColor #1a1b26\n" +
+		"skinparam NodeBackgroundColor #f0f0f2\n" +
+		"skinparam NodeBorderColor #cbd0d8\n" +
+		"skinparam SequenceLifeLineBorderColor #cbd0d8\n" +
+		"skinparam NoteBackgroundColor #f0f0f2\n" +
+		"skinparam NoteBorderColor #cbd0d8\n" +
+		"skinparam NoteFontColor #1a1b26\n" +
+		"A -> B"
 	if got != want {
 		t.Errorf("light effective source:\n got %q\nwant %q", got, want)
 	}
 }
 
-func TestDiagramProcessor_effectiveSource_missingBgTreatedDark(t *testing.T) {
+// TestDiagramProcessor_effectiveSource_missingVarsFallBackDark pins the
+// defensive-floor path: an entirely empty theme map (no "bg" to classify, so
+// isDarkTheme treats it as dark) falls back to the generic dark constants for
+// every key themePreamble reads.
+func TestDiagramProcessor_effectiveSource_missingVarsFallBackDark(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{State: fakeState{theme: domain.ThemeVars{}}})
-	if got := p.effectiveSource("X"); got != "!theme cyborg\nskinparam backgroundColor transparent\nX" {
-		t.Errorf("missing bg must be treated as dark; got %q", got)
+	got := p.effectiveSource("X")
+	want := "skinparam backgroundColor transparent\n" +
+		"skinparam DefaultFontColor #e0e0e0\n" +
+		"skinparam DefaultFontName monospace\n" +
+		"skinparam ArrowColor #555555\n" +
+		"skinparam ArrowFontColor #e0e0e0\n" +
+		"skinparam ClassBackgroundColor #2a2a2a\n" +
+		"skinparam ClassBorderColor #555555\n" +
+		"skinparam ClassFontColor #e0e0e0\n" +
+		"skinparam ActivityBackgroundColor #2a2a2a\n" +
+		"skinparam ActivityBorderColor #555555\n" +
+		"skinparam ActivityDiamondBackgroundColor #2a2a2a\n" +
+		"skinparam ActivityDiamondBorderColor #555555\n" +
+		"skinparam StateBackgroundColor #2a2a2a\n" +
+		"skinparam StateBorderColor #555555\n" +
+		"skinparam ParticipantBackgroundColor #2a2a2a\n" +
+		"skinparam ParticipantBorderColor #555555\n" +
+		"skinparam ParticipantFontColor #e0e0e0\n" +
+		"skinparam ActorBackgroundColor #2a2a2a\n" +
+		"skinparam ActorBorderColor #555555\n" +
+		"skinparam ActorFontColor #e0e0e0\n" +
+		"skinparam NodeBackgroundColor #2a2a2a\n" +
+		"skinparam NodeBorderColor #555555\n" +
+		"skinparam SequenceLifeLineBorderColor #555555\n" +
+		"skinparam NoteBackgroundColor #2a2a2a\n" +
+		"skinparam NoteBorderColor #555555\n" +
+		"skinparam NoteFontColor #e0e0e0\n" +
+		"X"
+	if got != want {
+		t.Errorf("missing vars must fall back to the dark constants; got %q", got)
 	}
 }
 
