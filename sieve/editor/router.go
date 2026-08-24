@@ -22,10 +22,10 @@ import (
 type NodeSource interface {
 	Name() string
 	Search(query string, limit int) []domain.Candidate
-	Resolve(uri string) (domain.Node, error)
+	Resolve(uri string) (domain.NodeDescriptor, error)
 }
 
-// Router is the one address → Node resolver: a registry federating a source per
+// Router is the one address → NodeDescriptor resolver: a registry federating a source per
 // container kind, with two faces — resolution and enumeration. Adding a kind is
 // one Register call at the composition root; nothing outside Go learns what
 // kinds exist.
@@ -71,7 +71,7 @@ func (r *Router) Register(source NodeSource) {
 	}
 }
 
-// Resolve turns an address into the Node it points at, asking each source in
+// Resolve turns an address into the NodeDescriptor it points at, asking each source in
 // registration order.
 //
 // Three refusals happen before any source is asked. The first belongs to the
@@ -84,16 +84,16 @@ func (r *Router) Register(source NodeSource) {
 // A target no source holds is domain.ErrNodeNotFound: dangling is normal. A
 // source failing for any OTHER reason (an unreadable store) surfaces as-is, so a
 // broken library is never mistaken for a deleted document.
-func (r *Router) Resolve(uri string) (domain.Node, error) {
+func (r *Router) Resolve(uri string) (domain.NodeDescriptor, error) {
 	addr, err := domain.ParseAddress(uri)
 	if err != nil {
-		return domain.Node{}, err
+		return domain.NodeDescriptor{}, err
 	}
 	if addr.Scheme != domain.SchemeContainer {
-		return domain.Node{}, fmt.Errorf("%w: %q", ErrSchemeUnsupported, addr.Scheme)
+		return domain.NodeDescriptor{}, fmt.Errorf("%w: %q", ErrSchemeUnsupported, addr.Scheme)
 	}
 	if addr.IsPinned() {
-		return domain.Node{}, fmt.Errorf("%w: %s", ErrVersionPinUnsupported, uri)
+		return domain.NodeDescriptor{}, fmt.Errorf("%w: %s", ErrVersionPinUnsupported, uri)
 	}
 	for _, source := range r.sources {
 		node, err := source.Resolve(uri)
@@ -101,10 +101,10 @@ func (r *Router) Resolve(uri string) (domain.Node, error) {
 			return node, nil
 		}
 		if !errors.Is(err, domain.ErrNodeNotFound) {
-			return domain.Node{}, fmt.Errorf("router: source %s: %w", source.Name(), err)
+			return domain.NodeDescriptor{}, fmt.Errorf("router: source %s: %w", source.Name(), err)
 		}
 	}
-	return domain.Node{}, fmt.Errorf("%w: %s", domain.ErrNodeNotFound, uri)
+	return domain.NodeDescriptor{}, fmt.Errorf("%w: %s", domain.ErrNodeNotFound, uri)
 }
 
 // Target answers WHERE a coordinate opens: the container to bring up, plus the

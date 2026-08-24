@@ -118,7 +118,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 		logger.Error("buffers init failed", "err", err)
 		return
 	}
-	// The Router: address → Node. Registering a source is the ONE line that makes
+	// The Router: address → NodeDescriptor. Registering a source is the ONE line that makes
 	// a container kind mentionable, and the invariant it carries is that a source
 	// may only offer what the AI can dereference — so v1 registers notes only,
 	// because that is what MCP get_by_uri reaches through this very Router. Chats

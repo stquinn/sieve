@@ -8,8 +8,8 @@
 // address for the life of the editor that owns the oracle. The verdict mapping
 // is trivial; the traffic ceiling is not.
 import { describe, it, expect, vi } from 'vitest'
-import { AddressStatus, AddressState } from '../src/static/block/address-status.js'
-import { ContractViolation } from '../src/static/block/sieve-block.js'
+import { AddressStatus, AddressState } from '../src/static/renderers/address-status.js'
+import { ContractViolation } from '../src/static/contract/sieve-block.js'
 
 /**
  * A stubbed MentionService: it answers from a map and counts what it was asked.

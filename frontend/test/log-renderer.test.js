@@ -5,9 +5,9 @@
 // render() alone yields the complete block. Scratch construction: (block) only;
 // the service-wired test below is the one live-instance case.
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
-import { LogRenderer } from '../src/static/block/renderers/log-renderer.js'
-import { SieveBlock, MODE } from '../src/static/block/sieve-block.js'
-import { serviceRig } from './helpers/service-rig.js'
+import { LogRenderer } from '../src/static/renderers/log-renderer.js'
+import { SieveBlock, MODE } from '../src/static/contract/sieve-block.js'
+import { providerRig } from './helpers/service-rig.js'
 
 /** @param {object} payload */
 function blk(payload) { return new SieveBlock('log', payload) }
@@ -124,10 +124,10 @@ describe('LogRenderer (bare-page DoD)', () => {
     expect(() => renderer.destroy()).not.toThrow()
   })
 
-  it('setMode and toggleColumn map to this kind\'s wire patches through a real BlockService', () => {
-    const { service, sock } = serviceRig({ blocks: [{ id: 'lg-test', kind: 'log' }] })
+  it('setMode and toggleColumn map to this kind\'s wire patches through a real ContainerTransport', () => {
+    const { provider, sock } = providerRig({ blocks: [{ id: 'lg-test', kind: 'log' }] })
 
-    const renderer = new LogRenderer(blk({ id: 'lg-test', source: 'x', mode: 'raw' }), service)
+    const renderer = new LogRenderer(blk({ id: 'lg-test', source: 'x', mode: 'raw' }), provider)
     renderer.render()
 
     renderer.setMode(MODE.EDIT)     // already raw — faithful no-op (old header guard)

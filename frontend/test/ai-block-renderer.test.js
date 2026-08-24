@@ -8,13 +8,13 @@
 // block for free. (The note lens swaps an empty PM-managed body via buildBody.)
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import MarkdownIt from 'markdown-it'
-import { AiBlockRenderer } from '../src/static/block/renderers/ai-block-renderer.js'
-import { SieveBlock } from '../src/static/block/sieve-block.js'
+import { AiBlockRenderer } from '../src/static/renderers/ai-block-renderer.js'
+import { SieveBlock } from '../src/static/contract/sieve-block.js'
 
 /** @param {object} payload */
 function blk(payload) { return new SieveBlock('ai-block', payload) }
 
-/** @typedef {import('../src/static/block/renderers/ai-block-renderer.js').AiBlockAttrs} AiBlockAttrs */
+/** @typedef {import('../src/static/renderers/ai-block-renderer.js').AiBlockAttrs} AiBlockAttrs */
 
 function clearInjectedStyles() {
   document.adoptedStyleSheets = []

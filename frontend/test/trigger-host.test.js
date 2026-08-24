@@ -13,7 +13,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest'
 import { TriggerHost, TextareaHost, TriggerPlacement, PanelPlacement } from '../src/static/shell/trigger-host.js'
 import { TriggerPopover } from '../src/static/shell/trigger-popover.js'
 import { TriggerProvider, SlashCommandProvider } from '../src/static/shell/trigger-providers.js'
-import { ContractViolation } from '../src/static/block/sieve-block.js'
+import { ContractViolation } from '../src/static/contract/sieve-block.js'
 
 function mountTextarea() {
   document.body.innerHTML = `

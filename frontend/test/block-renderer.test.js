@@ -8,9 +8,9 @@
 // exact kinds the defect named actually get the fix.
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import MarkdownIt from 'markdown-it'
-import { AiBlockRenderer } from '../src/static/block/renderers/ai-block-renderer.js'
-import { WebClipRenderer } from '../src/static/block/renderers/web-clip-renderer.js'
-import { SieveBlock } from '../src/static/block/sieve-block.js'
+import { AiBlockRenderer } from '../src/static/renderers/ai-block-renderer.js'
+import { WebClipRenderer } from '../src/static/renderers/web-clip-renderer.js'
+import { SieveBlock } from '../src/static/contract/sieve-block.js'
 
 function clearInjectedStyles() {
   document.adoptedStyleSheets = []

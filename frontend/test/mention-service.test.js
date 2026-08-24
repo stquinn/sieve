@@ -6,10 +6,10 @@
 // the ONLY place the picker's typeahead touches the wire (#49 — surfaces and
 // providers stay transport-blind).
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { MentionService } from '../src/static/block/mention-service.js'
-import { CommandService } from '../src/static/block/command-service.js'
-import { WorkspaceService } from '../src/static/block/workspace-service.js'
-import { ContractViolation } from '../src/static/block/sieve-block.js'
+import { MentionService } from '../src/static/shell/mention-service.js'
+import { CommandService } from '../src/static/shell/command-service.js'
+import { WorkspaceService } from '../src/static/shell/workspace-service.js'
+import { ContractViolation } from '../src/static/contract/sieve-block.js'
 
 class FakeWebSocket {
   /** @type {any} */ onopen = null

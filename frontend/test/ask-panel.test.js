@@ -14,15 +14,15 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { AskPanel } from '../src/static/shell/ask-panel.js'
-import { CommandService } from '../src/static/block/command-service.js'
-import { WorkspaceService } from '../src/static/block/workspace-service.js'
-import { SieveBlock } from '../src/static/block/sieve-block.js'
+import { CommandService } from '../src/static/shell/command-service.js'
+import { WorkspaceService } from '../src/static/shell/workspace-service.js'
+import { SieveBlock } from '../src/static/contract/sieve-block.js'
 // GLOW DROPPED (P4.B) regression guard: ask-panel.js does NOT import these — the
 // mock exists purely as a trip-wire so a future re-coupling would be caught here.
-vi.mock('../src/static/ai/ai-target-decoration.js', () => ({
+vi.mock('../src/static/lens/document-editor/surfaces/ai-target-decoration.js', () => ({
   setAiTargetGlow: vi.fn(), clearAiTargetGlow: vi.fn(), AiTargetDecoration: {},
 }))
-import { setAiTargetGlow } from '../src/static/ai/ai-target-decoration.js'
+import { setAiTargetGlow } from '../src/static/lens/document-editor/surfaces/ai-target-decoration.js'
 
 // Builds the structural #ask-panel exactly as index.html renders it (the child
 // wires this, never rebuilds it).
@@ -69,7 +69,11 @@ function fakeWorkspace(editor) {
   const subs = []
   return {
     _editor: editor,
-    get activeTab() { return this._editor ? { editor: this._editor } : null },
+    /** The mount the active tab holds — the host end of the container facade. */
+    _mount: null,
+    get activeTab() {
+      return this._editor ? { editor: this._editor, mount: this._mount } : null
+    },
     onSelectionUpdate: (fn) => { subs.push(fn); return () => {} },
     emit: (ctx) => subs.forEach((fn) => fn(ctx)),
     getSelectionContext: vi.fn(() => (editor ? editor.getSelectionContext() : null)),
@@ -798,18 +802,20 @@ describe('AskPanel — the footer shows what the message will act on', () => {
     expect(targetChips(el).length).toBe(1)
   })
 
-  it('a SELECTION gets a chip per block, labelled from the workspace BlockService (#82)', () => {
+  it('a SELECTION gets a chip per block, labelled from the ACTIVE CONTAINER (#82)', () => {
     vi.useFakeTimers()
     const el = mountPanelDom()
     const ws = fakeWorkspace(fakeEditor({ kind: 'selection', ref: 'b1,b2', label: '“retry policy”' }))
     ws._editor.getSelectionContext = () => ({
+      docUuid: 'u-1',
       target: { kind: 'selection', ref: 'b1,b2', label: '“retry policy”' },
       blockIds: ['b1', 'b2'],
     })
-    ws.blockService = {
-      envelopeFor: (id) => (id === 'b2' ? new SieveBlock('code', { language: 'go' }) : null),
-      kindFor: (id) => (id === 'b1' ? 'prose' : 'code'),
+    const held = {
+      b1: { id: 'b1', kind: 'prose', attrs: {} },
+      b2: { id: 'b2', kind: 'code', attrs: { language: 'go' } },
     }
+    ws._mount = { provider: { getBlock: (id) => held[id] || null, subscribe() {}, unsubscribe() {} } }
     const panel = new AskPanel(ws)
     panel.open()
     vi.runAllTimers()
@@ -828,13 +834,13 @@ describe('AskPanel — the footer shows what the message will act on', () => {
       blockIds: ['b2'],
     })
     let language = 'go'
-    /** @type {((block: any) => void)[]} */ const listeners = []
-    ws.blockService = {
-      envelopeFor: () => new SieveBlock('code', { language }),
-      kindFor: () => 'code',
-    }
-    ws.documentService = {
-      onBlockUpdated: (uuid, fn) => { listeners.push(fn); return () => {} },
+    /** @type {any[]} */ const listeners = []
+    ws._mount = {
+      provider: {
+        getBlock: (id) => ({ id, kind: 'code', attrs: { language } }),
+        subscribe: (l) => listeners.push(l),
+        unsubscribe: () => {},
+      },
     }
     const el = mountPanelDom()
     const panel = new AskPanel(ws)
@@ -843,9 +849,10 @@ describe('AskPanel — the footer shows what the message will act on', () => {
     const language1 = () => targetChips(el)[1].querySelector('.ask-target-chip__label').textContent
     expect(language1()).toBe('go')
 
-    // The caret has not moved — only the block's own truth changed.
+    // The caret has not moved — only the block's own truth changed. The panel is
+    // a SECOND follower of the same container, so it hears the cue directly.
     language = 'rust'
-    listeners.forEach((fn) => fn({ id: 'b2' }))
+    listeners.forEach((l) => l.onChanged({ blockIds: ['b2'], orderChanged: false }))
     expect(language1()).toBe('rust')
   })
 })

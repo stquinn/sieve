@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { wrapProseBlock } from '../src/static/block/prose-markers.js'
+import { wrapProseBlock } from '../src/static/lens/document-editor/surfaces/prose-markers.js'
 
 // prose-markers is the save-direction symmetry to Go's serializeProseBlock: it
 // wraps one top-level prose node's clean markdown in the paired

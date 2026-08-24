@@ -13,11 +13,11 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import {
   RendererStyleRegistry,
   StyleElementStrategy,
-} from '../src/static/block/renderers/renderer-style-registry.js'
-import { BlockRenderer, ContractViolation } from '../src/static/block/renderers/block-renderer.js'
-import { REGION } from '../src/static/block/renderers/block-renderer.js'
-import { SieveBlock } from '../src/static/block/sieve-block.js'
-import { serviceRig } from './helpers/service-rig.js'
+} from '../src/static/renderers/renderer-style-registry.js'
+import { BlockRenderer, ContractViolation } from '../src/static/renderers/block-renderer.js'
+import { REGION } from '../src/static/renderers/block-renderer.js'
+import { SieveBlock } from '../src/static/contract/sieve-block.js'
+import { providerRig } from './helpers/service-rig.js'
 
 /** @param {object} [payload] */
 function blk(payload) { return new SieveBlock('demo', payload || {}) }
@@ -113,7 +113,7 @@ describe('BlockRenderer (the renderer half — APPROVED contract rev 2)', () => 
     expect(() => new BareRenderer(blk())).toThrow(ContractViolation)
   })
 
-  it('construction with a raw attr map (the wire costume) throws ContractViolation — envelopes only', () => {
+  it('construction with a raw attr map (the wire costume) throws ContractViolation — blocks only', () => {
     class DemoRenderer extends BlockRenderer { update(block) { super.update(block) } }
     expect(() => new DemoRenderer(/** @type {any} */ ({ id: 'x' }))).toThrow(ContractViolation)
   })
@@ -133,7 +133,7 @@ describe('BlockRenderer (the renderer half — APPROVED contract rev 2)', () => 
     expect(matches.length).toBe(1)
   })
 
-  it('render() builds DOM from the envelope alone, stamps data-id, and get body is a pure accessor', () => {
+  it('render() builds DOM from the block alone, stamps data-id, and get body is a pure accessor', () => {
     class DemoRenderer extends BlockRenderer {
       static styles = '.demo2 { color: var(--theme-text); }'
       static rootClass = 'demo2-root'
@@ -184,22 +184,22 @@ describe('BlockRenderer (the renderer half — APPROVED contract rev 2)', () => 
     expect(claimed && root.contains(claimed)).toBe(true)
   })
 
-  it('undeclared core verbs throw ContractViolation; declared base verbs route through the service; scratch instances are inert', () => {
+  it('undeclared core verbs throw ContractViolation; declared base verbs route through the provider; scratch instances are inert', () => {
     class DemoRenderer extends BlockRenderer { update(block) { super.update(block) } }
 
-    // Scratch instance (no service): verbs that push are inert, never throw.
+    // Scratch instance (no provider): verbs that push are inert, never throw.
     const scratch = new DemoRenderer(blk({ id: 'demo-3' }))
     expect(() => scratch.retry()).not.toThrow()
     expect(() => scratch.setContent('x')).not.toThrow()
-    // Undeclared verbs throw regardless of service.
+    // Undeclared verbs throw regardless of the provider.
     expect(() => scratch.setMode('render')).toThrow(ContractViolation)
     expect(() => scratch.expand()).toThrow(ContractViolation)
 
     // Live instance: base verbs frame blockId-addressed FROZEN ops on the
     // document's channel (issue #49 Phase 1 — appliers are retired; the base
     // setContent default maps to the `content` attr).
-    const { service, sock } = serviceRig({ blocks: [{ id: 'demo-3', kind: 'demo' }] })
-    const live = new DemoRenderer(blk({ id: 'demo-3' }), service)
+    const { provider, sock } = providerRig({ blocks: [{ id: 'demo-3', kind: 'demo' }] })
+    const live = new DemoRenderer(blk({ id: 'demo-3' }), provider)
     live.retry()
     live.setContent('new text')
     expect(sock.sent.map((x) => JSON.parse(x))).toEqual([

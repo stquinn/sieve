@@ -6,7 +6,7 @@
 // onUpdate registry with per-listener exception isolation.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { SelectionModel } from '../src/static/editor/selection-model.js'
+import { SelectionModel } from '../src/static/lens/document-editor/selection-model.js'
 
 const UUID = 'doc-uuid-1'
 

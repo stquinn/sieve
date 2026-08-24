@@ -38,26 +38,33 @@
 // ids-only: a label changes without any id changing (rename a code block's
 // language and nothing about the selection moves), so a snapshot carrying labels
 // would either miss the change or need a second freshness rule fighting the
-// meaningful-diff convention. Instead the row asks the block cache for each id
-// every time it paints — the cache IS the freshness — and the mirror's own
-// change signal (`blockUpdated`) repaints a chip whose block changed while the
-// selection stood still. The mirror arrives by CONSTRUCTOR INJECTION; this class
-// reaches for no global and opens no wire.
+// meaningful-diff convention. Instead the row asks the CONTAINER for each id
+// every time it paints — the follower model IS the freshness — and a container
+// cue repaints a chip whose block changed while the selection stood still.
+//
+// The container it reads is the ACTIVE mount's, so it is re-pointed rather than
+// injected once: which container the composer acts on changes with the tab, and
+// a row holding yesterday's provider would label chips from a document nobody is
+// looking at.
 
-import { esc } from '../block/renderers/html-escape.js'
-import { getSieveIcon } from '../block/block-kinds.js'
+import { esc } from '../renderers/html-escape.js'
+import { getSieveIcon } from '../renderers/block-kinds.js'
 
 /**
- * @typedef {import('../editor/selection-model.js').SelectionContext} SelectionContext
- * @typedef {import('../block/sieve-block.js').SieveBlock} SieveBlock
+ * @typedef {import('../lens/document-editor/selection-model.js').SelectionContext} SelectionContext
  */
 
 /**
- * The block-cache READ SEAM: block id → what the server last said that block
- * is. `BlockService` satisfies it as-is; a test stubs it with two functions.
- * @typedef {object} BlockMirror
- * @property {(blockId: string) => SieveBlock|null} envelopeFor  the last server-authored envelope, or null
- * @property {(blockId: string) => string} kindFor               the indexed kind, or '' for an unknown id
+ * The read seam: block id → what the container says that block is. A
+ * `ContainerProvider` satisfies it as-is; a test stubs it with one function.
+ *
+ * There is ONE tier now. The retired block cache had two — an authored block,
+ * and a routing entry that knew only a kind — so a block the server had not
+ * spoken about yet still produced a kind-name chip. The container knows a block
+ * or it does not, and a block it does not know is one the user cannot have
+ * selected, so the narrowing costs nothing real.
+ * @typedef {object} BlockSource
+ * @property {(blockId: string) => ({kind?: string, attrs?: Record<string, any>}|null)} getBlock
  */
 
 export class TargetChips {
@@ -72,10 +79,10 @@ export class TargetChips {
   static #HINT_CHARS = 32
 
   /**
-   * kind → the payload keys carrying its identifying hint, in preference order.
+   * kind → the attrs keys carrying its identifying hint, in preference order.
    * A kind absent from here (log) — or one whose keys are all empty (a code
    * block with no language) — shows its KIND NAME alone, which is the same
-   * fallback a mirror miss takes. One table, one rule, prose included.
+   * fallback a container miss takes. One table, one rule, prose included.
    * @type {Readonly<Record<string, string[]>>}
    */
   static #HINTS = Object.freeze({
@@ -91,7 +98,7 @@ export class TargetChips {
   })
 
   /** @type {HTMLElement|null} the chip row (null → headless: every verb no-ops) */ #row = null
-  /** @type {BlockMirror|null} the id→block read seam (null → kind-less fallback labels) */ #mirror = null
+  /** @type {BlockSource|null} the id→block read seam (null → kind-less fallback labels) */ #source = null
   /** @type {string} the resolved target's own label ('' → nothing to draw) */ #targetLabel = ''
   /** @type {string[]} the blocks a SELECTION spans; empty for every other target kind */ #blockIds = []
 
@@ -101,12 +108,12 @@ export class TargetChips {
    *   before Send, which stays the footer's last child. Construct this BEFORE
    *   ComposerAttachments and the two rows land in reading order: what the
    *   message acts on, then what it drags along.
-   * @param {BlockMirror|null} [mirror] the block-cache read seam. Absent (a bare
+   * @param {BlockSource|null} [source] the container read seam. Absent (a bare
    *   construction, a headless test) the per-block chips fall back to their
    *   kind-less label rather than disappearing.
    */
-  constructor(footerEl, mirror = null) {
-    this.#mirror = mirror || null
+  constructor(footerEl, source = null) {
+    this.#source = source || null
     if (!footerEl) return
     const row = document.createElement('div')
     row.className = 'ask-popup__target'
@@ -138,45 +145,54 @@ export class TargetChips {
   }
 
   /**
-   * The cached envelope advanced for `block`. Repaints only when that block is one
-   * the row is currently drawing: a language or title change must reach its chip
+   * Points the row at a container. Called when the active mount changes; a null
+   * source (nothing open) leaves the chips on their kind-less labels rather than
+   * clearing a row the selection still describes.
+   * @param {BlockSource|null} source
+   */
+  setSource(source) {
+    this.#source = source || null
+    this.#render()
+  }
+
+  /**
+   * The container changed. Repaints only when one of the named blocks is one the
+   * row is currently drawing: a language or title change must reach its chip
    * without waiting for the caret to move, and a change anywhere else in the
    * document must not redraw a row that would come out identical.
-   * @param {{id?: string}|null} block
+   * @param {{blockIds?: ReadonlyArray<string>}|null} change
    */
-  blockUpdated(block) {
-    const id = (block && block.id) || ''
-    if (!id || this.#blockIds.indexOf(id) < 0) return
-    this.#render()
+  containerChanged(change) {
+    const ids = (change && change.blockIds) || []
+    for (const id of ids) {
+      if (id && this.#blockIds.indexOf(id) >= 0) { this.#render(); return }
+    }
   }
 
   // ── Labelling ──────────────────────────────────────────────────────────────
 
   /**
    * The label for ONE block of the selection: the identifying hint its kind
-   * carries, or — when the mirror has no envelope for it yet — the kind name
-   * alone. Never empty, so a chip is never suppressed.
+   * carries, or — when the container does not hold it — the generic block name.
+   * Never empty, so a chip is never suppressed.
    * @param {string} blockId
    * @returns {{kind: string, label: string}}
    */
   #labelFor(blockId) {
-    // Mirror-FIRST: the envelope carries the kind AND the payload the hint comes
-    // from. The routing index answers only the kind, and only for a block the
-    // server has not authored an envelope for yet.
-    const block = this.#mirror ? this.#mirror.envelopeFor(blockId) : null
-    const kind = (block && block.kind) || (this.#mirror ? this.#mirror.kindFor(blockId) : '') || ''
-    const hint = block ? TargetChips.#hintFrom(kind, block.payload || {}) : ''
+    const block = this.#source ? this.#source.getBlock(blockId) : null
+    const kind = (block && block.kind) || ''
+    const hint = block ? TargetChips.#hintFrom(kind, block.attrs || {}) : ''
     return { kind: kind, label: hint || TargetChips.#kindName(kind) }
   }
 
   /**
-   * The hint a kind's payload carries, or '' when it carries none.
-   * @param {string} kind @param {Record<string, any>} payload
+   * The hint a kind's attrs carry, or '' when they carry none.
+   * @param {string} kind @param {Record<string, any>} attrs
    * @returns {string}
    */
-  static #hintFrom(kind, payload) {
+  static #hintFrom(kind, attrs) {
     for (const key of TargetChips.#HINTS[kind] || []) {
-      const hint = TargetChips.#tidy(payload[key])
+      const hint = TargetChips.#tidy(attrs[key])
       if (hint) return hint
     }
     return ''

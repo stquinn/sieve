@@ -31,7 +31,7 @@ type AssetsPort interface {
 }
 
 // NodesPort is the address-resolution surface processors use: one method,
-// coordinate -> Node. editor.Router is the implementation and the composition
+// coordinate -> NodeDescriptor. editor.Router is the implementation and the composition
 // root injects it.
 //
 // This port is not the same KIND of seam as its siblings. The others keep
@@ -50,7 +50,7 @@ type AssetsPort interface {
 // ErrNodeNotFound is DANGLING, which is a normal state a block renders (a cached
 // face with a missing marker), never a failure it reports.
 type NodesPort interface {
-	Resolve(uri string) (domain.Node, error)
+	Resolve(uri string) (domain.NodeDescriptor, error)
 }
 
 // StatePort is the settings-read surface processors use.

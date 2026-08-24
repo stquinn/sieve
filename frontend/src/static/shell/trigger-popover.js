@@ -17,7 +17,7 @@
 // abandon the token under the caret; typing FORWARD from an abandoned prefix
 // stays closed, backspacing to a shorter one re-arms it.
 
-import { ContractViolation } from '../block/sieve-block.js'
+import { ContractViolation } from '../contract/sieve-block.js'
 import { TriggerProvider } from './trigger-providers.js'
 import { TriggerHost, TriggerPlacement, PanelPlacement } from './trigger-host.js'
 

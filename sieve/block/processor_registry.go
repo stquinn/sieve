@@ -25,6 +25,35 @@ type RegionShape struct {
 // IsZero reports that the processor declares no document region.
 func (s RegionShape) IsZero() bool { return s.Head == "" }
 
+// Wraps reports that `content` is EXACTLY one region of this shape — the head
+// opening its first line, the tail closing its last, and nothing outside either.
+//
+// It exists because a block declares its kind in TWO vocabularies. A
+// "sieve/<kind>" clipboard view says what a block is in the app's; a fenced span
+// says the same thing in the document's, with the kind written on the fence. A
+// paste carrying only the second is the same round-trip as one carrying the
+// first, so it has to be recognised as one — otherwise a general text matcher
+// claims a block's own serialized form on the way past.
+//
+// Only KIND-QUALIFIED heads can answer here: a marker shape opens with a token
+// that does not end at the line break, so the check below excludes it, which is
+// right — a marker span is document structure, not a block's portable form.
+func (s RegionShape) Wraps(content string) bool {
+	if s.IsZero() || s.Tail == "" {
+		return false
+	}
+	span := strings.TrimSpace(content)
+	if len(span) <= len(s.Head)+len(s.Tail) || !strings.HasSuffix(span, s.Tail) {
+		return false
+	}
+	if !strings.HasPrefix(span, s.Head) {
+		return false
+	}
+	// The head must be the WHOLE opening token: "```code" must not claim a
+	// "```codegen" fence, whose kind is a language this shape knows nothing about.
+	return span[len(s.Head)] == '\n'
+}
+
 // ContentEntry is one item from the browser clipboard DataTransfer.
 type ContentEntry struct {
 	MIMEType string                 `json:"mimeType"`
@@ -212,12 +241,21 @@ type JobContext struct {
 // ONLY by the breakglass markdown-mode editor (a verbatim buffer that must hold a
 // parseable, id-preserving fence for a block inserted while in that mode).
 type BlockLifecycleListener interface {
-	OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int, token string)
+	OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int)
 	OnBlockUpdated(uuid, blockID string, attrs map[string]interface{})
 	// OnBlockReplaced renders an in-place TRANSFORM: swap the block identified by oldID
 	// with a new block (newKind/newID + attrs). markdown is the serialized fence for the
 	// breakglass markdown editor.
 	OnBlockReplaced(uuid, oldID, newKind, newID string, attrs map[string]interface{}, markdown string)
+	// OnBlockRemoved renders a block leaving the container. A transform is not a
+	// removal — it keeps the slot and announces both ids through OnBlockReplaced.
+	OnBlockRemoved(uuid, blockID string)
+	// OnOrderChanged renders a reorder. order is the container's COMPLETE child id
+	// order for the same reason the set-order op carries one: installing a whole
+	// order is idempotent, so a duplicate or late event lands the client in the
+	// same place. It names nothing that arrived or left — those have their own
+	// events.
+	OnOrderChanged(uuid string, order []string)
 }
 
 // BlockProcessor is the contract every SieveBlock Kind implements — the central
@@ -607,12 +645,14 @@ type MarkdownContenter interface {
 //
 // Two passes, because a paste has two jobs and they must not collide:
 //
-//  1. SELF-KIND (round-trip): a copied block carries a sieve/<kind> view; the
-//     processor whose Kind() == that view claims it FIRST. A copied code block
-//     comes back as code — never silently "upgraded" to another kind just because
-//     some other processor (e.g. diagram on mermaid source) would also match it.
+//  1. SELF-KIND (round-trip): a copied block declares its own kind, and the
+//     processor whose Kind() matches claims it FIRST. A copied code block comes
+//     back as code — never silently "upgraded" to another kind just because some
+//     other processor (e.g. diagram on mermaid source) would also match it.
 //     Because the right processor is *selected* here, the upgrading processor's
 //     Transform is never invoked on the paste, so nothing needs to gate Transform.
+//     The declaration has two spellings and both count: the sieve/<kind> clipboard
+//     view, and the block's own fenced form, whose kind is written on the fence.
 //
 //  2. GENERAL (new content / upgrades): nobody's own view → first registered
 //     claimer wins, with PROSE consulted LAST (it is the terminal flavour and can
@@ -624,7 +664,7 @@ func FirstPasteMatch(entries []ContentEntry) (kind string, processor BlockProces
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 
-	// Pass 1 — self-kind round-trip (NOT detection).
+	// Pass 1 — self-kind round-trip (NOT detection), by clipboard view…
 	for _, e := range entries {
 		k, _, sieveOK := e.SieveAttrs()
 		if !sieveOK {
@@ -632,6 +672,18 @@ func FirstPasteMatch(entries []ContentEntry) (kind string, processor BlockProces
 		}
 		for i := range pasteMatchers {
 			if pasteMatchers[i].Kind == k && pasteMatchers[i].Processor.IsSupportedContent(entries).Has(ActionPaste) {
+				return pasteMatchers[i].Kind, pasteMatchers[i].Processor, false, true
+			}
+		}
+	}
+	// …and by the block's own fenced form, which names its kind just as plainly.
+	// A processor that does not claim its own fence in IsSupportedContent is not
+	// promoted here, so this widens precedence only where a kind already said the
+	// bytes are its own.
+	for _, e := range entries {
+		for i := range pasteMatchers {
+			if pasteMatchers[i].Processor.Shape().Wraps(e.Content) &&
+				pasteMatchers[i].Processor.IsSupportedContent(entries).Has(ActionPaste) {
 				return pasteMatchers[i].Kind, pasteMatchers[i].Processor, false, true
 			}
 		}

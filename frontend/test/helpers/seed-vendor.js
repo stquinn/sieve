@@ -1,7 +1,7 @@
 // @ts-check
 // seed-vendor.js — seeds globalThis.TipTap with permissive proxy stand-ins for the
 // vendor members the side-effect extension modules read at MODULE-EVAL time
-// (editor/extensions.js, editor/block-chrome.js, ai/ai-target-decoration.js do
+// (lens/extensions.js, lens/block-chrome.js, lens/surfaces/ai-target-decoration.js do
 // `VENDOR.Extension.create/.extend` / `new VENDOR.PluginKey(...)` as they load).
 //
 // Import this FIRST — before any module that transitively imports those (e.g.

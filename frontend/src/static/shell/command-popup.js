@@ -9,15 +9,15 @@
 // error view). Only when a real block arrives does the popup resolve the kind's
 // renderer (COMMAND_RENDERERS) and mount it for the body content.
 //
-// Envelope contract: the popup reads the block's TYPED getters (block.kind /
+// Block contract: the popup reads the block's TYPED getters (block.kind /
 // block.status) — the opaque payload is the kind renderer's business, so the
 // Copy button pulls its answer text from the renderer (copyText), never by
 // reaching into payload.
 
-import { AiBlockRenderer } from '../block/renderers/ai-block-renderer.js'
-import { rendererStyles } from '../block/renderers/renderer-style-registry.js'
+import { AiBlockRenderer } from '../renderers/ai-block-renderer.js'
+import { rendererStyles } from '../renderers/renderer-style-registry.js'
 import { commandPopupStyles } from './command-popup.styles.js'
-import { CommandResultRenderer } from '../block/renderers/command-result-renderer.js'
+import { CommandResultRenderer } from '../renderers/command-result-renderer.js'
 
 /** @typedef {{ cmd: string, text: string, error?: string }} CommandMeta */
 
@@ -44,8 +44,8 @@ export class CommandPopup {
   /** @type {HTMLElement} */ #anchor
   /** @type {() => void} */ #onDelete
   /** @type {HTMLElement|null} */ #root = null
-  /** @type {import('../block/renderers/block-renderer.js').BlockRenderer|null} */ #renderer = null
-  /** @type {import('../block/sieve-block.js').SieveBlock|null} */ #block = null
+  /** @type {import('../renderers/block-renderer.js').BlockRenderer|null} */ #renderer = null
+  /** @type {import('../contract/sieve-block.js').SieveBlock|null} */ #block = null
   /** @type {CommandMeta} */ #meta = { cmd: '', text: '' }
   /** @type {HTMLElement|null} */ #bodyEl = null
   /** @type {HTMLElement|null} */ #titleEl = null
@@ -63,7 +63,7 @@ export class CommandPopup {
   get visible() { return !!this.#root }
 
   /**
-   * @param {import('../block/sieve-block.js').SieveBlock|null} block
+   * @param {import('../contract/sieve-block.js').SieveBlock|null} block
    * @param {CommandMeta} [meta]
    */
   show(block, meta) {
@@ -145,7 +145,7 @@ export class CommandPopup {
   }
 
   /**
-   * @param {import('../block/sieve-block.js').SieveBlock|null} block
+   * @param {import('../contract/sieve-block.js').SieveBlock|null} block
    * @param {CommandMeta} [meta]
    */
   update(block, meta) {
@@ -168,7 +168,7 @@ export class CommandPopup {
   #renderBody() {
     if (!this.#bodyEl) return
 
-    // No envelope yet: a block-less terminal error → generic error view; else the
+    // No block yet: a block-less terminal error → generic error view; else the
     // generic pending view (spinner + command name).
     if (!this.#block) {
       this.#renderer = null

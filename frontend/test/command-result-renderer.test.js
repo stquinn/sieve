@@ -6,8 +6,8 @@
 // `primary` value, falling back to the markdown body.
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import MarkdownIt from 'markdown-it'
-import { CommandResultRenderer } from '../src/static/block/renderers/command-result-renderer.js'
-import { SieveBlock } from '../src/static/block/sieve-block.js'
+import { CommandResultRenderer } from '../src/static/renderers/command-result-renderer.js'
+import { SieveBlock } from '../src/static/contract/sieve-block.js'
 
 /** @param {object} payload */
 function blk(payload) { return new SieveBlock('command-result', payload) }

@@ -16,7 +16,7 @@
 // constructor captures it, and register() is an inert no-op without it — see
 // node-view-registry.test.js).
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { labelForAction } from '../src/static/block/action-label.js'
+import { labelForAction } from '../src/static/renderers/action-label.js'
 
 const VENDOR = /** @type {any} */ (globalThis).TipTap
 
@@ -25,8 +25,8 @@ const VENDOR = /** @type {any} */ (globalThis).TipTap
 beforeAll(async () => {
   VENDOR.Node = { create: (/** @type {any} */ cfg) => ({ __node: cfg.name }) }
   VENDOR.mergeAttributes = (/** @type {any} */ a, /** @type {any} */ b) => Object.assign({}, a, b)
-  await import('../src/static/editor/surfaces/node-views/web-clip-node-view.js')
-  const { rendererFor } = await import('../src/static/block/sieve-block-extension.js')
+  await import('../src/static/lens/document-editor/surfaces/node-views/web-clip-node-view.js')
+  const { rendererFor } = await import('../src/static/lens/document-editor/surfaces/sieve-block-extension.js')
   adapter = rendererFor('web-clip')
 })
 

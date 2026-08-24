@@ -7,23 +7,23 @@ import { contextFor } from './helpers/selection-context.js'
 // side-effect extension modules + the controllable descriptor helpers, replacing the
 // old bus-based getSieveBlockLabel injection. This file does not use buildAiContext,
 // so extensions.js is mocked too (no vendor seed needed).
-vi.mock('../src/static/editor/extensions.js', () => ({
+vi.mock('../src/static/lens/extensions.js', () => ({
   Search: {}, SelectionHighlight: {}, HighlightMark: {}, AiShortcuts: { configure: () => ({}) },
 }))
-vi.mock('../src/static/editor/block-chrome.js', () => ({
+vi.mock('../src/static/lens/document-editor/block-chrome.js', () => ({
   BlockChrome: {},
   getBlockSelectionRange: vi.fn((view) => {
     const sel = view.state.selection
     return { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false, isNodeSelection: !!sel.node }
   }),
 }))
-vi.mock('../src/static/ai/ai-target-decoration.js', () => ({ AiTargetDecoration: {} }))
-vi.mock('../src/static/block/prose-block.js', () => ({ BlockId: {} }))
-vi.mock('../src/static/block/prose-group.js', () => ({ ProseGroup: {}, proseBlockNodes: vi.fn(() => []) }))
-vi.mock('../src/static/editor/interaction-policy.js', () => ({
+vi.mock('../src/static/lens/document-editor/surfaces/ai-target-decoration.js', () => ({ AiTargetDecoration: {} }))
+vi.mock('../src/static/lens/document-editor/surfaces/prose-block.js', () => ({ BlockId: {} }))
+vi.mock('../src/static/lens/document-editor/surfaces/prose-group.js', () => ({ ProseGroup: {}, proseBlockNodes: vi.fn(() => []) }))
+vi.mock('../src/static/lens/document-editor/interaction-policy.js', () => ({
   policyEnterKeydown: vi.fn(() => false), buildInteractionPolicyExtension: vi.fn(() => ({})),
 }))
-vi.mock('../src/static/block/sieve-block-extension.js', () => ({
+vi.mock('../src/static/lens/document-editor/surfaces/sieve-block-extension.js', () => ({
   getSieveNodes: vi.fn(() => []),
   getSieveBlockLabel: vi.fn(() => null),
   serializeNode: vi.fn(() => 'ser'),
@@ -31,13 +31,13 @@ vi.mock('../src/static/block/sieve-block-extension.js', () => ({
   sieveBlockEntries: vi.fn(() => []),
   rendererFor: vi.fn(() => null),
 }))
-vi.mock('../src/static/block/block-selection.js', () => ({
+vi.mock('../src/static/lens/document-editor/block-selection.js', () => ({
   BlockSelection: { blockRange: vi.fn(() => null), textInside: vi.fn(() => null) },
 }))
 
-import { getSieveBlockLabel } from '../src/static/block/sieve-block-extension.js'
-import { BlockSelection } from '../src/static/block/block-selection.js'
-import { getBlockSelectionRange } from '../src/static/editor/block-chrome.js'
+import { getSieveBlockLabel } from '../src/static/lens/document-editor/surfaces/sieve-block-extension.js'
+import { BlockSelection } from '../src/static/lens/document-editor/block-selection.js'
+import { getBlockSelectionRange } from '../src/static/lens/document-editor/block-chrome.js'
 
 // P3.C — the AI target is RESOLVED IN THE SURFACE and STORED in the SelectionContext
 // as `context.target = { kind, ref, range, label }` (plain values; NO PM node). The

@@ -265,3 +265,80 @@ func TestNewSieveBlock_KeepsGivenID(t *testing.T) {
 		t.Fatalf("given id not preserved on both sides: ID=%q Attrs[id]=%v", b.ID, b.Attrs["id"])
 	}
 }
+
+// A block's own FENCED form is the same self-declaration its sieve/<kind> view
+// is, so it must take the round-trip pass too. Without this a general text
+// matcher — registered earlier and clever about raw content — claims the bytes on
+// the way past and the block comes back as something else entirely.
+func TestFirstPasteMatch_fencedFormIsSelfKind(t *testing.T) {
+	ResetRegistry()
+	// A greedy earlier claimant: anything with a newline in it reads as code.
+	code := &mockProcessor{
+		FencedDeserializer: FencedDeserializer{Kind: "code"},
+		actionsFn: func(entries []ContentEntry) SupportedActions {
+			for _, e := range entries {
+				if e.MIMEType == "text/plain" && e.Content != "" {
+					return SupportedActions{Kind: "code", Actions: []Action{ActionPaste}}
+				}
+			}
+			return SupportedActions{Kind: "code"}
+		},
+	}
+	// ai-block claims only its own fence.
+	aiBlock := &mockProcessor{
+		FencedDeserializer: FencedDeserializer{Kind: "ai-block"},
+		actionsFn: func(entries []ContentEntry) SupportedActions {
+			for _, e := range entries {
+				if (FencedDeserializer{Kind: "ai-block"}).Shape().Wraps(e.Content) {
+					return SupportedActions{Kind: "ai-block", Actions: []Action{ActionPaste}}
+				}
+			}
+			return SupportedActions{Kind: "ai-block"}
+		},
+	}
+	RegisterProcessor(code)
+	RegisterProcessor(aiBlock)
+
+	fence := []ContentEntry{{MIMEType: "text/plain", Content: "```ai-block\nid: ab-1\nstatus: COMPLETE\n```"}}
+	kind, _, fromDetection, ok := FirstPasteMatch(fence)
+	if !ok || kind != "ai-block" {
+		t.Fatalf("a pasted ai-block fence should come back as ai-block, got kind=%q ok=%v", kind, ok)
+	}
+	if fromDetection {
+		t.Error("a round-trip is not detection — it must not be stamped smartPaste")
+	}
+
+	// The promotion is narrow: text that is NOT a registered kind's fence still
+	// goes to whoever claims it in the general pass.
+	plain := []ContentEntry{{MIMEType: "text/plain", Content: "```go\nx := 1\n```"}}
+	if kind, _, _, ok := FirstPasteMatch(plain); !ok || kind != "code" {
+		t.Fatalf("a ```go fence is not a kind's own form, got kind=%q ok=%v", kind, ok)
+	}
+}
+
+func TestRegionShape_Wraps(t *testing.T) {
+	shape := FencedDeserializer{Kind: "ai-block"}.Shape()
+	cases := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{"the whole entry is the fence", "```ai-block\nid: x\n```", true},
+		{"surrounding whitespace is not content", "\n  ```ai-block\nid: x\n```\n ", true},
+		{"a longer kind is a different kind", "```ai-blockish\nid: x\n```", false},
+		{"prose around it means the entry is a document, not a block", "hello\n```ai-block\nid: x\n```", false},
+		{"an unterminated fence is not a region", "```ai-block\nid: x\n", false},
+		{"a bare head is not a region", "```ai-block", false},
+		{"another kind's fence", "```diagram\nsource: x\n```", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shape.Wraps(tc.content); got != tc.want {
+				t.Errorf("Wraps(%q) = %v, want %v", tc.content, got, tc.want)
+			}
+		})
+	}
+	if (RegionShape{}).Wraps("```\nx\n```") {
+		t.Error("a processor that declares no region must claim nothing")
+	}
+}

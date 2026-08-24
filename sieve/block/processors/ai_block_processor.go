@@ -52,24 +52,53 @@ func (p *AIBlockProcessor) InitAttrs(id string, overrides map[string]interface{}
 	return attrs
 }
 
-// most basic version we can do
+// IsSupportedContent claims an ai-block in either of the two forms one can be
+// carried in: the sieve/ai-block clipboard view an in-app copy puts on the
+// clipboard, and the ```ai-block fence — the block's own serialized form, which
+// is what a copy out of markdown mode (or out of the file on disk) produces.
 func (p *AIBlockProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
 	for _, e := range entries {
-		if e.IsSieveType(p) {
+		if e.IsSieveType(p) || p.Shape().Wraps(e.Content) {
 			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionExtract}}
 		}
 	}
 	return block.SupportedActions{Kind: p.Kind()}
 }
 
-// most basic version we can do - just copy the block with a new id
+// Transform recovers the pasted block's attrs — from whichever of the two forms
+// carried it. Either way the result is a NEW block: the framework mints its id,
+// so the pasted one is dropped rather than duplicated into the document.
 func (p *AIBlockProcessor) Transform(entries []block.ContentEntry, uuid, blockID string, action block.Action) map[string]interface{} {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
 			return e.AsAttrsForNewBlock(p)
 		}
+		if attrs := p.attrsFromFence(e.Content); attrs != nil {
+			return attrs
+		}
 	}
 	return nil
+}
+
+// attrsFromFence reads a pasted ```ai-block fence through the deserializer this
+// processor already embeds — the same one the document load path uses — so the
+// paste never grows a second parser for bytes that already have one.
+//
+// The id goes, because this is a new block. So do the aliases, which Deserialize
+// lifts off the attrs for us: an alias is a name inside ONE document, given by a
+// deliberate act, and a copy inherits neither the name nor the act.
+func (p *AIBlockProcessor) attrsFromFence(content string) map[string]interface{} {
+	span := strings.TrimSpace(content)
+	if !p.Shape().Wraps(span) {
+		return nil
+	}
+	blocks, err := p.Deserialize(block.Region{Kind: p.Kind(), Raw: span})
+	if err != nil || len(blocks) == 0 {
+		return nil
+	}
+	attrs := blocks[0].Attrs
+	delete(attrs, "id")
+	return attrs
 }
 
 func (p *AIBlockProcessor) OnChange(blk *block.SieveBlock) {}

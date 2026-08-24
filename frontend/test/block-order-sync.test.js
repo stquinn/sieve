@@ -9,7 +9,7 @@
 // Order is reported as ONE set-order op carrying the complete id order, because
 // applying a whole order is idempotent where a sequence of moves is not.
 import { describe, it, expect } from 'vitest'
-import { computeOrderOp } from '../src/static/block/block-sync.js'
+import { computeOrderOp } from '../src/static/lens/document-editor/block-sync.js'
 
 const b = (id, kind) => ({ id, kind: kind || 'prose', content: 'x' })
 

@@ -21,7 +21,8 @@ func TestRegistry_HoldsTheWholeVocabulary(t *testing.T) {
 		}},
 		{ChannelDocument, Outbound, []string{
 			"pong", "markdown-content", "wysiwyg-content", "extract-ack",
-			"block-op-ack", "insert-block", "block-attrs-updated", "replace-block", "error",
+			"block-op-ack", "insert-block", "block-attrs-updated", "replace-block",
+			"remove-block", "order-changed", "error",
 			"load-content", "paste-ack", "detect-extractions-result", "export-content",
 		}},
 		{ChannelWorkspace, Inbound, []string{

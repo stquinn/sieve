@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
-import { serializeNode } from '../src/static/block/sieve-block-extension.js'
+import { serializeNode } from '../src/static/lens/document-editor/surfaces/sieve-block-extension.js'
 
 // context-menu.js:292 `yaml()` fed the ai-block Copy/Cut actions via a
 // bus-published serializeAiBlockYaml — a symbol deleted in 45db37b (2026-06-04)
@@ -11,13 +11,13 @@ import { serializeNode } from '../src/static/block/sieve-block-extension.js'
 //   their markdown) → warn + abort: NO clipboard write (Copy must not clear
 //   the user's clipboard with '') and NO delete (Cut must not destroy the
 //   block after copying nothing — silent data loss).
-vi.mock('../src/static/block/sieve-block-extension.js', () => ({
+vi.mock('../src/static/lens/document-editor/surfaces/sieve-block-extension.js', () => ({
   extractContentEntryFromEditor: vi.fn(),
   detectAndAppendExtractions: vi.fn(),
   serializeNode: vi.fn(),
 }))
 
-// context-menu.js imports applyTargetHighlight from editor/extensions.js, which
+// context-menu.js imports applyTargetHighlight from lens/extensions.js, which
 // (per ask-context.test.js's harness note) builds its Extension.create()/
 // PluginKey members at MODULE-EVAL time off the tiptap-vendor `T` bag — those
 // vendor members must exist on globalThis.TipTap BEFORE the module is first
@@ -46,7 +46,7 @@ beforeAll(async () => {
   const stubs = {}
   for (const name of STUBBED_VENDOR_MEMBERS) stubs[name] = makeProxy()
   Object.assign(globalThis.TipTap, stubs)
-  await import('../src/static/editor/context-menu.js')
+  await import('../src/static/lens/document-editor/context-menu.js')
 })
 
 afterAll(() => {

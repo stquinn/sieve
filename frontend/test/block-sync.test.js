@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { computeBlockSync, seedBaseline, dedupeActions, updateBlockOp, proseOp } from '../src/static/block/block-sync.js'
+import { computeBlockSync, seedBaseline, dedupeActions, proseOp } from '../src/static/lens/document-editor/block-sync.js'
+import { updateBlockOp } from '../src/static/container/block-ops.js'
 
 // updateBlockOp is the structured-edit counterpart to computeBlockSync's prose
 // ops: a NodeView (code/diagram/log) passes { id, kind, attrs } to
@@ -48,7 +49,7 @@ describe('dedupeActions', () => {
   it('returns nothing when every id is unique and non-empty', () => {
     expect(dedupeActions(['pr-1', 'pr-2', 'pr-3'])).toEqual([])
   })
-  it('does NOT flag empty ids (they are legitimately pending — no frontend mint)', () => {
+  it('does NOT flag empty ids (the trailing editing surface is not a block yet)', () => {
     expect(dedupeActions(['pr-1', '', 'pr-3', ''])).toEqual([])
   })
   it('flags the DUPLICATE second occurrence — the splitBlock attr-copy trap', () => {
@@ -56,9 +57,6 @@ describe('dedupeActions', () => {
   })
   it('flags every later duplicate, first occurrence always kept', () => {
     expect(dedupeActions(['pr-1', 'pr-2', 'pr-1', 'pr-2', 'pr-2'])).toEqual([2, 3, 4])
-  })
-  it('flags duplicate tokens too (split copies a pending token)', () => {
-    expect(dedupeActions(['tok-aa', 'tok-aa'])).toEqual([1])
   })
   it('is empty for an empty list', () => {
     expect(dedupeActions([])).toEqual([])
@@ -344,70 +342,58 @@ describe('computeBlockSync', () => {
   })
 })
 
-describe('computeBlockSync — token (backend-authoritative) prose create', () => {
-  it('emits create-block with a token and NO durable blockId for a pending prose node', () => {
-    const r = computeBlockSync([{ id: '', token: 'tok-aa', kind: 'prose', content: 'hi' }], {})
+describe('computeBlockSync — a prose block is born with its own id', () => {
+  it('emits create-block STATING the id the lens minted', () => {
+    const r = computeBlockSync([{ id: 'pr-new', kind: 'prose', content: 'hi' }], {})
     expect(r.ops).toEqual([
-      { type: 'create-block', blockId: '', kind: 'prose', attrs: { content: 'hi' }, index: 0, token: 'tok-aa' },
+      { type: 'create-block', blockId: 'pr-new', kind: 'prose', attrs: { content: 'hi' }, index: 0 },
     ])
-    expect(r.next).toHaveProperty('tok-aa') // token baselined so it is not re-emitted
+    expect(r.next).toHaveProperty('pr-new') // baselined so it is not re-emitted
   })
 
-  it('SKIPS a pending node whose token is already in flight (baselined) — no duplicate create, no update', () => {
-    const base = computeBlockSync([{ id: '', token: 'tok-aa', kind: 'prose', content: 'hi' }], {}).next
-    const r = computeBlockSync([{ id: '', token: 'tok-aa', kind: 'prose', content: 'hi EDITED in flight' }], base)
-    expect(r.ops).toEqual([]) // held until the backend acks the id
+  it('carries NO transient handle: identity is the id, and there is nothing to correlate', () => {
+    const [op] = computeBlockSync([{ id: 'pr-new', kind: 'prose', content: 'hi' }], {}).ops
+    expect(Object.keys(op)).toEqual(['type', 'blockId', 'kind', 'attrs', 'index'])
   })
 
-  it('a node that has acquired a backend id updates by that id (post-ack)', () => {
-    // ack swapped the cache key tok-aa -> pr-9 (editor.js); the node now carries id pr-9.
-    const prev = { 'pr-9': 'prose\x00hi\x00' }
-    const r = computeBlockSync([{ id: 'pr-9', kind: 'prose', content: 'hi there' }], prev)
-    expect(r.ops).toEqual([{ type: 'update-block', blockId: 'pr-9', kind: 'prose', attrs: { content: 'hi there' } }])
+  it('an edit made while the create is in flight becomes ONE update under the SAME id', () => {
+    // No pin, no key swap: the id never changes, so the second tick is an
+    // ordinary diff against the create-time signature.
+    const base = computeBlockSync([{ id: 'pr-new', kind: 'prose', content: 'hi' }], {}).next
+    const r = computeBlockSync([{ id: 'pr-new', kind: 'prose', content: 'hi there' }], base)
+    expect(r.ops).toEqual([
+      { type: 'update-block', blockId: 'pr-new', kind: 'prose', attrs: { content: 'hi there' } },
+    ])
   })
 
-  it('a tokenless, idless empty surface is still skipped and not baselined', () => {
+  it('an id-less empty surface is still skipped and not baselined', () => {
     const r = computeBlockSync([{ id: '', kind: 'prose', content: '' }], {})
     expect(r.ops).toEqual([])
     expect(r.next).toEqual({})
   })
 
-  it('PINS the in-flight token baseline to the create-time sig (a flight-edit is not masked)', () => {
-    const base = computeBlockSync([{ id: '', token: 'tok-aa', kind: 'prose', content: 'hi' }], {}).next
-    const createSig = base['tok-aa']
-    const r = computeBlockSync([{ id: '', token: 'tok-aa', kind: 'prose', content: 'hi there' }], base)
-    expect(r.ops).toEqual([])                  // still in flight → no op
-    expect(r.next['tok-aa']).toBe(createSig)   // baseline PINNED, not advanced to 'hi there'
-  })
-
-  it('emits the flight-edit as one update-block after the ack swaps the cache key to the real id', () => {
-    const base = computeBlockSync([{ id: '', token: 'tok-aa', kind: 'prose', content: 'hi' }], {}).next
-    const mid = computeBlockSync([{ id: '', token: 'tok-aa', kind: 'prose', content: 'hi there' }], base).next
-    // reconcilePendingToken swaps tok-aa -> pr-9 carrying the PINNED create-time sig:
-    const prev = { 'pr-9': mid['tok-aa'] }
-    const r = computeBlockSync([{ id: 'pr-9', kind: 'prose', content: 'hi there' }], prev)
-    expect(r.ops).toEqual([{ type: 'update-block', blockId: 'pr-9', kind: 'prose', attrs: { content: 'hi there' } }])
-  })
-
-  it('emits create-block for a STRUCTURAL blank (empty prose with content after) carrying a token', () => {
+  it('emits create-block for a STRUCTURAL blank (empty prose with content after)', () => {
     const r = computeBlockSync([
-      { id: '', token: 'tok-bb', kind: 'prose', content: '' },
+      { id: 'pr-blank', kind: 'prose', content: '' },
       { id: 'pr-2', kind: 'prose', content: 'after' },
     ], {})
-    const created = r.ops.filter(o => o.type === 'create-block').map(o => o.token || o.blockId)
-    expect(created).toContain('tok-bb')   // the structural blank is a real block, synced
+    const created = r.ops.filter(o => o.type === 'create-block').map(o => o.blockId)
+    expect(created).toContain('pr-blank')   // the structural blank is a real block, synced
   })
 })
 
-describe('computeBlockSync — delete loop ignores in-flight tokens', () => {
-  it('does NOT emit delete-block for a tok- baseline key that vanished (no backend id yet)', () => {
-    const prev = { 'tok-aa': 'prose\x00hi\x00' } // create in flight, node then removed
-    const r = computeBlockSync([], prev)
-    expect(r.ops).toEqual([]) // the insert-block ack handles a deleted-in-flight node by real id
-  })
-  it('still emits delete-block for a durable id that disappeared', () => {
+describe('computeBlockSync — the delete loop', () => {
+  it('emits delete-block for any baselined id that disappeared', () => {
+    // Every id in the baseline is one Go was told about — a block reaches it only
+    // by being loaded or created — so a delete always names something Go can find.
     const prev = { 'pr-1': 'prose\x00A\x00' }
     const r = computeBlockSync([], prev)
     expect(r.ops).toEqual([{ type: 'delete-block', blockId: 'pr-1' }])
+  })
+
+  it('deletes a block created THIS session by the same id it was created with', () => {
+    const base = computeBlockSync([{ id: 'pr-new', kind: 'prose', content: 'hi' }], {}).next
+    const r = computeBlockSync([], base)
+    expect(r.ops).toEqual([{ type: 'delete-block', blockId: 'pr-new' }])
   })
 })

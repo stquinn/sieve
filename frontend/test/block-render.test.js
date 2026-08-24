@@ -10,15 +10,15 @@ const mocks = vi.hoisted(() => ({
     `<div data-type="sieve-${kind}" data-id="${(attrs && attrs.id) || ''}"></div>`
   ),
 }))
-vi.mock('../src/static/block/sieve-block-extension.js', () => ({
+vi.mock('../src/static/lens/document-editor/surfaces/sieve-block-extension.js', () => ({
   buildSieveBlockHTML: mocks.buildSieveBlockHTML,
 }))
 
-const { buildBlocksHTML } = await import('../src/static/block/block-render.js')
-// The render pipeline is envelope-native (issue #49 Phase 3): buildBlocksHTML
-// consumes SieveBlock envelopes, reading the kind + the FLAT payload (properties
+const { buildBlocksHTML } = await import('../src/static/lens/document-editor/surfaces/block-render.js')
+// The render pipeline is block-native (issue #49 Phase 3): buildBlocksHTML
+// consumes SieveBlocks, reading the kind + the FLAT payload (properties
 // bag). SieveBlock is the unmocked leaf type — never touches the extension module.
-const { SieveBlock } = await import('../src/static/block/sieve-block.js')
+const { SieveBlock } = await import('../src/static/contract/sieve-block.js')
 
 // mdRender stub: marks its input so we can assert WHICH text was rendered.
 const md = (t) => `<R>${t}</R>`

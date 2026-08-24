@@ -3,9 +3,9 @@
 // server-INITIATED frame becomes a page-global DOM event, and a (re)connect
 // declares every topic stale.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { WorkspaceService } from '../src/static/block/workspace-service.js'
-import { InvalidationService } from '../src/static/block/invalidation-service.js'
-import { ContractViolation } from '../src/static/block/sieve-block.js'
+import { WorkspaceService } from '../src/static/shell/workspace-service.js'
+import { InvalidationService } from '../src/static/shell/invalidation-service.js'
+import { ContractViolation } from '../src/static/contract/sieve-block.js'
 
 /** Every topic the contract names, in the order the resync fires them. */
 const TOPICS = ['notes', 'session', 'prompts', 'library', 'intent']

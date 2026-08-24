@@ -8,7 +8,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { TargetChips } from '../src/static/shell/target-chips.js'
 import { ComposerAttachments } from '../src/static/shell/composer-attachments.js'
-import { SieveBlock } from '../src/static/block/sieve-block.js'
 
 /** The structural footer as index.html renders it (never rebuilt by the class). */
 function mountFooter() {
@@ -22,23 +21,16 @@ function mountFooter() {
 }
 
 /**
- * A stub block cache: `blocks` maps id → envelope (or a bare kind string for an
- * id the index knows but has no server envelope for). No wire, no globals.
- * @param {Record<string, SieveBlock|string>} blocks
+ * A stub container: `blocks` maps id → {kind, attrs}. No wire, no globals — the
+ * shape a ContainerProvider's getBlock answers with.
+ * @param {Record<string, {kind: string, attrs?: Record<string, any>}>} blocks
  */
-function mirror(blocks) {
-  return {
-    envelopeFor: (id) => {
-      const entry = blocks[id]
-      return entry instanceof SieveBlock ? entry : null
-    },
-    kindFor: (id) => {
-      const entry = blocks[id]
-      if (typeof entry === 'string') return entry
-      return entry instanceof SieveBlock ? entry.kind : ''
-    },
-  }
+function container(blocks) {
+  return { getBlock: (id) => blocks[id] || null }
 }
+
+/** @param {string} kind @param {Record<string, any>} [attrs] */
+const held = (kind, attrs) => ({ kind, attrs: attrs || {} })
 
 /** A selection context spanning `ids`. */
 const selecting = (ids, label = '“retry policy”') => /** @type {any} */ ({
@@ -101,7 +93,7 @@ describe('TargetChips', () => {
     expect(() => target.show(/** @type {any} */ ({ target: { label: 'Document' } }))).not.toThrow()
     expect(target.size).toBe(1)   // the model still answers; there is just nothing to draw into
     expect(() => target.show(null)).not.toThrow()
-    expect(() => target.blockUpdated({ id: 'b1' })).not.toThrow()
+    expect(() => target.containerChanged({ blockIds: ['b1'] })).not.toThrow()
     expect(target.size).toBe(0)
   })
 
@@ -122,10 +114,10 @@ describe('TargetChips — a chip per block of a SELECTION', () => {
   beforeEach(() => { footer = mountFooter() })
 
   it('labels each kind from its own payload key', () => {
-    const target = new TargetChips(footer, mirror({
-      p1: new SieveBlock('prose', { content: '## The migration plan is the interesting half of this' }),
-      c1: new SieveBlock('code', { language: 'go', source: 'func main() {}' }),
-      d1: new SieveBlock('diagram', { diagramType: 'mermaid', source: 'graph TD' }),
+    const target = new TargetChips(footer, container({
+      p1: held('prose', { content: '## The migration plan is the interesting half of this' }),
+      c1: held('code', { language: 'go', source: 'func main() {}' }),
+      d1: held('diagram', { diagramType: 'mermaid', source: 'graph TD' }),
     }))
     target.show(selecting(['p1', 'c1', 'd1']))
 
@@ -135,30 +127,30 @@ describe('TargetChips — a chip per block of a SELECTION', () => {
   })
 
   it('falls back to the KIND NAME when the payload carries no hint', () => {
-    const target = new TargetChips(footer, mirror({
-      l1: new SieveBlock('log', { source: '12:00 boot' }),
-      c1: new SieveBlock('code', { source: 'x = 1' }),          // no language yet
-      w1: new SieveBlock('web-clip', { title: '' }),
+    const target = new TargetChips(footer, container({
+      l1: held('log', { source: '12:00 boot' }),
+      c1: held('code', { source: 'x = 1' }),          // no language yet
+      w1: held('web-clip', { title: '' }),
     }))
     target.show(selecting(['l1', 'c1', 'w1']))
     expect(labels().slice(1)).toEqual(['log', 'code', 'web clip'])
   })
 
-  it('a MIRROR MISS still draws a chip: the indexed kind, or the generic noun', () => {
-    // 'b1' is indexed but has no server envelope yet; 'b2' is unknown entirely.
-    const target = new TargetChips(footer, mirror({ b1: 'ai-block' }))
+  it('a CONTAINER MISS still draws a chip: the generic noun, never nothing', () => {
+    // The container holds b1 with no hint-bearing attr; it has never heard of b2.
+    const target = new TargetChips(footer, container({ b1: held('ai-block') }))
     target.show(selecting(['b1', 'b2']))
     expect(labels().slice(1)).toEqual(['ai block', 'block'])
   })
 
-  it('with NO mirror injected the chips stand, unlabelled rather than absent', () => {
+  it('with NO container injected the chips stand, unlabelled rather than absent', () => {
     const target = new TargetChips(footer, null)
     target.show(selecting(['b1', 'b2']))
     expect(labels()).toEqual(['“retry policy”', 'block', 'block'])
   })
 
   it('is SELECTION-ONLY: a document target keeps the single chip', () => {
-    const target = new TargetChips(footer, mirror({ p1: new SieveBlock('prose', { content: 'Hello' }) }))
+    const target = new TargetChips(footer, container({ p1: held('prose', { content: 'Hello' }) }))
     // The caret's block rides on blockIds for a document target too — it is the
     // SPAN, not the target's extent, so a chip per block would misdescribe the send.
     target.show(/** @type {any} */ ({ target: { kind: 'document', ref: 'doc', label: 'Document' }, blockIds: ['p1'] }))
@@ -171,8 +163,8 @@ describe('TargetChips — a chip per block of a SELECTION', () => {
   it('caps the row at four and counts the rest in ONE inert chip', () => {
     const blocks = {}
     const ids = ['b1', 'b2', 'b3', 'b4', 'b5', 'b6']
-    ids.forEach((id, i) => { blocks[id] = new SieveBlock('code', { language: 'lang' + i }) })
-    const target = new TargetChips(footer, mirror(blocks))
+    ids.forEach((id, i) => { blocks[id] = held('code', { language: 'lang' + i }) })
+    const target = new TargetChips(footer, container(blocks))
     target.show(selecting(ids))
 
     expect(labels()).toEqual(['“retry policy”', 'lang0', 'lang1', 'lang2', 'lang3', '+2 more'])
@@ -186,8 +178,7 @@ describe('TargetChips — a chip per block of a SELECTION', () => {
     const ids = Array.from({ length: 40 }, (_, i) => 'b' + i)
     const seen = []
     const target = new TargetChips(footer, {
-      envelopeFor: (id) => { seen.push(id); return new SieveBlock('code', { language: id }) },
-      kindFor: () => 'code',
+      getBlock: (id) => { seen.push(id); return held('code', { language: id }) },
     })
     target.show(selecting(ids))
 
@@ -199,24 +190,30 @@ describe('TargetChips — a chip per block of a SELECTION', () => {
 
   it('repaints the chip whose block changed, and ONLY for a block it draws', () => {
     let language = 'go'
-    const target = new TargetChips(footer, {
-      envelopeFor: () => new SieveBlock('code', { language }),
-      kindFor: () => 'code',
-    })
+    const target = new TargetChips(footer, { getBlock: () => held('code', { language }) })
     target.show(selecting(['b1']))
     expect(labels()[1]).toBe('go')
 
     language = 'rust'
-    target.blockUpdated({ id: 'other' })       // not in the selection: no repaint
+    target.containerChanged({ blockIds: ['other'] })  // not in the selection: no repaint
     expect(labels()[1]).toBe('go')
 
-    target.blockUpdated({ id: 'b1' })
+    target.containerChanged({ blockIds: ['b1'] })
+    expect(labels()[1]).toBe('rust')
+  })
+
+  it('re-points at another container when the active mount changes', () => {
+    const target = new TargetChips(footer, container({ b1: held('code', { language: 'go' }) }))
+    target.show(selecting(['b1']))
+    expect(labels()[1]).toBe('go')
+
+    target.setSource(container({ b1: held('code', { language: 'rust' }) }))
     expect(labels()[1]).toBe('rust')
   })
 
   it('escapes a derived label — a prose hint is user text', () => {
-    const target = new TargetChips(footer, mirror({
-      p1: new SieveBlock('prose', { content: '<img src=x onerror=1>' }),
+    const target = new TargetChips(footer, container({
+      p1: held('prose', { content: '<img src=x onerror=1>' }),
     }))
     target.show(selecting(['p1']))
     const label = /** @type {HTMLElement} */ (chips()[1].querySelector('.ask-target-chip__label'))

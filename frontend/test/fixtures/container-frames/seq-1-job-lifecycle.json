@@ -1,0 +1,21 @@
+{
+  "name": "job lifecycle",
+  "uuid": "doc-seq-1",
+  "description": "A loaded document whose ai-block and code block are advanced by block-attrs-updated render-backs, including one for an id the container never held.",
+  "steps": [
+    {
+      "load": {
+        "uuid": "doc-seq-1",
+        "blocks": [
+          { "id": "p1", "kind": "prose", "attrs": { "content": "Notes on the wire" } },
+          { "id": "c1", "kind": "code", "attrs": { "source": "go build ./...", "status": "COMPLETE" } },
+          { "id": "a1", "kind": "ai-block", "attrs": { "question": "What breaks?", "status": "PENDING" } }
+        ]
+      }
+    },
+    { "frame": { "type": "block-attrs-updated", "id": "a1", "attrs": { "status": "RUNNING" } } },
+    { "frame": { "type": "block-attrs-updated", "id": "a1", "attrs": { "status": "COMPLETE", "answer": "The order fact." } } },
+    { "frame": { "type": "block-attrs-updated", "id": "ghost-1", "attrs": { "status": "COMPLETE" } } },
+    { "frame": { "type": "block-attrs-updated", "id": "c1", "attrs": { "status": "ERROR", "error": "exit 1" } } }
+  ]
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { getSieveIcon } from '../src/static/block/block-kinds.js'
+import { getSieveIcon } from '../src/static/renderers/block-kinds.js'
 
 // base/globals.js is the ONE writer of window.GLOBALS — the sole bridge for
 // consumers that cannot import ES modules (index.html inline scripts, e.g. the

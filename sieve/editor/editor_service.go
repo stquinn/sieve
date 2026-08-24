@@ -107,7 +107,7 @@ func (es *EditorService) notifySaved(uuid string, version int) {
 	}
 }
 
-func (es *EditorService) notifyBlockCreated(uuid string, blk block.SieveBlock, index int, token string) {
+func (es *EditorService) notifyBlockCreated(uuid string, blk block.SieveBlock, index int) {
 	es.mu.RLock()
 	l := es.listener
 	es.mu.RUnlock()
@@ -120,7 +120,7 @@ func (es *EditorService) notifyBlockCreated(uuid string, blk block.SieveBlock, i
 		if processor := block.GetProcessor(blk.Kind); processor != nil {
 			markdown, _ = processor.Serialize(blk)
 		}
-		l.OnBlockCreated(uuid, blk.Kind, blk.ID, blk.Attrs, markdown, index, token)
+		l.OnBlockCreated(uuid, blk.Kind, blk.ID, blk.Attrs, markdown, index)
 	}
 }
 
@@ -143,6 +143,27 @@ func (es *EditorService) notifyBlockReplaced(uuid, oldID string, blk block.Sieve
 			markdown, _ = processor.Serialize(blk)
 		}
 		l.OnBlockReplaced(uuid, oldID, blk.Kind, blk.ID, blk.Attrs, markdown)
+	}
+}
+
+func (es *EditorService) notifyBlockRemoved(uuid, blockID string) {
+	es.mu.RLock()
+	l := es.listener
+	es.mu.RUnlock()
+	if l != nil {
+		l.OnBlockRemoved(uuid, blockID)
+	}
+}
+
+// notifyOrderChanged announces a reorder. order is read back from the shadow
+// AFTER the op applied rather than taken from the op: the op is a request, and
+// what the client has to follow is what the document now holds.
+func (es *EditorService) notifyOrderChanged(uuid string, order []string) {
+	es.mu.RLock()
+	l := es.listener
+	es.mu.RUnlock()
+	if l != nil {
+		l.OnOrderChanged(uuid, order)
 	}
 }
 
@@ -294,7 +315,13 @@ func (es *EditorService) HandleBlockOp(uuid string, op block.BlockOp) error {
 			if id == "" {
 				id = ident.New()
 			}
-			_, _, err := es.createBlock(uuid, op.Kind, id, op.Attrs, op.Aliases, op.Index, true, op.Token)
+			_, _, err := es.createBlock(uuid, op.Kind, id, op.Attrs, op.Aliases, op.Index, true)
+			return err
+		}
+		// A kind-less create falls through to the plain tree insert below, which
+		// cannot run the lifecycle. It still carries an id from somewhere, so it
+		// gets the same scrutiny every named id gets.
+		if err := es.validateClientID(uuid, op.BlockID); err != nil {
 			return err
 		}
 	case "update-block":
@@ -310,7 +337,22 @@ func (es *EditorService) HandleBlockOp(uuid string, op block.BlockOp) error {
 	if shadow == nil {
 		return fmt.Errorf("block-op: no open document for uuid %q", uuid)
 	}
-	return shadow.ApplyOp(op)
+	if err := shadow.ApplyOp(op); err != nil {
+		return err
+	}
+	// Every mutation echoes, so a client that follows this document rather than
+	// leading it can be told (#96). These ops are applied here and nowhere else in
+	// Go, so this is their only emission point — a transform keeps the slot and
+	// says so with a replace-block instead. A removal needs no accompanying
+	// order-changed: losing the id IS the order change, and two events for one
+	// mutation is two repaints.
+	switch op.Type {
+	case "delete-block":
+		es.notifyBlockRemoved(uuid, op.BlockID)
+	case "set-order", "move", "reorder":
+		es.notifyOrderChanged(uuid, shadow.BlockIDs())
+	}
+	return nil
 }
 
 // UpdateBlock merges attrs into the named block, creating it if needed.
@@ -645,13 +687,46 @@ func (es *EditorService) CreateBlock(uuid, kind string, overrides map[string]int
 	return es.createBlockWithID(uuid, kind, ident.New(), overrides, nil, index)
 }
 
+// validateClientID is the server's whole job on the identity of a block it did
+// not name (issue #96). A UUIDv7 is unique without coordination, so a block born
+// in a lens can carry the durable id it will keep — Go stops being the sole MINTER
+// and becomes the sole VALIDATOR. There are exactly two ways a given name is not
+// acceptable, and both are refusals rather than corrections: a silently-substituted
+// id would leave the client addressing a block that no longer answers to it.
+//
+//	MALFORMED  — anything that is not the canonical UUID form. ident.Valid is the
+//	             one predicate, shared with the client, so both ends agree about
+//	             what an id even is.
+//	TAKEN      — this document already holds it. Adopting it would merge two
+//	             blocks the client believes are distinct.
+//
+// An empty id is not a client id at all (Go is about to mint one) and passes.
+func (es *EditorService) validateClientID(uuid, blockID string) error {
+	if blockID == "" {
+		return nil
+	}
+	if !ident.Valid(blockID) {
+		return fmt.Errorf("create-block: refusing malformed block id %q", blockID)
+	}
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow == nil {
+		return fmt.Errorf("create-block: no open document for uuid %q", uuid)
+	}
+	if _, taken := shadow.SnapshotBlock(blockID); taken {
+		return fmt.Errorf("create-block: block id %q is already in document %q", blockID, uuid)
+	}
+	return nil
+}
+
 // createBlockWithID creates a block using a caller-supplied ID at a caller-supplied
 // document index. Used by HandlePaste so the pre-generated ID (passed to PasteMatch)
 // is reused. index is the position among top-level blocks; a negative index appends
 // (out-of-range indices clamp to the end). The block is inserted through the SAME
 // create-block op as every other create — no separate append path.
 func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides map[string]interface{}, aliases []string, index int) (id string, rawYaml string, err error) {
-	return es.createBlock(uuid, kind, blockID, overrides, aliases, index, true, "")
+	return es.createBlock(uuid, kind, blockID, overrides, aliases, index, true)
 }
 
 // createBlock is the one creation primitive. notify controls the WS render-back
@@ -659,7 +734,7 @@ func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides
 // positionally as a tracked PM transaction, preserving undo). aliases carries the
 // block's lineage when a create op brings it (usually nil — lineage normally accrues
 // via gc/merge).
-func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[string]interface{}, aliases []string, index int, notify bool, token string) (id string, rawYaml string, err error) {
+func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[string]interface{}, aliases []string, index int, notify bool) (id string, rawYaml string, err error) {
 	defer func() {
 		if err == nil {
 			es.DispatchJobIfNeeded(uuid, id)
@@ -671,6 +746,9 @@ func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[s
 	es.mu.RUnlock()
 	if shadow == nil {
 		return "", "", fmt.Errorf("create-block: no open document for uuid %q", uuid)
+	}
+	if err = es.validateClientID(uuid, blockID); err != nil {
+		return "", "", err
 	}
 	processor := block.GetProcessor(kind)
 	if processor == nil {
@@ -691,7 +769,7 @@ func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[s
 	}
 
 	if notify {
-		es.notifyBlockCreated(uuid, sieveBlock, index, token)
+		es.notifyBlockCreated(uuid, sieveBlock, index)
 	}
 
 	return id, rawYaml, nil

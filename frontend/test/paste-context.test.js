@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { docWithCaret, build } from './helpers/editor-fixture.js'
-import { caretInRawTextBlock } from '../src/static/editor/paste-context.js'
+import { caretInRawTextBlock } from '../src/static/lens/document-editor/paste-context.js'
 
 // caretInRawTextBlock is the small pure predicate that tells the smart-paste
 // handler to step aside: when the caret sits inside a code:true fenced block

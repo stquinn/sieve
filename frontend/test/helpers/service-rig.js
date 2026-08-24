@@ -1,12 +1,19 @@
 // @ts-check
-// service-rig.js — shared test rig for the wire-owning service pair (issue #49
-// Phase 1). Builds a REAL BlockService (and optionally DocumentService) over a
-// FakeSocket factory, so tests drive verbs and assert the FROZEN wire frames
-// exactly as they leave. Never touches a real socket.
+// service-rig.js — shared test rig for the wire-owning transport. Builds a REAL
+// ContainerTransport (and optionally DocumentService) over a FakeSocket factory, so
+// tests drive verbs and assert the FROZEN wire frames exactly as they leave.
+// Never touches a real socket.
+//
+// `providerRig` builds the WHOLE host stack over that same socket — follower
+// model, binding, provider — so a test can hold the thing a lens is handed and
+// still assert the frames its verbs produce.
 
 import { vi } from 'vitest'
-import { BlockService } from '../../src/static/block/block-service.js'
-import { DocumentService } from '../../src/static/block/document-service.js'
+import { ContainerTransport } from '../../src/static/container/container-transport.js'
+import { DocumentService } from '../../src/static/container/document-service.js'
+import { ContainerModel } from '../../src/static/container/container-model.js'
+import { ContainerBinding } from '../../src/static/container/container-binding.js'
+import { BlockProviderAdapter } from '../../src/static/container/block-provider-adapter.js'
 
 /** A fake WebSocket that records sends and lets tests drive open/message/close. */
 export class FakeSocket {
@@ -46,17 +53,13 @@ export class FakeSocket {
   sentOfType(t) { return this.sent.map((s) => JSON.parse(s)).filter((m) => m.type === t) }
 }
 
-/** A recording channel delegate (every editor-side reaction is a spy). */
+/** A recording channel delegate (every host-side reaction is a spy). */
 export function fakeDelegate(overrides = {}) {
-  return Object.assign({
-    applyServerOp: vi.fn(),
-    onMessage: vi.fn(),
-    resolveInsertIndex: vi.fn(() => -1),
-  }, overrides)
+  return Object.assign({ onMessage: vi.fn() }, overrides)
 }
 
 /**
- * A REAL BlockService + DocumentService over FakeSockets. Optionally opens a
+ * A REAL ContainerTransport + DocumentService over FakeSockets. Optionally opens a
  * channel for `uuid` (with a recording delegate) and seeds the routing index
  * with `blocks` ([{id, kind}]). The channel's socket is driven OPEN so frames
  * leave immediately (call with {open: false} to test the pending queue).
@@ -65,7 +68,7 @@ export function fakeDelegate(overrides = {}) {
  */
 export function serviceRig(opts = {}) {
   const uuid = opts.uuid === undefined ? 'doc-1' : opts.uuid
-  const service = new BlockService({
+  const service = new ContainerTransport({
     socketFactory: (url) => new FakeSocket(url),
     wsUrlFor: (u) => 'ws://test/api/ws/document/' + u,
   })
@@ -76,7 +79,29 @@ export function serviceRig(opts = {}) {
     service.openChannel(uuid, /** @type {any} */ (delegate))
     sock = FakeSocket.instances[FakeSocket.instances.length - 1]
     if (opts.open !== false) sock.driveOpen()
-    if (opts.blocks) service.indexDocument(uuid, opts.blocks)
   }
   return { service, documentService, delegate, sock, uuid }
+}
+
+/**
+ * The whole HOST stack for one container over a FakeSocket: a real transport, a
+ * real follower model seeded with `blocks`, and the provider a lens would be
+ * handed. Verbs asserted through `provider` still produce real frames on `sock`.
+ *
+ * @param {{uuid?: string, blocks?: Array<{id: string, kind: string, attrs?: Record<string, any>}>, open?: boolean}} [opts]
+ */
+export function providerRig(opts = {}) {
+  const uuid = opts.uuid === undefined ? 'doc-1' : opts.uuid
+  const rig = serviceRig({ uuid: uuid, open: opts.open })
+  const model = new ContainerModel(uuid, 'note')
+  rig.service.observeFrames(uuid, (frame) => model.applyFrame(frame))
+  rig.documentService.onContent(uuid, (content) => model.applyLoad(/** @type {any} */ (content)))
+  if (opts.blocks) {
+    model.applyLoad({
+      uuid: uuid,
+      blocks: opts.blocks.map((b) => ({ id: b.id, kind: b.kind, attrs: b.attrs || {} })),
+    })
+  }
+  const provider = new BlockProviderAdapter(model, new ContainerBinding(uuid, rig.documentService))
+  return Object.assign({}, rig, { model, provider })
 }

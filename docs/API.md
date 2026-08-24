@@ -59,8 +59,10 @@ alone, so the token appears in no response header.
 | `insert-block` | `protocol.InsertBlockFrame` | — | InsertBlockFrame is the render-back for a block the SERVER created: the client places this authoritative node at this index as a tracked transaction, and never computes a position of its own. |
 | `load-content` | `protocol.LoadContentFrame` | `opId` | LoadContentFrame answers a load. |
 | `markdown-content` | `protocol.MarkdownContentFrame` | `opId` | MarkdownContentFrame is the merged markdown that seeds the markdown editor after a mode switch. |
+| `order-changed` | `protocol.OrderChangedFrame` | — | OrderChangedFrame is the render-back for a reorder. |
 | `paste-ack` | `protocol.PasteAckFrame` | `opId` | PasteAckFrame answers a paste with what the server made of the clipboard. |
 | `pong` | `protocol.PongFrame` | — | PongFrame answers a PingFrame. |
+| `remove-block` | `protocol.RemoveBlockFrame` | — | RemoveBlockFrame is the render-back for a block that left the container: the client retires it by id rather than reloading the document. |
 | `replace-block` | `protocol.ReplaceBlockFrame` | — | ReplaceBlockFrame is the render-back for an in-place transform: one block becomes another kind with a new identity, and the client replaces by id rather than reloading the document. |
 | `wysiwyg-content` | `protocol.WysiwygContentFrame` | `opId` | WysiwygContentFrame is the re-parsed block list the WYSIWYG editor mounts after a mode switch. |
 
@@ -308,7 +310,6 @@ InsertBlockFrame is the render-back for a block the SERVER created: the client p
 | `attrs` | `map[string]interface {}` | yes |  |
 | `index` | `int` | yes | document position to insert at |
 | `markdown` | `string` | yes | markdown-mode buffer only; WYSIWYG renders from attrs |
-| `token` | `string` | yes | transient handle echoed from a create-block op, so the client can swap its pending node for the authoritative id |
 
 #### `load-content` — server → client
 
@@ -336,6 +337,15 @@ MarkdownContentFrame is the merged markdown that seeds the markdown editor after
 | `markdown` | `string` | yes | blocks embedded back into markdown — the whole document |
 | `opId` | `string` | no |  |
 
+#### `order-changed` — server → client
+
+OrderChangedFrame is the render-back for a reorder.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `order` | `[]string` | yes | the container's complete child id order, first position to last |
+
 #### `paste-ack` — server → client
 
 PasteAckFrame answers a paste with what the server made of the clipboard.
@@ -358,6 +368,15 @@ PongFrame answers a PingFrame.
 | Field | Go type | Required | Description |
 |---|---|---|---|
 | `type` | `string` | yes |  |
+
+#### `remove-block` — server → client
+
+RemoveBlockFrame is the render-back for a block that left the container: the client retires it by id rather than reloading the document.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `id` | `string` | yes | the block that left the container |
 
 #### `replace-block` — server → client
 
@@ -671,7 +690,6 @@ BlockOp is a granular mutation of the BlockDoc tree, carried over the wire (Stag
 | `aliases` | `[]string` | no |  |
 | `index` | `int` | yes |  |
 | `parentId` | `string` | no |  |
-| `token` | `string` | no |  |
 | `order` | `[]string` | no | set-order only: the complete top-level block id order to install |
 
 ### `block.ContentEntry`
@@ -722,7 +740,7 @@ SupportedActions is one processor's offer for a set of entries: its Kind plus th
 
 ### `domain.Attachment`
 
-Attachment is a live edge to another Node in the system: the address of something Sieve already holds, offered as context for one AI turn.
+Attachment is a live edge to another NodeDescriptor in the system: the address of something Sieve already holds, offered as context for one AI turn.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|

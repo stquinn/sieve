@@ -231,30 +231,30 @@
     <script src="/ui/static/vendor/js-yaml.js"></script>
     <script src="/ui/static/vendor/panzoom.min.js"></script>
     <script src="/ui/static/base/icons.js"></script>
-    <script type="module" src="/ui/static/editor/extensions.js"></script>
-    <script type="module" src="/ui/static/ai/ai-target.js"></script>
-    <script type="module" src="/ui/static/editor/paste-context.js"></script>
-    <script type="module" src="/ui/static/editor/block-chrome.js"></script>
-    <script type="module" src="/ui/static/ai/ai-target-decoration.js"></script>
-    <script type="module" src="/ui/static/block/block-kinds.js"></script>
-    <script type="module" src="/ui/static/editor/interaction-policy.js"></script>
-    <script type="module" src="/ui/static/block/action-label.js"></script>
-    <script type="module" src="/ui/static/block/sieve-block-extension.js"></script>
-    <script type="module" src="/ui/static/editor/surfaces/node-views/ai-block-node-view.js"></script>
-    <script type="module" src="/ui/static/editor/surfaces/node-views/code-node-view.js"></script>
-    <script type="module" src="/ui/static/editor/surfaces/node-views/log-node-view.js"></script>
-    <script type="module" src="/ui/static/editor/surfaces/node-views/web-clip-node-view.js"></script>
-    <script type="module" src="/ui/static/editor/surfaces/node-views/smart-image-node-view.js"></script>
-    <script type="module" src="/ui/static/editor/surfaces/node-views/smart-card-node-view.js"></script>
-    <script type="module" src="/ui/static/editor/surfaces/node-views/attachment-node-view.js"></script>
-    <script type="module" src="/ui/static/editor/surfaces/node-views/diagram-node-view.js"></script>
-    <script type="module" src="/ui/static/block/prose-markers.js"></script>
-    <script type="module" src="/ui/static/block/block-render.js"></script>
-    <script type="module" src="/ui/static/block/block-sync.js"></script>
-    <script type="module" src="/ui/static/block/prose-block.js"></script>
-    <script type="module" src="/ui/static/block/prose-group.js"></script>
-    <script type="module" src="/ui/static/editor/surfaces/block-position.js"></script>
-    <script type="module" src="/ui/static/editor/surfaces/render-empty.js"></script>
+    <script type="module" src="/ui/static/lens/extensions.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/surfaces/ai-target.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/paste-context.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/block-chrome.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/surfaces/ai-target-decoration.js"></script>
+    <script type="module" src="/ui/static/renderers/block-kinds.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/interaction-policy.js"></script>
+    <script type="module" src="/ui/static/renderers/action-label.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/surfaces/sieve-block-extension.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/surfaces/node-views/ai-block-node-view.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/surfaces/node-views/code-node-view.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/surfaces/node-views/log-node-view.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/surfaces/node-views/web-clip-node-view.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/surfaces/node-views/smart-image-node-view.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/surfaces/node-views/smart-card-node-view.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/surfaces/node-views/attachment-node-view.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/surfaces/node-views/diagram-node-view.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/surfaces/prose-markers.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/surfaces/block-render.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/block-sync.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/surfaces/prose-block.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/surfaces/prose-group.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/surfaces/block-position.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/surfaces/render-empty.js"></script>
     <script type="module" src="/ui/static/base/globals.js"></script>
     <!-- Shell skeleton (P1: Workspace/Tab/Editor component model). Dual-use ES
          modules: type="module" is MANDATORY — a plain <script> tag fails at
@@ -262,13 +262,13 @@
          Modules execute deferred (after classic scripts parse); editor.js only
          reads window.sieveWorkspace / window.SieveEditor at runtime (initEditor
          via DOMContentLoaded/htmx events), never at parse time, so ordering is safe. -->
-    <script type="module" src="/ui/static/editor/editor-shell.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/editor-shell.js"></script>
     <script type="module" src="/ui/static/shell/tab.js"></script>
     <script type="module" src="/ui/static/shell/workspace.js"></script>
     <script src="/ui/static/ai/ai-actions.js"></script>
     <script src="/ui/static/ui/tabbar.js"></script>
     <script src="/ui/static/ui/sidebar.js"></script>
-    <script type="module" src="/ui/static/editor/context-menu.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/context-menu.js"></script>
     <script src="/ui/static/ui/layout.js"></script>
 
     <script>
@@ -657,30 +657,20 @@
             e.target.value = '';
             return;
           }
-          var mount = document.getElementById('tiptap-mount');
-          var uuid = mount && mount.getAttribute('data-uuid');
-          // Only proceed when a real document (not a prompt) is active
-          if (!uuid || uuid.startsWith('prompt:') || !window.__tiptap) return;
-          var ds = window.sieveWorkspace && window.sieveWorkspace.documentService;
-          if (!ds) return;
+          var ws = window.sieveWorkspace;
+          if (!ws || !window.__tiptap) return;
           var reader = new FileReader();
           reader.onload = function(ev) {
             if (!ev.target || !ev.target.result) return;
-            // Use the BLOCK INDEX captured BEFORE the file dialog opened (the dialog
+            // Use the ANCHOR captured BEFORE the file dialog opened (the dialog
             // blurred the editor, so re-deriving the caret now would land at the end).
-            var imgIndex = (typeof window.__sieveCapturedInsertIndex === 'number') ? window.__sieveCapturedInsertIndex : -1;
-            // Reached through the Workspace rather than by importing the service:
-            // this inline script is not a module. The created block arrives on the
-            // document wire's insert-block render-back, so the ack is nothing to
-            // act on here — only a failure is.
-            //
-            // context.filename is what says "this came from a FILE" rather than
-            // "this is pasted text" — the attachment processor requires it, and
-            // without it a picked .yml is claimed by nobody and does nothing.
-            ds.smartPaste(uuid, {
-              entries: [{ mimeType: file.type, content: ev.target.result, context: { filename: file.name } }],
-              index: imgIndex,
-            }).catch(function(err) { console.error('[toolbar] file attach failed', err); });
+            // Reached through the Workspace rather than by importing anything: this
+            // inline script is not a module. The created block arrives as a container
+            // change, so there is nothing to act on here — only a failure.
+            ws.attachFile(
+              { mimeType: file.type, content: ev.target.result, filename: file.name },
+              window.__sieveCapturedInsertAnchor
+            ).catch(function(err) { console.error('[toolbar] file attach failed', err); });
           };
           reader.readAsDataURL(file);
           e.target.value = '';

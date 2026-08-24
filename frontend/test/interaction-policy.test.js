@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { registerBlockKind } from '../src/static/block/block-kinds.js'
+import { registerBlockKind } from '../src/static/renderers/block-kinds.js'
 import {
   DEFAULT_POLICY, CODE_TEXT_POLICY, policyFor, classifyContext,
   indentInsertions, dedentDeletions, leadingIndentAt, smartHomeTarget,
   textInputEdit, applyTextEdit, pairDeleteEdit, pairExpandEdit, handleSubstitutionGuard,
-} from '../src/static/editor/interaction-policy.js'
+} from '../src/static/lens/document-editor/interaction-policy.js'
 
 describe('policyFor', () => {
   it('merges a declared policy over defaults', () => {

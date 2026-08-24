@@ -1,7 +1,7 @@
 // @ts-check
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { CommandPopup } from '../src/static/shell/command-popup.js'
-import { SieveBlock } from '../src/static/block/sieve-block.js'
+import { SieveBlock } from '../src/static/contract/sieve-block.js'
 
 describe('CommandPopup', () => {
   let anchor

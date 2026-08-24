@@ -1,0 +1,39 @@
+{
+  "name": "transform and reseed",
+  "uuid": "doc-seq-3",
+  "description": "An in-place transform (replace-block mints a fresh identity) followed by a whole-list reseed — the mode-switch/reconnect answer, and today the ONLY inbound shape that retires a block or re-orders one.",
+  "steps": [
+    {
+      "load": {
+        "uuid": "doc-seq-3",
+        "blocks": [
+          { "id": "p1", "kind": "prose", "attrs": { "content": "intro" } },
+          { "id": "c1", "kind": "code", "attrs": { "source": "@startuml\nA->B\n@enduml" } },
+          { "id": "l1", "kind": "log", "attrs": { "source": "ERROR boom" } }
+        ]
+      }
+    },
+    { "frame": { "type": "insert-block", "kind": "command-result", "id": "r1", "attrs": { "title": "stats" }, "index": 2 } },
+    {
+      "frame": {
+        "type": "replace-block",
+        "oldId": "c1",
+        "newId": "d1",
+        "newKind": "diagram",
+        "attrs": { "source": "@startuml\nA->B\n@enduml", "format": "plantuml" },
+        "newYaml": ""
+      }
+    },
+    { "frame": { "type": "block-attrs-updated", "id": "d1", "attrs": { "status": "COMPLETE", "svg": "<svg/>" } } },
+    {
+      "load": {
+        "uuid": "doc-seq-3",
+        "blocks": [
+          { "id": "p1", "kind": "prose", "attrs": { "content": "intro" } },
+          { "id": "l1", "kind": "log", "attrs": { "source": "ERROR boom" } },
+          { "id": "d1", "kind": "diagram", "attrs": { "source": "@startuml\nA->B\n@enduml", "format": "plantuml", "status": "COMPLETE", "svg": "<svg/>" } }
+        ]
+      }
+    }
+  ]
+}

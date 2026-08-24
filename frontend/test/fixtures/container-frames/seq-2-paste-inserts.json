@@ -1,0 +1,32 @@
+{
+  "name": "paste inserts",
+  "uuid": "doc-seq-2",
+  "description": "Server-created blocks arriving as insert-block render-backs: a paste at a caret-derived index, an append (-1), a kind-less frame, then a job advance on the pasted image — and finally the two mutation echoes the old cache path never folded, a remove-block and an order-changed.",
+  "steps": [
+    {
+      "load": {
+        "uuid": "doc-seq-2",
+        "blocks": [
+          { "id": "p1", "kind": "prose", "attrs": { "content": "before" } },
+          { "id": "p2", "kind": "prose", "attrs": { "content": "after" } }
+        ]
+      }
+    },
+    {
+      "frame": {
+        "type": "insert-block",
+        "kind": "smart-image",
+        "id": "img-1",
+        "attrs": { "src": "/ui/assets/doc-seq-2/a.png", "status": "PENDING" },
+        "index": 1,
+        "markdown": "",
+        "token": "tok-9"
+      }
+    },
+    { "frame": { "type": "insert-block", "kind": "web-clip", "id": "clip-1", "attrs": { "url": "https://x.test" }, "index": -1 } },
+    { "frame": { "type": "insert-block", "id": "unk-1", "attrs": { "source": "?" }, "index": 0 } },
+    { "frame": { "type": "block-attrs-updated", "id": "img-1", "attrs": { "status": "COMPLETE", "width": 640 } } },
+    { "frame": { "type": "remove-block", "id": "p2" } },
+    { "frame": { "type": "order-changed", "order": ["clip-1", "unk-1", "img-1", "p1"] } }
+  ]
+}

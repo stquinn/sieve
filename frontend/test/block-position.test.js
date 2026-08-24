@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Schema } from '@tiptap/pm/model'
-import { blockIndexForInsert, docPosForBlockIndex, blockIndexAfter, blockIndexAt, enclosingBlockId } from '../src/static/editor/surfaces/block-position.js'
+import { blockIndexForInsert, docPosForBlockIndex, blockIndexAfter, blockIndexAt, enclosingBlockId } from '../src/static/lens/document-editor/surfaces/block-position.js'
 
 // Schema with doc that accepts both block-group nodes (paragraph/heading/codeBlock)
 // and sieveBlock-group nodes (sieve-diagram, sieve-prose).

@@ -2,11 +2,11 @@ import './helpers/seed-vendor.js'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { docWithRange, docWithNodeSelection, docWithCaretNear, build } from './helpers/editor-fixture.js'
 import { contextFor } from './helpers/selection-context.js'
-import { WysiwygSurface } from '../src/static/editor/surfaces/wysiwyg-surface.js'
-import { buildAiContext } from '../src/static/editor/extensions.js'
-import { getSieveBlockLabel } from '../src/static/block/sieve-block-extension.js'
-import { BlockSelection } from '../src/static/block/block-selection.js'
-import { getBlockSelectionRange } from '../src/static/editor/block-chrome.js'
+import { WysiwygSurface } from '../src/static/lens/document-editor/surfaces/wysiwyg-surface.js'
+import { buildAiContext } from '../src/static/lens/extensions.js'
+import { getSieveBlockLabel } from '../src/static/lens/document-editor/surfaces/sieve-block-extension.js'
+import { BlockSelection } from '../src/static/lens/document-editor/block-selection.js'
+import { getBlockSelectionRange } from '../src/static/lens/document-editor/block-chrome.js'
 
 // ask-context.test.js — P3.D (stateless Ask panel, #29 task 5). Harness redone P4.E
 // once extensions.js became a real ES module.
@@ -28,7 +28,7 @@ import { getBlockSelectionRange } from '../src/static/editor/block-chrome.js'
 // Harness: buildAiContext is now a genuine `export function` in extensions.js (P4.E),
 // reached the honest way — `import()` the real module and call the export directly. The
 // only wrinkle is extensions.js's OWN vendor dependency: it reads
-// `import { T as VENDOR } from '../editor/surfaces/tiptap-vendor.js'` (a live bag over
+// `import { T as VENDOR } from './document-editor/surfaces/tiptap-vendor.js'` (a live bag over
 // globalThis.TipTap, installed once by test/setup.js) and calls VENDOR.Extension.create/
 // .extend and `new VENDOR.PluginKey(...)` at MODULE-EVAL time (Search, SelectionHighlight,
 // HighlightMark, AiShortcuts are built as the module loads, not lazily). Those vendor
@@ -48,20 +48,20 @@ import { getBlockSelectionRange } from '../src/static/editor/block-chrome.js'
 // descriptor helpers (block-chrome.getBlockSelectionRange, sieve-block-extension.*)
 // and the other side-effect / registry modules are vi.mocked — replacing the retired
 // deps.T / shared-bus injection the ContextSurface adapter used to feed.
-vi.mock('../src/static/editor/block-chrome.js', () => ({
+vi.mock('../src/static/lens/document-editor/block-chrome.js', () => ({
   BlockChrome: {},
   getBlockSelectionRange: vi.fn((view) => {
     const sel = view.state.selection
     return { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false, isNodeSelection: !!sel.node }
   }),
 }))
-vi.mock('../src/static/ai/ai-target-decoration.js', () => ({ AiTargetDecoration: {} }))
-vi.mock('../src/static/block/prose-block.js', () => ({ BlockId: {} }))
-vi.mock('../src/static/block/prose-group.js', () => ({ ProseGroup: {}, proseBlockNodes: vi.fn(() => []) }))
-vi.mock('../src/static/editor/interaction-policy.js', () => ({
+vi.mock('../src/static/lens/document-editor/surfaces/ai-target-decoration.js', () => ({ AiTargetDecoration: {} }))
+vi.mock('../src/static/lens/document-editor/surfaces/prose-block.js', () => ({ BlockId: {} }))
+vi.mock('../src/static/lens/document-editor/surfaces/prose-group.js', () => ({ ProseGroup: {}, proseBlockNodes: vi.fn(() => []) }))
+vi.mock('../src/static/lens/document-editor/interaction-policy.js', () => ({
   policyEnterKeydown: vi.fn(() => false), buildInteractionPolicyExtension: vi.fn(() => ({})),
 }))
-vi.mock('../src/static/block/sieve-block-extension.js', () => ({
+vi.mock('../src/static/lens/document-editor/surfaces/sieve-block-extension.js', () => ({
   getSieveNodes: vi.fn(() => []),
   getSieveBlockLabel: vi.fn(() => null),
   serializeNode: vi.fn(() => 'ser'),
@@ -69,7 +69,7 @@ vi.mock('../src/static/block/sieve-block-extension.js', () => ({
   sieveBlockEntries: vi.fn(() => []),
   rendererFor: vi.fn(() => null),
 }))
-vi.mock('../src/static/block/block-selection.js', () => ({
+vi.mock('../src/static/lens/document-editor/block-selection.js', () => ({
   BlockSelection: { blockRange: vi.fn(() => null), textInside: vi.fn(() => null) },
 }))
 

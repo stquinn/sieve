@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { BlockSelection } from '../src/static/block/block-selection.js'
+import { BlockSelection } from '../src/static/lens/document-editor/block-selection.js'
 
 // A click anywhere in a block makes it the caret/selection owner — EXCEPT on
 // interactive controls / chrome, inside editable text (PM owns the caret there),

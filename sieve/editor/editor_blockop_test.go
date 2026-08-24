@@ -1,12 +1,16 @@
 package editor
 
 import (
+	"crypto/sha1"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
+	"sieve/sieve/services"
 )
 
 // onChangeProbeProcessor isolates the uniform update pipeline: OnChange stamps a
@@ -149,7 +153,7 @@ func TestHandleBlockOp_proseUpdateUsesAttrsContentAndKeepsAliases(t *testing.T) 
 
 	// Seed a prose block with its body in attrs.content and an alias.
 	if err := es.HandleBlockOp(uuid, block.BlockOp{
-		Type: "create-block", Kind: "prose", BlockID: "pr-1",
+		Type: "create-block", Kind: "prose", BlockID: fixtureID("pr-1"),
 		Attrs: map[string]interface{}{"content": "hello"}, Aliases: []string{"old-alias"}, Index: 0,
 	}); err != nil {
 		t.Fatalf("seed create: %v", err)
@@ -157,12 +161,12 @@ func TestHandleBlockOp_proseUpdateUsesAttrsContentAndKeepsAliases(t *testing.T) 
 
 	// Update with NO aliases: content updates via attrs.content, alias preserved.
 	if err := es.HandleBlockOp(uuid, block.BlockOp{
-		Type: "update-block", Kind: "prose", BlockID: "pr-1",
+		Type: "update-block", Kind: "prose", BlockID: fixtureID("pr-1"),
 		Attrs: map[string]interface{}{"content": "hello world"},
 	}); err != nil {
 		t.Fatalf("update (no aliases): %v", err)
 	}
-	blk := frontendBlockByID(t, es, uuid, "pr-1")
+	blk := frontendBlockByID(t, es, uuid, fixtureID("pr-1"))
 	if got, _ := blk.Attrs["content"].(string); got != "hello world" {
 		t.Errorf("prose content not updated via attrs.content: %q", got)
 	}
@@ -172,12 +176,12 @@ func TestHandleBlockOp_proseUpdateUsesAttrsContentAndKeepsAliases(t *testing.T) 
 
 	// Update WITH aliases: replaced.
 	if err := es.HandleBlockOp(uuid, block.BlockOp{
-		Type: "update-block", Kind: "prose", BlockID: "pr-1",
+		Type: "update-block", Kind: "prose", BlockID: fixtureID("pr-1"),
 		Attrs: map[string]interface{}{"content": "hello world"}, Aliases: []string{"new-alias"},
 	}); err != nil {
 		t.Fatalf("update (with aliases): %v", err)
 	}
-	blk = frontendBlockByID(t, es, uuid, "pr-1")
+	blk = frontendBlockByID(t, es, uuid, fixtureID("pr-1"))
 	if len(blk.Aliases) != 1 || blk.Aliases[0] != "new-alias" {
 		t.Errorf("alias not replaced: %v", blk.Aliases)
 	}
@@ -213,7 +217,7 @@ func TestHandleBlockOp_proseCreateNotifiesLikeEveryKind(t *testing.T) {
 	}
 
 	if err := es.HandleBlockOp(uuid, block.BlockOp{
-		Type: "create-block", Kind: "prose", BlockID: "pr-1",
+		Type: "create-block", Kind: "prose", BlockID: fixtureID("pr-1"),
 		Attrs: map[string]interface{}{"content": "hello"}, Index: 0,
 	}); err != nil {
 		t.Fatalf("create-block: %v", err)
@@ -221,7 +225,7 @@ func TestHandleBlockOp_proseCreateNotifiesLikeEveryKind(t *testing.T) {
 
 	select {
 	case id := <-created:
-		if id != "pr-1" {
+		if id != fixtureID("pr-1") {
 			t.Errorf("notified for wrong block: %q (want pr-1)", id)
 		}
 	case <-time.After(2 * time.Second):
@@ -229,10 +233,177 @@ func TestHandleBlockOp_proseCreateNotifiesLikeEveryKind(t *testing.T) {
 	}
 
 	// The block still lands in the tree with its content (existing behavior preserved).
-	blk := frontendBlockByID(t, es, uuid, "pr-1")
+	blk := frontendBlockByID(t, es, uuid, fixtureID("pr-1"))
 	if got, _ := blk.Attrs["content"].(string); got != "hello" {
 		t.Errorf("prose content missing after create: %q (want \"hello\")", got)
 	}
+}
+
+// seedProse opens an EMPTY document and creates one prose block per id, in
+// order, so the ids under test are the document's whole order (any body text
+// would parse into a prose block of its own).
+// fixtureID turns a readable test label ("pr-1") into a REAL uuid, because the
+// server now VALIDATES the ids a client supplies (issue #96) and a short handle
+// is not one. Deterministic, so a test can name the same block twice and mean it.
+func fixtureID(label string) string {
+	sum := sha1.Sum([]byte(label))
+	return fmt.Sprintf("00000000-0000-7000-8000-%x", sum[:6])
+}
+
+func seedProse(t *testing.T, es *EditorService, ds *services.DocumentService, ids ...string) string {
+	t.Helper()
+	doc, _ := ds.New()
+	doc.SetBody(nil)
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	if err := es.Open(uuid); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	for i, id := range ids {
+		if err := es.HandleBlockOp(uuid, block.BlockOp{
+			Type: "create-block", Kind: "prose", BlockID: id,
+			Attrs: map[string]interface{}{"content": id}, Index: i,
+		}); err != nil {
+			t.Fatalf("seed create %s: %v", id, err)
+		}
+	}
+	if got := frontendIDs(t, es, uuid); !reflect.DeepEqual(got, ids) {
+		t.Fatalf("seeded document holds %v, want %v", got, ids)
+	}
+	return uuid
+}
+
+// Every mutation echoes (#96): a delete-block the server applied must reach the
+// client as its own render-back, or a follower model can only learn of the
+// deletion by reloading the document.
+func TestHandleBlockOp_deleteEchoesTheRemovedBlock(t *testing.T) {
+	resetRegistry() // registers the prose terminal
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+	uuid := seedProse(t, es, ds, fixtureID("pr-1"), fixtureID("pr-2"), fixtureID("pr-3"))
+
+	var removed []string
+	var orders [][]string
+	es.SetLifecycleListener(&mockLifecycleListener{
+		onRemoved: func(_, blockID string) { removed = append(removed, blockID) },
+		onOrder:   func(_ string, order []string) { orders = append(orders, order) },
+	})
+
+	if err := es.HandleBlockOp(uuid, block.BlockOp{Type: "delete-block", BlockID: fixtureID("pr-2")}); err != nil {
+		t.Fatalf("delete-block: %v", err)
+	}
+
+	if want := []string{fixtureID("pr-2")}; !reflect.DeepEqual(removed, want) {
+		t.Errorf("removed echoes: %v, want %v", removed, want)
+	}
+	// Losing the id IS the order change: a second event for one mutation would be
+	// a second repaint.
+	if len(orders) != 0 {
+		t.Errorf("a delete also echoed an order change: %v", orders)
+	}
+	if got := frontendIDs(t, es, uuid); !reflect.DeepEqual(got, []string{fixtureID("pr-1"), fixtureID("pr-3")}) {
+		t.Errorf("tree after delete: %v", got)
+	}
+}
+
+// A set-order echoes the container's COMPLETE new order, read back from the
+// document rather than repeated off the request.
+func TestHandleBlockOp_setOrderEchoesTheWholeNewOrder(t *testing.T) {
+	resetRegistry()
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+	uuid := seedProse(t, es, ds, fixtureID("pr-1"), fixtureID("pr-2"), fixtureID("pr-3"))
+
+	var orders [][]string
+	var removed []string
+	es.SetLifecycleListener(&mockLifecycleListener{
+		onOrder:   func(_ string, order []string) { orders = append(orders, order) },
+		onRemoved: func(_, blockID string) { removed = append(removed, blockID) },
+	})
+
+	if err := es.HandleBlockOp(uuid, block.BlockOp{
+		Type: "set-order", Order: []string{fixtureID("pr-3"), fixtureID("pr-1"), fixtureID("pr-2")},
+	}); err != nil {
+		t.Fatalf("set-order: %v", err)
+	}
+
+	want := [][]string{{fixtureID("pr-3"), fixtureID("pr-1"), fixtureID("pr-2")}}
+	if !reflect.DeepEqual(orders, want) {
+		t.Errorf("order echoes: %v, want %v", orders, want)
+	}
+	if len(removed) != 0 {
+		t.Errorf("a reorder echoed a removal: %v", removed)
+	}
+	if got := frontendIDs(t, es, uuid); !reflect.DeepEqual(got, []string{fixtureID("pr-3"), fixtureID("pr-1"), fixtureID("pr-2")}) {
+		t.Errorf("tree after set-order: %v", got)
+	}
+}
+
+// A move is a reorder by another name, and echoes the order it produced — the
+// op names an index, so only the document knows the result.
+func TestHandleBlockOp_moveEchoesTheResultingOrder(t *testing.T) {
+	resetRegistry()
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+	uuid := seedProse(t, es, ds, fixtureID("pr-1"), fixtureID("pr-2"), fixtureID("pr-3"))
+
+	var orders [][]string
+	es.SetLifecycleListener(&mockLifecycleListener{
+		onOrder: func(_ string, order []string) { orders = append(orders, order) },
+	})
+
+	if err := es.HandleBlockOp(uuid, block.BlockOp{Type: "move", BlockID: fixtureID("pr-3"), Index: 0}); err != nil {
+		t.Fatalf("move: %v", err)
+	}
+
+	want := [][]string{{fixtureID("pr-3"), fixtureID("pr-1"), fixtureID("pr-2")}}
+	if !reflect.DeepEqual(orders, want) {
+		t.Errorf("order echoes: %v, want %v", orders, want)
+	}
+}
+
+// An op that did not apply changed nothing, so it must echo nothing: a client
+// that repainted on a refused delete would drop a block the document still holds.
+func TestHandleBlockOp_refusedStructuralOpsEchoNothing(t *testing.T) {
+	resetRegistry()
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+	uuid := seedProse(t, es, ds, fixtureID("pr-1"), fixtureID("pr-2"))
+
+	var echoes int
+	es.SetLifecycleListener(&mockLifecycleListener{
+		onRemoved: func(string, string) { echoes++ },
+		onOrder:   func(string, []string) { echoes++ },
+	})
+
+	if err := es.HandleBlockOp(uuid, block.BlockOp{Type: "delete-block", BlockID: "ghost"}); err == nil {
+		t.Fatal("deleting an unheld block was accepted")
+	}
+	// set-order refuses anything but a permutation — this one drops pr-2.
+	if err := es.HandleBlockOp(uuid, block.BlockOp{Type: "set-order", Order: []string{fixtureID("pr-1")}}); err == nil {
+		t.Fatal("a set-order that is not a permutation was accepted")
+	}
+	if echoes != 0 {
+		t.Errorf("%d echo(es) fired for ops that did not apply", echoes)
+	}
+}
+
+// frontendIDs returns the open document's top-level block ids in order.
+func frontendIDs(t *testing.T, es *EditorService, uuid string) []string {
+	t.Helper()
+	blocks, ok := es.FrontendBlocks(uuid)
+	if !ok {
+		t.Fatalf("FrontendBlocks: no shadow for %q", uuid)
+	}
+	ids := make([]string, len(blocks))
+	for i, b := range blocks {
+		ids[i] = b.ID
+	}
+	return ids
 }
 
 // C.2b — EditorService.HandleBlockOp applies a wire op to the open shadow's Doc

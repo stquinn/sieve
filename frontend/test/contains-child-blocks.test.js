@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Schema } from 'prosemirror-model'
-import { containsChildBlocks } from '../src/static/block/block-kinds.js'
+import { containsChildBlocks } from '../src/static/renderers/block-kinds.js'
 
 // Mirrors the real sieve-block schema shapes:
 //   container ('block+')  → ai-block, web-clip  — hold child BLOCKS

@@ -3,8 +3,8 @@
 // OVER the image. Read-only chrome, gated by the PERSISTED showSummary attribute.
 
 import { describe, it, expect, beforeEach } from 'vitest'
-import { SmartImageRenderer } from '../src/static/block/renderers/smart-image-renderer.js'
-import { SieveBlock } from '../src/static/block/sieve-block.js'
+import { SmartImageRenderer } from '../src/static/renderers/smart-image-renderer.js'
+import { SieveBlock } from '../src/static/contract/sieve-block.js'
 
 /** @param {Record<string, any>} payload */
 function render(payload) {

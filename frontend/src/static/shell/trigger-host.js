@@ -10,9 +10,9 @@
 //
 // ProseMirrorHost lives here — the popover must be able to hold it — but touches
 // no PM API: it is built on an EditorCaretPort the SURFACE implements, because
-// editor/surfaces/ is the only package permitted to see PM/DOM (CLAUDE.md).
+// lens/surfaces/ is the only package permitted to see PM/DOM (CLAUDE.md).
 
-import { ContractViolation } from '../block/sieve-block.js'
+import { ContractViolation } from '../contract/sieve-block.js'
 import { TriggerProvider } from './trigger-providers.js'
 
 /**
@@ -176,7 +176,7 @@ export class TextareaHost extends TriggerHost {
 
 /**
  * What a caret-bearing DOCUMENT has to answer for the picker to sit in it.
- * Implemented by the surface's CaretTriggerPort (editor/surfaces/).
+ * Implemented by the surface's CaretTriggerPort (lens/surfaces/).
  *
  * `caretText` is deliberately ONE call returning both halves of the scan: the
  * text and the offset must come from the same PM state, and two calls could

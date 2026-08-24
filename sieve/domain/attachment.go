@@ -6,7 +6,7 @@ import "strings"
 // block and on the wire alike.
 const AttachmentsAttr = "attachments"
 
-// Attachment is a live edge to another Node in the system: the address of
+// Attachment is a live edge to another NodeDescriptor in the system: the address of
 // something Sieve already holds, offered as context for one AI turn.
 //
 // URI AND TITLE ARE THE WHOLE OF IT, and between them they are enough for
@@ -24,7 +24,7 @@ const AttachmentsAttr = "attachments"
 // as a block attr (block/ names the key) AND it rides the command envelope onto
 // command.Context — and `command` and `ai` cannot import `block` (block → ai →
 // command already exists, so the reverse edge would close a cycle). It is a leaf
-// value like Node and Candidate, so the leaf is where it belongs; no carrier owns
+// value like NodeDescriptor and Candidate, so the leaf is where it belongs; no carrier owns
 // it.
 type Attachment struct {
 	URI   string `json:"uri" yaml:"uri"`

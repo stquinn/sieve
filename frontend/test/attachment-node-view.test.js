@@ -18,7 +18,7 @@
 // way node-view-registry.test.js does. The registered adapter is then read back
 // out of the shared block-kind registry.
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
-import { getBlockKind } from '../src/static/block/block-kinds.js'
+import { getBlockKind } from '../src/static/renderers/block-kinds.js'
 
 const VENDOR = /** @type {any} */ (globalThis).TipTap
 const W = /** @type {any} */ (globalThis)
@@ -28,7 +28,7 @@ const W = /** @type {any} */ (globalThis)
 beforeAll(async () => {
   VENDOR.Node = { create: (/** @type {any} */ cfg) => ({ __node: cfg.name }) }
   VENDOR.mergeAttributes = (/** @type {any} */ a, /** @type {any} */ b) => Object.assign({}, a, b)
-  await import('../src/static/editor/surfaces/node-views/attachment-node-view.js')
+  await import('../src/static/lens/document-editor/surfaces/node-views/attachment-node-view.js')
   adapter = getBlockKind('attachment').renderer
 })
 

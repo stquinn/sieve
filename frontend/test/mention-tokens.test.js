@@ -7,7 +7,7 @@
 // actually attached are marked, so an email address, a code sample or a stray
 // `@` in prose stays prose.
 import { describe, it, expect, afterEach } from 'vitest'
-import { MentionTokens } from '../src/static/block/renderers/mention-tokens.js'
+import { MentionTokens } from '../src/static/renderers/mention-tokens.js'
 
 /** @param {string} html */
 function el(html) {

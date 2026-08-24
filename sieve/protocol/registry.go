@@ -103,6 +103,8 @@ func (r *Registry) registerDocumentFrames() {
 	r.addFrame(ChannelDocument, Outbound, TypeInsertBlock, InsertBlockFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeBlockAttrsUpdated, BlockAttrsUpdatedFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeReplaceBlock, ReplaceBlockFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeRemoveBlock, RemoveBlockFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeOrderChanged, OrderChangedFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeError, ErrorFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeLoadContent, LoadContentFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypePasteAck, PasteAckFrame{})

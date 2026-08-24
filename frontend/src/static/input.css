@@ -5,7 +5,7 @@
 /* .smart-card-card / .smart-card-card__* migrated to SmartCardRenderer's
    stylesheet in the renderer/NodeView split (docs/design/specs/2026-07-20-block-renderer-extraction.md,
    Phase 4, issue #47) — see
-   frontend/src/static/block/renderers/smart-card-renderer.styles.js. This
+   frontend/src/static/renderers/smart-card-renderer.styles.js. This
    was the only sieve-block CSS living in input.css (the tailwind-built
    stylesheet) rather than editor.css — verified before moving anything. */
 

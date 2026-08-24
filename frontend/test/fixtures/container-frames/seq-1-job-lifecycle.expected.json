@@ -1,0 +1,15 @@
+{
+  "order": ["p1", "c1", "a1"],
+  "blocks": {
+    "p1": { "id": "p1", "kind": "prose", "attrs": { "content": "Notes on the wire", "id": "p1" } },
+    "c1": { "id": "c1", "kind": "code", "attrs": { "source": "go build ./...", "status": "ERROR", "error": "exit 1", "id": "c1" } },
+    "a1": { "id": "a1", "kind": "ai-block", "attrs": { "question": "What breaks?", "status": "COMPLETE", "answer": "The order fact.", "id": "a1" } }
+  },
+  "oracleEnvelopes": {
+    "p1": { "kind": "prose", "payload": { "content": "Notes on the wire", "id": "p1", "kind": "prose" } },
+    "c1": { "kind": "code", "payload": { "source": "go build ./...", "status": "ERROR", "error": "exit 1", "id": "c1", "kind": "code" } },
+    "a1": { "kind": "ai-block", "payload": { "question": "What breaks?", "status": "COMPLETE", "answer": "The order fact.", "id": "a1", "kind": "ai-block" } },
+    "ghost-1": null
+  },
+  "oracleOnlyIds": []
+}

@@ -2,8 +2,8 @@ package domain
 
 import "errors"
 
-// Node is what an address resolves to — the Router's output and the second half
-// of "address → Node".
+// NodeDescriptor is what an address resolves to — the Router's output and the
+// second half of "address → NodeDescriptor".
 //
 // It is a PROJECTION, not the storable itself: each source flattens its own
 // storage into this one shape, so a consumer (the AI manifest builder, a chip
@@ -13,7 +13,7 @@ import "errors"
 // It lives in the leaf because its producer and its consumer must not have to
 // know each other: editor.Router builds one, mcp's get_by_uri returns one, and
 // domain/ is the package both can name (same reason as LinkPreviewResult).
-type Node struct {
+type NodeDescriptor struct {
 	URI     string // the address it was resolved from
 	UUID    string // the target's identity
 	Kind    string // the source's own noun: "note"
@@ -27,7 +27,7 @@ type Node struct {
 }
 
 // OpenTarget is where a coordinate NAVIGATES — the other question an address
-// answers, beside "what is there" (Node). It names the container to bring up
+// answers, beside "what is there" (NodeDescriptor). It names the container to bring up
 // and, when the address qualifies one, the block to reveal inside it.
 //
 // It exists so that NO consumer takes an address apart itself. The frontend
@@ -38,7 +38,7 @@ type Node struct {
 // mode is silence: an unrecognised form falls through the guard and the click
 // does nothing.
 //
-// Same reason as Node for living in the leaf: editor.Router produces one and
+// Same reason as NodeDescriptor for living in the leaf: editor.Router produces one and
 // requesthandlers puts it on the wire, and domain/ is the package both can name.
 type OpenTarget struct {
 	URI     string // the address it was derived from

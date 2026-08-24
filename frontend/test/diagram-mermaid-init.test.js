@@ -7,8 +7,8 @@
 // of a note with bad mermaid source). The renderer's own catch shows the
 // in-block error panel; mermaid must never touch the document.
 import { describe, it, expect } from 'vitest'
-import { DiagramTheme } from '../src/static/block/renderers/diagram-renderer.styles.js'
-import { codeStyles } from '../src/static/block/renderers/code-renderer.styles.js'
+import { DiagramTheme } from '../src/static/renderers/diagram-renderer.styles.js'
+import { codeStyles } from '../src/static/renderers/code-renderer.styles.js'
 
 /**
  * Extracts the declaration map of the rule whose selector list matches

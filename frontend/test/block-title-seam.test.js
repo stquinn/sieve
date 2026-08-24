@@ -12,7 +12,7 @@
 // against the real AiBlockRenderer/WebClipRenderer classes.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import MarkdownIt from 'markdown-it'
-import { syncBlockTitle } from '../src/static/block/sieve-block-extension.js'
+import { syncBlockTitle } from '../src/static/lens/document-editor/surfaces/sieve-block-extension.js'
 
 describe('syncBlockTitle (framework title seam)', () => {
   beforeAll(() => {

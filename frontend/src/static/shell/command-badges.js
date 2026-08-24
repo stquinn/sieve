@@ -7,15 +7,15 @@
 // shows a generic spinner + command name. Only when the server result arrives
 // does the block become a real SieveBlock with its final kind (ai-block, etc.).
 
-import { SieveBlock } from '../block/sieve-block.js'
+import { SieveBlock } from '../contract/sieve-block.js'
 import { CommandPopup } from './command-popup.js'
-import { rendererStyles } from '../block/renderers/renderer-style-registry.js'
+import { rendererStyles } from '../renderers/renderer-style-registry.js'
 import { commandBadgesStyles } from './command-badges.styles.js'
 
 /**
  * @typedef {object} BadgeEntry
  * @property {HTMLElement} el
- * @property {import('../block/command-service.js').DispatchHandle} handle
+ * @property {import('./command-service.js').DispatchHandle} handle
  * @property {string} state
  * @property {{cmd: string, text: string, error?: string}} meta
  * @property {SieveBlock|null} block
@@ -39,7 +39,7 @@ export class CommandBadges {
   }
 
   /**
-   * @param {import('../block/command-service.js').DispatchHandle} handle
+   * @param {import('./command-service.js').DispatchHandle} handle
    * @param {{cmd: string, text: string}} meta
    */
   track(handle, meta) {
@@ -68,17 +68,17 @@ export class CommandBadges {
     }
   }
 
-  /** @param {BadgeEntry} entry @param {import('../block/command-service.js').CommandResult} r */
+  /** @param {BadgeEntry} entry @param {import('./command-service.js').CommandResult} r */
   #onResult(entry, r) {
     if (r.block) {
       entry.block = new SieveBlock(r.block.kind, r.block.attrs)
     } else if (r.status === 'ERROR') {
       if (entry.block) {
-        // A prior block exists — merge the error into a FRESH envelope of the
+        // A prior block exists — merge the error into a FRESH block of the
         // SAME kind (never a hardcoded 'ai-block'); the block keeps its identity.
         entry.block = new SieveBlock(entry.block.kind, Object.assign({}, entry.block.payload, { status: 'ERROR', error: r.error || '' }))
       } else {
-        // No block ever arrived — do NOT fabricate an ai-block envelope (the
+        // No block ever arrived — do NOT fabricate an ai-block block (the
         // "assumed ai-block" 8808c0a removed). Carry the error on the meta so the
         // popup renders a generic, kind-less error view.
         entry.meta = Object.assign({}, entry.meta, { error: r.error || 'Command failed.' })

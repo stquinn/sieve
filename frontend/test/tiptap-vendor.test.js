@@ -3,7 +3,7 @@
 // `T` is a live bag over the vendor global. Tests stub members by mutating
 // globalThis.TipTap (installed by test/setup.js); they must never reassign it.
 import { describe, it, expect, afterEach } from 'vitest'
-import { T } from '../src/static/editor/surfaces/tiptap-vendor.js'
+import { T } from '../src/static/lens/document-editor/surfaces/tiptap-vendor.js'
 
 describe('tiptap-vendor bag (the ONE sanctioned vendor-global read)', () => {
   afterEach(() => {

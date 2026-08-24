@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { HeaderBar } from '../src/static/block/renderers/header-bar.js'
+import { HeaderBar } from '../src/static/renderers/header-bar.js'
 
 // The header re-render (renderHeaderBar) rebuilds the whole toolbar so button
 // states track the live attrs. adopt/restoreFocusedControl keep a control the

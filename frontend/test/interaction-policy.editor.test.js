@@ -13,8 +13,8 @@ import { StarterKit } from '@tiptap/starter-kit'
 import { Table, TableRow, TableCell, TableHeader } from '@tiptap/extension-table'
 import { Plugin, Selection, TextSelection, NodeSelection } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
-import { registerBlockKind } from '../src/static/block/block-kinds.js'
-import { buildInteractionPolicyExtension, policyEnterKeydown, CODE_TEXT_POLICY } from '../src/static/editor/interaction-policy.js'
+import { registerBlockKind } from '../src/static/renderers/block-kinds.js'
+import { buildInteractionPolicyExtension, policyEnterKeydown, CODE_TEXT_POLICY } from '../src/static/lens/document-editor/interaction-policy.js'
 
 // These take the SAME preset the real code-node-view.js / diagram-node-view.js
 // declarations do, so the fakes cannot drift from what ships. (diagram's real
@@ -48,7 +48,7 @@ registerBlockKind({
 })
 
 // Prose is a block like any other and DECLARES its policy — mirrors the real
-// declaration in block/prose-block.js (surround only, no autoclose). A native
+// declaration in lens/surfaces/prose-block.js (surround only, no autoclose). A native
 // def is its own behaviour holder, so the policy sits on the def itself.
 registerBlockKind({
   kind: 'prose',

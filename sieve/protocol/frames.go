@@ -64,6 +64,8 @@ const (
 	TypeInsertBlock             = "insert-block"
 	TypeBlockAttrsUpdated       = "block-attrs-updated"
 	TypeReplaceBlock            = "replace-block"
+	TypeRemoveBlock             = "remove-block"
+	TypeOrderChanged            = "order-changed"
 	TypeError                   = "error"
 	TypeLoadContent             = "load-content"
 	TypePasteAck                = "paste-ack"

@@ -20,8 +20,8 @@
 //     how — a hosted build with no file manager has to be able to answer
 //     differently without this class changing.
 import { describe, it, expect, afterEach } from 'vitest'
-import { AttachmentRenderer } from '../src/static/block/renderers/attachment-renderer.js'
-import { SieveBlock } from '../src/static/block/sieve-block.js'
+import { AttachmentRenderer } from '../src/static/renderers/attachment-renderer.js'
+import { SieveBlock } from '../src/static/contract/sieve-block.js'
 
 /** @param {object} payload */
 function blk(payload) { return new SieveBlock('attachment', payload) }

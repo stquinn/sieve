@@ -173,7 +173,7 @@ textarea::selection {
 /* .node-image (ghost-selection fix + premium tooltip) migrated to
    SmartImageRenderer's stylesheet in the renderer/NodeView split
    (docs/design/specs/2026-07-20-block-renderer-extraction.md, Phase 4, issue
-   #47) — see frontend/src/static/block/renderers/smart-image-renderer.styles.js.
+   #47) — see frontend/src/static/renderers/smart-image-renderer.styles.js.
    Confirmed exclusive to smart-image before moving (no native TipTap Image
    extension uses this class — it renders with `editor-image` instead). */
 
@@ -515,7 +515,7 @@ textarea::selection {
      the scale automatically) and with unitless line-height (already
      scale-free, no change needed).
      Block-internal chrome (code/log/diagram/ai-block renderers, see
-     block/renderers/*.styles.js) expresses its font-sizes as
+     renderers/*.styles.js) expresses its font-sizes as
      calc(var(--doc-size) * <step>) AGAINST THIS SAME PROPERTY at any nesting
      depth — never against a parent's computed em — so sizes never compound.
      --theme-editorBaseSize is a hook for a future theme-level base and is
@@ -838,7 +838,7 @@ textarea::selection {
 /* AiBlock's own look-and-feel (shell, badge, chain-glow colours, hr/inline-  */
 /* code) migrated to AiBlockRenderer's stylesheet in the renderer/NodeView   */
 /* split (docs/design/specs/2026-07-20-block-renderer-extraction.md, Phase 3, */
-/* issue #46) — see frontend/src/static/block/renderers/ai-block-renderer.styles.js. */
+/* issue #46) — see frontend/src/static/renderers/ai-block-renderer.styles.js. */
 /* Only the FRAMEWORK-owned heading slot below remains here (shared by any   */
 /* kind declaring titleProvider, not ai-block-exclusive).                   */
 
@@ -872,7 +872,7 @@ textarea::selection {
 /* web-clip's own look-and-feel (shell, status chrome, content typography)
    migrated to WebClipRenderer's stylesheet in the renderer/NodeView split
    (docs/design/specs/2026-07-20-block-renderer-extraction.md, Phase 4, issue
-   #47) — see frontend/src/static/block/renderers/web-clip-renderer.styles.js. */
+   #47) — see frontend/src/static/renderers/web-clip-renderer.styles.js. */
 
 /* ── Shared fenced-block rendered content ────────────────────────────── */
 /* Standard Tiptap Code Blocks (used after promotion) */
@@ -894,7 +894,7 @@ pre.tiptap-code-block code {
   display: block;
 }
 
-/* applyHighlighting() in block/renderers/highlighting.js wraps each pre>code */
+/* applyHighlighting() in renderers/highlighting.js wraps each pre>code */
 /* in a .sieve-code-block div with a line-number gutter, matching the     */
 /* TipTap .code-block appearance. All colours from the theme.             */
 /* Future blocks: call applyHighlighting(contentEl) after setting innerHTML */
@@ -964,7 +964,7 @@ pre.tiptap-code-block code {
 /* A link is ORDINARY MARKDOWN, not a Sieve block (#67 —
    docs/design/specs/2026-07-27-inline-block-removal-links-decision.md): the
    retired inline `smart-link` NodeView is replaced by TipTap's `link` mark,
-   configured in editor/surfaces/wysiwyg-surface.js with openOnClick:false (a
+   configured in lens/surfaces/wysiwyg-surface.js with openOnClick:false (a
    navigating webview would destroy the running Wails app). The class comes from
    that extension's HTMLAttributes, so ONLY prose anchors match — an <a> inside a
    block renderer's own DOM keeps its renderer's styling. Mod+Click opens it
@@ -999,8 +999,8 @@ pre.tiptap-code-block code {
    generic .sieve-block:focus-within / ProseMirror-selectednode rule below,
    which every kind's shell participates in) — kept here even after a kind's
    OWN shell CSS (background/border/radius/hover) moves into its renderer's
-   stylesheet (code → block/renderers/code-renderer.styles.js, Phase 4;
-   diagram → block/renderers/diagram-renderer.styles.js, Phase 2). */
+   stylesheet (code → renderers/code-renderer.styles.js, Phase 4;
+   diagram → renderers/diagram-renderer.styles.js, Phase 2). */
 .sieve-block--code {
   --sieve-focus-accent: var(--theme-accentGreen);
 }
@@ -1077,9 +1077,9 @@ pre.tiptap-code-block code {
 /* .sieve-block__body/__gutter/__code-area/__highlight/__edit (generic,
    unscoped) and the .sieve-block--log .log-tok- / .log-line- / .log--hide-noise
    families were the shared body-chrome + log-decoration rules every raw-text sieve
-   kind (code/log/diagram) drew from. Now that code (block/renderers/code-renderer.styles.js),
-   log (block/renderers/log-renderer.styles.js), and diagram
-   (block/renderers/diagram-renderer.styles.js) each carry their OWN scoped
+   kind (code/log/diagram) drew from. Now that code (renderers/code-renderer.styles.js),
+   log (renderers/log-renderer.styles.js), and diagram
+   (renderers/diagram-renderer.styles.js) each carry their OWN scoped
    copy, the generic rules had no consumer left and were removed here as
    part of the Phase 4 (#47) sweep — docs/design/specs/2026-07-20-block-renderer-extraction.md. */
 
@@ -1986,7 +1986,7 @@ pre.tiptap-code-block code {
 
 /* ── Chip tokens: the one definition of what a chip looks like (#38) ─────────
    THE VOCABULARY HAS THREE CALLERS AND ONE SET OF VALUES. `AttachmentChip`
-   (block/renderers/attachment-chip.js) draws the ai-block footer's chips and the
+   (renderers/attachment-chip.js) draws the ai-block footer's chips and the
    attachment block's; the composer's `.ask-chip` / `.ask-target-chip` below draw
    the Ask panel's. The composer cannot consume the component — it is not a
    block, so it carries no block styles, and importing a renderer into the shell

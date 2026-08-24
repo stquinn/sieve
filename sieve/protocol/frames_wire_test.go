@@ -79,21 +79,21 @@ func outboundWireCases() []wireCase {
 		{
 			name:    "insert-block",
 			channel: ChannelDocument,
-			frame:   NewInsertBlockFrame("code", "b1", attrs, 3, "```go\nx := 1\n```", "tok-9"),
-			golden:  `{"type":"insert-block","kind":"code","id":"b1","attrs":{"source":"x = 1","status":"done"},"index":3,"markdown":"` + "```go\\nx := 1\\n```" + `","token":"tok-9"}`,
+			frame:   NewInsertBlockFrame("code", "b1", attrs, 3, "```go\nx := 1\n```"),
+			golden:  `{"type":"insert-block","kind":"code","id":"b1","attrs":{"source":"x = 1","status":"done"},"index":3,"markdown":"` + "```go\\nx := 1\\n```" + `"}`,
 			legacy: map[string]interface{}{
 				"type": "insert-block", "kind": "code", "id": "b1", "attrs": attrs,
-				"index": 3, "markdown": "```go\nx := 1\n```", "token": "tok-9",
+				"index": 3, "markdown": "```go\nx := 1\n```",
 			},
 		},
 		{
 			name:    "insert-block with no attrs",
 			channel: ChannelDocument,
-			frame:   NewInsertBlockFrame("prose", "b2", nil, 0, "", ""),
-			golden:  `{"type":"insert-block","kind":"prose","id":"b2","attrs":null,"index":0,"markdown":"","token":""}`,
+			frame:   NewInsertBlockFrame("prose", "b2", nil, 0, ""),
+			golden:  `{"type":"insert-block","kind":"prose","id":"b2","attrs":null,"index":0,"markdown":""}`,
 			legacy: map[string]interface{}{
 				"type": "insert-block", "kind": "prose", "id": "b2", "attrs": map[string]interface{}(nil),
-				"index": 0, "markdown": "", "token": "",
+				"index": 0, "markdown": "",
 			},
 		},
 		{
@@ -112,6 +112,28 @@ func outboundWireCases() []wireCase {
 				"type": "replace-block", "oldId": "b1", "newId": "b2", "newKind": "diagram",
 				"attrs": attrs, "newYaml": "kind: diagram\n",
 			},
+		},
+		{
+			// A bare id is the whole payload: a block that left the container has
+			// nothing else to say about itself.
+			name:    "remove-block",
+			channel: ChannelDocument,
+			frame:   NewRemoveBlockFrame("b1"),
+			golden:  `{"type":"remove-block","id":"b1"}`,
+		},
+		{
+			name:    "order-changed",
+			channel: ChannelDocument,
+			frame:   NewOrderChangedFrame([]string{"b2", "b1", "b3"}),
+			golden:  `{"type":"order-changed","order":["b2","b1","b3"]}`,
+		},
+		{
+			// An emptied container still reorders to a LIST: the client installs
+			// what it is given, and a null would be a crash rather than "nothing".
+			name:    "order-changed for an emptied container",
+			channel: ChannelDocument,
+			frame:   NewOrderChangedFrame(nil),
+			golden:  `{"type":"order-changed","order":[]}`,
 		},
 		{
 			name:    "load-content",
@@ -492,14 +514,14 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 		},
 		{
 			name: "block-op",
-			raw:  `{"type":"block-op","opId":"op-5","uuid":"doc-1","op":{"type":"create-block","kind":"prose","attrs":{"content":"probe"},"index":0,"token":"tok-1"}}`,
+			raw:  `{"type":"block-op","opId":"op-5","uuid":"doc-1","op":{"type":"create-block","kind":"prose","attrs":{"content":"probe"},"index":0}}`,
 			into: &BlockOpFrame{},
 			want: &BlockOpFrame{
 				Type: TypeBlockOp, OpID: "op-5",
 				Op: block.BlockOp{
 					Type: "create-block", Kind: "prose",
 					Attrs: map[string]interface{}{"content": "probe"},
-					Index: 0, Token: "tok-1",
+					Index: 0,
 				},
 			},
 		},

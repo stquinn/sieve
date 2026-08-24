@@ -1,0 +1,16 @@
+{
+  "order": ["p1", "l1", "d1"],
+  "blocks": {
+    "p1": { "id": "p1", "kind": "prose", "attrs": { "content": "intro", "id": "p1" } },
+    "l1": { "id": "l1", "kind": "log", "attrs": { "source": "ERROR boom", "id": "l1" } },
+    "d1": { "id": "d1", "kind": "diagram", "attrs": { "source": "@startuml\nA->B\n@enduml", "format": "plantuml", "status": "COMPLETE", "svg": "<svg/>", "id": "d1" } }
+  },
+  "oracleEnvelopes": {
+    "p1": { "kind": "prose", "payload": { "content": "intro", "id": "p1", "kind": "prose" } },
+    "l1": { "kind": "log", "payload": { "source": "ERROR boom", "id": "l1", "kind": "log" } },
+    "d1": { "kind": "diagram", "payload": { "source": "@startuml\nA->B\n@enduml", "format": "plantuml", "status": "COMPLETE", "svg": "<svg/>", "id": "d1", "kind": "diagram" } },
+    "c1": { "kind": "code", "payload": { "source": "@startuml\nA->B\n@enduml", "id": "c1", "kind": "code" } },
+    "r1": { "kind": "command-result", "payload": { "title": "stats", "id": "r1" } }
+  },
+  "oracleOnlyIds": ["c1", "r1"]
+}

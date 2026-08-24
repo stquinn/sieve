@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { NodeViewRegistry } from '../src/static/block/sieve-block-extension.js'
+import { NodeViewRegistry } from '../src/static/lens/document-editor/surfaces/sieve-block-extension.js'
 
 // node-view-registry.test.js — the typed registry that replaced the former
 // `export let registerSieveRenderer` + registration-IIFE rebinding (issue #49

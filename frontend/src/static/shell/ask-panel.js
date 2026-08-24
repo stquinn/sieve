@@ -30,9 +30,9 @@ import { TargetChips } from './target-chips.js'
 export class AskPanel {
   /** @type {import('./workspace.js').SieveWorkspace} */
   #ws
-  /** @type {import('../block/command-service.js').CommandService|null} */
+  /** @type {import('./command-service.js').CommandService|null} */
   #commandService = null
-  /** @type {import('../block/mention-service.js').MentionService|null} */
+  /** @type {import('./mention-service.js').MentionService|null} */
   #mentionService = null
   /** @type {import('./command-badges.js').CommandBadges|null} */
   #badges = null
@@ -55,20 +55,20 @@ export class AskPanel {
   #pinned = false
   /** @type {ReturnType<typeof setTimeout>|null} label debounce */
   #labelTimeout = null
-  /** @type {import('../editor/selection-model.js').SelectionContext|null} focus coordinate pulled on jump-in */
+  /** @type {import('../lens/document-editor/selection-model.js').SelectionContext|null} focus coordinate pulled on jump-in */
   #focusReturn = null
-  /** @type {import('../editor/selection-model.js').SelectionContext|null} the context whose label is CURRENTLY shown — what send acts on (D-5: send == shown) */
+  /** @type {import('../lens/document-editor/selection-model.js').SelectionContext|null} the context whose label is CURRENTLY shown — what send acts on (D-5: send == shown) */
   #lastContext = null
-  /** @type {string} the document whose block truth the target chips are watching */
+  /** @type {string} the container whose truth the target chips are watching */
   #watchedUuid = ''
   /** @type {(() => void)|null} unsubscribe for that watch */
   #unwatchBlocks = null
 
   /**
    * @param {import('./workspace.js').SieveWorkspace} ws
-   * @param {import('../block/command-service.js').CommandService} [commandService]
+   * @param {import('./command-service.js').CommandService} [commandService]
    * @param {import('./command-badges.js').CommandBadges} [badges]
-   * @param {import('../block/mention-service.js').MentionService} [mentionService]
+   * @param {import('./mention-service.js').MentionService} [mentionService]
    */
   constructor(ws, commandService, badges, mentionService) {
     this.#ws = ws
@@ -82,13 +82,11 @@ export class AskPanel {
     this.#label = this.#panel.querySelector('.ask-popup__label')
     // The target row is built FIRST so it lands left of the attachment chips:
     // what the message acts on, then what it drags along. It is view-only and
-    // holds no model — the editor owns the selection it draws. The BlockService
-    // rides in as its read seam: a per-block chip's label is derived from the
-    // block cache at paint time, so nothing about it travels on the selection.
-    this.#targetChips = new TargetChips(
-      this.#panel.querySelector('.ask-popup__footer'),
-      (ws && /** @type {any} */ (ws).blockService) || null,
-    )
+    // holds no model — the editor owns the selection it draws. Its read seam is
+    // the ACTIVE container's provider, pointed at it by #watchBlocks below: a
+    // per-block chip's label is derived at paint time, so nothing about it
+    // travels on the selection.
+    this.#targetChips = new TargetChips(this.#panel.querySelector('.ask-popup__footer'))
     // The attachment model comes next: the `@` provider's accept-sink writes
     // into it, so it must exist before the picker can offer anything. It takes
     // the composer too — the `@Title` tokens live there and the chips are a VIEW
@@ -390,7 +388,7 @@ export class AskPanel {
   /**
    * The P3.D boot closure, now OWNED here: on a meaningful selection change,
    * re-render the label when the panel is open. NO glow (dropped in P4.B).
-   * @param {import('../editor/selection-model.js').SelectionContext|null} ctx
+   * @param {import('../lens/document-editor/selection-model.js').SelectionContext|null} ctx
    */
   #onSelectionUpdate(ctx) {
     if (!ctx) return
@@ -453,19 +451,30 @@ export class AskPanel {
     if (this.#unwatchBlocks) this.#unwatchBlocks()
     this.#unwatchBlocks = null
     this.#watchedUuid = uuid || ''
-    const docs = (this.#ws && /** @type {any} */ (this.#ws).documentService) || null
-    if (!this.#watchedUuid || !docs || !this.#targetChips) return
-    this.#unwatchBlocks = docs.onBlockUpdated(
-      this.#watchedUuid,
-      /** @param {any} block */ (block) => { if (this.#targetChips) this.#targetChips.blockUpdated(block) },
-    )
+    if (!this.#targetChips) return
+    const tab = (this.#ws && /** @type {any} */ (this.#ws).activeTab) || null
+    const mount = (tab && tab.mount) || null
+    const provider = mount ? mount.provider : null
+    this.#targetChips.setSource(provider)
+    if (!this.#watchedUuid || !provider) return
+    // A SECOND subscriber on the same container, alongside the mounted lens. The
+    // model fans out to as many followers as ask for it, which is the property
+    // that lets a panel outside the editor stay current without asking the editor
+    // anything.
+    const listener = {
+      onChanged: (/** @type {any} */ change) => {
+        if (this.#targetChips) this.#targetChips.containerChanged(change)
+      },
+    }
+    provider.subscribe(listener)
+    this.#unwatchBlocks = () => provider.unsubscribe(listener)
   }
 
   /**
    * The KNOWN command the composer names right now, or null. Resolution is the
    * CommandService's — one place decides what a command is, and "known" means
    * exactly what dispatch means by it.
-   * @returns {import('../block/command-service.js').CommandDescriptor|null}
+   * @returns {import('./command-service.js').CommandDescriptor|null}
    */
   #activeCommand() {
     const cs = this.#commands()
@@ -473,7 +482,7 @@ export class AskPanel {
     return resolved ? resolved.cmd : null
   }
 
-  /** @returns {import('../block/command-service.js').CommandService|null} the injected service, or the workspace's */
+  /** @returns {import('./command-service.js').CommandService|null} the injected service, or the workspace's */
   #commands() {
     return this.#commandService || (this.#ws && /** @type {any} */ (this.#ws).commandService) || null
   }

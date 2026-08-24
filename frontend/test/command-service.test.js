@@ -1,8 +1,8 @@
 // @ts-check
 import { describe, it, expect, beforeEach } from 'vitest'
-import { CommandService } from '../src/static/block/command-service.js'
-import { ContractViolation } from '../src/static/block/sieve-block.js'
-import { WorkspaceService } from '../src/static/block/workspace-service.js'
+import { CommandService } from '../src/static/shell/command-service.js'
+import { ContractViolation } from '../src/static/contract/sieve-block.js'
+import { WorkspaceService } from '../src/static/shell/workspace-service.js'
 
 class FakeWebSocket {
   /** @type {any} */

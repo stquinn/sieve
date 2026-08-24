@@ -1,6 +1,6 @@
 // @ts-check
 // sanctioned-markdown.test.js — DoD coverage for
-// block/renderers/sanctioned-markdown.js, the dedicated html:false
+// renderers/sanctioned-markdown.js, the dedicated html:false
 // markdown-it instance every renderer fill (title, body) runs on
 // (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md §Content lanes
 // / §Body/title pull-back — DEFECT SEC-B, issue #48). Uses the REAL
@@ -24,7 +24,7 @@ describe('sanctioned-markdown', () => {
   })
 
   it('preserves markdown feature parity: emphasis, inline code, links, ==mark==', async () => {
-    const { renderSanctionedMarkdown } = await import('../src/static/block/renderers/sanctioned-markdown.js')
+    const { renderSanctionedMarkdown } = await import('../src/static/renderers/sanctioned-markdown.js')
     const html = renderSanctionedMarkdown('*em* `code` [link](https://example.com) ==marked==')
     expect(html).toContain('<em>em</em>')
     expect(html).toContain('<code>code</code>')
@@ -33,7 +33,7 @@ describe('sanctioned-markdown', () => {
   })
 
   it('SECURITY (DEFECT SEC-B, #48): html:false — raw HTML embedded in markdown text renders escaped/inert, never live DOM', async () => {
-    const { renderSanctionedMarkdown } = await import('../src/static/block/renderers/sanctioned-markdown.js')
+    const { renderSanctionedMarkdown } = await import('../src/static/renderers/sanctioned-markdown.js')
     const hostile = 'before <img src=x onerror="window.__pwned = true"> after'
     const html = renderSanctionedMarkdown(hostile)
     expect(html).not.toContain('<img')
@@ -41,7 +41,7 @@ describe('sanctioned-markdown', () => {
   })
 
   it('SECURITY (DEFECT SEC-B, #48): a <script> tag embedded in markdown text also renders inert', async () => {
-    const { renderSanctionedMarkdown } = await import('../src/static/block/renderers/sanctioned-markdown.js')
+    const { renderSanctionedMarkdown } = await import('../src/static/renderers/sanctioned-markdown.js')
     const html = renderSanctionedMarkdown('<script>window.__pwned2 = true</script>')
     expect(html).not.toContain('<script>')
     expect(html).toContain('&lt;script&gt;')
@@ -49,14 +49,14 @@ describe('sanctioned-markdown', () => {
 
   it('falls back to HTML-escaped plain text when the vendor MarkdownIt export is unavailable', async () => {
     delete /** @type {any} */ (globalThis).TipTap.MarkdownIt
-    const { renderSanctionedMarkdown } = await import('../src/static/block/renderers/sanctioned-markdown.js')
+    const { renderSanctionedMarkdown } = await import('../src/static/renderers/sanctioned-markdown.js')
     const html = renderSanctionedMarkdown('<script>alert(1)</script>')
     expect(html).not.toContain('<script>')
     expect(html).toBe('&lt;script&gt;alert(1)&lt;/script&gt;')
   })
 
   it('points a relative image src at the store file route, and leaves every other src alone', async () => {
-    const { renderSanctionedMarkdown } = await import('../src/static/block/renderers/sanctioned-markdown.js')
+    const { renderSanctionedMarkdown } = await import('../src/static/renderers/sanctioned-markdown.js')
     // A rendered fill is injected into the app shell, so a relative src would
     // otherwise be resolved against the shell's own URL and 404.
     expect(renderSanctionedMarkdown('![d](diagrams/flow.png)'))
@@ -68,14 +68,14 @@ describe('sanctioned-markdown', () => {
   })
 
   it('keeps the image alt text markdown-it produced (the rule delegates, it does not re-render)', async () => {
-    const { renderSanctionedMarkdown } = await import('../src/static/block/renderers/sanctioned-markdown.js')
+    const { renderSanctionedMarkdown } = await import('../src/static/renderers/sanctioned-markdown.js')
     expect(renderSanctionedMarkdown('![the flow](diagrams/flow.png "t")'))
       .toContain('alt="the flow"')
   })
 
   it('sanctionedMarkdownIt() constructs the instance lazily and caches it (register the mark plugin exactly once)', async () => {
     const useSpy = vi.spyOn(MarkdownIt.prototype, 'use')
-    const { sanctionedMarkdownIt } = await import('../src/static/block/renderers/sanctioned-markdown.js')
+    const { sanctionedMarkdownIt } = await import('../src/static/renderers/sanctioned-markdown.js')
     const first = sanctionedMarkdownIt()
     const second = sanctionedMarkdownIt()
     expect(first).toBe(second)

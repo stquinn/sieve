@@ -24,7 +24,7 @@ func newWsTestServerWithResolvableNodes(t *testing.T) (*httptest.Server, *sieve.
 	t.Helper()
 	srv, sp, _, _ := newWsTestServer(t)
 	uri := domain.NewContainerAddress(resolveContainerUUID).String()
-	src := &stubSource{nodes: map[string]domain.Node{
+	src := &stubSource{nodes: map[string]domain.NodeDescriptor{
 		uri: {URI: uri, UUID: resolveContainerUUID, Kind: "note", Title: "Auth Design"},
 	}}
 	sp.Nodes = editor.NewRouter(src)

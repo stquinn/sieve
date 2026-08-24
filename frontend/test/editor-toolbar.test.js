@@ -5,28 +5,28 @@
 // active-state wiring. Headless (happy-dom) with fake editors/surfaces.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { ToolbarButton, ButtonGroup } from '../src/static/shell/toolbar-button.js'
-import { EditorToolbar } from '../src/static/editor/editor-toolbar.js'
-import { WysiwygSurface } from '../src/static/editor/surfaces/wysiwyg-surface.js'
-import { MarkdownSurface } from '../src/static/editor/surfaces/markdown-surface.js'
-import { AbstractSurface } from '../src/static/editor/surfaces/abstract-surface.js'
-import { registerBlockKind } from '../src/static/block/block-kinds.js'
+import { ToolbarButton, ButtonGroup } from '../src/static/lens/document-editor/toolbar-button.js'
+import { EditorToolbar } from '../src/static/lens/document-editor/editor-toolbar.js'
+import { WysiwygSurface } from '../src/static/lens/document-editor/surfaces/wysiwyg-surface.js'
+import { MarkdownSurface } from '../src/static/lens/document-editor/surfaces/markdown-surface.js'
+import { AbstractSurface } from '../src/static/lens/document-editor/surfaces/abstract-surface.js'
+import { registerBlockKind } from '../src/static/renderers/block-kinds.js'
 
 // P4.E: wysiwyg-surface imports its app helpers from their owner modules; four of
 // those owners (extensions.js, block-chrome.js, ai-target-decoration.js,
 // prose-block.js) execute vendor calls at IMPORT time and would crash under the
 // bare test/setup.js TipTap seed. This file never mounts a surface, so inert
 // mocks satisfy the imports.
-vi.mock('../src/static/editor/extensions.js', () => ({
+vi.mock('../src/static/lens/extensions.js', () => ({
   Search: {}, SelectionHighlight: {}, HighlightMark: {},
   AiShortcuts: { configure: () => ({}) },
   buildAiContext: vi.fn(), applyTargetHighlight: vi.fn(),
 }))
-vi.mock('../src/static/editor/block-chrome.js', () => ({
+vi.mock('../src/static/lens/document-editor/block-chrome.js', () => ({
   BlockChrome: {}, getBlockSelectionRange: vi.fn(),
 }))
-vi.mock('../src/static/ai/ai-target-decoration.js', () => ({ AiTargetDecoration: {} }))
-vi.mock('../src/static/block/prose-block.js', () => ({ BlockId: {} }))
+vi.mock('../src/static/lens/document-editor/surfaces/ai-target-decoration.js', () => ({ AiTargetDecoration: {} }))
+vi.mock('../src/static/lens/document-editor/surfaces/prose-block.js', () => ({ BlockId: {} }))
 
 afterEach(() => { document.body.innerHTML = ''; vi.restoreAllMocks() })
 
@@ -362,7 +362,7 @@ describe('EditorToolbar composition (P4.D)', () => {
 
 // ── P4.E: insert-button icons come from the kind registry via the ES import ─────
 // #kindIcon used to read getSieveIcon off the shared bus (the transitional icon
-// bus); it now imports getSieveIcon from block/block-kinds.js — the registry
+// bus); it now imports getSieveIcon from renderers/block-kinds.js — the registry
 // lookup. RED before the rewire: with no bus-published getSieveIcon the buttons
 // rendered '' even though the registry declared an icon.
 

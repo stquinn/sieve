@@ -6,9 +6,9 @@
 // PM-managed body (the adapter's handleBuild claim of the BODY region).
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import MarkdownIt from 'markdown-it'
-import { WebClipRenderer } from '../src/static/block/renderers/web-clip-renderer.js'
-import { SieveBlock } from '../src/static/block/sieve-block.js'
-import { serviceRig } from './helpers/service-rig.js'
+import { WebClipRenderer } from '../src/static/renderers/web-clip-renderer.js'
+import { SieveBlock } from '../src/static/contract/sieve-block.js'
+import { providerRig } from './helpers/service-rig.js'
 
 /** @param {object} payload */
 function blk(payload) { return new SieveBlock('web-clip', payload) }
@@ -46,8 +46,8 @@ function isVisible(el) {
 }
 
 /** render() ALONE = the complete block. */
-function mount(attrs, service) {
-  const renderer = new WebClipRenderer(blk(attrs), service || null)
+function mount(attrs, provider) {
+  const renderer = new WebClipRenderer(blk(attrs), provider || null)
   const dom = renderer.render()
   return { renderer, dom }
 }
@@ -130,9 +130,9 @@ describe('WebClipRenderer (Phase 4 — bare-page DoD)', () => {
     expect(isVisible(dom.querySelector('.web-clip-block__retry'))).toBe(true)
   })
 
-  it('retry button frames the FROZEN retry-block-job through a real BlockService (semantic verb)', () => {
-    const { service, sock } = serviceRig({ blocks: [{ id: 'wc-g7b8', kind: 'web-clip' }] })
-    const { dom } = mount({ id: 'wc-g7b8', source: 'example.com', mode: 'fetch', status: 'ERROR', error: 'boom' }, service);
+  it('retry button frames the FROZEN retry-block-job through a real ContainerTransport (semantic verb)', () => {
+    const { provider, sock } = providerRig({ blocks: [{ id: 'wc-g7b8', kind: 'web-clip' }] })
+    const { dom } = mount({ id: 'wc-g7b8', source: 'example.com', mode: 'fetch', status: 'ERROR', error: 'boom' }, provider);
     /** @type {HTMLButtonElement} */ (dom.querySelector('.web-clip-block__retry')).click()
     expect(sock.sentOfType('retry-block-job')).toEqual([
       { type: 'retry-block-job', uuid: 'doc-1', id: 'wc-g7b8' },

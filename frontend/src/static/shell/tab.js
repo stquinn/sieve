@@ -7,12 +7,13 @@
 // dispatch. Dual-use ES module: `export` for vitest imports, window.* for
 // classic-script access.
 
-import { AbstractEditor } from '../editor/abstract-editor.js'
-import { NoteEditor } from '../editor/note-editor.js'
-import { PromptEditor } from '../editor/prompt-editor.js'
-import { EditorMode } from '../editor/editor-mode.js'
+import { AbstractEditor } from '../lens/abstract-editor.js'
+import { NoteEditor } from '../lens/document-editor/note-editor.js'
+import { PromptEditor } from '../lens/prompt/prompt-editor.js'
+import { EditorMode } from '../lens/document-editor/editor-mode.js'
+import { MountBinding } from './mount-binding.js'
 
-/** @typedef {import('../editor/editor-mode.js').EditorModeValue} EditorModeValue */
+/** @typedef {import('../lens/document-editor/editor-mode.js').EditorModeValue} EditorModeValue */
 
 export class SieveTab {
   /** @type {string} */
@@ -37,13 +38,25 @@ export class SieveTab {
   #unsubEditor = null
 
   /**
+   * The MOUNT this tab's editor is bound to (issue #96): one container, its
+   * follower model, its provider and its presence seam. It is the tab's, not the
+   * editor's, because it outlives an editor swap — a mode flip builds a new
+   * surface against the SAME container — and because closing it is a host act.
+   * @type {MountBinding|null}
+   */
+  #mount = null
+
+  /** @type {(() => void)|null} unsubscribe from the mount's selection adverts */
+  #unsubAdvert = null
+
+  /**
    * Tab-level selection-update registry (P3.B). Mirrors the workspace's
    * onActiveTabChanged shape: republishes the attached editor's
    * `selection-update` context. The registry belongs to the Tab IDENTITY (not the
    * editor), so its subscribers keep working when a new editor attaches after a
    * mode flip / re-init — attachEditor re-subscribes the forward, the listeners
    * are untouched.
-   * @type {Array<(ctx: import('../editor/selection-model.js').SelectionContext) => void>}
+   * @type {Array<(ctx: import('../lens/document-editor/selection-model.js').SelectionContext) => void>}
    */
   #selectionListeners = []
 
@@ -86,12 +99,46 @@ export class SieveTab {
   get editor() { return this.#editor }
 
   /**
-   * Editor factory — the SOLE place the `prompt:` prefix decides an editor type.
-   * A prompt document has no WebSocket (PromptEditor); everything else is a
-   * NoteEditor that owns a WS channel.
+   * The mount this tab's editor is bound to, or null before one is attached.
+   * @returns {MountBinding|null}
+   */
+  get mount() { return this.#mount }
+
+  /**
+   * Records the mount for this tab and takes up its presence stream, so the
+   * tab's own selection registry keeps working across an editor swap.
+   * @param {MountBinding} mount
+   */
+  attachMount(mount) {
+    if (!(mount instanceof MountBinding)) throw new Error('SieveTab.attachMount: expected a MountBinding')
+    if (this.#unsubAdvert) { this.#unsubAdvert(); this.#unsubAdvert = null }
+    this.#mount = mount
+    this.#unsubAdvert = mount.onSelectionAdvert((ctx) => this.#notifySelectionListeners(ctx))
+  }
+
+  /**
+   * Closes and forgets this tab's mount: the container's channel closes and its
+   * follower model is discarded. Idempotent.
+   */
+  detachMount() {
+    if (this.#unsubAdvert) { this.#unsubAdvert(); this.#unsubAdvert = null }
+    if (this.#mount) { this.#mount.close(); this.#mount = null }
+  }
+
+  /**
+   * The tab's current selection context, pulled from the MOUNT — the host end of
+   * the presence seam, which holds the last advert the lens made.
+   * @returns {any|null}
+   */
+  getSelectionContext() { return this.#mount ? this.#mount.getSelectionContext() : null }
+
+  /**
+   * Editor factory — the SOLE place the `prompt:` prefix decides a lens type. It
+   * is a CAPABILITY decision: a prompt's container speaks whole-content only, so
+   * it gets the lens whose constructor demands only that.
    * @param {string} uuid — document uuid (matches this tab's uuid)
    * @param {object} [options] — passed to the concrete editor constructor
-   *   (documentService, onServerMessage, toolbar, …)
+   *   (provider, loadContainer, mentionService, toolbar, …)
    * @returns {AbstractEditor}
    */
   createEditor(uuid, options = {}) {
@@ -110,19 +157,22 @@ export class SieveTab {
   attachEditor(ed) {
     if (!(ed instanceof AbstractEditor)) throw new Error('SieveTab.attachEditor: expected SieveEditor')
     this.#editor = ed
+    // Presence flows the other way: the lens advertises to the MOUNT, which
+    // republishes to this tab's registry (see attachMount). Only the editor's own
+    // producer events are consumed here.
+    if (this.#mount) ed.setSelectionListener(this.#mount)
     this.#unsubEditor = ed.onEvent((e) => {
       if (e.type === 'mode-changed') this.#mode = e.mode
-      else if (e.type === 'selection-update') this.#notifySelectionListeners(e.context)
       else if (e.type === 'stats') this.#notifyStatsListeners(e)
     })
   }
 
   /**
-   * Registers a listener for this tab's selection-update stream (the attached
-   * editor's SelectionModel push, forwarded here). Returns an unsubscribe.
-   * Mirrors SieveWorkspace.onActiveTabChanged. Survives editor swaps — the
-   * registry lives on the Tab identity, not the editor.
-   * @param {(ctx: import('../editor/selection-model.js').SelectionContext) => void} fn
+   * Registers a listener for this tab's selection-update stream (the mounted
+   * lens's presence advert, republished here). Returns an unsubscribe. Mirrors
+   * SieveWorkspace.onActiveTabChanged. Survives editor swaps — the registry lives
+   * on the Tab identity, not the editor.
+   * @param {(ctx: import('../lens/document-editor/selection-model.js').SelectionContext) => void} fn
    * @returns {() => void} unsubscribe
    */
   onSelectionUpdate(fn) {
@@ -130,7 +180,7 @@ export class SieveTab {
     return () => { this.#selectionListeners = this.#selectionListeners.filter((l) => l !== fn) }
   }
 
-  /** @param {import('../editor/selection-model.js').SelectionContext} ctx */
+  /** @param {import('../lens/document-editor/selection-model.js').SelectionContext} ctx */
   #notifySelectionListeners(ctx) {
     for (const fn of this.#selectionListeners) {
       try { fn(ctx) } catch (e) { console.error('[SieveTab] selectionUpdate listener threw', e) }

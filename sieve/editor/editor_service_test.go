@@ -2,6 +2,7 @@ package editor
 
 import (
 	"context"
+	"sieve/ident"
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
 	"sieve/sieve/domain"
@@ -628,12 +629,26 @@ func (f fakeLinkPreview) FetchFull(string) domain.LinkPreviewResult {
 type mockLifecycleListener struct {
 	onCreated func(uuid, kind, blockID, markdown string)
 	onUpdated func(uuid, blockID string, attrs map[string]interface{})
+	onRemoved func(uuid, blockID string)
+	onOrder   func(uuid string, order []string)
 }
 
 func (l *mockLifecycleListener) OnBlockReplaced(uuid, oldID, newKind, newID string, attrs map[string]interface{}, markdown string) {
 }
 
-func (l *mockLifecycleListener) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int, token string) {
+func (l *mockLifecycleListener) OnBlockRemoved(uuid, blockID string) {
+	if l.onRemoved != nil {
+		l.onRemoved(uuid, blockID)
+	}
+}
+
+func (l *mockLifecycleListener) OnOrderChanged(uuid string, order []string) {
+	if l.onOrder != nil {
+		l.onOrder(uuid, order)
+	}
+}
+
+func (l *mockLifecycleListener) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int) {
 	if l.onCreated != nil {
 		l.onCreated(uuid, kind, blockID, markdown)
 	}
@@ -645,16 +660,22 @@ func (l *mockLifecycleListener) OnBlockUpdated(uuid, blockID string, attrs map[s
 	}
 }
 
-type tokenCaptureListener struct{ id, token string }
+type idCaptureListener struct{ id string }
 
-func (l *tokenCaptureListener) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int, token string) {
-	l.id, l.token = blockID, token
+func (l *idCaptureListener) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int) {
+	l.id = blockID
 }
-func (l *tokenCaptureListener) OnBlockUpdated(uuid, blockID string, attrs map[string]interface{}) {}
-func (l *tokenCaptureListener) OnBlockReplaced(uuid, oldID, newKind, newID string, attrs map[string]interface{}, markdown string) {
+func (l *idCaptureListener) OnBlockUpdated(uuid, blockID string, attrs map[string]interface{}) {}
+func (l *idCaptureListener) OnBlockReplaced(uuid, oldID, newKind, newID string, attrs map[string]interface{}, markdown string) {
 }
+func (l *idCaptureListener) OnBlockRemoved(uuid, blockID string)        {}
+func (l *idCaptureListener) OnOrderChanged(uuid string, order []string) {}
 
-func TestHandleBlockOp_proseCreateMintsIdAndEchoesToken(t *testing.T) {
+// A create-block that names no id is minted a durable one by Go, which is the
+// sole authority over ids. There is no transient handle to correlate: a lens
+// that wants to find its own newborn states the UUIDv7 it minted (ident.New is
+// unique without coordination), and one that states nothing gets Go's.
+func TestHandleBlockOp_proseCreateMintsDurableID(t *testing.T) {
 	resetRegistry()
 	block.RegisterProcessor(processors.NewProseProcessor(block.BlockServices{}))
 
@@ -663,21 +684,21 @@ func TestHandleBlockOp_proseCreateMintsIdAndEchoesToken(t *testing.T) {
 	doc, _ := ds.New()
 	_ = es.Open(doc.UUID())
 
-	capListener := &tokenCaptureListener{}
+	capListener := &idCaptureListener{}
 	es.SetLifecycleListener(capListener)
 
 	err := es.HandleBlockOp(doc.UUID(), block.BlockOp{
-		Type: "create-block", Kind: "prose", BlockID: "", Token: "tok-abc",
+		Type: "create-block", Kind: "prose", BlockID: "",
 		Attrs: map[string]interface{}{"content": "hello"}, Index: 0,
 	})
 	if err != nil {
 		t.Fatalf("HandleBlockOp: %v", err)
 	}
-	if capListener.token != "tok-abc" {
-		t.Fatalf("token not echoed: got %q want tok-abc", capListener.token)
-	}
 	if capListener.id == "" || strings.HasPrefix(capListener.id, "tok-") {
 		t.Fatalf("expected a backend-minted durable id, got %q", capListener.id)
+	}
+	if !ident.Valid(capListener.id) {
+		t.Fatalf("expected a UUID from ident.New, got %q", capListener.id)
 	}
 }
 

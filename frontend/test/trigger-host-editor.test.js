@@ -24,15 +24,15 @@ import { Editor, Node, Extension } from '@tiptap/core'
 import { StarterKit } from '@tiptap/starter-kit'
 import { Plugin, Selection, TextSelection, NodeSelection } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
-import { registerBlockKind } from '../src/static/block/block-kinds.js'
+import { registerBlockKind } from '../src/static/renderers/block-kinds.js'
 import {
   buildInteractionPolicyExtension, policyEnterKeydown, triggersSuppressed, CODE_TEXT_POLICY, DEFAULT_POLICY, policyFor,
-} from '../src/static/editor/interaction-policy.js'
-import { CaretTriggerPort } from '../src/static/editor/surfaces/caret-trigger-port.js'
+} from '../src/static/lens/document-editor/interaction-policy.js'
+import { CaretTriggerPort } from '../src/static/lens/document-editor/surfaces/caret-trigger-port.js'
 import { ProseMirrorHost, CaretPlacement, TriggerHost, TextareaHost } from '../src/static/shell/trigger-host.js'
 import { TriggerPopover } from '../src/static/shell/trigger-popover.js'
 import { MentionProvider } from '../src/static/shell/trigger-providers.js'
-import { ContractViolation } from '../src/static/block/sieve-block.js'
+import { ContractViolation } from '../src/static/contract/sieve-block.js'
 
 // CaretTriggerPort reads TextSelection off the vendor bag (test/setup.js installs
 // it). Assign, never reassign — a reassignment orphans the captured bag.

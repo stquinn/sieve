@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Schema, Fragment } from '@tiptap/pm/model'
-import { proseBlockNodes, proseGroupMarkdownSerialize } from '../src/static/block/prose-group.js'
+import { proseBlockNodes, proseGroupMarkdownSerialize } from '../src/static/lens/document-editor/surfaces/prose-group.js'
 
 // A minimal schema mirroring the live doc's relevant shape: native prose nodes
 // (group "block") + the proseGroup container (group "block", content "block+").

@@ -26,8 +26,8 @@ reconciled to the APPROVED **Block Renderer Contract rev 2** —
 everything in this section. EVERY structured kind (7 of 7 — the eighth,
 `smart-link`, was deleted by #67 along with the inline block mode itself:
 `docs/design/archive/specs/2026-07-27-inline-block-removal-links-decision.md`)
-now has a `BlockRenderer` subclass in `block/renderers/` held by a thin
-NodeView adapter in `editor/surfaces/node-views/` (`<kind>-node-view.js` —
+now has a `BlockRenderer` subclass in `renderers/` held by a thin
+NodeView adapter in `lens/document-editor/surfaces/node-views/` (`<kind>-node-view.js` —
 moved+renamed from `processors/<kind>-renderer.js` 2026-07-21: they are
 NodeViews, the old names clashed with the real renderers, and PM enters the
 JS graph only in surfaces). **This is the required pattern for any new
@@ -45,7 +45,7 @@ environment (see the spec's Problem section — the fullscreen lightbox bug,
 
 - **Renderer (JS class)** — attrs in, DOM out, sheet carried. A **real ES
   class hierarchy**: extends `BlockRenderer`, defined in
-  `frontend/src/static/block/renderers/block-renderer.js` (its own `@ts-check`'d
+  `frontend/src/static/renderers/block-renderer.js` (its own `@ts-check`'d
   module; imported DIRECTLY — the old `base/fenced-block-base.js` re-export shim
   was dissolved by #49 P5):
 
@@ -86,7 +86,7 @@ environment (see the spec's Problem section — the fullscreen lightbox bug,
   }
   ```
 
-  Outbound effects flow through the **BlockService** (constructed in the
+  Outbound effects flow through the **ContainerTransport** (constructed in the
   Workspace composition root, handed down — contract §service pair): the
   base's `retry()`/`setContent()` and the protected `_pushAttrs`/`_pushContent`
   route `blockId`-addressed calls to the applier the kind's adapter registers.
@@ -139,7 +139,7 @@ environment (see the spec's Problem section — the fullscreen lightbox bug,
   SEC-B / issue #48): `BlockRenderer` ships two default methods,
   `fillTitle(el, text)` and `fillBody(el, markdown)` — both run the
   SANCTIONED dedicated markdown-it instance (html:false;
-  `block/renderers/sanctioned-markdown.js`) followed by `applyHighlighting`.
+  `renderers/sanctioned-markdown.js`) followed by `applyHighlighting`.
   **Never** the editor's own (html:true) markdown-it instance — that instance
   stays confined to PM parse paths where the schema filters raw HTML before
   it reaches the DOM. TITLE rendering is renderer-side in *every* lens
@@ -165,7 +165,7 @@ environment (see the spec's Problem section — the fullscreen lightbox bug,
   is live PM content, a `handleBuild` interceptor that CLAIMS the body region
   (returns `false` for `REGION.BODY` after decorating the container — the
   base skips the hook, records the claim, and the claimed container is PM's
-  `contentDOM`). It registers the kind's **v1 applier** with the BlockService
+  `contentDOM`). It registers the kind's **v1 applier** with the ContainerTransport
   (`owns`/`updateAttributes`/`setContent`/`retry` — where PM knowledge like
   render-ward caret capture lives; unregister in `destroy`), calls
   `renderer.update(sieveBlockFor(updatedNode, …))` from the TipTap `update()`
@@ -177,7 +177,7 @@ environment (see the spec's Problem section — the fullscreen lightbox bug,
   registration (`buildPlugins`) — and stays thin: schema/lifecycle glue, not
   look-and-feel.
 
-**Style registration mechanism** (`frontend/src/static/block/renderers/renderer-style-registry.js`):
+**Style registration mechanism** (`frontend/src/static/renderers/renderer-style-registry.js`):
 a `RendererStyleRegistry` registers a class's `static styles` **exactly once
 per class**, the first time an instance is constructed, behind one
 interchangeable strategy contract (`inject(cssText, key)`):
@@ -385,10 +385,10 @@ hub.Broadcast("ai:job-ended",   mustJSON(map[string]string{"jobId": blkID}))
 
 `GET /api/ai/active-jobs` is served by `h.JobTracker.ServeActiveJobs` and returns all currently in-flight jobs — used by JS to restore state on tab switch.
 
-**JS-side:** `block/renderers/job-status.js` owns job tracking — a stateful `JobStatusTracker` singleton (seeded from `/api/jobs` on module load, kept current by the `sse:jobs:changed` full-snapshot listener). It exports `isJobActive(id)` / `isJobQueued(id)` / `isJobStale(createdAt, id)` / `isStaleByTime(createdAt)` — import and call them in every block extension's `isStale`:
+**JS-side:** `renderers/job-status.js` owns job tracking — a stateful `JobStatusTracker` singleton (seeded from `/api/jobs` on module load, kept current by the `sse:jobs:changed` full-snapshot listener). It exports `isJobActive(id)` / `isJobQueued(id)` / `isJobStale(createdAt, id)` / `isStaleByTime(createdAt)` — import and call them in every block extension's `isStale`:
 
 ```js
-import { isStaleByTime, isJobActive } from '../../../block/renderers/job-status.js'
+import { isStaleByTime, isJobActive } from '../../../renderers/job-status.js'
 
 function isStale(createdAt, id) {
   if (isJobActive(id)) return false
@@ -426,15 +426,15 @@ The old pattern of `window.__sieveActiveWebClips.add/delete` + `SieveAI.trackJob
 
 ---
 
-## Rule 10 — JS Extension Structure: Import Shared Utilities from `block/renderers/`
+## Rule 10 — JS Extension Structure: Import Shared Utilities from `renderers/`
 
-All fenced block extensions are loaded as `type="module"`. Import shared utilities directly from their owning modules in `frontend/src/static/block/renderers/` (the old `base/fenced-block-base.js` single import point was dissolved by #49 P5) — do not duplicate them:
+All fenced block extensions are loaded as `type="module"`. Import shared utilities directly from their owning modules in `frontend/src/static/renderers/` (the old `base/fenced-block-base.js` single import point was dissolved by #49 P5) — do not duplicate them:
 
 ```js
-import { esc } from '../../../block/renderers/html-escape.js'
-import { renderSanctionedMarkdown } from '../../../block/renderers/sanctioned-markdown.js'
-import { applyHighlighting } from '../../../block/renderers/highlighting.js'
-import { isStaleByTime, isJobActive } from '../../../block/renderers/job-status.js'
+import { esc } from '../../../renderers/html-escape.js'
+import { renderSanctionedMarkdown } from '../../../renderers/sanctioned-markdown.js'
+import { applyHighlighting } from '../../../renderers/highlighting.js'
+import { isStaleByTime, isJobActive } from '../../../renderers/job-status.js'
 ```
 
 | Export (module) | Purpose |
@@ -602,7 +602,7 @@ if (!aiBlockId) {
 - [ ] Background goroutine: calls `h.JobTracker.Start` + `hub.Broadcast("ai:job-started", ...)` at start; `h.JobTracker.End` + `hub.Broadcast("ai:job-ended", ...)` after SSE resolution broadcast
 
 **JS side**
-- [ ] Extension file is `type="module"`; import shared utilities directly from `block/renderers/` (`esc` ← html-escape.js, `renderSanctionedMarkdown` ← sanctioned-markdown.js, `applyHighlighting` ← highlighting.js, `isStaleByTime`/`isJobActive` ← job-status.js — Rule 10)
+- [ ] Extension file is `type="module"`; import shared utilities directly from `renderers/` (`esc` ← html-escape.js, `renderSanctionedMarkdown` ← sanctioned-markdown.js, `applyHighlighting` ← highlighting.js, `isStaleByTime`/`isJobActive` ← job-status.js — Rule 10)
 - [ ] `flushSave().then(...)` wraps every `fetch` that causes Go to write the document
 - [ ] TipTap Node extension:
   - [ ] Fence hook replaces ` ```tag ``` ` → `<div data-type="...">` with `data-*` attributes including `data-raw-yaml`
@@ -612,7 +612,7 @@ if (!aiBlockId) {
   - [ ] Markdown serialiser replays `node.attrs.rawYaml` verbatim
 - [ ] After `contentEl.innerHTML = renderMarkdown(...)` → call `applyHighlighting(contentEl)`
 - [ ] Block identity `data-*` (`data-id`/`data-kind`) is stamped by the renderer's own `render()` from the envelope — adapters never write renderer DOM
-- [ ] `isStale(createdAt, id)`: call `isJobActive(id)` first (from `block/renderers/job-status.js` — or just use its `isJobStale(createdAt, id)`), then `return isStaleByTime(createdAt)` — no manual Set management needed
+- [ ] `isStale(createdAt, id)`: call `isJobActive(id)` first (from `renderers/job-status.js` — or just use its `isJobStale(createdAt, id)`), then `return isStaleByTime(createdAt)` — no manual Set management needed
 - [ ] Context menu dispatches `sieve:contextmenu`; sets node selection before opening
 - [ ] SSE/server completion arrives as a render-back op (insert-block / replace-block / block-attrs-updated) applied as a TRACKED transaction — never `softReloadContent` for an operation (that wipes undo; backend-is-source-of-truth rule)
 
@@ -624,6 +624,6 @@ if (!aiBlockId) {
 - [ ] Look-and-feel lives in a `BlockRenderer` subclass: base constructor `(block, blockService?, handleBuild?)` (typed `SieveBlock` envelope, never a raw attr map), `build*` region hooks + base `render()`, `update(block)` calling `super.update(block)` FIRST, `destroy()`; zero PM/editor/`window.*`-app-bus imports; state read from `this.block.payload` only (no shadow attr caches)
 - [ ] Outbound effects are SEMANTIC VERBS (core `setMode`/`setContent`/`retry`/`expand`, kind verbs on the subclass) mapping to schema privately via `_pushAttrs`/`_pushContent` — consumers never see an attr name
 - [ ] `static styles` carries the kind's CSS, using ONLY `--theme-*` vars for colour; moved out of `input.css` in the SAME change (never a separate pass)
-- [ ] NodeView is a thin adapter in `editor/surfaces/node-views/`: constructs the renderer from `sieveBlockFor(node[, overlay])` + `ctx.blockService`, claims a live-PM body via `handleBuild` where the kind needs one, registers the v1 applier (unregistered in `destroy`), calls `renderer.update(sieveBlockFor(...))`/`renderer.destroy()`; owns `ignoreMutation`/`selectNode`/`stopEvent`/attr parsing/`buildPlugins` — no look-and-feel logic
+- [ ] NodeView is a thin adapter in `lens/document-editor/surfaces/node-views/`: constructs the renderer from `sieveBlockFor(node[, overlay])` + `ctx.blockService`, claims a live-PM body via `handleBuild` where the kind needs one, registers the v1 applier (unregistered in `destroy`), calls `renderer.update(sieveBlockFor(...))`/`renderer.destroy()`; owns `ignoreMutation`/`selectNode`/`stopEvent`/attr parsing/`buildPlugins` — no look-and-feel logic
 - [ ] Build hooks construct chrome DOM once; `update(block)` patches via `textContent`/`className`/`hidden`/property assignment — never rebuilds skeleton via `innerHTML`; no attrs-derived text is ever concatenated into an `innerHTML` string (injection hazard — see "Build-once/patch-on-update" above)
 - [ ] Renders correctly against `frontend/test/harness/bare-page-renderer.html` (only `:root` theme vars, no app stylesheet)

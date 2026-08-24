@@ -1,7 +1,7 @@
 // surfaces.test.js — P2.B unit tests for the input-surface classes.
 // Imports the REAL surface modules (dual-use ES modules). MarkdownSurface is
 // exercised end-to-end (happy-dom textarea + fake timers). WysiwygSurface's
-// applyServerOp is exercised as CALL-SHAPE tests against real ProseMirror docs
+// applyContainerChange is exercised as CALL-SHAPE tests against real ProseMirror docs
 // (editor-fixture schema) with an injected fake TipTap bundle — these pin the
 // undo-history-sacred semantics: tracked insertContentAt at the server's index,
 // replace-by-id as a tracked range insert, and addToHistory:false ONLY on the
@@ -23,25 +23,25 @@ import { DOMParser as PMDOMParser, Schema } from '@tiptap/pm/model'
 // (the live PM selection) so the basic feedSelection tests read the same range
 // they used to; richness tests override it.
 //
-// P4.F: the surfaces IMPORT `T` from editor/surfaces/tiptap-vendor.js (the shared
+// P4.F: the surfaces IMPORT `T` from lens/surfaces/tiptap-vendor.js (the shared
 // globalThis.TipTap bag installed by test/setup.js) instead of taking a host.T
 // seam. Tests seed the fake vendor members onto that bag (the established P4.E
 // pattern — Object.assign(globalThis.TipTap, …), never reassign) and clear them
 // after each test so a fake bundle never leaks forward.
-vi.mock('../src/static/editor/extensions.js', () => ({
+vi.mock('../src/static/lens/extensions.js', () => ({
   Search: {}, SelectionHighlight: {}, HighlightMark: {},
   AiShortcuts: { configure: () => ({}) },
 }))
-vi.mock('../src/static/editor/block-chrome.js', () => ({
+vi.mock('../src/static/lens/document-editor/block-chrome.js', () => ({
   BlockChrome: {},
   getBlockSelectionRange: vi.fn((view) => {
     const sel = view.state.selection
     return { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false, isNodeSelection: !!sel.node }
   }),
 }))
-vi.mock('../src/static/ai/ai-target-decoration.js', () => ({ AiTargetDecoration: {} }))
-vi.mock('../src/static/block/prose-block.js', () => ({ BlockId: {} }))
-vi.mock('../src/static/block/prose-group.js', () => ({
+vi.mock('../src/static/lens/document-editor/surfaces/ai-target-decoration.js', () => ({ AiTargetDecoration: {} }))
+vi.mock('../src/static/lens/document-editor/surfaces/prose-block.js', () => ({ BlockId: {} }))
+vi.mock('../src/static/lens/document-editor/surfaces/prose-group.js', () => ({
   ProseGroup: {},
   proseBlockNodes: vi.fn((content) => { const out = []; content.forEach((n) => out.push(n)); return out }),
 }))
@@ -49,12 +49,12 @@ vi.mock('../src/static/block/prose-group.js', () => ({
 // textInputEdit, applyTextEdit, handleSubstitutionGuard — which the markdown
 // surface uses for its pair/substitution rules) comes through REAL, so these
 // tests exercise the shipped transforms rather than a fake of them.
-vi.mock('../src/static/editor/interaction-policy.js', async (importOriginal) => ({
+vi.mock('../src/static/lens/document-editor/interaction-policy.js', async (importOriginal) => ({
   ...(await importOriginal()),
   policyEnterKeydown: vi.fn(() => false),
   buildInteractionPolicyExtension: vi.fn(() => ({})),
 }))
-vi.mock('../src/static/block/sieve-block-extension.js', () => ({
+vi.mock('../src/static/lens/document-editor/surfaces/sieve-block-extension.js', () => ({
   getSieveNodes: vi.fn(() => []),
   getSieveBlockLabel: vi.fn(() => null),
   serializeNode: vi.fn(() => 'ser'),
@@ -62,39 +62,39 @@ vi.mock('../src/static/block/sieve-block-extension.js', () => ({
   sieveBlockEntries: vi.fn(() => []),
   rendererFor: vi.fn(() => null),
 }))
-vi.mock('../src/static/block/block-selection.js', () => ({
+vi.mock('../src/static/lens/document-editor/block-selection.js', () => ({
   BlockSelection: { blockRange: vi.fn(() => null), textInside: vi.fn(() => null) },
 }))
-vi.mock('../src/static/block/block-sync.js', () => ({
+vi.mock('../src/static/lens/document-editor/block-sync.js', () => ({
   seedBaseline: vi.fn((triples) => { const m = {}; triples.forEach((t) => { if (t.id) m[t.id] = t.content }); return m }),
   computeBlockSync: vi.fn(() => ({ next: {}, ops: [] })),
   computeOrderOp: vi.fn(() => ({ op: null, next: null })),
 }))
-vi.mock('../src/static/editor/surfaces/block-position.js', () => ({
+vi.mock('../src/static/lens/document-editor/surfaces/block-position.js', () => ({
   docPosForBlockIndex: vi.fn(() => 7),
   blockIndexAfter: vi.fn(() => -1),
 }))
-vi.mock('../src/static/editor/paste-context.js', () => ({
+vi.mock('../src/static/lens/document-editor/paste-context.js', () => ({
   caretInRawTextBlock: vi.fn(() => false),
 }))
 
-import { AbstractSurface, SurfaceEvent } from '../src/static/editor/surfaces/abstract-surface.js'
-import { MarkdownSurface } from '../src/static/editor/surfaces/markdown-surface.js'
-import { WysiwygSurface } from '../src/static/editor/surfaces/wysiwyg-surface.js'
-import { buildBlocksHTML } from '../src/static/block/block-render.js'
-import { SieveBlock } from '../src/static/block/sieve-block.js'
-import { getBlockSelectionRange } from '../src/static/editor/block-chrome.js'
-import { BlockSelection } from '../src/static/block/block-selection.js'
-import { computeBlockSync, computeOrderOp } from '../src/static/block/block-sync.js'
-import { docPosForBlockIndex, blockIndexAfter } from '../src/static/editor/surfaces/block-position.js'
-import { caretInRawTextBlock } from '../src/static/editor/paste-context.js'
+import { AbstractSurface, SurfaceEvent } from '../src/static/lens/document-editor/surfaces/abstract-surface.js'
+import { MarkdownSurface } from '../src/static/lens/document-editor/surfaces/markdown-surface.js'
+import { WysiwygSurface } from '../src/static/lens/document-editor/surfaces/wysiwyg-surface.js'
+import { buildBlocksHTML } from '../src/static/lens/document-editor/surfaces/block-render.js'
+import { SieveBlock } from '../src/static/contract/sieve-block.js'
+import { getBlockSelectionRange } from '../src/static/lens/document-editor/block-chrome.js'
+import { BlockSelection } from '../src/static/lens/document-editor/block-selection.js'
+import { computeBlockSync, computeOrderOp } from '../src/static/lens/document-editor/block-sync.js'
+import { docPosForBlockIndex, blockIndexAfter } from '../src/static/lens/document-editor/surfaces/block-position.js'
+import { caretInRawTextBlock } from '../src/static/lens/document-editor/paste-context.js'
 import { schema as fxSchema, build, docWithCaret, docWithCaretAt, docWithRange, docWithNodeSelection } from './helpers/editor-fixture.js'
 
 // window.isMod is an index.html global in the app; provide it for keydown tests.
 beforeEach(() => { window.isMod = (e) => !!(e.ctrlKey || e.metaKey) })
 afterEach(() => { vi.useRealTimers() })
 
-// The shared vendor bag (installed by test/setup.js; editor/surfaces/tiptap-vendor.js's `T`
+// The shared vendor bag (installed by test/setup.js; lens/surfaces/tiptap-vendor.js's `T`
 // is the same object). Seed fake vendor members onto it; clear them after each
 // test so a fake TipTap bundle from one test never leaks into the next.
 const VENDOR = /** @type {any} */ (globalThis).TipTap
@@ -121,14 +121,18 @@ beforeEach(() => {
 // ── MarkdownSurface ───────────────────────────────────────────────────────────
 
 // A fake host (the parent editor): the markdown surface calls its public API
-// directly (P4.F) — onSurfaceEvent / setRawContent / takeInsertPos / softReload.
+// directly — onSurfaceEvent / setRawContent / reload.
 function mdHost(overrides = {}) {
   return Object.assign({
     setRawContent: vi.fn(),
-    softReload: vi.fn(),
-    takeInsertPos: vi.fn(() => null),
+    reload: vi.fn(),
     onSurfaceEvent: vi.fn(),
   }, overrides)
+}
+
+/** A container stub: `blocks` maps id → {id, kind, attrs, text?}, in `order`. */
+function containerOf(order, blocks) {
+  return { getOrder: () => order, getBlock: (id) => blocks[id] || null }
 }
 
 function mountMd(content = 'seed body', host = mdHost()) {
@@ -201,22 +205,53 @@ describe('MarkdownSurface (P2.B)', () => {
     expect(host.setRawContent).toHaveBeenCalledTimes(1)
   })
 
-  it('applyServerOp(insert-block) appends the markdown, clears insert pos, submits the buffer', () => {
+  it('the FIRST cue only records what the container holds — the load is already in the buffer', () => {
+    const { s, host } = mountMd('hello')
+    s.applyContainerChange({ blockIds: ['a'], orderChanged: true },
+      containerOf(['a'], { a: { id: 'a', kind: 'code', attrs: {}, text: '```js\nseeded\n```' } }))
+    expect(s.body).toBe('hello')
+    expect(host.setRawContent).not.toHaveBeenCalled()
+  })
+
+  it('a block ARRIVING appends its serialized form to the buffer and hands the buffer over', () => {
+    // A dialog insert while the user is in markdown mode. The buffer is what gets
+    // saved and what a flip back re-parses, so a block that reached only Go's tree
+    // would be lost by both.
     const { s, host, textarea } = mountMd('hello')
-    s.applyServerOp({ type: 'insert-block', markdown: '```js\ncode\n```' })
-    expect(host.takeInsertPos).toHaveBeenCalledTimes(1)
+    s.applyContainerChange({ blockIds: [], orderChanged: false }, containerOf([], {}))
+    s.applyContainerChange({ blockIds: ['c1'], orderChanged: true },
+      containerOf(['c1'], { c1: { id: 'c1', kind: 'code', attrs: {}, text: '```js\ncode\n```' } }))
     expect(s.body).toBe('hello\n\n```js\ncode\n```\n')
     expect(textarea.value).toBe(s.body)
     expect(host.setRawContent).toHaveBeenCalledWith(s.body)
   })
 
-  it('applyServerOp(replace-block) requests a reload; block-attrs-updated is a no-op', () => {
+  it('appends a block ONCE, however many times its cue names it', () => {
+    const { s, host } = mountMd('hello')
+    s.applyContainerChange({ blockIds: [], orderChanged: false }, containerOf([], {}))
+    const held = containerOf(['c1'], { c1: { id: 'c1', kind: 'code', attrs: {}, text: 'FENCE' } })
+    s.applyContainerChange({ blockIds: ['c1'], orderChanged: true }, held)
+    s.applyContainerChange({ blockIds: ['c1'], orderChanged: false }, held)
+    expect(s.body).toBe('hello\n\nFENCE\n')
+    expect(host.setRawContent).toHaveBeenCalledTimes(1)
+  })
+
+  it('a block LEAVING asks the host to reload — a verbatim buffer cannot express a removal', () => {
     const { s, host } = mountMd('x')
-    s.applyServerOp({ type: 'replace-block', oldId: 'a', newId: 'b' })
-    expect(host.softReload).toHaveBeenCalledTimes(1)
-    s.applyServerOp({ type: 'block-attrs-updated', id: 'a', attrs: { status: 'done' } })
+    s.applyContainerChange({ blockIds: [], orderChanged: false },
+      containerOf(['a'], { a: { id: 'a', kind: 'code', attrs: {} } }))
+    s.applyContainerChange({ blockIds: ['a'], orderChanged: true }, containerOf([], {}))
+    expect(host.reload).toHaveBeenCalledTimes(1)
     expect(host.setRawContent).not.toHaveBeenCalled()
-    expect(host.softReload).toHaveBeenCalledTimes(1) // unchanged
+  })
+
+  it('an attrs change has no raw-markdown representation and is correctly ignored', () => {
+    const { s, host } = mountMd('x')
+    const held = containerOf(['a'], { a: { id: 'a', kind: 'code', attrs: { status: 'PENDING' } } })
+    s.applyContainerChange({ blockIds: [], orderChanged: false }, held)
+    s.applyContainerChange({ blockIds: ['a'], orderChanged: false }, held)
+    expect(host.setRawContent).not.toHaveBeenCalled()
+    expect(host.reload).not.toHaveBeenCalled()
   })
 
   it('unmount removes the DOM and kills a pending debounce', () => {
@@ -259,55 +294,55 @@ describe('MarkdownSurface (P2.B)', () => {
   })
 })
 
-// ── WysiwygSurface: applyServerOp call-shape (undo-history sacred) ─────────────
-
-// A schema with a token attr on paragraphs (the pending-prose flight path).
-const tokSchema = new Schema({
-  nodes: {
-    doc: { content: 'block+' },
-    paragraph: {
-      group: 'block', content: 'inline*',
-      attrs: { id: { default: '' }, token: { default: '' } },
-      toDOM: (nd) => ['p', { 'data-id': nd.attrs.id }, 0], parseDOM: [{ tag: 'p' }],
-    },
-    text: { group: 'inline' },
-  },
-})
+// ── WysiwygSurface: the container cue's placement (undo-history sacred) ───────
 
 // A fake host (the parent editor): the wysiwyg surface calls its public API
-// directly (P4.F) — onSurfaceEvent / flushSave / takeInsertPos and
-// the insert-index math (insertIndexForBlock = commitInsertIndex(captureInsertPos()),
-// insertIndexForBlockAt(pos) = commitInsertIndex(pos), plus clearInsertPos) —
-// and reaches the SERVICE PAIR through documentService/blockService (issue #49
-// Phase 1: the observer's op batch decomposes into service verbs). `uuid`
-// is read by the surface constructor. TestWysiwygSurface overrides uuid per call.
+// directly — onSurfaceEvent / flushSave, the insert-ANCHOR family, and the
+// container `provider`, which is the whole of its outbound surface. `uuid` is
+// read by the surface constructor; TestWysiwygSurface overrides it per call.
 function wyHost(overrides = {}) {
   return Object.assign({
-    // pasteSlice / smartPaste front the paste pipelines (issue #49 Phase 4 — the
-    // stray HTTP fetches now leave through DocumentService, not bare fetch()).
-    documentService: {
-      createBlock: vi.fn(),
-      deleteBlock: vi.fn(),
-      setBlockOrder: vi.fn(),
-      pasteSlice: vi.fn(() => Promise.resolve({})),
-      smartPaste: vi.fn(() => Promise.resolve({ outcome: 'none' })),
-      nativeDropPaste: vi.fn(() => Promise.resolve({ outcome: 'none' })),
-      nativeClipboardPaste: vi.fn(() => Promise.resolve({ outcome: 'none' })),
+    // The ONE business dependency: a container provider. Every outbound intent —
+    // block ops, the four paste kinds — leaves through it, and there is no
+    // transport anywhere in the surface's reach.
+    provider: {
+      paste: vi.fn(() => Promise.resolve({ outcome: 'none' })),
+      detectExtractions: vi.fn(() => Promise.resolve([])),
+      requestAddBlock: vi.fn(),
+      requestSetBlock: vi.fn(),
+      requestRemoveBlock: vi.fn(),
+      requestSetOrder: vi.fn(),
+      subscribe: vi.fn(),
+      unsubscribe: vi.fn(),
+      getUuid: () => 'doc-1',
+      getKind: () => 'note',
+      getOrder: vi.fn(() => []),
+      getBlock: vi.fn(() => null),
     },
-    blockService: { updateAttributes: vi.fn() },
     flushSave: vi.fn(),
-    insertIndexForBlock: vi.fn(() => 0),
-    insertIndexForBlockAt: vi.fn(() => 0),
-    // issue #33: the paste/drop path PEEKS (side-effect-free) and consumes the empty-
-    // paragraph anchor only on a confirmed match. Defaults: no anchor to consume.
-    peekInsertIndexForBlock: vi.fn(() => ({ index: 0, anchor: null })),
-    peekInsertIndexAt: vi.fn(() => ({ index: 0, anchor: null })),
+    // The insert ANCHOR family: a surface names the block a new one should follow,
+    // never a position. issue #33: paste/drop PEEK (side-effect-free) and consume
+    // the empty-paragraph anchor only on a confirmed match.
+    insertAnchorForBlock: vi.fn(() => null),
+    peekInsertAnchorForBlock: vi.fn(() => ({ afterBlockId: null, anchor: null })),
+    peekInsertAnchorAt: vi.fn(() => ({ afterBlockId: null, anchor: null })),
     consumeInsertAnchor: vi.fn(),
-    clearInsertPos: vi.fn(),
-    takeInsertPos: vi.fn(() => null),
     onSurfaceEvent: vi.fn(),
     uuid: 'doc-1',
   }, overrides)
+}
+
+/** A host whose container speaks WHOLE-CONTENT only — a prompt has no block tree. */
+function wyPromptHost(overrides = {}) {
+  return wyHost(Object.assign({
+    provider: {
+      subscribe: vi.fn(), unsubscribe: vi.fn(),
+      getUuid: () => 'prompt:p', getKind: () => 'prompt',
+      getOrder: () => [], getBlock: () => null,
+      getContents: vi.fn(), setContents: vi.fn(), flushContents: vi.fn(),
+    },
+    uuid: 'prompt:p',
+  }, overrides))
 }
 
 // A recorded fake editor over a REAL ProseMirror EditorState, so doc scans,
@@ -340,7 +375,7 @@ function fakeEditorOver(schema, docNodes) {
 }
 
 // A surface whose live editor is injected (the mount path builds the real island
-// in-app; these tests pin the applyServerOp contract on the instance). The uuid is
+// in-app; these tests pin the applyContainerChange contract on the instance). The uuid is
 // merged into the host (the surface reads host.uuid, P4.F) so the ('doc-1', host,
 // ed) call shape is preserved.
 class TestWysiwygSurface extends WysiwygSurface {
@@ -348,101 +383,162 @@ class TestWysiwygSurface extends WysiwygSurface {
   get editorPane() { return this._ed }
 }
 
-describe('WysiwygSurface.applyServerOp (P2.B call-shape, undo-sacred)', () => {
-  // P4.F: the render pipeline (#blockToNodes) reads ProseMirrorDOMParser off the
-  // imported `T` (the shared vendor bag) — seed it (the retired callShapeT bundle,
-  // now the ONE vendor member the applyServerOp path needs).
+describe('WysiwygSurface.applyContainerChange (placement, undo-sacred)', () => {
+  // The render pipeline (#blockToNodes) reads ProseMirrorDOMParser off the
+  // imported `T` (the shared vendor bag) — seed it: the ONE vendor member the
+  // placement path needs.
   beforeEach(() => {
     vi.useFakeTimers() // deferred focus/scroll callbacks never run
     seedVendor({ ProseMirrorDOMParser: PMDOMParser })
   })
 
-  it('insert-block at msg.index → TRACKED insertContentAt(docPosForBlockIndex(index))', () => {
+  /**
+   * A surface already past its bootstrap paint, so the cues below are DELTAS.
+   * The paint's own transaction is cleared off the recorder — it is the load
+   * semantics, pinned separately, and would otherwise be counted as placement.
+   */
+  function painted(ed, host = wyHost()) {
+    const s = new TestWysiwygSurface('doc-1', host, ed)
+    s.paintContainer(containerOf([], {}))
+    ed.dispatched.length = 0
+    ed.calls.length = 0
+    return s
+  }
+
+  const cue = (blockIds, orderChanged = false) => ({ blockIds, orderChanged })
+
+  it('a block the doc does not hold is PLACED at its container index, TRACKED', () => {
     const ed = fakeEditorOver(fxSchema, [build.p('one', 'b1')])
-    const s = new TestWysiwygSurface('doc-1', wyHost(), ed)
-    s.applyServerOp({ type: 'insert-block', kind: 'prose', id: 'srv-1', attrs: { id: 'srv-1', content: 'Hello' }, index: 1 })
+    const s = painted(ed)
+    s.applyContainerChange(cue(['srv-1']), containerOf(['b1', 'srv-1'], {
+      'srv-1': { id: 'srv-1', kind: 'prose', attrs: { id: 'srv-1', content: 'Hello' } },
+    }))
     expect(docPosForBlockIndex).toHaveBeenCalledWith(ed.state.doc, 1)
     const ins = ed.calls.find((c) => c[0] === 'insertContentAt')
     expect(ins).toBeTruthy()
-    expect(ins[1]).toBe(7)                    // the server's index, mapped — never a JS-chosen pos
+    expect(ins[1]).toBe(7)                    // the container's index, mapped — never a JS-chosen pos
     expect(ins[2].length).toBeGreaterThan(0)  // the server's node content
     expect(ed.dispatched.length).toBe(0)      // NO raw transaction — tracked command only
   })
 
-  it('insert-block falls back to the captured numeric insert pos when no index', () => {
-    const ed = fakeEditorOver(fxSchema, [build.p('one', 'b1')])
-    const host = wyHost({ takeInsertPos: vi.fn(() => 3) })
-    const s = new TestWysiwygSurface('doc-1', host, ed)
-    s.applyServerOp({ type: 'insert-block', kind: 'prose', id: 'srv-2', attrs: { id: 'srv-2', content: 'Hi' } })
-    expect(host.takeInsertPos).toHaveBeenCalledTimes(1)
-    const ins = ed.calls.find((c) => c[0] === 'insertContentAt')
-    expect(ins[1]).toBe(3)
-  })
-
-  it('insert-block skip-if-present: an echoed id already in the DOM never re-inserts', () => {
+  it('a block the doc ALREADY holds is never re-placed — the lens drew it', () => {
+    // A prose block the user typed: the lens named it, Go echoed it back. There
+    // is nothing to insert, and inserting would duplicate the paragraph.
     const ed = fakeEditorOver(fxSchema, [build.p('one', 'srv-3')])
-    ed.view.dom.innerHTML = '<p data-id="srv-3">one</p>'
-    const s = new TestWysiwygSurface('doc-1', wyHost(), ed)
-    s.applyServerOp({ type: 'insert-block', kind: 'prose', id: 'srv-3', attrs: { id: 'srv-3', content: 'one' }, index: 0 })
+    const s = painted(ed)
+    s.applyContainerChange(cue(['srv-3']), containerOf(['srv-3'], {
+      'srv-3': { id: 'srv-3', kind: 'prose', attrs: { id: 'srv-3', content: 'one' } },
+    }))
     expect(ed.calls.find((c) => c[0] === 'insertContentAt')).toBeUndefined()
+    expect(ed.dispatched.length).toBe(0)
   })
 
-  it('insert-block token swap: setNodeMarkup with addToHistory:false, no insert', () => {
-    const p = tokSchema.nodes.paragraph.create({ id: '', token: 'tok-1' }, tokSchema.text('typed'))
-    const ed = fakeEditorOver(tokSchema, [p])
-    const s = new TestWysiwygSurface('doc-1', wyHost(), ed)
-    s.applyServerOp({ type: 'insert-block', kind: 'prose', token: 'tok-1', id: 'real-1' })
-    expect(ed.dispatched.length).toBe(1)
-    const tr = ed.dispatched[0]
-    expect(tr.getMeta('addToHistory')).toBe(false)     // never a re-insert, never undoable
-    const node = tr.doc.child(0)
-    expect(node.attrs.id).toBe('real-1')
-    expect(node.attrs.token).toBe('')
-    expect(ed.calls.find((c) => c[0] === 'insertContentAt')).toBeUndefined()
-  })
-
-  it('insert-block token orphan (node deleted in flight): deletes by authoritative id', () => {
-    const ed = fakeEditorOver(tokSchema, [tokSchema.nodes.paragraph.create({ id: 'x', token: '' }, tokSchema.text('t'))])
-    const host = wyHost()
-    const s = new TestWysiwygSurface('doc-1', host, ed)
-    s.applyServerOp({ type: 'insert-block', kind: 'prose', token: 'tok-gone', id: 'real-2' })
-    // Domain-shaped: the delete verb only — the WS envelope is the service's.
-    expect(host.documentService.deleteBlock).toHaveBeenCalledWith('doc-1', 'real-2')
+  it("a prose block the doc holds is NOT repainted — the lens owns its own text", () => {
+    const ed = fakeEditorOver(fxSchema, [build.p('typed so far', 'p1')])
+    const s = painted(ed)
+    s.applyContainerChange(cue(['p1']), containerOf(['p1'], {
+      p1: { id: 'p1', kind: 'prose', attrs: { id: 'p1', content: 'what Go last heard' } },
+    }))
     expect(ed.dispatched.length).toBe(0)
     expect(ed.calls.find((c) => c[0] === 'insertContentAt')).toBeUndefined()
   })
 
-  it('replace-block: TRACKED insertContentAt over the oldId range (undoable transform)', () => {
-    const first = build.p('first', 'old-1')
+  it('a block whose KIND changed is replaced by id — TRACKED, so a transform is undoable', () => {
+    const first = build.sieveCode('blk-1')
     const ed = fakeEditorOver(fxSchema, [first, build.p('second', 'keep-1')])
-    const s = new TestWysiwygSurface('doc-1', wyHost(), ed)
-    s.applyServerOp({ type: 'replace-block', oldId: 'old-1', newId: 'new-1', newKind: 'prose', attrs: { content: 'Replaced' } })
+    const s = painted(ed)
+    s.applyContainerChange(cue(['blk-1']), containerOf(['blk-1', 'keep-1'], {
+      'blk-1': { id: 'blk-1', kind: 'prose', attrs: { id: 'blk-1', content: 'Replaced' } },
+    }))
     const ins = ed.calls.find((c) => c[0] === 'insertContentAt')
     expect(ins).toBeTruthy()
     expect(ins[1]).toEqual({ from: 0, to: first.nodeSize }) // replace-by-id range
     expect(ed.dispatched.length).toBe(0)                    // tracked command, no raw tr
   })
 
-  it('replace-block with unknown oldId does nothing', () => {
-    const ed = fakeEditorOver(fxSchema, [build.p('first', 'a')])
-    const s = new TestWysiwygSurface('doc-1', wyHost(), ed)
-    s.applyServerOp({ type: 'replace-block', oldId: 'nope', newId: 'new', newKind: 'prose', attrs: {} })
-    expect(ed.calls.find((c) => c[0] === 'insertContentAt')).toBeUndefined()
+  it("a block that LEFT the container is removed UNTRACKED — it is not this user's edit", () => {
+    const gone = build.sieveCode('blk-1')
+    const ed = fakeEditorOver(fxSchema, [gone, build.p('second', 'keep-1')])
+    const s = painted(ed)
+    s.applyContainerChange(cue(['blk-1'], true), containerOf(['keep-1'], {
+      'keep-1': { id: 'keep-1', kind: 'prose', attrs: { id: 'keep-1' } },
+    }))
+    expect(ed.dispatched.length).toBeGreaterThan(0)
+    expect(ed.dispatched[0].getMeta('addToHistory')).toBe(false)
+    expect(ed.dispatched[0].doc.childCount).toBe(1)
   })
 
-  it('block-attrs-updated: setNodeMarkup by id with addToHistory:false', () => {
+  it('an attrs change on a structured block is setNodeMarkup by id, addToHistory:false', () => {
     const ed = fakeEditorOver(fxSchema, [build.sieveCode('blk-1'), build.p('txt', 'p1')])
-    const s = new TestWysiwygSurface('doc-1', wyHost(), ed)
-    s.applyServerOp({ type: 'block-attrs-updated', id: 'blk-1', attrs: { ref: 'r-9' } })
+    const s = painted(ed)
+    s.applyContainerChange(cue(['blk-1']), containerOf(['blk-1', 'p1'], {
+      'blk-1': { id: 'blk-1', kind: 'code', attrs: { id: 'blk-1', ref: 'r-9' } },
+    }))
     expect(ed.dispatched.length).toBe(1)
     const tr = ed.dispatched[0]
     expect(tr.getMeta('addToHistory')).toBe(false)
     expect(tr.doc.child(0).attrs.ref).toBe('r-9')
   })
 
-  it('applyServerOp without a live editor is a safe no-op', () => {
+  it('a cue naming a block NEITHER side holds does nothing at all', () => {
+    const ed = fakeEditorOver(fxSchema, [build.p('first', 'a')])
+    const s = painted(ed)
+    s.applyContainerChange(cue(['nope']), containerOf(['a'], { a: { id: 'a', kind: 'prose', attrs: {} } }))
+    expect(ed.calls.find((c) => c[0] === 'insertContentAt')).toBeUndefined()
+    expect(ed.dispatched.length).toBe(0)
+  })
+
+  it('a cue without a live editor is a safe no-op', () => {
     const s = new TestWysiwygSurface('doc-1', wyHost(), null)
-    expect(() => s.applyServerOp({ type: 'insert-block', id: 'x', index: 0 })).not.toThrow()
+    expect(() => s.applyContainerChange(cue(['x']), containerOf([], {}))).not.toThrow()
+  })
+
+  it('the FIRST cue paints the whole container — bootstrap is just the first cue', () => {
+    const ed = fakeEditorOver(fxSchema, [build.p('stale', 'old')])
+    const s = new TestWysiwygSurface('doc-1', wyHost(), ed) // never painted
+    s.applyContainerChange(cue(['n1'], true), containerOf(['n1'], {
+      n1: { id: 'n1', kind: 'prose', attrs: { id: 'n1', content: 'fresh' } },
+    }))
+    // One whole-document replace, non-undoable — the load semantics, and the ONE
+    // place they are legitimate.
+    expect(ed.dispatched.length).toBe(1)
+    expect(ed.dispatched[0].getMeta('addToHistory')).toBe(false)
+  })
+
+  it('re-orders the doc to match the container, UNTRACKED, only when the sets already agree', () => {
+    const ed = fakeEditorOver(fxSchema, [build.p('one', 'b1'), build.p('two', 'b2')])
+    const s = painted(ed)
+    const held = {
+      b1: { id: 'b1', kind: 'prose', attrs: {} },
+      b2: { id: 'b2', kind: 'prose', attrs: {} },
+    }
+    s.applyContainerChange(cue([], true), containerOf(['b2', 'b1'], held))
+    expect(ed.dispatched.length).toBe(1)
+    expect(ed.dispatched[0].getMeta('addToHistory')).toBe(false)
+    expect(ed.dispatched[0].doc.child(0).attrs.id).toBe('b2')
+  })
+
+  it('leaves the order alone while the doc holds something the container does not', () => {
+    // A create still in flight, or the trailing editing surface: the two lists
+    // describe different things, and reordering against the shorter one would
+    // move a block past something the container cannot see.
+    const ed = fakeEditorOver(fxSchema, [build.p('one', 'b1'), build.p('pending', '')])
+    const s = painted(ed)
+    s.applyContainerChange(cue([], true), containerOf(['b1', 'b2'], {
+      b1: { id: 'b1', kind: 'prose', attrs: {} },
+      b2: { id: 'b2', kind: 'prose', attrs: {} },
+    }))
+    expect(ed.dispatched.length).toBe(0)
+  })
+
+  it('says nothing when the doc is already in the container order', () => {
+    const ed = fakeEditorOver(fxSchema, [build.p('one', 'b1'), build.p('two', 'b2')])
+    const s = painted(ed)
+    s.applyContainerChange(cue([], true), containerOf(['b1', 'b2'], {
+      b1: { id: 'b1', kind: 'prose', attrs: {} },
+      b2: { id: 'b2', kind: 'prose', attrs: {} },
+    }))
+    expect(ed.dispatched.length).toBe(0)
   })
 })
 
@@ -506,7 +602,7 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     const s = new WysiwygSurface(host)
     const root = document.createElement('div')
     document.body.appendChild(root)
-    s.mount(root, { body: '', blocks: [] })
+    s.mount(root, null)
     return { s, root, host, T, ed: editor() }
   }
 
@@ -531,35 +627,44 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
   })
 
   it('mount stamps the parent Editor onto the pane as sieveHost (the NodeView→Editor handle)', () => {
-    // P4.F Brief C: a block capability (ctx.getEditor) reaches the Editor through
+    // A block capability (ctx.getEditor) reaches the Editor through
     // editorPane.sieveHost — the pane the surface built, stamped with its host.
     const { host, ed } = mountWy()
     expect(ed.sieveHost).toBe(host)
   })
 
-  it('onUpdate debounces 500ms then submits granular block-domain ops through the service pair', () => {
+  it('mount stamps the CONTAINER PROVIDER onto the pane — a NodeView reaches no transport', () => {
+    const { host, ed } = mountWy()
+    expect(ed.blockProvider).toBe(host.provider)
+  })
+
+  it('mount paints NOTHING — the container\'s bootstrap cue is what paints', () => {
+    const { s, ed } = mountWy()
+    expect(ed.view.dispatch).not.toHaveBeenCalled()
+    // …and the surface says so, by subscribing rather than by having been handed
+    // a block list: nothing was passed to mount at all.
+    expect(s.editorPane).toBe(ed)
+  })
+
+  it('onUpdate debounces 500ms then submits granular block intents through the provider', () => {
     vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [{ type: 'update-block', blockId: 'b1', kind: 'prose', attrs: { content: 'x' } }] })
     const { host, ed } = mountWy()
     ed.options.onUpdate({ editor: ed })
-    expect(host.blockService.updateAttributes).not.toHaveBeenCalled()
+    expect(host.provider.requestSetBlock).not.toHaveBeenCalled()
     vi.advanceTimersByTime(500)
     expect(computeBlockSync).toHaveBeenCalledTimes(1)
-    // update-block decomposes to BlockService.updateAttributes (aliases lifted).
-    expect(host.blockService.updateAttributes).toHaveBeenCalledWith('b1', { content: 'x' }, { aliases: undefined })
+    expect(host.provider.requestSetBlock).toHaveBeenCalledWith('b1', { content: 'x' })
   })
 
-  it('#submitOps maps the observer batch IN ORDER: create → explicit-index createBlock, update → updateAttributes, delete → deleteBlock', () => {
+  it('#submitOps maps the observer batch IN ORDER, and a create NAMES ITSELF', () => {
     const order = []
-    const host = wyHost({
-      documentService: {
-        createBlock: vi.fn((...a) => order.push(['create', ...a])),
-        deleteBlock: vi.fn((...a) => order.push(['delete', ...a])),
-      },
-      blockService: { updateAttributes: vi.fn((...a) => order.push(['update', ...a])) },
-    })
+    const host = wyHost()
+    host.provider.requestAddBlock = vi.fn((...a) => order.push(['add', ...a]))
+    host.provider.requestSetBlock = vi.fn((...a) => order.push(['set', ...a]))
+    host.provider.requestRemoveBlock = vi.fn((...a) => order.push(['remove', ...a]))
     vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [
-      { type: 'create-block', blockId: '', kind: 'prose', attrs: { content: 'new' }, index: 2, token: 'tok-9', aliases: ['old-1'] },
-      { type: 'update-block', blockId: 'b1', kind: 'prose', attrs: { content: 'x' }, aliases: ['b0'] },
+      { type: 'create-block', blockId: 'pr-new', kind: 'prose', attrs: { content: 'new' }, index: 1 },
+      { type: 'update-block', blockId: 'b1', kind: 'prose', attrs: { content: 'x' } },
       { type: 'delete-block', blockId: 'b2' },
     ] })
     const doc = fxSchema.nodes.doc.create(null, [build.p('one', 'b1')])
@@ -569,16 +674,16 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     const s = new WysiwygSurface(Object.assign(host, { uuid: 'doc-1' }))
     const root = document.createElement('div')
     document.body.appendChild(root)
-    s.mount(root, { body: '', blocks: [] })
+    s.mount(root, null)
     const ed = bundle.editor()
     ed.options.onUpdate({ editor: ed })
     vi.advanceTimersByTime(500)
-    // Emission order preserved exactly; the create rides the EXPLICIT-INDEX
-    // path (opts.index bypasses resolveInsertIndex) with token/aliases/blockId.
+    // Emission order preserved exactly. The create carries the id the identity
+    // plugin minted at birth, and an ANCHOR — the block it follows — never an index.
     expect(order).toEqual([
-      ['create', 'doc-1', 'prose', { content: 'new' }, undefined, { index: 2, token: 'tok-9', aliases: ['old-1'], blockId: '' }],
-      ['update', 'b1', { content: 'x' }, { aliases: ['b0'] }],
-      ['delete', 'doc-1', 'b2'],
+      ['add', 'prose', { content: 'new', id: 'pr-new' }, 'b1'],
+      ['set', 'b1', { content: 'x' }],
+      ['remove', 'b2'],
     ])
   })
 
@@ -616,7 +721,7 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     expect(host.onSurfaceEvent).not.toHaveBeenCalledWith(SurfaceEvent.DOC_PROJECTED)
   })
 
-  it('a reorder submits ONE set-order op through DocumentService, after the batch (#94)', () => {
+  it('a reorder submits ONE requestSetOrder, after the batch (#94)', () => {
     // The observer's signature is positionless, so order is reported separately —
     // and LAST, because set-order installs a COMPLETE order and must land after
     // this tick's creates and deletes have moved the server's set.
@@ -625,9 +730,9 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     const { host, ed } = mountWy()
     ed.options.onUpdate({ editor: ed })
     vi.advanceTimersByTime(500)
-    expect(host.documentService.setBlockOrder).toHaveBeenCalledWith('doc-1', ['b1', 'b2'])
-    expect(host.documentService.deleteBlock.mock.invocationCallOrder[0])
-      .toBeLessThan(host.documentService.setBlockOrder.mock.invocationCallOrder[0])
+    expect(host.provider.requestSetOrder).toHaveBeenCalledWith(['b1', 'b2'])
+    expect(host.provider.requestRemoveBlock.mock.invocationCallOrder[0])
+      .toBeLessThan(host.provider.requestSetOrder.mock.invocationCallOrder[0])
   })
 
   it('sends nothing when neither content nor order moved', () => {
@@ -636,8 +741,8 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     const { host, ed } = mountWy()
     ed.options.onUpdate({ editor: ed })
     vi.advanceTimersByTime(500)
-    expect(host.documentService.setBlockOrder).not.toHaveBeenCalled()
-    expect(host.blockService.updateAttributes).not.toHaveBeenCalled()
+    expect(host.provider.requestSetOrder).not.toHaveBeenCalled()
+    expect(host.provider.requestSetBlock).not.toHaveBeenCalled()
   })
 
   it('flushPending fires the pending sync immediately, exactly once', () => {
@@ -645,11 +750,11 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     const { s, host, ed } = mountWy()
     ed.options.onUpdate({ editor: ed })
     s.flushPending()
-    expect(host.blockService.updateAttributes).toHaveBeenCalledTimes(1)
+    expect(host.provider.requestSetBlock).toHaveBeenCalledTimes(1)
     vi.advanceTimersByTime(1000)
-    expect(host.blockService.updateAttributes).toHaveBeenCalledTimes(1) // timer cancelled — no double sync
+    expect(host.provider.requestSetBlock).toHaveBeenCalledTimes(1) // timer cancelled — no double sync
     s.flushPending()                                      // idle → no-op
-    expect(host.blockService.updateAttributes).toHaveBeenCalledTimes(1)
+    expect(host.provider.requestSetBlock).toHaveBeenCalledTimes(1)
   })
 
   it('unmount destroys the island, clears the root and window.__tiptap, kills the timer', () => {
@@ -661,33 +766,27 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     expect(window.__tiptap).toBeNull()
     expect(s.editorPane).toBeNull()
     vi.advanceTimersByTime(1000)
-    expect(host.blockService.updateAttributes).not.toHaveBeenCalled()
+    expect(host.provider.requestSetBlock).not.toHaveBeenCalled()
   })
 })
 
-// ── WysiwygSurface: #handleSmartPaste / #handleSmartDrop (P4.A) ────────────────
-// The smart-paste / smart-drop pipelines moved off editor.js's IIFE into the
-// surface as #private methods, wired at editorProps.handlePaste / handleDrop.
-// They call the editor-sourced insert-index host (insertIndexForBlock /
-// insertIndexForBlockAt / clearInsertPos) rather than the retired IIFE closures.
-// Undo-sacred: the ai-block reimport insertContent stays a TRACKED command.
+// ── WysiwygSurface: #handleSmartPaste / #handleSmartDrop ──────────────────────
+// The paste / drop pipelines are #private methods wired at
+// editorProps.handlePaste / handleDrop. They ask the CONTAINER what to make of
+// the gesture — ONE query, four payload kinds — and name where with an ANCHOR
+// the host resolved, never an index. Undo-sacred: the local replay's
+// insertContent stays a TRACKED command.
 
 describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
-  let prevJsyaml
   beforeEach(() => {
-    prevJsyaml = window.jsyaml
-    window.jsyaml = { load: (s) => JSON.parse(s) }
     // The moved code now reads the caretInRawTextBlock ES import (paste-context.js,
     // mocked above). Default false (a normal prose caret); tests override per-case.
     vi.mocked(caretInRawTextBlock).mockReturnValue(false)
   })
-  afterEach(() => {
-    window.jsyaml = prevJsyaml
-  })
 
-  // The surface no longer speaks fetch — the paste pipelines leave through
-  // DocumentService.smartPaste / pasteSlice (issue #49 Phase 4). Tests stub those
-  // verbs on the host's documentService (wyHost defaults; override per-case).
+  // The surface speaks no transport at all: every gesture leaves through
+  // provider.paste, and the tests stub that one query (wyHost's default answers
+  // `none`; override per case).
 
   // Mount a real WysiwygSurface via the recording bundle; expose the editorProps
   // handlers (the wiring the editor gives ProseMirror) + the fake editor + host.
@@ -696,14 +795,17 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     const doc = fxSchema.nodes.doc.create(null, [build.p('one', 'b1')])
     const state = EditorState.create({ schema: fxSchema, doc })
     const bundle = mountBundle(state)
-    seedVendor(bundle.T) // the surface imports T from the vendor bag (P4.F)
+    seedVendor(bundle.T) // the surface imports T from the vendor bag
     const s = new WysiwygSurface(Object.assign(host, { uuid }))
     const root = document.createElement('div')
     document.body.appendChild(root)
-    s.mount(root, { body: '', blocks: [] })
+    s.mount(root, null)
     const ed = bundle.editor()
     return { s, ed, host, props: ed.options.editorProps, uuid }
   }
+
+  /** The kinds this host's provider was asked about, in order. */
+  const pasteKinds = (host) => host.provider.paste.mock.calls.map((c) => c[0].kind)
 
   function clip({ text = '', html = '', slice = '', items = [] } = {}) {
     return {
@@ -719,18 +821,27 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     expect(typeof props.handleDrop).toBe('function')
   })
 
-  it('ai-block reimport: a pasted ```ai-block fence → TRACKED commands.insertContent(sieve-ai-block), returns true', () => {
-    const { ed, props } = mountPaste()
-    const yaml = 'id: ab-1\nref: doc\nstatus: PENDING'
-    const text = '```ai-block\n' + JSON.stringify({ id: 'ab-1', ref: 'doc', status: 'PENDING' }) + '\n```'
-    const event = { clipboardData: clip({ text }), target: {}, preventDefault: vi.fn() }
-    const handled = props.handlePaste({}, event)
-    expect(handled).toBe(true)
+  // A pasted ```ai-block fence is a block arriving in its own serialized form, so
+  // it is a structural mutation and Go owns it (the ai-block processor claims its
+  // own fence; the block comes back over insert-block). The surface used to
+  // reconstruct the node itself — the one place a paste minted structure locally.
+  it('a pasted ai-block fence goes to Go like any other paste — no local node is built', async () => {
+    const host = wyHost({ peekInsertAnchorForBlock: vi.fn(() => ({ afterBlockId: 'b-2', anchor: null })) })
+    host.provider.paste.mockReturnValue(Promise.resolve({ outcome: 'block', kind: 'ai-block', id: 'ab-9' }))
+    const text = '```ai-block\nid: ab-1\nref: doc\nstatus: COMPLETE\n```'
+    const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb(text) }
+    const { ed, props } = mountPaste(host, 'doc-1')
+    const event = { clipboardData: Object.assign(clip({ text, items: [strItem] }), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
+
+    expect(props.handlePaste({}, event)).toBe(true)
     expect(event.preventDefault).toHaveBeenCalled()
-    expect(ed.commands.insertContent).toHaveBeenCalledTimes(1)
-    const arg = ed.commands.insertContent.mock.calls[0][0]
-    expect(arg.type).toBe('sieve-ai-block')
-    expect(arg.attrs.id).toBe('ab-1')
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(host.provider.paste).toHaveBeenCalledWith(
+      { kind: 'smart', entries: [{ mimeType: 'text/plain', content: text }] }, 'b-2')
+    // Nothing local: the block is Go's to create and its render-back is what
+    // renders it.
+    expect(ed.commands.insertContent).not.toHaveBeenCalled()
   })
 
   it('caret in a raw-text block → returns false (native paste), no insert', () => {
@@ -740,22 +851,20 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     expect(ed.commands.insertContent).not.toHaveBeenCalled()
   })
 
-  it('smart-paste pipeline: PEEKS the block index (side-effect-free), calls the service verb, consumes the anchor on outcome:block, returns true', async () => {
-    // The surface no longer speaks fetch — it calls DocumentService.smartPaste
-    // (issue #49 Phase 4). Stub the verb on the host, not global fetch.
-    const anchor = { id: 'p-1', token: '' }
-    const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 4, anchor })) })
-    host.documentService.smartPaste.mockReturnValue(Promise.resolve({ outcome: 'block', kind: 'code', id: 'co-1' }))
+  it('smart paste: PEEKS the anchor (side-effect-free), asks the container, consumes the anchor on outcome:block, returns true', async () => {
+    const anchor = { id: 'p-1' }
+    const host = wyHost({ peekInsertAnchorForBlock: vi.fn(() => ({ afterBlockId: 'b-4', anchor })) })
+    host.provider.paste.mockReturnValue(Promise.resolve({ outcome: 'block', kind: 'code', id: 'co-1' }))
     const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('hello') }
     const { ed, props } = mountPaste(host, 'doc-1')
     const event = { clipboardData: Object.assign(clip({ text: 'hello', items: [strItem] }), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
     const handled = props.handlePaste({}, event)
     expect(handled).toBe(true)
-    expect(host.peekInsertIndexForBlock).toHaveBeenCalledTimes(1)
-    expect(host.insertIndexForBlock).not.toHaveBeenCalled() // no EAGER consume
+    expect(host.peekInsertAnchorForBlock).toHaveBeenCalledTimes(1)
+    expect(host.insertAnchorForBlock).not.toHaveBeenCalled() // no EAGER consume
     expect(event.preventDefault).toHaveBeenCalled()
     await new Promise((r) => setTimeout(r, 0))
-    expect(host.documentService.smartPaste).toHaveBeenCalledWith('doc-1', expect.objectContaining({ index: 4 }))
+    expect(host.provider.paste).toHaveBeenCalledWith(expect.objectContaining({ kind: 'smart' }), 'b-4')
     // outcome:block → the blank line is consumed NOW, by the peeked anchor handle.
     expect(host.consumeInsertAnchor).toHaveBeenCalledWith(anchor)
     // The block arrives over the insert-block render-back — the surface must NOT
@@ -768,16 +877,15 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
   // empty-paragraph anchor — the blank line and caret stay intact, so insertContent
   // replays into the empty paragraph, never into an adjacent code:true block.
   it('smart-paste outcome:none → replays clipboard content AND never consumes the anchor (issue #33)', async () => {
-    const anchor = { id: 'p-1', token: '' }
-    const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 0, anchor })) })
-    host.documentService.smartPaste.mockReturnValue(Promise.resolve({ outcome: 'none' }))
+    const anchor = { id: 'p-1' }
+    const host = wyHost({ peekInsertAnchorForBlock: vi.fn(() => ({ afterBlockId: 'b-0', anchor })) })
+    host.provider.paste.mockReturnValue(Promise.resolve({ outcome: 'none' }))
     const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('hello') }
     const { ed, props } = mountPaste(host, 'doc-1')
     const event = { clipboardData: Object.assign(clip({ text: 'hello', items: [strItem] }), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
     props.handlePaste({}, event)
     // Drain the async chain: Promise.all → fetch → r.json() → result handler.
     await new Promise((r) => setTimeout(r, 0))
-    expect(host.clearInsertPos).toHaveBeenCalled()   // stale insert pos cleared
     expect(ed.commands.insertContent).toHaveBeenCalledWith('hello')
     expect(host.consumeInsertAnchor).not.toHaveBeenCalled() // blank line preserved
     // Our preventDefault()'d smart-paste robbed PM of its native scroll-to-caret —
@@ -791,16 +899,15 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
   // clipboard, and leaves the empty-paragraph anchor alone (it was minted to hold a
   // BLOCK's place; this is an inline insert into that very paragraph).
   it('smart-paste outcome:content → inserts GO\'s fragment, not the clipboard, and never consumes the anchor', async () => {
-    const anchor = { id: 'p-1', token: '' }
-    const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 0, anchor })) })
+    const anchor = { id: 'p-1' }
+    const host = wyHost({ peekInsertAnchorForBlock: vi.fn(() => ({ afterBlockId: 'b-0', anchor })) })
     const frag = '<a href="https://example.com">Example Domain</a>'
-    host.documentService.smartPaste.mockReturnValue(Promise.resolve({ outcome: 'content', html: frag }))
+    host.provider.paste.mockReturnValue(Promise.resolve({ outcome: 'content', content: frag }))
     const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('https://example.com') }
     const { ed, props } = mountPaste(host, 'doc-1')
     const event = { clipboardData: Object.assign(clip({ text: 'https://example.com', items: [strItem] }), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
     expect(props.handlePaste({}, event)).toBe(true)
     await new Promise((r) => setTimeout(r, 0))
-    expect(host.clearInsertPos).toHaveBeenCalled()
     expect(ed.commands.insertContent).toHaveBeenCalledTimes(1)
     expect(ed.commands.insertContent).toHaveBeenCalledWith(frag)
     expect(host.consumeInsertAnchor).not.toHaveBeenCalled()
@@ -813,12 +920,12 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
   it.each([
     ['an unknown outcome', { outcome: 'quantum-block' }],
     ['a missing outcome', {}],
-    ['content with no fragment', { outcome: 'content', html: '' }],
+    ['content with no fragment', { outcome: 'content', content: '' }],
     ['a null body', null],
   ])('smart-paste degrades %s to the local replay (never a swallowed paste)', async (_label, result) => {
-    const anchor = { id: 'p-1', token: '' }
-    const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 0, anchor })) })
-    host.documentService.smartPaste.mockReturnValue(Promise.resolve(result))
+    const anchor = { id: 'p-1' }
+    const host = wyHost({ peekInsertAnchorForBlock: vi.fn(() => ({ afterBlockId: 'b-0', anchor })) })
+    host.provider.paste.mockReturnValue(Promise.resolve(result))
     const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('hello') }
     const { ed, props } = mountPaste(host, 'doc-1')
     const event = { clipboardData: Object.assign(clip({ text: 'hello', items: [strItem] }), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
@@ -830,7 +937,7 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
 
   it('smart-paste outcome:none prefers the text/html clipboard view when there is one', async () => {
     const host = wyHost()
-    host.documentService.smartPaste.mockReturnValue(Promise.resolve({ outcome: 'none' }))
+    host.provider.paste.mockReturnValue(Promise.resolve({ outcome: 'none' }))
     const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('hello') }
     const { ed, props } = mountPaste(host, 'doc-1')
     const event = { clipboardData: Object.assign(clip({ text: 'hello', html: '<p><b>hello</b></p>', items: [strItem] }), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
@@ -839,16 +946,15 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     expect(ed.commands.insertContent).toHaveBeenCalledWith('<p><b>hello</b></p>')
   })
 
-  it('multi-block slice paste → DocumentService.pasteSlice(uuid, {slice, index}), clears insert pos, returns true', () => {
-    const host = wyHost({ insertIndexForBlock: vi.fn(() => 7) })
+  it('a multi-block slice is the SAME query with kind:slice, anchored at the caret', () => {
+    const host = wyHost({ insertAnchorForBlock: vi.fn(() => 'b-7') })
     const { props } = mountPaste(host, 'doc-1')
     const slice = [{ kind: 'prose', content: 'a' }, { kind: 'code', content: 'b' }]
     const event = { clipboardData: clip({ slice: JSON.stringify(slice) }), target: {}, preventDefault: vi.fn() }
     const handled = props.handlePaste({}, event)
     expect(handled).toBe(true)
     expect(event.preventDefault).toHaveBeenCalled()
-    expect(host.clearInsertPos).toHaveBeenCalled()
-    expect(host.documentService.pasteSlice).toHaveBeenCalledWith('doc-1', { slice, index: 7 })
+    expect(host.provider.paste).toHaveBeenCalledWith({ kind: 'slice', slice }, 'b-7')
   })
 
   // ── The NATIVE CLIPBOARD (#87) ───────────────────────────────────────────────
@@ -870,28 +976,28 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     }
 
     it('an EMPTY DataTransfer → nativeClipboardPaste at the PEEKED caret index, and the gesture is claimed', async () => {
-      const anchor = { id: 'p-1', token: '' }
-      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 4, anchor })) })
-      host.documentService.nativeClipboardPaste.mockReturnValue(
+      const anchor = { id: 'p-1' }
+      const host = wyHost({ peekInsertAnchorForBlock: vi.fn(() => ({ afterBlockId: 'b-4', anchor })) })
+      host.provider.paste.mockReturnValue(
         Promise.resolve({ outcome: 'block', kind: 'smart-image', id: 'si-1' }))
       const { ed, props } = mountPaste(host, 'doc-1')
       const event = { clipboardData: emptyClip(), target: {}, preventDefault: vi.fn() }
 
       expect(props.handlePaste({}, event)).toBe(true)
       expect(event.preventDefault).toHaveBeenCalled()
-      expect(host.insertIndexForBlock).not.toHaveBeenCalled() // no EAGER consume
+      expect(host.insertAnchorForBlock).not.toHaveBeenCalled() // no EAGER consume
       await new Promise((r) => setTimeout(r, 0))
-      // NO clipboard rides the frame: there was none to send, and that is the point.
-      expect(host.documentService.nativeClipboardPaste).toHaveBeenCalledWith('doc-1', { index: 4 })
-      expect(host.documentService.smartPaste).not.toHaveBeenCalled()
+      // NO clipboard rides the payload: there was none to send, and that is the point.
+      expect(host.provider.paste).toHaveBeenCalledWith({ kind: 'native-clipboard' }, 'b-4')
+      expect(pasteKinds(host)).toEqual(['native-clipboard'])
       expect(host.consumeInsertAnchor).toHaveBeenCalledWith(anchor)
       expect(ed.commands.insertContent).not.toHaveBeenCalled()
     })
 
     it('an empty clipboard the server makes nothing of consumes no anchor and replays nothing', async () => {
-      const anchor = { id: 'p-1', token: '' }
-      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 0, anchor })) })
-      host.documentService.nativeClipboardPaste.mockReturnValue(Promise.resolve({ outcome: 'none' }))
+      const anchor = { id: 'p-1' }
+      const host = wyHost({ peekInsertAnchorForBlock: vi.fn(() => ({ afterBlockId: 'b-0', anchor })) })
+      host.provider.paste.mockReturnValue(Promise.resolve({ outcome: 'none' }))
       const { ed, props } = mountPaste(host, 'doc-1')
 
       props.handlePaste({}, { clipboardData: emptyClip(), target: {}, preventDefault: vi.fn() })
@@ -902,16 +1008,16 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     })
 
     it('a COPIED FILE the page can name still goes to the NATIVE clipboard read', async () => {
-      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 4, anchor: null })) })
-      host.documentService.nativeClipboardPaste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
+      const host = wyHost({ peekInsertAnchorForBlock: vi.fn(() => ({ afterBlockId: 'b-4', anchor: null })) })
+      host.provider.paste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
       const { props } = mountPaste(host, 'doc-1')
       const event = { clipboardData: uriListClip('file:///home/u/report.pdf\r\n'), target: {}, preventDefault: vi.fn() }
       expect(props.handlePaste({}, event)).toBe(true)
       await new Promise((r) => setTimeout(r, 0))
       // One backend mechanism for every native gesture: the page's list is only
       // the recogniser; Go asks GTK for the clipboard's own uris.
-      expect(host.documentService.nativeClipboardPaste).toHaveBeenCalledWith('doc-1', { index: 4 })
-      expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
+      expect(host.provider.paste).toHaveBeenCalledWith({ kind: 'native-clipboard' }, 'b-4')
+      expect(pasteKinds(host)).toEqual(['native-clipboard'])
     })
 
     it('a copied http URL is not a file — the ordinary pipeline still gets it', async () => {
@@ -925,9 +1031,7 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
 
       expect(props.handlePaste({}, event)).toBe(true)
       await new Promise((r) => setTimeout(r, 0))
-      expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
-      expect(host.documentService.nativeClipboardPaste).not.toHaveBeenCalled()
-      expect(host.documentService.smartPaste).toHaveBeenCalled()
+      expect(pasteKinds(host)).toEqual(['smart'])
     })
 
     // The REGRESSION GUARD on the emptiness test. A DataTransfer that answers
@@ -937,8 +1041,8 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     // items. Advertised-but-unreadable is the native-read signal — Go asks GTK
     // for the uris itself.
     it('a copied file the page cannot read — types advertised, nothing readable — goes native', async () => {
-      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 4, anchor: null })) })
-      host.documentService.nativeClipboardPaste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
+      const host = wyHost({ peekInsertAnchorForBlock: vi.fn(() => ({ afterBlockId: 'b-4', anchor: null })) })
+      host.provider.paste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
       const { props } = mountPaste(host, 'doc-1')
       const event = {
         clipboardData: {
@@ -951,8 +1055,8 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
       }
       expect(props.handlePaste({}, event)).toBe(true)
       await new Promise((r) => setTimeout(r, 0))
-      expect(host.documentService.nativeClipboardPaste).toHaveBeenCalledWith('doc-1', { index: 4 })
-      expect(host.documentService.smartPaste).not.toHaveBeenCalled()
+      expect(host.provider.paste).toHaveBeenCalledWith({ kind: 'native-clipboard' }, 'b-4')
+      expect(pasteKinds(host)).toEqual(['native-clipboard'])
     })
 
     it('a clipboard that answers getData but lists no types is NOT empty', async () => {
@@ -966,19 +1070,19 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
 
       expect(props.handlePaste({}, event)).toBe(true)
       await new Promise((r) => setTimeout(r, 0))
-      expect(host.documentService.nativeClipboardPaste).not.toHaveBeenCalled()
-      expect(host.documentService.smartPaste).toHaveBeenCalled()
+      expect(pasteKinds(host)).toEqual(['smart'])
     })
 
-    it('a paste into a prompt pseudo-document is left to PM (no block tree to create into)', () => {
-      const host = wyHost()
+    it('a paste into a WHOLE-CONTENT container is left to PM — a prompt has no block tree', () => {
+      // The exclusion is by TYPE, not by a uuid test: the provider carries no
+      // paste query at all, because there is nothing to paste a block into.
+      const host = wyPromptHost()
       const { props } = mountPaste(host, 'prompt:p')
       expect(props.handlePaste({}, { clipboardData: emptyClip(), target: {}, preventDefault: vi.fn() })).toBe(false)
-      expect(host.documentService.nativeClipboardPaste).not.toHaveBeenCalled()
       expect(props.handlePaste({}, {
         clipboardData: uriListClip('file:///a.png\r\n'), target: {}, preventDefault: vi.fn(),
       })).toBe(false)
-      expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
+      expect(host.provider.paste).toBeUndefined()
     })
   })
 
@@ -1002,7 +1106,7 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
   }
 
   function dropUriList(host, uriList, result) {
-    host.documentService.nativeDropPaste.mockReturnValue(Promise.resolve(result || { outcome: 'none' }))
+    host.provider.paste.mockReturnValue(Promise.resolve(result || { outcome: 'none' }))
     const { ed, props } = mountPaste(host, 'doc-1')
     ed.view.posAtCoords = () => ({ pos: 12 })
     ed.state.selection = { to: 0 }
@@ -1011,30 +1115,27 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
   }
 
   it('an external drop PEEKS insertIndexAt(dropPos), redeems the bucket with what it read as the hint', async () => {
-    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
+    const host = wyHost({ peekInsertAnchorAt: vi.fn(() => ({ afterBlockId: 'b-9', anchor: null })) })
     const list = 'file:///home/u/swagger.yml\r\n'
     const { handled, event } = dropUriList(host, list, { outcome: 'block' })
     expect(handled).toBe(true)
-    expect(host.peekInsertIndexAt).toHaveBeenCalledWith(12)
-    expect(host.insertIndexForBlockAt).not.toHaveBeenCalled() // no EAGER consume on drop
+    expect(host.peekInsertAnchorAt).toHaveBeenCalledWith(12)
+    expect(host.insertAnchorForBlock).not.toHaveBeenCalled() // no EAGER consume on drop
     // Without this PM inserts the file:/// path as text — the whole #86 symptom.
     expect(event.preventDefault).toHaveBeenCalled()
     await new Promise((r) => setTimeout(r, 0))
     // The bucket is the source; readable text rides only as the bucket-miss hint.
-    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', {
-      entries: [{ mimeType: 'text/uri-list', content: list }],
-      index: 9,
-    })
-    expect(host.documentService.smartPaste).not.toHaveBeenCalled()
+    expect(host.provider.paste).toHaveBeenCalledWith(
+      { kind: 'native-drop', entries: [{ mimeType: 'text/uri-list', content: list }] }, 'b-9')
   })
 
   it('a drop whose DataTransfer is COMPLETELY unreadable redeems with an empty hint', async () => {
-    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
+    const host = wyHost({ peekInsertAnchorAt: vi.fn(() => ({ afterBlockId: 'b-9', anchor: null })) })
     const { handled, event } = dropUriList(host, '', { outcome: 'block' })
     expect(handled).toBe(true)
     expect(event.preventDefault).toHaveBeenCalled()
     await new Promise((r) => setTimeout(r, 0))
-    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', { entries: [], index: 9 })
+    expect(host.provider.paste).toHaveBeenCalledWith({ kind: 'native-drop', entries: [] }, 'b-9')
   })
 
   it('an internal PM drag (moved, or view.dragging) is never claimed', () => {
@@ -1044,7 +1145,7 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     expect(props.handleDrop({}, event, { content: [] }, true)).toBe(false)
     ed.view.dragging = { slice: {}, move: false }
     expect(props.handleDrop({}, event, { content: [] }, false)).toBe(false)
-    expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
+    expect(host.provider.paste).not.toHaveBeenCalled()
   })
 
   // THE TRAP that shipped path-as-text: PM parses an external drop's text into a
@@ -1053,8 +1154,8 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
   // getData for every flavour; PM got the text through WebKit's internal
   // channel), so its text rides the frame as the page hint.
   it('an external drop only the SLICE could read → claimed, slice text is the hint', async () => {
-    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
-    host.documentService.nativeDropPaste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
+    const host = wyHost({ peekInsertAnchorAt: vi.fn(() => ({ afterBlockId: 'b-9', anchor: null })) })
+    host.provider.paste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
     const { ed, props } = mountPaste(host, 'doc-1')
     ed.view.posAtCoords = () => ({ pos: 12 })
     ed.view.dragging = null
@@ -1064,19 +1165,16 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     expect(props.handleDrop({}, event, slice, false)).toBe(true)
     expect(event.preventDefault).toHaveBeenCalled()
     await new Promise((r) => setTimeout(r, 0))
-    expect(host.documentService.nativeDropPaste).toHaveBeenCalledWith('doc-1', {
-      entries: [{ mimeType: 'text/plain', content: '/home/u/dragged/handler.go' }],
-      index: 9,
-    })
+    expect(host.provider.paste).toHaveBeenCalledWith(
+      { kind: 'native-drop', entries: [{ mimeType: 'text/plain', content: '/home/u/dragged/handler.go' }] }, 'b-9')
   })
 
-  it('a drop into a prompt pseudo-document is left to PM (no block tree to create into)', () => {
-    const host = wyHost()
-    host.documentService.nativeDropPaste.mockReturnValue(Promise.resolve({ outcome: 'none' }))
+  it('a drop into a WHOLE-CONTENT container is left to PM — a prompt has no block tree', () => {
+    const host = wyPromptHost()
     const { props } = mountPaste(host, 'prompt:p')
     const event = { dataTransfer: dt('file:///a.png\r\n'), clientX: 1, clientY: 1, preventDefault: vi.fn() }
     expect(props.handleDrop({}, event, null, false)).toBe(false)
-    expect(host.documentService.nativeDropPaste).not.toHaveBeenCalled()
+    expect(host.provider.paste).toBeUndefined()
   })
 
   // The drop handler reads the SAME union as paste, so its branch selection is
@@ -1085,8 +1183,8 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     const LIST = 'file:///home/u/x.png\r\n'
 
     it('outcome:block → consumes the anchor, inserts nothing locally', async () => {
-      const anchor = { id: 'p-1', token: '' }
-      const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor })) })
+      const anchor = { id: 'p-1' }
+      const host = wyHost({ peekInsertAnchorAt: vi.fn(() => ({ afterBlockId: 'b-9', anchor })) })
       const { ed } = dropUriList(host, LIST, { outcome: 'block', kind: 'smart-image', id: 'si-1' })
       await new Promise((r) => setTimeout(r, 0))
       expect(host.consumeInsertAnchor).toHaveBeenCalledWith(anchor)
@@ -1094,12 +1192,11 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     })
 
     it("outcome:content → inserts Go's fragment AT THE DROP POSITION, keeping the anchor", async () => {
-      const anchor = { id: 'p-1', token: '' }
-      const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor })) })
+      const anchor = { id: 'p-1' }
+      const host = wyHost({ peekInsertAnchorAt: vi.fn(() => ({ afterBlockId: 'b-9', anchor })) })
       const frag = '<a href="https://example.com">Example Domain</a>'
-      const { ed } = dropUriList(host, LIST, { outcome: 'content', html: frag })
+      const { ed } = dropUriList(host, LIST, { outcome: 'content', content: frag })
       await new Promise((r) => setTimeout(r, 0))
-      expect(host.clearInsertPos).toHaveBeenCalled()
       // 12 is posAtCoords — the DROP coordinate, never the caret.
       expect(ed.commands.insertContentAt).toHaveBeenCalledWith(12, frag)
       expect(host.consumeInsertAnchor).not.toHaveBeenCalled()
@@ -1109,7 +1206,7 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     // A drag naming a file this machine no longer has answers `none`. The caret's
     // empty paragraph must survive it — which is what the PEEK is for.
     it('outcome:none → never touches the document (a drop has no clipboard to replay)', async () => {
-      const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: { id: 'p-1', token: '' } })) })
+      const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: { id: 'p-1' } })) })
       const { ed } = dropUriList(host, LIST, { outcome: 'none' })
       await new Promise((r) => setTimeout(r, 0))
       expect(ed.commands.insertContentAt).not.toHaveBeenCalled()
@@ -1118,31 +1215,29 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     })
   })
 
-  it('paste in a prompt: uuid prompt: → no server round trip (returns false)', () => {
-    const { props } = mountPaste(wyHost(), 'prompt:p')
+  it('paste in a whole-content container: no round trip at all (returns false)', () => {
+    const { props } = mountPaste(wyPromptHost(), 'prompt:p')
     const event = { clipboardData: clip({ text: 'plain', items: [] }), target: {}, preventDefault: vi.fn() }
     expect(props.handlePaste({}, event)).toBe(false)
   })
 
   // ── insertLink — the Insert-from-URL ladder's "Link" rung (#67) ──────────────
   // It is a CALLER of the paste path, not a second link-inserting mechanism: the
-  // same DocumentService.smartPaste round-trip (which is what fetches the title in
-  // Go), the same peek/consume anchor contract, the same union reader. These pin
-  // that reuse — a hand-rolled local `<a>` build would fail every one of them.
+  // same paste query (which is what fetches the title in Go), the same
+  // peek/consume anchor contract, the same decision reader. These pin that reuse —
+  // a hand-rolled local `<a>` build would fail every one of them.
   describe('WysiwygSurface.insertLink (Link rung reuses the paste round-trip)', () => {
     it("sends the URL as a text/plain entry at the PEEKED index, and inserts GO's anchor at the caret", async () => {
-      const anchor = { id: 'p-1', token: '' }
-      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 3, anchor })) })
+      const anchor = { id: 'p-1' }
+      const host = wyHost({ peekInsertAnchorForBlock: vi.fn(() => ({ afterBlockId: 'b-3', anchor })) })
       const frag = '<a href="https://example.com">Example Domain</a>'
-      host.documentService.smartPaste.mockReturnValue(Promise.resolve({ outcome: 'content', html: frag }))
+      host.provider.paste.mockReturnValue(Promise.resolve({ outcome: 'content', content: frag }))
       const { s, ed } = mountPaste(host, 'doc-1')
 
       await expect(s.insertLink('https://example.com')).resolves.toBe(true)
 
-      expect(host.documentService.smartPaste).toHaveBeenCalledWith('doc-1', {
-        entries: [{ mimeType: 'text/plain', content: 'https://example.com' }],
-        index: 3,
-      })
+      expect(host.provider.paste).toHaveBeenCalledWith(
+        { kind: 'smart', entries: [{ mimeType: 'text/plain', content: 'https://example.com' }] }, 'b-3')
       expect(ed.commands.insertContent).toHaveBeenCalledWith(frag)
       // Inline insert into the caret's own paragraph — the block anchor is untouched.
       expect(host.consumeInsertAnchor).not.toHaveBeenCalled()
@@ -1150,9 +1245,9 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     })
 
     it('an outcome:block URL (an image) becomes that BLOCK — the pipeline decides, this rung does not second-guess it', async () => {
-      const anchor = { id: 'p-1', token: '' }
-      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 3, anchor })) })
-      host.documentService.smartPaste.mockReturnValue(Promise.resolve({ outcome: 'block', kind: 'smart-image', id: 'si-1' }))
+      const anchor = { id: 'p-1' }
+      const host = wyHost({ peekInsertAnchorForBlock: vi.fn(() => ({ afterBlockId: 'b-3', anchor })) })
+      host.provider.paste.mockReturnValue(Promise.resolve({ outcome: 'block', kind: 'smart-image', id: 'si-1' }))
       const { s, ed } = mountPaste(host, 'doc-1')
 
       await expect(s.insertLink('https://example.com/cat.png')).resolves.toBe(true)
@@ -1161,8 +1256,8 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     })
 
     it('outcome:none replays the bare URL (the degraded outcome a paste of it gives)', async () => {
-      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 0, anchor: null })) })
-      host.documentService.smartPaste.mockReturnValue(Promise.resolve({ outcome: 'none' }))
+      const host = wyHost({ peekInsertAnchorForBlock: vi.fn(() => ({ afterBlockId: 'b-0', anchor: null })) })
+      host.provider.paste.mockReturnValue(Promise.resolve({ outcome: 'none' }))
       const { s, ed } = mountPaste(host, 'doc-1')
 
       await expect(s.insertLink('https://example.com')).resolves.toBe(false)
@@ -1171,7 +1266,7 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
 
     it('a failed round-trip resolves false and inserts NOTHING (no title-less fallback anchor)', async () => {
       const host = wyHost()
-      host.documentService.smartPaste.mockReturnValue(Promise.reject(new Error('offline')))
+      host.provider.paste.mockReturnValue(Promise.reject(new Error('offline')))
       const { s, ed } = mountPaste(host, 'doc-1')
       const err = vi.spyOn(console, 'error').mockImplementation(() => {})
 
@@ -1180,17 +1275,17 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
       err.mockRestore()
     })
 
-    it('no url, and a prompt buffer, are inert (no round trip)', async () => {
+    it('no url, and a whole-content container, are inert (no round trip)', async () => {
       const host = wyHost()
       const { s } = mountPaste(host, 'doc-1')
       await expect(s.insertLink('')).resolves.toBe(false)
 
-      const promptHost = wyHost()
+      const promptHost = wyPromptHost()
       const p = mountPaste(promptHost, 'prompt:p')
       await expect(p.s.insertLink('https://example.com')).resolves.toBe(false)
 
-      expect(host.documentService.smartPaste).not.toHaveBeenCalled()
-      expect(promptHost.documentService.smartPaste).not.toHaveBeenCalled()
+      expect(host.provider.paste).not.toHaveBeenCalled()
+      expect(promptHost.provider.paste).toBeUndefined()
     })
   })
 })
@@ -1493,7 +1588,7 @@ describe('WysiwygSurface blockCursor capture + applyPosition (P3.E)', () => {
   })
 })
 
-describe('WysiwygSurface.reloadFromBlocks — load render parks the caret+scroll at the TOP (issue #51)', () => {
+describe('WysiwygSurface.paintContainer — a LOAD parks the caret+scroll at the TOP (issue #51)', () => {
   // A whole-doc replaceWith maps the prior selection to the END of the new
   // content; left there, the mount/reload focus scrolls every opened document
   // to its bottom (defect observed 2026-07-22: "documents always open scrolled
@@ -1506,9 +1601,9 @@ describe('WysiwygSurface.reloadFromBlocks — load render parks the caret+scroll
   // advanced. The fix folds the caret reset AND `tr.scrollIntoView()` into the
   // SAME transaction as the replace — no separate post-dispatch
   // commands.setTextSelection call (that would be a second, later transaction
-  // PM has no reason to scroll for). softReload's own caret/scroll restore
-  // runs AFTER reloadFromBlocks, so genuine mid-session reloads still put the
-  // user back where they had been.
+  // PM has no reason to scroll for). A reload's own caret/scroll restore runs
+  // AFTER the paint, so genuine mid-session reloads still put the user back
+  // where they had been.
   beforeEach(() => {
     vi.useFakeTimers()
     seedVendor({ ProseMirrorDOMParser: PMDOMParser, TextSelection })
@@ -1517,7 +1612,9 @@ describe('WysiwygSurface.reloadFromBlocks — load render parks the caret+scroll
   it('the dispatched transaction carries the doc-start selection AND requests scrollIntoView', () => {
     const ed = fakeEditorOver(fxSchema, [build.p('old content', 'b1')])
     const s = new TestWysiwygSurface('doc-1', wyHost(), ed)
-    s.reloadFromBlocks([new SieveBlock('prose', { id: 'p1', content: 'hello' })])
+    s.paintContainer(containerOf(['p1'], {
+      p1: { id: 'p1', kind: 'prose', attrs: { id: 'p1', content: 'hello' } },
+    }))
     expect(ed.dispatched).toHaveLength(1)
     const tr = ed.dispatched[0]
     expect(tr.scrolledIntoView).toBe(true) // PM itself takes the "scroll to selection" branch

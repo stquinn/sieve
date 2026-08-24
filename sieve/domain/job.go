@@ -5,7 +5,7 @@ package domain
 //
 // It lives in the leaf because its producer and its consumers must not have to
 // know each other: services.JobTracker mints one and the protocol contract puts
-// it on the wire, and domain/ is the package both can name (same reason as Node
+// it on the wire, and domain/ is the package both can name (same reason as NodeDescriptor
 // and Candidate).
 type JobInfo struct {
 	JobID string `json:"jobId"`

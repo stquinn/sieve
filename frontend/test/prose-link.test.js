@@ -15,8 +15,9 @@
 //     text is the LABEL ALONE, so a text/plain-only entry set has no URL in it
 //     anywhere and Go's ContentEntry.Link() finds nothing → ZERO offers, no
 //     error, nothing in the menu.
-//   • the wire op for a range source is `extract` (additive) at the freed index,
-//     while the MENU keeps the "Convert to …" verb it was offered.
+//   • the verb a range source plays back is `extract` (additive), while the MENU
+//     keeps the "Convert to …" wording it was offered. WHERE the new block lands
+//     is the host's arithmetic against the container's order — not this lens's.
 //   • the consuming deletes are ordinary TRACKED prose edits (undo sanctity).
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -30,20 +31,20 @@ import { Markdown } from 'tiptap-markdown'
 // fake surface hands over a REAL TipTap editor as its editorPane — so inert
 // stubs satisfy the imports. block-position stays REAL: its index math is
 // exactly what the playback under test uses.
-vi.mock('../src/static/editor/extensions.js', () => ({
+vi.mock('../src/static/lens/extensions.js', () => ({
   Search: {}, SelectionHighlight: {}, HighlightMark: {},
   AiShortcuts: { configure: () => ({}) },
   buildAiContext: vi.fn(() => ({ blockRef: 'doc', contextLabel: 'x' })),
   applyTargetHighlight: vi.fn(),
 }))
-vi.mock('../src/static/editor/block-chrome.js', () => ({ BlockChrome: {}, getBlockSelectionRange: vi.fn() }))
-vi.mock('../src/static/ai/ai-target-decoration.js', () => ({ AiTargetDecoration: {} }))
-vi.mock('../src/static/block/prose-block.js', () => ({ BlockId: {} }))
+vi.mock('../src/static/lens/document-editor/block-chrome.js', () => ({ BlockChrome: {}, getBlockSelectionRange: vi.fn() }))
+vi.mock('../src/static/lens/document-editor/surfaces/ai-target-decoration.js', () => ({ AiTargetDecoration: {} }))
+vi.mock('../src/static/lens/document-editor/surfaces/prose-block.js', () => ({ BlockId: {} }))
 
-import { ProseLink } from '../src/static/editor/surfaces/prose-link.js'
-import { LINK_OPTIONS } from '../src/static/editor/surfaces/wysiwyg-surface.js'
-import { AbstractEditor } from '../src/static/editor/abstract-editor.js'
-import { AbstractSurface } from '../src/static/editor/surfaces/abstract-surface.js'
+import { ProseLink } from '../src/static/lens/document-editor/surfaces/prose-link.js'
+import { LINK_OPTIONS } from '../src/static/lens/document-editor/surfaces/wysiwyg-surface.js'
+import { AbstractEditor } from '../src/static/lens/abstract-editor.js'
+import { AbstractSurface } from '../src/static/lens/document-editor/surfaces/abstract-surface.js'
 import { LinkEditDialog } from '../src/static/ui/link-edit-dialog.js'
 
 // ── Harness ──────────────────────────────────────────────────────────────────
@@ -67,19 +68,25 @@ class PaneSurface extends AbstractSurface {
   get editorPane() { return this.pane }
   mount() {}
   unmount() {}
-  applyServerOp() {}
+  applyContainerChange() {}
+  paintContainer() {}
   flushPending() { this.flushCount++ }
 }
 
-/** An editor whose surface hands over `pane`, with a recording BlockService. */
+/** An editor whose surface hands over `pane`, with a recording provider. */
 function makeEditor(pane) {
   const sent = []
-  const blockService = { extract: (frame) => sent.push(frame) }
-  const documentService = { blockService, open() {} }
+  const provider = {
+    requestAddBlock() {},
+    requestTransform: (blockId, targetKind, operation, entries) =>
+      sent.push({ blockId, targetKind, operation, entries }),
+    subscribe() {}, unsubscribe() {},
+    getUuid: () => 'doc-1', getKind: () => 'note', getOrder: () => [], getBlock: () => null,
+  }
   class TestEditor extends AbstractEditor {
     _createSurface() { return new PaneSurface(pane) }
   }
-  const ed = new TestEditor('doc-1', { documentService })
+  const ed = new TestEditor('doc-1', { provider })
   const surface = ed.presentSurface('wysiwyg', document.createElement('div'), null)
   return { ed, sent, surface }
 }
@@ -303,12 +310,11 @@ describe('converting a prose link (#67 playback)', () => {
     const { ed, sent } = makeEditor(pane)
     await convert(ed, pane, 'T')
 
-    // The link's paragraph was the doc's 2nd block (index 1) and is gone; the
-    // new block is created in its place, so the result is NOT "link + block".
+    // The link's paragraph was the doc's 2nd block and is gone; the new block
+    // takes its place, so the result is NOT "link + block".
     expect(pane.state.doc.childCount).toBe(2)
     expect(pane.storage.markdown.getMarkdown()).toBe('first para\n\nlast para')
     expect(sent).toHaveLength(1)
-    expect(sent[0].index).toBe(1)
   })
 
   it('a link MID-SENTENCE: only the link is consumed, the sentence survives', async () => {
@@ -318,11 +324,12 @@ describe('converting a prose link (#67 playback)', () => {
 
     expect(pane.storage.markdown.getMarkdown()).toBe('see  for details')
     expect(pane.state.doc.childCount).toBe(1)
-    // The block lands AFTER the surviving paragraph.
-    expect(sent[0].index).toBe(1)
+    // WHERE it lands is not stated here: the verb names the SOURCE BLOCK, and the
+    // host resolves that to a position against the container's own order.
+    expect(sent[0].blockId).toBe('prose-1')
   })
 
-  it('sends the ADDITIVE wire verb — a range source has no block to replace', async () => {
+  it('plays back the ADDITIVE verb — a range source has no block to replace', async () => {
     pane = makePane('see [T](https://example.com/x) for details')
     const { ed, sent } = makeEditor(pane)
     await convert(ed, pane, 'T')
@@ -352,7 +359,7 @@ describe('converting a prose link (#67 playback)', () => {
     const { ed, sent } = makeEditor(pane)
     await convert(ed, pane, 'T')
     expect(pane.state.doc.childCount).toBe(1)
-    expect(sent[0].index).toBe(1)
+    expect(sent).toHaveLength(1)
   })
 
   it('leaves ordinary block sources on the in-place TRANSFORM verb', async () => {
@@ -360,6 +367,6 @@ describe('converting a prose link (#67 playback)', () => {
     const { ed, sent } = makeEditor(pane)
     await ed.extract({ blockId: 'blk-1', targetKind: 'smart-card', operation: 'transform', entries: ENTRIES })
     expect(sent[0].operation).toBe('transform')
-    expect(sent[0].index).toBe(-1)
+    expect(sent[0].blockId).toBe('blk-1')
   })
 })

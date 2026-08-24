@@ -324,7 +324,7 @@ func (p *AttachmentProcessor) DescribeJob(jctx block.JobContext) *block.Processo
 // attachmentFace is the resolve job's result: what the coordinate names, and
 // whether it names anything at all.
 type attachmentFace struct {
-	node    domain.Node
+	node    domain.NodeDescriptor
 	missing bool
 }
 

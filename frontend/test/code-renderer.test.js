@@ -7,9 +7,9 @@
 // block. Scratch construction: (block) only; the service-wired test below is
 // the one live-instance case.
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
-import { CodeRenderer } from '../src/static/block/renderers/code-renderer.js'
-import { SieveBlock } from '../src/static/block/sieve-block.js'
-import { serviceRig } from './helpers/service-rig.js'
+import { CodeRenderer } from '../src/static/renderers/code-renderer.js'
+import { SieveBlock } from '../src/static/contract/sieve-block.js'
+import { providerRig } from './helpers/service-rig.js'
 
 /** @param {object} payload */
 function blk(payload) { return new SieveBlock('code', payload) }
@@ -115,12 +115,12 @@ describe('CodeRenderer (bare-page DoD)', () => {
     expect(() => renderer.destroy()).not.toThrow()
   })
 
-  it('setContent (the outbound truth channel) frames this kind\'s source patch on the document channel through a real BlockService', () => {
+  it('setContent (the outbound truth channel) frames this kind\'s source patch on the document channel through a real ContainerTransport', () => {
     // Issue #49 Phase 1: appliers are retired — the verb leaves as the FROZEN
     // block-op frame; the content→source mapping is CodeRenderer's own.
-    const { service, sock } = serviceRig({ blocks: [{ id: 'cd-test', kind: 'code' }] })
+    const { provider, sock } = providerRig({ blocks: [{ id: 'cd-test', kind: 'code' }] })
 
-    const renderer = new CodeRenderer(blk({ id: 'cd-test', source: 'x', language: 'js' }), service)
+    const renderer = new CodeRenderer(blk({ id: 'cd-test', source: 'x', language: 'js' }), provider)
     renderer.render()
     renderer.setContent('const y = 2')
 

@@ -62,32 +62,32 @@ func (s *NotesSource) Search(query string, limit int) []domain.Candidate {
 // Resolve dereferences a container address into the note it names. Anything this
 // source does not hold — a foreign scheme, a deleted document, an unfiled buffer
 // — is domain.ErrNodeNotFound, which the Router reads as "ask the next source".
-func (s *NotesSource) Resolve(uri string) (domain.Node, error) {
+func (s *NotesSource) Resolve(uri string) (domain.NodeDescriptor, error) {
 	addr, err := domain.ParseAddress(uri)
 	if err != nil {
-		return domain.Node{}, err
+		return domain.NodeDescriptor{}, err
 	}
 	if addr.Scheme != domain.SchemeContainer {
-		return domain.Node{}, fmt.Errorf("%w: notes does not answer scheme %q", domain.ErrNodeNotFound, addr.Scheme)
+		return domain.NodeDescriptor{}, fmt.Errorf("%w: notes does not answer scheme %q", domain.ErrNodeNotFound, addr.Scheme)
 	}
 	doc, err := s.documents.LoadByUUID(addr.Container)
 	if err != nil {
-		return domain.Node{}, fmt.Errorf("%w: %s", domain.ErrNodeNotFound, uri)
+		return domain.NodeDescriptor{}, fmt.Errorf("%w: %s", domain.ErrNodeNotFound, uri)
 	}
 	if doc.Kind() != domain.KindNote {
-		return domain.Node{}, fmt.Errorf("%w: %s is not a filed note", domain.ErrNodeNotFound, uri)
+		return domain.NodeDescriptor{}, fmt.Errorf("%w: %s is not a filed note", domain.ErrNodeNotFound, uri)
 	}
 	return s.nodeOf(addr, doc), nil
 }
 
-// nodeOf projects a loaded note into the kind-agnostic Node shape.
-func (s *NotesSource) nodeOf(addr domain.Address, doc domain.Document) domain.Node {
+// nodeOf projects a loaded note into the kind-agnostic NodeDescriptor shape.
+func (s *NotesSource) nodeOf(addr domain.Address, doc domain.Document) domain.NodeDescriptor {
 	meta := doc.Meta()
 	summary := ""
 	if sm := meta.Summary(); sm != nil {
 		summary = *sm
 	}
-	return domain.Node{
+	return domain.NodeDescriptor{
 		URI:     addr.String(),
 		UUID:    doc.UUID(),
 		Kind:    string(domain.KindNote),

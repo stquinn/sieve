@@ -47,8 +47,10 @@ export const DocumentFrame = Object.freeze({
   INSERT_BLOCK: 'insert-block',
   LOAD_CONTENT: 'load-content',
   MARKDOWN_CONTENT: 'markdown-content',
+  ORDER_CHANGED: 'order-changed',
   PASTE_ACK: 'paste-ack',
   PONG: 'pong',
+  REMOVE_BLOCK: 'remove-block',
   REPLACE_BLOCK: 'replace-block',
   WYSIWYG_CONTENT: 'wysiwyg-content',
 })

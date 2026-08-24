@@ -4,11 +4,11 @@
 // docs/design/archive/specs/2026-07-21-block-renderer-contract.md). Bare-page
 // protocol: render() alone yields the complete block. Scratch construction is
 // (block) only; the resize tests construct LIVE instances over a real
-// BlockService with a registered fake applier (the v1 transport).
+// ContainerTransport with a registered fake applier (the v1 transport).
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
-import { SmartImageRenderer } from '../src/static/block/renderers/smart-image-renderer.js'
-import { SieveBlock } from '../src/static/block/sieve-block.js'
-import { serviceRig } from './helpers/service-rig.js'
+import { SmartImageRenderer } from '../src/static/renderers/smart-image-renderer.js'
+import { SieveBlock } from '../src/static/contract/sieve-block.js'
+import { providerRig } from './helpers/service-rig.js'
 
 /** @param {object} payload */
 function blk(payload) { return new SieveBlock('smart-image', payload) }
@@ -35,22 +35,22 @@ function installBareThemeVars() {
   return el
 }
 
-/** render() alone = the complete block. Pass a service for LIVE instances. */
-function mount(payload, service) {
-  const renderer = new SmartImageRenderer(blk(payload), service || null)
+/** render() alone = the complete block. Pass a provider for LIVE instances. */
+function mount(payload, provider) {
+  const renderer = new SmartImageRenderer(blk(payload), provider || null)
   const dom = renderer.render()
   return { renderer, dom }
 }
 
-/** A real, wire-owning BlockService with `id` seeded into its routing index
+/** A real, wire-owning ContainerTransport with `id` seeded into its routing index
  *  (issue #49 Phase 1 — appliers are retired; assertions read the socket). */
 function serviceWithBlock(id) {
-  const { service, sock } = serviceRig({ blocks: [{ id, kind: 'smart-image' }] })
+  const { provider, sock } = providerRig({ blocks: [{ id, kind: 'smart-image' }] })
   /** @param {string} blockId */
   const patchesFor = (blockId) => sock.sentOfType('block-op')
     .filter((m) => m.op.type === 'update-block' && m.op.blockId === blockId)
     .map((m) => m.op.attrs)
-  return { service, sock, patchesFor }
+  return { provider, sock, patchesFor }
 }
 
 describe('SmartImageRenderer (bare-page DoD)', () => {
@@ -119,9 +119,9 @@ describe('SmartImageRenderer (bare-page DoD)', () => {
     expect(getComputedStyle(badge).display).toBe('none')
   })
 
-  it('resize drag commits width/height through the BlockService (drag release self-invokes the resize verb)', () => {
-    const { service, patchesFor } = serviceWithBlock('im-e5f6')
-    const { dom } = mount({ id: 'im-e5f6', src: '/x.png', status: 'COMPLETE' }, service)
+  it('resize drag commits width/height through the ContainerTransport (drag release self-invokes the resize verb)', () => {
+    const { provider, patchesFor } = serviceWithBlock('im-e5f6')
+    const { dom } = mount({ id: 'im-e5f6', src: '/x.png', status: 'COMPLETE' }, provider)
     document.body.appendChild(dom)
     const resizer = /** @type {HTMLElement} */ (dom.querySelector('.image-resizer'));
 
@@ -135,9 +135,9 @@ describe('SmartImageRenderer (bare-page DoD)', () => {
     expect(typeof patches[0].height).toBe('string')
   })
 
-  it('resize(width, height) frames the expected FROZEN block-op via a real BlockService', () => {
-    const { service, sock } = serviceWithBlock('im-f6a7')
-    const { renderer } = mount({ id: 'im-f6a7', src: '/x.png', status: 'COMPLETE' }, service)
+  it('resize(width, height) frames the expected FROZEN block-op via a real ContainerTransport', () => {
+    const { provider, sock } = serviceWithBlock('im-f6a7')
+    const { renderer } = mount({ id: 'im-f6a7', src: '/x.png', status: 'COMPLETE' }, provider)
 
     renderer.resize('320', '240')
 

@@ -9,8 +9,8 @@
 // SYNCHRONOUS fetch that throws when the connection is refused (no dev server
 // here). The stub keeps every assertion about DiagramRenderer's own DOM/CSS.
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
-import { DiagramRenderer } from '../src/static/block/renderers/diagram-renderer.js'
-import { SieveBlock } from '../src/static/block/sieve-block.js'
+import { DiagramRenderer } from '../src/static/renderers/diagram-renderer.js'
+import { SieveBlock } from '../src/static/contract/sieve-block.js'
 
 /** @param {object} payload */
 function blk(payload) { return new SieveBlock('diagram', payload) }
@@ -161,18 +161,18 @@ describe('DiagramRenderer (Phase 2 pilot — bare-page DoD)', () => {
     expect(select.value).toBe('plantuml')
   })
 
-  it('picking an engine pushes diagramType via the block service (no source translation)', () => {
+  it('picking an engine pushes diagramType through the provider (no source translation)', () => {
     /** @type {{id: string, patch: object}[]} */
     const pushes = []
-    const svc = { updateAttributes: (id, patch) => { pushes.push({ id, patch }) }, envelopeFor: () => null }
-    const renderer = new DiagramRenderer(blk({ id: 'di-x', source: 'A->B', diagramType: 'mermaid', mode: 'edit' }), svc)
+    const provider = { requestSetBlock: (id, patch) => { pushes.push({ id, patch }) }, getBlock: () => null }
+    const renderer = new DiagramRenderer(blk({ id: 'di-x', source: 'A->B', diagramType: 'mermaid', mode: 'edit' }), provider)
     const dom = renderer.render()
     const select = /** @type {HTMLSelectElement} */ (dom.querySelector('select.diagram-block__engine'))
     select.value = 'plantuml'
     select.dispatchEvent(new Event('change'))
     expect(pushes).toEqual([{ id: 'di-x', patch: { diagramType: 'plantuml' } }])
     // Re-picking the current engine is a no-op (no redundant push).
-    const renderer2 = new DiagramRenderer(blk({ id: 'di-y', source: 'A->B', diagramType: 'mermaid', mode: 'edit' }), svc)
+    const renderer2 = new DiagramRenderer(blk({ id: 'di-y', source: 'A->B', diagramType: 'mermaid', mode: 'edit' }), provider)
     renderer2.setDiagramType('mermaid')
     expect(pushes.length).toBe(1)
   })

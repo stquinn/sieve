@@ -12,12 +12,14 @@
 // window.sieveWorkspace at runtime (initEditor via htmx events), never at parse.
 
 import { SieveTab } from './tab.js'
-import { BlockService } from '../block/block-service.js'
-import { DocumentService } from '../block/document-service.js'
-import { WorkspaceService } from '../block/workspace-service.js'
-import { CommandService } from '../block/command-service.js'
-import { MentionService } from '../block/mention-service.js'
-import { InvalidationService } from '../block/invalidation-service.js'
+import { MountBinding } from './mount-binding.js'
+import { ContainerModelFeed } from '../container/container-model-feed.js'
+import { ContainerTransport } from '../container/container-transport.js'
+import { DocumentService } from '../container/document-service.js'
+import { WorkspaceService } from './workspace-service.js'
+import { CommandService } from './command-service.js'
+import { MentionService } from './mention-service.js'
+import { InvalidationService } from './invalidation-service.js'
 import { CommandBadges } from './command-badges.js'
 import { AskPanel } from './ask-panel.js'
 import { InsertDialogs } from './insert-dialogs.js'
@@ -42,7 +44,7 @@ export class SieveWorkspace {
    * republishes the ACTIVE tab's selection stream only (a background tab's push
    * never reaches here). Consumers arrive in P3.D (the Ask panel); today it has
    * no production consumer.
-   * @type {Array<(ctx: import('../editor/selection-model.js').SelectionContext|null) => void>}
+   * @type {Array<(ctx: import('../lens/document-editor/selection-model.js').SelectionContext|null) => void>}
    */
   #selectionListeners = []
 
@@ -66,7 +68,7 @@ export class SieveWorkspace {
   /** @type {ReturnType<typeof setTimeout>|null} issue #51 lazy scroll-persist debounce (the active tab only — a background tab has no live editor to report from) */
   #scrollPersistTimer = null
 
-  /** @type {BlockService} the app-wide protocol boundary singleton AND wire
+  /** @type {ContainerTransport} the app-wide protocol boundary singleton AND wire
    * owner (contract §service pair; issue #49 Phase 1) — constructed HERE, the
    * composition root, and handed down through editor options → surface →
    * pane. Never window.*. */
@@ -75,6 +77,11 @@ export class SieveWorkspace {
   /** @type {DocumentService} the uuid-addressed half, composed over the wire
    * owner by constructor injection (contract §service pair). */
   #documentService
+
+  /** @type {ContainerModelFeed} one follower model per open container, kept in
+   * step with the wire. The HOST's data plane (issue #96): a lens never sees it,
+   * only the provider a MountBinding wraps around it. */
+  #feed
 
   /** @type {WorkspaceService} the session-channel wire owner — the workspace
    * command plane's transport, shared by every tenant that speaks it (#74 P1).
@@ -94,14 +101,15 @@ export class SieveWorkspace {
   #invalidationService
 
   /**
-   * @param {import('../block/block-service.js').BlockServiceOptions} [serviceOptions]
-   *   — the BlockService test seams (socketFactory / wsUrlFor). EMPTY in prod:
+   * @param {import('../container/container-transport.js').ContainerTransportOptions} [serviceOptions]
+   *   — the ContainerTransport test seams (socketFactory / wsUrlFor). EMPTY in prod:
    *   the boot singleton below constructs with real sockets; tests inject
    *   fakes here (the seam moved off the editors onto the wire owner).
    */
   constructor(serviceOptions) {
-    this.#blockService = new BlockService(serviceOptions)
+    this.#blockService = new ContainerTransport(serviceOptions)
     this.#documentService = new DocumentService(this.#blockService)
+    this.#feed = new ContainerModelFeed(this.#documentService)
     this.#workspaceService = new WorkspaceService({ socketFactory: serviceOptions?.socketFactory })
     this.#commandService = new CommandService(this.#workspaceService, {
       commands: typeof window !== 'undefined' ? /** @type {any} */ (window).__sieveCommands || [] : [],
@@ -113,7 +121,7 @@ export class SieveWorkspace {
     this.#invalidationService = new InvalidationService(this.#workspaceService)
   }
 
-  /** The BlockService singleton (handed down; renderers/adapters consume it). */
+  /** The ContainerTransport singleton (handed down; renderers/adapters consume it). */
   get blockService() { return this.#blockService }
 
   /** The DocumentService singleton (editors/Workspace consume it). */
@@ -374,7 +382,7 @@ export class SieveWorkspace {
    *
    * @param {string} uuid — target document uuid, or '' to tear down
    * @param {object} [options] — passed to the Tab's editor factory
-   *   (surfaceCollaborators, onServerMessage, …)
+   *   (toolbar, …) — the provider and loader are the host's own
    * @returns {SieveTab|null} the activated Tab, or null after a teardown
    */
   activateDocument(uuid, options) {
@@ -390,21 +398,39 @@ export class SieveWorkspace {
         prev.editor.destroy()
         prev.detachEditor()
       }
+      // The MOUNT goes with the editor: closing it closes the container's channel
+      // and discards its follower model. Close-before-open across a switch is
+      // load-bearing for the Go WS takeover guard.
+      prev.detachMount()
       if (!uuid) this.closeTab(prev.uuid)
     }
     if (!uuid) return null
 
     const tab = this.openTab(uuid)
     if (!tab.editor) {
-      // The service pair rides the editor options; a connect-declaring editor
-      // (NoteEditor) opens its channel through documentService at construction,
-      // registering itself as the channel delegate — no separate per-document
-      // handle registration remains (the v1 seam is retired).
-      // Every plane tenant an editor's surfaces may need rides the options from
-      // this one composition root, so no surface reaches a singleton for one.
-      tab.attachEditor(tab.createEditor(uuid, Object.assign(
-        { documentService: this.#documentService, mentionService: this.#mentionService }, options,
-      )))
+      // A tab can still be holding a mount with no lens on it — an editor torn
+      // down out of band leaves exactly that — and it has to give that mount up
+      // BEFORE the next one opens. Close-before-open on ONE uuid is the whole
+      // rule: two live claims on a container's channel is a takeover, and the
+      // side that loses it is a silently dead UI.
+      tab.detachMount()
+      // THE MOUNT SEQUENCE (issue #96 comment 1694). The host resolves the
+      // container, opens its channel, and hands the lens ONE dependency: the
+      // provider. Which provider depends on what the container IS — a prompt is
+      // text, a note is a block tree that can also project itself as text — and
+      // that decision lives in the MountBinding, beside the model it wraps.
+      const kind = uuid.startsWith('prompt:') ? 'prompt' : 'note'
+      const mount = new MountBinding(uuid, this.#documentService, this.#feed, kind)
+      // The delegate is transport routing, NOT a repaint path: content reaches
+      // the lens through its subscription, and what is left here is traffic that
+      // is nobody's document truth (a server error).
+      if (kind !== 'prompt') mount.openChannel({ onMessage: (msg) => this.routeServerMessage(msg) })
+      tab.attachMount(mount)
+      tab.attachEditor(tab.createEditor(uuid, Object.assign({
+        provider: mount.provider,
+        loadContainer: () => mount.load(),
+        mentionService: this.#mentionService,
+      }, options)))
     }
     return tab
   }
@@ -423,7 +449,7 @@ export class SieveWorkspace {
    * flushSave / …); a disconnected editor (PromptEditor) no-ops the
    * transport-backed ops safely, so nothing here probes for it. (Replaces
    * editor.js's `_activeEditor()`.)
-   * @returns {import('../editor/abstract-editor.js').AbstractEditor|null}
+   * @returns {import('../lens/abstract-editor.js').AbstractEditor|null}
    */
   get activeEditor() {
     return this.#activeTab ? this.#activeTab.editor : null
@@ -462,11 +488,15 @@ export class SieveWorkspace {
     this.#currentMountEl = mountEl
     const wantMode = mode || this.#activeTab?.mode || 'wysiwyg'
 
-    // Document load rides the service boundary (contract §service pair): the
-    // service owns the HTTP call, types the block list into envelopes, and seeds
-    // the block cache. The surface render pipeline consumes the envelopes; the
-    // untyped `raw` wire bridge is retired (issue #49 Phase 3).
-    this.#documentService.load(uuid)
+    // The LOAD is a host act: it seeds the container's follower model (through the
+    // feed's own subscription) and answers with the facts only the host acts on —
+    // the mode to present, the markdown body, the saved scroll, the version. The
+    // lens is handed none of it: it paints from the model, on the bootstrap cue
+    // its subscription produces the moment the surface mounts.
+    const tab = this.#activeTab
+    const mount = tab ? tab.mount : null
+    if (!mount) return
+    mount.load()
       .then((data) => {
         if (this.#currentUuid !== uuid) return // a later init superseded this load
 
@@ -478,12 +508,9 @@ export class SieveWorkspace {
         // version this load served, and a save can land the moment it mounts.
         ed.seedVersion(data.version)
         // The editor owns its root (#tiptap-mount); the surface owns the DOM under
-        // it. presentSurface unmounts any previous surface first.
-        ed.presentSurface(
-          isMarkdown ? 'markdown' : 'wysiwyg',
-          mountEl,
-          isMarkdown ? (data.body || '') : { body: data.body || '', blocks: data.blocks }
-        )
+        // it. presentSurface unmounts any previous surface first, then subscribes —
+        // and the subscription's first cue is what paints.
+        ed.presentSurface(isMarkdown ? 'markdown' : 'wysiwyg', mountEl, isMarkdown ? (data.body || '') : null)
         // Seed the Tab's mode record + body class after the initial present
         // (mode-changed does not fire on initial mount — only on an actual flip).
         if (this.#activeTab) this.#activeTab.recordMode(ed.mode)
@@ -509,7 +536,7 @@ export class SieveWorkspace {
   #syncShell(uuid) {
     const existing = this.getTab(uuid)
     const hadEditor = !!(existing && existing.editor)
-    const tab = this.activateDocument(uuid, { onServerMessage: this.routeServerMessage.bind(this) })
+    const tab = this.activateDocument(uuid)
     if (tab && tab.editor && !hadEditor) {
       tab.editor.onEvent(this.onEditorModeEvent.bind(this))
       // issue #51: the lazy crash-safety flush — a debounced persist on top of
@@ -629,6 +656,7 @@ export class SieveWorkspace {
         tab.editor.destroy()
         tab.detachEditor()
       }
+      tab.detachMount()
       this.closeTab(uuid)
     })
 
@@ -649,12 +677,12 @@ export class SieveWorkspace {
       }
     }, true)
 
-    // Restore renders the backend's RELOADED block list (ids intact) via
-    // editor.softReload — never a flat setContent re-parse (which re-mints ids).
+    // A restore is a genuine whole-container LOAD: reload() reseeds the model and
+    // repaints from it — never a flat setContent re-parse (which re-mints ids).
     document.body.addEventListener('editor:restore', (e) => {
       const data = e.detail
       if (!data || !data.uuid) return
-      this.activeEditor?.softReload()
+      this.activeEditor?.reload()
     })
 
     // Suppress the native context menu inside the editor mount (capture).
@@ -693,12 +721,10 @@ export class SieveWorkspace {
     })
   }
 
-  // ── Chrome verbs (P4.D: the provideChrome registry is fully retired) ──────────
-  // Every chrome verb now delegates DIRECTLY to a Workspace-owned child or the
-  // active editor — no registry hop. The search overlay + insert dialogs are P4.C
-  // children; copyDocumentAsMarkdown reaches the active editor's copyAsMarkdown
-  // (P4.D — the editor owns the export). The public verbs ARE the component API
-  // the native menu calls (main.go buildMenu); their external contract is unchanged.
+  // ── Chrome verbs ─────────────────────────────────────────────────────────────
+  // Each delegates DIRECTLY to a Workspace-owned child (the search overlay, the
+  // insert dialogs) or to the active tab's MOUNT. These public verbs ARE the
+  // component API the native menu calls (main.go buildMenu).
 
   /** Shows/hides the document search overlay (P4.C child). */
   toggleSearch() { this.#searchOverlay?.toggle() }
@@ -722,8 +748,55 @@ export class SieveWorkspace {
    */
   openUrlCardDialog(url) { this.#insertDialogs?.openUrlCard(url) }
 
-  /** Copies the active document's clean markdown export to the clipboard (P4.D: editor-owned). */
-  copyDocumentAsMarkdown() { this.#activeTab?.editor?.copyAsMarkdown() }
+  /**
+   * Copies the active container's clean markdown export to the clipboard — the
+   * File › Export › Clipboard (Markdown) menu path.
+   *
+   * A HOST verb, not a lens one: the menu acts on the workspace, and the
+   * filtering the export applies (ai-blocks dropped, cards and clips reduced to
+   * links) is Go's — no lens's projection of the document. The flush first is
+   * what makes the export include what the user has just typed.
+   *
+   * A native menu click carries no DOM gesture and steals focus, so WebKit
+   * rejects navigator.clipboard — the Wails native pasteboard is primary and the
+   * browser API is the non-Wails dev fallback. No toast system → the feedback is
+   * the OS clipboard.
+   * @returns {Promise<void>}
+   */
+  copyDocumentAsMarkdown() {
+    const mount = this.#activeTab ? this.#activeTab.mount : null
+    if (!mount) return Promise.resolve()
+    return this.flushSave()
+      .then(() => mount.exportAs('markdown'))
+      .then((md) => {
+        if (md == null) return
+        const rt = /** @type {any} */ (window).runtime
+        if (rt && rt.ClipboardSetText) return rt.ClipboardSetText(md)
+        return navigator.clipboard.writeText(md)
+      })
+      .catch((err) => { console.warn('export-markdown copy failed', err) })
+  }
+
+  /**
+   * The toolbar's file-attach path: a file the user picked, handed to the active
+   * container's paste pipeline. It lives here because the picker's dialog blurs
+   * the editor — the ANCHOR was captured before it opened and comes back in.
+   * @param {{mimeType: string, content: string, filename: string}} file
+   * @param {string|null|undefined} afterBlockId
+   * @returns {Promise<unknown>}
+   */
+  attachFile(file, afterBlockId) {
+    const mount = this.#activeTab ? this.#activeTab.mount : null
+    const provider = mount ? /** @type {any} */ (mount.provider) : null
+    if (!provider || typeof provider.paste !== 'function') return Promise.resolve()
+    // context.filename is what says "this came from a FILE" rather than "this is
+    // pasted text" — the attachment processor requires it, and without it a
+    // picked .yml is claimed by nobody and does nothing.
+    return provider.paste({
+      kind: 'smart',
+      entries: [{ mimeType: file.mimeType, content: file.content, context: { filename: file.filename } }],
+    }, afterBlockId)
+  }
 
   // ── Listener registry (P1: registration methods exist, empty — wired P2) ─────
 
@@ -747,7 +820,7 @@ export class SieveWorkspace {
    * subscription is dropped and the new tab's is taken up, with an immediate
    * D4-synth republish from the new editor's current context (null-guarded); an
    * active→null teardown emits a null context so consumers can clear.
-   * @param {(ctx: import('../editor/selection-model.js').SelectionContext|null) => void} fn
+   * @param {(ctx: import('../lens/document-editor/selection-model.js').SelectionContext|null) => void} fn
    * @returns {() => void} unsubscribe
    */
   onSelectionUpdate(fn) {
@@ -761,7 +834,7 @@ export class SieveWorkspace {
    * Pull the active tab's current frozen SelectionContext, or null when no document
    * is open (P3.E — the read half of the read/write coordinate symmetry). Mirrors
    * the internal pull `#switchSelectionSource` already performs.
-   * @returns {import('../editor/selection-model.js').SelectionContext|null}
+   * @returns {import('../lens/document-editor/selection-model.js').SelectionContext|null}
    */
   getSelectionContext() {
     return this.#activeTab && this.#activeTab.editor
@@ -774,7 +847,7 @@ export class SieveWorkspace {
    * (P3.E — the WRITE half; a VERB on the Workspace, never on the frozen context).
    * Routes straight to the active editor's applyPosition (Tab holds no position
    * write). Safe no-op when no document is open or ctx is null.
-   * @param {import('../editor/selection-model.js').SelectionContext|null} ctx
+   * @param {import('../lens/document-editor/selection-model.js').SelectionContext|null} ctx
    */
   setPosition(ctx) {
     if (ctx && this.#activeTab && this.#activeTab.editor) {
@@ -807,7 +880,10 @@ export class SieveWorkspace {
     if (this.#unsubActiveSelection) { this.#unsubActiveSelection(); this.#unsubActiveSelection = null }
     if (!tab) { this.#notifySelectionListeners(null); return }
     this.#unsubActiveSelection = tab.onSelectionUpdate((ctx) => this.#notifySelectionListeners(ctx))
-    const synth = tab.editor ? tab.editor.getSelectionContext() : null
+    // The synth pulls from the MOUNT — the host end of the presence seam, which
+    // holds the last advert the lens made. Null before the lens has made one, and
+    // then the tab's own forward delivers the first context.
+    const synth = tab.getSelectionContext()
     if (synth) this.#notifySelectionListeners(synth)
   }
 
@@ -818,7 +894,7 @@ export class SieveWorkspace {
     }
   }
 
-  /** @param {import('../editor/selection-model.js').SelectionContext|null} ctx */
+  /** @param {import('../lens/document-editor/selection-model.js').SelectionContext|null} ctx */
   #notifySelectionListeners(ctx) {
     for (const fn of this.#selectionListeners) {
       try { fn(ctx) } catch (e) { console.error('[SieveWorkspace] selectionUpdate listener threw', e) }

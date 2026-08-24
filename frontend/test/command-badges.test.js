@@ -77,11 +77,11 @@ describe('CommandBadges', () => {
 
     const popup = document.querySelector('.command-popup')
     expect(popup).not.toBeNull()
-    expect(popup.querySelector('.sieve-ai-block')).toBeNull()   // no fabricated envelope
+    expect(popup.querySelector('.sieve-ai-block')).toBeNull()   // no fabricated block
     expect(popup.textContent).toContain('backend exploded')
   })
 
-  it('an ERROR after a prior block merges into a fresh envelope of the SAME kind', () => {
+  it('an ERROR after a prior block merges into a fresh block of the SAME kind', () => {
     let resultCb
     const handle = { correlationId: 'c-1', onResult: (cb) => { resultCb = cb }, cancel: vi.fn() }
     badges.track(handle, { cmd: 'render', text: 'diagram' })

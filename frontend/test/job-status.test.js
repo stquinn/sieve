@@ -5,7 +5,7 @@
 // as `sieve:jobs-changed` with the snapshot as the event DETAIL — already an
 // object, never a JSON string.
 import { describe, it, expect } from 'vitest'
-import { isJobActive, isJobQueued, isJobStale } from '../src/static/block/renderers/job-status.js'
+import { isJobActive, isJobQueued, isJobStale } from '../src/static/renderers/job-status.js'
 
 /** @param {object} snapshot */
 function push(snapshot) {

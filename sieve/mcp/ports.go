@@ -3,7 +3,7 @@ package mcp
 import "sieve/sieve/domain"
 
 // NodeResolver is the address surface this server needs: one method, coordinate
-// → Node. editor.Router is the implementation, and the composition root injects
+// → NodeDescriptor. editor.Router is the implementation, and the composition root injects
 // it — the CONSUMER declares the interface, so mcp/ depends on "something that
 // dereferences an address" rather than on all of editor/ (which would drag the
 // codec, the sweeper and the editor service in behind it).
@@ -17,5 +17,5 @@ import "sieve/sieve/domain"
 //	version pin refused    @v{n}, which no storable can honour yet
 //	domain.ErrNodeNotFound a well-formed address nothing holds (deleted, unfiled)
 type NodeResolver interface {
-	Resolve(uri string) (domain.Node, error)
+	Resolve(uri string) (domain.NodeDescriptor, error)
 }

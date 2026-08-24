@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { BlockSelection } from '../src/static/block/block-selection.js'
+import { BlockSelection } from '../src/static/lens/document-editor/block-selection.js'
 
 // On copy, text/plain + text/html must follow a native DOM highlight inside a
 // block's custom region (the log Explore table) — where PM's selection is a

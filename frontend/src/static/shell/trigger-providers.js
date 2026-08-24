@@ -25,7 +25,7 @@
 // session-plane tenant) and calls one verb on it (#49 — the UI stays
 // transport-blind).
 
-import { ContractViolation } from '../block/sieve-block.js'
+import { ContractViolation } from '../contract/sieve-block.js'
 
 /**
  * The token the caret currently sits in — minted by TriggerProvider.scanToken,
@@ -281,7 +281,7 @@ export class SlashCommandProvider extends TriggerProvider {
 
 /**
  * @typedef {object} CandidateSource
- * @property {(q: string, limit?: number) => Promise<import('../block/mention-service.js').MentionCandidate[]>} search
+ * @property {(q: string, limit?: number) => Promise<import('./mention-service.js').MentionCandidate[]>} search
  */
 
 /**
@@ -308,7 +308,7 @@ const MAX_TOKEN_CHARS = 60
 
 export class MentionProvider extends TriggerProvider {
   /** @type {CandidateSource} */ #source
-  /** @type {(c: import('../block/mention-service.js').MentionCandidate) => void} */ #onAccept
+  /** @type {(c: import('./mention-service.js').MentionCandidate) => void} */ #onAccept
   /** @type {number} */ #debounceMs
   /** @type {number|undefined} */ #limit
   /** @type {ReturnType<typeof setTimeout>|null} */ #timer = null
@@ -317,7 +317,7 @@ export class MentionProvider extends TriggerProvider {
 
   /**
    * @param {CandidateSource} source  the MentionService (the plane tenant)
-   * @param {(c: import('../block/mention-service.js').MentionCandidate) => void} [onAccept]
+   * @param {(c: import('./mention-service.js').MentionCandidate) => void} [onAccept]
    *   — the composer's attachment sink; accepting a candidate both echoes
    *   `@Title` into the text AND hands the candidate here.
    * @param {MentionProviderOptions} [options]
@@ -373,7 +373,7 @@ export class MentionProvider extends TriggerProvider {
     })
   }
 
-  /** @param {import('../block/mention-service.js').MentionCandidate} c @returns {Node} */
+  /** @param {import('./mention-service.js').MentionCandidate} c @returns {Node} */
   render(c) { return this.renderRow('@' + c.title, c.detail) }
 
   /**
@@ -397,7 +397,7 @@ export class MentionProvider extends TriggerProvider {
    * seeded one when the target has gone), which is smart-card's behaviour and
    * deliberately unlike the composer's frozen chip: a turn is a historical
    * record, a block is a live reference.
-   * @param {import('../block/mention-service.js').MentionCandidate} c
+   * @param {import('./mention-service.js').MentionCandidate} c
    * @param {TriggerToken} token
    * @param {import('./trigger-host.js').TriggerHost} host
    */

@@ -609,8 +609,8 @@ func (h *WsHandler) handleRetryBlockJob(f inboundFrame) {
 }
 
 // OnBlockCreated implements sieve.BlockLifecycleListener.
-func (h *WsHandler) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int, token string) {
-	h.sendTo(uuid, protocol.NewInsertBlockFrame(kind, blockID, attrs, index, markdown, token))
+func (h *WsHandler) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int) {
+	h.sendTo(uuid, protocol.NewInsertBlockFrame(kind, blockID, attrs, index, markdown))
 }
 
 // OnBlockUpdated implements sieve.BlockLifecycleListener.
@@ -621,6 +621,16 @@ func (h *WsHandler) OnBlockUpdated(uuid, blockID string, attrs map[string]interf
 // OnBlockReplaced implements block.BlockLifecycleListener.
 func (h *WsHandler) OnBlockReplaced(uuid, oldID, newKind, newID string, attrs map[string]interface{}, markdown string) {
 	h.sendTo(uuid, protocol.NewReplaceBlockFrame(oldID, newKind, newID, attrs, markdown))
+}
+
+// OnBlockRemoved implements block.BlockLifecycleListener.
+func (h *WsHandler) OnBlockRemoved(uuid, blockID string) {
+	h.sendTo(uuid, protocol.NewRemoveBlockFrame(blockID))
+}
+
+// OnOrderChanged implements block.BlockLifecycleListener.
+func (h *WsHandler) OnOrderChanged(uuid string, order []string) {
+	h.sendTo(uuid, protocol.NewOrderChangedFrame(order))
 }
 
 // Either way the created block reaches the client as a render-back

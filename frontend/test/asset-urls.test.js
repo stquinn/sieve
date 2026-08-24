@@ -10,7 +10,7 @@ import {
   resolveImageSrc,
   storeFileSrc,
   storeFileRef,
-} from '../src/static/block/renderers/asset-urls.js'
+} from '../src/static/renderers/asset-urls.js'
 
 describe('asset-urls', () => {
   it('proxies a remote image through /ui/image-proxy, origin-qualified', () => {

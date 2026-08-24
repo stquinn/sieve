@@ -12,8 +12,8 @@
 //     than restating literals, or a caller that differs has no way to differ
 //     except by copying the appearance, which is the duplication this removed.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { AttachmentChip } from '../src/static/block/renderers/attachment-chip.js'
-import { RendererStyleRegistry } from '../src/static/block/renderers/renderer-style-registry.js'
+import { AttachmentChip } from '../src/static/renderers/attachment-chip.js'
+import { RendererStyleRegistry } from '../src/static/renderers/renderer-style-registry.js'
 
 const q = (/** @type {HTMLElement} */ el, /** @type {string} */ part) =>
   /** @type {HTMLElement|null} */ (el.querySelector('.sieve-attachment-chip__' + part))

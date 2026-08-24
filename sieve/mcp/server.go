@@ -34,7 +34,7 @@ import (
 // that quietly ends the property.
 type Server struct {
 	documents *services.DocumentService
-	nodes     NodeResolver    // address → Node; the concrete Router is injected at the root
+	nodes     NodeResolver    // address → NodeDescriptor; the concrete Router is injected at the root
 	audit     bodyReadAuditor // every body read, recorded at one place
 
 	sdk     *mcpsdk.Server

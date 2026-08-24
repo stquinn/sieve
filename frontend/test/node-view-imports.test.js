@@ -41,7 +41,7 @@ describe('node-view module graph resolves', () => {
   for (const kind of KINDS) {
     it(`${kind}-node-view.js imports cleanly`, async () => {
       await expect(
-        import(`../src/static/editor/surfaces/node-views/${kind}-node-view.js`),
+        import(`../src/static/lens/document-editor/surfaces/node-views/${kind}-node-view.js`),
       ).resolves.toBeTruthy()
     })
   }
@@ -49,7 +49,7 @@ describe('node-view module graph resolves', () => {
   for (const kind of REMOVED_KINDS) {
     it(`${kind}-node-view.js no longer exists`, async () => {
       await expect(
-        import(`../src/static/editor/surfaces/node-views/${kind}-node-view.js`),
+        import(`../src/static/lens/document-editor/surfaces/node-views/${kind}-node-view.js`),
       ).rejects.toThrow()
     })
   }

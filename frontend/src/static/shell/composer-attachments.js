@@ -53,17 +53,17 @@
 // (editor.css `:root`), so change what a chip looks like in the tokens, never in
 // one of the two components.
 
-import { esc } from '../block/renderers/html-escape.js'
+import { esc } from '../renderers/html-escape.js'
 // The token rule is SHARED with the ai-block, which marks the same `@Title`
 // tokens in the question it renders (#74). Two copies of "what counts as a
 // mention" would let a chip and its inline mark describe different text.
-import { MentionTokens } from '../block/renderers/mention-tokens.js'
+import { MentionTokens } from '../renderers/mention-tokens.js'
 
 /**
  * A candidate as the picker offers it. `kind`/`detail` are display-only — they
  * exist to tell two same-titled offers apart while choosing — and are NEVER
  * persisted: only `{uri, title}` leaves the composer.
- * @typedef {import('../block/mention-service.js').MentionCandidate} MentionCandidate
+ * @typedef {import('./mention-service.js').MentionCandidate} MentionCandidate
  */
 
 /**

@@ -25,7 +25,7 @@ import { Markdown } from 'tiptap-markdown'
 // seed-vendor FIRST: wysiwyg-surface transitively imports the side-effect
 // extension modules that build Extension.create(...) at module-eval time.
 import './helpers/seed-vendor.js'
-import { LINK_OPTIONS } from '../src/static/editor/surfaces/wysiwyg-surface.js'
+import { LINK_OPTIONS } from '../src/static/lens/document-editor/surfaces/wysiwyg-surface.js'
 
 /** @type {any} */
 let editor

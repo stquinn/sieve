@@ -91,12 +91,12 @@ for why the mechanism is precedence rather than a policy flag.
     NodeSelection) → **native** (unhandled), so the chord stays free there.
 
   **Policy-extension-owned**, like every key chord —
-  `editor/interaction-policy.js` resolves the context and dispatches; a
+  `lens/document-editor/interaction-policy.js` resolves the context and dispatches; a
   per-renderer `handleKeyDown` for it is FORBIDDEN. It is editor-owned and
   caret-contextual, NOT a native-menu accelerator (the menu claims no `Mod+K`),
   and it is bare `Mod+K` only: `Mod+Shift+K` / `Mod+Alt+K` pass through. The
   mark mechanics (range resolution, apply) live on `ProseLink`
-  (`editor/surfaces/prose-link.js`); the dialog is the shared
+  (`lens/document-editor/surfaces/prose-link.js`); the dialog is the shared
   `ui/link-edit-dialog.js`, the same one the smart-card block's "Edit Link…"
   opens. Editing a link is an ORDINARY TRACKED prose edit — it rides the
   existing prose→Go block-sync, has no wire verb of its own, and undoes in one
@@ -131,7 +131,7 @@ for why the mechanism is precedence rather than a policy flag.
     measured at 0 invocations under Mod+Click (1 under a plain click, proving
     the probe live) and was DELETED. Do not add one back.
   - A pointer gesture, not a key chord, so it is not the policy extension's;
-    `editor/interaction-policy.js` carries a pointer to this row.
+    `lens/document-editor/interaction-policy.js` carries a pointer to this row.
 
 **Smart Home platform note:** the Home column applies to the `Home` key
 (Linux/Windows; fn+Left on Mac) AND to Cmd+Left on macOS — the idiomatic Mac
@@ -140,7 +140,7 @@ line-start gesture (VS Code parity). Shift-selection variants stay native.
 ## Policy declaration (revised 2026-07-29)
 
 A kind opts into behaviour **by name**. `DEFAULT_POLICY`
-(`editor/interaction-policy.js`) is the complete list of flags; a kind declares
+(`lens/document-editor/interaction-policy.js`) is the complete list of flags; a kind declares
 a `Partial` of it as `interactionPolicy`, and `policyFor` merges the two.
 
 | Flag | Behaviour |

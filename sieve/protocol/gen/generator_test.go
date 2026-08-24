@@ -210,7 +210,7 @@ func TestGenerate_DocumentsReferencedPackages(t *testing.T) {
 		"BlockOp is a granular mutation of the BlockDoc tree",
 		"SupportedActions is one processor's offer",
 		"Candidate is one offer from a source's enumeration face",
-		"Attachment is a live edge to another Node",
+		"Attachment is a live edge to another NodeDescriptor",
 		"JobInfo describes one background job",
 	} {
 		if !bytes.Contains(markdown, []byte(phrase)) {

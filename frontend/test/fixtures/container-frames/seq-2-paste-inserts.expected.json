@@ -1,0 +1,17 @@
+{
+  "order": ["clip-1", "unk-1", "img-1", "p1"],
+  "blocks": {
+    "p1": { "id": "p1", "kind": "prose", "attrs": { "content": "before", "id": "p1" } },
+    "img-1": { "id": "img-1", "kind": "smart-image", "attrs": { "src": "/ui/assets/doc-seq-2/a.png", "status": "COMPLETE", "width": 640, "id": "img-1" } },
+    "clip-1": { "id": "clip-1", "kind": "web-clip", "attrs": { "url": "https://x.test", "id": "clip-1" } },
+    "unk-1": { "id": "unk-1", "kind": "code", "attrs": { "source": "?", "id": "unk-1" } }
+  },
+  "oracleEnvelopes": {
+    "p1": { "kind": "prose", "payload": { "content": "before", "id": "p1", "kind": "prose" } },
+    "p2": { "kind": "prose", "payload": { "content": "after", "id": "p2", "kind": "prose" } },
+    "img-1": { "kind": "smart-image", "payload": { "src": "/ui/assets/doc-seq-2/a.png", "status": "COMPLETE", "width": 640, "id": "img-1" } },
+    "clip-1": { "kind": "web-clip", "payload": { "url": "https://x.test", "id": "clip-1" } },
+    "unk-1": { "kind": "code", "payload": { "source": "?", "id": "unk-1" } }
+  },
+  "oracleOnlyIds": ["p2"]
+}

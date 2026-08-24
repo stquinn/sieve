@@ -18,7 +18,7 @@ import (
 // address is dangling by design.
 type stubSource struct {
 	offers    []domain.Candidate
-	nodes     map[string]domain.Node
+	nodes     map[string]domain.NodeDescriptor
 	resolved  []string
 	lastQuery string
 	lastLimit int
@@ -34,12 +34,12 @@ func (s *stubSource) Search(query string, limit int) []domain.Candidate {
 	return s.offers
 }
 
-func (s *stubSource) Resolve(uri string) (domain.Node, error) {
+func (s *stubSource) Resolve(uri string) (domain.NodeDescriptor, error) {
 	s.resolved = append(s.resolved, uri)
 	if node, ok := s.nodes[uri]; ok {
 		return node, nil
 	}
-	return domain.Node{}, domain.ErrNodeNotFound
+	return domain.NodeDescriptor{}, domain.ErrNodeNotFound
 }
 
 func newWsTestServerWithNodes(t *testing.T) (*httptest.Server, *sieve.ServiceProvider, *stubSource) {

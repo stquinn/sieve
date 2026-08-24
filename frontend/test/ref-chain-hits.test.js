@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { proseChainHits } from '../src/static/block/block-kinds.js'
+import { proseChainHits } from '../src/static/renderers/block-kinds.js'
 import { build, docWithCaretAt } from './helpers/editor-fixture.js'
 
 // proseChainHits is the pure selection behind the AI ref-chain hover glow: given

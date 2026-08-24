@@ -243,6 +243,18 @@ func (s *ShadowDocument) ApplyOp(op BlockOp) error {
 	return nil
 }
 
+// BlockIDs returns the top-level child ids in document order — the container's
+// order as a value, without the blocks hanging off it.
+func (s *ShadowDocument) BlockIDs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make([]string, len(s.Blocks))
+	for i, b := range s.Blocks {
+		ids[i] = b.ID
+	}
+	return ids
+}
+
 // findBlock returns a pointer to the block with the given ID within the live
 // tree, or nil. ASSUMES s.mu is held by the caller — the returned pointer
 // aliases the live slice and the caller must mutate it under that lock.
@@ -263,11 +275,6 @@ type BlockOp struct {
 	Aliases  []string               `json:"aliases,omitempty"`
 	Index    int                    `json:"index"`
 	ParentID string                 `json:"parentId,omitempty"`
-	// Token is a TRANSIENT frontend correlation handle (tok-…) for a prose create —
-	// NOT a durable id. Go mints the durable id (ident.New) and echoes the
-	// token back on insert-block so the client can swap its pending node's token for
-	// the authoritative id. Never persisted.
-	Token string `json:"token,omitempty"`
 	// Order is the COMPLETE top-level block order a set-order op installs, newest
 	// first position to last. It is the whole order rather than a delta because
 	// applying it is idempotent: a duplicate or out-of-sequence frame lands the

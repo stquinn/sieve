@@ -17,7 +17,7 @@
 // `blockCursor: null` (happy-dom has no `.sieve-block__edit` active element), part of
 // the real SelectionContext shape and untouched by any assertion.
 
-import { WysiwygSurface } from '../../src/static/editor/surfaces/wysiwyg-surface.js'
+import { WysiwygSurface } from '../../src/static/lens/document-editor/surfaces/wysiwyg-surface.js'
 
 // Minimal test surface: inject the fixture editor as the live PM instance so
 // feedSelection runs the REAL PM→descriptor path (fallback er, no block-chrome)
@@ -38,7 +38,7 @@ class ContextSurface extends WysiwygSurface {
 /**
  * @param {{state:any}} editor  a fixture editor (docWithCaret/… → {editor:{state}})
  * @param {boolean} [isMarkdownMode]
- * @returns {import('../../src/static/editor/selection-model.js').SelectionContext}
+ * @returns {import('../../src/static/lens/document-editor/selection-model.js').SelectionContext}
  */
 export function contextFor(editor, isMarkdownMode = false) {
   if (isMarkdownMode) {

@@ -59,10 +59,14 @@ channels:
         $ref: '#/components/messages/documentLoadContent'
       documentMarkdownContent:
         $ref: '#/components/messages/documentMarkdownContent'
+      documentOrderChanged:
+        $ref: '#/components/messages/documentOrderChanged'
       documentPasteAck:
         $ref: '#/components/messages/documentPasteAck'
       documentPong:
         $ref: '#/components/messages/documentPong'
+      documentRemoveBlock:
+        $ref: '#/components/messages/documentRemoveBlock'
       documentReplaceBlock:
         $ref: '#/components/messages/documentReplaceBlock'
       documentWysiwygContent:
@@ -134,8 +138,10 @@ operations:
       - $ref: '#/channels/document/messages/documentInsertBlock'
       - $ref: '#/channels/document/messages/documentLoadContent'
       - $ref: '#/channels/document/messages/documentMarkdownContent'
+      - $ref: '#/channels/document/messages/documentOrderChanged'
       - $ref: '#/channels/document/messages/documentPasteAck'
       - $ref: '#/channels/document/messages/documentPong'
+      - $ref: '#/channels/document/messages/documentRemoveBlock'
       - $ref: '#/channels/document/messages/documentReplaceBlock'
       - $ref: '#/channels/document/messages/documentWysiwygContent'
   workspaceReceive:
@@ -435,6 +441,21 @@ components:
         $ref: '#/components/correlationIds/opId'
       payload:
         $ref: '#/components/schemas/ProtocolMarkdownContentFrame'
+    documentOrderChanged:
+      name: order-changed
+      title: order-changed
+      summary: OrderChangedFrame is the render-back for a reorder.
+      description: |-
+        OrderChangedFrame is the render-back for a reorder. It carries the COMPLETE
+        child order for the same reason the set-order op does: applying a whole order
+        is idempotent, so a duplicate or out-of-sequence frame lands the client in the
+        same place, while a delta would not.
+
+        It names no block that arrived or left — those have their own frames — so a
+        client folds it as a permutation of what it already holds.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProtocolOrderChangedFrame'
     documentPasteAck:
       name: paste-ack
       title: paste-ack
@@ -463,6 +484,20 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolPongFrame'
+    documentRemoveBlock:
+      name: remove-block
+      title: remove-block
+      summary: 'RemoveBlockFrame is the render-back for a block that left the container: the client retires it by id rather than reloading the document.'
+      description: |-
+        RemoveBlockFrame is the render-back for a block that left the container: the
+        client retires it by id rather than reloading the document.
+
+        A transform is NOT a removal — it mints a fresh identity for the same slot and
+        says so with a replace-block, which carries both ids. This frame means the
+        container has one child fewer.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProtocolRemoveBlockFrame'
     documentReplaceBlock:
       name: replace-block
       title: replace-block
@@ -739,8 +774,6 @@ components:
           type: integer
         parentId:
           type: string
-        token:
-          type: string
         order:
           type: array
           description: 'set-order only: the complete top-level block id order to install'
@@ -811,7 +844,7 @@ components:
     DomainAttachment:
       type: object
       description: |-
-        Attachment is a live edge to another Node in the system: the address of
+        Attachment is a live edge to another NodeDescriptor in the system: the address of
         something Sieve already holds, offered as context for one AI turn.
 
         URI AND TITLE ARE THE WHOLE OF IT, and between them they are enough for
@@ -829,7 +862,7 @@ components:
         as a block attr (block/ names the key) AND it rides the command envelope onto
         command.Context — and `command` and `ai` cannot import `block` (block → ai →
         command already exists, so the reverse edge would close a cycle). It is a leaf
-        value like Node and Candidate, so the leaf is where it belongs; no carrier owns
+        value like NodeDescriptor and Candidate, so the leaf is where it belongs; no carrier owns
         it.
       properties:
         uri:
@@ -866,7 +899,7 @@ components:
 
         It lives in the leaf because its producer and its consumers must not have to
         know each other: services.JobTracker mints one and the protocol contract puts
-        it on the wire, and domain/ is the package both can name (same reason as Node
+        it on the wire, and domain/ is the package both can name (same reason as NodeDescriptor
         and Candidate).
       properties:
         jobId:
@@ -1332,9 +1365,6 @@ components:
         markdown:
           type: string
           description: markdown-mode buffer only; WYSIWYG renders from attrs
-        token:
-          type: string
-          description: transient handle echoed from a create-block op, so the client can swap its pending node for the authoritative id
       required:
         - type
         - kind
@@ -1342,7 +1372,6 @@ components:
         - attrs
         - index
         - markdown
-        - token
     ProtocolInvalidateFrame:
       type: object
       description: |-
@@ -1559,6 +1588,27 @@ components:
         - type
         - correlationId
         - candidates
+    ProtocolOrderChangedFrame:
+      type: object
+      description: |-
+        OrderChangedFrame is the render-back for a reorder. It carries the COMPLETE
+        child order for the same reason the set-order op does: applying a whole order
+        is idempotent, so a duplicate or out-of-sequence frame lands the client in the
+        same place, while a delta would not.
+
+        It names no block that arrived or left — those have their own frames — so a
+        client folds it as a permutation of what it already holds.
+      properties:
+        type:
+          type: string
+        order:
+          type: array
+          description: the container's complete child id order, first position to last
+          items:
+            type: string
+      required:
+        - type
+        - order
     ProtocolPasteAckFrame:
       type: object
       description: |-
@@ -1653,6 +1703,24 @@ components:
           type: string
       required:
         - type
+    ProtocolRemoveBlockFrame:
+      type: object
+      description: |-
+        RemoveBlockFrame is the render-back for a block that left the container: the
+        client retires it by id rather than reloading the document.
+
+        A transform is NOT a removal — it mints a fresh identity for the same slot and
+        says so with a replace-block, which carries both ids. This frame means the
+        container has one child fewer.
+      properties:
+        type:
+          type: string
+        id:
+          type: string
+          description: the block that left the container
+      required:
+        - type
+        - id
     ProtocolReplaceBlockFrame:
       type: object
       description: |-

@@ -1,5 +1,5 @@
 // search-extension.test.js — regression coverage for the REAL Search TipTap
-// extension (frontend/src/static/editor/extensions.js). search-overlay.test.js
+// extension (frontend/src/static/lens/extensions.js). search-overlay.test.js
 // only exercises the overlay CHROME against a fully-faked editor/commands and
 // never touches this file at all — so until now there was zero coverage of the
 // actual match-scan / next-prev / scroll machinery.
@@ -26,7 +26,7 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import Highlight from '@tiptap/extension-highlight'
 
 Object.assign(globalThis.TipTap, { Node, Extension, Plugin, PluginKey, Decoration, DecorationSet, Highlight })
-const { Search } = await import('../src/static/editor/extensions.js')
+const { Search } = await import('../src/static/lens/extensions.js')
 
 let editor = null
 afterEach(() => {

@@ -83,7 +83,7 @@ type NoteContent struct {
 }
 
 // NodeContent is what an address resolved to, as get_by_uri returns it: the
-// wire projection of domain.Node.
+// wire projection of domain.NodeDescriptor.
 //
 // Kind-AGNOSTIC on purpose. It says what the thing calls itself rather than
 // assuming a note, so the day a source for chats or Things registers behind the

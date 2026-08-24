@@ -3,8 +3,8 @@
 // Multi-tenancy on ONE socket: commands are not the wire's only tenant, so the
 // socket belongs to the plane rather than to any one of them.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { WorkspaceService } from '../src/static/block/workspace-service.js'
-import { ContractViolation } from '../src/static/block/sieve-block.js'
+import { WorkspaceService } from '../src/static/shell/workspace-service.js'
+import { ContractViolation } from '../src/static/contract/sieve-block.js'
 
 class FakeWebSocket {
   /** @type {any} */ onopen = null

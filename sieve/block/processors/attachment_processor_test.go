@@ -16,17 +16,17 @@ import (
 // fakeNodes stands in for editor.Router. The port is one method, so the whole
 // resolver is a map plus the two refusals the contract names.
 type fakeNodes struct {
-	nodes map[string]domain.Node
+	nodes map[string]domain.NodeDescriptor
 	err   error
 }
 
-func (f fakeNodes) Resolve(uri string) (domain.Node, error) {
+func (f fakeNodes) Resolve(uri string) (domain.NodeDescriptor, error) {
 	if f.err != nil {
-		return domain.Node{}, f.err
+		return domain.NodeDescriptor{}, f.err
 	}
 	n, ok := f.nodes[uri]
 	if !ok {
-		return domain.Node{}, domain.ErrNodeNotFound
+		return domain.NodeDescriptor{}, domain.ErrNodeNotFound
 	}
 	return n, nil
 }
@@ -233,7 +233,7 @@ func TestAttachmentProcessor_DescribeJob_noAddressNoJob(t *testing.T) {
 func TestAttachmentProcessor_DescribeJob_resolvesACoordinate(t *testing.T) {
 	uuid := ident.New()
 	uri := "container:" + uuid
-	p := NewAttachmentProcessor(block.BlockServices{Nodes: fakeNodes{nodes: map[string]domain.Node{
+	p := NewAttachmentProcessor(block.BlockServices{Nodes: fakeNodes{nodes: map[string]domain.NodeDescriptor{
 		uri: {URI: uri, UUID: uuid, Kind: "note", Title: "Auth Design", Summary: "Token rotation and session binding"},
 	}}})
 	blk := &block.SieveBlock{ID: "at-1", Kind: "attachment", Attrs: map[string]interface{}{
@@ -281,7 +281,7 @@ func TestAttachmentProcessor_DescribeJob_resolvesACoordinate(t *testing.T) {
 func TestAttachmentProcessor_DescribeJob_refreshesAStaleFace(t *testing.T) {
 	uuid := ident.New()
 	uri := "container:" + uuid
-	p := NewAttachmentProcessor(block.BlockServices{Nodes: fakeNodes{nodes: map[string]domain.Node{
+	p := NewAttachmentProcessor(block.BlockServices{Nodes: fakeNodes{nodes: map[string]domain.NodeDescriptor{
 		uri: {URI: uri, UUID: uuid, Kind: "note", Title: "Renamed"},
 	}}})
 	blk := &block.SieveBlock{ID: "at-1", Kind: "attachment", Attrs: map[string]interface{}{
@@ -304,7 +304,7 @@ func TestAttachmentProcessor_DescribeJob_refreshesAStaleFace(t *testing.T) {
 // reads. ERROR stays reserved for "the job broke".
 func TestAttachmentProcessor_DescribeJob_danglingIsNotAFailure(t *testing.T) {
 	uri := "container:" + ident.New()
-	p := NewAttachmentProcessor(block.BlockServices{Nodes: fakeNodes{nodes: map[string]domain.Node{}}})
+	p := NewAttachmentProcessor(block.BlockServices{Nodes: fakeNodes{nodes: map[string]domain.NodeDescriptor{}}})
 	blk := &block.SieveBlock{ID: "at-1", Kind: "attachment", Attrs: map[string]interface{}{
 		"uri": uri, "title": "Deleted Note", "targetKind": "note", "status": block.BlockStatusPending,
 	}}

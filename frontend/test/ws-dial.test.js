@@ -3,9 +3,9 @@
 // does not present the run's token (requesthandlers/ws_handler.go
 // authorizeUpgrade), so a wire owner that dials without it connects to nothing.
 import { describe, it, expect, afterEach } from 'vitest'
-import { WsDial } from '../src/static/block/ws-dial.js'
-import { WorkspaceService } from '../src/static/block/workspace-service.js'
-import { BlockService } from '../src/static/block/block-service.js'
+import { WsDial } from '../src/static/container/ws-dial.js'
+import { WorkspaceService } from '../src/static/shell/workspace-service.js'
+import { ContainerTransport } from '../src/static/container/container-transport.js'
 import { WS_SUBPROTOCOL } from '../src/static/generated/protocol.js'
 
 class FakeWebSocket {
@@ -54,17 +54,17 @@ describe('the wire owners present the credential', () => {
     service.close()
   })
 
-  it('BlockService dials a document channel with the protocol list', () => {
+  it('ContainerTransport dials a document channel with the protocol list', () => {
     setToken('tok-doc')
     /** @type {string[][]} */ const offered = []
-    const service = new BlockService({
+    const service = new ContainerTransport({
       socketFactory: (url, protocols) => {
         offered.push(protocols || [])
         return /** @type {any} */ (new FakeWebSocket(url))
       },
       wsUrlFor: (uuid) => 'ws://test/api/ws/document/' + uuid,
     })
-    service.openChannel('doc-1', /** @type {any} */ ({ applyServerOp() {}, onMessage() {}, resolveInsertIndex: () => 0 }))
+    service.openChannel('doc-1', /** @type {any} */ ({ onMessage() {} }))
     expect(offered).toEqual([[WS_SUBPROTOCOL, 'tok-doc']])
     service.closeChannel('doc-1')
   })

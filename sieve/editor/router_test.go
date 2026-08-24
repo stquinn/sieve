@@ -22,7 +22,7 @@ const (
 // exercise, so the source behind it is deliberately inert.
 type fakeSource struct {
 	name       string
-	nodes      map[string]domain.Node
+	nodes      map[string]domain.NodeDescriptor
 	candidates []domain.Candidate
 	resolved   []string // every uri this source was asked to resolve
 	searched   []int    // every limit this source was asked for
@@ -39,21 +39,21 @@ func (f *fakeSource) Search(query string, limit int) []domain.Candidate {
 	return f.candidates
 }
 
-func (f *fakeSource) Resolve(uri string) (domain.Node, error) {
+func (f *fakeSource) Resolve(uri string) (domain.NodeDescriptor, error) {
 	f.resolved = append(f.resolved, uri)
 	if f.failWith != nil {
-		return domain.Node{}, f.failWith
+		return domain.NodeDescriptor{}, f.failWith
 	}
 	if n, ok := f.nodes[uri]; ok {
 		return n, nil
 	}
-	return domain.Node{}, fmt.Errorf("%w: %s", domain.ErrNodeNotFound, uri)
+	return domain.NodeDescriptor{}, fmt.Errorf("%w: %s", domain.ErrNodeNotFound, uri)
 }
 
 func TestRouter_ResolvesThroughTheFirstSourceThatAnswers(t *testing.T) {
 	uri := "container:" + testContainerUUID
 	empty := &fakeSource{name: "empty"}
-	notes := &fakeSource{name: "notes", nodes: map[string]domain.Node{
+	notes := &fakeSource{name: "notes", nodes: map[string]domain.NodeDescriptor{
 		uri: {URI: uri, UUID: testContainerUUID, Kind: "note", Title: "Auth Design"},
 	}}
 	r := NewRouter(empty, notes)
@@ -188,7 +188,7 @@ func TestRouter_SearchIgnoresEmptyQueries(t *testing.T) {
 
 func TestRouter_TargetOfAContainerAddressIsThatContainer(t *testing.T) {
 	uri := "container:" + testContainerUUID
-	notes := &fakeSource{name: "notes", nodes: map[string]domain.Node{
+	notes := &fakeSource{name: "notes", nodes: map[string]domain.NodeDescriptor{
 		uri: {URI: uri, UUID: testContainerUUID, Kind: "note", Title: "Auth Design"},
 	}}
 	r := NewRouter(notes)
@@ -210,7 +210,7 @@ func TestRouter_TargetOfAContainerAddressIsThatContainer(t *testing.T) {
 // the source is asked for is the container address.
 func TestRouter_TargetOfAQualifiedBlockAddressOpensItsContainer(t *testing.T) {
 	containerURI := "container:" + testContainerUUID
-	notes := &fakeSource{name: "notes", nodes: map[string]domain.Node{
+	notes := &fakeSource{name: "notes", nodes: map[string]domain.NodeDescriptor{
 		containerURI: {URI: containerURI, UUID: testContainerUUID, Kind: "note", Title: "Auth Design"},
 	}}
 	r := NewRouter(notes)
@@ -231,7 +231,7 @@ func TestRouter_TargetOfAQualifiedBlockAddressOpensItsContainer(t *testing.T) {
 // only the container that opens can resolve it.
 func TestRouter_TargetCarriesAnAliasHandleThrough(t *testing.T) {
 	containerURI := "container:" + testContainerUUID
-	notes := &fakeSource{name: "notes", nodes: map[string]domain.Node{
+	notes := &fakeSource{name: "notes", nodes: map[string]domain.NodeDescriptor{
 		containerURI: {URI: containerURI, UUID: testContainerUUID},
 	}}
 	r := NewRouter(notes)

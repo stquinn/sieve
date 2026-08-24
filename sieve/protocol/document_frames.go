@@ -172,11 +172,10 @@ type InsertBlockFrame struct {
 	Attrs    map[string]interface{} `json:"attrs"`
 	Index    int                    `json:"index" doc:"document position to insert at"`
 	Markdown string                 `json:"markdown" doc:"markdown-mode buffer only; WYSIWYG renders from attrs"`
-	Token    string                 `json:"token" doc:"transient handle echoed from a create-block op, so the client can swap its pending node for the authoritative id"`
 }
 
 // NewInsertBlockFrame builds the created-block render-back.
-func NewInsertBlockFrame(kind, id string, attrs map[string]interface{}, index int, markdown, token string) InsertBlockFrame {
+func NewInsertBlockFrame(kind, id string, attrs map[string]interface{}, index int, markdown string) InsertBlockFrame {
 	return InsertBlockFrame{
 		Type:     TypeInsertBlock,
 		Kind:     kind,
@@ -184,7 +183,6 @@ func NewInsertBlockFrame(kind, id string, attrs map[string]interface{}, index in
 		Attrs:    attrs,
 		Index:    index,
 		Markdown: markdown,
-		Token:    token,
 	}
 }
 
@@ -227,6 +225,43 @@ func NewReplaceBlockFrame(oldID, newKind, newID string, attrs map[string]interfa
 		Attrs:   attrs,
 		NewYaml: newYaml,
 	}
+}
+
+// RemoveBlockFrame is the render-back for a block that left the container: the
+// client retires it by id rather than reloading the document.
+//
+// A transform is NOT a removal — it mints a fresh identity for the same slot and
+// says so with a replace-block, which carries both ids. This frame means the
+// container has one child fewer.
+type RemoveBlockFrame struct {
+	Type string `json:"type"`
+	ID   string `json:"id" doc:"the block that left the container"`
+}
+
+// NewRemoveBlockFrame builds the removed-block render-back.
+func NewRemoveBlockFrame(id string) RemoveBlockFrame {
+	return RemoveBlockFrame{Type: TypeRemoveBlock, ID: id}
+}
+
+// OrderChangedFrame is the render-back for a reorder. It carries the COMPLETE
+// child order for the same reason the set-order op does: applying a whole order
+// is idempotent, so a duplicate or out-of-sequence frame lands the client in the
+// same place, while a delta would not.
+//
+// It names no block that arrived or left — those have their own frames — so a
+// client folds it as a permutation of what it already holds.
+type OrderChangedFrame struct {
+	Type  string   `json:"type"`
+	Order []string `json:"order" doc:"the container's complete child id order, first position to last"`
+}
+
+// NewOrderChangedFrame builds the reorder render-back. A nil order is normalised
+// to empty, so a client never reads a length off null.
+func NewOrderChangedFrame(order []string) OrderChangedFrame {
+	if order == nil {
+		order = []string{}
+	}
+	return OrderChangedFrame{Type: TypeOrderChanged, Order: order}
 }
 
 // ErrorFrame reports that an operation failed, in words meant for the user. It is
