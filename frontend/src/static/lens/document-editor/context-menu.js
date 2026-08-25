@@ -1,6 +1,6 @@
 // context-menu.js — single source of truth for all context menus.
 // Components fire 'sieve:contextmenu' with { x, y, context } in the detail.
-// context.type must be one of: 'editor' | 'image' | 'aiBlock' | 'note' | 'folder' | 'prompt'
+// context.type must be one of: 'editor' | 'sieveBlock' | 'aiBlock' | 'note' | 'folder' | 'prompt'
 import { getSieveIcon } from '../../renderers/block-kinds.js'
 import { applyTargetHighlight } from '../extensions.js'
 import { NodeViewRegistry, detectAndAppendExtractions, serializeNode } from './surfaces/sieve-block-extension.js'
@@ -500,7 +500,6 @@ import { ProseLink } from './surfaces/prose-link.js'
     var d = e.detail, ctx = d.context, items
     switch (ctx.type) {
       case 'editor':    items = buildEditorItems(ctx, d.x, d.y); break
-      case 'image':     items = buildImageItems(ctx); break
       case 'aiBlock':   items = buildAiBlockItems(ctx); break
       case 'note':      items = buildNoteItems(ctx); break
       case 'folder':    items = buildFolderItems(ctx); break
