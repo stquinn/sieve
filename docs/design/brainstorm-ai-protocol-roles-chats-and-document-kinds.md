@@ -614,6 +614,139 @@ It needs exactly one new capability, and it is one #74 needs anyway: `resolveCha
 
 ---
 
+## 8c. Addendum (2026-08-25): the question is a list of blocks; pointing is a kind of block
+
+Written while designing the Go side of chats. It revises §8b — overturning two of its
+conclusions with machinery §8b did not yet have (#74's attachments) — settles §3's turn
+question for good, and completes §8a's coordinate grammar. Tracked: #100 (ReferenceBlock),
+#101 (the ai-block refactor), #102 (the chat kind).
+
+### The arc: four positions, each overturned by its successor
+
+The design passed through every station before arriving:
+
+1. **§8b's turn container** — `UserTurn { blocks } | AiTurn`. Justified by minting: a
+   block born in a turn needs a home. Overturned when #74 landed attachments as a *field
+   on the ai-block* (manifest + ephemeral grant, no materialisation) — the container's
+   structural justification evaporated.
+2. **The ai-block IS the turn.** Post-#74 the ai-block carries question + attachments +
+   answer — one full exchange with one id; the chain at block granularity *is* turn
+   granularity; an unanswered question is a block with no answer; §8b's `question` union
+   evaporates. Everything §8b wanted from the container, cheaper. But the question is a
+   scalar — pasted code, a log, anything rich is homeless, and attachments only point at
+   what already lives in the library.
+3. **`AiTurn` as its own kind** — turn = list of blocks, the AI's move a separate type.
+   Buys prose-as-a-block uniformity and an honest shape for the AI move; costs a fork of
+   the AI machinery into two drifting siblings, loses the flat spine, and re-opens the
+   union.
+4. **Convergence: the ai-block with `question: List<Block>`.** The standard question is
+   one prose block; pasted material is minted *into the list*; the exchange is complete
+   in isolation, so extraction ("the chat is the ore, the note is the metal") is a plain
+   copy — no re-addressing, retiring §8b's honest-cost paragraph.
+
+### The dissolutions
+
+What made position 4 stable is a sequence of discriminators collapsing into structure
+that already carried the information:
+
+- **The ai-block's `ref` attr dissolves into the question.** "Ask about these three
+  blocks" was always one utterance — the gesture and the sentence; the scalar question
+  forced the gesture into a side-field. The attachment processor's header had already
+  said it of the composer manifest: it *"exists to compensate for a textarea having
+  nowhere to put a block."* (`ref` survives system-wide as the generic SieveBlock edge —
+  web-clip provenance — the ai-block just stops using it; `outgoingRefs`/`gcRefs`
+  harvest reference elements from the list.)
+- **`rel` as behaviour dissolves into the pin.** Brainstorm 6 §7's *"bare = live edge,
+  pinned = frozen snapshot"* is the whole freeze story, per element: §5's "refs in turns
+  freeze; refs in roles re-read" pushed down to its true grain. A quote is a pinned
+  address — by-value semantics without a copy, because FileStore snapshots every save.
+  `rel` survives **only as an authored presentation hint** (quote/target/attach), and it
+  earns that place because display intent is genuinely orthogonal to the address — the
+  proving case is a workbench flow wanting a *quoted reference that is a live edge*.
+  Fenced hard: behaviour never forks on it, queries never filter on it.
+- **The ref-vs-attachment kind split dissolves into the scheme**, and the attachment
+  kind is subsumed: one kind, `reference = { uri }` plus a derived face. Its src/uri
+  fork was scheme dispatch before the vocabulary existed.
+- **The container-vs-block grain dissolves into the path.** One internal scheme:
+
+  ```
+  sieve:{container}                  — a container
+  sieve:{container}@v{n}             — pinned (the pin sits on the container segment:
+                                       versions are per-container)
+  sieve:{container}/{leaf}           — a leaf within it
+  /{leaf}                            — relative reference against the current container
+  ```
+
+  `container:`/`block:` become parse-forever aliases; relative references are standard
+  URI resolution rather than new grammar (#81 arrives free).
+- **The asset scheme dissolves into the path.** An asset already lives inside a
+  container (`Owns()`, the document directory, ExternalRef's derivation walk); the
+  held-file arm becomes a relative sieve reference. Assets being immutable makes the
+  pin trivial at the asset leaf: same key, same bytes, at any version — the only
+  version-dependent fact is membership, and a version without the asset is an ordinary
+  dangling resolve. Which yields the closing
+  generalisation: **in terms of addressability, a block and an asset are the same thing**
+  — leaf Nodes under a container segment. Payload (attrs vs bytes), lifecycle
+  (versioned vs immutable), face rendering — all resolution facts, never addressing
+  facts. The smart-image was the tell all along: a block wearing an asset. The scheme
+  allow-list lands at `{sieve, https}`, with `file:` never admitted (the mint gesture
+  copies to an asset — Shared categories cannot carry machine-scoped paths, and bare
+  filesystem pointers cross the containment fence).
+
+Discrimination is container-side *lookup*, never address-side inference: the container
+checks its block index, then its assets; ids stay opaque.
+
+### Order, the chain, and the prompt
+
+Order is stored and authoritative at both grains — the chat spine in ask order, the
+question list in the asker's arrangement — never derived from chain back-pointers.
+"Containment arranges, refs describe" survives with the jobs split cleanly: order belongs
+to the container, lineage to the block.
+
+The chain folds into the question too: a follow-up's question *begins with* a pinned
+reference to its parent exchange — a follow-up is literally a quote plus more words. In a
+chat the container order carries the chain and nothing is written; the written pinned
+reference in a first question is the **branch** (§8b's cross-document chain edge,
+unchanged). Prompt assembly becomes role policy over observables — initially bucketed by
+scheme/pin/grain to reproduce the tuned shapes, eval-guarded — with one genuinely new
+class: the **pinned reference renders as QUOTED** (resolved snapshot, marked as cited
+history so the role cannot mistake it for current state).
+
+### What this settles for the chat (#102)
+
+A chat is `List<AiBlock>` in ask order — native YAML, born Shared in the library, §5's
+lifecycle unchanged. The flat spine means `DocView`, `BuildContext`, the THREAD walk and
+the job engine work unchanged; every layer learns "chat" through a seam it already has
+(Category value, `documentFromStoreable` branch, `ChatsSource`, `ChatCodec`, a PM-free
+lens per §8). The turn, as a noun distinct from the ai-block, is gone.
+
+### Costs, stated
+
+- **Nested rendering in the note host.** A question *list* inside the ai-block NodeView
+  is the hardest UI item in the plan (#101 Phase B); until it lands, single-prose
+  questions render exactly as today.
+- **The prompt spine refactor** (`qaHeader`/`buildPrompt` from attr-slots to list-folds)
+  must be prompt-neutral on day one — the eval corpus is the guard.
+- **Stage E, softened but touched.** This is not a `Children` field: it is a kind whose
+  *payload* contains blocks — the diagram block embedding fenced code is the precedent,
+  and the 4-space literal discipline already protects it. Question-list fragments are
+  deliberately not externally addressable; the citable unit is the exchange, and the
+  rare fragment that deserves an address gets promoted.
+- **A kind is renamed on disk** (`attachment` → `reference`) via deserialize-time alias
+  — the same sugar move as the question scalar, `ref`, and `attachments` attrs; no
+  sweeps, no dual-read windows anywhere in the design.
+
+### Where this leaves the series
+
+§8a's footnote keeps winning: first the workbench edge, then the branch, now the entire
+reference apparatus — each time a mechanism dissolved, the address grammar picked up the
+weight. What is left of the ai-block is one sentence: **a question that is a list of
+blocks, an answer, and nothing else** — with pointing a kind of block, freezing a
+property of an address, and the chat just a container that holds exchanges in the order
+they were asked.
+
+---
+
 ## 9. Deliberately unresolved
 
 - **Role formalisation shape** — the Go type for protocol roles (template + schema +
