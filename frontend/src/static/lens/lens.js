@@ -7,26 +7,15 @@
 // provider is pre-bound to a single container, so possession is authorization
 // and a lens cannot re-target itself — remounting is a host gesture.
 //
-// The base is deliberately THIN: lifecycle, read-and-paint, presence. The
-// hierarchy is one level deep (Lens → OutlineLens; Lens → BlockLens → NoteLens)
-// and splits on WRITE capability only — the constructor signature is the
-// capability declaration. If a third level ever feels necessary, that
-// capability should have been an interface.
+// The base is deliberately THIN: lifecycle, read-and-paint, presence. Every
+// lens extends it — the outline, and (through AbstractEditor) both editors —
+// so there is one lifecycle story, not one per family.
 //
 // Read-and-paint, not apply-a-delta: a cue says WHAT changed, never what the
 // new value is. The lens reads the answer back through the provider, so there
 // is no second copy of container state on the lens side to drift.
 
-/**
- * Thrown when a lens's construction or lifecycle contract is broken.
- *
- * Distinct from `contract/sieve-block.js`'s `ContractViolation` so that neither
- * side's `instanceof` accidentally answers for the other's failures. The two are
- * now both leaf-reachable, so collapsing them is a live option — it is a decision
- * about whether a broken lens lifecycle and a broken block shape are one error,
- * not a packaging constraint any more.
- */
-export class LensContractViolation extends Error {}
+import { ContractViolation } from '../contract/sieve-block.js'
 
 export class Lens {
   /** @type {import('../contract/container-provider.js').ContainerProvider} */ #provider
@@ -36,13 +25,13 @@ export class Lens {
   /** @param {import('../contract/container-provider.js').ContainerProvider} provider */
   constructor(provider) {
     if (new.target === Lens) {
-      throw new LensContractViolation('Lens is abstract — extend it, never instantiate it directly')
+      throw new ContractViolation('Lens is abstract — extend it, never instantiate it directly')
     }
     if (!provider || typeof provider.getOrder !== 'function' || typeof provider.subscribe !== 'function') {
-      throw new LensContractViolation(`${new.target.name}: construct with a ContainerProvider`)
+      throw new ContractViolation(`${new.target.name}: construct with a ContainerProvider`)
     }
     if (this.paint === Lens.prototype.paint) {
-      throw new LensContractViolation(`${new.target.name} must implement paint(change)`)
+      throw new ContractViolation(`${new.target.name} must implement paint(change)`)
     }
     this.#provider = provider
   }
@@ -61,6 +50,12 @@ export class Lens {
   /** @returns {boolean} */
   get isMounted() { return this.#host !== null }
 
+  /** The container this lens presents. Asked of the PROVIDER, because that is
+   *  what a lens is bound to; a lens holding its own identity (an editor, whose
+   *  uuid outlives any one mount) overrides this.
+   *  @returns {string} */
+  get uuid() { return this.#provider.getUuid() }
+
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   /**
@@ -74,10 +69,10 @@ export class Lens {
    */
   mount(hostElement) {
     if (!hostElement || typeof hostElement.appendChild !== 'function') {
-      throw new LensContractViolation(`${this.constructor.name}.mount: an element is required`)
+      throw new ContractViolation(`${this.constructor.name}.mount: an element is required`)
     }
     if (this.#host) {
-      throw new LensContractViolation(`${this.constructor.name} is already mounted — unmount first`)
+      throw new ContractViolation(`${this.constructor.name} is already mounted — unmount first`)
     }
     this.#host = hostElement
     this.#provider.subscribe(this)
@@ -117,7 +112,7 @@ export class Lens {
    */
   setSelectionListener(listener) {
     if (listener && typeof listener.onSelectionChanged !== 'function') {
-      throw new LensContractViolation(`${this.constructor.name}.setSelectionListener: listener must implement onSelectionChanged`)
+      throw new ContractViolation(`${this.constructor.name}.setSelectionListener: listener must implement onSelectionChanged`)
     }
     this.#selectionListener = listener || null
   }
@@ -135,7 +130,7 @@ export class Lens {
    */
   advertiseSelection(advert) {
     if (!this.#selectionListener) return
-    const context = Object.freeze(Object.assign({}, advert, { docUuid: this.#provider.getUuid() }))
+    const context = Object.freeze(Object.assign({}, advert, { docUuid: this.uuid }))
     this.#selectionListener.onSelectionChanged(
       /** @type {Readonly<import('../contract/selection-listener.js').SelectionContext>} */ (/** @type {any} */ (context)))
   }
@@ -148,6 +143,6 @@ export class Lens {
    * @param {Readonly<import('../contract/container-update-listener.js').ContainerChange>} change
    */
   paint(change) {
-    throw new LensContractViolation(`${this.constructor.name} must implement paint(change)`)
+    throw new ContractViolation(`${this.constructor.name} must implement paint(change)`)
   }
 }

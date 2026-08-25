@@ -8,18 +8,18 @@
 // stored mode to fall out of sync, which is what makes the old torn-down-limbo
 // mode-toggle state unrepresentable.
 //
-// ONE BUSINESS DEPENDENCY (issue #96). The editor is a LENS: it is constructed
-// against a container PROVIDER — the whole of the Lens↔Host wall — and there is
-// no transport in its hands, its surfaces' hands, or its renderers'. It cannot
-// name a socket, a document service or a frame, because it holds no object that
-// has one.
+// ONE BUSINESS DEPENDENCY (issue #96). The editor is a LENS — literally, since
+// #99: it EXTENDS Lens, which holds the provider, owns the mount/unmount
+// lifecycle, routes the inbound cue to `paint`, and carries the presence seam.
+// What is left here is what makes an editor an editor: a surface to present,
+// a mode, dirty state, and the verbs the chrome calls.
 //
-// INBOUND IS A SUBSCRIPTION. The editor registers as the provider's
-// ContainerUpdateListener; every change to the container — its own verb's
-// effect, another lens's edit, a finished AI job, the watcher — arrives as ONE
-// origin-blind `onChanged({blockIds, orderChanged})`. It re-reads the named
-// blocks and places the SERVER's nodes with the existing tracked-transaction
-// machinery. There is no per-origin repaint path left to keep in step.
+// INBOUND IS A SUBSCRIPTION, run by the base: mounting subscribes, and every
+// change to the container — this lens's own verb's effect, another lens's edit,
+// a finished AI job, the watcher — arrives as ONE origin-blind cue, dispatched
+// to `paint`. It re-reads the named blocks and places the SERVER's nodes with
+// the existing tracked-transaction machinery. There is no per-origin repaint
+// path left to keep in step.
 //
 // OUTBOUND IS THE PROVIDER'S VERBS. Structure leaves as `request*`, in-flight
 // text as `flush`, a clipboard as the `paste` query. Nothing here computes a
@@ -30,6 +30,8 @@
 // window.* assignment happens in editor-shell.js (which re-exports this as the
 // P1 `SieveEditor` name for backward compatibility).
 
+import { Lens } from './lens.js'
+import { ContractViolation } from '../contract/sieve-block.js'
 import { AbstractSurface } from './document-editor/surfaces/abstract-surface.js'
 import { EditorMode } from './document-editor/editor-mode.js'
 import { SelectionModel } from './document-editor/selection-model.js'
@@ -49,10 +51,10 @@ import { AddressStatus } from '../renderers/address-status.js'
  * @typedef {object} AbstractEditorOptions
  * @property {any} [provider]
  *   — the mounted container's provider: the ONE business dependency, pre-bound
- *   to one container by the host. A NoteEditor demands the block extension; a
- *   PromptEditor demands only the whole-content one. A bare construction (tests)
- *   may omit it entirely, in which case every verb is a safe no-op — callers
- *   never probe for one.
+ *   to one container by the host. REQUIRED — the base refuses a lens without
+ *   one, because possession of a provider is what authorizes a lens to present
+ *   a container at all. A NoteEditor demands the block extension; a PromptEditor
+ *   demands only the whole-content one.
  * @property {() => Promise<{body?: string, version?: number, scroll?: number}>} [loadContainer]
  *   — the HOST's loader for this container. A whole-container LOAD is a host
  *   concern (it decides mode, and it owns the markdown body), so the editor is
@@ -65,7 +67,7 @@ import { AddressStatus } from '../renderers/address-status.js'
  *   `@` picker — the affordance is absent, nothing is broken.
  */
 
-export class AbstractEditor {
+export class AbstractEditor extends Lens {
   // ── Identity + surface state ─────────────────────────────────────────────────
 
   /** @type {string} */
@@ -76,9 +78,6 @@ export class AbstractEditor {
 
   /** @type {AbstractSurface|null} */
   #surface = null
-
-  /** @type {HTMLElement|null} the editor-owned root the surfaces mount under */
-  #rootEl = null
 
   /** @type {Array<(event: SurfaceEventMsg) => void>} surface-event registrants */
   #eventListeners = []
@@ -93,11 +92,7 @@ export class AbstractEditor {
    */
   #selectionModel
 
-  // ── The wall (bare constructions keep these null/false) ─────────────────────
-
-  /** @type {any} the mounted container's provider — the ONE business
-   * dependency. Null in bare constructions, where every verb is a safe no-op. */
-  #provider = null
+  // ── The wall (the provider itself, and the subscription, are the base's) ────
 
   /** @type {boolean} whether this container's provider carries the BLOCK
    * extension. It replaces the old `connect` declaration: a lens's capability is
@@ -107,14 +102,6 @@ export class AbstractEditor {
   /** @type {(() => Promise<{body?: string, version?: number, scroll?: number}>)|null}
    * the host's loader for this container (see AbstractEditorOptions). */
   #loadContainer = null
-
-  /** @type {{onSelectionChanged: (ctx: any) => void}|null} the host's presence
-   * seam — the one channel that flows lens→host outside the facade's verbs. */
-  #selectionListener = null
-
-  /** @type {boolean} whether this editor is currently registered as its
-   * provider's ContainerUpdateListener (true only while a surface is mounted). */
-  #subscribed = false
 
   /** @type {object|null} the `@` picker's protocol peer (#38). Held, never
    * called from here: the WYSIWYG surface hosts the picker, and this is the
@@ -168,7 +155,8 @@ export class AbstractEditor {
    * @param {AbstractEditorOptions} [options]
    */
   constructor(uuid, options = {}) {
-    if (!uuid) throw new Error('AbstractEditor: uuid is required')
+    super(options.provider)
+    if (!uuid) throw new ContractViolation('AbstractEditor: uuid is required')
     this.#uuid = uuid
     this.#selectionModel = new SelectionModel(uuid)
     // P3.B: bridge the SelectionModel's own push onto the editor's ONE onEvent
@@ -178,12 +166,12 @@ export class AbstractEditor {
     // field is fine; the model already fires only on a meaningful change.
     this.#selectionModel.onUpdate((ctx) => {
       this.#emitEvent({ type: 'selection-update', context: ctx })
-      // The presence seam: the host hears what this lens is looking at. It is
-      // an ADVERT, not a request — nothing here waits for or reads an answer.
-      if (this.#selectionListener) this.#selectionListener.onSelectionChanged(ctx)
+      // The presence seam, run by the base: the host hears what this lens is
+      // looking at. It is an ADVERT, not a request — nothing here waits for or
+      // reads an answer.
+      this.advertiseSelection(ctx)
     })
-    this.#provider = options.provider || null
-    this.#blockCapable = !!(this.#provider && typeof this.#provider.requestAddBlock === 'function')
+    this.#blockCapable = typeof this.provider.requestAddBlock === 'function'
     this.#loadContainer = options.loadContainer || null
     this.#mentionService = options.mentionService || null
 
@@ -200,27 +188,30 @@ export class AbstractEditor {
 
   // ── Identity + surface accessors ─────────────────────────────────────────────
 
-  /** @returns {string} The document uuid this editor session is for. */
+  /**
+   * @override — the document uuid this editor session is for. It is the
+   * editor's OWN, not the provider's: an editor's identity is fixed at
+   * construction and outlives any one mount, which is what lets the
+   * container-saved reaction and saveAndSettle recognise their own facts before
+   * a surface has ever been presented.
+   * @returns {string}
+   */
   get uuid() { return this.#uuid }
 
   /**
-   * The mounted container's provider — the whole of this lens's business
-   * surface. Surfaces and renderers reach their verbs through it; there is
-   * nothing else to reach. Null in bare constructions.
+   * @override — the same provider the base holds, WIDENED. An editor's container
+   * carries the block extension, the whole-content one, or both, and which verbs
+   * are present IS the capability declaration it probes for (`canEditBlocks`,
+   * the `typeof` guards on flushContents / requestPersist). The base names only
+   * the reads every lens shares, so typing it narrowly here would make every
+   * capability probe a type error.
+   * @returns {any}
    */
-  get provider() { return this.#provider }
+  get provider() { return super.provider }
 
   /** Whether this container's provider carries the block extension (a note
    *  does; a prompt does not). @returns {boolean} */
   get canEditBlocks() { return this.#blockCapable }
-
-  /**
-   * Registers the HOST's presence listener. It flows the other way from every
-   * other channel here — the host subscribes to the lens — which is why it is
-   * SET on the lens rather than asked for through the provider.
-   * @param {{onSelectionChanged: (ctx: any) => void}|null} listener
-   */
-  setSelectionListener(listener) { this.#selectionListener = listener || null }
 
   /** The `@` picker's protocol peer, or null in bare constructions. */
   get mentionService() { return this.#mentionService }
@@ -266,13 +257,6 @@ export class AbstractEditor {
 
   /** @returns {boolean} Whether the document has unsaved changes. */
   get isDirty() { return this.#dirty }
-
-  /**
-   * The editor-owned root element, for subclasses (setMode remounts into it).
-   * @protected
-   * @returns {HTMLElement|null}
-   */
-  get _rootEl() { return this.#rootEl }
 
   /** Marks the document dirty (unsaved changes present). */
   markDirty() { this.#dirty = true }
@@ -415,7 +399,7 @@ export class AbstractEditor {
    * @returns {AbstractSurface}
    */
   _createSurface(mode) {
-    throw new Error('AbstractEditor: _createSurface must be implemented by the concrete editor type')
+    throw new ContractViolation('AbstractEditor: _createSurface must be implemented by the concrete editor type')
   }
 
   /**
@@ -429,39 +413,51 @@ export class AbstractEditor {
    * @returns {AbstractSurface} the mounted surface
    */
   presentSurface(mode, rootEl, content) {
-    this.#unsubscribeFromContainer()
-    if (this.#surface) this.#surface.unmount()
-    this.#rootEl = rootEl
+    if (this.isMounted) this.unmount()
     const next = this._createSurface(mode)
-    if (!(next instanceof AbstractSurface)) throw new Error('AbstractEditor: _createSurface must return an AbstractSurface')
+    if (!(next instanceof AbstractSurface)) throw new ContractViolation('AbstractEditor: _createSurface must return an AbstractSurface')
     // A mount root can arrive pre-classed by a PREVIOUS editor's toggle — sync
     // the class to THIS editor's state so DOM and #showAiBlocks never desync.
     rootEl.classList.toggle('hide-ai-blocks', !this.#showAiBlocks)
     next.mount(rootEl, content)
     this.#surface = next
-    // Subscribe AFTER the mount, because subscribing cues immediately with the
-    // whole container: the surface mounts empty and the bootstrap cue paints it
-    // from the model the host has already seeded. That is the ONE painting path
-    // — there is no separate "initial render" to keep in step with the repaint.
+    // Mount LAST, because the base's mount subscribes and subscribing cues
+    // immediately with the whole container: the surface mounts empty and the
+    // bootstrap cue paints it from the model the host has already seeded. That
+    // is the ONE painting path — there is no separate "initial render" to keep
+    // in step with the repaint.
     //
-    // Painting the whole container is only safe HERE, at open, and that is the
-    // reason this subscription is tied to the surface rather than to the editor:
-    // there is no undo history yet to lose, and every later cue is a delta.
-    this.#subscribeToContainer()
+    // Painting the whole container is only safe HERE, at open, which is why an
+    // editor's mount is tied to presenting a surface: there is no undo history
+    // yet to lose, and every later cue is a delta.
+    super.mount(rootEl)
     // Seed the document stats for the new surface (initial present + mode flip);
     // doc-changed emits them thereafter. The retired editor.js dispatchStats seed.
     this.#emitStats()
     return next
   }
 
-  // ── Inbound: the ONE channel (ContainerUpdateListener) ───────────────────────
+  /**
+   * @override — tears the surface down BEFORE the base drops the subscription
+   * and empties the root. The order is load-bearing: a WysiwygSurface destroys a
+   * live ProseMirror view, which must still own its DOM when it does.
+   */
+  unmount() {
+    if (this.#surface) {
+      this.#surface.unmount()
+      this.#surface = null
+    }
+    super.unmount()
+  }
+
+  // ── Inbound: the ONE channel (the base's onChanged dispatches here) ──────────
 
   /**
-   * The container changed. WHAT changed is `blockIds` (blocks that arrived,
-   * changed or left) and whether the order did; WHO changed it is deliberately
-   * unsayable — this lens's own verb, another lens, a finished job and the file
-   * watcher all arrive here identically, so there is one repaint story rather
-   * than one per origin.
+   * @override — the container changed. WHAT changed is `blockIds` (blocks that
+   * arrived, changed or left) and whether the order did; WHO changed it is
+   * deliberately unsayable — this lens's own verb, another lens, a finished job
+   * and the file watcher all arrive here identically, so there is one repaint
+   * story rather than one per origin.
    *
    * The handler re-READS: the cue names ids, and the current truth for each is
    * whatever the provider answers now. Nothing is carried in the event, so a
@@ -469,27 +465,13 @@ export class AbstractEditor {
    *
    * Suppressed during a host-driven load, which ends in a full repaint anyway
    * (see #reloadInProgress).
-   * @param {{blockIds: ReadonlyArray<string>, orderChanged: boolean}} change
+   * @param {Readonly<{blockIds: ReadonlyArray<string>, orderChanged: boolean}>} change
    */
-  onChanged(change) {
+  paint(change) {
     if (this.#reloadInProgress) return
     const surface = this.#surface
-    if (!surface || !this.#provider) return
-    surface.applyContainerChange(change || { blockIds: [], orderChanged: false }, this.#provider)
-  }
-
-  /** Registers this editor as its provider's update listener. Idempotent. */
-  #subscribeToContainer() {
-    if (this.#subscribed || !this.#provider) return
-    this.#subscribed = true
-    this.#provider.subscribe(this)
-  }
-
-  /** Drops the subscription so a torn-down surface is never cued. Idempotent. */
-  #unsubscribeFromContainer() {
-    if (!this.#subscribed || !this.#provider) return
-    this.#subscribed = false
-    this.#provider.unsubscribe(this)
+    if (!surface) return
+    surface.applyContainerChange(change || { blockIds: [], orderChanged: false }, this.provider)
   }
 
   /**
@@ -578,8 +560,8 @@ export class AbstractEditor {
    * @param {string} raw
    */
   setRawContent(raw) {
-    if (this.#provider && typeof this.#provider.flushContents === 'function') {
-      this.#provider.flushContents(raw)
+    if (typeof this.provider.flushContents === 'function') {
+      this.provider.flushContents(raw)
     }
   }
 
@@ -621,8 +603,7 @@ export class AbstractEditor {
     }
     const res = resolveEntriesForKind ? resolveEntriesForKind(targetKind, sourceNode, entries) : entries
     return Promise.resolve(res).then((resolved) => {
-      const p = this.#provider
-      if (p && this.#blockCapable) p.requestTransform(blockId, targetKind, wireOp, resolved)
+      if (this.#blockCapable) this.provider.requestTransform(blockId, targetKind, wireOp, resolved)
     })
   }
 
@@ -781,7 +762,7 @@ export class AbstractEditor {
 
     // Both directions speak WHOLE-CONTENT through the same provider — the flip is
     // one lens using both of its container's vocabularies, not two providers.
-    const provider = this.#provider
+    const provider = this.provider
     let payload
     if (target === EditorMode.MARKDOWN) {
       // The container's authoritative serialized form. The frontend never
@@ -797,7 +778,7 @@ export class AbstractEditor {
     }
 
     // Success only — the swap is unreachable on timeout/error.
-    this.presentSurface(target, /** @type {HTMLElement} */ (this.#rootEl), payload)
+    this.presentSurface(target, /** @type {HTMLElement} */ (this.host), payload)
     return true
   }
 
@@ -811,7 +792,7 @@ export class AbstractEditor {
    */
   toggleAiBlocks() {
     this.#showAiBlocks = !this.#showAiBlocks
-    if (this.#rootEl) this.#rootEl.classList.toggle('hide-ai-blocks', !this.#showAiBlocks)
+    if (this.host) this.host.classList.toggle('hide-ai-blocks', !this.#showAiBlocks)
     return this.#showAiBlocks
   }
 
@@ -834,9 +815,9 @@ export class AbstractEditor {
     attrs = attrs || {}
     // diagram default: an empty (source-less) diagram opens straight into edit mode.
     if (kind === 'diagram' && !attrs.source) attrs.mode = 'edit'
-    if (!this.#provider || !this.#blockCapable) return
+    if (!this.#blockCapable) return
     const anchor = (afterBlockId === undefined) ? this.#anchorFromCaret() : afterBlockId
-    this.#provider.requestAddBlock(kind, attrs, anchor)
+    this.provider.requestAddBlock(kind, attrs, anchor)
   }
 
   /**
@@ -1160,10 +1141,10 @@ export class AbstractEditor {
       const data = (await this.#loadContainer()) || {}
       this.seedVersion(data.version || 0)
       const surface = this.#surface
-      if (mode === 'wysiwyg' && this.editorPane && surface && this.#provider) {
+      if (mode === 'wysiwyg' && this.editorPane && surface) {
         // The container model is the truth the repaint reads — the same reads
         // every cue uses, so a load and a change paint from ONE source.
-        surface.paintContainer(this.#provider)
+        surface.paintContainer(this.provider)
         this.#reloadInProgress = false
         this.applyPosition(focus)
       } else if (mode === 'markdown' && surface) {
@@ -1194,8 +1175,8 @@ export class AbstractEditor {
   flushSave() {
     const s = this.#surface
     if (s) s.flushPending()
-    if (this.#provider && typeof this.#provider.requestPersist === 'function') {
-      this.#provider.requestPersist()
+    if (typeof this.provider.requestPersist === 'function') {
+      this.provider.requestPersist()
     }
     return Promise.resolve()
   }
@@ -1264,16 +1245,11 @@ export class AbstractEditor {
    * extend destroy() must call super.destroy().
    */
   destroy() {
-    if (this.#surface) {
-      this.#surface.unmount()
-      this.#surface = null
-    }
-    this.#rootEl = null
-    document.removeEventListener('sieve:container-saved', this.#onContainerSaved)
-    this.#selectionListener = null
     // The provider is the HOST's; the mount that made it is what closes the
     // container's channel and discards its model. A lens hands back only what it
-    // took: the subscription.
-    this.#unsubscribeFromContainer()
+    // took: the surface, the subscription, and the element.
+    this.unmount()
+    document.removeEventListener('sieve:container-saved', this.#onContainerSaved)
+    this.setSelectionListener(null)
   }
 }

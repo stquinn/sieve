@@ -11,7 +11,8 @@
 import { describe, it, expect } from 'vitest'
 import { FakeHost } from './helpers/fake-host.js'
 import { OutlineLens } from '../src/static/lens/outline/outline-lens.js'
-import { Lens, LensContractViolation } from '../src/static/lens/lens.js'
+import { Lens } from '../src/static/lens/lens.js'
+import { ContractViolation } from '../src/static/contract/sieve-block.js'
 
 import seq2 from './fixtures/container-frames/seq-2-paste-inserts.json'
 import seq3 from './fixtures/container-frames/seq-3-transform-and-reseed.json'
@@ -50,26 +51,26 @@ function mountedOnSeq2() {
 describe('Lens base contract', () => {
   it('is abstract', () => {
     const host = new FakeHost('doc-1')
-    expect(() => new Lens(host.provider)).toThrow(LensContractViolation)
+    expect(() => new Lens(host.provider)).toThrow(ContractViolation)
   })
 
   it('demands a provider', () => {
-    expect(() => new OutlineLens(/** @type {any} */ (null))).toThrow(LensContractViolation)
-    expect(() => new OutlineLens(/** @type {any} */ ({}))).toThrow(LensContractViolation)
+    expect(() => new OutlineLens(/** @type {any} */ (null))).toThrow(ContractViolation)
+    expect(() => new OutlineLens(/** @type {any} */ ({}))).toThrow(ContractViolation)
   })
 
   it('refuses a subclass with no paint', () => {
     class Bare extends Lens {}
     const host = new FakeHost('doc-1')
-    expect(() => new Bare(host.provider)).toThrow(LensContractViolation)
+    expect(() => new Bare(host.provider)).toThrow(ContractViolation)
   })
 
   it('refuses a second mount and a listener that cannot listen', () => {
     const host = new FakeHost('doc-1')
     const lens = new OutlineLens(host.provider)
     host.mount(lens)
-    expect(() => lens.mount(document.createElement('div'))).toThrow(LensContractViolation)
-    expect(() => lens.setSelectionListener(/** @type {any} */ ({}))).toThrow(LensContractViolation)
+    expect(() => lens.mount(document.createElement('div'))).toThrow(ContractViolation)
+    expect(() => lens.setSelectionListener(/** @type {any} */ ({}))).toThrow(ContractViolation)
   })
 })
 

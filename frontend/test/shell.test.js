@@ -202,26 +202,26 @@ function makeNote(uuid = 'n', options = {}) { return noteRig(uuid, options).ed }
 
 describe('SieveEditor (P1 identity, P2.B surface-derived)', () => {
   it('exposes uuid via getter', () => {
-    const ed = new SieveEditor('abc-123')
+    const ed = new SieveEditor('abc-123', { provider: fakeProvider() })
     expect(ed.uuid).toBe('abc-123')
   })
 
   it('mode defaults to wysiwyg with no surface, and derives from the mounted surface', () => {
-    const ed = new FakeSurfaceSieveEditor('abc-123')
+    const ed = new FakeSurfaceSieveEditor('abc-123', { provider: fakeProvider() })
     expect(ed.mode).toBe('wysiwyg')
     ed.presentSurface('markdown', document.createElement('div'), 'body')
     expect(ed.mode).toBe('markdown') // live derivation
   })
 
   it('editorPane is null with no surface and derives from the mounted surface', () => {
-    const ed = new FakeSurfaceSieveEditor('abc-123')
+    const ed = new FakeSurfaceSieveEditor('abc-123', { provider: fakeProvider() })
     expect(ed.editorPane).toBeNull()
     ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
     expect(ed.editorPane).toEqual({ fake: 'tiptap' })
   })
 
   it('throws if uuid missing', () => {
-    expect(() => new SieveEditor('')).toThrow('uuid is required')
+    expect(() => new SieveEditor('', { provider: fakeProvider() })).toThrow('uuid is required')
   })
 })
 
@@ -238,7 +238,7 @@ describe('SieveTab', () => {
 
   it('attachEditor sets the editor', () => {
     const tab = new SieveTab('tab-uuid')
-    const ed = new SieveEditor('tab-uuid')
+    const ed = new SieveEditor('tab-uuid', { provider: fakeProvider() })
     tab.attachEditor(ed)
     expect(tab.editor).toBe(ed)
   })
@@ -250,7 +250,7 @@ describe('SieveTab', () => {
 
   it('detachEditor clears the editor', () => {
     const tab = new SieveTab('tab-uuid')
-    const ed = new SieveEditor('tab-uuid')
+    const ed = new SieveEditor('tab-uuid', { provider: fakeProvider() })
     tab.attachEditor(ed)
     tab.detachEditor()
     expect(tab.editor).toBeNull()
@@ -275,7 +275,7 @@ describe('SieveTab', () => {
 
   it('attachEditor subscribes to the editor stream; a mode-changed event records the tab mode', () => {
     const tab = new SieveTab('tab-uuid')
-    const ed = new SieveEditor('tab-uuid')
+    const ed = new SieveEditor('tab-uuid', { provider: fakeProvider() })
     let emit
     ed.onEvent = (fn) => { emit = fn; return () => { emit = null } }
     tab.attachEditor(ed)
@@ -286,7 +286,7 @@ describe('SieveTab', () => {
 
   it('non-mode events do not disturb the recorded mode', () => {
     const tab = new SieveTab('tab-uuid')
-    const ed = new SieveEditor('tab-uuid')
+    const ed = new SieveEditor('tab-uuid', { provider: fakeProvider() })
     let emit
     ed.onEvent = (fn) => { emit = fn; return () => {} }
     tab.attachEditor(ed)
@@ -297,7 +297,7 @@ describe('SieveTab', () => {
 
   it('detachEditor unsubscribes from the editor stream', () => {
     const tab = new SieveTab('tab-uuid')
-    const ed = new SieveEditor('tab-uuid')
+    const ed = new SieveEditor('tab-uuid', { provider: fakeProvider() })
     let emit
     let unsubscribed = false
     ed.onEvent = (fn) => { emit = fn; return () => { unsubscribed = true; emit = null } }
@@ -308,7 +308,7 @@ describe('SieveTab', () => {
 
   it('the tab mode survives detach (client-side record persists across tab switch)', () => {
     const tab = new SieveTab('tab-uuid')
-    const ed = new SieveEditor('tab-uuid')
+    const ed = new SieveEditor('tab-uuid', { provider: fakeProvider() })
     ed.onEvent = (fn) => { return () => {} }
     tab.attachEditor(ed)
     tab.recordMode(EditorMode.MARKDOWN)
@@ -413,7 +413,7 @@ describe('SieveWorkspace', () => {
 
   it('workspace.activeTab.editor.uuid chain works', () => {
     const tab = ws.openTab('chain-test')
-    const ed = new SieveEditor('chain-test')
+    const ed = new SieveEditor('chain-test', { provider: fakeProvider() })
     tab.attachEditor(ed)
     expect(ws.activeTab.editor.uuid).toBe('chain-test')
   })
@@ -423,7 +423,7 @@ describe('SieveWorkspace', () => {
 
 describe('AbstractEditor (P2.A base, P2.B surfaces)', () => {
   it('flushSave is concrete on the base (P2.B.2); destroy unmounts the surface', async () => {
-    const ed = new FakeSurfaceEditor('u')
+    const ed = new FakeSurfaceEditor('u', { provider: fakeProvider() })
     const root = document.createElement('div')
     const surface = ed.presentSurface('markdown', root, 'x')
     // Disconnected editor: flushPending fires on the surface, and the save is
@@ -436,7 +436,7 @@ describe('AbstractEditor (P2.A base, P2.B surfaces)', () => {
   })
 
   it('tracks dirty state', () => {
-    const ed = new AbstractEditor('u')
+    const ed = new AbstractEditor('u', { provider: fakeProvider() })
     expect(ed.isDirty).toBe(false)
     ed.markDirty()
     expect(ed.isDirty).toBe(true)
@@ -446,7 +446,7 @@ describe('AbstractEditor (P2.A base, P2.B surfaces)', () => {
 
   it('NoteEditor and PromptEditor are AbstractEditor instances', () => {
     expect(makeNote('n')).toBeInstanceOf(AbstractEditor)
-    expect(new PromptEditor('prompt:p')).toBeInstanceOf(AbstractEditor)
+    expect(new PromptEditor('prompt:p', { provider: wholeContentProvider() })).toBeInstanceOf(AbstractEditor)
   })
 
   it('a whole-content container has no mode to flip to — setMode resolves false', async () => {
@@ -464,7 +464,7 @@ describe('AbstractEditor surface events + domain API (P2.B / P4.F)', () => {
   // domain methods. Tests drive them by calling those methods on `ed`, exactly as
   // the surface now does.
   function rig() {
-    const ed = new FakeSurfaceEditor('u')
+    const ed = new FakeSurfaceEditor('u', { provider: fakeProvider() })
     ed.presentSurface('markdown', document.createElement('div'), 'x')
     return { ed }
   }
@@ -561,13 +561,13 @@ describe('AbstractEditor SelectionModel wiring (P3.A)', () => {
   // Mounts a fake surface and returns handles to drive its notify + script its
   // feedSelection descriptor.
   function rig(mode = 'wysiwyg') {
-    const ed = new FakeSurfaceEditor('u')
+    const ed = new FakeSurfaceEditor('u', { provider: fakeProvider() })
     ed.presentSurface(mode, document.createElement('div'), 'x')
     return { ed, surface: () => ed.surface, notify: () => ed.onSurfaceEvent.bind(ed) }
   }
 
   it('exposes an initial none SelectionContext for the editor uuid', () => {
-    const ed = new FakeSurfaceEditor('doc-9')
+    const ed = new FakeSurfaceEditor('doc-9', { provider: fakeProvider() })
     const ctx = ed.getSelectionContext()
     expect(ctx.docUuid).toBe('doc-9')
     expect(ctx.selectionType).toBe('none')
@@ -642,7 +642,7 @@ describe('AbstractEditor SelectionModel wiring (P3.A)', () => {
 describe('AbstractEditor selection-update onEvent bridge (P3.B)', () => {
   // Mounts a fake surface + scripts feedSelection; drives notify to push the model.
   function rig() {
-    const ed = new FakeSurfaceEditor('u')
+    const ed = new FakeSurfaceEditor('u', { provider: fakeProvider() })
     ed.presentSurface('wysiwyg', document.createElement('div'), 'x')
     return { ed, surface: () => ed.surface, notify: () => ed.onSurfaceEvent.bind(ed) }
   }
@@ -703,7 +703,7 @@ describe('SieveTab selection forwarding — the presence seam, host-ward', () =>
     // The wiring under test: the tab hands the editor its mount, so the editor's
     // own SelectionModel push lands on the seam without either end naming the other.
     const { tab } = mountedTab()
-    const ed = new FakeSurfaceEditor('u')
+    const ed = new FakeSurfaceEditor('u', { provider: fakeProvider() })
     tab.attachEditor(ed)
     ed.presentSurface('wysiwyg', document.createElement('div'), null)
     const seen = []
@@ -717,10 +717,10 @@ describe('SieveTab selection forwarding — the presence seam, host-ward', () =>
     const { tab, advertise } = mountedTab()
     const seen = []
     tab.onSelectionUpdate((ctx) => seen.push(ctx.blockId))
-    tab.attachEditor(new FakeSurfaceEditor('u'))
+    tab.attachEditor(new FakeSurfaceEditor('u', { provider: fakeProvider() }))
     advertise({ blockId: 'from-a' })
     tab.detachEditor()
-    tab.attachEditor(new FakeSurfaceEditor('u'))
+    tab.attachEditor(new FakeSurfaceEditor('u', { provider: fakeProvider() }))
     advertise({ blockId: 'from-b' })
     expect(seen).toEqual(['from-a', 'from-b'])
   })
@@ -856,7 +856,7 @@ describe('SieveWorkspace.onSelectionUpdate republish (P3.B)', () => {
 
 describe('AbstractEditor.presentSurface (P2.B lifecycle)', () => {
   it('mounts via _createSurface and stores the root', () => {
-    const ed = new FakeSurfaceEditor('u')
+    const ed = new FakeSurfaceEditor('u', { provider: fakeProvider() })
     const root = document.createElement('div')
     const s = ed.presentSurface('markdown', root, 'seed')
     expect(ed.made).toEqual([s])
@@ -865,15 +865,17 @@ describe('AbstractEditor.presentSurface (P2.B lifecycle)', () => {
   })
 
   it('unmounts the previous surface BEFORE mounting the next', () => {
-    const ed = new FakeSurfaceEditor('u')
+    const ed = new FakeSurfaceEditor('u', { provider: fakeProvider() })
     const root = document.createElement('div')
     ed.presentSurface('markdown', root, 'seed')
     ed.presentSurface('wysiwyg', root, { body: '', blocks: [] })
-    expect(ed.surfaceLog).toEqual(['mount:markdown', 'unmount:markdown', 'mount:wysiwyg'])
+    // Each present ends in a bootstrap cue: mounting subscribes, and subscribing
+    // cues with the whole container, so the fresh surface paints from the model.
+    expect(ed.surfaceLog).toEqual(['mount:markdown', 'cue', 'unmount:markdown', 'mount:wysiwyg', 'cue'])
   })
 
   it('presentSurface on the abstract base throws — the repertoire lives on concrete types', () => {
-    const ed = new AbstractEditor('u')
+    const ed = new AbstractEditor('u', { provider: fakeProvider() })
     expect(() => ed.presentSurface('markdown', document.createElement('div'), '')).toThrow('_createSurface')
   })
 })
@@ -1142,7 +1144,7 @@ describe('flushSave routing — in-flight text down, then persist', () => {
   })
 
   it('a bare lens (no container) drops both halves rather than throwing', async () => {
-    const ed = new FakeSurfaceEditor('u')
+    const ed = new FakeSurfaceEditor('u', { provider: fakeProvider() })
     ed.presentSurface('markdown', document.createElement('div'), 'x')
     await expect(ed.flushSave()).resolves.toBeUndefined()
   })
@@ -1171,7 +1173,7 @@ describe('flushSave routing — in-flight text down, then persist', () => {
   })
 
   it('PromptEditor mode is markdown by default (fixed)', () => {
-    expect(new PromptEditor('prompt:p').mode).toBe('markdown')
+    expect(new PromptEditor('prompt:p', { provider: wholeContentProvider() }).mode).toBe('markdown')
   })
 
   it('a prompt skips the save while a whole-container load is mid-flight', async () => {
@@ -1313,7 +1315,7 @@ describe('SieveWorkspace editor lifecycle (P4.F — moved from editor.js)', () =
     expect(w.activeEditor).toBeNull() // no active tab
     const tab = w.openTab('doc-a')
     expect(w.activeEditor).toBeNull() // tab open, no editor attached yet
-    const ed = new SieveEditor('doc-a')
+    const ed = new SieveEditor('doc-a', { provider: fakeProvider() })
     tab.attachEditor(ed)
     expect(w.activeEditor).toBe(ed)
   })
@@ -1322,7 +1324,7 @@ describe('SieveWorkspace editor lifecycle (P4.F — moved from editor.js)', () =
     const w = new SieveWorkspace()
     await expect(w.flushSave()).resolves.toBeUndefined()
     const tab = w.openTab('doc-a')
-    const ed = new SieveEditor('doc-a')
+    const ed = new SieveEditor('doc-a', { provider: fakeProvider() })
     ed.flushSave = vi.fn(() => Promise.resolve('flushed'))
     tab.attachEditor(ed)
     await expect(w.flushSave()).resolves.toBe('flushed')
@@ -1340,7 +1342,7 @@ describe('SieveWorkspace editor lifecycle (P4.F — moved from editor.js)', () =
   it('onEditorModeEvent: mode-changed toggles body class + reloads tabs', () => {
     const w = new SieveWorkspace()
     const tab = w.openTab('doc-a')
-    const ed = new SieveEditor('doc-a')
+    const ed = new SieveEditor('doc-a', { provider: fakeProvider() })
     tab.attachEditor(ed)
     Object.defineProperty(ed, 'mode', { get: () => 'markdown', configurable: true })
     const loadSpy = vi.spyOn(w, 'loadTabs').mockReturnValue(Promise.resolve())
@@ -1588,7 +1590,7 @@ describe('a WHOLE-CONTENT lens (the prompt pseudo-document)', () => {
   })
 
   it('a bare lens (no container at all) drops every verb quietly', async () => {
-    const ed = new PromptEditor('prompt:x')
+    const ed = new PromptEditor('prompt:x', { provider: wholeContentProvider() })
     expect(() => ed.setRawContent('# x')).not.toThrow()
     expect(() => ed.createBlock('code', {})).not.toThrow()
     await expect(ed.flushSave()).resolves.toBeUndefined()
@@ -1813,7 +1815,7 @@ describe('AbstractEditor.toggleMode (P2.C — binary-flip sugar over setMode)', 
 
 describe('AbstractEditor.toggleAiBlocks (P2.C)', () => {
   function rigWithRoot() {
-    const ed = new FakeSurfaceEditor('u')
+    const ed = new FakeSurfaceEditor('u', { provider: fakeProvider() })
     const root = document.createElement('div')
     ed.presentSurface('markdown', root, 'x')
     return { ed, root }
@@ -1838,7 +1840,7 @@ describe('AbstractEditor.toggleAiBlocks (P2.C)', () => {
   })
 
   it('without a mounted root it flips state without throwing', () => {
-    const ed = new AbstractEditor('u')
+    const ed = new AbstractEditor('u', { provider: fakeProvider() })
     expect(() => ed.toggleAiBlocks()).not.toThrow()
   })
 
@@ -1853,14 +1855,14 @@ describe('AbstractEditor.toggleAiBlocks (P2.C)', () => {
   it('presentSurface clears a stale hide-ai-blocks class a previous editor left on the mount root (P2.C.2)', () => {
     const root = document.createElement('div')
     root.classList.add('hide-ai-blocks') // stale — THIS editor never toggled
-    const ed = new FakeSurfaceEditor('u')
+    const ed = new FakeSurfaceEditor('u', { provider: fakeProvider() })
     ed.presentSurface('markdown', root, 'x')
     expect(root.classList.contains('hide-ai-blocks')).toBe(false)
   })
 
   it('presentSurface KEEPS hide-ai-blocks for an editor that toggled hidden (remount is state-driven, not a blind clear)', () => {
     const root = document.createElement('div')
-    const ed = new FakeSurfaceEditor('u')
+    const ed = new FakeSurfaceEditor('u', { provider: fakeProvider() })
     ed.presentSurface('markdown', root, 'x')
     ed.toggleAiBlocks() // hide
     expect(root.classList.contains('hide-ai-blocks')).toBe(true)
@@ -2486,7 +2488,7 @@ describe('SieveWorkspace.copyDocumentAsMarkdown', () => {
 
 describe('AbstractEditor stats producer (P4.D)', () => {
   it('presentSurface emits an initial stats event on the stream', () => {
-    const ed = new FakeSurfaceEditor('u')
+    const ed = new FakeSurfaceEditor('u', { provider: fakeProvider() })
     const events = []
     ed.onEvent((ev) => events.push(ev))
     ed.presentSurface('markdown', document.createElement('div'), 'hello\nworld')
@@ -2498,7 +2500,7 @@ describe('AbstractEditor stats producer (P4.D)', () => {
   })
 
   it('a doc-changed surface event emits a follow-up stats event', () => {
-    const ed = new FakeSurfaceEditor('u')
+    const ed = new FakeSurfaceEditor('u', { provider: fakeProvider() })
     ed.presentSurface('markdown', document.createElement('div'), 'x')
     const events = []
     ed.onEvent((ev) => events.push(ev.type))
