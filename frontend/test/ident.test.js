@@ -50,6 +50,14 @@ describe('Ident.mint', () => {
     for (let i = 0; i < 20000; i++) seen.add(Ident.mint())
     expect(seen.size).toBe(20000)
   })
+
+  it('orders strictly increasing within a single millisecond, matching Go', () => {
+    // A tight loop mints many ids inside one clock tick. Go's uuid.NewV7 keeps a
+    // sequence counter in rand_a so same-millisecond ids still sort; the client
+    // must give the same guarantee or the two mints are not interchangeable.
+    const ids = Array.from({ length: 200 }, () => Ident.mint())
+    for (let i = 1; i < ids.length; i++) expect(ids[i] > ids[i - 1]).toBe(true)
+  })
 })
 
 describe('Ident.valid', () => {

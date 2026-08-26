@@ -19,28 +19,46 @@ const HEX = Object.freeze(Array.from({ length: 256 }, (_, i) => i.toString(16).p
 // spellings are forms we never mint, so a value in one of them is not one of ours.
 const CANONICAL = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+// Monotonic counter state for rand_a (mirrors google/uuid's getV7Time), so a
+// mint always emits a (ms, seq) pair strictly greater than every previous one.
+let lastMs = 0
+let lastSeq = 0
+
 export const Ident = Object.freeze({
   /**
-   * Mints a UUIDv7. Time-ordered ACROSS milliseconds only: rand_a is random here,
-   * where Go's uuid.NewV7 puts a sequence counter in it, so ids minted in the same
-   * millisecond are unordered relative to each other and to Go's. Nothing sorts by
-   * id — container order is an explicit list — so do not start.
+   * Mints a UUIDv7. Time-ordered, and strictly monotonic even for ids minted
+   * within the same millisecond: rand_a carries a 12-bit sequence counter, not
+   * random bits, matching Go's uuid.NewV7. A later mint always sorts after an
+   * earlier one, lexicographically, by construction.
    * @returns {string} the canonical 8-4-4-4-12 form
    */
   mint() {
     const bytes = new Uint8Array(BYTES)
     crypto.getRandomValues(bytes)
 
+    const now = Date.now()
+    if (now > lastMs) {
+      lastMs = now
+      lastSeq = 0
+    } else {
+      lastSeq++
+      if (lastSeq > 0xfff) {
+        lastMs++
+        lastSeq = 0
+      }
+    }
+
     // 48-bit big-endian millisecond timestamp. Written with arithmetic rather
     // than bit shifts on purpose: JS bitwise operators truncate to 32 bits, and
     // the high two bytes of a millisecond clock are past that.
-    let ms = Date.now()
+    let ms = lastMs
     for (let i = 5; i >= 0; i--) {
       bytes[i] = ms % 256
       ms = Math.floor(ms / 256)
     }
-    bytes[VERSION_BYTE] = (bytes[VERSION_BYTE] & 0x0f) | 0x70  // version 7
+    bytes[VERSION_BYTE] = 0x70 | (lastSeq >> 8)  // version 7 | seq high nibble
     bytes[VARIANT_BYTE] = (bytes[VARIANT_BYTE] & 0x3f) | 0x80  // variant RFC 4122
+    bytes[7] = lastSeq & 0xff  // seq low byte
 
     let out = ''
     for (let i = 0; i < BYTES; i++) {
