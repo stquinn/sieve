@@ -43,6 +43,10 @@ export class PromptEditor extends AbstractEditor {
   flushSave() {
     // A reload replaces the whole document; a save mid-reload would race it.
     if (this.isSaveSuppressed()) return Promise.resolve()
+    // An untouched prompt has nothing to state. Saving one anyway would mint an
+    // override file for a prompt the user only READ, permanently shadowing the
+    // baked-in default from that point on.
+    if (!this.isDirty) return Promise.resolve()
 
     const s = this.surface
     const body = (s && s.body) || ''

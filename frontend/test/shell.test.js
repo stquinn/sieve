@@ -1156,8 +1156,20 @@ describe('flushSave routing — in-flight text down, then persist', () => {
     const ed = new (withFakeSurfaces(PromptEditor))('prompt:p', { provider })
     const surface = ed.presentSurface('markdown', document.createElement('div'), 'seed')
     surface.bodyValue = 'prompt body'
+    ed.markDirty()
     await ed.flushSave()
     expect(provider.setContents).toHaveBeenCalledWith('prompt body')
+  })
+
+  it('an UNTOUCHED prompt does not write — reading one must not mint an override', async () => {
+    // GetPromptContent prefers a store override over the baked-in default, so a
+    // save on open would shadow the default forever for a prompt merely READ.
+    const provider = wholeContentProvider()
+    const ed = new (withFakeSurfaces(PromptEditor))('prompt:p', { provider })
+    const surface = ed.presentSurface('markdown', document.createElement('div'), 'seed')
+    surface.bodyValue = 'seed'
+    await ed.flushSave()
+    expect(provider.setContents).not.toHaveBeenCalled()
   })
 
   it('a prompt does NOT clear its own dirty state — the saved fact does, for every type alike', async () => {
