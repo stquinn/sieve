@@ -1,7 +1,8 @@
 // @ts-check
-// globals.js — the ONE writer of window.GLOBALS: window-reachable app helpers
-// for consumers that cannot import ES modules (index.html inline scripts).
-// Each member carries a reason + death date. No anonymous additions.
+// The ONE writer of window.GLOBALS: window-reachable app helpers for consumers
+// that cannot import ES modules (index.html's inline scripts). Every member
+// states why it must be reachable that way. No anonymous additions.
 import { getSieveIcon } from '../renderers/block-kinds.js'
-// getSieveIcon: index.html inline [data-sieve-kind] icon decorator (DOMContentLoaded) — dies P4.F (inline readers → workspace.X()).
+// getSieveIcon: the inline [data-sieve-kind] icon decorator in index.html. Goes
+// when those inline readers become workspace calls.
 window.GLOBALS = Object.freeze({ getSieveIcon })

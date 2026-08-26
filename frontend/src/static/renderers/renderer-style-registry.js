@@ -1,32 +1,17 @@
 // @ts-check
-// renderer-style-registry.js — register-once-per-class stylesheet carriage,
-// born for Sieve block renderers (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
-// "Phase 1" — issue #44) and since adopted as THE component-owns-its-styles
-// pattern for any style-carrying component class (shell chrome like
-// CommandPopup/CommandBadges registers here too — #55).
+// Register-once-per-class stylesheet carriage: a class declares `static styles`
+// (CSS text using ONLY --theme-* vars for colour) and this registry injects that
+// CSS into the document exactly once per class, the first time an instance of
+// the class is constructed. BlockRenderer does it in its base constructor;
+// non-renderer components call rendererStyles.register(TheClass) in their own.
 //
-// A class declares `static styles` (CSS text using ONLY --theme-* vars for
-// colour — the host<->renderer styling protocol the spec commits to). This
-// registry injects that CSS into the document exactly once per class, the
-// first time an instance of the class is constructed (BlockRenderer does it in
-// its base constructor for every renderer; non-renderer components call
-// rendererStyles.register(TheClass) in their own constructors).
-//
-// Two injection strategies exist behind one contract — `inject(cssText, key)` —
-// so the mechanism is swappable without touching callers:
+// Two injection strategies sit behind one contract — `inject(cssText, key)` —
+// chosen by feature detection at construction:
 //   - AdoptedSheetStrategy — new CSSStyleSheet() + document.adoptedStyleSheets.
-//     One parse, shared across every mount. This is the PRIMARY strategy: the
-//     app's real engine is WebKitGTK 2.52.5 (webkit2gtk-4.1, confirmed via
-//     `pkg-config --modversion webkit2gtk-4.1` in the nix dev shell), which
-//     comfortably post-dates the Safari 16.4-era engine that shipped
-//     constructable stylesheets — no feature gap here.
+//     One parse, shared across every mount. The PRIMARY strategy.
 //   - StyleElementStrategy — a single deduplicated <style data-sieve-renderer="…">
-//     per class. Kept as the portable fallback (embedded/exported artefacts,
-//     older engines, non-browser hosts) so the seam never hard-codes an engine
-//     assumption — chosen automatically when adoptedStyleSheets isn't present.
-//
-// Strategy choice is feature-detected at construction; callers never need to
-// know which one is live.
+//     per class. The portable fallback for hosts without adoptedStyleSheets
+//     (embedded/exported artefacts, older engines, non-browser hosts).
 
 /**
  * @typedef {object} StyleInjectionStrategy
@@ -61,12 +46,8 @@ export class RendererStyleRegistry {
   /** @type {StyleInjectionStrategy} */
   #strategy
 
-  // Feature detection, not an engine allowlist. True on the app's real
-  // WebKitGTK 2.52.5 target today; kept as a real runtime check (not a
-  // hardcoded true) so the fallback stays reachable for any future host that
-  // doesn't have it (embedded artefacts, older engines). A static on the
-  // registry — the type that owns the strategy decision — per the
-  // no-loose-functions rule.
+  // Feature detection, not an engine allowlist — a real runtime check, so the
+  // fallback stays reachable for any host that lacks adoptedStyleSheets.
   /** @returns {boolean} */
   static supportsAdoptedStyleSheets() {
     return typeof CSSStyleSheet !== 'undefined' &&
@@ -101,7 +82,5 @@ export class RendererStyleRegistry {
 
 export { AdoptedSheetStrategy, StyleElementStrategy }
 
-// rendererStyles — the app-wide singleton every BlockRenderer subclass
-// registers through (composition-root-style singleton, not a window.* global —
-// it is imported, never grabbed off `window`).
+// The app-wide singleton every BlockRenderer subclass registers through.
 export const rendererStyles = new RendererStyleRegistry()

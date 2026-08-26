@@ -1,6 +1,6 @@
-// ai-actions.js — Status bar driven by the workspace channel's jobs-changed
-// push (a full snapshot, republished as the sieve:jobs-changed DOM event).
-// Exposes window.SieveAI namespace; maintains window.__sieveActiveJobs for the close-guard.
+// Status bar driven by the workspace channel's jobs-changed push (a full snapshot,
+// republished as the sieve:jobs-changed DOM event). Exposes the window.SieveAI
+// namespace, and maintains window.__sieveActiveJobs for the close-guard.
 (function() {
   // activeJobs: jobId → {label, docId, spinTab}. Replaced wholesale on every push.
   var activeJobs = {};
@@ -9,8 +9,7 @@
 
   function updateStatusBar() {
     // Write only into the dedicated jobs slot — NOT .status-bar__left, which also
-    // holds the library chip (#library-chip). Clobbering the whole left cell wiped
-    // the chip (and its hx-get wrapper) on every job start/end.
+    // holds the library chip (#library-chip) and its hx-get wrapper.
     var sbLeft = document.querySelector('.status-bar__jobs');
     if (!sbLeft) return;
     var ids = Object.keys(activeJobs);
@@ -18,7 +17,6 @@
 
     var frag = document.createDocumentFragment();
 
-    // ── Active cell: spinner + first label (+N more) ──────────────────────────
     if (ids.length > 0) {
       var active = document.createElement('span');
       active.className = 'status-bar__job-active';
@@ -38,7 +36,6 @@
       frag.appendChild(active);
     }
 
-    // ── Queued cell: waiting count (divider vs the active cell is CSS) ─────────
     if (queuedJobs.length > 0) {
       var queued = document.createElement('span');
       queued.className = 'status-bar__job-queued';
@@ -76,14 +73,12 @@
 
   // applyJobsSnapshot — replaces activeJobs/queuedJobs from a full server snapshot.
   function applyJobsSnapshot(payload) {
-    // Clear spinners for jobs that are about to be removed.
     Object.keys(activeJobs).forEach(function(id) {
       var job = activeJobs[id];
       if (job.spinTab && job.docId) setEvaluating(job.docId, false);
     });
-    // Rebuild from snapshot. EVERY JobEngine job paints here uniformly —
-    // commands included (their CommandBadge is an additional affordance, not a
-    // replacement; #55 decision #5's filter was reversed 2026-07-26).
+    // Rebuild from snapshot. EVERY JobEngine job paints here uniformly — commands
+    // included (their CommandBadge is an additional affordance, not a replacement).
     activeJobs = {};
     (payload.active || []).forEach(function(j) {
       if (!j.jobId) return;
@@ -95,19 +90,17 @@
     updateStatusBar();
   }
 
-  // ── Full-snapshot listener — the SOLE driver of status bar state. The server
-  // sends one unprompted on connect, so there is nothing to seed on page load.
+  // The server sends one unprompted on connect, so there is nothing to seed on load.
   document.addEventListener('sieve:jobs-changed', function(e) {
     applyJobsSnapshot(e.detail || {});
   });
 
-  // saveAndDispatch saves the editor first and waits for the save to LAND,
-  // because filing reads what is ON DISK: the AI must judge the document the
-  // user is looking at, not the last save. The filing verb then rides the
-  // WORKSPACE channel — a different socket from the save, with no ordering
-  // between them — which is exactly why the wait is on the landed fact rather
-  // than on having sent the flush. Its result is not read here: the work happens
-  // in a job, and the job's progress is what repaints this bar.
+  // saveAndDispatch saves the editor first and waits for the save to LAND, because
+  // filing reads what is ON DISK: the AI must judge the document the user is looking
+  // at, not the last save. The filing verb then rides the WORKSPACE channel — a
+  // different socket from the save, with no ordering between them — which is why the
+  // wait is on the landed fact rather than on having sent the flush. Its result is
+  // not read here: the work happens in a job, and the job repaints this bar.
   function saveAndDispatch(verb, id) {
     var p = window.sieveWorkspace ? window.sieveWorkspace.saveAndSettle() : Promise.resolve();
     p.then(function() {

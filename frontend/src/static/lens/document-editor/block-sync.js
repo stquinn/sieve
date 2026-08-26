@@ -1,21 +1,16 @@
-// block-sync.js — the thin-observer diff core (pure, D.4).
+// The thin-observer diff core (pure). computeBlockSync is an id-keyed diff over the
+// top-level blocks that emits create-block / update-block / delete-block ops —
+// granular, never a whole-document markdown blob.
 //
-// The block document model syncs the editor to Go with granular block-ops, not a
-// whole-document markdown blob. computeBlockSync is an id-keyed diff over the
-// top-level blocks that emits create-block / update-block / delete-block ops.
+// SCOPE: the observer owns PROSE block content. Structured (sieve-*) blocks sync
+// through their own channels, and their change-signature is a hash of their attrs
+// (the frontend never serialises them to markdown), so this emits no create/update
+// content op for one — they are tracked only for the baseline and for DELETE
+// detection (a delete-block is kind-agnostic).
 //
-// SCOPE: the observer owns PROSE block content. Structured (sieve-*) blocks have
-// their own sync channels — content via the container provider's own verbs (an
-// update-block op built here by updateBlockOp, framed by the host), arrival via
-// the container cue — and their change-signature is a hash of their attrs
-// (the frontend never serialises them to markdown). So this observer emits no
-// create/update content op for a structured block; it tracks them only for the
-// baseline and for DELETE detection (a delete-block is kind-agnostic).
-//
-// There is NO whole-document fallback. Every WYSIWYG edit is a granular block-op
-// over the WS — that is the only channel. (Markdown mode is a separate, verbatim
-// breakglass buffer, also over the WS.) An id-less node is the trailing editing
-// surface, not a block yet, and is simply skipped — never a fallback.
+// There is NO whole-document fallback: every WYSIWYG edit is a granular block-op,
+// and markdown mode is a separate verbatim breakglass buffer. An id-less node is
+// the trailing editing surface, not a block yet, and is simply skipped.
 
 // blockSig is a block's change-signature, prefixed with kind so a cached entry's
 // kind is recoverable. Prose hashes on content + aliases; structured hashes on its
@@ -25,15 +20,10 @@ function blockSig(b) {
 }
 
 // proseOp builds a create/update entry for a prose block, the batch's only
-// content-bearing shape. Prose's body rides in attrs.content. A CREATE states
-// the id the LENS minted (issue #96): a UUIDv7 is unique without coordination,
-// so the block is born with the name Go will know it by and there is no handle
-// to correlate or swap afterwards. Go validates the name and adopts it.
-//
-// The batch is the observer's INTERNAL result — WysiwygSurface turns each entry
-// into a facade verb (#submitOps) and nothing here reaches the wire, so this
-// deliberately does not reuse container/block-ops.js: reaching across for that
-// constructor would put the host's wire vocabulary inside a lens.
+// content-bearing shape. Prose's body rides in attrs.content. A CREATE states the
+// id the LENS minted: a UUIDv7 is unique without coordination, so the block is born
+// with the name Go will know it by and there is no handle to correlate afterwards.
+// Go validates the name and adopts it.
 export function proseOp(type, b, index) {
   var op = { type: type, blockId: b.id || '', kind: 'prose', attrs: { content: b.content || '' } }
   if (b.aliases && b.aliases.length) op.aliases = b.aliases
@@ -52,25 +42,22 @@ function isEmptyProse(b) {
 }
 
 // isPendingEmptyProse reports a brand-new blank prose paragraph that is just the
-// TRAILING editing surface — no content-bearing block of any kind follows it. That
-// one is ephemeral (excluded from the baseline + ops; create-block fires on first
+// TRAILING editing surface — no content-bearing block follows it. That one is
+// ephemeral (excluded from the baseline and from ops; create-block fires on first
 // content). A blank paragraph with content AFTER it is a STRUCTURAL blank line the
-// user placed deliberately — it is a real block, so it is born with an id and syncs
-// through the SAME create-block path as every other block (no special case), and
-// round-trips as its own delimited prose block.
+// user placed deliberately: a real block, born with an id, synced through the same
+// create-block path as every other block.
 function isPendingEmptyProse(b, prev, hasContentAfter) {
   return isEmptyProse(b) && !hasContentAfter && !(prev && b.id && b.id in prev)
 }
 
-// seedBaseline builds the initial change-signature map directly from the SERVER's
-// blocks (what Go already holds), so the first diff against it produces the right
-// verb. EVERY id'd server block is included — including an empty one — because Go
-// has it: editing it must be an update-block, never a duplicate create-block. (We
-// must NOT route this through computeBlockSync's pending-empty filter, which would
-// drop a loaded empty prose block from the baseline and make its first content
-// create-block an id Go already had → two blocks with one id on disk.) An id-less
-// block (a fresh client surface with no server origin) is skipped — it becomes a
-// real block, via create-block, once it has an id + content.
+// seedBaseline builds the initial change-signature map from the SERVER's blocks, so
+// the first diff against it produces the right verb. EVERY id'd server block is
+// included — an empty one too — because Go has it: editing it must be an
+// update-block, never a duplicate create-block. It must NOT be routed through
+// computeBlockSync's pending-empty filter, which would drop a loaded empty prose
+// block and make its first content a create-block on an id Go already had. An
+// id-less block has no server origin and is skipped.
 export function seedBaseline(curr) {
   var next = {}
   for (var i = 0; i < (curr || []).length; i++) {
@@ -80,16 +67,13 @@ export function seedBaseline(curr) {
   return next
 }
 
-// dedupeActions is the split-defense decision: given the ids of the top-level
-// prose nodes in document order, return the INDICES of the 2nd-and-later
-// occurrences of any NON-EMPTY id. ProseMirror's Enter copies the split node's
-// attrs, so the new half is born carrying the original's id; the first occurrence
-// keeps it and every later duplicate is RE-MINTED into a block of its own (issue
-// #96). Empty values are left untouched: an id-less node is the trailing editing
-// surface, which is not a block yet.
-// NOTE (E-1 forward): this pass assumes ONE top-level prose node per id. If E-1's
-// proseGroup is ever represented as several top-level nodes sharing one backend id,
-// this clears all-but-first; keep a proseGroup as a single top-level node instead.
+// dedupeActions is the split-defense decision: given the ids of the top-level prose
+// nodes in document order, return the INDICES of the 2nd-and-later occurrences of
+// any NON-EMPTY id. ProseMirror's Enter copies the split node's attrs, so the new
+// half is born carrying the original's id; the first occurrence keeps it and every
+// later duplicate is RE-MINTED into a block of its own. Empty values are left
+// untouched: an id-less node is the trailing editing surface, not a block yet.
+// This pass assumes ONE top-level prose node per id.
 export function dedupeActions(values) {
   var seen = {}
   var dup = []
@@ -104,9 +88,8 @@ export function dedupeActions(values) {
 
 export function computeBlockSync(curr, prev) {
   var next = {}
-  // Index of the LAST content-bearing block (any kind that is not a blank prose
-  // paragraph). A blank prose block before this index has content after it →
-  // structural; at or after it → trailing editing surface.
+  // Index of the LAST content-bearing block. A blank prose block before it has
+  // content after it → structural; at or after it → trailing editing surface.
   var lastContentIdx = -1
   for (var j = 0; j < curr.length; j++) {
     if (!isEmptyProse(curr[j])) lastContentIdx = j
@@ -121,10 +104,6 @@ export function computeBlockSync(curr, prev) {
   // First call: just seed the baseline, never emit ops.
   if (!prev) return { ops: [], next: next }
 
-  // Creates + updates in document order. PROSE is observed here; STRUCTURED
-  // creates/changes emit NOTHING — they sync through their own channels
-  // (ctx.updateAttributes for edits, the `insert-block` render-back for creation). The
-  // observer tracks structured blocks only for the baseline + delete detection.
   var ops = []
   for (var k = 0; k < curr.length; k++) {
     var p = curr[k]
@@ -134,9 +113,8 @@ export function computeBlockSync(curr, prev) {
     if (!(p.id in prev)) ops.push(proseOp('create-block', p, k))
     else if (prev[p.id] !== next[p.id]) ops.push(proseOp('update-block', p, k))
   }
-  // Deletes are kind-agnostic. Every id here is one Go was told about, because a
-  // block reaches the baseline only by being loaded or created — so a delete
-  // always names something the server can find.
+  // Deletes are kind-agnostic. Every id here is one Go was told about — a block
+  // reaches the baseline only by being loaded or created.
   for (var id in prev) {
     if (!(id in next)) {
       ops.push({ type: 'delete-block', blockId: id })
@@ -146,18 +124,15 @@ export function computeBlockSync(curr, prev) {
 }
 
 /**
- * computeOrderOp is the ORDER half of the observer (#94). computeBlockSync is an
- * id-keyed diff — a block's signature is kind + content + aliases, and nothing in
- * it is positional — so a drag-handle reorder changed no signature, added no id
- * and removed none. The batch came out empty and the reorder was lost on the next
- * load. Order is its own fact and needs its own op.
+ * computeOrderOp is the ORDER half of the observer. computeBlockSync is an id-keyed
+ * diff and nothing in a signature is positional, so a drag-handle reorder changes no
+ * signature and adds or removes no id: order is its own fact and needs its own op.
  *
  * It reports the COMPLETE id order rather than a sequence of moves, because
- * installing a whole order is idempotent: a duplicated or late frame lands the
- * document in the same place. Go refuses anything that is not a permutation of
- * what it holds (ShadowDocument.setOrder), since a list missing one id is
- * indistinguishable from a mass delete — which is why this holds off whenever the
- * client cannot yet name every block the server has:
+ * installing a whole order is idempotent — a duplicated or late frame lands the
+ * document in the same place. Go refuses anything that is not a permutation of what
+ * it holds, since a list missing one id is indistinguishable from a mass delete, so
+ * this holds off whenever the client cannot yet name every block the server has:
  *
  *   - the same tick creates or deletes (the sets are still moving), or
  *   - some node is id-less (the trailing editing surface is not a block yet).

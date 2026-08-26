@@ -1,76 +1,43 @@
 // @ts-check
-// block-renderer.js — BlockRenderer: the renderer half of the renderer/
-// NodeView split. NORMATIVE contract:
-// docs/design/archive/specs/2026-07-21-block-renderer-contract.md (APPROVED rev 2).
-//
-// A renderer is a LIVE, STATEFUL, LENS-BLIND, PROTOCOL-BLIND object that
-// BUILDS ITSELF and speaks BUSINESS VERBS. Contract:
+// BlockRenderer: a LIVE, STATEFUL, LENS-BLIND, PROTOCOL-BLIND object that BUILDS
+// ITSELF and speaks BUSINESS VERBS.
 //
 //   constructor(block, provider?, handleBuild?)
-//       - block        : the typed SieveBlock (NEVER a raw attr map —
-//                        raw maps are the wire costume and cross no consumer
-//                        signature)
-//       - provider     : the outbound effect boundary — the mounted container's
-//                        BlockContainerProvider (issue #96). A renderer speaks
-//                        facade verbs (requestSetBlock / flush / requestRetry)
-//                        and never a transport: it does not know a socket
-//                        exists, and after the cutover there is no object in
-//                        its hands that does. Omitted for SCRATCH (authoring)
-//                        instances — live-vs-scratch reads directly off the
-//                        constructor call.
-//       - handleBuild  : nullable region-build interceptor (paste-handler
-//                        idiom: HANDLE IT OR I WILL) — the one channel a lens
-//                        uses to take over a region's content:
-//                          handleBuild(renderer, region, container, block) → bool
-//                          absent/true → base builds the region normally
-//                          false       → region is EXTERNALLY MANAGED: the base
-//                                        places `container`, records the claim,
-//                                        skips the hook — and update() skips it
-//                                        permanently (the kind's ref-guarded
-//                                        patches never saw slot refs recorded)
+//       - block        : the typed SieveBlock, never a raw attr map
+//       - provider     : the outbound effect boundary — a BlockContainerProvider.
+//                        A renderer speaks facade verbs and never a transport.
+//                        Omitted for SCRATCH instances, which are inert.
+//       - handleBuild  : nullable region-build interceptor (HANDLE IT OR I WILL),
+//                        the one channel a lens uses to take over a region:
+//                        handleBuild(renderer, region, container, block) → bool.
+//                        false → EXTERNALLY MANAGED: the base places `container`,
+//                        records the claim, skips the hook, and update() skips
+//                        the region permanently.
 //
-//   render()  — base TEMPLATE (subclasses NEVER override): stamps data-id,
-//               builds the shell, then per region [consult handler → default:
-//               invoke build hook] in canonical order (Header · Title · Body ·
-//               Footer). render() ALONE yields the complete block; each build
-//               hook runs EXACTLY once; adapters never write renderer DOM.
+//   render()  — base TEMPLATE (subclasses NEVER override): the shell, then per
+//               region [consult handler → else invoke the build hook] in canonical
+//               order (Header · Title · Body · Footer). render() ALONE yields the
+//               complete block; each build hook runs EXACTLY once.
 //
-//   update(block) — THE inbound truth channel. Kind-authored override; MUST
-//               call super.update(block) first (stores the block), then
-//               patch via recorded slot refs.
+//   update(block) — THE inbound truth channel. A kind-authored override MUST call
+//               super.update(block) first, then patch via recorded slot refs.
 //
-//   Core semantic API — consumers NEVER see an attribute name or wire value:
-//     setMode(mode)    MODE enum; declared kinds override (ContractViolation
-//                      otherwise), mapping the enum to their wire strings
-//                      privately via _pushAttrs.
-//     setContent(text) outbound truth report (the editor lens's sync closure
-//                      ends here, never at a socket).
-//     retry()          re-run the block's backend job (kind-blind).
-//     expand()         one behaviour, three triggers (chord / header / menu);
-//                      expandable kinds override.
-//   Kind-specific verbs live on the subclass (resize, setColumns, …) under the
-//   abstract-consumer rule: self-invoked by the kind's own chrome, or called by
-//   a consumer that constructed the concrete type. Never instanceof-sniffed.
+//   Core semantic API (setMode · setContent · retry · expand) — consumers NEVER
+//   see an attribute name or wire value. Kind-specific verbs live on the
+//   subclass, self-invoked by its own chrome or called by a consumer that
+//   constructed the concrete type. Never instanceof-sniffed.
 //
-//   _pushAttrs/_pushContent — the ONLY places semantic verbs become schema
-//   (each attr name appears in exactly one class: the kind's renderer).
-//   @protected by convention: JS #private fields don't cross the subclass
-//   boundary, so these are underscore-marked instead — same contract.
+//   _pushAttrs/_pushContent — the ONLY places semantic verbs become schema, so
+//   each attr name appears in exactly one class: the kind's renderer.
 //
-// A renderer NEVER imports ProseMirror, never receives an editor/view
-// reference, never touches window.* app buses, and its public API names no PM
-// concept. Header layout uses the header-provider family + HeaderBar
-// (header-bar.js) as collaborators inside buildHeader().
+// A renderer NEVER imports ProseMirror, never receives an editor/view reference,
+// never touches window.* app buses, and its public API names no PM concept.
 
 import { rendererStyles } from './renderer-style-registry.js'
 import { renderSanctionedMarkdown } from './sanctioned-markdown.js'
 import { applyHighlighting } from './highlighting.js'
 import { SieveBlock, ContractViolation } from '../contract/sieve-block.js'
 
-// ContractViolation lives at the leaf (sieve-block.js) so services import it
-// downward; re-exported here so renderer-side callers import BlockRenderer and
-// ContractViolation from the one file (the path the retired
-// base/fenced-block-base.js grab-bag used to re-export — issue #49 P5).
 export { ContractViolation }
 
 /** The block anatomy's region tokens (frozen, string-valued — DOM/debug legible). */
@@ -81,10 +48,9 @@ export class BlockRenderer {
   static styles = ''
 
   /**
-   * Root element class(es), declared as DATA — the block roots are
-   * heterogeneous (`sieve-block--diagram`, `sieve-ai-block ai-block`,
-   * `web-clip-block`, `image-block node-image`, …), so the shell class stays
-   * kind-owned rather than canonical.
+   * Root element class(es), declared as DATA. The block roots are heterogeneous
+   * (`sieve-block--diagram`, `sieve-ai-block ai-block`, `web-clip-block`, …), so
+   * the shell class stays kind-owned rather than canonical.
    * @type {string}
    */
   static rootClass = ''
@@ -120,32 +86,20 @@ export class BlockRenderer {
     this.#handleBuild = handleBuild || null
   }
 
-  // ── Accessors ─────────────────────────────────────────────────────────────
-  /** The current typed block (updated by update(block)). */
   get block() { return this.#block }
-  /** The block id. */
   get id() { return this.#block.id }
   /** The block root element (available after render()). */
   get root() { return this.#root }
-  /** The recorded HEADER region element, or null. */
   get header() { return this.#header }
-  /** The recorded TITLE region element, or null. */
   get title() { return this.#title }
-  /** The recorded BODY region element (hook-built, or the externally-managed
-   *  container a lens claimed via handleBuild). */
+  /** The recorded BODY region: hook-built, or a container a lens claimed. */
   get body() { return this.#body }
-  /** The recorded FOOTER region element, or null. */
   get footer() { return this.#footer }
   /** Is this region externally managed (claimed via handleBuild)? @param {string} region */
   externallyManaged(region) { return this.#external.has(region) }
 
-  // ── Template method (NOT overridden) ──────────────────────────────────────
-
   /**
-   * Build the complete block DOM — shell then Header · Title · Body · Footer.
-   * Per region: consult handleBuild (claim → base places the claim container,
-   * records it, skips the hook); default → invoke the build hook exactly once
-   * and append its result directly (no wrapper).
+   * Build the complete block DOM — shell, then Header · Title · Body · Footer.
    * @returns {HTMLElement}
    */
   render() {
@@ -161,7 +115,6 @@ export class BlockRenderer {
     this.#header = header && header.nodeType === 1 ? /** @type {HTMLElement} */ (header) : null
 
     const title = this.#buildRegion(root, REGION.TITLE, () => this.buildTitle(), (el) => {
-      // The one uniform region class the framework stamps.
       el.classList.add('sieve-block__heading')
       el.contentEditable = 'false'
     })
@@ -179,9 +132,9 @@ export class BlockRenderer {
   }
 
   /**
-   * One region: consult the interceptor, else run the hook. Claimed regions
-   * get a base-made container the handler may DECORATE (classes, attributes)
-   * before returning false; the hook is skipped and never sees the region.
+   * One region: consult the interceptor, else run the hook. A claimed region gets
+   * a base-made container the handler may DECORATE before returning false; the
+   * hook is skipped and never sees the region.
    * @param {HTMLElement} root @param {string} region @param {() => Node|null} hook
    * @param {(el: HTMLElement) => void} [stamp]  uniform framework stamping
    * @returns {Node|null}
@@ -204,8 +157,6 @@ export class BlockRenderer {
     return el
   }
 
-  // ── Hooks ─────────────────────────────────────────────────────────────────
-
   /** Build the HEADER region, or null. @returns {Node|null} */
   buildHeader() { return null }
   /** Build the TITLE region, or null. @returns {HTMLElement|null} */
@@ -216,9 +167,9 @@ export class BlockRenderer {
   buildBody() { return null }
 
   /**
-   * THE inbound truth channel. Kind overrides MUST call super.update(block)
-   * first (stores the block), then patch via recorded slot refs — claimed
-   * regions recorded no refs, so ref-guarded patches skip them naturally.
+   * THE inbound truth channel. A kind override MUST call super.update(block)
+   * first, then patch via recorded slot refs — claimed regions recorded no refs,
+   * so ref-guarded patches skip them naturally.
    * @param {SieveBlock} block
    */
   update(block) {
@@ -232,11 +183,9 @@ export class BlockRenderer {
   destroy() {}
 
   /**
-   * The plain text a consumer copies for this block (the command popup's Copy
-   * button). Base default = the kind's own bodyMarkdown() when it exposes one,
-   * else '' — so the popup stays payload-blind and kind-agnostic (it calls this
-   * ONE accessor). Kinds with a cleaner raw value (a command result's `primary`)
-   * override this.
+   * The plain text a consumer copies for this block: the kind's own
+   * bodyMarkdown() when it exposes one, else ''. Kinds with a cleaner raw value
+   * override it.
    * @returns {string}
    */
   copyText() {
@@ -244,11 +193,8 @@ export class BlockRenderer {
     return typeof self.bodyMarkdown === 'function' ? String(self.bodyMarkdown() || '') : ''
   }
 
-  // ── Core semantic API ─────────────────────────────────────────────────────
-
   /**
-   * Switch presentation mode (MODE enum). Kinds declaring modes override,
-   * mapping the enum to their wire strings privately.
+   * Switch presentation mode (MODE enum). Kinds declaring modes override.
    * @param {string} _mode
    */
   setMode(_mode) {
@@ -256,8 +202,8 @@ export class BlockRenderer {
   }
 
   /**
-   * Outbound content truth report/command. Never paints the displayed body —
-   * in an editor lens that body is PM's; truth returns via update(block).
+   * Outbound content truth report. Never paints the displayed body — in an editor
+   * lens that body is PM's; truth returns via update(block).
    * @param {string} text
    */
   setContent(text) { this._pushContent(text) }
@@ -272,11 +218,9 @@ export class BlockRenderer {
     throw new ContractViolation(`${this.constructor.name} is not expandable (expand)`)
   }
 
-  // ── Schema push seam (@protected by convention — see file header) ─────────
-
   /**
-   * The ONLY place a kind's semantic verbs become wire schema. Scratch
-   * instances (no provider) are inert — they author, never effect.
+   * The ONLY place a kind's semantic verbs become wire schema. Scratch instances
+   * have no provider and are inert: they author, never effect.
    * @protected @param {Record<string, any>} patch
    */
   _pushAttrs(patch) {
@@ -284,22 +228,17 @@ export class BlockRenderer {
   }
 
   /**
-   * The block's own text, handed over. It is a `flush` rather than a
-   * `requestSetBlock` because the value is the LENS's — the renderer has been
-   * holding the user's keystrokes and is passing them on, not asking Go for a
-   * change it might decline. Which attr a kind keeps its text in is the host's
-   * to resolve, so nothing here names one.
+   * Hand the block's own text over. Which attr a kind keeps its text in is the
+   * host's to resolve, so nothing here names one.
    * @protected @param {string} text
    */
   _pushContent(text) {
     if (this.#provider) this.#provider.flush(this.id, text)
   }
 
-  // ── Internal sanctioned-markdown fill helpers ─────────────────────────────
-
   /**
-   * TITLE/BODY markdown fill via the SANCTIONED markdown-it instance
-   * (html:false — SEC-B #48, never the editor's html:true one), then highlight.
+   * TITLE/BODY markdown fill via the SANCTIONED markdown-it instance (html:false,
+   * never the editor's html:true one), then highlight.
    * @param {HTMLElement} el @param {string} text — non-empty markdown text
    */
   fillTitle(el, text) {
@@ -320,7 +259,7 @@ export class BlockRenderer {
   }
 
   /**
-   * Fill a markdown body (empty → an empty paragraph). Same SEC-B invariant.
+   * Fill a markdown body (empty → an empty paragraph).
    * @param {HTMLElement} el @param {string} markdown
    */
   fillBody(el, markdown) {

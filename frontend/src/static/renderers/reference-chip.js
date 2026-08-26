@@ -1,19 +1,14 @@
 // @ts-check
-// ReferenceChip: the "this is a reference" chip, as one component. A sibling of
-// StatusBadge and LineGutter in renderers/ — shared look-and-feel with no PM, no
-// editor, no window.* and no idea what a document is.
+// ReferenceChip: the "this is a reference" chip, as one component — shared
+// look-and-feel with no PM, no editor, no window.* and no idea what a document
+// is.
 //
 // IT IS NOT THE ROW THAT HOLDS CHIPS. A caller owns its own layout and sets
 // `--chip-max-width` on it if its chips clamp; the chip itself is only ever as
 // wide as it needs to be.
 //
-// THE COMPOSER IS NOT A CONSUMER: it is not a block, so it carries no block
-// styles, and importing a renderer into the shell would cross the
-// shell/renderer boundary. It keeps its own component and unifies with this one
-// on the `--chip-*` TOKENS.
-//
-// IMMUTABLE ONCE BUILT. Both callers redraw their whole row from the model on
-// every change, so no patch path is offered.
+// IMMUTABLE ONCE BUILT: callers redraw their whole row from the model on every
+// change, so no patch path is offered.
 
 import { rendererStyles } from './renderer-style-registry.js'
 import { referenceChipStyles } from './reference-chip.styles.js'
@@ -39,8 +34,7 @@ export class ReferenceChip {
   /** CSS text using ONLY `--theme-` and `--chip-` vars for colour. */
   static styles = referenceChipStyles
 
-  /** The selector this chip's styles hang off, and a row's hook to reach its
-   *  own chips. */
+  /** The selector this chip's styles hang off, and a row's hook to its chips. */
   static ROOT_CLASS = 'sieve-reference-chip'
 
   /** 📄 — a source the document holds or points at. */
@@ -91,8 +85,7 @@ export class ReferenceChip {
 
   /**
    * Registers interest in "the user activated this chip", handing back the
-   * address. The chip never opens anything itself — it has no idea what a
-   * workspace is; whoever built it does.
+   * address. The chip never opens anything itself.
    * @param {(uri: string) => void} fn
    * @returns {() => void} unsubscribe
    */

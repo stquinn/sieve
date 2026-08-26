@@ -1,17 +1,10 @@
 // @ts-check
-// toolbar-button.js — the two toolbar widgets (P4.D).
-//
 // A ToolbarButton is a pure render+behaviour widget owning its own <button>: it
-// carries an onClick closure (NO delegation, NO data-cmd string switch — the
-// retired editor.js handleToolbarClick) and optional active()/enabled() closures
-// the owner refreshes on selection/context change. A ButtonGroup is a thin
-// `.tb-group` wrapper owning an ordered ToolbarButton[] with a refresh() fanout,
-// matching the existing toolbar DOM shape verbatim (.tb-group / .tb-btn).
-//
-// Both are CLASSES (idiomatic-js.md — no free-function file). Icons are hydrated
-// at build via the injected `iconHtml` string (the SieveIcons / getSieveIcon
-// lookup lives with the caller, keeping the widget content-blind). Dual-use ES
-// module: `export` for vitest; imported by editor-toolbar.js.
+// carries an onClick closure (no delegation, no data-cmd string switch) and
+// optional active()/enabled() closures the owner refreshes on selection or
+// context change. A ButtonGroup is a thin `.tb-group` wrapper owning an ordered
+// ToolbarButton[] with a refresh() fanout. Icons arrive pre-resolved as the
+// injected `iconHtml`, which keeps the widget content-blind.
 
 /**
  * @typedef {object} ToolbarButtonSpec
@@ -41,8 +34,8 @@ export class ToolbarButton {
     if (title) btn.title = title
     if (iconHtml) btn.innerHTML = iconHtml
     else if (text) btn.textContent = text
-    // mousedown → preventDefault preserves the old toolbar focus-guard (index.html
-    // 748–750): a toolbar click must not blur the editor before the command runs.
+    // preventDefault on mousedown: a toolbar click must not blur the editor before
+    // the command runs.
     btn.addEventListener('mousedown', (e) => { e.preventDefault() })
     btn.addEventListener('click', () => { if (onClick) onClick() })
     this.#el = btn
@@ -53,7 +46,6 @@ export class ToolbarButton {
   /** @returns {HTMLButtonElement} the owned <button>, for a ButtonGroup to append */
   get el() { return this.#el }
 
-  /** Sets the mode-toggle icon/title at runtime (the flip re-render — updateModeUI body). */
   setIcon(iconHtml) { this.#el.innerHTML = iconHtml }
   /** @param {string} title */
   setTitle(title) { this.#el.title = title }
@@ -93,7 +85,6 @@ export class ButtonGroup {
   /** @returns {ToolbarButton[]} the group's buttons (read-only order) */
   get buttons() { return this.#buttons.slice() }
 
-  /** Refreshes every button's active/enabled state. */
   refresh() {
     for (const b of this.#buttons) b.refresh()
   }

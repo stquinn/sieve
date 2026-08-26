@@ -1,13 +1,10 @@
 // @ts-check
-// command-badges.styles.js — CommandBadges' stylesheet (sibling carriage, the
-// same component-owns-its-styles pattern the block renderers use; carried via
-// RendererStyleRegistry). Colours are --theme-* vars only.
+// command-badges.styles.js — CommandBadges' stylesheet, carried via
+// RendererStyleRegistry. Colours are --theme-* vars only.
 //
-// The slot lives here too: the status bar donates the mount point (index.html
-// structural div), but CommandBadges owns the region — it populates it, and
-// the :empty hide is badge behaviour. Remaining status-bar CSS in editor.css
-// is pre-existing debt; it migrates to a status-bar.styles.js when the
-// StatusBar component is next touched.
+// The slot rules live here too: the status bar donates the mount point, but
+// CommandBadges owns the region — it populates it, and the :empty hide is badge
+// behaviour.
 
 export const commandBadgesStyles = `
   /* The status-bar slot CommandBadges mounts into (#55). */

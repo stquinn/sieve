@@ -1,44 +1,12 @@
 // @ts-check
-// log-renderer.styles.js — LogRenderer's stylesheet, a sibling module per the
-// styles-file-geography convention (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
-// "Styles file geography"): a renderer file starts with its class — behaviour
-// first, never a CSS wall — so any sheet over ~30 lines lives in its own
-// `<kind>-renderer.styles.js` sibling module, imported into the class's
-// `static styles`. This module is renderer-internal — nothing outside
-// log-renderer.js imports it.
+// LogRenderer's stylesheet — the shell, the body/gutter/code-area/edit chrome,
+// the `.log-tok-*` / `.log-line-*` decoration classes and `.log--hide-noise`,
+// the raw/explore pill, and the Explore table's look. Renderer-internal.
 //
-// Sources (moved here in the same change per the spec — style carriage is
-// never a separate pass):
-//   - the shell + body/gutter/code-area/edit chrome: log's OWN scoped copy of
-//     the former UNSCOPED `.sieve-block__body`/`.sieve-block__gutter`/etc
-//     rules in editor.css (mirrors code-renderer.styles.js's identical
-//     re-scoping — see that file's header). Log's dom no longer carries the
-//     borrowed `sieve-block--code` class (see log-renderer.js's header for
-//     why that coupling was retired), so this kind needed its OWN complete
-//     shell copy, not just body chrome.
-//   - `.sieve-block--log .log-tok-*` / `.log-line-*` (decoration classes) and
-//     `.log--hide-noise`: carried verbatim from editor.css, already scoped.
-//   - `.log-block__toggle*` (raw/explore pill): a NEW log-owned class,
-//     replacing the borrowed `.diagram-block__toggle*` classes the old
-//     LogHeader used (see log-renderer.js's header — that borrowing broke
-//     the moment diagram's Phase-2 migration moved those classes into
-//     diagram-renderer.styles.js's lazily-registered stylesheet). Same visual
-//     values as diagram's pill; `--sieve-focus-accent` (declared on
-//     `.sieve-block--log` in editor.css, this kind's teal) drives the active
-//     state exactly as it already did before this migration.
-//   - `.log-block__edit-area` / `.log-block__explore-area` / `.log-block__table`
-//     / `.log-block__row` / `.log-block__cell` / `.log-block__table-msg`: the
-//     Explore table's look, previously built as ad-hoc inline `element.style.*`
-//     assignments in the old NodeView (now lens/surfaces/node-views/log-node-view.js) — moved into
-//     real CSS here (LogRenderer.js's #renderTable now only sets the classes
-//     + the few genuinely PER-CELL values: colour/opacity/whitespace that vary
-//     row-to-row by log severity, which stay inline for the same reason a
-//     renderer sets style.width from a per-instance value elsewhere in this
-//     codebase).
-//
-// House rule: colour only via --theme-* vars / color-mix — nothing hardcoded
-// here needed conversion (the original inline styles already used theme vars
-// throughout).
+// Colour only via --theme-* vars / color-mix. `--sieve-focus-accent` (declared
+// on `.sieve-block--log` in editor.css) drives the pill's active state. The few
+// genuinely PER-CELL table values — colour/opacity/whitespace that vary
+// row-to-row by log severity — stay inline in the renderer on purpose.
 
 export const logStyles = /* css */ `
   .sieve-block--log {

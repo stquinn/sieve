@@ -1,15 +1,9 @@
 // @ts-check
 // trigger-popover.js — TriggerPopover: the trigger-driven hint picker. Renders
-// a fixed list (z-index: 1000) over whatever HOST it is given, placed by a
-// PLACEMENT strategy — in the composer, as a visual extension of the Ask Panel —
+// a fixed list over whatever HOST it is given, placed by a PLACEMENT strategy,
 // and handles keyboard navigation (ArrowUp, ArrowDown, Tab, Enter, Escape).
-//
-// It keeps only what EVERY trigger shares — the keyboard model, the
-// scroll-into-view fix (#63), the dismissal and the token lifecycle. The
-// trigger-specific half is a PROVIDER (trigger-providers.js) and the surface is
-// a HOST (trigger-host.js), so THE POPOVER NEVER KNOWS WHAT TEXT IS: it asks the
-// host for a token and hands the host a candidate. That is what lets the same
-// picker sit in the composer's textarea and in the editor's document.
+// THE POPOVER NEVER KNOWS WHAT TEXT IS: it asks the host for a token and hands
+// the host a candidate.
 //
 // THE TOKEN CAN BE ABANDONED. A sticky token needs a way to stop, or an `@`
 // typed in an ordinary sentence would query on every keystroke and ambush the
@@ -23,11 +17,9 @@ import { TriggerHost, TriggerPlacement, PanelPlacement } from './trigger-host.js
 
 /**
  * Tab, however the platform spells it. WebKitGTK reports Shift+Tab as the X11
- * keysym `ISO_Left_Tab` in `event.key` where Chrome always says 'Tab', so
- * matching on the key name alone lets Shift+Tab fall THROUGH an open picker —
- * harmless in a textarea (focus navigation) but not in the editor, where it
- * would reach the interaction policy's Tab backstop while the list is up. Same
- * three-way match the policy extension already uses, for the same reason.
+ * keysym `ISO_Left_Tab` in `event.key` where Chrome says 'Tab', so matching on
+ * the key name alone lets Shift+Tab fall THROUGH an open picker and reach the
+ * editor's interaction-policy Tab backstop.
  * @param {KeyboardEvent} e @returns {boolean}
  */
 function isTabKey(e) {
@@ -35,33 +27,30 @@ function isTabKey(e) {
 }
 
 export class TriggerPopover {
-  /** @type {TriggerHost} the surface this picker is hosted in */ #host
+  /** @type {TriggerHost} */ #host
   /** @type {(TriggerHost & import('./trigger-host.js').TypedTriggerHost)|null} the same
-   *  host when it carries the TYPED SLICE — checked once here at the boundary
-   *  rather than `typeof`-tested at each call site. A host without it has no
-   *  token stream to arm from, and waits to be summoned instead. */ #typed = null
-  /** @type {TriggerPlacement} where the popover sits over the host */ #placement
+   *  host when it carries the TYPED SLICE. A host without it has no token stream
+   *  to arm from, and waits to be summoned instead. */ #typed = null
+  /** @type {TriggerPlacement} */ #placement
   /** @type {Map<string, TriggerProvider>} trigger character → the ONE provider claiming it */ #providers = new Map()
   /** @type {HTMLElement|null} */ #popoverEl = null
-  /** @type {any[]} the candidates currently listed */ #items = []
+  /** @type {any[]} */ #items = []
   /** @type {number} */ #selectedIndex = 0
   /** @type {import('./trigger-providers.js').TriggerToken|null} the token the listed candidates answer */ #token = null
   /** @type {number} monotonic query counter — an async answer that is not the
-   *  newest is DROPPED (a slow round-trip must never overwrite a newer list) */ #seq = 0
+   *  newest is DROPPED */ #seq = 0
   /** @type {{start: number, prefix: string}|null} the token the user walked away
-   *  from — dry, dismissed or completed. Keyed by where it started and what had
-   *  been typed at the time, so a LONGER continuation of it stays abandoned and
-   *  a shorter one re-arms. */ #abandoned = null
+   *  from. Keyed by where it started and what had been typed at the time, so a
+   *  LONGER continuation stays abandoned and a shorter one re-arms. */ #abandoned = null
   /** @type {boolean} true while an accepted completion is being written back —
    *  the `input` that write fires is OUR edit, not the user's. */ #completing = false
-  /** @type {Array<() => void>} the host subscriptions, dropped on destroy */ #unsubscribes = []
+  /** @type {Array<() => void>} */ #unsubscribes = []
 
   /**
-   * @param {TriggerHost} host  the surface hosting the picker
+   * @param {TriggerHost} host
    * @param {TriggerProvider[]} providers  one per trigger character
    * @param {TriggerPlacement} [placement]  defaults to the composer's panel
-   *   placement, which is the only one that exists; the editor host brings a
-   *   caret-anchored one with it.
+   *   placement; the editor host brings a caret-anchored one with it.
    */
   constructor(host, providers, placement) {
     if (!(host instanceof TriggerHost)) {
@@ -72,7 +61,6 @@ export class TriggerPopover {
     }
     this.#host = host
     this.#placement = placement || new PanelPlacement()
-    // The typed-slice check, once, at the boundary (how-to-idiomatic-js §2c).
     const typed = /** @type {any} */ (host)
     this.#typed = typeof typed.tokenAtCaret === 'function' && typeof typed.onInput === 'function'
       ? typed
@@ -90,8 +78,6 @@ export class TriggerPopover {
     this.#createPopoverDom()
     this.#wireEvents()
   }
-
-  // ── DOM + events ───────────────────────────────────────────────────────────
 
   #createPopoverDom() {
     const el = document.createElement('div')
@@ -119,22 +105,19 @@ export class TriggerPopover {
 
   /**
    * Subscribes to the host. The INPUT stream belongs to the typed slice: a host
-   * that cannot be typed into has no token to arm from and is summoned instead.
-   * Precedence — capture phase in a textarea, beating the interaction-policy
-   * keymaps in an editor — is the HOST's problem; this only asks to be told.
+   * that cannot be typed into is summoned instead. Precedence — capture phase in
+   * a textarea, beating the interaction-policy keymaps in an editor — is the
+   * HOST's problem; this only asks to be told.
    */
   #wireEvents() {
     if (this.#typed) this.#unsubscribes.push(this.#typed.onInput(() => this.#handleInput()))
     this.#unsubscribes.push(this.#host.onKeyDown((e) => this.#handleKeyDown(e)))
     this.#unsubscribes.push(this.#host.onDismiss(() => this.#handleDismiss()))
 
-    // AN OPEN LIST HAS TO SURVIVE THE PAGE MOVING UNDER IT. A keystroke re-places
-    // it, but a CARET-anchored list detaches the moment the document scrolls
-    // without one — a wheel, a touchpad, a scrollIntoView from something else.
-    //
-    // CAPTURE on window, because `scroll` does not bubble: a window listener in
-    // the capture phase is the one form that hears an INNER scroller (the
-    // editor's own #htmx-editor) as well as the page.
+    // AN OPEN LIST HAS TO SURVIVE THE PAGE MOVING UNDER IT: a caret-anchored list
+    // detaches the moment the document scrolls without a keystroke. CAPTURE on
+    // window, because `scroll` does not bubble — that is the one form that hears
+    // an INNER scroller (the editor's own #htmx-editor) as well as the page.
     const reposition = () => {
       if (this.#popoverEl && this.#popoverEl.style.display !== 'none') {
         this.#placement.place(this.#popoverEl, this.#host)
@@ -159,9 +142,6 @@ export class TriggerPopover {
     this.#token = token
     const seq = ++this.#seq
     const answer = token.provider.search(token.prefix)
-    // A provider that can enumerate locally answers SYNCHRONOUSLY, and stays
-    // synchronous end-to-end — that is what keeps `/` byte-identical. One that
-    // must ask Go answers with a promise, guarded by the sequence number.
     if (answer && typeof (/** @type {any} */ (answer).then) === 'function') {
       /** @type {Promise<any[]>} */ (answer).then((items) => {
         if (seq === this.#seq) this.#present(items)
@@ -174,9 +154,7 @@ export class TriggerPopover {
   /**
    * Lists `items`, or — when the query came back with nothing to offer — DRIES
    * UP: the picker closes and the token is abandoned, so typing on writes plain
-   * prose instead of asking again. Nothing is lost by it: both providers narrow
-   * monotonically (a startsWith filter, a substring query), so a prefix that
-   * matched nothing cannot match more once it grows.
+   * prose instead of asking again.
    * @param {any[]} items
    */
   #present(items) {
@@ -190,9 +168,7 @@ export class TriggerPopover {
     this.show()
   }
 
-  /**
-   * @param {KeyboardEvent} e
-   */
+  /** @param {KeyboardEvent} e */
   #handleKeyDown(e) {
     if (!this.#popoverEl || this.#popoverEl.style.display === 'none') return
 
@@ -219,9 +195,8 @@ export class TriggerPopover {
       e.preventDefault()
       e.stopPropagation()
       e.stopImmediatePropagation()
-      // Escape ABANDONS, it does not merely hide: dismissing a picker the user
-      // did not want and having it reappear on the next keystroke is the same
-      // ambush by a slower route.
+      // Escape ABANDONS, it does not merely hide: a picker that reappears on the
+      // next keystroke is the same ambush by a slower route.
       this.#abandon(this.#token)
     }
   }
@@ -233,14 +208,10 @@ export class TriggerPopover {
   }
 
   /**
-   * Hands an accepted candidate to the HOST, together with the token it answers
-   * — the popover never knows what a completion means, and never assumes it is a
-   * text substitution — and then abandons whatever token the write-back left
-   * under the caret.
-   *
-   * That last step is not bookkeeping: a completed `@Sprite Sheet Analysis ` is
-   * still a legal sticky token matching the very candidate just accepted, so
-   * without abandoning it the picker would re-open on top of its own result.
+   * Hands an accepted candidate to the HOST together with the token it answers,
+   * then abandons whatever token the write-back left under the caret. A completed
+   * `@Sprite Sheet Analysis ` is still a legal sticky token matching the
+   * candidate just accepted, so without that the picker re-opens on its own result.
    * @param {any} candidate
    */
   #acceptCandidate(candidate) {
@@ -252,19 +223,13 @@ export class TriggerPopover {
 
   /**
    * Runs `edit` as OUR write rather than the user's typing: the `input` it fires
-   * is ignored here, so a programmatic change to the composer text neither
-   * reopens the picker on what it just wrote nor records an abandonment for a
-   * token that no longer exists.
+   * is ignored here, so a programmatic change neither reopens the picker on what
+   * it just wrote nor records an abandonment for a token that no longer exists.
+   * Re-entrant, so a nested edit cannot un-suppress the outer one.
    *
-   * ONE notion of "our own edit", not a second guard per caller: acceptance
-   * writing a completion back and the composer deleting an attachment's token
-   * are the same problem, so they share `#completing`. Re-entrant, so a nested
-   * edit cannot un-suppress the outer one.
-   *
-   * DEAF IS NOT CLOSED, so it also CLOSES the picker. Suppressing the echo alone
-   * left an open list answering a token the edit had just deleted, with `#token`
-   * still describing where that token used to be — so Enter wrote a completion
-   * into a span that no longer existed.
+   * DEAF IS NOT CLOSED, so it also CLOSES the picker: suppressing the echo alone
+   * leaves an open list answering a token the edit just deleted, and Enter then
+   * writes a completion into a span that no longer exists.
    * @param {() => void} edit
    */
   applyOwnEdit(edit) {
@@ -278,8 +243,6 @@ export class TriggerPopover {
     this.#abandon(null)   // closes, drops the stale token, invalidates answers in flight
   }
 
-  // ── Abandonment ────────────────────────────────────────────────────────────
-
   /** The token under the caret right now, ignoring abandonment. Null for a host
    *  with no typed slice — there is no caret for one to be under.
    *  @returns {import('./trigger-providers.js').TriggerToken|null} */
@@ -289,9 +252,8 @@ export class TriggerPopover {
 
   /**
    * Closes the picker and remembers `token` as walked away from. A blank prefix
-   * is NOT recorded: nothing has been asked yet, so there is nothing to be dry
-   * about — and a record of `''` would abandon every token that trigger ever
-   * opens.
+   * is NOT recorded: nothing has been asked yet, and a record of `''` would
+   * abandon every token that trigger ever opens.
    * @param {import('./trigger-providers.js').TriggerToken|null} token
    */
   #abandon(token) {
@@ -303,9 +265,8 @@ export class TriggerPopover {
 
   /**
    * Is `token` the abandoned one, or a continuation of it? Typing FORWARD keeps
-   * it abandoned (the picker must not reappear mid-sentence because a longer
-   * phrase happened to match); backspacing to a shorter prefix re-arms it, so a
-   * typo is always recoverable.
+   * it abandoned; backspacing to a shorter prefix re-arms it, so a typo is
+   * always recoverable.
    * @param {import('./trigger-providers.js').TriggerToken} token @returns {boolean}
    */
   #isAbandoned(token) {
@@ -315,10 +276,8 @@ export class TriggerPopover {
 
   /**
    * Forgets the abandonment record and closes the picker — the composer has been
-   * CLEARED, so the record's (index, prefix) describes text that no longer
-   * exists. Harmless while the library only grows (a dry prefix stays dry), but a
-   * document CREATED mid-session would otherwise stay unfindable behind a record
-   * taken before it existed, until the user happened to backspace.
+   * CLEARED, so the record's (index, prefix) describes text that no longer exists
+   * and a document created mid-session would stay unfindable behind it.
    */
   reset() {
     this.#abandoned = null
@@ -358,11 +317,9 @@ export class TriggerPopover {
       this.#popoverEl?.appendChild(row)
     })
 
-    // Keyboard navigation has to carry the viewport with it (#63): #render()
-    // clears innerHTML, which resets scrollTop to 0, so arrowing past the visible
-    // rows leaves the selection below the fold. 'nearest' scrolls the minimum
-    // needed, so the list stays still while the selection is already visible
-    // instead of recentring on every keypress.
+    // Keyboard navigation has to carry the viewport with it: #render() clears
+    // innerHTML, which resets scrollTop to 0. 'nearest' scrolls the minimum
+    // needed, so the list stays still while the selection is already visible.
     const activeEl = this.#popoverEl.querySelector('.command-hint-item.is-active')
     if (activeEl) activeEl.scrollIntoView({ block: 'nearest' })
   }
@@ -370,10 +327,8 @@ export class TriggerPopover {
   show() {
     if (this.#popoverEl) {
       // Visible BEFORE placing: a display:none element has no box, so a placement
-      // that wants to size itself to its content (CaretPlacement) measures zero
-      // and has to fall back to a fixed cap. Both statements are synchronous, so
-      // no frame is painted between them and the pre-placement position is never
-      // seen.
+      // that sizes itself to its content (CaretPlacement) measures zero. Both
+      // statements are synchronous, so the pre-placement position is never seen.
       this.#popoverEl.style.display = 'block'
       this.#placement.place(this.#popoverEl, this.#host)
     }
@@ -384,12 +339,9 @@ export class TriggerPopover {
   }
 
   /**
-   * Drops every subscription and the popover element.
-   *
-   * IT ALSO INVALIDATES ANSWERS IN FLIGHT, which is not tidiness: a search is a
-   * round-trip and a host can go away while one is out (a tab switch, a mode
-   * flip). Unsubscribing does not reach a promise already handed a `.then`, so
-   * without bumping the sequence the late answer would render a list and ask a
+   * Drops every subscription and the popover element, and INVALIDATES ANSWERS IN
+   * FLIGHT. Unsubscribing does not reach a promise already handed a `.then`, so
+   * without bumping the sequence a late answer would render a list and ask a
    * torn-down host where to place it.
    */
   destroy() {

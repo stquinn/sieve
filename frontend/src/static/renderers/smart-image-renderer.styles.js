@@ -1,37 +1,12 @@
 // @ts-check
-// smart-image-renderer.styles.js — SmartImageRenderer's stylesheet, a sibling
-// module per the styles-file-geography convention (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
-// "Styles file geography"): a renderer file starts with its class — behaviour
-// first, never a CSS wall — so any sheet over ~30 lines lives in its own
-// `<kind>-renderer.styles.js` sibling module, imported into the class's
-// `static styles`. This module is renderer-internal — nothing outside
-// smart-image-renderer.js imports it.
+// SmartImageRenderer's stylesheet. Renderer-internal.
 //
-// Carried from editor.css's former `.node-image`/`.image-block`/`.image-resizer`
-// rules (moved here in the same change per the spec — style carriage is never
-// a separate pass). `.node-image`/`.image-block`/`.image-resizer` were
-// confirmed exclusive to this kind before moving (no native TipTap Image
-// extension uses `.node-image`; it renders with a DIFFERENT class,
-// `editor-image` — see wysiwyg-surface.js). Two rules were a shared selector
-// LIST with prose's `.block-node` and the native-codeblock's
-// `.code-block-wrapper` (chain-highlight ready-state + the ref-active glow) —
-// only THIS kind's `.image-block` selector was extracted, the same surgical
-// split ai-block-renderer.styles.js did for its `::selection` entry; the
-// `.block-node`/`.code-block-wrapper` half of those rules stays in editor.css
-// (prose/native-codeblock are out of scope for this epic).
-//
-// The status badge (`.smart-image-status*`) REPLACES the old inline
-// `element.style.cssText = '...'` + per-state `badge.style.background/color`
-// assignments with real CSS classes — the same DOM-out-of-JS-inline-styles
-// upgrade LogRenderer's Explore table made at its own migration. Deliberate,
-// noted exception to the house "no hardcoded colour literals" rule: the
-// pending/error scrims keep literal white (`#fff`) badge TEXT over a
-// deliberately dark/red overlay — an image-overlay convention (video-player-
-// style captions) that intentionally reads the same regardless of the active
-// app theme, unlike every other themed chip in this app. The overlay
-// BACKGROUNDS themselves are expressed as `color-mix` scrims against
-// `--theme-bgDark`/`--theme-accentRed` rather than the original hardcoded
-// `rgba(0,0,0,.55)`/`rgba(180,0,0,.75)`.
+// Deliberate, noted exception to the house "no hardcoded colour literals" rule:
+// the pending/error scrims keep literal white (`#fff`) badge TEXT over a
+// deliberately dark/red overlay — an image-overlay convention (video-player-style
+// captions) that intentionally reads the same whatever the active app theme is.
+// The overlay BACKGROUNDS are color-mix scrims against --theme-bgDark and
+// --theme-accentRed.
 
 export const smartImageStyles = /* css */ `
   /* Fix ghost selection bars in WebKit around images */

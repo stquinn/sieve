@@ -1,25 +1,9 @@
 // @ts-check
-// abstract-surface.js — the input-surface interface (P2.B).
-//
-// A Surface is one PRIVATE input surface of an editor: either the TipTap
-// WYSIWYG island (WysiwygSurface) or the raw-markdown textarea
-// (MarkdownSurface). The editor swaps surfaces in place via
-// NoteEditor.setMode; the surface owns its own DOM subtree, its debounced
-// doc-sync, and how server render-back ops (insert-block / replace-block /
-// block-attrs-updated) land in its representation. The editor never reaches
-// into a surface's DOM — it drives only this contract.
-//
-// The concrete surfaces are standalone ES modules that receive their parent
-// editor (`host`) via constructor DI (docs/how-to-idiomatic-js.md): the editor
-// constructs its own surfaces (_createSurface owns the mode→surface repertoire),
-// and the surface calls the editor's public API directly (onSurfaceEvent,
-// the service-pair verbs / setRawContent, save, insert-pos, reload) — the P4.F dissolution of
-// the pre-bound closure bag. State that used to be editor.js module vars
-// (lastSyncedBody, docUpdateTimer, docSyncFlush, currentMarkdownTextarea, the
-// noteServerBlock/reconcilePendingToken seams) is #private surface state.
-//
-// Dual-use ES module: `export` for vitest imports; `window.SieveSurface` for
-// the classic-script editor.js.
+// A Surface is one PRIVATE input surface of an editor: the TipTap WYSIWYG island
+// or the raw-markdown textarea. The editor swaps surfaces in place via setMode;
+// the surface owns its own DOM subtree, its debounced doc-sync, and how a
+// container change lands in its representation. The editor never reaches into a
+// surface's DOM — it drives only this contract.
 
 /**
  * A server render-back op message (WS shape, frozen).
@@ -29,10 +13,8 @@
 
 /**
  * An editor-domain event a surface REPORTS OUTWARD via the host editor's
- * `onSurfaceEvent` handler — producer-named plain data, never a consumer name (a
- * surface must not know an Ask panel or toolbar exists). The editor forwards these to
- * its registered listeners (AbstractEditor.onEvent); the seed of P3's
- * SelectionModel stream. Frozen shared values (docs/how-to-idiomatic-js.md).
+ * `onSurfaceEvent` handler — producer-named plain data, never a consumer name: a
+ * surface must not know an Ask panel or toolbar exists.
  * @typedef {{type: string}} SurfaceEventMsg
  */
 export const SurfaceEvent = Object.freeze({
@@ -40,10 +22,9 @@ export const SurfaceEvent = Object.freeze({
   DOC_CHANGED: Object.freeze({ type: 'doc-changed' }),
   /**
    * The document content changed WITHOUT the user authoring anything: the
-   * framework projected the server's own truth into the doc (the NodeView body
-   * projection, sieve-block-extension's syncMdInto). It grows the document, so
-   * anything measuring it must follow — but it is not an edit, and treating it as
-   * one showed the dirty dot on every freshly opened note (issue #90).
+   * framework projected the server's own truth into the doc. It grows the
+   * document, so anything measuring it must follow — but it is not an edit, and
+   * treating it as one shows the dirty dot on every freshly opened note.
    */
   DOC_PROJECTED: Object.freeze({ type: 'doc-projected' }),
   /** The selection/caret moved. */
@@ -53,19 +34,18 @@ export const SurfaceEvent = Object.freeze({
   /** Focus moved within the surface (e.g. into a block's inner form control). */
   FOCUS_CHANGED: Object.freeze({ type: 'focus-changed' }),
   /**
-   * The surface's OWN scroller moved (issue #51), debounced by the surface
-   * before it fires. Routes to the SelectionModel's setScroll (silent — never
-   * a meaningful-diff emit) via AbstractEditor#feedSelectionModel; NOT the same
-   * path as SELECTION_CHANGED (which re-derives the whole descriptor).
+   * The surface's OWN scroller moved, debounced before it fires. Routes to the
+   * SelectionModel's setScroll silently, and NOT through SELECTION_CHANGED, which
+   * re-derives the whole descriptor.
    */
   SCROLL_CHANGED: Object.freeze({ type: 'scroll-changed' }),
 })
 
 export class AbstractSurface {
   /**
-   * The editing mode this surface presents ('wysiwyg' | 'markdown'). Fixed per
-   * concrete class — the editor's mode IS the mounted surface's mode, which is
-   * what makes a torn-down-limbo mode unrepresentable.
+   * The editing mode this surface presents. Fixed per concrete class: the editor's
+   * mode IS the mounted surface's mode, which is what makes a torn-down-limbo mode
+   * unrepresentable.
    * @abstract
    * @returns {string}
    */
@@ -73,93 +53,59 @@ export class AbstractSurface {
     throw new Error(this.constructor.name + ' must implement get mode()')
   }
 
-  /**
-   * The live TipTap instance, or null for surfaces that have none (markdown).
-   * @returns {unknown|null}
-   */
+  /** @returns {unknown|null} the live TipTap instance, or null for surfaces with none */
   get editorPane() { return null }
 
-  /**
-   * The raw markdown body, or null for surfaces that do not hold one (wysiwyg
-   * never serialises the document — Go owns markdown).
-   * @returns {string|null}
-   */
+  /** @returns {string|null} the raw markdown body, or null for surfaces that hold
+   *  none — wysiwyg never serialises the document, because Go owns markdown */
   get body() { return null }
 
-  /**
-   * The surface's current document stats — chars + lines from its OWN plain-text
-   * view + a top-level block count. The editor's stats() delegates here so ALL
-   * TipTap access stays surface-private (P4.D — the epic's TipTap-only-in-surface
-   * discipline). Default derives from the plain-text `body`; WysiwygSurface
-   * overrides with the PM doc's textContent + childCount.
-   * @returns {{ chars: number, lines: number, blockCount: number }}
-   */
+  /** The surface's current document stats, from its OWN plain-text view. The
+   *  editor delegates here so ALL TipTap access stays surface-private.
+   *  @returns {{ chars: number, lines: number, blockCount: number }} */
   stats() {
     const text = this.body || ''
     const lines = text === '' ? 0 : text.split('\n').length
     return { chars: text.length, lines, blockCount: lines }
   }
 
-  // ── Document search (D-3: the editor's search verbs delegate here) ─────────────
-  //
-  // Mirrors the stats() seam: the SearchOverlay drives the active editor's
-  // search methods, which delegate to the mounted surface — so ALL TipTap /
-  // search-extension access stays surface-private (the Search extension lives in
-  // lens/extensions.js and is mounted on WysiwygSurface's OWN #editor). A
-  // surface with no search (markdown's plain textarea, the base) is a no-op that
-  // returns false; WysiwygSurface overrides with the real search commands.
+  // The editor's search verbs delegate here, so all TipTap and search-extension
+  // access stays surface-private. A surface with no search returns false.
 
-  /**
-   * Set the live search term and return the current match stats, or false when
-   * the surface has no search. WysiwygSurface runs the Search extension command.
-   * @param {string} term
-   * @returns {{current:number,total:number}|false}
-   */
+  /** @param {string} term @returns {{current:number,total:number}|false} */
   searchTerm(term) { return false }
 
-  /**
-   * Advance to the next match; returns the current match stats, or false.
-   * @returns {{current:number,total:number}|false}
-   */
+  /** @returns {{current:number,total:number}|false} */
   searchNext() { return false }
 
-  /**
-   * Step to the previous match; returns the current match stats, or false.
-   * @returns {{current:number,total:number}|false}
-   */
+  /** @returns {{current:number,total:number}|false} */
   searchPrev() { return false }
 
-  /**
-   * Clear the active search (and return focus to the editing view). No-op here.
-   * @returns {false}
-   */
+  /** @returns {false} */
   clearSearch() { return false }
 
   /**
    * Mounts the surface into the editor's root element and seeds it with content.
-   * The root element is owned by the editor; the DOM the surface builds under it
-   * is private to the surface.
+   * The root is owned by the editor; the DOM the surface builds under it is
+   * private to the surface.
    * @abstract
    * @param {HTMLElement} rootEl
-   * @param {unknown}     content — surface-specific seed (markdown string, or {body, blocks})
+   * @param {unknown}     content — surface-specific seed
    */
   mount(rootEl, content) {
     throw new Error(this.constructor.name + ' must implement mount()')
   }
 
-  /**
-   * Tears down the surface's DOM + timers. After unmount the surface is inert;
-   * a fresh surface instance is created for the next mount.
-   * @abstract
-   */
+  /** Tears down the surface's DOM and timers. After unmount the surface is inert;
+   *  a fresh instance is created for the next mount. @abstract */
   unmount() {
     throw new Error(this.constructor.name + ' must implement unmount()')
   }
 
   /**
-   * The container changed: place what the cue names. The base is ABSTRACT — a
-   * surface is a way of showing a container, so how a change reaches the screen
-   * is exactly what a concrete surface is for.
+   * The container changed: place what the cue names. ABSTRACT — a surface is a way
+   * of showing a container, so how a change reaches the screen is what a concrete
+   * surface is for.
    * @param {{blockIds: ReadonlyArray<string>, orderChanged: boolean}} change
    * @param {any} provider the mounted container's provider (reads only)
    */
@@ -167,95 +113,81 @@ export class AbstractSurface {
     throw new Error(this.constructor.name + ' must implement applyContainerChange()')
   }
 
-  /**
-   * Paints the WHOLE container — the bootstrap cue, and a genuine LOAD. Abstract
-   * for the same reason.
-   * @param {any} provider
-   */
+  /** Paints the WHOLE container — the bootstrap cue, and a genuine LOAD. Abstract
+   *  for the same reason. @param {any} provider */
   paintContainer(provider) {
     throw new Error(this.constructor.name + ' must implement paintContainer()')
   }
 
-  /**
-   * Pastes plain text through this surface's paste path. The base has none — a
-   * surface with no pipeline reports that nothing was made of it, and the caller
-   * falls back to its own local insert.
-   * @param {string} text
-   * @returns {Promise<'block'|'content'|'none'>}
-   */
+  /** Pastes plain text through this surface's paste path. The base has none, so it
+   *  reports that nothing was made of it and the caller falls back to a local
+   *  insert. @param {string} text @returns {Promise<'block'|'content'|'none'>} */
   pasteText(text) { return Promise.resolve('none') }
 
-  /**
-   * Flushes any pending debounced edit immediately so Go's shadow is current
-   * before a save or a mode flip. Idempotent — a no-op when nothing is pending.
-   * @abstract
-   */
+  /** Flushes any pending debounced edit so Go's shadow is current before a save or
+   *  a mode flip. Idempotent. @abstract */
   flushPending() {
     throw new Error(this.constructor.name + ' must implement flushPending()')
   }
 
   /**
    * Inserts `url` at the caret as a hyperlink, via the Go paste round-trip that
-   * fetches its title (#67). NOT abstract — a surface with no inline marks has
-   * nothing to insert into and honestly reports that it did not act: in the
-   * markdown SOURCE surface the document is raw text, where writing `[x](url)` is
-   * the native affordance, so there is nothing worth a second mechanism.
+   * fetches its title. NOT abstract: a surface with no inline marks has nothing to
+   * insert into and honestly reports that it did not act. In the markdown SOURCE
+   * surface the document is raw text, where writing `[x](url)` is the native
+   * affordance.
    * @param {string} url
    * @returns {Promise<boolean>} whether a link was inserted
    */
   insertLink(url) { return Promise.resolve(false) }
 
   /**
-   * The surface's OWN formatting button groups for the editor toolbar (P4.D). The
-   * editor composes these AFTER its persistent editor-level groups and re-renders
-   * ONLY this section on a mode flip. A surface with no rich commands (markdown's
-   * plain textarea) returns [] → its formatting buttons are ABSENT (not dimmed).
-   * Each button's onClick/active closure runs on the surface's OWN live view — no
-   * window.__tiptap, no editor hop.
+   * The surface's OWN formatting button groups for the editor toolbar. The editor
+   * composes these AFTER its persistent editor-level groups and re-renders ONLY
+   * this section on a mode flip. A surface with no rich commands returns [], so
+   * its formatting buttons are ABSENT rather than dimmed. Each button's
+   * onClick/active closure runs on the surface's OWN live view.
    * @returns {import('../toolbar-button.js').ButtonGroup[]}
    */
   toolbarContents() { return [] }
 
   /**
-   * Raw selection/focus feed — the SelectionModel hook wired in P3. Declared so
-   * the contract is stable; P2.B surfaces inherit this empty stub.
+   * Raw selection/focus feed — the SelectionModel hook. Declared so the contract
+   * is stable; base surfaces inherit this empty stub.
    * @returns {null}
    */
   feedSelection() { return null }
 
   /**
    * Restores focus/selection from a SelectionContext coordinate — the symmetric
-   * WRITE side of feedSelection (P3.E). The concrete surface turns the plain
-   * coordinate back into a PM selection / block-inner focus / textarea focus.
-   * Base surfaces have no live view; the default is a no-op focus fallback.
+   * WRITE side of feedSelection. The concrete surface turns the plain coordinate
+   * back into a PM selection / block-inner focus / textarea focus. Base surfaces
+   * have no live view, so the default is a no-op focus fallback.
    * @param {import('../selection-model.js').SelectionContext} ctx
    */
   applyPosition(ctx) { /* base: nothing to focus */ }
 
   /**
-   * The surface's own scroller position (issue #51) — the SCROLL_CHANGED feed
-   * hook, mirroring feedSelection. `null` when the surface has no live scroller
-   * yet (unmounted / not found); the model treats null as "nothing to report".
+   * The surface's own scroller position — the SCROLL_CHANGED feed hook, mirroring
+   * feedSelection. `null` when the surface has no live scroller yet; the model
+   * treats null as "nothing to report".
    * @returns {number|null}
    */
   feedScroll() { return null }
 
   /**
-   * Restores (or parks) the surface's scroller position — the symmetric WRITE
-   * side of feedScroll. Called both on a fresh document load (park at top /
-   * restore the session's saved offset) and via applyPosition (preserve scroll
-   * across a same-session reload). `null`/`undefined` is "leave it alone"
-   * (no report to restore); 0 is a real, valid park-at-top value. Base surfaces
-   * have no live scroller; the default is a no-op.
+   * Restores (or parks) the surface's scroller position — the symmetric WRITE side
+   * of feedScroll. Called both on a fresh document load and via applyPosition, to
+   * preserve scroll across a same-session reload. `null`/`undefined` means leave
+   * it alone; 0 is a real, valid park-at-top value.
    * @param {number|null|undefined} value
    */
   applyScroll(value) { /* base: nothing to scroll */ }
 
   /**
-   * Quote + truncate a snippet on a word boundary near 20 chars — the ONE
-   * content-blind label helper both surfaces share (MarkdownSurface for its
-   * textarea sub-range label; WysiwygSurface's block-label path). String-only:
-   * no PM/block knowledge, so it belongs on the shared base.
+   * Quote and truncate a snippet on a word boundary near 20 chars — the ONE
+   * content-blind label helper both surfaces share. String-only: no PM or block
+   * knowledge, so it belongs on the shared base.
    * @param {string} text
    * @returns {string}
    */

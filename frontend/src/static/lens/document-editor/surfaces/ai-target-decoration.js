@@ -1,10 +1,7 @@
-// ai-target-decoration.js — AiTargetDecoration extension.
 // Ephemeral glow for the live Ask AI target. NOT a doc mutation: a single
-// Decoration.node class driven by plugin state, set via meta. Cleared at SEND
-// when the committed == highlight / blockRef takes over. Separate plugin from
-// blockChrome on purpose: it must NOT be suppressed by block-chrome's
-// has-selection rule (the target frequently IS the selection).
-// Depends on the vendor TipTap bundle (vendor/tiptap.js) loaded first.
+// Decoration.node class driven by plugin state, set via meta. It is a separate
+// plugin from blockChrome on purpose — it must NOT be suppressed by
+// block-chrome's has-selection rule, since the target frequently IS the selection.
 import { T as VENDOR } from './tiptap-vendor.js'
 import { proseChainHits } from '../../../renderers/block-kinds.js'
 
@@ -15,11 +12,10 @@ var Decoration = VENDOR.Decoration
 var DecorationSet = VENDOR.DecorationSet
 
   var aiTargetKey = new PluginKey('aiTarget')
-  // Ref-chain hover glow. Structured blocks are NodeViews (opaque DOM) so
-  // ai-block-renderer's applyChain can toggle their class directly; a native
-  // prose <p> is owned by ProseMirror, which reconciles away any externally-set
-  // class on the next view update. So prose chain-members get `block-ref-active`
-  // via a decoration (PM renders it, so it survives) instead of raw classList.
+  // Ref-chain hover glow. A native prose <p> is owned by ProseMirror, which
+  // reconciles away any class set on it from outside, so prose chain-members get
+  // `block-ref-active` through a decoration rather than classList. (Structured
+  // blocks are NodeViews with opaque DOM, so applyChain toggles theirs directly.)
   var refChainKey = new PluginKey('refChain')
 
   export var AiTargetDecoration = Extension.create({
@@ -89,10 +85,6 @@ var DecorationSet = VENDOR.DecorationSet
       ]
     },
   })
-
-  // (The Ask-target GLOW imperatives setAiTargetGlow/clearAiTargetGlow were removed
-  // in P4.E — the glow was dropped in P4.B and had zero callers. The AiTargetDecoration
-  // plugin's aiTargetKey half is now inert; retiring it is a P4.F/close-out follow-up.)
 
   // Ref-chain glow for native prose blocks (structured blocks use classList in
   // applyChain). ids = the chain's block ids; prose members get block-ref-active.

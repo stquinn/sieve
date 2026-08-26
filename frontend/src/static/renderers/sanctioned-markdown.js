@@ -1,30 +1,16 @@
 // @ts-check
-// sanctioned-markdown.js — the ONE markdown-it instance every non-PM renderer
-// fill (title, body) runs on (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
-// §Content lanes / §Body/title pull-back — DEFECT SEC-B, issue #48).
+// The ONE markdown-it instance every non-PM renderer fill (title, body) runs on.
 //
 // html:false — raw HTML embedded in markdown text renders as inert, escaped
 // text, never live DOM. This is deliberately NOT the editor's own markdown-it
-// instance: lens/surfaces/wysiwyg-surface.js configures tiptap-markdown
-// with html:true so ProseMirror's own HTML-node parsing/paste path works —
-// that instance's output is filtered by the PM schema before it ever reaches
-// the DOM, which is why html:true is safe THERE and unsafe here. Borrowing
-// the editor's instance for a direct innerHTML write (the pre-#48 title
-// seam) is exactly the defect this module exists to close: a remote-content
-// title/body (web-clip's fetched page metadata, an LLM response) hit
-// innerHTML with HTML passthrough switched on.
+// instance, which runs html:true so ProseMirror's own HTML parsing/paste path
+// works; that instance's output is filtered by the PM schema before it reaches
+// the DOM, which is why html:true is safe THERE and unsafe here. Escaped raw
+// HTML displaying as literal text in a title or body is the accepted trade.
 //
 // markdown-it-mark (the ==mark== extension) is `.use()`d here explicitly to
-// match the editor's feature set — the editor gets it via
-// lens/extensions.js's HighlightMark markdown.parse.setup hook (a seam
-// tiptap-markdown drives per-extension); this standalone instance has no
-// equivalent, so it registers the same plugin directly.
-//
-// Markup discipline note: no legitimate raw-HTML-in-title/body use exists in
-// this app (AI responses and fetched-page metadata are markdown/plain text,
-// never HTML-by-design) — escaped raw HTML displaying as literal text in the
-// rare document that happens to contain it is accepted (stated assumption,
-// issue #48).
+// match the editor's feature set, which gets it through a tiptap-markdown hook
+// this standalone instance has no equivalent of.
 
 import { T } from './vendor-libs.js'
 import { storeFileSrc } from './asset-urls.js'
@@ -68,11 +54,10 @@ function installStoreFileImageRule(md) {
 }
 
 /**
- * Renders markdown text via the sanctioned instance. Falls back to
- * HTML-escaped plain text (via textContent round-trip) if the vendor
- * MarkdownIt export isn't available — the same inert fallback the pre-#48
- * renderMarkdown had, so a missing vendor bundle never means "raw text
- * reaches innerHTML unescaped".
+ * Renders markdown text via the sanctioned instance. Falls back to HTML-escaped
+ * plain text (a textContent round-trip) when the vendor MarkdownIt export is
+ * unavailable, so a missing vendor bundle never means "raw text reaches
+ * innerHTML unescaped".
  * @param {string} text
  * @returns {string} HTML string, safe to assign to innerHTML
  */

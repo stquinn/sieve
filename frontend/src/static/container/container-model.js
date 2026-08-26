@@ -1,17 +1,15 @@
 // @ts-check
-// container-model.js — ContainerModel: the client's follower model of ONE
-// container (issue #96).
+// The client's follower model of ONE container.
 //
-// It is a FOLD over the wire shapes that already exist: the load answer
-// ({uuid, ordered blocks}) is the initial state, and the document channel's
-// render-backs maintain it. Nothing else constitutes it — there is no
-// serialized-container frame, and there is deliberately no optimistic apply
-// path: Go leads, this follows, and an intent shows up here only as the effect
-// Go echoed back.
+// It is a FOLD over the wire shapes that already exist: the load answer is the
+// initial state, and the document channel's render-backs maintain it. There is no
+// serialized-container frame and deliberately no optimistic apply path — Go
+// leads, this follows, and an intent shows up here only as the effect Go echoed
+// back.
 //
-// Reads hand out frozen deep COPIES. That is not defensiveness about callers:
-// the same contract has to survive being served across a process boundary
-// later, where a reference is not a thing that can be returned.
+// Reads hand out frozen deep COPIES. That is not defensiveness about callers: the
+// same contract has to survive being served across a process boundary later,
+// where a reference is not a thing that can be returned.
 
 import { ContractViolation } from '../contract/sieve-block.js'
 import { DocumentFrame } from '../generated/protocol.js'
@@ -19,14 +17,14 @@ import { DocumentFrame } from '../generated/protocol.js'
 /**
  * One child of the container, as JSON-shaped data.
  *
- * `text` is the block's own SERIALIZED form, and it is present only when Go
- * volunteered it — which it does on a create. It is derived, and deriving it is a
- * processor's job on the Go side, so there is no client path to it and no way to
- * refresh it. The one consumer is a WHOLE-CONTENT lens: while a verbatim buffer
- * is the authority, a block arriving has to reach the BUFFER or it is lost by
- * both the save and the flip back, and this is the only projection of a single
- * block that exists. It is a field rather than an attr because it is not part of
- * the block's state — nothing patches it, and it must never travel back.
+ * `text` is the block's own SERIALIZED form, present only when Go volunteered it,
+ * which it does on a create. Deriving it is a processor's job on the Go side, so
+ * there is no client path to it and no way to refresh it. Its one consumer is a
+ * WHOLE-CONTENT lens: while a verbatim buffer is the authority, a block arriving
+ * has to reach the BUFFER or it is lost by both the save and the flip back, and
+ * this is the only projection of a single block that exists. It is a field rather
+ * than an attr because it is not part of the block's state — nothing patches it,
+ * and it must never travel back.
  *
  * @typedef {object} BlockNode
  * @property {string} id
@@ -51,8 +49,8 @@ import { DocumentFrame } from '../generated/protocol.js'
  */
 
 /**
- * The load answer this model seeds from — `load-content` / `wysiwyg-content`
- * read as data.
+ * The load answer this model seeds from — `load-content` / `wysiwyg-content` read
+ * as data.
  *
  * @typedef {object} ContainerContent
  * @property {string} [uuid]  empty when Go found nothing, which seeds an empty container
@@ -82,33 +80,25 @@ export class ContainerModel {
     this.#kind = kind || 'note'
   }
 
-  // ── Reads (sync, copies) ───────────────────────────────────────────────────
-
   /** @returns {string} */
   getUuid() { return this.#uuid }
 
   /** @returns {string} */
   getKind() { return this.#kind }
 
-  /** The child ids in container order.
-   *  @returns {ReadonlyArray<string>} */
+  /** @returns {ReadonlyArray<string>} the child ids in container order */
   getOrder() { return Object.freeze(this.#order.slice()) }
 
-  /** The child with this id, or null.
-   *  @param {string} id @returns {Readonly<BlockNode>|null} */
+  /** @param {string} id @returns {Readonly<BlockNode>|null} */
   getBlock(id) {
     const node = id ? this.#nodes.get(id) : undefined
     return node ? this.#deepFreeze(structuredClone(node)) : null
   }
 
-  // ── Subscription ───────────────────────────────────────────────────────────
-
-  /**
-   * Registers a listener and immediately cues it with the whole container.
-   * Bootstrap is not a separate handshake — it is the first `onChanged`, so a
-   * lens has exactly one read-and-paint path.
-   * @param {ContainerUpdateListener} listener
-   */
+  /** Registers a listener and immediately cues it with the whole container:
+   *  bootstrap is not a separate handshake, it is the first `onChanged`, so a lens
+   *  has exactly one read-and-paint path.
+   *  @param {ContainerUpdateListener} listener */
   subscribe(listener) {
     if (!listener || typeof listener.onChanged !== 'function') {
       throw new ContractViolation('ContainerModel.subscribe: listener must implement onChanged')
@@ -120,15 +110,10 @@ export class ContainerModel {
   /** @param {ContainerUpdateListener} listener */
   unsubscribe(listener) { this.#listeners.delete(listener) }
 
-  // ── Ingest (the transport-facing fold) ─────────────────────────────────────
-
-  /**
-   * Seeds the whole container from a load answer — a RESET, not a merge: the
-   * answer is the complete truth for the container at that moment, so it is the
-   * one inbound shape that can retire a child this model still holds without
-   * naming it.
-   * @param {ContainerContent} content
-   */
+  /** Seeds the whole container from a load answer — a RESET, not a merge. The
+   *  answer is the complete truth at that moment, so it is the one inbound shape
+   *  that can retire a child this model still holds without naming it.
+   *  @param {ContainerContent} content */
   applyLoad(content) {
     const c = content || {}
     if (c.uuid && c.uuid !== this.#uuid) {
@@ -150,12 +135,9 @@ export class ContainerModel {
   }
 
   /**
-   * Folds one document-channel render-back. Frames this model does not claim
-   * are dropped in silence — it shares its channel with acks, mode replies and
-   * the ping watchdog, none of which are container truth.
-   *
-   * A frame's ORIGIN is not read here and is not carried out: what changed is
-   * the whole cue, and who asked for it is nobody's business above this fold.
+   * Folds one document-channel render-back. Frames this model does not claim are
+   * dropped in silence — it shares its channel with acks, mode replies and the
+   * ping watchdog. A frame's ORIGIN is not read here and not carried out.
    * @param {Record<string, any>} frame
    */
   applyFrame(frame) {
@@ -184,9 +166,8 @@ export class ContainerModel {
     this.#nodes.set(f.newId, node)
     if (f.newId === f.oldId) { this.#emit([f.newId], false); return }
 
-    // A transform mints a fresh identity, so the replaced id leaves the
-    // container entirely. Whatever still has to ROUTE for it — an undo that can
-    // resurrect it — is the transport's business, not the container's.
+    // A transform mints a fresh identity, so the replaced id leaves the container
+    // entirely. Whatever still has to ROUTE for it is the transport's business.
     const at = f.oldId ? this.#order.indexOf(f.oldId) : -1
     if (at >= 0) this.#order[at] = f.newId
     else this.#order.push(f.newId)
@@ -198,9 +179,9 @@ export class ContainerModel {
   #applyAttrs(f) {
     const prior = f.id ? this.#nodes.get(f.id) : undefined
     if (!prior) return // an id this container never held has no kind to author under
-    // MERGE, though Go documents this frame's attrs as the full bag: a partial
-    // bag must not silently erase the keys it omits, and a full one makes the
-    // merge an identity anyway.
+    // MERGE, though Go documents this frame's attrs as the full bag: a partial bag
+    // must not silently erase the keys it omits, and a full one makes the merge an
+    // identity anyway.
     this.#nodes.set(f.id, this.#node(f.id, prior.kind, Object.assign({}, prior.attrs, f.attrs)))
     this.#emit([f.id], false)
   }
@@ -216,12 +197,9 @@ export class ContainerModel {
 
   /**
    * Installs the container's complete new child order. A name this model has no
-   * node for is dropped: it is a position that cannot be painted, and the only
-   * way to hold one is to have missed the frame that authored it — which the
-   * next load answer repairs.
-   *
-   * Ids it does NOT name are left alone: a block leaves the container by
-   * remove-block, and Go echoes only permutations of what the container holds.
+   * node for is dropped: it is a position that cannot be painted, and the next
+   * load answer repairs it. Ids it does NOT name are left alone — a block leaves
+   * by remove-block, and Go echoes only permutations of what the container holds.
    * @param {Record<string, any>} f
    */
   #applyOrderChanged(f) {
@@ -230,17 +208,12 @@ export class ContainerModel {
     this.#emit([], true)
   }
 
-  // ── Internals ──────────────────────────────────────────────────────────────
-
   /**
-   * Authors a node from wire parts. `id` is stamped into the attrs bag as well
-   * as the field: the bag is what a renderer and the fenced serializer read a
-   * block's identity out of.
-   *
-   * The bag is CLONED, so the model owns every byte of its state and freezes
-   * nothing that belongs to the caller's frame. The clone also refuses a
-   * non-serializable attr at the door, which is where that has to be refused —
-   * this state is destined to cross a process boundary intact.
+   * Authors a node from wire parts. `id` is stamped into the attrs bag as well as
+   * the field, because the bag is what a renderer and the fenced serializer read a
+   * block's identity out of. The bag is CLONED, so the model owns every byte of
+   * its state, and the clone refuses a non-serializable attr at the door — this
+   * state is destined to cross a process boundary intact.
    * @param {string} id @param {string} [kind] @param {Record<string, any>} [attrs]
    * @param {string} [text] the block's serialized form, when Go volunteered it
    * @returns {Readonly<BlockNode>}
@@ -254,9 +227,8 @@ export class ContainerModel {
     return this.#deepFreeze(node)
   }
 
-  /** The insertion slot for a wire index; -1 (Go's append) and anything past
-   *  the end both mean "at the end".
-   *  @param {number} index @returns {number} */
+  /** The insertion slot for a wire index; -1 and anything past the end both mean
+   *  "at the end". @param {number} index @returns {number} */
   #positionFor(index) {
     const end = this.#order.length
     return typeof index === 'number' && index >= 0 && index < end ? index : end
@@ -274,9 +246,8 @@ export class ContainerModel {
     return Object.freeze({ blockIds: Object.freeze(blockIds.slice()), orderChanged: orderChanged })
   }
 
-  /** A throwing listener is isolated: it must not abort the fan-out, and the
-   *  fold that produced the cue is already committed.
-   *  @param {ContainerUpdateListener} listener @param {Readonly<ContainerChange>} change */
+  /** A throwing listener is isolated: the fold that produced the cue is already
+   *  committed. @param {ContainerUpdateListener} listener @param {Readonly<ContainerChange>} change */
   #deliver(listener, change) {
     try { listener.onChanged(change) } catch (e) { console.error('[container-model] listener threw', e) }
   }

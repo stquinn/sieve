@@ -1,11 +1,11 @@
 // @ts-check
-// command-badges.js — status-bar badge lifecycle for correlated command jobs
-// (#55): one badge per correlationId (pending → holding → dismissed); the badge
-// IS the re-summon affordance and, later, the Job Engine Viewer's summon seed.
+// command-badges.js — status-bar badge lifecycle for correlated command jobs:
+// one badge per correlationId (pending → holding → dismissed), and the badge IS
+// the re-summon affordance.
 //
-// The pending state is KIND-AGNOSTIC: `block` starts as null, and the popup
-// shows a generic spinner + command name. Only when the server result arrives
-// does the block become a real SieveBlock with its final kind (ai-block, etc.).
+// The pending state is KIND-AGNOSTIC: `block` starts as null and the popup shows
+// a generic spinner + command name. Only when the server result arrives does the
+// block become a real SieveBlock with its final kind.
 
 import { SieveBlock } from '../contract/sieve-block.js'
 import { CommandPopup } from './command-popup.js'
@@ -23,10 +23,6 @@ import { commandBadgesStyles } from './command-badges.styles.js'
  */
 
 export class CommandBadges {
-  // Sibling stylesheet carriage — the component-owns-its-styles pattern the
-  // block renderers established, via the same register-once registry. The
-  // slot rules ride here too: the status bar donates the mount point, but
-  // this component owns the region.
   static styles = commandBadgesStyles
 
   /** @type {HTMLElement|null} */ #slot
@@ -74,13 +70,12 @@ export class CommandBadges {
       entry.block = new SieveBlock(r.block.kind, r.block.attrs)
     } else if (r.status === 'ERROR') {
       if (entry.block) {
-        // A prior block exists — merge the error into a FRESH block of the
-        // SAME kind (never a hardcoded 'ai-block'); the block keeps its identity.
+        // Merge the error into a FRESH block of the SAME kind (never a
+        // hardcoded 'ai-block'); the block keeps its identity.
         entry.block = new SieveBlock(entry.block.kind, Object.assign({}, entry.block.payload, { status: 'ERROR', error: r.error || '' }))
       } else {
-        // No block ever arrived — do NOT fabricate an ai-block block (the
-        // "assumed ai-block" 8808c0a removed). Carry the error on the meta so the
-        // popup renders a generic, kind-less error view.
+        // No block ever arrived — do NOT fabricate an ai-block. Carry the error
+        // on the meta so the popup renders a generic, kind-less error view.
         entry.meta = Object.assign({}, entry.meta, { error: r.error || 'Command failed.' })
       }
     }

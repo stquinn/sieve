@@ -1,10 +1,7 @@
 // @ts-check
-// copy-image.js — copies an image `src` to the clipboard as PNG.
-//
-// WebKit strictly requires image/png for clipboard writes, so non-PNG blobs
-// are re-encoded via a canvas. Pure helper (fetch → canvas → PNG → clipboard),
-// no state. Extracted from SieveWorkspace#copyImageToClipboard (P4.F pass 2;
-// the window._sieveCopyImageToClipboard facade is retired in the same change).
+// Copies an image `src` to the clipboard as PNG. WebKit strictly requires image/png
+// for clipboard writes, so non-PNG blobs are re-encoded via a canvas. Pure helper
+// (fetch → canvas → PNG → clipboard), no state.
 
 /**
  * @param {string} src

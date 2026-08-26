@@ -1,28 +1,18 @@
 // @ts-check
-// diagram-renderer.js — DiagramRenderer: the renderer half of the diagram
-// kind's renderer/NodeView split (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
-// Phase 2 / issue #45 — the epic's pilot). Owns look-and-feel ONLY: the HEADER
-// (badge + engine dropdown + edit/render toggle + expand button); the edit-mode
-// chrome (gutter + code-area) and render-mode SVG (incl. the --theme-* →
-// themeVariables mapping and the mermaid escape-hatch CSS patch); and this
-// kind's stylesheet (`static styles`). Zero ProseMirror/editor/window.*
-// dependencies.
+// DiagramRenderer — the diagram kind's look-and-feel: the header (badge +
+// engine dropdown + edit/render toggle + expand), the edit-mode chrome (gutter +
+// code-area), the render-mode SVG (including the --theme-* → themeVariables
+// mapping and the mermaid escape-hatch CSS patch), and this kind's stylesheet.
 //
-// TWO ENGINES, ONE KIND (issue #54): diagramType picks the engine. mermaid
-// renders client-side (a held render promise); plantuml renders as a backend
-// JOB and the renderer is a PASSIVE display of it — PENDING shows the shared
-// job-status spinner (StatusBadge), COMPLETE fetches the same-origin svgAsset
-// and inlines it, ERROR shows the error card. Both engines converge on ONE
-// display tail (#displaySvg / #displayError). No source translation on switch.
+// TWO ENGINES, ONE KIND: `diagramType` picks the engine. mermaid renders
+// client-side (a held render promise); plantuml renders as a backend JOB and the
+// renderer is a PASSIVE display of it — PENDING shows the shared job-status
+// spinner, COMPLETE fetches the same-origin svgAsset and inlines it, ERROR shows
+// the error card. Both engines converge on ONE display tail (#displaySvg /
+// #displayError). No source translation on switch.
 //
-// buildHeader() lays out a DiagramHeader via a HeaderBar; its toggle and the
-// expand button call this renderer's SEMANTIC VERBS (setMode / expand — the
-// contract's core API; docs/design/archive/specs/2026-07-21-block-renderer-contract.md).
-// setMode maps the MODE enum to this kind's wire strings privately via
-// _pushAttrs; caret capture on the render-ward flip is the PM adapter's
-// business (a NodeView-local variable in its update()). buildBody() builds
-// both mode surfaces; the editable <code> is exposed as renderer.codeElement
-// for the adapter's contentDOM.
+// buildBody() builds both mode surfaces; the editable <code> is exposed as
+// renderer.codeElement for the adapter's contentDOM.
 
 import { BlockRenderer } from './block-renderer.js'
 import { MODE } from '../contract/sieve-block.js'
@@ -45,7 +35,6 @@ import { expandBlock } from '../ui/media-lightbox.js'
 
 const ENGINES = Object.freeze(['mermaid', 'plantuml'])
 
-// ── Header provider — badge + engine dropdown + edit/render toggle. ──
 const EDIT_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
   '<path d="M1 7.5 L6 2 L8 4 L3 9 L1 9 Z"/><line x1="5" y1="3" x2="7" y2="5"/></svg>'
 const RENDER_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
@@ -63,10 +52,8 @@ function toggleBtn(label, icon, active, activeCls, onClick) {
 class DiagramHeader extends AdvancedHeaderProvider {
   badge() { return 'diagram' }
   /** The engine picker — a native <select> styled AS the type label (chevron on
-   *  hover). Picking an engine hits the renderer's semantic verb setDiagramType,
-   *  which maps to the wire privately via _pushAttrs. A pointer widget: native
-   *  <select> keyboard handling is the platform's, never a per-renderer
-   *  handleKeyDown (docs/editor-interaction-contract.md).
+   *  hover). A pointer widget: native <select> keyboard handling is the
+   *  platform's, never a per-renderer handleKeyDown.
    *  @param {DiagramAttrs} attrs @param {DiagramRenderer} r @returns {HTMLElement[]} */
   left(attrs, r) {
     const current = (attrs && attrs.diagramType) || 'mermaid'
@@ -124,7 +111,6 @@ export class DiagramRenderer extends BlockRenderer {
     styleEl.appendChild(document.createTextNode(DiagramTheme.edgeLabelPatchCss))
   }
 
-  // ── mermaid lazy-load + theming (class-static singleton) ──────────────────
   /** @type {Promise<void>|null} */
   static #mermaidReady = null
   /** @type {Set<DiagramRenderer>} */
@@ -139,10 +125,9 @@ export class DiagramRenderer extends BlockRenderer {
     if (DiagramRenderer.#themeListenerInstalled) return
     DiagramRenderer.#themeListenerInstalled = true
     document.addEventListener('settings:changed', () => {
-      // Re-init mermaid's theme variables FIRST (if it's loaded) so mermaid
+      // Re-init mermaid's theme variables FIRST (if it is loaded) so mermaid
       // instances re-render under the new theme. Plantuml instances nudge a
-      // backend re-dispatch — which must happen even in a mermaid-free doc,
-      // so the whole listener no longer bails when mermaid is absent.
+      // backend re-dispatch, which must happen even in a mermaid-free doc.
       if (DiagramRenderer.#mermaidGlobal()) DiagramRenderer.#initMermaid()
       DiagramRenderer.#liveInstances.forEach((instance) => instance.rerenderForThemeChange())
     })
@@ -174,14 +159,10 @@ export class DiagramRenderer extends BlockRenderer {
   }
 
   // renderDiagramSvgEntry — acquires a diagram's SVG as an image/svg+xml
-  // ContentEntry for the export/extraction pipeline, branching on the engine:
-  //   mermaid  → render the source locally via mermaid.render() (also handles an
-  //              embedded ```mermaid fence among `entries`);
-  //   plantuml → fetch the persisted same-origin svgAsset (rendered at least
-  //              once). A never-rendered plantuml block (no svgAsset) yields no
-  //              entry, exactly as empty-source mermaid does.
-  // Same ContentEntry out either way, so the downstream smart-image pipeline is
-  // untouched. Shared by smart-image's and prose's resolveEntries. Static.
+  // ContentEntry for the export/extraction pipeline: mermaid renders the source
+  // locally (also handling an embedded ```mermaid fence among `entries`),
+  // plantuml fetches the persisted same-origin svgAsset. A never-rendered
+  // plantuml block yields no entry, exactly as empty-source mermaid does.
   /** @param {any} sourceNode @param {any[]} entries @returns {Promise<{mimeType:string,content:string}|null>} */
   static renderDiagramSvgEntry(sourceNode, entries) {
     const attrs = (sourceNode && sourceNode.attrs) || {}
@@ -211,7 +192,6 @@ export class DiagramRenderer extends BlockRenderer {
     }).then((result) => ({ mimeType: 'image/svg+xml', content: result.svg }))
   }
 
-  // ── instance state ────────────────────────────────────────────────────────
   /** @type {HeaderBar|null} */ #headerBar = null
   /** @type {HTMLElement|null} */ #editBody = null
   /** @type {HTMLElement|null} */ #renderBody = null
@@ -222,25 +202,20 @@ export class DiagramRenderer extends BlockRenderer {
   #destroyed = false
 
   /** The editable <code> the adapter binds as ProseMirror's contentDOM. Stable
-   *  across mode swaps (the edit body detaches in render mode but its <code> is
-   *  retained). A neutral accessor. @returns {HTMLElement|null} */
+   *  across mode swaps. @returns {HTMLElement|null} */
   get codeElement() { return this.#codeEl }
 
   /**
    * Consume the last mode transition — non-null only when attrs.mode changed on
-   * the most recent update(). The adapter reads this right after update() to run
-   * its PM-specific caret restore on an edit-ward transition.
+   * the most recent update().
    * @returns {{ modeChangedTo: 'edit'|'render' }|null}
    */
   takeModeTransition() { const t = this.#modeTransition; this.#modeTransition = null; return t }
 
   /** @returns {HTMLElement} */
   buildHeader() {
-    // The header's context IS this renderer — buttons speak the semantic verbs
-    // (setMode / expand), never attr names or injected closures.
     this.#headerBar = new HeaderBar(new DiagramHeader(), (bar, _attrs, ctx) => {
       const r = /** @type {DiagramRenderer} */ (ctx)
-      // Expand button — shown only when there is something to expand (render mode).
       if (r.expandContent()) {
         bar.appendChild(expandButton('⤢', () => r.expand()))
       }
@@ -248,9 +223,8 @@ export class DiagramRenderer extends BlockRenderer {
     return this.#headerBar.render(/** @type {DiagramAttrs} */ (this.block.payload), this)
   }
 
-  /** Builds BOTH surfaces (so the <code> always exists) and renders the initial
-   *  mode's content; returns the current-mode surface for the base to install.
-   *  @returns {HTMLElement} */
+  /** Builds BOTH surfaces (so the <code> always exists) and returns the
+   *  current-mode surface for the base to install. @returns {HTMLElement} */
   buildBody() {
     this.#editBody = this.#buildEditBody()
     this.#renderBody = this.#buildRenderBodyShell()
@@ -267,8 +241,7 @@ export class DiagramRenderer extends BlockRenderer {
 
   /** @param {import('../contract/sieve-block.js').SieveBlock} block */
   update(block) {
-    // Previous truth read BEFORE super stores the new block (the base's
-    // block is the ONE copy of state — no shadow caches, by contract).
+    // Previous truth read BEFORE super stores the new block.
     const prevMode = /** @type {DiagramAttrs} */ (this.block.payload).mode
     super.update(block)
     const attrs = /** @type {DiagramAttrs} */ (block.payload)
@@ -277,12 +250,8 @@ export class DiagramRenderer extends BlockRenderer {
     this.#modeTransition = prevMode === attrs.mode ? null : { modeChangedTo: attrs.mode }
   }
 
-  // ── Semantic verbs (the contract's core API) ──────────────────────────────
-
   /**
-   * MODE → this kind's wire strings, privately. DEFAULT = render (the
-   * diagram's natural presentation). Caret capture on the render-ward flip is
-   * the PM adapter's business (NodeView-local), not knowledge this class holds.
+   * MODE → this kind's wire strings. DEFAULT = render.
    * @param {string} mode
    */
   setMode(mode) {
@@ -294,16 +263,14 @@ export class DiagramRenderer extends BlockRenderer {
 
   /**
    * Outbound truth report — THIS kind's content attr is `source`, knowledge
-   * that lives here and nowhere else (contract §setContent direction; the
-   * retired v1 applier used to do this mapping adapter-side).
+   * that lives here and nowhere else.
    * @param {string} text
    */
   setContent(text) { this._pushAttrs({ source: text }) }
 
   /**
-   * Switch the render ENGINE (mermaid ⇄ plantuml). Maps to the `diagramType`
-   * wire attr privately; the attrs-driven render path repaints from there. NO
-   * source translation — wrong-engine syntax gets that engine's error, honestly.
+   * Switch the render ENGINE (mermaid ⇄ plantuml). NO source translation —
+   * wrong-engine syntax gets that engine's error, honestly.
    * @param {string} type
    */
   setDiagramType(type) {
@@ -315,8 +282,7 @@ export class DiagramRenderer extends BlockRenderer {
 
   /**
    * Capability probe + spec builder — non-null only when there is something to
-   * expand (render mode; edit mode is raw text). Also the behaviour-registry
-   * path's implementation (one capability, every trigger lands here).
+   * expand (render mode; edit mode is raw text).
    * @returns {{ element: Element|null, title: string, mode: 'media' }|null}
    */
   expandContent() {
@@ -326,7 +292,7 @@ export class DiagramRenderer extends BlockRenderer {
     return { element: svg, title: (attrs.diagramType || 'mermaid') + ' diagram', mode: 'media' }
   }
 
-  /** Expand the rendered SVG into the lightbox (chord / header / menu all land here). */
+  /** Expand the rendered SVG into the lightbox. */
   expand() {
     const spec = this.expandContent()
     if (spec && spec.element) expandBlock({ element: spec.element, title: spec.title, mode: spec.mode })
@@ -338,21 +304,16 @@ export class DiagramRenderer extends BlockRenderer {
     DiagramRenderer.#liveInstances.delete(this)
   }
 
-  // Presentational hook for the adapter's live-typing sync (a MutationObserver
-  // on contentDOM, OUTSIDE the render/update lifecycle).
+  // Presentational hook for the adapter's live-typing sync, OUTSIDE the render/update lifecycle.
   /** @param {string} source */
   syncGutterLineCount(source) {
     if (this.#gutter) DiagramRenderer.#updateGutter(this.#gutter, source)
   }
 
   // React to a theme change on a live RENDER-mode block — a no-op otherwise.
-  //   mermaid  → re-render locally (mermaid was re-initialised with the new
-  //              theme variables by the static listener before this call);
-  //   plantuml → the theme preamble is part of the backend render hash, so the
-  //              rendered asset is now stale. A benign source re-sync nudges the
-  //              backend: DescribeJob re-evaluates, finds hash(effectiveSource)
-  //              changed, and re-dispatches — the new asset arrives as an attrs
-  //              render-back → a fresh update(). We compute no doc state here.
+  // mermaid re-renders locally; plantuml's theme preamble is part of the backend
+  // render hash, so a benign source re-sync nudges the backend to re-dispatch and
+  // the new asset arrives as an attrs render-back.
   rerenderForThemeChange() {
     const attrs = /** @type {DiagramAttrs} */ (this.block.payload)
     if (this.#destroyed || !this.#renderBody || attrs.mode !== 'render') return
@@ -362,8 +323,6 @@ export class DiagramRenderer extends BlockRenderer {
     }
     this.#renderInto(attrs)
   }
-
-  // ── DOM construction (presentational only) ───────────────────────────────
 
   /** @returns {HTMLElement} */
   #buildEditBody() {
@@ -433,14 +392,11 @@ export class DiagramRenderer extends BlockRenderer {
     gutter.innerHTML = ''
     for (let i = 1; i <= count; i++) {
       const span = document.createElement('span')
-      // Pseudo-content number (data-ln), never a text node — see LineGutter.sync
-      // for the WebKit copy-leak rationale.
+      // Pseudo-content number (data-ln), never a text node (WebKit copy leak).
       span.dataset.ln = String(i)
       gutter.appendChild(span)
     }
   }
-
-  // ── Render dispatch (branches on engine; both feed the shared display tail) ─
 
   /** Repaint the render body as a pure function of attrs. Cancels any live
    *  panzoom first, then branches on the engine. @param {DiagramAttrs} attrs */
@@ -469,10 +425,9 @@ export class DiagramRenderer extends BlockRenderer {
     })
   }
 
-  /** Passive display of the plantuml render JOB — pure function of attrs, no
+  /** Passive display of the plantuml render JOB — a pure function of attrs, no
    *  held render promise. PENDING → job-status spinner; COMPLETE → fetch + inline
-   *  the persisted asset (no spinner flash); ERROR/TIMEOUT/stale → the error
-   *  card. Each status transition arrives as a fresh update() → #renderInto.
+   *  the persisted asset; ERROR/TIMEOUT/stale → the error card.
    *  @param {DiagramAttrs} attrs */
   #renderPlantuml(attrs) {
     const src = (attrs.source || '').trim()
@@ -495,15 +450,12 @@ export class DiagramRenderer extends BlockRenderer {
   }
 
   /** Fetch a same-origin rendered-SVG asset and inline it via the shared tail.
-   *  The only in-flight promise in the plantuml path — guarded so a fetch that
-   *  resolves after a newer render-back superseded this asset never inserts a
-   *  stale SVG. No loading state is shown first, so a COMPLETE block swaps the
-   *  SVG in place with no spinner flash. @param {string} url */
+   *  Guarded so a fetch that resolves after a newer render-back superseded this
+   *  asset never inserts a stale SVG. @param {string} url */
   #fetchAndDisplayPlantuml(url) {
     // no-cache: the asset lives at a STABLE URL but is overwritten in place on
-    // each re-render (one asset per block), so a theme re-render leaves svgAsset
-    // unchanged while its bytes differ — revalidate so we never inline a stale
-    // pre-theme-switch SVG from the HTTP cache.
+    // each re-render, so its bytes change while svgAsset does not — revalidate,
+    // or a stale pre-theme-switch SVG comes back from the HTTP cache.
     fetch(url, { cache: 'no-cache' })
       .then((res) => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.text() })
       .then((svgText) => {
@@ -521,8 +473,6 @@ export class DiagramRenderer extends BlockRenderer {
   #assetSuperseded(url) {
     return String(/** @type {DiagramAttrs} */ (this.block.payload).svgAsset || '') !== url
   }
-
-  // ── Shared display tail (both engines land here once they hold SVG text) ────
 
   /** Inline SVG text into the panzoom wrap, patch the edge-label escape hatch,
    *  and (re)arm inline pan/zoom. @param {string} svgText */
@@ -570,8 +520,7 @@ export class DiagramRenderer extends BlockRenderer {
   }
 
   // Inline Ctrl-gated pan/zoom on the rendered diagram (one atomic CSS transform
-  // on the wrapper). Purely a generic interactive-viewer behaviour — no PM/editor
-  // coupling, so it stays here.
+  // on the wrapper).
   /** @param {HTMLElement} renderBody @param {HTMLElement} wrap */
   #setupInlinePanzoom(renderBody, wrap) {
     const MIN = 1, MAX = 20

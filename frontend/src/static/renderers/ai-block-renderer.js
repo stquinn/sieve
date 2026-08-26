@@ -1,35 +1,24 @@
 // @ts-check
-// AiBlockRenderer: the renderer half of the ai-block kind's renderer/NodeView
-// split. Owns look-and-feel: the block shell, the status BADGE (its header), the
-// question TITLE, and the response/status BODY, plus this kind's stylesheet
-// (`static styles`). Zero ProseMirror/editor/window.* dependencies — it mounts
-// identically in the note editor's NodeView adapter, a chat turn, or the
-// bare-page harness.
+// AiBlockRenderer — the ai-block kind's look-and-feel: the block shell, the
+// status BADGE (its header), the question TITLE, the response/status BODY and
+// the attachment chip row (its footer), plus this kind's stylesheet.
 //
-// This class is PURE and lens-blind (NORMATIVE contract:
-// docs/design/archive/specs/2026-07-21-block-renderer-contract.md): buildBody() builds
-// AND FILLS the body from bodyMarkdown() (sanctioned markdown), and update()
-// re-fills it — guarded on the #contentEl ref it recorded. In the editor lens
-// the adapter claims the BODY region via the handleBuild interceptor, so no
-// #contentEl is recorded and the ref-guarded update() naturally leaves the
-// projected body to ProseMirror; the seam authors body content via FRESH
-// scratch instances of this class (chain of custody). The badge + question
-// title still render renderer-side in every lens. Chain-glow hover and the
-// read-only guard plugin stay adapter-side (PM/cross-block).
+// buildBody() builds AND FILLS the body from bodyMarkdown(). In the editor lens
+// the adapter claims the BODY region via handleBuild, so no #contentEl is
+// recorded and the ref-guarded update() leaves the projected body to
+// ProseMirror; the seam authors body content via FRESH scratch instances.
 
 import { BlockRenderer } from './block-renderer.js'
 import { aiBlockStyles } from './ai-block-renderer.styles.js'
 import { isJobStale } from './job-status.js'
 import { MentionTokens } from './mention-tokens.js'
-// The chip is SHARED look-and-feel, not ai-block's: the footer chip, the
-// composer chip and the reference block are one visual object.
 import { ReferenceChip } from './reference-chip.js'
 import { AddressState } from './address-status.js'
 
-/** One attachment as it is persisted: the address is the truth and the title is
- *  what labels it. Nothing else is stored, and nothing is resolved to build the
- *  prompt — the model is given the address and dereferences it itself (MCP
- *  `get_by_uri`) if it decides it needs the contents.
+/** One attachment as it is persisted: the address is the truth, the title is
+ *  what labels it. Nothing is resolved to build the prompt — the model is given
+ *  the address and dereferences it itself (MCP `get_by_uri`) if it needs the
+ *  contents.
  * @typedef {{ uri: string, title?: string }} AiBlockAttachment */
 
 /** @typedef {{ id?: string, ref?: string, type?: 'ASK'|'EXPLAIN'|'BTW', status?: string, createdAt?: string, question?: string, response?: string|null, error?: string|null, model?: string|null, supportsEmbedding?: boolean, attachments?: AiBlockAttachment[] }} AiBlockAttrs */
@@ -75,30 +64,23 @@ export class AiBlockRenderer extends BlockRenderer {
   }
 
   /**
-   * The ATTACHMENTS the question carried, as chips — the FOOTER region, and its
-   * first consumer. Same place the composer puts them, so a question as it was
-   * sent and the answer that came back read alike.
-   *
-   * The row is built ALWAYS and hidden when empty, rather than conditionally
-   * returned: a block created before its server truth arrives has no attachments
-   * yet, and a region that was never built cannot appear on the update() that
-   * brings them.
+   * The ATTACHMENTS the question carried, as chips — the FOOTER region. The row
+   * is built ALWAYS and hidden when empty, never conditionally returned: a
+   * region that was never built cannot appear on the update() that brings them.
    * @returns {HTMLElement}
    */
   buildFooter() {
     this.#attachmentsEl = document.createElement('div')
     this.#attachmentsEl.className = 'ai-block__attachments'
-    // setAttribute, not the IDL property: the ATTRIBUTE is what ProseMirror's
-    // DOM parser and the read-only guard read (and what jsdom reflects).
+    // setAttribute, not the IDL property: the ATTRIBUTE is what a DOM parser reads.
     this.#attachmentsEl.setAttribute('contenteditable', 'false')
     this.#fillAttachments(/** @type {AiBlockAttrs} */ (this.block.payload))
     return this.#attachmentsEl
   }
 
   /**
-   * Registers interest in "the user clicked an attachment chip", handing back the
-   * address. A renderer never opens a document itself; the NodeView adapter that
-   * holds it does.
+   * Registers interest in "the user clicked an attachment chip", handing back
+   * the address. A renderer never opens a document itself.
    * @param {(uri: string) => void} fn
    * @returns {() => void} unsubscribe
    */
@@ -108,28 +90,20 @@ export class AiBlockRenderer extends BlockRenderer {
   }
 
   /**
-   * Supplies the oracle that says whether an attachment's target still exists. It
-   * is a BUSINESS collaborator, not transport: this class asks "is that document
-   * still there?" and never learns there is a socket behind the answer.
-   *
-   * It is INJECTED because the renderer contract fixes the constructor at
-   * (block, provider, handleBuild), and because one oracle per editor is what
-   * keeps a redraw from costing a round trip. Passing it is optional: a bare page
-   * renders the cached faces.
+   * Supplies the oracle that says whether an attachment's target still exists —
+   * a BUSINESS collaborator, not transport, and one per editor so a redraw costs
+   * no round trip. Optional: a bare page renders the cached faces.
    * @param {import('./address-status.js').AddressStatus|null} addresses
    */
   probeAttachmentsWith(addresses) {
     this.#addresses = addresses || null
-    // Redraw so the call site may come either side of render() — the row
-    // guards on its own ref, so before it there is simply nothing to do.
+    // Redraw: the call site may come either side of render(), and the row guards on its own ref.
     this.#fillAttachments(/** @type {AiBlockAttrs} */ (this.block.payload))
   }
 
   /**
-   * The markdown the BODY shows — response when complete, else a status line —
-   * derived from THIS instance's block. The renderer OWNS this mapping; the
-   * editor-lens seam reads it from a FRESH scratch instance per pass (contract
-   * chain of custody) and parses it into PM.
+   * The markdown the BODY shows — response when complete, else a status line.
+   * The renderer OWNS this mapping.
    * @returns {string}
    */
   bodyMarkdown() {
@@ -150,17 +124,14 @@ export class AiBlockRenderer extends BlockRenderer {
     this.#renderBadge(attrs)
     this.#fillQuestion(attrs)
     this.#fillAttachments(attrs)
-    // Body patch is REF-GUARDED — a claimed (externally managed) body recorded
-    // no #contentEl, so PM's body is left alone with no update() override needed.
+    // Body patch is REF-GUARDED — a claimed body recorded no #contentEl.
     if (this.#contentEl) this.fillBody(this.#contentEl, this.bodyMarkdown())
   }
 
   /**
    * Renders the question AND marks the `@Title` tokens it attached, in that
    * order: the marking works on the RENDERED prose, so the markdown rendering of
-   * the question is untouched by it. The literal `@Auth Design` reading in the
-   * accent its footer chip carries is what says "that name in the sentence and
-   * that chip are one object" — and only the titles the block actually attached
+   * the question is untouched by it. Only the titles the block actually attached
    * are marked, so an email address or a stray `@` stays prose.
    * @param {AiBlockAttrs} attrs
    */
@@ -188,13 +159,10 @@ export class AiBlockRenderer extends BlockRenderer {
 
   /**
    * Asks, ONCE per address, whether each chip's target is still there, and
-   * redraws when an answer turns one dangling. Calling this from a draw pass is
-   * safe precisely because AddressStatus caps a probe at one per address for
-   * the editor's life: a row rebuilt on every keystroke adds no wire traffic.
-   *
-   * Only a DANGLING answer redraws. LIVE and UNKNOWN change no pixel, and
-   * redrawing on them would rebuild the row from inside its own rebuild for
-   * nothing.
+   * redraws when an answer turns one dangling. Safe to call from a draw pass
+   * precisely because AddressStatus caps a probe at one per address for the
+   * editor's life. Only a DANGLING answer redraws — LIVE and UNKNOWN change no
+   * pixel.
    * @param {AiBlockAttachment[]} list
    */
   #probeAttachments(list) {
@@ -224,13 +192,9 @@ export class AiBlockRenderer extends BlockRenderer {
    * One chip, drawn by the SHARED component — what is ai-block's here is only
    * the MAPPING: which of this kind's fields is the label, and what makes one
    * dangling. DANGLING IS A NORMAL STATE, not an error: the chip greys, keeps
-   * its cached title and stays clickable, so it is still identifiable.
-   *
-   * TWO ROUTES REACH THE ONE APPEARANCE. An attachment with no cached face at
-   * all (nothing was ever cached, or the entry predates titles) has only its
-   * address to show; one whose address Go says resolves to nothing has a face
-   * that outlived its document. Both are "orphaned but readable", so both wear
-   * the same chip rather than inventing a second vocabulary.
+   * its cached title and stays clickable. An attachment with no cached face and
+   * one whose face outlived its document are both "orphaned but readable", so
+   * both wear that same chip.
    * @param {AiBlockAttachment} attachment
    * @returns {HTMLElement}
    */
@@ -250,8 +214,7 @@ export class AiBlockRenderer extends BlockRenderer {
 
   /**
    * Has this coordinate been ANSWERED for, negatively? Unasked and unanswered
-   * both read false — a chip is normal until Go says otherwise, so a block never
-   * flickers through a dangling look on its way to a verdict.
+   * both read false — a chip is normal until Go says otherwise.
    * @param {string} uri
    * @returns {boolean}
    */

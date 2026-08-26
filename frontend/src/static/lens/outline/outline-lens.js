@@ -1,26 +1,14 @@
 // @ts-check
-// outline-lens.js — OutlineLens: a read-only lens that paints the container as
-// a list of block cards (issue #96 P3, the facade's pathfinder).
-//
-// It extends Lens directly and demands only the base ContainerProvider, so it
-// is the minimal port profile the wall supports: reads and the presence seam,
-// no verbs, no in-flight text. Anything it needs that the base provider cannot
-// answer is a hole in the contract, which is the point of building it before
-// the editor moves.
-//
-// PM-free and host-free by construction: the only things it imports besides its
-// own base are two `renderers/` utilities, and the import-graph tripwire
-// (frontend/test/lens-isolation.test.js) is the arbiter of what else it may
-// ever reach for.
+// A read-only lens: paints the container as a list of block cards. It extends Lens
+// directly and demands only the base ContainerProvider — reads and the presence
+// seam, no verbs, no in-flight text. PM-free and host-free by construction.
 
 import { Lens } from '../lens.js'
 import { esc } from '../../renderers/html-escape.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
 
-// Attr keys searched, in order, for something worth showing. Kinds keep their
-// payload in an opaque bag, so an outline can only guess at the human-legible
-// member — first hit wins, empty excerpt if none matches, and a kind whose
-// payload is unreadable still gets a card with its kind word.
+// Attr keys searched, in order, for something human-legible to show. First hit
+// wins; a kind whose payload is unreadable still gets a card with its kind word.
 const EXCERPT_KEYS = Object.freeze([
   'title', 'question', 'content', 'source', 'text', 'url', 'filename', 'response', 'alt', 'src',
 ])
@@ -85,9 +73,9 @@ export class OutlineLens extends Lens {
   }
 
   /**
-   * `orderChanged` is the whole patch decision: it is set by every fold that
-   * moved a child in or out of the list (the bootstrap cue included), and clear
-   * for every fold that only rewrote one in place.
+   * `orderChanged` is the whole patch decision: it is set by every fold that moved
+   * a child in or out of the list (the bootstrap cue included), and clear for every
+   * fold that only rewrote one in place.
    * @param {Readonly<import('../../contract/container-update-listener.js').ContainerChange>} change
    */
   paint(change) {
@@ -96,8 +84,6 @@ export class OutlineLens extends Lens {
     else this.#patch(root, change.blockIds)
   }
 
-  // ── Painting ───────────────────────────────────────────────────────────────
-
   /** The list element, built on first paint — `mount` cannot build it, because
    *  subscribing cues the first paint before `mount` returns.
    *  @returns {HTMLElement} */
@@ -105,8 +91,6 @@ export class OutlineLens extends Lens {
     if (this.#root) return this.#root
     const root = document.createElement('div')
     root.className = 'sieve-outline'
-    // One delegated listener rather than one per card: the card elements come
-    // and go with every fold, and a per-card listener would go with them.
     root.addEventListener('click', (event) => this.#onClick(event))
     this.#root = root
     const host = /** @type {HTMLElement} */ (this.host)
@@ -182,8 +166,6 @@ export class OutlineLens extends Lens {
     }
     return ''
   }
-
-  // ── Presence ───────────────────────────────────────────────────────────────
 
   /** @param {Event} event */
   #onClick(event) {

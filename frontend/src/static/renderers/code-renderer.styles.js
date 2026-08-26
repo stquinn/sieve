@@ -1,37 +1,12 @@
 // @ts-check
-// code-renderer.styles.js — CodeRenderer's stylesheet, a sibling module per
-// the styles-file-geography convention (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
-// "Styles file geography"): a renderer file starts with its class — behaviour
-// first, never a CSS wall — so any sheet over ~30 lines lives in its own
-// `<kind>-renderer.styles.js` sibling module, imported into the class's
-// `static styles`. This module is renderer-internal — nothing outside
-// code-renderer.js imports it.
-//
-// Carried verbatim from editor.css's former UNSCOPED `.sieve-block--code` /
-// `.sieve-block__body` / `.sieve-block__gutter` / `.sieve-block__code-area` /
-// `.sieve-block__highlight` / `.sieve-block__edit` rules (moved here in the
-// same change per the spec — style carriage is never a separate pass), now
-// SCOPED under `.sieve-block--code` so this kind owns a complete, independent
-// copy (mirroring how diagram-renderer.styles.js scoped its own body chrome
-// under `.sieve-block--diagram` in Phase 2, rather than relying on the
-// generic unscoped selectors). 'log' shares this exact body-chrome shape
-// (its dom used to ALSO carry the `sieve-block--code` class to borrow this
-// styling — see log-renderer.styles.js's header for why that coupling was
-// retired in the same phase) and gets its OWN scoped copy at its migration —
-// once both consumers have one, the generic unscoped rules in editor.css are
-// dead and removed (the P4 sweep).
+// CodeRenderer's stylesheet, SCOPED under `.sieve-block--code` so this kind owns
+// a complete, independent copy of its shell and body chrome. Renderer-internal,
+// and colour comes only from --theme-* vars / color-mix.
 //
 // The `--sieve-focus-accent` custom property declaration on `.sieve-block--code`
 // stays FRAMEWORK-owned in editor.css (it feeds the shared generic
 // `.sieve-block:focus-within` / `.ProseMirror-selectednode` rule every kind's
-// shell participates in) — only the kind's OWN visual properties (shell
-// background/border/radius, body/gutter/code-area chrome) move here.
-//
-// One change versus the old rule set (house rule: no hardcoded colour
-// literals): the hover box-shadow's rgba(0,0,0,.25) becomes a color-mix
-// against --theme-bgDark, matching the conversion diagram-renderer.styles.js
-// and ai-block-renderer.styles.js already established for the identical
-// unconverted-rgba idiom.
+// shell participates in) — only the kind's OWN visual properties live here.
 
 export const codeStyles = /* css */ `
   .sieve-block--code {

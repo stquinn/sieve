@@ -1,31 +1,21 @@
 // @ts-check
-// address-status.js — AddressStatus: what is known about whether the coordinates
-// a document renders still point at something (#82).
+// AddressStatus — what is known about whether the coordinates a document
+// renders still point at something.
 //
-// A PERSISTED ATTACHMENT KEEPS ITS OWN FACE. An ai-block stores `{uri, title}`
+// A PERSISTED ATTACHMENT KEEPS ITS OWN FACE: an ai-block stores `{uri, title}`
 // and nothing more, so a chip whose target document has since been deleted goes
-// on showing the cached title with nothing to say the document is gone. The
-// answer is already on the wire: `mention-resolve` replies `found:false` with a
-// reason rather than dropping the frame, so "is that still there?" costs one
-// round trip and no new frame.
+// on showing the cached title. `mention-resolve` answers "is that still there?"
+// in one round trip.
 //
-// THE POLICY IS WHY THIS IS NOT A METHOD ON MentionService. That class
-// round-trips whatever it is asked, and cadence is deliberately the caller's
-// business — the picker's debounce lives in the picker. Here the caller is a
-// RENDERER, and a renderer redraws on every transaction that touches its node:
-// asking per chip per redraw would put a frame on the wire per character typed.
-// So an address is asked about AT MOST ONCE, and every later redraw reads the
-// remembered verdict instead.
-//
-// ITS LIFETIME IS THE EDITOR'S, and that is the whole of the cache-invalidation
-// story: AbstractEditor builds one over its mention peer and it dies with the
-// editor, so reopening a document (or switching back to its tab) asks again. A
-// container that came back is live again on the next fresh load.
+// AN ADDRESS IS ASKED ABOUT AT MOST ONCE, and every later redraw reads the
+// remembered verdict — a renderer redraws on every transaction that touches its
+// node, so asking per chip per redraw would put a frame on the wire per
+// character typed. Its lifetime is the editor's, and that is the whole of the
+// cache-invalidation story: reopening a document asks again.
 //
 // AN UNANSWERED PROBE IS NOT A VERDICT. A timed-out round trip leaves the
 // address UNKNOWN, and it is not retried — greying a document that is merely
-// unreachable would be a lie told confidently, and re-asking on each redraw is
-// the chatter this class exists to prevent.
+// unreachable would be a lie told confidently.
 
 import { ContractViolation } from '../contract/sieve-block.js'
 
@@ -44,9 +34,8 @@ export const AddressState = Object.freeze({
 
 /**
  * The one thing this class needs of a wire peer: ask where a coordinate opens.
- * MentionService satisfies it; a test stub satisfies it in three lines. Neither
- * `found:false` (the address resolves to nothing) nor `null` (no answer came)
- * may reject — see MentionService.resolve.
+ * Neither `found:false` (the address resolves to nothing) nor `null` (no answer
+ * came) may reject.
  * @typedef {object} AddressResolver
  * @property {(uri: string) => Promise<{found: boolean}|null>} resolve
  */

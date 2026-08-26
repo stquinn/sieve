@@ -1,28 +1,19 @@
 // @ts-check
-// log-renderer.js — LogRenderer: the renderer half of the 'log' kind's
-// renderer/NodeView split (Block Renderer Contract,
-// docs/design/archive/specs/2026-07-21-block-renderer-contract.md). Owns look-and-feel
-// ONLY: the block shell, the HEADER (badge + format + raw/explore toggle +
-// noise | filter + column buttons), the raw-text body (gutter + code-area) and
-// the Explore table, and this kind's stylesheet (`static styles`). Zero
-// ProseMirror/editor/window.* dependencies.
+// LogRenderer — the 'log' kind's look-and-feel: the block shell, the HEADER
+// (badge + format + raw/explore toggle + noise | filter + column buttons), the
+// raw-text body (gutter + code-area), the Explore table, and this kind's
+// stylesheet.
 //
-// buildHeader() lays out a LogHeader via a HeaderBar; its controls call this
-// renderer's SEMANTIC VERBS (setMode — core API; setFilter / toggleNoise /
-// toggleColumn — kind-specific verbs under the abstract-consumer rule: the
-// header is this kind's own chrome). setMode maps the MODE enum to this kind's
-// wire strings (raw/explore) privately via _pushAttrs. buildBody() builds the
-// raw/explore surfaces and kicks off the async parsed-JSON table. WHICH columns
-// exist is data-driven: once the asset loads the renderer stores the columns
-// (renderer-owned state, read by the header via renderer.columns) and
-// re-renders its header — the live Filter… input survives that re-render via
-// HeaderBar's adopt/restoreFocusedControl.
+// buildBody() builds the raw/explore surfaces and kicks off the async
+// parsed-JSON table. WHICH columns exist is data-driven: once the asset loads
+// the renderer stores the columns (renderer-owned state, read by the header via
+// renderer.columns) and re-renders its header — the live Filter… input survives
+// that re-render via HeaderBar's adopt/restoreFocusedControl.
 //
-// PM-specific concerns stay adapter-side: the raw text is ProseMirror-owned
-// (the adapter binds the <code>, exposed as renderer.codeElement), the log-line
+// PM-specific concerns stay adapter-side: the raw text is ProseMirror-owned (the
+// adapter binds the <code>, exposed as renderer.codeElement), the log-line
 // DECORATION plugin, the read-only guard plugin, and resolving parsedAssetRef →
-// URL against the held Editor's uuid (overlaid onto the block as
-// resolvedAssetUrl).
+// URL against the held Editor's uuid (overlaid as resolvedAssetUrl).
 
 import { BlockRenderer } from './block-renderer.js'
 import { MODE } from '../contract/sieve-block.js'
@@ -38,9 +29,6 @@ const RAW_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" strok
 const EXPLORE_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
   '<rect x="1" y="1" width="8" height="8" rx="1"/><line x1="1" y1="4" x2="9" y2="4"/><line x1="4" y1="4" x2="4" y2="9"/></svg>'
 
-// ── Header provider — the richest toolbar. The ctx IS the renderer (contract
-// rule): controls speak its semantic verbs; the available columns are read
-// off renderer.columns. ──
 class LogHeader extends AdvancedHeaderProvider {
   badge() { return 'Log' }
 
@@ -127,7 +115,6 @@ export class LogRenderer extends BlockRenderer {
   static styles = logStyles
   static rootClass = 'sieve-block sieve-block--log'
 
-  // ── Shared attrs-decision helpers (consumed by THIS class and LogHeader) ──
   /** @param {LogAttrs} attrs @returns {'raw'|'explore'} */
   static mode(attrs) { return /** @type {'raw'|'explore'} */ (attrs.mode || (attrs.parsedAssetRef ? 'explore' : 'raw')) }
   /** @param {LogAttrs} attrs @returns {boolean} */
@@ -163,9 +150,6 @@ export class LogRenderer extends BlockRenderer {
 
   /** @returns {HTMLElement} */
   buildHeader() {
-    // The header's context IS this renderer — controls speak the semantic
-    // verbs (setMode / setFilter / toggleNoise / toggleColumn), never attr
-    // names or injected closures.
     this.#headerBar = new HeaderBar(new LogHeader())
     return this.#headerBar.render(/** @type {LogAttrs} */ (this.block.payload), this)
   }
@@ -228,10 +212,9 @@ export class LogRenderer extends BlockRenderer {
     return body
   }
 
-  /** THE inbound truth channel. @param {import('../contract/sieve-block.js').SieveBlock} block */
+  /** @param {import('../contract/sieve-block.js').SieveBlock} block */
   update(block) {
-    // Previous truth read BEFORE super stores the new block (the base's
-    // block is the ONE copy of state — no shadow caches, by contract).
+    // Previous truth read BEFORE super stores the new block.
     const prev = /** @type {LogAttrs} */ (this.block.payload)
     super.update(block)
     const attrs = /** @type {LogAttrs} */ (block.payload)
@@ -240,8 +223,6 @@ export class LogRenderer extends BlockRenderer {
     this.#syncBody(attrs, assetChanged)
   }
 
-  // ── Semantic verbs (core setMode + this kind's own — contract
-  //    §abstract-consumer rule: LogHeader is this kind's own chrome) ──────────
 
   /**
    * MODE → this kind's wire strings, privately: EDIT → 'raw' (the editable
@@ -272,10 +253,8 @@ export class LogRenderer extends BlockRenderer {
 
   /**
    * Outbound truth report — THIS kind's content attr is `source`, knowledge
-   * that lives here and nowhere else (contract §setContent direction; the
-   * retired v1 applier used to do this mapping adapter-side). The log body is
-   * read-only in the editor, so no lens drives this today — declared for
-   * contract completeness.
+   * that lives here and nowhere else. The log body is read-only in the editor,
+   * so no lens drives this today — declared for contract completeness.
    * @param {string} text
    */
   setContent(text) { this._pushAttrs({ source: text }) }
@@ -333,9 +312,8 @@ export class LogRenderer extends BlockRenderer {
     fetch(attrs.resolvedAssetUrl).then((res) => res.json()).then((data) => {
       this.#loadingAsset = false
       this.#loadedJson = data
-      // WHICH columns exist is now known — store them (renderer-owned) and
-      // re-render the header so the column buttons appear. Truth is read live
-      // off the block (it may have advanced while the fetch was in flight).
+      // WHICH columns exist is now known — store them and re-render the header.
+      // Truth is read live off the block (it may have advanced mid-fetch).
       const live = /** @type {LogAttrs} */ (this.block.payload)
       this.#cols = this.#availableColumns()
       if (this.#headerBar) this.#headerBar.update(live, this)

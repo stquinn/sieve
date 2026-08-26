@@ -1,47 +1,29 @@
 // @ts-check
-// ComposerAttachments: what the Ask composer has attached to the message being
-// written, and the chip row that shows it.
+// What the Ask composer has attached to the message being written, and the chip
+// row that shows it. The chips live in `.ask-popup__footer`, left of Send, and
+// overflow scrolls horizontally rather than growing the panel, because the
+// footer's height feeds ui/layout.js's askPanelMinHeight.
 //
-// The chips live in the EXISTING `.ask-popup__footer` (index.html) — a chip
-// region on the left, Send on the right. Overflow scrolls horizontally rather
-// than growing the panel, because the footer's height feeds ui/layout.js's
-// askPanelMinHeight.
+// THE MODEL AND ITS CHIPS ARE ONE TYPE: every mutation re-renders from the list.
 //
-// THE MODEL AND ITS CHIPS ARE ONE TYPE. The chips ARE this data drawn: every
-// mutation re-renders from the list rather than patching the DOM in parallel.
-//
-// URI IS IDENTITY, TITLE IS AN ECHO. Two library notes may both be called
-// "Notes": two attachments, two addresses, one text token each. Dedupe is by
-// uri, and reconciliation PAIRS tokens to attachments per title rather than
-// asking "is this title present", so deleting one of two `@Notes` tokens drops
-// exactly one attachment.
+// URI IS IDENTITY, TITLE IS AN ECHO. Two library notes may both be called "Notes".
+// Dedupe is by uri, and reconciliation PAIRS tokens to attachments per title
+// rather than asking "is this title present", so deleting one of two `@Notes`
+// tokens drops exactly one.
 //
 // THE CHIP IS A VIEW OF THE TOKENS IN THE MESSAGE; THE TEXT IS WHAT YOU EDIT.
-// Two rules carry that:
+// `#known` is every candidate accepted since the composer was last cleared;
+// `#attached` is the subset a `@Title` token currently carries. Reconciling
+// RE-DERIVES the second from the first, so a token that comes back re-attaches.
+// The invariant is one-way: a chip implies a token, a token does not imply a chip.
 //
-//   • the pool and the view are separate. `#known` is every candidate accepted
-//     since the composer was last cleared; `#attached` is the subset a `@Title`
-//     token currently carries — the chips, and what send carries. Reconciling
-//     RE-DERIVES the second from the first, so a token that comes back (undo, a
-//     retyped title) re-attaches;
-//   • the INVARIANT is one-way: a chip implies a token, a token does not imply a
-//     chip. `@Auth Design` typed as prose and never accepted is just prose, and
-//     a chip can never outlive its token.
+// THE ✕ FORGETS; EDITING THE TEXT DOES NOT. ✕ means "I do not want this
+// attached", so its document leaves `#known`; a text edit means "I am editing my
+// sentence", so it stays pooled. Forgetting is by URI, never by title.
 //
-// THE ✕ FORGETS; EDITING THE TEXT DOES NOT. Both gestures take the chip and its
-// token and differ only in intent: ✕ means "I do not want this attached", so its
-// document leaves `#known` and writing that title again is ordinary prose; a
-// text edit means "I am editing my sentence", so its document stays pooled and
-// the token coming back re-attaches it. Forgetting is by URI, never by title.
-//
-// DETACHING DEMOTES. An attachment the text lost moves to the BACK of the pool
+// DETACHING DEMOTES: an attachment the text lost moves to the BACK of the pool
 // before the pairing is redone, so a remaining identical `@Notes` pairs with the
 // attachment the user did not touch.
-//
-// THE CHIP IS THE SHARED VOCABULARY, DRAWN LOCALLY. A block draws it with the
-// ReferenceChip component; the composer cannot, because it is not a block and
-// carries no block styles. The `--chip-*` tokens (editor.css `:root`) are what
-// unify the two, so change what a chip looks like in the tokens.
 
 import { esc } from '../renderers/html-escape.js'
 // The token rule is SHARED with the ai-block, which marks the same `@Title`
@@ -85,7 +67,7 @@ export class ComposerAttachments {
   /** @type {Attachment[]} THE POOL: every candidate accepted since the composer
    *  was last cleared, insertion-ordered. Only clear() and the chip's ✕ take
    *  anything out of it — a document the TEXT lost stays, which is what lets an
-   *  undone deletion re-attach instead of being lost. */ #known = []
+   *  undone deletion re-attach. */ #known = []
   /** @type {Attachment[]} THE VIEW: the subset a `@Title` token carries right
    *  now. The chips, and what send carries. */ #attached = []
   /** @type {HTMLElement|null} the chip row (null → headless: model-only, all verbs still work) */ #row = null
@@ -95,14 +77,13 @@ export class ComposerAttachments {
 
   /**
    * @param {HTMLElement|null} footerEl the structural `.ask-popup__footer`. The
-   *   row is CREATED here (the panel's own DOM is never rebuilt) and inserted
-   *   before Send, which stays the footer's last child.
+   *   row is CREATED here and inserted before Send, which stays the last child.
    * @param {HTMLTextAreaElement|null} [textarea] the composer. The tokens live in
    *   it, so every verb that removes an attachment removes its text too.
    * @param {((edit: () => void) => void)|null} [applyEdit] how to perform a
-   *   programmatic edit of that text. The panel passes the picker's own-edit
-   *   gate, so the `input` such an edit fires is understood as OURS and does not
-   *   reopen the picker on what was just deleted. Defaults to plain application.
+   *   programmatic edit of that text. The panel passes the picker's own-edit gate,
+   *   so the `input` such an edit fires is understood as OURS and does not reopen
+   *   the picker on what was just deleted. Defaults to plain application.
    */
   constructor(footerEl, textarea = null, applyEdit = null) {
     this.#textarea = textarea || null
@@ -112,36 +93,25 @@ export class ComposerAttachments {
     row.className = 'ask-popup__chips'
     // Send is the anchor, not the first child: TargetChips draws its own row into
     // this same footer, and inserting at the front would put a row built LATER
-    // ahead of one built earlier. insertBefore(null) appends, so a footer with no
-    // Send still works.
+    // ahead of one built earlier.
     footerEl.insertBefore(row, footerEl.querySelector('.ask-popup__send'))
     this.#row = row
     this.#render()
   }
 
-  // ── Reads ──────────────────────────────────────────────────────────────────
-
   /** @returns {number} how many documents are attached */
   get size() { return this.#attached.length }
 
-  /**
-   * The persisted shape: `{uri, title}` and nothing else.
-   *
-   * NOTHING is resolved on the way out — the prompt's manifest is rendered from
-   * these two fields alone, and anything richer a chip holds (`kind`, `detail`)
-   * is picker dressing that must not reach storage.
-   * @returns {AttachmentEntry[]}
-   */
+  /** The persisted shape: `{uri, title}` and nothing else. Anything richer a chip
+   *  holds is picker dressing that must not reach storage.
+   *  @returns {AttachmentEntry[]} */
   manifest() {
     return this.#attached.map((a) => ({ uri: a.uri, title: a.title }))
   }
 
-  // ── Writes ─────────────────────────────────────────────────────────────────
-
   /**
-   * Attaches a picked candidate. Idempotent while it IS attached — attaching the
-   * same document twice adds no context, so the second accept is a no-op (its
-   * `@Title` echo still lands in the text, which is the user's business). A
+   * Attaches a picked candidate. Idempotent while it IS attached, so a second
+   * accept is a no-op — though its `@Title` echo still lands in the text. A
    * document whose token was deleted is NOT attached, so accepting it again
    * genuinely re-attaches.
    * @param {MentionCandidate|null} candidate
@@ -157,23 +127,19 @@ export class ComposerAttachments {
       detail: (candidate && candidate.detail || '').trim(),
     })
     // Newest last in BOTH lists, so the pool order the pairing walks and the chip
-    // order the user sees are the same order.
+    // order the user sees are the same.
     this.#retain(item)
     this.#attached = this.#attached.concat([item])
     this.#render()
     return true
   }
 
-  /**
-   * Detaches by address — the ✕ on a chip. It removes the `@Title` echo from the
-   * message as well, and it FORGETS the document: a pooled document would
-   * silently re-attach when its title was written again. Accepting it from the
-   * picker again is how it comes back.
-   * @param {string} uri
-   */
+  /** Detaches by address — the ✕ on a chip. It removes the `@Title` echo too, and
+   *  it FORGETS the document: a pooled one would silently re-attach when its title
+   *  was written again. @param {string} uri */
   remove(uri) {
-    // The pool is the superset, so looking there finds an attachment whether it
-    // is currently attached or not. Pair BEFORE forgetting: #pairs walks #known.
+    // The pool is the superset, so this finds an attachment whether attached or
+    // not. Pair BEFORE forgetting: #pairs walks #known.
     const item = this.#known.find((a) => a.uri === uri)
     if (!item) return
     const pair = this.#pairs(this.#text()).find((p) => p.item.uri === uri) || null
@@ -183,15 +149,12 @@ export class ComposerAttachments {
 
   /**
    * ATOMIC TOKEN DELETION. If `caret` sits at the RIGHT EDGE of an attached
-   * document's `@Title` token, that whole token — not one character of it — goes,
-   * and its chip with it, so a half-broken `@Auth Desig` is unreachable by the
-   * ordinary gesture.
-   *
-   * It is still a TEXT edit, so the document stays pooled and typing the title
-   * back re-attaches it.
+   * document's `@Title` token, that whole token goes and its chip with it, so a
+   * half-broken `@Auth Desig` is unreachable by the ordinary gesture. It is still
+   * a TEXT edit, so the document stays pooled and typing the title back re-attaches.
    * @param {number} caret
-   * @returns {boolean} whether a token was deleted (i.e. whether the caller's
-   *   keypress was consumed)
+   * @returns {boolean} whether a token was deleted, and so whether the caller's
+   *   keypress was consumed
    */
   detachAt(caret) {
     if (!this.#textarea) return false
@@ -212,12 +175,9 @@ export class ComposerAttachments {
 
   /**
    * RECONCILIATION: re-derives what is attached from the message as written, on
-   * EVERY composer edit, so a chip never outlives its token.
-   *
-   * It re-derives rather than prunes, so a token that comes BACK (undo, a retyped
-   * title) re-attaches from the pool. Pairing per title rather than testing
-   * presence is what makes duplicate titles work: two "Notes" attachments survive
-   * two `@Notes` tokens, and exactly one survives one.
+   * EVERY composer edit, so a chip never outlives its token. It re-derives rather
+   * than prunes, so a token that comes BACK re-attaches from the pool. Pairing per
+   * title rather than testing presence is what makes duplicate titles work.
    * @param {string} text the message as written
    * @returns {AttachmentEntry[]} the surviving manifest
    */
@@ -227,15 +187,11 @@ export class ComposerAttachments {
     return this.manifest()
   }
 
-  // ── Tokens ─────────────────────────────────────────────────────────────────
-
   /**
    * Pairs each pooled attachment with the `@Title` token carrying it, walking the
-   * pool in order and handing each attachment the next unspoken-for token of its
-   * title. An attachment with no token left is simply absent from the result —
-   * which is precisely what "not attached" means. What IS a token is
-   * MentionTokens' rule: at the start or after whitespace, so "mail me@Auth
-   * Design" is an address.
+   * pool in order and handing each the next unspoken-for token of its title. An
+   * attachment with no token left is absent from the result, which is precisely
+   * what "not attached" means. What IS a token is MentionTokens' rule.
    * @param {string} text
    * @returns {TokenPair[]}
    */
@@ -256,37 +212,29 @@ export class ComposerAttachments {
   #text() { return this.#textarea ? this.#textarea.value : '' }
 
   /**
-   * Puts `item` at the BACK of the pool, adding it if it is new. Pool order is
-   * the order `#pairs` hands out tokens, so touching an attachment sends it to
-   * the last identical `@Notes` — which is what keeps duplicate titles honest:
-   * with the first token deleted, the survivor must pair with the attachment the
-   * user did not touch.
+   * Puts `item` at the BACK of the pool, adding it if new. Pool order is the order
+   * `#pairs` hands out tokens, so touching an attachment sends it to the last
+   * identical `@Notes` — which keeps duplicate titles honest: with the first token
+   * deleted, the survivor pairs with the attachment the user did not touch.
    * @param {Attachment} item
    */
   #retain(item) {
     this.#known = this.#known.filter((a) => a.uri !== item.uri).concat([item])
   }
 
-  /**
-   * Takes `item` off the chip row and cuts its token out of the message. The
-   * caller has already settled its fate in the POOL — retained or forgotten is
-   * the only thing the two removal gestures disagree about.
-   * @param {Attachment} item
-   * @param {{start: number, end: number}|null} span its token, if it still has one
-   */
+  /** Takes `item` off the chip row and cuts its token out of the message. The
+   *  caller has already settled its fate in the POOL.
+   *  @param {Attachment} item
+   *  @param {{start: number, end: number}|null} span its token, if it still has one */
   #drop(item, span) {
     this.#attached = this.#attached.filter((a) => a.uri !== item.uri)
     this.#render()
     if (span) this.#cut(span.start, span.end)
   }
 
-  /**
-   * Cuts `[start, end)` out of the message, taking ONE trailing space with it
-   * when the token was sitting in a gap — deleting a word must not leave the hole
-   * it was in. The caret lands where the token began, as it would after any
-   * deletion.
-   * @param {number} start @param {number} end
-   */
+  /** Cuts `[start, end)` out of the message, taking ONE trailing space with it when
+   *  the token sat in a gap — deleting a word must not leave the hole it was in.
+   *  @param {number} start @param {number} end */
   #cut(start, end) {
     const textarea = this.#textarea
     if (!textarea) return
@@ -303,8 +251,6 @@ export class ComposerAttachments {
     })
   }
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-
   /** Redraws the chip row from the view. */
   #render() {
     const row = this.#row
@@ -314,12 +260,9 @@ export class ComposerAttachments {
     for (const item of this.#attached) row.appendChild(this.#chip(item))
   }
 
-  /**
-   * One chip: the document's title, its detail as the tooltip (how two chips
-   * with the same title are told apart), and a ✕.
-   * @param {Attachment} item
-   * @returns {HTMLElement}
-   */
+  /** One chip: the title, its detail as the tooltip (how two chips with the same
+   *  title are told apart), and a ✕.
+   *  @param {Attachment} item @returns {HTMLElement} */
   #chip(item) {
     const chip = document.createElement('span')
     chip.className = 'ask-chip'
@@ -331,8 +274,8 @@ export class ComposerAttachments {
       '<button type="button" class="ask-chip__remove" aria-label="Remove ' + esc(item.title) + '">&#10005;</button>'
 
     const remove = /** @type {HTMLElement} */ (chip.querySelector('.ask-chip__remove'))
-    // mousedown is swallowed so clicking ✕ never pulls focus out of the composer
-    // (which would fire the popover's blur dismissal and close the panel's box).
+    // mousedown is swallowed so clicking ✕ never pulls focus out of the composer,
+    // which would fire the popover's blur dismissal.
     remove.addEventListener('mousedown', (e) => e.preventDefault())
     remove.addEventListener('click', (e) => {
       e.preventDefault()

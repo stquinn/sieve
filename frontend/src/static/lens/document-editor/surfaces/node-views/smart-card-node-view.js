@@ -1,24 +1,15 @@
-// smart-card-node-view.js — Sieve NodeView ADAPTER for the 'smart-card' kind
-// (the PM half of the renderer/NodeView split; NORMATIVE contract:
-// docs/design/archive/specs/2026-07-21-block-renderer-contract.md). Look-and-feel (the
-// card shell, OG-style layout, loading chrome, this kind's stylesheet) lives
-// in SmartCardRenderer (frontend/src/static/renderers/smart-card-renderer.js
-// — a DIFFERENT class). This
-// file HOLDS a SmartCardRenderer instance by COMPOSITION and owns everything
-// that genuinely speaks ProseMirror: schema data (nodeConfig/attrs/parseAttrs),
-// chrome-host click shielding, click-to-edit-when-no-href (dispatches
-// `sieve:smart-card-edit`), Mod+Click to open the URL via the Wails runtime,
-// and Mod+Click to open the URL via the Wails runtime — all of which need the
-// NodeView's closure, so per the PM-specificity sorting test they stay
-// adapter-side. The renderer's semantic verbs (setLink) leave through the
-// ContainerTransport, the wire owner (issue #49 Phase 1 — appliers retired).
+// The NodeView adapter for the 'smart-card' kind. Look-and-feel — the card
+// shell, OG-style layout, loading chrome, this kind's stylesheet — belongs to
+// SmartCardRenderer, which this file holds by composition. What lives here is
+// everything that speaks ProseMirror: schema data (nodeConfig/attrs/parseAttrs),
+// chrome-host click shielding, click-to-edit when there is no href (dispatches
+// `sieve:smart-card-edit`), and Mod+Click to open the URL via the Wails runtime —
+// all of which need the NodeView's closure.
 //
-// The edit dialog is NOT here any more. Restoring prose links (#67) gave the
-// "URL + display title" popup a second consumer that shares nothing with this
-// kind, so it was hoisted whole into ui/link-edit-dialog.js (LinkEditDialog —
-// the shared surface both call). What stays adapter-side is the PM-bound half:
-// resolving the block id to its live renderer and landing the save on the
-// renderer's own semantic verb (setLink).
+// The edit dialog itself is NOT here: the "URL + display title" popup is shared
+// with prose links and lives in ui/link-edit-dialog.js. What stays adapter-side
+// is the PM-bound half — resolving the block id to its live renderer and landing
+// the save on the renderer's own setLink.
 
 import { registerSieveRenderer, sieveBlockFor } from '../sieve-block-extension.js'
 import { SmartCardRenderer } from '../../../../renderers/smart-card-renderer.js'
@@ -27,10 +18,9 @@ import { openLinkEditor } from '../../../../ui/link-edit-dialog.js'
 ;(function () {
   'use strict'
 
-  // liveRenderers — id → live SmartCardRenderer instance. The edit dialog (a
-  // module-level singleton driven by `sieve:smart-card-edit`) resolves the
-  // block's renderer here so its SAVE lands on the renderer's own semantic
-  // verb (setLink) — never on wire ops from this file.
+  // id → live SmartCardRenderer instance. The edit dialog, a module-level
+  // singleton driven by `sieve:smart-card-edit`, resolves the block's renderer
+  // here so its SAVE lands on setLink and never on a wire op from this file.
   /** @type {Record<string, any>} */
   var liveRenderers = {}
 
@@ -82,21 +72,15 @@ import { openLinkEditor } from '../../../../ui/link-edit-dialog.js'
       var nodeTypeName = 'sieve-smart-card'
       var currentAttrs = Object.assign({}, node.attrs)
 
-      // The renderer instance this NodeView HOLDS by composition (never
-      // inheritance — see the file header). It builds itself from the typed
-      // block (no live overlay — this kind has no lens-supplied fields);
-      // this adapter only supplies PM-only click/interaction concerns around
-      // it; its semantic verbs (setLink) hit the real wire through the
-      // ContainerTransport.
       var renderer = new SmartCardRenderer(sieveBlockFor(node, undefined, ctx && ctx.provider), ctx.provider || null)
 
       var dom = renderer.render()
       if (currentAttrs.id) liveRenderers[currentAttrs.id] = renderer
 
-      // The block-chrome host (gutter line number + drag handle) is injected as the
-      // card's first child, so its events bubble here.  Ignore them: a handle click
-      // is a block selection, and a handle drag is a reorder — neither should
-      // activate/navigate the card or be cancelled.
+      // The block-chrome host (gutter line number + drag handle) is injected as
+      // the card's first child, so its events bubble here. Ignore them: a handle
+      // click is a block selection and a handle drag is a reorder, so neither
+      // should navigate the card or be cancelled.
       function fromChrome(e) { return e.target && e.target.closest && e.target.closest('.block-chrome-host') }
 
       dom.addEventListener('dragstart', function (e) {
@@ -183,13 +167,11 @@ import { openLinkEditor } from '../../../../ui/link-edit-dialog.js'
 
   registerSieveRenderer('smart-card', SmartCardNodeView)
 
-  // ── Edit dialog binding (the DIALOG itself is ui/link-edit-dialog.js) ────
   //
   // SAVE = the live renderer's semantic verb. The shared dialog is a singleton
-  // and knows nothing about blocks, so this binding resolves the block's
-  // renderer by id (liveRenderers) and calls setLink — the patch reaches the
-  // document through the ContainerTransport (an update-block op on the document's
-  // channel), never a wire op from this file.
+  // that knows nothing about blocks, so this binding resolves the block's renderer
+  // by id and calls setLink; the patch reaches the document as an update-block op,
+  // never a wire op from this file.
   document.addEventListener('sieve:smart-card-edit', function (e) {
     var detail = e.detail || {}
     openLinkEditor({

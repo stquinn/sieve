@@ -1,21 +1,8 @@
 // @ts-check
-// header-bar.js — PM-free header machinery for block renderers (the renderer/
-// NodeView split, docs/design/archive/specs/2026-07-20-block-renderer-extraction.md;
-// living contract in docs/how-to-intelligent-fenced-blocks.md). Everything here
-// is plain DOM: no ProseMirror, no editor/view, no window.* app bus — so a
-// renderer builds its own HEADER region from these collaborators and it works
-// identically in the note lens, a chat turn, or the bare-page harness.
-//
-// This file used to live inside sieve-block-extension.js's registration IIFE
-// (the fossil of the framework-assembles-the-block-around-the-renderer era).
-// It moved here when renderers took ownership of their own header: a kind's
-// buildHeader() creates a HeaderBar and returns its bar; the kind's update()
-// drives HeaderBar.update() so active states track live attrs. Focus survival
-// across that re-render (log's live Filter… input) rides along in HeaderBar via
-// adopt/restoreFocusedControl. The provider family (AdvancedHeaderProvider &c.)
-// are the declarative "how to lay out the bar" collaborators HeaderBar uses.
-
-// ── Small builders ────────────────────────────────────────────────────────
+// PM-free header machinery for block renderers: plain DOM, no ProseMirror, no
+// editor/view, no window.* app bus. A kind's buildHeader() creates a HeaderBar
+// and returns its bar; the kind's update() drives HeaderBar.update() so active
+// states track live attrs.
 
 /** @param {string} [cls] @param {string} [tag] @returns {HTMLElement} */
 function hdrEl(cls, tag) {
@@ -47,9 +34,7 @@ function resolveBadge(badge, attrs) {
 }
 
 /**
- * Shared segmented toggle (log's raw/explore, diagram's edit/render both
- * hand-build their own richer variants; this is the plain shared one).
- * onChange(value) is the durable action.
+ * Shared segmented toggle; onChange(value) is the durable action.
  * @param {{value: string, label: string, icon?: string}[]} options
  * @param {string} activeValue
  * @param {(value: string) => void} onChange
@@ -70,8 +55,7 @@ export function segmentedToggle(options, activeValue, onChange) {
 /**
  * The universal EXPAND affordance button. The icon HTML and the click action
  * are injected by the RENDERER's own buildHeader (its expand() verb — one
- * behaviour, every trigger lands on it; contract
- * docs/design/archive/specs/2026-07-21-block-renderer-contract.md).
+ * behaviour, every trigger lands on it).
  * @param {string} iconHtml @param {() => void} onClick @returns {HTMLButtonElement}
  */
 export function expandButton(iconHtml, onClick) {
@@ -82,8 +66,6 @@ export function expandButton(iconHtml, onClick) {
   xb.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); onClick() })
   return xb
 }
-
-// ── Header provider hierarchy (collaborators used inside buildHeader()) ─────
 
 /** Base slot — override render() or subclass AdvancedHeaderProvider. */
 export class SieveBlockHeader {
@@ -130,24 +112,17 @@ export class AdvancedHeaderProvider extends SieveBlockHeader {
   }
 }
 
-// ── Focus survival across a header re-render ────────────────────────────────
 // A header re-render rebuilds the whole toolbar so button states track live
-// attrs. But a header may hold a control the user is actively in — log's
-// Filter… input — and a naive wholesale swap would rob it of focus + caret and
-// reset its value mid-type (which is why the header once SKIPPED the re-render
-// while focus was inside the bar, leaving button states stale — the log toolbar
-// "doesn't redraw" bug). Instead keep the LIVE focused control across the
-// rebuild: move its actual DOM node into the fresh tree at the matching slot
-// (value/caret intact) and re-focus it after mounting (reparenting blurs it).
+// attrs. When the bar holds a control the user is actively in — log's Filter…
+// input — the LIVE focused control is kept across the rebuild: its actual DOM
+// node moves into the fresh tree at the matching slot (value/caret intact) and
+// is re-focused after mounting, since reparenting blurs it.
 
 const HEADER_FOCUSABLE = 'input, textarea, select, button'
 
-// ── HeaderBar — the header's build + focus-preserving re-render ─────────────
-// A kind's buildHeader() creates one and returns its bar (via render); the
-// kind's update() calls HeaderBar.update() so active states track live attrs.
 // The per-block context the provider needs (injected actions + live view state
-// such as log's columns) is passed per call by the kind — document state stays
-// renderer-owned; HeaderBar holds only its current bar element.
+// such as log's columns) is passed per call by the kind; HeaderBar holds only
+// its current bar element.
 
 export class HeaderBar {
   /** @type {SieveBlockHeader} */ #provider
@@ -189,10 +164,6 @@ export class HeaderBar {
     this.#el = fresh
     HeaderBar.restoreFocusedControl(snap)
   }
-
-  // ── Focus survival across a header re-render (static: pure DOM helpers the
-  // re-render owns; also used by the LEGACY headerProvider seam in
-  // sieve-block-extension.js, which drives its own bar swap) ──────────────────
 
   /**
    * Move the live focused control from oldBar into freshBar at the matching slot

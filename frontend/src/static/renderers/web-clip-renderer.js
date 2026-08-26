@@ -1,19 +1,13 @@
 // @ts-check
-// web-clip-renderer.js — WebClipRenderer: the renderer half of the 'web-clip'
-// kind's renderer/NodeView split (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
-// Phase 4 / issue #47). Owns look-and-feel: the block shell, the status chrome
-// (its header — the A7 StatusBadge state machine), the page TITLE, and the
-// fetched/summarised BODY, plus this kind's stylesheet. Zero ProseMirror/editor/
-// window.* dependencies.
+// WebClipRenderer — the 'web-clip' kind's look-and-feel: the block shell, the
+// status chrome (its header), the page TITLE, the fetched/summarised BODY, and
+// this kind's stylesheet.
 //
-// This class is PURE and lens-blind (NORMATIVE contract:
-// docs/design/archive/specs/2026-07-21-block-renderer-contract.md): buildBody() builds
-// AND FILLS the body from bodyMarkdown() (the block's content), and update()
+// buildBody() builds AND FILLS the body from bodyMarkdown(), and update()
 // re-fills it — guarded on the #contentEl ref. In the editor lens the adapter
-// claims the BODY region via handleBuild (no #contentEl recorded; the seam
-// authors body content via fresh scratch instances). Retry is the base's
-// semantic verb (this.retry() → the container provider). Reverse chain-glow hover stays
-// adapter-side (cross-block).
+// claims the BODY region via handleBuild, so no #contentEl is recorded and the
+// seam authors body content via fresh scratch instances. Retry is the base's
+// semantic verb (this.retry()).
 //
 // Status chrome is mount-once/patch: buildHeader() builds the ENTIRE chrome DOM
 // once (badge, [spinner|icon][label], the COMPLETE-only [status][link] pair, the
@@ -74,8 +68,7 @@ export class WebClipRenderer extends BlockRenderer {
         const t = /** @type {HTMLElement} */ (e.target)
         const a = t.closest ? t.closest('a') : null
         if (a && /** @type {HTMLAnchorElement} */ (a).href) {
-          // Prevent Wails navigating the internal webview. (Ctrl+Click is
-          // handled by the global capture in editor.js.)
+          // Prevent Wails navigating the internal webview.
           e.preventDefault()
         }
       })
@@ -150,8 +143,7 @@ export class WebClipRenderer extends BlockRenderer {
     return this.#contentEl
   }
 
-  /** The body markdown, derived from THIS instance's block (the editor-lens
-   *  seam reads it from a fresh scratch instance per pass). @returns {string} */
+  /** The body markdown, derived from THIS instance's block. @returns {string} */
   bodyMarkdown() { return (/** @type {WebClipAttrs} */ (this.block.payload).content || '').trim() }
 
   /** @param {import('../contract/sieve-block.js').SieveBlock} block */

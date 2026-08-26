@@ -1,31 +1,18 @@
-// diagram-node-view.js — Sieve NodeView ADAPTER for the 'diagram' kind (the PM
-// half of the renderer/NodeView split; NORMATIVE contract:
-// docs/design/archive/specs/2026-07-21-block-renderer-contract.md
-// Phase 2 / issue #45). Look-and-feel (attrs in, DOM out, mermaid invocation,
-// the kind's stylesheet) lives in DiagramRenderer
-// (frontend/src/static/renderers/diagram-renderer.js — a DIFFERENT
-// class). This file HOLDS a
-// DiagramRenderer instance by COMPOSITION and owns everything that genuinely
-// speaks ProseMirror: contentDOM binding, caret capture/restore across the
-// mode flip (a NodeView-LOCAL variable since issue #49 Phase 1 — cursorPos
-// left the wire and the schema; caret-restore scope is the NodeView lifetime,
-// intended), the lowlight decoration plugin, selection/stopEvent/
-// ignoreMutation, and the mode-flip dispatch through the live renderer's
-// setMode (whose patch leaves through the ContainerTransport, the wire owner).
-// Keyboard behaviour (Tab/Enter/Mod+Enter toggle) comes from the
-// shared interaction-policy extension via interactionPolicy + onModEnter — do
-// NOT add handleKeyDown here (docs/editor-interaction-contract.md is
-// normative).
+// The NodeView adapter for the 'diagram' kind. Look-and-feel — attrs in, DOM
+// out, mermaid invocation, the kind's stylesheet — belongs to DiagramRenderer,
+// which this file holds by composition. What lives here is everything that
+// genuinely speaks ProseMirror: the contentDOM binding, caret capture/restore
+// across the mode flip, the lowlight decoration plugin,
+// selection/stopEvent/ignoreMutation, and the mode-flip dispatch.
 //
-// Per-kind SCHEMA DATA (nodeConfig/attrs/parseAttrs) stays here, not on
-// DiagramRenderer: it is TipTap/ProseMirror configuration — attrs.parseHTML
-// reads PM's parsed `data-*` HTML attributes, nodeConfig feeds PM's schema
-// builder — consumed exclusively by createSieveNode in sieve-block-extension.js.
-// DiagramRenderer has no use for it standalone (a chat-turn bubble mounting
-// DiagramRenderer directly never touches TipTap attrs), so keeping it here
-// keeps that class PM-agnostic in the fullest sense and leaves the registered
-// descriptor's shape — the contract sieve-block-extension.js's duck-typed
-// registerSieveRenderer() consumes — exactly as that file already expects.
+// Keyboard behaviour (Tab/Enter/Mod+Enter) comes from the shared
+// interaction-policy extension via interactionPolicy + onModEnter — do NOT add a
+// handleKeyDown here; docs/editor-interaction-contract.md is normative.
+//
+// Per-kind SCHEMA DATA (nodeConfig/attrs/parseAttrs) stays here rather than on
+// DiagramRenderer, because it is TipTap configuration: attrs.parseHTML reads PM's
+// parsed `data-*` attributes and nodeConfig feeds PM's schema builder, both
+// consumed only by createSieveNode in sieve-block-extension.js.
 
 import { esc } from '../../../../renderers/html-escape.js'
 import { getLowlight } from '../../../../renderers/highlighting.js'
@@ -35,45 +22,31 @@ import { CODE_TEXT_POLICY } from '../../interaction-policy.js'
 import { MODE } from '../../../../contract/sieve-block.js'
 import { DiagramRenderer } from '../../../../renderers/diagram-renderer.js'
 
-// ensureMermaid / renderDiagramSvgEntry — re-exported for the two existing
-// cross-file consumers (smart-image-node-view.js imports statically,
-// prose-block.js imports dynamically via import('./diagram-node-view.js')
-// so as never to eagerly evaluate a processor module — see prose-block.js's
-// comment). Both symbols now just delegate to DiagramRenderer's statics; unlike
-// the pre-split version, they no longer depend on this file's registration IIFE
-// having run (a latent gap the split incidentally closes). renderDiagramSvgEntry
-// branches on the engine: mermaid renders locally, plantuml fetches its svgAsset.
+// Re-exported for cross-file consumers (smart-image-node-view.js statically,
+// prose-block.js dynamically); both delegate to DiagramRenderer's statics, so
+// neither depends on this file's registration having run.
+// renderDiagramSvgEntry branches on the engine: mermaid renders locally,
+// plantuml fetches its svgAsset.
 export function ensureMermaid() { return DiagramRenderer.ensureMermaid() }
 export function renderDiagramSvgEntry(sourceNode, entries) { return DiagramRenderer.renderDiagramSvgEntry(sourceNode, entries) }
 
 ;(function () {
   'use strict'
 
-  // The diagram's HEADER (badge + mermaid label + edit/render toggle + expand
-  // button) is built by DiagramRenderer, whose buttons call its OWN semantic
-  // verbs (setMode / expand — contract core API). The verbs leave through the
-  // ContainerTransport; the PM-side caret capture/restore around the mode flip stays
-  // HERE, keyed off takeModeTransition() in the NodeView's update().
-
-  // liveRenderers — id → live DiagramRenderer instance. The behaviour-registry
-  // paths (policy Mod+Enter, policy expand chord, context menu) resolve the
-  // block's renderer here so every trigger lands on the SAME verb methods.
+  // id → live DiagramRenderer instance. The behaviour-registry paths (policy
+  // Mod+Enter, policy expand chord, context menu) resolve the block's renderer
+  // here, so every trigger lands on the same verb methods.
   /** @type {Record<string, any>} */
   var liveRenderers = {}
 
-  // ── DiagramNodeView ────────────────────────────────────────────────────────
-  // The registered descriptor sieve-block-extension.js's duck-typed
-  // registerSieveRenderer() consumes (see that file's header comment for the
-  // full "renderer interface"). Named distinctly from the imported
-  // DiagramRenderer CLASS above — same word, two different layers (this is the
-  // PM-adapter descriptor object; DiagramRenderer is the look-and-feel class it
-  // holds by composition) — to keep the two unambiguous in this file.
+  // The descriptor sieve-block-extension.js's registerSieveRenderer() consumes.
+  // Named distinctly from the imported DiagramRenderer CLASS: this is the
+  // PM-adapter descriptor, that is the look-and-feel class it holds.
 
   var DiagramNodeView = {
-    // flipMode — THE mode-flip op (contract: one function, N entry points).
-    // Called by onModEnter (policy extension) and the render body's DOM keydown
-    // listener. Both land on the live renderer's setMode — the SAME verb the
-    // header toggle calls; caret capture happens in the NodeView's update().
+    // THE mode-flip op: onModEnter, the render body's keydown listener and the
+    // header toggle all land on the live renderer's setMode. Caret capture happens
+    // in the NodeView's update().
     flipMode: function (attrs) {
       if (!attrs || !attrs.id) return false
       var r = liveRenderers[attrs.id]
@@ -82,8 +55,7 @@ export function renderDiagramSvgEntry(sourceNode, entries) { return DiagramRende
       return true
     },
 
-    // onModEnter — policy-extension entry point (modEnterTogglesMode). `host` is the
-    // parent Editor, threaded by the interaction-policy extension.
+    // Policy-extension entry point (modEnterTogglesMode).
     onModEnter: function (view, selection, _host) {
       var node = selection.node || selection.$from.parent
 
@@ -110,19 +82,17 @@ export function renderDiagramSvgEntry(sourceNode, entries) { return DiagramRende
       return DiagramNodeView.flipMode(node.attrs)
     },
 
-    // getExpandContent — behaviour-registry entry point (policy expand chord /
-    // header / menu: one capability). Delegates to the live renderer's
-    // expandContent() so the spec is built in exactly one place.
+    // Behaviour-registry entry point for the expand capability (policy chord,
+    // header, menu). Delegates to the live renderer's expandContent().
     /** @returns {{ element: Element|null, title: string, mode: 'media' } | null} */
     getExpandContent: function (node) {
       var r = node && node.attrs && liveRenderers[node.attrs.id]
       return r ? r.expandContent() : null
     },
 
-    // Edit mode IS literal source text, so the code preset applies wholesale;
-    // the three keys after the spread are this kind's own additions.
-    // caretStop:'render' — a caret stop only in render mode; edit mode is raw text.
-    // Mod+Enter is this kind's declared override: mode toggle, not escape.
+    // Edit mode IS literal source text, so the code preset applies wholesale.
+    // caretStop:'render' — a caret stop only in render mode. Mod+Enter is this
+    // kind's declared override: mode toggle, not escape.
     interactionPolicy: { ...CODE_TEXT_POLICY, modEnterTogglesMode: true, caretStop: 'render', expandable: true },
 
     nodeConfig: {
@@ -139,12 +109,11 @@ export function renderDiagramSvgEntry(sourceNode, entries) { return DiagramRende
       return esc(typeof data.source === 'string' ? data.source : '')
     },
 
-    // status/createdAt come from BASE_ATTRS (merged for every sieve node). The
-    // plantuml render job additionally sets svgAsset (the rendered SVG's
-    // same-origin ExternalRef) and error — declared here so those render-backs
-    // land on the PM node and reach DiagramRenderer. renderedHash is the
-    // backend's dispatch gate only (frontend never reads it), so it is not
-    // declared. mermaid blocks leave svgAsset/error empty.
+    // status/createdAt come from BASE_ATTRS. The plantuml render job also sets
+    // svgAsset (the rendered SVG's same-origin ExternalRef) and error, declared
+    // here so those render-backs land on the PM node. renderedHash is the
+    // backend's dispatch gate alone, so it is deliberately not declared; mermaid
+    // blocks leave svgAsset/error empty.
     attrs: {
       source:      { default: '', parseHTML: function (el) { return el.getAttribute('data-source')       || '' } },
       diagramType: { default: 'mermaid', parseHTML: function (el) { return el.getAttribute('data-diagram-type') || 'mermaid' } },
@@ -179,26 +148,17 @@ export function renderDiagramSvgEntry(sourceNode, entries) { return DiagramRende
       var nodeTypeName = node.type.name
       var currentAttrs = Object.assign({}, node.attrs)
 
-      // blockFor — the typed block with `source` overlaid as the LIVE PM
-      // text (node.textContent), never the debounced attrs.source: the debounce
-      // (see the MutationObserver below) can lag up to 200ms behind what's in
-      // the document, and a mode-flip right after typing must never render
-      // stale mermaid source. The overlay key is this kind's own knowledge.
+      // The typed block with `source` overlaid as the LIVE PM text, never the
+      // debounced attrs.source: the debounce below can lag 200ms behind the
+      // document, and a mode flip right after typing must not render stale source.
       function blockFor(n) {
         return sieveBlockFor(n, { source: n.textContent }, ctx && ctx.provider)
       }
 
-      // The renderer instance this NodeView HOLDS by composition (never
-      // inheritance — see the file header). All look-and-feel (header, both
-      // bodies, mermaid invocation, gutter/highlight box chrome) is its job;
-      // its semantic verbs hit the real wire through the ContainerTransport (issue
-      // #49 Phase 1 — the v1 appliers are retired); this kind's
-      // content→source mapping lives on DiagramRenderer.setContent.
       var renderer = new DiagramRenderer(blockFor(node), ctx.provider || null)
 
-      // NodeView-local caret memory for the edit⇄render round trip (replaces
-      // the retired cursorPos attr — caret position never rides the wire or
-      // the schema; its scope is THIS NodeView's lifetime, intended).
+      // NodeView-local caret memory for the edit⇄render round trip; caret position
+      // never rides the wire or the schema.
       var savedCursorPos = 0
 
       var dom = renderer.render()
@@ -214,24 +174,15 @@ export function renderDiagramSvgEntry(sourceNode, entries) { return DiagramRende
         renderer.syncGutterLineCount(text)
         clearTimeout(updateTimer)
         updateTimer = setTimeout(function() {
-          // The sync closure ends at the renderer's outbound verb — never a
-          // socket, never an attr name here (contract §setContent direction).
           if (currentAttrs.id) renderer.setContent(text)
         }, 200)
       })
       observer.observe(contentDOM, { characterData: true, childList: true, subtree: true })
 
-      // ── Events ────────────────────────────────────────────────────────────────
-
-      // Note: contentDOM keydown is usually swallowed by ProseMirror's root listener.
-      // Ctrl+Enter for switching to render mode is handled in buildPlugins below.
-
-      // Ctrl+Enter / Cmd+Enter in render mode: flip back to edit — via the
-      // SAME flipMode dispatch the policy extension uses (contract: one
-      // function, two entry points). stopPropagation prevents the event
-      // bubbling to TipTap's root listener. Delegated on `dom` (not the
-      // renderer's render-body directly) since the render body is torn down
-      // and rebuilt by the renderer as mode changes.
+      // Ctrl/Cmd+Enter in render mode: flip back to edit through the SAME flipMode
+      // dispatch the policy extension uses. Delegated on `dom` rather than the
+      // render body, which the renderer tears down and rebuilds on every mode
+      // change; stopPropagation keeps it off TipTap's root listener.
       dom.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
           e.preventDefault()
@@ -240,12 +191,9 @@ export function renderDiagramSvgEntry(sourceNode, entries) { return DiagramRende
         }
       })
 
-      // Mod+Alt+E in render mode: focus is OUTSIDE ProseMirror here, so the
-      // shared interaction-policy extension's expand chord never fires — this
-      // raw listener is the render-mode entry point (contract: one capability,
-      // two dispatch paths, mirroring flipMode above). `node` is kept fresh by
-      // the NodeView's update() (reassigns node = updatedNode); `dom` is the
-      // block root element — both in scope here.
+      // Mod+Alt+E in render mode: focus is OUTSIDE ProseMirror, so the shared
+      // interaction-policy extension's expand chord never fires — this raw listener
+      // is the render-mode entry point for the same capability.
       dom.addEventListener('keydown', function (e) {
         if ((e.key === 'e' || e.key === 'E' || e.code === 'KeyE') &&
             e.altKey && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
@@ -253,8 +201,6 @@ export function renderDiagramSvgEntry(sourceNode, entries) { return DiagramRende
           renderer.expand()
         }
       })
-
-      // ── NodeView ──────────────────────────────────────────────────────────────
 
       return {
         dom:        dom,
@@ -271,9 +217,8 @@ export function renderDiagramSvgEntry(sourceNode, entries) { return DiagramRende
           renderer.update(blockFor(updatedNode))
           var transition = renderer.takeModeTransition()
 
-          // Render-ward transition: remember where the caret sat in the source
-          // (PM's selection still points into this node's text) so the next
-          // edit-ward flip can put it back. NodeView-local — never the wire.
+          // Render-ward: remember where the caret sat in the source (PM's selection
+          // still points into this node's text) for the next edit-ward flip.
           if (transition && transition.modeChangedTo === 'render') {
             try {
               var sel = editorPane.view.state.selection
@@ -284,10 +229,8 @@ export function renderDiagramSvgEntry(sourceNode, entries) { return DiagramRende
             } catch (e) {}
           }
 
-          // Only a genuine mode TRANSITION into edit needs PM's help: restore
-          // the caret remembered on the last render-ward flip. DiagramRenderer
-          // already focused the render pane itself on the render-ward
-          // transition (a plain DOM focus() call, no PM needed there).
+          // Only a genuine transition into edit needs PM's help. On the render-ward
+          // one DiagramRenderer focuses the render pane itself, with no PM involved.
           if (transition && transition.modeChangedTo === 'edit') {
             var pos = savedCursorPos
             if (editorPane && editorPane.commands && getPos) {
@@ -331,8 +274,6 @@ export function renderDiagramSvgEntry(sourceNode, entries) { return DiagramRende
       }
     },
 
-    // ── Plugins ───────────────────────────────────────────────────────────────
-
     buildPlugins: function(nodeType) {
       var Plugin = T.Plugin
       var Decoration = T.Decoration
@@ -364,7 +305,6 @@ export function renderDiagramSvgEntry(sourceNode, entries) { return DiagramRende
         } catch (e) { return [] }
       }
 
-
       return [
         new Plugin({
           state: {
@@ -388,16 +328,12 @@ export function renderDiagramSvgEntry(sourceNode, entries) { return DiagramRende
             decorations: function(state) {
               return this.getState(state)
             }
-            // Keyboard behaviour (Tab/Enter/Mod+Enter) is owned by the
-            // interaction-policy extension via interactionPolicy + onModEnter
-            // above — no per-renderer key handling (contract rule).
           }
         })
       ]
     },
   }
 
-  // ── Context menu ──────────────────────────────────────────────────────────────
   // Ask AI, Explain, and Delete are injected by sieve-block-extension.js framework.
 
   DiagramNodeView.buildAiCtx = function () { return { contextLabel: 'Diagram' } }

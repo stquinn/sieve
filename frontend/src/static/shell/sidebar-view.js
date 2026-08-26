@@ -6,10 +6,8 @@
  *
  * #htmx-sidebar carries ONE hard-wired `hx-get="/ui/views/sidebar"` — the tree —
  * fired by `sieve:invalidate-notes` / `sieve:invalidate-session`. The search
- * panel is swapped into that SAME container, so the container's trigger outlives
- * it: opening a file adds a tab, which invalidates `session`, which refetched the
- * tree and threw the results away before the user could reach the second hit
- * (issue #93). The same applied to every rename, intent change and delete.
+ * panel is swapped into that SAME container, so without re-pointing that request
+ * any tab change, rename or delete refetches the tree over live search results.
  *
  * The container is the only element whose request is rewritten. The panel's own
  * "Close Search" button issues the identical GET from a DIFFERENT elt, and that
@@ -47,8 +45,7 @@ export class SidebarView {
   /**
    * The live query when the search panel is mounted, or null in tree mode. The
    * INPUT is the truth, not a field on this class: the panel is server-rendered
-   * markup that a swap can replace at any moment, so a remembered query would
-   * drift from what the user is looking at.
+   * markup a swap can replace at any moment, so a remembered query would drift.
    * @returns {string|null}
    */
   #liveQuery() {

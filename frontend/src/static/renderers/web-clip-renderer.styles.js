@@ -1,30 +1,9 @@
 // @ts-check
-// web-clip-renderer.styles.js — WebClipRenderer's stylesheet, a sibling
-// module per the styles-file-geography convention (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
-// "Styles file geography"): a renderer file starts with its class — behaviour
-// first, never a CSS wall — so any sheet over ~30 lines lives in its own
-// `<kind>-renderer.styles.js` sibling module, imported into the class's
-// `static styles`. This module is renderer-internal — nothing outside
-// web-clip-renderer.js imports it.
+// WebClipRenderer's stylesheet. Renderer-internal, and colour comes only from
+// --theme-* vars / color-mix.
 //
-// Carried verbatim from editor.css's former `.web-clip-block`/`.web-clip-block__*`
-// rule set (moved here in the same change per the spec — style carriage is
-// never a separate pass), PLUS the `.web-clip-block__badge::selection` entry
-// this kind owned in editor.css's shared selector-reset list at the top of the
-// file (only THIS kind's selector moved — the sibling kinds' selectors stay in
-// editor.css until THEY migrate, same restraint rule ai-block-renderer.styles.js
-// followed for `.ai-block__badge::selection`).
-//
-// `.sieve-block__heading` (the title/divider region) is DELIBERATELY NOT
-// here — framework-owned chrome rendered by sieve-block-extension.js's
-// titleProvider slot, shared by any kind declaring one (ai-block already
-// established this restraint rule).
-//
-// Two changes versus the old rule set (house rule: no hardcoded colour
-// literals): the hover/selected box-shadows' rgba(0,0,0,.25)/rgba(0,0,0,.45)
-// become color-mix() against --theme-bgDark, matching the conversion every
-// other migrated kind's stylesheet already established for the identical
-// unconverted-rgba idiom.
+// `.sieve-block__heading` (the title/divider region) is DELIBERATELY NOT here —
+// framework-owned chrome, shared by any kind declaring one.
 
 export const webClipStyles = /* css */ `
   /* Guard the \`hidden\` IDL property/attribute WebClipRenderer#update toggles

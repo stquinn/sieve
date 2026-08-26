@@ -1,11 +1,10 @@
 // @ts-check
-// block-channel.js — BlockChannel: one document's live wire: the socket, its
-// pending queue, awaiters, timers and reconnect state.
+// BlockChannel: one document's live wire — the socket, its pending queue, awaiters,
+// timers and reconnect state.
 // Transport contract: null onclose before close in teardown (a deliberate close must
 // not schedule a reconnect), pending-queue replay on open, 45s pong watchdog, 15s ping
 // interval, 1s→30s exponential backoff, 5s await timeout (per-call override via
-// awaitReply/awaitAck's timeoutMs — see document-service.js's paste verbs), awaiter-
-// consumed replies with late replies dropped.
+// awaitReply/awaitAck's timeoutMs), awaiter-consumed replies with late replies dropped.
 
 import { DocumentFrame } from '../generated/protocol.js'
 
@@ -47,7 +46,6 @@ export class BlockChannel {
     this.#open()
   }
 
-  /** The delegate registered at open (DocumentService reads it for createBlock). */
   get delegate() { return this.#delegate }
 
   #open() {
@@ -125,10 +123,9 @@ export class BlockChannel {
       return
     }
 
-    // The observer runs FIRST and sees EVERY routed frame: it is what feeds the
-    // container's follower model, and the model is what every mounted lens reads.
-    // The delegate is what is left over — traffic that is nobody's document truth
-    // (a server error), which the host handles.
+    // The observer runs FIRST and sees EVERY routed frame: it feeds the container's
+    // follower model, which is what every mounted lens reads. The delegate is what
+    // is left over — traffic that is nobody's document truth, such as a server error.
     this.#observeInbound(msg)
     this.#delegate.onMessage(msg)
   }

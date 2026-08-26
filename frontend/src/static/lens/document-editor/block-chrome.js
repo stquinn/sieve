@@ -1,25 +1,13 @@
-// block-chrome.js — BlockChrome TipTap extension.
-// Adds a ProseMirror plugin that renders gutter chrome (line number + drag handle + rail)
-// for every top-level block node, plus drag-reorder.
+// Renders gutter chrome (line number + drag handle + rail) for every top-level
+// block, plus drag-reorder. Two strategies, because PM owns different DOM:
 //
-// Two-strategy approach to avoid infinite loop with ProseMirror:
+//   A — prose/native nodes (p, h1, ul, blockquote, …): PM owns their DOM, so a
+//       manually injected <div> is foreign DOM that PM reconciles, and loops.
+//       A Decoration.widget at offset+1 with side:-1 is tracked natively instead.
 //
-//   Strategy A — Prose/native nodes → Decoration.widget
-//     ProseMirror owns the DOM for prose nodes (p, h1, ul, blockquote, etc.).
-//     Injecting a <div> manually as first child causes PM to see foreign DOM,
-//     include it in reconciliation, and loop.  Instead we use Decoration.widget
-//     at offset+1 with side:-1 so PM tracks it natively.
-//
-//   Strategy B — Sieve atom nodes → fill existing .block-chrome-host slot
-//     sieve-block-extension.js injects a .block-chrome-host div as first child
-//     of every Sieve NodeView's DOM during addNodeView().  NodeViews have
-//     ignoreMutation logic that suppresses reconciliation for their own DOM.
-//     view.update() finds that pre-existing slot and populates it.
-//
-// Discriminator: a top-level node is a Sieve block when its attrs contain
-// node type name starting with 'sieve-' (checked at line 85 via indexOf).
-//
-// Depends on the vendor TipTap bundle (vendor/tiptap.js) loaded first.
+//   B — Sieve atom nodes: sieve-block-extension.js injects a .block-chrome-host
+//       slot into every NodeView, whose ignoreMutation suppresses reconciliation
+//       of its own DOM. view.update() finds that slot and populates it.
 import { T as VENDOR } from './surfaces/tiptap-vendor.js'
 
 var Extension = VENDOR.Extension
@@ -30,22 +18,16 @@ var DecorationSet = VENDOR.DecorationSet
 
   var blockChromeKey = new PluginKey('blockChrome')
 
-  // ── Drag state ──────────────────────────────────────────────────────────────
-  // Module-level; cleared on drop or dragend.  { from: number }
+  // { from: number }; cleared on drop or dragend.
   var dragState = null
 
-  // ── Block selection state ────────────────────────────────────────────────────
   // Tracks last handle-clicked block for shift-range selection
   var lastSelectedOffset = null
 
-  // ── Top-level boundary helpers ──────────────────────────────────────────────
-
-  // Given a clientY and the EditorView, find the nearest top-level boundary
-  // (doc position: before a node or after the last node).
-  // Returns a doc position integer or null.
+  // Given a clientY and the EditorView, finds the nearest top-level boundary
+  // (before a node, or after the last). Returns a doc position or null.
   function nearestBoundary(view, clientY) {
     var doc = view.state.doc
-    // Collect boundary doc positions: before each top-level node, plus after last.
     var positions = []
     doc.forEach(function (node, offset) {
       positions.push(offset)                      // before this node
@@ -61,7 +43,6 @@ var DecorationSet = VENDOR.DecorationSet
     var bestDist = Infinity
     for (var i = 0; i < positions.length; i++) {
       var p = positions[i]
-      // Clamp to valid range for coordsAtPos
       var safeP = Math.max(0, Math.min(p, doc.content.size))
       var domCoords = null
       try { domCoords = view.coordsAtPos(safeP) } catch (_) { continue }
@@ -75,7 +56,6 @@ var DecorationSet = VENDOR.DecorationSet
     return bestPos
   }
 
-  // ── Is this a Sieve block node? ──────────────────────────────────────────────
   // Identity is the node TYPE: every structured Sieve block is a `sieve-*` node.
   // Prose/native nodes (paragraph, heading, proseGroup, …) never carry that prefix.
 
@@ -83,10 +63,8 @@ var DecorationSet = VENDOR.DecorationSet
     return !!(node && node.type && node.type.name.indexOf('sieve-') === 0)
   }
 
-  // ── Create chrome host DOM for a widget (Strategy A — prose nodes) ───────────
-  // Returns a configured .block-chrome-host element with event listeners wired.
   // blockIndex is 1-based. offset is the doc offset of the node (for drag pos).
-  // getPos is the PM widget factory's getPos callback (may be null in fallback).
+  // getPos is the PM widget factory's callback (may be null in fallback).
 
   function createChromeHostWidget(blockIndex, offset, view, getPos) {
     var host = document.createElement('div')
@@ -110,17 +88,14 @@ var DecorationSet = VENDOR.DecorationSet
     host.appendChild(handle)
     host.appendChild(rail)
 
-    // ── mousedown: select the entire top-level node or shift-click range ─────
     handle.addEventListener('mousedown', function (e) {
-      // stopPropagation (not preventDefault): prevents PM from creating a
-      // spurious TextSelection, but allows the browser to detect a subsequent
-      // drag gesture from this element (preventDefault would suppress dragstart).
+      // stopPropagation, NOT preventDefault: this suppresses PM's spurious
+      // TextSelection while leaving the browser free to start a drag gesture.
       e.stopPropagation()
       var editor = window.__tiptap
       if (!editor) return
 
       if (e.shiftKey && lastSelectedOffset != null) {
-        // Shift-click: extend to a block range spanning from lastSelectedOffset to this block
         var doc = editor.state.doc
         var a = lastSelectedOffset
         var b = offset
@@ -128,8 +103,8 @@ var DecorationSet = VENDOR.DecorationSet
         var hi = Math.max(a, b)
         var hiNode = doc.nodeAt(hi)
         var to = hi + (hiNode ? hiNode.nodeSize : 1)
-        // Block-range via our own plugin-state range — NOT setTextSelection, which
-        // snaps its endpoints off the contentEditable=false sieve atoms (dropping them).
+        // Our own plugin-state range, NOT setTextSelection — that snaps its endpoints
+        // off the contentEditable=false sieve atoms, dropping them.
         editor.view.dispatch(editor.state.tr.setMeta(blockChromeKey, { range: { from: lo, to: to } }))
       } else {
         lastSelectedOffset = offset
@@ -138,14 +113,12 @@ var DecorationSet = VENDOR.DecorationSet
       view.focus()
     })
 
-    // ── dragstart: record source pos ───────────────────────────────────
     handle.addEventListener('dragstart', function (e) {
       dragState = { from: offset }
       e.dataTransfer.effectAllowed = 'move'
       e.dataTransfer.setData('application/x-sieve-block', String(offset))
-      // stopImmediatePropagation: blocks PM's bubble-phase dragstart from seeing
-      // this event and starting its own NodeSelection drag (which would double-insert).
-      // Do NOT preventDefault — that cancels the drag and shows the stop cursor.
+      // stopImmediatePropagation keeps PM's bubble-phase dragstart from starting its
+      // own NodeSelection drag (double-insert). preventDefault would cancel the drag.
       e.stopImmediatePropagation()
       try {
         var domNode = view.nodeDOM(offset)
@@ -154,7 +127,6 @@ var DecorationSet = VENDOR.DecorationSet
       } catch (_) {}
     })
 
-    // ── dragend: clean up if drop didn't fire (e.g. dropped outside editor)
     handle.addEventListener('dragend', function () {
       dragState = null
     })
@@ -162,16 +134,11 @@ var DecorationSet = VENDOR.DecorationSet
     return host
   }
 
-  // ── Populate a single .block-chrome-host element (Strategy B — Sieve nodes) ──
-  // Creates (or reuses) the line number, handle, and rail children.
   // blockIndex is 1-based.
-
   function populateChromeHost(host, blockIndex, pos, view) {
-    // Idempotency: if already populated with the correct index, skip.
     var linenum = host.querySelector('.block-chrome-linenum')
     if (linenum && linenum.textContent === String(blockIndex)) return
 
-    // Clear any stale content.
     while (host.firstChild) host.removeChild(host.firstChild)
 
     var num = document.createElement('span')
@@ -190,14 +157,12 @@ var DecorationSet = VENDOR.DecorationSet
     host.appendChild(handle)
     host.appendChild(rail)
 
-    // ── mousedown: select the entire top-level node or shift-click range ─────
     handle.addEventListener('mousedown', function (e) {
       e.stopPropagation()
       var editor = window.__tiptap
       if (!editor) return
 
       if (e.shiftKey && lastSelectedOffset != null) {
-        // Shift-click: extend to a block range spanning from lastSelectedOffset to this block
         var doc = editor.state.doc
         var a = lastSelectedOffset
         var b = pos
@@ -205,8 +170,6 @@ var DecorationSet = VENDOR.DecorationSet
         var hi = Math.max(a, b)
         var hiNode = doc.nodeAt(hi)
         var to = hi + (hiNode ? hiNode.nodeSize : 1)
-        // Block-range via our own plugin-state range — NOT setTextSelection, which
-        // snaps its endpoints off the contentEditable=false sieve atoms (dropping them).
         editor.view.dispatch(editor.state.tr.setMeta(blockChromeKey, { range: { from: lo, to: to } }))
       } else {
         lastSelectedOffset = pos
@@ -215,7 +178,6 @@ var DecorationSet = VENDOR.DecorationSet
       view.focus()
     })
 
-    // ── dragstart: record source pos ───────────────────────────────────
     handle.addEventListener('dragstart', function (e) {
       dragState = { from: pos }
       e.dataTransfer.effectAllowed = 'move'
@@ -228,18 +190,15 @@ var DecorationSet = VENDOR.DecorationSet
       } catch (_) {}
     })
 
-    // ── dragend: clean up if drop didn't fire (e.g. dropped outside editor)
     handle.addEventListener('dragend', function () {
       dragState = null
     })
   }
 
-  // ── Effective selection range ────────────────────────────────────────────────
-  // The authoritative range for block-level selection + copy.  Prefers our own
-  // plugin-state range (set by handle click / shift-click / gutter drag): a real
-  // pair of doc positions that — unlike a ProseMirror TextSelection — does NOT
-  // snap off the contentEditable=false sieve atoms.  Falls back to the live PM
-  // selection so a plain caret / NodeSelection / native prose drag still works.
+  // The authoritative range for block-level selection + copy. Prefers our own
+  // plugin-state range (handle click / shift-click / gutter drag), which unlike a
+  // PM TextSelection does not snap off contentEditable=false sieve atoms; falls
+  // back to the live PM selection for a plain caret / NodeSelection / prose drag.
   function effectiveRange(state) {
     var ps = blockChromeKey.getState(state)
     if (ps && ps.range) {
@@ -248,13 +207,6 @@ var DecorationSet = VENDOR.DecorationSet
     var s = state.selection
     return { from: s.from, to: s.to, active: !s.empty, isBlockRange: false, isNodeSelection: !!s.node }
   }
-
-  // ── Build Decoration set ─────────────────────────────────────────────────────
-  // For every top-level node:
-  //   1. Decoration.node — applies class 'block-with-chrome' (CSS positioning hook)
-  //   2. Decoration.widget at offset+1 — only for PROSE nodes (Strategy A).
-  //      Sieve nodes have their host slot filled by view.update() (Strategy B).
-  // Also adds the drop-indicator widget during drag.
 
   function buildDecorations(state) {
     var decos = []
@@ -266,16 +218,13 @@ var DecorationSet = VENDOR.DecorationSet
       var from = offset
       var to   = offset + node.nodeSize
 
-      // Mark the block for CSS gutter positioning.
-      // block-in-selection drives a FULL-NODE tint, but only for blocks that cannot
-      // show a native selection highlight: content-less atoms (smart-card, smart-image),
-      // whose DOM is contentEditable=false. Content-bearing sieve blocks (code, ai-block,
-      // web-clip, diagram, log) render real editable content, so the browser draws the
-      // native sub-text highlight — tinting the whole node there makes a partial text
-      // drag look like (and copy as) a whole-block selection. Still tint any sieve node
-      // that is part of an explicit gutter block-range.
-      // EXCEPTION: a single NodeSelection exactly on this block gets .ProseMirror-
-      // selectednode from Tiptap, so we don't double-tint it here.
+      // block-in-selection drives a FULL-NODE tint, but only for blocks that cannot show
+      // a native selection highlight: content-less atoms (smart-card, smart-image), whose
+      // DOM is contentEditable=false. Content-bearing sieve blocks render real editable
+      // content and get the browser's own sub-text highlight — tinting the whole node
+      // there makes a partial text drag look like (and copy as) a whole-block selection.
+      // A single NodeSelection exactly on this block already has .ProseMirror-selectednode,
+      // so it is not double-tinted.
       var isSingleNodeSel = !er.isBlockRange && er.isNodeSelection && er.from === from
       var tintWhole = isSieveNode(node) && (node.isAtom || er.isBlockRange)
       var inSel = tintWhole && er.active && er.from < to && er.to > from && !isSingleNodeSel
@@ -283,12 +232,10 @@ var DecorationSet = VENDOR.DecorationSet
         Decoration.node(from, to, { class: inSel ? 'block-with-chrome block-in-selection' : 'block-with-chrome' })
       )
 
-      // Strategy A: prose/native nodes only.
-      // Widget placed at `offset` (BEFORE the node) with side:1 so it renders
-      // as a DOM sibling preceding the block element inside .ProseMirror, NOT
-      // inside the <p>. This is critical: draggable="true" inside a nested
-      // contenteditable context is unreliable in browsers. As a direct sibling
-      // of .ProseMirror with contenteditable="false", drag works correctly.
+      // Strategy A: prose/native nodes only. The widget sits at `offset` (BEFORE the
+      // node) with side:1, so it renders as a DOM sibling preceding the block rather
+      // than inside the <p>: draggable="true" inside a nested contenteditable is
+      // unreliable across browsers, but works as a contenteditable=false sibling.
       if (!isSieveNode(node)) {
         decos.push(
           Decoration.widget(
@@ -305,11 +252,8 @@ var DecorationSet = VENDOR.DecorationSet
     return DecorationSet.create(state.doc, decos)
   }
 
-  // ── Sync Sieve block chrome hosts (Strategy B) ───────────────────────────────
-  // Called from view.update() on every state change.
-  // ONLY fills the .block-chrome-host slot that sieve-block-extension.js has
-  // already injected. Never touches prose nodes — those are handled by
-  // Decoration.widget (Strategy A).
+  // Called from view.update(). ONLY fills the .block-chrome-host slot that
+  // sieve-block-extension.js injected; prose nodes are Strategy A's.
 
   function syncSieveChrome(editorView) {
     var index = 0
@@ -320,10 +264,9 @@ var DecorationSet = VENDOR.DecorationSet
       var nodeDOM = editorView.nodeDOM(offset)
       if (!nodeDOM) return
 
-      // The chrome host should have been injected as first child by
-      // sieve-block-extension.js on NodeView creation.  If it is missing
-      // (renderer recreated its root, or injection raced with a state update)
-      // inject it here so chrome is always present.
+      // The slot should already be the NodeView's first child. If it is missing (the
+      // renderer recreated its root, or injection raced a state update), inject it
+      // here so chrome is always present.
       var host = nodeDOM.querySelector(':scope > .block-chrome-host')
       if (!host) {
         host = document.createElement('div')
@@ -336,8 +279,6 @@ var DecorationSet = VENDOR.DecorationSet
     })
   }
 
-  // ── Plugin ─────────────────────────────────────────────────────────────────
-
   export var BlockChrome = Extension.create({
     name: 'blockChrome',
     addProseMirrorPlugins: function () {
@@ -345,10 +286,9 @@ var DecorationSet = VENDOR.DecorationSet
         new Plugin({
           key: blockChromeKey,
 
-          // ── Plugin state: our own block-selection range ──────────────────────
-          // A real {from,to} pair of doc positions spanning whole blocks.  Set via
-          // setMeta(blockChromeKey, { range }).  Unlike a PM TextSelection it never
-          // snaps off the sieve atoms, so it is the authoritative multi-block range.
+          // A real {from,to} pair of doc positions spanning whole blocks, set via
+          // setMeta(blockChromeKey, { range }). Unlike a PM TextSelection it never snaps
+          // off the sieve atoms, so it is the authoritative multi-block range.
           state: {
             init: function () { return { range: null } },
             apply: function (tr, prev) {
@@ -368,21 +308,14 @@ var DecorationSet = VENDOR.DecorationSet
           },
 
           props: {
-            // ── Decorations ───────────────────────────────────────────────
             decorations: function (state) {
               return buildDecorations(state)
             },
 
-            // ── Backspace / Delete over a gutter block-range ───────────────
-            // A whole-block selection lives in OUR plugin state (effectiveRange),
-            // not in the PM selection — a PM TextSelection snaps off the
-            // contentEditable=false sieve atoms, so we never set one. That means
-            // PM's own deleteSelection sees only a collapsed caret and Backspace
-            // is a no-op on the highlighted blocks (the user had to fall back to
-            // the context-menu Delete). Own the keystroke when — and only when —
-            // a block-range is active: delete that exact doc range and clear it.
-            // A plain text selection (isBlockRange:false) still falls through to
-            // PM's native deletion untouched.
+            // A whole-block selection lives in OUR plugin state, not in the PM selection, so
+            // PM's own deleteSelection sees a collapsed caret and Backspace would be a
+            // no-op on the highlighted blocks. Own the keystroke when — and only when — a
+            // block-range is active; a plain text selection falls through to PM.
             handleKeyDown: function (view, event) {
               if (event.key !== 'Backspace' && event.key !== 'Delete') return false
               var er = effectiveRange(view.state)
@@ -394,10 +327,8 @@ var DecorationSet = VENDOR.DecorationSet
               return true
             },
 
-            // ── DOM event handlers ─────────────────────────────────────────
             handleDOMEvents: {
 
-              // dragover: allow our handle drags to drop
               dragover: function (view, event) {
                 if (!dragState) return false
                 event.preventDefault()
@@ -405,7 +336,6 @@ var DecorationSet = VENDOR.DecorationSet
                 return true
               },
 
-              // drop: single-transaction reorder
               drop: function (view, event) {
                 if (!dragState) return false
                 event.preventDefault()
@@ -423,8 +353,7 @@ var DecorationSet = VENDOR.DecorationSet
                 var nodeSize = node.nodeSize
                 if (targetPos === from || targetPos === from + nodeSize) return true
 
-                // Single transaction: delete source + map insert position.
-                // One tr = one Mod+Z undo step.
+                // Single transaction: delete source + map insert position. One tr = one undo step.
                 var tr = view.state.tr
                 tr.delete(from, from + nodeSize)
                 tr.insert(tr.mapping.map(targetPos), node)
@@ -434,18 +363,11 @@ var DecorationSet = VENDOR.DecorationSet
             },
           },
 
-          // ── view() callback: sync Sieve chrome hosts after every state update ─
-          // Strategy B only: fills the .block-chrome-host slot that
-          // sieve-block-extension.js injected.  Prose nodes are handled by
-          // Decoration.widget (Strategy A) — never touch those here.
           view: function (editorView) {
             requestAnimationFrame(function () { syncSieveChrome(editorView) })
 
-            // ── Drag-select preview ────────────────────────────────────────────
-            // CSS :hover does not update during a mouse-button-held drag because
-            // the browser captures the mouse to the drag origin.  Instead we use
-            // mousemove + elementFromPoint to find the block under the cursor and
-            // add .drag-hover directly to its DOM element.
+            // CSS :hover stops updating once the browser captures the mouse for a drag, so
+            // the block under the cursor is found with elementFromPoint and marked directly.
             var dragHoverEl = null
 
             function clearDragHover() {
@@ -455,10 +377,6 @@ var DecorationSet = VENDOR.DecorationSet
               }
             }
 
-            // Drag-drop preview: highlight the block under the cursor during a
-            // handle drag.  Only active when dragState is set (after dragstart on
-            // a handle) — CSS :hover stops updating once the browser captures the
-            // mouse for the native drag, so we drive it manually via mousemove.
             function onMouseMove(e) {
               if (!dragState) { clearDragHover(); return }
               var el = document.elementFromPoint(e.clientX, e.clientY)
@@ -484,14 +402,12 @@ var DecorationSet = VENDOR.DecorationSet
 
             return {
               update: function (view) {
-                // Toggle has-selection on the editor root so CSS and JS can
-                // suppress hover-driven highlights (chain glows, etc.) while
-                // a selection is active.
+                // has-selection lets CSS and JS suppress hover-driven highlights (chain glows)
+                // while a selection is active.
                 view.dom.classList.toggle('has-selection', !view.state.selection.empty)
 
-                // Dynamically expand the gutter width for documents with many blocks
-                // to prevent line numbers from wrapping or pushing the rail.
-                // 54px is the base width in editor.css (accommodates up to 99 blocks).
+                // Expand the gutter for documents with many blocks, or line numbers wrap and
+                // push the rail. 54px is the base width in editor.css (up to 99 blocks).
                 var digits = String(view.state.doc.childCount).length
                 var chromeW = 54
                 if (digits > 2) {
@@ -512,8 +428,7 @@ var DecorationSet = VENDOR.DecorationSet
     },
   })
 
-  // Authoritative block-selection range for the copy handler (editor.js).
-  // Returns { from, to, active, isBlockRange }.  isBlockRange=true means our own
-  // multi-block range is set (shift-click / gutter drag); false means we fell back
-  // to the live PM selection (caret / single NodeSelection / native prose drag).
+  // Authoritative block-selection range for the copy handler. isBlockRange=true means
+  // our own multi-block range is set (shift-click / gutter drag); false means the
+  // live PM selection (caret / single NodeSelection / native prose drag).
   export var getBlockSelectionRange = function (view) { return effectiveRange(view.state) }

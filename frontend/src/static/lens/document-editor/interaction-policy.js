@@ -1,29 +1,18 @@
-// interaction-policy.js — ONE shared mechanism for keyboard interaction.
-// Renderers DECLARE an interactionPolicy; this module resolves the caret's
-// context and applies the policy. Per-renderer key handlers are forbidden
-// (docs/editor-interaction-contract.md is the normative behaviour spec).
+// ONE shared mechanism for keyboard interaction. Renderers DECLARE an
+// interactionPolicy; this module resolves the caret's context and applies the
+// policy. Per-renderer key handlers are forbidden, and
+// docs/editor-interaction-contract.md is the normative behaviour spec.
 //
-// Layered: pure helpers (top section, vitest-tested) + the TipTap extension
-// (browser-only, added by editor.js at priority 50 so native keymaps —
-// list indent, table cell nav — always run first: defer first, consume last).
+// Layered: pure helpers (top section, vitest-tested) plus the TipTap extension,
+// added at priority 50 so native keymaps — list indent, table cell nav — always
+// run first. Defer first, consume last.
 //
-// Links split cleanly along that line: the Mod+K CHORD (edit the link at the
-// caret / make one from the selection) IS owned here like every other chord —
-// the mark mechanics live on ProseLink, this module only routes. Mod+CLICK is
-// not, for the reason below.
-//
-// NOT OWNED HERE — Mod+Click on a link (open externally). It is the one
-// interaction that is deliberately APP-GLOBAL rather than editor-scoped: links
-// appear outside the editor too (chrome, dialogs, block renderers), and in a Wails
-// webview an anchor that navigates replaces the running application, so the
-// suppression has to be unconditional. The owner is `shell/workspace.js`
-// bootEditorLifecycle() — a document-level CAPTURE-phase click listener. Because
-// capture on `document` runs before anything on `view.dom` and it calls
-// stopPropagation(), no editor- or renderer-level click handler can see a
-// Mod+Click; one added here would be dead code. This is an exception to "no
-// per-renderer handlers" only in WHERE it lives — it is still exactly one shared
-// mechanism, scoped to the app instead of the editor.
-// Normative row: docs/editor-interaction-contract.md.
+// NOT OWNED HERE: Mod+Click on a link (open externally). It is deliberately
+// APP-GLOBAL rather than editor-scoped, because links appear outside the editor
+// too and in a Wails webview an anchor that navigates replaces the running
+// application, so the suppression must be unconditional. Its owner is
+// shell/workspace.js's document-level CAPTURE-phase click listener, which calls
+// stopPropagation — so a Mod+Click handler added here would be dead code.
 
 import { getBlockBehaviour } from '../../renderers/block-kinds.js'
 import { expandBlock } from '../../ui/media-lightbox.js'
@@ -34,8 +23,15 @@ import { ProseLink } from './surfaces/prose-link.js'
 /** @typedef {import('../../contract/sieve-block.js').SieveBlock} SieveBlock */
 
 /**
- * The full set of behaviours a kind may opt into. Kinds declare a Partial of
- * this as `interactionPolicy`; policyFor merges it over DEFAULT_POLICY.
+ * The full set of behaviours a kind may opt into. Kinds declare a Partial of this
+ * as `interactionPolicy`; policyFor merges it over DEFAULT_POLICY.
+ *
+ * EVERY field is a DISCRETE BEHAVIOUR opted into by name. There is deliberately
+ * NO genre field ('code' vs 'prose'): a category is a second declaration
+ * mechanism, and it lies the moment one kind wants code-style autoclose with
+ * prose-style Enter. A flag is born WITH its reader — never declare one before
+ * something consumes it.
+ *
  * @typedef {object} InteractionPolicy
  * @property {boolean} tabIndents
  * @property {number} indentWidth
@@ -53,18 +49,6 @@ import { ProseLink } from './surfaces/prose-link.js'
  * @property {boolean} literalGlyphs
  * @property {boolean} suppressTriggers
  */
-
-// EVERY field is a DISCRETE BEHAVIOUR a kind opts into by name. There is
-// deliberately NO genre/text-type field ('code' vs 'prose'): a category is a
-// second declaration mechanism next to these flags, and it lies the moment one
-// kind wants code-style autoclose with prose-style Enter — at which point you
-// add override flags on top and have arrived back here with an extra layer of
-// indirection. The "yep, this is code" ergonomics live in CODE_TEXT_POLICY
-// below, which is a DECLARATION-TIME preset, not a runtime category.
-//
-// A flag names ONE behaviour, and it is born WITH its reader: never declare one
-// here before something consumes it, or it drifts into a live branch no real
-// kind switches on.
 export var DEFAULT_POLICY = {
   tabIndents: false,          // Tab/Shift+Tab indent/de-indent each touched line by indentWidth
   indentWidth: 0,             // spaces per Tab where tabIndents
@@ -83,15 +67,10 @@ export var DEFAULT_POLICY = {
   suppressTriggers: false,    // `@`/`/` pickers never arm in this block's text
 }
 
-// CODE_TEXT_POLICY — the "yep, this is code" preset: the whole bundle of
-// literal-source-text behaviours under one name, SPREAD AT DECLARATION TIME by
-// the kinds that want it (`interactionPolicy: { ...CODE_TEXT_POLICY }`).
-//
-// Why a preset and not a `genre: 'code'` field: policyFor only ever sees plain
-// booleans, so there stays exactly ONE declaration mechanism; a kind can opt
-// out of any single line of it by overriding that key after the spread; and
-// reading a kind's interactionPolicy still tells you everything it does without
-// a lookup table somewhere else.
+// The "yep, this is code" preset: every literal-source-text behaviour under one
+// name, SPREAD AT DECLARATION TIME by the kinds that want it. policyFor only ever
+// sees plain booleans, so there stays exactly ONE declaration mechanism, and a
+// kind opts out of any line by overriding that key after the spread.
 export var CODE_TEXT_POLICY = Object.freeze({
   tabIndents: true,
   indentWidth: 2,
@@ -103,19 +82,17 @@ export var CODE_TEXT_POLICY = Object.freeze({
   expandPairOnEnter: true,
   blockTextSubstitution: true,
   literalGlyphs: true,
-  // `@Override`, `@media`, `@Component` sit at a line start after whitespace, so
-  // they satisfy the `@` trigger's boundary rule and would open the picker only
-  // to flash shut when the library search comes back dry. One line here covers
-  // code AND diagram, both of which spread this preset.
+  // `@Override`, `@media` and `@Component` sit at a line start after whitespace,
+  // so they satisfy the `@` trigger's boundary rule and would open the picker
+  // only to flash shut when the library search comes back dry.
   suppressTriggers: true,
 })
 
-// PAIRS — the ONE table every pair behaviour reads (surround, autoclose,
-// type-over, backspace-deletes-pair, Enter expansion). Frozen and shared so the
-// PM surface and the markdown textarea can never drift apart on what a "pair"
-// is. Markdown emphasis (* _) is deliberately absent: Mod+B/Mod+I already own
-// bold/italic, and a literal asterisk is common enough that surrounding it
-// would fight the user more often than help.
+// The ONE table every pair behaviour reads (surround, autoclose, type-over,
+// backspace-deletes-pair, Enter expansion). Frozen and shared so the PM surface
+// and the markdown textarea can never drift on what a "pair" is. Markdown
+// emphasis (* _) is deliberately absent: Mod+B/Mod+I already own bold/italic,
+// and surrounding a literal asterisk would fight the user more often than help.
 export var PAIRS = Object.freeze({ '"': '"', "'": "'", '`': '`', '(': ')', '[': ']', '{': '}' })
 
 var CLOSERS = Object.freeze(Object.keys(PAIRS).reduce(function (acc, open) {
@@ -134,16 +111,16 @@ export function isCloser(ch) {
 }
 
 // A pair should NOT auto-close when it would strand a closer against text the
-// user is about to wrap by hand — VS Code's rule. Typing `(` before `foo` gives
-// a lone `(`; before a space, a newline, EOF or a closing bracket it pairs.
+// user is about to wrap by hand. Typing `(` before `foo` gives a lone `(`; before
+// a space, a newline, EOF or a closing bracket it pairs.
 function isWordChar(ch) {
   return !!ch && /[\w$]/.test(ch)
 }
 
-// Defaults first, then the kind's declared overrides for KNOWN keys only — a
-// flag name that is not in DEFAULT_POLICY is silently ignored, so the JSDoc
-// typedef on `interactionPolicy` (sieve-block-extension.js) is the only thing
-// standing between a typo'd flag and a behaviour that quietly never happens.
+// Defaults first, then the kind's declared overrides for KNOWN keys only: a flag
+// name that is not in DEFAULT_POLICY is silently ignored, so the JSDoc typedef on
+// `interactionPolicy` is the only thing standing between a typo'd flag and a
+// behaviour that quietly never happens.
 /** @param {string} kind @returns {InteractionPolicy} */
 export function policyFor(kind) {
   var beh = getBlockBehaviour(kind)
@@ -159,14 +136,12 @@ var TABLE_TYPES = { table: 1, tableRow: 1, tableCell: 1, tableHeader: 1 }
 function kindFromTypeName(name) {
   if (!name) return 'prose'
   if (name.indexOf('sieve-') === 0) return name.slice('sieve-'.length)
-  // Native TipTap code blocks share the 'code' interaction policy — the
-  // contract's Code row applies to BOTH code surfaces (uniform mechanism).
+  // Native TipTap code blocks share the 'code' interaction policy: the
+  // contract's Code row applies to BOTH code surfaces.
   if (name === 'codeBlock') return 'code'
   return 'prose'
 }
 
-// classifyContext is pure: the extension extracts names from PM state and
-// passes them here so this decision table is unit-testable.
 export function classifyContext(info) {
   var nodeSel = info.nodeSelectionTypeName || null
   var kind = kindFromTypeName(nodeSel || info.parentTypeName)
@@ -186,8 +161,6 @@ export function classifyContext(info) {
   }
 }
 
-// ── raw-text transforms (pure; offsets are within the block's text) ─────────
-
 function lineStartsInRange(text, from, to) {
   var starts = [0]
   for (var i = 0; i < text.length; i++) {
@@ -202,8 +175,8 @@ function lineStartsInRange(text, from, to) {
 
 export function indentInsertions(text, from, to, width) {
   var pad = new Array(width + 1).join(' ')
-  // Collapsed caret: insert at the caret (VS Code semantics — push text right).
-  // Selection: indent every touched line at its start.
+  // Collapsed caret: insert at the caret, pushing text right. Selection: indent
+  // every touched line at its start.
   if (from === to) return [{ pos: from, insert: pad }]
   return lineStartsInRange(text, from, to)
     .map(function (s) { return { pos: s, insert: pad } })
@@ -233,29 +206,24 @@ export function smartHomeTarget(lineText, col) {
   return col === first ? 0 : first
 }
 
-// ── pair transforms (pure) ─────────────────────────────────────────────────
-//
 // Every pair behaviour returns the same edit shape, and both surfaces apply it
 // the same way — the PM plugin as a transaction, the markdown <textarea> via
-// applyTextEdit. That shared shape is the whole reason the rule cannot drift
-// between the two surfaces.
+// applyTextEdit. That shared shape is why the rule cannot drift between them.
 //
-// OFFSET CAVEAT: block-local offsets are derived from `parent.textContent`,
-// which drifts from PM positions in a textblock containing inline ATOMS (a
-// hardBreak or inline image contributes 1 to position but 0 to textContent).
-// Only the character-peeking guards below (autoClose/typeOver/pairDelete) index
-// into `text`, and those run exclusively under `autoClosePairs` — declared only
-// by literal-source-text kinds, whose `text*` content cannot hold an atom.
-// `surroundEdit`, the one behaviour prose enables, never indexes `text` at all.
+// OFFSET CAVEAT: block-local offsets derive from `parent.textContent`, which
+// drifts from PM positions in a textblock containing inline ATOMS. Only the
+// character-peeking guards index into `text`, and those run exclusively under
+// `autoClosePairs` — declared only by literal-source-text kinds, whose `text*`
+// content cannot hold an atom. `surroundEdit`, the one behaviour prose enables,
+// never indexes `text` at all.
 //
 /**
- * An edit is a list of point operations in DESCENDING position order, so
- * applying them in sequence never invalidates a later one's offsets.
+ * An edit is a list of point operations in DESCENDING position order, so applying
+ * them in sequence never invalidates a later one's offsets.
  *
  * Surround is deliberately two INSERTIONS rather than one replacement: in prose
- * the wrapped range carries marks (bold, links), and re-writing it as plain
- * text would silently flatten them. Nothing here ever rewrites existing
- * content — ops only insert around it or delete it outright.
+ * the wrapped range carries marks, and re-writing it as plain text would silently
+ * flatten them. Nothing here ever rewrites existing content.
  *
  * @typedef {object} TextOp
  * @property {number} from    start of the replaced range (block-local offsets)
@@ -269,9 +237,8 @@ export function smartHomeTarget(lineText, col) {
  */
 
 /**
- * Typing a pair character over a NON-EMPTY selection wraps it instead of
- * replacing it. The selection is preserved (now sitting inside the pair) so the
- * gesture can be repeated to nest.
+ * Typing a pair character over a NON-EMPTY selection wraps it. The selection is
+ * preserved, now inside the pair, so the gesture can be repeated to nest.
  * @returns {TextEdit|null}
  */
 export function surroundEdit(text, from, to, ch) {
@@ -298,10 +265,8 @@ export function typeOverEdit(text, from, to, ch) {
   return { ops: [], caret: from + 1 } // pure caret move: the closer is already there
 }
 
-/**
- * Typing an opener at a collapsed caret inserts the whole pair.
- * @returns {TextEdit|null}
- */
+/** Typing an opener at a collapsed caret inserts the whole pair.
+ *  @returns {TextEdit|null} */
 export function autoCloseEdit(text, from, to, ch) {
   var close = closerFor(ch)
   if (close === null || from !== to) return null
@@ -313,9 +278,8 @@ export function autoCloseEdit(text, from, to, ch) {
 }
 
 /**
- * Backspace with the caret between an empty pair removes both halves —
- * without this, autoclose leaves orphaned closers behind and is worse than no
- * autoclose at all.
+ * Backspace with the caret between an empty pair removes both halves. Without
+ * this, autoclose strands orphaned closers and is worse than no autoclose.
  * @returns {TextEdit|null}
  */
 export function pairDeleteEdit(text, from, to) {
@@ -328,7 +292,6 @@ export function pairDeleteEdit(text, from, to) {
 /**
  * Enter with the caret between an empty pair expands to a block: opener line,
  * indented blank line with the caret on it, closer line at the original indent.
- * This is where a brace style like `if x {` ⏎ actually lives.
  * @returns {TextEdit|null}
  */
 export function pairExpandEdit(text, from, to, indentWidth) {
@@ -343,9 +306,8 @@ export function pairExpandEdit(text, from, to, indentWidth) {
 
 /**
  * THE text-input decision for a typed character — the single entry point both
- * surfaces call. Order matters: surround (there is a selection) → type-over
- * (the closer is already there) → autoclose. Returns null for "not ours, let
- * the surface do its native thing".
+ * surfaces call. Order matters: surround (there is a selection) → type-over (the
+ * closer is already there) → autoclose. Returns null for "not ours".
  * @param {string} text @param {number} from @param {number} to @param {string} ch
  * @param {InteractionPolicy} policy
  * @returns {TextEdit|null}
@@ -363,12 +325,10 @@ export function textInputEdit(text, from, to, ch, policy) {
   return null
 }
 
-/**
- * Apply an edit to a plain string — used by the markdown <textarea> surface and
- * by the unit tests, so the behaviour under test is literally the shipped one.
- * @param {string} text @param {TextEdit} edit
- * @returns {{text: string, caret: number, head: number}}
- */
+/** Apply an edit to a plain string — used by the markdown <textarea> surface and
+ *  by the unit tests, so the behaviour under test is the shipped one.
+ *  @param {string} text @param {import('./interaction-policy.js').TextEdit} edit
+ *  @returns {{text: string, caret: number, head: number}} */
 export function applyTextEdit(text, edit) {
   var out = text
   edit.ops.forEach(function (op) {
@@ -377,25 +337,18 @@ export function applyTextEdit(text, edit) {
   return { text: out, caret: edit.caret, head: edit.head === undefined ? edit.caret : edit.head }
 }
 
-// ── browser layer: PM state → classified context, and the TipTap extension ──
-
 export function resolveContext(state, view) {
   var sel = state.selection
   var nodeSelName = sel.node ? sel.node.type.name : null
   var $from = sel.$from
   var ancestors = []
   var parent = $from.parent
-  // Typed block read — the policy never indexes raw attr maps (contract
-  // §typed block). Via sieveBlockFor with NO blockService: the mode
-  // here is the LIVE presentation mode (diagram edit/render, toggled locally by
-  // Mod+Enter), a PM-node concern — never the mirror's Go truth (which would lag
-  // the toggle). It resolves through the resurrect path, reading node attrs.
-  // MODE.DEFAULT (modeless kinds) normalises to null so classifyContext's
-  // ctx.mode contract is unchanged.
+  // The policy never indexes raw attr maps. Via sieveBlockFor with NO
+  // blockService, because the mode here is the LIVE presentation mode toggled
+  // locally by Mod+Enter — never Go truth, which would lag the toggle.
   var blockMode = sieveBlockFor(sel.node || parent).mode
   var mode = blockMode === MODE.DEFAULT ? null : blockMode
 
-  // If focus is inside a block sub-element (e.g. log table filter input), resolve that block
   if (view && document.activeElement && view.dom.contains(document.activeElement)) {
     var blockEl = document.activeElement.closest('.sieve-block')
     if (blockEl) {
@@ -414,7 +367,6 @@ export function resolveContext(state, view) {
           }
         }
       } catch (e) {
-        // Fallback to selection-based logic
       }
     }
   }
@@ -432,15 +384,13 @@ export function resolveContext(state, view) {
 }
 
 /**
- * THE READER FOR `suppressTriggers` — does the caret sit in text where a `@`/`/`
- * picker must not arm? Asked by the editor's caret port before it hands the
- * popover any text to scan, so the picker never sees the inside of a code or
- * diagram block. Resolved through the SAME resolveContext the arrows, Tab, Enter
- * and Home go through, so a kind opts in by naming the flag like any other.
+ * THE READER FOR `suppressTriggers`: does the caret sit in text where a `@`/`/`
+ * picker must not arm? Asked by the caret port before it hands the popover any
+ * text to scan, and resolved through the SAME resolveContext the arrows, Tab,
+ * Enter and Home go through, so a kind opts in by naming the flag.
  *
- * The chip-like kinds need nothing: ai-block, web-clip, smart-image, smart-card
- * and reference are all `caretStop: true`, so no caret enters their text and no
- * trigger can arm there in the first place.
+ * The chip-like kinds need nothing: they are all `caretStop: true`, so no caret
+ * enters their text.
  * @param {any} state @param {any} [view] @returns {boolean}
  */
 export function triggersSuppressed(state, view) {
@@ -460,9 +410,9 @@ function rawTextSpan(state) {
   }
 }
 
-// dispatchTextEdit — the PM half of applyTextEdit: same TextEdit, applied as a
-// tracked transaction so undo sees one step and the backend's block sync gets a
-// normal doc change. Ops are already descending, so positions stay valid.
+// The PM half of applyTextEdit: the same TextEdit, applied as a tracked
+// transaction so undo sees one step and the backend's block sync gets a normal
+// doc change. Ops are already descending, so positions stay valid.
 function dispatchTextEdit(view, blockStart, edit) {
   var tr = view.state.tr
   edit.ops.forEach(function (op) {
@@ -497,15 +447,14 @@ function applyDedent(view, width) {
   return true
 }
 
-// TT — the TipTap/PM namespace captured by buildInteractionPolicyExtension
-// (the vendor bundle global in the app; a shim of the same classes in
-// vitest). Needed because this file is loaded raw in the browser: bare
-// '@tiptap/pm/state' imports cannot resolve here.
+// The TipTap/PM namespace captured by buildInteractionPolicyExtension. Needed
+// because this file is loaded raw in the browser, where bare '@tiptap/pm/state'
+// imports cannot resolve.
 var TT = null
 
-// insertParagraphAfter — the universal block escape (Shift+Enter anywhere in
-// a sieve block; plain Enter on a selected read-only block): a new paragraph
-// after the caret's TOP-LEVEL block, caret placed inside it.
+// The universal block escape (Shift+Enter anywhere in a sieve block; plain Enter
+// on a selected read-only block): a new paragraph after the caret's TOP-LEVEL
+// block, caret placed inside it.
 function insertParagraphAfter(view) {
   var state = view.state
   var sel = state.selection
@@ -524,18 +473,15 @@ function insertParagraphAfter(view) {
   return true
 }
 
-// policyEnterKeydown — the Enter-family entry point, called from editor.js's
-// editorProps.handleKeyDown (NOT from the plugin below). Ordering rationale:
-// TipTap's core Keymap binds Enter→newlineInCode and Mod-Enter→exitCode, which
-// run BEFORE any extension plugin and would consume Enter inside code:true
-// blocks (plain newline, no auto-indent; exitCode instead of mode toggle).
-// editorProps runs before core, and this function returns false in every
-// context the policy does not own, so native prose/list/table Enter (and
-// prose Shift+Enter soft breaks) are untouched. Tab is the mirror case:
-// native keymaps must win, so it lives in the priority-50 backstop plugin.
-// `host` is the surface's parent Editor (WysiwygSurface passes self.#host),
-// threaded through to a mode-toggling kind's onModEnter so it can reach the
-// Editor's public API rather than firing a global CustomEvent.
+// The Enter-family entry point, called from editorProps.handleKeyDown rather than
+// the plugin below: TipTap's core Keymap binds Enter→newlineInCode and
+// Mod-Enter→exitCode, which run BEFORE any extension plugin and would consume
+// Enter inside code:true blocks. editorProps runs before core, and this returns
+// false in every context the policy does not own. Tab is the mirror case — native
+// keymaps must win there, so it lives in the priority-50 backstop plugin.
+//
+// `host` is the surface's parent Editor, threaded through to a mode-toggling
+// kind's onModEnter so it can reach the Editor's public API.
 export function policyEnterKeydown(view, event, host) {
   if (event.key !== 'Enter') return false
   return handleEnter(view, event, host)
@@ -546,15 +492,13 @@ function handleEnter(view, event, host) {
   var isMod = event.metaKey || event.ctrlKey
   var inSieveBlock = ctx.kind !== 'prose'
 
-  // Shift+Enter: THE universal block escape (contract: "Two chords, one
-  // meaning each"). Prose keeps its native soft break (we return false).
+  // Shift+Enter: THE universal block escape. Prose keeps its native soft break.
   if (event.shiftKey && !isMod) {
     if (!inSieveBlock) return false
     event.preventDefault()
     return insertParagraphAfter(view)
   }
 
-  // Mod+Enter: mode toggle for kinds that declare it; native otherwise.
   if (isMod) {
     if (ctx.policy.modEnterTogglesMode) {
       var beh = getBlockBehaviour(ctx.kind)
@@ -566,8 +510,8 @@ function handleEnter(view, event, host) {
     return false
   }
 
-  // Plain Enter on a selected caret-stop block: escape (this is how prose is
-  // planted between two adjacent read-only blocks).
+  // Plain Enter on a selected caret-stop block: escape. This is how prose is
+  // planted between two adjacent read-only blocks.
   if (ctx.isNodeSelection && stopActive(ctx.policy, sieveBlockFor(view.state.selection.node))) {
     event.preventDefault()
     return insertParagraphAfter(view)
@@ -579,9 +523,9 @@ function handleEnter(view, event, host) {
   if (ctx.policy.enterInsertsNewline && !ctx.isNodeSelection && ctx.mode !== 'render') {
     event.preventDefault()
     var s = rawTextSpan(view.state)
-    // Between an empty pair, Enter expands to a block before it falls through
-    // to the plain newline — this is the `if x {` ⏎ case. Checked first because
-    // it SUBSUMES auto-indent (it emits the indented body line itself).
+    // Between an empty pair, Enter expands to a block before it falls through to
+    // the plain newline. Checked first because it SUBSUMES auto-indent — it emits
+    // the indented body line itself.
     if (ctx.policy.expandPairOnEnter) {
       var expand = pairExpandEdit(s.text, s.from, s.to, ctx.policy.indentWidth)
       if (expand) return dispatchTextEdit(view, s.blockStart, expand)
@@ -593,18 +537,17 @@ function handleEnter(view, event, host) {
   return false // native Enter (prose split etc.)
 }
 
-// stopActive — is this kind a caret stop right now? ('render' = only while
-// the block is in render mode; true = always.) Reads the TYPED block,
-// never a raw attr map (contract §typed block).
+// Is this kind a caret stop right now? 'render' means only while the block is in
+// render mode; true means always. Reads the TYPED block, never a raw attr map.
 /** @param {InteractionPolicy} policy @param {SieveBlock} block */
 function stopActive(policy, block) {
   if (policy.caretStop === 'render') return block.mode === MODE.RENDER
   return !!policy.caretStop
 }
 
-// atBoundary — is the caret on the block's boundary line in the arrow
-// direction? endOfTextblock needs real layout; fall back to hard start/end
-// offsets where none exists (unit tests, degenerate views).
+// Is the caret on the block's boundary line in the arrow direction?
+// endOfTextblock needs real layout, so fall back to hard start/end offsets where
+// none exists.
 function atBoundary(view, down) {
   try {
     return view.endOfTextblock(down ? 'down' : 'up')
@@ -616,14 +559,14 @@ function atBoundary(view, down) {
 
 var IS_MAC = typeof navigator !== 'undefined' && /Mac|iP(hone|ad|od)/.test(navigator.platform || '')
 
-// isEditingKey — keys that would mutate text content (used for readOnlyText).
+// Keys that would mutate text content, for readOnlyText.
 function isEditingKey(event) {
   if (event.key === 'Backspace' || event.key === 'Delete') return true
   return event.key.length === 1 && !event.metaKey && !event.ctrlKey
 }
 
-// handleSmartHome — contract Home column for raw-text blocks: first press
-// jumps to the first non-whitespace character of the line, second to col 0.
+// The contract's Home column for raw-text blocks: first press jumps to the first
+// non-whitespace character of the line, second to col 0.
 function handleSmartHome(view, event) {
   var ctx = resolveContext(view.state, view)
   if (!ctx.policy.smartHome || ctx.isNodeSelection || ctx.mode === 'render') return false
@@ -640,14 +583,13 @@ function handleSmartHome(view, event) {
   return true
 }
 
-// handleArrowStop — caret contract clause 4: read-only blocks are a single
-// caret stop. Arrow onto one → whole-block NodeSelection; arrow again → past
-// it. Prevents the caret diving into non-atom read-only containers.
+// Caret contract clause 4: read-only blocks are a single caret stop. Arrow onto
+// one selects the whole block; arrow again moves past it. This prevents the caret
+// diving into non-atom read-only containers.
 function handleArrowStop(view, down) {
   var st = view.state
   var sel = st.selection
 
-  // A caret-stop block is selected → move past it.
   if (sel.node) {
     var ctx = resolveContext(st, view)
     if (stopActive(ctx.policy, sieveBlockFor(sel.node))) {
@@ -659,7 +601,6 @@ function handleArrowStop(view, down) {
     return false
   }
 
-  // Caret on a boundary line adjacent to a caret-stop block → select it.
   var $head = sel.$head
   if ($head.depth === 0) return false
   if (!atBoundary(view, down)) return false
@@ -674,10 +615,10 @@ function handleArrowStop(view, down) {
   return true
 }
 
-// handlePolicyTextInput — PM's handleTextInput hook. This, not handleKeyDown,
-// is the correct home for the pair behaviours: PM hands us the exact range the
-// typed text would replace, and the hook is IME/dead-key safe (on a layout
-// where `"` is a dead key, keydown reports the dead key, not the character).
+// PM's handleTextInput hook. This, not handleKeyDown, is the correct home for the
+// pair behaviours: PM hands us the exact range the typed text would replace, and
+// the hook is IME/dead-key safe — on a layout where `"` is a dead key, keydown
+// reports the dead key rather than the character.
 function handlePolicyTextInput(view, from, to, text) {
   var ctx = resolveContext(view.state, view)
   if (ctx.isNodeSelection || ctx.mode === 'render' || ctx.policy.readOnlyText) return false
@@ -690,9 +631,8 @@ function handlePolicyTextInput(view, from, to, text) {
   return dispatchTextEdit(view, blockStart, edit)
 }
 
-// handlePairBackspace — the companion autoclose MUST have: Backspace with the
-// caret between an empty pair removes both halves. Without it autoclose strands
-// orphaned closers and is worse than no autoclose at all.
+// The companion autoclose MUST have: Backspace with the caret between an empty
+// pair removes both halves, so autoclose never strands orphaned closers.
 function handlePairBackspace(view) {
   var ctx = resolveContext(view.state, view)
   if (!ctx.policy.autoClosePairs || ctx.isNodeSelection || ctx.mode === 'render') return false
@@ -702,17 +642,14 @@ function handlePairBackspace(view) {
   return dispatchTextEdit(view, s.blockStart, edit)
 }
 
-// handleSubstitutionGuard — cancels OS-level automatic text substitution
-// (macOS "smart dashes/quotes": `--` + space silently becomes `–`) inside kinds
-// that declare blockTextSubstitution. That substitution is a real character
-// mutation, not a rendering effect, and in a PlantUML/mermaid fence or a code
-// block it corrupts the source — `--`, `---` and `----` all mean different
-// things. Confirmed on macOS 2026-07-29; WebKitGTK does not do it.
+// Cancels OS-level automatic text substitution (macOS smart dashes: `--` plus a
+// space silently becomes an en dash) inside kinds declaring blockTextSubstitution.
+// That substitution is a real character mutation, not a rendering effect, and in a
+// mermaid fence or a code block it corrupts the source — `--`, `---` and `----`
+// all mean different things.
 //
-// `insertReplacementText` is the Input Events inputType reserved for
-// spell-check/autocorrect/substitution replacements, so this is precise: it
-// leaves ordinary typing (`insertText`) and deliberate pastes
-// (`insertFromPaste`) — including a genuine em dash — completely alone.
+// `insertReplacementText` is the inputType reserved for autocorrect/substitution
+// replacements, so ordinary typing and deliberate pastes are left alone.
 export function handleSubstitutionGuard(event, policy) {
   if (!policy || !policy.blockTextSubstitution) return false
   if (event.inputType !== 'insertReplacementText') return false
@@ -720,10 +657,9 @@ export function handleSubstitutionGuard(event, policy) {
   return true
 }
 
-// handleExpand — resolve the caret/selection's block, ask its renderer for
-// expand content, and open the lightbox. Returns false (native) when the block
-// is not expandable or has nothing to expand right now (diagram edit mode,
-// pending image). No per-renderer key handling — the policy owns the chord.
+// Resolve the caret/selection's block, ask its renderer for expand content, and
+// open the lightbox. Returns false (native) when the block is not expandable or
+// has nothing to expand right now.
 function handleExpand(view) {
   var ctx = resolveContext(view.state, view)
   if (!ctx.policy.expandable) return false
@@ -739,14 +675,11 @@ function handleExpand(view) {
   return expandBlock(spec)
 }
 
-// handleLinkEdit — the Mod+K chord (contract): the caret inside a `link` mark
-// edits that link; a non-empty text selection becomes a new one. PROSE ONLY —
-// a link is ordinary markdown, and the raw-text/read-only kinds carry no marks;
-// a paragraph INSIDE a sieve container (a web-clip's projected body) is excluded
-// too, since that body is Go's to author, not the user's. Returns false (native)
-// wherever there is nothing to edit and nothing to create, so the chord stays
-// free for anything else that wants it there. ProseLink owns every mark
-// mechanic; this is only the routing.
+// The Mod+K chord: the caret inside a `link` mark edits that link; a non-empty
+// text selection becomes a new one. PROSE ONLY — a link is ordinary markdown, and
+// the raw-text/read-only kinds carry no marks. A paragraph INSIDE a sieve
+// container is excluded too, since that body is Go's to author. ProseLink owns
+// every mark mechanic; this is only routing.
 function handleLinkEdit(view) {
   var ctx = resolveContext(view.state, view)
   if (ctx.kind !== 'prose' || ctx.isNodeSelection) return false
@@ -756,12 +689,10 @@ function handleLinkEdit(view) {
   return link ? link.edit() : false
 }
 
-// buildLiteralGlyphsPlugin — the ONE read site translating the literalGlyphs
-// flag into something the stylesheet can see. A Decoration, not a classList
-// write: PM reverts classes set directly on nodes it owns (native codeBlock),
-// and this way sieve NodeViews and native code blocks are handled by the same
-// mechanism. Lives here beside the flag rather than in the renderers, which are
-// PM-free and must not gain an edge into the editor layer.
+// The ONE read site translating the literalGlyphs flag into something the
+// stylesheet can see. A Decoration, not a classList write: PM reverts classes set
+// directly on nodes it owns, and this way sieve NodeViews and native code blocks
+// go through the same mechanism.
 function buildLiteralGlyphsPlugin(T) {
   function build(doc) {
     var decos = []
@@ -787,44 +718,38 @@ export function buildInteractionPolicyExtension(T) {
   TT = T
   return T.Extension.create({
     name: 'sieveInteractionPolicy',
-    // Lower than the default 100: native keymaps (list indent/outdent, table
-    // goToNextCell/PreviousCell) run FIRST. We are the backstop, never a shadow.
+    // Lower than the default 100: native keymaps run FIRST. We are the backstop,
+    // never a shadow.
     priority: 50,
     addProseMirrorPlugins: function () {
       return [
         new T.Plugin({
           props: {
-            // Pair behaviours (surround / autoclose / type-over). Runs here
-            // rather than in handleKeyDown so IME and dead-key layouts work.
+            // Pair behaviours (surround / autoclose / type-over). Here rather
+            // than in handleKeyDown so IME and dead-key layouts work.
             handleTextInput: function (view, from, to, text) {
               return handlePolicyTextInput(view, from, to, text)
             },
             handleDOMEvents: {
-              // OS text substitution (macOS smart dashes) — see
-              // handleSubstitutionGuard. A DOM event, not a PM one, so it has
-              // to come through handleDOMEvents rather than a PM prop.
+              // A DOM event, not a PM one, so it comes through handleDOMEvents
+              // rather than a PM prop.
               beforeinput: function (view, event) {
                 return handleSubstitutionGuard(event, resolveContext(view.state, view).policy)
               },
             },
             handleKeyDown: function (view, event) {
-              // Backspace between an empty pair deletes both halves.
               if (event.key === 'Backspace' && !event.metaKey && !event.ctrlKey && !event.altKey) {
                 if (handlePairBackspace(view)) { event.preventDefault(); return true }
-                // fall through: not between a pair, native Backspace applies
               }
-              // Mod+Alt+E — expand the block at the caret/selection into the
-              // lightbox (appearance tier; contract). Not a PM/TipTap binding.
+              // Mod+Alt+E — expand the block at the caret into the lightbox.
               if ((event.key === 'e' || event.key === 'E' || event.code === 'KeyE') &&
                   event.altKey && (event.metaKey || event.ctrlKey) && !event.shiftKey) {
                 if (handleExpand(view)) { event.preventDefault(); return true }
                 return false
               }
-              // Mod+K — edit the link at the caret, or make one out of the
-              // selected text (contract; the ONE link CHORD, and the only way to
-              // link text already in the document — the Insert-from-URL dialog's
-              // Link rung covers a URL that is not in it yet).
-              // Editor-owned and unclaimed by the native menu.
+              // Mod+K — the ONE link CHORD, and the only way to link text
+              // already in the document; the Insert-from-URL dialog's Link rung
+              // covers a URL that is not in it yet.
               if ((event.key === 'k' || event.key === 'K' || event.code === 'KeyK') &&
                   (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey) {
                 if (handleLinkEdit(view)) { event.preventDefault(); return true }
@@ -834,11 +759,8 @@ export function buildInteractionPolicyExtension(T) {
                   !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
                 return handleArrowStop(view, event.key === 'ArrowDown')
               }
-              // Smart home: the Home key (Linux/Windows; fn+Left on Mac), and
-              // Cmd+Left on macOS — the idiomatic line-start gesture there
-              // (VS Code treats it as smart-home too). Only in raw-text
-              // blocks; native everywhere else. Shift variants (selection)
-              // stay native.
+              // Smart home: the Home key, and Cmd+Left on macOS. Only in
+              // raw-text blocks; Shift variants stay native.
               if (event.key === 'Home' && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
                 return handleSmartHome(view, event)
               }
@@ -846,8 +768,8 @@ export function buildInteractionPolicyExtension(T) {
                   !event.shiftKey && !event.ctrlKey && !event.altKey) {
                 return handleSmartHome(view, event)
               }
-              // Read-only text (log): consume typing/deleting keys so the
-              // content cannot be edited; caret movement and copy still work.
+              // Read-only text: consume typing and deleting keys so the content
+              // cannot be edited; caret movement and copy still work.
               if (isEditingKey(event)) {
                 var roCtx = resolveContext(view.state, view)
                 if (roCtx.policy.readOnlyText && !roCtx.isNodeSelection) {
@@ -856,18 +778,16 @@ export function buildInteractionPolicyExtension(T) {
                 }
               }
               // keyCode 9 matters: WebKitGTK can report Shift+Tab as the X11
-              // keysym ISO_Left_Tab in event.key (Chrome always says 'Tab'),
-              // which made Shift+Tab fall through to focus navigation in the
-              // wails app while working in Chrome.
+              // keysym ISO_Left_Tab in event.key, which made Shift+Tab fall
+              // through to focus navigation in the wails app.
               var isTabKey = event.key === 'Tab' || event.key === 'ISO_Left_Tab' || event.keyCode === 9
               if (!isTabKey) return false
               if (event.metaKey || event.ctrlKey || event.altKey) return false
               var isShiftTab = event.shiftKey || event.key === 'ISO_Left_Tab'
               var ctx = resolveContext(view.state, view)
-              // Native structural keymaps already ran (priority order); from
-              // here we own the key so focus can never escape the editor.
+              // Native structural keymaps already ran; from here we own the key
+              // so focus can never escape the editor.
               if (ctx.inList || ctx.inTable) {
-                // e.g. Shift+Tab in the first table cell: consume ∅.
                 event.preventDefault()
                 return true
               }
@@ -877,7 +797,6 @@ export function buildInteractionPolicyExtension(T) {
                   ? applyDedent(view, ctx.policy.indentWidth)
                   : applyIndent(view, ctx.policy.indentWidth)
               }
-              // Plain paragraph / read-only / caret-stop: consume ∅.
               event.preventDefault()
               return true
             },

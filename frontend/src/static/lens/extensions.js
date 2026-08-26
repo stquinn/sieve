@@ -1,6 +1,3 @@
-// extensions.js — vanilla JS TipTap custom extensions.
-// Depends on the vendor TipTap bundle (ui/static/vendor/tiptap.js) being loaded first.
-
 import { T as VENDOR } from './document-editor/surfaces/tiptap-vendor.js'
 
 var Node = VENDOR.Node
@@ -9,8 +6,6 @@ var Plugin = VENDOR.Plugin
 var PluginKey = VENDOR.PluginKey
 var Decoration = VENDOR.Decoration
 var DecorationSet = VENDOR.DecorationSet
-
-  // ── Search ─────────────────────────────────────────────────────────────────
 
   var searchPluginKey = new PluginKey('search')
 
@@ -118,31 +113,16 @@ var DecorationSet = VENDOR.DecorationSet
                      state.searchTerm !== (oldState && oldState.searchTerm))) {
                   var current = state.results[state.currentIndex]
                   if (current) {
-                    // view.nodeDOM(pos) only resolves when pos sits exactly on a
-                    // child's start boundary (docView.descAt) — a substring match
-                    // almost always starts strictly inside a text node, so it
-                    // bottoms out on a leaf TextViewDesc and returns null; in the
-                    // rare boundary-aligned case it returns a raw DOM Text node,
-                    // which has no .scrollIntoView (only Element does). Either way
-                    // the scroll never fired. domAtPos(pos) resolves an arbitrary
-                    // position; walk up from whatever it returns (often a Text
-                    // node) to the nearest Element and let the browser's own
-                    // scroll-container resolution do the rest.
+                    // nodeDOM(pos) resolves only when pos sits exactly on a child's start
+                    // boundary, and then yields a raw Text node with no .scrollIntoView. domAtPos
+                    // resolves any position; climb to the nearest Element and scroll that.
                     var located = view.domAtPos(current.from)
                     var dom = located && located.node
                     while (dom && dom.nodeType !== 1) dom = dom.parentNode
-                    // A match can resolve to an element that is DETACHED from the
-                    // document: a diagram in render mode leaves its <code>
-                    // contentDOM orphaned (the NodeView still points at it, so
-                    // domAtPos happily returns it), and a detached subtree has no
-                    // geometry anywhere up its chain — climbing the DOM finds
-                    // nothing to scroll to. The doc scan is right to FIND those
-                    // matches (the source really is in the document), so instead
-                    // of dropping them, fall back through the DOC: take the
-                    // top-level block containing the match and scroll its NodeView
-                    // wrapper, which is attached and visible. Navigation then lands
-                    // on the block holding the match rather than silently
-                    // consuming a next-press.
+                    // A match can resolve to a DETACHED element — a diagram in render mode
+                    // orphans its <code> contentDOM — which has no geometry anywhere up its
+                    // chain. Fall back through the doc and scroll the top-level block's
+                    // NodeView wrapper, which is attached.
                     var box = dom && dom.getBoundingClientRect()
                     var attached = dom && document.contains(dom) && (box.width || box.height)
                     if (!attached) {
@@ -178,8 +158,6 @@ var DecorationSet = VENDOR.DecorationSet
     },
   })
 
-  // ── SelectionHighlight ─────────────────────────────────────────────────────
-
   export var SelectionHighlight = Extension.create({
     name: 'selectionHighlight',
     addProseMirrorPlugins: function () {
@@ -188,16 +166,15 @@ var DecorationSet = VENDOR.DecorationSet
           props: {
             decorations: function (state) {
               var sel = state.selection
-              // sel.node is defined for NodeSelection. sel.empty is true for empty TextSelection.
-              // So if it's not empty and has no node, it's a TextSelection (or AllSelection)
+              // NodeSelection sets sel.node; an empty TextSelection sets sel.empty — so
+              // neither flag means a non-empty text range.
               if (sel.empty || sel.node) return DecorationSet.empty
               var decos = []
               state.doc.nodesBetween(sel.from, sel.to, function (node, pos) {
                 if (node.isLeaf && node.type.name.startsWith('sieve-')) {
                   if (pos >= sel.from && pos + node.nodeSize <= sel.to) {
-                    // A sieve block that is part of a multi-block RANGE selection.
-                    // Use the range tint (background) — NOT ProseMirror-selectednode,
-                    // whose outline is reserved for a single focused NodeSelection.
+                    // Range tint, NOT ProseMirror-selectednode: that outline is reserved for a
+                    // single focused NodeSelection.
                     decos.push(Decoration.node(pos, pos + node.nodeSize, { class: 'block-in-selection' }))
                   }
                 }
@@ -210,48 +187,31 @@ var DecorationSet = VENDOR.DecorationSet
     }
   })
 
-  // ── buildAiContext ─────────────────────────────────────────────────────────
-  // P3.C/P3.D: reads ONLY the resolved AI target the editor STORED in its
-  // SelectionContext (context.target = {kind, ref, range, label}) — no PM walk, no
-  // node, no per-field re-derivation. For an ai-block follow-up target.ref is the
-  // ai-block's own single id and target.label is already 'Follow-up'; Go walks the
-  // block's ref back-pointer chain server-side (the frontend never pre-walks it).
+  // Reads ONLY the AI target the editor already resolved into its SelectionContext
+  // (context.target = {kind, ref, range, label}) — no PM walk, no re-derivation.
   export function buildAiContext(context) {
     var t = context.target
 
     if (t.kind === 'document') return { blockRef: 'doc', contextLabel: 'Document' }
-    // selection → the ref chain of every top-level block the selection crosses
-    // (D-r.7 bug-1 fix); each block already carries an id, no blockRef wrap.
     if (t.kind === 'selection') return { blockRef: t.ref || 'doc', contextLabel: t.label }
 
-    // block → the target's SINGLE id (P3.D). For an ai-block follow-up this is the
-    // ai-block's own id and t.label is already 'Follow-up' (resolved in the surface):
-    // Go walks the block's ref back-pointer chain and reconstitutes the thread. The
-    // frontend never pre-walks the chain — sending "<ref>,<id>" did Go's job
-    // incompletely. Every block kind falls through here.
+    // block → the target's SINGLE id. Go walks the ref back-pointer chain
+    // server-side to reconstitute an ai-block thread; never pre-walk it here.
+    // Every block kind falls through to this.
     return { blockRef: t.ref || 'doc', contextLabel: t.label }
   }
 
-  // ── applyTargetHighlight ─────────────────────────────────────────────────────
-  // Canonical "mark this selection as the AI target". D-r.7: every top-level block
-  // already carries an id (D-r.4 minting), so the AI target resolves by id and the
-  // legacy blockRef wrap is no longer needed — we simply apply the == highlight
-  // mark to the selected words. (The blockRef node type itself is retired in Stage
-  // E; here it just stops being created.) Single source of truth shared by the
-  // context menu's "Highlight Target" item and the Ask AI / Explain handler in
-  // editor.js, so every entry point produces an identical target.
+  // Canonical "mark this selection as the AI target": applies the == highlight mark
+  // to the range. Every entry point routes through here, so targets are identical.
   export function applyTargetHighlight(editor, range) {
-    // D-5: mark an EXPLICIT range {from,to} (a SelectionContext coordinate) — the
-    // words the label named — and NEVER re-derive the extent from
-    // editor.state.selection (which may have drifted since the label rendered).
-    // Shared by askAi (context.target.range) and the context menu's "Highlight
-    // Target" (its live-selection extent, passed in). No range / collapsed → no-op.
+    // Marks the EXPLICIT range passed in — never re-derive the extent from
+    // editor.state.selection, which may have drifted since the label rendered.
+    // No range / collapsed → no-op.
     if (!range || range.from == null || range.from === range.to) return
     if (editor.isActive && editor.isActive('highlight')) return // already marked
     editor.chain().setTextSelection({ from: range.from, to: range.to }).setMark('highlight').run()
   }
 
-  // ── HighlightMark ──────────────────────────────────────────────────────────
   // Extends the built-in Highlight extension with tiptap-markdown storage so
   // ==word== round-trips correctly through the markdown serializer/parser.
 
@@ -275,9 +235,6 @@ var DecorationSet = VENDOR.DecorationSet
     },
   })
 
-  // BlockId (the prose identity attr) now lives in prose-block.js — the cohesive
-  // prose block KIND definition — exported from there.
-
   export var AiShortcuts = Extension.create({
     name: 'aiShortcuts',
     addOptions: function() {
@@ -285,14 +242,10 @@ var DecorationSet = VENDOR.DecorationSet
         onExplain: function() {},
       }
     },
-    // Only caret-contextual chords the native menu does NOT claim live here.
-    // Smart File (Mod+Shift+E), Keep & Smart File (Mod+Shift+Return) and Toggle
-    // AI Blocks (Mod+J) are owned by the menu (App-Level Chords, see
-    // docs/editor-interaction-contract.md) — do not rebind them in the editor.
-    // ASK (Mod+Shift+A) LEFT the editor keymap in P4.E (D-5): the Ask panel is a
-    // Workspace child and its document-level listener owns the chord wholesale (it
-    // is a chrome action, not a caret-contextual edit). EXPLAIN (Mod+E) STAYS — it
-    // is caret-contextual, so it is a legitimate editor chord.
+    // Only caret-contextual chords the native menu does NOT claim live here. Smart
+    // File (Mod+Shift+E), Keep & Smart File (Mod+Shift+Return), Toggle AI Blocks
+    // (Mod+J) and Ask (Mod+Shift+A) are owned outside the editor — do not rebind
+    // them. See docs/editor-interaction-contract.md.
     addKeyboardShortcuts: function() {
       var self = this
       return {

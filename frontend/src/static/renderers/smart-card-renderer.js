@@ -1,20 +1,14 @@
 // @ts-check
-// smart-card-renderer.js — SmartCardRenderer: the renderer half of the
-// 'smart-card' kind's renderer/NodeView split. NORMATIVE contract:
-// docs/design/archive/specs/2026-07-21-block-renderer-contract.md (APPROVED rev 2).
-// Owns look-and-feel ONLY: the card shell, the OG-style layout (meta row,
-// thumbnail, title/description/url), the loading/pending chrome (shared
-// StatusBadge decision tree — survey item A7), and this kind's stylesheet
-// (`static styles`). Zero ProseMirror/editor/window.* dependencies.
+// SmartCardRenderer — the 'smart-card' kind's look-and-feel: the card shell, the
+// OG-style layout (meta row, thumbnail, title/description/url), the
+// loading/pending chrome, and this kind's stylesheet.
 //
-// An atom — its whole surface is the BODY (buildBody), which owns the card
-// content AND the root-level pending class + data attr (an atom's body IS its
-// surface). EVERY click handler (chrome-host shielding, click-to-edit-when-no-
-// href, Mod+Click to open) needs getPos()/the NodeView closure or dispatches
-// `sieve:smart-card-edit` — genuinely PM-coupled, so ALL interaction stays
-// adapter-side; this class builds static DOM only. The edit dialog's SAVE lands
-// back here as the semantic verb setLink(href, title) (subclass-owned; called
-// by the adapter that constructed this concrete type — abstract-consumer rule).
+// An atom — its whole surface is the BODY, which owns the card content AND the
+// root-level pending class + data attr. EVERY click handler (chrome-host
+// shielding, click-to-edit-when-no-href, Mod+Click to open) needs getPos() or
+// the NodeView closure, so ALL interaction stays adapter-side and this class
+// builds static DOM only. The edit dialog's SAVE lands back here as the semantic
+// verb setLink(href, title).
 //
 // `isPending` is driven by StatusBadge.classify() === 'pending' specifically
 // (not 'stale'), so a stale card falls back to real data instead of hanging.
@@ -50,13 +44,10 @@ export class SmartCardRenderer extends BlockRenderer {
     this.#renderContent(/** @type {SmartCardPayload} */ (block.payload))
   }
 
-  // ── Semantic verbs (kind-specific — contract's abstract-consumer rule) ────
-
   /**
-   * Repoint the card at a (possibly retitled) URL — the edit dialog's SAVE.
-   * The verb is the ONLY place that edit becomes schema (via _pushAttrs);
-   * refreshed card data (description, image, siteName) returns as document
-   * truth through update(block).
+   * Repoint the card at a (possibly retitled) URL — the edit dialog's SAVE, and
+   * the ONLY place that edit becomes schema. Refreshed card data (description,
+   * image, siteName) returns as document truth through update(block).
    * @param {string} href @param {string} title
    */
   setLink(href, title) {

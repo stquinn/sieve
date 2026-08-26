@@ -1,10 +1,9 @@
-// block-position.js — pure PM doc position helpers, testable without the editor.
-// Every function takes a `doc` (PM Node), not the editor object.
+// Pure PM doc position helpers. Every function takes a `doc` (PM Node), never
+// the editor object, so they are testable without a live editor.
 
-// blockIndexForInsert(doc, pos): the top-level block index for inserting at doc
-// position `pos` — the number of top-level nodes that end at or before `pos`.
-// pos == null → doc.childCount (append).
-// `pos` may be a number or an object with a `.from` field (sieveInsertPos range form).
+// The top-level block index for inserting at doc position `pos` — the number of
+// top-level nodes that end at or before `pos`; pos == null → doc.childCount
+// (append). `pos` may be a number or an object with a `.from` field.
 export function blockIndexForInsert(doc, pos) {
   if (pos == null) return doc.childCount
   var p = (typeof pos === 'object') ? pos.from : pos
@@ -28,10 +27,9 @@ export function docPosForBlockIndex(doc, idx) {
   return pos
 }
 
-// blockIndexAfter(doc, blockId): the top-level block index immediately AFTER the
-// top-level node whose attrs.id === blockId; -1 if no such node found.
-// Only considers DIRECT children of doc — not nested descendants.
-// This is the correct insert position for an extract/paste following a given block.
+// The top-level block index immediately AFTER the top-level node whose
+// attrs.id === blockId; -1 if there is none. Considers only DIRECT children of
+// doc, and is the insert position for an extract or paste following that block.
 export function blockIndexAfter(doc, blockId) {
   if (!blockId) return -1
   for (var i = 0; i < doc.childCount; i++) {
@@ -41,11 +39,10 @@ export function blockIndexAfter(doc, blockId) {
   return -1
 }
 
-// blockIndexAt(doc, pos): the index of the TOP-LEVEL block whose range
-// [offset, offset+nodeSize) contains doc position `pos`; -1 when none does.
-// Position-native counterpart of blockIndexAfter (which is id-native) — needed
-// where the source is a RANGE inside a block rather than a block with an id
-// (a prose link, #67), and the anchor must be derived from the position.
+// The index of the TOP-LEVEL block whose range [offset, offset+nodeSize) contains
+// doc position `pos`; -1 when none does. The position-native counterpart of
+// blockIndexAfter, for when the source is a range inside a block rather than a
+// block with an id.
 export function blockIndexAt(doc, pos) {
   var offset = 0
   for (var i = 0; i < doc.childCount; i++) {
@@ -56,10 +53,9 @@ export function blockIndexAt(doc, pos) {
   return -1
 }
 
-// enclosingBlockId(doc, pos): the id of the TOP-LEVEL block containing doc
-// position `pos`. Works for both atom nodes (leaf, no interior positions) and
-// containers. Returns '' when no top-level block owns the position or when the
-// node has no id.
+// The id of the TOP-LEVEL block containing doc position `pos`, for atom nodes and
+// containers alike. '' when no top-level block owns the position, or when the
+// node it finds has no id.
 export function enclosingBlockId(doc, pos) {
   var i = blockIndexAt(doc, pos)
   if (i < 0) return ''
@@ -67,15 +63,14 @@ export function enclosingBlockId(doc, pos) {
   return (child.attrs && child.attrs.id) ? child.attrs.id : ''
 }
 
-// emptyParagraphAnchor(doc, pos): the top-level node that anchors insert
-// position `pos` (a blockInsertPos result — the boundary AFTER the caret's
-// block), IF that node is a bare empty paragraph. Contract rule ("Block
-// insertion placement"): an empty paragraph is a placement TARGET, not an
-// anchor — the new block takes its index and the paragraph is consumed.
-// Bare = type 'paragraph', no content or whitespace-only. Empty headings/list
-// items never match: their emptiness carries chosen structure. Returns
-// { from, to, index } or null (incl. for the {from,to} replace-range form and
-// doc-level gap positions, which anchor no node).
+// The top-level node anchoring insert position `pos` (a blockInsertPos result —
+// the boundary AFTER the caret's block), IF that node is a bare empty paragraph.
+// Contract rule "Block insertion placement": an empty paragraph is a placement
+// TARGET, not an anchor — the new block takes its index and consumes it. Bare =
+// type 'paragraph' with no content or whitespace only; empty headings and list
+// items never match, because their emptiness carries chosen structure. Returns
+// { from, to, index }, or null — including for the {from,to} replace-range form
+// and doc-level gap positions, which anchor no node.
 export function emptyParagraphAnchor(doc, pos) {
   if (pos == null || typeof pos === 'object') return null
   var offset = 0

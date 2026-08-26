@@ -1,14 +1,9 @@
 // @ts-check
-// highlighting.js — lowlight-based syntax highlighting for rendered markdown
-// content. Lives here in renderers/, the "engines a renderer's fill
-// contract needs" home alongside sanctioned-markdown.js — BlockRenderer's
-// default fillTitle/fillBody call applyHighlighting after rendering. (Callers
-// import getLowlight/applyHighlighting straight from this file; the retired
-// base/fenced-block-base.js grab-bag used to re-export them — issue #49 P5.)
+// lowlight-based syntax highlighting for rendered markdown content:
+// BlockRenderer's default fillTitle/fillBody call applyHighlighting after
+// rendering.
 
 import { T } from './vendor-libs.js'
-
-// ── Lowlight (lazy) ───────────────────────────────────────────────────────────
 
 var _lowlight = null
 
@@ -45,8 +40,7 @@ function addLineNumbers(pre, lineCount) {
   gutter.className = 'sieve-code-block__gutter'
   for (var i = 1; i <= lineCount; i++) {
     var span = document.createElement('span')
-    // Pseudo-content number (data-ln), never a text node — see LineGutter.sync
-    // for the WebKit copy-leak rationale.
+    // Pseudo-content number (data-ln), never a text node (WebKit copy leak).
     span.dataset.ln = String(i)
     gutter.appendChild(span)
   }
@@ -58,8 +52,8 @@ function addLineNumbers(pre, lineCount) {
 
 // applyHighlighting — walks pre>code elements, applies lowlight syntax colours,
 // wraps each block in a .sieve-code-block gutter layout, and marks the container
-// with 'sieve-rendered-content'. Call this once after setting innerHTML on your
-// content div — box, gutter, and colours all apply.
+// with 'sieve-rendered-content'. Call once after setting innerHTML on a content
+// div — box, gutter and colours all apply.
 export function applyHighlighting(container) {
   container.classList.add('sieve-rendered-content')
   var low = getLowlight()

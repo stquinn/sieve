@@ -1,10 +1,9 @@
 // @ts-check
-// media-lightbox.js — a window-filling overlay that hosts ONE element for
-// focused viewing. Two layers: a reusable overlay SHELL (backdrop, title bar,
-// toolbar slot, Esc/backdrop/× close, focus capture+restore) and a media
-// CONTROLLER (mode:'media' only) that adds pan/zoom via @panzoom/panzoom.
-// The shell is the deliberate reuse seam for a future mode:'live' focus mode.
-// Pure view-layer: zoom/pan is ephemeral, never persisted (docs spec §Architecture).
+// A window-filling overlay that hosts ONE element for focused viewing. Two layers:
+// a reusable overlay SHELL (backdrop, title bar, toolbar slot, Esc/backdrop/× close,
+// focus capture+restore) and a media CONTROLLER (mode:'media' only) that adds
+// pan/zoom via @panzoom/panzoom. The shell is the deliberate reuse seam for a future
+// mode:'live'. Pure view-layer: zoom/pan is ephemeral, never persisted.
 
 /** @typedef {{ element: Element, title: string, mode: 'media' }} ExpandSpec */
 
@@ -72,7 +71,6 @@ export class MediaLightbox {
     content.appendChild(spec.element)
     stage.appendChild(content)
 
-    // Backdrop click (stage, not content) closes.
     stage.addEventListener('mousedown', (e) => { if (e.target === stage) this.close() })
 
     overlay.append(bar, stage)
@@ -82,12 +80,10 @@ export class MediaLightbox {
     overlay.focus()
 
     if (spec.mode === 'media') {
-      // Panzoom measures the content when it initialises. A fresh <img> (smart-image)
-      // has its `src` set but hasn't loaded yet — it's 0x0, so cursor-anchored wheel
-      // zoom would compute its focal against a zero-size element and drift to a corner
-      // (buttons/center-zoom look fine; only zoomWithWheel is wrong). Defer setup until
-      // the image is loaded so panzoom measures real dimensions. A synchronously-sized
-      // element (a diagram's SVG) is already `complete`/absent → set up immediately.
+      // Panzoom measures the content when it initialises, and a fresh <img> with its
+      // `src` set but not yet loaded is 0x0 — cursor-anchored wheel zoom would compute
+      // its focal against a zero-size element and drift to a corner. Defer setup until
+      // the image loads; an already-sized element (a diagram's SVG) sets up at once.
       const img = spec.element instanceof HTMLImageElement ? spec.element : content.querySelector('img')
       if (img && !img.complete) {
         const ready = () => { if (this.#overlay === overlay) this.#enableMedia(stage, content, toolbar) }
@@ -99,36 +95,27 @@ export class MediaLightbox {
     }
   }
 
-  /**
-   * Wires @panzoom/panzoom onto content plus a wheel-zoom listener,
-   * double-click fit↔2× toggle, live zoom-% readout, and toolbar buttons.
-   * @param {HTMLElement} stage @param {HTMLElement} content @param {HTMLElement} toolbar
-   */
+  /** @param {HTMLElement} stage @param {HTMLElement} content @param {HTMLElement} toolbar */
   #enableMedia(stage, content, toolbar) {
     const PZ = /** @type {any} */ (window).Panzoom
     if (!PZ) return // no lib (e.g. unit env): shell still shows content statically
     // NO `contain`. panzoom's contain couples panning to scale in BOTH directions:
-    // 'outside' (cover) blocks zoom-OUT below cover; 'inside' blocks zoom-IN above
-    // fit. A lightbox wants FREE zoom — the CSS (.media-lightbox__content
-    // max-width/height:100%) already lays the content out fit-to-window, so scale 1
-    // = fit = 100% readout, and panzoom then zooms freely in (→maxScale) and out
-    // (→minScale) and Fit/reset returns to scale 1. Free pan is the accepted
-    // trade-off (you can pan a zoomed image off-centre).
+    // 'outside' blocks zoom-OUT below cover, 'inside' blocks zoom-IN above fit, and a
+    // lightbox wants FREE zoom. The CSS already lays the content out fit-to-window, so
+    // scale 1 = fit = 100% readout and panzoom zooms freely either way. Free pan is
+    // the accepted trade-off.
     const pz = PZ(content, {
       maxScale: 10, minScale: 0.1, step: 0.3,
       cursor: 'grab', canvas: true,
     })
     this.#panzoom = pz
-    // Cursor-anchored wheel zoom. panzoom's zoomToPoint/zoomWithWheel measures the
-    // cursor offset from the PARENT's content-box origin and assumes the panzoomed
-    // element sits there. The stage flex-centres `content` (fit-content), so content's
-    // layout box is inset by gap=(stageInner−contentLayout)/2 on each axis — a constant
-    // panzoom cannot see, so its focal is off by exactly that gap and the zoom drifts to
-    // a corner (a known panzoom + flex-centering pitfall). Shift the cursor point back by
-    // the gap before handing it to zoomWithWheel so the focal lands on the true content
-    // point under the cursor. offsetWidth/Height are LAYOUT metrics (transform-immune), so
-    // the gap is stable across pan/zoom. Same correction for <img> (origin 50% 50%) and
-    // inline <svg> (origin 0 0) — both share the identical layout gap.
+    // Cursor-anchored wheel zoom. panzoom's zoomToPoint measures the cursor offset
+    // from the PARENT's content-box origin and assumes the panzoomed element sits
+    // there; the stage flex-centres `content`, so its layout box is inset by
+    // gap=(stageInner−contentLayout)/2 per axis and the focal is off by exactly that,
+    // drifting the zoom to a corner. Shift the cursor point back by the gap first.
+    // offsetWidth/Height are LAYOUT metrics (transform-immune), so the gap is stable
+    // across pan/zoom, and <img> and inline <svg> share the identical gap.
     stage.addEventListener('wheel', (e) => {
       e.preventDefault()
       const gapX = (stage.clientWidth - content.offsetWidth) / 2
@@ -139,7 +126,6 @@ export class MediaLightbox {
         clientX: e.clientX - gapX, clientY: e.clientY - gapY,
       })
     }, { passive: false })
-    // Double-click toggles fit(reset) ↔ 2×.
     content.addEventListener('dblclick', () => {
       if (pz.getScale() > 1.05) pz.reset()
       else pz.zoom(2, { animate: true })
@@ -172,9 +158,9 @@ export class MediaLightbox {
     document.removeEventListener('keydown', this.#onKey)
     if (this.#panzoom && typeof this.#panzoom.destroy === 'function') this.#panzoom.destroy()
     this.#panzoom = null
-    // Restore a borrowed live element to its origin via the placeholder. panzoom's
-    // transform lived on the (discarded) content wrapper, not the element, so it
-    // returns pristine. No placeholder (or a wiped one) → the element is discarded.
+    // Restore a borrowed live element via its placeholder. panzoom's transform lived
+    // on the discarded content wrapper, not the element, so it returns pristine. No
+    // placeholder (or a wiped one) → the element is discarded.
     const b = this.#borrowed
     this.#borrowed = null
     if (b && b.placeholder && b.placeholder.parentNode) {

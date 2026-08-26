@@ -1,9 +1,8 @@
 // @ts-check
-// command-popup.styles.js — CommandPopup's stylesheet (sibling carriage, the
-// same component-owns-its-styles pattern the block renderers use; carried via
-// RendererStyleRegistry). Colours are --theme-* vars only.
+// command-popup.styles.js — CommandPopup's stylesheet, carried via
+// RendererStyleRegistry. Colours are --theme-* vars only.
 //
-// The ai-spin keyframes and the .status-bar__spinner base the popup spinner
+// The ai-spin keyframes and the .status-bar__spinner base this popup's spinner
 // composes with live in editor.css — keyframes are document-global, so an
 // adopted sheet can reference them freely.
 

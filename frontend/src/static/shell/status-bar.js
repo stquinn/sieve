@@ -1,22 +1,13 @@
 // @ts-check
-// status-bar.js — the status bar as a Workspace child (P4.D).
+// status-bar.js — the status bar as a Workspace child. Constructed ONCE by the
+// Workspace and persists across tab/editor switches — it is NOT owned by any
+// editor. It owns the three JS-written slots of the static .status-bar DOM:
+// __save (+ the #meta-dirty-dot), __blockid, __stats, and REFLECTS the active
+// editor by subscribing to its `stats` stream, re-pointing on
+// ws.onActiveTabChanged. It is also the sole consumer of two DOM CustomEvents
+// whose producers are not migrated: sieve:meta-dirty and editor:blockhover.
 //
-// The status bar is constructed ONCE by the Workspace (bootChrome) and persists
-// across tab/editor switches — it is NOT owned by any editor. It owns the three
-// JS-written slots of the static .status-bar DOM (index.html): __save (+ the
-// #meta-dirty-dot), __blockid, __stats. It REFLECTS the active editor by
-// subscribing to that editor's onEvent stream (filtered to `stats`) and
-// re-pointing on ws.onActiveTabChanged (mirrors AskPanel's re-point on selection).
-//
-// Two producers stay DOM CustomEvents for now (their producers live inside the
-// frozen WS envelope / editor.js's remaining listeners — they retire in P4.E/F):
-// sieve:meta-dirty (the save paint, abstract-editor #markSaved) and
-// editor:blockhover (editor.js mouseover). Their CONSUMERS moved OUT of index.html
-// into this child — the single status-owner is relocated, not split.
-//
-// The META panel (#htmx-meta-panel) stays HTMX-owned/untouched. Dual-use ES
-// module: imported by workspace.js (which constructs it); reached via
-// window.sieveWorkspace's #statusBar (no public getter needed — it has no verbs).
+// The META panel (#htmx-meta-panel) stays HTMX-owned and untouched here.
 
 export class StatusBar {
   /** @type {import('./workspace.js').SieveWorkspace} */
@@ -38,44 +29,36 @@ export class StatusBar {
     this.#saveSlot = document.querySelector('.status-bar__save')
     this.#blockIdSlot = document.querySelector('.status-bar__blockid')
     this.#statsSlot = document.querySelector('.status-bar__stats')
-    // The dirty/save paint + block-id readout ride DOM CustomEvents whose producers
-    // are NOT yet migrated (the editor's own save reaction; editor.js mouseover).
-    // Consume them here — the consumers moved out of index.html.
     document.addEventListener('sieve:meta-dirty', (e) => this.#onDirty(/** @type {CustomEvent} */ (e).detail))
     document.addEventListener('editor:blockhover', (e) => this.#onBlockHover(/** @type {CustomEvent} */ (e).detail))
     if (this.#blockIdSlot) this.#blockIdSlot.addEventListener('click', () => this.#copyBlockId())
-    // Reflect the active editor's stats stream; re-point on tab change.
     this.#ws.onActiveTabChanged((tab) => this.#pointAt(tab))
     this.#pointAt(this.#ws.activeTab)
   }
 
   /**
-   * Re-points the stats subscription at the new active tab's editor: drops the old
-   * subscription, subscribes to the new editor's onEvent (filtered to `stats`), then
-   * PULL-seeds the current stats (editor.stats()) so a subscription that lands after
-   * the editor's initial-present emit still paints. Null-guards a tab with no editor
-   * yet. Mirrors the workspace's #switchSelectionSource.
+   * Re-points the stats subscription at the new active tab's editor, then
+   * PULL-seeds the current stats so a subscription that lands after the editor's
+   * initial-present emit still paints.
    * @param {import('./tab.js').SieveTab|null} tab
    */
   #pointAt(tab) {
     if (this.#unsubEditor) { this.#unsubEditor(); this.#unsubEditor = null }
     if (!tab) return
-    // Subscribe at the TAB level (not the editor): the tab-identity forward survives
-    // an editor that attaches AFTER the tab is active — on COLD BOOT openTab makes
-    // the tab active before activateDocument attaches the editor, and
-    // onActiveTabChanged does not re-fire on the same-tab attach. The editor's
-    // initial-present stats seed, emitted after attachEditor subscribes, is
-    // forwarded through here. (Mirrors the selection stream's tab-level forward.)
+    // Subscribe at the TAB level, not the editor: the tab-identity forward
+    // survives an editor that attaches AFTER the tab is active. On COLD BOOT
+    // openTab makes the tab active before activateDocument attaches the editor,
+    // and onActiveTabChanged does not re-fire on the same-tab attach.
     this.#unsubEditor = tab.onStats((ev) => this.#onStats(ev))
-    // Also PULL-seed when the editor is ALREADY present (a tab SWITCH after boot: its
-    // present seed fired before we subscribed, so there is no pending emit to catch).
+    // Also PULL-seed when the editor is ALREADY present (a tab SWITCH after boot:
+    // its present seed fired before we subscribed).
     const editor = tab.editor
     if (editor && typeof editor.stats === 'function') this.#onStats(editor.stats())
   }
 
   /**
    * Paints chars/lines into the __stats slot and sets the --line-digits gutter
-   * width (chrome — was editor.js dispatchStats; moved to the consumer).
+   * width.
    * @param {{ chars?: number, lines?: number, blockCount?: number }} ev
    */
   #onStats(ev) {
@@ -90,8 +73,7 @@ export class StatusBar {
   }
 
   /**
-   * Paints the save indicator + the #meta-dirty-dot from a sieve:meta-dirty detail
-   * (verbatim from the retired index.html consumer). detail.dirty true → red
+   * Paints the save indicator and the #meta-dirty-dot. detail.dirty true → red
    * "Unsaved"; false → green "Saved".
    * @param {{ dirty?: boolean }|null} detail
    */
@@ -114,17 +96,13 @@ export class StatusBar {
   /**
    * Writes the hovered block's kind and id-tail into the __blockid slot.
    *
-   * Block ids became UUIDs in #75, which broke the old verbatim readout twice
-   * over. The slot ellipsises, so a 36-char id truncated to its HEAD — and a
-   * UUIDv7 leads with a millisecond timestamp, so every block minted in one
-   * session shares that prefix and the readout became uniform noise. The
-   * discriminating half is the tail, so that is what is shown. Kind is shown
-   * explicitly too: it used to ride along free in the `pr-`/`co-` prefix, and
-   * opaque ids carry no kind at all.
+   * The TAIL, not the head: a UUIDv7 leads with a millisecond timestamp, so a
+   * head-truncated readout is uniform noise across one session. Kind is written
+   * explicitly because an opaque id carries none.
    *
-   * The last value PERSISTS when the pointer leaves the block (the old consumer
-   * blanked it). It has to: the slot is click-to-copy, and a readout that
-   * cleared on mouse-out could never be reached to click.
+   * The last value PERSISTS when the pointer leaves the block: the slot is
+   * click-to-copy, and a readout that cleared on mouse-out could never be
+   * reached to click.
    * @param {{ id?: string, kind?: string }|null} detail
    */
   #onBlockHover(detail) {
@@ -140,9 +118,8 @@ export class StatusBar {
 
   /**
    * The distinguishing tail of a block id: the last 6 chars of a UUID. Ids short
-   * enough to read whole (a legacy handle in a document not yet migrated, a
-   * transient `tok-…`) are returned verbatim — truncating those would lose
-   * information rather than noise.
+   * enough to read whole (a legacy handle, a transient `tok-…`) come back
+   * verbatim.
    * @param {string} id
    * @returns {string}
    */
@@ -152,8 +129,6 @@ export class StatusBar {
 
   /**
    * Copies the FULL id of the last hovered block, flashing the slot to confirm.
-   * The full id is what is useful off-screen (a bug report, a ref, and in time a
-   * block: coordinate) — the tail is only ever a legible stand-in.
    */
   async #copyBlockId() {
     const slot = this.#blockIdSlot

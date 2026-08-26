@@ -1,15 +1,9 @@
-// log-node-view.js — Sieve NodeView ADAPTER for the 'log' kind (the PM half of
-// the renderer/NodeView split, Block Renderer Contract:
-// docs/design/archive/specs/2026-07-21-block-renderer-contract.md). Look-and-feel (the
-// block shell, header toolbar, raw-text body, Explore table, this kind's
-// stylesheet) lives in LogRenderer
-// (frontend/src/static/renderers/log-renderer.js — a DIFFERENT class,
-// deliberately same basename, different directory). This file HOLDS a
-// LogRenderer instance by COMPOSITION and owns everything that genuinely
-// speaks ProseMirror: contentDOM binding/ignoreMutation, the log-line
-// decoration plugin (buildPlugins), the read-only guard plugin, and resolving
-// parsedAssetRef → URL against the held Editor's uuid (the renderer's outbound
-// verbs leave through the ContainerTransport, the wire owner).
+// The NodeView adapter for the 'log' kind. Look-and-feel — the block shell,
+// header toolbar, raw-text body, Explore table, this kind's stylesheet — belongs
+// to LogRenderer, which this file holds by composition. What lives here is
+// everything that speaks ProseMirror: the contentDOM binding and ignoreMutation,
+// the log-line decoration plugin, the read-only guard plugin, and resolving
+// parsedAssetRef → URL against the held Editor's uuid.
 
 import { esc } from '../../../../renderers/html-escape.js'
 import { getLowlight } from '../../../../renderers/highlighting.js'
@@ -22,26 +16,18 @@ import { documentAssetUrl } from '../../../../renderers/asset-urls.js'
 ;(function () {
   'use strict'
 
-  // Spring Boot log line — compiled once (was recompiled per line in applyHighlight).
+  // Spring Boot log line, compiled once.
   var SPRING_LINE_RE = /^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)\s+(\w+)\s+(.*?)\s+---\s+\[(.*?)\]\s+(.*?)\s+:\s+(.*)$/
 
-  // The header toolbar (badge/format/raw-explore toggle/noise/filter/column
-  // buttons) is built by LogRenderer, whose controls call its OWN semantic
-  // verbs (setMode / setFilter / toggleNoise / toggleColumn). It self-refreshes
-  // once the parsed-JSON columns load.
-
-  // liveRenderers — id → live LogRenderer instance. The behaviour-registry
-  // path (policy Mod+Enter) resolves the block's renderer here so every
-  // trigger lands on the SAME verb methods the header toggle calls.
+  // id → live LogRenderer instance. The behaviour-registry path (policy
+  // Mod+Enter) resolves the block's renderer here, so every trigger lands on the
+  // same verb methods the header toggle calls.
   /** @type {Record<string, any>} */
   var liveRenderers = {}
 
-  // ── LogNodeView ────────────────────────────────────────────────────────
-
   var LogNodeView = {
-    // flipMode — THE mode-flip op (contract: one function, N entry points).
-    // Lands on the live renderer's setMode — the SAME verb the header toggle
-    // calls; the enum→wire mapping stays private to LogRenderer.
+    // THE mode-flip op: lands on the live renderer's setMode, the same verb the
+    // header toggle calls. The enum→wire mapping stays private to LogRenderer.
     flipMode: function (attrs) {
       if (!attrs || !attrs.id) return false
       var r = liveRenderers[attrs.id]
@@ -58,29 +44,21 @@ import { documentAssetUrl } from '../../../../renderers/asset-urls.js'
       logFormatRegex:  { default: '', parseHTML: function (el) { return el.getAttribute('data-log-format-regex') || '' } },
       status:          { default: 'COMPLETE', parseHTML: function (el) { return el.getAttribute('data-status') || 'COMPLETE' } },
       // Persisted view settings — the header controls write these through the
-      // renderer's semantic verbs (via the ContainerTransport), so a configured
-      // log comes back configured.
+      // renderer's semantic verbs, so a configured log comes back configured.
       mode:            { default: '', parseHTML: function (el) { return el.getAttribute('data-mode') || '' } },
       filter:          { default: '', parseHTML: function (el) { return el.getAttribute('data-filter') || '' } },
       disabledCols:    { default: '', parseHTML: function (el) { return el.getAttribute('data-disabled-cols') || '' } },
       hideNoise:       { default: false, parseHTML: function (el) { return el.getAttribute('data-hide-noise') === 'true' } },
     },
 
-    // Read-only text: caret may enter (select/copy), typing is consumed.
-    // Mod+Enter toggles raw↔explore (declared policy override, same
-    // mechanism as diagram's edit↔render — see interaction-policy.js).
-    //
-    // readOnlyText was MISSING here until 2026-07-29 while the comment above
-    // and the guard plugin below both claimed it was declared. The node is
+    // Read-only text: the caret may enter (select/copy), typing is consumed.
+    // Mod+Enter toggles raw↔explore. readOnlyText is load-bearing: the node is
     // `atom: false` with `content: 'text*'` and a real contentDOM, so the
-    // handleTextInput guard below stopped typing but nothing stopped Backspace
-    // or Delete — the policy's isEditingKey branch (which covers both) was
-    // switched on by no real kind at all, only by a test FakeBlock.
+    // handleTextInput guard below stops typing but nothing else stops Backspace
+    // or Delete.
     interactionPolicy: { caretStop: true, modEnterTogglesMode: true, readOnlyText: true },
 
-    // onModEnter — policy-extension entry point: flip raw↔explore. `_host` is
-    // the parent Editor, threaded by the interaction-policy extension (unused
-    // — the flip routes through the live renderer's verb).
+    // Policy-extension entry point: flip raw↔explore.
     onModEnter: function (view, selection, _host) {
       var node = selection.node || selection.$from.parent
 
@@ -106,8 +84,8 @@ import { documentAssetUrl } from '../../../../renderers/asset-urls.js'
       return LogNodeView.flipMode(node.attrs)
     },
 
-    // text* + code:true — the raw captured log lines ARE the node's text content,
-    // exactly like code/diagram. Editing is blocked by the read-only plugin below.
+    // text* + code:true — the raw captured log lines ARE the node's text content.
+    // Editing is blocked by the read-only plugin below.
     nodeConfig: {
       atom: false,
       selectable: true,
@@ -153,27 +131,17 @@ import { documentAssetUrl } from '../../../../renderers/asset-urls.js'
       var nodeTypeName = node.type.name
       var currentAttrs = Object.assign({}, node.attrs)
 
-      // resolveAssetUrl — the parsedAssetRef → fetchable URL resolution needs
-      // the held Editor's document uuid (a PM-framework concern via
-      // ctx.getEditor()), so it stays adapter-side; the RESOLVED url travels to
-      // LogRenderer as an block overlay field (alongside `source` as the
-      // live PM text — the overlay keys are this kind's own knowledge).
+      // Resolving parsedAssetRef → a fetchable URL needs the held Editor's
+      // document uuid, a PM-framework concern, so it stays adapter-side; the
+      // RESOLVED url travels to LogRenderer as a block overlay field.
       function resolveAssetUrl(ref) {
         return documentAssetUrl(ctx && ctx.getEditor() && ctx.getEditor().uuid || '', ref)
       }
 
-      // blockFor — the typed block for this NodeView's renderer.
       function blockFor(n) {
         return sieveBlockFor(n, { source: n.textContent, resolvedAssetUrl: resolveAssetUrl(n.attrs.parsedAssetRef) }, ctx && ctx.provider)
       }
 
-      // The renderer instance this NodeView HOLDS by composition. It builds its
-      // own header (raw/explore toggle, filter, column buttons — self-refreshing
-      // once the parsed-JSON columns load) and the raw/explore bodies; this
-      // adapter only supplies PM-only concerns around it. Its semantic verbs
-      // hit the real wire through the ContainerTransport (issue #49 Phase 1 — the v1
-      // appliers are retired); this kind's content→source mapping lives on
-      // LogRenderer.setContent.
       var renderer = new LogRenderer(blockFor(node), ctx.provider || null)
 
       var dom = renderer.render()
@@ -204,8 +172,6 @@ import { documentAssetUrl } from '../../../../renderers/asset-urls.js'
       }
     },
 
-    // ── Plugins ───────────────────────────────────────────────────────────────
-
     buildPlugins: function(nodeType) {
       var Plugin = T.Plugin
       var Decoration = T.Decoration
@@ -219,10 +185,8 @@ import { documentAssetUrl } from '../../../../renderers/asset-urls.js'
         return inside
       }
 
-      // ── Log syntax highlighting via decorations ───────────────────────────────
-      // Semantic classes only — colours and noise-dimming live in CSS
-      // (log-renderer.styles.js) so the noise toggle is a pure view concern
-      // (a class on the block root).
+      // Semantic classes only — colours and noise-dimming live in CSS, so the
+      // noise toggle stays a pure view concern.
       function decorateLine(line, start, decos) {
         var spring = line.match(SPRING_LINE_RE)
         if (spring) {
@@ -308,11 +272,9 @@ import { documentAssetUrl } from '../../../../renderers/asset-urls.js'
             handleTextInput: function(view, from, to, text) {
               return isInside(view.state, from, to)
             },
-            // Keyboard read-only enforcement lives in the interaction-policy
-            // extension (interactionPolicy.readOnlyText above — genuinely
-            // declared since 2026-07-29) — contract rule: no per-renderer key
-            // handling. handleTextInput/Paste/Drop stay here: they guard input
-            // paths, not keys.
+            // Keyboard read-only enforcement belongs to the interaction-policy
+            // extension (interactionPolicy.readOnlyText above); handleTextInput,
+            // Paste and Drop stay here because they guard input paths, not keys.
             handlePaste: function(view, event, slice) {
               return isInside(view.state, view.state.selection.from, view.state.selection.to)
             },

@@ -1,15 +1,12 @@
 // @ts-check
-// asset-urls.js — the browser half's ONE place a Sieve served-file route is
-// built. Every renderer, node-view and surface that needs one asks here rather
-// than concatenating the shape itself: a route that is spelled in four places
-// moves in three, and the fourth fails as a broken image rather than an error.
-//
-// Pure string transforms with no owning type (the html-escape.js precedent), so
-// they are exported functions rather than methods on a service. The document
-// asset prefix is NOT declared here: it comes from generated/protocol.js, whose
-// other half is the Go constant `store.AssetURLPrefix` that mints the references
-// written into documents. What a document says an asset is and what the browser
-// asks for therefore cannot drift apart.
+// The browser half's ONE place a Sieve served-file route is built. Every
+// renderer, node-view and surface that needs one asks here rather than
+// concatenating the shape itself: a route spelled in four places moves in three,
+// and the fourth fails as a broken image rather than an error. The document
+// asset prefix is NOT declared here — it comes from generated/protocol.js, whose
+// other half is the Go constant that mints the references written into
+// documents, so what a document says an asset is and what the browser asks for
+// cannot drift apart.
 
 import { assetUrl } from '../generated/protocol.js'
 

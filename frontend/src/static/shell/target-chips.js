@@ -2,37 +2,18 @@
 // TargetChips: the Ask composer's view of WHAT THE MESSAGE WILL ACT ON, drawn in
 // the footer beside the attachment chips.
 //
-// THE HEADER SHOWS THE SUBJECT, THE FOOTER SHOWS THE CONTEXT: the header names
-// the command, and what it will act on stays visible down here either way.
+// VIEW-ONLY: the editor owns the selection, so a target chip carries NO ✕ — the
+// cross keeps one meaning in this footer, "drop an attachment".
 //
-// VIEW-ONLY. The editor owns the selection; this only draws it. A target chip
-// therefore carries NO ✕ — the cross keeps exactly one meaning in this footer,
-// which is "drop an attachment".
+// A TARGET CHIP IS NOT AN ATTACHMENT. It never enters the manifest, never
+// reaches the persisted attrs, and a send leaves it standing.
 //
-// BOTH ROWS ARE COORDINATE CHIPS, styled as one species from one set of rules
-// (editor.css, `.ask-chip, .ask-target-chip`): an attachment chip holds a
-// coordinate pointing at another document, this one holds the local target. The
-// difference is said with the missing ✕ and an outline instead of a fill, never
-// with contrast.
+// A CHIP PER BLOCK ONLY FOR `target.kind === 'selection'`: for a DOCUMENT target
+// `blockIds` is the caret's block, not the target's extent.
 //
-// A TARGET CHIP IS NOT AN ATTACHMENT. It is deliberately not part of
-// ComposerAttachments: it never enters the manifest, never reaches the persisted
-// attrs, and a send leaves it standing, because the selection it describes
-// outlives the message.
-//
-// A CHIP PER BLOCK, FOR A SELECTION ONLY. A range selection spans blocks the
-// user picked out one by one, so it earns a chip each. A DOCUMENT target does
-// not, because `blockIds` is then the caret's block rather than the target's
-// extent, so the per-block row is gated on `target.kind === 'selection'` and the
-// other two kinds keep the single chip.
-//
-// THE LABELS ARE DERIVED AT RENDER TIME, NEVER CARRIED. SelectionContext stays
-// ids-only — a label can change without any id changing — so the row asks the
-// CONTAINER for each id every time it paints, and a container cue repaints a chip
-// whose block changed while the selection stood still.
-//
-// The container it reads is the ACTIVE mount's, so it is re-pointed rather than
-// injected once: which container the composer acts on changes with the tab.
+// LABELS ARE DERIVED AT RENDER TIME, NEVER CARRIED — SelectionContext is
+// ids-only, so the row asks the ACTIVE mount's container for each id as it
+// paints, and is re-pointed rather than injected once.
 
 import { esc } from '../renderers/html-escape.js'
 import { getSieveIcon } from '../renderers/block-kinds.js'
@@ -43,10 +24,7 @@ import { getSieveIcon } from '../renderers/block-kinds.js'
 
 /**
  * The read seam: block id → what the container says that block is. A
- * `ContainerProvider` satisfies it as-is; a test stubs it with one function.
- *
- * The container knows a block or it does not: there is no second tier for a
- * block it has not seen.
+ * `ContainerProvider` satisfies it as-is.
  * @typedef {object} BlockSource
  * @property {(blockId: string) => ({kind?: string, attrs?: Record<string, any>}|null)} getBlock
  */
@@ -57,16 +35,13 @@ export class TargetChips {
    *  askPanelMinHeight — so the row is capped rather than wrapped. */
   static #CAP = 4
 
-  /** A hint is a few words, then an ellipsis: it identifies the block, it does
-   *  not reproduce it. */
+  /** A hint is a few words then an ellipsis; it does not reproduce the block. */
   static #HINT_WORDS = 5
   static #HINT_CHARS = 32
 
   /**
-   * kind → the attrs keys carrying its identifying hint, in preference order.
-   * A kind absent from here (log) — or one whose keys are all empty (a code
-   * block with no language) — shows its KIND NAME alone, which is the same
-   * fallback a container miss takes. One table, one rule, prose included.
+   * kind → the attrs keys carrying its identifying hint, in preference order. A
+   * kind absent from here, or one whose keys are all empty, shows its KIND NAME.
    * @type {Readonly<Record<string, string[]>>}
    */
   static #HINTS = Object.freeze({
@@ -85,16 +60,13 @@ export class TargetChips {
   /** @type {BlockSource|null} the id→block read seam (null → kind-less fallback labels) */ #source = null
   /** @type {string} the resolved target's own label ('' → nothing to draw) */ #targetLabel = ''
   /** @type {string[]} the blocks a SELECTION spans; empty for every other target kind */ #blockIds = []
-
   /**
    * @param {HTMLElement|null} footerEl the structural `.ask-popup__footer`. The
-   *   row is CREATED here (the panel's own DOM is never rebuilt) and inserted
-   *   before Send, which stays the footer's last child. Construct this BEFORE
-   *   ComposerAttachments and the two rows land in reading order: what the
-   *   message acts on, then what it drags along.
-   * @param {BlockSource|null} [source] the container read seam. Absent (a bare
-   *   construction, a headless test) the per-block chips fall back to their
-   *   kind-less label rather than disappearing.
+   *   row is inserted before Send, which stays the footer's last child.
+   *   Construct this BEFORE ComposerAttachments so the two rows land in reading
+   *   order: what the message acts on, then what it drags along.
+   * @param {BlockSource|null} [source] the container read seam. Absent, the
+   *   per-block chips fall back to their kind-less label.
    */
   constructor(footerEl, source = null) {
     this.#source = source || null
@@ -115,9 +87,8 @@ export class TargetChips {
   }
 
   /**
-   * Draws the target of `context` — the SAME context the panel last rendered and
-   * will send with, never a live re-read, so the chips describe exactly what a
-   * send would act on. A context with no target (nothing open) draws nothing.
+   * Draws the target of `context` — the SAME context the panel will send with,
+   * never a live re-read. A context with no target draws nothing.
    * @param {Readonly<SelectionContext>|{target?: {kind?: string, label?: string}, blockIds?: string[]}|null} context
    */
   show(context) {
@@ -129,9 +100,8 @@ export class TargetChips {
   }
 
   /**
-   * Points the row at a container. Called when the active mount changes; a null
-   * source (nothing open) leaves the chips on their kind-less labels rather than
-   * clearing a row the selection still describes.
+   * Points the row at a container. A null source leaves the chips on their
+   * kind-less labels rather than clearing a row the selection still describes.
    * @param {BlockSource|null} source
    */
   setSource(source) {
@@ -141,9 +111,7 @@ export class TargetChips {
 
   /**
    * The container changed. Repaints only when one of the named blocks is one the
-   * row is currently drawing: a language or title change must reach its chip
-   * without waiting for the caret to move, and a change anywhere else in the
-   * document must not redraw a row that would come out identical.
+   * row is drawing, so a title change reaches its chip without a caret move.
    * @param {{blockIds?: ReadonlyArray<string>}|null} change
    */
   containerChanged(change) {
@@ -153,12 +121,9 @@ export class TargetChips {
     }
   }
 
-  // ── Labelling ──────────────────────────────────────────────────────────────
-
   /**
-   * The label for ONE block of the selection: the identifying hint its kind
-   * carries, or — when the container does not hold it — the generic block name.
-   * Never empty, so a chip is never suppressed.
+   * The label for ONE block of the selection: its kind's identifying hint, or the
+   * generic block name. Never empty, so a chip is never suppressed.
    * @param {string} blockId
    * @returns {{kind: string, label: string}}
    */
@@ -203,13 +168,10 @@ export class TargetChips {
     return kind ? String(kind).replace(/-/g, ' ') : 'block'
   }
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-
   /** The target's own marker, and the generic one a kind-less block falls back to. */
   static #TARGET_GLYPH = '&#9678;'
   static #BLOCK_GLYPH = '&#9642;'
 
-  /** Redraws the row: the target chip, then one chip per spanned block. */
   #render() {
     const row = this.#row
     if (!row) return
@@ -223,7 +185,7 @@ export class TargetChips {
     for (const id of shown) {
       const block = this.#labelFor(id)
       // The kind registry owns the glyph — a chip must not invent a second icon
-      // vocabulary for kinds that already have one.
+      // vocabulary.
       const icon = (block.kind && getSieveIcon(block.kind)) || TargetChips.#BLOCK_GLYPH
       row.appendChild(TargetChips.#chip(
         block.label, TargetChips.#kindName(block.kind), icon, 'ask-target-chip--block',
@@ -234,9 +196,8 @@ export class TargetChips {
   }
 
   /**
-   * One chip: a glyph and the label. No button — see the header. `iconHtml` is
-   * either an entity or the kind registry's own SVG — internal either way, never
-   * user data; the LABEL is the half that is escaped.
+   * One chip: a glyph and the label, no button. `iconHtml` is internal markup
+   * either way; the LABEL is the half that is escaped.
    * @param {string} label @param {string} title @param {string} iconHtml @param {string} modifier
    * @returns {HTMLElement}
    */
@@ -252,10 +213,7 @@ export class TargetChips {
 
   /**
    * The overflow chip: how many blocks did not fit, and — up to a readable few —
-   * which. It is INERT: the footer is one line, so the rest are named in the
-   * tooltip rather than revealed by a control this row has no room for. Only the
-   * named few are looked up, so selecting a whole document costs a handful of
-   * lookups and leaves a tooltip a person can read.
+   * which. INERT: the footer is one line, so the rest are named in the tooltip.
    * @param {string[]} ids the blocks it stands for
    * @returns {HTMLElement}
    */

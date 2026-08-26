@@ -40,15 +40,11 @@
     }
 
     // The server owns the layout width vars: it renders them into
-    // <style id="layout-overrides-*"> blocks with !important (index.html initial
-    // render, hx-swap-oob replacements from session_handler.go toggles). Drag
-    // updates must therefore edit THAT stylesheet's rule via CSSOM — an inline
-    // style on #app-root either loses to the stylesheet !important (no flag) or,
-    // with an !important flag, permanently beats the server's later hide-toggle
-    // (which sets --sidebar-w: 0px), leaving an empty column. Editing the
-    // server's own rule keeps one owner: the next OOB swap replaces the whole
-    // <style> element and cleanly wins. Match by selectorText, not rule index —
-    // the block also contains #htmx-sidebar / .sidebar-handle rules.
+    // <style id="layout-overrides-*"> blocks with !important. A drag must therefore
+    // edit THAT stylesheet's rule via CSSOM — an inline style on #app-root either
+    // loses to the stylesheet's !important or, with an !important flag of its own,
+    // permanently beats the server's later hide-toggle and leaves an empty column.
+    // Match by selectorText, not rule index: the block also holds other rules.
     function setLayoutVar(styleElId, varName, value) {
         const styleEl = document.getElementById(styleElId);
         if (!styleEl || !styleEl.sheet) return;
@@ -124,7 +120,6 @@
         document.removeEventListener('mousemove', onMouseMove);
         document.removeEventListener('mouseup', onMouseUp);
 
-        // Save to backend
         const appRoot = document.getElementById('app-root');
         const promptsPanel = document.getElementById('prompts-panel');
         const askPanel = document.getElementById('ask-panel');

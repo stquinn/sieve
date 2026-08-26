@@ -14,12 +14,9 @@
     sparkle:     svg('<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.937A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.582a.5.5 0 0 1 0 .962L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>'),
     promote:     svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>'),
     expand:      svg('<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>'),
-    // Explain + Ask are the TOOLBAR's own pair, distinct from `info` (the
-    // smart-image menu) and `sparkle` (the ai-block's kind icon). Both are chosen
-    // for SILHOUETTE: at 14px with a 2px stroke only the outer shape survives, so
-    // the old pair — a circle holding a 4px tick, and a 4-pointed star whose
-    // concave points closed up into a blob — were unreadable, and the circle also
-    // collided with `help`.
+    // Explain + Ask are the TOOLBAR's own pair, distinct from `info` (the smart-image
+    // menu) and `sparkle` (the ai-block's kind icon). Both are chosen for SILHOUETTE:
+    // at 14px with a 2px stroke only the outer shape survives.
     explain:     svg('<path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5.76.76 1.23 1.52 1.41 2.5"/>'),
     ask:         svg('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'),
     info:        svg('<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>'),

@@ -1,15 +1,8 @@
 // @ts-check
-// workspace.js — Workspace singleton (P1: zero-behavior skeleton).
-// Workspace is the root of the JS component model. It holds the open Tabs,
-// tracks the active Tab, and owns an empty listener registry (listeners wired
-// in later phases). It is created once at boot (below) and exposed on window
-// as `window.sieveWorkspace` so the browser console can reach it and so
-// editor.js (a classic script sharing the same global) can look it up.
-// Dual-use ES module (block-position.js pattern): `export` for vitest imports,
-// window.* assignment for classic-script access. Loaded in index.html with
-// type="module" — a plain <script> tag would fail at parse on `export`.
-// Modules execute deferred (after classic scripts parse); editor.js only reads
-// window.sieveWorkspace at runtime (initEditor via htmx events), never at parse.
+// The root of the JS component model: it holds the open Tabs, tracks the active
+// one, and is the composition root that constructs every service and chrome
+// child. Created once at module load and exposed as `window.sieveWorkspace`, the
+// only surviving global.
 
 import { SieveTab } from './tab.js'
 import { MountBinding } from './mount-binding.js'
@@ -34,77 +27,59 @@ export class SieveWorkspace {
   /** @type {SieveTab|null} */
   #activeTab = null
 
-  // ── Listener registry (empty in P1; typed registration methods wired in P2) ──
-
   /** @type {Array<(tab: SieveTab|null) => void>} */
   #activeTabListeners = []
 
-  /**
-   * Public selection-update registry (P3.B). Mirrors #activeTabListeners: it
-   * republishes the ACTIVE tab's selection stream only (a background tab's push
-   * never reaches here). Consumers arrive in P3.D (the Ask panel); today it has
-   * no production consumer.
-   * @type {Array<(ctx: import('../lens/document-editor/selection-model.js').SelectionContext|null) => void>}
-   */
+  /** @type {Array<(ctx: import('../lens/document-editor/selection-model.js').SelectionContext|null) => void>}
+   *  republishes the ACTIVE tab's selection stream only. */
   #selectionListeners = []
 
   /** @type {(() => void)|null} unsubscribe from the ACTIVE tab's onSelectionUpdate */
   #unsubActiveSelection = null
 
-  // ── Editor lifecycle state (P4.F — moved from editor.js) ─────────────────────
-
   /** @type {string} the active editor's uuid ('' when torn down). Load-bearing
    * staleness guard: initEditor sets this synchronously before the async load and
-   * the load's `.then` re-checks it so a later init supersedes an in-flight load. */
+   * the load's `.then` re-checks it, so a later init supersedes an in-flight load. */
   #currentUuid = ''
 
   /** @type {HTMLElement|null} the active editor's mount element. QUIRK PRESERVED
-   * (do NOT "fix"): this is NOT cleared on teardown, matching editor.js. */
+   * (do NOT "fix"): this is NOT cleared on teardown. */
   #currentMountEl = null
 
   /** @type {string|null} last hovered block key — dedup for editor:blockhover. */
   #lastHoverKey = null
 
-  /** @type {ReturnType<typeof setTimeout>|null} issue #51 lazy scroll-persist debounce (the active tab only — a background tab has no live editor to report from) */
+  /** @type {ReturnType<typeof setTimeout>|null} lazy scroll-persist debounce, for the active tab only */
   #scrollPersistTimer = null
 
-  /** @type {ContainerTransport} the app-wide protocol boundary singleton AND wire
-   * owner (contract §service pair; issue #49 Phase 1) — constructed HERE, the
-   * composition root, and handed down through editor options → surface →
-   * pane. Never window.*. */
+  /** @type {ContainerTransport} the app-wide protocol boundary AND wire owner,
+   *  constructed HERE and handed down. Never window.*. */
   #blockService
 
-  /** @type {DocumentService} the uuid-addressed half, composed over the wire
-   * owner by constructor injection (contract §service pair). */
+  /** @type {DocumentService} the uuid-addressed half, composed over the wire owner. */
   #documentService
 
-  /** @type {ContainerModelFeed} one follower model per open container, kept in
-   * step with the wire. The HOST's data plane (issue #96): a lens never sees it,
-   * only the provider a MountBinding wraps around it. */
+  /** @type {ContainerModelFeed} one follower model per open container. The HOST's
+   *  data plane: a lens sees only the provider a MountBinding wraps around it. */
   #feed
 
-  /** @type {WorkspaceService} the session-channel wire owner — the workspace
-   * command plane's transport, shared by every tenant that speaks it (#74 P1).
-   * Sibling of #blockService, which owns the per-uuid document channels. */
+  /** @type {WorkspaceService} the workspace command plane's transport, shared by
+   *  every tenant. Sibling of #blockService, which owns the document channels. */
   #workspaceService
 
   /** @type {CommandService} the workspace command plane's slash-command tenant. */
   #commandService
 
-  /** @type {MentionService} the plane's `@`-picker tenant (#74 P4) — the second
-   * tenant of the session socket and the first non-command one. */
+  /** @type {MentionService} the plane's `@`-picker tenant. */
   #mentionService
 
-  /** @type {InvalidationService} the plane's push tenant. Held only so it stays
-   * alive: it claims its frames and republishes them as DOM events, and nothing
-   * here ever calls it. */
+  /** @type {InvalidationService} the plane's push tenant, held only so it stays
+   *  alive: it claims its frames and republishes them as DOM events. */
   #invalidationService
 
   /**
    * @param {import('../container/container-transport.js').ContainerTransportOptions} [serviceOptions]
-   *   — the ContainerTransport test seams (socketFactory / wsUrlFor). EMPTY in prod:
-   *   the boot singleton below constructs with real sockets; tests inject
-   *   fakes here (the seam moved off the editors onto the wire owner).
+   *   the ContainerTransport test seams (socketFactory / wsUrlFor). EMPTY in prod.
    */
   constructor(serviceOptions) {
     this.#blockService = new ContainerTransport(serviceOptions)
@@ -121,39 +96,23 @@ export class SieveWorkspace {
     this.#invalidationService = new InvalidationService(this.#workspaceService)
   }
 
-  /** The ContainerTransport singleton (handed down; renderers/adapters consume it). */
   get blockService() { return this.#blockService }
 
-  /** The DocumentService singleton (editors/Workspace consume it). */
   get documentService() { return this.#documentService }
 
-  /** The WorkspaceService singleton (session-channel wire owner; tenants
-   *  register on it — the plane, not a feature). */
   get workspaceService() { return this.#workspaceService }
 
-  /** The CommandService singleton (workspace slash-command protocol peer). */
   get commandService() { return this.#commandService }
 
-  /** The MentionService singleton (the `@` picker's protocol peer). */
   get mentionService() { return this.#mentionService }
 
-  // ── Tab management ────────────────────────────────────────────────────────────
-
-  /**
-   * Returns the Tab for a uuid if it exists, otherwise null.
-   * @param {string} uuid
-   * @returns {SieveTab|null}
-   */
+  /** @param {string} uuid @returns {SieveTab|null} */
   getTab(uuid) {
     return this.#tabs.get(uuid) ?? null
   }
 
-  /**
-   * Opens (creates) a Tab for the given uuid if not already tracked, marks it
-   * active, and returns it. Called by editor.js at the start of initEditor.
-   * @param {string} uuid
-   * @returns {SieveTab}
-   */
+  /** Opens (creates) a Tab for the uuid if not already tracked, marks it active.
+   *  @param {string} uuid @returns {SieveTab} */
   openTab(uuid) {
     if (!uuid) throw new Error('SieveWorkspace.openTab: uuid is required')
     let tab = this.#tabs.get(uuid)
@@ -165,11 +124,8 @@ export class SieveWorkspace {
     return tab
   }
 
-  /**
-   * Closes (removes) the Tab for a uuid if it is tracked. If it was the active
-   * tab, activeTab becomes null. Called by editor.js when the editor tears down.
-   * @param {string} uuid
-   */
+  /** Closes the Tab for a uuid. If it was active, activeTab becomes null.
+   *  @param {string} uuid */
   closeTab(uuid) {
     const tab = this.#tabs.get(uuid)
     if (!tab) return
@@ -181,50 +137,31 @@ export class SieveWorkspace {
     }
   }
 
-  /**
-   * Currently active Tab, or null when no document is open.
-   * @returns {SieveTab|null}
-   */
+  /** @returns {SieveTab|null} */
   get activeTab() { return this.#activeTab }
 
-  // ── Tab-lifecycle verbs (P2.D — the external API facade) ─────────────────────
   // These are the ONLY front-end entry points for tab mutation and the tabbar
-  // render. Each is a thin owner over the SAME htmx.ajax call the templates ran
-  // before P2.D (identical swap semantics; the OOB editor mount is preserved).
-  // The INTERNALS still drive the server-rendered HTMX templates (tabbar.html +
-  // OOB editor.html); the self-rendering-JSON version is deferred to tech-debt
-  // V-B. Each guards htmx (mirrors the templates' `window.htmx && …`) and returns
-  // the htmx.ajax promise. See docs/design/specs/2026-07-08-workspace-editor-
-  // component-model.md.
+  // render. Each is a thin owner over an htmx.ajax call, guards htmx, and returns
+  // its promise.
 
   /**
-   * Opens (or focuses) the document for a uuid: POST /api/note/open/{uuid},
-   * swapping the tabbar. The server re-renders the strip and OOB-mounts the
-   * editor; the OOB re-init drives activateDocument, so no client prune here.
-   * @param {string} uuid
-   * @returns {Promise<any>}
+   * Opens (or focuses) the document for a uuid, swapping the tabbar. The server
+   * re-renders the strip and OOB-mounts the editor, whose re-init drives
+   * activateDocument — so there is no client prune here.
+   * @param {string} uuid @returns {Promise<any>}
    */
   open(uuid) {
-    // RAW id in the path (no encodeURIComponent): chi.URLParam does not unescape,
-    // and the Go handlers compare against decoded ids (strings.HasPrefix(id,
-    // "prompt:")). A `prompt:` uuid must arrive with a literal colon — a legal
-    // path char — exactly as the pre-P2.D templates sent `{{.ID}}`. Percent-
-    // encoding the colon made prompt opens 404. All ids are URL-path-safe.
+    // RAW id in the path: chi.URLParam does not unescape and the Go handlers
+    // compare against decoded ids, so a `prompt:` uuid must arrive with a literal
+    // colon. Percent-encoding it makes prompt opens 404.
     return this.#ajax('POST', '/api/note/open/' + uuid)
   }
 
   /**
-   * Opens what a Sieve COORDINATE points at — the verb behind clicking a mention
-   * (an ai-block attachment chip, or a reference block's own chip).
-   *
+   * Opens what a Sieve COORDINATE points at — the verb behind clicking a mention.
    * `uri` is OPAQUE to every line of this file: Go owns the address grammar, so
-   * this asks rather than parses. What comes back is already actionable, and an
-   * address that resolves to nothing says so.
-   *
-   * `target.blockId` — the block to reveal inside the document — rides the answer
-   * and has no consumer yet; opening the container is the honest subset.
-   * @param {string} uri
-   * @returns {Promise<boolean>} whether a document was opened
+   * this asks rather than parses.
+   * @param {string} uri @returns {Promise<boolean>} whether a document was opened
    */
   async openAddress(uri) {
     const target = await this.#mentionService.resolve(uri)
@@ -236,74 +173,47 @@ export class SieveWorkspace {
     return true
   }
 
-  /**
-   * Creates a new untitled note and opens it: POST /api/note, tabbar swap.
-   * @returns {Promise<any>}
-   */
+  /** @returns {Promise<any>} */
   newNote() {
     return this.#ajax('POST', '/api/note')
   }
 
-  /**
-   * Closes one tab (the ✕ button, context-menu "Close Tab"). A single-element
-   * call into the one close mechanism.
-   * @param {string} uuid
-   * @returns {Promise<any>}
-   */
+  /** @param {string} uuid @returns {Promise<any>} */
   close(uuid) { return this.#closeTabs([uuid]) }
 
-  /**
-   * Closes the currently active tab, or no-ops when nothing is active. Replaces
-   * the native menu's `data-uuid` DOM scrape.
-   * @returns {Promise<any>|void}
-   */
+  /** @returns {Promise<any>|void} */
   closeActiveTab() {
     if (this.#activeTab) return this.close(this.#activeTab.uuid)
   }
 
-  /**
-   * The authoritative list of ALL open tab ids — read from the rendered strip
-   * (#tabs-area [data-tab-id]), NOT #tabs. #tabs holds only tabs ACTIVATED in this
-   * JS session (each has a live SieveTab/editor); a tab loaded from the session but
-   * never clicked has no #tabs entry. The server session (the strip) is the source
-   * of truth for what is open, so close-all / close-others enumerate from it.
-   * @returns {string[]}
-   */
+  /** The authoritative list of ALL open tab ids, read from the rendered strip and
+   *  NOT #tabs: #tabs holds only tabs ACTIVATED this session, so one loaded from
+   *  the session but never clicked has no entry.
+   *  @returns {string[]} */
   #openTabIds() {
     return Array.from(document.querySelectorAll('#tabs-area [data-tab-id]'))
       .map((el) => /** @type {HTMLElement} */ (el).dataset.tabId)
       .filter((id) => !!id)
   }
 
-  /**
-   * Closes every open tab (context-menu "Close All Tabs"). The server empties the
-   * session and mints one fresh note; the funnel prunes the old identities.
-   * @returns {Promise<any>}
-   */
+  /** Closes every open tab. The server empties the session and mints one fresh
+   *  note; the funnel prunes the old identities. @returns {Promise<any>} */
   closeAll() { return this.#closeTabs(this.#openTabIds()) }
 
-  /**
-   * Closes every tab EXCEPT keepUuid (context-menu "Close Others"). Same funnel,
-   * complement id set over the rendered strip. Close-to-right / close-to-left are
-   * the same shape over a tab-order slice.
-   * @param {string} keepUuid
-   * @returns {Promise<any>}
-   */
+  /** @param {string} keepUuid @returns {Promise<any>} */
   closeOthers(keepUuid) {
     return this.#closeTabs(this.#openTabIds().filter((u) => u !== keepUuid))
   }
 
   /**
-   * The ONE close path: POST the id SET to /api/tabs/close as JSON {ids}. The
-   * server owns which tabs close, the active-tab re-point, the Smart-Close AI
-   * filing per doc, and the empty⇒fresh-note; it renders tabbar.html + OOB
-   * editor.html. We apply that with htmx.swap (fetch, not htmx.ajax, so the body
-   * can be JSON) and prune the closed identities in afterSettleCallback — i.e.
-   * AFTER the OOB editor mount's initEditor→activateDocument has destroyed the
-   * outgoing editor (its WS) while #activeTab still pointed at it. Pruning earlier
-   * would null #activeTab first and leak that editor.
-   * @param {string[]} uuids
-   * @returns {Promise<any>}
+   * The ONE close path: POST the id SET as JSON. The server owns which tabs close,
+   * the active-tab re-point, the Smart-Close filing and the
+   * empty-becomes-fresh-note. Applied with htmx.swap rather than htmx.ajax so the
+   * body can be JSON, and the closed identities are pruned in afterSettleCallback
+   * — AFTER the OOB editor mount has destroyed the outgoing editor while
+   * #activeTab still pointed at it. Pruning earlier nulls #activeTab first and
+   * leaks that editor.
+   * @param {string[]} uuids @returns {Promise<any>}
    */
   #closeTabs(uuids) {
     if (!window.htmx || !uuids.length) return Promise.resolve()
@@ -321,8 +231,6 @@ export class SieveWorkspace {
   }
 
   /**
-   * Reorders the tab strip: POST /api/tabs/reorder with from/to indices, tabbar
-   * swap.
    * @param {number} fromIdx — source tab index
    * @param {number} toPos — target insertion position
    * @returns {Promise<any>}
@@ -331,23 +239,19 @@ export class SieveWorkspace {
     return this.#ajax('POST', '/api/tabs/reorder', { values: { from: fromIdx, to: toPos } })
   }
 
-  /**
-   * Fetches and renders the tab strip: GET /ui/views/tabs, tabbar swap. The
-   * boot + invalidation refetch entry point — the #htmx-tabbar div carries no
-   * hx-get/hx-trigger of its own.
-   * @returns {Promise<any>}
-   */
+  /** Fetches and renders the tab strip. The boot and invalidation refetch entry
+   *  point — #htmx-tabbar carries no hx-get/hx-trigger of its own.
+   *  @returns {Promise<any>} */
   loadTabs() {
     return this.#ajax('GET', '/ui/views/tabs')
   }
 
   /**
-   * Shared htmx.ajax over the tabbar mount. Guards htmx (mirrors the templates)
-   * and always resolves to a promise so `.then` prunes are safe even without
-   * htmx present (tests, early boot).
+   * Shared htmx.ajax over the tabbar mount. Always resolves to a promise, so
+   * `.then` prunes are safe even without htmx present.
    * @param {'GET'|'POST'} method
    * @param {string} url
-   * @param {object} [extraOpts] — merged into the swap options (e.g. values)
+   * @param {object} [extraOpts] — merged into the swap options
    * @returns {Promise<any>}
    */
   #ajax(method, url, extraOpts) {
@@ -356,46 +260,32 @@ export class SieveWorkspace {
     return window.htmx.ajax(method, url, opts)
   }
 
-  // ── Editor lifecycle (P2.A fix wave: the ONE authoritative teardown path) ────
-
   /**
    * Activates the document for a uuid, owning the editor lifecycle end-to-end.
-   * This is the SINGLE place a previous editor is destroyed:
+   * The SINGLE place a previous editor is destroyed:
    *
-   * - Genuine tab SWITCH (uuid differs from the active tab's): the previous
-   *   editor is destroyed (its WS closes) BEFORE the new tab's editor is
-   *   created (its WS opens). That close-before-open ordering is load-bearing
-   *   for the Go WS takeover guard (ws_handler.go pointer-identity unregister)
-   *   and matches the old openEditorWs behavior (closeEditorWs() first).
+   * - tab SWITCH: the previous editor is destroyed (its WS closes) BEFORE the new
+   *   one is created. That ordering is load-bearing for the Go WS takeover guard.
    * - TEARDOWN (uuid ''): the active editor is destroyed and its tab closed.
-   * - Same-uuid re-activation (toggleMode, a prompt re-init, and any editor.html
-   *   re-render for the unchanged active note — e.g. re-opening the active note
-   *   from the sidebar, or closing a background tab): the editor instance and
-   *   its live socket are KEPT — destroy is never spurious. (Behavior delta vs
-   *   the pre-P2.A code, which recycled the socket on those note paths; keeping
-   *   it avoids the takeover race entirely.)
+   * - Same-uuid re-activation: the editor and its live socket are KEPT.
    *
    * @param {string} uuid — target document uuid, or '' to tear down
-   * @param {object} [options] — passed to the Tab's editor factory
-   *   (toolbar, …) — the provider and loader are the host's own
+   * @param {object} [options] — passed to the Tab's editor factory; the provider
+   *   and loader are the host's own
    * @returns {SieveTab|null} the activated Tab, or null after a teardown
    */
   activateDocument(uuid, options) {
     const prev = this.#activeTab
     if (prev && prev.uuid !== uuid) {
       if (prev.editor) {
-        // issue #51: the ONE place a tab's editor goes away (switch OR
-        // teardown) — pull its scroll coordinate and flush it to session.json
-        // BEFORE the SelectionModel that holds it is destroyed. The lazy
-        // debounce (see #syncShell) covers the crash-loss window; this call is
-        // the guaranteed flush for the ordinary switch/close path.
+    // The ONE place a tab's editor goes away: pull its scroll coordinate and flush
+    // it BEFORE the SelectionModel holding it is destroyed.
         this.#persistScroll(prev)
         prev.editor.destroy()
         prev.detachEditor()
       }
       // The MOUNT goes with the editor: closing it closes the container's channel
-      // and discards its follower model. Close-before-open across a switch is
-      // load-bearing for the Go WS takeover guard.
+      // and discards its follower model.
       prev.detachMount()
       if (!uuid) this.closeTab(prev.uuid)
     }
@@ -403,22 +293,16 @@ export class SieveWorkspace {
 
     const tab = this.openTab(uuid)
     if (!tab.editor) {
-      // A tab can still be holding a mount with no lens on it — an editor torn
-      // down out of band leaves exactly that — and it has to give that mount up
-      // BEFORE the next one opens. Close-before-open on ONE uuid is the whole
-      // rule: two live claims on a container's channel is a takeover, and the
-      // side that loses it is a silently dead UI.
+    // Close-before-open on ONE uuid is the whole rule: two live claims on a
+    // container's channel is a takeover, and the loser is a silently dead UI.
       tab.detachMount()
-      // THE MOUNT SEQUENCE (issue #96 comment 1694). The host resolves the
-      // container, opens its channel, and hands the lens ONE dependency: the
-      // provider. Which provider depends on what the container IS — a prompt is
-      // text, a note is a block tree that can also project itself as text — and
-      // that decision lives in the MountBinding, beside the model it wraps.
+    // THE MOUNT SEQUENCE. The host resolves the container, opens its channel, and
+    // hands the lens ONE dependency: the provider. Which provider depends on what
+    // the container IS, and that decision lives in the MountBinding.
       const kind = uuid.startsWith('prompt:') ? 'prompt' : 'note'
       const mount = new MountBinding(uuid, this.#documentService, this.#feed, kind)
-      // The delegate is transport routing, NOT a repaint path: content reaches
-      // the lens through its subscription, and what is left here is traffic that
-      // is nobody's document truth (a server error).
+    // Transport routing, NOT a repaint path: content reaches the lens through its
+    // subscription, and what is left is nobody's document truth.
       if (kind !== 'prompt') mount.openChannel({ onMessage: (msg) => this.routeServerMessage(msg) })
       tab.attachMount(mount)
       tab.attachEditor(tab.createEditor(uuid, Object.assign({
@@ -430,41 +314,28 @@ export class SieveWorkspace {
     return tab
   }
 
-  // ── Editor boot/lifecycle ────────────────────────────────────────────────────
-  // The Workspace (the app-root singleton) owns the editor's boot half: the
-  // derived active-editor accessor, the initEditor entry point (called from
-  // index.html), the mode/error/save reactions, and the app-level DOM listeners
-  // (bootEditorLifecycle). window.sieveWorkspace is the only surviving global.
-
-  /**
-   * The live editor instance for the active tab (a NoteEditor or PromptEditor),
-   * or null. Call sites speak the editor's DOMAIN methods (createBlock /
-   * flushSave / …); a disconnected editor (PromptEditor) no-ops the
-   * transport-backed ops safely, so nothing here probes for it.
-   * @returns {import('../lens/abstract-editor.js').AbstractEditor|null}
-   */
+  /** The live editor for the active tab, or null. Call sites speak the editor's
+   *  DOMAIN methods; a disconnected editor no-ops transport-backed ops safely.
+   *  @returns {import('../lens/abstract-editor.js').AbstractEditor|null} */
   get activeEditor() {
     return this.#activeTab ? this.#activeTab.editor : null
   }
 
   /**
-   * Public entry point called from index.html (DOMContentLoaded / htmx:load /
-   * library switch). Opens/activates the shell Tab + its editor for `uuid`, loads
-   * the document body from the backend, and presents the surface. Falsy
-   * mountEl/uuid tears the active editor down. (Moved verbatim-in-behaviour from
-   * editor.js initEditor.)
+   * Public entry point called from index.html. Opens/activates the shell Tab and
+   * its editor, loads the body, and presents the surface. Falsy mountEl/uuid tears
+   * the active editor down.
    * @param {HTMLElement|null} mountEl
    * @param {string} uuid
    * @param {string} [mode]
    */
   initEditor(mountEl, uuid, mode) {
-    // Flush the previous editor's pending edits while it is still attached, so
-    // they go out on ITS socket before any teardown (surface flush + WS flush).
+    // Flush the previous editor while it is still attached, so its edits go out on
+    // ITS socket before any teardown.
     const prev = this.activeEditor
     if (prev && prev.surface) this.flushSave()
-    // initEditor never destroys editors/surfaces directly: the shell editor is
-    // destroyed only in activateDocument (via #syncShell); the previous surface is
-    // unmounted by presentSurface (same-uuid re-init) or editor.destroy() (switch).
+    // initEditor never destroys editors directly: that is activateDocument's, and
+    // the previous surface is unmounted by presentSurface or editor.destroy().
 
     if (!mountEl || !uuid) {
       // Teardown — #syncShell('') destroys the active editor and closes its tab.
@@ -474,17 +345,15 @@ export class SieveWorkspace {
     }
 
     // Set the staleness guard SYNCHRONOUSLY before the fetch: the load's `.then`
-    // re-checks `this.#currentUuid !== uuid` so a later init supersedes this load.
+    // re-checks it, so a later init supersedes this load.
     this.#currentUuid = uuid
     this.#syncShell(uuid)
     this.#currentMountEl = mountEl
     const wantMode = mode || this.#activeTab?.mode || 'wysiwyg'
 
-    // The LOAD is a host act: it seeds the container's follower model (through the
-    // feed's own subscription) and answers with the facts only the host acts on —
-    // the mode to present, the markdown body, the saved scroll, the version. The
-    // lens is handed none of it: it paints from the model, on the bootstrap cue
-    // its subscription produces the moment the surface mounts.
+    // The LOAD is a host act: it seeds the container's follower model and answers
+    // with the facts only the host acts on. The lens is handed none of it; it
+    // paints from the model on its subscription's bootstrap cue.
     const tab = this.#activeTab
     const mount = tab ? tab.mount : null
     if (!mount) return
@@ -496,33 +365,26 @@ export class SieveWorkspace {
 
         const ed = this.activeEditor
         if (!ed) return
-        // Before the content mounts: the editor's saved-fact baseline is the
-        // version this load served, and a save can land the moment it mounts.
+        // The editor's saved-fact baseline is the version this load served, and a
+        // save can land the moment it mounts.
         ed.seedVersion(data.version)
-        // The editor owns its root (#tiptap-mount); the surface owns the DOM under
-        // it. presentSurface unmounts any previous surface first, then subscribes —
-        // and the subscription's first cue is what paints.
+        // presentSurface unmounts any previous surface, then subscribes — and the
+        // subscription's first cue is what paints.
         ed.presentSurface(isMarkdown ? 'markdown' : 'wysiwyg', mountEl, isMarkdown ? (data.body || '') : null)
-        // Seed the Tab's mode record + body class after the initial present
-        // (mode-changed does not fire on initial mount — only on an actual flip).
+        // mode-changed fires only on an actual flip, not on the initial mount.
         if (this.#activeTab) this.#activeTab.recordMode(ed.mode)
         document.body.classList.toggle('markdown-mode', ed.mode === 'markdown')
-        // issue #51: restore the session's saved scroll (0 for a never-seen /
-        // never-scrolled tab — the same value the park-at-top floor uses, so
-        // one call serves both).
+        // 0 for a never-seen tab is the park-at-top floor, so one call serves both.
         ed.restoreScroll(data.scroll || 0)
       })
       .catch((err) => { console.error('[editor] load failed', err) })
   }
 
   /**
-   * Syncs the shell to a tab-lifecycle transition (moved from editor.js
-   * _syncShell): delegates to activateDocument — the ONE authoritative editor
-   * teardown path — and, ONLY when a NEW editor instance was created
-   * (`tab.editor && !hadEditor`), subscribes its mode-event reaction.
-   * ATTACH-ONCE-PER-EDITOR-INSTANCE: a same-uuid re-init (toggleMode / prompt
-   * revert) reuses the existing editor and must NOT re-subscribe, or mode-changed
-   * would double-fire.
+   * Syncs the shell to a tab-lifecycle transition, and ONLY when a NEW editor
+   * instance was created subscribes its mode-event reaction.
+   * ATTACH-ONCE-PER-EDITOR-INSTANCE: a same-uuid re-init reuses the existing
+   * editor and must NOT re-subscribe, or mode-changed would double-fire.
    * @param {string} uuid — target uuid, or '' to tear down
    */
   #syncShell(uuid) {
@@ -531,36 +393,25 @@ export class SieveWorkspace {
     const tab = this.activateDocument(uuid)
     if (tab && tab.editor && !hadEditor) {
       tab.editor.onEvent(this.onEditorModeEvent.bind(this))
-      // issue #51: the lazy crash-safety flush — a debounced persist on top of
-      // the guaranteed one in activateDocument (switch/teardown), so a crash
-      // mid-session loses at most a few seconds of scrolling, not the whole
-      // session. scroll-changed never fires the meaningful selection-update
-      // broadcast (SelectionModel excludes it); this is a SEPARATE listener on
-      // the SAME editor event stream doc-changed/transaction already use.
+      // The lazy crash-safety flush, on top of the guaranteed one in
+      // activateDocument. scroll-changed never fires the meaningful
+      // selection-update broadcast, so this is a SEPARATE listener.
       tab.editor.onEvent((e) => { if (e.type === 'scroll-changed') this.#scheduleScrollPersist(tab) })
     }
   }
 
-  /**
-   * Handles the WS messages that are neither protocol nor surface ops nor awaited
-   * mode replies (moved from editor.js): only surfaces a server error. A late
-   * fall-through (e.g. a stray mode reply) is deliberately dropped.
-   * @param {{type?: string, message?: string}} msg
-   */
+  /** Handles the WS messages that are neither protocol, surface ops, nor awaited
+   *  mode replies: only surfaces a server error.
+   *  @param {{type?: string, message?: string}} msg */
   routeServerMessage(msg) {
     if (msg.type === 'error') {
       window.alert(msg.message || 'An error occurred.')
     }
   }
 
-  /**
-   * The two non-toolbar chrome reactions to a surface mode flip (moved from
-   * editor.js onEditorModeEvent): the body `markdown-mode` class (drives the
-   * ask-panel/table hide CSS) + the tab-strip re-render; and the verbatim
-   * stay-on-failure alert. A newly created editor gets this as its mode reaction
-   * (subscribed once in #syncShell).
-   * @param {{type: string, mode?: string, error?: unknown}} event
-   */
+  /** The two non-toolbar chrome reactions to a surface mode flip: the body
+   *  `markdown-mode` class plus the tab-strip re-render, and the failure alert.
+   *  @param {{type: string, mode?: string, error?: unknown}} event */
   onEditorModeEvent(event) {
     if (event.type === 'mode-changed') {
       document.body.classList.toggle('markdown-mode', this.activeEditor?.mode === 'markdown')
@@ -571,37 +422,22 @@ export class SieveWorkspace {
     }
   }
 
-  /**
-   * Flushes the active editor's pending edits (moved from editor.js flushSave).
-   * NoteEditor: channel flush; PromptEditor: HTTP save override. Returns a
-   * Promise so callers can await the save.
-   * @returns {Promise<any>}
-   */
+  /** @returns {Promise<any>} */
   flushSave() {
     return this.activeEditor ? this.activeEditor.flushSave() : Promise.resolve()
   }
 
-  /**
-   * Saves the active editor and resolves once the save has LANDED — for a caller
-   * whose next step reads the document from disk over another wire. See
-   * AbstractEditor.saveAndSettle.
-   * @returns {Promise<void>}
-   */
+  /** Saves and resolves once the save has LANDED — for a caller whose next step
+   *  reads the document from disk over another wire. @returns {Promise<void>} */
   saveAndSettle() {
     return this.activeEditor ? this.activeEditor.saveAndSettle() : Promise.resolve()
   }
 
-  /**
-   * Registers the app-level editor DOM listeners. Called once at module load
-   * next to startTabbar()/bootChrome(); the listeners read the active editor via
-   * this.activeEditor.
-   */
+  /** Registers the app-level editor DOM listeners. Called once at module load. */
   bootEditorLifecycle() {
-    // External changes to a prompt (revert / background edit) → re-init in place.
-    // The backend emits BOTH prompts:changed and notes:changed on a prompt revert;
-    // regular notes are left alone while typing, so both listeners guard on the
-    // prompt: uuid prefix. NOTE: startTabbar() ALSO listens for notes:changed (its
-    // own tabbar refresh) — this is a SEPARATE, intentionally-additional listener.
+    // The backend emits BOTH prompts:changed and notes:changed on a prompt revert,
+    // and regular notes are left alone while typing, so both listeners guard on
+    // the `prompt:` uuid prefix.
     document.addEventListener('prompts:changed', () => {
       if (this.#currentUuid?.startsWith('prompt:')) {
         this.initEditor(this.#currentMountEl, this.#currentUuid, this.activeEditor?.mode)
@@ -614,28 +450,14 @@ export class SieveWorkspace {
     })
 
     // RECONCILIATION, not an operation: the server broadcasts that a container is
-    // already gone, and everything this workspace still holds for it goes with
-    // it — the editor (whose destroy closes its document socket) and then the tab
-    // bookkeeping. Deleting a BACKGROUND note reaches no element the delete's own
-    // response swaps, which is why the news arrives on the workspace wire rather
-    // than in that response.
+    // already gone, and everything this workspace still holds for it goes too.
+    // Deleting a BACKGROUND note reaches no element the delete's own response
+    // swaps, which is why the news arrives on the workspace wire.
     //
-    // Tearing down a MOUNTED editor here is the ORDINARY path, not the edge case:
-    // the delete handler emits the frame before it renders, so on loopback this
-    // listener normally runs first and the active note's live editor is the one
-    // it destroys. That is safe because destroy() performs exactly the unmount
-    // and channel-close activateDocument performs when a tab is switched away
-    // from; the response's OOB editor swap then re-inits a clean mount for the
-    // new active tab. The one thing activateDocument does that this deliberately
-    // does not is flush the scroll coordinate — there is no document left to
-    // restore it into.
-    //
-    // The reverse order needs no negotiation either: it is idempotent by
-    // construction. An unknown uuid is nothing to do, and a tab whose editor the
-    // swap already destroyed (activateDocument detached it) has no editor left.
-    // The display-race invariant that makes activateDocument the single teardown
-    // site does not bind here — the news is that the document ceased to exist,
-    // so there is no view left worth protecting from a flicker.
+    // Tearing down a MOUNTED editor here is the ORDINARY path, and it is safe:
+    // destroy() performs exactly the unmount and channel-close activateDocument
+    // performs on a switch. It deliberately does NOT flush the scroll coordinate —
+    // there is no document left to restore it into. Either order is idempotent.
     document.addEventListener('sieve:container-deleted', (e) => {
       const uuid = /** @type {CustomEvent} */ (e).detail?.uuid
       if (!uuid) return
@@ -649,8 +471,7 @@ export class SieveWorkspace {
       this.closeTab(uuid)
     })
 
-    // Global capture for Ctrl/Cmd+Click on any link in the app → open externally
-    // (capture-phase `true` PRESERVED — it must win before link handlers).
+    // Capture phase is load-bearing: it must win before link handlers.
     document.addEventListener('click', (e) => {
       if (window.isMod(e)) {
         const a = e.target.closest ? e.target.closest('a') : null
@@ -666,8 +487,8 @@ export class SieveWorkspace {
       }
     }, true)
 
-    // A restore is a genuine whole-container LOAD: reload() reseeds the model and
-    // repaints from it — never a flat setContent re-parse (which re-mints ids).
+    // A restore is a genuine whole-container LOAD: reload() reseeds the model —
+    // never a flat setContent re-parse, which re-mints ids.
     document.body.addEventListener('editor:restore', (e) => {
       const data = e.detail
       if (!data || !data.uuid) return
@@ -685,19 +506,14 @@ export class SieveWorkspace {
       if (e.target.closest('.ai-block, .image-block, .web-clip-block, .sieve-block')) return
       const ed = this.activeEditor
       if (!ed) return
-      // No link scraped off the DOM here: the menu resolves the link from the
-      // DOCUMENT (ProseLink.forSelection over the snapped selection), which is the
-      // only view that carries the mark's range for the Convert offers. The old
-      // `linkUrl` detail existed solely to prefill the Insert dialogs, and those
-      // no longer vary with it (#67).
+      // No link is scraped off the DOM: the menu resolves it from the DOCUMENT,
+      // the only view carrying the mark's range for the Convert offers.
       document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
         detail: { x: e.clientX, y: e.clientY, context: { type: 'editor', editor: ed.editorPane } }
       }))
     })
 
-    // Block-ID hover readout (dev/debug) → editor:blockhover. Pure DOM read; both
-    // prose and Sieve blocks carry data-id (Sieve also data-kind). Fires only when
-    // the hovered block changes (#lastHoverKey dedup).
+    // Fires only when the hovered block changes.
     document.addEventListener('mouseover', (e) => {
       const inMount = e.target.closest && e.target.closest('#tiptap-mount')
       const el = inMount ? e.target.closest('[data-id]') : null
@@ -710,46 +526,29 @@ export class SieveWorkspace {
     })
   }
 
-  // ── Chrome verbs ─────────────────────────────────────────────────────────────
-  // Each delegates DIRECTLY to a Workspace-owned child (the search overlay, the
-  // insert dialogs) or to the active tab's MOUNT. These public verbs ARE the
-  // component API the native menu calls (main.go buildMenu).
+  // Each delegates DIRECTLY to a Workspace-owned child or to the active tab's
+  // MOUNT. These public verbs ARE the component API the native menu calls.
 
-  /** Shows/hides the document search overlay (P4.C child). */
   toggleSearch() { this.#searchOverlay?.toggle() }
 
-  /** Advances to the next search match (F3 / Mod+G) — opens the overlay first if closed. */
   searchNext() { this.#searchOverlay?.next() }
 
-  /** Advances to the previous search match (Shift+F3 / Mod+Shift+G) — opens the overlay first if closed. */
   searchPrev() { this.#searchOverlay?.prev() }
 
-  /**
-   * Opens the Insert from URL dialog — the web-clip entry point (P4.C child).
-   * @param {string} [url] optional href prefill (no caller supplies one today:
-   *   every entry point is a plain "insert something new")
-   */
+  /** @param {string} [url] optional href prefill */
   openWebClipDialog(url) { this.#insertDialogs?.openWebClip(url) }
 
-  /**
-   * Opens the Insert Link Card dialog (P4.C child).
-   * @param {string} [url] optional href prefill (see openWebClipDialog)
-   */
+  /** @param {string} [url] optional href prefill */
   openUrlCardDialog(url) { this.#insertDialogs?.openUrlCard(url) }
 
   /**
-   * Copies the active container's clean markdown export to the clipboard — the
-   * File › Export › Clipboard (Markdown) menu path.
+   * Copies the active container's clean markdown export to the clipboard. A HOST
+   * verb, not a lens one: the filtering the export applies is Go's, not any lens's
+   * projection. The flush first is what includes what the user just typed.
    *
-   * A HOST verb, not a lens one: the menu acts on the workspace, and the
-   * filtering the export applies (ai-blocks dropped, cards and clips reduced to
-   * links) is Go's — no lens's projection of the document. The flush first is
-   * what makes the export include what the user has just typed.
-   *
-   * A native menu click carries no DOM gesture and steals focus, so WebKit
-   * rejects navigator.clipboard — the Wails native pasteboard is primary and the
-   * browser API is the non-Wails dev fallback. No toast system → the feedback is
-   * the OS clipboard.
+   * A native menu click carries no DOM gesture and steals focus, so WebKit rejects
+   * navigator.clipboard — the Wails pasteboard is primary, the browser API is the
+   * non-Wails dev fallback.
    * @returns {Promise<void>}
    */
   copyDocumentAsMarkdown() {
@@ -767,9 +566,8 @@ export class SieveWorkspace {
   }
 
   /**
-   * The toolbar's file-attach path: a file the user picked, handed to the active
-   * container's paste pipeline. It lives here because the picker's dialog blurs
-   * the editor — the ANCHOR was captured before it opened and comes back in.
+   * The toolbar's file-attach path. It lives here because the picker's dialog
+   * blurs the editor — the ANCHOR was captured before it opened and comes back in.
    * @param {{mimeType: string, content: string, filename: string}} file
    * @param {string|null|undefined} afterBlockId
    * @returns {Promise<unknown>}
@@ -779,22 +577,14 @@ export class SieveWorkspace {
     const provider = mount ? /** @type {any} */ (mount.provider) : null
     if (!provider || typeof provider.paste !== 'function') return Promise.resolve()
     // context.filename is what says "this came from a FILE" rather than "this is
-    // pasted text" — the reference processor requires it, and without it a
-    // picked .yml is claimed by nobody and does nothing.
+    // pasted text": without it a picked .yml is claimed by nobody.
     return provider.paste({
       kind: 'smart',
       entries: [{ mimeType: file.mimeType, content: file.content, context: { filename: file.filename } }],
     }, afterBlockId)
   }
 
-  // ── Listener registry (P1: registration methods exist, empty — wired P2) ─────
-
-  /**
-   * Register a listener called whenever the active tab changes (including to null).
-   * Returns an unsubscribe function.
-   * @param {(tab: SieveTab|null) => void} fn
-   * @returns {() => void}
-   */
+  /** @param {(tab: SieveTab|null) => void} fn @returns {() => void} unsubscribe */
   onActiveTabChanged(fn) {
     this.#activeTabListeners.push(fn)
     return () => {
@@ -803,12 +593,9 @@ export class SieveWorkspace {
   }
 
   /**
-   * Register a listener for the ACTIVE tab's selection stream (P3.B). Returns an
-   * unsubscribe. The Workspace republishes only the active tab's contexts; a
-   * background tab's push is not delivered. On an active-tab change the previous
-   * subscription is dropped and the new tab's is taken up, with an immediate
-   * D4-synth republish from the new editor's current context (null-guarded); an
-   * active→null teardown emits a null context so consumers can clear.
+   * Register a listener for the ACTIVE tab's selection stream. On an active-tab
+   * change the previous subscription is dropped and the new tab's taken up, with
+   * an immediate republish; an active-to-null teardown emits a null context.
    * @param {(ctx: import('../lens/document-editor/selection-model.js').SelectionContext|null) => void} fn
    * @returns {() => void} unsubscribe
    */
@@ -819,32 +606,21 @@ export class SieveWorkspace {
     }
   }
 
-  /**
-   * Pull the active tab's current frozen SelectionContext, or null when no document
-   * is open (P3.E — the read half of the read/write coordinate symmetry). Mirrors
-   * the internal pull `#switchSelectionSource` already performs.
-   * @returns {import('../lens/document-editor/selection-model.js').SelectionContext|null}
-   */
+  /** @returns {import('../lens/document-editor/selection-model.js').SelectionContext|null} */
   getSelectionContext() {
     return this.#activeTab && this.#activeTab.editor
       ? this.#activeTab.editor.getSelectionContext()
       : null
   }
 
-  /**
-   * Restore focus/selection on the active tab from a (previously pulled) coordinate
-   * (P3.E — the WRITE half; a VERB on the Workspace, never on the frozen context).
-   * Routes straight to the active editor's applyPosition (Tab holds no position
-   * write). Safe no-op when no document is open or ctx is null.
-   * @param {import('../lens/document-editor/selection-model.js').SelectionContext|null} ctx
-   */
+  /** Restore focus/selection on the active tab — a VERB on the Workspace, never on
+   *  the frozen context. Safe no-op when nothing is open.
+   *  @param {import('../lens/document-editor/selection-model.js').SelectionContext|null} ctx */
   setPosition(ctx) {
     if (ctx && this.#activeTab && this.#activeTab.editor) {
       this.#activeTab.editor.applyPosition(ctx)
     }
   }
-
-  // ── Private helpers ────────────────────────────────────────────────────────────
 
   /** @param {SieveTab|null} tab */
   #setActiveTab(tab) {
@@ -855,14 +631,10 @@ export class SieveWorkspace {
   }
 
   /**
-   * Re-points the republished selection stream at the new active tab (P3.B):
-   * drops the old tab's subscription, subscribes to the new one's
-   * onSelectionUpdate, and synthesizes an immediate republish (D4 — a tab change
-   * IS a selection change). The synth is null-guarded: when the new tab has no
-   * editor yet (openTab→#setActiveTab can precede attachEditor) or its editor's
-   * context is null, nothing is synthesized — the tab's own forward delivers the
-   * first context once attached. A null active tab (teardown) emits a null
-   * context to clear consumers.
+   * Re-points the republished selection stream at the new active tab and
+   * synthesizes an immediate republish, because a tab change IS a selection
+   * change. Null-guarded: when the new tab has no editor yet, nothing is
+   * synthesized and the tab's own forward delivers the first context.
    * @param {SieveTab|null} tab
    */
   #switchSelectionSource(tab) {
@@ -870,8 +642,7 @@ export class SieveWorkspace {
     if (!tab) { this.#notifySelectionListeners(null); return }
     this.#unsubActiveSelection = tab.onSelectionUpdate((ctx) => this.#notifySelectionListeners(ctx))
     // The synth pulls from the MOUNT — the host end of the presence seam, which
-    // holds the last advert the lens made. Null before the lens has made one, and
-    // then the tab's own forward delivers the first context.
+    // holds the last advert the lens made.
     const synth = tab.getSelectionContext()
     if (synth) this.#notifySelectionListeners(synth)
   }
@@ -890,13 +661,9 @@ export class SieveWorkspace {
     }
   }
 
-  /**
-   * Debounces a lazy scroll-persist for the ACTIVE tab (issue #51 crash-safety
-   * floor — "so a crash loses at most a few seconds"). One timer suffices:
-   * only the active tab ever has a live editor to report scroll-changed from
-   * (activateDocument destroys the previous one before a new one attaches).
-   * @param {SieveTab} tab
-   */
+  /** Debounces a lazy scroll-persist for the ACTIVE tab. One timer suffices: only
+   *  the active tab has a live editor to report scroll-changed from.
+   *  @param {SieveTab} tab */
   #scheduleScrollPersist(tab) {
     if (this.#scrollPersistTimer) clearTimeout(this.#scrollPersistTimer)
     this.#scrollPersistTimer = setTimeout(() => {
@@ -905,15 +672,9 @@ export class SieveWorkspace {
     }, 3000)
   }
 
-  /**
-   * Pulls a tab's current scroll coordinate (via its editor's SelectionContext
-   * — a PULL, never a push, per the issue #51 design) and persists it to
-   * session.json over the workspace channel. Fire-and-forget — scroll is
-   * caret-class state, not worth a save-suppression or a swap response.
-   * No-op when the tab has no editor or never reported a scroll (ctx.scroll
-   * null — nothing pulled yet, e.g. the user never scrolled this session).
-   * @param {SieveTab} tab
-   */
+  /** Pulls a tab's scroll coordinate — a PULL, never a push — and persists it over
+   *  the workspace channel. Fire-and-forget: scroll is caret-class state.
+   *  @param {SieveTab} tab */
   #persistScroll(tab) {
     if (this.#scrollPersistTimer) { clearTimeout(this.#scrollPersistTimer); this.#scrollPersistTimer = null }
     const ctx = tab.editor ? tab.editor.getSelectionContext() : null
@@ -921,33 +682,26 @@ export class SieveWorkspace {
     this.#workspaceService.persistScroll(tab.uuid, ctx.scroll)
   }
 
-  // ── Workspace-owned chrome children (P4.B: Ask panel; P4.C: dialogs + search) ─
-
   /** @type {AskPanel|null} the permanent Ask-panel child (constructed once) */
   #askPanel = null
 
-  /** @type {InsertDialogs|null} the URL insert dialogs child (P4.C) */
+  /** @type {InsertDialogs|null} the URL insert dialogs child */
   #insertDialogs = null
 
-  /** @type {SearchOverlay|null} the document search overlay child (P4.C) */
+  /** @type {SearchOverlay|null} the document search overlay child */
   #searchOverlay = null
 
   /** @type {CommandBadges|null} the command badges child */
   #commandBadges = null
 
-  /** @type {StatusBar|null} the status-bar child (P4.D — stats/dirty/blockid slots) */
+  /** @type {StatusBar|null} the status-bar child (stats/dirty/blockid slots) */
   #statusBar = null
 
-  /** @type {SidebarView|null} keeps the sidebar's tree/search mode across invalidations (#93) */
+  /** @type {SidebarView|null} keeps the sidebar's tree/search mode across invalidations */
   #sidebarView = null
 
-  /**
-   * Constructs the Workspace-owned chrome children (P4.B: the Ask panel; P4.C: the
-   * insert dialogs + search overlay; P4.D: the status bar). Called once at module
-   * load next to startTabbar(). The AskPanel/StatusBar wire their structural DOM
-   * and null-guard its absence (vitest imports the classes headless — the status
-   * bar's slots resolve to null and every write no-ops).
-   */
+  /** Constructs the Workspace-owned chrome children, once at module load. Each
+   *  null-guards its structural DOM, so a headless import leaves writes no-ops. */
   bootChrome() {
     if (!this.#commandBadges) this.#commandBadges = new CommandBadges()
     if (!this.#askPanel) this.#askPanel = new AskPanel(this, this.#commandService, this.#commandBadges, this.#mentionService)
@@ -958,18 +712,14 @@ export class SieveWorkspace {
   }
 
   /**
-   * Dials the workspace channel, which is the page's ONLY way to hear the server
-   * speak: every invalidation and the jobs snapshot arrive on it, and a page that
-   * never dials sits on views nothing will ever refresh.
+   * Dials the workspace channel, the page's ONLY way to hear the server speak.
+   * It must be dialled EXPLICITLY at boot, because WorkspaceService.open() is
+   * otherwise reached only from send() — so a page where nobody runs a command
+   * would hear nothing at all, with no error to explain it.
    *
-   * It must be dialled EXPLICITLY at boot. WorkspaceService.open() is otherwise
-   * reached only from send(), so a page where nobody runs a command, resolves a
-   * mention or scrolls a tab would hear nothing at all — a stale sidebar with no
-   * error anywhere to explain it.
-   *
-   * Called after the constructor has registered every tenant, because the server
-   * speaks first: the jobs snapshot is written the instant the socket connects,
-   * and a tenant registering after that would have it dropped as unclaimed.
+   * Called after every tenant is registered, because the server speaks first: the
+   * jobs snapshot is written the instant the socket connects, and a tenant
+   * registering after that would have it dropped as unclaimed.
    */
   bootPushChannel() {
     this.#workspaceService.open()
@@ -978,31 +728,24 @@ export class SieveWorkspace {
   /** @returns {CommandBadges|null} */
   get commandBadges() { return this.#commandBadges }
 
-  /** @returns {AskPanel|null} the permanent Ask-panel child (entry points reach it here) */
+  /** @returns {AskPanel|null} the permanent Ask-panel child */
   get askPanel() { return this.#askPanel }
 
-  /** @returns {InsertDialogs|null} the URL insert dialogs child (P4.C) */
+  /** @returns {InsertDialogs|null} the URL insert dialogs child */
   get insertDialogs() { return this.#insertDialogs }
 
-  /** @returns {SearchOverlay|null} the document search overlay child (P4.C) */
+  /** @returns {SearchOverlay|null} the document search overlay child */
   get searchOverlay() { return this.#searchOverlay }
 
-  // ── Tabbar boot + refresh ownership (the #htmx-tabbar div carries none) ─────
-
   /**
-   * Boots the tab strip and subscribes to the out-of-band refresh signals every
-   * other panel declares as an hx-trigger; the Workspace OWNS the tabbar render
-   * (loadTabs), so its mount has no attributes of its own to carry them.
+   * Boots the tab strip and subscribes to the refresh signals every other panel
+   * declares as an hx-trigger; the Workspace OWNS the tabbar render, so its mount
+   * has no attributes of its own to carry them.
    *
-   * TWO SIGNALS, ONE SUBJECT: the invalidation push (`sieve:invalidate-*`,
-   * dispatched on `document`, reaching every client) and the HX-Trigger response
-   * event (`session:changed` / `notes:changed`, which bubbles to `document` and
-   * reaches only the client that made the request, immediately). Both are
-   * listened for because they answer different questions — "someone changed
-   * this" and "your own request changed this" — and a duplicate refetch is
-   * cheaper than a strip that lags its own click.
-   *
-   * Idempotent-safe to call once at module load; guards on #htmx-tabbar existing.
+   * TWO SIGNALS, ONE SUBJECT: the invalidation push (reaching every client) and
+   * the HX-Trigger response event (reaching only the client that made the
+   * request). Both are listened for because they answer different questions, and
+   * a duplicate refetch is cheaper than a strip that lags its own click.
    */
   startTabbar() {
     const boot = () => { if (document.getElementById('htmx-tabbar')) this.loadTabs() }
@@ -1019,24 +762,12 @@ export class SieveWorkspace {
   }
 }
 
-// ── Singleton ─────────────────────────────────────────────────────────────────
-// Created once at module load time. editor.js looks this up via window.sieveWorkspace.
-// Acceptance criterion: window.sieveWorkspace.activeTab.editor.uuid works from console.
 const workspace = new SieveWorkspace()
 window.sieveWorkspace = workspace
 
-// The Workspace owns the tab strip render. Boot it + subscribe to the refresh
-// signals here (module load — this is the deferred module, so the DOM
-// mount exists or DOMContentLoaded is still pending, both handled). Guarded so
-// vitest (which imports the class without a real document tab mount) is unaffected.
-//
 // The push channel is dialled LAST: its first frame arrives the moment the socket
-// connects, and the consumers of that frame are the DOM listeners the three boots
-// above install. Dialling first would publish the jobs snapshot and the connect
-// resync into a page where nothing is listening yet. It is dialled only where a
-// socket can exist: the headless DOM vitest imports this module under HAS a
-// document but no WebSocket, and importing a module must not fail for want of a
-// wire nothing in a unit test speaks.
+// connects, and its consumers are the DOM listeners the boots above install.
+// Dialling first would publish into a page where nothing is listening yet.
 if (typeof document !== 'undefined') {
   workspace.startTabbar(); workspace.bootChrome(); workspace.bootEditorLifecycle()
   if (typeof WebSocket === 'function') workspace.bootPushChannel()

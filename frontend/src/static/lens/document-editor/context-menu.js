@@ -1,16 +1,14 @@
-// context-menu.js — single source of truth for all context menus.
-// Components fire 'sieve:contextmenu' with { x, y, context } in the detail.
-// context.type must be one of: 'editor' | 'sieveBlock' | 'aiBlock' | 'note' | 'folder' | 'prompt'
+// Single source of truth for all context menus. Components fire 'sieve:contextmenu'
+// with { x, y, context } in the detail; context.type must be one of
+// 'editor' | 'sieveBlock' | 'aiBlock' | 'note' | 'folder' | 'prompt'.
 import { getSieveIcon } from '../../renderers/block-kinds.js'
 import { applyTargetHighlight } from '../extensions.js'
 import { NodeViewRegistry, detectAndAppendExtractions, serializeNode } from './surfaces/sieve-block-extension.js'
 import { enclosingBlockId } from './surfaces/block-position.js'
 import { ProseLink } from './surfaces/prose-link.js'
 
-  // ── Icons ───────────────────────────────────────────────────────────────────
   var IC = window.SieveIcons || {}
 
-  // ── Renderer ────────────────────────────────────────────────────────────────
   function render(x, y, items) {
     var existing = document.getElementById('sieve-context-menu')
     if (existing) existing.remove()
@@ -82,7 +80,6 @@ import { ProseLink } from './surfaces/prose-link.js'
     }
   }
 
-  // ── Helpers ──────────────────────────────────────────────────────────────────
   function hx(method, url, opts) {
     return window.htmx.ajax(method, url, opts || {})
   }
@@ -116,7 +113,6 @@ import { ProseLink } from './surfaces/prose-link.js'
     ]
   }
 
-  // ── Editor: text / code block / table ────────────────────────────────────────
   function buildEditorItems(ctx, x, y) {
     var editor = ctx.editor
 
@@ -135,10 +131,8 @@ import { ProseLink } from './surfaces/prose-link.js'
     var sel = state.selection
     var hasSelection = !sel.empty
 
-    // The link the (snapped) selection is about, if any. ONE resolution, three
-    // consumers below: the URL readout, the Edit/Copy verbs, and the Convert
-    // offers. `isNew` (a selection with no mark yet) is Mod+K's creation path,
-    // not a menu affordance — the menu only speaks about links that exist.
+    // The link the (snapped) selection is about, if any. The menu only speaks about
+    // links that exist — `isNew` is Mod+K's creation path, not a menu affordance.
     var proseLink = ProseLink.forSelection(editor.view)
     if (proseLink && proseLink.isNew) proseLink = null
 
@@ -174,12 +168,9 @@ import { ProseLink } from './surfaces/prose-link.js'
       }})
     }
 
-    // Paste is a CALLER of the paste path, never a second mechanism. It used to
-    // recognise a ```ai-block fence itself and hand-build a node from the YAML —
-    // which minted nothing, reused the SOURCE's id, and named a node type
-    // (`aiBlock`) the schema does not have, so it inserted a paragraph of nothing.
-    // Recognising a block's serialized form is the pipeline's job, and Go's
-    // ai-block processor claims its own fence.
+    // Paste is a CALLER of the paste path, never a second mechanism: recognising a
+    // block's serialized form is the pipeline's job, and Go's ai-block processor
+    // claims its own fence.
     items.push({ icon: IC.paste, label: 'Paste', action: function () {
       editor.commands.focus()
       navigator.clipboard.readText().then(function (text) {
@@ -205,10 +196,9 @@ import { ProseLink } from './surfaces/prose-link.js'
       editor.commands.selectAll()
     }})
 
-    // ── Link section ────────────────────────────────────────────────────────
-    // In WYSIWYG a link renders as its label alone, so the href is invisible
-    // without markdown mode; the header IS the cheapest visibility win (#67).
-    // Both verbs delegate to ProseLink — the same object Mod+K drives.
+    // In WYSIWYG a link renders as its label alone, so the href is invisible without
+    // markdown mode; the header is the cheapest visibility win. Both verbs delegate
+    // to ProseLink, the same object Mod+K drives.
     if (proseLink) {
       items.push({ type: 'divider' })
       items.push({ type: 'header', label: ellipsise(proseLink.href, 52) })
@@ -216,14 +206,9 @@ import { ProseLink } from './surfaces/prose-link.js'
       items.push({ icon: IC.copy, label: 'Copy Link', action: function () { proseLink.copy() }})
     }
 
-    // INSERT items are genuine inserts: they open their dialog and create a NEW
-    // block, consuming nothing. They deliberately do NOT vary with the link under
-    // the cursor — the "Insert … from Link" variants they used to grow were a
-    // hand-built substitute for the extraction pipeline, from back when the offer
-    // gate excluded prose. Converting a link is a Convert offer now (see
-    // describeSource below), which is the framework's own path: right verb, right
-    // menu group, the kind's own Fetch/Summarise choice, and no re-asking for a URL
-    // the app already has. (#67)
+    // INSERT items are genuine inserts: they open their dialog and create a NEW block,
+    // consuming nothing. They deliberately do NOT vary with the link under the cursor
+    // — converting a link is a Convert offer (see describeSource below).
     items.push({ type: 'divider' })
     items.push({ icon: getSieveIcon('web-clip'), label: 'Insert Web Clip...', action: function () {
       window.sieveWorkspace && window.sieveWorkspace.openWebClipDialog()
@@ -248,19 +233,17 @@ import { ProseLink } from './surfaces/prose-link.js'
           editor.chain().extendMarkRange('highlight').unsetMark('highlight').focus().run()
           return
         }
-        // D-5: applyTargetHighlight takes an explicit range now. The right-click set
-        // the selection (buildEditorItems), so the current selection extent IS the
-        // target the user is marking — pass it explicitly (no in-function live read).
+        // applyTargetHighlight takes an explicit range. The right-click already set the
+        // selection, so its extent IS the target being marked — pass it explicitly.
         applyTargetHighlight(editor, { from: editor.state.selection.from, to: editor.state.selection.to })
         editor.commands.focus()
       }})
     }
 
     items.push({ type: 'divider' })
-    // Ask AI / Explain just fire the event — the editor.js handler owns ALL the
-    // business logic (target highlight + focus + buildAiContext + run), so the
-    // context menu, toolbar, and keyboard shortcut behave identically. The menu's
-    // only job is to set the selection from the right-click (done in buildEditorItems).
+    // Ask AI / Explain only fire the event; the editor's handler owns ALL the business
+    // logic (target highlight + focus + buildAiContext + run), so menu, toolbar and
+    // keyboard shortcut behave identically.
     items.push({ icon: IC.sparkle, label: 'Ask AI...', action: function () {
       document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
     }})
@@ -270,18 +253,13 @@ import { ProseLink } from './surfaces/prose-link.js'
 
     // Native source → Sieve block conversion. A native node IS its own content, so
     // converting it is an in-place TRANSFORM — the backend decides additive-vs-replace.
-    // We reuse the exact extraction path the Sieve-block NodeView uses:
-    // extractContentEntryFromEditor reads whatever DOM element was clicked. The context
-    // menu has no DOM event, but it has the click coords, so we reconstruct the same
-    // target with elementFromPoint and pass a synthetic { target } — the function reads
-    // nothing else off the event. Detection (all processors) decides the conversion
-    // targets; we only describe the source.
+    // extractContentEntryFromEditor reads whatever DOM element was clicked; the menu
+    // has no DOM event, so the same target is reconstructed from the click coords via
+    // elementFromPoint and passed as a synthetic { target }. It reads nothing else.
     //
-    // ONE discovery call, ONE offer-rendering path — describeSource just says WHICH
-    // source, so a prose link's offers arrive in the menu exactly like every other
-    // source's (#67). A link is the one source that is a RANGE inside a block rather
-    // than a block: it has no id, so it carries `sourceRange` and the editor plays the
-    // offer back by consuming that range (AbstractEditor.extract).
+    // describeSource only says WHICH source; detection decides the targets. A link is
+    // the one source that is a RANGE inside a block rather than a block: it has no id,
+    // so it carries `sourceRange` and the editor plays the offer back by consuming it.
     function describeSource() {
       var nativeConvertible = { codeBlock: true, image: true }
       if (targetNode && nativeConvertible[targetNode.type.name] && targetPos !== null &&
@@ -304,8 +282,7 @@ import { ProseLink } from './surfaces/prose-link.js'
       if (proseLink && proseLink.href) {
         return {
           sourceNode: null,
-          // 'prose' excludes the prose processor from its own offers (Go's
-          // DetectExtractions skips pm.Kind === sourceKind) — "Embed in Document"
+          // 'prose' excludes the prose processor from its own offers — "Embed in Document"
           // is meaningless for something already embedded in the document.
           sourceKind: 'prose',
           entries: proseLink.contentEntries(),
@@ -323,9 +300,8 @@ import { ProseLink } from './surfaces/prose-link.js'
       detectAndAppendExtractions(source)
     }
 
-    // Delete — only for block-level native nodes (codeBlock, table).
-    // Paragraph text uses normal keyboard deletion; this is for structured blocks
-    // where there's no other obvious affordance (e.g. after extracting to Sieve).
+    // Delete — only for block-level native nodes. Paragraph text uses normal keyboard
+    // deletion; this is for structured blocks with no other obvious affordance.
     var blockNodeTypes = { codeBlock: true, table: true }
     if (targetNode && blockNodeTypes[targetNode.type.name] && targetPos !== null) {
       ;(function (node, pos) {
@@ -339,10 +315,6 @@ import { ProseLink } from './surfaces/prose-link.js'
 
     return items
   }
-
-  // ── AI Block node ────────────────────────────────────────────────────────────
-
-
 
   function buildAiBlockItems(ctx) {
     var editor = ctx.editor, getPos = ctx.getPos, n = ctx.node
@@ -393,7 +365,6 @@ import { ProseLink } from './surfaces/prose-link.js'
     ]
   }
 
-  // ── Sidebar: note ────────────────────────────────────────────────────────────
   function buildNoteItems(ctx) {
     var id = ctx.id, name = ctx.name, intent = ctx.intent, isTab = ctx.isTab
     var items = []
@@ -447,7 +418,6 @@ import { ProseLink } from './surfaces/prose-link.js'
     return items
   }
 
-  // ── Sidebar: folder ──────────────────────────────────────────────────────────
   function buildFolderItems(ctx) {
     var id = ctx.id, name = ctx.name
     var items = []
@@ -474,7 +444,6 @@ import { ProseLink } from './surfaces/prose-link.js'
     return items
   }
 
-  // ── Sidebar: prompt ──────────────────────────────────────────────────────────
   function buildPromptItems(ctx) {
     var id = ctx.id, name = ctx.name, isVirtual = ctx.isVirtual, isTab = ctx.isTab
     var items = []
@@ -495,7 +464,6 @@ import { ProseLink } from './surfaces/prose-link.js'
     return items
   }
 
-  // ── Central dispatcher ───────────────────────────────────────────────────────
   document.addEventListener('sieve:contextmenu', function (e) {
     var d = e.detail, ctx = d.context, items
     switch (ctx.type) {
@@ -510,10 +478,6 @@ import { ProseLink } from './surfaces/prose-link.js'
     render(d.x, d.y, items)
   })
 
-  // Icons are globally accessible via window.SieveIcons
-
-
-  // ── Dismiss ──────────────────────────────────────────────────────────────────
   document.addEventListener('click', function (e) {
     var menu = document.getElementById('sieve-context-menu')
     if (menu && !menu.contains(e.target)) menu.remove()

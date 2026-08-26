@@ -1,25 +1,12 @@
 // @ts-check
-// ask-panel.js — the Ask panel as a PERMANENT Workspace child (P4.B).
+// The Ask panel as a PERMANENT Workspace child, constructed ONCE and persisting
+// across tab/editor switches, so it is NOT owned by any editor. It REFLECTS the
+// active editor by subscribing to workspace.onSelectionUpdate.
 //
-// The Ask panel is constructed ONCE by the Workspace (bootChrome) and persists
-// across tab/editor switches — it is NOT owned by any editor. It REFLECTS the
-// active editor by subscribing to workspace.onSelectionUpdate (the P3.B stream:
-// republishes the active tab + synthesizes on tab-switch), so the label tracks
-// the caret / focus / tab change. On SEND it targets ws.activeTab.editor and
-// calls the ONE editor seam (editor.askAi) — the child owns the DIALOG, the
-// editor owns the doc mutation.
-//
-// It wires the STRUCTURAL #ask-panel DOM from index.html (never rebuilds it) and
-// null-guards a missing panel (headless boot / vitest import). D-5 (P4.E): the
-// panel is DUMB UI — it holds NO tiptap and does NO position/protocol work. On send
-// it passes the SelectionContext it LAST RENDERED (the label the user saw) to the
-// ONE editor seam editor.askAi({type,question,context}); the editor owns the target
-// highlight, insert index, flush, block creation, and cursor. Passing the shown
-// context (never a live re-read) is the D-5 anti-race: send acts on exactly what the
-// label described. The Ask-panel FOCUS GLOW was DROPPED in P4.B — panel paints nothing.
-//
-// Dual-use ES module: imported by workspace.js (which constructs it). No window.*
-// export — the singleton is reached via window.sieveWorkspace.askPanel.
+// The panel is DUMB UI: it holds NO tiptap and does NO position or protocol work.
+// On send it passes the SelectionContext it LAST RENDERED — the label the user
+// saw — and never a live re-read, so send acts on exactly what the label
+// described. The editor owns the doc mutation.
 
 import { TriggerPopover } from './trigger-popover.js'
 import { SlashCommandProvider, MentionProvider } from './trigger-providers.js'
@@ -38,12 +25,12 @@ export class AskPanel {
   #badges = null
   /** @type {TriggerPopover|null} */
   #hintPopover = null
-  /** @type {ComposerAttachments|null} what the message being written has attached
-   *  (#74). PANEL STATE — the chips are UI, the manifest is what send carries. */
+  /** @type {ComposerAttachments|null} what the message being written has
+   *  attached. PANEL STATE — the chips are UI, the manifest is what send carries. */
   #attachments = null
-  /** @type {TargetChips|null} the footer's view of what the message will ACT ON
-   *  (#74). A separate concern from #attachments and deliberately so: the editor
-   *  owns the selection this draws, so it never enters a manifest. */
+  /** @type {TargetChips|null} the footer's view of what the message will ACT ON.
+   *  A separate concern from #attachments and deliberately so: the editor owns the
+   *  selection this draws, so it never enters a manifest. */
   #targetChips = null
   /** @type {HTMLElement|null} the structural #ask-panel (null → all methods no-op) */
   #panel = null
@@ -57,7 +44,7 @@ export class AskPanel {
   #labelTimeout = null
   /** @type {import('../lens/document-editor/selection-model.js').SelectionContext|null} focus coordinate pulled on jump-in */
   #focusReturn = null
-  /** @type {import('../lens/document-editor/selection-model.js').SelectionContext|null} the context whose label is CURRENTLY shown — what send acts on (D-5: send == shown) */
+  /** @type {import('../lens/document-editor/selection-model.js').SelectionContext|null} the context whose label is CURRENTLY shown — what send acts on */
   #lastContext = null
   /** @type {string} the container whose truth the target chips are watching */
   #watchedUuid = ''
@@ -80,28 +67,22 @@ export class AskPanel {
     if (!this.#panel) return
     this.#textarea = this.#panel.querySelector('.ask-popup__input')
     this.#label = this.#panel.querySelector('.ask-popup__label')
-    // The target row is built FIRST so it lands left of the attachment chips:
-    // what the message acts on, then what it drags along. It is view-only and
-    // holds no model — the editor owns the selection it draws. Its read seam is
-    // the ACTIVE container's provider, pointed at it by #watchBlocks below: a
-    // per-block chip's label is derived at paint time, so nothing about it
-    // travels on the selection.
+    // The target row is built FIRST so it lands left of the attachment chips: what
+    // the message acts on, then what it drags along. View-only — the editor owns
+    // the selection it draws.
     this.#targetChips = new TargetChips(this.#panel.querySelector('.ask-popup__footer'))
-    // The attachment model comes next: the `@` provider's accept-sink writes
-    // into it, so it must exist before the picker can offer anything. It takes
-    // the composer too — the `@Title` tokens live there and the chips are a VIEW
-    // of them (#74 P6) — and the gate through which it edits that text. The gate
-    // is late-bound because the picker it defers to is built below.
+    // The attachment model comes next: the `@` provider's accept-sink writes into
+    // it, so it must exist before the picker can offer anything. It also takes the
+    // composer, since the `@Title` tokens live there and the chips are a VIEW of
+    // them, plus the gate through which it edits that text.
     this.#attachments = new ComposerAttachments(
       this.#panel.querySelector('.ask-popup__footer'),
       this.#textarea,
       (edit) => this.#applyOwnEdit(edit),
     )
-    // ONE picker, two triggers (#74 P4): `/` enumerates the boot-shipped command
-    // list, `@` round-trips the library through the session plane. The popover
-    // owns the keyboard model, each provider owns only its own trigger, and the
-    // HOST owns the surface — here the textarea, placed as an extension of the
-    // panel above it.
+    // ONE picker, two triggers: `/` enumerates the boot-shipped command list, `@`
+    // round-trips the library. The popover owns the keyboard model, each provider
+    // its own trigger, and the HOST the surface.
     if (this.#textarea) {
       const providers = []
       if (this.#commandService) providers.push(new SlashCommandProvider(this.#commandService))
@@ -118,20 +99,15 @@ export class AskPanel {
     this.#wirePinToggle()
     this.#wireGlobalHotkey()
     this.#wireAiEvents()
-    // The panel tracks the canonical selection stream (P3.D closure, now OWNED
-    // here). The workspace republishes only the active tab + synthesizes on
-    // tab-switch, so the label refreshes on caret move, focus change, AND tab
-    // change. NO glow — dropped in P4.B.
+    // The workspace republishes only the active tab and synthesizes on
+    // tab-switch, so the label refreshes on caret move, focus change AND tab
+    // change.
     this.#ws.onSelectionUpdate((ctx) => this.#onSelectionUpdate(ctx))
   }
 
-  // ── Public verbs the entry points call ────────────────────────────────────────
-
-  /**
-   * Opens the Ask box: toggle-out if it already has focus (focus axis only —
-   * pin/visibility is independent), else pull the focus coordinate for jump-out,
-   * show, seed the label, and focus the textarea.
-   */
+  /** Opens the Ask box: toggle-out if it already has focus, else pull the focus
+   *  coordinate for jump-out, show, seed the label and focus the textarea. Focus
+   *  and pin are independent axes. */
   open() {
     if (!this.#panel || !this.#textarea) return
     if (this.#panel.classList.contains('is-open') && document.activeElement === this.#textarea) {
@@ -139,39 +115,32 @@ export class AskPanel {
       return
     }
     // Jump IN: pull where focus was so jump-out restores it exactly. Must run
-    // before the textarea steals focus below — the coordinate is still live here.
+    // before the textarea steals focus below.
     this.#focusReturn = this.#ws.getSelectionContext()
-    // Seed the send context to the current selection so an immediate send (before
-    // the first debounced label render) still acts on what's shown; #refreshLabel
-    // keeps it in lock-step with the label thereafter.
+    // Seed the send context so an immediate send, before the first debounced label
+    // render, still acts on what is shown.
     this.#lastContext = this.#focusReturn
     this.#panel.classList.add('is-open')
-    // Paint what we already know before the debounced pull confirms it: the
-    // target chip must not arrive 100ms after the panel it belongs to.
+    // Paint what we already know before the debounced pull confirms it: the target
+    // chip must not arrive 100ms after the panel it belongs to.
     this.#renderSubject()
     this.#refreshLabel()
     const ta = this.#textarea
     setTimeout(() => ta.focus(), 50)
   }
 
-  /**
-   * Jumps back to the editor (the former returnToEditor): hides the panel if
-   * unpinned, restoring the caret to where we were on jump-in. Focus and panel
-   * visibility are independent — a jump-out NEVER touches the persisted pin state.
-   * This is what a Ctrl+Shift+A jump-out and the open() toggle-out call.
-   */
+  /** Jumps back to the editor, hiding the panel if unpinned and restoring the
+   *  caret to where we were on jump-in. A jump-out NEVER touches the persisted
+   *  pin state. */
   close() {
     if (!this.#panel) return
     if (!this.#pinned) this.#panel.classList.remove('is-open')
     this.#ws.setPosition(this.#focusReturn)
   }
 
-  /**
-   * Dismisses the panel (the former closePanel — the ✕ button / Escape): "View
-   * Ask panel on/off" and "pin" are ONE persisted boolean, so when pinned ON, ✕
-   * untoggles it through the same endpoint the View menu uses (persisting off);
-   * a transient ambient open just hands focus back and hides (close()).
-   */
+  /** Dismisses the panel. "View Ask panel on/off" and "pin" are ONE persisted
+   *  boolean, so when pinned ON, ✕ untoggles it through the same endpoint the View
+   *  menu uses; a transient ambient open just hands focus back and hides. */
   #dismiss() {
     if (this.#pinned && window.htmx) {
       window.htmx.ajax('POST', '/api/session/toggle/askpanel', { swap: 'none' })
@@ -179,10 +148,7 @@ export class AskPanel {
     this.close()
   }
 
-  /**
-   * Focus-agnostic toggle (the non-PM Ctrl+Shift+A body): if the box has focus,
-   * jump back out; otherwise jump in.
-   */
+  /** Focus-agnostic toggle: if the box has focus, jump back out; otherwise in. */
   toggle() {
     if (this.#panel && this.#panel.classList.contains('is-open') && document.activeElement === this.#textarea) {
       this.close()
@@ -191,18 +157,13 @@ export class AskPanel {
     }
   }
 
-  /**
-   * Run an explain job on the active editor over its CURRENT selection context
-   * (explain is caret-contextual — fired from Mod+E / the context menu / a block
-   * affordance, so "what's at the caret now" IS the target; no panel label is
-   * involved). The editor owns the markdown abort (askAi no-ops explain in markdown).
-   */
+  /** Run an explain job over the active editor's CURRENT selection context.
+   *  Explain is caret-contextual, so "what is at the caret now" IS the target and
+   *  no panel label is involved. The editor owns the markdown abort. */
   explainActive() {
     const ed = this.#activeEditor()
     if (ed) ed.askAi({ type: 'explain', context: ed.getSelectionContext() })
   }
-
-  // ── Private ───────────────────────────────────────────────────────────────────
 
   /** @returns {any} the live active editor, or null */
   #activeEditor() {
@@ -220,26 +181,23 @@ export class AskPanel {
     if (closeBtn) closeBtn.addEventListener('click', () => this.#dismiss())
 
     textarea.addEventListener('keydown', (e) => {
-      // ATOMIC TOKEN DELETION (#74 P6). Backspace at the right edge of an
-      // accepted `@Title` takes the WHOLE token and its chip, which is what makes
-      // the half-broken `@Auth Desig` state unreachable by the ordinary gesture.
-      // Anywhere else it falls straight through — the key is only ever borrowed.
+      // ATOMIC TOKEN DELETION. Backspace at the right edge of an accepted `@Title`
+      // takes the WHOLE token and its chip, which makes the half-broken
+      // `@Auth Desig` state unreachable. Anywhere else it falls straight through.
       if (e.key === 'Backspace' && !e.ctrlKey && !e.metaKey && !e.altKey && this.#detachTokenAtCaret()) {
         e.preventDefault()
         return
       }
-      // Ctrl+Shift+A (jump back out) is the global hotkey — only Enter/Escape are box-local.
+      // Ctrl+Shift+A (jump back out) is the global hotkey; only Enter/Escape are box-local.
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.#send() }
       if (e.key === 'Escape') { e.preventDefault(); this.#dismiss() }
     })
 
-    // LIVE RECONCILIATION (#74 P6): the chips are a VIEW of the `@Title` tokens
-    // in the message, so every edit path — typing, selecting through a token and
-    // deleting, cut, paste-over, undo — redraws them. Reconciling only at send
-    // was the defect: the UI claimed "attached" right up until it silently
-    // wasn't. The HEADER is derived from the same text on the same event and for
-    // the same reason (#74): a label set once when the panel opened would go on
-    // saying "Ask About …" over a `/btw` the user has already typed.
+    // LIVE RECONCILIATION: the chips are a VIEW of the `@Title` tokens, so every
+    // edit path redraws them — reconciling only at send let the UI claim
+    // "attached" right up until it silently was not. The HEADER is derived from
+    // the same text on the same event, or a label set once when the panel opened
+    // would go on saying "Ask About …" over a `/btw` already typed.
     textarea.addEventListener('input', () => {
       this.#reconcileChips()
       this.#renderSubject()
@@ -251,11 +209,9 @@ export class AskPanel {
     if (this.#textarea && this.#attachments) this.#attachments.reconcile(this.#textarea.value)
   }
 
-  /**
-   * Deletes the whole attachment token the caret sits at the right edge of.
-   * A SELECTION deletes itself — Backspace over one is not a token gesture.
-   * @returns {boolean} whether the keypress was consumed
-   */
+  /** Deletes the whole attachment token the caret sits at the right edge of. A
+   *  SELECTION deletes itself — Backspace over one is not a token gesture.
+   *  @returns {boolean} whether the keypress was consumed */
   #detachTokenAtCaret() {
     const textarea = this.#textarea
     if (!textarea || !this.#attachments) return false
@@ -263,13 +219,10 @@ export class AskPanel {
     return this.#attachments.detachAt(textarea.selectionStart)
   }
 
-  /**
-   * Performs a programmatic edit of the composer text as OUR write: the picker
-   * ignores the `input` it fires, so deleting a token neither reopens the picker
-   * on the deleted token nor disturbs the abandonment record. Same guard
-   * acceptance uses — there is one notion of "our own edit", not two.
-   * @param {() => void} edit
-   */
+  /** Performs a programmatic edit of the composer text as OUR write: the picker
+   *  ignores the `input` it fires, so deleting a token neither reopens the picker
+   *  on it nor disturbs the abandonment record. One notion of "our own edit".
+   *  @param {() => void} edit */
   #applyOwnEdit(edit) {
     if (this.#hintPopover) this.#hintPopover.applyOwnEdit(edit)
     else edit()
@@ -285,12 +238,10 @@ export class AskPanel {
     })
   }
 
-  /**
-   * The Mod+Shift+A entry. D-5: the Ask panel owns this chord WHOLESALE — the editor
-   * keymap no longer binds it (AiShortcuts.onAsk removed), so this document-level
-   * listener handles every case, including when the main editor has focus. It is
-   * still not hijacked inside the sidebar or a modal dialog. No tiptap reach.
-   */
+  /** The Mod+Shift+A entry. The Ask panel owns this chord WHOLESALE — the editor
+   *  keymap does not bind it — so this document-level listener handles every case,
+   *  including when the main editor has focus. Still not hijacked inside the
+   *  sidebar or a modal dialog. */
   #wireGlobalHotkey() {
     document.addEventListener('keydown', (e) => {
       if ((e.key !== 'a' && e.key !== 'A') || !window.isMod(e) || !e.shiftKey || e.altKey) return
@@ -301,42 +252,27 @@ export class AskPanel {
     })
   }
 
-  /**
-   * TRANSITIONAL (P4.B; death date P4.D/F): the sieve:ai-ask / sieve:ai-explain
-   * events still ride from the producers that lack a clean handle to reach this
-   * child directly — the surface PM keymap, the context-menu items, the
-   * sieve-block affordance. Their consumers now live HERE (moved out of editor.js)
-   * so the single business seam is relocated, not split. The toolbar and the
-   * Ctrl+Shift+A hotkey are de-evented (they call open()/toggle()/explainActive
-   * directly).
-   */
+  /** TRANSITIONAL: the sieve:ai-ask / sieve:ai-explain events still ride from the
+   *  producers that lack a clean handle to reach this child directly. Their
+   *  consumers live HERE, so the single business seam is relocated rather than
+   *  split. */
   #wireAiEvents() {
     document.addEventListener('sieve:ai-ask', () => this.open())
     document.addEventListener('sieve:ai-explain', () => this.explainActive())
   }
 
-  /**
-   * SEND: hand the question + the context the panel LAST RENDERED (the label the
-   * user saw) to the ONE editor seam. The editor owns EVERYTHING doc-facing — the
-   * == target highlight, the block insert index, the flush, the ai-block creation,
-   * and the post-send cursor collapse. The panel touches NO tiptap and does NO
-   * position/protocol work; passing the shown context (never a live re-read) is the
-   * D-5 anti-race — send acts on exactly what the label described.
-   */
+  /** SEND: hand the question plus the context the panel LAST RENDERED to the ONE
+   *  editor seam, which owns everything doc-facing. Passing the shown context,
+   *  never a live re-read, is what makes send act on what the label described. */
   #send() {
     if (!this.#textarea) return
     const val = this.#textarea.value.trim()
     if (!val) return
 
-    // SEND-TIME RECONCILIATION (#74 P4): an attachment whose `@Title` token the
-    // user deleted from the message is dropped here — deleting the text is a
-    // legitimate way to detach. Both send paths carry the SAME manifest shape.
-    //
-    // ONE call site, ahead of the branch, deliberately: the two send paths must
-    // not be able to reconcile differently. It prunes the model, so a send that
-    // then aborts (no active editor) leaves the chips agreeing with the text
-    // that is still in the box — which is the state the user would have seen
-    // anyway, not a loss.
+    // SEND-TIME RECONCILIATION: an attachment whose `@Title` token the user
+    // deleted is dropped here, because deleting the text is a legitimate way to
+    // detach. ONE call site ahead of the branch, so the two send paths cannot
+    // reconcile differently.
     const attachments = this.#attachments ? this.#attachments.reconcile(this.#textarea.value) : []
 
     if (val.startsWith('/')) {
@@ -346,11 +282,8 @@ export class AskPanel {
         if (resolved) {
           const context = this.#lastContext || (this.#ws ? this.#ws.getSelectionContext() : null)
           // No onResult here: the CommandBadge wires its own listener off the
-          // handle (handle.onResult) and owns the answer lifecycle. There is no
-          // editor.handleCommandResult seam — command results land in the badge/
-          // popup, never back in the editor doc.
-          // attachments ride as a TOP-LEVEL sibling of context on the frame, not
-          // inside it — Go reads them as their own field (see CommandService).
+          // handle. attachments ride as a TOP-LEVEL sibling of context on the
+          // frame — Go reads them as their own field.
           const handle = cs.dispatch(resolved.cmd.name, resolved.args, context, undefined, attachments)
           const badges = this.#badges || (this.#ws && /** @type {any} */ (this.#ws).commandBadges)
           if (badges) {
@@ -369,25 +302,22 @@ export class AskPanel {
     this.#clearComposer()
   }
 
-  /** Resets the composer after a send: the box, the chips, the picker's memory of
-   *  the token the user walked away from, the focus coordinate. The abandonment
-   *  record is keyed to an index in text that no longer exists, and outliving the
-   *  send would keep a document created mid-session unfindable (#74 P6). */
+  /** Resets the composer after a send. The picker's abandonment record is keyed to
+   *  an index in text that no longer exists, and outliving the send would keep a
+   *  document created mid-session unfindable. */
   #clearComposer() {
     if (this.#textarea) this.#textarea.value = ''
     if (this.#attachments) this.#attachments.clear()
     if (this.#hintPopover) this.#hintPopover.reset()
     if (this.#panel && !this.#pinned) this.#panel.classList.remove('is-open')
     this.#focusReturn = null
-    // The header is a view of the text, and the text is gone: an emptied composer
-    // names no command, so the subject goes back to being the target. (The target
-    // chip stays — the selection outlives the message.)
+    // The header is a view of the text, and the text is gone. The target chip
+    // stays — the selection outlives the message.
     this.#renderSubject()
   }
 
   /**
-   * The P3.D boot closure, now OWNED here: on a meaningful selection change,
-   * re-render the label when the panel is open. NO glow (dropped in P4.B).
+   * On a meaningful selection change, re-render the label when the panel is open.
    * @param {import('../lens/document-editor/selection-model.js').SelectionContext|null} ctx
    */
   #onSelectionUpdate(ctx) {
@@ -396,9 +326,8 @@ export class AskPanel {
   }
 
   /**
-   * Debounced re-render from the live target (pull at refresh, F2). It also
-   * STORES the pulled context as #lastContext, so #send acts on exactly the
-   * context the panel is describing (D-5: send == shown).
+   * Debounced re-render from the live target. It also STORES the pulled context as
+   * #lastContext, so #send acts on exactly the context the panel is describing.
    */
   #refreshLabel() {
     if (!this.#panel || !this.#label) return
@@ -411,19 +340,16 @@ export class AskPanel {
   }
 
   /**
-   * Renders the two things the panel says about a send: the HEADER (the SUBJECT —
-   * the command being invoked, or Ask and what it is about) and the footer's
-   * target chip (the CONTEXT that subject will receive).
+   * Renders the two things the panel says about a send: the HEADER (the SUBJECT)
+   * and the footer's target chip (the CONTEXT that subject will receive).
    *
    * Both are DERIVED, never set-and-left. The header is a view of the composer
-   * text exactly as the attachment chips are, so it names a command the moment
-   * the text resolves to one and reverts the moment that token goes — no send,
-   * no selection event needed. It swaps only on an EXACT match against a known
-   * command, or it would flicker through `/b`, `/bt` on the way to `/btw`.
+   * text, so it names a command the moment the text resolves to one and reverts
+   * the moment that token goes. It swaps only on an EXACT match, or it would
+   * flicker through `/b`, `/bt` on the way to `/btw`.
    *
-   * The target chip is drawn from #lastContext (the context a send would carry),
-   * never a live re-read, so what is on screen and what would be sent cannot
-   * disagree.
+   * The target chip is drawn from #lastContext — the context a send would carry —
+   * so what is on screen and what would be sent cannot disagree.
    */
   #renderSubject() {
     if (!this.#panel || !this.#label) return
@@ -438,14 +364,10 @@ export class AskPanel {
     this.#watchBlocks(this.#lastContext ? this.#lastContext.docUuid : '')
   }
 
-  /**
-   * Points the chips' freshness subscription at `uuid`, moving it on a tab
-   * switch and dropping it when nothing is open. The chips repaint on every
-   * selection change already; this covers the case where the SELECTION stands
-   * still and a block inside it changes — a code block's language, an ai-block's
-   * question — which no selection event would ever announce.
-   * @param {string} uuid
-   */
+  /** Points the chips' freshness subscription at `uuid`. The chips repaint on
+   *  every selection change already; this covers the case where the SELECTION
+   *  stands still and a block inside it changes, which no selection event would
+   *  announce. @param {string} uuid */
   #watchBlocks(uuid) {
     if ((uuid || '') === this.#watchedUuid) return
     if (this.#unwatchBlocks) this.#unwatchBlocks()
@@ -458,9 +380,8 @@ export class AskPanel {
     this.#targetChips.setSource(provider)
     if (!this.#watchedUuid || !provider) return
     // A SECOND subscriber on the same container, alongside the mounted lens. The
-    // model fans out to as many followers as ask for it, which is the property
-    // that lets a panel outside the editor stay current without asking the editor
-    // anything.
+    // model fans out to as many followers as ask for it, which is what lets a
+    // panel outside the editor stay current without asking the editor anything.
     const listener = {
       onChanged: (/** @type {any} */ change) => {
         if (this.#targetChips) this.#targetChips.containerChanged(change)
@@ -472,8 +393,7 @@ export class AskPanel {
 
   /**
    * The KNOWN command the composer names right now, or null. Resolution is the
-   * CommandService's — one place decides what a command is, and "known" means
-   * exactly what dispatch means by it.
+   * CommandService's, so "known" means exactly what dispatch means by it.
    * @returns {import('./command-service.js').CommandDescriptor|null}
    */
   #activeCommand() {

@@ -1,19 +1,12 @@
 // @ts-check
-// code-renderer.js — CodeRenderer: the renderer half of the 'code' kind's
-// renderer/NodeView split (Block Renderer Contract,
-// docs/design/archive/specs/2026-07-21-block-renderer-contract.md). Owns look-and-feel
-// ONLY: the block shell, the HEADER (a stateful language badge), the
-// gutter+code-area body chrome, this kind's stylesheet (`static styles`), and
-// the content→source outbound mapping (setContent). Zero ProseMirror/editor/
-// window.* dependencies.
+// CodeRenderer — the 'code' kind's look-and-feel: the block shell, the HEADER (a
+// stateful language badge), the gutter + code-area body chrome, this kind's
+// stylesheet, and the content→source outbound mapping (setContent).
 //
-// buildHeader() lays out a CodeHeader via a HeaderBar; buildBody() builds the
-// gutter + code-area + the editable <code>. PM-specific concerns stay
-// adapter-side: the raw text is ProseMirror-owned (the adapter binds the
-// <code>, exposed as renderer.codeElement, as the NodeView's contentDOM), the
-// lowlight DECORATION plugin, and the MutationObserver that watches contentDOM
-// and reports live text through this renderer's setContent (the contract's
-// outbound truth channel).
+// PM-specific concerns stay adapter-side: the raw text is ProseMirror-owned (the
+// adapter binds the <code>, exposed as renderer.codeElement, as the NodeView's
+// contentDOM), the lowlight DECORATION plugin, and the MutationObserver that
+// watches contentDOM and reports live text through setContent.
 
 import { BlockRenderer } from './block-renderer.js'
 import { codeStyles } from './code-renderer.styles.js'
@@ -23,9 +16,6 @@ import { StatusBadge } from './status-badge.js'
 
 /** @typedef {{ id?: string, source?: string, language?: string, detectionMethod?: string, status?: string, createdAt?: string|null }} CodeAttrs */
 
-// ── Header provider — badge only, but stateful: 'detecting…' while the language
-// job runs, the language once known, else 'CODE' (pending/settled off
-// StatusBadge.classify — survey item A7). ──
 class CodeHeader extends AdvancedHeaderProvider {
   /** @param {CodeAttrs} attrs @returns {HTMLElement} */
   badge(attrs) {
@@ -54,8 +44,6 @@ export class CodeRenderer extends BlockRenderer {
 
   /** @returns {HTMLElement} */
   buildHeader() {
-    // The header's context IS this renderer (contract rule — providers speak
-    // semantic verbs, never injected closures; CodeHeader is read-only today).
     this.#headerBar = new HeaderBar(new CodeHeader())
     return this.#headerBar.render(/** @type {CodeAttrs} */ (this.block.payload), this)
   }
@@ -93,7 +81,7 @@ export class CodeRenderer extends BlockRenderer {
     return body
   }
 
-  /** THE inbound truth channel. @param {import('../contract/sieve-block.js').SieveBlock} block */
+  /** @param {import('../contract/sieve-block.js').SieveBlock} block */
   update(block) {
     super.update(block)
     const attrs = /** @type {CodeAttrs} */ (block.payload)
@@ -108,8 +96,7 @@ export class CodeRenderer extends BlockRenderer {
     this.syncGutterLineCount(attrs.source || '')
   }
 
-  /** The editable <code> the adapter binds as ProseMirror's contentDOM. A
-   *  neutral accessor. @returns {HTMLElement|null} */
+  /** The editable <code> the adapter binds as ProseMirror's contentDOM. @returns {HTMLElement|null} */
   get codeElement() { return this.#codeEl }
 
   /** Live-typing gutter sync the adapter's MutationObserver drives (outside the
@@ -118,8 +105,7 @@ export class CodeRenderer extends BlockRenderer {
 
   /**
    * Outbound truth report — THIS kind's content attr is `source`, knowledge
-   * that lives here and nowhere else (contract §setContent direction; the
-   * retired v1 applier used to do this mapping adapter-side).
+   * that lives here and nowhere else.
    * @param {string} text
    */
   setContent(text) { this._pushAttrs({ source: text }) }

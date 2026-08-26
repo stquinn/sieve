@@ -1,28 +1,14 @@
 // @ts-check
-// markdown-surface.js — the raw-markdown input surface (P2.B).
-//
-// Faithful code motion of editor.js's mountMarkdown (+ updateGutter, the
-// markdown branch of the insert-block render-back, and the markdown flush
-// semantics of the old flushSave/takePendingMarkdown seam). The former module
-// vars `lastSyncedBody`, `docUpdateTimer`, and `currentMarkdownTextarea` are
-// #private fields here — they live and die with the surface, so a stale timer
-// can never fire against a torn-down mount.
-//
-// Markdown mode is the breakglass verbatim buffer: edits flow to the host as
-// whole-buffer setRawContent handoffs (500ms debounce), which is `flush` at
-// container scale — the buffer is kept, deliberately NOT re-parsed, because
+// The raw-markdown input surface: the breakglass VERBATIM buffer. Edits flow to
+// the host as whole-buffer setRawContent handoffs on a 500ms debounce — `flush` at
+// container scale. The buffer is KEPT, deliberately NOT re-parsed, because
 // re-parsing a half-typed document would take Go out of verbatim mode
 // mid-keystroke.
 //
-// It FOLLOWS THE CONTAINER only where it can. A block arriving while this buffer
-// is authoritative (a dialog insert) is appended in its serialized form, which is
-// the one projection of a single block Go volunteers; a block LEAVING is a
-// structural change this text cannot express, so it asks the host for a reload.
-// Everything else — an attrs change, a reorder — has no representation in a
+// It FOLLOWS THE CONTAINER only where it can: a block arriving is appended in its
+// serialized form, a block LEAVING is a structural change this text cannot express
+// so it asks the host for a reload, and everything else has no representation in a
 // verbatim buffer and is correctly ignored.
-//
-// Dual-use ES module: `export` for vitest; `window.SieveMarkdownSurface` for
-// the classic-script editor.js factory.
 
 import { AbstractSurface, SurfaceEvent } from './abstract-surface.js'
 import { EditorMode } from '../editor-mode.js'
@@ -30,16 +16,16 @@ import {
   DEFAULT_POLICY, textInputEdit, applyTextEdit, handleSubstitutionGuard,
 } from '../interaction-policy.js'
 
-// MARKDOWN_POLICY — the breakglass buffer's own declaration. It is one
-// <textarea> holding the WHOLE document, prose and fences together, so it
-// cannot know whether the caret is in a sentence or in a code fence:
+// The breakglass buffer's own policy declaration. It is one <textarea> holding
+// the WHOLE document, prose and fences together, so it cannot know whether the
+// caret is in a sentence or in a code fence:
 //   - surroundSelection: safe either way, and the gesture users expect.
-//   - blockTextSubstitution: macOS smart dashes corrupt fences, and this
-//     surface is where the corruption was actually observed.
-//   - literalGlyphs: it is a verbatim view; `--` must not paint as `–`.
+//   - blockTextSubstitution: macOS smart dashes corrupt fences, and this surface
+//     is where the corruption was actually observed.
+//   - literalGlyphs: it is a verbatim view; `--` must not paint as an en dash.
 //   - autoClosePairs/expandPairOnEnter: DELIBERATELY OFF. Auto-pairing a `(`
 //     mid-sentence is the first thing anyone disables, and there is no way to
-//     tell prose from code here. Autoclose stays where the policy can be sure.
+//     tell prose from code here.
 const MARKDOWN_POLICY = Object.freeze({
   ...DEFAULT_POLICY,
   surroundSelection: true,
@@ -52,13 +38,8 @@ const MARKDOWN_POLICY = Object.freeze({
  */
 
 export class MarkdownSurface extends AbstractSurface {
-  /**
-   * The parent editor (`host`) — the surface calls its public API directly
-   * (onSurfaceEvent / setRawContent / reload). No app-level chrome, no AI
-   * concepts, no chords: app-level chords are owned by the native menu, which
-   * calls the editor API directly (P2.C).
-   * @type {AbstractEditor}
-   */
+  /** @type {AbstractEditor} the parent editor, whose public API this calls
+   *  directly. No app-level chrome, no AI concepts, no chords. */
   #host
 
   /** @type {HTMLElement|null} */
@@ -73,38 +54,30 @@ export class MarkdownSurface extends AbstractSurface {
   /** @type {HTMLTextAreaElement|null} */
   #textarea = null
 
-  /** @type {string} the latest raw markdown body (formerly module lastSyncedBody) */
+  /** @type {string} the latest raw markdown body */
   #body = ''
 
-  /** @type {ReturnType<typeof setTimeout>|null} 500ms doc-update debounce (formerly module docUpdateTimer) */
+  /** @type {ReturnType<typeof setTimeout>|null} 500ms doc-update debounce */
   #timer = null
 
-  /** @type {ReturnType<typeof setTimeout>|null} scroll-report debounce (issue #51) */
+  /** @type {ReturnType<typeof setTimeout>|null} scroll-report debounce */
   #scrollTimer = null
 
-  /**
-   * The container blocks this buffer already accounts for. Seeded from the
-   * container at the first cue (the load is already IN the buffer), so a later
-   * arrival is recognisable as one — a cue names a block every time anything
-   * about it changes, and appending on each would paste it repeatedly.
-   * @type {Set<string>}
-   */
+  /** @type {Set<string>} the container blocks this buffer already accounts for.
+   *  Seeded at the first cue, because the load is already IN the buffer, so a later
+   *  arrival is recognisable as one — a cue names a block every time anything about
+   *  it changes, and appending on each would paste it repeatedly. */
   #known = new Set()
 
-  /**
-   * Whether the first cue has been taken. It is a flag rather than "is #known
-   * empty", because an EMPTY container is a legitimate thing to bootstrap
-   * against — and inferring from the set would make the first real arrival look
-   * like a second bootstrap and swallow it.
-   * @type {boolean}
-   */
+  /** @type {boolean} whether the first cue has been taken. A flag rather than "is
+   *  #known empty", because an EMPTY container is legitimate to bootstrap against,
+   *  and inferring from the set would make the first real arrival look like a
+   *  second bootstrap and swallow it. */
   #bootstrapped = false
 
-  /**
-   * No uuid: this surface holds no content that needs the document identity —
-   * transport identity is the EDITOR's concern (host rule, P2.B correction 3).
-   * @param {AbstractEditor} host — the parent editor
-   */
+  /** No uuid: this surface holds no content needing the document identity —
+   *  transport identity is the EDITOR's concern.
+   *  @param {AbstractEditor} host — the parent editor */
   constructor(host) {
     super()
     if (!host) throw new Error('MarkdownSurface: host is required')
@@ -118,7 +91,6 @@ export class MarkdownSurface extends AbstractSurface {
   get body() { return this.#body }
 
   /**
-   * Builds the gutter + textarea under the root (verbatim mountMarkdown DOM).
    * @param {HTMLElement} rootEl
    * @param {unknown}     content — the raw markdown body
    */
@@ -132,12 +104,9 @@ export class MarkdownSurface extends AbstractSurface {
 
     const gutter = document.createElement('div')
     gutter.className = 'markdown-gutter'
-    // font-size MUST match .markdown-raw's (editor.css, code tier =
-    // calc(--doc-size)*0.85) exactly: the gutter is a separate scrolling
-    // column of one div per line, kept visually aligned with the textarea's
-    // rows purely by scrollTop sync (below) plus identical row heights
-    // (line-height * font-size). Any divergence between the two would drift
-    // the numbers off their lines as soon as editorScale != 1.
+    // font-size MUST match .markdown-raw's exactly: the gutter is a separate
+    // scrolling column of one div per line, aligned with the textarea's rows purely
+    // by scrollTop sync plus identical row heights.
     gutter.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;flex-shrink:0;padding:40px 0.6rem 0.85em;background-color:var(--theme-bgDark);border-right:1px solid var(--theme-border);color:var(--theme-muted);font-family:var(--theme-monoFont);font-size:calc(var(--doc-size) * 0.85);line-height:1.75;overflow:hidden'
 
     const textarea = document.createElement('textarea')
@@ -153,14 +122,12 @@ export class MarkdownSurface extends AbstractSurface {
 
     this.#updateGutter(body)
 
-    // The breakglass buffer is verbatim source text, so it takes the same
-    // policy every literal-text BLOCK does — the SAME pure transforms the PM
-    // surface uses, applied to the textarea value. Two call sites, one rule:
-    // a divergence here would be a keyboard behaviour that silently stops
-    // working the moment you switch to markdown mode.
+    // The breakglass buffer is verbatim source text, so it takes the same policy
+    // every literal-text BLOCK does — the SAME pure transforms the PM surface uses,
+    // applied to the textarea value. A divergence here would be a keyboard
+    // behaviour that silently stops working the moment you switch to markdown.
     textarea.addEventListener('beforeinput', (e) => {
-      // macOS smart-dash/quote substitution corrupts source; see
-      // handleSubstitutionGuard. Confirmed reproducing in THIS surface.
+      // macOS smart-dash/quote substitution corrupts source.
       if (handleSubstitutionGuard(e, MARKDOWN_POLICY)) return
       if (e.inputType !== 'insertText' || typeof e.data !== 'string') return
       const edit = textInputEdit(
@@ -175,8 +142,7 @@ export class MarkdownSurface extends AbstractSurface {
       if (val === this.#body) return
       this.#body = val
       this.#updateGutter(val)
-      // Producer-named outbound event; the editor's SurfaceListener handler
-      // (onSurfaceEvent) forwards it to registrants and marks the doc dirty.
+      // Producer-named outbound event; the editor forwards it and marks dirty.
       this.#host.onSurfaceEvent(SurfaceEvent.DOC_CHANGED)
       if (this.#timer) clearTimeout(this.#timer)
       this.#timer = setTimeout(() => {
@@ -184,14 +150,10 @@ export class MarkdownSurface extends AbstractSurface {
         this.#host.setRawContent(val)
       }, 500)
     })
-    // NO app-level chords here: Mod+S / Mod+J bubble from the textarea to the
-    // transitional document-level listener in editor.js (P2.C owns the proper
-    // chord transport migration).
+    // NO app-level chords here: Mod+S / Mod+J bubble to the document listener.
     textarea.addEventListener('scroll', () => {
       gutter.scrollTop = textarea.scrollTop
-      // issue #51: markdown's own scroller is the textarea itself (no shell
-      // ancestor involved) — debounce-report it the same way the wysiwyg
-      // surface reports #htmx-editor.
+      // Markdown's own scroller is the textarea itself, with no shell ancestor.
       if (this.#scrollTimer) clearTimeout(this.#scrollTimer)
       this.#scrollTimer = setTimeout(() => {
         this.#scrollTimer = null
@@ -208,11 +170,9 @@ export class MarkdownSurface extends AbstractSurface {
   }
 
   /**
-   * Applies a policy TextEdit to the textarea. Goes through execCommand where
-   * available so the browser's own undo stack records the change — setting
-   * `.value` directly would make Mod+Z blow away everything typed since the
-   * last native entry, which is exactly the undo-history damage the
-   * backend-is-source-of-truth rule guards against on the PM side.
+   * Applies a policy TextEdit to the textarea, through execCommand where available
+   * so the browser's own undo stack records the change — setting `.value` directly
+   * would make Mod+Z blow away everything typed since the last native entry.
    * @param {import('../interaction-policy.js').TextEdit} edit
    */
   #applyTextEdit(edit) {
@@ -232,7 +192,6 @@ export class MarkdownSurface extends AbstractSurface {
     ta.dispatchEvent(new Event('input', { bubbles: true }))
   }
 
-  /** Removes the surface's DOM and kills the pending debounces. */
   unmount() {
     if (this.#timer) { clearTimeout(this.#timer); this.#timer = null }
     if (this.#scrollTimer) { clearTimeout(this.#scrollTimer); this.#scrollTimer = null }
@@ -243,10 +202,7 @@ export class MarkdownSurface extends AbstractSurface {
     this.#rootEl = null
   }
 
-  /**
-   * Flushes a pending debounced edit as an immediate setRawContent (the old
-   * flushSave markdown branch / takePendingMarkdown accessor). Idle → no-op.
-   */
+  /** Flushes a pending debounced edit as an immediate setRawContent. Idle: no-op. */
   flushPending() {
     if (!this.#timer) return
     clearTimeout(this.#timer)
@@ -256,14 +212,10 @@ export class MarkdownSurface extends AbstractSurface {
 
   /**
    * Raw selection descriptor for the SelectionModel. Markdown mode is an opaque
-   * verbatim buffer — there is no block model to key a selection on — so the AI
-   * target is always the whole DOCUMENT; the model's focusZone is 'markdown' while
-   * this surface is mounted (set by the editor's focus channel).
-   *
-   * P3.C: a textarea sub-string selection resolves to a document-scoped 'selection'
-   * (ref 'doc') with a snippet label; otherwise the document target with a 'Document'
-   * label. The `target` is ALWAYS present (label folded in), matching the wysiwyg
-   * surface's contract.
+   * verbatim buffer with no block model to key a selection on, so the AI target is
+   * always the whole DOCUMENT. A sub-string selection resolves to a
+   * document-scoped 'selection' with a snippet label; otherwise the document
+   * target. `target` is ALWAYS present, matching the wysiwyg contract.
    * @returns {import('../selection-model.js').RawSelectionDescriptor}
    */
   feedSelection() {
@@ -286,14 +238,10 @@ export class MarkdownSurface extends AbstractSurface {
     }
   }
 
-  /**
-   * Restores focus/selection from a SelectionContext coordinate (P3.E write side).
-   * Markdown is the degenerate whole-text case: map the DOCUMENT coordinate
-   * (`caret`/`range`, textarea offsets) back onto the textarea. No blockCursor —
-   * markdown has no block-inner cursor. Behaviour-equivalent to the retired
-   * `{kind:'markdown',start,end}` focus token.
-   * @param {import('../selection-model.js').SelectionContext} ctx
-   */
+  /** Restores focus/selection from a SelectionContext coordinate. Markdown is the
+   *  degenerate whole-text case: map the DOCUMENT coordinate back onto the
+   *  textarea. No blockCursor — markdown has no block-inner cursor.
+   *  @param {import('../selection-model.js').SelectionContext} ctx */
   applyPosition(ctx) {
     const ta = this.#textarea
     if (!ta) return
@@ -305,16 +253,16 @@ export class MarkdownSurface extends AbstractSurface {
   }
 
   /**
-   * @override — the textarea's own scrollTop (its scroller, unlike wysiwyg's
-   * shell ancestor). null when unmounted. issue #51.
+   * @override — the textarea's own scrollTop, since it is its own scroller unlike
+   * wysiwyg's shell ancestor. null when unmounted.
    * @returns {number|null}
    */
   feedScroll() { return this.#textarea ? this.#textarea.scrollTop : null }
 
   /**
    * @override — restores (or parks) the textarea's scroll position, syncing the
-   * gutter to match. null/undefined ⇒ nothing to restore; 0 is a real
-   * park-at-top value. issue #51.
+   * gutter to match. null/undefined means nothing to restore; 0 is a real
+   * park-at-top value.
    * @param {number|null|undefined} value
    */
   applyScroll(value) {
@@ -334,16 +282,14 @@ export class MarkdownSurface extends AbstractSurface {
    * The container changed while this verbatim buffer is the authority.
    *
    * FIRST CUE: the buffer already holds the load, so it only records what the
-   * container has — nothing is appended.
+   * container has and appends nothing.
    *
-   * A BLOCK ARRIVED (a dialog insert while the user is in markdown mode): append
-   * its serialized form. That form is Go's — a block's fence is its processor's
-   * to write, never this surface's — and it has to land in the BUFFER, because
-   * the buffer is what gets saved and what a flip back re-parses. A block that
-   * only existed in Go's tree would be lost by both.
+   * A BLOCK ARRIVED: append its serialized form. That form is Go's — a block's
+   * fence is its processor's to write — and it has to land in the BUFFER, because
+   * the buffer is what gets saved and what a flip back re-parses.
    *
-   * A BLOCK LEFT: the buffer cannot express a removal by position, so ask the
-   * host to reload the whole thing. Break-glass mode, break-glass answer.
+   * A BLOCK LEFT: the buffer cannot express a removal by position, so ask the host
+   * to reload. Break-glass mode, break-glass answer.
    *
    * Anything else — attrs, order — has no raw-markdown representation.
    * @param {{blockIds: ReadonlyArray<string>, orderChanged: boolean}} change
@@ -378,21 +324,16 @@ export class MarkdownSurface extends AbstractSurface {
     if (departed) this.#host.reload()
   }
 
-  /**
-   * Paints the whole container. A whole-content lens has no block-by-block
-   * painting to do — its content IS the buffer, which the host replaces through
-   * replaceBody — so this only re-bases what it accounts for.
-   * @param {any} provider
-   */
+  /** Paints the whole container. A whole-content lens has no block-by-block
+   *  painting to do — its content IS the buffer, which the host replaces through
+   *  replaceBody — so this only re-bases what it accounts for.
+   *  @param {any} provider */
   paintContainer(provider) {
     this.#known = new Set(provider ? provider.getOrder() : [])
     this.#bootstrapped = true
   }
 
-  /**
-   * Replaces the whole buffer from disk (a whole-container reload's markdown branch).
-   * @param {string} body
-   */
+  /** Replaces the whole buffer from disk. @param {string} body */
   replaceBody(body) {
     this.#body = body
     if (this.#textarea) this.#textarea.value = body
@@ -413,5 +354,4 @@ export class MarkdownSurface extends AbstractSurface {
   }
 }
 
-// Expose on window for classic-script access from editor.js.
 window.SieveMarkdownSurface = MarkdownSurface

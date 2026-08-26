@@ -1,6 +1,5 @@
 // @ts-check
-// ReferenceRenderer's stylesheet, a sibling module per the styles-file-geography
-// convention: a renderer file starts with its class, never a CSS wall.
+// ReferenceRenderer's stylesheet.
 //
 // THIS BLOCK IS A CHIP, NOT A CARD. Almost nothing is declared here: the chip's
 // appearance belongs to ReferenceChip and its shared `--chip-*` tokens, and this

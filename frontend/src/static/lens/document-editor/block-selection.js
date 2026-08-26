@@ -1,15 +1,13 @@
 // @ts-check
-// block-selection.js — BlockSelection: the pure decisions that reconcile a
-// NATIVE DOM Selection with a sieve block's ProseMirror NodeSelection.
+// BlockSelection: the pure decisions that reconcile a NATIVE DOM Selection with a
+// sieve block's ProseMirror NodeSelection.
 //
-// A sieve block is a NodeView atom: PM's position-based selection knows only
-// the whole block, while the browser's DOM Selection can land inside the
-// block's own read-only regions (a log Explore table, an ai-block question
-// title) that PM does not own. These three decisions — who claims a click, and
-// what a visible highlight actually covers — are pure functions of the DOM
-// selection + the block's DOM/PM coordinates, so they live here as a cohesive
-// named type, testable without an editor. (Moved off the loose top-level funcs
-// in sieve-block-extension.js — issue #49 P5, retires TECH-DEBT X-D.)
+// A sieve block is a NodeView atom: PM's position-based selection knows only the
+// whole block, while the browser's DOM Selection can land inside the block's own
+// read-only regions (a log Explore table, an ai-block question title) that PM does
+// not own. These three decisions — who claims a click, and what a visible highlight
+// actually covers — are pure functions of the DOM selection plus the block's DOM/PM
+// coordinates.
 
 // BLOCK_CLICK_SKIP lists what a click must NOT claim the block for: interactive
 // controls + the header/chrome own their own clicks.
@@ -55,19 +53,15 @@ export class BlockSelection {
   }
 
   /**
-   * The {from,to} PM range of the block a visible DOM highlight actually lives
-   * in, IF that block is NOT already covered by the PM selection `er` (else
-   * null). Pure.
+   * The {from,to} PM range of the block a visible DOM highlight actually lives in,
+   * IF that block is NOT already covered by the PM selection `er` (else null). Pure.
    *
-   * A block's READ-ONLY region (the ai-block question title, the log Explore
-   * table — contentEditable=false DOM PM does not own) can hold a highlight PM's
-   * position-based selection knows nothing about: PM's selection stays on
-   * whatever block last held the caret. Driving the copy off `er` alone would
-   * then serialize the WRONG (previously-selected) block. The copy handler calls
-   * this to re-target the range it visits onto the block the user actually
-   * highlighted. When `er` already covers the matched block, PM owns that text
-   * (the block's live PM content, e.g. an ai-block response) — return null and
-   * leave `er` alone.
+   * A block's READ-ONLY region (contentEditable=false DOM PM does not own) can hold
+   * a highlight PM knows nothing about: PM's selection stays on whatever block last
+   * held the caret, so driving the copy off `er` alone would serialize the WRONG
+   * block. The copy handler calls this to re-target the range it visits onto the
+   * block the user actually highlighted. When `er` already covers the matched block,
+   * PM owns that text — return null and leave `er` alone.
    * @param {Selection|null} domSelection
    * @param {{from: number, to: number}|null} er   the PM selection range
    * @param {{from: number, to: number, dom: any}[]} blocks   ordered top-level sieve-block descriptors

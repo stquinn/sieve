@@ -1,19 +1,8 @@
 // @ts-check
-// command-result-renderer.styles.js — CommandResultRenderer's stylesheet, a
-// sibling module per the styles-file-geography convention
-// (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md, "Styles
-// file geography"): the renderer file starts with its class — behaviour first —
-// and any sheet over ~30 lines lives in its own `<kind>-renderer.styles.js`
-// sibling (`export const <kind>Styles = /* css */ \`…\``), imported into the
-// class's `static styles`. Renderer-internal — nothing outside
-// command-result-renderer.js imports it.
-//
-// CSS text using ONLY --theme-* variables for colour (the host<->renderer
-// styling contract — no hardcoded hex/rgba, no fallbacks). The command-result
-// kind is the HONEST carrier for non-AI slash commands (/uuid, /hash, /base64,
-// /env, /jwt, /now, /stats): a header with the /cmd chip + a status badge, a
-// title, and a sanctioned-markdown body. It mounts inside the detached-answer
-// popup (command-popup.js), so its chrome is intentionally lighter than the
+// CommandResultRenderer's stylesheet: CSS text using ONLY --theme-* variables
+// for colour (no hardcoded hex/rgba, no fallbacks). A header with the /cmd chip
+// + a status badge, a title, and a sanctioned-markdown body. It mounts inside
+// the detached-answer popup, so its chrome is intentionally lighter than the
 // editor-embedded ai-block (no absolute-positioned border badge).
 
 export const commandResultStyles = /* css */ `

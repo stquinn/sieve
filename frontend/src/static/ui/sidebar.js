@@ -18,7 +18,6 @@
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', draggedId);
         
-        // Create a minimalist ghost element
         const ghost = document.createElement('div');
         ghost.textContent = file.dataset.ctxName || 'Moving note...';
         ghost.style.cssText = `

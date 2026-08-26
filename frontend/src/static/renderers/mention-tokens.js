@@ -1,32 +1,24 @@
 // @ts-check
-// mention-tokens.js — MentionTokens: THE rule for what counts as an `@Title`
-// mention token (#74), and the marking of those tokens inside prose that has
-// already been rendered.
-//
-// ONE RULE, TWO SIDES OF THE SAME OBJECT. The composer decides what a `@Title`
-// token IS when it reconciles chips against the message being written
-// (shell/composer-attachments.js); the ai-block decides what to MARK when it
-// draws the question that was sent. If those two disagreed, a chip and its
-// inline mention would be describing different text — so the rule lives in one
-// place and both call it.
+// MentionTokens — THE rule for what counts as an `@Title` mention token, and
+// the marking of those tokens inside prose that has already been rendered. The
+// composer (deciding what a token IS) and the ai-block (deciding what to MARK)
+// both call it, so a chip and its inline mention always describe the same text.
 //
 // THE DATA IS THE MATCHER, NEVER A REGEX. `@\w+` would mark an email address, a
 // code sample and a stray `@` in prose. A block carries the list of documents it
 // actually attached, so only THOSE titles are matched, and every occurrence of
 // one is a mention (duplicate titles are legal — two notes may both be "Notes").
 //
-// TITLES ARE USER-AUTHORED TEXT (SEC-B, issue #48). This module never
-// concatenates a title into an HTML string: it splits existing TEXT NODES and
-// puts the matched characters back through `textContent`, so an HTML-shaped
-// title can only ever render as inert text. There is no innerHTML here on
-// purpose — do not add one.
+// TITLES ARE USER-AUTHORED TEXT. This module never concatenates a title into an
+// HTML string: it splits existing TEXT NODES and puts the matched characters
+// back through `textContent`, so an HTML-shaped title can only ever render as
+// inert text. There is no innerHTML here on purpose — do not add one.
 
 export class MentionTokens {
   /**
-   * Tags whose text FLOWS with the text around it. Everything else is treated as
-   * a block: its text starts a new line, and a token opening it is therefore at
-   * a boundary. Stated as the inline set (small and closed) rather than the block
-   * set, because markdown renders into an open-ended list of block elements.
+   * Tags whose text FLOWS with the text around it. Everything else is treated
+   * as a block: its text starts a new line, so a token opening it is at a
+   * boundary.
    * @type {ReadonlySet<string>}
    */
   static #INLINE = Object.freeze(new Set([
@@ -44,9 +36,7 @@ export class MentionTokens {
   /**
    * Every place `@title` appears in `text` AS A TOKEN — at the start of the line
    * or after whitespace, so "mail me@Auth Design" is an address and not a
-   * mention. This is the same boundary predicate the `@` trigger provider
-   * accepts on (shell/trigger-providers.js), which is what makes a marked
-   * mention and an accepted one the same thing.
+   * mention. The same boundary predicate the `@` trigger provider accepts on.
    * @param {string} text
    * @param {string} [title]
    * @param {string} [before] the character preceding `text` ('' = start of line)

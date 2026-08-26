@@ -1,19 +1,10 @@
-// web-clip-node-view.js — Sieve NodeView ADAPTER for the 'web-clip' kind (the
-// PM half of the renderer/NodeView split; NORMATIVE contract:
-// docs/design/archive/specs/2026-07-21-block-renderer-contract.md
-// Phase 4 / issue #47). Look-and-feel (the block shell, status chrome, this
-// kind's stylesheet) lives in WebClipRenderer
-// (frontend/src/static/renderers/web-clip-renderer.js — a DIFFERENT
-// class). This file HOLDS a
-// WebClipRenderer instance by COMPOSITION and owns everything that genuinely
-// speaks ProseMirror or is cross-block: contentDOM binding/ignoreMutation,
-// the framework schema data (nodeConfig/attrs/parseAttrs/titleProvider/
-// contentProvider — the actual title/body rendering is the framework's
-// title/content slot seam, see WebClipRenderer's header comment for why that
-// stays out of the renderer), the read-only-container guard plugin, and
-// reverse chain-glow hover (cross-block DOM querying to light up referencing
-// ai-blocks) — framework-layer material, deliberately left untouched here
-// (same restraint ai-block's applyChain already established).
+// The NodeView adapter for the 'web-clip' kind. Look-and-feel — the block shell,
+// status chrome, this kind's stylesheet — belongs to WebClipRenderer, which this
+// file holds by composition. What lives here is everything that speaks
+// ProseMirror or is cross-block: the contentDOM binding and ignoreMutation, the
+// framework schema data (nodeConfig/attrs/parseAttrs/titleProvider/
+// contentProvider), the read-only-container guard plugin, and reverse chain-glow
+// hover, which queries across blocks to light up referencing ai-blocks.
 
 import { T } from '../tiptap-vendor.js'
 import { registerSieveRenderer, sieveBlockFor } from '../sieve-block-extension.js'
@@ -24,7 +15,7 @@ import { WebClipRenderer } from '../../../../renderers/web-clip-renderer.js'
 ;(function () {
   'use strict'
 
-  // Returns a human-readable summary of a web-clip node for AI context (Rule 14).
+  // A human-readable summary of a web-clip node, for AI context.
   function webClipSummary(n) {
     var parts = []
     if (n.attrs.title)   parts.push('**' + n.attrs.title + '**')
@@ -33,21 +24,18 @@ import { WebClipRenderer } from '../../../../renderers/web-clip-renderer.js'
     return parts.join('\n\n')
   }
 
-  // ── WebClipNodeView ────────────────────────────────────────────────────────
-  // The registered descriptor sieve-block-extension.js's duck-typed
-  // registerSieveRenderer() consumes. Named distinctly from the imported
-  // WebClipRenderer CLASS above — same word, two different layers — to keep
-  // the two unambiguous in this file.
+  // The descriptor sieve-block-extension.js's registerSieveRenderer() consumes.
+  // Named distinctly from the imported WebClipRenderer CLASS: this is the
+  // PM-adapter descriptor, that is the look-and-feel class it holds.
 
   var WebClipNodeView = {
 
     getIcon: function() { return window.SieveIcons && window.SieveIcons.externalLink },
     getFriendlyName: function(node) { return 'Web Clip' },
 
-    // TITLE (the page title) and BODY (the fetched/summarised article) are
-    // rendered by WebClipRenderer now (title region + bodyMarkdown → attrs.content).
-    // The seam reads bodyMarkdown to project live PM nodes into the body
-    // container (the handleBuild-claimed region). The source link stays header chrome.
+    // The title and the body (the fetched or summarised article) are rendered by
+    // WebClipRenderer; the seam reads its bodyMarkdown to project live PM nodes
+    // into the handleBuild-claimed body container. The source link is header chrome.
 
     getInitialContentHTML: function() { return '<p></p>' },
 
@@ -56,15 +44,11 @@ import { WebClipRenderer } from '../../../../renderers/web-clip-renderer.js'
       return [{ mimeType: 'text/uri-list', content: node.attrs.source }]
     },
 
-    // web-clip is the ONE kind that supplies its own extraction items, because it is
-    // the one kind that offers a CHOICE of how much of the page to bring in. That
-    // choice — the "(Fetch)" / "(Summarise)" suffix — is all this kind owns.
-    //
-    // The VERB is the framework's and is DERIVED, never restated: labelForAction
-    // (renderers/action-label.js) is the single verb map, and the friendly kind name is
-    // the same getFriendlyName the generic offer path reads. Restating them is how
-    // this kind drifted into a private "Upgrade to" while every other kind said
-    // "Convert to" — removed under #67, and derivation is what stops it recurring.
+    // web-clip is the ONE kind that supplies its own extraction items, because it
+    // is the one kind offering a CHOICE of how much of the page to bring in. That
+    // choice — the "(Fetch)" / "(Summarise)" suffix — is all this kind owns. The
+    // VERB is DERIVED from labelForAction, the single verb map, and never restated
+    // here, which is what keeps this kind's wording from drifting from every other.
     getExtractionMenuItems: function(sourceNode, entries, defaultAction, opts) {
       var IC = window.SieveIcons || {}
       var action = (opts && opts.operation) || 'extract'
@@ -117,13 +101,10 @@ import { WebClipRenderer } from '../../../../renderers/web-clip-renderer.js'
 
       var nodeTypeName = 'sieve-web-clip'
 
-      // The renderer instance this NodeView HOLDS by composition (never
-      // inheritance — see the file header). This lens CLAIMS the BODY region
-      // via the handleBuild interceptor: PM owns the claimed container as its
-      // contentDOM while the status chrome + title still render renderer-side;
-      // the seam authors body content via fresh scratch instances. Retry is the
-      // renderer's semantic verb, effected through the ContainerTransport (the
-      // web-clip body is server-written — no outbound content channel).
+      // This lens CLAIMS the BODY region through the handleBuild interceptor: PM
+      // owns the claimed container as its contentDOM, while the status chrome and
+      // title still render renderer-side. The web-clip body is server-written, so
+      // there is no outbound content channel.
       var bodyContainer = null
       var handleBuild = function (_r, region, container) {
         if (region !== REGION.BODY) return true
@@ -136,11 +117,9 @@ import { WebClipRenderer } from '../../../../renderers/web-clip-renderer.js'
       var dom = renderer.render()
       var contentDOM = bodyContainer   // the claimed body container PM binds as its contentDOM
 
-      // Reverse chain highlight: when hovering the web-clip, light up any AI blocks
-      // that reference it via data-ai-ref. Forward direction (AI → web-clip) is in
-      // ai-block-renderer.js. Cross-block DOM querying — framework-layer material,
-      // deliberately left adapter-side (same restraint ai-block's applyChain
-      // already established).
+      // Reverse chain highlight: hovering the web-clip lights up any AI blocks
+      // referencing it via data-ai-ref. The forward direction lives in
+      // ai-block-renderer.js.
       function applyReverseChain(action) {
         var id = dom.getAttribute('data-id') || ''
         if (!id) return
@@ -172,8 +151,6 @@ import { WebClipRenderer } from '../../../../renderers/web-clip-renderer.js'
         },
       }
     },
-
-    // ── Plugins ───────────────────────────────────────────────────────────────
 
     buildPlugins: function(nodeType) {
       var Plugin = T.Plugin
@@ -223,9 +200,8 @@ import { WebClipRenderer } from '../../../../renderers/web-clip-renderer.js'
       var modeLabel = node.attrs.mode === 'summarise' ? 'Summarised' : 'Fetched'
       var headerLabel = isComplete ? (modeLabel + ' from ' + domain) : domain
 
-      // Copy/Cut/Delete are intentionally NOT here. Highlighted text copies natively;
-      // whole-block copy + the universal Delete come from the framework. The old
-      // bespoke Copy wrote the entire block's YAML instead of the selection.
+      // Copy/Cut/Delete are deliberately absent: highlighted text copies natively,
+      // and whole-block copy plus the universal Delete come from the framework.
       return [{ type: 'header', label: headerLabel }]
     },
 

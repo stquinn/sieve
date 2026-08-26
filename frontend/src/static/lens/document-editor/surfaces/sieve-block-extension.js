@@ -1,61 +1,51 @@
-// sieve-block-extension.js — Sieve block node factory + the node-view registry.
+// Sieve block node factory + the node-view registry.
 //
-// A block KIND is contributed by registering an ADAPTER (historically "renderer")
-// with the registry: `registerSieveRenderer('code', CodeNodeView)` mints a TipTap
-// node named 'sieve-code' from the adapter's schema/attrs and wires its NodeView.
+// A block KIND is contributed by registering an ADAPTER with the registry:
+// `registerSieveRenderer('code', CodeNodeView)` mints a TipTap node named
+// 'sieve-code' from the adapter's schema/attrs and wires its NodeView.
 // getSieveNodes() then includes it automatically — no editor wiring per kind.
 //
-// The adapter contract is the typedef below (supersedes the old prose "Renderer
-// interface" comment): it documents every member the factory actually reads —
-// surveyed from the real call sites, nothing aspirational.
-//
 // @typedef {Object} SieveNodeView
-//   The object an adapter's makeNodeView returns — a TipTap NodeView, plus the
+//   The object an adapter's makeNodeView returns: a TipTap NodeView, plus the
 //   optional `renderer` handle migrated kinds expose.
 // @property {HTMLElement} dom                  block root element (required)
 // @property {HTMLElement} [contentDOM]         editable content host (live PM body)
 // @property {(node: any) => boolean} [update]  TipTap NodeView update hook
 // @property {(event: Event) => boolean} [stopEvent] TipTap NodeView stopEvent hook
 // @property {import('../../../renderers/block-renderer.js').BlockRenderer} [renderer]
-//   the BlockRenderer instance a MIGRATED kind exposes — enables the framework's
-//   PM body projection (bodyMarkdown) and TITLE fill (fillTitle).
+//   the BlockRenderer a MIGRATED kind exposes — enables the framework's PM body
+//   projection (bodyMarkdown) and TITLE fill (fillTitle).
 //
 // @typedef {Object} SieveBlockAdapter
-//   The kind contract registered via registerSieveRenderer. All members are
+//   The kind contract registered via registerSieveRenderer. Every member is
 //   optional except makeNodeView; the factory feature-detects each.
 // @property {(node: any, editor: any, getPos: (() => number), ctx: object) => SieveNodeView} makeNodeView
 //   Builds the NodeView (required).
 // @property {{atom?: boolean, selectable?: boolean, draggable?: boolean,
 //   content?: string, marks?: string, code?: boolean, defining?: boolean}} [nodeConfig]
-//   ProseMirror schema overrides (schema-level, fixed at editor-init time). There
-//   is no `group`/`inline` knob: EVERY registered kind is a top-level member of
-//   the document list (group 'sieveBlock', a <div>). Inline blocks were removed
-//   with smart-link — docs/design/archive/specs/2026-07-27-inline-block-removal-links-decision.md.
+//   ProseMirror schema overrides, fixed at editor-init time. There is no
+//   `group`/`inline` knob: EVERY registered kind is a top-level member of the
+//   document list (group 'sieveBlock', a <div>).
 // @property {Record<string, any>} [attrs]      kind-specific TipTap attr defs (merged with BASE_ATTRS).
 // @property {(data: object) => Record<string, any>} [parseAttrs]
-//   Parsed-YAML → the extra data-* attributes the kind needs on initial parse.
+//   Parsed-YAML to the extra data-* attributes the kind needs on initial parse.
 // @property {(type: any) => any[]} [buildPlugins]           per-kind ProseMirror plugins.
 // @property {(node: any) => ({mimeType: string, content: string, context?: object}[]|null)} [asContentEntry]
 //   the kind's own clipboard/text views (code → source, diagram → mermaid, …).
 // @property {(arg: {node: any, editorPane: any, getPos: Function, provider: any, getEditor: Function}) => any[]} [buildContextMenuItems]
 //   kind-specific context-menu items, prepended before the framework items.
 // @property {(node: any) => ({contextLabel?: string, imageIds?: string[]})} [buildAiCtx]
-//   customises the "Ask About [X]" label / included image ids.
+//   customises the "Ask About [X]" label and included image ids.
 // @property {Partial<import('../interaction-policy.js').InteractionPolicy>} [interactionPolicy]
-//   declared interaction policy — the behaviours this kind opts into, by name.
-//   Typed against the real DEFAULT_POLICY shape (it read `{expandable?: boolean}`
-//   until 2026-07-29, so every other flag a kind declared went unchecked and a
-//   typo'd name silently fell back to the default).
+//   the behaviours this kind opts into, by name.
 // @property {(node: any, dom: HTMLElement) => any} [getExpandContent]  lightbox/expand spec, or null.
 // @property {(node?: any) => string} [getFriendlyName]      display name for menus/labels.
 // @property {(data: object) => string} [getInitialContentHTML]  initial inner HTML for a non-atom kind.
 // @property {(sourceNode: any, entries: any[], dispatch: Function, opts: {operation: string}) => any[]} [getExtractionMenuItems]
-//   kind-authored extraction menu items (else the framework builds a default).
-//   A kind implements this to offer a CHOICE the framework cannot know about
+//   kind-authored extraction menu items, else the framework builds a default. A
+//   kind implements this to offer a CHOICE the framework cannot know about
 //   (web-clip's Fetch/Summarise) — never to reword the action. The VERB must be
-//   DERIVED from labelForAction (renderers/action-label.js), which is the one verb map
-//   and the one regression gate; restating it is how web-clip drifted into a
-//   private "Upgrade to" (#67).
+//   DERIVED from labelForAction (renderers/action-label.js), the one verb map.
 // @property {(state: any, node: any) => void} [markdownSerialize]  markdown-storage serialize override.
 // @property {{render: (attrs: object, ctx: object) => HTMLElement}} [headerProvider]  LEGACY header seam.
 // @property {string|((attrs: object) => any)} [titleProvider]                        LEGACY title seam.
@@ -64,10 +54,9 @@
 // @property {string} [markdownAttr]                                                  LEGACY content seam (alias).
 //
 // Adding a new block kind:
-//   1. Create lens/document-editor/surfaces/node-views/<kind>-node-view.js implementing the adapter above.
-//   2. Add <script type="module" src="/ui/static/lens/document-editor/surfaces/node-views/<kind>-node-view.js">
-//      to index.html AFTER lens/document-editor/surfaces/sieve-block-extension.js (the node-view
-//      registers at its own top level; the registry must exist first).
+//   1. Create node-views/<kind>-node-view.js implementing the adapter above.
+//   2. Add its <script type="module"> to index.html AFTER this module — the
+//      node-view registers at its own top level, so the registry must exist first.
 
 import { esc } from '../../../renderers/html-escape.js'
 import { isJobStale } from '../../../renderers/job-status.js'
@@ -81,14 +70,12 @@ import { HeaderBar } from '../../../renderers/header-bar.js'
 import { SieveBlock } from '../../../contract/sieve-block.js'
 import { BlockSelection } from '../block-selection.js'
 
-// sieveBlockFor — the SEAM's block constructor for adapters (block-first
-// flow, contract §typed block). MODEL-FIRST (issue #96): the node's id
-// resolves the mounted container's follower model — what Go holds — and on a hit
-// that block's attrs are the base, with the kind-owned live overlay applied on
-// top (overlay wins). On a MISS — no provider, no id, or an id the container does
-// not hold (a node the user just typed, a scratch instance) — it falls back to
-// SieveBlock.from(node), the PM-RESURRECT path. Overlay precedence is uniform
-// across both paths: overlay > model.
+// The SEAM's block constructor for adapters. MODEL-FIRST: the node's id resolves
+// the mounted container's follower model — what Go holds — and on a hit that
+// block's attrs are the base, with the kind-owned live overlay applied on top. On
+// a MISS (no provider, no id, or an id the container does not hold) it falls back
+// to SieveBlock.from(node), the PM-RESURRECT path. Overlay precedence is uniform
+// across both: overlay > model.
 /**
  * @param {{ type: { name: string }, attrs: Record<string, any> }} node
  * @param {Record<string, any>} [overlay]  kind-owned live fields (e.g. {source: textContent})
@@ -103,18 +90,11 @@ export function sieveBlockFor(node, overlay, provider) {
   return SieveBlock.from(node, overlay)
 }
 
-// ── TITLE slot fill decision ─────────────────────────────────────────────────
-// syncBlockTitle — the TITLE slot's fill decision (pure DOM, no PM). Body/title
-// pull-back (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
-// "Body/title pull-back", DEFECT SEC-B / issue #48): TITLE rendering is
-// renderer-side in every lens, PM included — this seam DELEGATES to the held
-// renderer's fillTitle (a BlockRenderer instance the NodeView adapter exposes
-// as `view.renderer`, e.g. lens/surfaces/node-views/ai-block-node-view.js,
-// lens/surfaces/node-views/web-clip-node-view.js) instead of writing innerHTML
-// itself. Kinds with no split renderer (prose — native, no NodeView) have no
-// `view.renderer` — the fallback uses the SANCTIONED instance
-// (renderSanctionedMarkdown, html:false) directly, never the editor's html:true
-// one, so every path here is SEC-B-safe regardless of migration state.
+// The TITLE slot's fill decision (pure DOM, no PM). TITLE rendering is
+// renderer-side in every lens, so this DELEGATES to the held renderer's fillTitle.
+// Kinds with no split renderer fall back to the SANCTIONED markdown instance
+// (html:false) rather than the editor's html:true one, so every path is
+// injection-safe.
 export function syncBlockTitle(titleEl, renderer, text) {
   var h = (text || '').trim()
   if (!h) {
@@ -131,11 +111,11 @@ export function syncBlockTitle(titleEl, renderer, text) {
   titleEl.style.display = ''
 }
 
-// serializeNode turns a single block node into markdown via the editor's OWN
-// markdown serialiser. The serialiser sizes code fences longer than any backtick
-// run in the content, so this is the only safe way to render a node to a fence —
-// never hand-build ```. The node is wrapped in a fresh doc so the serialiser has a
-// valid root. Returns '' on failure (e.g. a node the serialiser can't handle).
+// Turns a single block node into markdown via the editor's OWN markdown
+// serialiser, which sizes code fences longer than any backtick run in the
+// content — so this is the only safe way to render a node to a fence, and never
+// hand-build ```. The node is wrapped in a fresh doc so the serialiser has a valid
+// root. Returns '' on failure.
 export function serializeNode(editor, node) {
   try {
     var wrapper = editor.state.schema.topNodeType.create(null, node)
@@ -146,10 +126,8 @@ export function serializeNode(editor, node) {
   }
 }
 
-// sieveBlockAttrs returns a plain own-property copy of a sieve node's attrs — the
-// canonical serialisable representation of a block. Single source of truth so every
-// wire path (extraction entries, single-block clipboard, sieve/slice) serialises a
-// block identically, and none reaches for the retired serialisedForm.
+// A plain own-property copy of a sieve node's attrs — the canonical serialisable
+// representation of a block, so every wire path serialises one identically.
 export function sieveBlockAttrs(node) {
   var attrs = {}
   for (var k in node.attrs) {
@@ -158,17 +136,15 @@ export function sieveBlockAttrs(node) {
   return attrs
 }
 
-// sieveFrameworkEntry is the universal "sieve/<kind>" view every block exposes:
-// its attrs as a JSON map. The backend (block.SieveAttrs) keys off the kind and
-// reads the attrs — rebuilding a block or reading fields, its choice.
+// The universal "sieve/<kind>" view every block exposes: its attrs as a JSON map.
+// The backend keys off the kind and reads the attrs.
 function sieveFrameworkEntry(node) {
   return { mimeType: 'sieve/' + node.attrs.kind, content: JSON.stringify(sieveBlockAttrs(node)) }
 }
 
-// sieveBlockEntries is the ContentEntry array describing a sieve block: the
-// renderer's own custom views (asContentEntry, e.g. a diagram's raw source) PLUS
-// the framework's sieve/<kind> view. Both the context-menu extraction push and the
-// clipboard copy path use this, so the backend always receives the same two views.
+// The ContentEntry array describing a sieve block: the renderer's own custom views
+// PLUS the framework's sieve/<kind> view. Both the context-menu extraction push and
+// the clipboard copy path use this, so the backend always receives the same two.
 export function sieveBlockEntries(node, renderer) {
   var entries = []
   if (renderer && typeof renderer.asContentEntry === 'function') {
@@ -179,9 +155,8 @@ export function sieveBlockEntries(node, renderer) {
   return entries
 }
 
-// resolveEntriesForKind looks up the behaviour for ANY block via the uniform
-// block-kind registry — prose (native) resolves identically to structured kinds,
-// no special-case fork.
+// Looks up the behaviour for ANY block via the uniform block-kind registry — prose
+// resolves identically to structured kinds, with no special case.
 export function resolveEntriesForKind(kind, sourceNode, entries) {
   var h = getBlockBehaviour && getBlockBehaviour(kind)
   if (h && typeof h.resolveEntries === 'function') {
@@ -189,8 +164,6 @@ export function resolveEntriesForKind(kind, sourceNode, entries) {
   }
   return entries
 }
-
-// ── Base attributes shared by every sieve block kind ─────────────────────────
 
 var BASE_ATTRS = {
   kind:             { default: '',        parseHTML: function (el) { return el.getAttribute('data-kind')        || '' } },
@@ -201,20 +174,13 @@ var BASE_ATTRS = {
   smartPaste: { default: false, parseHTML: function (el) { return el.getAttribute('data-smart-paste') === 'true' } },
 }
 
-// draggable:false — reordering is done via the custom gutter handle (block-chrome.js),
-// not ProseMirror's native node drag.  Native node-drag on a draggable block stole
-// textarea/text-selection gestures (a drag inside a code textarea moved the whole block).
+// draggable:false — reordering uses the custom gutter handle, not ProseMirror's
+// native node drag, which stole textarea/text-selection gestures (a drag inside a
+// code textarea moved the whole block).
 var DEFAULT_NODE_CONFIG = { atom: true, selectable: true, draggable: false }
 
-// ── NodeViewRegistry ─────────────────────────────────────────────────────────
-// The typed registry that OWNS kind→adapter registration and lookup, plus the
-// node factory that mints each kind's TipTap node. Replaces the former
-// `export let` + registration-IIFE rebinding: registry state is #private, the
-// registration entry point is a real method, and thin named-export delegators
-// below keep every existing import site unchanged. When the TipTap runtime is
-// absent (unit tests importing the pure helpers), #runtime is null and register()
-// is an inert no-op — the exact "nothing registers without a runtime" property
-// the IIFE's early return used to provide.
+// The typed registry that OWNS kind-to-adapter registration and lookup, plus the
+// node factory. Without a TipTap runtime, register() is an inert no-op.
 class NodeViewRegistry {
   /** @type {Record<string, any>} kind → minted TipTap node */
   #nodes = {}
@@ -232,8 +198,7 @@ class NodeViewRegistry {
   /**
    * Register a kind's adapter: mint its TipTap node, remember the adapter, and
    * record it in the shared block-kind registry (native:false — a sieve-<kind>
-   * NodeView renders its payload; prose registers native:true in prose-block.js).
-   * No-op without a runtime (unit-test import of the pure helpers).
+   * NodeView renders its payload). No-op without a runtime.
    * @param {string} kind @param {SieveBlockAdapter} adapter
    */
   register(kind, adapter) {
@@ -249,10 +214,9 @@ class NodeViewRegistry {
   adapterFor(kind) { return this.#adapters[kind] }
 
   /**
-   * The minted nodes, sieve-prose FIRST. PM's createAndFill auto-fill grabs the
-   * FIRST instantiable node type in the required group (schema-declaration
-   * order); listing prose first makes every auto-fill (empty doc, trailing/gap
-   * fill) a prose block, not a stray ai-block atom.
+   * The minted nodes, sieve-prose FIRST. PM's createAndFill grabs the FIRST
+   * instantiable node type in the required group, so listing prose first makes
+   * every auto-fill a prose block rather than a stray ai-block atom.
    * @returns {any[]}
    */
   nodes() {
@@ -263,10 +227,8 @@ class NodeViewRegistry {
     return keys.map(function (k) { return reg[k] })
   }
 
-  // Canonical friendly name for a sieve block node — the ONE source the live
-  // label, the context menu, and the commit path share. Reuses each adapter's
-  // optional buildAiCtx(node).contextLabel (e.g. a code block surfacing its
-  // language), falling back to a title-cased kind.
+  // Canonical friendly name for a sieve block node — the ONE source the live label,
+  // the context menu and the commit path share.
   /** @param {any} node @returns {string} */
   blockLabel(node) {
     var kind = node && node.attrs ? node.attrs.kind : ''
@@ -276,11 +238,9 @@ class NodeViewRegistry {
     return (base && base.contextLabel) || fallback
   }
 
-  // buildBlockHTML assembles a structured block's data-* div from its PROPERTIES
-  // map (data) — the single builder shared by the markdownit fence rule
-  // (load-from-markdown) and block-render.js (load-from-attrs), so both emit
-  // byte-identical HTML that each adapter's parseHTML consumes. The block model
-  // is properties-in: block-render passes Go-sent attrs straight in, no fence parse.
+  // Assembles a structured block's data-* div from its PROPERTIES map — the single
+  // builder shared by the markdownit fence rule and block-render.js, so both emit
+  // byte-identical HTML that each adapter's parseHTML consumes.
   /** @param {string} kind @param {object} data @returns {string} */
   buildBlockHTML(kind, data) {
     var renderer = this.#adapters[kind]
@@ -319,20 +279,16 @@ class NodeViewRegistry {
     return '<div ' + htmlAttrs.join(' ') + '>' + innerHTML + '</div>\n'
   }
 
-  // The backend returns [{kind, actions}]. The frontend is a dumb renderer: it
-  // shows each offered (kind, action) and plays back {operation}.
+  // The backend returns [{kind, actions}]. The frontend is a dumb renderer: it shows
+  // each offered (kind, action) and plays back {operation}.
   //
-  // sourceRange ({from,to}, optional) says the source is a RANGE INSIDE a block
-  // rather than the block itself — a prose link, which has no block id of its
-  // own (#67). It is carried, untouched, to editor.extract, which owns the
-  // playback difference; nothing here branches on it.
+  // sourceRange says the source is a RANGE INSIDE a block rather than the block
+  // itself — a prose link, which has no block id. It is carried untouched to
+  // editor.extract, which owns the playback difference.
   detectAndAppendExtractions({ sourceNode, sourceKind, entries, blockId, sourcePos, sourceRange, extractSourceLabel, editor }) {
     // Capability discovery is a facade QUERY: the lens asks its container which
     // kinds this content could become, and is answered with offers — never with
-    // document content, and never over a transport it can see. Reached via the
-    // editor host's provider (the same host whose .extract plays the chosen offer
-    // back). No host/provider → nothing to discover (the menu items would be dead
-    // anyway, since dispatch needs the editor).
+    // document content, and never over a transport it can see.
     var self = this
     var provider = editor && editor.provider
     if (!provider || typeof provider.detectExtractions !== 'function') return
@@ -353,7 +309,6 @@ class NodeViewRegistry {
             ? r.getFriendlyName()
             : offer.kind.split('-').map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1) }).join(' '))
 
-        // Menu offers the source-mutating ops (extract/transform/undo-smart-paste); paste is never shown here.
         ;(offer.actions || []).forEach(function (action) {
           if (action !== 'extract' && action !== 'transform' && action !== 'undo-smart-paste') return
 
@@ -375,10 +330,9 @@ class NodeViewRegistry {
             var items = r.getExtractionMenuItems(sourceNode, entries, dispatch, { operation: action })
             if (items && items.length) { items.forEach(function (it) { extraItems.push(it) }); return }
           }
-          // Prose's TRANSFORM is the universal "flatten this block into the document"
-          // affordance — it is NOT "convert to a block kind" (an image embeds as a plain
-          // image, code as a fence, etc.), so "Convert to Text" misnames it. Label it
-          // "Embed in Document" (the wording the retired bespoke item used).
+          // Prose's TRANSFORM is the universal "flatten this block into the
+          // document" affordance, NOT "convert to a block kind", so "Convert to
+          // Text" misnames it.
           var isEmbed = offer.kind === 'prose' && action === 'transform'
           extraItems.push({
             icon: isEmbed ? (IC.promote || icon) : icon,
@@ -388,40 +342,33 @@ class NodeViewRegistry {
         })
       })
       window.SieveContextMenu.appendItems(extraItems)
-      // Discovery is an OFFER: a document with no channel answers none, so the
-      // only way here is a wire timeout or a broken menu build. Neither should
-      // take the menu down — the base items are already open — but neither is
-      // "nothing to extract" either, so it is said out loud rather than eaten.
+      // Discovery is an OFFER: a document with no channel answers none, so the only
+      // way here is a wire timeout or a broken menu build. Neither should take the
+      // menu down, but neither is "nothing to extract" either.
     }).catch(function (err) { console.warn('[sieve-block] extraction offers unavailable', err) })
   }
 
-  // extractContentEntryFromEditor inspects whatever DOM element was clicked
-  // (event.target) and, if it sits on something extractable, returns the
-  // ContentEntry array detection needs — the INPUT STAGE of the registry's
-  // context-menu extraction pipeline (detectAndAppendExtractions). Static: it
-  // needs no registry state, only the event + editor. Shared by two callers: the
-  // Sieve-block NodeView (real DOM event) and the editor context menu (a
-  // synthetic { target: elementFromPoint(x,y) } — see context-menu.js). It reads
-  // ONLY event.target; nothing else off the event.
+  // Inspects whatever DOM element was clicked and, if it sits on something
+  // extractable, returns the ContentEntry array detection needs. Static: it needs no
+  // registry state. Shared by the NodeView (a real DOM event) and the editor context
+  // menu (a synthetic target), and it reads ONLY event.target.
   static extractContentEntryFromEditor(event, editor) {
     var entries = null;
     var extractSourceLabel = "";
     var view = editor.view;
 
-    //an image would be interesting to extract, and we can get a data-uri for it if needed.
     var closestImg = event.target.tagName === 'IMG' ? event.target : (event.target.closest ? event.target.closest('img') : null);
     if (closestImg && closestImg.src && view.dom.contains(closestImg)) {
-      // A native <img> is a NATIVE source → use a NATIVE mime so recognition offers
-      // TRANSFORM (Convert), not EXTRACT. (The old 'sieve/image' mime made it look like
-      // a Sieve-block source.) A data: URI needs an image/* mime; a served asset URL is
-      // matched by smart-image's isImageURL on the content, so any non-sieve mime works.
+      // A native <img> is a NATIVE source, so use a NATIVE mime and recognition
+      // offers TRANSFORM rather than EXTRACT. A data: URI needs an image/* mime;
+      // a served asset URL is matched by smart-image's isImageURL on the content,
+      // so any non-sieve mime works.
       var imgSrc = closestImg.src
       var imgMime = imgSrc.indexOf('data:') === 0 ? (imgSrc.slice(5).split(/[;,]/)[0] || 'image/png') : 'text/uri-list'
       entries = [{ mimeType: imgMime, content: imgSrc }];
       extractSourceLabel = 'image';
     }
 
-    // Anchor click
     var closestA = event.target.tagName === 'A' ? event.target : (event.target.closest ? event.target.closest('a') : null);
     if (!entries && closestA && closestA.href && view.dom.contains(closestA)) {
       entries = [{ mimeType: 'text/uri-list', content: closestA.href }];
@@ -432,10 +379,9 @@ class NodeViewRegistry {
       var closestPre = event.target.closest && event.target.closest('pre');
       if (closestPre && view.dom.contains(closestPre)) {
         // Resolve the clicked <pre> back to its ProseMirror codeBlock node so the
-        // markdown serialiser can fence it correctly (nested ``` runs and all). A
-        // Sieve block's rendered <pre> is NodeView DOM, not a real codeBlock node — it
-        // resolves to no codeBlock here and is left to asContentEntry / the sieve/<kind>
-        // entry instead, which is the correct path for those.
+        // markdown serialiser can fence it correctly. A Sieve block's rendered
+        // <pre> is NodeView DOM, not a real codeBlock node, so it resolves to none
+        // here and is left to asContentEntry instead.
         var codeNode = null;
         try {
           var $pos = view.state.doc.resolve(view.posAtDOM(closestPre, 0));
@@ -456,10 +402,9 @@ class NodeViewRegistry {
     return { entries, extractSourceLabel };
   }
 
-  // ── Node factory ─────────────────────────────────────────────────────────────
-  // Mints the TipTap node for a kind from its adapter (`renderer`). Called only
-  // from register(), so the runtime is guaranteed present. `self` closes the
-  // registry over the deep TipTap callbacks (where `this` rebinds to the node).
+  // Mints the TipTap node for a kind from its adapter. Called only from register(),
+  // so the runtime is guaranteed present. `self` closes the registry over the deep
+  // TipTap callbacks, where `this` rebinds to the node.
   /** @param {string} kind @param {SieveBlockAdapter} renderer */
   #createSieveNode(kind, renderer) {
     var self = this
@@ -472,12 +417,9 @@ class NodeViewRegistry {
 
     return Node.create({
       name:       nodeName,
-      // Step 5: sieve blocks form the "sieveBlock" group — the ONLY thing the doc
-      // top level allows besides native prose. That keeps the top level all-blocks
-      // (no bare paragraphs) and, because prose content is the "block" group,
-      // excludes sieve blocks from inside prose (kind-homogeneity). EVERY kind is
-      // a document-list member: there is no inline mode (removed with smart-link,
-      // docs/design/archive/specs/2026-07-27-inline-block-removal-links-decision.md).
+      // Sieve blocks form the "sieveBlock" group — the ONLY thing the doc top level
+      // allows besides native prose. That keeps the top level all-blocks and, because
+      // prose content is the "block" group, excludes sieve blocks from inside prose.
       group:      'sieveBlock',
       atom:       cfg.atom,
       selectable: cfg.selectable,
@@ -504,9 +446,9 @@ class NodeViewRegistry {
       },
 
       renderText({ node }) {
-        // Plain-text view of the block for native copy / textBetween: the renderer's
-        // own text/plain view (code → source, diagram → mermaid) if it tailors one,
-        // else the node's text. Not markdown — Go owns that.
+        // Plain-text view for native copy / textBetween: the renderer's own
+        // text/plain view if it tailors one, else the node's text. Not markdown —
+        // Go owns that.
         if (renderer && typeof renderer.asContentEntry === 'function') {
           var ents = renderer.asContentEntry(node)
           if (ents) {
@@ -520,16 +462,12 @@ class NodeViewRegistry {
 
       addNodeView() {
         return function ({ node, editor: editorPane, getPos }) {
-          // ctx — the per-block handle, shared by the header seam AND makeNodeView
-          // (passed as the 4th arg; other renderers ignore it). Provider instances
-          // are stateless/shared, so per-block state lives here. Durable changes →
-          // ctx.updateAttributes (routes through the ContainerTransport, the wire owner —
-          // no global CustomEvent); transient view state → ctx.state. attrs
-          // is a LIVE read. refreshHeader re-renders the toolbar — for a renderer that
-          // must rebuild it after async data lands (e.g. log's column toggles once the
-          // parsed JSON loads). getEditor reaches the parent Editor's PUBLIC API through
-          // the pane the surface stamped (editorPane.sieveHost) — the ONLY way a
-          // NodeView touches the Editor; it never speaks to the backend directly.
+          // ctx — the per-block handle, shared by the header seam AND makeNodeView.
+          // Provider instances are stateless and shared, so per-block state lives
+          // here: durable changes through ctx.updateAttributes, transient view state
+          // through ctx.state, `attrs` a LIVE read. getEditor reaches the parent
+          // Editor's PUBLIC API through the pane the surface stamped — the ONLY way
+          // a NodeView touches the Editor, and never the backend.
           var renderHeaderBar   // assigned by the header seam below
           var blockCtx = {
             id: node.attrs.id,
@@ -547,16 +485,13 @@ class NodeViewRegistry {
             },
             getAttribute: function (name) { return blockCtx.attrs[name] },
             getEditor: function () { return editorPane.sieveHost || null },
-            // The mounted container's provider (issue #96 — the Lens↔Host wall),
-            // stamped on the pane by the surface as sieveHost is. Renderers
-            // receive it at construction and speak facade verbs through it; no
-            // transport is reachable from here.
+            // The mounted container's provider, stamped on the pane by the
+            // surface as sieveHost is. Renderers receive it at construction and
+            // speak facade verbs through it; no transport is reachable from here.
             get provider() { return editorPane.blockProvider || null },
-            // What the editor knows about whether the coordinates a block
-            // renders still resolve (#82). Reached through the HOST rather than
-            // a pane stamp, and read lazily like getEditor, because the surface
-            // stamps sieveHost only after the pane is built — a NodeView made
-            // during that build would capture nothing.
+            // Reached through the HOST and read lazily like getEditor, because the
+            // surface stamps sieveHost only after the pane is built — a NodeView
+            // made during that build would capture nothing.
             get addressStatus() {
               var host = editorPane.sieveHost
               return (host && host.addressStatus) || null
@@ -566,9 +501,8 @@ class NodeViewRegistry {
               if (p) p.requestSetBlock(node.attrs.id, patch)
             },
             retry: function () {
-              // Go's retry handler writes PENDING and echoes immediately — the
-              // echo is the paint (the old editor-side optimistic PM reset died
-              // with the editor verb, deliberately).
+              // Go's retry handler writes PENDING and echoes immediately, and
+              // the echo is the paint.
               var p = blockCtx.provider
               if (p) p.requestRetry(node.attrs.id)
             },
@@ -576,25 +510,21 @@ class NodeViewRegistry {
           }
           var view = renderer.makeNodeView(node, editorPane, getPos, blockCtx)
           if (view.dom) {
-            // Inject the chrome host slot as the FIRST child.
-            // BlockChrome will find it via .block-chrome-host and populate it
-            // with the line number, drag handle, and rail.  Must be
-            // contenteditable="false" so PM never tries to edit it.
+            // The chrome host slot goes in FIRST; BlockChrome finds it via
+            // .block-chrome-host. Must be contenteditable="false" so PM never
+            // tries to edit it.
             var chromeHost = document.createElement('div')
             chromeHost.className = 'block-chrome-host'
             chromeHost.setAttribute('contenteditable', 'false')
             view.dom.insertBefore(chromeHost, view.dom.firstChild)
 
-            // data-kind: migrated renderers stamp their own identity data-* from
-            // the block (contract: adapters never write renderer DOM); this
-            // fallback covers any kind whose DOM the framework still assembles
-            // via the LEGACY provider seam below.
+            // Migrated renderers stamp their own identity data-* from the block;
+            // this fallback covers any kind whose DOM the framework assembles.
             if (!view.dom.hasAttribute('data-kind')) view.dom.setAttribute('data-kind', kind)
 
-            // Explicitly non-editable: prevents the block root from inheriting
-            // contentEditable="true" from the ProseMirror root, which would let
-            // the browser treat it as an editable area and break PM atom snapping.
-            // Only apply this to blocks without a contentDOM (i.e., pure atoms).
+            // Explicitly non-editable: this stops the block root inheriting
+            // contentEditable="true" from the ProseMirror root, which would break
+            // PM atom snapping. Only for blocks with no contentDOM.
             if (!view.contentDOM) {
               view.dom.contentEditable = 'false'
             }
@@ -606,15 +536,9 @@ class NodeViewRegistry {
               var n = currentNode || node
               var IC = window.SieveIcons || {}
 
-              // The provider is passed so a menu item can COMMIT a change (e.g.
-              // toggling a persisted rendering attribute) through the wall,
-              // instead of reaching for a window.* global the way view-layer code
-              // without ctx has had to (X-B debt).
-              // getEditor is passed for the same reason: items that need the
-              // document uuid (smart-image's Copy Image, to resolve an asset URL)
-              // were already CALLING ctx.getEditor() and throwing "ctx.getEditor
-              // is not a function" on their first line, because this ctx is
-              // assembled here and never carried it.
+              // The provider is passed so a menu item can COMMIT a change through
+              // the wall instead of reaching for a window.* global, and getEditor
+              // for the items that need the document uuid.
               var items = renderer.buildContextMenuItems
                 ? renderer.buildContextMenuItems({
                     node: n, editorPane: editorPane, getPos: getPos,
@@ -638,11 +562,9 @@ class NodeViewRegistry {
                 }
               }
 
-              // Ask AI + Explain — universal for every sieve block. The intent enters
-              // the SELECTION stream: setNodeSelection(getPos()) makes THIS block the
-              // resolved AI target (context.target), so the Ask/Explain handlers pull it
-              // live — no precomputed side-channel (P3.D). Go's BuildContext +
-              // expandAIBlockRefs assemble context server-side from the block id.
+              // Ask AI + Explain — universal for every sieve block. The intent
+              // enters the SELECTION stream: setNodeSelection(getPos()) makes THIS
+              // block the resolved AI target, so the handlers pull it live.
               items = items.concat([
                 { type: 'divider' },
                 { icon: IC.sparkle, label: 'Ask AI…', action: function () {
@@ -657,7 +579,6 @@ class NodeViewRegistry {
                 }},
               ])
 
-              // Delete — universal for every sieve block.
               items = items.concat([
                 { type: 'divider' },
                 { icon: IC.trash, label: 'Delete', action: function () {
@@ -686,26 +607,19 @@ class NodeViewRegistry {
                 detail: { x: e.clientX, y: e.clientY, context: { type: 'sieveBlock', items: items } },
               }))
 
-              //now lets see if we clicked on something interesting within the block that we can extract data from.
               var { entries, extractSourceLabel } = NodeViewRegistry.extractContentEntryFromEditor( e, editorPane);
 
               if(entries == undefined || !entries) {
-                //nothign more intersting than the sieve block itself was clicked on,
-                // but if the renderer supports it, we can extract a content entry from
                 extractSourceLabel = renderer.getFriendlyName ? renderer.getFriendlyName(n) : n.attrs.kind || 'block';
-                // The block's own views (asContentEntry) PLUS the framework's
-                // universal sieve/<kind> JSON view — the same array the clipboard emits.
+                // The block's own views PLUS the framework's universal
+                // sieve/<kind> JSON view — the same array the clipboard emits.
                 entries = sieveBlockEntries(n, renderer);
               } else {
-                // Specific sub-content was clicked. Stamp parentId ONLY when n is a true
-                // CONTAINER — a block that holds child blocks (schema content 'block+':
-                // ai-block, web-clip). Then the clicked thing is a genuine nested child, and
-                // an in-place TRANSFORM would ReplaceBlock(n.id) and clobber the parent's
-                // other content (e.g. an AI block's response) — defect #1, data loss; the
-                // backend demotes TRANSFORM→EXTRACT so the copy lands after the surviving
-                // parent. For a LEAF block (code/diagram 'text*', smart-image atom) the
-                // clicked content IS the block itself — no parentId, so its own in-place
-                // TRANSFORM ("Embed in Document") survives.
+                // Specific sub-content was clicked. Stamp parentId ONLY when n is a
+                // true CONTAINER — a block holding child blocks. Then the clicked
+                // thing is a genuine nested child, and an in-place TRANSFORM would
+                // clobber the parent's other content, so the backend demotes it to
+                // EXTRACT. For a LEAF block the clicked content IS the block.
                 if (n.attrs && n.attrs.id && containsChildBlocks(n)) {
                   entries.forEach(function (en) {
                     en.context = Object.assign({}, en.context, { parentId: n.attrs.id });
@@ -714,10 +628,8 @@ class NodeViewRegistry {
                 // Still hand the backend the framework view so it can key off the source kind/attrs.
                 entries.push(sieveFrameworkEntry(n));
               }
-              // A renderer may have no content entry (e.g. a prose block) → ensure
-              // an array so we never crash on null.
+              // A renderer may have no content entry, so ensure an array.
               if (!entries) entries = [];
-
 
               if (entries) {
                 self.detectAndAppendExtractions({
@@ -731,14 +643,10 @@ class NodeViewRegistry {
               }
             })
 
-            // ── Click-to-own-selection ────────────────────────────────────────────
-            // A click anywhere in the block makes it the caret/selection owner: a
-            // NodeSelection at the block's position + editor focus, so keyboard
-            // chords (Mod+Enter mode toggle, arrows, escape) route through the
-            // policy extension uniformly — no per-renderer click/keydown handling.
-            // BlockSelection.shouldClaim filters out controls/chrome, editable text
-            // (PM's own caret), and a text drag-select (copy). mouseup (not
-            // mousedown) so a drag that selects text is left intact.
+            // A click anywhere in the block makes it the caret/selection owner, so
+            // keyboard chords route through the policy extension uniformly and no
+            // renderer handles click/keydown itself. mouseup, not mousedown, so a
+            // drag that selects text is left intact.
             view.dom.addEventListener('mouseup', function (event) {
               if (typeof getPos !== 'function') return
               var domSel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null
@@ -753,13 +661,10 @@ class NodeViewRegistry {
             })
           }
 
-          // ── Central stopEvent: shield interactive sub-elements from ProseMirror ──
-          // Now that every sieve block is selectable+draggable (uniform schema),
-          // we must stop clicks/typing inside a block's own form controls from
-          // reaching ProseMirror — otherwise a click in a code textarea would
-          // create/clear a NodeSelection and fight the editor caret.  Renderers
-          // may also define their own stopEvent (e.g. key handling); we compose
-          // with it rather than replacing it.
+          // Every sieve block is selectable and draggable, so clicks and typing
+          // inside its own form controls must not reach ProseMirror — a click in a
+          // code textarea would otherwise fight the editor caret. A renderer may
+          // define its own stopEvent, which this composes with.
           var rendererStopEvent = view.stopEvent
           view.stopEvent = function (event) {
             var t = event.target
@@ -780,31 +685,21 @@ class NodeViewRegistry {
                 t.closest('textarea, input, button, select, option, a[href], .CodeMirror, .cm-editor')) {
               return true
             }
-            // 4. Otherwise defer to the renderer's own stopEvent (if any), else let PM handle it.
+            // Otherwise defer to the renderer's own stopEvent, else let PM handle it.
             if (typeof rendererStopEvent === 'function') return rendererStopEvent.call(view, event)
             return false
           }
 
-          // ── Block anatomy: Header · Title · Body ─────────────────────────────
-          // MIGRATED kinds (their adapter exposes a BlockRenderer instance as
-          // view.renderer) BUILD THEMSELVES — the renderer owns the header, title
-          // and body chrome via its own render()/update(); the framework does NOT
-          // assemble anything around it. The one remaining framework job for them
-          // is the PM BODY PROJECTION (contract chain of custody,
-          // docs/design/archive/specs/2026-07-21-block-renderer-contract.md): a FRESH
-          // SCRATCH renderer instance per pass authors the body markdown from Go
-          // truth (the live instance's body region is externally managed — PM's),
-          // and this seam parses it into contentDOM as live document nodes via a
-          // tracked transaction (selection/targeting/round-trip is a PM concern).
-          // A renderer without bodyMarkdown (diagram/code/log's raw-text bodies)
-          // needs no projection. Kinds with NO split renderer yet fall to the
-          // LEGACY provider seam below.
+          // MIGRATED kinds BUILD THEMSELVES: the renderer owns the header, title and
+          // body chrome, and the framework assembles nothing around it. The one
+          // remaining framework job is the PM BODY PROJECTION — a FRESH SCRATCH
+          // renderer per pass authors the body markdown from Go truth, and this seam
+          // parses it into contentDOM as live nodes via a tracked transaction. Kinds
+          // with no split renderer fall to the LEGACY seam below.
 
-          // syncMdInto — parse markdown → a tracked PM replace of contentDOM's
-          // content. Shared by the migrated body projection and the legacy
-          // contentProvider seam; getPos can be stale by the time this deferred
-          // sync runs, and doc.nodeAt THROWS for an out-of-range pos, so
-          // bounds-check before touching the doc.
+          // syncMdInto — parse markdown into a tracked PM replace of contentDOM.
+          // getPos can be stale by the time this deferred sync runs, and doc.nodeAt
+          // THROWS for an out-of-range pos, so bounds-check first.
           var syncMdInto = function (md) {
             setTimeout(function () {
               if (!editorPane || !editorPane.view) return
@@ -827,11 +722,9 @@ class NodeViewRegistry {
           }
 
           if (view.renderer) {
-            // ── MIGRATED: the renderer owns its chrome. Only project the body. ──
             if (view.contentDOM && typeof view.renderer.bodyMarkdown === 'function') {
-              // SCRATCH-INSTANCE AUTHORING: one fresh instance per pass, built
-              // from the node's block, guards nothing, fires no effects (no
-              // service), and is discarded once its bodyMarkdown is extracted.
+              // SCRATCH-INSTANCE AUTHORING: one fresh instance per pass, guarding
+              // nothing and firing no effects, discarded once bodyMarkdown is out.
               var RendererClass = /** @type {any} */ (view.renderer).constructor
               var resolveBodyM = function (n) {
                 return new RendererClass(sieveBlockFor(n, undefined, blockCtx.provider)).bodyMarkdown()
@@ -850,7 +743,6 @@ class NodeViewRegistry {
             return view
           }
 
-          // ── LEGACY provider seam (unmigrated kinds only) ─────────────────────
           // headerProvider (→ top toolbar), titleProvider (→ metadata lead),
           // contentProvider (→ live PM body). Inert for kinds declaring none.
           var resolve = function (p) {
@@ -944,26 +836,20 @@ class NodeViewRegistry {
       addStorage() {
         return {
           markdown: {
-            // Go owns ALL markdown generation (disk + markdown mode, derived from
-            // the authoritative tree). The frontend never serialises a structured
-            // block to markdown, so this default is a no-op — it is reached only by
-            // serializeNode for a structured node (e.g. clipboard text/plain), whose
-            // real payload is the sieve/<kind> + custom views, not markdown.
+            // Go owns ALL markdown generation, so this default is a no-op — reached
+            // only by serializeNode for a structured node, whose real payload is the
+            // sieve/<kind> and custom views.
             //
-            // markdownSerialize override: a TRANSPARENT node (e.g. sieve-prose) owns
-            // real prose children and must serialise them; it takes full control here.
+            // markdownSerialize override: a TRANSPARENT node owns real prose children
+            // and must serialise them, so it takes over here.
             serialize: renderer.markdownSerialize ? renderer.markdownSerialize : function (state, node) {
               state.closeBlock(node)
             },
 
             parse: {
-              // Wrap the markdownit fence rule. Only intercepts fences whose info
-              // string matches this kind AND whose YAML body contains an id field.
-              // All other fences fall through to the previous handler in the chain.
-              //
-              // A FENCE is the only shape a block loads from: the inline
-              // `[!kind]{json}[!kind-end]` ruler was removed with smart-link (see
-              // the header) — residual inline markers now read as literal prose.
+              // Intercepts only fences whose info string matches this kind AND whose
+              // YAML body carries an id; everything else falls through. A FENCE is
+              // the only shape a block loads from.
               setup: function (markdownit) {
                 var prevFence = markdownit.renderer.rules.fence
                 markdownit.renderer.rules.fence = function (tokens, idx, options, env, self2) {
@@ -984,10 +870,9 @@ class NodeViewRegistry {
                       : self2.renderToken(tokens, idx, options)
                   }
 
-                  // The fence reconstructs the properties map (data) by parsing
-                  // its YAML; build the data-* div from it via the SAME helper
-                  // block-render.js uses with Go-sent attrs — one builder, exact
-                  // parity across the load-from-markdown and load-from-attrs paths.
+                  // Built from the parsed YAML via the SAME helper block-render.js
+                  // uses with Go-sent attrs — one builder, exact parity across both
+                  // load paths.
                   return self.buildBlockHTML(kind, data)
                 }
               },
@@ -999,11 +884,7 @@ class NodeViewRegistry {
   }
 }
 
-// ── The singleton + thin named-export delegators ─────────────────────────────
-// One registry per app. The delegators preserve every existing import site
-// (registerSieveRenderer, buildSieveBlockHTML, getSieveNodes, getSieveBlockLabel,
-// rendererFor, detectAndAppendExtractions) — the machinery moved to a class, the
-// public surface did not.
+// One registry per app. The delegators preserve every existing import site.
 
 const registry = new NodeViewRegistry()
 
@@ -1021,20 +902,16 @@ export function detectAndAppendExtractions(spec) { return registry.detectAndAppe
 
 export { NodeViewRegistry }
 
-// ── Native Code Block (syntax highlighting via CodeBlockLowlight) ─────────────
-// Uses CodeBlockLowlight's decoration system for highlighting. Visual appearance
-// is handled by the existing .tiptap .code-block CSS + .hljs-* token colours.
-// Import-time side-effect (guarded on the runtime), same as before — replaces the
-// registration IIFE's equivalent block.
+// Uses CodeBlockLowlight's decoration system; appearance is the existing
+// .tiptap .code-block CSS plus .hljs-* token colours.
 if (typeof window !== 'undefined' && T.CodeBlockLowlight) {
   window.SieveNativeCodeBlock = T.CodeBlockLowlight.extend({
     // The bundled tiptap-markdown serialiser for code blocks hardcodes a
-    // 3-backtick fence. A code block whose own content contains a ``` run
-    // (e.g. a ````markdown block wrapping ```http) therefore has its fence
-    // collapsed to 3 ticks on save, which corrupts the document on reload.
-    // Override the serialiser to size the fence longer than any backtick run
-    // in the content (standard prosemirror-markdown behaviour). The parse
-    // spec is replicated verbatim from the bundle so loading is unaffected.
+    // 3-backtick fence, so a code block whose own content contains a ``` run has
+    // its fence collapsed to 3 ticks on save, corrupting the document on reload.
+    // Override the serialiser to size the fence longer than any backtick run in
+    // the content. The parse spec is replicated verbatim from the bundle, so
+    // loading is unaffected.
     addStorage() {
       var parent = (this.parent && this.parent()) || {}
       var out = {}

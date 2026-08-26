@@ -1,9 +1,7 @@
 // @ts-check
-// The composer's TRIGGER PROVIDER family.
-//
-// One popover (trigger-popover.js) owns the shared half — keyboard model,
-// scroll-into-view, dismissal — and a HOST (trigger-host.js) owns the surface it
-// all happens in. A provider owns the trigger-specific half and nothing else:
+// The composer's TRIGGER PROVIDER family. One popover owns the shared half —
+// keyboard model, scroll-into-view, dismissal — a HOST owns the surface it
+// happens in, and a provider owns the trigger-specific half:
 //
 //   trigger            the character that opens it
 //   acceptsBoundary()  what must sit BEFORE the trigger for it to count
@@ -12,26 +10,16 @@
 //   render(item)       the row's content
 //   accept(item, …)    what accepting DOES, performed against the HOST
 //
-// THE SCAN LIVES HERE (scanToken), on the type whose two predicates decide it
-// and whose TriggerToken it mints. A HOST runs it over its own text; the popover
-// never sees text at all.
-//
-// `@` CANNOT ENUMERATE AT BOOT — the library is unbounded, so search() is a
-// debounced round-trip returning a promise, where the command list is a
-// boot-shipped array returned synchronously.
-//
-// Nothing here speaks transport: MentionProvider holds a MentionService and
-// calls one verb on it, so the UI stays transport-blind.
+// THE SCAN LIVES HERE, on the type whose two predicates decide it and whose
+// TriggerToken it mints. A HOST runs it over its own text; the popover never sees
+// text at all.
 
 import { ContractViolation } from '../contract/sieve-block.js'
 
 /**
- * The token the caret currently sits in — minted by TriggerProvider.scanToken,
- * frozen because a provider reads it and never edits it.
- *
- * `start`/`end` are the HOST's coordinates and opaque to everyone else: a
- * textarea's string offsets today, a ProseMirror host's positions tomorrow. Only
- * the host that minted them interprets them.
+ * The token the caret currently sits in, frozen because a provider reads it and
+ * never edits it. `start`/`end` are the HOST's coordinates and opaque to everyone
+ * else — only the host that minted them interprets them.
  * @typedef {object} TriggerToken
  * @property {TriggerProvider} provider  the provider claiming this token's trigger
  * @property {number} start   index of the trigger character
@@ -39,24 +27,19 @@ import { ContractViolation } from '../contract/sieve-block.js'
  * @property {string} prefix  what the user has typed since the trigger
  */
 
-// ── The abstract provider ────────────────────────────────────────────────────
-
 export class TriggerProvider {
   /**
-   * The token in `text` that the caret at `caret` sits in, or null. Walks BACK
-   * from the caret to the NEAREST trigger character and asks the provider
-   * claiming it whether both sides hold: `acceptsBoundary` for what precedes the
-   * trigger, `acceptsPrefix` for how far the token may run past it.
+   * The token in `text` that the caret at `caret` sits in, or null. Walks BACK to
+   * the NEAREST trigger character and asks the provider claiming it whether both
+   * sides hold.
    *
    * ONE MECHANISM, NOT TWO CATEGORIES: each trigger overrides exactly one of the
-   * two predicates. `/` overrides the BOUNDARY (a command is a whole-line verb,
-   * so only position 0 counts) and keeps the default span; `@` keeps the default
-   * boundary (start of text or after whitespace, so `me@example` is an address)
-   * and overrides the SPAN, because a document title is several words.
+   * two predicates. `/` overrides the BOUNDARY, since a command is a whole-line
+   * verb; `@` overrides the SPAN, since a document title is several words.
    *
-   * THE NEAREST TRIGGER CLAIMS THE SCAN. Whichever way it answers, the walk stops
-   * there: a `/` in the middle of a word is a rejected token, never an invitation
-   * to keep looking for an earlier `@` that would then swallow it.
+   * THE NEAREST TRIGGER CLAIMS THE SCAN. However it answers, the walk stops
+   * there: a `/` mid-word is a rejected token, never an invitation to keep looking
+   * for an earlier `@` that would then swallow it.
    * @param {string} value @param {number} caret
    * @param {Map<string, TriggerProvider>} providers
    * @returns {TriggerToken|null}
@@ -82,10 +65,8 @@ export class TriggerProvider {
   }
 
   /**
-   * Does a trigger at `start`, preceded by `before`, actually open this picker?
-   * The DEFAULT is the mid-text rule — a trigger at the start of the text or
-   * after whitespace — because that is the general case; `/` is the restrictive
-   * one and overrides.
+   * Does a trigger at `start`, preceded by `before`, open this picker? The DEFAULT
+   * is the mid-text rule: at the start of the text, or after whitespace.
    * @param {string} before  the character before the trigger ('' at index 0)
    * @param {number} _start  the trigger's index
    * @returns {boolean}
@@ -93,21 +74,19 @@ export class TriggerProvider {
   acceptsBoundary(before, _start) { return before === '' || /\s/.test(before) }
 
   /**
-   * Is `prefix` — everything typed since the trigger — still part of this
-   * provider's token? This is TOKEN STICKINESS, and it is a trait rather than a
-   * rule in the scanner: the DEFAULT is that a token ends at the first
-   * whitespace (one word, which is what a command name is), and a provider whose
-   * candidates are named in several words overrides it.
+   * Is `prefix` still part of this provider's token? TOKEN STICKINESS is a
+   * provider trait rather than a rule in the scanner: the DEFAULT ends a token at
+   * the first whitespace, and a provider whose candidates are named in several
+   * words overrides it.
    * @param {string} prefix  the text between the trigger and the caret
    * @returns {boolean}
    */
   acceptsPrefix(prefix) { return !/\s/.test(prefix) }
 
   /**
-   * The candidates for `prefix` — an ARRAY for a provider that can enumerate
-   * locally, or a PROMISE of one for a provider that must ask Go. The popover
-   * renders a synchronous answer synchronously (that is what keeps `/`
-   * byte-identical) and guards an async one against being overtaken.
+   * The candidates for `prefix` — an ARRAY for a provider that enumerates locally,
+   * a PROMISE for one that must ask Go. The popover renders a synchronous answer
+   * synchronously and guards an async one against being overtaken.
    * @param {string} _prefix
    * @returns {any[]|Promise<any[]>}
    */
@@ -115,24 +94,17 @@ export class TriggerProvider {
     throw new ContractViolation(`${this.constructor.name} must implement search(prefix)`)
   }
 
-  /**
-   * The row content for one candidate. Use renderRow() for the house look.
-   * @param {any} _item
-   * @returns {Node}
-   */
+  /** The row content for one candidate. Use renderRow() for the house look.
+   *  @param {any} _item @returns {Node} */
   render(_item) {
     throw new ContractViolation(`${this.constructor.name} must implement render(item)`)
   }
 
   /**
-   * Apply an accepted candidate IN `host`. Text providers call replaceToken()
-   * for the substitution and then do whatever else acceptance means to them (a
-   * mention also attaches).
-   *
-   * THE HOST IS PASSED, NOT A PAYLOAD, because accepting is not defined as a text
-   * substitution: a `{kind` provider deletes the token and creates a block
-   * instead. Range-replace is one facility a typed host offers, and a provider
-   * that needs it calls for it.
+   * Apply an accepted candidate IN `host`. THE HOST IS PASSED, NOT A PAYLOAD,
+   * because accepting is not defined as a text substitution: a block-making
+   * provider deletes the token and creates a block instead. Range-replace is one
+   * facility a typed host offers, and a provider that needs it calls for it.
    * @param {any} _item @param {TriggerToken} _token
    * @param {import('./trigger-host.js').TriggerHost} _host
    */
@@ -140,25 +112,14 @@ export class TriggerProvider {
     throw new ContractViolation(`${this.constructor.name} must implement accept(item, token, host)`)
   }
 
-  // ── Shared behaviour (on the type that owns the token contract) ────────────
-
   /**
-   * Substitutes `text` for the token under the caret and leaves the caret one
+   * Substitutes `text` for the token under the caret, leaving the caret one
    * character past it. The trailing gap is REUSED, not duplicated: a completion
-   * accepted mid-sentence ("How does @au| handle this?") must not leave a double
-   * space behind it, while one accepted at the end of the line still gets the
-   * separator that lets the next word be typed straight away.
-   *
-   * An existing separator is SWALLOWED INTO THE REPLACED RANGE rather than left
-   * standing, so the one rule the host has to keep — caret after the insert —
-   * lands the caret past the gap either way. The host never learns that a
-   * completion has a notion of a trailing space; that is completion semantics
-   * and belongs to the family that owns the token.
-   *
-   * THE TYPED SLICE IS ASKED FOR HERE rather than required of every host, because
-   * substituting text is what this kind of provider does. A provider that
-   * completes text into a host that cannot be typed into is a wiring mistake and
-   * says so by name.
+   * accepted mid-sentence must not leave a double space, while one at the end of
+   * the line still gets its separator. The existing separator is SWALLOWED INTO
+   * THE REPLACED RANGE, so the host's one rule — caret after the insert — lands
+   * past the gap either way, and the host never learns a completion has a notion
+   * of a trailing space.
    * @protected
    * @param {import('./trigger-host.js').TriggerHost} host
    * @param {TriggerToken} token @param {string} text
@@ -174,13 +135,9 @@ export class TriggerProvider {
   }
 
   /**
-   * Turns the token under the caret into a BLOCK — the second facility a host
-   * may offer, and the sibling of replaceToken above. The token's range travels
-   * with it because deleting it is the HOST's half of the job (its coordinates
-   * are opaque out here), and the host performs both halves inside one boundary.
-   *
-   * ASKED FOR BY NAME, exactly as the typed slice is, so a provider that makes
-   * blocks in a host that cannot hold one says so.
+   * Turns the token under the caret into a BLOCK. The token's range travels with
+   * it because deleting it is the HOST's half of the job — its coordinates are
+   * opaque out here — and the host performs both halves inside one boundary.
    * @protected
    * @param {import('./trigger-host.js').TriggerHost} host
    * @param {TriggerToken} token
@@ -195,9 +152,8 @@ export class TriggerProvider {
   }
 
   /**
-   * Can `host` hold a block? The capability check a provider whose acceptance
-   * DIFFERS BY HOST runs before it decides what accepting means. Presence is the
-   * capability (trigger-host.js), so this is the one place that `typeof` lives.
+   * Can `host` hold a block? Presence is the capability, so this is the one place
+   * that `typeof` lives.
    * @protected
    * @param {import('./trigger-host.js').TriggerHost} host @returns {boolean}
    */
@@ -206,8 +162,8 @@ export class TriggerProvider {
   }
 
   /**
-   * The house row: a bold leading label and a dim trailing detail. Shared so the
-   * two triggers are visually ONE picker rather than two that happen to overlap.
+   * The house row: a bold leading label and a dim trailing detail, shared so the
+   * two triggers are visually ONE picker.
    * @protected
    * @param {string} label @param {string} [detail]
    * @returns {DocumentFragment}
@@ -230,8 +186,6 @@ export class TriggerProvider {
     return frag
   }
 }
-
-// ── `/` — slash commands ─────────────────────────────────────────────────────
 
 /**
  * @typedef {object} CommandLister
@@ -271,8 +225,6 @@ export class SlashCommandProvider extends TriggerProvider {
   accept(cmd, token, host) { this.replaceToken(host, token, '/' + cmd.name) }
 }
 
-// ── `@` — document mentions ──────────────────────────────────────────────────
-
 /**
  * @typedef {object} CandidateSource
  * @property {(q: string, limit?: number) => Promise<import('./mention-service.js').MentionCandidate[]>} search
@@ -281,9 +233,8 @@ export class SlashCommandProvider extends TriggerProvider {
 /**
  * @typedef {object} MentionProviderOptions
  * @property {number} [debounceMs]
- *   — the typing-cadence window. It lives HERE and
- *   not in MentionService: the service round-trips what it is asked, the
- *   provider is the thing watching a keyboard.
+ *   the typing-cadence window. It lives HERE and not in MentionService: the
+ *   service round-trips what it is asked, the provider watches a keyboard.
  * @property {number} [limit]
  */
 
@@ -291,9 +242,9 @@ export class SlashCommandProvider extends TriggerProvider {
 const DEFAULT_DEBOUNCE_MS = 120
 
 /**
- * The runaway backstop: an unaccepted `@` cannot query for ever, whatever the
- * library contains. A sticky token normally stops itself when a query comes back
- * dry, so these bounds bite only a token that keeps matching.
+ * The runaway backstop: an unaccepted `@` cannot query for ever. A sticky token
+ * normally stops itself when a query comes back dry, so these bounds bite only a
+ * token that keeps matching.
  */
 const MAX_TOKEN_WORDS = 4
 const MAX_TOKEN_CHARS = 60
@@ -310,8 +261,8 @@ export class MentionProvider extends TriggerProvider {
   /**
    * @param {CandidateSource} source  the MentionService (the plane tenant)
    * @param {(c: import('./mention-service.js').MentionCandidate) => void} [onAccept]
-   *   — the composer's attachment sink; accepting a candidate both echoes
-   *   `@Title` into the text AND hands the candidate here.
+   *   the composer's attachment sink; accepting a candidate both echoes `@Title`
+   *   into the text AND hands the candidate here.
    * @param {MentionProviderOptions} [options]
    */
   constructor(source, onAccept, options = {}) {
@@ -330,11 +281,10 @@ export class MentionProvider extends TriggerProvider {
   /**
    * A MENTION TOKEN SURVIVES SPACES, because a document is named in words:
    * `@sprite sheet an` is one token narrowing towards "Sprite Sheet Analysis".
-   * What stops it is the popover's dry stop — no candidates means the token is
-   * abandoned — with these bounds as the backstop.
+   * What stops it is the popover's dry stop, with these bounds as the backstop.
    *
    * A NEWLINE still terminates it: Shift+Enter starts a new line of the message,
-   * and a token that spanned it would keep a picker open across the break.
+   * and a token spanning it would keep a picker open across the break.
    * @param {string} prefix @returns {boolean}
    */
   acceptsPrefix(prefix) {
@@ -346,9 +296,8 @@ export class MentionProvider extends TriggerProvider {
   /**
    * The library is unbounded, so this is a DEBOUNCED ROUND-TRIP rather than a
    * local filter. A BLANK prefix never queries: Go answers an empty query with
-   * nothing (NotesSource.Search floors on a blank query), so the frame would buy
-   * an empty list at the cost of a socket write on every `@` keystroke — and
-   * since the token is sticky, "@ " is blank too.
+   * nothing, so the frame would buy an empty list at the cost of a socket write
+   * on every `@` keystroke — and since the token is sticky, "@ " is blank too.
    * @param {string} prefix @returns {Promise<any[]>}
    */
   search(prefix) {
@@ -368,22 +317,21 @@ export class MentionProvider extends TriggerProvider {
   render(c) { return this.renderRow('@' + c.title, c.detail) }
 
   /**
-   * ONE CANDIDATE, ONE MEANING — "make this document present here" — and the
-   * HOST decides what that costs:
+   * ONE CANDIDATE, ONE MEANING — "make this document present here" — and the HOST
+   * decides what that costs:
    *
    * - **A document** can hold a block, so the mention BECOMES one: the token is
    *   deleted and a `reference` block carrying the `uri` takes its place. No text
-   *   echo, because the chip in the document is the reference.
-   * - **A composer** cannot, so the LITERAL `@Title` goes into the message and
-   *   the candidate goes to the panel's attachment sink, which draws the chip
-   *   beside it. The text echo stays plain, so two documents called "Notes"
-   *   produce two identical tokens and two different chips: the ambiguity lives
-   *   in the echo and never in the data.
+   *   echo, because the chip in the document IS the reference.
+   * - **A composer** cannot, so the LITERAL `@Title` goes into the message and the
+   *   candidate goes to the panel's attachment sink. Two documents called "Notes"
+   *   then produce two identical tokens and two different chips: the ambiguity
+   *   lives in the echo and never in the data.
    *
    * THE WHOLE FACE is seeded, not just a label, so a block born complete never
-   * resolves merely to render. `mime` is what says the face is filled AND what
-   * the block is: a pointer's mime names Sieve's own space (`sieve/note`), which
-   * is how the renderer tells pointing from holding.
+   * resolves merely to render. `mime` is what says the face is filled AND what the
+   * block is — a pointer's mime names Sieve's own space, which is how the renderer
+   * tells pointing from holding.
    * @param {import('./mention-service.js').MentionCandidate} c
    * @param {TriggerToken} token
    * @param {import('./trigger-host.js').TriggerHost} host

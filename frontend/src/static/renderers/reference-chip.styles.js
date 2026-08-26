@@ -1,8 +1,5 @@
 // @ts-check
-// ReferenceChip's stylesheet, a sibling module per the styles-file-geography
-// convention: a component file starts with its class, so any sheet over ~30
-// lines lives in its own `<name>.styles.js` sibling, imported into the class's
-// `static styles`.
+// ReferenceChip's stylesheet.
 //
 // THE TOKENS ARE NOT DEFINED HERE. The `--chip-*` custom properties this sheet
 // reads are owned by editor.css's `:root`, so the composer's chips — which

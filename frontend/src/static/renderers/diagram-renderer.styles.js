@@ -1,36 +1,20 @@
 // @ts-check
-// diagram-renderer.styles.js — DiagramRenderer's stylesheet, a sibling module
-// per the styles-file-geography convention (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
-// "Styles file geography", user decision 2026-07-20): a renderer file starts
-// with its class — behaviour first, never a CSS wall — so any sheet over
-// ~30 lines lives in its own `<kind>-renderer.styles.js` sibling module
-// (`export const <kind>Styles = /* css */ \`…\``, Lit-style), imported into
-// the class's `static styles`. This module is renderer-internal — nothing
-// outside diagram-renderer.js imports it.
+// DiagramRenderer's stylesheet: CSS text using ONLY --theme-* variables for
+// colour. Renderer-internal.
 //
-// CSS text using ONLY --theme-* variables for colour (the host<->renderer
-// styling contract). Carried verbatim from input.css's former
-// .sieve-block--diagram / .diagram-block__* rules (moved here in the same
-// change per the spec — style carriage is never a separate pass). Two
-// changes versus the old global rule set:
-//   1. the hover box-shadow's rgba(0,0,0,.25) becomes a color-mix against
-//      --theme-bgDark (house rule: no hardcoded colour literals);
-//   2. the mermaid .edgeLabel escape hatch is GONE from here — it now rides
-//      inside each rendered SVG's own <style> (see diagram-renderer.js's
-//      #patchEdgeLabelStyle), so it travels with the artefact instead of
-//      depending on this stylesheet's cascade reaching wherever the SVG
-//      currently lives (the lightbox-move bug this whole epic exists to fix).
-// `animation: spin …` depends on the shared `@keyframes spin` Tailwind
-// already emits globally (input.css / tailwind.css) — keyframes register
-// document-wide regardless of which stylesheet (adopted or otherwise)
+// The mermaid `.edgeLabel` escape hatch is deliberately NOT here — it rides
+// inside each rendered SVG's own <style> (see #patchEdgeLabelStyle), so it
+// travels with the artefact instead of depending on this stylesheet's cascade
+// reaching wherever the SVG currently lives.
+//
+// `animation: spin …` depends on the shared `@keyframes spin` Tailwind emits
+// globally: keyframes register document-wide regardless of which stylesheet
 // declares the consuming rule, so no keyframe needs to travel with this class.
 
-// DiagramTheme — the diagram kind's COMPLETE theming story in one module
-// (user decision 2026-07-20): the CSS sheet (block chrome), the mermaid
-// themeVariables mapping (the "stylesheet" for the SVG interior, in mermaid's
-// dialect), and the edge-label escape-hatch patch that exists precisely
-// because that mapping has a hole. Hole and patch sit side by side here;
-// diagram-renderer.js keeps behaviour only.
+// DiagramTheme — the diagram kind's COMPLETE theming story in one module: the
+// CSS sheet (block chrome), the mermaid themeVariables mapping (the SVG
+// interior's "stylesheet", in mermaid's dialect), and the edge-label
+// escape-hatch patch that exists precisely because that mapping has a hole.
 export class DiagramTheme {
   static sheet = /* css */ `
   .sieve-block--diagram {
@@ -399,21 +383,15 @@ export class DiagramTheme {
   }
 `
 
-  // ── mermaid escape hatch (rides with the render output, not the app stylesheet) ──
-  //
-  // Flowchart edge labels (Yes/No on links, and inter-subgraph edges in particular)
-  // share mermaid's `.label` colour with node labels, which the theme below sets dark
-  // for text sitting on light node fills (see #buildMermaidTheme's CONTRAST MODEL
-  // comment). But edge labels float on the dark canvas, so that dark text goes
-  // invisible. Mermaid exposes no separate variable for this, so the patch forces
-  // edge-label text light — appended to mermaid's OWN in-SVG <style> element (added by
-  // mermaid itself in every render) rather than left as an app-stylesheet rule. That
-  // makes the SVG artefact style-complete BY ITSELF: it survives the fullscreen
-  // lightbox's move (media-lightbox.js MediaLightbox#open relocates the live <svg> into
-  // the overlay, and back on close) and any future host — the exact bug (b57fe22) this
-  // epic's spec names as its motivating defect. `.edgeLabel` is a mermaid-only class
-  // (unused elsewhere in the app), so this is safe wherever the SVG ends up. Node labels
-  // use `.nodeLabel` (untouched); only `.edgeLabel` descendants are overridden.
+  // Flowchart edge labels (Yes/No on links, inter-subgraph edges) share
+  // mermaid's `.label` colour with node labels, which the theme sets dark for
+  // text on light node fills (see the CONTRAST MODEL comment below). Edge labels
+  // float on the dark canvas, so that dark text goes invisible, and mermaid
+  // exposes no separate variable for it. The patch forces edge-label text light
+  // and is appended to mermaid's OWN in-SVG <style>, which makes the SVG
+  // style-complete BY ITSELF: it survives the lightbox relocating the live <svg>
+  // into an overlay, and any future host. `.edgeLabel` is a mermaid-only class,
+  // so this is safe wherever the SVG ends up; node labels use `.nodeLabel`.
   static edgeLabelPatchCss = /* css */ `
     .edgeLabel,
     .edgeLabel .label,
@@ -461,18 +439,15 @@ export class DiagramTheme {
     // override each on-a-fill text colour to bgDark per diagram family below.
     /** @type {Record<string, string>} */
     const tv = {
-      // ── Typography ──
       fontFamily:           v('--theme-monoFont') || 'monospace',
       fontSize:             '12px',
 
-      // ── Roots ──
       background:           bgDark,
-      textColor:            text,        // master label colour (canvas) — the key fix
+      textColor:            text,        // master label colour (canvas)
       lineColor:            textDim,
       arrowheadColor:       textDim,
       titleColor:           text,
 
-      // ── Flowchart / generic nodes (light accent fills → dark text) ──
       primaryColor:         accent,
       primaryBorderColor:   accent,
       primaryTextColor:     bgDark,
@@ -488,7 +463,6 @@ export class DiagramTheme {
       nodeTextColor:        bgDark,
       defaultLinkColor:     textDim,
 
-      // ── Edge / generic labels (float on the dark canvas → light) ──
       // NOT 'transparent': flowchart's .labelBkg does fade(edgeLabelBackground, .5),
       // and fade('transparent') → semi-opaque BLACK (a black box behind edge
       // labels like Yes/No). Use the canvas colour so the box blends into the bg.
@@ -497,12 +471,10 @@ export class DiagramTheme {
       labelTextColor:       text,
       labelBackgroundColor: bgAlt,
 
-      // ── Subgraphs / clusters ──
       clusterBkg:           bgAlt,
       clusterBorder:        border2,
 
-      // ── ER attributes + Class members (boxes are light → dark member text;
-      //    relation labels float on the canvas → light) ──
+      // ER/class: relation labels float on the canvas → light.
       attributeBackgroundColorOdd:  bgAlt,
       attributeBackgroundColorEven: bgDark,
       classText:            bgDark,
@@ -510,8 +482,7 @@ export class DiagramTheme {
       relationLabelColor:   text,
       relationLabelBackground: bgAlt,
 
-      // ── State diagrams (state boxes light → dark labels; composites +
-      //    transition labels live on the canvas → light) ──
+      // State: transition labels live on the canvas → light.
       stateBkg:             accent,
       stateLabelColor:      bgDark,
       altBackground:        bgAlt,
@@ -523,7 +494,6 @@ export class DiagramTheme {
       transitionColor:      textDim,
       transitionLabelColor: text,
 
-      // ── Sequence diagrams (own variable set, ignore the generic labels) ──
       actorBkg:             accent,
       actorBorder:          accent,
       actorTextColor:       bgDark,
@@ -540,8 +510,7 @@ export class DiagramTheme {
       activationBorderColor: border2,
       sequenceNumberColor:  bgDark,
 
-      // ── Gantt (task bars are light accents → dark in-bar text; section bands
-      //    and outside/clickable text live on the canvas → light) ──
+      // Gantt: outside and clickable text live on the canvas → light.
       sectionBkgColor:      bgAlt,
       sectionBkgColor2:     bgDark,
       altSectionBkgColor:   bgDark,
@@ -562,15 +531,13 @@ export class DiagramTheme {
       todayLineColor:       accentRe,
       excludeBkgColor:      bgAlt,
 
-      // ── Pie (slices = palette accents → dark slice text; title + legend on
-      //    the canvas → light) ──
+      // Pie: title and legend sit on the canvas → light.
       pieTitleTextColor:    text,
       pieSectionTextColor:  bgDark,
       pieLegendTextColor:   text,
       pieStrokeColor:       bgDark,
       pieOuterStrokeColor:  border2,
 
-      // ── Gitgraph (branch colours = palette below; commit/tag labels) ──
       commitLabelColor:     text,
       commitLabelBackground: bgAlt,
       branchLabelColor:     bgDark,
@@ -578,15 +545,13 @@ export class DiagramTheme {
       tagLabelBackground:   accentYe,
       tagLabelBorder:       border2,
 
-      // ── Quadrant charts (distinct accent per quadrant; on-fill text dark;
-      //    chart title + axis labels on the canvas → light) ──
+      // Quadrant: chart title and axis labels on the canvas → light.
       quadrant1Fill: accentOr, quadrant2Fill: accentCy, quadrant3Fill: accentGr, quadrant4Fill: accentYe,
       quadrant1TextFill: bgDark, quadrant2TextFill: bgDark, quadrant3TextFill: bgDark, quadrant4TextFill: bgDark,
       quadrantPointFill: bgDark, quadrantPointTextFill: bgDark,
       quadrantTitleFill: text, quadrantXAxisTextFill: text, quadrantYAxisTextFill: text,
       quadrantInternalBorderStrokeFill: border2, quadrantExternalBorderStrokeFill: border2,
 
-      // ── Requirement diagrams (light box → dark text) ──
       requirementBackground: accent,
       requirementBorderColor: accent,
       requirementTextColor:  bgDark,

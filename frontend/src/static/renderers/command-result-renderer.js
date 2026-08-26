@@ -1,17 +1,12 @@
 // @ts-check
-// command-result-renderer.js — CommandResultRenderer: the HONEST generic
-// renderer for non-AI slash-command results (/uuid, /hash, /base64, /env, /jwt,
-// /now, /stats). These commands run entirely in Go and return a plain answer —
-// they are NOT AI jobs, so they no longer cosplay as ai-blocks (the fabricated
-// question/type/ref attrs are gone). Go owns WHAT the answer says (tables,
-// fenced code, scope lines, timestamps); this class owns HOW it looks.
-//
-// Follows the BlockRenderer contract exactly (block-renderer.js): PM-free, zero
-// window.*, builds itself, speaks business verbs. Header = a /cmd chip + the
-// shared StatusBadge treatment; Title = payload.title; Body = sanctioned
-// markdown of payload.response (code-fence highlighting for free). It mounts in
-// the detached-answer popup (command-popup.js), which stays payload-blind and
-// pulls the copyable value through the base copyText() accessor.
+// CommandResultRenderer — the generic renderer for non-AI slash-command results
+// (/uuid, /hash, /base64, /env, /jwt, /now, /stats). These commands run entirely
+// in Go and return a plain answer: Go owns WHAT the answer says (tables, fenced
+// code, scope lines, timestamps), this class owns HOW it looks. Header = a /cmd
+// chip + the shared StatusBadge treatment; Title = payload.title; Body =
+// sanctioned markdown of payload.response. It mounts in the detached-answer
+// popup, which stays payload-blind and pulls the copyable value through the base
+// copyText() accessor.
 
 import { BlockRenderer } from './block-renderer.js'
 import { commandResultStyles } from './command-result-renderer.styles.js'
@@ -62,7 +57,6 @@ export class CommandResultRenderer extends BlockRenderer {
 
   /**
    * The markdown the BODY shows — response when complete, else the error line.
-   * The renderer OWNS this mapping (contract); the popup never reads payload.
    * @returns {string}
    */
   bodyMarkdown() {
@@ -75,9 +69,9 @@ export class CommandResultRenderer extends BlockRenderer {
 
   /**
    * The plain text the popup's Copy button writes — the raw copyable value
-   * (payload.primary) when Go supplied one, else the rendered markdown body.
-   * Overrides the base default so a command result copies its bare answer
-   * (uuid / hash / decoded text), not the surrounding table/scope chrome.
+   * (payload.primary) when Go supplied one, else the rendered markdown body, so
+   * a command result copies its bare answer (uuid / hash / decoded text), not
+   * the surrounding table/scope chrome.
    * @returns {string}
    */
   copyText() {

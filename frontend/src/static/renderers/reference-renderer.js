@@ -1,20 +1,12 @@
 // @ts-check
-// ReferenceRenderer: the renderer half of the 'reference' kind's
-// renderer/NodeView split (NORMATIVE contract:
-// docs/design/archive/specs/2026-07-21-block-renderer-contract.md).
+// ReferenceRenderer: the 'reference' kind's look-and-feel, and there is
+// deliberately very little of it — the block IS a reference chip, so this class
+// composes ReferenceChip on a shrink-wrapping line and adds the chevron that
+// reveals `summary`. No card shell, no header bar, no toolbar.
 //
-// Owns look-and-feel ONLY, and there is deliberately very little of it: the
-// block IS a reference chip, so this class COMPOSES ReferenceChip inside a
-// block-level wrapper that shrink-wraps it, adds the chevron that reveals
-// `summary`, and stops there. No card shell, no header bar, no toolbar.
-//
-// Zero ProseMirror/editor/window.* dependencies: it mounts identically in the
-// note editor's NodeView adapter and on a bare page.
-//
-// THE ONE GESTURE IT OWNS. Single click is NOT handled here — a block sits in
-// the editing flow, so placing the caret is the shared interaction policy's job.
-// DOUBLE click opens, and this class fans out an INTENT (`onOpen`) carrying the
-// block's target; it never names a mechanism.
+// THE ONE GESTURE IT OWNS: DOUBLE click, fanned out as an INTENT (`onOpen`)
+// carrying the block's target. Single click is NOT handled here — a block sits
+// in the editing flow, so placing the caret is the shared policy's job.
 
 import { BlockRenderer } from './block-renderer.js'
 import { referenceStyles } from './reference-renderer.styles.js'
@@ -22,14 +14,11 @@ import { ReferenceChip } from './reference-chip.js'
 import { StatusBadge } from './status-badge.js'
 
 /**
- * The reference block's payload, as the Go processor stamps it
- * (sieve/block/processors/reference_processor.go, InitAttrs). `uri` is the ONE
+ * The reference block's payload, as the Go processor stamps it. `uri` is the ONE
  * address: a held file's bytes live at a `sieve://{container}/{leaf}` coordinate
- * like any other.
- *
- * `mime` is the DISCRIMINATOR: a pointer's mime names Sieve's own space
- * (`sieve/note`), a held file's names a real format (`text/yaml`), so HELD ⇔ the
- * mime is not a `sieve/*` type. It is also the only noun the chip needs.
+ * like any other. `mime` is the DISCRIMINATOR — HELD ⇔ the mime names a real
+ * format (`text/yaml`) rather than Sieve's own space (`sieve/note`) — and it is
+ * the only noun the chip needs.
  * @typedef {object} ReferencePayload
  * @property {string} [id]
  * @property {string} [uri]     the ONE address: sieve://{container}[/{leaf}]
@@ -56,7 +45,7 @@ export class ReferenceRenderer extends BlockRenderer {
   static styles = referenceStyles
   static rootClass = 'reference-block'
 
-  /** Disclosure glyphs. A GLYPH SWAP, never a CSS transform — see the styles file. */
+  /** Disclosure glyphs. A GLYPH SWAP, never a CSS transform. */
   static #CHEVRON = Object.freeze({ COLLAPSED: '▸', EXPANDED: '▾' })
 
   /** The label a block with no title, no file and no coordinate still wears. */
@@ -68,8 +57,7 @@ export class ReferenceRenderer extends BlockRenderer {
   /** @type {Array<(target: ReferenceTarget) => void>} */ #openListeners = []
 
   /**
-   * THE address rule: `uri` is the one thing a reference addresses, whatever it
-   * points at or holds.
+   * The one thing a reference addresses, whatever it points at or holds.
    * @param {ReferencePayload} payload
    * @returns {ReferenceTarget|null} null when the block addresses nothing
    */
@@ -107,10 +95,9 @@ export class ReferenceRenderer extends BlockRenderer {
   }
 
   /**
-   * A stored byte count as a reader sees it — "412 KB". Mirrors the processor's
-   * `humanSize` exactly (1024-based, one decimal below 10) so the chip and the
-   * AI context state the same size. `bytes` is a STRING attr, so a value that
-   * will not parse renders nothing rather than a wrong number.
+   * A stored byte count as a reader sees it — "412 KB" (1024-based, one decimal
+   * below 10). `bytes` is a STRING attr, so a value that will not parse renders
+   * nothing rather than a wrong number.
    * @param {string|number} [bytes]
    * @returns {string}
    */
@@ -133,8 +120,7 @@ export class ReferenceRenderer extends BlockRenderer {
   buildBody() {
     const body = document.createElement('div')
     body.className = 'reference-block__body'
-    // setAttribute, not the IDL property: the ATTRIBUTE is what ProseMirror's
-    // DOM parser and the read-only guard read (and what jsdom/happy-dom reflect).
+    // setAttribute, not the IDL property: the ATTRIBUTE is what a DOM parser reads.
     body.setAttribute('contenteditable', 'false')
 
     this.#line = document.createElement('div')
@@ -143,8 +129,6 @@ export class ReferenceRenderer extends BlockRenderer {
     this.#summaryEl.className = 'reference-block__summary'
     body.appendChild(this.#line)
     body.appendChild(this.#summaryEl)
-
-    // DOUBLE click opens; single click is the shared policy's (see the header).
     body.addEventListener('dblclick', (e) => this.#onDoubleClick(e))
 
     this.#draw(/** @type {ReferencePayload} */ (this.block.payload))
@@ -156,8 +140,6 @@ export class ReferenceRenderer extends BlockRenderer {
     super.update(block)
     this.#draw(/** @type {ReferencePayload} */ (block.payload))
   }
-
-  // ── Semantic verbs (kind-specific — the contract's abstract-consumer rule) ──
 
   /**
    * Registers interest in "the user opened this reference", handing back what the
@@ -183,7 +165,7 @@ export class ReferenceRenderer extends BlockRenderer {
     return this.#expanded
   }
 
-  /** Is the summary currently revealed? @returns {boolean} */
+  /** @returns {boolean} */
   get expanded() { return this.#expanded }
 
   /** The one line the chevron reveals ('' when the block has none). @returns {string} */
@@ -203,9 +185,8 @@ export class ReferenceRenderer extends BlockRenderer {
   }
 
   /**
-   * What "copy" yields for a reference, as ONE rule: the coordinate it points
-   * at, or the friendly name of the file it holds. Static because the context
-   * menu has only the node's attrs — the same rule must not be restated there.
+   * What "copy" yields for a reference: the coordinate it points at, or the
+   * friendly name of the file it holds.
    * @param {ReferencePayload} payload
    * @returns {string}
    */
@@ -215,13 +196,9 @@ export class ReferenceRenderer extends BlockRenderer {
     return t.held ? t.title : t.uri
   }
 
-  // ── Drawing ────────────────────────────────────────────────────────────────
-
   /**
-   * Redraws the chip and the summary from the block. The whole line is
-   * rebuilt rather than patched because ReferenceChip is immutable once built;
-   * the disclosure state lives on THIS object, so it survives the redraw a
-   * render-back triggers.
+   * Redraws the chip and the summary from the block. The whole line is rebuilt,
+   * not patched: ReferenceChip is immutable once built.
    * @param {ReferencePayload} payload
    */
   #draw(payload) {
@@ -233,8 +210,7 @@ export class ReferenceRenderer extends BlockRenderer {
     const missing = ReferenceRenderer.#isMissing(payload)
     const chip = new ReferenceChip({
       // A held file's own chip carries no data-uri: its click activation is
-      // inert (its own click handler no-ops), which is correct — this block
-      // opens the file on DOUBLE click, through the intent below.
+      // inert — this block opens the file on DOUBLE click, through the intent below.
       uri: held ? '' : (payload.uri || '').trim(),
       label: ReferenceRenderer.labelFor(payload),
       detail: this.#detail(payload),
@@ -258,8 +234,7 @@ export class ReferenceRenderer extends BlockRenderer {
     }
   }
 
-  /** The disclosure control — a real button, but never a tab stop (Tab belongs
-   *  to the shared interaction policy, and a chip has no editable text).
+  /** The disclosure control — a real button, never a tab stop.
    *  @returns {HTMLElement} */
   #buildChevron() {
     const btn = document.createElement('button')
@@ -292,9 +267,8 @@ export class ReferenceRenderer extends BlockRenderer {
 
   /**
    * The quiet secondary text after the label: "yaml · 412 KB" for a held file,
-   * "note" for a citation. Either half may be missing (a job that has not landed
-   * yet) and the line simply shortens rather than inventing a placeholder —
-   * mirroring the processor's `typeLine`.
+   * "note" for a citation. Either half may be missing, and the line simply
+   * shortens rather than inventing a placeholder.
    * @param {ReferencePayload} payload
    * @returns {string}
    */
@@ -309,10 +283,7 @@ export class ReferenceRenderer extends BlockRenderer {
 
   /**
    * The noun for the thing this block points at or holds — "note" for a pointer,
-   * "yaml" or "pdf" for a held file. DERIVED from `mime`, never stored beside it:
-   * `sieve/note` reduces to "note" by exactly the rule `text/yaml` reduces to
-   * "yaml", so one attr carries both halves of the vocabulary. Mirrors the
-   * processor's `mimeFamily`.
+   * "yaml" or "pdf" for a held file. DERIVED from `mime`, never stored beside it.
    * @param {ReferencePayload} payload
    * @returns {string}
    */
@@ -330,10 +301,9 @@ export class ReferenceRenderer extends BlockRenderer {
   }
 
   /**
-   * DANGLING IS A NORMAL STATE, not a job failure: the processor settles a
-   * reference whose target is gone as COMPLETE with a non-empty `error`, keeping
-   * the cached face. So it is the ERROR TEXT that greys a chip, never `status`,
-   * which would miss every dangling block.
+   * DANGLING IS A NORMAL STATE, not a job failure: a reference whose target is
+   * gone settles COMPLETE with a non-empty `error`, keeping the cached face. So
+   * it is the ERROR TEXT that greys a chip, never `status`.
    * @param {ReferencePayload} payload
    * @returns {boolean}
    */
@@ -342,10 +312,8 @@ export class ReferenceRenderer extends BlockRenderer {
   }
 
   /**
-   * held ⇔ the mime is NOT a `sieve/*` type — mirrors the processor's own
-   * invariant. THE FACE DECIDES: the uri is never inspected to answer this, so a
-   * held file and a pointer at someone else's asset are told apart by what was
-   * stamped, not by how the address happens to look.
+   * held ⇔ the mime does NOT name Sieve's own space (`sieve/…`). THE FACE
+   * DECIDES: the uri is never inspected to answer this.
    * @param {ReferencePayload} payload
    * @returns {boolean}
    */

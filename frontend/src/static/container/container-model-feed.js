@@ -1,23 +1,18 @@
 // @ts-check
-// container-model-feed.js — ContainerModelFeed: the host's per-uuid registry of
-// live ContainerModels, kept in step with the wire (issue #96 P4a).
-//
-// ContainerModel is a pure fold — it takes frames and answers reads, and knows
-// nothing about where a frame came from. This class is the other half: it owns
-// one model per open container, subscribes it to that container's traffic, and
-// discards it when the container closes. Model lifetime IS channel lifetime; a
-// model that outlived its socket would answer reads about a document nothing is
-// following any more.
+// ContainerModelFeed: the host's per-uuid registry of live ContainerModels, kept in
+// step with the wire. ContainerModel is a pure fold and knows nothing about where a
+// frame came from; this class owns one model per open container, subscribes it to
+// that container's traffic, and discards it when the container closes. Model
+// lifetime IS channel lifetime — a model that outlived its socket would answer reads
+// about a document nothing is following any more.
 //
 // TWO inbound seams, because Go answers in two shapes:
 //
-//   - whole-container ANSWERS (load-content, wysiwyg-content) reset the model.
-//     They are correlated replies, so the transport settles them on their awaiter
-//     and they never reach a frame observer — DocumentService.onContent publishes
-//     them instead.
-//   - mutation ECHOES (insert / replace / attrs / remove / order) fold onto it,
-//     via ContainerTransport.observeFrames, which sees every routed frame including the
-//     two the editor path deliberately drops.
+//   - whole-container ANSWERS (load-content, wysiwyg-content) reset the model. They
+//     are correlated replies, so the transport settles them on their awaiter and
+//     they never reach a frame observer — DocumentService.onContent publishes them.
+//   - mutation ECHOES (insert / replace / attrs / remove / order) fold onto it, via
+//     ContainerTransport.observeFrames, which sees every routed frame.
 
 import { ContractViolation } from '../contract/sieve-block.js'
 import { ContainerModel } from './container-model.js'
@@ -79,9 +74,8 @@ export class ContainerModelFeed {
 
   /**
    * The load answer as the model's ContainerContent. Go answers load-content and
-   * wysiwyg-content from one assembly, so both already carry `blocks`; only the
-   * uuid differs — load-content names the document, wysiwyg-content does too, and
-   * a shape carrying neither seeds by position alone.
+   * wysiwyg-content from one assembly, so both already carry `blocks`; only the uuid
+   * field differs, and a shape carrying neither seeds by position alone.
    * @param {Record<string, any>} content
    * @returns {import('./container-model.js').ContainerContent}
    */

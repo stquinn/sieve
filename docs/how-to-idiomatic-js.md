@@ -227,6 +227,50 @@ problem; stories are.
 `sieve/domain/address.go`'s type godoc is the calibration example: twenty lines,
 every one of them defining.
 
+### Running a comment pass
+
+Four things that are not obvious until a pass has gone wrong:
+
+**Delete the block; do not shorten it.** The instinct is to rewrite prose more
+tersely, and it under-delivers by roughly half: the #104 pass got 18% off its worst
+file that way, and 42% once it started deleting. If a block fails *"would a
+competent reader get this WRONG without it?"*, it does not exist in a shorter form —
+it does not exist. A doc comment over `markDirty()` that says "Marks the document
+dirty" goes; it does not become "Marks it dirty".
+
+**Know the floor before chasing a number.** Comment lines are three different
+things, and only one is discretionary:
+
+| | example | discretionary? |
+|---|---|---|
+| tags | `@param`, `@returns`, `@type`, `@typedef` | no — load-bearing under `// @ts-check` |
+| scaffolding | `/**`, ` */`, blank ` *` separators | no — implied by the tags |
+| prose | everything else | **yes — this is the target** |
+
+A types-only file legitimately reads 90% comment; `contract/` is four files with 23
+lines of code between them and is correct as it stands. Measure prose against code,
+never total comment against code, and never delete a tag to move a percentage.
+
+**Template-literal contents are STRING DATA, not comments.** The CSS inside
+`export const fooStyles = \`…\`` is emitted verbatim; editing it changes the
+stylesheet. In a `*.styles.js` only the header above the export is a comment. Two
+independent agents tripped on this in one afternoon.
+
+**Verify mechanically, three ways.** A comment pass claims to change no behaviour,
+so prove it rather than asserting it:
+
+1. **esbuild byte-identity** — minify each in-scope file with
+   `--minify --legal-comments=none` and compare the hash before and after. Comments
+   are stripped, so an identical hash means nothing but comments moved. This catches
+   a truncated JSDoc that swallowed the line below it.
+2. **`tsc --noEmit` error-set identity** — diff the *set* of errors, not the count.
+   Byte-identity CANNOT catch a broken type, because types are comments; only the
+   type-checker can.
+3. **The test suite.**
+
+Any one alone is insufficient: (1) is blind to types, (2) is blind to logic, (3) is
+blind to whatever is untested.
+
 **Never write a comment to answer a code review.** If a reviewer asks "why not
 X", the answer goes in the issue or the design doc. Each defence is individually
 reasonable; the accumulation leaves a file arguing with a reviewer instead of

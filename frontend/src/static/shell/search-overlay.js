@@ -1,21 +1,12 @@
 // @ts-check
-// search-overlay.js — the document search overlay as a Workspace child (P4.C).
+// search-overlay.js — a find/next/prev/clear overlay over the live editor, as a
+// Workspace child. It owns its own JS-created overlay DOM, appended to
+// document.body lazily on first toggle. Backs workspace.toggleSearch().
 //
-// A find/next/prev/clear overlay over the live editor. It owns its own JS-created
-// overlay DOM (document.body.appendChild, lazily on first toggle — faithful to
-// the old ensureOverlays laziness); it is NOT wired from index.html markup. Backs
-// workspace.toggleSearch().
-//
-// The overlay drives the ACTIVE EDITOR'S search verbs (searchTerm / searchNext /
-// searchPrev / clearSearch), which return the current match stats and delegate to
-// the mounted surface (D-3). It no longer reaches the editor's live TipTap handle:
-// the Search
-// extension + its `storage.search` match set are surface-private (WysiwygSurface's
-// OWN #editor). The null-editor guard stays; markdown mode is a local stub (its
-// surface's search verbs no-op).
-//
-// Dual-use ES module: imported by workspace.js (which constructs it). No window.*
-// export — reached via window.sieveWorkspace.searchOverlay.
+// It drives the ACTIVE EDITOR'S search verbs (searchTerm / searchNext /
+// searchPrev / clearSearch), which return the current match stats. It never
+// reaches the editor's live TipTap handle: the Search extension and its
+// `storage.search` match set are surface-private. Markdown mode is a local stub.
 
 export class SearchOverlay {
   /** @type {import('./workspace.js').SieveWorkspace} */
@@ -29,20 +20,18 @@ export class SearchOverlay {
 
   /** @param {import('./workspace.js').SieveWorkspace} ws */
   constructor(ws) {
-    // NO DOM in the constructor (vitest-safe; the overlay is built lazily on the
-    // first toggle, mirroring the old ensureOverlays laziness).
+    // NO DOM in the constructor (vitest-safe): the overlay is built lazily on
+    // the first toggle.
     this.#ws = ws
   }
 
-  // ── Public verb the Workspace delegates to ──────────────────────────────────────
-
   /**
-   * Shows/hides the search overlay (was toggleSearch).
+   * Shows/hides the search overlay.
    *
    * PRESERVED QUIRK (intentional, do NOT "fix"): a freshly JS-created overlay has
    * style.display === '' (empty, not 'none'), so the FIRST press falls into the
-   * hide branch (sets display='none' + clearSearch) and only the SECOND press
-   * shows it. #ensure() deliberately does not initialise display, preserving this.
+   * hide branch and only the SECOND press shows it. #ensure() deliberately does
+   * not initialise display, preserving this.
    */
   toggle() {
     const overlay = this.#ensure()
@@ -68,9 +57,8 @@ export class SearchOverlay {
   }
 
   /**
-   * Advances to the next match (F3 / Mod+G accelerator verb, mirrors the ↓
-   * button). When the overlay is CLOSED, opens it instead of searching — F3 on a
-   * closed search is conventionally "start searching", not "search blind".
+   * Advances to the next match (F3 / Mod+G, mirrors the ↓ button). When the
+   * overlay is CLOSED, opens it instead of searching.
    */
   next() {
     if (!this.#isOpen()) { this.open(); return }
@@ -80,8 +68,8 @@ export class SearchOverlay {
   }
 
   /**
-   * Advances to the previous match (Shift+F3 / Mod+Shift+G accelerator verb,
-   * mirrors the ↑ button). Same closed-overlay judgement call as next().
+   * Advances to the previous match (Shift+F3 / Mod+Shift+G, mirrors the ↑
+   * button). Same closed-overlay behaviour as next().
    */
   prev() {
     if (!this.#isOpen()) { this.open(); return }
@@ -89,8 +77,6 @@ export class SearchOverlay {
     const ed = this.#activeEditor()
     if (ed) this.#renderStats(ed.searchPrev())
   }
-
-  // ── Private ─────────────────────────────────────────────────────────────────────
 
   /** @returns {boolean} whether the overlay is currently shown. */
   #isOpen() {
@@ -109,8 +95,8 @@ export class SearchOverlay {
   }
 
   /**
-   * Lazily builds the overlay on first toggle (was createSearchOverlay). Does NOT
-   * initialise style.display — see the toggle() quirk note.
+   * Lazily builds the overlay on first toggle. Does NOT initialise style.display
+   * — see the toggle() quirk note.
    * @returns {HTMLElement|null}
    */
   #ensure() {
@@ -145,7 +131,6 @@ export class SearchOverlay {
     input.addEventListener('input', () => {
       const term = input.value
       if (this.#mode() === 'markdown') {
-        // Placeholder
       } else {
         const ed = this.#activeEditor()
         if (ed) this.#renderStats(ed.searchTerm(term))
@@ -173,7 +158,7 @@ export class SearchOverlay {
   /**
    * Refreshes the n/N match count from a stats object the editor's search verb
    * returned (`{current,total}`). Markdown mode has no matches → '0/0'; a falsy
-   * stats (no results yet) leaves the count unchanged, as the old storage read did.
+   * stats leaves the count unchanged.
    * @param {{current:number,total:number}|null|false} stats
    */
   #renderStats(stats) {
@@ -190,7 +175,7 @@ export class SearchOverlay {
   /**
    * @param {string} cls
    * @param {string} text
-   * @param {string} label accessible name — sets aria-label + title (command-popup tone: plain, active-voice, sentence case)
+   * @param {string} label accessible name — sets aria-label + title
    * @param {(e: Event) => void} onClick
    * @returns {HTMLButtonElement}
    */

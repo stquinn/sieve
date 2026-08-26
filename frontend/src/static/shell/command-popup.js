@@ -1,18 +1,14 @@
 // @ts-check
-// command-popup.js — the detached-answer popup (#55): a host for command-result
-// block renderers (note lens / bare harness / here). An appearance, not an
-// interruption: never steals focus. Hide parks the answer on its badge;
-// Delete (via onDelete) removes it from existence.
+// command-popup.js — the detached-answer popup: a host for command-result block
+// renderers. An appearance, not an interruption: it never steals focus. Hide
+// parks the answer on its badge; Delete (via onDelete) removes it.
 //
-// The pending state is KIND-AGNOSTIC: when block is null the popup renders a
-// generic spinner + command name (or, on a block-less terminal error, a generic
-// error view). Only when a real block arrives does the popup resolve the kind's
-// renderer (COMMAND_RENDERERS) and mount it for the body content.
+// The pending state is KIND-AGNOSTIC: when block is null it renders a generic
+// spinner + command name, or a generic error view on a block-less terminal error.
 //
 // Block contract: the popup reads the block's TYPED getters (block.kind /
-// block.status) — the opaque payload is the kind renderer's business, so the
-// Copy button pulls its answer text from the renderer (copyText), never by
-// reaching into payload.
+// block.status). The opaque payload is the kind renderer's business, so Copy
+// pulls its text from the renderer (copyText), never by reaching into payload.
 
 import { AiBlockRenderer } from '../renderers/ai-block-renderer.js'
 import { rendererStyles } from '../renderers/renderer-style-registry.js'
@@ -22,22 +18,18 @@ import { CommandResultRenderer } from '../renderers/command-result-renderer.js'
 /** @typedef {{ cmd: string, text: string, error?: string }} CommandMeta */
 
 /**
- * Kind → renderer resolution for command-result blocks. Frozen and small; a new
- * command result kind adds one entry here (its PM-free renderer). NOT the
- * PM-coupled NodeViewRegistry — this popup stays out of ProseMirror. AI
- * commands (/btw, /summary, /todo) resolve to AiBlockRenderer; non-AI developer
- * utilities (/uuid, /hash, …) to the honest CommandResultRenderer.
+ * Kind → renderer resolution for command-result blocks. A new command result
+ * kind adds one entry here (its PM-free renderer). NOT the PM-coupled
+ * NodeViewRegistry — this popup stays out of ProseMirror.
  * @type {Readonly<Record<string, typeof AiBlockRenderer | typeof CommandResultRenderer>>}
  */
 const COMMAND_RENDERERS = Object.freeze({ 'ai-block': AiBlockRenderer, 'command-result': CommandResultRenderer })
 
 export class CommandPopup {
-  // Sibling stylesheet carriage — the component-owns-its-styles pattern the
-  // block renderers established, via the same register-once registry.
   static styles = commandPopupStyles
 
   // One command popup visible at a time: opening hides any other, and Escape
-  // closes only the top-of-stack. A static registry (not a window.* bus).
+  // closes only the top-of-stack.
   /** @type {CommandPopup[]} */ static #openStack = []
   static #top() { return CommandPopup.#openStack[CommandPopup.#openStack.length - 1] || null }
 
@@ -131,11 +123,10 @@ export class CommandPopup {
     }
 
     // CAPTURE phase (third arg true): document-level capture runs BEFORE any
-    // target-phase handler, so when a popup is on top of the stack, Escape is
-    // consumed here (stopImmediatePropagation) before the Ask-panel textarea's
-    // own keydown handler can fire #dismiss() and silently unpin the panel.
-    // Precedent: command-hint-popover.js. removeEventListener MUST pass the same
-    // capture flag or it silently no-ops.
+    // target-phase handler, so Escape is consumed here (stopImmediatePropagation)
+    // before the Ask-panel textarea's own keydown handler can fire #dismiss() and
+    // silently unpin the panel. removeEventListener MUST pass the same capture
+    // flag or it silently no-ops.
     document.addEventListener('keydown', onKey, true)
     document.addEventListener('click', onClick)
     this.#unlisten = [
@@ -168,8 +159,6 @@ export class CommandPopup {
   #renderBody() {
     if (!this.#bodyEl) return
 
-    // No block yet: a block-less terminal error → generic error view; else the
-    // generic pending view (spinner + command name).
     if (!this.#block) {
       this.#renderer = null
       if (this.#meta.error) this.#renderStatus(true, '⚠', 'Command failed', this.#meta.error)
@@ -177,7 +166,6 @@ export class CommandPopup {
       return
     }
 
-    // Resolve the kind's renderer; an unknown kind gets a safe generic view.
     const RendererClass = COMMAND_RENDERERS[this.#block.kind]
     if (!RendererClass) {
       this.#renderer = null
@@ -196,8 +184,7 @@ export class CommandPopup {
   }
 
   /**
-   * Generic status view (pending spinner OR terminal error/unsupported): a
-   * centred icon-or-spinner + a label + an optional detail line.
+   * Generic status view (pending spinner OR terminal error/unsupported).
    * @param {boolean} isError @param {string|null} icon @param {string} label @param {string} [detail]
    */
   #renderStatus(isError, icon, label, detail) {
@@ -233,10 +220,8 @@ export class CommandPopup {
   }
 
   /**
-   * The answer text to copy — pulled from the kind renderer's copyText()
-   * accessor (a command result yields its raw `primary` value; other kinds fall
-   * back to their markdown body). Empty when no renderer is mounted (pending /
-   * generic view).
+   * The answer text to copy, pulled from the kind renderer's copyText()
+   * accessor. Empty when no renderer is mounted (pending / generic view).
    * @returns {string}
    */
   #answerText() {
@@ -263,9 +248,8 @@ export class CommandPopup {
   }
 
   /**
-   * Copy micro-feedback: flashes the button green + "Copied ✓" for 1.2s, then
-   * restores it. The scrimless popup has no toast channel, so the button is
-   * the confirmation surface.
+   * Copy micro-feedback: flashes the button for 1.2s. The scrimless popup has no
+   * toast channel, so the button is the confirmation surface.
    * @param {HTMLButtonElement} btn
    */
   #flashCopied(btn) {

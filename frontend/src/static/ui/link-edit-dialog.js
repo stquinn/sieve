@@ -1,22 +1,11 @@
 // @ts-check
-// link-edit-dialog.js — THE modal for editing a hyperlink's URL and display
-// title. One <dialog>, one class, every caller.
+// THE modal for editing a hyperlink's URL and display title. One <dialog>, one
+// class, every caller. Nothing in it speaks ProseMirror, block attrs or the wire: it
+// collects two strings and hands them back.
 //
-// WHY IT LIVES IN ui/ AND NOT IN A NODE-VIEW. It started life inside
-// smart-card-node-view.js, which made it look like a smart-card concern; it
-// never was. Nothing in it speaks ProseMirror, block attrs or the wire — it
-// collects two strings and hands them back. It now has two consumers that share
-// nothing but that shape:
-//   • the smart-card NodeView (`sieve:smart-card-edit`) → renderer.setLink()
-//   • a prose `link` mark (ProseLink.edit — Mod+K and the context menu) → a
-//     tracked PM transaction
-// A UI surface shared across kinds belongs beside ui/media-lightbox.js (the
-// same shape: a class + a lazy singleton + one thin verb), not inside either
-// consumer. #67.
-//
-// The caller supplies the SAVE behaviour (`onSave`); the dialog owns only the
-// DOM, the Enter/Escape wiring, and the "blank title falls back to the URL"
-// rule. It never touches a document.
+// The caller supplies the SAVE behaviour (`onSave`); the dialog owns only the DOM,
+// the Enter/Escape wiring, and the "blank title falls back to the URL" rule. It
+// never touches a document.
 
 /**
  * @typedef {object} LinkEditSpec
@@ -72,8 +61,7 @@ export class LinkEditDialog {
   }
 
   /**
-   * Lazily builds the <dialog> on first open (no DOM in the constructor —
-   * vitest-safe, matching InsertDialogs).
+   * Lazily builds the <dialog> on first open — no DOM in the constructor.
    * @returns {HTMLDialogElement|null}
    */
   #ensure() {
@@ -128,7 +116,6 @@ export class LinkEditDialog {
     return dlg
   }
 
-  /** Validates, applies the blank-title fallback, hands over, closes. */
   #save() {
     if (!this.#hrefInput || !this.#labelInput) return
     const href = this.#hrefInput.value.trim()
@@ -141,8 +128,7 @@ export class LinkEditDialog {
 }
 
 /**
- * Opens THE shared link dialog — the one-line call site every consumer uses
- * (mirrors media-lightbox.js's `expandBlock`).
+ * Opens THE shared link dialog — the one-line call site every consumer uses.
  * @param {LinkEditSpec} spec
  */
 export function openLinkEditor(spec) { LinkEditDialog.shared().open(spec) }

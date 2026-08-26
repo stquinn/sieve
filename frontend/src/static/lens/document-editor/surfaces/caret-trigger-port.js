@@ -1,15 +1,7 @@
 // @ts-check
-// caret-trigger-port.js — CaretTriggerPort: what a live ProseMirror caret can
-// answer for the `@` picker hosted in the document (#38).
-//
-// This is the PM half of shell's `ProseMirrorHost`: lens/surfaces/ is THE PM
-// package and nothing PM crosses out of it — what leaves here is a rect, a
-// string, an offset.
-//
-// SelectionModel is deliberately NOT the source for any of it. It is a DOCUMENT
-// coordinate and never a PM node, so it can say which block the caret is in but
-// not where that is in pixels, nor what text surrounds it. Both come from the
-// view.
+// What a live ProseMirror caret can answer for the `@` picker hosted in the
+// document — the PM half of shell's `ProseMirrorHost`. Nothing PM crosses out of
+// it: what leaves here is a rect, a string, an offset.
 
 import { T } from './tiptap-vendor.js'
 import { triggersSuppressed } from '../interaction-policy.js'
@@ -42,9 +34,8 @@ export class CaretTriggerPort {
    * means there is nothing here to scan.
    *
    * The last guard is why `@Override` inside a code or diagram block never arms
-   * the picker, and it is ASKED of `interaction-policy.js` rather than decided
-   * here: judging eligibility would be a second declaration mechanism beside
-   * `interactionPolicy`.
+   * the picker. Eligibility is ASKED of `interaction-policy.js`, never decided
+   * here.
    * @returns {{text: string, caret: number}|null}
    */
   caretText() {
@@ -59,10 +50,9 @@ export class CaretTriggerPort {
   }
 
   /**
-   * The caret in viewport pixels. Null (the host falls back to the editor's own
-   * box) when the view cannot answer: `coordsAtPos` THROWS for a position it has
-   * no DOM for, which happens mid-teardown and inside a detached node view, and
-   * a picker is never worth an exception.
+   * The caret in viewport pixels, or null when the view cannot answer — the host
+   * then falls back to the editor's own box. `coordsAtPos` THROWS for a position
+   * it has no DOM for, which happens mid-teardown and inside a detached node view.
    * @returns {DOMRect|null}
    */
   caretRect() {
@@ -101,17 +91,13 @@ export class CaretTriggerPort {
   }
 
   /**
-   * ACCEPTANCE, THE DOCUMENT VERSION: the token goes and a block takes its place.
+   * Acceptance in the document: the token goes and a block takes its place.
    *
    * The FLUSH is load-bearing — Go's shadow must hold the token deletion before
    * the create arrives on the same socket. The create itself is the editor's,
-   * because it owns the id→index math and renders the server's authoritative
-   * node back at the server's index; nothing here computes a document position.
-   *
-   * The anchor argument is OMITTED deliberately: the caret is left where the
-   * token was, so the standard placement rule (consume an empty paragraph, else
-   * the next line) already lands the block correctly, and passing an index would
-   * take that math off its one owner.
+   * which owns the id→index math; nothing here computes a document position, and
+   * the anchor argument is omitted deliberately so the standard placement rule
+   * (consume an empty paragraph, else the next line) applies.
    * @param {number} start @param {number} end
    * @param {string} kind @param {Record<string, any>} attrs
    */
@@ -122,9 +108,8 @@ export class CaretTriggerPort {
   }
 
   /**
-   * DOC CHANGES ONLY — a caret MOVE must not arm the picker. Clicking into an
-   * `@` written months ago and having a picker open on it is an ambush, and a
-   * document is full of legitimate `@`s.
+   * DOC CHANGES ONLY — a caret MOVE must not arm the picker, or clicking into an
+   * `@` written months ago ambushes the user with one.
    * @param {() => void} fn @returns {() => void}
    */
   onDocChange(fn) {

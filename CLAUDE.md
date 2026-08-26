@@ -155,9 +155,21 @@ declarations now generate.
   reasonable; the accumulation leaves a file arguing with a reviewer instead of
   telling a caller what to do.
 
-  The test: **would a competent reader get this WRONG without it?** Never instruct
-  anyone — human or agent — to "match the surrounding comment density"; that
-  propagates the worst example nearby. Full rule + worked example:
+  The test: **would a competent reader get this WRONG without it?** If the answer
+  is no, the comment does not exist in a shorter form — **delete the block, do not
+  shorten it.** Rewriting prose more tersely while keeping every block is the
+  failure mode that made #104 necessary; it recovers about half of what deleting
+  does. Never instruct anyone — human or agent — to "match the surrounding comment
+  density"; that propagates the worst example nearby.
+
+  **Measure prose against code, never total comment against code.** Tags
+  (`@param`, `@type`, `@typedef`) and their `/** */` scaffolding are structural and
+  load-bearing under `// @ts-check` — a types-only file such as `contract/` reads
+  90% comment and is correct. Only prose is discretionary. Never delete a tag to
+  move a percentage.
+
+  Full rule, worked example, and how to run a pass safely (including the
+  three-way mechanical verification a comment-only change must pass):
   `docs/how-to-idiomatic-js.md` §8 (language-neutral, applies to Go too).
 
 - **Tests live with the type they exercise.** A test that touches a type's internals (`Attrs`, unexported methods, the mutex) is white-box and belongs **in that type's package**. Cross-package tests use the public method API only — never add a construction seam to poke across a package boundary. Editor-mechanic tests use a **FakeBlock**; only prose-*specific* tests need the real `ProseProcessor` (which lives in `block/processors/`).

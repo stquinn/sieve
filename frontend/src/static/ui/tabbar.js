@@ -30,11 +30,8 @@
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/plain', dragFromIdx.toString());
       
-      // Use the tab itself as the drag image but slightly translucent
-      // The browser does this by default if we don't set a drag image,
-      // but we want it to look "pleasant".
-      // Let's use the default but make sure it's not "huge" (browser usually takes the closest relative container)
-      // If we want it to be exactly the tab, we can clone it.
+      // The tab itself as the drag image, cloned so the browser does not pick up
+      // the nearest relative container, and made translucent.
       const ghost = tab.cloneNode(true);
       ghost.style.width = tab.offsetWidth + 'px';
       ghost.style.opacity = '0.8';
@@ -75,17 +72,15 @@
       e.preventDefault();
       clearIndicators();
       dragToPos = area.querySelectorAll('[data-tab-idx]').length;
-      // Optionally highlight the spacer or the last tab's right side
       const lastTab = area.querySelector('[data-tab-idx]:last-child');
       if (lastTab) lastTab.classList.add('tab-drop-indicator-right');
     }
   });
 
   document.addEventListener('dragleave', e => {
-    // Only clear if we are leaving a tab
     if (e.target.closest('[data-tab-idx]')) {
-      // We don't clear here because dragover will immediately re-apply it on the next tab
-      // But we can clear if we leave the tabs-area entirely
+      // dragover re-applies the indicator on the next tab immediately, so clear
+      // only when the pointer leaves the tab bar entirely.
       if (!e.relatedTarget || !e.relatedTarget.closest('#tabs-bar')) {
         clearIndicators();
       }

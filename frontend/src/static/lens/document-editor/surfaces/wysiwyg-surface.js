@@ -1,43 +1,18 @@
 // @ts-check
-// wysiwyg-surface.js — the TipTap WYSIWYG input surface (P2.B).
+// The TipTap WYSIWYG input surface: the TipTap island, the block-to-node render
+// pipeline, and the placement of whatever the container tells it changed.
 //
-// It owns the TipTap island (construction, the block-sync cache + thin observer,
-// flushPending), the block→node render pipeline, and the placement of whatever
-// the container tells it changed.
+// INBOUND IS ONE CUE. The surface does not receive server ops; it is told the
+// container changed and re-reads the blocks it names from the follower model.
 //
-// INBOUND IS ONE CUE (issue #96). The surface does not receive server ops; it is
-// told the container changed and re-reads the blocks it names from the follower
-// model. Every origin — this lens's own verb, another lens, a finished job, the
-// watcher — arrives the same way, so there is ONE placement path rather than one
-// per message type.
-//
-// UNDO HISTORY IS SACRED (CLAUDE.md Non-Obvious Rules): the placement logic is
-// verbatim — an arrival lands as a TRACKED transaction (insertContentAt at
-// docPosForBlockIndex of the block's container index / replace-by-block-id),
-// while a change nobody in this editor made (attrs, a departure, a reorder) is
-// addToHistory:false so it never displaces the user's own undo. Prose the editor
-// already holds is skipped — the lens owns its own text. Scroll-to-new is
-// universal. No whole repaint is ever used for a change; only for a LOAD.
-//
-// Normalization applied during motion (behavior-identical): VENDOR names go
-// through the `T` vendor-bag import (lens/surfaces/tiptap-vendor.js);
-// every APP helper is a direct ES import from its owning module (P4.E bus
-// retirement). The module vars the old code wrote (currentEditor, docUpdateTimer,
-// docSyncFlush, blockContentCache seams) are #private state; `window.__tiptap` is
-// still set/nulled on mount/unmount for its remaining consumers (P4 migrates them).
-//
-// Dual-use ES module: `export` for vitest; `window.SieveWysiwygSurface` for the
-// classic-script editor.js factory.
+// UNDO HISTORY IS SACRED (CLAUDE.md). An arrival or replacement lands as a
+// TRACKED transaction; a change nobody in this editor made — attrs, a departure,
+// a reorder — is addToHistory:false. Prose the editor already holds is skipped.
+// A whole repaint is only ever used for a LOAD, never for a change.
 
 import { AbstractSurface, SurfaceEvent } from './abstract-surface.js'
 import { EditorMode } from '../editor-mode.js'
 import { ToolbarButton, ButtonGroup } from '../toolbar-button.js'
-// P4.E: the app helpers the surface used to read off the shared TipTap bus are now
-// direct ES imports from their OWNING modules (the bus is retired). Only genuine
-// VENDOR names (Editor/Node/StarterKit/Table*/Placeholder/Image/Markdown/
-// Extension/Plugin/Decoration(Set)/ProseMirrorDOMParser/…) still ride `#T` (the
-// injected vendor bundle). The dead legacy ai-block extension entry (never
-// published → always undefined) was removed in P4.E with Stephen's sign-off.
 import { T } from './tiptap-vendor.js'
 import { BlockId } from './prose-block.js'
 import { ProseGroup, proseBlockNodes } from './prose-group.js'
@@ -46,8 +21,6 @@ import { BlockChrome, getBlockSelectionRange } from '../block-chrome.js'
 import { AiTargetDecoration } from './ai-target-decoration.js'
 import { Search, SelectionHighlight, HighlightMark, AiShortcuts } from '../../extensions.js'
 import { policyEnterKeydown, buildInteractionPolicyExtension } from '../interaction-policy.js'
-// The `@` picker, hosted HERE (#38) but OWNED by shell — one picker for the
-// whole app. This surface contributes only a port onto a live ProseMirror caret.
 import { TriggerPopover } from '../../../shell/trigger-popover.js'
 import { MentionProvider } from '../../../shell/trigger-providers.js'
 import { ProseMirrorHost, CaretPlacement } from '../../../shell/trigger-host.js'
@@ -66,11 +39,6 @@ import { caretInRawTextBlock } from '../paste-context.js'
 import { CaretTriggerPort } from './caret-trigger-port.js'
 import { resolveImageSrc, storeFileSrc, storeFileRef } from '../../../renderers/asset-urls.js'
 
-// The formatting command spec (P4.D): each entry is one ToolbarButton the WYSIWYG
-// surface contributes to the editor toolbar. `icon` is a SieveIcons key; `cmd`
-// runs on the surface's OWN #editorPane (the retired handleToolbarClick data-cmd
-// switch — chain().focus().<cmd>().run()); `active` mirrors the retired syncToolbar
-// isActive map. File-private frozen DATA (docs/how-to-idiomatic-js.md).
 const FORMATTING_GROUPS = Object.freeze([
   Object.freeze([
     Object.freeze({ icon: 'bold', title: 'Bold', cmd: (c) => c.toggleBold(), active: ['bold'] }),
@@ -95,31 +63,20 @@ const FORMATTING_GROUPS = Object.freeze([
   ]),
 ])
 
-// LINK_OPTIONS — the StarterKit `link` configuration (issue #67). A link is
-// ORDINARY MARKDOWN, not a Sieve block (see
-// docs/design/archive/specs/2026-07-27-inline-block-removal-links-decision.md), so the
-// `link` MARK must exist in the schema: without it PM drops <a> on parse and the
-// href is destroyed on the first load — the "links disappear" symptom #67
-// reports. Every flag below is load-bearing:
-//   openOnClick:false — this is a Wails WebKit webview; letting an anchor
-//     navigate replaces the running application. Opening is EXPLICIT: Mod+Click,
-//     owned APP-GLOBALLY by shell/workspace.js's document capture listener (NOT by
-//     this surface — see the note at handleDOMEvents), which hands the href to
-//     window.runtime.BrowserOpenURL.
-//   linkOnPaste:false / autolink:false — GO owns paste (the smart-paste
-//     round-trip resolves a URL to `[Title](url)` server-side). TipTap must not
-//     race it by minting its own marks from pasted or typed text.
-//   HTMLAttributes — these seed the MARK's attribute defaults (Link's
-//     addAttributes reads options.HTMLAttributes), so nulling target/rel drops
-//     the extension's default target="_blank" rel="noopener…": a new-window
-//     request is meaningless-to-hazardous in a webview, and opening is Mod+Click's
-//     job. `class` is what editor.css styles; scoping the CSS to it keeps a block
-//     renderer's own anchors out of prose-link styling. NOTE there is deliberately
-//     no `title` hint here — `title` is a genuine Link mark ATTRIBUTE (markdown's
-//     `[text](url "title")`), so a value set here is overwritten by the mark's own
-//     null on every render. The affordance is the colour/underline/pointer cursor.
-// File-private frozen DATA (docs/how-to-idiomatic-js.md §3); exported so the
-// round-trip test pins the SHIPPING config, not a copy of it.
+// The StarterKit `link` configuration. A link is ORDINARY MARKDOWN, not a Sieve
+// block, so the `link` MARK must exist in the schema: without it PM drops <a> on
+// parse and the href is destroyed on the first load. Every flag is load-bearing:
+//   openOnClick:false — in a Wails webview an anchor that navigates replaces the
+//     running application. Opening is Mod+Click, owned app-globally by
+//     shell/workspace.js's document capture listener.
+//   linkOnPaste:false / autolink:false — GO owns paste, and TipTap must not race
+//     it by minting its own marks from pasted or typed text.
+//   HTMLAttributes — seeds the MARK's attribute defaults, so nulling target/rel
+//     drops the default target="_blank": a new-window request is
+//     meaningless-to-hazardous in a webview. There is deliberately no `title`
+//     hint, because `title` is a genuine Link mark ATTRIBUTE and a value set
+//     here is overwritten by the mark's own null on every render.
+// Exported so the round-trip test pins the SHIPPING config, not a copy.
 export const LINK_OPTIONS = Object.freeze({
   openOnClick: false,
   linkOnPaste: false,
@@ -127,10 +84,6 @@ export const LINK_OPTIONS = Object.freeze({
   HTMLAttributes: Object.freeze({ class: 'prose-link', target: null, rel: null }),
 })
 
-// Human labels for native unit node types, so the Ask panel header ("Ask About
-// <label>") reads naturally (not "Ask About BulletList"). File-private frozen
-// DATA (docs/how-to-idiomatic-js.md — a shared value, not behaviour), read by
-// #labelFor. Owned by the surface since P3.F folded selection-descriptor.js in.
 const NATIVE_UNIT_LABEL = Object.freeze({
   blockquote: 'Quote', codeBlock: 'Code Block',
   bulletList: 'List', orderedList: 'List', taskList: 'Task List',
@@ -145,17 +98,8 @@ export class WysiwygSurface extends AbstractSurface {
   /** @type {string} */
   #uuid
 
-  /**
-   * The parent editor (`host`) — the surface calls its public API directly:
-   * onSurfaceEvent (outbound editor-domain events), flushSave (the PM-internal
-   * Mod+S — caret-contextual, runs pre-core in editorProps handleKeyDown per
-   * docs/editor-interaction-contract.md), and the insert-ANCHOR math
-   * (insertAnchorForBlock / peekInsertAnchor* / consumeInsertAnchor) the
-   * surface's OWN #handleSmartPaste/Drop need. Block-domain intents leave through
-   * the host's `provider` — the container facade, and the only outbound surface
-   * there is. Nothing app-level: no chrome names, no AI concepts, no transport.
-   * @type {AbstractEditor}
-   */
+  /** @type {AbstractEditor} the parent editor, whose public API this calls
+   *  directly. Block-domain intents leave through its `provider`. */
   #host
 
   /** @type {any} the TipTap vendor bundle */
@@ -167,74 +111,46 @@ export class WysiwygSurface extends AbstractSurface {
   /** @type {any} the live TipTap Editor instance */
   #editorPane = null
 
-  /**
-   * Per-mount block-sync cache: { [blockId]: serializedContent } as of the last
-   * successful sync. The thin observer (Stage D.3) diffs against it.
-   * @type {Record<string, string>|null}
-   */
+  /** @type {Record<string, string>|null} per-mount block-sync cache
+   *  ({ [blockId]: serializedContent }) the thin observer diffs against */
   #blockContentCache = null
 
-  /**
-   * Per-mount block-ORDER baseline: the top-level block ids as of the last
-   * reported sync (#94). Separate from #blockContentCache because a block's
-   * signature is deliberately positionless — order is its own fact.
-   * @type {string[]|null}
-   */
+  /** @type {string[]|null} per-mount block-ORDER baseline. Separate from
+   *  #blockContentCache because a block's signature is deliberately
+   *  positionless — order is its own fact. */
   #blockOrderCache = null
 
-  /** @type {ReturnType<typeof setTimeout>|null} 500ms observer debounce (formerly module docUpdateTimer) */
+  /** @type {ReturnType<typeof setTimeout>|null} 500ms observer debounce */
   #syncTimer = null
 
-  /**
-   * Whether this surface has painted the container yet. The FIRST cue after a
-   * mount is the bootstrap one — it names the whole container, and there is no
-   * undo history to protect — so it paints everything; every cue after it is a
-   * delta and places only what it names.
-   * @type {boolean}
-   */
+  /** @type {boolean} whether this surface has painted yet. The FIRST cue after a
+   *  mount names the whole container and has no undo history to protect, so it
+   *  paints everything; every later cue is a delta. */
   #painted = false
 
-  /**
-   * Suppresses the observer while the FRAMEWORK writes the server's own truth
-   * into the doc (the bootstrap paint, a reload). Without it a load reports as a
-   * user edit: the document goes dirty on open and syncs back what it was just
-   * given.
-   * @type {boolean}
-   */
+  /** @type {boolean} suppresses the observer while the FRAMEWORK writes the
+   *  server's own truth into the doc. Without it a load reports as a user edit:
+   *  the document goes dirty on open and syncs back what it was given. */
   #suppressUpdate = false
 
-  /**
-   * The document-level `selectionchange` handler (P3.B). Read-only-region
-   * highlights (contentEditable=false: ai-block title, log Explore table) do NOT
-   * fire PM's onSelectionUpdate, so the model would never hear them. This feeds
-   * the SAME path (host.onSurfaceEvent → editor #feedSelectionModel → feedSelection).
-   * Stored so unmount removes it — no leak across remounts.
-   * @type {(() => void)|null}
-   */
+  /** @type {(() => void)|null} the document-level `selectionchange` handler.
+   *  Read-only-region highlights do NOT fire PM's onSelectionUpdate, so the model
+   *  would never hear them. Stored so unmount removes it. */
   #onDocSelectionChange = null
 
-  /**
-   * The scrollable ancestor #htmx-editor — the shell's persistent editor
-   * scroller (CLAUDE.md verified fact, issue #51), NOT this surface's own root
-   * (#tiptap-mount is a flex child with no overflow of its own). Resolved at
-   * mount time; null once unmounted.
-   * @type {HTMLElement|null}
-   */
+  /** @type {HTMLElement|null} the scrollable ancestor #htmx-editor, NOT this
+   *  surface's own root — #tiptap-mount is a flex child with no overflow. */
   #scroller = null
 
   /** @type {(() => void)|null} the scroller's debounced 'scroll' handler — stored so unmount removes it */
   #onScroll = null
 
-  /** @type {ReturnType<typeof setTimeout>|null} scroll-report debounce (issue #51) */
+  /** @type {ReturnType<typeof setTimeout>|null} scroll-report debounce */
   #scrollTimer = null
 
-  /**
-   * The `@` picker hosted in this document (#38) — the SAME TriggerPopover the
-   * Ask panel runs, over a ProseMirrorHost and a caret-anchored placement. Null
-   * when the editor was built without a MentionService (bare / vitest mounts):
-   * the picker is an affordance, never a requirement to edit.
-   * @type {TriggerPopover|null}
-   */
+  /** @type {TriggerPopover|null} the `@` picker hosted in this document. Null
+   *  when the editor was built without a MentionService: the picker is an
+   *  affordance, never a requirement to edit. */
   #triggerPicker = null
 
   /**
@@ -256,9 +172,7 @@ export class WysiwygSurface extends AbstractSurface {
   get editorPane() { return this.#editorPane }
 
   /**
-   * @override — chars/lines from the PM doc's textContent, blockCount from its
-   * top-level childCount. Keeps ALL TipTap access surface-private (P4.D). Guards a
-   * partial/absent view (mid-construction) → falls back to the line count.
+   * @override
    * @returns {{ chars: number, lines: number, blockCount: number }}
    */
   stats() {
@@ -268,15 +182,6 @@ export class WysiwygSurface extends AbstractSurface {
     const blockCount = (ed && ed.state && ed.state.doc) ? ed.state.doc.childCount : lines
     return { chars: text.length, lines, blockCount }
   }
-
-  // ── Document search (D-3: runs the Search extension on this surface's #editorPane) ──
-  //
-  // The SearchOverlay drives the editor's search verbs; the editor delegates here.
-  // These are the exact command bodies that used to live behind SearchOverlay's
-  // ed.editorPane reach — now surface-private, on this surface's OWN #editorPane (the
-  // Search extension + its `storage.search` match set live there). searchTerm /
-  // searchNext / searchPrev return the current match stats; clearSearch clears the
-  // highlight and returns focus to the editing view (the overlay's close gesture).
 
   /**
    * @override
@@ -315,11 +220,9 @@ export class WysiwygSurface extends AbstractSurface {
     return false
   }
 
-  /**
-   * Current match stats from the Search extension storage, or null when it has no
-   * results yet. `current` is 1-based when there are matches, 0 otherwise.
-   * @param {any} ed @returns {{current:number,total:number}|null}
-   */
+  /** Current match stats from the Search extension storage, or null when it has
+   *  no results yet. `current` is 1-based when there are matches, 0 otherwise.
+   *  @param {any} ed @returns {{current:number,total:number}|null} */
   #searchStats(ed) {
     const s = ed.storage && ed.storage.search
     if (!s || !s.results) return null
@@ -327,11 +230,6 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /**
-   * The WYSIWYG formatting button groups for the editor toolbar (P4.D). Each
-   * button's onClick runs its command on this surface's OWN #editorPane
-   * (chain().focus().<cmd>().run() — no window.__tiptap, no editor hop), and its
-   * `active` closure reads this.#editorPane.isActive(...) (the retired syncToolbar
-   * map, now per-button). Icons come from window.SieveIcons (verbatim bus).
    * @returns {ButtonGroup[]}
    */
   toolbarContents() {
@@ -344,8 +242,6 @@ export class WysiwygSurface extends AbstractSurface {
       active: spec.active ? () => { const ed = self.#editorPane; return !!(ed && ed.isActive.apply(ed, spec.active)) } : undefined,
     }))))
   }
-
-  // ── Mount: the TipTap island (verbatim mountWysiwyg) ───────────────────────────
 
   /**
    * @param {HTMLElement} rootEl
@@ -360,14 +256,10 @@ export class WysiwygSurface extends AbstractSurface {
     this.#rootEl = rootEl
     this.#painted = false
 
-    // Node-granular (2026-06-19): the doc top level holds NATIVE block nodes
-    // (paragraph/heading/list/table/blockquote/…, group "block") AND structured
-    // sieve blocks (group "sieveBlock") as siblings — a prose block IS one native
-    // top-level node, not a custom container. The retired `sieveBlock+` schema
-    // (+ its per-keystroke wrapper / minter / trailing-surface plugin) is gone;
-    // PM owns node creation/splitting/merging natively. Identity rides on each
-    // native node's `id` attr (BlockId, addGlobalAttributes); minting is
-    // a passive observe-time concern (D-r.4), never a doc mutation here.
+    // The doc top level holds NATIVE block nodes and structured sieve blocks as
+    // siblings: a prose block IS one native top-level node, not a custom
+    // container, and PM owns node creation/splitting/merging natively. Identity
+    // rides on each native node's `id` attr.
     var SieveDocument = T.Node.create({ name: 'doc', topNode: true, content: '(block | sieveBlock)+' })
 
     var editorPane = new T.Editor({
@@ -375,10 +267,8 @@ export class WysiwygSurface extends AbstractSurface {
       extensions: [
         SieveDocument,
         BlockId,
-        // trailingNode:true — caret contract clause 1 (no dead-ends): a
-        // paragraph is guaranteed after a final structured block. The earlier
-        // Gapcursor-only bet failed for non-atom read-only containers
-        // (web-clip/ai-block) — see docs/editor-interaction-contract.md.
+        // trailingNode:true — caret contract clause 1 (no dead-ends). A
+        // Gapcursor-only bet fails for non-atom read-only containers.
         T.StarterKit.configure({ document: false, link: LINK_OPTIONS, codeBlock: false, trailingNode: true, history: { depth: 10000, newGroupDelay: 500 } }),
         T.Placeholder.configure({ placeholder: function (p) { return p.editor.isEmpty ? 'Start writing…' : '' } }),
         BlockChrome,
@@ -388,18 +278,15 @@ export class WysiwygSurface extends AbstractSurface {
         T.TableHeader,
         T.TableCell,
         Search,
-        // Shared keyboard policy (priority 50 — runs AFTER native keymaps like
-        // list indent and table cell-nav; docs/editor-interaction-contract.md).
-        // Per-renderer key handlers are forbidden; kinds declare interactionPolicy.
+        // Priority 50, so it runs AFTER native keymaps like list indent and
+        // table cell-nav. Per-renderer key handlers are forbidden.
         buildInteractionPolicyExtension(T),
 
-        // An ordinary markdown image may name a file by its path within the
-        // store (`![](diagrams/flow.png)`). The browser would resolve that
-        // against the app shell, so the src is pointed at the store's route on
-        // the way OUT to the DOM and read back to its relative form on the way
-        // IN from parsed HTML. Both halves are attribute-level on purpose: the
-        // node's attrs — which is what tiptap-markdown serialises — keep the
-        // path the document was written with, so rendering never rewrites disk.
+    // An ordinary markdown image may name a file by its path within the store.
+    // The browser would resolve that against the app shell, so the src is pointed
+    // at the store's route on the way OUT and read back on the way IN. Both halves
+    // are attribute-level on purpose: the node's attrs — what tiptap-markdown
+    // serialises — keep the path the document was written with.
         T.Image.extend({
           addAttributes: function () {
             var parent = this.parent ? this.parent() : {}
@@ -447,40 +334,25 @@ export class WysiwygSurface extends AbstractSurface {
        .concat(getSieveNodes()).concat([
         T.TaskList,
         T.TaskItem.configure({ nested: true }),
-        // NOTE: no `link` option here — tiptap-markdown has none (its addOptions
-        // is html/tightLists/bulletListMarker/linkify/breaks/transform*), so the
-        // one that used to sit here was inert. Link behaviour is LINK_OPTIONS on
-        // StarterKit above. tiptap-markdown's own `link` MARK extension supplies
-        // the serializer, so a link mark round-trips to `[text](url)` unaided;
-        // `linkify` stays at its default false so a bare URL in markdown is NOT
-        // silently turned into a link on load (Go decides what becomes a link).
+        // No `link` option: tiptap-markdown has none, so one would be inert.
+        // `linkify` stays false so a bare URL is NOT silently turned into a link
+        // on load — Go decides that.
         T.Markdown.configure({ html: true, transformPastedText: true }),
         AiShortcuts.configure({
-          // EXPLAIN (Mod+E) stays a caret-contextual editor chord; it fires the
-          // transitional event the Ask panel consumes. ASK (Mod+Shift+A) LEFT the
-          // editor keymap in P4.E (D-5) — the Ask panel's document listener owns it.
+          // ASK (Mod+Shift+A) is owned by the Ask panel's document listener.
           onExplain: function () { document.dispatchEvent(new CustomEvent('sieve:ai-explain')) },
         }),
       ]),
-      // Seed one empty native paragraph — the default editing surface of a new
-      // doc. renderBlocksIntoEditor replaces it for a non-empty doc; an empty doc
-      // keeps this typeable paragraph (a prose block; its id is minted on
-      // first sync, D-r.4). A native <p> is a valid top-level node under the new
-      // (block | sieveBlock)+ schema, so no custom container is needed.
+      // Seed one empty native paragraph. renderBlocksIntoEditor replaces it for a
+      // non-empty doc; an empty doc keeps this typeable paragraph.
       content: '<p></p>',
       editorProps: {
         attributes: { spellcheck: 'true' },
         handleDOMEvents: {
           copy: function(view, event) {
-            // Copy is delegated to ProseMirror now that sieve blocks are real PM nodes.
-            // text/plain + text/html are whatever PM produces. This handler only steps
-            // in for the two things PM can't express:
-            //   (1) smart-image → copy the actual bitmap, and
-            //   (2) a WHOLE-block copy (single sieve NodeSelection or a gutter
-            //       block-range) → ADD sieve/slice + sieve/<kind> so smart paste can
-            //       rebuild the proper kind. We mirror PM's text/plain (the block's
-            //       serialisedForm) and provide a richer text/html from the rendered DOM.
-            // Sub-text highlights, bare cursors, and prose all fall through to native.
+            // Copy is PM's. This handler steps in only for what PM cannot
+            // express: a smart-image bitmap, and a WHOLE-block copy, which adds
+            // sieve/slice + sieve/<kind> so smart paste can rebuild the kind.
             var sel = view.state.selection
 
             // (1) Smart-image bitmap.
@@ -491,8 +363,6 @@ export class WysiwygSurface extends AbstractSurface {
               return true
             }
 
-            // Range covered by the selection (a gutter block-range, a NodeSelection,
-            // or a text range) — drives which blocks the loop below visits.
             var er = (T && getBlockSelectionRange)
               ? getBlockSelectionRange(view)
               : { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false }
@@ -505,8 +375,6 @@ export class WysiwygSurface extends AbstractSurface {
               return clone.outerHTML
             }
 
-            // selText returns the SELECTED portion of a node's text (so a partial
-            // multi-block selection copies only the highlight).
             var selText = function (nodeFrom, nodeEnd) {
               var a = Math.max(er.from, nodeFrom), b = Math.min(er.to, nodeEnd)
               return b > a ? view.state.doc.textBetween(a, b, '\n') : ''
@@ -514,19 +382,15 @@ export class WysiwygSurface extends AbstractSurface {
             var escHtml = function (s) {
               return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
             }
-            // A block is partially selected when the (non-empty) selection cuts into
-            // it. sieve/slice + sieve/<kind> always carry the WHOLE block (a block is
-            // only meaningful whole); text/plain + text/html follow the selection.
+            // sieve/slice + sieve/<kind> always carry the WHOLE block; only the
+            // text views follow the selection.
             var partial = function (nodeFrom, nodeEnd) {
               return er.to > er.from && (er.from > nodeFrom || er.to < nodeEnd)
             }
 
-            // Native DOM text highlight (once). A block's custom region (the log
-            // Explore table) holds text PM does not own, so a highlight there
-            // leaves PM's selection a whole-block NodeSelection — without this the
-            // rich copy below would grab the ENTIRE block. text/plain + text/html
-            // follow this highlight per-block (via BlockSelection.textInside); the
-            // sieve/slice + sieve/<kind> mimes stay whole-block (only-meaningful-whole).
+            // A block's custom region holds text PM does not own, so a highlight
+            // there leaves PM's selection a whole-block NodeSelection — without
+            // this the rich copy below would grab the ENTIRE block.
             var domSel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null
             var domSelHtml = ''
             if (domSel && !domSel.isCollapsed && domSel.toString().trim()) {
@@ -536,15 +400,9 @@ export class WysiwygSurface extends AbstractSurface {
                 domSelHtml = frag.innerHTML
               } catch (e) {}
 
-              // Re-target `er` when the highlight lives in a block's READ-ONLY
-              // region (the ai-block question title, the log Explore table —
-              // contentEditable=false DOM PM cannot track). There PM's selection
-              // stays on whatever block last held the caret, so the loop below —
-              // driven by `er` — would visit and copy the WRONG (previously
-              // selected) block. BlockSelection.blockRange finds the block the user
-              // actually highlighted and points the loop at it; when PM already
-              // owns the highlighted text (er covers it) it returns null and er is
-              // left untouched.
+              // Re-target `er` when the highlight lives in a READ-ONLY region PM
+              // cannot track: PM's selection stays on whatever block last held
+              // the caret, so the loop below would copy the WRONG block.
               var blockDescs = []
               view.state.doc.forEach(function (node, offset) {
                 if (String(node.type.name).indexOf('sieve-') === 0) {
@@ -563,10 +421,8 @@ export class WysiwygSurface extends AbstractSurface {
             var hasSieve = false
             var singleSieveEntries = null  // the framework ContentEntry array, if exactly one sieve block
 
-            // sieve/slice is [][]ContentEntry — an ordered list of per-block entry
-            // sets (a sequence of "normal pastes"), reconstructed server-side. Each
-            // block contributes its FULL view set (sieve → framework views, prose →
-            // its sieve/prose + text). text/plain + text/html follow the selection.
+            // sieve/slice is [][]ContentEntry, reconstructed server-side. Each
+            // block contributes its FULL view set.
             var proseKind = getBlockKind && getBlockKind('prose')
             view.state.doc.forEach(function (node, offset) {
               var nodeEnd = offset + node.nodeSize
@@ -588,20 +444,16 @@ export class WysiwygSurface extends AbstractSurface {
                 }
                 return null
               }
-              // A native DOM highlight INSIDE this block's custom region (log
-              // Explore table) → text/plain + text/html follow it, even though PM
-              // sees the whole block selected. (sliceItems already holds the full
-              // block above.)
+              // A DOM highlight inside this block's custom region: the text
+              // views follow it even though PM sees the whole block selected.
               var domInBlock = BlockSelection.textInside(domSel, dom)
               if (domInBlock) {
                 plainParts.push(domInBlock)
                 htmlParts.push(domSelHtml || escHtml(domInBlock))
               } else if (partial(offset, nodeEnd)) {
-                // Cut by the PM selection → just the highlighted text.
                 plainParts.push(selText(offset, nodeEnd))
                 htmlParts.push(escHtml(selText(offset, nodeEnd)))
               } else {
-                // Whole block / bare cursor → the block's full text + html views.
                 plainParts.push(pick('text/plain') || node.textContent || (dom ? dom.innerText : ''))
                 htmlParts.push(pick('text/html') || blockHTML(dom))
               }
@@ -609,41 +461,24 @@ export class WysiwygSurface extends AbstractSurface {
 
             if (!hasSieve) return false   // pure prose → native PM copy
 
-            // Every sieve-involving copy is served HERE — never deferred to native
-            // PM copy. A sub-text selection used to fall through to native, but a
-            // slice inside a `defining`/`code` block (code, diagram, log-raw)
-            // re-wraps the WHOLE node, so native copied the entire block. Instead
-            // the loop above already put the SELECTION into text/plain + text/html
-            // (per-block, via the DOM highlight or the PM range) while sieve/slice +
-            // sieve/<kind> carry the whole block — one uniform rule, every kind.
+            // Every sieve-involving copy is served HERE: a slice inside a
+            // `defining`/`code` block re-wraps the WHOLE node, so native copy
+            // takes the entire block.
             event.preventDefault()
             event.clipboardData.setData('text/plain', plainParts.filter(Boolean).join('\n\n'))
             event.clipboardData.setData('text/html', htmlParts.filter(Boolean).join('\n'))
             event.clipboardData.setData('sieve/slice', JSON.stringify(sliceItems))
-            // Single sieve block → also expose every mime in its framework ContentEntry
-            // array (custom views like text/uri-list + the sieve/<kind> view), so a
-            // cross-context paste lands on the same backend matchers as extraction.
+            // Single sieve block: expose every mime in its ContentEntry array
+            // too, so a cross-context paste hits the same backend matchers.
             if (sliceItems.length === 1 && sliceItems[0]._type === 'sieve' && singleSieveEntries) {
               singleSieveEntries.forEach(function (en) { event.clipboardData.setData(en.mimeType, en.content) })
             }
             return true
           },
-          // NOTE — there is deliberately NO `click` handler for Mod+Click link
-          // opening here. Link activation is APP-GLOBAL and lives in
-          // `shell/workspace.js` bootEditorLifecycle(): a document-level
-          // CAPTURE-phase listener that matches any `a[href^=http]` anywhere in the
-          // app and calls preventDefault + stopPropagation + BrowserOpenURL.
-          //
-          // A PM-level handler cannot fire for Mod+Click and is not needed. Verified
-          // in the running app (2026-07-27, #67), CDP-instrumented Ctrl+Click:
-          //   prose link            → BrowserOpenURL fired; this handler ran 0 times
-          //   link inside a NodeView→ BrowserOpenURL fired; this handler ran 0 times
-          //   plain click, contrast → handler ran 1 time (so the probe was live)
-          // The capture runs on `document` before anything on `view.dom`, and its
-          // stopPropagation() means the event never descends to ProseMirror's own
-          // listener. (`stopEvent`'s `a[href]` shield inside NodeViews is a SEPARATE,
-          // still-correct mechanism — it gates PM's processing, not the capture,
-          // which has already run.) See docs/editor-interaction-contract.md.
+          // There is deliberately NO `click` handler for Mod+Click. Link
+          // activation is APP-GLOBAL: shell/workspace.js's document-level CAPTURE
+          // listener runs before anything on `view.dom` and calls
+          // stopPropagation, so a PM-level handler here could never fire.
         },
         handlePaste: function (_view, event) { return self.#handleSmartPaste(event) },
         handleDrop: function (_view, event, slice, moved) { return self.#handleSmartDrop(event, slice, moved) },
@@ -653,20 +488,16 @@ export class WysiwygSurface extends AbstractSurface {
             self.#host.flushSave()
             return true
           }
-          // Enter family routes through the interaction policy FROM HERE
-          // (pre-core: TipTap's core Keymap would otherwise consume Enter in
-          // code:true blocks). Returns false in every context the policy
-          // does not own, so native prose/list/table Enter is untouched.
+          // Enter routes through the interaction policy FROM HERE, pre-core,
+          // because TipTap's core Keymap would otherwise consume Enter in
+          // code:true blocks.
           if (event.key === 'Enter' && policyEnterKeydown &&
               policyEnterKeydown(view, event, self.#host)) {
             return true
           }
-          // Tab/Shift+Tab are owned by the interaction-policy extension
-          // (docs/editor-interaction-contract.md) — never handle them here:
-          // editorProps runs BEFORE extension keymaps and would shadow
-          // list indent and table cell navigation (that was defect #6).
-          // Block-insertion chords (Mod+Shift+W/L/D) are owned by the native
-          // menu (App-Level Chords); the editor no longer binds them.
+          // Tab/Shift+Tab belong to the interaction-policy extension — never
+          // handle them here: editorProps runs BEFORE extension keymaps and would
+          // shadow list indent and table cell navigation.
           return false
         },
       },
@@ -681,18 +512,13 @@ export class WysiwygSurface extends AbstractSurface {
       },
       onUpdate: function (p) {
         if (!initialized || self.#suppressUpdate) return
-        // A body projection (sieve-block-extension's syncMdInto) reaches here as a
-        // real doc change, because it IS one — but it is the framework writing the
-        // server's own body markdown into contentDOM, deferred past the mount's
-        // suppression window, so no user authored it. It reports as DOC_PROJECTED,
-        // which refreshes what measures the doc without dirtying it (#90).
+        // A body projection IS a real doc change, but it is the framework
+        // writing the server's own markdown into contentDOM, so it reports as
+        // DOC_PROJECTED and refreshes measurements without dirtying.
         var tr = p && p.transaction
         var projected = !!(tr && tr.getMeta && tr.getMeta('sieve-md-sync'))
-        // Stage D.3: the thin observer. We no longer serialize the whole document
-        // on every keystroke — onUpdate only reports the change and (re)arms a
-        // debounce. The actual diff + wire send happens once typing settles, in
-        // syncDocument, which emits granular block-ops (id-less nodes are
-        // skipped until minted — no whole-document fallback).
+        // The thin observer only reports the change and (re)arms a debounce; the
+        // diff and wire send happen once typing settles, in syncDocument.
         self.#host.onSurfaceEvent(projected ? SurfaceEvent.DOC_PROJECTED : SurfaceEvent.DOC_CHANGED)
         if (self.#syncTimer) clearTimeout(self.#syncTimer)
         self.#syncTimer = setTimeout(function () {
@@ -703,43 +529,31 @@ export class WysiwygSurface extends AbstractSurface {
     })
 
     this.#editorPane = editorPane
-    // The NodeView→Editor handle (P4.F Brief C): stamp the parent Editor onto the
-    // TipTap pane the surface built, so a block capability (ctx.getEditor) can reach
-    // the Editor's PUBLIC API through the held pane — never the backend directly, and
-    // never a window global. Read lazily by getEditor at capability-fire time.
+    // Stamp the parent Editor onto the pane, so a block capability can reach the
+    // Editor's PUBLIC API — never the backend, never a window global.
     editorPane.sieveHost = this.#host
-    // The mounted container's PROVIDER rides the same stamp as sieveHost — the
-    // NodeView ctx reads it (ctx.provider) for renderer construction, and it is
-    // the whole of what a renderer can reach outward.
+    // The mounted container's PROVIDER rides the same stamp, and is the whole of
+    // what a renderer can reach outward.
     editorPane.blockProvider = this.#host.provider || null
     window.__tiptap = editorPane
 
-    // The document is NOT painted here. The surface mounts holding the empty
-    // paragraph the schema seeds, and the container's bootstrap cue paints it —
-    // the same read-and-place path every later change takes. One painting story,
-    // and no way for an initial render to drift from a repaint.
+    // The document is NOT painted here: the surface mounts holding the schema's
+    // empty paragraph, and the container's bootstrap cue paints it — the same
+    // read-and-place path every later change takes.
     this.#seedBlockCache(editorPane, [])
 
-    // Catch focus events on inner form controls (like Sieve Code block textareas)
-    // where ProseMirror's native onSelectionUpdate won't fire.
+    // Inner form controls, where PM's native onSelectionUpdate will not fire.
     editorPane.view.dom.addEventListener('focusin', function() {
       self.#host.onSurfaceEvent(SurfaceEvent.FOCUS_CHANGED)
     })
 
-    // P3.B: a highlight dragged inside a block's READ-ONLY region (ai-block title,
-    // log Explore table — contentEditable=false) does NOT fire PM's
-    // onSelectionUpdate, so feed the model via the SAME selection-changed path.
-    // The model already coalesces caret-only noise; the read-only-region drags
-    // that matter change range/selectedText, which ARE meaningful — no debounce
-    // added (revisit only if the smoke shows churn).
+    // A highlight inside a READ-ONLY region does not fire onSelectionUpdate, so
+    // feed the model through the SAME selection-changed path.
     this.#onDocSelectionChange = function () { self.#host.onSurfaceEvent(SurfaceEvent.SELECTION_CHANGED) }
     document.addEventListener('selectionchange', this.#onDocSelectionChange)
 
-    // issue #51: debounce-report the shell scroller's position into the
-    // SelectionModel (silent — see SurfaceEvent.SCROLL_CHANGED). #htmx-editor
-    // is the PERSISTENT scroll ancestor (CLAUDE.md verified fact); rootEl
-    // (#tiptap-mount) never scrolls itself. Absent in a bare/test mount — the
-    // surface simply never reports (feedScroll/applyScroll stay no-ops).
+    // #htmx-editor is the PERSISTENT scroll ancestor; rootEl never scrolls
+    // itself. Absent in a bare mount, where the surface simply never reports.
     this.#scroller = document.getElementById('htmx-editor')
     if (this.#scroller) {
       this.#onScroll = function () {
@@ -752,20 +566,13 @@ export class WysiwygSurface extends AbstractSurface {
       this.#scroller.addEventListener('scroll', this.#onScroll, { passive: true })
     }
 
-    // The `@` picker (#38) — last, because it ports onto the live view.
     this.#mountTriggerPicker()
   }
 
-  /**
-   * Tears down the island: kills the observer debounce, destroys the TipTap
-   * editor, clears the root's children (faithful to the old toggle's
-   * innerHTML='' swap) and the window.__tiptap handle.
-   */
   unmount() {
     this.#painted = false
-    // Before the view dies: the picker's subscriptions are ON it, and its
-    // popover element lives on document.body where an orphan would survive the
-    // remount and stack.
+    // Before the view dies: the picker's subscriptions are ON it, and its popover
+    // lives on document.body where an orphan would survive the remount.
     if (this.#triggerPicker) { this.#triggerPicker.destroy(); this.#triggerPicker = null }
     if (this.#syncTimer) { clearTimeout(this.#syncTimer); this.#syncTimer = null }
     if (this.#onDocSelectionChange) {
@@ -787,19 +594,16 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /**
-   * @override — the shell scroller's current position, or null when absent
-   * (unmounted / bare test mount). issue #51.
+   * @override — the shell scroller's current position, or null when absent.
    * @returns {number|null}
    */
   feedScroll() { return this.#scroller ? this.#scroller.scrollTop : null }
 
   /**
-   * @override — restores (or parks) the shell scroller's position. Deferred
-   * two animation frames: the surface's content is synchronously rendered by
-   * mount()/paintContainer BEFORE this runs, but the browser has not yet laid
-   * it out — an immediate scrollTop assignment silently clamps to 0 against a
-   * not-yet-tall scrollHeight (issue #51). null/undefined ⇒ nothing to
-   * restore (leave the natural scroll alone); 0 is a real park-at-top value.
+   * @override — restores (or parks) the shell scroller. Deferred two animation
+   * frames: the content is rendered synchronously BEFORE this runs but not yet
+   * laid out, and an immediate scrollTop clamps to 0 against a short scrollHeight.
+   * null/undefined means nothing to restore; 0 is a real park-at-top value.
    * @param {number|null|undefined} value
    */
   applyScroll(value) {
@@ -811,11 +615,7 @@ export class WysiwygSurface extends AbstractSurface {
     })
   }
 
-  /**
-   * Immediate flush of the pending debounced block-sync — used by flushSave, a
-   * tab switch, the mode flip, and the anchor commit that frees an empty
-   * paragraph before a create lands. Idle → no-op.
-   */
+  /** Immediate flush of the pending debounced block-sync. Idle: no-op. */
   flushPending() {
     if (!this.#syncTimer) return
     clearTimeout(this.#syncTimer)
@@ -824,21 +624,16 @@ export class WysiwygSurface extends AbstractSurface {
     if (ed) this.#syncDocument(ed)
   }
 
-  // ── The `@` picker's host (#38) ────────────────────────────────────────────
-
   /**
-   * Wires the picker over the live view. Silent no-op without a MentionService —
-   * a bare/vitest mount edits perfectly well without an `@` picker, and a missing
-   * OPTIONAL service must never be a mount failure.
+   * Wires the picker over the live view. Silent no-op without a MentionService: a
+   * missing OPTIONAL service must never be a mount failure.
    *
-   * ONLY `@` is registered. `/` is a COMPOSER verb: a slash command runs against
-   * the message being written, and a document has no message. The popover takes
-   * whatever providers its host is given, which is exactly why that is a wiring
-   * decision here rather than a fork inside the picker.
+   * ONLY `@` is registered. `/` is a COMPOSER verb — a slash command runs against
+   * the message being written, and a document has no message.
    */
   #mountTriggerPicker() {
-    // Idempotent: a re-mount without an unmount would otherwise leave the old
-    // picker's element on document.body and its subscriptions on a dead view.
+    // Idempotent: a re-mount without an unmount would leave the old picker's
+    // element on document.body and its subscriptions on a dead view.
     if (this.#triggerPicker) { this.#triggerPicker.destroy(); this.#triggerPicker = null }
     const editorPane = this.#editorPane
     const mentions = /** @type {any} */ (this.#host).mentionService
@@ -849,33 +644,20 @@ export class WysiwygSurface extends AbstractSurface {
     )
   }
 
-  // ── Smart paste / drop ────────────────────────────────────────────────────────
-  //
   // Tiptap-bound clipboard/drag I/O, wired at editorProps.handlePaste/handleDrop.
-  // The no-match fallback's insertContent keeps its TRACKED (default
-  // addToHistory) semantics and its preventDefault gate. The insert ANCHOR is
-  // editor-sourced via #host (insertAnchorForBlock / peekInsertAnchor*) — a
-  // surface names the block a paste should follow, never a position for Go.
+  // Nothing here CREATES a block: every branch either steps aside or hands the
+  // payload to the container and waits, because a paste that mints structure
+  // locally is a second document authority.
   //
-  // Nothing here CREATES a block. Every branch either steps aside, or hands the
-  // payload to the container and waits for the decision: a paste that mints
-  // structure locally is a second document authority, which is the one thing the
-  // backend-is-truth rule forbids.
-  //
-  // ONE QUERY, FOUR KINDS. The four gestures below differ in what they can hand
-  // over — a readable clipboard, a Sieve slice, a drop the OS caught, a clipboard
-  // the page cannot read at all — and that difference is DATA in the payload, not
-  // four methods.
+  // ONE QUERY, FOUR KINDS — a readable clipboard, a Sieve slice, a drop the OS
+  // caught, a clipboard the page cannot read at all — as DATA in the payload
+  // rather than four methods.
 
   /**
-   * The container's paste DECISION, read defensively. `outcome` is the only field
-   * either handler switches on, and the rest is meaningless without it.
-   *
-   * Everything this build does not recognise degrades to `none` — including a
-   * `content` outcome carrying no fragment. A future outcome must fall back to
-   * "replay the clipboard", NEVER to a silently swallowed paste, and that rule
-   * lives here once rather than in each handler's switch.
-   *
+   * The container's paste DECISION, read defensively. Anything this build does
+   * not recognise degrades to `none`, including a `content` outcome carrying no
+   * fragment: an unknown future outcome must fall back to replaying the
+   * clipboard, never to a silently swallowed paste.
    * @param {{outcome?: string, content?: string}|null|undefined} decision
    * @returns {'block'|'content'|'none'}
    */
@@ -888,27 +670,21 @@ export class WysiwygSurface extends AbstractSurface {
 
   /**
    * Plays ONE smart-paste round-trip result into the document — the SINGLE place
-   * the union is consumed. Its three callers (paste, drop, and the Insert-from-URL
-   * dialog's Link rung via `insertLink`) differ only in WHERE content lands and
-   * what a `none` outcome replays locally, so those are PARAMETERS rather than
-   * three copies of the same switch drifting apart.
+   * the union is consumed.
    *
    *   block   — the block arrives over the insert-block render-back at its own
-   *             server index; all that is left here is consuming the empty-paragraph
-   *             anchor that was holding its place (deferred delete, by node id).
-   *   content — Go composed a fragment for the caret (#67: a link whose title it
-   *             fetched). The anchor is deliberately NOT consumed: it was minted to
-   *             hold a BLOCK's place, and this is an inline insert INSIDE it.
-   *   none    — Sieve did nothing; the blank line was never eaten, so `replay`
-   *             (when the caller has something to replay) lands at the intact caret.
-   *             We preventDefault()'d the original gesture, so PM never ran its
+   *             server index; all that is left is consuming the empty-paragraph
+   *             anchor that held its place.
+   *   content — Go composed a fragment for the caret. The anchor is deliberately
+   *             NOT consumed: it was minted to hold a BLOCK's place.
+   *   none    — the blank line was never eaten, so `replay` lands at the intact
+   *             caret. The gesture was preventDefault()'d, so PM never ran its
    *             native scroll-to-caret — restore it explicitly.
    *
    * @param {{outcome?: string, content?: string}|null|undefined} decision
    * @param {{anchor: {id: string}|null, at?: number, replay?: string|null}} placement
-   *   `at` — an explicit document position (a DROP coordinate); omitted = the live
-   *   caret. `replay` — the local content for `none`; omitted = nothing to replay
-   *   (a drop's payload is not the clipboard).
+   *   `at` — an explicit DROP coordinate; omitted = the live caret. `replay` —
+   *   the local content for `none`; omitted = nothing to replay.
    * @returns {'block'|'content'|'none'} the outcome that was applied
    */
   #applyPasteResult(decision, placement) {
@@ -919,8 +695,8 @@ export class WysiwygSurface extends AbstractSurface {
       this.#host.consumeInsertAnchor(placement.anchor)
       return outcome
     }
-    // `outcome === 'content'` already implies a non-null decision with a fragment
-    // (#pasteOutcome demands both) — the guard is for the type-checker's benefit.
+    // `outcome === 'content'` already implies a fragment; the guard is for the
+    // type-checker.
     const content = outcome === 'content' ? (decision && decision.content) : placement.replay
     if (!content) return outcome
     if (placement.at != null) ed.commands.insertContentAt(placement.at, content)
@@ -930,32 +706,25 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /**
-   * Inserts `url` at the caret as a hyperlink, THROUGH THE SAME Go round-trip a
-   * paste of that URL takes: Go fetches the page title (og:title first, bounded —
-   * `sieve/block/paste_link.go`) and composes the anchor, and the answer is played
-   * back by `#applyPasteResult` like any other paste. The Insert-from-URL dialog's
-   * "Link" rung is a CALLER of the paste path, not a second mechanism — there is
-   * deliberately no local "just make an <a>" fallback, because one that cannot
-   * fetch a title is exactly the dumber path this exists to avoid.
+   * Inserts `url` at the caret as a hyperlink THROUGH THE SAME Go round-trip a
+   * paste of that URL takes, so Go fetches the title and composes the anchor.
+   * There is deliberately no local "just make an <a>" fallback, because one that
+   * cannot fetch a title is the dumber path this exists to avoid.
    *
-   * The asymmetry with the dialog's other three rungs is real, not a shortcut:
-   * they call `editor.createBlock` because they MAKE BLOCKS; a link is an inline
-   * mark at the caret and has no block to create. (A URL the pipeline claims for a
-   * kind — an image URL — still becomes that BLOCK here, exactly as pasting it
-   * would. The pipeline decides; this rung does not second-guess it.)
+   * The dialog's other three rungs call `editor.createBlock` because they MAKE
+   * BLOCKS; a link is an inline mark with no block to create. A URL the pipeline
+   * claims for a kind still becomes that BLOCK here.
    * @param {string} url
    * @returns {Promise<boolean>} true when Go's content (or block) landed
    */
   insertLink(url) {
     const provider = this.#pasteProvider()
     if (!url || !this.#editorPane || !provider) return Promise.resolve(false)
-    // Same peek/consume contract as paste: side-effect-free until the answer.
     const peek = this.#host.peekInsertAnchorForBlock()
     return provider
       .paste({ kind: 'smart', entries: [{ mimeType: 'text/plain', content: url }] }, peek.afterBlockId)
-      // `none` replays the bare URL — the degraded outcome a paste of it would give.
-      // Not reachable while Go composes an anchor for every http(s) URL, and the
-      // dialog's gate admits nothing else.
+      // `none` replays the bare URL. Not reachable while Go composes an anchor
+      // for every http(s) URL.
       .then((decision) => this.#applyPasteResult(decision, { anchor: peek.anchor, replay: url }) !== 'none')
       .catch((err) => {
         console.error('[wysiwyg-surface] insert link failed', err)
@@ -965,9 +734,7 @@ export class WysiwygSurface extends AbstractSurface {
 
   /**
    * @override — pastes plain text through the SAME pipeline a keyboard paste
-   * takes, so a menu Paste and a Mod+V of the same clipboard produce the same
-   * document. A container with no paste query falls back to the local insert,
-   * which is what a plain paste always was.
+   * takes. A container with no paste query falls back to the local insert.
    * @param {string} text
    * @returns {Promise<'block'|'content'|'none'>}
    */
@@ -991,13 +758,9 @@ export class WysiwygSurface extends AbstractSurface {
       })
   }
 
-  /**
-   * The container's paste query, or null when this surface has nothing to ask.
-   * The prompt pseudo-document is excluded by TYPE, not by a uuid test: its
-   * provider carries no block extension, because a prompt has no block tree to
-   * paste into.
-   * @returns {any}
-   */
+  /** The container's paste query, or null. The prompt pseudo-document is excluded
+   *  by TYPE, not by a uuid test: its provider carries no block extension.
+   *  @returns {any} */
   #pasteProvider() {
     const provider = this.#host.provider
     return (provider && typeof provider.paste === 'function') ? provider : null
@@ -1014,9 +777,8 @@ export class WysiwygSurface extends AbstractSurface {
       return false
     }
 
-    // Caret inside a raw-text fenced block (code / diagram / log — code:true
-    // nodes): paste is a literal text paste into that block, not a smart-paste
-    // that mints a new block. Step aside; PM's default handler inserts the text.
+    // Caret inside a raw-text fenced block: paste is a literal text paste into
+    // that block, not a smart-paste. Step aside.
     if (caretInRawTextBlock && caretInRawTextBlock(this.#editorPane)) {
       return false
     }
@@ -1024,26 +786,18 @@ export class WysiwygSurface extends AbstractSurface {
     var text = event.clipboardData.getData('text/plain')
     var html = event.clipboardData.getData('text/html')
 
-    // A pasted ```ai-block fence is NOT handled here. It is a block arriving in
-    // its own serialized form, which makes it a structural mutation, and those
-    // belong to Go: the smart-paste pipeline below carries it, the ai-block
-    // processor recognises its own fence, and the block comes back over the
-    // insert-block render-back like every other created block.
+    // A pasted ```ai-block fence is NOT handled here: it is a block arriving in
+    // serialized form, which is a structural mutation and belongs to Go.
 
-    // ── 1b. sieve/slice → server-side reconstruct ───────────────────────────────
-    // A multi-block slice ([][]ContentEntry) is reconstructed by Go: FirstPasteMatch
-    // per item → a block at cursorIndex+i with a fresh backend id (prose claims its
-    // sieve/prose). Each created block render-backs via insert-block at its index.
-    // A single-block slice falls through to the smart-paste pipeline, which resolves
-    // it from its sieve/<kind> view the same way.
+    // A multi-block slice is reconstructed by Go, one block per item at
+    // cursorIndex+i, each render-backing via insert-block. A single-block slice
+    // falls through to the smart-paste pipeline below.
     var sliceData = event.clipboardData.getData('sieve/slice')
     if (sliceData && this.#pasteProvider()) {
       try {
         var slice = JSON.parse(sliceData)
         if (Array.isArray(slice) && slice.length > 1) {
           event.preventDefault()
-          // Each reconstructed block arrives at its own container position, so
-          // there is nothing here to place — only where the run starts.
           this.#pasteProvider()
             .paste({ kind: 'slice', slice: slice }, this.#host.insertAnchorForBlock())
             .catch(function (err) { console.error('[wysiwyg-surface] paste-slice failed', err) })
@@ -1054,30 +808,22 @@ export class WysiwygSurface extends AbstractSurface {
       }
     }
 
-    // ── 1c. Native clipboard — what the page cannot read (#87) ──────────────────
-    // Two shapes leave through Go, and both are gestures the webview can see but
-    // not READ. The prompt pseudo-document is excluded from both: it is a plain
-    // file with no block tree to create into.
+    // Two shapes leave through Go: gestures the webview can see but not READ.
     if (this.#pasteProvider()) {
-      // A COPIED FILE the page can name: route it to the NATIVE clipboard read
-      // all the same — one backend mechanism for every native gesture. The list
-      // the page read is only the RECOGNISER; Go asks GTK for the clipboard's own
-      // uris and ingests those.
+      // A COPIED FILE the page can name still routes to the NATIVE clipboard
+      // read. The list the page read is only the RECOGNISER; Go asks GTK itself.
       if (WysiwygSurface.#localFileURIs(event.clipboardData) !== null) {
         return this.#pasteThroughGo(event, 'native file paste')
       }
       // A CLIPBOARD THE PAGE CANNOT SEE AT ALL. WebKitGTK delivers a paste event
-      // whose DataTransfer is completely empty for a screenshot copied by an
-      // ordinary desktop tool — no types, no items, no files — while any normal
-      // GTK process reads the same offer fine (#87). That emptiness is the only
-      // signal there is, so it is the trigger, and Go reads the clipboard itself.
+      // whose DataTransfer is completely empty for a desktop-tool screenshot,
+      // while any normal GTK process reads the same offer fine. That emptiness is
+      // the only signal there is, so it is the trigger.
       if (WysiwygSurface.#offersNothing(event.clipboardData)) {
         return this.#pasteThroughGo(event, 'native clipboard paste')
       }
     }
 
-    // ── 2. Smart-paste pipeline (including images) ────────────────────────────────
-    // Collect all clipboard entries. For files, we use FileReader to get base64.
     if (this.#pasteProvider()) {
       var self = this
       if (event.clipboardData && event.clipboardData.items) {
@@ -1104,11 +850,9 @@ export class WysiwygSurface extends AbstractSurface {
           }
         })
 
-        // Smart paste resolves a block kind server-side (web-clip / smart-image /
-        // smart-card) → PEEK the anchor. Peek is side-effect-free (issue #33): the
-        // caret's empty-paragraph anchor is consumed ONLY once a match is
-        // confirmed — a no-match must leave the blank line and caret intact so the
-        // fallback pastes there, not into an adjacent code block.
+        // PEEK, not consume: the caret's empty-paragraph anchor is eaten ONLY
+        // once a match is confirmed, so a no-match leaves the blank line and
+        // caret intact and the fallback pastes there.
         var peek = this.#host.peekInsertAnchorForBlock()
         event.preventDefault()
 
@@ -1118,8 +862,6 @@ export class WysiwygSurface extends AbstractSurface {
           if (!provider) return
           provider.paste({ kind: 'smart', entries: validEntries }, peek.afterBlockId)
             .then(function (decision) {
-              // A paste replays the original clipboard at the intact caret when Sieve
-              // did nothing with it; content lands at that same caret.
               self.#applyPasteResult(decision, { anchor: peek.anchor, replay: html || text })
             })
             .catch(function (err) {
@@ -1138,17 +880,13 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /**
-   * Claims a paste whose content the page cannot read and hands the gesture to Go,
-   * at the CARET.
+   * Claims a paste whose content the page cannot read and hands the gesture to
+   * Go, at the CARET.
    *
    * BOTH native paste shapes are ONE payload kind — `native-clipboard` — because
    * they are one question: the page cannot read this, please read it yourself.
-   * What differs is only which recogniser fired, and that is a log line.
-   * PEEK the anchor (side-effect-free, issue #33 — a paste the server makes
-   * nothing of must leave the caret's empty paragraph intact), claim the gesture
-   * before the round trip, and play the decision back. There is deliberately no
-   * `replay`: the page never held the content, so a `none` outcome has nothing to
-   * put back.
+   * There is deliberately no `replay`: the page never held the content, so a
+   * `none` outcome has nothing to put back.
    * @param {ClipboardEvent} event
    * @param {string} label named in the failure log
    * @returns {boolean} always true — the gesture is claimed either way
@@ -1165,14 +903,12 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /**
-   * True when a DataTransfer offers nothing THE PAGE CAN READ — the #87 signal.
+   * True when a DataTransfer offers nothing THE PAGE CAN READ.
    *
-   * Not "no types": WebKitGTK advertises flavours whose content it then refuses to
-   * hand over (a file-manager COPY lists text/uri-list while every `getData`
-   * answers ''), and its string items only deliver after the handler returns, when
-   * the store is already empty. An advertised-but-unreadable offer is exactly the
-   * native-read signal. A `kind: 'file'` item or a populated `files` list is a real
-   * readable File (a browser image copy) and takes the ordinary pipeline, as does
+   * Not "no types": WebKitGTK advertises flavours whose content it then refuses
+   * to hand over, and its string items only deliver after the handler returns,
+   * when the store is already empty. An advertised-but-unreadable offer IS the
+   * native-read signal. A real readable File takes the ordinary pipeline, as does
    * any flavour `getData` actually answers.
    * @param {DataTransfer} transfer
    * @returns {boolean}
@@ -1186,17 +922,13 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /**
-   * A DROP is a native-file gesture the page can see but cannot READ.
+   * A DROP is a native-file gesture the page can see but cannot READ. WebKitGTK
+   * never materialises a `File` for a file-manager drag: the whole drop arrives
+   * as the `text/uri-list` the OS put on it, and no amount of reading
+   * `DataTransfer` produces bytes. So this owns the GESTURE and the PLACEMENT
+   * only, and hands the uri-list to Go, which does the reading.
    *
-   * WebKitGTK never materialises a `File` for a file-manager drag: the whole drop
-   * arrives as the `text/uri-list` the OS put on it — a `file:///…` string — and no
-   * amount of reading `DataTransfer` produces bytes (#86). So this owns the GESTURE
-   * and the PLACEMENT only: it recognises a desktop file drag, resolves where the
-   * drop landed, and hands the uri-list to Go, which does the reading.
-   *
-   * Everything else is left to ProseMirror. A dragged link, a dragged selection of
-   * text — that is content PM already knows how to insert, and claiming it here
-   * would be taking work off the editor to do it worse.
+   * Everything else is left to ProseMirror.
    * @param {DragEvent} event
    * @returns {boolean} true when handled (native drop suppressed)
    */
@@ -1204,45 +936,37 @@ export class WysiwygSurface extends AbstractSurface {
     if (!event.dataTransfer || !this.#editorPane) return false
     // A container with no block extension (a prompt) has no block tree to drop into.
     if (!this.#pasteProvider()) return false
-    // Internal PM drags — a block reorder, a moved selection — are PM's own and
-    // never claimed. THE TRAP: `slice` is NOT the discriminator — PM parses any
-    // droppable content into a slice, including an external drop's path text, so
-    // gating on it hands every external drop back to PM. A drag that ORIGINATED
-    // in this editor is what `view.dragging` marks (and `moved` covers the
-    // move-flavour); everything else is external. Every external drop is the ONE
-    // drop mechanism on every platform: the gesture pages the backend, exactly
-    // as the empty-clipboard paste does (#87). The page's own view of the drop
-    // is never consulted — WebKitGTK starves it and every source app starves it
-    // differently (#86) — so external text/link drag-in is not a supported
-    // gesture; the OS-level catch (Wails OnFileDrop) feeds the native drop
-    // bucket the server redeems.
+    // Internal PM drags are PM's own and never claimed. THE TRAP: `slice` is NOT
+    // the discriminator, because PM parses any droppable content into a slice,
+    // including an external drop's path text, so gating on it hands every
+    // external drop back to PM. `view.dragging` marks a drag that ORIGINATED
+    // here; everything else is external and pages the backend. The page's own
+    // view of the drop is never consulted — WebKitGTK starves it — so the
+    // OS-level catch (Wails OnFileDrop) feeds the native drop bucket.
     if (moved || this.#editorPane.view.dragging) return false
 
     const coords = this.#editorPane.view.posAtCoords({ left: event.clientX, top: event.clientY })
     const insertPos = coords ? coords.pos : this.#editorPane.state.selection.to
-    // PEEK (issue #33), never an eager consume: a drag the bucket cannot answer
-    // still resolves `none`, and the caret's empty paragraph must survive that.
+    // PEEK, never an eager consume: a drag the bucket cannot answer still resolves
+    // `none`, and the caret's empty paragraph must survive that.
     const peek = this.#host.peekInsertAnchorAt(insertPos)
 
     // Claim the drop BEFORE the round trip. Without this PM inserts the `file:///…`
-    // path as text, which is the whole reported symptom.
+    // path as text.
     event.preventDefault()
 
     const provider = this.#pasteProvider()
     // The frame means "there was a drop at this position — take it from the
     // native drop bucket", plus whatever text the page could read as a HINT: some
-    // source apps (VSCode) never offer a file URI at any layer, GTK included, so
-    // the bucket misses them and a bare path on text/plain is the only address
-    // there is. Go consults the hint ONLY when the bucket is empty.
+    // source apps never offer a file URI at any layer. Go consults the hint ONLY
+    // when the bucket is empty.
     const hint = []
     for (const flavour of ['text/uri-list', 'text/plain']) {
       const v = event.dataTransfer.getData(flavour)
       if (v) hint.push({ mimeType: flavour, content: v })
     }
-    // WebKitGTK starves getData for EVERY flavour — but PM parsed the drop into
-    // `slice` through WebKit's INTERNAL channel (which is how path-as-text ever
-    // got inserted at all), so the slice's text is the one readable view of a
-    // VSCode-style drop the platform allows.
+    // WebKitGTK starves getData for EVERY flavour, but PM parsed the drop into
+    // `slice` through WebKit's INTERNAL channel — the one readable view left.
     if (hint.length === 0 && slice && slice.content && slice.content.size) {
       const text = slice.content.textBetween(0, slice.content.size, '\n', '\n').trim()
       if (text) hint.push({ mimeType: 'text/plain', content: text })
@@ -1253,12 +977,10 @@ export class WysiwygSurface extends AbstractSurface {
     return true
   }
 
-
   /**
    * Whether a `text/uri-list` names at least one LOCAL file. The test is the URI
    * SCHEME: a link dragged out of a browser puts its http URL on this same
-   * flavour, and that is content to paste rather than a file to read. Blank lines
-   * and `#` comments are legal in the format (RFC 2483 §5) and name nothing.
+   * flavour, and that is content to paste rather than a file to read.
    * @param {string} list
    * @returns {boolean}
    */
@@ -1270,12 +992,10 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /**
-   * The `text/uri-list` of a transfer that names LOCAL FILES, or null. Read by the
-   * COPY-paste branch (a file manager offers the same list a drag carries). This
-   * is the synchronous getData view, which WebKitGTK may answer with '' — that is
-   * fine HERE: an unreadable copied-file paste falls through to the
-   * `native-clipboard` read, where Go asks GTK for the uris itself. Only the DROP
-   * path needs the async items read, because a drop has no native fallback.
+   * The `text/uri-list` of a transfer that names LOCAL FILES, or null. This is the
+   * synchronous getData view, which WebKitGTK may answer with '' — fine HERE,
+   * because an unreadable copied-file paste falls through to the
+   * `native-clipboard` read. Only the DROP path needs the async items read.
    * @param {DataTransfer} transfer
    * @returns {string|null}
    */
@@ -1285,26 +1005,16 @@ export class WysiwygSurface extends AbstractSurface {
     return WysiwygSurface.#namesAFile(list) ? list : null
   }
 
-  // ── Selection feed (P3.A: the SelectionModel raw source) ───────────────────────
-
   /**
    * Builds a RAW selection descriptor from the LIVE PM state — the ONLY place PM
-   * selection is read for the SelectionModel (the model itself never touches PM).
-   * PLAIN data only: no PM node escapes; blockId/blockKind/ref are extracted as
-   * strings, and the resolved AI `target` ({kind,ref,range,label}) is baked in.
+   * selection is read for the SelectionModel, and no PM node escapes.
    *
-   * This method owns the PARTS THAT NEED THE LIVE VIEW/DOM: the effective range
-   * (block-chrome getBlockSelectionRange — its own plugin state for gutter/shift-
-   * click multi-block; falls back to the live PM selection) and the read-only-region
-   * DOM highlight fold (F5: ai-block title / log Explore table — contentEditable=false
-   * PM can't track). It then delegates the PM-only descriptor assembly (classification,
-   * blockIds span, primary, target + label) to `buildSelectionDescriptor` — the SAME
-   * pure core the vitest adapter reuses, so they can't drift (P3.C).
+   * This owns the PARTS THAT NEED THE LIVE VIEW/DOM: the effective range and the
+   * read-only-region DOM highlight fold. The PM-only assembly is
+   * #buildSelectionDescriptor's.
    * @returns {import('../selection-model.js').RawSelectionDescriptor}
    */
   feedSelection() {
-    // Read through the public `editorPane` accessor (as flushPending
-    // do) — the live instance, whatever a subclass injects.
     const ed = /** @type {any} */ (this.editorPane)
     if (!ed || !ed.state) {
       return {
@@ -1317,16 +1027,14 @@ export class WysiwygSurface extends AbstractSurface {
     const state = ed.state
     const sel = state.selection
 
-    // The EFFECTIVE range: block-chrome's authoritative range (its own plugin
-    // state for gutter/shift-click multi-block; falls back to the live PM
-    // selection for a caret / single NodeSelection / native prose drag).
+    // The EFFECTIVE range: block-chrome's authoritative range, falling back to
+    // the live PM selection.
     let er = (T && getBlockSelectionRange)
       ? getBlockSelectionRange(ed.view)
       : { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false, isNodeSelection: !!sel.node }
 
-    // Read-only-region DOM highlight fold (F5): a highlight inside a block's
-    // contentEditable=false region leaves PM's selection elsewhere. Re-target the
-    // effective range onto the block the highlight actually lives in.
+    // A highlight inside a contentEditable=false region leaves PM's selection
+    // elsewhere, so re-target onto the block it actually lives in.
     const domSel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null
     let domSelText = null
     if (domSel && !domSel.isCollapsed && domSel.toString && domSel.toString().trim() && T) {
@@ -1339,22 +1047,17 @@ export class WysiwygSurface extends AbstractSurface {
     }
 
     const raw = this.#buildSelectionDescriptor(state.doc, sel, er, T, domSelText)
-    // The DOM read the pure PM core must NOT do: if focus sits inside a block's
-    // inner editor (`.sieve-block__edit`), merge its OWN cursor as the opaque,
-    // caret-like blockCursor (P3.E). Null for a plain prose caret. This is the
-    // P3.C split extended by one surface-owned DOM read.
+    // The DOM read the pure PM core must NOT do: focus inside a block's inner
+    // editor merges its OWN cursor as the opaque blockCursor.
     raw.blockCursor = this.#captureBlockCursor()
     return raw
   }
 
   /**
-   * DORMANT SEAM (P3.E — see selection-model CONVENTION): captures a block's inner
-   * cursor ONLY when focus sits in a `.sieve-block__edit` FORM CONTROL (selectionStart)
-   * or a block opting in via `host.__sieveFocus.capture()`. NO current block is built
-   * that way — code/diagram/log edit via a PM contentDOM (`activeElement` stays on
-   * `.ProseMirror`, their caret is already `caret`/`range`), so this returns `null` in
-   * practice. Kept as the extension point for a future non-PM inner editor. Surface-
-   * owned DOM read; no PM/YAML.
+   * DORMANT SEAM: captures a block's inner cursor only when focus sits in a
+   * `.sieve-block__edit` form control. No shipped block is built that way — code,
+   * diagram and log edit via a PM contentDOM — so this returns null in practice.
+   * Kept as the extension point for a future non-PM inner editor.
    * @returns {object|null}
    */
   #captureBlockCursor() {
@@ -1372,13 +1075,10 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /**
-   * Restores focus/selection from a SelectionContext coordinate (P3.E write side) —
-   * the symmetric WRITE of feedSelection, inlined like MarkdownSurface.applyPosition.
-   * When the ctx names a block that hosts an inner editor AND carries a blockCursor,
-   * restore INSIDE that block (per-flavour `__sieveFocus.restore`, else the generic
-   * `.sieve-block__edit` textarea with a stale-token clamp). Otherwise re-resolve the
-   * DOCUMENT caret/range against the current doc size and drive the editor. TipTap via
-   * `this.editorPane` (its own accessor, as flushPending does) — never exposed.
+   * Restores focus/selection from a SelectionContext coordinate — the symmetric
+   * WRITE of feedSelection. A ctx naming a block that hosts an inner editor AND
+   * carrying a blockCursor restores INSIDE that block; otherwise the DOCUMENT
+   * caret/range is re-resolved against the current doc size.
    * @param {import('../selection-model.js').SelectionContext} ctx
    */
   applyPosition(ctx) {
@@ -1401,8 +1101,8 @@ export class WysiwygSurface extends AbstractSurface {
       }
       // block/textarea gone → fall through to the doc caret.
     }
-    // (b) doc caret/range re-resolved against the CURRENT doc: a captured Selection is
-    // bound to its doc instance and would throw if anything edited in between.
+    // (b) doc caret/range re-resolved against the CURRENT doc: a captured Selection
+    // is bound to its doc instance and would throw if anything edited in between.
     const ed = /** @type {any} */ (this.editorPane)
     if (ed) {
       ed.view.focus()
@@ -1414,12 +1114,9 @@ export class WysiwygSurface extends AbstractSurface {
     }
   }
 
-  /**
-   * Ordered top-level sieve-block descriptors `[{from, to, dom}]` (the copy
-   * handler's pattern, 6ee94bd) — the read-only-region fold input. Only sieve
-   * nodes hold a read-only region PM cannot track; native prose is PM-owned.
-   * @param {any} ed @returns {Array<{from:number,to:number,dom:any}>}
-   */
+  /** Ordered top-level sieve-block descriptors — the read-only-region fold input.
+   *  Only sieve nodes hold a region PM cannot track.
+   *  @param {any} ed @returns {Array<{from:number,to:number,dom:any}>} */
   #topBlockDescriptors(ed) {
     const out = []
     const view = ed.view
@@ -1431,30 +1128,18 @@ export class WysiwygSurface extends AbstractSurface {
     return out
   }
 
-  // ── PM→descriptor core (folded from selection-descriptor.js, P3.F) ─────────────
-  //
-  // The PM-only descriptor assembly: turns a live ProseMirror (doc + selection +
-  // effective range) into the PLAIN raw descriptor the SelectionModel ingests —
-  // INCLUDING the resolved AI `target` ({kind, ref, range, label}) and its label.
-  // NO PM node ever escapes: the resolver USES PM to PRODUCE plain values; the
-  // descriptor STORES plain values only. These were `export function`s in the
-  // retired selection-descriptor.js; folded here verbatim as #private methods
-  // (they are all PM-specific — MarkdownSurface needs none of them; only the
-  // string-only quoteSnippet is shared, and it lives on AbstractSurface).
-
   /**
-   * Build the full PLAIN raw descriptor from a live PM (doc + selection + effective
-   * range). The ONE place PM is read into a descriptor.
+   * Build the full PLAIN raw descriptor from a live PM — the ONE place PM is read
+   * into a descriptor, and no PM node ever escapes.
    *
-   * Classification (locked ruling folds dom/block-range → 'range'): single
-   * NodeSelection → 'block'; block-range OR dom-fold → 'range'; collapsed → 'caret';
-   * else non-empty text → 'range'.
+   * Classification: single NodeSelection → 'block'; block-range or dom-fold →
+   * 'range'; collapsed → 'caret'; else non-empty text → 'range'.
    *
    * @param {any} doc              the PM doc
    * @param {any} sel              the PM selection (state.selection)
    * @param {{from:number,to:number,active:boolean,isBlockRange?:boolean,isNodeSelection?:boolean}} er  the effective range (surface-computed)
    * @param {any} T                truthy gate: enables the rich getSieveBlockLabel path (#labelFor)
-   * @param {string|null} [domSelText]  read-only-region DOM highlight text (F5 fold), or null
+   * @param {string|null} [domSelText]  read-only-region DOM highlight text, or null
    * @returns {import('../selection-model.js').RawSelectionDescriptor}
    */
   #buildSelectionDescriptor(doc, sel, er, T, domSelText = null) {
@@ -1474,8 +1159,8 @@ export class WysiwygSurface extends AbstractSurface {
     }
 
     const primaryId = this.#nodeBlockId(primary)
-    // A COLLAPSED caret spans exactly ONE block — its primary. A RANGE keeps the full
-    // multi-block overlap span (D3). (See the surface note the code moved from.)
+    // A COLLAPSED caret spans exactly ONE block — its primary. A RANGE keeps the
+    // full multi-block overlap span.
     const blockIds = (selectionType === 'caret')
       ? (primaryId ? [primaryId] : [])
       : span.map((b) => b.id).filter(Boolean)
@@ -1499,8 +1184,7 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /**
-   * The resolved AI `target` — the four ordered cases (D-r.7), from PLAIN values.
-   * The label is baked in (labelFor ran while `primary` was in hand).
+   * The resolved AI `target` — four ordered cases, from PLAIN values:
    *   (a) NodeSelection of a UNIT (proseGroup excluded) → block by id
    *   (b) text selection OR node-selected proseGroup → selection + ref chain
    *   (c) bare caret in a UNIT → block by id
@@ -1533,17 +1217,13 @@ export class WysiwygSurface extends AbstractSurface {
 
   /**
    * The PRIMARY block node: a NodeSelection targets its own node; otherwise the
-   * block at the selection HEAD (via $from) WHEN that block is inside the spanned
-   * range. When the effective range was re-targeted (a read-only-region DOM fold / a
-   * block-chrome range that doesn't cover the PM head), the head block is NOT in the
-   * span, so fall to the FIRST block the range spans.
+   * block at the selection HEAD, when that block is inside the spanned range.
+   * When the effective range was re-targeted the head block is NOT in the span,
+   * so fall to the FIRST block the range spans.
    *
-   * DOC-LEVEL GAP (depth 0 — a collapsed caret at a point between top-level nodes,
-   * e.g. after an atom / at doc end): faithful port of the old topLevelForCaret gap
-   * branch — prefer the ADJACENT non-flowing UNIT (nodeBefore, then nodeAfter) so a
-   * caret sitting in the gap after an hr / before a paragraph still targets that unit,
-   * never a flowing paragraph. Falls back to the index-clamped child otherwise (range
-   * spans that don't cover the head).
+   * DOC-LEVEL GAP (a collapsed caret between top-level nodes): prefer the
+   * ADJACENT non-flowing UNIT, so a caret in the gap after an hr targets that
+   * unit rather than a flowing paragraph.
    * @param {any} doc @param {any} sel @param {any} span
    * @returns {any|null}
    */
@@ -1567,13 +1247,10 @@ export class WysiwygSurface extends AbstractSurface {
     return span.length ? span[0].node : head
   }
 
-  /**
-   * Every top-level block whose extent overlaps `[from,to]`, in document order, as
-   * `{node, id}` (overlap: `from < node.to && to > node.from`). A collapsed caret
-   * still lands in exactly the block it sits in.
-   * @param {any} doc @param {number} from @param {number} to
-   * @returns {Array<{node:any,id:string|null}>}
-   */
+  /** Every top-level block whose extent overlaps `[from,to]`, in document order.
+   *  A collapsed caret still lands in exactly the block it sits in.
+   *  @param {any} doc @param {number} from @param {number} to
+   *  @returns {Array<{node:any,id:string|null}>} */
   #blocksInRange(doc, from, to) {
     const out = []
     doc.forEach((node, offset) => {
@@ -1593,11 +1270,9 @@ export class WysiwygSurface extends AbstractSurface {
     return id || null
   }
 
-  /**
-   * The block kind as a PLAIN string: a sieve-* node carries `attrs.kind`; a native
-   * prose node is its PM type name. Null when no node owns the selection.
-   * @param {any} node @returns {string|null}
-   */
+  /** The block kind as a PLAIN string: a sieve-* node carries `attrs.kind`, a
+   *  native prose node is its PM type name.
+   *  @param {any} node @returns {string|null} */
   #nodeBlockKind(node) {
     if (!node || !node.type) return null
     if (node.attrs && node.attrs.kind) return node.attrs.kind
@@ -1611,12 +1286,10 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /**
-   * The friendly display label for the resolved target — ALWAYS populated. The
-   * surface holds the PM `primary` node here, so RICH sieve labels
-   * (getSieveBlockLabel → renderer.buildAiCtx(node).contextLabel, e.g. 'Javascript
-   * Code Block') are preserved; it must not regress to a bare title-cased kind. This
-   * is the ported `describeTarget`, driven by selectionType+blockKind instead of a
-   * naked node.
+   * The friendly display label for the resolved target, ALWAYS populated. The
+   * surface holds the PM `primary` node here, so RICH sieve labels (e.g.
+   * 'Javascript Code Block') are preserved and must not regress to a bare
+   * title-cased kind.
    * @param {any} primary                    the PM node owning the selection (or null)
    * @param {'none'|'caret'|'range'|'block'} selectionType
    * @param {string|null} blockKind
@@ -1625,8 +1298,8 @@ export class WysiwygSurface extends AbstractSurface {
    * @returns {string}
    */
   #labelFor(primary, selectionType, blockKind, selectedText, T) {
-    // A range, OR a node-selected proseGroup (invisible grouping → its passage), is
-    // a text selection → a snippet.
+    // A range, or a node-selected proseGroup (invisible grouping → its passage),
+    // is a text selection → a snippet.
     if (selectionType === 'range' ||
         (selectionType === 'block' && blockKind === 'proseGroup')) {
       return this.quoteSnippet(
@@ -1646,42 +1319,34 @@ export class WysiwygSurface extends AbstractSurface {
     return 'Document'
   }
 
-  /** Title-case a kind for a fallback label ("smart-image" → "Smart image"). */
   #titleCase(kind) {
     if (!kind) return 'Block'
     return kind.charAt(0).toUpperCase() + kind.slice(1).replace(/-/g, ' ')
   }
 
   /**
-   * isFlowingText: the ONE discriminator (D-r.7), by KIND STRING now. A top-level
-   * block is flowing text iff it is a paragraph, heading, or proseGroup — content a
-   * bare caret can't disambiguate, so it targets the whole document. EVERY other
-   * top-level kind (blockquote, code, list, table, image, hr, all structured sieve-*)
-   * is a discrete UNIT you target as a whole by its id.
+   * The ONE discriminator. A top-level block is flowing text iff it is a
+   * paragraph, heading or proseGroup — content a bare caret cannot disambiguate,
+   * so it targets the whole document. Every other top-level kind is a discrete
+   * UNIT you target as a whole by its id.
    *
    * proseGroup counts as flowing text because it is a backend contrivance: one
-   * multi-paragraph prose block rendered under a shared id, visually
-   * indistinguishable from individually-minted paragraphs. A bare caret may only
-   * target units the user can SEE as units.
+   * multi-paragraph prose block under a shared id, visually indistinguishable
+   * from individually-minted paragraphs. A bare caret may only target units the
+   * user can SEE as units.
    * @param {string|null} kind
    */
   #isFlowingText(kind) {
     return kind === 'paragraph' || kind === 'heading' || kind === 'proseGroup'
   }
 
-  // ── Inbound: the container cue (one path, every origin) ───────────────────────
+  // The surface is told WHAT changed and re-reads each block from the follower
+  // model. Who changed it is unsayable.
   //
-  // The surface is told WHAT changed — block ids, and whether the order did — and
-  // re-reads each one from the follower model. Who changed it is unsayable, which
-  // is the point: a verb this lens sent, a job that finished, another lens and the
-  // file watcher all land here identically.
-  //
-  // TRACKED-NESS IS NOT UNIFORM, and the split is deliberate. An ARRIVAL and a
-  // REPLACEMENT are placements of something the user asked for, so they are
-  // ordinary tracked transactions and belong in their undo stack. A DEPARTURE, an
-  // attrs refresh and a reorder are changes nobody in this editor made — putting
-  // those in the undo stack would mean the user's next Mod+Z undid someone else's
-  // work instead of their own.
+  // TRACKED-NESS IS NOT UNIFORM, deliberately. An ARRIVAL and a REPLACEMENT are
+  // placements of something the user asked for, so they are tracked. A DEPARTURE,
+  // an attrs refresh and a reorder are changes nobody here made, and tracking
+  // those would mean the user's next Mod+Z undid someone else's work.
 
   /**
    * @param {{blockIds: ReadonlyArray<string>, orderChanged: boolean}} change
@@ -1701,24 +1366,19 @@ export class WysiwygSurface extends AbstractSurface {
       if (!held) { this.#placeBlock(node, provider.getOrder().indexOf(id)); continue }
       const heldKind = (held.node.attrs && held.node.attrs.kind) || ''
       if (heldKind && heldKind !== node.kind) { this.#replaceBlockNode(id, node); continue }
-      // PROSE THE EDITOR ALREADY HOLDS IS SKIPPED. Its text is the lens's own —
-      // it is the one piece of state that legitimately lives ahead of Go — so
-      // painting the server's copy over it would stamp on the keystroke that is
-      // still in flight. Baseline it instead, so the observer does not re-create
-      // a block Go has just told us it has.
+      // PROSE THE EDITOR ALREADY HOLDS IS SKIPPED: its text is the lens's own,
+      // the one piece of state that legitimately lives ahead of Go. Baseline it
+      // instead, so the observer does not re-create a block Go already has.
       if (node.kind === 'prose') { this.#noteServerBlock(id); continue }
       this.#refreshBlockAttrs(id, node.attrs)
     }
     if (change && change.orderChanged) this.#reconcileOrder(provider.getOrder())
   }
 
-  /**
-   * Paints the WHOLE container from the model — the bootstrap cue, and a genuine
-   * LOAD (a restore, an AI whole-document answer). It replaces the doc in one
-   * non-undoable transaction, so it WIPES UNDO HISTORY by construction: never
-   * call it for a change.
-   * @param {any} provider
-   */
+  /** Paints the WHOLE container from the model — the bootstrap cue, and a genuine
+   *  LOAD. One non-undoable transaction, so it WIPES UNDO HISTORY by
+   *  construction: never call it for a change.
+   *  @param {any} provider */
   paintContainer(provider) {
     const ed = /** @type {any} */ (this.editorPane)
     if (!ed || !provider) return
@@ -1735,12 +1395,10 @@ export class WysiwygSurface extends AbstractSurface {
     }
   }
 
-  /**
-   * The container's blocks as the render pipeline's typed blocks, in order.
-   * The model hands out plain frozen data; the pipeline is block-native, and
-   * this is the one place the two meet.
-   * @param {any} provider @returns {SieveBlock[]}
-   */
+  /** The container's blocks as the pipeline's typed blocks, in order. The model
+   *  hands out plain frozen data and the pipeline is block-native; this is where
+   *  the two meet.
+   *  @param {any} provider @returns {SieveBlock[]} */
   #blocksFromContainer(provider) {
     const out = []
     for (const id of provider.getOrder()) {
@@ -1750,11 +1408,8 @@ export class WysiwygSurface extends AbstractSurface {
     return out
   }
 
-  /**
-   * The first node in the doc carrying this id, at any depth (a composite kind
-   * can hold child blocks), or null.
-   * @param {any} ed @param {string} id @returns {{pos: number, node: any}|null}
-   */
+  /** The first node carrying this id, at any depth, or null.
+   *  @param {any} ed @param {string} id @returns {{pos: number, node: any}|null} */
   #findNodeById(ed, id) {
     if (!id) return null
     let hit = null
@@ -1765,13 +1420,10 @@ export class WysiwygSurface extends AbstractSurface {
     return hit
   }
 
-  /**
-   * Places a block the container holds but this doc does not, at the container
-   * position it occupies — a TRACKED transaction, so it is one undoable step and
-   * the history survives.
-   * @param {{id: string, kind: string, attrs: Record<string, any>}} node
-   * @param {number} index the block's position in the container
-   */
+  /** Places a block the container holds but this doc does not, at the container
+   *  position it occupies — a TRACKED transaction, so it is one undoable step.
+   *  @param {{id: string, kind: string, attrs: Record<string, any>}} node
+   *  @param {number} index the block's position in the container */
   #placeBlock(node, index) {
     var self = this
     var ed = /** @type {any} */ (this.editorPane)
@@ -1781,8 +1433,7 @@ export class WysiwygSurface extends AbstractSurface {
     var content = this.#blockToNodes(ed, blk).map(function (n) { return n.toJSON() })
     if (!content.length) return
 
-    // Go's index is the CONTAINER's, and docPosForBlockIndex maps it onto this
-    // doc's top level. A negative index (the container does not name it) appends.
+    // Go's index is the CONTAINER's; a negative index appends.
     var at = index >= 0 ? this.#docPosForBlockIndex(ed, index) : ed.state.doc.content.size
     ed.commands.insertContentAt(at, content)
 
@@ -1796,10 +1447,8 @@ export class WysiwygSurface extends AbstractSurface {
         if (focusEl) /** @type {HTMLElement} */ (focusEl).focus()
       }, 50)
     } else if (kind !== 'ai-block') {
-      // Anything else the user just inserted (image, web-clip, card, …): return focus
-      // to the editor with the caret AFTER the new block so they can keep typing. (A
-      // file dialog / toolbar click leaves focus elsewhere; code/diagram focus their own
-      // edit surface above; async AI answers intentionally never steal focus.)
+      // Return focus with the caret AFTER the new block so the user can keep
+      // typing. code/diagram focus their own edit surface; AI answers never do.
       setTimeout(function () {
         var e2 = /** @type {any} */ (self.editorPane)
         if (!e2) return
@@ -1814,12 +1463,9 @@ export class WysiwygSurface extends AbstractSurface {
     this.#scrollTo(node.id)
   }
 
-  /**
-   * In-place TRANSFORM: tracked replace-by-id — swap the node carrying this id
-   * for the container's current one. insertContentAt(range, …) is undoable (and
-   * the observer propagates an undo to the backend).
-   * @param {string} id @param {{id: string, kind: string, attrs: Record<string, any>}} node
-   */
+  /** In-place TRANSFORM: tracked replace-by-id. insertContentAt(range, …) is
+   *  undoable, and the observer propagates an undo to the backend.
+   *  @param {string} id @param {{id: string, kind: string, attrs: Record<string, any>}} node */
   #replaceBlockNode(id, node) {
     var ed = /** @type {any} */ (this.editorPane)
     if (!ed) return
@@ -1834,12 +1480,9 @@ export class WysiwygSurface extends AbstractSurface {
     this.#scrollTo(node.id)
   }
 
-  /**
-   * A block left the container. Untracked: this is not an edit anyone made in
-   * this editor, and a tracked delete would put someone else's change at the top
-   * of the user's undo stack.
-   * @param {string} id
-   */
+  /** A block left the container. UNTRACKED: nobody here made this edit, and a
+   *  tracked delete would put someone else's change atop the user's undo stack.
+   *  @param {string} id */
   #removeBlockNode(id) {
     var ed = /** @type {any} */ (this.editorPane)
     if (!ed) return
@@ -1851,11 +1494,8 @@ export class WysiwygSurface extends AbstractSurface {
     if (this.#blockContentCache) delete this.#blockContentCache[id]
   }
 
-  /**
-   * A block's attrs changed (a job finished, a status moved). Untracked, for the
-   * same reason a departure is.
-   * @param {string} id @param {Record<string, any>} attrs
-   */
+  /** A block's attrs changed. Untracked, for the same reason a departure is.
+   *  @param {string} id @param {Record<string, any>} attrs */
   #refreshBlockAttrs(id, attrs) {
     var ed = /** @type {any} */ (this.editorPane)
     if (!ed) return
@@ -1871,11 +1511,10 @@ export class WysiwygSurface extends AbstractSurface {
             status:          parsed.status   || node.attrs.status,
           })
           Object.keys(parsed).forEach(function (k) {
-            // Safely apply keys that exist in the existing node.attrs schema mapping.
-            // `kind` is refused alongside id/status: BASE_ATTRS declares it on EVERY
-            // sieve-* node as the block's own kind, so a processor attrs bag carrying
-            // a `kind` key would silently retype the node the moment a job completed.
-            // A block's kind changes by replacement and never by an attrs update.
+            // Apply only keys already in the schema. `kind` is refused alongside
+            // id/status: BASE_ATTRS declares it on EVERY sieve-* node, so a
+            // processor attrs bag carrying one would silently retype the node the
+            // moment a job completed. Kind changes by replacement only.
             if (k !== 'id' && k !== 'status' && k !== 'kind' && (k in node.attrs)) {
               nextAttrs[k] = parsed[k]
             }
@@ -1896,16 +1535,10 @@ export class WysiwygSurface extends AbstractSurface {
   /**
    * Re-orders the doc's top-level blocks to match the container's order.
    *
-   * It applies ONLY when the doc holds exactly the container's blocks: while a
-   * node is still pending (the trailing editing surface is bare, a create has not
-   * landed) the two lists describe different things, and reordering against a
-   * list that is missing an id would move a block past something the container
-   * cannot see. Leaving it alone is safe — the next cue after the sets agree
-   * still differs, and reorders it then.
-   *
-   * The lens's OWN drag-reorder never reaches the rebuild below: by the time the
-   * echo arrives the doc is already in that order, so the comparison is equal and
-   * nothing is dispatched.
+   * ONLY when the doc holds exactly the container's blocks: while a node is still
+   * pending the two lists describe different things, and reordering against a
+   * list missing an id would move a block past something the container cannot
+   * see. Leaving it alone is safe — the next cue after the sets agree reorders.
    * @param {ReadonlyArray<string>} order
    */
   #reconcileOrder(order) {
@@ -1932,12 +1565,10 @@ export class WysiwygSurface extends AbstractSurface {
     this.#blockOrderCache = order.slice()
   }
 
-  /**
-   * Brings a block into view. An async answer carries no focus, so it can land
-   * below the fold and be missed; deferred so the NodeView has rendered, and
-   * 'nearest' so it does not jump when the block is already visible.
-   * @param {string} id
-   */
+  /** Brings a block into view. An async answer carries no focus, so it can land
+   *  below the fold; deferred so the NodeView has rendered, 'nearest' so it does
+   *  not jump when already visible.
+   *  @param {string} id */
   #scrollTo(id) {
     if (!id) return
     setTimeout(function () {
@@ -1946,17 +1577,11 @@ export class WysiwygSurface extends AbstractSurface {
     }, 60)
   }
 
-  // ── Render pipeline (verbatim blockToNodes / renderBlocksIntoEditor) ───────────
-
   /**
-   * blockToNodes renders ONE SieveBlock (prose or structured) to its
-   * ProseMirror node(s) via the editor's live markdownit + each node's parseHTML —
-   * the single place that knows how a block becomes editor nodes. Shared by the
-   * whole-document load (renderBlocksIntoEditor) and the per-block render-back
-   * (insert-block / replace-block), so a server-created block renders identically
-   * however it arrives; every caller hands it a SieveBlock (the render pipeline is
-   * block-native). Parsed in ISOLATION so a block the schema rejects is logged +
-   * skipped, never aborting.
+   * Renders ONE SieveBlock to its ProseMirror node(s) — the single place that
+   * knows how a block becomes editor nodes, shared by the whole-document load and
+   * the per-block render-back so a block renders identically however it arrives.
+   * Parsed in ISOLATION, so a block the schema rejects is logged and skipped.
    * @param {any} editorPane @param {import('../../../contract/sieve-block.js').SieveBlock} b @returns {any[]}
    */
   #blockToNodes(editorPane, b) {
@@ -1970,8 +1595,8 @@ export class WysiwygSurface extends AbstractSurface {
       var tmp = document.createElement('div')
       tmp.innerHTML = (bhtml || '').trim()
       if (b.kind === 'prose') {
-        // A prose block parses to its NATIVE top-level node(s); proseBlockNodes
-        // stamps the block id (one node → that node; >1 → one proseGroup container).
+        // proseBlockNodes stamps the block id: one node → that node; >1 → one
+        // proseGroup.
         var produced = proseBlockNodes(parser.parse(tmp).content, b.id || '', editorPane.state.schema)
         if (!produced.length) console.error('[editor] prose block (' + (b.id || '') + ') produced no node from:\n' + (bhtml || '').trim().slice(0, 200))
         produced.forEach(function (n) { out.push(n) })
@@ -1988,11 +1613,10 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /**
-   * renderBlocksIntoEditor replaces the whole document with the block list, each
-   * block rendered via blockToNodes, swapped in via one non-undoable transaction.
-   * opts.allowEmpty — when true, a genuinely-empty block list clears the editor
-   * to one empty paragraph instead of keeping stale content. Set only by the
-   * known-good caller (paintContainer); omit for all other callers.
+   * Replaces the whole document with the block list, in one non-undoable
+   * transaction. opts.allowEmpty: a genuinely-empty block list clears the editor
+   * to one empty paragraph instead of keeping stale content. Set only by
+   * paintContainer.
    * @param {any} editorPane @param {import('../../../contract/sieve-block.js').SieveBlock[]} blocks @param {{allowEmpty?: boolean}} [opts]
    */
   #renderBlocksIntoEditor(editorPane, blocks, opts) {
@@ -2008,25 +1632,12 @@ export class WysiwygSurface extends AbstractSurface {
     tr.replaceWith(0, editorPane.state.doc.content.size, replacement)
     tr.setMeta('addToHistory', false)
     // The whole-doc replace maps the prior selection to the END of the new
-    // content; a load is not an edit — park the caret at the doc start (TipTap
-    // clamps 0 to the first valid position) IN THE SAME transaction.
-    //
-    // issue #51 root cause (confirmed via a captured WebKitGTK stack trace
-    // through tiptap.js's dispatchTransaction → updateStateInner): PM's view
-    // DEFAULTS to PRESERVING the scroller's prior offset across a state update
-    // (the ordinary-edit assumption) UNLESS the transaction's scrollToSelection
-    // counter advanced — so an unadorned replace silently carried the PREVIOUS
-    // document's scroll position into this one (why the symptom was "no
-    // consistency": different previous doc → different landing spot, not
-    // literally "always the bottom"). `scrollIntoView()` bumps that counter, so
-    // updateStateInner takes its "scroll to selection" branch and moves the
-    // viewport ITSELF, inside this SAME dispatch — never assign scrollTop
-    // after the fact; that would race PM's own restore rather than replacing
-    // it. A reload's own caret/scroll restore (applyPosition/applyScroll)
-    // runs AFTER this, so a genuine mid-session reload still returns the user
-    // to their prior spot; a fresh document LOAD instead restores from the
-    // session's saved Tab.Scroll (workspace.js initEditor → editor.restoreScroll),
-    // deferred past PM's own scroll via the surface's double-rAF applyScroll.
+    // content; a load is not an edit, so park the caret at the doc start IN THE
+    // SAME transaction. PM's view DEFAULTS to preserving the scroller's prior
+    // offset unless the transaction's scrollToSelection counter advanced, so an
+    // unadorned replace carries the PREVIOUS document's scroll into this one.
+    // `scrollIntoView()` bumps that counter. Never assign scrollTop after the
+    // fact: that races PM's own restore rather than replacing it.
     try {
       tr.setSelection(T.TextSelection.atStart(tr.doc))
       tr.scrollIntoView()
@@ -2034,17 +1645,12 @@ export class WysiwygSurface extends AbstractSurface {
     editorPane.view.dispatch(tr)
   }
 
-  // ── Block-sync cache (verbatim mountWysiwyg internals) ─────────────────────────
-
   /**
-   * Serialize one top-level block to the (id, kind, content) the sync diff
-   * needs (node-granular, 2026-06-19). A structured sieve block's `content` is a
-   * change-SIGNATURE only (never emitted as an op): the JSON of its attrs, which
-   * changes iff its persistent state does — no markdown produced. EVERY OTHER
-   * top-level node is a prose block: a NATIVE TipTap node (paragraph/heading/
-   * list/table/…) whose identity is its `id` attr and whose content is its CLEAN
-   * markdown (native nodes never embed markers — Go re-wraps on save). No node
-   * returns null now, so the observer never falls back merely on node type.
+   * Serialize one top-level block to the (id, kind, content) the sync diff needs.
+   * A structured sieve block's `content` is a change-SIGNATURE only, never emitted
+   * as an op: the JSON of its attrs, which changes iff its persistent state does.
+   * Every other top-level node is a prose block, whose content is its CLEAN
+   * markdown — native nodes never embed markers, and Go re-wraps on save.
    * @param {any} ed @param {any} node
    */
   #topBlockTriple(ed, node) {
@@ -2069,52 +1675,38 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /**
-   * Seed the sync baseline from GO's view (the server block list), NOT the
-   * editor — so a block PM created client-side (e.g. the prose block an empty
-   * doc createAndFills, or a split) is absent from the baseline and the first
-   * sync emits a create-block for it. Seeding from the editor would hide such a
-   * block from Go forever (its update-block would fail "block not found"). For a
-   * loaded doc the server blocks ARE the editor blocks, so nothing spurious.
+   * Seed the sync baseline from GO's view, NOT the editor, so a block PM created
+   * client-side is absent from it and the first sync emits a create-block.
+   * Seeding from the editor would hide such a block from Go forever, its
+   * update-block failing "block not found".
    * @param {any} editorPane @param {Array<any>|null} serverBlocks
    */
   #seedBlockCache(editorPane, serverBlocks) {
-    // Structured signature is the JSON of the rendered node's attrs (topBlockTriple's
-    // derivation). The SERVER block's attrs would stringify differently (key order,
-    // schema defaults) and phantom-flag a change on the first diff, so read the
-    // structured baseline straight off the just-rendered editor, keyed by id.
+    // The structured signature is the JSON of the RENDERED node's attrs. The
+    // SERVER block's would stringify differently and phantom-flag a change on the
+    // first diff, so read it straight off the just-rendered editor.
     var structuredSig = {}
     this.#collectTopBlocks(editorPane).forEach(function (t) {
       if (t.kind !== 'prose' && t.id) structuredSig[t.id] = t.content
     })
-    // serverBlocks are SieveBlocks (the render pipeline is block-native):
-    // .id/.kind via getters, the prose body via proseContent (payload.content).
     var triples = (serverBlocks || []).map(function (b) {
       return {
         id: b.id,
         kind: b.kind,
-        // Prose body rides in payload.content (proseContent); structured signs on
-        // the attrs-hash derived from its rendered node.
         content: b.kind === 'prose' ? proseContent(b) : (structuredSig[b.id] || ''),
       }
     })
-    // seedBaseline includes EVERY id'd server block (even an empty one) so the
-    // first edit to a loaded block is an update-block, never a duplicate create.
+    // Includes EVERY id'd server block, even an empty one, so the first edit to a
+    // loaded block is an update-block and never a duplicate create.
     this.#blockContentCache = seedBaseline
       ? seedBaseline(triples)
       : {}
-    // The order baseline seeds from GO's list too, so the first reorder after a
-    // load is measured against what the server actually holds (#94).
     this.#blockOrderCache = triples.filter(function (t) { return !!t.id }).map(function (t) { return t.id })
   }
 
   /**
-   * syncDocument is the debounced domain submit: granular block-ops only.
-   * There is NO whole-document fallback — every WYSIWYG edit becomes a
-   * block-domain op (prose via the observer; structured via their own channels
-   * + delete-block here) handed to the service pair, which owns the WS
-   * enveloping (#submitOps). Markdown mode keeps its own whole-buffer
-   * setRawContent path, outside here. It NEVER mutates the document — pure
-   * read + submit.
+   * The debounced domain submit: granular block-ops only, with NO whole-document
+   * fallback. It NEVER mutates the document — pure read + submit.
    * @param {any} ed
    */
   #syncDocument(ed) {
@@ -2122,8 +1714,8 @@ export class WysiwygSurface extends AbstractSurface {
     if (!curr || !computeBlockSync) return
     var r = computeBlockSync(curr, this.#blockContentCache)
     this.#blockContentCache = r.next
-    // Order rides LAST in the batch: it installs the COMPLETE order, so it must
-    // land after this tick's creates and deletes have moved the server's set.
+    // Order rides LAST: it installs the COMPLETE order, so it must land after
+    // this tick's creates and deletes have moved the server's set.
     var o = computeOrderOp(curr, this.#blockOrderCache, r.ops)
     this.#blockOrderCache = o.next
     var ops = o.op ? r.ops.concat([o.op]) : r.ops
@@ -2131,19 +1723,11 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /**
-   * #submitOps — the ONE place the observer's op batch becomes facade verbs.
-   * Emission order is preserved: every verb leaves synchronously, in sequence, so
-   * the container sees the tick's creates before its order statement.
-   *
-   * - create-block → requestAddBlock. The block NAMES ITSELF: the id the identity
-   *   plugin minted at birth rides in `attrs.id`, and the anchor is the block it
-   *   follows in the doc — never an index (the host owns that arithmetic).
-   * - update-block → requestSetBlock.
-   * - delete-block → requestRemoveBlock.
-   * - set-order    → requestSetOrder (the container's whole id order, #94).
-   *
-   * A surface with no block-capable provider (a bare test construction) drops the
-   * batch.
+   * The ONE place the observer's op batch becomes facade verbs. Emission order is
+   * preserved, so the container sees the tick's creates before its order
+   * statement. A create-block block NAMES ITSELF: the id minted at birth rides in
+   * `attrs.id`, and the anchor is the block it follows — never an index. A surface
+   * with no block-capable provider drops the batch.
    * @param {any[]} ops @param {any[]} curr the top-level blocks this batch was diffed from
    */
   #submitOps(ops, curr) {
@@ -2164,13 +1748,10 @@ export class WysiwygSurface extends AbstractSurface {
     }
   }
 
-  /**
-   * The block a new child at document index `index` should follow. Walks BACK
-   * past anything with no id — the trailing editing surface is not a block the
-   * container knows — and answers `null` at the front, which is a real place and
-   * a different statement from "wherever".
-   * @param {any[]} curr @param {number} index @returns {string|null}
-   */
+  /** The block a new child at document index `index` should follow. Walks BACK
+   *  past anything with no id, and answers `null` at the front — a real place, and
+   *  a different statement from "wherever".
+   *  @param {any[]} curr @param {number} index @returns {string|null} */
   #anchorBefore(curr, index) {
     for (var i = Math.min(index, (curr || []).length) - 1; i >= 0; i--) {
       if (curr[i] && curr[i].id) return curr[i].id
@@ -2178,12 +1759,10 @@ export class WysiwygSurface extends AbstractSurface {
     return null
   }
 
-  /**
-   * Baseline a server-created block (by id) into the sync cache so the thin
-   * observer sees it as already-present and never re-creates it. Derived from the
-   * rendered node so its signature matches topBlockTriple exactly.
-   * @param {string} id
-   */
+  /** Baseline a server-created block so the thin observer sees it as
+   *  already-present and never re-creates it. Derived from the rendered node so
+   *  its signature matches topBlockTriple exactly.
+   *  @param {string} id */
   #noteServerBlock(id) {
     var ed = /** @type {any} */ (this.editorPane)
     if (!this.#blockContentCache || !id || !ed) return
@@ -2196,17 +1775,12 @@ export class WysiwygSurface extends AbstractSurface {
     if (seed) for (var k in seed) this.#blockContentCache[k] = seed[k]
   }
 
-  /**
-   * docPosForBlockIndex maps a top-level BLOCK index (Go's tree position, echoed
-   * on insert-block) to the editor doc position before that node — so a
-   * render-back lands where Go put it, even for a batch (a paste slice).
-   * Delegates to the tested docPosForBlockIndex import (lens/surfaces/block-position.js).
-   * @param {any} editorPane @param {number} idx
-   */
+  /** Maps a top-level BLOCK index (Go's tree position) to the editor doc position
+   *  before that node, so a render-back lands where Go put it.
+   *  @param {any} editorPane @param {number} idx */
   #docPosForBlockIndex(editorPane, idx) {
     return docPosForBlockIndex(editorPane.state.doc, idx)
   }
 }
 
-// Expose on window for classic-script access from editor.js.
 window.SieveWysiwygSurface = WysiwygSurface

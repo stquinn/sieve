@@ -1,20 +1,12 @@
 // @ts-check
-// AiBlockRenderer's stylesheet, a sibling module per the styles-file-geography
-// convention: a renderer file starts with its class, so any sheet over ~30 lines
-// lives in its own `<kind>-renderer.styles.js` sibling, imported into the class's
-// `static styles`. This module is renderer-internal.
-//
-// Colour comes ONLY from --theme-* variables — the host↔renderer styling
-// contract — so no rule here carries a colour literal.
+// AiBlockRenderer's stylesheet. Colour comes ONLY from --theme-* variables —
+// the host↔renderer styling contract — so no rule here carries a colour literal.
 //
 // `.sieve-block__heading` (the title/divider region) is deliberately NOT here:
-// it is framework-owned chrome rendered by sieve-block-extension.js's
-// titleProvider slot, shared by any kind that declares one, so it lives in
-// editor.css.
+// it is framework-owned chrome, shared by any kind that declares one.
 //
-// `.ai-block__badge--error` intentionally carries no rule. AiBlockRenderer#update()
-// applies the class for non-COMPLETE/non-PENDING/non-DISPATCHED statuses and for
-// stale PENDING/DISPATCHED, but no distinct visual has ever been designed for it.
+// `.ai-block__badge--error` intentionally carries no rule. The class is applied
+// for non-COMPLETE statuses, but no distinct visual has ever been designed.
 
 export const aiBlockStyles = /* css */ `
   .hide-ai-blocks .ai-block {

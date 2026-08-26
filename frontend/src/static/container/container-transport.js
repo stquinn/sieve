@@ -1,23 +1,14 @@
 // @ts-check
-// container-transport.js — the WIRE OWNER for document channels. One
-// socket per open document uuid, with its pending queue, awaiters, ping/pong
-// watchdog and exponential-backoff reconnect (block-channel.js). Wire frame
-// shapes are FROZEN.
+// The WIRE OWNER for document channels: one socket per open document uuid, with
+// its pending queue, awaiters, ping/pong watchdog and backoff reconnect. Wire
+// frame shapes are FROZEN.
 //
-// TRANSPORT AND NOTHING ELSE (issue #96). It holds no view of what a document
-// contains: the id→block cache it used to keep is gone, and with it every
-// blockId-addressed verb that needed one. What a client knows about a container
-// is the FOLLOWER MODEL the host keeps (container/container-model.js), fed from
-// `observeFrames` below — one place, one writer, and a lens reads it through a
-// provider rather than asking a socket.
+// TRANSPORT AND NOTHING ELSE. It holds no view of what a document contains: that
+// is the FOLLOWER MODEL the host keeps, fed from `observeFrames` below — one
+// place, one writer, and a lens reads it through a provider rather than a socket.
 //
-// ONE instance, constructed in the Workspace composition root and handed down
-// (idiomatic-js §5 — never window.*). Its callers are the host's own data plane:
-// DocumentService, and container/container-binding.js, which is this same
-// surface with a uuid bound once at mount.
-//
-// The per-channel DELEGATE receives what the transport does not settle itself
-// and the follower model does not claim — a server error, and little else.
+// The per-channel DELEGATE receives what the transport does not settle itself and
+// the follower model does not claim — a server error, and little else.
 
 import { ContractViolation } from '../contract/sieve-block.js'
 import { BlockChannel } from './block-channel.js'
@@ -31,37 +22,32 @@ import { DocumentFrame } from '../generated/protocol.js'
 /**
  * @typedef {object} ContainerTransportOptions
  * @property {(url: string, protocols?: string[]) => WebSocket} [socketFactory]
- *   — injected for tests; defaults to `new WebSocket(url, protocols)`
+ *   injected for tests; defaults to `new WebSocket(url, protocols)`
  * @property {(uuid: string) => string} [wsUrlFor]
- *   — injected for tests; defaults to the document-channel URL for the uuid
+ *   injected for tests; defaults to the document-channel URL for the uuid
  */
 
 export class ContainerTransport {
   /** @type {(url: string, protocols?: string[]) => WebSocket} */ #socketFactory
   /** @type {(uuid: string) => string} */ #wsUrlFor
   /** @type {Map<string, BlockChannel>} uuid → live channel */ #channels = new Map()
-  /** @type {Map<string, Set<(msg: Record<string, any>) => void>>} uuid → raw inbound-frame observers (see observeFrames) */ #frameObservers = new Map()
-  /** @type {number} monotonic opId source; per-ContainerTransport so ids never collide across channels (correlation is uuid+opId, but a global counter also survives a takeover cleanly) */ #opSeq = 0
+  /** @type {Map<string, Set<(msg: Record<string, any>) => void>>} uuid → raw inbound-frame observers */ #frameObservers = new Map()
+  /** @type {number} monotonic opId source; correlation is uuid+opId, but a global counter also survives a takeover cleanly */ #opSeq = 0
 
-  /** @param {ContainerTransportOptions} [options]
-   *    the test seams (empty in prod) */
+  /** @param {ContainerTransportOptions} [options] the test seams (empty in prod) */
   constructor(options = {}) {
     this.#socketFactory = options.socketFactory || ((url, protocols) => new WebSocket(url, protocols))
     this.#wsUrlFor = options.wsUrlFor || ((uuid) => ContainerTransport.#defaultUrl(uuid))
   }
 
-  /** Mints the next request-correlation opId (issue #49 Phase 2). Monotonic and
-   *  per-service, so it is unique within any uuid AND across channels.
-   *  @returns {string} */
+  /** Mints the next request-correlation opId: monotonic and per-service, so it is
+   *  unique within any uuid AND across channels. @returns {string} */
   #mintOpId() { return 'op-' + (++this.#opSeq) }
 
   /**
-   * The production document-channel URL. The uuid is a PATH segment;
-   * encodeURIComponent is kept as harmless hygiene, not a safety mechanism — chi
-   * routes document channels on RawPath, so an encoded handle (e.g. `prompt:x` →
-   * `prompt%3Ax`) arrives at Go STILL ENCODED, never decoded back to the raw `:`.
-   * It does not rescue a non-uuid handle carrying a `/` or `:`; only ident UUIDs
-   * ever open a document channel in practice.
+   * The production document-channel URL. encodeURIComponent is hygiene, not a
+   * safety mechanism — chi routes document channels on RawPath, so an encoded
+   * handle arrives at Go STILL ENCODED.
    *
    * The dev-server host rewrite is load-bearing: WebKitGTK cannot carry a
    * WebSocket upgrade over the app's custom scheme, so the wire always rides the
@@ -75,24 +61,16 @@ export class ContainerTransport {
     return proto + '//' + host + '/api/ws/document/' + encodeURIComponent(uuid)
   }
 
-  // ── Channel lifecycle (DocumentService.open/close front these) ─────────────
-
-  /**
-   * Opens the live channel for a document. An existing channel for the uuid is
-   * torn down first (mirrors the retired #open's closeSocket-first semantics —
-   * in practice activateDocument's close-before-open ordering means this never
-   * fires in the app).
-   * @param {string} uuid
-   * @param {ChannelDelegate} delegate
-   */
+  /** Opens the live channel for a document, tearing down any existing one first.
+   *  @param {string} uuid @param {ChannelDelegate} delegate */
   openChannel(uuid, delegate) {
     if (!uuid) throw new ContractViolation('ContainerTransport.openChannel: uuid is required')
     if (!delegate) throw new ContractViolation('ContainerTransport.openChannel: delegate is required')
     const existing = this.#channels.get(uuid)
     if (existing) existing.close()
     this.#channels.set(uuid, new BlockChannel(
-      // The channel owns the socket's LIFE; dialling it — url and credential
-      // alike — is the wire owner's business, so it is bound here.
+      // Dialling the socket — url and credential alike — is the wire owner's
+      // business, so it is bound here.
       (url) => this.#socketFactory(url, WsDial.protocols()),
       () => this.#wsUrlFor(uuid),
       delegate,
@@ -100,10 +78,7 @@ export class ContainerTransport {
     ))
   }
 
-  /**
-   * Closes a document's channel (no reconnect).
-   * @param {string} uuid
-   */
+  /** @param {string} uuid */
   closeChannel(uuid) {
     const ch = this.#channels.get(uuid)
     if (!ch) return
@@ -113,12 +88,9 @@ export class ContainerTransport {
 
   /**
    * Every routed inbound frame on a document's channel, in arrival order, before
-   * the delegate sees it.
-   *
-   * Frames an awaiter consumed never arrive here: the transport settles those and
-   * returns (block-channel.js). Whole-container ANSWERS (load-content,
-   * wysiwyg-content) are exactly that shape, which is why they reach a follower
-   * through DocumentService.onContent instead.
+   * the delegate sees it. Frames an awaiter consumed never arrive here, which is
+   * why whole-container ANSWERS reach a follower through DocumentService.onContent
+   * instead.
    * @param {string} uuid @param {Record<string, any>} msg
    */
   #onInbound(uuid, msg) {
@@ -130,10 +102,9 @@ export class ContainerTransport {
   }
 
   /**
-   * Subscribe to a document's raw inbound frames (see #onInbound). The returned
-   * function unsubscribes. This is the seam the container's follower model feeds
-   * from — and the only inbound seam there is, which is what makes the model the
-   * single client-side account of what a container holds.
+   * Subscribe to a document's raw inbound frames — the seam the follower model
+   * feeds from, and the only inbound seam there is, which is what makes the model
+   * the single client-side account of what a container holds.
    * @param {string} uuid @param {(msg: Record<string, any>) => void} observer
    * @returns {() => void} unsubscribe
    */
@@ -149,17 +120,11 @@ export class ContainerTransport {
     }
   }
 
-  // ── Public verbs (uuid-addressed — the host's data plane ends here) ────────
-
   /**
-   * Backend-declared extraction capability discovery: given a source kind and its
-   * content entries, ask Go which (kind, actions) it can extract/transform into.
-   * Frame frozen: {type:'detect-extractions', sourceKind, entries, opId} →
-   * detect-extractions-result, whose offers ride an `offers` KEY (the reply is a
-   * frame, not the bare array the retired endpoint answered with). No channel →
-   * an empty offer list: nothing to discover is a legitimate answer, and the menu
-   * this feeds already renders none. REJECTS on the 5s timeout; the facade's
-   * adapter is what degrades that to an empty list for the menu.
+   * Backend-declared extraction capability discovery: which (kind, actions) Go can
+   * extract or transform this content into. No channel means an empty offer list —
+   * nothing to discover is a legitimate answer. REJECTS on the 5s timeout; the
+   * facade's adapter degrades that to an empty list.
    * @param {string} uuid @param {{sourceKind: string, entries: object[]}} payload
    * @returns {Promise<Array<{kind: string, actions: string[]}>>}
    */
@@ -174,22 +139,16 @@ export class ContainerTransport {
       .then((reply) => reply.offers || [])
   }
 
-  /**
-   * Re-run a block's backend job (kind-blind: Go knows what retry means).
-   * Frame frozen: {type:'retry-block-job', uuid, id}.
-   * @param {string} uuid @param {string} blockId
-   */
+  /** Re-run a block's backend job; kind-blind, because Go knows what retry means.
+   *  @param {string} uuid @param {string} blockId */
   retry(uuid, blockId) {
     this._send(uuid, { type: DocumentFrame.RETRY_BLOCK_JOB, uuid: uuid, id: blockId })
   }
 
   /**
-   * Frames a block extraction/transform (the lens-side prep — context stamping,
-   * entry resolution — stays in the lens; the payload arrives fully prepared).
-   * Frame frozen: {type:'extract', blockId, targetKind, operation, entries,
-   * index} — NO uuid inside; the server resolves the document from the channel.
-   * Returns the extract-ack RESULT {ok, error?} (resolves, never rejects); any
-   * block it creates or replaces arrives as a container change.
+   * Frames a block extraction/transform; the lens-side prep stays in the lens.
+   * The frame carries NO uuid — the server resolves the document from the channel.
+   * Never rejects; any block it creates or replaces arrives as a container change.
    * @param {string} uuid
    * @param {{blockId?: string, targetKind: string, operation: string, entries: object[], index: number}} payload
    * @returns {Promise<{ok: boolean, error?: string}>}
@@ -205,36 +164,26 @@ export class ContainerTransport {
     }, 'extract ' + payload.targetKind)
   }
 
-  // ── Service-pair internals (@protected by convention) ──────────────────────
-  // JS #private fields don't cross the class boundary, so the framing surface the
-  // service pair shares is underscore-marked instead — same contract as the
-  // renderers' _pushAttrs seam.
-  //
-  // Two callers, both inside the host's data plane: DocumentService (its uuid-
-  // addressed twin) and container/container-binding.js, which is this same
-  // surface with the uuid bound once at mount. Nothing above the data plane calls
-  // them — a lens holds a provider, and a provider holds a binding.
+  // JS #private fields do not cross the class boundary, so the framing surface the
+  // service pair shares is underscore-marked instead. Its only callers are inside
+  // the host's data plane — a lens holds a provider, and a provider holds a
+  // binding.
 
   /** @param {string} uuid @returns {boolean} whether a live channel exists */
   _hasChannel(uuid) { return this.#channels.has(uuid) }
 
-  /**
-   * Send a frame on a document's channel; channel-less uuids no-op (the
-   * socketless-parity rule: sends drop, never throw).
-   * @param {string} uuid @param {object} msg
-   */
+  /** Send a frame on a document's channel; channel-less uuids no-op, because sends
+   *  drop rather than throw. @param {string} uuid @param {object} msg */
   _send(uuid, msg) {
     const ch = this.#channels.get(uuid)
     if (ch) ch.send(msg)
   }
 
   /**
-   * Send + await a HANDSHAKE reply on a document's channel, correlated by a freshly
-   * minted opId; channel-less uuids reject with the socketless error (awaits
-   * resolve-or-reject, never hang). REJECTS on timeout (5s default) — setMode's
-   * stay-on-failure depends on it. `timeoutMs` raises the ceiling for a caller
-   * whose server-side counterpart can legitimately run long (document-service's
-   * paste verbs; see its PASTE_ACK_TIMEOUT_MS).
+   * Send and await a HANDSHAKE reply. A channel-less uuid rejects, so an await
+   * always settles. REJECTS on timeout (5s default) — setMode's stay-on-failure
+   * depends on it. `timeoutMs` raises the ceiling for a caller whose server-side
+   * counterpart can legitimately run long.
    * @param {string} uuid @param {object} msg @param {string} [label] @param {number} [timeoutMs]
    * @returns {Promise<any>}
    */
@@ -245,11 +194,9 @@ export class ContainerTransport {
   }
 
   /**
-   * Send + await an ACK on a document's channel, correlated by a freshly minted
-   * opId. Resolves the ack RESULT {ok, error?} — including on a channel-less uuid
-   * ({ok:false, error:'dropped: …'}) and on timeout — and NEVER rejects, so a
-   * fire-and-forget caller can ignore the promise safely. (createBlock / deleteBlock
-   * route here.)
+   * Send and await an ACK. Resolves the ack RESULT — including on a channel-less
+   * uuid and on timeout — and NEVER rejects, so a fire-and-forget caller can
+   * ignore the promise safely.
    * @param {string} uuid @param {object} msg @param {string} [label] @param {number} [timeoutMs]
    * @returns {Promise<{ok: boolean, error?: string}>}
    */

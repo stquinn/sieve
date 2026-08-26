@@ -1,16 +1,10 @@
-// smart-image-node-view.js — Sieve NodeView ADAPTER for the 'smart-image' kind
-// (the PM half of the renderer/NodeView split; NORMATIVE contract:
-// docs/design/archive/specs/2026-07-21-block-renderer-contract.md). Look-and-feel (the
-// image wrapper, resize handle, status badge, this kind's stylesheet) lives in
-// SmartImageRenderer (frontend/src/static/renderers/smart-image-renderer.js
-// — a DIFFERENT class). This
-// file HOLDS a SmartImageRenderer instance by COMPOSITION and owns the
-// genuinely PM/framework-side pieces: schema data (nodeConfig/attrs/parseAttrs)
-// and authoring the block's live `src` overlay against the held Editor's
-// document uuid (the renderer's semantic verbs — resize — leave through the
-// ContainerTransport, the wire owner) —
-// SmartImageRenderer.resolveSrc itself is a pure (src, uuid) function with no
-// ctx dependency (see that class for why).
+// The NodeView adapter for the 'smart-image' kind. Look-and-feel — the image
+// wrapper, resize handle, status badge, this kind's stylesheet — belongs to
+// SmartImageRenderer, which this file holds by composition. What lives here is
+// the PM/framework-side pieces: schema data (nodeConfig/attrs/parseAttrs) and
+// authoring the block's live `src` overlay against the held Editor's document
+// uuid. SmartImageRenderer.resolveSrc itself is a pure (src, uuid) function with
+// no ctx dependency.
 
 import { registerSieveRenderer, sieveBlockFor } from '../sieve-block-extension.js'
 import { DiagramRenderer } from '../../../../renderers/diagram-renderer.js'
@@ -23,17 +17,13 @@ import { SmartImageRenderer } from '../../../../renderers/smart-image-renderer.j
     var nodeTypeName = 'sieve-smart-image'
     var currentAttrs = Object.assign({}, node.attrs)
 
-    // blockFor — the typed block with `src` overlaid as the RESOLVED
-    // asset URL (proxy / per-document asset path). The overlay key is this
-    // kind's own knowledge; resolution needs the held Editor's uuid, which is
-    // why it happens here and not in the (PM-blind, ctx-free) renderer.
+    // The typed block with `src` overlaid as the RESOLVED asset URL. Resolution
+    // needs the held Editor's uuid, which is why it happens here and not in the
+    // PM-blind, ctx-free renderer.
     function blockFor(n) {
       return sieveBlockFor(n, { src: SmartImageRenderer.resolveSrc(n.attrs.src || '', ctx && ctx.getEditor() && ctx.getEditor().uuid) }, ctx && ctx.provider)
     }
 
-    // The renderer instance this NodeView HOLDS by composition (never
-    // inheritance — see the file header). All look-and-feel is its job; its
-    // semantic verbs (resize) hit the real wire through the ContainerTransport.
     var renderer = new SmartImageRenderer(blockFor(node), ctx.provider || null)
 
     var dom = renderer.render()
@@ -92,18 +82,16 @@ import { SmartImageRenderer } from '../../../../renderers/smart-image-renderer.j
       return { contextLabel: 'Image', imageIds: node.attrs.id ? [node.attrs.id] : [] }
     },
 
-    // getExpandContent — a fresh <img> at the resolved src. Null while the asset
-    // job is PENDING/DISPATCHED or errored (nothing meaningful to show yet).
+    // A fresh <img> at the resolved src. Null while the asset job is
+    // PENDING/DISPATCHED or errored — there is nothing meaningful to show yet.
     getExpandContent: function (node, _dom) {
       if (!node || !node.attrs || !node.attrs.src) return null
       var status = node.attrs.status || 'PENDING'
       if (status === 'PENDING' || status === 'DISPATCHED' || status === 'ERROR' || status === 'TIMEOUT') return null
       var img = document.createElement('img')
-      // resolveSrc is pure (src, uuid) — no ctx. getExpandContent gets (node, dom)
-      // not the block ctx, so reach the active editor the same way other
-      // view-layer code does — window.sieveWorkspace.activeEditor (has .uuid). A
-      // document is only ever open in the single active tab, so activeEditor is
-      // THIS block's editor.
+      // getExpandContent receives (node, dom), not the block ctx, so the uuid comes
+      // from window.sieveWorkspace.activeEditor: a document is only ever open in
+      // the single active tab, so that IS this block's editor.
       var activeEditor = window.sieveWorkspace && window.sieveWorkspace.activeEditor
       img.src = SmartImageRenderer.resolveSrc(node.attrs.src, activeEditor && activeEditor.uuid)
       img.alt = node.attrs.alt || ''
@@ -141,8 +129,8 @@ import { SmartImageRenderer } from '../../../../renderers/smart-image-renderer.j
             }).catch(function (err) { console.error('Failed to copy image', err) })
         }},
         // Offered ONLY when there is a description — an item that reveals nothing
-        // is a lie. The toggle writes the persisted showSummary attribute through
-        // the wire owner, so the choice survives reopening the document.
+        // is a lie. The toggle persists showSummary, so the choice survives a
+        // reopen.
         n.attrs.summary ? {
           icon: window.SieveIcons.info,
           label: n.attrs.showSummary ? 'Hide Description' : 'Show Description',
@@ -154,10 +142,9 @@ import { SmartImageRenderer } from '../../../../renderers/smart-image-renderer.j
         } : null,
       ].filter(Boolean)
     },
-    // Extract → Image: acquire the diagram's SVG and REPLACE the entries with
-    // it, so Transform's saveSVG writes the image. Shared helper lives in
-    // diagram-renderer.js and branches on the engine (mermaid renders locally,
-    // plantuml fetches its svgAsset); null = nothing to extract (pass through).
+    // Extract → Image: acquire the diagram's SVG and REPLACE the entries with it,
+    // so Transform's saveSVG writes the image. The shared helper branches on the
+    // engine; null means nothing to extract, and the entries pass through.
     resolveEntries: function(sourceNode, entries) {
       return DiagramRenderer.renderDiagramSvgEntry(sourceNode, entries).then(function (svg) {
         return svg ? [svg] : entries

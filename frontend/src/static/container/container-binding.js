@@ -1,22 +1,13 @@
 // @ts-check
-// container-binding.js — ContainerBinding: the transport, pre-bound to ONE
-// container (issue #96 P4a).
+// ContainerBinding: the transport, pre-bound to ONE container. Every method here is
+// one wire frame with the uuid already filled in, and nothing above it holds a uuid
+// — possession of a provider is authorization for exactly one container.
 //
-// Every method here is one existing wire frame with the uuid already filled in.
-// That is the whole job: the provider adapter above it must not hold a uuid,
-// because possession of a provider is authorization for exactly one container
-// and a uuid parameter is a way to name another one. Binding the uuid once, in
-// the host's mount sequence, is what makes that structural rather than a rule.
+// It mints NO correlations of its own: an opId settles the promise a method returns
+// and goes no further, so nothing above this class ever learns one.
 //
-// It mints NO correlations of its own — the wire owner does, inside `_awaitAck`
-// / `_awaitReply` / `updateAttributes`, and they live and die there: an opId
-// settles the promise these methods return and goes no further. Nothing above
-// this class ever learns one, and a render-back carries none, so there is
-// nothing here to thread upward.
-//
-// The results are the RAW wire answers. Mapping them to the facade's vocabulary
-// (a PasteDecision, an offer list) belongs to the adapter, which is the thing
-// that speaks the facade.
+// The results are the RAW wire answers. Mapping them to the facade's vocabulary (a
+// PasteDecision, an offer list) belongs to the adapter, which speaks the facade.
 
 import { ContractViolation } from '../contract/sieve-block.js'
 import { updateBlockOp } from './block-ops.js'
@@ -44,18 +35,14 @@ export class ContainerBinding {
   /** @returns {string} */
   getUuid() { return this.#uuid }
 
-  // ── Mutations (each resolves the wire ack; the adapter ignores it) ──────────
-
   /**
-   * create-block at an absolute index the CALLER resolved from container order —
-   * a container's order is a fact the host already holds, so no lens and no
-   * editor needs to be mounted for a block to be added.
+   * create-block at an absolute index the CALLER resolved from container order — a
+   * container's order is a fact the host already holds, so no lens need be mounted
+   * for a block to be added.
    *
-   * A block the client already drew names ITSELF: `attrs.id` is lifted to the
-   * op's blockId, which is the field Go validates and adopts (issue #96). The
-   * lift happens here, at the framing layer, because which wire field carries
-   * identity is framing knowledge — the facade above simply says the block knows
-   * its own name.
+   * A block the client already drew names ITSELF: `attrs.id` is lifted to the op's
+   * blockId, which is the field Go validates and adopts. The lift happens here,
+   * because which wire field carries identity is framing knowledge.
    * @param {string} kind @param {Record<string, any>} attrs @param {number} index
    * @returns {Promise<{ok: boolean, error?: string}>}
    */
@@ -66,8 +53,7 @@ export class ContainerBinding {
 
   /**
    * update-block: an attrs DELTA for one block. `kind` comes from the caller (the
-   * follower model knows it) rather than the transport's routing index, so a
-   * container that was never loaded through the old cache path still updates.
+   * follower model knows it), not from the transport's routing index.
    * @param {string} blockId @param {string} kind @param {Record<string, any>} patch
    * @returns {Promise<{ok: boolean, error?: string}>}
    */
@@ -79,9 +65,9 @@ export class ContainerBinding {
 
   /**
    * set-order: the container's COMPLETE child order. Reorder is expressed this way
-   * rather than as a move-by-index because installing a whole order is idempotent
-   * — a duplicate or late request lands the container in the same place — and
-   * because it is the shape Go echoes back as order-changed.
+   * rather than as a move-by-index because installing a whole order is idempotent —
+   * a duplicate or late request lands the container in the same place — and because
+   * it is the shape Go echoes back as order-changed.
    * @param {string[]} order
    * @returns {Promise<{ok: boolean, error?: string}>}
    */
@@ -90,10 +76,9 @@ export class ContainerBinding {
   }
 
   /**
-   * delete-block: the container drops one child. Go answers it with a
-   * `remove-block` echo, which is how every follower — the lens that asked and
-   * the ones that did not — learns the block is gone; this ack only reports
-   * whether the request was accepted.
+   * delete-block: the container drops one child. Go answers it with a `remove-block`
+   * echo, which is how every follower learns the block is gone; this ack only
+   * reports whether the request was accepted.
    * @param {string} blockId
    * @returns {Promise<{ok: boolean, error?: string}>}
    */
@@ -131,14 +116,11 @@ export class ContainerBinding {
     this.#documents.flush(this.#uuid)
   }
 
-  // ── Whole-container text (the break-glass projection pair) ─────────────────
-
   /**
    * The container's authoritative serialized form. A channel-bearing container
-   * answers it with the enter-markdown handshake, which is also Go's hand-over:
-   * from here it treats the text as the truth until `setContents` re-parses. A
-   * channel-less one (a prompt) has no such mode to be in, so its load answer
-   * IS the projection.
+   * answers with the enter-markdown handshake, which is also Go's hand-over: it
+   * treats the text as the truth until `setContents` re-parses. A channel-less one
+   * (a prompt) has no such mode, so its load answer IS the projection.
    * @returns {Promise<string>}
    */
   getContents() {
@@ -147,10 +129,9 @@ export class ContainerBinding {
   }
 
   /**
-   * Hands the whole container back as text. Go re-parses and resumes leading
-   * from the block tree; the deltas arrive on the ordinary inbound path. The
-   * channel-less half is the prompt's HTTP save, which is the same statement
-   * for a container whose whole truth IS its text.
+   * Hands the whole container back as text. Go re-parses and resumes leading from
+   * the block tree; the deltas arrive on the ordinary inbound path. The channel-less
+   * half is the prompt's HTTP save.
    * @param {string} text
    * @returns {Promise<void>}
    */
@@ -160,9 +141,8 @@ export class ContainerBinding {
 
   /**
    * The in-flight whole-container handoff: keep this buffer, do not re-parse it.
-   * Fire-and-forget, because it always lands — it is `flush` at container scale.
-   * A channel-less container has no verbatim buffer to hold, so its only way to
-   * keep text is to save it.
+   * Fire-and-forget, because it always lands — `flush` at container scale. A
+   * channel-less container can only keep text by saving it.
    * @param {string} text
    */
   flushContents(text) {
@@ -171,10 +151,10 @@ export class ContainerBinding {
   }
 
   /**
-   * The server's clean whole-container export (ai-blocks filtered, cards and
-   * clips reduced to links) — what "Copy as Markdown" puts on the clipboard,
-   * never a download. A container with no channel has no server-side filter to
-   * apply and no ai-blocks to filter, so its raw projection is the export.
+   * The server's clean whole-container export (ai-blocks filtered, cards and clips
+   * reduced to links) — what "Copy as Markdown" puts on the clipboard, never a
+   * download. A container with no channel has nothing to filter, so its raw
+   * projection is the export.
    * @param {string} format
    * @returns {Promise<string|null>}
    */
@@ -183,12 +163,9 @@ export class ContainerBinding {
     return this.getContents()
   }
 
-  // ── Queries (decisions and offers — never document content) ────────────────
-
   /**
-   * One paste round trip, resolving Go's raw PasteResult union. The payload's
-   * `kind` picks the wire verb: the four kinds are four things Go can be asked
-   * to make of a gesture, not four methods.
+   * One paste round trip, resolving Go's raw PasteResult union. The payload's `kind`
+   * picks the wire verb.
    * @param {{kind?: string, entries?: object[], slice?: object[][], index: number}} payload
    * @returns {Promise<Record<string, any>>}
    */

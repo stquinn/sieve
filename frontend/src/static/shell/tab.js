@@ -1,11 +1,8 @@
 // @ts-check
-// tab.js — Tab shell object + editor factory (P2.A).
-// A Tab is the identity of one open document session. It holds a uuid and a
-// reference to its editor (an AbstractEditor subclass) once mounted. The Tab is
-// also the editor FACTORY: createEditor is the ONE place that decides NoteEditor
-// vs PromptEditor from the uuid — every other former `prompt:` guard becomes type
-// dispatch. Dual-use ES module: `export` for vitest imports, window.* for
-// classic-script access.
+// tab.js — a Tab is the identity of one open document session: a uuid, the mount
+// bound to it, and its editor once one is attached. The Tab is also the editor
+// FACTORY: createEditor is the ONE place that decides NoteEditor vs PromptEditor
+// from the uuid.
 
 import { AbstractEditor } from '../lens/abstract-editor.js'
 import { NoteEditor } from '../lens/document-editor/note-editor.js'
@@ -23,13 +20,9 @@ export class SieveTab {
   #editor = null
 
   /**
-   * The tab's editing mode — the CLIENT-SIDE record that survives a tab switch
-   * (the editor instance is destroyed on switch; the Tab identity persists).
-   * P2.D: this is where mode lives now — the retired `tabModes` module global.
-   * The server persists mode independently (Tab.Mode on flip / editor/load), so
-   * this is a fast local hint, not the source of truth. Kept in sync by the
-   * editor's `mode-changed` event (subscribed in attachEditor) plus the
-   * editor.js load-path seed (recordMode after the initial present).
+   * The tab's editing mode — the CLIENT-SIDE record that survives a tab switch:
+   * the editor is destroyed on switch, the Tab identity persists. The server
+   * persists mode independently, so this is a hint, not the source of truth.
    * @type {EditorModeValue}
    */
   #mode = EditorMode.WYSIWYG
@@ -38,10 +31,9 @@ export class SieveTab {
   #unsubEditor = null
 
   /**
-   * The MOUNT this tab's editor is bound to (issue #96): one container, its
-   * follower model, its provider and its presence seam. It is the tab's, not the
-   * editor's, because it outlives an editor swap — a mode flip builds a new
-   * surface against the SAME container — and because closing it is a host act.
+   * The MOUNT this tab's editor is bound to: one container, its follower model,
+   * its provider and its presence seam. It is the tab's, not the editor's,
+   * because it outlives an editor swap and because closing it is a host act.
    * @type {MountBinding|null}
    */
   #mount = null
@@ -50,63 +42,43 @@ export class SieveTab {
   #unsubAdvert = null
 
   /**
-   * Tab-level selection-update registry (P3.B). Mirrors the workspace's
-   * onActiveTabChanged shape: republishes the attached editor's
-   * `selection-update` context. The registry belongs to the Tab IDENTITY (not the
-   * editor), so its subscribers keep working when a new editor attaches after a
-   * mode flip / re-init — attachEditor re-subscribes the forward, the listeners
-   * are untouched.
+   * Republishes the attached editor's `selection-update` context. This registry
+   * and #statsListeners belong to the Tab IDENTITY, not the editor, so their
+   * subscribers keep working when a new editor attaches after a mode flip.
    * @type {Array<(ctx: import('../lens/document-editor/selection-model.js').SelectionContext) => void>}
    */
   #selectionListeners = []
 
-  /**
-   * Tab-level `stats` listeners (P4.D). Same rationale as #selectionListeners: the
-   * StatusBar points at the TAB, not the editor, so the subscription survives an
-   * editor that attaches AFTER the tab is active (cold boot) and the editor's
-   * initial-present stats seed — emitted after attachEditor subscribes — is
-   * forwarded here.
-   * @type {Array<(ev: { chars: number, lines: number, blockCount: number }) => void>}
-   */
+  /** @type {Array<(ev: { chars: number, lines: number, blockCount: number }) => void>} */
   #statsListeners = []
 
-  /**
-   * @param {string} uuid — document uuid for this tab
-   */
+  /** @param {string} uuid — document uuid for this tab */
   constructor(uuid) {
     if (!uuid) throw new Error('SieveTab: uuid is required')
     this.#uuid = uuid
   }
 
-  /** @returns {string} The document uuid this tab holds. */
+  /** @returns {string} */
   get uuid() { return this.#uuid }
 
-  /** @returns {EditorModeValue} The tab's current editing mode. */
+  /** @returns {EditorModeValue} */
   get mode() { return this.#mode }
 
   /**
-   * Records the tab's editing mode. Called by editor.js's load-path seed after
-   * the initial surface present (mode-changed does not fire on initial present).
-   * The editor's `mode-changed` event keeps it in sync thereafter.
+   * Records the tab's editing mode. Needed on the load path because
+   * `mode-changed` does not fire on the initial surface present.
    * @param {EditorModeValue} mode
    */
   recordMode(mode) { this.#mode = mode }
 
-  /**
-   * The editor for this tab, or null before it mounts.
-   * @returns {AbstractEditor|null}
-   */
+  /** @returns {AbstractEditor|null} null before one mounts */
   get editor() { return this.#editor }
 
-  /**
-   * The mount this tab's editor is bound to, or null before one is attached.
-   * @returns {MountBinding|null}
-   */
+  /** @returns {MountBinding|null} null before one is attached */
   get mount() { return this.#mount }
 
   /**
-   * Records the mount for this tab and takes up its presence stream, so the
-   * tab's own selection registry keeps working across an editor swap.
+   * Records the mount and takes up its presence stream.
    * @param {MountBinding} mount
    */
   attachMount(mount) {
@@ -126,8 +98,7 @@ export class SieveTab {
   }
 
   /**
-   * The tab's current selection context, pulled from the MOUNT — the host end of
-   * the presence seam, which holds the last advert the lens made.
+   * The last advert the mounted lens made.
    * @returns {any|null}
    */
   getSelectionContext() { return this.#mount ? this.#mount.getSelectionContext() : null }
@@ -138,7 +109,6 @@ export class SieveTab {
    * it gets the lens whose constructor demands only that.
    * @param {string} uuid — document uuid (matches this tab's uuid)
    * @param {object} [options] — passed to the concrete editor constructor
-   *   (provider, loadContainer, mentionService, toolbar, …)
    * @returns {AbstractEditor}
    */
   createEditor(uuid, options = {}) {
@@ -148,18 +118,14 @@ export class SieveTab {
   }
 
   /**
-   * Called by editor.js when initEditor mounts an editor for this tab.
-   * Subscribes to the editor's event stream so the Tab self-records mode on each
-   * flip (`mode-changed` — emitted by AbstractEditor.setMode). The Tab is the
-   * mode record-keeper; editor.js no longer keeps a per-uuid map.
+   * Takes up the editor's event stream so the Tab self-records mode on each flip.
    * @param {AbstractEditor} ed
    */
   attachEditor(ed) {
     if (!(ed instanceof AbstractEditor)) throw new Error('SieveTab.attachEditor: expected SieveEditor')
     this.#editor = ed
     // Presence flows the other way: the lens advertises to the MOUNT, which
-    // republishes to this tab's registry (see attachMount). Only the editor's own
-    // producer events are consumed here.
+    // republishes to this tab's registry.
     if (this.#mount) ed.setSelectionListener(this.#mount)
     this.#unsubEditor = ed.onEvent((e) => {
       if (e.type === 'mode-changed') this.#mode = e.mode
@@ -168,10 +134,8 @@ export class SieveTab {
   }
 
   /**
-   * Registers a listener for this tab's selection-update stream (the mounted
-   * lens's presence advert, republished here). Returns an unsubscribe. Mirrors
-   * SieveWorkspace.onActiveTabChanged. Survives editor swaps — the registry lives
-   * on the Tab identity, not the editor.
+   * Registers a listener for this tab's selection-update stream — the mounted
+   * lens's presence advert, republished here.
    * @param {(ctx: import('../lens/document-editor/selection-model.js').SelectionContext) => void} fn
    * @returns {() => void} unsubscribe
    */
@@ -188,9 +152,8 @@ export class SieveTab {
   }
 
   /**
-   * Registers a listener for this tab's `stats` stream (the attached editor's
-   * doc-stats event, forwarded here). Returns an unsubscribe. Mirrors
-   * onSelectionUpdate — tab-identity registry, survives editor swaps + late attach.
+   * Registers a listener for this tab's `stats` stream — the attached editor's
+   * doc-stats event, forwarded here.
    * @param {(ev: { chars: number, lines: number, blockCount: number }) => void} fn
    * @returns {() => void} unsubscribe
    */
@@ -207,10 +170,8 @@ export class SieveTab {
   }
 
   /**
-   * Called by editor.js when the editor is torn down. Detaches the reference and
-   * unsubscribes from its event stream so the Tab is inert (the caller is
-   * responsible for editor.destroy()). The recorded #mode is KEPT — it is the
-   * client-side record that survives across a tab switch.
+   * Detaches the editor reference and unsubscribes from its event stream; the
+   * caller still owns editor.destroy(). The recorded #mode is KEPT.
    */
   detachEditor() {
     if (this.#unsubEditor) { this.#unsubEditor(); this.#unsubEditor = null }
@@ -218,5 +179,4 @@ export class SieveTab {
   }
 }
 
-// Expose on window for classic-script access.
 window.SieveTab = SieveTab

@@ -1,12 +1,9 @@
-// Sieve NodeView ADAPTER for the 'reference' kind — the PM half of the
-// renderer/NodeView split (NORMATIVE contract:
-// docs/design/archive/specs/2026-07-21-block-renderer-contract.md).
-//
-// Look-and-feel — the chip, its detail text, the chevron and the summary it
-// reveals — lives in ReferenceRenderer, which this file HOLDS by COMPOSITION.
-// What is owned here is what genuinely speaks ProseMirror or the app: schema
-// data (nodeConfig/attrs/parseAttrs), the interaction policy, the context menu,
-// and the ANSWER to the renderer's open intent.
+// The NodeView adapter for the 'reference' kind. Look-and-feel — the chip, its
+// detail text, the chevron and the summary it reveals — belongs to
+// ReferenceRenderer, which this file holds by composition. What is owned here is
+// what speaks ProseMirror or the app: schema data (nodeConfig/attrs/parseAttrs),
+// the interaction policy, the context menu, and the ANSWER to the renderer's
+// open intent.
 //
 // THE OPEN GESTURE. The renderer fans out "the user opened this reference" with
 // the block's target and names no mechanism. Here that becomes:
@@ -21,11 +18,10 @@
 //     hosted build answers the same gesture with a download or a viewer.
 //
 // `kind` IS RESERVED. BASE_ATTRS declares `kind` on every sieve-* node as the
-// BLOCK's kind, so no processor may name an attr that: the collision is silent,
-// because WysiwygSurface#applyBlockAttrsUpdated copies any wire key present in
-// node.attrs and a target's own noun would overwrite the node's "reference" as
-// soon as a job completed. That handler refuses `kind` outright, and the noun a
-// reference wears is derived from `mime`.
+// BLOCK's kind, so no processor may name an attr that: the collision would be
+// silent, since applyBlockAttrsUpdated copies any wire key present in node.attrs
+// and a target's own noun would overwrite "reference" as soon as a job completed.
+// The noun a reference wears is derived from `mime` instead.
 
 import { registerSieveRenderer, sieveBlockFor } from '../sieve-block-extension.js'
 import { ReferenceRenderer } from '../../../../renderers/reference-renderer.js'
@@ -91,9 +87,8 @@ import { ReferenceRenderer } from '../../../../renderers/reference-renderer.js'
         return true
       },
 
-      // The renderer REWRITES this subtree on every redraw (a chip is immutable,
-      // so a chevron toggle or a render-back rebuilds the line). Nothing inside
-      // is ProseMirror's, and a mutation must never cost the NodeView its
+      // The renderer REWRITES this subtree on every redraw. Nothing inside is
+      // ProseMirror's, and a mutation here must never cost the NodeView its
       // recreation.
       ignoreMutation: function () { return true },
 
@@ -174,13 +169,10 @@ import { ReferenceRenderer } from '../../../../renderers/reference-renderer.js'
 
   registerSieveRenderer('reference', ReferenceNodeView)
 
-  // ── The DESKTOP realisation of the open-an-asset intent ──────────────────
-  //
   // ShowInFilesByID resolves the document to its directory and reveals it, which
-  // IS where a held asset lives (a document is a directory). Nothing here
-  // LAUNCHES the file — Sieve declines that capability deliberately (a dropped
-  // .desktop would be executed, not viewed); reading the asset in place is the
-  // chevron's job.
+  // is where a held asset lives. Nothing here LAUNCHES the file — Sieve declines
+  // that capability deliberately, since a dropped .desktop would be executed
+  // rather than viewed; reading the asset in place is the chevron's job.
   document.addEventListener(OPEN_ASSET_EVENT, function (e) {
     var uuid = (e.detail && e.detail.uuid) || ''
     if (!uuid) return

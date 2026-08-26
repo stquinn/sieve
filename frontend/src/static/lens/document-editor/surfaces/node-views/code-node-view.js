@@ -1,20 +1,13 @@
-// code-node-view.js — Sieve NodeView ADAPTER for the 'code' kind (the PM half
-// of the renderer/NodeView split, Block Renderer Contract:
-// docs/design/archive/specs/2026-07-21-block-renderer-contract.md). Look-and-feel (the
-// block shell, header badge, gutter+code-area body chrome, this kind's
-// stylesheet) lives in CodeRenderer
-// (frontend/src/static/renderers/code-renderer.js — a DIFFERENT class,
-// deliberately same basename, different directory). This file HOLDS a
-// CodeRenderer instance by COMPOSITION and owns everything that genuinely
-// speaks ProseMirror: contentDOM binding/ignoreMutation, the lowlight
-// decoration plugin (buildPlugins), and the MutationObserver that watches
-// contentDOM and reports live text through renderer.setContent (contract
-// §setContent direction — the renderer's outbound verbs leave through the
-// ContainerTransport, the wire owner).
-// Keyboard behaviour (Tab/Enter/Home) comes from the shared
-// interaction-policy extension via this renderer's interactionPolicy
-// declaration — do NOT add handleKeyDown here
-// (docs/editor-interaction-contract.md is normative).
+// The NodeView adapter for the 'code' kind. Look-and-feel — the block shell,
+// header badge, gutter and code-area chrome, this kind's stylesheet — belongs to
+// CodeRenderer, which this file holds by composition. What lives here is
+// everything that speaks ProseMirror: the contentDOM binding and ignoreMutation,
+// the lowlight decoration plugin, and the MutationObserver that watches
+// contentDOM and reports live text through renderer.setContent.
+//
+// Keyboard behaviour (Tab/Enter/Home) comes from the shared interaction-policy
+// extension via this kind's interactionPolicy declaration — do NOT add a
+// handleKeyDown here; docs/editor-interaction-contract.md is normative.
 
 import { esc } from '../../../../renderers/html-escape.js'
 import { getLowlight } from '../../../../renderers/highlighting.js'
@@ -26,24 +19,15 @@ import { CodeRenderer } from '../../../../renderers/code-renderer.js'
 ;(function () {
   'use strict'
 
-  // ── CodeNodeView ────────────────────────────────────────────────────────
-  // The registered descriptor sieve-block-extension.js's duck-typed
-  // registerSieveRenderer() consumes. Named distinctly from the imported
-  // CodeRenderer CLASS above — same word, two different layers (this is the
-  // PM-adapter descriptor object; CodeRenderer is the look-and-feel class it
-  // holds by composition) — to keep the two unambiguous in this file.
+  // The descriptor sieve-block-extension.js's registerSieveRenderer() consumes.
+  // Named distinctly from the imported CodeRenderer CLASS: this is the PM-adapter
+  // descriptor, that is the look-and-feel class it holds.
 
   var CodeNodeView = {
 
-    // The renderer builds its own header (the stateful language badge lives in
-    // CodeRenderer now) — the framework no longer assembles a headerProvider
-    // slot around it.
-
-    // Keyboard behaviour is DECLARED here and applied by the shared
-    // interaction-policy extension (docs/editor-interaction-contract.md).
     // Code is the canonical literal-source-text kind, so it takes the preset
-    // whole and adds nothing — spread (not referenced) so policyFor still sees
-    // plain flags and any single line stays overridable here.
+    // whole. Spread rather than referenced, so policyFor still sees plain flags
+    // and any single line stays overridable here.
     interactionPolicy: { ...CODE_TEXT_POLICY },
 
     nodeConfig: {
@@ -89,37 +73,26 @@ import { CodeRenderer } from '../../../../renderers/code-renderer.js'
       var nodeTypeName = node.type.name
       var currentAttrs = Object.assign({}, node.attrs)
 
-      // blockFor — the typed block with `source` overlaid as the LIVE PM
-      // text (node.textContent), never the debounced attrs.source (the debounce
-      // below can lag up to 200ms behind what's actually in the document). The
-      // overlay key is this kind's own knowledge.
+      // The typed block with `source` overlaid as the LIVE PM text, never the
+      // debounced attrs.source, which can lag 200ms behind the document.
       function blockFor(n) {
         return sieveBlockFor(n, { source: n.textContent }, ctx && ctx.provider)
       }
 
-      // The renderer instance this NodeView HOLDS by composition (never
-      // inheritance — see the file header). It builds its own shell, header
-      // (language badge), gutter and code-area from the block handed at
-      // construction; this adapter only supplies PM-only concerns around it.
-      // The renderer's outbound verbs hit the real wire through the
-      // ContainerTransport (issue #49 Phase 1 — the v1 appliers are retired); this
-      // kind's content→source mapping lives on CodeRenderer.setContent.
       var renderer = new CodeRenderer(blockFor(node), ctx.provider || null)
 
       var dom = renderer.render()
 
-      // The <code> element the renderer built is ProseMirror's contentDOM (the
-      // word "contentDOM" stays adapter-side — the renderer names no PM concept).
+      // The <code> element the renderer built is ProseMirror's contentDOM; the
+      // word "contentDOM" stays adapter-side, the renderer names no PM concept.
       var contentDOM = renderer.codeElement
 
       var updateTimer = null
-      // lastSource is the text we last OBSERVED. Syntax highlighting rewrites the
-      // inner <span> tree whenever the language attr changes (e.g. the AI refines
-      // the language), which fires this observer with byte-identical text. Guarding
-      // on a real text change skips that decoration-only re-render — otherwise we
-      // emit a phantom `source` block-update for content that did not change, which
-      // is what let a stale heuristic clobber the AI's language. Updated ONLY here
-      // (never in update()) so genuine user edits still dispatch.
+      // The text last OBSERVED. Syntax highlighting rewrites the inner <span> tree
+      // whenever the language attr changes, firing this observer with
+      // byte-identical text; guarding on a real text change skips that
+      // decoration-only re-render, which would otherwise emit a phantom `source`
+      // update. Updated ONLY here, never in update(), so genuine edits dispatch.
       var lastSource = node.textContent
       var observer = new MutationObserver(function() {
         var text = contentDOM.textContent
@@ -128,14 +101,10 @@ import { CodeRenderer } from '../../../../renderers/code-renderer.js'
         renderer.syncGutterLineCount(text)
         clearTimeout(updateTimer)
         updateTimer = setTimeout(function() {
-          // The sync closure ends at the renderer's outbound verb — never a
-          // socket, never an attr name here (contract §setContent direction).
           if (currentAttrs.id) renderer.setContent(lastSource)
         }, 200)
       })
       observer.observe(contentDOM, { characterData: true, childList: true, subtree: true })
-
-      // ── NodeView ──────────────────────────────────────────────────────────────
 
       return {
         dom:        dom,
@@ -161,8 +130,6 @@ import { CodeRenderer } from '../../../../renderers/code-renderer.js'
         },
       }
     },
-
-    // ── Plugins ───────────────────────────────────────────────────────────────
 
     buildPlugins: function(nodeType) {
       var Plugin = T.Plugin
@@ -197,7 +164,6 @@ import { CodeRenderer } from '../../../../renderers/code-renderer.js'
         } catch (e) { return [] }
       }
 
-
       return [
         new Plugin({
           state: {
@@ -221,9 +187,6 @@ import { CodeRenderer } from '../../../../renderers/code-renderer.js'
             decorations: function(state) {
               return this.getState(state)
             },
-            // Keyboard behaviour (Tab/Enter/Home) is owned by the
-            // interaction-policy extension via interactionPolicy above —
-            // no per-renderer key handling (contract rule).
           }
         })
       ]

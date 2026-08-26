@@ -1,23 +1,9 @@
 // @ts-check
-// mount-binding.js — MountBinding: one mounted container, from the host's side
-// (issue #96 P4a; wired as the construction seam in P4b).
-//
-// The settled contract's mount sequence has four steps and a host verb for each:
-//
-//     model    = ensureModel(address)
-//     provider = new ProviderAdapter(model, binding)
-//     lens     = new NoteLens(provider)          ← the caller's, not this class's
-//     provider.subscribe(lens)                   ← the lens does it at mount
-//     lens.setSelectionListener(binding)         ← this object IS the listener
-//
-// This class owns the first two and the last, which is exactly the host's half.
-// It never constructs a lens: which lens a container gets is a workspace
-// decision, and a host object that picked one would be the composition root
-// smuggled into the mount.
-//
-// It is thin on purpose. Everything with judgment in it lives on one side of the
-// wall or the other; this is the seam, and a seam that accumulates behaviour is
-// how the two sides grow back together.
+// mount-binding.js — MountBinding: one mounted container, from the host's side.
+// One binding holds ONE uuid: it owns that container's model, its channel and
+// the single provider a lens is constructed against, and it IS the lens's
+// selection listener. It never constructs a lens — which lens a container gets
+// is a workspace decision. A closed binding is spent; a re-mount builds a new one.
 //
 // WHICH PROVIDER a container gets is decided here, from its kind, because the
 // provider TYPE is the container's capability and the host is what knows it: a
@@ -68,22 +54,17 @@ export class MountBinding {
 
   /**
    * The one business dependency a lens is constructed against. The model behind
-   * it is #private all the way down, so handing this out hands out the read
-   * surface and the verbs and nothing else.
+   * it is #private all the way down, so this hands out the read surface and the
+   * verbs and nothing else.
    * @returns {WholeContentAdapter}
    */
   get provider() { return this.#provider }
 
-  // ── Lifecycle ─────────────────────────────────────────────────────────────
-
   /**
-   * Opens the container's live channel. The model was created in the constructor
-   * and is already observing, so it folds every frame this channel delivers from
-   * the first one.
-   *
-   * The delegate is the transport's own inbound routing, NOT a repaint path: the
-   * lens hears about content through its subscription, and what is left here is
-   * the traffic that is nobody's document truth (a server error, a stray reply).
+   * Opens the container's live channel. The model already observes from the
+   * constructor, so it folds every frame from the first. The delegate receives
+   * the transport's own inbound routing, NOT a repaint path — the lens hears
+   * about content through its subscription.
    * @param {import('../container/container-transport.js').ChannelDelegate} delegate
    */
   openChannel(delegate) {
@@ -93,19 +74,15 @@ export class MountBinding {
 
   /**
    * Loads the container. The load ANSWER seeds the model through the feed's own
-   * subscription — this returns the typed shape only, for the caller that still
-   * needs it (the host presents at open: the mode choice and the markdown body
-   * are host concerns). Requires an open channel for a channel-bearing
-   * container; a prompt pseudo-document answers over HTTP either way.
+   * subscription; this returns the typed shape only, for the host that presents
+   * at open. Requires an open channel for a channel-bearing container.
    * @returns {Promise<{body: string, blocks: object[], meta: {mode: string}, scroll: number, version: number}>}
    */
   load() { return this.#documents.load(this.#uuid) }
 
   /**
-   * The server's clean whole-container export — the "Copy as Markdown" text.
-   * A HOST verb: the menu that asks for it acts on the workspace, not through
-   * the wall, and the filtering it applies (ai-blocks dropped, cards and clips
-   * reduced to links) is Go's, not any lens's projection.
+   * The server's clean whole-container export — the "Copy as Markdown" text. Its
+   * filtering (ai-blocks dropped, cards and clips reduced to links) is Go's.
    * @param {string} [format]
    * @returns {Promise<string|null>}
    */
@@ -113,8 +90,7 @@ export class MountBinding {
 
   /**
    * Closes the channel and discards the model. After this the binding is spent:
-   * a re-mount constructs a new one, because the provider a lens holds is bound
-   * to the model this one discarded.
+   * the provider a lens holds is bound to the model this one discarded.
    */
   close() {
     if (this.#channelOpen) {
@@ -126,13 +102,9 @@ export class MountBinding {
     this.#lastAdvert = null
   }
 
-  // ── SelectionListener (the presence seam, flowing host-ward) ───────────────
-
   /**
-   * Receives the mounted lens's selection/presence advertisement. The lens
-   * registers this object with `lens.setSelectionListener(binding)`; the advert
-   * is a broadcast, best-attempt, and this end judges nothing about it — it
-   * stores the latest and re-publishes.
+   * Receives the mounted lens's selection/presence advertisement. This end judges
+   * nothing about it — it stores the latest and re-publishes.
    * @param {Readonly<import('../contract/selection-listener.js').SelectionContext>} context
    */
   onSelectionChanged(context) {
@@ -144,8 +116,6 @@ export class MountBinding {
 
   /**
    * Subscribes to this mount's selection adverts; returns an unsubscribe.
-   * Deliberately the same signature as SieveTab.onSelectionUpdate, which is what
-   * the shell's selection plumbing already consumes.
    * @param {(context: Readonly<any>) => void} listener
    * @returns {() => void} unsubscribe
    */
@@ -156,9 +126,8 @@ export class MountBinding {
   }
 
   /**
-   * The most recent advert, or null before the lens has made one. This is the
-   * PULL half the shell needs: the workspace synthesizes a republish on tab
-   * activation by pulling the mount's current context.
+   * The most recent advert, or null before the lens has made one — the PULL half
+   * the shell needs to republish on tab activation.
    * @returns {Readonly<any>|null}
    */
   getSelectionContext() { return this.#lastAdvert }

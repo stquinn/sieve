@@ -1,23 +1,6 @@
 // @ts-check
-// smart-card-renderer.styles.js — SmartCardRenderer's stylesheet, a sibling
-// module per the styles-file-geography convention (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
-// "Styles file geography"): a renderer file starts with its class — behaviour
-// first, never a CSS wall — so any sheet over ~30 lines lives in its own
-// `<kind>-renderer.styles.js` sibling module, imported into the class's
-// `static styles`. This module is renderer-internal — nothing outside
-// smart-card-renderer.js imports it.
-//
-// Carried verbatim from input.css's former `.smart-card-card`/`.smart-card-card__*`
-// rule set (moved here in the same change per the spec — style carriage is
-// never a separate pass). NOTE: like ai-block's CSS living in editor.css
-// rather than input.css, this kind's rules lived in input.css (the tailwind-
-// built stylesheet), NOT editor.css — verified before moving anything. Since
-// input.css changed, `frontend/`'s tailwind build must be re-run (see the P4
-// sweep notes) — this stylesheet needs no such build itself.
-//
-// Already used only theme vars (--theme-fg2/fg3/bgLight/accent/border/border2)
-// — no hardcoded colour literals needed converting, unlike several other
-// kinds' carried-over rgba() box-shadows.
+// SmartCardRenderer's stylesheet. Renderer-internal, and colour comes only from
+// --theme-* variables.
 
 export const smartCardStyles = /* css */ `
   .smart-card-card {

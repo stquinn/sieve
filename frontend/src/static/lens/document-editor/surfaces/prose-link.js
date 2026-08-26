@@ -1,23 +1,12 @@
 // @ts-check
-// prose-link.js — ONE hyperlink in the document, and every verb that owns it.
+// ONE hyperlink in the document, and every verb that owns it.
 //
-// A link is ORDINARY MARKDOWN, not a Sieve block
-// (docs/design/archive/specs/2026-07-27-inline-block-removal-links-decision.md), so in the
-// WYSIWYG surface it is a TipTap `link` MARK over a text range — it has no block
-// id, no NodeView, no processor. That makes it the one document thing with no
-// owning type, which is exactly how the knowledge of it ended up smeared across a
-// context menu and a key handler. This class IS that owning type: resolve one
-// (`at` / `forSelection`), then ask it for its href, its label, its document
-// range, its clipboard views, or tell it to change (`apply`), be edited
-// (`edit`), or be copied (`copy`). #67.
-//
-// Every consumer goes through it — the interaction policy's Mod+K, the editor
-// context menu's "Edit Link…"/"Copy Link", and the context menu's Convert offers
-// (which need the range so the playback can consume it). None of them re-derives
-// a mark range.
-//
-// It lives in lens/surfaces/ because it reads and dispatches ProseMirror
-// (surfaces is THE PM package). It takes a live `view`, never a global.
+// A link is ordinary markdown, not a Sieve block, so in the WYSIWYG surface it is
+// a TipTap `link` MARK over a text range — no block id, no NodeView, no
+// processor. This class is its owning type: resolve one (`at` / `forSelection`),
+// then ask it for its href, label, document range or clipboard views, or tell it
+// to change (`apply`), be edited (`edit`) or be copied (`copy`). It takes a live
+// `view`, never a global.
 
 import { esc } from '../../../renderers/html-escape.js'
 import { openLinkEditor } from '../../../ui/link-edit-dialog.js'
@@ -47,8 +36,6 @@ export class ProseLink {
     this.#isNew = fields.isNew
   }
 
-  // ── Factories ───────────────────────────────────────────────────────────────
-
   /**
    * The link mark covering document position `pos`, or null. Walks outward over
    * adjacent text nodes carrying the SAME href, so a link whose label is partly
@@ -65,8 +52,8 @@ export class ProseLink {
     if (!parent.isTextblock) return null
 
     // childAfter, falling back to childBefore when the position sits exactly on a
-    // child boundary (the caret at the end of a link is the common case, and the
-    // mark is inclusive:false so it is not in $pos.marks()).
+    // child boundary: the mark is inclusive:false, so a caret at the end of a link
+    // does not see it in $pos.marks().
     let child = parent.childAfter($pos.parentOffset)
     if (!child.node || ($pos.parentOffset === child.offset && child.offset !== 0)) {
       const before = parent.childBefore($pos.parentOffset)
@@ -125,8 +112,6 @@ export class ProseLink {
     return new ProseLink(view, { from: sel.from, to: sel.to, href: '', label: text, isNew: true })
   }
 
-  // ── Read ────────────────────────────────────────────────────────────────────
-
   /** @returns {string} */ get href() { return this.#href }
   /** @returns {string} */ get label() { return this.#label }
   /** @returns {number} */ get from() { return this.#from }
@@ -140,12 +125,10 @@ export class ProseLink {
    * The clipboard/detection views of this link — what Go's `ContentEntry.Link()`
    * reads to decide what a link can become.
    *
-   * text/html FIRST and NON-NEGOTIABLE: the rendered link's plain text is the
-   * LABEL ALONE ("Title") with the URL nowhere in it, so a text/plain-only entry
-   * set carries no href and every processor declines — zero offers, silently.
-   * The `<a href>` view is the only one that survives the round trip, and it is
-   * the first form `Link()` looks for. text/plain rides along as the markdown
-   * form for anything that reads text.
+   * text/html FIRST and non-negotiable: a rendered link's plain text is the LABEL
+   * ALONE, so a text/plain-only entry set carries no href and every processor
+   * declines, silently. The `<a href>` view is the only one that survives the
+   * round trip. text/plain rides along as the markdown form.
    * @returns {{mimeType: string, content: string}[]}
    */
   contentEntries() {
@@ -156,16 +139,13 @@ export class ProseLink {
     ]
   }
 
-  // ── Write ───────────────────────────────────────────────────────────────────
-
   /**
    * Writes the link into the document as an ORDINARY TRACKED prose edit — it
    * rides the existing prose→Go block-sync, exactly like typing (no wire verb of
    * its own, nothing to render back). Blank href → no-op.
    *
-   * Label unchanged → only the mark is swapped, so any other inline marks on the
-   * text (bold, code) survive. Label changed → the range is replaced by the new
-   * text carrying the link mark, which is the user asking for that text.
+   * Label unchanged → only the mark is swapped, so other inline marks on the text
+   * (bold, code) survive. Label changed → the range is replaced by the new text.
    * @param {string} href @param {string} label @returns {boolean} applied
    */
   apply(href, label) {

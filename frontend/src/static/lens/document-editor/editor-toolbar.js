@@ -1,21 +1,13 @@
 // @ts-check
-// The editor-owned toolbar.
-//
-// NoteEditor constructs an EditorToolbar, which mounts into the #editor-toolbar
-// host in index.html (the ShowToolbar visibility gate and --toolbar-h stay
-// Go-driven). It composes left→right:
+// The editor-owned toolbar. It composes left→right as
 //   surface.toolbarContents() + [editor-level groups]
 // so formatting comes first and the editor-level tail (insert, mode-toggle,
 // AI-query, help) follows. The editor-level groups PERSIST across surface swaps;
 // only the surface section re-renders on a mode flip.
 //
 // Active-state (#refresh) fires on the editor's RAW onEvent stream
-// (selection-changed / transaction) and NOT the coalesced onSelectionUpdate,
-// which drops caret-only moves and would leave bold/italic active-state stale.
-//
-// Kind icons come from the block-kind registry via getSieveIcon; window.SieveIcons
-// backs #icon.
-// Dual-use ES module: `export` for vitest; imported by note-editor.js.
+// (selection-changed / transaction) and NOT the coalesced onSelectionUpdate, which
+// drops caret-only moves and would leave bold/italic active-state stale.
 
 import { ToolbarButton, ButtonGroup } from './toolbar-button.js'
 import { EditorMode } from './editor-mode.js'
@@ -48,24 +40,15 @@ export class EditorToolbar {
     this.#host = host !== undefined ? host : document.getElementById('editor-toolbar')
   }
 
-  /**
-   * Mounts the toolbar into its host: builds the persistent editor-level groups
-   * once, renders the surface section from the current surface, wires the raw
-   * event stream for active-state + the flip re-render, and seeds one refresh.
-   */
   mount() {
     if (!this.#host) return
     this.#host.innerHTML = ''
-    // Formatting (surface-declared) groups come FIRST (left); the editor-level
-    // tail (insert, mode-toggle, AI, help) follows on the right (Stephen 2026-07-12).
     this.#surfaceSection = document.createElement('span')
     this.#surfaceSection.className = 'tb-surface-section'
     this.#host.appendChild(this.#surfaceSection)
     this.#renderSurfaceSection()
     this.#editorGroups = this.#buildEditorGroups()
     for (const g of this.#editorGroups) this.#host.appendChild(g.el)
-    // Active-state MUST track the RAW stream (caret-only moves included), and the
-    // flip re-render + mode-button refresh ride the same subscription.
     this.#unsub = this.#editor.onEvent((ev) => this.#onEditorEvent(ev))
     this.#syncModeButton()
     this.refresh()
@@ -75,30 +58,25 @@ export class EditorToolbar {
   get mounted() { return !!(this.#host && this.#surfaceSection) }
 
   /**
-   * Re-renders the surface section against the current surface (a fresh present
-   * that did not fire mode-changed — the initial load / same-uuid re-init). The
-   * flip case rides #onEditorEvent's mode-changed branch.
+   * Re-renders the surface section against the current surface — the initial load
+   * or a same-uuid re-init. The flip case rides #onEditorEvent's mode-changed branch.
    */
   refreshSurfaceSection() {
     if (!this.mounted) return
-    // A mode FLIP re-renders via the mode-changed subscription; NoteEditor.present
-    // Surface ALSO calls here on that same flip — skip when the mode just changed to
-    // avoid a double render. Only a same-mode re-init (a reload / library-switch,
-    // which fires NO mode-changed) needs this path. By the time this runs on a flip,
-    // super.presentSurface has already swapped #surface, so editor.mode is the NEW
-    // mode while #renderedMode is still the OLD one → they differ → skip.
+    // A mode FLIP re-renders via the mode-changed subscription, and presentSurface
+    // also lands here on that same flip — by then editor.mode is the NEW mode while
+    // #renderedMode is still the old, so they differ and the double render is
+    // skipped. Only a same-mode re-init (reload / library switch) needs this path.
     if (this.#editor.mode !== this.#renderedMode) return
     this.#renderSurfaceSection()
     this.#syncModeButton()
     this.refresh()
   }
 
-  /** Tears down the subscription (editor destroy). */
   destroy() {
     if (this.#unsub) { this.#unsub(); this.#unsub = null }
   }
 
-  /** Refreshes active/enabled state across every group (editor-level + surface). */
   refresh() {
     for (const g of this.#editorGroups) g.refresh()
     for (const g of this.#surfaceGroups) g.refresh()
@@ -112,14 +90,11 @@ export class EditorToolbar {
     const tableToolbar = document.getElementById('table-toolbar')
     if (!tableToolbar) return
     const ed = /** @type {any} */ (this.#editor.editorPane)
-    // FOCUS-GATED: the table utilities bar is an ACTIVE-editing affordance. A doc
-    // whose default/restored selection resolves inside a table — e.g. a table as
-    // the LAST block, where the doc-end position sits in the trailing table cell —
-    // fires selection-changed/transaction on tab-switch load while the editor is
-    // UNFOCUSED (tab switch does not applyPosition/focus). Without this gate the
-    // bar flashes open even though the caret is not really in the table. hasFocus()
-    // separates a real user caret from the programmatic default; the mousedown
-    // preventDefault on the table buttons keeps focus during a table command.
+    // FOCUS-GATED: the table bar is an ACTIVE-editing affordance. A doc whose
+    // restored selection resolves inside a table — a table as the LAST block, say —
+    // fires selection-changed on tab-switch load while the editor is UNFOCUSED, and
+    // without this gate the bar flashes open. hasFocus() separates a real user caret
+    // from the programmatic default.
     const focused = !!(ed && ed.view && ed.view.hasFocus && ed.view.hasFocus())
     const inTable = focused && !!(ed.isActive && ed.isActive('table'))
     tableToolbar.style.display = inTable ? 'flex' : 'none'
@@ -132,20 +107,16 @@ export class EditorToolbar {
     const t = ev && ev.type
     if (t === 'selection-changed' || t === 'transaction') {
       this.refresh()
-      // Table-toolbar visibility is SELECTION-driven and synced ONLY here, never
-      // at mount: seeding it in mount()'s refresh flashes the bar open on a fresh
-      // tab load whenever the doc's default selection resolves inside a table.
+      // Table-toolbar visibility is SELECTION-driven and synced ONLY here, never at
+      // mount: seeding it there flashes the bar open on a fresh tab load.
       this.#syncTableToolbar()
     } else if (t === 'mode-changed') {
-      // The surface swapped: rebuild ONLY the surface section + refresh the mode
-      // button (icon/title). The editor-level groups persist.
       this.#renderSurfaceSection()
       this.#syncModeButton()
       this.refresh()
     }
   }
 
-  /** Rebuilds the surface-formatting groups from the mounted surface's toolbarContents(). */
   #renderSurfaceSection() {
     if (!this.#surfaceSection) return
     this.#surfaceSection.innerHTML = ''
@@ -159,20 +130,17 @@ export class EditorToolbar {
       }
       this.#surfaceSection.appendChild(g.el)
     })
-    // Trailing divider between the formatting groups and the editor-level tail —
-    // only when formatting is present (markdown mode → no dangling separator).
+    // Trailing divider only when formatting is present (markdown mode → no dangling
+    // separator).
     if (this.#surfaceGroups.length) {
       const sep = document.createElement('div')
       sep.className = 'tb-sep'
       this.#surfaceSection.appendChild(sep)
     }
-    // Record the mode this section was built for (the flip-vs-reinit discriminator
-    // refreshSurfaceSection reads). Set here so mount / mode-changed / same-mode
-    // re-init all keep it current.
+    // The flip-vs-reinit discriminator refreshSurfaceSection reads.
     this.#renderedMode = this.#editor.mode
   }
 
-  /** Flips the mode-toggle button's icon + title from the current editor mode (updateModeUI body). */
   #syncModeButton() {
     if (!this.#modeButton) return
     const isMd = this.#editor.mode === EditorMode.MARKDOWN
@@ -181,11 +149,9 @@ export class EditorToolbar {
   }
 
   /**
-   * The editor-level groups — persistent across surface swaps (built once). These
-   * are the buttons that survive a flip: mode-toggle (the only way back from
-   * markdown), insert (code/diagram/web-clip/attach), AI-query (explain/ask), help.
-   * Each carries its OWN click closure — no delegation, no window.__tiptap hop for
-   * the editor verbs (they call the editor / workspace directly).
+   * The editor-level groups, built once and persistent across surface swaps: the
+   * mode-toggle (the only way back from markdown), insert, AI-query and help. Each
+   * carries its OWN click closure — no delegation.
    * @returns {ButtonGroup[]}
    */
   #buildEditorGroups() {
@@ -199,8 +165,6 @@ export class EditorToolbar {
     })
     const modeGroup = new ButtonGroup([this.#modeButton])
 
-    // Insert: code + diagram (create-block via the editor's create path), web-clip
-    // (workspace dialog), attach-a-file (capture-insert + hidden file input click).
     const insertGroup = new ButtonGroup([
       new ToolbarButton({
         iconHtml: EditorToolbar.#kindIcon('code'), title: 'Insert code block',
@@ -220,7 +184,6 @@ export class EditorToolbar {
       }),
     ])
 
-    // AI-query: explain + ask (the workspace AskPanel child). data-icon parity via SieveIcons.
     const aiGroup = new ButtonGroup([
       new ToolbarButton({
         id: 'tb-explain-btn', iconHtml: EditorToolbar.#icon('explain'), title: 'Explain',
@@ -244,10 +207,6 @@ export class EditorToolbar {
       }),
     ], { className: 'tb-help' })
 
-    // These editor-level groups are the toolbar's TAIL (right): mount() appends
-    // them AFTER the surface's formatting groups, so left→right the row reads
-    // [formatting] · mode · insert · AI · help. (Formatting active-state is
-    // unaffected: it lives in the surface closures, refreshed on the same raw stream.)
     return [modeGroup, insertGroup, aiGroup, helpGroup]
   }
 
@@ -259,14 +218,13 @@ export class EditorToolbar {
 
   /**
    * Attach a file. ONE affordance for every file type: the button never names a
-   * block kind — it hands bytes and a mime type to smart-paste, and the paste-match
-   * registry decides, so an image becomes a smart-image and anything else a
-   * reference. Adding a kind extends this button without touching it.
+   * block kind — it hands bytes and a mime type to smart-paste and the paste-match
+   * registry decides, so adding a kind extends this button without touching it.
    *
-   * The insert ANCHOR is captured BEFORE the dialog opens, because opening it
-   * blurs the editor and the caret would re-derive to the end of the document.
-   * It is stashed on the window because the picker's change handler lives in the
-   * app shell's inline script, which is not a module (X-B debt).
+   * The insert ANCHOR is captured BEFORE the dialog opens, because opening it blurs
+   * the editor and the caret would re-derive to the end of the document. It is
+   * stashed on the window because the picker's change handler lives in the app
+   * shell's inline script, which is not a module.
    */
   #attachFile() {
     /** @type {any} */ (window).__sieveCapturedInsertAnchor = this.#editor.captureImageInsert()

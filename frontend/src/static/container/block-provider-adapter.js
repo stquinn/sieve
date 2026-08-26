@@ -2,24 +2,15 @@
 // BlockProviderAdapter: the host's implementation of the WRITE half of the wall,
 // contract/container-provider.js's BlockContainerProvider.
 //
-// It EXTENDS the read-only adapter rather than adding verbs to it, because
-// read-only is a TYPE and not a flag: a `?version={n}`-pinned version viewer is
-// handed a bare ProviderAdapter. Its immediate base is WholeContentAdapter, so a
-// DOCUMENT's provider carries both extensions.
-//
 // Three properties hold across every verb here:
 //
-//   NO LOCAL WRITE. Not one method touches the model. Go leads, the model
-//   follows, and the effect of a verb reaches the lens as the echo Go sent —
-//   the same way another lens's edit, an AI job and the watcher arrive.
-//
-//   NO CORRELATION OUT. The verbs are void. A lens asked for a change and is
-//   later told that A change happened; it re-reads and paints. It never learns
-//   which change was its own.
-//
-//   POSITION FROM ORDER. Anchoring is by block id; the host turns an id into a
-//   position by reading its own follower model. A lens never computes a document
-//   position.
+//   NO LOCAL WRITE — not one method touches the model. Go leads, the model follows,
+//     and a verb's effect reaches the lens as the echo Go sent, indistinguishable
+//     from another lens's edit, an AI job or the watcher.
+//   NO CORRELATION OUT — the verbs are void. A lens is later told that A change
+//     happened; it never learns which change was its own.
+//   POSITION FROM ORDER — anchoring is by block id, which the host resolves against
+//     its own follower model. A lens never computes a document position.
 
 import { ContractViolation } from '../contract/sieve-block.js'
 import { WholeContentAdapter } from './whole-content-adapter.js'
@@ -46,12 +37,10 @@ export class BlockProviderAdapter extends WholeContentAdapter {
     if (typeof binding.createBlock !== 'function' || typeof binding.setOrder !== 'function') {
       throw new ContractViolation('BlockProviderAdapter: construct with a ContainerBinding')
     }
-    // The base holds its own #private copy for the reads; this one is for the
-    // position arithmetic the verbs do. The transport is the base's `_binding`.
+    // The base keeps its own #private copy for the reads; this one is for the
+    // verbs' position arithmetic.
     this.#model = model
   }
-
-  // ── Verbs (void — Go may decline, and the effect arrives via onChanged) ────
 
   /**
    * Puts a new block into the container. `attrs.id` is the block's own name when
@@ -86,13 +75,11 @@ export class BlockProviderAdapter extends WholeContentAdapter {
   }
 
   /**
-   * States the container's COMPLETE child order. Installing a whole order is
-   * idempotent — a duplicate or late request lands the container in the same
-   * place — and it is the shape `order-changed` echoes back.
-   *
-   * An order that is not a permutation of what this container holds is DROPPED
-   * here rather than sent: Go refuses it anyway, and a list missing an id is
-   * indistinguishable from a mass delete.
+   * States the container's COMPLETE child order — idempotent, so a duplicate or late
+   * request lands the container in the same place, and it is the shape
+   * `order-changed` echoes back. An order that is not a permutation of what this
+   * container holds is DROPPED here rather than sent: Go refuses it anyway, and a
+   * list missing an id is indistinguishable from a mass delete.
    * @param {ReadonlyArray<string>} order
    */
   requestSetOrder(order) {
@@ -126,9 +113,9 @@ export class BlockProviderAdapter extends WholeContentAdapter {
   }
 
   /**
-   * Re-runs whatever async work the block declares. Kind-blind: what retry means
-   * for a flavour is the processor's business. Void like every other verb — the
-   * outcome is the block's status attrs changing, which arrives as `onChanged`.
+   * Re-runs whatever async work the block declares. Kind-blind: what retry means for
+   * a flavour is the processor's business. Void — the outcome is the block's status
+   * attrs changing, which arrives as `onChanged`.
    * @param {string} blockId
    */
   requestRetry(blockId) {
@@ -137,16 +124,12 @@ export class BlockProviderAdapter extends WholeContentAdapter {
   }
 
   /**
-   * Asks the container to reach disk NOW rather than on its own debounce. It is
-   * not `flush`: flush hands over one block's in-flight text, this commits
-   * whatever the container already holds.
-   *
-   * Void and unanswered: a save announces itself to the whole workspace as
-   * `container-saved`.
+   * Asks the container to reach disk NOW rather than on its own debounce. It is not
+   * `flush`: flush hands over one block's in-flight text, this commits whatever the
+   * container already holds. Void and unanswered — a save announces itself to the
+   * whole workspace as `container-saved`.
    */
   requestPersist() { this._binding.persist() }
-
-  // ── Queries (decisions and offers, never document content) ────────────────
 
   /**
    * Asks Go what to make of a clipboard, a drop, or a gesture the page could not
@@ -196,13 +179,10 @@ export class BlockProviderAdapter extends WholeContentAdapter {
       })
   }
 
-  // ── In-flight text handoff ────────────────────────────────────────────────
-
   /**
    * Hands the host a block's lens-owned draft text. Unprefixed because a flush
-   * always lands, where a `request*` may be declined. It sends the same
-   * update-block op `requestSetBlock` does; what differs is which side owns the
-   * value.
+   * always lands, where a `request*` may be declined. It sends the same update-block
+   * op `requestSetBlock` does; what differs is which side owns the value.
    * @param {string} blockId @param {string} text
    */
   flush(blockId, text) {
@@ -212,8 +192,6 @@ export class BlockProviderAdapter extends WholeContentAdapter {
     patch[CONTENT_ATTR[node.kind] || 'content'] = text
     this.#settle(this._binding.updateBlock(blockId, node.kind, patch), 'flush')
   }
-
-  // ── Internals ─────────────────────────────────────────────────────────────
 
   /**
    * The container position a child anchored after `afterBlockId` takes.
@@ -234,7 +212,7 @@ export class BlockProviderAdapter extends WholeContentAdapter {
 
   /**
    * Go's PasteResult as the facade's decision. `html` is the wire's name for the
-   * composed fragment and `content` is the facade's; the rest of the wire union is
+   * composed fragment and `content` is the facade's; the rest of the union is
    * transport bookkeeping a lens has no use for.
    * @param {Record<string, any>} result
    * @returns {import('../contract/container-provider.js').PasteDecision}
@@ -257,9 +235,9 @@ export class BlockProviderAdapter extends WholeContentAdapter {
   }
 
   /**
-   * Consumes a verb's wire ack. The facade has no onAck — effects ARE the ack —
-   * so the outcome is logged and discarded, and the promise never escapes to
-   * become an unhandled rejection.
+   * Consumes a verb's wire ack. The facade has no onAck — effects ARE the ack — so
+   * the outcome is logged and discarded rather than escaping as an unhandled
+   * rejection.
    * @param {Promise<{ok: boolean, error?: string}>} ack @param {string} verb
    */
   #settle(ack, verb) {

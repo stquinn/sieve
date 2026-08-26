@@ -1,21 +1,11 @@
-// ai-block-node-view.js — Sieve NodeView ADAPTER for the 'ai-block' kind (the
-// PM half of the renderer/NodeView split; NORMATIVE contract:
-// docs/design/archive/specs/2026-07-21-block-renderer-contract.md
-// Phase 3 / issue #46). Look-and-feel (the block shell, the badge, this
-// kind's stylesheet) lives in AiBlockRenderer
-// (frontend/src/static/renderers/ai-block-renderer.js — a DIFFERENT
-// class). This file HOLDS an
-// AiBlockRenderer instance by COMPOSITION and owns everything that genuinely
-// speaks ProseMirror or is cross-block: contentDOM binding/ignoreMutation,
-// the framework schema data (nodeConfig/attrs/parseAttrs/titleProvider/
-// contentProvider — consumed by createSieveNode + sieve-block-extension.js's
-// title/content slot seam, which does the actual question/response
-// rendering into contentDOM as live PM nodes; see AiBlockRenderer's header
-// comment for why that stays out of the renderer), the read-only-container
-// guard plugin (isInsideAiBlock + handleTextInput/KeyDown/Paste/Drop), and
-// chain-glow hover (gatherChain/applyChain) — cross-block DOM querying +
-// a PM decoration for native prose peers, framework-layer material for the
-// future X-D framework extraction, deliberately left untouched here.
+// The NodeView adapter for the 'ai-block' kind. Look-and-feel — the block shell,
+// the badge, this kind's stylesheet — belongs to AiBlockRenderer, which this file
+// holds by composition. What lives here is everything that speaks ProseMirror or
+// is cross-block: the contentDOM binding and ignoreMutation, the framework schema
+// data (nodeConfig/attrs/parseAttrs/titleProvider/contentProvider, consumed by
+// createSieveNode and the title/content slot seam that renders the
+// question/response into contentDOM as live PM nodes), the read-only-container
+// guard plugin, and chain-glow hover (gatherChain/applyChain).
 
 import { isJobStale } from '../../../../renderers/job-status.js'
 import { T } from '../tiptap-vendor.js'
@@ -43,12 +33,9 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
     return ids
   }
 
-  // ── AiBlockNodeView ────────────────────────────────────────────────────────
-  // The registered descriptor sieve-block-extension.js's duck-typed
-  // registerSieveRenderer() consumes. Named distinctly from the imported
-  // AiBlockRenderer CLASS above — same word, two different layers (this is the
-  // PM-adapter descriptor object; AiBlockRenderer is the look-and-feel class it
-  // holds by composition) — to keep the two unambiguous in this file.
+  // The descriptor sieve-block-extension.js's registerSieveRenderer() consumes.
+  // Named distinctly from the imported AiBlockRenderer CLASS: this is the
+  // PM-adapter descriptor, that is the look-and-feel class it holds.
 
   var AiBlockNodeView = {
     // Read-only container: arrows treat it as a single caret stop.
@@ -61,10 +48,9 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
       content: 'block+'
     },
 
-    // TITLE (the question) and BODY (response/status) are rendered by
-    // AiBlockRenderer now — the question via its title region, the body-markdown
-    // decision via its bodyMarkdown(). The seam authors the projected body via
-    // FRESH scratch AiBlockRenderer instances (contract chain of custody).
+    // The title (question) and body (response/status) are rendered by
+    // AiBlockRenderer; the seam authors the projected body via fresh scratch
+    // instances of it.
 
     getInitialContentHTML: function() { return '<p></p>' },
 
@@ -76,10 +62,10 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
       question: { default: '',    parseHTML: function (el) { return el.getAttribute('data-question') || '' } },
       response: { default: null,  parseHTML: function (el) { return el.getAttribute('data-response') || null } },
       error:    { default: null,  parseHTML: function (el) { return el.getAttribute('data-error') || null } },
-      // Attachments (#74) are a LIST, so they ride the data-* costume as JSON —
-      // every other attr here is a scalar String()s cleanly. The renderer reads
-      // them off the ContainerTransport's block cache in the ordinary case; this is the
-      // PM-resurrect fallback, and it must not lose them silently.
+      // Attachments are a LIST, so they ride the data-* costume as JSON where
+      // every other attr here is a scalar. This parse is the PM-resurrect
+      // fallback — ordinarily the renderer reads them off the block cache — and it
+      // must not lose them silently.
       attachments: {
         default: [],
         parseHTML: function (el) {
@@ -113,12 +99,9 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
     makeNodeView: function (node, editorPane, getPos, ctx) {
       var nodeTypeName = 'sieve-ai-block'
 
-      // The renderer instance this NodeView HOLDS by composition (never
-      // inheritance — see the file header). This lens CLAIMS the BODY region
-      // via the handleBuild interceptor (contract: decorate · own · default):
-      // PM owns the claimed container as its contentDOM while the badge/title
-      // still render renderer-side; the seam authors body content via fresh
-      // scratch instances. This adapter supplies PM-only/cross-block concerns.
+      // This lens CLAIMS the BODY region through the handleBuild interceptor: PM
+      // owns the claimed container as its contentDOM, while the badge and title
+      // still render renderer-side.
       var bodyContainer = null
       var handleBuild = function (_r, region, container) {
         if (region !== REGION.BODY) return true
@@ -128,14 +111,13 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
       }
       var renderer = new AiBlockRenderer(sieveBlockFor(node, undefined, ctx && ctx.provider), ctx.provider || null, handleBuild)
 
-      // Whether an attachment's target still EXISTS is the EDITOR's knowledge
-      // (#82): it holds the one cache, and that cache dying with it is what
-      // makes a reopened document ask again. Wired here for the same reason the
-      // chip click is — the adapter is the only layer that sees both sides.
+      // Whether an attachment's target still EXISTS is the EDITOR's knowledge: it
+      // holds the one cache, and that cache dying with it is what makes a reopened
+      // document ask again.
       //
-      // Deferred, not eager: the surface stamps sieveHost onto the pane only
-      // after the pane is built, so a NodeView created during that build finds
-      // nothing yet and the first update() is where it arrives.
+      // Deferred, not eager: the surface stamps sieveHost onto the pane only after
+      // the pane is built, so a NodeView created during that build finds nothing
+      // yet and the first update() is where it arrives.
       var addressesWired = false
       function wireAddresses() {
         var addresses = ctx && ctx.addressStatus
@@ -148,18 +130,12 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
       var dom = renderer.render()
       var contentDOM = bodyContainer   // the claimed body container PM binds as its contentDOM
 
-      // Click-to-open on an attachment chip. The RENDERER reports the address and
-      // knows nothing else — opening one is a workspace verb, so the reach lives
-      // here, in the adapter.
-      //
-      // The uri is OPAQUE: no scheme test, no split, no pin rule. The grammar is
-      // Go's, and openAddress asks.
+      // Click-to-open on an attachment chip. Opening an address is a workspace
+      // verb, so the reach lives here rather than in the renderer. The uri is
+      // OPAQUE: no scheme test, no split, no pin rule — openAddress asks.
       renderer.onOpenAttachment(function (uri) {
         if (window.sieveWorkspace) window.sieveWorkspace.openAddress(uri)
       })
-      // The renderer's verbs (retry) leave through the ContainerTransport, the wire
-      // owner (the ai-block body is server-written — no outbound content
-      // channel; issue #49 Phase 1 retired the v1 appliers).
 
       function applyChain(action) {
         var id = dom.getAttribute('data-id') || ''
@@ -177,9 +153,8 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
           if (wcEl) wcEl.classList[action]('web-clip-block--chain-active')
         })
         // Native prose <p> blocks are owned by ProseMirror, which reverts any
-        // externally-set class on its next view update. Drive their glow through a
-        // PM decoration instead (setRefChain), so PM renders block-ref-active and
-        // it survives. Harmless no-op on the structured ids handled above.
+        // class set on them from outside, so their glow goes through a PM
+        // decoration. Harmless no-op on the structured ids handled above.
         if (editorPane && editorPane.view) {
           if (action === 'add') {
             var proseIds = []
@@ -224,8 +199,6 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
       }
     },
 
-    // ── Plugins ───────────────────────────────────────────────────────────────
-
     buildPlugins: function(nodeType) {
       var Plugin = T.Plugin
 
@@ -237,15 +210,11 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
         return inside
       }
 
-      // deleteEditsAiBody decides whether a Backspace/Delete would EDIT an ai-block's
-      // read-only response text (block it) versus remove the WHOLE block (allow it —
-      // the block is an atom, keyboard delete == context-menu Delete, and a mistake
-      // is undoable). Delete IS a text-modifying op, so we can't just wave it through;
-      // we wave through only the whole-block cases:
-      //   • a NodeSelection on the block, or
-      //   • a selection that fully CONTAINS the block (multi-block range).
-      // A selection that overlaps the block only PARTIALLY would cut into its text —
-      // that we still block.
+      // Whether a Backspace/Delete would EDIT an ai-block's read-only response
+      // text (block it) or remove the WHOLE block (allow it — keyboard delete is
+      // the context-menu Delete, and a mistake is undoable). Only the whole-block
+      // cases pass: a NodeSelection on the block, or a selection that fully
+      // CONTAINS it. A partial overlap would cut into its text, so it is blocked.
       function deleteEditsAiBody(state) {
         var sel = state.selection
         if (sel.node && sel.node.type === nodeType) return false // whole-block NodeSelection
