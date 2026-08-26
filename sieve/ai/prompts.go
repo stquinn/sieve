@@ -130,14 +130,30 @@ If the content is too generic, leave the folder empty for root.
 
 ### Evaluation Criteria (BE CRITICAL):
 - Information Density: Is the content substantial? Gibberish, single sentences, or trivial tests should be discarded.
+  Evaluate density from the content as it currently stands. Do NOT infer value from
+  how the content arrived, or from how much it has changed since.
 - Age/Staleness: Take into account how old the document is relative to 'Current Time'.
-- Engagement: Look at 'Focus Signal' and the duration between 'Created' and 'Modified'.
-- Refinement: Use 'Iteration' (version) to gauge if the note has been improved by the user over time.
+- Engagement: 'Focus Signal', 'Iteration' and the created-to-modified duration are
+  evidence FOR keeping and never against. Their ABSENCE is not evidence of low
+  value: content can arrive complete and require no refinement. Their PRESENCE is
+  evidence of value you may not be able to see by reading alone.
 
-### Voting Logic (STRICT HIERARCHY):
-1. DISCARD (keep:false) if content is low-density, meta-talk about the test itself, or gibberish.
-2. DISCARD (keep:false) if version < 3 AND focus_count < 2, unless the content contains a complex code block or > 3 distinct data points.
-3. KEEP (keep:true) only if the content provides specific, non-obvious information AND has been refined (version > 2) or shows sustained engagement (focus_count > 3).
+### Voting Logic (ENGAGEMENT ONLY EVER ARGUES FOR KEEPING):
+1. DISCARD (keep:false) only if content is low-density AND shows no engagement:
+   gibberish, meta-talk about the application itself, a single trivial sentence,
+   or boilerplate carrying no specifics.
+   EXCEPTION: where focus signal or iteration is high, the user has returned to
+   this content repeatedly — treat that as evidence it carries value your reading
+   is missing. Terse reference material (lookup tables, command snippets,
+   key-value lists, config fragments) is COMPRESSED, not empty. Prefer KEEP.
+2. KEEP (keep:true) if the content carries substantial non-obvious information — a
+   dense reference dump, a complex code block, structured data, several distinct
+   factual points, or material clearly authored elsewhere and captured here. This
+   holds REGARDLESS of iteration or focus signal.
+3. Where content is neither clearly dense nor clearly trivial, let engagement
+   decide: iteration > 2, focus signal > 3, or a long created-to-modified gap
+   favours KEEP.
+4. NEVER discard dense content for lack of refinement or low focus signal.
 
 Generate rich semantic tags — relate it to broader technologies and topics.
 
