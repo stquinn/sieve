@@ -52,9 +52,9 @@ func (s *ServiceProvider) BlockServices() block.BlockServices {
 		LinkPreview: s.LinkPreview,
 		State:       s.State,
 		Plantuml:    s.Plantuml,
-		// The Router, as the one-method interface block/ declares for itself: a
-		// processor holding a coordinate dereferences it through the same registry
-		// the @ picker and MCP get_by_uri read through.
+		// The Router, as the one-method interface block/ declares for itself, so a
+		// processor dereferences a coordinate through the same registry the @
+		// picker and MCP get_by_uri read through.
 		Nodes: s.Nodes,
 	}
 }
@@ -118,18 +118,10 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 		logger.Error("buffers init failed", "err", err)
 		return
 	}
-	// The Router: address → NodeDescriptor. Registering a source is the ONE line that makes
-	// a container kind mentionable, and the invariant it carries is that a source
-	// may only offer what the AI can dereference — so v1 registers notes only,
-	// because that is what MCP get_by_uri reaches through this very Router. Chats
-	// and Things become mentionable the day a source for them is registered here,
-	// and nothing outside Go learns what kinds exist.
-	//
-	// It lives in editor/ for the same reason the identity sweeper does: the
-	// grammar already spells block: addresses, and resolving one to a real
-	// SieveBlock needs both the block codec and the document service. services/
-	// cannot import block/ (the edge runs block → ai → command → services), so
-	// editor/ — the only package that sees both — is where it belongs.
+	// The Router: address → NodeDescriptor. Registering a source is the ONE line
+	// that makes a container kind mentionable, and a source may only offer what
+	// can also be dereferenced — so notes only, because that is what MCP
+	// get_by_uri reaches through this same Router.
 	s.Nodes = editor.NewRouter(editor.NewNotesSource(s.Documents))
 	s.Assets = services.NewAssetService(store, storePath)
 	s.State, err = services.NewStateService(store, storePath, themesFS)
@@ -150,8 +142,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	//
 	// The Router goes in as mcp.NodeResolver — the one-method interface the MCP
 	// package declares for itself — so get_by_uri dereferences coordinates through
-	// the same registry the @ picker offers them from, and mcp/ never learns that
-	// editor/ exists beyond this line.
+	// the same registry the @ picker offers them from.
 	s.MCP = mcp.NewServer(s.Documents, s.Nodes)
 	s.AI.SetMCPEndpoint(s.MCP)
 	s.Commands = command.NewRegistry()
@@ -194,7 +185,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	block.RegisterProcessor(processors.NewDiagramProcessor(svc))
 	block.RegisterProcessor(processors.NewSmartImageProcessor(svc))
 	block.RegisterProcessor(processors.NewSmartCardProcessor(svc))
-	block.RegisterProcessor(processors.NewAttachmentProcessor(svc))
+	block.RegisterProcessor(processors.NewReferenceProcessor(svc))
 	block.RegisterProcessor(processors.NewWebClipBlockProcessor(svc))
 	block.RegisterProcessor(processors.NewLogProcessor(svc))
 	block.RegisterProcessor(processors.NewCodeBlockProcessor(svc))

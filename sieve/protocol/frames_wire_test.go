@@ -29,8 +29,8 @@ type wireCase struct {
 func outboundWireCases() []wireCase {
 	attrs := map[string]interface{}{"status": "done", "source": "x = 1"}
 	blocks := []block.FrontendBlock{{ID: "b1", Kind: "prose", Attrs: map[string]interface{}{"content": "hello"}}}
-	candidates := []domain.Candidate{{URI: "container:9f2b", Title: "Auth Design", Kind: "note", Detail: "design/"}}
-	target := domain.OpenTarget{URI: "container:9f2b", UUID: "9f2b", BlockID: "b1", Kind: "note", Title: "Auth Design"}
+	candidates := []domain.Candidate{{URI: "sieve://9f2b", Title: "Auth Design", Kind: "note", Detail: "design/"}}
+	target := domain.OpenTarget{URI: "sieve://9f2b", UUID: "9f2b", BlockID: "b1", Kind: "note", Title: "Auth Design"}
 	boom := errors.New("boom")
 
 	return []wireCase{
@@ -242,7 +242,7 @@ func outboundWireCases() []wireCase {
 			name:    "mention-result",
 			channel: ChannelWorkspace,
 			frame:   NewMentionResultFrame("c-2", candidates),
-			golden:  `{"type":"mention-result","correlationId":"c-2","candidates":[{"uri":"container:9f2b","title":"Auth Design","kind":"note","detail":"design/"}]}`,
+			golden:  `{"type":"mention-result","correlationId":"c-2","candidates":[{"uri":"sieve://9f2b","title":"Auth Design","kind":"note","detail":"design/","summary":""}]}`,
 			legacy:  map[string]interface{}{"type": "mention-result", "correlationId": "c-2", "candidates": candidates},
 		},
 		{
@@ -255,20 +255,20 @@ func outboundWireCases() []wireCase {
 		{
 			name:    "mention-resolved found",
 			channel: ChannelWorkspace,
-			frame:   NewMentionResolvedFrame("c-3", "container:9f2b", target),
-			golden:  `{"type":"mention-resolved","correlationId":"c-3","uri":"container:9f2b","found":true,"uuid":"9f2b","blockId":"b1","kind":"note","title":"Auth Design"}`,
+			frame:   NewMentionResolvedFrame("c-3", "sieve://9f2b", target),
+			golden:  `{"type":"mention-resolved","correlationId":"c-3","uri":"sieve://9f2b","found":true,"uuid":"9f2b","blockId":"b1","kind":"note","title":"Auth Design"}`,
 			legacy: map[string]interface{}{
-				"type": "mention-resolved", "correlationId": "c-3", "uri": "container:9f2b",
+				"type": "mention-resolved", "correlationId": "c-3", "uri": "sieve://9f2b",
 				"found": true, "uuid": "9f2b", "blockId": "b1", "kind": "note", "title": "Auth Design",
 			},
 		},
 		{
 			name:    "mention-resolved unresolvable",
 			channel: ChannelWorkspace,
-			frame:   NewMentionUnresolvedFrame("c-3", "container:gone", errors.New("node: address resolves to nothing")),
-			golden:  `{"type":"mention-resolved","correlationId":"c-3","uri":"container:gone","found":false,"uuid":"","blockId":"","kind":"","title":"","error":"node: address resolves to nothing"}`,
+			frame:   NewMentionUnresolvedFrame("c-3", "sieve://gone", errors.New("node: address resolves to nothing")),
+			golden:  `{"type":"mention-resolved","correlationId":"c-3","uri":"sieve://gone","found":false,"uuid":"","blockId":"","kind":"","title":"","error":"node: address resolves to nothing"}`,
 			legacy: map[string]interface{}{
-				"type": "mention-resolved", "correlationId": "c-3", "uri": "container:gone",
+				"type": "mention-resolved", "correlationId": "c-3", "uri": "sieve://gone",
 				"found": false, "uuid": "", "blockId": "", "kind": "", "title": "",
 				"error": "node: address resolves to nothing",
 			},
@@ -527,14 +527,14 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 		},
 		{
 			name: "command",
-			raw:  `{"type":"command","family":"ai","cmd":"btw","args":{"text":"why?"},"context":{"docUuid":"doc-1"},"attachments":[{"uri":"container:9f2b","title":"Auth Design"}],"correlationId":"c-1"}`,
+			raw:  `{"type":"command","family":"ai","cmd":"btw","args":{"text":"why?"},"context":{"docUuid":"doc-1"},"attachments":[{"uri":"sieve://9f2b","title":"Auth Design"}],"correlationId":"c-1"}`,
 			into: &CommandFrame{},
 			want: &CommandFrame{
 				Type: TypeCommand, Family: "ai", Cmd: "btw",
 				Args:          CommandArgs{Text: "why?"},
 				CorrelationID: "c-1",
 				Context:       json.RawMessage(`{"docUuid":"doc-1"}`),
-				Attachments:   []domain.Attachment{{URI: "container:9f2b", Title: "Auth Design"}},
+				Attachments:   []domain.Attachment{{URI: "sieve://9f2b", Title: "Auth Design"}},
 			},
 		},
 		{
@@ -551,9 +551,9 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 		},
 		{
 			name: "mention-resolve",
-			raw:  `{"type":"mention-resolve","uri":"container:9f2b","correlationId":"c-3"}`,
+			raw:  `{"type":"mention-resolve","uri":"sieve://9f2b","correlationId":"c-3"}`,
 			into: &MentionResolveFrame{},
-			want: &MentionResolveFrame{Type: TypeMentionResolve, URI: "container:9f2b", CorrelationID: "c-3"},
+			want: &MentionResolveFrame{Type: TypeMentionResolve, URI: "sieve://9f2b", CorrelationID: "c-3"},
 		},
 	}
 

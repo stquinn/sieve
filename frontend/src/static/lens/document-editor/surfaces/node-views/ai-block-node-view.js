@@ -148,16 +148,12 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
       var dom = renderer.render()
       var contentDOM = bodyContainer   // the claimed body container PM binds as its contentDOM
 
-      // Click-to-open on an attachment chip (#74). The RENDERER reports the
-      // address and knows nothing else — opening one is a workspace verb, so the
-      // reach lives here, in the adapter, exactly as this layer already reaches
-      // window.sieveWorkspace for the image-copy path.
+      // Click-to-open on an attachment chip. The RENDERER reports the address and
+      // knows nothing else — opening one is a workspace verb, so the reach lives
+      // here, in the adapter.
       //
-      // The uri is OPAQUE: no scheme test, no split, no pin rule. Those live in
-      // Go (#75), and openAddress asks. This used to decode `container:{uuid}`
-      // here, which is a second implementation of the grammar whose failure mode
-      // is silence — a `block:` coordinate fell through the prefix guard and the
-      // chip did nothing at all.
+      // The uri is OPAQUE: no scheme test, no split, no pin rule. The grammar is
+      // Go's, and openAddress asks.
       renderer.onOpenAttachment(function (uri) {
         if (window.sieveWorkspace) window.sieveWorkspace.openAddress(uri)
       })

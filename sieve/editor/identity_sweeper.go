@@ -9,19 +9,12 @@ import (
 	"sieve/sieve/services"
 )
 
-// IdentitySweeper runs the load-time migration pipeline (block.DocumentMigrator
-// — UUID block ids per #75, asset routes per #19) over every document in the
-// attached library.
+// IdentitySweeper runs the load-time migration pipeline (block.DocumentMigrator)
+// over every document in the attached library.
 //
-// Migration is otherwise LAZY: a document is upgraded when it is opened. That
-// leaves documents nobody has opened carrying legacy short handles — still valid
-// ids, but not globally unique, so their blocks cannot be addressed from outside
-// the document. This closes that gap deliberately, which is what /migrate-ids
-// exists for.
-//
-// It lives in editor/ because it is the only package that can see BOTH halves of
-// the job: block/ (codec + migrator) and services/ (documents). services/ cannot
-// import block/ — block → ai → command → services already runs the other way.
+// Migration is otherwise LAZY — a document is upgraded when it is opened — which
+// leaves documents nobody has opened carrying legacy short handles, unaddressable
+// from outside their own document. This is what /migrate-ids exists to close.
 type IdentitySweeper struct {
 	docs  *services.DocumentService
 	codec *block.DocumentCodec
@@ -41,9 +34,8 @@ func (s *IdentitySweeper) SweepLibrary() domain.IdentitySweepResult {
 		return out
 	}
 
-	// AllUUIDs, not List: List covers only filed Library notes, and Sieve is
-	// scratchpad-first, so most documents at any moment are unfiled buffers. A
-	// sweep that skipped them would leave the majority of blocks unaddressable.
+	// AllUUIDs, not List: List covers only filed Library notes, and most documents
+	// at any moment are unfiled buffers.
 	uuids, err := s.docs.AllUUIDs()
 	if err != nil {
 		out.Failures = append(out.Failures, fmt.Sprintf("list documents: %v", err))
@@ -79,7 +71,7 @@ func (s *IdentitySweeper) sweepOne(uuid string) (bool, int, error) {
 	if err != nil {
 		return false, 0, fmt.Errorf("parse: %w", err)
 	}
-	after, changed := block.DocumentMigrator{}.Migrate(before)
+	after, changed := block.DocumentMigrator{}.Migrate(before, uuid)
 	if !changed {
 		return false, 0, nil
 	}

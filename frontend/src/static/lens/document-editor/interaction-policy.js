@@ -20,10 +20,9 @@
 // bootEditorLifecycle() — a document-level CAPTURE-phase click listener. Because
 // capture on `document` runs before anything on `view.dom` and it calls
 // stopPropagation(), no editor- or renderer-level click handler can see a
-// Mod+Click; one added here would be dead code (a PM-level handler was verified
-// unreachable and deleted, #67, 2026-07-27). This is an exception to "no
-// per-renderer handlers" only in WHERE it lives — it is still exactly ONE shared
-// mechanism, just one scoped to the app instead of the editor.
+// Mod+Click; one added here would be dead code. This is an exception to "no
+// per-renderer handlers" only in WHERE it lives — it is still exactly one shared
+// mechanism, scoped to the app instead of the editor.
 // Normative row: docs/editor-interaction-contract.md.
 
 import { getBlockBehaviour } from '../../renderers/block-kinds.js'
@@ -63,14 +62,9 @@ import { ProseLink } from './surfaces/prose-link.js'
 // indirection. The "yep, this is code" ergonomics live in CODE_TEXT_POLICY
 // below, which is a DECLARATION-TIME preset, not a runtime category.
 //
-// `rawText` used to sit here meaning three things at once ("literal paste
-// target; Tab indents inside", plus an unwritten "this is code"). Only the Tab
-// half was ever implemented — paste literalness comes from PM's `code: true`,
-// not from any policy read — so it was split into the behaviours it actually
-// performs (2026-07-29). Flags are born WITH their reader: never declare one
-// here before something consumes it, which is how `readOnlyText` drifted into
-// a live branch that no real kind switched on (log's declaration had lost it;
-// only a test FakeBlock exercised it).
+// A flag names ONE behaviour, and it is born WITH its reader: never declare one
+// here before something consumes it, or it drifts into a live branch no real
+// kind switches on.
 export var DEFAULT_POLICY = {
   tabIndents: false,          // Tab/Shift+Tab indent/de-indent each touched line by indentWidth
   indentWidth: 0,             // spaces per Tab where tabIndents
@@ -445,7 +439,7 @@ export function resolveContext(state, view) {
  * and Home go through, so a kind opts in by naming the flag like any other.
  *
  * The chip-like kinds need nothing: ai-block, web-clip, smart-image, smart-card
- * and attachment are all `caretStop: true`, so no caret enters their text and no
+ * and reference are all `caretStop: true`, so no caret enters their text and no
  * trigger can arm there in the first place.
  * @param {any} state @param {any} [view] @returns {boolean}
  */
@@ -539,9 +533,9 @@ function insertParagraphAfter(view) {
 // context the policy does not own, so native prose/list/table Enter (and
 // prose Shift+Enter soft breaks) are untouched. Tab is the mirror case:
 // native keymaps must win, so it lives in the priority-50 backstop plugin.
-// `host` is the surface's parent Editor (WysiwygSurface passes self.#host), threaded
-// through to a mode-toggling kind's onModEnter so it can reach the Editor's public API
-// (the ContainerTransport verbs) instead of firing a global CustomEvent (P4.F Brief C).
+// `host` is the surface's parent Editor (WysiwygSurface passes self.#host),
+// threaded through to a mode-toggling kind's onModEnter so it can reach the
+// Editor's public API rather than firing a global CustomEvent.
 export function policyEnterKeydown(view, event, host) {
   if (event.key !== 'Enter') return false
   return handleEnter(view, event, host)

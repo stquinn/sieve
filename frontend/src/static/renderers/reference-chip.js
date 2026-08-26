@@ -1,32 +1,28 @@
 // @ts-check
-// attachment-chip.js — AttachmentChip: the "this is an attachment" chip, as one
-// component. A sibling of StatusBadge and LineGutter in renderers/ — a
-// shared piece of look-and-feel with no PM, no editor, no window.* and no idea
-// what a document is.
+// ReferenceChip: the "this is a reference" chip, as one component. A sibling of
+// StatusBadge and LineGutter in renderers/ — shared look-and-feel with no PM, no
+// editor, no window.* and no idea what a document is.
 //
-// IT IS NOT THE ROW THAT HOLDS CHIPS. A caller owns its own layout — the
-// ai-block footer's scrolling strip, the composer footer's hint-displacing
-// region, the attachment block's shrink-wrapping wrapper — and sets
-// `--chip-max-width` on it if its chips clamp. The chip itself is only ever as
+// IT IS NOT THE ROW THAT HOLDS CHIPS. A caller owns its own layout and sets
+// `--chip-max-width` on it if its chips clamp; the chip itself is only ever as
 // wide as it needs to be.
 //
-// THE COMPOSER IS DELIBERATELY NOT A CONSUMER: it is not a block, so it carries
-// no block styles, and importing a renderer into the shell would cross the
-// shell/renderer boundary. It keeps its own component (a ✕ affordance and a
-// fixed-height footer constraint this chip has no business knowing about) and
-// unifies with this one on the `--chip-*` TOKENS instead.
+// THE COMPOSER IS NOT A CONSUMER: it is not a block, so it carries no block
+// styles, and importing a renderer into the shell would cross the
+// shell/renderer boundary. It keeps its own component and unifies with this one
+// on the `--chip-*` TOKENS.
 //
 // IMMUTABLE ONCE BUILT. Both callers redraw their whole row from the model on
-// every change, so there is no patch path to maintain and none is offered.
+// every change, so no patch path is offered.
 
 import { rendererStyles } from './renderer-style-registry.js'
-import { attachmentChipStyles } from './attachment-chip.styles.js'
+import { referenceChipStyles } from './reference-chip.styles.js'
 
 /**
  * One chip's whole contract. Everything is optional because a chip's job is to
- * stay identifiable however little survived: an attachment with no cached title
+ * stay identifiable however little survived: a reference with no cached title
  * still shows its address, and one with no address at all is still a label.
- * @typedef {object} AttachmentChipSpec
+ * @typedef {object} ReferenceChipSpec
  * @property {string} [uri]     the coordinate this chip stands for. Stamped as
  *   `data-uri` and handed to activate listeners; a chip without one is inert.
  * @property {string} [label]   the primary text. Falls back to `uri`.
@@ -39,13 +35,13 @@ import { attachmentChipStyles } from './attachment-chip.styles.js'
  * @property {string} [icon]    override the leading glyph.
  */
 
-export class AttachmentChip {
+export class ReferenceChip {
   /** CSS text using ONLY `--theme-` and `--chip-` vars for colour. */
-  static styles = attachmentChipStyles
+  static styles = referenceChipStyles
 
   /** The selector this chip's styles hang off, and a row's hook to reach its
    *  own chips. */
-  static ROOT_CLASS = 'sieve-attachment-chip'
+  static ROOT_CLASS = 'sieve-reference-chip'
 
   /** 📄 — a source the document holds or points at. */
   static #ICON = '\u{1F4C4}'
@@ -56,9 +52,9 @@ export class AttachmentChip {
   /** @type {string} */ #uri
   /** @type {Array<(uri: string) => void>} */ #listeners = []
 
-  /** @param {AttachmentChipSpec} [spec] */
+  /** @param {ReferenceChipSpec} [spec] */
   constructor(spec) {
-    rendererStyles.register(AttachmentChip)
+    rendererStyles.register(ReferenceChip)
     const s = spec || {}
     this.#uri = (s.uri || '').trim()
     const missing = !!s.missing
@@ -67,13 +63,13 @@ export class AttachmentChip {
     const tooltip = (s.tooltip || '').trim()
 
     const el = document.createElement('span')
-    el.className = AttachmentChip.ROOT_CLASS + (missing ? ' ' + AttachmentChip.ROOT_CLASS + '--missing' : '')
+    el.className = ReferenceChip.ROOT_CLASS + (missing ? ' ' + ReferenceChip.ROOT_CLASS + '--missing' : '')
     if (this.#uri) el.setAttribute('data-uri', this.#uri)
     if (tooltip) el.setAttribute('title', tooltip)
 
-    el.appendChild(AttachmentChip.#part('icon', s.icon || (missing ? AttachmentChip.#ICON_MISSING : AttachmentChip.#ICON), true))
-    el.appendChild(AttachmentChip.#part('label', label))
-    if (detail) el.appendChild(AttachmentChip.#part('detail', detail))
+    el.appendChild(ReferenceChip.#part('icon', s.icon || (missing ? ReferenceChip.#ICON_MISSING : ReferenceChip.#ICON), true))
+    el.appendChild(ReferenceChip.#part('label', label))
+    if (detail) el.appendChild(ReferenceChip.#part('detail', detail))
 
     el.addEventListener('click', (e) => {
       e.preventDefault()
@@ -109,7 +105,7 @@ export class AttachmentChip {
   #activate() {
     if (!this.#uri) return
     for (const fn of this.#listeners) {
-      try { fn(this.#uri) } catch (e) { console.error('[attachment-chip] activate listener threw', e) }
+      try { fn(this.#uri) } catch (e) { console.error('[reference-chip] activate listener threw', e) }
     }
   }
 
@@ -123,7 +119,7 @@ export class AttachmentChip {
    */
   static #part(part, text, decorative) {
     const el = document.createElement('span')
-    el.className = AttachmentChip.ROOT_CLASS + '__' + part
+    el.className = ReferenceChip.ROOT_CLASS + '__' + part
     el.textContent = text
     if (decorative) el.setAttribute('aria-hidden', 'true')
     return el

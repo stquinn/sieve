@@ -1,44 +1,43 @@
 // @ts-check
-// attachment-renderer.js — AttachmentRenderer: the renderer half of the
-// 'attachment' kind's renderer/NodeView split (NORMATIVE contract:
-// docs/design/archive/specs/2026-07-21-block-renderer-contract.md; the kind's
-// design: docs/design/archive/specs/2026-08-19-attachment-block-design.md).
+// ReferenceRenderer: the renderer half of the 'reference' kind's
+// renderer/NodeView split (NORMATIVE contract:
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md).
 //
 // Owns look-and-feel ONLY, and there is deliberately very little of it: the
-// block IS an attachment chip, so this class COMPOSES AttachmentChip inside a
+// block IS a reference chip, so this class COMPOSES ReferenceChip inside a
 // block-level wrapper that shrink-wraps it, adds the chevron that reveals
 // `summary`, and stops there. No card shell, no header bar, no toolbar.
 //
 // Zero ProseMirror/editor/window.* dependencies: it mounts identically in the
 // note editor's NodeView adapter and on a bare page.
 //
-// ── THE ONE GESTURE IT OWNS ─────────────────────────────────────────────────
-// SINGLE click is NOT handled here. A block sits in the editing flow, so a
-// single click must place the caret and select it like any other block — that is
-// the shared interaction policy's job, and a handler here would fight it.
+// THE ONE GESTURE IT OWNS. Single click is NOT handled here — a block sits in
+// the editing flow, so placing the caret is the shared interaction policy's job.
 // DOUBLE click opens, and this class fans out an INTENT (`onOpen`) carrying the
-// block's target; it never names a mechanism, so a hosted build can answer
-// differently from the desktop one without touching this file. Same seam as
-// `sieve:ai-ask`/`sieve:ai-explain`.
+// block's target; it never names a mechanism.
 
 import { BlockRenderer } from './block-renderer.js'
-import { attachmentStyles } from './attachment-renderer.styles.js'
-import { AttachmentChip } from './attachment-chip.js'
+import { referenceStyles } from './reference-renderer.styles.js'
+import { ReferenceChip } from './reference-chip.js'
 import { StatusBadge } from './status-badge.js'
 
 /**
- * The attachment block's payload, as the Go processor stamps it
- * (sieve/block/processors/attachment_processor.go, InitAttrs). Exactly one of
- * `src` / `uri` is ever set — the kind's only invariant.
- * @typedef {object} AttachmentPayload
+ * The reference block's payload, as the Go processor stamps it
+ * (sieve/block/processors/reference_processor.go, InitAttrs). `uri` is the ONE
+ * address: a held file's bytes live at a `sieve://{container}/{leaf}` coordinate
+ * like any other.
+ *
+ * `mime` is the DISCRIMINATOR: a pointer's mime names Sieve's own space
+ * (`sieve/note`), a held file's names a real format (`text/yaml`), so HELD ⇔ the
+ * mime is not a `sieve/*` type. It is also the only noun the chip needs.
+ * @typedef {object} ReferencePayload
  * @property {string} [id]
- * @property {string} [src]     an asset filename in the document directory — the block HOLDS a file
- * @property {string} [uri]     a `container:{uuid}` coordinate — the block POINTS at another container
+ * @property {string} [uri]     the ONE address: sieve://{container}[/{leaf}]
  * @property {string} [title]   the cached name
- * @property {string} [targetKind] what the block points at or holds ("note" for a citation, the mime family for a file)
  * @property {string} [summary] one line under the title; what the chevron reveals
  * @property {string} [bytes]   a held file's size, as a STRING (see the processor for why)
- * @property {string} [mime]
+ * @property {string} [mime]    what this block points at or holds; non-sieve/* ⇔ held
+ * @property {string} [rel]     the authored relationship; nothing renders or branches on it
  * @property {string} [status]
  * @property {string} [error]
  * @property {string|null} [createdAt]
@@ -46,69 +45,63 @@ import { StatusBadge } from './status-badge.js'
 
 /**
  * What this block opens, resolved from its one address attr.
- * @typedef {object} AttachmentTarget
- * @property {string} uri   the coordinate to navigate to ('' for a held file)
- * @property {string} src   the asset to reveal ('' for a citation)
- * @property {string} title what to call it
+ * @typedef {object} ReferenceTarget
+ * @property {string} uri     the coordinate to navigate to
+ * @property {string} title   what to call it
+ * @property {boolean} held   true when the face carries `mime` — a file this
+ *   block itself holds, opened by revealing it rather than navigating to it
  */
 
-export class AttachmentRenderer extends BlockRenderer {
-  static styles = attachmentStyles
-  static rootClass = 'attachment-block'
+export class ReferenceRenderer extends BlockRenderer {
+  static styles = referenceStyles
+  static rootClass = 'reference-block'
 
   /** Disclosure glyphs. A GLYPH SWAP, never a CSS transform — see the styles file. */
   static #CHEVRON = Object.freeze({ COLLAPSED: '▸', EXPANDED: '▾' })
 
   /** The label a block with no title, no file and no coordinate still wears. */
-  static #UNADDRESSED_LABEL = 'Attachment'
+  static #UNADDRESSED_LABEL = 'Reference'
 
   /** @type {HTMLElement|null} the shrink-wrapping row that holds the chip */ #line = null
   /** @type {HTMLElement|null} the revealed summary */ #summaryEl = null
   /** @type {boolean} disclosure state — VIEW state, never persisted (the kind has no attr for it) */ #expanded = false
-  /** @type {Array<(target: AttachmentTarget) => void>} */ #openListeners = []
+  /** @type {Array<(target: ReferenceTarget) => void>} */ #openListeners = []
 
   /**
-   * THE address rule, in one place, mirroring the processor's own `address()`:
-   * exactly one of src/uri is ever set, and the (illegal) both-set case resolves
-   * to `uri` — arbitrarily, but identically on both sides of the wire, so a block
-   * cannot mean one thing to Go and another to the reader.
-   * @param {AttachmentPayload} payload
-   * @returns {AttachmentTarget|null} null when the block addresses nothing
+   * THE address rule: `uri` is the one thing a reference addresses, whatever it
+   * points at or holds.
+   * @param {ReferencePayload} payload
+   * @returns {ReferenceTarget|null} null when the block addresses nothing
    */
   static targetFor(payload) {
     const p = payload || {}
     const uri = (p.uri || '').trim()
-    const src = (p.src || '').trim()
-    const title = AttachmentRenderer.labelFor(p)
-    if (uri) return { uri: uri, src: '', title: title }
-    if (src) return { uri: '', src: src, title: title }
-    return null
+    if (!uri) return null
+    return { uri: uri, title: ReferenceRenderer.labelFor(p), held: ReferenceRenderer.#isHeld(p) }
   }
 
   /**
-   * What the chip is CALLED: its cached title, else the thing it addresses. A
-   * chip is never blank — one nobody can identify has stopped being one.
-   * @param {AttachmentPayload} payload
+   * What the chip is CALLED: its cached title, else the thing it addresses.
+   * Never blank.
+   * @param {ReferencePayload} payload
    * @returns {string}
    */
   static labelFor(payload) {
     const p = payload || {}
     const title = (p.title || '').trim()
     if (title) return title
-    const src = (p.src || '').trim()
-    if (src) return AttachmentRenderer.filenameOf(src)
-    return (p.uri || '').trim() || AttachmentRenderer.#UNADDRESSED_LABEL
+    if (ReferenceRenderer.#isHeld(p)) return ReferenceRenderer.filenameOf(p.uri)
+    return (p.uri || '').trim() || ReferenceRenderer.#UNADDRESSED_LABEL
   }
 
   /**
-   * The bare asset name from a stored src. Mirrors the processor's `filename`.
-   * A src is always a filename in the document directory; the `.assets/` strip
-   * and the basename are defensive against a path-qualified one.
-   * @param {string} src
+   * The bare filename at the end of a `sieve://{container}/{leaf}` address —
+   * the leaf key a held file's uri names.
+   * @param {string} uri
    * @returns {string}
    */
-  static filenameOf(src) {
-    const trimmed = (src || '').trim().replace(/^\.assets\//, '')
+  static filenameOf(uri) {
+    const trimmed = (uri || '').trim()
     const parts = trimmed.split('/')
     return parts[parts.length - 1] || trimmed
   }
@@ -139,38 +132,37 @@ export class AttachmentRenderer extends BlockRenderer {
   /** The whole block: a chip on a shrink-wrapping line, and the summary under it. @returns {HTMLElement} */
   buildBody() {
     const body = document.createElement('div')
-    body.className = 'attachment-block__body'
+    body.className = 'reference-block__body'
     // setAttribute, not the IDL property: the ATTRIBUTE is what ProseMirror's
     // DOM parser and the read-only guard read (and what jsdom/happy-dom reflect).
     body.setAttribute('contenteditable', 'false')
 
     this.#line = document.createElement('div')
-    this.#line.className = 'attachment-block__line'
+    this.#line.className = 'reference-block__line'
     this.#summaryEl = document.createElement('div')
-    this.#summaryEl.className = 'attachment-block__summary'
+    this.#summaryEl.className = 'reference-block__summary'
     body.appendChild(this.#line)
     body.appendChild(this.#summaryEl)
 
     // DOUBLE click opens; single click is the shared policy's (see the header).
     body.addEventListener('dblclick', (e) => this.#onDoubleClick(e))
 
-    this.#draw(/** @type {AttachmentPayload} */ (this.block.payload))
+    this.#draw(/** @type {ReferencePayload} */ (this.block.payload))
     return body
   }
 
   /** @param {import('../contract/sieve-block.js').SieveBlock} block */
   update(block) {
     super.update(block)
-    this.#draw(/** @type {AttachmentPayload} */ (block.payload))
+    this.#draw(/** @type {ReferencePayload} */ (block.payload))
   }
 
   // ── Semantic verbs (kind-specific — the contract's abstract-consumer rule) ──
 
   /**
-   * Registers interest in "the user opened this attachment", handing back what
-   * the block addresses. The renderer NEVER opens anything itself — naming a
-   * workspace or a file manager here would harden the desktop into the block.
-   * @param {(target: AttachmentTarget) => void} fn
+   * Registers interest in "the user opened this reference", handing back what the
+   * block addresses. The renderer never opens anything itself.
+   * @param {(target: ReferenceTarget) => void} fn
    * @returns {() => void} unsubscribe
    */
   onOpen(fn) {
@@ -187,7 +179,7 @@ export class AttachmentRenderer extends BlockRenderer {
   toggleSummary(force) {
     const next = force === undefined ? !this.#expanded : !!force
     this.#expanded = next && !!this.summaryText()
-    this.#draw(/** @type {AttachmentPayload} */ (this.block.payload))
+    this.#draw(/** @type {ReferencePayload} */ (this.block.payload))
     return this.#expanded
   }
 
@@ -196,54 +188,55 @@ export class AttachmentRenderer extends BlockRenderer {
 
   /** The one line the chevron reveals ('' when the block has none). @returns {string} */
   summaryText() {
-    const payload = /** @type {AttachmentPayload} */ (this.block.payload)
+    const payload = /** @type {ReferencePayload} */ (this.block.payload)
     return (payload.summary || '').trim()
   }
 
-  /** What this block opens, or null when it addresses nothing. @returns {AttachmentTarget|null} */
+  /** What this block opens, or null when it addresses nothing. @returns {ReferenceTarget|null} */
   target() {
-    return AttachmentRenderer.targetFor(/** @type {AttachmentPayload} */ (this.block.payload))
+    return ReferenceRenderer.targetFor(/** @type {ReferencePayload} */ (this.block.payload))
   }
 
   /** The address (or filename) a consumer copies for this block. @returns {string} */
   copyText() {
-    return AttachmentRenderer.copyTextFor(/** @type {AttachmentPayload} */ (this.block.payload))
+    return ReferenceRenderer.copyTextFor(/** @type {ReferencePayload} */ (this.block.payload))
   }
 
   /**
-   * What "copy" yields for an attachment, as ONE rule: the coordinate it points
-   * at, or the name of the file it holds. Static because the context menu has
-   * only the node's attrs — the same rule must not be restated there.
-   * @param {AttachmentPayload} payload
+   * What "copy" yields for a reference, as ONE rule: the coordinate it points
+   * at, or the friendly name of the file it holds. Static because the context
+   * menu has only the node's attrs — the same rule must not be restated there.
+   * @param {ReferencePayload} payload
    * @returns {string}
    */
   static copyTextFor(payload) {
-    const t = AttachmentRenderer.targetFor(payload)
+    const t = ReferenceRenderer.targetFor(payload)
     if (!t) return ''
-    return t.uri || AttachmentRenderer.filenameOf(t.src)
+    return t.held ? t.title : t.uri
   }
 
   // ── Drawing ────────────────────────────────────────────────────────────────
 
   /**
    * Redraws the chip and the summary from the block. The whole line is
-   * rebuilt rather than patched because AttachmentChip is immutable once built;
+   * rebuilt rather than patched because ReferenceChip is immutable once built;
    * the disclosure state lives on THIS object, so it survives the redraw a
    * render-back triggers.
-   * @param {AttachmentPayload} payload
+   * @param {ReferencePayload} payload
    */
   #draw(payload) {
     const line = this.#line
     const summaryEl = this.#summaryEl
     if (!line || !summaryEl) return
 
-    const missing = AttachmentRenderer.#isMissing(payload)
-    const chip = new AttachmentChip({
-      // A held file has no coordinate; the chip is then simply not addressed
-      // (its own click activation is inert, which is correct — this block opens
-      // on DOUBLE click, through the intent below).
-      uri: (payload.uri || '').trim(),
-      label: AttachmentRenderer.labelFor(payload),
+    const held = ReferenceRenderer.#isHeld(payload)
+    const missing = ReferenceRenderer.#isMissing(payload)
+    const chip = new ReferenceChip({
+      // A held file's own chip carries no data-uri: its click activation is
+      // inert (its own click handler no-ops), which is correct — this block
+      // opens the file on DOUBLE click, through the intent below.
+      uri: held ? '' : (payload.uri || '').trim(),
+      label: ReferenceRenderer.labelFor(payload),
       detail: this.#detail(payload),
       tooltip: this.#tooltip(payload, missing),
       missing: missing,
@@ -256,12 +249,12 @@ export class AttachmentRenderer extends BlockRenderer {
     line.appendChild(chip.element)
 
     summaryEl.textContent = summary
-    summaryEl.classList.toggle('attachment-block__summary--shown', this.#expanded && !!summary)
+    summaryEl.classList.toggle('reference-block__summary--shown', this.#expanded && !!summary)
 
     const root = this.root
     if (root) {
       const pending = StatusBadge.classify(payload.status, payload.createdAt, payload.id) === 'pending'
-      root.classList.toggle('attachment-block--pending', pending)
+      root.classList.toggle('reference-block--pending', pending)
     }
   }
 
@@ -271,11 +264,11 @@ export class AttachmentRenderer extends BlockRenderer {
   #buildChevron() {
     const btn = document.createElement('button')
     btn.type = 'button'
-    btn.className = 'attachment-block__chevron'
+    btn.className = 'reference-block__chevron'
     btn.tabIndex = -1
     btn.setAttribute('aria-expanded', this.#expanded ? 'true' : 'false')
     btn.setAttribute('aria-label', this.#expanded ? 'Hide summary' : 'Show summary')
-    btn.textContent = this.#expanded ? AttachmentRenderer.#CHEVRON.EXPANDED : AttachmentRenderer.#CHEVRON.COLLAPSED
+    btn.textContent = this.#expanded ? ReferenceRenderer.#CHEVRON.EXPANDED : ReferenceRenderer.#CHEVRON.COLLAPSED
     btn.addEventListener('click', (e) => {
       e.preventDefault()
       e.stopPropagation()
@@ -288,12 +281,12 @@ export class AttachmentRenderer extends BlockRenderer {
   #onDoubleClick(e) {
     const el = /** @type {HTMLElement|null} */ (e.target)
     // The chevron reads the asset in place; it is not an open gesture.
-    if (el && el.closest && el.closest('.attachment-block__chevron')) return
+    if (el && el.closest && el.closest('.reference-block__chevron')) return
     const target = this.target()
     if (!target) return
     e.preventDefault()
     for (const fn of this.#openListeners) {
-      try { fn(target) } catch (err) { console.error('[attachment] open listener threw', err) }
+      try { fn(target) } catch (err) { console.error('[reference] open listener threw', err) }
     }
   }
 
@@ -302,36 +295,46 @@ export class AttachmentRenderer extends BlockRenderer {
    * "note" for a citation. Either half may be missing (a job that has not landed
    * yet) and the line simply shortens rather than inventing a placeholder —
    * mirroring the processor's `typeLine`.
-   * @param {AttachmentPayload} payload
+   * @param {ReferencePayload} payload
    * @returns {string}
    */
   #detail(payload) {
     const parts = []
     const kind = this.#assetKind(payload)
     if (kind) parts.push(kind)
-    const size = AttachmentRenderer.humanSize(payload.bytes)
+    const size = ReferenceRenderer.humanSize(payload.bytes)
     if (size) parts.push(size)
     return parts.join(' · ')
   }
 
   /**
-   * The kind of the thing this block points at or holds — "note" for a citation,
-   * the mime family ("yaml", "pdf") for a held file. The attr is `targetKind`
-   * because `kind` is reserved for the BLOCK's kind (see the NodeView adapter).
-   * @param {AttachmentPayload} payload
+   * The noun for the thing this block points at or holds — "note" for a pointer,
+   * "yaml" or "pdf" for a held file. DERIVED from `mime`, never stored beside it:
+   * `sieve/note` reduces to "note" by exactly the rule `text/yaml` reduces to
+   * "yaml", so one attr carries both halves of the vocabulary. Mirrors the
+   * processor's `mimeFamily`.
+   * @param {ReferencePayload} payload
    * @returns {string}
    */
   #assetKind(payload) {
-    return (payload.targetKind || '').trim()
+    const mime = ((payload || {}).mime || '').trim()
+    const slash = mime.indexOf('/')
+    if (slash < 0) return mime
+    let sub = mime.slice(slash + 1)
+    const plus = sub.indexOf('+')
+    if (plus > 0) sub = sub.slice(0, plus)          // image/svg+xml → svg
+    sub = sub.replace(/^vnd\./, '').replace(/^x-/, '')
+    if (sub === 'plain') return 'text'              // nothing is called a "plain"
+    const dot = sub.lastIndexOf('.')
+    return dot >= 0 ? sub.slice(dot + 1) : sub      // the office types' last segment
   }
 
   /**
    * DANGLING IS A NORMAL STATE, not a job failure: the processor settles a
    * reference whose target is gone as COMPLETE with a non-empty `error`, keeping
-   * the cached face. So it is the ERROR TEXT that greys a chip — testing `status`
-   * here instead would miss every dangling block there is. A job that genuinely
-   * broke leaves an error too, and ONE predicate is right for both.
-   * @param {AttachmentPayload} payload
+   * the cached face. So it is the ERROR TEXT that greys a chip, never `status`,
+   * which would miss every dangling block.
+   * @param {ReferencePayload} payload
    * @returns {boolean}
    */
   static #isMissing(payload) {
@@ -339,16 +342,28 @@ export class AttachmentRenderer extends BlockRenderer {
   }
 
   /**
+   * held ⇔ the mime is NOT a `sieve/*` type — mirrors the processor's own
+   * invariant. THE FACE DECIDES: the uri is never inspected to answer this, so a
+   * held file and a pointer at someone else's asset are told apart by what was
+   * stamped, not by how the address happens to look.
+   * @param {ReferencePayload} payload
+   * @returns {boolean}
+   */
+  static #isHeld(payload) {
+    const mime = ((payload || {}).mime || '').trim()
+    return mime !== '' && !mime.startsWith('sieve/')
+  }
+
+  /**
    * What tells two same-labelled chips apart — and, when something is wrong,
-   * what is wrong. @param {AttachmentPayload} payload @param {boolean} missing
+   * what is wrong. @param {ReferencePayload} payload @param {boolean} missing
    * @returns {string}
    */
   #tooltip(payload, missing) {
     if (missing) return (payload.error || '').trim()
     const uri = (payload.uri || '').trim()
-    if (uri) return uri
-    const src = (payload.src || '').trim()
-    return src ? AttachmentRenderer.filenameOf(src) : ''
+    if (!uri) return ''
+    return ReferenceRenderer.#isHeld(payload) ? ReferenceRenderer.filenameOf(uri) : uri
   }
 
 }

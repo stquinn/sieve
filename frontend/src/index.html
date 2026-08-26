@@ -240,13 +240,13 @@
     <script type="module" src="/ui/static/lens/document-editor/interaction-policy.js"></script>
     <script type="module" src="/ui/static/renderers/action-label.js"></script>
     <script type="module" src="/ui/static/lens/document-editor/surfaces/sieve-block-extension.js"></script>
+    <script type="module" src="/ui/static/lens/document-editor/surfaces/node-views/reference-node-view.js"></script>
     <script type="module" src="/ui/static/lens/document-editor/surfaces/node-views/ai-block-node-view.js"></script>
     <script type="module" src="/ui/static/lens/document-editor/surfaces/node-views/code-node-view.js"></script>
     <script type="module" src="/ui/static/lens/document-editor/surfaces/node-views/log-node-view.js"></script>
     <script type="module" src="/ui/static/lens/document-editor/surfaces/node-views/web-clip-node-view.js"></script>
     <script type="module" src="/ui/static/lens/document-editor/surfaces/node-views/smart-image-node-view.js"></script>
     <script type="module" src="/ui/static/lens/document-editor/surfaces/node-views/smart-card-node-view.js"></script>
-    <script type="module" src="/ui/static/lens/document-editor/surfaces/node-views/attachment-node-view.js"></script>
     <script type="module" src="/ui/static/lens/document-editor/surfaces/node-views/diagram-node-view.js"></script>
     <script type="module" src="/ui/static/lens/document-editor/surfaces/prose-markers.js"></script>
     <script type="module" src="/ui/static/lens/document-editor/surfaces/block-render.js"></script>
@@ -637,7 +637,7 @@
 
         // ── Toolbar file attach ─────────────────────────────────────────────────
         // No kind is named here: the entry carries the file's mime type and Go's
-        // paste-match registry routes it (image/* -> smart-image, else attachment).
+        // paste-match registry routes it (image/* -> smart-image, else reference).
         // The ceiling is the user's `max_attachment_bytes` setting (#84), published
         // by the index template; the fallback mirrors domain.DefaultMaxAttachmentBytes.
         // Read PER CHECK, not captured at load: settings change under a running window.

@@ -1,48 +1,20 @@
 // @ts-check
-// ai-block-renderer.styles.js — AiBlockRenderer's stylesheet, a sibling module
-// per the styles-file-geography convention (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
-// "Styles file geography", user decision 2026-07-20): a renderer file starts
-// with its class — behaviour first, never a CSS wall — so any sheet over
-// ~30 lines lives in its own `<kind>-renderer.styles.js` sibling module
-// (`export const <kind>Styles = /* css */ \`…\``, Lit-style), imported into
-// the class's `static styles`. This module is renderer-internal — nothing
-// outside ai-block-renderer.js imports it.
+// AiBlockRenderer's stylesheet, a sibling module per the styles-file-geography
+// convention: a renderer file starts with its class, so any sheet over ~30 lines
+// lives in its own `<kind>-renderer.styles.js` sibling, imported into the class's
+// `static styles`. This module is renderer-internal.
 //
-// CSS text using ONLY --theme-* variables for colour (the host<->renderer
-// styling contract). Carried verbatim from frontend/src/static/editor.css's
-// former ".ai-block"/".ai-block__*" rule set (moved here in the same change
-// per the spec — style carriage is never a separate pass). NOTE: unlike the
-// diagram pilot, this CSS lived in editor.css, not input.css — input.css has
-// no ai-block rules at all (verified before moving anything); editor.css is
-// the hand-authored stylesheet linked directly in index.html (not part of the
-// tailwind build), so no `tailwindcss --minify` rebuild is needed for this
-// migration — only editor.css shrinks.
+// Colour comes ONLY from --theme-* variables — the host↔renderer styling
+// contract — so no rule here carries a colour literal.
 //
-// Two changes versus the old global rule set (house rule: no hardcoded colour
-// literals):
-//   1. the hover/selected box-shadows' rgba(0,0,0,.25) / rgba(0,0,0,.45)
-//      become color-mix() against --theme-bgDark, matching the conversion
-//      diagram-renderer.styles.js already established for the identical
-//      unconverted-rgba idiom;
-//   2. `.ai-block__badge::selection` is carried here from editor.css's shared
-//      multi-kind selector list (`.ai-block__badge::selection,
-//      .web-clip-block__badge::selection, …`) — only this kind's selector
-//      moved; the sibling kinds' selectors stay in editor.css until THEY
-//      migrate (restraint rule — do not touch what this change doesn't own).
+// `.sieve-block__heading` (the title/divider region) is deliberately NOT here:
+// it is framework-owned chrome rendered by sieve-block-extension.js's
+// titleProvider slot, shared by any kind that declares one, so it lives in
+// editor.css.
 //
-// `.sieve-block__heading` (the title/divider region) is DELIBERATELY NOT
-// here: it is framework-owned chrome rendered by sieve-block-extension.js's
-// titleProvider slot, shared by any future kind that declares one — not
-// ai-block-exclusive look-and-feel, so it stays in editor.css per the
-// restraint rule (shared clusters get their shared home at their second
-// MIGRATED consumer, not before).
-//
-// `.ai-block__badge--error` intentionally carries no CSS RULE here, same as
-// pre-split editor.css: the class is applied by AiBlockRenderer#update() for
-// non-COMPLETE/non-PENDING/non-DISPATCHED statuses and for stale
-// PENDING/DISPATCHED, but no distinct visual ever existed for it (a
-// pre-existing gap, out of scope for this migration — carried over verbatim,
-// not fixed).
+// `.ai-block__badge--error` intentionally carries no rule. AiBlockRenderer#update()
+// applies the class for non-COMPLETE/non-PENDING/non-DISPATCHED statuses and for
+// stale PENDING/DISPATCHED, but no distinct visual has ever been designed for it.
 
 export const aiBlockStyles = /* css */ `
   .hide-ai-blocks .ai-block {
@@ -163,11 +135,11 @@ export const aiBlockStyles = /* css */ `
     to { transform: rotate(360deg); }
   }
 
-  /* An @Title the question attached (#74) — the INLINE half of its footer chip.
-     Same accent as the AttachmentChip in the footer row below, deliberately: the
-     name in the sentence and the chip under the answer are one object, and the
-     tint is what says so. Tinted rather than coloured-only so it reads as a mark in both
-     themes; box-decoration-break keeps the pill's ends when a long title wraps. */
+  /* An @Title the question attached — the INLINE half of its footer chip. Same
+     accent as the ReferenceChip in the footer row below, so the name in the
+     sentence and the chip under the answer read as one object. Tinted rather
+     than coloured-only so it reads as a mark in both themes;
+     box-decoration-break keeps the pill's ends when a long title wraps. */
   .ai-block__mention {
     border-radius: 3px;
     padding: 0 2px;
@@ -178,17 +150,17 @@ export const aiBlockStyles = /* css */ `
     box-decoration-break: clone;
   }
 
-  /* ── Attachment chips (#74) — the FOOTER region ────────────────────────────
+  /* ── Attachment chips — the FOOTER region ─────────────────────────────────
      The documents this turn's question attached. Deliberately quiet: they are
      provenance, not content, so they sit under the answer at badge weight and
      scroll sideways rather than reflowing the block.
 
-     THE ROW IS AI-BLOCK'S; THE CHIP IS NOT (#38). The chips inside are
-     AttachmentChip (renderers/attachment-chip.js) and carry their own
+     THE ROW IS AI-BLOCK'S; THE CHIP IS NOT. The chips inside are
+     ReferenceChip (renderers/reference-chip.js) and carry their own
      appearance — this rule set owns only the strip that holds them. The one
      thing the ROW says about its chips is how far they may run: a chip under an
      answer is a compact provenance mark, so it ellipsises at 15rem. The
-     attachment BLOCK deliberately lifts that clamp (its chip is the block's
+     reference BLOCK deliberately lifts that clamp (its chip is the block's
      whole identity), which is exactly why the clamp is the row's to set and not
      the chip's to assume. */
   .ai-block__attachments {

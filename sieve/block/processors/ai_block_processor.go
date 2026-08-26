@@ -41,11 +41,9 @@ func (p *AIBlockProcessor) InitAttrs(id string, overrides map[string]interface{}
 		}
 		attrs[k] = v
 	}
-	// Attachments arrive from the composer as a loose wire list. This is the door:
-	// decode normalises them to uri + title in the canonical attrs form (a chip's
-	// other fields are transient and never persist), and an empty list carries no
-	// attr at all, so an attachment-less block persists exactly as it did before
-	// the attr existed.
+	// Attachments arrive from the composer as a loose wire list, and this is the
+	// door: decode normalises them to uri + title in the canonical attrs form, and
+	// an empty list writes no attr at all.
 	if _, ok := attrs[block.AttachmentsAttr]; ok {
 		domain.DecodeAttachments(attrs[block.AttachmentsAttr]).StampAttrs(attrs)
 	}
@@ -58,7 +56,7 @@ func (p *AIBlockProcessor) InitAttrs(id string, overrides map[string]interface{}
 // is what a copy out of markdown mode (or out of the file on disk) produces.
 func (p *AIBlockProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
 	for _, e := range entries {
-		if e.IsSieveType(p) || p.Shape().Wraps(e.Content) {
+		if e.IsSieveType(p) || p.WrapsAnyShape(e.Content) {
 			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionExtract}}
 		}
 	}
@@ -89,7 +87,7 @@ func (p *AIBlockProcessor) Transform(entries []block.ContentEntry, uuid, blockID
 // deliberate act, and a copy inherits neither the name nor the act.
 func (p *AIBlockProcessor) attrsFromFence(content string) map[string]interface{} {
 	span := strings.TrimSpace(content)
-	if !p.Shape().Wraps(span) {
+	if !p.WrapsAnyShape(span) {
 		return nil
 	}
 	blocks, err := p.Deserialize(block.Region{Kind: p.Kind(), Raw: span})
@@ -119,14 +117,10 @@ func (p *AIBlockProcessor) aiBlockLabel(blk *block.SieveBlock) string {
 // BuildContext (THREAD / ref-chain / target callers) calls this then appends the
 // answer, because the conversation history MUST keep prior answers.
 //
-// THIS IS THE ATTACHMENTS SEAM, and it is the only one that is per-TURN.
-// Attachments are a property of a question, and qaHeader is the one place a
-// question is rendered — the ACTION reaches it directly and every THREAD entry
-// reaches it through BuildContext. Rendering in DescribeJob instead would emit
-// the section once, for the newest turn only, losing exactly the thing the
-// design is for: which turn brought which document in. And the position falls
-// out for free — QUESTION, then ATTACHED DOCUMENTS, then the answer BuildContext
-// appends.
+// THIS IS THE ATTACHMENTS SEAM, and it is per-TURN: attachments belong to a
+// question, and this is the one place a question is rendered, so every turn in a
+// thread carries the documents it was given. The order falls out — QUESTION,
+// then ATTACHED DOCUMENTS, then the answer BuildContext appends.
 func (p *AIBlockProcessor) qaHeader(blk block.SieveBlock) string {
 	q, _ := blk.Attrs["question"].(string)
 	t, _ := blk.Attrs["type"].(string)

@@ -1,26 +1,27 @@
 package editor
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"sieve/ident"
 	"sieve/logger"
 	"sieve/sieve/domain"
 	"sieve/sieve/services"
+	"sieve/store"
 )
 
 // NotesSource is the Router's face on the library: filed documents, offered as
 // candidates and resolved as Nodes.
 //
-// NOTES ONLY, deliberately. The source invariant is that it may only offer what
-// the AI can dereference, and what the AI dereferences (MCP get_by_uri) comes
-// back through here — so an unfiled buffer is never offered (Search enumerates
-// the library) and never resolved (Resolve refuses a non-note), even though
-// DocumentService.LoadByUUID would happily find one. Offering one would put a
-// chip in the picker whose address answers nothing.
+// NOTES ONLY. An unfiled buffer is never offered (Search enumerates the library)
+// and never resolved (Resolve refuses a non-note), even though
+// DocumentService.LoadByUUID would happily find one.
 type NotesSource struct {
 	documents *services.DocumentService
 }
@@ -33,10 +34,9 @@ func NewNotesSource(documents *services.DocumentService) *NotesSource {
 // Name identifies this source in Router diagnostics.
 func (s *NotesSource) Name() string { return "notes" }
 
-// Search offers the filed notes matching query, capped at limit. It leans on
-// DocumentService.Search, which matches title, summary, tags and body — the
-// title half is what a name-keyed @ picker needs. Results come back in library
-// scan order, not relevance order; ranking waits for the metadata index (#37).
+// Search offers the filed notes matching query, capped at limit, through
+// DocumentService.Search (title, summary, tags and body). Results come back in
+// library scan order, NOT relevance order.
 func (s *NotesSource) Search(query string, limit int) []domain.Candidate {
 	if limit <= 0 || strings.TrimSpace(query) == "" {
 		return nil
@@ -59,17 +59,13 @@ func (s *NotesSource) Search(query string, limit int) []domain.Candidate {
 	return out
 }
 
-// Resolve dereferences a container address into the note it names. Anything this
-// source does not hold — a foreign scheme, a deleted document, an unfiled buffer
-// — is domain.ErrNodeNotFound, which the Router reads as "ask the next source".
-func (s *NotesSource) Resolve(uri string) (domain.NodeDescriptor, error) {
-	addr, err := domain.ParseAddress(uri)
-	if err != nil {
-		return domain.NodeDescriptor{}, err
-	}
-	if addr.Scheme != domain.SchemeContainer {
-		return domain.NodeDescriptor{}, fmt.Errorf("%w: notes does not answer scheme %q", domain.ErrNodeNotFound, addr.Scheme)
-	}
+// Resolve dereferences an address into the note it names, or into the leaf it
+// names inside one — live, or as of the version it pins. Anything this source
+// does not hold — a deleted document, an unfiled buffer, a version nobody wrote,
+// a name the container does not answer to — is domain.ErrNodeNotFound, which the
+// Router reads as "ask the next source".
+func (s *NotesSource) Resolve(addr domain.Address) (domain.NodeDescriptor, error) {
+	uri := addr.String()
 	doc, err := s.documents.LoadByUUID(addr.Container)
 	if err != nil {
 		return domain.NodeDescriptor{}, fmt.Errorf("%w: %s", domain.ErrNodeNotFound, uri)
@@ -77,11 +73,28 @@ func (s *NotesSource) Resolve(uri string) (domain.NodeDescriptor, error) {
 	if doc.Kind() != domain.KindNote {
 		return domain.NodeDescriptor{}, fmt.Errorf("%w: %s is not a filed note", domain.ErrNodeNotFound, uri)
 	}
-	return s.nodeOf(addr, doc), nil
+	// The pin names a CONTAINER version, so it is read — and dangles when nobody
+	// wrote it — whatever grain the address goes on to name.
+	body, err := s.bodyOf(addr, doc)
+	if err != nil {
+		return domain.NodeDescriptor{}, err
+	}
+	if addr.IsContainer() {
+		return s.nodeOf(addr, doc, body), nil
+	}
+	leaves, err := newContainerLeaves(addr, doc, body)
+	if err != nil {
+		return domain.NodeDescriptor{}, err
+	}
+	return leaves.resolve()
 }
 
-// nodeOf projects a loaded note into the kind-agnostic NodeDescriptor shape.
-func (s *NotesSource) nodeOf(addr domain.Address, doc domain.Document) domain.NodeDescriptor {
+// nodeOf projects a loaded note into the kind-agnostic NodeDescriptor shape over
+// the body the address named.
+//
+// A pinned descriptor is NOT uniformly historical: the body is the snapshot,
+// while title and summary are current, because snapshots are body-only.
+func (s *NotesSource) nodeOf(addr domain.Address, doc domain.Document, body string) domain.NodeDescriptor {
 	meta := doc.Meta()
 	summary := ""
 	if sm := meta.Summary(); sm != nil {
@@ -93,17 +106,40 @@ func (s *NotesSource) nodeOf(addr domain.Address, doc domain.Document) domain.No
 		Kind:    string(domain.KindNote),
 		Title:   meta.DisplayName(),
 		Summary: summary,
-		Body:    string(doc.Body()),
+		Body:    body,
 	}
 }
 
-// candidateOf projects a search hit into an offer.
+// bodyOf reads the container content an address names: today's, or the snapshot
+// it pins.
+func (s *NotesSource) bodyOf(addr domain.Address, doc domain.Document) (string, error) {
+	if !addr.IsPinned() {
+		return string(doc.Body()), nil
+	}
+	snapshot, err := s.documents.RetrieveVersion(doc, store.VersionRef{ID: strconv.Itoa(addr.Version)})
+	if err != nil {
+		// A version nobody wrote, or one pruned out of history, is dangling; the
+		// store reports it as a missing snapshot file. Every other failure must
+		// surface, or a broken store reads as a deleted snapshot.
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("%w: %s", domain.ErrNodeNotFound, addr.String())
+		}
+		return "", err
+	}
+	return string(snapshot.Body), nil
+}
+
+// candidateOf projects a search hit into an offer. Summary is the NOTE's own
+// one-liner, so a reference minted from an accepted mention is born complete and
+// never resolves merely to render. Detail is a different sentence; see
+// domain.Candidate.
 func (s *NotesSource) candidateOf(r services.SearchResult) domain.Candidate {
 	return domain.Candidate{
-		URI:    domain.NewContainerAddress(r.ID).String(),
-		Title:  r.Name,
-		Kind:   string(domain.KindNote),
-		Detail: s.detailOf(r),
+		URI:     domain.NewContainerAddress(r.ID).String(),
+		Title:   r.Name,
+		Kind:    string(domain.KindNote),
+		Detail:  s.detailOf(r),
+		Summary: r.Summary,
 	}
 }
 

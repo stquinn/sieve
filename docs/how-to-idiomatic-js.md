@@ -172,32 +172,65 @@ workspace.onSelectionUpdate((ctx) => this.#refresh(ctx))   // ✓
 workspace.onSelectionUpdate(this.#refresh)                 // ✗ detached this
 ```
 
-## 8. Comments: git is the archaeology
+## 8. Comments: source code is source code
 
-**A comment explains what the code does and, where it is not obvious, why it is
-that way. It is not an essay about what came before.** The source history already
-holds that, holds it accurately, and holds it without rotting.
+**A doc comment is a straight definition and explanation of what you are looking
+at — what it is, what it does, what it requires of a caller, what it guarantees.
+That is all it is for.** History and archaeology belong in git, the design record
+belongs in the issue, and durable prose belongs in `docs/`.
+
+**The line is DEFINING versus NARRATING, not long versus short.** Prose that
+DEFINES is valid at any length: what this is, the forms it takes, what a caller
+must respect, a constraint that makes the obvious usage wrong, a deliberate
+absence in the design. Prose that NARRATES is invalid at any length: how we got
+here, what was rejected and why, what it used to be called, which issue or phase
+moved it, why a reviewer's objection did not apply. Cut it even when it is two
+sentences. So do not ask "is this too long"; ask **is this defining the thing, or
+telling its story?**
 
 **Keep:**
 
-- **The trap** — a constraint that makes the obvious implementation wrong.
+- **What it does**, in the fewest words that are still precise, and what a caller
+  must or must not do.
+- **The trap** — a constraint that makes the obvious usage wrong, as ONE SENTENCE
+  stating the rule, never as the story of how it was found.
   *"`bytes` is stored as a STRING: attrs round-trip through JSON on paste and
   yaml.v3 writes a large float in exponent form, so a numeric attr silently
   becomes `1e+08` on the second save."* Without it the next author "fixes" the
   type and reintroduces the bug.
-- **The why-not** — an alternative that was tried and fails.
 - **JSDoc types** (`@typedef` / `@param` / `@returns` / `@property`). These are
   load-bearing under `// @ts-check`; they are contract, not commentary.
 
 **Delete:**
 
-- **Archaeology.** What used to live here, what moved out, which phase did it,
-  what a sibling file implements. `git log -p` answers all of it and stays true.
-- **Phase codes as the sole referent** — `P3.C`, `D-r.7`, `P4.F`. They point at
-  plan documents that are archived or gone. An issue number attached to a
-  sentence that stands on its own is fine (`#38`); a bare code is not.
+- **Provenance.** What it used to be, what replaced what, which issue or phase
+  drove it, what a sibling file implements. `git log -p` answers all of it and
+  stays true. A bare phase code (`P3.C`, `D-r.7`) points at a plan document that
+  is archived or gone; an issue number inside a sentence that stands on its own
+  is fine.
+- **Design narrative.** Why this was chosen over an alternative, what the other
+  approach would have cost, comparisons a caller does not need.
 - **Restatement** — anything a competent reader takes straight from the code.
-- **Ceremonial banners** around trivial code.
+- **Ceremonial banners**, and CAPITALS used for rhetoric rather than a real
+  warning.
+
+**If you find yourself writing what would be considered prose in a code comment,
+either the code is too complex and warrants the essay, or you are writing in the
+wrong place.** That diagnostic applies to the narrating kind only, never to a
+definition: either the code needs simplifying, or the thought belongs in `docs/`
+or the issue.
+
+JSDoc and `// @ts-check` annotations stay, however verbose — types, parameters
+and returns ARE the contract. Verbosity in service of the contract is not the
+problem; stories are.
+
+`sieve/domain/address.go`'s type godoc is the calibration example: twenty lines,
+every one of them defining.
+
+**Never write a comment to answer a code review.** If a reviewer asks "why not
+X", the answer goes in the issue or the design doc. Each defence is individually
+reasonable; the accumulation leaves a file arguing with a reviewer instead of
+telling a caller what to do.
 
 **The test for any comment: would a competent reader get this WRONG without it?**
 If no, delete it.

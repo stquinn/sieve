@@ -1,36 +1,22 @@
 // @ts-check
-// mention-service.js — MentionService: JS protocol peer for the `@` picker's
-// typeahead (#74 P4).
+// MentionService: the JS protocol peer for the `@` picker's typeahead.
 //
 // A TENANT of the workspace channel, not its owner (the plane is
 // workspace-service.js): it claims the `mention-result` and `mention-resolved`
-// frame words and speaks `mention-query` and `mention-resolve`.
+// frame words and speaks `mention-query` and `mention-resolve`. It is not a
+// command — a typeahead is answered directly, with no job and no
+// PENDING/COMPLETE lifecycle.
 //
-// IT IS NOT A COMMAND. A typeahead needs a sub-100ms answer with no JobEngine
-// job, no worker pool and no result block, none of which the command envelope's
-// PENDING/COMPLETE lifecycle can give it — so it is a sibling frame pair on the
-// same socket, exactly as Go's handleMentionQuery is a sibling of handleCommand.
-//
-// It is also the ONLY place the picker touches transport (#49): the UI provider
+// It is the ONLY place the picker touches transport: the UI provider
 // (shell/trigger-providers.js) calls search() and never sees a socket. The
-// TYPING CADENCE is not this class's business either — debouncing belongs to the
+// typing cadence is not this class's business either — debouncing belongs to the
 // provider that watches the keyboard; this one round-trips whatever it is asked.
 //
 // TWO VERBS, ONE ROUTER. `search` asks what COULD be mentioned; `resolve` asks
-// what a mention MEANS. They are the two faces of Go's one editor.Router
-// (enumeration and navigation), so they belong to its one JS peer rather than to
-// two tenants that would each invent a correlation scheme over the same wire.
-// The consumer of the second is not the picker but a rendered mention — the
-// ai-block's attachment chip — which is still a mention: the persisted form of
-// one. (If a non-mention consumer ever needs an address resolved — a smart link,
-// a status-bar id — that is the trigger to rename this class for what it has
-// become, an address peer, rather than to grow a third tenant.)
+// what a mention MEANS. They are the two faces of Go's one editor.Router, so one
+// correlation scheme serves both.
 //
-// JS NEVER DECODES A COORDINATE. That is the rule `resolve` exists to keep. The
-// grammar is Go's (#75) and a second implementation in JavaScript both drifts
-// and fails silently: the retired chip handler tested for a `container:` prefix
-// and returned early on everything else, so a `block:{container}/{handle}`
-// address — legal, and what #80 wants — made the chip do nothing at all. So a
+// JS NEVER DECODES A COORDINATE — that is the rule `resolve` exists to keep. A
 // uri travels through here as an OPAQUE string, and what comes back is already
 // actionable: a uuid to open and a block id to reveal.
 
@@ -45,7 +31,9 @@ import { WorkspaceFrame } from '../generated/protocol.js'
  * @property {string} uri
  * @property {string} title
  * @property {string} [kind]
- * @property {string} [detail]
+ * @property {string} [detail]  the picker's disambiguation line (folder · snippet)
+ * @property {string} [summary] the target's OWN one-liner — a different sentence
+ *   from `detail`, and what an accepted mention seeds into the block it mints
  */
 
 /**
@@ -53,8 +41,7 @@ import { WorkspaceFrame } from '../generated/protocol.js'
  * and the ONLY thing the frontend is allowed to know about an address. `uuid` is
  * the document to open; `blockId` is the block to reveal inside it (empty for a
  * whole container). `found` false means Go refused or found nothing, and `error`
- * says which — a click that fails must say so, which is exactly what the JS
- * prefix-guard this replaces could not do.
+ * says which.
  * @typedef {object} MentionTarget
  * @property {string} uri      the address it was resolved from, echoed back
  * @property {boolean} found
@@ -86,9 +73,9 @@ const DEFAULT_TIMEOUT_MS = 4000
 export class MentionService {
   /** @type {import('./workspace-service.js').WorkspaceService} the workspace-channel wire owner */ #workspace
   /** @type {Map<string, {settle: (answer: any) => void, timer: ReturnType<typeof setTimeout>}>}
-   *  correlationId → the waiting request. One map for BOTH verbs: correlation is
-   *  the plane's scheme, so an id is unique whatever asked for it, and the
-   *  waiting promise is what knows the shape of its own answer. */ #pending = new Map()
+   *  correlationId → the waiting request. One map for BOTH verbs: an id is
+   *  unique whatever asked for it, and the waiting promise knows the shape of
+   *  its own answer. */ #pending = new Map()
   /** @type {number} */ #timeoutMs
   /** @type {number} */ #defaultLimit
 
@@ -104,8 +91,8 @@ export class MentionService {
     this.#workspace = workspace
     this.#timeoutMs = options.timeoutMs || DEFAULT_TIMEOUT_MS
     this.#defaultLimit = options.defaultLimit || DEFAULT_LIMIT
-    // Join the plane at construction — a peer that queries before it can hear
-    // the answer is the silent-dead-UI shape the plane exists to prevent.
+    // Join the plane at construction: a peer that queries before it can hear the
+    // answer never hears it.
     this.#workspace.registerTenant(this)
   }
 
@@ -149,12 +136,12 @@ export class MentionService {
   }
 
   /**
-   * Asks Go WHERE a coordinate opens. `uri` is opaque here — it is not parsed,
-   * split or prefix-tested on the way out, because the grammar is Go's.
+   * Asks Go WHERE a coordinate opens. `uri` is opaque here — never parsed, split
+   * or prefix-tested on the way out.
    *
-   * Resolves with the target (which may itself say `found: false`, the honest
-   * answer for a deleted or refused address), or with null when the address is
-   * empty or the round-trip times out. It NEVER rejects.
+   * Resolves with the target (which may itself say `found: false` for a deleted
+   * or refused address), or with null when the address is empty or the round-trip
+   * times out. It NEVER rejects.
    * @param {string} uri
    * @returns {Promise<MentionTarget|null>}
    */
@@ -166,9 +153,8 @@ export class MentionService {
 
   /**
    * Puts a correlated frame on the plane and hands back the promise of its
-   * reply. `onTimeout` is what that promise settles with when none arrives —
-   * every verb here answers, because a caller left waiting for ever is the
-   * silent failure this class exists to make impossible.
+   * reply. `onTimeout` is what that promise settles with when no reply arrives:
+   * every verb here answers, and none leaves a caller waiting.
    * @template T
    * @param {Record<string, any>} frame  the verb's own fields (no correlation id)
    * @param {T} onTimeout

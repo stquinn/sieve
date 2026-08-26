@@ -353,7 +353,7 @@ The ancestor of all four is `smart-link` itself: introduced 2026-05-02 (`e391458
 
 **Tracked:** register only (found by `go test -race` during #19 Task 5, verified pre-existing at `1c77f1d` — reproducible on that commit with no relation to the epic's own changes).
 
-**What:** `-race` flags concurrent access between `AttachmentProcessor.holdDroppedFile` (`sieve/block/processors/attachment_processor.go`) — which stages a dropped file's bytes onto the block's attrs synchronously on the request goroutine — and the async flush path (`EditorService.flushShadow`, `sieve/editor/editor_service.go`, which derives markdown and calls `Buffer.SetBody`/`Note.SetBody`, `sieve/domain/buffer.go` + `note.go`) running on the debounce goroutine. Both can touch the same block's attrs/body without a shared lock in the window between a drop landing and the next flush.
+**What:** `-race` flags concurrent access between `ReferenceProcessor.holdDroppedFile` (`sieve/block/processors/reference_processor.go`) — which stages a dropped file's bytes onto the block's attrs synchronously on the request goroutine — and the async flush path (`EditorService.flushShadow`, `sieve/editor/editor_service.go`, which derives markdown and calls `Buffer.SetBody`/`Note.SetBody`, `sieve/domain/buffer.go` + `note.go`) running on the debounce goroutine. Both can touch the same block's attrs/body without a shared lock in the window between a drop landing and the next flush.
 
 **Why deferred:** #19 is a wire/route consolidation epic; this race predates it and is orthogonal to the surface reorganisation. Fixing shadow-document attr mutation locking mid-epic would widen the blast radius into `ShadowDocument`'s concurrency model, which #19 does not touch elsewhere.
 
@@ -388,3 +388,33 @@ The ancestor of all four is `smart-link` itself: introduced 2026-05-02 (`e391458
 **Why deferred:** each is a real design decision (what a lens raises versus opens, who owns the trigger popover, where an asset URL is composed), not a re-point. P4c was the mechanical packaging chapter; forcing these would have widened the allowlist and hidden them.
 
 **Retires when:** the quarantine list is empty and deleted. Verify: `npx vitest run test/lens-isolation.test.js` with `QUARANTINE = []`.
+
+## G-A: `VersionedStorable.Meta`/`Owns` docs lie about what filestore actually returns
+
+**Tracked:** register only (found while building #100's `ReferenceProcessor`, which reads snapshot metadata through `store.VersionedStorable`).
+
+**What:** `store/version.go:33-38` documents `Meta` as "the metadata map at the time of the snapshot" and `Owns` as "nil for Storables that do not own assets". Both are false for `filestore`: its implementation returns the CURRENT metadata regardless of which version is asked for, and `Owns` is always nil. `sieve/editor/notes_source.go` already describes the real behaviour correctly at its own call site — the interface doc is the only place still carrying the wrong claim.
+
+**Why deferred:** #100 only reads through the interface as documented at the call site that already gets it right; correcting the interface doc (or changing filestore to match it) is a `store/` decision outside the reference-block epic's surface.
+
+**Retires when:** either `store/version.go`'s doc comment is corrected to describe what filestore actually returns, or filestore is made to honour the documented contract (metadata as of the snapshot, and a real `Owns` for versions that own assets) — whichever the store maintainer decides is the intended contract.
+
+## H-A: `max_attachment_bytes` misnames the drop-path ceiling — predates #100
+
+**Tracked:** register only (found while building #100's `ReferenceProcessor.maxHeldBytes`, which reads this setting).
+
+**What:** `max_attachment_bytes` (settings key) / `MaxAttachmentBytes` / `AttachmentCeilingBytes()` / `MaxAttachmentMB()` / `native_drop.go`'s `attachmentCeiling()` all name a ceiling that is actually the DROP-PATH byte limit, applied by `native_drop.go` to any native file drop before a kind is even chosen. The name predates #100 and was never specific to the old `attachment` kind — `ReferenceProcessor.maxHeldBytes` inherits the same misnomer by necessity, since it reads the same setting.
+
+**Why deferred:** it is a persisted settings key plus a settings-form field, so retiring the name needs a migration (old key → new key) and its own scoped change, not a drive-by rename inside #100.
+
+**Retires when:** the setting, its Go accessors, and `native_drop.go`'s helper are renamed to `max_dropped_file_bytes` — the name for what it actually gates, NOT `reference` (renaming it after this kind would be wrong for the same reason the current name is) — with a settings migration for existing `settings.json` files carrying the old key.
+
+## J-A: `AssetService.ServeAssetData` returns an untyped "asset not found" — no sentinel
+
+**Tracked:** register only (found while building #100's `ReferenceProcessor` ingest fallback, which now depends on distinguishing this case).
+
+**What:** `AssetService.ServeAssetData` (`sieve/services/asset_service.go:56`) returns an untyped "asset not found" error with no sentinel a caller can match on. This predates #100, but #100 makes it load-bearing: the reference kind's ingest fallback must tell "not an asset" (fall through to the next resolution) apart from "an asset that failed to read" (a real error), and today the only way to do that is to preserve and forward the original error text rather than check identity.
+
+**Why deferred:** changing an existing service error's shape is a `services/` contract change with its own blast radius (every existing caller of `ServeAssetData` needs auditing for string-matching assumptions); out of scope for #100's own surface.
+
+**Retires when:** `ServeAssetData` returns a sentinel (e.g. `ErrAssetNotFound`) wrapped with `%w`, and `ReferenceProcessor`'s ingest fallback switches from preserving/forwarding the raw error to `errors.Is` against it.

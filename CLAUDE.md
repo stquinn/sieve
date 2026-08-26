@@ -18,7 +18,7 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 | Wails App struct + lifecycle | `app.go` |
 | Composition root (DI: wires ports, registers processors) | `sieve/service_provider.go` (package `sieve`, root) |
 | **Block model + codec + registry + ports** | `sieve/block/` (SieveBlock, DocumentCodec, RegionScanner, ShadowDocument, ports.go, processor_registry.go) |
-| **Block processors** (9 concrete flavours) | `sieve/block/processors/` (code, diagram, log, prose, smart-image/card, web-clip, ai-block, attachment) |
+| **Block processors** (9 concrete flavours) | `sieve/block/processors/` (code, diagram, log, prose, smart-image/card, web-clip, ai-block, reference) |
 | **Domain leaf types** (persistent) | `sieve/domain/` (Document, Buffer, Note, Session, Settings, Categories, ImageAsset, FilingRecommendation, ImageDesc, LinkPreviewResult) |
 | **Services** (persistence) | `sieve/services/` (DocumentService, AssetService, StateService, JobTracker, JobEngine, LinkPreviewService, LibraryService, PlantumlService) |
 | **Editor** (the only package that sees both `block/` and `services/`) | `sieve/editor/` (EditorService, Router + NotesSource = address → Node, IdentitySweeper) |
@@ -120,14 +120,42 @@ declarations now generate.
 
 - **JS is written with the same OOP discipline as Go (2026-07-08).** "Vanilla JS" is a LANGUAGE choice — plain JavaScript, no React/JSX/TypeScript (complexity the maintainer doesn't carry); build steps (esbuild, tailwind) and libraries are fine and already exist. It is never an excuse for loose function bags: new JS is real ES classes with constructors and `#private` fields; shared values are `Object.freeze`d; public contracts carry JSDoc types checkable via `// @ts-check` (`tsc --noEmit` — types in comments, code stays JS). No new IIFE namespace bags, no state as module-scope `var`s, no `window.*` buses — the existing ones are quarantined debt (X-C, epic #31), not precedent. Idioms + enforcement: `docs/how-to-idiomatic-js.md`. Architectural context: `docs/design/specs/2026-07-08-workspace-editor-component-model.md` §Design discipline.
 - **No loose/free functions (OOP cohesion).** Behaviour belongs as a **method on the type or service that owns its data** — not a package-level `func`. If a function genuinely has no owning type, attach it to a Utilities service; it does not float. Dangling package-level symbols hide their callers, which is exactly what made the S-A package split painful. Data mutations live with the data (e.g. block ops + snapshots are `ShadowDocument` methods; serialize/deserialize are `BlockProcessor`/`DocumentCodec` methods; paste-matching is a registry method `FirstPasteMatch`). **Known backlog applying this:** `block/`'s codec/parser still has free funcs (`scanProseRegion`, `mdParser`, goldmark helpers, `handle_gc`'s `gcRefs`/`gcAliases`) and `ai/eval` helpers — attach them to their owning type as opportunity allows.
-- **Comments: git is the archaeology (2026-08-19).** A comment explains what the
-  code does and, where it is not obvious, why it is that way — never what came
-  before. KEEP the trap (a constraint that makes the obvious implementation
-  wrong), the why-not (an alternative that fails), and JSDoc types (load-bearing
-  under `// @ts-check`). DELETE archaeology (what moved, which phase did it),
-  bare phase codes (`P3.C`, `D-r.7` — they point at archived plans; an issue
-  number in a real sentence is fine), restatement, and ceremonial banners. The
-  test: **would a competent reader get this WRONG without it?** Never instruct
+- **Comments: source code is source code (2026-08-26).** A doc comment is a
+  straight **definition and explanation of what you are looking at** — what it is,
+  what it does, what it requires of a caller, what it guarantees. That is all it is
+  for.
+
+  **The line is DEFINING versus NARRATING, not long versus short.** Prose that
+  DEFINES is valid at any length: what this is, the forms it takes, what a caller
+  must respect, a constraint that makes the obvious usage wrong, a deliberate
+  absence in the design. `sieve/domain/address.go`'s type godoc runs to twenty
+  lines and every line earns its place. Prose that NARRATES is invalid at any
+  length: how we got here, what was rejected and why, what it used to be called,
+  which issue or phase moved it, why a reviewer's objection did not apply. Cut it
+  even when it is two sentences.
+
+  So when you meet a long comment, do not ask "is this too long". Ask: **is this
+  defining the thing, or telling its story?**
+
+  **History and archaeology belong in git. The design record belongs in the issue.
+  Durable prose belongs in `docs/`. Source code holds the contract.**
+
+  **If you find yourself writing what would be considered prose in a code comment,
+  either the code is too complex and warrants the essay, or you are writing in the
+  wrong place.** That is a diagnostic and it applies to the narrating kind only:
+  either go and simplify the code, or go and write the thought in `docs/` or the
+  issue. Neither is fixed by writing more comment.
+
+  JSDoc and `// @ts-check` annotations stay, however verbose — types, parameters
+  and returns ARE the contract. Verbosity in service of the contract is not the
+  problem; stories are.
+
+  **Never write a comment to answer a code review.** If a reviewer asks "why not
+  X", the answer goes in the issue or the design doc. Each defence is individually
+  reasonable; the accumulation leaves a file arguing with a reviewer instead of
+  telling a caller what to do.
+
+  The test: **would a competent reader get this WRONG without it?** Never instruct
   anyone — human or agent — to "match the surrounding comment density"; that
   propagates the worst example nearby. Full rule + worked example:
   `docs/how-to-idiomatic-js.md` §8 (language-neutral, applies to Go too).
@@ -140,7 +168,7 @@ declarations now generate.
 
 - **Backend is the document source of truth** — any op that mutates the doc **in Go** (paste, extract, transform, promote, AI-block create) renders by **placing the server's authoritative node at the server's index** as a **tracked** PM transaction: insert at `docPosForBlockIndex(msg.index)`, or replace-by-block-id for transform. The frontend reads the caret to pick an index and sends it to Go; Go creates there and echoes `msg.index` back. JS must NOT compute doc state/position or splice JS-chosen content (retired `replaceSource`/`sieveInsertPos`-range path); it only places the server's node. **Do NOT full-reload (`softReloadContent`) for an operation — `renderBlocksIntoEditor`'s `replaceWith + addToHistory:false` wipes undo history.** Full reload is only for genuine doc *loads* (open/restore/library-switch/AI whole-doc). Prose the editor already holds is skipped (baseline, no re-insert); scroll-to-new is universal.
 - **All ids are UUIDs, minted only by `ident.New`** (#75) — documents and blocks alike. Ids are **opaque**: no kind prefix, nothing may infer a block's kind from its id, and nothing displays one. A block id lives in TWO places and both must be written together — the `SieveBlock.ID` field *and* `Attrs["id"]` — because the WYSIWYG wire and the fenced serializer read it out of `Attrs`; use `reidentify`, never a bare field assignment. Legacy short handles are upgraded by `BlockIdentityMigrator` on the document load path (`NewShadow`), never inside `DocumentCodec.Deserialize`, which stays a pure parse; `EditorService.open` flushes that upgrade synchronously so ids are stable from first open. `/migrate-ids` sweeps documents nobody has opened.
-- **An alias is a NAME, not an identity** — durable, given only by a deliberate act (a declared name, a domain-meaningful handle), unique only *within* its document, and never auto-minted or garbage-collected. Migration creates none. Cross-document coordinates use `domain.Address` (`container:{uuid}[@v{n}]`, `block:{uuid}`, `block:{container-uuid}[@v{n}]/{handle}`); there is deliberately no bare `block:{alias}` form, so an alias cannot leave its document.
+- **An alias is a NAME, not an identity** — durable, given only by a deliberate act (a declared name, a domain-meaningful handle), unique only *within* its document, and never auto-minted or garbage-collected. Migration creates none. Cross-document coordinates use `domain.Address`, an RFC 3986 authority-form URI whose authority is the container — `sieve://{container}[/{leaf}][?version={n}]`, plus the relative `/{leaf}` resolved against the current container. A leaf is a block uuid, an alias or an asset key, and **which one is decided container-side at lookup**, never inferred from the address. There is deliberately no container-less leaf form, so an alias cannot leave its document.
 - **`user_intent` is user-owned** — AI must never write `Tab.UserIntent`. It signals "keep" or "trash" and is set only by explicit user action.
 - **Frontmatter** — stripped before content reaches TipTap; re-prepended on save. Never pass raw frontmatter to the editor.
 - **CLI stdin** — `sieve/cli.go` `RunCLI` passes prompts via stdin to `claude --print --no-session-persistence`. Never use `sh -c` with a double-quoted prompt — backticks in fenced code blocks get shell-expanded and silently erased.

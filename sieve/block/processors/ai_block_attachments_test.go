@@ -40,8 +40,8 @@ func TestAIBlock_AttachmentsRoundTripByteStable(t *testing.T) {
 		"status":   block.BlockStatusPending,
 	})
 	blk.SetAttachments(block.Attachments{
-		{URI: "container:9f2b3c4d-1a2b-4c5d-8e9f-a1b2c3d4e5f6", Title: "Auth Design"},
-		{URI: "container:7a1c9b2e-3d4f-4a5b-9c8d-0e1f2a3b4c5d", Title: "Retry RFC"},
+		{URI: "sieve://9f2b3c4d-1a2b-4c5d-8e9f-a1b2c3d4e5f6", Title: "Auth Design"},
+		{URI: "sieve://7a1c9b2e-3d4f-4a5b-9c8d-0e1f2a3b4c5d", Title: "Retry RFC"},
 	})
 
 	first, second, back := serializeReparseSerialize(t, []block.SieveBlock{blk})
@@ -51,9 +51,9 @@ func TestAIBlock_AttachmentsRoundTripByteStable(t *testing.T) {
 	// shape scanner looks for a closing fence.
 	wantYAML := "attachments:\n" +
 		"    - title: Auth Design\n" +
-		"      uri: container:9f2b3c4d-1a2b-4c5d-8e9f-a1b2c3d4e5f6\n" +
+		"      uri: sieve://9f2b3c4d-1a2b-4c5d-8e9f-a1b2c3d4e5f6\n" +
 		"    - title: Retry RFC\n" +
-		"      uri: container:7a1c9b2e-3d4f-4a5b-9c8d-0e1f2a3b4c5d\n"
+		"      uri: sieve://7a1c9b2e-3d4f-4a5b-9c8d-0e1f2a3b4c5d\n"
 	if !strings.Contains(first, wantYAML) {
 		t.Fatalf("attachments not persisted in the canonical form:\n--- want ---\n%s\n--- got ---\n%s", wantYAML, first)
 	}
@@ -68,10 +68,10 @@ func TestAIBlock_AttachmentsRoundTripByteStable(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("attachments = %+v, want 2", got)
 	}
-	if got[0].URI != "container:9f2b3c4d-1a2b-4c5d-8e9f-a1b2c3d4e5f6" || got[0].Title != "Auth Design" {
+	if got[0].URI != "sieve://9f2b3c4d-1a2b-4c5d-8e9f-a1b2c3d4e5f6" || got[0].Title != "Auth Design" {
 		t.Errorf("attachment[0] = %+v", got[0])
 	}
-	if got[1].URI != "container:7a1c9b2e-3d4f-4a5b-9c8d-0e1f2a3b4c5d" || got[1].Title != "Retry RFC" {
+	if got[1].URI != "sieve://7a1c9b2e-3d4f-4a5b-9c8d-0e1f2a3b4c5d" || got[1].Title != "Retry RFC" {
 		t.Errorf("attachment[1] = %+v", got[1])
 	}
 	// `ref` is untouched: the local chain and the coordinates never mix.
@@ -116,7 +116,7 @@ func TestAIBlockInitAttrs_NormalisesAttachments(t *testing.T) {
 		"question": "How does @Auth Design handle this?",
 		"attachments": []interface{}{
 			map[string]interface{}{
-				"uri": "container:9f2b", "title": "Auth Design",
+				"uri": "sieve://9f2b", "title": "Auth Design",
 				"kind": "note", "summary": "decoration, never persisted",
 			},
 			map[string]interface{}{"title": "no address"},
@@ -127,7 +127,7 @@ func TestAIBlockInitAttrs_NormalisesAttachments(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("attachments = %+v, want just the addressable one", got)
 	}
-	if got[0].URI != "container:9f2b" || got[0].Title != "Auth Design" {
+	if got[0].URI != "sieve://9f2b" || got[0].Title != "Auth Design" {
 		t.Errorf("attachment = %+v", got[0])
 	}
 	entry, ok := attrs["attachments"].([]interface{})[0].(map[string]interface{})

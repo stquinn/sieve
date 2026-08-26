@@ -1,5 +1,11 @@
 > **STATUS: DONE** — shipped 2026-08-19 (#38 closed). Archived 2026-08-19.
 >
+> **Superseded 2026-08-25 (#100):** the `attachment` kind this design shipped was
+> subsumed into `reference` — one `uri` plus a cached face, `held` decided by the
+> face's `mime` rather than by a separate `src`/`uri` fork. An `attachment` fence
+> still loads (a fence-head alias on `FencedDeserializer`); everything below is
+> historical.
+>
 > **What shipped:** the `attachment` kind (one processor, one renderer), created
 > by the toolbar paperclip, an `@`-mention in the editor, or a pasted coordinate;
 > the `TriggerHost` seam that put the composer's picker into the document; and the

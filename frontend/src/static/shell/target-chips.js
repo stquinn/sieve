@@ -1,51 +1,38 @@
 // @ts-check
-// target-chips.js — TargetChips: the Ask composer's view of WHAT THE MESSAGE
-// WILL ACT ON, drawn in the footer beside the attachment chips (#74).
+// TargetChips: the Ask composer's view of WHAT THE MESSAGE WILL ACT ON, drawn in
+// the footer beside the attachment chips.
 //
-// THE HEADER SHOWS THE SUBJECT, THE FOOTER SHOWS THE CONTEXT. While Ask was the
-// only thing the box could do, the target WAS the subject and the header said so
-// ("Ask About 'retry policy'"). A slash command breaks that — `/btw` is the
-// subject and the target is merely what it receives — so the header names the
-// command and the context moves down here, where it stays visible either way.
+// THE HEADER SHOWS THE SUBJECT, THE FOOTER SHOWS THE CONTEXT: the header names
+// the command, and what it will act on stays visible down here either way.
 //
-// VIEW-ONLY, AND THAT IS THE POINT. The editor owns the selection; this only
-// draws it. So a target chip carries NO ✕: the cross keeps exactly one meaning
-// in this footer — drop an attachment — and a cross that sometimes meant "change
-// the selection from the panel" would be a second, worse way to do what moving
-// the caret already does.
+// VIEW-ONLY. The editor owns the selection; this only draws it. A target chip
+// therefore carries NO ✕ — the cross keeps exactly one meaning in this footer,
+// which is "drop an attachment".
 //
-// BOTH ROWS ARE COORDINATE CHIPS, and they are styled as one species from one
-// set of rules (editor.css, `.ask-chip, .ask-target-chip`): an attachment chip
-// holds a coordinate pointing at another document, this one holds the local
-// target. The difference is said with the MISSING ✕ and an outline-instead-of-
-// fill, never with contrast — a first attempt at "quieter" faded it until it
-// could not be read.
+// BOTH ROWS ARE COORDINATE CHIPS, styled as one species from one set of rules
+// (editor.css, `.ask-chip, .ask-target-chip`): an attachment chip holds a
+// coordinate pointing at another document, this one holds the local target. The
+// difference is said with the missing ✕ and an outline instead of a fill, never
+// with contrast.
 //
-// A TARGET CHIP IS NOT AN ATTACHMENT, though. It is deliberately NOT part of
+// A TARGET CHIP IS NOT AN ATTACHMENT. It is deliberately not part of
 // ComposerAttachments: it never enters the manifest, never reaches the persisted
-// attrs, and a send leaves it standing because the selection it describes
-// outlives the message. Two rows in one footer is the honest shape of two kinds
-// of context — one the editor owns, one the composer does.
+// attrs, and a send leaves it standing, because the selection it describes
+// outlives the message.
 //
-// A CHIP PER BLOCK, FOR A SELECTION ONLY (#82). A range selection spans blocks
-// the user picked out one by one, so it earns a chip each; a DOCUMENT target
-// does not, because `blockIds` is then the caret's block, not the target's
-// extent — a chip row would describe a send that acts on the whole document as
-// if it acted on one paragraph. So the per-block row is gated on
-// `target.kind === 'selection'` and the other two kinds keep the single chip.
+// A CHIP PER BLOCK, FOR A SELECTION ONLY. A range selection spans blocks the
+// user picked out one by one, so it earns a chip each. A DOCUMENT target does
+// not, because `blockIds` is then the caret's block rather than the target's
+// extent, so the per-block row is gated on `target.kind === 'selection'` and the
+// other two kinds keep the single chip.
 //
 // THE LABELS ARE DERIVED AT RENDER TIME, NEVER CARRIED. SelectionContext stays
-// ids-only: a label changes without any id changing (rename a code block's
-// language and nothing about the selection moves), so a snapshot carrying labels
-// would either miss the change or need a second freshness rule fighting the
-// meaningful-diff convention. Instead the row asks the CONTAINER for each id
-// every time it paints — the follower model IS the freshness — and a container
-// cue repaints a chip whose block changed while the selection stood still.
+// ids-only — a label can change without any id changing — so the row asks the
+// CONTAINER for each id every time it paints, and a container cue repaints a chip
+// whose block changed while the selection stood still.
 //
 // The container it reads is the ACTIVE mount's, so it is re-pointed rather than
-// injected once: which container the composer acts on changes with the tab, and
-// a row holding yesterday's provider would label chips from a document nobody is
-// looking at.
+// injected once: which container the composer acts on changes with the tab.
 
 import { esc } from '../renderers/html-escape.js'
 import { getSieveIcon } from '../renderers/block-kinds.js'
@@ -58,11 +45,8 @@ import { getSieveIcon } from '../renderers/block-kinds.js'
  * The read seam: block id → what the container says that block is. A
  * `ContainerProvider` satisfies it as-is; a test stubs it with one function.
  *
- * There is ONE tier now. The retired block cache had two — an authored block,
- * and a routing entry that knew only a kind — so a block the server had not
- * spoken about yet still produced a kind-name chip. The container knows a block
- * or it does not, and a block it does not know is one the user cannot have
- * selected, so the narrowing costs nothing real.
+ * The container knows a block or it does not: there is no second tier for a
+ * block it has not seen.
  * @typedef {object} BlockSource
  * @property {(blockId: string) => ({kind?: string, attrs?: Record<string, any>}|null)} getBlock
  */
@@ -90,7 +74,7 @@ export class TargetChips {
     code: ['language'],
     diagram: ['diagramType'],
     'ai-block': ['question'],
-    attachment: ['title', 'uri', 'src'],
+    reference: ['title', 'uri'],
     'smart-image': ['alt', 'src'],
     'smart-card': ['title', 'href'],
     'web-clip': ['title', 'source'],

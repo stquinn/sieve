@@ -77,7 +77,7 @@ alone, so the token appears in no response header.
 | `mention-query` | `protocol.MentionQueryFrame` | `correlationId` | MentionQueryFrame is the `@`-picker's typeahead question. |
 | `mention-resolve` | `protocol.MentionResolveFrame` | `correlationId` | MentionResolveFrame asks where a coordinate opens. |
 | `ping` | `protocol.PingFrame` | — | PingFrame is a liveness probe, answered with a PongFrame. |
-| `session-scroll` | `protocol.SessionScrollFrame` | — | SessionScrollFrame persists one tab's scroll offset — the per-user VIEW coordinate a surface debounces up while the user scrolls, plus the pull at tab deactivation. |
+| `session-scroll` | `protocol.SessionScrollFrame` | — | SessionScrollFrame persists one tab's scroll offset, debounced up while the user scrolls and pulled again at tab deactivation. |
 
 **Server → client**
 
@@ -85,7 +85,7 @@ alone, so the token appears in no response header.
 |---|---|---|---|
 | `command-result` | `protocol.CommandResultFrame` | `correlationId` | CommandResultFrame reports one step of a command's lifecycle. |
 | `container-deleted` | `protocol.ContainerDeletedFrame` | — | ContainerDeletedFrame is NEWS, not an instruction: the container it names is already gone from the store, and every workspace socket hears so. |
-| `container-saved` | `protocol.ContainerSavedFrame` | — | ContainerSavedFrame is NEWS in the same past tense its deleted sibling carries: the container it names has just reached disk, and every workspace socket hears so. |
+| `container-saved` | `protocol.ContainerSavedFrame` | — | ContainerSavedFrame is NEWS: the container it names has just reached disk, and every workspace socket hears so. |
 | `invalidate` | `protocol.InvalidateFrame` | — | InvalidateFrame tells every connected workspace socket that a subject changed and the views showing it are stale. |
 | `jobs-changed` | `protocol.JobsChangedFrame` | — | JobsChangedFrame broadcasts the whole job snapshot whenever it changes. |
 | `mention-resolved` | `protocol.MentionResolvedFrame` | `correlationId` | MentionResolvedFrame answers "where does this coordinate open" with something the client can ACT on — a document to open, a block to reveal — and never anything it would have to parse. |
@@ -445,7 +445,7 @@ MentionResolveFrame asks where a coordinate opens.
 | Field | Go type | Required | Description |
 |---|---|---|---|
 | `type` | `string` | yes |  |
-| `uri` | `string` | yes | a domain.Address coordinate: container:{uuid}[@v{n}], block:{uuid}, block:{container}[@v{n}]/{handle} |
+| `uri` | `string` | yes | a domain.Address coordinate: sieve://{container}[?version={n}], sieve://{container}/{leaf}[?version={n}] |
 | `correlationId` | `string` | yes |  |
 
 #### `ping` — client → server
@@ -458,7 +458,7 @@ PingFrame is a liveness probe, answered with a PongFrame.
 
 #### `session-scroll` — client → server
 
-SessionScrollFrame persists one tab's scroll offset — the per-user VIEW coordinate a surface debounces up while the user scrolls, plus the pull at tab deactivation.
+SessionScrollFrame persists one tab's scroll offset, debounced up while the user scrolls and pulled again at tab deactivation.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
@@ -490,7 +490,7 @@ ContainerDeletedFrame is NEWS, not an instruction: the container it names is alr
 
 #### `container-saved` — server → client
 
-ContainerSavedFrame is NEWS in the same past tense its deleted sibling carries: the container it names has just reached disk, and every workspace socket hears so.
+ContainerSavedFrame is NEWS: the container it names has just reached disk, and every workspace socket hears so.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
@@ -757,6 +757,7 @@ Candidate is one offer from a source's enumeration face: what the picker shows a
 | `title` | `string` | yes |  |
 | `kind` | `string` | yes |  |
 | `detail` | `string` | yes |  |
+| `summary` | `string` | yes |  |
 
 ### `domain.JobInfo`
 

@@ -40,11 +40,9 @@ type CommandCancelFrame struct {
 	CorrelationID string `json:"correlationId"`
 }
 
-// MentionQueryFrame is the `@`-picker's typeahead question.
-//
-// It is a SIBLING FRAME TYPE, not a command: a typeahead needs a sub-100ms answer
-// with no job, no worker pool and no result block, none of which a command's
-// PENDING/COMPLETE lifecycle can give it.
+// MentionQueryFrame is the `@`-picker's typeahead question. It is a frame type
+// of its own rather than a command: it is answered directly, with no job and no
+// PENDING/COMPLETE lifecycle.
 type MentionQueryFrame struct {
 	Type string `json:"type"`
 	Q    string `json:"q" doc:"the partial the user has typed"`
@@ -55,26 +53,20 @@ type MentionQueryFrame struct {
 	CorrelationID string `json:"correlationId"`
 }
 
-// MentionResolveFrame asks where a coordinate opens.
-//
-// It exists so the frontend holds coordinates as OPAQUE STRINGS. Decoding an
-// address in JavaScript is a second implementation of a grammar Go owns, and its
-// failure mode is silence: an unrecognised form falls through the guard and the
-// click does nothing.
+// MentionResolveFrame asks where a coordinate opens. It exists so the frontend
+// holds coordinates as OPAQUE STRINGS and never decodes the address grammar
+// itself.
 type MentionResolveFrame struct {
 	Type          string `json:"type"`
-	URI           string `json:"uri" doc:"a domain.Address coordinate: container:{uuid}[@v{n}], block:{uuid}, block:{container}[@v{n}]/{handle}"`
+	URI           string `json:"uri" doc:"a domain.Address coordinate: sieve://{container}[?version={n}], sieve://{container}/{leaf}[?version={n}]"`
 	CorrelationID string `json:"correlationId"`
 }
 
-// SessionScrollFrame persists one tab's scroll offset — the per-user VIEW
-// coordinate a surface debounces up while the user scrolls, plus the pull at tab
-// deactivation.
+// SessionScrollFrame persists one tab's scroll offset, debounced up while the
+// user scrolls and pulled again at tab deactivation.
 //
-// It is fire-and-forget and unanswered: this is caret-class state, not a shared
-// UI change, so there is nothing to broadcast and nothing to swap. It names its
-// tab because the workspace channel is not bound to a document — and a tab closed
-// mid-flight is a harmless no-op.
+// It is fire-and-forget and unanswered. It names its tab because the workspace
+// channel is not bound to a document; a tab closed mid-flight is a no-op.
 type SessionScrollFrame struct {
 	Type   string `json:"type"`
 	ID     string `json:"id" doc:"the tab whose offset this is"`
@@ -93,9 +85,9 @@ type CommandResultBlock struct {
 // CommandResultFrame reports one step of a command's lifecycle. A command emits
 // several: PENDING when the work is accepted, then COMPLETE or ERROR.
 //
-// It is correlated and therefore ack-shaped, so it goes back on the socket the
-// request arrived on — never to whichever socket currently owns the workspace
-// channel, which is how a second tab silently swallowed another tab's answers.
+// It is correlated and therefore ack-shaped: it goes back on the socket the
+// request arrived on, never to whichever socket currently owns the workspace
+// channel.
 type CommandResultFrame struct {
 	Type          string              `json:"type"`
 	CorrelationID string              `json:"correlationId"`
@@ -134,9 +126,8 @@ type MentionResultFrame struct {
 	Candidates    []domain.Candidate `json:"candidates" doc:"never null — the picker renders a list, and an empty one means no matches"`
 }
 
-// NewMentionResultFrame builds the typeahead answer. A nil slice is normalised to
-// empty: a null would be an undefined-length crash in the picker rather than "no
-// matches".
+// NewMentionResultFrame builds the typeahead answer. A nil slice is normalised
+// to empty: a null would crash the picker rather than read as "no matches".
 func NewMentionResultFrame(correlationID string, candidates []domain.Candidate) MentionResultFrame {
 	if candidates == nil {
 		candidates = []domain.Candidate{}
@@ -148,9 +139,8 @@ func NewMentionResultFrame(correlationID string, candidates []domain.Candidate) 
 // the client can ACT on — a document to open, a block to reveal — and never
 // anything it would have to parse.
 //
-// An unresolvable address is an ANSWER (found:false plus a reason), not a dropped
-// frame: a request with no reply is the same silence in a slower costume. Every
-// key is present in every reply, resolvable or not, so a consumer reading uuid
+// An unresolvable address is an ANSWER (found:false plus a reason), never a
+// dropped frame. Every key is present in every reply, so a consumer reading uuid
 // never has to tell "absent" from "empty".
 type MentionResolvedFrame struct {
 	Type          string `json:"type"`
@@ -190,8 +180,7 @@ func NewMentionUnresolvedFrame(correlationID, uri string, err error) MentionReso
 
 // InvalidateFrame tells every connected workspace socket that a subject changed
 // and the views showing it are stale. It is a NUDGE, not a payload: the client
-// refetches the affected view over HTTP, so hypermedia stays hypermedia and only
-// the signalling moved onto this wire.
+// refetches the affected view over HTTP.
 type InvalidateFrame struct {
 	Type  string `json:"type"`
 	Topic Topic  `json:"topic"`
@@ -208,25 +197,14 @@ func NewInvalidateFrame(topic Topic) InvalidateFrame {
 // bookkeeping, its editor, that editor's document socket) — rather than being
 // asked to perform a deletion of its own.
 //
-// CONTAINER, not "document", because that is the word the coordinate system
-// uses: a block-holding document is addressed as container:{uuid}, and further
-// container kinds are coming. Nothing here reads the container's kind — the
-// reconciliation is one uuid the client no longer has anything to hold — so
-// naming the frame after today's only kind would have to be renamed by the next.
+// Acting on it is IDEMPOTENT: a client that never held the container does
+// nothing, and one that hears the same news twice does nothing the second time.
+// It carries a uuid rather than a topic, because what went stale is the client's
+// own state and not a view to refetch.
 //
-// The past tense is the whole design. There is no permission to negotiate and no
-// ordering to agree: a client that never held the container does nothing, and
-// one that hears the same news twice does nothing the second time. That is also
-// why it carries a uuid rather than a topic — nothing is refetched, because what
-// went stale is the client's own state, not a view.
-//
-// The delete's own HTTP response is not a competing signal. A note deletion
-// emits this frame BEFORE it renders, so on loopback the client normally
-// reconciles first and tears down the editor that is still MOUNTED — the
-// ordinary path, not a hazard: the teardown is the same unmount and
-// channel-close the editor performs when a tab is switched away from, and the
-// response's out-of-band editor swap then mounts the new active tab from
-// scratch.
+// It is emitted BEFORE the deleting request renders its response, so on loopback
+// a client normally tears its editor down first and the response's out-of-band
+// swap then mounts the new active tab.
 type ContainerDeletedFrame struct {
 	Type string `json:"type"`
 	UUID string `json:"uuid" doc:"the container that no longer exists"`
@@ -237,29 +215,22 @@ func NewContainerDeletedFrame(uuid string) ContainerDeletedFrame {
 	return ContainerDeletedFrame{Type: TypeContainerDeleted, UUID: uuid}
 }
 
-// ContainerSavedFrame is NEWS in the same past tense its deleted sibling
-// carries: the container it names has just reached disk, and every workspace
-// socket hears so. A client that holds an editor for that uuid clears its dirty
-// state; one that does not, does nothing.
+// ContainerSavedFrame is NEWS: the container it names has just reached disk, and
+// every workspace socket hears so. A client holding an editor for that uuid
+// clears its dirty state; one that does not, does nothing.
 //
-// It is the ONE saved-signal, and it is here rather than on the document
-// channel because a save is a FACT ABOUT A CONTAINER, not the outcome of one
-// client's request. Every writer therefore publishes the same frame — the
-// explicit flush, the debounce autosave, a finished job's write, and the prompt
-// pseudo-document's HTTP save, which by riding this wire gains a saved-signal
-// for the first time. That is also why it names its uuid: the workspace channel
-// is bound to the window, not to a document.
+// It is the ONE saved-signal and every writer publishes it — the explicit flush,
+// the debounce autosave, a finished job's write, the prompt pseudo-document's
+// HTTP save. It names its uuid because the workspace channel is bound to the
+// window, not to a document.
 //
-// Version is what makes the fact ORDERABLE, which a client that waited for its
-// own save to land needs: the store stamps a strictly increasing version on
-// every write, so a listener can tell a save newer than the state it knew from
-// a debounce write that was already in flight when it asked. A container with no
-// version history reports 0 — the prompt pseudo-document is a plain file with no
-// metadata — and a real document's first save is version 1, so 0 is unambiguous.
+// Version makes the fact ORDERABLE: the store stamps a strictly increasing
+// version on every write, so a listener can tell a save newer than the state it
+// knew from a debounce write already in flight. A container with no version
+// history reports 0, and a real document's first save is version 1.
 //
-// A FAILED save emits nothing. There is no "save failed" frame to pair with
-// this one, because the absence IS the signal: the document stays dirty, which
-// is exactly what the user needs to see, and the server logs the reason.
+// A FAILED save emits nothing — the document simply stays dirty, and the server
+// logs the reason.
 type ContainerSavedFrame struct {
 	Type    string `json:"type"`
 	UUID    string `json:"uuid" doc:"the container whose content just reached disk"`
@@ -278,23 +249,19 @@ type JobsSnapshot struct {
 }
 
 // JobsChangedFrame broadcasts the whole job snapshot whenever it changes. Unlike
-// an invalidate it carries data: the consumers are JS reading counts and labels,
-// not a view that could refetch itself, and the jobs it describes were dispatched
-// on this very wire.
-//
-// It is also the ONLY way the snapshot reaches a client — there is no endpoint to
-// poll — so a workspace socket is sent one the moment it connects.
+// an invalidate it carries data, and it is the ONLY way the snapshot reaches a
+// client — there is no endpoint to poll — so a workspace socket is sent one the
+// moment it connects.
 type JobsChangedFrame struct {
 	Type string `json:"type"`
 	// The snapshot is EMBEDDED, so active/queued sit at the top level of the frame
-	// rather than nested under a key: envelope and payload at one level, uniform
-	// with every other frame.
+	// rather than nested under a key.
 	JobsSnapshot `doc:"the whole snapshot, not a delta"`
 }
 
 // NewJobsChangedFrame builds the jobs broadcast. Either nil list is normalised
-// to empty for the same reason a mention result is: the consumer reads a length,
-// and a null there is a crash rather than "no jobs".
+// to empty: the consumer reads a length, and a null there is a crash rather than
+// "no jobs".
 func NewJobsChangedFrame(snapshot JobsSnapshot) JobsChangedFrame {
 	if snapshot.Active == nil {
 		snapshot.Active = []domain.JobInfo{}

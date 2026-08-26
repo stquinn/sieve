@@ -1,6 +1,7 @@
 package block
 
 import (
+	"strings"
 	"testing"
 
 	"sieve/ident"
@@ -208,11 +209,10 @@ func TestDetectExtractions_returnsActionsPerKind(t *testing.T) {
 }
 
 // A source nested inside a composite (its entries carry Context["parentId"]) must
-// never be offered an in-place TRANSFORM: TRANSFORM replaces the source block by id,
-// and the only id available is the parent composite's — replacing it would clobber
-// the whole composite (e.g. an AI block's response). Defect #1, data loss. The fix:
-// DetectExtractions maps any Transform -> Extract for nested sources (additive-only;
-// the extracted copy lands after the parent, which survives).
+// never be offered an in-place TRANSFORM: TRANSFORM replaces the source block by
+// id, and the only id available is the parent composite's — replacing it would
+// clobber the whole composite. DetectExtractions maps any Transform -> Extract for
+// nested sources, so the extracted copy lands after a surviving parent.
 func TestDetectExtractions_nestedSourceNeverOffersTransform(t *testing.T) {
 	ResetRegistry()
 	mock := &mockProcessor{
@@ -243,9 +243,8 @@ func TestDetectExtractions_nestedSourceNeverOffersTransform(t *testing.T) {
 	}
 }
 
-// Ids are opaque UUIDs and carry no kind — the kind-prefix scheme minted 2 random
-// bytes per prefix (65,536 values, no collision check) and is gone (#75). What
-// still matters is that NewSieveBlock mints on BOTH sides of the id invariant.
+// Ids are opaque UUIDs and carry no kind. NewSieveBlock mints on BOTH sides of the
+// id invariant.
 func TestNewSieveBlock_MintsUUID(t *testing.T) {
 	b := NewSieveBlock(KindProse, "", map[string]interface{}{"content": "hi"})
 	if !ident.Valid(b.ID) {
@@ -289,7 +288,7 @@ func TestFirstPasteMatch_fencedFormIsSelfKind(t *testing.T) {
 		FencedDeserializer: FencedDeserializer{Kind: "ai-block"},
 		actionsFn: func(entries []ContentEntry) SupportedActions {
 			for _, e := range entries {
-				if (FencedDeserializer{Kind: "ai-block"}).Shape().Wraps(e.Content) {
+				if (FencedDeserializer{Kind: "ai-block"}).Shapes()[0].Wraps(e.Content) {
 					return SupportedActions{Kind: "ai-block", Actions: []Action{ActionPaste}}
 				}
 			}
@@ -316,8 +315,91 @@ func TestFirstPasteMatch_fencedFormIsSelfKind(t *testing.T) {
 	}
 }
 
+// An aliased fence is the same self-declaration as a canonical one: pass 1b must
+// walk EVERY shape a processor declares, not just its canonical one, so a fence
+// tagged with an old kind name still round-trips through the processor that now
+// answers to it.
+func TestFirstPasteMatch_aliasedFenceIsSelfKind(t *testing.T) {
+	ResetRegistry()
+	defer ResetRegistry()
+	renamed := &mockProcessor{
+		FencedDeserializer: FencedDeserializer{Kind: "canon-kind", Aliases: []string{"legacy-kind"}},
+		actionsFn: func(entries []ContentEntry) SupportedActions {
+			return SupportedActions{Kind: "canon-kind", Actions: []Action{ActionPaste}}
+		},
+	}
+	RegisterProcessor(renamed)
+
+	fence := []ContentEntry{{MIMEType: "text/plain", Content: "```legacy-kind\nid: x\n```"}}
+	kind, _, fromDetection, ok := FirstPasteMatch(fence)
+	if !ok || kind != "canon-kind" {
+		t.Fatalf("a pasted alias fence should come back as the canonical kind, got kind=%q ok=%v", kind, ok)
+	}
+	if fromDetection {
+		t.Error("a round-trip is not detection — it must not be stamped smartPaste")
+	}
+}
+
+// Pass 1b must gate the (potentially expensive) IsSupportedContent call behind
+// the cheap shape check, not the other way round: a processor whose shape does
+// NOT wrap the content must never have its IsSupportedContent invoked at all.
+// The spy panics if called, so this test fails loudly if the check order
+// regresses.
+func TestFirstPasteMatch_pass1b_shapeGatesIsSupportedContent(t *testing.T) {
+	ResetRegistry()
+	defer ResetRegistry()
+	spy := &mockProcessor{
+		FencedDeserializer: FencedDeserializer{Kind: "spy-kind"},
+		actionsFn: func([]ContentEntry) SupportedActions {
+			panic("IsSupportedContent must not run before the shape check rules this processor out")
+		},
+	}
+	real := &mockProcessor{
+		FencedDeserializer: FencedDeserializer{Kind: "real-kind"},
+		actionsFn: func([]ContentEntry) SupportedActions {
+			return SupportedActions{Kind: "real-kind", Actions: []Action{ActionPaste}}
+		},
+	}
+	RegisterProcessor(spy)
+	RegisterProcessor(real)
+
+	fence := []ContentEntry{{MIMEType: "text/plain", Content: "```real-kind\nid: x\n```"}}
+	kind, _, _, ok := FirstPasteMatch(fence)
+	if !ok || kind != "real-kind" {
+		t.Fatalf("want real-kind, got kind=%q ok=%v", kind, ok)
+	}
+}
+
+// A registration-time wiring error — two flavours declaring the same on-disk
+// fence tag (whether both as Kind, or one as Kind and the other as an alias) —
+// must be LOUD, never resolved silently by registration order. Re-registering
+// the SAME kind (a routine test-teardown pattern) must NOT trigger it.
+func TestRegisterProcessor_collidingFenceTagPanics(t *testing.T) {
+	ResetRegistry()
+	defer ResetRegistry()
+	RegisterProcessor(&mockProcessor{FencedDeserializer: FencedDeserializer{Kind: "collide-a"}})
+
+	// Re-registering the SAME kind must not panic — this is the ordinary
+	// replace path every test-teardown-less test already relies on.
+	RegisterProcessor(&mockProcessor{FencedDeserializer: FencedDeserializer{Kind: "collide-a"}})
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected a panic on a colliding fence tag, got none")
+		}
+		msg, _ := r.(string)
+		if !strings.Contains(msg, "collide-a") || !strings.Contains(msg, "collide-b") {
+			t.Errorf("panic message should name both processors, got %q", msg)
+		}
+	}()
+	// A DIFFERENT kind declaring "collide-a" as an ALIAS collides with the
+	// already-registered "collide-a" processor above.
+	RegisterProcessor(&mockProcessor{FencedDeserializer: FencedDeserializer{Kind: "collide-b", Aliases: []string{"collide-a"}}})
+}
+
 func TestRegionShape_Wraps(t *testing.T) {
-	shape := FencedDeserializer{Kind: "ai-block"}.Shape()
+	shape := FencedDeserializer{Kind: "ai-block"}.Shapes()[0]
 	cases := []struct {
 		name    string
 		content string

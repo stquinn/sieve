@@ -215,19 +215,14 @@ export class SieveWorkspace {
 
   /**
    * Opens what a Sieve COORDINATE points at — the verb behind clicking a mention
-   * (an ai-block attachment chip today, a block reference next).
+   * (an ai-block attachment chip, or a reference block's own chip).
    *
-   * `uri` is OPAQUE to every line of this file. Go owns the address grammar
-   * (#75): which schemes exist, what a version pin means, how a block address
-   * names its container. Asking rather than parsing is the whole point — the JS
-   * decode this replaces recognised `container:` and returned early on anything
-   * else, so a legal `block:{container}/{handle}` address made the chip do
-   * nothing, silently. What comes back is already actionable, and an address
-   * that resolves to nothing SAYS so.
+   * `uri` is OPAQUE to every line of this file: Go owns the address grammar, so
+   * this asks rather than parses. What comes back is already actionable, and an
+   * address that resolves to nothing says so.
    *
-   * `target.blockId` (the block to reveal inside the document) rides the answer
-   * but has no consumer yet — revealing one is #80's half. It is deliberately
-   * not faked here: opening the container is the honest subset.
+   * `target.blockId` — the block to reveal inside the document — rides the answer
+   * and has no consumer yet; opening the container is the honest subset.
    * @param {string} uri
    * @returns {Promise<boolean>} whether a document was opened
    */
@@ -435,20 +430,17 @@ export class SieveWorkspace {
     return tab
   }
 
-  // ── Editor boot/lifecycle (P4.F — moved from editor.js's IIFE) ────────────────
-  // The BOOT/LIFECYCLE half of the retired editor.js island now lives on the
-  // Workspace (the app-root singleton): the derived active-editor accessor, the
-  // initEditor entry point (called from index.html), the mode/error/save
-  // reactions, and the app-level DOM listeners (bootEditorLifecycle). Pass 2
-  // retired the residual window.* facades (_editorSave / _sieveCopyImageToClipboard
-  // / __stashActiveTabUuid) pass 1 had kept — only window.sieveWorkspace survives.
+  // ── Editor boot/lifecycle ────────────────────────────────────────────────────
+  // The Workspace (the app-root singleton) owns the editor's boot half: the
+  // derived active-editor accessor, the initEditor entry point (called from
+  // index.html), the mode/error/save reactions, and the app-level DOM listeners
+  // (bootEditorLifecycle). window.sieveWorkspace is the only surviving global.
 
   /**
    * The live editor instance for the active tab (a NoteEditor or PromptEditor),
    * or null. Call sites speak the editor's DOMAIN methods (createBlock /
    * flushSave / …); a disconnected editor (PromptEditor) no-ops the
-   * transport-backed ops safely, so nothing here probes for it. (Replaces
-   * editor.js's `_activeEditor()`.)
+   * transport-backed ops safely, so nothing here probes for it.
    * @returns {import('../lens/abstract-editor.js').AbstractEditor|null}
    */
   get activeEditor() {
@@ -600,12 +592,9 @@ export class SieveWorkspace {
   }
 
   /**
-   * Registers the app-level editor DOM listeners (moved from editor.js's IIFE
-   * body in P4.F). Called once at module load next to startTabbar()/bootChrome().
-   * The listeners read the active editor via this.activeEditor. The residual
-   * window.* facades (_editorSave / _sieveCopyImageToClipboard / P4.F pass 1)
-   * were retired in pass 2 — callers now use window.sieveWorkspace.flushSave()
-   * and the ui/copy-image.js util directly.
+   * Registers the app-level editor DOM listeners. Called once at module load
+   * next to startTabbar()/bootChrome(); the listeners read the active editor via
+   * this.activeEditor.
    */
   bootEditorLifecycle() {
     // External changes to a prompt (revert / background edit) → re-init in place.
@@ -790,7 +779,7 @@ export class SieveWorkspace {
     const provider = mount ? /** @type {any} */ (mount.provider) : null
     if (!provider || typeof provider.paste !== 'function') return Promise.resolve()
     // context.filename is what says "this came from a FILE" rather than "this is
-    // pasted text" — the attachment processor requires it, and without it a
+    // pasted text" — the reference processor requires it, and without it a
     // picked .yml is claimed by nobody and does nothing.
     return provider.paste({
       kind: 'smart',

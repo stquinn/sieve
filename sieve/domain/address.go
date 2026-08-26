@@ -3,180 +3,216 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
 	"sieve/ident"
 )
 
-// Address is a Sieve coordinate — a reference to a container, or to one block
+// Scheme is the one internal scheme. Everything Sieve can name lives in it.
+const Scheme = "sieve"
+
+// versionParam is the pin's query key.
+const versionParam = "version"
+
+// Address is a Sieve coordinate — a reference to a container, or to one leaf
 // inside one, in a form that survives leaving its document.
 //
-//	container:{uuid}[@v{n}]
-//	block:{uuid}
-//	block:{container-uuid}[@v{n}]/{handle}
+//	sieve://{container}                      — a container
+//	sieve://{container}?version={n}          — pinned container
+//	sieve://{container}/{leaf}               — a leaf within it
+//	sieve://{container}/{leaf}?version={n}   — that leaf, as of container version n
+//	/{leaf}                                  — relative, resolved against the
+//	                                           container it was written in
 //
-// where handle is a block uuid (identity) or a local alias (name).
+// The container uuid is the RFC 3986 authority, not a path segment, so the
+// relative form resolves by url.URL.ResolveReference rather than a bespoke
+// rewriter.
 //
-// The scheme names SHAPE, not service. container:/block: rather than
-// document:/chat:/thing: because the latter encode LOCATION, and location is
-// mutable: a block born in a document and later published as a Thing would change
-// address, and every citation to it would die. Container KINDS live in .meta,
-// exactly as Note and Buffer do today.
+// {leaf} names a block uuid, a local alias, or an asset key (a filename,
+// extension included). Which of the three it is is decided container-side at
+// lookup and must never be inferred from the address.
 //
-// Versions belong to storables, not blocks: a block has no version of its own,
-// its container does. So block:{uuid}@v{n} is meaningless and the pin attaches to
-// the CONTAINER segment. That is also why the container-qualified form is not a
-// redundant locator hint — it is the only form that can express a FROZEN block
-// reference.
+// A version belongs to the container, not to the leaf: the pin is a query on
+// the whole coordinate and reads "this leaf, as of container version n".
 //
-// An alias may never appear in a cross-document coordinate, because aliases are
-// unique only within their own document. The grammar enforces that structurally:
-// there is no bare block:{alias} production, so the rule cannot be expressed
-// wrongly. A reference leaving a document resolves alias → uuid at the boundary.
+// There is no absolute leaf production without an authority, so an alias —
+// unique only within its container — cannot travel without it.
 type Address struct {
-	Scheme    string // SchemeContainer or SchemeBlock
-	Container string // container uuid; empty for a bare block: address
-	Block     string // block uuid or local alias; empty for a container: address
-	Version   int    // 0 = live (unpinned); >0 pins the container version
+	// Container is the container uuid — the naming authority. Every path that
+	// produces an Address canonicalises it (ident.Canonical), so Equal compares
+	// it exactly and String never emits a spelling that misses the
+	// lowercase-named document directory.
+	Container string
+	// Leaf is a block uuid, a local alias, or an asset key; "" names the
+	// container itself. Stored verbatim: an asset key is a filename on a
+	// case-sensitive filesystem, so folding here names a file that does not
+	// exist. Case never distinguishes two coordinates — Equal folds instead.
+	Leaf    string
+	Version int // 0 = live (unpinned); >0 pins the container version
 }
-
-const (
-	SchemeContainer = "container"
-	SchemeBlock     = "block"
-)
 
 // ErrBadAddress is the sentinel every parse failure wraps.
 var ErrBadAddress = errors.New("domain: malformed address")
 
 // NewContainerAddress builds the live (unpinned) address of a whole container.
-// It is the only place the container scheme is spelled, so no caller concatenates
-// "container:" and no caller has to remember which segment a uuid goes in.
 func NewContainerAddress(uuid string) Address {
-	return Address{Scheme: SchemeContainer, Container: strings.TrimSpace(uuid)}
+	return Address{Container: ident.Canonical(strings.TrimSpace(uuid))}
 }
 
-// ParseAddress parses a coordinate, rejecting anything the grammar does not
-// produce. Strictness is the feature: an address that parses leniently becomes a
-// dangling reference nobody notices until the thing it names is gone.
+// NewLeafAddress builds the live address of one leaf inside a container. leaf is
+// whatever the container will be asked to look up — a block uuid, a local alias
+// or an asset key.
+//
+// It is total and validates nothing. A leaf containing "/" is a programming
+// error, not a runtime one: it emits sieve://{container}/a/b, which
+// ParseAddress rejects as naming more than one leaf.
+func NewLeafAddress(container, leaf string) Address {
+	return Address{
+		Container: ident.Canonical(strings.TrimSpace(container)),
+		Leaf:      strings.TrimSpace(leaf),
+	}
+}
+
+// ParseAddress parses an ABSOLUTE coordinate, rejecting anything the grammar
+// does not produce. A relative reference is not parsed here; ResolveAddress
+// takes those.
 func ParseAddress(s string) (Address, error) {
-	scheme, rest, ok := strings.Cut(s, ":")
-	if !ok || rest == "" {
-		return Address{}, fmt.Errorf("%w: %q", ErrBadAddress, s)
+	u, err := url.Parse(s)
+	if err != nil {
+		return Address{}, fmt.Errorf("%w: %q: %s", ErrBadAddress, s, err)
 	}
-	switch scheme {
-	case SchemeContainer:
-		return parseContainerAddress(rest, s)
-	case SchemeBlock:
-		return parseBlockAddress(rest, s)
-	default:
-		return Address{}, fmt.Errorf("%w: unknown scheme %q in %q", ErrBadAddress, scheme, s)
+	if u.Scheme != Scheme {
+		return Address{}, fmt.Errorf("%w: scheme %q is not %q in %q", ErrBadAddress, u.Scheme, Scheme, s)
 	}
+	return addressFromURL(u, s)
 }
 
-func parseContainerAddress(rest, full string) (Address, error) {
-	if strings.Contains(rest, "/") {
-		return Address{}, fmt.Errorf("%w: a container address names no block: %q", ErrBadAddress, full)
+// ResolveAddress resolves a reference — absolute or relative — against the
+// container it was written in. An absolute ref ignores the base entirely.
+//
+// A relative ref does NOT inherit the base's pin: RFC 3986 replaces the base's
+// query whenever the ref carries a path, so "/{leaf}" written inside a frozen
+// container names the LIVE leaf.
+func ResolveAddress(ref string, base Address) (Address, error) {
+	if base.Container == "" {
+		return Address{}, fmt.Errorf("%w: no base container to resolve %q against", ErrBadAddress, ref)
 	}
-	uuid, version, err := splitVersion(rest, full)
+	if strings.TrimSpace(ref) == "" {
+		return Address{}, fmt.Errorf("%w: empty reference", ErrBadAddress)
+	}
+	refURL, err := url.Parse(ref)
+	if err != nil {
+		return Address{}, fmt.Errorf("%w: %q: %s", ErrBadAddress, ref, err)
+	}
+	if refURL.IsAbs() {
+		return ParseAddress(ref)
+	}
+	return addressFromURL(base.url().ResolveReference(refURL), ref)
+}
+
+// addressFromURL is the single validator, so an address reached by resolution
+// is held to the same rules as a parsed one. raw is the caller's spelling, used
+// for error messages and for the fragment check that survives url.Parse
+// dropping a bare "#".
+func addressFromURL(u *url.URL, raw string) (Address, error) {
+	if u.Opaque != "" {
+		return Address{}, fmt.Errorf("%w: %q has no // authority", ErrBadAddress, raw)
+	}
+	if u.User != nil {
+		return Address{}, fmt.Errorf("%w: %q carries userinfo", ErrBadAddress, raw)
+	}
+	if u.Port() != "" {
+		return Address{}, fmt.Errorf("%w: %q carries a port", ErrBadAddress, raw)
+	}
+	if u.Fragment != "" || strings.Contains(raw, "#") {
+		return Address{}, fmt.Errorf("%w: %q carries a fragment", ErrBadAddress, raw)
+	}
+	if u.ForceQuery {
+		return Address{}, fmt.Errorf("%w: %q carries an empty query", ErrBadAddress, raw)
+	}
+	if !ident.Valid(u.Host) {
+		return Address{}, fmt.Errorf("%w: authority %q is not a uuid in %q", ErrBadAddress, u.Host, raw)
+	}
+	leaf := strings.TrimPrefix(u.Path, "/")
+	if strings.Contains(leaf, "/") {
+		return Address{}, fmt.Errorf("%w: %q names more than one leaf", ErrBadAddress, raw)
+	}
+	if u.Path == "/" {
+		return Address{}, fmt.Errorf("%w: %q ends in a slash and so names no leaf", ErrBadAddress, raw)
+	}
+	version, err := parseVersion(u.RawQuery, raw)
 	if err != nil {
 		return Address{}, err
 	}
-	if !ident.Valid(uuid) {
-		return Address{}, fmt.Errorf("%w: container segment %q is not a uuid in %q", ErrBadAddress, uuid, full)
-	}
-	return Address{Scheme: SchemeContainer, Container: uuid, Version: version}, nil
+	return Address{Container: ident.Canonical(u.Host), Leaf: leaf, Version: version}, nil
 }
 
-func parseBlockAddress(rest, full string) (Address, error) {
-	head, handle, qualified := strings.Cut(rest, "/")
-	if !qualified {
-		// block:{uuid} — live and unqualified. No version pin is legal here: a
-		// block has no version of its own, only its container does.
-		if !ident.Valid(head) {
-			return Address{}, fmt.Errorf(
-				"%w: bare block address %q must be a uuid (an alias may never leave its container)", ErrBadAddress, full)
+// parseVersion reads the pin off a query string. Versions are 1-based:
+// version=0 is rejected because 0 is the live sentinel.
+func parseVersion(rawQuery, raw string) (int, error) {
+	if rawQuery == "" {
+		return 0, nil
+	}
+	q, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return 0, fmt.Errorf("%w: bad query in %q: %s", ErrBadAddress, raw, err)
+	}
+	for key := range q {
+		if key != versionParam {
+			return 0, fmt.Errorf("%w: unknown query parameter %q in %q", ErrBadAddress, key, raw)
 		}
-		return Address{Scheme: SchemeBlock, Block: head}, nil
 	}
-	if handle == "" || strings.Contains(handle, "/") {
-		return Address{}, fmt.Errorf("%w: bad block segment in %q", ErrBadAddress, full)
+	values := q[versionParam]
+	if len(values) != 1 {
+		return 0, fmt.Errorf("%w: %s must appear exactly once in %q", ErrBadAddress, versionParam, raw)
 	}
-	container, version, err := splitVersion(head, full)
-	if err != nil {
-		return Address{}, err
-	}
-	if !ident.Valid(container) {
-		return Address{}, fmt.Errorf("%w: container segment %q is not a uuid in %q", ErrBadAddress, container, full)
-	}
-	return Address{Scheme: SchemeBlock, Container: container, Block: handle, Version: version}, nil
-}
-
-// splitVersion peels an optional @v{n} pin off a segment. n is 1-based: @v0 is
-// rejected because 0 is the live sentinel and no storable has a version zero.
-func splitVersion(segment, full string) (string, int, error) {
-	head, tail, ok := strings.Cut(segment, "@")
-	if !ok {
-		return segment, 0, nil
-	}
-	if !strings.HasPrefix(tail, "v") {
-		return "", 0, fmt.Errorf("%w: bad version pin %q in %q", ErrBadAddress, tail, full)
-	}
-	n, err := strconv.Atoi(tail[1:])
+	n, err := strconv.Atoi(values[0])
 	if err != nil || n < 1 {
-		return "", 0, fmt.Errorf("%w: bad version pin %q in %q", ErrBadAddress, tail, full)
+		return 0, fmt.Errorf("%w: bad version pin %q in %q", ErrBadAddress, values[0], raw)
 	}
-	return head, n, nil
+	return n, nil
 }
 
-// String renders the canonical spelling: ParseAddress(a.String()) == a.
-func (a Address) String() string {
-	var b strings.Builder
-	b.WriteString(a.Scheme)
-	b.WriteByte(':')
-	if a.Scheme == SchemeBlock && a.Container == "" {
-		b.WriteString(a.Block)
-		return b.String()
+// url renders this address as a URI. It is shared by String and by relative
+// resolution, so emission and the resolution base cannot drift apart.
+func (a Address) url() *url.URL {
+	u := &url.URL{Scheme: Scheme, Host: a.Container}
+	if a.Leaf != "" {
+		u.Path = "/" + a.Leaf
 	}
-	b.WriteString(a.Container)
 	if a.Version > 0 {
-		b.WriteString("@v")
-		b.WriteString(strconv.Itoa(a.Version))
+		u.RawQuery = versionParam + "=" + strconv.Itoa(a.Version)
 	}
-	if a.Scheme == SchemeBlock {
-		b.WriteByte('/')
-		b.WriteString(a.Block)
-	}
-	return b.String()
+	return u
 }
+
+// String renders the canonical spelling. ParseAddress(a.String()) == a for
+// every address ParseAddress or ResolveAddress produced. The round trip does
+// not extend to the constructors, which validate nothing; see NewLeafAddress.
+func (a Address) String() string { return a.url().String() }
 
 // IsPinned reports that this address names a frozen container version.
 func (a Address) IsPinned() bool { return a.Version > 0 }
 
-// IsAlias reports that the block segment is a local NAME rather than an identity.
-// Such an address must be resolved against its container before it can be
-// compared or followed.
-func (a Address) IsAlias() bool {
-	return a.Scheme == SchemeBlock && a.Block != "" && !ident.Valid(a.Block)
+// IsContainer reports that this address names a whole container rather than
+// something inside one.
+func (a Address) IsContainer() bool { return a.Leaf == "" }
+
+// ContainerAddress drops the leaf and keeps the pin — dropping the pin would
+// silently turn a frozen reference live.
+func (a Address) ContainerAddress() Address {
+	return Address{Container: a.Container, Version: a.Version}
 }
 
-// Equal reports whether two addresses denote the same thing. Equality is
-// POST-RESOLUTION: two addresses are equal iff they resolve to the same uuid AND
-// the same pin state — so a live block: and a frozen block:…@v7/… are
-// deliberately unequal. An unresolved alias cannot be compared at all and always
-// answers false; resolve it against its container first.
+// Equal reports whether two addresses denote the same thing. All three fields
+// are the identity, including the pin, so a live address and a frozen one are
+// deliberately unequal. Case never distinguishes two coordinates: the authority
+// arrives canonicalised and the leaf is folded here, so two Equal addresses may
+// render different strings.
 func (a Address) Equal(other Address) bool {
-	if a.IsAlias() || other.IsAlias() {
-		return false
-	}
-	if a.Scheme != other.Scheme || a.Version != other.Version {
-		return false
-	}
-	if a.Scheme == SchemeBlock {
-		// For a uuid-addressed block the container segment is a LOCATOR HINT, not
-		// part of identity — block:{uuid} and block:{c}/{uuid} name the same block.
-		// It is load-bearing only when pinned, and Version is compared above.
-		return a.Block == other.Block
-	}
-	return a.Container == other.Container
+	return a.Container == other.Container &&
+		strings.EqualFold(a.Leaf, other.Leaf) &&
+		a.Version == other.Version
 }

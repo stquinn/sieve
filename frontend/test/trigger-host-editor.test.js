@@ -1,9 +1,8 @@
 // @ts-check
-// trigger-host-editor.test.js — the `@` picker hosted in a DOCUMENT (#38).
+// The `@` picker hosted in a DOCUMENT.
 //
 // Driven against a REAL TipTap editor with the real interaction-policy
-// extension, because the three things this feature had to prove are all things a
-// fake would have granted for free:
+// extension, because a fake would grant all three of these for free:
 //
 //   1. KEY PRECEDENCE. The picker binds keydown in the CAPTURE phase on
 //      `view.dom`; ProseMirror installs ONE bubble-phase listener on that same
@@ -17,8 +16,7 @@
 //      deletes the token and CREATES A BLOCK — and creates it with NO index and
 //      NO anchor, because the editor owns all id→index math.
 //
-// The port under test is the SHIPPED CaretTriggerPort, not a re-typed copy: it
-// is a class precisely so a test can drive the real one.
+// The port under test is the SHIPPED CaretTriggerPort, not a re-typed copy.
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { Editor, Node, Extension } from '@tiptap/core'
 import { StarterKit } from '@tiptap/starter-kit'
@@ -253,10 +251,10 @@ describe('CaretTriggerPort — what a live caret can answer', () => {
 // ── Acceptance creates a BLOCK ──────────────────────────────────────────────
 
 describe('accepting a mention in a document', () => {
-  it('deletes the token, flushes, and creates an `attachment` block with NO anchor', async () => {
+  it('deletes the token, flushes, and creates a `reference` block with NO anchor', async () => {
     makeEditor(PARA('see @au for detail'))
     const { host, flush } = mountPicker({
-      source: sourceOf({ uri: 'container:9f2b', title: 'Auth Design', detail: 'note' }),
+      source: sourceOf({ uri: 'sieve://9f2b', title: 'Auth Design', detail: 'note' }),
     })
     caretAt(8)                                     // "see @au|"
     type('t')                                      // → "see @aut|"
@@ -273,8 +271,32 @@ describe('accepting a mention in a document', () => {
     // The anchor argument is OMITTED — never an index. The editor derives the
     // index from the caret, which is what applies the empty-line placement rule.
     expect(host.createBlock).toHaveBeenCalledTimes(1)
-    expect(host.createBlock.mock.calls[0]).toEqual(['attachment', { uri: 'container:9f2b', title: 'Auth Design' }])
+    expect(host.createBlock.mock.calls[0]).toEqual(['reference',
+      { uri: 'sieve://9f2b', title: 'Auth Design', summary: '', mime: '' }])
     expect(host.createBlock.mock.calls[0].length).toBe(2)
+  })
+
+  it('seeds the WHOLE face, so the block is born complete and never resolves to render', async () => {
+    makeEditor(PARA('see @au for detail'))
+    const { host } = mountPicker({
+      source: sourceOf({
+        uri: 'sieve://9f2b', title: 'Auth Design', kind: 'note',
+        summary: 'Token rotation and session binding',
+      }),
+    })
+    caretAt(8)
+    type('t')
+    await settle()
+    pressReal('Enter')
+
+    // `mime` is the candidate's kind in Sieve's own space — the same spelling the
+    // processor stamps on resolve, and what tells pointing from holding.
+    expect(host.createBlock.mock.calls[0]).toEqual(['reference', {
+      uri: 'sieve://9f2b',
+      title: 'Auth Design',
+      summary: 'Token rotation and session binding',
+      mime: 'sieve/note',
+    }])
   })
 
   it('leaves the caret\'s line EMPTY when the token had it to itself — the placement rule\'s input', async () => {
@@ -285,7 +307,7 @@ describe('accepting a mention in a document', () => {
         { type: 'paragraph', content: [{ type: 'text', text: '@au' }] },
       ],
     })
-    const { host } = mountPicker({ source: sourceOf({ uri: 'container:9f2b', title: 'Auth Design' }) })
+    const { host } = mountPicker({ source: sourceOf({ uri: 'sieve://9f2b', title: 'Auth Design' }) })
     caretAt(11)     // end of the second paragraph's "@au"
     type('t')
     await settle()
@@ -294,12 +316,13 @@ describe('accepting a mention in a document', () => {
     // An empty paragraph at the caret is exactly what the editor's
     // commitInsertIndex consumes, so the block BECOMES that node in place.
     expect(editor.state.doc.child(1).textContent).toBe('')
-    expect(host.createBlock).toHaveBeenCalledWith('attachment', { uri: 'container:9f2b', title: 'Auth Design' })
+    expect(host.createBlock).toHaveBeenCalledWith('reference',
+      { uri: 'sieve://9f2b', title: 'Auth Design', summary: '', mime: '' })
   })
 
   it('a mouse pick means the same thing as a key pick', async () => {
     makeEditor(PARA('see @au'))
-    const { host } = mountPicker({ source: sourceOf({ uri: 'container:1', title: 'Auth Design' }) })
+    const { host } = mountPicker({ source: sourceOf({ uri: 'sieve://1', title: 'Auth Design' }) })
     caretAt(8)
     type('t')
     await settle()
@@ -307,7 +330,8 @@ describe('accepting a mention in a document', () => {
     const row = /** @type {HTMLElement} */ (popoverEl().querySelector('.command-hint-item'))
     row.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true, cancelable: true }))
 
-    expect(host.createBlock).toHaveBeenCalledWith('attachment', { uri: 'container:1', title: 'Auth Design' })
+    expect(host.createBlock).toHaveBeenCalledWith('reference',
+      { uri: 'sieve://1', title: 'Auth Design', summary: '', mime: '' })
   })
 })
 

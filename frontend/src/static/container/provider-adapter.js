@@ -1,22 +1,15 @@
 // @ts-check
-// provider-adapter.js — ProviderAdapter: the host's implementation of the base
-// ContainerProvider (contract/container-provider.js) over a ContainerModel.
+// ProviderAdapter: the host's implementation of the base ContainerProvider
+// (contract/container-provider.js) over a ContainerModel.
 //
-// The class exists for one property: the model is a #private field, so a lens
-// holding a provider has no expression that reaches past the read surface —
-// no `provider.model`, no prototype walk, no accidental fold from the wrong
-// side of the wall. The import-graph tripwire keeps the model out of a lens's
-// module graph; this keeps it out of its object graph.
+// The model is a #private field, so a lens holding a provider has no expression
+// that reaches past the read surface — no `provider.model`, no prototype walk.
 //
 // This is the READ half only. Verbs and queries (BlockContainerProvider) need
-// the transport binding and land with it; a read-only mount — a `@v{n}`-pinned
-// version viewer, an OutlineLens — is complete with exactly this, which is why
-// read-only is a TYPE rather than a flag on a richer provider.
-//
-// The reads stay sync across a future IPC bridge without changing shape: the
-// bridge's lens side holds its own ContainerModel replica and this same adapter
-// wraps it (followers chain — only Go leads). Serialization discipline lives at
-// the subscribe stream; plain frozen copies at the reads.
+// the transport binding and land with it; a read-only mount — a
+// `?version={n}`-pinned version viewer, an OutlineLens — is complete with
+// exactly this, which is why read-only is a TYPE and not a flag on a richer
+// provider.
 
 import { ContractViolation } from '../contract/sieve-block.js'
 

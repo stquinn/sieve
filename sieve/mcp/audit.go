@@ -2,22 +2,22 @@ package mcp
 
 import "sieve/logger"
 
-// bodyRead is one whole-content read of a Sieve document, as the audit trail
-// records it.
+// bodyRead is one content read through a Sieve MCP verb, as the audit trail
+// records it. Content leaves the knowledge base through get_note and get_by_uri
+// and nowhere else, and both write one of these.
 //
-// It is a TYPE, not two logger.Info calls, because it is the EVIDENCE behind the
-// package's central claim: content leaves the knowledge base through get_note
-// and get_by_uri and nowhere else. Two verbs are two doors; one record shape
-// keeps them a single boundary, and keeps the two lines from drifting into
-// describing the same read differently.
-//
-// Both namings of the target are carried. They are the same document — a uuid is
-// what get_note is asked for, a coordinate is what get_by_uri is asked for — and
-// recording both means one audit line answers either question.
+// A read is not always a whole document — get_by_uri dereferences a leaf
+// coordinate too — so container and uuid are separate namings, which is what
+// keeps the trail greppable by document.
 type bodyRead struct {
-	verb  string // the tool that performed the read
-	uuid  string // the target's identity
-	uri   string // the target's coordinate
+	verb string // the tool that performed the read
+	// container is the document the content came out of. Always a uuid, whatever
+	// grain was read.
+	container string
+	// uuid is the identity of what was ACTUALLY read: the document itself for a
+	// whole-content read, or a block id / asset key for a leaf one.
+	uuid  string
+	uri   string // the coordinate the target was named by
 	title string
 	bytes int
 }
@@ -28,12 +28,11 @@ func (b bodyRead) message() string { return "sieve mcp: " + b.verb + " (body rea
 
 // attrs is the structured half: what was read, and how much of it.
 func (b bodyRead) attrs() []any {
-	return []any{"uuid", b.uuid, "uri", b.uri, "title", b.title, "bytes", b.bytes}
+	return []any{"container", b.container, "uuid", b.uuid, "uri", b.uri, "title", b.title, "bytes", b.bytes}
 }
 
 // bodyReadAuditor is where those records go. Production writes them to the log;
-// the package's own tests substitute a recorder, because "every body read is
-// visible at one boundary" is an invariant worth asserting rather than assuming.
+// tests substitute a recorder.
 type bodyReadAuditor interface {
 	record(b bodyRead)
 }

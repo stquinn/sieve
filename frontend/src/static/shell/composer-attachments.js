@@ -1,62 +1,52 @@
 // @ts-check
-// composer-attachments.js — ComposerAttachments: what the Ask composer has
-// attached to the message being written, and the chip row that shows it (#74 P4).
+// ComposerAttachments: what the Ask composer has attached to the message being
+// written, and the chip row that shows it.
 //
-// NO NEW ROW. The chips live in the EXISTING `.ask-popup__footer` (index.html),
-// whose whole contract is a chip region on the left and Send on the right (the
-// Enter/Shift+Enter chord is said in the composer's placeholder, not down here).
-// Overflow scrolls horizontally rather than growing the panel — the footer's
-// height feeds ui/layout.js's askPanelMinHeight, so a wrapping chip row would
-// push the composer's minimum height around.
+// The chips live in the EXISTING `.ask-popup__footer` (index.html) — a chip
+// region on the left, Send on the right. Overflow scrolls horizontally rather
+// than growing the panel, because the footer's height feeds ui/layout.js's
+// askPanelMinHeight.
 //
-// THE MODEL AND ITS CHIPS ARE ONE TYPE. The chips ARE this data drawn — there is
-// no second object that could disagree with it, and every mutation re-renders
-// from the list rather than patching the DOM in parallel.
+// THE MODEL AND ITS CHIPS ARE ONE TYPE. The chips ARE this data drawn: every
+// mutation re-renders from the list rather than patching the DOM in parallel.
 //
 // URI IS IDENTITY, TITLE IS AN ECHO. Two library notes may both be called
-// "Notes": they are two attachments with two addresses and one text token each.
-// So dedupe is by uri, and reconciliation PAIRS tokens to attachments per title
-// rather than asking "is this title present" — deleting one of two `@Notes`
-// tokens drops exactly one attachment.
+// "Notes": two attachments, two addresses, one text token each. Dedupe is by
+// uri, and reconciliation PAIRS tokens to attachments per title rather than
+// asking "is this title present", so deleting one of two `@Notes` tokens drops
+// exactly one attachment.
 //
-// THE CHIP IS A VIEW OF THE TOKENS IN THE MESSAGE; THE TEXT IS WHAT YOU EDIT
-// (#74 P6). Reconciliation used to run only at SEND, so a chip could go on
-// claiming "attached" over a token the user had already broken and the
-// attachment was then dropped silently, with no answer and no explanation. Two
-// halves fix that:
+// THE CHIP IS A VIEW OF THE TOKENS IN THE MESSAGE; THE TEXT IS WHAT YOU EDIT.
+// Two rules carry that:
 //
 //   • the pool and the view are separate. `#known` is every candidate accepted
 //     since the composer was last cleared; `#attached` is the subset a `@Title`
 //     token currently carries — the chips, and what send carries. Reconciling
 //     RE-DERIVES the second from the first, so a token that comes back (undo, a
-//     retyped title) re-attaches instead of being lost for ever;
+//     retyped title) re-attaches;
 //   • the INVARIANT is one-way: a chip implies a token, a token does not imply a
-//     chip. `@Auth Design` typed as prose and never accepted is just prose — but
-//     a chip can never outlive its token, which is exactly the silent drop.
+//     chip. `@Auth Design` typed as prose and never accepted is just prose, and
+//     a chip can never outlive its token.
 //
 // THE ✕ FORGETS; EDITING THE TEXT DOES NOT. Both gestures take the chip and its
-// token, and they differ only in INTENT — which is the whole difference. The ✕
-// says "I do not want this attached", so its document leaves `#known` and
-// writing that title again is ordinary prose; a text edit says "I am editing my
-// sentence", so its document stays pooled and the token coming back (Ctrl+Z, a
-// retype) re-attaches it. Forgetting is by URI, never by title: with two "Notes"
-// attached, ✕ on one leaves the other's token resolving to the other document.
+// token and differ only in intent: ✕ means "I do not want this attached", so its
+// document leaves `#known` and writing that title again is ordinary prose; a
+// text edit means "I am editing my sentence", so its document stays pooled and
+// the token coming back re-attaches it. Forgetting is by URI, never by title.
 //
 // DETACHING DEMOTES. An attachment the text lost moves to the BACK of the pool
 // before the pairing is redone, so a remaining identical `@Notes` pairs with the
-// attachment the user did not touch rather than sliding onto the deleted one's
-// chip.
+// attachment the user did not touch.
 //
 // THE CHIP IS THE SHARED VOCABULARY, DRAWN LOCALLY. A block draws it with the
-// AttachmentChip component; the composer cannot — it is not a block, so it
-// carries no block styles. The `--chip-*` TOKENS are what unify the two instead
-// (editor.css `:root`), so change what a chip looks like in the tokens, never in
-// one of the two components.
+// ReferenceChip component; the composer cannot, because it is not a block and
+// carries no block styles. The `--chip-*` tokens (editor.css `:root`) are what
+// unify the two, so change what a chip looks like in the tokens.
 
 import { esc } from '../renderers/html-escape.js'
 // The token rule is SHARED with the ai-block, which marks the same `@Title`
-// tokens in the question it renders (#74). Two copies of "what counts as a
-// mention" would let a chip and its inline mark describe different text.
+// tokens in the question it renders. Two copies of "what counts as a mention"
+// would let a chip and its inline mark describe different text.
 import { MentionTokens } from '../renderers/mention-tokens.js'
 
 /**
@@ -137,10 +127,9 @@ export class ComposerAttachments {
   /**
    * The persisted shape: `{uri, title}` and nothing else.
    *
-   * NOTHING is resolved on the way to the model — the prompt's manifest is
-   * rendered from these two fields alone. So anything richer a chip is holding
-   * (`kind`, `detail`, a summary) is picker dressing that must not reach
-   * storage, where it could only ever go stale.
+   * NOTHING is resolved on the way out — the prompt's manifest is rendered from
+   * these two fields alone, and anything richer a chip holds (`kind`, `detail`)
+   * is picker dressing that must not reach storage.
    * @returns {AttachmentEntry[]}
    */
   manifest() {
@@ -177,13 +166,9 @@ export class ComposerAttachments {
 
   /**
    * Detaches by address — the ✕ on a chip. It removes the `@Title` echo from the
-   * message as well: leaving the token behind is the same chip/text disagreement
-   * as a stale chip, just pointing the other way.
-   *
-   * And it FORGETS the document. The ✕ is an explicit refusal, so it must be
-   * final: were the document left pooled, writing its title again later — `as
-   * @Auth Design says…` — would silently re-attach what the user had removed.
-   * Accepting it from the picker again is how it comes back.
+   * message as well, and it FORGETS the document: a pooled document would
+   * silently re-attach when its title was written again. Accepting it from the
+   * picker again is how it comes back.
    * @param {string} uri
    */
   remove(uri) {
@@ -199,11 +184,11 @@ export class ComposerAttachments {
   /**
    * ATOMIC TOKEN DELETION. If `caret` sits at the RIGHT EDGE of an attached
    * document's `@Title` token, that whole token — not one character of it — goes,
-   * and its chip with it. This is what makes the half-broken `@Auth Desig` state
-   * unreachable by the ordinary gesture.
+   * and its chip with it, so a half-broken `@Auth Desig` is unreachable by the
+   * ordinary gesture.
    *
    * It is still a TEXT edit, so the document stays pooled and typing the title
-   * back re-attaches it — that is what lets undo restore the chip.
+   * back re-attaches it.
    * @param {number} caret
    * @returns {boolean} whether a token was deleted (i.e. whether the caller's
    *   keypress was consumed)
@@ -226,14 +211,13 @@ export class ComposerAttachments {
   }
 
   /**
-   * RECONCILIATION: re-derives what is attached from the message as written. Runs
-   * on EVERY composer edit, not just at send — a chip that outlives its token is
-   * the whole defect, and a send is far too late to discover it.
+   * RECONCILIATION: re-derives what is attached from the message as written, on
+   * EVERY composer edit, so a chip never outlives its token.
    *
    * It re-derives rather than prunes, so a token that comes BACK (undo, a retyped
-   * title) re-attaches from the pool. Pairing per title (rather than testing
-   * presence) is what makes duplicate titles work: two "Notes" attachments
-   * survive two `@Notes` tokens, and exactly one survives one.
+   * title) re-attaches from the pool. Pairing per title rather than testing
+   * presence is what makes duplicate titles work: two "Notes" attachments survive
+   * two `@Notes` tokens, and exactly one survives one.
    * @param {string} text the message as written
    * @returns {AttachmentEntry[]} the surviving manifest
    */

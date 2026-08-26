@@ -146,6 +146,25 @@ func TestRegionScanner_TextRegionBodyEqualsRaw(t *testing.T) {
 	}
 }
 
+// A fence tagged with a processor's ALIAS must be scanned as a shape region just
+// as its canonical fence is — the scanner segments on every head a flavour's
+// Shapes() declares, not only the canonical one.
+func TestRegionScanner_AliasedFenceIsScannedAsARegion(t *testing.T) {
+	shapes := FencedDeserializer{Kind: "reference", Aliases: []string{"attachment"}}.Shapes()
+	md := "before\n\n```attachment\nid: r-1\n```\n\nafter\n"
+	regions := NewRegionScanner(shapes).Scan(md)
+
+	if len(regions) != 3 {
+		t.Fatalf("want 3 regions (text, fence, text), got %d: %#v", len(regions), regions)
+	}
+	// The scanner tags the region with whichever head matched — the alias itself.
+	// Canonicalisation to the flavour's own Kind is Deserialize's job, not the
+	// scanner's.
+	if regions[1].Kind != "attachment" {
+		t.Errorf("aliased fence region Kind = %q, want attachment", regions[1].Kind)
+	}
+}
+
 func TestScan_proseMarkerSpanWithInnerFence_isOneRegion(t *testing.T) {
 	shapes := []RegionShape{
 		{Kind: "diagram", Head: "```diagram", Tail: "```"},

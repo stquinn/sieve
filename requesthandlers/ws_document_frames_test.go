@@ -207,22 +207,22 @@ func TestWS_Paste_AckIsTheResultUnion(t *testing.T) {
 		}
 	})
 
-	// #38: a DROPPED FILE takes the same route a paste does — the surface reads it
-	// as a data URI, stamps the filename in the entry's context, and the registry
+	// A DROPPED FILE takes the same route a paste does: the surface reads it as a
+	// data URI, stamps the filename in the entry's context, and the registry
 	// routes it.
-	t.Run("a dropped file becomes an attachment", func(t *testing.T) {
-		block.RegisterProcessor(processors.NewAttachmentProcessor(block.BlockServices{
+	t.Run("a dropped file becomes a reference", func(t *testing.T) {
+		block.RegisterProcessor(processors.NewReferenceProcessor(block.BlockServices{
 			Documents: sp.Documents, Assets: services.NewAssetService(sp.Store, ""),
 		}))
-		t.Cleanup(func() { block.UnregisterProcessor("attachment") })
+		t.Cleanup(func() { block.UnregisterProcessor("reference") })
 
 		payload := base64.StdEncoding.EncodeToString([]byte("openapi: 3.0.0\n"))
 		got := paste(t, `[{"mimeType":"text/yaml","content":"data:text/yaml;base64,`+payload+`","context":{"filename":"swagger.yml"}}]`)
 		if got["outcome"] != "block" {
 			t.Fatalf("outcome: got %q, want block (%v)", got["outcome"], got)
 		}
-		if got["kind"] != "attachment" {
-			t.Errorf("kind: got %q, want attachment", got["kind"])
+		if got["kind"] != "reference" {
+			t.Errorf("kind: got %q, want reference", got["kind"])
 		}
 		// The chip's label rides in the serialized block, so the drop is only
 		// complete if the original filename survived the whole round trip.

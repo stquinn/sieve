@@ -1,43 +1,39 @@
-// attachment-node-view.js — Sieve NodeView ADAPTER for the 'attachment' kind
-// (the PM half of the renderer/NodeView split; NORMATIVE contract:
-// docs/design/archive/specs/2026-07-21-block-renderer-contract.md; the kind's
-// design: docs/design/archive/specs/2026-08-19-attachment-block-design.md).
+// Sieve NodeView ADAPTER for the 'reference' kind — the PM half of the
+// renderer/NodeView split (NORMATIVE contract:
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md).
 //
 // Look-and-feel — the chip, its detail text, the chevron and the summary it
-// reveals — lives in AttachmentRenderer, which this file HOLDS by COMPOSITION.
+// reveals — lives in ReferenceRenderer, which this file HOLDS by COMPOSITION.
 // What is owned here is what genuinely speaks ProseMirror or the app: schema
 // data (nodeConfig/attrs/parseAttrs), the interaction policy, the context menu,
 // and the ANSWER to the renderer's open intent.
 //
-// ── THE OPEN GESTURE ────────────────────────────────────────────────────────
-// The renderer fans out "the user opened this attachment" with the block's
-// target and names no mechanism. Here that becomes:
+// THE OPEN GESTURE. The renderer fans out "the user opened this reference" with
+// the block's target and names no mechanism. Here that becomes:
 //
-//   points (uri) → the container, via window.sieveWorkspace.openAddress, which
-//     asks Go to resolve the address. The uri is OPAQUE on this side: no scheme
-//     test, no split, no pin rule. Same path ai-block's footer chips take.
+//   points (uri, not held) → the container, via window.sieveWorkspace.openAddress,
+//     which asks Go to resolve the address. The uri is OPAQUE on this side: no
+//     scheme test, no split, no pin rule.
 //
-//   holds (src) → a `sieve:attachment-open-asset` INTENT on document, answered
-//     at the bottom of this file by the DESKTOP realisation (reveal in the OS
-//     file manager). The intent is not ceremony: a hosted build with no file
-//     manager must be able to answer the same gesture with a download or a
-//     viewer without reopening the block's design.
+//   holds (a non-`sieve/*` mime — a file this block itself holds) → a
+//     `sieve:reference-open-asset` INTENT on document, answered at the bottom of
+//     this file by the DESKTOP realisation (reveal in the OS file manager). A
+//     hosted build answers the same gesture with a download or a viewer.
 //
-// ── `kind` IS RESERVED; THIS KIND USES `targetKind` ─────────────────────────
-// BASE_ATTRS declares `kind` on every sieve-* node as the BLOCK's kind, so no
-// processor may name an attr that, and the collision is SILENT:
-// WysiwygSurface#applyBlockAttrsUpdated copies any wire key present in
-// node.attrs, so Go's "yaml" overwrote the node's own "attachment" as soon as a
-// job completed. That handler now refuses `kind` outright too, since a block's
-// kind changes by replace-block and never by an attrs update.
+// `kind` IS RESERVED. BASE_ATTRS declares `kind` on every sieve-* node as the
+// BLOCK's kind, so no processor may name an attr that: the collision is silent,
+// because WysiwygSurface#applyBlockAttrsUpdated copies any wire key present in
+// node.attrs and a target's own noun would overwrite the node's "reference" as
+// soon as a job completed. That handler refuses `kind` outright, and the noun a
+// reference wears is derived from `mime`.
 
 import { registerSieveRenderer, sieveBlockFor } from '../sieve-block-extension.js'
-import { AttachmentRenderer } from '../../../../renderers/attachment-renderer.js'
+import { ReferenceRenderer } from '../../../../renderers/reference-renderer.js'
 
 ;(function () {
   'use strict'
 
-  var OPEN_ASSET_EVENT = 'sieve:attachment-open-asset'
+  var OPEN_ASSET_EVENT = 'sieve:reference-open-asset'
 
   /** The document a block belongs to. The active-editor fallback covers a host
    *  with no getEditor: a document is only ever open in the single active tab,
@@ -49,16 +45,15 @@ import { AttachmentRenderer } from '../../../../renderers/attachment-renderer.js
     return (active && active.uuid) || ''
   }
 
-  /** The ONE place a target becomes an action. @param {{uri: string, src: string, title: string}} target */
+  /** The ONE place a target becomes an action. @param {{uri: string, title: string, held: boolean}} target */
   function openTarget(target, uuid) {
     if (!target) return
-    if (target.uri) {
+    if (!target.held) {
       if (window.sieveWorkspace) window.sieveWorkspace.openAddress(target.uri)
       return
     }
-    if (!target.src) return
     document.dispatchEvent(new CustomEvent(OPEN_ASSET_EVENT, {
-      detail: { src: target.src, title: target.title || '', uuid: uuid || '' },
+      detail: { uri: target.uri, title: target.title || '', uuid: uuid || '' },
     }))
   }
 
@@ -67,9 +62,9 @@ import { AttachmentRenderer } from '../../../../renderers/attachment-renderer.js
   }
 
   function makeNodeView(node, editorPane, getPos, ctx) {
-    var nodeTypeName = 'sieve-attachment'
+    var nodeTypeName = 'sieve-reference'
 
-    var renderer = new AttachmentRenderer(
+    var renderer = new ReferenceRenderer(
       sieveBlockFor(node, undefined, ctx && ctx.provider),
       (ctx && ctx.provider) || null)
 
@@ -106,10 +101,10 @@ import { AttachmentRenderer } from '../../../../renderers/attachment-renderer.js
     }
   }
 
-  var AttachmentNodeView = {
+  var ReferenceNodeView = {
 
     getIcon: function () { return window.SieveIcons && window.SieveIcons.smartFile },
-    getFriendlyName: function () { return 'Attachment' },
+    getFriendlyName: function () { return 'Reference' },
 
     // A chip has no editable text, so the arrows select it as ONE stop — joining
     // ai-block, web-clip, smart-image and smart-card.
@@ -125,10 +120,8 @@ import { AttachmentRenderer } from '../../../../renderers/attachment-renderer.js
 
     // `kind` is ABSENT on purpose — see the file header.
     attrs: {
-      src:     { default: '', parseHTML: function (el) { return el.getAttribute('data-src')     || '' } },
       uri:     { default: '', parseHTML: function (el) { return el.getAttribute('data-uri')     || '' } },
       title:   { default: '', parseHTML: function (el) { return el.getAttribute('data-title')   || '' } },
-      targetKind: { default: '', parseHTML: function (el) { return el.getAttribute('data-target-kind') || '' } },
       summary: { default: '', parseHTML: function (el) { return el.getAttribute('data-summary') || '' } },
       bytes:   { default: '', parseHTML: function (el) { return el.getAttribute('data-bytes')   || '' } },
       mime:    { default: '', parseHTML: function (el) { return el.getAttribute('data-mime')    || '' } },
@@ -137,10 +130,8 @@ import { AttachmentRenderer } from '../../../../renderers/attachment-renderer.js
 
     parseAttrs: function (data) {
       return {
-        src:     data.src     || '',
         uri:     data.uri     || '',
         title:   data.title   || '',
-        targetKind: data.targetKind || '',
         summary: data.summary || '',
         bytes:   String(data.bytes == null ? '' : data.bytes),
         mime:    data.mime    || '',
@@ -148,9 +139,8 @@ import { AttachmentRenderer } from '../../../../renderers/attachment-renderer.js
       }
     },
 
-    // A citation copies as its coordinate — which the processor claims back as a
-    // TRANSFORM when it is pasted, so a copied chip becomes a chip again. A held
-    // file has no text form: its bytes live in the document directory.
+    // A reference copies as its coordinate — which the processor claims back as
+    // a TRANSFORM when it is pasted, so a copied chip becomes a chip again.
     asContentEntry: function (node) {
       var uri = (node.attrs.uri || '').trim()
       return uri ? [{ mimeType: 'text/plain', content: uri }] : null
@@ -161,20 +151,20 @@ import { AttachmentRenderer } from '../../../../renderers/attachment-renderer.js
     buildContextMenuItems: function (opts) {
       var node = opts.node
       var IC = window.SieveIcons || {}
-      var target = AttachmentRenderer.targetFor(node.attrs)
-      var items = [{ type: 'header', label: 'Attachment' }]
+      var target = ReferenceRenderer.targetFor(node.attrs)
+      var items = [{ type: 'header', label: 'Reference' }]
       if (!target) return items
 
       items.push({
         icon: IC.externalLink,
-        label: target.uri ? 'Open Reference' : 'Show in Files',
+        label: target.held ? 'Show in Files' : 'Open Reference',
         action: function () { openTarget(target, uuidOf(opts)) },
       })
       items.push({
         icon: IC.copy,
-        label: target.uri ? 'Copy Address' : 'Copy Filename',
+        label: target.held ? 'Copy Filename' : 'Copy Address',
         action: function () {
-          var text = AttachmentRenderer.copyTextFor(node.attrs)
+          var text = ReferenceRenderer.copyTextFor(node.attrs)
           if (text) navigator.clipboard.writeText(text).catch(function () {})
         },
       })
@@ -182,7 +172,7 @@ import { AttachmentRenderer } from '../../../../renderers/attachment-renderer.js
     },
   }
 
-  registerSieveRenderer('attachment', AttachmentNodeView)
+  registerSieveRenderer('reference', ReferenceNodeView)
 
   // ── The DESKTOP realisation of the open-an-asset intent ──────────────────
   //

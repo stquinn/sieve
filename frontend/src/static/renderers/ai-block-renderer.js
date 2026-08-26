@@ -1,12 +1,10 @@
 // @ts-check
-// ai-block-renderer.js — AiBlockRenderer: the renderer half of the ai-block
-// kind's renderer/NodeView split (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
-// Phase 3 / issue #46). Owns look-and-feel: the block shell, the status BADGE
-// (its header — the A7 status state machine), the question TITLE, and the
-// response/status BODY, plus this kind's stylesheet (`static styles`). Zero
-// ProseMirror/editor/window.* dependencies — mounts identically in the note
-// editor's NodeView adapter (lens/surfaces/node-views/ai-block-node-view.js, by composition),
-// a chat turn, or the bare-page harness.
+// AiBlockRenderer: the renderer half of the ai-block kind's renderer/NodeView
+// split. Owns look-and-feel: the block shell, the status BADGE (its header), the
+// question TITLE, and the response/status BODY, plus this kind's stylesheet
+// (`static styles`). Zero ProseMirror/editor/window.* dependencies — it mounts
+// identically in the note editor's NodeView adapter, a chat turn, or the
+// bare-page harness.
 //
 // This class is PURE and lens-blind (NORMATIVE contract:
 // docs/design/archive/specs/2026-07-21-block-renderer-contract.md): buildBody() builds
@@ -24,14 +22,14 @@ import { aiBlockStyles } from './ai-block-renderer.styles.js'
 import { isJobStale } from './job-status.js'
 import { MentionTokens } from './mention-tokens.js'
 // The chip is SHARED look-and-feel, not ai-block's: the footer chip, the
-// composer chip and the attachment block are one visual object.
-import { AttachmentChip } from './attachment-chip.js'
+// composer chip and the reference block are one visual object.
+import { ReferenceChip } from './reference-chip.js'
 import { AddressState } from './address-status.js'
 
-/** One attachment as it is persisted (#74): the address is the truth and the
- *  title is what labels it. Nothing else is stored, and nothing is resolved to
- *  build the prompt — the model is given the address and dereferences it itself
- *  (MCP `get_by_uri`) if it decides it needs the contents.
+/** One attachment as it is persisted: the address is the truth and the title is
+ *  what labels it. Nothing else is stored, and nothing is resolved to build the
+ *  prompt — the model is given the address and dereferences it itself (MCP
+ *  `get_by_uri`) if it decides it needs the contents.
  * @typedef {{ uri: string, title?: string }} AiBlockAttachment */
 
 /** @typedef {{ id?: string, ref?: string, type?: 'ASK'|'EXPLAIN'|'BTW', status?: string, createdAt?: string, question?: string, response?: string|null, error?: string|null, model?: string|null, supportsEmbedding?: boolean, attachments?: AiBlockAttachment[] }} AiBlockAttrs */
@@ -99,8 +97,8 @@ export class AiBlockRenderer extends BlockRenderer {
 
   /**
    * Registers interest in "the user clicked an attachment chip", handing back the
-   * address. A renderer never opens a document itself — it is lens-blind and has
-   * no idea what a workspace is; the NodeView adapter that holds it does.
+   * address. A renderer never opens a document itself; the NodeView adapter that
+   * holds it does.
    * @param {(uri: string) => void} fn
    * @returns {() => void} unsubscribe
    */
@@ -110,16 +108,14 @@ export class AiBlockRenderer extends BlockRenderer {
   }
 
   /**
-   * Supplies the oracle that says whether an attachment's target still exists
-   * (#82). It is a BUSINESS collaborator, not transport: this class asks "is
-   * that document still there?" and never learns there is a socket, a frame or
-   * a correlation id behind the answer.
+   * Supplies the oracle that says whether an attachment's target still exists. It
+   * is a BUSINESS collaborator, not transport: this class asks "is that document
+   * still there?" and never learns there is a socket behind the answer.
    *
-   * It is INJECTED rather than constructed here for two reasons: the renderer
-   * contract fixes the constructor at (block, provider, handleBuild), and
-   * the CACHE is the point — one oracle per editor is what keeps a redraw from
-   * costing a round trip. Passing it is optional in every lens; a bare page
-   * simply renders the cached faces, which is what it did before.
+   * It is INJECTED because the renderer contract fixes the constructor at
+   * (block, provider, handleBuild), and because one oracle per editor is what
+   * keeps a redraw from costing a round trip. Passing it is optional: a bare page
+   * renders the cached faces.
    * @param {import('./address-status.js').AddressStatus|null} addresses
    */
   probeAttachmentsWith(addresses) {
@@ -242,7 +238,7 @@ export class AiBlockRenderer extends BlockRenderer {
     const uri = (attachment && attachment.uri || '').trim()
     const title = (attachment && attachment.title || '').trim()
     const missing = !title || this.#isDangling(uri)
-    const chip = new AttachmentChip({
+    const chip = new ReferenceChip({
       uri: uri,
       label: title,
       missing: missing,

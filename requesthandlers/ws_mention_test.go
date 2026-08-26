@@ -34,7 +34,8 @@ func (s *stubSource) Search(query string, limit int) []domain.Candidate {
 	return s.offers
 }
 
-func (s *stubSource) Resolve(uri string) (domain.NodeDescriptor, error) {
+func (s *stubSource) Resolve(addr domain.Address) (domain.NodeDescriptor, error) {
+	uri := addr.String()
 	s.resolved = append(s.resolved, uri)
 	if node, ok := s.nodes[uri]; ok {
 		return node, nil
@@ -46,8 +47,8 @@ func newWsTestServerWithNodes(t *testing.T) (*httptest.Server, *sieve.ServicePro
 	t.Helper()
 	srv, sp, _, _ := newWsTestServer(t)
 	src := &stubSource{offers: []domain.Candidate{
-		{URI: "container:9f2b", Title: "Auth Design", Kind: "note", Detail: "design/ · #auth"},
-		{URI: "container:7a1c", Title: "Auth Retry RFC", Kind: "note", Detail: "rfc/"},
+		{URI: "sieve://9f2b", Title: "Auth Design", Kind: "note", Detail: "design/ · #auth"},
+		{URI: "sieve://7a1c", Title: "Auth Retry RFC", Kind: "note", Detail: "rfc/"},
 	}}
 	sp.Nodes = editor.NewRouter(src)
 	return srv, sp, src
@@ -76,7 +77,7 @@ func TestWS_MentionQuery_RoundTripsCandidates(t *testing.T) {
 		t.Fatalf("candidates = %+v, want 2", frame["candidates"])
 	}
 	first, _ := cands[0].(map[string]interface{})
-	if first["uri"] != "container:9f2b" || first["title"] != "Auth Design" ||
+	if first["uri"] != "sieve://9f2b" || first["title"] != "Auth Design" ||
 		first["kind"] != "note" || first["detail"] != "design/ · #auth" {
 		t.Fatalf("candidate shape = %+v", first)
 	}
@@ -128,11 +129,10 @@ func TestWS_MentionQuery_NoMatchesRepliesWithAnEmptyList(t *testing.T) {
 	}
 }
 
-// TestWS_MentionResult_RoutesToRequester_NotChannelOwner is the mention half of
-// the 2026-07-26 stolen-/btw incident: a second workspace socket registering
-// __workspace__ deposes the requester as owner. A mention-result is ack-shaped, so
-// it is REQUESTER-AFFINE — reaching for sendTo(workspaceChannelKey) here would
-// silently hand one tab's typeahead replies to another.
+// A mention-result is ack-shaped and therefore REQUESTER-AFFINE. A second
+// workspace socket registering __workspace__ deposes the requester as owner, so
+// reaching for sendTo(workspaceChannelKey) here would silently hand one tab's
+// typeahead replies to another.
 func TestWS_MentionResult_RoutesToRequester_NotChannelOwner(t *testing.T) {
 	srv, _, _ := newWsTestServerWithNodes(t)
 	requester := dialWorkspaceWS(t, srv)

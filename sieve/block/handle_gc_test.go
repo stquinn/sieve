@@ -30,10 +30,9 @@ func TestGCRefs_DropsDangling(t *testing.T) {
 	}
 }
 
-// There is no alias GC by design (#75) — an alias is durable by intent, and a
-// declared name has no referrers by definition, so collecting unreferenced ones
-// would drop exactly the handles worth keeping. What must hold is that an alias
-// stays resolvable: collectHandles indexes it, which TestCollectHandles covers.
+// There is no alias GC by design: an alias is durable by intent and a declared
+// name has no referrers, so collecting unreferenced ones would drop exactly the
+// handles worth keeping. What must hold is that an alias stays resolvable.
 
 // `ref` is the document-local chain and NOTHING else. Attachments are global
 // addresses living in their own attr, so the ref machinery — outgoingRefs, the
@@ -43,7 +42,7 @@ func TestRefSemanticsUnchangedByAttachments(t *testing.T) {
 	b := SieveBlock{ID: "ai-c71e", Kind: "ai-block", Attrs: map[string]interface{}{
 		"ref": "pr-a,blk-gone",
 		AttachmentsAttr: []interface{}{
-			map[string]interface{}{"uri": "container:9f2b", "title": "Auth Design"},
+			map[string]interface{}{"uri": "sieve://9f2b", "title": "Auth Design"},
 		},
 	}}
 
@@ -62,7 +61,7 @@ func TestRefSemanticsUnchangedByAttachments(t *testing.T) {
 	}
 
 	// The GC prunes refs; it neither walks nor drops attachments.
-	if got := b.Attachments(); len(got) != 1 || got[0].URI != "container:9f2b" {
+	if got := b.Attachments(); len(got) != 1 || got[0].URI != "sieve://9f2b" {
 		t.Fatalf("attachments disturbed by ref GC: %+v", got)
 	}
 }

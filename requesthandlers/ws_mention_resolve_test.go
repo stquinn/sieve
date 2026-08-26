@@ -64,15 +64,15 @@ func TestWS_MentionResolve_AnswersWhereAContainerAddressOpens(t *testing.T) {
 	}
 }
 
-// A block: coordinate — the form #75's grammar defines and the JS decode could
-// only ever DROP — opens its CONTAINER and names the block to reveal. The
-// frontend still learns no grammar: it gets a uuid and a block id.
-func TestWS_MentionResolve_AQualifiedBlockAddressOpensItsContainer(t *testing.T) {
+// A leaf coordinate — the form the JS decode could only ever DROP — opens its
+// CONTAINER and names the block to reveal. The frontend still learns no grammar:
+// it gets a uuid and a block id.
+func TestWS_MentionResolve_ALeafAddressOpensItsContainer(t *testing.T) {
 	srv, _, _ := newWsTestServerWithResolvableNodes(t)
 	conn := dialWorkspaceWS(t, srv)
 	defer conn.Close()
 
-	uri := "block:" + resolveContainerUUID + "/" + resolveBlockUUID
+	uri := "sieve://" + resolveContainerUUID + "/" + resolveBlockUUID
 	if err := conn.WriteJSON(map[string]interface{}{
 		"type": "mention-resolve", "uri": uri, "correlationId": "c-r2",
 	}); err != nil {
@@ -88,10 +88,8 @@ func TestWS_MentionResolve_AQualifiedBlockAddressOpensItsContainer(t *testing.T)
 	}
 }
 
-// UNRESOLVABLE IS AN ANSWER, NOT SILENCE. The JS guard this replaces returned
-// early on anything it did not recognise, so the chip did nothing and said
-// nothing. Every request gets a reply; an unresolvable one carries found:false
-// and a reason.
+// UNRESOLVABLE IS AN ANSWER, NOT SILENCE. Every request gets a reply; an
+// unresolvable one carries found:false and a reason.
 func TestWS_MentionResolve_UnresolvableAddressesAnswerWithAReason(t *testing.T) {
 	srv, _, _ := newWsTestServerWithResolvableNodes(t)
 	conn := dialWorkspaceWS(t, srv)
@@ -100,8 +98,8 @@ func TestWS_MentionResolve_UnresolvableAddressesAnswerWithAReason(t *testing.T) 
 	cases := []struct{ name, uri string }{
 		{"malformed", "not-an-address"},
 		{"dangling", domain.NewContainerAddress(resolveMissingUUID).String()},
-		{"version pin", domain.NewContainerAddress(resolveContainerUUID).String() + "@v2"},
-		{"bare block", "block:" + resolveBlockUUID},
+		{"pin to a version nothing holds", domain.NewContainerAddress(resolveContainerUUID).String() + "?version=2"},
+		{"leafless authority", "sieve://" + resolveBlockUUID + "/"},
 	}
 	for i, tc := range cases {
 		cid := "c-bad-" + tc.name
@@ -124,9 +122,9 @@ func TestWS_MentionResolve_UnresolvableAddressesAnswerWithAReason(t *testing.T) 
 }
 
 // The mention-resolved frame is correlated and therefore ack-shaped: it must go
-// back to the REQUESTER. The 2026-07-26 stolen-/btw incident is why — a second
-// workspace socket deposes the first as __workspace__ owner, and a handler reaching
-// for sendTo(workspaceChannelKey) would hand this tab's answer to the other one.
+// back to the REQUESTER. A second workspace socket deposes the first as
+// __workspace__ owner, so a handler reaching for sendTo(workspaceChannelKey)
+// would hand this tab's answer to the other one.
 func TestWS_MentionResolved_RoutesToRequester_NotChannelOwner(t *testing.T) {
 	srv, _, _ := newWsTestServerWithResolvableNodes(t)
 	requester := dialWorkspaceWS(t, srv)

@@ -10,12 +10,12 @@ import "testing"
 func TestSieveBlock_AttachmentsRoundTripThroughTheAttrsBag(t *testing.T) {
 	b := NewSieveBlock("ai-block", "ai-c71e", nil)
 	b.SetAttachments(Attachments{
-		{URI: "container:9f2b", Title: "Auth Design"},
-		{URI: "container:7a1c", Title: "Retry RFC"},
+		{URI: "sieve://9f2b", Title: "Auth Design"},
+		{URI: "sieve://7a1c", Title: "Retry RFC"},
 	})
 
 	got := b.Attachments()
-	if len(got) != 2 || got[0].URI != "container:9f2b" || got[1].Title != "Retry RFC" {
+	if len(got) != 2 || got[0].URI != "sieve://9f2b" || got[1].Title != "Retry RFC" {
 		t.Fatalf("Attachments() = %+v", got)
 	}
 	if _, ok := b.Attrs[AttachmentsAttr].([]interface{}); !ok {
@@ -27,7 +27,7 @@ func TestSieveBlock_AttachmentsRoundTripThroughTheAttrsBag(t *testing.T) {
 // all, so it serializes exactly as it did before the attr existed.
 func TestSieveBlock_SetAttachmentsEmptyRemovesTheAttr(t *testing.T) {
 	b := NewSieveBlock("ai-block", "ai-c71e", nil)
-	b.SetAttachments(Attachments{{URI: "container:9f2b"}})
+	b.SetAttachments(Attachments{{URI: "sieve://9f2b"}})
 	b.SetAttachments(nil)
 
 	if _, present := b.Attrs[AttachmentsAttr]; present {

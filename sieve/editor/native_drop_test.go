@@ -76,10 +76,9 @@ func TestUriList_FilesReadsOnlyLocalPaths(t *testing.T) {
 	}
 }
 
-// The entry a dropped file becomes is the shape the browser's file branch used to
-// produce, because it feeds the same paste registry: a data URI carrying the
-// bytes, and the ORIGINAL filename in Context — which AttachmentProcessor refuses
-// a file without.
+// The entry a dropped file becomes feeds the ordinary paste registry: a data URI
+// carrying the bytes, and the ORIGINAL filename in Context, which the reference
+// kind refuses a file without.
 func TestDroppedFile_EntryCarriesTheBytesAndTheFilename(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "swagger.yml")
@@ -108,8 +107,8 @@ func TestDroppedFile_EntryCarriesTheBytesAndTheFilename(t *testing.T) {
 }
 
 // smart-image claims a paste only when BOTH the entry's type and its data URI say
-// image/*, so an image that came back text/plain would silently become an
-// attachment instead.
+// image/*, so an image that came back text/plain would silently become a
+// reference instead.
 func TestDroppedFile_EntryTypesAnImageBothWays(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "shot.png")
@@ -149,15 +148,13 @@ func TestDroppedFile_ExtensionlessFileIsTypedFromItsBytes(t *testing.T) {
 	}
 }
 
-// A file too big to hold is SKIPPED WITHOUT BEING READ. The size is asked of the
-// filesystem, not of the bytes, which is what keeps a huge drop out of memory —
-// the front half of the ceiling the browser used to enforce before Go did the
-// reading. AttachmentProcessor's own check remains the backstop, so the two
-// halves must name the SAME constant.
+// A file too big to hold is SKIPPED WITHOUT BEING READ: the size is asked of the
+// filesystem, not of the bytes, which keeps a huge drop out of memory. The
+// reference kind's own check is the backstop, and both halves name the same
+// constant.
 //
 // Both files here are SPARSE (truncate, never written), so the ceiling is
-// exercised at full size for the cost of an inode: a guard that regressed into
-// reading first would have to move 25MB to fail this.
+// exercised at full size for the cost of an inode.
 func TestDroppedFile_OverTheCeilingIsSkippedWithoutBeingRead(t *testing.T) {
 	sparse := func(name string, size int64) droppedFile {
 		t.Helper()
@@ -199,7 +196,7 @@ func TestDroppedFile_UnreadablePathsProduceNoEntry(t *testing.T) {
 	}
 }
 
-// newDropEditor stands up an editor with the real attachment kind registered, so
+// newDropEditor stands up an editor with the real reference kind registered, so
 // a drop's journey is the production one: uri-list → file read → paste match →
 // block.
 func newDropEditor(t *testing.T) (*EditorService, string) {
@@ -215,7 +212,7 @@ func newDropEditor(t *testing.T) (*EditorService, string) {
 		t.Fatalf("NewDocumentService: %v", err)
 	}
 	svc := block.BlockServices{Documents: ds, Assets: services.NewAssetService(fs, dir)}
-	block.RegisterProcessor(processors.NewAttachmentProcessor(svc))
+	block.RegisterProcessor(processors.NewReferenceProcessor(svc))
 
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
 	es.SetServices(svc)
@@ -242,9 +239,8 @@ func writeDropped(t *testing.T, name, body string) string {
 }
 
 // The frame carries ONLY the index: the paths come from the native drop bucket
-// (Wails OnFileDrop), the ONE drop mechanism on every platform — the page's own
-// view of a drop is never consulted (#86). Same ethos as the empty-clipboard
-// paste (#87).
+// (Wails OnFileDrop), the one drop mechanism on every platform. The page's own
+// view of a drop is never consulted.
 type fakeDropBucket struct{ paths []string }
 
 func (f *fakeDropBucket) TakeDrop(time.Duration) []string { return f.paths }
@@ -281,8 +277,8 @@ func TestHandleNativeDrop_OneBlockPerFileInDragOrder(t *testing.T) {
 		t.Fatalf("want one block per dropped file, got %d: %+v", len(blocks), blocks)
 	}
 	for i, want := range []string{"first.yml", "second.pdf"} {
-		if blocks[i].Kind != "attachment" {
-			t.Errorf("block %d kind = %q, want attachment", i, blocks[i].Kind)
+		if blocks[i].Kind != "reference" {
+			t.Errorf("block %d kind = %q, want reference", i, blocks[i].Kind)
 		}
 		if title, _ := blocks[i].Attrs["title"].(string); title != want {
 			t.Errorf("block %d title = %q, want %q (drag order)", i, title, want)
@@ -365,7 +361,6 @@ func TestHandleNativeDrop_UnopenedDocumentIsNothing(t *testing.T) {
 		t.Errorf("outcome = %q, want nothing", res.Outcome)
 	}
 }
-
 
 // The page hint: consulted ONLY on a bucket miss — VSCode-style sources never
 // offer a file URI at any layer, so the bare path the page read is the only

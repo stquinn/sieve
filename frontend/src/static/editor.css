@@ -1984,44 +1984,35 @@ pre.tiptap-code-block code {
   flex-shrink: 0;
 }
 
-/* ── Chip tokens: the one definition of what a chip looks like (#38) ─────────
-   THE VOCABULARY HAS THREE CALLERS AND ONE SET OF VALUES. `AttachmentChip`
-   (renderers/attachment-chip.js) draws the ai-block footer's chips and the
-   attachment block's; the composer's `.ask-chip` / `.ask-target-chip` below draw
+/* ── Chip tokens: the one definition of what a chip looks like ───────────────
+   THE VOCABULARY HAS THREE CALLERS AND ONE SET OF VALUES. `ReferenceChip`
+   (renderers/reference-chip.js) draws the ai-block footer's chips and the
+   reference block's; the composer's `.ask-chip` / `.ask-target-chip` below draw
    the Ask panel's. The composer cannot consume the component — it is not a
-   block, so it carries no block styles, and importing a renderer into the shell
-   would cross the shell/renderer boundary — so the TOKENS are unified where the
+   block, so it carries no block styles — so the TOKENS are unified where the
    COMPONENTS cannot be, and every caller draws its radius, tint, border and
    sizing from here.
 
    THEY LIVE IN :root, NOT WITH EITHER CALLER. A renderer's styles are injected
    lazily, the first time an instance of that class is constructed, and the
-   composer can draw a chip before any block ever has — so the shared half has to
-   sit in the always-present hand-authored sheet, next to the palette.
+   composer can draw a chip before any block ever has, so the shared half sits in
+   the always-present hand-authored sheet.
 
    THE DEFAULTS ARE THE BLOCK CHIP'S. A caller that differs OVERRIDES A TOKEN on
-   its own selector rather than restating the appearance: the composer's ✕ needs
-   asymmetric padding, a 14rem clamp and a slightly stronger fill, and the
-   dangling variant re-points `--chip-accent` to grey itself out — hover tint
-   included, because the tint is mixed FROM that variable. That is the whole
+   its own selector rather than restating the appearance — that is the whole
    extension mechanism.
 
    THE FILL IS A STRENGTH, NOT A PRE-MIXED COLOUR, and that is a correctness
-   requirement. A custom property whose value contains `var()` is substituted
-   where it is DECLARED, then inherits already-resolved; a `--chip-tint:
-   color-mix(… var(--chip-accent) …)` written here would freeze at `:root`'s
-   accent and strength and silently ignore every override below it (verified in
-   the real engine: the dangling chip kept the blue fill and the composer kept
-   8%). So the mix stays in the rule that paints, and what is shared is the
-   STRENGTH.
+   requirement: a custom property whose value contains `var()` is substituted
+   where it is DECLARED, so a `--chip-tint: color-mix(… var(--chip-accent) …)`
+   written here would freeze at `:root`'s accent and ignore every override below
+   it. The mix stays in the rule that paints; what is shared is the STRENGTH.
 
-   TYPE SIZE IS DELIBERATELY NOT A TOKEN, for the same substitution reason and a
-   design one. A `--chip-font-size: calc(var(--doc-size) * 0.72)` here would be
-   substituted at `:root`, where `--doc-size` does not exist (it is declared on
-   `.editor-panel`) — the whole declaration goes invalid and every chip inherits
-   its parent's size instead (measured: 40px in a 40px body). And the two callers
-   genuinely disagree anyway: a block chip scales with the document, panel chrome
-   does not. Each states its own. */
+   TYPE SIZE IS DELIBERATELY NOT A TOKEN. A `--chip-font-size: calc(var(--doc-size)
+   * 0.72)` here would be substituted at `:root`, where `--doc-size` does not
+   exist (it is declared on `.editor-panel`), so the whole declaration goes
+   invalid and every chip inherits its parent's size. The two callers also
+   disagree: a block chip scales with the document, panel chrome does not. */
 :root {
   --chip-radius: 999px;
   --chip-gap: 5px;
@@ -2062,7 +2053,7 @@ pre.tiptap-code-block code {
 
 /* THE ONE CHIP APPEARANCE — the same as the BLOCK chip's: radius, tint strength,
    border and accent all come from the `--chip-*` tokens above, which
-   AttachmentChip reads too. What is overridden here is only what a composer chip
+   ReferenceChip reads too. What is overridden here is only what a composer chip
    genuinely differs on — the ✕'s asymmetric padding, a footer-sized clamp, a 10%
    fill. Each is a token moved, not a rule restated. The fixed 12px/1.4 type is
    the one thing that is not a token at all: panel chrome does not scale with the

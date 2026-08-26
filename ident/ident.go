@@ -1,18 +1,16 @@
 // Package ident owns identity for everything Sieve persists — documents and
-// blocks alike. It is a leaf: store/ does not import sieve/, so an id type in
-// sieve/domain would be unreachable from filestore, and two copies of "mint a
-// uuid" is exactly the divergence this package exists to prevent.
-//
-// Named ident rather than id because `id` shadows the commonest local variable
-// in this codebase.
+// blocks alike. It must stay a leaf: store/ cannot import sieve/, so an id type
+// under sieve/domain would be unreachable from filestore.
 package ident
 
-import "github.com/google/uuid"
+import (
+	"strings"
 
-// New mints a UUIDv7 — time-ordered, so ids sort chronologically and index
-// locality is preserved. Falls back to v4 if the system clock read fails, which
-// costs ordering but never uniqueness; an id-less block is unrecoverable, an
-// unordered one is merely untidy.
+	"github.com/google/uuid"
+)
+
+// New mints a UUIDv7 — time-ordered, so ids sort chronologically. It falls back
+// to v4 if the clock read fails, which costs ordering but never uniqueness.
 func New() string {
 	if u, err := uuid.NewV7(); err == nil {
 		return u.String()
@@ -22,12 +20,26 @@ func New() string {
 
 // Valid reports whether s is a UUID in the canonical 8-4-4-4-12 form. It is
 // deliberately STRICTER than uuid.Parse, which also accepts the urn:, braced and
-// hyphen-less spellings: this is the predicate that decides "has this id already
-// been migrated", so a form we would never mint must answer false.
+// hyphen-less spellings: this decides whether an id has already been migrated, so
+// a form Sieve would never mint must answer false.
 func Valid(s string) bool {
 	if len(s) != 36 {
 		return false
 	}
 	_, err := uuid.Parse(s)
 	return err == nil
+}
+
+// Canonical returns the one spelling of an id — LOWERCASE, which is what Sieve
+// mints — so two writings of the same uuid compare and index alike. RFC 4122
+// makes hex case insignificant, so an uppercase spelling parses happily and then
+// misses a lowercase-named directory on disk.
+//
+// Anything that is not a valid uuid comes back untouched: this normalises
+// identity, it does not invent it. A caller wanting a refusal asks Valid.
+func Canonical(s string) string {
+	if !Valid(s) {
+		return s
+	}
+	return strings.ToLower(s)
 }

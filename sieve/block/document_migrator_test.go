@@ -2,6 +2,10 @@ package block
 
 import "testing"
 
+// testDocumentUUID stands in for the container ReferenceURIMigrator mints
+// against; these fixtures carry no reference blocks, so its value is inert.
+const testDocumentUUID = "0197b1f4-1111-7222-8333-444455556666"
+
 // DocumentCodec.Deserialize stays a PURE parse: the migration is a side effect
 // only a load-that-can-save path (DocumentMigrator's callers) may take, so a
 // read-only re-parse — findBlockByID's markdown fallback, AI context building, a
@@ -31,7 +35,7 @@ func TestDocumentMigrator_RunsIdentityAndAssetURLSteps(t *testing.T) {
 			"src": "/sieve/" + testAssetUUID + "/im.png",
 		}},
 	}
-	out, changed := DocumentMigrator{}.Migrate(in)
+	out, changed := DocumentMigrator{}.Migrate(in, testDocumentUUID)
 	if !changed {
 		t.Fatal("changed = false for a tree needing both migrations")
 	}
@@ -53,12 +57,30 @@ func TestDocumentMigrator_AssetURLOnlyStillReportsChanged(t *testing.T) {
 			"src": "/sieve/" + testAssetUUID + "/im.png",
 		}},
 	}
-	out, changed := DocumentMigrator{}.Migrate(in)
+	out, changed := DocumentMigrator{}.Migrate(in, testDocumentUUID)
 	if !changed {
 		t.Fatal("changed = false for a document whose only debt is a legacy asset route")
 	}
 	if out[0].ID != id {
 		t.Errorf("canonical id disturbed: %q", out[0].ID)
+	}
+}
+
+// The reference step runs as part of the same pipeline, keyed off the document
+// uuid DocumentMigrator now carries.
+func TestDocumentMigrator_RunsReferenceURIStep(t *testing.T) {
+	in := []SieveBlock{
+		{ID: "rf-1", Kind: "reference", Attrs: map[string]interface{}{
+			"id":  "rf-1",
+			"uri": "container:" + testAssetUUID,
+		}},
+	}
+	out, changed := DocumentMigrator{}.Migrate(in, testDocumentUUID)
+	if !changed {
+		t.Fatal("changed = false for a document whose only debt is a legacy reference uri")
+	}
+	if got, want := out[0].Attrs["uri"], "sieve://"+testAssetUUID; got != want {
+		t.Errorf("reference-uri step did not run: uri = %v, want %q", got, want)
 	}
 }
 
@@ -70,7 +92,7 @@ func TestDocumentMigrator_CleanTreeIsUnchanged(t *testing.T) {
 			"src": "/ui/assets/" + testAssetUUID + "/im.png",
 		}},
 	}
-	if _, changed := (DocumentMigrator{}).Migrate(in); changed {
+	if _, changed := (DocumentMigrator{}).Migrate(in, testDocumentUUID); changed {
 		t.Fatal("a fully migrated tree reported changed = true")
 	}
 }

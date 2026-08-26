@@ -91,7 +91,7 @@ func onePixelPNG(t *testing.T) block.ContentEntry {
 // The entry the reader produces has to be one the real image kind CLAIMS, and
 // smart-image demands image/* of BOTH halves — the mime type and the data URI.
 // A reader that answered "application/octet-stream", or handed over raw bytes
-// instead of a data URI, would compile, ship, and quietly make attachments out of
+// instead of a data URI, would compile, ship, and quietly make references out of
 // every screenshot.
 func TestNativeClipboard_SmartImageClaimsTheReadersEntry(t *testing.T) {
 	entries := []block.ContentEntry{onePixelPNG(t)}
@@ -101,9 +101,8 @@ func TestNativeClipboard_SmartImageClaimsTheReadersEntry(t *testing.T) {
 	}
 }
 
-// A screenshot on the clipboard becomes a block at the caret's index — the
-// gesture #87 reports as inert, because WebKitGTK hands the page an empty
-// DataTransfer no handler could salvage.
+// A screenshot on the clipboard becomes a block at the caret's index, read from
+// the OS because WebKitGTK hands the page an empty DataTransfer.
 func TestHandleNativeClipboard_ImageTakesTheOrdinaryPastePath(t *testing.T) {
 	es, uuid := newClipboardEditor(t)
 	clip := &fakeClipboard{entries: []block.ContentEntry{onePixelPNG(t)}}
@@ -181,8 +180,8 @@ func TestHandleNativeClipboard_CopiedFilesTakeTheDropIngestion(t *testing.T) {
 		t.Fatalf("want one block per copied file, got %d: %+v", len(blocks), blocks)
 	}
 	for i, want := range []string{"first.yml", "second.pdf"} {
-		if blocks[i].Kind != "attachment" {
-			t.Errorf("block %d kind = %q, want attachment", i, blocks[i].Kind)
+		if blocks[i].Kind != "reference" {
+			t.Errorf("block %d kind = %q, want reference", i, blocks[i].Kind)
 		}
 		if title, _ := blocks[i].Attrs["title"].(string); title != want {
 			t.Errorf("block %d title = %q, want %q (copy order)", i, title, want)
@@ -252,7 +251,7 @@ func TestHandleNativeClipboard_UnopenedDocumentIsNothing(t *testing.T) {
 	}
 }
 
-// newClipboardEditor stands up the drop editor (real attachment kind, so a copied
+// newClipboardEditor stands up the drop editor (real reference kind, so a copied
 // file's journey is the production one) plus an image kind for the other branch.
 func newClipboardEditor(t *testing.T) (*EditorService, string) {
 	t.Helper()

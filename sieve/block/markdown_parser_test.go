@@ -25,6 +25,53 @@ func TestFindBlockByIDNotFound(t *testing.T) {
 	}
 }
 
+// End-to-end through DocumentCodec: a fence tagged with an alias is scanned as a
+// region, claimed by the flavour that declares the alias, and deserialises to
+// the flavour's CANONICAL kind — the whole point of the alias mechanism (a
+// fence written under an old kind name must not fall through to prose).
+func TestDocumentCodec_Deserialize_aliasedFenceCanonicalises(t *testing.T) {
+	RegisterProcessor(&mockContextProcessor{
+		FencedDeserializer: FencedDeserializer{Kind: "reference-mock", Aliases: []string{"attachment-mock"}},
+	})
+	defer UnregisterProcessor("reference-mock")
+
+	md := "```attachment-mock\nid: r-1\nuri: sieve://x\n```\n"
+	blocks, err := NewDocumentCodec(GlobalRegistry()).Deserialize(md)
+	if err != nil {
+		t.Fatalf("Deserialize: %v", err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("want 1 block, got %d: %+v", len(blocks), blocks)
+	}
+	if blocks[0].Kind != "reference-mock" {
+		t.Errorf("an aliased fence must load as the CANONICAL kind, got %q (would silently mangle to prose without the alias mechanism)", blocks[0].Kind)
+	}
+}
+
+// The on-disk consequence of canonicalisation: an aliased fence must not only
+// load correctly, it must SAVE back out under the canonical head and never echo
+// the alias it matched. Echoing it would be silent document mangling on the next
+// save.
+func TestDocumentCodec_DeserializeThenSerialize_aliasedFenceRoundTripsToCanonicalHead(t *testing.T) {
+	RegisterProcessor(&mockContextProcessor{
+		FencedDeserializer: FencedDeserializer{Kind: "reference-mock", Aliases: []string{"attachment-mock"}},
+	})
+	defer UnregisterProcessor("reference-mock")
+
+	codec := NewDocumentCodec(GlobalRegistry())
+	blocks, err := codec.Deserialize("```attachment-mock\nid: r-2\nuri: sieve://x\n```\n")
+	if err != nil {
+		t.Fatalf("Deserialize: %v", err)
+	}
+	out, err := codec.Serialize(blocks)
+	if err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+	if !strings.HasPrefix(out, "```reference-mock\n") {
+		t.Fatalf("a re-saved aliased fence must write the CANONICAL head, got %q", out)
+	}
+}
+
 func TestBuildContextForIDDispatchesByKind(t *testing.T) {
 	RegisterProcessor(&mockContextProcessor{FencedDeserializer: FencedDeserializer{Kind: "code"}, returnVal: "CODE CONTEXT"})
 	defer UnregisterProcessor("code")

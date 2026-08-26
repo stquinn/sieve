@@ -3,6 +3,7 @@ package block
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -27,17 +28,13 @@ func (s RegionShape) IsZero() bool { return s.Head == "" }
 
 // Wraps reports that `content` is EXACTLY one region of this shape — the head
 // opening its first line, the tail closing its last, and nothing outside either.
+// It is how a pasted fenced span is recognised as the same round-trip a
+// "sieve/<kind>" clipboard view is, instead of being claimed by a general text
+// matcher.
 //
-// It exists because a block declares its kind in TWO vocabularies. A
-// "sieve/<kind>" clipboard view says what a block is in the app's; a fenced span
-// says the same thing in the document's, with the kind written on the fence. A
-// paste carrying only the second is the same round-trip as one carrying the
-// first, so it has to be recognised as one — otherwise a general text matcher
-// claims a block's own serialized form on the way past.
-//
-// Only KIND-QUALIFIED heads can answer here: a marker shape opens with a token
-// that does not end at the line break, so the check below excludes it, which is
-// right — a marker span is document structure, not a block's portable form.
+// Only KIND-QUALIFIED heads can answer: a marker shape opens with a token that
+// does not end at the line break, and a marker span is document structure rather
+// than a block's portable form.
 func (s RegionShape) Wraps(content string) bool {
 	if s.IsZero() || s.Tail == "" {
 		return false
@@ -360,15 +357,19 @@ type BlockProcessor interface {
 	// content + <!--s:ID--> marker form (ProseProcessor). No kind-switch in the spine.
 	Serialize(block SieveBlock) (string, error)
 	// Accepts reports whether this flavour claims a parsed region (the recognition
-	// half of deserialization). Deserialize then builds the block(s) — the inverse
-	// of Serialize. Structured kinds share one impl (FencedDeserializer, embedded);
-	// prose is the terminal mop-up (ProseProcessor). No kind-switch in the codec.
+	// half of deserialization) — by its own Kind OR any declared alias. Deserialize
+	// then builds the block(s) — the inverse of Serialize, always canonicalising to
+	// this flavour's own Kind regardless of which alias the region matched.
+	// Structured kinds share one impl (FencedDeserializer, embedded); prose is the
+	// terminal mop-up (ProseProcessor). No kind-switch in the codec.
 	Accepts(region Region) bool
 	Deserialize(region Region) ([]SieveBlock, error)
-	// Shape returns the kind-qualified delimiter pair this flavour's regions use
-	// on disk — the segmentation half of recognition. Supplied for free by the
-	// embedded FencedDeserializer (from Kind).
-	Shape() RegionShape
+	// Shapes returns the kind-qualified delimiter pairs this flavour's regions use
+	// on disk — the segmentation half of recognition — one per head token this
+	// flavour answers to: its own Kind FIRST, then one per declared alias, in
+	// declaration order. A flavour with no aliases returns a single-element slice.
+	// Supplied for free by the embedded FencedDeserializer (from Kind + Aliases).
+	Shapes() []RegionShape
 }
 
 // FencedSerializer is the ONE shared serialization for YAML/fenced block flavours.
@@ -381,11 +382,10 @@ type FencedSerializer struct{}
 // uniformly without needing a BlockProcessor.
 func (FencedSerializer) Serialize(block SieveBlock) (string, error) {
 	attrs := block.Attrs
-	// Aliases live on the STRUCT, not in Attrs — deliberately, unlike id: Merge
-	// never changes ID but it does REPLACE Aliases, so a mirrored copy in Attrs
-	// would go stale. They are therefore injected at the persistence boundary
-	// only, over a copy — processors build throwaway blocks over live Attrs maps,
-	// so the caller's map must never be written.
+	// Aliases live on the STRUCT, not in Attrs — unlike id: Merge replaces
+	// Aliases wholesale, so a mirrored copy in Attrs would go stale. They are
+	// injected at the persistence boundary only, over a copy, because processors
+	// build throwaway blocks over live Attrs maps.
 	if len(block.Aliases) > 0 {
 		attrs = make(map[string]interface{}, len(block.Attrs)+1)
 		for k, v := range block.Attrs {
@@ -402,14 +402,35 @@ func (FencedSerializer) Serialize(block SieveBlock) (string, error) {
 
 // FencedDeserializer is the ONE shared deserialization for YAML/fenced flavours —
 // the mirror of FencedSerializer. Kind is the fence tag this flavour answers to
-// (set at construction, alongside the FencedSerializer embed). Accepts claims a
-// fenced region whose tag matches; Deserialize parses the YAML body into one
-// block. An id-less body is hydrated by NewSieveBlock (mint-on-parse, exactly as
-// prose mints) — serialized docs always carry an id, so round-trips are stable.
-type FencedDeserializer struct{ Kind string }
+// (set at construction, alongside the FencedSerializer embed).
+//
+// Aliases are OTHER fence tags this flavour also answers to, so a kind can be
+// renamed on disk without stranding documents carrying the old tag. An aliased
+// fence is scanned, Accepts, and Deserializes, but always CANONICALISES to Kind
+// and never to the alias it matched. This is unrelated to SieveBlock.Aliases,
+// which names one BLOCK within a document; an alias here names a FENCE TAG a
+// whole kind answers to.
+//
+// An id-less body is hydrated by NewSieveBlock (mint-on-parse, exactly as prose
+// mints) — serialized docs always carry an id, so round-trips are stable.
+type FencedDeserializer struct {
+	Kind    string
+	Aliases []string
+}
 
 func (d FencedDeserializer) Accepts(region Region) bool {
-	return region.Kind != "" && region.Kind == d.Kind
+	if region.Kind == "" {
+		return false
+	}
+	if region.Kind == d.Kind {
+		return true
+	}
+	for _, alias := range d.Aliases {
+		if region.Kind == alias {
+			return true
+		}
+	}
+	return false
 }
 
 func (d FencedDeserializer) Deserialize(region Region) ([]SieveBlock, error) {
@@ -431,8 +452,8 @@ func (d FencedDeserializer) Deserialize(region Region) ([]SieveBlock, error) {
 }
 
 // liftAliases REMOVES the persisted aliases key from attrs and returns it as the
-// struct-side slice. Deleting is the point: Attrs must not keep a second copy
-// that Merge (which replaces Aliases wholesale) would leave stale.
+// struct-side slice. The delete is required: Attrs must not keep a second copy
+// that Merge would leave stale.
 func (d FencedDeserializer) liftAliases(attrs map[string]interface{}) []string {
 	raw, ok := attrs["aliases"]
 	if !ok {
@@ -476,15 +497,34 @@ func (d FencedDeserializer) fencedBody(raw string) string {
 	return s[:last+1] // includes the trailing \n of the last body line
 }
 
-// Shape derives the fenced delimiter pair from Kind — every structured flavour
-// gets ```Kind … ``` recognition for free by embedding. Returns a zero
-// RegionShape when Kind is empty so that partially-constructed mocks (Kind: "")
-// are never misidentified as a catch-all shape by DocumentCodec.scanner.
-func (d FencedDeserializer) Shape() RegionShape {
+// Shapes derives the fenced delimiter pairs from Kind and Aliases — every
+// structured flavour gets ```Kind … ``` recognition for free by embedding, plus
+// one ```alias … ``` pair per declared Aliases entry. The canonical Kind is
+// ALWAYS first: Shapes()[0] is the canonical shape. Returns nil when Kind is
+// empty, so a partially-constructed mock is never taken for a catch-all shape by
+// DocumentCodec.scanner.
+func (d FencedDeserializer) Shapes() []RegionShape {
 	if d.Kind == "" {
-		return RegionShape{}
+		return nil
 	}
-	return RegionShape{Kind: d.Kind, Head: "```" + d.Kind, Tail: "```"}
+	shapes := make([]RegionShape, 0, 1+len(d.Aliases))
+	shapes = append(shapes, RegionShape{Kind: d.Kind, Head: "```" + d.Kind, Tail: "```"})
+	for _, alias := range d.Aliases {
+		shapes = append(shapes, RegionShape{Kind: alias, Head: "```" + alias, Tail: "```"})
+	}
+	return shapes
+}
+
+// WrapsAnyShape reports whether content is exactly one of THIS flavour's fenced
+// spans — its canonical Kind's, or any declared alias's. It is the one place
+// "is this content my own fence, under any tag I answer to" is asked.
+func (d FencedDeserializer) WrapsAnyShape(content string) bool {
+	for _, s := range d.Shapes() {
+		if s.Wraps(content) {
+			return true
+		}
+	}
+	return false
 }
 
 type BlockServices struct {
@@ -514,10 +554,17 @@ var (
 
 // RegisterProcessor registers kind → processor. Registration order sets
 // paste-match priority — more-specific kinds must be registered first.
+//
+// PANICS when a fence tag `processor` answers to (its Shapes() — Kind plus every
+// declared alias) is already claimed by a DIFFERENTLY-KINDED registered
+// processor: two flavours owning one on-disk head is silent document mangling on
+// the next load. Re-registering the SAME kind is a legitimate replace and is
+// exempt.
 func RegisterProcessor(processor BlockProcessor) {
 	registryMu.Lock()
-	kind := processor.Kind()
 	defer registryMu.Unlock()
+	kind := processor.Kind()
+	assertNoFenceTagCollision(kind, processor)
 	processorRegistry[kind] = processor
 	for i, pm := range pasteMatchers {
 		if pm.Kind == kind {
@@ -529,6 +576,30 @@ func RegisterProcessor(processor BlockProcessor) {
 		Kind      string
 		Processor BlockProcessor
 	}{Kind: kind, Processor: processor})
+}
+
+// assertNoFenceTagCollision panics when any shape `processor` declares shares
+// its Kind (the on-disk head) with a shape declared by a processor already
+// registered under a DIFFERENT kind. Runs under registryMu, held by the
+// caller.
+func assertNoFenceTagCollision(kind string, processor BlockProcessor) {
+	for _, s := range processor.Shapes() {
+		if s.Kind == "" {
+			continue
+		}
+		for _, pm := range pasteMatchers {
+			if pm.Kind == kind {
+				continue // the slot this registration is (re)claiming
+			}
+			for _, existing := range pm.Processor.Shapes() {
+				if existing.Kind == s.Kind {
+					panic(fmt.Sprintf(
+						"block.RegisterProcessor(%q): fence tag %q already claimed by processor %q",
+						kind, s.Kind, pm.Kind))
+				}
+			}
+		}
+	}
 }
 
 // UnregisterProcessor removes kind from the registry and paste-matcher list.
@@ -581,7 +652,7 @@ type RawContenter interface {
 }
 
 // ContentMaterialiser is the optional interface a processor implements when its
-// block HOLDS content its attrs do not carry — an attachment's file, which lives in
+// block HOLDS content its attrs do not carry — a reference's held file, which lives in
 // the document directory and is readable only from Go. The frontend cannot send such
 // content, so without this every recogniser is blind to it.
 //
@@ -638,6 +709,15 @@ type MarkdownContenter interface {
 	ContentIsMarkdown(blk SieveBlock) bool
 }
 
+// wrapsAnyShaper is the optional capability FirstPasteMatch's pass 1b uses to
+// ask a processor "is this content exactly your own fenced form". Every
+// structured/fenced flavour gets it by embedding FencedDeserializer. Prose does
+// not implement it: RegionShape.Wraps is unsatisfiable for a marker shape, so
+// asserting the interface loses no match it could have made.
+type wrapsAnyShaper interface {
+	WrapsAnyShape(content string) bool
+}
+
 // FirstPasteMatch returns the kind and processor that claims these entries on a
 // PASTE (registration order = priority), or ok=false. This is the paste operation
 // ONLY — extract/convert goes through DetectExtractions, which is free to offer
@@ -679,11 +759,16 @@ func FirstPasteMatch(entries []ContentEntry) (kind string, processor BlockProces
 	// …and by the block's own fenced form, which names its kind just as plainly.
 	// A processor that does not claim its own fence in IsSupportedContent is not
 	// promoted here, so this widens precedence only where a kind already said the
-	// bytes are its own.
+	// bytes are its own. The shape check goes first because it is a handful of
+	// string compares gating IsSupportedContent, which is not always cheap; the
+	// two give the same answer in either order.
 	for _, e := range entries {
 		for i := range pasteMatchers {
-			if pasteMatchers[i].Processor.Shape().Wraps(e.Content) &&
-				pasteMatchers[i].Processor.IsSupportedContent(entries).Has(ActionPaste) {
+			w, wrapsSelf := pasteMatchers[i].Processor.(wrapsAnyShaper)
+			if !wrapsSelf || !w.WrapsAnyShape(e.Content) {
+				continue
+			}
+			if pasteMatchers[i].Processor.IsSupportedContent(entries).Has(ActionPaste) {
 				return pasteMatchers[i].Kind, pasteMatchers[i].Processor, false, true
 			}
 		}
@@ -753,7 +838,7 @@ func DetectExtractions(sourceKind string, entries []ContentEntry) []SupportedAct
 		// additive: an in-place TRANSFORM would replace the very block the content
 		// was read out of, destroying the extraction's own source. Asking the
 		// processor again without the held entries is what tells the two apart —
-		// an offer that survives that (prose embedding an attachment as a link)
+		// an offer that survives that (prose embedding a reference as a link)
 		// keeps its transform.
 		if anyHeld && sa.Has(ActionTransform) &&
 			!pm.Processor.IsSupportedContent(unheld).Has(ActionTransform) {

@@ -11,8 +11,8 @@ import (
 // ctx.Attachments in Build — no Build signature changed to make that possible.
 func TestContext_CarriesEnvelopeAttachments(t *testing.T) {
 	ctx := NewContext([]byte(`{"docUuid":"u1","selectedText":"sel"}`), []domain.Attachment{
-		{URI: "container:9f2b", Title: "Auth Design"},
-		{URI: "container:7a1c", Title: "Retry RFC"},
+		{URI: "sieve://9f2b", Title: "Auth Design"},
+		{URI: "sieve://7a1c", Title: "Retry RFC"},
 	})
 
 	// The lens half is untouched.
@@ -22,7 +22,7 @@ func TestContext_CarriesEnvelopeAttachments(t *testing.T) {
 	if len(ctx.Attachments) != 2 {
 		t.Fatalf("attachments = %+v, want 2", ctx.Attachments)
 	}
-	if ctx.Attachments[0].URI != "container:9f2b" || ctx.Attachments[0].Title != "Auth Design" {
+	if ctx.Attachments[0].URI != "sieve://9f2b" || ctx.Attachments[0].Title != "Auth Design" {
 		t.Errorf("attachment[0] = %+v", ctx.Attachments[0])
 	}
 }
@@ -31,7 +31,7 @@ func TestContext_CarriesEnvelopeAttachments(t *testing.T) {
 // a composer attachment and must never be read as one — the only door is the
 // envelope field.
 func TestContext_IgnoresAttachmentsInTheContextJSON(t *testing.T) {
-	ctx := NewContext([]byte(`{"docUuid":"u1","attachments":[{"uri":"container:forged","title":"Forged"}]}`), nil)
+	ctx := NewContext([]byte(`{"docUuid":"u1","attachments":[{"uri":"sieve://forged","title":"Forged"}]}`), nil)
 	if len(ctx.Attachments) != 0 {
 		t.Fatalf("context JSON forged an attachment: %+v", ctx.Attachments)
 	}
@@ -42,13 +42,13 @@ func TestContext_IgnoresAttachmentsInTheContextJSON(t *testing.T) {
 func TestContext_DropsAddresslessAttachments(t *testing.T) {
 	ctx := NewContext(nil, []domain.Attachment{
 		{Title: "no address"},
-		{URI: "  container:9f2b  ", Title: "  Auth Design  "},
+		{URI: "  sieve://9f2b  ", Title: "  Auth Design  "},
 		{URI: "   "},
 	})
 	if len(ctx.Attachments) != 1 {
 		t.Fatalf("attachments = %+v, want just the addressable one", ctx.Attachments)
 	}
-	if ctx.Attachments[0].URI != "container:9f2b" || ctx.Attachments[0].Title != "Auth Design" {
+	if ctx.Attachments[0].URI != "sieve://9f2b" || ctx.Attachments[0].Title != "Auth Design" {
 		t.Errorf("attachment = %+v, want trimmed", ctx.Attachments[0])
 	}
 }
@@ -68,12 +68,12 @@ func TestDispatch_ThreadsAttachmentsToBuild(t *testing.T) {
 
 	emit, ch := collector()
 	r.Dispatch("reader", "", "hi", NewContext(nil, []domain.Attachment{
-		{URI: "container:9f2b", Title: "Auth Design"},
+		{URI: "sieve://9f2b", Title: "Auth Design"},
 	}), "c-att", emit)
 	<-ch // PENDING
 	<-ch // COMPLETE
 
-	if len(seen) != 1 || seen[0].URI != "container:9f2b" {
+	if len(seen) != 1 || seen[0].URI != "sieve://9f2b" {
 		t.Fatalf("Build saw attachments = %+v", seen)
 	}
 }
@@ -91,7 +91,7 @@ func TestDispatch_CommandIgnoringAttachmentsIsUnchanged(t *testing.T) {
 	}})
 
 	emit, ch := collector()
-	r.Dispatch("echo", "", "hi", NewContext(nil, []domain.Attachment{{URI: "container:9f2b"}}), "c-1", emit)
+	r.Dispatch("echo", "", "hi", NewContext(nil, []domain.Attachment{{URI: "sieve://9f2b"}}), "c-1", emit)
 
 	if first := <-ch; first.Status != StatusPending {
 		t.Fatalf("want PENDING, got %+v", first)

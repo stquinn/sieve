@@ -10,10 +10,7 @@ import (
 
 // IsDataURI reports whether this entry's content is a `data:` URI — the shape a
 // browser produces for a file it has read (FileReader.readAsDataURL) and for a
-// binary clipboard payload. It is the entry's OWN question because more than one
-// kind asks it: smart-image ingests a pasted image this way and attachment
-// ingests a dropped file, and a second spelling of the same prefix test is a
-// second place for the two to disagree.
+// binary clipboard payload.
 func (e ContentEntry) IsDataURI() bool {
 	return strings.HasPrefix(strings.TrimSpace(e.Content), "data:")
 }

@@ -1,11 +1,9 @@
 // @ts-check
-// ai-block-renderer.test.js — DoD coverage for AiBlockRenderer (the ai-block
-// kind's look-and-feel class, docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
-// Phase 3 / issue #46). Bare-page protocol: render() ALONE yields the complete
-// block. Unlike the note lens (the adapter's handleBuild claim, in the adapter
-// file), this PURE class BUILDS AND FILLS the body from bodyMarkdown() and
-// the title from attrs.question — so a chat turn / embedded card gets a working
-// block for free. (The note lens swaps an empty PM-managed body via buildBody.)
+// Coverage for AiBlockRenderer, the ai-block kind's look-and-feel class.
+// Bare-page protocol: render() ALONE yields the complete block — this pure class
+// builds AND fills the body from bodyMarkdown() and the title from
+// attrs.question, so a chat turn or embedded card gets a working block for free.
+// (The note lens swaps an empty PM-managed body via buildBody.)
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import MarkdownIt from 'markdown-it'
 import { AiBlockRenderer } from '../src/static/renderers/ai-block-renderer.js'
@@ -147,17 +145,15 @@ describe('AiBlockRenderer (Phase 3 — bare-page DoD)', () => {
   })
 })
 
-// ── Attachments (#74 P4) ─────────────────────────────────────────────────────
+// ── Attachments ──────────────────────────────────────────────────────────────
 // The ai-block renders the documents its question attached, as chips in the
-// FOOTER region — the same place the composer puts them, so a sent question and
-// the answer that came back read alike.
+// FOOTER region — the same place the composer puts them.
 //
 // The ROW (.ai-block__attachments) is ai-block's; the CHIP inside it is the
-// shared AttachmentChip (#38), so the assertions below name
-// `.sieve-attachment-chip` — the component owns its class the way it owns its
-// styles. What is tested HERE is ai-block's MAPPING onto it (which field labels
-// a chip, what makes one dangling, when the row hides); the component's own
-// contract is attachment-chip.test.js.
+// shared ReferenceChip, which owns its own class. What is tested here is
+// ai-block's MAPPING onto it — which field labels a chip, what makes one
+// dangling, when the row hides. The component's own contract is
+// reference-chip.test.js.
 
 describe('AiBlockRenderer — the attachment chip row', () => {
   /** @type {HTMLStyleElement} */ let rootVars
@@ -178,7 +174,7 @@ describe('AiBlockRenderer — the attachment chip row', () => {
       { uri: 'container:9f2b', title: 'Auth Design' },
       { uri: 'container:1a2b', title: 'Retry RFC' },
     ]))
-    const chips = dom.querySelectorAll('.sieve-attachment-chip')
+    const chips = dom.querySelectorAll('.sieve-reference-chip')
     expect(chips.length).toBe(2)
     expect(chips[0].textContent).toContain('Auth Design')
     expect(chips[0].getAttribute('data-uri')).toBe('container:9f2b')
@@ -190,21 +186,21 @@ describe('AiBlockRenderer — the attachment chip row', () => {
       { uri: 'container:aaa', title: 'Notes' },
       { uri: 'container:bbb', title: 'Notes' },
     ]))
-    const chips = dom.querySelectorAll('.sieve-attachment-chip')
+    const chips = dom.querySelectorAll('.sieve-reference-chip')
     expect(Array.from(chips).map((c) => c.getAttribute('data-uri'))).toEqual(['container:aaa', 'container:bbb'])
   })
 
   it('an ai-block with no attachments renders no row at all (absent IS the empty case)', () => {
     const { dom } = mount(REPRESENTATIVE_ATTRS)
-    expect(dom.querySelectorAll('.sieve-attachment-chip').length).toBe(0)
+    expect(dom.querySelectorAll('.sieve-reference-chip').length).toBe(0)
     const row = dom.querySelector('.ai-block__attachments')
     expect(/** @type {HTMLElement} */ (row).style.display).toBe('none')
   })
 
   it('a chip with nothing left to show renders MISSING — dangling is a normal state', () => {
     const { dom } = mount(withAttachments([{ uri: 'container:gone' }]))
-    const chip = /** @type {HTMLElement} */ (dom.querySelector('.sieve-attachment-chip'))
-    expect(chip.className).toContain('sieve-attachment-chip--missing')
+    const chip = /** @type {HTMLElement} */ (dom.querySelector('.sieve-reference-chip'))
+    expect(chip.className).toContain('sieve-reference-chip--missing')
     // Falls back to the address so the chip is still identifiable, never blank.
     expect(chip.textContent).toContain('container:gone')
   })
@@ -214,7 +210,7 @@ describe('AiBlockRenderer — the attachment chip row', () => {
     /** @type {string[]} */ const opened = []
     const off = renderer.onOpenAttachment((uri) => opened.push(uri))
 
-    const chip = /** @type {HTMLElement} */ (dom.querySelector('.sieve-attachment-chip'))
+    const chip = /** @type {HTMLElement} */ (dom.querySelector('.sieve-reference-chip'))
     chip.click()
     expect(opened).toEqual(['container:9f2b'])
 
@@ -226,12 +222,12 @@ describe('AiBlockRenderer — the attachment chip row', () => {
   it('update() re-fills the chip row in place when server truth arrives', () => {
     const { renderer, dom } = mount(REPRESENTATIVE_ATTRS)
     const rowBefore = dom.querySelector('.ai-block__attachments')
-    expect(dom.querySelectorAll('.sieve-attachment-chip').length).toBe(0)
+    expect(dom.querySelectorAll('.sieve-reference-chip').length).toBe(0)
 
     renderer.update(blk(withAttachments([{ uri: 'container:9f2b', title: 'Auth Design' }])))
 
     expect(dom.querySelector('.ai-block__attachments')).toBe(rowBefore)  // same element
-    expect(dom.querySelectorAll('.sieve-attachment-chip').length).toBe(1)
+    expect(dom.querySelectorAll('.sieve-reference-chip').length).toBe(1)
   })
 
   it('the row is not editable — it is chrome inside a PM-managed block', () => {
@@ -242,15 +238,14 @@ describe('AiBlockRenderer — the attachment chip row', () => {
   })
 })
 
-// ── Dangling attachments (#82) ───────────────────────────────────────────────
+// ── Dangling attachments ─────────────────────────────────────────────────────
 // An attachment persists {uri, title} and nothing else, so a chip whose target
 // document was deleted goes on showing the cached title. Given an AddressStatus
 // the renderer ASKS, and greys the chip when the answer is "that resolves to
-// nothing" — keeping the title readable, because the point is "orphaned but
-// readable", never "error".
+// nothing", keeping the title readable: orphaned but readable, never an error.
 //
-// The renderer stays transport-blind: what it holds is an oracle with a
-// remembered verdict and an ask; it never learns there is a socket behind one.
+// The renderer stays transport-blind — it holds an oracle with a remembered
+// verdict and an ask, and never learns there is a socket behind one.
 
 describe('AiBlockRenderer — a chip whose target is gone', () => {
   /** @type {HTMLStyleElement} */ let rootVars
@@ -292,13 +287,13 @@ describe('AiBlockRenderer — a chip whose target is gone', () => {
   /** Drains the microtask queue the probes and their redraws run on. */
   const settled = () => new Promise((resume) => setTimeout(resume, 0))
 
-  const chipOf = (dom) => /** @type {HTMLElement} */ (dom.querySelector('.sieve-attachment-chip'))
+  const chipOf = (dom) => /** @type {HTMLElement} */ (dom.querySelector('.sieve-reference-chip'))
 
   it('renders NORMALLY until the answer arrives — a block never flickers through dangling', () => {
     const { renderer, dom } = mount(withAttachments([AUTH]))
     renderer.probeAttachmentsWith(/** @type {any} */ (fakeAddresses({ 'container:9f2b': 'dangling' })))
     // Synchronously, before the probe settles: nothing has been answered yet.
-    expect(chipOf(dom).className).not.toContain('sieve-attachment-chip--missing')
+    expect(chipOf(dom).className).not.toContain('sieve-reference-chip--missing')
   })
 
   it('greys the chip once the address answers DANGLING, keeping the cached title', async () => {
@@ -307,7 +302,7 @@ describe('AiBlockRenderer — a chip whose target is gone', () => {
     await settled()
 
     const chip = chipOf(dom)
-    expect(chip.className).toContain('sieve-attachment-chip--missing')
+    expect(chip.className).toContain('sieve-reference-chip--missing')
     expect(chip.textContent).toContain('Auth Design')          // orphaned but READABLE
     expect(chip.getAttribute('title')).toContain('no longer available')
     expect(chip.getAttribute('data-uri')).toBe('container:9f2b')   // and still clickable
@@ -319,7 +314,7 @@ describe('AiBlockRenderer — a chip whose target is gone', () => {
     await settled()
 
     const chip = chipOf(dom)
-    expect(chip.className).not.toContain('sieve-attachment-chip--missing')
+    expect(chip.className).not.toContain('sieve-reference-chip--missing')
     expect(chip.getAttribute('title')).toBe('container:9f2b')
   })
 
@@ -328,9 +323,9 @@ describe('AiBlockRenderer — a chip whose target is gone', () => {
     renderer.probeAttachmentsWith(/** @type {any} */ (fakeAddresses({ 'container:9f2b': 'dangling' })))
     await settled()
 
-    const chips = dom.querySelectorAll('.sieve-attachment-chip')
-    expect(chips[0].className).toContain('sieve-attachment-chip--missing')
-    expect(chips[1].className).not.toContain('sieve-attachment-chip--missing')
+    const chips = dom.querySelectorAll('.sieve-reference-chip')
+    expect(chips[0].className).toContain('sieve-reference-chip--missing')
+    expect(chips[1].className).not.toContain('sieve-reference-chip--missing')
   })
 
   it('a redraw asks NOTHING further — the verdict is remembered, not re-fetched', async () => {
@@ -346,7 +341,7 @@ describe('AiBlockRenderer — a chip whose target is gone', () => {
     await settled()
 
     expect(addresses.probes).toEqual(['container:9f2b'])
-    expect(chipOf(dom).className).toContain('sieve-attachment-chip--missing')
+    expect(chipOf(dom).className).toContain('sieve-reference-chip--missing')
   })
 
   it('an attachment arriving later is probed on the update that brings it', async () => {
@@ -359,18 +354,18 @@ describe('AiBlockRenderer — a chip whose target is gone', () => {
     await settled()
 
     expect(addresses.probes).toEqual(['container:9f2b'])
-    expect(chipOf(dom).className).toContain('sieve-attachment-chip--missing')
+    expect(chipOf(dom).className).toContain('sieve-reference-chip--missing')
   })
 
   it('without an oracle the row renders exactly as it did before #82', () => {
     const { dom } = mount(withAttachments([AUTH]))
     const chip = chipOf(dom)
-    expect(chip.className).not.toContain('sieve-attachment-chip--missing')
+    expect(chip.className).not.toContain('sieve-reference-chip--missing')
     expect(chip.textContent).toContain('Auth Design')
   })
 })
 
-// ── The question's @mentions (#74) ───────────────────────────────────────────
+// ── The question's @mentions ─────────────────────────────────────────────────
 // The literal `@Auth Design` inside the rendered question is marked with the
 // SAME accent its footer chip carries, so the inline mention and the chip read
 // as one object. Only titles this block actually attached are marked — the data

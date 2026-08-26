@@ -47,9 +47,8 @@ func (p *ProseProcessor) Serialize(blk block.SieveBlock) (string, error) {
 // BuildContext: a prose block's AI context IS its content. If the block carries
 // ==highlighted== words they become a "Specifically regarding" trailer Tag — NOT
 // appended to the string here. The framework's collection merge unions that Tag
-// across a multi-block target into ONE focus line (and renders it once via
-// AIContext.String). This is the highlight-as-target feature the retired
-// block-anchor provided, now a mergeable trailer instead of a per-block suffix.
+// across a multi-block target into ONE focus line, rendered once via
+// AIContext.String.
 func (p *ProseProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
 	content := blk.Content()
 	ctx := block.AIContext{NodeIDs: []string{blk.ID}, Content: content}
@@ -63,9 +62,8 @@ func (p *ProseProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _ m
 var targetHighlightRe = regexp.MustCompile(`==([^=]+)==`)
 
 // extractTargets pulls the ==highlighted== words/phrases out of prose content,
-// trimmed and in document order. These are the AI "targets" the user marked —
-// the successor to the retired block-anchor's Targets, sourced from the highlight
-// markers that round-trip in the content itself.
+// trimmed and in document order. These are the AI "targets" the user marked,
+// sourced from the highlight markers that round-trip in the content itself.
 func extractTargets(content string) []string {
 	var targets []string
 	for _, m := range targetHighlightRe.FindAllStringSubmatch(content, -1) {
@@ -383,10 +381,11 @@ func findLegacyClose(lines []string, start int) int {
 
 func (p *ProseProcessor) Kind() string { return "prose" }
 
-// Shape: prose regions are delimited by paired <!--s:ID--> / <!--/s:ID--> markers.
-// Kind is "prose"; the markers are kind-blind so Head/Tail carry no id.
-func (p *ProseProcessor) Shape() block.RegionShape {
-	return block.RegionShape{Kind: block.KindProse, Head: "<!--s:", Tail: "<!--/s:"}
+// Shapes: prose regions are delimited by paired <!--s:ID--> / <!--/s:ID-->
+// markers. Kind is "prose"; the markers are kind-blind so Head/Tail carry no id.
+// Prose has no aliases, so this is always a single-element slice.
+func (p *ProseProcessor) Shapes() []block.RegionShape {
+	return []block.RegionShape{{Kind: block.KindProse, Head: "<!--s:", Tail: "<!--/s:"}}
 }
 
 // Accepts always returns true: prose is the terminal mop-up. The codec sorts prose

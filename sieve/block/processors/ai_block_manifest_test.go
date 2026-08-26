@@ -12,9 +12,9 @@ import (
 // is rendered from what the attachment already carries, so these titles are the
 // ones the block persisted and these uuids are read straight out of the uris.
 const (
-	authURI  = "container:aaaaaaaa-1a2b-4c5d-8e9f-a1b2c3d4e5f6"
-	retryURI = "container:bbbbbbbb-1a2b-4c5d-8e9f-a1b2c3d4e5f6"
-	rateURI  = "container:cccccccc-1a2b-4c5d-8e9f-a1b2c3d4e5f6"
+	authURI  = "sieve://aaaaaaaa-1a2b-4c5d-8e9f-a1b2c3d4e5f6"
+	retryURI = "sieve://bbbbbbbb-1a2b-4c5d-8e9f-a1b2c3d4e5f6"
+	rateURI  = "sieve://cccccccc-1a2b-4c5d-8e9f-a1b2c3d4e5f6"
 )
 
 // aiBlockWithAttachments builds one chain turn.
@@ -27,11 +27,9 @@ func aiBlockWithAttachments(id, ref, question, response string, atts ...domain.A
 	return blk
 }
 
-// THE per-turn assertion: each ai-block in the chain carries its OWN attachments,
-// so each entry emits its own section. This is why attachments could not ride
-// `ref` — one field cannot be both the traversal edge and a per-turn property,
-// and a three-turn chain where each turn attached different documents is exactly
-// where that breaks.
+// Each ai-block in the chain carries its OWN attachments, so each thread entry
+// emits its own section: a three-turn chain where each turn attached different
+// documents renders three different manifests.
 func TestAIBlock_ThreeTurnChain_EachTurnRendersItsOwnManifest(t *testing.T) {
 	resetRegistry()
 	svc := block.BlockServices{}
@@ -50,9 +48,9 @@ func TestAIBlock_ThreeTurnChain_EachTurnRendersItsOwnManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed serialize: %v", err)
 	}
-	// NewShadow upgrades the fixture's readable handles to UUIDs on load (#75) —
-	// and rewrites the chain's refs to match — so the action turn is asked for by
-	// position (it is the last block) rather than by the name it was seeded with.
+	// NewShadow upgrades the fixture's readable handles to UUIDs on load, and
+	// rewrites the chain's refs to match, so the action turn is asked for by
+	// position rather than by the name it was seeded with.
 	shadow := block.NewShadow("u", body, codec, 0, nil)
 	loaded := shadow.SnapshotBlocks()
 	actionID := loaded[len(loaded)-1].ID
@@ -108,7 +106,7 @@ func TestAIBlock_UndereferenceableAttachment_RendersUnavailableAndStillAsks(t *t
 
 	p := NewAIBlockProcessor(svc)
 	blk := aiBlockWithAttachments("ab-1", "doc", "still answerable?", "",
-		domain.Attachment{URI: "block:not-a-uuid", Title: "Some Block"})
+		domain.Attachment{URI: "sieve://not-a-uuid", Title: "Some Block"})
 	_, _, question := p.buildPrompt(&blk, block.DocView{})
 
 	if !strings.Contains(question, "still answerable?") {

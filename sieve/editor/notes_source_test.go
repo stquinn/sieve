@@ -2,6 +2,7 @@ package editor
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -10,9 +11,8 @@ import (
 )
 
 // seedFiledNote creates a buffer, stamps metadata, and files it into the library.
-// Deliberately a second copy of the services-package fixture: an unexported test
-// helper cannot cross a package boundary, and exporting one so tests can share it
-// would put fixture code in the production API.
+// It is a deliberate second copy of the services-package fixture: an unexported
+// test helper cannot cross a package boundary.
 func seedFiledNote(t *testing.T, ds *services.DocumentService, title, folder string, tags []string, summary, body string) domain.Document {
 	t.Helper()
 	doc, err := ds.New()
@@ -42,6 +42,39 @@ func seedFiledNote(t *testing.T, ds *services.DocumentService, title, folder str
 	return filed
 }
 
+// reviseNote writes a new body over an existing document. Every Save writes a
+// snapshot, so this is how a test grows the history a pin can name.
+func reviseNote(t *testing.T, ds *services.DocumentService, doc domain.Document, body string) domain.Document {
+	t.Helper()
+	doc.SetBody([]byte(body))
+	saved, err := ds.Save(doc)
+	if err != nil {
+		t.Fatalf("Save revision: %v", err)
+	}
+	return saved
+}
+
+// latestVersion reads the newest ordinal out of a document's history. Tests ask
+// the store what the version numbers are rather than assuming them, because the
+// ordinal a given seeding path lands on is the store's business, not theirs.
+func latestVersion(t *testing.T, doc domain.Document) int {
+	t.Helper()
+	versions := doc.Versions()
+	if len(versions) == 0 {
+		t.Fatal("document has no history")
+	}
+	n, err := strconv.Atoi(versions[0].ID)
+	if err != nil {
+		t.Fatalf("version ref %q is not a decimal ordinal: %v", versions[0].ID, err)
+	}
+	return n
+}
+
+// pinnedURI spells sieve://{uuid}?version={n}.
+func pinnedURI(uuid string, version int) string {
+	return domain.NewContainerAddress(uuid).String() + "?version=" + strconv.Itoa(version)
+}
+
 func newTestNotesSource(t *testing.T) (*NotesSource, *services.DocumentService) {
 	t.Helper()
 	ds, _ := newTestDocumentService(t)
@@ -54,7 +87,7 @@ func TestNotesSource_ResolvesALiveAddress(t *testing.T) {
 		"Token exchange and refresh rules.", "# Auth Design\n\nBearer tokens.")
 
 	uri := domain.NewContainerAddress(note.UUID()).String()
-	node, err := src.Resolve(uri)
+	node, err := src.Resolve(mustAddress(t, uri))
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -78,6 +111,57 @@ func TestNotesSource_ResolvesALiveAddress(t *testing.T) {
 	}
 }
 
+// THE point of a pin: it answers with the snapshot it names, not with whatever
+// the document says today.
+func TestNotesSource_PinnedAddressResolvesTheSnapshotNotLiveContent(t *testing.T) {
+	src, ds := newTestNotesSource(t)
+	note := seedFiledNote(t, ds, "Auth Design", "design", []string{"auth"},
+		"Token exchange and refresh rules.", "Bearer tokens only.")
+	pinned := latestVersion(t, note)
+	revised := reviseNote(t, ds, note, "Bearer tokens and mTLS.")
+	if latestVersion(t, revised) == pinned {
+		t.Fatalf("precondition: the revision did not write a new version (still %d)", pinned)
+	}
+
+	node, err := src.Resolve(mustAddress(t, pinnedURI(note.UUID(), pinned)))
+	if err != nil {
+		t.Fatalf("Resolve pinned: %v", err)
+	}
+	if node.Body != "Bearer tokens only." {
+		t.Errorf("body = %q, want the version-%d snapshot", node.Body, pinned)
+	}
+	if node.UUID != note.UUID() || node.Kind != "note" {
+		t.Errorf("node = %+v, want the container's own identity", node)
+	}
+	// The descriptor is not uniformly historical: the body is the snapshot, the
+	// title and summary are current.
+	if node.Title != "Auth Design" || node.Summary != "Token exchange and refresh rules." {
+		t.Errorf("node = %+v, want current meta beside the frozen body", node)
+	}
+
+	// The unpinned address is unaffected by any of it.
+	live, err := src.Resolve(mustAddress(t, domain.NewContainerAddress(note.UUID()).String()))
+	if err != nil {
+		t.Fatalf("Resolve live: %v", err)
+	}
+	if live.Body != "Bearer tokens and mTLS." {
+		t.Errorf("live body = %q, want the revision", live.Body)
+	}
+}
+
+// A version nobody wrote dangles exactly like a document nobody kept: dangling
+// is a normal state, and a pin outliving its snapshot is the ordinary way a
+// reference goes stale.
+func TestNotesSource_PinToAVersionThatWasNeverWrittenDangles(t *testing.T) {
+	src, ds := newTestNotesSource(t)
+	note := seedFiledNote(t, ds, "Auth Design", "design", nil, "", "Bearer tokens only.")
+
+	beyond := latestVersion(t, note) + 99
+	if _, err := src.Resolve(mustAddress(t, pinnedURI(note.UUID(), beyond))); !errors.Is(err, domain.ErrNodeNotFound) {
+		t.Fatalf("err = %v, want ErrNodeNotFound", err)
+	}
+}
+
 // A deleted target is dangling — a typed error the caller can render as a stale
 // chip, never a panic.
 func TestNotesSource_DeletedAddressDangles(t *testing.T) {
@@ -89,7 +173,7 @@ func TestNotesSource_DeletedAddressDangles(t *testing.T) {
 		t.Fatalf("Delete: %v", err)
 	}
 
-	if _, err := src.Resolve(uri); !errors.Is(err, domain.ErrNodeNotFound) {
+	if _, err := src.Resolve(mustAddress(t, uri)); !errors.Is(err, domain.ErrNodeNotFound) {
 		t.Fatalf("err = %v, want ErrNodeNotFound", err)
 	}
 }
@@ -114,7 +198,7 @@ func TestNotesSource_RefusesBuffers(t *testing.T) {
 	}
 
 	uri := domain.NewContainerAddress(buf.UUID()).String()
-	if _, err := src.Resolve(uri); !errors.Is(err, domain.ErrNodeNotFound) {
+	if _, err := src.Resolve(mustAddress(t, uri)); !errors.Is(err, domain.ErrNodeNotFound) {
 		t.Fatalf("Resolve(buffer) err = %v, want ErrNodeNotFound", err)
 	}
 	for _, c := range src.Search("auth", 10) {
@@ -124,14 +208,12 @@ func TestNotesSource_RefusesBuffers(t *testing.T) {
 	}
 }
 
-// A block: address is perfectly well formed — the notes source simply does not
-// answer that address space, which the Router must read as "ask the next source"
-// rather than as a failure.
-func TestNotesSource_DoesNotAnswerForeignSchemes(t *testing.T) {
+// A leaf inside a container this source does not hold is dangling, which the
+// Router reads as "ask the next source" rather than as a failure.
+func TestNotesSource_LeafOfAnUnheldContainerDangles(t *testing.T) {
 	src, _ := newTestNotesSource(t)
-	blockURI := "block:" + testContainerUUID + "/" + testBlockUUID
-	if _, err := src.Resolve(blockURI); !errors.Is(err, domain.ErrNodeNotFound) {
-		t.Fatalf("err = %v, want ErrNodeNotFound (this source does not answer block:)", err)
+	if _, err := src.Resolve(mustAddress(t, leafURI(testContainerUUID, testBlockUUID))); !errors.Is(err, domain.ErrNodeNotFound) {
+		t.Fatalf("err = %v, want ErrNodeNotFound", err)
 	}
 }
 

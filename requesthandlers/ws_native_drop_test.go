@@ -14,9 +14,9 @@ import (
 )
 
 // A native drop's frame carries ONLY the index: the paths come from the native
-// drop bucket the OS-level catch fed (Wails OnFileDrop) — the page's view of a
-// drop is never consulted (#86). Multi-file drags arrive as one callback, so
-// several files are one gesture, one frame, several blocks.
+// drop bucket the OS-level catch fed (Wails OnFileDrop), and the page's view of
+// a drop is never consulted. Multi-file drags arrive as one callback, so several
+// files are one gesture, one frame, several blocks.
 //
 // The block still arrives the way every other created block does — an
 // insert-block render-back — so this pins the ACK, which is what tells the
@@ -24,10 +24,10 @@ import (
 func TestWS_NativeDrop_ReadsTheFilesAndMakesBlocks(t *testing.T) {
 	block.RegisterProcessor(&processors.ProseProcessor{})
 	srv, sp, _, uuid := newWsTestServer(t)
-	block.RegisterProcessor(processors.NewAttachmentProcessor(block.BlockServices{
+	block.RegisterProcessor(processors.NewReferenceProcessor(block.BlockServices{
 		Documents: sp.Documents, Assets: services.NewAssetService(sp.Store, ""),
 	}))
-	t.Cleanup(func() { block.UnregisterProcessor("attachment") })
+	t.Cleanup(func() { block.UnregisterProcessor("reference") })
 
 	dir := t.TempDir()
 	var paths []string

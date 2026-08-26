@@ -27,9 +27,9 @@ func newExportProseProc() *exportProseProc {
 	return &exportProseProc{fakeProc: *newFakeProc("exp-prose")}
 }
 
-func (exportProseProc) Mode() BlockMode     { return BlockModeProse }
-func (exportProseProc) Accepts(Region) bool { return true }
-func (exportProseProc) Shape() RegionShape  { return RegionShape{} }
+func (exportProseProc) Mode() BlockMode       { return BlockModeProse }
+func (exportProseProc) Accepts(Region) bool   { return true }
+func (exportProseProc) Shapes() []RegionShape { return nil }
 func (exportProseProc) Deserialize(r Region) ([]SieveBlock, error) {
 	return []SieveBlock{NewSieveBlock("exp-prose", "", map[string]interface{}{"content": r.Raw})}, nil
 }

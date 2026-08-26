@@ -60,12 +60,13 @@ func NewShadow(uuid, body string, codec *DocumentCodec, debounce time.Duration, 
 	if err != nil {
 		logger.Warn("editor: parse block doc failed", "uuid", uuid, "err", err)
 	}
-	// Lazy load-time migration (#75 ids, #19 asset routes): a legacy short
-	// handle becomes a UUID and in-document refs follow it; a legacy /sieve/…
-	// asset URL is rewritten to the current route. This is the load path — the
-	// one place minting/rewriting can be followed by a save — which is why
+	// Lazy load-time migration: a legacy short handle becomes a UUID and
+	// in-document refs follow it; a legacy asset URL is rewritten to the current
+	// route; a legacy address or src attr on a reference block is rewritten to
+	// its sieve:// uri, minted against this document's own uuid. This is the load
+	// path — the one place minting can be followed by a save — which is why
 	// DocumentMigrator is not run inside Deserialize.
-	blocks, migrated := DocumentMigrator{}.Migrate(blocks)
+	blocks, migrated := DocumentMigrator{}.Migrate(blocks, uuid)
 	s := &ShadowDocument{
 		UUID:     uuid,
 		Blocks:   blocks,

@@ -25,8 +25,10 @@ func NewDocumentCodec(reg ProcessorRegistry) *DocumentCodec {
 func (c *DocumentCodec) scanner() *RegionScanner {
 	var shapes []RegionShape
 	for _, p := range c.registry.Ordered() {
-		if s := p.Shape(); !s.IsZero() {
-			shapes = append(shapes, s)
+		for _, s := range p.Shapes() {
+			if !s.IsZero() {
+				shapes = append(shapes, s)
+			}
 		}
 	}
 	return NewRegionScanner(shapes)
@@ -59,8 +61,7 @@ func (c *DocumentCodec) Deserialize(markdown string) ([]SieveBlock, error) {
 
 // Serialize renders the block slice to markdown by asking each block's flavour to
 // serialize ITSELF — the mirror of Deserialize. The spine never decides format by
-// kind. A block must carry an id (persistence-boundary invariant). Identical
-// behaviour to the former shim SerializeBlockDocWithHandles, now fully on the codec.
+// kind. A block must carry an id (persistence-boundary invariant).
 func (c *DocumentCodec) Serialize(blocks []SieveBlock) (string, error) {
 	parts := make([]string, 0, len(blocks))
 	for _, b := range blocks {
@@ -79,8 +80,7 @@ func (c *DocumentCodec) Serialize(blocks []SieveBlock) (string, error) {
 // orderedProseLast returns the registry's processors with the terminal prose
 // (BlockModeProse) flavour moved to the end, so first-acceptor dispatch lets
 // structured recognisers win and prose mops up gap text and unsupported fences.
-// This is the ONLY place prose is "special" — a single ordering rule reflecting its
-// genuine catch-all role, not a per-region branch.
+// This ordering rule is the ONLY place prose is special.
 func (c *DocumentCodec) orderedProseLast() []BlockProcessor {
 	all := c.registry.Ordered()
 	out := make([]BlockProcessor, 0, len(all))
@@ -133,16 +133,14 @@ func (c *DocumentCodec) findBlockByID(markdown string, id string) (SieveBlock, b
 }
 
 // ProcessorRegistry is the narrow read-only seam DocumentCodec needs over the
-// registry. Injecting it (rather than reaching into the package globals) lets the
-// codec be tested with a fake registry — no resetRegistry() global gymnastics.
+// registry. Injecting it rather than reaching into the package globals lets the
+// codec be tested with a fake registry.
 type ProcessorRegistry interface {
 	Get(kind string) BlockProcessor
 	Ordered() []BlockProcessor // registry priority order, for the Accepts loop
 }
 
-// registryAdapter satisfies ProcessorRegistry over the existing package-global
-// registry. De-globalizing registration is a separate follow-up; this keeps the
-// codec injectable today without that ripple.
+// registryAdapter satisfies ProcessorRegistry over the package-global registry.
 type registryAdapter struct{}
 
 func (registryAdapter) Get(kind string) BlockProcessor { return GetProcessor(kind) }

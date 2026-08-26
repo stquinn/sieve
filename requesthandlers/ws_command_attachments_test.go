@@ -36,7 +36,7 @@ func TestWS_Command_EnvelopeAttachmentsReachBuild(t *testing.T) {
 		"context":       map[string]interface{}{"docUuid": "u1"},
 		"correlationId": "c-att-1",
 		"attachments": []map[string]string{
-			{"uri": "container:9f2b", "title": "Auth Design"},
+			{"uri": "sieve://9f2b", "title": "Auth Design"},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -45,7 +45,7 @@ func TestWS_Command_EnvelopeAttachmentsReachBuild(t *testing.T) {
 
 	select {
 	case got := <-seen:
-		if len(got) != 1 || got[0].URI != "container:9f2b" || got[0].Title != "Auth Design" {
+		if len(got) != 1 || got[0].URI != "sieve://9f2b" || got[0].Title != "Auth Design" {
 			t.Fatalf("Build saw attachments = %+v", got)
 		}
 	case <-time.After(2 * time.Second):
@@ -63,7 +63,7 @@ func TestWS_Command_AttachmentsAreInertForCommandsThatIgnoreThem(t *testing.T) {
 	if err := conn.WriteJSON(map[string]interface{}{
 		"type": "command", "family": "ai", "cmd": "fake",
 		"args": map[string]string{"text": "hi"}, "correlationId": "c-inert",
-		"attachments": []map[string]string{{"uri": "container:9f2b", "title": "Auth Design"}},
+		"attachments": []map[string]string{{"uri": "sieve://9f2b", "title": "Auth Design"}},
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -1,11 +1,9 @@
 // @ts-check
-// attachment-renderer.test.js — the 'attachment' kind's look-and-feel class
-// (#38, docs/design/archive/specs/2026-08-19-attachment-block-design.md). Bare-page
-// protocol: render() alone yields the complete block, with no ProseMirror, no
-// editor and no window.* in sight.
+// The 'reference' kind's look-and-feel class. Bare-page protocol: render() alone
+// yields the complete block, with no ProseMirror, no editor and no window.* in
+// sight.
 //
-// Four things here are load-bearing rather than mechanical, and each has a
-// reason it can silently regress:
+// Four properties here are load-bearing rather than mechanical:
 //
 //   • DANGLING IS NOT THE ERROR STATUS. The processor settles a reference whose
 //     target is gone as COMPLETE with a non-empty `error`, KEEPING the cached
@@ -20,58 +18,60 @@
 //     how — a hosted build with no file manager has to be able to answer
 //     differently without this class changing.
 import { describe, it, expect, afterEach } from 'vitest'
-import { AttachmentRenderer } from '../src/static/renderers/attachment-renderer.js'
+import { ReferenceRenderer } from '../src/static/renderers/reference-renderer.js'
 import { SieveBlock } from '../src/static/contract/sieve-block.js'
 
 /** @param {object} payload */
-function blk(payload) { return new SieveBlock('attachment', payload) }
+function blk(payload) { return new SieveBlock('reference', payload) }
 
 /** render() alone = the complete block (bare-page protocol). */
 function mount(payload) {
-  const renderer = new AttachmentRenderer(blk(payload))
+  const renderer = new ReferenceRenderer(blk(payload))
   const dom = renderer.render()
   document.body.appendChild(dom)
   return { renderer, dom }
 }
 
 const chipOf = (/** @type {HTMLElement} */ dom) =>
-  /** @type {HTMLElement} */ (dom.querySelector('.sieve-attachment-chip'))
+  /** @type {HTMLElement} */ (dom.querySelector('.sieve-reference-chip'))
 const partOf = (/** @type {HTMLElement} */ dom, /** @type {string} */ part) =>
-  /** @type {HTMLElement|null} */ (dom.querySelector('.sieve-attachment-chip__' + part))
+  /** @type {HTMLElement|null} */ (dom.querySelector('.sieve-reference-chip__' + part))
 const chevronOf = (/** @type {HTMLElement} */ dom) =>
-  /** @type {HTMLElement|null} */ (dom.querySelector('.attachment-block__chevron'))
+  /** @type {HTMLElement|null} */ (dom.querySelector('.reference-block__chevron'))
 const summaryOf = (/** @type {HTMLElement} */ dom) =>
-  /** @type {HTMLElement} */ (dom.querySelector('.attachment-block__summary'))
+  /** @type {HTMLElement} */ (dom.querySelector('.reference-block__summary'))
 
 /** A real bubbling double click on `el`. */
 function dblclick(/** @type {HTMLElement} */ el) {
   el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
 }
 
-/** A held file, resolved. */
+/** A held file, resolved: its own uri is a leaf address IN this document, and
+ *  `mime` — never a `src` attr — is what says the block holds these bytes. */
 const HELD = {
-  id: 'at-1', src: 'swagger.yml', uri: '', title: '', targetKind: 'yaml',
+  id: 'ref-1', uri: 'sieve://doc-1/swagger.yml', title: '',
   summary: 'openapi: 3.0.0', bytes: '421888', mime: 'text/yaml',
   status: 'COMPLETE', error: '', createdAt: '2026-08-19T10:00:00Z',
 }
 
-/** A citation, resolved. */
+/** A pointer, resolved: names another container, holds nothing. Its mime lives
+ *  in Sieve's own space, which is exactly what says it points rather than holds. */
 const CITES = {
-  id: 'at-2', src: '', uri: 'container:9f2b', title: 'Auth Design', targetKind: 'note',
-  summary: 'Token rotation and session binding', bytes: '', mime: '',
+  id: 'ref-2', uri: 'sieve://9f2b', title: 'Auth Design',
+  summary: 'Token rotation and session binding', bytes: '', mime: 'sieve/note',
   status: 'COMPLETE', error: '', createdAt: '2026-08-19T10:00:00Z',
 }
 
 afterEach(() => { document.body.innerHTML = '' })
 
-describe('AttachmentRenderer — the block is a chip', () => {
+describe('ReferenceRenderer — the block is a chip', () => {
   it('draws ONE chip inside a shrink-wrapping line, and no card shell', () => {
     const { dom } = mount(CITES)
-    expect(dom.className).toBe('attachment-block')
-    expect(dom.getAttribute('data-id')).toBe('at-2')
-    expect(dom.getAttribute('data-kind')).toBe('attachment')
-    expect(dom.querySelectorAll('.sieve-attachment-chip').length).toBe(1)
-    expect(chipOf(dom).parentElement?.className).toBe('attachment-block__line')
+    expect(dom.className).toBe('reference-block')
+    expect(dom.getAttribute('data-id')).toBe('ref-2')
+    expect(dom.getAttribute('data-kind')).toBe('reference')
+    expect(dom.querySelectorAll('.sieve-reference-chip').length).toBe(1)
+    expect(chipOf(dom).parentElement?.className).toBe('reference-block__line')
     // No header bar, no toolbar, no status badge: that is card furniture.
     expect(dom.querySelector('.sieve-block__heading')).toBe(null)
     expect(dom.querySelector('.ai-block__badge')).toBe(null)
@@ -80,32 +80,32 @@ describe('AttachmentRenderer — the block is a chip', () => {
   it('labels a citation with its cached title and carries the coordinate as identity', () => {
     const { dom } = mount(CITES)
     expect(partOf(dom, 'label')?.textContent).toBe('Auth Design')
-    expect(chipOf(dom).getAttribute('data-uri')).toBe('container:9f2b')
-    expect(chipOf(dom).getAttribute('title')).toBe('container:9f2b')
+    expect(chipOf(dom).getAttribute('data-uri')).toBe('sieve://9f2b')
+    expect(chipOf(dom).getAttribute('title')).toBe('sieve://9f2b')
   })
 
   it('labels a held file with its filename when nothing has titled it, and is NOT addressed', () => {
     const { dom } = mount(HELD)
     expect(partOf(dom, 'label')?.textContent).toBe('swagger.yml')
-    // A held file has no coordinate — the chip's own click activation is inert,
-    // which is right: this block opens on a double click.
+    // A held file's own chip carries no data-uri — its click activation is
+    // inert, which is right: this block opens on a double click.
     expect(chipOf(dom).hasAttribute('data-uri')).toBe(false)
   })
 
-  it('prefers an explicit title over the filename, and strips a path-qualified src', () => {
+  it('prefers an explicit title over the filename derived from its uri', () => {
     const { dom } = mount({ ...HELD, title: 'Payments API' })
     expect(partOf(dom, 'label')?.textContent).toBe('Payments API')
-    expect(AttachmentRenderer.filenameOf('.assets/swagger.yml')).toBe('swagger.yml')
-    expect(AttachmentRenderer.filenameOf('a/b/c.pdf')).toBe('c.pdf')
+    expect(ReferenceRenderer.filenameOf('sieve://doc-1/swagger.yml')).toBe('swagger.yml')
+    expect(ReferenceRenderer.filenameOf('a/b/c.pdf')).toBe('c.pdf')
   })
 
-  it('is never blank — an attachment addressing nothing is still a label', () => {
-    const { dom } = mount({ id: 'at-3', status: 'COMPLETE' })
-    expect(partOf(dom, 'label')?.textContent).toBe('Attachment')
+  it('is never blank — a reference addressing nothing is still a label', () => {
+    const { dom } = mount({ id: 'ref-3', status: 'COMPLETE' })
+    expect(partOf(dom, 'label')?.textContent).toBe('Reference')
   })
 })
 
-describe('AttachmentRenderer — kind and size as quiet secondary text', () => {
+describe('ReferenceRenderer — kind and size as quiet secondary text', () => {
   it('reads "yaml · 412 KB" after the label for a held file', () => {
     const { dom } = mount(HELD)
     expect(partOf(dom, 'detail')?.textContent).toBe('yaml · 412 KB')
@@ -114,64 +114,71 @@ describe('AttachmentRenderer — kind and size as quiet secondary text', () => {
   it('shortens to the kind alone for a citation, and omits the slot entirely when neither is known', () => {
     expect(partOf(mount(CITES).dom, 'detail')?.textContent).toBe('note')
     document.body.innerHTML = ''
-    expect(partOf(mount({ id: 'x', uri: 'container:1', status: 'PENDING' }).dom, 'detail')).toBe(null)
+    expect(partOf(mount({ id: 'x', uri: 'sieve://1', status: 'PENDING' }).dom, 'detail')).toBe(null)
   })
 
   it('ignores the reserved `kind` attr — the block kind never describes the target', () => {
-    // `kind` is the FRAMEWORK's attr (BASE_ATTRS) for the block's own kind, which
-    // is why this processor spells its own as `targetKind`. A payload carrying
-    // both must read the latter; regressing to `kind` would print "attachment"
-    // as if it described the file.
-    const { dom } = mount({ ...HELD, targetKind: '', kind: 'attachment' })
+    // `kind` is the FRAMEWORK's attr (BASE_ATTRS) for the block's own kind, so a
+    // payload carrying it must still read the noun off `mime`; regressing to
+    // `kind` would print "reference" as if it described the file.
+    const { dom } = mount({ ...HELD, mime: '', kind: 'reference' })
     expect(partOf(dom, 'detail')?.textContent).toBe('412 KB')
   })
 
+  it('derives the noun from `mime` for both halves — there is no second attr', () => {
+    // sieve/note reduces to "note" by exactly the rule text/yaml reduces to
+    // "yaml", which is why one attr carries the whole vocabulary.
+    expect(partOf(mount({ ...CITES, mime: 'sieve/note' }).dom, 'detail')?.textContent).toBe('note')
+    document.body.innerHTML = ''
+    expect(partOf(mount({ ...CITES, mime: 'text/plain', bytes: '' }).dom, 'detail')?.textContent).toBe('text')
+  })
+
   it('formats sizes the way the processor does, and renders nothing for an unparseable one', () => {
-    expect(AttachmentRenderer.humanSize('900')).toBe('900 B')
-    expect(AttachmentRenderer.humanSize('1536')).toBe('1.5 KB')
-    expect(AttachmentRenderer.humanSize('421888')).toBe('412 KB')
-    expect(AttachmentRenderer.humanSize('5242880')).toBe('5.0 MB')
-    expect(AttachmentRenderer.humanSize('')).toBe('')
-    expect(AttachmentRenderer.humanSize('later')).toBe('')
-    expect(AttachmentRenderer.humanSize('-1')).toBe('')
+    expect(ReferenceRenderer.humanSize('900')).toBe('900 B')
+    expect(ReferenceRenderer.humanSize('1536')).toBe('1.5 KB')
+    expect(ReferenceRenderer.humanSize('421888')).toBe('412 KB')
+    expect(ReferenceRenderer.humanSize('5242880')).toBe('5.0 MB')
+    expect(ReferenceRenderer.humanSize('')).toBe('')
+    expect(ReferenceRenderer.humanSize('later')).toBe('')
+    expect(ReferenceRenderer.humanSize('-1')).toBe('')
   })
 })
 
-describe('AttachmentRenderer — dangling is a normal state', () => {
+describe('ReferenceRenderer — dangling is a normal state', () => {
   const DANGLING = {
     ...CITES,
-    status: 'COMPLETE',                                   // NOT 'ERROR' — the resolve completed
-    error: 'nothing answers for container:9f2b any more', // and found nothing
+    status: 'COMPLETE',                            // NOT 'ERROR' — the resolve completed
+    error: 'nothing answers for sieve://9f2b any more', // and found nothing
   }
 
   it('greys a COMPLETE block carrying an error, KEEPING the face it cached', () => {
     const { dom } = mount(DANGLING)
-    expect(chipOf(dom).className).toContain('sieve-attachment-chip--missing')
+    expect(chipOf(dom).className).toContain('sieve-reference-chip--missing')
     // Still identifiable, still addressed: a reference whose target is gone
     // still says what it pointed at.
     expect(partOf(dom, 'label')?.textContent).toBe('Auth Design')
-    expect(chipOf(dom).getAttribute('data-uri')).toBe('container:9f2b')
+    expect(chipOf(dom).getAttribute('data-uri')).toBe('sieve://9f2b')
     expect(chipOf(dom).getAttribute('title')).toBe(DANGLING.error)
   })
 
   it('does not grey a COMPLETE block with no error — the ordinary case', () => {
-    expect(chipOf(mount(CITES).dom).className).toBe('sieve-attachment-chip')
+    expect(chipOf(mount(CITES).dom).className).toBe('sieve-reference-chip')
   })
 
   it('greys a genuinely FAILED job too — one predicate, because neither can be opened', () => {
-    const { dom } = mount({ ...HELD, status: 'ERROR', error: 'attachment: read swagger.yml: no such asset' })
-    expect(chipOf(dom).className).toContain('sieve-attachment-chip--missing')
+    const { dom } = mount({ ...HELD, status: 'ERROR', error: 'reference: read swagger.yml: no such asset' })
+    expect(chipOf(dom).className).toContain('sieve-reference-chip--missing')
     expect(partOf(dom, 'label')?.textContent).toBe('swagger.yml')
   })
 
   it('dims while the job is still in flight', () => {
-    const { dom } = mount({ id: 'at-9', uri: 'container:9f2b', status: 'PENDING', createdAt: new Date().toISOString() })
-    expect(dom.className).toContain('attachment-block--pending')
-    expect(mount(CITES).dom.className).not.toContain('attachment-block--pending')
+    const { dom } = mount({ id: 'ref-9', uri: 'sieve://9f2b', status: 'PENDING', createdAt: new Date().toISOString() })
+    expect(dom.className).toContain('reference-block--pending')
+    expect(mount(CITES).dom.className).not.toContain('reference-block--pending')
   })
 })
 
-describe('AttachmentRenderer — the chevron reads the asset in place', () => {
+describe('ReferenceRenderer — the chevron reads the asset in place', () => {
   it('offers no chevron when there is nothing to reveal', () => {
     const { dom } = mount({ ...CITES, summary: '' })
     expect(chevronOf(dom)).toBe(null)
@@ -183,13 +190,13 @@ describe('AttachmentRenderer — the chevron reads the asset in place', () => {
     const chevron = chevronOf(dom)
     expect(chevron).not.toBe(null)
     // ON the chip: a flex child of it, so the two hover as one object.
-    expect(chevron?.parentElement?.className).toContain('sieve-attachment-chip')
+    expect(chevron?.parentElement?.className).toContain('sieve-reference-chip')
     expect(summaryOf(dom).textContent).toBe(CITES.summary)
     expect(summaryOf(dom).className).not.toContain('--shown')
 
     chevron?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     expect(renderer.expanded).toBe(true)
-    expect(summaryOf(dom).className).toContain('attachment-block__summary--shown')
+    expect(summaryOf(dom).className).toContain('reference-block__summary--shown')
     expect(chevronOf(dom)?.getAttribute('aria-expanded')).toBe('true')
 
     chevronOf(dom)?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
@@ -213,13 +220,13 @@ describe('AttachmentRenderer — the chevron reads the asset in place', () => {
   })
 })
 
-describe('AttachmentRenderer — double click opens, and names no mechanism', () => {
+describe('ReferenceRenderer — double click opens, and names no mechanism', () => {
   it('reports the COORDINATE for a block that points', () => {
     const { dom, renderer } = mount(CITES)
     /** @type {any[]} */ const seen = []
     renderer.onOpen((t) => seen.push(t))
     dblclick(chipOf(dom))
-    expect(seen).toEqual([{ uri: 'container:9f2b', src: '', title: 'Auth Design' }])
+    expect(seen).toEqual([{ uri: 'sieve://9f2b', title: 'Auth Design', held: false }])
   })
 
   it('reports the ASSET for a block that holds — no URL, no path, no file manager', () => {
@@ -227,13 +234,13 @@ describe('AttachmentRenderer — double click opens, and names no mechanism', ()
     /** @type {any[]} */ const seen = []
     renderer.onOpen((t) => seen.push(t))
     dblclick(chipOf(dom))
-    expect(seen).toEqual([{ uri: '', src: 'swagger.yml', title: 'swagger.yml' }])
+    expect(seen).toEqual([{ uri: 'sieve://doc-1/swagger.yml', title: 'swagger.yml', held: true }])
   })
 
-  it('resolves the (illegal) both-set case the way the processor does — uri wins', () => {
-    expect(AttachmentRenderer.targetFor({ src: 'a.yml', uri: 'container:1', title: 'T' }))
-      .toEqual({ uri: 'container:1', src: '', title: 'T' })
-    expect(AttachmentRenderer.targetFor({})).toBe(null)
+  it('targetFor: held is read from the FACE (a non-empty mime), never a separate attr', () => {
+    expect(ReferenceRenderer.targetFor(HELD)).toEqual({ uri: 'sieve://doc-1/swagger.yml', title: 'swagger.yml', held: true })
+    expect(ReferenceRenderer.targetFor(CITES)).toEqual({ uri: 'sieve://9f2b', title: 'Auth Design', held: false })
+    expect(ReferenceRenderer.targetFor({})).toBe(null)
   })
 
   it('does NOT fire on a single click — selecting the block is the shared policy’s', () => {
@@ -254,7 +261,7 @@ describe('AttachmentRenderer — double click opens, and names no mechanism', ()
   })
 
   it('does nothing at all for a block that addresses nothing', () => {
-    const { dom, renderer } = mount({ id: 'at-3', status: 'COMPLETE' })
+    const { dom, renderer } = mount({ id: 'ref-3', status: 'COMPLETE' })
     let fired = 0
     renderer.onOpen(() => { fired++ })
     dblclick(chipOf(dom))
@@ -274,28 +281,28 @@ describe('AttachmentRenderer — double click opens, and names no mechanism', ()
   })
 
   it('copies the address, or the filename when it holds one', () => {
-    expect(new AttachmentRenderer(blk(CITES)).copyText()).toBe('container:9f2b')
-    expect(new AttachmentRenderer(blk(HELD)).copyText()).toBe('swagger.yml')
-    expect(new AttachmentRenderer(blk({})).copyText()).toBe('')
+    expect(new ReferenceRenderer(blk(CITES)).copyText()).toBe('sieve://9f2b')
+    expect(new ReferenceRenderer(blk(HELD)).copyText()).toBe('swagger.yml')
+    expect(new ReferenceRenderer(blk({})).copyText()).toBe('')
   })
 })
 
-describe('AttachmentRenderer — the stylesheet', () => {
+describe('ReferenceRenderer — the stylesheet', () => {
   // No clearing here: the registry's register-once set is a module singleton, so
   // emptying document.adoptedStyleSheets would prove nothing (the second
   // register is a no-op by design). Counting the sheets that survive every
   // instance built by this whole file is the property that matters.
   it('registers exactly once however many instances are built', () => {
-    new AttachmentRenderer(blk(CITES))
-    new AttachmentRenderer(blk(HELD))
-    new AttachmentRenderer(blk({}))
+    new ReferenceRenderer(blk(CITES))
+    new ReferenceRenderer(blk(HELD))
+    new ReferenceRenderer(blk({}))
     const mine = document.adoptedStyleSheets.filter((sheet) =>
-      Array.from(sheet.cssRules).some((rule) => rule.cssText.indexOf('.attachment-block') === 0))
+      Array.from(sheet.cssRules).some((rule) => rule.cssText.indexOf('.reference-block') === 0))
     expect(mine.length).toBe(1)
   })
 
   it('names no colour of its own — every one is a --theme-*/--chip-* token', () => {
-    const css = AttachmentRenderer.styles
+    const css = ReferenceRenderer.styles
     expect(css).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
     expect(css).not.toMatch(/\brgba?\(/)
     expect(css).toContain('var(--theme-fg2)')
@@ -303,7 +310,7 @@ describe('AttachmentRenderer — the stylesheet', () => {
   })
 
   it('shrink-wraps rather than filling the line, and lifts the footer chip’s clamp', () => {
-    const css = AttachmentRenderer.styles
+    const css = ReferenceRenderer.styles
     expect(css).toContain('width: max-content')
     // `max-width: 100%` is the text column's bound and is fine; a bare
     // `width: 100%` would be the card behaviour this kind refuses.
@@ -314,6 +321,6 @@ describe('AttachmentRenderer — the stylesheet', () => {
   })
 
   it('flips the chevron by swapping its glyph — no transform inside a contentEditable', () => {
-    expect(AttachmentRenderer.styles).not.toContain('transform')
+    expect(ReferenceRenderer.styles).not.toContain('transform')
   })
 })

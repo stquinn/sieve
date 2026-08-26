@@ -1,22 +1,20 @@
 // @ts-check
-// editor-toolbar.js — the editor-owned toolbar (P4.D).
+// The editor-owned toolbar.
 //
-// The toolbar is EDITOR-owned: NoteEditor constructs an EditorToolbar, which
-// mounts into the existing #editor-toolbar host (KEPT in index.html; its inner
-// button DOM removed — the ShowToolbar visibility gate + --toolbar-h stay
-// Go-driven). It composes, left→right (Stephen 2026-07-12):
+// NoteEditor constructs an EditorToolbar, which mounts into the #editor-toolbar
+// host in index.html (the ShowToolbar visibility gate and --toolbar-h stay
+// Go-driven). It composes left→right:
 //   surface.toolbarContents() + [editor-level groups]
-// i.e. formatting FIRST (left), then the editor-level tail (insert, mode-toggle,
-// AI-query, help). The editor-level groups (mode-toggle, insert, AI-query, help) PERSIST across
-// surface swaps; only the surface section re-renders on a mode flip. Active-state
-// (#refresh) fires on the editor's RAW onEvent stream (selection-changed /
-// transaction) — NOT the coalesced onSelectionUpdate, which drops caret-only
-// moves, so a caret-into-mark move would leave bold/italic active-state stale.
+// so formatting comes first and the editor-level tail (insert, mode-toggle,
+// AI-query, help) follows. The editor-level groups PERSIST across surface swaps;
+// only the surface section re-renders on a mode flip.
 //
-// This retires editor.js's syncToolbar + updateModeUI + the legacy-chrome
-// selection/transaction/mode-changed fan-out cases. Kind icons come from the
-// block-kind registry via getSieveIcon (the icon bus is retired); window.SieveIcons
-// (a distinct bus) still backs #icon.
+// Active-state (#refresh) fires on the editor's RAW onEvent stream
+// (selection-changed / transaction) and NOT the coalesced onSelectionUpdate,
+// which drops caret-only moves and would leave bold/italic active-state stale.
+//
+// Kind icons come from the block-kind registry via getSieveIcon; window.SieveIcons
+// backs #icon.
 // Dual-use ES module: `export` for vitest; imported by note-editor.js.
 
 import { ToolbarButton, ButtonGroup } from './toolbar-button.js'
@@ -107,9 +105,8 @@ export class EditorToolbar {
   }
 
   /**
-   * Shows/hides the (still-static, P4.D-deferred) #table-toolbar when the caret is
-   * inside a table, and tracks --table-toolbar-h for the gutter separator — the
-   * retired syncToolbar table branch, now driven off the surface's live tiptap.
+   * Shows/hides the static #table-toolbar when the caret is inside a table, and
+   * tracks --table-toolbar-h for the gutter separator.
    */
   #syncTableToolbar() {
     const tableToolbar = document.getElementById('table-toolbar')
@@ -135,10 +132,9 @@ export class EditorToolbar {
     const t = ev && ev.type
     if (t === 'selection-changed' || t === 'transaction') {
       this.refresh()
-      // Table-toolbar visibility is SELECTION-driven — synced ONLY here (matching
-      // the pre-P4.D syncToolbar, which ran only on selection-changed/transaction,
-      // never at mount). Seeding it in mount()'s refresh flashed the bar open on a
-      // fresh tab load whenever the doc's default selection resolved inside a table.
+      // Table-toolbar visibility is SELECTION-driven and synced ONLY here, never
+      // at mount: seeding it in mount()'s refresh flashes the bar open on a fresh
+      // tab load whenever the doc's default selection resolves inside a table.
       this.#syncTableToolbar()
     } else if (t === 'mode-changed') {
       // The surface swapped: rebuild ONLY the surface section + refresh the mode
@@ -264,8 +260,8 @@ export class EditorToolbar {
   /**
    * Attach a file. ONE affordance for every file type: the button never names a
    * block kind — it hands bytes and a mime type to smart-paste, and the paste-match
-   * registry decides, so an image becomes a smart-image and anything else an
-   * attachment. Adding a kind extends this button without touching it.
+   * registry decides, so an image becomes a smart-image and anything else a
+   * reference. Adding a kind extends this button without touching it.
    *
    * The insert ANCHOR is captured BEFORE the dialog opens, because opening it
    * blurs the editor and the caret would re-derive to the end of the document.
@@ -278,7 +274,7 @@ export class EditorToolbar {
     if (input) /** @type {HTMLInputElement} */ (input).click()
   }
 
-  /** @param {string} key @returns {string} the SieveIcons SVG for a key, or '' (icon bus retires P4.E) */
+  /** @param {string} key @returns {string} the SieveIcons SVG for a key, or '' */
   static #icon(key) {
     const icons = /** @type {any} */ (window).SieveIcons
     return (icons && icons[key]) || ''

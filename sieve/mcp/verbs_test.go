@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"sieve/sieve/block"
+	"sieve/sieve/block/processors"
 	"sieve/sieve/editor"
 	"sieve/sieve/services"
 	"sieve/store/filestore"
@@ -41,6 +43,12 @@ func newTestServerWithDocs(t *testing.T) (*Server, *services.DocumentService) {
 	if err != nil {
 		t.Fatalf("NewDocumentService: %v", err)
 	}
+	// Resolving a leaf parses the container's body, so the terminal prose
+	// flavour has to be registered here as it is in production — without it the
+	// codec has nothing to accept a region with and every body fails to parse.
+	block.ResetRegistry()
+	block.RegisterProcessor(&processors.ProseProcessor{})
+	t.Cleanup(block.ResetRegistry)
 	return NewServer(ds, editor.NewRouter(editor.NewNotesSource(ds))), ds
 }
 

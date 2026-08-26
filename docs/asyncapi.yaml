@@ -547,11 +547,9 @@ components:
       title: mention-query
       summary: MentionQueryFrame is the `@`-picker's typeahead question.
       description: |-
-        MentionQueryFrame is the `@`-picker's typeahead question.
-
-        It is a SIBLING FRAME TYPE, not a command: a typeahead needs a sub-100ms answer
-        with no job, no worker pool and no result block, none of which a command's
-        PENDING/COMPLETE lifecycle can give it.
+        MentionQueryFrame is the `@`-picker's typeahead question. It is a frame type
+        of its own rather than a command: it is answered directly, with no job and no
+        PENDING/COMPLETE lifecycle.
       contentType: application/json
       correlationId:
         $ref: '#/components/correlationIds/correlationId'
@@ -562,12 +560,9 @@ components:
       title: mention-resolve
       summary: MentionResolveFrame asks where a coordinate opens.
       description: |-
-        MentionResolveFrame asks where a coordinate opens.
-
-        It exists so the frontend holds coordinates as OPAQUE STRINGS. Decoding an
-        address in JavaScript is a second implementation of a grammar Go owns, and its
-        failure mode is silence: an unrecognised form falls through the guard and the
-        click does nothing.
+        MentionResolveFrame asks where a coordinate opens. It exists so the frontend
+        holds coordinates as OPAQUE STRINGS and never decodes the address grammar
+        itself.
       contentType: application/json
       correlationId:
         $ref: '#/components/correlationIds/correlationId'
@@ -588,16 +583,13 @@ components:
     workspaceSessionScroll:
       name: session-scroll
       title: session-scroll
-      summary: SessionScrollFrame persists one tab's scroll offset — the per-user VIEW coordinate a surface debounces up while the user scrolls, plus the pull at tab deactivation.
+      summary: SessionScrollFrame persists one tab's scroll offset, debounced up while the user scrolls and pulled again at tab deactivation.
       description: |-
-        SessionScrollFrame persists one tab's scroll offset — the per-user VIEW
-        coordinate a surface debounces up while the user scrolls, plus the pull at tab
-        deactivation.
+        SessionScrollFrame persists one tab's scroll offset, debounced up while the
+        user scrolls and pulled again at tab deactivation.
 
-        It is fire-and-forget and unanswered: this is caret-class state, not a shared
-        UI change, so there is nothing to broadcast and nothing to swap. It names its
-        tab because the workspace channel is not bound to a document — and a tab closed
-        mid-flight is a harmless no-op.
+        It is fire-and-forget and unanswered. It names its tab because the workspace
+        channel is not bound to a document; a tab closed mid-flight is a no-op.
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolSessionScrollFrame'
@@ -609,9 +601,9 @@ components:
         CommandResultFrame reports one step of a command's lifecycle. A command emits
         several: PENDING when the work is accepted, then COMPLETE or ERROR.
 
-        It is correlated and therefore ack-shaped, so it goes back on the socket the
-        request arrived on — never to whichever socket currently owns the workspace
-        channel, which is how a second tab silently swallowed another tab's answers.
+        It is correlated and therefore ack-shaped: it goes back on the socket the
+        request arrived on, never to whichever socket currently owns the workspace
+        channel.
       contentType: application/json
       correlationId:
         $ref: '#/components/correlationIds/correlationId'
@@ -628,56 +620,38 @@ components:
         bookkeeping, its editor, that editor's document socket) — rather than being
         asked to perform a deletion of its own.
 
-        CONTAINER, not "document", because that is the word the coordinate system
-        uses: a block-holding document is addressed as container:{uuid}, and further
-        container kinds are coming. Nothing here reads the container's kind — the
-        reconciliation is one uuid the client no longer has anything to hold — so
-        naming the frame after today's only kind would have to be renamed by the next.
+        Acting on it is IDEMPOTENT: a client that never held the container does
+        nothing, and one that hears the same news twice does nothing the second time.
+        It carries a uuid rather than a topic, because what went stale is the client's
+        own state and not a view to refetch.
 
-        The past tense is the whole design. There is no permission to negotiate and no
-        ordering to agree: a client that never held the container does nothing, and
-        one that hears the same news twice does nothing the second time. That is also
-        why it carries a uuid rather than a topic — nothing is refetched, because what
-        went stale is the client's own state, not a view.
-
-        The delete's own HTTP response is not a competing signal. A note deletion
-        emits this frame BEFORE it renders, so on loopback the client normally
-        reconciles first and tears down the editor that is still MOUNTED — the
-        ordinary path, not a hazard: the teardown is the same unmount and
-        channel-close the editor performs when a tab is switched away from, and the
-        response's out-of-band editor swap then mounts the new active tab from
-        scratch.
+        It is emitted BEFORE the deleting request renders its response, so on loopback
+        a client normally tears its editor down first and the response's out-of-band
+        swap then mounts the new active tab.
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolContainerDeletedFrame'
     workspaceContainerSaved:
       name: container-saved
       title: container-saved
-      summary: 'ContainerSavedFrame is NEWS in the same past tense its deleted sibling carries: the container it names has just reached disk, and every workspace socket hears so.'
+      summary: 'ContainerSavedFrame is NEWS: the container it names has just reached disk, and every workspace socket hears so.'
       description: |-
-        ContainerSavedFrame is NEWS in the same past tense its deleted sibling
-        carries: the container it names has just reached disk, and every workspace
-        socket hears so. A client that holds an editor for that uuid clears its dirty
-        state; one that does not, does nothing.
+        ContainerSavedFrame is NEWS: the container it names has just reached disk, and
+        every workspace socket hears so. A client holding an editor for that uuid
+        clears its dirty state; one that does not, does nothing.
 
-        It is the ONE saved-signal, and it is here rather than on the document
-        channel because a save is a FACT ABOUT A CONTAINER, not the outcome of one
-        client's request. Every writer therefore publishes the same frame — the
-        explicit flush, the debounce autosave, a finished job's write, and the prompt
-        pseudo-document's HTTP save, which by riding this wire gains a saved-signal
-        for the first time. That is also why it names its uuid: the workspace channel
-        is bound to the window, not to a document.
+        It is the ONE saved-signal and every writer publishes it — the explicit flush,
+        the debounce autosave, a finished job's write, the prompt pseudo-document's
+        HTTP save. It names its uuid because the workspace channel is bound to the
+        window, not to a document.
 
-        Version is what makes the fact ORDERABLE, which a client that waited for its
-        own save to land needs: the store stamps a strictly increasing version on
-        every write, so a listener can tell a save newer than the state it knew from
-        a debounce write that was already in flight when it asked. A container with no
-        version history reports 0 — the prompt pseudo-document is a plain file with no
-        metadata — and a real document's first save is version 1, so 0 is unambiguous.
+        Version makes the fact ORDERABLE: the store stamps a strictly increasing
+        version on every write, so a listener can tell a save newer than the state it
+        knew from a debounce write already in flight. A container with no version
+        history reports 0, and a real document's first save is version 1.
 
-        A FAILED save emits nothing. There is no "save failed" frame to pair with
-        this one, because the absence IS the signal: the document stays dirty, which
-        is exactly what the user needs to see, and the server logs the reason.
+        A FAILED save emits nothing — the document simply stays dirty, and the server
+        logs the reason.
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolContainerSavedFrame'
@@ -688,8 +662,7 @@ components:
       description: |-
         InvalidateFrame tells every connected workspace socket that a subject changed
         and the views showing it are stale. It is a NUDGE, not a payload: the client
-        refetches the affected view over HTTP, so hypermedia stays hypermedia and only
-        the signalling moved onto this wire.
+        refetches the affected view over HTTP.
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolInvalidateFrame'
@@ -699,12 +672,9 @@ components:
       summary: JobsChangedFrame broadcasts the whole job snapshot whenever it changes.
       description: |-
         JobsChangedFrame broadcasts the whole job snapshot whenever it changes. Unlike
-        an invalidate it carries data: the consumers are JS reading counts and labels,
-        not a view that could refetch itself, and the jobs it describes were dispatched
-        on this very wire.
-
-        It is also the ONLY way the snapshot reaches a client — there is no endpoint to
-        poll — so a workspace socket is sent one the moment it connects.
+        an invalidate it carries data, and it is the ONLY way the snapshot reaches a
+        client — there is no endpoint to poll — so a workspace socket is sent one the
+        moment it connects.
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolJobsChangedFrame'
@@ -717,9 +687,8 @@ components:
         the client can ACT on — a document to open, a block to reveal — and never
         anything it would have to parse.
 
-        An unresolvable address is an ANSWER (found:false plus a reason), not a dropped
-        frame: a request with no reply is the same silence in a slower costume. Every
-        key is present in every reply, resolvable or not, so a consumer reading uuid
+        An unresolvable address is an ANSWER (found:false plus a reason), never a
+        dropped frame. Every key is present in every reply, so a consumer reading uuid
         never has to tell "absent" from "empty".
       contentType: application/json
       correlationId:
@@ -844,26 +813,16 @@ components:
     DomainAttachment:
       type: object
       description: |-
-        Attachment is a live edge to another NodeDescriptor in the system: the address of
-        something Sieve already holds, offered as context for one AI turn.
+        Attachment is a live edge to another NodeDescriptor in the system: the address
+        of something Sieve already holds, offered as context for one AI turn.
 
-        URI AND TITLE ARE THE WHOLE OF IT, and between them they are enough for
-        everything an attachment does: the title labels the chip and names the document
-        in the prompt, and the uri carries the uuid a model needs to read it. NOTHING
-        is fetched to use an attachment — the prompt path resolves no addresses at all,
-        which is what keeps it free of the document store.
+        URI AND TITLE ARE THE WHOLE OF IT: the title labels the chip and names the
+        document in the prompt, the uri carries the address a model needs to read it.
+        NOTHING is fetched to use an attachment — the prompt path resolves no
+        addresses at all.
 
-        The title is the one it was attached under. A document renamed since then shows
-        its old name paired with a uuid that still resolves — for a historical turn the
-        more faithful record, not a stale one — and a document DELETED since then still
-        reads "Auth Design" rather than a bare address.
-
-        IT LIVES IN domain BECAUSE IT HAS SEVERAL CARRIERS. An attachment is persisted
-        as a block attr (block/ names the key) AND it rides the command envelope onto
-        command.Context — and `command` and `ai` cannot import `block` (block → ai →
-        command already exists, so the reverse edge would close a cycle). It is a leaf
-        value like NodeDescriptor and Candidate, so the leaf is where it belongs; no carrier owns
-        it.
+        The title is the one it was attached under, so a document renamed or deleted
+        since still reads under the name the turn recorded.
       properties:
         uri:
           type: string
@@ -875,8 +834,13 @@ components:
       type: object
       description: |-
         Candidate is one offer from a source's enumeration face: what the picker shows
-        and what an accepted mention persists. The invariant behind it is that a
-        source may only offer what it can also dereference.
+        and what an accepted mention persists. A source may only offer what it can
+        also dereference.
+
+        Summary and Detail are different sentences and neither substitutes for the
+        other: Detail disambiguates (folder · match snippet) and is discarded once a
+        candidate is picked, while Summary is the target's own description and is what
+        an accepted mention persists into the block it mints.
       properties:
         uri:
           type: string
@@ -886,11 +850,14 @@ components:
           type: string
         detail:
           type: string
+        summary:
+          type: string
       required:
         - uri
         - title
         - kind
         - detail
+        - summary
     DomainJobInfo:
       type: object
       description: |-
@@ -1045,9 +1012,9 @@ components:
         CommandResultFrame reports one step of a command's lifecycle. A command emits
         several: PENDING when the work is accepted, then COMPLETE or ERROR.
 
-        It is correlated and therefore ack-shaped, so it goes back on the socket the
-        request arrived on — never to whichever socket currently owns the workspace
-        channel, which is how a second tab silently swallowed another tab's answers.
+        It is correlated and therefore ack-shaped: it goes back on the socket the
+        request arrived on, never to whichever socket currently owns the workspace
+        channel.
       properties:
         type:
           type: string
@@ -1077,25 +1044,14 @@ components:
         bookkeeping, its editor, that editor's document socket) — rather than being
         asked to perform a deletion of its own.
 
-        CONTAINER, not "document", because that is the word the coordinate system
-        uses: a block-holding document is addressed as container:{uuid}, and further
-        container kinds are coming. Nothing here reads the container's kind — the
-        reconciliation is one uuid the client no longer has anything to hold — so
-        naming the frame after today's only kind would have to be renamed by the next.
+        Acting on it is IDEMPOTENT: a client that never held the container does
+        nothing, and one that hears the same news twice does nothing the second time.
+        It carries a uuid rather than a topic, because what went stale is the client's
+        own state and not a view to refetch.
 
-        The past tense is the whole design. There is no permission to negotiate and no
-        ordering to agree: a client that never held the container does nothing, and
-        one that hears the same news twice does nothing the second time. That is also
-        why it carries a uuid rather than a topic — nothing is refetched, because what
-        went stale is the client's own state, not a view.
-
-        The delete's own HTTP response is not a competing signal. A note deletion
-        emits this frame BEFORE it renders, so on loopback the client normally
-        reconciles first and tears down the editor that is still MOUNTED — the
-        ordinary path, not a hazard: the teardown is the same unmount and
-        channel-close the editor performs when a tab is switched away from, and the
-        response's out-of-band editor swap then mounts the new active tab from
-        scratch.
+        It is emitted BEFORE the deleting request renders its response, so on loopback
+        a client normally tears its editor down first and the response's out-of-band
+        swap then mounts the new active tab.
       properties:
         type:
           type: string
@@ -1108,29 +1064,22 @@ components:
     ProtocolContainerSavedFrame:
       type: object
       description: |-
-        ContainerSavedFrame is NEWS in the same past tense its deleted sibling
-        carries: the container it names has just reached disk, and every workspace
-        socket hears so. A client that holds an editor for that uuid clears its dirty
-        state; one that does not, does nothing.
+        ContainerSavedFrame is NEWS: the container it names has just reached disk, and
+        every workspace socket hears so. A client holding an editor for that uuid
+        clears its dirty state; one that does not, does nothing.
 
-        It is the ONE saved-signal, and it is here rather than on the document
-        channel because a save is a FACT ABOUT A CONTAINER, not the outcome of one
-        client's request. Every writer therefore publishes the same frame — the
-        explicit flush, the debounce autosave, a finished job's write, and the prompt
-        pseudo-document's HTTP save, which by riding this wire gains a saved-signal
-        for the first time. That is also why it names its uuid: the workspace channel
-        is bound to the window, not to a document.
+        It is the ONE saved-signal and every writer publishes it — the explicit flush,
+        the debounce autosave, a finished job's write, the prompt pseudo-document's
+        HTTP save. It names its uuid because the workspace channel is bound to the
+        window, not to a document.
 
-        Version is what makes the fact ORDERABLE, which a client that waited for its
-        own save to land needs: the store stamps a strictly increasing version on
-        every write, so a listener can tell a save newer than the state it knew from
-        a debounce write that was already in flight when it asked. A container with no
-        version history reports 0 — the prompt pseudo-document is a plain file with no
-        metadata — and a real document's first save is version 1, so 0 is unambiguous.
+        Version makes the fact ORDERABLE: the store stamps a strictly increasing
+        version on every write, so a listener can tell a save newer than the state it
+        knew from a debounce write already in flight. A container with no version
+        history reports 0, and a real document's first save is version 1.
 
-        A FAILED save emits nothing. There is no "save failed" frame to pair with
-        this one, because the absence IS the signal: the document stays dirty, which
-        is exactly what the user needs to see, and the server logs the reason.
+        A FAILED save emits nothing — the document simply stays dirty, and the server
+        logs the reason.
       properties:
         type:
           type: string
@@ -1377,8 +1326,7 @@ components:
       description: |-
         InvalidateFrame tells every connected workspace socket that a subject changed
         and the views showing it are stale. It is a NUDGE, not a payload: the client
-        refetches the affected view over HTTP, so hypermedia stays hypermedia and only
-        the signalling moved onto this wire.
+        refetches the affected view over HTTP.
       properties:
         type:
           type: string
@@ -1391,12 +1339,9 @@ components:
       type: object
       description: |-
         JobsChangedFrame broadcasts the whole job snapshot whenever it changes. Unlike
-        an invalidate it carries data: the consumers are JS reading counts and labels,
-        not a view that could refetch itself, and the jobs it describes were dispatched
-        on this very wire.
-
-        It is also the ONLY way the snapshot reaches a client — there is no endpoint to
-        poll — so a workspace socket is sent one the moment it connects.
+        an invalidate it carries data, and it is the ONLY way the snapshot reaches a
+        client — there is no endpoint to poll — so a workspace socket is sent one the
+        moment it connects.
       properties:
         type:
           type: string
@@ -1486,11 +1431,9 @@ components:
     ProtocolMentionQueryFrame:
       type: object
       description: |-
-        MentionQueryFrame is the `@`-picker's typeahead question.
-
-        It is a SIBLING FRAME TYPE, not a command: a typeahead needs a sub-100ms answer
-        with no job, no worker pool and no result block, none of which a command's
-        PENDING/COMPLETE lifecycle can give it.
+        MentionQueryFrame is the `@`-picker's typeahead question. It is a frame type
+        of its own rather than a command: it is answered directly, with no job and no
+        PENDING/COMPLETE lifecycle.
       properties:
         type:
           type: string
@@ -1509,18 +1452,15 @@ components:
     ProtocolMentionResolveFrame:
       type: object
       description: |-
-        MentionResolveFrame asks where a coordinate opens.
-
-        It exists so the frontend holds coordinates as OPAQUE STRINGS. Decoding an
-        address in JavaScript is a second implementation of a grammar Go owns, and its
-        failure mode is silence: an unrecognised form falls through the guard and the
-        click does nothing.
+        MentionResolveFrame asks where a coordinate opens. It exists so the frontend
+        holds coordinates as OPAQUE STRINGS and never decodes the address grammar
+        itself.
       properties:
         type:
           type: string
         uri:
           type: string
-          description: 'a domain.Address coordinate: container:{uuid}[@v{n}], block:{uuid}, block:{container}[@v{n}]/{handle}'
+          description: 'a domain.Address coordinate: sieve://{container}[?version={n}], sieve://{container}/{leaf}[?version={n}]'
         correlationId:
           type: string
       required:
@@ -1534,9 +1474,8 @@ components:
         the client can ACT on — a document to open, a block to reveal — and never
         anything it would have to parse.
 
-        An unresolvable address is an ANSWER (found:false plus a reason), not a dropped
-        frame: a request with no reply is the same silence in a slower costume. Every
-        key is present in every reply, resolvable or not, so a consumer reading uuid
+        An unresolvable address is an ANSWER (found:false plus a reason), never a
+        dropped frame. Every key is present in every reply, so a consumer reading uuid
         never has to tell "absent" from "empty".
       properties:
         type:
@@ -1766,14 +1705,11 @@ components:
     ProtocolSessionScrollFrame:
       type: object
       description: |-
-        SessionScrollFrame persists one tab's scroll offset — the per-user VIEW
-        coordinate a surface debounces up while the user scrolls, plus the pull at tab
-        deactivation.
+        SessionScrollFrame persists one tab's scroll offset, debounced up while the
+        user scrolls and pulled again at tab deactivation.
 
-        It is fire-and-forget and unanswered: this is caret-class state, not a shared
-        UI change, so there is nothing to broadcast and nothing to swap. It names its
-        tab because the workspace channel is not bound to a document — and a tab closed
-        mid-flight is a harmless no-op.
+        It is fire-and-forget and unanswered. It names its tab because the workspace
+        channel is not bound to a document; a tab closed mid-flight is a no-op.
       properties:
         type:
           type: string

@@ -669,6 +669,14 @@ that already carried the information:
   fork was scheme dispatch before the vocabulary existed.
 - **The container-vs-block grain dissolves into the path.** One internal scheme:
 
+  > **Superseded by issue #100 (comments 1736, 1739).** The grammar landed as an
+  > RFC 3986 authority-form URI, not the opaque-authority sketch below: authority
+  > form `sieve://{container}[/{leaf}][?version={n}]`, plus a relative `/{leaf}`
+  > resolved by standard `net/url` reference resolution. `container:`/`block:`
+  > were DROPPED rather than kept as parse-forever aliases (a load-path migrator
+  > rewrites stored ones); `https` was cut from the admitted scheme set. Grammar
+  > of record is `sieve/domain/address.go`.
+
   ```
   sieve:{container}                  — a container
   sieve:{container}@v{n}             — pinned (the pin sits on the container segment:

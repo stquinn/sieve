@@ -28,10 +28,8 @@ import (
 //
 // Read-only v1: search, get_meta, get_note, get_by_uri, list_facets. TWO verbs
 // return bodies — get_note names its target by uuid, get_by_uri by coordinate —
-// and both record the SAME bodyRead audit through one auditor, so bulk-read is
-// still visible at a single Sieve-owned boundary though there are now two doors
-// through it. Adding a body-bearing verb without that record would be the change
-// that quietly ends the property.
+// and both MUST record the same bodyRead audit through one auditor, which is
+// what keeps bulk-read visible at a single boundary.
 type Server struct {
 	documents *services.DocumentService
 	nodes     NodeResolver    // address → NodeDescriptor; the concrete Router is injected at the root
@@ -78,7 +76,7 @@ func NewServer(documents *services.DocumentService, nodes NodeResolver) *Server 
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
 		Name: "get_by_uri",
 		Description: "Return whatever a Sieve uri points at: its title, metadata and full markdown body. " +
-			"Pass the uri exactly as it appears in an ATTACHED DOCUMENTS manifest (e.g. container:{uuid}) — copy it, never construct one.",
+			"Pass the uri exactly as it appears in an ATTACHED DOCUMENTS manifest (e.g. sieve://{uuid}) — copy it, never construct one.",
 	}, s.getByURI)
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
 		Name:        "list_facets",

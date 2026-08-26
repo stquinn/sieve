@@ -1,27 +1,20 @@
 // @ts-check
-// lens-isolation.test.js — the firewall as a grep (issue #96 P3, widened to the
-// whole merged lens/ package in P4c).
+// The lens firewall, as a grep.
 //
 // A lens may reach `contract/` (the wall), `renderers/` (PM-free block
-// look-and-feel), `ident/` (identity — a block born in a lens carries its real
-// UUIDv7 from birth) and the two library leaves `vendor/`/`base/`, and nothing
-// else — no host data plane, no shell, no generated protocol. That is what makes
-// a lens hostable by something that is not this workspace, and it is checked
-// TRANSITIVELY: a renderer that itself imports the model would smuggle the whole
-// host in behind a legal-looking first hop.
+// look-and-feel), `ident/` and the two library leaves `vendor/`/`base/`, and
+// nothing else — no host data plane, no shell, no generated protocol. It is
+// checked TRANSITIVELY: a renderer that itself imports the model would smuggle
+// the whole host in behind a legal-looking first hop.
 //
-// P4c moved `editor/` wholesale into `lens/`, so this now polices 40 files
-// instead of the two pathfinders. The editor did NOT arrive clean, and the
-// allowlist was deliberately NOT widened to hide that: the ten edges it still
-// has into `shell/` and `ui/` are enumerated in QUARANTINE below and asserted
-// EXACTLY. The list is a ratchet — a new coupling fails the suite, and a
-// coupling that gets fixed fails it too, so the debt can only leave the tree
-// deliberately. Do not add to it to make a change pass.
+// The edges lens/ still has into `shell/` and `ui/` are enumerated in QUARANTINE
+// below and asserted EXACTLY. The list is a ratchet — a new coupling fails the
+// suite, and a coupling that gets fixed fails it too — so DO NOT add to it to
+// make a change pass.
 //
-// Statement-form imports are the thing being policed. JSDoc `import('…')` type
-// references live inside comments, which are stripped before matching — a type
-// reference is not a module dependency, and the contract package's own purity
-// test draws the same line.
+// Statement-form imports are what is policed. JSDoc `import('…')` type
+// references live inside comments, which are stripped before matching: a type
+// reference is not a module dependency.
 
 import { describe, it, expect } from 'vitest'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
@@ -37,9 +30,8 @@ const LENS_DIR = path.join(STATIC, 'lens')
 // here as debt; nothing in lens/ currently reaches it or vendor/.
 const ALLOWED_DIRS = Object.freeze(['lens', 'contract', 'renderers', 'ident', 'vendor', 'base'])
 
-// The couplings the P4b cutover did NOT dissolve. Each is a lens (or a renderer
-// a lens paints through) calling host chrome directly instead of asking through
-// the wall:
+// The couplings still outstanding. Each is a lens — or a renderer a lens paints
+// through — calling host chrome directly instead of asking through the wall:
 //
 //   • ui/media-lightbox.js, ui/link-edit-dialog.js, ui/copy-image.js — host
 //     chrome the block/prose paths summon inline (expand an image, edit a link,
@@ -185,10 +177,10 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
       path.join('lens', 'document-editor', 'surfaces', 'caret-trigger-port.js'),
       path.join('lens', 'document-editor', 'surfaces', 'markdown-surface.js'),
       path.join('lens', 'document-editor', 'surfaces', 'node-views', 'ai-block-node-view.js'),
-      path.join('lens', 'document-editor', 'surfaces', 'node-views', 'attachment-node-view.js'),
       path.join('lens', 'document-editor', 'surfaces', 'node-views', 'code-node-view.js'),
       path.join('lens', 'document-editor', 'surfaces', 'node-views', 'diagram-node-view.js'),
       path.join('lens', 'document-editor', 'surfaces', 'node-views', 'log-node-view.js'),
+      path.join('lens', 'document-editor', 'surfaces', 'node-views', 'reference-node-view.js'),
       path.join('lens', 'document-editor', 'surfaces', 'node-views', 'smart-card-node-view.js'),
       path.join('lens', 'document-editor', 'surfaces', 'node-views', 'smart-image-node-view.js'),
       path.join('lens', 'document-editor', 'surfaces', 'node-views', 'web-clip-node-view.js'),
@@ -234,10 +226,9 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
 
   it('walks transitively, not one hop deep', () => {
     // Proven against a chain that really is deep: BlockRenderer → its markdown
-    // engine → the asset-url helper → the generated protocol module. P4c moved
-    // the SieveBlock data shape into contract/, so the base class is no longer
-    // host-coupled through IT — this asset-url chain is the last thing keeping a
-    // lens from extending BlockRenderer, and it is the quarantine's tenth entry.
+    // engine → the asset-url helper → the generated protocol module. That
+    // asset-url chain is the quarantine's tenth entry, and the last thing keeping
+    // a lens from extending BlockRenderer.
     const open = new ImportGraph([])
     const reached = open.walk([path.join(STATIC, 'renderers', 'block-renderer.js')]).reached
     expect(reached).toContain(path.join('contract', 'sieve-block.js'))

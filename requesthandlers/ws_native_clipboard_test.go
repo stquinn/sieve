@@ -20,8 +20,8 @@ type stubClipboard struct{ entries []block.ContentEntry }
 func (c stubClipboard) Entries() ([]block.ContentEntry, error) { return c.entries, nil }
 
 // A native-clipboard paste is the one paste kind that carries NO payload: the
-// page's DataTransfer was empty — which is the whole signal (#87) — so the frame
-// says only where the caret is and the server reads the OS clipboard itself.
+// page's DataTransfer was empty, which is the whole signal, so the frame says
+// only where the caret is and the server reads the OS clipboard itself.
 //
 // The block still arrives the way every created block does, over an insert-block
 // render-back, so this pins the ACK: what tells the surface whether to consume
@@ -29,10 +29,10 @@ func (c stubClipboard) Entries() ([]block.ContentEntry, error) { return c.entrie
 func TestWS_NativeClipboard_ReadsTheClipboardAndMakesABlock(t *testing.T) {
 	block.RegisterProcessor(&processors.ProseProcessor{})
 	srv, sp, _, uuid := newWsTestServer(t)
-	block.RegisterProcessor(processors.NewAttachmentProcessor(block.BlockServices{
+	block.RegisterProcessor(processors.NewReferenceProcessor(block.BlockServices{
 		Documents: sp.Documents, Assets: services.NewAssetService(sp.Store, ""),
 	}))
-	t.Cleanup(func() { block.UnregisterProcessor("attachment") })
+	t.Cleanup(func() { block.UnregisterProcessor("reference") })
 
 	path := filepath.Join(t.TempDir(), "swagger.yml")
 	if err := os.WriteFile(path, []byte("openapi: 3.0.0"), 0o644); err != nil {

@@ -501,6 +501,7 @@ func (ds *DocumentService) Search(query string) ([]SearchResult, error) {
 			IsSummaryMatch: isSummaryMatch,
 			IsBodyMatch:    isBodyMatch,
 			Snippet:        strings.TrimSpace(snippet),
+			Summary:        strings.TrimSpace(metaString(meta, "summary")),
 		})
 	}
 	return results, nil
@@ -709,4 +710,7 @@ type SearchResult struct {
 	IsSummaryMatch bool   `json:"isSummaryMatch"`
 	IsBodyMatch    bool   `json:"isBodyMatch"`
 	Snippet        string `json:"snippet"`
+	// Summary is the note's OWN one-liner, not a match snippet. The scan already
+	// holds it, so carrying it here saves a caller a full document load per hit.
+	Summary string `json:"summary"`
 }

@@ -1,41 +1,33 @@
 // @ts-check
-// container-provider.js — the business half of the Lens↔Host wall (issue #96
-// P2, the settled contract in issue comment 1694; the P4b vocabulary rulings in
-// comment 1699). The provider hierarchy is what a HOST implements and hands a
-// lens at mount; it is pre-bound to ONE container (possession = authorization —
-// a lens cannot remount itself, only a host gesture re-targets).
+// The business half of the Lens↔Host wall. The provider hierarchy is what a HOST
+// implements and hands a lens at mount, pre-bound to ONE container: possession is
+// authorization, so a lens cannot remount itself and only a host gesture
+// re-targets.
 //
-// This module is a LEAF: it imports nothing, from `contract/` or anywhere
-// else, so both sides of the wall (and a future IPC bridge) can depend on it
-// without pulling in the other. Types only — nothing here runs.
+// This module is a LEAF — it imports nothing — so both sides of the wall can
+// depend on it without pulling in the other. Types only; nothing here runs.
 
 /**
  * One block, as JSON-shaped data — a frozen copy, never a live reference.
  * Mirrors container/container-model.js's BlockNode field-for-field; redeclared
  * here rather than imported because this package imports nothing.
  *
- * A BLOCK IS BORN WITH ITS DURABLE IDENTITY, WHEREVER IT IS BORN (issue #96).
- * Ids are UUIDv7, and that is the whole point: a v7 is unique without
- * coordination, so whoever creates a block can name it. A block born in Go — a
- * paste, an AI answer, a transform — is named by `ident.New` there; a block born
- * in a LENS, which is prose typed into existence, is named by the lens's own
- * `ident.mint`. Go's role on that second path is not to mint but to VALIDATE:
- * well-formed, and not a name this container already uses. It refuses rather
- * than corrects, because a substituted id would leave the creator addressing a
- * block that no longer answers to it.
+ * A BLOCK IS BORN WITH ITS DURABLE IDENTITY, WHEREVER IT IS BORN. Ids are
+ * UUIDv7, unique without coordination, so whoever creates a block names it: Go
+ * mints for a block it creates, a lens mints for prose typed into existence. On
+ * that second path Go VALIDATES rather than mints — well-formed, and not a name
+ * this container already uses — and refuses rather than corrects, because a
+ * substituted id would leave the creator addressing a block that no longer
+ * answers to it.
  *
- * There is therefore NO pending state, no transient handle, and nothing to
+ * There is therefore no pending state, no transient handle and nothing to
  * correlate: the block carries the same name on both sides from the first
- * keystroke, so `onChanged` stays `{blockIds, orderChanged}` and a lens
- * recognises an arrival it made by the plain id it chose.
+ * keystroke, and a lens recognises an arrival it made by the id it chose.
  *
- * `text` is the block's own SERIALIZED form, present only when the host had it
- * to give (Go volunteers it when it creates a block). It is DERIVED — a
- * processor's job, never re-implemented client-side — so there is no way to ask
- * for it and no way to refresh it. Its one consumer is a whole-content lens,
- * which needs a single block's projection to fold an arrival into a verbatim
- * buffer. It is a field rather than an attr because it is not part of the block's
- * state: nothing patches it and it never travels back.
+ * `text` is the block's own SERIALIZED form, present only when the host had one
+ * to give. It is derived Go-side, so there is no way to ask for it and no way to
+ * refresh it; its one consumer is a whole-content lens folding an arrival into a
+ * verbatim buffer. Nothing patches it and it never travels back.
  *
  * @typedef {object} BlockData
  * @property {string} id
@@ -50,10 +42,9 @@
  *
  * `context` is what an entry knows about WHERE IT CAME FROM, as opposed to what
  * it is: the filename of a picked file, the parent a transform was invoked
- * inside. A processor may require it — the attachment processor claims nothing
- * without a filename — so it is part of the entry rather than a separate
- * argument, and it is optional because a plain clipboard string has no provenance
- * to state.
+ * inside. A processor may require it — the reference processor claims a dropped
+ * file only when it carries a filename — and it is absent for a plain clipboard
+ * string.
  *
  * @typedef {object} ContentEntry
  * @property {string} mimeType
@@ -62,11 +53,9 @@
  */
 
 /**
- * What a paste is, as DATA. One query, four kinds — mirroring the wire's own
- * "one frame, four kinds" (issue #96 comment 1699 ruling 4): "what should the
- * server make of this" is one question with one answer shape, and reading the
- * fields regardless of kind is how a discriminated union rots into a bag of
- * optional flags.
+ * What a paste is, as DATA: one query, four kinds. Read the fields for the kind
+ * the payload declares — reading them regardless of kind is how a discriminated
+ * union rots into a bag of optional flags.
  *
  * - `smart`            — a clipboard the page could read; `entries` is it.
  * - `slice`            — a multi-block Sieve selection; `slice` is [][]ContentEntry.
@@ -85,11 +74,9 @@
  */
 
 /**
- * Outcome of one paste round trip — Go's `block.PasteResult` discriminated
- * union, abstracted at the facade, minus the transport noise (`kind`/`id`/
- * `rawYaml`/`error` are wire plumbing the facade does not surface; a created
- * block is announced through `onChanged` like any other arrival, and a declined
- * paste has no facade-visible error — the caller replays locally).
+ * Outcome of one paste round trip — Go's `block.PasteResult`, abstracted at the
+ * facade. A created block is announced through `onChanged` like any other
+ * arrival, and a declined paste surfaces no error: the caller replays locally.
  *
  * - `block`   — a block was created server-side; nothing further to do here.
  * - `content` — Go composed a fragment for the caret; insert `content`.
@@ -109,17 +96,12 @@
  */
 
 /**
- * Read-only minimum every mounted container offers. A `@v{n}`-pinned mount (a
- * version viewer) returns EXACTLY this type — read-only is a type a host
- * hands out, not a flag on a richer one, because a pinned coordinate can never
- * legitimately accept a verb.
+ * Read-only minimum every mounted container offers. A `?version={n}`-pinned
+ * mount returns EXACTLY this type: read-only is a type a host hands out, never a
+ * flag on a richer one, because a pinned coordinate cannot accept a verb.
  *
  * Reads are SYNC and return frozen copies, answered by the nearest follower
- * model — never a round trip. In the in-process host that model is
- * `container/container-model.js`'s `ContainerModel`; across a future IPC
- * bridge it is a replica the bridge maintains, so this contract's shape never
- * has to change to cross a process — serialization discipline lives at the
- * `subscribe` stream, plain copies at these reads.
+ * model — never a round trip.
  *
  * @typedef {object} ContainerProvider
  * @property {() => string} getUuid
@@ -132,24 +114,20 @@
  */
 
 /**
- * Adds block intents to the read-only minimum. Every `request*` verb is VOID:
- * Go may decline silently, and the only visible effect is a later `onChanged`
- * saying what changed — never that this verb is what changed it (see
- * container-update-listener.js — "there is no onAck", and no correlation
- * either). `paste` and `detectExtractions` are QUERIES — decisions/offers
- * only, never document content — so they answer with a Promise instead.
+ * Adds block intents to the read-only minimum. Every `request*` verb is VOID: Go
+ * may decline silently, and the only visible effect is a later `onChanged`
+ * saying what changed — never that this verb is what changed it. `paste` and
+ * `detectExtractions` are QUERIES — decisions and offers, never document content
+ * — so they answer with a Promise instead.
  *
- * Anchoring is by BLOCK ID, never an index: the host resolves `afterBlockId`
- * to a position by reading its own follower model. A lens never computes a
- * document position (see the repo-wide "backend is the document source of
- * truth" rule). `afterBlockId` OMITTED appends; `null` means the front of the
- * container; an id the container does not hold appends, because inventing a
- * position for a name nobody has is how a block lands where the user did not
- * point.
+ * Anchoring is by BLOCK ID, never an index: a lens never computes a document
+ * position, and the host resolves `afterBlockId` against its own follower model.
+ * `afterBlockId` omitted appends; `null` means the front of the container; an id
+ * the container does not hold appends.
  *
- * A block the lens has ALREADY DRAWN names itself: `attrs.id` carries the
+ * A block the lens has ALREADY DRAWN names itself — `attrs.id` carries the
  * UUIDv7 it minted, and Go validates and adopts it (see BlockData). A block the
- * lens has not drawn simply omits it and Go mints.
+ * lens has not drawn omits it and Go mints.
  *
  * @typedef {ContainerProvider & {
  *   requestAddBlock: (kind: string, attrs: Record<string, any>, afterBlockId?: string|null) => void,
@@ -164,47 +142,34 @@
  *   flush: (blockId: string, text: string) => void,
  * }} BlockContainerProvider
  */
-// requestRemoveBlock exists because REMOVAL IS A CONTRACT VERB, not a side
-// effect of some other edit. The alternative — a lens dropping a block by
-// leaving it out of some larger statement of what the container should contain
-// — would make deletion the one mutation with no verb of its own, and it would
-// force every lens that can delete to be able to describe the WHOLE container.
-// A lens says which block it wants gone, and learns it is gone the same way
-// every other follower does: Go's `remove-block` echo reaching the fold.
+// requestRemoveBlock: REMOVAL IS A CONTRACT VERB. A lens says which block it
+// wants gone and learns it is gone the way every other follower does — Go's
+// `remove-block` echo reaching the fold.
 
-// requestSetOrder states the container's COMPLETE child order rather than
-// moving one block relative to another (issue #96 comment 1699 ruling 2). A
-// whole order is idempotent — a duplicate or late request lands the container
-// in the same place — and it is the shape `order-changed` echoes back, so the
-// same statement travels in both directions. A lens that knows where one block
-// should go knows the order it wants; expressing that as a move as well would
-// be two mechanisms for one fact.
+// requestSetOrder states the container's COMPLETE child order rather than moving
+// one block relative to another. A whole order is idempotent — a duplicate or
+// late request lands the container in the same place — and it is the shape
+// `order-changed` echoes back.
 
 // requestPersist asks the container to reach disk NOW rather than on its own
 // debounce (Mod+S, the flush before an AI ask, filing). It is DISTINCT from
-// `flush`: flush hands over one block's in-flight text, persist commits
-// whatever the container already holds, and a lens routinely wants one without
-// the other.
+// `flush`: flush hands over one block's in-flight text, persist commits whatever
+// the container already holds.
 
-// flush is deliberately UNPREFIXED: it hands lens-owned in-flight text to the
-// host (the follower invariant's one sanctioned exception — a lens's own
-// draft is the single piece of state that legitimately lives ahead of Go), not
-// a request Go might decline. Naming it `requestFlush` would claim the same
-// may-be-ignored semantics as the verbs above, which is false — a flush always
-// lands.
+// flush is UNPREFIXED because it always lands: it hands lens-owned in-flight
+// text to the host — a lens's own draft is the one piece of state that
+// legitimately lives ahead of Go — rather than making a request Go may decline.
 
 /**
- * The whole-container-as-text extension (issue #96 comment 1699 ruling 3): the
- * markdown break-glass buffer's vocabulary, and the one the mode flip speaks.
- * A PROMPT's provider is this and nothing else, and it legally never cues —
- * nothing but the prompt's own lens ever mutates a prompt, so "no events" is
- * correct rather than a hole.
+ * The whole-container-as-text extension: the markdown break-glass buffer's
+ * vocabulary, and the one the mode flip speaks. A PROMPT's provider is this and
+ * nothing else, and it legally never cues, because nothing but the prompt's own
+ * lens ever mutates a prompt.
  *
- * The projection is DERIVED, Go-serialized (serialization stays a
- * `BlockProcessor` concern, never re-implemented client-side).
+ * The projection is DERIVED and Go-serialized; serialization is never
+ * re-implemented client-side.
  *
- * Three members, because Go really has three verbs here and collapsing them
- * would break an invariant:
+ * Three members, because collapsing any two would break an invariant:
  *
  *   getContents()      — the authoritative whole projection. On a container
  *                        with a live channel this IS the hand-over: Go answers

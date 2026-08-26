@@ -1,14 +1,10 @@
 // @ts-check
-// node-view-imports.test.js — every NodeView adapter module must RESOLVE and
-// EVALUATE. A stale import specifier (the 2026-07-21 processors/*-renderer.js →
-// node-views/*-node-view.js rename left smart-image importing a dead
-// './diagram-renderer.js') kills the whole module's evaluation in the browser,
-// which silently unregisters the kind: every block of that kind is DROPPED from
-// the editor on load, with only a console error ("produced no sieve-<kind>
-// node"). Importing each module here makes a dead specifier fail CI instead of
-// the user's document. Registration itself is a no-op without the vendor
-// runtime (NodeViewRegistry's #runtime is null under the test stub), so these
-// imports are side-effect-safe.
+// Every NodeView adapter module must RESOLVE and EVALUATE. A stale import
+// specifier kills the whole module's evaluation in the browser, which silently
+// unregisters the kind: every block of that kind is DROPPED from the editor on
+// load, with only a console error. Importing each module here makes a dead
+// specifier fail CI instead of the user's document. Registration itself is a
+// no-op without the vendor runtime, so these imports are side-effect-safe.
 import { describe, it, expect } from 'vitest'
 
 // ai-target-decoration.js runs `new T.PluginKey(...)` and `T.Extension.create`
@@ -23,19 +19,19 @@ Object.assign(/** @type {any} */ (globalThis).TipTap, {
 
 const KINDS = [
   'ai-block',
-  'attachment',
   'code',
   'diagram',
   'log',
+  'reference',
   'smart-card',
   'smart-image',
   'web-clip',
 ]
 
-// smart-link is GONE (#67 — inline blocks were removed from the framework;
-// docs/design/archive/specs/2026-07-27-inline-block-removal-links-decision.md). Pinned
-// here so a resurrected module doesn't slip back in unnoticed.
-const REMOVED_KINDS = ['smart-link']
+// smart-link is GONE (inline blocks were removed from the framework) and
+// attachment is GONE (renamed to reference). Pinned here so a resurrected module
+// does not slip back in unnoticed.
+const REMOVED_KINDS = ['smart-link', 'attachment']
 
 describe('node-view module graph resolves', () => {
   for (const kind of KINDS) {

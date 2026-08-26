@@ -11,16 +11,12 @@ import (
 	"sieve/store"
 )
 
-// documentAssets writes a block's binary payload into the document that holds it.
-// It is the ONE place that decides WHERE such bytes live: the category follows the
-// document's own kind (a note's assets belong to the Library, a buffer's to the
-// working copy), and the saved asset is attached to the document so the ownership
-// graph knows about it.
-//
-// It exists as a type rather than as a method on each processor because two kinds
-// ingest bytes — smart-image from a paste, attachment from a drop — and they must
-// place them identically. A second copy of this rule would eventually put one
-// kind's assets in the wrong category.
+// documentAssets writes a block's binary payload into the document that holds
+// it. It is the ONE place that decides where such bytes live: the category
+// follows the document's own kind (a note's assets belong to the Library, a
+// buffer's to the working copy), and the saved asset is attached to the document
+// so the ownership graph knows about it. Every kind that ingests bytes places
+// them through here.
 type documentAssets struct {
 	svc block.BlockServices
 	// kind names the owner in the log line, so a save can still be traced to the

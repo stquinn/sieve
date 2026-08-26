@@ -4,52 +4,39 @@ import (
 	"strings"
 
 	"sieve/ident"
+	"sieve/sieve/domain"
 )
 
-// sieve_block.go — the SieveBlock data model: type, constructor, and value
-// methods. No serialization, no parsing, and no per-kind names — the data model is
-// kind-agnostic; those live in document_codec.go and the codec/processor files.
-
-// SieveBlock is a node in the unified, ordered block tree (spec §2). EVERY kind —
-// prose included — carries its payload in the single Attrs bag, addressed by id;
-// kind is consulted only at render/serialise time. There is no per-kind payload
-// field: prose's body is Attrs["content"] (read via Content()), exactly as code
-// is Attrs["source"], web-clip Attrs["content"], ai Attrs["response"].
+// SieveBlock is a node in the unified, ordered block tree. EVERY kind — prose
+// included — carries its payload in the single Attrs bag, addressed by id; kind
+// is consulted only at render/serialise time. There is no per-kind payload
+// field: prose's body is Attrs["content"], code's is Attrs["source"], ai's is
+// Attrs["response"].
 //
-// There is no Children field: a block is a LEAF. Containers (columns) are a
-// distinct structural type — they HOLD blocks but are not blocks (no payload, no
-// content) — and arrive in Stage E behind a small Node interface (ID()/Kind())
-// both implement. Until then nothing nests at runtime.
+// A block is a LEAF: there is no Children field and nothing nests.
 type SieveBlock struct {
 	ID    string
 	Kind  string
 	Attrs map[string]interface{}
-	// Aliases are additional handles this block answers to, accumulated when
-	// other blocks merge into it (spec §7). ID is the primary handle; a ref
-	// resolves against ID or any alias.
+	// Aliases are additional handles this block answers to, accumulated when other
+	// blocks merge into it. ID is the primary handle; a ref resolves against ID or
+	// any alias.
 	Aliases []string
 }
 
-// NewSieveBlock is the sole sanctioned way to construct a block, and it enforces
-// the invariant the type cannot enforce on its own (Go has no constructors): a
-// block is GIVEN an id or it GENERATES one — it never exists id-less. Every
-// construction site (the parser, ApplyOp create, split) routes through here, so
-// the rule lives in ONE place instead of being swept after the fact. Pass id=""
-// to mint (ident.New mints a UUIDv7 — ids are opaque and carry no kind); pass a
-// known id (a marker's handle, a frontend-minted blockId) to keep it. The
-// serialize-time guard in DocumentCodec.Serialize is the runtime backstop
-// for any future code path that bypasses this factory with a raw literal.
+// NewSieveBlock is the sole sanctioned way to construct a block: a block is
+// GIVEN an id or it GENERATES one and never exists id-less. Pass id="" to mint
+// (ident.New — ids are opaque and carry no kind); pass a known id to keep it.
+// DocumentCodec.Serialize carries the runtime backstop for any path that
+// bypasses this factory.
 func NewSieveBlock(kind, id string, attrs map[string]interface{}) SieveBlock {
 	if id == "" {
 		id = ident.New()
 	}
-	// The invariant is TWO-SIDED: mirror the id into Attrs["id"] too. Both the WYSIWYG
-	// wire (buildSieveBlockHTML reads Attrs["id"] — a missing one drops the block on
-	// load) and the fenced serializer (SerializeYaml(Attrs) writes `id:` FROM Attrs)
-	// read the id out of Attrs, never the ID field — so a minted id that lived only on
-	// ID vanished on both load AND save (the id-less-block bug). Copy-on-write: the
-	// prose processor builds throwaway blocks from LIVE attrs maps, so never mutate the
-	// caller's map. Skip the copy when Attrs already agrees (the common serialized case).
+	// The invariant is TWO-SIDED: the id is mirrored into Attrs["id"]. The WYSIWYG
+	// wire and the fenced serializer both read the id out of Attrs and never off
+	// the ID field, so an id written to only one side drops the block on load and
+	// on save. Copy-on-write, because callers pass live attrs maps.
 	if attrs == nil {
 		attrs = map[string]interface{}{"id": id}
 	} else if existing, _ := attrs["id"].(string); existing != id {
@@ -64,18 +51,12 @@ func NewSieveBlock(kind, id string, attrs map[string]interface{}) SieveBlock {
 }
 
 // Content is the block's authored text payload (Attrs["content"]) — a prose
-// block's verbatim markdown, a web-clip's clipped text. "" when absent. A nil-safe
-// typed read of one attr key (sibling of Source/Status/Ref); whether this accessor
-// family earns its keep over direct Attrs access is a separate question.
+// block's verbatim markdown, a web-clip's clipped text. "" when absent.
 func (b SieveBlock) Content() string { return b.StringAttr("content") }
 
-// Merge applies a patch onto this block: attrs merge additively (a partial patch
-// keeps existing keys — a NodeView sending only {source} must not drop status),
-// and aliases REPLACE the current set when the patch carries them (nil leaves
-// them untouched). This is the single block-patch semantic, shared by
-// ShadowDocument.MergeBlock and the update-block op. Content is just
-// Attrs["content"], so prose needs no special handling here — the attr merge
-// carries it like any other key.
+// Merge applies a patch onto this block: attrs merge additively, so a partial
+// patch keeps existing keys, and aliases REPLACE the current set when the patch
+// carries them (nil leaves them untouched).
 func (b *SieveBlock) Merge(patch SieveBlock) {
 	if b.Attrs == nil {
 		b.Attrs = make(map[string]interface{}, len(patch.Attrs))
@@ -89,10 +70,8 @@ func (b *SieveBlock) Merge(patch SieveBlock) {
 }
 
 // StringAttr reads a string-valued attr, returning "" when the key is absent,
-// nil, or not a string. It is the single safe primitive the named accessors
-// below are built on — replacing brittle b.Attrs["x"].(string) casts (spec #5)
-// that panic or silently mis-type. Storage stays kind-agnostic (one Attrs bag);
-// only the read is typed.
+// nil, or not a string. It is the safe primitive the named accessors below are
+// built on.
 func (b SieveBlock) StringAttr(key string) string {
 	s, _ := b.Attrs[key].(string)
 	return s
@@ -107,8 +86,43 @@ func (b SieveBlock) Ref() string { return b.StringAttr("ref") }
 // Status is the job lifecycle state (Attrs["status"]): PENDING/DISPATCHED/…
 func (b SieveBlock) Status() string { return b.StringAttr("status") }
 
+// AttachmentsAttr is the attrs-bag key the attachment list lives under.
+const AttachmentsAttr = domain.AttachmentsAttr
+
+// Attachments is a block's ordered attachment list — the `attachments` attr,
+// persisted as:
+//
+//	attachments:
+//	    - uri: sieve://9f2b-…
+//	      title: Auth Design
+//
+// The type itself lives in domain (it has several carriers, including the
+// command envelope); this is its block-side name.
+//
+// An attachment is a per-turn MANIFEST ENTRY, not a block: it records one
+// document an ai-block turn was handed and lives only in that turn's attrs.
+//
+// An attachment is NOT a ref. `ref` is the document-local chain the ai-block
+// walks and the GC prunes; an attachment is a global address that nothing walks
+// and nothing GCs.
+type Attachments = domain.Attachments
+
+// Attachments is this block's attachment list.
+func (b SieveBlock) Attachments() Attachments {
+	return domain.DecodeAttachments(b.Attrs[AttachmentsAttr])
+}
+
+// SetAttachments writes the list in canonical form. An empty list REMOVES the
+// key: absent is the empty case.
+func (b *SieveBlock) SetAttachments(a Attachments) {
+	if b.Attrs == nil && len(a) > 0 {
+		b.Attrs = map[string]interface{}{}
+	}
+	a.StampAttrs(b.Attrs) // a nil bag with nothing to write is a no-op
+}
+
 // answersTo returns every handle this block resolves to — its primary ID plus
-// any aliases absorbed via merges (spec §7).
+// any aliases absorbed via merges.
 func (b SieveBlock) answersTo() []string {
 	out := make([]string, 0, 1+len(b.Aliases))
 	if b.ID != "" {
@@ -119,7 +133,7 @@ func (b SieveBlock) answersTo() []string {
 
 // outgoingRefs returns this block's outgoing ref targets (Attrs["ref"]) as an
 // ordered, whitespace-trimmed, non-empty slice — the tokenized form of the
-// comma-separated Ref() string. Mirrors answersTo() for the outgoing direction.
+// comma-separated Ref() string.
 func (b SieveBlock) outgoingRefs() []string {
 	ref := b.Ref()
 	if ref == "" {
@@ -135,10 +149,9 @@ func (b SieveBlock) outgoingRefs() []string {
 	return out
 }
 
-// cloneDeep returns a value copy of b with a freshly-allocated Attrs map (and
-// Aliases slice), so a caller can hand it to a processor / background job that
-// mutates Attrs without racing the live tree. Content lives in Attrs, so the map
-// copy carries it.
+// cloneDeep returns a value copy of b with a freshly-allocated Attrs map and
+// Aliases slice, so a caller can hand it to a background job that mutates Attrs
+// without racing the live tree.
 func (b SieveBlock) cloneDeep() SieveBlock {
 	cp := SieveBlock{ID: b.ID, Kind: b.Kind, Attrs: make(map[string]interface{}, len(b.Attrs))}
 	for k, v := range b.Attrs {
@@ -151,10 +164,8 @@ func (b SieveBlock) cloneDeep() SieveBlock {
 }
 
 // reidentify returns a copy of b carrying newID on BOTH sides of the id
-// invariant — the ID field AND Attrs["id"]. Writing only one side reintroduces
-// the id-less-block bug: the WYSIWYG wire (buildSieveBlockHTML) and the fenced
-// serializer (SerializeYaml(Attrs)) both read the id out of Attrs, never off ID,
-// so a half-written id drops the block on load and on save. Aliases ride along.
+// invariant — the ID field AND Attrs["id"]. Writing only one side drops the
+// block on load and on save. Aliases ride along.
 func (b SieveBlock) reidentify(newID string) SieveBlock {
 	cp := b.cloneDeep()
 	cp.ID = newID
@@ -163,14 +174,9 @@ func (b SieveBlock) reidentify(newID string) SieveBlock {
 }
 
 // withRefs returns a copy of b whose outgoing ref list is refs, in the
-// comma-separated Attrs["ref"] form outgoingRefs tokenizes. Mirrors outgoingRefs
-// for the write direction.
+// comma-separated Attrs["ref"] form outgoingRefs tokenizes.
 func (b SieveBlock) withRefs(refs []string) SieveBlock {
 	cp := b.cloneDeep()
 	cp.Attrs["ref"] = strings.Join(refs, ",")
 	return cp
 }
-
-// The document is an ordered []SieveBlock — the in-memory form the serialization
-// spine round-trips against markdown. There is no wrapper type: ShadowDocument
-// holds the slice directly (no nested "document inside a document").

@@ -28,8 +28,8 @@ func aiFamily() []aiFamilyCase {
 }
 
 const (
-	authURI  = "container:aaaaaaaa-1a2b-4c5d-8e9f-a1b2c3d4e5f6"
-	retryURI = "container:bbbbbbbb-1a2b-4c5d-8e9f-a1b2c3d4e5f6"
+	authURI  = "sieve://aaaaaaaa-1a2b-4c5d-8e9f-a1b2c3d4e5f6"
+	retryURI = "sieve://bbbbbbbb-1a2b-4c5d-8e9f-a1b2c3d4e5f6"
 )
 
 // attachedPair is what the composer sends and the envelope carries: addresses
@@ -79,14 +79,11 @@ func familyManifestEntries(t *testing.T, prompt string) []map[string]any {
 	return entries
 }
 
-// THE gap this closes: attachments rode the envelope and did nothing. Every
-// AI-family command now renders ONE ATTACHED DOCUMENTS section naming this
-// turn's documents by the coordinate get_by_uri takes — the same string the
-// block persisted, so nothing anywhere translates.
-//
-// There is ONE renderer (domain.Attachments.PromptSection), asserted at the
-// renderer in domain and HERE through a real command, so the ai-block path and
-// the command path cannot drift into two wordings.
+// Every AI-family command renders ONE ATTACHED DOCUMENTS section naming this
+// turn's documents by the coordinate get_by_uri takes — the same string the block
+// persisted, so nothing anywhere translates. There is one renderer
+// (domain.Attachments.PromptSection), asserted here through a real command so the
+// ai-block path and the command path cannot drift into two wordings.
 func TestAIFamily_RendersOneManifestSectionForItsAttachments(t *testing.T) {
 	for _, tc := range aiFamily() {
 		t.Run(tc.name, func(t *testing.T) {
@@ -163,7 +160,7 @@ func TestAIFamily_UndereferenceableAttachmentDegradesRatherThanFailing(t *testin
 			svc := newSmartTestService(t, cap)
 
 			_, done, prompt := runFamilyCommand(t, tc.make(svc), tc.text,
-				command.NewContext(nil, []domain.Attachment{{URI: "block:gone", Title: "Deleted Doc"}}), cap)
+				command.NewContext(nil, []domain.Attachment{{URI: "sieve://gone", Title: "Deleted Doc"}}), cap)
 
 			if done["status"] != "COMPLETE" || done["response"] != "answer" {
 				t.Fatalf("a bad attachment failed the command: %+v", done)
@@ -179,11 +176,8 @@ func TestAIFamily_UndereferenceableAttachmentDegradesRatherThanFailing(t *testin
 	}
 }
 
-// THE regression that would otherwise slip through: a command invoked with NO
-// attachments must produce the prompt it produced before the feature existed.
-// The with-attachments prompt is proven to be exactly that prompt plus the
-// section, so the attachment-free path adds nothing at all — not even a
-// separator — and no attr appears on the block.
+// A command invoked with NO attachments adds nothing to the prompt — not even a
+// separator — and writes no attr on the block.
 func TestAIFamily_NoAttachmentsIsUnchanged(t *testing.T) {
 	for _, tc := range aiFamily() {
 		t.Run(tc.name, func(t *testing.T) {

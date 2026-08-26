@@ -42,7 +42,7 @@ type UUIDInput struct {
 // URIInput is the argument set for get_by_uri: a Sieve coordinate, copied
 // verbatim from wherever the model was given it.
 type URIInput struct {
-	URI string `json:"uri" jsonschema:"a Sieve coordinate, e.g. container:{uuid}; copy it exactly as it was given (an attachment manifest lists them) rather than constructing one"`
+	URI string `json:"uri" jsonschema:"a Sieve coordinate, e.g. sieve://{uuid}; copy it exactly as it was given (an attachment manifest lists them) rather than constructing one"`
 }
 
 // NoteSummary is one search hit: metadata only, never a body.
@@ -83,11 +83,8 @@ type NoteContent struct {
 }
 
 // NodeContent is what an address resolved to, as get_by_uri returns it: the
-// wire projection of domain.NodeDescriptor.
-//
-// Kind-AGNOSTIC on purpose. It says what the thing calls itself rather than
-// assuming a note, so the day a source for chats or Things registers behind the
-// Router the verb keeps working and its output shape does not move.
+// wire projection of domain.NodeDescriptor. It is kind-AGNOSTIC — it says what
+// the thing calls itself rather than assuming a note.
 type NodeContent struct {
 	URI     string `json:"uri"`  // the coordinate it was resolved from
 	UUID    string `json:"uuid"` // the target's identity
@@ -193,11 +190,12 @@ func (s *Server) getNote(_ context.Context, _ *mcpsdk.CallToolRequest, in UUIDIn
 	// The audit names the document that was ACTUALLY read (doc.UUID()), not the
 	// string that was asked for, so the trail cannot be skewed by a sloppy arg.
 	s.audit.record(bodyRead{
-		verb:  "get_note",
-		uuid:  n.uuid,
-		uri:   domain.NewContainerAddress(n.uuid).String(),
-		title: meta.Title,
-		bytes: len(body),
+		verb:      "get_note",
+		container: n.uuid,
+		uuid:      n.uuid,
+		uri:       domain.NewContainerAddress(n.uuid).String(),
+		title:     meta.Title,
+		bytes:     len(body),
 	})
 	return nil, NoteContent{Meta: meta, Body: body}, nil
 }
@@ -206,32 +204,38 @@ func (s *Server) getNote(_ context.Context, _ *mcpsdk.CallToolRequest, in UUIDIn
 // and returns what that address names, body included — the second body-bearing
 // verb, audited identically to get_note.
 //
-// It CHECKS NOTHING about the address. Grammar, resolvable schemes, version pins
-// and dangling targets are all the Router's judgements, and re-deciding any of
-// them here would create a second opinion about what a coordinate means. The
-// refusals are surfaced as tool errors, wrapped so the model sees which verb
-// refused and why.
-//
-// This is what generalises past get_note: get_note can only ever name a whole
-// note, while a coordinate grows with the address grammar — block:{container}/
-// {handle} resolves through the same verb the day a source answers for it.
+// It PARSES at its own door and checks nothing else. The uri arrives in a model's
+// prompt, so the parse is where untrusted input stops being text, and it is what
+// makes this verb structurally incapable of fetching an https address. Everything
+// past the parse — version pins, leaf grains, dangling targets — is the Router's
+// judgement; refusals are surfaced as tool errors naming the verb and the
+// reason.
 func (s *Server) getByURI(_ context.Context, _ *mcpsdk.CallToolRequest, in URIInput) (*mcpsdk.CallToolResult, NodeContent, error) {
 	uri := strings.TrimSpace(in.URI)
 	if s.nodes == nil {
 		logger.Error("sieve mcp: get_by_uri has no resolver wired", "uri", uri)
 		return nil, NodeContent{}, fmt.Errorf("get_by_uri %q: no resolver is wired", uri)
 	}
-	node, err := s.nodes.Resolve(uri)
+	addr, err := domain.ParseAddress(uri)
+	if err != nil {
+		logger.Warn("sieve mcp: get_by_uri refused", "uri", uri, "err", err)
+		return nil, NodeContent{}, fmt.Errorf("get_by_uri %q: not a Sieve coordinate (expected sieve://{container}[/{leaf}][?version={n}]): %w", uri, err)
+	}
+	node, err := s.nodes.Resolve(addr)
 	if err != nil {
 		logger.Warn("sieve mcp: get_by_uri refused", "uri", uri, "err", err)
 		return nil, NodeContent{}, fmt.Errorf("get_by_uri %q: %w", uri, err)
 	}
+	// The audit names BOTH grains: node.UUID may be a leaf identity, so the
+	// container must come off the ADDRESS this verb parsed, or the trail loses
+	// which document a leaf read came out of.
 	s.audit.record(bodyRead{
-		verb:  "get_by_uri",
-		uuid:  node.UUID,
-		uri:   node.URI,
-		title: node.Title,
-		bytes: len(node.Body),
+		verb:      "get_by_uri",
+		container: addr.Container,
+		uuid:      node.UUID,
+		uri:       node.URI,
+		title:     node.Title,
+		bytes:     len(node.Body),
 	})
 	return nil, NodeContent{
 		URI:     node.URI,
