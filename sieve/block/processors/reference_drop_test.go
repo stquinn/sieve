@@ -121,21 +121,27 @@ func TestReferenceProcessor_Transform_savesADroppedFile(t *testing.T) {
 	if addr.Container != doc.UUID() || addr.Leaf == "" {
 		t.Errorf("uri %q must name a leaf inside this document (%s)", uri, doc.UUID())
 	}
+	// The face lands under cache, never at root: root attrs describe the pointing.
+	face := refFace(t, overrides)
 	// The chip is labelled with what the USER dropped. The stored asset is named
 	// after the block, so without this the chip would wear a UUID.
-	if overrides["title"] != "swagger.yml" {
-		t.Errorf("title: got %v, want the original filename swagger.yml", overrides["title"])
+	if face["title"] != "swagger.yml" {
+		t.Errorf("cache.title: got %v, want the original filename swagger.yml", face["title"])
 	}
 	// The whole face, at mint: mime says what it is (and that it is HELD), bytes
 	// says how big, summary is the first line that carries anything.
-	if overrides["mime"] != "text/yaml" {
-		t.Errorf("mime: got %v, want text/yaml", overrides["mime"])
+	if face["mime"] != "text/yaml" {
+		t.Errorf("cache.mime: got %v, want text/yaml", face["mime"])
 	}
-	if got, want := overrides["bytes"], strconv.Itoa(len(body)); got != want {
-		t.Errorf("bytes: got %v, want %q", got, want)
+	if got, want := face["bytes"], strconv.Itoa(len(body)); got != want {
+		t.Errorf("cache.bytes: got %v, want %q", got, want)
 	}
-	if s, _ := overrides["summary"].(string); !strings.Contains(s, "openapi: 3.0.0") {
-		t.Errorf("summary must excerpt the file; got %q", s)
+	if s, _ := face["summary"].(string); !strings.Contains(s, "openapi: 3.0.0") {
+		t.Errorf("cache.summary must excerpt the file; got %q", s)
+	}
+	// A face minted from bytes in hand is dated at mint.
+	if ts, _ := face["cachedAt"].(string); ts == "" {
+		t.Error("a dropped file's face must be stamped with cachedAt")
 	}
 	// …and the bytes are readable back by the key the address names.
 	got, err := assets.ServeAssetData(doc.UUID(), addr.Leaf)
@@ -176,8 +182,8 @@ func TestReferenceProcessor_droppedFileIsBornCompleteAndFaced(t *testing.T) {
 	if job := p.DescribeJob(block.JobContext{UUID: doc.UUID(), Block: blk}); job != nil {
 		t.Errorf("a faced reference describes no job; got %+v", job)
 	}
-	if blk.Attrs["title"] != "swagger.yml" {
-		t.Errorf("title: got %v, want the dropped filename", blk.Attrs["title"])
+	if refFace(t, blk.Attrs)["title"] != "swagger.yml" {
+		t.Errorf("cache.title: got %v, want the dropped filename", blk.Attrs["cache"])
 	}
 }
 
@@ -231,10 +237,11 @@ func TestReferenceProcessor_Transform_binaryDropGetsNoSummary(t *testing.T) {
 	if overrides == nil {
 		t.Fatal("Transform declined a dropped pdf")
 	}
-	if overrides["mime"] != "application/pdf" {
-		t.Errorf("mime: got %v, want application/pdf", overrides["mime"])
+	face := refFace(t, overrides)
+	if face["mime"] != "application/pdf" {
+		t.Errorf("cache.mime: got %v, want application/pdf", face["mime"])
 	}
-	if s, _ := overrides["summary"].(string); s != "" {
+	if s, _ := face["summary"].(string); s != "" {
 		t.Errorf("a binary file carries no summary; got %q", s)
 	}
 }

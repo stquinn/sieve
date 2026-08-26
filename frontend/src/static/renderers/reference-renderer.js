@@ -14,19 +14,29 @@ import { ReferenceChip } from './reference-chip.js'
 import { StatusBadge } from './status-badge.js'
 
 /**
- * The reference block's payload, as the Go processor stamps it. `uri` is the ONE
- * address: a held file's bytes live at a `sieve://{container}/{leaf}` coordinate
- * like any other. `mime` is the DISCRIMINATOR — HELD ⇔ the mime names a real
+ * What the last resolve took from the TARGET — the reference's cached face,
+ * namespaced under one attr so it can never be mistaken for a fact about the
+ * reference itself. `mime` is the DISCRIMINATOR — HELD ⇔ the mime names a real
  * format (`text/yaml`) rather than Sieve's own space (`sieve/note`) — and it is
  * the only noun the chip needs.
+ * @typedef {object} ReferenceFace
+ * @property {string} [title]    the cached name
+ * @property {string} [summary]  one line under the title; what the chevron reveals
+ * @property {string} [bytes]    a held file's size, as a STRING (see the processor for why)
+ * @property {string} [mime]     what this block points at or holds; non-sieve/* ⇔ held
+ * @property {string} [cachedAt] when this face was taken from the target
+ */
+
+/**
+ * The reference block's payload, as the Go processor stamps it. Root attrs are
+ * facts about the POINTING; `cache` is the facts about the POINTED-AT. `uri` is
+ * the ONE address: a held file's bytes live at a `sieve://{container}/{leaf}`
+ * coordinate like any other.
  * @typedef {object} ReferencePayload
  * @property {string} [id]
- * @property {string} [uri]     the ONE address: sieve://{container}[/{leaf}]
- * @property {string} [title]   the cached name
- * @property {string} [summary] one line under the title; what the chevron reveals
- * @property {string} [bytes]   a held file's size, as a STRING (see the processor for why)
- * @property {string} [mime]    what this block points at or holds; non-sieve/* ⇔ held
- * @property {string} [rel]     the authored relationship; nothing renders or branches on it
+ * @property {string} [uri]    the ONE address: sieve://{container}[/{leaf}]
+ * @property {ReferenceFace} [cache] the cached face; absent until something resolves
+ * @property {string} [rel]    the authored relationship; nothing renders or branches on it
  * @property {string} [status]
  * @property {string} [error]
  * @property {string|null} [createdAt]
@@ -69,6 +79,16 @@ export class ReferenceRenderer extends BlockRenderer {
   }
 
   /**
+   * The cached face — the facts about the pointed-at. Always an object, so a
+   * block nothing has resolved yet reads as an empty face.
+   * @param {ReferencePayload} payload
+   * @returns {ReferenceFace}
+   */
+  static faceOf(payload) {
+    return (payload || {}).cache || {}
+  }
+
+  /**
    * What the chip is CALLED: its cached title, else the thing it addresses.
    * Never blank.
    * @param {ReferencePayload} payload
@@ -76,7 +96,7 @@ export class ReferenceRenderer extends BlockRenderer {
    */
   static labelFor(payload) {
     const p = payload || {}
-    const title = (p.title || '').trim()
+    const title = (ReferenceRenderer.faceOf(p).title || '').trim()
     if (title) return title
     if (ReferenceRenderer.#isHeld(p)) return ReferenceRenderer.filenameOf(p.uri)
     return (p.uri || '').trim() || ReferenceRenderer.#UNADDRESSED_LABEL
@@ -171,7 +191,7 @@ export class ReferenceRenderer extends BlockRenderer {
   /** The one line the chevron reveals ('' when the block has none). @returns {string} */
   summaryText() {
     const payload = /** @type {ReferencePayload} */ (this.block.payload)
-    return (payload.summary || '').trim()
+    return (ReferenceRenderer.faceOf(payload).summary || '').trim()
   }
 
   /** What this block opens, or null when it addresses nothing. @returns {ReferenceTarget|null} */
@@ -276,7 +296,7 @@ export class ReferenceRenderer extends BlockRenderer {
     const parts = []
     const kind = this.#assetKind(payload)
     if (kind) parts.push(kind)
-    const size = ReferenceRenderer.humanSize(payload.bytes)
+    const size = ReferenceRenderer.humanSize(ReferenceRenderer.faceOf(payload).bytes)
     if (size) parts.push(size)
     return parts.join(' · ')
   }
@@ -288,7 +308,7 @@ export class ReferenceRenderer extends BlockRenderer {
    * @returns {string}
    */
   #assetKind(payload) {
-    const mime = ((payload || {}).mime || '').trim()
+    const mime = (ReferenceRenderer.faceOf(payload).mime || '').trim()
     const slash = mime.indexOf('/')
     if (slash < 0) return mime
     let sub = mime.slice(slash + 1)
@@ -312,13 +332,13 @@ export class ReferenceRenderer extends BlockRenderer {
   }
 
   /**
-   * held ⇔ the mime does NOT name Sieve's own space (`sieve/…`). THE FACE
-   * DECIDES: the uri is never inspected to answer this.
+   * held ⇔ the cached mime does NOT name Sieve's own space (`sieve/…`). THE
+   * FACE DECIDES: the uri is never inspected to answer this.
    * @param {ReferencePayload} payload
    * @returns {boolean}
    */
   static #isHeld(payload) {
-    const mime = ((payload || {}).mime || '').trim()
+    const mime = (ReferenceRenderer.faceOf(payload).mime || '').trim()
     return mime !== '' && !mime.startsWith('sieve/')
   }
 

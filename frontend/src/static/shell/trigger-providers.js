@@ -329,21 +329,26 @@ export class MentionProvider extends TriggerProvider {
    *   lives in the echo and never in the data.
    *
    * THE WHOLE FACE is seeded, not just a label, so a block born complete never
-   * resolves merely to render. `mime` is what says the face is filled AND what the
-   * block is — a pointer's mime names Sieve's own space, which is how the renderer
-   * tells pointing from holding.
+   * resolves merely to render. The face rides the `cache` attr — root attrs are
+   * the reference's own, the cache is what was taken from the target — and
+   * `cache.mime` is what says the face is filled AND what the block is: a
+   * pointer's mime names Sieve's own space, which is how the renderer tells
+   * pointing from holding. An empty face stays an ABSENT cache.
    * @param {import('./mention-service.js').MentionCandidate} c
    * @param {TriggerToken} token
    * @param {import('./trigger-host.js').TriggerHost} host
    */
   accept(c, token, host) {
     if (this.hostMakesBlocks(host)) {
-      this.createBlockFrom(host, token, 'reference', {
-        uri: c.uri,
-        title: c.title || '',
-        summary: c.summary || '',
-        mime: c.kind ? 'sieve/' + c.kind : '',
-      })
+      /** @type {Record<string, string>} */
+      const face = {}
+      if (c.title) face.title = c.title
+      if (c.summary) face.summary = c.summary
+      if (c.kind) face.mime = 'sieve/' + c.kind
+      /** @type {Record<string, any>} */
+      const attrs = { uri: c.uri }
+      if (Object.keys(face).length) attrs.cache = face
+      this.createBlockFrom(host, token, 'reference', attrs)
       return
     }
     this.replaceToken(host, token, '@' + c.title)

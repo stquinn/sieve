@@ -272,7 +272,7 @@ describe('accepting a mention in a document', () => {
     // index from the caret, which is what applies the empty-line placement rule.
     expect(host.createBlock).toHaveBeenCalledTimes(1)
     expect(host.createBlock.mock.calls[0]).toEqual(['reference',
-      { uri: 'sieve://9f2b', title: 'Auth Design', summary: '', mime: '' }])
+      { uri: 'sieve://9f2b', cache: { title: 'Auth Design' } }])
     expect(host.createBlock.mock.calls[0].length).toBe(2)
   })
 
@@ -293,9 +293,11 @@ describe('accepting a mention in a document', () => {
     // processor stamps on resolve, and what tells pointing from holding.
     expect(host.createBlock.mock.calls[0]).toEqual(['reference', {
       uri: 'sieve://9f2b',
-      title: 'Auth Design',
-      summary: 'Token rotation and session binding',
-      mime: 'sieve/note',
+      cache: {
+        title: 'Auth Design',
+        summary: 'Token rotation and session binding',
+        mime: 'sieve/note',
+      },
     }])
   })
 
@@ -317,7 +319,7 @@ describe('accepting a mention in a document', () => {
     // commitInsertIndex consumes, so the block BECOMES that node in place.
     expect(editor.state.doc.child(1).textContent).toBe('')
     expect(host.createBlock).toHaveBeenCalledWith('reference',
-      { uri: 'sieve://9f2b', title: 'Auth Design', summary: '', mime: '' })
+      { uri: 'sieve://9f2b', cache: { title: 'Auth Design' } })
   })
 
   it('a mouse pick means the same thing as a key pick', async () => {
@@ -331,7 +333,7 @@ describe('accepting a mention in a document', () => {
     row.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true, cancelable: true }))
 
     expect(host.createBlock).toHaveBeenCalledWith('reference',
-      { uri: 'sieve://1', title: 'Auth Design', summary: '', mime: '' })
+      { uri: 'sieve://1', cache: { title: 'Auth Design' } })
   })
 })
 

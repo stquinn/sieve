@@ -61,12 +61,23 @@ func TestReferenceProcessor_InitAttrs_defaults(t *testing.T) {
 		t.Errorf("status: got %v, want COMPLETE for an addressless block", attrs["status"])
 	}
 	for _, field := range []string{
-		"uri", "rel", "title", "summary", "bytes", "mime",
+		"uri", "rel",
 		"status", "error", "createdAt", "completedAt", "supportsEmbedding",
 	} {
 		if _, ok := attrs[field]; !ok {
 			t.Errorf("InitAttrs must declare field %q", field)
 		}
+	}
+	// The face lives under `cache`, never at root: root attrs describe the
+	// POINTING, the cache describes the POINTED-AT.
+	for _, field := range []string{"title", "summary", "bytes", "mime"} {
+		if _, ok := attrs[field]; ok {
+			t.Errorf("face attr %q must not exist at root — it belongs under cache", field)
+		}
+	}
+	// An empty face is an ABSENT cache, not an empty map: nothing serialises noise.
+	if _, ok := attrs["cache"]; ok {
+		t.Error("a faceless block must not carry a cache key")
 	}
 	// src is GONE: a held file's location is its uri like everything else's.
 	if _, ok := attrs["src"]; ok {
@@ -99,9 +110,20 @@ func TestReferenceProcessor_InitAttrs_unfacedAddressMeansPending(t *testing.T) {
 	}
 }
 
+// refFace digs the cache map out of a block's attrs, failing the test when the
+// block has none.
+func refFace(t *testing.T, attrs map[string]interface{}) map[string]interface{} {
+	t.Helper()
+	face, ok := attrs["cache"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("attrs carry no cache map: %#v", attrs)
+	}
+	return face
+}
+
 // The gestures that already KNOW what they are naming — a drop, an accepted @
 // mention — seed the face at mint, and a block whose face is filled has nothing
-// to resolve. mime is what says so: every reference ends up carrying one.
+// to resolve. cache.mime is what says so: every reference ends up carrying one.
 func TestReferenceProcessor_InitAttrs_aSeededFaceIsBornComplete(t *testing.T) {
 	p := NewReferenceProcessor(block.BlockServices{})
 	for _, tc := range []struct {
@@ -109,11 +131,12 @@ func TestReferenceProcessor_InitAttrs_aSeededFaceIsBornComplete(t *testing.T) {
 		override map[string]interface{}
 	}{
 		{"a mentioned note", map[string]interface{}{
-			"uri": "sieve://" + ident.New(), "title": "Auth Design", "mime": "sieve/note",
+			"uri":   "sieve://" + ident.New(),
+			"cache": map[string]interface{}{"title": "Auth Design", "mime": "sieve/note"},
 		}},
 		{"a dropped file", map[string]interface{}{
 			"uri":   domain.NewLeafAddress(ident.New(), "swagger.yml").String(),
-			"title": "swagger.yml", "mime": "text/yaml", "bytes": "42",
+			"cache": map[string]interface{}{"title": "swagger.yml", "mime": "text/yaml", "bytes": "42"},
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -125,6 +148,10 @@ func TestReferenceProcessor_InitAttrs_aSeededFaceIsBornComplete(t *testing.T) {
 			if ts, _ := attrs["completedAt"].(string); ts == "" {
 				t.Error("a born-COMPLETE block must be stamped with completedAt")
 			}
+			// A face seeded at mint is dated at mint.
+			if ts, _ := refFace(t, attrs)["cachedAt"].(string); ts == "" {
+				t.Error("a seeded face must be stamped with cachedAt")
+			}
 		})
 	}
 }
@@ -135,14 +162,36 @@ func TestReferenceProcessor_InitAttrs_pastedFaceIsNotReArmed(t *testing.T) {
 	p := NewReferenceProcessor(block.BlockServices{})
 	attrs := p.InitAttrs(ident.New(), map[string]interface{}{
 		"uri":   "sieve://" + ident.New(),
-		"title": "Auth Design",
-		"mime":  "sieve/note",
+		"cache": map[string]interface{}{"title": "Auth Design", "mime": "sieve/note"},
 	})
 	if attrs["status"] != block.BlockStatusComplete {
 		t.Errorf("status: got %v, want COMPLETE", attrs["status"])
 	}
-	if attrs["title"] != "Auth Design" {
-		t.Errorf("the cached face still seeds the block; got %v", attrs["title"])
+	if refFace(t, attrs)["title"] != "Auth Design" {
+		t.Errorf("the cached face still seeds the block; got %v", attrs["cache"])
+	}
+}
+
+// The legacy wire shape — face attrs at root — folds under cache at the same
+// gate. A caller that has not learned the cache shape still mints a correct
+// block, and the fold is what keeps root attrs meaning THE POINTING.
+func TestReferenceProcessor_InitAttrs_foldsLegacyFaceOverrides(t *testing.T) {
+	p := NewReferenceProcessor(block.BlockServices{})
+	attrs := p.InitAttrs(ident.New(), map[string]interface{}{
+		"uri":   "sieve://" + ident.New(),
+		"title": "Auth Design", "mime": "sieve/note", "summary": "Token rotation",
+	})
+	face := refFace(t, attrs)
+	if face["title"] != "Auth Design" || face["mime"] != "sieve/note" || face["summary"] != "Token rotation" {
+		t.Errorf("legacy face overrides must fold under cache; got %#v", face)
+	}
+	for _, field := range []string{"title", "summary", "mime"} {
+		if _, ok := attrs[field]; ok {
+			t.Errorf("folded attr %q must leave the root", field)
+		}
+	}
+	if attrs["status"] != block.BlockStatusComplete {
+		t.Errorf("a legacy-seeded face is still born COMPLETE; got %v", attrs["status"])
 	}
 }
 
@@ -235,8 +284,8 @@ func TestReferenceProcessor_Transform_canonicalisesTheCoordinate(t *testing.T) {
 		t.Errorf("uri: got %v, want sieve://%s", overrides["uri"], uuid)
 	}
 	// Nothing has read the target yet, so nothing may claim to know what it is.
-	if overrides["mime"] != nil {
-		t.Errorf("a bare coordinate seeds no face; got mime %v", overrides["mime"])
+	if overrides["cache"] != nil {
+		t.Errorf("a bare coordinate seeds no face; got cache %v", overrides["cache"])
 	}
 }
 
@@ -264,7 +313,8 @@ func TestReferenceProcessor_DescribeJob_noAddressNoJob(t *testing.T) {
 func TestReferenceProcessor_DescribeJob_aFilledFaceDescribesNoJob(t *testing.T) {
 	p := NewReferenceProcessor(block.BlockServices{Nodes: fakeNodes{}})
 	blk := &block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: p.InitAttrs("at-1", map[string]interface{}{
-		"uri": "sieve://" + ident.New(), "title": "Auth Design", "mime": "sieve/note",
+		"uri":   "sieve://" + ident.New(),
+		"cache": map[string]interface{}{"title": "Auth Design", "mime": "sieve/note"},
 	})}
 	if job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "u", Block: blk}); job != nil {
 		t.Errorf("a block born COMPLETE must describe no job; got %+v", job)
@@ -297,16 +347,27 @@ func TestReferenceProcessor_DescribeJob_resolvesACoordinate(t *testing.T) {
 	}
 	job.Apply(res, blk)
 
-	if blk.Attrs["title"] != "Auth Design" {
-		t.Errorf("title: got %v, want Auth Design", blk.Attrs["title"])
+	face := refFace(t, blk.Attrs)
+	if face["title"] != "Auth Design" {
+		t.Errorf("cache.title: got %v, want Auth Design", face["title"])
 	}
 	// A pointer's mime names Sieve's own space: this block points at a note, it
 	// does not hold one.
-	if blk.Attrs["mime"] != "sieve/note" {
-		t.Errorf("mime: got %v, want sieve/note", blk.Attrs["mime"])
+	if face["mime"] != "sieve/note" {
+		t.Errorf("cache.mime: got %v, want sieve/note", face["mime"])
 	}
-	if blk.Attrs["summary"] != "Token rotation and session binding" {
-		t.Errorf("summary: got %v", blk.Attrs["summary"])
+	if face["summary"] != "Token rotation and session binding" {
+		t.Errorf("cache.summary: got %v", face["summary"])
+	}
+	// The cache is STAMPED: what was taken from the target says when it was taken.
+	if ts, _ := face["cachedAt"].(string); ts == "" {
+		t.Error("a resolve must stamp cachedAt into the cache")
+	}
+	// The fold's whole point: nothing the resolve learned lands at root.
+	for _, field := range []string{"title", "summary", "mime"} {
+		if _, ok := blk.Attrs[field]; ok {
+			t.Errorf("resolve wrote face attr %q to root — it belongs under cache", field)
+		}
 	}
 	if blk.Attrs["status"] != block.BlockStatusComplete {
 		t.Errorf("status: got %v, want COMPLETE", blk.Attrs["status"])
@@ -326,7 +387,9 @@ func TestReferenceProcessor_DescribeJob_resolvesACoordinate(t *testing.T) {
 func TestReferenceProcessor_DescribeJob_aNonCoordinateDangles(t *testing.T) {
 	p := NewReferenceProcessor(block.BlockServices{Nodes: fakeNodes{}})
 	blk := &block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
-		"uri": "https://example.com/spec", "title": "The Spec", "status": block.BlockStatusPending,
+		"uri":    "https://example.com/spec",
+		"cache":  map[string]interface{}{"title": "The Spec"},
+		"status": block.BlockStatusPending,
 	}}
 	job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "doc", Block: blk})
 	if job == nil {
@@ -344,8 +407,8 @@ func TestReferenceProcessor_DescribeJob_aNonCoordinateDangles(t *testing.T) {
 	if e, _ := blk.Attrs["error"].(string); !strings.Contains(e, "not a Sieve coordinate") {
 		t.Errorf("error must say the uri is not a coordinate; got %q", e)
 	}
-	if blk.Attrs["title"] != "The Spec" {
-		t.Errorf("the cached face survives; got %v", blk.Attrs["title"])
+	if refFace(t, blk.Attrs)["title"] != "The Spec" {
+		t.Errorf("the cached face survives; got %v", blk.Attrs["cache"])
 	}
 }
 
@@ -357,7 +420,9 @@ func TestReferenceProcessor_DescribeJob_danglingIsNotAFailure(t *testing.T) {
 	uri := "sieve://" + ident.New()
 	p := NewReferenceProcessor(block.BlockServices{Nodes: fakeNodes{nodes: map[string]domain.NodeDescriptor{}}})
 	blk := &block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
-		"uri": uri, "title": "Deleted Note", "status": block.BlockStatusPending,
+		"uri":    uri,
+		"cache":  map[string]interface{}{"title": "Deleted Note"},
+		"status": block.BlockStatusPending,
 	}}
 	job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "doc", Block: blk})
 	res, err := job.Work()
@@ -372,8 +437,8 @@ func TestReferenceProcessor_DescribeJob_danglingIsNotAFailure(t *testing.T) {
 	if e, _ := blk.Attrs["error"].(string); e == "" {
 		t.Error("a dangling reference must record why it is missing")
 	}
-	if blk.Attrs["title"] != "Deleted Note" {
-		t.Errorf("the cached face survives a dangling resolve; got %v", blk.Attrs["title"])
+	if refFace(t, blk.Attrs)["title"] != "Deleted Note" {
+		t.Errorf("the cached face survives a dangling resolve; got %v", blk.Attrs["cache"])
 	}
 }
 
@@ -401,8 +466,10 @@ func TestReferenceProcessor_BuildContext_heldFile(t *testing.T) {
 	docUUID := ident.New()
 	uri := domain.NewLeafAddress(docUUID, "at-1.yml").String()
 	blk := block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
-		"uri": uri, "mime": "text/yaml", "bytes": "421888",
-		"summary": "openapi: 3.0.0",
+		"uri": uri,
+		"cache": map[string]interface{}{
+			"mime": "text/yaml", "bytes": "421888", "summary": "openapi: 3.0.0",
+		},
 	}}
 	ctx := p.BuildContext(blk, block.DocView{UUID: docUUID}, map[string]bool{})
 	if ctx.IsEmpty() {
@@ -427,8 +494,11 @@ func TestReferenceProcessor_BuildContext_pointer(t *testing.T) {
 	p := NewReferenceProcessor(block.BlockServices{})
 	uri := "sieve://" + ident.New()
 	blk := block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
-		"uri": uri, "title": "Auth Design", "mime": "sieve/note",
-		"summary": "Token rotation and session binding",
+		"uri": uri,
+		"cache": map[string]interface{}{
+			"title": "Auth Design", "mime": "sieve/note",
+			"summary": "Token rotation and session binding",
+		},
 	}}
 	got := p.BuildContext(blk, block.DocView{UUID: ident.New()}, map[string]bool{}).String()
 	for _, want := range []string{
@@ -462,19 +532,28 @@ func TestReferenceProcessor_MarkdownRepresentation(t *testing.T) {
 		want  string
 	}{
 		{
-			name:  "held file links to its served asset",
-			attrs: map[string]interface{}{"uri": held, "mime": "text/yaml", "title": "swagger.yml"},
-			want:  "[swagger.yml](/ui/assets/" + docUUID + "/at-1.yml)",
+			name: "held file links to its served asset",
+			attrs: map[string]interface{}{
+				"uri":   held,
+				"cache": map[string]interface{}{"mime": "text/yaml", "title": "swagger.yml"},
+			},
+			want: "[swagger.yml](/ui/assets/" + docUUID + "/at-1.yml)",
 		},
 		{
-			name:  "held file with no title falls back to the asset key",
-			attrs: map[string]interface{}{"uri": held, "mime": "text/yaml"},
-			want:  "[at-1.yml](/ui/assets/" + docUUID + "/at-1.yml)",
+			name: "held file with no title falls back to the asset key",
+			attrs: map[string]interface{}{
+				"uri":   held,
+				"cache": map[string]interface{}{"mime": "text/yaml"},
+			},
+			want: "[at-1.yml](/ui/assets/" + docUUID + "/at-1.yml)",
 		},
 		{
-			name:  "pointer links to its coordinate",
-			attrs: map[string]interface{}{"uri": uri, "mime": "sieve/note", "title": "Auth Design"},
-			want:  "[Auth Design](" + uri + ")",
+			name: "pointer links to its coordinate",
+			attrs: map[string]interface{}{
+				"uri":   uri,
+				"cache": map[string]interface{}{"mime": "sieve/note", "title": "Auth Design"},
+			},
+			want: "[Auth Design](" + uri + ")",
 		},
 		{
 			name:  "addressless renders nothing",
@@ -493,12 +572,14 @@ func TestReferenceProcessor_MarkdownRepresentation(t *testing.T) {
 }
 
 // The fenced round-trip is inherited whole from FencedSerializer/Deserializer —
-// this asserts the kind is wired to them, not that YAML works.
+// this asserts the kind is wired to them AND that the nested cache map survives
+// the YAML trip intact.
 func TestReferenceProcessor_SerializeRoundTrip(t *testing.T) {
 	p := NewReferenceProcessor(block.BlockServices{})
 	id := ident.New()
 	blk := block.NewSieveBlock("reference", id, map[string]interface{}{
-		"uri": "sieve://" + ident.New(), "title": "Auth Design", "mime": "sieve/note",
+		"uri":   "sieve://" + ident.New(),
+		"cache": map[string]interface{}{"title": "Auth Design", "mime": "sieve/note"},
 	})
 	md, err := p.Serialize(blk)
 	if err != nil {
@@ -524,7 +605,16 @@ func TestReferenceProcessor_SerializeRoundTrip(t *testing.T) {
 	if back[0].Attrs["uri"] != blk.Attrs["uri"] {
 		t.Errorf("uri: got %v, want %v", back[0].Attrs["uri"], blk.Attrs["uri"])
 	}
+	face := refFace(t, back[0].Attrs)
+	if face["title"] != "Auth Design" || face["mime"] != "sieve/note" {
+		t.Errorf("the cache map must round-trip through YAML; got %#v", face)
+	}
 }
+
+// The legacy fold itself lives on the LOAD PATH (block.ReferenceMigrator, the
+// #75 pattern — Deserialize stays a pure parse) and is tested there. What is
+// owned here: the folded shape round-trips, and the fold's WIRE gate (InitAttrs,
+// above).
 
 // A ```attachment fence must still be scanned, still parse, and come back as a
 // `reference` block — then re-serialise under the CANONICAL head. Without the
@@ -552,6 +642,11 @@ func TestReferenceProcessor_LegacyAttachmentFenceLoadsAsReference(t *testing.T) 
 	}
 	if back[0].ID != id || back[0].Attrs["uri"] != uri {
 		t.Errorf("the parsed block lost its payload: %+v", back[0])
+	}
+	// The parse does NOT fold the root face — that is the load-path migrator's
+	// job (Deserialize stays pure). The root title survives the parse verbatim.
+	if back[0].Attrs["title"] != "Auth Design" {
+		t.Errorf("Deserialize must parse the legacy shape verbatim; got %#v", back[0].Attrs)
 	}
 
 	md, err := p.Serialize(back[0])

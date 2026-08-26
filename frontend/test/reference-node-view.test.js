@@ -64,18 +64,20 @@ describe('reference NodeView — schema and policy', () => {
     expect(adapter.getFriendlyName()).toBe('Reference')
   })
 
-  it('declares the face and NEVER `kind` — that name is the framework’s block kind', () => {
+  it('declares the face under `cache` and NEVER `kind` — that name is the framework’s block kind', () => {
     // BASE_ATTRS declares `kind` on every sieve-* node as the BLOCK's kind, so a
     // processor may not reuse the name: declaring it here would shadow the block
-    // kind and emit a second data-kind. What this block points at or holds comes
-    // off `mime`, derived rather than stored a second time. There is no `src`
-    // either — `uri` is the one address attr, whether this block points or holds.
+    // kind and emit a second data-kind. The face — what this block points at or
+    // holds — is ONE `cache` attr, a map, so a target's facts can never be
+    // mistaken for the reference's own. There is no `src` either — `uri` is the
+    // one address attr, whether this block points or holds.
     expect(Object.keys(adapter.attrs).sort())
-      .toEqual(['bytes', 'error', 'mime', 'summary', 'title', 'uri'])
+      .toEqual(['cache', 'error', 'uri'])
     expect(Object.keys(adapter.attrs)).not.toContain('kind')
-    // A wire envelope carrying the reserved name is ignored.
-    expect(adapter.parseAttrs({ kind: 'reference', mime: 'text/yaml', bytes: 12 }))
-      .toEqual({ uri: '', title: '', summary: '', bytes: '12', mime: 'text/yaml', error: '' })
+    // A wire envelope carrying the reserved name is ignored, and the cache rides
+    // the data-* costume as JSON (the ai-block attachments pattern).
+    expect(adapter.parseAttrs({ kind: 'reference', cache: { mime: 'text/yaml', bytes: '12' } }))
+      .toEqual({ uri: '', cache: '{"mime":"text/yaml","bytes":"12"}', error: '' })
   })
 
   it('copies as its coordinate, so a pasted chip can become a chip again — held or not', () => {
@@ -83,14 +85,14 @@ describe('reference NodeView — schema and policy', () => {
       .toEqual([{ mimeType: 'text/plain', content: 'sieve://9f2b' }])
     // A held file's uri is a leaf address in this same document — copying it
     // still yields a coordinate, exactly as a pointing reference does.
-    expect(adapter.asContentEntry(nodeOf({ uri: 'sieve://doc-1/swagger.yml', mime: 'text/yaml' })))
+    expect(adapter.asContentEntry(nodeOf({ uri: 'sieve://doc-1/swagger.yml', cache: { mime: 'text/yaml' } })))
       .toEqual([{ mimeType: 'text/plain', content: 'sieve://doc-1/swagger.yml' }])
     // An addressless reference has no text form.
     expect(adapter.asContentEntry(nodeOf({ uri: '' }))).toBe(null)
   })
 
   it('ignores every mutation — the renderer rewrites this subtree, none of it is PM’s', () => {
-    const view = mount({ uri: 'sieve://9f2b', title: 'Auth Design' }, 'doc-1')
+    const view = mount({ uri: 'sieve://9f2b', cache: { title: 'Auth Design' } }, 'doc-1')
     expect(view.ignoreMutation()).toBe(true)
     expect(view.renderer).toBeTruthy()   // marks the kind MIGRATED for the seam
   })
@@ -120,14 +122,14 @@ describe('reference NodeView — double click opens where it lives', () => {
   })
 
   it('POINTS: hands the opaque coordinate to the workspace, and fires no asset intent', () => {
-    mount({ uri: 'sieve://9f2b', title: 'Auth Design' }, 'doc-1')
+    mount({ uri: 'sieve://9f2b', cache: { title: 'Auth Design' } }, 'doc-1')
     dblclickChip()
     expect(openAddress.mock.calls).toEqual([['sieve://9f2b']])
     expect(intents).toEqual([])
   })
 
   it('HOLDS: fires the intent with the asset and its document — never a path or a URL', () => {
-    mount({ uri: 'sieve://doc-1/swagger.yml', title: 'Payments API', mime: 'text/yaml' }, 'doc-1')
+    mount({ uri: 'sieve://doc-1/swagger.yml', cache: { title: 'Payments API', mime: 'text/yaml' } }, 'doc-1')
     dblclickChip()
     expect(openAddress).not.toHaveBeenCalled()
     expect(intents).toEqual([{ uri: 'sieve://doc-1/swagger.yml', title: 'Payments API', uuid: 'doc-1' }])
@@ -135,14 +137,14 @@ describe('reference NodeView — double click opens where it lives', () => {
 
   it('the DESKTOP handler answers that intent by revealing the document directory', () => {
     // Swappable by design: a hosted build answers the same event differently.
-    mount({ uri: 'sieve://doc-1/swagger.yml', mime: 'text/yaml' }, 'doc-1')
+    mount({ uri: 'sieve://doc-1/swagger.yml', cache: { mime: 'text/yaml' } }, 'doc-1')
     dblclickChip()
     expect(showInFiles.mock.calls).toEqual([['doc-1']])
   })
 
   it('falls back to the active editor when the block’s ctx has no document', () => {
     W.sieveWorkspace.activeEditor = { uuid: 'doc-active' }
-    mount({ uri: 'sieve://doc-1/swagger.yml', mime: 'text/yaml' }, '')
+    mount({ uri: 'sieve://doc-1/swagger.yml', cache: { mime: 'text/yaml' } }, '')
     dblclickChip()
     expect(showInFiles.mock.calls).toEqual([['doc-active']])
   })
@@ -162,7 +164,7 @@ describe('reference NodeView — double click opens where it lives', () => {
     cites[1].action()
     expect(openAddress.mock.calls).toEqual([['sieve://9f2b']])
 
-    const holds = adapter.buildContextMenuItems({ node: nodeOf({ uri: 'sieve://doc-1/swagger.yml', mime: 'text/yaml' }), getEditor: () => ({ uuid: 'doc-1' }) })
+    const holds = adapter.buildContextMenuItems({ node: nodeOf({ uri: 'sieve://doc-1/swagger.yml', cache: { mime: 'text/yaml' } }), getEditor: () => ({ uuid: 'doc-1' }) })
     expect(holds.map((/** @type {any} */ i) => i.label)).toEqual(['Reference', 'Show in Files', 'Copy Filename'])
     holds[1].action()
     expect(showInFiles.mock.calls).toEqual([['doc-1']])

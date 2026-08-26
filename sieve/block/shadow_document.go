@@ -63,7 +63,8 @@ func NewShadow(uuid, body string, codec *DocumentCodec, debounce time.Duration, 
 	// Lazy load-time migration: a legacy short handle becomes a UUID and
 	// in-document refs follow it; a legacy asset URL is rewritten to the current
 	// route; a legacy address or src attr on a reference block is rewritten to
-	// its sieve:// uri, minted against this document's own uuid. This is the load
+	// its sieve:// uri, minted against this document's own uuid, and a root-level
+	// reference face folds under its cache attr. This is the load
 	// path — the one place minting can be followed by a save — which is why
 	// DocumentMigrator is not run inside Deserialize.
 	blocks, migrated := DocumentMigrator{}.Migrate(blocks, uuid)

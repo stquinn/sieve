@@ -13,14 +13,14 @@ import (
 const sqlFixture = "SELECT id, name\nFROM customers\nWHERE active = 1;\n"
 
 // heldAttrs is a reference's attrs as the drop path leaves them: the coordinate
-// naming the asset, plus the mime and byte count stamped from those same bytes.
-// mime is what makes it HELD — a sieve/* one would be a pointer.
+// naming the asset at root, plus the mime and byte count stamped from those same
+// bytes under cache. cache.mime is what makes it HELD — a sieve/* one would be a
+// pointer.
 func heldAttrs(uuid, key, mimeType string, size int) map[string]interface{} {
 	return map[string]interface{}{
 		"id":     "at-1",
 		"uri":    domain.NewLeafAddress(uuid, key).String(),
-		"mime":   mimeType,
-		"bytes":  strconv.Itoa(size),
+		"cache":  map[string]interface{}{"mime": mimeType, "bytes": strconv.Itoa(size)},
 		"status": block.BlockStatusComplete,
 	}
 }
@@ -105,7 +105,7 @@ func TestReferenceProcessor_MaterialiseContent_refusesAnUnfacedReference(t *test
 		Assets: fakeAssets{files: map[string][]byte{uuid + "/at-1.sql": []byte(sqlFixture)}},
 	})
 	attrs := map[string]interface{}{
-		"id": "at-1", "uri": domain.NewLeafAddress(uuid, "at-1.sql").String(), "mime": "", "bytes": "",
+		"id": "at-1", "uri": domain.NewLeafAddress(uuid, "at-1.sql").String(),
 	}
 
 	if got := p.MaterialiseContent(uuid, attrs); got != nil {

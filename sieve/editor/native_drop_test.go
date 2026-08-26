@@ -19,6 +19,15 @@ import (
 // carries (a dragged link's http URL, a comment line, the trailing blank the CRLF
 // termination leaves) name nothing to read, and treating any of them as a path is
 // how a link drag would turn into a failed file read.
+
+// refTitle reads a reference block's cached title — the face lives under the
+// `cache` attr (root attrs describe the pointing, the cache the pointed-at).
+func refTitle(attrs map[string]interface{}) string {
+	face, _ := attrs["cache"].(map[string]interface{})
+	title, _ := face["title"].(string)
+	return title
+}
+
 func TestUriList_FilesReadsOnlyLocalPaths(t *testing.T) {
 	cases := []struct {
 		name string
@@ -280,7 +289,7 @@ func TestHandleNativeDrop_OneBlockPerFileInDragOrder(t *testing.T) {
 		if blocks[i].Kind != "reference" {
 			t.Errorf("block %d kind = %q, want reference", i, blocks[i].Kind)
 		}
-		if title, _ := blocks[i].Attrs["title"].(string); title != want {
+		if title := refTitle(blocks[i].Attrs); title != want {
 			t.Errorf("block %d title = %q, want %q (drag order)", i, title, want)
 		}
 	}
@@ -304,7 +313,7 @@ func TestHandleNativeDrop_NegativeIndexAppends(t *testing.T) {
 	if len(blocks) != 2 {
 		t.Fatalf("want 2 blocks, got %d", len(blocks))
 	}
-	if title, _ := blocks[1].Attrs["title"].(string); title != "second.yml" {
+	if title := refTitle(blocks[1].Attrs); title != "second.yml" {
 		t.Errorf("appended block title = %q, want second.yml (appended last)", title)
 	}
 }
@@ -324,7 +333,7 @@ func TestHandleNativeDrop_SkipsUnreadableFiles(t *testing.T) {
 	if len(blocks) != 1 {
 		t.Fatalf("want the one readable file's block, got %d: %+v", len(blocks), blocks)
 	}
-	if title, _ := blocks[0].Attrs["title"].(string); title != "here.yml" {
+	if title := refTitle(blocks[0].Attrs); title != "here.yml" {
 		t.Errorf("block title = %q, want here.yml", title)
 	}
 }
@@ -393,7 +402,7 @@ func TestHandleNativeDrop_BucketWinsOverTheHint(t *testing.T) {
 	if len(blocks) != 1 {
 		t.Fatalf("want ONE block (the bucket's), got %d", len(blocks))
 	}
-	if title, _ := blocks[0].Attrs["title"].(string); title != "from-bucket.txt" {
+	if title := refTitle(blocks[0].Attrs); title != "from-bucket.txt" {
 		t.Errorf("title = %q, want from-bucket.txt (bucket first)", title)
 	}
 }

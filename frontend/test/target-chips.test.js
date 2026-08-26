@@ -126,6 +126,16 @@ describe('TargetChips — a chip per block of a SELECTION', () => {
     ])
   })
 
+  it('labels a reference from its CACHED title — the face lives under `cache`', () => {
+    const target = new TargetChips(footer, container({
+      r1: held('reference', { uri: 'sieve://9f2b', cache: { title: 'Auth Design', mime: 'sieve/note' } }),
+      r2: held('reference', { uri: 'sieve://9f2c' }),   // unresolved: the uri is all it has
+    }))
+    target.show(selecting(['r1', 'r2']))
+
+    expect(labels()).toEqual(['“retry policy”', 'Auth Design', 'sieve://9f2c'])
+  })
+
   it('falls back to the KIND NAME when the payload carries no hint', () => {
     const target = new TargetChips(footer, container({
       l1: held('log', { source: '12:00 boot' }),

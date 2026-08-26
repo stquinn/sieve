@@ -113,24 +113,26 @@ import { ReferenceRenderer } from '../../../../renderers/reference-renderer.js'
       draggable: false,
     },
 
-    // `kind` is ABSENT on purpose — see the file header.
+    // `kind` is ABSENT on purpose — see the file header. The face is ONE `cache`
+    // attr, a map of what the resolve took from the target (title, summary,
+    // mime, bytes, cachedAt) — root attrs describe the POINTING. A map rides the
+    // data-* costume as JSON, the ai-block attachments pattern.
     attrs: {
-      uri:     { default: '', parseHTML: function (el) { return el.getAttribute('data-uri')     || '' } },
-      title:   { default: '', parseHTML: function (el) { return el.getAttribute('data-title')   || '' } },
-      summary: { default: '', parseHTML: function (el) { return el.getAttribute('data-summary') || '' } },
-      bytes:   { default: '', parseHTML: function (el) { return el.getAttribute('data-bytes')   || '' } },
-      mime:    { default: '', parseHTML: function (el) { return el.getAttribute('data-mime')    || '' } },
-      error:   { default: '', parseHTML: function (el) { return el.getAttribute('data-error')   || '' } },
+      uri: { default: '', parseHTML: function (el) { return el.getAttribute('data-uri') || '' } },
+      cache: {
+        default: null,
+        parseHTML: function (el) {
+          try { return JSON.parse(el.getAttribute('data-cache') || 'null') } catch (e) { return null }
+        },
+      },
+      error: { default: '', parseHTML: function (el) { return el.getAttribute('data-error') || '' } },
     },
 
     parseAttrs: function (data) {
       return {
-        uri:     data.uri     || '',
-        title:   data.title   || '',
-        summary: data.summary || '',
-        bytes:   String(data.bytes == null ? '' : data.bytes),
-        mime:    data.mime    || '',
-        error:   data.error   || '',
+        uri:   data.uri || '',
+        cache: JSON.stringify(data.cache || null),
+        error: data.error || '',
       }
     },
 

@@ -10,12 +10,12 @@ package block
 type DocumentMigrator struct{}
 
 // Migrate runs every load-time migration in order and reports whether any of
-// them changed the tree. documentUUID is the container ReferenceURIMigrator mints
+// them changed the tree. documentUUID is the container ReferenceMigrator mints
 // against when folding a relative or src-only reference to its absolute form. The
 // input is never mutated.
 func (m DocumentMigrator) Migrate(blocks []SieveBlock, documentUUID string) ([]SieveBlock, bool) {
 	blocks, idsChanged := BlockIdentityMigrator{}.Migrate(blocks)
 	blocks, urlsChanged := AssetURLMigrator{}.Migrate(blocks)
-	blocks, urisChanged := ReferenceURIMigrator{}.Migrate(blocks, documentUUID)
+	blocks, urisChanged := ReferenceMigrator{}.Migrate(blocks, documentUUID)
 	return blocks, idsChanged || urlsChanged || urisChanged
 }

@@ -41,7 +41,9 @@ export class TargetChips {
 
   /**
    * kind → the attrs keys carrying its identifying hint, in preference order. A
-   * kind absent from here, or one whose keys are all empty, shows its KIND NAME.
+   * dotted key reads through a nested map (a reference's face lives under its
+   * `cache` attr). A kind absent from here, or one whose keys are all empty,
+   * shows its KIND NAME.
    * @type {Readonly<Record<string, string[]>>}
    */
   static #HINTS = Object.freeze({
@@ -49,7 +51,7 @@ export class TargetChips {
     code: ['language'],
     diagram: ['diagramType'],
     'ai-block': ['question'],
-    reference: ['title', 'uri'],
+    reference: ['cache.title', 'uri'],
     'smart-image': ['alt', 'src'],
     'smart-card': ['title', 'href'],
     'web-clip': ['title', 'source'],
@@ -141,10 +143,24 @@ export class TargetChips {
    */
   static #hintFrom(kind, attrs) {
     for (const key of TargetChips.#HINTS[kind] || []) {
-      const hint = TargetChips.#tidy(attrs[key])
+      const hint = TargetChips.#tidy(TargetChips.#pluck(attrs, key))
       if (hint) return hint
     }
     return ''
+  }
+
+  /**
+   * One value out of `attrs`, following a dotted key through nested maps.
+   * @param {Record<string, any>} attrs @param {string} key
+   * @returns {any}
+   */
+  static #pluck(attrs, key) {
+    let value = /** @type {any} */ (attrs)
+    for (const part of key.split('.')) {
+      if (value == null || typeof value !== 'object') return undefined
+      value = value[part]
+    }
+    return value
   }
 
   /**

@@ -183,7 +183,7 @@ func TestHandleNativeClipboard_CopiedFilesTakeTheDropIngestion(t *testing.T) {
 		if blocks[i].Kind != "reference" {
 			t.Errorf("block %d kind = %q, want reference", i, blocks[i].Kind)
 		}
-		if title, _ := blocks[i].Attrs["title"].(string); title != want {
+		if title := refTitle(blocks[i].Attrs); title != want {
 			t.Errorf("block %d title = %q, want %q (copy order)", i, title, want)
 		}
 	}

@@ -46,20 +46,27 @@ function dblclick(/** @type {HTMLElement} */ el) {
   el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
 }
 
-/** A held file, resolved: its own uri is a leaf address IN this document, and
- *  `mime` — never a `src` attr — is what says the block holds these bytes. */
+/** A held file, resolved. The face lives under `cache` — root attrs describe
+ *  the POINTING, the cache the POINTED-AT — and `cache.mime` (never a `src`
+ *  attr) is what says the block holds these bytes. */
 const HELD = {
-  id: 'ref-1', uri: 'sieve://doc-1/swagger.yml', title: '',
-  summary: 'openapi: 3.0.0', bytes: '421888', mime: 'text/yaml',
+  id: 'ref-1', uri: 'sieve://doc-1/swagger.yml',
+  cache: { summary: 'openapi: 3.0.0', bytes: '421888', mime: 'text/yaml' },
   status: 'COMPLETE', error: '', createdAt: '2026-08-19T10:00:00Z',
 }
 
-/** A pointer, resolved: names another container, holds nothing. Its mime lives
- *  in Sieve's own space, which is exactly what says it points rather than holds. */
+/** A pointer, resolved: names another container, holds nothing. Its cached mime
+ *  lives in Sieve's own space, which is exactly what says it points rather than
+ *  holds. */
 const CITES = {
-  id: 'ref-2', uri: 'sieve://9f2b', title: 'Auth Design',
-  summary: 'Token rotation and session binding', bytes: '', mime: 'sieve/note',
+  id: 'ref-2', uri: 'sieve://9f2b',
+  cache: { title: 'Auth Design', summary: 'Token rotation and session binding', mime: 'sieve/note' },
   status: 'COMPLETE', error: '', createdAt: '2026-08-19T10:00:00Z',
+}
+
+/** `base` with its cache patched — the shorthand every face variation uses. */
+function withFace(base, patch) {
+  return { ...base, cache: { ...(base.cache || {}), ...patch } }
 }
 
 afterEach(() => { document.body.innerHTML = '' })
@@ -93,7 +100,7 @@ describe('ReferenceRenderer — the block is a chip', () => {
   })
 
   it('prefers an explicit title over the filename derived from its uri', () => {
-    const { dom } = mount({ ...HELD, title: 'Payments API' })
+    const { dom } = mount(withFace(HELD, { title: 'Payments API' }))
     expect(partOf(dom, 'label')?.textContent).toBe('Payments API')
     expect(ReferenceRenderer.filenameOf('sieve://doc-1/swagger.yml')).toBe('swagger.yml')
     expect(ReferenceRenderer.filenameOf('a/b/c.pdf')).toBe('c.pdf')
@@ -121,16 +128,16 @@ describe('ReferenceRenderer — kind and size as quiet secondary text', () => {
     // `kind` is the FRAMEWORK's attr (BASE_ATTRS) for the block's own kind, so a
     // payload carrying it must still read the noun off `mime`; regressing to
     // `kind` would print "reference" as if it described the file.
-    const { dom } = mount({ ...HELD, mime: '', kind: 'reference' })
+    const { dom } = mount({ ...withFace(HELD, { mime: '' }), kind: 'reference' })
     expect(partOf(dom, 'detail')?.textContent).toBe('412 KB')
   })
 
   it('derives the noun from `mime` for both halves — there is no second attr', () => {
     // sieve/note reduces to "note" by exactly the rule text/yaml reduces to
     // "yaml", which is why one attr carries the whole vocabulary.
-    expect(partOf(mount({ ...CITES, mime: 'sieve/note' }).dom, 'detail')?.textContent).toBe('note')
+    expect(partOf(mount(withFace(CITES, { mime: 'sieve/note' })).dom, 'detail')?.textContent).toBe('note')
     document.body.innerHTML = ''
-    expect(partOf(mount({ ...CITES, mime: 'text/plain', bytes: '' }).dom, 'detail')?.textContent).toBe('text')
+    expect(partOf(mount(withFace(CITES, { mime: 'text/plain' })).dom, 'detail')?.textContent).toBe('text')
   })
 
   it('formats sizes the way the processor does, and renders nothing for an unparseable one', () => {
@@ -180,7 +187,7 @@ describe('ReferenceRenderer — dangling is a normal state', () => {
 
 describe('ReferenceRenderer — the chevron reads the asset in place', () => {
   it('offers no chevron when there is nothing to reveal', () => {
-    const { dom } = mount({ ...CITES, summary: '' })
+    const { dom } = mount(withFace(CITES, { summary: '' }))
     expect(chevronOf(dom)).toBe(null)
     expect(summaryOf(dom).className).not.toContain('--shown')
   })
@@ -191,7 +198,7 @@ describe('ReferenceRenderer — the chevron reads the asset in place', () => {
     expect(chevron).not.toBe(null)
     // ON the chip: a flex child of it, so the two hover as one object.
     expect(chevron?.parentElement?.className).toContain('sieve-reference-chip')
-    expect(summaryOf(dom).textContent).toBe(CITES.summary)
+    expect(summaryOf(dom).textContent).toBe(CITES.cache.summary)
     expect(summaryOf(dom).className).not.toContain('--shown')
 
     chevron?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
@@ -207,14 +214,14 @@ describe('ReferenceRenderer — the chevron reads the asset in place', () => {
   it('keeps the disclosure open across a render-back, and re-fills the revealed text', () => {
     const { dom, renderer } = mount(CITES)
     renderer.toggleSummary(true)
-    renderer.update(blk({ ...CITES, summary: 'Rewritten by the resolve' }))
+    renderer.update(blk(withFace(CITES, { summary: 'Rewritten by the resolve' })))
     expect(renderer.expanded).toBe(true)
     expect(summaryOf(dom).textContent).toBe('Rewritten by the resolve')
     expect(summaryOf(dom).className).toContain('--shown')
   })
 
   it('cannot be expanded into nothing', () => {
-    const { renderer, dom } = mount({ ...CITES, summary: '' })
+    const { renderer, dom } = mount(withFace(CITES, { summary: '' }))
     expect(renderer.toggleSummary(true)).toBe(false)
     expect(summaryOf(dom).className).not.toContain('--shown')
   })

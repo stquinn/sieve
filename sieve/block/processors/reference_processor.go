@@ -50,12 +50,21 @@ const referenceMaxExtLen = 12
 // ReferenceProcessor handles the 'reference' Kind — a chip that either HOLDS a
 // file the document is about, or POINTS at something else Sieve can name.
 //
+// TWO NAMESPACES. Root attrs are facts about the POINTING — `uri`, `rel`,
+// `status`, `error`, the timestamps. The `cache` attr is a map of facts about
+// the POINTED-AT — `title`, `summary`, `mime`, `bytes`, stamped `cachedAt` —
+// whatever the last resolve (or the mint that had the bytes in hand) returned.
+// Without the split, caching a target's attrs would make a reference
+// indistinguishable from the thing it points at. Legacy blocks carrying face
+// attrs at root fold under `cache` via block.ReferenceMigrator.FoldFace — the
+// load-path migrator on disk shapes (flushed on open), InitAttrs on the wire.
+//
 // ONE ADDRESS, ONE DISCRIMINATOR. Every reference carries a `uri` and nothing
 // else locates it — a held file's bytes live at
 // sieve://{own-container}/{asset-key}. What separates the two halves is the
-// FACE, not the address: `mime` is always stamped, and held ⇔ that mime is not a
-// sieve/* type. An address is parsed once, in the resolve job; everything else
-// reads the face.
+// FACE, not the address: `cache.mime` is always stamped, and held ⇔ that mime
+// is not a sieve/* type. An address is parsed once, in the resolve job;
+// everything else reads the face.
 //
 // `rel` is a fence, not a feature: it records the relationship an author
 // declared ("cites", "supersedes"). Nothing branches on it and no query filters
@@ -84,15 +93,9 @@ func (p *ReferenceProcessor) Mode() block.BlockMode { return block.BlockModeBloc
 
 func (p *ReferenceProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
-		"id":  id,
-		"uri": "", // the one address, whether this block holds or points
-		"rel": "", // the authored relationship; nothing branches on it
-		// The cached face. mime is stamped for both halves — a real media type for
-		// a held file, sieve/{kind} for a pointer.
-		"title":             "",
-		"summary":           "",
-		"bytes":             "",
-		"mime":              "",
+		"id":                id,
+		"uri":               "", // the one address, whether this block holds or points
+		"rel":               "", // the authored relationship; nothing branches on it
 		"status":            block.BlockStatusPending,
 		"createdAt":         time.Now().UTC().Format(time.RFC3339),
 		"completedAt":       "",
@@ -105,6 +108,16 @@ func (p *ReferenceProcessor) InitAttrs(id string, overrides map[string]interface
 		}
 		attrs[k] = v
 	}
+	// The wire gate of the legacy-face fold; the disk gate is the load-path
+	// migrator (which is also what flushes the rewrite on open).
+	block.ReferenceMigrator{}.FoldFace(attrs)
+	// A face seeded at mint (a drop, an accepted @ mention) is dated at mint; a
+	// caller-supplied stamp is kept.
+	if face := p.face(attrs); len(face) > 0 {
+		if ts, _ := face["cachedAt"].(string); ts == "" {
+			p.stampFace(face)
+		}
+	}
 	// Decided after the overrides: whether there is work to do is a fact about the
 	// seeded block, not about the defaults.
 	if p.resolvable(attrs) {
@@ -114,6 +127,37 @@ func (p *ReferenceProcessor) InitAttrs(id string, overrides map[string]interface
 	}
 	return attrs
 }
+
+// face reads the cache map — the facts taken from the target. Nil when the
+// block has no face yet.
+func (p *ReferenceProcessor) face(attrs map[string]interface{}) map[string]interface{} {
+	m, _ := attrs["cache"].(map[string]interface{})
+	return m
+}
+
+// faceStr reads one string off the cache; "" when the face or the key is absent.
+func (p *ReferenceProcessor) faceStr(attrs map[string]interface{}, key string) string {
+	s, _ := p.face(attrs)[key].(string)
+	return s
+}
+
+// ensureFace returns the cache map, creating it on first write. An empty face
+// stays an ABSENT attr — only a writer with something to say mints the map.
+func (p *ReferenceProcessor) ensureFace(attrs map[string]interface{}) map[string]interface{} {
+	if m := p.face(attrs); m != nil {
+		return m
+	}
+	m := map[string]interface{}{}
+	attrs["cache"] = m
+	return m
+}
+
+// stampFace dates the cache's contents: what was taken from the target says
+// when it was taken.
+func (p *ReferenceProcessor) stampFace(face map[string]interface{}) {
+	face["cachedAt"] = time.Now().UTC().Format(time.RFC3339)
+}
+
 
 // uri reads the block's one address attr.
 func (p *ReferenceProcessor) uri(attrs map[string]interface{}) string {
@@ -125,13 +169,12 @@ func (p *ReferenceProcessor) uri(attrs map[string]interface{}) string {
 // in yet. It is both the complete-vs-pending and the describes-a-job predicate,
 // which BlockProcessor requires to agree.
 //
-// A reference always ends up carrying a mime, so an empty one is exactly the
-// window between a coordinate arriving and its resolve landing. A block seeded
-// with a face (a drop, an accepted @ mention) is born complete and is never
-// re-armed.
+// A reference always ends up carrying a cache.mime, so an empty one is exactly
+// the window between a coordinate arriving and its resolve landing. A block
+// seeded with a face (a drop, an accepted @ mention) is born complete and is
+// never re-armed.
 func (p *ReferenceProcessor) resolvable(attrs map[string]interface{}) bool {
-	mimeType, _ := attrs["mime"].(string)
-	return p.uri(attrs) != "" && strings.TrimSpace(mimeType) == ""
+	return p.uri(attrs) != "" && strings.TrimSpace(p.faceStr(attrs, "mime")) == ""
 }
 
 // complete seals the face. status and completedAt must be stamped together — a
@@ -142,13 +185,12 @@ func (p *ReferenceProcessor) complete(attrs map[string]interface{}) {
 }
 
 // held reports that this block holds the bytes its address names, rather than
-// pointing at something else. THE FACE DECIDES: a pointer's mime is sieve/{kind}
-// and a held file's is a real format. Never inspect the address to answer this —
-// a block pointing at another document's asset looks exactly like one holding
-// its own.
+// pointing at something else. THE FACE DECIDES: a pointer's cache.mime is
+// sieve/{kind} and a held file's is a real format. Never inspect the address to
+// answer this — a block pointing at another document's asset looks exactly like
+// one holding its own.
 func (p *ReferenceProcessor) held(attrs map[string]interface{}) bool {
-	mimeType, _ := attrs["mime"].(string)
-	mimeType = strings.TrimSpace(mimeType)
+	mimeType := strings.TrimSpace(p.faceStr(attrs, "mime"))
 	return mimeType != "" && !strings.HasPrefix(mimeType, "sieve/")
 }
 
@@ -279,16 +321,22 @@ func (p *ReferenceProcessor) holdDroppedFile(e block.ContentEntry, filename, uui
 	mimeType := p.sniffMIME(key, data)
 	// title is the file the user dropped; the address names the file on disk, and
 	// the two are deliberately different (see assetExt).
-	return map[string]interface{}{
-		"uri":     domain.NewLeafAddress(uuid, key).String(),
-		"title":   filename,
-		"mime":    mimeType,
-		"summary": p.excerpt(mimeType, data),
+	face := map[string]interface{}{
+		"title": filename,
+		"mime":  mimeType,
 		// bytes is stored as a STRING: attrs round-trip through JSON on a paste,
 		// which returns every number as a float64, and yaml.v3 writes a large
 		// float64 in exponent form — so a numeric attr becomes "1e+08" on the
 		// second save.
 		"bytes": strconv.Itoa(len(data)),
+	}
+	if s := p.excerpt(mimeType, data); s != "" {
+		face["summary"] = s
+	}
+	p.stampFace(face)
+	return map[string]interface{}{
+		"uri":   domain.NewLeafAddress(uuid, key).String(),
+		"cache": face,
 	}
 }
 
@@ -374,13 +422,19 @@ func (p *ReferenceProcessor) resolveJob(uri string) *block.ProcessorJob {
 				// "the job broke".
 				b.Attrs["error"] = f.dangling
 			} else {
+				face := p.ensureFace(b.Attrs)
 				if f.node.Title != "" {
-					b.Attrs["title"] = f.node.Title
+					face["title"] = f.node.Title
 				}
 				// A pointer's mime names Sieve's own space, not a media type: this
 				// block points at a note, it does not hold one.
-				b.Attrs["mime"] = "sieve/" + f.node.Kind
-				b.Attrs["summary"] = f.node.Summary
+				face["mime"] = "sieve/" + f.node.Kind
+				if f.node.Summary != "" {
+					face["summary"] = f.node.Summary
+				} else {
+					delete(face, "summary")
+				}
+				p.stampFace(face)
 				b.Attrs["error"] = ""
 			}
 			p.complete(b.Attrs)
@@ -530,8 +584,7 @@ func (p *ReferenceProcessor) MaterialiseContent(uuid string, attrs map[string]in
 	if !p.held(attrs) {
 		return nil // a pointer holds no bytes of its own
 	}
-	mimeType, _ := attrs["mime"].(string)
-	if !p.isPlainText(mimeType) {
+	if !p.isPlainText(p.faceStr(attrs, "mime")) {
 		return nil
 	}
 	// The stamped size is consulted before the read, so an oversized file is never
@@ -559,8 +612,7 @@ func (p *ReferenceProcessor) MaterialiseContent(uuid string, attrs map[string]in
 // holdDroppedFile), so an absent or unparseable one means "nothing is known
 // about these bytes" rather than a file of length zero.
 func (p *ReferenceProcessor) storedBytes(attrs map[string]interface{}) (int64, bool) {
-	raw, _ := attrs["bytes"].(string)
-	n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	n, err := strconv.ParseInt(strings.TrimSpace(p.faceStr(attrs, "bytes")), 10, 64)
 	if err != nil || n < 0 {
 		return 0, false
 	}
@@ -576,7 +628,7 @@ func (p *ReferenceProcessor) BuildContext(blk block.SieveBlock, _ block.DocView,
 	if uri == "" {
 		return block.AIContext{}
 	}
-	summary, _ := blk.Attrs["summary"].(string)
+	summary := p.faceStr(blk.Attrs, "summary")
 	// AIContext.String drops a tag whose values are all blank, so an unsummarised
 	// or untyped reference needs no branch here.
 	return block.AIContext{
@@ -593,8 +645,8 @@ func (p *ReferenceProcessor) BuildContext(blk block.SieveBlock, _ block.DocView,
 // label is what a reference is called: its cached title, else the file it holds,
 // else the coordinate itself. It is never empty.
 func (p *ReferenceProcessor) label(attrs map[string]interface{}, uri string) string {
-	if title, _ := attrs["title"].(string); strings.TrimSpace(title) != "" {
-		return strings.TrimSpace(title)
+	if title := strings.TrimSpace(p.faceStr(attrs, "title")); title != "" {
+		return title
 	}
 	if p.held(attrs) {
 		if addr, ok := p.heldAddress(attrs); ok {
@@ -609,8 +661,8 @@ func (p *ReferenceProcessor) label(attrs map[string]interface{}, uri string) str
 // shortens rather than inventing a placeholder.
 func (p *ReferenceProcessor) typeLine(attrs map[string]interface{}) string {
 	var parts []string
-	if mimeType, _ := attrs["mime"].(string); strings.TrimSpace(mimeType) != "" {
-		parts = append(parts, p.mimeFamily(strings.TrimSpace(mimeType)))
+	if mimeType := strings.TrimSpace(p.faceStr(attrs, "mime")); mimeType != "" {
+		parts = append(parts, p.mimeFamily(mimeType))
 	}
 	if size := p.humanSize(attrs); size != "" {
 		parts = append(parts, size)
