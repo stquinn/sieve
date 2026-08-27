@@ -127,6 +127,53 @@ export const aiBlockStyles = /* css */ `
     to { transform: rotate(360deg); }
   }
 
+  /* ── The question list — the TITLE region ─────────────────────────────────
+     The blocks the question is composed of, drawn in order. The framework's
+     .sieve-block__heading gives the region its weight and its divider; what is
+     owned here is only the spacing BETWEEN elements and the fact that a
+     structured element inside a heading is not heading text — a code listing
+     must not inherit the question's weight. */
+  .ai-block__question > .ai-block__element + .ai-block__element {
+    margin-top: 0.6rem;
+  }
+
+  /* SPACING BETWEEN ELEMENTS IS THE LIST'S, and only the list's. A composed
+     element is a whole block, and a block in a DOCUMENT carries the margins that
+     separate it from its neighbours there — 1.5rem above and 2rem below. Inside
+     a question those are somebody else's spacing: they double the row gap and
+     pad the region top and bottom with space that says nothing. */
+  .ai-block__question .sieve-block {
+    margin-top: 0;
+    margin-bottom: 0;
+  }
+
+  /* Rendered markdown outside a .tiptap surface keeps the browser's own
+     paragraph margins. The heading region promises no leading or trailing
+     margin, but its rules reach only its DIRECT children, and an element's text
+     is two levels in — so the promise is re-made where the text actually is.
+     Inner paragraphs keep their margins: those separate prose from prose. */
+  .ai-block__question .sieve-block__content > :first-child {
+    margin-top: 0;
+  }
+
+  .ai-block__question .sieve-block__content > :last-child {
+    margin-bottom: 0;
+  }
+
+  .ai-block__element:not([data-kind="prose"]) {
+    font-weight: normal;
+  }
+
+  /* A kind the question list has no rendering for: its name, then its literal
+     text. Quiet — it is a fallback, not a design. */
+  .ai-block__element-plain pre {
+    margin: 0.35rem 0 0;
+    white-space: pre-wrap;
+    font-family: var(--theme-monoFont);
+    font-size: calc(var(--doc-size) * 0.85);
+    color: var(--theme-textSubtle);
+  }
+
   /* An @Title the question attached — the INLINE half of its footer chip. Same
      accent as the ReferenceChip in the footer row below, so the name in the
      sentence and the chip under the answer read as one object. Tinted rather

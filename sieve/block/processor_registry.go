@@ -222,6 +222,26 @@ func (s SupportedActions) asAdditive() SupportedActions {
 // ProseProcessor.Accepts + orderedProseLast).
 const KindProse = "prose"
 
+// KindReference is the reference kind name — a pointer to an address, whether it
+// stands in the document tree or inside another block's payload as an element.
+// It names the one kind an edge can be carried as, so the code that mints an
+// element edge and the code that harvests one agree on the spelling.
+const KindReference = "reference"
+
+// RelTarget and RelAttach are the two roles a reference can declare in its `rel`
+// attr: what the reference IS to whatever holds it. A target names material the
+// holder is about; an attachment names material the holder was handed.
+//
+// The role is AUTHORED and it decides — a consumer reads `rel` first and only
+// falls back to what the address observably names when `rel` declares neither
+// role. That fallback is why an undeclared reference still classifies, and the
+// declaration is why "attach the document you are already in" can be said at
+// all, which no address can express.
+const (
+	RelTarget = "target"
+	RelAttach = "attach"
+)
+
 // JobContext is the complete input to a processor's DescribeJob.
 // EditorService assembles it at dispatch time — processors never reach back into services.
 type JobContext struct {
@@ -697,6 +717,18 @@ func MaterialiseEntries(uuid string, entries []ContentEntry) []ContentEntry {
 	out := make([]ContentEntry, 0, len(entries)+len(held))
 	out = append(out, entries...)
 	return append(out, held...)
+}
+
+// BlockParent is the optional capability a processor implements when its block's
+// payload holds child blocks — elements, which live inside the parent and
+// nowhere else. Implementing it IS the has-children predicate: a caller asks
+// GetProcessor(kind).(BlockParent) rather than naming the kinds that nest.
+//
+// Children returns the parent's elements in order. Each carries ITS OWN attrs
+// map — the one stored inside the parent's payload — so an attr written through
+// an element lands in what the parent persists; the list itself is a fresh read.
+type BlockParent interface {
+	Children(blk *SieveBlock) []*SieveBlock
 }
 
 // MarkdownContenter is the optional interface a processor implements when a given

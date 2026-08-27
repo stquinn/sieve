@@ -13,6 +13,7 @@ import { codeStyles } from './code-renderer.styles.js'
 import { LineGutter } from './line-gutter.js'
 import { AdvancedHeaderProvider, badgeEl, HeaderBar } from './header-bar.js'
 import { StatusBadge } from './status-badge.js'
+import { registerBlockRenderer } from './block-kinds.js'
 
 /** @typedef {{ id?: string, source?: string, language?: string, detectionMethod?: string, status?: string, createdAt?: string|null }} CodeAttrs */
 
@@ -69,6 +70,12 @@ export class CodeRenderer extends BlockRenderer {
 
     const codeEl = document.createElement('code')
     codeEl.className = 'hljs'
+    // A record's text is read, never typed into: no lens binds this as an
+    // editable surface, and the attribute says so to any that tried.
+    if (this.readOnly) {
+      pre.setAttribute('contenteditable', 'false')
+      pre.style.pointerEvents = 'none'
+    }
 
     pre.appendChild(codeEl)
     codeArea.appendChild(pre)
@@ -110,3 +117,5 @@ export class CodeRenderer extends BlockRenderer {
    */
   setContent(text) { this._pushAttrs({ source: text }) }
 }
+
+registerBlockRenderer('code', () => CodeRenderer)

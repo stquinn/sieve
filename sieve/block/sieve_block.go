@@ -83,8 +83,27 @@ func (b SieveBlock) Source() string { return b.StringAttr("source") }
 // Ref is the AI-chain reference list (Attrs["ref"]), comma-separated block ids.
 func (b SieveBlock) Ref() string { return b.StringAttr("ref") }
 
+// WholeDocumentRef is the ref token naming the whole document rather than a
+// block in it. No block answers to it: every resolver that walks refs has to
+// recognise it before it looks a handle up.
+const WholeDocumentRef = "doc"
+
 // Status is the job lifecycle state (Attrs["status"]): PENDING/DISPATCHED/…
 func (b SieveBlock) Status() string { return b.StringAttr("status") }
+
+// FaceAttr is the attrs-bag key a block's FACE lives under — the facts cached
+// from whatever the block points at (title, summary, mime, bytes, cachedAt).
+// Root attrs mean the POINTING; everything taken from the target sits one level
+// deeper, under this key.
+const FaceAttr = "cache"
+
+// FaceString reads one fact off this block's face. "" when the block has no
+// face, or nothing under key.
+func (b SieveBlock) FaceString(key string) string {
+	face, _ := b.Attrs[FaceAttr].(map[string]interface{})
+	s, _ := face[key].(string)
+	return s
+}
 
 // AttachmentsAttr is the attrs-bag key the attachment list lives under.
 const AttachmentsAttr = domain.AttachmentsAttr
@@ -131,10 +150,18 @@ func (b SieveBlock) answersTo() []string {
 	return append(out, b.Aliases...)
 }
 
-// outgoingRefs returns this block's outgoing ref targets (Attrs["ref"]) as an
-// ordered, whitespace-trimmed, non-empty slice — the tokenized form of the
-// comma-separated Ref() string.
-func (b SieveBlock) outgoingRefs() []string {
+// outgoingRefs returns every in-document handle this block points at, in order:
+// the tokens of its `ref` attr, then the handles its elements address. container
+// is the document the block lives in — the naming authority an element address
+// is recognised as local against; "" claims no element edge.
+func (b SieveBlock) outgoingRefs(container string) []string {
+	return append(b.refAttrTokens(), b.elementRefs(container)...)
+}
+
+// refAttrTokens returns this block's `ref` attr as an ordered,
+// whitespace-trimmed, non-empty slice — the tokenized form of the
+// comma-separated Ref() string, and the exact inverse of withRefs.
+func (b SieveBlock) refAttrTokens() []string {
 	ref := b.Ref()
 	if ref == "" {
 		return nil
@@ -145,6 +172,40 @@ func (b SieveBlock) outgoingRefs() []string {
 		if r != "" {
 			out = append(out, r)
 		}
+	}
+	return out
+}
+
+// elementRefs returns the handles this block's elements point at. A kind whose
+// processor is not a BlockParent holds no elements and answers nothing, so every
+// other kind's edges are exactly its `ref` attr.
+//
+// KIND AND ADDRESS DECIDE, never `rel`. A document edge is ROLE-INDEPENDENT —
+// what the question was about and what it was handed are equally edges of the
+// block holding them — and this is the one place that must stay so: reading a
+// role here would hide half a block's edges from the document that resolves
+// them. An element is an edge iff it is a reference whose address names a
+// LEAF of container's LIVE version: a whole-container address names a document
+// rather than a block in one, a leaf elsewhere is not this document's chain, and
+// a pinned address names a frozen snapshot instead of the block that is here
+// now. None of those is a handle the document resolves, and `ref` is the
+// document-local chain and nothing else.
+func (b SieveBlock) elementRefs(container string) []string {
+	parent, ok := GetProcessor(b.Kind).(BlockParent)
+	if !ok || container == "" {
+		return nil
+	}
+	own := domain.NewContainerAddress(container)
+	var out []string
+	for _, el := range parent.Children(&b) {
+		if el.Kind != KindReference {
+			continue
+		}
+		addr, err := domain.ParseAddress(el.StringAttr("uri"))
+		if err != nil || addr.IsContainer() || !addr.ContainerAddress().Equal(own) {
+			continue
+		}
+		out = append(out, addr.Leaf)
 	}
 	return out
 }
@@ -173,8 +234,9 @@ func (b SieveBlock) reidentify(newID string) SieveBlock {
 	return cp
 }
 
-// withRefs returns a copy of b whose outgoing ref list is refs, in the
-// comma-separated Attrs["ref"] form outgoingRefs tokenizes.
+// withRefs returns a copy of b whose `ref` attr is refs, in the comma-separated
+// form refAttrTokens reads back. It writes the attr and only the attr: a caller
+// rewriting a parent's element edges goes through SetElements.
 func (b SieveBlock) withRefs(refs []string) SieveBlock {
 	cp := b.cloneDeep()
 	cp.Attrs["ref"] = strings.Join(refs, ",")

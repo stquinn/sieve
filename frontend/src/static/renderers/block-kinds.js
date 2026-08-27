@@ -28,6 +28,33 @@ export function getBlockKind(kind) {
   return registry[kind] || null
 }
 
+// ── The PM-free renderer class, by kind ──────────────────────────────────────
+// The look-and-feel half of the same all-blocks registry: what DRAWS a block of
+// a given kind, for any consumer that has a block and no lens — a question's
+// elements, a popup, a bare page. It is separate from the definition above
+// because a NATIVE kind (prose) has no NodeView adapter and still has a renderer,
+// and because this half must be reachable from renderers/ with no lens loaded.
+//
+// A kind registers a THUNK, not the class: a renderer that composes this
+// registry is itself in it, and a thunk is read at draw time rather than at
+// module evaluation, so the cycle that creates costs nothing.
+var renderers = {}
+
+// registerBlockRenderer records how a kind is drawn. Each renderer module calls
+// it for its own kind, at the bottom of its own file, so the declaration sits
+// with the class rather than in a table that can drift from it.
+export function registerBlockRenderer(kind, factory) {
+  renderers[kind] = factory
+  return factory
+}
+
+// getBlockRenderer returns a kind's renderer CLASS, or null when nothing has
+// registered one. A caller draws the miss itself — never guesses a substitute.
+export function getBlockRenderer(kind) {
+  var factory = renderers[kind]
+  return factory ? factory() : null
+}
+
 // containsChildBlocks reports whether a node holds block-level CHILDREN (schema
 // content 'block+') — a true container (ai-block, web-clip) — versus a leaf that
 // holds its own text ('text*': code, diagram) or nothing (atom: smart-image).

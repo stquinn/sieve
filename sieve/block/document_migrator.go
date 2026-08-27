@@ -13,9 +13,14 @@ type DocumentMigrator struct{}
 // them changed the tree. documentUUID is the container ReferenceMigrator mints
 // against when folding a relative or src-only reference to its absolute form. The
 // input is never mutated.
+//
+// ORDER IS LOAD-BEARING at both ends: identity runs first so every later step
+// sees canonical ids, and AIBlockMigrator runs last so the addresses it copies
+// into question elements have already been rewritten to their current spelling.
 func (m DocumentMigrator) Migrate(blocks []SieveBlock, documentUUID string) ([]SieveBlock, bool) {
 	blocks, idsChanged := BlockIdentityMigrator{}.Migrate(blocks)
 	blocks, urlsChanged := AssetURLMigrator{}.Migrate(blocks)
 	blocks, urisChanged := ReferenceMigrator{}.Migrate(blocks, documentUUID)
-	return blocks, idsChanged || urlsChanged || urisChanged
+	blocks, questionsChanged := AIBlockMigrator{}.Migrate(blocks, documentUUID)
+	return blocks, idsChanged || urlsChanged || urisChanged || questionsChanged
 }

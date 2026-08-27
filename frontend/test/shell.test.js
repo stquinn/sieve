@@ -2004,17 +2004,44 @@ describe('AbstractEditor.askAi (the single AI-job seam, pure over context)', () 
     vi.mocked(applyTargetHighlight).mockClear()
   })
 
-  it('anchors the answer after the context target\'s BLOCK, flushes first, then creates', async () => {
+  it('mints the question as a LIST: what it is about, then what was asked', async () => {
     const rig = seamRig('wysiwyg', { kind: 'block', ref: 'co-9', label: 'Code Block' })
     const flushSave = vi.spyOn(rig.ed, 'flushSave')
     const createBlock = vi.spyOn(rig.ed, 'createBlock')
     await rig.ed.askAi({ type: 'ask', question: 'why?' })
+    // The target is a bare reference DECLARING its role, addressed against this
+    // editor's own container; the typed text is one prose element after it.
+    const question = [
+      { kind: 'reference', attrs: { uri: 'sieve://u/co-9', rel: 'target' } },
+      { kind: 'prose', attrs: { content: 'why?' } },
+    ]
     // The anchor is the context's stable BLOCK ID — no live caret read, and no
     // position: turning that id into one is the host's, through the verb.
-    expect(createBlock).toHaveBeenCalledWith('ai-block', { type: 'ASK', ref: 'co-9', question: 'why?' }, 'b1')
-    expect(rig.provider.requestAddBlock).toHaveBeenCalledWith('ai-block', { type: 'ASK', ref: 'co-9', question: 'why?' }, 'b1')
+    expect(createBlock).toHaveBeenCalledWith('ai-block', { type: 'ASK', question }, 'b1')
+    expect(rig.provider.requestAddBlock).toHaveBeenCalledWith('ai-block', { type: 'ASK', question }, 'b1')
     expect(flushSave).toHaveBeenCalled()                  // flush BEFORE create
     expect(flushSave.mock.invocationCallOrder[0]).toBeLessThan(createBlock.mock.invocationCallOrder[0])
+  })
+
+  // A multi-block selection is a question about EACH of them, in span order.
+  it('one target reference per block of the selection', async () => {
+    const rig = seamRig('wysiwyg')
+    vi.mocked(buildAiContext).mockReturnValueOnce({ blockRef: 'pr-a,pr-b', contextLabel: 'Two blocks' })
+    await rig.ed.askAi({ type: 'ask', question: 'q' })
+    expect(rig.provider.requestAddBlock.mock.calls[0][1].question).toEqual([
+      { kind: 'reference', attrs: { uri: 'sieve://u/pr-a', rel: 'target' } },
+      { kind: 'reference', attrs: { uri: 'sieve://u/pr-b', rel: 'target' } },
+      { kind: 'prose', attrs: { content: 'q' } },
+    ])
+  })
+
+  // A follow-up is an ask about the parent exchange, so the list BEGINS with a
+  // reference to it — the same gesture, no second path.
+  it('a follow-up begins with a target reference to the parent exchange', async () => {
+    const rig = seamRig('wysiwyg', { kind: 'block', ref: 'ai-parent', label: 'Ask AI' })
+    await rig.ed.askAi({ type: 'ask', question: 'and then?' })
+    expect(rig.provider.requestAddBlock.mock.calls[0][1].question[0]).toEqual(
+      { kind: 'reference', attrs: { uri: 'sieve://u/ai-parent', rel: 'target' } })
   })
 
   it('no context block id → no anchor; createBlock derives one from the caret', async () => {
@@ -2035,8 +2062,8 @@ describe('AbstractEditor.askAi (the single AI-job seam, pure over context)', () 
     await rig.ed.askAi({ type: 'ask', question: 'q', context: passed })
     expect(buildAiContext).toHaveBeenCalledWith(passed)
     const [, attrs, anchor] = rig.provider.requestAddBlock.mock.calls[0]
-    expect(attrs.ref).toBe('co-panel')  // the panel's ref, not the live co-live
-    expect(anchor).toBe('bPanel')       // the panel's anchor, not the live b1
+    expect(attrs.question[0].attrs.uri).toBe('sieve://u/co-panel')  // the panel's target, not the live co-live
+    expect(anchor).toBe('bPanel')                                   // the panel's anchor, not the live b1
   })
 
   it('selection target: highlights the CONTEXT target range (not the live selection)', async () => {
@@ -2055,10 +2082,15 @@ describe('AbstractEditor.askAi (the single AI-job seam, pure over context)', () 
     expect(applyTargetHighlight).not.toHaveBeenCalled()
   })
 
-  it('explain: type is EXPLAIN and the question defaults to empty', async () => {
+  // Explain asks nothing in words, so the list is its target and nothing else —
+  // a prose element with no text would be a question that is not there.
+  it('explain: type is EXPLAIN and the list is the target alone', async () => {
     const rig = seamRig('wysiwyg', { kind: 'block', ref: 'pr-1', label: 'Paragraph' })
     await rig.ed.askAi({ type: 'explain', context: rig.ed.getSelectionContext() })
-    expect(rig.provider.requestAddBlock).toHaveBeenCalledWith('ai-block', { type: 'EXPLAIN', ref: 'pr-1', question: '' }, 'b1')
+    expect(rig.provider.requestAddBlock).toHaveBeenCalledWith('ai-block', {
+      type: 'EXPLAIN',
+      question: [{ kind: 'reference', attrs: { uri: 'sieve://u/pr-1', rel: 'target' } }],
+    }, 'b1')
   })
 
   it('explain in markdown mode is a NO-OP (no inline target to explain)', async () => {
@@ -2070,23 +2102,38 @@ describe('AbstractEditor.askAi (the single AI-job seam, pure over context)', () 
   it('ask in markdown mode still asks — no block ids there, so the answer appends', async () => {
     const rig = seamRig('markdown', { kind: 'document', ref: '', label: 'Document' })
     await rig.ed.askAi({ type: 'ask', question: 'q', context: { blockIds: [], blockId: null, target: { kind: 'document', ref: '', label: 'Document' } } })
-    expect(rig.provider.requestAddBlock).toHaveBeenCalledWith('ai-block', { type: 'ASK', ref: 'doc', question: 'q' }, undefined)
+    // A whole-document target is the CONTAINER's own address — no leaf.
+    expect(rig.provider.requestAddBlock).toHaveBeenCalledWith('ai-block', {
+      type: 'ASK',
+      question: [
+        { kind: 'reference', attrs: { uri: 'sieve://u', rel: 'target' } },
+        { kind: 'prose', attrs: { content: 'q' } },
+      ],
+    }, undefined)
   })
 
-  it('falls back to a "doc" ref when buildAiContext yields no blockRef', async () => {
+  it('falls back to the whole document when buildAiContext yields no blockRef', async () => {
     const rig = seamRig('wysiwyg', { kind: 'document', ref: '', label: 'Document' })
     vi.mocked(buildAiContext).mockReturnValueOnce({})   // no blockRef
     await rig.ed.askAi({ type: 'ask', question: 'q' })
-    expect(rig.provider.requestAddBlock.mock.calls[0][1].ref).toBe('doc')
+    expect(rig.provider.requestAddBlock.mock.calls[0][1].question[0]).toEqual(
+      { kind: 'reference', attrs: { uri: 'sieve://u', rel: 'target' } })
   })
 
-  it('an attachment manifest rides as a plain attr; absent IS the empty case', async () => {
+  // The picker's manifest becomes reference elements of the question declaring
+  // `attach`, carrying the address they were offered under and the title that
+  // labelled it as their cached face. Attaching nothing adds nothing.
+  it('an attached document becomes a reference element declaring attach', async () => {
     const rig = seamRig('wysiwyg', { kind: 'block', ref: 'co-9', label: 'Code Block' })
-    await rig.ed.askAi({ type: 'ask', question: 'q', attachments: [{ uri: 'container:x', title: 'X' }] })
-    expect(rig.provider.requestAddBlock.mock.calls[0][1].attachments).toEqual([{ uri: 'container:x', title: 'X' }])
+    await rig.ed.askAi({ type: 'ask', question: 'q', attachments: [{ uri: 'sieve://9f2b', title: 'X' }] })
+    expect(rig.provider.requestAddBlock.mock.calls[0][1].question).toEqual([
+      { kind: 'reference', attrs: { uri: 'sieve://u/co-9', rel: 'target' } },
+      { kind: 'prose', attrs: { content: 'q' } },
+      { kind: 'reference', attrs: { uri: 'sieve://9f2b', rel: 'attach', cache: { title: 'X' } } },
+    ])
     rig.provider.requestAddBlock.mockClear()
     await rig.ed.askAi({ type: 'ask', question: 'q', attachments: [] })
-    expect(rig.provider.requestAddBlock.mock.calls[0][1]).not.toHaveProperty('attachments')
+    expect(rig.provider.requestAddBlock.mock.calls[0][1].question).toHaveLength(2)
   })
 })
 

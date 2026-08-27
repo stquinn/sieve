@@ -1,0 +1,72 @@
+{
+  "container": "0197b2aa-1111-7888-8999-aaaabbbbcccc",
+  "cases": [
+    {
+      "name": "asks about a block of this document",
+      "gesture": { "about": "0197b2aa-3333-7888-8999-aaaabbbbcccc", "ask": "why?" },
+      "attrs": {
+        "type": "ASK",
+        "question": [
+          {
+            "kind": "reference",
+            "attrs": {
+              "uri": "sieve://0197b2aa-1111-7888-8999-aaaabbbbcccc/0197b2aa-3333-7888-8999-aaaabbbbcccc",
+              "rel": "target"
+            }
+          },
+          { "kind": "prose", "attrs": { "content": "why?" } }
+        ]
+      }
+    },
+    {
+      "name": "asks about the whole document with an attachment",
+      "gesture": {
+        "about": "doc",
+        "ask": "how does @Auth Design handle this?",
+        "attach": [{ "uri": "sieve://0197b2aa-2222-7888-8999-aaaabbbbcccc", "title": "Auth Design" }]
+      },
+      "attrs": {
+        "type": "ASK",
+        "question": [
+          {
+            "kind": "reference",
+            "attrs": { "uri": "sieve://0197b2aa-1111-7888-8999-aaaabbbbcccc", "rel": "target" }
+          },
+          { "kind": "prose", "attrs": { "content": "how does @Auth Design handle this?" } },
+          {
+            "kind": "reference",
+            "attrs": {
+              "uri": "sieve://0197b2aa-2222-7888-8999-aaaabbbbcccc",
+              "rel": "attach",
+              "cache": { "title": "Auth Design" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "explain carries no prose",
+      "gesture": { "about": "0197b2aa-3333-7888-8999-aaaabbbbcccc" },
+      "attrs": {
+        "type": "EXPLAIN",
+        "question": [
+          {
+            "kind": "reference",
+            "attrs": {
+              "uri": "sieve://0197b2aa-1111-7888-8999-aaaabbbbcccc/0197b2aa-3333-7888-8999-aaaabbbbcccc",
+              "rel": "target"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "a detached question is prose alone",
+      "gesture": { "ask": "loose thought" },
+      "attrs": {
+        "type": "ASK",
+        "question": [{ "kind": "prose", "attrs": { "content": "loose thought" } }]
+      }
+    }
+  ]
+}

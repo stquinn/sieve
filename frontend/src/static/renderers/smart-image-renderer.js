@@ -13,6 +13,7 @@ import { BlockRenderer } from './block-renderer.js'
 import { smartImageStyles } from './smart-image-renderer.styles.js'
 import { StatusBadge } from './status-badge.js'
 import { resolveImageSrc } from './asset-urls.js'
+import { registerBlockRenderer } from './block-kinds.js'
 
 /** @typedef {{ id?: string, src?: string, alt?: string, summary?: string, width?: string, height?: string, status?: string, createdAt?: string|null, error?: string, showSummary?: boolean }} SmartImagePayload */
 
@@ -208,3 +209,5 @@ export class SmartImageRenderer extends BlockRenderer {
 
   // destroy(): base no-op — resize listeners live on `window` only during a drag.
 }
+
+registerBlockRenderer('smart-image', () => SmartImageRenderer)

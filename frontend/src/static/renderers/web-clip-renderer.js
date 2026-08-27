@@ -18,6 +18,7 @@
 import { BlockRenderer } from './block-renderer.js'
 import { webClipStyles } from './web-clip-renderer.styles.js'
 import { StatusBadge } from './status-badge.js'
+import { registerBlockRenderer } from './block-kinds.js'
 
 /** @typedef {{ id?: string, source?: string, mode?: string, status?: string, createdAt?: string|null, error?: string|null, title?: string|null, content?: string|null }} WebClipAttrs */
 
@@ -197,3 +198,5 @@ export class WebClipRenderer extends BlockRenderer {
 
   // destroy(): base no-op is correct — this class owns no timers/observers.
 }
+
+registerBlockRenderer('web-clip', () => WebClipRenderer)

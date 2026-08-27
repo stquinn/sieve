@@ -20,6 +20,7 @@ import { DiagramTheme } from './diagram-renderer.styles.js'
 import { StatusBadge } from './status-badge.js'
 import { AdvancedHeaderProvider, HeaderBar, expandButton } from './header-bar.js'
 import { expandBlock } from '../ui/media-lightbox.js'
+import { registerBlockRenderer } from './block-kinds.js'
 
 /**
  * @typedef {Object} DiagramAttrs
@@ -57,6 +58,14 @@ class DiagramHeader extends AdvancedHeaderProvider {
    *  @param {DiagramAttrs} attrs @param {DiagramRenderer} r @returns {HTMLElement[]} */
   left(attrs, r) {
     const current = (attrs && attrs.diagramType) || 'mermaid'
+    // The picker rewrites the block's engine; a record shows the engine as a
+    // label instead, so what it was drawn with is still legible.
+    if (r.readOnly) {
+      const label = document.createElement('span')
+      label.className = 'diagram-block__engine-wrap'
+      label.textContent = current
+      return [label]
+    }
     const wrap = document.createElement('span')
     wrap.className = 'diagram-block__engine-wrap'
 
@@ -83,6 +92,7 @@ class DiagramHeader extends AdvancedHeaderProvider {
   }
   /** @param {DiagramAttrs} attrs @param {DiagramRenderer} r — the renderer (semantic verbs) */
   right(attrs, r) {
+    if (r.readOnly) return []
     const mode = attrs.mode || 'render'
     const toggle = document.createElement('div')
     toggle.className = 'diagram-block__toggle'
@@ -231,7 +241,7 @@ export class DiagramRenderer extends BlockRenderer {
     DiagramRenderer.#liveInstances.add(this)
     DiagramRenderer.#installThemeListener()
     const attrs = /** @type {DiagramAttrs} */ (this.block.payload)
-    if (attrs.mode === 'render') {
+    if (this.readOnly || attrs.mode === 'render') {
       this.#renderInto(attrs)
       return this.#renderBody
     }
@@ -593,3 +603,5 @@ export class DiagramRenderer extends BlockRenderer {
     }
   }
 }
+
+registerBlockRenderer('diagram', () => DiagramRenderer)

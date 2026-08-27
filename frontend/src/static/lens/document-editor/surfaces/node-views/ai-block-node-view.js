@@ -59,7 +59,16 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
       ref:      { default: 'doc', parseHTML: function (el) { return el.getAttribute('data-ref') || 'doc' } },
       type:     { default: 'ASK', parseHTML: function (el) { return el.getAttribute('data-ai-type') || 'ASK' } },
       model:    { default: null,  parseHTML: function (el) { return el.getAttribute('data-model') || null } },
-      question: { default: '',    parseHTML: function (el) { return el.getAttribute('data-question') || '' } },
+      // The question is a LIST OF BLOCKS, so like attachments it rides the data-*
+      // costume as JSON where the scalars around it ride as text. This parse is
+      // the PM-resurrect fallback — ordinarily the renderer reads the list off the
+      // block cache — and it must not lose it silently.
+      question: {
+        default: [],
+        parseHTML: function (el) {
+          try { return JSON.parse(el.getAttribute('data-question') || '[]') } catch (e) { return [] }
+        }
+      },
       response: { default: null,  parseHTML: function (el) { return el.getAttribute('data-response') || null } },
       error:    { default: null,  parseHTML: function (el) { return el.getAttribute('data-error') || null } },
       // Attachments are a LIST, so they ride the data-* costume as JSON where
@@ -89,7 +98,7 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
         // attr's parseHTML reads data-ai-type. Avoids the data-type node-marker clash.
         aiType:   data.type     || 'ASK',
         model:    data.model    || null,
-        question: data.question || '',
+        question: JSON.stringify(data.question || []),
         response: data.response || null,
         error:    data.error    || null,
         attachments: JSON.stringify(data.attachments || []),

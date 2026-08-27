@@ -418,3 +418,33 @@ The ancestor of all four is `smart-link` itself: introduced 2026-05-02 (`e391458
 **Why deferred:** changing an existing service error's shape is a `services/` contract change with its own blast radius (every existing caller of `ServeAssetData` needs auditing for string-matching assumptions); out of scope for #100's own surface.
 
 **Retires when:** `ServeAssetData` returns a sentinel (e.g. `ErrAssetNotFound`) wrapped with `%w`, and `ReferenceProcessor`'s ingest fallback switches from preserving/forwarding the raw error to `errors.Is` against it.
+
+## N-A: `reparseDoc` rebuilds the whole tree without running any migrator
+
+**Tracked:** register only (found while evaluating a create-path conversion gate for #101 Task 4; predates the epic).
+
+**What:** `ShadowDocument` has four mutation doors — `applyOpTo`'s create arm, `ReplaceBlock`, `MergeBlock` and `reparseDoc` — and only the LOAD path (`NewShadow`) runs `DocumentMigrator`. `reparseDoc` is the markdown-mode commit: it rebuilds the entire block tree from the buffer text, and it is ungated for EVERY migrator, not just the newest one. So a legacy fence typed or pasted into markdown mode enters the tree unconverted — a legacy short block id (`BlockIdentityMigrator`), a legacy asset URL (`AssetURLMigrator`), a `container:`/`block:` reference uri (`ReferenceMigrator`), or a pre-#101 flat ai-block question (`AIBlockMigrator`) — and stays that way until the document is closed and reopened.
+
+**Why deferred:** it is a latent hole in a rare hand-authoring path, not a live defect (the material converts on the next load), and the fix is a shadow-level decision about which migrators may run outside the load path — `BlockIdentityMigrator`'s own godoc says it runs "only where a save can follow", and running it mid-edit would silently rewrite a client-supplied id while the client still holds the stale one. That is a design call for the shadow, not a drive-by inside a per-kind epic.
+
+**Retires when:** `reparseDoc` runs the same conversion the load path does, with the identity question answered explicitly — either by running `DocumentMigrator` whole and re-acking the ids it rewrites, or by splitting the pipeline into the migrators that are safe to run on any rebuild and the one that is not. Verify: type a legacy `container:`-uri reference fence into markdown mode, commit, and read the block's `uri` back without reloading.
+
+## Q-A: "Quote this" — no gesture composes a question element from a selection
+
+**Tracked:** register only (deferred with pinning at #101 close-out, 2026-08-27).
+
+**What:** a question is a list of blocks and the model admits any kind in it, but the composer mints exactly three shapes: a target reference from the selection, one prose element from the typed text, and an attach reference per `@` mention (`QuestionList.about`/`ask`/`attach`). There is no gesture that puts the material ITSELF into the question — "quote this passage and ask about it" can only be done by naming the block and hoping the model reads it. The renderer and the fold both already handle a quoted element (the showcase note carries prose, code and log elements the composer cannot produce), so what is missing is only the gesture.
+
+**Why deferred:** #101 deliberately kept the composer's expressiveness where it was — the model grew, the gestures did not, and growing them later needs no framework change. Which quote form is right is also open: an inline copy of the text (a prose/code element) or a PINNED reference (`sieve://{container}/{leaf}?version={n}`), which is by-value semantics without a copy and is what brainstorm 5 §8c's freeze story points at. That choice wants the versions work behind it.
+
+**Retires when:** a selection-scoped "Quote" gesture mints its element into the question list, and the choice between an inline copy and a pinned reference is made rather than defaulted.
+
+## Q-B: a block cannot be pasted into a question that already exists
+
+**Tracked:** register only (deferred with pinning at #101 close-out, 2026-08-27).
+
+**What:** a question is composed once, at the moment it is asked, and nothing edits it afterwards. Pasting a block into an existing ai-block's question — the natural way to add the log you forgot — has no path: the paste pipeline resolves to the DOCUMENT's block list, the ai-block's question region is `contentEditable=false` and PM owns only the answer body, and no wire op addresses an element inside a block's payload.
+
+**Why deferred:** it is not a rendering gap but a model one, and it reopens a settled question — an answered exchange is a RECORD, so editing its question after the answer exists makes the pair incoherent. The coherent version is probably "compose a new turn seeded from this one" rather than mutation, which is chat-shaped work (#102).
+
+**Retires when:** either an element-grained mutation exists and the record/edit question is answered for an answered exchange, or the gesture is deliberately re-expressed as a new turn and this entry closes as won't-do.

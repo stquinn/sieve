@@ -95,7 +95,7 @@ func (p *ReferenceProcessor) InitAttrs(id string, overrides map[string]interface
 	attrs := map[string]interface{}{
 		"id":                id,
 		"uri":               "", // the one address, whether this block holds or points
-		"rel":               "", // the authored relationship; nothing branches on it
+		"rel":               "", // the authored role a consumer classifies on (block.RelTarget/RelAttach); empty falls through to the address rule
 		"status":            block.BlockStatusPending,
 		"createdAt":         time.Now().UTC().Format(time.RFC3339),
 		"completedAt":       "",

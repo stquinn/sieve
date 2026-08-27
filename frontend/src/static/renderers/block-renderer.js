@@ -2,7 +2,7 @@
 // BlockRenderer: a LIVE, STATEFUL, LENS-BLIND, PROTOCOL-BLIND object that BUILDS
 // ITSELF and speaks BUSINESS VERBS.
 //
-//   constructor(block, provider?, handleBuild?)
+//   constructor(block, provider?, handleBuild?, options?)
 //       - block        : the typed SieveBlock, never a raw attr map
 //       - provider     : the outbound effect boundary — a BlockContainerProvider.
 //                        A renderer speaks facade verbs and never a transport.
@@ -13,6 +13,25 @@
 //                        false → EXTERNALLY MANAGED: the base places `container`,
 //                        records the claim, skips the hook, and update() skips
 //                        the region permanently.
+//       - options      : { readOnly } — see below.
+//
+//   READ-ONLY is a FRAMEWORK CONCEPT, not a lens's private arrangement. A block
+//   is drawn read-only when it is a RECORD of something rather than a live thing
+//   to work on — the material a question was composed of, a quoted turn, an
+//   archived view.
+//
+//   IT FORBIDS MUTATION, NOT EXPLORATION. A renderer honouring it draws its full
+//   anatomy and its normal chrome and disables only what EDITS or MUTATES the
+//   block — an editable text surface, an action that writes, a control that
+//   persists a mode. Everything that changes how the block is READ stays fully
+//   interactive: a log keeps its filter and column controls, code keeps
+//   selection and copy, a diagram keeps pan, zoom and expand. A kind whose read
+//   affordance normally persists its state holds it locally instead, because a
+//   record has no block of its own to write to.
+//
+//   The base does the general half: every outbound verb (_pushAttrs,
+//   _pushContent, retry) is inert. A kind does the visible half by consulting
+//   `this.readOnly` where it builds an affordance that edits or mutates.
 //
 //   render()  — base TEMPLATE (subclasses NEVER override): the shell, then per
 //               region [consult handler → else invoke the build hook] in canonical
@@ -58,6 +77,7 @@ export class BlockRenderer {
   /** @type {SieveBlock} */ #block
   /** @type {import('../contract/container-provider.js').BlockContainerProvider|null} */ #provider
   /** @type {((renderer: BlockRenderer, region: string, container: HTMLElement, block: SieveBlock) => boolean)|null} */ #handleBuild
+  /** @type {boolean} */ #readOnly = false
   /** @type {Set<string>} */ #external = new Set()
   /** @type {HTMLElement|null} */ #root = null
   /** @type {HTMLElement|null} */ #header = null
@@ -69,8 +89,9 @@ export class BlockRenderer {
    * @param {SieveBlock} block  the typed block
    * @param {import('../contract/container-provider.js').BlockContainerProvider|null} [provider]  omitted for scratch instances
    * @param {(renderer: BlockRenderer, region: string, container: HTMLElement, block: SieveBlock) => boolean} [handleBuild]
+   * @param {{readOnly?: boolean}} [options]
    */
-  constructor(block, provider, handleBuild) {
+  constructor(block, provider, handleBuild, options) {
     if (new.target === BlockRenderer) {
       throw new ContractViolation('BlockRenderer is abstract — extend it, never instantiate it directly')
     }
@@ -84,9 +105,17 @@ export class BlockRenderer {
     this.#block = block
     this.#provider = provider || null
     this.#handleBuild = handleBuild || null
+    this.#readOnly = !!(options && options.readOnly)
   }
 
   get block() { return this.#block }
+
+  /**
+   * Is this block drawn as a RECORD rather than a live thing to work on? A kind
+   * consults it where it builds an affordance that edits or mutates, and offers
+   * that affordance only when it is false. @returns {boolean}
+   */
+  get readOnly() { return this.#readOnly }
   get id() { return this.#block.id }
   /** The block root element (available after render()). */
   get root() { return this.#root }
@@ -208,9 +237,10 @@ export class BlockRenderer {
    */
   setContent(text) { this._pushContent(text) }
 
-  /** Re-run the block's backend job. Kind-blind — Go knows what retry means. */
+  /** Re-run the block's backend job. Kind-blind — Go knows what retry means.
+   *  A record is not re-run: read-only makes it inert. */
   retry() {
-    if (this.#provider) this.#provider.requestRetry(this.id)
+    if (this.#provider && !this.#readOnly) this.#provider.requestRetry(this.id)
   }
 
   /** Expand into the lightbox. Expandable kinds override. */
@@ -219,12 +249,21 @@ export class BlockRenderer {
   }
 
   /**
+   * The uuid of the container this block is mounted in — what a kind measures
+   * "inside this document" against. '' for a scratch instance, which is mounted
+   * nowhere: a kind reading it must treat everything as elsewhere.
+   * @protected @returns {string}
+   */
+  get _container() { return this.#provider ? this.#provider.getUuid() : '' }
+
+  /**
    * The ONLY place a kind's semantic verbs become wire schema. Scratch instances
-   * have no provider and are inert: they author, never effect.
+   * have no provider and are inert: they author, never effect. So is a read-only
+   * one, which is drawing a record of something rather than working on it.
    * @protected @param {Record<string, any>} patch
    */
   _pushAttrs(patch) {
-    if (this.#provider) this.#provider.requestSetBlock(this.id, patch)
+    if (this.#provider && !this.#readOnly) this.#provider.requestSetBlock(this.id, patch)
   }
 
   /**
@@ -233,7 +272,7 @@ export class BlockRenderer {
    * @protected @param {string} text
    */
   _pushContent(text) {
-    if (this.#provider) this.#provider.flush(this.id, text)
+    if (this.#provider && !this.#readOnly) this.#provider.flush(this.id, text)
   }
 
   /**

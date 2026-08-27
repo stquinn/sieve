@@ -50,9 +50,15 @@ const REPRESENTATIVE_ATTRS = {
   createdAt: new Date().toISOString(),
 }
 
-/** render() ALONE = the complete block. */
-function mount(attrs) {
-  const renderer = new AiBlockRenderer(blk(attrs))
+/** The document a mounted block lives in — what its question's addresses are
+ *  measured against. */
+const DOC = '0198c1a0-0000-7000-8000-000000000001'
+
+/** render() ALONE = the complete block. `container` mounts it in a document; a
+ *  bare mount is a scratch instance, which is mounted nowhere. */
+function mount(attrs, container) {
+  const provider = container ? /** @type {any} */ ({ getUuid: () => container }) : undefined
+  const renderer = new AiBlockRenderer(blk(attrs), provider)
   const dom = renderer.render()
   return { renderer, dom }
 }
@@ -99,6 +105,25 @@ describe('AiBlockRenderer (Phase 3 — bare-page DoD)', () => {
     expect(body?.textContent).toContain('It parses the fence')
 
     expect(getComputedStyle(/** @type {Element} */ (badge)).color.toLowerCase()).toBe('#7aa2f7')
+  })
+
+  // A question composed in the document is a LIST OF BLOCKS, and the TITLE
+  // region is where that list is drawn. A question the block has nothing to draw
+  // for — one that is only a target the chain already lights — shows no region
+  // at all, which is exactly what an Explain looked like before the list existed.
+  it('a question composed as a list draws the list in the title region', () => {
+    const { dom } = mount({
+      ...REPRESENTATIVE_ATTRS,
+      question: [
+        { kind: 'reference', attrs: { uri: 'sieve://' + DOC, rel: 'target' } },
+        { kind: 'prose', attrs: { content: 'What does this function do?' } },
+      ],
+    })
+    expect(dom.querySelector('.sieve-block__heading')?.textContent).toContain('What does this function do?')
+
+    const bare = mount({ ...REPRESENTATIVE_ATTRS, question: [{ kind: 'reference', attrs: { uri: 'sieve://' + DOC, rel: 'target' } }] }, DOC)
+    const title = /** @type {HTMLElement|null} */ (bare.dom.querySelector('.sieve-block__heading'))
+    expect(title?.style.display).toBe('none')
   })
 
   it('badge state machine: PENDING (fresh) shows the thinking state, EXPLAIN types show EXPLAIN', () => {
@@ -453,7 +478,9 @@ describe('AiBlockRenderer — @mentions inside the question', () => {
       attachments: [{ uri: 'container:9f2b', title: 'Auth Design' }],
     })
     expect(mentions(heading(dom))).toEqual(['@Auth Design'])
-    expect(dom.querySelectorAll('.sieve-block__content .ai-block__mention').length).toBe(0)
+    // The ANSWER body specifically: a prose element drawn inside the question
+    // wears the framework's content class too, so the class alone names both.
+    expect(dom.querySelectorAll('.sieve-block__content.tiptap .ai-block__mention').length).toBe(0)
   })
 
   it('update() marks the question when the server\'s attachments arrive after the block', () => {
@@ -473,5 +500,103 @@ describe('AiBlockRenderer — @mentions inside the question', () => {
     const title = heading(dom)
     expect(mentions(title)).toEqual([])
     expect(title?.textContent?.trim()).toBe('What about @Auth Design?')
+  })
+})
+
+// ── The question list drives the block's three affordances ───────────────────
+// The question is folded once and read in three places: what it is ABOUT
+// becomes the chain the hover glow walks, what it was HANDED becomes the footer
+// chip row (and the marks on the `@Title` tokens inside the question), and what
+// it IS is drawn in the title region. This is where the block's own reading of
+// those slots is pinned; how the drawn list LOOKS is question-list-view.test.js.
+
+describe('AiBlockRenderer — the question drives the chain, the chips and the title', () => {
+  /** @type {HTMLStyleElement} */ let rootVars
+
+  beforeAll(() => {
+    clearInjectedStyles();
+    /** @type {any} */ (globalThis).TipTap = /** @type {any} */ (globalThis).TipTap || {}
+    Object.assign(/** @type {any} */ (globalThis).TipTap, { MarkdownIt })
+  })
+  afterAll(() => { delete /** @type {any} */ (globalThis).TipTap.MarkdownIt })
+  beforeEach(() => { rootVars = installBareThemeVars() })
+  afterEach(() => { rootVars.remove(); document.body.innerHTML = '' })
+
+  const LEAF = '0198c1a0-0000-7000-8000-000000000010'
+  const OTHER = '0198c1a0-ffff-7000-8000-0000000000ff'
+  /** @param {string} uri @param {string} rel @param {string} [title] */
+  const ref = (uri, rel, title) => ({
+    kind: 'reference',
+    attrs: title ? { uri, rel, cache: { title } } : { uri, rel },
+  })
+
+  it('the chain names the local targets, and only those', () => {
+    const { dom } = mount({
+      ...REPRESENTATIVE_ATTRS,
+      ref: '',
+      question: [
+        ref('sieve://' + DOC, 'target'),
+        ref('sieve://' + DOC + '/' + LEAF, 'target'),
+        ref('sieve://' + OTHER + '/x', 'target'),
+      ],
+    }, DOC)
+    expect(dom.getAttribute('data-ai-ref')).toBe('doc,' + LEAF)
+  })
+
+  it('a question about nothing names no chain — detached is an absence', () => {
+    const { dom } = mount({ ...REPRESENTATIVE_ATTRS, ref: '', question: [{ kind: 'prose', attrs: { content: 'why?' } }] }, DOC)
+    expect(dom.getAttribute('data-ai-ref')).toBe('')
+  })
+
+  it("update() re-stamps the chain when the block's question arrives", () => {
+    const { renderer, dom } = mount({ ...REPRESENTATIVE_ATTRS, ref: '', question: [] }, DOC)
+    expect(dom.getAttribute('data-ai-ref')).toBe('')
+    renderer.update(blk({ ...REPRESENTATIVE_ATTRS, ref: '', question: [ref('sieve://' + DOC + '/' + LEAF, 'target')] }))
+    expect(dom.getAttribute('data-ai-ref')).toBe(LEAF)
+  })
+
+  it('the attach-role elements are the footer chips, labelled by their cached title', () => {
+    const { dom } = mount({
+      ...REPRESENTATIVE_ATTRS,
+      question: [
+        ref('sieve://' + DOC, 'target'),
+        { kind: 'prose', attrs: { content: 'How does @Auth Design handle retries?' } },
+        ref('sieve://' + OTHER, 'attach', 'Auth Design'),
+        ref('sieve://0198c1a0-bbbb-7000-8000-0000000000bb', 'quote', 'Rate Limits'),
+      ],
+    }, DOC)
+    const row = /** @type {HTMLElement} */ (dom.querySelector('.ai-block__attachments'))
+    const chips = row.querySelectorAll('.sieve-reference-chip')
+    // The unrecognised role falls to the address, which is elsewhere: attached.
+    expect(Array.from(chips).map((c) => c.querySelector('.sieve-reference-chip__label')?.textContent)).toEqual(['Auth Design', 'Rate Limits'])
+    expect(row.style.display).toBe('flex')
+  })
+
+  it("marks the `@Title` of a document the question's own elements attached", () => {
+    const { dom } = mount({
+      ...REPRESENTATIVE_ATTRS,
+      question: [
+        { kind: 'prose', attrs: { content: 'How does @Auth Design handle retries?' } },
+        ref('sieve://' + OTHER, 'attach', 'Auth Design'),
+      ],
+    }, DOC)
+    const marks = Array.from(dom.querySelectorAll('.sieve-block__heading .ai-block__mention')).map((m) => m.textContent)
+    expect(marks).toEqual(['@Auth Design'])
+  })
+
+  it('an unchanged question is not redrawn on every update', () => {
+    const question = [{ kind: 'prose', attrs: { content: 'why?' } }]
+    const { renderer, dom } = mount({ ...REPRESENTATIVE_ATTRS, question }, DOC)
+    const drawn = dom.querySelector('.ai-block__element')
+    for (let i = 0; i < 5; i++) renderer.update(blk({ ...REPRESENTATIVE_ATTRS, status: 'PENDING', question }))
+    expect(dom.querySelector('.ai-block__element')).toBe(drawn)   // the same node, never rebuilt
+  })
+
+  it('destroy() releases what the question list composed', () => {
+    const { renderer } = mount({
+      ...REPRESENTATIVE_ATTRS,
+      question: [{ kind: 'log', attrs: { source: 'a\nb' } }],
+    }, DOC)
+    expect(() => renderer.destroy()).not.toThrow()
   })
 })

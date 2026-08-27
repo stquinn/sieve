@@ -16,6 +16,7 @@
 import { BlockRenderer } from './block-renderer.js'
 import { smartCardStyles } from './smart-card-renderer.styles.js'
 import { StatusBadge } from './status-badge.js'
+import { registerBlockRenderer } from './block-kinds.js'
 
 /** @typedef {{ id?: string, href?: string, title?: string, description?: string, image?: string, siteName?: string, status?: string, createdAt?: string|null }} SmartCardPayload */
 
@@ -127,3 +128,5 @@ export class SmartCardRenderer extends BlockRenderer {
 
   // destroy(): base no-op is correct — this class owns no timers/observers.
 }
+
+registerBlockRenderer('smart-card', () => SmartCardRenderer)

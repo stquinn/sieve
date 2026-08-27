@@ -20,6 +20,7 @@ import { MODE } from '../contract/sieve-block.js'
 import { logStyles } from './log-renderer.styles.js'
 import { LineGutter } from './line-gutter.js'
 import { AdvancedHeaderProvider, badgeEl, HeaderBar } from './header-bar.js'
+import { registerBlockRenderer } from './block-kinds.js'
 
 /** @typedef {{ id?: string, source?: string, parsedAssetRef?: string, resolvedAssetUrl?: string, logFormatName?: string, logFormatRegex?: string, status?: string, mode?: string, filter?: string, disabledCols?: string, hideNoise?: boolean }} LogAttrs */
 /** @typedef {{ key: string, name: string }} LogColumn */
@@ -46,19 +47,24 @@ class LogHeader extends AdvancedHeaderProvider {
       items.push(fb)
     }
     const explore = LogRenderer.isExplore(attrs)
-    const toggle = document.createElement('div')
-    toggle.className = 'log-block__toggle'
-    toggle.style.marginLeft = '8px'
-    const rawBtn = document.createElement('button')
-    rawBtn.className = 'log-block__toggle-btn' + (!explore ? ' log-block__toggle-btn--active-raw' : '')
-    rawBtn.innerHTML = RAW_SVG + ' Raw'
-    rawBtn.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); r.setMode(MODE.EDIT) })
-    const exploreBtn = document.createElement('button')
-    exploreBtn.className = 'log-block__toggle-btn' + (explore ? ' log-block__toggle-btn--active-explore' : '')
-    exploreBtn.innerHTML = EXPLORE_SVG + ' Explore'
-    exploreBtn.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); r.setMode(MODE.RENDER) })
-    toggle.appendChild(rawBtn); toggle.appendChild(exploreBtn)
-    items.push(toggle)
+    // The raw/explore toggle is the one control here that changes the BLOCK
+    // rather than the reading of it, so a record does not offer it: which
+    // surface a record shows is decided by what processing produced.
+    if (!r.readOnly) {
+      const toggle = document.createElement('div')
+      toggle.className = 'log-block__toggle'
+      toggle.style.marginLeft = '8px'
+      const rawBtn = document.createElement('button')
+      rawBtn.className = 'log-block__toggle-btn' + (!explore ? ' log-block__toggle-btn--active-raw' : '')
+      rawBtn.innerHTML = RAW_SVG + ' Raw'
+      rawBtn.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); r.setMode(MODE.EDIT) })
+      const exploreBtn = document.createElement('button')
+      exploreBtn.className = 'log-block__toggle-btn' + (explore ? ' log-block__toggle-btn--active-explore' : '')
+      exploreBtn.innerHTML = EXPLORE_SVG + ' Explore'
+      exploreBtn.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); r.setMode(MODE.RENDER) })
+      toggle.appendChild(rawBtn); toggle.appendChild(exploreBtn)
+      items.push(toggle)
+    }
     if (!explore) {
       const noiseBtn = document.createElement('button')
       noiseBtn.className = 'sieve-block__badge sieve-block__badge--clickable' + (attrs.hideNoise ? ' sieve-block__badge--active' : '')
@@ -119,6 +125,16 @@ export class LogRenderer extends BlockRenderer {
   static mode(attrs) { return /** @type {'raw'|'explore'} */ (attrs.mode || (attrs.parsedAssetRef ? 'explore' : 'raw')) }
   /** @param {LogAttrs} attrs @returns {boolean} */
   static isExplore(attrs) { return LogRenderer.mode(attrs) === 'explore' }
+
+  /**
+   * The surface a READ-ONLY log shows. `parsedAssetRef` is the observable fact
+   * that the parse job ran; the resolved url is whether this context can reach
+   * what it produced. Both, or there is nothing to explore and the text stands.
+   * @param {LogAttrs} attrs @returns {'raw'|'explore'}
+   */
+  static recordMode(attrs) {
+    return (attrs.parsedAssetRef && attrs.resolvedAssetUrl) ? 'explore' : 'raw'
+  }
   /** @param {LogAttrs} attrs @returns {Record<string, boolean>} */
   static disabledSet(attrs) {
     /** @type {Record<string, boolean>} */
@@ -143,6 +159,40 @@ export class LogRenderer extends BlockRenderer {
   #loadingAsset = false
   /** @type {IntersectionObserver|null} */ #tableObserver = null
   /** @type {LogColumn[]} */ #cols = []
+  /** @type {LogAttrs} how a RECORD is currently being read — see #read */ #view = {}
+
+  /**
+   * THE ONE VIEW OF THIS BLOCK every part of the renderer draws from: the
+   * block's attrs, with a record's own reading laid over them.
+   *
+   * Reading is not editing, so a record's filter, columns and noise dimming are
+   * live — they just live HERE, for as long as it is drawn, instead of being
+   * written back to a block a record does not own. A record's MODE is settled
+   * here too, and that is why this is one method rather than a per-caller
+   * adjustment: the header and the body decide what to show from the same
+   * `mode`, and two places computing it is two places to disagree — a bar
+   * offering Explore controls over a body that fell back to raw.
+   * @returns {LogAttrs}
+   */
+  #read() {
+    const attrs = /** @type {LogAttrs} */ (this.block.payload)
+    if (!this.readOnly) return attrs
+    return Object.assign({}, attrs, this.#view, { mode: LogRenderer.recordMode(attrs) })
+  }
+
+  /**
+   * Applies a change to HOW THIS IS READ. A live block persists it, because the
+   * next reader of that block should see it; a record holds it locally and
+   * redraws itself, because there is no block of its own to persist it to.
+   * @param {LogAttrs} patch
+   */
+  #readAs(patch) {
+    if (!this.readOnly) { this._pushAttrs(patch); return }
+    Object.assign(this.#view, patch)
+    const attrs = this.#read()
+    if (this.#headerBar) this.#headerBar.update(attrs, this)
+    this.#syncBody(attrs, false)
+  }
 
   /** The columns the loaded parsed-JSON asset made available (renderer-owned
    *  state; LogHeader reads this to build the column buttons). @returns {LogColumn[]} */
@@ -151,7 +201,7 @@ export class LogRenderer extends BlockRenderer {
   /** @returns {HTMLElement} */
   buildHeader() {
     this.#headerBar = new HeaderBar(new LogHeader())
-    return this.#headerBar.render(/** @type {LogAttrs} */ (this.block.payload), this)
+    return this.#headerBar.render(this.#read(), this)
   }
 
   /** @returns {HTMLElement} */
@@ -208,16 +258,16 @@ export class LogRenderer extends BlockRenderer {
     this.#editArea = editArea
     this.#exploreArea = exploreArea
     this.#tableContainer = tableContainer
-    this.#syncBody(/** @type {LogAttrs} */ (this.block.payload), true)
+    this.#syncBody(this.#read(), true)
     return body
   }
 
   /** @param {import('../contract/sieve-block.js').SieveBlock} block */
   update(block) {
     // Previous truth read BEFORE super stores the new block.
-    const prev = /** @type {LogAttrs} */ (this.block.payload)
+    const prev = this.#read()
     super.update(block)
-    const attrs = /** @type {LogAttrs} */ (block.payload)
+    const attrs = this.#read()
     if (this.#headerBar) this.#headerBar.update(attrs, this)
     const assetChanged = prev.parsedAssetRef !== attrs.parsedAssetRef || prev.status !== attrs.status
     this.#syncBody(attrs, assetChanged)
@@ -231,7 +281,7 @@ export class LogRenderer extends BlockRenderer {
    * @param {string} mode
    */
   setMode(mode) {
-    const attrs = /** @type {LogAttrs} */ (this.block.payload)
+    const attrs = this.#read()
     if (mode === MODE.DEFAULT) {
       if (attrs.mode) this._pushAttrs({ mode: '' })
       return
@@ -242,14 +292,14 @@ export class LogRenderer extends BlockRenderer {
   }
 
   /** Set the Explore table's row filter text. @param {string} text */
-  setFilter(text) { this._pushAttrs({ filter: text }) }
+  setFilter(text) { this.#readAs({ filter: text }) }
 
   /** Flip the raw view's noise dimming. */
-  toggleNoise() { this._pushAttrs({ hideNoise: !(/** @type {LogAttrs} */ (this.block.payload).hideNoise) }) }
+  toggleNoise() { this.#readAs({ hideNoise: !this.#read().hideNoise }) }
 
   /** Toggle one Explore column's visibility by key. The comma-joined
    *  disabledCols wire encoding stays private to this class. @param {string} key */
-  toggleColumn(key) { this._pushAttrs({ disabledCols: LogRenderer.toggleDisabled(/** @type {LogAttrs} */ (this.block.payload), key) }) }
+  toggleColumn(key) { this.#readAs({ disabledCols: LogRenderer.toggleDisabled(this.#read(), key) }) }
 
   /**
    * Outbound truth report — THIS kind's content attr is `source`, knowledge
@@ -314,7 +364,7 @@ export class LogRenderer extends BlockRenderer {
       this.#loadedJson = data
       // WHICH columns exist is now known — store them and re-render the header.
       // Truth is read live off the block (it may have advanced mid-fetch).
-      const live = /** @type {LogAttrs} */ (this.block.payload)
+      const live = this.#read()
       this.#cols = this.#availableColumns()
       if (this.#headerBar) this.#headerBar.update(live, this)
       this.#renderTable(live)
@@ -442,3 +492,5 @@ export class LogRenderer extends BlockRenderer {
     }
   }
 }
+
+registerBlockRenderer('log', () => LogRenderer)

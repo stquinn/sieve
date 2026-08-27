@@ -136,6 +136,22 @@ describe('TargetChips — a chip per block of a SELECTION', () => {
     expect(labels()).toEqual(['“retry policy”', 'Auth Design', 'sieve://9f2c'])
   })
 
+  it('labels an ai-block by the PROSE of its question list', () => {
+    const target = new TargetChips(footer, container({
+      a1: held('ai-block', {
+        question: [
+          { kind: 'reference', attrs: { uri: 'sieve://9f2b', rel: 'target' } },
+          { kind: 'prose', attrs: { content: 'What breaks if we drop the cache?' } },
+        ],
+      }),
+      a2: held('ai-block', { question: [{ kind: 'reference', attrs: { uri: 'sieve://9f2b', rel: 'target' } }] }),
+    }))
+    target.show(selecting(['a1', 'a2']))
+
+    // a2 asks in references alone, so it has no line to show and falls to its kind.
+    expect(labels()).toEqual(['“retry policy”', 'What breaks if we drop…', 'ai block'])
+  })
+
   it('falls back to the KIND NAME when the payload carries no hint', () => {
     const target = new TargetChips(footer, container({
       l1: held('log', { source: '12:00 boot' }),

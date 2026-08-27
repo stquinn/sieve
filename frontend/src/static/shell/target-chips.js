@@ -17,6 +17,7 @@
 
 import { esc } from '../renderers/html-escape.js'
 import { getSieveIcon } from '../renderers/block-kinds.js'
+import { QuestionList } from '../renderers/question-list.js'
 
 /**
  * @typedef {import('../lens/document-editor/selection-model.js').SelectionContext} SelectionContext
@@ -167,10 +168,14 @@ export class TargetChips {
    * One short line from a payload value: markdown markers off the front (a
    * heading's `#` identifies nothing), whitespace collapsed to single spaces,
    * then cut at a word boundary with an ellipsis.
+   *
+   * A value that is a LIST OF BLOCKS — an ai-block's question — reads as the
+   * prose it is composed of, which is the line a person would recognise it by.
    * @param {any} value
    * @returns {string}
    */
   static #tidy(value) {
+    if (Array.isArray(value)) value = QuestionList.text(value)
     if (typeof value !== 'string' && typeof value !== 'number') return ''
     const text = String(value).replace(/\s+/g, ' ').replace(/^[#>*+\-\s]+/, '').trim()
     if (!text) return ''

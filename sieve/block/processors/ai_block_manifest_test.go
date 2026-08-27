@@ -17,13 +17,42 @@ const (
 	rateURI  = "sieve://cccccccc-1a2b-4c5d-8e9f-a1b2c3d4e5f6"
 )
 
-// aiBlockWithAttachments builds one chain turn.
+// chainDocUUID is the container the chain lives in — the naming authority the
+// load path addresses its question elements against.
+const chainDocUUID = "0197b1f4-dddd-7eee-8fff-a1b2c3d4e5f6"
+
+// aiBlockWithAttachments builds one chain turn in the legacy flat form, which
+// the document load path converts to a question list.
 func aiBlockWithAttachments(id, ref, question, response string, atts ...domain.Attachment) block.SieveBlock {
 	blk := block.NewSieveBlock("ai-block", id, map[string]interface{}{
 		"id": id, "ref": ref, "type": "ASK",
 		"status": block.BlockStatusComplete, "question": question, "response": response,
 	})
 	blk.SetAttachments(atts)
+	return blk
+}
+
+// askAbout builds one turn in its CURRENT form — a question list holding the
+// whole-document target, the question text and one reference element per
+// attachment — for a test that assembles a prompt without a load path to
+// convert a legacy record for it.
+func askAbout(container, id, question, response string, atts ...domain.Attachment) block.SieveBlock {
+	blk := block.NewSieveBlock("ai-block", id, map[string]interface{}{
+		"id": id, "type": "ASK", "status": block.BlockStatusComplete, "response": response,
+	})
+	els := block.Elements{
+		block.NewSieveBlock(block.KindReference, "", map[string]interface{}{
+			"uri": domain.NewContainerAddress(container).String(), "rel": block.RelTarget,
+		}),
+		block.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": question}),
+	}
+	for _, a := range atts {
+		els = append(els, block.NewSieveBlock(block.KindReference, "", map[string]interface{}{
+			"uri": a.URI, "rel": block.RelAttach,
+			block.FaceAttr: map[string]interface{}{"title": a.Title},
+		}))
+	}
+	blk.SetElements(block.QuestionAttr, els)
 	return blk
 }
 
@@ -51,7 +80,7 @@ func TestAIBlock_ThreeTurnChain_EachTurnRendersItsOwnManifest(t *testing.T) {
 	// NewShadow upgrades the fixture's readable handles to UUIDs on load, and
 	// rewrites the chain's refs to match, so the action turn is asked for by
 	// position rather than by the name it was seeded with.
-	shadow := block.NewShadow("u", body, codec, 0, nil)
+	shadow := block.NewShadow(chainDocUUID, body, codec, 0, nil)
 	loaded := shadow.SnapshotBlocks()
 	actionID := loaded[len(loaded)-1].ID
 	action, doc, ok := shadow.SnapshotForJob(actionID)
@@ -105,9 +134,9 @@ func TestAIBlock_UndereferenceableAttachment_RendersUnavailableAndStillAsks(t *t
 	t.Cleanup(resetRegistry)
 
 	p := NewAIBlockProcessor(svc)
-	blk := aiBlockWithAttachments("ab-1", "doc", "still answerable?", "",
+	blk := askAbout(chainDocUUID, "ab-1", "still answerable?", "",
 		domain.Attachment{URI: "sieve://not-a-uuid", Title: "Some Block"})
-	_, _, question := p.buildPrompt(&blk, block.DocView{})
+	_, _, question := p.buildPrompt(&blk, block.DocView{UUID: chainDocUUID})
 
 	if !strings.Contains(question, "still answerable?") {
 		t.Fatalf("the question survived nothing:\n%s", question)
@@ -128,10 +157,8 @@ func TestAIBlock_NoAttachments_PromptUnchanged(t *testing.T) {
 	t.Cleanup(resetRegistry)
 
 	p := NewAIBlockProcessor(block.BlockServices{})
-	blk := block.NewSieveBlock("ai-block", "ab-1", map[string]interface{}{
-		"id": "ab-1", "ref": "doc", "type": "ASK", "question": "plain question?",
-	})
-	_, _, question := p.buildPrompt(&blk, block.DocView{})
+	blk := askAbout(chainDocUUID, "ab-1", "plain question?", "")
+	_, _, question := p.buildPrompt(&blk, block.DocView{UUID: chainDocUUID})
 
 	if strings.Contains(question, "ATTACHED") {
 		t.Fatalf("an attachment-less turn grew a section:\n%s", question)

@@ -57,7 +57,7 @@ func BuildContextForID(id string, doc DocView, seen map[string]bool, filter Bloc
 		return AIContext{}
 	}
 	seen[id] = true
-	if id == "doc" {
+	if id == WholeDocumentRef {
 		return AIContext{Content: doc.deriveMarkdownFiltered(filter)}
 	}
 	// Uniform dispatch: every block — prose included — resolves by id (GetBlock) and

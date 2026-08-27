@@ -18,15 +18,22 @@ import (
 // Migration runs only where a save can follow: the document load path (NewShadow)
 // and the /migrate-ids sweep.
 //
-// Migration creates NO aliases. Attrs["ref"] is the complete referrer set for a
-// block id — nothing outside a document persists one (domain/, StateService,
-// JobTracker and JobEngine carry no block-id field, and content links are
-// https-only) — so rewriting refs in-document is exhaustive and verifiable.
+// Migration creates NO aliases. A referrer to a block id is persisted in two
+// places and nowhere else: the `ref` attr, and the uri of a reference element
+// inside another block's payload. Nothing outside a document persists one at all
+// (domain/, StateService, JobTracker and JobEngine carry no block-id field, and
+// content links are https-only), so an in-document rewrite is exhaustive and
+// verifiable.
+//
+// This step rewrites the ATTR. Element uris need no rewrite and get none: an
+// element address is minted from an id that is already a uuid, because this step
+// runs FIRST in DocumentMigrator and the step that mints element addresses runs
+// LAST — so no element uri can name a handle being renamed here.
 //
 // It is one step of DocumentMigrator, the load-time pipeline callers run.
 type BlockIdentityMigrator struct{}
 
-// Migrate returns the tree with every id a unique UUID and every in-document ref
+// Migrate returns the tree with every id a unique UUID and every `ref` attr
 // pointed at the new ids, plus whether anything changed. The input is never
 // mutated: undo and the caller's snapshot both depend on that.
 func (m BlockIdentityMigrator) Migrate(blocks []SieveBlock) ([]SieveBlock, bool) {
@@ -79,16 +86,21 @@ func (m BlockIdentityMigrator) assignIDs(blocks []SieveBlock) ([]SieveBlock, map
 	return out, rename, changed
 }
 
-// rewriteRefs points every outgoing ref at its target's new id, in place over the
+// rewriteRefs points every `ref` attr at its target's new id, in place over the
 // already-copied tree. Tokens absent from rename are left VERBATIM — they name a
 // block this document does not contain, and guessing is worse than preserving.
+//
+// It reads and writes the ATTR — refAttrTokens and its inverse withRefs — never
+// the wider edge set outgoingRefs harvests: an edge carried as an element is
+// rewritten where it is stored, and rebuilding one into a `ref` attr would leave
+// the block holding both forms at once.
 func (m BlockIdentityMigrator) rewriteRefs(blocks []SieveBlock, rename map[string]string) bool {
 	if len(rename) == 0 {
 		return false
 	}
 	changed := false
 	for i, b := range blocks {
-		refs := b.outgoingRefs()
+		refs := b.refAttrTokens()
 		if len(refs) == 0 {
 			continue
 		}

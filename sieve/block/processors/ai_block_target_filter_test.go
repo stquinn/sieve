@@ -28,6 +28,7 @@ func TestAIBlock_DocTarget_ExcludesPriorAnswerButThreadKeepsIt(t *testing.T) {
 	// fixture seeds real uuids rather than readable handles, keeping the ids stable
 	// across the markdown -> shadow -> snapshot round trip this test relies on.
 	const (
+		docUUID  = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a00"
 		proseID  = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a01"
 		priorID  = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a02"
 		followID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a03"
@@ -51,22 +52,23 @@ func TestAIBlock_DocTarget_ExcludesPriorAnswerButThreadKeepsIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed serialize: %v", err)
 	}
-	shadow := block.NewShadow("u", body, codec, 0, nil)
-	_, doc, ok := shadow.SnapshotForJob(followID)
+	shadow := block.NewShadow(docUUID, body, codec, 0, nil)
+	follow, doc, ok := shadow.SnapshotForJob(followID)
 	if !ok {
 		t.Fatalf("SnapshotForJob(%s) not found; body was:\n%s", followID, body)
 	}
 
-	targets, threadIDs := p.resolveChain(followID, priorID, doc)
-	if len(targets) != 1 || targets[0] != "doc" {
-		t.Fatalf("expected targets=[doc], got %v", targets)
+	w := p.resolveChain(follow, doc)
+	if len(w.local) != 1 || w.local[0] != "doc" || len(w.foreign) != 0 {
+		t.Fatalf("expected targets=[doc], got %v / %v", w.local, w.foreign)
 	}
-	if len(threadIDs) != 1 || threadIDs[0] != priorID {
-		t.Fatalf("expected thread=[%s], got %v", priorID, threadIDs)
+	if len(w.thread) != 1 || w.thread[0] != priorID {
+		t.Fatalf("expected thread=[%s], got %v", priorID, w.thread)
 	}
+	threadIDs := w.thread
 
 	// TARGET: filtered whole-doc content.
-	targetContent := p.buildTargets(targets, doc)
+	targetContent := p.buildTargets(w, doc)
 	if !strings.Contains(targetContent, proseText) {
 		t.Errorf("TARGET lost prose content; got %q", targetContent)
 	}

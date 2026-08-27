@@ -16,6 +16,7 @@ import { emptyParagraphAnchor, blockIndexForInsert, blockIndexAt, docPosForBlock
 import { buildAiContext, applyTargetHighlight } from './extensions.js'
 import { resolveEntriesForKind } from './document-editor/surfaces/sieve-block-extension.js'
 import { AddressStatus } from '../renderers/address-status.js'
+import { QuestionList } from '../renderers/question-list.js'
 
 /**
  * @typedef {import('./document-editor/surfaces/abstract-surface.js').SurfaceEventMsg} SurfaceEventMsg
@@ -573,13 +574,18 @@ export class AbstractEditor extends Lens {
    * NEVER re-reads the live selection on write: that would race the label (panel
    * shows target C1, editor acts on a drifted C2).
    *
-   * Builds the ai-block ref, applies the == target highlight, anchors the insert
-   * AFTER the target's top-level block, flushes the pending sync, creates the
-   * ai-block, and collapses the caret to the target end. EXPLAIN in markdown is a
-   * no-op; ASK still works.
+   * MINTS THE QUESTION AS A LIST OF BLOCKS, in gesture order: what the message is
+   * about (the resolved target, or the parent exchange of a follow-up), the text
+   * as prose, then what the `@` picker attached. Every reference it mints
+   * declares its role.
+   *
+   * Applies the == target highlight, anchors the insert AFTER the target's
+   * top-level block, flushes the pending sync, creates the ai-block, and
+   * collapses the caret to the target end. EXPLAIN in markdown is a no-op; ASK
+   * still works.
    * @param {{ type: 'ask'|'explain', question?: string, context?: import('./document-editor/selection-model.js').SelectionContext, attachments?: Array<{uri: string, title?: string}> }} job
-   *   `attachments` is the composer's manifest — a plain attr on the ai-block,
-   *   leaving `ref` untouched.
+   *   `attachments` is the composer's manifest; each entry becomes a reference
+   *   element of the question declaring `attach`.
    * @returns {Promise<void>}
    */
   askAi({ type, question, context, attachments }) {
@@ -587,7 +593,6 @@ export class AbstractEditor extends Lens {
     if (type === 'explain' && this.mode === EditorMode.MARKDOWN) return Promise.resolve()
     const ctx = context || this.getSelectionContext()
     const aiCtx = buildAiContext(ctx)
-    const ref = (aiCtx && aiCtx.blockRef) || 'doc'
     const blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
     const target = ctx && ctx.target
     const ed = /** @type {any} */ (this.editorPane)
@@ -605,10 +610,11 @@ export class AbstractEditor extends Lens {
     }
     const done = this.flushSave()
       .then(() => {
-        const attrs = /** @type {Record<string, any>} */ ({ type: blockType, ref: ref, question: question || '' })
-        // Absent IS the empty case (Go's InitAttrs deletes an empty list).
-        if (attachments && attachments.length) attrs.attachments = attachments
-        this.createBlock('ai-block', attrs, anchorId)
+        const list = new QuestionList(this.uuid)
+          .about((aiCtx && aiCtx.blockRef) || 'doc')
+          .ask(question)
+          .attach(attachments)
+        this.createBlock('ai-block', { type: blockType, question: list.elements }, anchorId)
       })
       .catch((err) => { console.error('[editor] askAi flush error:', err) })
     // Editor owns its cursor: collapse focus to the target end.

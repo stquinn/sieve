@@ -271,7 +271,10 @@ place appearance reads the policy, deliberately kept to a single site.
    it is rule 5 unchanged — it selects the block, because a block sits in the
    editing flow and must behave like one. The ai-block's FOOTER chip stays
    single-click to open: it is not in that flow (it is provenance under an
-   answer), and the two differing is deliberate rather than an accident.
+   answer), and the two differing is deliberate rather than an accident. The
+   footer is the ONLY place an ai-block draws a chip — its question draws none,
+   because a reference the question names is either an attachment, which the
+   footer shows, or a target, which is pointing and has no entry of its own.
    What opening means is decided by ONE rule, off the block's single address:
    - points (`uri`) → the container, via `window.sieveWorkspace.openAddress`
      (`MentionService.resolve` → the Router) — the same path ai-block chips take.
@@ -741,16 +744,22 @@ placement, above).
 
 ### Gestures on a block chip (#38)
 
-| Gesture | On an `attachment` block | On the ai-block's FOOTER chip |
+| Gesture | On a `reference` block | On the ai-block's FOOTER chip |
 |---|---|---|
 | single click | selects the block, like any other block | opens the coordinate |
 | double click | opens: a `uri` opens its container, a `src` reveals the file where it lives | — |
 
-The two differ deliberately and it is recorded here so it does not later read as
-an accident. A block sits in the editing flow, so a single click must place the
-caret and select it exactly as it would for any other block — which leaves
-double click for opening. The ai-block's footer chip is NOT in that flow (there
-is no caret in it and nothing to select), so single click can mean open there
+The footer row is the only chip site an ai-block has: the documents its question
+attached. The question itself draws no chip — a reference it names is either one
+of those attachments or a target, and a target is POINTING, which is shown by
+the lineage affordances on the block it points at rather than by a mark inside
+the question.
+
+The two columns differ deliberately and it is recorded here so it does not later
+read as an accident. A block sits in the editing flow, so a single click must
+place the caret and select it exactly as it would for any other block — which
+leaves double click for opening. The footer chip is NOT in that flow (there is
+no caret in it and nothing to select), so single click can mean open there
 without ambiguity.
 
 Reading the asset is the chevron's job rather than double click's: expanding

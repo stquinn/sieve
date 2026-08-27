@@ -1,0 +1,18 @@
+{
+  "uuid": "0198c1a0-0000-7000-8000-000000000001",
+  "type": "document",
+  "status": "unfiled",
+  "version": 1,
+  "display_name": "Question List Showcase",
+  "filename": "question-list-showcase.md",
+  "summary": "An ai-block question list exercising every element role the model allows.",
+  "tags": [],
+  "created": "2026-08-27T09:00:00",
+  "modified": "2026-08-27T09:00:00",
+  "names": [
+    {
+      "name": "question-list-showcase",
+      "from": "2026-08-27T09:00:00"
+    }
+  ]
+}

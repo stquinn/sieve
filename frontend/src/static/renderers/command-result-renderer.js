@@ -11,6 +11,7 @@
 import { BlockRenderer } from './block-renderer.js'
 import { commandResultStyles } from './command-result-renderer.styles.js'
 import { StatusBadge } from './status-badge.js'
+import { registerBlockRenderer } from './block-kinds.js'
 
 /** @typedef {{ id?: string, cmd?: string, status?: string, title?: string, response?: string|null, primary?: string|null, error?: string|null, createdAt?: string|null, completedAt?: string|null }} CommandResultAttrs */
 
@@ -109,3 +110,5 @@ export class CommandResultRenderer extends BlockRenderer {
 
   // destroy(): base no-op is correct — this class owns no timers/observers.
 }
+
+registerBlockRenderer('command-result', () => CommandResultRenderer)

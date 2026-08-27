@@ -380,6 +380,14 @@ composer eventually upgrades from a bare textarea to a richer input.)
 
 ## 8b. Addendum (2026-08-11): the ai-block is the AI *turn*, not the turn
 
+> **Superseded by §8c and BUILT AS SUCH in issue #101.** §8c overturned this
+> addendum's `question` union and its turn container before either was built;
+> #101 then shipped §8c's shape — `question: List<Block>` with pointing a kind of
+> block — so nothing on this page's `question.turn`, `UserTurn`/`AiTurn` or
+> container-minting design exists in the code. What DID survive is read below:
+> the exchange as the citable unit, attachments as a per-turn field, and a block
+> keeping its own edges. Model of record is `sieve/block/` + `AIBlockProcessor`.
+
 Written while designing `@`-mention attachments (#74). It revises §3, §6 and §8, and
 resolves part of §9's turn-grammar question.
 
@@ -616,6 +624,16 @@ It needs exactly one new capability, and it is one #74 needs anyway: `resolveCha
 
 ## 8c. Addendum (2026-08-25): the question is a list of blocks; pointing is a kind of block
 
+> **Settled by issue #101 (closed 2026-08-27).** Position 4 is built: `question`
+> is the element list, `reference` is the kind that points (#100), the harvest
+> and the prompt fold both read the list, the composer mints it and the ai-block
+> draws it. Two positions below were revised in the building and the CODE is
+> authority over this page for them: `rel` is not presentation-only — it is the
+> authored role a consumer classifies on, with the address as the fallback (see
+> the note under "the dissolutions"); and the version pin, not `rel`, remains the
+> only freeze mechanism, still unbuilt. Model of record: `sieve/block/`,
+> `AIBlockProcessor.foldQuestion`, `frontend/src/static/renderers/question-list.js`.
+
 Written while designing the Go side of chats. It revises §8b — overturning two of its
 conclusions with machinery §8b did not yet have (#74's attachments) — settles §3's turn
 question for good, and completes §8a's coordinate grammar. Tracked: #100 (ReferenceBlock),
@@ -664,6 +682,17 @@ that already carried the information:
   earns that place because display intent is genuinely orthogonal to the address — the
   proving case is a workbench flow wanting a *quoted reference that is a live edge*.
   Fenced hard: behaviour never forks on it, queries never filter on it.
+
+  > **Revised in the building (#101, 2026-08-27).** "Presentation hint" was too
+  > narrow and the fence sat in the wrong place. `rel` is **the authored role a
+  > CONSUMER classifies on** — an ai-block's question reads `target`/`attach` off
+  > it to decide which slot an element belongs to, which is composition (prompt +
+  > UI) rather than presentation, and the address rule is what an element
+  > declaring neither role falls back to. The fence that holds is the one that
+  > matters: `rel` never alters permissions, and the harvest that answers "what
+  > does this document point at" stays role-blind, so no graph or GC fact turns
+  > on it. Definitions of record: `block.RelTarget`/`RelAttach`,
+  > `AIBlockProcessor.foldQuestion`, `QuestionList.fold`.
 - **The ref-vs-attachment kind split dissolves into the scheme**, and the attachment
   kind is subsumed: one kind, `reference = { uri }` plus a derived face. Its src/uri
   fork was scheme dispatch before the vocabulary existed.

@@ -12,6 +12,7 @@ import { BlockRenderer } from './block-renderer.js'
 import { referenceStyles } from './reference-renderer.styles.js'
 import { ReferenceChip } from './reference-chip.js'
 import { StatusBadge } from './status-badge.js'
+import { registerBlockRenderer } from './block-kinds.js'
 
 /**
  * What the last resolve took from the TARGET — the reference's cached face,
@@ -36,7 +37,11 @@ import { StatusBadge } from './status-badge.js'
  * @property {string} [id]
  * @property {string} [uri]    the ONE address: sieve://{container}[/{leaf}]
  * @property {ReferenceFace} [cache] the cached face; absent until something resolves
- * @property {string} [rel]    the authored relationship; nothing renders or branches on it
+ * @property {string} [rel]    the authored role a CONSUMER classifies on — an
+ *   ai-block's question reads `target`/`attach` off it to decide which slot this
+ *   reference belongs to, and falls back to the address when it declares
+ *   neither. It never alters permissions or what the reference IS; this block's
+ *   own rendering does not read it.
  * @property {string} [status]
  * @property {string} [error]
  * @property {string|null} [createdAt]
@@ -355,3 +360,5 @@ export class ReferenceRenderer extends BlockRenderer {
   }
 
 }
+
+registerBlockRenderer('reference', () => ReferenceRenderer)
