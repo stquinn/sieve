@@ -285,3 +285,26 @@ shape when this graduates to a spec and Forgejo plan:
 
 The email workbench is the feature that pays for the platform; the platform is the part
 that outlives the feature.
+
+---
+
+## 9. Addendum (2026-08-27, post-#101): the anatomy got cheaper
+
+Epic #101 (ai-block question becomes `List<Block>`; pointing is a kind of block)
+changed this chapter's costs:
+
+- **§1's originating defect is half-dissolved.** Replay-against-latest is structural
+  now: bare references resolve current-at-replay and re-ask re-folds the question. The
+  remaining half — the conversation living in the wrong place — is the chat/workbench
+  remit.
+- **§2's annotation state has a storage shape**: payload elements — identified children
+  (`ident.New` uuids) inside the block's value, enumerable via the `BlockParent`
+  capability, out of the document spine. Structure without hanging weight off prose. An
+  annotation with a refutation is recognisably a tiny exchange, which the exchange
+  record now covers. §5's parsed thread messages are the same shape.
+- **§3's embedded read-only card exists generically**: full-anatomy `readOnly` record
+  rendering through the renderer registry — every kind, one mechanism. §7's parked
+  transclusion shrank with it: v1 is resolve-address → render-readOnly, no watchers.
+- **§4's referenceability test is concrete**: an address reaches it, a role classifies
+  it, the reference harvest walks it — the assembled graph brainstorm 2 promised is
+  computable from shipped storage.

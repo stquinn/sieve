@@ -810,3 +810,31 @@ stops needing to know what *this* is — and the point at which the same block g
 opened anywhere, by anything, because the only thing an editor ever received was a coordinate.
 
 And a second edge beside it, unchanged: **if a host is a thing, what is the workspace a host of?**
+
+---
+
+## 14. Addendum (2026-08-27, post-#101): the coordinate half arrived
+
+Epic #101 (question becomes `List<Block>`) landed machinery this chapter priced as
+future, without setting out to:
+
+- **§7's blue-sky column is mostly built.** The global coordinate scheme shipped as
+  #100's authority form (`sieve://{container}[/{leaf}][?version={n}]`); the Router
+  exists (`editor/Router` + `NotesSource`, address → Node, container-side discrimination);
+  and #101 exercised cross-container resolution live — foreign targets resolve globally,
+  chain walks stop at container boundaries, dangling renders as a normal state. **Bare =
+  live edge, pinned = frozen** is production semantics now: the prompt fold re-reads bare
+  references at every ask. The remote-subject workbench's remaining prerequisites are the
+  block store and WS subscription only.
+- **§5's subject field dissolved.** A subject is a `rel: target` reference element —
+  bare, hence re-read. The freeze/re-read question ("does this document have a subject?")
+  is answered per element by the pin, not per document kind by a field.
+- **§3's containment contract has a third fact**: *am I a record?* — the `readOnly`
+  renderer flag, honoured per kind across all ten renderers (mutation forbidden,
+  exploration kept). And §10 phase 2's "second host with no ProseMirror in sight" was
+  demonstrated in miniature: `QuestionListView` draws full-anatomy blocks with zero PM
+  in frame.
+- **§8's detach-keep** ("collapse the coordinate to self") is an id-preserving
+  re-address — the operation element promotion already performs.
+- **§9.4 arrived on schedule**: the draft-composer design (an editor lens hosted in the
+  ask panel, Enter = send vs editor keys) is the key-precedence problem in concrete form.
