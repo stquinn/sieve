@@ -1,0 +1,278 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap">
+  <style>
+    body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: #1f2326; color: #f8f8f2; }
+    a { color: #f9ae58; } a:hover { color: #fac761; }
+    * { box-sizing: border-box; }
+    .mono { font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+
+    .win { background: #343d46; border: 1px solid #14171a; border-radius: 8px; overflow: hidden;
+           box-shadow: 0 18px 60px rgba(0,0,0,.5); display: flex; flex-direction: column; position: relative; }
+
+    .wb-bar { height: 44px; flex: 0 0 auto; display: flex; align-items: center; gap: 12px; padding: 0 16px;
+              background: #2c333a; border-bottom: 1px solid #1f2326; }
+    .wb-kind { font-size: 10px; font-weight: 700; letter-spacing: .08em; color: #f9ae58;
+               font-family: "Cascadia Code", "JetBrains Mono", monospace; border: 1px solid #4e565f;
+               border-radius: 4px; padding: 1px 6px; background: #343d46; }
+    .wb-title { font-size: 13px; font-weight: 600; }
+    .subj-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border: 1px solid #4e565f;
+                 border-radius: 999px; background: rgba(95,179,179,.08); color: #5fb3b3; font-size: 11px; }
+    .live-tag { padding: 0 6px; border-radius: 3px; background: rgba(153,204,153,.14); color: #99cc99;
+                font: 700 9px "Cascadia Code", "JetBrains Mono", monospace; letter-spacing: .06em; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 4px 13px; border-radius: 5px;
+           font-size: 11.5px; font-weight: 700; }
+    .btn--replay { background: rgba(249,174,88,.16); color: #f9ae58; }
+    .btn--quiet { background: rgba(248,248,242,.06); color: #a6acb9; font-weight: 500; }
+    .btn--floor { background: rgba(153,204,153,.12); color: #99cc99; font-weight: 500; }
+    .mile { display: flex; align-items: center; margin-left: auto; }
+    .m-dot { width: 8px; height: 8px; border-radius: 50%; background: #4e565f; }
+    .m-seg { width: 22px; height: 2px; background: #4e565f; }
+    .m-dot--floor { width: 10px; height: 10px; background: #99cc99; box-shadow: 0 0 6px rgba(153,204,153,.6); }
+
+    .body { flex: 1; min-height: 0; display: flex; }
+    .left { flex: 1; min-width: 0; display: flex; flex-direction: column; border-right: 1px solid #1f2326; }
+
+    /* source surface */
+    .src { flex: 1; min-height: 0; background: #2c333a; display: flex; overflow: hidden;
+           font-family: "Cascadia Code", "JetBrains Mono", monospace; font-size: 13px; line-height: 1.7; }
+    .src-gut { flex: 0 0 auto; padding: 14px 10px; text-align: right; color: #606971; border-right: 1px solid #4e565f;
+               user-select: none; background: #2c333a; }
+    .src-gut .mark { color: #ec5f66; font-weight: 700; }
+    .src pre { margin: 0; padding: 14px 18px; flex: 1; overflow: hidden; color: #f8f8f2; }
+    .sk { color: #c594c5; } .ss { color: #99cc99; } .sf { color: #6699cc; } .sn { color: #f9ae58; }
+    .sc { color: #a6acb9; font-style: italic; } .st { color: #5fb3b3; }
+    .weakline { background: rgba(236,95,102,.12); border-bottom: 1px solid rgba(236,95,102,.6); border-radius: 2px; }
+    .goodline { background: rgba(153,204,153,.13); border-bottom: 1px solid rgba(153,204,153,.5); border-radius: 2px; }
+
+    .apop { position: absolute; width: 340px; background: #2c333a; border: 1px solid #4e565f; border-radius: 8px;
+            box-shadow: 0 8px 40px rgba(0,0,0,.6); z-index: 40; overflow: hidden;
+            font-family: ui-sans-serif, system-ui, sans-serif; }
+    .apop-h { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid #1f2326;
+              font: 700 9.5px "Cascadia Code", "JetBrains Mono", monospace; letter-spacing: .08em;
+              text-transform: uppercase; color: #ec5f66; }
+    .apop-note { padding: 9px 12px 4px; font-size: 12px; line-height: 1.55; color: #a6acb9; }
+    .apop-sug { margin: 6px 12px; padding: 7px 10px; border-left: 3px solid rgba(153,204,153,.6);
+                background: rgba(153,204,153,.07); border-radius: 0 5px 5px 0;
+                font: 11.5px "Cascadia Code", "JetBrains Mono", monospace; line-height: 1.5; color: #f8f8f2; }
+    .apop-foot { display: flex; gap: 8px; padding: 8px 12px 10px; }
+    .abtn { padding: 3px 12px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+    .abtn--apply { background: rgba(153,204,153,.16); color: #99cc99; }
+    .abtn--refute { background: rgba(248,248,242,.06); color: #a6acb9; font-weight: 500; }
+
+    /* console */
+    .console { flex: 0 0 auto; height: 190px; border-top: 1px solid #1f2326; display: flex; flex-direction: column; background: #262c32; }
+    .con-h { display: flex; align-items: center; gap: 10px; padding: 5px 14px; background: #2c333a;
+             border-bottom: 1px solid #1f2326; }
+    .con-title { font: 700 10px "Cascadia Code", "JetBrains Mono", monospace; letter-spacing: .08em;
+                 text-transform: uppercase; color: #5fb3b3; }
+    .run { display: inline-flex; align-items: center; gap: 6px; padding: 2px 12px; border-radius: 4px;
+           background: rgba(153,204,153,.14); color: #99cc99; font-size: 11px; font-weight: 700; }
+    .con-body { flex: 1; padding: 10px 16px; font: 12px "Cascadia Code", "JetBrains Mono", monospace;
+                line-height: 1.7; color: #a6acb9; overflow: hidden; }
+    .con-body .ok { color: #99cc99; }
+    .con-body .cmd { color: #f8f8f2; }
+
+    /* conversation panel */
+    .evalp { width: 372px; flex: 0 0 auto; background: #2c333a; display: flex; flex-direction: column; overflow: hidden; }
+    .tp-h { padding: 10px 14px 6px; font: 700 10px "Cascadia Code", "JetBrains Mono", monospace; letter-spacing: .08em;
+            text-transform: uppercase; color: #606971; display: flex; align-items: center; }
+    .xchg { position: relative; border: 1px solid rgba(95,179,179,.28); border-radius: 8px;
+            background: rgba(95,179,179,.04); margin: 14px 14px 0; padding: 14px 14px 10px; }
+    .xchg-badge { position: absolute; top: -9px; left: 12px; background: #2c333a; padding: 0 6px;
+                  font: 700 10px "Cascadia Code", "JetBrains Mono", monospace; letter-spacing: .08em;
+                  color: #f9ae58; border: 1px solid #4e565f; border-radius: 4px; }
+    .xchg-time { position: absolute; top: -8px; right: 12px; background: #2c333a; padding: 0 6px;
+                 font: 10px "Cascadia Code", "JetBrains Mono", monospace; color: #606971; }
+    .q { margin-bottom: 8px; padding-bottom: 7px; border-bottom: 2px solid rgba(249,174,88,.35);
+         font-weight: 600; font-size: 12px; line-height: 1.5; }
+    .ans { font-size: 11.5px; line-height: 1.6; color: #a6acb9; }
+    .ans p { margin: 0 0 7px; } .ans p:last-child { margin-bottom: 0; }
+    .chip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border: 1px solid #4e565f;
+            border-radius: 999px; font-size: 10.5px; white-space: nowrap; }
+    .chip--cite { background: rgba(102,153,204,.10); color: #6699cc; }
+
+    .composer-mini { margin: 12px 14px; border: 1px solid #4e565f; border-radius: 8px; background: #343d46;
+                     padding: 8px 12px; font-size: 12px; color: #606971; display: flex; align-items: center; gap: 8px; }
+    .composer-mini .caret { display: inline-block; width: 6px; height: 13px; background: #f9ae58; }
+
+    .statusbar { height: 30px; flex: 0 0 auto; background: #2c333a; border-top: 1px solid #1f2326;
+                 display: flex; align-items: center; gap: 14px; padding: 0 14px; font-size: 11px; color: #606971; }
+
+    .pin { position: absolute; z-index: 60; width: 19px; height: 19px; border-radius: 50%; background: #fac761;
+           color: #1f2326; border: 2px solid #1f2326; font: 700 11px "Cascadia Code", "JetBrains Mono", monospace;
+           display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,.5); }
+    .rail { width: 320px; flex: 0 0 auto; padding: 24px; overflow: hidden; }
+    .rail h2 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
+    .rail .sub { font-size: 11.5px; color: #606971; margin-bottom: 14px; line-height: 1.5; }
+    .arow { display: flex; gap: 9px; margin-bottom: 10px; align-items: flex-start; }
+    .arow .n { flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%; background: #fac761; color: #1f2326;
+               font: 700 10.5px "Cascadia Code", "JetBrains Mono", monospace; display: flex; align-items: center;
+               justify-content: center; margin-top: 1px; }
+    .arow .t { font-size: 11.5px; line-height: 1.45; color: #a6acb9; }
+    .arow .t b { color: #f8f8f2; font-weight: 600; }
+    .own { display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 3px;
+           font: 700 9px "Cascadia Code", "JetBrains Mono", monospace; letter-spacing: .06em; vertical-align: 1px; }
+    .own--host { background: rgba(102,153,204,.16); color: #6699cc; }
+    .own--lens { background: rgba(153,204,153,.16); color: #99cc99; }
+    .own--user { background: rgba(250,199,97,.16); color: #fac761; }
+  </style>
+</helmet>
+
+<div style="width: 1760px; height: 1030px; background: #1f2326; display: flex; overflow: hidden">
+  <div style="flex: 1; padding: 24px; position: relative">
+    <div class="win" style="width: 1392px; height: 982px">
+
+      <!-- workbench bar -->
+      <div class="wb-bar">
+        <span class="wb-kind">WB</span>
+        <span class="wb-title">tail scanner fix</span>
+        <span class="subj-chip">⌖ Parser sketch › scanner.go § Tail scanner <span class="live-tag">LIVE · re-read</span></span>
+        <span class="pin" style="position: static">1</span>
+        <span class="btn btn--quiet">Open source ↗</span>
+        <span class="btn btn--quiet">Detach…</span>
+        <span class="pin" style="position: static">2</span>
+        <div class="mile"><span class="m-dot"></span><span class="m-seg"></span><span class="m-dot"></span><span class="m-seg"></span><span class="m-dot m-dot--floor"></span></div>
+        <span style="font-size: 10px; color: #606971" class="mono">floor @v12 · 14:07</span>
+        <span class="btn btn--floor">⚑ Mark floor</span>
+        <span class="pin" style="position: static">3</span>
+        <span class="btn btn--replay">Replay ▸</span>
+      </div>
+
+      <div class="body">
+        <div class="left" style="position: relative">
+          <!-- source surface -->
+          <div class="src">
+            <div class="src-gut">108<br>109<br>110<br>111<br>112<br><span class="mark">113</span><br>114<br>115<br>116<br>117<br>118<br>119</div>
+            <pre><span class="sc">// tail reports whether line closes the fenced region.</span>
+<span class="sk">func</span> (s *<span class="st">Scanner</span>) <span class="sf">tail</span>(line <span class="st">string</span>, col <span class="st">int</span>) <span class="st">bool</span> {
+    <span class="sk">if</span> s.state != inFence {
+        <span class="sk">return</span> <span class="sn">false</span>
+    }
+    <span class="weakline">trimmed := strings.<span class="sf">TrimSpace</span>(line)</span>
+    <span class="goodline"><span class="sk">if</span> col == <span class="sn">0</span> &amp;&amp; !fence.<span class="sf">MatchString</span>(line) {</span>
+    <span class="goodline">    <span class="sk">return</span> <span class="sn">false</span> <span class="sc">// col-0 guard sees raw indentation</span></span>
+    <span class="goodline">}</span>
+    <span class="sk">return</span> fence.<span class="sf">MatchString</span>(trimmed)
+}
+</pre>
+            <span class="pin" style="position: absolute; left: 340px; top: 14px">4</span>
+          </div>
+
+          <!-- annotation popover -->
+          <div class="apop" style="left: 470px; top: 128px">
+            <span class="pin" style="right: -30px; top: 10px">5</span>
+            <div class="apop-h">weak · line 113</div>
+            <div class="apop-note">TrimSpace still erases the indentation before the guard on 114 reads it — the fix
+              only works because the guard now takes the raw line. Drop the trim entirely.</div>
+            <div class="apop-sug">return fence.MatchString(strings.TrimLeft(line, " "))</div>
+            <div class="apop-foot">
+              <span class="abtn abtn--apply">Apply</span>
+              <span class="abtn abtn--refute">Refute…</span>
+            </div>
+          </div>
+
+          <!-- console -->
+          <div class="console">
+            <div class="con-h">
+              <span class="con-title">Console</span>
+              <span class="run">▸ Run</span>
+              <span class="pin" style="position: static">6</span>
+              <span style="padding: 0 6px; border-radius: 3px; background: rgba(96,105,113,.25); color: #a6acb9; font: 700 9px 'Cascadia Code', 'JetBrains Mono', monospace; letter-spacing: .06em">FUTURE · slot reserved</span>
+              <span style="margin-left: auto; font: 10px 'Cascadia Code', 'JetBrains Mono', monospace; color: #606971">go test · containment: directories-only</span>
+            </div>
+            <div class="con-body">
+              <span class="cmd">$ go test ./sieve/block/ -run TestTailScanner</span><br>
+              --- PASS: TestTailScanner_ColumnZeroFence (0.00s)<br>
+              --- PASS: TestTailScanner_IndentedClose (0.00s)<br>
+              <span class="ok">ok&nbsp;&nbsp;sieve/block&nbsp;&nbsp;0.41s</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- conversation panel -->
+        <div class="evalp">
+          <div class="tp-h">Conversation
+            <span class="pin" style="position: static; margin-left: 8px">7</span>
+            <span style="margin-left: auto; font-size: 9.5px; color: #606971" class="mono">Mod+Enter flips ⇄</span>
+            <span class="pin" style="position: static; margin-left: 6px">8</span>
+          </div>
+          <div class="xchg">
+            <span class="xchg-badge">AI</span><span class="xchg-time">13:58</span>
+            <div class="q">Why does this drop the closing fence at column zero?</div>
+            <div class="ans">
+              <p>TrimSpace erases the only signal the column-zero rule reads…</p>
+              <p style="margin: 0"><span class="chip chip--cite"><span>⌕ scanner.go:113</span><span class="k" style="opacity:.7; font-size:9.5px">cites</span></span></p>
+            </div>
+          </div>
+          <div class="xchg">
+            <span class="xchg-badge">AI</span><span class="xchg-time">14:06 · replay 2</span>
+            <div class="q">Re-evaluate after the guard change — anything left?</div>
+            <div class="ans">
+              <p>The guard is right; line 113 still trims before the match. One annotation, one suggestion —
+              tests pass either way, but the trim is dead weight.</p>
+            </div>
+          </div>
+          <div class="composer-mini">Ask about the subject…<span class="caret"></span><span style="margin-left: auto; font-size: 9.5px" class="mono">Enter sends</span></div>
+        </div>
+      </div>
+
+      <div class="statusbar">
+        <span class="mono" style="font-size: 10.5px">workbench · code — subject remote: Parser sketch</span>
+        <span style="margin-left: auto" class="mono">subject re-read 14:06 · run PASS · floor @v12</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ rail ══ -->
+  <div class="rail">
+    <h2>B′ — Workbench · remote subject</h2>
+    <div class="sub">The subject is another document’s block. The block stays the same block — work here refines
+      the document underneath. Console, dead ends and the argument all stay in the workbench.</div>
+
+    <div class="arow"><span class="n">1</span><div class="t"><b>Remote subject chip</b><span class="own own--host">HOST</span><br>
+      A bare <span class="mono">rel: target</span> reference — <span class="mono">sieve://parser-sketch/code-tail</span>,
+      re-read at every evaluation (green LIVE tag). Pinning it would freeze — purple <span class="mono">@v12</span>.
+      Same chip grammar as everywhere else.</div></div>
+
+    <div class="arow"><span class="n">2</span><div class="t"><b>Open source · Detach</b><span class="own own--host">HOST</span><br>
+      Open source navigates to the owning document. Detach is a decision: keep (collapse the coordinate to a local
+      copy) or revert — revert falls back to the FLOOR, not the opening state.</div></div>
+
+    <div class="arow"><span class="n">3</span><div class="t"><b>Milestones</b><span class="own own--user">USER</span><br>
+      Pinned coordinates held by the workbench, sparse and user-owned. What makes a live edge on someone else’s
+      document tolerable: a bad final ten minutes never costs the good hour.</div></div>
+
+    <div class="arow"><span class="n">4</span><div class="t"><b>Source surface</b><span class="own own--lens">LENS</span><br>
+      Source is WORKED text — the source-editor lens (CodeMirror direction), full-bleed, no PM in frame. While
+      focused it owns its keymap; the host stack above it resolves Esc and window chords.</div></div>
+
+    <div class="arow"><span class="n">5</span><div class="t"><b>Line annotations</b><span class="own own--lens">LENS</span><br>
+      The same annotation engine as the email draft — gutter mark + span tint, popover with Apply (tracked
+      edit<span class="own own--host">HOST</span>) and Refute (stored on the annotation). One module, two surfaces.</div></div>
+
+    <div class="arow"><span class="n">6</span><div class="t"><b>Console — slot reserved, not scoped</b><span class="own own--lens">LENS</span><br>
+      Execution is deliberately parked (sandboxing, dev environments, shells — its own can of worms) and may never
+      ship. The region stays in the design so the layout already knows where it fits: stdout as a record region,
+      Run as a job under a containment profile<span class="own own--host">HOST</span>. Both workbenches stand
+      complete without it.</div></div>
+
+    <div class="arow"><span class="n">7</span><div class="t"><b>Conversation</b><span class="own own--lens">LENS</span><br>
+      Exchange records + the same composer, narrow. The document receives only the refined code; the argument
+      never enters it.</div></div>
+
+    <div class="arow"><span class="n">8</span><div class="t"><b>Mod+Enter flip</b><span class="own own--host">HOST</span><br>
+      At this width: focus hop between subject and conversation. Narrow: the panel goes behind and the flip swaps
+      faces. Viewport-specific, per the host model.</div></div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

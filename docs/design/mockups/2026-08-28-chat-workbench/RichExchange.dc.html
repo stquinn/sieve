@@ -1,0 +1,258 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap">
+  <style>
+    body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: #1f2326; color: #f8f8f2; }
+    a { color: #f9ae58; } a:hover { color: #fac761; }
+    * { box-sizing: border-box; }
+    .mono { font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .panel { background: #343d46; border: 1px solid #14171a; border-radius: 8px; padding: 24px 28px;
+             box-shadow: 0 12px 40px rgba(0,0,0,.4); position: relative; }
+    .panel-cap { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+                 color: #606971; font-family: "Cascadia Code", "JetBrains Mono", monospace; margin-bottom: 14px; }
+
+    .state-cap { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+                 color: #606971; font-family: "Cascadia Code", "JetBrains Mono", monospace; margin-bottom: 10px; }
+    .state-cap b { color: #5fb3b3; }
+
+    /* exchange wrapper — rest vs hover */
+    .xrec { position: relative; padding: 12px 16px; border-radius: 8px; border: 1px solid transparent; }
+    .xrec--hover { border-color: rgba(95,179,179,.35); background: rgba(95,179,179,.04);
+                   box-shadow: 0 4px 20px rgba(0,0,0,.25); }
+    .xrec-stamp { position: absolute; top: -8px; right: 12px; background: #343d46; padding: 0 6px;
+                  font-size: 10px; color: #606971; font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .xrec-tools { position: absolute; top: 8px; right: 10px; display: flex; gap: 2px; }
+    .xtool { width: 21px; height: 21px; border-radius: 4px; display: flex; align-items: center; justify-content: center;
+             color: #a6acb9; font-size: 11px; background: rgba(248,248,242,.06); }
+
+    /* my move — the utterance boundary */
+    .qmove { margin-left: auto; width: fit-content; max-width: 88%; background: rgba(249,174,88,.07);
+             border: 1px solid rgba(249,174,88,.22); border-radius: 8px; padding: 10px 13px;
+             font-size: 13px; line-height: 1.6; }
+    .qmove .q-el + .q-el { margin-top: 9px; }
+    .q-attach { display: flex; gap: 6px; justify-content: flex-end; margin-top: 9px; padding-top: 8px;
+                border-top: 1px solid rgba(249,174,88,.15); }
+    /* the borderless alternative */
+    .qmove--alt { border: none; background: rgba(249,174,88,.10); }
+
+    .amove { margin: 10px 24px 0 0; max-width: 92%; font-size: 13px; line-height: 1.6; }
+    .amove p { margin: 0 0 9px; } .amove p:last-child { margin-bottom: 0; }
+
+    .chip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border: 1px solid #4e565f;
+            border-radius: 999px; font-size: 10.5px; white-space: nowrap; }
+    .chip--attach { background: rgba(249,174,88,.08); color: #f9ae58; }
+    .chip--cite { background: rgba(102,153,204,.10); color: #6699cc; }
+    .chip .k { opacity: .7; font-size: 9.5px; }
+
+    .quote { padding: 6px 9px 6px 11px; border-left: 3px solid rgba(197,148,197,.65);
+             background: rgba(197,148,197,.08); border-radius: 0 6px 6px 0; font-weight: 400;
+             font-size: 11.5px; line-height: 1.5; color: #a6acb9; }
+    .quote-src { font-size: 9.5px; color: #606971; font-family: "Cascadia Code", "JetBrains Mono", monospace; margin-bottom: 2px; }
+    .quote-src b { color: #c594c5; font-weight: 500; }
+
+    .blk { background: #2c333a; border: 1px solid rgba(95,179,179,.28); border-radius: 8px;
+           overflow: hidden; margin: 2px 0; }
+    .blk-hd { display: flex; align-items: center; gap: 8px; padding: 3px 10px; background: #373e45;
+              border-bottom: 1px solid rgba(95,179,179,.28); }
+    .kbadge { font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+              font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .code-body { display: flex; font-family: "Cascadia Code", "JetBrains Mono", monospace; font-size: 11.5px; line-height: 1.6; }
+    .gut { flex: 0 0 auto; padding: 7px 7px; text-align: right; color: #606971; border-right: 1px solid #4e565f; user-select: none; }
+    .code-body pre { margin: 0; padding: 7px 11px; overflow: hidden; color: #f8f8f2; flex: 1; }
+    .sk { color: #c594c5; } .ss { color: #99cc99; } .sf { color: #6699cc; } .sn { color: #f9ae58; }
+    .sc { color: #a6acb9; font-style: italic; } .st { color: #5fb3b3; }
+
+    table.md { border-collapse: collapse; margin: 2px 0 9px; font-size: 11.5px; }
+    table.md th, table.md td { border: 1px solid #4e565f; padding: 3px 10px; text-align: left; }
+    table.md th { background: #2c333a; color: #a6acb9; font-weight: 600; font-size: 10.5px; }
+    table.md td b { color: #6699cc; font-weight: 500; font-family: "Cascadia Code", "JetBrains Mono", monospace; font-size: 11px; }
+
+    .pin { position: absolute; z-index: 60; width: 19px; height: 19px; border-radius: 50%; background: #fac761;
+           color: #1f2326; border: 2px solid #1f2326; font: 700 11px "Cascadia Code", "JetBrains Mono", monospace;
+           display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,.5); }
+    .rail { width: 320px; flex: 0 0 auto; padding: 24px; }
+    .rail h2 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
+    .rail .sub { font-size: 11.5px; color: #606971; margin-bottom: 14px; line-height: 1.5; }
+    .arow { display: flex; gap: 9px; margin-bottom: 11px; align-items: flex-start; }
+    .arow .n { flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%; background: #fac761; color: #1f2326;
+               font: 700 10.5px "Cascadia Code", "JetBrains Mono", monospace; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+    .arow .t { font-size: 11.5px; line-height: 1.48; color: #a6acb9; }
+    .arow .t b { color: #f8f8f2; font-weight: 600; }
+    .own { display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 3px;
+           font: 700 9px "Cascadia Code", "JetBrains Mono", monospace; letter-spacing: .06em; vertical-align: 1px; }
+    .own--lens { background: rgba(153,204,153,.16); color: #99cc99; }
+    .own--host { background: rgba(102,153,204,.16); color: #6699cc; }
+  </style>
+</helmet>
+
+<div style="width: 1760px; height: 1100px; background: #1f2326; display: flex; overflow: hidden">
+  <div style="flex: 1; padding: 24px; display: flex; flex-direction: column; gap: 20px; overflow: hidden">
+
+    <!-- ══ the same rich exchange, twice ══ -->
+    <div class="panel">
+      <div class="panel-cap">One rich exchange — question AND answer are block lists · same content, two states</div>
+      <div style="display: flex; gap: 56px">
+
+        <!-- AT REST -->
+        <div style="flex: 1; min-width: 0">
+          <div class="state-cap">at rest — spacing groups it; no shells beyond the blocks’ own</div>
+          <div class="xrec">
+            <div class="qmove" style="position: relative">
+              <span class="pin" style="left: -34px; top: 2px">1</span>
+              <div class="q-el">This still breaks on the indented close — failing input, and the verdict I’m pushing back on:</div>
+              <div class="q-el blk" style="position: relative">
+                <span class="pin" style="left: -34px; top: 6px">2</span>
+                <div class="blk-hd"><span class="kbadge" style="color: #99cc99">code</span><span class="kbadge" style="color: #606971; text-transform: none; letter-spacing: 0">text · pasted</span></div>
+                <div class="code-body">
+                  <div class="gut">1<br>2<br>3</div>
+                  <pre>some prose inside a region
+    ```
+the close sits four spaces deep</pre>
+                </div>
+              </div>
+              <div class="q-el quote">
+                <div class="quote-src"><b>❝ quoted</b> · this chat · 14:07 · @v9 · pinned</div>
+                …the scanner mints two, the codec the third…
+              </div>
+              <div class="q-attach">
+                <span class="chip chip--attach"><span>fence-cases.log</span><span class="k">log · 11 KB</span></span>
+              </div>
+            </div>
+            <div class="amove" style="position: relative">
+              <span class="pin" style="left: -34px; top: 2px">3</span>
+              <p>Right — the indented close is legal inside a 4-space literal, so it must NOT end the region. Two cases decide it:</p>
+              <table class="md">
+                <tr><th>input</th><th>column</th><th>verdict</th></tr>
+                <tr><td>bare fence</td><td>0</td><td><b>closes</b></td></tr>
+                <tr><td>indented fence</td><td>4</td><td><b>content</b></td></tr>
+              </table>
+              <div class="blk">
+                <div class="blk-hd"><span class="kbadge" style="color: #99cc99">code</span><span class="kbadge" style="color: #606971; text-transform: none; letter-spacing: 0">go</span></div>
+                <div class="code-body">
+                  <div class="gut">1<br>2</div>
+                  <pre><span class="sk">if</span> col &gt;= <span class="sn">4</span> { <span class="sk">return</span> <span class="sn">false</span> } <span class="sc">// literal indent — content</span>
+<span class="sk">return</span> col == <span class="sn">0</span> &amp;&amp; fence.<span class="sf">MatchString</span>(line)</pre>
+                </div>
+              </div>
+              <p style="display: flex; gap: 6px; margin: 8px 0 0">
+                <span class="chip chip--cite"><span>⌕ Scanner Tail · column-zero</span><span class="k">cites</span></span>
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- HOVERED -->
+        <div style="flex: 1; min-width: 0">
+          <div class="state-cap"><b>hovered / focused</b> — the record shell draws it all together</div>
+          <div class="xrec xrec--hover">
+            <span class="xrec-stamp">14:19 · @v11</span>
+            <div class="xrec-tools"><span class="xtool">⧉</span><span class="xtool">❝</span><span class="xtool">⤢</span></div>
+            <span class="pin" style="right: -30px; top: 12px">4</span>
+            <div class="qmove">
+              <div class="q-el">This still breaks on the indented close — failing input, and the verdict I’m pushing back on:</div>
+              <div class="q-el blk">
+                <div class="blk-hd"><span class="kbadge" style="color: #99cc99">code</span><span class="kbadge" style="color: #606971; text-transform: none; letter-spacing: 0">text · pasted</span></div>
+                <div class="code-body">
+                  <div class="gut">1<br>2<br>3</div>
+                  <pre>some prose inside a region
+    ```
+the close sits four spaces deep</pre>
+                </div>
+              </div>
+              <div class="q-el quote">
+                <div class="quote-src"><b>❝ quoted</b> · this chat · 14:07 · @v9 · pinned</div>
+                …the scanner mints two, the codec the third…
+              </div>
+              <div class="q-attach">
+                <span class="chip chip--attach"><span>fence-cases.log</span><span class="k">log · 11 KB</span></span>
+              </div>
+            </div>
+            <div class="amove">
+              <p>Right — the indented close is legal inside a 4-space literal, so it must NOT end the region. Two cases decide it:</p>
+              <table class="md">
+                <tr><th>input</th><th>column</th><th>verdict</th></tr>
+                <tr><td>bare fence</td><td>0</td><td><b>closes</b></td></tr>
+                <tr><td>indented fence</td><td>4</td><td><b>content</b></td></tr>
+              </table>
+              <div class="blk">
+                <div class="blk-hd"><span class="kbadge" style="color: #99cc99">code</span><span class="kbadge" style="color: #606971; text-transform: none; letter-spacing: 0">go</span></div>
+                <div class="code-body">
+                  <div class="gut">1<br>2</div>
+                  <pre><span class="sk">if</span> col &gt;= <span class="sn">4</span> { <span class="sk">return</span> <span class="sn">false</span> } <span class="sc">// literal indent — content</span>
+<span class="sk">return</span> col == <span class="sn">0</span> &amp;&amp; fence.<span class="sf">MatchString</span>(line)</pre>
+                </div>
+              </div>
+              <p style="display: flex; gap: 6px; margin: 8px 0 0">
+                <span class="chip chip--cite"><span>⌕ Scanner Tail · column-zero</span><span class="k">cites</span></span>
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ the alternative, judged ══ -->
+    <div class="panel">
+      <div class="panel-cap">Alternative considered — the question borderless too (tint only)</div>
+      <div style="display: flex; gap: 24px; align-items: flex-start">
+        <div style="width: 460px; flex: 0 0 auto; position: relative">
+          <span class="pin" style="left: -8px; top: -8px">5</span>
+          <div class="qmove qmove--alt" style="margin-left: auto">
+            <div class="q-el" style="font-size: 12.5px">Same rich question, tint only — no utterance edge:</div>
+            <div class="q-el blk">
+              <div class="blk-hd"><span class="kbadge" style="color: #99cc99">code</span></div>
+              <div class="code-body"><div class="gut">1</div><pre>    ```</pre></div>
+            </div>
+          </div>
+        </div>
+        <div style="font-size: 11.5px; line-height: 1.6; color: #a6acb9; max-width: 620px">
+          <b style="color: #f8f8f2">Rejected, with the reasoning on the record:</b> at rest there is no teal shell, so the tint is the ONLY
+          thing separating my rich question from the answer above it in the scroll — and a tint under dark block chrome
+          reads as background, not as a boundary. The border is not content framing; it is the <b style="color: #f9ae58">utterance edge</b>:
+          it claims the pasted fragment, the pinned quote and the chips as one ask. It also keeps the chat face in the same
+          family as the note-host ai-block card. If this proves heavy in real use, dropping the border is a one-token change
+          — the layout does not move.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ rail ══ -->
+  <div class="rail">
+    <h2>A⁙ — Rich ⇄ rich</h2>
+    <div class="sub">The symmetric worst case: both halves are block lists. Three edges, three claims —
+      teal = record (exchange), orange = speaker (utterance), block chrome = kind. Nesting them is not
+      double-framing; each edge says something different.</div>
+
+    <div class="arow"><span class="n">1</span><div class="t"><b>The question keeps its edge</b><span class="own own--lens">LENS</span><br>
+      The orange border is the utterance boundary — “everything inside is what I asked, including what I chose to
+      show you.” It marks speaker and extent, not content; that job exists only on the question side.</div></div>
+
+    <div class="arow"><span class="n">2</span><div class="t"><b>Blocks inside the question</b><span class="own own--lens">LENS</span><br>
+      Full kind chrome, readOnly, via the same registry as everywhere else. Kind chrome nests inside the utterance
+      edge because they answer different questions: what kind is this vs who said this.</div></div>
+
+    <div class="arow"><span class="n">3</span><div class="t"><b>The answer stays bare</b><span class="own own--lens">LENS</span><br>
+      Its identity is already carried twice — left column position, and the record shell on hover. A third edge
+      would be redundant, which is exactly the double-framing argument; it bites here and not on the question.</div></div>
+
+    <div class="arow"><span class="n">4</span><div class="t"><b>Hovered</b><span class="own own--lens">LENS</span><br>
+      The teal shell wraps both halves as one citable record — stamp, read controls, right-click
+      target<span class="own own--host">HOST</span>. Maximum nesting on screen: teal › orange › block. Three levels,
+      never more, each a different claim.</div></div>
+
+    <div class="arow"><span class="n">5</span><div class="t"><b>The alternative, kept honest</b><br>
+      Borderless question drawn and rejected (reasoning beside it). Reversible in one token if real use disagrees —
+      the geometry doesn’t change.</div></div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

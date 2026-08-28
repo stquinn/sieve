@@ -1,0 +1,27 @@
+{
+  "pages": [
+    { "id": "page-chat", "name": "A — Chat" },
+    { "id": "page-workbench", "name": "B — Workbench" },
+    { "id": "page-vocab", "name": "C — Shared vocabulary" }
+  ],
+  "artboards": [
+    { "file": "Main.dc.html", "title": "Chat — document lens", "page": "page-chat", "x": 0, "y": 0, "w": 1760, "h": 900 },
+    { "file": "TurnRecord.dc.html", "title": "The exchange record", "page": "page-chat", "x": 0, "y": 1040, "w": 1240, "h": 1150 },
+    { "file": "Composer.dc.html", "title": "The composer", "page": "page-chat", "x": 1340, "y": 1040, "w": 1240, "h": 1000 },
+    { "file": "Streaming.dc.html", "title": "Answer arrival", "page": "page-chat", "x": 0, "y": 2320, "w": 1240, "h": 900 },
+    { "file": "RichAnswer.dc.html", "title": "A rich answer", "page": "page-chat", "x": 1340, "y": 2320, "w": 1240, "h": 1180 },
+    { "file": "RichExchange.dc.html", "title": "Rich question, rich answer", "page": "page-chat", "x": 0, "y": 3620, "w": 1760, "h": 1100 },
+    { "file": "WorkbenchEmail.dc.html", "title": "Workbench — self-owned (email)", "page": "page-workbench", "x": 0, "y": 0, "w": 1760, "h": 1000 },
+    { "file": "WorkbenchCode.dc.html", "title": "Workbench — remote subject (code)", "page": "page-workbench", "x": 0, "y": 1120, "w": 1760, "h": 1030 },
+    { "file": "Vocabulary.dc.html", "title": "Shared vocabulary", "page": "page-vocab", "x": 0, "y": 0, "w": 1440, "h": 1980 }
+  ],
+  "annotations": [
+    { "id": "note-chat-premise", "page": "page-chat", "x": 1840, "y": 40, "w": 320,
+      "text": "Premise: a Chat is List<AiBlock> — the thread IS container order. Two sides, one record: my move right in orange (the human's colour), the answer left with the column width code needs; no AI badge in a chat; the teal record shell materialises on hover. The card face with the badge survives as the NOTE-host rendering. Answers arrive WHOLE — blocks are the authoring grain (mint tools), not a display trick. Yellow pins = annotations; HOST/LENS tags say who owns the gesture." },
+    { "id": "note-wb-premise", "page": "page-workbench", "x": 1840, "y": 40, "w": 320,
+      "text": "Premise: a Workbench is a document WITH A SUBJECT (teal ⌖ chip, bare = re-read). Self-owned and remote are one design in two states — same bar, same annotations, same conversation panel. At this width the conversation sits BESIDE; narrow, it goes BEHIND and Mod+Enter flips." },
+    { "id": "note-vocab-premise", "page": "page-vocab", "x": 1540, "y": 40, "w": 300,
+      "text": "The contract sheet: if a drawing here changes, it changes in chat, workbench and note together. Chip hue = rel. Pin = frozen, bare = live. Records keep full anatomy minus mutation." }
+  ],
+  "launch": { "view": "canvas", "page": "page-chat" }
+}

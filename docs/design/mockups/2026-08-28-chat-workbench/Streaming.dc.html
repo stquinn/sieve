@@ -1,0 +1,204 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap">
+  <style>
+    body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: #1f2326; color: #f8f8f2; }
+    a { color: #f9ae58; } a:hover { color: #fac761; }
+    * { box-sizing: border-box; }
+    .mono { font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+
+    .stage { display: flex; flex-direction: column; width: 356px; flex: 0 0 auto; }
+    .stage-cap { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+                 color: #606971; font-family: "Cascadia Code", "JetBrains Mono", monospace; margin-bottom: 12px; }
+    .stage-cap b { color: #f9ae58; }
+
+    .xrec { position: relative; padding: 12px 14px; border-radius: 8px; border: 1px solid transparent; }
+    .xrec--hover { border-color: rgba(95,179,179,.35); background: rgba(95,179,179,.04); }
+    .xrec-stamp { position: absolute; top: -8px; right: 12px; background: #1f2326; padding: 0 6px;
+                  font-size: 10px; color: #606971; font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .xrec-tools { position: absolute; top: 6px; right: 8px; display: flex; gap: 2px; }
+    .xtool { width: 20px; height: 20px; border-radius: 4px; display: flex; align-items: center; justify-content: center;
+             color: #a6acb9; font-size: 11px; background: rgba(248,248,242,.06); }
+
+    .qmove { margin-left: auto; width: fit-content; max-width: 270px; background: rgba(249,174,88,.07);
+             border: 1px solid rgba(249,174,88,.22); border-radius: 8px; padding: 8px 11px;
+             font-size: 12px; line-height: 1.55; }
+    .amove { margin: 9px 12px 0 0; font-size: 12px; line-height: 1.6; }
+    .amove p { margin: 0 0 8px; } .amove p:last-child { margin-bottom: 0; }
+
+    .codeblk { background: #2c333a; border: 1px solid rgba(95,179,179,.28); border-radius: 8px; overflow: hidden; margin: 4px 0 8px; }
+    .code-hd { display: flex; align-items: center; gap: 8px; padding: 3px 10px; background: #373e45;
+               border-bottom: 1px solid rgba(95,179,179,.28); }
+    .kbadge { font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+              font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .code-body { display: flex; font-family: "Cascadia Code", "JetBrains Mono", monospace; font-size: 11px; line-height: 1.6; }
+    .gut { flex: 0 0 auto; padding: 7px 6px; text-align: right; color: #606971; border-right: 1px solid #4e565f; user-select: none; }
+    .code-body pre { margin: 0; padding: 7px 10px; overflow: hidden; color: #f8f8f2; flex: 1; }
+    .sk { color: #c594c5; } .ss { color: #99cc99; } .sf { color: #6699cc; } .sn { color: #f9ae58; }
+    .st { color: #5fb3b3; }
+
+    .skel { border: 1px dashed rgba(95,179,179,.4); border-radius: 8px; padding: 8px 10px; margin-top: 4px;
+            display: flex; align-items: center; gap: 8px; color: #5fb3b3; font-size: 10.5px;
+            background: rgba(95,179,179,.05); width: fit-content; }
+    .skel .dot { width: 6px; height: 6px; border-radius: 50%; background: #5fb3b3; animation: pulse 1.2s ease-in-out infinite; }
+    @keyframes pulse { 0%,100% { opacity: .25 } 50% { opacity: 1 } }
+
+    .chip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border: 1px solid #4e565f;
+            border-radius: 999px; font-size: 10.5px; white-space: nowrap; }
+    .chip--cite { background: rgba(102,153,204,.10); color: #6699cc; }
+    .chip .k { opacity: .7; font-size: 9.5px; }
+
+    /* the mint loop diagram */
+    .loop { border: 1px solid #4e565f; border-radius: 8px; background: #262c32; padding: 14px; }
+    .actor { font: 700 9.5px "Cascadia Code", "JetBrains Mono", monospace; letter-spacing: .07em;
+             text-transform: uppercase; padding: 3px 9px; border-radius: 4px; display: inline-block; }
+    .actor--llm { background: rgba(249,174,88,.14); color: #f9ae58; }
+    .actor--mcp { background: rgba(95,179,179,.14); color: #5fb3b3; }
+    .msg { display: flex; align-items: center; gap: 8px; margin: 9px 0; font: 10.5px "Cascadia Code", "JetBrains Mono", monospace; color: #a6acb9; }
+    .msg .arr { color: #606971; flex: 0 0 auto; width: 26px; text-align: center; }
+    .msg b { color: #f8f8f2; font-weight: 500; }
+    .msg .note { color: #606971; font-size: 9.5px; }
+
+    .arrow { align-self: center; color: #606971; font-size: 20px; padding: 0 12px; margin-top: 30px; }
+
+    .wire { margin-top: 14px; border-top: 1px dashed #4e565f; padding-top: 8px; font-size: 10px; color: #606971;
+            font-family: "Cascadia Code", "JetBrains Mono", monospace; line-height: 1.7; }
+    .wire b { color: #5fb3b3; font-weight: 500; }
+
+    .pin { position: absolute; z-index: 60; width: 19px; height: 19px; border-radius: 50%; background: #fac761;
+           color: #1f2326; border: 2px solid #1f2326; font: 700 11px "Cascadia Code", "JetBrains Mono", monospace;
+           display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,.5); }
+    .rail { width: 320px; flex: 0 0 auto; padding: 26px 24px; }
+    .rail h2 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
+    .rail .sub { font-size: 11.5px; color: #606971; margin-bottom: 16px; line-height: 1.5; }
+    .arow { display: flex; gap: 9px; margin-bottom: 12px; align-items: flex-start; }
+    .arow .n { flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%; background: #fac761; color: #1f2326;
+               font: 700 10.5px "Cascadia Code", "JetBrains Mono", monospace; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+    .arow .t { font-size: 11.5px; line-height: 1.5; color: #a6acb9; }
+    .arow .t b { color: #f8f8f2; font-weight: 600; }
+    .own { display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 3px;
+           font: 700 9px "Cascadia Code", "JetBrains Mono", monospace; letter-spacing: .06em; vertical-align: 1px; }
+    .own--host { background: rgba(102,153,204,.16); color: #6699cc; }
+    .own--lens { background: rgba(153,204,153,.16); color: #99cc99; }
+  </style>
+</helmet>
+
+<div style="width: 1240px; height: 900px; background: #1f2326; display: flex; overflow: hidden">
+  <div style="flex: 1; padding: 30px 10px 24px 24px; overflow: hidden">
+    <div style="display: flex; align-items: flex-start">
+
+      <!-- stage 1: pending -->
+      <div class="stage">
+        <div class="stage-cap"><b>1</b> · asked — pending record</div>
+        <div class="xrec">
+          <span class="pin" style="top: -8px; left: -8px">1</span>
+          <div class="qmove">Give me the enum plus the two mint sites, and name the test that pins each.</div>
+          <div class="amove">
+            <div class="skel"><span class="dot"></span> answering…</div>
+          </div>
+        </div>
+        <div class="wire">wire ▸ <b>op ack</b> exchange appended<br>wire ▸ <b>job started</b> (JobTracker)<br>&nbsp;<br>an unanswered exchange is structural —<br>it persists if you close the tab now</div>
+      </div>
+
+      <div class="arrow">→</div>
+
+      <!-- stage 2: the mint loop (server-side, invisible to the UI) -->
+      <div class="stage">
+        <div class="stage-cap"><b>2</b> · meanwhile — the mint loop</div>
+        <div class="loop" style="position: relative">
+          <span class="pin" style="top: -10px; right: -8px">2</span>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 4px">
+            <span class="actor actor--llm">LLM</span>
+            <span class="actor actor--mcp">Sieve MCP</span>
+          </div>
+          <div class="msg"><span class="arr">──▶</span><div><b>answer_block("code", {…})</b><br><span class="note">asks the server to author on its behalf</span></div></div>
+          <div class="msg"><span class="arr">◀──</span><div><b>the minted BLOCK</b><br><span class="note">processor-validated · ident.New id · serialized form</span></div></div>
+          <div class="msg"><span class="arr">──▶</span><div><b>answer_block("reference", {uri, rel: cites})</b><br><span class="note">checked against the fetch log</span></div></div>
+          <div class="msg"><span class="arr">◀──</span><div><b>the minted BLOCK</b></div></div>
+          <div style="border-top: 1px dashed #4e565f; margin-top: 10px; padding-top: 8px; font: 10.5px 'Cascadia Code','JetBrains Mono',monospace; color: #a6acb9">
+            the model <b style="color:#f8f8f2">places each returned block into its reply</b> — it never hand-writes fenced YAML, and nothing lands in the document yet
+          </div>
+        </div>
+        <div class="wire">wire ▸ <b>(silence)</b> — the loop is server↔model;<br>the UI shows stage 1 throughout</div>
+      </div>
+
+      <div class="arrow">→</div>
+
+      <!-- stage 3: the whole answer lands -->
+      <div class="stage">
+        <div class="stage-cap"><b>3</b> · reply complete — the answer lands WHOLE</div>
+        <div class="xrec xrec--hover">
+          <span class="xrec-stamp">14:07 · @v9</span>
+          <div class="xrec-tools"><span class="xtool">⧉</span><span class="xtool">❝</span><span class="xtool">⤢</span></div>
+          <span class="pin" style="top: 34px; right: -30px">4</span>
+          <div class="qmove">Give me the enum plus the two mint sites, and name the test that pins each.</div>
+          <div class="amove">
+            <p>Three severities cover it; the scanner mints two, the codec the third:</p>
+            <div class="codeblk">
+              <div class="code-hd"><span class="kbadge" style="color: #99cc99">code</span><span class="kbadge" style="color: #606971; text-transform: none; letter-spacing: 0">go</span></div>
+              <div class="code-body">
+                <div class="gut">1<br>2</div>
+                <pre><span class="sk">type</span> <span class="st">Severity</span> <span class="sk">int</span>
+<span class="sk">const</span> ( SevRecoverable <span class="st">Severity</span> = <span class="sf">iota</span>; SevStructural; SevFatal )</pre>
+              </div>
+            </div>
+            <p style="display: flex; gap: 6px; flex-wrap: wrap; margin: 0; position: relative">
+              <span class="chip chip--cite"><span>⌕ scanner.go:114</span><span class="k">cites</span></span>
+              <span class="chip chip--cite"><span>⌕ TestTailScanner</span><span class="k">cites</span></span>
+              <span class="pin" style="position: static">3</span>
+            </p>
+          </div>
+        </div>
+        <div class="wire">wire ▸ <b>job complete</b> — answer applied, version stamped<br>one wire event; the lens paints once</div>
+      </div>
+    </div>
+
+    <div style="margin-top: 26px; border: 1px dashed #4e565f; border-radius: 8px; padding: 14px 18px; width: 1100px; position: relative">
+      <span class="pin" style="top: -10px; left: 14px">5</span>
+      <div class="mono" style="font-size: 11px; color: #a6acb9; line-height: 1.8">
+        Deliberately NOT drawn: character streaming, typing carets, progressive block reveal. The CLI returns one finished reply; anything
+        animating before that would be theatre. What the block grain actually buys is <span style="color:#f8f8f2">structure, not spectacle</span> — every answer block is
+        real (typed, validated, id-minted server-side), so citations are checkable edges and extraction promotes a block with its identity intact.
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ rail ══ -->
+  <div class="rail">
+    <h2>A‴ — Answer arrival</h2>
+    <div class="sub">The answer mirrors the question (#117): a list of blocks the model authors through mint tools —
+      and it arrives WHOLE. Pending → mint loop → landed.</div>
+
+    <div class="arow"><span class="n">1</span><div class="t"><b>Pending record</b><span class="own own--lens">LENS</span><br>
+      Quiet dots in the answer slot — no badge ring here (the thinking ring survives in the note host, where the
+      badge lives). An unanswered exchange is structural: close the tab, resume in three weeks.</div></div>
+
+    <div class="arow"><span class="n">2</span><div class="t"><b>The mint loop</b><span class="own own--host">HOST</span><br>
+      <span class="mono">answer_block(kind, payload)</span>: the server authors the block through the kind’s
+      processor and hands the finished BLOCK back; the model places it in its reply. The HOW never leaves the
+      server — the model never writes fenced YAML.</div></div>
+
+    <div class="arow"><span class="n">3</span><div class="t"><b>Citations are minted too</b><span class="own own--lens">LENS</span><br>
+      A cite is <span class="mono">answer_block("reference", {uri, rel: cites})</span> — and the server holds the
+      fetch log, so a citation naming something never fetched is detectably fabricated.</div></div>
+
+    <div class="arow"><span class="n">4</span><div class="t"><b>Landing</b><span class="own own--lens">LENS</span><br>
+      Job complete = one wire event<span class="own own--host">HOST</span>: the whole answer applies to the spine
+      block, version stamps, read controls arm. The lens paints once — no reflow choreography.</div></div>
+
+    <div class="arow"><span class="n">5</span><div class="t"><b>No theatre</b><br>
+      The honesty rule, stated on the canvas so it survives review: block grain is the AUTHORING grain. True
+      streaming — the LLM piping into a live block through the tools — is a real but SEPARATE design, parked
+      undrawn; if it ever lands, the pending slot is its seam and nothing else here changes.</div></div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

@@ -1,0 +1,268 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap">
+  <style>
+    body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: #1f2326; color: #f8f8f2; }
+    a { color: #f9ae58; } a:hover { color: #fac761; }
+    * { box-sizing: border-box; }
+    .mono { font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+
+    .card { background: #343d46; border: 1px solid #14171a; border-radius: 8px; padding: 20px 24px;
+            box-shadow: 0 8px 30px rgba(0,0,0,.35); }
+    .card h3 { margin: 0 0 3px; font-size: 13px; font-weight: 700; }
+    .card .why { font-size: 11px; color: #606971; line-height: 1.5; margin-bottom: 14px; }
+    .spec { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .lbl { font: 700 9.5px "Cascadia Code", "JetBrains Mono", monospace; letter-spacing: .07em;
+           text-transform: uppercase; color: #606971; width: 100%; margin: 6px 0 2px; }
+
+    .chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border: 1px solid #4e565f;
+            border-radius: 999px; font-size: 11.5px; white-space: nowrap; }
+    .chip .k { opacity: .7; font-size: 10.5px; }
+    .c-attach { background: rgba(249,174,88,.08); color: #f9ae58; }
+    .c-cite { background: rgba(102,153,204,.10); color: #6699cc; }
+    .c-quote { background: rgba(197,148,197,.10); color: #c594c5; }
+    .c-subj { background: rgba(95,179,179,.08); color: #5fb3b3; }
+    .c-missing { background: transparent; color: #606971; border-style: dashed; }
+    .mention { border-radius: 3px; padding: 0 3px; background: rgba(249,174,88,.14); color: #f9ae58; font-weight: 500; font-size: 13px; }
+
+    .xchg { position: relative; border: 1px solid rgba(95,179,179,.28); border-radius: 8px;
+            background: rgba(95,179,179,.04); padding: 14px 16px 10px; }
+    .xchg-badge { position: absolute; top: -9px; left: 12px; background: #343d46; padding: 0 6px;
+                  font: 700 10px "Cascadia Code", "JetBrains Mono", monospace; letter-spacing: .08em;
+                  color: #f9ae58; border: 1px solid #4e565f; border-radius: 4px; }
+    .badge--think { border-color: transparent; box-shadow: 0 0 0 1px rgba(249,174,88,.9), 0 0 12px rgba(197,148,197,.6); }
+    .q { margin-bottom: 8px; padding-bottom: 7px; border-bottom: 2px solid rgba(249,174,88,.35);
+         font-weight: 600; font-size: 12.5px; line-height: 1.5; }
+    .ans { font-size: 12px; line-height: 1.6; color: #a6acb9; }
+
+    .kbadge { font: 700 10.5px "Cascadia Code", "JetBrains Mono", monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .frame { border: 1px solid rgba(95,179,179,.35); border-radius: 8px; overflow: hidden; flex: 1; min-width: 240px; }
+    .frame-src { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: #373e45;
+                 border-bottom: 1px solid rgba(95,179,179,.28); font: 10px "Cascadia Code", "JetBrains Mono", monospace; color: #606971; }
+    .frame-src b { color: #5fb3b3; font-weight: 700; }
+    .frame-body { padding: 9px 12px; font: 11.5px "Cascadia Code", "JetBrains Mono", monospace; color: #a6acb9; background: #2c333a; line-height: 1.6; }
+    .tag { padding: 0 6px; border-radius: 3px; font: 700 9px "Cascadia Code", "JetBrains Mono", monospace; letter-spacing: .06em; margin-left: auto; }
+    .tag--live { background: rgba(153,204,153,.14); color: #99cc99; }
+    .tag--pin { background: rgba(197,148,197,.14); color: #c594c5; }
+
+    .swatch { flex: 1; min-width: 180px; border-radius: 8px; padding: 10px 12px; font-size: 12px; }
+    .glowbox { position: relative; border: 1px solid rgba(249,174,88,.45); border-radius: 8px;
+               background: rgba(249,174,88,.05); }
+    .glowbox::after { content: ''; position: absolute; inset: -1px; border-radius: 8px;
+                      border-left: 3px solid #f9ae58; pointer-events: none; }
+    .focusbox { border: 1px solid #f9ae58; border-radius: 8px; box-shadow: 0 0 0 3px rgba(249,174,88,.25); background: #2c333a; }
+
+    .mile { display: flex; align-items: center; }
+    .m-dot { width: 8px; height: 8px; border-radius: 50%; background: #4e565f; }
+    .m-seg { width: 26px; height: 2px; background: #4e565f; }
+    .m-dot--floor { width: 10px; height: 10px; background: #99cc99; box-shadow: 0 0 6px rgba(153,204,153,.6); }
+
+    .tier { display: flex; align-items: baseline; gap: 14px; }
+    .tier .n { font: 10px "Cascadia Code", "JetBrains Mono", monospace; color: #606971; width: 150px; flex: 0 0 auto; }
+    td, th { text-align: left; padding: 3px 14px 3px 0; font-size: 11.5px; color: #a6acb9; }
+    th { color: #606971; font: 700 9.5px "Cascadia Code", "JetBrains Mono", monospace; letter-spacing: .07em; text-transform: uppercase; }
+    td b { color: #f8f8f2; font-weight: 600; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; height: 1980px; background: #1f2326; padding: 26px 28px; overflow: hidden">
+  <div style="margin-bottom: 18px">
+    <div style="font-size: 17px; font-weight: 700">C — Shared vocabulary</div>
+    <div style="font-size: 11.5px; color: #606971; margin-top: 3px">One drawing per idea, identical in the chat, the workbench, and the note.
+      All colour from the Mariana theme tokens; all chrome evolved from <span class="mono">renderers/*.styles.js</span>, none replaced.</div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px">
+
+    <!-- the record -->
+    <div class="card">
+      <h3>The exchange record — two faces</h3>
+      <div class="why">One record, host-dependent framing. CHAT face: my move right in orange (the human’s colour —
+        cursor, focus, chips), the answer left in the open column, no badge, shell only on hover. NOTE face: the
+        teal card with the AI badge — among other kinds the badge earns its place.</div>
+      <div class="lbl">Chat face — at rest, no shell</div>
+      <div style="padding: 4px 0 10px">
+        <div style="margin-left: auto; width: fit-content; max-width: 75%; background: rgba(249,174,88,.07); border: 1px solid rgba(249,174,88,.22); border-radius: 8px; padding: 8px 12px; font-size: 12.5px; line-height: 1.5">My move — the question list, utterance weight
+          <div style="display: flex; gap: 6px; justify-content: flex-end; margin-top: 7px; padding-top: 6px; border-top: 1px solid rgba(249,174,88,.15)">
+            <span class="chip c-attach"><span>what it was handed</span><span class="k">attach</span></span>
+          </div>
+        </div>
+        <div style="margin: 8px 30px 0 0; font-size: 12.5px; line-height: 1.6; color: #a6acb9">The answer — a list of minted blocks, left, near-full column.</div>
+      </div>
+      <div class="lbl">Note face — the card, badge kept</div>
+      <div class="xchg">
+        <span class="xchg-badge">AI</span>
+        <span style="position: absolute; top: -8px; right: 12px; background: #343d46; padding: 0 6px; font: 10px 'Cascadia Code','JetBrains Mono',monospace; color: #606971">14:07 · @v9</span>
+        <div class="q">The question — heading weight, orange rule</div>
+        <div class="ans">The answer — body weight.</div>
+      </div>
+      <div class="lbl" style="margin-top: 12px">The three slots — and the one with no drawing</div>
+      <table>
+        <tr><th>slot</th><th>rel</th><th>face</th></tr>
+        <tr><td><b>body</b></td><td>—</td><td>renders as content, in authored order</td></tr>
+        <tr><td><b>handed</b></td><td class="mono">attach</td><td>chips docked under MY move (chat) · under the answer (note card)</td></tr>
+        <tr><td><b>about</b></td><td class="mono">target</td><td><b>no entry</b> — glows the local target, transcludes the foreign one</td></tr>
+      </table>
+    </div>
+
+    <!-- live vs record -->
+    <div class="card">
+      <h3>Live block vs record</h3>
+      <div class="why">One renderer per kind, one flag. A record keeps the full anatomy and every read affordance;
+        only mutation leaves. Nothing else may differ — that is what makes the two surfaces read as one system.</div>
+      <div style="display: flex; gap: 14px">
+        <div style="flex: 1">
+          <div class="lbl">Live (draft, note, subject)</div>
+          <div class="frame" style="border-color: rgba(95,179,179,.28); min-width: 0">
+            <div class="frame-src"><b style="color:#99cc99">CODE</b> go · <span style="color:#a6acb9">mode ⌄ · edit · extract</span></div>
+            <div class="frame-body">func tail(line string) bool {</div>
+          </div>
+        </div>
+        <div style="flex: 1">
+          <div class="lbl">Record (readOnly)</div>
+          <div class="frame" style="border-color: rgba(95,179,179,.28); min-width: 0">
+            <div class="frame-src"><b style="color:#99cc99">CODE</b> go · <span>⧉ copy · ⤢ expand</span></div>
+            <div class="frame-body">func tail(line string) bool {</div>
+          </div>
+        </div>
+      </div>
+      <div class="lbl" style="margin-top: 12px">Gesture routing on a record</div>
+      <div style="font-size: 11.5px; color: #a6acb9; line-height: 1.6">Elements are anonymous (no block identity in the DOM), so
+        every right-click resolves upward to the parent exchange — the host menu speaks about the record, never about
+        its internals. Read affordances (copy, expand, fold, scroll) stay live all the way down.</div>
+    </div>
+
+    <!-- chip family -->
+    <div class="card">
+      <h3>The chip family</h3>
+      <div class="why">One pill (radius 999, 2px 9px pad, 8% tint), five accents. The hue IS the rel: what a chip
+        means is readable before its label is. Chips clamp at 15rem in rows; a reference block lifts the clamp.</div>
+      <div class="spec">
+        <span class="lbl">attach — handed to the turn · orange (accentPrimary)</span>
+        <span class="chip c-attach"><span>Scanner notes</span><span class="k">note</span></span>
+        <span class="chip c-attach"><span>fence-cases.log</span><span class="k">log · 11 KB</span></span>
+        <span class="lbl">cites — pointed out of an answer · cyan</span>
+        <span class="chip c-cite"><span>⌕ scanner.go:114</span><span class="k">cites</span></span>
+        <span class="lbl">quote — pinned history · purple</span>
+        <span class="chip c-quote"><span>❝ exchange 13:58</span><span class="k">@v7</span></span>
+        <span class="lbl">subject — what a workbench is about · teal</span>
+        <span class="chip c-subj"><span>⌖ scanner.go § Tail scanner</span></span>
+        <span class="lbl">dangling — a normal state, not an error · muted, dashed</span>
+        <span class="chip c-missing"><span>deleted-note</span><span class="k">missing</span></span>
+        <span class="lbl">the inline half — @-mention token in prose (same orange as its chip)</span>
+        <span style="font-size: 13.5px">…the retry loop in <span class="mention">@Scheduler sketch</span> holds…</span>
+      </div>
+    </div>
+
+    <!-- transclusion -->
+    <div class="card">
+      <h3>Transclusion — bare vs pinned</h3>
+      <div class="why">A reference rendering its target in place, read-only, full anatomy. The provenance strip names
+        the source; the tag states the time semantics. Green/live re-reads at every evaluation; purple/pinned is the
+        cited version, frozen. This is the ONLY sanctioned way to show foreign material richly.</div>
+      <div style="display: flex; gap: 14px">
+        <div class="frame">
+          <div class="frame-src"><b>⌖ TARGET</b> Parser sketch › scanner.go <span class="tag tag--live">LIVE · re-read</span></div>
+          <div class="frame-body">trimmed := strings.TrimSpace(line)</div>
+        </div>
+        <div class="frame" style="border-color: rgba(197,148,197,.4)">
+          <div class="frame-src"><b style="color: #c594c5">❝ QUOTED</b> this chat › 13:58 <span class="tag tag--pin">@v7 · frozen</span></div>
+          <div class="frame-body" style="border-left: 3px solid rgba(197,148,197,.5)">…classify at the point the error is minted…</div>
+        </div>
+      </div>
+      <div style="font-size: 11px; color: #606971; margin-top: 10px" class="mono">refs in turns freeze (pin) · refs in roles re-read (bare) — the pin is the whole freeze mechanism</div>
+    </div>
+
+    <!-- glow & tint language -->
+    <div class="card">
+      <h3>Glow &amp; tint language</h3>
+      <div class="why">Four different claims on a block, four distinct paints — never interchangeable. Focus is a ring;
+        being-pointed-at is a left bar; judgement is a span tint inside content; stale is grey.</div>
+      <div style="display: flex; gap: 12px; flex-wrap: wrap">
+        <div class="swatch focusbox">focused / selected<br><span style="font-size: 10px; color: #606971" class="mono">ring 3px accent 25%</span></div>
+        <div class="swatch glowbox">target glow<br><span style="font-size: 10px; color: #606971" class="mono">3px bar + 5% tint</span></div>
+      </div>
+      <div style="margin-top: 12px; font-size: 13px; line-height: 2">
+        <span style="background: rgba(153,204,153,.13); border-bottom: 1px solid rgba(153,204,153,.5); border-radius: 2px; padding: 0 2px">good span</span> ·
+        <span style="background: rgba(236,95,102,.13); border-bottom: 1px solid rgba(236,95,102,.6); border-radius: 2px; padding: 0 2px">weak span</span> ·
+        <span style="background: rgba(96,105,113,.16); border-bottom: 1px dashed #606971; border-radius: 2px; padding: 0 2px; color: #a6acb9">stale span</span> ·
+        <span style="background: rgba(102,153,204,.6); border-radius: 2px; padding: 0 2px">selection</span>
+      </div>
+      <div style="font-size: 11px; color: #606971; margin-top: 8px">Annotation tints are editor-only decorations — the file never
+        contains highlight markup. All four survive both the email draft and the code surface unchanged.</div>
+      <div class="lbl" style="margin-top: 14px">edges — three claims, maximum nesting (chat)</div>
+      <div style="position: relative; border: 1px solid rgba(95,179,179,.35); background: rgba(95,179,179,.04); border-radius: 8px; padding: 20px 12px 10px">
+        <span style="position: absolute; top: -8px; left: 10px; background: #343d46; padding: 0 5px; font: 700 9px 'Cascadia Code','JetBrains Mono',monospace; letter-spacing: .06em; color: #5fb3b3">RECORD · hover only</span>
+        <div style="position: relative; margin-left: auto; width: fit-content; border: 1px solid rgba(249,174,88,.22); background: rgba(249,174,88,.07); border-radius: 8px; padding: 16px 10px 8px">
+          <span style="position: absolute; top: -8px; left: 8px; background: #343d46; padding: 0 5px; font: 700 9px 'Cascadia Code','JetBrains Mono',monospace; letter-spacing: .06em; color: #f9ae58">SPEAKER</span>
+          <div style="border: 1px solid rgba(95,179,179,.28); background: #2c333a; border-radius: 6px; padding: 4px 10px; font: 10.5px 'Cascadia Code','JetBrains Mono',monospace; color: #a6acb9"><span style="color: #99cc99; font-weight: 700; font-size: 9px; letter-spacing: .06em">KIND</span> block chrome</div>
+        </div>
+      </div>
+      <div style="font-size: 11px; color: #606971; margin-top: 8px">Teal = record (materialises on hover/focus) · orange = utterance boundary
+        (the question keeps it even when rich) · block chrome = kind. A claim is never drawn twice — the ANSWER gets no
+        edge of its own: column position + the hover shell already identify it, and its blocks self-chrome.</div>
+    </div>
+
+    <!-- badges & status -->
+    <div class="card">
+      <h3>Badges, thinking, milestones</h3>
+      <div class="why">Kind badges keep their shipped colours. The AI badge is NOTE-HOST chrome only — a chat drops
+        it (everyone there is known) and shows pending work as quiet dots in the answer slot instead. Milestones
+        are the workbench’s floor timeline — user-owned, sparse.</div>
+      <div class="spec" style="gap: 14px">
+        <span class="kbadge" style="color: #f9ae58; border: 1px solid #4e565f; border-radius: 4px; padding: 1px 6px; background: #343d46">AI</span>
+        <span class="kbadge" style="color: #99cc99">code</span>
+        <span class="kbadge" style="color: #5fb3b3">log</span>
+        <span class="kbadge" style="color: #c594c5">diagram</span>
+        <span class="kbadge" style="color: #f9ae58">wb</span>
+        <span class="kbadge" style="color: #5fb3b3">chat</span>
+      </div>
+      <div class="lbl" style="margin-top: 12px">thinking — conic ring traces the AI badge while a job runs (note host)</div>
+      <span class="xchg-badge badge--think" style="position: static; display: inline-block">AI</span>
+      <div class="lbl" style="margin-top: 12px">pending (chat) — no badge, so the answer slot carries it; the answer lands WHOLE</div>
+      <span style="display: inline-flex; align-items: center; gap: 8px; border: 1px dashed rgba(95,179,179,.4); border-radius: 8px; padding: 6px 10px; color: #5fb3b3; font-size: 10.5px; background: rgba(95,179,179,.05)"><span style="width: 6px; height: 6px; border-radius: 50%; background: #5fb3b3"></span> answering…</span>
+      <div class="lbl" style="margin-top: 14px">milestones — dots are saves worth naming; the green dot is the floor</div>
+      <div style="display: flex; align-items: center; gap: 10px">
+        <div class="mile"><span class="m-dot"></span><span class="m-seg"></span><span class="m-dot"></span><span class="m-seg"></span><span class="m-dot m-dot--floor"></span></div>
+        <span style="font: 10px 'Cascadia Code','JetBrains Mono',monospace; color: #606971">floor @v12 · detach-revert lands here</span>
+      </div>
+    </div>
+
+    <!-- ownership -->
+    <div class="card" style="grid-column: span 2">
+      <h3>Who owns what — the standing key legend</h3>
+      <div class="why">The rule under every pin on the other artboards. Hosts own chrome, key precedence and menus;
+        lenses render and honour readOnly; the user owns intent.</div>
+      <table>
+        <tr><th>region</th><th>owner</th><th>notes</th></tr>
+        <tr><td><b>Tabs, status bar, sidebar, dialogs, context menus</b></td><td class="mono" style="color: #6699cc">HOST</td><td>records resolve right-click to their parent block; the menu is host-scoped (no Ask-in-Ask inside a composer)</td></tr>
+        <tr><td><b>Enter=send (composer) · Mod+Enter flip · Esc</b></td><td class="mono" style="color: #6699cc">HOST</td><td>claimed pre-core, ahead of the mounted editor lens; flip semantics are viewport-specific</td></tr>
+        <tr><td><b>All editing keys, block rendering, read affordances</b></td><td class="mono" style="color: #99cc99">LENS</td><td>a lens takes one provider and paints onChanged; transport-blind</td></tr>
+        <tr><td><b>@-mention typeahead · slash commands · invalidations</b></td><td class="mono" style="color: #6699cc">HOST</td><td>tenants of the workspace wire (MentionService, CommandService, InvalidationService)</td></tr>
+        <tr><td><b>Send, Replay, Run, Apply — anything that mutates truth</b></td><td class="mono" style="color: #6699cc">HOST</td><td>ops on the document wire; backend is the source of truth; lens places the server’s echo</td></tr>
+        <tr><td><b>user_intent · milestones · refutations</b></td><td class="mono" style="color: #fac761">USER</td><td>judgements, never measurements — AI recommends, never sets</td></tr>
+      </table>
+    </div>
+
+    <!-- scale -->
+    <div class="card" style="grid-column: span 2">
+      <h3>Scale &amp; rhythm</h3>
+      <div class="why">Everything sits on the editor’s four size tiers of <span class="mono">--doc-size</span> (16px default) and the shipped paddings — no new numbers were invented for these surfaces.</div>
+      <div class="tier"><span class="n">×1.0 — body / answers</span><span style="font-size: 16px">The answer reads at document size.</span></div>
+      <div class="tier" style="margin-top: 6px"><span class="n">×0.85 — code / inner mono</span><span class="mono" style="font-size: 13.6px">fence.MatchString(line)</span></div>
+      <div class="tier" style="margin-top: 6px"><span class="n">×0.72 — chips / summaries</span><span style="font-size: 11.5px; color: #f9ae58">Scanner notes · note</span></div>
+      <div class="tier" style="margin-top: 6px"><span class="n">×0.7 — badges</span><span class="kbadge" style="color: #99cc99">code</span></div>
+      <div style="font-size: 11px; color: #606971; margin-top: 12px" class="mono">card: radius 8 · pad 1.25rem 1.5rem · margins 1.5/2rem (zeroed inside a list) — chip: radius 999 · pad 2px 8px · tint 8%/18% hover — heading rule: 2px accent 35%</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

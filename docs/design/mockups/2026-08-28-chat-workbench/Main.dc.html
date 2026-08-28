@@ -1,0 +1,297 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap">
+  <style>
+    body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: #1f2326; color: #f8f8f2; }
+    a { color: #f9ae58; } a:hover { color: #fac761; }
+    * { box-sizing: border-box; }
+    .mono { font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+
+    /* ── app window ── */
+    .win { background: #343d46; border: 1px solid #14171a; border-radius: 8px; overflow: hidden;
+           box-shadow: 0 18px 60px rgba(0,0,0,.5); display: flex; flex-direction: row; }
+    .sidebar { width: 224px; flex: 0 0 auto; background: #2c333a; border-right: 1px solid #1f2326;
+               display: flex; flex-direction: column; padding: 10px 0; overflow: hidden; }
+    .side-h { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+              color: #606971; padding: 10px 14px 4px; font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .side-row { font-size: 12.5px; color: #a6acb9; padding: 4px 14px 4px 22px; white-space: nowrap;
+                overflow: hidden; text-overflow: ellipsis; }
+    .side-row--on { background: rgba(249,174,88,.10); color: #f8f8f2; border-left: 2px solid #f9ae58; padding-left: 20px; }
+    .side-time { color: #606971; font-size: 10.5px; margin-left: 6px; }
+
+    .rightcol { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .tabs { height: 36px; flex: 0 0 auto; background: #2c333a; border-bottom: 1px solid #1f2326;
+            display: flex; align-items: stretch; }
+    .tab { display: flex; align-items: center; gap: 7px; padding: 0 14px; font-size: 12px; color: #a6acb9;
+           border-right: 1px solid #1f2326; border-top: 2px solid transparent; }
+    .tab--on { background: #343d46; color: #f8f8f2; border-top: 2px solid #f9ae58; }
+    .tab-kind { font-size: 9px; font-weight: 700; letter-spacing: .08em; color: #5fb3b3;
+                font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+
+    .surface { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; align-items: center; }
+    .thread { width: 720px; flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+
+    /* ── exchange: one record, two moves ── */
+    .xrec { position: relative; padding: 10px 14px; margin: 8px -14px 8px; border-radius: 8px;
+            border: 1px solid transparent; }
+    .xrec--hover { border-color: rgba(95,179,179,.35); background: rgba(95,179,179,.04);
+                   box-shadow: 0 4px 20px rgba(0,0,0,.25); }
+    .xrec-stamp { position: absolute; top: -8px; right: 12px; background: #343d46; padding: 0 6px;
+                  font-size: 10px; color: #606971; font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .xrec-tools { position: absolute; top: 8px; right: 10px; display: flex; gap: 2px; }
+    .xtool { width: 22px; height: 22px; border-radius: 4px; display: flex; align-items: center; justify-content: center;
+             color: #a6acb9; font-size: 12px; background: rgba(248,248,242,.06); }
+
+    /* my move — right-favouring, orange = the human's colour */
+    .qmove { margin-left: auto; width: fit-content; max-width: 560px; background: rgba(249,174,88,.07);
+             border: 1px solid rgba(249,174,88,.22); border-radius: 8px; padding: 10px 14px;
+             font-size: 14px; line-height: 1.6; }
+    .qmove .q-el + .q-el { margin-top: 8px; }
+    .q-attach { display: flex; gap: 6px; justify-content: flex-end; margin-top: 9px; padding-top: 8px;
+                border-top: 1px solid rgba(249,174,88,.15); }
+
+    /* the AI's move — left, near-full column (answers carry code) */
+    .amove { margin: 10px 40px 0 0; max-width: 660px; font-size: 14px; line-height: 1.62; }
+    .amove p { margin: 0 0 10px; } .amove p:last-child { margin-bottom: 0; }
+
+    .mention { border-radius: 3px; padding: 0 3px; background: rgba(249,174,88,.14); color: #f9ae58; font-weight: 500; }
+    .chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; max-width: 240px;
+            border: 1px solid #4e565f; border-radius: 999px; background: rgba(249,174,88,.08);
+            color: #f9ae58; font-size: 11.5px; white-space: nowrap; }
+    .chip .k { opacity: .7; font-size: 10.5px; }
+    .chip--cite { background: rgba(102,153,204,.10); color: #6699cc; }
+
+    .quote { padding: 7px 10px 7px 12px; border-left: 3px solid rgba(197,148,197,.65);
+             background: rgba(197,148,197,.08); border-radius: 0 6px 6px 0; font-weight: 400;
+             font-size: 12.5px; line-height: 1.5; color: #a6acb9; }
+    .quote-src { font-size: 10px; color: #606971; font-family: "Cascadia Code", "JetBrains Mono", monospace; margin-bottom: 3px; }
+    .quote-src b { color: #c594c5; font-weight: 500; }
+
+    .codeblk { background: #2c333a; border: 1px solid rgba(95,179,179,.28); border-radius: 8px; overflow: hidden; margin: 4px 0 10px; }
+    .code-hd { display: flex; align-items: center; gap: 10px; padding: 4px 12px; background: #373e45;
+               border-bottom: 1px solid rgba(95,179,179,.28); }
+    .kbadge { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+              font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .code-body { display: flex; font-family: "Cascadia Code", "JetBrains Mono", monospace; font-size: 12.6px; line-height: 1.6; }
+    .gut { flex: 0 0 auto; padding: 10px 8px; text-align: right; color: #606971; border-right: 1px solid #4e565f;
+           background: #2c333a; user-select: none; }
+    .code-body pre { margin: 0; padding: 10px 14px; overflow: hidden; color: #f8f8f2; flex: 1; }
+    .sk { color: #c594c5; } .ss { color: #99cc99; } .sf { color: #6699cc; } .sn { color: #f9ae58; }
+    .sc { color: #a6acb9; font-style: italic; } .st { color: #5fb3b3; }
+
+    /* streaming */
+    .skel { border: 1px dashed rgba(95,179,179,.4); border-radius: 8px; padding: 9px 12px; margin-top: 8px;
+            display: flex; align-items: center; gap: 10px; color: #5fb3b3; font-size: 11.5px;
+            background: rgba(95,179,179,.05); width: fit-content; }
+    .skel .dot { width: 6px; height: 6px; border-radius: 50%; background: #5fb3b3; opacity: .8;
+                 animation: pulse 1.2s ease-in-out infinite; }
+    @keyframes pulse { 0%,100% { opacity: .25 } 50% { opacity: 1 } }
+    .caret { display: inline-block; width: 7px; height: 15px; background: #f9ae58; vertical-align: text-bottom;
+             animation: pulse 1s step-end infinite; }
+
+    /* composer */
+    .composer { flex: 0 0 auto; width: 720px; margin: 6px 0 14px; border: 1px solid #4e565f; border-radius: 8px;
+                background: #2c333a; box-shadow: 0 -8px 30px rgba(0,0,0,.25); }
+    .composer:focus-within { border-color: #f9ae58; }
+    .comp-body { padding: 12px 16px 8px; font-size: 14px; line-height: 1.6; min-height: 44px; }
+    .comp-chips { display: flex; gap: 6px; padding: 0 16px 9px; }
+    .comp-foot { display: flex; align-items: center; gap: 14px; padding: 6px 10px 6px 16px;
+                 border-top: 1px solid #1f2326; }
+    .hint { font-size: 10.5px; color: #606971; font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .hint b { color: #a6acb9; font-weight: 500; }
+    .send { margin-left: auto; padding: 5px 16px; border-radius: 5px; background: rgba(249,174,88,.16);
+            color: #f9ae58; font-size: 12px; font-weight: 700; letter-spacing: .02em; }
+
+    .statusbar { height: 30px; flex: 0 0 auto; background: #2c333a; border-top: 1px solid #1f2326;
+                 display: flex; align-items: center; gap: 14px; padding: 0 14px; font-size: 11px; color: #606971; }
+    .libchip { display: inline-flex; align-items: center; gap: 5px; background: #4e5a65; border: 1px solid #1f2326;
+               border-radius: 4px; padding: 1px 8px; font-size: 10.5px; font-weight: 600; color: #f9ae58; }
+    .libdot { width: 6px; height: 6px; border-radius: 50%; background: #99cc99; }
+
+    /* ── annotation layer ── */
+    .pin { position: absolute; z-index: 60; width: 19px; height: 19px; border-radius: 50%; background: #fac761;
+           color: #1f2326; border: 2px solid #1f2326; font: 700 11px "Cascadia Code", "JetBrains Mono", monospace;
+           display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,.5); }
+    .rail { width: 320px; flex: 0 0 auto; padding: 26px 24px; overflow: hidden; }
+    .rail h2 { margin: 0 0 4px; font-size: 15px; font-weight: 700; color: #f8f8f2; }
+    .rail .sub { font-size: 11.5px; color: #606971; margin-bottom: 16px; line-height: 1.5; }
+    .arow { display: flex; gap: 9px; margin-bottom: 12px; align-items: flex-start; }
+    .arow .n { flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%; background: #fac761; color: #1f2326;
+               font: 700 10.5px "Cascadia Code", "JetBrains Mono", monospace; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+    .arow .t { font-size: 11.5px; line-height: 1.5; color: #a6acb9; }
+    .arow .t b { color: #f8f8f2; font-weight: 600; }
+    .own { display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 3px; font: 700 9px "Cascadia Code", "JetBrains Mono", monospace;
+           letter-spacing: .06em; vertical-align: 1px; }
+    .own--host { background: rgba(102,153,204,.16); color: #6699cc; }
+    .own--lens { background: rgba(153,204,153,.16); color: #99cc99; }
+  </style>
+</helmet>
+
+<div style="width: 1760px; height: 900px; background: #1f2326; display: flex; overflow: hidden">
+
+  <!-- ══ mock ══ -->
+  <div style="flex: 1; padding: 24px; position: relative">
+    <div class="win" style="width: 1392px; height: 852px; position: relative">
+
+      <!-- sidebar -->
+      <div class="sidebar">
+        <div class="side-h">Notes</div>
+        <div class="side-row">inbox</div>
+        <div class="side-row">designs</div>
+        <div class="side-h" style="margin-top: 6px">Things</div>
+        <div class="side-row">email-workbench</div>
+        <div class="side-row">diagram</div>
+        <div class="side-h" style="margin-top: 6px">Chats</div>
+        <div class="side-row side-row--on">Parser error taxonomy<span class="side-time">14:02</span></div>
+        <div class="side-row">Go embed layout<span class="side-time">Mon</span></div>
+        <div class="side-row">WebKitGTK clipboard<span class="side-time">21 Aug</span></div>
+        <div style="position: relative"><span class="pin" style="position: absolute; right: 10px; top: -66px">1</span></div>
+      </div>
+
+      <!-- right column -->
+      <div class="rightcol">
+        <div class="tabs">
+          <div class="tab"><span class="tab-kind" style="color: #99cc99">MD</span> inbox-triage</div>
+          <div class="tab tab--on"><span class="tab-kind">CHAT</span> Parser error taxonomy</div>
+          <div class="tab"><span class="tab-kind" style="color: #f9ae58">WB</span> reply to Dana</div>
+          <span class="pin" style="position: absolute; left: 640px; top: 28px">8</span>
+        </div>
+
+        <div class="surface">
+          <div class="thread">
+
+            <!-- turn 1: at rest — no shell, no badge; scrolled partially out -->
+            <div class="xrec" style="margin-top: -46px">
+              <div class="qmove" style="font-size: 13.5px">…and keep recoverable separate from fatal?</div>
+              <div class="amove">
+                <p>Keep the two families as one enum with a <span class="mono" style="font-size:12.6px; background:rgba(249,174,88,.10); border:1px solid rgba(249,174,88,.20); border-radius:3px; padding:1px 5px; color:#6699cc">Recoverable</span> predicate rather than two error types — the scanner already threads one error value.</p>
+              </div>
+            </div>
+
+            <!-- turn 2: HOVERED — the record shell materialises -->
+            <div class="xrec xrec--hover">
+              <span class="xrec-stamp">13:58 · @v7</span>
+              <div class="xrec-tools"><span class="xtool">⧉</span><span class="xtool">❝</span><span class="xtool">⤢</span></div>
+              <span class="pin" style="right: -30px; top: 14px">2</span>
+              <div class="qmove">
+                <span class="pin" style="position: absolute; margin-left: -46px; margin-top: 2px">3</span>
+                <div class="q-el quote">
+                  <div class="quote-src"><b>❝ quoted</b> · this chat · @v7 · pinned</div>
+                  …one enum with a Recoverable predicate rather than two error types…
+                </div>
+                <div class="q-el">But the Tail scanner treats column-zero fences as fatal — doesn’t that contradict this?</div>
+                <div class="q-attach">
+                  <span class="chip"><span>scanner.go</span><span class="k">code · 4 KB</span></span>
+                </div>
+              </div>
+              <div class="amove">
+                <span class="pin" style="position: absolute; margin-left: -46px; margin-top: 26px">4</span>
+                <p>It doesn’t — the Tail case fails <i>structurally</i>, before any error value exists. Classify at the point the error is minted:</p>
+                <div class="codeblk">
+                  <div class="code-hd"><span class="kbadge" style="color: #99cc99">code</span><span class="kbadge" style="color: #606971; text-transform: none; letter-spacing: 0">go</span></div>
+                  <div class="code-body">
+                    <div class="gut">1<br>2<br>3<br>4<br>5</div>
+                    <pre><span class="sk">func</span> (s *<span class="st">Scanner</span>) <span class="sf">classify</span>(err <span class="st">error</span>) <span class="st">Severity</span> {
+    <span class="sk">if</span> pe := <span class="sf">asParseError</span>(err); pe != <span class="sn">nil</span> &amp;&amp; pe.Recoverable {
+        <span class="sk">return</span> SevRecoverable
+    }
+    <span class="sk">return</span> SevFatal <span class="sc">// structural failures never carry pe</span>
+}</pre>
+                  </div>
+                </div>
+                <p style="display: flex; align-items: center; gap: 8px; margin: 0">
+                  <span class="chip chip--cite"><span>⌕ scanner.go § Tail scanner</span><span class="k">cites</span></span>
+                </p>
+              </div>
+            </div>
+
+            <!-- turn 3: pending — a structural unanswered exchange -->
+            <div class="xrec">
+              <div class="qmove">Give me the enum plus the two mint sites, and name the test that pins each.</div>
+              <div class="amove">
+                <span class="pin" style="position: absolute; margin-left: -46px; margin-top: 4px">5</span>
+                <div class="skel" style="margin-top: 2px"><span class="dot"></span> answering…</div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- composer -->
+          <div class="composer">
+            <span class="pin" style="position: absolute; margin-left: -32px; margin-top: 14px">6</span>
+            <div class="comp-body">
+              Fold that into <span class="mention">@Scanner notes</span> as a summary table too<span class="caret"></span>
+              <span class="pin" style="position: absolute; margin-left: 10px">7</span>
+            </div>
+            <div class="comp-chips">
+              <span class="chip"><span>Scanner notes</span><span class="k">note</span></span>
+            </div>
+            <div class="comp-foot">
+              <span class="hint"><b>Enter</b> send</span><span class="hint"><b>Alt+Enter</b> newline</span>
+              <span class="hint"><b>@</b> mention</span><span class="hint"><b>paste</b> mints a block</span>
+              <div class="send">Ask</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="statusbar">
+          <span class="libchip"><span class="libdot"></span> personal</span>
+          <span class="mono" style="font-size: 10.5px">chat · 7 exchanges</span>
+          <span style="margin-left: auto" class="mono">saved · born in library</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ annotation rail ══ -->
+  <div class="rail">
+    <h2>A — Chat document lens</h2>
+    <div class="sub">A Chat is <span class="mono">List&lt;AiBlock&gt;</span> — container order is the thread. Two sides, one
+      record: my move right in orange, the answer left in the open column. No AI badge — in a chat, everyone
+      knows. No shells at rest; proximity groups the exchange.</div>
+
+    <div class="arow"><span class="n">1</span><div class="t"><b>Chats library section</b><span class="own own--host">HOST</span><br>
+      Chronological, born-shared — no triage on close; pause/resume. Hypermedia sidebar, HTMX refetch on <span class="mono">invalidate</span>.</div></div>
+
+    <div class="arow"><span class="n">2</span><div class="t"><b>The record shell, on hover</b><span class="own own--lens">LENS</span><br>
+      Rest = two bare moves. Hover/focus materialises the familiar teal ai-block shell around BOTH — read controls
+      (copy · quote · expand), timestamp + version stamp. One exchange, one citable record; right-click resolves to
+      it → host menu<span class="own own--host">HOST</span> (cite, branch from here, delete exchange).</div></div>
+
+    <div class="arow"><span class="n">3</span><div class="t"><b>My move</b><span class="own own--lens">LENS</span><br>
+      Right-favouring, orange-tinted — orange is already the human’s colour (cursor, focus, chips). Utterance
+      weight, not heading weight. Elements are whole blocks: pinned quote, prose, attach chips docked under it.
+      Width caps at ~75%; pointer-first questions stay short.</div></div>
+
+    <div class="arow"><span class="n">4</span><div class="t"><b>The answer</b><span class="own own--lens">LENS</span><br>
+      Left-set, near-full column — answers carry code and need the width; that asymmetry (not symmetric bubbles) is
+      what distinguishes the sides. Citations land in flow as cyan chips; click navigates via the
+      Router<span class="own own--host">HOST</span>.</div></div>
+
+    <div class="arow"><span class="n">5</span><div class="t"><b>Pending exchange</b><span class="own own--lens">LENS</span><br>
+      An unanswered exchange is structural, not inferred — close the tab mid-thought, resume in three weeks. While
+      the job runs: quiet dots, no fake progress. The answer lands WHOLE on the DOCUMENT wire<span class="own own--host">HOST</span>;
+      blocks are the authoring grain, never a display trick.</div></div>
+
+    <div class="arow"><span class="n">6</span><div class="t"><b>Composer</b><span class="own own--lens">LENS</span><br>
+      The full document-editor lens on an in-memory draft. The chat host claims <b>Enter</b> = send pre-core<span class="own own--host">HOST</span>;
+      Alt+Enter newline, all editing keys stay the editor’s. No Ask/Explain inside — you are already in one.</div></div>
+
+    <div class="arow"><span class="n">7</span><div class="t"><b>@-mention</b><span class="own own--host">HOST</span><br>
+      <span class="mono">@Title</span> token in prose + attachment chip below — one gesture, two faces.
+      Typeahead is the workspace wire’s MentionService tenant.</div></div>
+
+    <div class="arow"><span class="n">8</span><div class="t"><b>Tabs · status bar</b><span class="own own--host">HOST</span><br>
+      Kind-tagged tabs (MD / CHAT / WB). The chat lens contributes no toolbar; chrome is the shell’s.</div></div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

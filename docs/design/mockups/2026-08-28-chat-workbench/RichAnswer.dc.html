@@ -1,0 +1,189 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap">
+  <style>
+    body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: #1f2326; color: #f8f8f2; }
+    a { color: #f9ae58; } a:hover { color: #fac761; }
+    * { box-sizing: border-box; }
+    .mono { font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .panel { background: #343d46; border: 1px solid #14171a; border-radius: 8px; padding: 30px 34px;
+             box-shadow: 0 12px 40px rgba(0,0,0,.4); position: relative; }
+    .panel-cap { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+                 color: #606971; font-family: "Cascadia Code", "JetBrains Mono", monospace; margin-bottom: 16px; }
+
+    .qmove { margin-left: auto; width: fit-content; max-width: 480px; background: rgba(249,174,88,.07);
+             border: 1px solid rgba(249,174,88,.22); border-radius: 8px; padding: 10px 14px;
+             font-size: 14px; line-height: 1.6; }
+    .amove { margin: 12px 40px 0 0; max-width: 640px; font-size: 14px; line-height: 1.62; }
+    .amove p { margin: 0 0 10px; }
+    .amove ul { margin: 0 0 10px; padding-left: 22px; }
+    .amove li { margin-bottom: 3px; }
+    .icode { font-family: "Cascadia Code", "JetBrains Mono", monospace; font-size: 12.6px;
+             background: rgba(249,174,88,.10); border: 1px solid rgba(249,174,88,.20);
+             border-radius: 3px; padding: 1px 5px; color: #6699cc; }
+
+    /* sanctioned-markdown table (prose block content) */
+    table.md { border-collapse: collapse; margin: 4px 0 12px; font-size: 12.5px; }
+    table.md th, table.md td { border: 1px solid #4e565f; padding: 4px 12px; text-align: left; }
+    table.md th { background: #2c333a; color: #a6acb9; font-weight: 600; font-size: 11.5px; }
+    table.md td b { color: #6699cc; font-weight: 500; font-family: "Cascadia Code", "JetBrains Mono", monospace; font-size: 12px; }
+
+    /* block shells (kind chrome, readOnly) */
+    .blk { background: #2c333a; border: 1px solid rgba(95,179,179,.28); border-radius: 8px;
+           overflow: hidden; margin: 4px 0 12px; }
+    .blk-hd { display: flex; align-items: center; gap: 10px; padding: 4px 12px; background: #373e45;
+              border-bottom: 1px solid rgba(95,179,179,.28); }
+    .kbadge { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+              font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .hd-tool { margin-left: auto; display: flex; gap: 8px; color: #606971; font-size: 12px; }
+
+    .code-body { display: flex; font-family: "Cascadia Code", "JetBrains Mono", monospace; font-size: 12.6px; line-height: 1.6; }
+    .gut { flex: 0 0 auto; padding: 9px 8px; text-align: right; color: #606971; border-right: 1px solid #4e565f; user-select: none; }
+    .code-body pre { margin: 0; padding: 9px 13px; overflow: hidden; color: #f8f8f2; flex: 1; }
+    .sk { color: #c594c5; } .ss { color: #99cc99; } .sf { color: #6699cc; } .sn { color: #f9ae58; }
+    .sc { color: #a6acb9; font-style: italic; } .st { color: #5fb3b3; }
+
+    /* rendered diagram face */
+    .dia { padding: 18px 16px; display: flex; align-items: center; justify-content: center; gap: 10px; }
+    .dnode { border: 1.5px solid #c594c5; border-radius: 6px; padding: 6px 12px; font-size: 11.5px;
+             color: #f8f8f2; background: rgba(197,148,197,.08); white-space: nowrap; }
+    .dnode--dec { border-radius: 999px; border-color: #5fb3b3; background: rgba(95,179,179,.08); }
+    .dnode--end { border-color: #99cc99; background: rgba(153,204,153,.08); }
+    .dnode--bad { border-color: #ec5f66; background: rgba(236,95,102,.08); }
+    .darr { color: #606971; font-size: 13px; flex: 0 0 auto; }
+    .dlbl { font-size: 9.5px; color: #a6acb9; font-family: "Cascadia Code", "JetBrains Mono", monospace; text-align: center; }
+
+    /* log block face */
+    .logline { font-family: "Cascadia Code", "JetBrains Mono", monospace; font-size: 11.5px; line-height: 1.7;
+               padding: 0 13px; color: #a6acb9; white-space: nowrap; overflow: hidden; }
+    .log-body { padding: 8px 0; }
+    .log-err { background: rgba(236,95,102,.10); color: #f8f8f2; }
+    .log-tok-lvl { color: #ec5f66; font-weight: 700; }
+    .log-tok-ts { color: #606971; }
+    .log-fold { color: #5fb3b3; font-size: 10.5px; padding: 0 13px; }
+
+    .chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border: 1px solid #4e565f;
+            border-radius: 999px; font-size: 11.5px; white-space: nowrap; }
+    .chip--cite { background: rgba(102,153,204,.10); color: #6699cc; }
+    .chip .k { opacity: .7; font-size: 10.5px; }
+
+    .pin { position: absolute; z-index: 60; width: 19px; height: 19px; border-radius: 50%; background: #fac761;
+           color: #1f2326; border: 2px solid #1f2326; font: 700 11px "Cascadia Code", "JetBrains Mono", monospace;
+           display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,.5); }
+    .rail { width: 320px; flex: 0 0 auto; padding: 26px 24px; }
+    .rail h2 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
+    .rail .sub { font-size: 11.5px; color: #606971; margin-bottom: 16px; line-height: 1.5; }
+    .arow { display: flex; gap: 9px; margin-bottom: 12px; align-items: flex-start; }
+    .arow .n { flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%; background: #fac761; color: #1f2326;
+               font: 700 10.5px "Cascadia Code", "JetBrains Mono", monospace; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+    .arow .t { font-size: 11.5px; line-height: 1.5; color: #a6acb9; }
+    .arow .t b { color: #f8f8f2; font-weight: 600; }
+    .own { display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 3px;
+           font: 700 9px "Cascadia Code", "JetBrains Mono", monospace; letter-spacing: .06em; vertical-align: 1px; }
+    .own--host { background: rgba(102,153,204,.16); color: #6699cc; }
+    .own--lens { background: rgba(153,204,153,.16); color: #99cc99; }
+  </style>
+</helmet>
+
+<div style="width: 1240px; height: 1180px; background: #1f2326; display: flex; overflow: hidden">
+  <div style="flex: 1; padding: 24px; overflow: hidden">
+
+    <div class="panel">
+      <div class="panel-cap">A rich answer — markdown prose + real Sieve blocks, all readOnly, zero ProseMirror</div>
+
+      <div class="qmove">Summarise the failure taxonomy and sketch the flow — include what the fence log actually showed.</div>
+
+      <div class="amove" style="position: relative">
+        <p>The taxonomy splits on <span class="icode">Recoverable</span> at the mint site — three severities, two owners:</p>
+        <span class="pin" style="left: -34px; top: 0">1</span>
+
+        <table class="md">
+          <tr><th>severity</th><th>minted by</th><th>pinned by</th></tr>
+          <tr><td><b>SevRecoverable</b></td><td>scanner</td><td><b>TestClassify_Recoverable</b></td></tr>
+          <tr><td><b>SevStructural</b></td><td>scanner (col-0 guard)</td><td><b>TestTailScanner_ColumnZeroFence</b></td></tr>
+          <tr><td><b>SevFatal</b></td><td>codec</td><td><b>TestDeserialize_Fatal</b></td></tr>
+        </table>
+
+        <div class="blk" style="position: relative">
+          <span class="pin" style="left: -34px; top: 10px">2</span>
+          <div class="blk-hd"><span class="kbadge" style="color: #c594c5">diagram</span><span class="kbadge" style="color: #606971; text-transform: none; letter-spacing: 0">mermaid · rendered</span>
+            <span class="hd-tool"><span>⤢</span></span></div>
+          <div class="dia">
+            <span class="dnode">parse error</span><span class="darr">─▶</span>
+            <span class="dnode dnode--dec">recoverable?</span>
+            <span style="display: flex; flex-direction: column; gap: 8px">
+              <span style="display: flex; align-items: center; gap: 8px"><span class="dlbl">yes</span><span class="darr">─▶</span><span class="dnode dnode--end">SevRecoverable</span></span>
+              <span style="display: flex; align-items: center; gap: 8px"><span class="dlbl">no</span><span class="darr">─▶</span><span class="dnode dnode--dec">structural?</span><span class="darr">─▶</span>
+                <span style="display: flex; flex-direction: column; gap: 6px">
+                  <span class="dnode dnode--end" style="border-color: #fac761; background: rgba(250,199,97,.08)">SevStructural</span>
+                  <span class="dnode dnode--bad">SevFatal</span>
+                </span></span>
+            </span>
+          </div>
+        </div>
+
+        <p>The fence log confirms the column-zero case never carried an error value:</p>
+
+        <div class="blk" style="position: relative">
+          <span class="pin" style="left: -34px; top: 10px">3</span>
+          <div class="blk-hd"><span class="kbadge" style="color: #5fb3b3">log</span><span class="kbadge" style="color: #606971; text-transform: none; letter-spacing: 0">fence-cases.log</span>
+            <span class="hd-tool"><span class="mono" style="font-size: 10px">hide noise</span><span>⤢</span></span></div>
+          <div class="log-body">
+            <div class="log-fold">▸ 41 earlier lines folded</div>
+            <div class="logline"><span class="log-tok-ts">14:02:11.482</span> scanner: fence open @ line 112, state=inFence</div>
+            <div class="logline log-err"><span class="log-tok-ts">14:02:11.483</span> <span class="log-tok-lvl">ERROR</span> tail: close fence dropped, col=0 — no ParseError minted</div>
+            <div class="logline"><span class="log-tok-ts">14:02:11.484</span> scanner: region abandoned, 14 lines re-queued</div>
+          </div>
+        </div>
+
+        <p style="display: flex; align-items: center; gap: 8px; margin: 0; position: relative">
+          <span class="chip chip--cite"><span>⌕ fence-cases.log:43</span><span class="k">cites</span></span>
+          <span class="chip chip--cite"><span>⌕ scanner.go § classify</span><span class="k">cites</span></span>
+          <span class="pin" style="position: static">4</span>
+        </p>
+        <span class="pin" style="left: -34px; bottom: 120px; position: absolute">5</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ rail ══ -->
+  <div class="rail">
+    <h2>A⁗ — A rich answer</h2>
+    <div class="sub">What the model gives back when the answer is genuinely structured: markdown lands as prose
+      blocks, everything else as real Sieve blocks — each minted through its kind’s processor, each rendered
+      readOnly by its own renderer. The thread is rendered DOM; the only ProseMirror in the tab is the composer.</div>
+
+    <div class="arow"><span class="n">1</span><div class="t"><b>Prose block = sanctioned markdown</b><span class="own own--lens">LENS</span><br>
+      Lists, tables, inline code through the same markdown-it path ai-block responses use today — body weight, NO
+      shell of its own. The table border is theme-border; nothing invents chrome.</div></div>
+
+    <div class="arow"><span class="n">2</span><div class="t"><b>Diagram block, rendered face</b><span class="own own--lens">LENS</span><br>
+      A real diagram block the model authored (<span class="mono">answer_block("diagram", …)</span>): mermaid renders,
+      full kind chrome, purple badge. readOnly drops mode-toggle/edit; ⤢ expand to the lightbox<span class="own own--host">HOST</span>
+      stays — reads survive. Promote it into a note and it keeps its id.</div></div>
+
+    <div class="arow"><span class="n">3</span><div class="t"><b>Log block, controls live</b><span class="own own--lens">LENS</span><br>
+      Folding, hide-noise, level highlighting are READ affordances — all live in a record. The model can hand back
+      an excerpt as a first-class log block instead of a fenced blob.</div></div>
+
+    <div class="arow"><span class="n">4</span><div class="t"><b>Citations close the answer</b><span class="own own--lens">LENS</span><br>
+      Reference elements pointing at exactly the material shown above — the log line and the classify site — both
+      checkable against the server’s fetch log.</div></div>
+
+    <div class="arow"><span class="n">5</span><div class="t"><b>Why no border around all this</b><span class="own own--lens">LENS</span><br>
+      The answer is a LIST, not a card: each structured block supplies its own full-border chrome, prose stays
+      bare. A container border would double-frame every block — the document-card feel this face exists to shed.
+      The full teal border you do see sometimes is the exchange’s hover shell, wrapping question + answer as one
+      record.</div></div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

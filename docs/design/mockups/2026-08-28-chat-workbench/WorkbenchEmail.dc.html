@@ -1,0 +1,272 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap">
+  <style>
+    body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: #1f2326; color: #f8f8f2; }
+    a { color: #f9ae58; } a:hover { color: #fac761; }
+    * { box-sizing: border-box; }
+    .mono { font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+
+    .win { background: #343d46; border: 1px solid #14171a; border-radius: 8px; overflow: hidden;
+           box-shadow: 0 18px 60px rgba(0,0,0,.5); display: flex; flex-direction: column; position: relative; }
+
+    /* workbench bar */
+    .wb-bar { height: 44px; flex: 0 0 auto; display: flex; align-items: center; gap: 12px; padding: 0 16px;
+              background: #2c333a; border-bottom: 1px solid #1f2326; }
+    .wb-kind { font-size: 10px; font-weight: 700; letter-spacing: .08em; color: #f9ae58;
+               font-family: "Cascadia Code", "JetBrains Mono", monospace; border: 1px solid #4e565f;
+               border-radius: 4px; padding: 1px 6px; background: #343d46; }
+    .wb-title { font-size: 13px; font-weight: 600; }
+    .subj-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border: 1px solid #4e565f;
+                 border-radius: 999px; background: rgba(95,179,179,.08); color: #5fb3b3; font-size: 11px; }
+    .eval-strip { margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 11px; color: #a6acb9; }
+    .issue-dot { display: inline-flex; align-items: center; gap: 5px; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 4px 13px; border-radius: 5px;
+           font-size: 11.5px; font-weight: 700; }
+    .btn--replay { background: rgba(249,174,88,.16); color: #f9ae58; }
+    .btn--quiet { background: rgba(248,248,242,.06); color: #a6acb9; font-weight: 500; }
+    .btn--floor { background: rgba(153,204,153,.12); color: #99cc99; font-weight: 500; }
+
+    /* milestones */
+    .mile { display: flex; align-items: center; gap: 0; }
+    .m-dot { width: 8px; height: 8px; border-radius: 50%; background: #4e565f; }
+    .m-seg { width: 22px; height: 2px; background: #4e565f; }
+    .m-dot--floor { width: 10px; height: 10px; background: #99cc99; box-shadow: 0 0 6px rgba(153,204,153,.6); }
+
+    .body { flex: 1; min-height: 0; display: flex; }
+
+    /* thread panel */
+    .threadp { width: 296px; flex: 0 0 auto; border-right: 1px solid #1f2326; background: #2c333a;
+               display: flex; flex-direction: column; overflow: hidden; }
+    .tp-h { padding: 10px 14px 6px; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+            color: #606971; font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .msg { margin: 0 10px 8px; border: 1px solid #1f2326; border-radius: 6px; background: #343d46; overflow: hidden; }
+    .msg-h { display: flex; align-items: baseline; gap: 8px; padding: 6px 10px; font-size: 11px; }
+    .msg-h b { color: #f8f8f2; font-weight: 600; }
+    .msg-h .when { margin-left: auto; color: #606971; font-size: 10px; }
+    .msg-b { padding: 0 10px 8px; font-size: 11.5px; line-height: 1.55; color: #a6acb9; }
+    .msg--old .msg-h { opacity: .75; }
+    .depth1 { border-left: 3px solid rgba(102,153,204,.5); }
+    .depth2 { border-left: 3px solid rgba(102,153,204,.25); }
+
+    /* draft */
+    .draft { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+    .draft-inner { max-width: 640px; margin: 0 auto; padding: 26px 34px; font-size: 14.5px; line-height: 1.75; }
+    .draft-inner p { margin: 0 0 13px; }
+    .good { background: rgba(153,204,153,.13); border-bottom: 1px solid rgba(153,204,153,.5); border-radius: 2px; padding: 0 1px; }
+    .weak { background: rgba(236,95,102,.13); border-bottom: 1px solid rgba(236,95,102,.6); border-radius: 2px; padding: 0 1px; }
+    .stale { background: rgba(96,105,113,.16); border-bottom: 1px dashed #606971; border-radius: 2px; padding: 0 1px; color: #a6acb9; }
+
+    /* annotation popover */
+    .apop { position: absolute; width: 330px; background: #2c333a; border: 1px solid #4e565f; border-radius: 8px;
+            box-shadow: 0 8px 40px rgba(0,0,0,.6); z-index: 40; overflow: hidden; }
+    .apop-h { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid #1f2326;
+              font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #ec5f66;
+              font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .apop-note { padding: 9px 12px 4px; font-size: 12px; line-height: 1.55; color: #a6acb9; }
+    .apop-sug { margin: 6px 12px; padding: 7px 10px; border-left: 3px solid rgba(153,204,153,.6);
+                background: rgba(153,204,153,.07); border-radius: 0 5px 5px 0; font-size: 12px; line-height: 1.5; }
+    .apop-foot { display: flex; gap: 8px; padding: 8px 12px 10px; }
+    .abtn { padding: 3px 12px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+    .abtn--apply { background: rgba(153,204,153,.16); color: #99cc99; }
+    .abtn--refute { background: rgba(248,248,242,.06); color: #a6acb9; font-weight: 500; }
+
+    /* evaluation panel */
+    .evalp { width: 356px; flex: 0 0 auto; border-left: 1px solid #1f2326; background: #2c333a;
+             display: flex; flex-direction: column; overflow: hidden; }
+    .xchg { position: relative; border: 1px solid rgba(95,179,179,.28); border-radius: 8px;
+            background: rgba(95,179,179,.04); margin: 14px 14px 0; padding: 14px 14px 10px; }
+    .xchg-badge { position: absolute; top: -9px; left: 12px; background: #2c333a; padding: 0 6px;
+                  font-size: 10px; font-weight: 700; letter-spacing: .08em; color: #f9ae58;
+                  font-family: "Cascadia Code", "JetBrains Mono", monospace; border: 1px solid #4e565f; border-radius: 4px; }
+    .xchg-time { position: absolute; top: -8px; right: 12px; background: #2c333a; padding: 0 6px;
+                 font-size: 10px; color: #606971; font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .q { margin-bottom: 8px; padding-bottom: 7px; border-bottom: 2px solid rgba(249,174,88,.35);
+         font-weight: 600; font-size: 12px; line-height: 1.5; }
+    .ans { font-size: 11.5px; line-height: 1.6; color: #a6acb9; }
+    .ans p { margin: 0 0 7px; } .ans p:last-child { margin-bottom: 0; }
+    .refute-line { margin: 8px 0 0; padding: 6px 9px; border-left: 3px solid rgba(249,174,88,.55);
+                   background: rgba(249,174,88,.06); border-radius: 0 5px 5px 0; font-size: 11.5px; color: #f8f8f2; }
+    .refute-line b { color: #f9ae58; font-weight: 700; font-size: 9.5px; letter-spacing: .06em;
+                     font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+
+    .statusbar { height: 30px; flex: 0 0 auto; background: #2c333a; border-top: 1px solid #1f2326;
+                 display: flex; align-items: center; gap: 14px; padding: 0 14px; font-size: 11px; color: #606971; }
+
+    .pin { position: absolute; z-index: 60; width: 19px; height: 19px; border-radius: 50%; background: #fac761;
+           color: #1f2326; border: 2px solid #1f2326; font: 700 11px "Cascadia Code", "JetBrains Mono", monospace;
+           display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,.5); }
+    .rail { width: 320px; flex: 0 0 auto; padding: 24px; overflow: hidden; }
+    .rail h2 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
+    .rail .sub { font-size: 11.5px; color: #606971; margin-bottom: 14px; line-height: 1.5; }
+    .arow { display: flex; gap: 9px; margin-bottom: 10px; align-items: flex-start; }
+    .arow .n { flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%; background: #fac761; color: #1f2326;
+               font: 700 10.5px "Cascadia Code", "JetBrains Mono", monospace; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+    .arow .t { font-size: 11.5px; line-height: 1.45; color: #a6acb9; }
+    .arow .t b { color: #f8f8f2; font-weight: 600; }
+    .own { display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 3px;
+           font: 700 9px "Cascadia Code", "JetBrains Mono", monospace; letter-spacing: .06em; vertical-align: 1px; }
+    .own--host { background: rgba(102,153,204,.16); color: #6699cc; }
+    .own--lens { background: rgba(153,204,153,.16); color: #99cc99; }
+    .own--user { background: rgba(250,199,97,.16); color: #fac761; }
+  </style>
+</helmet>
+
+<div style="width: 1760px; height: 1000px; background: #1f2326; display: flex; overflow: hidden">
+  <div style="flex: 1; padding: 24px; position: relative">
+    <div class="win" style="width: 1392px; height: 952px">
+
+      <!-- workbench bar -->
+      <div class="wb-bar">
+        <span class="wb-kind">WB</span>
+        <span class="wb-title">reply to Dana</span>
+        <span class="subj-chip">⌖ subject: the draft below — self-owned</span>
+        <span class="pin" style="position: static">1</span>
+        <div class="eval-strip">
+          <span class="issue-dot"><span class="dot" style="background: #ec5f66"></span>2 weak</span>
+          <span class="issue-dot"><span class="dot" style="background: #99cc99"></span>1 good</span>
+          <span>evaluated 2 min ago</span>
+          <div class="mile"><span class="m-dot"></span><span class="m-seg"></span><span class="m-dot"></span><span class="m-seg"></span><span class="m-dot m-dot--floor"></span></div>
+          <span class="btn btn--floor">⚑ Mark floor</span>
+          <span class="pin" style="position: static">3</span>
+          <span class="btn btn--quiet">Copy draft</span>
+          <span class="pin" style="position: static">9</span>
+          <span class="btn btn--replay">Replay ▸</span>
+          <span class="pin" style="position: static">2</span>
+        </div>
+      </div>
+
+      <div class="body">
+        <!-- thread panel -->
+        <div class="threadp">
+          <div class="tp-h">Thread — 4 messages<span class="pin" style="position: absolute; margin-left: 8px; margin-top: -2px">4</span></div>
+          <div class="msg">
+            <div class="msg-h"><b>Dana Whitmore</b><span class="when">Tue 09:12</span></div>
+            <div class="msg-b">Can you confirm the integration build date? Legal needs the SOW updated before Thursday’s review, and the milestone language still says “TBD”.</div>
+          </div>
+          <div class="msg msg--old depth1">
+            <div class="msg-h"><b>you</b><span class="when">Mon 17:40</span></div>
+            <div class="msg-b">Waiting on the scanner fix before I commit to a date — will confirm this week.</div>
+          </div>
+          <div class="msg msg--old depth1">
+            <div class="msg-h"><b>Dana Whitmore</b><span class="when">Mon 11:03</span></div>
+            <div class="msg-b">Re: SOW timeline — flagging that the review moved up a week…</div>
+          </div>
+          <div class="msg msg--old depth2">
+            <div class="msg-h"><b>Priya N.</b><span class="when">last Thu</span></div>
+            <div class="msg-b">Original SOW attached, milestone table in §4…</div>
+          </div>
+        </div>
+
+        <!-- draft -->
+        <div class="draft" style="position: relative">
+          <div class="draft-inner">
+            <p><span class="good">Thanks for flagging the review date — that changes our ordering, and it’s the right call to lock the milestone language now.</span><span class="pin" style="position: absolute; margin-left: 8px; margin-top: -2px">5</span></p>
+            <p>The scanner fix landed yesterday, so the integration branch is no longer blocked. <span class="weak">I think we should probably be able to get the build done fairly soon after that.</span></p>
+            <p><span class="stale">I’ll also loop in Priya on the SOW wording once we have a date.</span><span class="pin" style="position: absolute; margin-left: 8px; margin-top: -2px">6</span></p>
+            <p><span class="weak">Maybe we could find a few minutes at some point</span> before Thursday’s review to walk the milestone table?</p>
+          </div>
+          <!-- popover anchored to the weak span -->
+          <div class="apop" style="left: 96px; top: 208px">
+            <div class="apop-h">weak · hedging <span style="margin-left: auto; color: #606971; text-transform: none; letter-spacing: 0">1 of 2</span></div>
+            <div class="apop-note">Dana needs a date for Legal — “probably fairly soon” gives them nothing to put in the SOW.</div>
+            <div class="apop-sug">We will deliver the integration build by Friday, 6 June.</div>
+            <div class="apop-foot">
+              <span class="abtn abtn--apply">Apply</span>
+              <span class="abtn abtn--refute">Refute…</span>
+              <span style="margin-left: auto; font-size: 10px; color: #606971" class="mono">↩ apply · r refute</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- evaluation / conversation panel -->
+        <div class="evalp">
+          <div class="tp-h" style="display: flex; align-items: center">Evaluation · conversation
+            <span class="pin" style="position: static; margin-left: 8px">7</span>
+            <span style="margin-left: auto; font-size: 9.5px; color: #606971" class="mono">Mod+Enter flips ⇄</span>
+            <span class="pin" style="position: static; margin-left: 6px">8</span>
+          </div>
+          <div class="xchg">
+            <span class="xchg-badge">AI</span><span class="xchg-time">14:02 · replay 3</span>
+            <div class="q">Evaluate the draft against the thread — tone and commitment.</div>
+            <div class="ans">
+              <p>The draft finally commits to a mechanism but still not to a date, which is the one thing the thread asks for.
+              Two spans hedge; the strongest sentence is the opener.</p>
+              <p style="color: #606971; font-size: 10.5px" class="mono">4 annotations → painted on the draft</p>
+            </div>
+          </div>
+          <div class="xchg" style="border-color: rgba(249,174,88,.3)">
+            <span class="xchg-badge">AI</span><span class="xchg-time">14:05</span>
+            <div class="q" style="border-bottom-color: rgba(249,174,88,.25)">re-argued after refute</div>
+            <div class="ans">
+              <div class="refute-line"><b>YOU REFUTED</b> — “Legal only needs the week, not the day.”</div>
+              <p style="margin-top: 7px">Conceded for the day — but the SOW table wants a dated row; “week of 2 June” still beats
+              “fairly soon”. Annotation kept, suggestion softened.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="statusbar">
+        <span class="mono" style="font-size: 10.5px">workbench · email — working copy (isolated)</span>
+        <span style="margin-left: auto" class="mono">draft edited · annotations 1 stale of 4 · floor @v12</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ rail ══ -->
+  <div class="rail">
+    <h2>B — Workbench · self-owned</h2>
+    <div class="sub">A document WITH A SUBJECT. Here the subject lives inside — the email draft. The conversation
+      and every evaluation live in the workbench, never in the subject.</div>
+
+    <div class="arow"><span class="n">1</span><div class="t"><b>Subject bar</b><span class="own own--host">HOST</span><br>
+      Workbench chrome: kind tag, title, the subject chip (⌖, teal). Self-owned state — a bare
+      <span class="mono">rel: target</span> reference at its own block, re-read at every evaluation.</div></div>
+
+    <div class="arow"><span class="n">2</span><div class="t"><b>Replay</b><span class="own own--host">HOST</span><br>
+      Flush save → Go re-reads thread + LATEST draft → job. One active job per block; user-paced, never
+      model-paced.</div></div>
+
+    <div class="arow"><span class="n">3</span><div class="t"><b>Milestones</b><span class="own own--user">USER</span><br>
+      Pinned coordinates held by the workbench — “this is the new floor”. Green dot = current floor; revert falls
+      back to the floor, not to the opening state. AI recommends floors, never sets them.</div></div>
+
+    <div class="arow"><span class="n">4</span><div class="t"><b>Thread panel</b><span class="own own--lens">LENS</span><br>
+      Presentation-only parse of the pasted thread: sender/date cards, quote-depth tint, newest expanded. The AI
+      always receives the raw thread.</div></div>
+
+    <div class="arow"><span class="n">5</span><div class="t"><b>Annotations</b><span class="own own--lens">LENS</span><br>
+      Editor-only decorations — the file never contains highlight markup. Green = good, red = weak. The popover’s
+      <b>Apply</b> swaps the span as a tracked, undoable edit (backend source of truth<span class="own own--host">HOST</span>);
+      <b>Refute</b> stores a one-line pushback ON the annotation — carried into the next replay.</div></div>
+
+    <div class="arow"><span class="n">6</span><div class="t"><b>Stale</b><span class="own own--lens">LENS</span><br>
+      Editing inside an annotated span greys it: this feedback predates your change. Visible, never blocking —
+      replay refreshes.</div></div>
+
+    <div class="arow"><span class="n">7</span><div class="t"><b>The conversation lives HERE</b><span class="own own--lens">LENS</span><br>
+      Evaluations and refutation threads are exchange records — the exact chat vocabulary (badge, orange question
+      rule, teal card). A refutation is a tiny exchange; annotate → concede → re-argue is the protocol.</div></div>
+
+    <div class="arow"><span class="n">8</span><div class="t"><b>Mod+Enter flip</b><span class="own own--host">HOST</span><br>
+      Viewport-specific, not kind-specific: at this width the panel sits BESIDE the draft and the flip merely moves
+      focus; narrow it and the panel goes BEHIND — the flip swaps faces (diagram-block precedent).</div></div>
+
+    <div class="arow"><span class="n">9</span><div class="t"><b>Copy draft</b><span class="own own--host">HOST</span><br>
+      Dual-flavour clipboard: <span class="mono">text/html</span> (inline styles, email-safe) + plain fallback —
+      ships to the mail client, stamps <span class="mono">copiedAt</span>. The vessel is ephemeral; triage argues
+      its own disposal.</div></div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

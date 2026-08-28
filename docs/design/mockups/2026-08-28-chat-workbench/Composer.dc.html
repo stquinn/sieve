@@ -1,0 +1,187 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap">
+  <style>
+    body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: #1f2326; color: #f8f8f2; }
+    a { color: #f9ae58; } a:hover { color: #fac761; }
+    * { box-sizing: border-box; }
+    .mono { font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .panel { background: #343d46; border: 1px solid #14171a; border-radius: 8px; padding: 28px 32px;
+             box-shadow: 0 12px 40px rgba(0,0,0,.4); position: relative; }
+    .panel-cap { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+                 color: #606971; font-family: "Cascadia Code", "JetBrains Mono", monospace; margin-bottom: 16px; }
+
+    .composer { position: relative; border: 1px solid #f9ae58; border-radius: 8px; background: #2c333a;
+                box-shadow: 0 0 0 3px rgba(249,174,88,.18); }
+    .comp-body { padding: 14px 18px 10px; font-size: 14px; line-height: 1.65; }
+    .comp-chips { display: flex; gap: 6px; padding: 0 18px 10px; }
+    .comp-foot { display: flex; align-items: center; gap: 14px; padding: 7px 12px 7px 18px; border-top: 1px solid #1f2326; }
+    .hint { font-size: 10.5px; color: #606971; font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .hint b { color: #a6acb9; font-weight: 500; }
+    .send { margin-left: auto; padding: 5px 16px; border-radius: 5px; background: rgba(249,174,88,.16);
+            color: #f9ae58; font-size: 12px; font-weight: 700; }
+    .mention { border-radius: 3px; padding: 0 3px; background: rgba(249,174,88,.14); color: #f9ae58; font-weight: 500; }
+    .mention--half { background: rgba(249,174,88,.08); color: #fac761; border-bottom: 1px dashed #f9ae58; }
+    .caret { display: inline-block; width: 7px; height: 15px; background: #f9ae58; vertical-align: text-bottom; }
+
+    .chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border: 1px solid #4e565f;
+            border-radius: 999px; background: rgba(249,174,88,.08); color: #f9ae58; font-size: 11.5px; white-space: nowrap; }
+    .chip .k { opacity: .7; font-size: 10.5px; }
+    .chip .x { opacity: .6; margin-left: 2px; font-size: 12px; }
+
+    /* mention popup */
+    .popup { position: absolute; left: 240px; top: 44px; width: 300px; background: #2c333a;
+             border: 1px solid #4e565f; border-radius: 8px; box-shadow: 0 8px 40px rgba(0,0,0,.6); z-index: 40; overflow: hidden; }
+    .pop-h { padding: 6px 12px; font-size: 9.5px; font-weight: 700; letter-spacing: .08em; color: #606971;
+             text-transform: uppercase; font-family: "Cascadia Code", "JetBrains Mono", monospace;
+             border-bottom: 1px solid #1f2326; }
+    .pop-row { display: flex; align-items: center; gap: 9px; padding: 6px 12px; font-size: 12.5px; color: #a6acb9; }
+    .pop-row--on { background: rgba(249,174,88,.12); color: #f8f8f2; }
+    .pop-kind { margin-left: auto; font-size: 9.5px; font-weight: 700; letter-spacing: .06em; color: #606971;
+                font-family: "Cascadia Code", "JetBrains Mono", monospace; text-transform: uppercase; }
+
+    /* minted fragment block inside the draft */
+    .frag { border: 1px solid rgba(95,179,179,.28); border-radius: 8px; overflow: hidden; margin: 8px 0; }
+    .frag-hd { display: flex; align-items: center; gap: 10px; padding: 3px 12px; background: #373e45;
+               border-bottom: 1px solid rgba(95,179,179,.28); }
+    .kbadge { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+              font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .code-body { display: flex; font-family: "Cascadia Code", "JetBrains Mono", monospace; font-size: 12.2px;
+                 line-height: 1.6; background: #2c333a; }
+    .gut { flex: 0 0 auto; padding: 8px; text-align: right; color: #606971; border-right: 1px solid #4e565f; user-select: none; }
+    .code-body pre { margin: 0; padding: 8px 14px; overflow: hidden; color: #f8f8f2; flex: 1; }
+    .sk { color: #c594c5; } .ss { color: #99cc99; } .sf { color: #6699cc; } .sn { color: #f9ae58; }
+    .sc { color: #a6acb9; font-style: italic; } .st { color: #5fb3b3; }
+
+    .quote { padding: 7px 10px 7px 12px; border-left: 3px solid rgba(197,148,197,.65); background: rgba(197,148,197,.06);
+             border-radius: 0 6px 6px 0; font-size: 12.5px; line-height: 1.5; color: #a6acb9; margin: 8px 0; }
+    .quote-src { font-size: 10px; color: #606971; font-family: "Cascadia Code", "JetBrains Mono", monospace; margin-bottom: 3px; }
+    .quote-src b { color: #c594c5; font-weight: 500; }
+
+    .pin { position: absolute; z-index: 60; width: 19px; height: 19px; border-radius: 50%; background: #fac761;
+           color: #1f2326; border: 2px solid #1f2326; font: 700 11px "Cascadia Code", "JetBrains Mono", monospace;
+           display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,.5); }
+    .rail { width: 320px; flex: 0 0 auto; padding: 26px 24px; }
+    .rail h2 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
+    .rail .sub { font-size: 11.5px; color: #606971; margin-bottom: 16px; line-height: 1.5; }
+    .arow { display: flex; gap: 9px; margin-bottom: 12px; align-items: flex-start; }
+    .arow .n { flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%; background: #fac761; color: #1f2326;
+               font: 700 10.5px "Cascadia Code", "JetBrains Mono", monospace; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+    .arow .t { font-size: 11.5px; line-height: 1.5; color: #a6acb9; }
+    .arow .t b { color: #f8f8f2; font-weight: 600; }
+    .own { display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 3px;
+           font: 700 9px "Cascadia Code", "JetBrains Mono", monospace; letter-spacing: .06em; vertical-align: 1px; }
+    .own--host { background: rgba(102,153,204,.16); color: #6699cc; }
+    .own--lens { background: rgba(153,204,153,.16); color: #99cc99; }
+  </style>
+</helmet>
+
+<div style="width: 1240px; height: 1000px; background: #1f2326; display: flex; overflow: hidden">
+  <div style="flex: 1; padding: 24px; display: flex; flex-direction: column; gap: 26px; overflow: hidden">
+
+    <!-- ══ panel 1: mention in flight ══ -->
+    <div class="panel" style="padding-bottom: 120px">
+      <div class="panel-cap">Composer — @-mention in flight</div>
+      <div class="composer" style="width: 720px">
+        <span class="pin" style="left: -32px; top: 16px">1</span>
+        <div class="comp-body">
+          Compare this against the retry loop in <span class="mention mention--half">@Sch</span><span class="caret"></span>
+        </div>
+        <div class="popup">
+          <span class="pin" style="right: -30px; top: 10px">2</span>
+          <div class="pop-h">mention — library</div>
+          <div class="pop-row pop-row--on">Scheduler sketch<span class="pop-kind">note</span></div>
+          <div class="pop-row">Schema migration<span class="pop-kind">chat</span></div>
+          <div class="pop-row">sched-trace.log<span class="pop-kind">thing</span></div>
+        </div>
+        <div class="comp-chips"></div>
+        <div class="comp-foot">
+          <span class="hint"><b>Enter</b> send</span><span class="hint"><b>Alt+Enter</b> newline</span>
+          <span class="hint"><b>Esc</b> dismiss popup</span>
+          <div class="send">Ask</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ panel 2: a composed question — quote + prose + minted fragment + chips ══ -->
+    <div class="panel">
+      <div class="panel-cap">Composer — a pointer-first question, fully composed</div>
+      <div class="composer" style="width: 720px">
+        <div class="comp-body">
+          <div class="quote" style="position: relative">
+            <span class="pin" style="left: -34px; top: 2px">3</span>
+            <div class="quote-src"><b>❝ quoted</b> · Parser error taxonomy › exchange 13:58 · @v7 · pinned</div>
+            …classify at the point the error is minted…
+          </div>
+          Does that hold once retries re-enter through <span class="mention">@Scheduler sketch</span>? Here’s the loop as it stands:
+          <div class="frag" style="position: relative">
+            <span class="pin" style="left: -34px; top: 8px">4</span>
+            <div class="frag-hd"><span class="kbadge" style="color: #99cc99">code</span><span class="kbadge" style="color: #606971; text-transform: none; letter-spacing: 0">go · pasted</span></div>
+            <div class="code-body">
+              <div class="gut">1<br>2<br>3</div>
+              <pre><span class="sk">for</span> attempt := <span class="sn">0</span>; attempt &lt; maxRetries; attempt++ {
+    <span class="sk">if</span> err := s.<span class="sf">scan</span>(src); err == <span class="sn">nil</span> { <span class="sk">break</span> }
+}</pre>
+            </div>
+          </div>
+          <span class="caret"></span>
+        </div>
+        <div class="comp-chips" style="position: relative">
+          <span class="pin" style="left: -34px; top: 0">5</span>
+          <span class="chip"><span>Scheduler sketch</span><span class="k">note</span><span class="x">×</span></span>
+        </div>
+        <div class="comp-foot">
+          <span class="hint"><b>Enter</b> send</span><span class="hint"><b>Alt+Enter</b> newline</span>
+          <span class="hint"><b>@</b> mention</span>
+          <div class="send" style="position: relative">Ask<span class="pin" style="right: -32px; top: 2px">6</span></div>
+        </div>
+      </div>
+      <div style="margin-top: 14px; font-size: 11px; color: #606971; width: 720px" class="mono">
+        the draft is an in-memory container — blocks here are LIVE and editable; they become a read-only record only at send
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ rail ══ -->
+  <div class="rail">
+    <h2>A″ — The composer</h2>
+    <div class="sub">The full document-editor lens mounted on an in-memory draft container. Pointer-first: a question
+      is mostly utterance + references; authored blocks are fragments, not works.</div>
+
+    <div class="arow"><span class="n">1</span><div class="t"><b>Draft surface</b><span class="own own--lens">LENS</span><br>
+      A real editor lens (PM), not a textarea — same surface, same paste pipeline, same block minting as any note.
+      The chat host claims <b>Enter</b> = send pre-core<span class="own own--host">HOST</span>; every other key falls through
+      to the editor. Focus ring is the standard orange.</div></div>
+
+    <div class="arow"><span class="n">2</span><div class="t"><b>Mention typeahead</b><span class="own own--host">HOST</span><br>
+      MentionService — a tenant of the workspace wire (<span class="mono">mention-query</span>/<span class="mono">mention-result</span>).
+      Accepting inserts the <span class="mono">@Title</span> token in prose AND the chip below: one gesture, an
+      <span class="mono">rel: attach</span> reference element under the hood.</div></div>
+
+    <div class="arow"><span class="n">3</span><div class="t"><b>Seeded quote</b><span class="own own--lens">LENS</span><br>
+      The ❝ read-control on any record quotes it into the composer as a pinned reference element — purple, frozen at
+      the cited version. A follow-up is a quote plus more words.</div></div>
+
+    <div class="arow"><span class="n">4</span><div class="t"><b>Pasted fragment</b><span class="own own--lens">LENS</span><br>
+      Paste mints a whole block through the registry’s paste-match — the open seam. Inside the draft it keeps its
+      full chrome and is editable; the border is the code kind’s own.</div></div>
+
+    <div class="arow"><span class="n">5</span><div class="t"><b>Chip row (draft state)</b><span class="own own--lens">LENS</span><br>
+      Attach chips are removable here (×) — the one place a chip mutates, because the draft is not yet a record.</div></div>
+
+    <div class="arow"><span class="n">6</span><div class="t"><b>Send</b><span class="own own--host">HOST</span><br>
+      Send = append exchange on the DOCUMENT wire (create ai-block + submit job). The draft’s block list becomes the
+      question list verbatim. No Ask/Explain menu items inside the composer — you are already inside one; the
+      host-scoped context menu omits them.</div></div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

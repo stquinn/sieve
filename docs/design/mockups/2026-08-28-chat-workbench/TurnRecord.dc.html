@@ -1,0 +1,216 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap">
+  <style>
+    body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: #1f2326; color: #f8f8f2; }
+    a { color: #f9ae58; } a:hover { color: #fac761; }
+    * { box-sizing: border-box; }
+    .mono { font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .panel { background: #343d46; border: 1px solid #14171a; border-radius: 8px; padding: 30px 34px;
+             box-shadow: 0 12px 40px rgba(0,0,0,.4); position: relative; }
+    .panel-cap { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+                 color: #606971; font-family: "Cascadia Code", "JetBrains Mono", monospace; margin-bottom: 16px; }
+
+    /* exchange record — chat face, shown in its hovered/inspect state */
+    .xrec { position: relative; padding: 14px 18px; border-radius: 8px;
+            border: 1px solid rgba(95,179,179,.35); background: rgba(95,179,179,.04);
+            box-shadow: 0 4px 20px rgba(0,0,0,.25); }
+    .xrec-stamp { position: absolute; top: -8px; right: 12px; background: #343d46; padding: 0 6px;
+                  font-size: 10px; color: #606971; font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .xrec-tools { position: absolute; top: 10px; right: 12px; display: flex; gap: 3px; }
+    .xtool { width: 24px; height: 24px; border-radius: 4px; display: flex; align-items: center; justify-content: center;
+             color: #a6acb9; font-size: 13px; background: rgba(248,248,242,.06); }
+
+    .qmove { margin-left: auto; width: fit-content; max-width: 470px; background: rgba(249,174,88,.07);
+             border: 1px solid rgba(249,174,88,.22); border-radius: 8px; padding: 11px 14px;
+             font-size: 14px; line-height: 1.6; }
+    .qmove .q-el + .q-el { margin-top: 9px; }
+    .q-attach { display: flex; gap: 6px; justify-content: flex-end; margin-top: 9px; padding-top: 8px;
+                border-top: 1px solid rgba(249,174,88,.15); }
+    .amove { margin: 12px 60px 0 0; max-width: 560px; font-size: 14px; line-height: 1.62; }
+    .amove p { margin: 0 0 10px; } .amove p:last-child { margin-bottom: 0; }
+
+    .chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; max-width: 240px;
+            border: 1px solid #4e565f; border-radius: 999px; background: rgba(249,174,88,.08);
+            color: #f9ae58; font-size: 11.5px; white-space: nowrap; }
+    .chip .k { opacity: .7; font-size: 10.5px; }
+    .chip--cite { background: rgba(102,153,204,.10); color: #6699cc; }
+
+    /* transclusion frame */
+    .transc { border: 1px solid rgba(95,179,179,.35); border-radius: 8px; overflow: hidden; font-weight: 400; }
+    .transc-src { display: flex; align-items: center; gap: 8px; padding: 4px 12px; background: #373e45;
+                  border-bottom: 1px solid rgba(95,179,179,.28); font-size: 10.5px; color: #606971;
+                  font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+    .transc-src b { color: #5fb3b3; font-weight: 700; letter-spacing: .06em; }
+    .live-tag { margin-left: auto; padding: 0 6px; border-radius: 3px; background: rgba(153,204,153,.14);
+                color: #99cc99; font-weight: 700; font-size: 9.5px; letter-spacing: .06em; }
+    .code-body { display: flex; font-family: "Cascadia Code", "JetBrains Mono", monospace; font-size: 12.2px;
+                 line-height: 1.6; background: #2c333a; }
+    .gut { flex: 0 0 auto; padding: 9px 8px; text-align: right; color: #606971; border-right: 1px solid #4e565f; user-select: none; }
+    .code-body pre { margin: 0; padding: 9px 12px; overflow: hidden; color: #f8f8f2; flex: 1; }
+    .sk { color: #c594c5; } .ss { color: #99cc99; } .sf { color: #6699cc; } .sn { color: #f9ae58; }
+    .sc { color: #a6acb9; font-style: italic; } .st { color: #5fb3b3; }
+
+    /* note-host face */
+    .xchg { position: relative; border: 1px solid rgba(95,179,179,.28); border-radius: 8px;
+            background: rgba(95,179,179,.04); padding: 16px 18px 12px; }
+    .xchg-badge { position: absolute; top: -9px; left: 12px; background: #343d46; padding: 0 6px;
+                  font-size: 10.5px; font-weight: 700; letter-spacing: .08em; color: #f9ae58;
+                  font-family: "Cascadia Code", "JetBrains Mono", monospace; border: 1px solid #4e565f; border-radius: 4px; }
+    .q-doc { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 2px solid rgba(249,174,88,.35);
+             font-weight: 600; font-size: 13.5px; line-height: 1.5; }
+    .ans-doc { font-size: 12.5px; line-height: 1.6; color: #a6acb9; }
+
+    .glow { position: relative; border: 1px solid rgba(249,174,88,.45); border-radius: 8px;
+            background: rgba(249,174,88,.05); }
+    .glow::after { content: ''; position: absolute; inset: -1px; border-radius: 8px;
+                   border-left: 3px solid #f9ae58; pointer-events: none; }
+
+    .slot-tag { position: absolute; right: -138px; width: 120px; font-size: 10px; line-height: 1.4;
+                color: #606971; font-family: "Cascadia Code", "JetBrains Mono", monospace;
+                border-left: 2px solid #4e565f; padding-left: 8px; }
+    .slot-tag b { color: #a6acb9; font-weight: 500; }
+
+    .pin { position: absolute; z-index: 60; width: 19px; height: 19px; border-radius: 50%; background: #fac761;
+           color: #1f2326; border: 2px solid #1f2326; font: 700 11px "Cascadia Code", "JetBrains Mono", monospace;
+           display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,.5); }
+    .rail { width: 320px; flex: 0 0 auto; padding: 26px 24px; }
+    .rail h2 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
+    .rail .sub { font-size: 11.5px; color: #606971; margin-bottom: 16px; line-height: 1.5; }
+    .arow { display: flex; gap: 9px; margin-bottom: 12px; align-items: flex-start; }
+    .arow .n { flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%; background: #fac761; color: #1f2326;
+               font: 700 10.5px "Cascadia Code", "JetBrains Mono", monospace; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+    .arow .t { font-size: 11.5px; line-height: 1.5; color: #a6acb9; }
+    .arow .t b { color: #f8f8f2; font-weight: 600; }
+    .own { display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 3px;
+           font: 700 9px "Cascadia Code", "JetBrains Mono", monospace; letter-spacing: .06em; vertical-align: 1px; }
+    .own--host { background: rgba(102,153,204,.16); color: #6699cc; }
+    .own--lens { background: rgba(153,204,153,.16); color: #99cc99; }
+  </style>
+</helmet>
+
+<div style="width: 1240px; height: 1150px; background: #1f2326; display: flex; overflow: hidden">
+  <div style="flex: 1; padding: 24px; display: flex; flex-direction: column; gap: 26px; overflow: hidden">
+
+    <!-- ══ panel 1: chat face, hovered — full anatomy ══ -->
+    <div class="panel" style="padding-right: 178px">
+      <div class="panel-cap">One exchange, chat face — inspect state (hover) · foreign target</div>
+
+      <div class="xrec">
+        <span class="xrec-stamp">13:58 · @v7</span>
+        <div class="xrec-tools"><span class="xtool">⧉</span><span class="xtool">❝</span><span class="xtool">⤢</span></div>
+        <span class="pin" style="top: -26px; left: 46px">1</span>
+        <span class="pin" style="top: 4px; right: 110px">2</span>
+
+        <div class="qmove" style="position: relative">
+          <div class="slot-tag" style="top: 0; right: -160px"><b>MY MOVE</b><br>the question list — right, orange, utterance weight</div>
+          <div class="q-el">Why does this drop the closing fence when it sits at column zero?</div>
+          <div class="q-el transc" style="position: relative">
+            <span class="pin" style="top: -10px; left: -34px">3</span>
+            <div class="transc-src"><b>⌖ TARGET</b> Parser sketch › scanner.go § Tail scanner <span class="live-tag">LIVE · re-read</span></div>
+            <div class="code-body">
+              <div class="gut">112<br>113<br>114</div>
+              <pre><span class="sk">func</span> (s *<span class="st">Scanner</span>) <span class="sf">tail</span>(line <span class="st">string</span>) <span class="st">bool</span> {
+    trimmed := strings.<span class="sf">TrimSpace</span>(line) <span class="sc">// defeats col-0 guard</span>
+    <span class="sk">return</span> fence.<span class="sf">MatchString</span>(trimmed)</pre>
+            </div>
+          </div>
+          <div class="q-attach" style="position: relative">
+            <div class="slot-tag" style="top: -2px; right: -160px"><b>ATTACH</b><br>what it was handed — docked under my move</div>
+            <span class="chip"><span>fence-cases.log</span><span class="k">log · 11 KB</span></span>
+            <span class="pin" style="position: static; margin-left: 4px">5</span>
+          </div>
+        </div>
+
+        <div class="amove" style="position: relative">
+          <div class="slot-tag" style="top: 0; right: -98px"><b>ANSWER</b><br>left, near-full column — a list of minted blocks</div>
+          <p><span class="mono" style="font-size: 12.6px; background: rgba(249,174,88,.10); border: 1px solid rgba(249,174,88,.20); border-radius: 3px; padding: 1px 5px; color: #6699cc">TrimSpace</span> erases the only signal the column-zero rule reads. Match on the raw line and let the guard see indentation:</p>
+          <div class="transc" style="border-color: rgba(95,179,179,.28)">
+            <div class="transc-src"><b style="color: #99cc99">CODE</b> go · authored into the answer</div>
+            <div class="code-body">
+              <div class="gut">1<br>2</div>
+              <pre><span class="sk">if</span> col == <span class="sn">0</span> &amp;&amp; !fence.<span class="sf">MatchString</span>(line) { <span class="sk">return</span> <span class="sn">false</span> }
+<span class="sk">return</span> fence.<span class="sf">MatchString</span>(strings.<span class="sf">TrimLeft</span>(line, <span class="ss">" "</span>))</pre>
+            </div>
+          </div>
+          <p style="display: flex; gap: 8px; margin: 10px 0 0">
+            <span class="chip chip--cite"><span>⌕ scanner.go:114</span><span class="k">cites</span></span>
+            <span class="pin" style="position: static">4</span>
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ panel 2: note-host face — the card survives there ══ -->
+    <div class="panel">
+      <div class="panel-cap">The same record in a NOTE — the card face keeps its AI badge; a local target GLOWS</div>
+      <div style="display: flex; gap: 22px; align-items: flex-start">
+        <div style="flex: 1">
+          <div class="glow" style="overflow: hidden">
+            <div class="transc-src" style="background: #373e45"><b style="color: #99cc99">CODE</b> go</div>
+            <div class="code-body">
+              <div class="gut">1<br>2</div>
+              <pre><span class="sk">func</span> (s *<span class="st">Scanner</span>) <span class="sf">tail</span>(line <span class="st">string</span>) <span class="st">bool</span> {
+    trimmed := strings.<span class="sf">TrimSpace</span>(line)</pre>
+            </div>
+          </div>
+          <div style="font-size: 10.5px; color: #606971; margin-top: 6px" class="mono">the pointed-at sibling — 3px bar + 5% tint, the existing chain-hover language</div>
+        </div>
+        <div style="flex: 1; position: relative">
+          <span class="pin" style="top: -10px; left: -32px">6</span>
+          <div class="xchg">
+            <span class="xchg-badge">AI</span>
+            <div class="q-doc">Why does this drop the closing fence at column zero?</div>
+            <div class="ans-doc">TrimSpace erases the indentation signal…</div>
+          </div>
+          <div style="font-size: 10.5px; color: #606971; margin-top: 6px" class="mono">among other kinds the badge earns its place — and the target ref still has NO visual entry</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ rail ══ -->
+  <div class="rail">
+    <h2>A′ — The exchange record</h2>
+    <div class="sub">One record, two faces. The chat face: my move right (orange), the answer left, no badge —
+      everyone here is known. The note face keeps the card and the AI badge. TARGET never gets a slot — it
+      glows or transcludes.</div>
+
+    <div class="arow"><span class="n">1</span><div class="t"><b>Shell + stamp</b><span class="own own--lens">LENS</span><br>
+      The teal shell is the inspect state — materialises on hover/focus, carrying timestamp + pinned version. The
+      exchange is the citable unit (<span class="mono">sieve://chat/{id}?version=7</span>); at rest the shell is gone
+      and the two moves stand alone.</div></div>
+
+    <div class="arow"><span class="n">2</span><div class="t"><b>Read controls</b><span class="own own--lens">LENS</span><br>
+      Copy · quote-into-composer · expand — reads only; the readOnly flag removes mutating affordances per kind.
+      Right-click anywhere resolves to this parent record → host menu<span class="own own--host">HOST</span>.</div></div>
+
+    <div class="arow"><span class="n">3</span><div class="t"><b>Foreign target = transclusion</b><span class="own own--lens">LENS</span><br>
+      The sanctioned rich rendering of foreign material: full-anatomy readOnly render via the registry, provenance
+      strip on top, <b>LIVE · re-read</b> tag (bare address). Pinned would read <span class="mono">@v12 · frozen</span>
+      in purple. Resolution is the Router’s<span class="own own--host">HOST</span>.</div></div>
+
+    <div class="arow"><span class="n">4</span><div class="t"><b>Citation</b><span class="own own--lens">LENS</span><br>
+      A reference element the model authored into its answer (#117) — cyan = cites, live edge. The server’s fetch
+      log makes an uncited fabrication detectable.</div></div>
+
+    <div class="arow"><span class="n">5</span><div class="t"><b>Attach chips</b><span class="own own--lens">LENS</span><br>
+      <span class="mono">rel: attach</span> elements — what MY move was handed, so they dock under it, right-aligned.
+      Quiet, clamped at 15rem. Click opens the source in a tab<span class="own own--host">HOST</span>.</div></div>
+
+    <div class="arow"><span class="n">6</span><div class="t"><b>The note face</b><span class="own own--lens">LENS</span><br>
+      Same record, host-dependent framing: in a note the exchange keeps the teal card and the AI badge — among
+      other kinds the badge earns its place. A local target is a sibling: the reference renders nothing and the
+      sibling glows. One pointing model, two faces.</div></div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>
