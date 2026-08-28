@@ -14,6 +14,16 @@ export function getLowlight() {
   return _lowlight
 }
 
+/** The languages a fence or code block may be tagged with: what the highlighter
+ *  IS REGISTERED FOR, read off the registry itself, so a menu can never offer
+ *  one it cannot colour and never misses one it can.
+ *  @returns {string[]} sorted names; empty when the registry is unavailable */
+export function listRegisteredLanguages() {
+  var low = getLowlight()
+  var listed = (low && typeof low.listLanguages === 'function') ? low.listLanguages() : null
+  return Array.isArray(listed) ? listed.slice().sort() : []
+}
+
 // Minimal hast-to-HTML serialiser. Only handles the subset lowlight emits:
 // root/element nodes (become <span class="…">) and text nodes.
 export function hastToHtml(nodes) {

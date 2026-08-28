@@ -1903,7 +1903,7 @@ pre.tiptap-code-block code {
 .ask-panel {
   flex-shrink: 0;
   overflow: hidden;
-  background: var(--theme-bgAlt);
+  background: transparent;
   flex-direction: column;
   width: 100%;
   min-width: 0;
@@ -1914,11 +1914,60 @@ pre.tiptap-code-block code {
   display: flex;
   position: relative;
   z-index: 20;
-  border-top: 1px solid var(--theme-border2);
 }
 
-/* Drag-to-resize grip — top strip of the panel. Lives inside #ask-panel so it
-   shows/hides with the panel. Matches .prompts-handle's row-resize vocabulary. */
+/* ── The writing box ─────────────────────────────────────────────────────────
+   Body, chips and footer inside ONE border, so the whole thing reads as a box
+   FLOATING over the editor ground rather than a band of panel chrome. The panel
+   itself paints nothing (background: transparent above) — only this box, its
+   border and its elevation shadow do.
+
+   THE FILL IS DARKER THAN THE GROUND: --ask-composer-bg mixes --theme-bgDark
+   into --theme-bg, so the box is a visibly distinct surface rather than reading
+   as border-only. Anything mounted inside the box that was toned for
+   --theme-bg specifically — the note editor's ground, not this box's — needs
+   re-toning against --ask-composer-bg instead (see the table override below);
+   most content needs no such override, because only a fill that assumed
+   --theme-bg collides here.
+
+   THE UNFOCUSED BORDER CARRIES A WHISPER OF THE ACCENT: color-mix of
+   --theme-accentPrimary into --theme-border2, so the box reads as "the input,
+   at rest" — distinct from the document above it — without requiring a click.
+   Focus is still a clear step up from that: the accent goes from a partial mix
+   to full strength, plus the ring, so the two states stay ordered.
+
+   SIDE + BOTTOM MARGINS let the ground show around the box so it reads as
+   anchored to the bottom of the column rather than edge-to-edge panel chrome; no
+   top margin, because the drag handle is the box's own top edge (below).
+
+   THE FOCUS RING IS :focus-within. The caret lives in a contentEditable the
+   panel never holds a handle to, so the box asks the DOM rather than being told. */
+.ask-panel .ask-composer {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin: 0 16px 12px;
+  --ask-composer-bg: color-mix(in srgb, var(--theme-bgDark) 40%, var(--theme-bg));
+  background: var(--ask-composer-bg);
+  border: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 35%, var(--theme-border2));
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 8px 30px color-mix(in srgb, var(--theme-bgDark) 55%, transparent);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.ask-panel .ask-composer:focus-within {
+  border-color: var(--theme-accentPrimary);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--theme-accentPrimary) 18%, transparent),
+    0 8px 30px color-mix(in srgb, var(--theme-bgDark) 55%, transparent);
+}
+
+/* Drag-to-resize grip — the box's OWN top edge, so it shows/hides with the box
+   and reads as part of the floating unit rather than a separate panel strip.
+   `overflow: hidden` on .ask-composer clips its hover fill to the box's rounded
+   top corners. Matches .prompts-handle's row-resize vocabulary. */
 .ask-handle {
   height: 6px;
   flex-shrink: 0;
@@ -1930,59 +1979,111 @@ pre.tiptap-code-block code {
   background: var(--theme-accentPrimary);
 }
 
-/* Reuse ask-popup__ BEM names for the inner elements */
-.ask-panel .ask-popup__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px 8px;
-  border-bottom: 1px solid var(--theme-border);
-  flex-shrink: 0;
-}
-
-.ask-panel .ask-popup__label {
-  font-size: 11px;
-  font-weight: 700;
-  color: color-mix(in srgb, var(--theme-accentPrimary) 65%, transparent);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.ask-panel .ask-popup__close {
-  background: none;
-  border: none;
-  color: var(--theme-muted);
-  cursor: pointer;
-  font-size: 14px;
-  padding: 0 2px;
-  line-height: 1;
-}
-.ask-panel .ask-popup__close:hover { color: var(--theme-text); }
-
+/* The composer lens mounts INTO .ask-popup__input, so the inset belongs to the
+   fixture and the scroll to the editable inside it — a message longer than the
+   panel scrolls, and the footer stays put. */
 .ask-panel .ask-popup__input {
   background: transparent;
   border: none;
   outline: none;
   color: var(--theme-text);
   font-family: inherit;
-  font-size: 16px;
-  padding: 14px 16px;
-  resize: none;
-  line-height: 1.55;
+  font-size: 14px;
+  line-height: 1.65;
+  padding: 14px 18px 10px;
   flex: 1;
   min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
-.ask-panel .ask-popup__input::placeholder { color: var(--theme-textDim); opacity: 0.5; font-size: 15px; }
+.ask-panel .ask-popup__input .ProseMirror { outline: none; flex: 1; min-height: 0; }
+/* No toolbar and no block chrome in a draft: nothing here is a block with
+   affordances, and the drag rail would sit where the message begins. */
+.ask-panel .ask-popup__input .block-chrome-host { display: none; }
+
+/* .tiptap's own rail padding (left = chrome-w + 1rem, right = 1rem) and its
+   gutter-separator rule are sized for the chrome rail hidden above — outside
+   .editor-panel, --chrome-w falls back to a value that doesn't match the note
+   editor's, so both survive as a stray inset and a mispositioned line. Its type
+   is the DOCUMENT's (--doc-size / --theme-editorLineHeight, both scoped to the
+   note editor's root), and a draft is panel chrome that does not scale with a
+   document. The fixture above owns both: one inset, one type size. */
+.ask-panel .ask-popup__input .tiptap {
+  padding: 0;
+  font-size: inherit;
+  line-height: inherit;
+}
+.ask-panel .ask-popup__input .tiptap::before { display: none; }
+
+/* ── Quote tokens: the one definition of a quoted reference's colour ────────
+   THE ACCENT LIVES IN :root, NOT WITH THE DRAFT'S OWN RULE BELOW — #102's
+   record-side quote renderer reads the same colour a composed message's
+   blockquote uses today, so the draft is the first caller, not the only one.
+   THE FILL IS A STRENGTH, NOT A PRE-MIXED COLOUR, same reasoning as the chip
+   tokens above: the mix stays in the rule that paints. */
+:root {
+  --quote-accent: var(--theme-accentPurple);
+  --quote-tint-strength: 8%;
+}
+
+/* A quoted reference is the thing being read here, not an aside in a longer
+   document — the note editor's own blockquote (--theme-muted, italic) reads
+   as deliberately quiet, which is wrong inside a message built to point at
+   exactly this text. Full text strength, an accent-toned band, no italic. */
+.ask-panel .ask-popup__input .tiptap blockquote {
+  border-left: 3px solid var(--quote-accent);
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--quote-accent) var(--quote-tint-strength), transparent);
+  color: var(--theme-text);
+  font-style: normal;
+}
+
+/* The base table rules (.tiptap table th / tr:nth-child(even) td) assume
+   --theme-bg as their ground — the note editor's, not this box's. Re-toned
+   here the same direction-agnostic way: --theme-text mixed into whichever
+   ground a band actually sits on, at two strengths so header and stripe stay
+   ordered above the plain fill, guaranteed high-contrast in either a dark or
+   a hypothetical light theme because it is the app's own read-against-ground
+   colour. Code blocks and inline code are NOT re-based: both keep their own
+   gutter/border or a lighter --theme-bgAlt fill that already reads distinctly
+   against --ask-composer-bg in every shipped theme — nothing here collides. */
+.ask-panel .ask-popup__input .tiptap table th {
+  background: color-mix(in srgb, var(--theme-text) 10%, var(--ask-composer-bg));
+}
+.ask-panel .ask-popup__input .tiptap table tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--theme-text) 5%, var(--ask-composer-bg));
+}
 
 .ask-panel .ask-popup__footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 8px 16px 10px;
+  gap: 14px;
+  padding: 7px 12px 7px 18px;
   border-top: 1px solid var(--theme-border);
   flex-shrink: 0;
 }
+
+/* ── Key hints — what this mount answers to ──────────────────────────────────
+   Mono, because a chord is a literal. The chord reads first (--theme-textDim,
+   the brighter of the pair) and what it does trails it (--theme-muted), so the
+   row scans as keys with glosses rather than as a sentence. */
+.ask-panel .ask-popup__hints {
+  display: none;
+  align-items: center;
+  gap: 14px;
+  flex: 0 0 auto;
+}
+
+.ask-panel .ask-popup__hint {
+  font-family: var(--theme-monoFont, monospace);
+  font-size: 12px;
+  color: var(--theme-muted);
+  white-space: nowrap;
+}
+
+.ask-panel .ask-popup__hint b { color: var(--theme-textDim); font-weight: 500; }
 
 /* ── Chip tokens: the one definition of what a chip looks like ───────────────
    THE VOCABULARY HAS THREE CALLERS AND ONE SET OF VALUES. `ReferenceChip`
@@ -2030,10 +2131,10 @@ pre.tiptap-code-block code {
    coordinate pointing at another document; a target chip holds the local target.
    They differ in SCOPE and in whether you can remove one — nothing else.
 
-   NO NEW ROW: the chips take the footer's LEFT region and Send keeps the right.
-   min-width:0 + overflow-x lets a long set scroll sideways instead of growing
-   the footer — its height feeds ui/layout.js's askPanelMinHeight, so a wrapping
-   row would shove the composer's floor around. */
+   NO NEW ROW: hints, then the chips, take the footer's LEFT region and Send
+   keeps the right. min-width:0 + overflow-x lets a long set scroll sideways
+   instead of growing the footer — its height feeds ui/layout.js's
+   askPanelMinHeight, so a wrapping row would shove the composer's floor around. */
 .ask-panel .ask-popup__target,
 .ask-panel .ask-popup__chips {
   display: none;
@@ -2045,8 +2146,8 @@ pre.tiptap-code-block code {
 }
 
 /* The target yields its width and scrolls; attachments take the rest. */
-.ask-panel .ask-popup__target { flex: 0 1 auto; margin-right: 8px; }
-.ask-panel .ask-popup__chips  { flex: 1 1 auto; margin-right: 12px; }
+.ask-panel .ask-popup__target { flex: 0 1 auto; }
+.ask-panel .ask-popup__chips  { flex: 1 1 auto; }
 
 .ask-panel .ask-popup__target::-webkit-scrollbar,
 .ask-panel .ask-popup__chips::-webkit-scrollbar { display: none; }
@@ -2060,7 +2161,7 @@ pre.tiptap-code-block code {
    document, so there is nothing to share. */
 .ask-panel .ask-chip,
 .ask-panel .ask-target-chip {
-  --chip-padding: 3px 4px 3px 9px;
+  --chip-padding: 2px 4px 2px 9px;
   --chip-max-width: 14rem;
   --chip-tint-strength: 10%;
   display: inline-flex;
@@ -2073,8 +2174,9 @@ pre.tiptap-code-block code {
   border-radius: var(--chip-radius);
   background: color-mix(in srgb, var(--chip-accent) var(--chip-tint-strength), transparent);
   color: var(--chip-accent);
-  font-size: 12px;
+  font-size: 11.5px;
   line-height: 1.4;
+  white-space: nowrap;
 }
 
 /* THE TARGET VARIANT: outlined rather than filled, and the ✕'s padding given
@@ -2131,18 +2233,40 @@ pre.tiptap-code-block code {
   color: var(--theme-accentRed);
 }
 
+/* Send is TINTED, not filled: it sits inside the writing box, where a solid
+   accent slab would outweigh the message it sends. Same accent-on-tint pairing
+   as the chips beside it, one step stronger so it still reads as the button. */
 .ask-panel .ask-popup__send {
-  background: var(--theme-accentPrimary);
+  margin-left: auto;
+  background: color-mix(in srgb, var(--theme-accentPrimary) 16%, transparent);
   border: none;
   border-radius: 5px;
-  color: var(--theme-bg);
+  color: var(--theme-accentPrimary);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
-  padding: 6px 18px;
+  padding: 5px 16px;
   letter-spacing: 0.02em;
+  flex: 0 0 auto;
 }
-.ask-panel .ask-popup__send:hover { background: color-mix(in srgb, var(--theme-accentPrimary) 85%, white); }
+.ask-panel .ask-popup__send:hover {
+  background: color-mix(in srgb, var(--theme-accentPrimary) 28%, transparent);
+}
+
+/* An `@Title` the draft has attached — the INLINE half of its chip. A
+   ProseMirror inline decoration (lens/document-editor/surfaces/mention-decoration.js),
+   never a class on a prose node, so PM's reconciliation cannot wipe it. Same
+   values as .ai-block__mention: the name in the draft and the name in the sent
+   question are one object seen twice. */
+.sieve-mention {
+  border-radius: 3px;
+  padding: 0 2px;
+  background: color-mix(in srgb, var(--theme-accentPrimary) 14%, transparent);
+  color: var(--theme-accentPrimary);
+  font-weight: 500;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
 
 /* ── Shared inner-element styles for the modal dialogs (internalize / edit) ── */
 /* These BEM names are still used by internalize-popup and link-edit-popup */

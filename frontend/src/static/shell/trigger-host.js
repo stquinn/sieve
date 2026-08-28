@@ -84,73 +84,6 @@ export class TriggerHost {
   }
 }
 
-export class TextareaHost extends TriggerHost {
-  /** @type {HTMLTextAreaElement} */ #textarea
-
-  /** @param {HTMLTextAreaElement} textarea */
-  constructor(textarea) {
-    super()
-    if (!textarea || typeof textarea.value !== 'string') {
-      throw new ContractViolation('TextareaHost requires a textarea')
-    }
-    this.#textarea = textarea
-  }
-
-  /** @returns {HTMLElement} */
-  anchorElement() { return this.#textarea }
-
-  /** CAPTURE PHASE, deliberately: the picker owns ArrowUp/Down, Tab, Enter and
-   *  Escape while open, and the composer's own keydown handler must not see them
-   *  first. @param {(e: KeyboardEvent) => void} fn @returns {() => void} */
-  onKeyDown(fn) {
-    /** @param {Event} e */
-    const handler = (e) => fn(/** @type {KeyboardEvent} */ (e))
-    this.#textarea.addEventListener('keydown', handler, true)
-    return () => this.#textarea.removeEventListener('keydown', handler, true)
-  }
-
-  /** @param {() => void} fn @returns {() => void} */
-  onDismiss(fn) {
-    const handler = () => fn()
-    this.#textarea.addEventListener('blur', handler)
-    return () => this.#textarea.removeEventListener('blur', handler)
-  }
-
-  /** @param {() => void} fn @returns {() => void} */
-  onInput(fn) {
-    const handler = () => fn()
-    this.#textarea.addEventListener('input', handler)
-    return () => this.#textarea.removeEventListener('input', handler)
-  }
-
-  /**
-   * @param {Map<string, TriggerProvider>} providers
-   * @returns {import('./trigger-providers.js').TriggerToken|null}
-   */
-  tokenAtCaret(providers) {
-    return TriggerProvider.scanToken(this.#textarea.value, this.#textarea.selectionStart, providers)
-  }
-
-  /** @param {number} index @returns {string} */
-  textAfter(index) { return this.#textarea.value.slice(index) }
-
-  /**
-   * Substitutes `text` for [start, end) and leaves the caret after it, focused.
-   * The `input` event is dispatched because the composer has OTHER listeners on it
-   * — the attachment reconciler among them. The popover's echo guard is what stops
-   * it reopening the picker on what it just wrote.
-   * @param {number} start @param {number} end @param {string} text
-   */
-  replaceRange(start, end, text) {
-    const value = this.#textarea.value
-    this.#textarea.value = value.slice(0, start) + text + value.slice(end)
-    this.#textarea.focus()
-    const caret = start + text.length
-    this.#textarea.setSelectionRange(caret, caret)
-    this.#textarea.dispatchEvent(new window.Event('input', { bubbles: true }))
-  }
-}
-
 /**
  * What a caret-bearing DOCUMENT has to answer for the picker to sit in it.
  * Implemented by the surface's CaretTriggerPort.
@@ -239,12 +172,23 @@ export class ProseMirrorHost extends TriggerHost {
   /** @param {number} start @param {number} end @param {string} text */
   replaceRange(start, end, text) { this.#port.replaceRange(start, end, text) }
 
+  /** @protected @returns {EditorCaretPort} the surface's caret port */
+  get _port() { return this.#port }
+}
+
+/**
+ * The ProseMirror host of a mount that can HOLD A BLOCK. The capability is the
+ * class, because presence of `createBlock` is how every provider probes for it:
+ * a mount that mints nothing is the plain ProseMirrorHost, and a candidate
+ * offered there completes as text instead.
+ */
+export class BlockMakingProseMirrorHost extends ProseMirrorHost {
   /** The candidate becomes a BLOCK where its token stood — delete and create both
    *  inside the surface's own boundary.
    *  @param {string} kind @param {Record<string, any>} attrs
    *  @param {import('./trigger-providers.js').TriggerToken} token */
   createBlock(kind, attrs, token) {
-    this.#port.createBlock(token.start, token.end, kind, attrs)
+    this._port.createBlock(token.start, token.end, kind, attrs)
   }
 }
 

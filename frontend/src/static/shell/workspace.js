@@ -331,6 +331,28 @@ export class SieveWorkspace {
     return this.#activeTab ? this.#activeTab.editor : null
   }
 
+  /** Every lens this host has mounted right now — the active tab's, and the
+   *  panel's draft. A host with two instruments on the page has two, and a
+   *  gesture belongs to exactly one of them.
+   *  @returns {Array<any>} */
+  #mountedLenses() {
+    return [this.activeEditor, this.#askPanel?.composer?.editor || null]
+  }
+
+  /** The mounted lens whose fixture contains `target`, or null outside them all.
+   *  WHICH mount a gesture happened in is a fact about the GESTURE: a lens
+   *  publishes the element it was mounted in, so nothing here names a mount and
+   *  a second arrangement needs no second listener.
+   *  @param {any} target the event target
+   *  @returns {any|null} */
+  #lensAt(target) {
+    if (!target || typeof target.closest !== 'function') return null
+    for (const lens of this.#mountedLenses()) {
+      if (lens && lens.isMounted && lens.host && lens.host.contains(target)) return lens
+    }
+    return null
+  }
+
   /**
    * Public entry point called from index.html. Opens/activates the shell Tab and
    * its editor, loads the body, and presents the surface. Falsy mountEl/uuid tears
@@ -505,17 +527,19 @@ export class SieveWorkspace {
       this.activeEditor?.reload()
     })
 
-    // Suppress the native context menu inside the editor mount (capture).
+    // Suppress the native context menu inside ANY mounted lens (capture).
     document.addEventListener('contextmenu', (e) => {
-      if (e.target.closest('#tiptap-mount')) e.preventDefault()
+      if (this.#lensAt(e.target)) e.preventDefault()
     }, true)
 
-    // Editor context menu: in-mount, not on a sieve block, with an active editor.
+    // Editor context menu: in a mounted lens, not on a sieve block. The two
+    // listeners are the two PHASES — suppress before anything else sees the
+    // gesture, offer after a block's own handler has had its refusal (it stops
+    // propagation) — and both resolve the same way.
     document.addEventListener('contextmenu', (e) => {
-      if (!e.target.closest('#tiptap-mount')) return
-      if (e.target.closest('.ai-block, .image-block, .web-clip-block, .sieve-block')) return
-      const ed = this.activeEditor
+      const ed = this.#lensAt(e.target)
       if (!ed) return
+      if (e.target.closest('.ai-block, .image-block, .web-clip-block, .sieve-block')) return
       // No link is scraped off the DOM: the menu resolves it from the DOCUMENT,
       // the only view carrying the mark's range for the Convert offers.
       document.dispatchEvent(new CustomEvent('sieve:contextmenu', {

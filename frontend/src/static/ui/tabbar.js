@@ -103,6 +103,13 @@
 
   function initOverflow(area, overflowWrap, overflowBtn) {
     let showDropdown = false;
+
+    const closeDropdown = () => {
+      showDropdown = false;
+      const dd = document.getElementById('tab-overflow-dropdown');
+      if (dd) dd.remove();
+    };
+
     const update = () => {
       if (!area.isConnected) return;
       const areaRight = area.getBoundingClientRect().right;
@@ -118,10 +125,11 @@
       if (hiddenCount > 0) {
         overflowWrap.style.display = 'flex';
         overflowWrap.style.alignItems = 'stretch';
-        overflowBtn.textContent = '\u25be ' + hiddenCount;
+        overflowBtn.textContent = '\u25bc ' + hiddenCount;
         overflowBtn._firstHidden = firstHidden;
       } else {
         overflowWrap.style.display = 'none';
+        if (showDropdown) closeDropdown();
       }
     };
 
@@ -129,6 +137,55 @@
     activeRo = new ResizeObserver(update);
     activeRo.observe(area);
     update();
+
+    // Opens a list of the tabs past `_firstHidden`, each activated through the
+    // SAME verb a visible tab's onmousedown uses (window.sieveWorkspace.open) \u2014
+    // there is no second path to focusing a tab.
+    overflowBtn.addEventListener('click', () => {
+      if (showDropdown) { closeDropdown(); return; }
+      showDropdown = true;
+      const firstHidden = overflowBtn._firstHidden || 0;
+      const tabs = area.querySelectorAll('[data-tab-idx]');
+      const dd = document.createElement('div');
+      dd.id = 'tab-overflow-dropdown';
+      dd.style.cssText = 'position:absolute;right:0;top:100%;margin-top:2px;z-index:50;' +
+        'background:var(--theme-bgAlt);border:1px solid var(--theme-border2);' +
+        'border-radius:6px;box-shadow:0 8px 32px color-mix(in srgb, var(--theme-bgDark) 60%, transparent);padding:4px 0;min-width:200px;';
+      for (let i = firstHidden; i < tabs.length; i++) {
+        const tab = tabs[i];
+        const id = tab.dataset.tabId;
+        const btn = document.createElement('button');
+        btn.style.cssText = 'display:flex;align-items:center;width:100%;background:transparent;border:none;' +
+          'text-align:left;padding:6px 12px;font-size:14px;color:var(--theme-textDim);cursor:pointer;transition:background 0.1s;';
+        btn.textContent = tab.dataset.ctxName || 'Untitled';
+        btn.onmouseenter = () => { btn.style.background = 'var(--theme-bg)'; };
+        btn.onmouseleave = () => { btn.style.background = 'transparent'; };
+        btn.onclick = () => {
+          // The strip does not scroll, so a summoned tab must be SEATED where
+          // it can be seen: the last visible slot, displacing that tab toward
+          // the overflow. The move SETTLES FIRST — reorder is index-based and
+          // the server tracks the active tab as one, so activating during the
+          // move can land on whichever tab slid into the old slot. Open is
+          // id-based and goes last, which no completed reorder can invalidate.
+          const seat = Math.max(0, firstHidden - 1);
+          const moved = (i >= firstHidden && seat < i)
+            ? window.sieveWorkspace.reorder(i, seat)
+            : null;
+          Promise.resolve(moved).then(() => window.sieveWorkspace.open(id));
+          closeDropdown();
+        };
+        dd.appendChild(btn);
+      }
+      overflowWrap.appendChild(dd);
+      setTimeout(() => {
+        document.addEventListener('mousedown', function handler(e) {
+          if (!overflowWrap.contains(e.target)) {
+            closeDropdown();
+            document.removeEventListener('mousedown', handler);
+          }
+        });
+      });
+    });
   }
 
   function init() {

@@ -4,32 +4,41 @@
 // overflow scrolls horizontally rather than growing the panel, because the
 // footer's height feeds ui/layout.js's askPanelMinHeight.
 //
-// THE MODEL AND ITS CHIPS ARE ONE TYPE: every mutation re-renders from the list.
+// THE ATTACHMENT IS A BLOCK IN THE DRAFT. Accepting a `@` candidate mints ONE
+// reference element declaring `attach` into the draft container, and that
+// element is the truth: the chip and the `@Title` mark are its two renderings,
+// and the harvest reads it straight out of the draft. Nothing here keeps a
+// second list.
 //
 // URI IS IDENTITY, TITLE IS AN ECHO. Two library notes may both be called "Notes".
-// Dedupe is by uri, and reconciliation PAIRS tokens to attachments per title
-// rather than asking "is this title present", so deleting one of two `@Notes`
-// tokens drops exactly one.
+// Dedupe is by uri, and reconciliation PAIRS tokens to elements per title rather
+// than asking "is this title present", so deleting one of two `@Notes` tokens
+// drops exactly one.
 //
 // THE CHIP IS A VIEW OF THE TOKENS IN THE MESSAGE; THE TEXT IS WHAT YOU EDIT.
-// `#known` is every candidate accepted since the composer was last cleared;
+// The draft's elements are the POOL — every candidate accepted into this draft;
 // `#attached` is the subset a `@Title` token currently carries. Reconciling
 // RE-DERIVES the second from the first, so a token that comes back re-attaches.
 // The invariant is one-way: a chip implies a token, a token does not imply a chip.
 //
 // THE ✕ FORGETS; EDITING THE TEXT DOES NOT. ✕ means "I do not want this
-// attached", so its document leaves `#known`; a text edit means "I am editing my
-// sentence", so it stays pooled. Forgetting is by URI, never by title.
+// attached", so its element leaves the draft; a text edit means "I am editing my
+// sentence", so the element stays and the chip alone goes. `commit()` settles
+// the difference at send. Forgetting is by URI, never by title.
 //
-// DETACHING DEMOTES: an attachment the text lost moves to the BACK of the pool
-// before the pairing is redone, so a remaining identical `@Notes` pairs with the
-// attachment the user did not touch.
+// THE POOL IS CONTAINER-ORDERED, and that order is what `#pairs` hands tokens
+// out in: accepting a second `@Notes` re-mints it at the back, so it pairs with
+// the second token rather than stealing the first one's.
 
 import { esc } from '../renderers/html-escape.js'
 // The token rule is SHARED with the ai-block, which marks the same `@Title`
 // tokens in the question it renders. Two copies of "what counts as a mention"
 // would let a chip and its inline mark describe different text.
 import { MentionTokens } from '../renderers/mention-tokens.js'
+// The element vocabulary is the QUESTION's, minted and read through the one
+// definition of it, so what the draft holds is what the wire carries.
+import { QuestionList } from '../renderers/question-list.js'
+import { Ident } from '../ident/ident.js'
 
 /**
  * A candidate as the picker offers it. `kind`/`detail` are display-only — they
@@ -46,12 +55,23 @@ import { MentionTokens } from '../renderers/mention-tokens.js'
  */
 
 /**
- * One attachment as this type holds it. `detail` is display-only (the chip's
- * tooltip, which is how two chips with the same title are told apart).
+ * One attachment as this type holds it: the entry, plus the draft block
+ * carrying it — the handle every removal goes through.
  * @typedef {object} Attachment
+ * @property {string} id
  * @property {string} uri
  * @property {string} title
- * @property {string} detail
+ */
+
+/**
+ * The draft this row is a view OF: the message as flat text — the coordinate
+ * space the `@Title` tokens live in — and the container the attachments are
+ * blocks in. Read as a live handle, never captured: a retired draft hands out a
+ * different container.
+ * @typedef {object} ComposerDraft
+ * @property {() => string} read
+ * @property {(start: number, end: number) => void} cut
+ * @property {any} provider
  */
 
 /**
@@ -64,30 +84,20 @@ import { MentionTokens } from '../renderers/mention-tokens.js'
  */
 
 export class ComposerAttachments {
-  /** @type {Attachment[]} THE POOL: every candidate accepted since the composer
-   *  was last cleared, insertion-ordered. Only clear() and the chip's ✕ take
-   *  anything out of it — a document the TEXT lost stays, which is what lets an
-   *  undone deletion re-attach. */ #known = []
   /** @type {Attachment[]} THE VIEW: the subset a `@Title` token carries right
    *  now. The chips, and what send carries. */ #attached = []
   /** @type {HTMLElement|null} the chip row (null → headless: model-only, all verbs still work) */ #row = null
-  /** @type {HTMLTextAreaElement|null} the composer whose text is the truth (null
-   *  → model-only: the token verbs no-op, the chip verbs still work) */ #textarea = null
-  /** @type {(edit: () => void) => void} runs a programmatic composer edit */ #applyEdit
+  /** @type {ComposerDraft|null} the draft the elements and their tokens both
+   *  live in (null → model-only: the chip verbs still work, and nothing attaches) */ #draft = null
 
   /**
    * @param {HTMLElement|null} footerEl the structural `.ask-popup__footer`. The
    *   row is CREATED here and inserted before Send, which stays the last child.
-   * @param {HTMLTextAreaElement|null} [textarea] the composer. The tokens live in
-   *   it, so every verb that removes an attachment removes its text too.
-   * @param {((edit: () => void) => void)|null} [applyEdit] how to perform a
-   *   programmatic edit of that text. The panel passes the picker's own-edit gate,
-   *   so the `input` such an edit fires is understood as OURS and does not reopen
-   *   the picker on what was just deleted. Defaults to plain application.
+   * @param {ComposerDraft|null} [draft] the message being written. Both halves of
+   *   an attachment live in it, so every verb reaches through it.
    */
-  constructor(footerEl, textarea = null, applyEdit = null) {
-    this.#textarea = textarea || null
-    this.#applyEdit = applyEdit || ((edit) => edit())
+  constructor(footerEl, draft = null) {
+    this.#draft = draft || null
     if (!footerEl) return
     const row = document.createElement('div')
     row.className = 'ask-popup__chips'
@@ -102,18 +112,25 @@ export class ComposerAttachments {
   /** @returns {number} how many documents are attached */
   get size() { return this.#attached.length }
 
-  /** The persisted shape: `{uri, title}` and nothing else. Anything richer a chip
-   *  holds is picker dressing that must not reach storage.
+  /** The persisted shape: `{uri, title}` and nothing else.
    *  @returns {AttachmentEntry[]} */
   manifest() {
     return this.#attached.map((a) => ({ uri: a.uri, title: a.title }))
   }
 
+  /** The attached titles — what a `@Title` token in the message names, and so
+   *  what the draft marks. Titleless attachments contribute nothing: there is no
+   *  token to find for one. @returns {string[]} */
+  titles() {
+    return this.#attached.map((a) => a.title).filter(Boolean)
+  }
+
   /**
-   * Attaches a picked candidate. Idempotent while it IS attached, so a second
-   * accept is a no-op — though its `@Title` echo still lands in the text. A
-   * document whose token was deleted is NOT attached, so accepting it again
-   * genuinely re-attaches.
+   * Attaches a picked candidate, by minting its reference element into the
+   * draft. Idempotent while it IS attached, so a second accept is a no-op —
+   * though its `@Title` echo still lands in the text. A document whose token was
+   * deleted is NOT attached, so accepting it again genuinely re-attaches, and
+   * its element is re-minted at the back of the draft.
    * @param {MentionCandidate|null} candidate
    * @returns {boolean} whether it was added
    */
@@ -121,56 +138,26 @@ export class ComposerAttachments {
     const uri = (candidate && candidate.uri || '').trim()
     if (!uri) return false                                  // no address = not an attachment
     if (this.#attached.some((a) => a.uri === uri)) return false
-    const item = Object.freeze({
-      uri: uri,
-      title: (candidate && candidate.title || '').trim(),
-      detail: (candidate && candidate.detail || '').trim(),
-    })
-    // Newest last in BOTH lists, so the pool order the pairing walks and the chip
-    // order the user sees are the same.
-    this.#retain(item)
+    const item = this.#mint(uri, (candidate && candidate.title || '').trim())
+    if (!item) return false                                 // no draft to attach to
     this.#attached = this.#attached.concat([item])
     this.#render()
     return true
   }
 
   /** Detaches by address — the ✕ on a chip. It removes the `@Title` echo too, and
-   *  it FORGETS the document: a pooled one would silently re-attach when its title
-   *  was written again. @param {string} uri */
+   *  it takes the ELEMENT out of the draft: one left there would silently
+   *  re-attach when its title was written again. @param {string} uri */
   remove(uri) {
     // The pool is the superset, so this finds an attachment whether attached or
-    // not. Pair BEFORE forgetting: #pairs walks #known.
-    const item = this.#known.find((a) => a.uri === uri)
+    // not. Pair BEFORE removing: #pairs walks the pool.
+    const item = this.#pool().find((a) => a.uri === uri)
     if (!item) return
     const pair = this.#pairs(this.#text()).find((p) => p.item.uri === uri) || null
-    this.#known = this.#known.filter((a) => a.uri !== uri)
-    this.#drop(item, pair)
-  }
-
-  /**
-   * ATOMIC TOKEN DELETION. If `caret` sits at the RIGHT EDGE of an attached
-   * document's `@Title` token, that whole token goes and its chip with it, so a
-   * half-broken `@Auth Desig` is unreachable by the ordinary gesture. It is still
-   * a TEXT edit, so the document stays pooled and typing the title back re-attaches.
-   * @param {number} caret
-   * @returns {boolean} whether a token was deleted, and so whether the caller's
-   *   keypress was consumed
-   */
-  detachAt(caret) {
-    if (!this.#textarea) return false
-    const pair = this.#pairs(this.#text()).find((p) => p.end === caret)
-    if (!pair) return false
-    this.#retain(pair.item)   // a text edit is not a refusal: undo re-attaches
-    this.#drop(pair.item, pair)
-    return true
-  }
-
-  /** Empties the set AND forgets the pool (after a send). */
-  clear() {
-    if (this.#known.length === 0 && this.#attached.length === 0) return
-    this.#known = []
-    this.#attached = []
+    this.#discard(item)
+    this.#attached = this.#attached.filter((a) => a.uri !== uri)
     this.#render()
+    if (pair) this.#cut(pair.start, pair.end)
   }
 
   /**
@@ -188,6 +175,21 @@ export class ComposerAttachments {
   }
 
   /**
+   * SETTLES THE DRAFT, at send: reconciles, then takes every element whose
+   * `@Title` token is gone out of the draft — deleting the text is a legitimate
+   * way to detach, and the harvest that follows reads the draft. What the chips
+   * show is what travels.
+   * @returns {AttachmentEntry[]} the manifest that survived
+   */
+  commit() {
+    const kept = this.reconcile(this.#text())
+    for (const item of this.#pool()) {
+      if (!kept.some((k) => k.uri === item.uri)) this.#discard(item)
+    }
+    return kept
+  }
+
+  /**
    * Pairs each pooled attachment with the `@Title` token carrying it, walking the
    * pool in order and handing each the next unspoken-for token of its title. An
    * attachment with no token left is absent from the result, which is precisely
@@ -199,7 +201,7 @@ export class ComposerAttachments {
     /** @type {Map<string, number>} title → how many of its tokens are spoken for */
     const spent = new Map()
     /** @type {TokenPair[]} */ const pairs = []
-    for (const item of this.#known) {
+    for (const item of this.#pool()) {
       const spans = MentionTokens.spans(text, item.title)
       const nth = spent.get(item.title) || 0
       spent.set(item.title, nth + 1)
@@ -208,47 +210,59 @@ export class ComposerAttachments {
     return pairs
   }
 
+  /** THE POOL: the draft's attach-rel reference blocks, in container order —
+   *  every candidate accepted into this draft, read afresh so a retired draft
+   *  leaves nothing behind. @returns {Attachment[]} */
+  #pool() {
+    const provider = this.#provider()
+    if (!provider) return []
+    /** @type {Attachment[]} */ const items = []
+    for (const id of provider.getOrder()) {
+      const node = provider.getBlock(id)
+      const entry = QuestionList.attachmentOf(node)
+      if (entry) items.push({ id: node.id, uri: entry.uri, title: entry.title })
+    }
+    return items
+  }
+
+  /** Mints `uri`'s element at the BACK of the draft. Pool order is the order
+   *  `#pairs` hands out tokens, so a document accepted again is re-minted rather
+   *  than left where it was, and pairs with the token just written for it.
+   *  @param {string} uri @param {string} title @returns {Attachment|null} */
+  #mint(uri, title) {
+    const provider = this.#provider()
+    const element = QuestionList.attachment(uri, title)
+    if (!provider || !element) return null
+    const held = this.#pool().find((a) => a.uri === uri)
+    if (held) provider.requestRemoveBlock(held.id)
+    const id = Ident.mint()
+    provider.requestAddBlock(element.kind, Object.assign({ id: id }, element.attrs))
+    return { id: id, uri: uri, title: title }
+  }
+
+  /** Takes one attachment's element out of the draft. @param {Attachment} item */
+  #discard(item) {
+    const provider = this.#provider()
+    if (provider) provider.requestRemoveBlock(item.id)
+  }
+
+  /** @returns {any} the live draft container (null when headless) */
+  #provider() { return (this.#draft && this.#draft.provider) || null }
+
   /** @returns {string} the message as written ('' when headless) */
-  #text() { return this.#textarea ? this.#textarea.value : '' }
-
-  /**
-   * Puts `item` at the BACK of the pool, adding it if new. Pool order is the order
-   * `#pairs` hands out tokens, so touching an attachment sends it to the last
-   * identical `@Notes` — which keeps duplicate titles honest: with the first token
-   * deleted, the survivor pairs with the attachment the user did not touch.
-   * @param {Attachment} item
-   */
-  #retain(item) {
-    this.#known = this.#known.filter((a) => a.uri !== item.uri).concat([item])
-  }
-
-  /** Takes `item` off the chip row and cuts its token out of the message. The
-   *  caller has already settled its fate in the POOL.
-   *  @param {Attachment} item
-   *  @param {{start: number, end: number}|null} span its token, if it still has one */
-  #drop(item, span) {
-    this.#attached = this.#attached.filter((a) => a.uri !== item.uri)
-    this.#render()
-    if (span) this.#cut(span.start, span.end)
-  }
+  #text() { return this.#draft ? this.#draft.read() : '' }
 
   /** Cuts `[start, end)` out of the message, taking ONE trailing space with it when
    *  the token sat in a gap — deleting a word must not leave the hole it was in.
    *  @param {number} start @param {number} end */
   #cut(start, end) {
-    const textarea = this.#textarea
-    if (!textarea) return
-    const value = textarea.value
+    const draft = this.#draft
+    if (!draft) return
+    const value = draft.read()
     // Only a horizontal space: a newline is structure the user typed, not a gap.
     const gapAfter = /[^\S\n\r]/.test(value.charAt(end))
     const gapBefore = start === 0 || /\s/.test(value.charAt(start - 1))
-    const cutTo = gapAfter && gapBefore ? end + 1 : end
-    this.#applyEdit(() => {
-      textarea.value = value.slice(0, start) + value.slice(cutTo)
-      textarea.focus()
-      textarea.setSelectionRange(start, start)
-      textarea.dispatchEvent(new window.Event('input', { bubbles: true }))
-    })
+    draft.cut(start, gapAfter && gapBefore ? end + 1 : end)
   }
 
   /** Redraws the chip row from the view. */
@@ -260,16 +274,15 @@ export class ComposerAttachments {
     for (const item of this.#attached) row.appendChild(this.#chip(item))
   }
 
-  /** One chip: the title, its detail as the tooltip (how two chips with the same
-   *  title are told apart), and a ✕.
+  /** One chip: the title, its ADDRESS as the tooltip (identity, and how two
+   *  chips with the same title are told apart), and a ✕.
    *  @param {Attachment} item @returns {HTMLElement} */
   #chip(item) {
     const chip = document.createElement('span')
     chip.className = 'ask-chip'
     chip.setAttribute('data-uri', item.uri)
-    if (item.detail) chip.setAttribute('title', item.detail)
+    chip.setAttribute('title', item.uri)
     chip.innerHTML =
-      '<span class="ask-chip__icon" aria-hidden="true">&#128196;</span>' +
       '<span class="ask-chip__label">' + esc(item.title || item.uri) + '</span>' +
       '<button type="button" class="ask-chip__remove" aria-label="Remove ' + esc(item.title) + '">&#10005;</button>'
 

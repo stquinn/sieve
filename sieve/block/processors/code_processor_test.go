@@ -459,6 +459,60 @@ func TestOnChange_alwaysRunsHeuristicsWhenLanguageAlreadySet(t *testing.T) {
 	}
 }
 
+func TestOnChange_manualLanguageSurvivesHeuristicRedetection(t *testing.T) {
+	proc := NewCodeBlockProcessor(block.BlockServices{})
+
+	// The same Go-looking source the test above proves heuristics rewrite —
+	// with the language picked by hand, nothing may touch it.
+	blk := &block.SieveBlock{
+		ID:   "co-0002",
+		Kind: "code",
+		Attrs: map[string]interface{}{
+			"id":              "co-0002",
+			"language":        "python",
+			"detectionMethod": "manual",
+			"status":          block.BlockStatusComplete,
+			"source":          strings.Repeat("fmt.Println(\"hello\")\nif err != nil { return err }\n", 5),
+		},
+	}
+
+	proc.OnChange(blk)
+
+	if lang, _ := blk.Attrs["language"].(string); lang != "python" {
+		t.Errorf("expected manual language=python to survive, got %q", lang)
+	}
+	if method, _ := blk.Attrs["detectionMethod"].(string); method != "manual" {
+		t.Errorf("expected detectionMethod=manual to survive, got %q", method)
+	}
+}
+
+func TestOnChange_manualPlainDoesNotDispatchDetection(t *testing.T) {
+	proc := NewCodeBlockProcessor(block.BlockServices{})
+
+	// "Plain" by hand is an empty language with a manual method: the empty
+	// language must not re-enter the detection pipeline as a PENDING dispatch.
+	blk := &block.SieveBlock{
+		ID:   "co-0003",
+		Kind: "code",
+		Attrs: map[string]interface{}{
+			"id":              "co-0003",
+			"language":        "",
+			"detectionMethod": "manual",
+			"status":          block.BlockStatusComplete,
+			"source":          "some short opaque text that heuristics cannot place",
+		},
+	}
+
+	proc.OnChange(blk)
+
+	if status, _ := blk.Attrs["status"].(string); status != block.BlockStatusComplete {
+		t.Errorf("expected status to stay COMPLETE for a manual Plain, got %q", status)
+	}
+	if lang, _ := blk.Attrs["language"].(string); lang != "" {
+		t.Errorf("expected manual Plain to keep an empty language, got %q", lang)
+	}
+}
+
 // An AI-authored language must survive a later source update even when the
 // heuristic disagrees. The AI refine step exists precisely because the heuristic
 // is unreliable (it reads a Java `package` line as Go). When the AI corrects the

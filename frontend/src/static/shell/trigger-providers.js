@@ -19,6 +19,7 @@
 // catalog of them IS, and who declares each one, is macro-catalog.js.
 
 import { ContractViolation } from '../contract/sieve-block.js'
+import { LensCapability, LENS_CAPABILITIES } from '../contract/lens-capabilities.js'
 
 // The two widths that make a picker's rows line up into columns: the icon gutter
 // every row carries, and the floor a name occupies before its description
@@ -243,21 +244,31 @@ export class TriggerProvider {
 
 export class SlashCommandProvider extends TriggerProvider {
   /** @type {CommandLister} */ #commands
+  /** @type {() => boolean} */ #inScope
 
-  /** @param {CommandLister} commandService the boot-shipped command enumeration */
-  constructor(commandService) {
+  /**
+   * @param {CommandLister} commandService the boot-shipped command enumeration
+   * @param {() => boolean} [inScope]
+   *   whether the caret is somewhere this MOUNT accepts a command at all —
+   *   asked afresh on every scan. The default is everywhere, which is the answer
+   *   for a host whose entire surface is one message; a host with more than one
+   *   place to type narrows it here rather than by subclassing the provider.
+   */
+  constructor(commandService, inScope) {
     super()
     if (!commandService || typeof commandService.list !== 'function') {
       throw new ContractViolation('SlashCommandProvider requires a command lister')
     }
     this.#commands = commandService
+    this.#inScope = inScope || (() => true)
   }
 
   get trigger() { return '/' }
 
-  /** A command is a whole-line verb: only a slash at position 0 opens it.
+  /** A command is a whole-line verb, and only where its mount takes one: a slash
+   *  at position 0, in a place the mount says is in scope.
    *  @param {string} _before @param {number} start @returns {boolean} */
-  acceptsBoundary(_before, start) { return start === 0 }
+  acceptsBoundary(_before, start) { return start === 0 && this.#inScope() }
 
   /** The command list ships as boot state — enumerable locally, so SYNCHRONOUS.
    *  @param {string} prefix @returns {Array<{name: string, description?: string}>} */
@@ -277,6 +288,9 @@ export class SlashCommandProvider extends TriggerProvider {
 /**
  * @typedef {object} MacroSpec
  * @property {string} label   the name a person picks it by
+ * @property {string} requires
+ *   the capability a mount must publish for this entry to be offered — one of
+ *   the `LensCapability` words, never a bare string.
  * @property {string} [name]
  *   the SECOND word it answers to — a kind's wire name, a verb's short handle.
  *   Defaults to the label.
@@ -288,6 +302,10 @@ export class SlashCommandProvider extends TriggerProvider {
  * ONE ENTRY IN THE `{` PICKER: a frontend verb, drawn like a command and picked
  * like one, whose acceptance is a CALL rather than a text completion.
  *
+ * AN ENTRY NAMES A CAPABILITY, NEVER A MOUNT. What it needs of the lens it lands
+ * in is `requires`; which mounts satisfy that is the lens's published spec to
+ * answer, so one catalog serves every mount by filtering.
+ *
  * ACCEPTING A MACRO ALWAYS REMOVES THE TYPED TOKEN. Whether that happens as the
  * first half of one host boundary (a create) or as an edit of its own before the
  * verb runs (a dialog, a native command) is the subclass's business; what a user
@@ -298,14 +316,19 @@ export class Macro {
   /** @type {string} */ #name
   /** @type {string} */ #description
   /** @type {string} */ #icon
+  /** @type {string} */ #requires
 
   /** @param {MacroSpec} spec */
   constructor(spec) {
     if (!spec || !spec.label) throw new ContractViolation('a Macro needs a label')
+    if (LENS_CAPABILITIES.indexOf(spec.requires) < 0) {
+      throw new ContractViolation(`the macro "${spec.label}" must declare the capability it requires`)
+    }
     this.#label = spec.label
     this.#name = spec.name || spec.label
     this.#description = spec.description || ''
     this.#icon = spec.icon || ''
+    this.#requires = spec.requires
   }
 
   get label() { return this.#label }
@@ -316,12 +339,19 @@ export class Macro {
 
   get icon() { return this.#icon }
 
+  /** @returns {string} the capability a mount must publish to offer this entry */
+  get requires() { return this.#requires }
+
   /**
    * Perform this entry in `host`, consuming the token the user typed to reach it.
    * @param {import('./trigger-host.js').TriggerHost} _host
    * @param {TriggerToken} _token
+   * @param {string} [_arg]
+   *   the ARGUMENT TAIL — whatever followed `BlockInsertProvider.ARG_SEPARATOR`
+   *   in the typed token, e.g. `go` from `{fence:go`. Undefined when the token
+   *   carried none. A subclass that takes no argument simply never reads it.
    */
-  run(_host, _token) {
+  run(_host, _token, _arg) {
     throw new ContractViolation(`${this.constructor.name} must implement run(host, token)`)
   }
 
@@ -355,6 +385,9 @@ export class Macro {
  * create are ONE host boundary — the host removes the token, flushes it to the
  * server, and asks for the block where it stood — so this writes no text and
  * computes no position.
+ *
+ * Making a block is what this class IS, so it requires `blocks` of its mount
+ * rather than taking a declaration from the kind it fronts.
  */
 export class BlockMacro extends Macro {
   /** @type {string} */ #kind
@@ -363,7 +396,13 @@ export class BlockMacro extends Macro {
   /** @param {InsertableKind} kind */
   constructor(kind) {
     const spec = kind || /** @type {any} */ ({})
-    super({ label: spec.label || spec.kind, name: spec.kind, description: spec.description, icon: spec.icon })
+    super({
+      label: spec.label || spec.kind,
+      name: spec.kind,
+      description: spec.description,
+      icon: spec.icon,
+      requires: LensCapability.BLOCKS,
+    })
     this.#kind = spec.kind
     this.#defaults = Object.assign({}, spec.defaults)
   }
@@ -384,16 +423,18 @@ export class BlockMacro extends Macro {
 }
 
 /**
- * @typedef {MacroSpec & {action: () => void}} ActionMacroSpec
+ * @typedef {MacroSpec & {action: (arg?: string) => void}} ActionMacroSpec
  */
 
 /**
  * A macro that FRONTS a capability the app already has — a dialog, a native
- * editing command. The action takes no arguments and returns nothing: whatever
- * it drives owns the outcome, including whether a block is ever created.
+ * editing command. The action returns nothing: whatever it drives owns the
+ * outcome, including whether a block is ever created. It receives the token's
+ * argument tail (see `Macro.run`), which an action indifferent to it simply
+ * ignores.
  */
 export class ActionMacro extends Macro {
-  /** @type {() => void} */ #action
+  /** @type {(arg?: string) => void} */ #action
 
   /** @param {ActionMacroSpec} spec */
   constructor(spec) {
@@ -406,10 +447,11 @@ export class ActionMacro extends Macro {
 
   /**
    * @param {import('./trigger-host.js').TriggerHost} host @param {TriggerToken} token
+   * @param {string} [arg]
    */
-  run(host, token) {
+  run(host, token, arg) {
     this.clearToken(host, token)
-    this.#action()
+    this.#action(arg)
   }
 }
 
@@ -420,6 +462,18 @@ export class ActionMacro extends Macro {
 
 export class BlockInsertProvider extends TriggerProvider {
   /** @type {MacroLister} */ #macros
+
+  /**
+   * The token's HEAD/ARGUMENT divider — `{fence:go` matches the `fence` entry
+   * and carries `go` as its `run` argument. Lives on the class the split logic
+   * belongs to; no other trigger reads it, so it has no reason to be a scanner
+   * concept. Chosen over a space because the scanner's default `acceptsPrefix`
+   * already ends a token at the first whitespace (a macro is named in one
+   * word) — `:` passes that predicate unchanged, so an argument needs no
+   * scanner override.
+   * @type {string}
+   */
+  static ARG_SEPARATOR = ':'
 
   /**
    * @param {MacroLister} macroLister  the catalog composed for this mount.
@@ -442,14 +496,27 @@ export class BlockInsertProvider extends TriggerProvider {
   get providesIcons() { return true }
 
   /**
+   * Splits a typed prefix at `ARG_SEPARATOR` into the entry-matching HEAD and
+   * the ARGUMENT past it. `{table` and `{fence` (no separator yet) carry no
+   * argument; `{fence:` carries an empty one — the author typed the separator
+   * but nothing after it.
+   * @param {string} prefix @returns {{head: string, arg: string|undefined}}
+   */
+  static #split(prefix) {
+    const i = prefix.indexOf(BlockInsertProvider.ARG_SEPARATOR)
+    return i < 0 ? { head: prefix, arg: undefined } : { head: prefix.slice(0, i), arg: prefix.slice(i + 1) }
+  }
+
+  /**
    * The catalog is small and local, so this is a SYNCHRONOUS filter. An entry
    * answers to its label and to its second name alike — one is what the user
    * reads, the other is what they may already know it as — and a BLANK prefix
-   * lists everything, which is the browse gesture.
+   * lists everything, which is the browse gesture. Only the HEAD of the prefix
+   * is matched: an entry stays listed while its argument is typed.
    * @param {string} prefix @returns {Macro[]}
    */
   search(prefix) {
-    const p = (prefix || '').toLowerCase()
+    const p = BlockInsertProvider.#split(prefix || '').head.toLowerCase()
     return (this.#macros.list() || []).filter((m) =>
       m.label.toLowerCase().startsWith(p) || m.name.toLowerCase().startsWith(p))
   }
@@ -460,11 +527,13 @@ export class BlockInsertProvider extends TriggerProvider {
   /**
    * THE ENTRY OWNS WHAT ACCEPTING MEANS, so there is no branch here on what kind
    * of entry it is. The host is passed through because the entry acts against it.
+   * The token's argument tail — everything past `ARG_SEPARATOR` in what was
+   * typed — travels to `run` unconditionally; an entry that takes none ignores it.
    * @param {Macro} macro @param {TriggerToken} token
    * @param {import('./trigger-host.js').TriggerHost} host
    */
   accept(macro, token, host) {
-    macro.run(host, token)
+    macro.run(host, token, BlockInsertProvider.#split(token.prefix).arg)
   }
 }
 

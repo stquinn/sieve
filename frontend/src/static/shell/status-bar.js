@@ -75,9 +75,15 @@ export class StatusBar {
   /**
    * Paints the save indicator and the #meta-dirty-dot. detail.dirty true → red
    * "Unsaved"; false → green "Saved".
-   * @param {{ dirty?: boolean }|null} detail
+   *
+   * THE BAR SPEAKS FOR THE ACTIVE TAB, AND ONLY IT. Several editing lenses are
+   * live at once — a note and the Ask composer's draft, say — and each announces
+   * its own dirty state, so a fact naming another container is not this bar's to
+   * paint. A fact naming NO container is addressed to whatever is active.
+   * @param {{ dirty?: boolean, uuid?: string }|null} detail
    */
   #onDirty(detail) {
+    if (!this.#isActive(detail && detail.uuid)) return
     const dirty = !!(detail && detail.dirty)
     const dot = document.getElementById('meta-dirty-dot')
     if (dot) {
@@ -91,6 +97,19 @@ export class StatusBar {
     this.#saveSlot.innerHTML =
       '<div class="flex items-center gap-[0.4rem]"><span class="w-2 h-2 rounded-full shrink-0 ' + dotColor +
       '"></span><span style="color: var(--theme-textDim);">' + label + '</span></div>'
+  }
+
+  /**
+   * Whether a container-addressed fact is one this bar reports. An unnamed
+   * container is the active one by convention, so a producer that has no uuid to
+   * hand still reaches the bar.
+   * @param {string|undefined|null} uuid
+   * @returns {boolean}
+   */
+  #isActive(uuid) {
+    if (!uuid) return true
+    const tab = this.#ws.activeTab
+    return !!tab && tab.uuid === uuid
   }
 
   /**

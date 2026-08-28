@@ -10,9 +10,13 @@
 // touches text, which is the whole point: it proves the popover can drive a host
 // that has no text in it at all.
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { TriggerHost, TextareaHost, TriggerPlacement, PanelPlacement } from '../src/static/shell/trigger-host.js'
+import { TextareaHost } from './helpers/textarea-host.js'
+import {
+  TriggerHost, TriggerPlacement, PanelPlacement,
+  ProseMirrorHost, BlockMakingProseMirrorHost,
+} from '../src/static/shell/trigger-host.js'
 import { TriggerPopover } from '../src/static/shell/trigger-popover.js'
-import { TriggerProvider, SlashCommandProvider } from '../src/static/shell/trigger-providers.js'
+import { TriggerProvider, SlashCommandProvider, MentionProvider } from '../src/static/shell/trigger-providers.js'
 import { ContractViolation } from '../src/static/contract/sieve-block.js'
 
 function mountTextarea() {
@@ -111,76 +115,6 @@ describe('TriggerHost.accept — "do something with this candidate"', () => {
 })
 
 // ── The textarea host ────────────────────────────────────────────────────────
-
-describe('TextareaHost — the composer\'s host', () => {
-  it('rejects anything that is not a textarea', () => {
-    expect(() => new TextareaHost(/** @type {any} */ (null))).toThrow(ContractViolation)
-    expect(() => new TextareaHost(/** @type {any} */ (document.createElement('div')))).toThrow(ContractViolation)
-  })
-
-  it('anchors on the textarea itself', () => {
-    const textarea = mountTextarea()
-    expect(new TextareaHost(textarea).anchorElement()).toBe(textarea)
-  })
-
-  it('scans the token under its own caret', () => {
-    const textarea = mountTextarea()
-    const host = new TextareaHost(textarea)
-    const providers = new Map([['/', new SlashCommandProvider({ list: () => [] })]])
-
-    textarea.value = '/btw hello'
-    textarea.setSelectionRange(3, 3)
-    expect(host.tokenAtCaret(providers)?.prefix).toBe('bt')
-
-    textarea.setSelectionRange(10, 10)
-    expect(host.tokenAtCaret(providers)).toBeNull()   // the token ended at the space
-  })
-
-  it('reads what follows a position', () => {
-    const textarea = mountTextarea()
-    textarea.value = 'How does @au handle this?'
-    expect(new TextareaHost(textarea).textAfter(12)).toBe(' handle this?')
-  })
-
-  it('replaceRange substitutes, focuses, leaves the caret after the insert and fires input', () => {
-    const textarea = mountTextarea()
-    const host = new TextareaHost(textarea)
-    const inputs = vi.fn()
-    textarea.addEventListener('input', inputs)
-    textarea.value = 'How does @au handle this?'
-
-    host.replaceRange(9, 12, '@Auth Design')
-
-    expect(textarea.value).toBe('How does @Auth Design handle this?')
-    expect(textarea.selectionStart).toBe('How does @Auth Design'.length)
-    expect(textarea.selectionEnd).toBe('How does @Auth Design'.length)
-    expect(document.activeElement).toBe(textarea)
-    // The composer has OTHER listeners on `input` (the attachment reconciler);
-    // a programmatic completion is a real change to the message.
-    expect(inputs).toHaveBeenCalledTimes(1)
-  })
-
-  it('unsubscribing actually removes each listener', () => {
-    const textarea = mountTextarea()
-    const host = new TextareaHost(textarea)
-    const keys = vi.fn(); const dismiss = vi.fn(); const input = vi.fn()
-
-    const offs = [host.onKeyDown(keys), host.onDismiss(dismiss), host.onInput(input)]
-    textarea.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'a', bubbles: true }))
-    textarea.dispatchEvent(new window.Event('blur'))
-    textarea.dispatchEvent(new window.Event('input', { bubbles: true }))
-    expect([keys.mock.calls.length, dismiss.mock.calls.length, input.mock.calls.length]).toEqual([1, 1, 1])
-
-    // keydown is registered in the CAPTURE phase (the picker owns the arrows,
-    // Tab, Enter and Escape while it is open, before the composer sees them), and
-    // removeEventListener silently does nothing when the flag does not match.
-    for (const off of offs) off()
-    textarea.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'a', bubbles: true }))
-    textarea.dispatchEvent(new window.Event('blur'))
-    textarea.dispatchEvent(new window.Event('input', { bubbles: true }))
-    expect([keys.mock.calls.length, dismiss.mock.calls.length, input.mock.calls.length]).toEqual([1, 1, 1])
-  })
-})
 
 // ── Completion semantics belong to the provider, not the host ────────────────
 
@@ -346,5 +280,62 @@ describe('TriggerPopover — over the host seam', () => {
     textarea.dispatchEvent(new window.Event('input', { bubbles: true }))
 
     expect(document.querySelector('.command-hint-popover')).toBeNull()
+  })
+})
+
+// ── THE BLOCK-MAKING CAPABILITY IS THE CLASS (#118) ──────────────────────────
+//
+// Every provider probes for `createBlock` by presence, so which host class a
+// mount is given IS its answer to "can a candidate become a block here". A
+// composer mounts the plain host and the same MentionProvider then completes
+// the candidate as text — one provider, two mounts, no branch on which.
+describe('ProseMirrorHost — the block capability is which class the mount got', () => {
+  /** The caret port both host classes are built over: every method the seam
+   *  demands, with the two that matter recording their calls. */
+  function fakePort() {
+    return {
+      element: () => document.createElement('div'),
+      caretText: () => ({ text: 'ask @au about it', caret: 7 }),
+      caretRect: () => null,
+      replaceRange: vi.fn(),
+      createBlock: vi.fn(),
+      onDocChange: () => () => {},
+      onBlur: () => () => {},
+    }
+  }
+
+  const AUTH = { uri: 'sieve://9f2b', title: 'Auth Design', kind: 'note', summary: 'how auth works' }
+
+  it('the plain host cannot hold a block, and says so by not offering the verb', () => {
+    const host = new ProseMirrorHost(fakePort())
+    expect(typeof /** @type {any} */ (host).createBlock).toBe('undefined')
+  })
+
+  it('the block-making host offers it, and delegates the token range to the port', () => {
+    const port = fakePort()
+    const host = new BlockMakingProseMirrorHost(port)
+    host.createBlock('reference', { uri: 'sieve://9f2b' }, tokenFor(null, 4, 7, 'au'))
+    expect(port.createBlock).toHaveBeenCalledWith(4, 7, 'reference', { uri: 'sieve://9f2b' })
+  })
+
+  it('a mention accepted in a BLOCK-MAKING mount becomes a reference block', () => {
+    const port = fakePort()
+    const provider = new MentionProvider({ search: () => Promise.resolve([]) })
+    provider.accept(AUTH, tokenFor(provider, 4, 7, 'au'), new BlockMakingProseMirrorHost(port))
+    expect(port.createBlock).toHaveBeenCalledWith(4, 7, 'reference', {
+      uri: 'sieve://9f2b',
+      cache: { title: 'Auth Design', summary: 'how auth works', mime: 'sieve/note' },
+    })
+    expect(port.replaceRange).not.toHaveBeenCalled()
+  })
+
+  it('the SAME accept in a draft writes the @Title echo and hands the candidate on', () => {
+    const port = fakePort()
+    const sink = vi.fn()
+    const provider = new MentionProvider({ search: () => Promise.resolve([]) }, sink)
+    provider.accept(AUTH, tokenFor(provider, 4, 7, 'au'), new ProseMirrorHost(port))
+    expect(port.createBlock).not.toHaveBeenCalled()
+    expect(port.replaceRange).toHaveBeenCalledWith(4, 8, '@Auth Design ')
+    expect(sink).toHaveBeenCalledWith(AUTH)
   })
 })

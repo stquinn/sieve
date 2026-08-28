@@ -22,8 +22,9 @@ const OUTCOME_NONE = 'none'
 
 // Where a kind keeps its text: `content` by default, overridden by the three
 // source-bearing kinds. The facade's `flush` names neither attr, so it resolves
-// here.
-const CONTENT_ATTR = Object.freeze({ code: 'source', diagram: 'source', log: 'source' })
+// against this — in every provider that implements one.
+/** @type {Readonly<Record<string, string>>} */
+export const CONTENT_ATTR = Object.freeze({ code: 'source', diagram: 'source', log: 'source' })
 
 export class BlockProviderAdapter extends WholeContentAdapter {
   /** @type {import('./container-model.js').ContainerModel} */ #model

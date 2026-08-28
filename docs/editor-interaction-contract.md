@@ -137,6 +137,60 @@ for why the mechanism is precedence rather than a policy flag.
 (Linux/Windows; fn+Left on Mac) AND to Cmd+Left on macOS — the idiomatic Mac
 line-start gesture (VS Code parity). Shift-selection variants stay native.
 
+## Per-mount key claims (decided 2026-08-28, #118)
+
+The key matrix above describes what a key means **in a context inside a
+document**. A second question sits above it, because a page now holds more than
+one live editor: which *mount* gets the key at all.
+
+**A key claim is per-mount configuration, resolved by focus. There is no global
+claim table.** A lens declares the keys its mount owns by overriding
+`AbstractEditor.claimKey(event)`; the base claims nothing, so an editing lens
+that has not said otherwise behaves exactly as this contract's matrix says. The
+surface asks the claim **first**, from `editorProps.handleKeyDown` — the same
+pre-core hook the Enter family already routes through — and returns consumed
+when the lens claims. Precedence between two live editors therefore needs no
+arbitration: the hook fires on the view the keystroke landed in.
+
+The resulting order for one keystroke, highest first:
+
+1. **The trigger picker**, while open — a capture-phase listener on `view.dom`
+   that calls `stopImmediatePropagation`, so nothing below ever sees the key.
+2. **The mount's claim** — `claimKey`, pre-core.
+3. **The interaction policy** — the Enter family (pre-core, `editorProps`) and
+   the Tab/arrow/Home backstop (priority-50 plugin).
+4. **The editor core** — TipTap's own keymaps.
+5. **The host chrome** — a bubble-phase listener on the panel or the document.
+
+### What each mount claims
+
+| Mount | Claims | Everything else |
+|---|---|---|
+| Note / document (`NoteEditor`) | **nothing** | the matrix above, unchanged |
+| Prompt (`PromptEditor`) | **nothing** | the matrix above, unchanged |
+| Composer (`ComposerEditor`) | `Mod+Enter` → send the message | the matrix above, unchanged |
+
+**The composer is EDITOR-FIRST (revised 2026-08-28, #118):** it claims exactly
+one chord, `Mod+Enter`, and nothing else. Bare `Enter`, `Shift+Enter` and
+`Alt+Enter` are unclaimed and fall through to the surface exactly as they do
+in `NoteEditor` — list continuation, a code/diagram fence's own newline, an
+empty list item's exit, HardBreak all behave identically in a draft and in a
+document, so muscle memory carries over instead of a context-dependent Enter
+surprising the author mid-sentence. The convention matches rich block-editor
+chat inputs elsewhere (Slack, Notion AI): Enter stays structural, Mod+Enter
+sends.
+
+This is a deliberate **divergence** from the note mount's own `Mod+Enter`: in
+`NoteEditor` it is `modEnterTogglesMode`, a per-kind view toggle a Sieve block
+declares (diagram edit↔render, log raw↔explore) — an affordance a draft has
+none of, since `ComposerEditor` mints no blocks (`_innateCapabilities.blocks`
+is `false`). The two mounts never compete for the chord because only one is
+ever focused at a time; `Mod+Enter` means "send" in the composer and "toggle
+this block's mode" in the note editor, and each mount's `claimKey` is the
+sole place either meaning is decided. `Escape` is unclaimed in the composer
+too — it belongs to the picker while one is open, and to the host panel
+otherwise (below).
+
 ## Policy declaration (revised 2026-07-29)
 
 A kind opts into behaviour **by name**. `DEFAULT_POLICY`
@@ -516,16 +570,76 @@ buttons including the n/N stats refresh) via
 these OPEN it (conventional "start searching") rather than silently advancing a
 hidden search. Replace… slots into the same Find submenu when #61 lands.
 
+## Context menu (revised 2026-08-28, #118)
+
+**A right-click is resolved to the MOUNT it happened in.** The host walks the
+lenses it has mounted — the active tab's document and the Ask panel's draft — and
+claims the gesture for the one whose fixture contains the target. A lens
+publishes the element it was mounted in, so the resolution names no mount and a
+third arrangement needs no third listener. Inside a claimed mount the browser's
+own menu is always suppressed; a sieve block raises its own menu instead and the
+editor menu stands down.
+
+**What is offered follows the mount, not the mount's name.** Three gates, and
+only three:
+
+| Gate | Read | Effect |
+|---|---|---|
+| capability | the lens's published spec (`blocks`) | a verb that MAKES a block — Ask AI, Explain, `==` Highlight Target — is absent where none can be made |
+| provider shape | `typeof provider.detectExtractions` | Extract / Transform / Embed-in-Document are absent for a container that describes no extractions |
+| data | what the caret is actually in or on | the table, fence and attachment sections appear only over their subject |
+
+`==` is gated with Ask AI deliberately: it names an ask TARGET, so it means
+nothing in a mount whose message becomes a block elsewhere.
+
+**Submenus are one level, and one mechanism.** An entry carrying children opens a
+flyout beside itself, flipped to its other side near the window edge and clamped
+so its bottom never passes the window's — the main menu clamps the same way, so a
+menu raised near either edge behaves identically to one raised anywhere else — and
+is itself inert — it opens rather than acts.
+
+| Key | On a parent entry | Inside the flyout |
+|---|---|---|
+| ArrowRight / Enter / Space | opens it and focuses the first child | — |
+| ArrowDown / ArrowUp | — | moves within, wrapping at both ends |
+| ArrowLeft | — | closes it, focus back on the parent |
+| Escape | closes the whole menu | closes the flyout; a second one closes the menu |
+| Enter, click | opens it | accepts, and the WHOLE menu closes |
+
+**The structured sections.** A caret inside a table adds Row → (Add Above · Add
+Below · Delete Row), Column → (Add Left · Add Right · Delete Column) and Delete
+Table — the stock TipTap table commands, offered in every wysiwyg mount because
+rearranging a table is editing and not authoring. Add Header Row joins them only
+while the table has none: GFM pipe markdown requires a header row, so once one
+exists the entry is gone rather than offering an OFF direction that would mint a
+table markdown cannot represent (`toggleHeaderRow` only ever adds one). Delete
+Table replaces the generic Delete Block there: one act, one entry. A caret inside
+a fence adds Language →, whose entries are **the languages the highlighter is
+registered for** (`getLowlight().listLanguages()`, never a hand-written list),
+sorted, with Plain — the absence of a tag — first and a tick on the fence's
+current one. It is the discoverable route to what `{fence:go` types.
+
+**The draft's own two verbs.** Right-clicking on a `@Title` token that the draft
+has attached offers Remove Attachment, which does exactly what the chip's ✕ does
+— detaches the document and takes the token with it, because the two are one
+object. The title comes from the MARK under the caret, which is drawn from the
+manifest, so a mount that keeps no manifest is offered nothing without a gate to
+remember. Clear Draft retires the whole draft — container, lens and undo history
+— so it is styled as the destructive verb it is; the panel stays open and the
+caret lands in the fresh message.
+
 ## Trigger picker (revised 2026-08-19, #74 P4/P5/P6 + #38)
 
 **ONE picker, two hosts.** The `@`/`/` picker is a single `TriggerPopover` over a
-`TriggerHost`: the composer's is its textarea (`TextareaHost`, a panel-anchored
-placement), the document's is a ProseMirror caret (`ProseMirrorHost`, a
-caret-anchored one). The keyboard model, the token scan, the abandonment state
-machine and the scroll-into-view fix are written ONCE and are identical in both
-— which is the point, and the reason a second popover was refused. What differs
-is stated where it differs: the composer's half is the rest of this section, the
-document's is *The same picker in the document* at the end of it.
+`TriggerHost`. Both hosts are now ProseMirror carets (`ProseMirrorHost`, a
+caret-anchored placement); what tells them apart is whether the mount can HOLD A
+BLOCK, which is the host CLASS it is given — `BlockMakingProseMirrorHost` for a
+document, the plain one for a draft. The keyboard model, the token scan, the
+abandonment state machine and the scroll-into-view fix are written ONCE and are
+identical in both — which is the point, and the reason a second popover was
+refused. What differs is stated where it differs: the composer's half is the rest
+of this section, the document's is *The same picker in the document* at the end
+of it.
 
 **Every row is the same set of columns.** A row is a left-aligned flex row of
 slots — an optional icon column, the name, the description — and the widths that
@@ -539,36 +653,37 @@ declares one, every row of that picker carries the slot — empty for an entry w
 no icon — so the names stay in a column. `/` and `@` declare none and run flush
 left; `{` declares one.
 
-### In the composer
+### In the composer (revised 2026-08-28, #118)
 
-The Ask panel's textarea is chrome, not an editor surface — none of the key
-matrix above applies to it. Two owners intercept keys there, and nothing else
-does:
+The Ask panel's message is written in a **composer mount** — the document-editor
+lens over an in-memory draft — so the whole key matrix above applies inside it,
+narrowed only by that mount's one claim (`Mod+Enter`) and by what a draft can
+hold. Three owners intercept keys, in this order:
 
 - **`TriggerPopover`** (`frontend/src/static/shell/trigger-popover.js`) — a
-  capture-phase `keydown`, active **only while the picker is open**;
-- **`AskPanel`** (`frontend/src/static/shell/ask-panel.js`) — the bubble-phase
-  `keydown` that already owned Enter/Escape, and now owns **Backspace at an
-  attachment token's right edge** as well.
+  capture-phase `keydown` on the editable root, active **only while the picker is
+  open**;
+- **the composer mount's claim** — `Mod+Enter` sends;
+- **`AskPanel`** (`frontend/src/static/shell/ask-panel.js`) — a bubble-phase
+  `keydown` on the panel, owning `Escape` alone.
 
-Everything else falls through to the browser's own text editing, unchanged.
+Everything else is the editing surface's, unchanged.
 
 | Key | While the picker is open |
 |---|---|
 | ↓ / ↑ | move the selection (wraps; scrolls the active row into view — #63) |
 | Tab | accept the selected candidate |
-| Enter (no Shift) | accept the selected candidate — the panel's send is **not** reached |
+| Enter (no Shift, Mod held or not) | accept the selected candidate — the mount's `Mod+Enter` send claim is **not** reached, even when Mod is held |
+| Escape | **abandon the token** — the picker closes and does not reopen as you type on; the panel's dismiss is **not** reached |
 | Shift+Enter | falls through (newline), picker stays open |
-| Escape | **abandon the token** — the picker closes and does not reopen as you type on; the panel stays open |
 
 Accept and dismiss both `stopImmediatePropagation`, which is what keeps a
 completion from also sending the message.
 
 | Key | In the composer, picker open or shut |
 |---|---|
-| Enter (no Shift) | send |
+| Mod+Enter | send (picker shut) — while the picker is open, Enter of any kind accepts the candidate above instead |
 | Escape | dismiss the panel |
-| **Backspace** | **when the caret sits at the right edge of an accepted `@Title` token and nothing is selected: deletes the WHOLE token, its trailing gap, and its chip.** Anywhere else — including over a selection, and with any of Ctrl/Cmd/Alt held — it falls through as an ordinary Backspace |
 
 **Two triggers, one picker.** `/` (slash commands) and `@` (document mentions)
 are PROVIDERS on the one popover, not two popovers: the keyboard model, the
@@ -626,13 +741,12 @@ invariant is one-way and is what makes a silent drop impossible:
 
 So `@Auth Design` typed as prose and never accepted is just prose (above), while
 a chip can never outlive the token it claims to represent. Reconciliation runs on
-**every composer `input`**, not at send: breaking a token removes its chip the
+**every change to the draft**, not at send: breaking a token removes its chip the
 moment it stops matching, rather than the UI claiming "attached" until send drops
 the attachment with no answer and no explanation.
 
 | Gesture | What it does |
 |---|---|
-| Backspace at a token's right edge | deletes the whole token, its gap, and its chip (the table above) |
 | select-through-and-delete, cut, paste-over, retype | the chip goes as soon as the token stops matching |
 | the chip's ✕ | deletes the `@Title` token from the message as well — the same disagreement pointing the other way — and **forgets the document** (below) |
 | undo, or retyping the title | **re-attaches** *unless the document was ✕'d*: matching is on exact title text, and every candidate accepted since the composer was last cleared is retained, so the chip comes back with its token |
@@ -641,39 +755,25 @@ the attachment with no answer and no explanation.
 its token and differ only in INTENT, which is the whole difference. ✕ means "I do
 not want this attached", so it is final: its document leaves the retained pool and
 writing that title again later — `as @Auth Design says…` — is ordinary prose, not
-a silent re-attach of what the user just refused. Every text edit, atomic
-Backspace included, means "I am editing my sentence", so its document stays
-pooled and the token coming back re-attaches it. A ✕'d document returns the
-normal way: accept it from the `@` picker again. Forgetting is per-URI, never
-per-title — with two "Notes" attached, ✕ on one cuts only its token and leaves
-the survivor resolving to the other document.
-
-**Only text edits are undoable.** Ctrl+Z restores any chip whose token an
-ordinary edit removed, because the browser's native undo stack holds that edit
-and reconciliation follows the restored text. It does **not** restore the two
-programmatic gestures — atomic Backspace and the chip's ✕ — because they assign
-`textarea.value`, which never enters that stack. Deliberate: routing them through
-`document.execCommand` to buy undo is not worth depending on a deprecated API.
+a silent re-attach of what the user just refused. A text edit means "I am editing
+my sentence", so its document stays pooled and the token coming back re-attaches
+it. A ✕'d document returns the normal way: accept it from the `@` picker again.
+Forgetting is per-URI, never per-title — with two "Notes" attached, ✕ on one cuts
+only its token and leaves the survivor resolving to the other document.
 
 Two more consequences worth naming:
 
 - **A send forgets everything.** `clear()` empties the retained pool, so a title
   typed after a send is prose, not a resurrected attachment.
-- **Detaching demotes.** With two attachments sharing a title (`@Notes and
-  @Notes`), deleting one token must drop exactly one chip *and leave the right
-  one*. The detached attachment moves to the back of the pool (or leaves it, for
-  a ✕) before the pairing is redone, so the surviving token pairs with the
-  attachment the user did not touch.
-
-Programmatic edits to the composer text (the two deletion gestures) go through
-`TriggerPopover.applyOwnEdit()` — the **same** `#completing` guard acceptance
-uses, so the `input` they fire is understood as ours: it neither reopens the
-picker on the token just deleted nor records an abandonment for text that no
-longer exists.
+- **The pool is insertion-ordered**, and that order is the order tokens are
+  handed out in. With two attachments sharing a title (`@Notes and @Notes`), ✕ on
+  one takes exactly its own token and leaves the survivor resolving to the other
+  document; accepting a document again puts it at the back, so it pairs with the
+  token just written for it.
 
 ### The header shows the subject; the footer shows the context (#74)
 
-**The panel header is a view of the composer text**, derived on the same `input`
+**The panel header is a view of the composer text**, derived on the same change
 event and for the same reason as the chips: a label set when the panel opened
 goes on claiming "Ask About Document" over a `/btw` the user has already typed.
 You are not asking *about* the target there — you are invoking a command that
@@ -752,6 +852,18 @@ named in one word. A bare `{` lists everything, which is the browse gesture; a
 prefix filters on the entry's label and its second name alike, so `co` and `code`
 both reach Code.
 
+**An entry MAY take an ARGUMENT, carried after `:` in the same token** — `{fence:go`
+matches the Fence entry on `fence` and hands `go` to what it runs. `:` needs no
+scanner change: it is not whitespace, so it already passes the token's default
+`acceptsPrefix`, and MATCHING is unaffected — only the text before `:` (the
+HEAD) is compared against an entry's label/name, so `{fen:go` and `{f:go`
+(while unambiguous) reach Fence exactly as `{fen`/`{f` would with no argument at
+all. The argument is read off the TOKEN at accept time, not off the candidate
+that matched it, so it survives a partial-head match undamaged. `{fence` with
+no `:` at all carries no argument (`undefined`); `{fence:` with nothing after
+the separator carries an empty one — an entry that ignores the argument (every
+entry but Fence, today) is unaffected either way.
+
 **MACROS ARE TO THE FRONTEND WHAT COMMANDS ARE TO THE BACKEND.** A command is a
 backend verb: declared in Go beside the logic it runs, enumerated to clients,
 dispatched over the wire. A macro is a frontend verb: declared beside the
@@ -768,6 +880,7 @@ The picker offers three kinds of entry, each declared where its capability lives
 | Web Clip | the workspace, which owns the URL dialog | the token is deleted, then the dialog opens |
 | Attach File | the workspace, fronting the toolbar's own attach flow | the token is deleted, then the anchor is captured and the OS file picker opens — the paste pipeline decides the block, exactly as it does for the toolbar button |
 | Table, Quote, Divider | the WYSIWYG surface, as class-level presets — the toolbar's native insert group, offered through a second door | the token is deleted, then the surface runs the toolbar's own command (`insertTable`, `toggleBlockquote`, `setHorizontalRule`) |
+| Fence | the WYSIWYG surface, as a class-level preset — a NATIVE code block, distinct from the Sieve Code block above it | the token is deleted, then the surface runs `setCodeBlock`, tagged with the token's argument as `language` when one was typed (`{fence:go`), untagged otherwise |
 
 The BLOCK KINDS offered are the ones a keystroke can make out of nothing. Every
 other kind is born another way — prose is typed, `ai-block` comes from Ask,
@@ -783,9 +896,9 @@ each mount READS both — so two mounts of the same surface can never double an
 entry.
 
 **Accepting makes a BLOCK, not text.** This is the one behaviour that genuinely
-differs between the two hosts, and it differs because the hosts do: a textarea
-has nowhere to put a block, so the composer echoes `@Title` and draws a chip
-beside it; a document does, so the token is deleted and a block takes its place —
+differs between the two hosts, and it differs because the hosts do: a draft mints
+no blocks, so the composer echoes `@Title` and draws a chip beside it; a document
+does, so the token is deleted and a block takes its place —
 a `reference` carrying the `uri` for `@`, an empty block of the named kind for a
 `{` kind entry, created with NO index and NO anchor because the editor owns all
 id→index math. There is no `@Title` text left behind to reconcile — the chip in

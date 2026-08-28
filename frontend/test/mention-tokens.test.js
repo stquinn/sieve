@@ -53,6 +53,34 @@ describe('MentionTokens.spans — the token rule', () => {
   })
 })
 
+// The multi-title half of the rule, shared with the ProseMirror decoration that
+// marks the same tokens inside a draft. `mark` reaches the characters through
+// the rendered DOM and the decoration through document positions — the answer to
+// "which characters" must be the same one, or a chip and its inline mark would
+// describe different text.
+describe('MentionTokens.claim — the spans one run of text yields for a SET of titles', () => {
+  it('returns every title\'s tokens, in text order', () => {
+    expect(MentionTokens.claim('@Retry RFC then @Notes', ['Notes', 'Retry RFC'])).toEqual([
+      { start: 0, end: 10 }, { start: 16, end: 22 },
+    ])
+  })
+
+  it('the LONGER title wins where two overlap — marking half a token reads as a typo', () => {
+    expect(MentionTokens.claim('@Auth Design here', ['Auth', 'Auth Design']))
+      .toEqual([{ start: 0, end: 12 }])
+  })
+
+  it('honours the preceding character, so an address is not claimed', () => {
+    expect(MentionTokens.claim('@Notes', ['Notes'], 'd')).toEqual([])
+    expect(MentionTokens.claim('@Notes', ['Notes'], ' ')).toEqual([{ start: 0, end: 6 }])
+  })
+
+  it('no titles, no spans — the answer for anything holding no manifest', () => {
+    expect(MentionTokens.claim('@Notes everywhere', [])).toEqual([])
+    expect(MentionTokens.claim('@Notes everywhere', /** @type {any} */ (null))).toEqual([])
+  })
+})
+
 describe('MentionTokens.mark — marking rendered prose', () => {
   it('wraps each token in a span carrying the caller\'s class, leaving the prose intact', () => {
     const root = el('<p>How does @Auth Design handle retries?</p>')

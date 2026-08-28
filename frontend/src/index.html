@@ -26,7 +26,7 @@
         .meta-handle { display: {{if .ShowMeta}}block{{else}}none{{end}} !important; }
     </style>
     <style id="layout-overrides-askpanel">
-        {{if .ShowAskPanel}}#ask-panel { display: flex !important; position: relative; z-index: 20; border-top: 1px solid var(--theme-border2); }{{end}}
+        {{if .ShowAskPanel}}#ask-panel { display: flex !important; position: relative; z-index: 20; }{{end}}
     </style>
     <script id="askpanel-state-sync">
         window.initAskPanelPinned = {{if .ShowAskPanel}}true{{else}}false{{end}};
@@ -128,17 +128,22 @@
                     </div>
 
                     <!-- Ask AI panel — persistent, resizable, at the bottom of the editor column.
-                         The drag handle is the panel's first child so it shows/hides with the
-                         panel's display (no JS toggle). Height persists via /api/session/layout. -->
+                         The panel itself paints nothing: it is a transparent resize
+                         region, and the writing box floats inside it. Height persists
+                         via /api/session/layout. -->
                     <div id="ask-panel" class="ask-panel {{if .ShowAskPanel}}is-open{{end}}" style="height: {{.AskPanelHeight}}px;">
-                        <div class="ask-handle"></div>
-                        <div class="ask-popup__header">
-                            <span class="ask-popup__label">Ask About Document</span>
-                            <button class="ask-popup__close" aria-label="Close" title="Close">&#10005;</button>
-                        </div>
-                        <textarea class="ask-popup__input" placeholder="Ask a question&#x2026; Enter sends &middot; Shift+Enter for a new line" spellcheck="false"></textarea>
-                        <div class="ask-popup__footer">
-                            <button class="ask-popup__send">Send</button>
+                        <!-- The writing box: body + chips + footer read as ONE
+                             bounded, elevated unit, and it is what carries the focus
+                             ring (:focus-within — the caret is in a contentEditable
+                             the panel never sees). The drag handle is its first
+                             child — grabbing the box's own top edge — so it shows/
+                             hides with the box (no JS toggle). -->
+                        <div class="ask-composer">
+                            <div class="ask-handle"></div>
+                            <div class="ask-popup__input"></div>
+                            <div class="ask-popup__footer">
+                                <button class="ask-popup__send">Send</button>
+                            </div>
                         </div>
                     </div>
                 </div>

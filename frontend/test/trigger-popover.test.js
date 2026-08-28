@@ -14,7 +14,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { TriggerPopover } from '../src/static/shell/trigger-popover.js'
 import { SlashCommandProvider, MentionProvider, TriggerProvider } from '../src/static/shell/trigger-providers.js'
-import { TextareaHost } from '../src/static/shell/trigger-host.js'
+import { TextareaHost } from './helpers/textarea-host.js'
 import { ContractViolation } from '../src/static/contract/sieve-block.js'
 
 function mountDom() {

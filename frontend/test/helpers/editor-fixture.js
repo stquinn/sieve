@@ -50,6 +50,9 @@ export const schema = new Schema({
       toDOM: (nd) => ['div', { 'data-id': nd.attrs.id, class: 'block-node prose-group' }, 0],
     },
     text: { group: 'inline' },
+    // The break Shift+Enter inserts: no character, one document position — the
+    // divergence the flat-text walk exists to close.
+    hardBreak: { group: 'inline', inline: true, selectable: false, toDOM: () => ['br'] },
     // a generic sieve atom (e.g. sieve-code), and the ai-block follow-up atom
     'sieve-code': sieveAtom('code'),
     'sieve-ai-block': sieveAtom('ai-block'),
@@ -141,4 +144,9 @@ export const build = {
   proseGroup: (id, texts) => n.proseGroup.create(id ? { id } : null,
     (texts || ['one', 'two']).map((s) => n.paragraph.create(null, t(s)))),
   aiBlock: (id, ref) => n['sieve-ai-block'].create({ id, kind: 'ai-block', serialisedForm: '', ref: ref || '' }),
+  br: () => n.hardBreak.create(),
+  // A paragraph over arbitrary inline content — the builder a break needs, since
+  // `p` takes a string.
+  inline: (content, id) => n.paragraph.create(id ? { id } : null, content),
+  text: (s) => t(s),
 }

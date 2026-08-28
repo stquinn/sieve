@@ -3,15 +3,16 @@
 // across tab/editor switches, so it is NOT owned by any editor. It REFLECTS the
 // active editor by subscribing to workspace.onSelectionUpdate.
 //
-// The panel is DUMB UI: it holds NO tiptap and does NO position or protocol work.
-// On send it passes the SelectionContext it LAST RENDERED — the label the user
-// saw — and never a live re-read, so send acts on exactly what the label
-// described. The editor owns the doc mutation.
+// The message is written in a COMPOSER MOUNT — a lens over an in-memory draft —
+// so what leaves here on send is the list of blocks that were written, not a
+// line of text. The panel still does NO position or protocol work of its own:
+// it passes the SelectionContext it LAST RENDERED into the footer's target
+// chip and never a live re-read, so send acts on exactly what was shown.
+// The editor owns the doc mutation.
 
-import { TriggerPopover } from './trigger-popover.js'
-import { SlashCommandProvider, MentionProvider } from './trigger-providers.js'
-import { TextareaHost, PanelPlacement } from './trigger-host.js'
 import { ComposerAttachments } from './composer-attachments.js'
+import { ComposerHints } from './composer-hints.js'
+import { ComposerMount } from './composer-mount.js'
 import { TargetChips } from './target-chips.js'
 
 export class AskPanel {
@@ -23,28 +24,29 @@ export class AskPanel {
   #mentionService = null
   /** @type {import('./command-badges.js').CommandBadges|null} */
   #badges = null
-  /** @type {TriggerPopover|null} */
-  #hintPopover = null
-  /** @type {ComposerAttachments|null} what the message being written has
-   *  attached. PANEL STATE — the chips are UI, the manifest is what send carries. */
+  /** @type {ComposerMount|null} the draft the message is written in — the panel's
+   *  ONE socket, and the same one #102's chat will take. */
+  #composer = null
+  /** @type {ComposerAttachments|null} the chip row over what the message being
+   *  written has attached. A VIEW of the draft's own elements — the panel keeps
+   *  no list of its own. */
   #attachments = null
+  /** @type {ComposerHints|null} the footer's view of what the draft answers to,
+   *  derived from the spec the mounted lens publishes. */
+  #hints = null
   /** @type {TargetChips|null} the footer's view of what the message will ACT ON.
    *  A separate concern from #attachments and deliberately so: the editor owns the
    *  selection this draws, so it never enters a manifest. */
   #targetChips = null
   /** @type {HTMLElement|null} the structural #ask-panel (null → all methods no-op) */
   #panel = null
-  /** @type {HTMLTextAreaElement|null} */
-  #textarea = null
-  /** @type {HTMLElement|null} */
-  #label = null
   /** @type {boolean} pin state — one persisted boolean (ShowAskPanel), mirrored here */
   #pinned = false
-  /** @type {ReturnType<typeof setTimeout>|null} label debounce */
+  /** @type {ReturnType<typeof setTimeout>|null} debounce for the pulled-context repaint */
   #labelTimeout = null
   /** @type {import('../lens/document-editor/selection-model.js').SelectionContext|null} focus coordinate pulled on jump-in */
   #focusReturn = null
-  /** @type {import('../lens/document-editor/selection-model.js').SelectionContext|null} the context whose label is CURRENTLY shown — what send acts on */
+  /** @type {import('../lens/document-editor/selection-model.js').SelectionContext|null} the context CURRENTLY shown in the target chip — what send acts on */
   #lastContext = null
   /** @type {string} the container whose truth the target chips are watching */
   #watchedUuid = ''
@@ -56,8 +58,11 @@ export class AskPanel {
    * @param {import('./command-service.js').CommandService} [commandService]
    * @param {import('./command-badges.js').CommandBadges} [badges]
    * @param {import('./mention-service.js').MentionService} [mentionService]
+   * @param {ComposerMount} [composer] the draft socket. The panel builds one over
+   *   its own fixture when none is given; a caller supplies one to mount the same
+   *   panel over a different arrangement.
    */
-  constructor(ws, commandService, badges, mentionService) {
+  constructor(ws, commandService, badges, mentionService, composer) {
     this.#ws = ws
     this.#commandService = commandService || (ws && /** @type {any} */ (ws).commandService) || null
     this.#mentionService = mentionService || (ws && /** @type {any} */ (ws).mentionService) || null
@@ -65,68 +70,78 @@ export class AskPanel {
     this.#panel = document.getElementById('ask-panel')
     this.#pinned = !!window.initAskPanelPinned
     if (!this.#panel) return
-    this.#textarea = this.#panel.querySelector('.ask-popup__input')
-    this.#label = this.#panel.querySelector('.ask-popup__label')
-    // The target row is built FIRST so it lands left of the attachment chips: what
+    // The composer is the SOCKET, and it comes first: the chips are a view of the
+    // message it holds, so they need it to read from.
+    this.#composer = composer || new ComposerMount(this.#panel.querySelector('.ask-popup__input'), {
+      mentionService: this.#mentionService,
+      commandService: this.#commandService,
+      macroCatalog: (ws && /** @type {any} */ (ws).macroCatalog) || null,
+    })
+    // The hint row takes the footer's left edge, so it is built FIRST — it
+    // inserts at the front, and both chip rows insert before Send.
+    this.#hints = new ComposerHints(this.#panel.querySelector('.ask-popup__footer'))
+    // The target row is built next so it lands left of the attachment chips: what
     // the message acts on, then what it drags along. View-only — the editor owns
     // the selection it draws.
     this.#targetChips = new TargetChips(this.#panel.querySelector('.ask-popup__footer'))
-    // The attachment model comes next: the `@` provider's accept-sink writes into
-    // it, so it must exist before the picker can offer anything. It also takes the
-    // composer, since the `@Title` tokens live there and the chips are a VIEW of
-    // them, plus the gate through which it edits that text.
+    // The attachment chips come next: the `@` provider's accept-sink writes
+    // through them, so they must exist before the picker can offer anything.
+    // They take the composer whole — an attachment's element and its `@Title`
+    // token both live in the draft, and the chips are a VIEW of the pair.
     this.#attachments = new ComposerAttachments(
-      this.#panel.querySelector('.ask-popup__footer'),
-      this.#textarea,
-      (edit) => this.#applyOwnEdit(edit),
+      this.#panel.querySelector('.ask-popup__footer'), this.#composer,
     )
-    // ONE picker, two triggers: `/` enumerates the boot-shipped command list, `@`
-    // round-trips the library. The popover owns the keyboard model, each provider
-    // its own trigger, and the HOST the surface.
-    if (this.#textarea) {
-      const providers = []
-      if (this.#commandService) providers.push(new SlashCommandProvider(this.#commandService))
-      if (this.#mentionService) {
-        providers.push(new MentionProvider(this.#mentionService, (c) => this.#attachments?.add(c)))
-      }
-      if (providers.length) {
-        this.#hintPopover = new TriggerPopover(
-          new TextareaHost(this.#textarea), providers, new PanelPlacement(),
-        )
-      }
-    }
+    this.#wireComposer()
     this.#wireDom()
     this.#wirePinToggle()
     this.#wireGlobalHotkey()
     this.#wireAiEvents()
     // The workspace republishes only the active tab and synthesizes on
-    // tab-switch, so the label refreshes on caret move, focus change AND tab
-    // change.
+    // tab-switch, so the target chip refreshes on caret move, focus change AND
+    // tab change.
     this.#ws.onSelectionUpdate((ctx) => this.#onSelectionUpdate(ctx))
+    // INVARIANT: whenever the panel is VISIBLE, the draft is MOUNTED. A pinned
+    // panel is visible from the server-rendered `is-open` class before open()
+    // ever runs — mount now so the socket is never empty. Not a jump-in, so it
+    // must not touch #focusReturn/#lastContext or steal focus.
+    if (this.#panel.classList.contains('is-open')) this.#openComposer()
+  }
+
+  /** Brings the draft into being and republishes what the footer says about it.
+   *  Idempotent, and the ONLY way the panel opens a composer: the hints are
+   *  derived from the mounted lens's spec, so they cannot be drawn before there
+   *  is a lens to ask, and no call site may forget to ask. */
+  #openComposer() {
+    if (!this.#composer) return
+    this.#composer.open()
+    if (this.#hints) this.#hints.show(this.#composer.capabilities())
   }
 
   /** Opens the Ask box: toggle-out if it already has focus, else pull the focus
-   *  coordinate for jump-out, show, seed the label and focus the textarea. Focus
-   *  and pin are independent axes. */
+   *  coordinate for jump-out, show, seed the target chip and focus the draft.
+   *  Focus and pin are independent axes. */
   open() {
-    if (!this.#panel || !this.#textarea) return
-    if (this.#panel.classList.contains('is-open') && document.activeElement === this.#textarea) {
+    if (!this.#panel || !this.#composer) return
+    if (this.#panel.classList.contains('is-open') && this.#composer.hasFocus()) {
       this.close()
       return
     }
+    // The draft is brought into being on the first open and kept across closes:
+    // a message half-written when the panel was dismissed is still being written.
+    this.#openComposer()
     // Jump IN: pull where focus was so jump-out restores it exactly. Must run
-    // before the textarea steals focus below.
+    // before the composer steals focus below.
     this.#focusReturn = this.#ws.getSelectionContext()
-    // Seed the send context so an immediate send, before the first debounced label
-    // render, still acts on what is shown.
+    // Seed the send context so an immediate send, before the first debounced
+    // repaint, still acts on what is shown.
     this.#lastContext = this.#focusReturn
     this.#panel.classList.add('is-open')
     // Paint what we already know before the debounced pull confirms it: the target
     // chip must not arrive 100ms after the panel it belongs to.
     this.#renderSubject()
     this.#refreshLabel()
-    const ta = this.#textarea
-    setTimeout(() => ta.focus(), 50)
+    const composer = this.#composer
+    setTimeout(() => composer.focus(), 50)
   }
 
   /** Jumps back to the editor, hiding the panel if unpinned and restoring the
@@ -150,7 +165,8 @@ export class AskPanel {
 
   /** Focus-agnostic toggle: if the box has focus, jump back out; otherwise in. */
   toggle() {
-    if (this.#panel && this.#panel.classList.contains('is-open') && document.activeElement === this.#textarea) {
+    if (this.#panel && this.#panel.classList.contains('is-open') &&
+        this.#composer && this.#composer.hasFocus()) {
       this.close()
     } else {
       this.open()
@@ -158,83 +174,122 @@ export class AskPanel {
   }
 
   /** Run an explain job over the active editor's CURRENT selection context.
-   *  Explain is caret-contextual, so "what is at the caret now" IS the target and
-   *  no panel label is involved. The editor owns the markdown abort. */
+   *  Explain is caret-contextual, so "what is at the caret now" IS the target
+   *  and no target chip is involved. The editor owns the markdown abort. */
   explainActive() {
     const ed = this.#activeEditor()
     if (ed) ed.askAi({ type: 'explain', context: ed.getSelectionContext() })
   }
+
+  /** @returns {ComposerMount|null} the draft socket this panel writes in */
+  get composer() { return this.#composer }
 
   /** @returns {any} the live active editor, or null */
   #activeEditor() {
     return (this.#ws.activeTab && this.#ws.activeTab.editor) || null
   }
 
-  /** Binds send / close / Enter / Escape onto the structural #ask-panel. */
-  #wireDom() {
-    const panel = /** @type {HTMLElement} */ (this.#panel)
-    const textarea = /** @type {HTMLTextAreaElement} */ (this.#textarea)
-    const sendBtn = panel.querySelector('.ask-popup__send')
-    const closeBtn = panel.querySelector('.ask-popup__close')
-
-    if (sendBtn) sendBtn.addEventListener('click', () => this.#send())
-    if (closeBtn) closeBtn.addEventListener('click', () => this.#dismiss())
-
-    textarea.addEventListener('keydown', (e) => {
-      // ATOMIC TOKEN DELETION. Backspace at the right edge of an accepted `@Title`
-      // takes the WHOLE token and its chip, which makes the half-broken
-      // `@Auth Desig` state unreachable. Anywhere else it falls straight through.
-      if (e.key === 'Backspace' && !e.ctrlKey && !e.metaKey && !e.altKey && this.#detachTokenAtCaret()) {
-        e.preventDefault()
-        return
-      }
-      // Ctrl+Shift+A (jump back out) is the global hotkey; only Enter/Escape are box-local.
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.#send() }
-      if (e.key === 'Escape') { e.preventDefault(); this.#dismiss() }
+  /**
+   * Takes up the composer's three streams.
+   *
+   * SUBMIT is the composer's gesture and the panel's decision: the lens says the
+   * message is finished, and everything about what that COSTS — command or ask,
+   * which editor receives it, what clears — stays here.
+   *
+   * LIVE RECONCILIATION: the chips are a VIEW of the `@Title` tokens, so every
+   * edit redraws them — reconciling only at send let the UI claim "attached"
+   * right up until it silently was not.
+   */
+  #wireComposer() {
+    const composer = /** @type {ComposerMount} */ (this.#composer)
+    composer.onSubmit(() => this.#send())
+    composer.onMention((c) => {
+      if (this.#attachments) this.#attachments.add(c)
+      this.#markMentions()
     })
-
-    // LIVE RECONCILIATION: the chips are a VIEW of the `@Title` tokens, so every
-    // edit path redraws them — reconciling only at send let the UI claim
-    // "attached" right up until it silently was not. The HEADER is derived from
-    // the same text on the same event, or a label set once when the panel opened
-    // would go on saying "Ask About …" over a `/btw` already typed.
-    textarea.addEventListener('input', () => {
+    composer.onChanged(() => {
       this.#reconcileChips()
       this.#renderSubject()
     })
+    // A token and its element are ONE object, so the draft's ask to detach is
+    // answered exactly as the chip's ✕ is.
+    composer.onDetachRequest((title) => this.#detach(title))
+    composer.onClearRequest(() => this.#clearDraft())
   }
 
-  /** Re-derives the chips from the message as written. */
+  /** Detaches the document named `title` — the ✕ path, reached from the token
+   *  instead of the chip. Titles are how a token names its document, so where
+   *  two attachments share one the first is detached; the two are indis-
+   *  tinguishable to whoever clicked. @param {string} title */
+  #detach(title) {
+    if (!this.#attachments) return
+    const hit = this.#attachments.manifest().find((a) => a.title === title)
+    if (hit) this.#attachments.remove(hit.uri)
+  }
+
+  /** Empties the message being written: a fresh draft, its attachments gone with
+   *  it, and the caret back in it. Clearing is not dismissing — the panel stays
+   *  open and the target chip, which describes the editor rather than the
+   *  message, stays as it is. */
+  #clearDraft() {
+    if (this.#composer) {
+      this.#composer.reset()
+      this.#composer.focus()
+    }
+    this.#reconcileChips()
+  }
+
+  /** Binds send / Escape onto the structural #ask-panel. There is no ✕ button —
+   *  the panel has no header — so #dismiss is reached only via Escape and the
+   *  View-menu pin toggle (#wirePinToggle). Escape is bound at the panel and NOT
+   *  claimed by the composer mount, so an open picker — which stops the event at
+   *  the surface — still gets first refusal on it. */
+  #wireDom() {
+    const panel = /** @type {HTMLElement} */ (this.#panel)
+    const sendBtn = panel.querySelector('.ask-popup__send')
+
+    if (sendBtn) sendBtn.addEventListener('click', () => this.#send())
+
+    panel.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      this.#dismiss()
+    })
+  }
+
+  /** Re-derives the chips from the message as written, and the marks in the
+   *  message from the chips — one derivation, in that order, because a chip is
+   *  what makes a `@Title` a mention rather than words that begin with an @. */
   #reconcileChips() {
-    if (this.#textarea && this.#attachments) this.#attachments.reconcile(this.#textarea.value)
+    if (this.#attachments) this.#attachments.reconcile(this.#composerText())
+    this.#markMentions()
   }
 
-  /** Deletes the whole attachment token the caret sits at the right edge of. A
-   *  SELECTION deletes itself — Backspace over one is not a token gesture.
-   *  @returns {boolean} whether the keypress was consumed */
-  #detachTokenAtCaret() {
-    const textarea = this.#textarea
-    if (!textarea || !this.#attachments) return false
-    if (textarea.selectionStart !== textarea.selectionEnd) return false
-    return this.#attachments.detachAt(textarea.selectionStart)
+  /** Tells the draft which titles are attached, so it marks their tokens. Which
+   *  ones those are is the chips' reading of the draft, so the panel is what
+   *  says this — the lens holds no view of what a message drags along. */
+  #markMentions() {
+    if (this.#composer && this.#attachments) {
+      this.#composer.setMentionTitles(this.#attachments.titles())
+    }
   }
 
-  /** Performs a programmatic edit of the composer text as OUR write: the picker
-   *  ignores the `input` it fires, so deleting a token neither reopens the picker
-   *  on it nor disturbs the abandonment record. One notion of "our own edit".
-   *  @param {() => void} edit */
-  #applyOwnEdit(edit) {
-    if (this.#hintPopover) this.#hintPopover.applyOwnEdit(edit)
-    else edit()
-  }
+  /** @returns {string} the message as written ('' before the first open) */
+  #composerText() { return this.#composer ? this.#composer.read() : '' }
 
   /** Reflects the persisted View-menu toggle onto the panel's open state. */
   #wirePinToggle() {
     document.addEventListener('sieve:ask-panel-toggled', (e) => {
       this.#pinned = /** @type {CustomEvent} */ (e).detail
       if (!this.#panel) return
-      if (this.#pinned) this.#panel.classList.add('is-open')
-      else if (document.activeElement !== this.#textarea) this.#panel.classList.remove('is-open')
+      if (this.#pinned) {
+        this.#panel.classList.add('is-open')
+        // Pinning ON makes the panel visible without a jump-in: mount the draft
+        // so the socket is never empty, without stealing focus.
+        this.#openComposer()
+      } else if (!this.#composer || !this.#composer.hasFocus()) {
+        this.#panel.classList.remove('is-open')
+      }
     })
   }
 
@@ -261,21 +316,32 @@ export class AskPanel {
     document.addEventListener('sieve:ai-explain', () => this.explainActive())
   }
 
-  /** SEND: hand the question plus the context the panel LAST RENDERED to the ONE
-   *  editor seam, which owns everything doc-facing. Passing the shown context,
-   *  never a live re-read, is what makes send act on what the label described. */
+  /**
+   * SEND: hand the question plus the context the panel LAST RENDERED to the ONE
+   * editor seam, which owns everything doc-facing. Passing the shown context,
+   * never a live re-read, is what makes send act on what the target chip showed.
+   *
+   * THE HARVEST IS TAKEN ONCE, ahead of the branch, and both paths read the same
+   * draft: a message that resolves to a command is the same message either way,
+   * and one that does not travels as the LIST OF BLOCKS it was written as —
+   * attachments included, since they are blocks of it.
+   */
   #send() {
-    if (!this.#textarea) return
-    const val = this.#textarea.value.trim()
+    if (!this.#composer) return
+    const val = this.#composer.read().trim()
     if (!val) return
 
-    // SEND-TIME RECONCILIATION: an attachment whose `@Title` token the user
-    // deleted is dropped here, because deleting the text is a legitimate way to
-    // detach. ONE call site ahead of the branch, so the two send paths cannot
-    // reconcile differently.
-    const attachments = this.#attachments ? this.#attachments.reconcile(this.#textarea.value) : []
+    // The draft is SETTLED first: an attachment whose `@Title` token the user
+    // deleted leaves it here, because deleting the text is a legitimate way to
+    // detach. ONE call site ahead of the harvest, so the two send paths cannot
+    // settle differently.
+    const attachments = this.#attachments ? this.#attachments.commit() : []
+    const body = this.#composer.harvest()
 
-    if (val.startsWith('/')) {
+    // A message that IS one `/`-prefixed line is a command; anything richer is an
+    // ask, whatever it starts with. The dispatched text is the message's own,
+    // because a command's arguments are text and never a block list.
+    if (AskPanel.#isCommandLine(body)) {
       const cs = this.#commands()
       if (cs) {
         const resolved = cs.resolve(val)
@@ -298,26 +364,43 @@ export class AskPanel {
     const ed = this.#activeEditor()
     if (!ed) return
     const context = this.#lastContext || ed.getSelectionContext()
-    ed.askAi({ type: 'ask', question: val, context, attachments })
+    // NO separate attachments: the harvested list already carries them as the
+    // reference elements they are, and a second copy would arrive twice.
+    ed.askAi({ type: 'ask', question: body, context })
     this.#clearComposer()
   }
 
-  /** Resets the composer after a send. The picker's abandonment record is keyed to
-   *  an index in text that no longer exists, and outliving the send would keep a
-   *  document created mid-session unfindable. */
+  /**
+   * Is this harvest a command line — one prose element that opens with a slash?
+   * A message with structure in it is an ask however it starts, because a
+   * command's arguments are one line of text and there is nowhere for a second
+   * block to go. References are not counted: they are the fold's other slots,
+   * and a command carries its attachments as a field of its own.
+   * @param {ReadonlyArray<import('../renderers/question-list.js').QuestionElement>} harvest
+   * @returns {boolean}
+   */
+  static #isCommandLine(harvest) {
+    const body = harvest.filter((el) => el.kind !== 'reference')
+    if (body.length !== 1 || body[0].kind !== 'prose') return false
+    return String((body[0].attrs && body[0].attrs.content) || '').startsWith('/')
+  }
+
+  /** Retires the draft after a send: a new container, a new lens, and no undo
+   *  history reaching back into a message already sent. The picker's abandonment
+   *  record dies with the lens, so a document created mid-session is findable
+   *  again on the next message. */
   #clearComposer() {
-    if (this.#textarea) this.#textarea.value = ''
-    if (this.#attachments) this.#attachments.clear()
-    if (this.#hintPopover) this.#hintPopover.reset()
+    if (this.#composer) this.#composer.reset()
+    this.#reconcileChips()
     if (this.#panel && !this.#pinned) this.#panel.classList.remove('is-open')
     this.#focusReturn = null
-    // The header is a view of the text, and the text is gone. The target chip
-    // stays — the selection outlives the message.
+    // The target chip stays — the selection outlives the message.
     this.#renderSubject()
   }
 
   /**
-   * On a meaningful selection change, re-render the label when the panel is open.
+   * On a meaningful selection change, re-render the target chip when the panel
+   * is open.
    * @param {import('../lens/document-editor/selection-model.js').SelectionContext|null} ctx
    */
   #onSelectionUpdate(ctx) {
@@ -330,7 +413,7 @@ export class AskPanel {
    * #lastContext, so #send acts on exactly the context the panel is describing.
    */
   #refreshLabel() {
-    if (!this.#panel || !this.#label) return
+    if (!this.#panel) return
     if (!this.#panel.classList.contains('is-open')) return
     if (this.#labelTimeout) clearTimeout(this.#labelTimeout)
     this.#labelTimeout = setTimeout(() => {
@@ -340,26 +423,13 @@ export class AskPanel {
   }
 
   /**
-   * Renders the two things the panel says about a send: the HEADER (the SUBJECT)
-   * and the footer's target chip (the CONTEXT that subject will receive).
-   *
-   * Both are DERIVED, never set-and-left. The header is a view of the composer
-   * text, so it names a command the moment the text resolves to one and reverts
-   * the moment that token goes. It swaps only on an EXACT match, or it would
-   * flicker through `/b`, `/bt` on the way to `/btw`.
-   *
-   * The target chip is drawn from #lastContext — the context a send would carry —
-   * so what is on screen and what would be sent cannot disagree.
+   * Renders the footer's target chip — what #lastContext, and so a send, would
+   * act on — and points the block-freshness watch at its container. There is no
+   * header to name a command in: the panel has none, so a message that resolves
+   * to one is named only by the command dispatch itself at send.
    */
   #renderSubject() {
-    if (!this.#panel || !this.#label) return
-    const cmd = this.#activeCommand()
-    const target = this.#lastContext && this.#lastContext.target
-    if (cmd) {
-      this.#label.textContent = '/' + cmd.name
-    } else if (target) {
-      this.#label.textContent = target.label === 'Follow-up' ? 'Ask Follow-up' : 'Ask About ' + target.label
-    }
+    if (!this.#panel) return
     if (this.#targetChips) this.#targetChips.show(this.#lastContext)
     this.#watchBlocks(this.#lastContext ? this.#lastContext.docUuid : '')
   }
@@ -389,17 +459,6 @@ export class AskPanel {
     }
     provider.subscribe(listener)
     this.#unwatchBlocks = () => provider.unsubscribe(listener)
-  }
-
-  /**
-   * The KNOWN command the composer names right now, or null. Resolution is the
-   * CommandService's, so "known" means exactly what dispatch means by it.
-   * @returns {import('./command-service.js').CommandDescriptor|null}
-   */
-  #activeCommand() {
-    const cs = this.#commands()
-    const resolved = cs && this.#textarea ? cs.resolve(this.#textarea.value) : null
-    return resolved ? resolved.cmd : null
   }
 
   /** @returns {import('./command-service.js').CommandService|null} the injected service, or the workspace's */

@@ -15,6 +15,7 @@ import {
 } from '../src/static/shell/trigger-providers.js'
 import { TriggerHost } from '../src/static/shell/trigger-host.js'
 import { ContractViolation } from '../src/static/contract/sieve-block.js'
+import { LensCapability } from '../src/static/contract/lens-capabilities.js'
 
 const KINDS = [
   { kind: 'code', label: 'Code', description: 'Source, syntax-highlighted', icon: '<svg id="code-icon"></svg>', defaults: {} },
@@ -25,7 +26,19 @@ const KINDS = [
 
 /** The verb entry the workspace contributes, as an ActionMacro. */
 function tableMacro(action = () => {}) {
-  return new ActionMacro({ label: 'Table', name: 'table', description: '3×3 with a header row', action })
+  return new ActionMacro({
+    label: 'Table', name: 'table', description: '3×3 with a header row',
+    requires: LensCapability.MARKDOWN, action,
+  })
+}
+
+/** The Fence preset's shape (#118 bonus): an ActionMacro whose action reads the
+ *  token's argument tail — `{fence:go` — as the language. */
+function fenceMacro(action = () => {}) {
+  return new ActionMacro({
+    label: 'Fence', name: 'fence', description: 'A fenced code block',
+    requires: LensCapability.MARKDOWN, action,
+  })
 }
 
 /** A lister handing out fresh entries, as the catalog's does. */
@@ -134,6 +147,29 @@ describe('BlockInsertProvider — search', () => {
   it('answers synchronously — the vocabulary is local', () => {
     expect(Array.isArray(provider().search('co'))).toBe(true)
   })
+
+  // THE ARGUMENT SEPARATOR (#118 bonus): `{fence:go` is one token under the
+  // scanner's own default rules (`:` is not whitespace, so acceptsPrefix needs
+  // no override), and matching stays HEAD-ONLY — the argument tail plays no
+  // part in finding the entry, only in what it is handed at accept().
+  describe('the `:` argument separator — matching stops at the head', () => {
+    it('matches the exact head, ignoring everything past the separator', () => {
+      expect(provider([fenceMacro()]).search('fence:go').map((m) => m.name)).toEqual(['fence'])
+    })
+
+    it('matches an UNAMBIGUOUS PARTIAL head exactly as an ordinary prefix would', () => {
+      expect(provider([fenceMacro()]).search('fen:go').map((m) => m.name)).toEqual(['fence'])
+    })
+
+    it('matches down to a single unambiguous letter — the separator changes nothing about matching', () => {
+      expect(provider([fenceMacro()]).search('f:go').map((m) => m.name)).toEqual(['fence'])
+    })
+
+    it('an EMPTY head before the separator lists everything, same as a bare `{`', () => {
+      expect(provider([fenceMacro()]).search(':go').map((m) => m.name).sort())
+        .toEqual(['code', 'diagram', 'fence', 'log', 'web-clip'].sort())
+    })
+  })
 })
 
 describe('BlockInsertProvider — acceptance RUNS THE ENTRY', () => {
@@ -192,11 +228,63 @@ describe('BlockInsertProvider — acceptance RUNS THE ENTRY', () => {
     const token = Object.freeze({ provider: p, start: 0, end: 4, prefix: 'tab' })
     expect(() => p.accept(p.search('tab')[0], token, new TextOnlyHost())).toThrow(ContractViolation)
   })
+
+  // THE TOKEN'S ARGUMENT TAIL (#118 bonus) — read off the LIVE token at accept
+  // time, not off the candidate that matched it, so a partial-head match still
+  // carries the full typed argument.
+  describe('the argument tail travels to run()', () => {
+    it('carries the tail after `:`, even reached via a PARTIAL head match', () => {
+      const host = new RecordingDocumentHost()
+      const action = vi.fn()
+      const p = provider([fenceMacro(action)])
+      const item = p.search('fen:go')[0]
+      const token = Object.freeze({ provider: p, start: 0, end: 7, prefix: 'fen:go' })
+
+      p.accept(item, token, /** @type {any} */ (host))
+
+      expect(action).toHaveBeenCalledWith('go')
+    })
+
+    it('is undefined when the token carries no separator at all', () => {
+      const host = new RecordingDocumentHost()
+      const action = vi.fn()
+      const p = provider([fenceMacro(action)])
+      const item = p.search('fence')[0]
+      const token = Object.freeze({ provider: p, start: 0, end: 6, prefix: 'fence' })
+
+      p.accept(item, token, /** @type {any} */ (host))
+
+      expect(action).toHaveBeenCalledWith(undefined)
+    })
+
+    it('is an empty string when the separator was typed with nothing after it', () => {
+      const host = new RecordingDocumentHost()
+      const action = vi.fn()
+      const p = provider([fenceMacro(action)])
+      const item = p.search('fence:')[0]
+      const token = Object.freeze({ provider: p, start: 0, end: 7, prefix: 'fence:' })
+
+      p.accept(item, token, /** @type {any} */ (host))
+
+      expect(action).toHaveBeenCalledWith('')
+    })
+
+    it('is ignored by a BlockMacro kind entry — a kind takes no argument, and nothing breaks carrying one anyway', () => {
+      const host = new RecordingDocumentHost()
+      const p = provider()
+      const item = p.search('web')[0]
+      const token = Object.freeze({ provider: p, start: 0, end: 8, prefix: 'web:clip' })
+
+      p.accept(item, token, /** @type {any} */ (host))
+
+      expect(host.created).toEqual([{ kind: 'web-clip', attrs: { mode: 'article' }, token }])
+    })
+  })
 })
 
 describe('Macro — the entry contract', () => {
   it('is abstract: a bare Macro cannot be run', () => {
-    expect(() => new Macro({ label: 'Nothing' }).run(/** @type {any} */ (null), /** @type {any} */ (null)))
+    expect(() => new Macro({ label: 'Nothing', requires: LensCapability.BLOCKS }).run(/** @type {any} */ (null), /** @type {any} */ (null)))
       .toThrow(ContractViolation)
   })
 
@@ -205,11 +293,12 @@ describe('Macro — the entry contract', () => {
   })
 
   it('answers to its label when it declares no second name', () => {
-    expect(new Macro({ label: 'Table' }).name).toBe('Table')
+    expect(new Macro({ label: 'Table', requires: LensCapability.MARKDOWN }).name).toBe('Table')
   })
 
   it('refuses an ActionMacro with nothing to run', () => {
-    expect(() => new ActionMacro(/** @type {any} */ ({ label: 'Table' }))).toThrow(ContractViolation)
+    expect(() => new ActionMacro(/** @type {any} */ ({ label: 'Table', requires: LensCapability.MARKDOWN })))
+      .toThrow(ContractViolation)
   })
 })
 

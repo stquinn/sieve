@@ -448,3 +448,11 @@ The ancestor of all four is `smart-link` itself: introduced 2026-05-02 (`e391458
 **Why deferred:** it is not a rendering gap but a model one, and it reopens a settled question — an answered exchange is a RECORD, so editing its question after the answer exists makes the pair incoherent. The coherent version is probably "compose a new turn seeded from this one" rather than mutation, which is chat-shaped work (#102).
 
 **Retires when:** either an element-grained mutation exists and the record/edit question is answered for an answered exchange, or the gesture is deliberately re-expressed as a new turn and this entry closes as won't-do.
+
+## S-B: headerless tables serialize as raw HTML (vendored tiptap-markdown fallback)
+
+**What:** `tiptap-markdown`'s `isMarkdownSerializable` requires an all-`tableHeader` first row; a headerless table falls back to a raw live-DOM HTML dump (data-ids, classes, inline styles included), which the record renders as escaped tags. The in-app mint paths are closed (#118: the table preset always creates a header; the context menu's only header verb is a conditional "Add Header Row" — the OFF direction was removed because markdown storage cannot hold a headerless GFM table). The REMAINING reachable path is a headerless table arriving via raw HTML paste and going unrepaired.
+
+**Why deferred:** the fallback logic lives inside `vendor/tiptap.js` — hardening it (serialize headerless as an empty-header pipe table) needs either a `bundle:tiptap` export change or duplicating the vendored fallback logic app-side. Bundle-level decision; the reported bug's path is fully closed without it. Two candidate approaches recorded in the #118 workspace report ("Task 3c fix 2 — headerless tables").
+
+**Retires when:** the bundle exposes (or the app overrides) table serialization such that a headerless table emits `| | |`-header pipe markdown instead of HTML — or an HTML-paste normalization step stamps a header row at the door.

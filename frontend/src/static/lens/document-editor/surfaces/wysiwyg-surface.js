@@ -19,11 +19,15 @@ import { ProseGroup, proseBlockNodes } from './prose-group.js'
 import { copyImageToClipboard } from '../../../ui/copy-image.js'
 import { BlockChrome, getBlockSelectionRange } from '../block-chrome.js'
 import { AiTargetDecoration } from './ai-target-decoration.js'
+import { MentionDecorations } from './mention-decoration.js'
+import { FlatText } from './flat-text.js'
 import { Search, SelectionHighlight, HighlightMark, AiShortcuts } from '../../extensions.js'
 import { policyEnterKeydown, buildInteractionPolicyExtension } from '../interaction-policy.js'
 import { TriggerPopover } from '../../../shell/trigger-popover.js'
-import { ActionMacro, BlockInsertProvider, MentionProvider } from '../../../shell/trigger-providers.js'
-import { ProseMirrorHost, CaretPlacement } from '../../../shell/trigger-host.js'
+import {
+  ActionMacro, BlockInsertProvider, MentionProvider, SlashCommandProvider,
+} from '../../../shell/trigger-providers.js'
+import { ProseMirrorHost, BlockMakingProseMirrorHost, CaretPlacement } from '../../../shell/trigger-host.js'
 import {
   getSieveNodes, getSieveBlockLabel, serializeNode, sieveBlockAttrs,
   sieveBlockEntries, rendererFor,
@@ -31,6 +35,7 @@ import {
 import { BlockSelection } from '../block-selection.js'
 import { getBlockKind, isNativeProseNodeName } from '../../../renderers/block-kinds.js'
 import { SieveBlock } from '../../../contract/sieve-block.js'
+import { LensCapability } from '../../../contract/lens-capabilities.js'
 import { buildBlocksHTML, proseContent } from './block-render.js'
 import { seedBaseline, computeBlockSync, computeOrderOp } from '../block-sync.js'
 import { docPosForBlockIndex, blockIndexAfter } from './block-position.js'
@@ -110,6 +115,10 @@ export class WysiwygSurface extends AbstractSurface {
 
   /** @type {any} the live TipTap Editor instance */
   #editorPane = null
+
+  /** @type {MentionDecorations|null} this mount's `@Title` marks — one instance
+   *  per surface, so two live editors never address each other's state */
+  #mentions = null
 
   /** @type {Record<string, string>|null} per-mount block-sync cache
    *  ({ [blockId]: serializedContent }) the thin observer diffs against */
@@ -255,6 +264,8 @@ export class WysiwygSurface extends AbstractSurface {
     var initialized = false
     this.#rootEl = rootEl
     this.#painted = false
+    var mentions = new MentionDecorations(T)
+    this.#mentions = mentions
 
     // The doc top level holds NATIVE block nodes and structured sieve blocks as
     // siblings: a prose block IS one native top-level node, not a custom
@@ -270,9 +281,10 @@ export class WysiwygSurface extends AbstractSurface {
         // trailingNode:true — caret contract clause 1 (no dead-ends). A
         // Gapcursor-only bet fails for non-atom read-only containers.
         T.StarterKit.configure({ document: false, link: LINK_OPTIONS, codeBlock: false, trailingNode: true, history: { depth: 10000, newGroupDelay: 500 } }),
-        T.Placeholder.configure({ placeholder: function (p) { return p.editor.isEmpty ? 'Start writing…' : '' } }),
+        T.Placeholder.configure({ placeholder: function (p) { return p.editor.isEmpty ? self.#host.placeholder : '' } }),
         BlockChrome,
         AiTargetDecoration,
+        mentions.extension,
         T.Table.configure({ resizable: false }),
         T.TableRow,
         T.TableHeader,
@@ -483,6 +495,14 @@ export class WysiwygSurface extends AbstractSurface {
         handlePaste: function (_view, event) { return self.#handleSmartPaste(event) },
         handleDrop: function (_view, event, slice, moved) { return self.#handleSmartDrop(event, slice, moved) },
         handleKeyDown: function (view, event) {
+          // THE MOUNT'S OWN CLAIMS, ahead of everything: pre-core here, so a
+          // claimed Enter is settled before the interaction policy and before
+          // TipTap's core keymap. The picker still wins over both — it listens
+          // in the capture phase on this same element.
+          if (self.#host.claimKey(event)) {
+            event.preventDefault()
+            return true
+          }
           if (event.key === 's' && window.isMod(event)) {
             event.preventDefault()
             self.#host.flushSave()
@@ -535,7 +555,10 @@ export class WysiwygSurface extends AbstractSurface {
     // The mounted container's PROVIDER rides the same stamp, and is the whole of
     // what a renderer can reach outward.
     editorPane.blockProvider = this.#host.provider || null
-    window.__tiptap = editorPane
+    // The global names THE DOCUMENT pane (X-C debt: block-chrome and the app
+    // menu read it). A mount that holds no blocks is not a document, so it
+    // leaves the pointer where it is rather than aiming the menu at a draft.
+    if (this.#claimsDocumentGlobals()) window.__tiptap = editorPane
 
     // The document is NOT painted here: the surface mounts holding the schema's
     // empty paragraph, and the container's bootstrap cue paints it — the same
@@ -553,8 +576,10 @@ export class WysiwygSurface extends AbstractSurface {
     document.addEventListener('selectionchange', this.#onDocSelectionChange)
 
     // #htmx-editor is the PERSISTENT scroll ancestor; rootEl never scrolls
-    // itself. Absent in a bare mount, where the surface simply never reports.
-    this.#scroller = document.getElementById('htmx-editor')
+    // itself. Found by ANCESTRY, so a surface mounted elsewhere on the page
+    // reports no scroll rather than another mount's. Absent in a bare mount,
+    // where the surface simply never reports.
+    this.#scroller = rootEl.closest ? rootEl.closest('#htmx-editor') : null
     if (this.#scroller) {
       this.#onScroll = function () {
         if (self.#scrollTimer) clearTimeout(self.#scrollTimer)
@@ -589,8 +614,69 @@ export class WysiwygSurface extends AbstractSurface {
     }
     if (this.#rootEl) this.#rootEl.innerHTML = ''
     this.#rootEl = null
+    this.#mentions = null
     this.#blockContentCache = null
-    window.__tiptap = null
+    if (this.#claimsDocumentGlobals()) window.__tiptap = null
+  }
+
+  /** Whether this mount is the page's DOCUMENT surface, and so the owner of the
+   *  globals the chrome reads. A lens that mints no blocks is not.
+   *  @returns {boolean} */
+  #claimsDocumentGlobals() {
+    const host = /** @type {any} */ (this.#host)
+    const caps = typeof host.getCapabilities === 'function' ? host.getCapabilities() : null
+    return !caps || !!caps[LensCapability.BLOCKS]
+  }
+
+  /**
+   * @override — the doc's text blocks joined by newlines, in document order,
+   * with a hard break reading as a newline of its own. NESTED blocks included: a
+   * list item is text someone wrote, and a token in one is as real as a token in
+   * a paragraph.
+   * @returns {string}
+   */
+  plainText() {
+    const ed = /** @type {any} */ (this.editorPane)
+    return ed ? new FlatText(ed.state.doc).text : ''
+  }
+
+  /**
+   * @override — cuts `[start, end)` out of `plainText()`. Applied back to front
+   * so each deletion leaves the earlier positions valid, and as ONE tracked
+   * transaction, because removing a mention is one undoable step.
+   * @param {number} start @param {number} end
+   */
+  deletePlainRange(start, end) {
+    const ed = /** @type {any} */ (this.editorPane)
+    if (!ed || end <= start) return
+    const tr = ed.state.tr
+    for (const range of new FlatText(ed.state.doc).ranges(start, end).reverse()) {
+      tr.delete(range.from, range.to)
+    }
+    if (tr.docChanged) ed.view.dispatch(tr)
+  }
+
+  /**
+   * @override — marks every `@Title` token of these titles in the surface. A
+   * meta-only transaction, so the draft is neither dirtied nor made undoable by
+   * a change to what it has attached.
+   * @param {ReadonlyArray<string|undefined>} titles
+   */
+  setMentionTitles(titles) {
+    const ed = /** @type {any} */ (this.editorPane)
+    if (ed && ed.view && this.#mentions) this.#mentions.apply(ed.view, titles)
+  }
+
+  /**
+   * @override — the title of the `@Title` token at a DOCUMENT position, read off
+   * the marks this surface is drawing.
+   * @param {number} pos
+   * @returns {string|null}
+   */
+  mentionTitleAt(pos) {
+    const ed = /** @type {any} */ (this.editorPane)
+    if (!ed || !ed.view || !this.#mentions) return null
+    return this.#mentions.titleAt(ed.view, pos)
   }
 
   /**
@@ -626,64 +712,92 @@ export class WysiwygSurface extends AbstractSurface {
 
   /**
    * This surface's own macros: the PM-NATIVE presets, whose acceptance is a
-   * command against the live pane rather than a create on the server. The
-   * declaration is CLASS-LEVEL and the icon is named rather than resolved, so
-   * nothing here depends on when a mount happens.
-   * @type {ReadonlyArray<{label: string, name: string, description: string, icon: string, run: (pane: any) => void}>}
+   * command against the live pane rather than a create on the server. Each
+   * inserts markdown-representable flow, so each requires only `markdown` of the
+   * mount it lands in. The declaration is CLASS-LEVEL and the icon is named
+   * rather than resolved, so nothing here depends on when a mount happens.
+   * @type {ReadonlyArray<{label: string, name: string, description: string, icon: string, requires: string, run: (pane: any, arg?: string) => void}>}
    */
   static #PRESETS = Object.freeze([Object.freeze({
     label: 'Table',
     name: 'table',
     description: '3×3 with a header row',
     icon: 'table',
+    requires: LensCapability.MARKDOWN,
     run: (/** @type {any} */ pane) => { pane.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
   }), Object.freeze({
     label: 'Quote',
     name: 'blockquote',
     description: 'An indented quotation',
     icon: 'blockquote',
+    requires: LensCapability.MARKDOWN,
     run: (/** @type {any} */ pane) => { pane.chain().focus().toggleBlockquote().run() },
   }), Object.freeze({
     label: 'Divider',
     name: 'hr',
     description: 'A horizontal rule',
     icon: 'horizontalRule',
+    requires: LensCapability.MARKDOWN,
     run: (/** @type {any} */ pane) => { pane.chain().focus().setHorizontalRule().run() },
+  }), Object.freeze({
+    label: 'Fence',
+    name: 'fence',
+    description: 'A fenced code block — :lang tags the language, e.g. fence:go',
+    icon: 'code',
+    requires: LensCapability.MARKDOWN,
+    // The trigger's argument tail (`go` from `{fence:go`) IS the language,
+    // passed through verbatim: nothing here validates or guesses it, the same
+    // rule harvest already applies to a hand-typed ```go fence.
+    run: (/** @type {any} */ pane, /** @type {string|undefined} */ arg) => {
+      const language = arg && arg.trim() ? arg.trim() : undefined
+      pane.chain().focus().setCodeBlock(language ? { language } : undefined).run()
+    },
   })])
 
   /**
    * The `{` picker's entries for ONE mount: everything the host's catalog offers,
-   * then this surface's presets bound to `pane`.
+   * then this surface's presets bound to `pane`, keeping only what the mounted
+   * lens supports.
+   *
+   * ONE RULE FOR BOTH HALVES. A catalog entry and a preset alike name the
+   * capability they require, and the lens's published spec answers — so the same
+   * catalog serves every mount and no entry ever names one.
    *
    * COMPOSING IS NOT REGISTERING. The presets are read afresh and minted here, so
    * a second mount produces a second list rather than a longer one.
    * @param {{list: () => import('../../../shell/trigger-providers.js').Macro[]}|null} catalog
    * @param {any} pane  the live TipTap editor a preset acts on
+   * @param {Readonly<Record<string, boolean>>} caps  the mounted lens's published capabilities
    * @returns {import('../../../shell/trigger-providers.js').Macro[]}
    */
-  static macrosFor(catalog, pane) {
+  static macrosFor(catalog, pane, caps) {
     const icons = /** @type {any} */ (window).SieveIcons || {}
     return (catalog ? catalog.list() : []).concat(WysiwygSurface.#PRESETS.map((preset) => new ActionMacro({
       label: preset.label,
       name: preset.name,
       description: preset.description,
       icon: icons[preset.icon] || '',
-      action: () => preset.run(pane),
-    })))
+      requires: preset.requires,
+      action: (/** @type {string|undefined} */ arg) => preset.run(pane, arg),
+    }))).filter((macro) => !!caps[macro.requires])
   }
 
   /**
-   * Wires the picker over the live view, with the triggers a DOCUMENT answers to:
+   * Wires the picker over the live view, with the triggers THIS MOUNT answers
+   * to. Each optional service is registered only when the host carries it: a
+   * missing OPTIONAL service is an affordance the mount lacks, never a mount
+   * failure.
    *
    *   `{` — run a macro: insert a block of a named kind, or drive a capability
    *         the host already has. Always registered: the catalog answers
-   *         locally, so it needs no service.
-   *   `@` — mention a document, which here becomes a reference block. Registered
-   *         only when the host carries a MentionService; a missing OPTIONAL
-   *         service must never be a mount failure.
-   *
-   * `/` is a COMPOSER verb — a slash command runs against the message being
-   * written, and a document has no message.
+   *         locally, so it needs no service. WHICH entries it offers is the
+   *         lens's published capabilities, applied in macrosFor.
+   *   `@` — mention a document, which in a block-capable mount becomes a
+   *         reference block. Needs a MentionService.
+   *   `/` — run a slash command against what is being written. Needs a
+   *         CommandService, and fires only in the container's FIRST block: a
+   *         command OPENS a message rather than punctuating one. A document
+   *         mount is handed no such service and so has no `/` at all.
    */
   #mountTriggerPicker() {
     // Idempotent: a re-mount without an unmount would leave the old picker's
@@ -691,17 +805,24 @@ export class WysiwygSurface extends AbstractSurface {
     if (this.#triggerPicker) { this.#triggerPicker.destroy(); this.#triggerPicker = null }
     const editorPane = this.#editorPane
     if (!editorPane) return
-    const macros = WysiwygSurface.macrosFor(
-      /** @type {any} */ (this.#host).macroCatalog || null, editorPane,
-    )
+    const host = /** @type {any} */ (this.#host)
+    const caps = host.getCapabilities()
+    const macros = WysiwygSurface.macrosFor(host.macroCatalog || null, editorPane, caps)
+    const port = new CaretTriggerPort(editorPane, this.#host, () => this.flushPending())
     /** @type {import('../../../shell/trigger-providers.js').TriggerProvider[]} */
     const providers = [new BlockInsertProvider({ list: () => macros })]
-    const mentions = /** @type {any} */ (this.#host).mentionService
-    if (mentions) providers.push(new MentionProvider(mentions))
-    const port = new CaretTriggerPort(editorPane, this.#host, () => this.flushPending())
-    this.#triggerPicker = new TriggerPopover(
-      new ProseMirrorHost(port), providers, new CaretPlacement(),
-    )
+    if (host.mentionService) {
+      providers.push(new MentionProvider(host.mentionService, (c) => host.onMentionAccepted(c)))
+    }
+    if (host.commandService) {
+      providers.push(new SlashCommandProvider(host.commandService, () => port.caretInFirstBlock()))
+    }
+    // The host CLASS carries the block-making capability, so a provider probing
+    // for it reads the same fact the lens published.
+    const triggerHost = caps[LensCapability.BLOCKS]
+      ? new BlockMakingProseMirrorHost(port)
+      : new ProseMirrorHost(port)
+    this.#triggerPicker = new TriggerPopover(triggerHost, providers, new CaretPlacement())
   }
 
   // Tiptap-bound clipboard/drag I/O, wired at editorProps.handlePaste/handleDrop.
@@ -1423,6 +1544,7 @@ export class WysiwygSurface extends AbstractSurface {
       const node = provider.getBlock(id)
       const held = this.#findNodeById(ed, id)
       if (!node) { if (held) this.#removeBlockNode(id); continue }
+      if (!WysiwygSurface.#isBody(node)) continue
       if (!held) { this.#placeBlock(node, provider.getOrder().indexOf(id)); continue }
       const heldKind = (held.node.attrs && held.node.attrs.kind) || ''
       if (heldKind && heldKind !== node.kind) { this.#replaceBlockNode(id, node); continue }
@@ -1432,7 +1554,7 @@ export class WysiwygSurface extends AbstractSurface {
       if (node.kind === 'prose') { this.#noteServerBlock(id); continue }
       this.#refreshBlockAttrs(id, node.attrs)
     }
-    if (change && change.orderChanged) this.#reconcileOrder(provider.getOrder())
+    if (change && change.orderChanged) this.#reconcileOrder(this.#bodyOrder(provider))
   }
 
   /** Paints the WHOLE container from the model — the bootstrap cue, and a genuine
@@ -1455,17 +1577,43 @@ export class WysiwygSurface extends AbstractSurface {
     }
   }
 
-  /** The container's blocks as the pipeline's typed blocks, in order. The model
-   *  hands out plain frozen data and the pipeline is block-native; this is where
-   *  the two meet.
+  /** The container's BODY blocks as the pipeline's typed blocks, in order. The
+   *  model hands out plain frozen data and the pipeline is block-native; this is
+   *  where the two meet.
    *  @param {any} provider @returns {SieveBlock[]} */
   #blocksFromContainer(provider) {
     const out = []
     for (const id of provider.getOrder()) {
       const n = provider.getBlock(id)
-      if (n) out.push(new SieveBlock(n.kind, Object.assign({}, n.attrs, { id: n.id, kind: n.kind })))
+      if (n && WysiwygSurface.#isBody(n)) {
+        out.push(new SieveBlock(n.kind, Object.assign({}, n.attrs, { id: n.id, kind: n.kind })))
+      }
     }
     return out
+  }
+
+  /** The ids of the container's body blocks, in container order — the order the
+   *  document can actually state, since it holds nothing else.
+   *  @param {any} provider @returns {string[]} */
+  #bodyOrder(provider) {
+    return provider.getOrder().filter((/** @type {string} */ id) =>
+      WysiwygSurface.#isBody(provider.getBlock(id)))
+  }
+
+  /**
+   * Whether a container block is BODY — material a surface paints.
+   *
+   * A reference declaring a `rel` is a QUESTION ELEMENT wearing its role stamp:
+   * it belongs to the question some block IS, not to the text being written, so
+   * no surface paints one and the observer never sees it. A document's own
+   * references carry an empty `rel`, and every other kind is body whatever it
+   * holds.
+   * @param {{kind: string, attrs?: Record<string, any>}|null} node
+   * @returns {boolean}
+   */
+  static #isBody(node) {
+    if (!node) return false
+    return !(node.kind === 'reference' && !!(node.attrs && node.attrs.rel))
   }
 
   /** The first node carrying this id, at any depth, or null.

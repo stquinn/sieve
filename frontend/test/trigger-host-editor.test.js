@@ -28,10 +28,13 @@ import {
   buildInteractionPolicyExtension, policyEnterKeydown, triggersSuppressed, CODE_TEXT_POLICY, DEFAULT_POLICY, policyFor,
 } from '../src/static/lens/document-editor/interaction-policy.js'
 import { CaretTriggerPort } from '../src/static/lens/document-editor/surfaces/caret-trigger-port.js'
-import { ProseMirrorHost, CaretPlacement, TriggerHost, TextareaHost } from '../src/static/shell/trigger-host.js'
+import { ProseMirrorHost, BlockMakingProseMirrorHost, CaretPlacement, TriggerHost } from '../src/static/shell/trigger-host.js'
 import { TriggerPopover } from '../src/static/shell/trigger-popover.js'
-import { ActionMacro, BlockInsertProvider, BlockMacro, MentionProvider } from '../src/static/shell/trigger-providers.js'
+import {
+  ActionMacro, BlockInsertProvider, BlockMacro, MentionProvider, SlashCommandProvider,
+} from '../src/static/shell/trigger-providers.js'
 import { ContractViolation } from '../src/static/contract/sieve-block.js'
+import { LensCapability } from '../src/static/contract/lens-capabilities.js'
 
 // CaretTriggerPort reads TextSelection off the vendor bag (test/setup.js installs
 // it). Assign, never reassign — a reassignment orphans the captured bag.
@@ -120,14 +123,16 @@ function macrosOf(kinds, ...verbs) {
   return { list: () => kinds.map((k) => new BlockMacro(k)).concat(verbs) }
 }
 
-/** Builds the picker over the real view, exactly as WysiwygSurface does. */
-function mountPicker({ host = fakeEditorHost(), flush = vi.fn(), source = sourceOf(), kinds = kindsOf() } = {}) {
+/** Builds the picker over the real view, exactly as WysiwygSurface does — `/`
+ *  included only for a mount handed a command service, scoped to the first
+ *  block. */
+function mountPicker({ host = fakeEditorHost(), flush = vi.fn(), source = sourceOf(), kinds = kindsOf(), commands = null } = {}) {
   const port = new CaretTriggerPort(editor, host, flush)
-  popover = new TriggerPopover(
-    new ProseMirrorHost(port),
-    [new BlockInsertProvider(kinds), new MentionProvider(source, undefined, { debounceMs: 0 })],
-    new CaretPlacement(),
-  )
+  const providers = [new BlockInsertProvider(kinds), new MentionProvider(source, undefined, { debounceMs: 0 })]
+  if (commands) providers.push(new SlashCommandProvider(commands, () => port.caretInFirstBlock()))
+  // A DOCUMENT mount: the block-making host, which is how a provider probing
+  // for `createBlock` learns this mount can hold one.
+  popover = new TriggerPopover(new BlockMakingProseMirrorHost(port), providers, new CaretPlacement())
   return { host, flush, port }
 }
 
@@ -238,6 +243,35 @@ describe('CaretTriggerPort — what a live caret can answer', () => {
     expect(token && { start: token.start, end: token.end, prefix: token.prefix })
       .toEqual({ start: 4, end: 7, prefix: 'au' })
     expect(host.textAfter(7)).toBe(' about it')
+  })
+
+  it('counts a hard break as one character in BOTH the text and the offset', () => {
+    // `see:` ⏎ `@au` — one paragraph, two visual lines. A textContent reading
+    // glues the lines (caret drifts one place per break); the FlatText ruler
+    // makes the break a newline, so the caret agrees with the text AND the
+    // newline is a token boundary — the mention right after a soft break scans.
+    makeEditor({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [
+        { type: 'text', text: 'see:' },
+        { type: 'hardBreak' },
+        { type: 'text', text: '@au' },
+      ] }],
+    })
+    const port = new CaretTriggerPort(editor, fakeEditorHost(), () => {})
+    caretAt(9)   // after "u": 1 + 4 chars + 1 break + 3 chars
+    expect(port.caretText()).toEqual({ text: 'see:\n@au', caret: 8 })
+
+    const host = new ProseMirrorHost(port)
+    const providers = new Map([['@', new MentionProvider(sourceOf())]])
+    const token = host.tokenAtCaret(providers)
+    expect(token && { start: token.start, end: token.end, prefix: token.prefix })
+      .toEqual({ start: 5, end: 8, prefix: 'au' })
+
+    // Accepting splices the TOKEN, not the break beside it.
+    port.replaceRange(5, 8, '@Auth Design')
+    expect(editor.state.doc.textContent).toBe('see:@Auth Design')
+    expect(editor.state.doc.firstChild.childCount).toBe(3)   // text, break, text survive
   })
 
   it('has nothing to scan without a collapsed caret in a textblock', () => {
@@ -417,7 +451,10 @@ describe('running a verb from `{` in a document', () => {
 
   /** @param {() => void} action */
   function verb(action) {
-    return new ActionMacro({ label: 'Web Clip', name: 'web-clip', description: 'Capture a page', action })
+    return new ActionMacro({
+      label: 'Web Clip', name: 'web-clip', description: 'Capture a page',
+      requires: LensCapability.BLOCKS, action,
+    })
   }
 
   it('deletes the token BEFORE the verb runs, and creates nothing', async () => {
@@ -684,30 +721,6 @@ describe('CaretPlacement — anchored to the caret, flipping when it must', () =
   })
 })
 
-// ── The composer is untouched ───────────────────────────────────────────────
-
-describe('the composer keeps its own meaning of accepting', () => {
-  it('a textarea host still gets `@Title` in the text and a candidate in the sink', () => {
-    document.body.innerHTML = '<div id="ask-panel"><textarea class="ask-popup__input"></textarea></div>'
-    const textarea = /** @type {HTMLTextAreaElement} */ (document.querySelector('.ask-popup__input'))
-    const sink = vi.fn()
-    const provider = new MentionProvider(sourceOf(), sink)
-    const host = new TextareaHost(textarea)
-    textarea.value = 'How does @au handle this?'
-
-    provider.accept(
-      { uri: 'container:9f2b', title: 'Auth Design' },
-      Object.freeze({ provider, start: 9, end: 12, prefix: 'au' }),
-      host,
-    )
-
-    // A textarea has nowhere to put a block, so the chip is the compensation —
-    // unchanged by #38, and the else-branch of the one accept.
-    expect(textarea.value).toBe('How does @Auth Design handle this?')
-    expect(sink).toHaveBeenCalledWith({ uri: 'container:9f2b', title: 'Auth Design' })
-  })
-})
-
 // ── A PM-native preset in a document ────────────────────────────────────────
 
 describe('a preset macro that wraps at the caret', () => {
@@ -715,6 +728,7 @@ describe('a preset macro that wraps at the caret', () => {
     makeEditor(PARA('{quo'))
     const quote = new ActionMacro({
       label: 'Quote', name: 'blockquote', description: 'An indented quotation',
+      requires: LensCapability.MARKDOWN,
       action: () => { editor.chain().focus().toggleBlockquote().run() },
     })
     mountPicker({ kinds: macrosOf([], quote) })
@@ -736,5 +750,114 @@ describe('a preset macro that wraps at the caret', () => {
     const bq = editor.state.doc.content.child(0)
     expect(bq.type.name).toBe('blockquote')
     expect(bq.textContent).toBe('hi')
+  })
+})
+
+// ── A preset macro that reads the token's argument tail (#118 Fence bonus) ──
+
+describe('a preset macro that takes the token\'s argument tail', () => {
+  /** The Fence preset's real shape: an ActionMacro whose action reads its
+   *  argument as the language, exactly as WysiwygSurface's `run` does. */
+  function fencePreset() {
+    return new ActionMacro({
+      label: 'Fence', name: 'fence', description: 'A fenced code block',
+      requires: LensCapability.MARKDOWN,
+      action: (arg) => {
+        const language = arg && arg.trim() ? arg.trim() : undefined
+        editor.chain().focus().setCodeBlock(language ? { language } : undefined).run()
+      },
+    })
+  }
+
+  it('tags the language from an UNAMBIGUOUS PARTIAL head — {fen:go still finds Fence', async () => {
+    makeEditor(PARA('{fen'))
+    mountPicker({ kinds: macrosOf([], fencePreset()) })
+    caretAt(5)
+    type(':go')
+    await settle()
+    expect(isOpen()).toBe(true)
+
+    pressReal('Enter')
+
+    const block = editor.state.doc.content.child(0)
+    expect(block.type.name).toBe('codeBlock')
+    expect(block.attrs.language).toBe('go')
+  })
+
+  it('inserts a BARE fence, caret inside it, when accepted with no separator typed at all', async () => {
+    makeEditor(PARA('{fenc'))
+    mountPicker({ kinds: macrosOf([], fencePreset()) })
+    caretAt(6)
+    type('e')
+    await settle()
+    expect(isOpen()).toBe(true)
+
+    pressReal('Enter')
+
+    const block = editor.state.doc.content.child(0)
+    expect(block.type.name).toBe('codeBlock')
+    expect(block.attrs.language).toBeFalsy()
+
+    // The caret landed INSIDE the fence, not merely beside it.
+    editor.view.dispatch(editor.state.tr.insertText('x'))
+    expect(editor.state.doc.content.child(0).textContent).toBe('x')
+  })
+})
+
+// ── `/` in a document mount: a configured verb, scoped to the first block ────
+
+describe('the `/` picker a mount is configured for (#118)', () => {
+  const COMMANDS = { list: () => [{ name: 'btw', description: 'by the way' }] }
+
+  const TWO_PARAS = {
+    type: 'doc',
+    content: [
+      { type: 'paragraph', content: [{ type: 'text', text: 'first' }] },
+      { type: 'paragraph', content: [{ type: 'text', text: 'second' }] },
+    ],
+  }
+
+  it('never fires for a mount handed NO command service — a document has no `/`', async () => {
+    makeEditor(PARA(''))
+    mountPicker()
+    caretInside('paragraph', 0)
+    type('/')
+    await settle()
+    expect(isOpen()).toBe(false)
+  })
+
+  it('opens at the start of the FIRST block for a mount that was handed one', async () => {
+    makeEditor(PARA(''))
+    mountPicker({ commands: COMMANDS })
+    caretInside('paragraph', 0)
+    type('/bt')
+    await settle()
+    expect(isOpen()).toBe(true)
+    expect(popoverEl().textContent).toContain('/btw')
+  })
+
+  it('stays shut in a LATER block, where the slash starts a line and not a message', async () => {
+    makeEditor(TWO_PARAS)
+    mountPicker({ commands: COMMANDS })
+    caretInside('paragraph', 0)
+    const port = new CaretTriggerPort(editor, fakeEditorHost(), () => {})
+    expect(port.caretInFirstBlock()).toBe(true)
+
+    // The caret's own textblock starts at offset 0 either way — what differs is
+    // WHICH block it is.
+    editor.commands.setTextSelection(editor.state.doc.child(0).nodeSize + 1)
+    expect(port.caretInFirstBlock()).toBe(false)
+    type('/bt')
+    await settle()
+    expect(isOpen()).toBe(false)
+  })
+
+  it('still refuses a slash that is not at the start of its line', async () => {
+    makeEditor(PARA('note'))
+    mountPicker({ commands: COMMANDS })
+    caretInside('paragraph', 4)
+    type('/bt')
+    await settle()
+    expect(isOpen()).toBe(false)
   })
 })

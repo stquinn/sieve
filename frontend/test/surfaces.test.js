@@ -89,7 +89,31 @@ import { computeBlockSync, computeOrderOp } from '../src/static/lens/document-ed
 import { docPosForBlockIndex, blockIndexAfter } from '../src/static/lens/document-editor/surfaces/block-position.js'
 import { caretInRawTextBlock } from '../src/static/lens/document-editor/paste-context.js'
 import { ActionMacro } from '../src/static/shell/trigger-providers.js'
+import { LensCapability } from '../src/static/contract/lens-capabilities.js'
+import { policyEnterKeydown } from '../src/static/lens/document-editor/interaction-policy.js'
 import { schema as fxSchema, build, docWithCaret, docWithCaretAt, docWithRange, docWithNodeSelection } from './helpers/editor-fixture.js'
+// The REAL token rule: the chips pair against the surface's flat text with it,
+// so a test asserting they agree must ask the same question they do.
+import { MentionTokens } from '../src/static/renderers/mention-tokens.js'
+
+// The trigger providers the surface builds are the REAL ones, recorded at
+// construction: which of them a mount registers is what #mountTriggerPicker
+// decides, and the only way to see that decision is to watch the constructions.
+const triggerSpy = vi.hoisted(() => ({ /** @type {any[]} */ slash: [], /** @type {any[]} */ mention: [] }))
+vi.mock('../src/static/shell/trigger-providers.js', async (importOriginal) => {
+  const actual = /** @type {any} */ (await importOriginal())
+  return Object.assign({}, actual, {
+    SlashCommandProvider: class extends actual.SlashCommandProvider {
+      constructor(commands, inScope) { super(commands, inScope); triggerSpy.slash.push({ commands, inScope }) }
+    },
+    MentionProvider: class extends actual.MentionProvider {
+      constructor(source, onAccept, options) {
+        super(source, onAccept, options)
+        triggerSpy.mention.push({ source })
+      }
+    },
+  })
+})
 
 // window.isMod is an index.html global in the app; provide it for keydown tests.
 beforeEach(() => { window.isMod = (e) => !!(e.ctrlKey || e.metaKey) })
@@ -329,9 +353,22 @@ function wyHost(overrides = {}) {
     peekInsertAnchorAt: vi.fn(() => ({ afterBlockId: null, anchor: null })),
     consumeInsertAnchor: vi.fn(),
     onSurfaceEvent: vi.fn(),
+    // The lens's published spec, which the surface reads to compose the `{`
+    // picker. A note mount's answer: everything but `/`, which it is handed no
+    // command service for.
+    getCapabilities: () => NOTE_CAPS,
+    // The base lens claims no key at all; a mount that claims one says so here.
+    claimKey: () => false,
     uuid: 'doc-1',
   }, overrides)
 }
+
+/** What a NOTE mount publishes: a block-capable container, a mention service and
+ *  no command service. The arrangement `macrosFor` must leave untouched. */
+const NOTE_CAPS = Object.freeze({ markdown: true, mentions: true, commands: false, blocks: true })
+
+/** What a COMPOSER mount publishes: a draft mints no blocks, and `/` is its own. */
+const COMPOSER_CAPS = Object.freeze({ markdown: true, mentions: true, commands: true, blocks: false })
 
 /** A host whose container speaks WHOLE-CONTENT only — a prompt has no block tree. */
 function wyPromptHost(overrides = {}) {
@@ -444,6 +481,25 @@ describe('WysiwygSurface.applyContainerChange (placement, undo-sacred)', () => {
     expect(ed.calls.find((c) => c[0] === 'insertContentAt')).toBeUndefined()
   })
 
+  // A reference declaring a `rel` is a QUESTION ELEMENT — the role stamp a
+  // composer gesture mints — and no surface paints one: it belongs to the
+  // question some block IS, not to the text being written. A document's own
+  // references carry an EMPTY `rel`, so they stay body and place like the kinds
+  // above.
+  it('a reference declaring a rel is NOT painted — it is a question element, not body', () => {
+    const ed = fakeEditorOver(fxSchema, [build.p('one', 'b1')])
+    const s = painted(ed)
+    s.applyContainerChange(cue(['att-1'], true), containerOf(['b1', 'att-1'], {
+      'att-1': {
+        id: 'att-1',
+        kind: 'reference',
+        attrs: { id: 'att-1', uri: 'sieve://other', rel: 'attach', cache: { title: 'Auth Design' } },
+      },
+    }))
+    expect(ed.calls.find((c) => c[0] === 'insertContentAt')).toBeUndefined()
+    expect(ed.dispatched.length).toBe(0)
+  })
+
   it('a block whose KIND changed is replaced by id — TRACKED, so a transform is undoable', () => {
     const first = build.sieveCode('blk-1')
     const ed = fakeEditorOver(fxSchema, [first, build.p('second', 'keep-1')])
@@ -554,8 +610,9 @@ function mountBundle(state) {
     Node: { create: (cfg) => cfg },
     Extension: { create: (cfg) => cfg },
     Plugin: function (cfg) { this.cfg = cfg },
+    PluginKey: function (name) { this.name = name; this.getState = () => null },
     DecorationSet: { empty: [], create: () => [] },
-    Decoration: { node: () => ({}) },
+    Decoration: { node: () => ({}), inline: () => ({}) },
     StarterKit: ext, Placeholder: ext, Table: ext, Image: ext, Markdown: ext,
     AiShortcuts: ext, TaskItem: ext,
     TableRow: {}, TableHeader: {}, TableCell: {}, Search: {}, TaskList: {},
@@ -601,18 +658,164 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     vi.mocked(computeOrderOp).mockReturnValue({ op: null, next: null })
   })
 
-  function mountWy() {
+  function mountWy(host = wyHost()) {
     const doc = fxSchema.nodes.doc.create(null, [build.p('one', 'b1')])
     const state = EditorState.create({ schema: fxSchema, doc })
     const { T, editor } = mountBundle(state)
     seedVendor(T) // the surface imports T from the vendor bag (P4.F) — seed the fake bundle
-    const host = wyHost()
     const s = new WysiwygSurface(host)
     const root = document.createElement('div')
     document.body.appendChild(root)
     s.mount(root, null)
     return { s, root, host, T, ed: editor() }
   }
+
+  // THE TRIGGERS ONE MOUNT ANSWERS TO (#118). `{` is unconditional; `@` and `/`
+  // are each registered only for a mount actually handed the service behind them.
+  describe('the trigger picker this mount builds', () => {
+    beforeEach(() => { triggerSpy.slash.length = 0; triggerSpy.mention.length = 0 })
+
+    it('registers neither `@` nor `/` for a mount handed neither service', () => {
+      mountWy()
+      expect(triggerSpy.mention).toEqual([])
+      expect(triggerSpy.slash).toEqual([])
+    })
+
+    it('registers `@` against the mention service it was handed', () => {
+      const mentionService = { search: () => Promise.resolve([]) }
+      mountWy(wyHost({ mentionService }))
+      expect(triggerSpy.mention.map((m) => m.source)).toEqual([mentionService])
+      expect(triggerSpy.slash).toEqual([])
+    })
+
+    it('registers `/` against the command service it was handed, scoped by a predicate', () => {
+      const commandService = { list: () => [] }
+      mountWy(wyHost({ commandService, getCapabilities: () => COMPOSER_CAPS }))
+      expect(triggerSpy.slash).toHaveLength(1)
+      expect(triggerSpy.slash[0].commands).toBe(commandService)
+      expect(typeof triggerSpy.slash[0].inScope).toBe('function')
+    })
+  })
+
+  // ── THE MOUNT'S OWN KEY CLAIMS (#118 2c) ──────────────────────────────────
+  //
+  // A claim is resolved BY FOCUS, and by construction: this hook fires on the
+  // view the keystroke landed in, so what these pin is the ORDER inside one
+  // mount — the claim runs pre-core, ahead of the Enter family's own pre-core
+  // routing, and a mount that claims nothing changes nothing.
+  describe('the key claims this mount makes', () => {
+    beforeEach(() => { vi.mocked(policyEnterKeydown).mockClear() })
+    const keydown = (key) => ({ key, preventDefault: vi.fn(), shiftKey: false, altKey: false, metaKey: false, ctrlKey: false })
+
+    it('asks the LENS first, and consumes the key it claims', () => {
+      const claimKey = vi.fn(() => true)
+      const { ed } = mountWy(wyHost({ claimKey }))
+      const event = keydown('Enter')
+      expect(ed.options.editorProps.handleKeyDown(ed.view, event)).toBe(true)
+      expect(claimKey).toHaveBeenCalledWith(event)
+      expect(event.preventDefault).toHaveBeenCalled()
+      // The policy never saw it: a claimed key is settled before the Enter family.
+      expect(policyEnterKeydown).not.toHaveBeenCalled()
+    })
+
+    it('a mount that claims NOTHING leaves the Enter family exactly where it was', () => {
+      const claimKey = vi.fn(() => false)
+      const { ed } = mountWy(wyHost({ claimKey }))
+      const event = keydown('Enter')
+      ed.options.editorProps.handleKeyDown(ed.view, event)
+      expect(claimKey).toHaveBeenCalled()
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(policyEnterKeydown).toHaveBeenCalled()
+    })
+
+    it('the claim is asked of EVERY key, not only Enter — a mount decides what it owns', () => {
+      const claimKey = vi.fn(() => false)
+      const { ed } = mountWy(wyHost({ claimKey }))
+      for (const key of ['Escape', 'Tab', 'a']) {
+        ed.options.editorProps.handleKeyDown(ed.view, keydown(key))
+      }
+      expect(claimKey.mock.calls.map((c) => c[0].key)).toEqual(['Escape', 'Tab', 'a'])
+    })
+  })
+
+  // ── THE FLAT TEXT A CHIP ROW READS (#118 2d) ──────────────────────────────
+  describe('the surface as a message someone else can read and edit', () => {
+    it('reads its text blocks as ONE string, joined by newlines', () => {
+      const doc = fxSchema.nodes.doc.create(null, [build.p('one', 'b1'), build.p('two', 'b2')])
+      const { s } = mountWy()
+      s.editorPane.state = EditorState.create({ schema: fxSchema, doc })
+      expect(s.plainText()).toBe('one\ntwo')
+    })
+
+    it('cuts a span back out of that string, as one dispatched edit', () => {
+      const doc = fxSchema.nodes.doc.create(null, [build.p('ask @Auth about it', 'b1')])
+      const { s } = mountWy()
+      const state = EditorState.create({ schema: fxSchema, doc })
+      s.editorPane.state = state
+      s.deletePlainRange(4, 10)                     // '@Auth '
+      const [tr] = s.editorPane.view.dispatch.mock.calls[0]
+      expect(tr.doc.textContent).toBe('ask about it')
+    })
+
+    it('an empty range dispatches nothing', () => {
+      const { s } = mountWy()
+      s.editorPane.view.dispatch.mockClear()
+      s.deletePlainRange(3, 3)
+      expect(s.editorPane.view.dispatch).not.toHaveBeenCalled()
+    })
+
+    // A hard break costs a document position and contributes nothing to
+    // `textContent`, so a flat reading built off `textContent` drifts one place
+    // per Shift+Enter — and the chips, which pair against that reading, drift
+    // with it while the mark stays exact. These pin the two ways that showed.
+    describe('a hard break is a character of the message', () => {
+      /** @param {any[]} content */
+      const over = (content) => {
+        const doc = fxSchema.nodes.doc.create(null, [build.inline(content, 'b1')])
+        const { s } = mountWy()
+        s.editorPane.state = EditorState.create({ schema: fxSchema, doc })
+        return s
+      }
+
+      it('reads as a NEWLINE, so a token opening the second line is a token', () => {
+        const s = over([build.text('see:'), build.br(), build.text('@Notes')])
+        expect(s.plainText()).toBe('see:\n@Notes')
+        // The boundary character is the break, not the `:` the old reading glued on.
+        expect(MentionTokens.spans(s.plainText(), 'Notes')).toEqual([{ start: 5, end: 11 }])
+      })
+
+      it('cuts the token the flat reading names, not the character before it', () => {
+        const s = over([build.br(), build.text('@Notes here')])
+        expect(s.plainText()).toBe('\n@Notes here')
+        const [span] = MentionTokens.spans(s.plainText(), 'Notes')
+        s.deletePlainRange(span.start, span.end)
+        const [tr] = s.editorPane.view.dispatch.mock.calls[0]
+        expect(tr.doc.textContent).toBe(' here')
+        expect(tr.doc.firstChild.firstChild.type.name).toBe('hardBreak')
+      })
+
+      it('is itself cuttable, as the one character it reads as', () => {
+        const s = over([build.text('ask'), build.br(), build.text('now')])
+        s.deletePlainRange(3, 4)
+        const [tr] = s.editorPane.view.dispatch.mock.calls[0]
+        expect(tr.doc.textContent).toBe('asknow')
+        expect(tr.doc.firstChild.childCount).toBe(1)
+      })
+    })
+
+    // The newline BETWEEN two blocks is one the reading invents: no position
+    // holds it, so a cut spanning it must not join the blocks.
+    it('a cut across two blocks takes the text and leaves the blocks', () => {
+      const doc = fxSchema.nodes.doc.create(null, [build.p('one', 'b1'), build.p('two', 'b2')])
+      const { s } = mountWy()
+      s.editorPane.state = EditorState.create({ schema: fxSchema, doc })
+      s.deletePlainRange(2, 5)                      // 'e', the newline, 't'
+      const [tr] = s.editorPane.view.dispatch.mock.calls[0]
+      expect(tr.doc.childCount).toBe(2)
+      expect(tr.doc.child(0).textContent).toBe('on')
+      expect(tr.doc.child(1).textContent).toBe('wo')
+    })
+  })
 
   it('mount constructs the island on the root and exposes editorPane + window.__tiptap', () => {
     const { s, root, ed } = mountWy()
@@ -621,6 +824,17 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     expect(s.editorPane).toBe(ed)
     expect(window.__tiptap).toBe(ed)
     expect(s.mode).toBe('wysiwyg')
+  })
+
+  // The global names THE DOCUMENT pane: block-chrome and the app menu read it,
+  // so a draft mounted elsewhere on the page must not aim them at itself.
+  it('a mount that holds NO blocks leaves window.__tiptap alone', () => {
+    const { ed } = mountWy()
+    expect(window.__tiptap).toBe(ed)          // the document mount claimed it
+    const draft = mountWy(wyHost({ getCapabilities: () => COMPOSER_CAPS }))
+    expect(window.__tiptap).toBe(ed)          // …and the draft left it there
+    draft.s.unmount()
+    expect(window.__tiptap).toBe(ed)          // nor did unmounting the draft clear it
   })
 
   // #67, 2026-07-27: link activation (Mod+Click → BrowserOpenURL) is APP-GLOBAL —
@@ -1644,27 +1858,33 @@ describe('WysiwygSurface.macrosFor — composing one mount\'s macros', () => {
       insertTable: (opts) => { calls.push(['insertTable', opts]); return chain },
       toggleBlockquote: () => { calls.push(['toggleBlockquote']); return chain },
       setHorizontalRule: () => { calls.push(['setHorizontalRule']); return chain },
+      setCodeBlock: (opts) => { calls.push(['setCodeBlock', opts]); return chain },
       run: () => { calls.push(['run']); return true },
     }
     return { calls, chain: () => chain }
   }
 
-  /** A host catalog offering `names`, as MacroCatalog does. */
+  /** A host catalog offering `names`, as MacroCatalog does: workspace verbs, so
+   *  each mints server-side material and requires `blocks`. */
   function catalogOf(...names) {
-    return { list: () => names.map((n) => new ActionMacro({ label: n, action: () => {} })) }
+    return {
+      list: () => names.map((n) => new ActionMacro({
+        label: n, requires: LensCapability.BLOCKS, action: () => {},
+      })),
+    }
   }
 
   it('leads with everything the HOST offers, then this surface\'s own presets', () => {
-    const macros = WysiwygSurface.macrosFor(catalogOf('Code', 'Web Clip'), paneStub())
-    expect(macros.map((m) => m.label)).toEqual(['Code', 'Web Clip', 'Table', 'Quote', 'Divider'])
+    const macros = WysiwygSurface.macrosFor(catalogOf('Code', 'Web Clip'), paneStub(), NOTE_CAPS)
+    expect(macros.map((m) => m.label)).toEqual(['Code', 'Web Clip', 'Table', 'Quote', 'Divider', 'Fence'])
   })
 
   it('offers its presets alone when the host carries no catalog', () => {
-    expect(WysiwygSurface.macrosFor(null, paneStub()).map((m) => m.name)).toEqual(['table', 'blockquote', 'hr'])
+    expect(WysiwygSurface.macrosFor(null, paneStub(), NOTE_CAPS).map((m) => m.name)).toEqual(['table', 'blockquote', 'hr', 'fence'])
   })
 
   it('names and describes each preset, so it reads like any other entry', () => {
-    const table = WysiwygSurface.macrosFor(null, paneStub())[0]
+    const table = WysiwygSurface.macrosFor(null, paneStub(), NOTE_CAPS)[0]
     expect(table.label).toBe('Table')
     expect(table.description).toBeTruthy()
   })
@@ -1673,17 +1893,17 @@ describe('WysiwygSurface.macrosFor — composing one mount\'s macros', () => {
   // afresh here, so a second mount cannot append a second Table.
   it('composes fresh every time — two mounts produce no duplicate entry', () => {
     const catalog = catalogOf('Code')
-    const first = WysiwygSurface.macrosFor(catalog, paneStub())
-    const second = WysiwygSurface.macrosFor(catalog, paneStub())
+    const first = WysiwygSurface.macrosFor(catalog, paneStub(), NOTE_CAPS)
+    const second = WysiwygSurface.macrosFor(catalog, paneStub(), NOTE_CAPS)
     expect(second.map((m) => m.label)).toEqual(first.map((m) => m.label))
-    expect(second.map((m) => m.label)).toEqual(['Code', 'Table', 'Quote', 'Divider'])
+    expect(second.map((m) => m.label)).toEqual(['Code', 'Table', 'Quote', 'Divider', 'Fence'])
     expect(second[1]).not.toBe(first[1])
   })
 
   it('binds each preset to the pane it was composed for', () => {
     const pane = paneStub()
     const other = paneStub()
-    WysiwygSurface.macrosFor(null, pane)[0].run(/** @type {any} */ ({ replaceRange: () => {} }), token(0, 6))
+    WysiwygSurface.macrosFor(null, pane, NOTE_CAPS)[0].run(/** @type {any} */ ({ replaceRange: () => {} }), token(0, 6))
     expect(other.calls).toEqual([])
     expect(pane.calls.length).toBeGreaterThan(0)
   })
@@ -1698,7 +1918,7 @@ describe('WysiwygSurface.macrosFor — composing one mount\'s macros', () => {
       },
     })
 
-    WysiwygSurface.macrosFor(null, pane)[0].run(host, token(4, 8))
+    WysiwygSurface.macrosFor(null, pane, NOTE_CAPS)[0].run(host, token(4, 8))
 
     expect(cleared).toEqual([[4, 8, '']])
     expect(pane.calls).toEqual([
@@ -1716,7 +1936,7 @@ describe('WysiwygSurface.macrosFor — composing one mount\'s macros', () => {
       },
     })
 
-    WysiwygSurface.macrosFor(null, pane)[1].run(host, token(4, 8))
+    WysiwygSurface.macrosFor(null, pane, NOTE_CAPS)[1].run(host, token(4, 8))
 
     expect(cleared).toEqual([[4, 8, '']])
     expect(pane.calls).toEqual([['focus'], ['toggleBlockquote'], ['run']])
@@ -1732,10 +1952,63 @@ describe('WysiwygSurface.macrosFor — composing one mount\'s macros', () => {
       },
     })
 
-    WysiwygSurface.macrosFor(null, pane)[2].run(host, token(4, 8))
+    WysiwygSurface.macrosFor(null, pane, NOTE_CAPS)[2].run(host, token(4, 8))
 
     expect(cleared).toEqual([[4, 8, '']])
     expect(pane.calls).toEqual([['focus'], ['setHorizontalRule'], ['run']])
+  })
+
+  // The Fence preset is a `{` macro AND a target of the token's argument tail
+  // (#118 bonus): `{fence:go` carries `go` past the picker into `run` as an
+  // ordinary token argument, not a Fence-specific wire.
+  describe('Fence — the language rides the token\'s argument tail', () => {
+    it('clears the token, then sets a plain code block when no language was typed', () => {
+      const pane = paneStub()
+      /** @type {any[]} */ const cleared = []
+      const host = /** @type {any} */ ({ replaceRange: (start, end, text) => { cleared.push([start, end, text]) } })
+
+      WysiwygSurface.macrosFor(null, pane, NOTE_CAPS)[3].run(host, token(4, 9))
+
+      expect(cleared).toEqual([[4, 9, '']])
+      expect(pane.calls).toEqual([['focus'], ['setCodeBlock', undefined], ['run']])
+    })
+
+    it('tags the language when the trigger runs it with an argument — the `{fence:go` path', () => {
+      const pane = paneStub()
+      const host = /** @type {any} */ ({ replaceRange: () => {} })
+
+      WysiwygSurface.macrosFor(null, pane, NOTE_CAPS)[3].run(host, token(4, 12), 'go')
+
+      expect(pane.calls).toEqual([['focus'], ['setCodeBlock', { language: 'go' }], ['run']])
+    })
+
+    it('treats a bare separator (`{fence:`) as no language, same as none typed', () => {
+      const pane = paneStub()
+      const host = /** @type {any} */ ({ replaceRange: () => {} })
+
+      WysiwygSurface.macrosFor(null, pane, NOTE_CAPS)[3].run(host, token(4, 10), '')
+
+      expect(pane.calls).toEqual([['focus'], ['setCodeBlock', undefined], ['run']])
+    })
+  })
+
+  // ONE CATALOG, MANY MOUNTS (#118). The workspace hands every mount the same
+  // entries; what differs is the lens's published spec, and the filter is the
+  // same rule for a catalog entry and a preset alike.
+
+  it('leaves a NOTE mount\'s list exactly as it was — everything on offer is supported', () => {
+    const macros = WysiwygSurface.macrosFor(catalogOf('Code', 'Web Clip'), paneStub(), NOTE_CAPS)
+    expect(macros.map((m) => m.label)).toEqual(['Code', 'Web Clip', 'Table', 'Quote', 'Divider', 'Fence'])
+  })
+
+  it('drops every block-minting entry for a COMPOSER mount, keeping the flow presets', () => {
+    const macros = WysiwygSurface.macrosFor(catalogOf('Web Clip', 'Attach File'), paneStub(), COMPOSER_CAPS)
+    expect(macros.map((m) => m.label)).toEqual(['Table', 'Quote', 'Divider', 'Fence'])
+  })
+
+  it('offers nothing at all to a mount that supports neither', () => {
+    const caps = Object.freeze({ markdown: false, mentions: false, commands: false, blocks: false })
+    expect(WysiwygSurface.macrosFor(catalogOf('Web Clip'), paneStub(), caps)).toEqual([])
   })
 
   /** @param {number} start @param {number} end */

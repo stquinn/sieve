@@ -23,6 +23,7 @@ import { getSieveIcon } from '../renderers/block-kinds.js'
 import { listInsertableKinds } from '../renderers/block-renderers.js'
 import { BlockMacro, ActionMacro } from './trigger-providers.js'
 import { ContractViolation } from '../contract/sieve-block.js'
+import { LensCapability } from '../contract/lens-capabilities.js'
 
 /**
  * The workspace verbs this catalog fronts — the one-call dialog opener the
@@ -60,6 +61,7 @@ export class MacroCatalog {
         name: 'web-clip',
         description: 'Capture a page from a URL',
         icon: getSieveIcon('web-clip'),
+        requires: LensCapability.BLOCKS,
         action: () => dialogs.openWebClipDialog(),
       }),
       new ActionMacro({
@@ -67,6 +69,7 @@ export class MacroCatalog {
         name: 'image',
         description: 'A file — the paste pipeline decides its block',
         icon: MacroCatalog.#attachIcon(),
+        requires: LensCapability.BLOCKS,
         action: () => MacroCatalog.#attachFile(dialogs),
       }),
     ])

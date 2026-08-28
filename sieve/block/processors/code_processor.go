@@ -180,6 +180,13 @@ func (p *CodeBlockProcessor) OnChange(blk *block.SieveBlock) {
 		return
 	}
 
+	// A manual pick is the human's word, "Plain" included: nothing in the
+	// detection pipeline — heuristic re-detection or the refine dispatch —
+	// second-guesses it, and it needs no confidence check.
+	if method, _ := blk.Attrs["detectionMethod"].(string); method == "manual" {
+		return
+	}
+
 	hint, _ := blk.Attrs["hint"].(string)
 	if detected, ok := lheur.DetectByHeuristics(source, hint); ok {
 		curLang, _ := blk.Attrs["language"].(string)
@@ -258,7 +265,12 @@ func (p *CodeBlockProcessor) DescribeJob(jctx block.JobContext) *block.Processor
 		},
 		Apply: func(result any, b *block.SieveBlock) {
 			lang, _ := result.(string)
-			if lheur.IsConfidentLanguage(lang) || !lheur.IsConfidentLanguage(currentLang) {
+			// Read LIVE, not from the describe-time closure: a manual pick made
+			// while this job was in flight still wins — the job settles the
+			// status and writes nothing else.
+			method, _ := b.Attrs["detectionMethod"].(string)
+			if method != "manual" &&
+				(lheur.IsConfidentLanguage(lang) || !lheur.IsConfidentLanguage(currentLang)) {
 				if lang != "" {
 					b.Attrs["language"] = lang
 					b.Attrs["detectionMethod"] = "ai"

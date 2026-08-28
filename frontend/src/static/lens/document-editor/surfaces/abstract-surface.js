@@ -124,6 +124,32 @@ export class AbstractSurface {
    *  insert. @param {string} text @returns {Promise<'block'|'content'|'none'>} */
   pasteText(text) { return Promise.resolve('none') }
 
+  /**
+   * The surface's content as ONE flat string, its text blocks joined by
+   * newlines. It exists so a consumer outside the editor — a chip row pairing
+   * `@Title` tokens to what it holds — can read what is written without seeing
+   * the document structure, and it defines the coordinate space
+   * `deletePlainRange` cuts in. The base has no text to offer.
+   * @returns {string}
+   */
+  plainText() { return '' }
+
+  /** Cuts `[start, end)` out of `plainText()` as one tracked edit. Offsets that
+   *  name nothing are a no-op.
+   *  @param {number} start @param {number} end */
+  deletePlainRange(start, end) {}
+
+  /** Marks the `@Title` tokens of these titles in what is drawn. A surface with
+   *  no way to draw a mark ignores them, which is what "the mark is a reading
+   *  affordance" means. @param {ReadonlyArray<string|undefined>} titles */
+  setMentionTitles(titles) {}
+
+  /** The title of the `@Title` token at `pos`, or null where there is none. A
+   *  surface that marks nothing has none anywhere.
+   *  @param {number} pos a position in this surface's own coordinates
+   *  @returns {string|null} */
+  mentionTitleAt(pos) { return null }
+
   /** Flushes any pending debounced edit so Go's shadow is current before a save or
    *  a mode flip. Idempotent. @abstract */
   flushPending() {

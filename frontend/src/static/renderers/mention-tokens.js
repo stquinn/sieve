@@ -71,7 +71,7 @@ export class MentionTokens {
     if (!el || wanted.length === 0) return 0
     let marked = 0
     for (const { node, before } of MentionTokens.#textNodes(el)) {
-      const spans = MentionTokens.#claim(node.data, before, wanted)
+      const spans = MentionTokens.claim(node.data, wanted, before)
       if (spans.length === 0) continue
       MentionTokens.#wrap(node, spans, className)
       marked += spans.length
@@ -118,16 +118,22 @@ export class MentionTokens {
   }
 
   /**
-   * The non-overlapping spans one text node yields for all the titles. Where two
-   * attached titles overlap ("Auth" and "Auth Design" against `@Auth Design`)
-   * the LONGER one wins: it is the more specific attachment, and marking half a
-   * token would read as a typo.
-   * @param {string} text @param {string} before @param {string[]} titles
+   * The non-overlapping spans one run of text yields for all the titles, in text
+   * order. Where two attached titles overlap ("Auth" and "Auth Design" against
+   * `@Auth Design`) the LONGER one wins: it is the more specific attachment, and
+   * marking half a token would read as a typo.
+   *
+   * The multi-title half of the rule, for a caller that has its own way of
+   * reaching the marked characters — `mark` puts them in the rendered DOM, a
+   * ProseMirror decoration puts them at document positions.
+   * @param {string} text
+   * @param {ReadonlyArray<string>} titles
+   * @param {string} [before] the character preceding `text` ('' = start of line)
    * @returns {Array<{start: number, end: number}>}
    */
-  static #claim(text, before, titles) {
+  static claim(text, titles, before) {
     /** @type {Array<{start: number, end: number}>} */ const all = []
-    for (const title of titles) {
+    for (const title of titles || []) {
       for (const span of MentionTokens.spans(text, title, before)) all.push(span)
     }
     all.sort((a, b) => a.start - b.start || b.end - a.end)

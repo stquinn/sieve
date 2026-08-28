@@ -40,10 +40,11 @@ function fakeEditor(seed = { chars: 0, lines: 0, blockCount: 0 }) {
 // A fake TAB mirroring SieveTab's tab-level stats forward: StatusBar subscribes to
 // tab.onStats (survives an editor that attaches after the tab is active). fireStats
 // simulates the editor's `stats` event being forwarded through the tab.
-function fakeTab(editor = null) {
+function fakeTab(editor = null, uuid = '') {
   let statsListeners = []
   return {
     editor,
+    uuid,
     onStats(fn) { statsListeners.push(fn); return () => { statsListeners = statsListeners.filter((l) => l !== fn) } },
     fireStats: (chars, lines, blockCount) => statsListeners.forEach((fn) => fn({ chars, lines, blockCount })),
   }
@@ -101,6 +102,56 @@ describe('StatusBar (P4.D)', () => {
     document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: false } }))
     expect(save.innerHTML).toContain('Saved')
     expect(dot.classList.contains('bg-tn-green')).toBe(true)
+  })
+
+  // SEVERAL EDITING LENSES ARE LIVE AT ONCE. The note in the active tab and the
+  // Ask composer's draft each announce their own dirty state on the same
+  // page-global event, so the bar has to know which container a fact is about —
+  // otherwise a keystroke in the Ask box flips the NOTE to "Unsaved", and nothing
+  // ever clears it because a draft is never saved.
+  describe('the bar speaks for the active tab', () => {
+    const dirty = (detail) => document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail }))
+    const label = () => document.querySelector('.status-bar__save').innerHTML
+
+    it('paints a fact naming the ACTIVE container', () => {
+      mountStatusDom()
+      const ws = fakeWorkspace()
+      ws._tab = fakeTab(fakeEditor(), 'note-1')
+      new StatusBar(ws)
+      dirty({ dirty: true, uuid: 'note-1' })
+      expect(label()).toContain('Unsaved')
+      dirty({ dirty: false, uuid: 'note-1' })
+      expect(label()).toContain('Saved')
+    })
+
+    it('IGNORES a fact naming another container — the draft does not dirty the note', () => {
+      mountStatusDom()
+      const ws = fakeWorkspace()
+      ws._tab = fakeTab(fakeEditor(), 'note-1')
+      new StatusBar(ws)
+      dirty({ dirty: false, uuid: 'note-1' })
+      dirty({ dirty: true, uuid: 'draft-9' })
+      expect(label()).toContain('Saved')
+      expect(document.getElementById('meta-dirty-dot').classList.contains('bg-tn-green')).toBe(true)
+    })
+
+    it('a fact naming NO container is addressed to whatever is active', () => {
+      mountStatusDom()
+      const ws = fakeWorkspace()
+      ws._tab = fakeTab(fakeEditor(), 'note-1')
+      new StatusBar(ws)
+      dirty({ dirty: true })
+      expect(label()).toContain('Unsaved')
+    })
+
+    it('with no tab at all, only an unnamed fact paints', () => {
+      mountStatusDom()
+      new StatusBar(fakeWorkspace())
+      dirty({ dirty: true, uuid: 'draft-9' })
+      expect(label()).toBe('')
+      dirty({ dirty: true })
+      expect(label()).toContain('Unsaved')
+    })
   })
 
   // Block ids are UUIDs (#75). The slot shows kind + the id's TAIL: a UUIDv7 leads

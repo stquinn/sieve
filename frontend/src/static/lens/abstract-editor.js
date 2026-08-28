@@ -8,6 +8,7 @@
 
 import { Lens } from './lens.js'
 import { ContractViolation } from '../contract/sieve-block.js'
+import { LensCapability } from '../contract/lens-capabilities.js'
 import { AbstractSurface } from './document-editor/surfaces/abstract-surface.js'
 import { EditorMode } from './document-editor/editor-mode.js'
 import { SelectionModel } from './document-editor/selection-model.js'
@@ -22,7 +23,17 @@ import { QuestionList } from '../renderers/question-list.js'
  * @typedef {import('./document-editor/surfaces/abstract-surface.js').SurfaceEventMsg} SurfaceEventMsg
  * @typedef {import('./document-editor/editor-mode.js').EditorModeValue} EditorModeValue
  * @typedef {import('../contract/container-provider.js').BlockContainerProvider} BlockContainerProvider
+ * @typedef {import('../contract/lens-capabilities.js').LensCapabilities} LensCapabilities
  */
+
+/** The full repertoire of an editing lens, before a subclass's identity or a
+ *  missing dependency narrows it. */
+const EVERY_CAPABILITY = Object.freeze({
+  [LensCapability.MARKDOWN]: true,
+  [LensCapability.MENTIONS]: true,
+  [LensCapability.COMMANDS]: true,
+  [LensCapability.BLOCKS]: true,
+})
 
 /**
  * @typedef {object} AbstractEditorOptions
@@ -33,13 +44,16 @@ import { QuestionList } from '../renderers/question-list.js'
  * @property {() => Promise<{body?: string, version?: number, scroll?: number}>} [loadContainer]
  *   the HOST's loader for this container; `reload()` invokes it and repaints from
  *   the model it reseeded. Absent means this editor cannot reload.
- * @property {object} [mentionService]
+ * @property {object|null} [mentionService]
  *   the `@`-picker peer the WYSIWYG surface hosts. Optional: without it the
  *   editor simply has no `@` picker.
- * @property {object} [macroCatalog]
+ * @property {object|null} [macroCatalog]
  *   what the HOST offers the `{` picker — the block kinds and the host verbs a
  *   surface composes its own presets onto. Optional: without it a surface's
  *   picker offers its presets alone.
+ * @property {object|null} [commandService]
+ *   the `/` picker's peer, enumerating the backend verbs this mount may dispatch.
+ *   Optional: without it the editor simply has no `/` picker.
  */
 
 export class AbstractEditor extends Lens {
@@ -60,9 +74,11 @@ export class AbstractEditor extends Lens {
    *  getSelectionContext. */
   #selectionModel
 
-  /** @type {boolean} whether this container's provider carries the BLOCK
-   *  extension. A lens's capability is what its provider offers. */
-  #blockCapable = false
+  /** @type {Readonly<LensCapabilities>} this lens's published specification:
+   *  what its class can innately do, narrowed by the dependencies it was
+   *  actually given. Computed once in the constructor and frozen — the lens
+   *  instance is the single authority on it. */
+  #capabilities
 
   /** @type {(() => Promise<{body?: string, version?: number, scroll?: number}>)|null} */
   #loadContainer = null
@@ -73,6 +89,9 @@ export class AbstractEditor extends Lens {
   /** @type {object|null} the `{` picker's host half, held for the surface that
    *  composes its own presets onto it. */
   #macroCatalog = null
+
+  /** @type {object|null} the `/` picker's peer, held for the WYSIWYG surface. */
+  #commandService = null
 
   /** @type {AddressStatus|null} built on demand over the mention peer. */
   #addressStatus = null
@@ -111,10 +130,11 @@ export class AbstractEditor extends Lens {
       // An ADVERT, not a request: nothing here waits for or reads an answer.
       this.advertiseSelection(ctx)
     })
-    this.#blockCapable = typeof this.provider.requestAddBlock === 'function'
     this.#loadContainer = options.loadContainer || null
     this.#mentionService = options.mentionService || null
     this.#macroCatalog = options.macroCatalog || null
+    this.#commandService = options.commandService || null
+    this.#capabilities = this.#deriveCapabilities()
 
     // Subscribed before any surface mounts, so a save landing during the initial
     // load is not missed. A prompt has no channel and still gets this: the fact
@@ -142,10 +162,106 @@ export class AbstractEditor extends Lens {
    */
   get provider() { return super.provider }
 
+  /**
+   * The abilities of this CLASS, before any dependency narrows them. A subclass
+   * whose identity forbids one says so here, and no dependency can grant it back.
+   * @protected
+   * @returns {Readonly<LensCapabilities>}
+   */
+  get _innateCapabilities() { return /** @type {any} */ (EVERY_CAPABILITY) }
+
+  /**
+   * The ONE artifact a consumer reads to know what this lens can do. The SAME
+   * frozen object for the lens's whole life: a mount cannot renegotiate it, and
+   * nothing outside may author one.
+   * @returns {Readonly<LensCapabilities>}
+   */
+  getCapabilities() { return this.#capabilities }
+
+  /** Innate abilities narrowed by what this lens was actually given. Called ONCE,
+   *  from the constructor, against the options already stored.
+   *  @returns {Readonly<LensCapabilities>} */
+  #deriveCapabilities() {
+    const innate = /** @type {any} */ (this._innateCapabilities)
+    return Object.freeze({
+      [LensCapability.MARKDOWN]: !!innate[LensCapability.MARKDOWN],
+      [LensCapability.MENTIONS]: !!innate[LensCapability.MENTIONS] && !!this.#mentionService,
+      [LensCapability.COMMANDS]: !!innate[LensCapability.COMMANDS] && !!this.#commandService,
+      [LensCapability.BLOCKS]: !!innate[LensCapability.BLOCKS]
+        && typeof this.provider.requestAddBlock === 'function',
+    })
+  }
+
   /** @returns {boolean} */
-  get canEditBlocks() { return this.#blockCapable }
+  get canEditBlocks() { return this.#capabilities.blocks }
+
+  /** What this lens invites you to write in it while it is empty. A fact of the
+   *  class, like its mode and its capabilities — a mount does not name it.
+   *  @returns {string} */
+  get placeholder() { return 'Start writing…' }
+
+  /**
+   * This MOUNT's key claims: keys the lens takes before its surface, its
+   * interaction policy and the editor core ever see them. Asked from the
+   * surface's pre-core keydown hook, so the claim composes with the Enter
+   * family's existing ordering rather than bypassing it.
+   *
+   * PRECEDENCE IS FOCUS, and by construction: the hook fires on the view the
+   * keystroke landed in, so two live editors on one page never contend.
+   *
+   * The base claims NOTHING — an editing lens that has not said otherwise wants
+   * the ordinary editor behaviour for every key.
+   * @param {KeyboardEvent} _event
+   * @returns {boolean} whether the keypress was consumed
+   */
+  claimKey(_event) { return false }
+
+  /**
+   * A `@` candidate was accepted in a mount that cannot hold a block, so the
+   * echo went into the text and the candidate itself has nowhere to be. A lens
+   * whose host keeps a manifest overrides this to pass it on; the base drops it,
+   * which is the right answer for a document — there the mention became a block.
+   * @param {import('../shell/mention-service.js').MentionCandidate} _candidate
+   */
+  onMentionAccepted(_candidate) {}
+
+  /** The mounted surface's text as ONE string, blocks joined by newlines — the
+   *  read half of the coordinate space `deletePlainRange` cuts in.
+   *  @returns {string} */
+  plainText() { return this.#surface ? this.#surface.plainText() : '' }
+
+  /** Cuts `[start, end)` out of that text as one tracked edit.
+   *  @param {number} start @param {number} end */
+  deletePlainRange(start, end) {
+    if (this.#surface) this.#surface.deletePlainRange(start, end)
+  }
+
+  /**
+   * The documents this lens's host says are attached, by title: every `@Title`
+   * token naming one is marked where it is written.
+   *
+   * IT IS THE HOST'S ANSWER, NOT THE LENS'S. A lens holds no manifest — the
+   * arrangement it sits in does — so a mount that keeps none simply never calls
+   * this and nothing is marked, which is the correct reading of a document
+   * where a mention became a block instead.
+   * @param {ReadonlyArray<string|undefined>} titles
+   */
+  setMentionTitles(titles) {
+    if (this.#surface) this.#surface.setMentionTitles(titles)
+  }
+
+  /** The title of the marked `@Title` token at `pos`, or null where none is
+   *  marked — which is every position of a lens whose host keeps no manifest.
+   *  @param {number} pos @returns {string|null} */
+  mentionTitleAt(pos) {
+    return this.#surface ? this.#surface.mentionTitleAt(pos) : null
+  }
 
   get mentionService() { return this.#mentionService }
+
+  /** What the host offers this editor's `/` picker, or null.
+   *  @returns {object|null} */
+  get commandService() { return this.#commandService }
 
   /** What the host offers this editor's `{` picker, or null.
    *  @returns {object|null} */
@@ -220,7 +336,7 @@ export class AbstractEditor extends Lens {
     if (type === 'doc-changed' || type === 'doc-projected') this.#emitStats()
     if (type === 'doc-changed') {
       this.markDirty()
-      document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
+      document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true, uuid: this.#uuid } }))
     }
   }
 
@@ -362,7 +478,7 @@ export class AbstractEditor extends Lens {
   #markSaved(version) {
     if (version > this.#version) this.#version = version
     this.clearDirty()
-    document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: false } }))
+    document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: false, uuid: this.#uuid } }))
     document.dispatchEvent(new CustomEvent('editor:saved', { detail: { uuid: this.#uuid } }))
   }
 
@@ -403,7 +519,7 @@ export class AbstractEditor extends Lens {
     }
     const res = resolveEntriesForKind ? resolveEntriesForKind(targetKind, sourceNode, entries) : entries
     return Promise.resolve(res).then((resolved) => {
-      if (this.#blockCapable) this.provider.requestTransform(blockId, targetKind, wireOp, resolved)
+      if (this.canEditBlocks) this.provider.requestTransform(blockId, targetKind, wireOp, resolved)
     })
   }
 
@@ -482,7 +598,7 @@ export class AbstractEditor extends Lens {
     if (target !== EditorMode.WYSIWYG && target !== EditorMode.MARKDOWN) return Promise.resolve(false)
     // A container with no block extension has one shape to be in — a prompt IS
     // its text.
-    if (!this.#blockCapable) return Promise.resolve(false)
+    if (!this.canEditBlocks) return Promise.resolve(false)
     if (!this.#surface || target === this.mode) return Promise.resolve(false)
     if (this.#modeFlip) return this.#modeFlip
     this.#modeFlip = this.#flipTo(target).finally(() => { this.#modeFlip = null })
@@ -552,7 +668,7 @@ export class AbstractEditor extends Lens {
     attrs = attrs || {}
     // diagram default: an empty (source-less) diagram opens straight into edit mode.
     if (kind === 'diagram' && !attrs.source) attrs.mode = 'edit'
-    if (!this.#blockCapable) return
+    if (!this.canEditBlocks) return
     const anchor = (afterBlockId === undefined) ? this.#anchorFromCaret() : afterBlockId
     this.provider.requestAddBlock(kind, attrs, anchor)
   }
@@ -596,9 +712,11 @@ export class AbstractEditor extends Lens {
    * top-level block, flushes the pending sync, creates the ai-block, and
    * collapses the caret to the target end. EXPLAIN in markdown is a no-op; ASK
    * still works.
-   * @param {{ type: 'ask'|'explain', question?: string, context?: import('./document-editor/selection-model.js').SelectionContext, attachments?: Array<{uri: string, title?: string}> }} job
-   *   `attachments` is the composer's manifest; each entry becomes a reference
-   *   element of the question declaring `attach`.
+   * @param {{ type: 'ask'|'explain', question?: string|ReadonlyArray<import('../renderers/question-list.js').QuestionElement>, context?: import('./document-editor/selection-model.js').SelectionContext, attachments?: Array<{uri: string, title?: string}> }} job
+   *   `question` is either the text of a one-line ask or the element list a
+   *   composer authored; both land in the body slot, between the target and the
+   *   attachments. `attachments` is the composer's manifest; each entry becomes a
+   *   reference element of the question declaring `attach`.
    * @returns {Promise<void>}
    */
   askAi({ type, question, context, attachments }) {
@@ -625,8 +743,9 @@ export class AbstractEditor extends Lens {
       .then(() => {
         const list = new QuestionList(this.uuid)
           .about((aiCtx && aiCtx.blockRef) || 'doc')
-          .ask(question)
-          .attach(attachments)
+        if (Array.isArray(question)) list.body(question)
+        else list.ask(/** @type {string|undefined} */ (question))
+        list.attach(attachments)
         this.createBlock('ai-block', { type: blockType, question: list.elements }, anchorId)
       })
       .catch((err) => { console.error('[editor] askAi flush error:', err) })

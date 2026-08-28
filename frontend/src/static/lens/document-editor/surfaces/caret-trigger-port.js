@@ -4,6 +4,7 @@
 // it: what leaves here is a rect, a string, an offset.
 
 import { T } from './tiptap-vendor.js'
+import { FlatText } from './flat-text.js'
 import { triggersSuppressed } from '../interaction-policy.js'
 
 export class CaretTriggerPort {
@@ -36,6 +37,11 @@ export class CaretTriggerPort {
    * The last guard is why `@Override` inside a code or diagram block never arms
    * the picker. Eligibility is ASKED of `interaction-policy.js`, never decided
    * here.
+   *
+   * Both halves come from the FlatText reading of the caret's block, the same
+   * ruler every other flat-text reader uses — a hard break is a character in
+   * the text AND a position in the document, so the caret cannot drift one
+   * place per break the way a `textContent` reading does.
    * @returns {{text: string, caret: number}|null}
    */
   caretText() {
@@ -46,7 +52,21 @@ export class CaretTriggerPort {
     const $from = sel.$from
     if (!$from.parent || !$from.parent.isTextblock) return null
     if (triggersSuppressed(pane.state, pane.view)) return null
-    return { text: $from.parent.textContent, caret: $from.parentOffset }
+    const flat = FlatText.ofBlock($from.parent, $from.start())
+    return { text: flat.text, caret: flat.flatOffsetOf(sel.from) }
+  }
+
+  /**
+   * Whether the caret sits inside the container's FIRST top-level block. A mount
+   * whose trigger is a verb over the whole container asks this: such a verb
+   * opens what is being written and cannot appear part-way down it.
+   * @returns {boolean}
+   */
+  caretInFirstBlock() {
+    const pane = this.#pane
+    if (!pane.view || pane.view.isDestroyed) return false
+    const sel = pane.state.selection
+    return !!sel && sel.$from.index(0) === 0
   }
 
   /**
@@ -79,9 +99,12 @@ export class CaretTriggerPort {
   replaceRange(start, end, text) {
     const pane = this.#pane
     if (!pane.view || pane.view.isDestroyed) return
-    const blockStart = pane.state.selection.$from.start()
-    const from = blockStart + start
-    const to = blockStart + end
+    // The same FlatText ruler the scan used: block-local flat offsets back to
+    // document positions, exact across hard breaks.
+    const $from = pane.state.selection.$from
+    const flat = FlatText.ofBlock($from.parent, $from.start())
+    const from = flat.pmOf(start)
+    const to = flat.pmOf(end)
     const tr = pane.state.tr
     if (text) tr.insertText(text, from, to)
     else if (from !== to) tr.delete(from, to)

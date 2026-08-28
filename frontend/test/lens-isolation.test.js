@@ -158,6 +158,7 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
     // edit here rather than a silently smaller check.
     expect(lensFiles.map((f) => path.relative(STATIC, f))).toEqual([
       path.join('lens', 'abstract-editor.js'),
+      path.join('lens', 'composer', 'composer-editor.js'),
       path.join('lens', 'document-editor', 'block-chrome.js'),
       path.join('lens', 'document-editor', 'block-selection.js'),
       path.join('lens', 'document-editor', 'block-sync.js'),
@@ -175,7 +176,10 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
       path.join('lens', 'document-editor', 'surfaces', 'block-position.js'),
       path.join('lens', 'document-editor', 'surfaces', 'block-render.js'),
       path.join('lens', 'document-editor', 'surfaces', 'caret-trigger-port.js'),
+      path.join('lens', 'document-editor', 'surfaces', 'flat-text.js'),
       path.join('lens', 'document-editor', 'surfaces', 'markdown-surface.js'),
+      path.join('lens', 'document-editor', 'surfaces', 'mention-decoration.js'),
+      path.join('lens', 'document-editor', 'surfaces', 'mention-ranges.js'),
       path.join('lens', 'document-editor', 'surfaces', 'node-views', 'ai-block-node-view.js'),
       path.join('lens', 'document-editor', 'surfaces', 'node-views', 'code-node-view.js'),
       path.join('lens', 'document-editor', 'surfaces', 'node-views', 'diagram-node-view.js'),

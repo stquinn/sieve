@@ -1,15 +1,23 @@
 // @ts-check
-// composer-attachments.test.js — the Ask composer's attachment model + chip row
-// (#74 P4). The model is PANEL STATE: it holds what the user attached, renders
-// the chips into the EXISTING .ask-popup__footer, and reconciles against the
-// message text at send time.
+// composer-attachments.test.js — the Ask composer's attachment chips (#74 P4,
+// re-sourced onto the draft in #118). THE TRUTH IS THE DRAFT: accepting a
+// candidate mints one attach-rel reference element into the draft container, and
+// the chips in the EXISTING .ask-popup__footer are a view of it paired against
+// the message text.
+//
+// WHAT A DRAFT IS here is the three things this type reaches for — read the
+// text, cut a span out of it, and the container — so what is driven below is a
+// REAL InMemoryContainerProvider and never a stand-in for one: the element
+// shape is the thing under test.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { ComposerAttachments } from '../src/static/shell/composer-attachments.js'
+import { InMemoryContainerProvider } from '../src/static/container/in-memory-container-provider.js'
+import { QuestionList } from '../src/static/renderers/question-list.js'
 
 function mountFooter() {
   document.body.innerHTML = `
     <div id="ask-panel" class="ask-panel">
-      <textarea class="ask-popup__input"></textarea>
+      <div class="ask-popup__input"></div>
       <div class="ask-popup__footer">
         <button class="ask-popup__send">Send</button>
       </div>
@@ -17,11 +25,32 @@ function mountFooter() {
   return /** @type {HTMLElement} */ (document.querySelector('.ask-popup__footer'))
 }
 
-/** The footer AND the composer the tokens live in — the bound (non-headless) model. */
+/** A draft, as flat as this type sees one: the text verbs, and the container the
+ *  attachments are blocks of. `retire()` is what a reset does — a different
+ *  container, so what the old one held is simply gone. */
+function fakeDraft(initial = '') {
+  let value = initial
+  let provider = new InMemoryContainerProvider()
+  return {
+    read: () => value,
+    cut: (start, end) => { value = value.slice(0, start) + value.slice(end) },
+    set: (next) => { value = next },
+    get provider() { return provider },
+    retire: () => { provider = new InMemoryContainerProvider(); value = '' },
+  }
+}
+
+/** The footer AND the draft the elements and tokens live in. */
 function mountComposer() {
   const footer = mountFooter()
-  const textarea = /** @type {HTMLTextAreaElement} */ (document.querySelector('.ask-popup__input'))
-  return { footer, textarea }
+  return { footer, message: fakeDraft() }
+}
+
+/** The draft's attach-rel reference elements, in container order. */
+function elementsOf(draft) {
+  return draft.provider.getOrder()
+    .map((/** @type {string} */ id) => draft.provider.getBlock(id))
+    .filter((/** @type {any} */ n) => !!QuestionList.attachmentOf(n))
 }
 
 const chips = () => Array.from(document.querySelectorAll('.ask-chip'))
@@ -31,8 +60,9 @@ const RETRY = { uri: 'container:1a2b', title: 'Retry RFC', kind: 'note', detail:
 
 describe('ComposerAttachments — the model', () => {
   /** @type {ComposerAttachments} */ let model
+  /** @type {ReturnType<typeof fakeDraft>} */ let draft
 
-  beforeEach(() => { model = new ComposerAttachments(mountFooter()) })
+  beforeEach(() => { draft = fakeDraft(); model = new ComposerAttachments(mountFooter(), draft) })
   afterEach(() => { document.body.innerHTML = '' })
 
   it('adds an attachment and reports it in the persisted {uri,title} shape only', () => {
@@ -40,6 +70,32 @@ describe('ComposerAttachments — the model', () => {
     expect(model.size).toBe(1)
     // kind/summary are resolved server-side at job time — they are NEVER persisted.
     expect(model.manifest()).toEqual([{ uri: 'container:9f2b', title: 'Auth Design' }])
+  })
+
+  // THE RULING (#118): accepting is a HOST WRITE into the draft. What lands is a
+  // question element wearing its role stamp — the same one a scalar ask mints —
+  // named by a draft-local uuid the harvest strips.
+  it('ACCEPT MINTS ONE ELEMENT into the draft: a reference declaring attach', () => {
+    model.add(AUTH)
+    const [node] = elementsOf(draft)
+    expect(node.kind).toBe('reference')
+    expect(node.attrs.rel).toBe('attach')
+    expect(node.attrs.uri).toBe('container:9f2b')
+    expect(node.attrs.cache).toEqual({ title: 'Auth Design' })
+    expect(node.id).toBeTruthy()
+  })
+
+  it('the element is what the chips and the manifest are BOTH read from', () => {
+    model.add(AUTH)
+    model.add(RETRY)
+    expect(elementsOf(draft).map((n) => n.attrs.uri)).toEqual(['container:9f2b', 'container:1a2b'])
+    expect(model.manifest().map((a) => a.uri)).toEqual(['container:9f2b', 'container:1a2b'])
+  })
+
+  it('attaches nothing when there is no draft to attach to', () => {
+    const headless = new ComposerAttachments(mountFooter())
+    expect(headless.add(AUTH)).toBe(false)
+    expect(headless.manifest()).toEqual([])
   })
 
   it('ignores a candidate with no address (an address-less attachment is not one)', () => {
@@ -54,25 +110,39 @@ describe('ComposerAttachments — the model', () => {
     expect(model.size).toBe(1)
   })
 
-  it('removes by uri', () => {
+  it('removes by uri, and the element leaves the draft with the chip', () => {
     model.add(AUTH)
     model.add(RETRY)
     model.remove('container:9f2b')
     expect(model.manifest()).toEqual([{ uri: 'container:1a2b', title: 'Retry RFC' }])
+    expect(elementsOf(draft).map((n) => n.attrs.uri)).toEqual(['container:1a2b'])
   })
 
-  it('clear() empties the set', () => {
+  it('A RETIRED DRAFT TAKES ITS ATTACHMENTS WITH IT — nothing here to empty', () => {
     model.add(AUTH)
-    model.clear()
+    draft.retire()
+    expect(model.reconcile('@Auth Design')).toEqual([])
     expect(model.size).toBe(0)
-    expect(model.manifest()).toEqual([])
+  })
+
+  it('titles() names what an @Title token in the message points at', () => {
+    model.add(AUTH)
+    model.add(RETRY)
+    expect(model.titles()).toEqual(['Auth Design', 'Retry RFC'])
+  })
+
+  it('titles() drops a titleless attachment — there is no token to find for one', () => {
+    model.add({ uri: 'container:ccc', title: '' })
+    expect(model.size).toBe(1)
+    expect(model.titles()).toEqual([])
   })
 })
 
 describe('ComposerAttachments — reconciliation against the message text', () => {
   /** @type {ComposerAttachments} */ let model
+  /** @type {ReturnType<typeof fakeDraft>} */ let draft
 
-  beforeEach(() => { model = new ComposerAttachments(mountFooter()) })
+  beforeEach(() => { draft = fakeDraft(); model = new ComposerAttachments(mountFooter(), draft) })
   afterEach(() => { document.body.innerHTML = '' })
 
   it('keeps an attachment whose @Title token is still in the message', () => {
@@ -120,13 +190,38 @@ describe('ComposerAttachments — reconciliation against the message text', () =
     expect(model.reconcile('what is in @Notes?')).toEqual([{ uri: 'container:aaa', title: 'Notes' }])
     expect(model.size).toBe(1)
   })
+
+  // Reconciling never touches the draft — a text edit is editing a sentence, and
+  // the element it leaves standing is what lets an undone deletion re-attach.
+  // SEND is where the difference is settled, because the harvest reads the draft.
+  it('reconciling leaves the element standing, however the text moved', () => {
+    model.add(AUTH)
+    draft.set('nothing about it any more')
+    expect(model.reconcile(draft.read())).toEqual([])
+    expect(elementsOf(draft).length).toBe(1)
+  })
+
+  it('COMMIT settles the draft: an element with no token left is cut out of it', () => {
+    model.add(AUTH)
+    model.add(RETRY)
+    draft.set('only @Retry RFC survives')
+    expect(model.commit()).toEqual([{ uri: 'container:1a2b', title: 'Retry RFC' }])
+    expect(elementsOf(draft).map((n) => n.attrs.uri)).toEqual(['container:1a2b'])
+  })
+
+  it('COMMIT keeps every element a token still carries', () => {
+    model.add(AUTH)
+    draft.set('How does @Auth Design handle this?')
+    expect(model.commit()).toEqual([{ uri: 'container:9f2b', title: 'Auth Design' }])
+    expect(elementsOf(draft).length).toBe(1)
+  })
 })
 
 describe('ComposerAttachments — the chip row in the existing footer', () => {
   /** @type {HTMLElement} */ let footer
   /** @type {ComposerAttachments} */ let model
 
-  beforeEach(() => { footer = mountFooter(); model = new ComposerAttachments(footer) })
+  beforeEach(() => { footer = mountFooter(); model = new ComposerAttachments(footer, fakeDraft()) })
   afterEach(() => { document.body.innerHTML = '' })
 
   it('adds NO new row to the panel — the chips live inside .ask-popup__footer', () => {
@@ -138,12 +233,20 @@ describe('ComposerAttachments — the chip row in the existing footer', () => {
     expect(footer.lastElementChild?.className).toBe('ask-popup__send')
   })
 
-  it('KNOWS NOTHING OF A HINT: the footer is chips + Send, and the chord lives in the placeholder (#82)', () => {
+  it('ADDS EXACTLY ONE ROW and nothing else — the rest of the footer is other owners\'', () => {
     model.add(AUTH)
     const footer = /** @type {HTMLElement} */ (document.querySelector('.ask-popup__footer'))
     expect(Array.from(footer.children).map((c) => c.className.split(' ')[0]))
       .toEqual(['ask-popup__chips', 'ask-popup__send'])
-    expect(document.querySelector('.ask-popup__hint')).toBe(null)
+  })
+
+  // The picker's `kind`/`detail` are dressing for CHOOSING, and the draft's
+  // element carries neither: a chip says what the attachment is — its title, and
+  // its address for the eye that needs to tell two of them apart.
+  it('a chip says the title and nothing the picker made up', () => {
+    model.add(AUTH)
+    expect(chips()[0].querySelector('.ask-chip__kind')).toBe(null)
+    expect(chips()[0].getAttribute('title')).toBe('container:9f2b')
   })
 
   it('renders one chip per attachment, carrying the uri (not the title) as identity', () => {
@@ -153,11 +256,11 @@ describe('ComposerAttachments — the chip row in the existing footer', () => {
     expect(chips()[0].textContent).toContain('Auth Design')
   })
 
-  it('duplicate titles render as two distinct chips (the detail tells them apart)', () => {
+  it('duplicate titles render as two distinct chips (the address tells them apart)', () => {
     model.add({ uri: 'container:aaa', title: 'Notes', detail: 'design/' })
     model.add({ uri: 'container:bbb', title: 'Notes', detail: 'journal/' })
     expect(chips().length).toBe(2)
-    expect(chips().map((c) => c.getAttribute('title'))).toEqual(['design/', 'journal/'])
+    expect(chips().map((c) => c.getAttribute('title'))).toEqual(['container:aaa', 'container:bbb'])
   })
 
   it('the ✕ on a chip removes that attachment', () => {
@@ -171,12 +274,10 @@ describe('ComposerAttachments — the chip row in the existing footer', () => {
 
   it('null-guards a missing footer (headless boot) — every verb still works', () => {
     document.body.innerHTML = ''
-    const headless = new ComposerAttachments(null)
-    expect(() => { headless.add(AUTH); headless.remove(AUTH.uri); headless.clear() }).not.toThrow()
+    const headless = new ComposerAttachments(null, fakeDraft())
+    expect(() => { headless.add(AUTH); headless.remove(AUTH.uri); headless.commit() }).not.toThrow()
     headless.add(RETRY)
     expect(headless.manifest()).toEqual([{ uri: 'container:1a2b', title: 'Retry RFC' }])
-    // With no composer bound there is no token to delete and nothing to consume.
-    expect(headless.detachAt(0)).toBe(false)
   })
 })
 
@@ -184,105 +285,30 @@ describe('ComposerAttachments — the chip row in the existing footer', () => {
 //
 // The defect these pin: reconciliation used to run ONLY at send, so a chip could
 // sit there claiming "attached" over a token the user had already broken, and the
-// attachment was dropped silently at send. The chip now follows the text on every
-// edit, and the two deletion gestures — Backspace at the token's right edge, and
-// the chip's ✕ — each remove BOTH halves.
-
-describe('ComposerAttachments — atomic token deletion', () => {
-  /** @type {HTMLTextAreaElement} */ let ta
-  /** @type {ComposerAttachments} */ let model
-
-  beforeEach(() => {
-    const composer = mountComposer()
-    ta = composer.textarea
-    model = new ComposerAttachments(composer.footer, ta)
-  })
-  afterEach(() => { document.body.innerHTML = '' })
-
-  /** Puts the caret at the right edge of `token` and returns that index. */
-  function caretAfter(token) {
-    const at = ta.value.indexOf(token) + token.length
-    ta.setSelectionRange(at, at)
-    return at
-  }
-
-  it('deletes the WHOLE token and its chip in one press', () => {
-    model.add(AUTH)
-    ta.value = 'How does @Auth Design handle this?'
-    model.reconcile(ta.value)
-    expect(chips().length).toBe(1)
-
-    expect(model.detachAt(caretAfter('@Auth Design'))).toBe(true)
-    // The token AND the gap it sat in go: deleting a word must not leave a hole.
-    expect(ta.value).toBe('How does handle this?')
-    expect(chips().length).toBe(0)
-    expect(model.manifest()).toEqual([])
-  })
-
-  it('leaves the caret where the token started', () => {
-    model.add(AUTH)
-    ta.value = 'How does @Auth Design handle this?'
-    model.reconcile(ta.value)
-    model.detachAt(caretAfter('@Auth Design'))
-    expect(ta.selectionStart).toBe(9)
-    expect(ta.selectionEnd).toBe(9)
-  })
-
-  it('does NOTHING when the caret is not at a token edge — an ordinary Backspace', () => {
-    model.add(AUTH)
-    ta.value = 'How does @Auth Design handle this?'
-    model.reconcile(ta.value)
-
-    expect(model.detachAt(5)).toBe(false)                    // mid-word
-    expect(model.detachAt(ta.value.length)).toBe(false)      // end of the message
-    expect(model.detachAt(ta.value.indexOf('@Auth Design'))).toBe(false)  // LEFT edge
-    expect(ta.value).toBe('How does @Auth Design handle this?')
-    expect(chips().length).toBe(1)
-  })
-
-  it('does not fire on text that merely LOOKS like a token (nothing was accepted)', () => {
-    ta.value = 'ask @Auth Design about it'
-    expect(model.detachAt('ask @Auth Design'.length)).toBe(false)
-    expect(ta.value).toBe('ask @Auth Design about it')
-  })
-
-  it('DUPLICATE TITLES: deleting the first token leaves the OTHER attachment attached', () => {
-    model.add({ uri: 'container:aaa', title: 'Notes', detail: 'design/' })
-    model.add({ uri: 'container:bbb', title: 'Notes', detail: 'journal/' })
-    ta.value = '@Notes and @Notes differ'
-    model.reconcile(ta.value)
-    expect(chips().length).toBe(2)
-
-    expect(model.detachAt('@Notes'.length)).toBe(true)
-    expect(ta.value).toBe('and @Notes differ')
-    // Detaching DEMOTES: the surviving token pairs with the one the user did not
-    // touch, not with the one whose text just went.
-    expect(model.manifest()).toEqual([{ uri: 'container:bbb', title: 'Notes' }])
-    expect(chips().map((c) => c.getAttribute('title'))).toEqual(['journal/'])
-  })
-})
+// attachment was dropped silently at send. The chip now follows the message on
+// every edit, and the chip's ✕ removes BOTH halves.
 
 describe('ComposerAttachments — the ✕ removes the text token too', () => {
-  /** @type {HTMLTextAreaElement} */ let ta
+  /** @type {ReturnType<typeof fakeMessage>} */ let message
   /** @type {ComposerAttachments} */ let model
 
   beforeEach(() => {
     const composer = mountComposer()
-    ta = composer.textarea
-    model = new ComposerAttachments(composer.footer, ta)
+    message = composer.message
+    model = new ComposerAttachments(composer.footer, message)
   })
   afterEach(() => { document.body.innerHTML = '' })
 
   it('deletes the @Title echo from the message, not just the chip', () => {
     model.add(AUTH)
     model.add(RETRY)
-    ta.value = 'compare @Auth Design with @Retry RFC please'
-    model.reconcile(ta.value)
+    message.set('compare @Auth Design with @Retry RFC please')
+    model.reconcile(message.read())
 
     const remove = /** @type {HTMLElement} */ (chips()[0].querySelector('.ask-chip__remove'))
     remove.click()
 
-    expect(ta.value).toBe('compare with @Retry RFC please')
+    expect(message.read()).toBe('compare with @Retry RFC please')
     expect(model.manifest()).toEqual([{ uri: 'container:1a2b', title: 'Retry RFC' }])
     expect(chips().length).toBe(1)
   })
@@ -290,22 +316,22 @@ describe('ComposerAttachments — the ✕ removes the text token too', () => {
   it('DUPLICATE TITLES: the ✕ takes exactly that chip and exactly one token', () => {
     model.add({ uri: 'container:aaa', title: 'Notes', detail: 'design/' })
     model.add({ uri: 'container:bbb', title: 'Notes', detail: 'journal/' })
-    ta.value = 'how do @Notes and @Notes differ?'
-    model.reconcile(ta.value)
+    message.set('how do @Notes and @Notes differ?')
+    model.reconcile(message.read())
 
     const remove = /** @type {HTMLElement} */ (chips()[0].querySelector('.ask-chip__remove'))
     remove.click()
 
-    expect(ta.value).toBe('how do and @Notes differ?')
+    expect(message.read()).toBe('how do and @Notes differ?')
     expect(model.manifest()).toEqual([{ uri: 'container:bbb', title: 'Notes' }])
   })
 
   it('still detaches when the token is already gone from the message', () => {
     model.add(AUTH)
-    ta.value = 'no token here'
+    message.set('no token here')
     const remove = /** @type {HTMLElement} */ (chips()[0].querySelector('.ask-chip__remove'))
     remove.click()
-    expect(ta.value).toBe('no token here')
+    expect(message.read()).toBe('no token here')
     expect(model.manifest()).toEqual([])
   })
 })
@@ -315,13 +341,13 @@ describe('ComposerAttachments — the ✕ removes the text token too', () => {
 // forgets the document out of the pool and a text edit does not — which is also
 // what keeps Ctrl+Z able to restore a chip a keystroke removed.
 describe('ComposerAttachments — the ✕ forgets, a text edit does not', () => {
-  /** @type {HTMLTextAreaElement} */ let ta
+  /** @type {ReturnType<typeof fakeMessage>} */ let message
   /** @type {ComposerAttachments} */ let model
 
   beforeEach(() => {
     const composer = mountComposer()
-    ta = composer.textarea
-    model = new ComposerAttachments(composer.footer, ta)
+    message = composer.message
+    model = new ComposerAttachments(composer.footer, message)
   })
   afterEach(() => { document.body.innerHTML = '' })
 
@@ -331,33 +357,33 @@ describe('ComposerAttachments — the ✕ forgets, a text edit does not', () => 
 
   it('the ✕ FORGETS: writing the same title afterwards stays plain prose', () => {
     model.add(AUTH)
-    ta.value = 'How does @Auth Design handle this?'
-    model.reconcile(ta.value)
+    message.set('How does @Auth Design handle this?')
+    model.reconcile(message.read())
     removeChip()
     expect(model.size).toBe(0)
 
     // The whole point: a removal is FINAL. Without forgetting, this silently
     // re-attaches the document the user just refused.
-    ta.value = 'as @Auth Design says…'
-    expect(model.reconcile(ta.value)).toEqual([])
+    message.set('as @Auth Design says…')
+    expect(model.reconcile(message.read())).toEqual([])
     expect(chips().length).toBe(0)
   })
 
-  it('an atomic Backspace does NOT forget — the same title typed back re-attaches', () => {
+  it('a TEXT EDIT does NOT forget — the same title typed back re-attaches', () => {
     model.add(AUTH)
-    ta.value = 'How does @Auth Design handle this?'
-    model.reconcile(ta.value)
-    expect(model.detachAt('How does @Auth Design'.length)).toBe(true)
-    expect(model.size).toBe(0)
+    message.set('How does @Auth Design handle this?')
+    model.reconcile(message.read())
+    message.set('How does handle this?')
+    expect(model.reconcile(message.read())).toEqual([])
 
-    ta.value = 'as @Auth Design says…'
-    expect(model.reconcile(ta.value)).toEqual([{ uri: 'container:9f2b', title: 'Auth Design' }])
+    message.set('as @Auth Design says…')
+    expect(model.reconcile(message.read())).toEqual([{ uri: 'container:9f2b', title: 'Auth Design' }])
   })
 
   it("a ✕'d document attaches again when accepted from the picker a second time", () => {
     model.add(AUTH)
-    ta.value = '@Auth Design'
-    model.reconcile(ta.value)
+    message.set('@Auth Design')
+    model.reconcile(message.read())
     removeChip()
 
     expect(model.add(AUTH)).toBe(true)
@@ -367,73 +393,61 @@ describe('ComposerAttachments — the ✕ forgets, a text edit does not', () => 
   it('DUPLICATE TITLES: ✕ forgets only the removed uri, and the survivor keeps the OTHER document', () => {
     model.add({ uri: 'container:aaa', title: 'Notes', detail: 'design/' })
     model.add({ uri: 'container:bbb', title: 'Notes', detail: 'journal/' })
-    ta.value = 'how do @Notes and @Notes differ?'
-    model.reconcile(ta.value)
+    message.set('how do @Notes and @Notes differ?')
+    model.reconcile(message.read())
 
     removeChip()                                          // ✕ on design/ (aaa)
-    expect(ta.value).toBe('how do and @Notes differ?')
+    expect(message.read()).toBe('how do and @Notes differ?')
     expect(model.manifest()).toEqual([{ uri: 'container:bbb', title: 'Notes' }])
 
     // Forgetting is per-URI, not per-title: bbb is untouched, so putting a second
     // @Notes back gives ONE chip — bbb's — not two.
-    ta.value = 'how do @Notes and @Notes differ?'
-    expect(model.reconcile(ta.value)).toEqual([{ uri: 'container:bbb', title: 'Notes' }])
-    expect(chips().map((c) => c.getAttribute('title'))).toEqual(['journal/'])
+    message.set('how do @Notes and @Notes differ?')
+    expect(model.reconcile(message.read())).toEqual([{ uri: 'container:bbb', title: 'Notes' }])
+    expect(chips().map((c) => c.getAttribute('title'))).toEqual(['container:bbb'])
   })
 })
 
 describe('ComposerAttachments — a token that comes back re-attaches', () => {
-  /** @type {HTMLTextAreaElement} */ let ta
+  /** @type {ReturnType<typeof fakeMessage>} */ let message
   /** @type {ComposerAttachments} */ let model
 
   beforeEach(() => {
     const composer = mountComposer()
-    ta = composer.textarea
-    model = new ComposerAttachments(composer.footer, ta)
+    message = composer.message
+    model = new ComposerAttachments(composer.footer, message)
   })
   afterEach(() => { document.body.innerHTML = '' })
 
   it('UNDO restores the chip — matching is on the title text, so the pool re-pairs', () => {
     model.add(AUTH)
-    ta.value = 'How does @Auth Design handle this?'
-    model.reconcile(ta.value)
+    message.set('How does @Auth Design handle this?')
+    model.reconcile(message.read())
     expect(chips().length).toBe(1)
 
     // Selected through the token and deleted (or cut, or pasted over).
-    ta.value = 'How does handle this?'
-    expect(model.reconcile(ta.value)).toEqual([])
+    message.set('How does handle this?')
+    expect(model.reconcile(message.read())).toEqual([])
     expect(chips().length).toBe(0)
 
     // …and undone.
-    ta.value = 'How does @Auth Design handle this?'
-    expect(model.reconcile(ta.value)).toEqual([{ uri: 'container:9f2b', title: 'Auth Design' }])
+    message.set('How does @Auth Design handle this?')
+    expect(model.reconcile(message.read())).toEqual([{ uri: 'container:9f2b', title: 'Auth Design' }])
     expect(chips().length).toBe(1)
     expect(chips()[0].getAttribute('data-uri')).toBe('container:9f2b')
   })
 
-  it('undoing an atomic Backspace brings the chip back with it', () => {
+  it('a retired draft forgets everything — a title typed after a send resurrects no chip', () => {
     model.add(AUTH)
-    ta.value = '@Auth Design summarise'
-    model.reconcile(ta.value)
-    expect(model.detachAt('@Auth Design'.length)).toBe(true)
-    expect(chips().length).toBe(0)
-
-    ta.value = '@Auth Design summarise'
-    model.reconcile(ta.value)
-    expect(chips().length).toBe(1)
-  })
-
-  it('clear() forgets the pool — a title typed after a send does not resurrect a chip', () => {
-    model.add(AUTH)
-    model.clear()
+    message.retire()
     expect(model.reconcile('@Auth Design')).toEqual([])
     expect(chips().length).toBe(0)
   })
 
   it('re-accepting a document whose token was deleted attaches it again', () => {
     model.add(AUTH)
-    ta.value = 'nothing here'
-    model.reconcile(ta.value)
+    message.set('nothing here')
+    model.reconcile(message.read())
     expect(model.size).toBe(0)
     expect(model.add(AUTH)).toBe(true)
     expect(model.size).toBe(1)

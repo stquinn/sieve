@@ -10,7 +10,7 @@
 // handleKeyDown here; docs/editor-interaction-contract.md is normative.
 
 import { esc } from '../../../../renderers/html-escape.js'
-import { getLowlight } from '../../../../renderers/highlighting.js'
+import { getLowlight, listRegisteredLanguages } from '../../../../renderers/highlighting.js'
 import { T } from '../tiptap-vendor.js'
 import { registerSieveRenderer, sieveBlockFor } from '../sieve-block-extension.js'
 import { CODE_TEXT_POLICY } from '../../interaction-policy.js'
@@ -200,12 +200,49 @@ import { CodeRenderer } from '../../../../renderers/code-renderer.js'
     return { contextLabel: label }
   }
 
-  CodeNodeView.buildContextMenuItems = function ({ node }) {
+  /** The Language flyout for a CODE BLOCK: the same registry list a fence
+   *  offers, but committed through the wall as a block attr change — and
+   *  stamped `manual`, because a hand-picked language is a detection METHOD,
+   *  the one the server's detection pipeline never second-guesses.
+   *  @param {any} node @param {any} provider @returns {any[]} */
+  function blockLanguageItems(node, provider) {
+    var IC = window.SieveIcons || {}
+    var current = node.attrs.language || ''
+    /** @param {string} label @param {string|null} language @param {boolean} isCurrent */
+    function item(label, language, isCurrent) {
+      return {
+        icon: isCurrent ? IC.check : null,
+        label: label,
+        cls: isCurrent ? 'ctx-item--active' : '',
+        action: function () {
+          provider.requestSetBlock(node.attrs.id, {
+            language: language === null ? '' : language,
+            detectionMethod: 'manual',
+          })
+        },
+      }
+    }
+    var items = [item('Plain', null, !current)]
+    listRegisteredLanguages().forEach(function (name) {
+      items.push(item(name, name, name === current))
+    })
+    return items
+  }
+
+  CodeNodeView.buildContextMenuItems = function ({ node, provider }) {
     var lang = node.attrs.language
     var label = lang && lang !== 'unknown' ? lang + ' block' : 'Code block'
-    return [
+    var items = [
       { type: 'header', label: label },
     ]
+    if (provider && typeof provider.requestSetBlock === 'function') {
+      items.push({
+        icon: (window.SieveIcons || {}).code || '',
+        label: 'Language',
+        children: blockLanguageItems(node, provider),
+      })
+    }
+    return items
   }
 
   registerSieveRenderer('code', CodeNodeView)

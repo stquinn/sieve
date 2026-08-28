@@ -95,21 +95,30 @@
         }
     }
 
-    // Minimum Ask-panel height: header + footer + exactly one textarea line
-    // (line-height + the input's vertical padding). Computed live so it tracks
-    // theme/font changes rather than hard-coding a pixel floor.
+    // Minimum Ask-panel height: footer + the writing box's own frame (its
+    // margins and borders, which now include the handle riding on its top edge)
+    // + exactly one line of message (line-height + the input's vertical
+    // padding). Computed live so it tracks theme/font changes rather than
+    // hard-coding a pixel floor. No header term: the panel no longer draws one.
     function askPanelMinHeight(askPanel) {
-        const header = askPanel.querySelector('.ask-popup__header');
         const footer = askPanel.querySelector('.ask-popup__footer');
         const input = askPanel.querySelector('.ask-popup__input');
         const handle = askPanel.querySelector('.ask-handle');
         const cs = getComputedStyle(input);
         const lineH = parseFloat(cs.lineHeight) || 22;
         const padV = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-        const headerH = header ? header.offsetHeight : 0;
         const footerH = footer ? footer.offsetHeight : 0;
         const handleH = handle ? handle.offsetHeight : 0;
-        return Math.ceil(headerH + footerH + handleH + lineH + padV);
+        const frameV = verticalFrame(askPanel.querySelector('.ask-composer'));
+        return Math.ceil(footerH + handleH + frameV + lineH + padV);
+    }
+
+    // What an element costs vertically over its content box: margins + borders.
+    function verticalFrame(el) {
+        if (!el) return 0;
+        const cs = getComputedStyle(el);
+        return ['marginTop', 'marginBottom', 'borderTopWidth', 'borderBottomWidth']
+            .reduce((sum, prop) => sum + (parseFloat(cs[prop]) || 0), 0);
     }
 
     function onMouseUp() {

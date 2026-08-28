@@ -482,11 +482,15 @@ describe('AbstractEditor surface events + domain API (P2.B / P4.F)', () => {
     expect(seen).toEqual(['doc-changed']) // unsubscribed
   })
 
-  it('a doc-changed marks the editor dirty and dispatches sieve:meta-dirty{dirty:true}', () => {
+  it('a doc-changed marks the editor dirty and dispatches sieve:meta-dirty{dirty:true} FOR ITS OWN uuid', () => {
     // P4.D regression guard: the retired legacyChromeFanout dispatched the
     // dirty:true signal on doc-changed (the saved fact dispatches dirty:false). Its
     // consumers are the StatusBar save slot + the meta-dirty-dot; without this the
     // save indicators are "always green".
+    //
+    // The uuid is load-bearing (#118): more than one editing lens is live on the
+    // page, so the fact has to say WHICH container it is about or a keystroke in
+    // the Ask composer flips the note's status bar to "Unsaved".
     const { ed } = rig()
     expect(ed.isDirty).toBe(false)
     let dirtyDetail = null
@@ -495,7 +499,7 @@ describe('AbstractEditor surface events + domain API (P2.B / P4.F)', () => {
     try {
       ed.onSurfaceEvent({ type: 'doc-changed' })
       expect(ed.isDirty).toBe(true)
-      expect(dirtyDetail).toEqual({ dirty: true })
+      expect(dirtyDetail).toEqual({ dirty: true, uuid: 'u' })
     } finally {
       document.removeEventListener('sieve:meta-dirty', handler)
     }
@@ -1613,7 +1617,8 @@ describe('dirty-state transitions (P2.A)', () => {
 
   it('an editor clears dirty on ITS OWN uuid\'s container-saved fact, and ignores another\'s', () => {
     const events = []
-    const handler = (e) => events.push(e.detail.dirty)
+    const details = []
+    const handler = (e) => { events.push(e.detail.dirty); details.push(e.detail) }
     document.addEventListener('sieve:meta-dirty', handler)
     try {
       // A uuid no other test built an editor for: editors leak across cases in
@@ -1636,6 +1641,8 @@ describe('dirty-state transitions (P2.A)', () => {
         expect(ed.isDirty).toBe(false)
         expect(events).toContain(false)
         expect(saved).toEqual([uuid])
+        // The clear names its container too, so the bar knows whose it is.
+        expect(details).toContainEqual({ dirty: false, uuid: uuid })
       } finally { document.removeEventListener('editor:saved', onSaved) }
 
       // A torn-down editor stops listening: it no longer presents that uuid.

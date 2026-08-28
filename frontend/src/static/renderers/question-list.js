@@ -80,7 +80,7 @@ export class QuestionList {
     for (const token of String(ref == null ? '' : ref).split(',')) {
       const leaf = token.trim()
       if (!leaf) continue
-      this.#reference(this.#address(leaf === WHOLE_DOCUMENT ? '' : leaf), QuestionRel.TARGET)
+      this.#target(this.#address(leaf === WHOLE_DOCUMENT ? '' : leaf))
     }
     return this
   }
@@ -99,6 +99,25 @@ export class QuestionList {
   }
 
   /**
+   * Adds elements a COMPOSER already authored, verbatim and in the order they
+   * were written. Each is taken as it stands — an element that names its own id
+   * keeps it, and the authority it reaches adopts that name.
+   *
+   * It is the list-shaped sibling of `ask`: `ask` mints one prose element from a
+   * string, this takes the elements a richer gesture produced. Both land in the
+   * same slot, so gesture order — target, body, attachments — is stated here and
+   * in one place only.
+   * @param {ReadonlyArray<QuestionElement>|null|undefined} elements
+   * @returns {this}
+   */
+  body(elements) {
+    for (const el of elements || []) {
+      if (el && typeof el.kind === 'string') this.#elements.push(el)
+    }
+    return this
+  }
+
+  /**
    * Declares what the turn was HANDED — the `@` picker's accepted candidates.
    * Each becomes a bare reference carrying the address and, as its cached FACE,
    * the title that labelled it. An entry with no address is not an attachment.
@@ -107,11 +126,44 @@ export class QuestionList {
    */
   attach(entries) {
     for (const entry of entries || []) {
-      const uri = (entry && entry.uri || '').trim()
-      if (!uri) continue
-      this.#reference(uri, QuestionRel.ATTACH, (entry && entry.title || '').trim())
+      const element = QuestionList.attachment(entry && entry.uri, entry && entry.title)
+      if (element) this.#elements.push(element)
     }
     return this
+  }
+
+  /**
+   * One attachment as the reference element that carries it: the address, the
+   * `attach` stamp, and the title as its cached face. THE SINGLE DEFINITION of
+   * the shape, so a composer holding the element as its own truth and a scalar
+   * ask minting one at send produce the same value. An entry with no address is
+   * not an attachment.
+   * @param {any} uri
+   * @param {any} [title]
+   * @returns {QuestionElement|null}
+   */
+  static attachment(uri, title) {
+    const address = String(uri == null ? '' : uri).trim()
+    if (!address) return null
+    /** @type {Record<string, any>} */
+    const attrs = { uri: address, rel: QuestionRel.ATTACH }
+    const face = String(title == null ? '' : title).trim()
+    if (face) attrs.cache = { title: face }
+    return { kind: KIND_REFERENCE, attrs: attrs }
+  }
+
+  /**
+   * The attachment an element carries, or null when it is not one — the reader
+   * half of `attachment`, over anything element-shaped, a container's block
+   * node included.
+   * @param {any} el
+   * @returns {AttachmentEntry|null}
+   */
+  static attachmentOf(el) {
+    if (!el || el.kind !== KIND_REFERENCE) return null
+    const attrs = el.attrs || {}
+    if (attrs.rel !== QuestionRel.ATTACH) return null
+    return { uri: String(attrs.uri || ''), title: String((attrs.cache && attrs.cache.title) || '') }
   }
 
   /** @returns {QuestionElement[]} the list as minted, in gesture order */
@@ -221,12 +273,11 @@ export class QuestionList {
     return Number.isInteger(n) && n >= 1 ? n : -1
   }
 
-  /** @param {string} uri @param {string} rel @param {string} [title] */
-  #reference(uri, rel, title) {
-    /** @type {Record<string, any>} */
-    const attrs = { uri: uri, rel: rel }
-    if (title) attrs.cache = { title: title }
-    this.#elements.push({ kind: KIND_REFERENCE, attrs: attrs })
+  /** Adds the material the question is ABOUT as a reference element. A target
+   *  carries no face: it is addressed inside the document reading it.
+   *  @param {string} uri */
+  #target(uri) {
+    this.#elements.push({ kind: KIND_REFERENCE, attrs: { uri: uri, rel: QuestionRel.TARGET } })
   }
 
   /** This container's address, or one of its leaves. @param {string} leaf @returns {string} */

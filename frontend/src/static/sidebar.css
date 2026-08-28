@@ -25,7 +25,10 @@
   white-space: nowrap;
 }
 
-.sieve-context-menu {
+/* A submenu is the SAME surface as the menu, so it shares the whole declaration
+   and overrides only where it hangs. */
+.sieve-context-menu,
+.sieve-context-submenu {
   position: fixed;
   z-index: 10000;
   background: var(--theme-bgAlt);
@@ -34,7 +37,38 @@
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
   padding: 6px 0;
   min-width: 200px;
+  /* NO static overflow here: a flyout is an absolutely-positioned CHILD of the
+     menu, and a scrollable menu clips it — the pointer then finds nothing to
+     hover, and focusing the clipped flyout scrolls the menu's own items away.
+     Height capping is context-menu.js's `capHeightToFit`, which turns a
+     surface scrollable only at the moment it actually caps it. */
   animation: context-menu-in 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Positioned against the menu it is a child of — which is what makes removing
+   the menu remove it too. Overlapping INTO the menu's edge (a negative margin,
+   not a gap) means the hover path from the parent item never crosses a strip
+   that belongs to neither element. */
+.sieve-context-submenu {
+  position: absolute;
+  left: 100%;
+  margin-left: -4px;
+  min-width: 150px;
+}
+
+.sieve-context-submenu--flipped {
+  left: auto;
+  right: 100%;
+  margin-left: 0;
+  margin-right: -4px;
+}
+
+.ctx-item--parent { position: relative; }
+
+.ctx-item__arrow {
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--theme-muted);
 }
 
 @keyframes context-menu-in {
