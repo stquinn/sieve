@@ -112,3 +112,29 @@ export function getSieveIcon(kind) {
   if (r && typeof r.getIcon === 'function') return r.getIcon()
   return (typeof window !== 'undefined' && window.SieveIcons) ? window.SieveIcons.code : '' // fallback
 }
+
+// listInsertableKinds returns the kinds a keystroke can make from nothing —
+// { kind, label, description, icon, defaults } per kind, in registration order.
+// A kind is in the list because ITS RENDERER CLASS declares a static
+// insertSpec(); a kind born some other way (typed, pasted, asked for) declares
+// nothing and is absent. The answer therefore covers whichever renderers have
+// been loaded — block-renderers.js is the manifest that loads them all.
+//
+// `defaults` is what the block starts as, and each entry gets its OWN copy: the
+// create path adds to the attrs it is handed.
+export function listInsertableKinds() {
+  var insertable = []
+  Object.keys(renderers).forEach(function (kind) {
+    var rendererClass = getBlockRenderer(kind)
+    if (!rendererClass || typeof rendererClass.insertSpec !== 'function') return
+    var spec = rendererClass.insertSpec()
+    insertable.push({
+      kind: kind,
+      label: spec.label || kind,
+      description: spec.description || '',
+      icon: getSieveIcon(kind) || '',
+      defaults: Object.assign({}, spec.defaults),
+    })
+  })
+  return insertable
+}

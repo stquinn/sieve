@@ -110,6 +110,16 @@ export class DiagramRenderer extends BlockRenderer {
   static styles = DiagramTheme.sheet
   static rootClass = 'sieve-block sieve-block--diagram'
 
+  /**
+   * This kind IS insertable from the keyboard, and a fresh one carries nothing:
+   * the engine comes from settings and a source-less diagram opens in edit mode,
+   * both decided server-side on create.
+   * @returns {{label: string, description: string, defaults: Record<string, any>}}
+   */
+  static insertSpec() {
+    return { label: 'Diagram', description: 'Mermaid or PlantUML, rendered', defaults: {} }
+  }
+
   /** @param {SVGSVGElement} svg */
   static #patchEdgeLabelStyle(svg) {
     /** @type {Element|null} */

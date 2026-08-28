@@ -16,6 +16,7 @@ import { InvalidationService } from './invalidation-service.js'
 import { CommandBadges } from './command-badges.js'
 import { AskPanel } from './ask-panel.js'
 import { InsertDialogs } from './insert-dialogs.js'
+import { MacroCatalog } from './macro-catalog.js'
 import { SearchOverlay } from './search-overlay.js'
 import { StatusBar } from './status-bar.js'
 import { SidebarView } from './sidebar-view.js'
@@ -77,6 +78,11 @@ export class SieveWorkspace {
    *  alive: it claims its frames and republishes them as DOM events. */
   #invalidationService
 
+  /** @type {MacroCatalog} what this host offers a `{` picker: the block kinds,
+   *  plus the URL verbs it owns the dialogs for. Built ONCE — a surface composes
+   *  its own presets onto a read of it, and registers nothing. */
+  #macroCatalog
+
   /**
    * @param {import('../container/container-transport.js').ContainerTransportOptions} [serviceOptions]
    *   the ContainerTransport test seams (socketFactory / wsUrlFor). EMPTY in prod.
@@ -94,6 +100,7 @@ export class SieveWorkspace {
     // lazily: the server pushes the jobs snapshot the instant a socket connects,
     // and a tenant registering later would have that first frame dropped.
     this.#invalidationService = new InvalidationService(this.#workspaceService)
+    this.#macroCatalog = new MacroCatalog(this)
   }
 
   get blockService() { return this.#blockService }
@@ -105,6 +112,8 @@ export class SieveWorkspace {
   get commandService() { return this.#commandService }
 
   get mentionService() { return this.#mentionService }
+
+  get macroCatalog() { return this.#macroCatalog }
 
   /** @param {string} uuid @returns {SieveTab|null} */
   getTab(uuid) {
@@ -309,6 +318,7 @@ export class SieveWorkspace {
         provider: mount.provider,
         loadContainer: () => mount.load(),
         mentionService: this.#mentionService,
+        macroCatalog: this.#macroCatalog,
       }, options)))
     }
     return tab

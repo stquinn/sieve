@@ -83,14 +83,17 @@ export let ProseBlock
           var isProse = isNativeProseNodeName
           // One walk of the top-level children: collect prose nodes for stamping,
           // and compute lastContentIdx = the index of the LAST child that is not
-          // an empty prose paragraph. A blank prose BEFORE it is a structural
-          // blank (a real block); one at or after it is the trailing surface.
+          // an empty PARAGRAPH. Only a paragraph can be the trailing surface —
+          // every other prose node with no text (a fresh blockquote or table, a
+          // horizontalRule, an image) is deliberate structure and owns an id. A
+          // blank paragraph BEFORE lastContentIdx is a structural blank (a real
+          // block); one at or after it is the trailing surface.
           var ids = [], positions = [], childIdxs = []
           var lastContentIdx = -1, ci = -1
           newState.doc.forEach(function (node, pos) {
             ci++
-            var emptyProse = isProse(node.type.name) && node.textContent.length === 0
-            if (!emptyProse) lastContentIdx = ci
+            var emptyPara = node.type.name === 'paragraph' && node.textContent.length === 0
+            if (!emptyPara) lastContentIdx = ci
             if (!isProse(node.type.name)) return // structured nodes own their id
             ids.push(node.attrs.id || '')
             positions.push(pos)
@@ -109,7 +112,9 @@ export let ProseBlock
             var changed = false
             // A loaded node already carries its id, so a LOAD never mints and
             // never triggers a create.
-            var isRealBlock = (node.textContent && node.textContent.length > 0) || childIdxs[idx] < lastContentIdx
+            var isRealBlock = node.type.name !== 'paragraph'
+              || (node.textContent && node.textContent.length > 0)
+              || childIdxs[idx] < lastContentIdx
             if (reMint[idx] || (!attrs.id && isRealBlock)) {
               attrs.id = isRealBlock ? Ident.mint() : ''
               changed = true
@@ -119,6 +124,22 @@ export let ProseBlock
               tr.setNodeMarkup(pos, undefined, attrs)
             }
           }
+
+          // A nested native prose node CARRIES NO ID — wrapping a paragraph
+          // into a blockquote or list leaves its old top-level id on the now-
+          // nested node, and a stale id is a live address: the container's
+          // remove cue for the retired top-level block would find the nested
+          // node and delete it out from under the caret. Stripping here is what
+          // makes the invariant true, not just documented.
+          newState.doc.forEach(function (node, pos) {
+            if (!isProse(node.type.name) || node.isLeaf) return
+            node.descendants(function (child, childPos) {
+              if (!child.attrs || !child.attrs.id || !isProse(child.type.name)) return
+              if (!tr) tr = newState.tr
+              tr.setNodeMarkup(pos + 1 + childPos, undefined, Object.assign({}, child.attrs, { id: '' }))
+            })
+          })
+
           if (!tr) return null
           tr.setMeta('addToHistory', false)
           return tr

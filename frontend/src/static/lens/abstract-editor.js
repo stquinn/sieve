@@ -36,6 +36,10 @@ import { QuestionList } from '../renderers/question-list.js'
  * @property {object} [mentionService]
  *   the `@`-picker peer the WYSIWYG surface hosts. Optional: without it the
  *   editor simply has no `@` picker.
+ * @property {object} [macroCatalog]
+ *   what the HOST offers the `{` picker — the block kinds and the host verbs a
+ *   surface composes its own presets onto. Optional: without it a surface's
+ *   picker offers its presets alone.
  */
 
 export class AbstractEditor extends Lens {
@@ -65,6 +69,10 @@ export class AbstractEditor extends Lens {
 
   /** @type {object|null} the `@` picker's peer, held for the WYSIWYG surface. */
   #mentionService = null
+
+  /** @type {object|null} the `{` picker's host half, held for the surface that
+   *  composes its own presets onto it. */
+  #macroCatalog = null
 
   /** @type {AddressStatus|null} built on demand over the mention peer. */
   #addressStatus = null
@@ -106,6 +114,7 @@ export class AbstractEditor extends Lens {
     this.#blockCapable = typeof this.provider.requestAddBlock === 'function'
     this.#loadContainer = options.loadContainer || null
     this.#mentionService = options.mentionService || null
+    this.#macroCatalog = options.macroCatalog || null
 
     // Subscribed before any surface mounts, so a save landing during the initial
     // load is not missed. A prompt has no channel and still gets this: the fact
@@ -137,6 +146,10 @@ export class AbstractEditor extends Lens {
   get canEditBlocks() { return this.#blockCapable }
 
   get mentionService() { return this.#mentionService }
+
+  /** What the host offers this editor's `{` picker, or null.
+   *  @returns {object|null} */
+  get macroCatalog() { return this.#macroCatalog }
 
   /** What this editor has learned about whether the coordinates its blocks render
    *  still resolve; null in bare constructions. Owned HERE, not by the workspace,

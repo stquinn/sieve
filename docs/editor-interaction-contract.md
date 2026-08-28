@@ -157,13 +157,15 @@ a `Partial` of it as `interactionPolicy`, and `policyFor` merges the two.
 | `expandPairOnEnter` | Enter inside an empty pair expands to a block |
 | `blockTextSubstitution` | cancel OS text substitution (macOS smart dashes/quotes) |
 | `literalGlyphs` | no ligature shaping — every character renders as itself |
-| `suppressTriggers` | `@`/`/` pickers never arm in this block's text |
+| `suppressTriggers` | no trigger picker (`@`, `{`, `/`) ever arms in this block's text |
 
 **`suppressTriggers` (added 2026-08-19, #38) is in `CODE_TEXT_POLICY`**, so one
 line covers `code` AND `diagram` and every code-ish kind that spreads the preset
 after them. `@Override`, `@media` and `@Component` sit at a line start after
 whitespace, so they satisfy the `@` trigger's boundary rule and would open the
-picker only to flash shut when the library search came back dry. Eligibility is
+picker only to flash shut when the library search came back dry. A `{` opening a
+scope is the same case and far more common, and the same one line covers it.
+Eligibility is
 an INTERACTION POLICY decision and not a host judgement: a host that adjudicated
 it would be a second declaration mechanism beside `interactionPolicy`. The
 chip-like kinds need nothing — `ai-block`, `web-clip`, `smart-image`,
@@ -525,6 +527,18 @@ machine and the scroll-into-view fix are written ONCE and are identical in both
 is stated where it differs: the composer's half is the rest of this section, the
 document's is *The same picker in the document* at the end of it.
 
+**Every row is the same set of columns.** A row is a left-aligned flex row of
+slots — an optional icon column, the name, the description — and the widths that
+make them line up (the icon gutter, the name's floor width) are declared once, by
+the row constructor every provider draws through (`TriggerProvider.renderRow`).
+Whether the icon column exists at all is a PROVIDER TRAIT (`providesIcons`),
+declared like the two token predicates beside it and stable for the whole
+interaction: a column inferred from whichever candidates a query happened to
+return would shift the list sideways under a user mid-word. Where a provider
+declares one, every row of that picker carries the slot — empty for an entry with
+no icon — so the names stay in a column. `/` and `@` declare none and run flush
+left; `{` declares one.
+
 ### In the composer
 
 The Ask panel's textarea is chrome, not an editor surface — none of the key
@@ -699,8 +713,9 @@ that a message aimed at a command still shows what it will act on.
 
 ### The same picker in the document (#38)
 
-The editor hosts the SAME popover, with `@` only: `/` is a composer verb (a slash
-command runs against the message being written, and a document has no message).
+The editor hosts the SAME popover, with two triggers: `@` (mention a document)
+and `{` (insert a block, #91). `/` is a composer verb — a slash command runs
+against the message being written, and a document has no message.
 
 **Where the picker's keys sit in the precedence order.** The popover binds
 `keydown` in the CAPTURE phase on `view.dom`. ProseMirror installs exactly one
@@ -730,17 +745,69 @@ Elsewhere the token rules are the composer's, unchanged: `@` keeps the default
 boundary (so `me@example` is an address), spans up to 4 words / 60 chars, and
 abandons on Escape, on going dry, and on acceptance.
 
+**`{` runs a MACRO.** Both its token predicates are the trigger defaults: `{`
+opens at the start of the text or after whitespace — so `${code` and `fn(){` are
+literal braces — and the token ends at the first whitespace, because a macro is
+named in one word. A bare `{` lists everything, which is the browse gesture; a
+prefix filters on the entry's label and its second name alike, so `co` and `code`
+both reach Code.
+
+**MACROS ARE TO THE FRONTEND WHAT COMMANDS ARE TO THE BACKEND.** A command is a
+backend verb: declared in Go beside the logic it runs, enumerated to clients,
+dispatched over the wire. A macro is a frontend verb: declared beside the
+capability it fronts, enumerated to whatever renders verbs, invoked with the
+caret's token. A new verb picks its side by WHERE ITS LOGIC HAPPENS — mutating
+domain state is a command, driving a frontend capability (a dialog, native
+editing) is a macro.
+
+The picker offers three kinds of entry, each declared where its capability lives:
+
+| Entry | Declared by | Accepting it |
+|---|---|---|
+| Code, Diagram, Log | the renderer class, as `static insertSpec()` | the token is deleted and the server creates an empty block of that kind |
+| Web Clip | the workspace, which owns the URL dialog | the token is deleted, then the dialog opens |
+| Attach File | the workspace, fronting the toolbar's own attach flow | the token is deleted, then the anchor is captured and the OS file picker opens — the paste pipeline decides the block, exactly as it does for the toolbar button |
+| Table, Quote, Divider | the WYSIWYG surface, as class-level presets — the toolbar's native insert group, offered through a second door | the token is deleted, then the surface runs the toolbar's own command (`insertTable`, `toggleBlockquote`, `setHorizontalRule`) |
+
+The BLOCK KINDS offered are the ones a keystroke can make out of nothing. Every
+other kind is born another way — prose is typed, `ai-block` comes from Ask,
+`reference` from `@`, the smart kinds from a paste, `command-result` from a
+command — and declares no insert. A kind is in the list because its RENDERER
+CLASS declares a `static insertSpec()`
+(`frontend/src/static/renderers/block-kinds.js`, `listInsertableKinds`), so the
+declaration sits with the class rather than in a table that can drift from it.
+
+Nothing REGISTERS with the picker. The workspace composes its catalog once
+(`shell/macro-catalog.js`), a surface declares its presets at class level, and
+each mount READS both — so two mounts of the same surface can never double an
+entry.
+
 **Accepting makes a BLOCK, not text.** This is the one behaviour that genuinely
 differs between the two hosts, and it differs because the hosts do: a textarea
 has nowhere to put a block, so the composer echoes `@Title` and draws a chip
-beside it; a document does, so the token is deleted and an `attachment` block
-carrying the `uri` takes its place. There is no `@Title` text left behind to
-reconcile — the chip in the document IS the reference.
+beside it; a document does, so the token is deleted and a block takes its place —
+a `reference` carrying the `uri` for `@`, an empty block of the named kind for a
+`{` kind entry, created with NO index and NO anchor because the editor owns all
+id→index math. There is no `@Title` text left behind to reconcile — the chip in
+the document IS the reference.
+
+A `{` insert starts the block on the server's own defaults (`InitAttrs`): the
+picker sends no attrs, so language detection, status, timestamps and a
+source-less diagram's edit mode are all settled backend-side, as they are for
+every other create.
+
+**THE TOKEN GOES FIRST, ALWAYS.** For a kind entry the deletion and the create
+are one host boundary (delete, flush, create). For a verb entry the deletion is
+its own tracked edit and lands BEFORE the verb runs — because the verb may be a
+dialog the user then dismisses, and a dismissal must leave the line clean rather
+than a stranded `{web`. A verb creates nothing itself: whatever it opens owns
+that.
 
 **Where it lands is the ordinary rule, not a new one**: the caret is left where
 the token was, so a line the token had to itself becomes the block, and a line
 with prose still on it puts the block on the next one (Block insertion
-placement, above).
+placement, above). A Table is inserted by ProseMirror at that same caret and is
+synced back by the block-sync spine like anything else typed — no server create.
 
 ### Gestures on a block chip (#38)
 

@@ -19,4 +19,4 @@ import './smart-card-renderer.js'
 import './smart-image-renderer.js'
 import './web-clip-renderer.js'
 
-export { getBlockRenderer } from './block-kinds.js'
+export { getBlockRenderer, listInsertableKinds } from './block-kinds.js'

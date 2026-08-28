@@ -12,8 +12,21 @@
 // stays closed, backspacing to a shorter one re-arms it.
 
 import { ContractViolation } from '../contract/sieve-block.js'
-import { TriggerProvider } from './trigger-providers.js'
+import { TriggerProvider, SUBGRID_ROWS } from './trigger-providers.js'
 import { TriggerHost, TriggerPlacement, PanelPlacement } from './trigger-host.js'
+
+/**
+ * TRUE SHARED COLUMNS when the engine has them: the popover becomes the grid
+ * and each row subgrids into it, so the name column is exactly as wide as the
+ * widest visible name and every description starts at one x — a floor width
+ * cannot do that once names outgrow it (document titles in `@` always do).
+ * Without subgrid the rows stay flex and the floor is the fallback rhythm.
+ */
+const SUBGRID = SUBGRID_ROWS
+
+/** The name track: content-sized, capped so one very long title cannot shove
+ *  every description off the popover's edge. */
+const NAME_TRACK = 'fit-content(26em)'
 
 /**
  * Tab, however the platform spells it. WebKitGTK reports Shift+Tab as the X11
@@ -34,6 +47,12 @@ export class TriggerPopover {
   /** @type {TriggerPlacement} */ #placement
   /** @type {Map<string, TriggerProvider>} trigger character → the ONE provider claiming it */ #providers = new Map()
   /** @type {HTMLElement|null} */ #popoverEl = null
+
+  /** @type {HTMLElement|null} the fade over the list's bottom edge, visible only
+   *  while entries sit below the fold — a scrollable list must say so. */ #scrollHint = null
+
+  /** @type {boolean} whether the popover is currently laid out as the rows'
+   *  shared grid — show() must then reveal it as `grid`, not `block`. */ #gridMode = false
   /** @type {any[]} */ #items = []
   /** @type {number} */ #selectedIndex = 0
   /** @type {import('./trigger-providers.js').TriggerToken|null} the token the listed candidates answer */ #token = null
@@ -86,7 +105,7 @@ export class TriggerPopover {
       'display: none',
       'position: fixed',
       'z-index: 1000',
-      'max-height: 200px',
+      'max-height: 320px',
       'overflow-y: auto',
       'background: var(--theme-bgAlt, #1f2335)',
       'border: 1px solid var(--theme-border2, #3b4261)',
@@ -100,7 +119,20 @@ export class TriggerPopover {
     ].join('; ') + ';'
 
     document.body.appendChild(el)
+    el.addEventListener('scroll', () => this.#syncScrollHint())
     this.#popoverEl = el
+  }
+
+  /**
+   * The fade earns its keep only while something is actually below the fold:
+   * at the bottom (or in an unscrollable list) it vanishes, so the last row is
+   * never veiled once it is reachable.
+   */
+  #syncScrollHint() {
+    const el = this.#popoverEl
+    if (!el || !this.#scrollHint) return
+    const below = el.scrollHeight - el.scrollTop - el.clientHeight > 4
+    this.#scrollHint.style.opacity = below ? '1' : '0'
   }
 
   /**
@@ -289,6 +321,23 @@ export class TriggerPopover {
     const token = this.#token
     if (!token) return
     this.#popoverEl.innerHTML = ''
+
+    // The container carries the columns; each row subgrids into them, so the
+    // name column is as wide as the widest visible name and every description
+    // starts at one x. The icon track exists only for a provider that declares
+    // one. Without subgrid, rows fall back to flex and the slots' own widths
+    // (icon gutter, name floor) are the rhythm.
+    // Every track is CONTENT-SIZED (never a fixed length): a subgrid row's own
+    // padding and border are charged inside its edge tracks, and only a track
+    // sized from its items inflates to absorb that — a fixed one lets the edge
+    // cell overflow into its neighbour.
+    this.#gridMode = SUBGRID
+    if (this.#gridMode) {
+      this.#popoverEl.style.gridTemplateColumns =
+        (token.provider.providesIcons ? 'max-content ' : '') + NAME_TRACK + ' 1fr'
+      if (this.#popoverEl.style.display !== 'none') this.#popoverEl.style.display = 'grid'
+    }
+
     this.#items.forEach((item, idx) => {
       const row = document.createElement('div')
       const isActive = idx === this.#selectedIndex
@@ -296,8 +345,9 @@ export class TriggerPopover {
       row.style.cssText = [
         'padding: 8px 14px',
         'cursor: pointer',
-        'display: flex',
-        'justify-content: space-between',
+        this.#gridMode
+          ? 'display: grid; grid-template-columns: subgrid; grid-column: 1 / -1'
+          : 'display: flex',
         'align-items: center',
         'font-size: 13px',
         'font-family: var(--theme-uiFont, system-ui, sans-serif)',
@@ -317,11 +367,31 @@ export class TriggerPopover {
       this.#popoverEl?.appendChild(row)
     })
 
+    // The bottom-edge fade, LAST so it sits over the list's bottom edge. Sticky
+    // inside the scroller with a negative margin, so it costs no list height;
+    // pointer-events off, so the row beneath it still takes the click.
+    const hint = document.createElement('div')
+    hint.className = 'command-hint-scroll-hint'
+    hint.style.cssText = [
+      'position: sticky',
+      'bottom: 0',
+      'height: 28px',
+      'margin-top: -28px',
+      'grid-column: 1 / -1',
+      'pointer-events: none',
+      'opacity: 0',
+      'transition: opacity 0.1s ease',
+      'background: linear-gradient(to bottom, transparent, var(--theme-bgAlt, #1f2335))',
+    ].join('; ')
+    this.#popoverEl.appendChild(hint)
+    this.#scrollHint = hint
+
     // Keyboard navigation has to carry the viewport with it: #render() clears
     // innerHTML, which resets scrollTop to 0. 'nearest' scrolls the minimum
     // needed, so the list stays still while the selection is already visible.
     const activeEl = this.#popoverEl.querySelector('.command-hint-item.is-active')
     if (activeEl) activeEl.scrollIntoView({ block: 'nearest' })
+    this.#syncScrollHint()
   }
 
   show() {
@@ -329,8 +399,10 @@ export class TriggerPopover {
       // Visible BEFORE placing: a display:none element has no box, so a placement
       // that sizes itself to its content (CaretPlacement) measures zero. Both
       // statements are synchronous, so the pre-placement position is never seen.
-      this.#popoverEl.style.display = 'block'
+      this.#popoverEl.style.display = this.#gridMode ? 'grid' : 'block'
       this.#placement.place(this.#popoverEl, this.#host)
+      // Only now does the element have a box to measure the fold against.
+      this.#syncScrollHint()
     }
   }
 

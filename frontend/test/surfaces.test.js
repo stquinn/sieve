@@ -88,6 +88,7 @@ import { BlockSelection } from '../src/static/lens/document-editor/block-selecti
 import { computeBlockSync, computeOrderOp } from '../src/static/lens/document-editor/block-sync.js'
 import { docPosForBlockIndex, blockIndexAfter } from '../src/static/lens/document-editor/surfaces/block-position.js'
 import { caretInRawTextBlock } from '../src/static/lens/document-editor/paste-context.js'
+import { ActionMacro } from '../src/static/shell/trigger-providers.js'
 import { schema as fxSchema, build, docWithCaret, docWithCaretAt, docWithRange, docWithNodeSelection } from './helpers/editor-fixture.js'
 
 // window.isMod is an index.html global in the app; provide it for keydown tests.
@@ -573,6 +574,13 @@ function mountBundle(state) {
       this.schema = state.schema
       this.view = { dom: document.createElement('div'), dispatch: vi.fn() }
       this.storage = { markdown: { parser: { md: { render: (t) => t } } } }
+      // The event seam a real Editor carries: the surface's trigger picker
+      // subscribes to `update`/`blur` through it on every mount.
+      this.handlers = {}
+      this.on = (event, fn) => { (this.handlers[event] = this.handlers[event] || []).push(fn) }
+      this.off = (event, fn) => {
+        this.handlers[event] = (this.handlers[event] || []).filter((h) => h !== fn)
+      }
       this.commands = { insertContentAt: vi.fn(), insertContent: vi.fn(), focus: vi.fn(), scrollIntoView: vi.fn() }
       this.destroyed = false
       this.destroy = () => { this.destroyed = true }
@@ -1623,4 +1631,115 @@ describe('WysiwygSurface.paintContainer — a LOAD parks the caret+scroll at the
     // AFTER the replace landed) is retired — everything rides one transaction.
     expect(ed.calls.some((c) => c[0] === 'setTextSelection')).toBe(false)
   })
+})
+
+// ── The `{` picker's entries (#91 phase 2) ──────────────────────────────────
+
+describe('WysiwygSurface.macrosFor — composing one mount\'s macros', () => {
+  /** A live-pane stub recording the command chain a preset drives. */
+  function paneStub() {
+    /** @type {any[]} */ const calls = []
+    /** @type {any} */ const chain = {
+      focus: () => { calls.push(['focus']); return chain },
+      insertTable: (opts) => { calls.push(['insertTable', opts]); return chain },
+      toggleBlockquote: () => { calls.push(['toggleBlockquote']); return chain },
+      setHorizontalRule: () => { calls.push(['setHorizontalRule']); return chain },
+      run: () => { calls.push(['run']); return true },
+    }
+    return { calls, chain: () => chain }
+  }
+
+  /** A host catalog offering `names`, as MacroCatalog does. */
+  function catalogOf(...names) {
+    return { list: () => names.map((n) => new ActionMacro({ label: n, action: () => {} })) }
+  }
+
+  it('leads with everything the HOST offers, then this surface\'s own presets', () => {
+    const macros = WysiwygSurface.macrosFor(catalogOf('Code', 'Web Clip'), paneStub())
+    expect(macros.map((m) => m.label)).toEqual(['Code', 'Web Clip', 'Table', 'Quote', 'Divider'])
+  })
+
+  it('offers its presets alone when the host carries no catalog', () => {
+    expect(WysiwygSurface.macrosFor(null, paneStub()).map((m) => m.name)).toEqual(['table', 'blockquote', 'hr'])
+  })
+
+  it('names and describes each preset, so it reads like any other entry', () => {
+    const table = WysiwygSurface.macrosFor(null, paneStub())[0]
+    expect(table.label).toBe('Table')
+    expect(table.description).toBeTruthy()
+  })
+
+  // COMPOSING IS NOT REGISTERING: the presets are a class-level declaration read
+  // afresh here, so a second mount cannot append a second Table.
+  it('composes fresh every time — two mounts produce no duplicate entry', () => {
+    const catalog = catalogOf('Code')
+    const first = WysiwygSurface.macrosFor(catalog, paneStub())
+    const second = WysiwygSurface.macrosFor(catalog, paneStub())
+    expect(second.map((m) => m.label)).toEqual(first.map((m) => m.label))
+    expect(second.map((m) => m.label)).toEqual(['Code', 'Table', 'Quote', 'Divider'])
+    expect(second[1]).not.toBe(first[1])
+  })
+
+  it('binds each preset to the pane it was composed for', () => {
+    const pane = paneStub()
+    const other = paneStub()
+    WysiwygSurface.macrosFor(null, pane)[0].run(/** @type {any} */ ({ replaceRange: () => {} }), token(0, 6))
+    expect(other.calls).toEqual([])
+    expect(pane.calls.length).toBeGreaterThan(0)
+  })
+
+  it('clears the token, then runs the toolbar\'s OWN insertTable command', () => {
+    const pane = paneStub()
+    /** @type {any[]} */ const cleared = []
+    const host = /** @type {any} */ ({
+      replaceRange: (start, end, text) => {
+        cleared.push([start, end, text])
+        expect(pane.calls).toEqual([]) // the token goes FIRST — a native insert never precedes it
+      },
+    })
+
+    WysiwygSurface.macrosFor(null, pane)[0].run(host, token(4, 8))
+
+    expect(cleared).toEqual([[4, 8, '']])
+    expect(pane.calls).toEqual([
+      ['focus'], ['insertTable', { rows: 3, cols: 3, withHeaderRow: true }], ['run'],
+    ])
+  })
+
+  it('clears the token, then runs the toolbar\'s OWN toggleBlockquote command', () => {
+    const pane = paneStub()
+    /** @type {any[]} */ const cleared = []
+    const host = /** @type {any} */ ({
+      replaceRange: (start, end, text) => {
+        cleared.push([start, end, text])
+        expect(pane.calls).toEqual([]) // the token goes FIRST — a native insert never precedes it
+      },
+    })
+
+    WysiwygSurface.macrosFor(null, pane)[1].run(host, token(4, 8))
+
+    expect(cleared).toEqual([[4, 8, '']])
+    expect(pane.calls).toEqual([['focus'], ['toggleBlockquote'], ['run']])
+  })
+
+  it('clears the token, then runs the toolbar\'s OWN setHorizontalRule command', () => {
+    const pane = paneStub()
+    /** @type {any[]} */ const cleared = []
+    const host = /** @type {any} */ ({
+      replaceRange: (start, end, text) => {
+        cleared.push([start, end, text])
+        expect(pane.calls).toEqual([]) // the token goes FIRST — a native insert never precedes it
+      },
+    })
+
+    WysiwygSurface.macrosFor(null, pane)[2].run(host, token(4, 8))
+
+    expect(cleared).toEqual([[4, 8, '']])
+    expect(pane.calls).toEqual([['focus'], ['setHorizontalRule'], ['run']])
+  })
+
+  /** @param {number} start @param {number} end */
+  function token(start, end) {
+    return /** @type {any} */ (Object.freeze({ provider: null, start, end, prefix: 'tab' }))
+  }
 })

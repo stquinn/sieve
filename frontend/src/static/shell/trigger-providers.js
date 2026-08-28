@@ -13,8 +13,30 @@
 // THE SCAN LIVES HERE, on the type whose two predicates decide it and whose
 // TriggerToken it mints. A HOST runs it over its own text; the popover never sees
 // text at all.
+//
+// The `{` picker's CANDIDATE type — the Macro family — lives here too, beside the
+// provider that renders and accepts it. A macro is a frontend verb; what the
+// catalog of them IS, and who declares each one, is macro-catalog.js.
 
 import { ContractViolation } from '../contract/sieve-block.js'
+
+// The two widths that make a picker's rows line up into columns: the icon gutter
+// every row carries, and the floor a name occupies before its description
+// begins. 14px icons with breathing room; a name column wide enough for the
+// kinds and verbs on offer.
+const ICON_SLOT_WIDTH = '22px'
+const NAME_SLOT_MIN_WIDTH = '10em'
+
+/**
+ * Whether the engine can lay the popover out as ONE shared grid the rows
+ * subgrid into. Detected HERE because both halves of the layout read it: the
+ * popover builds its track template from it, and renderRow drops the name
+ * slot's floor width under it — a shared track already hugs the widest name,
+ * and keeping the floor would push every description past a gulf of dead
+ * space. Without subgrid the rows are flex and the floor IS the rhythm.
+ */
+export const SUBGRID_ROWS = typeof CSS !== 'undefined' && !!CSS.supports
+  && CSS.supports('grid-template-columns', 'subgrid')
 
 /**
  * The token the caret currently sits in, frozen because a provider reads it and
@@ -82,6 +104,16 @@ export class TriggerProvider {
    * @returns {boolean}
    */
   acceptsPrefix(prefix) { return !/\s/.test(prefix) }
+
+  /**
+   * Does this provider's picker carry an ICON COLUMN? A trait rather than an
+   * inference from the candidates in hand: a column that appeared and vanished
+   * as queries happened to return icons would move the whole list sideways under
+   * a user mid-word. The DEFAULT is no column — a command and a document title
+   * are named, not pictured.
+   * @returns {boolean}
+   */
+  get providesIcons() { return false }
 
   /**
    * The candidates for `prefix` — an ARRAY for a provider that enumerates locally,
@@ -162,23 +194,40 @@ export class TriggerProvider {
   }
 
   /**
-   * The house row: a bold leading label and a dim trailing detail, shared so the
-   * two triggers are visually ONE picker.
+   * The house row, shared so every trigger is visually ONE picker: a
+   * left-aligned flex row of slots — name, description, and an icon column
+   * ahead of them for a provider whose `providesIcons` trait declares one.
+   *
+   * THE COLUMNS ARE THE POINT. Where there is an icon column every row carries
+   * it, empty or not, and the name slot has a floor width — so every name in the
+   * list starts at one x and every description at another. Both widths are
+   * declared HERE and nowhere else: the popover contributes the flex row, not
+   * the rhythm inside it. A name longer than the floor pushes only its own
+   * description.
    * @protected
-   * @param {string} label @param {string} [detail]
+   * @param {string} label @param {string} [detail] @param {string} [icon] SVG markup
    * @returns {DocumentFragment}
    */
-  renderRow(label, detail) {
+  renderRow(label, detail, icon) {
     const frag = document.createDocumentFragment()
+
+    if (this.providesIcons) {
+      const iconEl = document.createElement('span')
+      iconEl.className = 'command-hint__icon'
+      iconEl.style.cssText = `display: inline-flex; align-items: center; flex: none; width: ${ICON_SLOT_WIDTH}; opacity: 0.8;`
+      if (icon) iconEl.innerHTML = icon
+      frag.appendChild(iconEl)
+    }
 
     const nameEl = document.createElement('span')
     nameEl.className = 'command-hint__name'
-    nameEl.style.cssText = 'font-family: var(--theme-monoFont, monospace); font-weight: 600; color: var(--theme-accentPrimary, #7aa2f7);'
+    const floor = SUBGRID_ROWS ? '' : `min-width: ${NAME_SLOT_MIN_WIDTH}; `
+    nameEl.style.cssText = `flex: none; ${floor}font-family: var(--theme-monoFont, monospace); font-weight: 600; color: var(--theme-accentPrimary, #7aa2f7);`
     nameEl.textContent = label
 
     const descEl = document.createElement('span')
     descEl.className = 'command-hint__desc'
-    descEl.style.cssText = 'font-size: 12px; opacity: 0.75; margin-left: 12px;'
+    descEl.style.cssText = 'flex: 1; min-width: 0; text-align: left; font-size: 12px; opacity: 0.75; margin-left: 12px;'
     descEl.textContent = detail || ''
 
     frag.appendChild(nameEl)
@@ -223,6 +272,200 @@ export class SlashCommandProvider extends TriggerProvider {
   /** @param {{name: string}} cmd @param {TriggerToken} token
    *  @param {import('./trigger-host.js').TriggerHost} host */
   accept(cmd, token, host) { this.replaceToken(host, token, '/' + cmd.name) }
+}
+
+/**
+ * @typedef {object} MacroSpec
+ * @property {string} label   the name a person picks it by
+ * @property {string} [name]
+ *   the SECOND word it answers to — a kind's wire name, a verb's short handle.
+ *   Defaults to the label.
+ * @property {string} [description]
+ * @property {string} [icon]  the entry's icon as SVG markup
+ */
+
+/**
+ * ONE ENTRY IN THE `{` PICKER: a frontend verb, drawn like a command and picked
+ * like one, whose acceptance is a CALL rather than a text completion.
+ *
+ * ACCEPTING A MACRO ALWAYS REMOVES THE TYPED TOKEN. Whether that happens as the
+ * first half of one host boundary (a create) or as an edit of its own before the
+ * verb runs (a dialog, a native command) is the subclass's business; what a user
+ * must never be left with is the `{table` a cancelled dialog abandoned.
+ */
+export class Macro {
+  /** @type {string} */ #label
+  /** @type {string} */ #name
+  /** @type {string} */ #description
+  /** @type {string} */ #icon
+
+  /** @param {MacroSpec} spec */
+  constructor(spec) {
+    if (!spec || !spec.label) throw new ContractViolation('a Macro needs a label')
+    this.#label = spec.label
+    this.#name = spec.name || spec.label
+    this.#description = spec.description || ''
+    this.#icon = spec.icon || ''
+  }
+
+  get label() { return this.#label }
+
+  get name() { return this.#name }
+
+  get description() { return this.#description }
+
+  get icon() { return this.#icon }
+
+  /**
+   * Perform this entry in `host`, consuming the token the user typed to reach it.
+   * @param {import('./trigger-host.js').TriggerHost} _host
+   * @param {TriggerToken} _token
+   */
+  run(_host, _token) {
+    throw new ContractViolation(`${this.constructor.name} must implement run(host, token)`)
+  }
+
+  /**
+   * Deletes the token, leaving the caret where it stood. The FIRST thing an entry
+   * that does not create does, because what follows may never happen.
+   * @protected
+   * @param {import('./trigger-host.js').TriggerHost} host @param {TriggerToken} token
+   */
+  clearToken(host, token) {
+    const typed = /** @type {import('./trigger-host.js').TypedTriggerHost} */ (/** @type {any} */ (host))
+    if (typeof typed.replaceRange !== 'function') {
+      throw new ContractViolation(`${this.constructor.name} clears its token and needs a host that can be typed into`)
+    }
+    typed.replaceRange(token.start, token.end, '')
+  }
+}
+
+/**
+ * One kind the picker can make, as the block vocabulary describes it.
+ * @typedef {object} InsertableKind
+ * @property {string} kind         the wire name the block is created under
+ * @property {string} label        the name a person picks it by
+ * @property {string} [description]
+ * @property {string} [icon]       the kind's icon as SVG markup
+ * @property {Record<string, any>} [defaults]  what a fresh block of this kind starts as
+ */
+
+/**
+ * THE COMMON CASE: the token becomes an empty block of one kind. Delete and
+ * create are ONE host boundary — the host removes the token, flushes it to the
+ * server, and asks for the block where it stood — so this writes no text and
+ * computes no position.
+ */
+export class BlockMacro extends Macro {
+  /** @type {string} */ #kind
+  /** @type {Record<string, any>} */ #defaults
+
+  /** @param {InsertableKind} kind */
+  constructor(kind) {
+    const spec = kind || /** @type {any} */ ({})
+    super({ label: spec.label || spec.kind, name: spec.kind, description: spec.description, icon: spec.icon })
+    this.#kind = spec.kind
+    this.#defaults = Object.assign({}, spec.defaults)
+  }
+
+  /** @returns {string} the wire name the block is created under */
+  get kind() { return this.#kind }
+
+  /**
+   * @param {import('./trigger-host.js').TriggerHost} host @param {TriggerToken} token
+   */
+  run(host, token) {
+    const maker = /** @type {import('./trigger-host.js').BlockMakingTriggerHost} */ (/** @type {any} */ (host))
+    if (typeof maker.createBlock !== 'function') {
+      throw new ContractViolation(`${this.constructor.name} makes blocks and needs a host that can hold one`)
+    }
+    maker.createBlock(this.#kind, Object.assign({}, this.#defaults), token)
+  }
+}
+
+/**
+ * @typedef {MacroSpec & {action: () => void}} ActionMacroSpec
+ */
+
+/**
+ * A macro that FRONTS a capability the app already has — a dialog, a native
+ * editing command. The action takes no arguments and returns nothing: whatever
+ * it drives owns the outcome, including whether a block is ever created.
+ */
+export class ActionMacro extends Macro {
+  /** @type {() => void} */ #action
+
+  /** @param {ActionMacroSpec} spec */
+  constructor(spec) {
+    super(spec)
+    if (!spec || typeof spec.action !== 'function') {
+      throw new ContractViolation('an ActionMacro needs an action to run')
+    }
+    this.#action = spec.action
+  }
+
+  /**
+   * @param {import('./trigger-host.js').TriggerHost} host @param {TriggerToken} token
+   */
+  run(host, token) {
+    this.clearToken(host, token)
+    this.#action()
+  }
+}
+
+/**
+ * @typedef {object} MacroLister
+ * @property {() => Macro[]} list
+ */
+
+export class BlockInsertProvider extends TriggerProvider {
+  /** @type {MacroLister} */ #macros
+
+  /**
+   * @param {MacroLister} macroLister  the catalog composed for this mount.
+   *   INJECTED, because what a `{` can do is the HOST's answer and not this
+   *   type's: what arrives here is a list, not a registry.
+   */
+  constructor(macroLister) {
+    super()
+    if (!macroLister || typeof macroLister.list !== 'function') {
+      throw new ContractViolation('BlockInsertProvider requires a macro lister')
+    }
+    this.#macros = macroLister
+  }
+
+  get trigger() { return '{' }
+
+  /** An entry here is a THING the document will hold or a verb it will run, and
+   *  both are recognised by their icon long before their name is read.
+   *  @returns {boolean} */
+  get providesIcons() { return true }
+
+  /**
+   * The catalog is small and local, so this is a SYNCHRONOUS filter. An entry
+   * answers to its label and to its second name alike — one is what the user
+   * reads, the other is what they may already know it as — and a BLANK prefix
+   * lists everything, which is the browse gesture.
+   * @param {string} prefix @returns {Macro[]}
+   */
+  search(prefix) {
+    const p = (prefix || '').toLowerCase()
+    return (this.#macros.list() || []).filter((m) =>
+      m.label.toLowerCase().startsWith(p) || m.name.toLowerCase().startsWith(p))
+  }
+
+  /** @param {Macro} macro @returns {Node} */
+  render(macro) { return this.renderRow(macro.label, macro.description, macro.icon) }
+
+  /**
+   * THE ENTRY OWNS WHAT ACCEPTING MEANS, so there is no branch here on what kind
+   * of entry it is. The host is passed through because the entry acts against it.
+   * @param {Macro} macro @param {TriggerToken} token
+   * @param {import('./trigger-host.js').TriggerHost} host
+   */
+  accept(macro, token, host) {
+    macro.run(host, token)
+  }
 }
 
 /**

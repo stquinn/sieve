@@ -22,14 +22,14 @@ import { AiTargetDecoration } from './ai-target-decoration.js'
 import { Search, SelectionHighlight, HighlightMark, AiShortcuts } from '../../extensions.js'
 import { policyEnterKeydown, buildInteractionPolicyExtension } from '../interaction-policy.js'
 import { TriggerPopover } from '../../../shell/trigger-popover.js'
-import { MentionProvider } from '../../../shell/trigger-providers.js'
+import { ActionMacro, BlockInsertProvider, MentionProvider } from '../../../shell/trigger-providers.js'
 import { ProseMirrorHost, CaretPlacement } from '../../../shell/trigger-host.js'
 import {
   getSieveNodes, getSieveBlockLabel, serializeNode, sieveBlockAttrs,
   sieveBlockEntries, rendererFor,
 } from './sieve-block-extension.js'
 import { BlockSelection } from '../block-selection.js'
-import { getBlockKind } from '../../../renderers/block-kinds.js'
+import { getBlockKind, isNativeProseNodeName } from '../../../renderers/block-kinds.js'
 import { SieveBlock } from '../../../contract/sieve-block.js'
 import { buildBlocksHTML, proseContent } from './block-render.js'
 import { seedBaseline, computeBlockSync, computeOrderOp } from '../block-sync.js'
@@ -625,22 +625,82 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /**
-   * Wires the picker over the live view. Silent no-op without a MentionService: a
-   * missing OPTIONAL service must never be a mount failure.
+   * This surface's own macros: the PM-NATIVE presets, whose acceptance is a
+   * command against the live pane rather than a create on the server. The
+   * declaration is CLASS-LEVEL and the icon is named rather than resolved, so
+   * nothing here depends on when a mount happens.
+   * @type {ReadonlyArray<{label: string, name: string, description: string, icon: string, run: (pane: any) => void}>}
+   */
+  static #PRESETS = Object.freeze([Object.freeze({
+    label: 'Table',
+    name: 'table',
+    description: '3×3 with a header row',
+    icon: 'table',
+    run: (/** @type {any} */ pane) => { pane.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
+  }), Object.freeze({
+    label: 'Quote',
+    name: 'blockquote',
+    description: 'An indented quotation',
+    icon: 'blockquote',
+    run: (/** @type {any} */ pane) => { pane.chain().focus().toggleBlockquote().run() },
+  }), Object.freeze({
+    label: 'Divider',
+    name: 'hr',
+    description: 'A horizontal rule',
+    icon: 'horizontalRule',
+    run: (/** @type {any} */ pane) => { pane.chain().focus().setHorizontalRule().run() },
+  })])
+
+  /**
+   * The `{` picker's entries for ONE mount: everything the host's catalog offers,
+   * then this surface's presets bound to `pane`.
    *
-   * ONLY `@` is registered. `/` is a COMPOSER verb — a slash command runs against
-   * the message being written, and a document has no message.
+   * COMPOSING IS NOT REGISTERING. The presets are read afresh and minted here, so
+   * a second mount produces a second list rather than a longer one.
+   * @param {{list: () => import('../../../shell/trigger-providers.js').Macro[]}|null} catalog
+   * @param {any} pane  the live TipTap editor a preset acts on
+   * @returns {import('../../../shell/trigger-providers.js').Macro[]}
+   */
+  static macrosFor(catalog, pane) {
+    const icons = /** @type {any} */ (window).SieveIcons || {}
+    return (catalog ? catalog.list() : []).concat(WysiwygSurface.#PRESETS.map((preset) => new ActionMacro({
+      label: preset.label,
+      name: preset.name,
+      description: preset.description,
+      icon: icons[preset.icon] || '',
+      action: () => preset.run(pane),
+    })))
+  }
+
+  /**
+   * Wires the picker over the live view, with the triggers a DOCUMENT answers to:
+   *
+   *   `{` — run a macro: insert a block of a named kind, or drive a capability
+   *         the host already has. Always registered: the catalog answers
+   *         locally, so it needs no service.
+   *   `@` — mention a document, which here becomes a reference block. Registered
+   *         only when the host carries a MentionService; a missing OPTIONAL
+   *         service must never be a mount failure.
+   *
+   * `/` is a COMPOSER verb — a slash command runs against the message being
+   * written, and a document has no message.
    */
   #mountTriggerPicker() {
     // Idempotent: a re-mount without an unmount would leave the old picker's
     // element on document.body and its subscriptions on a dead view.
     if (this.#triggerPicker) { this.#triggerPicker.destroy(); this.#triggerPicker = null }
     const editorPane = this.#editorPane
+    if (!editorPane) return
+    const macros = WysiwygSurface.macrosFor(
+      /** @type {any} */ (this.#host).macroCatalog || null, editorPane,
+    )
+    /** @type {import('../../../shell/trigger-providers.js').TriggerProvider[]} */
+    const providers = [new BlockInsertProvider({ list: () => macros })]
     const mentions = /** @type {any} */ (this.#host).mentionService
-    if (!editorPane || !mentions) return
+    if (mentions) providers.push(new MentionProvider(mentions))
     const port = new CaretTriggerPort(editorPane, this.#host, () => this.flushPending())
     this.#triggerPicker = new TriggerPopover(
-      new ProseMirrorHost(port), [new MentionProvider(mentions)], new CaretPlacement(),
+      new ProseMirrorHost(port), providers, new CaretPlacement(),
     )
   }
 
@@ -1488,6 +1548,12 @@ export class WysiwygSurface extends AbstractSurface {
     if (!ed) return
     var held = this.#findNodeById(ed, id)
     if (!held) return
+    // A remove cue names a TOP-LEVEL block. A nested NATIVE PROSE match is a
+    // stale leftover id on a node something wrapped (identity strips it on the
+    // next pass), never the container's block — deleting it would tear content
+    // out of a blockquote or list the user is inside. A nested sieve-* match
+    // stays deletable: a container kind's children are genuinely addressed.
+    if (isNativeProseNodeName(held.node.type.name) && ed.state.doc.resolve(held.pos).depth > 0) return
     var tr = ed.state.tr.delete(held.pos, held.pos + held.node.nodeSize)
     tr.setMeta('addToHistory', false)
     ed.view.dispatch(tr)

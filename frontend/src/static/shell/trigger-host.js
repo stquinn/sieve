@@ -277,7 +277,7 @@ export class PanelPlacement extends TriggerPlacement {
  * picker opens on a function of the caret position alone, so it cannot flip up and
  * down under the user as they type.
  */
-const POPOVER_MAX_HEIGHT = 200
+const POPOVER_MAX_HEIGHT = 320
 
 const CARET_MIN_WIDTH = 160
 const CARET_GAP = 4

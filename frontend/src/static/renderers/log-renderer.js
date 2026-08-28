@@ -121,6 +121,16 @@ export class LogRenderer extends BlockRenderer {
   static styles = logStyles
   static rootClass = 'sieve-block sieve-block--log'
 
+  /**
+   * This kind IS insertable from the keyboard, and a fresh one is an empty raw
+   * log waiting for text: the parse job only exists once there is a source, so
+   * the server settles status and language on create.
+   * @returns {{label: string, description: string, defaults: Record<string, any>}}
+   */
+  static insertSpec() {
+    return { label: 'Log', description: 'Log output, parsed into columns', defaults: {} }
+  }
+
   /** @param {LogAttrs} attrs @returns {'raw'|'explore'} */
   static mode(attrs) { return /** @type {'raw'|'explore'} */ (attrs.mode || (attrs.parsedAssetRef ? 'explore' : 'raw')) }
   /** @param {LogAttrs} attrs @returns {boolean} */

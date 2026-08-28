@@ -43,6 +43,16 @@ export class CodeRenderer extends BlockRenderer {
   /** @type {HTMLElement|null} */ #gutter = null
   /** @type {HTMLElement|null} */ #codeEl = null
 
+  /**
+   * This kind IS insertable from the keyboard, and this is what a fresh one is:
+   * nothing. Every attr the block needs — language, status, timestamps — is the
+   * server's to fill on create.
+   * @returns {{label: string, description: string, defaults: Record<string, any>}}
+   */
+  static insertSpec() {
+    return { label: 'Code', description: 'Source, syntax-highlighted', defaults: {} }
+  }
+
   /** @returns {HTMLElement} */
   buildHeader() {
     this.#headerBar = new HeaderBar(new CodeHeader())

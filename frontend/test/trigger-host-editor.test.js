@@ -1,5 +1,6 @@
 // @ts-check
-// The `@` picker hosted in a DOCUMENT.
+// The pickers hosted in a DOCUMENT — `@` (mention a document) and `{` (insert a
+// block), over one popover and one caret port.
 //
 // Driven against a REAL TipTap editor with the real interaction-policy
 // extension, because a fake would grant all three of these for free:
@@ -12,9 +13,9 @@
 //   2. `suppressTriggers`. The flag is read through the SAME resolveContext the
 //      arrows and Tab go through, so the test puts a caret in a real
 //      `sieve-code` node rather than asserting a boolean off a policy object.
-//   3. ACCEPTANCE IS NOT A TEXT SUBSTITUTION here. `@Auth Design` in a document
-//      deletes the token and CREATES A BLOCK — and creates it with NO index and
-//      NO anchor, because the editor owns all id→index math.
+//   3. ACCEPTANCE IS NOT A TEXT SUBSTITUTION here. `@Auth Design` and `{code`
+//      alike delete the token and CREATE A BLOCK — with NO index and NO anchor,
+//      because the editor owns all id→index math.
 //
 // The port under test is the SHIPPED CaretTriggerPort, not a re-typed copy.
 import { describe, it, expect, afterEach, vi } from 'vitest'
@@ -29,7 +30,7 @@ import {
 import { CaretTriggerPort } from '../src/static/lens/document-editor/surfaces/caret-trigger-port.js'
 import { ProseMirrorHost, CaretPlacement, TriggerHost, TextareaHost } from '../src/static/shell/trigger-host.js'
 import { TriggerPopover } from '../src/static/shell/trigger-popover.js'
-import { MentionProvider } from '../src/static/shell/trigger-providers.js'
+import { ActionMacro, BlockInsertProvider, BlockMacro, MentionProvider } from '../src/static/shell/trigger-providers.js'
 import { ContractViolation } from '../src/static/contract/sieve-block.js'
 
 // CaretTriggerPort reads TextSelection off the vendor bag (test/setup.js installs
@@ -109,11 +110,23 @@ function fakeEditorHost() {
   return { createBlock: vi.fn() }
 }
 
+/** A catalog of kind macros, as MacroCatalog composes them. */
+function kindsOf(...kinds) {
+  return { list: () => kinds.map((k) => new BlockMacro(k)) }
+}
+
+/** A catalog whose entries are kind macros plus verb macros. */
+function macrosOf(kinds, ...verbs) {
+  return { list: () => kinds.map((k) => new BlockMacro(k)).concat(verbs) }
+}
+
 /** Builds the picker over the real view, exactly as WysiwygSurface does. */
-function mountPicker({ host = fakeEditorHost(), flush = vi.fn(), source = sourceOf() } = {}) {
+function mountPicker({ host = fakeEditorHost(), flush = vi.fn(), source = sourceOf(), kinds = kindsOf() } = {}) {
   const port = new CaretTriggerPort(editor, host, flush)
   popover = new TriggerPopover(
-    new ProseMirrorHost(port), [new MentionProvider(source, undefined, { debounceMs: 0 })], new CaretPlacement(),
+    new ProseMirrorHost(port),
+    [new BlockInsertProvider(kinds), new MentionProvider(source, undefined, { debounceMs: 0 })],
+    new CaretPlacement(),
   )
   return { host, flush, port }
 }
@@ -334,6 +347,116 @@ describe('accepting a mention in a document', () => {
 
     expect(host.createBlock).toHaveBeenCalledWith('reference',
       { uri: 'sieve://1', cache: { title: 'Auth Design' } })
+  })
+})
+
+// ── Inserting a block by name ───────────────────────────────────────────────
+
+describe('inserting a block from `{` in a document', () => {
+  const CODE = { kind: 'code', label: 'Code', description: 'Source, syntax-highlighted' }
+  const DIAGRAM = { kind: 'diagram', label: 'Diagram', description: 'Mermaid or PlantUML' }
+
+  it('deletes the token, flushes, and creates the named kind with NO anchor', async () => {
+    makeEditor(PARA('notes {co'))
+    const { host, flush } = mountPicker({ kinds: kindsOf(CODE, DIAGRAM) })
+    caretAt(10)                                    // "notes {co|"
+    type('d')                                      // → "notes {cod|"
+    await settle()
+    expect(isOpen()).toBe(true)
+
+    pressReal('Enter')
+
+    // The typed name is GONE: what the user asked for is the block, not the word.
+    expect(editor.state.doc.textContent).toBe('notes ')
+    expect(flush).toHaveBeenCalledTimes(1)
+    // Empty attrs — every default is the server's to fill — and the anchor
+    // argument is OMITTED, never an index.
+    expect(host.createBlock.mock.calls[0]).toEqual(['code', {}])
+    expect(host.createBlock.mock.calls[0].length).toBe(2)
+  })
+
+  it('leaves the caret\'s line EMPTY when the token had it to itself — the placement rule\'s input', async () => {
+    makeEditor({
+      type: 'doc',
+      content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'intro' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: '{diag' }] },
+      ],
+    })
+    const { host } = mountPicker({ kinds: kindsOf(CODE, DIAGRAM) })
+    caretAt(13)                                    // end of the second paragraph
+    type('r')
+    await settle()
+    pressReal('Tab')
+
+    expect(editor.state.doc.child(1).textContent).toBe('')
+    expect(host.createBlock).toHaveBeenCalledWith('diagram', {})
+  })
+
+  it('never arms inside a raw-text block — a brace there is a literal brace', async () => {
+    makeEditor({ type: 'doc', content: [{ type: 'sieve-code', content: [{ type: 'text', text: 'x' }] }] })
+    const { host } = mountPicker({ kinds: kindsOf(CODE) })
+    caretInside('sieve-code', 1)
+    type('{cod')
+    await settle()
+    expect(isOpen()).toBe(false)
+    expect(host.createBlock).not.toHaveBeenCalled()
+  })
+})
+
+// ── Running a verb from `{` ─────────────────────────────────────────────────
+//
+// The other half of the entry model (#91 phase 2): an entry that FRONTS a
+// capability rather than creating a block. What must hold against a real
+// document is the ORDER — the token is gone before the verb runs — because the
+// verb may be a dialog the user then dismisses, and there is no second chance to
+// tidy the line.
+
+describe('running a verb from `{` in a document', () => {
+  const CODE = { kind: 'code', label: 'Code', description: 'Source, syntax-highlighted' }
+
+  /** @param {() => void} action */
+  function verb(action) {
+    return new ActionMacro({ label: 'Web Clip', name: 'web-clip', description: 'Capture a page', action })
+  }
+
+  it('deletes the token BEFORE the verb runs, and creates nothing', async () => {
+    /** @type {string[]} */ const seen = []
+    makeEditor(PARA('notes {we'))
+    const openDialog = vi.fn(() => { seen.push(editor.state.doc.textContent) })
+    const { host, flush } = mountPicker({ kinds: macrosOf([CODE], verb(openDialog)) })
+    caretAt(10)                                    // "notes {we|"
+    type('b')                                      // → "notes {web|"
+    await settle()
+    expect(isOpen()).toBe(true)
+
+    pressReal('Enter')
+
+    expect(editor.state.doc.textContent).toBe('notes ')
+    // The line was ALREADY clean when the dialog opened — a dismissal from here
+    // leaves nothing behind.
+    expect(seen).toEqual(['notes '])
+    expect(openDialog).toHaveBeenCalledTimes(1)
+    // The dialog owns the create, so nothing has been asked for yet — and there
+    // is no block create to order a flush against.
+    expect(host.createBlock).not.toHaveBeenCalled()
+    expect(flush).not.toHaveBeenCalled()
+  })
+
+  it('clears the token as a TRACKED edit — Ctrl+Z brings it back', async () => {
+    makeEditor(PARA('notes {we'))
+    mountPicker({ kinds: macrosOf([CODE], verb(() => {})) })
+    caretAt(10)
+    type('b')
+    await settle()
+    pressReal('Enter')
+    expect(editor.state.doc.textContent).toBe('notes ')
+
+    // ProseMirror groups the clear with the keystroke that armed the picker —
+    // both fall inside newGroupDelay — so one undo returns the token less that
+    // last character. What is pinned is that the deletion is undoable at all.
+    editor.commands.undo()
+    expect(editor.state.doc.textContent).toBe('notes {we')
   })
 })
 
@@ -582,5 +705,36 @@ describe('the composer keeps its own meaning of accepting', () => {
     // unchanged by #38, and the else-branch of the one accept.
     expect(textarea.value).toBe('How does @Auth Design handle this?')
     expect(sink).toHaveBeenCalledWith({ uri: 'container:9f2b', title: 'Auth Design' })
+  })
+})
+
+// ── A PM-native preset in a document ────────────────────────────────────────
+
+describe('a preset macro that wraps at the caret', () => {
+  it('leaves the caret INSIDE the quote, so the next keystroke lands in it', async () => {
+    makeEditor(PARA('{quo'))
+    const quote = new ActionMacro({
+      label: 'Quote', name: 'blockquote', description: 'An indented quotation',
+      action: () => { editor.chain().focus().toggleBlockquote().run() },
+    })
+    mountPicker({ kinds: macrosOf([], quote) })
+    caretAt(5)
+    type('t')
+    await settle()
+    expect(isOpen()).toBe(true)
+
+    pressReal('Enter')
+
+    const $from = editor.state.selection.$from
+    let inQuote = false
+    for (let d = $from.depth; d > 0; d--) {
+      if ($from.node(d).type.name === 'blockquote') inQuote = true
+    }
+    expect(inQuote).toBe(true)
+
+    editor.view.dispatch(editor.state.tr.insertText('hi'))
+    const bq = editor.state.doc.content.child(0)
+    expect(bq.type.name).toBe('blockquote')
+    expect(bq.textContent).toBe('hi')
   })
 })
