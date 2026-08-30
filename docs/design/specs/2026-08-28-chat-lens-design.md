@@ -1,7 +1,7 @@
 # Chat Lens — Presentation and Interaction Design
 
-Tracked: #102 (blocked on the Composer prerequisite and #117). Design approved
-2026-08-28.
+Tracked: #102 (prerequisites cleared: the Composer #118 and the answer list
+#117 are both merged). Design approved 2026-08-28.
 
 ## Design artifacts, and which one wins
 
