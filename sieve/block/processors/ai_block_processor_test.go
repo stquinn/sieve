@@ -82,7 +82,7 @@ func TestAIBlockBuildContext(t *testing.T) {
 	t.Cleanup(resetRegistry)
 
 	p := &AIBlockProcessor{}
-	blk := block.NewSieveBlock("ai-block", "ai-ab12", map[string]interface{}{"response": "A compiled language."})
+	blk := block.NewSieveBlock("ai-block", "ai-ab12", map[string]interface{}{block.AnswerAttr: "A compiled language."})
 	blk.SetElements(block.QuestionAttr, block.Elements{foldProse("What is Go?")})
 
 	ctx := p.BuildContext(blk, block.DocView{UUID: foldDocUUID}, map[string]bool{})
@@ -104,7 +104,7 @@ func TestAIBlock_qaHeader_ASK_omitsOwnAnswer(t *testing.T) {
 	p := &AIBlockProcessor{}
 	doc := block.DocView{UUID: foldDocUUID}
 	blk := block.NewSieveBlock("ai-block", "ai-retry", map[string]interface{}{
-		"response": "STALE-PRIOR-ANSWER-a-compiled-language",
+		block.AnswerAttr: "STALE-PRIOR-ANSWER-a-compiled-language",
 		"type":     "ASK",
 	})
 	blk.SetElements(block.QuestionAttr, block.Elements{foldTarget(foldLeafID), foldProse("What is Go?")})
@@ -136,7 +136,7 @@ func TestAIBlock_qaHeader_EXPLAIN_omitsOwnAnswer(t *testing.T) {
 	p := &AIBlockProcessor{}
 	doc := block.DocView{UUID: foldDocUUID}
 	blk := block.NewSieveBlock("ai-block", "ai-exp", map[string]interface{}{
-		"response": "STALE-EXPLANATION-do-not-reuse",
+		block.AnswerAttr: "STALE-EXPLANATION-do-not-reuse",
 		"type":     "EXPLAIN",
 	})
 	blk.SetElements(block.QuestionAttr, block.Elements{foldTarget(foldLeafID)})
@@ -163,7 +163,7 @@ func TestAIBlock_actionContext_hasNodeIdHeaderButNoOwnAnswer(t *testing.T) {
 
 	p := &AIBlockProcessor{}
 	blk := block.NewSieveBlock("ai-block", "ai-act", map[string]interface{}{
-		"response": "STALE-ACTION-ANSWER",
+		block.AnswerAttr: "STALE-ACTION-ANSWER",
 		"type":     "ASK",
 	})
 	blk.SetElements(block.QuestionAttr, block.Elements{foldTarget(foldLeafID), foldProse("Follow up?")})

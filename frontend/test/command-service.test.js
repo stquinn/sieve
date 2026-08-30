@@ -130,7 +130,7 @@ describe('CommandService', () => {
       correlationId: cid,
       cmd: 'btw',
       status: 'COMPLETE',
-      block: { kind: 'ai-block', attrs: { status: 'COMPLETE', response: 'ans' } }
+      block: { kind: 'ai-block', attrs: { status: 'COMPLETE', answer: [{ kind: 'prose', attrs: { content: 'ans' } }] } }
     })
 
     expect(results.length).toBe(2)
@@ -142,7 +142,7 @@ describe('CommandService', () => {
       correlationId: cid,
       cmd: 'btw',
       status: 'COMPLETE',
-      block: { kind: 'ai-block', attrs: { status: 'COMPLETE', response: 'stale' } }
+      block: { kind: 'ai-block', attrs: { status: 'COMPLETE', answer: [{ kind: 'prose', attrs: { content: 'stale' } }] } }
     })
     expect(results.length).toBe(2)
   })

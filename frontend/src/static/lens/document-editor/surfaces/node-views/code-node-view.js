@@ -79,7 +79,7 @@ import { CodeRenderer } from '../../../../renderers/code-renderer.js'
         return sieveBlockFor(n, { source: n.textContent }, ctx && ctx.provider)
       }
 
-      var renderer = new CodeRenderer(blockFor(node), ctx.provider || null)
+      var renderer = new CodeRenderer(blockFor(node), ctx.provider || null, undefined, ctx.renderOptions)
 
       var dom = renderer.render()
 

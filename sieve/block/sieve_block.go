@@ -10,8 +10,8 @@ import (
 // SieveBlock is a node in the unified, ordered block tree. EVERY kind — prose
 // included — carries its payload in the single Attrs bag, addressed by id; kind
 // is consulted only at render/serialise time. There is no per-kind payload
-// field: prose's body is Attrs["content"], code's is Attrs["source"], ai's is
-// Attrs["response"].
+// field: prose's body is Attrs["content"], code's is Attrs["source"], an
+// ai-block's is the element lists under Attrs["question"] and Attrs["answer"].
 //
 // A block is a LEAF: there is no Children field and nothing nests.
 type SieveBlock struct {

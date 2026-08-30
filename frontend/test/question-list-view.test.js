@@ -72,7 +72,7 @@ function draw(question, container) {
   const provider = /** @type {any} */ ({ getUuid: () => uuid })
   const renderer = new AiBlockRenderer(new SieveBlock('ai-block', {
     id: '0198c1a0-0000-7000-8000-000000000020', type: 'ASK', status: 'COMPLETE',
-    question: question, response: 'an answer',
+    question: question, answer: [{ kind: 'prose', attrs: { content: 'an answer' } }],
   }), provider)
   const dom = renderer.render()
   const el = /** @type {HTMLElement} */ (dom.querySelector('.ai-block__question'))
@@ -220,7 +220,7 @@ describe('the ai-block question — the showcase note, drawn', () => {
 
       const renderer = new AiBlockRenderer(new SieveBlock('ai-block', {
         id: '0198c1a0-0000-7000-8000-000000000020', type: 'ASK', status: 'COMPLETE',
-        response: 'an answer', question: blocks[0].question,
+        answer: [{ kind: 'prose', attrs: { content: 'an answer' } }], question: blocks[0].question,
       }), /** @type {any} */ (provider))
       const dom = renderer.render()
       document.body.appendChild(dom)
@@ -366,7 +366,7 @@ describe('the ai-block question — what it draws and what it leaves alone', () 
       requestRetry() { provider.calls.push('retry') },
       flush() { provider.calls.push('flush') } }
     const renderer = new AiBlockRenderer(new SieveBlock('ai-block', {
-      id: '0198c1a0-0000-7000-8000-000000000020', type: 'ASK', status: 'COMPLETE', response: 'an answer',
+      id: '0198c1a0-0000-7000-8000-000000000020', type: 'ASK', status: 'COMPLETE', answer: [{ kind: 'prose', attrs: { content: 'an answer' } }],
       question: [
         { kind: 'log', attrs: { id: 'el-1', source: 'WARN a' } },
         { kind: 'diagram', attrs: { id: 'el-2', mode: 'edit', source: 'graph TD; a-->b' } },

@@ -30,9 +30,10 @@
 // relative to the document holding it.
 //
 // AN ELEMENT IS NOT ADDRESSABLE. It lives inside its parent's payload, so no
-// composed DOM presents a document-block identity — see #anonymise, which is
+// composed DOM presents a document-block identity — see BlockIdentity, which is
 // what keeps a gesture inside a question resolving to the block hosting it.
 
+import { BlockIdentity } from './block-identity.js'
 import { SieveBlock } from '../contract/sieve-block.js'
 import { getBlockRenderer } from './block-renderers.js'
 import { documentAssetUrl } from './asset-urls.js'
@@ -42,10 +43,6 @@ import { getLowlight, hastToHtml } from './highlighting.js'
 /** @typedef {import('./question-list.js').QuestionElement} QuestionElement */
 
 export class QuestionListView {
-  /** The DOM markers a resolver reads a document block's identity from. An
-   *  element carries none of them. @type {ReadonlyArray<string>} */
-  static #IDENTITY_ATTRS = Object.freeze(['data-id', 'data-block-id'])
-
   /** @type {Array<{destroy: () => void}>} composed renderers this draw owns */ #composed = []
   /** @type {MutationObserver|null} keeps late content anonymous */ #watcher = null
   /** @type {string} the container whose assets an element's refs name */ #container
@@ -118,7 +115,7 @@ export class QuestionListView {
     const Renderer = getBlockRenderer(element.kind)
     if (!Renderer) return QuestionListView.#unknown(element)
     const renderer = new Renderer(new SieveBlock(element.kind, this.#resolved(element)), null, undefined, { readOnly: true })
-    const dom = QuestionListView.#anonymise(renderer.render())
+    const dom = BlockIdentity.strip(renderer.render())
     QuestionListView.#writeOwnText(renderer, element.attrs || {})
     this.#composed.push(renderer)
     return dom
@@ -190,51 +187,9 @@ export class QuestionListView {
     return el
   }
 
-  /**
-   * Keeps the drawn question anonymous FOR AS LONG AS IT IS DRAWN.
-   *
-   * Stripping identity once is not enough: a kind may inject content long after
-   * it was composed, and that content is not always Sieve's — a rendered mermaid
-   * diagram carries `data-id` on its own edges. An identity resolver walking up
-   * from one would answer with a coordinate that is not a block at all, so the
-   * strip has to survive whatever a kind draws later.
-   * @param {HTMLElement} el
-   */
+  /** Keeps the drawn question anonymous for as long as it is drawn — a kind may
+   *  inject content long after it was composed. @param {HTMLElement} el */
   #keepAnonymous(el) {
-    if (typeof MutationObserver !== 'function') return
-    this.#watcher = new MutationObserver((records) => {
-      for (const record of records) {
-        if (record.type === 'attributes' && record.target.nodeType === 1) {
-          QuestionListView.#anonymise(/** @type {HTMLElement} */ (record.target))
-        }
-        for (const node of Array.from(record.addedNodes)) {
-          if (node.nodeType === 1) QuestionListView.#anonymise(/** @type {HTMLElement} */ (node))
-        }
-      }
-    })
-    this.#watcher.observe(el, {
-      subtree: true, childList: true,
-      attributes: true, attributeFilter: /** @type {string[]} */ (QuestionListView.#IDENTITY_ATTRS.slice()),
-    })
-  }
-
-  /**
-   * Strips every document-block identity marker off a composed element's root.
-   *
-   * THIS IS WHAT MAKES A GESTURE LAND ON THE HOSTING BLOCK. Every id resolver in
-   * the tree is an ANCESTOR walk (`closest('[data-id]')`), so an element root
-   * presenting an id would answer as the block that was clicked — and its id
-   * resolves to nothing in the document, so an extract, transform or delete
-   * aimed at it would name a block that does not exist. With no marker on it the
-   * nearest one is the host, which is the interactable unit.
-   * @param {HTMLElement} dom @returns {HTMLElement}
-   */
-  static #anonymise(dom) {
-    for (const attr of QuestionListView.#IDENTITY_ATTRS) {
-      dom.removeAttribute(attr)
-      // The WHOLE subtree: a kind's chrome may stamp identity deeper than its root.
-      for (const el of dom.querySelectorAll('[' + attr + ']')) el.removeAttribute(attr)
-    }
-    return dom
+    this.#watcher = BlockIdentity.keepAnonymous(el)
   }
 }

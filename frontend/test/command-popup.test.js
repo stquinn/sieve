@@ -33,7 +33,7 @@ describe('CommandPopup', () => {
     popup = new CommandPopup({ anchor, onDelete: vi.fn() })
     popup.show(null, { cmd: 'summary', text: '' })
 
-    const block = new SieveBlock('ai-block', { question: 'summary', response: 'Answer text', status: 'COMPLETE' })
+    const block = new SieveBlock('ai-block', { question: 'summary', answer: [{ kind: 'prose', attrs: { content: 'Answer text' } }], status: 'COMPLETE' })
     popup.update(block, { cmd: 'summary', text: '' })
 
     const el = document.querySelector('.command-popup')
@@ -43,7 +43,7 @@ describe('CommandPopup', () => {
 
   it('show(block) mounts AiBlockRenderer output when block provided', () => {
     popup = new CommandPopup({ anchor, onDelete: vi.fn() })
-    const block = new SieveBlock('ai-block', { question: 'what is X', response: 'X is KISS', status: 'COMPLETE' })
+    const block = new SieveBlock('ai-block', { question: 'what is X', answer: [{ kind: 'prose', attrs: { content: 'X is KISS' } }], status: 'COMPLETE' })
     popup.show(block, { cmd: 'btw', text: 'what is X' })
 
     expect(popup.visible).toBe(true)
@@ -54,7 +54,7 @@ describe('CommandPopup', () => {
 
   it('Escape key hides popup', () => {
     popup = new CommandPopup({ anchor, onDelete: vi.fn() })
-    const block = new SieveBlock('ai-block', { question: 'q', response: 'ans', status: 'COMPLETE' })
+    const block = new SieveBlock('ai-block', { question: 'q', answer: [{ kind: 'prose', attrs: { content: 'ans' } }], status: 'COMPLETE' })
     popup.show(block, { cmd: 'btw', text: 'q' })
 
     document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
@@ -100,7 +100,7 @@ describe('CommandPopup', () => {
 
   it('Escape from a focused textarea is consumed in capture phase before the target handler runs', () => {
     popup = new CommandPopup({ anchor, onDelete: vi.fn() })
-    const block = new SieveBlock('ai-block', { question: 'q', response: 'ans', status: 'COMPLETE' })
+    const block = new SieveBlock('ai-block', { question: 'q', answer: [{ kind: 'prose', attrs: { content: 'ans' } }], status: 'COMPLETE' })
     popup.show(block, { cmd: 'btw', text: 'q' })
 
     // An Ask-panel-like textarea with its OWN target-phase Escape handler (the
@@ -129,7 +129,7 @@ describe('CommandPopup', () => {
     document.body.appendChild(anchorB)
     const a = new CommandPopup({ anchor, onDelete: vi.fn() })
     const b = new CommandPopup({ anchor: anchorB, onDelete: vi.fn() })
-    const block = new SieveBlock('ai-block', { question: 'q', response: 'ans', status: 'COMPLETE' })
+    const block = new SieveBlock('ai-block', { question: 'q', answer: [{ kind: 'prose', attrs: { content: 'ans' } }], status: 'COMPLETE' })
 
     a.show(block, { cmd: 'a', text: '' })
     b.show(block, { cmd: 'b', text: '' })

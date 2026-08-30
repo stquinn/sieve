@@ -62,7 +62,7 @@ import { ReferenceRenderer } from '../../../../renderers/reference-renderer.js'
 
     var renderer = new ReferenceRenderer(
       sieveBlockFor(node, undefined, ctx && ctx.provider),
-      (ctx && ctx.provider) || null)
+      (ctx && ctx.provider) || null, undefined, ctx && ctx.renderOptions)
 
     var dom = renderer.render()
 

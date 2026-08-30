@@ -16,11 +16,11 @@ func TestContentForSave_roundTripsWysiwyg(t *testing.T) {
 	block.RegisterProcessor(NewAIBlockProcessor(block.BlockServices{}))
 	t.Cleanup(resetRegistry)
 
-	md := "# Hello\n\n```ai-block\nid: ab-1234\nresponse: untouched\n```"
+	md := "# Hello\n\n```ai-block\nid: ab-1234\nmodel: untouched\n```"
 	shadow := block.NewShadow("test-uuid", md, block.NewDocumentCodec(block.GlobalRegistry()), 0, nil)
 
 	result := shadow.ContentForSave()
-	if !strings.Contains(result, "# Hello") || !strings.Contains(result, "response: untouched") {
+	if !strings.Contains(result, "# Hello") || !strings.Contains(result, "model: untouched") {
 		t.Fatalf("expected content preserved, got:\n%s", result)
 	}
 	// parse -> serialize -> parse is a fixpoint.

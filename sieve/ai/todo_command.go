@@ -13,6 +13,7 @@ import (
 type TodoCommand struct {
 	ai *AIService
 	docMetaReader
+	popupAnswer
 }
 
 func NewTodoCommand(aiSvc *AIService, docs *services.DocumentService) *TodoCommand {
@@ -51,14 +52,7 @@ func (c *TodoCommand) Build(text string, ctx command.Context) (command.Job, erro
 			if err != nil {
 				return command.Block{}, err
 			}
-			done := make(map[string]interface{}, len(attrs)+3)
-			for k, v := range attrs {
-				done[k] = v
-			}
-			done["status"] = "COMPLETE"
-			done["response"] = resp
-			done["completedAt"] = time.Now().UTC().Format(time.RFC3339)
-			return command.Block{Kind: "ai-block", Attrs: done}, nil
+			return c.complete(attrs, resp), nil
 		},
 	}, nil
 }

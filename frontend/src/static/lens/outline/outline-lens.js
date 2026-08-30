@@ -5,12 +5,13 @@
 
 import { Lens } from '../lens.js'
 import { esc } from '../../renderers/html-escape.js'
+import { QuestionList } from '../../renderers/question-list.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
 
 // Attr keys searched, in order, for something human-legible to show. First hit
 // wins; a kind whose payload is unreadable still gets a card with its kind word.
 const EXCERPT_KEYS = Object.freeze([
-  'title', 'question', 'content', 'source', 'text', 'url', 'filename', 'response', 'alt', 'src',
+  'title', 'question', 'content', 'source', 'text', 'url', 'filename', 'answer', 'alt', 'src',
 ])
 const EXCERPT_MAX = 120
 
@@ -159,9 +160,12 @@ export class OutlineLens extends Lens {
   #excerpt(node) {
     const attrs = node.attrs || {}
     for (const key of EXCERPT_KEYS) {
-      const value = attrs[key]
-      if (typeof value !== 'string' || !value.trim()) continue
-      const flat = value.trim().replace(/\s+/g, ' ')
+      // An attr is either a plain string or the element list an exchange's
+      // question and answer are — QuestionList reads both, and reads anything
+      // else as nothing to show.
+      const text = QuestionList.text(attrs[key])
+      if (!text.trim()) continue
+      const flat = text.trim().replace(/\s+/g, ' ')
       return flat.length > EXCERPT_MAX ? flat.slice(0, EXCERPT_MAX - 1) + '…' : flat
     }
     return ''

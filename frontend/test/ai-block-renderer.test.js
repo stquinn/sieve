@@ -39,6 +39,10 @@ function installBareThemeVars() {
   return el
 }
 
+/** The answer of an ordinary exchange: one span of prose, as the one-element
+ *  list it is. @param {string} content */
+const prose = (content) => [{ kind: 'prose', attrs: { content } }]
+
 /** @type {AiBlockAttrs} */
 const REPRESENTATIVE_ATTRS = {
   id: 'ai-a1b2',
@@ -46,7 +50,7 @@ const REPRESENTATIVE_ATTRS = {
   type: 'ASK',
   status: 'COMPLETE',
   question: 'What does this function do?',
-  response: 'It parses the fence.\n\n```js\nfunction f() { return 1 }\n```',
+  answer: prose('It parses the fence.\n\n```js\nfunction f() { return 1 }\n```'),
   createdAt: new Date().toISOString(),
 }
 
@@ -85,7 +89,7 @@ describe('AiBlockRenderer (Phase 3 — bare-page DoD)', () => {
     expect(matches.length).toBe(1)
   })
 
-  it('render() builds the shell + badge + FILLED question title + FILLED response body, styled purely from --theme-* vars', () => {
+  it('render() builds the shell + badge + FILLED question title + FILLED answer body, styled purely from --theme-* vars', () => {
     const { renderer, dom } = mount(REPRESENTATIVE_ATTRS)
     document.body.appendChild(dom)
 
@@ -96,7 +100,7 @@ describe('AiBlockRenderer (Phase 3 — bare-page DoD)', () => {
     const badge = dom.querySelector('.ai-block__badge')
     expect(badge?.textContent).toBe('ASK')
 
-    // The PURE renderer fills the title (question) + body (response) itself.
+    // The PURE renderer fills the title (question) + body (answer) itself.
     const title = dom.querySelector('.sieve-block__heading')
     expect(title?.textContent).toContain('What does this function do?')
     const body = dom.querySelector('.sieve-block__content.tiptap')
@@ -167,6 +171,139 @@ describe('AiBlockRenderer (Phase 3 — bare-page DoD)', () => {
   it('destroy() is safe to call and does not throw (base no-op — no timers/observers)', () => {
     const { renderer } = mount(REPRESENTATIVE_ATTRS)
     expect(() => renderer.destroy()).not.toThrow()
+  })
+})
+
+// ── The answer is a list of blocks ───────────────────────────────────────────
+// The BODY is ProseMirror's contentDOM, filled from bodyMarkdown(), so what an
+// answer projects into the document is the MARKDOWN its elements are.
+//
+// THE ORDINARY EXCHANGE IS BYTE-IDENTICAL. An answer of one prose element must
+// render exactly the text that element carries, trimmed and nothing else — the
+// projected PM content, and with it selection and copy, is then the same
+// document it was when an answer was a string.
+
+describe('AiBlockRenderer — the answer the body shows', () => {
+  beforeAll(() => {
+    clearInjectedStyles();
+    /** @type {any} */ (globalThis).TipTap = /** @type {any} */ (globalThis).TipTap || {}
+    Object.assign(/** @type {any} */ (globalThis).TipTap, { MarkdownIt })
+  })
+  afterAll(() => { delete /** @type {any} */ (globalThis).TipTap.MarkdownIt })
+  afterEach(() => { document.body.innerHTML = '' })
+
+  /** The markdown a COMPLETE block projects. @param {any} answer */
+  const body = (answer) => new AiBlockRenderer(blk({ id: 'ai-a1b2', status: 'COMPLETE', answer })).bodyMarkdown()
+
+  // The formula the body was rendered by before the answer became a list. Every
+  // one-prose answer must still produce exactly this.
+  /** @param {string} text */
+  const asString = (text) => (text || '').trim()
+
+  const SPANS = [
+    'It parses the fence.',
+    'It parses the fence.\n\n```js\nfunction f() { return 1 }\n```',
+    '  leading and trailing whitespace  ',
+    '# A heading\n\n- a\n- b\n',
+    'a *literal* `---` and an [inline link](sieve://9f2b)',
+    '',
+    '   ',
+  ]
+
+  it('one prose element renders EXACTLY what the string form rendered', () => {
+    for (const text of SPANS) expect(body(prose(text))).toBe(asString(text))
+  })
+
+  it('a bare string answer renders as the one prose element it is', () => {
+    for (const text of SPANS) expect(body(text)).toBe(asString(text))
+  })
+
+  it('an unanswered block renders nothing at all, whatever shape the absence took', () => {
+    for (const nothing of [undefined, null, [], '', '   ', 0, {}]) expect(body(nothing)).toBe('')
+  })
+
+  it('every element renders as the kind it is, in authored order, one span apiece', () => {
+    const md = body([
+      { kind: 'prose', attrs: { content: 'The pool was exhausted first.' } },
+      { kind: 'code', attrs: { language: 'go', source: 'func backoff() {}' } },
+      { kind: 'log', attrs: { source: '11:04 WARN pool exhausted' } },
+      { kind: 'diagram', attrs: { diagramType: 'mermaid', source: 'graph TD\n  A --> B' } },
+      { kind: 'reference', attrs: { uri: 'sieve://9f2b/0197', cache: { title: 'Retry RFC §4' } } },
+      { kind: 'prose', attrs: { content: 'Raise the ceiling.' } },
+    ])
+    expect(md).toBe([
+      'The pool was exhausted first.',
+      '```go\nfunc backoff() {}\n```',
+      '```\n11:04 WARN pool exhausted\n```',
+      '```mermaid\ngraph TD\n  A --> B\n```',
+      '[Retry RFC §4](sieve://9f2b/0197)',
+      'Raise the ceiling.',
+    ].join('\n\n'))
+  })
+
+  it('a fence around source that carries its own fence is longer than what is inside it', () => {
+    const source = 'the RFC writes it as:\n```go\nmin(base<<attempt, ceiling)\n```'
+    expect(body([{ kind: 'code', attrs: { language: 'go', source } }])).toBe('````go\n' + source + '\n````')
+  })
+
+  it('a reference with no cached title is labelled by its address, and one addressing nothing renders nothing', () => {
+    expect(body([{ kind: 'reference', attrs: { uri: 'sieve://9f2b/0197' } }])).toBe('[sieve://9f2b/0197](sieve://9f2b/0197)')
+    expect(body([{ kind: 'reference', attrs: {} }])).toBe('')
+  })
+
+  it('a link is well-formed however hostile its title and address are', () => {
+    const md = body([{
+      kind: 'reference',
+      attrs: { uri: 'sieve://9f2b/notes (draft).md', cache: { title: 'a [bracketed] title' } },
+    }])
+    expect(md).toBe('[a \\[bracketed\\] title](<sieve://9f2b/notes (draft).md>)')
+  })
+
+  it('an element renders whatever text it carries when the kind is one this lens has no mapping for', () => {
+    expect(body([{ kind: 'web-clip', attrs: { content: 'the clipped text', source: 'https://example.com' } }]))
+      .toBe('the clipped text')
+    expect(body([{ kind: 'mystery-kind', attrs: { source: 'literal text' } }])).toBe('literal text')
+    expect(body([{ kind: 'mystery-kind', attrs: {} }])).toBe('')
+  })
+
+  it('an element that renders to nothing leaves no gap between the ones that do', () => {
+    const md = body([
+      { kind: 'prose', attrs: { content: 'first' } },
+      { kind: 'code', attrs: { language: 'go', source: '   ' } },
+      { kind: 'prose', attrs: { content: 'second' } },
+    ])
+    expect(md).toBe('first\n\nsecond')
+  })
+
+  it('junk in the list is dropped rather than drawn', () => {
+    expect(body([null, 'a bare string', { attrs: { content: 'kindless' } }, { kind: 'prose', attrs: { content: 'real' } }]))
+      .toBe('real')
+  })
+
+  it('the answer is read ONLY when the block is complete — the status arms are untouched', () => {
+    const answer = prose('an answer that arrived late')
+    const pending = new AiBlockRenderer(blk({ id: 'ai-a1b2', status: 'PENDING', createdAt: new Date().toISOString(), answer }))
+    expect(pending.bodyMarkdown()).toBe('*(thinking…)*')
+
+    const stale = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+    const timedOut = new AiBlockRenderer(blk({ id: 'ai-a1b2', status: 'DISPATCHED', createdAt: stale, answer }))
+    expect(timedOut.bodyMarkdown()).toBe('Request timed out. (Right-click to Retry)')
+
+    const failed = new AiBlockRenderer(blk({ id: 'ai-a1b2', status: 'ERROR', error: 'the CLI timed out', answer }))
+    expect(failed.bodyMarkdown()).toBe('the CLI timed out')
+  })
+
+  it('the drawn body carries the answer the list composed', () => {
+    const { dom } = mount({
+      ...REPRESENTATIVE_ATTRS,
+      answer: [
+        { kind: 'prose', attrs: { content: 'The pool was exhausted first.' } },
+        { kind: 'code', attrs: { language: 'go', source: 'func backoff() {}' } },
+      ],
+    })
+    const content = dom.querySelector('.sieve-block__content.tiptap')
+    expect(content?.textContent).toContain('The pool was exhausted first.')
+    expect(content?.querySelector('code')?.textContent).toContain('func backoff() {}')
   })
 })
 
@@ -474,7 +611,7 @@ describe('AiBlockRenderer — @mentions inside the question', () => {
     const { dom } = mount({
       ...REPRESENTATIVE_ATTRS,
       question: 'Summarise @Auth Design',
-      response: 'The @Auth Design note says retries are capped.',
+      answer: prose('The @Auth Design note says retries are capped.'),
       attachments: [{ uri: 'container:9f2b', title: 'Auth Design' }],
     })
     expect(mentions(heading(dom))).toEqual(['@Auth Design'])

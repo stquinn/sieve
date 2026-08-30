@@ -112,7 +112,7 @@ import { WebClipRenderer } from '../../../../renderers/web-clip-renderer.js'
         bodyContainer = container
         return false
       }
-      var renderer = new WebClipRenderer(sieveBlockFor(node, undefined, ctx && ctx.provider), ctx.provider || null, handleBuild)
+      var renderer = new WebClipRenderer(sieveBlockFor(node, undefined, ctx && ctx.provider), ctx.provider || null, handleBuild, ctx.renderOptions)
 
       var dom = renderer.render()
       var contentDOM = bodyContainer   // the claimed body container PM binds as its contentDOM

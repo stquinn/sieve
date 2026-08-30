@@ -24,7 +24,7 @@ import { SmartImageRenderer } from '../../../../renderers/smart-image-renderer.j
       return sieveBlockFor(n, { src: SmartImageRenderer.resolveSrc(n.attrs.src || '', ctx && ctx.getEditor() && ctx.getEditor().uuid) }, ctx && ctx.provider)
     }
 
-    var renderer = new SmartImageRenderer(blockFor(node), ctx.provider || null)
+    var renderer = new SmartImageRenderer(blockFor(node), ctx.provider || null, undefined, ctx.renderOptions)
 
     var dom = renderer.render()
 

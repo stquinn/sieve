@@ -115,6 +115,49 @@ describe('OutlineLens bootstrap paint', () => {
     ])
   })
 
+  // An exchange holds its question and its answer as LISTS of elements, so the
+  // excerpt of one is read out of the list rather than off a string attr — the
+  // question first, and the answer when the question has no prose to show.
+  it('excerpts an exchange from the element lists it is composed of', () => {
+    const host = new FakeHost('doc-x')
+    host.play({
+      load: {
+        uuid: 'doc-x',
+        blocks: [
+          {
+            id: 'ai1', kind: 'ai-block',
+            attrs: {
+              question: [
+                { kind: 'reference', attrs: { uri: 'sieve://doc-x/c1', rel: 'target' } },
+                { kind: 'prose', attrs: { content: 'Why did the retry\nloop give up?' } },
+              ],
+              answer: [{ kind: 'prose', attrs: { content: 'The pool was exhausted first.' } }],
+            },
+          },
+          {
+            id: 'ai2', kind: 'ai-block',
+            attrs: {
+              question: [{ kind: 'reference', attrs: { uri: 'sieve://doc-x/c1', rel: 'target' } }],
+              answer: [
+                { kind: 'code', attrs: { source: 'func backoff() {}' } },
+                { kind: 'prose', attrs: { content: 'Raise the ceiling.' } },
+              ],
+            },
+          },
+          { id: 'ai3', kind: 'ai-block', attrs: { question: 'a scalar question', answer: 'a scalar answer' } },
+        ],
+      },
+    })
+    const lens = new OutlineLens(host.provider)
+    const element = host.mount(lens)
+
+    expect(cards(element)).toEqual([
+      ['ai-block', 'Why did the retry loop give up?'],
+      ['ai-block', 'Raise the ceiling.'],
+      ['ai-block', 'a scalar question'],
+    ])
+  })
+
   it('escapes block content rather than rendering it', () => {
     const host = new FakeHost('doc-x')
     host.play({ load: { uuid: 'doc-x', blocks: [{ id: 'p1', kind: 'prose', attrs: { content: '<img src=x onerror=boom>' } }] } })

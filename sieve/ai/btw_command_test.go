@@ -36,8 +36,11 @@ func TestBtwBuild_DetachedAiBlockShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if done.Attrs["status"] != "COMPLETE" || done.Attrs["response"] != "A" || done.Attrs["completedAt"] == "" {
+	if done.Attrs["status"] != "COMPLETE" || done.Attrs["completedAt"] == "" {
 		t.Fatalf("final envelope wrong: %+v", done)
+	}
+	if got := popupAnswerOf(t, done.Attrs); got != "A" {
+		t.Fatalf("answer = %q, want the CLI's reply", got)
 	}
 }
 
@@ -102,8 +105,11 @@ func TestBtwBuild_MissingDocTolerated(t *testing.T) {
 	}
 
 	done, err := job.Work()
-	if err != nil || done.Attrs["response"] != "A" {
-		t.Fatalf("missing doc should be tolerated: %v, %+v", err, done)
+	if err != nil {
+		t.Fatalf("missing doc should be tolerated: %v", err)
+	}
+	if got := popupAnswerOf(t, done.Attrs); got != "A" {
+		t.Fatalf("answer = %q, want the CLI's reply", got)
 	}
 }
 

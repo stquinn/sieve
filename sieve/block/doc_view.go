@@ -78,7 +78,7 @@ type BlockFilter func(b SieveBlock) bool
 // serialized only when f.Accept(b). A nil filter accepts everything, so it is
 // byte-identical to deriveMarkdown (existing behaviour unchanged). AI TARGET
 // assembly uses this to exclude ai-blocks — otherwise every prior answer's raw
-// YAML fence (response: …) lands in the slot the model treats as document truth,
+// YAML fence (answer: …) lands in the slot the model treats as document truth,
 // and it fixates on / resurrects stale text.
 //
 // MARKDOWN-MODE GAP — conscious decision: in breakglass markdown mode there is no

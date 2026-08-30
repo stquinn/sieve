@@ -314,7 +314,7 @@ func TestAIBlock_EmbedHeadingIsOneLineOfProseOrNothing(t *testing.T) {
 	answered := func(question []interface{}) block.SieveBlock {
 		return block.NewSieveBlock("ai-block", showcaseAskID, map[string]interface{}{
 			"id": showcaseAskID, "type": "ASK", "status": block.BlockStatusComplete,
-			block.QuestionAttr: question, "response": "an answer",
+			block.QuestionAttr: question, block.AnswerAttr: "an answer",
 		})
 	}
 	element := func(kind string, attrs map[string]interface{}) interface{} {

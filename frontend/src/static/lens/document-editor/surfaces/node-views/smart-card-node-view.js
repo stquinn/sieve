@@ -72,7 +72,7 @@ import { openLinkEditor } from '../../../../ui/link-edit-dialog.js'
       var nodeTypeName = 'sieve-smart-card'
       var currentAttrs = Object.assign({}, node.attrs)
 
-      var renderer = new SmartCardRenderer(sieveBlockFor(node, undefined, ctx && ctx.provider), ctx.provider || null)
+      var renderer = new SmartCardRenderer(sieveBlockFor(node, undefined, ctx && ctx.provider), ctx.provider || null, undefined, ctx.renderOptions)
 
       var dom = renderer.render()
       if (currentAttrs.id) liveRenderers[currentAttrs.id] = renderer

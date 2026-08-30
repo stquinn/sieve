@@ -38,7 +38,7 @@ describe('CommandBadges', () => {
     const btn = slot.querySelector('.command-badge')
     expect(btn.classList.contains('command-badge--pending')).toBe(true)
 
-    resultCb({ status: 'COMPLETE', block: { kind: 'ai-block', attrs: { status: 'COMPLETE', question: 'q', response: 'a' } } })
+    resultCb({ status: 'COMPLETE', block: { kind: 'ai-block', attrs: { status: 'COMPLETE', question: 'q', answer: [{ kind: 'prose', attrs: { content: 'a' } }] } } })
     expect(btn.classList.contains('command-badge--pending')).toBe(false)
     expect(btn.classList.contains('command-badge--holding')).toBe(true)
   })
@@ -54,7 +54,7 @@ describe('CommandBadges', () => {
 
     resultCb({
       status: 'COMPLETE',
-      block: { kind: 'ai-block', attrs: { question: 'what is DRY', response: 'Don’t Repeat Yourself', status: 'COMPLETE' } }
+      block: { kind: 'ai-block', attrs: { question: 'what is DRY', answer: [{ kind: 'prose', attrs: { content: 'Don’t Repeat Yourself' } }], status: 'COMPLETE' } }
     })
 
     const btn = slot.querySelector('.command-badge')

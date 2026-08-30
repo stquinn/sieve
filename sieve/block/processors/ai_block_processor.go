@@ -37,13 +37,14 @@ func (p *AIBlockProcessor) Mode() block.BlockMode { return block.BlockModeBlock 
 // mints no element ids, so the list arrives id-less and this is the model's
 // entrance. Identifying it later is not equivalent — the first fold of a new ask
 // reads its question out of a job snapshot that shares the payload with the live
-// tree, and would be minting into it without the document's lock.
+// tree, and would be minting into it without the document's lock. The answer
+// slot is identified at the same door: creation seeds no answer, but a paste and
+// a transform both arrive carrying one.
 func (p *AIBlockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
 		"id":                id,
 		"status":            block.BlockStatusPending,
 		"createdAt":         time.Now().UTC().Format(time.RFC3339),
-		"response":          "",
 		"type":              "ASK",
 		"model":             "",
 		"error":             "",
@@ -56,6 +57,7 @@ func (p *AIBlockProcessor) InitAttrs(id string, overrides map[string]interface{}
 		attrs[k] = v
 	}
 	block.MintElementIDs(attrs, block.QuestionAttr)
+	block.MintElementIDs(attrs, block.AnswerAttr)
 	return attrs
 }
 
@@ -110,11 +112,68 @@ func (p *AIBlockProcessor) attrsFromFence(content string) map[string]interface{}
 
 func (p *AIBlockProcessor) OnChange(blk *block.SieveBlock) {}
 
-// Children returns the ordered blocks this block's question is composed of — the
-// BlockParent capability. They are elements: they live in this block's payload
-// and nowhere else, so nothing in the document tree addresses them.
+// Children returns the ordered blocks this exchange is composed of — the
+// BlockParent capability. The question's elements come first, then the answer's:
+// both slots hold elements, which live in this block's payload and nowhere else,
+// so nothing in the document tree addresses them.
 func (p *AIBlockProcessor) Children(blk *block.SieveBlock) []*block.SieveBlock {
-	return blk.Elements(block.QuestionAttr)
+	return append(blk.Elements(block.QuestionAttr), p.answerElements(*blk)...)
+}
+
+// answerElements is THE answer seam: the ordered blocks this exchange was
+// answered with, or none when it has not been answered.
+//
+// Every consumer reads the answer here, so the degraded form is normalised once
+// and nothing downstream carries a second arm: a producer that cannot compose
+// blocks writes a bare string, and a bare string IS one prose block.
+func (p *AIBlockProcessor) answerElements(blk block.SieveBlock) []*block.SieveBlock {
+	raw, degraded := blk.Attrs[block.AnswerAttr].(string)
+	if !degraded {
+		return blk.Elements(block.AnswerAttr)
+	}
+	folded := p.proseElements(raw)
+	out := make([]*block.SieveBlock, len(folded))
+	for i := range folded {
+		out[i] = &folded[i]
+	}
+	return out
+}
+
+// foldAnswer reads whatever a producer returned into the element list an answer
+// IS, so ingest accepts both the composed form and the raw one:
+//
+//   - a list of blocks passes through — it is already the answer;
+//   - a string, or a list of strings, becomes one prose element apiece;
+//   - a blank string is no answer at all and folds to nothing, because an answer
+//     that is not there is never invented.
+func (p *AIBlockProcessor) foldAnswer(result any) block.Elements {
+	switch v := result.(type) {
+	case string:
+		return p.proseElements(v)
+	case []string:
+		return p.proseElements(v...)
+	default:
+		return block.DecodeElements(result)
+	}
+}
+
+// proseElements mints one identified prose element per non-blank span.
+func (p *AIBlockProcessor) proseElements(spans ...string) block.Elements {
+	out := make(block.Elements, 0, len(spans))
+	for _, s := range spans {
+		if strings.TrimSpace(s) == "" {
+			continue
+		}
+		out = append(out, block.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": s}))
+	}
+	return out
+}
+
+// answerText renders the answer slot: the merged CONTENT of its elements,
+// through the same per-kind AI seam the question body renders through — so an
+// answer composed of any kind reads to a model the way that kind reads.
+func (p *AIBlockProcessor) answerText(blk block.SieveBlock, doc block.DocView) string {
+	return strings.TrimSpace(block.MergeContexts(p.elementContexts(p.answerElements(blk), doc)).Content)
 }
 
 // aiBlockLabel is the in-flight status label for an ai-block job.
@@ -128,7 +187,7 @@ func (p *AIBlockProcessor) aiBlockLabel(blk *block.SieveBlock) string {
 // qaHeader renders the QUESTION-side of this block's Q&A WITHOUT its own answer:
 // "EXPLAIN NODE: <ref>" or "QUESTION ABOUT: <ref>\n<question>", followed by this
 // turn's ATTACHED DOCUMENTS section when it has one. It is the ACTION
-// assembly — the block being asked must never carry its own prior `response`, or a
+// assembly — the block being asked must never carry its own prior answer, or a
 // retry (where the doc snapshot already holds a stale answer) biases the new answer.
 // BuildContext (THREAD / ref-chain / target callers) calls this then appends the
 // answer, because the conversation history MUST keep prior answers.
@@ -320,18 +379,17 @@ func (p *AIBlockProcessor) questionText(body []*block.SieveBlock, doc block.DocV
 // the Q&A, not a mergeable trailer. Unlike the ACTION assembly (qaHeader) this DOES
 // append the block's own answer — a ref-chain / THREAD entry is conversation history.
 func (p *AIBlockProcessor) BuildContext(blk block.SieveBlock, doc block.DocView, seen map[string]bool) block.AIContext {
-	r, _ := blk.Attrs["response"].(string)
 	t, _ := blk.Attrs["type"].(string)
 
 	sb := strings.Builder{}
 	sb.WriteString(p.qaHeader(blk, doc))
-	if r != "" {
+	if answer := p.answerText(blk, doc); answer != "" {
 		if t == "EXPLAIN" {
 			sb.WriteString("\n**ANSWER:** ")
 		} else {
 			sb.WriteString("\n\n**ANSWER:** ")
 		}
-		sb.WriteString(strings.TrimSpace(r))
+		sb.WriteString(answer)
 	}
 
 	return block.AIContext{NodeIDs: []string{blk.ID}, Content: sb.String()}
@@ -428,7 +486,7 @@ func (p *AIBlockProcessor) buildTargets(w chainWalk, doc block.DocView) string {
 	var ctxs []block.AIContext
 	// Exclude this processor's own kind: when a target is the whole doc, its derived
 	// markdown must not carry prior ai-block answers — an ai-block serializes as its
-	// raw YAML fence (question + response), and including prior answers makes the
+	// raw YAML fence (question + answer), and including prior answers makes the
 	// model fixate on its own stale output and resurrect document text quoted inside
 	// old answers. THREAD (a separate slot) still carries the conversation. A
 	// specific-block target ignores the filter (returned as-is).
@@ -455,7 +513,7 @@ func (p *AIBlockProcessor) buildTargets(w chainWalk, doc block.DocView) string {
 //     its own Q&A entry (NOT merged — distinct entries keeping their own
 //     trailers, and their own attachments).
 //   - question — the ACTION: this block's own question-side. It must NOT carry
-//     its own prior `response`: on a retry the doc snapshot already holds a
+//     its own prior answer: on a retry the doc snapshot already holds a
 //     stale answer, and leaking it into the ACTION biases the new one. The NODE
 //     ID header is preserved via NodeIDs.
 //
@@ -510,7 +568,7 @@ func (p *AIBlockProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJo
 		},
 		Apply: func(result any, b *block.SieveBlock) {
 			b.Attrs["status"] = block.BlockStatusComplete
-			b.Attrs["response"] = result.(string)
+			b.SetElements(block.AnswerAttr, p.foldAnswer(result))
 			b.Attrs["completedAt"] = time.Now().UTC().Format(time.RFC3339)
 		},
 	}
@@ -539,12 +597,11 @@ func (p *AIBlockProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJo
 // the exchange is titled by its answer's position instead.
 func (p *AIBlockProcessor) MarkdownRepresentation(blk block.SieveBlock, uuid string) string {
 	status, _ := blk.Attrs["status"].(string)
-	response, _ := blk.Attrs["response"].(string)
-	response = strings.TrimSpace(response)
-	if status != block.BlockStatusComplete || response == "" {
+	doc := block.DocView{UUID: uuid}
+	answer := p.answerText(blk, doc)
+	if status != block.BlockStatusComplete || answer == "" {
 		return ""
 	}
-	doc := block.DocView{UUID: uuid}
 	q := p.foldQuestion(blk, doc)
 	heading, rest := p.embedHeading(q.body)
 
@@ -556,7 +613,7 @@ func (p *AIBlockProcessor) MarkdownRepresentation(blk block.SieveBlock, uuid str
 		parts = append(parts, body)
 	}
 	parts = append(parts, p.embedAttachments(q.attachments)...)
-	return strings.Join(append(parts, response), "\n\n")
+	return strings.Join(append(parts, answer), "\n\n")
 }
 
 // embedAttachments renders each attached document as one markdown link, in list

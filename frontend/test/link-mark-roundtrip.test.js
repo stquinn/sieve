@@ -148,6 +148,12 @@ describe('LINK_OPTIONS — the shipping configuration', () => {
     expect(LINK_OPTIONS.HTMLAttributes.class).toBe('prose-link')
   })
 
+  it('registers the sieve protocol — an unregistered scheme is dropped on parse', () => {
+    expect(LINK_OPTIONS.protocols).toContain('sieve')
+    editor.commands.setContent('[Retry RFC §4](sieve://0198c1a0-ffff-7000-8000-0000000000ff/x)')
+    expect(firstLinkMark(editor).attrs.href).toBe('sieve://0198c1a0-ffff-7000-8000-0000000000ff/x')
+  })
+
   it('renders no target="_blank"/rel — a webview must never be asked for a new window', () => {
     editor.commands.setContent('[Sieve](https://example.com/docs)')
     const attrs = firstLinkMark(editor).attrs

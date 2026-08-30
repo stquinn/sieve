@@ -81,11 +81,16 @@ const FORMATTING_GROUPS = Object.freeze([
 //     meaningless-to-hazardous in a webview. There is deliberately no `title`
 //     hint, because `title` is a genuine Link mark ATTRIBUTE and a value set
 //     here is overwritten by the mark's own null on every render.
+//   protocols — the Link mark validates hrefs against an allow-list on parse and
+//     drops the mark on a miss, so a sieve:// address (a reference element in a
+//     projected answer, or one authored in prose) must be registered or it
+//     degrades to bare text.
 // Exported so the round-trip test pins the SHIPPING config, not a copy.
 export const LINK_OPTIONS = Object.freeze({
   openOnClick: false,
   linkOnPaste: false,
   autolink: false,
+  protocols: Object.freeze(['sieve']),
   HTMLAttributes: Object.freeze({ class: 'prose-link', target: null, rel: null }),
 })
 

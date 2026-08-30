@@ -14,7 +14,10 @@
 // @property {(event: Event) => boolean} [stopEvent] TipTap NodeView stopEvent hook
 // @property {import('../../../renderers/block-renderer.js').BlockRenderer} [renderer]
 //   the BlockRenderer a MIGRATED kind exposes — enables the framework's PM body
-//   projection (bodyMarkdown) and TITLE fill (fillTitle).
+//   projection and TITLE fill (fillTitle). The body is taken from
+//   `bodyElements()` when the renderer offers one and it answers a list — each
+//   element is projected as a node of its own kind — and from `bodyMarkdown()`
+//   otherwise.
 //
 // @typedef {Object} SieveBlockAdapter
 //   The kind contract registered via registerSieveRenderer. Every member is
@@ -64,6 +67,7 @@ import { getLowlight, applyHighlighting } from '../../../renderers/highlighting.
 import { renderSanctionedMarkdown } from '../../../renderers/sanctioned-markdown.js'
 import { T } from './tiptap-vendor.js'
 import { registerBlockKind, getBlockBehaviour, containsChildBlocks } from '../../../renderers/block-kinds.js'
+import { BlockIdentity } from '../../../renderers/block-identity.js'
 import { labelForAction } from '../../../renderers/action-label.js'
 import { expandBlock } from '../../../ui/media-lightbox.js'
 import { HeaderBar } from '../../../renderers/header-bar.js'
@@ -279,6 +283,25 @@ class NodeViewRegistry {
     return '<div ' + htmlAttrs.join(' ') + '>' + innerHTML + '</div>\n'
   }
 
+  // The HTML a BODY PROJECTION of block ELEMENTS parses from: each element in the
+  // costume its kind travels to ProseMirror in, so the projected node is the same
+  // node the document load path builds and gets its kind's own NodeView. A kind
+  // with no node type of its own — prose, whose editor form is native nodes —
+  // reads as the markdown it carries, as does one this build does not know.
+  //
+  // Each element's HTML is TRIMMED and the pieces butted together: whitespace
+  // between two block elements is a stray text node, and a parse wraps one in a
+  // paragraph of its own — an empty line between every element of the answer.
+  /** @param {ReadonlyArray<{kind: string, attrs: Record<string, any>}>} elements @returns {string} */
+  elementsHTML(elements) {
+    var self = this
+    return (elements || []).map(function (el) {
+      var attrs = (el && el.attrs) || {}
+      var costume = (el && self.#adapters[el.kind]) ? self.buildBlockHTML(el.kind, attrs) : ''
+      return (costume || renderSanctionedMarkdown(String(attrs.content || attrs.source || ''))).trim()
+    }).join('')
+  }
+
   // The backend returns [{kind, actions}]. The frontend is a dumb renderer: it shows
   // each offered (kind, action) and plays back {operation}.
   //
@@ -346,6 +369,29 @@ class NodeViewRegistry {
       // way here is a wire timeout or a broken menu build. Neither should take the
       // menu down, but neither is "nothing to extract" either.
     }).catch(function (err) { console.warn('[sieve-block] extraction offers unavailable', err) })
+  }
+
+  // Is the node at this position an ELEMENT — a block living inside another
+  // block's payload, projected into that block's content — rather than a member
+  // of the document tree? The answer is STRUCTURAL: a sieve node whose PM parent
+  // is another sieve node is one, whatever kind either of them is.
+  //
+  // Read at NodeView construction, where ProseMirror answers getPos() with the
+  // position it is building at and the view already holds the new state. A
+  // position it cannot resolve is read as document-level, which is the form with
+  // no suppression in it.
+  /** @param {any} editorPane @param {any} getPos @returns {boolean} */
+  static isElementPosition(editorPane, getPos) {
+    if (typeof getPos !== 'function' || !editorPane || !editorPane.state) return false
+    try {
+      var pos = getPos()
+      var doc = editorPane.state.doc
+      if (pos == null || pos < 0 || pos > doc.content.size) return false
+      var parent = doc.resolve(pos).parent
+      return !!parent && String(parent.type.name).indexOf('sieve-') === 0
+    } catch (err) {
+      return false
+    }
   }
 
   // Inspects whatever DOM element was clicked and, if it sits on something
@@ -469,6 +515,19 @@ class NodeViewRegistry {
           // Editor's PUBLIC API through the pane the surface stamped — the ONLY way
           // a NodeView touches the Editor, and never the backend.
           var renderHeaderBar   // assigned by the header seam below
+
+          // ELEMENT MODE — is this node an element of another block's payload,
+          // projected into that block's content, rather than a member of the
+          // document tree? Decided ONCE, HERE, structurally: a sieve node whose
+          // PM parent is another sieve node is not addressable, whatever kind it
+          // is. No kind detects this for itself, and none may.
+          //
+          // An element resolves to no block in the container, so it gets no
+          // provider (its outbound verbs go inert), no identity in its DOM, no
+          // chrome, and none of the framework's block verbs.
+          var elementMode = NodeViewRegistry.isElementPosition(editorPane, getPos)
+          var renderOptions = Object.freeze({ readOnly: elementMode })
+
           var blockCtx = {
             id: node.attrs.id,
             kind: kind,
@@ -488,7 +547,13 @@ class NodeViewRegistry {
             // The mounted container's provider, stamped on the pane by the
             // surface as sieveHost is. Renderers receive it at construction and
             // speak facade verbs through it; no transport is reachable from here.
-            get provider() { return editorPane.blockProvider || null },
+            // An ELEMENT has none: it names no block the container holds, so a
+            // verb aimed at its id would address a block that does not exist.
+            get provider() { return elementMode ? null : (editorPane.blockProvider || null) },
+            // The framework flags a kind honours at construction. A kind FORWARDS
+            // these to its renderer exactly as it forwards the provider; it never
+            // decides them.
+            renderOptions: renderOptions,
             // Reached through the HOST and read lazily like getEditor, because the
             // surface stamps sieveHost only after the pane is built — a NodeView
             // made during that build would capture nothing.
@@ -509,14 +574,26 @@ class NodeViewRegistry {
             refreshHeader: function () { if (renderHeaderBar) renderHeaderBar() },
           }
           var view = renderer.makeNodeView(node, editorPane, getPos, blockCtx)
+          /** @type {MutationObserver|null} */
+          var anonymiser = null
           if (view.dom) {
             // The chrome host slot goes in FIRST; BlockChrome finds it via
             // .block-chrome-host. Must be contenteditable="false" so PM never
-            // tries to edit it.
-            var chromeHost = document.createElement('div')
-            chromeHost.className = 'block-chrome-host'
-            chromeHost.setAttribute('contenteditable', 'false')
-            view.dom.insertBefore(chromeHost, view.dom.firstChild)
+            // tries to edit it. An element gets none: BlockChrome walks the
+            // document's top level, so a gutter number or drag handle here would
+            // be chrome for a block nobody can address.
+            if (!elementMode) {
+              var chromeHost = document.createElement('div')
+              chromeHost.className = 'block-chrome-host'
+              chromeHost.setAttribute('contenteditable', 'false')
+              view.dom.insertBefore(chromeHost, view.dom.firstChild)
+            } else {
+              // The identity a kind stamps on itself, taken back off — and kept
+              // off, because a kind draws long after it is built (mermaid stamps
+              // data-id on its own edges).
+              BlockIdentity.strip(view.dom)
+              anonymiser = BlockIdentity.keepAnonymous(view.dom)
+            }
 
             // Migrated renderers stamp their own identity data-* from the block;
             // this fallback covers any kind whose DOM the framework assembles.
@@ -529,7 +606,12 @@ class NodeViewRegistry {
               view.dom.contentEditable = 'false'
             }
 
+            // The framework's BLOCK VERBS — the context menu, and the click that
+            // makes a block the selection owner — name a block by id, so an
+            // ELEMENT offers neither: each gesture passes through to the block
+            // HOSTING it, which is the interactable unit.
             view.dom.addEventListener('contextmenu', function (e) {
+              if (elementMode) return
               e.preventDefault()
               e.stopPropagation()
               var currentNode = (typeof getPos === 'function') ? editorPane.state.doc.nodeAt(getPos()) : node
@@ -648,6 +730,7 @@ class NodeViewRegistry {
             // renderer handles click/keydown itself. mouseup, not mousedown, so a
             // drag that selects text is left intact.
             view.dom.addEventListener('mouseup', function (event) {
+              if (elementMode) return
               if (typeof getPos !== 'function') return
               var domSel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null
               if (!BlockSelection.shouldClaim(event.target, view.dom, view.contentDOM, domSel)) return
@@ -659,6 +742,16 @@ class NodeViewRegistry {
                 editorPane.view.focus()
               } catch (e) {}
             })
+          }
+
+          // The anonymiser outlives the build, so it is released with the view.
+          if (anonymiser) {
+            var watcher = anonymiser
+            var origDestroy = (typeof view.destroy === 'function') ? view.destroy.bind(view) : null
+            view.destroy = function () {
+              watcher.disconnect()
+              if (origDestroy) origDestroy()
+            }
           }
 
           // Every sieve block is selectable and draggable, so clicks and typing
@@ -693,19 +786,26 @@ class NodeViewRegistry {
           // MIGRATED kinds BUILD THEMSELVES: the renderer owns the header, title and
           // body chrome, and the framework assembles nothing around it. The one
           // remaining framework job is the PM BODY PROJECTION — a FRESH SCRATCH
-          // renderer per pass authors the body markdown from Go truth, and this seam
-          // parses it into contentDOM as live nodes via a tracked transaction. Kinds
-          // with no split renderer fall to the LEGACY seam below.
+          // renderer per pass authors the body from Go truth, and this seam parses
+          // it into contentDOM as live nodes via a tracked transaction. Kinds with
+          // no split renderer fall to the LEGACY seam below.
+          //
+          // A body is offered in one of TWO forms and the richer one wins:
+          // bodyElements() gives the body as BLOCKS, each projected as a node of
+          // its own kind so it draws through its own NodeView; bodyMarkdown()
+          // gives it as text. Either way the projection is ONE-WAY — the block's
+          // attrs are the truth and nothing is read back — and invisible to save,
+          // which walks the document's top level and signs a sieve block by its
+          // attrs alone.
 
-          // syncMdInto — parse markdown into a tracked PM replace of contentDOM.
+          // syncHtmlInto — parse HTML into a tracked PM replace of contentDOM.
           // getPos can be stale by the time this deferred sync runs, and doc.nodeAt
           // THROWS for an out-of-range pos, so bounds-check first.
-          var syncMdInto = function (md) {
+          var syncHtmlInto = function (/** @type {string} */ html) {
             setTimeout(function () {
               if (!editorPane || !editorPane.view) return
-              var html = renderSanctionedMarkdown(md || '') || '<p></p>'
               var tmp = document.createElement('div')
-              tmp.innerHTML = html
+              tmp.innerHTML = html || '<p></p>'
               var PMDP = T.ProseMirrorDOMParser || T.DOMParser
               var slice = PMDP.fromSchema(editorPane.state.schema).parseSlice(tmp)
               var pos = typeof getPos === 'function' ? getPos() : -1
@@ -715,28 +815,52 @@ class NodeViewRegistry {
               if (!cur || !cur.type.name.startsWith('sieve-')) return
               var tr = editorPane.state.tr
               tr.replace(pos + 1, pos + 1 + cur.content.size, slice)
+              // A body the replace leaves identical is never dispatched: the
+              // change would recreate this view, whose construction projects
+              // again, and nothing in that cycle ends it. Compared on the RESULT
+              // rather than the slice, which parseSlice hands back open-ended.
+              var next = tr.doc.nodeAt(pos)
+              if (next && next.content.eq(cur.content)) return
               tr.setMeta('sieve-md-sync', true)
               tr.setMeta('addToHistory', false)
               editorPane.view.dispatch(tr)
             }, 0)
           }
+          var syncMdInto = function (/** @type {string} */ md) { syncHtmlInto(renderSanctionedMarkdown(md || '')) }
 
           if (view.renderer) {
             if (view.contentDOM && typeof view.renderer.bodyMarkdown === 'function') {
               // SCRATCH-INSTANCE AUTHORING: one fresh instance per pass, guarding
-              // nothing and firing no effects, discarded once bodyMarkdown is out.
+              // nothing and firing no effects, discarded once the body is out.
               var RendererClass = /** @type {any} */ (view.renderer).constructor
-              var resolveBodyM = function (n) {
-                return new RendererClass(sieveBlockFor(n, undefined, blockCtx.provider)).bodyMarkdown()
+              // The body as {key, html}. The KEY is what the churn guard compares:
+              // update() arrives on edits anywhere in the document, and a body
+              // reprojected on each of them would re-render every element it holds
+              // — a mermaid diagram per keystroke. Only a body that actually
+              // CHANGED is written back.
+              var projectionOf = function (/** @type {any} */ n) {
+                var scratch = new RendererClass(sieveBlockFor(n, undefined, blockCtx.provider))
+                var elements = (typeof scratch.bodyElements === 'function') ? scratch.bodyElements() : null
+                if (elements) return { key: 'blocks:' + JSON.stringify(elements), elements: elements }
+                var md = scratch.bodyMarkdown()
+                return { key: 'text:' + md, markdown: md }
               }
-              var lastMdM = resolveBodyM(node)
-              if (lastMdM) syncMdInto(lastMdM)
+              var htmlOf = function (/** @type {any} */ p) {
+                if (p.elements) return self.elementsHTML(p.elements)
+                return p.markdown ? renderSanctionedMarkdown(p.markdown) : ''
+              }
+              var lastProjection = projectionOf(node)
+              var firstHtml = htmlOf(lastProjection)
+              if (firstHtml) syncHtmlInto(firstHtml)
               var origUpdateM = (typeof view.update === 'function') ? view.update.bind(view) : null
-              view.update = function (updatedNode) {
+              view.update = function (/** @type {any} */ updatedNode) {
                 var ok = origUpdateM ? origUpdateM(updatedNode) : true
                 if (!ok) return false
-                var nextMd = resolveBodyM(updatedNode)
-                if (nextMd !== lastMdM) { lastMdM = nextMd; syncMdInto(nextMd) }
+                var next = projectionOf(updatedNode)
+                if (next.key !== lastProjection.key) {
+                  lastProjection = next
+                  syncHtmlInto(htmlOf(next))
+                }
                 return true
               }
             }

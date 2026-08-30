@@ -4,7 +4,7 @@
 // is cross-block: the contentDOM binding and ignoreMutation, the framework schema
 // data (nodeConfig/attrs/parseAttrs/titleProvider/contentProvider, consumed by
 // createSieveNode and the title/content slot seam that renders the
-// question/response into contentDOM as live PM nodes), the read-only-container
+// question/answer into contentDOM as live PM nodes), the read-only-container
 // guard plugin, and chain-glow hover (gatherChain/applyChain).
 
 import { isJobStale } from '../../../../renderers/job-status.js'
@@ -41,14 +41,18 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
     // Read-only container: arrows treat it as a single caret stop.
     interactionPolicy: { caretStop: true },
 
+    // The body holds the ANSWER, and an answer is a list of blocks — so its
+    // content admits sieve blocks alongside native prose, exactly as the document
+    // top level does. A projected element is drawn by its kind's own NodeView;
+    // what makes it an ELEMENT rather than a block is that it lives here.
     nodeConfig: {
       atom: false,
       selectable: true,
       draggable: false,
-      content: 'block+'
+      content: '(block | sieveBlock)+'
     },
 
-    // The title (question) and body (response/status) are rendered by
+    // The title (question) and body (answer/status) are rendered by
     // AiBlockRenderer; the seam authors the projected body via fresh scratch
     // instances of it.
 
@@ -69,7 +73,14 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
           try { return JSON.parse(el.getAttribute('data-question') || '[]') } catch (e) { return [] }
         }
       },
-      response: { default: null,  parseHTML: function (el) { return el.getAttribute('data-response') || null } },
+      // The answer is a list of blocks in the same encoding as the question, and
+      // rides the same costume for the same reason.
+      answer: {
+        default: [],
+        parseHTML: function (el) {
+          try { return JSON.parse(el.getAttribute('data-answer') || '[]') } catch (e) { return [] }
+        }
+      },
       error:    { default: null,  parseHTML: function (el) { return el.getAttribute('data-error') || null } },
       // Attachments are a LIST, so they ride the data-* costume as JSON where
       // every other attr here is a scalar. This parse is the PM-resurrect
@@ -99,7 +110,7 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
         aiType:   data.type     || 'ASK',
         model:    data.model    || null,
         question: JSON.stringify(data.question || []),
-        response: data.response || null,
+        answer:   JSON.stringify(data.answer || []),
         error:    data.error    || null,
         attachments: JSON.stringify(data.attachments || []),
       }
@@ -118,7 +129,7 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
         bodyContainer = container
         return false
       }
-      var renderer = new AiBlockRenderer(sieveBlockFor(node, undefined, ctx && ctx.provider), ctx.provider || null, handleBuild)
+      var renderer = new AiBlockRenderer(sieveBlockFor(node, undefined, ctx && ctx.provider), ctx.provider || null, handleBuild, ctx.renderOptions)
 
       // Whether an attachment's target still EXISTS is the EDITOR's knowledge: it
       // holds the one cache, and that cache dying with it is what makes a reopened
@@ -219,7 +230,7 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
         return inside
       }
 
-      // Whether a Backspace/Delete would EDIT an ai-block's read-only response
+      // Whether a Backspace/Delete would EDIT an ai-block's read-only answer
       // text (block it) or remove the WHOLE block (allow it — keyboard delete is
       // the context-menu Delete, and a mistake is undoable). Only the whole-block
       // cases pass: a NodeSelection on the block, or a selection that fully
@@ -246,7 +257,7 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
             },
             handleKeyDown: function(view, event) {
               // Backspace/Delete: allowed to remove the whole block (undoable),
-              // blocked only when they would edit the read-only response body.
+              // blocked only when they would edit the read-only answer body.
               if (event.key === 'Backspace' || event.key === 'Delete') {
                 return deleteEditsAiBody(view.state)
               }

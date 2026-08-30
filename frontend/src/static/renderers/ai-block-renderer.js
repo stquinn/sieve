@@ -1,6 +1,6 @@
 // @ts-check
 // AiBlockRenderer — the ai-block kind's look-and-feel: the block shell, the
-// status BADGE (its header), the question TITLE, the response/status BODY and
+// status BADGE (its header), the question TITLE, the answer/status BODY and
 // the attachment chip row (its footer), plus this kind's stylesheet.
 //
 // THE QUESTION IS A LIST OF BLOCKS, folded once and read in three places, one
@@ -11,6 +11,13 @@
 // composed of — is handed to QuestionListView to draw. The fold is
 // QuestionList's, so this class and Go's prompt assembly classify the same
 // element the same way.
+//
+// THE ANSWER IS A LIST OF BLOCKS IN THE SAME ENCODING, and it is offered TWO
+// WAYS, because a host draws what it is able to draw. bodyElements() offers the
+// list as blocks, for a host that can host blocks; bodyMarkdown() offers it as
+// markdown — one span per element, in authored order — for one that cannot. An
+// answer that is one span of prose reads the same either way, so the body of an
+// ordinary exchange is byte for byte what it always was.
 //
 // buildBody() builds AND FILLS the body from bodyMarkdown(). In the editor lens
 // the adapter claims the BODY region via handleBuild, so no #contentEl is
@@ -34,11 +41,11 @@ import { registerBlockRenderer } from './block-kinds.js'
  *  contents.
  * @typedef {{ uri: string, title?: string }} AiBlockAttachment */
 
-/** `question` is the ordered list of blocks the question is composed of. A
- *  standalone command's popup block carries the plain text it was asked with
- *  instead — it is a detached answer, not a question in a document — and reads
- *  as the one prose element it is.
- * @typedef {{ id?: string, ref?: string, type?: 'ASK'|'EXPLAIN'|'BTW', status?: string, createdAt?: string, question?: import('./question-list.js').QuestionElement[]|string, response?: string|null, error?: string|null, model?: string|null, supportsEmbedding?: boolean, attachments?: AiBlockAttachment[] }} AiBlockAttrs */
+/** `question` and `answer` are both ordered lists of the blocks that side of the
+ *  exchange is composed of. Either may arrive as a plain string — what a
+ *  standalone command's popup block carries, and what a producer that cannot
+ *  compose blocks writes — and a string reads as the one prose element it is.
+ * @typedef {{ id?: string, ref?: string, type?: 'ASK'|'EXPLAIN'|'BTW', status?: string, createdAt?: string, question?: import('./question-list.js').QuestionElement[]|string, answer?: import('./question-list.js').QuestionElement[]|string, error?: string|null, model?: string|null, supportsEmbedding?: boolean, attachments?: AiBlockAttachment[] }} AiBlockAttrs */
 
 export class AiBlockRenderer extends BlockRenderer {
   static styles = aiBlockStyles
@@ -78,7 +85,7 @@ export class AiBlockRenderer extends BlockRenderer {
     return this.#titleEl
   }
 
-  /** The response/status BODY, self-filled. In the editor lens the adapter
+  /** The answer/status BODY, self-filled. In the editor lens the adapter
    *  claims this region via handleBuild, so this hook never runs there.
    *  @returns {HTMLElement} */
   buildBody() {
@@ -127,18 +134,119 @@ export class AiBlockRenderer extends BlockRenderer {
   }
 
   /**
-   * The markdown the BODY shows — response when complete, else a status line.
+   * The BLOCKS the body shows, or null when the body is a status line rather
+   * than an answer.
+   *
+   * A host that can draw whole blocks — the editor lens, which projects each
+   * element as a node of its own kind — takes this in preference to
+   * bodyMarkdown(); a host that can only draw text falls back to that. An answer
+   * element is a SETTLED record and carries no job of its own, so one that names
+   * no status is complete rather than pending.
+   * @returns {import('./question-list.js').QuestionElement[]|null}
+   */
+  bodyElements() {
+    const attrs = /** @type {AiBlockAttrs} */ (this.block.payload)
+    if ((attrs.status || 'PENDING') !== 'COMPLETE') return null
+    return QuestionList.elementsOf(attrs.answer).map((el) => ({
+      kind: el.kind,
+      attrs: Object.assign({ status: 'COMPLETE' }, el.attrs),
+    }))
+  }
+
+  /**
+   * The markdown the BODY shows — the answer when complete, else a status line.
    * The renderer OWNS this mapping.
+   *
+   * Still the whole story for a host that draws text: the status lines, and the
+   * answer wherever no richer projection is available (a bare page, and the
+   * self-filled buildBody above).
    * @returns {string}
    */
   bodyMarkdown() {
     const attrs = /** @type {AiBlockAttrs} */ (this.block.payload)
     const status = attrs.status || 'PENDING'
-    if (status === 'COMPLETE') return (attrs.response || '').trim()
+    if (status === 'COMPLETE') return AiBlockRenderer.answerMarkdown(attrs.answer)
     if (status === 'PENDING' || status === 'DISPATCHED') {
       return isJobStale(attrs.createdAt, attrs.id) ? 'Request timed out. (Right-click to Retry)' : '*(thinking…)*'
     }
     return (attrs.error || 'Request failed. (Right-click to Retry)').trim()
+  }
+
+  /**
+   * An answer as the markdown it shows: every element rendered as the kind it
+   * is, in authored order, one blank-line-separated span apiece. An element that
+   * renders to nothing contributes no span, so a blank one leaves no gap.
+   *
+   * Whatever form the answer arrived in is read through QuestionList — both
+   * slots of an exchange carry the same element encoding, and a plain string is
+   * the one prose element it always was.
+   * @param {any} answer
+   * @returns {string}
+   */
+  static answerMarkdown(answer) {
+    return QuestionList.elementsOf(answer)
+      .map((el) => AiBlockRenderer.#elementMarkdown(el))
+      .filter((md) => md.trim())
+      .join('\n\n')
+      .trim()
+  }
+
+  /**
+   * One answer element as markdown, by kind: prose is its content, a kind whose
+   * content is literal source text is that text fenced, and a reference is a
+   * link to what it addresses. A kind with no mapping of its own renders
+   * whatever text it carries, so an answer composed of a kind this does not know
+   * still reads.
+   * @param {import('./question-list.js').QuestionElement} el
+   * @returns {string}
+   */
+  static #elementMarkdown(el) {
+    const attrs = el.attrs || {}
+    switch (el.kind) {
+      case 'reference': return AiBlockRenderer.#link(attrs)
+      case 'code':
+      case 'log':       return AiBlockRenderer.#fence(attrs.source, attrs.language)
+      case 'diagram':   return AiBlockRenderer.#fence(attrs.source, attrs.diagramType)
+      default:          return String(attrs.content || attrs.source || '')
+    }
+  }
+
+  /**
+   * Source text as a fenced block. The fence is longer than the longest backtick
+   * run inside it, so source carrying its own fence — a model quoting markdown
+   * back — cannot end the one around it.
+   * @param {any} source @param {any} language @returns {string}
+   */
+  static #fence(source, language) {
+    const text = String(source == null ? '' : source)
+    if (!text.trim()) return ''
+    const runs = text.match(/`+/g) || []
+    const fence = '`'.repeat(runs.reduce((longest, run) => Math.max(longest, run.length + 1), 3))
+    return fence + String(language == null ? '' : language).trim() + '\n' + text + '\n' + fence
+  }
+
+  /**
+   * A reference element as one markdown link: its cached title is the text, the
+   * address is the destination, and a reference with no title is labelled by its
+   * address rather than left unclickable. An element addressing nothing renders
+   * nothing.
+   *
+   * BOTH HALVES ARE HOSTILE INPUT — a title is whatever a document was called or
+   * a model wrote, and a leaf may be an asset key carrying spaces and brackets —
+   * so this escapes what would end a link early, by the same rule Go's
+   * embedAttachments applies.
+   * @param {Record<string, any>} attrs
+   * @returns {string}
+   */
+  static #link(attrs) {
+    const uri = String(attrs.uri || '').trim()
+    if (!uri) return ''
+    const title = String(ReferenceRenderer.faceOf(attrs).title || '').trim()
+    const text = (title || uri).replace(/\\/g, '\\\\').replace(/([[\]])/g, '\\$1')
+    const destination = /[ \t\n\r()<>\\]/.test(uri)
+      ? '<' + uri.replace(/\\/g, '\\\\').replace(/([<>])/g, '\\$1').replace(/[\n\r]/g, '') + '>'
+      : uri
+    return '[' + text + '](' + destination + ')'
   }
 
   /** @param {import('../contract/sieve-block.js').SieveBlock} block */

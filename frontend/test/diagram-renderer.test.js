@@ -94,7 +94,8 @@ describe('DiagramRenderer (Phase 2 pilot — bare-page DoD)', () => {
     expect(dom.className).toBe('sieve-block sieve-block--diagram')
     expect(dom.querySelector('.sieve-block__body')).toBeTruthy()
     expect(dom.querySelector('.sieve-block__gutter')).toBeTruthy()
-    expect(dom.querySelector('.diagram-block__render')).toBeFalsy()  // not attached in edit mode
+    expect(/** @type {HTMLElement} */ (dom.querySelector('.sieve-block__body')).hidden).toBe(false)
+    expect(/** @type {HTMLElement} */ (dom.querySelector('.diagram-block__render')).hidden).toBe(true)
 
     const gutterSpan = dom.querySelector('.sieve-block__gutter span')
     expect(gutterSpan).toBeTruthy()
@@ -114,7 +115,7 @@ describe('DiagramRenderer (Phase 2 pilot — bare-page DoD)', () => {
     document.body.appendChild(dom)
 
     expect(dom.querySelector('.diagram-block__render')).toBeTruthy()
-    expect(dom.querySelector('.sieve-block__body')).toBeFalsy()  // edit body not attached in render mode
+    expect(/** @type {HTMLElement} */ (dom.querySelector('.sieve-block__body')).hidden).toBe(true)
     expect(dom.querySelector('.diagram-block__loading')).toBeTruthy()
 
     await new Promise((resolve) => setTimeout(resolve, 0))
@@ -136,6 +137,48 @@ describe('DiagramRenderer (Phase 2 pilot — bare-page DoD)', () => {
 
     renderer.update(blk({ id: 'di-test', source: 'graph TD; A-->B', diagramType: 'mermaid', mode: 'render' }))
     expect(renderer.takeModeTransition()).toEqual({ modeChangedTo: 'render' })
+  })
+
+  // ProseMirror is handed the edit surface's <code> as contentDOM. A contentDOM
+  // that leaves the document reads to PM as content the user deleted, and it
+  // dispatches a replace to match — so the mode flip switches visibility only.
+  it('both mode surfaces stay attached across a flip; only visibility and the code element move with it', () => {
+    installMermaidStub()
+    const { renderer, dom } = mount({ id: 'di-test', source: 'graph TD', diagramType: 'mermaid', mode: 'edit' })
+    document.body.appendChild(dom)
+    const codeEl = renderer.codeElement
+    const editBody = /** @type {HTMLElement} */ (dom.querySelector('.sieve-block__body'))
+    const renderBody = /** @type {HTMLElement} */ (dom.querySelector('.diagram-block__render'))
+
+    /** @param {'edit'|'render'} mode */
+    const flipTo = (mode) => renderer.update(blk({ id: 'di-test', source: 'graph TD', diagramType: 'mermaid', mode }))
+
+    flipTo('render')
+    expect(dom.contains(editBody)).toBe(true)
+    expect(dom.contains(renderBody)).toBe(true)
+    expect(dom.contains(codeEl)).toBe(true)
+    expect(editBody.hidden).toBe(true)
+    expect(renderBody.hidden).toBe(false)
+
+    flipTo('edit')
+    expect(dom.contains(codeEl)).toBe(true)
+    expect(renderer.codeElement).toBe(codeEl)
+    expect(editBody.hidden).toBe(false)
+    expect(renderBody.hidden).toBe(true)
+  })
+
+  it('a read-only diagram authored in edit mode still draws as a record, both surfaces attached', () => {
+    installMermaidStub()
+    const renderer = new DiagramRenderer(blk({ id: 'di-ro', source: 'graph TD', diagramType: 'mermaid', mode: 'edit' }), null, undefined, { readOnly: true })
+    const dom = renderer.render()
+    const editBody = /** @type {HTMLElement} */ (dom.querySelector('.sieve-block__body'))
+    expect(dom.contains(renderer.codeElement)).toBe(true)
+    expect(editBody.hidden).toBe(true)
+    expect(/** @type {HTMLElement} */ (dom.querySelector('.diagram-block__render')).hidden).toBe(false)
+
+    // An update must not walk a record back into an editable surface.
+    renderer.update(blk({ id: 'di-ro', source: 'graph TD; A-->B', diagramType: 'mermaid', mode: 'edit' }))
+    expect(editBody.hidden).toBe(true)
   })
 
   it('syncGutterLineCount keeps the gutter line count current without a full update() call', () => {
@@ -175,6 +218,123 @@ describe('DiagramRenderer (Phase 2 pilot — bare-page DoD)', () => {
     const renderer2 = new DiagramRenderer(blk({ id: 'di-y', source: 'A->B', diagramType: 'mermaid', mode: 'edit' }), provider)
     renderer2.setDiagramType('mermaid')
     expect(pushes.length).toBe(1)
+  })
+})
+
+// A rendered diagram is a pure function of (engine, theme, source), and drawing
+// it is expensive enough that ProseMirror recreating the NodeView — which it does
+// on any decoration change, hover included — showed as a visible twitch: the SVG
+// cleared to a spinner and faded back in. These pin that a repaint happens only
+// when one of those inputs actually moved.
+describe('DiagramRenderer — the rendered SVG is memoized', () => {
+  /** @type {HTMLStyleElement} */
+  let rootVars
+  beforeEach(() => { rootVars = installBareThemeVars() })
+  afterEach(() => {
+    rootVars.remove()
+    document.body.innerHTML = ''
+    const win = /** @type {any} */ (window)
+    delete win.mermaid
+  })
+
+  /** A mermaid whose every render is distinguishable, and which records what it
+   *  was asked for. @returns {{sources: string[]}} */
+  function installCountingMermaid() {
+    /** @type {string[]} */
+    const sources = []
+    let n = 0
+    const win = /** @type {any} */ (window)
+    win.mermaid = {
+      initialize() {},
+      /** @param {string} _id @param {string} src */
+      render(_id, src) {
+        sources.push(src)
+        return Promise.resolve({ svg: '<svg xmlns="http://www.w3.org/2000/svg" id="paint-' + (++n) + '"></svg>' })
+      },
+    }
+    return { sources }
+  }
+
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+  /** @param {HTMLElement} dom */
+  const svgIn = (dom) => dom.querySelector('.diagram-block__render svg')
+  /** @param {HTMLElement} dom */
+  const loadingIn = (dom) => dom.querySelector('.diagram-block__loading')
+
+  it('an update carrying identical attrs leaves the painted SVG untouched', async () => {
+    installCountingMermaid()
+    const attrs = { id: 'di-mem-1', source: 'graph TD; memo --> same', diagramType: 'mermaid', mode: 'render' }
+    const { renderer, dom } = mount(attrs)
+    document.body.appendChild(dom)
+    await settle()
+    const painted = svgIn(dom)
+    expect(painted).toBeTruthy()
+
+    renderer.update(blk(Object.assign({}, attrs)))
+    // Not "an equal SVG" — the SAME element. Anything else is a repaint the
+    // user sees.
+    expect(svgIn(dom)).toBe(painted)
+    expect(loadingIn(dom)).toBeFalsy()
+  })
+
+  it('a second renderer over the same attrs paints from the cache, with no loading gap', async () => {
+    const mermaid = installCountingMermaid()
+    const attrs = { id: 'di-mem-2', source: 'graph TD; cache --> hit', diagramType: 'mermaid', mode: 'render' }
+    const first = mount(attrs)
+    document.body.appendChild(first.dom)
+    await settle()
+    const painted = svgIn(first.dom)
+    expect(painted).toBeTruthy()
+
+    // What a NodeView recreation is: a fresh renderer over unchanged attrs.
+    // It must paint SYNCHRONOUSLY — a spinner between the two is the twitch.
+    const second = mount(Object.assign({}, attrs))
+    expect(loadingIn(second.dom)).toBeFalsy()
+    expect(svgIn(second.dom)).toBeTruthy()
+    expect(svgIn(second.dom)?.getAttribute('id')).toBe(painted?.getAttribute('id'))
+    expect(mermaid.sources.length).toBe(1)
+  })
+
+  it('a changed source repaints', async () => {
+    installCountingMermaid()
+    const attrs = { id: 'di-mem-3', source: 'graph TD; before --> x', diagramType: 'mermaid', mode: 'render' }
+    const { renderer, dom } = mount(attrs)
+    document.body.appendChild(dom)
+    await settle()
+    const first = svgIn(dom)?.getAttribute('id')
+
+    renderer.update(blk(Object.assign({}, attrs, { source: 'graph TD; after --> y' })))
+    await settle()
+    expect(svgIn(dom)?.getAttribute('id')).not.toBe(first)
+  })
+
+  it('a theme change repaints, though engine and source are unchanged', async () => {
+    const mermaid = installCountingMermaid()
+    const source = 'graph TD; theme --> swap'
+    const { dom } = mount({ id: 'di-mem-4', source, diagramType: 'mermaid', mode: 'render' })
+    document.body.appendChild(dom)
+    await settle()
+    const first = svgIn(dom)?.getAttribute('id')
+    expect(mermaid.sources.filter((s) => s === source).length).toBe(1)
+
+    document.dispatchEvent(new Event('settings:changed'))
+    await settle()
+    expect(mermaid.sources.filter((s) => s === source).length).toBe(2)
+    expect(svgIn(dom)?.getAttribute('id')).not.toBe(first)
+  })
+
+  it('flipping to edit and back repaints nothing — the render surface was only hidden', async () => {
+    const mermaid = installCountingMermaid()
+    const attrs = { id: 'di-mem-5', source: 'graph TD; flip --> back', diagramType: 'mermaid', mode: 'render' }
+    const { renderer, dom } = mount(attrs)
+    document.body.appendChild(dom)
+    await settle()
+    const painted = svgIn(dom)
+
+    renderer.update(blk(Object.assign({}, attrs, { mode: 'edit' })))
+    renderer.update(blk(Object.assign({}, attrs, { mode: 'render' })))
+    expect(svgIn(dom)).toBe(painted)
+    expect(mermaid.sources.length).toBe(1)
   })
 })
 
@@ -240,6 +400,76 @@ describe('DiagramRenderer — plantuml passive display branch', () => {
     const svg = dom.querySelector('.diagram-block__panzoom svg')
     expect(svg).toBeTruthy()
     expect(svg?.getAttribute('id')).toBe('puml-live')
+  })
+
+  /** A fetch that records every URL it was asked for. @param {string} text */
+  function countingFetch(text) {
+    /** @type {string[]} */
+    const calls = []
+    vi.stubGlobal('fetch', (/** @type {any} */ url) => {
+      calls.push(String(url))
+      return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(text) })
+    })
+    return { calls }
+  }
+
+  const settle = () => new Promise((r) => setTimeout(r, 0))
+
+  /** A COMPLETE plantuml block. The memo is keyed by source + asset URL + theme
+   *  and NOT by block id — two blocks rendering the same source from the same
+   *  URL are the same bytes — so each test needs its own `tag` to get a cache
+   *  entry of its own. @param {string} tag */
+  const puml = (tag) => ({
+    id: 'di-' + tag, createdAt: NOW(),
+    source: '@startuml\n' + tag + '->cache\n@enduml', diagramType: 'plantuml', mode: 'render',
+    status: 'COMPLETE', svgAsset: '/ui/assets/doc-uuid/' + tag + '.svg',
+  })
+
+  // Recreation costs a NETWORK round trip here, so the memo matters more than it
+  // does for mermaid.
+  it('a recreated renderer paints the cached asset without fetching again', async () => {
+    const f = countingFetch('<svg id="puml-memo"></svg>')
+    const attrs = puml('memo')
+    const first = mount(attrs)
+    document.body.appendChild(first.dom)
+    await settle()
+    expect(first.dom.querySelector('.diagram-block__panzoom svg')).toBeTruthy()
+    expect(f.calls.length).toBe(1)
+
+    const second = mount(Object.assign({}, attrs))
+    expect(second.dom.querySelector('.diagram-block__loading')).toBeFalsy()
+    expect(second.dom.querySelector('.diagram-block__panzoom svg')).toBeTruthy()
+    expect(f.calls.length).toBe(1)
+  })
+
+  it('a different svgAsset fetches again', async () => {
+    const f = countingFetch('<svg id="puml-a"></svg>')
+    const attrs = puml('memo-2')
+    const first = mount(attrs)
+    document.body.appendChild(first.dom)
+    await settle()
+    expect(f.calls.length).toBe(1)
+
+    mount(Object.assign({}, attrs, { svgAsset: '/ui/assets/doc-uuid/memo-2b.svg' }))
+    await settle()
+    expect(f.calls.length).toBe(2)
+  })
+
+  // The asset is overwritten IN PLACE at a stable URL, and a theme switch is one
+  // of the things that rewrites it — so the theme has to be part of what the
+  // bytes are remembered under, or a recreation would serve the old theme's SVG.
+  it('after a theme change a recreated renderer refetches rather than serving pre-theme bytes', async () => {
+    const f = countingFetch('<svg id="puml-theme"></svg>')
+    const attrs = puml('memo-3')
+    const first = mount(attrs)
+    document.body.appendChild(first.dom)
+    await settle()
+    expect(f.calls.length).toBe(1)
+
+    document.dispatchEvent(new Event('settings:changed'))
+    mount(Object.assign({}, attrs))
+    await settle()
+    expect(f.calls.length).toBe(2)
   })
 
   it('ERROR shows the error card carrying the backend error attr', () => {

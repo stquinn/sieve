@@ -170,20 +170,22 @@ export class QuestionList {
   get elements() { return this.#elements.slice() }
 
   /**
-   * A question as the list of elements it IS, whatever form it arrived in. A
-   * scalar question — what a standalone command's popup block carries, and what
-   * a document written before the list existed holds until its load path
-   * converts it — reads as the one prose element it always was, so every reader
-   * below has a single shape to work on and no legacy arm.
-   * @param {any} question
+   * A slot of an exchange as the list of elements it IS, whatever form it
+   * arrived in — the QUESTION, and the ANSWER, which carries the same encoding.
+   * A scalar — what a standalone command's popup block carries, what a producer
+   * that cannot compose blocks writes, and what a document written before the
+   * list existed holds until its load path converts it — reads as the one prose
+   * element it always was, so every reader below has a single shape to work on
+   * and no legacy arm.
+   * @param {any} list
    * @returns {QuestionElement[]}
    */
-  static elementsOf(question) {
-    if (typeof question === 'string') {
-      return question.trim() ? [{ kind: 'prose', attrs: { content: question } }] : []
+  static elementsOf(list) {
+    if (typeof list === 'string') {
+      return list.trim() ? [{ kind: 'prose', attrs: { content: list } }] : []
     }
-    if (!Array.isArray(question)) return []
-    return question.filter((el) => el && typeof el === 'object' && typeof el.kind === 'string')
+    if (!Array.isArray(list)) return []
+    return list.filter((el) => el && typeof el === 'object' && typeof el.kind === 'string')
   }
 
   /**
@@ -226,13 +228,14 @@ export class QuestionList {
   }
 
   /**
-   * The readable text of a question — what a one-line summary of it shows: its
-   * prose elements, in order. A question composed only of references has none.
-   * @param {any} question
+   * The readable text of a question or an answer — what a one-line summary of it
+   * shows: its prose elements, in order. A list composed only of references has
+   * none, and neither has a value that is no list at all.
+   * @param {any} list
    * @returns {string}
    */
-  static text(question) {
-    return QuestionList.elementsOf(question)
+  static text(list) {
+    return QuestionList.elementsOf(list)
       .filter((el) => el.kind === 'prose')
       .map((el) => (el.attrs && el.attrs.content) || '')
       .filter(Boolean)

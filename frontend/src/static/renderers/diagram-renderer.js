@@ -11,8 +11,12 @@
 // the error card. Both engines converge on ONE display tail (#displaySvg /
 // #displayError). No source translation on switch.
 //
-// buildBody() builds both mode surfaces; the editable <code> is exposed as
-// renderer.codeElement for the adapter's contentDOM.
+// buildBody() builds BOTH mode surfaces into the body region and they stay
+// ATTACHED in every mode — a flip switches visibility alone. The editable <code>
+// inside the edit surface (exposed as renderer.codeElement) is what the adapter
+// binds as ProseMirror's contentDOM, and a contentDOM outside the document reads
+// to ProseMirror as content the user deleted: it dispatches a replace to match,
+// erasing the source.
 
 import { BlockRenderer } from './block-renderer.js'
 import { MODE } from '../contract/sieve-block.js'
@@ -138,6 +142,36 @@ export class DiagramRenderer extends BlockRenderer {
   static #themeListenerInstalled = false
   static #renderCounter = 0
 
+  // The theme is an INPUT to a rendered diagram under BOTH engines — mermaid
+  // bakes it into the SVG, plantuml renders it into the persisted asset — but it
+  // lives in CSS custom properties, not in a block's attrs. This counter is the
+  // theme's identity for render-signature purposes: it moves exactly when the
+  // theme does, which is what makes a signature comparison honest.
+  static #themeEpoch = 0
+
+  /** Rendered SVG text by render signature, so a NodeView that ProseMirror
+   *  recreates repaints from memory rather than from a mermaid render or an
+   *  asset fetch. Insertion-ordered and evicted oldest-first: each entry is a
+   *  whole SVG document, so the bound is deliberately small.
+   *  @type {Map<string, string>} */
+  static #svgCache = new Map()
+  static #SVG_CACHE_MAX = 24
+
+  /** @param {string} signature @returns {string|undefined} */
+  static #cachedSvg(signature) { return DiagramRenderer.#svgCache.get(signature) }
+
+  /** @param {string} signature @param {string} svg */
+  static #cacheSvg(signature, svg) {
+    const cache = DiagramRenderer.#svgCache
+    cache.delete(signature)
+    cache.set(signature, svg)
+    while (cache.size > DiagramRenderer.#SVG_CACHE_MAX) {
+      const oldest = cache.keys().next()
+      if (oldest.done) break
+      cache.delete(oldest.value)
+    }
+  }
+
   /** @returns {any} */
   static #mermaidGlobal() { return /** @type {any} */ (window).mermaid }
 
@@ -145,7 +179,12 @@ export class DiagramRenderer extends BlockRenderer {
     if (DiagramRenderer.#themeListenerInstalled) return
     DiagramRenderer.#themeListenerInstalled = true
     document.addEventListener('settings:changed', () => {
-      // Re-init mermaid's theme variables FIRST (if it is loaded) so mermaid
+      // The epoch moves FIRST: every cached SVG and every rendered signature is
+      // keyed by it, so this one increment is what invalidates them. The clear
+      // then reclaims what the increment just made unreachable.
+      DiagramRenderer.#themeEpoch++
+      DiagramRenderer.#svgCache.clear()
+      // Re-init mermaid's theme variables (if it is loaded) so mermaid
       // instances re-render under the new theme. Plantuml instances nudge a
       // backend re-dispatch, which must happen even in a mermaid-free doc.
       if (DiagramRenderer.#mermaidGlobal()) DiagramRenderer.#initMermaid()
@@ -219,6 +258,9 @@ export class DiagramRenderer extends BlockRenderer {
   /** @type {HTMLElement|null} */ #codeEl = null
   /** @type {(() => void)|null} */ #panzoomCleanup = null
   /** @type {{ modeChangedTo: 'edit'|'render' }|null} */ #modeTransition = null
+  /** The signature of what #renderBody currently shows, or null before the first
+   *  paint. @type {string|null} */
+  #renderedSignature = null
   #destroyed = false
 
   /** The editable <code> the adapter binds as ProseMirror's contentDOM. Stable
@@ -243,20 +285,19 @@ export class DiagramRenderer extends BlockRenderer {
     return this.#headerBar.render(/** @type {DiagramAttrs} */ (this.block.payload), this)
   }
 
-  /** Builds BOTH surfaces (so the <code> always exists) and returns the
-   *  current-mode surface for the base to install. @returns {HTMLElement} */
+  /** The body region: both mode surfaces, the current one shown.
+   *  @returns {HTMLElement} */
   buildBody() {
+    const surfaces = document.createElement('div')
+    surfaces.className = 'diagram-block__surfaces'
     this.#editBody = this.#buildEditBody()
     this.#renderBody = this.#buildRenderBodyShell()
+    surfaces.appendChild(this.#editBody)
+    surfaces.appendChild(this.#renderBody)
     DiagramRenderer.#liveInstances.add(this)
     DiagramRenderer.#installThemeListener()
-    const attrs = /** @type {DiagramAttrs} */ (this.block.payload)
-    if (this.readOnly || attrs.mode === 'render') {
-      this.#renderInto(attrs)
-      return this.#renderBody
-    }
-    this.syncGutterLineCount(attrs.source || '')
-    return this.#editBody
+    this.#applyMode(/** @type {DiagramAttrs} */ (this.block.payload))
+    return surfaces
   }
 
   /** @param {import('../contract/sieve-block.js').SieveBlock} block */
@@ -266,7 +307,7 @@ export class DiagramRenderer extends BlockRenderer {
     super.update(block)
     const attrs = /** @type {DiagramAttrs} */ (block.payload)
     if (this.#headerBar) this.#headerBar.update(attrs, this)
-    if (this.root) this.#applyMode(this.root, attrs)
+    this.#applyMode(attrs)
     this.#modeTransition = prevMode === attrs.mode ? null : { modeChangedTo: attrs.mode }
   }
 
@@ -348,6 +389,7 @@ export class DiagramRenderer extends BlockRenderer {
   #buildEditBody() {
     const editBody = document.createElement('div')
     editBody.className = 'sieve-block__body'
+    editBody.hidden = true
 
     const gutter = document.createElement('div')
     gutter.className = 'sieve-block__gutter'
@@ -382,24 +424,30 @@ export class DiagramRenderer extends BlockRenderer {
     renderBody.className = 'diagram-block__render'
     renderBody.setAttribute('tabindex', '0')
     renderBody.style.outline = 'none'
+    renderBody.hidden = true
     return renderBody
   }
 
-  /** @param {HTMLElement} dom @param {DiagramAttrs} attrs */
-  #applyMode(dom, attrs) {
+  /**
+   * Show the mode's surface and hide the other — never detach either (see this
+   * file's header). A RECORD has no editable surface to offer, so read-only
+   * pins the block in render mode whatever its attrs say.
+   * @param {DiagramAttrs} attrs
+   */
+  #applyMode(attrs) {
     const editBody = this.#editBody
     const renderBody = this.#renderBody
     if (!editBody || !renderBody) return
 
-    if (attrs.mode === 'render') {
-      const comingFromEdit = dom.contains(editBody)
-      if (comingFromEdit) dom.removeChild(editBody)
-      if (!dom.contains(renderBody)) dom.appendChild(renderBody)
+    if (this.readOnly || attrs.mode === 'render') {
+      const comingFromEdit = !editBody.hidden
+      editBody.hidden = true
+      renderBody.hidden = false
       if (comingFromEdit) renderBody.focus()
       this.#renderInto(attrs)
     } else {
-      if (dom.contains(renderBody)) dom.removeChild(renderBody)
-      if (!dom.contains(editBody)) dom.appendChild(editBody)
+      renderBody.hidden = true
+      editBody.hidden = false
       this.syncGutterLineCount(attrs.source || '')
     }
   }
@@ -418,38 +466,76 @@ export class DiagramRenderer extends BlockRenderer {
     }
   }
 
-  /** Repaint the render body as a pure function of attrs. Cancels any live
-   *  panzoom first, then branches on the engine. @param {DiagramAttrs} attrs */
-  #renderInto(attrs) {
-    if (!this.#renderBody) return
-    if (this.#panzoomCleanup) { this.#panzoomCleanup(); this.#panzoomCleanup = null }
-    if ((attrs.diagramType || 'mermaid') === 'plantuml') this.#renderPlantuml(attrs)
-    else this.#renderMermaid(attrs)
+  /**
+   * Everything the render body's content is a function of, as one comparable
+   * string. Two calls with equal signatures MUST paint the same pixels, so
+   * anything the display branches on belongs here — the theme included, because
+   * mermaid bakes it into the SVG, and for plantuml the CLASSIFIED job state
+   * rather than the raw status, because that is what the display actually reads.
+   * @param {DiagramAttrs} attrs @returns {string}
+   */
+  #renderSignature(attrs) {
+    const engine = attrs.diagramType || 'mermaid'
+    const parts = [engine, String(DiagramRenderer.#themeEpoch), attrs.source || '']
+    if (engine === 'plantuml') {
+      parts.push(
+        StatusBadge.classify(attrs.status, attrs.createdAt, attrs.id),
+        String(attrs.svgAsset || ''),
+        String(attrs.error || ''),
+      )
+    }
+    return parts.join(' ')
   }
 
-  /** Client-side mermaid path — render the source locally, then hand the SVG to
-   *  the shared display tail (or #displayError on a parse failure). @param {DiagramAttrs} attrs */
-  #renderMermaid(attrs) {
+  /** Repaint the render body as a pure function of attrs — and only when that
+   *  function's inputs moved, because ProseMirror recreates a NodeView on any
+   *  decoration change and an unconditional repaint shows as a twitch.
+   *  @param {DiagramAttrs} attrs */
+  #renderInto(attrs) {
+    if (!this.#renderBody) return
+    const signature = this.#renderSignature(attrs)
+    if (signature === this.#renderedSignature) return
+    this.#renderedSignature = signature
+    if (this.#panzoomCleanup) { this.#panzoomCleanup(); this.#panzoomCleanup = null }
+    if ((attrs.diagramType || 'mermaid') === 'plantuml') this.#renderPlantuml(attrs, signature)
+    else this.#renderMermaid(attrs, signature)
+  }
+
+  /** Has a newer signature been painted since `signature` was launched?
+   *  @param {string} signature @returns {boolean} */
+  #superseded(signature) { return this.#destroyed || this.#renderedSignature !== signature }
+
+  /** Client-side mermaid path — display the cached SVG for this signature, else
+   *  render the source locally and hand the SVG to the shared display tail (or
+   *  #displayError on a parse failure).
+   *  @param {DiagramAttrs} attrs @param {string} signature */
+  #renderMermaid(attrs, signature) {
     const src = (attrs.source || '').trim()
     if (!src) { this.#showEmptyHint(); return }
+    const cached = DiagramRenderer.#cachedSvg(signature)
+    // Consulted BEFORE the spinner: on a hit this paints synchronously, so a
+    // recreated NodeView never shows a loading state it will replace one frame
+    // later. That gap is the twitch.
+    if (cached !== undefined) { this.#displaySvg(cached); return }
     this.#showLoading()
     DiagramRenderer.ensureMermaid().then(() => {
       const id = DiagramRenderer.#uniqueMermaidId(attrs.id)
       return DiagramRenderer.#mermaidGlobal().render(id, src)
     }).then((result) => {
-      if (this.#destroyed) return
+      DiagramRenderer.#cacheSvg(signature, result.svg)
+      if (this.#superseded(signature)) return
       this.#displaySvg(result.svg)
     }).catch((err) => {
-      if (this.#destroyed) return
+      if (this.#superseded(signature)) return
       this.#displayError((err && err.message) ? err.message : String(err), 'Diagram syntax error')
     })
   }
 
   /** Passive display of the plantuml render JOB — a pure function of attrs, no
-   *  held render promise. PENDING → job-status spinner; COMPLETE → fetch + inline
-   *  the persisted asset; ERROR/TIMEOUT/stale → the error card.
-   *  @param {DiagramAttrs} attrs */
-  #renderPlantuml(attrs) {
+   *  held render promise. PENDING → job-status spinner; COMPLETE → the cached
+   *  asset, else fetch + inline it; ERROR/TIMEOUT/stale → the error card.
+   *  @param {DiagramAttrs} attrs @param {string} signature */
+  #renderPlantuml(attrs, signature) {
     const src = (attrs.source || '').trim()
     if (!src) { this.#showEmptyHint(); return }
 
@@ -460,7 +546,9 @@ export class DiagramRenderer extends BlockRenderer {
       // COMPLETE without an asset ref is a transient race (status landed before
       // svgAsset) — hold the spinner; the follow-up attrs render-back carries it.
       if (!url) { this.#showLoading(); return }
-      this.#fetchAndDisplayPlantuml(url)
+      const cached = DiagramRenderer.#cachedSvg(signature)
+      if (cached !== undefined) { this.#displaySvg(cached); return }
+      this.#fetchAndDisplayPlantuml(url, signature)
       return
     }
     // stale | timeout | error
@@ -471,19 +559,23 @@ export class DiagramRenderer extends BlockRenderer {
 
   /** Fetch a same-origin rendered-SVG asset and inline it via the shared tail.
    *  Guarded so a fetch that resolves after a newer render-back superseded this
-   *  asset never inserts a stale SVG. @param {string} url */
-  #fetchAndDisplayPlantuml(url) {
+   *  asset never inserts a stale SVG. @param {string} url @param {string} signature */
+  #fetchAndDisplayPlantuml(url, signature) {
     // no-cache: the asset lives at a STABLE URL but is overwritten in place on
     // each re-render, so its bytes change while svgAsset does not — revalidate,
-    // or a stale pre-theme-switch SVG comes back from the HTTP cache.
+    // or a stale pre-theme-switch SVG comes back from the HTTP cache. The
+    // signature the bytes are memoized under carries everything they are a
+    // function of (theme and job state included), so no HTTP cache is involved
+    // in serving them again.
     fetch(url, { cache: 'no-cache' })
       .then((res) => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.text() })
       .then((svgText) => {
-        if (this.#destroyed || this.#assetSuperseded(url)) return
+        DiagramRenderer.#cacheSvg(signature, svgText)
+        if (this.#superseded(signature) || this.#assetSuperseded(url)) return
         this.#displaySvg(svgText)
       })
       .catch((err) => {
-        if (this.#destroyed || this.#assetSuperseded(url)) return
+        if (this.#superseded(signature) || this.#assetSuperseded(url)) return
         this.#displayError((err && err.message) ? err.message : String(err), 'PlantUML render error')
       })
   }

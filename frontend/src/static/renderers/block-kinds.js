@@ -8,7 +8,7 @@
 //     (paragraph/heading/list/…); TipTap owns editing/split/merge and identity
 //     rides on a `blockId` global attr. No sieve-<kind> NodeView.
 //   - native: false (structured) → a sieve-<kind> atom NodeView renders a payload
-//     (source/response/yaml) from its attrs; identity is the `id` attr.
+//     (source/answer/yaml) from its attrs; identity is the `id` attr.
 //
 // A pure data structure (no TipTap/DOM deps), shared by both registration paths:
 // registerSieveRenderer (structured) and prose-block.js (native).

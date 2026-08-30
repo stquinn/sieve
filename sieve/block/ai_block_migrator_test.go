@@ -275,3 +275,130 @@ func TestDocumentMigrator_RunsAIBlockStepAfterTheReferenceStep(t *testing.T) {
 		t.Errorf("the attachment element names %v, want the rewritten address %q", got[2].Attrs["uri"], want)
 	}
 }
+
+// migratedAnswer runs the migrator over one ai-block and returns its answer
+// elements, failing the test when the record was not converted.
+func migratedAnswer(t *testing.T, attrs map[string]interface{}) Elements {
+	t.Helper()
+	out, changed := AIBlockMigrator{}.Migrate([]SieveBlock{aiBlock(attrs)}, aiDocUUID)
+	if !changed {
+		t.Fatalf("changed = false for a legacy record: %+v", attrs)
+	}
+	got := DecodeElements(out[0].Attrs[AnswerAttr])
+	if len(got) == 0 {
+		t.Fatalf("conversion produced no answer elements: %+v", out[0].Attrs)
+	}
+	return got
+}
+
+// The answer was one string, so it becomes one prose element — the same fold
+// every producer's raw reply takes, applied once on the load path.
+func TestAIBlockMigrator_ResponseStringBecomesAProseElement(t *testing.T) {
+	got := migratedAnswer(t, map[string]interface{}{"response": "Because chlorophyll."})
+	if len(got) != 1 {
+		t.Fatalf("got %d elements, want 1: %+v", len(got), got)
+	}
+	if got[0].Kind != KindProse {
+		t.Errorf("element kind = %q, want %q", got[0].Kind, KindProse)
+	}
+	if got[0].Content() != "Because chlorophyll." {
+		t.Errorf("element content = %q", got[0].Content())
+	}
+	if got[0].ID == "" || got[0].Attrs["id"] != got[0].ID {
+		t.Errorf("element id not written on both sides: ID=%q Attrs[id]=%v", got[0].ID, got[0].Attrs["id"])
+	}
+}
+
+// Only blankness is measured; the answer itself is carried verbatim, because an
+// answer's leading whitespace is markdown a trim would change.
+func TestAIBlockMigrator_ResponseIsCarriedVerbatim(t *testing.T) {
+	const padded = "\n    indented code\n\ntrailing\n"
+	if got := migratedAnswer(t, map[string]interface{}{"response": padded}); got[0].Content() != padded {
+		t.Errorf("element content = %q, want the string verbatim", got[0].Content())
+	}
+}
+
+// Conversion consumes what it reads on the answer side too.
+func TestAIBlockMigrator_ConsumedResponseIsRemoved(t *testing.T) {
+	out, _ := AIBlockMigrator{}.Migrate([]SieveBlock{aiBlock(map[string]interface{}{
+		"response": "an answer",
+	})}, aiDocUUID)
+	if v, ok := out[0].Attrs["response"]; ok {
+		t.Errorf("`response` survived conversion: %v", v)
+	}
+}
+
+// An empty response is no answer, so there is nothing to convert and nothing is
+// invented — and a record carrying only one is not dirtied by a load.
+func TestAIBlockMigrator_EmptyResponseConvertsNothing(t *testing.T) {
+	for _, response := range []string{"", "   \n "} {
+		in := []SieveBlock{aiBlock(map[string]interface{}{"response": response, "type": "ASK"})}
+		out, changed := AIBlockMigrator{}.Migrate(in, aiDocUUID)
+		if changed {
+			t.Fatalf("changed = true for response %q", response)
+		}
+		if _, ok := out[0].Attrs[AnswerAttr]; ok {
+			t.Errorf("an answer was invented for response %q", response)
+		}
+	}
+}
+
+// A record showing BOTH answer forms is left exactly as stored, for the reason
+// the question side is: the two cannot be reconciled without guessing.
+func TestAIBlockMigrator_BothAnswerFormsAreLeftAsStored(t *testing.T) {
+	in := aiBlock(map[string]interface{}{"response": "the legacy one"})
+	in.SetElements(AnswerAttr, Elements{NewSieveBlock(KindProse, "", map[string]interface{}{"content": "current"})})
+
+	out, changed := AIBlockMigrator{}.Migrate([]SieveBlock{in}, aiDocUUID)
+	if changed {
+		t.Fatal("changed = true for an incoherent record")
+	}
+	if out[0].Attrs["response"] != "the legacy one" {
+		t.Errorf("the legacy response was consumed anyway: %v", out[0].Attrs["response"])
+	}
+	if got := DecodeElements(out[0].Attrs[AnswerAttr]); len(got) != 1 || got[0].Content() != "current" {
+		t.Errorf("the stored list was disturbed: %+v", got)
+	}
+}
+
+// THE TWO SLOTS CONVERT INDEPENDENTLY. A record half-converted by an earlier
+// load — a current question beside a legacy response — still has its answer
+// folded, and the question it already holds is not disturbed.
+func TestAIBlockMigrator_ASlotAlreadyConvertedDoesNotBlockTheOther(t *testing.T) {
+	in := aiBlock(map[string]interface{}{"response": "an answer"})
+	in.SetElements(QuestionAttr, Elements{NewSieveBlock(KindProse, "", map[string]interface{}{"content": "why?"})})
+
+	out, changed := AIBlockMigrator{}.Migrate([]SieveBlock{in}, aiDocUUID)
+	if !changed {
+		t.Fatal("changed = false: the legacy answer was not converted")
+	}
+	if got := DecodeElements(out[0].Attrs[QuestionAttr]); len(got) != 1 || got[0].Content() != "why?" {
+		t.Errorf("the stored question was disturbed: %+v", got)
+	}
+	if got := DecodeElements(out[0].Attrs[AnswerAttr]); len(got) != 1 || got[0].Content() != "an answer" {
+		t.Errorf("answer = %+v, want the folded legacy response", got)
+	}
+}
+
+// A converted record is clean: a second load must not report a change, or every
+// open would rewrite the document.
+func TestAIBlockMigrator_ConvertedAnswerIsUnchangedOnTheNextLoad(t *testing.T) {
+	out, _ := AIBlockMigrator{}.Migrate([]SieveBlock{aiBlock(map[string]interface{}{
+		"question": "Why?", "ref": aiTargetID, "response": "because",
+	})}, aiDocUUID)
+	if _, changed := (AIBlockMigrator{}).Migrate(out, aiDocUUID); changed {
+		t.Fatal("a converted record reported changed = true on the next load")
+	}
+}
+
+// The input tree is never mutated on the answer side either.
+func TestAIBlockMigrator_DoesNotMutateInputOnTheAnswerSide(t *testing.T) {
+	in := []SieveBlock{aiBlock(map[string]interface{}{"response": "an answer"})}
+	AIBlockMigrator{}.Migrate(in, aiDocUUID)
+	if in[0].Attrs["response"] != "an answer" {
+		t.Errorf("the input record was rewritten in place: %+v", in[0].Attrs)
+	}
+	if _, ok := in[0].Attrs[AnswerAttr]; ok {
+		t.Errorf("the input record grew an answer list: %+v", in[0].Attrs)
+	}
+}

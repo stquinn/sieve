@@ -532,7 +532,7 @@ When a block is used as context for a follow-up AI question, send clean prose �
 
 | Block type | Meaningful content to pass |
 |------------|---------------------------|
-| `ai-block` | `question` + `response` as `**Q:**` / `**A:**`. `question` is a LIST of elements (each a `{kind, attrs}` child block), never a string — read it through `QuestionList`, which is the one place that knows the encoding |
+| `ai-block` | `question` + `answer` as `**Q:**` / `**A:**`. Both are LISTS of elements (each a `{kind, attrs}` child block), never strings — read them through `QuestionList`, which is the one place that knows the encoding |
 | `web-clip` | `title`, `source` URL, and `content` (the fetched/summarised text) |
 | `diagram` *(future)* | diagram description/caption + the diagram source (e.g. Mermaid syntax) as a labelled code block |
 | Any block | Whatever a human would read to understand what the block *contains* — not the YAML wrapper |
@@ -541,13 +541,14 @@ When a block is used as context for a follow-up AI question, send clean prose �
 
 **Good (ai-block example):**
 
-`QuestionList.text` reads the question's prose elements in list order — the readable
-half of a question whose other elements are the references it targets and attaches.
+`QuestionList.text` reads the prose elements of either slot in list order — the readable
+half of a question whose other elements are the references it targets and attaches, and
+of an answer whose other elements are the code, logs and diagrams it was composed of.
 
 ```js
 function aiBlockSummary(node) {
   var q = QuestionList.text(node.attrs.question).trim()
-  var r = (node.attrs.response || '').trim()
+  var r = QuestionList.text(node.attrs.answer).trim()
   if (!q && !r) return serializer.serialize(node).trim()
   var parts = []
   if (q) parts.push('**Q:** ' + q)

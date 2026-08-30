@@ -17,6 +17,7 @@ import (
 type BtwCommand struct {
 	ai *AIService
 	docMetaReader
+	popupAnswer
 }
 
 func NewBtwCommand(aiSvc *AIService, docs *services.DocumentService) *BtwCommand {
@@ -58,14 +59,7 @@ func (c *BtwCommand) Build(text string, ctx command.Context) (command.Job, error
 			if err != nil {
 				return command.Block{}, err
 			}
-			done := make(map[string]interface{}, len(attrs)+3)
-			for k, v := range attrs {
-				done[k] = v
-			}
-			done["status"] = "COMPLETE"
-			done["response"] = resp
-			done["completedAt"] = time.Now().UTC().Format(time.RFC3339)
-			return command.Block{Kind: "ai-block", Attrs: done}, nil
+			return c.complete(attrs, resp), nil
 		},
 	}, nil
 }

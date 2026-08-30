@@ -155,7 +155,7 @@ export function renderDiagramSvgEntry(sourceNode, entries) { return DiagramRende
         return sieveBlockFor(n, { source: n.textContent }, ctx && ctx.provider)
       }
 
-      var renderer = new DiagramRenderer(blockFor(node), ctx.provider || null)
+      var renderer = new DiagramRenderer(blockFor(node), ctx.provider || null, undefined, ctx.renderOptions)
 
       // NodeView-local caret memory for the edit⇄render round trip; caret position
       // never rides the wire or the schema.

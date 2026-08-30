@@ -580,6 +580,15 @@ third arrangement needs no third listener. Inside a claimed mount the browser's
 own menu is always suppressed; a sieve block raises its own menu instead and the
 editor menu stands down.
 
+**An ELEMENT raises no menu of its own.** A sieve node living inside another
+sieve block's content — the blocks an ai-block's answer is composed of, projected
+into its body — is not addressable: it names no block the container holds, so
+every block verb aimed at it would name a block that does not exist. A right-click
+on one is left to bubble, and the block HOSTING it raises the menu. The same
+suppression covers the click that makes a block the selection owner. This is a
+framework decision taken once, at the NodeView factory, from the node's position;
+no kind opts in or out of it.
+
 **What is offered follows the mount, not the mount's name.** Three gates, and
 only three:
 

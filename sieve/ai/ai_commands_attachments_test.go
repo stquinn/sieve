@@ -162,7 +162,7 @@ func TestAIFamily_UndereferenceableAttachmentDegradesRatherThanFailing(t *testin
 			_, done, prompt := runFamilyCommand(t, tc.make(svc), tc.text,
 				command.NewContext(nil, []domain.Attachment{{URI: "sieve://gone", Title: "Deleted Doc"}}), cap)
 
-			if done["status"] != "COMPLETE" || done["response"] != "answer" {
+			if done["status"] != "COMPLETE" || popupAnswerOf(t, done) != "answer" {
 				t.Fatalf("a bad attachment failed the command: %+v", done)
 			}
 			entries := familyManifestEntries(t, prompt)

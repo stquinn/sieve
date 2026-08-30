@@ -169,6 +169,14 @@ export class DiagramTheme {
     padding: 0 8px;
   }
 
+  /* The mode switch is the \`hidden\` property on two ALWAYS-ATTACHED surfaces
+     (see diagram-renderer.js's header). \`!important\` is load-bearing: both
+     surfaces carry an explicit \`display\` below, which beats the UA
+     stylesheet's \`[hidden] { display: none }\` on source order. */
+  .sieve-block--diagram [hidden] {
+    display: none !important;
+  }
+
   /* Edit mode body — same CSS grid pattern as code block */
   .sieve-block--diagram .sieve-block__body {
     display: flex;

@@ -142,7 +142,7 @@ import { documentAssetUrl } from '../../../../renderers/asset-urls.js'
         return sieveBlockFor(n, { source: n.textContent, resolvedAssetUrl: resolveAssetUrl(n.attrs.parsedAssetRef) }, ctx && ctx.provider)
       }
 
-      var renderer = new LogRenderer(blockFor(node), ctx.provider || null)
+      var renderer = new LogRenderer(blockFor(node), ctx.provider || null, undefined, ctx.renderOptions)
 
       var dom = renderer.render()
       if (currentAttrs.id) liveRenderers[currentAttrs.id] = renderer
