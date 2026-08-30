@@ -140,14 +140,21 @@ export class CommandService {
    * lazily on the first send.
    * @param {string} commandName
    * @param {string} text
+   *   — the message after the verb as the caller's raw text/plain. `text` and
+   *   `body` are TWO PROJECTIONS of the ONE message, both authored by the
+   *   caller; neither is derived from the other anywhere. A text-born caller
+   *   (a filing verb, a menu) sends text alone and no body.
    * @param {Record<string, any>|null} context
    *   — the lens-authored context, or null when there is none.
    * @param {(res: CommandResult) => void} [onResult]
    * @param {Array<{uri: string, title?: string}>} [attachments]
    *   — the composer's attachment manifest for THIS invocation.
+   * @param {Array<{kind: string, attrs: Record<string, any>}>} [body]
+   *   — the same message as the blocks it was written as, in order, verb
+   *   removed. The command consumes whichever projection makes sense for it.
    * @returns {DispatchHandle}
    */
-  dispatch(commandName, text, context, onResult, attachments) {
+  dispatch(commandName, text, context, onResult, attachments, body) {
     const cid = this.#workspace.newCorrelationId()
 
     /** @type {Set<(res: CommandResult) => void>} */
@@ -172,7 +179,8 @@ export class CommandService {
       args: { text: text },
       correlationId: cid,
       context: context || {},
-      attachments: attachments || []
+      attachments: attachments || [],
+      body: body || []
     }
 
     this.#workspace.send(frame)

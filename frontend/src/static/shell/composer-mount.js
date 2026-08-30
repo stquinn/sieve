@@ -100,6 +100,14 @@ export class ComposerMount {
     if (this.#editor) this.#editor.setMentionTitles(titles)
   }
 
+  /** Tells the draft which command it currently resolves to, so its leading
+   *  `/verb` token is marked. Which one that is comes of reading the draft
+   *  against the host's registry, so the host is what says this.
+   *  @param {string|null} verb the command name, without its slash */
+  setCommandVerb(verb) {
+    if (this.#editor) this.#editor.setCommandVerb(verb)
+  }
+
   /** Puts the caret in the message. */
   focus() {
     const pane = /** @type {any} */ (this.#editor && this.#editor.editorPane)

@@ -144,6 +144,11 @@ export class AbstractSurface {
    *  affordance" means. @param {ReadonlyArray<string|undefined>} titles */
   setMentionTitles(titles) {}
 
+  /** Marks the leading `/verb` token in what is drawn, when the host says the
+   *  draft resolves to that command. A surface with no way to draw a mark ignores
+   *  it. @param {string|null} verb */
+  setCommandVerb(verb) {}
+
   /** The title of the `@Title` token at `pos`, or null where there is none. A
    *  surface that marks nothing has none anywhere.
    *  @param {number} pos a position in this surface's own coordinates

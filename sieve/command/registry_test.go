@@ -54,7 +54,7 @@ func TestDispatch_PendingThenComplete(t *testing.T) {
 	}})
 
 	emit, ch := collector()
-	r.Dispatch("echo", "", "hi", NewContext(nil, nil), "c-1", emit)
+	r.Dispatch("echo", "", "hi", NewContext(nil, nil, nil), "c-1", emit)
 
 	first := <-ch
 	if first.Status != StatusPending || first.Block == nil {
@@ -81,7 +81,7 @@ func TestDispatch_StampsCorrelationIDAsBlockID(t *testing.T) {
 	}})
 
 	emit, ch := collector()
-	r.Dispatch("echo", "", "hi", NewContext(nil, nil), "corr-42", emit)
+	r.Dispatch("echo", "", "hi", NewContext(nil, nil, nil), "corr-42", emit)
 
 	pending := <-ch
 	if pending.Status != StatusPending || pending.Block == nil {
@@ -103,7 +103,7 @@ func TestDispatch_StampsCorrelationIDAsBlockID(t *testing.T) {
 func TestDispatch_UnknownCommand(t *testing.T) {
 	r := testRegistry(t)
 	emit, ch := collector()
-	r.Dispatch("nope", "", "text", NewContext(nil, nil), "c-1", emit)
+	r.Dispatch("nope", "", "text", NewContext(nil, nil, nil), "c-1", emit)
 
 	out := <-ch
 	if out.Status != StatusError || !strings.Contains(out.Err, "unknown command") {
@@ -118,7 +118,7 @@ func TestDispatch_BuildErrorFailsFast(t *testing.T) {
 	}})
 
 	emit, ch := collector()
-	r.Dispatch("failbuild", "", "text", NewContext(nil, nil), "c-1", emit)
+	r.Dispatch("failbuild", "", "text", NewContext(nil, nil, nil), "c-1", emit)
 
 	out := <-ch
 	if out.Status != StatusError || out.Err != "tier dumb fail fast" {
@@ -144,7 +144,7 @@ func TestDispatch_EffectOnlyCommand(t *testing.T) {
 	}})
 
 	emit, ch := collector()
-	r.Dispatch("sideeffect", "", "text", NewContext(nil, nil), "c-1", emit)
+	r.Dispatch("sideeffect", "", "text", NewContext(nil, nil, nil), "c-1", emit)
 
 	first := <-ch
 	if first.Status != StatusPending || first.Block != nil {
@@ -169,7 +169,7 @@ func TestDispatch_WorkErrorEmitsError(t *testing.T) {
 	}})
 
 	emit, ch := collector()
-	r.Dispatch("workfail", "", "text", NewContext(nil, nil), "c-1", emit)
+	r.Dispatch("workfail", "", "text", NewContext(nil, nil, nil), "c-1", emit)
 
 	first := <-ch
 	if first.Status != StatusPending {
@@ -198,8 +198,8 @@ func TestDispatch_ConcurrentCorrelationsDisjoint(t *testing.T) {
 	emit1, ch1 := collector()
 	emit2, ch2 := collector()
 
-	r.Dispatch("gated", "", "first", NewContext(nil, nil), "c-1", emit1)
-	r.Dispatch("gated", "", "second", NewContext(nil, nil), "c-2", emit2)
+	r.Dispatch("gated", "", "first", NewContext(nil, nil, nil), "c-1", emit1)
+	r.Dispatch("gated", "", "second", NewContext(nil, nil, nil), "c-2", emit2)
 
 	p1 := <-ch1
 	p2 := <-ch2
@@ -235,7 +235,7 @@ func TestCancel_DropsResult(t *testing.T) {
 	}})
 
 	emit, ch := collector()
-	r.Dispatch("gated", "", "text", NewContext(nil, nil), "c-1", emit)
+	r.Dispatch("gated", "", "text", NewContext(nil, nil, nil), "c-1", emit)
 
 	p := <-ch
 	if p.Status != StatusPending {
@@ -255,7 +255,7 @@ func TestCancel_DropsResult(t *testing.T) {
 }
 
 func TestNewContext_TypedCoreAndFloor(t *testing.T) {
-	ctx := NewContext([]byte(`{"docUuid":"u1","selectedText":"sel","blockId":"b1","blockIds":["b1","b2"],"extra":{"lens":"note"}}`), nil)
+	ctx := NewContext([]byte(`{"docUuid":"u1","selectedText":"sel","blockId":"b1","blockIds":["b1","b2"],"extra":{"lens":"note"}}`), nil, nil)
 	if ctx.DocUUID != "u1" || ctx.SelectedText != "sel" || ctx.BlockID != "b1" || len(ctx.BlockIDs) != 2 {
 		t.Fatalf("typed context fields not populated: %+v", ctx)
 	}
@@ -263,12 +263,12 @@ func TestNewContext_TypedCoreAndFloor(t *testing.T) {
 		t.Fatalf("raw map missing extra field: %+v", ctx.Raw)
 	}
 
-	empty := NewContext(nil, nil)
+	empty := NewContext(nil, nil, nil)
 	if empty.DocUUID != "" || empty.Raw == nil {
 		t.Fatalf("nil raw context floor failure: %+v", empty)
 	}
 
-	bad := NewContext([]byte(`not-json`), nil)
+	bad := NewContext([]byte(`not-json`), nil, nil)
 	if bad.DocUUID != "" || bad.Raw == nil {
 		t.Fatalf("bad raw context floor failure: %+v", bad)
 	}
@@ -313,7 +313,7 @@ func TestDispatch_FamilyMatchProceeds(t *testing.T) {
 	}})
 
 	emit, ch := collector()
-	r.Dispatch("util-cmd", FamilyUtil, "x", NewContext(nil, nil), "c-1", emit)
+	r.Dispatch("util-cmd", FamilyUtil, "x", NewContext(nil, nil, nil), "c-1", emit)
 
 	first := <-ch
 	if first.Status != StatusPending {
@@ -335,7 +335,7 @@ func TestDispatch_FamilyMismatchErrorsBeforeSubmit(t *testing.T) {
 	}})
 
 	emit, ch := collector()
-	r.Dispatch("util-cmd", FamilyAI, "x", NewContext(nil, nil), "c-1", emit)
+	r.Dispatch("util-cmd", FamilyAI, "x", NewContext(nil, nil, nil), "c-1", emit)
 
 	out := <-ch
 	if out.Status != StatusError || !strings.Contains(out.Err, "family mismatch") {
@@ -366,7 +366,7 @@ func TestDispatch_EmptyFamilyIsTolerant(t *testing.T) {
 
 	emit, ch := collector()
 	// Empty expectedFamily skips the integrity check even though the command is util.
-	r.Dispatch("util-cmd", "", "x", NewContext(nil, nil), "c-1", emit)
+	r.Dispatch("util-cmd", "", "x", NewContext(nil, nil, nil), "c-1", emit)
 
 	first := <-ch
 	if first.Status != StatusPending {

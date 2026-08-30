@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"sieve/sieve/block"
@@ -527,7 +528,7 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 		},
 		{
 			name: "command",
-			raw:  `{"type":"command","family":"ai","cmd":"btw","args":{"text":"why?"},"context":{"docUuid":"doc-1"},"attachments":[{"uri":"sieve://9f2b","title":"Auth Design"}],"correlationId":"c-1"}`,
+			raw:  `{"type":"command","family":"ai","cmd":"btw","args":{"text":"why?"},"context":{"docUuid":"doc-1"},"attachments":[{"uri":"sieve://9f2b","title":"Auth Design"}],"body":[{"kind":"prose","attrs":{"id":"el-1","content":"the rest of it"}}],"correlationId":"c-1"}`,
 			into: &CommandFrame{},
 			want: &CommandFrame{
 				Type: TypeCommand, Family: "ai", Cmd: "btw",
@@ -535,6 +536,26 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 				CorrelationID: "c-1",
 				Context:       json.RawMessage(`{"docUuid":"doc-1"}`),
 				Attachments:   []domain.Attachment{{URI: "sieve://9f2b", Title: "Auth Design"}},
+				Body: []CommandBlock{{Kind: "prose", Attrs: map[string]interface{}{
+					"id": "el-1", "content": "the rest of it",
+				}}},
+			},
+		},
+		{
+			// A composed message is a LIST OF BLOCKS of any kind, in the order it
+			// was written, each carrying whatever its kind owns.
+			name: "command with a multi-kind body",
+			raw:  `{"type":"command","cmd":"btw","args":{"text":""},"body":[{"kind":"prose","attrs":{"content":"why does this fail?"}},{"kind":"code","attrs":{"language":"go","source":"x := 1"}},{"kind":"reference","attrs":{"uri":"sieve://9f2b","rel":"attach"}}],"correlationId":"c-2"}`,
+			into: &CommandFrame{},
+			want: &CommandFrame{
+				Type: TypeCommand, Cmd: "btw",
+				Args:          CommandArgs{Text: ""},
+				CorrelationID: "c-2",
+				Body: []CommandBlock{
+					{Kind: "prose", Attrs: map[string]interface{}{"content": "why does this fail?"}},
+					{Kind: "code", Attrs: map[string]interface{}{"language": "go", "source": "x := 1"}},
+					{Kind: "reference", Attrs: map[string]interface{}{"uri": "sieve://9f2b", "rel": "attach"}},
+				},
 			},
 		},
 		{
@@ -566,6 +587,46 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 				t.Errorf("decoded frame\n got: %#v\nwant: %#v", tc.into, tc.want)
 			}
 		})
+	}
+}
+
+// A composed message survives the wire in the order and the shape it was
+// written in: one {kind, attrs} entry per block, no entry rewritten, and no
+// `body` key at all on a turn that composed none.
+func TestCommandFrame_BodyRoundTrips(t *testing.T) {
+	golden := `{"type":"command","cmd":"btw","args":{"text":"why?"},"correlationId":"c-1","body":[{"kind":"prose","attrs":{"content":"first"}},{"kind":"code","attrs":{"language":"go","source":"x := 1"}}]}`
+
+	frame := CommandFrame{
+		Type: TypeCommand, Cmd: "btw",
+		Args:          CommandArgs{Text: "why?"},
+		CorrelationID: "c-1",
+		Body: []CommandBlock{
+			{Kind: "prose", Attrs: map[string]interface{}{"content": "first"}},
+			{Kind: "code", Attrs: map[string]interface{}{"language": "go", "source": "x := 1"}},
+		},
+	}
+	encoded, err := json.Marshal(frame)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(encoded) != golden {
+		t.Errorf("encoded frame\n got: %s\nwant: %s", encoded, golden)
+	}
+
+	var back CommandFrame
+	if err := json.Unmarshal(encoded, &back); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !reflect.DeepEqual(back, frame) {
+		t.Errorf("round-tripped frame\n got: %#v\nwant: %#v", back, frame)
+	}
+
+	bodiless, err := json.Marshal(CommandFrame{Type: TypeCommand, Cmd: "btw", CorrelationID: "c-2"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(bodiless), "body") {
+		t.Errorf("a turn that composed no body still sent the key: %s", bodiless)
 	}
 }
 

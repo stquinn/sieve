@@ -851,11 +851,29 @@ func (h *WsHandler) handleCommand(f inboundFrame) {
 		emit(command.Outcome{Status: command.StatusError, Err: "commands unavailable"})
 		return
 	}
-	// The Context is assembled HERE, at the wire edge, from BOTH of the envelope's
+	// The Context is assembled HERE, at the wire edge, from ALL of the envelope's
 	// context-bearing fields — the lens-authored `context` JSON and the
-	// composer-authored `attachments` list.
+	// composer-authored `attachments` and `body`.
 	reg.Dispatch(env.Cmd, env.Family, env.Args.Text,
-		command.NewContext(env.Context, env.Attachments), env.CorrelationID, emit)
+		command.NewContext(env.Context, env.Attachments, h.commandBody(env.Body)),
+		env.CorrelationID, emit)
+}
+
+// commandBody projects the envelope's composed message into the command plane's
+// own block vocabulary. It is the ONE crossing between the two, so a command
+// never holds a protocol type and stays wire-blind.
+func (h *WsHandler) commandBody(blocks []protocol.CommandBlock) command.Blocks {
+	if len(blocks) == 0 {
+		return nil
+	}
+	body := make(command.Blocks, 0, len(blocks))
+	for _, b := range blocks {
+		if b.Kind == "" {
+			continue // nothing names what this block is, so nothing can render it
+		}
+		body = append(body, command.Block{Kind: b.Kind, Attrs: b.Attrs})
+	}
+	return body
 }
 
 // The client-supplied mention limit is floored and capped to these.

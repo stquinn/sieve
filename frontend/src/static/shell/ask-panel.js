@@ -10,6 +10,7 @@
 // chip and never a live re-read, so send acts on exactly what was shown.
 // The editor owns the doc mutation.
 
+import { CommandCue } from './command-cue.js'
 import { ComposerAttachments } from './composer-attachments.js'
 import { ComposerHints } from './composer-hints.js'
 import { ComposerMount } from './composer-mount.js'
@@ -38,12 +39,17 @@ export class AskPanel {
    *  A separate concern from #attachments and deliberately so: the editor owns the
    *  selection this draws, so it never enters a manifest. */
   #targetChips = null
+  /** @type {CommandCue|null} the footer's view of WHICH WAY SEND WILL GO, drawn
+   *  from the same predicate the send branch is taken on. */
+  #cue = null
   /** @type {HTMLElement|null} the structural #ask-panel (null → all methods no-op) */
   #panel = null
   /** @type {boolean} pin state — one persisted boolean (ShowAskPanel), mirrored here */
   #pinned = false
   /** @type {ReturnType<typeof setTimeout>|null} debounce for the pulled-context repaint */
   #labelTimeout = null
+  /** @type {ReturnType<typeof setTimeout>|null} debounce for the command-cue repaint */
+  #cueTimeout = null
   /** @type {import('../lens/document-editor/selection-model.js').SelectionContext|null} focus coordinate pulled on jump-in */
   #focusReturn = null
   /** @type {import('../lens/document-editor/selection-model.js').SelectionContext|null} the context CURRENTLY shown in the target chip — what send acts on */
@@ -91,6 +97,9 @@ export class AskPanel {
     this.#attachments = new ComposerAttachments(
       this.#panel.querySelector('.ask-popup__footer'), this.#composer,
     )
+    // The command cue comes last, so it sits against Send: it is what Send is
+    // about to do.
+    this.#cue = new CommandCue(this.#panel.querySelector('.ask-popup__footer'))
     this.#wireComposer()
     this.#wireDom()
     this.#wirePinToggle()
@@ -115,6 +124,9 @@ export class AskPanel {
     if (!this.#composer) return
     this.#composer.open()
     if (this.#hints) this.#hints.show(this.#composer.capabilities())
+    // A draft kept across a close may already be a command, so the cue is drawn
+    // from the message rather than reset with the panel.
+    this.#paintCue()
   }
 
   /** Opens the Ask box: toggle-out if it already has focus, else pull the focus
@@ -210,6 +222,7 @@ export class AskPanel {
     composer.onChanged(() => {
       this.#reconcileChips()
       this.#renderSubject()
+      this.#refreshCue()
     })
     // A token and its element are ONE object, so the draft's ask to detach is
     // answered exactly as the chip's ✕ is.
@@ -237,6 +250,7 @@ export class AskPanel {
       this.#composer.focus()
     }
     this.#reconcileChips()
+    this.#paintCue()
   }
 
   /** Binds send / Escape onto the structural #ask-panel. There is no ✕ button —
@@ -328,37 +342,33 @@ export class AskPanel {
    */
   #send() {
     if (!this.#composer) return
-    const val = this.#composer.read().trim()
-    if (!val) return
+    if (!this.#composer.read().trim()) return
 
     // The draft is SETTLED first: an attachment whose `@Title` token the user
     // deleted leaves it here, because deleting the text is a legitimate way to
     // detach. ONE call site ahead of the harvest, so the two send paths cannot
     // settle differently.
     const attachments = this.#attachments ? this.#attachments.commit() : []
-    const body = this.#composer.harvest()
+    const written = this.#composer.harvest()
 
-    // A message that IS one `/`-prefixed line is a command; anything richer is an
-    // ask, whatever it starts with. The dispatched text is the message's own,
-    // because a command's arguments are text and never a block list.
-    if (AskPanel.#isCommandLine(body)) {
-      const cs = this.#commands()
-      if (cs) {
-        const resolved = cs.resolve(val)
-        if (resolved) {
-          const context = this.#lastContext || (this.#ws ? this.#ws.getSelectionContext() : null)
-          // No onResult here: the CommandBadge wires its own listener off the
-          // handle. attachments ride as a TOP-LEVEL sibling of context on the
-          // frame — Go reads them as their own field.
-          const handle = cs.dispatch(resolved.cmd.name, resolved.args, context, undefined, attachments)
-          const badges = this.#badges || (this.#ws && /** @type {any} */ (this.#ws).commandBadges)
-          if (badges) {
-            badges.track(handle, { cmd: resolved.cmd.name, text: resolved.args })
-          }
-          this.#clearComposer()
-          return
-        }
+    // The SAME predicate the footer has been painting, asked once more against
+    // the settled draft — so what Send does is what the cue said it would.
+    const command = this.#resolveDraftCommand(written)
+    const cs = this.#commands()
+    if (command && cs) {
+      const context = this.#lastContext || (this.#ws ? this.#ws.getSelectionContext() : null)
+      // No onResult here: the CommandBadge wires its own listener off the
+      // handle. attachments and body ride as TOP-LEVEL siblings of context on
+      // the frame — Go reads each as its own field.
+      const handle = cs.dispatch(
+        command.cmd.name, command.text, context, undefined, attachments, command.body,
+      )
+      const badges = this.#badges || (this.#ws && /** @type {any} */ (this.#ws).commandBadges)
+      if (badges) {
+        badges.track(handle, { cmd: command.cmd.name, text: command.text })
       }
+      this.#clearComposer()
+      return
     }
 
     const ed = this.#activeEditor()
@@ -366,23 +376,94 @@ export class AskPanel {
     const context = this.#lastContext || ed.getSelectionContext()
     // NO separate attachments: the harvested list already carries them as the
     // reference elements they are, and a second copy would arrive twice.
-    ed.askAi({ type: 'ask', question: body, context })
+    ed.askAi({ type: 'ask', question: written, context })
     this.#clearComposer()
   }
 
   /**
-   * Is this harvest a command line — one prose element that opens with a slash?
-   * A message with structure in it is an ask however it starts, because a
-   * command's arguments are one line of text and there is nowhere for a second
-   * block to go. References are not counted: they are the fold's other slots,
-   * and a command carries its attachments as a field of its own.
-   * @param {ReadonlyArray<import('../renderers/question-list.js').QuestionElement>} harvest
-   * @returns {boolean}
+   * THE PREDICATE. What command this draft resolves to — the ONE reading of it,
+   * used both to paint the footer and to take the send branch, so the two can
+   * never disagree.
+   *
+   * A draft is a command when its FIRST element that is not a reference is prose
+   * opening at position 0 with a `/verb` the registry knows. References are
+   * skipped because a `@Title` written before the verb is an attachment, not the
+   * head of the message. `/usr/bin/thing` resolves to no verb and is therefore a
+   * question about a path.
+   *
+   * EVERYTHING AFTER THE VERB IS THE MESSAGE, never a demotion, and it is
+   * carried as TWO COMPLETE PROJECTIONS of that one message — the flavors a
+   * clipboard would call text/plain and its structured form:
+   *
+   *   - `text` is the composer's raw plaintext with the verb removed;
+   *   - `body` is the same message as the blocks it was written as, in order,
+   *     references included. The rest of the verb's own line stays the head
+   *     element, keeping its authored id; a line that was only the verb
+   *     contributes nothing and is dropped.
+   *
+   * Neither projection is derived from the other anywhere downstream: both are
+   * authored here, from the same draft in the same reading, and a command
+   * consumes whichever makes sense for it.
+   * @param {ReadonlyArray<import('../renderers/question-list.js').QuestionElement>} elements
+   * @returns {{cmd: {name: string, description?: string}, text: string,
+   *   body: Array<import('../renderers/question-list.js').QuestionElement>}|null}
    */
-  static #isCommandLine(harvest) {
-    const body = harvest.filter((el) => el.kind !== 'reference')
-    if (body.length !== 1 || body[0].kind !== 'prose') return false
-    return String((body[0].attrs && body[0].attrs.content) || '').startsWith('/')
+  #resolveDraftCommand(elements) {
+    const cs = this.#commands()
+    if (!cs) return null
+    const at = elements.findIndex((el) => el.kind !== 'reference')
+    if (at < 0 || elements[at].kind !== 'prose') return null
+    const content = String((elements[at].attrs && elements[at].attrs.content) || '')
+    if (!content.startsWith('/')) return null
+    const resolved = cs.resolve(content)
+    if (!resolved) return null
+    // The verb as it actually sits in the draft: the slash, any space the
+    // resolver tolerated after it, and the name — what both flavors strip.
+    const afterSlash = content.slice(1)
+    const verbToken = content.slice(
+      0, 1 + (afterSlash.length - afterSlash.trimStart().length) + resolved.cmd.name.length,
+    )
+    const remainder = content.slice(verbToken.length).trim()
+    // The verb element is REPLACED in place by its remainder, so an element
+    // written before it — a reference — keeps its position in the message.
+    const body = elements.flatMap((el, i) => {
+      if (i !== at) return [el]
+      if (remainder === '') return []
+      return [{ kind: 'prose', attrs: { ...el.attrs, content: remainder } }]
+    })
+    return {
+      cmd: resolved.cmd,
+      text: this.#plainTextMinusVerb(verbToken),
+      body: body,
+    }
+  }
+
+  /** The message as the composer's own text/plain projection, with the one
+   *  verb token removed from the line it opens. @param {string} verbToken
+   *  @returns {string} */
+  #plainTextMinusVerb(verbToken) {
+    const lines = (this.#composer ? this.#composer.read() : '').split('\n')
+    const at = lines.findIndex((l) => l.startsWith(verbToken))
+    if (at >= 0) lines[at] = lines[at].slice(verbToken.length).replace(/^\s+/, '')
+    return lines.join('\n').trim()
+  }
+
+  /** Repaints the command cue once typing settles. Debounced on the same beat as
+   *  the target chip, because the reading behind it FLUSHES the draft — the cue
+   *  must describe the harvest the send will take, not the one the container had
+   *  500ms ago. */
+  #refreshCue() {
+    if (this.#cueTimeout) clearTimeout(this.#cueTimeout)
+    this.#cueTimeout = setTimeout(() => this.#paintCue(), 100)
+  }
+
+  /** Draws what the draft currently resolves to: the footer's badge, Send's own
+   *  label, and the `/verb` token's mark in the message. */
+  #paintCue() {
+    if (!this.#composer) return
+    const command = this.#resolveDraftCommand(this.#composer.harvest())
+    if (this.#cue) this.#cue.show(command ? command.cmd : null)
+    this.#composer.setCommandVerb(command ? command.cmd.name : null)
   }
 
   /** Retires the draft after a send: a new container, a new lens, and no undo
@@ -392,6 +473,7 @@ export class AskPanel {
   #clearComposer() {
     if (this.#composer) this.#composer.reset()
     this.#reconcileChips()
+    this.#paintCue()
     if (this.#panel && !this.#pinned) this.#panel.classList.remove('is-open')
     this.#focusReturn = null
     // The target chip stays — the selection outlives the message.

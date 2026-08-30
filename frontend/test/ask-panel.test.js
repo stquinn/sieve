@@ -23,6 +23,7 @@
 import './helpers/seed-vendor.js'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { AskPanel } from '../src/static/shell/ask-panel.js'
+import { CommandService } from '../src/static/shell/command-service.js'
 import { ComposerMount } from '../src/static/shell/composer-mount.js'
 import { InMemoryContainerProvider } from '../src/static/container/in-memory-container-provider.js'
 import { QuestionList } from '../src/static/renderers/question-list.js'
@@ -79,10 +80,13 @@ function fakeComposer() {
     resets: 0,
     /** @type {string[]} the titles the panel last told the draft to mark */
     marked: [],
+    /** @type {string|null} the verb the panel last told the draft to mark */
+    verb: null,
     caps,
     open() { this.opened++ },
     capabilities() { return this.opened ? this.caps : null },
     setMentionTitles(titles) { this.marked = Array.from(titles || []) },
+    setCommandVerb(verb) { this.verb = verb || null },
     focus() { focused = true },
     hasFocus: () => focused,
     blur() { focused = false },
@@ -108,10 +112,12 @@ function fakeComposer() {
     // ── What the harness drives ──────────────────────────────────────────────
     /** Writes the whole message and fires the change stream, as an edit does. */
     type(next) { value = next; changes.forEach((f) => f()) },
-    /** Pins an exact harvest, for a draft with structure in it. */
+    /** Pins an exact harvest, for a draft with structure in it. Writing IS an
+     *  edit, so it fires the change stream exactly as `type` does. */
     compose(list) {
       elements = list
       value = list.map((e) => e.attrs.content || e.attrs.source || '').join('\n\n')
+      changes.forEach((f) => f())
     },
     /** The Mod+Enter the lens claimed. */
     submit() { submits.forEach((f) => f()) },
@@ -640,6 +646,8 @@ describe('AskPanel — @ attachments (#74 P4, re-sourced onto the draft in #118)
   })
 
   it('a slash command carries the SAME manifest shape (attachments are not Ask-only)', () => {
+    // …and the reference is in the BODY as well: an attachment is an element of
+    // the message, and the manifest is a second, settled reading of it.
     mountPanelDom({ open: true })
     const commands = {
       list: () => [{ name: 'btw', description: 'by the way' }],
@@ -651,7 +659,9 @@ describe('AskPanel — @ attachments (#74 P4, re-sourced onto the draft in #118)
     send()
     expect(commands.dispatch).toHaveBeenCalledWith(
       'btw', 'about @Auth Design', expect.anything(), undefined,
-      [{ uri: 'container:9f2b', title: 'Auth Design' }])
+      [{ uri: 'container:9f2b', title: 'Auth Design' }],
+      [prose('about @Auth Design'),
+        QuestionList.attachment('container:9f2b', 'Auth Design')])
   })
 
   it('with no MentionService the panel still works — nothing ever attaches', () => {
@@ -781,7 +791,7 @@ describe('AskPanel — the footer shows what the message will act on', () => {
     expect(targetChips().length).toBe(0)
   })
 
-  it('THE FOOTER IS HINTS + CHIPS + SEND, in reading order and on ONE row (#118)', () => {
+  it('THE FOOTER IS HINTS + CHIPS + CUE + SEND, in reading order and on ONE row (#118, #126)', () => {
     vi.useFakeTimers()
     const el = mountPanelDom()
     const { panel } = build(fakeWorkspace(fakeEditor({ kind: 'document', ref: 'doc', label: 'Document' })))
@@ -790,7 +800,8 @@ describe('AskPanel — the footer shows what the message will act on', () => {
 
     const footer = el.querySelector('.ask-popup__footer')
     expect(Array.from(footer.children).map((c) => c.className.split(' ')[0]))
-      .toEqual(['ask-popup__hints', 'ask-popup__target', 'ask-popup__chips', 'ask-popup__send'])
+      .toEqual(['ask-popup__hints', 'ask-popup__target', 'ask-popup__chips',
+        'ask-popup__command', 'ask-popup__send'])
     expect(targetChips().length).toBe(1)
   })
 
@@ -868,7 +879,10 @@ describe('AskPanel — Slash command routing (#55)', () => {
     expect(commands.resolve).toHaveBeenCalledWith('/btw what is X')
     // Dispatched with NO onResult callback — the dead editor.handleCommandResult
     // seam was removed; the badge owns the result lifecycle via handle.onResult.
-    expect(commands.dispatch).toHaveBeenCalledWith('btw', 'what is X', expect.anything(), undefined, [])
+    // Both flavors say the same one-line message: the raw text, and the verb
+    // element carrying its remainder.
+    expect(commands.dispatch).toHaveBeenCalledWith(
+      'btw', 'what is X', expect.anything(), undefined, [], [prose('what is X')])
     expect(editor.askAi).not.toHaveBeenCalled()
     expect(composer.resets).toBe(1)
   })
@@ -890,28 +904,6 @@ describe('AskPanel — Slash command routing (#55)', () => {
     expect(el.classList.contains('is-open')).toBe(true)   // pinned → send never unpins
   })
 
-  // THE DISPATCH RULE. A command is one line: it has one text argument and
-  // nowhere to put a second block, so a draft with structure in it is an ASK
-  // however it opens.
-  it('a MULTI-BLOCK draft that opens with a slash is an ask, not a command', () => {
-    mountPanelDom({ open: true })
-    const editor = fakeEditor()
-    const commands = {
-      list: () => [{ name: 'btw', description: 'Ask btw' }],
-      resolve: vi.fn(() => ({ cmd: { name: 'btw' }, args: 'x' })),
-      dispatch: vi.fn(),
-    }
-    const { composer } = build(fakeWorkspace(editor), { commands })
-    composer.compose([
-      prose('/btw what is this', 'b0'),
-      { kind: 'code', attrs: { id: 'b1', source: 'x := 1', language: 'go' } },
-    ])
-    send()
-
-    expect(commands.dispatch).not.toHaveBeenCalled()
-    expect(editor.askAi).toHaveBeenCalledTimes(1)
-  })
-
   it('a draft whose ONE block is a code fence is an ask, whatever it contains', () => {
     mountPanelDom({ open: true })
     const editor = fakeEditor()
@@ -924,5 +916,200 @@ describe('AskPanel — Slash command routing (#55)', () => {
 
     expect(commands.dispatch).not.toHaveBeenCalled()
     expect(editor.askAi).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ── Command mode is DERIVED, and VISIBLE (#126) ──────────────────────────────
+//
+// THERE IS NO ARMED FLAG. What the draft resolves to is read afresh from the
+// message against the registry, so arming is typing a verb the registry knows
+// and disarming is any edit that breaks that reading.
+//
+// ONE PREDICATE FEEDS BOTH: the cue the footer paints and the branch send takes
+// come from the same call, which is what these hold — every case asserts the
+// visible state AND, where a send follows, that the send agrees with it.
+//
+// THE REGISTRY IS THE REAL ONE. `/usr/bin/thing` is a path rather than a verb
+// only because a real resolve says so, so these run against a real
+// CommandService over a stub plane rather than a hand-written resolve that could
+// be made to say anything.
+describe('AskPanel — command mode is derived from the draft (#126)', () => {
+  const VERBS = [
+    { name: 'btw', description: 'By the way', family: 'ai' },
+    { name: 'uuid', description: 'Generate a UUID', family: 'util' },
+  ]
+  const AUTH = { uri: 'container:9f2b', title: 'Auth Design', kind: 'note' }
+
+  /** The real command tenant over a stub plane: real `resolve`, real frames. */
+  function commandPlane(commands = VERBS) {
+    /** @type {any[]} */ const frames = []
+    const service = new CommandService(/** @type {any} */ ({
+      send: (/** @type {any} */ frame) => frames.push(frame),
+      registerTenant: () => {},
+      newCorrelationId: () => 'c-1',
+    }), { commands })
+    return { service, frames }
+  }
+
+  const badge = () => document.querySelector('.ask-command-chip')
+  const sendLabel = () => /** @type {HTMLElement} */ (
+    document.querySelector('.ask-popup__send')).textContent
+  const sendArmed = () => /** @type {HTMLElement} */ (
+    document.querySelector('.ask-popup__send')).classList.contains('ask-popup__send--command')
+  /** The cue repaint is debounced on the change stream, like the target chip. */
+  const settle = () => vi.advanceTimersByTime(150)
+
+  /** The panel over the real registry, with the timers the cue needs. */
+  function armable() {
+    vi.useFakeTimers()
+    mountPanelDom({ open: true })
+    const editor = fakeEditor()
+    const plane = commandPlane()
+    const built = build(fakeWorkspace(editor), { commands: plane.service })
+    return { editor, composer: built.composer, frames: plane.frames }
+  }
+
+  it('a resolving verb at position 0 of the first element arms the cue, Send and the token', () => {
+    const { composer } = armable()
+    composer.type('/btw what is X')
+    settle()
+
+    expect(badge().textContent).toContain('/btw')
+    expect(badge().textContent).toContain('By the way')
+    expect(sendLabel()).toBe('Run /btw')
+    expect(sendArmed()).toBe(true)
+    expect(composer.verb).toBe('btw')
+  })
+
+  it('/usr/bin/thing resolves to no verb: it is a question about a path', () => {
+    const { composer, editor, frames } = armable()
+    composer.type('/usr/bin/thing is missing')
+    settle()
+
+    expect(badge()).toBeNull()
+    expect(sendLabel()).toBe('Send')
+    expect(sendArmed()).toBe(false)
+    expect(composer.verb).toBeNull()
+
+    send()
+    expect(frames).toEqual([])
+    expect(editor.askAi.mock.calls[0][0].question)
+      .toEqual([prose('/usr/bin/thing is missing')])
+  })
+
+  it('a verb that does not OPEN the message is text — a command is not punctuation', () => {
+    const { composer, editor, frames } = armable()
+    composer.compose([prose('what about this', 'b0'), prose('/btw later', 'b1')])
+    settle()
+
+    expect(badge()).toBeNull()
+    expect(composer.verb).toBeNull()
+
+    send()
+    expect(frames).toEqual([])
+    expect(editor.askAi).toHaveBeenCalledTimes(1)
+  })
+
+  it('BLOCKS UNDER THE VERB ARE ITS BODY: they keep it armed and travel as blocks', () => {
+    const { composer, editor, frames } = armable()
+    const fence = { kind: 'code', attrs: { id: 'b1', source: 'x := 1', language: 'go' } }
+    composer.compose([prose('/btw what is this', 'b0'), fence, prose('and this?', 'b2')])
+    settle()
+
+    expect(sendLabel()).toBe('Run /btw')
+    send()
+
+    expect(editor.askAi).not.toHaveBeenCalled()
+    expect(frames.length).toBe(1)
+    expect(frames[0].cmd).toBe('btw')
+    // TWO PROJECTIONS of the one message, verb removed from both: args.text is
+    // the composer's raw plaintext, body the blocks — the verb element replaced
+    // in place by its remainder, keeping its authored id.
+    expect(frames[0].args.text).toBe('what is this\n\nx := 1\n\nand this?')
+    expect(frames[0].body).toEqual(
+      [prose('what is this'), fence, prose('and this?', 'b2')])
+  })
+
+  it('a one-line command still arms, and sends with an empty body', () => {
+    const { composer, frames } = armable()
+    composer.type('/uuid')
+    settle()
+
+    expect(sendLabel()).toBe('Run /uuid')
+    send()
+    expect(frames[0].cmd).toBe('uuid')
+    expect(frames[0].args.text).toBe('')
+    expect(frames[0].body).toEqual([])
+  })
+
+  it('EDITING THE VERB AWAY DISARMS: there is no flag to leave behind', () => {
+    const { composer, editor } = armable()
+    composer.type('/btw what is X')
+    settle()
+    expect(sendLabel()).toBe('Run /btw')
+
+    composer.type('/btwx what is X')
+    settle()
+    expect(badge()).toBeNull()
+    expect(sendLabel()).toBe('Send')
+    expect(composer.verb).toBeNull()
+
+    send()
+    expect(editor.askAi).toHaveBeenCalledTimes(1)
+  })
+
+  it('DISPLACING THE VERB LINE DISARMS: it is no longer what the message opens with', () => {
+    const { composer } = armable()
+    composer.compose([prose('/btw what is X', 'b0')])
+    settle()
+    expect(sendLabel()).toBe('Run /btw')
+
+    composer.compose([prose('actually, first this', 'z0'), prose('/btw what is X', 'b0')])
+    settle()
+    expect(sendLabel()).toBe('Send')
+  })
+
+  it('an attachment written before the verb does not displace it — a reference is not the head', () => {
+    const { composer, frames } = armable()
+    composer.compose([
+      QuestionList.attachment(AUTH.uri, AUTH.title),
+      prose('/btw what is X', 'b0'),
+    ])
+    settle()
+
+    expect(sendLabel()).toBe('Run /btw')
+    send()
+    expect(frames[0].cmd).toBe('btw')
+    // …and it is still an element of the message, so it rides in the body too,
+    // keeping its place ahead of the verb element's remainder.
+    expect(frames[0].body).toEqual([
+      QuestionList.attachment(AUTH.uri, AUTH.title),
+      prose('what is X'),
+    ])
+  })
+
+  it('sending takes the cue down with the draft', () => {
+    const { composer } = armable()
+    composer.type('/btw what is X')
+    settle()
+    expect(sendArmed()).toBe(true)
+
+    send()
+    expect(badge()).toBeNull()
+    expect(sendLabel()).toBe('Send')
+    expect(sendArmed()).toBe(false)
+    expect(composer.verb).toBeNull()
+  })
+
+  it('a panel with no command service never arms — nothing resolves', () => {
+    vi.useFakeTimers()
+    mountPanelDom({ open: true })
+    const { composer } = build(fakeWorkspace(fakeEditor()))
+    composer.type('/btw what is X')
+    settle()
+
+    expect(badge()).toBeNull()
+    expect(sendLabel()).toBe('Send')
+    expect(composer.verb).toBeNull()
   })
 })

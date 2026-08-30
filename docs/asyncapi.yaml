@@ -944,13 +944,35 @@ components:
     ProtocolCommandArgs:
       type: object
       description: |-
-        CommandArgs is what the user typed after the verb. It is an object rather than
-        a bare string so a command can grow named arguments without a wire break.
+        CommandArgs is the message after the verb, as the caller's raw text/plain.
+        It is one of the frame's TWO PROJECTIONS of that message — Body is the other
+        — both authored by the caller, neither ever derived from the other. A caller
+        with no block form (a filing verb, a menu) sends text alone.
+
+        It is an object rather than a bare string so a command can grow named
+        arguments without a wire break.
       properties:
         text:
           type: string
+          description: the message after the verb as raw text; the string projection of what body carries as blocks
       required:
         - text
+    ProtocolCommandBlock:
+      type: object
+      description: |-
+        CommandBlock is a block as the command wire carries it, in either direction:
+        the kind, and everything that kind owns. It is deliberately narrower than the
+        block itself — no position, no identity beyond what the attrs bag holds —
+        because neither direction mutates a document. Inbound it is a block the
+        composer authored; outbound it is a rendering instruction.
+      properties:
+        kind:
+          type: string
+        attrs:
+          type: object
+      required:
+        - kind
+        - attrs
     ProtocolCommandCancelFrame:
       type: object
       description: CommandCancelFrame cancels an in-flight command by its correlation id.
@@ -986,26 +1008,16 @@ components:
           description: coordinates the composer attached with @; what a command does with them is its own business
           items:
             $ref: '#/components/schemas/DomainAttachment'
+        body:
+          type: array
+          description: the message after the verb as ordered blocks; the structured projection of args.text — a command consumes whichever fits
+          items:
+            $ref: '#/components/schemas/ProtocolCommandBlock'
       required:
         - type
         - cmd
         - args
         - correlationId
-    ProtocolCommandResultBlock:
-      type: object
-      description: |-
-        CommandResultBlock is the block a command produced, projected to what the
-        client renders it from. It is deliberately narrower than the block itself: a
-        result is a rendering instruction, not a document mutation, so nothing beyond
-        kind and attrs crosses.
-      properties:
-        kind:
-          type: string
-        attrs:
-          type: object
-      required:
-        - kind
-        - attrs
     ProtocolCommandResultFrame:
       type: object
       description: |-
@@ -1026,7 +1038,7 @@ components:
           type: string
           description: PENDING | COMPLETE | ERROR
         block:
-          $ref: '#/components/schemas/ProtocolCommandResultBlock'
+          $ref: '#/components/schemas/ProtocolCommandBlock'
         error:
           type: string
           description: present on ERROR

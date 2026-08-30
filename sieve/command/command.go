@@ -3,6 +3,7 @@ package command
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"sieve/sieve/domain"
@@ -35,31 +36,34 @@ const (
 //   - The lens authors the SelectionContext half (DocUUID, SelectedText,
 //     BlockID(s), Raw) — a typed core plus the full tolerant bag, decoded from
 //     the envelope's `context` JSON.
-//   - The COMPOSER authors Attachments. They arrive as their own envelope field
-//     (`attachments`) because `@` is a composer affordance, not a property of
-//     the selection — and they are NEVER read out of the context JSON, so a lens
-//     cannot forge one.
+//   - The COMPOSER authors Attachments and Body. They arrive as their own
+//     envelope fields (`attachments`, `body`) because `@` and the message itself
+//     are composer affordances, not properties of the selection — and they are
+//     NEVER read out of the context JSON, so a lens cannot forge either.
 //
-// Attachments land here rather than on a new Build parameter precisely because
-// Context is already "what the command knows about its invocation site" and
-// every command takes it — so every command can have them without a single
-// existing Build signature changing.
+// They land here rather than on new Build parameters precisely because Context
+// is already "what the command knows about its invocation site" and every
+// command takes it — so every command can have them without a single existing
+// Build signature changing.
 type Context struct {
 	DocUUID      string                 `json:"docUuid"`
 	SelectedText string                 `json:"selectedText"`
 	BlockID      string                 `json:"blockId"`
 	BlockIDs     []string               `json:"blockIds"`
 	Raw          map[string]interface{} // everything the lens sent, untyped
-	// Attachments is composer-authored and json:"-" ON PURPOSE: the field above
-	// this comment is filled from the envelope, never from the context JSON.
+	// Attachments and Body are composer-authored and json:"-" ON PURPOSE: both
+	// are filled from the envelope, never from the context JSON.
 	Attachments domain.Attachments `json:"-"`
+	// Body is everything the composer wrote after the verb line, in order. A
+	// command consumes it or ignores it; an empty body is the ordinary case.
+	Body Blocks `json:"-"`
 }
 
-// NewContext decodes the lens-authored context JSON and attaches the
-// composer-authored attachment list. Attachments go through
-// domain.Attachment.Normalised — the same door the block attr path uses — so an
-// address-less entry never reaches a command.
-func NewContext(raw json.RawMessage, attachments []domain.Attachment) Context {
+// NewContext decodes the lens-authored context JSON and attaches what the
+// composer authored — the attachment list and the message body. Attachments go
+// through domain.Attachment.Normalised — the same door the block attr path uses
+// — so an address-less entry never reaches a command.
+func NewContext(raw json.RawMessage, attachments []domain.Attachment, body Blocks) Context {
 	ctx := Context{Raw: make(map[string]interface{})}
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &ctx.Raw)
@@ -73,12 +77,83 @@ func NewContext(raw json.RawMessage, attachments []domain.Attachment) Context {
 			ctx.Attachments = append(ctx.Attachments, normalised)
 		}
 	}
+	ctx.Body = body
 	return ctx
 }
 
 type Block struct {
 	Kind  string                 `json:"kind"`
 	Attrs map[string]interface{} `json:"attrs"`
+}
+
+// Blocks is an ordered list of blocks: the shape a composed message takes on the
+// command plane, whether a composer authored it or a command built it.
+//
+// THE KIND VOCABULARY IS SPELLED HERE AS LITERALS. `command` sits BELOW `block`
+// in the package DAG — block reaches ai, ai reaches command — so the kind names
+// and attr keys read below cannot be imported. They must equal what the block
+// package and its processors declare.
+type Blocks []Block
+
+// AttrValue renders the list into the canonical element-payload form a block's
+// attrs bag holds: a list of {kind, attrs} maps. It must stay this form and not
+// []Block — a struct marshals its fields in declaration order and a map in
+// sorted-key order, so mixing the two rewrites the YAML on the second save.
+//
+// An empty list renders as nil: absent is the empty case for an element slot.
+func (b Blocks) AttrValue() []interface{} {
+	if len(b) == 0 {
+		return nil
+	}
+	out := make([]interface{}, 0, len(b))
+	for _, el := range b {
+		attrs := el.Attrs
+		if attrs == nil {
+			attrs = map[string]interface{}{}
+		}
+		out = append(out, map[string]interface{}{"kind": el.Kind, "attrs": attrs})
+	}
+	return out
+}
+
+// Markdown flattens the list to the one text a prompt is composed from, blocks
+// separated by a blank line. A block contributing nothing is dropped, so the
+// result of an empty or text-less list is the empty string.
+func (b Blocks) Markdown() string {
+	spans := make([]string, 0, len(b))
+	for _, el := range b {
+		if span := el.markdown(); span != "" {
+			spans = append(spans, span)
+		}
+	}
+	return strings.Join(spans, "\n\n")
+}
+
+// The two kinds whose text is not simply their content. Every other kind is
+// read as prose, so a new kind reads as what it says rather than as nothing.
+const (
+	kindCode      = "code"
+	kindReference = "reference"
+)
+
+// markdown renders one block as the text a prompt reads it as: code fenced and
+// tagged with its language, a reference contributing nothing (an address reaches
+// a prompt as an attachment, not as text), anything else as its content.
+func (b Block) markdown() string {
+	switch b.Kind {
+	case kindReference:
+		return ""
+	case kindCode:
+		source, _ := b.Attrs["source"].(string)
+		if strings.TrimSpace(source) == "" {
+			return ""
+		}
+		language, _ := b.Attrs["language"].(string)
+		return "```" + language + "\n" + strings.TrimRight(source, "\n") + "\n```"
+	default:
+		content, _ := b.Attrs["content"].(string)
+		return strings.TrimSpace(content)
+	}
 }
 
 // stampIdentity sets the block's "id" attr to the job's correlationID, giving

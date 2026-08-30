@@ -13,7 +13,7 @@ func TestContext_CarriesEnvelopeAttachments(t *testing.T) {
 	ctx := NewContext([]byte(`{"docUuid":"u1","selectedText":"sel"}`), []domain.Attachment{
 		{URI: "sieve://9f2b", Title: "Auth Design"},
 		{URI: "sieve://7a1c", Title: "Retry RFC"},
-	})
+	}, nil)
 
 	// The lens half is untouched.
 	if ctx.DocUUID != "u1" || ctx.SelectedText != "sel" {
@@ -31,7 +31,7 @@ func TestContext_CarriesEnvelopeAttachments(t *testing.T) {
 // a composer attachment and must never be read as one — the only door is the
 // envelope field.
 func TestContext_IgnoresAttachmentsInTheContextJSON(t *testing.T) {
-	ctx := NewContext([]byte(`{"docUuid":"u1","attachments":[{"uri":"sieve://forged","title":"Forged"}]}`), nil)
+	ctx := NewContext([]byte(`{"docUuid":"u1","attachments":[{"uri":"sieve://forged","title":"Forged"}]}`), nil, nil)
 	if len(ctx.Attachments) != 0 {
 		t.Fatalf("context JSON forged an attachment: %+v", ctx.Attachments)
 	}
@@ -44,7 +44,7 @@ func TestContext_DropsAddresslessAttachments(t *testing.T) {
 		{Title: "no address"},
 		{URI: "  sieve://9f2b  ", Title: "  Auth Design  "},
 		{URI: "   "},
-	})
+	}, nil)
 	if len(ctx.Attachments) != 1 {
 		t.Fatalf("attachments = %+v, want just the addressable one", ctx.Attachments)
 	}
@@ -69,7 +69,7 @@ func TestDispatch_ThreadsAttachmentsToBuild(t *testing.T) {
 	emit, ch := collector()
 	r.Dispatch("reader", "", "hi", NewContext(nil, []domain.Attachment{
 		{URI: "sieve://9f2b", Title: "Auth Design"},
-	}), "c-att", emit)
+	}, nil), "c-att", emit)
 	<-ch // PENDING
 	<-ch // COMPLETE
 
@@ -91,7 +91,7 @@ func TestDispatch_CommandIgnoringAttachmentsIsUnchanged(t *testing.T) {
 	}})
 
 	emit, ch := collector()
-	r.Dispatch("echo", "", "hi", NewContext(nil, []domain.Attachment{{URI: "sieve://9f2b"}}), "c-1", emit)
+	r.Dispatch("echo", "", "hi", NewContext(nil, []domain.Attachment{{URI: "sieve://9f2b"}}, nil), "c-1", emit)
 
 	if first := <-ch; first.Status != StatusPending {
 		t.Fatalf("want PENDING, got %+v", first)

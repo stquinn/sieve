@@ -20,6 +20,7 @@ import { copyImageToClipboard } from '../../../ui/copy-image.js'
 import { BlockChrome, getBlockSelectionRange } from '../block-chrome.js'
 import { AiTargetDecoration } from './ai-target-decoration.js'
 import { MentionDecorations } from './mention-decoration.js'
+import { CommandVerbDecorations } from './command-verb-decoration.js'
 import { FlatText } from './flat-text.js'
 import { Search, SelectionHighlight, HighlightMark, AiShortcuts } from '../../extensions.js'
 import { policyEnterKeydown, buildInteractionPolicyExtension } from '../interaction-policy.js'
@@ -124,6 +125,10 @@ export class WysiwygSurface extends AbstractSurface {
   /** @type {MentionDecorations|null} this mount's `@Title` marks — one instance
    *  per surface, so two live editors never address each other's state */
   #mentions = null
+
+  /** @type {CommandVerbDecorations|null} this mount's `/verb` mark, one instance
+   *  per surface for the same reason */
+  #commandVerb = null
 
   /** @type {Record<string, string>|null} per-mount block-sync cache
    *  ({ [blockId]: serializedContent }) the thin observer diffs against */
@@ -271,6 +276,8 @@ export class WysiwygSurface extends AbstractSurface {
     this.#painted = false
     var mentions = new MentionDecorations(T)
     this.#mentions = mentions
+    var commandVerb = new CommandVerbDecorations(T)
+    this.#commandVerb = commandVerb
 
     // The doc top level holds NATIVE block nodes and structured sieve blocks as
     // siblings: a prose block IS one native top-level node, not a custom
@@ -290,6 +297,7 @@ export class WysiwygSurface extends AbstractSurface {
         BlockChrome,
         AiTargetDecoration,
         mentions.extension,
+        commandVerb.extension,
         T.Table.configure({ resizable: false }),
         T.TableRow,
         T.TableHeader,
@@ -620,6 +628,7 @@ export class WysiwygSurface extends AbstractSurface {
     if (this.#rootEl) this.#rootEl.innerHTML = ''
     this.#rootEl = null
     this.#mentions = null
+    this.#commandVerb = null
     this.#blockContentCache = null
     if (this.#claimsDocumentGlobals()) window.__tiptap = null
   }
@@ -670,6 +679,16 @@ export class WysiwygSurface extends AbstractSurface {
   setMentionTitles(titles) {
     const ed = /** @type {any} */ (this.editorPane)
     if (ed && ed.view && this.#mentions) this.#mentions.apply(ed.view, titles)
+  }
+
+  /**
+   * @override — marks the leading `/verb` token, where the draft opens with the
+   * one the host names. A meta-only transaction, for the same reason.
+   * @param {string|null} verb
+   */
+  setCommandVerb(verb) {
+    const ed = /** @type {any} */ (this.editorPane)
+    if (ed && ed.view && this.#commandVerb) this.#commandVerb.apply(ed.view, verb)
   }
 
   /**

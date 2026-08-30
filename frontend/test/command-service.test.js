@@ -250,6 +250,32 @@ describe('CommandService', () => {
     expect(fakeWs.sent[0].attachments).toEqual([])
   })
 
+  // #126: the verb's line is `args.text`; everything written UNDER it is the
+  // body, and it travels as blocks rather than being flattened into the text.
+  it('the body rides as a TOP-LEVEL sibling too, as the block list it was written as', async () => {
+    workspace.open()
+    await new Promise(r => setTimeout(r, 10))
+
+    const body = [
+      { kind: 'prose', attrs: { id: 'b1', content: '1. first\n2. second' } },
+      { kind: 'code', attrs: { id: 'b2', source: 'panic()', language: 'go' } },
+    ]
+    service.dispatch('btw', 'about this', { docId: 'doc-1' }, undefined, [], body)
+
+    const sent = fakeWs.sent[0]
+    expect(sent.body).toEqual(body)
+    expect(sent.args.text).toBe('about this')
+    expect(sent.context).toEqual({ docId: 'doc-1' })
+  })
+
+  it('a dispatch with no body still carries the field, empty', async () => {
+    workspace.open()
+    await new Promise(r => setTimeout(r, 10))
+
+    service.dispatch('btw', 'hello', {})
+    expect(fakeWs.sent[0].body).toEqual([])
+  })
+
   describe('dispatchFiling — the ai family\'s three verbs', () => {
     const filing = [
       { name: 'file', description: 'File it', family: 'ai' },

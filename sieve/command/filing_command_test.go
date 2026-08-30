@@ -64,7 +64,7 @@ func (r *recordingInvalidator) NotesChanged() { r.calls <- struct{}{} }
 // contextFor builds the invocation context a lens authors for an open document.
 func contextFor(uuid string) Context {
 	raw, _ := json.Marshal(map[string]string{"docUuid": uuid})
-	return NewContext(raw, nil)
+	return NewContext(raw, nil, nil)
 }
 
 // Each filing verb dispatches to its own EditorService call, naming the
@@ -176,7 +176,7 @@ func TestFilingCommands_RefuseAnInvocationWithNoLivingDocument(t *testing.T) {
 		ctx  Context
 		want string
 	}{
-		{"no document", NewContext(nil, nil), "carried none"},
+		{"no document", NewContext(nil, nil, nil), "carried none"},
 		{"unknown document", contextFor("not-a-uuid"), "not found"},
 	} {
 		t.Run(refusal.name, func(t *testing.T) {

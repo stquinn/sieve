@@ -250,6 +250,19 @@ export class AbstractEditor extends Lens {
     if (this.#surface) this.#surface.setMentionTitles(titles)
   }
 
+  /**
+   * The command this lens's host says the draft currently resolves to: the
+   * leading `/verb` token is marked where it is written.
+   *
+   * IT IS THE HOST'S ANSWER, NOT THE LENS'S, for the reason `setMentionTitles`
+   * is: the registry of verbs belongs to the arrangement, so a mount that keeps
+   * none never calls this and nothing is marked.
+   * @param {string|null} verb the command name, without its slash
+   */
+  setCommandVerb(verb) {
+    if (this.#surface) this.#surface.setCommandVerb(verb)
+  }
+
   /** The title of the marked `@Title` token at `pos`, or null where none is
    *  marked — which is every position of a lens whose host keeps no manifest.
    *  @param {number} pos @returns {string|null} */

@@ -91,7 +91,7 @@ func TestAIFamily_RendersOneManifestSectionForItsAttachments(t *testing.T) {
 			svc := newSmartTestService(t, cap)
 
 			_, _, prompt := runFamilyCommand(t, tc.make(svc), tc.text,
-				command.NewContext(nil, attachedPair()), cap)
+				command.NewContext(nil, attachedPair(), nil), cap)
 
 			if n := strings.Count(prompt, "ATTACHED DOCUMENTS"); n != 1 {
 				t.Fatalf("rendered %d sections, want exactly 1:\n%s", n, prompt)
@@ -135,7 +135,7 @@ func TestAIFamily_ResultBlockCarriesThePersistedAttachments(t *testing.T) {
 			svc := newSmartTestService(t, cap)
 
 			pending, done, _ := runFamilyCommand(t, tc.make(svc), tc.text,
-				command.NewContext(nil, attachedPair()), cap)
+				command.NewContext(nil, attachedPair(), nil), cap)
 
 			for _, attrs := range []map[string]interface{}{pending, done} {
 				list, ok := attrs[domain.AttachmentsAttr].([]interface{})
@@ -160,7 +160,7 @@ func TestAIFamily_UndereferenceableAttachmentDegradesRatherThanFailing(t *testin
 			svc := newSmartTestService(t, cap)
 
 			_, done, prompt := runFamilyCommand(t, tc.make(svc), tc.text,
-				command.NewContext(nil, []domain.Attachment{{URI: "sieve://gone", Title: "Deleted Doc"}}), cap)
+				command.NewContext(nil, []domain.Attachment{{URI: "sieve://gone", Title: "Deleted Doc"}}, nil), cap)
 
 			if done["status"] != "COMPLETE" || popupAnswerOf(t, done) != "answer" {
 				t.Fatalf("a bad attachment failed the command: %+v", done)
@@ -183,7 +183,7 @@ func TestAIFamily_NoAttachmentsIsUnchanged(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			bareCap := &captureRunner{ret: "answer"}
 			bare := newSmartTestService(t, bareCap)
-			pending, done, barePrompt := runFamilyCommand(t, tc.make(bare), tc.text, command.NewContext(nil, nil), bareCap)
+			pending, done, barePrompt := runFamilyCommand(t, tc.make(bare), tc.text, command.NewContext(nil, nil, nil), bareCap)
 
 			if strings.Contains(barePrompt, "ATTACHED") {
 				t.Fatalf("an attachment-less turn grew a section:\n%s", barePrompt)
@@ -197,7 +197,7 @@ func TestAIFamily_NoAttachmentsIsUnchanged(t *testing.T) {
 			attCap := &captureRunner{ret: "answer"}
 			att := newSmartTestService(t, attCap)
 			_, _, withPrompt := runFamilyCommand(t, tc.make(att), tc.text,
-				command.NewContext(nil, attachedPair()), attCap)
+				command.NewContext(nil, attachedPair(), nil), attCap)
 
 			// Removing the one inserted section must give back the bare prompt
 			// byte-for-byte: the section is the ONLY difference between them.
@@ -215,7 +215,7 @@ func TestBtw_NoAttachments_PromptIsByteIdenticalToTheTemplate(t *testing.T) {
 	cap := &captureRunner{ret: "answer"}
 	svc := newSmartTestService(t, cap)
 
-	if _, _, prompt := runFamilyCommand(t, NewBtwCommand(svc, nil), "what is SRP", command.NewContext(nil, nil), cap); prompt !=
+	if _, _, prompt := runFamilyCommand(t, NewBtwCommand(svc, nil), "what is SRP", command.NewContext(nil, nil, nil), cap); prompt !=
 		strings.NewReplacer(
 			"{question}", "what is SRP",
 			"{selection}", "",

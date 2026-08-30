@@ -2210,6 +2210,58 @@ pre.tiptap-code-block code {
   --chip-accent: var(--theme-textDim);
 }
 
+/* ── The command cue: what Send is about to run ──────────────────────────────
+   The footer's chip vocabulary again, with the accent re-pointed at the command
+   colour the draft's own `/verb` token carries — one state, said in two places,
+   in one colour. It sits against Send and never scrolls: which way the message
+   goes is not a detail that may slide out of view. */
+.ask-panel .ask-popup__command {
+  display: none;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.ask-panel .ask-command-chip {
+  --chip-accent: var(--theme-accentPurple);
+  --chip-padding: 2px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--chip-gap);
+  max-width: 20rem;
+  padding: var(--chip-padding);
+  border: 1px solid color-mix(in srgb, var(--chip-accent) 45%, transparent);
+  border-radius: var(--chip-radius);
+  background: color-mix(in srgb, var(--chip-accent) 10%, transparent);
+  color: var(--chip-accent);
+  font-size: 11.5px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.ask-panel .ask-command-chip__verb {
+  font-family: var(--theme-monoFont, monospace);
+  font-weight: 600;
+}
+
+/* The description is the gloss, so it reads at the footer's own dim weight
+   rather than in the accent — the verb is what is being named. */
+.ask-panel .ask-command-chip__desc {
+  color: var(--theme-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Send carries the command accent too while one is armed, so the button and the
+   badge beside it are visibly the same statement. */
+.ask-panel .ask-popup__send--command {
+  background: color-mix(in srgb, var(--theme-accentPurple) 16%, transparent);
+  color: var(--theme-accentPurple);
+}
+
+.ask-panel .ask-popup__send--command:hover {
+  background: color-mix(in srgb, var(--theme-accentPurple) 28%, transparent);
+}
+
 .ask-panel .ask-chip__label,
 .ask-panel .ask-target-chip__label {
   overflow: hidden;
@@ -2264,6 +2316,20 @@ pre.tiptap-code-block code {
   background: color-mix(in srgb, var(--theme-accentPrimary) 14%, transparent);
   color: var(--theme-accentPrimary);
   font-weight: 500;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* The `/verb` the draft resolves to — the same mark, in the command accent, so a
+   verb and a name are told apart by colour rather than by shape. Drawn as an
+   inline decoration (lens/document-editor/surfaces/command-verb-decoration.js)
+   for the reason the mention is: PM owns the prose node. */
+.sieve-command-verb {
+  border-radius: 3px;
+  padding: 0 2px;
+  background: color-mix(in srgb, var(--theme-accentPurple) 16%, transparent);
+  color: var(--theme-accentPurple);
+  font-weight: 600;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }

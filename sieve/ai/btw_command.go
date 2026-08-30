@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"sieve/ident"
 	"sieve/sieve/command"
 	"sieve/sieve/domain"
 	"sieve/sieve/services"
@@ -35,13 +36,15 @@ func (c *BtwCommand) Build(text string, ctx command.Context) (command.Job, error
 	if c.ai == nil || c.ai.Tier() == domain.TierDumb {
 		return command.Job{}, fmt.Errorf("AI commands are unavailable — configure an AI CLI in Settings")
 	}
-	if strings.TrimSpace(text) == "" {
+	question := c.question(text, ctx.Body)
+	if len(question) == 0 {
 		return command.Job{}, fmt.Errorf("usage: /btw <question>")
 	}
+	prompt := question.Markdown()
 	attrs := map[string]interface{}{
 		"status":    "PENDING",
 		"createdAt": time.Now().UTC().Format(time.RFC3339),
-		"question":  text,
+		"question":  question.AttrValue(),
 		"type":      "BTW",
 		"ref":       "", // detached: no target graph
 	}
@@ -51,11 +54,11 @@ func (c *BtwCommand) Build(text string, ctx command.Context) (command.Job, error
 	ctx.Attachments.StampAttrs(attrs)
 	pending := &command.Block{Kind: "ai-block", Attrs: attrs}
 	return command.Job{
-		Label:   c.label(text),
+		Label:   c.label(prompt),
 		Pending: pending,
 		Work: func() (command.Block, error) {
 			title, summary := c.docMeta(ctx.DocUUID)
-			resp, err := c.ai.RunBtw(ctx.Attachments.AppendTo(text), ctx.SelectedText, title, summary, ctx.DocUUID)
+			resp, err := c.ai.RunBtw(ctx.Attachments.AppendTo(prompt), ctx.SelectedText, title, summary, ctx.DocUUID)
 			if err != nil {
 				return command.Block{}, err
 			}
@@ -64,10 +67,33 @@ func (c *BtwCommand) Build(text string, ctx command.Context) (command.Job, error
 	}, nil
 }
 
+// question picks the turn's question from the envelope's two projections of
+// the one message: the block form verbatim when it was sent — every element
+// keeping the id it arrived with, because an authored block's id travels —
+// else the text form as a single minted prose element (a popup block enters
+// no document, so it passes no door that would mint one).
+//
+// The list is EMPTY only when the turn carried neither, which is the one thing
+// /btw refuses.
+func (c *BtwCommand) question(text string, body command.Blocks) command.Blocks {
+	if len(body) > 0 {
+		return body
+	}
+	if trimmed := strings.TrimSpace(text); trimmed != "" {
+		return command.Blocks{{Kind: "prose", Attrs: map[string]interface{}{
+			"id":      ident.New(),
+			"content": trimmed,
+		}}}
+	}
+	return nil
+}
+
+// label names the job in the job list: the question's text on one line, cut to
+// forty runes.
 func (c *BtwCommand) label(text string) string {
-	r := []rune(text)
+	r := []rune(strings.Join(strings.Fields(text), " "))
 	if len(r) > 40 {
 		return "/btw " + string(r[:40]) + "…"
 	}
-	return "/btw " + text
+	return "/btw " + string(r)
 }

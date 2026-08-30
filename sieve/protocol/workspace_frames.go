@@ -6,10 +6,15 @@ import (
 	"sieve/sieve/domain"
 )
 
-// CommandArgs is what the user typed after the verb. It is an object rather than
-// a bare string so a command can grow named arguments without a wire break.
+// CommandArgs is the message after the verb, as the caller's raw text/plain.
+// It is one of the frame's TWO PROJECTIONS of that message — Body is the other
+// — both authored by the caller, neither ever derived from the other. A caller
+// with no block form (a filing verb, a menu) sends text alone.
+//
+// It is an object rather than a bare string so a command can grow named
+// arguments without a wire break.
 type CommandArgs struct {
-	Text string `json:"text"`
+	Text string `json:"text" doc:"the message after the verb as raw text; the string projection of what body carries as blocks"`
 }
 
 // CommandFrame dispatches one slash command.
@@ -32,6 +37,15 @@ type CommandFrame struct {
 	// them is its own business. Keeping them out of Context is what stops a lens
 	// forging one.
 	Attachments []domain.Attachment `json:"attachments,omitempty" doc:"coordinates the composer attached with @; what a command does with them is its own business"`
+	// Body is the message after the verb as the blocks it was authored as, in
+	// order — the structured projection of the same message Args.Text carries as
+	// raw text. The verb itself appears in neither: the rest of its line is the
+	// head element here, or absent when the line was the verb alone. A command
+	// consumes whichever projection makes sense for it.
+	//
+	// It is composer-authored and a SIBLING of Context for the same reason
+	// Attachments is: a lens cannot forge one through the context bag.
+	Body []CommandBlock `json:"body,omitempty" doc:"the message after the verb as ordered blocks; the structured projection of args.text — a command consumes whichever fits"`
 }
 
 // CommandCancelFrame cancels an in-flight command by its correlation id.
@@ -73,11 +87,12 @@ type SessionScrollFrame struct {
 	Scroll int    `json:"scroll" doc:"the pixel offset from the top"`
 }
 
-// CommandResultBlock is the block a command produced, projected to what the
-// client renders it from. It is deliberately narrower than the block itself: a
-// result is a rendering instruction, not a document mutation, so nothing beyond
-// kind and attrs crosses.
-type CommandResultBlock struct {
+// CommandBlock is a block as the command wire carries it, in either direction:
+// the kind, and everything that kind owns. It is deliberately narrower than the
+// block itself — no position, no identity beyond what the attrs bag holds —
+// because neither direction mutates a document. Inbound it is a block the
+// composer authored; outbound it is a rendering instruction.
+type CommandBlock struct {
 	Kind  string                 `json:"kind"`
 	Attrs map[string]interface{} `json:"attrs"`
 }
@@ -89,12 +104,12 @@ type CommandResultBlock struct {
 // request arrived on, never to whichever socket currently owns the workspace
 // channel.
 type CommandResultFrame struct {
-	Type          string              `json:"type"`
-	CorrelationID string              `json:"correlationId"`
-	Cmd           string              `json:"cmd"`
-	Status        string              `json:"status" doc:"PENDING | COMPLETE | ERROR"`
-	Block         *CommandResultBlock `json:"block,omitempty" doc:"present when this step produced a block to render"`
-	Error         string              `json:"error,omitempty" doc:"present on ERROR"`
+	Type          string        `json:"type"`
+	CorrelationID string        `json:"correlationId"`
+	Cmd           string        `json:"cmd"`
+	Status        string        `json:"status" doc:"PENDING | COMPLETE | ERROR"`
+	Block         *CommandBlock `json:"block,omitempty" doc:"present when this step produced a block to render"`
+	Error         string        `json:"error,omitempty" doc:"present on ERROR"`
 }
 
 // NewCommandResultFrame builds one lifecycle step.
@@ -109,7 +124,7 @@ func NewCommandResultFrame(correlationID, cmd, status string) CommandResultFrame
 
 // WithBlock returns the step carrying the block it produced.
 func (f CommandResultFrame) WithBlock(kind string, attrs map[string]interface{}) CommandResultFrame {
-	f.Block = &CommandResultBlock{Kind: kind, Attrs: attrs}
+	f.Block = &CommandBlock{Kind: kind, Attrs: attrs}
 	return f
 }
 

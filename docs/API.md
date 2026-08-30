@@ -417,6 +417,7 @@ CommandFrame dispatches one slash command.
 | `correlationId` | `string` | yes | required — a command with no correlation id is dropped, because its result could not be routed |
 | `context` | `json.RawMessage` | no | whatever the invoking surface knows about the selection, shaped by that surface |
 | `attachments` | `[]domain.Attachment` | no | coordinates the composer attached with @; what a command does with them is its own business |
+| `body` | `[]protocol.CommandBlock` | no | the message after the verb as ordered blocks; the structured projection of args.text — a command consumes whichever fits |
 
 #### `command-cancel` — client → server
 
@@ -476,7 +477,7 @@ CommandResultFrame reports one step of a command's lifecycle.
 | `correlationId` | `string` | yes |  |
 | `cmd` | `string` | yes |  |
 | `status` | `string` | yes | PENDING \| COMPLETE \| ERROR |
-| `block` | `*protocol.CommandResultBlock` | no | present when this step produced a block to render |
+| `block` | `*protocol.CommandBlock` | no | present when this step produced a block to render |
 | `error` | `string` | no | present on ERROR |
 
 #### `container-deleted` — server → client
@@ -774,15 +775,15 @@ JobInfo describes one background job the UI can see: what the tab spinner and th
 
 ### `protocol.CommandArgs`
 
-CommandArgs is what the user typed after the verb.
+CommandArgs is the message after the verb, as the caller's raw text/plain.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
-| `text` | `string` | yes |  |
+| `text` | `string` | yes | the message after the verb as raw text; the string projection of what body carries as blocks |
 
-### `protocol.CommandResultBlock`
+### `protocol.CommandBlock`
 
-CommandResultBlock is the block a command produced, projected to what the client renders it from.
+CommandBlock is a block as the command wire carries it, in either direction: the kind, and everything that kind owns.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
