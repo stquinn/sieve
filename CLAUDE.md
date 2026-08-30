@@ -120,6 +120,19 @@ declarations now generate.
 
 - **JS is written with the same OOP discipline as Go (2026-07-08).** "Vanilla JS" is a LANGUAGE choice — plain JavaScript, no React/JSX/TypeScript (complexity the maintainer doesn't carry); build steps (esbuild, tailwind) and libraries are fine and already exist. It is never an excuse for loose function bags: new JS is real ES classes with constructors and `#private` fields; shared values are `Object.freeze`d; public contracts carry JSDoc types checkable via `// @ts-check` (`tsc --noEmit` — types in comments, code stays JS). No new IIFE namespace bags, no state as module-scope `var`s, no `window.*` buses — the existing ones are quarantined debt (X-C, epic #31), not precedent. Idioms + enforcement: `docs/how-to-idiomatic-js.md`. Architectural context: `docs/design/specs/2026-07-08-workspace-editor-component-model.md` §Design discipline.
 - **No loose/free functions (OOP cohesion).** Behaviour belongs as a **method on the type or service that owns its data** — not a package-level `func`. If a function genuinely has no owning type, attach it to a Utilities service; it does not float. Dangling package-level symbols hide their callers, which is exactly what made the S-A package split painful. Data mutations live with the data (e.g. block ops + snapshots are `ShadowDocument` methods; serialize/deserialize are `BlockProcessor`/`DocumentCodec` methods; paste-matching is a registry method `FirstPasteMatch`). **Known backlog applying this:** `block/`'s codec/parser still has free funcs (`scanProseRegion`, `mdParser`, goldmark helpers, `handle_gc`'s `gcRefs`/`gcAliases`) and `ai/eval` helpers — attach them to their owning type as opportunity allows.
+- **Test code is production code (2026-08-30).** Nothing novel: the standard
+  discipline — DRY, refactored, DELETED when superseded — applies to a test
+  suite exactly as to the code it exercises. It is written down because the
+  delivery loop drifts from it systematically: an implementing agent only ever
+  ADDS tests (adding is safe, deleting feels risky, and an agent never feels
+  maintenance pain), which is how the epics reached ~10:1 insertions over
+  deletions. Rules: EXTEND the suite file that already covers the area — a
+  parallel file cloning its scaffolding is the failure mode; table-drive
+  per-kind/per-case variants; a NEW test file only for a genuinely new unit;
+  a contract change that deletes no tests is suspect — the superseded pinning
+  went somewhere. Briefs to implementing agents must carry these rules and
+  require reporting which existing tests were leveraged or updated and why any
+  new file exists. Consolidation backlog: #127.
 - **Comments: source code is source code (2026-08-26).** A doc comment is a
   straight **definition and explanation of what you are looking at** — what it is,
   what it does, what it requires of a caller, what it guarantees. That is all it is
