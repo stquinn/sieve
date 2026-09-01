@@ -627,13 +627,17 @@ func (f fakeLinkPreview) FetchFull(string) domain.LinkPreviewResult {
 }
 
 type mockLifecycleListener struct {
-	onCreated func(uuid, kind, blockID, markdown string)
-	onUpdated func(uuid, blockID string, attrs map[string]interface{})
-	onRemoved func(uuid, blockID string)
-	onOrder   func(uuid string, order []string)
+	onCreated  func(uuid, kind, blockID, markdown string)
+	onUpdated  func(uuid, blockID string, attrs map[string]interface{})
+	onReplaced func(uuid, oldID, newKind, newID string, attrs map[string]interface{}, markdown string)
+	onRemoved  func(uuid, blockID string)
+	onOrder    func(uuid string, order []string)
 }
 
 func (l *mockLifecycleListener) OnBlockReplaced(uuid, oldID, newKind, newID string, attrs map[string]interface{}, markdown string) {
+	if l.onReplaced != nil {
+		l.onReplaced(uuid, oldID, newKind, newID, attrs, markdown)
+	}
 }
 
 func (l *mockLifecycleListener) OnBlockRemoved(uuid, blockID string) {

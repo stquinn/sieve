@@ -148,7 +148,11 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		// enforces it before it reads a file at all, so it has to know the number
 		// Go would enforce — not a constant of its own that can drift from it.
 		MaxAttachmentBytes int
-		DevServerPort      int
+		// SpellcheckEnabled seeds the toolbar toggle's pressed state. It is a
+		// persisted global, so the page has to be told it at boot — the wire only
+		// carries a CHANGE.
+		SpellcheckEnabled bool
+		DevServerPort     int
 		// WSToken is this run's WebSocket upgrade credential (#83). The shell is
 		// where the page learns it, because the shell is the one thing only the app
 		// is served — a local process that dials the wires cannot ask for it.
@@ -172,6 +176,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		AutosaveDebounce:   info.AutosaveDebounce,
 		CLITimeoutLong:     info.CLITimeoutLong,
 		MaxAttachmentBytes: info.MaxAttachmentBytes,
+		SpellcheckEnabled:  info.SpellcheckEnabled,
 		DevServerPort:      h.app.DevServerPort,
 		WSToken:            h.app.WSToken,
 		Commands:           template.JS(commandsJSON),

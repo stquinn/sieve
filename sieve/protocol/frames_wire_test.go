@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -32,6 +33,10 @@ func outboundWireCases() []wireCase {
 	blocks := []block.FrontendBlock{{ID: "b1", Kind: "prose", Attrs: map[string]interface{}{"content": "hello"}}}
 	candidates := []domain.Candidate{{URI: "sieve://9f2b", Title: "Auth Design", Kind: "note", Detail: "design/"}}
 	target := domain.OpenTarget{URI: "sieve://9f2b", UUID: "9f2b", BlockID: "b1", Kind: "note", Title: "Auth Design"}
+	marks := []domain.TextMark{{
+		BlockID: "b1", Locator: "content", Quote: "teh", Occurrence: 1,
+		Start: 15, End: 18, Class: domain.TextClassProse,
+	}}
 	boom := errors.New("boom")
 
 	return []wireCase{
@@ -204,6 +209,40 @@ func outboundWireCases() []wireCase {
 			channel: ChannelDocument,
 			frame:   NewExportContentFrame("op-11", "markdown", "# Auth Design\n"),
 			golden:  `{"type":"export-content","opId":"op-11","format":"markdown","content":"# Auth Design\n"}`,
+		},
+		{
+			name:    "spell-marks",
+			channel: ChannelDocument,
+			frame:   NewSpellMarksFrame("b1", marks),
+			golden:  `{"type":"spell-marks","blockId":"b1","marks":[{"locator":"content","quote":"teh","occurrence":1,"start":15,"end":18,"class":"prose","suggestions":[]}]}`,
+		},
+		{
+			// The clear. An empty set must marshal as [] and never as null — the
+			// client reads a length off it to decide what to drop.
+			name:    "spell-marks cleared",
+			channel: ChannelDocument,
+			frame:   NewSpellMarksFrame("b1", nil),
+			golden:  `{"type":"spell-marks","blockId":"b1","marks":[]}`,
+		},
+		{
+			name:    "text-replace-ack applied",
+			channel: ChannelDocument,
+			frame:   NewTextReplaceAckFrame("op-1", nil),
+			golden:  `{"type":"text-replace-ack","opId":"op-1","outcome":"ok"}`,
+		},
+		{
+			// A stale anchor is an outcome, not an error: the wire says so by
+			// carrying the word and no error string.
+			name:    "text-replace-ack stale",
+			channel: ChannelDocument,
+			frame:   NewTextReplaceAckFrame("op-1", fmt.Errorf("%w: %q at occurrence %d", block.ErrTextStale, "teh", 1)),
+			golden:  `{"type":"text-replace-ack","opId":"op-1","outcome":"stale"}`,
+		},
+		{
+			name:    "text-replace-ack failed",
+			channel: ChannelDocument,
+			frame:   NewTextReplaceAckFrame("op-1", boom),
+			golden:  `{"type":"text-replace-ack","opId":"op-1","outcome":"error","error":"boom"}`,
 		},
 		{
 			name:    "error",

@@ -3,6 +3,7 @@ package services
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"testing/fstest"
 
@@ -78,5 +79,36 @@ func TestStateService_ActiveThemeVars_embeddedFallback(t *testing.T) {
 
 	if got := ss.ActiveThemeVars()["bg"]; got != "#1a1b26" {
 		t.Errorf("bg: got %q, want embedded #1a1b26", got)
+	}
+}
+
+// The user dictionary is a line-per-word file the StateService owns. It reads
+// back what it wrote, an unwritten one is empty rather than an error, and blank
+// lines a hand edit leaves behind are skipped.
+func TestStateService_UserDictionaryRoundTrip(t *testing.T) {
+	ss, _ := newTestStateService(t, "", nil)
+
+	if words := ss.LoadUserDictionary(); len(words) != 0 {
+		t.Errorf("a store with no dictionary returned %v, want none", words)
+	}
+	if err := ss.SaveUserDictionary([]string{"zzblorp", "zzquux"}); err != nil {
+		t.Fatalf("SaveUserDictionary: %v", err)
+	}
+	if got := ss.LoadUserDictionary(); !slices.Equal(got, []string{"zzblorp", "zzquux"}) {
+		t.Errorf("LoadUserDictionary = %v, want the two words written", got)
+	}
+
+	if err := ss.SaveUserDictionary([]string{"", "  zzblorp  ", ""}); err != nil {
+		t.Fatalf("SaveUserDictionary: %v", err)
+	}
+	if got := ss.LoadUserDictionary(); !slices.Equal(got, []string{"zzblorp"}) {
+		t.Errorf("LoadUserDictionary = %v, want blank lines skipped and the word trimmed", got)
+	}
+
+	if err := ss.SaveUserDictionary(nil); err != nil {
+		t.Fatalf("SaveUserDictionary(nil): %v", err)
+	}
+	if got := ss.LoadUserDictionary(); len(got) != 0 {
+		t.Errorf("LoadUserDictionary = %v, want an emptied dictionary", got)
 	}
 }

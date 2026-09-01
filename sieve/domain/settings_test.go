@@ -507,3 +507,46 @@ func TestParseSettings_ContainmentOverlay_UserAdditions(t *testing.T) {
 		t.Fatalf("McpServers = %+v, want sieve+forgejo", got.McpServers)
 	}
 }
+
+// The spellcheck toggle is three-state on disk and two-state to a caller: the
+// question "is it off" can only be answered false by a file that SAYS false,
+// which is what a plain bool could not express and why the field is a pointer.
+func TestSettings_SpellcheckEnabled(t *testing.T) {
+	cases := []struct {
+		name string
+		json string
+		want bool
+	}{
+		{name: "never written is ON", json: `{}`, want: true},
+		{name: "written true is ON", json: `{"spellcheck_enabled":true}`, want: true},
+		{name: "written false is OFF", json: `{"spellcheck_enabled":false}`, want: false},
+		{name: "corrupt settings fall back to the default", json: `{`, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ParseSettings([]byte(tc.json)).SpellcheckEnabled(); got != tc.want {
+				t.Errorf("SpellcheckEnabled() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	if !DefaultSettings().SpellcheckEnabled() {
+		t.Error("DefaultSettings has spelling off; the default is ON")
+	}
+}
+
+// A flip writes the key either way, so the file states the choice rather than
+// leaning on the default — and it survives the round trip through Marshal.
+func TestSettings_WithSpellcheckPersistsBothAnswers(t *testing.T) {
+	for _, want := range []bool{false, true} {
+		data, err := DefaultSettings().WithSpellcheck(want).Marshal()
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		if !strings.Contains(string(data), `"spellcheck_enabled"`) {
+			t.Errorf("marshalled settings omit the key for %v: %s", want, data)
+		}
+		if got := ParseSettings(data).SpellcheckEnabled(); got != want {
+			t.Errorf("round trip of %v read back as %v", want, got)
+		}
+	}
+}

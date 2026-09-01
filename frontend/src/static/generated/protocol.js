@@ -37,6 +37,7 @@ export const DocumentFrame = Object.freeze({
   PASTE: 'paste',
   PING: 'ping',
   RETRY_BLOCK_JOB: 'retry-block-job',
+  TEXT_REPLACE: 'text-replace',
   // server → client
   BLOCK_ATTRS_UPDATED: 'block-attrs-updated',
   BLOCK_OP_ACK: 'block-op-ack',
@@ -52,6 +53,8 @@ export const DocumentFrame = Object.freeze({
   PONG: 'pong',
   REMOVE_BLOCK: 'remove-block',
   REPLACE_BLOCK: 'replace-block',
+  SPELL_MARKS: 'spell-marks',
+  TEXT_REPLACE_ACK: 'text-replace-ack',
   WYSIWYG_CONTENT: 'wysiwyg-content',
 })
 /** @typedef {typeof DocumentFrame[keyof typeof DocumentFrame]} DocumentFrameWord */
@@ -65,6 +68,9 @@ export const WorkspaceFrame = Object.freeze({
   MENTION_RESOLVE: 'mention-resolve',
   PING: 'ping',
   SESSION_SCROLL: 'session-scroll',
+  SPELL_ENABLE: 'spell-enable',
+  SPELL_IGNORE: 'spell-ignore',
+  SPELL_LEARN: 'spell-learn',
   // server → client
   COMMAND_RESULT: 'command-result',
   CONTAINER_DELETED: 'container-deleted',

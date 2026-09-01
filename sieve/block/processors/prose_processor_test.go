@@ -2,7 +2,9 @@ package processors
 
 import (
 	"bytes"
+	"errors"
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"strconv"
 	"strings"
 	"testing"
@@ -96,6 +98,201 @@ func TestProseProcessor_BuildContextNoHighlightsNoHint(t *testing.T) {
 	ctx := p.BuildContext(blk, block.DocView{}, nil).String()
 	if strings.Contains(ctx, "Specifically regarding") {
 		t.Errorf("expected no hint without highlights, got %q", ctx)
+	}
+}
+
+// Which kinds take part in the text substrate, asked the only way anything may
+// ask: the registry, never a kind list. READING and WRITING are separate
+// answers, and the gap between them is the point — code and diagram hand out
+// their source so a reader can index it, and accept no writes back.
+func TestProcessors_TextCapabilitiesAnswerThroughTheRegistry(t *testing.T) {
+	block.ResetRegistry()
+	block.RegisterProcessor(&ProseProcessor{})
+	block.RegisterProcessor(&CodeBlockProcessor{FencedDeserializer: block.FencedDeserializer{Kind: "code"}})
+	block.RegisterProcessor(&DiagramProcessor{FencedDeserializer: block.FencedDeserializer{Kind: "diagram"}})
+	t.Cleanup(func() {
+		block.ResetRegistry()
+		block.RegisterProcessor(&ProseProcessor{})
+	})
+
+	cases := []struct {
+		kind      string
+		bears     bool
+		updatable bool
+	}{
+		{kind: block.KindProse, bears: true, updatable: true},
+		{kind: "code", bears: true},
+		{kind: "diagram", bears: true},
+		{kind: "no-such-kind"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.kind, func(t *testing.T) {
+			if _, ok := block.TextBearerFor(tc.kind); ok != tc.bears {
+				t.Errorf("TextBearerFor(%q) = %v, want %v", tc.kind, ok, tc.bears)
+			}
+			if _, ok := block.TextUpdaterFor(tc.kind); ok != tc.updatable {
+				t.Errorf("TextUpdaterFor(%q) = %v, want %v", tc.kind, ok, tc.updatable)
+			}
+		})
+	}
+}
+
+// UpdateText's apply guard: the anchor is the quote at its occurrence, resolved
+// in the content AS IT NOW STANDS. The table drives what the offsets a client
+// last saw have drifted into — nothing, an earlier edit, a rewrite of the
+// quote itself — and each case asserts the content that results, so a write
+// that lands on the wrong run fails here rather than in a document.
+func TestProseProcessor_UpdateTextResolvesTheQuoteWhereItNowSits(t *testing.T) {
+	var p ProseProcessor
+	// Every case's anchor was minted against this reading, so start/end are the
+	// offsets of "teh" in it — and every case but the first has moved on.
+	const asRead = "teh cat sat on teh mat"
+	const hintStart, hintEnd = 15, 18 // the SECOND "teh" in asRead
+
+	cases := []struct {
+		name        string
+		content     string
+		quote       string
+		occurrence  int
+		replacement string
+		want        string
+		wantStale   bool
+	}{
+		{
+			name:    "nothing drifted",
+			content: asRead,
+			quote:   "teh", occurrence: 1, replacement: "the",
+			want: "teh cat sat on the mat",
+		},
+		{
+			name:    "an earlier edit displaced it",
+			content: "teh enormous cat sat on teh mat",
+			quote:   "teh", occurrence: 1, replacement: "the",
+			want: "teh enormous cat sat on the mat",
+		},
+		{
+			name:    "an earlier edit pulled it back",
+			content: "teh cat teh mat",
+			quote:   "teh", occurrence: 1, replacement: "the",
+			want: "teh cat the mat",
+		},
+		{
+			name:    "occurrence 0 is the first, not the hinted one",
+			content: asRead,
+			quote:   "teh", occurrence: 0, replacement: "the",
+			want: "the cat sat on teh mat",
+		},
+		{
+			name:    "the quote was typed over",
+			content: "teh cat sat on the mat",
+			quote:   "teh", occurrence: 1, replacement: "the",
+			want:      "teh cat sat on the mat",
+			wantStale: true,
+		},
+		{
+			name:    "every copy of the quote is gone",
+			content: "the cat sat on the mat",
+			quote:   "teh", occurrence: 0, replacement: "the",
+			want:      "the cat sat on the mat",
+			wantStale: true,
+		},
+		{
+			name:    "the count no longer reaches the occurrence",
+			content: "teh cat sat on the mat",
+			quote:   "teh", occurrence: 1, replacement: "the",
+			want:      "teh cat sat on the mat",
+			wantStale: true,
+		},
+		{
+			name:    "a quote inside a longer word is not that word",
+			content: "there is teh cat",
+			quote:   "teh", occurrence: 0, replacement: "the",
+			want: "there is the cat",
+		},
+		{
+			name:    "an empty replacement deletes the run",
+			content: asRead,
+			quote:   "teh", occurrence: 1, replacement: "",
+			want: "teh cat sat on  mat",
+		},
+		{
+			name:    "markdown around the quote is untouched",
+			content: "# Title\n\nThe **teh** in bold.",
+			quote:   "teh", occurrence: 0, replacement: "the",
+			want: "# Title\n\nThe **the** in bold.",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			blk := p.newProseBlock("pr-1", tc.content)
+			err := p.UpdateText(&blk, ProseContentLocator, hintStart, hintEnd, tc.quote, tc.occurrence, tc.replacement)
+			if tc.wantStale {
+				if !errors.Is(err, block.ErrTextStale) {
+					t.Errorf("err = %v, want ErrTextStale", err)
+				}
+			} else if err != nil {
+				t.Errorf("UpdateText: %v", err)
+			}
+			if blk.Content() != tc.want {
+				t.Errorf("content = %q, want %q", blk.Content(), tc.want)
+			}
+		})
+	}
+}
+
+// The locator is the processor's own handle, and one it did not mint names
+// nothing it can write to. It is refused rather than guessed at, and refused as
+// a fault — a locator that does not exist is a caller bug, not text that moved
+// on, so it must not read as stale.
+func TestProseProcessor_UpdateTextRefusesAForeignLocator(t *testing.T) {
+	var p ProseProcessor
+	blk := p.newProseBlock("pr-1", "teh cat")
+
+	err := p.UpdateText(&blk, "source", 0, 3, "teh", 0, "the")
+	if err == nil {
+		t.Fatal("a foreign locator was accepted")
+	}
+	if errors.Is(err, block.ErrTextStale) {
+		t.Error("a foreign locator reported as stale; staleness is about text, not about locators")
+	}
+	if blk.Content() != "teh cat" {
+		t.Errorf("content = %q, want it untouched", blk.Content())
+	}
+}
+
+// The ONE segment prose projects is its content, byte for byte. The identity is
+// the invariant every offset and quote is anchored in, so the table asserts on
+// exactly the shapes normalisation would be tempted to tidy.
+func TestProseProcessor_NormalisedTextIsTheStoredBytes(t *testing.T) {
+	var p ProseProcessor
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{"plain", "Hello world"},
+		{"markdown syntax survives", "# Title\n\n- one\n- two"},
+		{"highlight markers survive", "The ==acute== onset."},
+		{"leading and trailing whitespace survive", "  padded line \n\n"},
+		{"a fence held as prose survives", "before\n```python\nprint(1)\n```\nafter"},
+		{"empty content is still one segment", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			blk := p.newProseBlock("pr-1", tc.content)
+			segments := p.NormalisedText(&blk)
+			if len(segments) != 1 {
+				t.Fatalf("want exactly one segment, got %d: %#v", len(segments), segments)
+			}
+			if segments[0].Text != tc.content {
+				t.Errorf("segment text = %q, want the stored bytes verbatim %q", segments[0].Text, tc.content)
+			}
+			if segments[0].Locator != ProseContentLocator {
+				t.Errorf("locator = %q, want %q", segments[0].Locator, ProseContentLocator)
+			}
+			if segments[0].Class != domain.TextClassProse {
+				t.Errorf("class = %q, want %q", segments[0].Class, domain.TextClassProse)
+			}
+		})
 	}
 }
 

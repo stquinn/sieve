@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sieve/sieve/ai"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
@@ -628,5 +629,51 @@ func TestCodeBlockProcessor_RawContent_returnsSource(t *testing.T) {
 	empty := block.NewSieveBlock("code", "co-2", map[string]interface{}{})
 	if got := p.RawContent(empty); got != "" {
 		t.Errorf("RawContent of source-less block = %q, want empty", got)
+	}
+}
+
+// What a code block projects into the text substrate. Its source is CODE — a
+// spell checker reads prose and nothing else, which is how an identifier
+// escapes a dictionary it was never in — and a filename it carries is a label.
+func TestCodeBlockProcessor_NormalisedText(t *testing.T) {
+	p := NewCodeBlockProcessor(block.BlockServices{})
+	const source = "func recieve() { retrn nil }"
+
+	cases := []struct {
+		name  string
+		attrs map[string]interface{}
+		want  []domain.TextSegment
+	}{
+		{
+			name:  "the source alone",
+			attrs: map[string]interface{}{"source": source, "language": "go"},
+			want:  []domain.TextSegment{{Locator: CodeSourceLocator, Text: source, Class: domain.TextClassCode}},
+		},
+		{
+			name:  "a named file adds the label",
+			attrs: map[string]interface{}{"source": source, "filename": "reciever.go"},
+			want: []domain.TextSegment{
+				{Locator: CodeSourceLocator, Text: source, Class: domain.TextClassCode},
+				{Locator: CodeFilenameLocator, Text: "reciever.go", Class: domain.TextClassLabel},
+			},
+		},
+		{
+			name:  "an empty filename is no segment, not an empty one",
+			attrs: map[string]interface{}{"source": source, "filename": ""},
+			want:  []domain.TextSegment{{Locator: CodeSourceLocator, Text: source, Class: domain.TextClassCode}},
+		},
+		{
+			name:  "a sourceless block still bears its one segment",
+			attrs: map[string]interface{}{},
+			want:  []domain.TextSegment{{Locator: CodeSourceLocator, Text: "", Class: domain.TextClassCode}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			blk := block.SieveBlock{Kind: "code", Attrs: tc.attrs}
+			if got := p.NormalisedText(&blk); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("NormalisedText = %#v, want %#v", got, tc.want)
+			}
+		})
 	}
 }

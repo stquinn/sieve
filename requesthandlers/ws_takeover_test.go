@@ -2,6 +2,7 @@ package requesthandlers
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,6 +38,15 @@ func newWsTestServerWithDebounce(t *testing.T, debounce time.Duration) (*httptes
 	return newWsTestServerWithJobs(t, debounce, nil)
 }
 
+// testSpellService parses the 80,000-word dictionary ONCE per test binary. Every
+// harness server shares it, so wiring the spell checker into the harness costs
+// one parse rather than one per test.
+var testSpellService = sync.OnceValue(func() *services.SpellService {
+	// No user dictionary: the harness has no state store to persist one into, and
+	// nothing here teaches the checker a word.
+	return services.NewSpellService(nil)
+})
+
 // newWsTestServerWithJobs is newWsTestServerWithDebounce for a test that needs
 // the workspace broadcast wired to a real JobsSource (jobs-changed frames) —
 // jobs is now a constructor argument on WorkspaceBroadcast, not a settable
@@ -57,7 +67,8 @@ func newWsTestServerWithJobs(t *testing.T, debounce time.Duration, jobs JobsSour
 	if err != nil {
 		t.Fatalf("NewStateService: %v", err)
 	}
-	sp := &sieve.ServiceProvider{Store: fs, Documents: ds, Editor: es, State: st}
+	sp := &sieve.ServiceProvider{Store: fs, Documents: ds, Editor: es, State: st,
+		Spell: editor.NewSpellChecker(es, testSpellService())}
 	h := NewWsHandler(sp, NewWorkspaceBroadcast(jobs), testWSToken)
 	// The same edge the composition root wires: a save announces itself to the
 	// workspace fan-out. Without it a test watching for container-saved would be

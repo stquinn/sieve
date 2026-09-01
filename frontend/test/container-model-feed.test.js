@@ -136,8 +136,8 @@ describe('ContainerModelFeed', () => {
     await pending
 
     expect(seen.map((c) => Object.keys(c).sort())).toEqual([
-      ['blockIds', 'orderChanged'],
-      ['blockIds', 'orderChanged'],
+      ['blockIds', 'orderChanged', 'replaced'],
+      ['blockIds', 'orderChanged', 'replaced'],
     ])
   })
 

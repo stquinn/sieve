@@ -17,17 +17,18 @@ func TestRegistry_HoldsTheWholeVocabulary(t *testing.T) {
 		{ChannelDocument, Inbound, []string{
 			"ping", "doc-update", "flush", "enter-markdown", "enter-wysiwyg",
 			"retry-block-job", "extract", "block-op",
-			"load", "paste", "detect-extractions", "export", "focus",
+			"load", "paste", "detect-extractions", "export", "focus", "text-replace",
 		}},
 		{ChannelDocument, Outbound, []string{
 			"pong", "markdown-content", "wysiwyg-content", "extract-ack",
 			"block-op-ack", "insert-block", "block-attrs-updated", "replace-block",
 			"remove-block", "order-changed", "error",
 			"load-content", "paste-ack", "detect-extractions-result", "export-content",
+			"spell-marks", "text-replace-ack",
 		}},
 		{ChannelWorkspace, Inbound, []string{
 			"ping", "command", "command-cancel", "mention-query", "mention-resolve",
-			"session-scroll",
+			"session-scroll", "spell-ignore", "spell-learn", "spell-enable",
 		}},
 		{ChannelWorkspace, Outbound, []string{
 			"pong", "command-result", "mention-result", "mention-resolved",

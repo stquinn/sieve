@@ -19,6 +19,11 @@ import { DocumentFrame } from '../generated/protocol.js'
  * @typedef {import('./block-channel.js').ChannelDelegate} ChannelDelegate
  */
 
+// Go's text-replace outcome for a write that could not be run, as the wire
+// spells it. The other two words — applied, and the anchor no longer resolves —
+// are read by nobody here: both mean the container is now what Go says it is.
+const TEXT_REPLACE_ERROR = 'error'
+
 /**
  * @typedef {object} ContainerTransportOptions
  * @property {(url: string, protocols?: string[]) => WebSocket} [socketFactory]
@@ -162,6 +167,33 @@ export class ContainerTransport {
       entries: payload.entries,
       index: payload.index,
     }, 'extract ' + payload.targetKind)
+  }
+
+  /**
+   * Frames a text-replace: one anchored run of a block's text, written by Go.
+   * The applied edit arrives as the block's own render-back BEFORE this settles,
+   * so what settles here is only which of the three things happened.
+   *
+   * Never rejects. A channel-less container, a timeout and a malformed answer
+   * all read as `error`, which is the truthful reading of "the write did not
+   * happen and nothing says it did".
+   * @param {string} uuid
+   * @param {{blockId: string, locator: string, quote: string, occurrence: number, start: number, end: number, replacement: string}} payload
+   * @returns {Promise<string>} the ack's outcome word
+   */
+  replaceText(uuid, payload) {
+    return this._awaitReply(uuid, {
+      type: DocumentFrame.TEXT_REPLACE,
+      blockId: payload.blockId,
+      locator: payload.locator,
+      quote: payload.quote,
+      occurrence: payload.occurrence,
+      start: payload.start,
+      end: payload.end,
+      replacement: payload.replacement,
+    }, 'text-replace ' + payload.blockId)
+      .then((reply) => String((reply && reply.outcome) || TEXT_REPLACE_ERROR))
+      .catch(() => TEXT_REPLACE_ERROR)
   }
 
   // JS #private fields do not cross the class boundary, so the framing surface the

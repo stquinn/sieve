@@ -37,7 +37,7 @@ export class FlatText {
   /** The flat reading of a document. A missing document reads as empty.
    *  @param {any} doc a ProseMirror document node */
   constructor(doc) {
-    this.#runs = FlatText.#walk(doc)
+    this.#runs = FlatText.#walk(doc, 0)
     this.#text = this.#runs.map((run) => run.text).join('')
     this.#base = 0
   }
@@ -57,6 +57,26 @@ export class FlatText {
     flat.#runs = runs
     flat.#text = runs.map((run) => run.text).join('')
     flat.#base = contentStart
+    return flat
+  }
+
+  /**
+   * The flat reading of ONE node of a document and everything under it, for a
+   * consumer whose coordinates are that node's. A node holding other blocks —
+   * a list, a table, a prose group — reads as its textblocks joined by the same
+   * newline the whole-document reading joins blocks with, so the reading of a
+   * block is the reading of the document restricted to it.
+   * @param {any} node a ProseMirror node
+   * @param {number} nodePos the node's own document position
+   * @returns {FlatText}
+   */
+  static ofNode(node, nodePos) {
+    if (!node) return new FlatText(null)
+    if (node.isTextblock) return FlatText.ofBlock(node, nodePos + 1)
+    const flat = new FlatText(null)
+    flat.#runs = FlatText.#walk(node, nodePos + 1)
+    flat.#text = flat.#runs.map((run) => run.text).join('')
+    flat.#base = nodePos + 1
     return flat
   }
 
@@ -137,22 +157,23 @@ export class FlatText {
   before(run) { return run.start > 0 ? this.#text.charAt(run.start - 1) : '' }
 
   /**
-   * @param {any} doc
+   * @param {any} root the node whose textblocks are read
+   * @param {number} contentStart the document position of `root`'s first child
    * @returns {ReadonlyArray<FlatRun>}
    */
-  static #walk(doc) {
+  static #walk(root, contentStart) {
     /** @type {FlatRun[]} */ const runs = []
-    if (!doc || typeof doc.descendants !== 'function') return runs
+    if (!root || typeof root.descendants !== 'function') return runs
     let offset = 0
     let first = true
-    doc.descendants((/** @type {any} */ node, /** @type {number} */ pos) => {
+    root.descendants((/** @type {any} */ node, /** @type {number} */ pos) => {
       if (!node.isTextblock) return true
       if (!first) {
         runs.push({ text: '\n', start: offset, pmStart: -1, pmEnd: -1, literal: false })
         offset += 1
       }
       first = false
-      offset = FlatText.#blockRuns(node, pos + 1, offset, runs)
+      offset = FlatText.#blockRuns(node, contentStart + pos + 1, offset, runs)
       return false
     })
     return runs

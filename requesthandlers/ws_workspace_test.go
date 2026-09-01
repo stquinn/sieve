@@ -8,6 +8,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"sieve/sieve/block"
+	"sieve/sieve/block/processors"
 	"sieve/sieve/domain"
 	"sieve/sieve/protocol"
 )
@@ -22,6 +24,20 @@ func dialWorkspaceWS(t *testing.T, srv *httptest.Server) *websocket.Conn {
 		t.Fatalf("first frame on a workspace socket = %v, want the jobs snapshot", first["type"])
 	}
 	return c
+}
+
+// waitFor polls until settled, failing with why after two seconds. An
+// unanswered frame is written and returns; the write it causes lands on the
+// server's own schedule, so a test that asserts the effect has to wait for it.
+func waitFor(t *testing.T, settled func() bool, why string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !settled() {
+		if time.Now().After(deadline) {
+			t.Fatal(why)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // dialWorkspaceWSRaw dials without consuming anything — for the test that reads
@@ -103,17 +119,10 @@ func TestWS_SessionScroll_PersistsTheTabsOffset(t *testing.T) {
 		t.Fatalf("write session-scroll: %v", err)
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
-	for {
+	waitFor(t, func() bool {
 		tabs := sp.State.LoadSession().Tabs
-		if len(tabs) == 1 && tabs[0].Scroll == 420 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("scroll never persisted, tabs = %v", tabs)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+		return len(tabs) == 1 && tabs[0].Scroll == 420
+	}, "scroll never persisted")
 
 	// Unanswered: a short read yields nothing rather than an ack.
 	_ = c.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
@@ -142,4 +151,65 @@ func TestWS_SessionScroll_UnservableFrameIsRefused(t *testing.T) {
 			}
 		})
 	}
+}
+
+// THE SPELLING VERBS CROSS THE WIRES. Each is sent on the workspace wire —
+// none of them is about a document — and what a client sees is a spell-marks
+// frame on the DOCUMENT channel it opened, because clearing a squiggle is the
+// only news there is.
+//
+// The ignored word is nonsense on purpose: the harness shares one parsed
+// dictionary across the whole test binary, so a word accepted here stays
+// accepted, and it must be one nothing else in this package writes.
+func TestWS_SpellingVerbsClearMarksOnTheDocumentWire(t *testing.T) {
+	cases := []struct {
+		name  string
+		word  string
+		frame string
+	}{
+		{name: "ignore", word: "zzblorp", frame: `{"type":"spell-ignore","word":"zzblorp"}`},
+		{name: "disable", word: "zzquux", frame: `{"type":"spell-enable","enabled":false}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			block.RegisterProcessor(&processors.ProseProcessor{})
+			srv, sp, _, uuid := newWsTestServer(t)
+			seedBody(t, sp, uuid, "a "+tc.word+" here")
+
+			doc := dialWS(t, srv, uuid)
+			marked := readUntil(t, doc, protocol.TypeSpellMarks, 2*time.Second)
+			if got, _ := marked["marks"].([]interface{}); len(got) != 1 {
+				t.Fatalf("opening the document pushed %v, want the one mark", marked["marks"])
+			}
+
+			ws := dialWorkspaceWS(t, srv)
+			send(t, ws, tc.frame)
+
+			cleared := readUntil(t, doc, protocol.TypeSpellMarks, 2*time.Second)
+			if got, _ := cleared["marks"].([]interface{}); len(got) != 0 {
+				t.Errorf("after %s the document heard %v, want an EMPTY mark set", tc.name, cleared["marks"])
+			}
+			_ = ws.Close()
+			closeAndSettle(doc)
+		})
+	}
+}
+
+// The toggle is a PERSISTED global: the frame writes settings.json, so the
+// answer survives the run that gave it.
+func TestWS_SpellEnable_PersistsTheSetting(t *testing.T) {
+	srv, sp, _, _ := newWsTestServer(t)
+	c := dialWorkspaceWS(t, srv)
+	defer c.Close()
+
+	if !sp.State.LoadSettings().SpellcheckEnabled() {
+		t.Fatal("spelling starts off; the default is on")
+	}
+	send(t, c, `{"type":"spell-enable","enabled":false}`)
+	waitFor(t, func() bool { return !sp.State.LoadSettings().SpellcheckEnabled() },
+		"the spellcheck setting was never persisted as off")
+
+	send(t, c, `{"type":"spell-enable","enabled":true}`)
+	waitFor(t, func() bool { return sp.State.LoadSettings().SpellcheckEnabled() },
+		"the spellcheck setting was never persisted back on")
 }

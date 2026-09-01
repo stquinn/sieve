@@ -16,7 +16,7 @@ the drift-catcher.
 |---|---|---|
 | reads | `get*`, sync | answered by the nearest follower model; frozen copies, never references |
 | queries | plain name → `Promise` | decisions/offers only, never document content; host-routed |
-| verbs | `request*`, void | Go may decline silently; effects arrive only via `onChanged`, which names what changed and never who asked |
+| verbs | `request*`, void | Go may decline silently; effects arrive via `onChanged`, which names what changed and never who asked (or, for the host's derived readings, via `onMarksChanged`) |
 
 Rule: void ⇒ `request*`; a `Promise` return ⇒ a plain name (async is already
 visible in the signature, so the prefix would be redundant). `flush` is the
@@ -32,6 +32,7 @@ one deliberate exception — see `container-provider.js`.
 | `requestSetOrder(order)` | verb | this is the order the container's children should be in |
 | `requestTransform(blockId, targetKind, operation, entries)` | verb | play back an offer `detectExtractions` produced |
 | `requestRetry(blockId)` | verb | run this block's work again |
+| `requestReplaceText(blockId, anchor, replacement)` | verb | this is what belongs where that mark points |
 | `requestPersist()` | verb | put what you already hold on disk, now |
 | `paste(payload, afterBlockId)` | query | what should be made of this clipboard/drop/gesture? |
 | `detectExtractions(sourceKind, entries)` | query | which kinds can this content become? |
@@ -41,6 +42,12 @@ Removal is a verb of its own rather than a consequence of some larger
 statement about the container's contents: a lens that can delete should not
 have to be able to describe the whole container to say so, and deletion is the
 one mutation that would otherwise have no way to be asked for.
+
+`requestReplaceText` is the one verb whose target is not a block but a run
+inside one, and it names that run the way a mark does — quote plus occurrence,
+never a range. The host resolves the anchor in the block's current text, so an
+edit that displaced the run costs nothing and a run since typed over is not
+written to at all.
 
 Order, by contrast, IS stated whole: `requestSetOrder` names every child in the
 order it should be in. That is idempotent, it refuses to be half-applied, and
@@ -110,8 +117,11 @@ first keystroke, and it recognises the block's arrival by the plain id it chose.
   minimum) → `BlockContainerProvider` (adds block verbs + paste/extraction
   queries + flush) and `WholeContentProvider` (the container-as-text trio a
   markdown lens and the mode flip speak).
-- `container-update-listener.js` — the one inbound channel: `onChanged`,
-  post-fold, origin-blind.
+- `container-update-listener.js` — the inbound channels: `onChanged`
+  (post-fold, origin-blind) and the optional `onMarksChanged`, one block's
+  complete set of the host's derived text marks. `onChanged` carries nothing
+  and is re-read from; `onMarksChanged` carries its answer, because marks are
+  not container state there is anything to read back.
 - `selection-listener.js` — the one channel that flows the other way: a
   lens's selection/focus/caret advertisement, host-consumed.
 

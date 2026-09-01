@@ -34,18 +34,24 @@ import { DocumentFrame } from '../generated/protocol.js'
  */
 
 /**
- * What changed in one fold step.
+ * What changed in one fold step. contract/container-update-listener.js holds
+ * the semantics of every field.
  *
  * @typedef {object} ContainerChange
  * @property {ReadonlyArray<string>} blockIds  ids whose node arrived, changed or left
  * @property {boolean} orderChanged
+ * @property {ReadonlyArray<string>} replaced  ids whose node this fold replaced whole
  */
 
 /**
- * The single method a lens implements to consume container state.
+ * What a lens implements to consume container state. `onMarksChanged` is
+ * optional; contract/container-update-listener.js holds the semantics of both.
+ *
+ * @typedef {import('../contract/container-update-listener.js').SieveTextMark} SieveTextMark
  *
  * @typedef {object} ContainerUpdateListener
  * @property {(change: Readonly<ContainerChange>) => void} onChanged
+ * @property {((blockId: string, marks: ReadonlyArray<Readonly<SieveTextMark>>) => void)} [onMarksChanged]
  */
 
 /**
@@ -67,6 +73,12 @@ export class ContainerModel {
   /** @type {string} */ #kind
   /** @type {string[]} */ #order = []
   /** @type {Map<string, Readonly<BlockNode>>} */ #nodes = new Map()
+  /** @type {Map<string, ReadonlyArray<Readonly<SieveTextMark>>>} blockId → the
+   *  host's derived reading of that block's text. Server-pushed and never
+   *  computed here, replaced whole per block, and kept for ids this container
+   *  does not (yet) hold: a mark set can outrun the load answer that names its
+   *  block, and dropping it would lose a squiggle nothing would push again. */
+  #marks = new Map()
   /** @type {Set<ContainerUpdateListener>} */ #listeners = new Set()
 
   /**
@@ -97,7 +109,9 @@ export class ContainerModel {
 
   /** Registers a listener and immediately cues it with the whole container:
    *  bootstrap is not a separate handshake, it is the first `onChanged`, so a lens
-   *  has exactly one read-and-paint path.
+   *  has exactly one read-and-paint path. Marks bootstrap the same way — every
+   *  set this model already holds is cued — so a lens mounting onto a container
+   *  that was checked before it arrived draws the same as one that was there.
    *  @param {ContainerUpdateListener} listener */
   subscribe(listener) {
     if (!listener || typeof listener.onChanged !== 'function') {
@@ -105,6 +119,7 @@ export class ContainerModel {
     }
     this.#listeners.add(listener)
     this.#deliver(listener, this.#change(this.#order, true))
+    for (const [blockId, marks] of this.#marks) this.#deliverMarks(listener, blockId, marks)
   }
 
   /** @param {ContainerUpdateListener} listener */
@@ -147,6 +162,24 @@ export class ContainerModel {
     else if (f.type === DocumentFrame.BLOCK_ATTRS_UPDATED) this.#applyAttrs(f)
     else if (f.type === DocumentFrame.REMOVE_BLOCK) this.#applyRemove(f)
     else if (f.type === DocumentFrame.ORDER_CHANGED) this.#applyOrderChanged(f)
+    else if (f.type === DocumentFrame.SPELL_MARKS) this.#applyMarks(f)
+  }
+
+  /**
+   * Installs one block's COMPLETE mark set, replacing whatever this model held
+   * for it — so an empty array is the CLEAR, and the frame a corrected block
+   * gets. They are not folded into the block: a mark is a reading OF a block,
+   * it never travels back, and a lens is HANDED it rather than reading it.
+   * @param {Record<string, any>} f
+   */
+  #applyMarks(f) {
+    if (!f.blockId) return
+    /** @type {SieveTextMark[]} */
+    const cloned = structuredClone(f.marks || [])
+    const marks = this.#deepFreeze(cloned)
+    if (marks.length) this.#marks.set(f.blockId, marks)
+    else this.#marks.delete(f.blockId)
+    for (const listener of this.#listeners) this.#deliverMarks(listener, f.blockId, marks)
   }
 
   /** @param {Record<string, any>} f */
@@ -159,20 +192,27 @@ export class ContainerModel {
     this.#emit([f.id], !known)
   }
 
-  /** @param {Record<string, any>} f */
+  /**
+   * Installs a block the host REWROTE, in the slot the old one held. The node is
+   * taken WHOLE — this frame is not a patch — so the cue names it replaced and a
+   * lens holding its own copy of that block's content takes this one.
+   *
+   * The ids may be the same block (a transform, a text edit Go executed) or two
+   * (a transform that minted a fresh identity), and only the second retires an
+   * id: whatever still has to ROUTE for it is the transport's business.
+   * @param {Record<string, any>} f
+   */
   #applyReplace(f) {
     if (!f.newId) return
     const node = this.#node(f.newId, f.newKind, f.attrs)
     this.#nodes.set(f.newId, node)
-    if (f.newId === f.oldId) { this.#emit([f.newId], false); return }
+    if (f.newId === f.oldId) { this.#emit([f.newId], false, [f.newId]); return }
 
-    // A transform mints a fresh identity, so the replaced id leaves the container
-    // entirely. Whatever still has to ROUTE for it is the transport's business.
     const at = f.oldId ? this.#order.indexOf(f.oldId) : -1
     if (at >= 0) this.#order[at] = f.newId
     else this.#order.push(f.newId)
-    if (f.oldId) this.#nodes.delete(f.oldId)
-    this.#emit(f.oldId ? [f.oldId, f.newId] : [f.newId], true)
+    if (f.oldId) { this.#nodes.delete(f.oldId); this.#marks.delete(f.oldId) }
+    this.#emit(f.oldId ? [f.oldId, f.newId] : [f.newId], true, [f.newId])
   }
 
   /** @param {Record<string, any>} f */
@@ -192,6 +232,7 @@ export class ContainerModel {
     const at = this.#order.indexOf(f.id)
     if (at >= 0) this.#order.splice(at, 1)
     this.#nodes.delete(f.id)
+    this.#marks.delete(f.id)
     this.#emit([f.id], at >= 0)
   }
 
@@ -234,22 +275,37 @@ export class ContainerModel {
     return typeof index === 'number' && index >= 0 && index < end ? index : end
   }
 
-  /** @param {ReadonlyArray<string>} blockIds @param {boolean} orderChanged */
-  #emit(blockIds, orderChanged) {
-    const change = this.#change(blockIds, orderChanged)
+  /** @param {ReadonlyArray<string>} blockIds @param {boolean} orderChanged
+   *  @param {ReadonlyArray<string>} [replaced] */
+  #emit(blockIds, orderChanged, replaced) {
+    const change = this.#change(blockIds, orderChanged, replaced)
     for (const listener of this.#listeners) this.#deliver(listener, change)
   }
 
   /** @param {ReadonlyArray<string>} blockIds @param {boolean} orderChanged
+   *  @param {ReadonlyArray<string>} [replaced]
    *  @returns {Readonly<ContainerChange>} */
-  #change(blockIds, orderChanged) {
-    return Object.freeze({ blockIds: Object.freeze(blockIds.slice()), orderChanged: orderChanged })
+  #change(blockIds, orderChanged, replaced) {
+    return Object.freeze({
+      blockIds:     Object.freeze(blockIds.slice()),
+      orderChanged: orderChanged,
+      replaced:     Object.freeze((replaced || []).slice()),
+    })
   }
 
   /** A throwing listener is isolated: the fold that produced the cue is already
    *  committed. @param {ContainerUpdateListener} listener @param {Readonly<ContainerChange>} change */
   #deliver(listener, change) {
     try { listener.onChanged(change) } catch (e) { console.error('[container-model] listener threw', e) }
+  }
+
+  /** A listener with nowhere to draw a mark does not implement the method, which
+   *  is a legitimate lens and not a failure. Throwing is isolated as above.
+   *  @param {ContainerUpdateListener} listener @param {string} blockId
+   *  @param {ReadonlyArray<Readonly<SieveTextMark>>} marks */
+  #deliverMarks(listener, blockId, marks) {
+    if (typeof listener.onMarksChanged !== 'function') return
+    try { listener.onMarksChanged(blockId, marks) } catch (e) { console.error('[container-model] listener threw', e) }
   }
 
   /**

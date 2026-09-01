@@ -275,6 +275,38 @@ describe('EditorToolbar composition (P4.D)', () => {
     } finally { window.sieveWorkspace = prevWs }
   })
 
+  // Spelling is a WORKSPACE setting: the button reads and writes the host's, not
+  // the editor's, and repaints itself on the press rather than waiting for the
+  // editor's next event (a toggle fires none).
+  it('the spellcheck button reflects the workspace setting and toggles it', () => {
+    const host = mountHost()
+    const spell = { enabled: true, toggled: 0, toggle() { this.enabled = !this.enabled; this.toggled++ } }
+    const prevWs = window.sieveWorkspace
+    window.sieveWorkspace = { spell }
+    try {
+      const ed = fakeEditor({ surface: { toolbarContents: () => [] } })
+      new EditorToolbar(ed, host).mount()
+      const btn = host.querySelector('#tb-spellcheck-btn')
+      expect(btn.classList.contains('active')).toBe(true)
+      btn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      expect(spell.toggled).toBe(1)
+      expect(spell.enabled).toBe(false)
+      expect(btn.classList.contains('active')).toBe(false)
+    } finally { window.sieveWorkspace = prevWs }
+  })
+
+  it('the spellcheck button is inert in a page with no workspace, never a throw', () => {
+    const host = mountHost()
+    const prevWs = window.sieveWorkspace
+    window.sieveWorkspace = undefined
+    try {
+      new EditorToolbar(fakeEditor({ surface: { toolbarContents: () => [] } }), host).mount()
+      const btn = host.querySelector('#tb-spellcheck-btn')
+      expect(btn.classList.contains('active')).toBe(false)
+      expect(() => btn.dispatchEvent(new MouseEvent('click', { bubbles: true }))).not.toThrow()
+    } finally { window.sieveWorkspace = prevWs }
+  })
+
   it('the ask button opens the AskPanel; explain calls explainActive', () => {
     const host = mountHost()
     const open = vi.fn()

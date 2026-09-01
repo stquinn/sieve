@@ -41,9 +41,13 @@ type Settings struct {
 	// a judgement about the user's machine and the user's content, not a property
 	// of the code — someone attaching 40MB PDFs on a workstation and someone on a
 	// small laptop want different answers. Zero or absent means the default.
-	MaxAttachmentBytes int               `json:"max_attachment_bytes,omitempty"`
-	CustomLogParsers   []CustomLogParser `json:"custom_log_parsers,omitempty"`
-	WorkerPools        map[string]int    `json:"worker_pools,omitempty"`
+	MaxAttachmentBytes int `json:"max_attachment_bytes,omitempty"`
+	// Spellcheck is three-state on purpose: absent means "never said", which is
+	// ON. A plain bool could not tell an unwritten key from a deliberate false,
+	// and the default is ON — read it through SpellcheckEnabled, never directly.
+	Spellcheck       *bool             `json:"spellcheck_enabled,omitempty"`
+	CustomLogParsers []CustomLogParser `json:"custom_log_parsers,omitempty"`
+	WorkerPools      map[string]int    `json:"worker_pools,omitempty"`
 	// PromptTimeouts overrides the CLI timeout (seconds) per prompt name. A
 	// zero or absent entry falls back to CLITimeoutLong.
 	PromptTimeouts map[string]int  `json:"prompt_timeouts,omitempty"`
@@ -79,6 +83,21 @@ func (s Settings) AttachmentCeilingBytes() int {
 		return DefaultMaxAttachmentBytes
 	}
 	return s.MaxAttachmentBytes
+}
+
+// SpellcheckEnabled reports whether spelling is checked at all — the ONE
+// normalisation point for the three-state field, so nothing downstream reads an
+// absent setting as "off".
+func (s Settings) SpellcheckEnabled() bool {
+	return s.Spellcheck == nil || *s.Spellcheck
+}
+
+// WithSpellcheck returns a copy of s with the toggle set explicitly, which is
+// how a flip persists: the key is written either way, so the file states what
+// the user chose rather than falling back to the default.
+func (s Settings) WithSpellcheck(on bool) Settings {
+	s.Spellcheck = &on
+	return s
 }
 
 // AISettings groups AI-subsystem settings under a nested "ai" object.
@@ -333,6 +352,9 @@ func ParseSettings(data []byte) Settings {
 	if loaded.MaxAttachmentBytes > 0 {
 		s.MaxAttachmentBytes = loaded.MaxAttachmentBytes
 	}
+	if loaded.Spellcheck != nil {
+		s.Spellcheck = loaded.Spellcheck
+	}
 	if len(loaded.CustomLogParsers) > 0 {
 		s.CustomLogParsers = loaded.CustomLogParsers
 	}
@@ -372,7 +394,9 @@ func (s Settings) Marshal() ([]byte, error) {
 
 // DefaultSettings returns the out-of-the-box settings with sensible defaults.
 func DefaultSettings() Settings {
+	spellcheck := true
 	return Settings{
+		Spellcheck:         &spellcheck,
 		CLITimeoutLong:     60,
 		AutosaveDebounce:   30,
 		Theme:              "sublime",

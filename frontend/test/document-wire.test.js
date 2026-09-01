@@ -121,6 +121,44 @@ describe('ContainerTransport.detectExtractions — capability discovery over the
   })
 })
 
+describe('ContainerTransport.replaceText — the write the marks made possible', () => {
+  beforeEach(() => FakeSocket.reset())
+
+  const anchor = {
+    blockId: 'p1', locator: 'content', quote: 'teh', occurrence: 1,
+    start: 12, end: 15, replacement: 'the',
+  }
+
+  it('sends the anchor whole — the offsets ride as the hint they are (FROZEN)', () => {
+    const { service, sock } = serviceRig({ uuid: 'doc-1' })
+    service.replaceText('doc-1', anchor)
+    expect(sock.sentOfType('text-replace')[0]).toEqual(
+      Object.assign({ type: 'text-replace', opId: lastOpId(sock, 'text-replace') }, anchor))
+  })
+
+  /** @type {Array<[string, any, string]>} */
+  const acks = [
+    ['applied', { outcome: 'ok' }, 'ok'],
+    ['the anchor no longer resolves', { outcome: 'stale' }, 'stale'],
+    ['the write could not be run', { outcome: 'error', error: 'boom' }, 'error'],
+    ['an answer with no outcome in it at all', {}, 'error'],
+  ]
+
+  for (const [name, ack, outcome] of acks) {
+    it(`resolves the outcome word: ${name}`, async () => {
+      const { service, sock } = serviceRig({ uuid: 'doc-1' })
+      const pending = service.replaceText('doc-1', anchor)
+      sock.driveMessage(Object.assign({ type: 'text-replace-ack', opId: lastOpId(sock, 'text-replace') }, ack))
+      await expect(pending).resolves.toBe(outcome)
+    })
+  }
+
+  it('reads a container with no live channel as a write that did not happen', async () => {
+    const { service } = serviceRig({ uuid: null })
+    await expect(service.replaceText('doc-1', anchor)).resolves.toBe('error')
+  })
+})
+
 describe('DocumentService paste pipelines — one frame, two kinds', () => {
   beforeEach(() => FakeSocket.reset())
 

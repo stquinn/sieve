@@ -20,6 +20,11 @@ const OUTCOME_BLOCK = 'block'
 const OUTCOME_CONTENT = 'content'
 const OUTCOME_NONE = 'none'
 
+// Go's text-replace outcome for a write that could not be run. Applied and
+// stale are both silent here — the first shows up as the block changing, the
+// second as the marks that follow no longer naming the run.
+const REPLACE_FAILED = 'error'
+
 // Where a kind keeps its text: `content` by default, overridden by the three
 // source-bearing kinds. The facade's `flush` names neither attr, so it resolves
 // against this — in every provider that implements one.
@@ -122,6 +127,35 @@ export class BlockProviderAdapter extends WholeContentAdapter {
   requestRetry(blockId) {
     if (!this.#model.getBlock(blockId)) return this.#drop('requestRetry', blockId)
     this._binding.retry(blockId)
+  }
+
+  /**
+   * Writes what belongs in a marked run's place. The anchor is the mark exactly
+   * as the host handed it over — Go resolves it in the block's current text — so
+   * a run the user has since typed over is left alone rather than overwritten at
+   * stale offsets.
+   *
+   * Void like its siblings, and SILENT on a run that no longer resolves: the
+   * correction either arrives as the block's own change or does not, and the
+   * marks that follow are what say which.
+   * @param {string} blockId
+   * @param {Readonly<import('../contract/container-update-listener.js').SieveTextMark>} anchor
+   * @param {string} replacement
+   */
+  requestReplaceText(blockId, anchor, replacement) {
+    if (!anchor || !anchor.quote) throw new ContractViolation('requestReplaceText: the anchor must carry the quote it names')
+    if (!this.#model.getBlock(blockId)) return this.#drop('requestReplaceText', blockId)
+    Promise.resolve(this._binding.replaceText({
+      blockId: blockId,
+      locator: anchor.locator || '',
+      quote: anchor.quote,
+      occurrence: anchor.occurrence || 0,
+      start: anchor.start || 0,
+      end: anchor.end || 0,
+      replacement: String(replacement == null ? '' : replacement),
+    })).then(
+      (outcome) => { if (outcome === REPLACE_FAILED) console.warn('[block-provider] requestReplaceText failed', blockId, anchor.quote) },
+      (e) => console.warn('[block-provider] requestReplaceText failed', e))
   }
 
   /**

@@ -352,6 +352,7 @@ type StoreInfo struct {
 	MaxHistoryVersions int              `json:"maxHistoryVersions"`
 	CLITimeoutLong     int              `json:"cliTimeoutLong"`
 	MaxAttachmentBytes int              `json:"maxAttachmentBytes"`
+	SpellcheckEnabled  bool             `json:"spellcheckEnabled"`
 	ShowPrompts        bool             `json:"showPrompts"`
 }
 
@@ -381,6 +382,7 @@ func (a *App) getStoreInfo() StoreInfo {
 		MaxHistoryVersions: liveSettings.MaxHistoryVersions,
 		CLITimeoutLong:     liveSettings.CLITimeoutLong,
 		MaxAttachmentBytes: liveSettings.MaxAttachmentBytes,
+		SpellcheckEnabled:  liveSettings.SpellcheckEnabled(),
 		ShowPrompts:        a.State.LoadSession().ShowPrompts,
 	}
 }

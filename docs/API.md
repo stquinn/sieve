@@ -45,6 +45,7 @@ alone, so the token appears in no response header.
 | `paste` | `protocol.PasteFrame` | `opId` | PasteFrame hands a clipboard to the server to make sense of. |
 | `ping` | `protocol.PingFrame` | — | PingFrame is a liveness probe, answered with a PongFrame. |
 | `retry-block-job` | `protocol.RetryBlockJobFrame` | — | RetryBlockJobFrame re-runs the job of one block that failed or was interrupted. |
+| `text-replace` | `protocol.TextReplaceFrame` | `opId` | TextReplaceFrame asks for one anchored run of a block's text to be replaced. |
 
 **Server → client**
 
@@ -63,7 +64,9 @@ alone, so the token appears in no response header.
 | `paste-ack` | `protocol.PasteAckFrame` | `opId` | PasteAckFrame answers a paste with what the server made of the clipboard. |
 | `pong` | `protocol.PongFrame` | — | PongFrame answers a PingFrame. |
 | `remove-block` | `protocol.RemoveBlockFrame` | — | RemoveBlockFrame is the render-back for a block that left the container: the client retires it by id rather than reloading the document. |
-| `replace-block` | `protocol.ReplaceBlockFrame` | — | ReplaceBlockFrame is the render-back for an in-place transform: one block becomes another kind with a new identity, and the client replaces by id rather than reloading the document. |
+| `replace-block` | `protocol.ReplaceBlockFrame` | — | ReplaceBlockFrame is the render-back for a block the SERVER rewrote in place: an in-place transform, or a text edit the client asked for and Go executed. |
+| `spell-marks` | `protocol.SpellMarksFrame` | — | SpellMarksFrame is the server-initiated render-back carrying ONE block's complete mark set. |
+| `text-replace-ack` | `protocol.TextReplaceAckFrame` | `opId` | TextReplaceAckFrame is the correlated outcome of a text-replace. |
 | `wysiwyg-content` | `protocol.WysiwygContentFrame` | `opId` | WysiwygContentFrame is the re-parsed block list the WYSIWYG editor mounts after a mode switch. |
 
 ### `workspace` — `/api/ws/workspace`
@@ -78,6 +81,9 @@ alone, so the token appears in no response header.
 | `mention-resolve` | `protocol.MentionResolveFrame` | `correlationId` | MentionResolveFrame asks where a coordinate opens. |
 | `ping` | `protocol.PingFrame` | — | PingFrame is a liveness probe, answered with a PongFrame. |
 | `session-scroll` | `protocol.SessionScrollFrame` | — | SessionScrollFrame persists one tab's scroll offset, debounced up while the user scrolls and pulled again at tab deactivation. |
+| `spell-enable` | `protocol.SpellEnableFrame` | — | SpellEnableFrame turns spell checking on or off for the whole workspace and persists the choice. |
+| `spell-ignore` | `protocol.SpellIgnoreFrame` | — | SpellIgnoreFrame stops a word being flagged for the rest of this run. |
+| `spell-learn` | `protocol.SpellLearnFrame` | — | SpellLearnFrame adds a word to the user's durable dictionary, which survives a restart. |
 
 **Server → client**
 
@@ -236,6 +242,22 @@ RetryBlockJobFrame re-runs the job of one block that failed or was interrupted.
 | `type` | `string` | yes |  |
 | `id` | `string` | yes | the block whose job re-runs |
 
+#### `text-replace` — client → server
+
+TextReplaceFrame asks for one anchored run of a block's text to be replaced.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | yes |  |
+| `blockId` | `string` | yes | the block whose text is being written |
+| `locator` | `string` | yes | which part of the block's payload, exactly as the mark carried it; opaque — only the block's processor reads it |
+| `quote` | `string` | yes | the exact text to replace; the anchor, not a label |
+| `occurrence` | `int` | yes | 0-based index among identical quotes in the same segment |
+| `start` | `int` | yes | byte offset hint into the segment as the client last saw it |
+| `end` | `int` | yes | byte offset hint, exclusive |
+| `replacement` | `string` | yes | what to put in the quote's place; an empty string deletes the run |
+
 #### `block-attrs-updated` — server → client
 
 BlockAttrsUpdatedFrame is the render-back for a block whose attrs the server changed — a finished job's result, a status transition.
@@ -380,16 +402,37 @@ RemoveBlockFrame is the render-back for a block that left the container: the cli
 
 #### `replace-block` — server → client
 
-ReplaceBlockFrame is the render-back for an in-place transform: one block becomes another kind with a new identity, and the client replaces by id rather than reloading the document.
+ReplaceBlockFrame is the render-back for a block the SERVER rewrote in place: an in-place transform, or a text edit the client asked for and Go executed.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
 | `type` | `string` | yes |  |
 | `oldId` | `string` | yes | the block being replaced; the client matches on it rather than reloading |
 | `newKind` | `string` | yes |  |
-| `newId` | `string` | yes | a transform mints a fresh identity — the new block is not the old one renamed |
+| `newId` | `string` | yes | equal to oldId when the block kept its identity; a transform to another kind mints a fresh one |
 | `attrs` | `map[string]interface {}` | yes | the new block's full attrs bag |
 | `newYaml` | `string` | yes | markdown-mode buffer only |
+
+#### `spell-marks` — server → client
+
+SpellMarksFrame is the server-initiated render-back carrying ONE block's complete mark set.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `blockId` | `string` | yes | the block whose whole mark set this is |
+| `marks` | `[]protocol.SpellMark` | yes | never null — an empty array clears this block's marks |
+
+#### `text-replace-ack` — server → client
+
+TextReplaceAckFrame is the correlated outcome of a text-replace.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | yes |  |
+| `outcome` | `string` | yes | ok — applied; stale — the quote no longer resolves at its occurrence and nothing changed; error — the request could not be run |
+| `error` | `string` | no | present only when outcome is error |
 
 #### `wysiwyg-content` — server → client
 
@@ -466,6 +509,33 @@ SessionScrollFrame persists one tab's scroll offset, debounced up while the user
 | `type` | `string` | yes |  |
 | `id` | `string` | yes | the tab whose offset this is |
 | `scroll` | `int` | yes | the pixel offset from the top |
+
+#### `spell-enable` — client → server
+
+SpellEnableFrame turns spell checking on or off for the whole workspace and persists the choice.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `enabled` | `bool` | yes | the state the toggle is being put INTO, not a request to flip — a repeat of the current state is a no-op |
+
+#### `spell-ignore` — client → server
+
+SpellIgnoreFrame stops a word being flagged for the rest of this run.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `word` | `string` | yes | the word as it was written; the server folds it to the form the dictionary is keyed by |
+
+#### `spell-learn` — client → server
+
+SpellLearnFrame adds a word to the user's durable dictionary, which survives a restart.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `word` | `string` | yes | the word as it was written; the server folds it to the form the dictionary is keyed by |
 
 #### `command-result` — server → client
 
@@ -802,6 +872,20 @@ JobsSnapshot is every job the UI can see, in insertion order.
 ### `protocol.PasteKind`
 
 PasteKind discriminates what a paste is asking for.
+
+### `protocol.SpellMark`
+
+SpellMark is one flagged run of text inside a block, as it travels on the wire.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `locator` | `string` | yes | which part of the block's payload this came from; opaque — only the block's processor reads it |
+| `quote` | `string` | yes | the exact text flagged; the anchor, not a label |
+| `occurrence` | `int` | yes | 0-based index among identical quotes in the same segment |
+| `start` | `int` | yes | byte offset hint into the segment as the server read it |
+| `end` | `int` | yes | byte offset hint, exclusive |
+| `class` | `string` | yes | the kind of language the segment holds — prose, code, label, caption, key |
+| `suggestions` | `[]string` | yes | never null — replacements offered for the quote, best first |
 
 ### `protocol.Topic`
 

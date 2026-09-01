@@ -50,7 +50,7 @@ describe('ProviderAdapter', () => {
     const listener = { onChanged: (/** @type {any} */ change) => seen.push(change) }
 
     provider.subscribe(listener)
-    expect(seen).toEqual([{ blockIds: ['p1', 'c1'], orderChanged: true }])
+    expect(seen).toEqual([{ blockIds: ['p1', 'c1'], orderChanged: true, replaced: [] }])
 
     model.applyFrame({ type: 'block-attrs-updated', id: 'p1', attrs: { content: 'bye' } })
     expect(seen).toHaveLength(2)

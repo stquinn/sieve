@@ -94,6 +94,7 @@ func (r *Registry) registerDocumentFrames() {
 	r.addFrame(ChannelDocument, Inbound, TypeDetectExtractions, DetectExtractionsFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeExport, ExportFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeFocus, FocusFrame{})
+	r.addFrame(ChannelDocument, Inbound, TypeTextReplace, TextReplaceFrame{})
 
 	r.addFrame(ChannelDocument, Outbound, TypePong, PongFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeMarkdownContent, MarkdownContentFrame{})
@@ -110,6 +111,8 @@ func (r *Registry) registerDocumentFrames() {
 	r.addFrame(ChannelDocument, Outbound, TypePasteAck, PasteAckFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeDetectExtractionsResult, DetectExtractionsResultFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeExportContent, ExportContentFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeSpellMarks, SpellMarksFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeTextReplaceAck, TextReplaceAckFrame{})
 }
 
 func (r *Registry) registerWorkspaceFrames() {
@@ -119,6 +122,9 @@ func (r *Registry) registerWorkspaceFrames() {
 	r.addFrame(ChannelWorkspace, Inbound, TypeMentionQuery, MentionQueryFrame{})
 	r.addFrame(ChannelWorkspace, Inbound, TypeMentionResolve, MentionResolveFrame{})
 	r.addFrame(ChannelWorkspace, Inbound, TypeSessionScroll, SessionScrollFrame{})
+	r.addFrame(ChannelWorkspace, Inbound, TypeSpellIgnore, SpellIgnoreFrame{})
+	r.addFrame(ChannelWorkspace, Inbound, TypeSpellLearn, SpellLearnFrame{})
+	r.addFrame(ChannelWorkspace, Inbound, TypeSpellEnable, SpellEnableFrame{})
 
 	r.addFrame(ChannelWorkspace, Outbound, TypePong, PongFrame{})
 	r.addFrame(ChannelWorkspace, Outbound, TypeCommandResult, CommandResultFrame{})

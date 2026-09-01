@@ -88,6 +88,14 @@
  * `requestPersist` commits what the container already holds; `flush` hands over
  * one block's in-flight text. Neither implies the other.
  *
+ * `requestReplaceText` writes one anchored run of a block's text — the write the
+ * host's marks made possible, where a lens points at text it was shown and says
+ * what belongs there instead. The anchor is the MARK, not a range: the host
+ * resolves it in the block's current text, so an edit that displaced the run
+ * costs nothing and a run that has been typed over is not written to at all. The
+ * corrected block arrives as an ordinary `onChanged`, and a run that no longer
+ * resolves arrives as nothing.
+ *
  * @typedef {ContainerProvider & {
  *   requestAddBlock: (kind: string, attrs: Record<string, any>, afterBlockId?: string|null) => void,
  *   requestSetBlock: (blockId: string, patch: Record<string, any>) => void,
@@ -95,6 +103,7 @@
  *   requestSetOrder: (order: ReadonlyArray<string>) => void,
  *   requestTransform: (blockId: string, targetKind: string, operation: string, entries: ContentEntry[]) => void,
  *   requestRetry: (blockId: string) => void,
+ *   requestReplaceText: (blockId: string, anchor: Readonly<import('./container-update-listener.js').SieveTextMark>, replacement: string) => void,
  *   requestPersist: () => void,
  *   paste: (payload: PastePayload, afterBlockId: string|null) => Promise<PasteDecision>,
  *   detectExtractions: (sourceKind: string, entries: ContentEntry[]) => Promise<ExtractionOffer[]>,

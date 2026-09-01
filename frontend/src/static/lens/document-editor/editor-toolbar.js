@@ -163,7 +163,15 @@ export class EditorToolbar {
       title: 'Toggle Editor Mode',
       onClick: () => { const w = ws(); w && w.activeTab && w.activeTab.editor && w.activeTab.editor.toggleMode() },
     })
-    const modeGroup = new ButtonGroup([this.#modeButton])
+    // Spelling is a WORKSPACE-wide setting, not this document's: the button
+    // reads and writes the one the host holds, and repaints itself the moment
+    // it is pressed rather than waiting for the editor's next event.
+    const spellButton = new ToolbarButton({
+      id: 'tb-spellcheck-btn', iconHtml: EditorToolbar.#icon('spellcheck'), title: 'Spell check',
+      active: () => { const w = ws(); return !!(w && w.spell && w.spell.enabled) },
+      onClick: () => { const w = ws(); w && w.spell && w.spell.toggle(); spellButton.refresh() },
+    })
+    const modeGroup = new ButtonGroup([this.#modeButton, spellButton])
 
     const insertGroup = new ButtonGroup([
       new ToolbarButton({

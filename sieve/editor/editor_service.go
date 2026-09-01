@@ -50,6 +50,7 @@ type EditorService struct {
 	shadows      map[string]*block.ShadowDocument
 	listener     block.BlockLifecycleListener
 	saved        ContainerSavedNotifier
+	spell        *SpellChecker       // observed after every op lands on a shadow; nil is a no-op (most tests never wire spelling)
 	clipboard    NativeClipboardPort // reads the OS clipboard the webview cannot (#87)
 	pendingDrops PendingDropSource   // the native drop bucket the webview cannot see (#86)
 	// jobsWG tracks every dispatched block-job goroutine (DispatchJobIfNeeded's
@@ -92,6 +93,16 @@ func (es *EditorService) SetSavedNotifier(n ContainerSavedNotifier) {
 	es.saved = n
 }
 
+// SetSpellChecker registers the checker observed after every op lands on a
+// shadow (notifyBlockCreated/Updated/Replaced) and closed alongside a document
+// (Close). Nil leaves those hooks a no-op, which is what a test that never
+// wires spelling gets.
+func (es *EditorService) SetSpellChecker(sc *SpellChecker) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	es.spell = sc
+}
+
 // notifySaved publishes the one fact a successful save produces. It is called
 // from flushShadow — the single chokepoint every document write funnels through
 // — so explicit flush, debounce autosave, a finished job's write and close-time
@@ -110,6 +121,7 @@ func (es *EditorService) notifySaved(uuid string, version int) {
 func (es *EditorService) notifyBlockCreated(uuid string, blk block.SieveBlock, index int) {
 	es.mu.RLock()
 	l := es.listener
+	sc := es.spell
 	es.mu.RUnlock()
 	if l != nil {
 		// markdown is the block's serialized fence — used ONLY by the breakglass
@@ -122,20 +134,28 @@ func (es *EditorService) notifyBlockCreated(uuid string, blk block.SieveBlock, i
 		}
 		l.OnBlockCreated(uuid, blk.Kind, blk.ID, blk.Attrs, markdown, index)
 	}
+	if sc != nil {
+		sc.enqueue(uuid, blk.ID)
+	}
 }
 
 func (es *EditorService) notifyBlockUpdated(uuid string, blk block.SieveBlock) {
 	es.mu.RLock()
 	l := es.listener
+	sc := es.spell
 	es.mu.RUnlock()
 	if l != nil {
 		l.OnBlockUpdated(uuid, blk.ID, blk.Attrs)
+	}
+	if sc != nil {
+		sc.enqueue(uuid, blk.ID)
 	}
 }
 
 func (es *EditorService) notifyBlockReplaced(uuid, oldID string, blk block.SieveBlock) {
 	es.mu.RLock()
 	l := es.listener
+	sc := es.spell
 	es.mu.RUnlock()
 	if l != nil {
 		markdown := ""
@@ -143,6 +163,9 @@ func (es *EditorService) notifyBlockReplaced(uuid, oldID string, blk block.Sieve
 			markdown, _ = processor.Serialize(blk)
 		}
 		l.OnBlockReplaced(uuid, oldID, blk.Kind, blk.ID, blk.Attrs, markdown)
+	}
+	if sc != nil {
+		sc.enqueue(uuid, blk.ID)
 	}
 }
 
@@ -237,6 +260,29 @@ func (es *EditorService) open(uuid string, recoverStuck bool) error {
 	return nil
 }
 
+// shadowFor returns uuid's open shadow, or nil. It is the read a same-package
+// collaborator (the spell checker) takes instead of touching es.shadows, so the
+// map and its lock stay this type's alone.
+func (es *EditorService) shadowFor(uuid string) *block.ShadowDocument {
+	es.mu.RLock()
+	defer es.mu.RUnlock()
+	return es.shadows[uuid]
+}
+
+// openUUIDs returns the documents currently open, in no order. It is the same
+// same-package read as shadowFor, for a collaborator that must act on ALL of
+// them — the spell checker answering a workspace-wide change of mind about a
+// word. A uuid closed between this read and the act on it is a no-op there.
+func (es *EditorService) openUUIDs() []string {
+	es.mu.RLock()
+	defer es.mu.RUnlock()
+	uuids := make([]string, 0, len(es.shadows))
+	for uuid := range es.shadows {
+		uuids = append(uuids, uuid)
+	}
+	return uuids
+}
+
 // FrontendBlocks projects the OPEN shadow's authoritative Doc into the wire
 // shape the WYSIWYG load renders from — the load-through-shadow path, so the
 // client sees the shadow's minted handles (real data-id) and identity is shared.
@@ -272,7 +318,16 @@ func (es *EditorService) Close(uuid string) {
 	es.mu.Lock()
 	shadow, ok := es.shadows[uuid]
 	delete(es.shadows, uuid)
+	sc := es.spell
 	es.mu.Unlock()
+
+	// Dropping the spell queue is unconditional: CheckAndPush runs off the WS
+	// read loop in its own goroutine and can still be mid-seed when a fast
+	// open+close races it — this must not leave a queue behind for a shadow
+	// that no longer exists.
+	if sc != nil {
+		sc.closeDocument(uuid)
+	}
 
 	if !ok {
 		return
@@ -366,6 +421,72 @@ func (es *EditorService) UpdateBlock(uuid string, blk block.SieveBlock) {
 		return
 	}
 	shadow.MergeBlock(blk)
+}
+
+// ReplaceText applies one anchored text edit to a block and returns what
+// happened. It is the write half of the text substrate: the client points at a
+// run it saw — a spelling mark, later anything else that names text — and asks
+// for it to be replaced.
+//
+// The processor that owns the payload resolves the anchor and rewrites its own
+// text; the result then goes through mergeAndReact, the SAME merge every other
+// granular mutation takes, so this edit marks the document dirty, runs the
+// processor's OnChange and re-queues the block for spelling exactly as a
+// client-sent update-block would.
+//
+// IT RENDERS BACK BY REPLACEMENT, not as an attrs merge. The edit is
+// client-INSTIGATED but server-EXECUTED — the species a paste and a transform
+// belong to — so the block Go now holds is the authoritative one and the client
+// PLACES it. An attrs merge would say the opposite: that the client's copy of
+// the text is still the current one and only some attrs moved. The identity is
+// unchanged, so both ids on the render-back are this block's.
+//
+// A stale anchor comes back as block.ErrTextStale, and nothing was changed.
+func (es *EditorService) ReplaceText(uuid string, edit domain.TextEdit) error {
+	shadow := es.shadowFor(uuid)
+	if shadow == nil {
+		return fmt.Errorf("text-replace: no open document for uuid %q", uuid)
+	}
+	blk, found := shadow.SnapshotBlock(edit.BlockID)
+	if !found {
+		return fmt.Errorf("text-replace: no block %q in document %q", edit.BlockID, uuid)
+	}
+	updater, writable := block.TextUpdaterFor(blk.Kind)
+	if !writable {
+		return fmt.Errorf("text-replace: kind %q does not accept text edits", blk.Kind)
+	}
+	if err := es.updateText(updater, &blk, edit); err != nil {
+		return err
+	}
+	// blk is a deep snapshot, so the processor wrote into a copy: the merge below
+	// is what puts the edit in the document. Passing the whole payload is safe —
+	// a merge is additive, and every key not rewritten merges back as itself.
+	merged, present, err := es.mergeAndReact(uuid, block.BlockOp{
+		Type:    "update-block",
+		BlockID: blk.ID,
+		Kind:    blk.Kind,
+		Attrs:   blk.Attrs,
+	})
+	if err != nil || !present {
+		return err
+	}
+	es.notifyBlockReplaced(uuid, merged.ID, merged)
+	es.DispatchJobIfNeeded(uuid, merged.ID)
+	return nil
+}
+
+// updateText calls the processor, recovering any panic so a bad processor costs
+// the caller an error rather than the process. Same containment as the spell
+// checker's read of NormalisedText: this runs on the WS read loop, where an
+// unrecovered panic takes down more than the request that caused it.
+func (es *EditorService) updateText(updater block.TextUpdater, blk *block.SieveBlock, edit domain.TextEdit) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("editor: UpdateText panicked", "kind", blk.Kind, "block", blk.ID, "err", r)
+			err = fmt.Errorf("text-replace: processor %q panicked", blk.Kind)
+		}
+	}()
+	return updater.UpdateText(blk, edit.Locator, edit.Start, edit.End, edit.Quote, edit.Occurrence, edit.Replacement)
 }
 
 // ExportMarkdown derives CLEAN whole-doc markdown for "Copy as Markdown" from the
@@ -517,9 +638,15 @@ func (es *EditorService) CloseAll() {
 		shadows = append(shadows, sh)
 	}
 	es.shadows = make(map[string]*block.ShadowDocument)
+	sc := es.spell
 	es.mu.Unlock()
 	logger.Info("editor: close-all", "count", len(shadows))
 	for _, sh := range shadows {
+		// Dropping the spell queue is unconditional for the same reason Close's
+		// is: nil only when the field is unwired (tests).
+		if sc != nil {
+			sc.closeDocument(sh.UUID)
+		}
 		sh.StopDebounce()
 		_ = es.flushShadow(sh, "close-all")
 	}
@@ -907,34 +1034,56 @@ func (es *EditorService) transformInPlace(uuid, kind string, processor block.Blo
 }
 
 // applyBlockUpdate is THE uniform update path, run identically for every kind
-// (prose/code/diagram/log): merge the patch into the live tree (attrs additive,
-// aliases replaced when present), let the processor react via OnChange, notify the
-// client with the merged result, and dispatch any job the change moved to PENDING.
-// The per-kind behaviour lives entirely in the processor (OnChange/RunJob) — this
-// orchestration never branches on kind. Reached only through HandleBlockOp's
-// update-block case (block-op is the single granular mutation path).
+// (prose/code/diagram/log): merge the patch into the live tree, let the processor
+// react, notify the client with the merged result, and dispatch any job the change
+// moved to PENDING. The per-kind behaviour lives entirely in the processor
+// (OnChange/RunJob) — this orchestration never branches on kind. Reached only
+// through HandleBlockOp's update-block case (block-op is the single granular
+// mutation path).
+//
+// It renders back as an ATTRS MERGE, the render-back for a change the client is
+// already holding the result of: it sent the op. A mutation Go itself executed
+// renders back by replacement instead — see ReplaceText.
 func (es *EditorService) applyBlockUpdate(uuid string, op block.BlockOp) error {
+	blk, present, err := es.mergeAndReact(uuid, op)
+	if err != nil || !present {
+		return err
+	}
+	es.notifyBlockUpdated(uuid, blk)
+	es.DispatchJobIfNeeded(uuid, op.BlockID)
+	return nil
+}
+
+// mergeAndReact is the half of a granular mutation that every caller shares:
+// merge the patch into the live tree (attrs additive, aliases replaced when
+// present), let the processor react via OnChange, and merge back only what
+// OnChange itself changed. It returns the block as it now stands — what a caller
+// renders back, on whichever lane it chooses.
+//
+// present is false when there is nothing to render back at all: no processor is
+// registered for the kind, or the block did not survive the merge.
+func (es *EditorService) mergeAndReact(uuid string, op block.BlockOp) (blk block.SieveBlock, present bool, err error) {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
 	if shadow == nil {
-		return fmt.Errorf("update-block: no open document for uuid %q", uuid)
+		return block.SieveBlock{}, false, fmt.Errorf("update-block: no open document for uuid %q", uuid)
 	}
 
-	// Merge the patch (attrs + aliases) into the live tree. Prose's body is just
-	// Attrs["content"], merged like any other key — no kind-special handling.
+	// Prose's body is just Attrs["content"], merged like any other key — no
+	// kind-special handling.
 	shadow.MergeBlock(block.SieveBlock{ID: op.BlockID, Kind: op.Kind, Attrs: op.Attrs, Aliases: op.Aliases})
 
 	processor := block.GetProcessor(op.Kind)
 	if processor == nil {
-		return nil
+		return block.SieveBlock{}, false, nil
 	}
 
 	// Snapshot the merged state (patch + existing attrs) for OnChange, then merge
 	// back only what OnChange itself changed.
 	snap, ok := shadow.SnapshotBlock(op.BlockID)
 	if !ok {
-		return nil
+		return block.SieveBlock{}, false, nil
 	}
 	blkCopy := &block.SieveBlock{ID: snap.ID, Kind: snap.Kind, Attrs: snap.Attrs}
 	attrsBefore := make(map[string]interface{}, len(snap.Attrs))
@@ -954,13 +1103,11 @@ func (es *EditorService) applyBlockUpdate(uuid string, op block.BlockOp) error {
 		shadow.MergeBlock(block.SieveBlock{ID: op.BlockID, Kind: op.Kind, Attrs: attrsChanged})
 	}
 
-	// Always notify so the client gets the merged + OnChanged attrs.
-	if blkFinal, okFinal := shadow.SnapshotBlock(op.BlockID); okFinal {
-		es.notifyBlockUpdated(uuid, block.SieveBlock{ID: op.BlockID, Kind: op.Kind, Attrs: blkFinal.Attrs})
+	blkFinal, okFinal := shadow.SnapshotBlock(op.BlockID)
+	if !okFinal {
+		return block.SieveBlock{}, false, nil
 	}
-
-	es.DispatchJobIfNeeded(uuid, op.BlockID)
-	return nil
+	return block.SieveBlock{ID: op.BlockID, Kind: op.Kind, Attrs: blkFinal.Attrs}, true, nil
 }
 
 // DispatchJobIfNeeded checks if the block has status PENDING. If so, it transitions the block

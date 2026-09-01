@@ -9,6 +9,7 @@ import { MountBinding } from './mount-binding.js'
 import { ContainerModelFeed } from '../container/container-model-feed.js'
 import { ContainerTransport } from '../container/container-transport.js'
 import { DocumentService } from '../container/document-service.js'
+import { SpellControl } from './spell-control.js'
 import { WorkspaceService } from './workspace-service.js'
 import { CommandService } from './command-service.js'
 import { MentionService } from './mention-service.js'
@@ -78,6 +79,9 @@ export class SieveWorkspace {
    *  alive: it claims its frames and republishes them as DOM events. */
   #invalidationService
 
+  /** @type {SpellControl} the workspace's spelling verbs, and the toggle's state. */
+  #spell
+
   /** @type {MacroCatalog} what this host offers a `{` picker: the block kinds,
    *  plus the URL verbs it owns the dialogs for. Built ONCE — a surface composes
    *  its own presets onto a read of it, and registers nothing. */
@@ -100,6 +104,8 @@ export class SieveWorkspace {
     // lazily: the server pushes the jobs snapshot the instant a socket connects,
     // and a tenant registering later would have that first frame dropped.
     this.#invalidationService = new InvalidationService(this.#workspaceService)
+    this.#spell = new SpellControl(this.#workspaceService,
+      typeof window !== 'undefined' ? /** @type {any} */ (window).__sieveSpellcheckEnabled !== false : true)
     this.#macroCatalog = new MacroCatalog(this)
   }
 
@@ -114,6 +120,8 @@ export class SieveWorkspace {
   get mentionService() { return this.#mentionService }
 
   get macroCatalog() { return this.#macroCatalog }
+
+  get spell() { return this.#spell }
 
   /** @param {string} uuid @returns {SieveTab|null} */
   getTab(uuid) {

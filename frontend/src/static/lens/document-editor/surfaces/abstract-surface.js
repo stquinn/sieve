@@ -106,7 +106,7 @@ export class AbstractSurface {
    * The container changed: place what the cue names. ABSTRACT — a surface is a way
    * of showing a container, so how a change reaches the screen is what a concrete
    * surface is for.
-   * @param {{blockIds: ReadonlyArray<string>, orderChanged: boolean}} change
+   * @param {{blockIds: ReadonlyArray<string>, orderChanged: boolean, replaced?: ReadonlyArray<string>}} change
    * @param {any} provider the mounted container's provider (reads only)
    */
   applyContainerChange(change, provider) {
@@ -148,6 +148,13 @@ export class AbstractSurface {
    *  draft resolves to that command. A surface with no way to draw a mark ignores
    *  it. @param {string|null} verb */
   setCommandVerb(verb) {}
+
+  /** Draws one block's COMPLETE set of text marks, replacing what was drawn for
+   *  that block; an empty set clears it. A surface with no way to draw a mark
+   *  ignores them — which is what "a mark is a reading affordance" means.
+   *  @param {string} blockId
+   *  @param {ReadonlyArray<import('../../../contract/container-update-listener.js').SieveTextMark>} marks */
+  setSpellMarks(blockId, marks) {}
 
   /** The title of the `@Title` token at `pos`, or null where there is none. A
    *  surface that marks nothing has none anywhere.

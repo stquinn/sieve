@@ -2,8 +2,10 @@ package protocol
 
 import (
 	"encoding/json"
+	"errors"
 
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 )
 
 // AppendIndex is the document position meaning "after everything else". It is the
@@ -199,19 +201,25 @@ func NewBlockAttrsUpdatedFrame(id string, attrs map[string]interface{}) BlockAtt
 	return BlockAttrsUpdatedFrame{Type: TypeBlockAttrsUpdated, ID: id, Attrs: attrs}
 }
 
-// ReplaceBlockFrame is the render-back for an in-place transform: one block
-// becomes another kind with a new identity, and the client replaces by id rather
-// than reloading the document.
+// ReplaceBlockFrame is the render-back for a block the SERVER rewrote in place:
+// an in-place transform, or a text edit the client asked for and Go executed.
+// The client replaces by id rather than reloading the document, and takes the
+// block WHOLE — this frame is the authoritative block, never a patch onto what
+// the client is holding.
+//
+// It is the render-back for a change the client did not compute. A change the
+// client already holds the result of — its own edit, echoed — goes back as a
+// BlockAttrsUpdatedFrame instead.
 type ReplaceBlockFrame struct {
 	Type    string                 `json:"type"`
 	OldID   string                 `json:"oldId" doc:"the block being replaced; the client matches on it rather than reloading"`
 	NewKind string                 `json:"newKind"`
-	NewID   string                 `json:"newId" doc:"a transform mints a fresh identity — the new block is not the old one renamed"`
+	NewID   string                 `json:"newId" doc:"equal to oldId when the block kept its identity; a transform to another kind mints a fresh one"`
 	Attrs   map[string]interface{} `json:"attrs" doc:"the new block's full attrs bag"`
 	NewYaml string                 `json:"newYaml" doc:"markdown-mode buffer only"`
 }
 
-// NewReplaceBlockFrame builds the transformed-block render-back. Its parameters
+// NewReplaceBlockFrame builds the replaced-block render-back. Its parameters
 // are in the order block.BlockLifecycleListener.OnBlockReplaced receives them
 // (oldID, newKind, newID) — the sole caller — because two adjacent string
 // parameters that read one way in the listener and the other in the constructor
@@ -230,9 +238,9 @@ func NewReplaceBlockFrame(oldID, newKind, newID string, attrs map[string]interfa
 // RemoveBlockFrame is the render-back for a block that left the container: the
 // client retires it by id rather than reloading the document.
 //
-// A transform is NOT a removal — it mints a fresh identity for the same slot and
-// says so with a replace-block, which carries both ids. This frame means the
-// container has one child fewer.
+// A block the server rewrote is NOT a removal — it keeps its slot and says so
+// with a replace-block, which carries both ids. This frame means the container
+// has one child fewer.
 type RemoveBlockFrame struct {
 	Type string `json:"type"`
 	ID   string `json:"id" doc:"the block that left the container"`
@@ -475,4 +483,132 @@ func NewExportContentFrame(opID, format, content string) ExportContentFrame {
 // human dwelling on a document.
 type FocusFrame struct {
 	Type string `json:"type"`
+}
+
+// SpellMark is one flagged run of text inside a block, as it travels on the
+// wire. It carries no block id — the frame that holds it names the block once.
+//
+// It anchors by Quote plus Occurrence, never by offsets: the client resolves
+// occurrence N of the quote in the text it currently holds and marks it WHERE IT
+// NOW SITS. Start and End are byte offsets into the segment as the server read
+// it, and any edit since displaces them, so they are a fast-path hint. A quote
+// that no longer resolves at its occurrence is dropped rather than guessed at.
+type SpellMark struct {
+	Locator     string   `json:"locator" doc:"which part of the block's payload this came from; opaque — only the block's processor reads it"`
+	Quote       string   `json:"quote" doc:"the exact text flagged; the anchor, not a label"`
+	Occurrence  int      `json:"occurrence" doc:"0-based index among identical quotes in the same segment"`
+	Start       int      `json:"start" doc:"byte offset hint into the segment as the server read it"`
+	End         int      `json:"end" doc:"byte offset hint, exclusive"`
+	Class       string   `json:"class" doc:"the kind of language the segment holds — prose, code, label, caption, key"`
+	Suggestions []string `json:"suggestions" doc:"never null — replacements offered for the quote, best first"`
+}
+
+// SpellMarksFrame is the server-initiated render-back carrying ONE block's
+// complete mark set. It is not an answer to anything: the server checks a
+// document when it opens and whenever its text settles, and pushes to the
+// document's registered owner.
+//
+// Marks REPLACE what the client holds for that block. An empty array is
+// therefore the clear — the frame a corrected block gets — and not a no-op.
+type SpellMarksFrame struct {
+	Type    string      `json:"type"`
+	BlockID string      `json:"blockId" doc:"the block whose whole mark set this is"`
+	Marks   []SpellMark `json:"marks" doc:"never null — an empty array clears this block's marks"`
+}
+
+// NewSpellMarksFrame builds one block's mark set for the wire, dropping the
+// block id each mark carries in Go: the frame names the block, so repeating it
+// per mark would let the two disagree.
+func NewSpellMarksFrame(blockID string, marks []domain.TextMark) SpellMarksFrame {
+	wire := make([]SpellMark, 0, len(marks))
+	for _, m := range marks {
+		suggestions := m.Suggestions
+		if suggestions == nil {
+			suggestions = []string{}
+		}
+		wire = append(wire, SpellMark{
+			Locator:     m.Locator,
+			Quote:       m.Quote,
+			Occurrence:  m.Occurrence,
+			Start:       m.Start,
+			End:         m.End,
+			Class:       m.Class,
+			Suggestions: suggestions,
+		})
+	}
+	return SpellMarksFrame{Type: TypeSpellMarks, BlockID: blockID, Marks: wire}
+}
+
+// TextReplaceFrame asks for one anchored run of a block's text to be replaced.
+// It is the write the marks made possible: the client points at text it was
+// shown and says what belongs there instead.
+//
+// The anchor is Quote plus Occurrence, and the server resolves it in the
+// block's CURRENT text — so an edit that displaced the run since the client saw
+// it costs nothing, and a run that has been typed over is not written to at
+// all. Start and End are the offsets the client last saw: a hint the server may
+// use to narrow a search, never a range it writes to on the client's word.
+type TextReplaceFrame struct {
+	Type        string `json:"type"`
+	OpID        string `json:"opId"`
+	BlockID     string `json:"blockId" doc:"the block whose text is being written"`
+	Locator     string `json:"locator" doc:"which part of the block's payload, exactly as the mark carried it; opaque — only the block's processor reads it"`
+	Quote       string `json:"quote" doc:"the exact text to replace; the anchor, not a label"`
+	Occurrence  int    `json:"occurrence" doc:"0-based index among identical quotes in the same segment"`
+	Start       int    `json:"start" doc:"byte offset hint into the segment as the client last saw it"`
+	End         int    `json:"end" doc:"byte offset hint, exclusive"`
+	Replacement string `json:"replacement" doc:"what to put in the quote's place; an empty string deletes the run"`
+}
+
+// Edit reads the frame as the edit the editor applies. The frame is the wire
+// form and the edit is the domain form of one request, so the mapping lives
+// here rather than at every call site that would otherwise copy nine fields.
+func (f TextReplaceFrame) Edit() domain.TextEdit {
+	return domain.TextEdit{
+		BlockID:     f.BlockID,
+		Locator:     f.Locator,
+		Quote:       f.Quote,
+		Occurrence:  f.Occurrence,
+		Start:       f.Start,
+		End:         f.End,
+		Replacement: f.Replacement,
+	}
+}
+
+// What a text-replace did. STALE is not a failure: the anchor named a run that
+// is no longer there, the document was left exactly as it was, and the client's
+// answer is to drop the mark it was acting on rather than to retry or report a
+// fault.
+const (
+	TextReplaceOK     = "ok"
+	TextReplaceStale  = "stale"
+	TextReplaceFailed = "error"
+)
+
+// TextReplaceAckFrame is the correlated outcome of a text-replace. Like every
+// ack it is emitted AFTER the operation, and therefore after the render-back
+// the operation fired on the same socket.
+//
+// An applied edit reaches the client as the authoritative block, not as
+// anything carried here: this frame reports only which of the three things
+// happened.
+type TextReplaceAckFrame struct {
+	Type    string `json:"type"`
+	OpID    string `json:"opId"`
+	Outcome string `json:"outcome" doc:"ok — applied; stale — the quote no longer resolves at its occurrence and nothing changed; error — the request could not be run"`
+	Error   string `json:"error,omitempty" doc:"present only when outcome is error"`
+}
+
+// NewTextReplaceAckFrame builds the outcome, reading a stale anchor out of the
+// error the editor returned. The sentinel and the wire word are mapped in ONE
+// place so they cannot drift apart.
+func NewTextReplaceAckFrame(opID string, err error) TextReplaceAckFrame {
+	switch {
+	case err == nil:
+		return TextReplaceAckFrame{Type: TypeTextReplaceAck, OpID: opID, Outcome: TextReplaceOK}
+	case errors.Is(err, block.ErrTextStale):
+		return TextReplaceAckFrame{Type: TypeTextReplaceAck, OpID: opID, Outcome: TextReplaceStale}
+	default:
+		return TextReplaceAckFrame{Type: TypeTextReplaceAck, OpID: opID, Outcome: TextReplaceFailed, Error: err.Error()}
+	}
 }

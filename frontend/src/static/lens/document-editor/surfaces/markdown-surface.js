@@ -292,7 +292,7 @@ export class MarkdownSurface extends AbstractSurface {
    * to reload. Break-glass mode, break-glass answer.
    *
    * Anything else — attrs, order — has no raw-markdown representation.
-   * @param {{blockIds: ReadonlyArray<string>, orderChanged: boolean}} change
+   * @param {{blockIds: ReadonlyArray<string>, orderChanged: boolean, replaced?: ReadonlyArray<string>}} change
    * @param {any} provider
    */
   applyContainerChange(change, provider) {

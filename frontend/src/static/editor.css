@@ -2334,6 +2334,19 @@ pre.tiptap-code-block code {
   box-decoration-break: clone;
 }
 
+/* A word the checker flagged. An inline decoration
+   (lens/document-editor/surfaces/spell-decoration.js), never a class on a prose
+   node, for the reason the two marks above are. Underline only: a mark is a
+   reading affordance and must not restyle the text it sits under. */
+.sieve-spell-mark {
+  text-decoration: underline wavy;
+  text-decoration-color: var(--theme-accentRed);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  -webkit-text-decoration-skip-ink: none;
+  text-decoration-skip-ink: none;
+}
+
 /* ── Shared inner-element styles for the modal dialogs (internalize / edit) ── */
 /* These BEM names are still used by internalize-popup and link-edit-popup */
 /* which are real <dialog> elements.                                            */

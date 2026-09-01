@@ -55,6 +55,7 @@ const (
 	TypeDetectExtractions = "detect-extractions"
 	TypeExport            = "export"
 	TypeFocus             = "focus"
+	TypeTextReplace       = "text-replace"
 
 	// Document channel, server → client.
 	TypeMarkdownContent         = "markdown-content"
@@ -71,6 +72,8 @@ const (
 	TypePasteAck                = "paste-ack"
 	TypeDetectExtractionsResult = "detect-extractions-result"
 	TypeExportContent           = "export-content"
+	TypeSpellMarks              = "spell-marks"
+	TypeTextReplaceAck          = "text-replace-ack"
 
 	// Workspace channel, client → server.
 	TypeCommand        = "command"
@@ -78,6 +81,9 @@ const (
 	TypeMentionQuery   = "mention-query"
 	TypeMentionResolve = "mention-resolve"
 	TypeSessionScroll  = "session-scroll"
+	TypeSpellIgnore    = "spell-ignore"
+	TypeSpellLearn     = "spell-learn"
+	TypeSpellEnable    = "spell-enable"
 
 	// Workspace channel, server → client.
 	TypeCommandResult    = "command-result"

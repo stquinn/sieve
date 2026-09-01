@@ -448,13 +448,53 @@ export class AbstractEditor extends Lens {
    * @override — the container changed. WHO changed it is deliberately unsayable.
    * Re-READS, since nothing is carried in the cue. Suppressed during a
    * host-driven load, which repaints anyway.
-   * @param {Readonly<{blockIds: ReadonlyArray<string>, orderChanged: boolean}>} change
+   * @param {Readonly<{blockIds: ReadonlyArray<string>, orderChanged: boolean, replaced?: ReadonlyArray<string>}>} change
    */
   paint(change) {
     if (this.#reloadInProgress) return
     const surface = this.#surface
     if (!surface) return
-    surface.applyContainerChange(change || { blockIds: [], orderChanged: false }, this.provider)
+    surface.applyContainerChange(change || { blockIds: [], orderChanged: false, replaced: [] }, this.provider)
+  }
+
+  /**
+   * The contract's optional marks cue: one block's COMPLETE set of text marks,
+   * replacing what is drawn for that block. Unlike `paint` it carries its
+   * answer, because marks are the host's derived reading of a block and not
+   * container state there is anything to read back.
+   *
+   * It is NOT suppressed during a load. A mark is placed by finding its quote in
+   * what is drawn, so one arriving against a half-replaced document simply
+   * resolves against the document that ends up there.
+   * @param {string} blockId
+   * @param {ReadonlyArray<import('../contract/container-update-listener.js').SieveTextMark>} marks
+   */
+  onMarksChanged(blockId, marks) {
+    if (this.#surface) this.#surface.setSpellMarks(blockId, marks || [])
+  }
+
+  /**
+   * Asks for what belongs in a marked run's place. The mark is one the surface
+   * is drawing — the host resolves its anchor in the block's current text — so
+   * this lens computes no position and writes nothing itself: the corrected
+   * block arrives as an ordinary container change, and a run that has moved on
+   * arrives as nothing.
+   *
+   * The surface is FLUSHED first. The host rewrites the block text it holds and
+   * echoes the whole block back, so anything typed since the last debounced sync
+   * must reach it before the rewrite is computed — otherwise the echo places
+   * text that predates the typing, and the typing is gone.
+   *
+   * A container that cannot be written to this way simply does not offer the
+   * verb, the way `setRawContent` treats its own.
+   * @param {Record<string, any>} mark a mark from `getSelectionContext().textMarks`
+   * @param {string} replacement
+   */
+  replaceText(mark, replacement) {
+    if (!mark || !mark.blockId) return
+    if (typeof this.provider.requestReplaceText !== 'function') return
+    if (this.#surface) this.#surface.flushPending()
+    this.provider.requestReplaceText(mark.blockId, /** @type {any} */ (mark), replacement)
   }
 
   #emitStats() { this.#emitEvent({ type: 'stats', ...this.stats() }) }

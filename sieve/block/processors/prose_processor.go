@@ -1,8 +1,11 @@
 package processors
 
 import (
+	"errors"
+	"fmt"
 	"regexp"
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"strings"
 )
 
@@ -72,6 +75,56 @@ func extractTargets(content string) []string {
 		}
 	}
 	return targets
+}
+
+// ProseContentLocator names the one segment a prose block bears: its whole
+// stored content. Prose has a single payload slot, so the locator is a constant
+// rather than something minted per block — but it stays opaque to callers, which
+// carry it back rather than reading it.
+const ProseContentLocator = "content"
+
+// NormalisedText makes prose a TextBearer: one segment holding the content
+// VERBATIM. The stored bytes are handed out unchanged — markdown syntax,
+// highlight markers, trailing whitespace and all — because every offset and
+// quote a text service derives is anchored in exactly these bytes.
+func (p *ProseProcessor) NormalisedText(blk *block.SieveBlock) []domain.TextSegment {
+	if blk == nil {
+		return nil
+	}
+	return []domain.TextSegment{{
+		Locator: ProseContentLocator,
+		Text:    blk.Content(),
+		Class:   domain.TextClassProse,
+	}}
+}
+
+// UpdateText makes prose a TextUpdater: the one segment it bears is writable,
+// and a write lands on the stored content.
+//
+// The run to replace is found by resolving occurrence N of quote among the word
+// runs of the content AS IT NOW STANDS, so an edit that displaced the word
+// since the anchor was taken changes nothing about where this writes. When the
+// content no longer holds that many of the quote the block is left untouched
+// and the write is stale. The offsets the requester saw are not consulted at
+// all: prose bears one segment, and resolving the anchor over it is what
+// decides the range.
+func (p *ProseProcessor) UpdateText(blk *block.SieveBlock, locator string, _, _ int, quote string, occurrence int, replacement string) error {
+	if blk == nil {
+		return errors.New("prose: no block to update")
+	}
+	if locator != ProseContentLocator {
+		return fmt.Errorf("prose: unknown locator %q", locator)
+	}
+	content := blk.Content()
+	run, found := domain.TextSegment{Text: content}.Locate(quote, occurrence)
+	if !found {
+		return fmt.Errorf("%w: %q at occurrence %d", block.ErrTextStale, quote, occurrence)
+	}
+	if blk.Attrs == nil {
+		blk.Attrs = map[string]interface{}{}
+	}
+	blk.Attrs["content"] = content[:run.Start] + replacement + content[run.End:]
+	return nil
 }
 
 // MarkdownRepresentation: prose's markdown is its content verbatim.

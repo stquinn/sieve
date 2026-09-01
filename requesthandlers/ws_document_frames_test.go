@@ -2,6 +2,7 @@ package requesthandlers
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -77,6 +78,34 @@ func TestWS_Load_AnswersWithTheChannelsDocument(t *testing.T) {
 	closeAndSettle(c)
 }
 
+// Opening a document channel pushes its spelling marks unasked: nothing sends a
+// frame to ask for them, so a missing push is a permanently unmarked document.
+// They ride the owner path every other render-back does.
+func TestWS_SpellMarks_ArePushedWhenTheChannelOpens(t *testing.T) {
+	block.RegisterProcessor(&processors.ProseProcessor{})
+	srv, sp, _, uuid := newWsTestServer(t)
+	seedBody(t, sp, uuid, "this sentence has a helllo in it")
+
+	c := dialWS(t, srv, uuid)
+	frame := readUntil(t, c, protocol.TypeSpellMarks, 2*time.Second)
+
+	if frame["blockId"] == "" || frame["blockId"] == nil {
+		t.Errorf("spell-marks named no block: %v", frame)
+	}
+	marks, _ := frame["marks"].([]interface{})
+	if len(marks) != 1 {
+		t.Fatalf("marks = %v, want the one misspelling", frame["marks"])
+	}
+	mark, _ := marks[0].(map[string]interface{})
+	if mark["quote"] != "helllo" {
+		t.Errorf("quote = %v, want helllo", mark["quote"])
+	}
+	if mark["class"] != domain.TextClassProse {
+		t.Errorf("class = %v, want prose", mark["class"])
+	}
+	closeAndSettle(c)
+}
+
 // The DEBOUNCE autosave — a save nobody asked for — announces itself on the
 // workspace wire like every other save. This is the editor's only saved-signal
 // for a document the user is simply typing in, so its absence is a permanently
@@ -125,11 +154,21 @@ func TestWS_ExplicitFlushAnnouncesTheSaveAndAnswersNothing(t *testing.T) {
 	if saved["uuid"] != uuid {
 		t.Errorf("container-saved uuid = %v, want %s", saved["uuid"], uuid)
 	}
-	// Nothing at all came back on the document wire: the flush is unanswered
-	// there, and the fact travels on the other one.
+	// Nothing came back on the document wire ANSWERING the flush: the fact travels
+	// on the other one. The only frames tolerated here are the ones the server
+	// pushes of its own accord — spelling marks, which a channel emits on open —
+	// so anything else, of any type, fails.
 	_ = c.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
-	if _, raw, err := c.ReadMessage(); err == nil {
-		t.Errorf("flush must be unanswered on the document wire, got %q", string(raw))
+	for {
+		_, raw, err := c.ReadMessage()
+		if err != nil {
+			break // read deadline: nothing further arrived
+		}
+		var frame map[string]interface{}
+		_ = json.Unmarshal(raw, &frame)
+		if frame["type"] != protocol.TypeSpellMarks {
+			t.Errorf("flush must be unanswered on the document wire, got %q", string(raw))
+		}
 	}
 	closeAndSettle(c)
 }

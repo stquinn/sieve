@@ -2,11 +2,16 @@ package requesthandlers
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"sieve/sieve/block"
+	"sieve/sieve/block/processors"
+	"sieve/sieve/protocol"
 )
 
 // readFrame reads one WS frame as a decoded map within timeout, or fails.
@@ -62,15 +67,12 @@ func TestWS_BlockOpAck_SuccessArrivesAfterRenderBack(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	// First correlated frame back must be the render-back, THEN the ack.
-	insert := readFrame(t, c, 2*time.Second)
-	if insert["type"] != "insert-block" {
-		t.Fatalf("expected insert-block render-back first, got %v", insert["type"])
-	}
-	ack := readFrame(t, c, 2*time.Second)
-	if ack["type"] != "block-op-ack" {
-		t.Fatalf("expected block-op-ack after the render-back, got %v", ack["type"])
-	}
+	// The render-back must come before the ack. readUntil only reads FORWARD, so
+	// an ack that arrived first would be consumed here and the second read would
+	// time out — the ordering is pinned without also asserting that no unrelated
+	// server-initiated frame shares the socket.
+	readUntil(t, c, protocol.TypeInsertBlock, 2*time.Second)
+	ack := readUntil(t, c, protocol.TypeBlockOpAck, 2*time.Second)
 	if ack["opId"] != "op-7" {
 		t.Errorf("ack opId = %v, want op-7", ack["opId"])
 	}
@@ -123,18 +125,15 @@ func TestWS_BlockOp_NoOpIDGetsNoAck(t *testing.T) {
 	if err := c.WriteMessage(websocket.TextMessage, []byte(createProseOp(uuid, "tok-plain"))); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	insert := readFrame(t, c, 2*time.Second)
-	if insert["type"] != "insert-block" {
-		t.Fatalf("expected insert-block, got %v", insert["type"])
-	}
+	insert := readUntil(t, c, protocol.TypeInsertBlock, 2*time.Second)
 	if _, has := insert["opId"]; has {
 		t.Errorf("render-back for an opId-less request must not carry opId, got %v", insert["opId"])
 	}
-	// No ack must follow: a short read should time out rather than yield a frame.
-	_ = c.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
-	if _, raw, err := c.ReadMessage(); err == nil {
-		t.Fatalf("expected NO further frame for an opId-less block-op, got %q", string(raw))
-	}
+	// No ack must follow. Unrelated server-initiated traffic on the same socket
+	// (spelling marks push themselves when a channel opens) is drained, because
+	// this pins what an opId-less REQUEST is answered with, not what else a
+	// document channel carries.
+	expectNoMessage(t, c, `"`+protocol.TypeBlockOpAck+`"`, 300*time.Millisecond)
 	closeAndSettle(c)
 }
 
@@ -149,7 +148,7 @@ func TestWS_ExtractAck_TransformRendersBackThenAcks(t *testing.T) {
 	if err := c.WriteMessage(websocket.TextMessage, []byte(createProseOpWithOpID(uuid, "tok-src", "op-seed"))); err != nil {
 		t.Fatalf("write create: %v", err)
 	}
-	insert := readFrame(t, c, 2*time.Second)
+	insert := readUntil(t, c, protocol.TypeInsertBlock, 2*time.Second)
 	srcID, _ := insert["id"].(string)
 	if srcID == "" {
 		t.Fatalf("no source block id from insert-block: %v", insert)
@@ -201,4 +200,94 @@ func TestWS_ExtractAck_TransformRendersBackThenAcks(t *testing.T) {
 		t.Errorf("a transform must render back with replace-block before its ack")
 	}
 	closeAndSettle(c)
+}
+
+// spellProseBlockID is the seeded prose block the text-replace cases write to.
+// A real uuid: the loader upgrades any other handle it parses, and a test that
+// names its target must seed one it will leave alone.
+const spellProseBlockID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4c01"
+
+// text-replace answers with an OUTCOME, and the two outcomes it has to tell
+// apart are not success and failure — they are "applied" and "the run you
+// pointed at is not there any more". Stale draws no error frame: the client's
+// view moved on, which is news about the mark rather than a fault.
+//
+// An applied edit reaches the client as the authoritative block through the
+// replace-by-id render-back a transform takes — the client PLACES the block Go
+// now holds rather than merging attrs onto text it believes it owns. Nothing
+// about the new text rides in the ack.
+func TestWS_TextReplaceAck_ReportsAppliedOrStale(t *testing.T) {
+	cases := []struct {
+		name        string
+		quote       string
+		occurrence  int
+		wantOutcome string
+		wantContent string
+	}{
+		{
+			name:  "the anchor still resolves",
+			quote: "helllo", occurrence: 0,
+			wantOutcome: protocol.TextReplaceOK,
+			wantContent: "a hello here",
+		},
+		{
+			name:  "the quote is not in the text",
+			quote: "wolrd", occurrence: 0,
+			wantOutcome: protocol.TextReplaceStale,
+		},
+		{
+			name:  "the occurrence is past what the text holds",
+			quote: "helllo", occurrence: 3,
+			wantOutcome: protocol.TextReplaceStale,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			block.RegisterProcessor(&processors.ProseProcessor{})
+			srv, sp, _, uuid := newWsTestServer(t)
+			seedBody(t, sp, uuid, "<!--s:"+spellProseBlockID+"-->\na helllo here\n<!--/s:"+spellProseBlockID+"-->")
+
+			c := dialWS(t, srv, uuid)
+			send(t, c, `{"type":"text-replace","opId":"op-tr","blockId":"`+spellProseBlockID+
+				`","locator":"content","quote":"`+tc.quote+`","occurrence":`+strconv.Itoa(tc.occurrence)+
+				`,"start":2,"end":8,"replacement":"hello"}`)
+
+			if tc.wantContent != "" {
+				// The render-back must precede the ack. readUntil only reads
+				// FORWARD, so an ack that arrived first would be consumed here and
+				// the ack read below would time out.
+				replace := readUntil(t, c, protocol.TypeReplaceBlock, 2*time.Second)
+				if replace["oldId"] != spellProseBlockID || replace["newId"] != spellProseBlockID {
+					t.Errorf("replace-block ids = (%v, %v), want both %s — a text edit keeps the block's identity",
+						replace["oldId"], replace["newId"], spellProseBlockID)
+				}
+				if replace["newKind"] != "prose" {
+					t.Errorf("replace-block newKind = %v, want prose", replace["newKind"])
+				}
+				attrs, _ := replace["attrs"].(map[string]interface{})
+				if content, _ := attrs["content"].(string); content != tc.wantContent {
+					t.Errorf("render-back content = %v, want %q", attrs["content"], tc.wantContent)
+				}
+			}
+
+			ack := readUntil(t, c, protocol.TypeTextReplaceAck, 2*time.Second)
+			if ack["opId"] != "op-tr" {
+				t.Errorf("ack opId = %v, want op-tr", ack["opId"])
+			}
+			if ack["outcome"] != tc.wantOutcome {
+				t.Errorf("ack outcome = %v, want %q", ack["outcome"], tc.wantOutcome)
+			}
+			if _, hasErr := ack["error"]; hasErr {
+				t.Errorf("a %s ack must carry no error field, got %v", tc.wantOutcome, ack["error"])
+			}
+			if tc.wantOutcome == protocol.TextReplaceStale {
+				// Nothing changed, so nothing is echoed and nothing is reported as
+				// broken. Spelling marks push themselves on this socket, so the
+				// needles name the two frames a stale write must NOT produce.
+				expectNoMessage(t, c, `"`+protocol.TypeReplaceBlock+`"`, 300*time.Millisecond)
+				expectNoMessage(t, c, `"`+protocol.TypeError+`"`, 100*time.Millisecond)
+			}
+			closeAndSettle(c)
+		})
+	}
 }

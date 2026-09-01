@@ -21,6 +21,7 @@ import { BlockChrome, getBlockSelectionRange } from '../block-chrome.js'
 import { AiTargetDecoration } from './ai-target-decoration.js'
 import { MentionDecorations } from './mention-decoration.js'
 import { CommandVerbDecorations } from './command-verb-decoration.js'
+import { SpellDecorations } from './spell-decoration.js'
 import { FlatText } from './flat-text.js'
 import { Search, SelectionHighlight, HighlightMark, AiShortcuts } from '../../extensions.js'
 import { policyEnterKeydown, buildInteractionPolicyExtension } from '../interaction-policy.js'
@@ -129,6 +130,10 @@ export class WysiwygSurface extends AbstractSurface {
   /** @type {CommandVerbDecorations|null} this mount's `/verb` mark, one instance
    *  per surface for the same reason */
   #commandVerb = null
+
+  /** @type {SpellDecorations|null} this mount's spelling squiggles, one instance
+   *  per surface for the same reason */
+  #spell = null
 
   /** @type {Record<string, string>|null} per-mount block-sync cache
    *  ({ [blockId]: serializedContent }) the thin observer diffs against */
@@ -278,6 +283,8 @@ export class WysiwygSurface extends AbstractSurface {
     this.#mentions = mentions
     var commandVerb = new CommandVerbDecorations(T)
     this.#commandVerb = commandVerb
+    var spell = new SpellDecorations(T)
+    this.#spell = spell
 
     // The doc top level holds NATIVE block nodes and structured sieve blocks as
     // siblings: a prose block IS one native top-level node, not a custom
@@ -298,6 +305,7 @@ export class WysiwygSurface extends AbstractSurface {
         AiTargetDecoration,
         mentions.extension,
         commandVerb.extension,
+        spell.extension,
         T.Table.configure({ resizable: false }),
         T.TableRow,
         T.TableHeader,
@@ -372,7 +380,7 @@ export class WysiwygSurface extends AbstractSurface {
       // non-empty doc; an empty doc keeps this typeable paragraph.
       content: '<p></p>',
       editorProps: {
-        attributes: { spellcheck: 'true' },
+        attributes: { spellcheck: 'false' },
         handleDOMEvents: {
           copy: function(view, event) {
             // Copy is PM's. This handler steps in only for what PM cannot
@@ -629,6 +637,7 @@ export class WysiwygSurface extends AbstractSurface {
     this.#rootEl = null
     this.#mentions = null
     this.#commandVerb = null
+    this.#spell = null
     this.#blockContentCache = null
     if (this.#claimsDocumentGlobals()) window.__tiptap = null
   }
@@ -689,6 +698,18 @@ export class WysiwygSurface extends AbstractSurface {
   setCommandVerb(verb) {
     const ed = /** @type {any} */ (this.editorPane)
     if (ed && ed.view && this.#commandVerb) this.#commandVerb.apply(ed.view, verb)
+  }
+
+  /**
+   * @override — draws one block's spelling marks, replacing what was drawn for
+   * that block. A meta-only transaction, for the reason `setMentionTitles` is:
+   * what the checker found about a block is not an edit to it.
+   * @param {string} blockId
+   * @param {ReadonlyArray<import('../../../contract/container-update-listener.js').SieveTextMark>} marks
+   */
+  setSpellMarks(blockId, marks) {
+    const ed = /** @type {any} */ (this.editorPane)
+    if (ed && ed.view && this.#spell) this.#spell.apply(ed.view, blockId, marks)
   }
 
   /**
@@ -1255,6 +1276,10 @@ export class WysiwygSurface extends AbstractSurface {
     // The DOM read the pure PM core must NOT do: focus inside a block's inner
     // editor merges its OWN cursor as the opaque blockCursor.
     raw.blockCursor = this.#captureBlockCursor()
+    // The marks this surface is DRAWING under that same coordinate. They live in
+    // the plugin, not in the document, so they are read here rather than off the
+    // doc the pure core walks.
+    raw.textMarks = this.#spell ? this.#spell.marksAt(state, er.from, er.to) : []
     return raw
   }
 
@@ -1554,7 +1579,7 @@ export class WysiwygSurface extends AbstractSurface {
   // those would mean the user's next Mod+Z undid someone else's work.
 
   /**
-   * @param {{blockIds: ReadonlyArray<string>, orderChanged: boolean}} change
+   * @param {{blockIds: ReadonlyArray<string>, orderChanged: boolean, replaced?: ReadonlyArray<string>}} change
    * @param {any} provider the mounted container's provider (reads only, here)
    */
   applyContainerChange(change, provider) {
@@ -1564,6 +1589,7 @@ export class WysiwygSurface extends AbstractSurface {
     // and there is no undo history to lose, so it paints everything.
     if (!this.#painted) { this.paintContainer(provider); return }
 
+    const replaced = new Set((change && change.replaced) || [])
     for (const id of (change && change.blockIds) || []) {
       const node = provider.getBlock(id)
       const held = this.#findNodeById(ed, id)
@@ -1571,7 +1597,10 @@ export class WysiwygSurface extends AbstractSurface {
       if (!WysiwygSurface.#isBody(node)) continue
       if (!held) { this.#placeBlock(node, provider.getOrder().indexOf(id)); continue }
       const heldKind = (held.node.attrs && held.node.attrs.kind) || ''
-      if (heldKind && heldKind !== node.kind) { this.#replaceBlockNode(id, node); continue }
+      // A REPLACED block is the host's whole truth for that slot, and a block
+      // that changed kind cannot be patched into the one the doc holds. Both
+      // are placed, prose included.
+      if (replaced.has(id) || (heldKind && heldKind !== node.kind)) { this.#replaceBlockNode(id, node); continue }
       // PROSE THE EDITOR ALREADY HOLDS IS SKIPPED: its text is the lens's own,
       // the one piece of state that legitimately lives ahead of Go. Baseline it
       // instead, so the observer does not re-create a block Go already has.
@@ -1695,8 +1724,9 @@ export class WysiwygSurface extends AbstractSurface {
     this.#scrollTo(node.id)
   }
 
-  /** In-place TRANSFORM: tracked replace-by-id. insertContentAt(range, …) is
-   *  undoable, and the observer propagates an undo to the backend.
+  /** Places the host's block over the one the doc holds for that id — a
+   *  transform, or a text rewrite Go executed. Tracked: insertContentAt(range, …)
+   *  is undoable, and the observer propagates an undo to the backend.
    *  @param {string} id @param {{id: string, kind: string, attrs: Record<string, any>}} node */
   #replaceBlockNode(id, node) {
     var ed = /** @type {any} */ (this.editorPane)

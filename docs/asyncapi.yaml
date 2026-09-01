@@ -41,6 +41,8 @@ channels:
         $ref: '#/components/messages/documentPing'
       documentRetryBlockJob:
         $ref: '#/components/messages/documentRetryBlockJob'
+      documentTextReplace:
+        $ref: '#/components/messages/documentTextReplace'
       documentBlockAttrsUpdated:
         $ref: '#/components/messages/documentBlockAttrsUpdated'
       documentBlockOpAck:
@@ -69,6 +71,10 @@ channels:
         $ref: '#/components/messages/documentRemoveBlock'
       documentReplaceBlock:
         $ref: '#/components/messages/documentReplaceBlock'
+      documentSpellMarks:
+        $ref: '#/components/messages/documentSpellMarks'
+      documentTextReplaceAck:
+        $ref: '#/components/messages/documentTextReplaceAck'
       documentWysiwygContent:
         $ref: '#/components/messages/documentWysiwygContent'
   workspace:
@@ -87,6 +93,12 @@ channels:
         $ref: '#/components/messages/workspacePing'
       workspaceSessionScroll:
         $ref: '#/components/messages/workspaceSessionScroll'
+      workspaceSpellEnable:
+        $ref: '#/components/messages/workspaceSpellEnable'
+      workspaceSpellIgnore:
+        $ref: '#/components/messages/workspaceSpellIgnore'
+      workspaceSpellLearn:
+        $ref: '#/components/messages/workspaceSpellLearn'
       workspaceCommandResult:
         $ref: '#/components/messages/workspaceCommandResult'
       workspaceContainerDeleted:
@@ -123,6 +135,7 @@ operations:
       - $ref: '#/channels/document/messages/documentPaste'
       - $ref: '#/channels/document/messages/documentPing'
       - $ref: '#/channels/document/messages/documentRetryBlockJob'
+      - $ref: '#/channels/document/messages/documentTextReplace'
   documentSend:
     action: send
     channel:
@@ -143,6 +156,8 @@ operations:
       - $ref: '#/channels/document/messages/documentPong'
       - $ref: '#/channels/document/messages/documentRemoveBlock'
       - $ref: '#/channels/document/messages/documentReplaceBlock'
+      - $ref: '#/channels/document/messages/documentSpellMarks'
+      - $ref: '#/channels/document/messages/documentTextReplaceAck'
       - $ref: '#/channels/document/messages/documentWysiwygContent'
   workspaceReceive:
     action: receive
@@ -156,6 +171,9 @@ operations:
       - $ref: '#/channels/workspace/messages/workspaceMentionResolve'
       - $ref: '#/channels/workspace/messages/workspacePing'
       - $ref: '#/channels/workspace/messages/workspaceSessionScroll'
+      - $ref: '#/channels/workspace/messages/workspaceSpellEnable'
+      - $ref: '#/channels/workspace/messages/workspaceSpellIgnore'
+      - $ref: '#/channels/workspace/messages/workspaceSpellLearn'
   workspaceSend:
     action: send
     channel:
@@ -333,6 +351,25 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolRetryBlockJobFrame'
+    documentTextReplace:
+      name: text-replace
+      title: text-replace
+      summary: TextReplaceFrame asks for one anchored run of a block's text to be replaced.
+      description: |-
+        TextReplaceFrame asks for one anchored run of a block's text to be replaced.
+        It is the write the marks made possible: the client points at text it was
+        shown and says what belongs there instead.
+
+        The anchor is Quote plus Occurrence, and the server resolves it in the
+        block's CURRENT text — so an edit that displaced the run since the client saw
+        it costs nothing, and a run that has been typed over is not written to at
+        all. Start and End are the offsets the client last saw: a hint the server may
+        use to narrow a search, never a range it writes to on the client's word.
+      contentType: application/json
+      correlationId:
+        $ref: '#/components/correlationIds/opId'
+      payload:
+        $ref: '#/components/schemas/ProtocolTextReplaceFrame'
     documentBlockAttrsUpdated:
       name: block-attrs-updated
       title: block-attrs-updated
@@ -492,23 +529,61 @@ components:
         RemoveBlockFrame is the render-back for a block that left the container: the
         client retires it by id rather than reloading the document.
 
-        A transform is NOT a removal — it mints a fresh identity for the same slot and
-        says so with a replace-block, which carries both ids. This frame means the
-        container has one child fewer.
+        A block the server rewrote is NOT a removal — it keeps its slot and says so
+        with a replace-block, which carries both ids. This frame means the container
+        has one child fewer.
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolRemoveBlockFrame'
     documentReplaceBlock:
       name: replace-block
       title: replace-block
-      summary: 'ReplaceBlockFrame is the render-back for an in-place transform: one block becomes another kind with a new identity, and the client replaces by id rather than reloading the document.'
+      summary: 'ReplaceBlockFrame is the render-back for a block the SERVER rewrote in place: an in-place transform, or a text edit the client asked for and Go executed.'
       description: |-
-        ReplaceBlockFrame is the render-back for an in-place transform: one block
-        becomes another kind with a new identity, and the client replaces by id rather
-        than reloading the document.
+        ReplaceBlockFrame is the render-back for a block the SERVER rewrote in place:
+        an in-place transform, or a text edit the client asked for and Go executed.
+        The client replaces by id rather than reloading the document, and takes the
+        block WHOLE — this frame is the authoritative block, never a patch onto what
+        the client is holding.
+
+        It is the render-back for a change the client did not compute. A change the
+        client already holds the result of — its own edit, echoed — goes back as a
+        BlockAttrsUpdatedFrame instead.
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolReplaceBlockFrame'
+    documentSpellMarks:
+      name: spell-marks
+      title: spell-marks
+      summary: SpellMarksFrame is the server-initiated render-back carrying ONE block's complete mark set.
+      description: |-
+        SpellMarksFrame is the server-initiated render-back carrying ONE block's
+        complete mark set. It is not an answer to anything: the server checks a
+        document when it opens and whenever its text settles, and pushes to the
+        document's registered owner.
+
+        Marks REPLACE what the client holds for that block. An empty array is
+        therefore the clear — the frame a corrected block gets — and not a no-op.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProtocolSpellMarksFrame'
+    documentTextReplaceAck:
+      name: text-replace-ack
+      title: text-replace-ack
+      summary: TextReplaceAckFrame is the correlated outcome of a text-replace.
+      description: |-
+        TextReplaceAckFrame is the correlated outcome of a text-replace. Like every
+        ack it is emitted AFTER the operation, and therefore after the render-back
+        the operation fired on the same socket.
+
+        An applied edit reaches the client as the authoritative block, not as
+        anything carried here: this frame reports only which of the three things
+        happened.
+      contentType: application/json
+      correlationId:
+        $ref: '#/components/correlationIds/opId'
+      payload:
+        $ref: '#/components/schemas/ProtocolTextReplaceAckFrame'
     documentWysiwygContent:
       name: wysiwyg-content
       title: wysiwyg-content
@@ -593,6 +668,43 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolSessionScrollFrame'
+    workspaceSpellEnable:
+      name: spell-enable
+      title: spell-enable
+      summary: SpellEnableFrame turns spell checking on or off for the whole workspace and persists the choice.
+      description: |-
+        SpellEnableFrame turns spell checking on or off for the whole workspace and
+        persists the choice. Turning it off clears every mark the client is drawing;
+        turning it on re-checks every open document.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProtocolSpellEnableFrame'
+    workspaceSpellIgnore:
+      name: spell-ignore
+      title: spell-ignore
+      summary: SpellIgnoreFrame stops a word being flagged for the rest of this run.
+      description: |-
+        SpellIgnoreFrame stops a word being flagged for the rest of this run.
+
+        The three spelling frames ride the WORKSPACE channel rather than the document
+        one because none of them is about a document: a word accepted while reading
+        one note is accepted in every note open beside it, and the toggle is one
+        answer for the whole app. Each is fire-and-forget and unanswered — the visible
+        effect is the marks that follow, pushed per document on the channel that owns
+        it.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProtocolSpellIgnoreFrame'
+    workspaceSpellLearn:
+      name: spell-learn
+      title: spell-learn
+      summary: SpellLearnFrame adds a word to the user's durable dictionary, which survives a restart.
+      description: |-
+        SpellLearnFrame adds a word to the user's durable dictionary, which survives
+        a restart.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProtocolSpellLearnFrame'
     workspaceCommandResult:
       name: command-result
       title: command-result
@@ -1660,9 +1772,9 @@ components:
         RemoveBlockFrame is the render-back for a block that left the container: the
         client retires it by id rather than reloading the document.
 
-        A transform is NOT a removal — it mints a fresh identity for the same slot and
-        says so with a replace-block, which carries both ids. This frame means the
-        container has one child fewer.
+        A block the server rewrote is NOT a removal — it keeps its slot and says so
+        with a replace-block, which carries both ids. This frame means the container
+        has one child fewer.
       properties:
         type:
           type: string
@@ -1675,9 +1787,15 @@ components:
     ProtocolReplaceBlockFrame:
       type: object
       description: |-
-        ReplaceBlockFrame is the render-back for an in-place transform: one block
-        becomes another kind with a new identity, and the client replaces by id rather
-        than reloading the document.
+        ReplaceBlockFrame is the render-back for a block the SERVER rewrote in place:
+        an in-place transform, or a text edit the client asked for and Go executed.
+        The client replaces by id rather than reloading the document, and takes the
+        block WHOLE — this frame is the authoritative block, never a patch onto what
+        the client is holding.
+
+        It is the render-back for a change the client did not compute. A change the
+        client already holds the result of — its own edit, echoed — goes back as a
+        BlockAttrsUpdatedFrame instead.
       properties:
         type:
           type: string
@@ -1688,7 +1806,7 @@ components:
           type: string
         newId:
           type: string
-          description: a transform mints a fresh identity — the new block is not the old one renamed
+          description: equal to oldId when the block kept its identity; a transform to another kind mints a fresh one
         attrs:
           type: object
           description: the new block's full attrs bag
@@ -1735,6 +1853,196 @@ components:
         - type
         - id
         - scroll
+    ProtocolSpellEnableFrame:
+      type: object
+      description: |-
+        SpellEnableFrame turns spell checking on or off for the whole workspace and
+        persists the choice. Turning it off clears every mark the client is drawing;
+        turning it on re-checks every open document.
+      properties:
+        type:
+          type: string
+        enabled:
+          type: boolean
+          description: the state the toggle is being put INTO, not a request to flip — a repeat of the current state is a no-op
+      required:
+        - type
+        - enabled
+    ProtocolSpellIgnoreFrame:
+      type: object
+      description: |-
+        SpellIgnoreFrame stops a word being flagged for the rest of this run.
+
+        The three spelling frames ride the WORKSPACE channel rather than the document
+        one because none of them is about a document: a word accepted while reading
+        one note is accepted in every note open beside it, and the toggle is one
+        answer for the whole app. Each is fire-and-forget and unanswered — the visible
+        effect is the marks that follow, pushed per document on the channel that owns
+        it.
+      properties:
+        type:
+          type: string
+        word:
+          type: string
+          description: the word as it was written; the server folds it to the form the dictionary is keyed by
+      required:
+        - type
+        - word
+    ProtocolSpellLearnFrame:
+      type: object
+      description: |-
+        SpellLearnFrame adds a word to the user's durable dictionary, which survives
+        a restart.
+      properties:
+        type:
+          type: string
+        word:
+          type: string
+          description: the word as it was written; the server folds it to the form the dictionary is keyed by
+      required:
+        - type
+        - word
+    ProtocolSpellMark:
+      type: object
+      description: |-
+        SpellMark is one flagged run of text inside a block, as it travels on the
+        wire. It carries no block id — the frame that holds it names the block once.
+
+        It anchors by Quote plus Occurrence, never by offsets: the client resolves
+        occurrence N of the quote in the text it currently holds and marks it WHERE IT
+        NOW SITS. Start and End are byte offsets into the segment as the server read
+        it, and any edit since displaces them, so they are a fast-path hint. A quote
+        that no longer resolves at its occurrence is dropped rather than guessed at.
+      properties:
+        locator:
+          type: string
+          description: which part of the block's payload this came from; opaque — only the block's processor reads it
+        quote:
+          type: string
+          description: the exact text flagged; the anchor, not a label
+        occurrence:
+          type: integer
+          description: 0-based index among identical quotes in the same segment
+        start:
+          type: integer
+          description: byte offset hint into the segment as the server read it
+        end:
+          type: integer
+          description: byte offset hint, exclusive
+        class:
+          type: string
+          description: the kind of language the segment holds — prose, code, label, caption, key
+        suggestions:
+          type: array
+          description: never null — replacements offered for the quote, best first
+          items:
+            type: string
+      required:
+        - locator
+        - quote
+        - occurrence
+        - start
+        - end
+        - class
+        - suggestions
+    ProtocolSpellMarksFrame:
+      type: object
+      description: |-
+        SpellMarksFrame is the server-initiated render-back carrying ONE block's
+        complete mark set. It is not an answer to anything: the server checks a
+        document when it opens and whenever its text settles, and pushes to the
+        document's registered owner.
+
+        Marks REPLACE what the client holds for that block. An empty array is
+        therefore the clear — the frame a corrected block gets — and not a no-op.
+      properties:
+        type:
+          type: string
+        blockId:
+          type: string
+          description: the block whose whole mark set this is
+        marks:
+          type: array
+          description: never null — an empty array clears this block's marks
+          items:
+            $ref: '#/components/schemas/ProtocolSpellMark'
+      required:
+        - type
+        - blockId
+        - marks
+    ProtocolTextReplaceAckFrame:
+      type: object
+      description: |-
+        TextReplaceAckFrame is the correlated outcome of a text-replace. Like every
+        ack it is emitted AFTER the operation, and therefore after the render-back
+        the operation fired on the same socket.
+
+        An applied edit reaches the client as the authoritative block, not as
+        anything carried here: this frame reports only which of the three things
+        happened.
+      properties:
+        type:
+          type: string
+        opId:
+          type: string
+        outcome:
+          type: string
+          description: ok — applied; stale — the quote no longer resolves at its occurrence and nothing changed; error — the request could not be run
+        error:
+          type: string
+          description: present only when outcome is error
+      required:
+        - type
+        - opId
+        - outcome
+    ProtocolTextReplaceFrame:
+      type: object
+      description: |-
+        TextReplaceFrame asks for one anchored run of a block's text to be replaced.
+        It is the write the marks made possible: the client points at text it was
+        shown and says what belongs there instead.
+
+        The anchor is Quote plus Occurrence, and the server resolves it in the
+        block's CURRENT text — so an edit that displaced the run since the client saw
+        it costs nothing, and a run that has been typed over is not written to at
+        all. Start and End are the offsets the client last saw: a hint the server may
+        use to narrow a search, never a range it writes to on the client's word.
+      properties:
+        type:
+          type: string
+        opId:
+          type: string
+        blockId:
+          type: string
+          description: the block whose text is being written
+        locator:
+          type: string
+          description: which part of the block's payload, exactly as the mark carried it; opaque — only the block's processor reads it
+        quote:
+          type: string
+          description: the exact text to replace; the anchor, not a label
+        occurrence:
+          type: integer
+          description: 0-based index among identical quotes in the same segment
+        start:
+          type: integer
+          description: byte offset hint into the segment as the client last saw it
+        end:
+          type: integer
+          description: byte offset hint, exclusive
+        replacement:
+          type: string
+          description: what to put in the quote's place; an empty string deletes the run
+      required:
+        - type
+        - opId
+        - blockId
+        - locator
+        - quote
+        - occurrence
+        - start
+        - end
+        - replacement
     ProtocolTopic:
       type: string
       description: |-

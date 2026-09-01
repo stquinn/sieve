@@ -142,6 +142,23 @@ describe('ContainerModel fold — replace-block', () => {
     model.applyFrame({ type: DocumentFrame.REPLACE_BLOCK, oldId: 'c1', newId: 'd1', newKind: 'diagram', attrs: {} })
     expect(rec.seen[1].blockIds).toEqual(['c1', 'd1'])
     expect(rec.seen[1].orderChanged).toBe(true)
+    expect(rec.seen[1].replaced).toEqual(['d1'])
+  })
+
+  // The same id on both sides is a block Go REWROTE in place — a transform, or a
+  // text edit it executed on the client's behalf. It keeps its slot, and the cue
+  // NAMES it replaced: the node that arrived is the whole truth for that block,
+  // not a patch onto what the reader holds.
+  it('keeps the slot when the id is unchanged, and still names the block replaced', () => {
+    const model = seeded()
+    const rec = recorder()
+    model.subscribe(rec)
+    model.applyFrame({
+      type: DocumentFrame.REPLACE_BLOCK, oldId: 'p1', newId: 'p1', newKind: 'prose', attrs: { content: 'the cat' },
+    })
+    expect(model.getOrder()).toEqual(['p1', 'c1', 'a1'])
+    expect(model.getBlock('p1')).toEqual({ id: 'p1', kind: 'prose', attrs: { content: 'the cat', id: 'p1' } })
+    expect(rec.seen[1]).toEqual({ blockIds: ['p1'], orderChanged: false, replaced: ['p1'] })
   })
 
   it('ignores a replace that names no new id', () => {
@@ -166,7 +183,7 @@ describe('ContainerModel fold — block-attrs-updated', () => {
     model.subscribe(rec)
     model.applyFrame({ type: DocumentFrame.BLOCK_ATTRS_UPDATED, id: 'a1', attrs: { status: 'COMPLETE' } })
     expect(model.getOrder()).toEqual(['p1', 'c1', 'a1'])
-    expect(rec.seen[1]).toEqual({ blockIds: ['a1'], orderChanged: false })
+    expect(rec.seen[1]).toEqual({ blockIds: ['a1'], orderChanged: false, replaced: [] })
   })
 
   it('is a no-op for an id the container never held', () => {
@@ -192,7 +209,7 @@ describe('ContainerModel fold — remove-block', () => {
     const rec = recorder()
     model.subscribe(rec)
     model.applyFrame({ type: DocumentFrame.REMOVE_BLOCK, id: 'c1' })
-    expect(rec.seen[1]).toEqual({ blockIds: ['c1'], orderChanged: true })
+    expect(rec.seen[1]).toEqual({ blockIds: ['c1'], orderChanged: true, replaced: [] })
   })
 
   it('is a no-op for an id the container never held, and for an id-less frame', () => {
@@ -226,7 +243,7 @@ describe('ContainerModel fold — order-changed', () => {
     const rec = recorder()
     model.subscribe(rec)
     model.applyFrame({ type: DocumentFrame.ORDER_CHANGED, order: ['a1', 'p1', 'c1'] })
-    expect(rec.seen[1]).toEqual({ blockIds: [], orderChanged: true })
+    expect(rec.seen[1]).toEqual({ blockIds: [], orderChanged: true, replaced: [] })
   })
 
   it('drops a name it has no node for', () => {
@@ -264,6 +281,122 @@ describe('ContainerModel fold — unclaimed frames', () => {
     model.applyFrame(/** @type {any} */ (undefined))
     expect(rec.seen).toHaveLength(1)
     expect(model.getOrder()).toEqual(['p1', 'c1', 'a1'])
+  })
+})
+
+describe('ContainerModel fold — spell-marks', () => {
+  /** @param {string} quote @param {number} [occurrence] */
+  const mark = (quote, occurrence) => ({
+    locator: 'content', quote: quote, occurrence: occurrence || 0,
+    start: 0, end: quote.length, class: 'prose', suggestions: [],
+  })
+
+  /** A recorder that also hears the optional marks cue.
+   *  @returns {{onChanged: (c: any) => void, onMarksChanged: (id: string, m: any) => void, seen: any[], marks: any[]}} */
+  const marksRecorder = () => {
+    /** @type {any[]} */ const seen = []
+    /** @type {any[]} */ const marks = []
+    return {
+      seen,
+      marks,
+      onChanged: (change) => { seen.push(change) },
+      onMarksChanged: (blockId, pushed) => { marks.push([blockId, pushed]) },
+    }
+  }
+
+  it('hands a block\'s mark set to the listener, and cues no container change', () => {
+    const model = seeded()
+    const rec = marksRecorder()
+    model.subscribe(rec)
+    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [mark('teh')] })
+    expect(rec.marks).toEqual([['p1', [mark('teh')]]])
+    // Marks are a reading OF the container, not a change TO it.
+    expect(rec.seen).toHaveLength(1)
+    expect(model.getBlock('p1')).toEqual({ id: 'p1', kind: 'prose', attrs: { content: 'hello', id: 'p1' } })
+  })
+
+  it('REPLACES the block\'s previous set rather than adding to it', () => {
+    const model = seeded()
+    const rec = marksRecorder()
+    model.subscribe(rec)
+    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [mark('teh'), mark('adn')] })
+    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [mark('adn')] })
+    expect(rec.marks[1]).toEqual(['p1', [mark('adn')]])
+  })
+
+  it('an empty array is the CLEAR — a corrected block loses its marks', () => {
+    const model = seeded()
+    const rec = marksRecorder()
+    model.subscribe(rec)
+    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [mark('teh')] })
+    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [] })
+    expect(rec.marks[1]).toEqual(['p1', []])
+
+    // …and the cleared set is not replayed to whoever subscribes next.
+    const later = marksRecorder()
+    model.subscribe(later)
+    expect(later.marks).toEqual([])
+  })
+
+  it('replays every held set at subscribe — bootstrap, the way onChanged is', () => {
+    const model = seeded()
+    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [mark('teh')] })
+    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'c1', marks: [mark('adn')] })
+    const rec = marksRecorder()
+    model.subscribe(rec)
+    expect(rec.marks).toEqual([['p1', [mark('teh')]], ['c1', [mark('adn')]]])
+  })
+
+  it('keeps marks for a block the container does not hold yet — a push can outrun the load', () => {
+    const model = new ContainerModel('doc-1')
+    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [mark('teh')] })
+    model.applyLoad({ uuid: 'doc-1', blocks: [{ id: 'p1', kind: 'prose', attrs: { content: 'teh' } }] })
+    const rec = marksRecorder()
+    model.subscribe(rec)
+    expect(rec.marks).toEqual([['p1', [mark('teh')]]])
+  })
+
+  it('retires a block\'s marks with the block, on remove and on a transform\'s new identity', () => {
+    const model = seeded()
+    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [mark('teh')] })
+    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'c1', marks: [mark('adn')] })
+    model.applyFrame({ type: DocumentFrame.REMOVE_BLOCK, id: 'p1' })
+    model.applyFrame({ type: DocumentFrame.REPLACE_BLOCK, oldId: 'c1', newId: 'c2', newKind: 'diagram', attrs: {} })
+    const rec = marksRecorder()
+    model.subscribe(rec)
+    expect(rec.marks).toEqual([])
+  })
+
+  it('drops a blockId-less frame, and a listener that cannot draw marks is not asked to', () => {
+    const model = seeded()
+    const plain = recorder()
+    model.subscribe(plain)
+    expect(() => model.applyFrame({ type: DocumentFrame.SPELL_MARKS, marks: [mark('teh')] })).not.toThrow()
+    expect(() => model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [mark('teh')] })).not.toThrow()
+    expect(plain.seen).toHaveLength(1)
+  })
+
+  it('isolates a listener that throws on the marks cue', () => {
+    const model = seeded()
+    const bad = { onChanged: () => {}, onMarksChanged: () => { throw new Error('boom') } }
+    const good = marksRecorder()
+    model.subscribe(bad)
+    model.subscribe(good)
+    expect(() => model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [mark('teh')] })).not.toThrow()
+    expect(good.marks).toHaveLength(1)
+  })
+
+  it('hands out frozen marks it owns every byte of', () => {
+    const model = seeded()
+    const rec = marksRecorder()
+    model.subscribe(rec)
+    const sent = [mark('teh')]
+    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: sent })
+    const [, held] = rec.marks[0]
+    expect(Object.isFrozen(held)).toBe(true)
+    expect(Object.isFrozen(held[0])).toBe(true)
+    sent[0].quote = 'mutated'
+    expect(held[0].quote).toBe('teh')
   })
 })
 
@@ -335,13 +468,13 @@ describe('ContainerModel subscription', () => {
     const model = seeded()
     const rec = recorder()
     model.subscribe(rec)
-    expect(rec.seen).toEqual([{ blockIds: ['p1', 'c1', 'a1'], orderChanged: true }])
+    expect(rec.seen).toEqual([{ blockIds: ['p1', 'c1', 'a1'], orderChanged: true, replaced: [] }])
   })
 
   it('cues an empty container too, so a lens has one paint path', () => {
     const rec = recorder()
     new ContainerModel('doc-1').subscribe(rec)
-    expect(rec.seen).toEqual([{ blockIds: [], orderChanged: true }])
+    expect(rec.seen).toEqual([{ blockIds: [], orderChanged: true, replaced: [] }])
   })
 
   it('refuses a listener that does not implement onChanged', () => {
@@ -402,7 +535,7 @@ describe('ContainerModel cue shape — origin-blind', () => {
   // one would start treating its own effects differently from everyone else's.
   // The first frame carries a correlation field to prove the fold copies nothing
   // off a frame but ids and order.
-  it('emits exactly blockIds and orderChanged, whatever the frame carried', () => {
+  it('emits exactly blockIds, orderChanged and replaced, whatever the frame carried', () => {
     const model = seeded()
     const rec = recorder()
     model.subscribe(rec)
@@ -415,7 +548,7 @@ describe('ContainerModel cue shape — origin-blind', () => {
 
     expect(rec.seen).toHaveLength(7) // the subscribe cue, then one per fold
     for (const change of rec.seen) {
-      expect(Object.keys(change).sort()).toEqual(['blockIds', 'orderChanged'])
+      expect(Object.keys(change).sort()).toEqual(['blockIds', 'orderChanged', 'replaced'])
     }
   })
 })

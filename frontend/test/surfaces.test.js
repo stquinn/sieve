@@ -443,7 +443,7 @@ describe('WysiwygSurface.applyContainerChange (placement, undo-sacred)', () => {
     return s
   }
 
-  const cue = (blockIds, orderChanged = false) => ({ blockIds, orderChanged })
+  const cue = (blockIds, orderChanged = false, replaced = []) => ({ blockIds, orderChanged, replaced })
 
   it('a block the doc does not hold is PLACED at its container index, TRACKED', () => {
     const ed = fakeEditorOver(fxSchema, [build.p('one', 'b1')])
@@ -479,6 +479,24 @@ describe('WysiwygSurface.applyContainerChange (placement, undo-sacred)', () => {
     }))
     expect(ed.dispatched.length).toBe(0)
     expect(ed.calls.find((c) => c[0] === 'insertContentAt')).toBeUndefined()
+  })
+
+  // The skip above is about text the lens is legitimately AHEAD of Go on. A
+  // REPLACED block is the other case entirely: Go executed the rewrite — a
+  // spelling correction the user asked for — so its text is the authoritative
+  // one, and prose is placed by id like every other kind.
+  it('a prose block the container REPLACED is placed by id — TRACKED, so the rewrite is undoable', () => {
+    const held = build.p('teh cat', 'p1')
+    const ed = fakeEditorOver(fxSchema, [held])
+    const s = painted(ed)
+    s.applyContainerChange(cue(['p1'], false, ['p1']), containerOf(['p1'], {
+      p1: { id: 'p1', kind: 'prose', attrs: { id: 'p1', content: 'the cat' } },
+    }))
+    const ins = ed.calls.find((c) => c[0] === 'insertContentAt')
+    expect(ins).toBeTruthy()
+    expect(ins[1]).toEqual({ from: 0, to: held.nodeSize }) // replace-by-id range
+    expect(JSON.stringify(ins[2])).toContain('the cat')    // the server's content, not the doc's
+    expect(ed.dispatched.length).toBe(0)                   // tracked command, never addToHistory:false
   })
 
   // A reference declaring a `rel` is a QUESTION ELEMENT — the role stamp a

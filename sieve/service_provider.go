@@ -26,6 +26,7 @@ type ServiceProvider struct {
 	Prompts     *ai.PromptService
 	AI          *ai.AIService
 	Editor      *editor.EditorService
+	Spell       *editor.SpellChecker
 	Jobs        *services.JobTracker
 	Engine      *services.JobEngine
 	Commands    *command.Registry
@@ -162,6 +163,13 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 		s.Editor.SetSavedNotifier(s.SavedNotifier)
 	}
 	s.Editor.SetJobs(s.Jobs) // s.Jobs is the tracker main() builds and wires into the broadcast before startup — no hub exists
+	// Spelling reads the open documents the Editor owns, so it is built with it
+	// and after it. The dictionary parse happens here, once.
+	s.Spell = editor.NewSpellChecker(s.Editor, services.NewSpellService(s.State))
+	s.Spell.SetEnabled(settings.SpellcheckEnabled())
+	// The Editor observes it back so a live op enqueues a recheck the same way
+	// the open-time seed does — one drain path for both.
+	s.Editor.SetSpellChecker(s.Spell)
 	// Communal JobEngine + Editor wiring. Built HERE (not in newAPIHandler) because
 	// it needs settings (State) and the Editor, which only exist after Init. The
 	// "ai" pool defaults to 3 (spec Global Constraint); explicit worker_pools config

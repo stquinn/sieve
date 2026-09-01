@@ -105,7 +105,7 @@ describe.each(ARRANGEMENTS)('$name provider — the read minimum', ({ make }) =>
   it('cues a new subscriber with the whole container — bootstrap IS the first onChanged', () => {
     const lens = recorder()
     provider.subscribe(lens)
-    expect(lens.cues).toEqual([{ blockIds: ['p1', 'c1', 'p2'], orderChanged: true }])
+    expect(lens.cues).toEqual([{ blockIds: ['p1', 'c1', 'p2'], orderChanged: true, replaced: [] }])
   })
 
   it('stops cueing an unsubscribed listener', () => {
@@ -182,7 +182,7 @@ describe('the wire-backed provider follows — an intent reaches the lens as Go\
 
     echo({ type: 'insert-block', id: 'p3', kind: 'prose', attrs: { content: 'typed' }, index: 1 })
     expect(provider.getOrder()).toEqual(['p1', 'p3', 'c1', 'p2'])
-    expect(lens.cues).toEqual([{ blockIds: ['p3'], orderChanged: true }])
+    expect(lens.cues).toEqual([{ blockIds: ['p3'], orderChanged: true, replaced: [] }])
   })
 })
 
@@ -200,7 +200,7 @@ describe('the in-memory provider IS the authority — a draft has nothing behind
   it('applies an add and echoes the SAME cue the wire path produces', () => {
     provider.requestAddBlock('prose', { content: 'typed', id: 'p3' }, 'p1')
     expect(provider.getOrder()).toEqual(['p1', 'p3', 'c1', 'p2'])
-    expect(lens.cues).toEqual([{ blockIds: ['p3'], orderChanged: true }])
+    expect(lens.cues).toEqual([{ blockIds: ['p3'], orderChanged: true, replaced: [] }])
     expect(provider.getBlock('p3')).toEqual({ id: 'p3', kind: 'prose', attrs: { content: 'typed', id: 'p3' } })
   })
 
@@ -231,19 +231,19 @@ describe('the in-memory provider IS the authority — a draft has nothing behind
   it('MERGES a set-block patch — a delta never erases the keys it omits', () => {
     provider.requestSetBlock('c1', { source: 'x=2' })
     expect(provider.getBlock('c1').attrs).toEqual({ id: 'c1', source: 'x=2' })
-    expect(lens.cues).toEqual([{ blockIds: ['c1'], orderChanged: false }])
+    expect(lens.cues).toEqual([{ blockIds: ['c1'], orderChanged: false, replaced: [] }])
   })
 
   it('removes a block and says the order changed', () => {
     provider.requestRemoveBlock('c1')
     expect(provider.getOrder()).toEqual(['p1', 'p2'])
-    expect(lens.cues).toEqual([{ blockIds: ['c1'], orderChanged: true }])
+    expect(lens.cues).toEqual([{ blockIds: ['c1'], orderChanged: true, replaced: [] }])
   })
 
   it('installs a complete new order', () => {
     provider.requestSetOrder(['p2', 'p1', 'c1'])
     expect(provider.getOrder()).toEqual(['p2', 'p1', 'c1'])
-    expect(lens.cues).toEqual([{ blockIds: [], orderChanged: true }])
+    expect(lens.cues).toEqual([{ blockIds: [], orderChanged: true, replaced: [] }])
   })
 
   it('records a flushed buffer under the attr the kind keeps its text in', () => {

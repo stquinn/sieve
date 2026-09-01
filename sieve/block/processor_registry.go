@@ -3,11 +3,13 @@ package block
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 
 	"sieve/sieve/ai"
+	"sieve/sieve/domain"
 	"sieve/sieve/fencedblock"
 )
 
@@ -729,6 +731,69 @@ func MaterialiseEntries(uuid string, entries []ContentEntry) []ContentEntry {
 // an element lands in what the parent persists; the list itself is a fresh read.
 type BlockParent interface {
 	Children(blk *SieveBlock) []*SieveBlock
+}
+
+// TextBearer is the optional capability a processor implements when its block's
+// payload holds human-readable text a text service may read. Implementing it IS
+// the participation predicate: nothing enumerates the kinds that bear text — a
+// caller asks the registry (TextBearerFor) and a kind that answers takes part.
+//
+// NormalisedText returns the block's text as segments, in the processor's own
+// order. Each segment's Text must be the STORED bytes verbatim: the offsets and
+// quotes a consumer derives are anchored in those bytes, so trimming, unescaping
+// or re-rendering on the way out silently invalidates every mark made from them.
+// A processor mints its own locators and is the only thing that reads one back.
+type TextBearer interface {
+	NormalisedText(blk *SieveBlock) []domain.TextSegment
+}
+
+// TextBearerFor returns kind's processor as a TextBearer, or false when the kind
+// bears no readable text (an unregistered kind included). It is the whole
+// participation test — a caller that asks this never names a kind.
+func TextBearerFor(kind string) (TextBearer, bool) {
+	bearer, ok := GetProcessor(kind).(TextBearer)
+	return bearer, ok
+}
+
+// ErrTextStale is what UpdateText returns when the run it was asked to replace
+// is no longer there: the quote does not occur in the located segment as many
+// times as the requested occurrence demands. It is a normal outcome, not a
+// fault — the text moved on between the read that produced the anchor and the
+// write that acts on it — and the block is left exactly as it was. Callers
+// test for it with errors.Is.
+var ErrTextStale = errors.New("text: the quote no longer resolves at its occurrence")
+
+// TextUpdater is the optional capability a processor implements when text a
+// TextBearer handed out can be written back. Implementing it IS the
+// participation predicate, exactly as TextBearer's is: a caller asks the
+// registry (TextUpdaterFor) rather than naming the kinds that accept edits.
+//
+// UpdateText replaces one anchored run of blk's text with replacement, writing
+// the result into blk's payload. locator names the segment, and only the
+// processor that minted it may read it.
+//
+// THE ANCHOR IS QUOTE PLUS OCCURRENCE, AND IT IS RESOLVED IN THE SEGMENT'S
+// CURRENT TEXT. A processor finds occurrence N of quote where it NOW sits and
+// writes there, so an edit that displaced it since the anchor was taken costs
+// nothing; if occurrence N is not there at all, the processor returns
+// ErrTextStale and changes NOTHING. start and end are the offsets the requester
+// last saw: a hint a processor may use to narrow a search in a large payload,
+// never a range it may write to on their word alone.
+//
+// A processor expresses the edit by WRITING payload values on blk. Its caller
+// merges the resulting attrs, so a value that is not written is left as it was
+// and a key cannot be removed this way.
+type TextUpdater interface {
+	UpdateText(blk *SieveBlock, locator string, start, end int, quote string, occurrence int, replacement string) error
+}
+
+// TextUpdaterFor returns kind's processor as a TextUpdater, or false when the
+// kind's text cannot be written back (an unregistered kind included). A kind
+// may bear text without accepting edits to it; the two capabilities are asked
+// for separately.
+func TextUpdaterFor(kind string) (TextUpdater, bool) {
+	updater, ok := GetProcessor(kind).(TextUpdater)
+	return updater, ok
 }
 
 // MarkdownContenter is the optional interface a processor implements when a given

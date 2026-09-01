@@ -30,6 +30,7 @@ function stubBinding(overrides = {}) {
     setContents: vi.fn(() => Promise.resolve()),
     flushContents: vi.fn(),
     exportAs: vi.fn(() => Promise.resolve('# doc')),
+    replaceText: vi.fn(() => Promise.resolve('ok')),
   }, overrides)
 }
 
@@ -176,6 +177,55 @@ describe('BlockProviderAdapter', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       provider.requestRetry('ghost')
       expect(binding.retry).not.toHaveBeenCalled()
+      warn.mockRestore()
+    })
+  })
+
+  describe('requestReplaceText', () => {
+    const anchor = { locator: 'content', quote: 'teh', occurrence: 1, start: 12, end: 15, class: 'prose', suggestions: ['the'] }
+
+    it('sends the anchor as the mark carried it, with what belongs in its place', () => {
+      provider.requestReplaceText('p1', anchor, 'the')
+      expect(binding.replaceText).toHaveBeenCalledWith({
+        blockId: 'p1', locator: 'content', quote: 'teh', occurrence: 1, start: 12, end: 15, replacement: 'the',
+      })
+    })
+
+    it('writes NOTHING to the model — the correction arrives as Go\'s own echo', () => {
+      provider.requestReplaceText('p1', anchor, 'the')
+      expect(snapshot(model)).toEqual(before)
+    })
+
+    it('an empty replacement is a deletion, not a missing field', () => {
+      provider.requestReplaceText('p1', anchor, '')
+      expect(binding.replaceText.mock.calls[0][0].replacement).toBe('')
+    })
+
+    it('drops an id this container does not hold', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      provider.requestReplaceText('ghost', anchor, 'the')
+      expect(binding.replaceText).not.toHaveBeenCalled()
+      warn.mockRestore()
+    })
+
+    it('refuses an anchor with no quote — there is nothing to resolve', () => {
+      expect(() => provider.requestReplaceText('p1', /** @type {any} */ ({ locator: 'content' }), 'the'))
+        .toThrow(ContractViolation)
+      expect(binding.replaceText).not.toHaveBeenCalled()
+    })
+
+    it('is SILENT on a stale anchor, and warns only on a failure', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const stale = seeded()
+      const staleBinding = stubBinding({ replaceText: vi.fn(() => Promise.resolve('stale')) })
+      new BlockProviderAdapter(stale, /** @type {any} */ (staleBinding)).requestReplaceText('p1', anchor, 'the')
+      await Promise.resolve()
+      expect(warn).not.toHaveBeenCalled()
+
+      const failed = stubBinding({ replaceText: vi.fn(() => Promise.resolve('error')) })
+      new BlockProviderAdapter(seeded(), /** @type {any} */ (failed)).requestReplaceText('p1', anchor, 'the')
+      await Promise.resolve()
+      expect(warn).toHaveBeenCalled()
       warn.mockRestore()
     })
   })

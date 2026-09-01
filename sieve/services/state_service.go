@@ -141,6 +141,40 @@ func (ss *StateService) LoadSettings() domain.Settings {
 	return *ss.cachedSettings
 }
 
+// userDictionaryFile is where the words the user taught the spell checker live.
+// A LINE-PER-WORD text file beside settings.json rather than a settings key: it
+// is a growing body of data the user may want to paste into, not a knob, and
+// settings.json is rewritten wholesale by the settings panel.
+const userDictionaryFile = "spell-dictionary.txt"
+
+// LoadUserDictionary returns the words the user has taught the spell checker.
+// Blank lines are skipped and a missing file is an empty dictionary, not an
+// error: never having taught it anything is the ordinary case.
+func (ss *StateService) LoadUserDictionary() []string {
+	item, err := ss.st.Load(domain.State, userDictionaryFile)
+	if err != nil {
+		return nil
+	}
+	var words []string
+	for _, line := range strings.Split(string(item.Body()), "\n") {
+		if word := strings.TrimSpace(line); word != "" {
+			words = append(words, word)
+		}
+	}
+	return words
+}
+
+// SaveUserDictionary replaces the file with words, one per line. The caller
+// owns the set and its order — this writes what it is given.
+func (ss *StateService) SaveUserDictionary(words []string) error {
+	body := ""
+	if len(words) > 0 {
+		body = strings.Join(words, "\n") + "\n"
+	}
+	_, err := ss.st.CreateText(domain.State, userDictionaryFile, []byte(body))
+	return err
+}
+
 // SaveSettings persists settings to the Store, replacing any existing file.
 func (ss *StateService) SaveSettings(settings domain.Settings) error {
 	data, err := settings.Marshal()

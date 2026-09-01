@@ -38,6 +38,30 @@ import { listRegisteredLanguages } from '../../renderers/highlighting.js'
    *  no token, so it is handed an empty one and clearing it writes nothing. */
   var NO_TOKEN = Object.freeze({ start: 0, end: 0, prefix: '' })
 
+  /** How many of a mark's corrections stand IN the menu. A spelling list is read
+   *  at a glance or not at all, and the rest of the menu has to stay reachable;
+   *  the offers past this hang in a flyout rather than being dropped. */
+  var SPELLING_OFFERS = 3
+
+  /** The mark this menu is about, or null. The caret sits on one word, but a
+   *  caret between two marked words touches both — so the one carrying
+   *  corrections wins, and the first is the fallback when neither does. A mount
+   *  that cannot be written to this way is not asked at all.
+   *  @param {any} lens @returns {any} */
+  function spellingMark(lens) {
+    if (!lens || typeof lens.getSelectionContext !== 'function' || typeof lens.replaceText !== 'function') return null
+    var marks = lens.getSelectionContext().textMarks || []
+    return marks.filter(function (m) { return m.suggestions && m.suggestions.length })[0] || marks[0] || null
+  }
+
+  /** The host's spelling verbs — ignore and learn are workspace-wide, so they
+   *  belong to the workspace and not to any lens.
+   *  @returns {any} */
+  function spellVerbs() {
+    var ws = window.sieveWorkspace
+    return (ws && ws.spell) || null
+  }
+
   /** The innermost ancestor of `$pos` whose type is one of `names`, with the
    *  document position it starts at — or null when the caret is in none of them.
    *  Resolved from the DOCUMENT: what the caret is IN is a fact the document
@@ -439,6 +463,48 @@ import { listRegisteredLanguages } from '../../renderers/highlighting.js'
     })
 
     var items = []
+    var lens = mountLens(editor)
+
+    // SPELLING LEADS THE MENU. The right-click above has already put the caret
+    // in the word under the pointer, so the marks the LENS advertises for that
+    // caret are the ones this menu is about: no position arithmetic here, and no
+    // DOM read.
+    //
+    // The corrections are the MARK'S. Nothing here holds a dictionary, so a mark
+    // that came with none offers no replacements — but it still offers the two
+    // verbs about the word itself, because "this is a word" is an answer a
+    // reader has for exactly the word nothing was close to.
+    //
+    // A menu is read at a glance: the first few corrections stand in the menu
+    // and the rest hang in the flyout every other long list here uses.
+    var spelling = spellingMark(lens)
+    if (spelling) {
+      var offers = spelling.suggestions || []
+      var replace = function (word) {
+        return { icon: IC.check, label: "Replace with '" + word + "'", action: function () {
+          lens.replaceText(spelling, word)
+          editor.commands.focus()
+        }}
+      }
+      offers.slice(0, SPELLING_OFFERS).forEach(function (word) { items.push(replace(word)) })
+      if (offers.length > SPELLING_OFFERS) {
+        items.push({ label: 'More suggestions', children: offers.slice(SPELLING_OFFERS).map(replace) })
+      }
+      if (offers.length) items.push({ type: 'divider' })
+      // Both verbs are the WORKSPACE's: a word accepted here is accepted in
+      // every document open beside this one, so neither goes through the lens.
+      items.push({ label: 'Ignore', action: function () {
+        var verbs = spellVerbs()
+        if (verbs) verbs.ignore(spelling.quote)
+        editor.commands.focus()
+      }})
+      items.push({ label: 'Add to dictionary', action: function () {
+        var verbs = spellVerbs()
+        if (verbs) verbs.learn(spelling.quote)
+        editor.commands.focus()
+      }})
+      items.push({ type: 'divider' })
+    }
 
     if (hasSelection) {
       items.push({ icon: IC.copy, label: 'Copy', action: function () {
@@ -499,7 +565,6 @@ import { listRegisteredLanguages } from '../../renderers/highlighting.js'
     // title comes from the MARK under the caret, which is drawn from the manifest,
     // so a mount holding no manifest marks nothing and is offered nothing: the
     // gate is the data, not a branch.
-    var lens = mountLens(editor)
     var mention = (lens && typeof lens.mentionTitleAt === 'function')
       ? lens.mentionTitleAt(sel.from) : null
     if (mention && lens && typeof lens.requestDetach === 'function') {

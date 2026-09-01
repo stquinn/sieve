@@ -47,6 +47,8 @@ describe('SelectionModel — initial context (P3.A)', () => {
       focusZone: 'editor',
       // P3.E: no block hosts an inner cursor at 'none'.
       blockCursor: null,
+      // The host's text marks under the coordinate: none, with nothing selected.
+      textMarks: [],
       // P3.C: 'none'/initial ⇒ the document target (label ALWAYS present).
       target: { kind: 'document', ref: 'doc', range: null, label: 'Document' },
       // issue #51: no scroll report has arrived yet.
@@ -291,6 +293,47 @@ describe('SelectionModel — scroll (issue #51: caret-class, pullable not pushed
     m.setScroll(500)
     m.setFocusZone('ask')
     expect(m.getContext().scroll).toBe(500)
+  })
+})
+
+describe('SelectionModel — the host text marks under the coordinate', () => {
+  const teh = { blockId: 'b1', locator: 'content', quote: 'teh', occurrence: 0, start: 2, end: 5, class: 'prose', suggestions: ['the'] }
+
+  it('carries what the surface fed, marks and all', () => {
+    const m = new SelectionModel(UUID)
+    m.ingest(raw({ textMarks: [teh] }))
+    expect(m.getContext().textMarks).toEqual([teh])
+  })
+
+  it('reads a descriptor that names none as none — a surface that draws no marks', () => {
+    const m = new SelectionModel(UUID)
+    m.ingest(raw())
+    expect(m.getContext().textMarks).toEqual([])
+  })
+
+  it('is CARET-CLASS: marks alone changing updates the pullable context and does NOT emit', () => {
+    const m = new SelectionModel(UUID)
+    m.ingest(raw({ textMarks: [teh] }))
+    const fn = vi.fn()
+    m.onUpdate(fn)
+    m.ingest(raw({ textMarks: [] }))
+    expect(fn).not.toHaveBeenCalled()
+    expect(m.getContext().textMarks).toEqual([])
+  })
+
+  it('rides setFocusZone through unchanged — a zone change is not a new reading', () => {
+    const m = new SelectionModel(UUID)
+    m.ingest(raw({ textMarks: [teh] }))
+    m.setFocusZone('ask')
+    expect(m.getContext().textMarks).toEqual([teh])
+  })
+
+  it('freezes the list and each mark in it, so a holder cannot edit a pulled snapshot', () => {
+    const m = new SelectionModel(UUID)
+    m.ingest(raw({ textMarks: [{ ...teh }] }))
+    const marks = m.getContext().textMarks
+    expect(Object.isFrozen(marks)).toBe(true)
+    expect(Object.isFrozen(marks[0])).toBe(true)
   })
 })
 

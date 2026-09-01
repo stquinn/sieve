@@ -439,6 +439,36 @@ func (p *DiagramProcessor) fence(blk block.SieveBlock, src string) string {
 	return "```" + lang + "\n" + src + "\n```"
 }
 
+// Locators a diagram's segments are named by. A diagram's payload is its
+// script and, when it has been given one, its title.
+const (
+	DiagramSourceLocator = "source"
+	DiagramTitleLocator  = "title"
+)
+
+// NormalisedText makes a diagram a TextBearer. Its script is CODE, not prose —
+// a spell checker reads neither, and says so by class rather than by naming the
+// kind — and a title it carries is a label. Both segments are the stored bytes
+// verbatim, so an offset taken from one addresses the attr it came from.
+func (p *DiagramProcessor) NormalisedText(blk *block.SieveBlock) []domain.TextSegment {
+	if blk == nil {
+		return nil
+	}
+	segments := []domain.TextSegment{{
+		Locator: DiagramSourceLocator,
+		Text:    p.RawContent(*blk),
+		Class:   domain.TextClassCode,
+	}}
+	if title, _ := blk.Attrs["title"].(string); title != "" {
+		segments = append(segments, domain.TextSegment{
+			Locator: DiagramTitleLocator,
+			Text:    title,
+			Class:   domain.TextClassLabel,
+		})
+	}
+	return segments
+}
+
 // RawContent returns the source text this block was built from (block.RawContenter).
 func (p *DiagramProcessor) RawContent(blk block.SieveBlock) string {
 	src, _ := blk.Attrs["source"].(string)

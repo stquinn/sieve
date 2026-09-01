@@ -107,6 +107,7 @@ func NewWsHandler(sp *sieve.ServiceProvider, broadcast *WorkspaceBroadcast, toke
 		protocol.TypeDetectExtractions: h.handleDetectExtractions,
 		protocol.TypeExport:            h.handleExport,
 		protocol.TypeFocus:             h.handleFocus,
+		protocol.TypeTextReplace:       h.handleTextReplace,
 	}
 	h.workspaceFrames = map[string]frameHandler{
 		protocol.TypePing:           h.handlePing,
@@ -115,6 +116,9 @@ func NewWsHandler(sp *sieve.ServiceProvider, broadcast *WorkspaceBroadcast, toke
 		protocol.TypeMentionQuery:   h.handleMentionQuery,
 		protocol.TypeMentionResolve: h.handleMentionResolve,
 		protocol.TypeSessionScroll:  h.handleSessionScroll,
+		protocol.TypeSpellIgnore:    h.handleSpellIgnore,
+		protocol.TypeSpellLearn:     h.handleSpellLearn,
+		protocol.TypeSpellEnable:    h.handleSpellEnable,
 	}
 	return h
 }
@@ -139,7 +143,7 @@ func (h *WsHandler) isMutating(frameType string) bool {
 	switch frameType {
 	case protocol.TypeDocUpdate, protocol.TypeBlockOp, protocol.TypeExtract,
 		protocol.TypeRetryBlockJob, protocol.TypeEnterMarkdown, protocol.TypeEnterWysiwyg,
-		protocol.TypePaste:
+		protocol.TypePaste, protocol.TypeTextReplace:
 		return true
 	default:
 		return false
@@ -456,6 +460,15 @@ func (h *WsHandler) handleDocumentWS(w http.ResponseWriter, r *http.Request) {
 		logger.Warn("ws: could not open shadow", "uuid", uuid, "err", err)
 	}
 
+	// Spelling is a server-initiated render-back, so it registers the same way the
+	// block lifecycle does and pushes through the same owner path. It runs off the
+	// read loop: a document opens and paints without waiting on a whole-document
+	// check, and marks arrive when they arrive.
+	if h.ServiceProvider.Spell != nil {
+		h.ServiceProvider.Spell.SetNotifier(h)
+		go h.ServiceProvider.Spell.CheckAndPush(uuid)
+	}
+
 	h.readLoop(conn, protocol.ChannelDocument, h.documentFrames, ch, uuid)
 }
 
@@ -509,6 +522,30 @@ func (h *WsHandler) handleBlockOp(f inboundFrame) {
 	}
 	if msg.OpID != "" {
 		f.reply(protocol.NewBlockOpAckFrame(msg.OpID, err))
+	}
+}
+
+// handleTextReplace applies one anchored text edit. The edited block reaches
+// the client as the authoritative block through the replace-by-id render-back
+// the editor fires — nothing about the block travels in the ack, which reports
+// only the outcome.
+//
+// A stale anchor is answered with the ack alone: the run the client pointed at
+// is gone, which is news about the client's own view rather than a fault, so it
+// draws no error frame.
+func (h *WsHandler) handleTextReplace(f inboundFrame) {
+	var msg protocol.TextReplaceFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeTextReplace, err)
+		return
+	}
+	err := h.ServiceProvider.Editor.ReplaceText(f.uuid, msg.Edit())
+	if err != nil && !errors.Is(err, block.ErrTextStale) {
+		logger.Warn("ws: text-replace failed", "uuid", f.uuid, "block", msg.BlockID, "err", err)
+		f.reply(protocol.NewErrorFrame(fmt.Sprintf("text-replace failed: %v", err)))
+	}
+	if msg.OpID != "" {
+		f.reply(protocol.NewTextReplaceAckFrame(msg.OpID, err))
 	}
 }
 
@@ -631,6 +668,12 @@ func (h *WsHandler) OnBlockRemoved(uuid, blockID string) {
 // OnOrderChanged implements block.BlockLifecycleListener.
 func (h *WsHandler) OnOrderChanged(uuid string, order []string) {
 	h.sendTo(uuid, protocol.NewOrderChangedFrame(order))
+}
+
+// SpellMarks implements editor.SpellMarksNotifier. Marks are a render-back, not
+// an ack — nobody asked for them — so they go to uuid's registered owner.
+func (h *WsHandler) SpellMarks(uuid, blockID string, marks []domain.TextMark) {
+	h.sendTo(uuid, protocol.NewSpellMarksFrame(blockID, marks))
 }
 
 // Either way the created block reaches the client as a render-back
@@ -803,6 +846,51 @@ func (h *WsHandler) handleSessionScroll(f inboundFrame) {
 			_ = h.ServiceProvider.State.SaveSession(session)
 			return
 		}
+	}
+}
+
+// handleSpellIgnore and handleSpellLearn accept one word — for this run, or for
+// good. Both answer nothing: the effect a client can see is the marks that
+// follow on each document's own channel, pushed for every open document rather
+// than only the one the word was ignored in.
+func (h *WsHandler) handleSpellIgnore(f inboundFrame) {
+	var msg protocol.SpellIgnoreFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeSpellIgnore, err)
+		return
+	}
+	if h.ServiceProvider.Spell != nil {
+		h.ServiceProvider.Spell.Ignore(msg.Word)
+	}
+}
+
+func (h *WsHandler) handleSpellLearn(f inboundFrame) {
+	var msg protocol.SpellLearnFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeSpellLearn, err)
+		return
+	}
+	if h.ServiceProvider.Spell != nil {
+		h.ServiceProvider.Spell.Learn(msg.Word)
+	}
+}
+
+// handleSpellEnable persists the toggle and applies it. The write comes FIRST:
+// the setting is what a restart reads, and applying a state that failed to
+// persist would leave the toolbar and the file disagreeing after one.
+func (h *WsHandler) handleSpellEnable(f inboundFrame) {
+	var msg protocol.SpellEnableFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeSpellEnable, err)
+		return
+	}
+	if state := h.ServiceProvider.State; state != nil {
+		if err := state.SaveSettings(state.LoadSettings().WithSpellcheck(msg.Enabled)); err != nil {
+			logger.Error("ws: could not persist the spellcheck setting", "err", err)
+		}
+	}
+	if h.ServiceProvider.Spell != nil {
+		h.ServiceProvider.Spell.SetEnabled(msg.Enabled)
 	}
 }
 

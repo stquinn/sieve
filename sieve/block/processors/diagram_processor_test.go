@@ -2,7 +2,9 @@ package processors
 
 import (
 	"context"
+	"reflect"
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"strings"
 	"testing"
 	"time"
@@ -168,5 +170,51 @@ func TestDiagramProcessor_DescribeJob_noJob(t *testing.T) {
 	// InitAttrs, so DescribeJob returns nil (never dispatched, never submitted).
 	if job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "test", Block: blk}); job != nil {
 		t.Errorf("diagram must return a nil job, got %+v", job)
+	}
+}
+
+// What a diagram projects into the text substrate. Its script is CODE, so a
+// reader that only reads prose leaves it alone; a title, when the block carries
+// one, is a label beside it. Both are the stored bytes.
+func TestDiagramProcessor_NormalisedText(t *testing.T) {
+	p := NewDiagramProcessor(block.BlockServices{})
+	const source = "graph TD\n  A[recieve] --> B[teh end]\n"
+
+	cases := []struct {
+		name  string
+		attrs map[string]interface{}
+		want  []domain.TextSegment
+	}{
+		{
+			name:  "the script alone",
+			attrs: map[string]interface{}{"source": source},
+			want:  []domain.TextSegment{{Locator: DiagramSourceLocator, Text: source, Class: domain.TextClassCode}},
+		},
+		{
+			name:  "a titled diagram adds the label",
+			attrs: map[string]interface{}{"source": source, "title": "Recieving pipeline"},
+			want: []domain.TextSegment{
+				{Locator: DiagramSourceLocator, Text: source, Class: domain.TextClassCode},
+				{Locator: DiagramTitleLocator, Text: "Recieving pipeline", Class: domain.TextClassLabel},
+			},
+		},
+		{
+			name:  "an empty title is no segment, not an empty one",
+			attrs: map[string]interface{}{"source": source, "title": ""},
+			want:  []domain.TextSegment{{Locator: DiagramSourceLocator, Text: source, Class: domain.TextClassCode}},
+		},
+		{
+			name:  "a sourceless diagram still bears its one segment",
+			attrs: map[string]interface{}{},
+			want:  []domain.TextSegment{{Locator: DiagramSourceLocator, Text: "", Class: domain.TextClassCode}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			blk := block.SieveBlock{Kind: "diagram", Attrs: tc.attrs}
+			if got := p.NormalisedText(&blk); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("NormalisedText = %#v, want %#v", got, tc.want)
+			}
+		})
 	}
 }

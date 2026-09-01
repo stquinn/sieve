@@ -43,6 +43,7 @@ const DOCUMENT_TARGET = Object.freeze({ kind: 'document', ref: 'doc', range: nul
  * @property {string|null} ref                                    block ref/anchor (ai-block re-chain)
  * @property {'editor'|'block-inner'|'ask'|'markdown'|'outside'} focusZone   doc selection persists across 'ask'
  * @property {object|null} blockCursor                            FORWARD SEAM: the caret inside a block whose editor is NOT ProseMirror. Nothing populates it; `null` in practice. OPAQUE + CARET-LIKE (excluded from the meaningful diff). See the module header.
+ * @property {ReadonlyArray<Record<string, any>>} textMarks       the host's text marks the surface DRAWS under this coordinate, each carrying its blockId. CARET-CLASS: it moves with the caret, so it is excluded from the meaningful diff and rides the pulled snapshot. `[]` from a surface that draws none.
  * @property {AiTarget} target                                    resolved AI target + its friendly label (ALWAYS present)
  * @property {number|null} scroll                                 the surface's scroller position: CARET-CLASS like blockCursor — excluded from the meaningful diff, updated SILENTLY via `setScroll` (never through `ingest`, so an unrelated caret move can't stomp it). Pullable, never pushed — pure scrolling must never broadcast a selection-update. `null` until the surface's first debounced report.
  */
@@ -63,6 +64,7 @@ const DOCUMENT_TARGET = Object.freeze({ kind: 'document', ref: 'doc', range: nul
  * @property {string|null} [blockKind]
  * @property {string|null} [ref]
  * @property {object|null} [blockCursor]
+ * @property {ReadonlyArray<Record<string, any>>} [textMarks]
  * @property {AiTarget} [target]
  */
 
@@ -100,6 +102,7 @@ export class SelectionModel {
       ref: null,
       focusZone: 'editor',
       blockCursor: null,
+      textMarks: [],
       target: DOCUMENT_TARGET,
       scroll: null,
     })
@@ -145,6 +148,7 @@ export class SelectionModel {
       ref: c.ref,
       focusZone: zone,
       blockCursor: c.blockCursor,
+      textMarks: c.textMarks,
       target: c.target,
       scroll: c.scroll,
     })
@@ -173,6 +177,7 @@ export class SelectionModel {
       ref: c.ref,
       focusZone: c.focusZone,
       blockCursor: c.blockCursor,
+      textMarks: c.textMarks,
       target: c.target,
       scroll: value,
     })
@@ -232,6 +237,7 @@ export class SelectionModel {
       ref: (raw.ref === undefined) ? null : raw.ref,
       focusZone: focusZone,
       blockCursor: (raw.blockCursor == null) ? null : raw.blockCursor,
+      textMarks: Array.isArray(raw.textMarks) ? raw.textMarks.slice() : [],
     // Default to the document target when a descriptor omits it, so `target` is
     // ALWAYS present.
       target: raw.target ? {
@@ -247,8 +253,9 @@ export class SelectionModel {
   }
 
   /**
-   * Deep-freezes a context — the object, `range`, `blockCursor`, `blockIds`, and
-   * `target` with its own `range` — so a holder cannot mutate a pulled snapshot.
+   * Deep-freezes a context — the object, `range`, `blockCursor`, `blockIds`,
+   * `textMarks` down to each mark, and `target` with its own `range` — so a
+   * holder cannot mutate a pulled snapshot.
    * @param {SelectionContext} ctx
    * @returns {Readonly<SelectionContext>}
    */
@@ -256,6 +263,8 @@ export class SelectionModel {
     if (ctx.range) Object.freeze(ctx.range)
     if (ctx.blockCursor) Object.freeze(ctx.blockCursor)
     Object.freeze(ctx.blockIds)
+    for (const mark of ctx.textMarks) Object.freeze(mark)
+    Object.freeze(ctx.textMarks)
     if (ctx.target) {
       if (ctx.target.range) Object.freeze(ctx.target.range)
       Object.freeze(ctx.target)

@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"sieve/logger"
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	lheur "sieve/sieve/lang"
 	"strings"
 	"time"
@@ -286,6 +287,36 @@ func (p *CodeBlockProcessor) DescribeJob(jctx block.JobContext) *block.Processor
 func (p *CodeBlockProcessor) RawContent(blk block.SieveBlock) string {
 	src, _ := blk.Attrs["source"].(string)
 	return src
+}
+
+// Locators a code block's segments are named by: its source and, when it has
+// been given one, the file it stands for.
+const (
+	CodeSourceLocator   = "source"
+	CodeFilenameLocator = "filename"
+)
+
+// NormalisedText makes a code block a TextBearer. Its source is CODE — a
+// spell checker reads prose and nothing else, and the class is how it knows to
+// leave a variable name alone — and a filename it carries is a label. Both
+// segments are the stored bytes verbatim.
+func (p *CodeBlockProcessor) NormalisedText(blk *block.SieveBlock) []domain.TextSegment {
+	if blk == nil {
+		return nil
+	}
+	segments := []domain.TextSegment{{
+		Locator: CodeSourceLocator,
+		Text:    p.RawContent(*blk),
+		Class:   domain.TextClassCode,
+	}}
+	if filename, _ := blk.Attrs["filename"].(string); filename != "" {
+		segments = append(segments, domain.TextSegment{
+			Locator: CodeFilenameLocator,
+			Text:    filename,
+			Class:   domain.TextClassLabel,
+		})
+	}
+	return segments
 }
 
 // ContentIsMarkdown reports whether this block's source is itself document

@@ -1,6 +1,6 @@
 // @ts-check
-// context-menu-structure.test.js — the menu's STRUCTURED sections (#118 3c): the
-// one-level flyout, the table verbs, and the fence's language.
+// context-menu-structure.test.js — the menu's STRUCTURED sections: the one-level
+// flyout, the spelling corrections, the table verbs, and the fence's language.
 //
 // WHAT THE CARET IS IN IS RESOLVED FROM THE DOCUMENT. The sections appear off a
 // resolved position's ancestors, never off the DOM under the pointer, so a doc
@@ -129,7 +129,7 @@ function stateWithCaret(doc, pos) {
  * menu is a caller of the pane's own verbs, so recording the chain IS the
  * assertion about what it does.
  */
-function paneOver(state) {
+function paneOver(state, host) {
   /** @type {string[]} */ const ran = []
   /** @type {any[]} */ const updates = []
   const chain = new Proxy({}, {
@@ -145,7 +145,7 @@ function paneOver(state) {
   return {
     ran,
     updates,
-    sieveHost: null,
+    sieveHost: host || null,
     state,
     view: { posAtCoords: () => null },
     isActive: () => false,
@@ -303,6 +303,140 @@ describe('the submenu primitive', () => {
     itemNamed(flyoutOf(row), 'Add Below').click()
     expect(pane.ran).toEqual(['addRowAfter'])
     expect(document.getElementById('sieve-context-menu')).toBeNull()
+  })
+})
+
+// The spelling section is the menu's only entry built from what the LENS
+// advertises rather than from the document, so the lens stands in as a stub: it
+// says which marks the caret sits on and records what it was asked to replace.
+// Whether those marks resolve in the drawn document is settled in
+// spell-marks.test.js — by the time one reaches an advertisement it has.
+
+/** A stub document-editor lens advertising `marks` under the caret.
+ *  @param {any[]} marks */
+function spellingLens(marks) {
+  const lens = {
+    marks: marks,
+    /** @type {any[]} */ replaced: [],
+    getSelectionContext: () => ({ textMarks: lens.marks }),
+    replaceText: (/** @type {any} */ mark, /** @type {string} */ word) => lens.replaced.push([mark, word]),
+  }
+  return lens
+}
+
+/** @param {string} quote @param {string[]} suggestions */
+const spellMark = (quote, suggestions) => ({
+  blockId: 'b1', locator: 'content', quote: quote, occurrence: 0,
+  start: 0, end: quote.length, class: 'prose', suggestions: suggestions,
+})
+
+describe('the spelling section', () => {
+  it('LEADS the menu, one entry per correction, closed by a separator', () => {
+    const menu = openMenu(paneOver(caretInProse(), spellingLens([spellMark('teh', ['the', 'tea', 'ten'])])))
+    expect(labelsOf(menu).slice(0, 3)).toEqual([
+      "Replace with 'the'", "Replace with 'tea'", "Replace with 'ten'",
+    ])
+    expect(menu.children[3].classList.contains('ctx-separator')).toBe(true)
+  })
+
+  it('stands three in the menu and hangs the rest in the flyout', () => {
+    const menu = openMenu(paneOver(caretInProse(), spellingLens([spellMark('teh', ['the', 'tea', 'ten', 'tec', 'ted'])])))
+    expect(labelsOf(menu).filter((l) => l.startsWith('Replace with')).length).toBe(3)
+    const more = itemNamed(menu, 'More suggestions')
+    more.dispatchEvent(new window.MouseEvent('mouseenter'))
+    expect(labelsOf(flyoutOf(more))).toEqual(["Replace with 'tec'", "Replace with 'ted'"])
+  })
+
+  it('offers no flyout when the menu already holds every correction', () => {
+    const menu = openMenu(paneOver(caretInProse(), spellingLens([spellMark('teh', ['the', 'tea', 'ten'])])))
+    expect(labelsOf(menu)).not.toContain('More suggestions›')
+  })
+
+  it('a correction taken from the flyout is the same verb, and closes the whole menu', () => {
+    const lens = spellingLens([spellMark('teh', ['the', 'tea', 'ten', 'tec'])])
+    const menu = openMenu(paneOver(caretInProse(), lens))
+    const more = itemNamed(menu, 'More suggestions')
+    more.dispatchEvent(new window.MouseEvent('mouseenter'))
+    itemNamed(flyoutOf(more), "Replace with 'tec'").click()
+    expect(lens.replaced).toEqual([[lens.marks[0], 'tec']])
+    expect(document.getElementById('sieve-context-menu')).toBeNull()
+  })
+
+  it('asks the LENS to replace that mark with that word, and hands focus back', () => {
+    const lens = spellingLens([spellMark('teh', ['the'])])
+    const pane = paneOver(caretInProse(), lens)
+    itemNamed(openMenu(pane), "Replace with 'the'").click()
+    expect(lens.replaced).toEqual([[lens.marks[0], 'the']])
+    expect(pane.commands.focus).toHaveBeenCalled()
+  })
+
+  it('speaks about the FIRST mark carrying corrections — the caret sits on one word', () => {
+    const lens = spellingLens([spellMark('teh', []), spellMark('adn', ['and'])])
+    const menu = openMenu(paneOver(caretInProse(), lens))
+    expect(labelsOf(menu).filter((l) => l.startsWith('Replace with'))).toEqual(["Replace with 'and'"])
+  })
+
+  it('is absent where the caret sits on no mark, and offers no corrections where the mark carried none', () => {
+    expect(labelsOf(openMenu(paneOver(caretInProse(), spellingLens([])))))
+      .not.toContain("Replace with 'the'")
+    expect(labelsOf(openMenu(paneOver(caretInProse(), spellingLens([spellMark('teh', [])])))).join(''))
+      .not.toContain('Replace with')
+  })
+
+  it('is absent in a mount that advertises no marks at all — a bare pane', () => {
+    expect(labelsOf(openMenu(paneOver(caretInProse()))).join('')).not.toContain('Replace with')
+  })
+
+  it('is absent where the mount cannot be written to this way', () => {
+    const lens = spellingLens([spellMark('teh', ['the'])])
+    delete lens.replaceText
+    expect(labelsOf(openMenu(paneOver(caretInProse(), lens))).join('')).not.toContain('Replace with')
+  })
+
+  // Ignoring and learning are the WORKSPACE's verbs, not the lens's: a word
+  // accepted here is accepted in every document open beside this one. The host
+  // is reached the way every other workspace verb in this menu reaches it.
+  it('offers Ignore and Add to dictionary, and hands the WORD to the workspace', () => {
+    const spell = { ignored: /** @type {string[]} */ ([]), learned: /** @type {string[]} */ ([]),
+      ignore(/** @type {string} */ w) { this.ignored.push(w) },
+      learn(/** @type {string} */ w) { this.learned.push(w) } }
+    const prevWs = window.sieveWorkspace
+    window.sieveWorkspace = /** @type {any} */ ({ spell })
+    try {
+      const pane = paneOver(caretInProse(), spellingLens([spellMark('teh', ['the'])]))
+      itemNamed(openMenu(pane), 'Ignore').click()
+      itemNamed(openMenu(pane), 'Add to dictionary').click()
+      expect(spell.ignored).toEqual(['teh'])
+      expect(spell.learned).toEqual(['teh'])
+    } finally { window.sieveWorkspace = prevWs }
+  })
+
+  // The mark nothing was close to is exactly the one a reader has an answer
+  // for: it is not a word this dictionary knows, and they are saying it is.
+  it('offers them for a mark carrying no corrections at all', () => {
+    const labels = labelsOf(openMenu(paneOver(caretInProse(), spellingLens([spellMark('zzblorp', [])]))))
+    expect(labels).toContain('Ignore')
+    expect(labels).toContain('Add to dictionary')
+    expect(labels.join('')).not.toContain('Replace with')
+  })
+
+  it('offers neither where the caret sits on no mark', () => {
+    const labels = labelsOf(openMenu(paneOver(caretInProse(), spellingLens([]))))
+    expect(labels).not.toContain('Ignore')
+    expect(labels).not.toContain('Add to dictionary')
+  })
+
+  // A right-click on a squiggle the caret was NOT in must still be about that
+  // word: the menu snaps the selection onto the pointer first, so the marks it
+  // then reads are the ones under the pointer.
+  it('reads the marks AFTER the right-click has moved the caret onto the word', () => {
+    const lens = spellingLens([])
+    const pane = paneOver(caretInProse(), lens)
+    pane.view.posAtCoords = () => ({ pos: 4 })
+    pane.commands.setTextSelection = vi.fn(() => { lens.marks = [spellMark('teh', ['the'])] })
+    const menu = openMenu(pane)
+    expect(pane.commands.setTextSelection).toHaveBeenCalledWith(4)
+    expect(labelsOf(menu)).toContain("Replace with 'the'")
   })
 })
 

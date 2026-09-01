@@ -17,6 +17,13 @@
  */
 
 /**
+ * One of the host's text marks together with the block it was pushed for. A
+ * mark alone names a stretch of SOME block's text; an advertisement is
+ * document-wide, so what it carries has to say which block.
+ * @typedef {import('./container-update-listener.js').SieveTextMark & {blockId: string}} SelectedTextMark
+ */
+
+/**
  * The lens's selection/focus/caret advertisement — JSON-shaped, with no PM node
  * and no DOM element in it. `caret`/`range` are the LENS's own document
  * coordinate: read them for display and decisions only, never to construct a
@@ -37,6 +44,13 @@
  * @property {object|null} blockCursor
  *   caret inside a block whose inner editor is not ProseMirror. Opaque: a host
  *   treats it as inert data and never inspects it.
+ * @property {ReadonlyArray<SelectedTextMark>} [textMarks]
+ *   the marks the lens is DRAWING that this selection sits on, in the order
+ *   their blocks pushed them. Optional the way `onMarksChanged` is: a lens with
+ *   nowhere to draw a mark advertises none. A mark here has resolved in what the
+ *   lens draws, so an affordance may act on it; empty means the selection sits
+ *   on none. Caret-class — it moves with the caret, so it never on its own makes
+ *   an advertisement worth pushing.
  * @property {string} docUuid
  *   the emitting lens's container uuid, so a host aggregating advertisements
  *   from several mounted lenses can attribute each one without side-channel

@@ -108,6 +108,17 @@ export class ContainerBinding {
   }
 
   /**
+   * text-replace: one anchored run of a block's text. The anchor is resolved
+   * against the block's CURRENT text server-side, so the offsets travel as the
+   * hint they are. The corrected block arrives as its own render-back.
+   * @param {{blockId: string, locator: string, quote: string, occurrence: number, start: number, end: number, replacement: string}} payload
+   * @returns {Promise<string>} the ack's outcome word
+   */
+  replaceText(payload) {
+    return this.#blocks.replaceText(this.#uuid, payload)
+  }
+
+  /**
    * flush: ask Go to write the container to disk now rather than on its own
    * debounce. Fire-and-forget and deliberately unanswered — the save announces
    * itself to the whole workspace as `container-saved`.
