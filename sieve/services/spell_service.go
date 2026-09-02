@@ -17,6 +17,13 @@ import (
 //go:embed spelldata/en-80k.txt
 var embeddedWordList string
 
+// embeddedVariantList is the British, Canadian and Australian spellings of
+// words the frequency list holds only in their American form, generated from
+// VarCon by tools/spelldict. Same format; see spelldata/en-variants-LICENSE.txt.
+//
+//go:embed spelldata/en-variants.txt
+var embeddedVariantList string
+
 // Misspelling is one word Check did not recognise, located in the text it was
 // found in. Start and End are BYTE offsets into that text, half-open, so
 // text[Start:End] is exactly Word.
@@ -82,6 +89,7 @@ func NewSpellService(store UserDictionary) *SpellService {
 		ignored: map[string]struct{}{},
 	}
 	s.load(embeddedWordList)
+	s.load(embeddedVariantList)
 	if store != nil {
 		for _, word := range store.LoadUserDictionary() {
 			s.learned[s.lookupKey(word)] = struct{}{}
@@ -141,10 +149,29 @@ func (s *SpellService) accepted(key string) bool {
 	return ok
 }
 
+// known reports whether the dictionary or the user accepts this LOOKUP KEY,
+// reading a possessive as its stem: a word is spelled the same whether or not
+// an apostrophe-s follows it, and neither the frequency list nor a user's
+// learned word carries every possessive form of itself.
+func (s *SpellService) known(key string) bool {
+	if _, ok := s.words[key]; ok || s.accepted(key) {
+		return true
+	}
+	stem, _, ok := s.splitPossessive(key)
+	if !ok {
+		return false
+	}
+	_, inDictionary := s.words[stem]
+	return inDictionary || s.accepted(stem)
+}
+
 // load parses `word<space>frequency` lines into the dictionary, lowercasing
 // every word so a lookup only ever needs the lowercase form. A line that is
 // blank, unsplittable or carries an unparseable frequency is skipped rather than
 // failing the load: a corrupt entry costs one word, not the whole dictionary.
+//
+// A word already loaded KEEPS its frequency, so lists loaded later add words
+// without reranking the ones the first list ordered.
 func (s *SpellService) load(list string) {
 	for _, line := range strings.Split(list, "\n") {
 		word, freq, ok := strings.Cut(strings.TrimSpace(line), " ")
@@ -155,7 +182,11 @@ func (s *SpellService) load(list string) {
 		if err != nil {
 			continue
 		}
-		s.words[strings.ToLower(word)] = n
+		key := strings.ToLower(word)
+		if _, seen := s.words[key]; seen {
+			continue
+		}
+		s.words[key] = n
 	}
 }
 
@@ -171,8 +202,7 @@ func (s *SpellService) Check(text string) []Misspelling {
 		if !s.checkable(run.Word) || s.spanned(addresses, run.Start) {
 			continue
 		}
-		key := s.lookupKey(run.Word)
-		if _, known := s.words[key]; known || s.accepted(key) {
+		if s.known(s.lookupKey(run.Word)) {
 			continue
 		}
 		out = append(out, Misspelling{Word: run.Word, Start: run.Start, End: run.End})
@@ -199,7 +229,19 @@ const shortWordLength = 5
 // The answer follows the CASE of the word it corrects: a Title-case
 // misspelling gets Title-case offers, because a suggestion is inserted where
 // the word stood and a sentence must still start with a capital.
+//
+// A POSSESSIVE is corrected in its stem and handed back possessive, wearing the
+// apostrophe it was typed with — the misspelling is in the word, never in the
+// suffix, and an offer that drops the suffix is not a correction of what stands
+// there.
 func (s *SpellService) Suggest(word string, max int) []string {
+	if stem, suffix, ok := s.splitPossessive(word); ok {
+		offers := s.Suggest(stem, max)
+		for i, offer := range offers {
+			offers[i] = offer + suffix
+		}
+		return offers
+	}
 	scan := newSuggestScan(s.lookupKey(word))
 	if max <= 0 || len(scan.key) == 0 {
 		return nil
@@ -237,6 +279,20 @@ func (s *SpellService) Suggest(word string, max int) []string {
 		out = append(out, s.restoreCase(word, c.word))
 	}
 	return out
+}
+
+// splitPossessive cuts a word into the stem being spelled and the apostrophe-s
+// that follows it, in whichever apostrophe it was written with. It takes a word
+// in either form — raw or folded — and the suffix comes back UNFOLDED, because
+// it is put back on an offer the user will see, where the fold would change the
+// character they typed.
+func (s *SpellService) splitPossessive(word string) (stem, suffix string, ok bool) {
+	for _, mark := range []string{"'s", "’s"} {
+		if cut := strings.TrimSuffix(word, mark); cut != word && cut != "" {
+			return cut, mark, true
+		}
+	}
+	return "", "", false
 }
 
 // restoreCase gives suggestion the shape of the word it replaces. Only

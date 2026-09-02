@@ -26,6 +26,29 @@ func TestSpellService_DictionaryLoaded(t *testing.T) {
 	}
 }
 
+// The dialect variants ship too, so a British or Irish writer's spelling is a
+// dictionary word rather than a squiggle.
+func TestSpellService_VariantListLoaded(t *testing.T) {
+	for _, word := range []string{"realisation", "colour", "behaviour", "organise", "recognise", "centre", "travelled"} {
+		if _, ok := spell.words[word]; !ok {
+			t.Errorf("%q is not in the dictionary — the variant list did not load", word)
+		}
+	}
+}
+
+// A word the second list repeats keeps the FIRST list's frequency.
+func TestSpellService_LoadKeepsTheFirstListsEntry(t *testing.T) {
+	s := &SpellService{words: map[string]int64{}}
+	s.load("zzword 100\n")
+	s.load("zzword 5\nzzother 7\n")
+	if got := s.words["zzword"]; got != 100 {
+		t.Errorf("zzword = %d, want 100 — the first list wins", got)
+	}
+	if got := s.words["zzother"]; got != 7 {
+		t.Errorf("zzother = %d, want 7 — a word only the second list has is still added", got)
+	}
+}
+
 // What Check flags and what it lets through. Each case is one rule; the want is
 // the exact word list, so a rule that starts flagging extra tokens fails here.
 func TestSpellService_Check(t *testing.T) {
@@ -47,6 +70,12 @@ func TestSpellService_Check(t *testing.T) {
 		{"an apostrophe misspelling is flagged", "dont't", []string{"dont't"}},
 		{"surrounding apostrophes are trimmed off", "'hello' 'helllo'", []string{"helllo"}},
 		{"a typographic apostrophe reads as one", "don’t", nil},
+		{"a possessive is accepted through its stem", "the object's edge and the cat's paw", nil},
+		{"a typographic possessive too", "the object’s edge", nil},
+		{"a plural possessive is unaffected", "the objects' edges", nil},
+		{"a possessive with a misspelled stem is still flagged", "the objct's edge", []string{"objct's"}},
+		{"British spellings are accepted", "realisation colour organise behaviour centre travelled", nil},
+		{"American spellings are accepted too", "realization color organize behavior center traveled", nil},
 		{"a url is an address, not words", "see https://github.com/wolfgarbe/SymSpell now", nil},
 		{"a path is an address, not words", "open docs/design/specs/plan.md please", nil},
 		{"a bare filename is an address", "read spellzz.txt today", nil},
@@ -78,10 +107,11 @@ func TestSpellService_Suggest(t *testing.T) {
 		name      string
 		word      string
 		max       int
-		wantHead  string   // the first offer, when the ordering is the point
-		wantAny   []string // offers that must appear somewhere in the list
-		wantNone  []string // offers that must not
-		wantCount int      // exact number of offers; unchecked where the count is not the point
+		wantHead   string   // the first offer, when the ordering is the point
+		wantAny    []string // offers that must appear somewhere in the list
+		wantNone   []string // offers that must not
+		wantSuffix string   // every offer ends with this, when the shape of the offer is the point
+		wantCount  int      // exact number of offers; unchecked where the count is not the point
 	}{
 		{name: "a transposition is one edit", word: "teh", max: 5, wantHead: "the", wantCount: unchecked},
 		{name: "a doubled letter is one edit", word: "helllo", max: 5, wantHead: "hello", wantCount: unchecked},
@@ -94,6 +124,9 @@ func TestSpellService_Suggest(t *testing.T) {
 		{name: "an empty word offers nothing", word: "", max: 5, wantCount: 0},
 		{name: "a Title-case misspelling gets Title-case offers", word: "Helllo", max: 5, wantHead: "Hello", wantCount: unchecked},
 		{name: "a lowercase misspelling keeps lowercase offers", word: "helllo", max: 5, wantHead: "hello", wantCount: unchecked},
+		{name: "a misspelled possessive is corrected in its stem", word: "objct's", max: 5, wantHead: "object's", wantSuffix: "'s", wantCount: unchecked},
+		{name: "a typographic possessive keeps the apostrophe it was typed with", word: "objct’s", max: 5, wantHead: "object’s", wantSuffix: "’s", wantCount: unchecked},
+		{name: "a Title-case possessive gets Title-case offers", word: "Objct's", max: 5, wantHead: "Object's", wantSuffix: "'s", wantCount: unchecked},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -110,6 +143,13 @@ func TestSpellService_Suggest(t *testing.T) {
 			for _, want := range tc.wantAny {
 				if !slices.Contains(got, want) {
 					t.Errorf("Suggest(%q) = %v, want it to offer %q", tc.word, got, want)
+				}
+			}
+			if tc.wantSuffix != "" {
+				for _, offer := range got {
+					if !strings.HasSuffix(offer, tc.wantSuffix) {
+						t.Errorf("Suggest(%q) offered %q, want every offer to end in %q", tc.word, offer, tc.wantSuffix)
+					}
 				}
 			}
 			for _, unwanted := range tc.wantNone {
@@ -217,6 +257,21 @@ func TestSpellService_LearnAndIgnoreAcceptAWord(t *testing.T) {
 			name:  "and the other way round",
 			teach: func(s *SpellService) { s.Ignore("zzblorp's") },
 			text:  "the zzblorp’s thing",
+		},
+		{
+			name:  "a learned word accepts its possessive",
+			teach: func(s *SpellService) { _ = s.Learn("Ruaraidh") },
+			text:  "Ruaraidh's note and ruaraidh's other one",
+		},
+		{
+			name:  "including the typographic possessive",
+			teach: func(s *SpellService) { _ = s.Learn("Ruaraidh") },
+			text:  "Ruaraidh’s note",
+		},
+		{
+			name:  "an ignored word accepts its possessive too",
+			teach: func(s *SpellService) { s.Ignore("zzblorp") },
+			text:  "the zzblorp's thing",
 		},
 		{
 			name:    "accepting one word does not accept its neighbours",
