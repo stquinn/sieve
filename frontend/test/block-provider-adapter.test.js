@@ -1,44 +1,26 @@
 // @ts-check
 // block-provider-adapter.test.js — the WRITE half of the wall (issue #96 P4a).
 //
-// The adapter is held against a STUB binding rather than a socket, because what
-// is under test is the translation: facade verb in, existing wire call out, and
-// nothing written to the model on the way past. The frames those binding calls
-// produce are pinned separately, by the service rig — here the binding is the
-// boundary.
+// The adapter is held against a STUB DocumentService rather than a socket, because
+// what is under test is the wall: facade verb in, the container's own uuid and the
+// service's verb out, and nothing written to the model on the way past. The frames
+// those calls produce are pinned separately, by the service rig — here the service
+// is the boundary.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ContainerModel } from '../src/static/container/container-model.js'
 import { BlockProviderAdapter } from '../src/static/container/block-provider-adapter.js'
 import { ProviderAdapter } from '../src/static/container/provider-adapter.js'
 import { ContractViolation } from '../src/static/contract/sieve-block.js'
+import { stubDocumentService as stubDocuments } from './helpers/service-rig.js'
 
-/** A recording ContainerBinding: every wire call is a spy, every ack resolves ok. */
-function stubBinding(overrides = {}) {
-  return Object.assign({
-    getUuid: () => 'doc-1',
-    createBlock: vi.fn(() => Promise.resolve({ ok: true })),
-    updateBlock: vi.fn(() => Promise.resolve({ ok: true })),
-    deleteBlock: vi.fn(() => Promise.resolve({ ok: true })),
-    setOrder: vi.fn(() => Promise.resolve({ ok: true })),
-    extract: vi.fn(() => Promise.resolve({ ok: true })),
-    retry: vi.fn(),
-    persist: vi.fn(),
-    paste: vi.fn(() => Promise.resolve({ outcome: 'none' })),
-    detectExtractions: vi.fn(() => Promise.resolve([])),
-    getContents: vi.fn(() => Promise.resolve('# doc')),
-    setContents: vi.fn(() => Promise.resolve()),
-    flushContents: vi.fn(),
-    exportAs: vi.fn(() => Promise.resolve('# doc')),
-    replaceText: vi.fn(() => Promise.resolve('ok')),
-  }, overrides)
-}
+const UUID = 'doc-1'
 
 /** A model holding p1 (prose), c1 (code), p2 (prose) in that order. */
-function seeded() {
-  const model = new ContainerModel('doc-1', 'note')
+function seeded(uuid = UUID) {
+  const model = new ContainerModel(uuid, 'note')
   model.applyLoad({
-    uuid: 'doc-1',
+    uuid: uuid,
     blocks: [
       { id: 'p1', kind: 'prose', attrs: { content: 'one' } },
       { id: 'c1', kind: 'code', attrs: { source: 'x=1' } },
@@ -55,45 +37,59 @@ function snapshot(model) {
 
 describe('BlockProviderAdapter', () => {
   /** @type {ContainerModel} */ let model
-  /** @type {any} */ let binding
+  /** @type {any} */ let documents
   /** @type {BlockProviderAdapter} */ let provider
   /** @type {any} */ let before
 
   beforeEach(() => {
     model = seeded()
-    binding = stubBinding()
-    provider = new BlockProviderAdapter(model, binding)
+    documents = stubDocuments()
+    provider = new BlockProviderAdapter(model, documents)
     before = snapshot(model)
   })
 
   it('demands both halves', () => {
     expect(() => new BlockProviderAdapter(seeded(), /** @type {any} */ (null))).toThrow(ContractViolation)
-    expect(() => new BlockProviderAdapter(/** @type {any} */ (null), stubBinding())).toThrow(ContractViolation)
+    expect(() => new BlockProviderAdapter(/** @type {any} */ (null), stubDocuments())).toThrow(ContractViolation)
   })
 
   it('is a ContainerProvider, so a read-only mount and a writing one share one read surface', () => {
     expect(provider).toBeInstanceOf(ProviderAdapter)
-    expect(provider.getUuid()).toBe('doc-1')
+    expect(provider.getUuid()).toBe(UUID)
     expect(provider.getOrder()).toEqual(['p1', 'c1', 'p2'])
+  })
+
+  // The service is stateless and speaks for every open container, so possession of
+  // a provider is authorization for exactly one: the uuid on every verb is the
+  // MODEL's, and two providers over one service cannot reach each other's document.
+  it('names its own container on every verb, from the model it follows', () => {
+    const other = new BlockProviderAdapter(seeded('doc-2'), documents)
+    provider.requestRetry('c1')
+    other.requestRetry('c1')
+    expect(documents.retry.mock.calls).toEqual([[UUID, 'c1'], ['doc-2', 'c1']])
   })
 
   // ── Verbs ───────────────────────────────────────────────────────────────────
 
   describe('requestAddBlock', () => {
-    it('resolves the anchor to the slot AFTER it', () => {
-      provider.requestAddBlock('code', { source: 'y=2' }, 'p1')
-      expect(binding.createBlock).toHaveBeenCalledWith('code', { source: 'y=2' }, 1)
+    // The anchor travels AS AN ID. Go resolves it against the authoritative tree,
+    // so the four statements below are translations, never lookups — which is the
+    // point: an id this model has not been told about yet still goes out intact.
+    it.each([
+      ['an id the container holds', 'p1', { afterBlockId: 'p1' }],
+      ['an id the container has never seen', 'ghost', { afterBlockId: 'ghost' }],
+      ['no anchor at all — Go appends', undefined, {}],
+      ['null, the FRONT — a real place, not "wherever"', null, { atFront: true }],
+    ])('sends %s', (_name, afterBlockId, want) => {
+      provider.requestAddBlock('code', { source: 'y=2' }, afterBlockId)
+      expect(documents.createBlock).toHaveBeenCalledWith(UUID, 'code', { source: 'y=2' }, want)
     })
 
-    it('appends when no anchor is named, and for one the container does not hold', () => {
-      provider.requestAddBlock('prose', {}, 'ghost')
-      provider.requestAddBlock('prose', {})
-      for (const call of binding.createBlock.mock.calls) expect(call[2]).toBe(-1)
-    })
-
-    it('puts a null anchor at the FRONT — a real place, not "wherever"', () => {
-      provider.requestAddBlock('prose', {}, null)
-      expect(binding.createBlock).toHaveBeenCalledWith('prose', {}, 0)
+    it('never consults the follower model for a position', () => {
+      const order = vi.spyOn(model, 'getOrder')
+      provider.requestAddBlock('prose', {}, 'p1')
+      expect(order).not.toHaveBeenCalled()
+      order.mockRestore()
     })
 
     it('refuses a kindless add', () => {
@@ -104,13 +100,13 @@ describe('BlockProviderAdapter', () => {
   describe('requestSetBlock', () => {
     it('sends the patch under the kind the model holds', () => {
       provider.requestSetBlock('c1', { source: 'x=2' })
-      expect(binding.updateBlock).toHaveBeenCalledWith('c1', 'code', { source: 'x=2' })
+      expect(documents.updateBlock).toHaveBeenCalledWith(UUID, 'c1', 'code', { source: 'x=2' })
     })
 
     it('drops an unknown id rather than throwing mid-gesture', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       expect(() => provider.requestSetBlock('ghost', { content: 'x' })).not.toThrow()
-      expect(binding.updateBlock).not.toHaveBeenCalled()
+      expect(documents.updateBlock).not.toHaveBeenCalled()
       warn.mockRestore()
     })
   })
@@ -118,16 +114,16 @@ describe('BlockProviderAdapter', () => {
   describe('requestRemoveBlock', () => {
     it('names the block to Go and says nothing else', () => {
       provider.requestRemoveBlock('c1')
-      expect(binding.deleteBlock).toHaveBeenCalledWith('c1')
+      expect(documents.deleteBlock).toHaveBeenCalledWith(UUID, 'c1')
       // Not an order restatement: removal is its own verb, so nothing describes
       // the container's remaining contents on the way out.
-      expect(binding.setOrder).not.toHaveBeenCalled()
+      expect(documents.setBlockOrder).not.toHaveBeenCalled()
     })
 
     it('drops an id this container does not hold rather than throwing mid-gesture', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       expect(() => provider.requestRemoveBlock('ghost')).not.toThrow()
-      expect(binding.deleteBlock).not.toHaveBeenCalled()
+      expect(documents.deleteBlock).not.toHaveBeenCalled()
       warn.mockRestore()
     })
 
@@ -140,22 +136,31 @@ describe('BlockProviderAdapter', () => {
   })
 
   describe('requestSetOrder', () => {
-    it('states the container\'s COMPLETE new order', () => {
-      provider.requestSetOrder(['p1', 'p2', 'c1'])
-      expect(binding.setOrder).toHaveBeenCalledWith(['p1', 'p2', 'c1'])
+    // Go still requires the full permutation, and the client still computes it —
+    // by merging what the lens can name into the order the follower holds. The
+    // merge itself is the model's, and its readings are pinned there; what these
+    // pin is that the COMPLETE result is what goes out.
+    it.each([
+      ['a full permutation', ['p1', 'p2', 'c1'], ['p1', 'p2', 'c1']],
+      ['a subsequence, into the slots those ids occupy', ['p2', 'p1'], ['p2', 'c1', 'p1']],
+    ])('sends the complete order for %s', (_name, want, sent) => {
+      provider.requestSetOrder(want)
+      expect(documents.setBlockOrder).toHaveBeenCalledWith(UUID, sent)
     })
 
-    it('says nothing when the container is already in that order', () => {
-      provider.requestSetOrder(['p1', 'c1', 'p2'])
-      expect(binding.setOrder).not.toHaveBeenCalled()
+    it.each([
+      ['the order the container already holds', ['p1', 'c1', 'p2']],
+      ['a subsequence that merges to no change', ['p1', 'p2']],
+      ['an empty statement', []],
+    ])('says nothing for %s', (_name, want) => {
+      provider.requestSetOrder(want)
+      expect(documents.setBlockOrder).not.toHaveBeenCalled()
     })
 
-    it('refuses anything that is not a permutation of what the container holds', () => {
+    it('drops the whole statement when it names a block the container does not hold', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      provider.requestSetOrder(['p1', 'c1'])           // one short — reads as a mass delete
-      provider.requestSetOrder(['p1', 'c1', 'ghost'])  // names a block nobody has
-      provider.requestSetOrder([])
-      expect(binding.setOrder).not.toHaveBeenCalled()
+      provider.requestSetOrder(['p1', 'c1', 'ghost'])
+      expect(documents.setBlockOrder).not.toHaveBeenCalled()
       warn.mockRestore()
     })
 
@@ -170,13 +175,13 @@ describe('BlockProviderAdapter', () => {
   describe('requestRetry', () => {
     it('names the block and says nothing about what retry means', () => {
       provider.requestRetry('c1')
-      expect(binding.retry).toHaveBeenCalledWith('c1')
+      expect(documents.retry).toHaveBeenCalledWith(UUID, 'c1')
     })
 
     it('drops an id this container does not hold', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       provider.requestRetry('ghost')
-      expect(binding.retry).not.toHaveBeenCalled()
+      expect(documents.retry).not.toHaveBeenCalled()
       warn.mockRestore()
     })
   })
@@ -184,12 +189,12 @@ describe('BlockProviderAdapter', () => {
   describe('requestReplaceText', () => {
     const anchor = { locator: 'content', quote: 'teh', occurrence: 1, grain: 'word', start: 12, end: 15, class: 'prose', suggestions: ['the'] }
 
-    // The MARK travels, not a payload: turning one into the frame's fields is
-    // the binding's single mapping, and its guards are pinned in
-    // mount-binding.test.js, where a real binding is on the other end.
+    // The MARK travels, not a payload: turning one into the frame's fields is the
+    // service's single mapping, and its guards are pinned in mount-binding.test.js,
+    // where a real wire is on the other end.
     it('hands over the mark as it stands, with the block it belongs to on it', () => {
       provider.requestReplaceText('p1', anchor, 'the')
-      expect(binding.replaceText).toHaveBeenCalledWith(Object.assign({}, anchor, { blockId: 'p1' }), 'the')
+      expect(documents.replaceText).toHaveBeenCalledWith(UUID, Object.assign({}, anchor, { blockId: 'p1' }), 'the')
     })
 
     it('writes NOTHING to the model — the correction arrives as Go\'s own echo', () => {
@@ -200,19 +205,19 @@ describe('BlockProviderAdapter', () => {
     it('drops an id this container does not hold', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       provider.requestReplaceText('ghost', anchor, 'the')
-      expect(binding.replaceText).not.toHaveBeenCalled()
+      expect(documents.replaceText).not.toHaveBeenCalled()
       warn.mockRestore()
     })
 
     it('is SILENT on a stale anchor, and warns only on a failure', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       const stale = seeded()
-      const staleBinding = stubBinding({ replaceText: vi.fn(() => Promise.resolve('stale')) })
-      new BlockProviderAdapter(stale, /** @type {any} */ (staleBinding)).requestReplaceText('p1', anchor, 'the')
+      const staleDocuments = stubDocuments({ replaceText: vi.fn(() => Promise.resolve('stale')) })
+      new BlockProviderAdapter(stale, /** @type {any} */ (staleDocuments)).requestReplaceText('p1', anchor, 'the')
       await Promise.resolve()
       expect(warn).not.toHaveBeenCalled()
 
-      const failed = stubBinding({ replaceText: vi.fn(() => Promise.resolve('error')) })
+      const failed = stubDocuments({ replaceText: vi.fn(() => Promise.resolve('error')) })
       new BlockProviderAdapter(seeded(), /** @type {any} */ (failed)).requestReplaceText('p1', anchor, 'the')
       await Promise.resolve()
       expect(warn).toHaveBeenCalled()
@@ -223,42 +228,41 @@ describe('BlockProviderAdapter', () => {
   describe('requestPersist', () => {
     it('asks the container to reach disk, naming no block', () => {
       provider.requestPersist()
-      expect(binding.persist).toHaveBeenCalledWith()
+      expect(documents.persist).toHaveBeenCalledWith(UUID)
       // Persist is not a flush: nothing about any block's text goes out with it.
-      expect(binding.updateBlock).not.toHaveBeenCalled()
+      expect(documents.updateBlock).not.toHaveBeenCalled()
     })
   })
 
   describe('whole-content (a document carries BOTH extensions)', () => {
     it('reads the container\'s authoritative text', async () => {
       expect(await provider.getContents()).toBe('# doc')
+      expect(documents.getContents).toHaveBeenCalledWith(UUID)
     })
 
     it('hands the whole container back and answers when Go has taken it', async () => {
       await provider.setContents('# edited')
-      expect(binding.setContents).toHaveBeenCalledWith('# edited')
+      expect(documents.setContents).toHaveBeenCalledWith(UUID, '# edited')
     })
 
     it('flushes an in-flight buffer WITHOUT asking for a re-parse', () => {
       provider.flushContents('# half typed')
-      expect(binding.flushContents).toHaveBeenCalledWith('# half typed')
-      expect(binding.setContents).not.toHaveBeenCalled()
+      expect(documents.flushContents).toHaveBeenCalledWith(UUID, '# half typed')
+      expect(documents.setContents).not.toHaveBeenCalled()
     })
   })
 
   describe('requestTransform', () => {
-    it('plays the offer back at the slot after the source', () => {
+    it('names the source and no position — where an additive result lands is Go\'s', () => {
       const entries = [{ mimeType: 'text/plain', content: '```go\nx := 1\n```' }]
       provider.requestTransform('c1', 'diagram', 'transform', entries)
-      expect(binding.extract).toHaveBeenCalledWith({
-        blockId: 'c1', targetKind: 'diagram', operation: 'transform', entries: entries, index: 2,
-      })
+      expect(documents.extract).toHaveBeenCalledWith(UUID, 'c1', 'diagram', 'transform', entries)
     })
 
     it('drops an unknown source', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       provider.requestTransform('ghost', 'code', 'extract', [])
-      expect(binding.extract).not.toHaveBeenCalled()
+      expect(documents.extract).not.toHaveBeenCalled()
       warn.mockRestore()
     })
   })
@@ -266,18 +270,18 @@ describe('BlockProviderAdapter', () => {
   describe('flush', () => {
     it('sends prose text under `content`', () => {
       provider.flush('p1', 'edited')
-      expect(binding.updateBlock).toHaveBeenCalledWith('p1', 'prose', { content: 'edited' })
+      expect(documents.updateBlock).toHaveBeenCalledWith(UUID, 'p1', 'prose', { content: 'edited' })
     })
 
     it('sends a source-bearing kind\'s text under `source`', () => {
       provider.flush('c1', 'x = 3')
-      expect(binding.updateBlock).toHaveBeenCalledWith('c1', 'code', { source: 'x = 3' })
+      expect(documents.updateBlock).toHaveBeenCalledWith(UUID, 'c1', 'code', { source: 'x = 3' })
     })
 
     it('drops an unknown id', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       provider.flush('ghost', 'text')
-      expect(binding.updateBlock).not.toHaveBeenCalled()
+      expect(documents.updateBlock).not.toHaveBeenCalled()
       warn.mockRestore()
     })
   })
@@ -315,9 +319,9 @@ describe('BlockProviderAdapter', () => {
 
   it('swallows a declined verb rather than rejecting into the gesture', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const declining = new BlockProviderAdapter(seeded(), stubBinding({
+    const declining = new BlockProviderAdapter(seeded(), stubDocuments({
       createBlock: () => Promise.resolve({ ok: false, error: 'no' }),
-      setOrder: () => Promise.reject(new Error('socket gone')),
+      setBlockOrder: () => Promise.reject(new Error('socket gone')),
     }))
     expect(() => declining.requestAddBlock('code', {}, null)).not.toThrow()
     expect(() => declining.requestSetOrder(['p2', 'p1', 'c1'])).not.toThrow()
@@ -334,16 +338,16 @@ describe('BlockProviderAdapter', () => {
     // any other attr, which is exactly why nothing here has to correlate.
     const born = '0191f0c2-2b4e-7a10-9c33-4d5e6f708192'
     provider.requestAddBlock('prose', { content: 'typed', id: born }, 'p1')
-    expect(binding.createBlock).toHaveBeenCalledWith('prose', { content: 'typed', id: born }, 1)
+    expect(documents.createBlock).toHaveBeenCalledWith(UUID, 'prose', { content: 'typed', id: born }, { afterBlockId: 'p1' })
   })
 
   // ── Queries ────────────────────────────────────────────────────────────────
 
   describe('paste', () => {
-    it('anchors the paste at the slot after the anchor', async () => {
+    it('carries the anchor id, leaving the position to Go', async () => {
       await provider.paste({ kind: 'smart', entries: [{ mimeType: 'text/plain', content: 'hi' }] }, 'c1')
-      expect(binding.paste).toHaveBeenCalledWith({
-        kind: 'smart', entries: [{ mimeType: 'text/plain', content: 'hi' }], slice: [], index: 2,
+      expect(documents.paste).toHaveBeenCalledWith(UUID, {
+        kind: 'smart', entries: [{ mimeType: 'text/plain', content: 'hi' }], slice: [], anchor: { afterBlockId: 'c1' },
       })
     })
 
@@ -351,10 +355,10 @@ describe('BlockProviderAdapter', () => {
       await provider.paste({ kind: 'slice', slice: [[{ mimeType: 'sieve/prose', content: 'a' }]] }, null)
       await provider.paste({ kind: 'native-drop', entries: [{ mimeType: 'text/uri-list', content: 'file:///x' }] }, null)
       await provider.paste({ kind: 'native-clipboard' }, null)
-      expect(binding.paste.mock.calls.map((c) => c[0].kind))
+      expect(documents.paste.mock.calls.map((c) => c[1].kind))
         .toEqual(['slice', 'native-drop', 'native-clipboard'])
       // The kind Sieve cannot read carries nothing, and the emptiness IS the payload.
-      expect(binding.paste.mock.calls[2][0].entries).toEqual([])
+      expect(documents.paste.mock.calls[2][1].entries).toEqual([])
     })
 
     it.each([
@@ -365,13 +369,13 @@ describe('BlockProviderAdapter', () => {
       ['an answer in no vocabulary at all', { outcome: 'wat' }, { outcome: 'none' }],
       ['an empty answer', {}, { outcome: 'none' }],
     ])('maps %s', async (_name, wire, want) => {
-      const p = new BlockProviderAdapter(seeded(), stubBinding({ paste: () => Promise.resolve(wire) }))
+      const p = new BlockProviderAdapter(seeded(), stubDocuments({ paste: () => Promise.resolve(wire) }))
       expect(await p.paste({ entries: [] }, null)).toEqual(want)
     })
 
     it('degrades a timeout to none, so the caller still replays the clipboard', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      const p = new BlockProviderAdapter(seeded(), stubBinding({
+      const p = new BlockProviderAdapter(seeded(), stubDocuments({
         paste: () => Promise.reject(new Error('ws timeout: paste smart')),
       }))
       expect(await p.paste({ entries: [] }, null)).toEqual({ outcome: 'none' })
@@ -379,7 +383,7 @@ describe('BlockProviderAdapter', () => {
     })
 
     it('strips the transport identifiers a lens has no use for', async () => {
-      const p = new BlockProviderAdapter(seeded(), stubBinding({
+      const p = new BlockProviderAdapter(seeded(), stubDocuments({
         paste: () => Promise.resolve({ outcome: 'block', kind: 'web-clip', id: 'b1', rawYaml: 'x' }),
       }))
       expect(Object.keys(await p.paste({ entries: [] }, null))).toEqual(['outcome'])
@@ -389,13 +393,13 @@ describe('BlockProviderAdapter', () => {
   describe('detectExtractions', () => {
     it('asks in the offer vocabulary and answers the offers verbatim', async () => {
       const offers = [{ kind: 'code', actions: ['extract', 'transform'] }]
-      const p = new BlockProviderAdapter(seeded(), stubBinding({ detectExtractions: () => Promise.resolve(offers) }))
+      const p = new BlockProviderAdapter(seeded(), stubDocuments({ detectExtractions: () => Promise.resolve(offers) }))
       expect(await p.detectExtractions('prose', [{ mimeType: 'text/plain', content: 'x' }])).toEqual(offers)
     })
 
     it('degrades a failure to an empty offer list', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      const p = new BlockProviderAdapter(seeded(), stubBinding({
+      const p = new BlockProviderAdapter(seeded(), stubDocuments({
         detectExtractions: () => Promise.reject(new Error('ws timeout')),
       }))
       expect(await p.detectExtractions('prose', [])).toEqual([])

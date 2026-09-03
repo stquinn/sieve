@@ -430,6 +430,10 @@ func (es *EditorService) UpdateMarkdown(uuid, markdown string) {
 func (es *EditorService) HandleBlockOp(uuid string, op block.BlockOp) error {
 	switch op.Type {
 	case "create-block":
+		// The wire states a create's position as an Anchor; this is the boundary that
+		// resolves it against the authoritative tree, so everything below works in
+		// resolved indices.
+		op.Index = es.ResolveAnchor(uuid, op.Anchor)
 		// Every kind-bearing create runs the one lifecycle (InitAttrs → positioned
 		// insert → job dispatch → render-back insert-block). The client ignores a
 		// render-back for a node it already has, so prose needs no special path. A
@@ -963,10 +967,25 @@ func (es *EditorService) validateClientID(uuid, blockID string) error {
 	return nil
 }
 
+// ResolveAnchor turns a wire anchor into the top-level index a new block takes in
+// uuid's tree — the one translation between how the wire names a position (by the
+// block it follows) and how every creation path here takes one (an int). A
+// document nobody has open resolves to block.AppendIndex, as does an anchor
+// naming a block the document does not hold; block.Anchor says why.
+func (es *EditorService) ResolveAnchor(uuid string, anchor block.Anchor) int {
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow == nil {
+		return block.AppendIndex
+	}
+	return shadow.ResolveAnchor(anchor)
+}
+
 // createBlockWithID creates a block using a caller-supplied ID at a caller-supplied
 // document index. Used by HandlePaste so the pre-generated ID (passed to PasteMatch)
-// is reused. index is the position among top-level blocks; a negative index appends
-// (out-of-range indices clamp to the end). The block is inserted through the SAME
+// is reused. index is the position among top-level blocks; block.AppendIndex — any
+// negative index — appends, and one past the end clamps there. The block is inserted through the SAME
 // create-block op as every other create — no separate append path.
 func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides map[string]interface{}, aliases []string, index int) (id string, rawYaml string, err error) {
 	return es.createBlock(uuid, kind, blockID, overrides, aliases, index, true)
@@ -1000,9 +1019,6 @@ func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[s
 	id = blockID
 	attrs := processor.InitAttrs(id, overrides)
 	sieveBlock := block.SieveBlock{ID: id, Kind: kind, Attrs: attrs, Aliases: aliases}
-	if index < 0 {
-		index = 1 << 30 // append: insertBlockAt clamps an out-of-range index to the end
-	}
 	if err = shadow.ApplyOp(block.BlockOp{Type: "create-block", BlockID: id, Kind: kind, Attrs: attrs, Aliases: aliases, Index: index}); err != nil {
 		return "", "", err
 	}
@@ -1012,7 +1028,10 @@ func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[s
 	}
 
 	if notify {
-		es.notifyBlockCreated(uuid, sieveBlock, index)
+		// The render-back states where the block ACTUALLY landed, which an append does
+		// not know going in: the client places the server's node at the index coming
+		// back, so it must be a real position and never a sentinel.
+		es.notifyBlockCreated(uuid, sieveBlock, shadow.IndexOfBlock(id))
 	}
 
 	return id, rawYaml, nil
@@ -1098,7 +1117,10 @@ func (es *EditorService) DetectExtractions(uuid, sourceKind string, entries []bl
 // TRANSFORM replaces sourceID in place (preserving its document position). The frontend
 // posted the operation — the backend does not re-derive it. For TRANSFORM, sourceID is
 // the id of the top-level block being replaced (native nodes are prose blocks with ids).
-func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []block.ContentEntry, index int, action block.Action, sourceID string) (id, rawYaml string, err error) {
+//
+// sourceID is also the POSITION: an additive extract lands directly after the block
+// it came from, so the caller states no index. An empty or unknown sourceID appends.
+func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []block.ContentEntry, action block.Action, sourceID string) (id, rawYaml string, err error) {
 	processor := block.GetProcessor(kind)
 	if processor == nil {
 		return "", "", fmt.Errorf("no processor registered for kind %q", kind)
@@ -1116,6 +1138,7 @@ func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []blo
 	if overrides == nil {
 		return "", "", fmt.Errorf("%s: processor %q could not transform entries into a block", action, kind)
 	}
+	index := es.ResolveAnchor(uuid, block.Anchor{AfterBlockID: sourceID})
 	return es.createBlockWithID(uuid, kind, blockID, overrides, nil, index)
 }
 

@@ -272,7 +272,7 @@ func TestWS_Paste_AckIsTheResultUnion(t *testing.T) {
 
 	paste := func(t *testing.T, entriesJSON string) map[string]interface{} {
 		t.Helper()
-		send(t, c, `{"type":"paste","opId":"op-p","kind":"smart","index":0,"entries":`+entriesJSON+`}`)
+		send(t, c, `{"type":"paste","opId":"op-p","kind":"smart","entries":`+entriesJSON+`}`)
 		return readUntil(t, c, "paste-ack", 2*time.Second)
 	}
 
@@ -349,7 +349,7 @@ func TestWS_Paste_SliceAcksWithoutNamingABlock(t *testing.T) {
 	c := dialWS(t, srv, uuid)
 
 	one := `[{"mimeType":"text/plain","content":"` + "```" + `go\nx := 1\n` + "```" + `"}]`
-	send(t, c, `{"type":"paste","opId":"op-slice","kind":"slice","index":0,"slice":[`+one+`,`+one+`]}`)
+	send(t, c, `{"type":"paste","opId":"op-slice","kind":"slice","slice":[`+one+`,`+one+`]}`)
 
 	ack := readUntil(t, c, "paste-ack", 2*time.Second)
 	if ack["opId"] != "op-slice" {

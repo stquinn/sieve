@@ -163,7 +163,7 @@ func TestCreateBlockFromEntries_extractCodeFromReference_keepsTheReference(t *te
 	es, uuid, referenceID := newEditorHoldingFile(t, "snippet.txt", []byte(heldGo))
 	entries := referenceEntries(t, es, uuid, referenceID)
 
-	codeID, _, err := es.CreateBlockFromEntries(uuid, "code", entries, 1, block.ActionExtract, referenceID)
+	codeID, _, err := es.CreateBlockFromEntries(uuid, "code", entries, block.ActionExtract, referenceID)
 	if err != nil {
 		t.Fatalf("CreateBlockFromEntries: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestDetectExtractions_referenceHoldingSQL_offersCodeExtract(t *testing.T) {
 		t.Fatalf("a .sql reference must offer a code extraction; got %v ok=%v", code.Actions, ok)
 	}
 
-	codeID, _, err := es.CreateBlockFromEntries(uuid, "code", entries, 1, block.ActionExtract, blockID)
+	codeID, _, err := es.CreateBlockFromEntries(uuid, "code", entries, block.ActionExtract, blockID)
 	if err != nil {
 		t.Fatalf("CreateBlockFromEntries: %v", err)
 	}

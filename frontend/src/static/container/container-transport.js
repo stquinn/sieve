@@ -13,16 +13,10 @@
 import { ContractViolation } from '../contract/sieve-block.js'
 import { BlockChannel } from './block-channel.js'
 import { WsDial } from './ws-dial.js'
-import { DocumentFrame } from '../generated/protocol.js'
 
 /**
  * @typedef {import('./block-channel.js').ChannelDelegate} ChannelDelegate
  */
-
-// Go's text-replace outcome for a write that could not be run, as the wire
-// spells it. The other two words — applied, and the anchor no longer resolves —
-// are read by nobody here: both mean the container is now what Go says it is.
-const TEXT_REPLACE_ERROR = 'error'
 
 /**
  * @typedef {object} ContainerTransportOptions
@@ -125,102 +119,10 @@ export class ContainerTransport {
     }
   }
 
-  /**
-   * Backend-declared extraction capability discovery: which (kind, actions) Go can
-   * extract or transform this content into. No channel means an empty offer list —
-   * nothing to discover is a legitimate answer. REJECTS on the 5s timeout; the
-   * facade's adapter degrades that to an empty list.
-   * @param {string} uuid @param {{sourceKind: string, entries: object[]}} payload
-   * @returns {Promise<Array<{kind: string, actions: string[]}>>}
-   */
-  detectExtractions(uuid, payload) {
-    const ch = this.#channels.get(uuid)
-    if (!ch) return Promise.resolve([])
-    return ch.awaitReply(this.#mintOpId(), {
-      type: DocumentFrame.DETECT_EXTRACTIONS,
-      sourceKind: payload.sourceKind,
-      entries: payload.entries,
-    }, 'detect-extractions ' + payload.sourceKind)
-      .then((reply) => reply.offers || [])
-  }
-
-  /** Re-run a block's backend job; kind-blind, because Go knows what retry means.
-   *  @param {string} uuid @param {string} blockId */
-  retry(uuid, blockId) {
-    this._send(uuid, { type: DocumentFrame.RETRY_BLOCK_JOB, uuid: uuid, id: blockId })
-  }
-
-  /**
-   * Frames a block extraction/transform; the lens-side prep stays in the lens.
-   * The frame carries NO uuid — the server resolves the document from the channel.
-   * Never rejects; any block it creates or replaces arrives as a container change.
-   * @param {string} uuid
-   * @param {{blockId?: string, targetKind: string, operation: string, entries: object[], index: number}} payload
-   * @returns {Promise<{ok: boolean, error?: string}>}
-   */
-  extract(uuid, payload) {
-    return this._awaitAck(uuid, {
-      type: DocumentFrame.EXTRACT,
-      blockId: payload.blockId,
-      targetKind: payload.targetKind,
-      operation: payload.operation,
-      entries: payload.entries,
-      index: payload.index,
-    }, 'extract ' + payload.targetKind)
-  }
-
-  /**
-   * Frames a text-replace: one anchored run of a block's text, written by Go.
-   * The applied edit arrives as the block's own render-back BEFORE this settles,
-   * so what settles here is only which of the three things happened.
-   *
-   * Never rejects. A channel-less container, a timeout and a malformed answer
-   * all read as `error`, which is the truthful reading of "the write did not
-   * happen and nothing says it did".
-   * @param {string} uuid
-   * @param {{blockId: string, locator: string, quote: string, occurrence: number, grain: string, start: number, end: number, replacement: string}} payload
-   * @returns {Promise<string>} the ack's outcome word
-   */
-  replaceText(uuid, payload) {
-    return this._awaitReply(uuid, {
-      type: DocumentFrame.TEXT_REPLACE,
-      blockId: payload.blockId,
-      locator: payload.locator,
-      quote: payload.quote,
-      occurrence: payload.occurrence,
-      grain: payload.grain,
-      start: payload.start,
-      end: payload.end,
-      replacement: payload.replacement,
-    }, 'text-replace ' + payload.blockId)
-      .then((reply) => String((reply && reply.outcome) || TEXT_REPLACE_ERROR))
-      .catch(() => TEXT_REPLACE_ERROR)
-  }
-
-  /**
-   * Frames a feature-control: one text-service producer switched on or off for
-   * THIS document, with whatever it is to work with.
-   *
-   * Unanswered and fire-and-forget. What a switched-on feature produces arrives
-   * as the marks it pushes, and a channel that has gone away has switched
-   * everything off by closing — which is why nothing here waits to be told the
-   * switch landed.
-   * @param {string} uuid
-   * @param {{feature: string, enabled: boolean, parameters?: Record<string, any>}} payload
-   */
-  setFeature(uuid, payload) {
-    this._send(uuid, {
-      type: DocumentFrame.FEATURE_CONTROL,
-      feature: payload.feature,
-      enabled: payload.enabled,
-      parameters: payload.parameters || {},
-    })
-  }
-
-  // JS #private fields do not cross the class boundary, so the framing surface the
-  // service pair shares is underscore-marked instead. Its only callers are inside
-  // the host's data plane — a lens holds a provider, and a provider holds a
-  // binding.
+  // JS #private fields do not cross the class boundary, so the framing surface
+  // DocumentService sends through is underscore-marked instead. It is the whole of
+  // what this class offers a verb: liveness, a send, and the two ways a frame is
+  // answered. Nothing above the host's data plane reaches it.
 
   /** @param {string} uuid @returns {boolean} whether a live channel exists */
   _hasChannel(uuid) { return this.#channels.has(uuid) }

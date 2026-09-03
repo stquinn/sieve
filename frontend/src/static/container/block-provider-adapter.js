@@ -9,8 +9,10 @@
 //     from another lens's edit, an AI job or the watcher.
 //   NO CORRELATION OUT — the verbs are void. A lens is later told that A change
 //     happened; it never learns which change was its own.
-//   POSITION FROM ORDER — anchoring is by block id, which the host resolves against
-//     its own follower model. A lens never computes a document position.
+//   POSITION FROM ORDER — anchoring is by block id, all the way to Go, which
+//     resolves it against the authoritative tree. Neither a lens nor the host
+//     computes a document position: the follower model trails Go by at least a
+//     round trip, so an anchor it has not seen yet is one Go can still honour.
 
 import { ContractViolation } from '../contract/sieve-block.js'
 import { WholeContentAdapter } from './whole-content-adapter.js'
@@ -36,15 +38,15 @@ export class BlockProviderAdapter extends WholeContentAdapter {
 
   /**
    * @param {import('./container-model.js').ContainerModel} model
-   * @param {import('./container-binding.js').ContainerBinding} binding
+   * @param {import('./document-service.js').DocumentService} documentService
    */
-  constructor(model, binding) {
-    super(model, binding)
-    if (typeof binding.createBlock !== 'function' || typeof binding.setOrder !== 'function') {
-      throw new ContractViolation('BlockProviderAdapter: construct with a ContainerBinding')
+  constructor(model, documentService) {
+    super(model, documentService)
+    if (typeof documentService.createBlock !== 'function' || typeof documentService.setBlockOrder !== 'function') {
+      throw new ContractViolation('BlockProviderAdapter: construct over the DocumentService')
     }
-    // The base keeps its own #private copy for the reads; this one is for the
-    // verbs' position arithmetic.
+    // The base keeps its own #private copy for the reads; this one is what the
+    // verbs check a named block against before speaking.
     this.#model = model
   }
 
@@ -57,7 +59,7 @@ export class BlockProviderAdapter extends WholeContentAdapter {
    */
   requestAddBlock(kind, attrs, afterBlockId) {
     if (!kind) throw new ContractViolation('requestAddBlock: kind is required')
-    this.#settle(this._binding.createBlock(kind, attrs || {}, this.#slotAfter(afterBlockId)), 'requestAddBlock')
+    this.#settle(this._documents.createBlock(this.getUuid(), kind, attrs || {}, this.#anchorOf(afterBlockId)), 'requestAddBlock')
   }
 
   /**
@@ -66,7 +68,7 @@ export class BlockProviderAdapter extends WholeContentAdapter {
   requestSetBlock(blockId, patch) {
     const node = this.#model.getBlock(blockId)
     if (!node) return this.#drop('requestSetBlock', blockId)
-    this.#settle(this._binding.updateBlock(blockId, node.kind, patch || {}), 'requestSetBlock')
+    this.#settle(this._documents.updateBlock(this.getUuid(), blockId, node.kind, patch || {}), 'requestSetBlock')
   }
 
   /**
@@ -77,45 +79,44 @@ export class BlockProviderAdapter extends WholeContentAdapter {
    */
   requestRemoveBlock(blockId) {
     if (!this.#model.getBlock(blockId)) return this.#drop('requestRemoveBlock', blockId)
-    this.#settle(this._binding.deleteBlock(blockId), 'requestRemoveBlock')
+    this.#settle(this._documents.deleteBlock(this.getUuid(), blockId), 'requestRemoveBlock')
   }
 
   /**
-   * States the container's COMPLETE child order — idempotent, so a duplicate or late
-   * request lands the container in the same place, and it is the shape
-   * `order-changed` echoes back. An order that is not a permutation of what this
-   * container holds is DROPPED here rather than sent: Go refuses it anyway, and a
-   * list missing an id is indistinguishable from a mass delete.
+   * States the relative order of the named children. The list may be a SUBSEQUENCE
+   * of what the container holds — a surface can only name what it paints, and a
+   * container also holds children no surface draws — so it is merged into the
+   * follower's full order and the COMPLETE permutation is what goes to Go. Go
+   * refuses anything that is not a permutation of the authority, and a refused
+   * statement is simply re-derived on the next quiet tick.
+   *
+   * THIS VERB CONSULTS THE MODEL, and it is the one that should. Its siblings
+   * anchor by id precisely so that Go, not the follower, decides a position; an
+   * order statement is not a position but a claim about relative order, and the
+   * follower's own order is the only thing the unnamed children's places can come
+   * from.
    * @param {ReadonlyArray<string>} order
    */
   requestSetOrder(order) {
-    const want = Array.from(order || [])
-    const held = this.#model.getOrder()
-    if (want.length !== held.length || !want.every((id) => held.indexOf(id) >= 0)) {
-      return this.#drop('requestSetOrder: not a permutation of the container', want.join(','))
+    const statement = this.#model.mergeOrder(order)
+    if (!statement.held) {
+      return this.#drop('requestSetOrder: names a block the container does not hold', Array.from(order || []).join(','))
     }
-    if (want.every((id, i) => id === held[i])) return  // already so — nothing to say
-    this.#settle(this._binding.setOrder(want), 'requestSetOrder')
+    if (!statement.order) return  // nothing to say — an empty statement, or already so
+    this.#settle(this._documents.setBlockOrder(this.getUuid(), statement.order), 'requestSetOrder')
   }
 
   /**
    * Plays back an offer `detectExtractions` produced: Go recognises the entries as
    * targetKind and applies the operation. Whether that REPLACES the source or adds
-   * beside it is Go's decision from `operation`; the index is consulted only for
-   * the additive case.
+   * beside it is Go's decision from `operation`, and so is where an additive result
+   * lands — after the source block it names.
    * @param {string} blockId @param {string} targetKind @param {string} operation
    * @param {Array<{mimeType: string, content: string}>} entries
    */
   requestTransform(blockId, targetKind, operation, entries) {
-    const at = this.#model.getOrder().indexOf(blockId)
-    if (at < 0) return this.#drop('requestTransform', blockId)
-    this.#settle(this._binding.extract({
-      blockId: blockId,
-      targetKind: targetKind,
-      operation: operation,
-      entries: entries || [],
-      index: at + 1,
-    }), 'requestTransform')
+    if (!this.#model.getBlock(blockId)) return this.#drop('requestTransform', blockId)
+    this.#settle(this._documents.extract(this.getUuid(), blockId, targetKind, operation, entries || []), 'requestTransform')
   }
 
   /**
@@ -126,7 +127,7 @@ export class BlockProviderAdapter extends WholeContentAdapter {
    */
   requestRetry(blockId) {
     if (!this.#model.getBlock(blockId)) return this.#drop('requestRetry', blockId)
-    this._binding.retry(blockId)
+    this._documents.retry(this.getUuid(), blockId)
   }
 
   /**
@@ -144,7 +145,7 @@ export class BlockProviderAdapter extends WholeContentAdapter {
    */
   requestReplaceText(blockId, anchor, replacement) {
     if (!this.#model.getBlock(blockId)) return this.#drop('requestReplaceText', blockId)
-    Promise.resolve(this._binding.replaceText(Object.assign({}, anchor, { blockId: blockId }), replacement)).then(
+    Promise.resolve(this._documents.replaceText(this.getUuid(), Object.assign({}, anchor, { blockId: blockId }), replacement)).then(
       (outcome) => { if (outcome === REPLACE_FAILED) console.warn('[block-provider] requestReplaceText failed', blockId, anchor && anchor.quote) },
       (e) => console.warn('[block-provider] requestReplaceText failed', e))
   }
@@ -155,7 +156,7 @@ export class BlockProviderAdapter extends WholeContentAdapter {
    * container already holds. Void and unanswered — a save announces itself to the
    * whole workspace as `container-saved`.
    */
-  requestPersist() { this._binding.persist() }
+  requestPersist() { this._documents.persist(this.getUuid()) }
 
   /**
    * Asks Go what to make of a clipboard, a drop, or a gesture the page could not
@@ -175,12 +176,12 @@ export class BlockProviderAdapter extends WholeContentAdapter {
    */
   paste(payload, afterBlockId) {
     const p = /** @type {any} */ (payload) || {}
-    return this._binding
-      .paste({
+    return this._documents
+      .paste(this.getUuid(), {
         kind: p.kind || 'smart',
         entries: p.entries || [],
         slice: p.slice || [],
-        index: this.#slotAfter(afterBlockId),
+        anchor: this.#anchorOf(afterBlockId),
       })
       .then((result) => this.#decisionOf(result))
       .catch((e) => {
@@ -197,8 +198,8 @@ export class BlockProviderAdapter extends WholeContentAdapter {
    * @returns {Promise<Array<import('../contract/container-provider.js').ExtractionOffer>>}
    */
   detectExtractions(sourceKind, entries) {
-    return this._binding
-      .detectExtractions({ sourceKind: sourceKind, entries: entries || [] })
+    return this._documents
+      .detectExtractions(this.getUuid(), sourceKind, entries || [])
       .catch((e) => {
         console.warn('[block-provider] detectExtractions did not answer', e)
         return []
@@ -216,24 +217,26 @@ export class BlockProviderAdapter extends WholeContentAdapter {
     if (!node) return this.#drop('flush', blockId)
     const patch = /** @type {Record<string, any>} */ ({})
     patch[CONTENT_ATTR[node.kind] || 'content'] = text
-    this.#settle(this._binding.updateBlock(blockId, node.kind, patch), 'flush')
+    this.#settle(this._documents.updateBlock(this.getUuid(), blockId, node.kind, patch), 'flush')
   }
 
   /**
-   * The container position a child anchored after `afterBlockId` takes.
+   * The facade's anchor argument in the shape the wire states it. It is a
+   * translation and NOT a lookup — an id this client has not seen yet still
+   * travels, because Go is the one that resolves it.
    *
-   *   omitted / undefined  → -1, Go's append. The caller named no anchor.
-   *   null                 → 0, the front. The caller named the START of the
-   *                          container, which is a real place and a different
-   *                          statement from "wherever".
-   *   an unknown id        → -1, append.
-   * @param {string|null|undefined} afterBlockId @returns {number}
+   *   omitted / undefined / ''  → the empty anchor, Go's append. No anchor named.
+   *   null                      → the front. The caller named the START of the
+   *                               container, which is a real place and a different
+   *                               statement from "wherever".
+   *   an id                     → after that block; Go appends if it is gone.
+   * @param {string|null|undefined} afterBlockId
+   * @returns {import('./document-service.js').BlockAnchor}
    */
-  #slotAfter(afterBlockId) {
-    if (afterBlockId === null) return 0
-    if (!afterBlockId) return -1
-    const at = this.#model.getOrder().indexOf(afterBlockId)
-    return at < 0 ? -1 : at + 1
+  #anchorOf(afterBlockId) {
+    if (afterBlockId === null) return { atFront: true }
+    if (!afterBlockId) return {}
+    return { afterBlockId: afterBlockId }
   }
 
   /**

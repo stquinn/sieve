@@ -12,7 +12,7 @@
 //     are correlated replies, so the transport settles them on their awaiter and
 //     they never reach a frame observer — DocumentService.onContent publishes them.
 //   - mutation ECHOES (insert / replace / attrs / remove / order) fold onto it, via
-//     ContainerTransport.observeFrames, which sees every routed frame.
+//     DocumentService.observeFrames, which sees every routed frame.
 
 import { ContractViolation } from '../contract/sieve-block.js'
 import { ContainerModel } from './container-model.js'
@@ -45,7 +45,7 @@ export class ContainerModelFeed {
     const model = new ContainerModel(uuid, kind)
     const release = [
       this.#documentService.onContent(uuid, (content) => model.applyLoad(this.#asContent(content))),
-      this.#documentService.blockService.observeFrames(uuid, (frame) => model.applyFrame(frame)),
+      this.#documentService.observeFrames(uuid, (frame) => model.applyFrame(frame)),
     ]
     this.#open.set(uuid, { model: model, release: release })
     return model

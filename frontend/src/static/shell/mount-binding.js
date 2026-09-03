@@ -12,7 +12,6 @@
 // which of those it demands by what its constructor asks for.
 
 import { ContainerModelFeed } from '../container/container-model-feed.js'
-import { ContainerBinding } from '../container/container-binding.js'
 import { BlockProviderAdapter } from '../container/block-provider-adapter.js'
 import { WholeContentAdapter } from '../container/whole-content-adapter.js'
 import { ContractViolation } from '../contract/sieve-block.js'
@@ -26,7 +25,6 @@ export class MountBinding {
   /** @type {import('../container/document-service.js').DocumentService} */ #documents
   /** @type {ContainerModelFeed} */ #feed
   /** @type {import('../container/container-model.js').ContainerModel} */ #model
-  /** @type {ContainerBinding} */ #binding
   /** @type {WholeContentAdapter} */ #provider
   /** @type {Array<(context: Readonly<any>) => void>} */ #advertListeners = []
   /** @type {Readonly<any>|null} */ #lastAdvert = null
@@ -47,10 +45,9 @@ export class MountBinding {
     this.#documents = documentService
     this.#feed = feed
     this.#model = feed.open(uuid, kind)
-    this.#binding = new ContainerBinding(uuid, documentService)
     this.#provider = kind === 'prompt'
-      ? new WholeContentAdapter(this.#model, this.#binding)
-      : new BlockProviderAdapter(this.#model, this.#binding)
+      ? new WholeContentAdapter(this.#model, documentService)
+      : new BlockProviderAdapter(this.#model, documentService)
   }
 
   /** @returns {string} */
@@ -90,7 +87,7 @@ export class MountBinding {
    * @param {string} [format]
    * @returns {Promise<string|null>}
    */
-  exportAs(format = 'markdown') { return this.#binding.exportAs(format) }
+  exportAs(format = 'markdown') { return this.#documents.exportAs(this.#uuid, format) }
 
   /**
    * Switches a text-service feature on or off for THIS container, carrying what
@@ -101,7 +98,7 @@ export class MountBinding {
    * @param {string} feature @param {boolean} enabled
    * @param {Record<string, any>} [parameters]
    */
-  setFeature(feature, enabled, parameters) { this.#binding.setFeature(feature, enabled, parameters) }
+  setFeature(feature, enabled, parameters) { this.#documents.setFeature(this.#uuid, feature, enabled, parameters) }
 
   /**
    * Writes what belongs in a marked run's place, and RESOLVES WITH THE OUTCOME.
@@ -121,7 +118,7 @@ export class MountBinding {
    */
   replaceText(mark, replacement) {
     if (!mark || !this.#model.getBlock(mark.blockId || '')) return Promise.resolve(REPLACE_FAILED)
-    return this.#binding.replaceText(mark, replacement)
+    return this.#documents.replaceText(this.#uuid, mark, replacement)
   }
 
   /**

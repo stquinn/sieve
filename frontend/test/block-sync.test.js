@@ -1,49 +1,5 @@
 import { describe, it, expect } from 'vitest'
 import { computeBlockSync, seedBaseline, dedupeActions, proseOp } from '../src/static/lens/document-editor/block-sync.js'
-import { updateBlockOp } from '../src/static/container/block-ops.js'
-
-// updateBlockOp is the structured-edit counterpart to computeBlockSync's prose
-// ops: a NodeView (code/diagram/log) passes { id, kind, attrs } to
-// ctx.updateAttributes when the user edits it, and that detail must become the
-// SAME `update-block` block-op shape prose already rides — so every block update,
-// prose or structured, converges on one wire op (block-update message retired).
-describe('updateBlockOp', () => {
-  it('maps a structured NodeView edit detail to an update-block block-op', () => {
-    const op = updateBlockOp({ id: 'co-1', kind: 'code', attrs: { source: 'x = 1' } })
-    expect(op).toEqual({
-      type: 'update-block',
-      blockId: 'co-1',
-      kind: 'code',
-      attrs: { source: 'x = 1' },
-    })
-  })
-
-  it('omits aliases when the edit carries none', () => {
-    const op = updateBlockOp({ id: 'dg-1', kind: 'diagram', attrs: { mode: 'render' } })
-    expect('aliases' in op).toBe(false)
-  })
-
-  it('carries aliases when present (same optional field prose uses)', () => {
-    const op = updateBlockOp({ id: 'lg-1', kind: 'log', attrs: { filter: 'warn' }, aliases: ['lg-0'] })
-    expect(op.aliases).toEqual(['lg-0'])
-  })
-
-  it('defaults attrs to an empty object when the detail omits them', () => {
-    const op = updateBlockOp({ id: 'co-2', kind: 'code' })
-    expect(op.attrs).toEqual({})
-  })
-
-  it('produces the SAME op type+verb prose updates ride (one converged path)', () => {
-    const prose = computeBlockSync(
-      [{ id: 'pr-1', kind: 'prose', content: 'B' }],
-      computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'A' }], null).next,
-    ).ops[0]
-    const structured = updateBlockOp({ id: 'co-1', kind: 'code', attrs: { source: 's' } })
-    expect(structured.type).toBe(prose.type) // both 'update-block'
-    expect(structured.blockId).toBeTruthy()
-    expect(prose.blockId).toBeTruthy()
-  })
-})
 
 describe('dedupeActions', () => {
   it('returns nothing when every id is unique and non-empty', () => {

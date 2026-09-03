@@ -177,6 +177,37 @@ func (s *ShadowDocument) ReplaceBlock(id string, newBlock SieveBlock) bool {
 	return false
 }
 
+// IndexOfBlock returns the top-level position of id, or -1 if this document does
+// not hold it. Caller must NOT hold s.mu.
+func (s *ShadowDocument) IndexOfBlock(id string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.Blocks {
+		if s.Blocks[i].ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// ResolveAnchor returns the top-level index a block anchored at a takes in this
+// document: one past the anchor block, 0 for the front, and AppendIndex both for
+// an absent anchor and for one naming a block this document does not hold. See
+// Anchor for why an unknown anchor appends rather than failing. Caller must NOT
+// hold s.mu.
+func (s *ShadowDocument) ResolveAnchor(a Anchor) int {
+	if a.AfterBlockID == "" {
+		if a.AtFront {
+			return 0
+		}
+		return AppendIndex
+	}
+	if at := s.IndexOfBlock(a.AfterBlockID); at >= 0 {
+		return at + 1
+	}
+	return AppendIndex
+}
+
 // DeleteBlockAttr removes a single key from an existing block's attrs.
 // Used to expunge transient fields (e.g. hint) that a job has consumed.
 func (s *ShadowDocument) DeleteBlockAttr(blockID, key string) {
@@ -264,6 +295,26 @@ func (s *ShadowDocument) findBlock(id string) *SieveBlock {
 	return s.findBlockIn(id)
 }
 
+// AppendIndex is the document position meaning "after everything else".
+const AppendIndex = -1
+
+// Anchor names where a created block lands: by the id of the block it follows,
+// never by a position. A client's position is derived from a document state that
+// is always at least one round trip behind this one, so the wire carries the
+// anchor and the authority resolves it — see ShadowDocument.ResolveAnchor.
+//
+// At most one field is set, and neither set means APPEND. AfterBlockID wins if
+// both are.
+//
+// An AfterBlockID this document does not hold APPENDS, deliberately: the anchor
+// named a block that has since been deleted, and the end of the document is
+// where a block whose neighbour is gone belongs. Refusing the op would lose the
+// content the user just made.
+type Anchor struct {
+	AfterBlockID string `json:"afterBlockId,omitempty" doc:"insert after this block; an id the document does not hold appends"`
+	AtFront      bool   `json:"atFront,omitempty" doc:"insert at position 0; ignored when afterBlockId is set"`
+}
+
 // BlockOp is a granular mutation of the BlockDoc tree, carried over the wire
 // (Stage C, spec §4). One op == one user-visible block change.
 type BlockOp struct {
@@ -273,10 +324,16 @@ type BlockOp struct {
 	// Attrs is the block's payload bag — uniform across kinds. Every kind's body
 	// rides here (prose's at Attrs["content"], code's at Attrs["source"]); there is
 	// no kind-special-cased Content field. update merges it, create constructs from it.
-	Attrs    map[string]interface{} `json:"attrs,omitempty"`
-	Aliases  []string               `json:"aliases,omitempty"`
-	Index    int                    `json:"index"`
-	ParentID string                 `json:"parentId,omitempty"`
+	Attrs   map[string]interface{} `json:"attrs,omitempty"`
+	Aliases []string               `json:"aliases,omitempty"`
+	// Index is the RESOLVED top-level position: move/reorder's destination, and
+	// create-block's landing place. create-block does not read it off the wire —
+	// the wire names an Anchor, which the boundary resolves into this field before
+	// the op reaches the tree.
+	Index int `json:"index"`
+	// Anchor is create-block's position AS THE WIRE STATES IT.
+	Anchor
+	ParentID string `json:"parentId,omitempty"`
 	// Order is the COMPLETE top-level block order a set-order op installs, newest
 	// first position to last. It is the whole order rather than a delta because
 	// applying it is idempotent: a duplicate or out-of-sequence frame lands the
@@ -382,13 +439,12 @@ func (s *ShadowDocument) removeBlock(id string) (SieveBlock, bool) {
 	return SieveBlock{}, false
 }
 
-// insertBlockAt inserts b at index in *blocks, clamping out-of-range indices to
-// the ends (a robustness choice — the wire layer may send a stale index).
+// insertBlockAt inserts b at index in *blocks. AppendIndex — and any other
+// negative index — appends, matching what an unresolved Anchor means; an index
+// past the end clamps there (a robustness choice — the wire layer may send a
+// stale index).
 func (s *ShadowDocument) insertBlockAt(index int, b SieveBlock) {
-	if index < 0 {
-		index = 0
-	}
-	if index > len(s.Blocks) {
+	if index < 0 || index > len(s.Blocks) {
 		index = len(s.Blocks)
 	}
 	s.Blocks = append(s.Blocks, SieveBlock{})

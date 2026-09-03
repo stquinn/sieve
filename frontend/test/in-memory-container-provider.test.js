@@ -18,6 +18,7 @@ import { BlockProviderAdapter } from '../src/static/container/block-provider-ada
 import { InMemoryContainerProvider } from '../src/static/container/in-memory-container-provider.js'
 import { ContractViolation } from '../src/static/contract/sieve-block.js'
 import { Ident } from '../src/static/ident/ident.js'
+import { stubDocumentService } from './helpers/service-rig.js'
 
 const SEED = Object.freeze([
   { id: 'p1', kind: 'prose', attrs: { content: 'one' } },
@@ -39,29 +40,15 @@ function recorder() {
 function wireArrangement() {
   const model = new ContainerModel('doc-1', 'note')
   model.applyLoad({ uuid: 'doc-1', blocks: SEED.map((b) => Object.assign({}, b)) })
-  const binding = {
-    getUuid: () => 'doc-1',
-    createBlock: vi.fn(() => Promise.resolve({ ok: true })),
-    updateBlock: vi.fn(() => Promise.resolve({ ok: true })),
-    deleteBlock: vi.fn(() => Promise.resolve({ ok: true })),
-    setOrder: vi.fn(() => Promise.resolve({ ok: true })),
-    extract: vi.fn(() => Promise.resolve({ ok: true })),
-    retry: vi.fn(),
-    persist: vi.fn(),
-    paste: vi.fn(() => Promise.resolve({ outcome: 'none' })),
-    detectExtractions: vi.fn(() => Promise.resolve([])),
-    getContents: vi.fn(() => Promise.resolve('# doc')),
-    setContents: vi.fn(() => Promise.resolve()),
-    flushContents: vi.fn(),
-  }
-  return { provider: new BlockProviderAdapter(model, binding), binding, echo: (f) => model.applyFrame(f) }
+  const documents = stubDocumentService()
+  return { provider: new BlockProviderAdapter(model, documents), documents, echo: (f) => model.applyFrame(f) }
 }
 
 /** The DRAFT arrangement: the same seed, and no wire at all. */
 function draftArrangement() {
   return {
     provider: new InMemoryContainerProvider({ uuid: 'doc-1', blocks: SEED.map((b) => Object.assign({}, b)) }),
-    binding: null,
+    documents: null,
     echo: () => {},
   }
 }
@@ -152,19 +139,6 @@ describe.each(ARRANGEMENTS)('$name provider — the verbs a lens may call', ({ m
     warn.mockRestore()
   })
 
-  it('refuses an order that is not a permutation of what the container holds', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    provider.requestSetOrder(['p1', 'c1'])
-    provider.requestSetOrder(['p1', 'c1', 'ghost'])
-    provider.requestSetOrder([])
-    expect(lens.cues).toEqual([])
-    warn.mockRestore()
-  })
-
-  it('says nothing when the container is already in the order asked for', () => {
-    provider.requestSetOrder(['p1', 'c1', 'p2'])
-    expect(lens.cues).toEqual([])
-  })
 })
 
 // ── Where the two arrangements differ: WHO leads ─────────────────────────────
@@ -284,35 +258,56 @@ describe('what the in-memory provider deliberately does NOT offer', () => {
 })
 
 // ── Subsequence order: a surface names only what it paints ───────────────────
+//
+// Both containers hold an attach element no surface draws, so the order a surface
+// can state is a SUBSEQUENCE. Both read it the same way — the merge is the
+// model's, and its readings are pinned in container-model.test.js. What is
+// asserted here is the STATEMENT each arrangement ends up making: the draft
+// installs it, the wire-backed provider sends it, and neither says anything at
+// all when there is nothing to say.
 
-describe('requestSetOrder over a draft holding blocks no surface draws', () => {
-  /** @returns {any} a draft holding two body blocks around an attach element */
-  function draftWithAttachment() {
-    const provider = new InMemoryContainerProvider({
-      blocks: [
-        { id: 'b1', kind: 'prose', attrs: { id: 'b1', content: 'one' } },
-        { id: 'b2', kind: 'prose', attrs: { id: 'b2', content: 'two' } },
-        { id: 'at', kind: 'reference', attrs: { id: 'at', uri: 'sieve://x', rel: 'attach' } },
-      ],
-    })
-    return provider
+const ELEMENT_SEED = Object.freeze([
+  { id: 'b1', kind: 'prose', attrs: { content: 'one' } },
+  { id: 'b2', kind: 'prose', attrs: { content: 'two' } },
+  { id: 'at', kind: 'reference', attrs: { uri: 'sieve://x', rel: 'attach' } },
+])
+
+/** @returns {{provider: any, stated: () => string[]|null}} */
+function draftHoldingAnElement() {
+  const provider = new InMemoryContainerProvider({ blocks: ELEMENT_SEED.map((b) => Object.assign({}, b)) })
+  const lens = recorder()
+  provider.subscribe(lens)
+  lens.cues.length = 0
+  return { provider, stated: () => (lens.cues.length ? Array.from(provider.getOrder()) : null) }
+}
+
+/** @returns {{provider: any, stated: () => string[]|null}} */
+function wireHoldingAnElement() {
+  const model = new ContainerModel('doc-1', 'note')
+  model.applyLoad({ uuid: 'doc-1', blocks: ELEMENT_SEED.map((b) => Object.assign({}, b)) })
+  const documents = stubDocumentService()
+  const calls = documents.setBlockOrder.mock.calls
+  return {
+    provider: new BlockProviderAdapter(model, documents),
+    stated: () => (calls.length ? calls[calls.length - 1][1] : null),
   }
+}
 
-  it('reorders the named subsequence and leaves the unnamed block in place', () => {
-    const provider = draftWithAttachment()
-    provider.requestSetOrder(['b2', 'b1'])
-    expect(provider.getOrder()).toEqual(['b2', 'b1', 'at'])
-  })
-
-  it('a statement naming the whole draft still behaves as the full permutation', () => {
-    const provider = draftWithAttachment()
-    provider.requestSetOrder(['at', 'b2', 'b1'])
-    expect(provider.getOrder()).toEqual(['at', 'b2', 'b1'])
-  })
-
-  it('drops a statement naming an id the draft does not hold', () => {
-    const provider = draftWithAttachment()
-    provider.requestSetOrder(['b2', 'stranger'])
-    expect(provider.getOrder()).toEqual(['b1', 'b2', 'at'])
+describe.each([
+  { name: 'wire-backed', make: wireHoldingAnElement },
+  { name: 'in-memory', make: draftHoldingAnElement },
+])('$name requestSetOrder over a container holding blocks no surface draws', ({ make }) => {
+  it.each([
+    ['reorders the named subsequence, leaving the unnamed element in place', ['b2', 'b1'], ['b2', 'b1', 'at']],
+    ['takes a statement naming every child as the full permutation', ['at', 'b2', 'b1'], ['at', 'b2', 'b1']],
+    ['says nothing when the merge is the order already held', ['b1', 'b2'], null],
+    ['says nothing about an empty statement', [], null],
+    ['drops a statement naming an id the container does not hold', ['b2', 'stranger'], null],
+  ])('%s', (_name, want, expected) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { provider, stated } = make()
+    provider.requestSetOrder(want)
+    expect(stated()).toEqual(expected)
+    warn.mockRestore()
   })
 })

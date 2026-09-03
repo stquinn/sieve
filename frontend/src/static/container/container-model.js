@@ -111,6 +111,36 @@ export class ContainerModel {
     return node ? this.#deepFreeze(structuredClone(node)) : null
   }
 
+  /**
+   * The container's COMPLETE order implied by a statement about SOME of its
+   * children — a read, not a write.
+   *
+   * A statement may be a subsequence: a surface can only name what it paints, and
+   * a container also holds children no surface draws (a question's reference
+   * elements). The named ids take the stated sequence in the slots they
+   * collectively occupy; every unnamed id keeps its place. So a partial statement
+   * says what it means — the relative order of these — and never what it does not.
+   *
+   * @param {ReadonlyArray<string>} order the ids being placed, in the order wanted
+   * @returns {{held: boolean, order: string[]|null}} `held` is false when the
+   *   statement names an id this container does not hold, which makes the whole of
+   *   it unusable: a stranger is indistinguishable from a stale statement about a
+   *   container that has since moved on. `order` is the full order to install, or
+   *   null when there is nothing to install — an empty statement, or one that
+   *   merges to the order already held.
+   */
+  mergeOrder(order) {
+    const want = Array.from(order || [])
+    const held = this.#order
+    if (!want.every((id) => held.indexOf(id) >= 0)) return { held: false, order: null }
+    if (!want.length) return { held: true, order: null }
+    const named = new Set(want)
+    let next = 0
+    const merged = held.map((id) => (named.has(id) ? want[next++] : id))
+    if (merged.every((id, i) => id === held[i])) return { held: true, order: null }
+    return { held: true, order: merged }
+  }
+
   /** Registers a listener and immediately cues it with the whole container:
    *  bootstrap is not a separate handshake, it is the first `onChanged`, so a lens
    *  has exactly one read-and-paint path. Marks bootstrap the same way — every

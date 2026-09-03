@@ -182,11 +182,10 @@ ExtractFrame creates a block from selected content — the additive extract/past
 |---|---|---|---|
 | `type` | `string` | yes |  |
 | `opId` | `string` | no | echoed on the extract-ack |
-| `blockId` | `string` | yes | the source block: transformed in place, or extracted from |
+| `blockId` | `string` | yes | the source block: transformed in place, or extracted from — and the anchor the extracted block lands after |
 | `targetKind` | `string` | yes | the block kind to create |
 | `operation` | `block.Action` | no | empty means extract — the additive default |
 | `entries` | `[]block.ContentEntry` | yes | the selection, one entry per clipboard-style view |
-| `index` | `int` | yes | document position for the new block; -1 appends, and is the default when the key is absent |
 
 #### `feature-control` — client → server
 
@@ -235,7 +234,8 @@ PasteFrame hands a clipboard to the server to make sense of.
 | `kind` | `protocol.PasteKind` | yes | smart \| slice \| native-drop \| native-clipboard. SECURITY: native-drop and native-clipboard make the server read files the NATIVE side caught (the drop bucket) or the OS clipboard names — never paths from the wire, so the wire carries the GESTURE, not a filesystem address. The socket upgrade gates keep these to the app's own page: an origin allow-list refuses a foreign browser page, and a per-run token refuses every other local process. |
 | `entries` | `[]block.ContentEntry` | no | smart: the clipboard's views. native-drop: absent — the server takes the paths from the native drop bucket the OS-level catch fed (Wails OnFileDrop); the page's own view of a drop is never consulted. native-clipboard: absent — the server reads the clipboard itself |
 | `slice` | `[][]block.ContentEntry` | no | slice only: one view set per copied block, in order |
-| `index` | `int` | yes | document position for the first created block; -1 appends, and is the default when the key is absent |
+| `afterBlockId` | `string` | no | insert after this block; an id the document does not hold appends |
+| `atFront` | `bool` | no | insert at position 0; ignored when afterBlockId is set |
 
 #### `ping` — client → server
 
@@ -764,6 +764,15 @@ its own declaration, in the package that owns it.
 
 Action is an operation a processor can perform on a set of ContentEntry views.
 
+### `block.Anchor`
+
+Anchor names where a created block lands: by the id of the block it follows, never by a position.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `afterBlockId` | `string` | no | insert after this block; an id the document does not hold appends |
+| `atFront` | `bool` | no | insert at position 0; ignored when afterBlockId is set |
+
 ### `block.BlockOp`
 
 BlockOp is a granular mutation of the BlockDoc tree, carried over the wire (Stage C, spec §4).
@@ -776,6 +785,8 @@ BlockOp is a granular mutation of the BlockDoc tree, carried over the wire (Stag
 | `attrs` | `map[string]interface {}` | no |  |
 | `aliases` | `[]string` | no |  |
 | `index` | `int` | yes |  |
+| `afterBlockId` | `string` | no | insert after this block; an id the document does not hold appends |
+| `atFront` | `bool` | no | insert at position 0; ignored when afterBlockId is set |
 | `parentId` | `string` | no |  |
 | `order` | `[]string` | no | set-order only: the complete top-level block id order to install |
 

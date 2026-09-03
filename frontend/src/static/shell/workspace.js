@@ -54,11 +54,12 @@ export class SieveWorkspace {
   /** @type {ReturnType<typeof setTimeout>|null} lazy scroll-persist debounce, for the active tab only */
   #scrollPersistTimer = null
 
-  /** @type {ContainerTransport} the app-wide protocol boundary AND wire owner,
-   *  constructed HERE and handed down. Never window.*. */
+  /** @type {ContainerTransport} the app-wide wire owner, constructed HERE and
+   *  reachable only through the DocumentService composed over it. Never window.*. */
   #blockService
 
-  /** @type {DocumentService} the uuid-addressed half, composed over the wire owner. */
+  /** @type {DocumentService} the document vocabulary, composed over the wire owner
+   *  and the only thing above it the host hands out. */
   #documentService
 
   /** @type {ContainerModelFeed} one follower model per open container. The HOST's
@@ -108,8 +109,6 @@ export class SieveWorkspace {
       typeof window !== 'undefined' ? /** @type {any} */ (window).__sieveSpellcheckEnabled !== false : true)
     this.#macroCatalog = new MacroCatalog(this)
   }
-
-  get blockService() { return this.#blockService }
 
   get documentService() { return this.#documentService }
 

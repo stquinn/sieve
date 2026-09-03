@@ -63,6 +63,38 @@ export function enclosingBlockId(doc, pos) {
   return (child.attrs && child.attrs.id) ? child.attrs.id : ''
 }
 
+// blockOffsetOf(doc, pos): `pos` restated as an offset WITHIN the top-level block
+// that owns it — { id, offset }, where offset is pos minus the position before
+// that block. null when no top-level block owns the position, or when the one
+// that does carries no id: such a node is nameless, so nothing about it survives
+// a permute of the doc's children.
+export function blockOffsetOf(doc, pos) {
+  var i = blockIndexAt(doc, pos)
+  if (i < 0) return null
+  var child = doc.child(i)
+  var id = child.attrs && child.attrs.id
+  if (!id) return null
+  return { id: id, offset: pos - docPosForBlockIndex(doc, i) }
+}
+
+// posForBlockOffset(doc, ref): the absolute position a blockOffsetOf reading names
+// in `doc`, wherever that block now sits. The offset is CLAMPED to the block, so a
+// reading taken before an edit shrank it still lands inside. -1 when `doc` holds no
+// block of that id.
+export function posForBlockOffset(doc, ref) {
+  if (!ref || !ref.id) return -1
+  var start = 0
+  for (var i = 0; i < doc.childCount; i++) {
+    var child = doc.child(i)
+    if (child.attrs && child.attrs.id === ref.id) {
+      var last = child.nodeSize - 1
+      return start + (ref.offset > 0 ? Math.min(ref.offset, last) : 0)
+    }
+    start += child.nodeSize
+  }
+  return -1
+}
+
 // The top-level node anchoring insert position `pos` (a blockInsertPos result —
 // the boundary AFTER the caret's block), IF that node is a bare empty paragraph.
 // Contract rule "Block insertion placement": an empty paragraph is a placement

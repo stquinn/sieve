@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Schema } from '@tiptap/pm/model'
-import { blockIndexForInsert, docPosForBlockIndex, blockIndexAfter, blockIndexAt, enclosingBlockId } from '../src/static/lens/document-editor/surfaces/block-position.js'
+import { blockIndexForInsert, docPosForBlockIndex, blockIndexAfter, blockIndexAt, enclosingBlockId, blockOffsetOf, posForBlockOffset } from '../src/static/lens/document-editor/surfaces/block-position.js'
 
 // Schema with doc that accepts both block-group nodes (paragraph/heading/codeBlock)
 // and sieveBlock-group nodes (sieve-diagram, sieve-prose).
@@ -57,6 +57,11 @@ function proseWrap(id, ...children) {
 
 function code(id) {
   return n.codeBlock.create({ id: id || '' })
+}
+
+// An id-bearing top-level block with text in it — the shape a caret actually sits in.
+function codeText(id, text) {
+  return n.codeBlock.create({ id: id || '' }, schema.text(text))
 }
 
 // Build doc: [p1, p2, sieve-diagram(id='di-39ad'), p3, p4]
@@ -232,5 +237,58 @@ describe('blockIndexAt', () => {
     const doc = n.doc.create(null, [p('one'), diag('di-2')])
     expect(blockIndexAt(doc, 5)).toBe(1)
     expect(enclosingBlockId(doc, 5)).toBe('di-2')
+  })
+})
+
+// ── blockOffsetOf / posForBlockOffset ────────────────────────────────────────
+// The pair a caret survives a whole-document permute by: a position read
+// relative to the block that owns it, and put back wherever that block now sits.
+// Absolute positions do not survive such a replace; a block id does.
+
+describe('blockOffsetOf', () => {
+  it('restates a position as an offset within the block that owns it', () => {
+    const doc = n.doc.create(null, [codeText('c1', 'alpha'), codeText('c2', 'bravo')])
+    // c1 is [0,7); c2 starts at 7, its text at 8, so 11 is three characters in.
+    expect(blockOffsetOf(doc, 11)).toEqual({ id: 'c2', offset: 4 })
+    expect(blockOffsetOf(doc, 2)).toEqual({ id: 'c1', offset: 2 })
+  })
+
+  it('names the TOP-LEVEL block for a position inside a structured block\'s own content', () => {
+    // What a caret in a code/log/diagram inner text does: the position is nested,
+    // and the block it belongs to is still the top-level one carrying the id.
+    const doc = n.doc.create(null, [codeText('c1', 'alpha'), proseWrap('s1', p('bravo'))])
+    // s1 opens at 7, its paragraph at 8, its text at 9 — so 12 is 'bra|vo'.
+    expect(blockOffsetOf(doc, 12)).toEqual({ id: 's1', offset: 5 })
+  })
+
+  it('answers null where there is nothing to name', () => {
+    const doc = n.doc.create(null, [p('id-less'), codeText('c1', 'x')])
+    expect(blockOffsetOf(doc, 2)).toBeNull()                   // the block carries no id
+    expect(blockOffsetOf(doc, doc.content.size)).toBeNull()    // no block owns the position
+  })
+})
+
+describe('posForBlockOffset', () => {
+  it('round-trips a position through a permute of the doc\'s children', () => {
+    const [a, b, c] = [codeText('c1', 'alpha'), codeText('c2', 'bravo'), codeText('c3', 'charlie')]
+    const before = n.doc.create(null, [a, b, c])
+    const pos = 11                                             // 'bra|vo' in c2
+    const ref = blockOffsetOf(before, pos)
+    const after = n.doc.create(null, [c, a, b])
+    // c3 (9) then c1 (7) — c2 now starts at 16, its text at 17.
+    expect(posForBlockOffset(after, ref)).toBe(20)
+    expect(after.textBetween(17, 20)).toBe('bra')
+  })
+
+  it('clamps an offset the block can no longer hold', () => {
+    const doc = n.doc.create(null, [codeText('c1', 'hi')])
+    expect(posForBlockOffset(doc, { id: 'c1', offset: 99 })).toBe(3)   // the last position inside
+    expect(posForBlockOffset(doc, { id: 'c1', offset: -4 })).toBe(0)
+  })
+
+  it('answers -1 when the reading names nothing this doc holds', () => {
+    const doc = n.doc.create(null, [codeText('c1', 'hi')])
+    expect(posForBlockOffset(doc, { id: 'gone', offset: 1 })).toBe(-1)
+    expect(posForBlockOffset(doc, null)).toBe(-1)
   })
 })

@@ -5,14 +5,13 @@
 // Never touches a real socket.
 //
 // `providerRig` builds the WHOLE host stack over that same socket — follower
-// model, binding, provider — so a test can hold the thing a lens is handed and
+// model, service, provider — so a test can hold the thing a lens is handed and
 // still assert the frames its verbs produce.
 
 import { vi } from 'vitest'
 import { ContainerTransport } from '../../src/static/container/container-transport.js'
 import { DocumentService } from '../../src/static/container/document-service.js'
 import { ContainerModel } from '../../src/static/container/container-model.js'
-import { ContainerBinding } from '../../src/static/container/container-binding.js'
 import { BlockProviderAdapter } from '../../src/static/container/block-provider-adapter.js'
 
 /** A fake WebSocket that records sends and lets tests drive open/message/close. */
@@ -51,6 +50,29 @@ export class FakeSocket {
   sentTypes() { return this.sent.map((s) => JSON.parse(s).type) }
   /** @param {string} t */
   sentOfType(t) { return this.sent.map((s) => JSON.parse(s)).filter((m) => m.type === t) }
+}
+
+/**
+ * A recording DocumentService: every wire verb is a spy and every ack resolves ok,
+ * for a test holding the provider over it rather than the frames underneath.
+ * @param {Record<string, any>} [overrides]
+ */
+export function stubDocumentService(overrides = {}) {
+  return Object.assign({
+    createBlock: vi.fn(() => Promise.resolve({ ok: true })),
+    updateBlock: vi.fn(() => Promise.resolve({ ok: true })),
+    deleteBlock: vi.fn(() => Promise.resolve({ ok: true })),
+    setBlockOrder: vi.fn(() => Promise.resolve({ ok: true })),
+    extract: vi.fn(() => Promise.resolve({ ok: true })),
+    retry: vi.fn(),
+    persist: vi.fn(),
+    paste: vi.fn(() => Promise.resolve({ outcome: 'none' })),
+    detectExtractions: vi.fn(() => Promise.resolve([])),
+    getContents: vi.fn(() => Promise.resolve('# doc')),
+    setContents: vi.fn(() => Promise.resolve()),
+    flushContents: vi.fn(),
+    replaceText: vi.fn(() => Promise.resolve('ok')),
+  }, overrides)
 }
 
 /** A recording channel delegate (every host-side reaction is a spy). */
@@ -94,7 +116,7 @@ export function providerRig(opts = {}) {
   const uuid = opts.uuid === undefined ? 'doc-1' : opts.uuid
   const rig = serviceRig({ uuid: uuid, open: opts.open })
   const model = new ContainerModel(uuid, 'note')
-  rig.service.observeFrames(uuid, (frame) => model.applyFrame(frame))
+  rig.documentService.observeFrames(uuid, (frame) => model.applyFrame(frame))
   rig.documentService.onContent(uuid, (content) => model.applyLoad(/** @type {any} */ (content)))
   if (opts.blocks) {
     model.applyLoad({
@@ -102,6 +124,6 @@ export function providerRig(opts = {}) {
       blocks: opts.blocks.map((b) => ({ id: b.id, kind: b.kind, attrs: b.attrs || {} })),
     })
   }
-  const provider = new BlockProviderAdapter(model, new ContainerBinding(uuid, rig.documentService))
+  const provider = new BlockProviderAdapter(model, rig.documentService)
   return Object.assign({}, rig, { model, provider })
 }

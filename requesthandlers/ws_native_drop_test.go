@@ -42,7 +42,7 @@ func TestWS_NativeDrop_ReadsTheFilesAndMakesBlocks(t *testing.T) {
 
 	c := dialWS(t, srv, uuid)
 	frame, err := json.Marshal(map[string]interface{}{
-		"type": "paste", "opId": "op-drop", "kind": "native-drop", "index": 0,
+		"type": "paste", "opId": "op-drop", "kind": "native-drop",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +96,7 @@ func TestWS_NativeDrop_NothingReadableIsNothing(t *testing.T) {
 
 	c := dialWS(t, srv, uuid)
 	frame, err := json.Marshal(map[string]interface{}{
-		"type": "paste", "opId": "op-drop", "kind": "native-drop", "index": 0,
+		"type": "paste", "opId": "op-drop", "kind": "native-drop",
 	})
 	if err != nil {
 		t.Fatal(err)

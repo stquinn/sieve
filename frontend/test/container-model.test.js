@@ -270,6 +270,38 @@ describe('ContainerModel fold — order-changed', () => {
   })
 })
 
+// ── mergeOrder ───────────────────────────────────────────────────────────────
+// The ONE reading of a partial order statement, shared by both providers: a
+// surface can only name what it paints, so a statement is a subsequence, and what
+// gets installed is that subsequence merged into the container's full order.
+
+describe('ContainerModel.mergeOrder', () => {
+  it.each([
+    ['a full permutation, as itself', ['a1', 'p1', 'c1'], ['a1', 'p1', 'c1']],
+    ['a subsequence into the slots those ids occupy', ['a1', 'p1'], ['a1', 'c1', 'p1']],
+    ['two neighbours swapped, leaving the third alone', ['c1', 'p1'], ['c1', 'p1', 'a1']],
+    ['a single id — which changes nothing', ['c1'], null],
+    ['a subsequence already in the order held', ['p1', 'a1'], null],
+    ['the whole order, unchanged', ['p1', 'c1', 'a1'], null],
+    ['an empty statement, which says nothing', [], null],
+  ])('reads %s', (_name, want, order) => {
+    expect(seeded().mergeOrder(want)).toEqual({ held: true, order })
+  })
+
+  it('refuses the WHOLE statement when it names an id the container does not hold', () => {
+    // A stranger is indistinguishable from a statement about a container that has
+    // since moved on, and half of a stale statement is not better than none.
+    expect(seeded().mergeOrder(['a1', 'ghost'])).toEqual({ held: false, order: null })
+    expect(seeded().mergeOrder(['ghost'])).toEqual({ held: false, order: null })
+  })
+
+  it('is a READ — it states an order without installing one', () => {
+    const model = seeded()
+    model.mergeOrder(['a1', 'p1'])
+    expect(model.getOrder()).toEqual(['p1', 'c1', 'a1'])
+  })
+})
+
 describe('ContainerModel fold — unclaimed frames', () => {
   it('drops frames that are not container truth, without a cue', () => {
     const model = seeded()

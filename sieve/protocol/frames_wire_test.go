@@ -470,25 +470,15 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 			want: &RetryBlockJobFrame{Type: TypeRetryBlockJob, ID: "b1"},
 		},
 		{
+			// An extract states no position: blockId is both the source and the
+			// anchor, and Go resolves where the result lands.
 			name: "extract",
-			raw:  `{"type":"extract","opId":"op-4","blockId":"b1","targetKind":"code","operation":"transform","entries":[{"mimeType":"text/plain","content":"x = 1"}],"index":3}`,
+			raw:  `{"type":"extract","opId":"op-4","blockId":"b1","targetKind":"code","operation":"transform","entries":[{"mimeType":"text/plain","content":"x = 1"}]}`,
 			into: &ExtractFrame{},
 			want: &ExtractFrame{
 				Type: TypeExtract, OpID: "op-4", BlockID: "b1", TargetKind: "code",
 				Operation: block.ActionTransform,
 				Entries:   []block.ContentEntry{{MIMEType: "text/plain", Content: "x = 1"}},
-				Index:     3,
-			},
-		},
-		{
-			// The append default is the TYPE's, not a pre-seed the caller must
-			// remember: a body with no index key must still append.
-			name: "extract with no index",
-			raw:  `{"type":"extract","opId":"op-4","blockId":"b1","targetKind":"code","entries":[]}`,
-			into: &ExtractFrame{},
-			want: &ExtractFrame{
-				Type: TypeExtract, OpID: "op-4", BlockID: "b1", TargetKind: "code",
-				Entries: []block.ContentEntry{}, Index: AppendIndex,
 			},
 		},
 		{
@@ -498,32 +488,34 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 			want: &LoadFrame{Type: TypeLoad, OpID: "op-8"},
 		},
 		{
-			name: "smart paste",
-			raw:  `{"type":"paste","opId":"op-9","kind":"smart","entries":[{"mimeType":"text/plain","content":"https://x"}],"index":3}`,
+			name: "smart paste anchored after a block",
+			raw:  `{"type":"paste","opId":"op-9","kind":"smart","entries":[{"mimeType":"text/plain","content":"https://x"}],"afterBlockId":"b1"}`,
 			into: &PasteFrame{},
 			want: &PasteFrame{
 				Type: TypePaste, OpID: "op-9", Kind: PasteKindSmart,
 				Entries: []block.ContentEntry{{MIMEType: "text/plain", Content: "https://x"}},
-				Index:   3,
+				Anchor:  block.Anchor{AfterBlockID: "b1"},
 			},
 		},
 		{
-			name: "smart paste with no index",
+			// No anchor keys at all is the append statement, and it must not decode
+			// as the front of the document.
+			name: "smart paste with no anchor",
 			raw:  `{"type":"paste","opId":"op-9","kind":"smart","entries":[]}`,
 			into: &PasteFrame{},
 			want: &PasteFrame{
 				Type: TypePaste, OpID: "op-9", Kind: PasteKindSmart,
-				Entries: []block.ContentEntry{}, Index: AppendIndex,
+				Entries: []block.ContentEntry{},
 			},
 		},
 		{
-			name: "slice paste",
-			raw:  `{"type":"paste","opId":"op-9","kind":"slice","slice":[[{"mimeType":"text/plain","content":"a"}]],"index":0}`,
+			name: "slice paste at the front",
+			raw:  `{"type":"paste","opId":"op-9","kind":"slice","slice":[[{"mimeType":"text/plain","content":"a"}]],"atFront":true}`,
 			into: &PasteFrame{},
 			want: &PasteFrame{
 				Type: TypePaste, OpID: "op-9", Kind: PasteKindSlice,
-				Slice: [][]block.ContentEntry{{{MIMEType: "text/plain", Content: "a"}}},
-				Index: 0,
+				Slice:  [][]block.ContentEntry{{{MIMEType: "text/plain", Content: "a"}}},
+				Anchor: block.Anchor{AtFront: true},
 			},
 		},
 		{
@@ -555,14 +547,14 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 		},
 		{
 			name: "block-op",
-			raw:  `{"type":"block-op","opId":"op-5","uuid":"doc-1","op":{"type":"create-block","kind":"prose","attrs":{"content":"probe"},"index":0}}`,
+			raw:  `{"type":"block-op","opId":"op-5","uuid":"doc-1","op":{"type":"create-block","kind":"prose","attrs":{"content":"probe"},"afterBlockId":"b1"}}`,
 			into: &BlockOpFrame{},
 			want: &BlockOpFrame{
 				Type: TypeBlockOp, OpID: "op-5",
 				Op: block.BlockOp{
 					Type: "create-block", Kind: "prose",
-					Attrs: map[string]interface{}{"content": "probe"},
-					Index: 0,
+					Attrs:  map[string]interface{}{"content": "probe"},
+					Anchor: block.Anchor{AfterBlockID: "b1"},
 				},
 			},
 		},

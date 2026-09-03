@@ -9,6 +9,9 @@
 // express "block verbs but no text projection" — a container Sieve does not have.
 // Verb semantics are contract/container-provider.js's.
 //
+// Possession of a provider is authorization for exactly ONE container: the uuid
+// every verb names is the model's, and nothing above this class holds one.
+//
 // A prompt never cues: nothing but its own lens mutates it, so `onChanged` fires
 // once, at subscribe.
 
@@ -16,31 +19,31 @@ import { ProviderAdapter } from './provider-adapter.js'
 import { ContractViolation } from '../contract/sieve-block.js'
 
 export class WholeContentAdapter extends ProviderAdapter {
-  /** @type {import('./container-binding.js').ContainerBinding} */ #binding
+  /** @type {import('./document-service.js').DocumentService} */ #documents
 
   /**
    * @param {import('./container-model.js').ContainerModel} model
-   * @param {import('./container-binding.js').ContainerBinding} binding
+   * @param {import('./document-service.js').DocumentService} documentService
    */
-  constructor(model, binding) {
+  constructor(model, documentService) {
     super(model)
-    if (!binding || typeof binding.getContents !== 'function' || typeof binding.setContents !== 'function') {
-      throw new ContractViolation('WholeContentAdapter: construct with a ContainerBinding')
+    if (!documentService || typeof documentService.getContents !== 'function' || typeof documentService.setContents !== 'function') {
+      throw new ContractViolation('WholeContentAdapter: construct over the DocumentService')
     }
-    this.#binding = binding
+    this.#documents = documentService
   }
 
   /**
-   * The transport this mount is bound to, so BlockProviderAdapter adds its verbs
-   * over the SAME binding rather than a second reference.
+   * The vocabulary this mount speaks, so BlockProviderAdapter adds its verbs over
+   * the SAME service rather than a second reference.
    * @protected
-   * @returns {import('./container-binding.js').ContainerBinding}
+   * @returns {import('./document-service.js').DocumentService}
    */
-  get _binding() { return this.#binding }
+  get _documents() { return this.#documents }
 
   /** @returns {Promise<string>} */
   getContents() {
-    return this.#binding.getContents().catch((e) => {
+    return this.#documents.getContents(this.getUuid()).catch((e) => {
       // A projection that did not arrive is not a buffer to mount: reject, so the
       // mode flip stays where it is.
       console.warn('[whole-content] getContents did not answer', e)
@@ -53,8 +56,8 @@ export class WholeContentAdapter extends ProviderAdapter {
    * anything until Go has taken the buffer.
    * @param {string} text @returns {Promise<void>}
    */
-  setContents(text) { return this.#binding.setContents(text || '') }
+  setContents(text) { return this.#documents.setContents(this.getUuid(), text || '') }
 
   /** @param {string} text */
-  flushContents(text) { this.#binding.flushContents(text || '') }
+  flushContents(text) { this.#documents.flushContents(this.getUuid(), text || '') }
 }

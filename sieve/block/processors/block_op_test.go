@@ -8,7 +8,9 @@ import (
 )
 
 // C.2c — the WS envelope {type:"block-op", op:{...}} must decode into BlockOp
-// with the exact field names the frontend sends. Guards the wire contract.
+// with the exact field names the frontend sends. Guards the wire contract. A
+// create states its position as an ANCHOR: no index reaches this struct off the
+// wire, because a client cannot know one.
 func TestBlockOp_DecodesWireEnvelope(t *testing.T) {
 	raw := []byte(`{
 		"type": "block-op",
@@ -18,7 +20,7 @@ func TestBlockOp_DecodesWireEnvelope(t *testing.T) {
 			"kind": "code",
 			"attrs": {"source": "x = 1"},
 			"aliases": ["co-old"],
-			"index": 2,
+			"afterBlockId": "co-0",
 			"parentId": "col-1"
 		}
 	}`)
@@ -32,8 +34,11 @@ func TestBlockOp_DecodesWireEnvelope(t *testing.T) {
 	if op.Type != "create-block" || op.BlockID != "co-1" || op.Kind != "code" {
 		t.Fatalf("scalar fields wrong: %+v", op)
 	}
-	if op.Index != 2 || op.ParentID != "col-1" {
-		t.Fatalf("index/parent wrong: %+v", op)
+	if op.AfterBlockID != "co-0" || op.AtFront || op.ParentID != "col-1" {
+		t.Fatalf("anchor/parent wrong: %+v", op)
+	}
+	if op.Index != 0 {
+		t.Fatalf("a create's index is resolved server-side, never decoded: %+v", op)
 	}
 	if op.Attrs["source"] != "x = 1" {
 		t.Fatalf("attrs wrong: %+v", op.Attrs)

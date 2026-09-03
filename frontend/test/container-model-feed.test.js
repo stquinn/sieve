@@ -74,7 +74,7 @@ describe('ContainerModelFeed', () => {
     const rig = feedRig()
     await driveLoad(rig, [{ id: 'p1', kind: 'prose', attrs: { content: 'one' } }])
 
-    const pending = rig.documentService.save(rig.uuid, '# reparsed')
+    const pending = rig.documentService.setContents(rig.uuid, '# reparsed')
     rig.sock.driveMessage({
       type: DocumentFrame.WYSIWYG_CONTENT,
       opId: lastOpId(rig.sock, DocumentFrame.ENTER_WYSIWYG),

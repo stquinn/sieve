@@ -1,16 +1,17 @@
 // @ts-check
-// document-wire.test.js — the transport's own surface, driven through the shared
-// service-rig (REAL services over FakeSockets — no real wire).
+// document-wire.test.js — the document vocabulary and the channel under it, driven
+// through the shared service-rig (REAL services over FakeSockets — no real wire).
 //
-// ContainerTransport holds NO view of what a document contains (issue #96): the block
-// cache it used to keep, and the render-back stream it fronted, are gone, because
-// the client's account of a container is the follower model
-// (container/container-model.js) and it is fed from `observeFrames`. What is left
-// here is the FROZEN frames — load, discovery, the paste pipelines, the dwell ping
-// — as they leave, and the reply shapes as they are read back.
+// Every frame Sieve speaks about a document is spelled in DocumentService, so every
+// frame is pinned here: the FROZEN shapes as they leave, and the reply shapes as
+// they are read back. ContainerTransport holds NO view of what a document contains
+// (issue #96) and no longer spells a frame either — the client's account of a
+// container is the follower model (container/container-model.js), fed from
+// `observeFrames`, and what is left of the transport is the channel itself.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { serviceRig, fakeDelegate, FakeSocket } from './helpers/service-rig.js'
+import { ContractViolation } from '../src/static/contract/sieve-block.js'
 
 describe('DocumentService.load — the host facts, and the container to the model', () => {
   beforeEach(() => FakeSocket.reset())
@@ -50,11 +51,11 @@ describe('DocumentService.load — the host facts, and the container to the mode
     expect(seen[0].blocks).toEqual([{ id: 'l1', kind: 'code', attrs: { source: 'x' } }])
   })
 
-  it('save publishes Go\'s REPARSE the same way — a whole new statement of the container', async () => {
+  it('setContents publishes Go\'s REPARSE the same way — a whole new statement of the container', async () => {
     const rig = serviceRig({ uuid: 'doc-1' })
     /** @type {any[]} */ const seen = []
     rig.documentService.onContent('doc-1', (c) => seen.push(c))
-    const pending = rig.documentService.save('doc-1', '# raw')
+    const pending = rig.documentService.setContents('doc-1', '# raw')
     rig.sock.driveMessage({
       type: 'wysiwyg-content', opId: lastOpId(rig.sock, 'enter-wysiwyg'),
       blocks: [{ id: 'r1', kind: 'prose', attrs: { content: 'raw' } }],
@@ -65,9 +66,9 @@ describe('DocumentService.load — the host facts, and the container to the mode
   })
 
   it('the inbound frame OBSERVER sees every routed frame, including the ones no reply settles', () => {
-    const { service, sock } = serviceRig({ uuid: 'doc-1' })
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
     /** @type {string[]} */ const types = []
-    service.observeFrames('doc-1', (msg) => types.push(msg.type))
+    documentService.observeFrames('doc-1', (msg) => types.push(msg.type))
     sock.driveMessage({ type: 'insert-block', kind: 'code', id: 'i1', attrs: {} })
     sock.driveMessage({ type: 'remove-block', id: 'i1' })
     sock.driveMessage({ type: 'order-changed', order: ['a', 'b'] })
@@ -75,12 +76,12 @@ describe('DocumentService.load — the host facts, and the container to the mode
   })
 
   it('is scoped per uuid — a frame on another document never reaches this observer', () => {
-    const { service, sock } = serviceRig({ uuid: 'doc-1' })
-    service.openChannel('doc-2', /** @type {any} */ (fakeDelegate()))
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    documentService.open('doc-2', /** @type {any} */ (fakeDelegate()))
     const sockB = FakeSocket.instances[FakeSocket.instances.length - 1]
     sockB.driveOpen()
     /** @type {string[]} */ const types = []
-    service.observeFrames('doc-1', (msg) => types.push(msg.type))
+    documentService.observeFrames('doc-1', (msg) => types.push(msg.type))
     sockB.driveMessage({ type: 'insert-block', kind: 'code', id: 'b1', attrs: {} })
     expect(types).toEqual([])
     sock.driveMessage({ type: 'insert-block', kind: 'code', id: 'a1', attrs: {} })
@@ -98,14 +99,14 @@ function lastOpId(sock, reqType) {
   return sent.length ? sent[sent.length - 1].opId : undefined
 }
 
-describe('ContainerTransport.detectExtractions — capability discovery over the document wire', () => {
+describe('DocumentService.detectExtractions — capability discovery over the document wire', () => {
   beforeEach(() => FakeSocket.reset())
 
   it('sends {sourceKind, entries} and resolves the offers out of the reply KEY', async () => {
-    const { service, sock } = serviceRig({ uuid: 'doc-1' })
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
     const entries = [{ kind: 'sieve/code', content: 'x=1' }]
     const offers = [{ kind: 'code', actions: ['extract'] }, { kind: 'prose', actions: ['transform'] }]
-    const pending = service.detectExtractions('doc-1', { sourceKind: 'log', entries })
+    const pending = documentService.detectExtractions('doc-1', 'log', entries)
     expect(sock.sentOfType('detect-extractions')[0]).toEqual({
       type: 'detect-extractions', sourceKind: 'log', entries, opId: lastOpId(sock, 'detect-extractions'),
     })
@@ -116,25 +117,61 @@ describe('ContainerTransport.detectExtractions — capability discovery over the
   })
 
   it('resolves an EMPTY offer list with no channel — nothing to discover is an answer', async () => {
-    const { service } = serviceRig({ uuid: null })
-    await expect(service.detectExtractions('doc-1', { sourceKind: 'log', entries: [] })).resolves.toEqual([])
+    const { documentService } = serviceRig({ uuid: null })
+    await expect(documentService.detectExtractions('doc-1', 'log', [])).resolves.toEqual([])
   })
 })
 
-describe('ContainerTransport.replaceText — the write the marks made possible', () => {
+// ONE MAPPING FROM MARK TO FRAME, and every door takes it — the lens's void
+// `requestReplaceText` and the shell's answering `MountBinding.replaceText` alike.
+// A second mapping would be a second chance to send an anchor the server cannot
+// resolve, so the mark's own fields and the guards that refuse an unresolvable one
+// are pinned here, where the frame leaves.
+describe('DocumentService.replaceText — the write the marks made possible', () => {
   beforeEach(() => FakeSocket.reset())
 
-  const anchor = {
+  const mark = {
     blockId: 'p1', locator: 'content', quote: 'teh', occurrence: 1, grain: 'word',
-    start: 12, end: 15, replacement: 'the',
+    start: 12, end: 15,
   }
 
   it('sends the anchor whole — the offsets ride as the hint they are (FROZEN)', () => {
-    const { service, sock } = serviceRig({ uuid: 'doc-1' })
-    service.replaceText('doc-1', anchor)
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    documentService.replaceText('doc-1', /** @type {any} */ (mark), 'the')
     expect(sock.sentOfType('text-replace')[0]).toEqual(
-      Object.assign({ type: 'text-replace', opId: lastOpId(sock, 'text-replace') }, anchor))
+      Object.assign({ type: 'text-replace', opId: lastOpId(sock, 'text-replace'), replacement: 'the' }, mark))
   })
+
+  it('carries the grain the mark was counted at — the server dispatches its resolution on it', () => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    documentService.replaceText('doc-1', /** @type {any} */ (Object.assign({}, mark, { grain: 'literal' })), 'the')
+    expect(sock.sentOfType('text-replace')[0].grain).toBe('literal')
+  })
+
+  it('an empty replacement is a deletion, not a missing field', () => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    documentService.replaceText('doc-1', /** @type {any} */ (mark), '')
+    expect(sock.sentOfType('text-replace')[0].replacement).toBe('')
+  })
+
+  // An anchor missing its quote or its grain resolves NOWHERE, so it is a contract
+  // breach rather than a race: the server would answer `stale` for text that never
+  // moved.
+  /** @type {Array<[string, Record<string, any>]>} */
+  const refused = [
+    ['no block named — nothing says where to resolve it', { blockId: '' }],
+    ['no quote — there is nothing to resolve', { quote: '' }],
+    ['no grain — nothing says how to count its occurrence', { grain: '' }],
+  ]
+
+  for (const [name, broken] of refused) {
+    it('refuses an anchor with ' + name, () => {
+      const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+      expect(() => documentService.replaceText('doc-1', /** @type {any} */ (Object.assign({}, mark, broken)), 'the'))
+        .toThrow(ContractViolation)
+      expect(sock.sentOfType('text-replace')).toEqual([])
+    })
+  }
 
   /** @type {Array<[string, any, string]>} */
   const acks = [
@@ -146,23 +183,23 @@ describe('ContainerTransport.replaceText — the write the marks made possible',
 
   for (const [name, ack, outcome] of acks) {
     it(`resolves the outcome word: ${name}`, async () => {
-      const { service, sock } = serviceRig({ uuid: 'doc-1' })
-      const pending = service.replaceText('doc-1', anchor)
+      const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+      const pending = documentService.replaceText('doc-1', /** @type {any} */ (mark), 'the')
       sock.driveMessage(Object.assign({ type: 'text-replace-ack', opId: lastOpId(sock, 'text-replace') }, ack))
       await expect(pending).resolves.toBe(outcome)
     })
   }
 
   it('reads a container with no live channel as a write that did not happen', async () => {
-    const { service } = serviceRig({ uuid: null })
-    await expect(service.replaceText('doc-1', anchor)).resolves.toBe('error')
+    const { documentService } = serviceRig({ uuid: null })
+    await expect(documentService.replaceText('doc-1', /** @type {any} */ (mark), 'the')).resolves.toBe('error')
   })
 })
 
-describe('DocumentService paste pipelines — one frame, two kinds', () => {
+describe('DocumentService.paste — one frame, four kinds', () => {
   beforeEach(() => FakeSocket.reset())
 
-  it('pasteSlice sends kind:slice with the slice, and the ack names no block', async () => {
+  it('sends kind:slice with the slice, and the ack names no block', async () => {
     const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
     // Wire shape is [][]block.ContentEntry (sieve/protocol/document_frames.go:328):
     // one ENTRY-ARRAY per copied block, each entry {mimeType, content} — the same
@@ -172,9 +209,9 @@ describe('DocumentService paste pipelines — one frame, two kinds', () => {
       [{ mimeType: 'sieve/prose', content: 'a' }],
       [{ mimeType: 'sieve/code', content: 'b' }],
     ]
-    const pending = documentService.pasteSlice('doc-1', { slice, index: 3 })
+    const pending = documentService.paste('doc-1', { kind: 'slice', slice, anchor: { afterBlockId: 'b3' } })
     expect(sock.sentOfType('paste')[0]).toEqual({
-      type: 'paste', kind: 'slice', slice, index: 3, opId: lastOpId(sock, 'paste'),
+      type: 'paste', kind: 'slice', slice, afterBlockId: 'b3', opId: lastOpId(sock, 'paste'),
     })
     sock.driveMessage({ type: 'paste-ack', opId: lastOpId(sock, 'paste'), outcome: 'block' })
     const res = await pending
@@ -182,12 +219,12 @@ describe('DocumentService paste pipelines — one frame, two kinds', () => {
     expect(res.id).toBeUndefined()
   })
 
-  it('smartPaste sends kind:smart with the entries and hands the PasteResult union through untouched', async () => {
+  it('sends kind:smart with the entries and hands the PasteResult union through untouched', async () => {
     const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
     const entries = [{ mimeType: 'text/plain', content: 'https://x.test' }]
-    const pending = documentService.smartPaste('doc-1', { entries, index: 4 })
+    const pending = documentService.paste('doc-1', { kind: 'smart', entries, anchor: { afterBlockId: 'b4' } })
     expect(sock.sentOfType('paste')[0]).toEqual({
-      type: 'paste', kind: 'smart', entries, index: 4, opId: lastOpId(sock, 'paste'),
+      type: 'paste', kind: 'smart', entries, afterBlockId: 'b4', opId: lastOpId(sock, 'paste'),
     })
     sock.driveMessage({
       type: 'paste-ack', opId: lastOpId(sock, 'paste'),
@@ -198,17 +235,34 @@ describe('DocumentService paste pipelines — one frame, two kinds', () => {
     expect(res.html).toBe('<a href="https://x.test">X</a>')
   })
 
+  // A kind states ONE field beside its discriminant, or none: an empty key is a
+  // payload the server would try to read.
+  /** @type {Array<[string, any, Record<string, any>]>} */
+  const bodies = [
+    ['native-drop carries the page\'s readable text as a HINT', 'native-drop', { entries: [{ mimeType: 'text/uri-list', content: 'file:///x' }] }],
+    ['native-clipboard carries NOTHING — the emptiness is the signal', 'native-clipboard', {}],
+  ]
+
+  for (const [name, kind, body] of bodies) {
+    it(name, () => {
+      const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+      documentService.paste('doc-1', Object.assign({ kind: kind, entries: body.entries || [] }))
+      expect(sock.sentOfType('paste')[0]).toEqual(
+        Object.assign({ type: 'paste', kind: kind, opId: lastOpId(sock, 'paste') }, body))
+    })
+  }
+
   // Go's paste path is SYNCHRONOUS and smart-image acquire downloads with an 8s
   // HTTP timeout (smart_image_processor.go:436-438) — a slow image paste's ack
   // can legitimately land after the wire's DEFAULT 5s ceiling. Both paste verbs
   // raise it to PASTE_ACK_TIMEOUT_MS (12s) so that ack is not dropped on the
   // floor: an ack arriving after the default would have fired would leave
   // #applyPasteResult never run and the insert anchor never consumed/cleared.
-  it('smartPaste and pasteSlice outlive the default 5s ceiling — an ack at 8s still lands', async () => {
+  it('outlives the default 5s ceiling — an ack at 8s still lands', async () => {
     vi.useFakeTimers()
     try {
       const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
-      const pending = documentService.smartPaste('doc-1', { entries: [], index: 0 })
+      const pending = documentService.paste('doc-1', { kind: 'smart', entries: [] })
       let settled = false
       pending.then(() => { settled = true }, () => { settled = true })
 
@@ -228,11 +282,11 @@ describe('DocumentService paste pipelines — one frame, two kinds', () => {
     }
   })
 
-  it('pasteSlice rejects only past the RAISED 12s ceiling, not the wire default', async () => {
+  it('rejects only past the RAISED 12s ceiling, not the wire default', async () => {
     vi.useFakeTimers()
     try {
       const { documentService } = serviceRig({ uuid: 'doc-1' })
-      const pending = documentService.pasteSlice('doc-1', { slice: [], index: 0 })
+      const pending = documentService.paste('doc-1', { kind: 'slice', slice: [] })
       const assertion = expect(pending).rejects.toThrow('ws timeout: paste slice')
       await vi.advanceTimersByTimeAsync(12000)
       await assertion
@@ -257,19 +311,19 @@ describe('DocumentService.focus — the dwell ping', () => {
   })
 })
 
-describe('DocumentService.flush — fire-and-forget persistence (the save is a workspace fact)', () => {
+describe('DocumentService.persist — fire-and-forget persistence (the save is a workspace fact)', () => {
   beforeEach(() => FakeSocket.reset())
 
   it('sends the frozen flush envelope, correlates nothing, and returns nothing', () => {
     const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
-    expect(documentService.flush('doc-1')).toBeUndefined()
+    expect(documentService.persist('doc-1')).toBeUndefined()
     // No opId: the contract has no reply for this frame to be correlated to.
     expect(sock.sentOfType('flush')).toEqual([{ type: 'flush', uuid: 'doc-1' }])
   })
 
   it('a channel-less uuid drops it, like every other fire-and-forget verb', () => {
     const { documentService } = serviceRig({ uuid: null })
-    expect(() => documentService.flush('nobody')).not.toThrow()
+    expect(() => documentService.persist('nobody')).not.toThrow()
   })
 })
 
@@ -278,26 +332,47 @@ describe('DocumentService.flush — fire-and-forget persistence (the save is a w
 describe('DocumentService membership verbs — the block-op envelope (FROZEN)', () => {
   beforeEach(() => FakeSocket.reset())
 
-  it('envelopes create + delete, in order, each naming the document', () => {
+  // Every membership verb rides ONE envelope, and the structured edits a NodeView
+  // makes converge on the same `update-block` op prose edits ride: one wire op for
+  // every block update, whatever drew it.
+  it('envelopes create + update + delete, in order, each naming the document', () => {
     const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
-    documentService.createBlock('doc-1', 'prose', { content: 'hi' }, undefined, { index: 1 })
+    documentService.createBlock('doc-1', 'prose', { content: 'hi' }, { afterBlockId: 'b1' })
+    documentService.updateBlock('doc-1', 'co-1', 'code', { source: 'x = 1' })
     documentService.deleteBlock('doc-1', 'b9')
     expect(sock.sentOfType('block-op')).toEqual([
-      { type: 'block-op', uuid: 'doc-1', opId: OPID, op: { type: 'create-block', blockId: '', kind: 'prose', attrs: { content: 'hi' }, index: 1 } },
+      { type: 'block-op', uuid: 'doc-1', opId: OPID, op: { type: 'create-block', blockId: '', kind: 'prose', attrs: { content: 'hi' }, afterBlockId: 'b1' } },
+      { type: 'block-op', uuid: 'doc-1', opId: OPID, op: { type: 'update-block', blockId: 'co-1', kind: 'code', attrs: { source: 'x = 1' } } },
       { type: 'block-op', uuid: 'doc-1', opId: OPID, op: { type: 'delete-block', blockId: 'b9' } },
     ])
   })
 
-  it('carries the id its CREATOR gave the block, and lifts aliases top-level', () => {
-    // A block born in a lens names itself (issue #96): the create simply states
-    // that name, and Go validates and adopts it.
+  it('defaults a patchless update to an empty attrs bag, never a missing key', () => {
     const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
-    documentService.createBlock('doc-1', 'prose', { content: 'x' }, undefined, {
-      index: 2, aliases: ['old-1'], blockId: '0191f0c2-2b4e-7a10-9c33-4d5e6f708192',
-    })
+    documentService.updateBlock('doc-1', 'co-2', 'code', /** @type {any} */ (undefined))
+    expect(sock.sentOfType('block-op')[0].op.attrs).toEqual({})
+  })
+
+  it('carries the id its CREATOR gave the block, and lifts aliases top-level', () => {
+    // A block born in a lens names itself (issue #96): the name rides in `attrs.id`
+    // as ordinary block data, the op lifts it onto `blockId` because that is where
+    // the wire keeps a block's name, and Go validates and adopts it.
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    const born = '0191f0c2-2b4e-7a10-9c33-4d5e6f708192'
+    documentService.createBlock('doc-1', 'prose', { content: 'x', id: born }, { atFront: true }, { aliases: ['old-1'] })
     expect(sock.sentOfType('block-op')[0].op).toEqual({
-      type: 'create-block', blockId: '0191f0c2-2b4e-7a10-9c33-4d5e6f708192',
-      kind: 'prose', attrs: { content: 'x' }, aliases: ['old-1'], index: 2,
+      type: 'create-block', blockId: born,
+      kind: 'prose', attrs: { content: 'x', id: born }, aliases: ['old-1'], atFront: true,
+    })
+  })
+
+  // A create with no anchor states no position at all: an absent key is how the
+  // wire says "append", and a 0 or -1 would be a position this client cannot know.
+  it('sends no position key when no anchor is named', () => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    documentService.createBlock('doc-1', 'prose', { content: 'hi' })
+    expect(sock.sentOfType('block-op')[0].op).toEqual({
+      type: 'create-block', blockId: '', kind: 'prose', attrs: { content: 'hi' },
     })
   })
 
@@ -307,21 +382,29 @@ describe('DocumentService membership verbs — the block-op envelope (FROZEN)', 
     expect(sock.sentOfType('block-op')[0].op).toEqual({ type: 'set-order', order: ['b2', 'b1'] })
   })
 
-  it('setRawContent envelopes the whole buffer as doc-update with the uuid', () => {
+  it('flushContents envelopes the whole buffer as doc-update with the uuid', () => {
     const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
-    documentService.setRawContent('doc-1', '# body')
+    documentService.flushContents('doc-1', '# body')
     expect(sock.sentOfType('doc-update')).toEqual([{ type: 'doc-update', uuid: 'doc-1', markdown: '# body' }])
   })
 
-  it('export asks the server for the clean projection; a channel-less container has none to ask for', async () => {
+  it('exportAs asks the server for the clean projection', async () => {
     const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
-    const pending = documentService.export('doc-1', 'markdown')
+    const pending = documentService.exportAs('doc-1', 'markdown')
     expect(sock.sentOfType('export')[0]).toEqual({ type: 'export', format: 'markdown', opId: lastOpId(sock, 'export') })
     sock.driveMessage({ type: 'export-content', opId: lastOpId(sock, 'export'), content: '# clean' })
     await expect(pending).resolves.toBe('# clean')
+  })
 
-    const bare = serviceRig({ uuid: null })
-    await expect(bare.documentService.export('prompt:x', 'markdown')).resolves.toBeNull()
+  // A channel-less container has nothing to filter, so its raw projection IS the
+  // export — and the projection of a prompt is its load answer, over HTTP.
+  it('exportAs answers a channel-less container with its own raw projection', async () => {
+    const prevFetch = global.fetch
+    global.fetch = /** @type {any} */ (vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ body: '# prompt' }) })))
+    try {
+      const { documentService } = serviceRig({ uuid: null })
+      await expect(documentService.exportAs('prompt:x', 'markdown')).resolves.toBe('# prompt')
+    } finally { global.fetch = prevFetch }
   })
 
   it('falls back to HTTP for a CHANNEL-LESS load — the prompt pseudo-document', async () => {
@@ -438,7 +521,7 @@ describe('opId correlation — the transport\'s own plumbing, below the wall', (
   it('a HANDSHAKE timeout still REJECTS — the mode flip\'s stay-on-failure depends on it', async () => {
     vi.useFakeTimers()
     const { documentService } = serviceRig({ uuid: 'doc-1' })
-    const pending = documentService.getRawContent('doc-1')
+    const pending = documentService.getContents('doc-1')
     const assertion = expect(pending).rejects.toThrow('ws timeout: enter-markdown')
     await vi.advanceTimersByTimeAsync(5000)
     await assertion
@@ -463,7 +546,7 @@ describe('opId correlation — the transport\'s own plumbing, below the wall', (
   it('a reply an awaiter consumed never reaches the channel delegate', async () => {
     const delegate = fakeDelegate()
     const { documentService, sock } = serviceRig({ uuid: 'doc-1', delegate })
-    const pending = documentService.getRawContent('doc-1')
+    const pending = documentService.getContents('doc-1')
     sock.driveMessage({ type: 'markdown-content', opId: lastOpId(sock, 'enter-markdown'), markdown: '# hi' })
     expect(await pending).toBe('# hi')
     // What the transport does not settle — and no follower claims — is all the

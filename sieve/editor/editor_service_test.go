@@ -47,53 +47,87 @@ func TestEditorService_ConcurrentFlush_NoRace(t *testing.T) {
 	wg.Wait()
 }
 
-// A structured create-block op must land the block AT its index, not appended —
-// the single positioned create path (toolbar/AI/extract all ride this). Regression:
-// removing the doc-update fallback exposed createBlockWithID's old SetBlock-append.
-func TestHandleBlockOp_structuredCreateInsertsAtIndex(t *testing.T) {
-	resetRegistry()
-	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
-	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
-
-	// Seed real uuids (#75): this test names the flanking blocks after a load, and
-	// NewShadow upgrades any non-uuid handle it parses.
+// A create-block op states its position as an ANCHOR — the block the new one
+// follows — and this document resolves it. Every create rides this one path
+// (toolbar, AI, paste, the lens's own observer), so these are the only five
+// statements a position can make.
+func TestHandleBlockOp_createResolvesTheAnchor(t *testing.T) {
+	// Real uuids (#75): the seeds are named after a load, and NewShadow upgrades
+	// any non-uuid handle it parses.
 	const (
 		firstID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a21"
 		lastID  = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a22"
+		goneID  = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a99"
 	)
-	doc, _ := ds.New()
-	doc.SetBody([]byte("```code\nid: " + firstID + "\nsource: a\nstatus: COMPLETE\n```\n\n```code\nid: " + lastID + "\nsource: b\nstatus: COMPLETE\n```"))
-	doc, _ = ds.Save(doc)
-	uuid := doc.UUID()
-	if err := es.Open(uuid); err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	// The code-block create dispatches an async job; wait for it to finish before the
-	// test returns, else its buffer write races t.TempDir's RemoveAll cleanup
-	// ("directory not empty"). Matches the sibling CreateBlock/HandlePaste tests.
-	defer waitJobs(t, es, uuid)
+	for _, tc := range []struct {
+		name   string
+		anchor block.Anchor
+		want   int // the position the created block takes among the three
+	}{
+		{"after the first block", block.Anchor{AfterBlockID: firstID}, 1},
+		{"after the last block", block.Anchor{AfterBlockID: lastID}, 2},
+		{"after a block the document no longer holds — appends", block.Anchor{AfterBlockID: goneID}, 2},
+		{"at the front", block.Anchor{AtFront: true}, 0},
+		{"no anchor at all — appends", block.Anchor{}, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetRegistry()
+			block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
+			ds, _ := newTestDocumentService(t)
+			es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
 
-	// Insert a new code block at index 1 — between the two seeds, NOT appended.
-	if err := es.HandleBlockOp(uuid, block.BlockOp{
-		Type:  "create-block",
-		Kind:  "code",
-		Attrs: map[string]interface{}{"source": "new"},
-		Index: 1,
-	}); err != nil {
-		t.Fatalf("HandleBlockOp create: %v", err)
-	}
+			doc, _ := ds.New()
+			doc.SetBody([]byte("```code\nid: " + firstID + "\nsource: a\nstatus: COMPLETE\n```\n\n```code\nid: " + lastID + "\nsource: b\nstatus: COMPLETE\n```"))
+			doc, _ = ds.Save(doc)
+			uuid := doc.UUID()
+			if err := es.Open(uuid); err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			// The code-block create dispatches an async job; wait for it to finish before
+			// the test returns, else its buffer write races t.TempDir's RemoveAll cleanup
+			// ("directory not empty"). Matches the sibling CreateBlock/HandlePaste tests.
+			defer waitJobs(t, es, uuid)
 
-	blocks, ok := es.FrontendBlocks(uuid)
-	if !ok || len(blocks) != 3 {
-		t.Fatalf("expected 3 blocks, got %d (ok=%v)", len(blocks), ok)
-	}
-	order := []string{blocks[0].ID, blocks[1].ID, blocks[2].ID}
-	if blocks[0].ID != firstID || blocks[2].ID != lastID {
-		t.Fatalf("flanking blocks moved — not positioned at index 1: %v", order)
-	}
-	if blocks[1].ID == firstID || blocks[1].ID == lastID {
-		t.Fatalf("new block was not inserted at index 1: %v", order)
+			echo := &idCaptureListener{}
+			es.SetLifecycleListener(echo)
+
+			if err := es.HandleBlockOp(uuid, block.BlockOp{
+				Type:   "create-block",
+				Kind:   "code",
+				Attrs:  map[string]interface{}{"source": "new"},
+				Anchor: tc.anchor,
+			}); err != nil {
+				t.Fatalf("HandleBlockOp create: %v", err)
+			}
+
+			blocks, ok := es.FrontendBlocks(uuid)
+			if !ok || len(blocks) != 3 {
+				t.Fatalf("expected 3 blocks, got %d (ok=%v)", len(blocks), ok)
+			}
+			var order []string
+			for _, b := range blocks {
+				order = append(order, b.ID)
+			}
+			created := order[tc.want]
+			if created == firstID || created == lastID {
+				t.Fatalf("new block did not land at %d: %v", tc.want, order)
+			}
+			// The seeds keep their relative order whatever the new block did.
+			var kept []string
+			for _, id := range order {
+				if id != created {
+					kept = append(kept, id)
+				}
+			}
+			if kept[0] != firstID || kept[1] != lastID {
+				t.Fatalf("the blocks already here moved: %v", order)
+			}
+			// The client places the server's node at the index the render-back names,
+			// so it must be where the block actually is — an append included.
+			if echo.id != created || echo.index != tc.want {
+				t.Fatalf("render-back said (%s, %d), block landed at (%s, %d)", echo.id, echo.index, created, tc.want)
+			}
+		})
 	}
 }
 
@@ -666,10 +700,14 @@ func (l *mockLifecycleListener) OnBlockUpdated(uuid, blockID string, attrs map[s
 	}
 }
 
-type idCaptureListener struct{ id string }
+type idCaptureListener struct {
+	id    string
+	index int
+}
 
 func (l *idCaptureListener) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int) {
 	l.id = blockID
+	l.index = index
 }
 func (l *idCaptureListener) OnBlockUpdated(uuid, blockID string, attrs map[string]interface{}) {}
 func (l *idCaptureListener) OnBlockReplaced(uuid, oldID, newKind, newID string, attrs map[string]interface{}, markdown string) {
@@ -695,7 +733,7 @@ func TestHandleBlockOp_proseCreateMintsDurableID(t *testing.T) {
 
 	err := es.HandleBlockOp(doc.UUID(), block.BlockOp{
 		Type: "create-block", Kind: "prose", BlockID: "",
-		Attrs: map[string]interface{}{"content": "hello"}, Index: 0,
+		Attrs: map[string]interface{}{"content": "hello"},
 	})
 	if err != nil {
 		t.Fatalf("HandleBlockOp: %v", err)

@@ -97,26 +97,20 @@ export class InMemoryContainerProvider {
   }
 
   /**
-   * States the order of the named children. The list may be a SUBSEQUENCE of
-   * what the draft holds: a surface can only name what it paints, and this
-   * draft also holds question elements no surface draws. Named ids take the
-   * stated sequence in the slots they collectively occupy; unnamed ids keep
-   * their places. An id the draft does not hold DROPS the whole statement — a
-   * list naming a stranger is indistinguishable from a stale one.
+   * States the order of the named children. The list may be a SUBSEQUENCE of what
+   * the draft holds — a surface can only name what it paints, and this draft also
+   * holds question elements no surface draws — so the merge into the draft's full
+   * order is what gets installed. An id the draft does not hold DROPS the whole
+   * statement: a list naming a stranger is indistinguishable from a stale one.
    * @param {ReadonlyArray<string>} order
    */
   requestSetOrder(order) {
-    const want = Array.from(order || [])
-    const held = this.#model.getOrder()
-    if (!want.length) return
-    if (!want.every((id) => held.indexOf(id) >= 0)) {
-      return this.#drop('requestSetOrder: not held by the draft', want.join(','))
+    const statement = this.#model.mergeOrder(order)
+    if (!statement.held) {
+      return this.#drop('requestSetOrder: not held by the draft', Array.from(order || []).join(','))
     }
-    const named = new Set(want)
-    let next = 0
-    const merged = held.map((id) => (named.has(id) ? want[next++] : id))
-    if (merged.every((id, i) => id === held[i])) return
-    this.#model.applyFrame({ type: DocumentFrame.ORDER_CHANGED, order: merged })
+    if (!statement.order) return
+    this.#model.applyFrame({ type: DocumentFrame.ORDER_CHANGED, order: statement.order })
   }
 
   /**

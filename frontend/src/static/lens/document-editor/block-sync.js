@@ -128,17 +128,15 @@ export function computeBlockSync(curr, prev) {
  * diff and nothing in a signature is positional, so a drag-handle reorder changes no
  * signature and adds or removes no id: order is its own fact and needs its own op.
  *
- * It reports the COMPLETE id order rather than a sequence of moves, because
- * installing a whole order is idempotent — a duplicated or late frame lands the
- * document in the same place. Go refuses anything that is not a permutation of what
- * it holds, since a list missing one id is indistinguishable from a mass delete, so
- * this holds off whenever the client cannot yet name every block the server has:
+ * It names the ID-BEARING top-level nodes, all of them, in document order: an
+ * id-less node is an editing surface rather than a block, Go was never told about
+ * one, and so it is SKIPPED — the statement is complete over the population both
+ * sides share. Stating a whole order rather than a sequence of moves is what makes
+ * it idempotent: a duplicated or late frame lands the document in the same place.
  *
- *   - the same tick creates or deletes (the sets are still moving), or
- *   - some node is id-less (the trailing editing surface is not a block yet).
- *
- * In both cases the baseline is left STALE deliberately, so the next quiet tick
- * still sees a difference and sends the order then.
+ * It holds off for the one case where that population is still moving — the same
+ * tick creates or deletes — leaving the baseline STALE deliberately, so the next
+ * quiet tick still sees a difference and sends the order then.
  *
  * @param {Array<{id?: string}>} curr top-level blocks in document order
  * @param {string[]|null} prevIds the id order as of the last reported sync; null seeds
@@ -150,8 +148,7 @@ export function computeOrderOp(curr, prevIds, ops) {
   var ids = []
   for (var i = 0; i < blocks.length; i++) {
     var b = blocks[i]
-    if (!b || !b.id) return { op: null, next: prevIds }   // id-less trailing surface
-    ids.push(b.id)
+    if (b && b.id) ids.push(b.id)
   }
   for (var j = 0; j < (ops || []).length; j++) {
     var t = ops[j] && ops[j].type

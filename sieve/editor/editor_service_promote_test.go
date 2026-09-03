@@ -68,7 +68,7 @@ func TestEditorService_TransformToProse(t *testing.T) {
 		t.Fatalf("marshal attrs: %v", err)
 	}
 	entries := []block.ContentEntry{{MIMEType: "sieve/" + src.Kind, Content: string(attrsJSON)}}
-	if _, _, err := es.CreateBlockFromEntries(uuid, "prose", entries, 0, block.ActionTransform, "tm-0001"); err != nil {
+	if _, _, err := es.CreateBlockFromEntries(uuid, "prose", entries, block.ActionTransform, "tm-0001"); err != nil {
 		t.Fatalf("transform-to-prose: %v", err)
 	}
 	_ = es.Flush(uuid)

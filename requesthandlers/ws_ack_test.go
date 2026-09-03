@@ -54,7 +54,7 @@ func readUntil(t *testing.T, c *websocket.Conn, wantType string, timeout time.Du
 // createProseOpWithOpID mints a create-block frame carrying the outer-envelope opId.
 func createProseOpWithOpID(uuid, token, opID string) string {
 	return `{"type":"block-op","opId":"` + opID + `","uuid":"` + uuid +
-		`","op":{"type":"create-block","kind":"prose","attrs":{"content":"probe"},"index":0,"token":"` + token + `"}}`
+		`","op":{"type":"create-block","kind":"prose","attrs":{"content":"probe"},"token":"` + token + `"}}`
 }
 
 // A block-op-ack for a successful create MUST arrive with ok:true, echo the opId,
@@ -162,7 +162,7 @@ func TestWS_ExtractAck_TransformRendersBackThenAcks(t *testing.T) {
 	// a prose→prose transform exercises the path.
 	entries := `[{"mimeType":"text/plain","content":"probe"}]`
 	extract := `{"type":"extract","opId":"op-tx","blockId":"` + srcID +
-		`","targetKind":"prose","operation":"transform","entries":` + entries + `,"index":-1}`
+		`","targetKind":"prose","operation":"transform","entries":` + entries + `}`
 	if err := c.WriteMessage(websocket.TextMessage, []byte(extract)); err != nil {
 		t.Fatalf("write extract: %v", err)
 	}

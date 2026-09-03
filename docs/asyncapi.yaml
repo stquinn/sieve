@@ -274,7 +274,9 @@ components:
       summary: ExtractFrame creates a block from selected content — the additive extract/paste mechanic and the in-place transform, told apart by Operation.
       description: |-
         ExtractFrame creates a block from selected content — the additive extract/paste
-        mechanic and the in-place transform, told apart by Operation.
+        mechanic and the in-place transform, told apart by Operation. It carries no
+        position: an additive extract lands after BlockID, and a transform keeps the
+        source's own slot.
       contentType: application/json
       correlationId:
         $ref: '#/components/correlationIds/opId'
@@ -901,6 +903,12 @@ components:
             type: string
         index:
           type: integer
+        afterBlockId:
+          type: string
+          description: insert after this block; an id the document does not hold appends
+        atFront:
+          type: boolean
+          description: insert at position 0; ignored when afterBlockId is set
         parentId:
           type: string
         order:
@@ -1407,7 +1415,9 @@ components:
       type: object
       description: |-
         ExtractFrame creates a block from selected content — the additive extract/paste
-        mechanic and the in-place transform, told apart by Operation.
+        mechanic and the in-place transform, told apart by Operation. It carries no
+        position: an additive extract lands after BlockID, and a transform keeps the
+        source's own slot.
       properties:
         type:
           type: string
@@ -1416,7 +1426,7 @@ components:
           description: echoed on the extract-ack
         blockId:
           type: string
-          description: 'the source block: transformed in place, or extracted from'
+          description: 'the source block: transformed in place, or extracted from — and the anchor the extracted block lands after'
         targetKind:
           type: string
           description: the block kind to create
@@ -1427,15 +1437,11 @@ components:
           description: the selection, one entry per clipboard-style view
           items:
             $ref: '#/components/schemas/BlockContentEntry'
-        index:
-          type: integer
-          description: document position for the new block; -1 appends, and is the default when the key is absent
       required:
         - type
         - blockId
         - targetKind
         - entries
-        - index
     ProtocolFeatureControlFrame:
       type: object
       description: |-
@@ -1815,13 +1821,15 @@ components:
             type: array
             items:
               $ref: '#/components/schemas/BlockContentEntry'
-        index:
-          type: integer
-          description: document position for the first created block; -1 appends, and is the default when the key is absent
+        afterBlockId:
+          type: string
+          description: insert after this block; an id the document does not hold appends
+        atFront:
+          type: boolean
+          description: insert at position 0; ignored when afterBlockId is set
       required:
         - type
         - kind
-        - index
     ProtocolPasteKind:
       type: string
       description: |-

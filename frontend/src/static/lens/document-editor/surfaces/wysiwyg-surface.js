@@ -42,7 +42,7 @@ import { SieveBlock } from '../../../contract/sieve-block.js'
 import { LensCapability } from '../../../contract/lens-capabilities.js'
 import { buildBlocksHTML, proseContent } from './block-render.js'
 import { seedBaseline, computeBlockSync, computeOrderOp } from '../block-sync.js'
-import { docPosForBlockIndex, blockIndexAfter } from './block-position.js'
+import { docPosForBlockIndex, blockIndexAfter, blockOffsetOf, posForBlockOffset } from './block-position.js'
 import { reloadReplacement } from './render-empty.js'
 import { caretInRawTextBlock } from '../paste-context.js'
 import { CaretTriggerPort } from './caret-trigger-port.js'
@@ -1828,6 +1828,12 @@ export class WysiwygSurface extends AbstractSurface {
    * pending the two lists describe different things, and reordering against a
    * list missing an id would move a block past something the container cannot
    * see. Leaving it alone is safe — the next cue after the sets agree reorders.
+   *
+   * THE CARET SURVIVES. The permute is a whole-doc replace, which maps every
+   * position to a boundary, so the selection is read BLOCK-RELATIVELY first and
+   * put back against the permuted doc in the same transaction. It does NOT
+   * scroll: nobody in this editor asked for this change, and a restore that bumped
+   * the transaction's scroll counter would move the viewport under a reader.
    * @param {ReadonlyArray<string>} order
    */
   #reconcileOrder(order) {
@@ -1847,11 +1853,42 @@ export class WysiwygSurface extends AbstractSurface {
     for (var j = 0; j < order.length; j++) if (held[j] !== order[j]) { same = false; break }
     if (same) return
 
+    var selection = ed.state.selection
+    var anchor = blockOffsetOf(doc, selection.anchor)
+    var head = blockOffsetOf(doc, selection.head)
     var nodes = order.map(function (id) { return byId.get(id) }).concat(trailing)
     var tr = ed.state.tr.replaceWith(0, doc.content.size, nodes)
+    this.#restoreSelection(tr, anchor, head)
     tr.setMeta('addToHistory', false)
     ed.view.dispatch(tr)
     this.#blockOrderCache = order.slice()
+  }
+
+  /**
+   * Puts a block-relative selection reading back on `tr`'s own doc, so the permute
+   * and the restore are ONE transaction and the caret never visibly moves.
+   *
+   * Left alone — PM's mapped selection stands — when either end named no block: a
+   * caret in the id-less trailing paragraph, or in a block the permute did not
+   * carry. There is nothing to compute from in either case, and a guess is worse
+   * than PM's.
+   * @param {any} tr
+   * @param {{id: string, offset: number}|null} anchor
+   * @param {{id: string, offset: number}|null} head
+   */
+  #restoreSelection(tr, anchor, head) {
+    if (!anchor || !head) return
+    var anchorPos = posForBlockOffset(tr.doc, anchor)
+    var headPos = posForBlockOffset(tr.doc, head)
+    if (anchorPos < 0 || headPos < 0) return
+    try {
+      // `between` resolves both ends to positions the schema actually accepts, so
+      // an offset landing on an atom or a node boundary degrades to the nearest
+      // valid selection instead of throwing mid-dispatch.
+      tr.setSelection(this.#T.TextSelection.between(tr.doc.resolve(anchorPos), tr.doc.resolve(headPos)))
+    } catch (err) {
+      console.warn('[wysiwyg-surface] could not restore the caret across a reorder', err)
+    }
   }
 
   /** Brings a block into view. An async answer carries no focus, so it can land

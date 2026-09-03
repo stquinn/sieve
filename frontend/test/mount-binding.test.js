@@ -69,12 +69,11 @@ describe('MountBinding', () => {
 
   // ── The verbs, as they actually leave ──────────────────────────────────────
 
-  // ONE MAPPING FROM MARK TO FRAME, and both doors take it: the lens's void
-  // `requestReplaceText` and the shell's answering `replaceText`. It is pinned
-  // here rather than against a stubbed binding because what is under test is the
-  // frame that leaves — a second mapping is a second chance to send an anchor the
-  // server cannot resolve.
-  describe('replaceText — the one mark-to-frame mapping', () => {
+  // TWO DOORS, ONE FRAME: the shell's answering `replaceText` and the lens's void
+  // `requestReplaceText` reach the same mapping, which lives in DocumentService and
+  // is pinned there (document-wire.test.js). What is under test here is that both
+  // doors arrive at it, and the membership guard this end adds.
+  describe('replaceText — both doors, one frame', () => {
     const mark = { blockId: 'p1', locator: 'content', quote: 'teh', occurrence: 1, grain: 'word', start: 12, end: 15 }
 
     it('sends the anchor as the mark carried it, with what belongs in its place', () => {
@@ -85,18 +84,6 @@ describe('MountBinding', () => {
       })
     })
 
-    it('carries the grain the mark was counted at — the server dispatches its resolution on it', () => {
-      const { binding, sock } = mounted()
-      binding.replaceText(Object.assign({}, mark, { grain: 'literal' }), 'the')
-      expect(lastSent(sock, DocumentFrame.TEXT_REPLACE).grain).toBe('literal')
-    })
-
-    it('an empty replacement is a deletion, not a missing field', () => {
-      const { binding, sock } = mounted()
-      binding.replaceText(mark, '')
-      expect(lastSent(sock, DocumentFrame.TEXT_REPLACE).replacement).toBe('')
-    })
-
     it('the LENS door produces the identical frame', () => {
       const { binding, sock } = mounted()
       binding.provider.requestReplaceText('p1', mark, 'the')
@@ -104,23 +91,6 @@ describe('MountBinding', () => {
         blockId: 'p1', locator: 'content', quote: 'teh', occurrence: 1, grain: 'word', replacement: 'the',
       })
     })
-
-    // An anchor missing its quote or its grain resolves NOWHERE, so it is a
-    // contract breach rather than a race: the server would answer `stale` for
-    // text that never moved.
-    /** @type {Array<[string, Record<string, any>]>} */
-    const refused = [
-      ['no quote — there is nothing to resolve', { blockId: 'p1', locator: 'content', grain: 'word' }],
-      ['no grain — nothing says how to count its occurrence', { blockId: 'p1', locator: 'content', quote: 'teh' }],
-    ]
-
-    for (const [name, broken] of refused) {
-      it('refuses an anchor with ' + name, () => {
-        const { binding, sock } = mounted()
-        expect(() => binding.replaceText(/** @type {any} */ (broken), 'the')).toThrow(ContractViolation)
-        expect(sock.sentOfType(DocumentFrame.TEXT_REPLACE)).toEqual([])
-      })
-    }
 
     // Naming a block the container does not hold is the ordinary race, not a
     // breach: it answers so a caller gating on the answer is released.
@@ -140,14 +110,24 @@ describe('MountBinding', () => {
     }
   })
 
-  it('sends requestAddBlock as a create-block op at the resolved index, correlated', () => {
+  it('sends requestAddBlock as a create-block op anchored on the block id, correlated', () => {
     const { binding, sock } = mounted()
     binding.provider.requestAddBlock('code', { source: 'x=1' }, 'p1')
 
     const frame = lastSent(sock, DocumentFrame.BLOCK_OP)
     expect(frame.uuid).toBe(UUID)
-    expect(frame.op).toEqual({ type: 'create-block', blockId: '', kind: 'code', attrs: { source: 'x=1' }, index: 1 })
+    expect(frame.op).toEqual({ type: 'create-block', blockId: '', kind: 'code', attrs: { source: 'x=1' }, afterBlockId: 'p1' })
     expect(frame.opId).toMatch(/^op-\d+$/)
+  })
+
+  // The whole point of anchoring by id: a sibling created moments ago is not in
+  // this client's follower model yet, and the op that follows it must still say
+  // so. An index would have read as "append" and landed at the end of the file.
+  it('anchors on a block the follower model has not been told about yet', () => {
+    const { binding, sock } = mounted()
+    binding.provider.requestAddBlock('prose', {}, 'not-yet-echoed')
+
+    expect(lastSent(sock, DocumentFrame.BLOCK_OP).op.afterBlockId).toBe('not-yet-echoed')
   })
 
   it('states the id a LENS-BORN block chose, so Go adopts rather than mints', () => {
@@ -210,7 +190,6 @@ describe('MountBinding', () => {
       targetKind: 'code',
       operation: 'transform',
       entries: entries,
-      index: 1,
       opId: frame.opId,
     })
     expect(frame.opId).toMatch(/^op-\d+$/)
@@ -232,7 +211,7 @@ describe('MountBinding', () => {
     const frame = lastSent(sock, DocumentFrame.PASTE)
     expect(frame.kind).toBe('smart')
     expect(frame.entries).toEqual(entries)
-    expect(frame.index).toBe(1)
+    expect(frame.afterBlockId).toBe('p1')
 
     sock.driveMessage({ type: DocumentFrame.PASTE_ACK, opId: frame.opId, outcome: 'content', html: '<a>T</a>' })
     expect(await pending).toEqual({ outcome: 'content', content: '<a>T</a>' })

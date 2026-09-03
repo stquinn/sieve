@@ -87,7 +87,7 @@ func TestCreateBlockFromEntries_transform_replacesInPlace(t *testing.T) {
 	es, uuid := newTestEditorServiceWithProseBlock(t)
 	// TRANSFORM the prose block "pr-1" into a code block.
 	entries := []block.ContentEntry{{MIMEType: "text/plain", Content: "```go\nx := 1\n```"}}
-	id, _, err := es.CreateBlockFromEntries(uuid, "code", entries, 0, block.ActionTransform, "pr-1")
+	id, _, err := es.CreateBlockFromEntries(uuid, "code", entries, block.ActionTransform, "pr-1")
 	if err != nil {
 		t.Fatalf("transform failed: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestCreateBlockFromEntries_extract_isAdditive(t *testing.T) {
 	es, uuid := newTestEditorServiceWithProseBlock(t)
 	before := len(es.shadows[uuid].SnapshotBlocks())
 	entries := []block.ContentEntry{{MIMEType: "text/plain", Content: "```go\nx := 1\n```"}}
-	_, _, err := es.CreateBlockFromEntries(uuid, "code", entries, -1, block.ActionExtract, "")
+	_, _, err := es.CreateBlockFromEntries(uuid, "code", entries, block.ActionExtract, "")
 	if err != nil {
 		t.Fatalf("extract failed: %v", err)
 	}

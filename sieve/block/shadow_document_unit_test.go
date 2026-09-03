@@ -100,3 +100,41 @@ func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
 		t.Errorf("expected status merged, got %v", blk.Attrs["status"])
 	}
 }
+
+// ResolveAnchor is the whole translation between how the wire names a position
+// (the block it follows) and the index every insertion path takes. These five
+// statements are all an anchor can make.
+func TestShadowDocument_ResolveAnchor(t *testing.T) {
+	shadow := &ShadowDocument{
+		UUID:   "test-uuid",
+		Blocks: []SieveBlock{{ID: "b1", Kind: "code"}, {ID: "b2", Kind: "code"}, {ID: "b3", Kind: "code"}},
+	}
+	for _, tc := range []struct {
+		name   string
+		anchor Anchor
+		want   int
+	}{
+		{"after the first block", Anchor{AfterBlockID: "b1"}, 1},
+		{"after the last block", Anchor{AfterBlockID: "b3"}, 3},
+		{"after a block this document does not hold", Anchor{AfterBlockID: "gone"}, AppendIndex},
+		{"the front", Anchor{AtFront: true}, 0},
+		{"no anchor at all", Anchor{}, AppendIndex},
+		{"an id wins over the front", Anchor{AfterBlockID: "b1", AtFront: true}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shadow.ResolveAnchor(tc.anchor); got != tc.want {
+				t.Errorf("ResolveAnchor(%+v) = %d, want %d", tc.anchor, got, tc.want)
+			}
+		})
+	}
+}
+
+// A resolved AppendIndex must reach the end of the document, never the front —
+// the direction a naive negative clamp gets wrong.
+func TestShadowDocument_insertBlockAtAppendsOnAppendIndex(t *testing.T) {
+	shadow := &ShadowDocument{UUID: "test-uuid", Blocks: []SieveBlock{{ID: "b1"}, {ID: "b2"}}}
+	shadow.insertBlockAt(AppendIndex, SieveBlock{ID: "new"})
+	if got := shadow.Blocks[len(shadow.Blocks)-1].ID; got != "new" {
+		t.Errorf("AppendIndex must land at the end; document is %v", shadow.Blocks)
+	}
+}

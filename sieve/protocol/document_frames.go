@@ -1,17 +1,11 @@
 package protocol
 
 import (
-	"encoding/json"
 	"errors"
 
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
 )
-
-// AppendIndex is the document position meaning "after everything else". It is the
-// DECODE-TIME default of every frame carrying an Index, so a client that sends no
-// index appends rather than silently inserting at the top of the document.
-const AppendIndex = -1
 
 // DocUpdateFrame carries the markdown-mode buffer's current text to the shadow
 // document. It is fire-and-forget — the shadow debounces persistence — so it
@@ -59,29 +53,16 @@ type RetryBlockJobFrame struct {
 }
 
 // ExtractFrame creates a block from selected content — the additive extract/paste
-// mechanic and the in-place transform, told apart by Operation.
+// mechanic and the in-place transform, told apart by Operation. It carries no
+// position: an additive extract lands after BlockID, and a transform keeps the
+// source's own slot.
 type ExtractFrame struct {
 	Type       string               `json:"type"`
 	OpID       string               `json:"opId,omitempty" doc:"echoed on the extract-ack"`
-	BlockID    string               `json:"blockId" doc:"the source block: transformed in place, or extracted from"`
+	BlockID    string               `json:"blockId" doc:"the source block: transformed in place, or extracted from — and the anchor the extracted block lands after"`
 	TargetKind string               `json:"targetKind" doc:"the block kind to create"`
 	Operation  block.Action         `json:"operation,omitempty" doc:"empty means extract — the additive default"`
 	Entries    []block.ContentEntry `json:"entries" doc:"the selection, one entry per clipboard-style view"`
-	Index      int                  `json:"index" doc:"document position for the new block; -1 appends, and is the default when the key is absent"`
-}
-
-// UnmarshalJSON decodes an extract with Index seeded to AppendIndex. The default
-// belongs to the TYPE and not to each caller: a decoder that forgets to pre-seed
-// reads a missing index as 0 and inserts at the top of the document.
-func (f *ExtractFrame) UnmarshalJSON(data []byte) error {
-	// The local type sheds this method, or Unmarshal would call it forever.
-	type frame ExtractFrame
-	seeded := frame{Index: AppendIndex}
-	if err := json.Unmarshal(data, &seeded); err != nil {
-		return err
-	}
-	*f = ExtractFrame(seeded)
-	return nil
 }
 
 // BlockOpFrame applies one granular operation to the authoritative block tree.
@@ -375,19 +356,8 @@ type PasteFrame struct {
 	Kind    PasteKind              `json:"kind" doc:"smart | slice | native-drop | native-clipboard. SECURITY: native-drop and native-clipboard make the server read files the NATIVE side caught (the drop bucket) or the OS clipboard names — never paths from the wire, so the wire carries the GESTURE, not a filesystem address. The socket upgrade gates keep these to the app's own page: an origin allow-list refuses a foreign browser page, and a per-run token refuses every other local process."`
 	Entries []block.ContentEntry   `json:"entries,omitempty" doc:"smart: the clipboard's views. native-drop: absent — the server takes the paths from the native drop bucket the OS-level catch fed (Wails OnFileDrop); the page's own view of a drop is never consulted. native-clipboard: absent — the server reads the clipboard itself"`
 	Slice   [][]block.ContentEntry `json:"slice,omitempty" doc:"slice only: one view set per copied block, in order"`
-	Index   int                    `json:"index" doc:"document position for the first created block; -1 appends, and is the default when the key is absent"`
-}
-
-// UnmarshalJSON decodes a paste with Index seeded to AppendIndex, for the reason
-// ExtractFrame.UnmarshalJSON gives.
-func (f *PasteFrame) UnmarshalJSON(data []byte) error {
-	type frame PasteFrame
-	seeded := frame{Index: AppendIndex}
-	if err := json.Unmarshal(data, &seeded); err != nil {
-		return err
-	}
-	*f = PasteFrame(seeded)
-	return nil
+	// Anchor places the FIRST block a paste creates; the rest follow it in order.
+	block.Anchor
 }
 
 // PasteAckFrame answers a paste with what the server made of the clipboard. Its

@@ -560,10 +560,10 @@ export class AbstractEditor extends Lens {
   }
 
   /**
-   * Requests a block extraction/transform: clears any stale insert position,
-   * stamps the caller context onto the first entry, resolves the target block
-   * index (skipped for transform and undo-smart-paste, which mutate in place) and
-   * the entries for the target kind, then hands the payload to the transport.
+   * Requests a block extraction/transform: stamps the caller context onto the
+   * first entry, resolves the entries for the target kind, then names the SOURCE
+   * BLOCK and the operation. Where the result lands is Go's — an additive extract
+   * follows its source, a transform keeps the source's slot.
    *
    * RANGE SOURCES (`sourceRange`). A prose link is a mark over a text range, not a
    * block, so an in-place TRANSFORM has nothing to replace and would destroy the

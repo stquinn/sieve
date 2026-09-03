@@ -38,8 +38,8 @@ func (es *EditorService) SetPendingDrops(s PendingDropSource) {
 
 // HandleNativeDrop makes blocks out of the most recent OS file drop, at index.
 //
-// The frame that lands here carries ONLY the index — the drop content itself is
-// redeemed from the native bucket, on every platform. The wait absorbs the race
+// The frame that lands here carries ONLY where the blocks go — the drop content
+// itself is redeemed from the native bucket, on every platform. The wait absorbs the race
 // between the DOM's frame and the native callback, which land in no guaranteed
 // order.
 //

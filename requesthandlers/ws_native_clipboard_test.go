@@ -44,7 +44,7 @@ func TestWS_NativeClipboard_ReadsTheClipboardAndMakesABlock(t *testing.T) {
 
 	c := dialWS(t, srv, uuid)
 	frame, err := json.Marshal(map[string]interface{}{
-		"type": "paste", "opId": "op-clip", "kind": "native-clipboard", "index": 0,
+		"type": "paste", "opId": "op-clip", "kind": "native-clipboard",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ func TestWS_NativeClipboard_NothingUsableIsNothing(t *testing.T) {
 
 	c := dialWS(t, srv, uuid)
 	frame, err := json.Marshal(map[string]interface{}{
-		"type": "paste", "opId": "op-clip", "kind": "native-clipboard", "index": 0,
+		"type": "paste", "opId": "op-clip", "kind": "native-clipboard",
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -120,7 +120,7 @@ func dialWS(t *testing.T, srv *httptest.Server, uuid string) *websocket.Conn {
 }
 
 func createProseOp(uuid, token string) string {
-	return `{"type":"block-op","uuid":"` + uuid + `","op":{"type":"create-block","kind":"prose","attrs":{"content":"probe"},"index":0,"token":"` + token + `"}}`
+	return `{"type":"block-op","uuid":"` + uuid + `","op":{"type":"create-block","kind":"prose","attrs":{"content":"probe"},"token":"` + token + `"}}`
 }
 
 func expectMessage(t *testing.T, c *websocket.Conn, needle string, timeout time.Duration) {

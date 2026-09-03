@@ -700,7 +700,7 @@ func (h *WsHandler) handleExtract(f inboundFrame) {
 	}
 
 	_, _, err := h.ServiceProvider.Editor.CreateBlockFromEntries(
-		f.uuid, p.TargetKind, p.Entries, p.Index, action, p.BlockID)
+		f.uuid, p.TargetKind, p.Entries, action, p.BlockID)
 	if err != nil {
 		logger.Warn("ws: extract block failed", "err", err)
 		f.reply(protocol.NewErrorFrame(fmt.Sprintf("Failed to extract block: %v", err)))
@@ -741,12 +741,16 @@ func (h *WsHandler) handlePaste(f inboundFrame) {
 		return
 	}
 
+	// The wire states a paste's landing place as an anchor; this is where it
+	// becomes the index every paste path below takes.
+	index := h.ServiceProvider.Editor.ResolveAnchor(f.uuid, msg.Anchor)
+
 	if msg.Kind == protocol.PasteKindNativeDrop {
 		// The entries name files rather than carrying them: the server reads the
 		// bytes off disk. See PasteKindNativeDrop for why that capability is on this
 		// wire at all, and allowOrigin for what keeps it off a foreign page's.
 		f.reply(protocol.NewPasteAckFrame(msg.OpID,
-			h.ServiceProvider.Editor.HandleNativeDrop(f.uuid, msg.Entries, msg.Index)))
+			h.ServiceProvider.Editor.HandleNativeDrop(f.uuid, msg.Entries, index)))
 		return
 	}
 
@@ -756,12 +760,12 @@ func (h *WsHandler) handlePaste(f inboundFrame) {
 		// PasteKindNativeClipboard for why that capability is on this wire at all, and
 		// allowOrigin for what keeps it off a foreign page's.
 		f.reply(protocol.NewPasteAckFrame(msg.OpID,
-			h.ServiceProvider.Editor.HandleNativeClipboard(f.uuid, msg.Index)))
+			h.ServiceProvider.Editor.HandleNativeClipboard(f.uuid, index)))
 		return
 	}
 
 	if msg.Kind == protocol.PasteKindSlice {
-		if _, err := h.ServiceProvider.Editor.HandlePasteSlice(f.uuid, msg.Slice, msg.Index); err != nil {
+		if _, err := h.ServiceProvider.Editor.HandlePasteSlice(f.uuid, msg.Slice, index); err != nil {
 			logger.Warn("ws: paste slice failed", "uuid", f.uuid, "err", err)
 			f.reply(protocol.NewPasteFailedFrame(msg.OpID, err))
 			return
@@ -775,7 +779,7 @@ func (h *WsHandler) handlePaste(f inboundFrame) {
 	}
 
 	f.reply(protocol.NewPasteAckFrame(msg.OpID,
-		h.ServiceProvider.Editor.HandlePaste(f.uuid, msg.Entries, msg.Index)))
+		h.ServiceProvider.Editor.HandlePaste(f.uuid, msg.Entries, index)))
 }
 
 // handleDetectExtractions answers which kinds would accept a selection. It

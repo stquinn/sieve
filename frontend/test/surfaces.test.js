@@ -70,7 +70,11 @@ vi.mock('../src/static/lens/document-editor/block-sync.js', () => ({
   computeBlockSync: vi.fn(() => ({ next: {}, ops: [] })),
   computeOrderOp: vi.fn(() => ({ op: null, next: null })),
 }))
-vi.mock('../src/static/lens/document-editor/surfaces/block-position.js', () => ({
+// The two PLACEMENT lookups are faked so a test can read the index the surface
+// asked for; the block-relative selection pair comes through REAL, because what
+// the reorder test pins is the arithmetic that carries a caret across a permute.
+vi.mock('../src/static/lens/document-editor/surfaces/block-position.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   docPosForBlockIndex: vi.fn(() => 7),
   blockIndexAfter: vi.fn(() => -1),
 }))
@@ -388,9 +392,10 @@ function wyPromptHost(overrides = {}) {
 // A recorded fake editor over a REAL ProseMirror EditorState, so doc scans,
 // setNodeMarkup, and addToHistory metas are the real thing while commands are
 // recorded call-shapes.
-function fakeEditorOver(schema, docNodes) {
+function fakeEditorOver(schema, docNodes, caretAt) {
   const doc = schema.nodes.doc.create(null, docNodes)
-  const state = EditorState.create({ schema, doc })
+  let state = EditorState.create({ schema, doc })
+  if (caretAt != null) state = state.apply(state.tr.setSelection(TextSelection.create(doc, caretAt)))
   const dom = document.createElement('div')
   const calls = []
   const dispatched = []
@@ -543,6 +548,42 @@ describe('WysiwygSurface.applyContainerChange (placement, undo-sacred)', () => {
     expect(ed.dispatched.length).toBeGreaterThan(0)
     expect(ed.dispatched[0].getMeta('addToHistory')).toBe(false)
     expect(ed.dispatched[0].doc.childCount).toBe(1)
+  })
+
+  // A reorder is a permute of the doc's children, expressed as a whole-document
+  // replace — and a whole-document replace maps every position to a boundary. So
+  // the selection is read BLOCK-RELATIVELY and put back in the same transaction,
+  // or the caret leaves the block the user is typing in on every reorder cue.
+  it.each([
+    ['a top-level block', () => [build.p('alpha', 'b1'), build.p('bravo', 'b2')], 11, 4],
+    ['a block\'s own nested content', () => [build.p('alpha', 'b1'), build.blockquote('b2')], 12, 5],
+    ['the id-less trailing paragraph, where PM\'s own mapping stands',
+      () => [build.p('alpha', 'b1'), build.p('bravo', 'b2'), build.p()], 15, null],
+  ])('a reorder carries the caret in %s, untracked and in ONE transaction', (_name, nodes, caretAt, head) => {
+    seedVendor({ TextSelection })
+    const ed = fakeEditorOver(fxSchema, nodes(), caretAt)
+    const s = painted(ed)
+    s.applyContainerChange(cue([], true), containerOf(['b2', 'b1'], {
+      b1: { id: 'b1', kind: 'prose', attrs: { id: 'b1' } },
+      b2: { id: 'b2', kind: 'prose', attrs: { id: 'b2' } },
+    }))
+    expect(ed.dispatched).toHaveLength(1)
+    const tr = ed.dispatched[0]
+    expect(tr.getMeta('addToHistory')).toBe(false)
+    expect(tr.doc.child(0).attrs.id).toBe('b2')
+    expect(tr.selectionSet).toBe(head !== null)
+    if (head !== null) expect(tr.selection.head).toBe(head)
+  })
+
+  it('a reorder never bumps the scroll counter — the reader is not moved', () => {
+    seedVendor({ TextSelection })
+    const ed = fakeEditorOver(fxSchema, [build.p('alpha', 'b1'), build.p('bravo', 'b2')], 11)
+    const s = painted(ed)
+    s.applyContainerChange(cue([], true), containerOf(['b2', 'b1'], {
+      b1: { id: 'b1', kind: 'prose', attrs: { id: 'b1' } },
+      b2: { id: 'b2', kind: 'prose', attrs: { id: 'b2' } },
+    }))
+    expect(ed.dispatched[0].scrolledIntoView).toBe(false)
   })
 
   it('an attrs change on a structured block is setNodeMarkup by id, addToHistory:false', () => {
