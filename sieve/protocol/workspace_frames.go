@@ -89,12 +89,15 @@ type SessionScrollFrame struct {
 
 // SpellIgnoreFrame stops a word being flagged for the rest of this run.
 //
-// The three spelling frames ride the WORKSPACE channel rather than the document
-// one because none of them is about a document: a word accepted while reading
-// one note is accepted in every note open beside it, and the toggle is one
-// answer for the whole app. Each is fire-and-forget and unanswered — the visible
-// effect is the marks that follow, pushed per document on the channel that owns
-// it.
+// Both spelling verbs ride the WORKSPACE channel rather than the document one
+// because neither is about a document: a word accepted while reading one note is
+// accepted in every note open beside it. Each is fire-and-forget and unanswered
+// — the visible effect is the marks that follow, pushed per document on the
+// channel that owns it.
+//
+// They are the FEATURE'S OWN verbs and not its lifecycle: a judgement about one
+// word does not switch spelling on or off, which is what the feature-control
+// frame is for.
 type SpellIgnoreFrame struct {
 	Type string `json:"type"`
 	Word string `json:"word" doc:"the word as it was written; the server folds it to the form the dictionary is keyed by"`
@@ -105,14 +108,6 @@ type SpellIgnoreFrame struct {
 type SpellLearnFrame struct {
 	Type string `json:"type"`
 	Word string `json:"word" doc:"the word as it was written; the server folds it to the form the dictionary is keyed by"`
-}
-
-// SpellEnableFrame turns spell checking on or off for the whole workspace and
-// persists the choice. Turning it off clears every mark the client is drawing;
-// turning it on re-checks every open document.
-type SpellEnableFrame struct {
-	Type    string `json:"type"`
-	Enabled bool   `json:"enabled" doc:"the state the toggle is being put INTO, not a request to flip — a repeat of the current state is a no-op"`
 }
 
 // CommandBlock is a block as the command wire carries it, in either direction:

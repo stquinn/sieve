@@ -202,6 +202,11 @@ export class MarkdownSurface extends AbstractSurface {
     this.#rootEl = null
   }
 
+  /** @override — hands the caret back to the raw buffer, where it was. */
+  focusEditor() {
+    if (this.#textarea) this.#textarea.focus()
+  }
+
   /** Flushes a pending debounced edit as an immediate setRawContent. Idle: no-op. */
   flushPending() {
     if (!this.#timer) return

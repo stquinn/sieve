@@ -32,6 +32,7 @@ func (g *Generator) ProtocolJS() ([]byte, error) {
 		}
 	}
 	g.writeTopicConstants(&b)
+	g.writeFeatureConstants(&b)
 	g.writeCommandConstants(&b)
 	g.writeAssetBuilder(&b)
 
@@ -104,6 +105,23 @@ func (g *Generator) writeTopicConstants(b *strings.Builder) {
 	b.WriteString("/** @typedef {typeof Topic[keyof typeof Topic]} TopicName */\n\n")
 	b.WriteString("/** Every topic, for the blanket resync a client runs when its workspace socket reconnects. */\n")
 	b.WriteString("export const AllTopics = Object.freeze(Object.values(Topic))\n\n")
+}
+
+// writeFeatureConstants publishes the text-service vocabulary: the word each
+// registered producer answers to. A feature rides the control frame and the
+// marks push as DATA — a new producer is not a new frame type — so this is the
+// only place the browser half learns which producers exist.
+func (g *Generator) writeFeatureConstants(b *strings.Builder) {
+	if len(g.contract.Features) == 0 {
+		return
+	}
+	b.WriteString("/** Text-service producers. A `feature-control` frame names one; a `text-marks` push carries the one that found them. */\n")
+	b.WriteString("export const Feature = Object.freeze({\n")
+	for _, f := range g.contract.Features {
+		b.WriteString(fmt.Sprintf("  %s: '%s',\n", g.jsConstantName(f), f))
+	}
+	b.WriteString("})\n")
+	b.WriteString("/** @typedef {typeof Feature[keyof typeof Feature]} FeatureName */\n\n")
 }
 
 // writeCommandConstants publishes the whole registered command vocabulary: the

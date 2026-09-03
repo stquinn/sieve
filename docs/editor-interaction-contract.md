@@ -513,11 +513,11 @@ Consequences:
 | Mod+Shift+P | View › Toggle Prompts | `htmx.ajax` POST `/api/session/prompts/toggle` |
 | (menu-click only) | View › Toggle Line Numbers | `htmx.ajax` POST `/api/session/linenumbers/toggle` |
 | Mod+Shift+M | View › Toggle Editor Mode | `window.sieveWorkspace?.activeTab?.editor?.toggleMode()` |
-| Mod+F | Edit › Find › Find… (mac: Find › Find…) | `window.sieveWorkspace?.toggleSearch()` |
-| F3 (non-mac) | Edit › Find › Find Next | `window.sieveWorkspace?.searchNext()` |
-| Mod+G (mac) | Find › Find Next | `window.sieveWorkspace?.searchNext()` |
-| Shift+F3 (non-mac) | Edit › Find › Find Previous | `window.sieveWorkspace?.searchPrev()` |
-| Mod+Shift+G (mac) | Find › Find Previous | `window.sieveWorkspace?.searchPrev()` |
+| Mod+F | Edit › Find › Find and Replace… (mac: Find › …) | `window.sieveWorkspace?.toggleFind()` |
+| F3 (non-mac) | Edit › Find › Find Next | `window.sieveWorkspace?.findNext()` |
+| Mod+G (mac) | Find › Find Next | `window.sieveWorkspace?.findNext()` |
+| Shift+F3 (non-mac) | Edit › Find › Find Previous | `window.sieveWorkspace?.findPrev()` |
+| Mod+Shift+G (mac) | Find › Find Previous | `window.sieveWorkspace?.findPrev()` |
 | Mod+Shift+F | Edit › Find › Find in Notes… (mac: Find › …) | `window.sieveSidebarSearch()` |
 | Mod+J | View › Toggle AI Blocks | `window.sieveWorkspace?.activeTab?.editor?.toggleAiBlocks()` |
 | Mod+P | View › Quick Switcher | open quick-switcher dialog |
@@ -564,11 +564,20 @@ carries exactly one `Accelerator`, and `Hidden: true` short-circuits *before*
 accelerator registration on all three backends (confirmed in the Wails v2
 source), so a hidden duplicate silently never binds.
 
-`SearchOverlay` exposes the real verbs (`next()`/`prev()`, mirroring the ↓/↑
-buttons including the n/N stats refresh) via
-`window.sieveWorkspace.searchNext()`/`searchPrev()` — when the overlay is closed
-these OPEN it (conventional "start searching") rather than silently advancing a
-hidden search. Replace… slots into the same Find submenu when #61 lands.
+`FindDialog` exposes the real verbs (`next()`/`prev()`, mirroring the ↓/↑
+buttons including the "n of m" refresh) via
+`window.sieveWorkspace.findNext()`/`findPrev()` — when the bar is closed these
+OPEN it (conventional "start searching") rather than silently advancing a hidden
+search. Replace is inside the bar rather than a menu row of its own: one chord
+opens the whole find-and-replace surface, as every editor's Mod+F does.
+
+**The bar's own keys never reach the editor.** Enter (next), Shift+Enter
+(previous) and Escape (close) are handled on the bar's own inputs, which live
+outside `#tiptap-mount` — so nothing in this document's editor-surface rules is
+involved, and the bar needs no `interactionPolicy`. A Tab chord is deliberately
+left alone and passed to the browser's own focus order; it is recognised by
+`keyCode === 9`, because WebKitGTK delivers Shift+Tab as `ISO_Left_Tab` and
+`event.key` reads as neither 'Tab' nor a shifted one.
 
 ## Context menu (revised 2026-08-28, #118)
 

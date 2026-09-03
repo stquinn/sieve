@@ -29,7 +29,7 @@ import { DOMParser as PMDOMParser, Schema } from '@tiptap/pm/model'
 // pattern — Object.assign(globalThis.TipTap, …), never reassign) and clear them
 // after each test so a fake bundle never leaks forward.
 vi.mock('../src/static/lens/extensions.js', () => ({
-  Search: {}, SelectionHighlight: {}, HighlightMark: {},
+  SelectionHighlight: {}, HighlightMark: {},
   AiShortcuts: { configure: () => ({}) },
 }))
 vi.mock('../src/static/lens/document-editor/block-chrome.js', () => ({
@@ -81,6 +81,8 @@ vi.mock('../src/static/lens/document-editor/paste-context.js', () => ({
 import { AbstractSurface, SurfaceEvent } from '../src/static/lens/document-editor/surfaces/abstract-surface.js'
 import { MarkdownSurface } from '../src/static/lens/document-editor/surfaces/markdown-surface.js'
 import { WysiwygSurface } from '../src/static/lens/document-editor/surfaces/wysiwyg-surface.js'
+import { SPELL_FEATURE } from '../src/static/lens/document-editor/surfaces/spell-decoration.js'
+import { FIND_FEATURE } from '../src/static/lens/document-editor/surfaces/find-decoration.js'
 import { buildBlocksHTML } from '../src/static/lens/document-editor/surfaces/block-render.js'
 import { SieveBlock } from '../src/static/contract/sieve-block.js'
 import { getBlockSelectionRange } from '../src/static/lens/document-editor/block-chrome.js'
@@ -628,12 +630,15 @@ function mountBundle(state) {
     Node: { create: (cfg) => cfg },
     Extension: { create: (cfg) => cfg },
     Plugin: function (cfg) { this.cfg = cfg },
-    PluginKey: function (name) { this.name = name; this.getState = () => null },
+    // A real PluginKey reads its plugin's own state out of the editor state; this
+    // one reads the slot its name gives it, which is the same relationship — and
+    // is what lets a test stage what a decoration set is holding.
+    PluginKey: function (name) { this.name = name; this.getState = (s) => (s && s[name]) || null },
     DecorationSet: { empty: [], create: () => [] },
     Decoration: { node: () => ({}), inline: () => ({}) },
     StarterKit: ext, Placeholder: ext, Table: ext, Image: ext, Markdown: ext,
     AiShortcuts: ext, TaskItem: ext,
-    TableRow: {}, TableHeader: {}, TableCell: {}, Search: {}, TaskList: {},
+    TableRow: {}, TableHeader: {}, TableCell: {}, TaskList: {},
     BlockChrome: {}, AiTargetDecoration: {},
     HighlightMark: {}, SelectionHighlight: {}, BlockId: {},
     buildInteractionPolicyExtension: () => ({}),
@@ -647,7 +652,7 @@ function mountBundle(state) {
       this.options = opts
       this.state = state
       this.schema = state.schema
-      this.view = { dom: document.createElement('div'), dispatch: vi.fn() }
+      this.view = { dom: document.createElement('div'), dispatch: vi.fn(), state: state }
       this.storage = { markdown: { parser: { md: { render: (t) => t } } } }
       // The event seam a real Editor carries: the surface's trigger picker
       // subscribes to `update`/`blur` through it on every mount.
@@ -687,6 +692,54 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     s.mount(root, null)
     return { s, root, host, T, ed: editor() }
   }
+
+  // WHOSE MARKS THIS SURFACE DRAWS. Marks arrive for every switched-on producer,
+  // and this surface has a decoration set per producer it can draw: anything
+  // else is dropped, because there is nothing here that knows how to draw it.
+  // The filter is the surface's own, since the surface owns the decoration sets.
+  describe('the marks this mount draws', () => {
+    const mark = { locator: 'content', quote: 'teh', occurrence: 0, grain: 'word', class: 'prose', suggestions: [] }
+
+    it.each([
+      ['spelling squiggles', SPELL_FEATURE, 1],
+      ['find highlights', FIND_FEATURE, 1],
+      ['a producer nothing here can draw', 'nonesuch', 0],
+    ])('%s → %i dispatch', (_name, feature, dispatches) => {
+      const { s, ed } = mountWy()
+      s.setTextMarks(feature, 'b1', [mark])
+      expect(ed.view.dispatch).toHaveBeenCalledTimes(dispatches)
+    })
+
+    // AND WHAT IT ADVERTISES IS ALL OF THEM. The selection descriptor carries
+    // every set's marks under the caret in one flat list, each stamped with the
+    // feature that drew it, and a consumer filters. The plugin states are staged
+    // directly: which marks resolve where is spell-marks.test.js's business.
+    /** @param {string} blockId */
+    const held = (blockId) => ({
+      hits: [{ blockId: blockId, mark: mark, ranges: [{ from: 1, to: 4 }] }],
+    })
+
+    it('advertises EVERY set\'s marks under the caret, each stamped with its feature', () => {
+      const { s, ed } = mountWy()
+      ed.state.sieveSpellDecoration = held('b1')
+      ed.state.sieveFindDecoration = held('b1')
+      const marks = s.feedSelection().textMarks
+      expect(marks.map((/** @type {any} */ m) => m.feature)).toEqual([SPELL_FEATURE, FIND_FEATURE])
+      expect(marks.map((/** @type {any} */ m) => m.quote)).toEqual(['teh', 'teh'])
+      expect(marks.every((/** @type {any} */ m) => m.blockId === 'b1')).toBe(true)
+    })
+
+    it('advertises the sets that have something there, and nothing at all from the rest', () => {
+      const { s, ed } = mountWy()
+      ed.state.sieveFindDecoration = held('b1')
+      expect(s.feedSelection().textMarks.map((/** @type {any} */ m) => m.feature)).toEqual([FIND_FEATURE])
+    })
+
+    it('advertises none where no set is drawing anything under the caret', () => {
+      const { s } = mountWy()
+      expect(s.feedSelection().textMarks).toEqual([])
+    })
+  })
 
   // THE TRIGGERS ONE MOUNT ANSWERS TO (#118). `{` is unconditional; `@` and `/`
   // are each registered only for a mount actually handed the service behind them.

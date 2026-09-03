@@ -35,7 +35,7 @@ func outboundWireCases() []wireCase {
 	target := domain.OpenTarget{URI: "sieve://9f2b", UUID: "9f2b", BlockID: "b1", Kind: "note", Title: "Auth Design"}
 	marks := []domain.TextMark{{
 		BlockID: "b1", Locator: "content", Quote: "teh", Occurrence: 1,
-		Start: 15, End: 18, Class: domain.TextClassProse,
+		Grain: domain.GrainWord, Start: 15, End: 18, Class: domain.TextClassProse,
 	}}
 	boom := errors.New("boom")
 
@@ -211,18 +211,19 @@ func outboundWireCases() []wireCase {
 			golden:  `{"type":"export-content","opId":"op-11","format":"markdown","content":"# Auth Design\n"}`,
 		},
 		{
-			name:    "spell-marks",
+			name:    "text-marks",
 			channel: ChannelDocument,
-			frame:   NewSpellMarksFrame("b1", marks),
-			golden:  `{"type":"spell-marks","blockId":"b1","marks":[{"locator":"content","quote":"teh","occurrence":1,"start":15,"end":18,"class":"prose","suggestions":[]}]}`,
+			frame:   NewTextMarksFrame(domain.FeatureSpellCheck, "b1", marks),
+			golden:  `{"type":"text-marks","feature":"spell-check","blockId":"b1","marks":[{"locator":"content","quote":"teh","occurrence":1,"grain":"word","start":15,"end":18,"class":"prose","suggestions":[]}]}`,
 		},
 		{
 			// The clear. An empty set must marshal as [] and never as null — the
-			// client reads a length off it to decide what to drop.
-			name:    "spell-marks cleared",
+			// client reads a length off it to decide what to drop, and it names the
+			// feature being cleared so no other feature's marks go with it.
+			name:    "text-marks cleared",
 			channel: ChannelDocument,
-			frame:   NewSpellMarksFrame("b1", nil),
-			golden:  `{"type":"spell-marks","blockId":"b1","marks":[]}`,
+			frame:   NewTextMarksFrame(domain.FeatureSpellCheck, "b1", nil),
+			golden:  `{"type":"text-marks","feature":"spell-check","blockId":"b1","marks":[]}`,
 		},
 		{
 			name:    "text-replace-ack applied",
@@ -615,6 +616,48 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 			into: &MentionResolveFrame{},
 			want: &MentionResolveFrame{Type: TypeMentionResolve, URI: "sieve://9f2b", CorrelationID: "c-3"},
 		},
+		{
+			name: "text-replace",
+			raw:  `{"type":"text-replace","opId":"op-12","blockId":"b1","locator":"content","quote":"teh","occurrence":1,"grain":"word","start":15,"end":18,"replacement":"the"}`,
+			into: &TextReplaceFrame{},
+			want: &TextReplaceFrame{
+				Type: TypeTextReplace, OpID: "op-12", BlockID: "b1", Locator: "content",
+				Quote: "teh", Occurrence: 1, Grain: domain.GrainWord,
+				Start: 15, End: 18, Replacement: "the",
+			},
+		},
+		{
+			// The framework reads Feature and Enabled and carries the rest. An
+			// imperative like replaceAll therefore costs the wire nothing — it is a
+			// parameter its own feature interprets, not a verb this contract knows.
+			name: "feature-control carries a feature's whole parameter bag, imperatives included",
+			raw:  `{"type":"feature-control","feature":"find","enabled":true,"parameters":{"term":"et alon","caseSensitive":true,"replacement":"oin","replaceAll":true}}`,
+			into: &FeatureControlFrame{},
+			want: &FeatureControlFrame{
+				Type: TypeFeatureControl, Feature: domain.FeatureFind, Enabled: true,
+				Parameters: map[string]any{
+					"term": "et alon", "caseSensitive": true, "replacement": "oin", "replaceAll": true,
+				},
+			},
+		},
+		{
+			name: "feature-control with nothing to work with omits the bag entirely",
+			raw:  `{"type":"feature-control","feature":"spell-check","enabled":false}`,
+			into: &FeatureControlFrame{},
+			want: &FeatureControlFrame{
+				Type: TypeFeatureControl, Feature: domain.FeatureSpellCheck, Enabled: false,
+			},
+		},
+		{
+			name: "text-replace at literal grain",
+			raw:  `{"type":"text-replace","opId":"op-13","blockId":"b1","locator":"content","quote":"et alon","occurrence":0,"grain":"literal","start":1,"end":8,"replacement":"oin"}`,
+			into: &TextReplaceFrame{},
+			want: &TextReplaceFrame{
+				Type: TypeTextReplace, OpID: "op-13", BlockID: "b1", Locator: "content",
+				Quote: "et alon", Occurrence: 0, Grain: domain.GrainLiteral,
+				Start: 1, End: 8, Replacement: "oin",
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -626,6 +669,25 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 				t.Errorf("decoded frame\n got: %#v\nwant: %#v", tc.into, tc.want)
 			}
 		})
+	}
+}
+
+// The wire form and the domain form of one request must name the SAME run. Edit
+// is the only mapping between them, so a field it forgets is a field the editor
+// resolves the anchor without — and the grain is the one that decides which
+// resolution runs at all.
+func TestTextReplaceFrame_EditCarriesTheWholeAnchor(t *testing.T) {
+	frame := TextReplaceFrame{
+		Type: TypeTextReplace, OpID: "op-1", BlockID: "b1", Locator: "content",
+		Quote: "V", Occurrence: 0, Grain: domain.GrainLiteral,
+		Start: 2, End: 3, Replacement: "R",
+	}
+	want := domain.TextEdit{
+		BlockID: "b1", Locator: "content", Quote: "V", Occurrence: 0,
+		Grain: domain.GrainLiteral, Start: 2, End: 3, Replacement: "R",
+	}
+	if got := frame.Edit(); got != want {
+		t.Errorf("Edit() = %+v, want %+v", got, want)
 	}
 }
 

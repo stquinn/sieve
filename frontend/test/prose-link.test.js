@@ -32,7 +32,7 @@ import { Markdown } from 'tiptap-markdown'
 // stubs satisfy the imports. block-position stays REAL: its index math is
 // exactly what the playback under test uses.
 vi.mock('../src/static/lens/extensions.js', () => ({
-  Search: {}, SelectionHighlight: {}, HighlightMark: {},
+  SelectionHighlight: {}, HighlightMark: {},
   AiShortcuts: { configure: () => ({}) },
   buildAiContext: vi.fn(() => ({ blockRef: 'doc', contextLabel: 'x' })),
   applyTargetHighlight: vi.fn(),

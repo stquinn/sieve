@@ -125,7 +125,7 @@ describe('ContainerTransport.replaceText — the write the marks made possible',
   beforeEach(() => FakeSocket.reset())
 
   const anchor = {
-    blockId: 'p1', locator: 'content', quote: 'teh', occurrence: 1,
+    blockId: 'p1', locator: 'content', quote: 'teh', occurrence: 1, grain: 'word',
     start: 12, end: 15, replacement: 'the',
   }
 

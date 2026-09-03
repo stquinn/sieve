@@ -39,8 +39,8 @@ func newWsTestServerWithDebounce(t *testing.T, debounce time.Duration) (*httptes
 }
 
 // testSpellService parses the 80,000-word dictionary ONCE per test binary. Every
-// harness server shares it, so wiring the spell checker into the harness costs
-// one parse rather than one per test.
+// harness server shares it, so wiring spelling into the harness costs one parse
+// rather than one per test.
 var testSpellService = sync.OnceValue(func() *services.SpellService {
 	// No user dictionary: the harness has no state store to persist one into, and
 	// nothing here teaches the checker a word.
@@ -67,8 +67,18 @@ func newWsTestServerWithJobs(t *testing.T, debounce time.Duration, jobs JobsSour
 	if err != nil {
 		t.Fatalf("NewStateService: %v", err)
 	}
-	sp := &sieve.ServiceProvider{Store: fs, Documents: ds, Editor: es, State: st,
-		Spell: editor.NewSpellChecker(es, testSpellService())}
+	sp := &sieve.ServiceProvider{Store: fs, Documents: ds, Editor: es, State: st}
+	// The composition root's own wiring, minus the settings read: every producer
+	// the app registers, spelling switched on, and the editor observing the engine
+	// back. Registration goes through the root's own method so a producer added
+	// there is a producer this harness serves.
+	sp.Inspection = editor.NewInspectionEngine(es)
+	sp.RegisterInspectors(testSpellService())
+	if err := sp.Inspection.SetWorkspaceFeature(sp.Spell.Feature(), true, nil); err != nil {
+		t.Fatalf("enable spelling: %v", err)
+	}
+	es.SetInspectionEngine(sp.Inspection)
+	es.SetFocusListener(sp.Inspection)
 	h := NewWsHandler(sp, NewWorkspaceBroadcast(jobs), testWSToken)
 	// The same edge the composition root wires: a save announces itself to the
 	// workspace fan-out. Without it a test watching for container-saved would be
@@ -231,39 +241,72 @@ func TestWS_StaleTeardownMustNotCloseSuccessorShadow(t *testing.T) {
 }
 
 // CLAIM-ON-WRITE (user-reported, dev-server tab + app window on one uuid): the
-// LATER registrant (A) owns the channel, but a mutating op arrives on the OTHER
-// live socket (B). B must re-claim ownership so the op's synchronous render-back
-// lands on B — the acting window — not on the co-claimant A. B is dialled FIRST
-// so A is the registered owner at the moment B writes; that is the exact race.
+// LATER registrant (A) owns the channel, but a mutating frame arrives on the
+// OTHER live socket (B). B must re-claim ownership so the frame's synchronous
+// render-back lands on B — the acting window — not on the co-claimant A. B is
+// dialled FIRST so A is the registered owner at the moment B writes; that is the
+// exact race.
+//
+// A feature-control frame is one of them. Most change nothing, but a feature's
+// parameters can carry an imperative it obeys against the document, and the
+// render-backs that follow are as synchronous as any op's — so the frame claims
+// like an op rather than being read as the switch it usually is.
 func TestWS_MutatingFrameClaimsListener(t *testing.T) {
-	srv, _, h, uuid := newWsTestServer(t)
+	const replaceAll = `{"type":"feature-control","feature":"find","enabled":true,` +
+		`"parameters":{"term":"the","replacement":"a","replaceAll":true}}`
 
-	b := dialWS(t, srv, uuid) // acting window (registers first)
-	if err := b.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
-		t.Fatalf("write barrier B: %v", err)
+	cases := []struct {
+		name, body, echo string
+		frame            func(uuid string) string
+	}{
+		{
+			name:  "a granular op",
+			frame: func(uuid string) string { return createProseOp(uuid, "tok-claim") },
+			echo:  protocol.TypeInsertBlock,
+		},
+		{
+			name:  "a feature-control carrying an imperative",
+			body:  "the cat sat on the mat",
+			frame: func(string) string { return replaceAll },
+			echo:  protocol.TypeReplaceBlock,
+		},
 	}
-	expectMessage(t, b, `"pong"`, 5*time.Second)
 
-	a := dialWS(t, srv, uuid) // co-claimant, ends up the registered owner
-	if err := a.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
-		t.Fatalf("write barrier A: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, sp, h, uuid := newWsTestServer(t)
+			if tc.body != "" {
+				seedBody(t, sp, uuid, tc.body)
+			}
+
+			b := dialWS(t, srv, uuid) // acting window (registers first)
+			if err := b.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
+				t.Fatalf("write barrier B: %v", err)
+			}
+			expectMessage(t, b, `"pong"`, 5*time.Second)
+
+			a := dialWS(t, srv, uuid) // co-claimant, ends up the registered owner
+			if err := a.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
+				t.Fatalf("write barrier A: %v", err)
+			}
+			expectMessage(t, a, `"pong"`, 5*time.Second)
+
+			// Sanity: A is the registered owner before B writes.
+			if err := b.WriteMessage(websocket.TextMessage, []byte(tc.frame(uuid))); err != nil {
+				t.Fatalf("write %s: %v", tc.name, err)
+			}
+			// B must receive its own render-back (proves the claim); A must not.
+			expectMessage(t, b, `"`+tc.echo+`"`, 2*time.Second)
+			expectNoMessage(t, a, `"`+tc.echo+`"`, 500*time.Millisecond)
+
+			// And subsequent unsolicited sendTo(uuid) render-backs now route to B.
+			h.sendTo(uuid, map[string]string{"type": "probe-owner-b"})
+			expectMessage(t, b, "probe-owner-b", 2*time.Second)
+			expectNoMessage(t, a, "probe-owner-b", 500*time.Millisecond)
+
+			closeAndSettle(a)
+		})
 	}
-	expectMessage(t, a, `"pong"`, 5*time.Second)
-
-	// Sanity: A is the registered owner before B writes.
-	if err := b.WriteMessage(websocket.TextMessage, []byte(createProseOp(uuid, "tok-claim"))); err != nil {
-		t.Fatalf("write block-op: %v", err)
-	}
-	// B must receive its own render-back (proves the claim); A must not.
-	expectMessage(t, b, `"insert-block"`, 2*time.Second)
-	expectNoMessage(t, a, `"insert-block"`, 500*time.Millisecond)
-
-	// And subsequent unsolicited sendTo(uuid) render-backs now route to B.
-	h.sendTo(uuid, map[string]string{"type": "probe-owner-b"})
-	expectMessage(t, b, "probe-owner-b", 2*time.Second)
-	expectNoMessage(t, a, "probe-owner-b", 500*time.Millisecond)
-
-	closeAndSettle(a)
 }
 
 // A NON-mutating frame (ping heartbeat) from the non-registered socket must NOT

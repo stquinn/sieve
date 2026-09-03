@@ -28,7 +28,7 @@ vi.mock('../src/static/shell/ask-panel.js', () => ({
   AskPanel: class { constructor() { this.composer = { editor: null } } },
 }))
 vi.mock('../src/static/shell/insert-dialogs.js', () => ({ InsertDialogs: class {} }))
-vi.mock('../src/static/shell/search-overlay.js', () => ({ SearchOverlay: class {} }))
+vi.mock('../src/static/shell/find-dialog.js', () => ({ FindDialog: class {} }))
 vi.mock('../src/static/shell/status-bar.js', () => ({ StatusBar: class {} }))
 vi.mock('../src/static/shell/sidebar-view.js', () => ({
   SidebarView: class { attach() { return this } },

@@ -2,6 +2,8 @@ package editor
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"sieve/ident"
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
@@ -1045,4 +1047,270 @@ func TestApplyJobUpdate_closedDoc(t *testing.T) {
 func waitJobs(t *testing.T, es *EditorService, _ string) {
 	t.Helper()
 	es.WaitForJobs()
+}
+
+// ── The anchored write lane ──────────────────────────────────────────────────
+// ReplaceText is driven here by marks the READ lane produced: an anchor is the
+// block kind's own, so a test that wrote one by hand would be asserting against
+// a locator no processor ever minted.
+
+// renderBackRecorder captures the attrs of every render-back a mutation fires,
+// whichever lane it takes — an attrs merge or a replace-by-id — so a test can
+// assert WHAT the client was told rather than only what the shadow now holds.
+// It also counts the replacements separately, because which lane a mutation
+// renders back on is itself the contract for a Go-side text rewrite.
+type renderBackRecorder struct {
+	mu       sync.Mutex
+	got      []map[string]interface{}
+	replaced []string
+}
+
+func (r *renderBackRecorder) listener() *mockLifecycleListener {
+	return &mockLifecycleListener{
+		onUpdated: func(_, _ string, attrs map[string]interface{}) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.got = append(r.got, attrs)
+		},
+		onReplaced: func(_, oldID, _, newID string, attrs map[string]interface{}, _ string) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.got = append(r.got, attrs)
+			r.replaced = append(r.replaced, oldID+"→"+newID)
+		},
+	}
+}
+
+func (r *renderBackRecorder) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.got)
+}
+
+func (r *renderBackRecorder) replacements() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.replaced...)
+}
+
+func (r *renderBackRecorder) last() map[string]interface{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.got) == 0 {
+		return nil
+	}
+	return r.got[len(r.got)-1]
+}
+
+// editFor is the mark handed straight back as the edit that acts on it: the
+// anchor travels unread, which is the whole point of the tuple.
+func editFor(m domain.TextMark, replacement string) domain.TextEdit {
+	return domain.TextEdit{
+		BlockID: m.BlockID, Locator: m.Locator, Quote: m.Quote, Occurrence: m.Occurrence,
+		Grain: m.Grain, Start: m.Start, End: m.End, Replacement: replacement,
+	}
+}
+
+// THE WRITE LANE END TO END, driven by nothing but a mark the read lane
+// produced: the mark's own anchor is handed straight back as the edit, the
+// block is rewritten, the client is told with the authoritative block, and the
+// mark clears.
+//
+// The render-back is a REPLACE-BY-ID, keeping the block's identity. A text
+// rewrite is client-instigated but SERVER-EXECUTED, the same species as a
+// paste or a transform: the client places the block Go now holds. The attrs
+// lane cannot carry it — a client merges attrs onto text it believes it still
+// owns, and drops the merge for prose.
+//
+// The clear is the point that must not be special-cased: nothing here re-inspects
+// the block. The edit went through the ordinary update path, whose post-apply
+// hook queues the block like any other op, and the next drain finds it corrected.
+func TestEditorService_ReplaceTextRewritesTheBlockAndClearsTheMark(t *testing.T) {
+	resetRegistry()
+	engine, _, es, uuids := openInspectedDocs(t, testSpell, 0, proseRegion(proseA, "a helllo here"))
+	uuid := uuids[0]
+	clock, notifier := staged(engine)
+	updates := &renderBackRecorder{}
+	es.SetLifecycleListener(updates.listener())
+
+	engine.CheckAndPush(uuid)
+	if ran := clock.fire(); ran != 1 {
+		t.Fatalf("seed: fire ran %d drains, want 1", ran)
+	}
+	marks, pushed := notifier.forBlock(proseA)
+	if !pushed || len(marks) != 1 {
+		t.Fatalf("seed pushed %+v (pushed=%v), want one mark", marks, pushed)
+	}
+	mark := marks[0]
+	if len(mark.Suggestions) == 0 || mark.Suggestions[0] != "hello" {
+		t.Fatalf("mark suggestions = %v, want hello offered first", mark.Suggestions)
+	}
+
+	// The edit IS the mark: quote, occurrence, grain and locator travel back
+	// unread.
+	if err := es.ReplaceText(uuid, editFor(mark, mark.Suggestions[0])); err != nil {
+		t.Fatalf("ReplaceText: %v", err)
+	}
+
+	blk, found := es.shadowFor(uuid).SnapshotBlock(proseA)
+	if !found || blk.Content() != "a hello here" {
+		t.Errorf("content = %q (found=%v), want %q", blk.Content(), found, "a hello here")
+	}
+	if updates.count() != 1 {
+		t.Fatalf("%d render-backs fired, want exactly 1 — the edited block is echoed like any other Go-side mutation", updates.count())
+	}
+	if content, _ := updates.last()["content"].(string); content != "a hello here" {
+		t.Errorf("render-back carried content %q, want the authoritative %q", content, "a hello here")
+	}
+	if want := []string{proseA + "→" + proseA}; !reflect.DeepEqual(updates.replacements(), want) {
+		t.Errorf("replacements = %v, want %v — a text rewrite is placed by id, never merged as attrs", updates.replacements(), want)
+	}
+
+	if ran := clock.fire(); ran != 1 {
+		t.Fatalf("after the replace, fire ran %d drains, want 1 — the op-observer must have queued the block", ran)
+	}
+	pushes := notifier.forBlockAll(proseA)
+	if len(pushes) != 2 {
+		t.Fatalf("proseA pushed %d times, want 2 (flag, then clear)", len(pushes))
+	}
+	if len(pushes[1]) != 0 {
+		t.Errorf("post-replace push = %+v, want an EMPTY set clearing the mark", pushes[1])
+	}
+}
+
+// What a replace refuses, and what it leaves behind when it does. Every case
+// asserts the block is UNCHANGED and no render-back fired: a write that cannot
+// be placed must not half-happen, and must not tell the client anything moved.
+//
+// The two refusals are separated as strictly here as at the processor: STALE
+// says the text moved on and invites a re-read, MALFORMED says no text could
+// ever make this request resolve. Each case takes the real mark and breaks one
+// thing about it, so what is being refused is exactly the one difference.
+func TestEditorService_ReplaceTextRefusals(t *testing.T) {
+	const content = "a helllo here"
+	cases := []struct {
+		name          string
+		edit          func(domain.TextMark) domain.TextEdit
+		wantStale     bool
+		wantMalformed bool
+	}{
+		{
+			name: "the quote was typed over between the mark and the edit",
+			edit: func(m domain.TextMark) domain.TextEdit {
+				m.Quote = "wolrd"
+				return editFor(m, "world")
+			},
+			wantStale: true,
+		},
+		{
+			name: "the occurrence is past what the text holds",
+			edit: func(m domain.TextMark) domain.TextEdit {
+				m.Occurrence = 1
+				return editFor(m, "hello")
+			},
+			wantStale: true,
+		},
+		{
+			// The quote IS in the text, but not as a word run. The grain the client
+			// declared is the whole reason this does not resolve.
+			name: "a word grain does not reach inside a word",
+			edit: func(m domain.TextMark) domain.TextEdit {
+				m.Quote = "elll"
+				return editFor(m, "ell")
+			},
+			wantStale: true,
+		},
+		{
+			name: "no such block",
+			edit: func(m domain.TextMark) domain.TextEdit {
+				m.BlockID = probeC
+				return editFor(m, "hello")
+			},
+		},
+		{
+			name: "a locator the processor did not mint",
+			edit: func(m domain.TextMark) domain.TextEdit {
+				m.Locator = "source"
+				return editFor(m, "hello")
+			},
+			wantMalformed: true,
+		},
+		{
+			// A grain is what says how an occurrence was counted, so an edit carrying
+			// none states no anchor at all — malformed, and not text that moved on.
+			name: "an anchor declaring no grain",
+			edit: func(m domain.TextMark) domain.TextEdit {
+				m.Grain = ""
+				return editFor(m, "hello")
+			},
+			wantMalformed: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetRegistry()
+			_, inspector, es, uuids := openInspectedDocs(t, testSpell, 0, proseRegion(proseA, content))
+			uuid := uuids[0]
+			mark := theMarkOn(t, es, inspector, uuid, proseA)
+			updates := &renderBackRecorder{}
+			es.SetLifecycleListener(updates.listener())
+
+			err := es.ReplaceText(uuid, tc.edit(mark))
+			if err == nil {
+				t.Fatal("the replace was accepted")
+			}
+			if errors.Is(err, block.ErrTextStale) != tc.wantStale {
+				t.Errorf("err = %v, stale=%v; want stale=%v", err, errors.Is(err, block.ErrTextStale), tc.wantStale)
+			}
+			if errors.Is(err, block.ErrTextMalformed) != tc.wantMalformed {
+				t.Errorf("err = %v, malformed=%v; want malformed=%v", err, errors.Is(err, block.ErrTextMalformed), tc.wantMalformed)
+			}
+			if blk, found := es.shadowFor(uuid).SnapshotBlock(proseA); !found || blk.Content() != content {
+				t.Errorf("content = %q (found=%v), want it untouched: %q", blk.Content(), found, content)
+			}
+			if updates.count() != 0 {
+				t.Errorf("%d render-backs fired for a refused replace, want none", updates.count())
+			}
+		})
+	}
+}
+
+// A closed document has nothing to write to. ReplaceText runs off the WS read
+// loop, so it can arrive after the channel that sent it went away.
+func TestEditorService_ReplaceTextRefusesAClosedDocument(t *testing.T) {
+	resetRegistry()
+	_, _, es, uuids := openInspectedDocs(t, testSpell, 0, proseRegion(proseA, "a helllo here"))
+	es.Close(uuids[0])
+
+	err := es.ReplaceText(uuids[0], domain.TextEdit{BlockID: proseA, Locator: "content", Quote: "helllo", Grain: domain.GrainWord, Replacement: "hello"})
+	if err == nil {
+		t.Fatal("a replace against a closed document was accepted")
+	}
+	if errors.Is(err, block.ErrTextStale) {
+		t.Error("a closed document reported as stale; staleness is about text that moved on")
+	}
+}
+
+// A replace is a document mutation like any other, so the autosave it arms is
+// the ordinary one: nothing asks for a flush, and the corrected text reaches
+// disk on the debounce the merge reset.
+func TestEditorService_AReplacementIsAutosavedLikeAnyOtherEdit(t *testing.T) {
+	resetRegistry()
+	_, inspector, es, uuids := openInspectedDocs(t, testSpell, 20*time.Millisecond, proseRegion(proseA, "a helllo here"))
+	uuid := uuids[0]
+	saves := newRecordingSaves()
+	es.SetSavedNotifier(saves)
+
+	if err := es.ReplaceText(uuid, editFor(theMarkOn(t, es, inspector, uuid, proseA), "hello")); err != nil {
+		t.Fatalf("ReplaceText: %v", err)
+	}
+
+	saves.await(t, 2*time.Second)
+	doc, err := es.documents.LoadByUUID(uuid)
+	if err != nil {
+		t.Fatalf("LoadByUUID: %v", err)
+	}
+	if !strings.Contains(string(doc.Body()), "a hello here") {
+		t.Errorf("on-disk body = %q, want the corrected text", string(doc.Body()))
+	}
 }

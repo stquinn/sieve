@@ -6,6 +6,7 @@ import { NodeViewRegistry, detectAndAppendExtractions, serializeNode } from './s
 import { enclosingBlockId } from './surfaces/block-position.js'
 import { ProseLink } from './surfaces/prose-link.js'
 import { WysiwygSurface } from './surfaces/wysiwyg-surface.js'
+import { SPELL_FEATURE } from './surfaces/spell-decoration.js'
 import { listRegisteredLanguages } from '../../renderers/highlighting.js'
 
   var IC = window.SieveIcons || {}
@@ -43,14 +44,17 @@ import { listRegisteredLanguages } from '../../renderers/highlighting.js'
    *  the offers past this hang in a flyout rather than being dropped. */
   var SPELLING_OFFERS = 3
 
-  /** The mark this menu is about, or null. The caret sits on one word, but a
-   *  caret between two marked words touches both — so the one carrying
-   *  corrections wins, and the first is the fallback when neither does. A mount
-   *  that cannot be written to this way is not asked at all.
+  /** The mark this menu is about, or null. The advertisement carries every
+   *  feature's marks under the caret, so SPELLING'S ARE PICKED OUT BY FEATURE:
+   *  a find highlight sits on the same word and offers nothing to correct. The
+   *  caret sits on one word, but a caret between two marked words touches both,
+   *  so the one carrying corrections wins and the first is the fallback when
+   *  neither does. A mount that cannot be written to this way is not asked.
    *  @param {any} lens @returns {any} */
   function spellingMark(lens) {
     if (!lens || typeof lens.getSelectionContext !== 'function' || typeof lens.replaceText !== 'function') return null
-    var marks = lens.getSelectionContext().textMarks || []
+    var marks = (lens.getSelectionContext().textMarks || [])
+      .filter(function (m) { return m.feature === SPELL_FEATURE })
     return marks.filter(function (m) { return m.suggestions && m.suggestions.length })[0] || marks[0] || null
   }
 

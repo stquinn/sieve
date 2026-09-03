@@ -296,27 +296,93 @@ const (
 	CodeFilenameLocator = "filename"
 )
 
+// codeLocator mints and reads code's {slot, hash} locator — the shared
+// slottedLocator (slotted_locator.go), which every kind whose reading is its
+// stored bytes verbatim uses the same way.
+var codeLocator = slottedLocator{Kind: "code"}
+
+// mintLocator builds the locator for slot: the slot name and a digest of the
+// bytes currently read out of it.
+func (p *CodeBlockProcessor) mintLocator(slot, text string) string {
+	return codeLocator.Mint(slot, text)
+}
+
+// slotText returns blk's current stored text for slot, and whether slot is
+// one this processor has ever minted a locator for. source and filename are
+// the only two; naming anything else is a locator this processor never made.
+func (p *CodeBlockProcessor) slotText(blk *block.SieveBlock, slot string) (string, bool) {
+	switch slot {
+	case CodeSourceLocator:
+		return p.RawContent(*blk), true
+	case CodeFilenameLocator:
+		filename, _ := blk.Attrs[CodeFilenameLocator].(string)
+		return filename, true
+	}
+	return "", false
+}
+
+// readLocator answers which slot locator names and whether it still names
+// that slot's CURRENT bytes, given blk's live payload.
+func (p *CodeBlockProcessor) readLocator(blk *block.SieveBlock, locator string) (slot, text string, err error) {
+	return codeLocator.Read(locator, func(slot string) (string, bool) { return p.slotText(blk, slot) })
+}
+
 // NormalisedText makes a code block a TextBearer. Its source is CODE — a
 // spell checker reads prose and nothing else, and the class is how it knows to
 // leave a variable name alone — and a filename it carries is a label. Both
-// segments are the stored bytes verbatim.
+// segments are the stored bytes verbatim, and each carries a locator minted
+// from its own slot and bytes (mintLocator).
 func (p *CodeBlockProcessor) NormalisedText(blk *block.SieveBlock) []domain.TextSegment {
 	if blk == nil {
 		return nil
 	}
+	source := p.RawContent(*blk)
 	segments := []domain.TextSegment{{
-		Locator: CodeSourceLocator,
-		Text:    p.RawContent(*blk),
+		Locator: p.mintLocator(CodeSourceLocator, source),
+		Text:    source,
 		Class:   domain.TextClassCode,
 	}}
 	if filename, _ := blk.Attrs["filename"].(string); filename != "" {
 		segments = append(segments, domain.TextSegment{
-			Locator: CodeFilenameLocator,
+			Locator: p.mintLocator(CodeFilenameLocator, filename),
 			Text:    filename,
 			Class:   domain.TextClassLabel,
 		})
 	}
 	return segments
+}
+
+// UpdateText makes code a TextUpdater: its segments — source and, when
+// present, filename — are each independently writable.
+//
+// CODE HAS NO PARSE: a segment's reading IS the stored bytes of the slot its
+// locator names, so a resolved run addresses those bytes directly and a
+// write is one splice — there is no map back through markup to derive, as
+// prose's ProseReading must (prose_reading.go). The batch mechanics —
+// validate every edit against its slot's current text, splice back to
+// front, all-or-nothing — are identityTextEditor's (identity_text_editor.go),
+// shared with diagram, the other kind whose reading is its stored bytes.
+func (p *CodeBlockProcessor) UpdateText(blk *block.SieveBlock, edits []domain.TextEdit) error {
+	if blk == nil {
+		return fmt.Errorf("%w: code: no block to update", block.ErrTextMalformed)
+	}
+	if len(edits) == 0 {
+		return nil
+	}
+	editor := identityTextEditor{Kind: "code", ReadLocator: func(locator string) (string, string, error) {
+		return p.readLocator(blk, locator)
+	}}
+	finalText, err := editor.Apply(edits)
+	if err != nil {
+		return err
+	}
+	if blk.Attrs == nil {
+		blk.Attrs = map[string]interface{}{}
+	}
+	for slot, text := range finalText {
+		blk.Attrs[slot] = text
+	}
+	return nil
 }
 
 // ContentIsMarkdown reports whether this block's source is itself document

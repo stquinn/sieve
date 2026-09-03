@@ -1,11 +1,14 @@
 package processors
 
 import (
-	"errors"
+	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"regexp"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
+	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -77,23 +80,88 @@ func extractTargets(content string) []string {
 	return targets
 }
 
-// ProseContentLocator names the one segment a prose block bears: its whole
-// stored content. Prose has a single payload slot, so the locator is a constant
-// rather than something minted per block — but it stays opaque to callers, which
-// carry it back rather than reading it.
-const ProseContentLocator = "content"
+// ProseContentSlot names the one part of a prose payload a reader is ever
+// handed: its whole stored content. Prose has a single slot, so the name is a
+// constant rather than something minted per block — it is half of the locator,
+// and the half that never varies.
+const ProseContentSlot = "content"
 
-// NormalisedText makes prose a TextBearer: one segment holding the content
-// VERBATIM. The stored bytes are handed out unchanged — markdown syntax,
-// highlight markers, trailing whitespace and all — because every offset and
-// quote a text service derives is anchored in exactly these bytes.
+// proseLocator is what prose puts on every segment it hands out, and reads back
+// off every edit that returns.
+//
+// It is SELF-SUFFICIENT: Slot says which part of the payload was read and Hash
+// is a digest of exactly those stored bytes. Nothing else is needed and nothing
+// else is kept — given bytes that still hash to Hash, the same parse yields the
+// same reading, so the span a reader named is the span the write resolves. The
+// hash is therefore not advisory: it is what makes a reading-side anchor
+// meaningful at all, since a payload edited anywhere is a payload whose reading
+// may number things differently.
+type proseLocator struct {
+	Slot string `json:"slot"`
+	Hash string `json:"hash"`
+}
+
+// mintLocator builds the locator for content: the slot prose bears and a digest
+// of the bytes read out of it.
+func (p *ProseProcessor) mintLocator(content string) string {
+	encoded, err := json.Marshal(proseLocator{Slot: ProseContentSlot, Hash: p.contentHash(content)})
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
+// contentHash digests the stored bytes a reading was taken from. It is a check
+// against text having moved on, not against anyone tampering with it, so speed
+// is the only property that matters.
+func (p *ProseProcessor) contentHash(content string) string {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(content))
+	return strconv.FormatUint(h.Sum64(), 16)
+}
+
+// readLocator answers whether an edit's locator still names content the payload
+// holds, given that content's current digest.
+//
+// A locator prose did not mint — a bare slot name, an empty string, anything
+// that is not this shape — is MALFORMED: no text could make it resolve. One
+// that is prose's own but whose digest no longer matches is STALE: the payload
+// moved on since it was read, the reading it was made against is gone, and
+// every anchor into it goes with it. That is coarse on purpose — prose reads
+// its content as one piece, so the whole piece is what can be vouched for —
+// and a stale anchor costs a client one debounce window before the next read
+// hands it a live one.
+func (p *ProseProcessor) readLocator(locator, contentHash string) error {
+	var read proseLocator
+	if err := json.Unmarshal([]byte(locator), &read); err != nil || read.Slot != ProseContentSlot || read.Hash == "" {
+		return fmt.Errorf("%w: prose: locator %q was not minted here", block.ErrTextMalformed, locator)
+	}
+	if read.Hash != contentHash {
+		return fmt.Errorf("%w: the text this anchor was read from has changed", block.ErrTextStale)
+	}
+	return nil
+}
+
+// NormalisedText makes prose a TextBearer: ONE segment holding prose's reading
+// of its content — the markdown read through the parse, with the syntax gone
+// and the words left (ProseReading defines it). That reading is what every
+// anchor into a prose block is meaningful against, and it is deliberately not
+// the stored bytes: a reader that counted markdown syntax would flag urls,
+// number occurrences the writer cannot see, and anchor on characters no surface
+// ever draws.
+//
+// The segment's locator carries the digest of the bytes this reading came from,
+// which is what lets an anchor made against it be honoured — or refused — long
+// after. Content that parses to nothing reads as nothing, and is still one
+// segment.
 func (p *ProseProcessor) NormalisedText(blk *block.SieveBlock) []domain.TextSegment {
 	if blk == nil {
 		return nil
 	}
+	content := blk.Content()
 	return []domain.TextSegment{{
-		Locator: ProseContentLocator,
-		Text:    blk.Content(),
+		Locator: p.mintLocator(content),
+		Text:    NewProseReading(content).Text(),
 		Class:   domain.TextClassProse,
 	}}
 }
@@ -101,30 +169,66 @@ func (p *ProseProcessor) NormalisedText(blk *block.SieveBlock) []domain.TextSegm
 // UpdateText makes prose a TextUpdater: the one segment it bears is writable,
 // and a write lands on the stored content.
 //
-// The run to replace is found by resolving occurrence N of quote among the word
-// runs of the content AS IT NOW STANDS, so an edit that displaced the word
-// since the anchor was taken changes nothing about where this writes. When the
-// content no longer holds that many of the quote the block is left untouched
-// and the write is stale. The offsets the requester saw are not consulted at
-// all: prose bears one segment, and resolving the anchor over it is what
-// decides the range.
-func (p *ProseProcessor) UpdateText(blk *block.SieveBlock, locator string, _, _ int, quote string, occurrence int, replacement string) error {
+// EVERY EDIT IS RESOLVED FIRST, AGAINST ONE READING, AND THEN SPLICED BACK TO
+// FRONT. Resolving as it went would anchor each edit in text an earlier one had
+// already moved; splicing back to front is what lets ranges resolved against a
+// single reading all land where they were resolved. One edit that does not
+// resolve leaves the block untouched.
+//
+// An edit resolves to SEVERAL splices when its match crosses markup — one per
+// stretch of stored text the match covers — so two edits overlap when any of
+// their splices do.
+//
+// THE STORED BYTES ARE SPLICED, NEVER RE-SERIALIZED. Writing the parse back out
+// would re-spell the whole payload in whatever markdown this parser prefers,
+// and the user's own line breaks, emphasis characters and spacing are not this
+// processor's to normalise. Every byte outside a resolved range is the byte
+// that was there before.
+func (p *ProseProcessor) UpdateText(blk *block.SieveBlock, edits []domain.TextEdit) error {
 	if blk == nil {
-		return errors.New("prose: no block to update")
+		return fmt.Errorf("%w: prose: no block to update", block.ErrTextMalformed)
 	}
-	if locator != ProseContentLocator {
-		return fmt.Errorf("prose: unknown locator %q", locator)
+	if len(edits) == 0 {
+		return nil
 	}
 	content := blk.Content()
-	run, found := domain.TextSegment{Text: content}.Locate(quote, occurrence)
-	if !found {
-		return fmt.Errorf("%w: %q at occurrence %d", block.ErrTextStale, quote, occurrence)
+	contentHash := p.contentHash(content)
+	for _, edit := range edits {
+		if err := p.readLocator(edit.Locator, contentHash); err != nil {
+			return err
+		}
+	}
+	reading := NewProseReading(content)
+	var splices []proseSplice
+	for _, edit := range edits {
+		resolved, err := reading.Resolve(edit)
+		if err != nil {
+			return err
+		}
+		splices = append(splices, resolved...)
+	}
+	sort.Slice(splices, func(i, j int) bool { return splices[i].start > splices[j].start })
+	for i := 1; i < len(splices); i++ {
+		if splices[i].stop > splices[i-1].start {
+			return fmt.Errorf("%w: prose: two edits name overlapping text", block.ErrTextMalformed)
+		}
+	}
+	for _, s := range splices {
+		content = content[:s.start] + s.replacement + content[s.stop:]
 	}
 	if blk.Attrs == nil {
 		blk.Attrs = map[string]interface{}{}
 	}
-	blk.Attrs["content"] = content[:run.Start] + replacement + content[run.End:]
+	blk.Attrs["content"] = content
 	return nil
+}
+
+// proseSplice is one resolved edit: the raw byte range it writes over and what
+// goes there.
+type proseSplice struct {
+	start       int
+	stop        int
+	replacement string
 }
 
 // MarkdownRepresentation: prose's markdown is its content verbatim.

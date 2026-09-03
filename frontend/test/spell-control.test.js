@@ -1,12 +1,14 @@
 // @ts-check
-// spell-control.test.js — the workspace's spelling verbs. NEW FILE because
-// SpellControl is a new unit, and the shell's services are tested one file each
-// (command-service, mention-service, invalidation-service).
+// spell-control.test.js — the workspace's spelling verbs and its share of the
+// text-service lifecycle. NEW FILE because SpellControl is a new unit, and the
+// shell's services are tested one file each (command-service, mention-service,
+// invalidation-service).
 //
 // The whole class is a sender plus one boolean, so the assertions are about
 // exactly that: which frame went out, and what the button would read afterwards.
 import { describe, it, expect, beforeEach } from 'vitest'
 import { SpellControl } from '../src/static/shell/spell-control.js'
+import { Feature, WorkspaceFrame } from '../src/static/generated/protocol.js'
 
 /** A stand-in for the wire owner: records the frames put on it. */
 function fakePlane() {
@@ -28,14 +30,17 @@ describe('SpellControl', () => {
     expect(new SpellControl(/** @type {any} */ (plane), /** @type {any} */ (undefined)).enabled).toBe(true)
   })
 
-  it('toggle sends the state it flipped INTO, and reads back as that state at once', () => {
+  // The toggle is the SHARED lifecycle frame naming spelling, not a spelling
+  // verb: it carries the feature word, the state it was put into, and the empty
+  // parameter bag every feature's frame has room for.
+  it('toggle sends the feature-control frame for the state it flipped INTO, and reads back as that state at once', () => {
     const spell = new SpellControl(/** @type {any} */ (plane), true)
     expect(spell.toggle()).toBe(false)
     expect(spell.enabled).toBe(false)
     expect(spell.toggle()).toBe(true)
     expect(plane.sent).toEqual([
-      { type: 'spell-enable', enabled: false },
-      { type: 'spell-enable', enabled: true },
+      { type: WorkspaceFrame.FEATURE_CONTROL, feature: Feature.SPELL_CHECK, enabled: false, parameters: {} },
+      { type: WorkspaceFrame.FEATURE_CONTROL, feature: Feature.SPELL_CHECK, enabled: true, parameters: {} },
     ])
   })
 

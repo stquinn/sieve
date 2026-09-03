@@ -175,13 +175,17 @@ func (ss *StateService) SaveUserDictionary(words []string) error {
 	return err
 }
 
-// SaveSettings persists settings to the Store, replacing any existing file.
+// SaveSettings persists settings to the Store, replacing any existing file. The
+// cache is invalidated rather than filled: what a load answers is the PARSED
+// file merged with the defaults, and settings handed in here need be neither.
 func (ss *StateService) SaveSettings(settings domain.Settings) error {
 	data, err := settings.Marshal()
 	if err != nil {
 		return err
 	}
 	_, err = ss.st.CreateText(domain.State, "settings.json", data)
+	ss.mu.Lock()
 	ss.cachedSettings = nil
+	ss.mu.Unlock()
 	return err
 }

@@ -18,7 +18,7 @@ import { registerBlockKind } from '../src/static/renderers/block-kinds.js'
 // bare test/setup.js TipTap seed. This file never mounts a surface, so inert
 // mocks satisfy the imports.
 vi.mock('../src/static/lens/extensions.js', () => ({
-  Search: {}, SelectionHighlight: {}, HighlightMark: {},
+  SelectionHighlight: {}, HighlightMark: {},
   AiShortcuts: { configure: () => ({}) },
   buildAiContext: vi.fn(), applyTargetHighlight: vi.fn(),
 }))

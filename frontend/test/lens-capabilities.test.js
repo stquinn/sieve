@@ -23,7 +23,7 @@ import { LensCapability, LENS_CAPABILITIES } from '../src/static/contract/lens-c
 // under the bare test/setup.js TipTap seed. Nothing here mounts a surface, so
 // inert mocks satisfy the imports (the editor-toolbar.test.js pattern).
 vi.mock('../src/static/lens/extensions.js', () => ({
-  Search: {}, SelectionHighlight: {}, HighlightMark: {},
+  SelectionHighlight: {}, HighlightMark: {},
   AiShortcuts: { configure: () => ({}) },
   buildAiContext: vi.fn(), applyTargetHighlight: vi.fn(),
 }))

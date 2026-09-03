@@ -21,7 +21,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest'
 vi.mock('../src/static/shell/tab.js', () => ({ SieveTab: class {} }))
 vi.mock('../src/static/shell/ask-panel.js', () => ({ AskPanel: class {} }))
 vi.mock('../src/static/shell/insert-dialogs.js', () => ({ InsertDialogs: class {} }))
-vi.mock('../src/static/shell/search-overlay.js', () => ({ SearchOverlay: class {} }))
+vi.mock('../src/static/shell/find-dialog.js', () => ({ FindDialog: class {} }))
 vi.mock('../src/static/shell/status-bar.js', () => ({ StatusBar: class {} }))
 
 describe('the page dials the push channel at boot', () => {

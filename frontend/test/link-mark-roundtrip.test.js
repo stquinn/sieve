@@ -26,6 +26,7 @@ import { Markdown } from 'tiptap-markdown'
 // extension modules that build Extension.create(...) at module-eval time.
 import './helpers/seed-vendor.js'
 import { LINK_OPTIONS } from '../src/static/lens/document-editor/surfaces/wysiwyg-surface.js'
+import { FlatText } from '../src/static/lens/document-editor/surfaces/flat-text.js'
 
 /** @type {any} */
 let editor
@@ -165,5 +166,23 @@ describe('LINK_OPTIONS — the shipping configuration', () => {
   it('is frozen (a shared value, docs/how-to-idiomatic-js.md §3)', () => {
     expect(Object.isFrozen(LINK_OPTIONS)).toBe(true)
     expect(Object.isFrozen(LINK_OPTIONS.HTMLAttributes)).toBe(true)
+  })
+})
+
+// ── What this stack DRAWS is what the server anchors marks in ───────────────
+// A text mark is numbered in the server's reading of the stored markdown and
+// resolved again in the flat reading of the parsed document — different code in
+// different languages, which agree only because the string is the same. The
+// autolink is where they nearly did not: the address is drawn, its brackets are
+// not, and the server reads it that way because of what is asserted here. The
+// twin rows are prose_reading_test.go and the grain table in spell-marks.test.js.
+
+describe('the reading marks are resolved in', () => {
+  it('draws an autolink as its address, with the brackets gone', () => {
+    editor.commands.setContent('a <https://x.example/a> a')
+    expect(new FlatText(editor.state.doc).text).toBe('a https://x.example/a a')
+    // It is a real autolink and not literal text, or the string above would
+    // agree for the wrong reason.
+    expect(firstLinkMark(editor).attrs.href).toBe('https://x.example/a')
   })
 })

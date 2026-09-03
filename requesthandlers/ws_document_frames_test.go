@@ -78,19 +78,23 @@ func TestWS_Load_AnswersWithTheChannelsDocument(t *testing.T) {
 	closeAndSettle(c)
 }
 
-// Opening a document channel pushes its spelling marks unasked: nothing sends a
+// Opening a document channel pushes its text marks unasked: nothing sends a
 // frame to ask for them, so a missing push is a permanently unmarked document.
-// They ride the owner path every other render-back does.
-func TestWS_SpellMarks_ArePushedWhenTheChannelOpens(t *testing.T) {
+// They ride the owner path every other render-back does, and each names the
+// feature that found it — the client draws each producer's findings its own way.
+func TestWS_TextMarks_ArePushedWhenTheChannelOpens(t *testing.T) {
 	block.RegisterProcessor(&processors.ProseProcessor{})
 	srv, sp, _, uuid := newWsTestServer(t)
 	seedBody(t, sp, uuid, "this sentence has a helllo in it")
 
 	c := dialWS(t, srv, uuid)
-	frame := readUntil(t, c, protocol.TypeSpellMarks, 2*time.Second)
+	frame := readUntil(t, c, protocol.TypeTextMarks, 2*time.Second)
 
 	if frame["blockId"] == "" || frame["blockId"] == nil {
-		t.Errorf("spell-marks named no block: %v", frame)
+		t.Errorf("text-marks named no block: %v", frame)
+	}
+	if frame["feature"] != domain.FeatureSpellCheck {
+		t.Errorf("feature = %v, want %q", frame["feature"], domain.FeatureSpellCheck)
 	}
 	marks, _ := frame["marks"].([]interface{})
 	if len(marks) != 1 {
@@ -104,6 +108,61 @@ func TestWS_SpellMarks_ArePushedWhenTheChannelOpens(t *testing.T) {
 		t.Errorf("class = %v, want prose", mark["class"])
 	}
 	closeAndSettle(c)
+}
+
+// FIND, END TO END OVER THE WIRE. A control frame on the document channel
+// switches a per-document producer on, its findings come back as a marks push
+// naming that feature, and the same frame carrying the imperative rewrites the
+// document — arriving as the ordinary replace-block echo, not as an answer of
+// its own, because a replace-all is an edit like any other by the time it
+// reaches a client.
+//
+// It is asserted HERE, over a real socket, because everything between the frame
+// and the echo is relay: the handler reads a feature word it does not interpret,
+// and a unit test of either end proves nothing about the wire between them.
+func TestWS_Find_SearchesAndReplacesFromTheControlFrame(t *testing.T) {
+	block.RegisterProcessor(&processors.ProseProcessor{})
+	srv, sp, _, uuid := newWsTestServer(t)
+	seedBody(t, sp, uuid, "the cat sat on the mat")
+
+	c := dialWS(t, srv, uuid)
+	send(t, c, `{"type":"feature-control","feature":"find","enabled":true,"parameters":{"term":"the"}}`)
+
+	found := readUntilFeature(t, c, domain.FeatureFind, 3*time.Second)
+	marks, _ := found["marks"].([]interface{})
+	if len(marks) != 2 {
+		t.Fatalf("marks = %v, want both matches of the term", found["marks"])
+	}
+	mark, _ := marks[0].(map[string]interface{})
+	if mark["quote"] != "the" || mark["grain"] != domain.GrainLiteral {
+		t.Errorf("mark = %v, want the literal text at literal grain", mark)
+	}
+
+	send(t, c, `{"type":"feature-control","feature":"find","enabled":true,`+
+		`"parameters":{"term":"the","replacement":"a","replaceAll":true}}`)
+
+	echo := readUntil(t, c, protocol.TypeReplaceBlock, 3*time.Second)
+	attrs, _ := echo["attrs"].(map[string]interface{})
+	if content, _ := attrs["content"].(string); content != "a cat sat on a mat" {
+		t.Errorf("the echoed block reads %v, want every match replaced", attrs["content"])
+	}
+	closeAndSettle(c)
+}
+
+// readUntilFeature reads text-marks frames until one carries the named feature.
+// A document with more than one producer switched on pushes several, and a test
+// about one of them must not be answered by another's.
+func readUntilFeature(t *testing.T, c *websocket.Conn, feature string, within time.Duration) map[string]interface{} {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		frame := readUntil(t, c, protocol.TypeTextMarks, time.Until(deadline))
+		if frame["feature"] == feature {
+			return frame
+		}
+	}
+	t.Fatalf("no text-marks frame for feature %q arrived", feature)
+	return nil
 }
 
 // The DEBOUNCE autosave — a save nobody asked for — announces itself on the
@@ -156,7 +215,7 @@ func TestWS_ExplicitFlushAnnouncesTheSaveAndAnswersNothing(t *testing.T) {
 	}
 	// Nothing came back on the document wire ANSWERING the flush: the fact travels
 	// on the other one. The only frames tolerated here are the ones the server
-	// pushes of its own accord — spelling marks, which a channel emits on open —
+	// pushes of its own accord — text marks, which a channel emits on open —
 	// so anything else, of any type, fails.
 	_ = c.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
 	for {
@@ -166,7 +225,7 @@ func TestWS_ExplicitFlushAnnouncesTheSaveAndAnswersNothing(t *testing.T) {
 		}
 		var frame map[string]interface{}
 		_ = json.Unmarshal(raw, &frame)
-		if frame["type"] != protocol.TypeSpellMarks {
+		if frame["type"] != protocol.TypeTextMarks {
 			t.Errorf("flush must be unanswered on the document wire, got %q", string(raw))
 		}
 	}

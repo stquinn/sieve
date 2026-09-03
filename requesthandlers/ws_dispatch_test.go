@@ -127,6 +127,7 @@ func TestWS_EveryServedFrameRefusesAnUnreadablePayload(t *testing.T) {
 		{protocol.TypeExtract, `{"type":"extract","entries":"not-a-list"}`},
 		{protocol.TypeEnterMarkdown, `{"type":"enter-markdown","opId":42}`},
 		{protocol.TypeEnterWysiwyg, `{"type":"enter-wysiwyg","markdown":[1,2]}`},
+		{protocol.TypeFeatureControl, `{"type":"feature-control","feature":"spell-check","enabled":"yes"}`},
 	} {
 		t.Run(malformed.name, func(t *testing.T) {
 			send(t, doc, malformed.frame)
@@ -142,12 +143,40 @@ func TestWS_EveryServedFrameRefusesAnUnreadablePayload(t *testing.T) {
 		{protocol.TypeCommandCancel, `{"type":"command-cancel","correlationId":7}`},
 		{protocol.TypeMentionQuery, `{"type":"mention-query","correlationId":"c-1","q":[]}`},
 		{protocol.TypeMentionResolve, `{"type":"mention-resolve","correlationId":"c-1","uri":9}`},
+		{protocol.TypeFeatureControl, `{"type":"feature-control","feature":"spell-check","enabled":[]}`},
 	} {
 		t.Run(malformed.name, func(t *testing.T) {
 			send(t, ws, malformed.frame)
 			assertRefusedAsUnreadable(t, ws, malformed.name)
 		})
 	}
+}
+
+// A FEATURE nothing serves is refused as differently as the two wires answer at
+// all. On a document channel the client asked for something and is told it
+// cannot have it, the way every other unservable document frame is answered; on
+// the workspace wire — shared by every tenant, answering nothing uncorrelated —
+// it is dropped to the log, and inventing a reply there would be inventing a
+// second grammar for the same mistake.
+//
+// The registry gate cannot catch this: the WORD is registered on both channels,
+// and what is unknown is a value inside it.
+func TestWS_FeatureControlNamingNothingIsRefusedPerWire(t *testing.T) {
+	srv, _, _, uuid := newWsTestServer(t)
+	const unknown = `{"type":"feature-control","feature":"nonesuch","enabled":true,"parameters":{}}`
+
+	doc := dialWS(t, srv, uuid)
+	send(t, doc, unknown)
+	frame := readUntil(t, doc, protocol.TypeError, 2*time.Second)
+	if msg, _ := frame["message"].(string); !strings.Contains(msg, "feature-control") {
+		t.Errorf("error message = %q, want it to name the frame it refused", msg)
+	}
+	closeAndSettle(doc)
+
+	ws := dialWorkspaceWS(t, srv)
+	defer ws.Close()
+	send(t, ws, unknown)
+	expectNoMessage(t, ws, `"`+protocol.TypeError+`"`, 300*time.Millisecond)
 }
 
 // A correlated frame carrying no correlation id is refused for the same reason:

@@ -26,7 +26,9 @@ type ServiceProvider struct {
 	Prompts     *ai.PromptService
 	AI          *ai.AIService
 	Editor      *editor.EditorService
-	Spell       *editor.SpellChecker
+	Inspection  *editor.InspectionEngine
+	Spell       *editor.SpellInspector
+	Find        *editor.FindInspector
 	Jobs        *services.JobTracker
 	Engine      *services.JobEngine
 	Commands    *command.Registry
@@ -43,6 +45,25 @@ type ServiceProvider struct {
 	SavedNotifier editor.ContainerSavedNotifier
 }
 
+// RegisterInspectors admits every text-service producer to the inspection
+// engine, under the channel that controls it: spelling has one answer for the
+// whole app and is switched from the workspace wire, find belongs to the dialog
+// that is asking and is switched from that document's own channel.
+//
+// It is the ONE registration site, so a harness that stands the engine up
+// without Init still gets exactly the producers the app has — and the wire's
+// published feature vocabulary is checkable against the producers that exist,
+// since a word nothing here registers is a switch that refuses every frame.
+//
+// Requires Inspection and Editor; the dictionary comes in because parsing one
+// is expensive enough that a caller decides when it happens.
+func (s *ServiceProvider) RegisterInspectors(spell *services.SpellService) {
+	s.Spell = editor.NewSpellInspector(spell, s.Inspection)
+	s.Inspection.Register(s.Spell, editor.ScopeWorkspace)
+	s.Find = editor.NewFindInspector(s.Editor)
+	s.Inspection.Register(s.Find, editor.ScopeDocument)
+}
+
 // BlockServices returns the scoped dependency bag for block processors.
 // Add a field here when a new service should be available inside RunJob / OnChange.
 func (s *ServiceProvider) BlockServices() block.BlockServices {
@@ -54,7 +75,7 @@ func (s *ServiceProvider) BlockServices() block.BlockServices {
 		State:       s.State,
 		Plantuml:    s.Plantuml,
 		// The Router, as the one-method interface block/ declares for itself, so a
-		// processor dereferences a coordinate through the same registry the @
+		// processor dereferences an address through the same registry the @
 		// picker and MCP get_by_uri read through.
 		Nodes: s.Nodes,
 	}
@@ -142,7 +163,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	// URL + a per-call bearer token from it at profile-render time.
 	//
 	// The Router goes in as mcp.NodeResolver — the one-method interface the MCP
-	// package declares for itself — so get_by_uri dereferences coordinates through
+	// package declares for itself — so get_by_uri dereferences addresses through
 	// the same registry the @ picker offers them from.
 	s.MCP = mcp.NewServer(s.Documents, s.Nodes)
 	s.AI.SetMCPEndpoint(s.MCP)
@@ -163,13 +184,21 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 		s.Editor.SetSavedNotifier(s.SavedNotifier)
 	}
 	s.Editor.SetJobs(s.Jobs) // s.Jobs is the tracker main() builds and wires into the broadcast before startup — no hub exists
-	// Spelling reads the open documents the Editor owns, so it is built with it
+	// Inspection reads the open documents the Editor owns, so it is built with it
 	// and after it. The dictionary parse happens here, once.
-	s.Spell = editor.NewSpellChecker(s.Editor, services.NewSpellService(s.State))
-	s.Spell.SetEnabled(settings.SpellcheckEnabled())
-	// The Editor observes it back so a live op enqueues a recheck the same way
-	// the open-time seed does — one drain path for both.
-	s.Editor.SetSpellChecker(s.Spell)
+	s.Inspection = editor.NewInspectionEngine(s.Editor)
+	s.RegisterInspectors(services.NewSpellService(s.State))
+	// The persisted setting is applied through the SAME path a control frame
+	// takes, so a run that starts checking and a run that is switched on midway
+	// arrive at their state one way.
+	if err := s.Inspection.SetWorkspaceFeature(s.Spell.Feature(), settings.SpellcheckEnabled(), nil); err != nil {
+		logger.Error("sieve: could not apply the spellcheck setting", "err", err)
+	}
+	// The Editor observes the engine back so a live op enqueues a recheck the
+	// same way the open-time seed does — one drain path for both — and a focus
+	// change re-checks what the reader is now looking at.
+	s.Editor.SetInspectionEngine(s.Inspection)
+	s.Editor.SetFocusListener(s.Inspection)
 	// Communal JobEngine + Editor wiring. Built HERE (not in newAPIHandler) because
 	// it needs settings (State) and the Editor, which only exist after Init. The
 	// "ai" pool defaults to 3 (spec Global Constraint); explicit worker_pools config

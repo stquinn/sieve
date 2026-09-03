@@ -7,17 +7,27 @@
 // parsed reading of those bytes, with the markup gone. Resolving by name is what
 // lets one anchor land in both readings.
 //
-// THE COUNT IS OVER WORD RUNS. A run is letters, digits and apostrophes, with
-// the apostrophes at its edges trimmed off, which is the tokenisation the
-// anchor was minted under. Counting substrings instead would number `the`
-// inside `there` and put every later occurrence one place out.
+// WHAT THE COUNT IS OVER IS THE ANCHOR'S OWN GRAIN, and it is dispatched on,
+// never assumed. A `word` anchor counts among WORD RUNS — letters, digits and
+// apostrophes, with the apostrophes at its edges trimmed off — so `the` inside
+// `there` is no occurrence of it. A `literal` anchor counts among the
+// NON-OVERLAPPING, left-to-right literal matches of the quote, so `aa` occurs
+// twice in `aaaa` and a phrase may cross a word boundary. The two disagree by
+// design, which is why the mint declares one.
 //
-// An anchor that does not resolve is ABSENT from the answer. A mark is derived
-// from text that has since moved on, and staleness is its absence rather than a
-// state anything has to represent.
+// An anchor that does not resolve is ABSENT from the answer, and an anchor whose
+// grain nothing counts in resolves nowhere. A mark is derived from text that has
+// since moved on, and staleness is its absence rather than a state anything has
+// to represent.
 
-/** One word run of a reading. @typedef {object} WordRun
- *  @property {string} word  the run with its edge apostrophes trimmed
+/** The grains an anchor may be counted at. The words are the wire's. */
+export const TextGrain = Object.freeze({
+  WORD: 'word',
+  LITERAL: 'literal',
+})
+
+/** One resolved run of a reading. @typedef {object} WordRun
+ *  @property {string} word  the run itself
  *  @property {number} start where it begins in the reading
  *  @property {number} end   one past where it ends */
 
@@ -48,10 +58,33 @@ export class QuoteAnchor {
   }
 
   /**
+   * Occurrence `occurrence` of `quote` among the NON-OVERLAPPING, left-to-right
+   * literal matches of it in `text`, or null where the text holds no such
+   * match. After a match the scan resumes past its end, so `aa` matches `aaaa`
+   * at 0 and 2 and not at 1 — the same counting Go's LocateLiteral does, and
+   * the two must agree for a mark minted on one side to name the same
+   * characters on the other.
+   * @param {string} text
+   * @param {string} quote
+   * @param {number} occurrence
+   * @returns {WordRun | null}
+   */
+  static literalRun(text, quote, occurrence) {
+    if (!quote || occurrence < 0) return null
+    let seen = 0
+    for (let at = text.indexOf(quote); at >= 0; at = text.indexOf(quote, at + quote.length)) {
+      if (seen === occurrence) return { word: quote, start: at, end: at + quote.length }
+      seen++
+    }
+    return null
+  }
+
+  /**
    * Where each of `marks` sits in `text`, in the order the marks were given.
-   * A mark whose quote does not occur in `text` as many times as its
-   * `occurrence` demands is left out.
-   * @template {{quote?: string, occurrence?: number}} M
+   * Each mark is resolved AT ITS OWN GRAIN. One whose quote does not occur in
+   * `text` as many times as its `occurrence` demands is left out, and so is one
+   * whose grain names no counting this knows.
+   * @template {{quote?: string, occurrence?: number, grain?: string}} M
    * @param {string} text
    * @param {ReadonlyArray<M>} marks
    * @returns {Array<{mark: M, start: number, end: number}>}
@@ -59,17 +92,26 @@ export class QuoteAnchor {
   static spansFor(text, marks) {
     /** @type {Array<{mark: M, start: number, end: number}>} */ const out = []
     if (!marks || !marks.length) return out
+    const reading = String(text || '')
 
     /** @type {Map<string, WordRun[]>} */ const byWord = new Map()
-    for (const run of QuoteAnchor.words(text)) {
+    for (const run of QuoteAnchor.words(reading)) {
       const held = byWord.get(run.word)
       if (held) held.push(run)
       else byWord.set(run.word, [run])
     }
 
     for (const mark of marks) {
-      const held = byWord.get(String((mark && mark.quote) || ''))
-      const at = held && held[Number((mark && mark.occurrence) || 0)]
+      const quote = String((mark && mark.quote) || '')
+      const occurrence = Number((mark && mark.occurrence) || 0)
+      const grain = mark && mark.grain
+      let at = null
+      if (grain === TextGrain.WORD) {
+        const held = byWord.get(quote)
+        at = (held && held[occurrence]) || null
+      } else if (grain === TextGrain.LITERAL) {
+        at = QuoteAnchor.literalRun(reading, quote, occurrence)
+      }
       if (at) out.push({ mark: mark, start: at.start, end: at.end })
     }
     return out

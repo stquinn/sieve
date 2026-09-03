@@ -181,15 +181,14 @@ func buildMenu(app *App) *menu.Menu {
 	// (A MenuItem carries exactly one Accelerator, and Hidden=true short-circuits
 	// before accelerator registration on every backend — so a hidden duplicate row
 	// would silently never bind its chord.)
-	find.AddText("Find…", keys.CmdOrCtrl("f"), js("window.sieveWorkspace?.toggleSearch()"))
+	find.AddText("Find and Replace…", keys.CmdOrCtrl("f"), js("window.sieveWorkspace?.toggleFind()"))
 	if isMac {
-		find.AddText("Find Next", keys.CmdOrCtrl("g"), js("window.sieveWorkspace?.searchNext()"))
-		find.AddText("Find Previous", keys.Combo("g", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveWorkspace?.searchPrev()"))
+		find.AddText("Find Next", keys.CmdOrCtrl("g"), js("window.sieveWorkspace?.findNext()"))
+		find.AddText("Find Previous", keys.Combo("g", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveWorkspace?.findPrev()"))
 	} else {
-		find.AddText("Find Next", keys.Key("f3"), js("window.sieveWorkspace?.searchNext()"))
-		find.AddText("Find Previous", keys.Shift("f3"), js("window.sieveWorkspace?.searchPrev()"))
+		find.AddText("Find Next", keys.Key("f3"), js("window.sieveWorkspace?.findNext()"))
+		find.AddText("Find Previous", keys.Shift("f3"), js("window.sieveWorkspace?.findPrev()"))
 	}
-	// Replace… slots in here when #61 lands.
 	find.AddSeparator()
 	find.AddText("Find in Notes…", keys.Combo("f", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveSidebarSearch?.()"))
 

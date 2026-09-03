@@ -108,14 +108,48 @@ export class ContainerBinding {
   }
 
   /**
-   * text-replace: one anchored run of a block's text. The anchor is resolved
-   * against the block's CURRENT text server-side, so the offsets travel as the
-   * hint they are. The corrected block arrives as its own render-back.
-   * @param {{blockId: string, locator: string, quote: string, occurrence: number, start: number, end: number, replacement: string}} payload
+   * text-replace: one anchored run of a block's text. The anchor is resolved at
+   * its own grain against the block's CURRENT text server-side, so the offsets
+   * travel as the hint they are. The corrected block arrives as its own
+   * render-back.
+   *
+   * It takes the MARK, not a payload, and it is the ONE place a mark becomes the
+   * frame's eight fields — a second mapping is a second chance to send an
+   * anchor the server cannot resolve. The quote and the grain are demanded here
+   * for that reason: an anchor missing either resolves nowhere, and the server
+   * would answer `stale` for text that never moved.
+   * @param {Readonly<import('../contract/container-update-listener.js').SieveTextMark> & {blockId?: string}} mark
+   * @param {string} replacement
    * @returns {Promise<string>} the ack's outcome word
    */
-  replaceText(payload) {
-    return this.#blocks.replaceText(this.#uuid, payload)
+  replaceText(mark, replacement) {
+    if (!mark || !mark.blockId) throw new ContractViolation('replaceText: the anchor must name the block it is in')
+    if (!mark.quote) throw new ContractViolation('replaceText: the anchor must carry the quote it names')
+    if (!mark.grain) throw new ContractViolation('replaceText: the anchor must carry the grain its occurrence is counted at')
+    return this.#blocks.replaceText(this.#uuid, {
+      blockId: mark.blockId,
+      locator: mark.locator || '',
+      quote: mark.quote,
+      occurrence: mark.occurrence || 0,
+      grain: mark.grain,
+      start: mark.start || 0,
+      end: mark.end || 0,
+      replacement: String(replacement == null ? '' : replacement),
+    })
+  }
+
+  /**
+   * feature-control: a text-service producer switched on or off for this
+   * container, carrying whatever that producer is to work with.
+   *
+   * THE CHANNEL IS THE SCOPE. Arriving here — on one container's own wire — is
+   * what makes the switch that container's alone, so a feature enabled through
+   * this dies when the container closes and no other container hears it.
+   * @param {string} feature @param {boolean} enabled
+   * @param {Record<string, any>} [parameters]
+   */
+  setFeature(feature, enabled, parameters) {
+    this.#blocks.setFeature(this.#uuid, { feature: feature, enabled: enabled, parameters: parameters })
   }
 
   /**

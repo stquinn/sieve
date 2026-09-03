@@ -39,6 +39,7 @@ alone, so the token appears in no response header.
 | `enter-wysiwyg` | `protocol.EnterWysiwygFrame` | `opId` | EnterWysiwygFrame switches the document to WYSIWYG mode, re-parsing the block tree from the markdown the client holds and answering with a WysiwygContentFrame. |
 | `export` | `protocol.ExportFrame` | `opId` | ExportFrame asks for clean whole-document text — the "Copy as Markdown" contract, with AI blocks excluded because prior Q&A is conversation, not document content. |
 | `extract` | `protocol.ExtractFrame` | `opId` | ExtractFrame creates a block from selected content — the additive extract/paste mechanic and the in-place transform, told apart by Operation. |
+| `feature-control` | `protocol.FeatureControlFrame` | — | FeatureControlFrame switches one text-service feature on or off, and says what it is to work with. |
 | `flush` | `protocol.FlushFrame` | — | FlushFrame asks the shadow document to persist now rather than on its debounce. |
 | `focus` | `protocol.FocusFrame` | — | FocusFrame is the dwell ping: the user is looking at this document, which raises its focus count. |
 | `load` | `protocol.LoadFrame` | `opId` | LoadFrame asks for the document this channel is bound to, as the editor mounts it. |
@@ -65,7 +66,7 @@ alone, so the token appears in no response header.
 | `pong` | `protocol.PongFrame` | — | PongFrame answers a PingFrame. |
 | `remove-block` | `protocol.RemoveBlockFrame` | — | RemoveBlockFrame is the render-back for a block that left the container: the client retires it by id rather than reloading the document. |
 | `replace-block` | `protocol.ReplaceBlockFrame` | — | ReplaceBlockFrame is the render-back for a block the SERVER rewrote in place: an in-place transform, or a text edit the client asked for and Go executed. |
-| `spell-marks` | `protocol.SpellMarksFrame` | — | SpellMarksFrame is the server-initiated render-back carrying ONE block's complete mark set. |
+| `text-marks` | `protocol.TextMarksFrame` | — | TextMarksFrame is the server-initiated render-back carrying ONE feature's complete mark set for ONE block. |
 | `text-replace-ack` | `protocol.TextReplaceAckFrame` | `opId` | TextReplaceAckFrame is the correlated outcome of a text-replace. |
 | `wysiwyg-content` | `protocol.WysiwygContentFrame` | `opId` | WysiwygContentFrame is the re-parsed block list the WYSIWYG editor mounts after a mode switch. |
 
@@ -77,11 +78,11 @@ alone, so the token appears in no response header.
 |---|---|---|---|
 | `command` | `protocol.CommandFrame` | `correlationId` | CommandFrame dispatches one slash command. |
 | `command-cancel` | `protocol.CommandCancelFrame` | `correlationId` | CommandCancelFrame cancels an in-flight command by its correlation id. |
+| `feature-control` | `protocol.FeatureControlFrame` | — | FeatureControlFrame switches one text-service feature on or off, and says what it is to work with. |
 | `mention-query` | `protocol.MentionQueryFrame` | `correlationId` | MentionQueryFrame is the `@`-picker's typeahead question. |
 | `mention-resolve` | `protocol.MentionResolveFrame` | `correlationId` | MentionResolveFrame asks where a coordinate opens. |
 | `ping` | `protocol.PingFrame` | — | PingFrame is a liveness probe, answered with a PongFrame. |
 | `session-scroll` | `protocol.SessionScrollFrame` | — | SessionScrollFrame persists one tab's scroll offset, debounced up while the user scrolls and pulled again at tab deactivation. |
-| `spell-enable` | `protocol.SpellEnableFrame` | — | SpellEnableFrame turns spell checking on or off for the whole workspace and persists the choice. |
 | `spell-ignore` | `protocol.SpellIgnoreFrame` | — | SpellIgnoreFrame stops a word being flagged for the rest of this run. |
 | `spell-learn` | `protocol.SpellLearnFrame` | — | SpellLearnFrame adds a word to the user's durable dictionary, which survives a restart. |
 
@@ -187,6 +188,17 @@ ExtractFrame creates a block from selected content — the additive extract/past
 | `entries` | `[]block.ContentEntry` | yes | the selection, one entry per clipboard-style view |
 | `index` | `int` | yes | document position for the new block; -1 appends, and is the default when the key is absent |
 
+#### `feature-control` — client → server
+
+FeatureControlFrame switches one text-service feature on or off, and says what it is to work with.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `feature` | `string` | yes | which producer this is about; a word from the registered feature vocabulary, refused when nothing serves it |
+| `enabled` | `bool` | yes | the state the feature is being put INTO, not a request to flip |
+| `parameters` | `map[string]interface {}` | no | what the feature is to work with; interpreted by that feature alone |
+
 #### `flush` — client → server
 
 FlushFrame asks the shadow document to persist now rather than on its debounce.
@@ -251,10 +263,11 @@ TextReplaceFrame asks for one anchored run of a block's text to be replaced.
 | `type` | `string` | yes |  |
 | `opId` | `string` | yes |  |
 | `blockId` | `string` | yes | the block whose text is being written |
-| `locator` | `string` | yes | which part of the block's payload, exactly as the mark carried it; opaque — only the block's processor reads it |
+| `locator` | `string` | yes | exactly what the mark carried, unread; an arbitrary per-kind payload only the block's processor interprets |
 | `quote` | `string` | yes | the exact text to replace; the anchor, not a label |
 | `occurrence` | `int` | yes | 0-based index among identical quotes in the same segment |
-| `start` | `int` | yes | byte offset hint into the segment as the client last saw it |
+| `grain` | `string` | yes | how the occurrence is counted — word: among identical word runs; literal: among non-overlapping left-to-right literal matches. Carried from the anchor unread; a request naming neither word is refused rather than guessed at |
+| `start` | `int` | yes | byte offset hint into the segment's reading as the client last saw it |
 | `end` | `int` | yes | byte offset hint, exclusive |
 | `replacement` | `string` | yes | what to put in the quote's place; an empty string deletes the run |
 
@@ -413,15 +426,16 @@ ReplaceBlockFrame is the render-back for a block the SERVER rewrote in place: an
 | `attrs` | `map[string]interface {}` | yes | the new block's full attrs bag |
 | `newYaml` | `string` | yes | markdown-mode buffer only |
 
-#### `spell-marks` — server → client
+#### `text-marks` — server → client
 
-SpellMarksFrame is the server-initiated render-back carrying ONE block's complete mark set.
+TextMarksFrame is the server-initiated render-back carrying ONE feature's complete mark set for ONE block.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
 | `type` | `string` | yes |  |
+| `feature` | `string` | yes | which producer these are from; the client keys and draws marks per feature |
 | `blockId` | `string` | yes | the block whose whole mark set this is |
-| `marks` | `[]protocol.SpellMark` | yes | never null — an empty array clears this block's marks |
+| `marks` | `[]protocol.TextMarkWire` | yes | never null — an empty array clears this feature's marks on this block |
 
 #### `text-replace-ack` — server → client
 
@@ -431,7 +445,7 @@ TextReplaceAckFrame is the correlated outcome of a text-replace.
 |---|---|---|---|
 | `type` | `string` | yes |  |
 | `opId` | `string` | yes |  |
-| `outcome` | `string` | yes | ok — applied; stale — the quote no longer resolves at its occurrence and nothing changed; error — the request could not be run |
+| `outcome` | `string` | yes | ok — applied; stale — the anchor no longer resolves and nothing changed; error — the request named nothing that could be written to |
 | `error` | `string` | no | present only when outcome is error |
 
 #### `wysiwyg-content` — server → client
@@ -471,6 +485,17 @@ CommandCancelFrame cancels an in-flight command by its correlation id.
 | `type` | `string` | yes |  |
 | `correlationId` | `string` | yes |  |
 
+#### `feature-control` — client → server
+
+FeatureControlFrame switches one text-service feature on or off, and says what it is to work with.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `feature` | `string` | yes | which producer this is about; a word from the registered feature vocabulary, refused when nothing serves it |
+| `enabled` | `bool` | yes | the state the feature is being put INTO, not a request to flip |
+| `parameters` | `map[string]interface {}` | no | what the feature is to work with; interpreted by that feature alone |
+
 #### `mention-query` — client → server
 
 MentionQueryFrame is the `@`-picker's typeahead question.
@@ -509,15 +534,6 @@ SessionScrollFrame persists one tab's scroll offset, debounced up while the user
 | `type` | `string` | yes |  |
 | `id` | `string` | yes | the tab whose offset this is |
 | `scroll` | `int` | yes | the pixel offset from the top |
-
-#### `spell-enable` — client → server
-
-SpellEnableFrame turns spell checking on or off for the whole workspace and persists the choice.
-
-| Field | Go type | Required | Description |
-|---|---|---|---|
-| `type` | `string` | yes |  |
-| `enabled` | `bool` | yes | the state the toggle is being put INTO, not a request to flip — a repeat of the current state is a no-op |
 
 #### `spell-ignore` — client → server
 
@@ -873,16 +889,17 @@ JobsSnapshot is every job the UI can see, in insertion order.
 
 PasteKind discriminates what a paste is asking for.
 
-### `protocol.SpellMark`
+### `protocol.TextMarkWire`
 
-SpellMark is one flagged run of text inside a block, as it travels on the wire.
+TextMarkWire is one marked run of text inside a block, as it travels on the wire.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
-| `locator` | `string` | yes | which part of the block's payload this came from; opaque — only the block's processor reads it |
-| `quote` | `string` | yes | the exact text flagged; the anchor, not a label |
+| `locator` | `string` | yes | everything the block's processor needs to place a write back into the text this was read from; an arbitrary per-kind payload, opaque everywhere else — carry it back unread |
+| `quote` | `string` | yes | the exact text marked; the anchor, not a label |
 | `occurrence` | `int` | yes | 0-based index among identical quotes in the same segment |
-| `start` | `int` | yes | byte offset hint into the segment as the server read it |
+| `grain` | `string` | yes | how the occurrence is counted — word: among identical word runs; literal: among non-overlapping left-to-right literal matches. Declared, never inferred, and a mark carrying neither word resolves nowhere |
+| `start` | `int` | yes | byte offset hint into the segment's reading as the server made it |
 | `end` | `int` | yes | byte offset hint, exclusive |
 | `class` | `string` | yes | the kind of language the segment holds — prose, code, label, caption, key |
 | `suggestions` | `[]string` | yes | never null — replacements offered for the quote, best first |

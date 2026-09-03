@@ -57,6 +57,11 @@ const (
 	TypeFocus             = "focus"
 	TypeTextReplace       = "text-replace"
 
+	// Both channels, client → server. Which channel a feature-control frame
+	// arrives on IS the scope it speaks for: the workspace wire controls a
+	// workspace-wide feature, a document channel controls that document's.
+	TypeFeatureControl = "feature-control"
+
 	// Document channel, server → client.
 	TypeMarkdownContent         = "markdown-content"
 	TypeWysiwygContent          = "wysiwyg-content"
@@ -72,7 +77,7 @@ const (
 	TypePasteAck                = "paste-ack"
 	TypeDetectExtractionsResult = "detect-extractions-result"
 	TypeExportContent           = "export-content"
-	TypeSpellMarks              = "spell-marks"
+	TypeTextMarks               = "text-marks"
 	TypeTextReplaceAck          = "text-replace-ack"
 
 	// Workspace channel, client → server.
@@ -83,7 +88,6 @@ const (
 	TypeSessionScroll  = "session-scroll"
 	TypeSpellIgnore    = "spell-ignore"
 	TypeSpellLearn     = "spell-learn"
-	TypeSpellEnable    = "spell-enable"
 
 	// Workspace channel, server → client.
 	TypeCommandResult    = "command-result"
@@ -124,3 +128,25 @@ type PongFrame struct {
 
 // NewPongFrame builds the liveness reply.
 func NewPongFrame() PongFrame { return PongFrame{Type: TypePong} }
+
+// FeatureControlFrame switches one text-service feature on or off, and says what
+// it is to work with. It is the WHOLE lifecycle grammar for every producer that
+// reads the text substrate — present and future — so a new feature is a new
+// registered inspector and a new word in Feature, never a new frame type.
+//
+// THE CHANNEL IS THE SCOPE. On the workspace wire it speaks for a feature that
+// has one answer for the whole app (spelling, which is persisted); on a document
+// channel it speaks for that document alone (a find whose term dies with the
+// dialog). There is deliberately no scope field: a frame cannot claim a reach its
+// socket does not have, and a document channel closing is the implicit disable
+// for everything it switched on.
+//
+// Parameters is the feature's own business — a search term, a case flag, an
+// imperative like replace-all — carried and never read by the framework, so a
+// feature's options cost the wire nothing.
+type FeatureControlFrame struct {
+	Type       string         `json:"type"`
+	Feature    string         `json:"feature" doc:"which producer this is about; a word from the registered feature vocabulary, refused when nothing serves it"`
+	Enabled    bool           `json:"enabled" doc:"the state the feature is being put INTO, not a request to flip"`
+	Parameters map[string]any `json:"parameters,omitempty" doc:"what the feature is to work with; interpreted by that feature alone"`
+}

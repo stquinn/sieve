@@ -31,6 +31,7 @@ export const DocumentFrame = Object.freeze({
   ENTER_WYSIWYG: 'enter-wysiwyg',
   EXPORT: 'export',
   EXTRACT: 'extract',
+  FEATURE_CONTROL: 'feature-control',
   FLUSH: 'flush',
   FOCUS: 'focus',
   LOAD: 'load',
@@ -53,7 +54,7 @@ export const DocumentFrame = Object.freeze({
   PONG: 'pong',
   REMOVE_BLOCK: 'remove-block',
   REPLACE_BLOCK: 'replace-block',
-  SPELL_MARKS: 'spell-marks',
+  TEXT_MARKS: 'text-marks',
   TEXT_REPLACE_ACK: 'text-replace-ack',
   WYSIWYG_CONTENT: 'wysiwyg-content',
 })
@@ -64,11 +65,11 @@ export const WorkspaceFrame = Object.freeze({
   // client → server
   COMMAND: 'command',
   COMMAND_CANCEL: 'command-cancel',
+  FEATURE_CONTROL: 'feature-control',
   MENTION_QUERY: 'mention-query',
   MENTION_RESOLVE: 'mention-resolve',
   PING: 'ping',
   SESSION_SCROLL: 'session-scroll',
-  SPELL_ENABLE: 'spell-enable',
   SPELL_IGNORE: 'spell-ignore',
   SPELL_LEARN: 'spell-learn',
   // server → client
@@ -100,6 +101,13 @@ export const Topic = Object.freeze({
 
 /** Every topic, for the blanket resync a client runs when its workspace socket reconnects. */
 export const AllTopics = Object.freeze(Object.values(Topic))
+
+/** Text-service producers. A `feature-control` frame names one; a `text-marks` push carries the one that found them. */
+export const Feature = Object.freeze({
+  SPELL_CHECK: 'spell-check',
+  FIND: 'find',
+})
+/** @typedef {typeof Feature[keyof typeof Feature]} FeatureName */
 
 /** Command families — the namespace a `command` frame declares it is invoking within. */
 export const CommandFamily = Object.freeze({

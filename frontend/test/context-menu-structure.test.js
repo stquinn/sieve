@@ -13,6 +13,8 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } from 'vitest'
 import { Schema } from '@tiptap/pm/model'
 import { EditorState, TextSelection } from '@tiptap/pm/state'
+import { SPELL_FEATURE } from '../src/static/lens/document-editor/surfaces/spell-decoration.js'
+import { FIND_FEATURE } from '../src/static/lens/document-editor/surfaces/find-decoration.js'
 
 const REGISTERED = ['python', 'go', 'javascript']
 
@@ -311,6 +313,10 @@ describe('the submenu primitive', () => {
 // says which marks the caret sits on and records what it was asked to replace.
 // Whether those marks resolve in the drawn document is settled in
 // spell-marks.test.js — by the time one reaches an advertisement it has.
+//
+// THE ADVERTISEMENT IS EVERY FEATURE'S MARKS AT ONCE, so what these pin is a
+// FILTER: the section is built from the marks stamped as spelling's, and another
+// producer's mark on the same word is not one of them.
 
 /** A stub document-editor lens advertising `marks` under the caret.
  *  @param {any[]} marks */
@@ -324,11 +330,15 @@ function spellingLens(marks) {
   return lens
 }
 
-/** @param {string} quote @param {string[]} suggestions */
-const spellMark = (quote, suggestions) => ({
-  blockId: 'b1', locator: 'content', quote: quote, occurrence: 0,
+/** @param {string} quote @param {string[]} suggestions @param {string} [feature] */
+const markUnderCaret = (quote, suggestions, feature = SPELL_FEATURE) => ({
+  blockId: 'b1', feature: feature, locator: 'content', quote: quote, occurrence: 0,
   start: 0, end: quote.length, class: 'prose', suggestions: suggestions,
 })
+/** @param {string} quote @param {string[]} suggestions */
+const spellMark = (quote, suggestions) => markUnderCaret(quote, suggestions)
+/** A find highlight sitting on the very same word. @param {string} quote */
+const findMark = (quote) => markUnderCaret(quote, [], FIND_FEATURE)
 
 describe('the spelling section', () => {
   it('LEADS the menu, one entry per correction, closed by a separator', () => {
@@ -374,6 +384,21 @@ describe('the spelling section', () => {
     const lens = spellingLens([spellMark('teh', []), spellMark('adn', ['and'])])
     const menu = openMenu(paneOver(caretInProse(), lens))
     expect(labelsOf(menu).filter((l) => l.startsWith('Replace with'))).toEqual(["Replace with 'and'"])
+  })
+
+  it('reads SPELLING\'s marks only — a find highlight on the same word is not one', () => {
+    const labels = labelsOf(openMenu(paneOver(caretInProse(), spellingLens([findMark('teh')]))))
+    expect(labels.join('')).not.toContain('Replace with')
+    expect(labels).not.toContain('Ignore')
+    expect(labels).not.toContain('Add to dictionary')
+  })
+
+  it('picks spelling\'s mark out from beside another feature\'s on the same word', () => {
+    const lens = spellingLens([findMark('teh'), spellMark('teh', ['the'])])
+    const menu = openMenu(paneOver(caretInProse(), lens))
+    expect(labelsOf(menu).filter((l) => l.startsWith('Replace with'))).toEqual(["Replace with 'the'"])
+    itemNamed(menu, "Replace with 'the'").click()
+    expect(lens.replaced).toEqual([[lens.marks[1], 'the']])
   })
 
   it('is absent where the caret sits on no mark, and offers no corrections where the mark carried none', () => {

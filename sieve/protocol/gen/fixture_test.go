@@ -102,7 +102,8 @@ func fixtureContract() Contract {
 				AcceptsForm:  true,
 			},
 		},
-		Topics: []protocol.Topic{protocol.TopicNotes},
+		Topics:   []protocol.Topic{protocol.TopicNotes},
+		Features: []string{"fixture-check"},
 		Routes: []Route{
 			{Method: "GET", Pattern: "/api/ws/document/{uuid}"},
 			{Method: "GET", Pattern: "/api/ws/workspace"},

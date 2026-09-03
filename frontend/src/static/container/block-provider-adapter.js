@@ -131,9 +131,9 @@ export class BlockProviderAdapter extends WholeContentAdapter {
 
   /**
    * Writes what belongs in a marked run's place. The anchor is the mark exactly
-   * as the host handed it over — Go resolves it in the block's current text — so
-   * a run the user has since typed over is left alone rather than overwritten at
-   * stale offsets.
+   * as the host handed it over, its grain included — Go resolves it at that
+   * grain in the block's current text — so a run the user has since typed over
+   * is left alone rather than overwritten at stale offsets.
    *
    * Void like its siblings, and SILENT on a run that no longer resolves: the
    * correction either arrives as the block's own change or does not, and the
@@ -143,18 +143,9 @@ export class BlockProviderAdapter extends WholeContentAdapter {
    * @param {string} replacement
    */
   requestReplaceText(blockId, anchor, replacement) {
-    if (!anchor || !anchor.quote) throw new ContractViolation('requestReplaceText: the anchor must carry the quote it names')
     if (!this.#model.getBlock(blockId)) return this.#drop('requestReplaceText', blockId)
-    Promise.resolve(this._binding.replaceText({
-      blockId: blockId,
-      locator: anchor.locator || '',
-      quote: anchor.quote,
-      occurrence: anchor.occurrence || 0,
-      start: anchor.start || 0,
-      end: anchor.end || 0,
-      replacement: String(replacement == null ? '' : replacement),
-    })).then(
-      (outcome) => { if (outcome === REPLACE_FAILED) console.warn('[block-provider] requestReplaceText failed', blockId, anchor.quote) },
+    Promise.resolve(this._binding.replaceText(Object.assign({}, anchor, { blockId: blockId }), replacement)).then(
+      (outcome) => { if (outcome === REPLACE_FAILED) console.warn('[block-provider] requestReplaceText failed', blockId, anchor && anchor.quote) },
       (e) => console.warn('[block-provider] requestReplaceText failed', e))
   }
 

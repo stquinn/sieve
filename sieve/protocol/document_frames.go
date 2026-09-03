@@ -485,77 +485,90 @@ type FocusFrame struct {
 	Type string `json:"type"`
 }
 
-// SpellMark is one flagged run of text inside a block, as it travels on the
-// wire. It carries no block id — the frame that holds it names the block once.
+// TextMarkWire is one marked run of text inside a block, as it travels on the
+// wire. It carries no block id and no feature — the frame that holds it names
+// both once.
 //
-// It anchors by Quote plus Occurrence, never by offsets: the client resolves
-// occurrence N of the quote in the text it currently holds and marks it WHERE IT
-// NOW SITS. Start and End are byte offsets into the segment as the server read
-// it, and any edit since displaces them, so they are a fast-path hint. A quote
-// that no longer resolves at its occurrence is dropped rather than guessed at.
-type SpellMark struct {
-	Locator     string   `json:"locator" doc:"which part of the block's payload this came from; opaque — only the block's processor reads it"`
-	Quote       string   `json:"quote" doc:"the exact text flagged; the anchor, not a label"`
+// It anchors by Quote plus Occurrence at a declared Grain, never by offsets: the
+// client resolves occurrence N of the quote in the text it currently holds and
+// marks it WHERE IT NOW SITS. Start and End are byte offsets into the segment's
+// READING — what the block's kind hands out as its text — and any edit since
+// displaces them, so they are a fast-path hint. A quote that no longer resolves
+// at its occurrence is dropped rather than guessed at.
+type TextMarkWire struct {
+	Locator     string   `json:"locator" doc:"everything the block's processor needs to place a write back into the text this was read from; an arbitrary per-kind payload, opaque everywhere else — carry it back unread"`
+	Quote       string   `json:"quote" doc:"the exact text marked; the anchor, not a label"`
 	Occurrence  int      `json:"occurrence" doc:"0-based index among identical quotes in the same segment"`
-	Start       int      `json:"start" doc:"byte offset hint into the segment as the server read it"`
+	Grain       string   `json:"grain" doc:"how the occurrence is counted — word: among identical word runs; literal: among non-overlapping left-to-right literal matches. Declared, never inferred, and a mark carrying neither word resolves nowhere"`
+	Start       int      `json:"start" doc:"byte offset hint into the segment's reading as the server made it"`
 	End         int      `json:"end" doc:"byte offset hint, exclusive"`
 	Class       string   `json:"class" doc:"the kind of language the segment holds — prose, code, label, caption, key"`
 	Suggestions []string `json:"suggestions" doc:"never null — replacements offered for the quote, best first"`
 }
 
-// SpellMarksFrame is the server-initiated render-back carrying ONE block's
-// complete mark set. It is not an answer to anything: the server checks a
-// document when it opens and whenever its text settles, and pushes to the
-// document's registered owner.
+// TextMarksFrame is the server-initiated render-back carrying ONE feature's
+// complete mark set for ONE block. It is not an answer to anything: the server
+// inspects a document when it opens and whenever its text settles, and pushes to
+// the document's registered owner.
 //
-// Marks REPLACE what the client holds for that block. An empty array is
-// therefore the clear — the frame a corrected block gets — and not a no-op.
-type SpellMarksFrame struct {
-	Type    string      `json:"type"`
-	BlockID string      `json:"blockId" doc:"the block whose whole mark set this is"`
-	Marks   []SpellMark `json:"marks" doc:"never null — an empty array clears this block's marks"`
+// Marks REPLACE what the client holds for that (feature, block) pair. An empty
+// array is therefore the clear — the frame a corrected block gets — and not a
+// no-op. Two features flagging the same block are two independent sets, so
+// neither can clear or overwrite the other.
+//
+// Feature is PRESENTATION AND BOOKKEEPING: it says who found this, so a client
+// can draw each producer's findings its own way. It never travels back — a
+// text-replace names an anchor and nothing about who made it.
+type TextMarksFrame struct {
+	Type    string         `json:"type"`
+	Feature string         `json:"feature" doc:"which producer these are from; the client keys and draws marks per feature"`
+	BlockID string         `json:"blockId" doc:"the block whose whole mark set this is"`
+	Marks   []TextMarkWire `json:"marks" doc:"never null — an empty array clears this feature's marks on this block"`
 }
 
-// NewSpellMarksFrame builds one block's mark set for the wire, dropping the
+// NewTextMarksFrame builds one feature's mark set for one block, dropping the
 // block id each mark carries in Go: the frame names the block, so repeating it
 // per mark would let the two disagree.
-func NewSpellMarksFrame(blockID string, marks []domain.TextMark) SpellMarksFrame {
-	wire := make([]SpellMark, 0, len(marks))
+func NewTextMarksFrame(feature, blockID string, marks []domain.TextMark) TextMarksFrame {
+	wire := make([]TextMarkWire, 0, len(marks))
 	for _, m := range marks {
 		suggestions := m.Suggestions
 		if suggestions == nil {
 			suggestions = []string{}
 		}
-		wire = append(wire, SpellMark{
+		wire = append(wire, TextMarkWire{
 			Locator:     m.Locator,
 			Quote:       m.Quote,
 			Occurrence:  m.Occurrence,
+			Grain:       m.Grain,
 			Start:       m.Start,
 			End:         m.End,
 			Class:       m.Class,
 			Suggestions: suggestions,
 		})
 	}
-	return SpellMarksFrame{Type: TypeSpellMarks, BlockID: blockID, Marks: wire}
+	return TextMarksFrame{Type: TypeTextMarks, Feature: feature, BlockID: blockID, Marks: wire}
 }
 
 // TextReplaceFrame asks for one anchored run of a block's text to be replaced.
 // It is the write the marks made possible: the client points at text it was
 // shown and says what belongs there instead.
 //
-// The anchor is Quote plus Occurrence, and the server resolves it in the
-// block's CURRENT text — so an edit that displaced the run since the client saw
-// it costs nothing, and a run that has been typed over is not written to at
-// all. Start and End are the offsets the client last saw: a hint the server may
-// use to narrow a search, never a range it writes to on the client's word.
+// The anchor is Quote plus Occurrence at a declared Grain, and the server
+// resolves it in the block's CURRENT text — so an edit that displaced the run
+// since the client saw it costs nothing, and a run that has been typed over is
+// not written to at all. Start and End are the offsets the client last saw: a
+// hint the server may use to narrow a search, never a range it writes to on the
+// client's word.
 type TextReplaceFrame struct {
 	Type        string `json:"type"`
 	OpID        string `json:"opId"`
 	BlockID     string `json:"blockId" doc:"the block whose text is being written"`
-	Locator     string `json:"locator" doc:"which part of the block's payload, exactly as the mark carried it; opaque — only the block's processor reads it"`
+	Locator     string `json:"locator" doc:"exactly what the mark carried, unread; an arbitrary per-kind payload only the block's processor interprets"`
 	Quote       string `json:"quote" doc:"the exact text to replace; the anchor, not a label"`
 	Occurrence  int    `json:"occurrence" doc:"0-based index among identical quotes in the same segment"`
-	Start       int    `json:"start" doc:"byte offset hint into the segment as the client last saw it"`
+	Grain       string `json:"grain" doc:"how the occurrence is counted — word: among identical word runs; literal: among non-overlapping left-to-right literal matches. Carried from the anchor unread; a request naming neither word is refused rather than guessed at"`
+	Start       int    `json:"start" doc:"byte offset hint into the segment's reading as the client last saw it"`
 	End         int    `json:"end" doc:"byte offset hint, exclusive"`
 	Replacement string `json:"replacement" doc:"what to put in the quote's place; an empty string deletes the run"`
 }
@@ -569,6 +582,7 @@ func (f TextReplaceFrame) Edit() domain.TextEdit {
 		Locator:     f.Locator,
 		Quote:       f.Quote,
 		Occurrence:  f.Occurrence,
+		Grain:       f.Grain,
 		Start:       f.Start,
 		End:         f.End,
 		Replacement: f.Replacement,
@@ -595,7 +609,7 @@ const (
 type TextReplaceAckFrame struct {
 	Type    string `json:"type"`
 	OpID    string `json:"opId"`
-	Outcome string `json:"outcome" doc:"ok — applied; stale — the quote no longer resolves at its occurrence and nothing changed; error — the request could not be run"`
+	Outcome string `json:"outcome" doc:"ok — applied; stale — the anchor no longer resolves and nothing changed; error — the request named nothing that could be written to"`
 	Error   string `json:"error,omitempty" doc:"present only when outcome is error"`
 }
 

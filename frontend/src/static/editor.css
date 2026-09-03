@@ -545,16 +545,29 @@ textarea::selection {
   max-width: var(--theme-editorMeasure, none);
 }
 
-/* Gutter separator — a fixed vertical rule at the right edge of the chrome rail.
-   --editor-top: viewport Y of the editor area top (#htmx-editor), measured by
-     updateEditorTop() in index.html. BlockChrome now owns the full left rail so
-     --line-digits is no longer needed; position is simply sidebar + chrome-w. */
-.tiptap::before {
+/* Gutter separator — a vertical rule at the right edge of the chrome rail.
+   BlockChrome owns the full left rail, so the position is simply the rail's
+   width.
+
+   IT LIVES IN THE TEXT'S BOX, NOT THE VIEWPORT. .tiptap is its containing block
+   (position: relative) and is at least a viewport tall (min-height: 100vh), so
+   the rule runs the full height of the pane and shares whatever scrolling the
+   text does. A rule anchored to the viewport instead stays exactly where it is
+   while the text slides sideways under it — and prose does slide, because a long
+   unbroken token has nowhere to wrap and #htmx-editor scrolls to reach it.
+   Neither --sidebar-w nor --editor-top is read for the same reason: where
+   .tiptap sits already accounts for both.
+
+   THE DIRECT CHILD ONLY. `.tiptap` is also worn by renderer bodies that want the
+   document's typography (ai-block, command result). They have no gutter to
+   separate, and drawing in their own box would put a stray rule through each
+   one. */
+#tiptap-mount > .tiptap::before {
   content: '';
-  position: fixed;
-  left: calc(var(--sidebar-w, 0px) + var(--chrome-w, 40px) + 0.5rem);
-  top: var(--editor-top, calc(var(--tabbar-h, 44px) + var(--toolbar-h, 0px) + var(--table-toolbar-h, 0px)));
-  bottom: 32px;
+  position: absolute;
+  left: calc(var(--chrome-w, 40px) + 0.5rem);
+  top: 0;
+  bottom: 0;
   width: 1px;
   background: var(--theme-border2);
   pointer-events: none;
@@ -1656,15 +1669,37 @@ pre.tiptap-code-block code {
   white-space: nowrap;
 }
 
-/* ── Search UI ───────────────────────────────────────────────────────── */
+/* ── Find marks ──────────────────────────────────────────────────────────
+   TWO TIERS, and the classes compose. Every match carries a weak tint — enough
+   to count while reading, not enough to compete. The one the reader stands on
+   carries a solid fill, the flipped text colour and a ring, because it is the
+   only one that has to be picked out of the others at a glance; the ring is a
+   box-shadow, so nothing reflows as it moves.
 
-.search-result {
-  background: color-mix(in srgb, var(--theme-accentPrimary) 40%, transparent);
+   The settle pulse runs on the one repaint that made a match current, and on
+   BACKGROUND-COLOUR ONLY: a transform beside a contentEditable repaints it, and
+   will-change rasterises it blurry under WebKitGTK. ─────────────────────── */
+
+.sieve-find-mark {
+  background: color-mix(in srgb, var(--theme-accentPrimary) 22%, transparent);
   border-radius: 2px;
 }
-.search-result-current {
-  background: color-mix(in srgb, var(--theme-accentOrange) 60%, transparent);
+.sieve-find-mark--current {
+  background: var(--theme-accentOrange);
   color: var(--theme-bg);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-accentOrange) 45%, transparent);
+}
+.sieve-find-mark--settling {
+  animation: sieve-find-settle 250ms ease-out;
+}
+
+@keyframes sieve-find-settle {
+  from { background-color: var(--theme-accentYellow); }
+  to   { background-color: var(--theme-accentOrange); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sieve-find-mark--settling { animation: none; }
 }
 
 /* ── Status Bar ──────────────────────────────────────────────────────── */
@@ -1894,8 +1929,15 @@ pre.tiptap-code-block code {
 /* Sits between #htmx-editor and the status bar, inside the editor column */
 /* so it is naturally bounded by sidebar on left and meta panel on right. */
 
-/* Clip #editor-col so the ask panel can never bleed into meta column. */
-#editor-col { overflow: hidden; }
+/* Clip #editor-col so the ask panel can never bleed into meta column, and make
+   it the box document-scoped overlays (the find bar) are positioned against.
+   CLIP, NOT HIDDEN: `hidden` makes a SCROLL CONTAINER whose scrollbars are
+   merely invisible, so anything overflowing it — a chrome overlay, a focused
+   control — can be scrolled into view programmatically and shift the whole
+   column sideways with nothing to scroll it back. `clip` forbids scrolling
+   outright. `hidden` stays as the fallback for a renderer that does not know
+   the keyword, where the clipping still holds. */
+#editor-col { overflow: hidden; overflow: clip; position: relative; }
 
 /* Resizable panel: display toggle + explicit (persisted) height, mirroring
    #prompts-panel. Height comes from the inline style the template renders;
@@ -2643,19 +2685,23 @@ pre.tiptap-code-block code {
   width: 100vw;
 }
 
-/* ── Editor Search Overlay ─────────────────────────────────────────────
-   Token language adopted from command-popup.styles.js (#61 UI pass): same
-   elevation formula, radius ratio (12px container : 6px controls), control
-   states (transition/active/focus-visible) and --theme-textDim secondary-text
-   token — scaled down for a persistent top-right HUD, not a modal. No header
-   bar: unlike the command popup, this surface has no title-worthy content
-   (no command name to announce), so a bgDark chrome strip would just be
-   decorative weight on a 280px utility — stays one plane on --theme-bgAlt,
-   with a hairline border-top separating the button row instead. ───────── */
-.editor-search-overlay {
-  position: fixed;
-  top: 60px;
-  right: 40px;
+/* ── Find bar ─────────────────────────────────────────────────────────────
+   Token language adopted from command-popup.styles.js: same elevation formula,
+   radius ratio (12px container : 6px controls) and control states
+   (transition/active/focus-visible) — scaled down for a persistent top-right
+   HUD, not a modal. No header bar: unlike the command popup, this surface has
+   no title-worthy content, so a bgDark chrome strip would be decorative weight
+   on a utility — it stays one plane on --theme-bgAlt, with a hairline
+   border-top separating the replace row.
+
+   ANCHORED TO THE EDITOR COLUMN, not to the window: find is document-scoped, so
+   it sits in the document's own top-right corner. The column excludes the meta
+   panel, so the bar cannot overlap it and follows that panel's width for free.
+   ───────────────────────────────────────────────────────────────────────── */
+.editor-find-bar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
   background: var(--theme-bgAlt);
   border: 1px solid var(--theme-border2);
   border-radius: 12px;
@@ -2664,28 +2710,60 @@ pre.tiptap-code-block code {
   z-index: 1000;
   flex-direction: column;
   gap: 10px;
-  width: 280px;
+  width: 320px;
+  /* The column clips its overflow, so a narrow one (a wide meta panel) shrinks
+     the bar rather than cutting its right-hand controls off. Tailwind preflight
+     is disabled project-wide, so the box model is stated here: both the width
+     and the clamp must bound the box the reader SEES, padding and border
+     included, or the visible box is 26px wider than either says. */
+  box-sizing: border-box;
+  max-width: calc(100% - 16px);
   box-shadow: 0 10px 28px color-mix(in srgb, var(--theme-bgDark) 55%, transparent);
-  animation: editor-search-in 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: editor-find-in 0.18s ease-out;
 }
 
-@keyframes editor-search-in {
-  from { transform: translateY(-6px) scale(0.97); opacity: 0; }
-  to   { transform: translateY(0) scale(1); opacity: 1; }
+/* Opacity alone. The bar now lays out over a contentEditable, and a transform on
+   anything beside one repaints it under WebKitGTK. */
+@keyframes editor-find-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .editor-search-overlay { animation: none; }
+  .editor-find-bar { animation: none; }
 }
 
-.editor-search__top-row {
+/* THE TERM BOX IS THE ONLY CELL THAT GIVES. Every control is sized by what it
+   says and none of them shrink, so a narrower bar takes its space out of the
+   input and never pushes a control past the rounded border. Wrapping is the
+   floor under that: below the width the controls alone need, a row breaks
+   rather than overflowing. */
+.editor-find__row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
-.editor-search__input {
+.editor-find__btn,
+.editor-find__toggle {
+  flex: none;
+}
+
+/* One hairline, between the reading and the writing. The rows above it are the
+   search — the term, then how it matches and where it has got to — and the last
+   row is the only one that changes the document. */
+.editor-find-bar > .editor-find__row:last-child {
+  padding-top: 8px;
+  border-top: 1px solid var(--theme-border2);
+}
+
+.editor-find__input {
   flex: 1;
+  /* An input's automatic minimum is its INTRINSIC width — some twenty
+     characters — which `flex: 1` does not override. Without this the row's
+     minimum exceeds the bar and the last control renders outside it. */
+  min-width: 0;
   background: var(--theme-bg);
   border: 1px solid var(--theme-border2);
   border-radius: 6px;
@@ -2696,11 +2774,11 @@ pre.tiptap-code-block code {
   transition: border-color 0.15s ease;
 }
 
-.editor-search__input:focus {
+.editor-find__input:focus {
   border-color: var(--theme-accentPrimary);
 }
 
-.editor-search__input:focus-visible {
+.editor-find__input:focus-visible {
   outline: 2px solid var(--theme-accentPrimary);
   outline-offset: 1px;
 }
@@ -2708,24 +2786,18 @@ pre.tiptap-code-block code {
 /* Full-strength text, not a dim token: the n/N counter is the primary feedback
    of the whole find interaction — the thing you read while stepping through
    matches — so it is content, not chrome. Dimming it made it hard to read. */
-.editor-search__stats {
+.editor-find__count {
   font-size: 12px;
   color: var(--theme-text);
   font-variant-numeric: tabular-nums;
+  /* It takes the rest of its row and reads from the right, so the number sits
+     under the way out and holds its place as it grows. */
+  flex: 1;
   min-width: 30px;
   text-align: right;
 }
 
-.editor-search__bottom-row {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  padding-top: 8px;
-  border-top: 1px solid var(--theme-border2);
-}
-
-.editor-search__btn {
+.editor-find__btn {
   padding: 4px 10px;
   font-size: 14px;
   background: transparent;
@@ -2736,49 +2808,56 @@ pre.tiptap-code-block code {
   transition: all 0.15s ease;
 }
 
-.editor-search__btn:hover {
+/* Every control in the row answers the pointer the same way. The toggle's
+   pressed fill is stated after this and wins the tie, so a hover never reads as
+   the case flag having let go. */
+.editor-find__btn:hover,
+.editor-find__toggle:hover {
   color: var(--theme-text);
   background: var(--theme-border);
   border-color: var(--theme-accentPrimary);
 }
 
-.editor-search__btn:active {
-  transform: translateY(1px);
+/* Pressed is a darker surface, not a nudge: the bar lays out over a
+   contentEditable and a transform on anything beside one repaints it. */
+.editor-find__btn:active {
   background: var(--theme-bgDark);
+  border-color: var(--theme-accentPrimary);
 }
 
-.editor-search__btn:focus-visible {
+.editor-find__btn:focus-visible {
   outline: 2px solid var(--theme-accentPrimary);
   outline-offset: 1px;
 }
 
-/* Full-strength at rest. A dim, borderless glyph reads as decoration rather
-   than a control; the hover background (below) carries the affordance instead
-   of a colour change from dim to legible. */
-.editor-search__close {
+/* The case toggle is a BUTTON THAT HOLDS ITS STATE, so pressed is a filled
+   surface rather than a colour change a reader has to compare against a
+   neighbour to notice. */
+.editor-find__toggle {
   padding: 4px 8px;
-  font-size: 14px;
+  font-size: 12px;
+  font-weight: 600;
   background: transparent;
-  border: 1px solid transparent;
+  border: 1px solid var(--theme-border2);
   border-radius: 6px;
   color: var(--theme-text);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
-.editor-search__close:hover {
-  color: var(--theme-text);
-  background: var(--theme-border);
+.editor-find__toggle[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--theme-accentPrimary) 30%, transparent);
+  border-color: var(--theme-accentPrimary);
 }
 
-.editor-search__close:active {
-  transform: translateY(1px);
-  background: var(--theme-bgDark);
-}
-
-.editor-search__close:focus-visible {
+.editor-find__toggle:focus-visible {
   outline: 2px solid var(--theme-accentPrimary);
   outline-offset: 1px;
+}
+
+.editor-find__btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 /* Ephemeral AI-target glow — same gutter/rail language as block chrome,

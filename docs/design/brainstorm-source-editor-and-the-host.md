@@ -107,7 +107,7 @@ That is the gap, documented by the code in its own comments, sitting precisely w
 CodeMirror moves.
 
 **The host has been built six times.** `media-lightbox.js`, `command-popup.js`,
-`ask-panel.js`, `search-overlay.js`, `insert-dialogs.js`, and the tab/workspace pair. Each
+`ask-panel.js`, `find-dialog.js`, `insert-dialogs.js`, and the tab/workspace pair. Each
 hand-rolls its own viewport, focus entry and exit, escape semantics, and key precedence.
 None share a contract. (Related drift: `focus-context.js`, which brainstorm 3 §1 cites as
 "the first brick already laid," no longer exists; `--surface-*` was only ever a named gap,

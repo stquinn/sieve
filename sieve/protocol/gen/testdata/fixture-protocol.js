@@ -37,6 +37,12 @@ export const Topic = Object.freeze({
 /** Every topic, for the blanket resync a client runs when its workspace socket reconnects. */
 export const AllTopics = Object.freeze(Object.values(Topic))
 
+/** Text-service producers. A `feature-control` frame names one; a `text-marks` push carries the one that found them. */
+export const Feature = Object.freeze({
+  FIXTURE_CHECK: 'fixture-check',
+})
+/** @typedef {typeof Feature[keyof typeof Feature]} FeatureName */
+
 /** Command families — the namespace a `command` frame declares it is invoking within. */
 export const CommandFamily = Object.freeze({
   FIXTURE: 'fixture',

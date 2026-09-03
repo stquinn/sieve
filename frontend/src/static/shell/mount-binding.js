@@ -17,6 +17,10 @@ import { BlockProviderAdapter } from '../container/block-provider-adapter.js'
 import { WholeContentAdapter } from '../container/whole-content-adapter.js'
 import { ContractViolation } from '../contract/sieve-block.js'
 
+/** The outcome a write that never reached the wire reports, spelled as the ack
+ *  spells its own failure — a caller reads one word, not two. */
+const REPLACE_FAILED = 'error'
+
 export class MountBinding {
   /** @type {string} */ #uuid
   /** @type {import('../container/document-service.js').DocumentService} */ #documents
@@ -87,6 +91,38 @@ export class MountBinding {
    * @returns {Promise<string|null>}
    */
   exportAs(format = 'markdown') { return this.#binding.exportAs(format) }
+
+  /**
+   * Switches a text-service feature on or off for THIS container, carrying what
+   * the feature is to work with. Host chrome — a find bar, a toggle — is what
+   * owns a feature's lifecycle, so the switch is a host verb and never one of
+   * the provider's: a lens draws what a feature found and does not decide that it
+   * runs.
+   * @param {string} feature @param {boolean} enabled
+   * @param {Record<string, any>} [parameters]
+   */
+  setFeature(feature, enabled, parameters) { this.#binding.setFeature(feature, enabled, parameters) }
+
+  /**
+   * Writes what belongs in a marked run's place, and RESOLVES WITH THE OUTCOME.
+   *
+   * It is the same lane and the same mapping the provider's `requestReplaceText`
+   * takes; what differs is that this one answers. A provider verb is void by
+   * contract — a lens acts and reads the result as an ordinary container change
+   * — but chrome that disarms a button until the write settles needs to be told
+   * when it did, and `ok` / `stale` / `error` is that telling.
+   *
+   * A mark on a block this container no longer holds resolves as `error`: the
+   * write did not happen, which is what a caller gating on the answer needs to
+   * hear, and the marks that follow are what say what is really there.
+   * @param {Readonly<import('../contract/container-update-listener.js').SieveTextMark> & {blockId?: string}} mark
+   * @param {string} replacement
+   * @returns {Promise<string>} the outcome word
+   */
+  replaceText(mark, replacement) {
+    if (!mark || !this.#model.getBlock(mark.blockId || '')) return Promise.resolve(REPLACE_FAILED)
+    return this.#binding.replaceText(mark, replacement)
+  }
 
   /**
    * Closes the channel and discards the model. After this the binding is spent:

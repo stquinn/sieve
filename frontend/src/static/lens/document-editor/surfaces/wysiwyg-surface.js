@@ -21,9 +21,11 @@ import { BlockChrome, getBlockSelectionRange } from '../block-chrome.js'
 import { AiTargetDecoration } from './ai-target-decoration.js'
 import { MentionDecorations } from './mention-decoration.js'
 import { CommandVerbDecorations } from './command-verb-decoration.js'
-import { SpellDecorations } from './spell-decoration.js'
+import { SpellDecorations, SPELL_FEATURE } from './spell-decoration.js'
+import { FindDecorations, FIND_FEATURE } from './find-decoration.js'
 import { FlatText } from './flat-text.js'
-import { Search, SelectionHighlight, HighlightMark, AiShortcuts } from '../../extensions.js'
+import { VerticalScroll } from './vertical-scroll.js'
+import { SelectionHighlight, HighlightMark, AiShortcuts } from '../../extensions.js'
 import { policyEnterKeydown, buildInteractionPolicyExtension } from '../interaction-policy.js'
 import { TriggerPopover } from '../../../shell/trigger-popover.js'
 import {
@@ -135,6 +137,10 @@ export class WysiwygSurface extends AbstractSurface {
    *  per surface for the same reason */
   #spell = null
 
+  /** @type {FindDecorations|null} this mount's find highlights, one instance per
+   *  surface for the same reason */
+  #find = null
+
   /** @type {Record<string, string>|null} per-mount block-sync cache
    *  ({ [blockId]: serializedContent }) the thin observer diffs against */
   #blockContentCache = null
@@ -208,49 +214,32 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /**
-   * @override
-   * @param {string} term
-   * @returns {{current:number,total:number}|false}
+   * @override — where the reader stands among the matches this surface DRAWS.
+   * The matches are the host's: they arrive as find marks and resolve against
+   * what is on screen, so this counts what a reader can actually see.
+   * @returns {{current:number,total:number}}
    */
-  searchTerm(term) {
+  findPosition() {
     const ed = /** @type {any} */ (this.editorPane)
-    if (!ed) return false
-    ed.commands.setSearchTerm(term)
-    return this.#searchStats(ed)
+    if (!ed || !ed.state || !this.#find) return { current: 0, total: 0 }
+    return this.#find.position(ed.state)
   }
 
-  /** @override @returns {{current:number,total:number}|false} */
-  searchNext() {
+  /** @override @param {number} delta +1 for the next match, -1 for the previous
+   *  @returns {{current:number,total:number}} */
+  findStep(delta) {
     const ed = /** @type {any} */ (this.editorPane)
-    if (!ed) return false
-    ed.commands.nextSearchResult()
-    return this.#searchStats(ed)
+    if (!ed || !ed.view || !this.#find) return { current: 0, total: 0 }
+    return this.#find.step(ed.view, delta)
   }
 
-  /** @override @returns {{current:number,total:number}|false} */
-  searchPrev() {
+  /** @override — the match the reader is standing on, as the anchor a replace is
+   *  spent through, or null when there is none.
+   *  @returns {Record<string, any>|null} */
+  currentFindMark() {
     const ed = /** @type {any} */ (this.editorPane)
-    if (!ed) return false
-    ed.commands.prevSearchResult()
-    return this.#searchStats(ed)
-  }
-
-  /** @override @returns {false} */
-  clearSearch() {
-    const ed = /** @type {any} */ (this.editorPane)
-    if (!ed) return false
-    ed.commands.clearSearch()
-    ed.commands.focus()
-    return false
-  }
-
-  /** Current match stats from the Search extension storage, or null when it has
-   *  no results yet. `current` is 1-based when there are matches, 0 otherwise.
-   *  @param {any} ed @returns {{current:number,total:number}|null} */
-  #searchStats(ed) {
-    const s = ed.storage && ed.storage.search
-    if (!s || !s.results) return null
-    return { current: s.results.length > 0 ? s.currentIndex + 1 : 0, total: s.results.length }
+    if (!ed || !ed.state || !this.#find) return null
+    return this.#find.current(ed.state)
   }
 
   /**
@@ -285,6 +274,8 @@ export class WysiwygSurface extends AbstractSurface {
     this.#commandVerb = commandVerb
     var spell = new SpellDecorations(T)
     this.#spell = spell
+    var find = new FindDecorations(T)
+    this.#find = find
 
     // The doc top level holds NATIVE block nodes and structured sieve blocks as
     // siblings: a prose block IS one native top-level node, not a custom
@@ -306,11 +297,11 @@ export class WysiwygSurface extends AbstractSurface {
         mentions.extension,
         commandVerb.extension,
         spell.extension,
+        find.extension,
         T.Table.configure({ resizable: false }),
         T.TableRow,
         T.TableHeader,
         T.TableCell,
-        Search,
         // Priority 50, so it runs AFTER native keymaps like list indent and
         // table cell-nav. Per-renderer key handlers are forbidden.
         buildInteractionPolicyExtension(T),
@@ -638,6 +629,7 @@ export class WysiwygSurface extends AbstractSurface {
     this.#mentions = null
     this.#commandVerb = null
     this.#spell = null
+    this.#find = null
     this.#blockContentCache = null
     if (this.#claimsDocumentGlobals()) window.__tiptap = null
   }
@@ -701,15 +693,20 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /**
-   * @override — draws one block's spelling marks, replacing what was drawn for
-   * that block. A meta-only transaction, for the reason `setMentionTitles` is:
-   * what the checker found about a block is not an edit to it.
+   * @override — draws one block's marks for the one feature this surface has a
+   * decoration set for, replacing what was drawn for that pair; any other
+   * producer's findings are dropped, because nothing here knows how to draw
+   * them. A meta-only transaction, for the reason `setMentionTitles` is: what a
+   * producer found about a block is not an edit to it.
+   * @param {string} feature
    * @param {string} blockId
    * @param {ReadonlyArray<import('../../../contract/container-update-listener.js').SieveTextMark>} marks
    */
-  setSpellMarks(blockId, marks) {
+  setTextMarks(feature, blockId, marks) {
     const ed = /** @type {any} */ (this.editorPane)
-    if (ed && ed.view && this.#spell) this.#spell.apply(ed.view, blockId, marks)
+    if (!ed || !ed.view) return
+    if (feature === SPELL_FEATURE && this.#spell) this.#spell.apply(ed.view, blockId, marks)
+    if (feature === FIND_FEATURE && this.#find) this.#find.apply(ed.view, blockId, marks)
   }
 
   /**
@@ -722,6 +719,12 @@ export class WysiwygSurface extends AbstractSurface {
     const ed = /** @type {any} */ (this.editorPane)
     if (!ed || !ed.view || !this.#mentions) return null
     return this.#mentions.titleAt(ed.view, pos)
+  }
+
+  /** @override — hands the caret back to ProseMirror, where it was. */
+  focusEditor() {
+    const ed = /** @type {any} */ (this.editorPane)
+    if (ed && ed.commands) ed.commands.focus()
   }
 
   /**
@@ -1276,11 +1279,29 @@ export class WysiwygSurface extends AbstractSurface {
     // The DOM read the pure PM core must NOT do: focus inside a block's inner
     // editor merges its OWN cursor as the opaque blockCursor.
     raw.blockCursor = this.#captureBlockCursor()
-    // The marks this surface is DRAWING under that same coordinate. They live in
-    // the plugin, not in the document, so they are read here rather than off the
-    // doc the pure core walks.
-    raw.textMarks = this.#spell ? this.#spell.marksAt(state, er.from, er.to) : []
+    // The marks this surface is DRAWING under that same range. They live in the
+    // plugin, not in the document, so they are read here rather than off the doc
+    // the pure core walks.
+    raw.textMarks = this.#textMarksAt(state, er.from, er.to)
     return raw
+  }
+
+  /**
+   * Every mark this surface draws under `[from, to]`, from ALL of its decoration
+   * sets, as one flat list in the order the sets are held. The advertisement is
+   * a broadcast: it says everything the surface knows is under there, each mark
+   * stamped with the feature that drew it, and a consumer decides which of them
+   * are its business.
+   * @param {any} state a ProseMirror editor state
+   * @param {number} from @param {number} to
+   * @returns {Array<Record<string, any>>}
+   */
+  #textMarksAt(state, from, to) {
+    /** @type {Array<Record<string, any>>} */ const marks = []
+    for (const set of [this.#spell, this.#find]) {
+      if (set) marks.push(...set.marksAt(state, from, to))
+    }
+    return marks
   }
 
   /**
@@ -1835,13 +1856,13 @@ export class WysiwygSurface extends AbstractSurface {
 
   /** Brings a block into view. An async answer carries no focus, so it can land
    *  below the fold; deferred so the NodeView has rendered, 'nearest' so it does
-   *  not jump when already visible.
+   *  not jump when already visible, and vertically only so an arrival never
+   *  moves the text the reader is looking at sideways.
    *  @param {string} id */
   #scrollTo(id) {
     if (!id) return
     setTimeout(function () {
-      var node = document.querySelector('[data-id="' + id + '"]')
-      if (node) node.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      VerticalScroll.into(document.querySelector('[data-id="' + id + '"]'), 'nearest')
     }, 60)
   }
 

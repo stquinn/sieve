@@ -17,7 +17,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 // inert stubs satisfy the imports; the pure position helpers (ai-target /
 // block-position) the editor really calls stay REAL.
 vi.mock('../src/static/lens/extensions.js', () => ({
-  Search: {}, SelectionHighlight: {}, HighlightMark: {},
+  SelectionHighlight: {}, HighlightMark: {},
   AiShortcuts: { configure: () => ({}) },
   // askAi imports these (was the shared bus): buildAiContext is pure over
   // context.target; applyTargetHighlight is spied to assert the ranged D-5 call.
@@ -2437,8 +2437,8 @@ describe('AbstractEditor.reload — the host loads, the lens repaints once', () 
 })
 
 describe('SieveWorkspace chrome delegation (P2.C transitional; P4.C/P4.D dissolved)', () => {
-  // P4.C moved the search overlay + the two insert dialogs OUT of the provideChrome
-  // registry into Workspace-owned children (SearchOverlay / InsertDialogs, built by
+  // P4.C moved the find bar + the two insert dialogs OUT of the provideChrome
+  // registry into Workspace-owned children (FindDialog / InsertDialogs, built by
   // bootChrome). P4.D retired the registry ENTIRELY: copyDocumentAsMarkdown now
   // delegates DIRECTLY to the active editor's copyAsMarkdown (the editor owns the
   // export). provideChrome / #chromeCall / WorkspaceChrome are GONE. These tests pin
@@ -2456,20 +2456,20 @@ describe('SieveWorkspace chrome delegation (P2.C transitional; P4.C/P4.D dissolv
     expect(() => new SieveWorkspace().copyDocumentAsMarkdown()).not.toThrow()
   })
 
-  it('the search + insert-dialog verbs delegate to the Workspace children, NOT #chromeCall', () => {
+  it('the find + insert-dialog verbs delegate to the Workspace children, NOT #chromeCall', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       const w = new SieveWorkspace()
       w.bootChrome()
-      const search = w.searchOverlay
+      const find = w.findDialog
       const dialogs = w.insertDialogs
-      expect(search).toBeTruthy()
+      expect(find).toBeTruthy()
       expect(dialogs).toBeTruthy()
-      const toggle = vi.spyOn(search, 'toggle').mockImplementation(() => {})
+      const toggle = vi.spyOn(find, 'toggle').mockImplementation(() => {})
       const clip = vi.spyOn(dialogs, 'openWebClip').mockImplementation(() => {})
       const card = vi.spyOn(dialogs, 'openUrlCard').mockImplementation(() => {})
 
-      w.toggleSearch()
+      w.toggleFind()
       w.openWebClipDialog('https://a.example')
       w.openUrlCardDialog('https://b.example')
 
@@ -2483,10 +2483,10 @@ describe('SieveWorkspace chrome delegation (P2.C transitional; P4.C/P4.D dissolv
     }
   })
 
-  it('the search + insert-dialog verbs null-guard safely before bootChrome', () => {
+  it('the find + insert-dialog verbs null-guard safely before bootChrome', () => {
     const w = new SieveWorkspace()
     // No bootChrome() → children are null; verbs must no-op, not throw.
-    expect(() => { w.toggleSearch(); w.openWebClipDialog(); w.openUrlCardDialog() }).not.toThrow()
+    expect(() => { w.toggleFind(); w.openWebClipDialog(); w.openUrlCardDialog() }).not.toThrow()
   })
 })
 

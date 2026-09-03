@@ -159,3 +159,54 @@ func TestLogProcessor_BracketedLevelIsLog(t *testing.T) {
 		t.Error("bracketed-level lines should be detected as a log")
 	}
 }
+
+// A captured log is a RECORD: editing it would falsify what was actually
+// logged, so log stays out of the write lane while prose/code/diagram join
+// it (code_processor_test.go, diagram_processor_test.go). The participation
+// predicates are asked separately (block.TextUpdaterFor, not a feature/kind
+// list), and this is the one row that pins log's answer.
+func TestLogProcessor_IsNotATextUpdater(t *testing.T) {
+	resetRegistry()
+	t.Cleanup(resetRegistry)
+	p := NewLogProcessor(block.BlockServices{})
+	block.RegisterProcessor(p)
+
+	if _, ok := block.TextUpdaterFor(p.Kind()); ok {
+		t.Error("log must not be a TextUpdater: editing a captured log falsifies a record")
+	}
+}
+
+// What a log projects into the text substrate: the WHOLE capture, verbatim,
+// as ONE segment of class CODE — never prose, so a spell checker leaves it
+// alone. Log stores its capture as a single string (the "source" attr, no
+// parse), which is why one segment is the whole answer rather than a table
+// of slots the way code's/diagram's two-slot NormalisedText tables are
+// (code_processor_test.go, diagram_processor_test.go).
+func TestLogProcessor_NormalisedText(t *testing.T) {
+	p := NewLogProcessor(block.BlockServices{})
+	const source = "2026-06-12T13:20:01 ERROR connection refused"
+
+	cases := []struct {
+		name  string
+		attrs map[string]interface{}
+		want  string
+	}{
+		{name: "the captured text, verbatim", attrs: map[string]interface{}{"source": source}, want: source},
+		{name: "a sourceless block still bears its one segment", attrs: map[string]interface{}{}, want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			blk := block.SieveBlock{Kind: "log", Attrs: tc.attrs}
+			got := p.NormalisedText(&blk)
+			if len(got) != 1 {
+				t.Fatalf("got %d segments, want exactly 1: %#v", len(got), got)
+			}
+			if got[0].Text != tc.want {
+				t.Errorf("segment text = %q, want %q", got[0].Text, tc.want)
+			}
+			if got[0].Class != domain.TextClassCode {
+				t.Errorf("class = %q, want %q", got[0].Class, domain.TextClassCode)
+			}
+		})
+	}
+}

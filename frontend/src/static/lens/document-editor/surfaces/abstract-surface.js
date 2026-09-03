@@ -15,7 +15,7 @@
  * An editor-domain event a surface REPORTS OUTWARD via the host editor's
  * `onSurfaceEvent` handler — producer-named plain data, never a consumer name: a
  * surface must not know an Ask panel or toolbar exists.
- * @typedef {{type: string}} SurfaceEventMsg
+ * @typedef {{type: string, feature?: string}} SurfaceEventMsg
  */
 export const SurfaceEvent = Object.freeze({
   /** The document content changed (a user edit settled into the surface). */
@@ -69,20 +69,18 @@ export class AbstractSurface {
     return { chars: text.length, lines, blockCount: lines }
   }
 
-  // The editor's search verbs delegate here, so all TipTap and search-extension
-  // access stays surface-private. A surface with no search returns false.
+  // The editor's find verbs delegate here, so all ProseMirror access stays
+  // surface-private. A surface that draws no find marks stands on no match,
+  // which is what nothing-of-nothing says.
 
-  /** @param {string} term @returns {{current:number,total:number}|false} */
-  searchTerm(term) { return false }
+  /** @returns {{current:number,total:number}} */
+  findPosition() { return { current: 0, total: 0 } }
 
-  /** @returns {{current:number,total:number}|false} */
-  searchNext() { return false }
+  /** @param {number} _delta @returns {{current:number,total:number}} */
+  findStep(_delta) { return { current: 0, total: 0 } }
 
-  /** @returns {{current:number,total:number}|false} */
-  searchPrev() { return false }
-
-  /** @returns {false} */
-  clearSearch() { return false }
+  /** @returns {Record<string, any>|null} */
+  currentFindMark() { return null }
 
   /**
    * Mounts the surface into the editor's root element and seeds it with content.
@@ -149,12 +147,14 @@ export class AbstractSurface {
    *  it. @param {string|null} verb */
   setCommandVerb(verb) {}
 
-  /** Draws one block's COMPLETE set of text marks, replacing what was drawn for
-   *  that block; an empty set clears it. A surface with no way to draw a mark
-   *  ignores them — which is what "a mark is a reading affordance" means.
+  /** Draws one FEATURE's COMPLETE set of text marks for one block, replacing what
+   *  was drawn for that pair; an empty set clears it. A surface with no way to
+   *  draw a mark ignores them — which is what "a mark is a reading affordance"
+   *  means — and a surface that draws one producer's findings ignores the rest.
+   *  @param {string} feature which producer found them
    *  @param {string} blockId
    *  @param {ReadonlyArray<import('../../../contract/container-update-listener.js').SieveTextMark>} marks */
-  setSpellMarks(blockId, marks) {}
+  setTextMarks(feature, blockId, marks) {}
 
   /** The title of the `@Title` token at `pos`, or null where there is none. A
    *  surface that marks nothing has none anywhere.
@@ -204,6 +204,14 @@ export class AbstractSurface {
    * @param {import('../selection-model.js').SelectionContext} ctx
    */
   applyPosition(ctx) { /* base: nothing to focus */ }
+
+  /**
+   * Puts the caret back where the reader left it, without moving it. It is what
+   * chrome calls when it is done with the keyboard: a surface that took no
+   * selection to restore still gets its editing focus back. Base surfaces have
+   * no live view, so the default does nothing.
+   */
+  focusEditor() { /* base: nothing to focus */ }
 
   /**
    * The surface's own scroller position — the SCROLL_CHANGED feed hook, mirroring

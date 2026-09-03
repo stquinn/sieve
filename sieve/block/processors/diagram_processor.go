@@ -3,6 +3,7 @@ package processors
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"sieve/logger"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
@@ -446,27 +447,99 @@ const (
 	DiagramTitleLocator  = "title"
 )
 
+// diagramLocator mints and reads a diagram's {slot, hash} locator — the
+// shared slottedLocator (slotted_locator.go), which every kind whose reading
+// is its stored bytes verbatim uses the same way.
+var diagramLocator = slottedLocator{Kind: "diagram"}
+
+// mintLocator builds the locator for slot: the slot name and a digest of the
+// bytes currently read out of it.
+func (p *DiagramProcessor) mintLocator(slot, text string) string {
+	return diagramLocator.Mint(slot, text)
+}
+
+// slotText returns blk's current stored text for slot, and whether slot is
+// one this processor has ever minted a locator for. source and title are
+// the only two; naming anything else is a locator this processor never made.
+func (p *DiagramProcessor) slotText(blk *block.SieveBlock, slot string) (string, bool) {
+	switch slot {
+	case DiagramSourceLocator:
+		return p.RawContent(*blk), true
+	case DiagramTitleLocator:
+		title, _ := blk.Attrs[DiagramTitleLocator].(string)
+		return title, true
+	}
+	return "", false
+}
+
+// readLocator answers which slot locator names and whether it still names
+// that slot's CURRENT bytes, given blk's live payload.
+func (p *DiagramProcessor) readLocator(blk *block.SieveBlock, locator string) (slot, text string, err error) {
+	return diagramLocator.Read(locator, func(slot string) (string, bool) { return p.slotText(blk, slot) })
+}
+
 // NormalisedText makes a diagram a TextBearer. Its script is CODE, not prose —
 // a spell checker reads neither, and says so by class rather than by naming the
 // kind — and a title it carries is a label. Both segments are the stored bytes
-// verbatim, so an offset taken from one addresses the attr it came from.
+// verbatim, and each carries a locator minted from its own slot and bytes
+// (mintLocator).
 func (p *DiagramProcessor) NormalisedText(blk *block.SieveBlock) []domain.TextSegment {
 	if blk == nil {
 		return nil
 	}
+	source := p.RawContent(*blk)
 	segments := []domain.TextSegment{{
-		Locator: DiagramSourceLocator,
-		Text:    p.RawContent(*blk),
+		Locator: p.mintLocator(DiagramSourceLocator, source),
+		Text:    source,
 		Class:   domain.TextClassCode,
 	}}
 	if title, _ := blk.Attrs["title"].(string); title != "" {
 		segments = append(segments, domain.TextSegment{
-			Locator: DiagramTitleLocator,
+			Locator: p.mintLocator(DiagramTitleLocator, title),
 			Text:    title,
 			Class:   domain.TextClassLabel,
 		})
 	}
 	return segments
+}
+
+// UpdateText makes a diagram a TextUpdater: its segments — the script and,
+// when present, the title — are each independently writable. THE WRITE LANDS
+// ON THE SCRIPT ATTR ITSELF, never on the block's serialized YAML form: the
+// splice happens here, in Go memory, before Serialize ever runs, so the
+// inner-fence protection Serialize applies (4-space indent + forced literal
+// style, fencedblock.SerializeYaml) sees the edited script exactly as it
+// would see any other — see TestDiagram_RoundTripKeepsInnerFenceInsideTheBlock
+// and this file's own UpdateText round-trip case (diagram_processor_test.go)
+// for a replacement that itself contains a ``` fence.
+//
+// A DIAGRAM HAS NO PARSE: a segment's reading IS the stored bytes of the slot
+// its locator names, so a resolved run addresses those bytes directly and a
+// write is one splice. The batch mechanics — validate every edit against its
+// slot's current text, splice back to front, all-or-nothing — are
+// identityTextEditor's (identity_text_editor.go), shared with code, the
+// other kind whose reading is its stored bytes.
+func (p *DiagramProcessor) UpdateText(blk *block.SieveBlock, edits []domain.TextEdit) error {
+	if blk == nil {
+		return fmt.Errorf("%w: diagram: no block to update", block.ErrTextMalformed)
+	}
+	if len(edits) == 0 {
+		return nil
+	}
+	editor := identityTextEditor{Kind: "diagram", ReadLocator: func(locator string) (string, string, error) {
+		return p.readLocator(blk, locator)
+	}}
+	finalText, err := editor.Apply(edits)
+	if err != nil {
+		return err
+	}
+	if blk.Attrs == nil {
+		blk.Attrs = map[string]interface{}{}
+	}
+	for slot, text := range finalText {
+		blk.Attrs[slot] = text
+	}
+	return nil
 }
 
 // RawContent returns the source text this block was built from (block.RawContenter).

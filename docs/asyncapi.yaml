@@ -29,6 +29,8 @@ channels:
         $ref: '#/components/messages/documentExport'
       documentExtract:
         $ref: '#/components/messages/documentExtract'
+      documentFeatureControl:
+        $ref: '#/components/messages/documentFeatureControl'
       documentFlush:
         $ref: '#/components/messages/documentFlush'
       documentFocus:
@@ -71,8 +73,8 @@ channels:
         $ref: '#/components/messages/documentRemoveBlock'
       documentReplaceBlock:
         $ref: '#/components/messages/documentReplaceBlock'
-      documentSpellMarks:
-        $ref: '#/components/messages/documentSpellMarks'
+      documentTextMarks:
+        $ref: '#/components/messages/documentTextMarks'
       documentTextReplaceAck:
         $ref: '#/components/messages/documentTextReplaceAck'
       documentWysiwygContent:
@@ -85,6 +87,8 @@ channels:
         $ref: '#/components/messages/workspaceCommand'
       workspaceCommandCancel:
         $ref: '#/components/messages/workspaceCommandCancel'
+      workspaceFeatureControl:
+        $ref: '#/components/messages/workspaceFeatureControl'
       workspaceMentionQuery:
         $ref: '#/components/messages/workspaceMentionQuery'
       workspaceMentionResolve:
@@ -93,8 +97,6 @@ channels:
         $ref: '#/components/messages/workspacePing'
       workspaceSessionScroll:
         $ref: '#/components/messages/workspaceSessionScroll'
-      workspaceSpellEnable:
-        $ref: '#/components/messages/workspaceSpellEnable'
       workspaceSpellIgnore:
         $ref: '#/components/messages/workspaceSpellIgnore'
       workspaceSpellLearn:
@@ -129,6 +131,7 @@ operations:
       - $ref: '#/channels/document/messages/documentEnterWysiwyg'
       - $ref: '#/channels/document/messages/documentExport'
       - $ref: '#/channels/document/messages/documentExtract'
+      - $ref: '#/channels/document/messages/documentFeatureControl'
       - $ref: '#/channels/document/messages/documentFlush'
       - $ref: '#/channels/document/messages/documentFocus'
       - $ref: '#/channels/document/messages/documentLoad'
@@ -156,7 +159,7 @@ operations:
       - $ref: '#/channels/document/messages/documentPong'
       - $ref: '#/channels/document/messages/documentRemoveBlock'
       - $ref: '#/channels/document/messages/documentReplaceBlock'
-      - $ref: '#/channels/document/messages/documentSpellMarks'
+      - $ref: '#/channels/document/messages/documentTextMarks'
       - $ref: '#/channels/document/messages/documentTextReplaceAck'
       - $ref: '#/channels/document/messages/documentWysiwygContent'
   workspaceReceive:
@@ -167,11 +170,11 @@ operations:
     messages:
       - $ref: '#/channels/workspace/messages/workspaceCommand'
       - $ref: '#/channels/workspace/messages/workspaceCommandCancel'
+      - $ref: '#/channels/workspace/messages/workspaceFeatureControl'
       - $ref: '#/channels/workspace/messages/workspaceMentionQuery'
       - $ref: '#/channels/workspace/messages/workspaceMentionResolve'
       - $ref: '#/channels/workspace/messages/workspacePing'
       - $ref: '#/channels/workspace/messages/workspaceSessionScroll'
-      - $ref: '#/channels/workspace/messages/workspaceSpellEnable'
       - $ref: '#/channels/workspace/messages/workspaceSpellIgnore'
       - $ref: '#/channels/workspace/messages/workspaceSpellLearn'
   workspaceSend:
@@ -277,6 +280,29 @@ components:
         $ref: '#/components/correlationIds/opId'
       payload:
         $ref: '#/components/schemas/ProtocolExtractFrame'
+    documentFeatureControl:
+      name: feature-control
+      title: feature-control
+      summary: FeatureControlFrame switches one text-service feature on or off, and says what it is to work with.
+      description: |-
+        FeatureControlFrame switches one text-service feature on or off, and says what
+        it is to work with. It is the WHOLE lifecycle grammar for every producer that
+        reads the text substrate — present and future — so a new feature is a new
+        registered inspector and a new word in Feature, never a new frame type.
+
+        THE CHANNEL IS THE SCOPE. On the workspace wire it speaks for a feature that
+        has one answer for the whole app (spelling, which is persisted); on a document
+        channel it speaks for that document alone (a find whose term dies with the
+        dialog). There is deliberately no scope field: a frame cannot claim a reach its
+        socket does not have, and a document channel closing is the implicit disable
+        for everything it switched on.
+
+        Parameters is the feature's own business — a search term, a case flag, an
+        imperative like replace-all — carried and never read by the framework, so a
+        feature's options cost the wire nothing.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProtocolFeatureControlFrame'
     documentFlush:
       name: flush
       title: flush
@@ -360,11 +386,12 @@ components:
         It is the write the marks made possible: the client points at text it was
         shown and says what belongs there instead.
 
-        The anchor is Quote plus Occurrence, and the server resolves it in the
-        block's CURRENT text — so an edit that displaced the run since the client saw
-        it costs nothing, and a run that has been typed over is not written to at
-        all. Start and End are the offsets the client last saw: a hint the server may
-        use to narrow a search, never a range it writes to on the client's word.
+        The anchor is Quote plus Occurrence at a declared Grain, and the server
+        resolves it in the block's CURRENT text — so an edit that displaced the run
+        since the client saw it costs nothing, and a run that has been typed over is
+        not written to at all. Start and End are the offsets the client last saw: a
+        hint the server may use to narrow a search, never a range it writes to on the
+        client's word.
       contentType: application/json
       correlationId:
         $ref: '#/components/correlationIds/opId'
@@ -552,21 +579,27 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolReplaceBlockFrame'
-    documentSpellMarks:
-      name: spell-marks
-      title: spell-marks
-      summary: SpellMarksFrame is the server-initiated render-back carrying ONE block's complete mark set.
+    documentTextMarks:
+      name: text-marks
+      title: text-marks
+      summary: TextMarksFrame is the server-initiated render-back carrying ONE feature's complete mark set for ONE block.
       description: |-
-        SpellMarksFrame is the server-initiated render-back carrying ONE block's
-        complete mark set. It is not an answer to anything: the server checks a
-        document when it opens and whenever its text settles, and pushes to the
-        document's registered owner.
+        TextMarksFrame is the server-initiated render-back carrying ONE feature's
+        complete mark set for ONE block. It is not an answer to anything: the server
+        inspects a document when it opens and whenever its text settles, and pushes to
+        the document's registered owner.
 
-        Marks REPLACE what the client holds for that block. An empty array is
-        therefore the clear — the frame a corrected block gets — and not a no-op.
+        Marks REPLACE what the client holds for that (feature, block) pair. An empty
+        array is therefore the clear — the frame a corrected block gets — and not a
+        no-op. Two features flagging the same block are two independent sets, so
+        neither can clear or overwrite the other.
+
+        Feature is PRESENTATION AND BOOKKEEPING: it says who found this, so a client
+        can draw each producer's findings its own way. It never travels back — a
+        text-replace names an anchor and nothing about who made it.
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProtocolSpellMarksFrame'
+        $ref: '#/components/schemas/ProtocolTextMarksFrame'
     documentTextReplaceAck:
       name: text-replace-ack
       title: text-replace-ack
@@ -617,6 +650,29 @@ components:
         $ref: '#/components/correlationIds/correlationId'
       payload:
         $ref: '#/components/schemas/ProtocolCommandCancelFrame'
+    workspaceFeatureControl:
+      name: feature-control
+      title: feature-control
+      summary: FeatureControlFrame switches one text-service feature on or off, and says what it is to work with.
+      description: |-
+        FeatureControlFrame switches one text-service feature on or off, and says what
+        it is to work with. It is the WHOLE lifecycle grammar for every producer that
+        reads the text substrate — present and future — so a new feature is a new
+        registered inspector and a new word in Feature, never a new frame type.
+
+        THE CHANNEL IS THE SCOPE. On the workspace wire it speaks for a feature that
+        has one answer for the whole app (spelling, which is persisted); on a document
+        channel it speaks for that document alone (a find whose term dies with the
+        dialog). There is deliberately no scope field: a frame cannot claim a reach its
+        socket does not have, and a document channel closing is the implicit disable
+        for everything it switched on.
+
+        Parameters is the feature's own business — a search term, a case flag, an
+        imperative like replace-all — carried and never read by the framework, so a
+        feature's options cost the wire nothing.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProtocolFeatureControlFrame'
     workspaceMentionQuery:
       name: mention-query
       title: mention-query
@@ -668,17 +724,6 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolSessionScrollFrame'
-    workspaceSpellEnable:
-      name: spell-enable
-      title: spell-enable
-      summary: SpellEnableFrame turns spell checking on or off for the whole workspace and persists the choice.
-      description: |-
-        SpellEnableFrame turns spell checking on or off for the whole workspace and
-        persists the choice. Turning it off clears every mark the client is drawing;
-        turning it on re-checks every open document.
-      contentType: application/json
-      payload:
-        $ref: '#/components/schemas/ProtocolSpellEnableFrame'
     workspaceSpellIgnore:
       name: spell-ignore
       title: spell-ignore
@@ -686,12 +731,15 @@ components:
       description: |-
         SpellIgnoreFrame stops a word being flagged for the rest of this run.
 
-        The three spelling frames ride the WORKSPACE channel rather than the document
-        one because none of them is about a document: a word accepted while reading
-        one note is accepted in every note open beside it, and the toggle is one
-        answer for the whole app. Each is fire-and-forget and unanswered — the visible
-        effect is the marks that follow, pushed per document on the channel that owns
-        it.
+        Both spelling verbs ride the WORKSPACE channel rather than the document one
+        because neither is about a document: a word accepted while reading one note is
+        accepted in every note open beside it. Each is fire-and-forget and unanswered
+        — the visible effect is the marks that follow, pushed per document on the
+        channel that owns it.
+
+        They are the FEATURE'S OWN verbs and not its lifecycle: a judgement about one
+        word does not switch spelling on or off, which is what the feature-control
+        frame is for.
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolSpellIgnoreFrame'
@@ -1388,6 +1436,40 @@ components:
         - targetKind
         - entries
         - index
+    ProtocolFeatureControlFrame:
+      type: object
+      description: |-
+        FeatureControlFrame switches one text-service feature on or off, and says what
+        it is to work with. It is the WHOLE lifecycle grammar for every producer that
+        reads the text substrate — present and future — so a new feature is a new
+        registered inspector and a new word in Feature, never a new frame type.
+
+        THE CHANNEL IS THE SCOPE. On the workspace wire it speaks for a feature that
+        has one answer for the whole app (spelling, which is persisted); on a document
+        channel it speaks for that document alone (a find whose term dies with the
+        dialog). There is deliberately no scope field: a frame cannot claim a reach its
+        socket does not have, and a document channel closing is the implicit disable
+        for everything it switched on.
+
+        Parameters is the feature's own business — a search term, a case flag, an
+        imperative like replace-all — carried and never read by the framework, so a
+        feature's options cost the wire nothing.
+      properties:
+        type:
+          type: string
+        feature:
+          type: string
+          description: which producer this is about; a word from the registered feature vocabulary, refused when nothing serves it
+        enabled:
+          type: boolean
+          description: the state the feature is being put INTO, not a request to flip
+        parameters:
+          type: object
+          description: what the feature is to work with; interpreted by that feature alone
+      required:
+        - type
+        - feature
+        - enabled
     ProtocolFlushFrame:
       type: object
       description: |-
@@ -1853,32 +1935,20 @@ components:
         - type
         - id
         - scroll
-    ProtocolSpellEnableFrame:
-      type: object
-      description: |-
-        SpellEnableFrame turns spell checking on or off for the whole workspace and
-        persists the choice. Turning it off clears every mark the client is drawing;
-        turning it on re-checks every open document.
-      properties:
-        type:
-          type: string
-        enabled:
-          type: boolean
-          description: the state the toggle is being put INTO, not a request to flip — a repeat of the current state is a no-op
-      required:
-        - type
-        - enabled
     ProtocolSpellIgnoreFrame:
       type: object
       description: |-
         SpellIgnoreFrame stops a word being flagged for the rest of this run.
 
-        The three spelling frames ride the WORKSPACE channel rather than the document
-        one because none of them is about a document: a word accepted while reading
-        one note is accepted in every note open beside it, and the toggle is one
-        answer for the whole app. Each is fire-and-forget and unanswered — the visible
-        effect is the marks that follow, pushed per document on the channel that owns
-        it.
+        Both spelling verbs ride the WORKSPACE channel rather than the document one
+        because neither is about a document: a word accepted while reading one note is
+        accepted in every note open beside it. Each is fire-and-forget and unanswered
+        — the visible effect is the marks that follow, pushed per document on the
+        channel that owns it.
+
+        They are the FEATURE'S OWN verbs and not its lifecycle: a judgement about one
+        word does not switch spelling on or off, which is what the feature-control
+        frame is for.
       properties:
         type:
           type: string
@@ -1902,30 +1972,35 @@ components:
       required:
         - type
         - word
-    ProtocolSpellMark:
+    ProtocolTextMarkWire:
       type: object
       description: |-
-        SpellMark is one flagged run of text inside a block, as it travels on the
-        wire. It carries no block id — the frame that holds it names the block once.
+        TextMarkWire is one marked run of text inside a block, as it travels on the
+        wire. It carries no block id and no feature — the frame that holds it names
+        both once.
 
-        It anchors by Quote plus Occurrence, never by offsets: the client resolves
-        occurrence N of the quote in the text it currently holds and marks it WHERE IT
-        NOW SITS. Start and End are byte offsets into the segment as the server read
-        it, and any edit since displaces them, so they are a fast-path hint. A quote
-        that no longer resolves at its occurrence is dropped rather than guessed at.
+        It anchors by Quote plus Occurrence at a declared Grain, never by offsets: the
+        client resolves occurrence N of the quote in the text it currently holds and
+        marks it WHERE IT NOW SITS. Start and End are byte offsets into the segment's
+        READING — what the block's kind hands out as its text — and any edit since
+        displaces them, so they are a fast-path hint. A quote that no longer resolves
+        at its occurrence is dropped rather than guessed at.
       properties:
         locator:
           type: string
-          description: which part of the block's payload this came from; opaque — only the block's processor reads it
+          description: everything the block's processor needs to place a write back into the text this was read from; an arbitrary per-kind payload, opaque everywhere else — carry it back unread
         quote:
           type: string
-          description: the exact text flagged; the anchor, not a label
+          description: the exact text marked; the anchor, not a label
         occurrence:
           type: integer
           description: 0-based index among identical quotes in the same segment
+        grain:
+          type: string
+          description: 'how the occurrence is counted — word: among identical word runs; literal: among non-overlapping left-to-right literal matches. Declared, never inferred, and a mark carrying neither word resolves nowhere'
         start:
           type: integer
-          description: byte offset hint into the segment as the server read it
+          description: byte offset hint into the segment's reading as the server made it
         end:
           type: integer
           description: byte offset hint, exclusive
@@ -1941,33 +2016,44 @@ components:
         - locator
         - quote
         - occurrence
+        - grain
         - start
         - end
         - class
         - suggestions
-    ProtocolSpellMarksFrame:
+    ProtocolTextMarksFrame:
       type: object
       description: |-
-        SpellMarksFrame is the server-initiated render-back carrying ONE block's
-        complete mark set. It is not an answer to anything: the server checks a
-        document when it opens and whenever its text settles, and pushes to the
-        document's registered owner.
+        TextMarksFrame is the server-initiated render-back carrying ONE feature's
+        complete mark set for ONE block. It is not an answer to anything: the server
+        inspects a document when it opens and whenever its text settles, and pushes to
+        the document's registered owner.
 
-        Marks REPLACE what the client holds for that block. An empty array is
-        therefore the clear — the frame a corrected block gets — and not a no-op.
+        Marks REPLACE what the client holds for that (feature, block) pair. An empty
+        array is therefore the clear — the frame a corrected block gets — and not a
+        no-op. Two features flagging the same block are two independent sets, so
+        neither can clear or overwrite the other.
+
+        Feature is PRESENTATION AND BOOKKEEPING: it says who found this, so a client
+        can draw each producer's findings its own way. It never travels back — a
+        text-replace names an anchor and nothing about who made it.
       properties:
         type:
           type: string
+        feature:
+          type: string
+          description: which producer these are from; the client keys and draws marks per feature
         blockId:
           type: string
           description: the block whose whole mark set this is
         marks:
           type: array
-          description: never null — an empty array clears this block's marks
+          description: never null — an empty array clears this feature's marks on this block
           items:
-            $ref: '#/components/schemas/ProtocolSpellMark'
+            $ref: '#/components/schemas/ProtocolTextMarkWire'
       required:
         - type
+        - feature
         - blockId
         - marks
     ProtocolTextReplaceAckFrame:
@@ -1987,7 +2073,7 @@ components:
           type: string
         outcome:
           type: string
-          description: ok — applied; stale — the quote no longer resolves at its occurrence and nothing changed; error — the request could not be run
+          description: ok — applied; stale — the anchor no longer resolves and nothing changed; error — the request named nothing that could be written to
         error:
           type: string
           description: present only when outcome is error
@@ -2002,11 +2088,12 @@ components:
         It is the write the marks made possible: the client points at text it was
         shown and says what belongs there instead.
 
-        The anchor is Quote plus Occurrence, and the server resolves it in the
-        block's CURRENT text — so an edit that displaced the run since the client saw
-        it costs nothing, and a run that has been typed over is not written to at
-        all. Start and End are the offsets the client last saw: a hint the server may
-        use to narrow a search, never a range it writes to on the client's word.
+        The anchor is Quote plus Occurrence at a declared Grain, and the server
+        resolves it in the block's CURRENT text — so an edit that displaced the run
+        since the client saw it costs nothing, and a run that has been typed over is
+        not written to at all. Start and End are the offsets the client last saw: a
+        hint the server may use to narrow a search, never a range it writes to on the
+        client's word.
       properties:
         type:
           type: string
@@ -2017,16 +2104,19 @@ components:
           description: the block whose text is being written
         locator:
           type: string
-          description: which part of the block's payload, exactly as the mark carried it; opaque — only the block's processor reads it
+          description: exactly what the mark carried, unread; an arbitrary per-kind payload only the block's processor interprets
         quote:
           type: string
           description: the exact text to replace; the anchor, not a label
         occurrence:
           type: integer
           description: 0-based index among identical quotes in the same segment
+        grain:
+          type: string
+          description: 'how the occurrence is counted — word: among identical word runs; literal: among non-overlapping left-to-right literal matches. Carried from the anchor unread; a request naming neither word is refused rather than guessed at'
         start:
           type: integer
-          description: byte offset hint into the segment as the client last saw it
+          description: byte offset hint into the segment's reading as the client last saw it
         end:
           type: integer
           description: byte offset hint, exclusive
@@ -2040,6 +2130,7 @@ components:
         - locator
         - quote
         - occurrence
+        - grain
         - start
         - end
         - replacement

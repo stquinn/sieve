@@ -739,10 +739,23 @@ type BlockParent interface {
 // caller asks the registry (TextBearerFor) and a kind that answers takes part.
 //
 // NormalisedText returns the block's text as segments, in the processor's own
-// order. Each segment's Text must be the STORED bytes verbatim: the offsets and
-// quotes a consumer derives are anchored in those bytes, so trimming, unescaping
-// or re-rendering on the way out silently invalidates every mark made from them.
-// A processor mints its own locators and is the only thing that reads one back.
+// order. Each segment's Text is THE KIND'S OWN READING of that part of its
+// payload — whatever the kind considers its text for the purpose of searching,
+// checking and anchoring — and every offset and quote a consumer derives is
+// meaningful against that reading and nothing else. A kind whose payload is
+// already plain text reads it as itself; a kind whose payload carries syntax
+// may read past it. What the substrate requires is only that a kind reads the
+// same way twice, and that a span of its reading is one it can find again.
+//
+// EACH SEGMENT'S LOCATOR IS MINTED HERE AND MUST BE SELF-SUFFICIENT — an
+// obligation the minting kind meets IN ITS OWN SHAPE, not a format this states.
+// It is an arbitrary per-kind payload, and what it must carry is whatever that
+// kind needs at the write to answer two questions without asking anyone: which
+// part of the block this reading came from, and whether the reading is still
+// the one the anchor was made against. A kind whose text can move under an
+// anchor owes the second answer something concrete; a kind whose text cannot
+// owes nothing. Everything between — an inspector, the engine, the wire, the client —
+// copies the locator verbatim, and only the processor that minted it reads it.
 type TextBearer interface {
 	NormalisedText(blk *SieveBlock) []domain.TextSegment
 }
@@ -756,35 +769,60 @@ func TextBearerFor(kind string) (TextBearer, bool) {
 }
 
 // ErrTextStale is what UpdateText returns when the run it was asked to replace
-// is no longer there: the quote does not occur in the located segment as many
-// times as the requested occurrence demands. It is a normal outcome, not a
-// fault — the text moved on between the read that produced the anchor and the
-// write that acts on it — and the block is left exactly as it was. Callers
-// test for it with errors.Is.
-var ErrTextStale = errors.New("text: the quote no longer resolves at its occurrence")
+// is no longer there: the anchor named text that the payload has since moved
+// on from. It is a normal outcome, not a fault — the read that produced the
+// anchor and the write that acts on it are separated by however long a client
+// took — and the block is left exactly as it was. Callers test for it with
+// errors.Is.
+var ErrTextStale = errors.New("text: the anchor no longer resolves")
+
+// ErrTextMalformed is what UpdateText returns when the request itself is
+// unanswerable, whatever the text says: a locator this processor never minted,
+// an anchor that declares no grain, no block to write to. It is the strict
+// opposite of ErrTextStale — stale invites the caller to re-read and try again,
+// malformed says nothing about the text could ever make this request resolve —
+// and the two must never be confused, because a client answers them
+// differently.
+var ErrTextMalformed = errors.New("text: the request names nothing this processor can write to")
 
 // TextUpdater is the optional capability a processor implements when text a
 // TextBearer handed out can be written back. Implementing it IS the
 // participation predicate, exactly as TextBearer's is: a caller asks the
 // registry (TextUpdaterFor) rather than naming the kinds that accept edits.
 //
-// UpdateText replaces one anchored run of blk's text with replacement, writing
-// the result into blk's payload. locator names the segment, and only the
-// processor that minted it may read it.
+// UpdateText replaces anchored runs of blk's text with their replacements,
+// writing the result into blk's payload. Each edit's Locator names where in the
+// payload it lands, and only the processor that minted that locator may read it.
 //
-// THE ANCHOR IS QUOTE PLUS OCCURRENCE, AND IT IS RESOLVED IN THE SEGMENT'S
-// CURRENT TEXT. A processor finds occurrence N of quote where it NOW sits and
-// writes there, so an edit that displaced it since the anchor was taken costs
-// nothing; if occurrence N is not there at all, the processor returns
-// ErrTextStale and changes NOTHING. start and end are the offsets the requester
-// last saw: a hint a processor may use to narrow a search in a large payload,
-// never a range it may write to on their word alone.
+// IT IS A BATCH, AND ALL OR NOTHING. Every edit is resolved against ONE reading
+// of the payload as it now stands, and only then is anything written — because
+// the first write moves the text every later anchor was made against, so
+// resolving as it went would spend anchors against a payload no reader ever
+// saw. An edit that does not resolve fails the WHOLE batch and NOTHING is
+// written. Replacing one run is the batch of one; an empty batch is a no-op.
 //
-// A processor expresses the edit by WRITING payload values on blk. Its caller
+// THE ANCHOR IS THE QUOTE AT ITS OCCURRENCE, COUNTED AT THE EDIT'S GRAIN, and
+// it is resolved in the segment's CURRENT reading rather than at the offsets it
+// carries: domain.GrainWord counts among identical word runs and
+// domain.GrainLiteral among non-overlapping literal matches, while Start and
+// End are what the requester last saw — a hint a processor may use to narrow a
+// search, never a range it may write to on their word alone. A run that has
+// been typed over is not written to at all. A processor DISPATCHES on the grain
+// rather than choosing, because it is declared by whoever minted the anchor and
+// is the only statement of how the occurrence was counted: an edit carrying
+// none, or a grain the processor does not know, is ErrTextMalformed and never
+// ErrTextStale.
+//
+// THE LOCATOR IS WHAT SAYS THE READING IS STILL THE ONE THE ANCHOR WAS MADE
+// AGAINST. A processor checks it before resolving anything, and a locator whose
+// payload has moved on since it was minted is ErrTextStale — the reading it
+// named is gone, and so is every offset and occurrence taken from it.
+//
+// A processor expresses the batch by WRITING payload values on blk. Its caller
 // merges the resulting attrs, so a value that is not written is left as it was
 // and a key cannot be removed this way.
 type TextUpdater interface {
-	UpdateText(blk *SieveBlock, locator string, start, end int, quote string, occurrence int, replacement string) error
+	UpdateText(blk *SieveBlock, edits []domain.TextEdit) error
 }
 
 // TextUpdaterFor returns kind's processor as a TextUpdater, or false when the

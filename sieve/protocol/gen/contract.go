@@ -40,6 +40,7 @@ type Contract struct {
 	Frames    []protocol.FrameEntry
 	Endpoints []protocol.EndpointEntry
 	Topics    []protocol.Topic
+	Features  []string
 	Routes    []Route
 	Commands  []CommandWord
 	// AssetURLPrefix is the served-asset route prefix the store mints. The JS
@@ -65,6 +66,7 @@ func NewContract() (Contract, error) {
 		Frames:         registry.Frames(),
 		Endpoints:      registry.Endpoints(),
 		Topics:         registry.Topics(),
+		Features:       registry.Features(),
 		AssetURLPrefix: store.AssetURLPrefix,
 		WSSubprotocol:  protocol.WSSubprotocol,
 		DeclaredIn:     reflect.TypeOf(protocol.PingFrame{}).PkgPath(),

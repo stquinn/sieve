@@ -5,7 +5,7 @@
 // (its `apply()` dispatch and its per-block REPLACE/CLEAR state, exercised the
 // way mention-decoration.test.js exercises MentionDecorations: a small fake
 // vendor bag standing in for Plugin/PluginKey/Decoration/DecorationSet), the
-// read back out of it — which marks a coordinate sits on — and the verb a reader
+// read back out of it — which marks a selection sits on — and the verb a reader
 // who picked a suggestion fires.
 //
 // NEW FILE because both units are new. It is one file rather than two for the
@@ -20,8 +20,10 @@
 
 import { describe, it, expect, vi } from 'vitest'
 import { Schema } from '@tiptap/pm/model'
-import { QuoteAnchor } from '../src/static/renderers/quote-anchor.js'
-import { SpellDecorations, SPELL_MARK_CLASS } from '../src/static/lens/document-editor/surfaces/spell-decoration.js'
+import { QuoteAnchor, TextGrain } from '../src/static/renderers/quote-anchor.js'
+import { SpellDecorations, SPELL_MARK_CLASS, SPELL_FEATURE } from '../src/static/lens/document-editor/surfaces/spell-decoration.js'
+import { FindDecorations, FIND_MARK_CLASS, FIND_CURRENT_CLASS, FIND_SETTLE_CLASS, FIND_FEATURE } from '../src/static/lens/document-editor/surfaces/find-decoration.js'
+import { Feature } from '../src/static/generated/protocol.js'
 import { AbstractEditor } from '../src/static/lens/abstract-editor.js'
 import { AbstractSurface } from '../src/static/lens/document-editor/surfaces/abstract-surface.js'
 import { EditorMode } from '../src/static/lens/document-editor/editor-mode.js'
@@ -32,7 +34,7 @@ import { EditorMode } from '../src/static/lens/document-editor/editor-mode.js'
 // Nothing here mounts a real surface, so inert mocks satisfy the imports (the
 // lens-capabilities.test.js pattern).
 vi.mock('../src/static/lens/extensions.js', () => ({
-  Search: {}, SelectionHighlight: {}, HighlightMark: {},
+  SelectionHighlight: {}, HighlightMark: {},
   AiShortcuts: { configure: () => ({}) },
   buildAiContext: vi.fn(), applyTargetHighlight: vi.fn(),
 }))
@@ -41,6 +43,15 @@ vi.mock('../src/static/lens/document-editor/block-chrome.js', () => ({
 }))
 vi.mock('../src/static/lens/document-editor/surfaces/ai-target-decoration.js', () => ({ AiTargetDecoration: {} }))
 vi.mock('../src/static/lens/document-editor/surfaces/prose-block.js', () => ({ BlockId: {} }))
+
+// The lens cannot import the generated wire module (the firewall), so it states
+// the feature word it draws for itself — and a test CAN import both, which is
+// what keeps the two halves of that word from drifting apart in silence.
+describe('the feature this lens draws', () => {
+  it('is the word the wire pushes spelling marks under', () => {
+    expect(SPELL_FEATURE).toBe(Feature.SPELL_CHECK)
+  })
+})
 
 describe('QuoteAnchor.words — the runs an occurrence counts over', () => {
   /** @type {Array<[string, string, string[]]>} */
@@ -76,7 +87,7 @@ describe('QuoteAnchor.words — the runs an occurrence counts over', () => {
 
 describe('QuoteAnchor.spansFor — placing marks by name', () => {
   /** @param {string} quote @param {number} [occurrence] */
-  const mark = (quote, occurrence) => ({ quote: quote, occurrence: occurrence || 0 })
+  const mark = (quote, occurrence) => ({ quote: quote, occurrence: occurrence || 0, grain: TextGrain.WORD })
 
   /** The text each resolved span names, so an assertion reads as what got placed.
    *  @param {string} text @param {Array<any>} marks */
@@ -117,11 +128,78 @@ describe('QuoteAnchor.spansFor — placing marks by name', () => {
 
   it('answers nothing for an empty mark set and for a quote-less mark', () => {
     expect(QuoteAnchor.spansFor('teh cat', [])).toEqual([])
-    expect(QuoteAnchor.spansFor('teh cat', [{ occurrence: 0 }])).toEqual([])
+    expect(QuoteAnchor.spansFor('teh cat', [{ occurrence: 0, grain: TextGrain.WORD }])).toEqual([])
   })
 
   it('resolves the apostrophe form the anchor was minted as', () => {
     expect(placed("it isn't so", [mark("isn't")])).toEqual(["isn't"])
+  })
+})
+
+// The client half of the grain contract, and it must count what Go counts: the
+// rows below are the ones sieve/domain/text_segment_test.go drives, asserted as
+// the offset each grain resolves to (-1 meaning "this grain does not resolve
+// it"). A resolver that quietly stood in for the other one disagrees with the
+// server about which characters a mark names.
+//
+// THE OFFSETS ARE NOT THE SAME NUMBERS ON BOTH SIDES and are not meant to be:
+// Go counts bytes and JavaScript counts UTF-16 units, so the multi-byte rows
+// resolve to different integers here than there. What must agree is the
+// ORDINAL — which match a given occurrence names — because that is what
+// crosses the wire. The rows are the same texts asked the same questions.
+describe('QuoteAnchor.spansFor — the grain says how the occurrence is counted', () => {
+  /** @param {string} quote @param {number} occurrence @param {string} grain */
+  const at = (quote, occurrence, grain) => ({ quote: quote, occurrence: occurrence, grain: grain })
+  /** The offsets a grain resolves to, so an unresolved mark reads as [].
+   *  @param {string} text @param {string} quote @param {number} occurrence @param {string} grain */
+  const starts = (text, quote, occurrence, grain) =>
+    QuoteAnchor.spansFor(text, [at(quote, occurrence, grain)]).map((hit) => hit.start)
+
+  /** name, text, quote, occurrence, where the word grain lands, where the literal grain lands
+   *  @type {Array<[string, string, string, number, number, number]>} */
+  const cases = [
+    ['a whole word both grains agree on', 'teh cat sat', 'teh', 0, 0, 0],
+    ['`the` in `the other there` is ONE word run and THREE literal matches: the first', 'the other there', 'the', 0, 0, 0],
+    ['…the second, inside `other`, which is no word run', 'the other there', 'the', 1, -1, 5],
+    ['…the third, inside `there`', 'the other there', 'the', 2, -1, 10],
+    ['an occurrence past the last match resolves in neither grain', 'the other there', 'the', 3, -1, -1],
+    ['literal matches do not overlap: `aa` in `aaaa` is the one at 0…', 'aaaa', 'aa', 0, -1, 0],
+    ['…and the one at 2, the overlapping match at 1 having been skipped', 'aaaa', 'aa', 1, -1, 2],
+    ['…and there is no third', 'aaaa', 'aa', 2, -1, -1],
+    ['a single letter inside a word is literal only', 'FIVE', 'V', 0, -1, 2],
+    // The reading the server numbers this in holds the address too — a surface
+    // draws it — so both sides count through it and land on the same match.
+    ['an address is counted through, not over', 'a https://x.example/a a', 'a', 1, 20, 14],
+    ['a run crossing a word boundary is literal only', 'get along', 'et alon', 0, -1, 1],
+    ['a multi-byte letter is a literal match like any other', 'café au café', 'é', 1, -1, 11],
+    ['a word run containing a multi-byte letter is still one run', 'café au café', 'café', 1, 8, 8],
+    ['a quote containing a non-BMP character counts as one match', 'a 🎉 b 🎉 c', '🎉', 1, -1, 7],
+    ['a quote spanning a non-BMP character resolves at its own offsets', 'say 🎉 now', 'y 🎉 n', 0, -1, 2],
+    ['an empty quote names nothing in either grain', 'the cat', '', 0, -1, -1],
+    ['a negative occurrence names nothing in either grain', 'the cat', 'the', -1, -1, -1],
+  ]
+
+  for (const [name, text, quote, occurrence, wordAt, literalAt] of cases) {
+    it(name, () => {
+      expect(starts(text, quote, occurrence, TextGrain.WORD)).toEqual(wordAt < 0 ? [] : [wordAt])
+      expect(starts(text, quote, occurrence, TextGrain.LITERAL)).toEqual(literalAt < 0 ? [] : [literalAt])
+    })
+  }
+
+  it('names the WHOLE quote a literal match covers, not the word around it', () => {
+    expect(QuoteAnchor.spansFor('get along', [at('et alon', 0, TextGrain.LITERAL)]))
+      .toEqual([{ mark: at('et alon', 0, TextGrain.LITERAL), start: 1, end: 8 }])
+  })
+
+  it('DROPS a mark whose grain nothing counts in — an unresolved mark is absent, never thrown', () => {
+    expect(QuoteAnchor.spansFor('teh cat', [at('teh', 0, 'sentence')])).toEqual([])
+    expect(QuoteAnchor.spansFor('teh cat', [at('teh', 0, '')])).toEqual([])
+    expect(QuoteAnchor.spansFor('teh cat', [/** @type {any} */ ({ quote: 'teh', occurrence: 0 })])).toEqual([])
+  })
+
+  it('drops only the grain-less mark, keeping the marks either side of it', () => {
+    const marks = [at('teh', 0, TextGrain.WORD), at('cat', 0, 'sentence'), at('sat', 0, TextGrain.LITERAL)]
+    expect(QuoteAnchor.spansFor('teh cat sat', marks).map((hit) => hit.mark.quote)).toEqual(['teh', 'sat'])
   })
 })
 
@@ -148,7 +226,8 @@ const para = (id, text) => n.paragraph.create({ id: id }, text ? t(text) : null)
 /** @param {...any} blocks */
 const doc = (...blocks) => n.doc.create(null, blocks)
 /** @param {string} quote @param {number} [occurrence] */
-const mark = (quote, occurrence) => ({ quote: quote, occurrence: occurrence || 0, locator: 'content', class: 'prose' })
+const mark = (quote, occurrence) =>
+  ({ quote: quote, occurrence: occurrence || 0, grain: TextGrain.WORD, locator: 'content', class: 'prose' })
 /** @param {Array<[string, Array<any>]>} entries */
 const table = (entries) => new Map(entries)
 /** The text each range names. @param {any} d @param {Array<{from: number, to: number}>} ranges */
@@ -253,7 +332,7 @@ describe('SpellDecorations.hits — the block and the mark each range came from'
 // per-block REPLACE/CLEAR semantic and rebuilds decorations from the walk
 // above.
 
-function vendor() {
+function vendor(slot = 'spell') {
   const T = {
     Extension: { create: (/** @type {any} */ cfg) => cfg },
     Plugin: function (/** @type {any} */ cfg) { Object.assign(this, cfg) },
@@ -261,7 +340,7 @@ function vendor() {
     // one reads the slot a test puts it in, which is the same relationship.
     PluginKey: function (/** @type {any} */ name) {
       this.name = name
-      this.getState = (/** @type {any} */ state) => state && state.spell
+      this.getState = (/** @type {any} */ state) => state && state[slot]
     },
     Decoration: {
       inline: (/** @type {number} */ from, /** @type {number} */ to, /** @type {any} */ attrs) =>
@@ -287,7 +366,7 @@ describe('SpellDecorations — the plugin', () => {
     const { T } = vendor()
     const spell = new SpellDecorations(T)
     const plugin = /** @type {any} */ (spell.extension).addProseMirrorPlugins()[0]
-    expect(plugin.state.init()).toEqual({ marks: new Map(), hits: [], decos: 'EMPTY' })
+    expect(plugin.state.init()).toEqual({ marks: new Map(), hits: [], cursor: null, decos: 'EMPTY' })
   })
 
   it('a push with marks decorates the quote it resolves', () => {
@@ -373,23 +452,36 @@ describe('SpellDecorations#apply — pushing one block\'s marks to the view', ()
 })
 
 // ── What the selection sits on ───────────────────────────────────────────────
-// The read half: the same held marks, asked about a coordinate instead of drawn.
+// The read half: the same held marks, asked about a selection instead of drawn.
+// It belongs to the BASE — every producer's marks are read the same way, and the
+// advertisement carries all of them at once — so the rows below run against BOTH
+// concrete sets, and each mark comes back stamped with the feature that drew it.
+//
 // `teh` occupies [3, 6) of `a teh word`, so 3..6 is inside the word (its trailing
 // edge included) and 2 and 7 are the characters either side of it.
 
-describe('SpellDecorations#marksAt — the marks a coordinate sits on', () => {
-  /** One surface that has been pushed `marks` for `blockId`, and the editor state
+describe('TextMarkDecorations#marksAt — the marks a selection sits on', () => {
+  /** One set of `make`'s kind, pushed `marks` for `blockId`, and the editor state
    *  its plugin then holds — built by the plugin's own `apply`, so what `marksAt`
    *  reads is what the surface really resolved.
-   *  @param {any} d @param {string} blockId @param {Array<any>} marks */
-  const pushedInto = (d, blockId, marks) => {
-    const { T } = vendor()
-    const spell = new SpellDecorations(T)
-    const init = /** @type {any} */ (spell.extension).addProseMirrorPlugins()[0].state.init()
-    return { spell: spell, state: { doc: d, spell: pushed(spell, init, d, blockId, marks) } }
+   *  @param {(T: any) => any} make @param {any} d @param {string} blockId @param {Array<any>} marks */
+  const pushedInto = (make, d, blockId, marks) => {
+    const { T } = vendor('slot')
+    const set = make(T)
+    const init = /** @type {any} */ (set.extension).addProseMirrorPlugins()[0].state.init()
+    return { set: set, state: { doc: d, slot: pushed(set, init, d, blockId, marks) } }
   }
 
-  const oneMarkedWord = () => pushedInto(doc(para('b1', 'a teh word')), 'b1', [mark('teh')])
+  /** Both concrete sets: neither overrides the read, and the stamp differs.
+   *  @type {Array<[string, (T: any) => any, string]>} */
+  const sets = [
+    ['spelling', (/** @type {any} */ T) => new SpellDecorations(T), SPELL_FEATURE],
+    ['find', (/** @type {any} */ T) => new FindDecorations(T), FIND_FEATURE],
+  ]
+  const aSpellSet = sets[0][1]
+
+  /** @param {(T: any) => any} make */
+  const oneMarkedWord = (make) => pushedInto(make, doc(para('b1', 'a teh word')), 'b1', [mark('teh')])
 
   /** @type {Array<[string, number, number, string[]]>} */
   const cases = [
@@ -404,37 +496,39 @@ describe('SpellDecorations#marksAt — the marks a coordinate sits on', () => {
     ['a BACKWARDS selection reads the same as its forward twin', 4, 1, ['teh']],
   ]
 
-  for (const [name, from, to, quotes] of cases) {
-    it(name, () => {
-      const { spell, state } = oneMarkedWord()
-      expect(spell.marksAt(state, from, to).map((m) => m.quote)).toEqual(quotes)
+  for (const [setName, make, feature] of sets) {
+    for (const [name, from, to, quotes] of cases) {
+      it(setName + ': ' + name, () => {
+        const { set, state } = oneMarkedWord(make)
+        expect(set.marksAt(state, from, to).map((/** @type {any} */ m) => m.quote)).toEqual(quotes)
+      })
+    }
+
+    it(setName + ': hands back the WHOLE mark, with its block and the feature that drew it', () => {
+      const { set, state } = oneMarkedWord(make)
+      expect(set.marksAt(state, 4, 4)).toEqual([
+        { blockId: 'b1', feature: feature, quote: 'teh', occurrence: 0, grain: TextGrain.WORD, locator: 'content', class: 'prose' },
+      ])
     })
   }
 
-  it('hands back the WHOLE mark, with the block it belongs to on it', () => {
-    const { spell, state } = oneMarkedWord()
-    expect(spell.marksAt(state, 4, 4)).toEqual([
-      { blockId: 'b1', quote: 'teh', occurrence: 0, locator: 'content', class: 'prose' },
-    ])
-  })
-
-  it('answers only the mark under the coordinate, not the block\'s others', () => {
-    const { spell, state } = pushedInto(doc(para('b1', 'teh cat adn dog')), 'b1', [mark('teh'), mark('adn')])
-    expect(spell.marksAt(state, 2, 2).map((m) => m.quote)).toEqual(['teh'])
-    expect(spell.marksAt(state, 10, 10).map((m) => m.quote)).toEqual(['adn'])
+  it('answers only the mark under the selection, not the block\'s others', () => {
+    const { set, state } = pushedInto(aSpellSet, doc(para('b1', 'teh cat adn dog')), 'b1', [mark('teh'), mark('adn')])
+    expect(set.marksAt(state, 2, 2).map((/** @type {any} */ m) => m.quote)).toEqual(['teh'])
+    expect(set.marksAt(state, 10, 10).map((/** @type {any} */ m) => m.quote)).toEqual(['adn'])
   })
 
   it('answers nothing where nothing has been pushed, and without a state at all', () => {
-    const { spell, state } = pushedInto(doc(para('b1', 'a teh word')), 'b1', [])
-    expect(spell.marksAt(state, 4, 4)).toEqual([])
-    expect(spell.marksAt({ doc: state.doc }, 4, 4)).toEqual([])
-    expect(spell.marksAt(null, 4, 4)).toEqual([])
+    const { set, state } = pushedInto(aSpellSet, doc(para('b1', 'a teh word')), 'b1', [])
+    expect(set.marksAt(state, 4, 4)).toEqual([])
+    expect(set.marksAt({ doc: state.doc }, 4, 4)).toEqual([])
+    expect(set.marksAt(null, 4, 4)).toEqual([])
   })
 
   it('answers nothing for a mark the block no longer bears, though it is still held', () => {
-    const { spell, state } = pushedInto(doc(para('b1', 'a the word')), 'b1', [mark('teh')])
-    expect(state.spell.marks.get('b1')).toEqual([mark('teh')])
-    expect(spell.marksAt(state, 4, 4)).toEqual([])
+    const { set, state } = pushedInto(aSpellSet, doc(para('b1', 'a the word')), 'b1', [mark('teh')])
+    expect(state.slot.marks.get('b1')).toEqual([mark('teh')])
+    expect(set.marksAt(state, 4, 4)).toEqual([])
   })
 })
 
@@ -475,7 +569,7 @@ describe('AbstractEditor#replaceText — asking for a correction', () => {
     return { lens, provider, log }
   }
 
-  const aMark = { blockId: 'b1', quote: 'helllo', occurrence: 0, start: 2, end: 8 }
+  const aMark = { blockId: 'b1', quote: 'helllo', occurrence: 0, grain: TextGrain.WORD, start: 2, end: 8 }
 
   it('FLUSHES the surface before dispatching — typing the observer still holds is not lost to the echo', () => {
     const { lens, provider, log } = mounted()
@@ -495,5 +589,158 @@ describe('AbstractEditor#replaceText — asking for a correction', () => {
     const { lens, log } = mounted(false)
     lens.replaceText(aMark, 'hello')
     expect(log).toEqual([])
+  })
+})
+
+// ── The find decoration set ──────────────────────────────────────────────────
+// The same mark machinery drawn as a highlight instead of a squiggle, plus the
+// one thing find keeps that spelling does not: WHERE THE READER STANDS. That
+// index is the lens's own — nothing pushed it and nothing is told it — so what
+// the tests below pin is that it survives a repaint, wraps at both ends, and
+// stays inside a set that shrank under it.
+
+describe('the feature the find lens draws', () => {
+  it('is the word the wire pushes find marks under', () => {
+    expect(FIND_FEATURE).toBe(Feature.FIND)
+  })
+})
+
+describe('FindDecorations — highlights and the current match', () => {
+  /** @param {string} quote @param {number} [occurrence] */
+  const hit = (quote, occurrence) => ({ locator: 'content', quote: quote, occurrence: occurrence || 0, grain: TextGrain.LITERAL, class: 'prose' })
+
+  /**
+   * A find set with one block's marks pushed into it, over a fake view whose
+   * dispatch runs the plugin's own `apply` — so stepping goes through exactly
+   * the transaction the surface would send.
+   * @param {any} d @param {string} blockId @param {Array<any>} marks
+   */
+  function pushedFind(d, blockId, marks) {
+    const { T } = vendor('find')
+    const find = new FindDecorations(T)
+    const plugin = /** @type {any} */ (find.extension).addProseMirrorPlugins()[0]
+    let slot = plugin.state.init()
+    // What the surface has DRAWN for the current match, which is what a scroll
+    // goes to: the decoration itself, reachable from the view's own DOM — and
+    // the pane around it, because a scroll is written on the SCROLLER.
+    const drawn = document.createElement('span')
+    drawn.className = FIND_MARK_CLASS + ' ' + FIND_CURRENT_CLASS
+    drawn.getBoundingClientRect = () => /** @type {any} */ ({ top: 400, bottom: 420, height: 20 })
+    const dom = document.createElement('div')
+    dom.appendChild(drawn)
+    const pane = document.createElement('div')
+    pane.style.overflowY = 'auto'
+    Object.defineProperty(pane, 'scrollHeight', { value: 2000 })
+    Object.defineProperty(pane, 'clientHeight', { value: 200 })
+    pane.getBoundingClientRect = () => /** @type {any} */ ({ top: 0, bottom: 200, height: 200 })
+    pane.scrollTop = 0
+    pane.scrollLeft = 64
+    pane.scrollTo = vi.fn()
+    pane.appendChild(dom)
+    // On the page: what scrolls is decided from COMPUTED style, which a detached
+    // element has none of.
+    document.body.appendChild(pane)
+    const view = {
+      dom: dom,
+      get state() { return { doc: d, find: slot, tr: { setMeta: (/** @type {any} */ _k, /** @type {any} */ m) => ({ meta: m }) } } },
+      dispatch: (/** @type {any} */ tr) => {
+        slot = plugin.state.apply({ getMeta: () => tr.meta, docChanged: false }, slot, null, { doc: d })
+      },
+      domAtPos: () => ({ node: null }),
+      nodeDOM: () => null,
+    }
+    find.apply(view, blockId, marks)
+    return { find, view, pane, decos: () => slot.decos }
+  }
+
+  const threeMatches = () => pushedFind(doc(para('b1', 'the other there')), 'b1', [hit('the', 0), hit('the', 1), hit('the', 2)])
+
+  /** The classes each match carries, in document order. @param {any[]} decos */
+  const tiers = (decos) => decos.map((/** @type {any} */ d) => d.attrs.class)
+  const HIGHLIGHTED = FIND_MARK_CLASS
+  const CURRENT = FIND_MARK_CLASS + ' ' + FIND_CURRENT_CLASS
+  const ARRIVED = CURRENT + ' ' + FIND_SETTLE_CLASS
+
+  it('highlights every match and emphasises the one the reader stands on', () => {
+    const { find, view, decos } = threeMatches()
+    find.step(view, 1)
+    expect(tiers(decos())).toEqual([HIGHLIGHTED, ARRIVED, HIGHLIGHTED])
+  })
+
+  it('SETTLES the first match a set arrives with — the reader arrives with it', () => {
+    const { decos } = threeMatches()
+    expect(tiers(decos())).toEqual([ARRIVED, HIGHLIGHTED, HIGHLIGHTED])
+  })
+
+  it('does NOT settle a repaint that moved nobody — the pulse is one-shot, not a state', () => {
+    const { find, view, decos } = threeMatches()
+    find.step(view, 1)
+    find.apply(view, 'b1', [hit('the', 0), hit('the', 1), hit('the', 2)])
+    expect(tiers(decos())).toEqual([HIGHLIGHTED, CURRENT, HIGHLIGHTED])
+  })
+
+  it('scrolls the PANE to what it drew, and only downwards', () => {
+    const { find, view, pane } = threeMatches()
+    find.step(view, 1)
+    // The drawn match sits 400 below a 200-tall pane's top, so centring it is
+    // 400 - (200 - 20) / 2. The sideways place comes back as it was found: a run
+    // of replaces is a run of these, and the reader put it there.
+    expect(pane.scrollTo).toHaveBeenCalledWith({ top: 310, left: 64, behavior: 'smooth' })
+  })
+
+  it('counts as a reader counts: 1-based, and nothing of nothing when there is no match', () => {
+    const { find, view } = threeMatches()
+    expect(find.position(view.state)).toEqual({ current: 1, total: 3 })
+    const empty = pushedFind(doc(para('b1', 'the other there')), 'b1', [])
+    expect(empty.find.position(empty.view.state)).toEqual({ current: 0, total: 0 })
+  })
+
+  /** @type {Array<[string, number[], {current: number, total: number}]>} */
+  const walks = [
+    ['forward', [1], { current: 2, total: 3 }],
+    ['forward to the end', [1, 1], { current: 3, total: 3 }],
+    ['forward past the end wraps to the first', [1, 1, 1], { current: 1, total: 3 }],
+    ['backward from the first wraps to the last', [-1], { current: 3, total: 3 }],
+    ['backward and forward again returns where it started', [-1, 1], { current: 1, total: 3 }],
+  ]
+
+  for (const [name, steps, want] of walks) {
+    it('walking ' + name, () => {
+      const { find, view } = threeMatches()
+      let at = { current: 0, total: 0 }
+      for (const delta of steps) at = find.step(view, delta)
+      expect(at).toEqual(want)
+      expect(find.position(view.state)).toEqual(want)
+    })
+  }
+
+  it('hands back the WHOLE current mark, with the block it belongs to on it', () => {
+    const { find, view } = threeMatches()
+    find.step(view, 1)
+    expect(find.current(view.state)).toEqual(Object.assign({ blockId: 'b1' }, hit('the', 1)))
+    expect(find.current({ doc: view.state.doc })).toBeNull()
+  })
+
+  it('keeps where the reader stood across a fresh push of the same matches', () => {
+    const { find, view } = threeMatches()
+    find.step(view, 1)
+    find.apply(view, 'b1', [hit('the', 0), hit('the', 1), hit('the', 2)])
+    expect(find.position(view.state)).toEqual({ current: 2, total: 3 })
+  })
+
+  it('lands the reader inside a set that shrank under them', () => {
+    const { find, view } = threeMatches()
+    find.step(view, 1)
+    find.step(view, 1)
+    find.apply(view, 'b1', [hit('the', 0)])
+    expect(find.position(view.state)).toEqual({ current: 1, total: 1 })
+    expect(find.current(view.state)).toEqual(Object.assign({ blockId: 'b1' }, hit('the', 0)))
+  })
+
+  it('stands on nothing, and steps to nothing, once the marks are cleared', () => {
+    const { find, view } = threeMatches()
+    find.apply(view, 'b1', [])
+    expect(find.step(view, 1)).toEqual({ current: 0, total: 0 })
+    expect(find.current(view.state)).toBeNull()
   })
 })

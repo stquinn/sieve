@@ -69,6 +69,77 @@ describe('MountBinding', () => {
 
   // ── The verbs, as they actually leave ──────────────────────────────────────
 
+  // ONE MAPPING FROM MARK TO FRAME, and both doors take it: the lens's void
+  // `requestReplaceText` and the shell's answering `replaceText`. It is pinned
+  // here rather than against a stubbed binding because what is under test is the
+  // frame that leaves — a second mapping is a second chance to send an anchor the
+  // server cannot resolve.
+  describe('replaceText — the one mark-to-frame mapping', () => {
+    const mark = { blockId: 'p1', locator: 'content', quote: 'teh', occurrence: 1, grain: 'word', start: 12, end: 15 }
+
+    it('sends the anchor as the mark carried it, with what belongs in its place', () => {
+      const { binding, sock } = mounted()
+      binding.replaceText(mark, 'the')
+      expect(lastSent(sock, DocumentFrame.TEXT_REPLACE)).toMatchObject({
+        blockId: 'p1', locator: 'content', quote: 'teh', occurrence: 1, grain: 'word', start: 12, end: 15, replacement: 'the',
+      })
+    })
+
+    it('carries the grain the mark was counted at — the server dispatches its resolution on it', () => {
+      const { binding, sock } = mounted()
+      binding.replaceText(Object.assign({}, mark, { grain: 'literal' }), 'the')
+      expect(lastSent(sock, DocumentFrame.TEXT_REPLACE).grain).toBe('literal')
+    })
+
+    it('an empty replacement is a deletion, not a missing field', () => {
+      const { binding, sock } = mounted()
+      binding.replaceText(mark, '')
+      expect(lastSent(sock, DocumentFrame.TEXT_REPLACE).replacement).toBe('')
+    })
+
+    it('the LENS door produces the identical frame', () => {
+      const { binding, sock } = mounted()
+      binding.provider.requestReplaceText('p1', mark, 'the')
+      expect(lastSent(sock, DocumentFrame.TEXT_REPLACE)).toMatchObject({
+        blockId: 'p1', locator: 'content', quote: 'teh', occurrence: 1, grain: 'word', replacement: 'the',
+      })
+    })
+
+    // An anchor missing its quote or its grain resolves NOWHERE, so it is a
+    // contract breach rather than a race: the server would answer `stale` for
+    // text that never moved.
+    /** @type {Array<[string, Record<string, any>]>} */
+    const refused = [
+      ['no quote — there is nothing to resolve', { blockId: 'p1', locator: 'content', grain: 'word' }],
+      ['no grain — nothing says how to count its occurrence', { blockId: 'p1', locator: 'content', quote: 'teh' }],
+    ]
+
+    for (const [name, broken] of refused) {
+      it('refuses an anchor with ' + name, () => {
+        const { binding, sock } = mounted()
+        expect(() => binding.replaceText(/** @type {any} */ (broken), 'the')).toThrow(ContractViolation)
+        expect(sock.sentOfType(DocumentFrame.TEXT_REPLACE)).toEqual([])
+      })
+    }
+
+    // Naming a block the container does not hold is the ordinary race, not a
+    // breach: it answers so a caller gating on the answer is released.
+    /** @type {Array<[string, Record<string, any>]>} */
+    const unheld = [
+      ['a block that has gone', { blockId: 'ghost' }],
+      ['no block named at all', { blockId: '' }],
+    ]
+
+    for (const [name, absent] of unheld) {
+      it('answers ' + name + ' without sending anything', async () => {
+        const { binding, sock } = mounted()
+        const outcome = await binding.replaceText(/** @type {any} */ (Object.assign({}, mark, absent)), 'the')
+        expect(outcome).toBe('error')
+        expect(sock.sentOfType(DocumentFrame.TEXT_REPLACE)).toEqual([])
+      })
+    }
+  })
+
   it('sends requestAddBlock as a create-block op at the resolved index, correlated', () => {
     const { binding, sock } = mounted()
     binding.provider.requestAddBlock('code', { source: 'x=1' }, 'p1')

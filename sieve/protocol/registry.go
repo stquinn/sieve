@@ -3,6 +3,8 @@ package protocol
 import (
 	"fmt"
 	"reflect"
+
+	"sieve/sieve/domain"
 )
 
 // FrameEntry is one frame in the vocabulary: which wire carries it, which way it
@@ -95,6 +97,7 @@ func (r *Registry) registerDocumentFrames() {
 	r.addFrame(ChannelDocument, Inbound, TypeExport, ExportFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeFocus, FocusFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeTextReplace, TextReplaceFrame{})
+	r.addFrame(ChannelDocument, Inbound, TypeFeatureControl, FeatureControlFrame{})
 
 	r.addFrame(ChannelDocument, Outbound, TypePong, PongFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeMarkdownContent, MarkdownContentFrame{})
@@ -111,7 +114,7 @@ func (r *Registry) registerDocumentFrames() {
 	r.addFrame(ChannelDocument, Outbound, TypePasteAck, PasteAckFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeDetectExtractionsResult, DetectExtractionsResultFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeExportContent, ExportContentFrame{})
-	r.addFrame(ChannelDocument, Outbound, TypeSpellMarks, SpellMarksFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeTextMarks, TextMarksFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeTextReplaceAck, TextReplaceAckFrame{})
 }
 
@@ -124,7 +127,7 @@ func (r *Registry) registerWorkspaceFrames() {
 	r.addFrame(ChannelWorkspace, Inbound, TypeSessionScroll, SessionScrollFrame{})
 	r.addFrame(ChannelWorkspace, Inbound, TypeSpellIgnore, SpellIgnoreFrame{})
 	r.addFrame(ChannelWorkspace, Inbound, TypeSpellLearn, SpellLearnFrame{})
-	r.addFrame(ChannelWorkspace, Inbound, TypeSpellEnable, SpellEnableFrame{})
+	r.addFrame(ChannelWorkspace, Inbound, TypeFeatureControl, FeatureControlFrame{})
 
 	r.addFrame(ChannelWorkspace, Outbound, TypePong, PongFrame{})
 	r.addFrame(ChannelWorkspace, Outbound, TypeCommandResult, CommandResultFrame{})
@@ -236,6 +239,19 @@ func (r *Registry) Endpoint(method, path string) (EndpointEntry, bool) {
 // Endpoints returns every typed endpoint in registration order, as a copy.
 func (r *Registry) Endpoints() []EndpointEntry {
 	return append([]EndpointEntry(nil), r.endpoints...)
+}
+
+// Features returns every text-service feature word — the BROWSER-FACING
+// vocabulary, published so the client has a constant to name a producer with
+// instead of a string literal. It gates nothing: what a control frame is allowed
+// to switch is decided by what registered an inspector, and a word here that
+// nothing registers is refused on arrival like any other unknown feature.
+//
+// The registry owns the list for the same reason it owns the topics: a feature
+// is DATA on the one control frame, so this is the only place the two halves of
+// the app can agree on which words exist.
+func (r *Registry) Features() []string {
+	return []string{domain.FeatureSpellCheck, domain.FeatureFind}
 }
 
 // Topics returns every invalidation topic. The registry owns the list because it

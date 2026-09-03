@@ -21,7 +21,7 @@ import { Ident } from '../src/static/ident/ident.js'
 // The owner modules that run vendor calls at IMPORT time and would crash under
 // the bare test/setup.js TipTap seed. Nothing here mounts a surface.
 vi.mock('../src/static/lens/extensions.js', () => ({
-  Search: {}, SelectionHighlight: {}, HighlightMark: {},
+  SelectionHighlight: {}, HighlightMark: {},
   AiShortcuts: { configure: () => ({}) },
   buildAiContext: vi.fn((ctx) => ({ blockRef: (ctx && ctx.target && ctx.target.ref) || 'doc' })),
   applyTargetHighlight: vi.fn(),

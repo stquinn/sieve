@@ -11,6 +11,7 @@ import (
 
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
+	"sieve/sieve/domain"
 	"sieve/sieve/protocol"
 )
 
@@ -130,7 +131,7 @@ func TestWS_BlockOp_NoOpIDGetsNoAck(t *testing.T) {
 		t.Errorf("render-back for an opId-less request must not carry opId, got %v", insert["opId"])
 	}
 	// No ack must follow. Unrelated server-initiated traffic on the same socket
-	// (spelling marks push themselves when a channel opens) is drained, because
+	// (text marks push themselves when a channel opens) is drained, because
 	// this pins what an opId-less REQUEST is answered with, not what else a
 	// document channel carries.
 	expectNoMessage(t, c, `"`+protocol.TypeBlockOpAck+`"`, 300*time.Millisecond)
@@ -207,38 +208,77 @@ func TestWS_ExtractAck_TransformRendersBackThenAcks(t *testing.T) {
 // names its target must seed one it will leave alone.
 const spellProseBlockID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4c01"
 
-// text-replace answers with an OUTCOME, and the two outcomes it has to tell
-// apart are not success and failure — they are "applied" and "the run you
-// pointed at is not there any more". Stale draws no error frame: the client's
-// view moved on, which is news about the mark rather than a fault.
+// text-replace answers with an OUTCOME, and the outcomes it has to tell apart
+// are not success and failure — they are "applied", "the run you pointed at is
+// not there any more", and "that request names nothing I can write to". Stale
+// draws no error frame: the client's view moved on, which is news about the
+// mark rather than a fault.
 //
 // An applied edit reaches the client as the authoritative block through the
 // replace-by-id render-back a transform takes — the client PLACES the block Go
 // now holds rather than merging attrs onto text it believes it owns. Nothing
 // about the new text rides in the ack.
+//
+// THE ANCHOR IS THE ONE THE READ LANE PUSHED. Every case takes the locator off
+// a real text-marks frame and breaks at most one thing about it, because a
+// locator is the block kind's own and nothing outside that kind — this test
+// included — may spell one.
 func TestWS_TextReplaceAck_ReportsAppliedOrStale(t *testing.T) {
 	cases := []struct {
 		name        string
+		locator     string // empty means the one the marks push carried
 		quote       string
 		occurrence  int
+		grain       string
+		replacement string
 		wantOutcome string
 		wantContent string
+		wantError   bool // whether the ack carries a message; only a refusal does
 	}{
 		{
 			name:  "the anchor still resolves",
-			quote: "helllo", occurrence: 0,
+			quote: "helllo", occurrence: 0, grain: domain.GrainWord, replacement: "hello",
+			wantOutcome: protocol.TextReplaceOK,
+			wantContent: "a hello here",
+		},
+		{
+			name:  "a literal anchor writes inside a word",
+			quote: "elll", occurrence: 0, grain: domain.GrainLiteral, replacement: "ell",
 			wantOutcome: protocol.TextReplaceOK,
 			wantContent: "a hello here",
 		},
 		{
 			name:  "the quote is not in the text",
-			quote: "wolrd", occurrence: 0,
+			quote: "wolrd", occurrence: 0, grain: domain.GrainWord, replacement: "hello",
 			wantOutcome: protocol.TextReplaceStale,
 		},
 		{
 			name:  "the occurrence is past what the text holds",
-			quote: "helllo", occurrence: 3,
+			quote: "helllo", occurrence: 3, grain: domain.GrainWord, replacement: "hello",
 			wantOutcome: protocol.TextReplaceStale,
+		},
+		{
+			// The word IS in the text, but not as a word run — the grain the client
+			// declared is the whole reason this does not resolve.
+			name:  "a word grain does not reach inside a word",
+			quote: "elll", occurrence: 0, grain: domain.GrainWord, replacement: "ell",
+			wantOutcome: protocol.TextReplaceStale,
+		},
+		{
+			// A locator this block's kind never minted is not a mark that went
+			// stale — no text could make it resolve — so it is the third outcome.
+			name:    "a locator the block's kind never minted",
+			locator: "content",
+			quote:   "helllo", occurrence: 0, grain: domain.GrainWord, replacement: "hello",
+			wantOutcome: protocol.TextReplaceFailed, wantError: true,
+		},
+		{
+			// An anchor with no grain says nothing about how its occurrence was
+			// counted, so it names no run at all — a request no text could satisfy,
+			// which is the refusal and not the staleness.
+			name:  "an anchor declaring no grain",
+			quote: "helllo", occurrence: 0, grain: "", replacement: "hello",
+			wantOutcome: protocol.TextReplaceFailed, wantError: true,
 		},
 	}
 	for _, tc := range cases {
@@ -248,9 +288,13 @@ func TestWS_TextReplaceAck_ReportsAppliedOrStale(t *testing.T) {
 			seedBody(t, sp, uuid, "<!--s:"+spellProseBlockID+"-->\na helllo here\n<!--/s:"+spellProseBlockID+"-->")
 
 			c := dialWS(t, srv, uuid)
+			locator := tc.locator
+			if locator == "" {
+				locator = pushedLocator(t, c)
+			}
 			send(t, c, `{"type":"text-replace","opId":"op-tr","blockId":"`+spellProseBlockID+
-				`","locator":"content","quote":"`+tc.quote+`","occurrence":`+strconv.Itoa(tc.occurrence)+
-				`,"start":2,"end":8,"replacement":"hello"}`)
+				`","locator":`+strconv.Quote(locator)+`,"quote":"`+tc.quote+`","occurrence":`+strconv.Itoa(tc.occurrence)+
+				`,"grain":"`+tc.grain+`","start":2,"end":8,"replacement":"`+tc.replacement+`"}`)
 
 			if tc.wantContent != "" {
 				// The render-back must precede the ack. readUntil only reads
@@ -277,17 +321,34 @@ func TestWS_TextReplaceAck_ReportsAppliedOrStale(t *testing.T) {
 			if ack["outcome"] != tc.wantOutcome {
 				t.Errorf("ack outcome = %v, want %q", ack["outcome"], tc.wantOutcome)
 			}
-			if _, hasErr := ack["error"]; hasErr {
-				t.Errorf("a %s ack must carry no error field, got %v", tc.wantOutcome, ack["error"])
+			_, hasErr := ack["error"]
+			if hasErr != tc.wantError {
+				t.Errorf("a %s ack carried error=%v, want an error field: %v", tc.wantOutcome, ack["error"], tc.wantError)
 			}
-			if tc.wantOutcome == protocol.TextReplaceStale {
-				// Nothing changed, so nothing is echoed and nothing is reported as
-				// broken. Spelling marks push themselves on this socket, so the
-				// needles name the two frames a stale write must NOT produce.
+			if tc.wantOutcome != protocol.TextReplaceOK {
+				// Nothing changed, so nothing is echoed and nothing is reported on
+				// the error frame — the outcome IS the report.
 				expectNoMessage(t, c, `"`+protocol.TypeReplaceBlock+`"`, 300*time.Millisecond)
 				expectNoMessage(t, c, `"`+protocol.TypeError+`"`, 100*time.Millisecond)
 			}
 			closeAndSettle(c)
 		})
 	}
+}
+
+// pushedLocator reads the locator off the engine's own marks push — the read
+// lane handing the write lane an anchor, which is the only way one is ever made.
+func pushedLocator(t *testing.T, c *websocket.Conn) string {
+	t.Helper()
+	frame := readUntil(t, c, protocol.TypeTextMarks, 3*time.Second)
+	marks, _ := frame["marks"].([]interface{})
+	if len(marks) == 0 {
+		t.Fatalf("the marks push carried nothing to anchor on: %v", frame)
+	}
+	mark, _ := marks[0].(map[string]interface{})
+	locator, _ := mark["locator"].(string)
+	if locator == "" {
+		t.Fatalf("the pushed mark carries no locator: %v", mark)
+	}
+	return locator
 }

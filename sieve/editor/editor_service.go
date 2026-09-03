@@ -36,23 +36,37 @@ type ContainerSavedNotifier interface {
 	ContainerSaved(uuid string, version int)
 }
 
+// FocusListener hears which open document the user is reading. The empty uuid
+// means the focused document has gone away and nothing has taken its place.
+//
+// It is a lifecycle cue for whoever derives something FROM the open document a
+// reader is actually looking at — the inspection engine re-checks it — and
+// never a request to change the document.
+type FocusListener interface {
+	OnFocusChanged(uuid string)
+}
+
 // EditorService is the Go-side editor model. It holds one ShadowDocument per
 // open document and coordinates all save operations. DocumentService owns disk.
 type EditorService struct {
-	documents    *services.DocumentService
-	codec        *block.DocumentCodec
-	services     block.BlockServices
-	jobs         *services.JobTracker // not a processor concern; EditorService tracks job spinners directly
-	engine       *services.JobEngine
-	ai           docFiler // synchronous AI brain; document-lifecycle jobs call it inside their Work
-	debounce     time.Duration
-	mu           sync.RWMutex
-	shadows      map[string]*block.ShadowDocument
-	listener     block.BlockLifecycleListener
-	saved        ContainerSavedNotifier
-	spell        *SpellChecker       // observed after every op lands on a shadow; nil is a no-op (most tests never wire spelling)
-	clipboard    NativeClipboardPort // reads the OS clipboard the webview cannot (#87)
-	pendingDrops PendingDropSource   // the native drop bucket the webview cannot see (#86)
+	documents  *services.DocumentService
+	codec      *block.DocumentCodec
+	services   block.BlockServices
+	jobs       *services.JobTracker // not a processor concern; EditorService tracks job spinners directly
+	engine     *services.JobEngine
+	ai         docFiler // synchronous AI brain; document-lifecycle jobs call it inside their Work
+	debounce   time.Duration
+	mu         sync.RWMutex
+	shadows    map[string]*block.ShadowDocument
+	listener   block.BlockLifecycleListener
+	saved      ContainerSavedNotifier
+	inspection *InspectionEngine // observed after every op lands on a shadow; nil is a no-op (most tests never wire inspection)
+	// focused is the document the user is reading right now, and focusListener
+	// hears it change. Both are volatile run state, guarded by mu like the rest.
+	focused       string
+	focusListener FocusListener
+	clipboard     NativeClipboardPort // reads the OS clipboard the webview cannot (#87)
+	pendingDrops  PendingDropSource   // the native drop bucket the webview cannot see (#86)
 	// jobsWG tracks every dispatched block-job goroutine (DispatchJobIfNeeded's
 	// `go RunJob`). It is the drain a retiring service (CloseAll) and callers that
 	// must settle dispatched work (WaitForJobs) wait on — a job's completion writes
@@ -93,14 +107,66 @@ func (es *EditorService) SetSavedNotifier(n ContainerSavedNotifier) {
 	es.saved = n
 }
 
-// SetSpellChecker registers the checker observed after every op lands on a
+// SetInspectionEngine registers the engine observed after every op lands on a
 // shadow (notifyBlockCreated/Updated/Replaced) and closed alongside a document
 // (Close). Nil leaves those hooks a no-op, which is what a test that never
-// wires spelling gets.
-func (es *EditorService) SetSpellChecker(sc *SpellChecker) {
+// wires inspection gets.
+func (es *EditorService) SetInspectionEngine(e *InspectionEngine) {
 	es.mu.Lock()
 	defer es.mu.Unlock()
-	es.spell = sc
+	es.inspection = e
+}
+
+// SetFocusListener registers who hears which document the user is looking at.
+func (es *EditorService) SetFocusListener(l FocusListener) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	es.focusListener = l
+}
+
+// SetFocusedDocument records that the user is now reading uuid, and tells
+// whoever is listening. Re-stating the document already focused says nothing.
+//
+// This is VOLATILE: it is where the eyes are in THIS run, not domain.Session's
+// persisted last-active tab, which survives a restart and answers a different
+// question ("what should open"). A document whose channel goes away is no longer
+// focused — Close clears it — so nothing here outlives the socket it came from.
+func (es *EditorService) SetFocusedDocument(uuid string) {
+	es.mu.Lock()
+	if es.focused == uuid {
+		es.mu.Unlock()
+		return
+	}
+	es.focused = uuid
+	listener := es.focusListener
+	es.mu.Unlock()
+	if listener != nil {
+		listener.OnFocusChanged(uuid)
+	}
+}
+
+// clearFocus forgets uuid if it is the focused document, and tells whoever is
+// listening that nothing is focused now.
+func (es *EditorService) clearFocus(uuid string) {
+	es.mu.Lock()
+	if es.focused != uuid {
+		es.mu.Unlock()
+		return
+	}
+	es.focused = ""
+	listener := es.focusListener
+	es.mu.Unlock()
+	if listener != nil {
+		listener.OnFocusChanged("")
+	}
+}
+
+// FocusedDocument returns the document the user is reading, or empty when the
+// last focused one has closed.
+func (es *EditorService) FocusedDocument() string {
+	es.mu.RLock()
+	defer es.mu.RUnlock()
+	return es.focused
 }
 
 // notifySaved publishes the one fact a successful save produces. It is called
@@ -121,7 +187,7 @@ func (es *EditorService) notifySaved(uuid string, version int) {
 func (es *EditorService) notifyBlockCreated(uuid string, blk block.SieveBlock, index int) {
 	es.mu.RLock()
 	l := es.listener
-	sc := es.spell
+	inspection := es.inspection
 	es.mu.RUnlock()
 	if l != nil {
 		// markdown is the block's serialized fence — used ONLY by the breakglass
@@ -134,28 +200,28 @@ func (es *EditorService) notifyBlockCreated(uuid string, blk block.SieveBlock, i
 		}
 		l.OnBlockCreated(uuid, blk.Kind, blk.ID, blk.Attrs, markdown, index)
 	}
-	if sc != nil {
-		sc.enqueue(uuid, blk.ID)
+	if inspection != nil {
+		inspection.enqueue(uuid, blk.ID)
 	}
 }
 
 func (es *EditorService) notifyBlockUpdated(uuid string, blk block.SieveBlock) {
 	es.mu.RLock()
 	l := es.listener
-	sc := es.spell
+	inspection := es.inspection
 	es.mu.RUnlock()
 	if l != nil {
 		l.OnBlockUpdated(uuid, blk.ID, blk.Attrs)
 	}
-	if sc != nil {
-		sc.enqueue(uuid, blk.ID)
+	if inspection != nil {
+		inspection.enqueue(uuid, blk.ID)
 	}
 }
 
 func (es *EditorService) notifyBlockReplaced(uuid, oldID string, blk block.SieveBlock) {
 	es.mu.RLock()
 	l := es.listener
-	sc := es.spell
+	inspection := es.inspection
 	es.mu.RUnlock()
 	if l != nil {
 		markdown := ""
@@ -164,8 +230,8 @@ func (es *EditorService) notifyBlockReplaced(uuid, oldID string, blk block.Sieve
 		}
 		l.OnBlockReplaced(uuid, oldID, blk.Kind, blk.ID, blk.Attrs, markdown)
 	}
-	if sc != nil {
-		sc.enqueue(uuid, blk.ID)
+	if inspection != nil {
+		inspection.enqueue(uuid, blk.ID)
 	}
 }
 
@@ -318,16 +384,20 @@ func (es *EditorService) Close(uuid string) {
 	es.mu.Lock()
 	shadow, ok := es.shadows[uuid]
 	delete(es.shadows, uuid)
-	sc := es.spell
+	inspection := es.inspection
 	es.mu.Unlock()
 
-	// Dropping the spell queue is unconditional: CheckAndPush runs off the WS
-	// read loop in its own goroutine and can still be mid-seed when a fast
+	// Dropping the inspection queue is unconditional: a seed runs off the WS
+	// read loop in its own goroutine and can still be mid-walk when a fast
 	// open+close races it — this must not leave a queue behind for a shadow
 	// that no longer exists.
-	if sc != nil {
-		sc.closeDocument(uuid)
+	if inspection != nil {
+		inspection.closeDocument(uuid)
 	}
+	// A document nobody can see is not the one being read. Clearing here rather
+	// than on a frame is what makes the teardown the single truth: the channel
+	// going away IS the focus ending.
+	es.clearFocus(uuid)
 
 	if !ok {
 		return
@@ -442,20 +512,46 @@ func (es *EditorService) UpdateBlock(uuid string, blk block.SieveBlock) {
 // unchanged, so both ids on the render-back are this block's.
 //
 // A stale anchor comes back as block.ErrTextStale, and nothing was changed.
+//
+// The processor takes a BATCH, and this is the batch of one.
 func (es *EditorService) ReplaceText(uuid string, edit domain.TextEdit) error {
+	return es.ReplaceTextBatch(uuid, edit.BlockID, []domain.TextEdit{edit})
+}
+
+// ReplaceTextBatch applies several anchored edits to ONE block as a single
+// write: the processor resolves every anchor against one reading before any of
+// them is written, and the result reaches the document as one merge, one echo
+// and one undo step.
+//
+// It is ALL-OR-NOTHING. One anchor that no longer resolves fails the batch and
+// leaves the block exactly as it was, because the alternative — writing the
+// edits that did resolve — would hand back a block half-way through an act the
+// caller asked for whole.
+//
+// The batch is why a caller replacing many runs must not loop the single-edit
+// form: the first write moves the text every later anchor was read against, so
+// a loop stales itself after its first success.
+//
+// It is as marks-blind as its batch-of-one sibling: a domain.TextEdit names a
+// run, and nothing here can tell which producer — or whether any producer — put
+// a mark on it.
+func (es *EditorService) ReplaceTextBatch(uuid, blockID string, edits []domain.TextEdit) error {
+	if len(edits) == 0 {
+		return nil
+	}
 	shadow := es.shadowFor(uuid)
 	if shadow == nil {
 		return fmt.Errorf("text-replace: no open document for uuid %q", uuid)
 	}
-	blk, found := shadow.SnapshotBlock(edit.BlockID)
+	blk, found := shadow.SnapshotBlock(blockID)
 	if !found {
-		return fmt.Errorf("text-replace: no block %q in document %q", edit.BlockID, uuid)
+		return fmt.Errorf("text-replace: no block %q in document %q", blockID, uuid)
 	}
 	updater, writable := block.TextUpdaterFor(blk.Kind)
 	if !writable {
 		return fmt.Errorf("text-replace: kind %q does not accept text edits", blk.Kind)
 	}
-	if err := es.updateText(updater, &blk, edit); err != nil {
+	if err := es.updateText(updater, &blk, edits); err != nil {
 		return err
 	}
 	// blk is a deep snapshot, so the processor wrote into a copy: the merge below
@@ -479,14 +575,33 @@ func (es *EditorService) ReplaceText(uuid string, edit domain.TextEdit) error {
 // the caller an error rather than the process. Same containment as the spell
 // checker's read of NormalisedText: this runs on the WS read loop, where an
 // unrecovered panic takes down more than the request that caused it.
-func (es *EditorService) updateText(updater block.TextUpdater, blk *block.SieveBlock, edit domain.TextEdit) (err error) {
+func (es *EditorService) updateText(updater block.TextUpdater, blk *block.SieveBlock, edits []domain.TextEdit) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Error("editor: UpdateText panicked", "kind", blk.Kind, "block", blk.ID, "err", r)
 			err = fmt.Errorf("text-replace: processor %q panicked", blk.Kind)
 		}
 	}()
-	return updater.UpdateText(blk, edit.Locator, edit.Start, edit.End, edit.Quote, edit.Occurrence, edit.Replacement)
+	return updater.UpdateText(blk, edits)
+}
+
+// readingOf returns blk's kind's own reading of its text, and whether the kind
+// bears text at all. A processor that panics costs its caller the reading and
+// nothing else: this is called from the WS read loop and from timer goroutines
+// alike, where an unrecovered panic takes down more than the read that caused
+// it.
+func (es *EditorService) readingOf(blk block.SieveBlock) (segments []domain.TextSegment, bearsText bool) {
+	bearer, bearsText := block.TextBearerFor(blk.Kind)
+	if !bearsText {
+		return nil, false
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("editor: NormalisedText panicked", "kind", blk.Kind, "block", blk.ID, "err", r)
+			segments = nil
+		}
+	}()
+	return bearer.NormalisedText(&blk), true
 }
 
 // ExportMarkdown derives CLEAN whole-doc markdown for "Copy as Markdown" from the
@@ -638,15 +753,16 @@ func (es *EditorService) CloseAll() {
 		shadows = append(shadows, sh)
 	}
 	es.shadows = make(map[string]*block.ShadowDocument)
-	sc := es.spell
+	inspection := es.inspection
 	es.mu.Unlock()
 	logger.Info("editor: close-all", "count", len(shadows))
 	for _, sh := range shadows {
-		// Dropping the spell queue is unconditional for the same reason Close's
-		// is: nil only when the field is unwired (tests).
-		if sc != nil {
-			sc.closeDocument(sh.UUID)
+		// Dropping the inspection queue is unconditional for the same reason
+		// Close's is: nil only when the field is unwired (tests).
+		if inspection != nil {
+			inspection.closeDocument(sh.UUID)
 		}
+		es.clearFocus(sh.UUID)
 		sh.StopDebounce()
 		_ = es.flushShadow(sh, "close-all")
 	}

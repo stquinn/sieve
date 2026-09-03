@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
 	"testing/fstest"
 
@@ -111,4 +112,33 @@ func TestStateService_UserDictionaryRoundTrip(t *testing.T) {
 	if got := ss.LoadUserDictionary(); len(got) != 0 {
 		t.Errorf("LoadUserDictionary = %v, want an emptied dictionary", got)
 	}
+}
+
+// The settings cache is shared state, and a save invalidates it while readers
+// are reading it: a workspace-scoped feature is switched on from the wire while
+// every other caller is asking what the settings say. Run under -race, this
+// fails on an unsynchronised invalidation.
+func TestStateService_SettingsCacheIsSafeAcrossConcurrentSavesAndLoads(t *testing.T) {
+	ss, _ := newTestStateService(t, "", nil)
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for range 20 {
+				ss.LoadSettings()
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for range 20 {
+				if err := ss.SaveSettings(domain.DefaultSettings()); err != nil {
+					t.Errorf("SaveSettings: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }

@@ -8,7 +8,7 @@ import { contextFor } from './helpers/selection-context.js'
 // old bus-based getSieveBlockLabel injection. This file does not use buildAiContext,
 // so extensions.js is mocked too (no vendor seed needed).
 vi.mock('../src/static/lens/extensions.js', () => ({
-  Search: {}, SelectionHighlight: {}, HighlightMark: {}, AiShortcuts: { configure: () => ({}) },
+  SelectionHighlight: {}, HighlightMark: {}, AiShortcuts: { configure: () => ({}) },
 }))
 vi.mock('../src/static/lens/document-editor/block-chrome.js', () => ({
   BlockChrome: {},

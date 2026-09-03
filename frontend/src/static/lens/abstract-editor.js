@@ -458,19 +458,29 @@ export class AbstractEditor extends Lens {
   }
 
   /**
-   * The contract's optional marks cue: one block's COMPLETE set of text marks,
-   * replacing what is drawn for that block. Unlike `paint` it carries its
-   * answer, because marks are the host's derived reading of a block and not
-   * container state there is anything to read back.
+   * The contract's optional marks cue: one feature's COMPLETE set of text marks
+   * for one block, replacing what is drawn for that pair. Unlike `paint` it
+   * carries its answer, because marks are the host's derived reading of a block
+   * and not container state there is anything to read back.
+   *
+   * WHICH producer's findings these are is passed through rather than judged
+   * here: the surface owns the drawing, so it owns knowing which of its
+   * decoration sets a feature belongs to.
    *
    * It is NOT suppressed during a load. A mark is placed by finding its quote in
    * what is drawn, so one arriving against a half-replaced document simply
    * resolves against the document that ends up there.
+   * @param {string} feature
    * @param {string} blockId
    * @param {ReadonlyArray<import('../contract/container-update-listener.js').SieveTextMark>} marks
    */
-  onMarksChanged(blockId, marks) {
-    if (this.#surface) this.#surface.setSpellMarks(blockId, marks || [])
+  onMarksChanged(feature, blockId, marks) {
+    if (this.#surface) this.#surface.setTextMarks(feature, blockId, marks || [])
+    // What a producer found changes what is DRAWN, and chrome that counts what is
+    // drawn — a find bar's "n of m" — has no other way to learn that the count
+    // moved. The feature word is passed through, not judged: which producers a
+    // listener cares about is the listener's business.
+    this.#emitEvent({ type: 'marks-changed', feature: feature })
   }
 
   /**
@@ -506,20 +516,22 @@ export class AbstractEditor extends Lens {
     return this.#surface ? this.#surface.stats() : { chars: 0, lines: 0, blockCount: 0 }
   }
 
-  // Each search verb DELEGATES to the mounted surface. A surface with no search
-  // returns false, which the overlay reads as "no matches".
+  // Each find verb DELEGATES to the mounted surface, which is where the matches
+  // are drawn and therefore the only place that knows where the reader stands
+  // among them. Nothing here searches: the matches arrive as the host's find
+  // marks, so a surface that draws none stands on nothing.
 
-  /** @param {string} term @returns {{current:number,total:number}|false} */
-  searchTerm(term) { return this.#surface ? this.#surface.searchTerm(term) : false }
+  /** @returns {{current:number,total:number}} */
+  findPosition() { return this.#surface ? this.#surface.findPosition() : { current: 0, total: 0 } }
 
-  /** @returns {{current:number,total:number}|false} */
-  searchNext() { return this.#surface ? this.#surface.searchNext() : false }
+  /** @param {number} delta +1 for the next match, -1 for the previous
+   *  @returns {{current:number,total:number}} */
+  findStep(delta) { return this.#surface ? this.#surface.findStep(delta) : { current: 0, total: 0 } }
 
-  /** @returns {{current:number,total:number}|false} */
-  searchPrev() { return this.#surface ? this.#surface.searchPrev() : false }
-
-  /** @returns {false} */
-  clearSearch() { return this.#surface ? this.#surface.clearSearch() : false }
+  /** The match the reader is standing on, as the anchor a replace is spent
+   *  through — `replaceText` takes exactly this.
+   *  @returns {Record<string, any>|null} */
+  currentFindMark() { return this.#surface ? this.#surface.currentFindMark() : null }
 
   /**
    * This document's content reached disk: drop the dirty state and tell the
@@ -979,6 +991,25 @@ export class AbstractEditor extends Lens {
       this.#reloadInProgress = false
       console.error('[editor] reload failed', err)
     }
+  }
+
+  /**
+   * Hands over anything the surface's debounced observer is still holding, so the
+   * host's copy of the text is current. It is the NARROW half of `flushSave`:
+   * nothing is persisted, because a caller that is about to have Go rewrite the
+   * text needs the host to hold what the reader typed, not disk to hold it.
+   */
+  flushEdits() {
+    if (this.#surface) this.#surface.flushPending()
+  }
+
+  /**
+   * Puts the caret back in the surface. Chrome that took the keyboard — a find
+   * bar, a dialog — calls it on the way out; where the caret goes is the
+   * surface's own answer, so nothing here says.
+   */
+  focus() {
+    if (this.#surface) this.#surface.focusEditor()
   }
 
   /**

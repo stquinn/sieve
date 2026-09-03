@@ -18,17 +18,18 @@ func TestRegistry_HoldsTheWholeVocabulary(t *testing.T) {
 			"ping", "doc-update", "flush", "enter-markdown", "enter-wysiwyg",
 			"retry-block-job", "extract", "block-op",
 			"load", "paste", "detect-extractions", "export", "focus", "text-replace",
+			"feature-control",
 		}},
 		{ChannelDocument, Outbound, []string{
 			"pong", "markdown-content", "wysiwyg-content", "extract-ack",
 			"block-op-ack", "insert-block", "block-attrs-updated", "replace-block",
 			"remove-block", "order-changed", "error",
 			"load-content", "paste-ack", "detect-extractions-result", "export-content",
-			"spell-marks", "text-replace-ack",
+			"text-marks", "text-replace-ack",
 		}},
 		{ChannelWorkspace, Inbound, []string{
 			"ping", "command", "command-cancel", "mention-query", "mention-resolve",
-			"session-scroll", "spell-ignore", "spell-learn", "spell-enable",
+			"session-scroll", "spell-ignore", "spell-learn", "feature-control",
 		}},
 		{ChannelWorkspace, Outbound, []string{
 			"pong", "command-result", "mention-result", "mention-resolved",
@@ -53,6 +54,24 @@ func TestRegistry_HoldsTheWholeVocabulary(t *testing.T) {
 	}
 }
 
+// ONE SHAPE, TWO WIRES. The control frame is registered on both channels with
+// the same payload, because the channel — not a field — is what says which scope
+// a switch speaks for. Two payloads would be two grammars wearing one word.
+func TestRegistry_FeatureControlIsOneShapeOnBothChannels(t *testing.T) {
+	r := NewRegistry()
+	document, onDocument := r.Frame(ChannelDocument, TypeFeatureControl)
+	workspace, onWorkspace := r.Frame(ChannelWorkspace, TypeFeatureControl)
+	if !onDocument || !onWorkspace {
+		t.Fatalf("feature-control registered on document=%v workspace=%v, want both", onDocument, onWorkspace)
+	}
+	if document.Payload != workspace.Payload {
+		t.Errorf("payloads differ: %v vs %v", document.Payload, workspace.Payload)
+	}
+	if document.Direction != Inbound || workspace.Direction != Inbound {
+		t.Errorf("directions = (%s, %s), want both inbound — nothing answers a switch", document.Direction, workspace.Direction)
+	}
+}
+
 // Retired words must not be speakable. block-extracted was emitted for months and
 // dropped by every client; the SSE event names are what invalidate topics
 // replaced, and they are event names, not frame types.
@@ -60,6 +79,10 @@ func TestRegistry_RetiredVocabularyIsAbsent(t *testing.T) {
 	r := NewRegistry()
 	for _, retired := range []string{
 		"block-extracted",
+		// The lifecycle grammar replaced them: a per-producer verb and a
+		// spelling-only marks push are exactly what the control frame and the
+		// feature-carrying push are there to make unnecessary.
+		"spell-enable", "spell-marks",
 		"notes:changed", "session:changed", "prompts:changed", "jobs:changed", "intent:changed",
 	} {
 		for _, channel := range []Channel{ChannelDocument, ChannelWorkspace} {

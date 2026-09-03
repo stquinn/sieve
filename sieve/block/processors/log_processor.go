@@ -510,3 +510,36 @@ func (p *LogProcessor) RawContent(blk block.SieveBlock) string {
 	src, _ := blk.Attrs["source"].(string)
 	return src
 }
+
+// LogSourceLocator names the one slot a log's captured text lives in.
+const LogSourceLocator = "source"
+
+// NormalisedText makes a log block a TextBearer, READ-ONLY: find can search
+// captured output — a record is worth finding precisely because it is a
+// record — but LogProcessor deliberately does not implement TextUpdater:
+// editing a captured log would falsify what was actually logged. Reading and
+// writing are separate participation predicates, and log is the kind that
+// answers yes to the first and no to the second.
+//
+// Class CODE, not prose: a spell checker must not squiggle log output, and
+// find reads every class regardless of which one this is. A log is stored
+// as ONE string (the "source" attr) with no parse, so its reading is that
+// string verbatim, and one segment is the whole of it.
+//
+// The locator is the BARE slot name, not a self-sufficient hash-carrying
+// record like prose's, code's or diagram's. TextBearer's self-sufficiency
+// obligation exists to answer one question — is this reading still the one
+// an anchor was made against — and that question is only ever asked AT A
+// WRITE: TextUpdaterFor("log") is false, so a write is refused before any
+// locator here is ever decoded, and nothing this kind mints is ever asked
+// to vouch for anything.
+func (p *LogProcessor) NormalisedText(blk *block.SieveBlock) []domain.TextSegment {
+	if blk == nil {
+		return nil
+	}
+	return []domain.TextSegment{{
+		Locator: LogSourceLocator,
+		Text:    p.RawContent(*blk),
+		Class:   domain.TextClassCode,
+	}}
+}

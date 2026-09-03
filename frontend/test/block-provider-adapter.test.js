@@ -182,13 +182,14 @@ describe('BlockProviderAdapter', () => {
   })
 
   describe('requestReplaceText', () => {
-    const anchor = { locator: 'content', quote: 'teh', occurrence: 1, start: 12, end: 15, class: 'prose', suggestions: ['the'] }
+    const anchor = { locator: 'content', quote: 'teh', occurrence: 1, grain: 'word', start: 12, end: 15, class: 'prose', suggestions: ['the'] }
 
-    it('sends the anchor as the mark carried it, with what belongs in its place', () => {
+    // The MARK travels, not a payload: turning one into the frame's fields is
+    // the binding's single mapping, and its guards are pinned in
+    // mount-binding.test.js, where a real binding is on the other end.
+    it('hands over the mark as it stands, with the block it belongs to on it', () => {
       provider.requestReplaceText('p1', anchor, 'the')
-      expect(binding.replaceText).toHaveBeenCalledWith({
-        blockId: 'p1', locator: 'content', quote: 'teh', occurrence: 1, start: 12, end: 15, replacement: 'the',
-      })
+      expect(binding.replaceText).toHaveBeenCalledWith(Object.assign({}, anchor, { blockId: 'p1' }), 'the')
     })
 
     it('writes NOTHING to the model — the correction arrives as Go\'s own echo', () => {
@@ -196,22 +197,11 @@ describe('BlockProviderAdapter', () => {
       expect(snapshot(model)).toEqual(before)
     })
 
-    it('an empty replacement is a deletion, not a missing field', () => {
-      provider.requestReplaceText('p1', anchor, '')
-      expect(binding.replaceText.mock.calls[0][0].replacement).toBe('')
-    })
-
     it('drops an id this container does not hold', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       provider.requestReplaceText('ghost', anchor, 'the')
       expect(binding.replaceText).not.toHaveBeenCalled()
       warn.mockRestore()
-    })
-
-    it('refuses an anchor with no quote — there is nothing to resolve', () => {
-      expect(() => provider.requestReplaceText('p1', /** @type {any} */ ({ locator: 'content' }), 'the'))
-        .toThrow(ContractViolation)
-      expect(binding.replaceText).not.toHaveBeenCalled()
     })
 
     it('is SILENT on a stale anchor, and warns only on a failure', async () => {

@@ -51,7 +51,7 @@ import { DocumentFrame } from '../generated/protocol.js'
  *
  * @typedef {object} ContainerUpdateListener
  * @property {(change: Readonly<ContainerChange>) => void} onChanged
- * @property {((blockId: string, marks: ReadonlyArray<Readonly<SieveTextMark>>) => void)} [onMarksChanged]
+ * @property {((feature: string, blockId: string, marks: ReadonlyArray<Readonly<SieveTextMark>>) => void)} [onMarksChanged]
  */
 
 /**
@@ -73,11 +73,15 @@ export class ContainerModel {
   /** @type {string} */ #kind
   /** @type {string[]} */ #order = []
   /** @type {Map<string, Readonly<BlockNode>>} */ #nodes = new Map()
-  /** @type {Map<string, ReadonlyArray<Readonly<SieveTextMark>>>} blockId → the
-   *  host's derived reading of that block's text. Server-pushed and never
-   *  computed here, replaced whole per block, and kept for ids this container
-   *  does not (yet) hold: a mark set can outrun the load answer that names its
-   *  block, and dropping it would lose a squiggle nothing would push again. */
+  /** @type {Map<string, Map<string, ReadonlyArray<Readonly<SieveTextMark>>>>} feature →
+   *  blockId → what that producer found in the block's text. Server-pushed and
+   *  never computed here, replaced whole per (feature, block), and kept for ids
+   *  this container does not (yet) hold: a mark set can outrun the load answer
+   *  that names its block, and dropping it would lose a mark nothing would push
+   *  again.
+   *
+   *  KEYED BY FEATURE FIRST: two producers reading the same block are two
+   *  independent answers, and each replaces only its own. */
   #marks = new Map()
   /** @type {Set<ContainerUpdateListener>} */ #listeners = new Set()
 
@@ -119,7 +123,9 @@ export class ContainerModel {
     }
     this.#listeners.add(listener)
     this.#deliver(listener, this.#change(this.#order, true))
-    for (const [blockId, marks] of this.#marks) this.#deliverMarks(listener, blockId, marks)
+    for (const [feature, held] of this.#marks) {
+      for (const [blockId, marks] of held) this.#deliverMarks(listener, feature, blockId, marks)
+    }
   }
 
   /** @param {ContainerUpdateListener} listener */
@@ -162,24 +168,38 @@ export class ContainerModel {
     else if (f.type === DocumentFrame.BLOCK_ATTRS_UPDATED) this.#applyAttrs(f)
     else if (f.type === DocumentFrame.REMOVE_BLOCK) this.#applyRemove(f)
     else if (f.type === DocumentFrame.ORDER_CHANGED) this.#applyOrderChanged(f)
-    else if (f.type === DocumentFrame.SPELL_MARKS) this.#applyMarks(f)
+    else if (f.type === DocumentFrame.TEXT_MARKS) this.#applyMarks(f)
   }
 
   /**
-   * Installs one block's COMPLETE mark set, replacing whatever this model held
-   * for it — so an empty array is the CLEAR, and the frame a corrected block
-   * gets. They are not folded into the block: a mark is a reading OF a block,
-   * it never travels back, and a lens is HANDED it rather than reading it.
+   * Installs one feature's COMPLETE mark set for one block, replacing whatever
+   * this model held for that PAIR — so an empty array is the CLEAR, and the
+   * frame a corrected block gets, while every other feature's marks on the same
+   * block are untouched. They are not folded into the block: a mark is a reading
+   * OF a block, it never travels back, and a lens is HANDED it rather than
+   * reading it.
    * @param {Record<string, any>} f
    */
   #applyMarks(f) {
-    if (!f.blockId) return
+    if (!f.blockId || !f.feature) return
     /** @type {SieveTextMark[]} */
     const cloned = structuredClone(f.marks || [])
     const marks = this.#deepFreeze(cloned)
-    if (marks.length) this.#marks.set(f.blockId, marks)
-    else this.#marks.delete(f.blockId)
-    for (const listener of this.#listeners) this.#deliverMarks(listener, f.blockId, marks)
+    const held = this.#marks.get(f.feature) || new Map()
+    if (marks.length) held.set(f.blockId, marks)
+    else held.delete(f.blockId)
+    if (held.size) this.#marks.set(f.feature, held)
+    else this.#marks.delete(f.feature)
+    for (const listener of this.#listeners) this.#deliverMarks(listener, f.feature, f.blockId, marks)
+  }
+
+  /** Retires every feature's marks on a block the container no longer holds.
+   *  @param {string} blockId */
+  #forgetMarks(blockId) {
+    for (const [feature, held] of this.#marks) {
+      if (!held.delete(blockId)) continue
+      if (!held.size) this.#marks.delete(feature)
+    }
   }
 
   /** @param {Record<string, any>} f */
@@ -211,7 +231,7 @@ export class ContainerModel {
     const at = f.oldId ? this.#order.indexOf(f.oldId) : -1
     if (at >= 0) this.#order[at] = f.newId
     else this.#order.push(f.newId)
-    if (f.oldId) { this.#nodes.delete(f.oldId); this.#marks.delete(f.oldId) }
+    if (f.oldId) { this.#nodes.delete(f.oldId); this.#forgetMarks(f.oldId) }
     this.#emit(f.oldId ? [f.oldId, f.newId] : [f.newId], true, [f.newId])
   }
 
@@ -232,7 +252,7 @@ export class ContainerModel {
     const at = this.#order.indexOf(f.id)
     if (at >= 0) this.#order.splice(at, 1)
     this.#nodes.delete(f.id)
-    this.#marks.delete(f.id)
+    this.#forgetMarks(f.id)
     this.#emit([f.id], at >= 0)
   }
 
@@ -301,11 +321,12 @@ export class ContainerModel {
 
   /** A listener with nowhere to draw a mark does not implement the method, which
    *  is a legitimate lens and not a failure. Throwing is isolated as above.
-   *  @param {ContainerUpdateListener} listener @param {string} blockId
+   *  @param {ContainerUpdateListener} listener @param {string} feature
+   *  @param {string} blockId
    *  @param {ReadonlyArray<Readonly<SieveTextMark>>} marks */
-  #deliverMarks(listener, blockId, marks) {
+  #deliverMarks(listener, feature, blockId, marks) {
     if (typeof listener.onMarksChanged !== 'function') return
-    try { listener.onMarksChanged(blockId, marks) } catch (e) { console.error('[container-model] listener threw', e) }
+    try { listener.onMarksChanged(feature, blockId, marks) } catch (e) { console.error('[container-model] listener threw', e) }
   }
 
   /**

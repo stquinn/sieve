@@ -178,7 +178,7 @@ export class ContainerTransport {
    * all read as `error`, which is the truthful reading of "the write did not
    * happen and nothing says it did".
    * @param {string} uuid
-   * @param {{blockId: string, locator: string, quote: string, occurrence: number, start: number, end: number, replacement: string}} payload
+   * @param {{blockId: string, locator: string, quote: string, occurrence: number, grain: string, start: number, end: number, replacement: string}} payload
    * @returns {Promise<string>} the ack's outcome word
    */
   replaceText(uuid, payload) {
@@ -188,12 +188,33 @@ export class ContainerTransport {
       locator: payload.locator,
       quote: payload.quote,
       occurrence: payload.occurrence,
+      grain: payload.grain,
       start: payload.start,
       end: payload.end,
       replacement: payload.replacement,
     }, 'text-replace ' + payload.blockId)
       .then((reply) => String((reply && reply.outcome) || TEXT_REPLACE_ERROR))
       .catch(() => TEXT_REPLACE_ERROR)
+  }
+
+  /**
+   * Frames a feature-control: one text-service producer switched on or off for
+   * THIS document, with whatever it is to work with.
+   *
+   * Unanswered and fire-and-forget. What a switched-on feature produces arrives
+   * as the marks it pushes, and a channel that has gone away has switched
+   * everything off by closing — which is why nothing here waits to be told the
+   * switch landed.
+   * @param {string} uuid
+   * @param {{feature: string, enabled: boolean, parameters?: Record<string, any>}} payload
+   */
+  setFeature(uuid, payload) {
+    this._send(uuid, {
+      type: DocumentFrame.FEATURE_CONTROL,
+      feature: payload.feature,
+      enabled: payload.enabled,
+      parameters: payload.parameters || {},
+    })
   }
 
   // JS #private fields do not cross the class boundary, so the framing surface the

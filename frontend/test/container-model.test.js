@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest'
 import { ContainerModel } from '../src/static/container/container-model.js'
 import { ContractViolation } from '../src/static/contract/sieve-block.js'
-import { DocumentFrame } from '../src/static/generated/protocol.js'
+import { DocumentFrame, Feature } from '../src/static/generated/protocol.js'
 
 /** A recording ContainerUpdateListener.
  *  @param {(change: any) => void} [onEach]  runs inside the cue, to read the model mid-emit
@@ -284,15 +284,23 @@ describe('ContainerModel fold — unclaimed frames', () => {
   })
 })
 
-describe('ContainerModel fold — spell-marks', () => {
+describe('ContainerModel fold — text-marks', () => {
   /** @param {string} quote @param {number} [occurrence] */
   const mark = (quote, occurrence) => ({
     locator: 'content', quote: quote, occurrence: occurrence || 0,
     start: 0, end: quote.length, class: 'prose', suggestions: [],
   })
 
-  /** A recorder that also hears the optional marks cue.
-   *  @returns {{onChanged: (c: any) => void, onMarksChanged: (id: string, m: any) => void, seen: any[], marks: any[]}} */
+  const SPELL = Feature.SPELL_CHECK
+  const OTHER = 'find'
+
+  /** One feature's push for one block. @param {string} feature @param {string} blockId @param {any[]} marks */
+  const push = (feature, blockId, marks) =>
+    ({ type: DocumentFrame.TEXT_MARKS, feature: feature, blockId: blockId, marks: marks })
+
+  /** A recorder that also hears the optional marks cue. Each cue is recorded as
+   *  the triple it arrives as, so a test can assert WHOSE marks landed where.
+   *  @returns {{onChanged: (c: any) => void, onMarksChanged: (f: string, id: string, m: any) => void, seen: any[], marks: any[]}} */
   const marksRecorder = () => {
     /** @type {any[]} */ const seen = []
     /** @type {any[]} */ const marks = []
@@ -300,7 +308,7 @@ describe('ContainerModel fold — spell-marks', () => {
       seen,
       marks,
       onChanged: (change) => { seen.push(change) },
-      onMarksChanged: (blockId, pushed) => { marks.push([blockId, pushed]) },
+      onMarksChanged: (feature, blockId, pushed) => { marks.push([feature, blockId, pushed]) },
     }
   }
 
@@ -308,8 +316,8 @@ describe('ContainerModel fold — spell-marks', () => {
     const model = seeded()
     const rec = marksRecorder()
     model.subscribe(rec)
-    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [mark('teh')] })
-    expect(rec.marks).toEqual([['p1', [mark('teh')]]])
+    model.applyFrame(push(SPELL, 'p1', [mark('teh')]))
+    expect(rec.marks).toEqual([[SPELL, 'p1', [mark('teh')]]])
     // Marks are a reading OF the container, not a change TO it.
     expect(rec.seen).toHaveLength(1)
     expect(model.getBlock('p1')).toEqual({ id: 'p1', kind: 'prose', attrs: { content: 'hello', id: 'p1' } })
@@ -319,18 +327,18 @@ describe('ContainerModel fold — spell-marks', () => {
     const model = seeded()
     const rec = marksRecorder()
     model.subscribe(rec)
-    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [mark('teh'), mark('adn')] })
-    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [mark('adn')] })
-    expect(rec.marks[1]).toEqual(['p1', [mark('adn')]])
+    model.applyFrame(push(SPELL, 'p1', [mark('teh'), mark('adn')]))
+    model.applyFrame(push(SPELL, 'p1', [mark('adn')]))
+    expect(rec.marks[1]).toEqual([SPELL, 'p1', [mark('adn')]])
   })
 
   it('an empty array is the CLEAR — a corrected block loses its marks', () => {
     const model = seeded()
     const rec = marksRecorder()
     model.subscribe(rec)
-    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [mark('teh')] })
-    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [] })
-    expect(rec.marks[1]).toEqual(['p1', []])
+    model.applyFrame(push(SPELL, 'p1', [mark('teh')]))
+    model.applyFrame(push(SPELL, 'p1', []))
+    expect(rec.marks[1]).toEqual([SPELL, 'p1', []])
 
     // …and the cleared set is not replayed to whoever subscribes next.
     const later = marksRecorder()
@@ -338,28 +346,50 @@ describe('ContainerModel fold — spell-marks', () => {
     expect(later.marks).toEqual([])
   })
 
-  it('replays every held set at subscribe — bootstrap, the way onChanged is', () => {
+  // TWO PRODUCERS, ONE BLOCK. Each set is keyed by the feature that found it, so
+  // a second producer's push neither overwrites the first's nor is cleared by it.
+  it('keeps each feature\'s marks on the same block apart, clear included', () => {
     const model = seeded()
-    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [mark('teh')] })
-    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'c1', marks: [mark('adn')] })
     const rec = marksRecorder()
     model.subscribe(rec)
-    expect(rec.marks).toEqual([['p1', [mark('teh')]], ['c1', [mark('adn')]]])
+    model.applyFrame(push(SPELL, 'p1', [mark('teh')]))
+    model.applyFrame(push(OTHER, 'p1', [mark('cat')]))
+    model.applyFrame(push(SPELL, 'p1', []))
+    expect(rec.marks).toEqual([
+      [SPELL, 'p1', [mark('teh')]],
+      [OTHER, 'p1', [mark('cat')]],
+      [SPELL, 'p1', []],
+    ])
+
+    // What survives is exactly the feature that was never cleared.
+    const later = marksRecorder()
+    model.subscribe(later)
+    expect(later.marks).toEqual([[OTHER, 'p1', [mark('cat')]]])
+  })
+
+  it('replays every held set at subscribe — bootstrap, the way onChanged is', () => {
+    const model = seeded()
+    model.applyFrame(push(SPELL, 'p1', [mark('teh')]))
+    model.applyFrame(push(OTHER, 'c1', [mark('adn')]))
+    const rec = marksRecorder()
+    model.subscribe(rec)
+    expect(rec.marks).toEqual([[SPELL, 'p1', [mark('teh')]], [OTHER, 'c1', [mark('adn')]]])
   })
 
   it('keeps marks for a block the container does not hold yet — a push can outrun the load', () => {
     const model = new ContainerModel('doc-1')
-    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [mark('teh')] })
+    model.applyFrame(push(SPELL, 'p1', [mark('teh')]))
     model.applyLoad({ uuid: 'doc-1', blocks: [{ id: 'p1', kind: 'prose', attrs: { content: 'teh' } }] })
     const rec = marksRecorder()
     model.subscribe(rec)
-    expect(rec.marks).toEqual([['p1', [mark('teh')]]])
+    expect(rec.marks).toEqual([[SPELL, 'p1', [mark('teh')]]])
   })
 
   it('retires a block\'s marks with the block, on remove and on a transform\'s new identity', () => {
     const model = seeded()
-    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [mark('teh')] })
-    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'c1', marks: [mark('adn')] })
+    model.applyFrame(push(SPELL, 'p1', [mark('teh')]))
+    model.applyFrame(push(OTHER, 'p1', [mark('cat')]))
+    model.applyFrame(push(SPELL, 'c1', [mark('adn')]))
     model.applyFrame({ type: DocumentFrame.REMOVE_BLOCK, id: 'p1' })
     model.applyFrame({ type: DocumentFrame.REPLACE_BLOCK, oldId: 'c1', newId: 'c2', newKind: 'diagram', attrs: {} })
     const rec = marksRecorder()
@@ -371,8 +401,9 @@ describe('ContainerModel fold — spell-marks', () => {
     const model = seeded()
     const plain = recorder()
     model.subscribe(plain)
-    expect(() => model.applyFrame({ type: DocumentFrame.SPELL_MARKS, marks: [mark('teh')] })).not.toThrow()
-    expect(() => model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [mark('teh')] })).not.toThrow()
+    expect(() => model.applyFrame(push(SPELL, '', [mark('teh')]))).not.toThrow()
+    expect(() => model.applyFrame(push('', 'p1', [mark('teh')]))).not.toThrow()
+    expect(() => model.applyFrame(push(SPELL, 'p1', [mark('teh')]))).not.toThrow()
     expect(plain.seen).toHaveLength(1)
   })
 
@@ -382,7 +413,7 @@ describe('ContainerModel fold — spell-marks', () => {
     const good = marksRecorder()
     model.subscribe(bad)
     model.subscribe(good)
-    expect(() => model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: [mark('teh')] })).not.toThrow()
+    expect(() => model.applyFrame(push(SPELL, 'p1', [mark('teh')]))).not.toThrow()
     expect(good.marks).toHaveLength(1)
   })
 
@@ -391,8 +422,8 @@ describe('ContainerModel fold — spell-marks', () => {
     const rec = marksRecorder()
     model.subscribe(rec)
     const sent = [mark('teh')]
-    model.applyFrame({ type: DocumentFrame.SPELL_MARKS, blockId: 'p1', marks: sent })
-    const [, held] = rec.marks[0]
+    model.applyFrame(push(SPELL, 'p1', sent))
+    const [, , held] = rec.marks[0]
     expect(Object.isFrozen(held)).toBe(true)
     expect(Object.isFrozen(held[0])).toBe(true)
     sent[0].quote = 'mutated'

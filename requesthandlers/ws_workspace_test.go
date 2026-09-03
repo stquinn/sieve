@@ -154,9 +154,13 @@ func TestWS_SessionScroll_UnservableFrameIsRefused(t *testing.T) {
 }
 
 // THE SPELLING VERBS CROSS THE WIRES. Each is sent on the workspace wire —
-// none of them is about a document — and what a client sees is a spell-marks
+// none of them is about a document — and what a client sees is a text-marks
 // frame on the DOCUMENT channel it opened, because clearing a squiggle is the
 // only news there is.
+//
+// The two rows are the two grammars: a word accepted is the feature's own verb,
+// while switching the feature off is the lifecycle control frame every producer
+// shares.
 //
 // The ignored word is nonsense on purpose: the harness shares one parsed
 // dictionary across the whole test binary, so a word accepted here stays
@@ -168,7 +172,7 @@ func TestWS_SpellingVerbsClearMarksOnTheDocumentWire(t *testing.T) {
 		frame string
 	}{
 		{name: "ignore", word: "zzblorp", frame: `{"type":"spell-ignore","word":"zzblorp"}`},
-		{name: "disable", word: "zzquux", frame: `{"type":"spell-enable","enabled":false}`},
+		{name: "disable", word: "zzquux", frame: `{"type":"feature-control","feature":"spell-check","enabled":false,"parameters":{}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -177,7 +181,7 @@ func TestWS_SpellingVerbsClearMarksOnTheDocumentWire(t *testing.T) {
 			seedBody(t, sp, uuid, "a "+tc.word+" here")
 
 			doc := dialWS(t, srv, uuid)
-			marked := readUntil(t, doc, protocol.TypeSpellMarks, 2*time.Second)
+			marked := readUntil(t, doc, protocol.TypeTextMarks, 2*time.Second)
 			if got, _ := marked["marks"].([]interface{}); len(got) != 1 {
 				t.Fatalf("opening the document pushed %v, want the one mark", marked["marks"])
 			}
@@ -185,7 +189,7 @@ func TestWS_SpellingVerbsClearMarksOnTheDocumentWire(t *testing.T) {
 			ws := dialWorkspaceWS(t, srv)
 			send(t, ws, tc.frame)
 
-			cleared := readUntil(t, doc, protocol.TypeSpellMarks, 2*time.Second)
+			cleared := readUntil(t, doc, protocol.TypeTextMarks, 2*time.Second)
 			if got, _ := cleared["marks"].([]interface{}); len(got) != 0 {
 				t.Errorf("after %s the document heard %v, want an EMPTY mark set", tc.name, cleared["marks"])
 			}
@@ -195,9 +199,9 @@ func TestWS_SpellingVerbsClearMarksOnTheDocumentWire(t *testing.T) {
 	}
 }
 
-// The toggle is a PERSISTED global: the frame writes settings.json, so the
-// answer survives the run that gave it.
-func TestWS_SpellEnable_PersistsTheSetting(t *testing.T) {
+// The toggle is a PERSISTED global: the control frame writes settings.json
+// BEFORE it is applied, so the answer survives the run that gave it.
+func TestWS_FeatureControl_PersistsTheSpellcheckSetting(t *testing.T) {
 	srv, sp, _, _ := newWsTestServer(t)
 	c := dialWorkspaceWS(t, srv)
 	defer c.Close()
@@ -205,11 +209,11 @@ func TestWS_SpellEnable_PersistsTheSetting(t *testing.T) {
 	if !sp.State.LoadSettings().SpellcheckEnabled() {
 		t.Fatal("spelling starts off; the default is on")
 	}
-	send(t, c, `{"type":"spell-enable","enabled":false}`)
+	send(t, c, `{"type":"feature-control","feature":"spell-check","enabled":false,"parameters":{}}`)
 	waitFor(t, func() bool { return !sp.State.LoadSettings().SpellcheckEnabled() },
 		"the spellcheck setting was never persisted as off")
 
-	send(t, c, `{"type":"spell-enable","enabled":true}`)
+	send(t, c, `{"type":"feature-control","feature":"spell-check","enabled":true,"parameters":{}}`)
 	waitFor(t, func() bool { return sp.State.LoadSettings().SpellcheckEnabled() },
 		"the spellcheck setting was never persisted back on")
 }

@@ -18,7 +18,7 @@ import { CommandBadges } from './command-badges.js'
 import { AskPanel } from './ask-panel.js'
 import { InsertDialogs } from './insert-dialogs.js'
 import { MacroCatalog } from './macro-catalog.js'
-import { SearchOverlay } from './search-overlay.js'
+import { FindDialog } from './find-dialog.js'
 import { StatusBar } from './status-bar.js'
 import { SidebarView } from './sidebar-view.js'
 
@@ -571,11 +571,11 @@ export class SieveWorkspace {
   // Each delegates DIRECTLY to a Workspace-owned child or to the active tab's
   // MOUNT. These public verbs ARE the component API the native menu calls.
 
-  toggleSearch() { this.#searchOverlay?.toggle() }
+  toggleFind() { this.#findDialog?.toggle() }
 
-  searchNext() { this.#searchOverlay?.next() }
+  findNext() { this.#findDialog?.next() }
 
-  searchPrev() { this.#searchOverlay?.prev() }
+  findPrev() { this.#findDialog?.prev() }
 
   /** @param {string} [url] optional href prefill */
   openWebClipDialog(url) { this.#insertDialogs?.openWebClip(url) }
@@ -730,8 +730,8 @@ export class SieveWorkspace {
   /** @type {InsertDialogs|null} the URL insert dialogs child */
   #insertDialogs = null
 
-  /** @type {SearchOverlay|null} the document search overlay child */
-  #searchOverlay = null
+  /** @type {FindDialog|null} the find-and-replace bar child */
+  #findDialog = null
 
   /** @type {CommandBadges|null} the command badges child */
   #commandBadges = null
@@ -748,7 +748,7 @@ export class SieveWorkspace {
     if (!this.#commandBadges) this.#commandBadges = new CommandBadges()
     if (!this.#askPanel) this.#askPanel = new AskPanel(this, this.#commandService, this.#commandBadges, this.#mentionService)
     if (!this.#insertDialogs) this.#insertDialogs = new InsertDialogs(this)
-    if (!this.#searchOverlay) this.#searchOverlay = new SearchOverlay(this)
+    if (!this.#findDialog) this.#findDialog = new FindDialog(this)
     if (!this.#statusBar) this.#statusBar = new StatusBar(this)
     if (!this.#sidebarView) this.#sidebarView = new SidebarView().attach()
   }
@@ -776,8 +776,8 @@ export class SieveWorkspace {
   /** @returns {InsertDialogs|null} the URL insert dialogs child */
   get insertDialogs() { return this.#insertDialogs }
 
-  /** @returns {SearchOverlay|null} the document search overlay child */
-  get searchOverlay() { return this.#searchOverlay }
+  /** @returns {FindDialog|null} the find-and-replace bar child */
+  get findDialog() { return this.#findDialog }
 
   /**
    * Boots the tab strip and subscribes to the refresh signals every other panel

@@ -108,6 +108,7 @@ func NewWsHandler(sp *sieve.ServiceProvider, broadcast *WorkspaceBroadcast, toke
 		protocol.TypeExport:            h.handleExport,
 		protocol.TypeFocus:             h.handleFocus,
 		protocol.TypeTextReplace:       h.handleTextReplace,
+		protocol.TypeFeatureControl:    h.handleDocumentFeatureControl,
 	}
 	h.workspaceFrames = map[string]frameHandler{
 		protocol.TypePing:           h.handlePing,
@@ -118,7 +119,7 @@ func NewWsHandler(sp *sieve.ServiceProvider, broadcast *WorkspaceBroadcast, toke
 		protocol.TypeSessionScroll:  h.handleSessionScroll,
 		protocol.TypeSpellIgnore:    h.handleSpellIgnore,
 		protocol.TypeSpellLearn:     h.handleSpellLearn,
-		protocol.TypeSpellEnable:    h.handleSpellEnable,
+		protocol.TypeFeatureControl: h.handleWorkspaceFeatureControl,
 	}
 	return h
 }
@@ -139,11 +140,18 @@ func (h *WsHandler) register(uuid string, c *wsConn) {
 // stale tab proving liveness or syncing to disk is not evidence a human edits
 // there, so it must not steal ownership from the real editor. transform rides
 // inside extract (via its Operation/Action), so it needs no separate case.
+//
+// feature-control counts even though most of them change nothing: a feature's
+// parameters can carry an imperative the feature obeys against the document
+// (find's replace-all), whose render-backs are synchronous and must reach the
+// socket that asked. Which frames carry one is not readable here — the parameters
+// are the feature's alone — and the frame only ever comes from a socket with a
+// live UI on it, so claiming on every one is both necessary and harmless.
 func (h *WsHandler) isMutating(frameType string) bool {
 	switch frameType {
 	case protocol.TypeDocUpdate, protocol.TypeBlockOp, protocol.TypeExtract,
 		protocol.TypeRetryBlockJob, protocol.TypeEnterMarkdown, protocol.TypeEnterWysiwyg,
-		protocol.TypePaste, protocol.TypeTextReplace:
+		protocol.TypePaste, protocol.TypeTextReplace, protocol.TypeFeatureControl:
 		return true
 	default:
 		return false
@@ -460,13 +468,13 @@ func (h *WsHandler) handleDocumentWS(w http.ResponseWriter, r *http.Request) {
 		logger.Warn("ws: could not open shadow", "uuid", uuid, "err", err)
 	}
 
-	// Spelling is a server-initiated render-back, so it registers the same way the
-	// block lifecycle does and pushes through the same owner path. It runs off the
-	// read loop: a document opens and paints without waiting on a whole-document
-	// check, and marks arrive when they arrive.
-	if h.ServiceProvider.Spell != nil {
-		h.ServiceProvider.Spell.SetNotifier(h)
-		go h.ServiceProvider.Spell.CheckAndPush(uuid)
+	// Marks are a server-initiated render-back, so the engine registers the same
+	// way the block lifecycle does and pushes through the same owner path. The
+	// seed runs off the read loop: a document opens and paints without waiting on
+	// a whole-document inspection, and marks arrive when they arrive.
+	if h.ServiceProvider.Inspection != nil {
+		h.ServiceProvider.Inspection.SetNotifier(h)
+		go h.ServiceProvider.Inspection.CheckAndPush(uuid)
 	}
 
 	h.readLoop(conn, protocol.ChannelDocument, h.documentFrames, ch, uuid)
@@ -670,10 +678,10 @@ func (h *WsHandler) OnOrderChanged(uuid string, order []string) {
 	h.sendTo(uuid, protocol.NewOrderChangedFrame(order))
 }
 
-// SpellMarks implements editor.SpellMarksNotifier. Marks are a render-back, not
-// an ack — nobody asked for them — so they go to uuid's registered owner.
-func (h *WsHandler) SpellMarks(uuid, blockID string, marks []domain.TextMark) {
-	h.sendTo(uuid, protocol.NewSpellMarksFrame(blockID, marks))
+// TextMarks implements editor.TextMarksNotifier. Marks are a render-back, not an
+// ack — nobody asked for them — so they go to uuid's registered owner.
+func (h *WsHandler) TextMarks(uuid, feature, blockID string, marks []domain.TextMark) {
+	h.sendTo(uuid, protocol.NewTextMarksFrame(feature, blockID, marks))
 }
 
 // Either way the created block reaches the client as a render-back
@@ -809,9 +817,12 @@ func (h *WsHandler) handleExport(f inboundFrame) {
 	f.reply(protocol.NewExportContentFrame(msg.OpID, format, md))
 }
 
-// handleFocus records that the user is dwelling on this document. It answers
+// handleFocus records that the user is dwelling on this document — as the
+// document's own durable count, and as the run's volatile "this is what is being
+// read", which anything deriving from the open document follows. It answers
 // nothing: the count is read from the meta panel, never from this frame.
 func (h *WsHandler) handleFocus(f inboundFrame) {
+	h.ServiceProvider.Editor.SetFocusedDocument(f.uuid)
 	doc, err := h.ServiceProvider.Documents.LoadByUUID(f.uuid)
 	if err != nil {
 		logger.Debug("ws: focus for an unknown document", "uuid", f.uuid, "err", err)
@@ -875,23 +886,61 @@ func (h *WsHandler) handleSpellLearn(f inboundFrame) {
 	}
 }
 
-// handleSpellEnable persists the toggle and applies it. The write comes FIRST:
-// the setting is what a restart reads, and applying a state that failed to
-// persist would leave the toolbar and the file disagreeing after one.
-func (h *WsHandler) handleSpellEnable(f inboundFrame) {
-	var msg protocol.SpellEnableFrame
-	if err := json.Unmarshal(f.raw, &msg); err != nil {
-		h.refuse(f, protocol.TypeSpellEnable, err)
+// handleWorkspaceFeatureControl switches a workspace-wide text-service feature.
+// Spelling's toggle is persisted FIRST: the setting is what a restart reads, and
+// applying a state that failed to persist would leave the toolbar and the file
+// disagreeing after one.
+//
+// A refusal is LOGGED rather than replied to. The workspace wire is shared by
+// every tenant and answers nothing uncorrelated, so a feature word nothing
+// serves is a client bug to read in the log, not a frame to invent.
+func (h *WsHandler) handleWorkspaceFeatureControl(f inboundFrame) {
+	msg, ok := h.featureControl(f)
+	if !ok {
 		return
 	}
-	if state := h.ServiceProvider.State; state != nil {
-		if err := state.SaveSettings(state.LoadSettings().WithSpellcheck(msg.Enabled)); err != nil {
-			logger.Error("ws: could not persist the spellcheck setting", "err", err)
+	if msg.Feature == domain.FeatureSpellCheck {
+		if state := h.ServiceProvider.State; state != nil {
+			if err := state.SaveSettings(state.LoadSettings().WithSpellcheck(msg.Enabled)); err != nil {
+				logger.Error("ws: could not persist the spellcheck setting", "err", err)
+			}
 		}
 	}
-	if h.ServiceProvider.Spell != nil {
-		h.ServiceProvider.Spell.SetEnabled(msg.Enabled)
+	if h.ServiceProvider.Inspection == nil {
+		return
 	}
+	if err := h.ServiceProvider.Inspection.SetWorkspaceFeature(msg.Feature, msg.Enabled, msg.Parameters); err != nil {
+		logger.Warn("ws: feature-control dropped", "feature", msg.Feature, "err", err)
+	}
+}
+
+// handleDocumentFeatureControl switches a feature for THIS document alone. The
+// refusal is answered here, unlike on the workspace wire: a document channel
+// already carries error frames for the frames it could not serve, and a dialog
+// that asked for a feature is waiting to be told it cannot have one.
+func (h *WsHandler) handleDocumentFeatureControl(f inboundFrame) {
+	msg, ok := h.featureControl(f)
+	if !ok {
+		return
+	}
+	if h.ServiceProvider.Inspection == nil {
+		return
+	}
+	if err := h.ServiceProvider.Inspection.SetDocumentFeature(f.uuid, msg.Feature, msg.Enabled, msg.Parameters); err != nil {
+		logger.Warn("ws: feature-control refused", "uuid", f.uuid, "feature", msg.Feature, "err", err)
+		f.reply(protocol.NewErrorFrame(fmt.Sprintf("%s refused: %v", protocol.TypeFeatureControl, err)))
+	}
+}
+
+// featureControl reads a control frame, refusing an unreadable one the way every
+// other unservable payload is refused.
+func (h *WsHandler) featureControl(f inboundFrame) (protocol.FeatureControlFrame, bool) {
+	var msg protocol.FeatureControlFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeFeatureControl, err)
+		return msg, false
+	}
+	return msg, true
 }
 
 // replyTo sends a correlated reply REQUESTER-AFFINELY, per the ownership rule
