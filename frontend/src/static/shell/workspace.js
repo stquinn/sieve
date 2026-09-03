@@ -407,14 +407,19 @@ export class SieveWorkspace {
         // The editor's saved-fact baseline is the version this load served, and a
         // save can land the moment it mounts.
         ed.seedVersion(data.version)
-        // presentSurface unmounts any previous surface, then subscribes — and the
-        // subscription's first cue is what paints.
-        ed.presentSurface(isMarkdown ? 'markdown' : 'wysiwyg', mountEl, isMarkdown ? (data.body || '') : null)
-        // mode-changed fires only on an actual flip, not on the initial mount.
-        if (this.#activeTab) this.#activeTab.recordMode(ed.mode)
-        document.body.classList.toggle('markdown-mode', ed.mode === 'markdown')
-        // 0 for a never-seen tab is the park-at-top floor, so one call serves both.
-        ed.restoreScroll(data.scroll || 0)
+        // The MODE is the host's to choose and the seed is the lens's to fetch:
+        // this load answer says which shape the reader left the container in, and
+        // nothing here hands over content. presentMode unmounts any previous
+        // surface, then subscribes — and the subscription's first cue is what
+        // paints.
+        return ed.presentMode(isMarkdown ? 'markdown' : 'wysiwyg', mountEl).then(() => {
+          if (this.#currentUuid !== uuid) return // a later init superseded this present
+          // mode-changed fires only on an actual flip, not on the initial mount.
+          if (this.#activeTab) this.#activeTab.recordMode(ed.mode)
+          document.body.classList.toggle('markdown-mode', ed.mode === 'markdown')
+          // 0 for a never-seen tab is the park-at-top floor, so one call serves both.
+          ed.restoreScroll(data.scroll || 0)
+        })
       })
       .catch((err) => { console.error('[editor] load failed', err) })
   }

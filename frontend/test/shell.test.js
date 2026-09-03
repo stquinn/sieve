@@ -884,6 +884,48 @@ describe('AbstractEditor.presentSurface (P2.B lifecycle)', () => {
   })
 })
 
+// A HOST names a mode and a root and supplies no content: which seed a surface
+// needs is the lens's knowledge. A markdown surface is a verbatim buffer, so it
+// is only ever presented over the container's own projection — the same ask the
+// flip makes, which is also what hands the container's text over to that buffer.
+describe('AbstractEditor.presentMode — the host names a mode, the lens fetches its seed', () => {
+  it('markdown is seeded by the container projection, and asks for it exactly once', async () => {
+    const { ed, provider, made } = noteRig('n')
+    provider.getContents.mockResolvedValue('# from the container')
+    const root = document.createElement('div')
+    await ed.presentMode('markdown', root)
+    expect(provider.getContents).toHaveBeenCalledTimes(1)
+    expect(made[0].mountArgs).toEqual([root, '# from the container'])
+    expect(ed.mode).toBe('markdown')
+  })
+
+  it('wysiwyg is seeded by nothing — the bootstrap cue paints it from the model', async () => {
+    const { ed, provider, made } = noteRig('n')
+    await ed.presentMode('wysiwyg', document.createElement('div'))
+    expect(provider.getContents).not.toHaveBeenCalled()
+    expect(made[0].mountArgs[1]).toBeNull()
+    expect(made[0].changes).toHaveLength(1)
+  })
+
+  it('a projection that never arrives presents the BLOCKS instead — never an unseeded buffer', async () => {
+    const { ed, provider, made } = noteRig('n')
+    provider.getContents.mockRejectedValue(new Error('ws timeout: enter-markdown'))
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await ed.presentMode('markdown', document.createElement('div'))
+    expect(made).toHaveLength(1)
+    expect(made[0].mode).toBe('wysiwyg')
+    expect(ed.mode).toBe('wysiwyg')
+    expect(errors).toHaveBeenCalled()
+  })
+
+  it('a whole-content container has no blocks to fall back to, so the failure reaches the host', async () => {
+    const ed = new FakeSurfaceEditor('prompt:p', { provider: wholeContentProvider() })
+    ed.provider.getContents.mockRejectedValue(new Error('ws timeout'))
+    await expect(ed.presentMode('markdown', document.createElement('div'))).rejects.toThrow('ws timeout')
+    expect(ed.made).toHaveLength(0)
+  })
+})
+
 describe('SieveTab.createEditor factory (P2.A)', () => {
   it('creates a NoteEditor for a note uuid', () => {
     const tab = new SieveTab('note-1')
@@ -1007,6 +1049,48 @@ describe('NoteEditor.setMode — the flip is ONE lens using both of its containe
     await assertion
     expect(rig.made).toHaveLength(1)
     expect(rig.ed.mode).toBe('wysiwyg')
+  })
+
+  /** Puts blocks in the container the fake provider answers for. */
+  function hold(provider, ...blocks) {
+    for (const b of blocks) { provider._order.push(b.id); provider._blocks[b.id] = b }
+    return provider
+  }
+
+  it('markdown→wysiwyg with an EMPTY buffer over a container that holds content is refused', async () => {
+    const rig = flipRig('markdown')
+    hold(rig.provider, { id: 'b1', kind: 'prose', attrs: { content: 'alpha alpha alpha' } })
+    rig.made[0].bodyValue = '   '
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await expect(rig.ed.setMode('wysiwyg')).rejects.toThrow('empty buffer')
+    // The container is never told: a re-parse of nothing would replace what it
+    // holds, and this lens would paint the result.
+    expect(rig.provider.setContents).not.toHaveBeenCalled()
+    expect(rig.made).toHaveLength(1)
+    expect(rig.made[0].unmountCount).toBe(0)
+    expect(rig.ed.mode).toBe('markdown')
+    expect(errors).toHaveBeenCalled()
+  })
+
+  it('an emptied container still flips — emptiness alone is never the test', async () => {
+    // Empty prose carries nothing, so a buffer with nothing in it states this
+    // container correctly and the reader is allowed to have emptied it.
+    const rig = flipRig('markdown')
+    hold(rig.provider, { id: 'b1', kind: 'prose', attrs: { content: '' } })
+    rig.made[0].bodyValue = ''
+    await expect(rig.ed.setMode('wysiwyg')).resolves.toBe(true)
+    expect(rig.provider.setContents).toHaveBeenCalledWith('')
+    expect(rig.ed.mode).toBe('wysiwyg')
+  })
+
+  it('a structured block carries its payload in attrs, so an empty buffer over one is refused', async () => {
+    const rig = flipRig('markdown')
+    hold(rig.provider, { id: 'b1', kind: 'smart-image', attrs: { src: '/api/assets/x.png' } })
+    rig.made[0].bodyValue = ''
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(rig.ed.setMode('wysiwyg')).rejects.toThrow('empty buffer')
+    expect(rig.provider.setContents).not.toHaveBeenCalled()
   })
 
   it('setMode with a value not in EditorMode resolves false and asks the container nothing', async () => {
@@ -1377,12 +1461,23 @@ describe('SieveWorkspace editor lifecycle (P4.F — moved from editor.js)', () =
 
   it('initEditor: a superseded in-flight load is dropped (staleness guard)', async () => {
     const w = new SieveWorkspace()
-    /** @type {Record<string, (body: string) => void>} */
-    const resolvers = {}
+    // A channel-less container answers BOTH asks over HTTP — the host's load and
+    // the lens's projection — so a uuid is asked more than once and each ask gets
+    // its own settler.
+    /** @type {Record<string, Array<(body: string) => void>>} */
+    const pending = {}
     global.fetch = vi.fn((url) => new Promise((res) => {
       const uuid = decodeURIComponent(url.split('uuid=')[1])
-      resolvers[uuid] = (body) => res({ json: () => Promise.resolve({ body, blocks: [] }) })
+      ;(pending[uuid] = pending[uuid] || []).push(
+        (body) => res({ json: () => Promise.resolve({ body, blocks: [] }) }))
     }))
+    /** Settles every ask outstanding for a uuid, and any the settling provokes. */
+    const answer = async (uuid, body) => {
+      for (let round = 0; round < 4 && (pending[uuid] || []).length; round++) {
+        for (const settle of pending[uuid].splice(0)) settle(body)
+        await new Promise((r) => setTimeout(r, 0))
+      }
+    }
     const mount = document.createElement('div')
 
     w.initEditor(mount, 'prompt:a', 'markdown') // load A pending, currentUuid='prompt:a'
@@ -1390,13 +1485,13 @@ describe('SieveWorkspace editor lifecycle (P4.F — moved from editor.js)', () =
     const edB = w.activeEditor
     const present = vi.spyOn(edB, 'presentSurface').mockImplementation(() => {})
 
-    resolvers['prompt:a']('A') // resolve the STALE load
-    await new Promise((r) => setTimeout(r, 0))
+    await answer('prompt:a', 'A') // resolve the STALE load
     expect(present).not.toHaveBeenCalled() // guard dropped it; edB untouched
 
-    resolvers['prompt:b']('B') // resolve the CURRENT load
-    await new Promise((r) => setTimeout(r, 0))
+    await answer('prompt:b', 'B') // resolve the CURRENT load
     expect(present).toHaveBeenCalledOnce() // current load presented into edB
+    // The seed is the container's own projection, never the load answer's body.
+    expect(present.mock.calls[0]).toEqual(['markdown', mount, 'B'])
   })
 
   it('initEditor: onEditorModeEvent attaches ONCE per editor instance (no re-subscribe on same-uuid re-init)', () => {

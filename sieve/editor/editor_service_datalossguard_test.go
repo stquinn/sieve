@@ -36,3 +36,35 @@ func TestEditorService_FlushDoesNotWipeNonEmptyDocWithEmptyContent(t *testing.T)
 		t.Fatalf("DATA LOSS: empty flush wiped a non-empty doc; on-disk body = %q", string(saved.Body()))
 	}
 }
+
+// A client that hands back a buffer emptier than the one it was given takes the
+// document's whole tree with it: the buffer IS the mode's truth, so enter-wysiwyg
+// re-parses it into nothing. Only the flush guard keeps that off disk — the
+// condition the enter-wysiwyg WARN reports.
+func TestEditorService_EnterWysiwygOverEmptyBufferKeepsTheFileIntact(t *testing.T) {
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+	es.SetLifecycleListener(&mockLifecycleListener{})
+
+	doc, _ := ds.New()
+	doc.SetBody([]byte("alpha alpha alpha\n\nbravo bravo"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	if err := es.Open(uuid); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	es.EnterWysiwyg(uuid) // no markdown was ever handed over: the buffer is empty
+	if blocks, ok := es.FrontendBlocks(uuid); !ok || len(blocks) != 0 {
+		t.Fatalf("expected the empty buffer to re-parse into no blocks, got %d (ok=%v)", len(blocks), ok)
+	}
+	_ = es.Flush(uuid)
+
+	saved, err := ds.LoadByUUID(uuid)
+	if err != nil {
+		t.Fatalf("LoadByUUID: %v", err)
+	}
+	if !strings.Contains(string(saved.Body()), "alpha alpha alpha") {
+		t.Fatalf("DATA LOSS: an empty re-parse reached disk; on-disk body = %q", string(saved.Body()))
+	}
+}

@@ -652,7 +652,16 @@ func (es *EditorService) EnterWysiwyg(uuid string) {
 		logger.Warn("editor: enter-wysiwyg — no shadow", "uuid", uuid)
 		return
 	}
+	prior := len(shadow.BlockIDs())
 	n := shadow.EnterWysiwygMode()
+	// A tree that held blocks and re-parses into none came from a buffer that no
+	// longer states the document. The tree is replaced regardless — the buffer is
+	// this mode's truth — and only the flush guard then keeps the emptiness off
+	// disk, so nothing else in the log says the document was lost.
+	if n == 0 && prior > 0 {
+		logger.Warn("editor: enter-wysiwyg re-parsed nothing over a document that held blocks",
+			"uuid", uuid, "prior_blocks", prior)
+	}
 	logger.Info("editor: enter-wysiwyg", "uuid", uuid, "blocks_reparsed", n)
 }
 

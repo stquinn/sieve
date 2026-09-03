@@ -26,6 +26,9 @@ import { QuestionList } from '../renderers/question-list.js'
  * @typedef {import('../contract/lens-capabilities.js').LensCapabilities} LensCapabilities
  */
 
+/** The one kind whose whole payload is text, so an empty one carries nothing. */
+const PROSE_KIND = 'prose'
+
 /** The full repertoire of an editing lens, before a subclass's identity or a
  *  missing dependency narrows it. */
 const EVERY_CAPABILITY = Object.freeze({
@@ -432,6 +435,51 @@ export class AbstractEditor extends Lens {
   }
 
   /**
+   * Presents a mode with the seed that mode requires — the ONE way a HOST puts a
+   * container on screen. Which seed a surface needs is this lens's knowledge, so
+   * a caller supplies a mode and a root and nothing else: a host that also
+   * supplied the content could seed a verbatim buffer with something the
+   * container never said.
+   *
+   * A markdown projection that never arrives leaves the buffer unpresentable. A
+   * container with a block tree is then presented as blocks — the shape it can
+   * always be read in — and one without has nothing else to be, so the failure
+   * reaches the caller.
+   * @param {EditorModeValue} mode
+   * @param {HTMLElement} rootEl — the editor's root
+   * @returns {Promise<AbstractSurface>} the mounted surface
+   */
+  async presentMode(mode, rootEl) {
+    let seed
+    try {
+      seed = await this.#seedFor(mode)
+    } catch (err) {
+      if (!this.canEditBlocks) throw err
+      console.error('[editor] the container did not project its text; presenting its blocks instead', err)
+      return this.presentSurface(EditorMode.WYSIWYG, rootEl, null)
+    }
+    return this.presentSurface(mode, rootEl, seed)
+  }
+
+  /**
+   * The seed a surface needs to be presented in `mode`.
+   *
+   * MARKDOWN is a verbatim buffer, so it is seeded by the container's own
+   * projection — the ask that also hands the container's text over to that
+   * buffer, which is why a markdown surface is never presented without it.
+   * WYSIWYG reads the model on its bootstrap cue and needs no seed at all.
+   *
+   * REJECTS when the projection does not arrive: an unseeded verbatim buffer
+   * would state that the container is empty.
+   * @param {EditorModeValue} mode
+   * @returns {Promise<string|null>}
+   */
+  #seedFor(mode) {
+    if (mode !== EditorMode.MARKDOWN) return Promise.resolve(null)
+    return this.provider.getContents()
+  }
+
+  /**
    * @override — tears the surface down BEFORE the base drops the subscription and
    * empties the root. The order is load-bearing: a WysiwygSurface destroys a live
    * ProseMirror view, which must still own its DOM when it does.
@@ -696,18 +744,46 @@ export class AbstractEditor extends Lens {
     let payload
     if (target === EditorMode.MARKDOWN) {
       // The frontend never serialises a document; that stays Go's job.
-      payload = await provider.getContents()
+      payload = await this.#seedFor(target)
     } else {
       // Hand the whole buffer back; Go re-parses and its blocks become the truth
       // again. That reset reaches this lens as the bootstrap cue of the new
       // surface, so nothing is passed through here.
-      await provider.setContents(old.body || '')
+      const buffer = old.body || ''
+      if (!buffer.trim() && this.#containerHoldsContent()) {
+        // Handing this over would have the container re-parse itself into
+        // nothing, and this lens paint the nothing. The buffer is what is wrong,
+        // so the container is not told about it and the flip does not happen.
+        console.error('[editor] refusing to hand over an empty buffer: the container holds content', this.uuid)
+        throw new ContractViolation('empty buffer over a container that holds content')
+      }
+      await provider.setContents(buffer)
       payload = null
     }
 
     // Success only — the swap is unreachable on timeout/error.
     this.presentSurface(target, /** @type {HTMLElement} */ (this.host), payload)
     return true
+  }
+
+  /**
+   * Whether the container holds anything a whole-document buffer would have to
+   * carry. Prose carries its text and an empty paragraph carries none; every
+   * structured kind carries its payload in attrs and so always counts.
+   *
+   * A container that holds nothing is a document a reader may legitimately have
+   * emptied, which is why emptiness alone is never the test.
+   * @returns {boolean}
+   */
+  #containerHoldsContent() {
+    const provider = this.provider
+    for (const id of provider.getOrder()) {
+      const node = provider.getBlock(id)
+      if (!node) continue
+      if (node.kind && node.kind !== PROSE_KIND) return true
+      if (String((node.attrs && node.attrs.content) || '').trim() !== '') return true
+    }
+    return false
   }
 
   /** Toggles AI-block visibility for THIS editor, mirrored as the

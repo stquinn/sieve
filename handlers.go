@@ -110,9 +110,16 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Which shape a reader left a container in is session state, so the shell
+	// mounts the active tab in its own mode — the same field editor.html carries
+	// on every other mount.
 	activeUUID := ""
+	activeMode := "wysiwyg"
 	if session.ActiveIdx >= 0 && session.ActiveIdx < len(session.Tabs) {
 		activeUUID = session.Tabs[session.ActiveIdx].ID
+		if m := session.Tabs[session.ActiveIdx].Mode; m != "" {
+			activeMode = m
+		}
 	}
 
 	tierStr := "dumb"
@@ -142,6 +149,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		PromptsHeight    int
 		AskPanelHeight   int
 		ActiveUUID       string
+		ActiveMode       string
 		AutosaveDebounce int
 		CLITimeoutLong   int
 		// MaxAttachmentBytes is the user's attachment ceiling (#84). The client
@@ -173,6 +181,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		PromptsHeight:      session.PromptsHeight,
 		AskPanelHeight:     session.AskPanelHeight,
 		ActiveUUID:         activeUUID,
+		ActiveMode:         activeMode,
 		AutosaveDebounce:   info.AutosaveDebounce,
 		CLITimeoutLong:     info.CLITimeoutLong,
 		MaxAttachmentBytes: info.MaxAttachmentBytes,
