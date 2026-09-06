@@ -1,7 +1,7 @@
 # How-To: Test CI Workflows Locally
 
 **Status:** Current (2026-08-08).
-**Companion:** `.gitea/workflows/ci.yml` and its byte-identical `.github/` twin.
+**Companion:** `.forgejo/workflows/ci.yml`.
 **Context:** Forgejo issue #70.
 
 Workflow changes used to be testable only by committing and pushing. That loop
@@ -49,7 +49,7 @@ stops being true.
 
 ```bash
 nix run nixpkgs#forgejo-runner -- exec \
-  -W .gitea/workflows/ci.yml \
+  -W .forgejo/workflows/ci.yml \
   -i catthehacker/ubuntu:act-latest \
   --default-actions-url https://data.forgejo.org \
   -j test-go
@@ -60,7 +60,7 @@ setup**:
 
 | Flag | Default | Why ours differs |
 |---|---|---|
-| `-W` | `./.forgejo/workflows/` | We have no `.forgejo/`. Point at the **file**, not the directory — the directory also contains `release.yml`, which recurses in and plans a `build-linux` job you did not ask for. |
+| `-W` | `./.forgejo/workflows/` | Point at the **file**, not the directory — the directory also contains `release.yml`, which recurses in and plans a `build-linux` job you did not ask for. |
 | `-i` | `node:20-bullseye` | Our runner labels map `ubuntu-latest` → `catthehacker/ubuntu:act-latest`. `build-go` and `credits` `sudo apt-get` GTK/WebKit, so the Debian/node default tests something we never run. |
 | `--default-actions-url` | `https://code.forgejo.org` | Our runners resolve bare `actions/*` from `data.forgejo.org` (see the note in `ci.yml`). |
 | `-j` | all jobs | Run one job. See below. |
@@ -68,7 +68,7 @@ setup**:
 List what is available without running anything:
 
 ```bash
-nix run nixpkgs#forgejo-runner -- exec -W .gitea/workflows/ci.yml --list
+nix run nixpkgs#forgejo-runner -- exec -W .forgejo/workflows/ci.yml --list
 ```
 
 ---
@@ -129,13 +129,11 @@ shell running it and kills your own terminal.
 **Piping hides the exit code.** `... | tail -60` reports `tail`'s status, not the
 runner's. Redirect to a file and check `$?`, or read the last lines afterwards.
 
-**Keep the two workflow files byte-identical.** `exec` runs whichever file you
-point `-W` at. If `.gitea/` and `.github/` have drifted you may be validating the
-copy that never runs. They diverged silently once already:
-
-```bash
-diff .gitea/workflows/ci.yml .github/workflows/ci.yml   # must be empty
-```
+**One workflow directory only.** Forgejo looks for `.forgejo/workflows`, then
+`.gitea/workflows`, then `.github/workflows`, and uses the first directory that
+exists, even if it holds no workflows. Adding a second directory silently
+disables the first. `.github/workflows` holds only the macOS release build, which
+Forgejo never reads because `.forgejo/workflows` exists.
 
 ---
 

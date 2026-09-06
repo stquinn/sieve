@@ -42,6 +42,7 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 | Store abstraction + FileStore | `store/interfaces.go`, `store/filestore/` |
 | File watcher | `watcher/` (package `watcher`: `NotesWatcher`, `New`) |
 | Tech debt register | `docs/TECH-DEBT.md` |
+| **CI / release workflows** | `.forgejo/workflows/` (`ci.yml`, `release.yml` = Linux) — the ONLY directory Forgejo reads (it stops at the first of `.forgejo/`, `.gitea/`, `.github/` that exists). `.github/workflows/release.yml` = macOS build only (no Mac build agent on Forgejo). Local runs: `docs/how-to-test-ci-locally.md` |
 | **Editor interaction contract (NORMATIVE)** | `docs/editor-interaction-contract.md` |
 | **Docs layout** | `docs/` root = long-lived contracts, behaviour specs, living registers, how-tos. `docs/design/` = design history: brainstorms + `specs/` + `plans/` (legacy) + `archive/`. `docs/design/specs/` = design/decision docs (thin: problem, decision, architecture, rationale); header carries `Tracked: #N` when work is active. Plans are Forgejo issues, NOT files (epic issue + per-phase issues for large work; drafted in scratchpad → posted via `tea api`; reviewed on the issue) — `docs/design/plans/` holds legacy plans only, never add to it. Completed/superseded specs are stamped with a status banner and `git mv`'d to `docs/design/archive/specs/` in the same change that closes their issue. |
 | Current milestone plan | `docs/FEATURE-BACKLOG.md` (PHASE9 completed → `docs/design/archive/PHASE9-PLAN.md`) |
