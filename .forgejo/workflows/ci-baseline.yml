@@ -1,0 +1,34 @@
+name: CI baseline (rung 2)
+
+# Gate 1 of sieve#136: how long does Sieve's devShell take to materialise on the
+# bare ci-base image, with no project image? This is the number a sieve-ci image
+# has to beat. Dispatch it by hand; it also runs when this file itself changes.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.forgejo/workflows/ci-baseline.yml]
+
+jobs:
+  baseline:
+    runs-on: nix
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cold nix develop (substitutes the whole devShell closure)
+        run: |
+          start=$(date +%s)
+          nix develop -c go version 2>&1 | tee nix-cold.log
+          echo "cold wall-clock: $(( $(date +%s) - start ))s"
+          grep -E 'will be fetched|MiB download' nix-cold.log || echo "no fetch summary line in nix output"
+
+      - name: Warm nix develop (everything already in the store)
+        run: |
+          start=$(date +%s)
+          nix develop -c wails version
+          nix develop -c node --version
+          echo "warm wall-clock: $(( $(date +%s) - start ))s"
+
+      - name: Store footprint
+        run: du -sh /nix/store
