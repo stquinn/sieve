@@ -2,17 +2,19 @@
   "nodes": {
     "ci-base": {
       "inputs": {
+        "flake-utils": "flake-utils",
         "nixpkgs": [
           "nixpkgs"
         ],
-        "nixpkgs-tea": "nixpkgs-tea"
+        "nixpkgs-tea": "nixpkgs-tea",
+        "systems": "systems_2"
       },
       "locked": {
-        "lastModified": 1788801743,
-        "narHash": "sha256-AnnM8BftjgPMhVTml+fHwyPWzMl0UDNzrZ1pbsTH1Zk=",
+        "lastModified": 1788804888,
+        "narHash": "sha256-ZCDpLYI4urFaB8dHmxuaugtX0BpSbsyBKz7EMQoedss=",
         "ref": "refs/heads/main",
-        "rev": "17e00733b4c4e6a781877125605ea947edcb22ef",
-        "revCount": 5,
+        "rev": "bf32c71af2cd27e6d27e4bc3735cf4073febd96c",
+        "revCount": 7,
         "type": "git",
         "url": "https://git.stephenquinn.ie/stephen/ci-base.git"
       },
@@ -24,6 +26,24 @@
     "flake-utils": {
       "inputs": {
         "systems": "systems"
+      },
+      "locked": {
+        "lastModified": 1731533236,
+        "narHash": "sha256-l0KFg5HjrsfsO/JpG+r7fRrqm12kzFHyUHqHCVpMMbI=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "11707dc2f618dd54ca8739b309ec4fc024de578b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "flake-utils_2": {
+      "inputs": {
+        "systems": "systems_3"
       },
       "locked": {
         "lastModified": 1731533236,
@@ -90,12 +110,42 @@
     "root": {
       "inputs": {
         "ci-base": "ci-base",
-        "flake-utils": "flake-utils",
+        "flake-utils": "flake-utils_2",
         "nixpkgs": "nixpkgs",
         "nixpkgs-darwin-intel": "nixpkgs-darwin-intel"
       }
     },
     "systems": {
+      "locked": {
+        "lastModified": 1681028828,
+        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
+        "owner": "nix-systems",
+        "repo": "default",
+        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-systems",
+        "repo": "default",
+        "type": "github"
+      }
+    },
+    "systems_2": {
+      "locked": {
+        "lastModified": 1681028828,
+        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
+        "owner": "nix-systems",
+        "repo": "default",
+        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-systems",
+        "repo": "default",
+        "type": "github"
+      }
+    },
+    "systems_3": {
       "locked": {
         "lastModified": 1681028828,
         "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
