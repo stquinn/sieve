@@ -92,10 +92,12 @@ nix run nixpkgs#forgejo-runner -- exec -W .forgejo/workflows/ci.yml --list
 | `build-go` | moderate | When you touched the build. The GTK/WebKit headers come from the image's devShell, so it is a compile and nothing else. |
 | `credits` | moderate | Rarely. Gated on dependency changes in CI; locally it does `npm ci` and a `go-licenses` run, both over the network. |
 
-Only Go module and npm downloads still use the network. The toolchain is
-`nix develop --offline` out of the image's store: a job that has to fetch a
-compiler means the image is stale, and `publish-ci-image.yml` rebuilds it on any
-flake change.
+Only Go module and npm downloads use the network in the steady state. The
+toolchain is `nix develop` out of the image's store. A job that fetches or builds
+a compiler is running a flake change against the previous image — `ci.yml` is
+deliberately not `--offline`, so that run degrades instead of failing — and
+`publish-ci-image.yml` is rebuilding the image behind it. Its probe job is where
+`--offline` is enforced.
 
 Default event is `push`. Use `-E pull_request` to exercise the PR branches —
 notably `credits`, whose filter step takes a different path on each.

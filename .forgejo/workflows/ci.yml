@@ -5,9 +5,13 @@ name: CI
 #
 # Every job runs in stephen/sieve-ci, the image publish-ci-image.yml builds from
 # this repo's flake. The toolchain is the devShell — go, node, wails, GTK/WebKit
-# headers — already in the image's store, so a step is `nix develop --offline -c
-# <cmd>` and there is no setup-go, no setup-node and no apt. Go module and npm
-# downloads still use the network; only the toolchain is offline.
+# headers — already in the image's store, so a step is `nix develop -c <cmd>` and
+# there is no setup-go, no setup-node and no apt. Steady state, Nix fetches
+# nothing. A commit that changes the flake runs once against the previous image
+# and Nix fetches or builds the difference; the publish workflow then rebuilds the
+# image and the next run is warm again. Deliberately NOT `--offline`: that would
+# make every flake-changing commit red until publish caught up. The publish
+# workflow's probe is the hermeticity check.
 #
 # Forgejo looks for workflows in .forgejo/workflows, then .gitea/workflows, then
 # .github/workflows, and uses the FIRST directory that exists — so this directory
@@ -40,10 +44,10 @@ jobs:
           restore-keys: ${{ runner.os }}-go-
 
       - name: go vet
-        run: nix develop --offline -c env CGO_ENABLED=0 go vet ./...
+        run: nix develop -c env CGO_ENABLED=0 go vet ./...
 
       - name: go test
-        run: nix develop --offline -c env CGO_ENABLED=0 go test ./...
+        run: nix develop -c env CGO_ENABLED=0 go test ./...
 
   build-go:
     name: Go Build (Wails / GTK)
@@ -64,7 +68,7 @@ jobs:
       # The repo-root package (main.go/app.go) is a Wails app → CGO + WebKitGTK
       # at compile time. The devShell's PKG_CONFIG_PATH points at them.
       - name: go build
-        run: nix develop --offline -c go build -tags webkit2_41 ./...
+        run: nix develop -c go build -tags webkit2_41 ./...
 
   frontend:
     runs-on: docker
@@ -81,11 +85,11 @@ jobs:
 
       - name: Install dependencies
         working-directory: frontend
-        run: nix develop --offline -c npm ci
+        run: nix develop -c npm ci
 
       - name: vitest
         working-directory: frontend
-        run: nix develop --offline -c npm test
+        run: nix develop -c npm test
 
   # Third-party credits staleness gate. third-party-licenses.json is generated
   # (tools/gencredits) and go:embed'ed; the release pipeline ships whatever is
@@ -127,13 +131,11 @@ jobs:
       - name: Install frontend dependencies
         if: steps.filter.outputs.credits == 'true'
         working-directory: frontend
-        run: nix develop --offline -c npm ci
+        run: nix develop -c npm ci
 
-      # go-licenses fetches over the network; --offline is the Nix store, not
-      # the step.
       - name: Regenerate credits
         if: steps.filter.outputs.credits == 'true'
-        run: nix develop --offline -c go run ./tools/gencredits
+        run: nix develop -c go run ./tools/gencredits
 
       - name: Fail if committed artifact is stale
         if: steps.filter.outputs.credits == 'true'

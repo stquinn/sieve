@@ -100,9 +100,11 @@ and never regenerate. Sieve itself is Apache-2.0 (`LICENSE` + `NOTICE` at root).
 package list plus this devShell's whole closure and every locked flake input, so a CI
 job enters the shell with no network. `.forgejo/workflows/publish-ci-image.yml` rebuilds
 and publishes it on any change to `flake.nix`/`flake.lock`, probes the new tag and only
-then moves `latest`; every job in `ci.yml` runs in it as `nix develop --offline -c <cmd>`,
-with no setup-go, no setup-node and no apt. A flake change therefore reaches CI in two
-steps: publish first, then the jobs pick up the new `latest`.
+then moves `latest`; every job in `ci.yml` runs in it as `nix develop -c <cmd>`, with no
+setup-go, no setup-node and no apt. `ci.yml` is deliberately NOT `--offline`: a commit that
+changes the flake runs once against the previous image, Nix fetches the difference, and the
+next run is warm once publish has moved `latest`. The publish probe is where `--offline` is
+enforced.
 
 **Wire contract:** `sieve/protocol/` is the single source of truth for every WS frame and typed
 JSON endpoint. Any change to one — a new frame, a changed field, a new endpoint — must regenerate
