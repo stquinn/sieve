@@ -1,0 +1,73 @@
+# Build the sieve-ci image from this repo's flake, push it under a unique tag,
+# prove that tag runs a job, and only then move `latest`.
+#
+# The image is ci-base's package list plus this devShell's whole closure and
+# every locked flake input, so the CI jobs in ci.yml run `nix develop --offline`
+# and download no toolchain. Anything that changes the closure — flake.nix or
+# flake.lock — has to come through here before ci.yml sees it.
+name: publish-ci-image
+on:
+  push:
+    branches: [main]
+    paths: [flake.nix, flake.lock, .forgejo/workflows/publish-ci-image.yml]
+  workflow_dispatch:
+
+env:
+  REGISTRY: git.stephenquinn.ie
+  IMAGE: stephen/sieve-ci
+  # Pull path for jobs: the in-cluster pull-through proxy of the registry. The
+  # instance requires sign-in for every pull, and a job's image pull carries no
+  # credentials, so it goes through the proxy, which holds its own.
+  MIRROR: registry-mirror.image-repository.svc.cluster.local:5002
+
+jobs:
+  publish:
+    runs-on: nix
+    outputs:
+      tag: ${{ steps.build.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build and push
+        id: build
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # This job runs on the bare ci-base with no ssh key, and evaluating
+          # the flake fetches the ci-base input over https. Nix's git fetcher
+          # reads a netrc, not git's credential helpers.
+          printf 'machine git.stephenquinn.ie login oauth2 password %s\n' "$GITHUB_TOKEN" > ~/.netrc
+          chmod 600 ~/.netrc
+          TAG="$(date +%Y%m%d)-$(git rev-parse --short HEAD)"
+          echo "building $REGISTRY/$IMAGE:$TAG"
+          mkdir -p /var/tmp # skopeo spools the archive here
+          nix run --netrc-file ~/.netrc .#ci-image | nix run nixpkgs#skopeo -- --insecure-policy copy \
+            --dest-creds "stephen:$REGISTRY_TOKEN" \
+            docker-archive:/dev/stdin "docker://$REGISTRY/$IMAGE:$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  probe:
+    needs: publish
+    runs-on: docker
+    container:
+      image: registry-mirror.image-repository.svc.cluster.local:5002/stephen/sieve-ci:${{ needs.publish.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: the toolchain resolves with no network
+        run: nix develop --offline -c go version && nix develop --offline -c node --version
+
+  promote:
+    needs: [publish, probe]
+    runs-on: nix
+    steps:
+      - name: retag as latest
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          TAG: ${{ needs.publish.outputs.tag }}
+        run: |
+          mkdir -p /var/tmp
+          nix run nixpkgs#skopeo -- --insecure-policy copy \
+            --src-creds "stephen:$REGISTRY_TOKEN" --dest-creds "stephen:$REGISTRY_TOKEN" \
+            "docker://$REGISTRY/$IMAGE:$TAG" "docker://$REGISTRY/$IMAGE:latest"
+          echo "$REGISTRY/$IMAGE:latest -> $TAG"

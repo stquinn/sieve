@@ -1,5 +1,26 @@
 {
   "nodes": {
+    "ci-base": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "nixpkgs-tea": "nixpkgs-tea"
+      },
+      "locked": {
+        "lastModified": 1788728584,
+        "narHash": "sha256-2xe3CWZYCLxDHoWz1fN8cs8fEeQ+pnjfC0tmGl/rhdE=",
+        "ref": "refs/heads/main",
+        "rev": "2ed14df11fcc2f60b331b594307367d7afeab2a1",
+        "revCount": 4,
+        "type": "git",
+        "url": "https://git.stephenquinn.ie/stephen/ci-base.git"
+      },
+      "original": {
+        "type": "git",
+        "url": "https://git.stephenquinn.ie/stephen/ci-base.git"
+      }
+    },
     "flake-utils": {
       "inputs": {
         "systems": "systems"
@@ -50,8 +71,25 @@
         "type": "github"
       }
     },
+    "nixpkgs-tea": {
+      "locked": {
+        "lastModified": 1783776592,
+        "narHash": "sha256-UgCQzxeWI75XM8G+hPrPh+MKzEPjG3SpAj7dtqSbksA=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
+        "ci-base": "ci-base",
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs",
         "nixpkgs-darwin-intel": "nixpkgs-darwin-intel"
