@@ -28,6 +28,20 @@
         inherit (pkgs) lib;
         isLinux = pkgs.stdenv.isLinux;
 
+        # The wails CLI pinned to the version go.mod depends on, ahead of the
+        # nixpkgs pin's 2.12.0, and built against the devShell's node so the
+        # closure carries one nodejs rather than two.
+        wails215 = (pkgs.wails.override { nodejs = pkgs.nodejs_22; }).overrideAttrs (_: {
+          version = "2.15.0";
+          src = pkgs.fetchFromGitHub {
+            owner = "wailsapp";
+            repo = "wails";
+            tag = "v2.15.0";
+            hash = "sha256-/0GJ0RVBxuPTUqSuoZ8pLi1E2dR9n1n3aPlUKjpFVJw=";
+          };
+          vendorHash = "sha256-LjWvZwBYpjIxkZke7UJJGYut0rnVnui/qSsXTnPxhgA=";
+        });
+
         # wails wrapper as a REAL nix-store package (not a runtime mktemp file):
         # a stable store path survives nix-direnv's cached `nix print-dev-env`,
         # where a temp-dir wrapper baked into PATH points at an ephemeral dir that
@@ -48,9 +62,9 @@
           case "$1" in
             dev|build)
               subcmd="$1"; shift
-              exec ${pkgs.wails}/bin/wails "$subcmd" -tags webkit2_41 "$@" ;;
+              exec ${wails215}/bin/wails "$subcmd" -tags webkit2_41 "$@" ;;
             *)
-              exec ${pkgs.wails}/bin/wails "$@" ;;
+              exec ${wails215}/bin/wails "$@" ;;
           esac
         '';
 
@@ -73,7 +87,7 @@
           src = ./.;
 
           proxyVendor = true;
-          vendorHash = "sha256-KWxSDFzjtwJz7XN/0R9w/Moelg+u9qDuM34u8CGMWjw=";
+          vendorHash = "sha256-bnyzETrskuW7+13SXtZMb8j/ok/bVVpCC0kaPVuW6Bc=";
 
           buildFlags = [ "-tags=wails,production,webkit2_41" "-trimpath" ];
 
@@ -140,15 +154,15 @@
           # On macOS, don't inherit dependencies from the Linux-specific sieve derivation
           inputsFrom = lib.optionals isLinux [ sieve ];
 
-          # On Linux, ship the -tags webkit2_41 wrapper instead of raw wails so
-          # `wails dev`/`build` target the 4.1 ABI. On macOS use raw wails (native
-          # WKWebView needs no tag).
+          # On Linux, ship the -tags webkit2_41 wrapper instead of the bare CLI so
+          # `wails dev`/`build` target the 4.1 ABI. On macOS use the CLI unwrapped
+          # (native WKWebView needs no tag).
           packages = with pkgs; [
             go
             nodejs_22
             pkg-config
             tea # Gitea/Forgejo CLI
-          ] ++ (if isLinux then [ wailsWrapped pkgs.gcc ] else [ pkgs.wails ]);
+          ] ++ (if isLinux then [ wailsWrapped pkgs.gcc ] else [ wails215 ]);
 
           shellHook = ''
             export CGO_ENABLED=1
