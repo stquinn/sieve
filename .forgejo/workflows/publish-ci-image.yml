@@ -2,9 +2,14 @@
 # prove that tag runs a job, and only then move `latest`.
 #
 # The image is ci-base's package list plus this devShell's whole closure and
-# every locked flake input, so the CI jobs in ci.yml run `nix develop --offline`
-# and download no toolchain. Anything that changes the closure — flake.nix or
-# flake.lock — has to come through here before ci.yml sees it.
+# every locked flake input, so the CI jobs in ci.yml enter the devShell with
+# nothing to fetch. Anything that changes the closure — flake.nix or flake.lock
+# — comes through here; ci.yml runs once against the previous image meanwhile.
+#
+# Layers are pushed zstd-compressed: the pull onto a runner node is bound by
+# per-layer decompression and extraction, not the LAN, and zstd inflates several
+# times faster than gzip. The probe job is the first pull of every tag, so a
+# runner that could not read the format would fail there, before promote.
 name: publish-ci-image
 on:
   push:
@@ -44,6 +49,7 @@ jobs:
           mkdir -p /var/tmp # skopeo spools the archive here
           nix run --netrc-file ~/.netrc .#ci-image | nix run nixpkgs#skopeo -- --insecure-policy copy \
             --dest-creds "stephen:$REGISTRY_TOKEN" \
+            --dest-compress-format zstd \
             docker-archive:/dev/stdin "docker://$REGISTRY/$IMAGE:$TAG"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 

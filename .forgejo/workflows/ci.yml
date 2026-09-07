@@ -83,13 +83,10 @@ jobs:
           key: ${{ runner.os }}-npm-${{ hashFiles('frontend/package-lock.json') }}
           restore-keys: ${{ runner.os }}-npm-
 
-      - name: Install dependencies
+      # One devShell entry for both: each `nix develop` evaluates the flake.
+      - name: npm ci + vitest
         working-directory: frontend
-        run: nix develop -c npm ci
-
-      - name: vitest
-        working-directory: frontend
-        run: nix develop -c npm test
+        run: nix develop -c sh -c 'npm ci && npm test'
 
   # Third-party credits staleness gate. third-party-licenses.json is generated
   # (tools/gencredits) and go:embed'ed; the release pipeline ships whatever is
