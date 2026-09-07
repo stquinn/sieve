@@ -31,7 +31,7 @@
         # The wails CLI pinned to the version go.mod depends on, ahead of the
         # nixpkgs pin's 2.12.0, and built against the devShell's node so the
         # closure carries one nodejs rather than two.
-        wails215 = (pkgs.wails.override { nodejs = pkgs.nodejs_22; }).overrideAttrs (_: {
+        wails215 = (pkgs.wails.override { nodejs = pkgs.nodejs_22; }).overrideAttrs (old: {
           version = "2.15.0";
           src = pkgs.fetchFromGitHub {
             owner = "wailsapp";
@@ -40,6 +40,13 @@
             hash = "sha256-/0GJ0RVBxuPTUqSuoZ8pLi1E2dR9n1n3aPlUKjpFVJw=";
           };
           vendorHash = "sha256-LjWvZwBYpjIxkZke7UJJGYut0rnVnui/qSsXTnPxhgA=";
+          # Go writes telemetry under its config dir on every run. In an
+          # unsandboxed build (the CI image) that is $HOME=/homeless-shelter,
+          # whose mere existence makes Nix refuse to start the NEXT build.
+          # XDG_CONFIG_HOME is the only knob Go honours; GOTELEMETRY=off is not.
+          preConfigure = (old.preConfigure or "") + ''
+            export XDG_CONFIG_HOME="$TMPDIR/xdg"
+          '';
         });
 
         # wails wrapper as a REAL nix-store package (not a runtime mktemp file):
