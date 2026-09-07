@@ -96,6 +96,12 @@ CI's `credits` job regenerates and diffs, failing
 the pipeline if a dep change lands without a regen; releases ship the committed artifact
 and never regenerate. Sieve itself is Apache-2.0 (`LICENSE` + `NOTICE` at root).
 
+**Release:** bump `sieveVersion` in `flake.nix` (the number a Nix install reports and
+stamps into `main.version` as `<version>+<commit>`), commit, tag `v<version>`, push. The
+Forgejo release workflow refuses a tag whose number differs from that constant. The Go
+module set is pinned by `vendorHash` in the same file; the credits CI job fails when a
+`go.mod`/`go.sum` change lands without the matching bump (the correct hash is in its log).
+
 **CI image:** `nix run .#ci-image | docker load` builds `stephen/sieve-ci` — ci-base's
 package list plus this devShell's whole closure and every locked flake input, so a CI
 job enters the shell with no network. `.forgejo/workflows/publish-ci-image.yml` rebuilds
