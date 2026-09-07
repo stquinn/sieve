@@ -1,8 +1,8 @@
 # How-To: Test CI Workflows Locally
 
-**Status:** Current (2026-08-08).
-**Companion:** `.forgejo/workflows/ci.yml`.
-**Context:** Forgejo issue #70.
+**Status:** Current (2026-09-07).
+**Companion:** `.forgejo/workflows/ci.yml`, `.forgejo/workflows/publish-ci-image.yml`.
+**Context:** Forgejo issues #70, #136.
 
 Workflow changes used to be testable only by committing and pushing. That loop
 produced four check-ins in twenty minutes — a land, a revert, and two abandoned
@@ -16,21 +16,18 @@ Forgejo server involved. It is the **same binary** that runs your CI.
 
 ## 1. Why this binary and not `act`
 
-`forgejo-runner exec` is Forgejo's wrapper around nektos/act, and nixpkgs ships
-it at the same version as the runner image in the cluster:
+`forgejo-runner exec` is Forgejo's wrapper around nektos/act. When the version
+nixpkgs ships matches the runner image in the cluster, local and CI run the same
+binary, the same vendored act, the same behaviour:
 
 ```bash
-nix eval --raw nixpkgs#forgejo-runner.version   # 12.13.2
+nix eval --raw nixpkgs#forgejo-runner.version   # compare with the runner
+                                                # StatefulSet's image tag
 ```
 
-That matches `image: code.forgejo.org/forgejo/runner:12.13.2` in the runner
-StatefulSet. Same binary, same vendored act, same behaviour. Plain `act` is also
-in nixpkgs and works, but you would be testing a different act version than the
-one that will actually run your job.
-
-**Re-check that match whenever you bump either side.** The moment the versions
-diverge, this document's central claim — that local and CI run the same code —
-stops being true.
+**Check that match before you trust a local run.** nixpkgs moves on its own; at
+the last check (2026-09-07) it was ahead at 13.1.0. Plain `act` is also in
+nixpkgs and works, but it is a third version again.
 
 ---
 
@@ -40,8 +37,19 @@ stops being true.
   `/var/run/docker.sock`.
 - **Nix.** No install step needed; `nix run` fetches the binary (~6.7 MiB) and
   caches it.
-- **Disk.** The first run pulls `catthehacker/ubuntu:act-latest`, which is over
-  a gigabyte.
+- **The project image, built locally.** Jobs run in `stephen/sieve-ci`, which
+  the cluster pulls from a registry your machine cannot reach. Build and load it
+  first — about 3 GB, a minute when the store is warm:
+
+  ```bash
+  nix run .#ci-image | docker load
+  docker tag stephen/sieve-ci:latest \
+    registry-mirror.image-repository.svc.cluster.local:5002/stephen/sieve-ci:latest
+  ```
+
+  The second tag is what `ci.yml`'s `container:` names, and `container:` wins
+  over `-i`. With the local tag in place and `--pull=false`, the runner uses the
+  image you just built.
 
 ---
 
@@ -50,8 +58,9 @@ stops being true.
 ```bash
 nix run nixpkgs#forgejo-runner -- exec \
   -W .forgejo/workflows/ci.yml \
-  -i catthehacker/ubuntu:act-latest \
+  -i stephen/sieve-ci:latest \
   --default-actions-url https://data.forgejo.org \
+  --pull=false \
   -j test-go
 ```
 
@@ -61,7 +70,8 @@ setup**:
 | Flag | Default | Why ours differs |
 |---|---|---|
 | `-W` | `./.forgejo/workflows/` | Point at the **file**, not the directory — the directory also contains `release.yml`, which recurses in and plans a `build-linux` job you did not ask for. |
-| `-i` | `node:20-bullseye` | Our runner labels map `ubuntu-latest` → `catthehacker/ubuntu:act-latest`. `build-go` and `credits` `sudo apt-get` GTK/WebKit, so the Debian/node default tests something we never run. |
+| `-i` | `node:20-bullseye` | The image every job's toolchain lives in. Each job also names it in `container:`, which act honours ahead of `-i` — hence the mirror-path tag in §2. |
+| `--pull=false` | pull | The mirror path is unreachable from a laptop; without this the runner tries to pull it and fails. |
 | `--default-actions-url` | `https://code.forgejo.org` | Our runners resolve bare `actions/*` from `data.forgejo.org` (see the note in `ci.yml`). |
 | `-j` | all jobs | Run one job. See below. |
 
@@ -79,8 +89,13 @@ nix run nixpkgs#forgejo-runner -- exec -W .forgejo/workflows/ci.yml --list
 |---|---|---|
 | `test-go` | moderate | **Yes** — the usual first check. |
 | `frontend` | low | **Yes** — fastest signal on the npm/vitest path. |
-| `build-go` | high | Only when you touched the build. It `apt-get`s `libgtk-3-dev` and `libwebkit2gtk-4.1-dev` on **every** run with no apt cache locally. |
-| `credits` | high | Rarely. Gated on dependency changes in CI; locally it does the same apt install plus `npm ci`. |
+| `build-go` | moderate | When you touched the build. The GTK/WebKit headers come from the image's devShell, so it is a compile and nothing else. |
+| `credits` | moderate | Rarely. Gated on dependency changes in CI; locally it does `npm ci` and a `go-licenses` run, both over the network. |
+
+Only Go module and npm downloads still use the network. The toolchain is
+`nix develop --offline` out of the image's store: a job that has to fetch a
+compiler means the image is stale, and `publish-ci-image.yml` rebuilds it on any
+flake change.
 
 Default event is `push`. Use `-E pull_request` to exercise the PR branches —
 notably `credits`, whose filter step takes a different path on each.
@@ -92,11 +107,14 @@ notably `credits`, whose filter step takes a different path on each.
 Be clear about the boundary, because a false sense of coverage is worse than
 none.
 
-- **The shared Actions cache server.** `actions/cache`, `setup-go`'s `cache:
-  true` and `setup-node`'s `cache: 'npm'` do not reach
-  `runner-cache-server.forgejo.svc.cluster.local`. Locally they use act's own
-  cache. **Cache-hit behaviour is not tested here** — but note that none of the
-  failures this tool exists to prevent were cache failures.
+- **The shared Actions cache server.** The `actions/cache` steps on `~/go/pkg/mod`,
+  `~/.cache/go-build` and `~/.npm` do not reach
+  `runner-cache-server.forgejo.svc.cluster.local`. Locally they time out and warn.
+  **Cache-hit behaviour is not tested here** — but note that none of the failures
+  this tool exists to prevent were cache failures.
+- **The registry.** CI pulls `sieve-ci:latest` through the in-cluster proxy;
+  locally you supply the tag yourself (§2), so a local pass says nothing about
+  whether the published image is current.
 - **Cluster networking.** Job containers in CI run on the pod network and can
   reach in-cluster services. Locally they are on a Docker bridge and cannot.
 - **Secrets.** None of the CI jobs use `${{ secrets.* }}` today. If that
@@ -125,6 +143,14 @@ rm -rf ~/.cache/actcache
 
 The bracket in `[b]in` matters — a bare `pkill -f forgejo-runner` matches the
 shell running it and kills your own terminal.
+
+**Every job logs a `bash-interactive` build failure.** `nix develop` runs its
+command under `bashInteractive`, which is in no mkShell's closure and so is not in
+the image. Offline it cannot be built, nix prints the whole 531-derivation
+dependency cascade and `error (ignored)`, then falls back and runs the step. It is
+noise, not a failure — the step's own exit code is what counts. It belongs in
+ci-base's `basePackages`; `extraPackages` cannot carry it (the layer builder fails
+creating its gcroot).
 
 **Piping hides the exit code.** `... | tail -60` reports `tail`'s status, not the
 runner's. Redirect to a file and check `$?`, or read the last lines afterwards.

@@ -42,7 +42,7 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 | Store abstraction + FileStore | `store/interfaces.go`, `store/filestore/` |
 | File watcher | `watcher/` (package `watcher`: `NotesWatcher`, `New`) |
 | Tech debt register | `docs/TECH-DEBT.md` |
-| **CI / release workflows** | `.forgejo/workflows/` (`ci.yml`, `release.yml` = Linux) — the ONLY directory Forgejo reads (it stops at the first of `.forgejo/`, `.gitea/`, `.github/` that exists). `.github/workflows/release.yml` = macOS build only (no Mac build agent on Forgejo). Local runs: `docs/how-to-test-ci-locally.md` |
+| **CI / release workflows** | `.forgejo/workflows/` (`ci.yml` = the 4 test jobs, all inside the `sieve-ci` image; `publish-ci-image.yml` = builds and publishes that image; `release.yml` = Linux) — the ONLY directory Forgejo reads (it stops at the first of `.forgejo/`, `.gitea/`, `.github/` that exists). `.github/workflows/release.yml` = macOS build only (no Mac build agent on Forgejo). Local runs: `docs/how-to-test-ci-locally.md` |
 | **Editor interaction contract (NORMATIVE)** | `docs/editor-interaction-contract.md` |
 | **Docs layout** | `docs/` root = long-lived contracts, behaviour specs, living registers, how-tos. `docs/design/` = design history: brainstorms + `specs/` + `plans/` (legacy) + `archive/`. `docs/design/specs/` = design/decision docs (thin: problem, decision, architecture, rationale); header carries `Tracked: #N` when work is active. Plans are Forgejo issues, NOT files (epic issue + per-phase issues for large work; drafted in scratchpad → posted via `tea api`; reviewed on the issue) — `docs/design/plans/` holds legacy plans only, never add to it. Completed/superseded specs are stamped with a status banner and `git mv`'d to `docs/design/archive/specs/` in the same change that closes their issue. |
 | Current milestone plan | `docs/FEATURE-BACKLOG.md` (PHASE9 completed → `docs/design/archive/PHASE9-PLAN.md`) |
@@ -95,6 +95,14 @@ stdlib's; fixed `b7e8967`, pinned by `tools/gencredits/go_license_test.go`, with
 CI's `credits` job regenerates and diffs, failing
 the pipeline if a dep change lands without a regen; releases ship the committed artifact
 and never regenerate. Sieve itself is Apache-2.0 (`LICENSE` + `NOTICE` at root).
+
+**CI image:** `nix run .#ci-image | docker load` builds `stephen/sieve-ci` — ci-base's
+package list plus this devShell's whole closure and every locked flake input, so a CI
+job enters the shell with no network. `.forgejo/workflows/publish-ci-image.yml` rebuilds
+and publishes it on any change to `flake.nix`/`flake.lock`, probes the new tag and only
+then moves `latest`; every job in `ci.yml` runs in it as `nix develop --offline -c <cmd>`,
+with no setup-go, no setup-node and no apt. A flake change therefore reaches CI in two
+steps: publish first, then the jobs pick up the new `latest`.
 
 **Wire contract:** `sieve/protocol/` is the single source of truth for every WS frame and typed
 JSON endpoint. Any change to one — a new frame, a changed field, a new endpoint — must regenerate
