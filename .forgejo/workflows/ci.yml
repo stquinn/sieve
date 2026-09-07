@@ -137,3 +137,9 @@ jobs:
       - name: Fail if committed artifact is stale
         if: steps.filter.outputs.credits == 'true'
         run: git diff --exit-code third-party-licenses.json
+
+      # flake.nix pins the Go module set by hash; a go.mod/go.sum change without
+      # a matching vendorHash bump fails here, with the correct hash in the log.
+      - name: flake vendorHash matches go.sum
+        if: steps.filter.outputs.credits == 'true'
+        run: nix build --no-link .#packages.x86_64-linux.default.goModules

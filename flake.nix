@@ -81,9 +81,14 @@
           gsettings-desktop-schemas
         ];
 
+        # The release number, bumped with each tag (a flake cannot read tags);
+        # the commit is appended so a Nix-built binary states what it was built from.
+        sieveVersion = "0.33.1";
+        sieveBuildVersion = "${sieveVersion}+${self.shortRev or self.dirtyShortRev or "dirty"}";
+
         sieve = pkgs.buildGoModule {
           pname = "sieve";
-          version = "0.1.0";
+          version = sieveVersion;
           src = ./.;
 
           proxyVendor = true;
@@ -103,7 +108,7 @@
 
           buildInputs = linuxLibs;
 
-          ldflags = [ "-s" "-w" ];
+          ldflags = [ "-s" "-w" "-X main.version=${sieveBuildVersion}" ];
 
           postInstall = ''
             install -Dm644 build/appicon.png \
