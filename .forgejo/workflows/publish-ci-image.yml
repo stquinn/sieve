@@ -1,6 +1,11 @@
 # Build the sieve-ci image from this repo's flake, push it under a unique tag,
 # prove that tag runs a job, and only then move `latest`.
 #
+# The tag is the Nix output hash of the image, so it changes only when the
+# image's contents change. A flake.nix edit that leaves the closure alone (a
+# vendorHash or sieveVersion bump) finds its tag already in the registry, skips
+# the build and the probe, and just re-points `latest`.
+#
 # The image is ci-base's package list plus this devShell's whole closure and
 # every locked flake input, so the CI jobs in ci.yml enter the devShell with
 # nothing to fetch. Anything that changes the closure — flake.nix or flake.lock
@@ -30,6 +35,7 @@ jobs:
     runs-on: nix
     outputs:
       tag: ${{ steps.build.outputs.tag }}
+      built: ${{ steps.build.outputs.built }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,17 +50,25 @@ jobs:
           # reads a netrc, not git's credential helpers.
           printf 'machine git.stephenquinn.ie login oauth2 password %s\n' "$GITHUB_TOKEN" > ~/.netrc
           chmod 600 ~/.netrc
-          TAG="$(date +%Y%m%d)-$(git rev-parse --short HEAD)"
-          echo "building $REGISTRY/$IMAGE:$TAG"
           mkdir -p /var/tmp # skopeo spools the archive here
+          TAG="$(basename "$(nix eval --raw --netrc-file ~/.netrc .#ci-image.outPath)" | cut -d- -f1)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if nix run nixpkgs#skopeo -- --insecure-policy inspect --creds "stephen:$REGISTRY_TOKEN" \
+               "docker://$REGISTRY/$IMAGE:$TAG" >/dev/null 2>&1; then
+            echo "$REGISTRY/$IMAGE:$TAG already published; image unchanged"
+            echo "built=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "building $REGISTRY/$IMAGE:$TAG"
           nix run --netrc-file ~/.netrc .#ci-image | nix run nixpkgs#skopeo -- --insecure-policy copy \
             --dest-creds "stephen:$REGISTRY_TOKEN" \
             --dest-compress-format zstd \
             docker-archive:/dev/stdin "docker://$REGISTRY/$IMAGE:$TAG"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "built=true" >> "$GITHUB_OUTPUT"
 
   probe:
     needs: publish
+    if: needs.publish.outputs.built == 'true'
     runs-on: docker
     container:
       image: registry-mirror.image-repository.svc.cluster.local:5002/stephen/sieve-ci:${{ needs.publish.outputs.tag }}
@@ -65,6 +79,8 @@ jobs:
 
   promote:
     needs: [publish, probe]
+    # Runs after a skipped probe too (image unchanged), never after a failed one.
+    if: always() && needs.publish.result == 'success' && needs.probe.result != 'failure' && needs.probe.result != 'cancelled'
     runs-on: nix
     steps:
       - name: retag as latest
