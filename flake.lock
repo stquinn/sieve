@@ -8,11 +8,11 @@
         "nixpkgs-tea": "nixpkgs-tea"
       },
       "locked": {
-        "lastModified": 1788728584,
-        "narHash": "sha256-2xe3CWZYCLxDHoWz1fN8cs8fEeQ+pnjfC0tmGl/rhdE=",
+        "lastModified": 1788801743,
+        "narHash": "sha256-AnnM8BftjgPMhVTml+fHwyPWzMl0UDNzrZ1pbsTH1Zk=",
         "ref": "refs/heads/main",
-        "rev": "2ed14df11fcc2f60b331b594307367d7afeab2a1",
-        "revCount": 4,
+        "rev": "17e00733b4c4e6a781877125605ea947edcb22ef",
+        "revCount": 5,
         "type": "git",
         "url": "https://git.stephenquinn.ie/stephen/ci-base.git"
       },
