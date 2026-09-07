@@ -199,13 +199,5 @@
         # streamLayeredImage's output is the script itself, not bin/<name>, so
         # `nix run .#ci-image` needs an explicit app.
         apps.ci-image = { type = "app"; program = "${ciImage}"; };
-      })
-    // {
-      # `pkgs.sieve` for a consumer that applies this overlay. The package is
-      # built from this flake's nixpkgs, so a consumer that wants it against
-      # its own must set `inputs.sieve.inputs.nixpkgs.follows = "nixpkgs"`.
-      overlays.default = final: prev: {
-        sieve = self.packages.${final.stdenv.hostPlatform.system}.default;
-      };
-    };
+      });
 }
