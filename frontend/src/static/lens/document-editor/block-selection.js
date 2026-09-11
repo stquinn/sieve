@@ -53,6 +53,26 @@ export class BlockSelection {
   }
 
   /**
+   * THE reading of "what the user has selected", as ONE computation: everything
+   * that must agree on the answer — the clipboard, and the panel that shows the
+   * user what they picked — asks here.
+   *
+   * `domText` wins whenever there is one: a highlight in a region PM does not own
+   * has no document range to read, and the characters the browser reports ARE the
+   * selection. `separator` is what joins text across a node boundary — '\n' for
+   * the clipboard, ' ' for a one-line label.
+   * @param {any} doc                        the ProseMirror document
+   * @param {{from: number, to: number}} range
+   * @param {string|null} domText            highlighted text PM cannot see, or null
+   * @param {string} separator
+   * @returns {string}
+   */
+  static selectedText(doc, range, domText, separator) {
+    if (domText) return domText
+    return range.to > range.from ? doc.textBetween(range.from, range.to, separator) : ''
+  }
+
+  /**
    * The {from,to} PM range of the block a visible DOM highlight actually lives in,
    * IF that block is NOT already covered by the PM selection `er` (else null). Pure.
    *

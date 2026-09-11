@@ -44,6 +44,7 @@ const ALLOWED_DIRS = Object.freeze(['lens', 'contract', 'renderers', 'ident', 'v
 //     whole renderer package (and therefore any lens that paints with it) drags
 //     the protocol in.
 const QUARANTINE = Object.freeze([
+  'lens/document-editor/clipboard-slice.js → ../../ui/copy-image.js',
   'lens/document-editor/interaction-policy.js → ../../ui/media-lightbox.js',
   'lens/document-editor/surfaces/node-views/smart-card-node-view.js → ../../../../ui/link-edit-dialog.js',
   'lens/document-editor/surfaces/prose-link.js → ../../../ui/link-edit-dialog.js',
@@ -51,7 +52,6 @@ const QUARANTINE = Object.freeze([
   'lens/document-editor/surfaces/wysiwyg-surface.js → ../../../shell/trigger-host.js',
   'lens/document-editor/surfaces/wysiwyg-surface.js → ../../../shell/trigger-popover.js',
   'lens/document-editor/surfaces/wysiwyg-surface.js → ../../../shell/trigger-providers.js',
-  'lens/document-editor/surfaces/wysiwyg-surface.js → ../../../ui/copy-image.js',
   'renderers/asset-urls.js → ../generated/protocol.js',
   'renderers/diagram-renderer.js → ../ui/media-lightbox.js',
 ])
@@ -162,6 +162,7 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
       path.join('lens', 'document-editor', 'block-chrome.js'),
       path.join('lens', 'document-editor', 'block-selection.js'),
       path.join('lens', 'document-editor', 'block-sync.js'),
+      path.join('lens', 'document-editor', 'clipboard-slice.js'),
       path.join('lens', 'document-editor', 'context-menu.js'),
       path.join('lens', 'document-editor', 'editor-mode.js'),
       path.join('lens', 'document-editor', 'editor-shell.js'),

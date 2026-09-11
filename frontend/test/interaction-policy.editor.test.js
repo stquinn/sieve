@@ -15,6 +15,12 @@ import { Plugin, Selection, TextSelection, NodeSelection } from '@tiptap/pm/stat
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { registerBlockKind } from '../src/static/renderers/block-kinds.js'
 import { buildInteractionPolicyExtension, policyEnterKeydown, CODE_TEXT_POLICY } from '../src/static/lens/document-editor/interaction-policy.js'
+import { NodeViewRegistry, HOST_BODY_SYNC } from '../src/static/lens/document-editor/surfaces/sieve-block-extension.js'
+
+// The shape every raw-text renderer really has: a text/plain view of the WHOLE
+// source. It is what made a partial cut copy the entire block, so the fakes
+// serialize through it and through the shipped textOf.
+const WHOLE_SOURCE_ADAPTER = { asContentEntry: (node) => [{ mimeType: 'text/plain', content: node.textContent }] }
 
 // These take the SAME preset the real code-node-view.js / diagram-node-view.js
 // declarations do, so the fakes cannot drift from what ships. (diagram's real
@@ -63,6 +69,8 @@ const SieveCode = Node.create({
   marks: '',
   code: true,
   defining: true,
+  addAttributes() { return { kind: { default: 'code' }, id: { default: 'code-1' } } },
+  renderText(props) { return NodeViewRegistry.textOf(props, WHOLE_SOURCE_ADAPTER) },
   parseHTML() { return [{ tag: 'pre.sieve-code' }] },
   renderHTML() { return ['pre', { class: 'sieve-code' }, ['code', 0]] },
 })
@@ -74,6 +82,8 @@ const SieveDiagram = Node.create({
   marks: '',
   code: true,
   defining: true,
+  addAttributes() { return { kind: { default: 'diagram' }, id: { default: 'diagram-1' } } },
+  renderText(props) { return NodeViewRegistry.textOf(props, WHOLE_SOURCE_ADAPTER) },
   parseHTML() { return [{ tag: 'pre.sieve-diagram' }] },
   renderHTML() { return ['pre', { class: 'sieve-diagram' }, ['code', 0]] },
 })
@@ -85,6 +95,8 @@ const SieveLog = Node.create({
   marks: '',
   code: true,
   defining: true,
+  addAttributes() { return { kind: { default: 'log' }, id: { default: 'log-1' } } },
+  renderText(props) { return NodeViewRegistry.textOf(props, WHOLE_SOURCE_ADAPTER) },
   parseHTML() { return [{ tag: 'pre.sieve-log' }] },
   renderHTML() { return ['pre', { class: 'sieve-log' }, ['code', 0]] },
 })
@@ -102,6 +114,8 @@ const SieveClip = Node.create({
   content: 'block+',
   selectable: true,
   defining: true,
+  addAttributes() { return { kind: { default: 'clip' }, id: { default: 'clip-1' } } },
+  renderText(props) { return NodeViewRegistry.textOf(props, WHOLE_SOURCE_ADAPTER) },
   parseHTML() { return [{ tag: 'div.sieve-clip' }] },
   renderHTML() { return ['div', { class: 'sieve-clip' }, 0] },
 })
@@ -678,5 +692,241 @@ describe('literalGlyphs decoration', () => {
     expect(decorated).toContain('sieve-code')
     expect(decorated).toContain('sieve-diagram')
     expect(decorated).not.toContain('paragraph')
+  })
+})
+
+// ── Clipboard ────────────────────────────────────────────────────────────────
+// Copy and cut are per-kind INTERACTION, so they are pinned here beside Tab and
+// Enter rather than at the surface. The handlers are driven the way ProseMirror's
+// own listener drives them, through the handleDOMEvents chain.
+
+const SOURCE = 'line one\nline two\nline three'
+// 'line two' inside SOURCE: content starts at doc position 1, 'line one\n' is 9
+// characters, so the middle line spans [10, 18).
+const MIDDLE = { from: 10, to: 18 }
+
+function clip() {
+  const data = {}
+  return { data, setData: (mime, value) => { data[mime] = value }, getData: (mime) => data[mime] || '' }
+}
+
+// The exact chain prosemirror-view walks for a clipboard event: the first
+// handleDOMEvents map with a handler for the type wins, and preventDefault also
+// counts as handled.
+function fireClipboard(type) {
+  const clipboardData = clip()
+  const event = { type, clipboardData, defaultPrevented: false, preventDefault() { this.defaultPrevented = true } }
+  const handled = editor.view.someProp('handleDOMEvents', (handlers) => {
+    const handler = handlers[type]
+    return handler ? (handler(editor.view, event) || event.defaultPrevented) : false
+  })
+  return { handled: !!handled, data: clipboardData.data }
+}
+
+function rangeAt(from, to) {
+  editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, from, to)))
+}
+
+function selectBlock(pos) {
+  editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, pos)))
+}
+
+function oneBlock(type) {
+  makeEditor({ type: 'doc', content: [{ type, content: [{ type: 'text', text: SOURCE }] }] })
+}
+
+describe('copy (contract: a partial PM range copies the selected characters — universal, not a per-kind opt-in)', () => {
+  const CASES = [
+    { node: 'sieve-code', kind: 'code', literal: true },
+    { node: 'sieve-diagram', kind: 'diagram', literal: true },
+    { node: 'sieve-log', kind: 'log', literal: true },
+  ]
+
+  for (const c of CASES) {
+    it(`${c.kind}: a partial range copies the selected characters`, () => {
+      oneBlock(c.node)
+      rangeAt(MIDDLE.from, MIDDLE.to)
+      const { handled, data } = fireClipboard('copy')
+      expect(handled).toBe(true)
+      expect(data['text/plain']).toBe('line two')
+    })
+
+    it(`${c.kind}: a partial range still carries the WHOLE block as sieve/slice`, () => {
+      oneBlock(c.node)
+      rangeAt(MIDDLE.from, MIDDLE.to)
+      const { data } = fireClipboard('copy')
+      const slice = JSON.parse(data['sieve/slice'])
+      expect(slice).toHaveLength(1)
+      const framework = slice[0].find((e) => e.mimeType === `sieve/${c.kind}`)
+      expect(JSON.parse(framework.content).kind).toBe(c.kind)
+    })
+
+    it(`${c.kind}: a whole-block NodeSelection copies the whole source`, () => {
+      oneBlock(c.node)
+      selectBlock(0)
+      const { handled, data } = fireClipboard('copy')
+      expect(handled).toBe(true)
+      expect(data['text/plain']).toBe(SOURCE)
+      expect(JSON.parse(data['sieve/slice'])).toHaveLength(1)
+    })
+  }
+
+  it('a non-atom kind with no clipboard declaration still copies the selected characters for a partial range', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-clip', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'clipped text' }] }] },
+    ] })
+    rangeAt(3, 7) // 'lipp', strictly inside the clip's paragraph
+    const { handled, data } = fireClipboard('copy')
+    expect(handled).toBe(true)
+    expect(data['text/plain']).toBe('lipp')
+  })
+
+  it('a non-atom kind with no clipboard declaration still copies the whole source for a whole-block selection', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-clip', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'clipped text' }] }] },
+    ] })
+    selectBlock(0)
+    const { handled, data } = fireClipboard('copy')
+    expect(handled).toBe(true)
+    expect(data['text/plain']).toBe('clipped text')
+  })
+
+  it('pure prose is left to ProseMirror', () => {
+    makeEditor({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello' }] }] })
+    rangeAt(1, 4)
+    const { handled, data } = fireClipboard('copy')
+    expect(handled).toBe(false)
+    expect(data['sieve/slice']).toBeUndefined()
+  })
+})
+
+describe('cut (contract: copy plus an ordinary delete — no kind has a cut rule)', () => {
+  for (const node of ['sieve-code', 'sieve-diagram']) {
+    it(`${node}: a partial cut takes the characters and removes exactly them`, () => {
+      oneBlock(node)
+      rangeAt(MIDDLE.from, MIDDLE.to)
+      const { handled, data } = fireClipboard('cut')
+      expect(handled).toBe(true)
+      expect(data['text/plain']).toBe('line two')
+      expect(docText()).toBe('line one\n\nline three')
+    })
+
+    it(`${node}: a whole-block cut removes the block`, () => {
+      oneBlock(node)
+      selectBlock(0)
+      expect(fireClipboard('cut').handled).toBe(true)
+      expect(editor.state.doc.childCount === 0 || editor.state.doc.child(0).type.name !== node).toBe(true)
+    })
+
+    it(`${node}: a cut at a collapsed caret with no highlight is not handled`, () => {
+      oneBlock(node)
+      rangeAt(MIDDLE.from, MIDDLE.from)
+      const { handled, data } = fireClipboard('cut')
+      expect(handled).toBe(false)
+      expect(Object.keys(data)).toHaveLength(0)
+      expect(docText()).toBe(SOURCE)
+    })
+  }
+
+  it('log: a partial cut copies and leaves the document UNCHANGED', () => {
+    oneBlock('sieve-log')
+    rangeAt(MIDDLE.from, MIDDLE.to)
+    const { handled, data } = fireClipboard('cut')
+    expect(handled).toBe(true)
+    expect(data['text/plain']).toBe('line two')
+    expect(docText()).toBe(SOURCE)
+  })
+
+  it('log: a whole-block cut removes the block — read-only is about TEXT', () => {
+    oneBlock('sieve-log')
+    selectBlock(0)
+    expect(fireClipboard('cut').handled).toBe(true)
+    expect(editor.state.doc.childCount === 0 || editor.state.doc.child(0).type.name !== 'sieve-log').toBe(true)
+  })
+
+  it('pure prose is left to ProseMirror', () => {
+    makeEditor({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello' }] }] })
+    rangeAt(1, 4)
+    expect(fireClipboard('cut').handled).toBe(false)
+    expect(docText()).toBe('hello')
+  })
+})
+
+describe('the native clipboard path (renderText honours the serialized range)', () => {
+  it('a partial range serializes as the selected characters, not the whole block', () => {
+    oneBlock('sieve-code')
+    rangeAt(MIDDLE.from, MIDDLE.to)
+    const sel = editor.state.selection
+    expect(editor.view.serializeForClipboard(sel.content()).text).toBe('line two')
+  })
+
+  it('a whole-block selection serializes as the renderer text/plain view', () => {
+    oneBlock('sieve-code')
+    selectBlock(0)
+    expect(editor.view.serializeForClipboard(editor.state.selection.content()).text).toBe(SOURCE)
+  })
+
+  it('editor.getText() still reads the whole block', () => {
+    oneBlock('sieve-code')
+    expect(editor.getText()).toBe(SOURCE)
+  })
+})
+
+describe('readOnlyText is a document-level wall (filterTransaction)', () => {
+  function logDoc() { oneBlock('sieve-log') }
+
+  it('refuses a delete of part of the text', () => {
+    logDoc()
+    editor.view.dispatch(editor.state.tr.delete(MIDDLE.from, MIDDLE.to))
+    expect(docText()).toBe(SOURCE)
+  })
+
+  it('refuses a paste over the selection', () => {
+    logDoc()
+    rangeAt(MIDDLE.from, MIDDLE.to)
+    editor.view.dispatch(editor.state.tr.insertText('pasted', MIDDLE.from, MIDDLE.to))
+    expect(docText()).toBe(SOURCE)
+  })
+
+  it('refuses an insertion at the very start of the text', () => {
+    logDoc()
+    editor.view.dispatch(editor.state.tr.insertText('x', 1))
+    expect(docText()).toBe(SOURCE)
+  })
+
+  it('lets a selection-only transaction through', () => {
+    logDoc()
+    rangeAt(MIDDLE.from, MIDDLE.to)
+    expect(editor.state.selection.from).toBe(MIDDLE.from)
+    expect(editor.state.selection.to).toBe(MIDDLE.to)
+  })
+
+  it('lets a whole-node replacement through — that is how every host paint arrives', () => {
+    logDoc()
+    const replacement = editor.schema.nodes['sieve-log'].create(null, editor.schema.text('fresh lines'))
+    const size = editor.state.doc.child(0).nodeSize
+    editor.view.dispatch(editor.state.tr.replaceWith(0, size, replacement))
+    expect(docText()).toBe('fresh lines')
+  })
+
+  it('lets a whole-document repaint through', () => {
+    logDoc()
+    const para = editor.schema.nodes.paragraph.create(null, editor.schema.text('reloaded'))
+    editor.view.dispatch(editor.state.tr.replaceWith(0, editor.state.doc.content.size, para))
+    expect(docText()).toBe('reloaded')
+  })
+
+  it('lets the host body projection write INSIDE the text — it alone says so', () => {
+    logDoc()
+    const tr = editor.state.tr.insertText('projected', MIDDLE.from, MIDDLE.to)
+    tr.setMeta(HOST_BODY_SYNC, true)
+    editor.view.dispatch(tr)
+    expect(docText()).toBe('line one\nprojected\nline three')
+  })
+
+  it('leaves a writable kind alone', () => {
+    oneBlock('sieve-code')
+    editor.view.dispatch(editor.state.tr.delete(MIDDLE.from, MIDDLE.to))
+    expect(docText()).toBe('line one\n\nline three')
   })
 })

@@ -106,3 +106,27 @@ describe('domSelectionBlockRange (bug 3: copy the highlighted block, not the sta
     expect(BlockSelection.blockRange(sel({ text: 'x', anchor: outside }), er, blocks)).toBeNull()
   })
 })
+
+// ONE reading of "what the user selected": the clipboard and the Ask panel's
+// label both ask here, so they cannot disagree about the same selection. The
+// separator is the caller's — '\n' joins clipboard text, ' ' keeps a label to
+// one line.
+describe('selectedText', () => {
+  const doc = {
+    textBetween: (from, to, separator) => `[${from},${to}|${separator === '\n' ? 'nl' : separator}]`,
+  }
+
+  it('reads the document range with the separator the caller asked for', () => {
+    expect(BlockSelection.selectedText(doc, { from: 4, to: 9 }, null, '\n')).toBe('[4,9|nl]')
+    expect(BlockSelection.selectedText(doc, { from: 4, to: 9 }, null, ' ')).toBe('[4,9| ]')
+  })
+
+  it('prefers a DOM highlight — a region PM does not own has no range to read', () => {
+    expect(BlockSelection.selectedText(doc, { from: 4, to: 9 }, 'highlighted', '\n')).toBe('highlighted')
+  })
+
+  it('is empty for a collapsed or inverted range', () => {
+    expect(BlockSelection.selectedText(doc, { from: 7, to: 7 }, null, '\n')).toBe('')
+    expect(BlockSelection.selectedText(doc, { from: 9, to: 4 }, null, '\n')).toBe('')
+  })
+})

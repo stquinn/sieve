@@ -10,19 +10,19 @@ regression pass. Source spec:
 "consume ∅" = event consumed, nothing happens, focus stays in the editor.
 "native" = TipTap/ProseMirror default; Sieve does not interject.
 
-| Context | Tab | Shift+Tab | Enter | Shift+Enter | Mod+Enter | ArrowDown at end | ArrowUp at start | Home |
-|---|---|---|---|---|---|---|---|---|
-| Plain paragraph | consume ∅ | consume ∅ | native (split para) | native (soft break) | native | native | native | native |
-| List item | native (indent) | native (outdent) | native | native (soft break) | native | native | native | native |
-| Table cell | native (next cell; last cell appends row — adopted TipTap default) | native (prev cell; consume ∅ in first cell) | native | native (soft break) | native | native | native | native |
-| Code block (sieve `code` AND native `codeBlock` — one policy for both) | indent 2 (multi-line: indent each selected line) | de-indent ≤2 per line | between an empty pair: expand to a block (see Pair characters); else newline + auto-indent (copy previous line's leading whitespace) | **escape: insert ¶ after block** | native (core exitCode — same effect as escape; undocumented alias) | exit to next block, content unchanged | exit to previous block | 1st press: first non-ws char; 2nd: column 0 |
-| Diagram (edit) | indent 2 (as code) | de-indent ≤2 (as code) | as code (pair expansion, else newline + auto-indent) | **escape: insert ¶ after block** | **toggle to render mode** (cursor position preserved) | exit to next block | exit to previous block | as code |
-| Diagram (render) | consume ∅ | consume ∅ | insert ¶ after (block is a caret stop) | **escape: insert ¶ after block** | **toggle to edit mode** (block selected OR render body focused — one function, two entry points) | pass to next block | pass to previous block | n/a |
-| Log block | consume ∅ | consume ∅ | consume ∅ (read-only text) | **escape: insert ¶ after block** | **toggle raw↔explore** | exit to next block | exit to previous block | native |
-| ai-block | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a |
-| web-clip | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a |
-| smart-image | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a |
-| attachment | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a |
+| Context | Tab | Shift+Tab | Enter | Shift+Enter | Mod+Enter | ArrowDown at end | ArrowUp at start | Home | Copy (partial range) | Cut (partial range) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Plain paragraph | consume ∅ | consume ∅ | native (split para) | native (soft break) | native | native | native | native | selected characters | selected characters |
+| List item | native (indent) | native (outdent) | native | native (soft break) | native | native | native | native | selected characters | selected characters |
+| Table cell | native (next cell; last cell appends row — adopted TipTap default) | native (prev cell; consume ∅ in first cell) | native | native (soft break) | native | native | native | native | selected characters | selected characters |
+| Code block (sieve `code` AND native `codeBlock` — one policy for both) | indent 2 (multi-line: indent each selected line) | de-indent ≤2 per line | between an empty pair: expand to a block (see Pair characters); else newline + auto-indent (copy previous line's leading whitespace) | **escape: insert ¶ after block** | native (core exitCode — same effect as escape; undocumented alias) | exit to next block, content unchanged | exit to previous block | 1st press: first non-ws char; 2nd: column 0 | **selected characters** + whole block as `sieve/slice` | selected characters; removes them |
+| Diagram (edit) | indent 2 (as code) | de-indent ≤2 (as code) | as code (pair expansion, else newline + auto-indent) | **escape: insert ¶ after block** | **toggle to render mode** (cursor position preserved) | exit to next block | exit to previous block | as code | **selected characters** + whole block as `sieve/slice` | selected characters; removes them |
+| Diagram (render) | consume ∅ | consume ∅ | insert ¶ after (block is a caret stop) | **escape: insert ¶ after block** | **toggle to edit mode** (block selected OR render body focused — one function, two entry points) | pass to next block | pass to previous block | n/a | whole block | whole block; removes the block |
+| Log block | consume ∅ | consume ∅ | consume ∅ (read-only text) | **escape: insert ¶ after block** | **toggle raw↔explore** | exit to next block | exit to previous block | native | **selected characters** + whole block as `sieve/slice` | selected characters; **document UNCHANGED** (read-only text) |
+| ai-block | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a | selected characters | selected characters; removes them |
+| web-clip | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a | selected characters | selected characters; removes them |
+| smart-image | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a | real bitmap | bitmap; removes the block |
+| attachment | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a | whole block | whole block; removes the block |
 
 **THE WHOLE MATRIX IS OVERRIDDEN WHILE A TRIGGER PICKER IS OPEN (#38).** ↑, ↓,
 Tab, Enter and Escape belong to the picker in every context above, in the
@@ -203,7 +203,7 @@ a `Partial` of it as `interactionPolicy`, and `policyFor` merges the two.
 | `smartHome` | Home column above (1st press → first non-ws char, 2nd → column 0) |
 | `enterInsertsNewline` / `autoIndentOnEnter` | Enter column above |
 | `modEnterTogglesMode` | Mod+Enter routes to the kind's `onModEnter` |
-| `readOnlyText` | caret may enter, typing/Backspace/Delete consumed |
+| `readOnlyText` | caret may enter; typing/Backspace/Delete consumed, and NO transaction may change the block's text (`filterTransaction`) |
 | `caretStop` (`true` \| `'render'`) | block is a single caret stop for arrows |
 | `expandable` | Mod+Alt+E / header button / context-menu item |
 | `surroundSelection` | typing a pair character over a selection wraps it |
@@ -396,14 +396,29 @@ The link's ContentEntry views MUST include `text/html` (`<a href>`): a rendered
 link's plain text is the label alone, so a text/plain-only entry set carries no
 URL and every processor declines — zero offers, silently.
 
-## Copy matrix
+## Copy and cut matrix
+
+Copy and cut are served by the interaction-policy extension in ONE place — no
+kind declares anything here, and there is no clipboard handler anywhere else.
+What a PM selection MEANS decides the views: a range covering only part of a
+block's content names exactly those characters; a range covering a block
+whole (or a NodeSelection of it) names the whole block. Atoms (smart-card,
+reference, smart-image) never have a partial range — a NodeSelection is the
+only selection they can hold — so they always read as whole-block. **Cut is
+the copy plus a delete of what the copy took, dispatched as an ordinary
+transaction** — no kind has a cut rule of its own. Read-only text survives a
+cut because `readOnlyText`'s `filterTransaction` wall refuses the delete, not
+because anything in the clipboard path knows about it.
 
 | Selection | Result |
 |---|---|
-| Partial text inside any sieve block (PM content — code/diagram/log-raw — OR a non-PM region like the log Explore table or the ai-block question title) | **Uniform rule:** text/plain + text/html follow the selection (the DOM highlight, or the PM range as fallback); `sieve/slice` + `sieve/<kind>` carry the WHOLE block (only-meaningful-whole). NEVER deferred to native PM copy — a slice inside a `defining`/`code` block re-wraps the whole node, so native copied everything. Served by the copy handler's per-block loop + `domSelectionTextInside`. **A highlight in a block's READ-ONLY region** (contentEditable=false DOM PM cannot track — the ai-block question title, the log Explore table) leaves PM's own selection on whatever block last held the caret; the handler re-targets the visited range onto the highlighted block via `domSelectionBlockRange`, so copy serves the block the user highlighted, not the stale one. |
+| Partial PM range inside a block's content (code, diagram, log, prose, ai-block, web-clip — any non-atom kind) | text/plain + text/html are the selected CHARACTERS; `sieve/slice` + `sieve/<kind>` still carry the WHOLE block (only-meaningful-whole). NEVER deferred to native PM copy — a slice inside a `defining`/`code` block re-wraps the whole node, so native copied everything. The native path agrees: a kind's text serializer clips its output to the serialized range. |
+| A highlight in a block's READ-ONLY region (contentEditable=false DOM PM cannot track — the ai-block question title, the log Explore table) | text/plain + text/html follow the highlight: PM's own selection stays on whatever block last held the caret, so the visited range is re-targeted onto the highlighted block (`BlockSelection.blockRange`). A CUT here still writes the clipboard, but removes nothing — the highlight is real selected content that is simply not PM's to delete. |
 | Single whole sieve block (gutter / NodeSelection) | text/plain + text/html + `sieve/slice` + `sieve/<kind>` + renderer custom views |
 | Gutter block-range | `sieve/slice` = ordered ContentEntry sets, one per block |
 | Smart-image node selection | real bitmap to clipboard |
+| Collapsed caret, no live DOM highlight | COPY still composes the caret's block, as above. CUT is NOT handled — a collapsed PM selection with nothing highlighted names no content to take, so the handler declines and native ProseMirror cut serves it (a no-op, as it always was on an empty selection). The user's existing clipboard is left untouched. |
+| Pure prose | deferred to native ProseMirror copy/cut |
 
 ## Paste matrix
 

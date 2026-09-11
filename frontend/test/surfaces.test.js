@@ -62,8 +62,13 @@ vi.mock('../src/static/lens/document-editor/surfaces/sieve-block-extension.js', 
   sieveBlockEntries: vi.fn(() => []),
   rendererFor: vi.fn(() => null),
 }))
-vi.mock('../src/static/lens/document-editor/block-selection.js', () => ({
-  BlockSelection: { blockRange: vi.fn(() => null), textInside: vi.fn(() => null) },
+// Only the two DOM-fold DECISIONS are faked. selectedText comes through REAL —
+// what feedSelection reports is what a copy puts on the clipboard, and a stubbed
+// reading here would let the two drift without a test noticing.
+vi.mock('../src/static/lens/document-editor/block-selection.js', async (importOriginal) => ({
+  BlockSelection: Object.assign(Object.create((await importOriginal()).BlockSelection), {
+    blockRange: vi.fn(() => null), textInside: vi.fn(() => null),
+  }),
 }))
 vi.mock('../src/static/lens/document-editor/block-sync.js', () => ({
   seedBaseline: vi.fn((triples) => { const m = {}; triples.forEach((t) => { if (t.id) m[t.id] = t.content }); return m }),

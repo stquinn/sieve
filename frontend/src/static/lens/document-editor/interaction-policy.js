@@ -17,8 +17,9 @@
 import { getBlockBehaviour } from '../../renderers/block-kinds.js'
 import { expandBlock } from '../../ui/media-lightbox.js'
 import { MODE } from '../../contract/sieve-block.js'
-import { sieveBlockFor } from './surfaces/sieve-block-extension.js'
+import { sieveBlockFor, HOST_BODY_SYNC } from './surfaces/sieve-block-extension.js'
 import { ProseLink } from './surfaces/prose-link.js'
+import { ClipboardSlice } from './clipboard-slice.js'
 
 /** @typedef {import('../../contract/sieve-block.js').SieveBlock} SieveBlock */
 
@@ -714,7 +715,67 @@ function buildLiteralGlyphsPlugin(T) {
   })
 }
 
-export function buildInteractionPolicyExtension(T) {
+/**
+ * What the clipboard handlers need from the surface they are mounted in. Omit it
+ * and they still compose every text view; only the whole-block gutter range and a
+ * document-relative image src go unresolved.
+ * @typedef {object} ClipboardHost
+ * @property {string} [uuid]  the document the editor is mounted on
+ * @property {(view: any) => {from: number, to: number}} [effectiveRange]
+ *   the authoritative selection range, which spans whole blocks for the gutter
+ *   gesture PM's own selection cannot express
+ */
+
+/** @param {any} view @param {any} editor @param {ClipboardHost|null} host */
+function clipboardFor(view, editor, host) {
+  return new ClipboardSlice({
+    view: view,
+    editor: editor,
+    range: (host && host.effectiveRange) ? host.effectiveRange(view) : null,
+    uuid: host && host.uuid,
+  })
+}
+
+// THE document-level wall for `readOnlyText`. Consuming editing keys keeps the key
+// from feeling dead; this is the guarantee. Every route into a block's text —
+// native cut, a paste over the selection, a drag-move, an IME commit — arrives as
+// a transaction, and one that changes characters inside a read-only block never
+// lands.
+//
+// A step covering a read-only block WHOLE is not text editing: deleting,
+// replacing and reordering the block itself stay available, and that is the shape
+// every host paint arrives in. The one host write landing strictly INSIDE a
+// block's content is the rendered-body projection, which says so with
+// HOST_BODY_SYNC.
+/** @param {any} tr @returns {boolean} */
+function readOnlyTextPermits(tr) {
+  if (!tr.docChanged) return true
+  if (tr.getMeta(HOST_BODY_SYNC)) return true
+  for (var i = 0; i < tr.steps.length; i++) {
+    if (stepEditsReadOnlyText(tr.docs[i], tr.steps[i])) return false
+  }
+  return true
+}
+
+/** @param {any} doc the document BEFORE this step @param {any} step @returns {boolean} */
+function stepEditsReadOnlyText(doc, step) {
+  var from = step.from
+  var to = step.to
+  // An attribute step carries no range and changes no characters.
+  if (!doc || typeof from !== 'number' || typeof to !== 'number') return false
+  var edits = false
+  doc.forEach(function (node, offset) {
+    if (edits) return
+    if (!policyFor(kindFromTypeName(node.type.name)).readOnlyText) return
+    if (to < offset + 1 || from > offset + node.nodeSize - 1) return       // outside this block's text
+    if (from <= offset && to >= offset + node.nodeSize) return             // the block as a whole
+    edits = true
+  })
+  return edits
+}
+
+/** @param {any} T @param {ClipboardHost} [clipboardHost] */
+export function buildInteractionPolicyExtension(T, clipboardHost) {
   TT = T
   return T.Extension.create({
     name: 'sieveInteractionPolicy',
@@ -722,8 +783,10 @@ export function buildInteractionPolicyExtension(T) {
     // never a shadow.
     priority: 50,
     addProseMirrorPlugins: function () {
+      var editor = this.editor
       return [
         new T.Plugin({
+          filterTransaction: function (tr) { return readOnlyTextPermits(tr) },
           props: {
             // Pair behaviours (surround / autoclose / type-over). Here rather
             // than in handleKeyDown so IME and dead-key layouts work.
@@ -735,6 +798,28 @@ export function buildInteractionPolicyExtension(T) {
               // rather than a PM prop.
               beforeinput: function (view, event) {
                 return handleSubstitutionGuard(event, resolveContext(view.state, view).policy)
+              },
+              // Copy/cut are served in ONE place, for every kind: what a PM range
+              // means decides the views, not the kind at that range (ClipboardSlice
+              // owns the rule). A cut is the copy plus an ordinary delete of what
+              // the copy took: no kind has a cut rule of its own, and read-only
+              // text survives because the wall above refuses the delete, not
+              // because anything here knows about it.
+              copy: function (view, event) {
+                if (!clipboardFor(view, editor, clipboardHost).write(event.clipboardData)) return false
+                event.preventDefault()
+                return true
+              },
+              cut: function (view, event) {
+                var slice = clipboardFor(view, editor, clipboardHost)
+                // An empty selection names nothing to take, so native cut (a
+                // no-op on a collapsed PM selection) serves it instead.
+                if (slice.empty) return false
+                if (!slice.write(event.clipboardData)) return false
+                event.preventDefault()
+                var cut = slice.cutRange
+                if (cut) view.dispatch(view.state.tr.delete(cut.from, cut.to).scrollIntoView())
+                return true
               },
             },
             handleKeyDown: function (view, event) {

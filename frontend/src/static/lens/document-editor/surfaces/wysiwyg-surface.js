@@ -16,7 +16,6 @@ import { ToolbarButton, ButtonGroup } from '../toolbar-button.js'
 import { T } from './tiptap-vendor.js'
 import { BlockId } from './prose-block.js'
 import { ProseGroup, proseBlockNodes } from './prose-group.js'
-import { copyImageToClipboard } from '../../../ui/copy-image.js'
 import { BlockChrome, getBlockSelectionRange } from '../block-chrome.js'
 import { AiTargetDecoration } from './ai-target-decoration.js'
 import { MentionDecorations } from './mention-decoration.js'
@@ -32,12 +31,9 @@ import {
   ActionMacro, BlockInsertProvider, MentionProvider, SlashCommandProvider,
 } from '../../../shell/trigger-providers.js'
 import { ProseMirrorHost, BlockMakingProseMirrorHost, CaretPlacement } from '../../../shell/trigger-host.js'
-import {
-  getSieveNodes, getSieveBlockLabel, serializeNode, sieveBlockAttrs,
-  sieveBlockEntries, rendererFor,
-} from './sieve-block-extension.js'
+import { getSieveNodes, getSieveBlockLabel, serializeNode, sieveBlockAttrs } from './sieve-block-extension.js'
 import { BlockSelection } from '../block-selection.js'
-import { getBlockKind, isNativeProseNodeName } from '../../../renderers/block-kinds.js'
+import { isNativeProseNodeName } from '../../../renderers/block-kinds.js'
 import { SieveBlock } from '../../../contract/sieve-block.js'
 import { LensCapability } from '../../../contract/lens-capabilities.js'
 import { buildBlocksHTML, proseContent } from './block-render.js'
@@ -46,7 +42,7 @@ import { docPosForBlockIndex, blockIndexAfter, blockOffsetOf, posForBlockOffset 
 import { reloadReplacement } from './render-empty.js'
 import { caretInRawTextBlock } from '../paste-context.js'
 import { CaretTriggerPort } from './caret-trigger-port.js'
-import { resolveImageSrc, storeFileSrc, storeFileRef } from '../../../renderers/asset-urls.js'
+import { storeFileSrc, storeFileRef } from '../../../renderers/asset-urls.js'
 
 const FORMATTING_GROUPS = Object.freeze([
   Object.freeze([
@@ -304,7 +300,10 @@ export class WysiwygSurface extends AbstractSurface {
         T.TableCell,
         // Priority 50, so it runs AFTER native keymaps like list indent and
         // table cell-nav. Per-renderer key handlers are forbidden.
-        buildInteractionPolicyExtension(T),
+        buildInteractionPolicyExtension(T, {
+          uuid: uuid,
+          effectiveRange: function (v) { return getBlockSelectionRange(v) },
+        }),
 
     // An ordinary markdown image may name a file by its path within the store.
     // The browser would resolve that against the app shell, so the src is pointed
@@ -373,132 +372,6 @@ export class WysiwygSurface extends AbstractSurface {
       editorProps: {
         attributes: { spellcheck: 'false' },
         handleDOMEvents: {
-          copy: function(view, event) {
-            // Copy is PM's. This handler steps in only for what PM cannot
-            // express: a smart-image bitmap, and a WHOLE-block copy, which adds
-            // sieve/slice + sieve/<kind> so smart paste can rebuild the kind.
-            var sel = view.state.selection
-
-            // (1) Smart-image bitmap.
-            if (sel && sel.node && sel.node.type.name === 'sieve-smart-image') {
-              if (!sel.node.attrs.src) return false
-              event.preventDefault()
-              copyImageToClipboard(resolveImageSrc(sel.node.attrs.src, uuid))
-              return true
-            }
-
-            var er = (T && getBlockSelectionRange)
-              ? getBlockSelectionRange(view)
-              : { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false }
-
-            var blockHTML = function (dom) {
-              if (!dom) return ''
-              var clone = dom.cloneNode(true)
-              var ch = clone.querySelector('.block-chrome-host')
-              if (ch) ch.remove()
-              return clone.outerHTML
-            }
-
-            var selText = function (nodeFrom, nodeEnd) {
-              var a = Math.max(er.from, nodeFrom), b = Math.min(er.to, nodeEnd)
-              return b > a ? view.state.doc.textBetween(a, b, '\n') : ''
-            }
-            var escHtml = function (s) {
-              return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-            }
-            // sieve/slice + sieve/<kind> always carry the WHOLE block; only the
-            // text views follow the selection.
-            var partial = function (nodeFrom, nodeEnd) {
-              return er.to > er.from && (er.from > nodeFrom || er.to < nodeEnd)
-            }
-
-            // A block's custom region holds text PM does not own, so a highlight
-            // there leaves PM's selection a whole-block NodeSelection — without
-            // this the rich copy below would grab the ENTIRE block.
-            var domSel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null
-            var domSelHtml = ''
-            if (domSel && !domSel.isCollapsed && domSel.toString().trim()) {
-              try {
-                var frag = document.createElement('div')
-                for (var dri = 0; dri < domSel.rangeCount; dri++) frag.appendChild(domSel.getRangeAt(dri).cloneContents())
-                domSelHtml = frag.innerHTML
-              } catch (e) {}
-
-              // Re-target `er` when the highlight lives in a READ-ONLY region PM
-              // cannot track: PM's selection stays on whatever block last held
-              // the caret, so the loop below would copy the WRONG block.
-              var blockDescs = []
-              view.state.doc.forEach(function (node, offset) {
-                if (String(node.type.name).indexOf('sieve-') === 0) {
-                  blockDescs.push({ from: offset, to: offset + node.nodeSize, dom: view.nodeDOM(offset) })
-                }
-              })
-              var retarget = BlockSelection.blockRange(domSel, er, blockDescs)
-              if (retarget) {
-                er = { from: retarget.from, to: retarget.to, active: true, isBlockRange: false, isNodeSelection: false }
-              }
-            }
-
-            var sliceItems = []
-            var plainParts = []
-            var htmlParts = []
-            var hasSieve = false
-            var singleSieveEntries = null  // the framework ContentEntry array, if exactly one sieve block
-
-            // sieve/slice is [][]ContentEntry, reconstructed server-side. Each
-            // block contributes its FULL view set.
-            var proseKind = getBlockKind && getBlockKind('prose')
-            view.state.doc.forEach(function (node, offset) {
-              var nodeEnd = offset + node.nodeSize
-              if (nodeEnd <= er.from || offset >= er.to) return
-              var dom = view.nodeDOM(offset)
-              var entries
-              if (String(node.type.name).indexOf('sieve-') === 0) {
-                hasSieve = true
-                entries = sieveBlockEntries(node, rendererFor(node.attrs.kind))
-                singleSieveEntries = entries
-              } else {
-                entries = (proseKind && proseKind.asContentEntry && proseKind.asContentEntry(node, self.editorPane)) || []
-              }
-              sliceItems.push(entries)
-
-              var pick = function (mime) {
-                for (var vi = 0; vi < entries.length; vi++) {
-                  if (entries[vi].mimeType === mime && entries[vi].content) return entries[vi].content
-                }
-                return null
-              }
-              // A DOM highlight inside this block's custom region: the text
-              // views follow it even though PM sees the whole block selected.
-              var domInBlock = BlockSelection.textInside(domSel, dom)
-              if (domInBlock) {
-                plainParts.push(domInBlock)
-                htmlParts.push(domSelHtml || escHtml(domInBlock))
-              } else if (partial(offset, nodeEnd)) {
-                plainParts.push(selText(offset, nodeEnd))
-                htmlParts.push(escHtml(selText(offset, nodeEnd)))
-              } else {
-                plainParts.push(pick('text/plain') || node.textContent || (dom ? dom.innerText : ''))
-                htmlParts.push(pick('text/html') || blockHTML(dom))
-              }
-            })
-
-            if (!hasSieve) return false   // pure prose → native PM copy
-
-            // Every sieve-involving copy is served HERE: a slice inside a
-            // `defining`/`code` block re-wraps the WHOLE node, so native copy
-            // takes the entire block.
-            event.preventDefault()
-            event.clipboardData.setData('text/plain', plainParts.filter(Boolean).join('\n\n'))
-            event.clipboardData.setData('text/html', htmlParts.filter(Boolean).join('\n'))
-            event.clipboardData.setData('sieve/slice', JSON.stringify(sliceItems))
-            // Single sieve block: expose every mime in its ContentEntry array
-            // too, so a cross-context paste hits the same backend matchers.
-            if (sliceItems.length === 1 && sliceItems[0]._type === 'sieve' && singleSieveEntries) {
-              singleSieveEntries.forEach(function (en) { event.clipboardData.setData(en.mimeType, en.content) })
-            }
-            return true
-          },
           // There is deliberately NO `click` handler for Mod+Click. Link
           // activation is APP-GLOBAL: shell/workspace.js's document-level CAPTURE
           // listener runs before anything on `view.dom` and calls
@@ -1405,9 +1278,8 @@ export class WysiwygSurface extends AbstractSurface {
     const primary = this.#primaryBlock(doc, sel, span)
 
     let selectedText = null
-    if (selectionType === 'range') {
-      selectedText = domSelText !== null ? domSelText : doc.textBetween(er.from, er.to, ' ')
-    }
+    // ' ' as the node separator: this reading is a one-line label, not clipboard text.
+    if (selectionType === 'range') selectedText = BlockSelection.selectedText(doc, er, domSelText, ' ')
 
     const primaryId = this.#nodeBlockId(primary)
     // A COLLAPSED caret spans exactly ONE block — its primary. A RANGE keeps the

@@ -140,6 +140,11 @@ export function sieveBlockAttrs(node) {
   return attrs
 }
 
+// The meta word a transaction carries when the HOST is projecting a block's
+// rendered body into that block's content rather than a user editing it. The
+// read-only-text wall admits it; nothing else may write inside such a block.
+export var HOST_BODY_SYNC = 'sieve-md-sync'
+
 // The universal "sieve/<kind>" view every block exposes: its attrs as a JSON map.
 // The backend keys off the kind and reads the attrs.
 function sieveFrameworkEntry(node) {
@@ -197,6 +202,43 @@ class NodeViewRegistry {
     this.#runtime = (typeof window !== 'undefined' && T.Node)
       ? { Node: T.Node, mergeAttributes: T.mergeAttributes }
       : null
+  }
+
+  /**
+   * A sieve node's plain-text view, for native copy and `textBetween`: the
+   * renderer's own `text/plain` view where it tailors one, else the node's own
+   * text. Not markdown — Go owns that.
+   *
+   * `range` is the span the serializer is walking. When it covers only PART of the
+   * node the answer is the covered CHARACTERS, never the tailored view, which
+   * describes the whole block and cannot be cut down — without this a partial
+   * selection serializes as the entire block. `pos` is the node's document
+   * position, so its own text starts at `pos + 1`.
+   *
+   * @param {{node: any, pos?: number, range?: {from: number, to: number}}} props
+   *   the argument ProseMirror hands a node's text serializer
+   * @param {SieveBlockAdapter} renderer
+   * @returns {string}
+   */
+  static textOf(props, renderer) {
+    var node = props.node
+    var text = node.textContent || ''
+    var range = props.range
+    var pos = props.pos
+    if (range && typeof pos === 'number' && (range.from > pos || range.to < pos + node.nodeSize)) {
+      var start = Math.max(0, range.from - (pos + 1))
+      var end = Math.min(text.length, range.to - (pos + 1))
+      return end > start ? text.slice(start, end) : ''
+    }
+    if (renderer && typeof renderer.asContentEntry === 'function') {
+      var ents = renderer.asContentEntry(node)
+      if (ents) {
+        for (var i = 0; i < ents.length; i++) {
+          if (ents[i].mimeType === 'text/plain' && ents[i].content) return ents[i].content
+        }
+      }
+    }
+    return text
   }
 
   /**
@@ -491,20 +533,7 @@ class NodeViewRegistry {
         return ['div', mergeAttributes({ 'data-type': dataType }, HTMLAttributes)]
       },
 
-      renderText({ node }) {
-        // Plain-text view for native copy / textBetween: the renderer's own
-        // text/plain view if it tailors one, else the node's text. Not markdown —
-        // Go owns that.
-        if (renderer && typeof renderer.asContentEntry === 'function') {
-          var ents = renderer.asContentEntry(node)
-          if (ents) {
-            for (var i = 0; i < ents.length; i++) {
-              if (ents[i].mimeType === 'text/plain' && ents[i].content) return ents[i].content
-            }
-          }
-        }
-        return node.textContent || ''
-      },
+      renderText(props) { return NodeViewRegistry.textOf(props, renderer) },
 
       addNodeView() {
         return function ({ node, editor: editorPane, getPos }) {
@@ -821,7 +850,7 @@ class NodeViewRegistry {
               // rather than the slice, which parseSlice hands back open-ended.
               var next = tr.doc.nodeAt(pos)
               if (next && next.content.eq(cur.content)) return
-              tr.setMeta('sieve-md-sync', true)
+              tr.setMeta(HOST_BODY_SYNC, true)
               tr.setMeta('addToHistory', false)
               editorPane.view.dispatch(tr)
             }, 0)
