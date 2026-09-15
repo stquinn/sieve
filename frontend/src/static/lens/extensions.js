@@ -37,6 +37,45 @@ var DecorationSet = VENDOR.DecorationSet
     }
   })
 
+  // Confluence-style heading autoformat: `h1. `, `h2. `, `h3. ` (case-insensitive)
+  // typed at the start of a textblock converts it to a heading of that level,
+  // alongside StarterKit's own `# `/`## `/`### ` rules. Space is the only boundary
+  // character, the token must be the whole prefix, and levels are 1–3 only.
+  //
+  // Hand-rolled rather than a `textblockTypeInputRule`: the vendor bundle exports
+  // neither that helper nor `InputRule`. The two guards below are the ones
+  // prosemirror-inputrules and that helper apply — a `code` textblock never
+  // autoformats, and the heading must be schema-legal where it would land.
+  export var HeadingShortcuts = Extension.create({
+    name: 'headingShortcuts',
+    addProseMirrorPlugins: function () {
+      return [
+        new Plugin({
+          props: {
+            handleTextInput: function (view, from, to, text) {
+              if (text !== ' ') return false
+              var state = view.state
+              var heading = state.schema.nodes.heading
+              if (!heading) return false
+
+              var $from = state.doc.resolve(from)
+              if (!$from.parent.isTextblock || $from.parent.type.spec.code) return false
+
+              var match = /^h([1-3])\.$/i.exec($from.parent.textBetween(0, $from.parentOffset, undefined, '\ufffc'))
+              if (!match) return false
+              if (!$from.node(-1).canReplaceWith($from.index(-1), $from.indexAfter(-1), heading)) return false
+
+              var start = $from.start()
+              // ONE tracked transaction, so a single Ctrl+Z reverts the conversion.
+              view.dispatch(state.tr.delete(start, to).setBlockType(start, start, heading, { level: Number(match[1]) }))
+              return true
+            }
+          }
+        })
+      ]
+    }
+  })
+
   // Reads ONLY the AI target the editor already resolved into its SelectionContext
   // (context.target = {kind, ref, range, label}) — no PM walk, no re-derivation.
   export function buildAiContext(context) {

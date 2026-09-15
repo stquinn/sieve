@@ -244,6 +244,36 @@ exercised the branch. Fixed 2026-07-29; the same commit split the old `rawText`
 flag (which meant three things and implemented one) into `tabIndents` +
 `smartHome`.
 
+## Autoformat input rules (revised 2026-09-15, #138)
+
+On-type substitutions: a token typed at the **start of a textblock**, closed by a
+**space**, converts the block. WYSIWYG only — the markdown breakglass surface is a
+raw `<textarea>` where a literal `#` is what the user means.
+
+| Token | Result | Owner |
+|---|---|---|
+| `# ` / `## ` / `### ` (and `#### `–`###### `) | Heading 1–6 | StarterKit `Heading` |
+| `h1. ` / `h2. ` / `h3. ` — **case-insensitive**, so `H1. ` too | Heading 1/2/3 | `HeadingShortcuts` (`lens/extensions.js`) |
+
+The `hN.` aliases are Confluence muscle memory. Levels **1–3 only** — the set the
+toolbar exposes; `h4.`–`h6.` are ordinary text.
+
+Rules for every autoformat:
+
+- **Space is the only boundary character.** Enter and Tab after the token leave it
+  as typed.
+- **Start-anchored.** The token must be the whole textblock prefix — `see h1. `
+  mid-line is text.
+- **Suppressed where the target is not schema-legal**, and never inside a `code`
+  textblock (a fence, native or sieve) — so a `h1.` in a PlantUML source stays.
+- **One tracked transaction**, so one undo puts the block back.
+- The Ask composer reuses the WYSIWYG surface, so the same rules apply there.
+
+Trade-off recorded: `HeadingShortcuts` is a raw `handleTextInput` plugin, not a
+registered prosemirror-inputrules rule (the vendor bundle exports neither
+`InputRule` nor `textblockTypeInputRule`). Undo reverts it; an immediate Backspace
+does not.
+
 ## Pair characters (decided 2026-07-29)
 
 The pair table is shared and frozen: `"` `'` `` ` `` `(` `[` `{`. Markdown
