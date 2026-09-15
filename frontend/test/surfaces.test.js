@@ -29,7 +29,7 @@ import { DOMParser as PMDOMParser, Schema } from '@tiptap/pm/model'
 // pattern — Object.assign(globalThis.TipTap, …), never reassign) and clear them
 // after each test so a fake bundle never leaks forward.
 vi.mock('../src/static/lens/extensions.js', () => ({
-  SelectionHighlight: {}, HighlightMark: {},
+  SelectionHighlight: {}, HighlightMark: {}, HeadingShortcuts: {},
   AiShortcuts: { configure: () => ({}) },
 }))
 vi.mock('../src/static/lens/document-editor/block-chrome.js', () => ({

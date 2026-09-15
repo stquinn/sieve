@@ -24,7 +24,7 @@ import { SpellDecorations, SPELL_FEATURE } from './spell-decoration.js'
 import { FindDecorations, FIND_FEATURE } from './find-decoration.js'
 import { FlatText } from './flat-text.js'
 import { VerticalScroll } from './vertical-scroll.js'
-import { SelectionHighlight, HighlightMark, AiShortcuts } from '../../extensions.js'
+import { SelectionHighlight, HighlightMark, AiShortcuts, HeadingShortcuts } from '../../extensions.js'
 import { policyEnterKeydown, buildInteractionPolicyExtension } from '../interaction-policy.js'
 import { TriggerPopover } from '../../../shell/trigger-popover.js'
 import {
@@ -323,6 +323,9 @@ export class WysiwygSurface extends AbstractSurface {
         }).configure({ inline: false, allowBase64: true, HTMLAttributes: { class: 'editor-image' } }),
         HighlightMark,
         SelectionHighlight,
+        // After StarterKit: the heading node type must exist for the autoformat
+        // to have something to convert to.
+        HeadingShortcuts,
         T.Extension.create({
           name: 'sieveFocusPlugin',
           addProseMirrorPlugins: function () {
