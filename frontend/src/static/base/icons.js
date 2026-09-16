@@ -49,6 +49,8 @@
     tableRowPlusBottom:   svg('<rect x="3" y="3" width="18" height="11" rx="2" ry="2"/><line x1="3" y1="8" x2="21" y2="8"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="10" y1="19" x2="14" y2="19"/>'),
     tableRowRemove:       svg('<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="7" y1="7" x2="17" y2="17"/><line x1="17" y1="7" x2="7" y2="17"/>'),
     tableHeader:          svg('<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><rect x="3" y="3" width="18" height="6" fill="currentColor"/><line x1="3" y1="15" x2="21" y2="15"/>'),
+    tableRowSelect:       svg('<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><rect x="3" y="9" width="18" height="6" fill="currentColor"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/>'),
+    tableColumnSelect:    svg('<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><rect x="9" y="3" width="6" height="18" fill="currentColor"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/>'),
     tableMerge:           svg('<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="12" y1="3" x2="12" y2="12"/>'),
     table:                svg('<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="9" x2="9" y2="21"/><line x1="15" y1="9" x2="15" y2="21"/>'),
     paperclip:            svg('<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>'),

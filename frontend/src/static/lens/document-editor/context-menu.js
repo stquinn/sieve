@@ -4,6 +4,7 @@
 import { applyTargetHighlight } from '../extensions.js'
 import { NodeViewRegistry, detectAndAppendExtractions, serializeNode } from './surfaces/sieve-block-extension.js'
 import { enclosingBlockId } from './surfaces/block-position.js'
+import { TableGrid } from './surfaces/table-grid.js'
 import { ProseLink } from './surfaces/prose-link.js'
 import { WysiwygSurface } from './surfaces/wysiwyg-surface.js'
 import { SPELL_FEATURE } from './surfaces/spell-decoration.js'
@@ -85,6 +86,24 @@ import { listRegisteredLanguages } from '../../renderers/highlighting.js'
    *  @param {any} editor @param {string} name @returns {() => void} */
   function paneCommand(editor, name) {
     return function () { editor.chain().focus()[name]().run() }
+  }
+
+  /** A menu entry selecting the whole row or column the caret's cell sits in.
+   *  The range comes from the table's GRID, so a merged cell selects every
+   *  column it spans rather than the one its child index suggests; the
+   *  selection itself is prosemirror-tables' own, built by the stock
+   *  `setCellSelection` command. An entry over a cell the grid cannot place
+   *  does nothing but keep the focus.
+   *  @param {any} editor @param {{node: any, pos: number}} table
+   *  @param {{node: any, pos: number}} cell @param {'row'|'column'} axis
+   *  @returns {() => void} */
+  function selectCellRange(editor, table, cell, axis) {
+    return function () {
+      var grid = new TableGrid(table.node, table.pos)
+      var range = (axis === 'row') ? grid.rowRangeAt(cell.pos) : grid.columnRangeAt(cell.pos)
+      if (!range) { editor.commands.focus(); return }
+      editor.chain().focus().setCellSelection(range).run()
+    }
   }
 
   /** Whether `table`'s first row is entirely header cells — read from the
@@ -582,19 +601,32 @@ import { listRegisteredLanguages } from '../../renderers/highlighting.js'
     // EDITING, not authoring, so this asks nothing of the mount beyond holding
     // the table the caret is in.
     var table = enclosingNode(sel.$from, { table: true })
+    var cell = table ? enclosingNode(sel.$from, { tableCell: true, tableHeader: true }) : null
     if (table) {
       items.push({ type: 'divider' })
       items.push({ type: 'header', label: 'Table' })
-      items.push({ icon: IC.table, label: 'Row', children: [
+      var rowItems = []
+      var columnItems = []
+      // Selecting is the verb the rest of the section acts THROUGH: it is what
+      // makes "Delete Row" name a row you can see, so it leads each submenu.
+      // It needs the cell the caret is in, which a caret between two tables'
+      // rows — or in a table's caption — does not give.
+      if (cell) {
+        rowItems.push({ icon: IC.tableRowSelect, label: 'Select Row',
+          action: selectCellRange(editor, table, cell, 'row') })
+        columnItems.push({ icon: IC.tableColumnSelect, label: 'Select Column',
+          action: selectCellRange(editor, table, cell, 'column') })
+      }
+      items.push({ icon: IC.table, label: 'Row', children: rowItems.concat([
         { icon: IC.tableRowPlusTop, label: 'Add Above', action: paneCommand(editor, 'addRowBefore') },
         { icon: IC.tableRowPlusBottom, label: 'Add Below', action: paneCommand(editor, 'addRowAfter') },
         { icon: IC.tableRowRemove, label: 'Delete Row', action: paneCommand(editor, 'deleteRow') },
-      ]})
-      items.push({ icon: IC.table, label: 'Column', children: [
+      ])})
+      items.push({ icon: IC.table, label: 'Column', children: columnItems.concat([
         { icon: IC.tableColumnPlusLeft, label: 'Add Left', action: paneCommand(editor, 'addColumnBefore') },
         { icon: IC.tableColumnPlusRight, label: 'Add Right', action: paneCommand(editor, 'addColumnAfter') },
         { icon: IC.tableColumnRemove, label: 'Delete Column', action: paneCommand(editor, 'deleteColumn') },
-      ]})
+      ])})
       // GFM pipe markdown requires a header row (tiptap-markdown's table
       // serializer falls back to a raw HTML dump without one — #118), so the
       // OFF direction is deliberately gone: a table that already has a header

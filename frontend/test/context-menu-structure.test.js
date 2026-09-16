@@ -99,6 +99,27 @@ function caretInTable() {
   return stateWithCaret(doc, 4)
 }
 
+/** A doc holding one 2×2 headerless table with a caret in its bottom-right
+ *  cell, and the document position of every cell — so a selection the menu
+ *  builds is asserted as the cells it names rather than as magic numbers.
+ *  @returns {{state: any, pos: number[][]}} */
+function caretInGridTable() {
+  const table = n.table.create(null, [['a', 'b'], ['c', 'd']].map((row) => n.tableRow.create(
+    null, row.map((t) => n.tableCell.create(null, n.paragraph.create(null, schema.text(t)))))))
+  const doc = n.doc.create(null, [table])
+  /** @type {number[][]} */ const pos = []
+  let rowPos = 1
+  table.forEach((/** @type {any} */ row) => {
+    let cellPos = rowPos + 1
+    /** @type {number[]} */ const line = []
+    row.forEach((/** @type {any} */ c) => { line.push(cellPos); cellPos += c.nodeSize })
+    pos.push(line)
+    rowPos += row.nodeSize
+  })
+  // +2 lands in the cell's paragraph: the caret is IN a cell, never on it.
+  return { state: stateWithCaret(doc, pos[1][1] + 2), pos }
+}
+
 /** A doc holding one table whose first row is a real header row, and a caret
  *  inside its (second row) cell. */
 function caretInTableWithHeader() {
@@ -134,18 +155,20 @@ function stateWithCaret(doc, pos) {
 function paneOver(state, host) {
   /** @type {string[]} */ const ran = []
   /** @type {any[]} */ const updates = []
+  /** @type {{name: string, args: any[]}[]} */ const calls = []
   const chain = new Proxy({}, {
     get(_t, prop) {
       return (/** @type {any[]} */ ...args) => {
         if (prop === 'run') return true
         if (prop === 'updateAttributes') updates.push(args)
-        else if (prop !== 'focus') ran.push(String(prop))
+        else if (prop !== 'focus') { ran.push(String(prop)); calls.push({ name: String(prop), args }) }
         return chain
       }
     },
   })
   return {
     ran,
+    calls,
     updates,
     sieveHost: host || null,
     state,
@@ -203,7 +226,7 @@ describe('the submenu primitive', () => {
     const flyout = flyoutOf(row)
     expect(flyout).not.toBeNull()
     expect(row.getAttribute('aria-expanded')).toBe('true')
-    expect(labelsOf(flyout)).toEqual(['Add Above', 'Add Below', 'Delete Row'])
+    expect(labelsOf(flyout)).toEqual(['Select Row', 'Add Above', 'Add Below', 'Delete Row'])
   })
 
   it('STAYS OPEN when the pointer moves into it — a flyout is left for its own buttons', () => {
@@ -274,7 +297,7 @@ describe('the submenu primitive', () => {
     key(row, 'ArrowRight')
     const flyout = flyoutOf(row)
     expect(flyout).not.toBeNull()
-    expect(document.activeElement.textContent).toBe('Add Above')
+    expect(document.activeElement.textContent).toBe('Select Row')
   })
 
   it('moves within on Up/Down, wrapping at both ends', () => {
@@ -282,7 +305,7 @@ describe('the submenu primitive', () => {
     const row = itemNamed(menu, 'Row')
     key(row, 'ArrowRight')
     key(document.activeElement, 'ArrowDown')
-    expect(document.activeElement.textContent).toBe('Add Below')
+    expect(document.activeElement.textContent).toBe('Add Above')
     key(document.activeElement, 'ArrowUp')
     key(document.activeElement, 'ArrowUp')
     expect(document.activeElement.textContent).toBe('Delete Row')
@@ -492,9 +515,44 @@ describe('the table section', () => {
     const menu = openMenu(pane)
     const column = itemNamed(menu, 'Column')
     column.dispatchEvent(new window.MouseEvent('mouseenter'))
-    expect(labelsOf(flyoutOf(column))).toEqual(['Add Left', 'Add Right', 'Delete Column'])
+    expect(labelsOf(flyoutOf(column))).toEqual(['Select Column', 'Add Left', 'Add Right', 'Delete Column'])
     itemNamed(flyoutOf(column), 'Add Left').click()
     expect(pane.ran).toEqual(['addColumnBefore'])
+  })
+
+  // Selecting is what makes every other verb in the section name something the
+  // user can SEE, so it leads each submenu (#147).
+  describe('Select Row / Select Column', () => {
+    /** The flyout under `label`, opened. */
+    function submenu(menu, label) {
+      const parent = itemNamed(menu, label)
+      parent.dispatchEvent(new window.MouseEvent('mouseenter'))
+      return flyoutOf(parent)
+    }
+
+    it('leads the Row submenu, and spans the caret\'s row end to end', () => {
+      const grid = caretInGridTable()
+      const pane = paneOver(grid.state)
+      const menu = openMenu(pane)
+      const row = submenu(menu, 'Row')
+      expect(labelsOf(row)).toEqual(['Select Row', 'Add Above', 'Add Below', 'Delete Row'])
+      itemNamed(row, 'Select Row').click()
+      expect(pane.calls).toEqual([{
+        name: 'setCellSelection',
+        args: [{ anchorCell: grid.pos[1][0], headCell: grid.pos[1][1] }],
+      }])
+    })
+
+    it('spans the caret\'s column top to bottom', () => {
+      const grid = caretInGridTable()
+      const pane = paneOver(grid.state)
+      const menu = openMenu(pane)
+      itemNamed(submenu(menu, 'Column'), 'Select Column').click()
+      expect(pane.calls).toEqual([{
+        name: 'setCellSelection',
+        args: [{ anchorCell: grid.pos[0][1], headCell: grid.pos[1][1] }],
+      }])
+    })
   })
 
   // GFM pipe markdown requires a header row (#118): the OFF direction is gone,
