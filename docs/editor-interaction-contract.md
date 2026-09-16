@@ -335,7 +335,7 @@ visible and a verb per axis for building one.
 |---|---|
 | Drag from one cell across others | native: a cell selection over the rectangle they span |
 | Shift+click another cell | native: extends to the rectangle between anchor and target |
-| Shift+Arrow from a cell | native: extends by one cell in that direction |
+| Shift+Arrow from a cell | native: extends the text selection first, and becomes a cell selection once it would leave the cell |
 | Context menu → Row → **Select Row** | the whole row the caret's cell sits in, first cell to last |
 | Context menu → Column → **Select Column** | the whole column the caret's cell sits in, top to bottom |
 
@@ -354,15 +354,19 @@ cell selection is up (`.ProseMirror-hideselection`), so the rectangle reads as a
 region rather than as a ragged text drag.
 
 **Backspace and Delete over a cell selection clear the cells' CONTENT and leave
-the structure** — stock prosemirror-tables. Removing a row or a column is
-Delete Row / Delete Column, a deliberate act one entry away; a bare Delete that
-destroyed structure would be a data-loss trap precisely because a whole-row
-selection is now easy to be holding.
+the structure**, with ONE exception: when the selection covers **every** cell of
+the table, TipTap's Table extension binds both keys to `deleteTable` and the
+table goes. Select Row on a single-row table, and Select Column on a
+single-column one, reach that state in one click. Removing a row or a column is
+otherwise Delete Row / Delete Column, a deliberate act one entry away. Both
+halves are pinned in `frontend/test/interaction-policy.editor.test.js`.
 
 **Not shipped:** row/column grips or a header strip (styles first — a grip is a
 much larger affordance to add speculatively), Mod+A escalation from cell to
-table to document, and column resizing (`resizable: false` stays, widths having
-no GFM representation).
+table to document (#153), column resizing (`resizable: false` stays, widths
+having no GFM representation), and a skin of its own for a `NodeSelection` on a
+whole table — the editor-wide `.ProseMirror-selectednode` outline already marks
+one.
 
 ## Caret contract
 
@@ -711,9 +715,8 @@ is itself inert — it opens rather than acts.
 **The structured sections.** A caret inside a table adds Row → (Select Row · Add
 Above · Add Below · Delete Row), Column → (Select Column · Add Left · Add Right ·
 Delete Column) and Delete Table. Select Row / Select Column lead their submenus
-because selecting is what makes every other verb there name something the user
-can see (#147, see *Table selection*); they need the cell the caret is in, so a
-caret in a table but in no cell is offered the rest without them. The others are
+and name what the rest of the section acts on (#147, see *Table selection*). The
+others are
 the stock TipTap table commands, offered in every wysiwyg mount because
 rearranging a table is editing and not authoring. Add Header Row joins them only
 while the table has none: GFM pipe markdown requires a header row, so once one
@@ -1059,3 +1062,5 @@ without reopening the contract.
 - Bracket/quote auto-pairing in code blocks (`autoPair` policy flag) —
   deferred; must not fight PM input rules.
 - Per-language indent width — uniform 2 until proven insufficient.
+- Table row/column grips, and Mod+A escalation from cell to table to document
+  (#153) — see *Table selection*.

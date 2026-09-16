@@ -111,6 +111,9 @@ describe('TableGrid', () => {
     const grid = new TableGrid(table, tablePos)
     expect(grid.rowRangeAt(0)).toBeNull()
     expect(grid.columnRangeAt(9999)).toBeNull()
+    // -1 is the grid's own hole sentinel, so it must be rejected before the
+    // lookup rather than finding an uncovered slot.
+    expect(grid.rowRangeAt(-1)).toBeNull()
   })
 
   // A colspan makes one cell occupy two slots of its row: the column through
@@ -170,19 +173,47 @@ describe('the cell-selection skin', () => {
   const css = fs.readFileSync(
     path.resolve(process.cwd(), 'src/static/editor.css'), 'utf8')
 
-  it('paints the class prosemirror-tables marks a selected cell with', () => {
-    expect(css).toMatch(/\.selectedCell/)
-  })
+  /** Every rule in the stylesheet as `{selectors, declarations}`, so a case
+   *  asks what a SELECTOR declares rather than matching the file's text —
+   *  reordering a selector list or a declaration is formatting, not a
+   *  behaviour change, and must not red the suite.
+   *  @type {{selectors: string[], declarations: string[]}[]} */
+  const rules = []
+  for (const [, head, body] of css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    rules.push({
+      selectors: head.split(',').map((s) => s.replace(/\s+/g, ' ').trim()).filter(Boolean),
+      declarations: body.split(';').map((d) => d.replace(/\s+/g, ' ').trim()).filter(Boolean),
+    })
+  }
+
+  /** What `selector` declares, across every rule that names it. */
+  function declaredBy(selector) {
+    return rules.filter((r) => r.selectors.includes(selector)).flatMap((r) => r.declarations)
+  }
 
   // A `background` loses: the header row and the even rows already paint one,
-  // so the same selection would read differently over each.
-  it('paints it as an overlay over the header and zebra backgrounds', () => {
-    expect(css).toMatch(/\.selectedCell::after\s*\{[^}]*position:\s*absolute/)
-    expect(css).toMatch(/table td\.selectedCell::after\s*\{[^}]*background:\s*var\(--theme-selectionBg\)/)
-    expect(css).toMatch(/table td\s*\{\s*position:\s*relative/)
+  // so the same selection would read differently over each. Both cell types
+  // carry the overlay — the header cell is the case the design exists for.
+  it.each(['th', 'td'])('paints a selected %s as an overlay, not a background', (cell) => {
+    expect(declaredBy(`.tiptap table ${cell}`)).toContain('position: relative')
+    const overlay = declaredBy(`.tiptap table ${cell}.selectedCell::after`)
+    expect(overlay).toContain('position: absolute')
+    expect(overlay).toContain('inset: 0')
+    expect(overlay).toContain('background: var(--theme-selectionBg)')
+    expect(declaredBy(`.tiptap table ${cell}.selectedCell`)).toContain('border-color: var(--theme-accentPrimary)')
   })
 
   it('suppresses the browser highlight ProseMirror hides under a cell selection', () => {
-    expect(css).toMatch(/\.ProseMirror-hideselection \*::selection\s*\{[^}]*background:\s*transparent/)
+    expect(declaredBy('.tiptap.ProseMirror-hideselection *::selection'))
+      .toContain('background: transparent')
+  })
+
+  // The same flag is raised by a NodeSelection, which Sieve makes on every
+  // block-handle click — so a node view's own form controls must be exempt or
+  // typing in a log block's filter field looks dead.
+  it.each(['input', 'textarea'])('leaves a node view\'s %s its caret and highlight', (control) => {
+    expect(declaredBy(`.tiptap.ProseMirror-hideselection ${control}`)).toContain('caret-color: auto')
+    expect(declaredBy(`.tiptap.ProseMirror-hideselection ${control}::selection`))
+      .toContain('background: var(--theme-selectionBg)')
   })
 })

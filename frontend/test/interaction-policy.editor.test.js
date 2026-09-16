@@ -13,6 +13,8 @@ import { StarterKit } from '@tiptap/starter-kit'
 import { Table, TableRow, TableCell, TableHeader } from '@tiptap/extension-table'
 import { Plugin, Selection, TextSelection, NodeSelection } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
+import { CellSelection } from '@tiptap/pm/tables'
+import { TableGrid } from '../src/static/lens/document-editor/surfaces/table-grid.js'
 import { registerBlockKind } from '../src/static/renderers/block-kinds.js'
 import { buildInteractionPolicyExtension, policyEnterKeydown, CODE_TEXT_POLICY } from '../src/static/lens/document-editor/interaction-policy.js'
 import { NodeViewRegistry, HOST_BODY_SYNC } from '../src/static/lens/document-editor/surfaces/sieve-block-extension.js'
@@ -205,6 +207,91 @@ describe('Tab in table (contract: native cell nav wins over the backstop)', () =
     const { handled } = press('Tab', { shiftKey: true })
     expect(handled).toBe(true)
     expect(docText()).toBe('')
+  })
+})
+
+// The range TableGrid computes is only right if prosemirror-tables ACCEPTS it:
+// `setCellSelection` feeds the two positions to `CellSelection.create`, which
+// throws on a position that is not in front of a cell. Asserting the resulting
+// selection here is what stops an off-by-one in the grid's walk from reaching a
+// user as a RangeError on the first click of Select Row (#147).
+describe('table selection (contract: Table selection)', () => {
+  /** A `rows`×`cols` headerless table, alone in the doc. */
+  function makeTableGrid(rows, cols) {
+    makeEditor({ type: 'doc', content: [{ type: 'paragraph' }] })
+    editor.commands.insertTable({ rows, cols, withHeaderRow: false })
+  }
+
+  /** The table in the document NOW, and a grid over it — the menu reads both
+   *  off the live state at click time, so a case that edits first must too. */
+  function gridNow() {
+    let found = null
+    editor.state.doc.descendants((node, pos) => {
+      if (!found && node.type.name === 'table') found = { node, pos }
+    })
+    return { grid: new TableGrid(found.node, found.pos), table: found }
+  }
+
+  /** The document position of the cell at row `r`, column `c`. */
+  function cellAt(table, r, c) {
+    let pos = table.pos + 1
+    for (let i = 0; i < r; i++) pos += table.node.child(i).nodeSize
+    let cur = pos + 1
+    for (let i = 0; i < c; i++) cur += table.node.child(r).child(i).nodeSize
+    return cur
+  }
+
+  /** How many rows and columns the table in the document has now. */
+  function shape() {
+    let found = null
+    editor.state.doc.descendants((node, pos) => {
+      if (!found && node.type.name === 'table') found = node
+    })
+    return found ? { rows: found.childCount, cols: found.child(0).childCount } : null
+  }
+
+  it('Select Row builds a real CellSelection over the row', () => {
+    makeTableGrid(3, 3)
+    const { grid, table } = gridNow()
+    editor.commands.setCellSelection(grid.rowRangeAt(cellAt(table, 1, 1)))
+    const sel = editor.state.selection
+    expect(sel instanceof CellSelection).toBe(true)
+    expect(sel.isRowSelection()).toBe(true)
+    expect(sel.ranges.length).toBe(3)
+  })
+
+  it('Select Column builds a real CellSelection over the column', () => {
+    makeTableGrid(3, 3)
+    const { grid, table } = gridNow()
+    editor.commands.setCellSelection(grid.columnRangeAt(cellAt(table, 1, 1)))
+    const sel = editor.state.selection
+    expect(sel instanceof CellSelection).toBe(true)
+    expect(sel.isColSelection()).toBe(true)
+    expect(sel.ranges.length).toBe(3)
+  })
+
+  it('Backspace over a selected row clears the cells and leaves the structure', () => {
+    makeTableGrid(3, 3)
+    caretAt(cellAt(gridNow().table, 1, 1) + 2)
+    editor.commands.insertContent('gone')
+    expect(docText()).toBe('gone')
+    const { grid, table } = gridNow()
+    editor.commands.setCellSelection(grid.rowRangeAt(cellAt(table, 1, 1)))
+    press('Backspace')
+    expect(docText()).toBe('')
+    expect(shape()).toEqual({ rows: 3, cols: 3 })
+  })
+
+  // TipTap's Table extension binds Backspace/Delete to deleteTable when the
+  // selection covers EVERY cell — which Select Row reaches in one click on a
+  // single-row table. The contract records this as the one case where the key
+  // takes structure.
+  it('Backspace over a selection covering every cell deletes the table', () => {
+    makeTableGrid(1, 3)
+    const { grid, table } = gridNow()
+    editor.commands.setCellSelection(grid.rowRangeAt(cellAt(table, 0, 0)))
+    press('Backspace')
+    expect(shape()).toBeNull()
   })
 })
 

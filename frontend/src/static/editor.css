@@ -1199,14 +1199,29 @@ pre.tiptap-code-block code {
 
 /* A cell selection is ProseMirror's selection, and PM hides the browser's own
    while one is up (`visible: false` → `.ProseMirror-hideselection` on the
-   surface). Without this rule the native highlight paints straight through the
-   overlay and the rectangle reads as a ragged text drag. */
-.ProseMirror-hideselection *::selection {
+   surface). Without these rules the native highlight paints straight through the
+   overlay and the rectangle reads as a ragged text drag.
+
+   A NodeSelection is `visible: false` too, so the class is up whenever a block
+   is selected by its chrome handle: the form controls a node view renders — a
+   log block's filter field — must keep their own caret and highlight, or typing
+   in one looks dead. */
+.tiptap.ProseMirror-hideselection *::selection {
   background: transparent;
 }
 
-.ProseMirror-hideselection {
+.tiptap.ProseMirror-hideselection {
   caret-color: transparent;
+}
+
+.tiptap.ProseMirror-hideselection input,
+.tiptap.ProseMirror-hideselection textarea {
+  caret-color: auto;
+}
+
+.tiptap.ProseMirror-hideselection input::selection,
+.tiptap.ProseMirror-hideselection textarea::selection {
+  background: var(--theme-selectionBg);
 }
 
 /* ── Editor area (editor + meta panel side by side) ─────────────────── */

@@ -101,7 +101,7 @@ import { listRegisteredLanguages } from '../../renderers/highlighting.js'
     return function () {
       var grid = new TableGrid(table.node, table.pos)
       var range = (axis === 'row') ? grid.rowRangeAt(cell.pos) : grid.columnRangeAt(cell.pos)
-      if (!range) { editor.commands.focus(); return }
+      if (!range) { editor.chain().focus().run(); return }
       editor.chain().focus().setCellSelection(range).run()
     }
   }
@@ -607,10 +607,8 @@ import { listRegisteredLanguages } from '../../renderers/highlighting.js'
       items.push({ type: 'header', label: 'Table' })
       var rowItems = []
       var columnItems = []
-      // Selecting is the verb the rest of the section acts THROUGH: it is what
-      // makes "Delete Row" name a row you can see, so it leads each submenu.
-      // It needs the cell the caret is in, which a caret between two tables'
-      // rows — or in a table's caption — does not give.
+      // The select verbs need the cell the caret is in; a caret inside a table
+      // but outside every cell is offered the rest of the section without them.
       if (cell) {
         rowItems.push({ icon: IC.tableRowSelect, label: 'Select Row',
           action: selectCellRange(editor, table, cell, 'row') })

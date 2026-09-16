@@ -26,9 +26,11 @@ export class TableGrid {
     /** @type {any[]} */ const rows = []
     table.forEach((/** @type {any} */ row) => rows.push(row))
 
-    // The table is as wide as its widest row's spans. A row losing cells to a
-    // rowspan above it is narrower by exactly what it lost, so the widest row
-    // is still the full width.
+    // The width is the widest row's spans. In a well-formed table that is the
+    // full width, because a row losing cells to a rowspan above it is narrower
+    // by exactly what it lost; in a malformed one it can under-count, and the
+    // cells past it are left unplaced — a range over them answers null rather
+    // than a wrong rectangle.
     let width = 0
     rows.forEach((row) => {
       let spanned = 0
@@ -85,9 +87,11 @@ export class TableGrid {
     return this.#rangeOver((i) => this.#slots[i * this.#width + slot.col], this.#height)
   }
 
-  /** The first slot `cellPos` covers, or null.
+  /** The first slot `cellPos` covers, or null. A negative position is rejected
+   *  before the lookup: -1 is the hole sentinel, so it would otherwise MATCH.
    *  @param {number} cellPos @returns {{row: number, col: number}|null} */
   #slotOf(cellPos) {
+    if (cellPos < 0) return null
     const at = this.#slots.indexOf(cellPos)
     if (at < 0) return null
     return { row: Math.floor(at / this.#width), col: at % this.#width }

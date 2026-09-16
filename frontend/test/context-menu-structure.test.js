@@ -520,8 +520,8 @@ describe('the table section', () => {
     expect(pane.ran).toEqual(['addColumnBefore'])
   })
 
-  // Selecting is what makes every other verb in the section name something the
-  // user can SEE, so it leads each submenu (#147).
+  // Each entry leads its submenu and hands prosemirror-tables the two cell
+  // positions bounding the caret's row or column (#147).
   describe('Select Row / Select Column', () => {
     /** The flyout under `label`, opened. */
     function submenu(menu, label) {

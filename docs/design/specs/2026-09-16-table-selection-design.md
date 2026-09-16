@@ -39,10 +39,12 @@ the even rows' own backgrounds — the same selection would read as two differen
 depending on which row it crossed. The overlay washes over both alike, and existing theme
 tokens carry it, so no theme gains a token.
 
-`.ProseMirror-hideselection *::selection { background: transparent }` joins it: a
+`.tiptap.ProseMirror-hideselection *::selection { background: transparent }` joins it: a
 `CellSelection` is invisible to the browser (`visible: false`), and ProseMirror flags the
 surface expecting exactly this rule. Without it the native highlight paints straight through
-the overlay.
+the overlay. A `NodeSelection` raises the same flag, so the rules are scoped to the editor
+root and exempt `input`/`textarea` — a node view's own form controls (a log block's filter
+field) keep their caret and highlight while a block is selected by its chrome handle.
 
 **A row or a column is a rectangle** —
 `frontend/src/static/lens/document-editor/surfaces/table-grid.js`. `TableGrid` maps a table
@@ -66,7 +68,14 @@ the user can see.
 
 - **No grips or header strip.** See the decision above.
 - **No Mod+A escalation** (cell → table → document). It lands in the shared interaction
-  policy and the contract's key matrix — a different blast radius; filed separately.
+  policy and the contract's key matrix — a different blast radius; filed as #153.
+- **No skin of its own for a `NodeSelection` on a whole table.** The editor-wide
+  `.ProseMirror-selectednode` outline already marks one; a table-scoped rule would be a
+  second way of saying the same thing.
+- **No rebinding of Backspace/Delete.** TipTap's Table extension deletes the whole table
+  when the selection covers every cell, which Select Row reaches in one click on a
+  single-row table. Keys belong to the shared interaction policy, which this change does
+  not open; the behaviour is recorded in the contract and pinned by a test instead.
 - **No column resizing.** `resizable: false` stays: a width has no GFM representation.
 - **No change to the on-disk or wire representation.** A selection is ephemeral UI state and
   nothing about it serializes. No Go change, no protocol change.
@@ -77,5 +86,5 @@ the user can see.
 
 `docs/editor-interaction-contract.md` §Table selection is normative: the gestures that build
 a selection, what it looks like, and that Backspace/Delete over one clears cell *content*
-and leaves the structure (stock prosemirror-tables — a bare Delete that destroyed structure
-would be a data-loss trap now that holding a whole-row selection is easy).
+and leaves the structure — except over a selection covering every cell, where TipTap's own
+binding deletes the table.
