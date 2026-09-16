@@ -271,6 +271,13 @@ func (p *DiagramProcessor) effectiveSource(source string) string {
 // transparent" stays a literal in both families — the SVG canvas itself has no
 // backing fill either way, so there is no theme var to source it from.
 //
+// Completeness policy: DefaultFontColor recolours the label of EVERY element,
+// including ones this list does not map, and PlantUML's stock fill for an
+// unmapped element is light. So any element PlantUML gives a fill to must have
+// its BackgroundColor mapped here, or its label is drawn light-on-light. An
+// element that is only ever drawn on the bare canvas (a title, a delay, a
+// message label) needs no row — DefaultFontColor already covers it.
+//
 // Fallback policy: every value below is sourced from ActiveThemeVars(); a key
 // absent from the map falls back to a generic dark/light constant selected by
 // isDarkTheme. Every theme this app ships populates all four source keys, so
@@ -313,7 +320,37 @@ func (p *DiagramProcessor) themePreamble() string {
 		"skinparam NoteBackgroundColor " + bgAlt,
 		"skinparam NoteBorderColor " + border,
 		"skinparam NoteFontColor " + text,
+		"skinparam SequenceLifeLineBackgroundColor " + bgAlt,
+		"skinparam SequenceGroupBackgroundColor " + bgAlt,
+		"skinparam SequenceGroupBodyBackgroundColor transparent",
+		"skinparam SequenceGroupBorderColor " + border,
+		"skinparam SequenceGroupFontColor " + text,
+		"skinparam SequenceGroupHeaderFontColor " + text,
+		"skinparam SequenceDividerBackgroundColor " + bgAlt,
+		"skinparam SequenceDividerBorderColor " + border,
+		"skinparam SequenceDividerFontColor " + text,
+		"skinparam SequenceBoxBackgroundColor " + bgAlt,
+		"skinparam SequenceBoxBorderColor " + border,
+		"skinparam SequenceBoxFontColor " + text,
+		"skinparam SequenceReferenceBackgroundColor " + bgAlt,
+		"skinparam SequenceReferenceHeaderBackgroundColor " + bgAlt,
+		"skinparam SequenceReferenceBorderColor " + border,
+		"skinparam SequenceReferenceFontColor " + text,
 	}
+	// The alternate lifeline shapes take the participant palette: `database A`
+	// standing beside `participant B` must read the same.
+	for _, shape := range []string{"Database", "Queue", "Collections", "Entity", "Boundary", "Control"} {
+		lines = append(lines,
+			"skinparam "+shape+"BackgroundColor "+bgAlt,
+			"skinparam "+shape+"BorderColor "+border,
+			"skinparam "+shape+"FontColor "+text,
+		)
+	}
+	lines = append(lines,
+		"skinparam LegendBackgroundColor "+bgAlt,
+		"skinparam LegendBorderColor "+border,
+		"skinparam LegendFontColor "+text,
+	)
 	return strings.Join(lines, "\n")
 }
 
