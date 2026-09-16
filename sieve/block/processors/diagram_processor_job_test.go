@@ -133,112 +133,86 @@ func fullLightThemeVars() domain.ThemeVars {
 	}
 }
 
-func TestDiagramProcessor_effectiveSource_darkPreamble(t *testing.T) {
-	p := NewDiagramProcessor(block.BlockServices{State: fakeState{theme: fullDarkThemeVars()}})
-	got := p.effectiveSource("A -> B")
-	want := "skinparam backgroundColor transparent\n" +
-		"skinparam DefaultFontColor #c0caf5\n" +
-		"skinparam DefaultFontName JetBrains Mono\n" +
-		"skinparam ArrowColor #3b4261\n" +
-		"skinparam ArrowFontColor #c0caf5\n" +
-		"skinparam ClassBackgroundColor #1e2030\n" +
-		"skinparam ClassBorderColor #3b4261\n" +
-		"skinparam ClassFontColor #c0caf5\n" +
-		"skinparam ActivityBackgroundColor #1e2030\n" +
-		"skinparam ActivityBorderColor #3b4261\n" +
-		"skinparam ActivityDiamondBackgroundColor #1e2030\n" +
-		"skinparam ActivityDiamondBorderColor #3b4261\n" +
-		"skinparam StateBackgroundColor #1e2030\n" +
-		"skinparam StateBorderColor #3b4261\n" +
-		"skinparam ParticipantBackgroundColor #1e2030\n" +
-		"skinparam ParticipantBorderColor #3b4261\n" +
-		"skinparam ParticipantFontColor #c0caf5\n" +
-		"skinparam ActorBackgroundColor #1e2030\n" +
-		"skinparam ActorBorderColor #3b4261\n" +
-		"skinparam ActorFontColor #c0caf5\n" +
-		"skinparam NodeBackgroundColor #1e2030\n" +
-		"skinparam NodeBorderColor #3b4261\n" +
-		"skinparam SequenceLifeLineBorderColor #3b4261\n" +
-		"skinparam NoteBackgroundColor #1e2030\n" +
-		"skinparam NoteBorderColor #3b4261\n" +
-		"skinparam NoteFontColor #c0caf5\n" +
-		"A -> B"
-	if got != want {
-		t.Errorf("dark effective source:\n got %q\nwant %q", got, want)
+// wantPreamble spells the whole preamble themePreamble must emit for one
+// palette: every irregular row, then the standard triple for each themed
+// element. The element list is restated here rather than read from the
+// implementation, so a family dropped or misspelled in production still fails.
+func wantPreamble(text, mono, border, bgAlt string) string {
+	lines := []string{
+		"skinparam backgroundColor transparent",
+		"skinparam DefaultFontColor " + text,
+		"skinparam DefaultFontName " + mono,
+		"skinparam ArrowColor " + border,
+		"skinparam ArrowFontColor " + text,
+		"skinparam SequenceLifeLineBorderColor " + border,
+		"skinparam SequenceLifeLineBackgroundColor " + bgAlt,
+		"skinparam SequenceGroupBackgroundColor " + bgAlt,
+		"skinparam SequenceGroupBorderColor " + border,
+		"skinparam SequenceGroupFontColor " + text,
+		"skinparam SequenceGroupHeaderFontColor " + text,
+		"skinparam SequenceBoxBorderColor " + border,
+		"skinparam SequenceBoxFontColor " + text,
+		"skinparam SequenceReferenceHeaderBackgroundColor " + bgAlt,
+		"skinparam SequenceGroupBodyBackgroundColor transparent",
+		"skinparam SequenceBoxBackgroundColor transparent",
 	}
+	for _, element := range []string{
+		"Class", "Activity", "ActivityDiamond", "State", "Partition",
+		"Participant", "Actor", "Database", "Queue", "Collections",
+		"Entity", "Boundary", "Control",
+		"SequenceDivider", "SequenceReference",
+		"Node", "Component", "Interface", "Artifact", "Storage", "File",
+		"Rectangle", "Package", "Folder", "Frame", "Card", "Cloud", "Agent",
+		"Usecase", "Object", "Note", "Legend",
+	} {
+		lines = append(lines,
+			"skinparam "+element+"BackgroundColor "+bgAlt,
+			"skinparam "+element+"BorderColor "+border,
+			"skinparam "+element+"FontColor "+text,
+		)
+	}
+	return strings.Join(lines, "\n")
 }
 
-func TestDiagramProcessor_effectiveSource_lightPreamble(t *testing.T) {
-	p := NewDiagramProcessor(block.BlockServices{State: fakeState{theme: fullLightThemeVars()}})
-	got := p.effectiveSource("A -> B")
-	want := "skinparam backgroundColor transparent\n" +
-		"skinparam DefaultFontColor #1a1b26\n" +
-		"skinparam DefaultFontName JetBrains Mono\n" +
-		"skinparam ArrowColor #cbd0d8\n" +
-		"skinparam ArrowFontColor #1a1b26\n" +
-		"skinparam ClassBackgroundColor #f0f0f2\n" +
-		"skinparam ClassBorderColor #cbd0d8\n" +
-		"skinparam ClassFontColor #1a1b26\n" +
-		"skinparam ActivityBackgroundColor #f0f0f2\n" +
-		"skinparam ActivityBorderColor #cbd0d8\n" +
-		"skinparam ActivityDiamondBackgroundColor #f0f0f2\n" +
-		"skinparam ActivityDiamondBorderColor #cbd0d8\n" +
-		"skinparam StateBackgroundColor #f0f0f2\n" +
-		"skinparam StateBorderColor #cbd0d8\n" +
-		"skinparam ParticipantBackgroundColor #f0f0f2\n" +
-		"skinparam ParticipantBorderColor #cbd0d8\n" +
-		"skinparam ParticipantFontColor #1a1b26\n" +
-		"skinparam ActorBackgroundColor #f0f0f2\n" +
-		"skinparam ActorBorderColor #cbd0d8\n" +
-		"skinparam ActorFontColor #1a1b26\n" +
-		"skinparam NodeBackgroundColor #f0f0f2\n" +
-		"skinparam NodeBorderColor #cbd0d8\n" +
-		"skinparam SequenceLifeLineBorderColor #cbd0d8\n" +
-		"skinparam NoteBackgroundColor #f0f0f2\n" +
-		"skinparam NoteBorderColor #cbd0d8\n" +
-		"skinparam NoteFontColor #1a1b26\n" +
-		"A -> B"
-	if got != want {
-		t.Errorf("light effective source:\n got %q\nwant %q", got, want)
+// TestDiagramProcessor_effectiveSource_themePreamble pins the whole emitted
+// preamble per palette, and the composition around it: the preamble, a newline,
+// then the user source untouched. The empty-vars case is the defensive floor —
+// no "bg" to classify, so isDarkTheme treats it as dark and every key falls back
+// to the generic dark constants.
+func TestDiagramProcessor_effectiveSource_themePreamble(t *testing.T) {
+	cases := []struct {
+		name   string
+		vars   domain.ThemeVars
+		source string
+		want   string
+	}{
+		{
+			name:   "dark theme vars",
+			vars:   fullDarkThemeVars(),
+			source: "A -> B",
+			want:   wantPreamble("#c0caf5", "JetBrains Mono", "#3b4261", "#1e2030"),
+		},
+		{
+			name:   "light theme vars",
+			vars:   fullLightThemeVars(),
+			source: "A -> B",
+			want:   wantPreamble("#1a1b26", "JetBrains Mono", "#cbd0d8", "#f0f0f2"),
+		},
+		{
+			name:   "missing vars fall back to the dark constants",
+			vars:   domain.ThemeVars{},
+			source: "X",
+			want:   wantPreamble("#e0e0e0", "monospace", "#555555", "#2a2a2a"),
+		},
 	}
-}
-
-// TestDiagramProcessor_effectiveSource_missingVarsFallBackDark pins the
-// defensive-floor path: an entirely empty theme map (no "bg" to classify, so
-// isDarkTheme treats it as dark) falls back to the generic dark constants for
-// every key themePreamble reads.
-func TestDiagramProcessor_effectiveSource_missingVarsFallBackDark(t *testing.T) {
-	p := NewDiagramProcessor(block.BlockServices{State: fakeState{theme: domain.ThemeVars{}}})
-	got := p.effectiveSource("X")
-	want := "skinparam backgroundColor transparent\n" +
-		"skinparam DefaultFontColor #e0e0e0\n" +
-		"skinparam DefaultFontName monospace\n" +
-		"skinparam ArrowColor #555555\n" +
-		"skinparam ArrowFontColor #e0e0e0\n" +
-		"skinparam ClassBackgroundColor #2a2a2a\n" +
-		"skinparam ClassBorderColor #555555\n" +
-		"skinparam ClassFontColor #e0e0e0\n" +
-		"skinparam ActivityBackgroundColor #2a2a2a\n" +
-		"skinparam ActivityBorderColor #555555\n" +
-		"skinparam ActivityDiamondBackgroundColor #2a2a2a\n" +
-		"skinparam ActivityDiamondBorderColor #555555\n" +
-		"skinparam StateBackgroundColor #2a2a2a\n" +
-		"skinparam StateBorderColor #555555\n" +
-		"skinparam ParticipantBackgroundColor #2a2a2a\n" +
-		"skinparam ParticipantBorderColor #555555\n" +
-		"skinparam ParticipantFontColor #e0e0e0\n" +
-		"skinparam ActorBackgroundColor #2a2a2a\n" +
-		"skinparam ActorBorderColor #555555\n" +
-		"skinparam ActorFontColor #e0e0e0\n" +
-		"skinparam NodeBackgroundColor #2a2a2a\n" +
-		"skinparam NodeBorderColor #555555\n" +
-		"skinparam SequenceLifeLineBorderColor #555555\n" +
-		"skinparam NoteBackgroundColor #2a2a2a\n" +
-		"skinparam NoteBorderColor #555555\n" +
-		"skinparam NoteFontColor #e0e0e0\n" +
-		"X"
-	if got != want {
-		t.Errorf("missing vars must fall back to the dark constants; got %q", got)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := NewDiagramProcessor(block.BlockServices{State: fakeState{theme: c.vars}})
+			got := p.effectiveSource(c.source)
+			if want := c.want + "\n" + c.source; got != want {
+				t.Errorf("effective source:\n got %q\nwant %q", got, want)
+			}
+		})
 	}
 }
 

@@ -271,6 +271,13 @@ func (p *DiagramProcessor) effectiveSource(source string) string {
 // transparent" stays a literal in both families — the SVG canvas itself has no
 // backing fill either way, so there is no theme var to source it from.
 //
+// Completeness policy: DefaultFontColor recolours the label of EVERY element,
+// including ones this list does not map, and PlantUML's stock fill for an
+// unmapped element is light. So any element PlantUML gives a fill to must have
+// its BackgroundColor mapped here, or its label is drawn light-on-light. An
+// element that is only ever drawn on the bare canvas (a title, a delay, a
+// message label) needs no row — DefaultFontColor already covers it.
+//
 // Fallback policy: every value below is sourced from ActiveThemeVars(); a key
 // absent from the map falls back to a generic dark/light constant selected by
 // isDarkTheme. Every theme this app ships populates all four source keys, so
@@ -292,29 +299,47 @@ func (p *DiagramProcessor) themePreamble() string {
 		"skinparam DefaultFontName " + mono,
 		"skinparam ArrowColor " + border,
 		"skinparam ArrowFontColor " + text,
-		"skinparam ClassBackgroundColor " + bgAlt,
-		"skinparam ClassBorderColor " + border,
-		"skinparam ClassFontColor " + text,
-		"skinparam ActivityBackgroundColor " + bgAlt,
-		"skinparam ActivityBorderColor " + border,
-		"skinparam ActivityDiamondBackgroundColor " + bgAlt,
-		"skinparam ActivityDiamondBorderColor " + border,
-		"skinparam StateBackgroundColor " + bgAlt,
-		"skinparam StateBorderColor " + border,
-		"skinparam ParticipantBackgroundColor " + bgAlt,
-		"skinparam ParticipantBorderColor " + border,
-		"skinparam ParticipantFontColor " + text,
-		"skinparam ActorBackgroundColor " + bgAlt,
-		"skinparam ActorBorderColor " + border,
-		"skinparam ActorFontColor " + text,
-		"skinparam NodeBackgroundColor " + bgAlt,
-		"skinparam NodeBorderColor " + border,
 		"skinparam SequenceLifeLineBorderColor " + border,
-		"skinparam NoteBackgroundColor " + bgAlt,
-		"skinparam NoteBorderColor " + border,
-		"skinparam NoteFontColor " + text,
+		"skinparam SequenceLifeLineBackgroundColor " + bgAlt,
+		"skinparam SequenceGroupBackgroundColor " + bgAlt,
+		"skinparam SequenceGroupBorderColor " + border,
+		"skinparam SequenceGroupFontColor " + text,
+		"skinparam SequenceGroupHeaderFontColor " + text,
+		"skinparam SequenceBoxBorderColor " + border,
+		"skinparam SequenceBoxFontColor " + text,
+		"skinparam SequenceReferenceHeaderBackgroundColor " + bgAlt,
+		// A group's body and a box are REGIONS drawn around other elements, so
+		// they stay canvas-coloured: given a fill they would be the same colour
+		// as the participants inside them, leaving only their border to read by.
+		"skinparam SequenceGroupBodyBackgroundColor transparent",
+		"skinparam SequenceBoxBackgroundColor transparent",
+	}
+	// Every element PlantUML draws as a filled, labelled shape, each taking the
+	// same three rows. This list is the completeness policy in practice: an
+	// element that gets a fill and is missing here renders its label
+	// light-on-light. Irregular ones are spelled out above instead.
+	for _, element := range []string{
+		"Class", "Activity", "ActivityDiamond", "State", "Partition",
+		"Participant", "Actor", "Database", "Queue", "Collections",
+		"Entity", "Boundary", "Control",
+		"SequenceDivider", "SequenceReference",
+		"Node", "Component", "Interface", "Artifact", "Storage", "File",
+		"Rectangle", "Package", "Folder", "Frame", "Card", "Cloud", "Agent",
+		"Usecase", "Object", "Note", "Legend",
+	} {
+		lines = append(lines, p.elementRows(element, bgAlt, border, text)...)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// elementRows is the standard three-row mapping for one element: the app's
+// alternate surface as fill, its secondary border, its body text.
+func (p *DiagramProcessor) elementRows(element, bgAlt, border, text string) []string {
+	return []string{
+		"skinparam " + element + "BackgroundColor " + bgAlt,
+		"skinparam " + element + "BorderColor " + border,
+		"skinparam " + element + "FontColor " + text,
+	}
 }
 
 // activeThemeVars fetches the current theme map, tolerating a nil State port
