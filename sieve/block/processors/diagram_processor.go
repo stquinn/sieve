@@ -299,59 +299,47 @@ func (p *DiagramProcessor) themePreamble() string {
 		"skinparam DefaultFontName " + mono,
 		"skinparam ArrowColor " + border,
 		"skinparam ArrowFontColor " + text,
-		"skinparam ClassBackgroundColor " + bgAlt,
-		"skinparam ClassBorderColor " + border,
-		"skinparam ClassFontColor " + text,
-		"skinparam ActivityBackgroundColor " + bgAlt,
-		"skinparam ActivityBorderColor " + border,
-		"skinparam ActivityDiamondBackgroundColor " + bgAlt,
-		"skinparam ActivityDiamondBorderColor " + border,
-		"skinparam StateBackgroundColor " + bgAlt,
-		"skinparam StateBorderColor " + border,
-		"skinparam ParticipantBackgroundColor " + bgAlt,
-		"skinparam ParticipantBorderColor " + border,
-		"skinparam ParticipantFontColor " + text,
-		"skinparam ActorBackgroundColor " + bgAlt,
-		"skinparam ActorBorderColor " + border,
-		"skinparam ActorFontColor " + text,
-		"skinparam NodeBackgroundColor " + bgAlt,
-		"skinparam NodeBorderColor " + border,
 		"skinparam SequenceLifeLineBorderColor " + border,
-		"skinparam NoteBackgroundColor " + bgAlt,
-		"skinparam NoteBorderColor " + border,
-		"skinparam NoteFontColor " + text,
 		"skinparam SequenceLifeLineBackgroundColor " + bgAlt,
 		"skinparam SequenceGroupBackgroundColor " + bgAlt,
-		"skinparam SequenceGroupBodyBackgroundColor transparent",
 		"skinparam SequenceGroupBorderColor " + border,
 		"skinparam SequenceGroupFontColor " + text,
 		"skinparam SequenceGroupHeaderFontColor " + text,
-		"skinparam SequenceDividerBackgroundColor " + bgAlt,
-		"skinparam SequenceDividerBorderColor " + border,
-		"skinparam SequenceDividerFontColor " + text,
-		"skinparam SequenceBoxBackgroundColor " + bgAlt,
 		"skinparam SequenceBoxBorderColor " + border,
 		"skinparam SequenceBoxFontColor " + text,
-		"skinparam SequenceReferenceBackgroundColor " + bgAlt,
 		"skinparam SequenceReferenceHeaderBackgroundColor " + bgAlt,
-		"skinparam SequenceReferenceBorderColor " + border,
-		"skinparam SequenceReferenceFontColor " + text,
+		// A group's body and a box are REGIONS drawn around other elements, so
+		// they stay canvas-coloured: given a fill they would be the same colour
+		// as the participants inside them, leaving only their border to read by.
+		"skinparam SequenceGroupBodyBackgroundColor transparent",
+		"skinparam SequenceBoxBackgroundColor transparent",
 	}
-	// The alternate lifeline shapes take the participant palette: `database A`
-	// standing beside `participant B` must read the same.
-	for _, shape := range []string{"Database", "Queue", "Collections", "Entity", "Boundary", "Control"} {
-		lines = append(lines,
-			"skinparam "+shape+"BackgroundColor "+bgAlt,
-			"skinparam "+shape+"BorderColor "+border,
-			"skinparam "+shape+"FontColor "+text,
-		)
+	// Every element PlantUML draws as a filled, labelled shape, each taking the
+	// same three rows. This list is the completeness policy in practice: an
+	// element that gets a fill and is missing here renders its label
+	// light-on-light. Irregular ones are spelled out above instead.
+	for _, element := range []string{
+		"Class", "Activity", "ActivityDiamond", "State", "Partition",
+		"Participant", "Actor", "Database", "Queue", "Collections",
+		"Entity", "Boundary", "Control",
+		"SequenceDivider", "SequenceReference",
+		"Node", "Component", "Interface", "Artifact", "Storage", "File",
+		"Rectangle", "Package", "Folder", "Frame", "Card", "Cloud", "Agent",
+		"Usecase", "Object", "Note", "Legend",
+	} {
+		lines = append(lines, p.elementRows(element, bgAlt, border, text)...)
 	}
-	lines = append(lines,
-		"skinparam LegendBackgroundColor "+bgAlt,
-		"skinparam LegendBorderColor "+border,
-		"skinparam LegendFontColor "+text,
-	)
 	return strings.Join(lines, "\n")
+}
+
+// elementRows is the standard three-row mapping for one element: the app's
+// alternate surface as fill, its secondary border, its body text.
+func (p *DiagramProcessor) elementRows(element, bgAlt, border, text string) []string {
+	return []string{
+		"skinparam " + element + "BackgroundColor " + bgAlt,
+		"skinparam " + element + "BorderColor " + border,
+		"skinparam " + element + "FontColor " + text,
+	}
 }
 
 // activeThemeVars fetches the current theme map, tolerating a nil State port

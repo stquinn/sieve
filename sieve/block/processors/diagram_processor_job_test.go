@@ -134,74 +134,44 @@ func fullLightThemeVars() domain.ThemeVars {
 }
 
 // wantPreamble spells the whole preamble themePreamble must emit for one
-// palette. It is deliberately explicit where themePreamble loops: a golden
-// states the emitted string independently of how the code assembles it.
+// palette: every irregular row, then the standard triple for each themed
+// element. The element list is restated here rather than read from the
+// implementation, so a family dropped or misspelled in production still fails.
 func wantPreamble(text, mono, border, bgAlt string) string {
-	return strings.Join([]string{
+	lines := []string{
 		"skinparam backgroundColor transparent",
 		"skinparam DefaultFontColor " + text,
 		"skinparam DefaultFontName " + mono,
 		"skinparam ArrowColor " + border,
 		"skinparam ArrowFontColor " + text,
-		"skinparam ClassBackgroundColor " + bgAlt,
-		"skinparam ClassBorderColor " + border,
-		"skinparam ClassFontColor " + text,
-		"skinparam ActivityBackgroundColor " + bgAlt,
-		"skinparam ActivityBorderColor " + border,
-		"skinparam ActivityDiamondBackgroundColor " + bgAlt,
-		"skinparam ActivityDiamondBorderColor " + border,
-		"skinparam StateBackgroundColor " + bgAlt,
-		"skinparam StateBorderColor " + border,
-		"skinparam ParticipantBackgroundColor " + bgAlt,
-		"skinparam ParticipantBorderColor " + border,
-		"skinparam ParticipantFontColor " + text,
-		"skinparam ActorBackgroundColor " + bgAlt,
-		"skinparam ActorBorderColor " + border,
-		"skinparam ActorFontColor " + text,
-		"skinparam NodeBackgroundColor " + bgAlt,
-		"skinparam NodeBorderColor " + border,
 		"skinparam SequenceLifeLineBorderColor " + border,
-		"skinparam NoteBackgroundColor " + bgAlt,
-		"skinparam NoteBorderColor " + border,
-		"skinparam NoteFontColor " + text,
 		"skinparam SequenceLifeLineBackgroundColor " + bgAlt,
 		"skinparam SequenceGroupBackgroundColor " + bgAlt,
-		"skinparam SequenceGroupBodyBackgroundColor transparent",
 		"skinparam SequenceGroupBorderColor " + border,
 		"skinparam SequenceGroupFontColor " + text,
 		"skinparam SequenceGroupHeaderFontColor " + text,
-		"skinparam SequenceDividerBackgroundColor " + bgAlt,
-		"skinparam SequenceDividerBorderColor " + border,
-		"skinparam SequenceDividerFontColor " + text,
-		"skinparam SequenceBoxBackgroundColor " + bgAlt,
 		"skinparam SequenceBoxBorderColor " + border,
 		"skinparam SequenceBoxFontColor " + text,
-		"skinparam SequenceReferenceBackgroundColor " + bgAlt,
 		"skinparam SequenceReferenceHeaderBackgroundColor " + bgAlt,
-		"skinparam SequenceReferenceBorderColor " + border,
-		"skinparam SequenceReferenceFontColor " + text,
-		"skinparam DatabaseBackgroundColor " + bgAlt,
-		"skinparam DatabaseBorderColor " + border,
-		"skinparam DatabaseFontColor " + text,
-		"skinparam QueueBackgroundColor " + bgAlt,
-		"skinparam QueueBorderColor " + border,
-		"skinparam QueueFontColor " + text,
-		"skinparam CollectionsBackgroundColor " + bgAlt,
-		"skinparam CollectionsBorderColor " + border,
-		"skinparam CollectionsFontColor " + text,
-		"skinparam EntityBackgroundColor " + bgAlt,
-		"skinparam EntityBorderColor " + border,
-		"skinparam EntityFontColor " + text,
-		"skinparam BoundaryBackgroundColor " + bgAlt,
-		"skinparam BoundaryBorderColor " + border,
-		"skinparam BoundaryFontColor " + text,
-		"skinparam ControlBackgroundColor " + bgAlt,
-		"skinparam ControlBorderColor " + border,
-		"skinparam ControlFontColor " + text,
-		"skinparam LegendBackgroundColor " + bgAlt,
-		"skinparam LegendBorderColor " + border,
-		"skinparam LegendFontColor " + text,
-	}, "\n")
+		"skinparam SequenceGroupBodyBackgroundColor transparent",
+		"skinparam SequenceBoxBackgroundColor transparent",
+	}
+	for _, element := range []string{
+		"Class", "Activity", "ActivityDiamond", "State", "Partition",
+		"Participant", "Actor", "Database", "Queue", "Collections",
+		"Entity", "Boundary", "Control",
+		"SequenceDivider", "SequenceReference",
+		"Node", "Component", "Interface", "Artifact", "Storage", "File",
+		"Rectangle", "Package", "Folder", "Frame", "Card", "Cloud", "Agent",
+		"Usecase", "Object", "Note", "Legend",
+	} {
+		lines = append(lines,
+			"skinparam "+element+"BackgroundColor "+bgAlt,
+			"skinparam "+element+"BorderColor "+border,
+			"skinparam "+element+"FontColor "+text,
+		)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // TestDiagramProcessor_effectiveSource_themePreamble pins the whole emitted
