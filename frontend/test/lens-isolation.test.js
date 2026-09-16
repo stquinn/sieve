@@ -198,6 +198,7 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
       path.join('lens', 'document-editor', 'surfaces', 'render-empty.js'),
       path.join('lens', 'document-editor', 'surfaces', 'sieve-block-extension.js'),
       path.join('lens', 'document-editor', 'surfaces', 'spell-decoration.js'),
+      path.join('lens', 'document-editor', 'surfaces', 'table-grid.js'),
       path.join('lens', 'document-editor', 'surfaces', 'text-mark-decorations.js'),
       path.join('lens', 'document-editor', 'surfaces', 'tiptap-vendor.js'),
       path.join('lens', 'document-editor', 'surfaces', 'vertical-scroll.js'),

@@ -1166,6 +1166,49 @@ pre.tiptap-code-block code {
   background: var(--theme-bgDark);
 }
 
+/* Cell selection. prosemirror-tables marks every cell of a CellSelection with
+   `.selectedCell`, so a range built by dragging across cells, by Shift+click,
+   by Shift+Arrow or by the menu's Select Row / Select Column is one class on
+   each cell of the rectangle.
+
+   THE HIGHLIGHT IS AN OVERLAY, NOT A BACKGROUND. The header row and the even
+   rows above already paint backgrounds of their own; a `background` here would
+   composite with them, so a selected header cell and a selected body cell would
+   read as two different selections. An ::after washes over both alike, which
+   needs the cell to be a positioned ancestor. */
+.tiptap table th,
+.tiptap table td {
+  position: relative;
+}
+
+.tiptap table th.selectedCell,
+.tiptap table td.selectedCell {
+  border-color: var(--theme-accentPrimary);
+}
+
+.tiptap table th.selectedCell::after,
+.tiptap table td.selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--theme-selectionBg);
+  opacity: 0.4;
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* A cell selection is ProseMirror's selection, and PM hides the browser's own
+   while one is up (`visible: false` → `.ProseMirror-hideselection` on the
+   surface). Without this rule the native highlight paints straight through the
+   overlay and the rectangle reads as a ragged text drag. */
+.ProseMirror-hideselection *::selection {
+  background: transparent;
+}
+
+.ProseMirror-hideselection {
+  caret-color: transparent;
+}
+
 /* ── Editor area (editor + meta panel side by side) ─────────────────── */
 
 .editor-area {
