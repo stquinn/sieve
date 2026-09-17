@@ -44,8 +44,8 @@ for why the mechanism is precedence rather than a policy flag.
   `interactionPolicy.expandable: true` (with a `getExpandContent(node, dom)`
   renderer callback), open the block in a fit-to-window pan/zoom lightbox
   overlay. `Mod+Alt` is the appearance/view tier of the app-wide
-  keyboard-shortcut taxonomy (#39) — distinct from `Mod+E` (Explain) and
-  `Mod+Alt+M` (Smart Metadata), no collision. It is editor-owned, NOT a
+  keyboard-shortcut taxonomy (decided 2026-09-17, #39 — see *Keyboard shortcut
+  taxonomy* below). It is editor-owned, NOT a
   native-menu accelerator. Like every interaction chord, it is
   **policy-extension-owned** — per-renderer `handleKeyDown` for it is
   FORBIDDEN, the shared interaction-policy extension resolves the caret/
@@ -509,6 +509,82 @@ the empty-paragraph anchor is consumed only once Go confirms a block — a drag
 naming a file this machine no longer has answers `none`, and the caret's blank
 line has to survive that.
 
+## Keyboard shortcut taxonomy (decided 2026-09-17, #39)
+
+**NORMATIVE.** Every chord in Sieve belongs to one of four command classes, and
+the class decides the modifier. Two of the classes are **inherited** — their
+chords arrive with the platform or with ProseMirror/TipTap, so Sieve conforms to
+them and mints no new command in them:
+
+| Class | Who owns the chord | Modifier |
+|---|---|---|
+| 1. File / OS verbs (New, Save, Close, Find, Quit, Settings, text size) | the platform | bare `Mod` |
+| 4. Editor verbs (bold, italic, undo, lists, headings, link) | ProseMirror / TipTap | bare `Mod`, `Mod+Shift+{Z,7,8,9,B}`, `Mod+Alt+1–6` |
+| 2. View / appearance — how things look, what is shown | Sieve | **`Mod+Alt`** |
+| 3. Generate — AI and insertion, anything that changes what the document *says* | Sieve | **`Mod+Shift`** |
+
+**The rule, in one line: if Sieve invented the command, it is never on bare
+`Mod`.** Bare `Mod` means "you already know this chord from somewhere else."
+
+**Sub-rule: `Shift` on an inherited `Mod` chord is that chord's variant or
+reverse, and stays inherited** — `Mod+Shift+Z` redo, `Mod+Shift+G` find previous,
+`Mod+Shift+F` find in notes, `Mod+Shift+O` open library. This is what lets
+`Mod+Shift` be the generate tier without an exception list.
+
+**`Mod+Shift+Alt` is the reserved fourth pattern and is empty.** A command that
+fits none of the three tiers goes there, and the command is probably wrong.
+
+### Placing a new chord — four questions, in order
+
+1. Does this command exist in other apps, or does PM/TipTap already bind it?
+   → their chord, bare `Mod`. Stop.
+2. Does it change what the document *says*? → **`Mod+Shift`**.
+3. Does it change how things *look* or what is shown? → **`Mod+Alt`**.
+4. None of the three → `Mod+Shift+Alt`, and question the command.
+
+### Which modifier patterns exist at all
+
+A native menu accelerator is evaluated **before** the webview sees the key on
+every platform (Linux: a window-level `GtkAccelGroup`, `gtk_window_activate_key`
+before `gtk_window_propagate_key_event`; macOS: `NSMenu performKeyEquivalent:`
+before the responder chain; Windows: `TranslateAccelerator` before
+`TranslateMessage`). **Binding a chord therefore does not add a gesture, it
+removes that keystroke from typing** — which is the constraint that prunes the
+space, not the OS's own grabs.
+
+For a **printable base key** (a letter, digit or punctuation mark), `Mod` is the
+only modifier that lifts the keystroke out of the text stream on all three
+platforms:
+
+| Pattern | Verdict |
+|---|---|
+| `Mod+CHAR`, `Mod+Shift+CHAR`, `Mod+Alt+CHAR` | available — the three tiers above |
+| `Shift+CHAR` | **never**: `Shift+B` *is* `B`; the user could no longer type a capital |
+| `Alt+CHAR` | **never**: macOS Option is the character layer (`Option+e/i/u/n/\`` are dead keys, `Option+c/p/v/5` give `ç π √ ∞`); Windows' mnemonic/alt-code layer |
+| `Shift+Alt+CHAR` | **never**: macOS's fourth character level; Windows' input-language switcher |
+| `Mod+Ctrl+CHAR` | **does not exist**: Wails' `SuperKey` is commented out and both the Linux and Windows backends map `ControlKey` and `CmdOrCtrlKey` to the same mask, so `keys.Combo(k, CmdOrCtrlKey, ControlKey)` silently *becomes* `Ctrl+k` and aliases an existing chord |
+
+**Non-printable base keys** — `F1`–`F24`, `Escape`, `Tab`, `Enter`, `Backspace`,
+`Delete`, `Home`/`End`/`PageUp`/`PageDown`, the arrows, `Space` — type nothing,
+so they are available bare and with any modifier. **They are class 1 only:** bind
+one only where a cross-platform convention already assigns it (`F3` find-next,
+`Escape` dismiss, `Enter`/`Mod+Enter` commit, `Tab` indent). Sieve mints no new
+verb on a function key; laptops hide them behind `Fn` and macOS defaults them to
+brightness and volume, so a Sieve-invented command placed there is one nobody
+finds.
+
+**Growth valve.** If a tier fills, the next step is leader chords
+(`Mod+<leader>` then a letter), never a fourth modifier: unbounded, and it costs
+the text stream nothing. `Mod+K` is the link chord, so a leader needs another
+key. Not implemented.
+
+**Enforcement.** `TestBuildMenu_ChordTaxonomy` (`app_test.go`) walks `buildMenu`'s
+whole tree against `menuTaxonomy` and fails the build when a chord is unlisted, in
+the wrong tier, bound twice, or binds a printable key without `Mod`. `buildMenu`
+branches on `goruntime.GOOS`, so a run covers the host platform's branch; rows are
+pinned to a branch by `menuChord.only`. Editor-owned chords are bound in JS,
+invisible to that test, and pinned by the editor-chord list below.
+
 ## App-Level Chords
 
 **Ownership rule (NORMATIVE).** The native menu (`main.go` `buildMenu`) is the
@@ -525,14 +601,15 @@ keys first. Owning them in the menu makes the resolution identical everywhere.
 Consequences:
 
 - The TipTap editor keymap (`extensions.js`) may bind **only caret-contextual
-  chords the menu does not claim** (currently `Mod+E` Explain — `Mod+Shift+A` Ask
-  LEFT the editor keymap in P4.E, see below; no menu item exists for either).
+  chords the menu does not claim** (currently `Mod+Shift+X` Explain —
+  `Mod+Shift+A` Ask LEFT the editor keymap in P4.E, see below; no menu item
+  exists for either).
 - **Document-level DOM `keydown` shortcut listeners are FORBIDDEN.** Insertion
   and app gestures ride the menu → event path, never a global `keydown`.
 - Never bind the same chord in two places, even to the same action — the menu
   wins on Mac and the duplicate is dead weight.
 - Dev-browser note: with no native menu, menu-owned chords are simply absent —
-  since P2.C this includes markdown-mode `Mod+S`/`Mod+J`, whose quarantined
+  since P2.C this includes markdown-mode `Mod+S`/`Mod+Alt+J`, whose quarantined
   transitional `keydown` listener is removed. The transitional P2.B exception
   is gone. The `Mod+Shift+A` **Ask** chord is now the ONE sanctioned document-level
   `keydown` listener: it is owned by the **AskPanel** (a Workspace child, not the
@@ -553,24 +630,24 @@ Consequences:
 | Mod+Shift+O | File › Open Library… | `window.sieveSelectLibrary()` |
 | Mod+, | File › Settings/Preferences | open settings dialog |
 | Mod+Q | File › Quit (non-Mac) | `wailsruntime.Quit` |
-| Mod+\\ | View › Toggle Sidebar | `htmx.ajax` POST `/api/session/sidebar/toggle` |
-| Mod+Shift+I | View › Toggle Meta Panel | `htmx.ajax` POST `/api/session/meta/toggle` |
-| Mod+Shift+P | View › Toggle Prompts | `htmx.ajax` POST `/api/session/prompts/toggle` |
+| Mod+Alt+S | View › Toggle Sidebar | `htmx.ajax` POST `/api/session/sidebar/toggle` |
+| Mod+Alt+I | View › Toggle Meta Panel | `htmx.ajax` POST `/api/session/meta/toggle` |
+| Mod+Alt+P | View › Toggle Prompts | `htmx.ajax` POST `/api/session/prompts/toggle` |
 | (menu-click only) | View › Toggle Line Numbers | `htmx.ajax` POST `/api/session/linenumbers/toggle` |
-| Mod+Shift+M | View › Toggle Editor Mode | `window.sieveWorkspace?.activeTab?.editor?.toggleMode()` |
+| Mod+Alt+M | View › Toggle Editor Mode | `window.sieveWorkspace?.activeTab?.editor?.toggleMode()` |
 | Mod+F | Edit › Find › Find and Replace… (mac: Find › …) | `window.sieveWorkspace?.toggleFind()` |
 | F3 (non-mac) | Edit › Find › Find Next | `window.sieveWorkspace?.findNext()` |
 | Mod+G (mac) | Find › Find Next | `window.sieveWorkspace?.findNext()` |
 | Shift+F3 (non-mac) | Edit › Find › Find Previous | `window.sieveWorkspace?.findPrev()` |
 | Mod+Shift+G (mac) | Find › Find Previous | `window.sieveWorkspace?.findPrev()` |
 | Mod+Shift+F | Edit › Find › Find in Notes… (mac: Find › …) | `window.sieveSidebarSearch()` |
-| Mod+J | View › Toggle AI Blocks | `window.sieveWorkspace?.activeTab?.editor?.toggleAiBlocks()` |
+| Mod+Alt+J | View › Toggle AI Blocks | `window.sieveWorkspace?.activeTab?.editor?.toggleAiBlocks()` |
 | Mod+P | View › Quick Switcher | open quick-switcher dialog |
-| Mod+Shift+T | View › Show Toolbar | `htmx.ajax` POST `/api/session/toolbar/toggle` |
+| Mod+Alt+B | View › Show Toolbar | `htmx.ajax` POST `/api/session/toolbar/toggle` |
 | Mod+= | View › Increase Editor Font | `htmx.ajax` POST `/api/settings/editor-scale/step?dir=up` |
 | Mod+- | View › Decrease Editor Font | `htmx.ajax` POST `/api/settings/editor-scale/step?dir=down` |
 | Mod+0 | View › Reset Editor Font | `htmx.ajax` POST `/api/settings/editor-scale/step?dir=reset` |
-| Mod+Alt+M | Tools › Smart Metadata | `window.SieveAI.smartMetadata()` |
+| Mod+Shift+M | Tools › Smart Metadata | `window.SieveAI.smartMetadata()` |
 | Mod+Shift+E | Tools › Smart File | `window.SieveAI.smartFile()` |
 | Mod+Shift+Return | Tools › Keep & Smart File | `window.SieveAI.keepAndSmartFile()` |
 | Mod+Shift+W | Tools › Insert WebClip | `window.sieveWorkspace?.openWebClipDialog()` |
@@ -578,10 +655,20 @@ Consequences:
 | Mod+Shift+D | Tools › Insert Diagram | `window.sieveWorkspace?.activeTab?.editor?.createBlock('diagram', {})` |
 | Mod+/ | Help › Shortcuts | open help dialog |
 
-Editor-owned caret chords (NOT in the menu): `Mod+E` = Explain block (bound in
-`extensions.js`); `Mod+K` = edit/create a link (owned by the interaction-policy
-extension — see its row above). (`Mod+Shift+A` Ask is NOT editor-bound — the
-AskPanel's document-level listener owns it; see "Consequences" above.)
+Editor-owned caret chords (NOT in the menu, and NOT visible to
+`TestBuildMenu_ChordTaxonomy` — this list is what pins them):
+
+| Chord | Action | Bound in |
+|---|---|---|
+| Mod+Shift+X | Explain block (generate tier) | `lens/extensions.js` (`AiShortcuts`) |
+| Mod+K | edit/create a link | `lens/document-editor/interaction-policy.js` |
+| Mod+Alt+E | expand the block into the lightbox (appearance tier) | `interaction-policy.js`, plus a render-mode diagram's own listener |
+
+`Mod+E` is **TipTap's inline-code toggle** (the `code` mark; `codeBlock` is
+disabled but the mark is not) and is not Sieve's to take. Explain held it until
+#39, colliding with `toggleCode`.
+(`Mod+Shift+A` Ask is NOT editor-bound — the AskPanel's document-level listener
+owns it; see "Consequences" above.)
 
 **Why find sits with the editing verbs, and why its home differs per platform.**
 Find/Replace is an editing concern, not a View one (View is for what you look at,
