@@ -193,17 +193,22 @@ func buildMenu(app *App) *menu.Menu {
 	find.AddText("Find in Notes…", keys.Combo("f", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveSidebarSearch?.()"))
 
 	view := appMenu.AddSubmenu("View")
-	view.AddText("Toggle Sidebar", keys.CmdOrCtrl("\\"), js("htmx.ajax('POST','/api/session/toggle/sidebar',{swap:'none'})"))
-	view.AddText("Toggle Meta Panel", keys.Combo("i", keys.CmdOrCtrlKey, keys.ShiftKey), js("htmx.ajax('POST','/api/session/toggle/meta',{swap:'none'})"))
+	// View rows are the appearance tier: Mod+Alt, per the keyboard shortcut
+	// taxonomy in docs/editor-interaction-contract.md, pinned by
+	// TestBuildMenu_ChordTaxonomy. Toggle Line Numbers stays chord-less because
+	// the letter its name asks for, Ctrl+Alt+L, is the GNOME screen lock.
+	view.AddText("Toggle Sidebar", keys.Combo("s", keys.CmdOrCtrlKey, keys.OptionOrAltKey), js("htmx.ajax('POST','/api/session/toggle/sidebar',{swap:'none'})"))
+	view.AddText("Toggle Meta Panel", keys.Combo("i", keys.CmdOrCtrlKey, keys.OptionOrAltKey), js("htmx.ajax('POST','/api/session/toggle/meta',{swap:'none'})"))
 	view.AddText("Toggle Ask Panel", nil, js("htmx.ajax('POST','/api/session/toggle/askpanel',{swap:'none'})"))
-	view.AddText("Toggle Prompts", keys.Combo("p", keys.CmdOrCtrlKey, keys.ShiftKey), js("htmx.ajax('POST','/api/session/toggle/prompts',{swap:'none'})"))
+	view.AddText("Toggle Prompts", keys.Combo("p", keys.CmdOrCtrlKey, keys.OptionOrAltKey), js("htmx.ajax('POST','/api/session/toggle/prompts',{swap:'none'})"))
 	view.AddText("Toggle Line Numbers", nil, js("htmx.ajax('POST','/api/session/toggle/linenumbers',{swap:'none'})"))
-	view.AddText("Toggle Editor Mode", keys.Combo("m", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveWorkspace?.activeTab?.editor?.toggleMode()"))
+	view.AddText("Toggle Editor Mode", keys.Combo("m", keys.CmdOrCtrlKey, keys.OptionOrAltKey), js("window.sieveWorkspace?.activeTab?.editor?.toggleMode()"))
 	view.AddSeparator()
-	view.AddText("Toggle AI Blocks", keys.CmdOrCtrl("j"), js("window.sieveWorkspace?.activeTab?.editor?.toggleAiBlocks()"))
+	view.AddText("Toggle AI Blocks", keys.Combo("j", keys.CmdOrCtrlKey, keys.OptionOrAltKey), js("window.sieveWorkspace?.activeTab?.editor?.toggleAiBlocks()"))
 	view.AddText("Quick Switcher", keys.CmdOrCtrl("p"), js("htmx.ajax('GET','/ui/views/search/dialog',{target:'#quickswitcher-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('quickswitcher-dialog').showModal()})"))
 	view.AddSeparator()
-	view.AddText("Show Toolbar", keys.Combo("t", keys.CmdOrCtrlKey, keys.ShiftKey),
+	// The letter is b, for bar: Ctrl+Alt+T is the Linux terminal grab.
+	view.AddText("Show Toolbar", keys.Combo("b", keys.CmdOrCtrlKey, keys.OptionOrAltKey),
 		js("htmx.ajax('POST','/api/session/toggle/toolbar',{swap:'none'})"))
 	view.AddSeparator()
 	// Editor-scale stepping (LookAndFeel.EditorScaleSteps). This is a settings
@@ -221,8 +226,10 @@ func buildMenu(app *App) *menu.Menu {
 	view.AddText("Reset Editor Font", keys.CmdOrCtrl("0"),
 		js("htmx.ajax('POST','/api/settings/editor-scale/step?dir=reset',{swap:'none'})"))
 
+	// Tools rows are the generate tier: Mod+Shift, for anything that changes what
+	// the document says (AI and insertion alike).
 	tools := appMenu.AddSubmenu("Tools")
-	tools.AddText("Smart Metadata", keys.Combo("m", keys.CmdOrCtrlKey, keys.OptionOrAltKey),
+	tools.AddText("Smart Metadata", keys.Combo("m", keys.CmdOrCtrlKey, keys.ShiftKey),
 		js("window.SieveAI?.smartMetadata()"))
 	tools.AddSeparator()
 	tools.AddText("Smart File", keys.Combo("e", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.SieveAI?.smartFile()"))
