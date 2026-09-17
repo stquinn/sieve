@@ -114,7 +114,7 @@ export class MarkdownSurface extends AbstractSurface {
     this.#gutter = gutter
     textarea.className = 'markdown-editor markdown-raw'
     textarea.spellcheck = true
-    textarea.placeholder = 'Raw markdown — Mod+Shift+M to return'
+    textarea.placeholder = 'Raw markdown — Mod+Alt+M to return'
     textarea.setAttribute('autocomplete', 'off')
     textarea.setAttribute('autocorrect', 'off')
     textarea.style.cssText = 'flex:1;padding-top:40px;padding-left:1rem;padding-right:1rem;padding-bottom:1rem'
@@ -150,7 +150,7 @@ export class MarkdownSurface extends AbstractSurface {
         this.#host.setRawContent(val)
       }, 500)
     })
-    // NO app-level chords here: Mod+S / Mod+J bubble to the document listener.
+    // NO app-level chords here: Mod+S / Mod+Alt+J bubble to the document listener.
     textarea.addEventListener('scroll', () => {
       gutter.scrollTop = textarea.scrollTop
       // Markdown's own scroller is the textarea itself, with no shell ancestor.
