@@ -7,6 +7,10 @@
 // chain ProseMirror's own keydown listener walks, in the same plugin order —
 // so a `true` result here means the browser default (focus escape) is
 // prevented in the real app.
+// real-vendor.js leads every other import on purpose: block-chrome.js reads its
+// vendor members at module-eval time, so the bag must hold the real classes
+// before that import is evaluated.
+import './helpers/real-vendor.js'
 import { describe, it, expect, afterEach } from 'vitest'
 import { Editor, Node, Extension } from '@tiptap/core'
 import { StarterKit } from '@tiptap/starter-kit'
@@ -15,6 +19,8 @@ import { Plugin, Selection, TextSelection, NodeSelection } from '@tiptap/pm/stat
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { CellSelection } from '@tiptap/pm/tables'
 import { TableGrid } from '../src/static/lens/document-editor/surfaces/table-grid.js'
+import { CellSelectionGuard } from '../src/static/lens/document-editor/surfaces/cell-selection-guard.js'
+import { BlockChrome } from '../src/static/lens/document-editor/block-chrome.js'
 import { registerBlockKind } from '../src/static/renderers/block-kinds.js'
 import { buildInteractionPolicyExtension, policyEnterKeydown, CODE_TEXT_POLICY } from '../src/static/lens/document-editor/interaction-policy.js'
 import { NodeViewRegistry, HOST_BODY_SYNC } from '../src/static/lens/document-editor/surfaces/sieve-block-extension.js'
@@ -125,7 +131,7 @@ const SieveClip = Node.create({
 let editor = null
 afterEach(() => { if (editor) { editor.destroy(); editor = null } })
 
-function makeEditor(contentJSON) {
+function makeEditor(contentJSON, extraExtensions = []) {
   editor = new Editor({
     element: document.createElement('div'),
     // Mirrors editor.js: Enter dispatches pre-core from editorProps (core
@@ -140,6 +146,7 @@ function makeEditor(contentJSON) {
       TableRow, TableHeader, TableCell,
       SieveCode, SieveDiagram, SieveLog, SieveClip,
       buildInteractionPolicyExtension({ Extension, Plugin, Selection, TextSelection, NodeSelection, Decoration, DecorationSet }),
+      ...extraExtensions,
     ],
     content: contentJSON,
   })
@@ -292,6 +299,92 @@ describe('table selection (contract: Table selection)', () => {
     editor.commands.setCellSelection(grid.rowRangeAt(cellAt(table, 0, 0)))
     press('Backspace')
     expect(shape()).toBeNull()
+  })
+
+  // The menu is opened BY a right-click, and a right-click in a contenteditable
+  // is a caret-placing gesture — so without the guard the selection the menu was
+  // built over is a TextSelection in one cell by the time an entry runs. These
+  // cases go through the real editor because the premise IS the vendor's:
+  // `selectedCell` is prosemirror-tables' own decoration on the selected cells.
+  describe('the right-click that opens a menu over it', () => {
+    const guard = new CellSelectionGuard()
+
+    /** The context-menu gesture on the cell at (r, c), as the guard sees it. */
+    function contextClick(r, c, opts = {}) {
+      const dom = editor.view.nodeDOM(cellAt(gridNow().table, r, c))
+      let prevented = false
+      const event = { button: 2, ctrlKey: false, ...opts, target: dom,
+        preventDefault() { prevented = true } }
+      return { handled: guard.handleMouseDown(editor.view, event), prevented, dom }
+    }
+
+    function selectRow(r) {
+      const { grid, table } = gridNow()
+      editor.commands.setCellSelection(grid.rowRangeAt(cellAt(table, r, 0)))
+    }
+
+    it('inside the selection is refused, so the caret never moves', () => {
+      makeTableGrid(3, 3)
+      selectRow(1)
+      const { handled, prevented, dom } = contextClick(1, 2)
+      expect(dom.classList.contains('selectedCell')).toBe(true)
+      expect(handled).toBe(true)
+      expect(prevented).toBe(true)
+    })
+
+    it('outside the selection is left alone, so the click collapses it', () => {
+      makeTableGrid(3, 3)
+      selectRow(1)
+      const { handled, prevented, dom } = contextClick(0, 0)
+      expect(dom.classList.contains('selectedCell')).toBe(false)
+      expect(handled).toBe(false)
+      expect(prevented).toBe(false)
+    })
+
+    it('macOS Ctrl+left is the same gesture and is refused too', () => {
+      makeTableGrid(3, 3)
+      selectRow(1)
+      expect(contextClick(1, 2, { button: 0, ctrlKey: true }).handled).toBe(true)
+    })
+
+    it('a plain left click is never claimed, even inside the selection', () => {
+      makeTableGrid(3, 3)
+      selectRow(1)
+      expect(contextClick(1, 2, { button: 0 }).handled).toBe(false)
+    })
+
+    it('with no cell selection live, a right-click in a table is unclaimed', () => {
+      makeTableGrid(3, 3)
+      caretAt(cellAt(gridNow().table, 1, 1) + 2)
+      expect(contextClick(1, 1).handled).toBe(false)
+    })
+  })
+
+  // #147: the gutter's drag handle is revealed by hover rules written for a
+  // prose row, which a table matches only for some pointer positions — a grab
+  // cursor flickering over a surface whose pointer gestures mean selection.
+  describe('gutter chrome over a table', () => {
+    function hosts() {
+      return Array.from(editor.view.dom.querySelectorAll('.block-chrome-host'))
+    }
+
+    it('a prose block keeps its number and its handle', () => {
+      makeEditor({ type: 'doc', content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'one' }] },
+      ] }, [BlockChrome])
+      const [host] = hosts()
+      expect(host.querySelector('.block-chrome-linenum').textContent).toBe('1')
+      expect(host.querySelector('.block-chrome-handle')).not.toBeNull()
+    })
+
+    it('a table keeps its number and is given no handle', () => {
+      makeEditor({ type: 'doc', content: [{ type: 'paragraph' }] }, [BlockChrome])
+      editor.commands.insertTable({ rows: 2, cols: 2, withHeaderRow: false })
+      const tableHost = hosts().find((h) => h.nextElementSibling?.tagName === 'TABLE')
+      expect(tableHost).toBeDefined()
+      expect(tableHost.querySelector('.block-chrome-linenum')).not.toBeNull()
+      expect(tableHost.querySelector('.block-chrome-handle')).toBeNull()
+    })
   })
 })
 

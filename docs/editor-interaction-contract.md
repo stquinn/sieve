@@ -361,6 +361,21 @@ single-column one, reach that state in one click. Removing a row or a column is
 otherwise Delete Row / Delete Column, a deliberate act one entry away. Both
 halves are pinned in `frontend/test/interaction-policy.editor.test.js`.
 
+**A cell selection survives the right-click that opens a menu over it.** A
+right-click in a `contenteditable` is a caret-placing gesture, so without a guard
+the selection an entry acts on is a `TextSelection` in the one cell clicked by
+the time it runs — Delete Row appears to work, because the caret is still in the
+row, while a multi-row range or Merge Cells silently acts on one cell.
+`CellSelectionGuard` therefore refuses the gesture — the right button, or macOS's
+Ctrl+left — when it lands on a cell the selection covers. Landing **outside** the
+selection is not claimed, and collapses it as any click does.
+
+**A table carries a gutter number but no drag handle.** Every other top-level
+block offers one; a table does not, because the handle's hover reveal is written
+for a prose row and a table's DOM matches it only for some pointer positions —
+an intermittent grab cursor over a surface whose pointer gestures already mean
+selection. Reordering a table is cut and paste.
+
 **Not shipped:** row/column grips or a header strip (styles first — a grip is a
 much larger affordance to add speculatively), Mod+A escalation from cell to
 table to document (#153), column resizing (`resizable: false` stays, widths

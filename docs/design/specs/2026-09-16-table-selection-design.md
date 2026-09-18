@@ -58,6 +58,28 @@ The class holds no ProseMirror — it reads `attrs.colspan`, `attrs.rowspan` and
 off the node it is handed — so it is a unit testable without an editor, and it lives in
 `surfaces/` beside the rest of the table machinery.
 
+**The selection outlives the gesture that opens a menu over it** —
+`frontend/src/static/lens/document-editor/surfaces/cell-selection-guard.js`, wired at the
+wysiwyg surface's `editorProps.handleDOMEvents.mousedown`, whose handlers ProseMirror
+consults ahead of every plugin's. A right-click inside a `contenteditable` is a
+caret-placing gesture: the browser moves the DOM selection and ProseMirror reads it back, so
+a `CellSelection` collapses to a `TextSelection` before any entry of the menu built over it
+runs. prosemirror-tables does not defend against it — its own mouse handling returns on the
+first line for any button but the primary one. `CellSelectionGuard` refuses the gesture when
+it lands on a cell the selection covers, and claims nothing outside it, which is what a
+spreadsheet does.
+
+Containment is read from the DOM, not recomputed: the guard asks whether the clicked element
+sits inside a cell carrying `selectedCell` — prosemirror-tables' own decoration, and the one
+the skin paints. The cells it keeps are therefore exactly the cells the user can see are
+selected, and no second derivation of the rectangle can disagree with the vendor's.
+
+**A table is given no drag handle** — `lens/document-editor/block-chrome.js`. Gutter chrome
+is built for every top-level node, and a table is one, so a table had a drag handle whose
+reveal rules were written for a prose row; a table's DOM satisfies them only for some
+pointer positions, which reads as a grab cursor flickering in and out over a surface whose
+pointer gestures mean cell selection. The number and the rail stay; the handle is not built.
+
 **The verbs are menu entries** — `lens/document-editor/context-menu.js`. Select Row and
 Select Column lead the existing Row and Column submenus, gated on the caret being in a
 cell, and run `editor.chain().focus().setCellSelection(range).run()`. Nothing else in the
@@ -76,6 +98,10 @@ the user can see.
   when the selection covers every cell, which Select Row reaches in one click on a
   single-row table. Keys belong to the shared interaction policy, which this change does
   not open; the behaviour is recorded in the contract and pinned by a test instead.
+- **No dragging a table by a handle.** Suppressing the handle takes that with it. It barely
+  worked — the handle could not be summoned reliably — and a table is moved by cut and
+  paste; a table-specific reveal rule was rejected as a grab affordance sitting next to a
+  selection skin that means something else.
 - **No column resizing.** `resizable: false` stays: a width has no GFM representation.
 - **No change to the on-disk or wire representation.** A selection is ephemeral UI state and
   nothing about it serializes. No Go change, no protocol change.
