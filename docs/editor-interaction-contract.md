@@ -367,8 +367,16 @@ the selection an entry acts on is a `TextSelection` in the one cell clicked by
 the time it runs — Delete Row appears to work, because the caret is still in the
 row, while a multi-row range or Merge Cells silently acts on one cell.
 `CellSelectionGuard` therefore refuses the gesture — the right button, or macOS's
-Ctrl+left — when it lands on a cell the selection covers. Landing **outside** the
-selection is not claimed, and collapses it as any click does.
+Ctrl+left (that form on macOS alone: elsewhere Ctrl+left is Mod+click) — when it
+lands on a cell the selection covers. Landing **outside** the selection is not
+claimed, and collapses it as any click does.
+
+**A selection covers its ranges, not the span between its endpoints.** A cell
+selection is a rectangle of separate ranges whose `from` and `to` enclose its
+head cell alone, so everything the menu does with a selection reads the ranges:
+the caret snap that moves onto a right-click outside the selection leaves a
+right-click on ANY selected cell alone, and Copy and Cut take every selected
+cell — Cut deletes all of them, and taking `from`..`to` would have copied one.
 
 **A table carries a gutter number but no drag handle.** Every other top-level
 block offers one; a table does not, because the handle's hover reveal is written

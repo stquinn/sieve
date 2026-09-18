@@ -33,10 +33,18 @@ export class CellSelectionGuard {
     return true
   }
 
-  /** The context-menu gesture in both its forms: the right button, and macOS's
-   *  Ctrl+left. @param {MouseEvent} event @returns {boolean} */
+  /** The context-menu gesture in both its forms: the right button, and — on
+   *  macOS ALONE — Ctrl+left. Everywhere else Ctrl+left is Mod+click, the app's
+   *  link activation, and claiming it would swallow a gesture with no menu
+   *  behind it. @param {MouseEvent} event @returns {boolean} */
   static #opensContextMenu(event) {
-    return event.button === 2 || (event.button === 0 && event.ctrlKey)
+    return event.button === 2 || (event.button === 0 && event.ctrlKey && CellSelectionGuard.#isMac())
+  }
+
+  /** Whether this is a macOS host. Read per call, not captured at load: it is
+   *  the one thing about the gesture a test has to vary. @returns {boolean} */
+  static #isMac() {
+    return typeof navigator !== 'undefined' && /Mac|iP(hone|ad|od)/.test(navigator.platform || '')
   }
 
   /** Whether `selection` is a `CellSelection`, read by its shape rather than by

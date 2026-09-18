@@ -88,6 +88,34 @@ import { listRegisteredLanguages } from '../../renderers/highlighting.js'
     return function () { editor.chain().focus()[name]().run() }
   }
 
+  /** Whether `selection` covers `pos`. A selection covers its RANGES, not the
+   *  span between its endpoints: a cell selection is a rectangle whose `from`
+   *  and `to` enclose its head cell alone, so a right-click on any other cell of
+   *  it would read as outside and snap the rectangle away.
+   *  @param {any} selection @param {number} pos @returns {boolean} */
+  function selectionCovers(selection, pos) {
+    var ranges = (selection && selection.ranges) || []
+    for (var i = 0; i < ranges.length; i++) {
+      if (pos >= ranges[i].$from.pos && pos <= ranges[i].$to.pos) return true
+    }
+    return false
+  }
+
+  /** The text a selection covers, range by range in document order — the same
+   *  reason: `textBetween(from, to)` over a cell selection yields the head cell
+   *  only, while the Cut that follows it deletes every cell.
+   *  @param {any} state @returns {string} */
+  function selectionText(state) {
+    var ranges = state.selection.ranges.slice()
+    ranges.sort(function (a, b) { return a.$from.pos - b.$from.pos })
+    var parts = []
+    for (var i = 0; i < ranges.length; i++) {
+      var text = state.doc.textBetween(ranges[i].$from.pos, ranges[i].$to.pos, '\n')
+      if (text) parts.push(text)
+    }
+    return parts.join('\n')
+  }
+
   /** A menu entry selecting the whole row or column the caret's cell sits in.
    *  The range comes from the table's GRID, so a merged cell selects every
    *  column it spans rather than the one its child index suggests; the
@@ -454,11 +482,8 @@ import { listRegisteredLanguages } from '../../renderers/highlighting.js'
     // Snap selection to right-click coordinates if click is outside current selection
     if (x != null && y != null) {
       var posAt = editor.view.posAtCoords({ left: x, top: y })
-      if (posAt && posAt.pos != null) {
-        var currentSel = editor.state.selection
-        if (posAt.pos < currentSel.from || posAt.pos > currentSel.to) {
-          editor.commands.setTextSelection(posAt.pos)
-        }
+      if (posAt && posAt.pos != null && !selectionCovers(editor.state.selection, posAt.pos)) {
+        editor.commands.setTextSelection(posAt.pos)
       }
     }
 
@@ -531,13 +556,11 @@ import { listRegisteredLanguages } from '../../renderers/highlighting.js'
 
     if (hasSelection) {
       items.push({ icon: IC.copy, label: 'Copy', action: function () {
-        var s = editor.state
-        var text = s.doc.textBetween(s.selection.from, s.selection.to, '\n')
+        var text = selectionText(editor.state)
         if (text) navigator.clipboard.writeText(text).catch(console.error)
       }})
       items.push({ icon: IC.cut, label: 'Cut', action: function () {
-        var s = editor.state
-        var text = s.doc.textBetween(s.selection.from, s.selection.to, '\n')
+        var text = selectionText(editor.state)
         if (text) navigator.clipboard.writeText(text).then(function () {
           editor.commands.deleteSelection()
           editor.commands.focus()

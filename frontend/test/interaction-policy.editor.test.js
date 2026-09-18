@@ -341,10 +341,25 @@ describe('table selection (contract: Table selection)', () => {
       expect(prevented).toBe(false)
     })
 
-    it('macOS Ctrl+left is the same gesture and is refused too', () => {
+    // Ctrl+left is the menu gesture on macOS and Mod+click (link activation)
+    // everywhere else, so the platform decides whether it is claimed at all.
+    it('Ctrl+left is the same gesture on macOS', () => {
+      const platform = navigator.platform
+      Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true })
+      try {
+        makeTableGrid(3, 3)
+        selectRow(1)
+        expect(contextClick(1, 2, { button: 0, ctrlKey: true }).handled).toBe(true)
+      } finally {
+        Object.defineProperty(navigator, 'platform', { value: platform, configurable: true })
+      }
+    })
+
+    it('Ctrl+left is left alone off macOS, where it is Mod+click', () => {
+      expect(navigator.platform).not.toMatch(/Mac/)
       makeTableGrid(3, 3)
       selectRow(1)
-      expect(contextClick(1, 2, { button: 0, ctrlKey: true }).handled).toBe(true)
+      expect(contextClick(1, 2, { button: 0, ctrlKey: true }).handled).toBe(false)
     })
 
     it('a plain left click is never claimed, even inside the selection', () => {

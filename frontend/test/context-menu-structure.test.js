@@ -13,6 +13,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } from 'vitest'
 import { Schema } from '@tiptap/pm/model'
 import { EditorState, TextSelection } from '@tiptap/pm/state'
+import { CellSelection } from '@tiptap/pm/tables'
 import { SPELL_FEATURE } from '../src/static/lens/document-editor/surfaces/spell-decoration.js'
 import { FIND_FEATURE } from '../src/static/lens/document-editor/surfaces/find-decoration.js'
 
@@ -72,14 +73,19 @@ afterEach(() => { document.getElementById('sieve-context-menu')?.remove() })
 // A schema with the two structures the sections are about. Cells hold paragraphs
 // so the caret sits three levels below the table, which is what the ancestor walk
 // has to climb.
+const CELL_ATTRS = { colspan: { default: 1 }, rowspan: { default: 1 }, colwidth: { default: null } }
+
 const schema = new Schema({
   nodes: {
     doc: { content: 'block+' },
     paragraph: { group: 'block', content: 'inline*', toDOM: () => ['p', 0] },
-    table: { group: 'block', content: 'tableRow+', toDOM: () => ['table', ['tbody', 0]] },
-    tableRow: { content: '(tableCell | tableHeader)+', toDOM: () => ['tr', 0] },
-    tableCell: { content: 'paragraph+', toDOM: () => ['td', 0] },
-    tableHeader: { content: 'paragraph+', toDOM: () => ['th', 0] },
+    // The tableRole/span attrs are prosemirror-tables' own requirements, and are
+    // here so a REAL CellSelection can be built over this doc: its rectangle is
+    // read through TableMap, which refuses a schema carrying neither.
+    table: { group: 'block', content: 'tableRow+', tableRole: 'table', toDOM: () => ['table', ['tbody', 0]] },
+    tableRow: { content: '(tableCell | tableHeader)+', tableRole: 'row', toDOM: () => ['tr', 0] },
+    tableCell: { content: 'paragraph+', tableRole: 'cell', attrs: CELL_ATTRS, toDOM: () => ['td', 0] },
+    tableHeader: { content: 'paragraph+', tableRole: 'header_cell', attrs: CELL_ATTRS, toDOM: () => ['th', 0] },
     codeBlock: {
       group: 'block', content: 'text*', code: true,
       attrs: { language: { default: null } },
@@ -553,6 +559,54 @@ describe('the table section', () => {
         args: [{ anchorCell: grid.pos[0][1], headCell: grid.pos[1][1] }],
       }])
     })
+  })
+
+  // The menu snaps the caret onto the pointer when the click lands outside the
+  // selection — and a cell selection is a RECTANGLE whose from/to enclose its
+  // head cell alone, so reading the span between its endpoints snapped away the
+  // very selection Select Row had just built (#147).
+  describe('the caret snap over a cell selection', () => {
+    /** A 2×2 table with a real CellSelection over its top row, and a pointer
+     *  landing in the cell named by (r, c). */
+    function rightClickOver(r, c) {
+      const grid = caretInGridTable()
+      const doc = grid.state.doc
+      const state = grid.state.apply(grid.state.tr.setSelection(
+        new CellSelection(doc.resolve(grid.pos[0][0]), doc.resolve(grid.pos[0][1]))))
+      const pane = paneOver(state)
+      pane.view.posAtCoords = () => ({ pos: grid.pos[r][c] + 2 })
+      openMenu(pane)
+      return pane
+    }
+
+    it('leaves the selection alone over a selected cell that is not the head', () => {
+      expect(rightClickOver(0, 0).commands.setTextSelection).not.toHaveBeenCalled()
+    })
+
+    it('leaves it alone over the head cell too', () => {
+      expect(rightClickOver(0, 1).commands.setTextSelection).not.toHaveBeenCalled()
+    })
+
+    it('snaps, as ever, over a cell the selection does not cover', () => {
+      expect(rightClickOver(1, 0).commands.setTextSelection).toHaveBeenCalled()
+    })
+  })
+
+  // Copy reads the same rectangle as the Cut that deletes it: `from..to` would
+  // take the head cell alone while deleteSelection clears every selected cell.
+  it('Copy over a cell selection takes every selected cell, in document order', async () => {
+    const grid = caretInGridTable()
+    const doc = grid.state.doc
+    const state = grid.state.apply(grid.state.tr.setSelection(
+      new CellSelection(doc.resolve(grid.pos[0][1]), doc.resolve(grid.pos[1][1]))))
+    const pane = paneOver(state)
+    const written = []
+    Object.defineProperty(globalThis.navigator, 'clipboard', {
+      value: { writeText: (t) => { written.push(t); return Promise.resolve() } },
+      configurable: true,
+    })
+    itemNamed(openMenu(pane), 'Copy').click()
+    expect(written).toEqual(['b\nd'])
   })
 
   // GFM pipe markdown requires a header row (#118): the OFF direction is gone,
