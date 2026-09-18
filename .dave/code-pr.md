@@ -1,4 +1,3 @@
-model: opus
 image: git.stephenquinn.ie/stephen/sieve-ci:latest
 
 # Sieve: class code-pr
