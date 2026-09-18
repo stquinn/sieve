@@ -63,10 +63,21 @@ var DecorationSet = VENDOR.DecorationSet
     return !!(node && node.type && node.type.name.indexOf('sieve-') === 0)
   }
 
+  // Whether a top-level node offers a drag handle. A table does not: the
+  // handle's hover reveal is written for a prose row, and a table's DOM matches
+  // it only for some pointer positions, so it reads as an intermittent grab
+  // cursor over a surface whose pointer gestures mean cell selection.
+
+  function offersDragHandle(node) {
+    return !(node && node.type && node.type.name === 'table')
+  }
+
   // blockIndex is 1-based. offset is the doc offset of the node (for drag pos).
   // getPos is the PM widget factory's callback (may be null in fallback).
+  // draggable false builds the host without a handle, so the block has gutter
+  // numbering and no drag affordance at all.
 
-  function createChromeHostWidget(blockIndex, offset, view, getPos) {
+  function createChromeHostWidget(blockIndex, offset, view, getPos, draggable) {
     var host = document.createElement('div')
     host.className = 'block-chrome-host'
     host.setAttribute('contenteditable', 'false')
@@ -76,15 +87,20 @@ var DecorationSet = VENDOR.DecorationSet
     num.className = 'block-chrome-linenum'
     num.textContent = String(blockIndex)
 
+    var rail = document.createElement('span')
+    rail.className = 'block-chrome-rail'
+
+    host.appendChild(num)
+    if (!draggable) {
+      host.appendChild(rail)
+      return host
+    }
+
     var handle = document.createElement('span')
     handle.className = 'block-chrome-handle'
     handle.setAttribute('draggable', 'true')
     handle.textContent = '⠿'   // 2×3 drag-dots glyph
 
-    var rail = document.createElement('span')
-    rail.className = 'block-chrome-rail'
-
-    host.appendChild(num)
     host.appendChild(handle)
     host.appendChild(rail)
 
@@ -241,9 +257,12 @@ var DecorationSet = VENDOR.DecorationSet
           Decoration.widget(
             offset,
             function (widgetView, getPos) {
-              return createChromeHostWidget(i + 1, offset, widgetView, getPos)
+              return createChromeHostWidget(i + 1, offset, widgetView, getPos, offersDragHandle(node))
             },
-            { side: 1, key: 'chrome-' + offset }
+            // The key carries the node's TYPE as well as its position: a widget
+            // whose key is unchanged keeps its DOM, so a table replacing a
+            // paragraph at the same offset would otherwise inherit its handle.
+            { side: 1, key: 'chrome-' + offset + '-' + node.type.name }
           )
         )
       }

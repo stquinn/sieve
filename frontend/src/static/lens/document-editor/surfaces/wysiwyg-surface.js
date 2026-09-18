@@ -42,6 +42,7 @@ import { docPosForBlockIndex, blockIndexAfter, blockOffsetOf, posForBlockOffset 
 import { reloadReplacement } from './render-empty.js'
 import { caretInRawTextBlock } from '../paste-context.js'
 import { CaretTriggerPort } from './caret-trigger-port.js'
+import { CellSelectionGuard } from './cell-selection-guard.js'
 import { storeFileSrc, storeFileRef } from '../../../renderers/asset-urls.js'
 
 const FORMATTING_GROUPS = Object.freeze([
@@ -178,6 +179,10 @@ export class WysiwygSurface extends AbstractSurface {
    *  when the editor was built without a MentionService: the picker is an
    *  affordance, never a requirement to edit. */
   #triggerPicker = null
+
+  /** @type {CellSelectionGuard} keeps a table cell selection alive across the
+   *  right-click that opens a menu over it. */
+  #cellSelectionGuard = new CellSelectionGuard()
 
   /**
    * @param {AbstractEditor} host — the parent editor (supplies uuid + the public API)
@@ -379,6 +384,9 @@ export class WysiwygSurface extends AbstractSurface {
           // activation is APP-GLOBAL: shell/workspace.js's document-level CAPTURE
           // listener runs before anything on `view.dom` and calls
           // stopPropagation, so a PM-level handler here could never fire.
+          mousedown: function (view, event) {
+            return self.#cellSelectionGuard.handleMouseDown(view, event)
+          },
         },
         handlePaste: function (_view, event) { return self.#handleSmartPaste(event) },
         handleDrop: function (_view, event, slice, moved) { return self.#handleSmartDrop(event, slice, moved) },

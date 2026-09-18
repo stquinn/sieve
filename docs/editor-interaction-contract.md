@@ -325,6 +325,72 @@ as three different things.
 `literalGlyphs` is declared in the policy but realised in CSS; that is the one
 place appearance reads the policy, deliberately kept to a single site.
 
+## Table selection (decided 2026-09-16, #147)
+
+**A table selection is prosemirror-tables' `CellSelection`, unchanged.** Sieve
+adds no selection primitive of its own; what it adds is the skin that makes one
+visible and a verb per axis for building one.
+
+| Gesture | Result |
+|---|---|
+| Drag from one cell across others | native: a cell selection over the rectangle they span |
+| Shift+click another cell | native: extends to the rectangle between anchor and target |
+| Shift+Arrow from a cell | native: extends the text selection first, and becomes a cell selection once it would leave the cell |
+| Context menu → Row → **Select Row** | the whole row the caret's cell sits in, first cell to last |
+| Context menu → Column → **Select Column** | the whole column the caret's cell sits in, top to bottom |
+
+A row or a column is a **rectangle of the table's grid**, not a row node's
+children: a cell with a `rowspan` occupies slots in rows whose child list does
+not hold it, and a `colspan` puts one cell in several columns. Both verbs
+resolve their range through `TableGrid`, so a selection through a merged cell
+covers every slot that cell spans.
+
+**Every cell of a selection is visibly marked.** prosemirror-tables sets
+`selectedCell` on each; `editor.css` paints it as an **overlay** (`::after`) with
+accent borders, never a `background` — the header row and the even rows already
+paint backgrounds of their own, and a competing one would make the same selection
+read differently over each. The browser's own highlight is suppressed while a
+cell selection is up (`.ProseMirror-hideselection`), so the rectangle reads as a
+region rather than as a ragged text drag.
+
+**Backspace and Delete over a cell selection clear the cells' CONTENT and leave
+the structure**, with ONE exception: when the selection covers **every** cell of
+the table, TipTap's Table extension binds both keys to `deleteTable` and the
+table goes. Select Row on a single-row table, and Select Column on a
+single-column one, reach that state in one click. Removing a row or a column is
+otherwise Delete Row / Delete Column, a deliberate act one entry away. Both
+halves are pinned in `frontend/test/interaction-policy.editor.test.js`.
+
+**A cell selection survives the right-click that opens a menu over it.** A
+right-click in a `contenteditable` is a caret-placing gesture, so without a guard
+the selection an entry acts on is a `TextSelection` in the one cell clicked by
+the time it runs — Delete Row appears to work, because the caret is still in the
+row, while a multi-row range or Merge Cells silently acts on one cell.
+`CellSelectionGuard` therefore refuses the gesture — the right button, or macOS's
+Ctrl+left (that form on macOS alone: elsewhere Ctrl+left is Mod+click) — when it
+lands on a cell the selection covers. Landing **outside** the selection is not
+claimed, and collapses it as any click does.
+
+**A selection covers its ranges, not the span between its endpoints.** A cell
+selection is a rectangle of separate ranges whose `from` and `to` enclose its
+head cell alone, so everything the menu does with a selection reads the ranges:
+the caret snap that moves onto a right-click outside the selection leaves a
+right-click on ANY selected cell alone, and Copy and Cut take every selected
+cell — Cut deletes all of them, and taking `from`..`to` would have copied one.
+
+**A table carries a gutter number but no drag handle.** Every other top-level
+block offers one; a table does not, because the handle's hover reveal is written
+for a prose row and a table's DOM matches it only for some pointer positions —
+an intermittent grab cursor over a surface whose pointer gestures already mean
+selection. Reordering a table is cut and paste.
+
+**Not shipped:** row/column grips or a header strip (styles first — a grip is a
+much larger affordance to add speculatively), Mod+A escalation from cell to
+table to document (#153), column resizing (`resizable: false` stays, widths
+having no GFM representation), and a skin of its own for a `NodeSelection` on a
+whole table — the editor-wide `.ProseMirror-selectednode` outline already marks
+one.
+
 ## Caret contract
 
 1. No dead-ends: every position reachable by arrows alone; a trailing
@@ -756,9 +822,12 @@ is itself inert — it opens rather than acts.
 | Escape | closes the whole menu | closes the flyout; a second one closes the menu |
 | Enter, click | opens it | accepts, and the WHOLE menu closes |
 
-**The structured sections.** A caret inside a table adds Row → (Add Above · Add
-Below · Delete Row), Column → (Add Left · Add Right · Delete Column) and Delete
-Table — the stock TipTap table commands, offered in every wysiwyg mount because
+**The structured sections.** A caret inside a table adds Row → (Select Row · Add
+Above · Add Below · Delete Row), Column → (Select Column · Add Left · Add Right ·
+Delete Column) and Delete Table. Select Row / Select Column lead their submenus
+and name what the rest of the section acts on (#147, see *Table selection*). The
+others are
+the stock TipTap table commands, offered in every wysiwyg mount because
 rearranging a table is editing and not authoring. Add Header Row joins them only
 while the table has none: GFM pipe markdown requires a header row, so once one
 exists the entry is gone rather than offering an OFF direction that would mint a
@@ -1103,3 +1172,5 @@ without reopening the contract.
 - Bracket/quote auto-pairing in code blocks (`autoPair` policy flag) —
   deferred; must not fight PM input rules.
 - Per-language indent width — uniform 2 until proven insufficient.
+- Table row/column grips, and Mod+A escalation from cell to table to document
+  (#153) — see *Table selection*.

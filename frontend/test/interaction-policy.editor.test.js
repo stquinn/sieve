@@ -7,12 +7,20 @@
 // chain ProseMirror's own keydown listener walks, in the same plugin order —
 // so a `true` result here means the browser default (focus escape) is
 // prevented in the real app.
+// real-vendor.js leads every other import on purpose: block-chrome.js reads its
+// vendor members at module-eval time, so the bag must hold the real classes
+// before that import is evaluated.
+import './helpers/real-vendor.js'
 import { describe, it, expect, afterEach } from 'vitest'
 import { Editor, Node, Extension } from '@tiptap/core'
 import { StarterKit } from '@tiptap/starter-kit'
 import { Table, TableRow, TableCell, TableHeader } from '@tiptap/extension-table'
 import { Plugin, Selection, TextSelection, NodeSelection } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
+import { CellSelection } from '@tiptap/pm/tables'
+import { TableGrid } from '../src/static/lens/document-editor/surfaces/table-grid.js'
+import { CellSelectionGuard } from '../src/static/lens/document-editor/surfaces/cell-selection-guard.js'
+import { BlockChrome } from '../src/static/lens/document-editor/block-chrome.js'
 import { registerBlockKind } from '../src/static/renderers/block-kinds.js'
 import { buildInteractionPolicyExtension, policyEnterKeydown, CODE_TEXT_POLICY } from '../src/static/lens/document-editor/interaction-policy.js'
 import { NodeViewRegistry, HOST_BODY_SYNC } from '../src/static/lens/document-editor/surfaces/sieve-block-extension.js'
@@ -123,7 +131,7 @@ const SieveClip = Node.create({
 let editor = null
 afterEach(() => { if (editor) { editor.destroy(); editor = null } })
 
-function makeEditor(contentJSON) {
+function makeEditor(contentJSON, extraExtensions = []) {
   editor = new Editor({
     element: document.createElement('div'),
     // Mirrors editor.js: Enter dispatches pre-core from editorProps (core
@@ -138,6 +146,7 @@ function makeEditor(contentJSON) {
       TableRow, TableHeader, TableCell,
       SieveCode, SieveDiagram, SieveLog, SieveClip,
       buildInteractionPolicyExtension({ Extension, Plugin, Selection, TextSelection, NodeSelection, Decoration, DecorationSet }),
+      ...extraExtensions,
     ],
     content: contentJSON,
   })
@@ -205,6 +214,192 @@ describe('Tab in table (contract: native cell nav wins over the backstop)', () =
     const { handled } = press('Tab', { shiftKey: true })
     expect(handled).toBe(true)
     expect(docText()).toBe('')
+  })
+})
+
+// The range TableGrid computes is only right if prosemirror-tables ACCEPTS it:
+// `setCellSelection` feeds the two positions to `CellSelection.create`, which
+// throws on a position that is not in front of a cell. Asserting the resulting
+// selection here is what stops an off-by-one in the grid's walk from reaching a
+// user as a RangeError on the first click of Select Row (#147).
+describe('table selection (contract: Table selection)', () => {
+  /** A `rows`×`cols` headerless table, alone in the doc. */
+  function makeTableGrid(rows, cols) {
+    makeEditor({ type: 'doc', content: [{ type: 'paragraph' }] })
+    editor.commands.insertTable({ rows, cols, withHeaderRow: false })
+  }
+
+  /** The table in the document NOW, and a grid over it — the menu reads both
+   *  off the live state at click time, so a case that edits first must too. */
+  function gridNow() {
+    let found = null
+    editor.state.doc.descendants((node, pos) => {
+      if (!found && node.type.name === 'table') found = { node, pos }
+    })
+    return { grid: new TableGrid(found.node, found.pos), table: found }
+  }
+
+  /** The document position of the cell at row `r`, column `c`. */
+  function cellAt(table, r, c) {
+    let pos = table.pos + 1
+    for (let i = 0; i < r; i++) pos += table.node.child(i).nodeSize
+    let cur = pos + 1
+    for (let i = 0; i < c; i++) cur += table.node.child(r).child(i).nodeSize
+    return cur
+  }
+
+  /** How many rows and columns the table in the document has now. */
+  function shape() {
+    let found = null
+    editor.state.doc.descendants((node, pos) => {
+      if (!found && node.type.name === 'table') found = node
+    })
+    return found ? { rows: found.childCount, cols: found.child(0).childCount } : null
+  }
+
+  it('Select Row builds a real CellSelection over the row', () => {
+    makeTableGrid(3, 3)
+    const { grid, table } = gridNow()
+    editor.commands.setCellSelection(grid.rowRangeAt(cellAt(table, 1, 1)))
+    const sel = editor.state.selection
+    expect(sel instanceof CellSelection).toBe(true)
+    expect(sel.isRowSelection()).toBe(true)
+    expect(sel.ranges.length).toBe(3)
+  })
+
+  it('Select Column builds a real CellSelection over the column', () => {
+    makeTableGrid(3, 3)
+    const { grid, table } = gridNow()
+    editor.commands.setCellSelection(grid.columnRangeAt(cellAt(table, 1, 1)))
+    const sel = editor.state.selection
+    expect(sel instanceof CellSelection).toBe(true)
+    expect(sel.isColSelection()).toBe(true)
+    expect(sel.ranges.length).toBe(3)
+  })
+
+  it('Backspace over a selected row clears the cells and leaves the structure', () => {
+    makeTableGrid(3, 3)
+    caretAt(cellAt(gridNow().table, 1, 1) + 2)
+    editor.commands.insertContent('gone')
+    expect(docText()).toBe('gone')
+    const { grid, table } = gridNow()
+    editor.commands.setCellSelection(grid.rowRangeAt(cellAt(table, 1, 1)))
+    press('Backspace')
+    expect(docText()).toBe('')
+    expect(shape()).toEqual({ rows: 3, cols: 3 })
+  })
+
+  // TipTap's Table extension binds Backspace/Delete to deleteTable when the
+  // selection covers EVERY cell — which Select Row reaches in one click on a
+  // single-row table. The contract records this as the one case where the key
+  // takes structure.
+  it('Backspace over a selection covering every cell deletes the table', () => {
+    makeTableGrid(1, 3)
+    const { grid, table } = gridNow()
+    editor.commands.setCellSelection(grid.rowRangeAt(cellAt(table, 0, 0)))
+    press('Backspace')
+    expect(shape()).toBeNull()
+  })
+
+  // The menu is opened BY a right-click, and a right-click in a contenteditable
+  // is a caret-placing gesture — so without the guard the selection the menu was
+  // built over is a TextSelection in one cell by the time an entry runs. These
+  // cases go through the real editor because the premise IS the vendor's:
+  // `selectedCell` is prosemirror-tables' own decoration on the selected cells.
+  describe('the right-click that opens a menu over it', () => {
+    const guard = new CellSelectionGuard()
+
+    /** The context-menu gesture on the cell at (r, c), as the guard sees it. */
+    function contextClick(r, c, opts = {}) {
+      const dom = editor.view.nodeDOM(cellAt(gridNow().table, r, c))
+      let prevented = false
+      const event = { button: 2, ctrlKey: false, ...opts, target: dom,
+        preventDefault() { prevented = true } }
+      return { handled: guard.handleMouseDown(editor.view, event), prevented, dom }
+    }
+
+    function selectRow(r) {
+      const { grid, table } = gridNow()
+      editor.commands.setCellSelection(grid.rowRangeAt(cellAt(table, r, 0)))
+    }
+
+    it('inside the selection is refused, so the caret never moves', () => {
+      makeTableGrid(3, 3)
+      selectRow(1)
+      const { handled, prevented, dom } = contextClick(1, 2)
+      expect(dom.classList.contains('selectedCell')).toBe(true)
+      expect(handled).toBe(true)
+      expect(prevented).toBe(true)
+    })
+
+    it('outside the selection is left alone, so the click collapses it', () => {
+      makeTableGrid(3, 3)
+      selectRow(1)
+      const { handled, prevented, dom } = contextClick(0, 0)
+      expect(dom.classList.contains('selectedCell')).toBe(false)
+      expect(handled).toBe(false)
+      expect(prevented).toBe(false)
+    })
+
+    // Ctrl+left is the menu gesture on macOS and Mod+click (link activation)
+    // everywhere else, so the platform decides whether it is claimed at all.
+    it('Ctrl+left is the same gesture on macOS', () => {
+      const platform = navigator.platform
+      Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true })
+      try {
+        makeTableGrid(3, 3)
+        selectRow(1)
+        expect(contextClick(1, 2, { button: 0, ctrlKey: true }).handled).toBe(true)
+      } finally {
+        Object.defineProperty(navigator, 'platform', { value: platform, configurable: true })
+      }
+    })
+
+    it('Ctrl+left is left alone off macOS, where it is Mod+click', () => {
+      expect(navigator.platform).not.toMatch(/Mac/)
+      makeTableGrid(3, 3)
+      selectRow(1)
+      expect(contextClick(1, 2, { button: 0, ctrlKey: true }).handled).toBe(false)
+    })
+
+    it('a plain left click is never claimed, even inside the selection', () => {
+      makeTableGrid(3, 3)
+      selectRow(1)
+      expect(contextClick(1, 2, { button: 0 }).handled).toBe(false)
+    })
+
+    it('with no cell selection live, a right-click in a table is unclaimed', () => {
+      makeTableGrid(3, 3)
+      caretAt(cellAt(gridNow().table, 1, 1) + 2)
+      expect(contextClick(1, 1).handled).toBe(false)
+    })
+  })
+
+  // #147: the gutter's drag handle is revealed by hover rules written for a
+  // prose row, which a table matches only for some pointer positions — a grab
+  // cursor flickering over a surface whose pointer gestures mean selection.
+  describe('gutter chrome over a table', () => {
+    function hosts() {
+      return Array.from(editor.view.dom.querySelectorAll('.block-chrome-host'))
+    }
+
+    it('a prose block keeps its number and its handle', () => {
+      makeEditor({ type: 'doc', content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'one' }] },
+      ] }, [BlockChrome])
+      const [host] = hosts()
+      expect(host.querySelector('.block-chrome-linenum').textContent).toBe('1')
+      expect(host.querySelector('.block-chrome-handle')).not.toBeNull()
+    })
+
+    it('a table keeps its number and is given no handle', () => {
+      makeEditor({ type: 'doc', content: [{ type: 'paragraph' }] }, [BlockChrome])
+      editor.commands.insertTable({ rows: 2, cols: 2, withHeaderRow: false })
+      const tableHost = hosts().find((h) => h.nextElementSibling?.tagName === 'TABLE')
+      expect(tableHost).toBeDefined()
+      expect(tableHost.querySelector('.block-chrome-linenum')).not.toBeNull()
+      expect(tableHost.querySelector('.block-chrome-handle')).toBeNull()
+    })
   })
 })
 
