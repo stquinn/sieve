@@ -6,9 +6,12 @@
   </div>
 
   <div class="help-modal__body">
-    <!-- Column 1: Global -->
+    <!-- One column per tier of the keyboard shortcut taxonomy
+         (docs/editor-interaction-contract.md § Keyboard shortcut taxonomy):
+         Mod = do & navigate, Mod+Shift = generate, Mod+Alt = appearance & view.
+         Formatting is the editor's own inherited set and spans all three. -->
     <section class="help-modal__section">
-      <h3 class="help-modal__section-title">Global Shortcuts</h3>
+      <h3 class="help-modal__section-title">Do & Navigate — Mod</h3>
       <table class="help-modal__table">
         <tbody>
           <tr>
@@ -20,24 +23,40 @@
             <td class="help-modal__desc">Close tab</td>
           </tr>
           <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">S</kbd></td>
+            <td class="help-modal__desc">Save note</td>
+          </tr>
+          <tr>
             <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">P</kbd></td>
             <td class="help-modal__desc">Quick switcher</td>
           </tr>
           <tr>
             <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">F</kbd></td>
-            <td class="help-modal__desc">Find in file</td>
+            <td class="help-modal__desc">Find and replace</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">F3</kbd><span class="help-modal__plus">/</span><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">G</kbd></td>
+            <td class="help-modal__desc">Find next</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">F3</kbd><span class="help-modal__plus">/</span><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">G</kbd></td>
+            <td class="help-modal__desc">Find previous</td>
           </tr>
           <tr>
             <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">F</kbd></td>
-            <td class="help-modal__desc">Global search</td>
+            <td class="help-modal__desc">Find in notes</td>
           </tr>
           <tr>
-            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">\</kbd></td>
-            <td class="help-modal__desc">Toggle sidebar</td>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">O</kbd></td>
+            <td class="help-modal__desc">Open library</td>
           </tr>
           <tr>
-            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">S</kbd></td>
-            <td class="help-modal__desc">Save note</td>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">,</kbd></td>
+            <td class="help-modal__desc">Settings</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">=</kbd><span class="help-modal__plus">/</span><kbd class="help-modal__kbd">-</kbd><span class="help-modal__plus">/</span><kbd class="help-modal__kbd">0</kbd></td>
+            <td class="help-modal__desc">Editor font bigger / smaller / reset</td>
           </tr>
           <tr>
             <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">/</kbd></td>
@@ -51,9 +70,8 @@
       </table>
     </section>
 
-    <!-- Column 2: AI & Views -->
     <section class="help-modal__section">
-      <h3 class="help-modal__section-title">AI & View Gestures</h3>
+      <h3 class="help-modal__section-title">Generate — Mod+Shift</h3>
       <table class="help-modal__table">
         <tbody>
           <tr>
@@ -65,32 +83,16 @@
             <td class="help-modal__desc">Keep & Smart File</td>
           </tr>
           <tr>
-            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Alt</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">M</kbd></td>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">M</kbd></td>
             <td class="help-modal__desc">Smart Metadata</td>
           </tr>
           <tr>
-            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">E</kbd></td>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">X</kbd></td>
             <td class="help-modal__desc">Explain block</td>
           </tr>
           <tr>
             <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">A</kbd></td>
             <td class="help-modal__desc">Ask AI block</td>
-          </tr>
-          <tr>
-            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">P</kbd></td>
-            <td class="help-modal__desc">Prompt tray</td>
-          </tr>
-          <tr>
-            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">I</kbd></td>
-            <td class="help-modal__desc">Meta drawer</td>
-          </tr>
-          <tr>
-            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">M</kbd></td>
-            <td class="help-modal__desc">Markdown view</td>
-          </tr>
-          <tr>
-            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">J</kbd></td>
-            <td class="help-modal__desc">Toggle AI visibility</td>
           </tr>
           <tr>
             <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">W</kbd></td>
@@ -108,9 +110,44 @@
       </table>
     </section>
 
-    <!-- Column 3: Formatting -->
     <section class="help-modal__section">
-      <h3 class="help-modal__section-title">Formatting Shortcuts</h3>
+      <h3 class="help-modal__section-title">Appearance & View — Mod+Alt</h3>
+      <table class="help-modal__table">
+        <tbody>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Alt</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">S</kbd></td>
+            <td class="help-modal__desc">Toggle sidebar</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Alt</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">I</kbd></td>
+            <td class="help-modal__desc">Meta drawer</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Alt</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">P</kbd></td>
+            <td class="help-modal__desc">Prompt tray</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Alt</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">M</kbd></td>
+            <td class="help-modal__desc">Markdown view</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Alt</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">J</kbd></td>
+            <td class="help-modal__desc">Toggle AI visibility</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Alt</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">B</kbd></td>
+            <td class="help-modal__desc">Show toolbar</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Alt</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">E</kbd></td>
+            <td class="help-modal__desc">Expand block</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="help-modal__section">
+      <h3 class="help-modal__section-title">Formatting</h3>
       <table class="help-modal__table">
         <tbody>
           <tr>
@@ -120,6 +157,14 @@
           <tr>
             <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">I</kbd></td>
             <td class="help-modal__desc">Italic</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">E</kbd></td>
+            <td class="help-modal__desc">Inline code</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">K</kbd></td>
+            <td class="help-modal__desc">Link</td>
           </tr>
           <tr>
             <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Z</kbd></td>
@@ -157,7 +202,6 @@
       </table>
     </section>
 
-    <!-- Column 4: Markdown Reference -->
     <section class="help-modal__section">
       <h3 class="help-modal__section-title">Markdown Reference</h3>
       <table class="help-modal__table">

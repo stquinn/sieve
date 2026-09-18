@@ -300,16 +300,16 @@ describe('MarkdownSurface (P2.B)', () => {
     expect(host.setRawContent).not.toHaveBeenCalled()
   })
 
-  it('handles NO app-level chords: Mod+S / Mod+J bubble out untouched', () => {
-    // Chord transport is the transitional document-level listener in editor.js
-    // (P2.C owns the proper migration) — the surface must not consume the keys.
+  it('handles NO app-level chords: Mod+S / Mod+Alt+J bubble out untouched', () => {
+    // App-level chords are owned by the native menu — the surface must not
+    // consume the keys.
     const { textarea } = mountMd('a')
     const modS = new KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true, cancelable: true })
     textarea.dispatchEvent(modS)
     expect(modS.defaultPrevented).toBe(false)
-    const modJ = new KeyboardEvent('keydown', { key: 'j', ctrlKey: true, bubbles: true, cancelable: true })
-    textarea.dispatchEvent(modJ)
-    expect(modJ.defaultPrevented).toBe(false)
+    const modAltJ = new KeyboardEvent('keydown', { key: 'j', ctrlKey: true, altKey: true, bubbles: true, cancelable: true })
+    textarea.dispatchEvent(modAltJ)
+    expect(modAltJ.defaultPrevented).toBe(false)
   })
 
   it('replaceBody swaps the buffer + textarea (softReload path)', () => {

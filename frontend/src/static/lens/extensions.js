@@ -133,13 +133,14 @@ var DecorationSet = VENDOR.DecorationSet
     },
     // Only caret-contextual chords the native menu does NOT claim live here. Smart
     // File (Mod+Shift+E), Keep & Smart File (Mod+Shift+Return), Toggle AI Blocks
-    // (Mod+J) and Ask (Mod+Shift+A) are owned outside the editor — do not rebind
-    // them. See docs/editor-interaction-contract.md.
+    // (Mod+Alt+J) and Ask (Mod+Shift+A) are owned outside the editor — do not
+    // rebind them. Explain is an AI verb, so it sits in the generate tier
+    // (Mod+Shift) like its siblings. See docs/editor-interaction-contract.md.
     addKeyboardShortcuts: function() {
       var self = this
       return {
-        'Mod-e': function() { self.options.onExplain(); return true },
-        'Mod-E': function() { self.options.onExplain(); return true },
+        'Mod-Shift-x': function() { self.options.onExplain(); return true },
+        'Mod-Shift-X': function() { self.options.onExplain(); return true },
       }
     }
   })

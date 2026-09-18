@@ -1302,13 +1302,13 @@ pre.tiptap-code-block code {
   overflow-y: auto;
   padding: 1rem 1.2rem 1.4rem;
   display: flex;
-  gap: 2rem;
-  padding: 1rem 1.2rem 1.4rem;
-  display: flex;
+  flex-wrap: wrap;
   gap: 2rem;
 }
 
-.help-modal__section { flex: 1; min-width: 0; }
+/* One column per shortcut tier, plus the two reference columns: they wrap onto a
+   second row rather than squeezing when the dialog is too narrow for all five. */
+.help-modal__section { flex: 1 1 200px; min-width: 0; }
 
 .help-modal__section-title {
   font-size: 11px;
