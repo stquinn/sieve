@@ -28,7 +28,7 @@ import { SelectionHighlight, HighlightMark, AiShortcuts, HeadingShortcuts } from
 import { policyEnterKeydown, buildInteractionPolicyExtension } from '../interaction-policy.js'
 import { TriggerPopover } from '../../../shell/trigger-popover.js'
 import {
-  ActionMacro, BlockInsertProvider, MentionProvider, SlashCommandProvider,
+  ActionMacro, BlockInsertProvider, EmojiProvider, MentionProvider, SlashCommandProvider,
 } from '../../../shell/trigger-providers.js'
 import { ProseMirrorHost, BlockMakingProseMirrorHost, CaretPlacement } from '../../../shell/trigger-host.js'
 import { getSieveNodes, getSieveBlockLabel, serializeNode, sieveBlockAttrs } from './sieve-block-extension.js'
@@ -674,10 +674,10 @@ export class WysiwygSurface extends AbstractSurface {
   }), Object.freeze({
     label: 'Fence',
     name: 'fence',
-    description: 'A fenced code block — :lang tags the language, e.g. fence:go',
+    description: 'A fenced code block — =lang tags the language, e.g. fence=go',
     icon: 'code',
     requires: LensCapability.MARKDOWN,
-    // The trigger's argument tail (`go` from `{fence:go`) IS the language,
+    // The trigger's argument tail (`go` from `{fence=go`) IS the language,
     // passed through verbatim: nothing here validates or guesses it, the same
     // rule harvest already applies to a hand-typed ```go fence.
     run: (/** @type {any} */ pane, /** @type {string|undefined} */ arg) => {
@@ -724,6 +724,9 @@ export class WysiwygSurface extends AbstractSurface {
    *         the host already has. Always registered: the catalog answers
    *         locally, so it needs no service. WHICH entries it offers is the
    *         lens's published capabilities, applied in macrosFor.
+   *   `:` — insert an emoji, as a grid of glyphs. Always registered, for the
+   *         same reason `{` is: the catalog is a local table. It needs a
+   *         character after the colon before it opens at all.
    *   `@` — mention a document, which in a block-capable mount becomes a
    *         reference block. Needs a MentionService.
    *   `/` — run a slash command against what is being written. Needs a
@@ -742,7 +745,7 @@ export class WysiwygSurface extends AbstractSurface {
     const macros = WysiwygSurface.macrosFor(host.macroCatalog || null, editorPane, caps)
     const port = new CaretTriggerPort(editorPane, this.#host, () => this.flushPending())
     /** @type {import('../../../shell/trigger-providers.js').TriggerProvider[]} */
-    const providers = [new BlockInsertProvider({ list: () => macros })]
+    const providers = [new BlockInsertProvider({ list: () => macros }), new EmojiProvider()]
     if (host.mentionService) {
       providers.push(new MentionProvider(host.mentionService, (c) => host.onMentionAccepted(c)))
     }

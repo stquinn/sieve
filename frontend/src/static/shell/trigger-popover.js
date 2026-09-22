@@ -13,6 +13,7 @@
 
 import { ContractViolation } from '../contract/sieve-block.js'
 import { TriggerProvider, SUBGRID_ROWS } from './trigger-providers.js'
+import { TriggerLayout } from './trigger-layout.js'
 import { TriggerHost, TriggerPlacement, PanelPlacement } from './trigger-host.js'
 
 /**
@@ -27,6 +28,15 @@ const SUBGRID = SUBGRID_ROWS
 /** The name track: content-sized, capped so one very long title cannot shove
  *  every description off the popover's edge. */
 const NAME_TRACK = 'fit-content(26em)'
+
+/** One grid cell, square, and the gutter around the whole grid. A cell is sized
+ *  HERE and not by its content: a grid whose columns tracked the widest glyph
+ *  would shift under a query that happened to return a wide one. */
+const CELL_PX = 34
+const GRID_PAD_PX = 6
+
+/** The caption strip under a grid. Tall enough for one line of the UI font. */
+const CAPTION_PX = 28
 
 /**
  * Tab, however the platform spells it. WebKitGTK reports Shift+Tab as the X11
@@ -200,22 +210,47 @@ export class TriggerPopover {
     this.show()
   }
 
+  /**
+   * The layout the listed candidates are drawn under — the provider's, or the
+   * list when nothing is open. One reader, so the keyboard model and the drawing
+   * can never disagree about which shape is on screen.
+   * @returns {TriggerLayout}
+   */
+  #layout() {
+    return this.#token ? this.#token.provider.layout : TriggerLayout.LIST
+  }
+
+  /**
+   * Moves the selection by `delta`, wrapping at both ends — the model a list has
+   * always had, and in a grid the one that carries the selection off the end of a
+   * row onto the next.
+   * @param {number} delta
+   */
+  #moveSelection(delta) {
+    const n = this.#items.length
+    if (n === 0) return
+    this.#selectedIndex = ((this.#selectedIndex + delta) % n + n) % n
+    this.#render()
+  }
+
   /** @param {KeyboardEvent} e */
   #handleKeyDown(e) {
     if (!this.#popoverEl || this.#popoverEl.style.display === 'none') return
 
-    if (e.key === 'ArrowDown') {
+    // A GRID CLAIMS ←/→ AND A LIST MUST NOT. In a list the horizontal arrows are
+    // the caret's — a completion being narrowed is still text being typed — so
+    // they are claimed only where there is another column to reach. ↑/↓ step by a
+    // whole row, which in a list is one candidate.
+    const layout = this.#layout()
+    const horizontal = layout.isGrid && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || horizontal) {
       e.preventDefault()
       e.stopPropagation()
       e.stopImmediatePropagation()
-      this.#selectedIndex = (this.#selectedIndex + 1) % this.#items.length
-      this.#render()
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      e.stopPropagation()
-      e.stopImmediatePropagation()
-      this.#selectedIndex = (this.#selectedIndex - 1 + this.#items.length) % this.#items.length
-      this.#render()
+      if (e.key === 'ArrowDown') this.#moveSelection(layout.columns)
+      else if (e.key === 'ArrowUp') this.#moveSelection(-layout.columns)
+      else this.#moveSelection(e.key === 'ArrowRight' ? 1 : -1)
     } else if (isTabKey(e) || (e.key === 'Enter' && !e.shiftKey)) {
       if (this.#items.length > 0 && this.#selectedIndex >= 0 && this.#selectedIndex < this.#items.length) {
         e.preventDefault()
@@ -316,11 +351,112 @@ export class TriggerPopover {
     this.#abandon(null)     // closes, invalidates any answer in flight, records nothing
   }
 
+  /**
+   * Draws the listed candidates under the provider's LAYOUT. Both shapes share
+   * this element, so each branch states every property the other sets: a grid
+   * following a list must not inherit the list's height cap, or the reverse.
+   */
   #render() {
     if (!this.#popoverEl) return
     const token = this.#token
     if (!token) return
     this.#popoverEl.innerHTML = ''
+    this.#scrollHint = null
+
+    const layout = this.#layout()
+    if (layout.isGrid) this.#renderGrid(token, layout)
+    else this.#renderList(token)
+
+    // Keyboard navigation has to carry the viewport with it: #render() clears
+    // innerHTML, which resets scrollTop to 0. 'nearest' scrolls the minimum
+    // needed, so the list stays still while the selection is already visible.
+    const activeEl = this.#popoverEl.querySelector('.command-hint-item.is-active')
+    if (activeEl) activeEl.scrollIntoView({ block: 'nearest' })
+    this.#syncScrollHint()
+  }
+
+  /**
+   * A GRID OF CELLS with the selected one named underneath. The cell is square
+   * and sized here, the mark inside it is the provider's, and the caption is the
+   * only thing that says what a wall of bare glyphs is offering.
+   * @param {import('./trigger-providers.js').TriggerToken} token
+   * @param {TriggerLayout} layout
+   */
+  #renderGrid(token, layout) {
+    const el = this.#popoverEl
+    if (!el) return
+    this.#gridMode = true
+    el.style.gridTemplateColumns = `repeat(${layout.columns}, ${CELL_PX}px)`
+    el.style.alignContent = 'start'
+    el.style.padding = `${GRID_PAD_PX}px`
+    el.style.maxHeight =
+      `${layout.rows * CELL_PX + (layout.hasCaption ? CAPTION_PX : 0) + GRID_PAD_PX * 2}px`
+    if (el.style.display !== 'none') el.style.display = 'grid'
+
+    this.#items.forEach((item, idx) => {
+      const cell = document.createElement('div')
+      const isActive = idx === this.#selectedIndex
+      cell.className = 'command-hint-item command-hint-item--cell' + (isActive ? ' is-active' : '')
+      cell.style.cssText = [
+        'display: flex',
+        'align-items: center',
+        'justify-content: center',
+        `width: ${CELL_PX}px`,
+        `height: ${CELL_PX}px`,
+        'box-sizing: border-box',
+        'cursor: pointer',
+        'border-radius: 6px',
+        'transition: background 0.1s ease',
+        isActive
+          ? 'background: color-mix(in srgb, var(--theme-accentPrimary, #7aa2f7) 30%, var(--theme-bgAlt, #1f2335)); box-shadow: inset 0 0 0 2px var(--theme-accentPrimary, #7aa2f7);'
+          : 'background: transparent; box-shadow: none;'
+      ].join('; ')
+      cell.appendChild(token.provider.render(item))
+      cell.addEventListener('mousedown', (e) => {
+        e.preventDefault()
+        this.#acceptCandidate(item)
+      })
+      el.appendChild(cell)
+    })
+
+    if (!layout.hasCaption) return
+    const caption = document.createElement('div')
+    caption.className = 'command-hint-caption'
+    caption.style.cssText = [
+      'position: sticky',
+      `bottom: ${-GRID_PAD_PX}px`,
+      `margin: 0 ${-GRID_PAD_PX}px ${-GRID_PAD_PX}px`,
+      'grid-column: 1 / -1',
+      `height: ${CAPTION_PX}px`,
+      'display: flex',
+      'align-items: center',
+      'padding: 0 10px',
+      'box-sizing: border-box',
+      'font-size: 12px',
+      'font-family: var(--theme-uiFont, system-ui, sans-serif)',
+      'color: var(--theme-textDim, #9aa5ce)',
+      'background: var(--theme-bgAlt, #1f2335)',
+      'border-top: 1px solid var(--theme-border2, #3b4261)',
+      'pointer-events: none',
+      'white-space: nowrap',
+      'overflow: hidden',
+      'text-overflow: ellipsis',
+    ].join('; ')
+    const selected = this.#items[this.#selectedIndex]
+    caption.textContent = selected ? token.provider.caption(selected) : ''
+    el.appendChild(caption)
+  }
+
+  /**
+   * THE LIST, which is what every picker was before there was a choice.
+   * @param {import('./trigger-providers.js').TriggerToken} token
+   */
+  #renderList(token) {
+    const el = this.#popoverEl
+    if (!el) return
+    el.style.alignContent = ''
+    el.style.padding = ''
+    el.style.maxHeight = '320px'
 
     // The container carries the columns; each row subgrids into them, so the
     // name column is as wide as the widest visible name and every description
@@ -333,9 +469,9 @@ export class TriggerPopover {
     // cell overflow into its neighbour.
     this.#gridMode = SUBGRID
     if (this.#gridMode) {
-      this.#popoverEl.style.gridTemplateColumns =
+      el.style.gridTemplateColumns =
         (token.provider.providesIcons ? 'max-content ' : '') + NAME_TRACK + ' 1fr'
-      if (this.#popoverEl.style.display !== 'none') this.#popoverEl.style.display = 'grid'
+      if (el.style.display !== 'none') el.style.display = 'grid'
     }
 
     this.#items.forEach((item, idx) => {
@@ -364,7 +500,7 @@ export class TriggerPopover {
         this.#acceptCandidate(item)
       })
 
-      this.#popoverEl?.appendChild(row)
+      el.appendChild(row)
     })
 
     // The bottom-edge fade, LAST so it sits over the list's bottom edge. Sticky
@@ -383,15 +519,8 @@ export class TriggerPopover {
       'transition: opacity 0.1s ease',
       'background: linear-gradient(to bottom, transparent, var(--theme-bgAlt, #1f2335))',
     ].join('; ')
-    this.#popoverEl.appendChild(hint)
+    el.appendChild(hint)
     this.#scrollHint = hint
-
-    // Keyboard navigation has to carry the viewport with it: #render() clears
-    // innerHTML, which resets scrollTop to 0. 'nearest' scrolls the minimum
-    // needed, so the list stays still while the selection is already visible.
-    const activeEl = this.#popoverEl.querySelector('.command-hint-item.is-active')
-    if (activeEl) activeEl.scrollIntoView({ block: 'nearest' })
-    this.#syncScrollHint()
   }
 
   show() {

@@ -38,7 +38,8 @@ const ALLOWED_DIRS = Object.freeze(['lens', 'contract', 'renderers', 'ident', 'v
 //     copy an image). A lens should raise these, not open them.
 //   • shell/trigger-*.js — the WysiwygSurface builds the shell's `@`-mention
 //     popover itself rather than exposing its CaretTriggerPort and letting the
-//     host attach one.
+//     host attach one. Three edges, but the closure is the whole trigger family:
+//     the provider module reaches its layout and emoji tables too.
 //   • renderers/asset-urls.js → generated/protocol.js — the one non-lens entry:
 //     a renderer resolves asset URLs through the generated wire module, so the
 //     whole renderer package (and therefore any lens that paints with it) drags
@@ -59,7 +60,9 @@ const QUARANTINE = Object.freeze([
 // The modules those edges drag in, transitively — the closure's forbidden half.
 const QUARANTINED_MODULES = Object.freeze([
   'generated/protocol.js',
+  'shell/emoji-catalog.js',
   'shell/trigger-host.js',
+  'shell/trigger-layout.js',
   'shell/trigger-popover.js',
   'shell/trigger-providers.js',
   'ui/copy-image.js',

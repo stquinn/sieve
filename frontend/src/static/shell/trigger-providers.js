@@ -6,8 +6,11 @@
 //   trigger            the character that opens it
 //   acceptsBoundary()  what must sit BEFORE the trigger for it to count
 //   acceptsPrefix()    how far PAST the trigger its token may run
+//   minPrefixLength    how much must be typed before it opens at all
+//   layout             a list of rows or a grid of cells, as DATA
 //   search(prefix)     candidates — an array (synchronous) or a promise of one
-//   render(item)       the row's content
+//   render(item)       the row's (or cell's) content
+//   caption(item)      what the selected candidate is called, under a grid
 //   accept(item, …)    what accepting DOES, performed against the HOST
 //
 // THE SCAN LIVES HERE, on the type whose two predicates decide it and whose
@@ -20,6 +23,8 @@
 
 import { ContractViolation } from '../contract/sieve-block.js'
 import { LensCapability, LENS_CAPABILITIES } from '../contract/lens-capabilities.js'
+import { TriggerLayout } from './trigger-layout.js'
+import { EmojiCatalog } from './emoji-catalog.js'
 
 // The two widths that make a picker's rows line up into columns: the icon gutter
 // every row carries, and the floor a name occupies before its description
@@ -76,6 +81,7 @@ export class TriggerProvider {
       const before = i > 0 ? text.charAt(i - 1) : ''
       if (!provider.acceptsBoundary(before, i)) return null
       const prefix = text.slice(i + 1, end)
+      if (prefix.length < provider.minPrefixLength) return null
       if (!provider.acceptsPrefix(prefix)) return null
       return Object.freeze({ provider: provider, start: i, end: end, prefix: prefix })
     }
@@ -105,6 +111,39 @@ export class TriggerProvider {
    * @returns {boolean}
    */
   acceptsPrefix(prefix) { return !/\s/.test(prefix) }
+
+  /**
+   * How many characters must follow the trigger before the picker opens at all.
+   * A SCANNER RULE, not a search one: below it there is no token, so nothing is
+   * asked and nothing is abandoned — backspacing to the bare trigger leaves the
+   * next keystroke free to open it again.
+   *
+   * The DEFAULT is 0 — the bare trigger opens the picker, which is the browse
+   * gesture `/` and `{` offer. A provider whose trigger character is ordinary
+   * punctuation raises it, so a colon in prose stays a colon.
+   * @returns {number}
+   */
+  get minPrefixLength() { return 0 }
+
+  /**
+   * HOW this provider's candidates are arranged — a list of named rows, or a
+   * grid of cells with a caption. Declared as DATA the popover reads, like
+   * `providesIcons` beside it, so a provider gains a grid by stating its shape
+   * rather than by drawing one.
+   * @returns {TriggerLayout}
+   */
+  get layout() { return TriggerLayout.LIST }
+
+  /**
+   * What the selected candidate is CALLED, shown under a picker whose layout
+   * declares a caption. The house default reads the name a candidate already
+   * carries; a provider whose candidates are named otherwise overrides it.
+   * @param {any} item @returns {string}
+   */
+  caption(item) {
+    const c = item || {}
+    return c.name || c.label || c.title || ''
+  }
 
   /**
    * Does this provider's picker carry an ICON COLUMN? A trait rather than an
@@ -235,6 +274,26 @@ export class TriggerProvider {
     frag.appendChild(descEl)
     return frag
   }
+
+  /**
+   * The house CELL, the grid's counterpart to `renderRow`: one glyph, centred,
+   * at the size that makes a wall of them readable. The cell's box — its size,
+   * its selected affordance — is the popover's, exactly as the row's is; what
+   * arrives here is the mark inside it.
+   * @protected
+   * @param {string} glyph @param {string} [label] the accessible name
+   * @returns {DocumentFragment}
+   */
+  renderCell(glyph, label) {
+    const frag = document.createDocumentFragment()
+    const el = document.createElement('span')
+    el.className = 'command-hint__glyph'
+    el.style.cssText = 'font-size: 20px; line-height: 1;'
+    el.textContent = glyph
+    if (label) el.setAttribute('aria-label', label)
+    frag.appendChild(el)
+    return frag
+  }
 }
 
 /**
@@ -348,7 +407,7 @@ export class Macro {
    * @param {TriggerToken} _token
    * @param {string} [_arg]
    *   the ARGUMENT TAIL — whatever followed `BlockInsertProvider.ARG_SEPARATOR`
-   *   in the typed token, e.g. `go` from `{fence:go`. Undefined when the token
+   *   in the typed token, e.g. `go` from `{fence=go`. Undefined when the token
    *   carried none. A subclass that takes no argument simply never reads it.
    */
   run(_host, _token, _arg) {
@@ -464,16 +523,16 @@ export class BlockInsertProvider extends TriggerProvider {
   /** @type {MacroLister} */ #macros
 
   /**
-   * The token's HEAD/ARGUMENT divider — `{fence:go` matches the `fence` entry
+   * The token's HEAD/ARGUMENT divider — `{fence=go` matches the `fence` entry
    * and carries `go` as its `run` argument. Lives on the class the split logic
    * belongs to; no other trigger reads it, so it has no reason to be a scanner
-   * concept. Chosen over a space because the scanner's default `acceptsPrefix`
-   * already ends a token at the first whitespace (a macro is named in one
-   * word) — `:` passes that predicate unchanged, so an argument needs no
-   * scanner override.
+   * concept. It must be a character that is neither whitespace (which would end
+   * the token under the default `acceptsPrefix`) nor a TRIGGER: the scan stops
+   * at the nearest trigger character whatever the answer, so a separator that
+   * is also a trigger would close this picker in the middle of its own token.
    * @type {string}
    */
-  static ARG_SEPARATOR = ':'
+  static ARG_SEPARATOR = '='
 
   /**
    * @param {MacroLister} macroLister  the catalog composed for this mount.
@@ -498,7 +557,7 @@ export class BlockInsertProvider extends TriggerProvider {
   /**
    * Splits a typed prefix at `ARG_SEPARATOR` into the entry-matching HEAD and
    * the ARGUMENT past it. `{table` and `{fence` (no separator yet) carry no
-   * argument; `{fence:` carries an empty one — the author typed the separator
+   * argument; `{fence=` carries an empty one — the author typed the separator
    * but nothing after it.
    * @param {string} prefix @returns {{head: string, arg: string|undefined}}
    */
@@ -535,6 +594,59 @@ export class BlockInsertProvider extends TriggerProvider {
   accept(macro, token, host) {
     macro.run(host, token, BlockInsertProvider.#split(token.prefix).arg)
   }
+}
+
+/**
+ * The `:` picker's shape: nine glyphs to a row, eight rows before it scrolls,
+ * and a caption — a wall of bare characters cannot say what is selected, so the
+ * name goes underneath. Nine columns sit inside the caret placement's width
+ * without widening it.
+ */
+const EMOJI_GRID = new TriggerLayout({ columns: 9, rows: 8, hasCaption: true })
+
+export class EmojiProvider extends TriggerProvider {
+  /** @type {EmojiCatalog} */ #catalog
+
+  /** @param {EmojiCatalog} [catalog]  the curated table; a test may bring its own */
+  constructor(catalog) {
+    super()
+    this.#catalog = catalog || new EmojiCatalog()
+  }
+
+  get trigger() { return ':' }
+
+  /** A wall of glyphs, not a list of names. @returns {TriggerLayout} */
+  get layout() { return EMOJI_GRID }
+
+  /**
+   * A COLON IS PUNCTUATION FIRST. The boundary rule already makes `Note: this`
+   * and `10:30` literal, but a colon at the start of a line is ordinary too — so
+   * the picker waits for a character to narrow on rather than offering the whole
+   * table to every stray `:`. There is deliberately no browse gesture here.
+   * @returns {number}
+   */
+  get minPrefixLength() { return 1 }
+
+  /** The table is local, so a SYNCHRONOUS filter.
+   *  @param {string} prefix @returns {import('./emoji-catalog.js').Emoji[]} */
+  search(prefix) { return this.#catalog.search(prefix) }
+
+  /** @param {import('./emoji-catalog.js').Emoji} emoji @returns {Node} */
+  render(emoji) { return this.renderCell(emoji.glyph, emoji.name) }
+
+  /** @param {import('./emoji-catalog.js').Emoji} emoji @returns {string} */
+  caption(emoji) { return emoji ? emoji.name : '' }
+
+  /**
+   * An emoji is a CHARACTER IN PROSE, so accepting one is a text completion and
+   * nothing else — no block, no attrs, no round trip. It goes through the shared
+   * `replaceToken`, which is what gives it the same trailing-gap behaviour as
+   * every other completion.
+   * @param {import('./emoji-catalog.js').Emoji} emoji
+   * @param {TriggerToken} token
+   * @param {import('./trigger-host.js').TriggerHost} host
+   */
+  accept(emoji, token, host) { this.replaceToken(host, token, emoji.glyph) }
 }
 
 /**

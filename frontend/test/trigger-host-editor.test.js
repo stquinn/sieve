@@ -769,11 +769,11 @@ describe('a preset macro that takes the token\'s argument tail', () => {
     })
   }
 
-  it('tags the language from an UNAMBIGUOUS PARTIAL head — {fen:go still finds Fence', async () => {
+  it('tags the language from an UNAMBIGUOUS PARTIAL head — {fen=go still finds Fence', async () => {
     makeEditor(PARA('{fen'))
     mountPicker({ kinds: macrosOf([], fencePreset()) })
     caretAt(5)
-    type(':go')
+    type('=go')
     await settle()
     expect(isOpen()).toBe(true)
 

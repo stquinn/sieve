@@ -14,6 +14,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { TriggerPopover } from '../src/static/shell/trigger-popover.js'
 import { SlashCommandProvider, MentionProvider, TriggerProvider } from '../src/static/shell/trigger-providers.js'
+import { TriggerLayout } from '../src/static/shell/trigger-layout.js'
 import { TextareaHost } from './helpers/textarea-host.js'
 import { ContractViolation } from '../src/static/contract/sieve-block.js'
 
@@ -616,5 +617,189 @@ describe('TriggerPopover — the dry stop', () => {
     await vi.advanceTimersByTimeAsync(10)
     expect(search).toHaveBeenCalledWith('author', undefined)
     popover.destroy()
+  })
+})
+
+// ── The LAYOUT seam: a list of rows, or a grid of cells (#157) ────────────────
+//
+// A provider declares its shape as DATA (columns, rows, caption) and the popover
+// reads it — so a grid is a declaration and not a second popover. These pin the
+// popover's half: what it draws, and the arrow model the shape implies. The
+// emoji picker's own declarations are in emoji-picker.test.js.
+
+describe('TriggerPopover — a GRID layout', () => {
+  /** A provider over single letters, gridded 3 wide, so a 2-D move is countable. */
+  class GridProvider extends TriggerProvider {
+    /** @param {Partial<import('../src/static/shell/trigger-layout.js').TriggerLayoutSpec>} [spec] */
+    constructor(spec) {
+      super()
+      this.declared = new TriggerLayout(Object.assign({ columns: 3, rows: 2, hasCaption: true }, spec))
+    }
+
+    get trigger() { return ':' }
+
+    get minPrefixLength() { return 1 }
+
+    get layout() { return this.declared }
+
+    /** @param {string} prefix */
+    search(prefix) {
+      return 'abcdefg'.split('').filter((c) => c.startsWith(prefix) || prefix === 'x')
+        .map((c) => ({ glyph: c.toUpperCase(), name: 'letter ' + c }))
+    }
+
+    /** @param {{glyph: string, name: string}} item */
+    render(item) { return this.renderCell(item.glyph, item.name) }
+
+    /** @param {{glyph: string}} item @param {any} token @param {any} host */
+    accept(item, token, host) { this.replaceToken(host, token, item.glyph) }
+  }
+
+  let textarea
+  let popover
+
+  /** @param {Partial<import('../src/static/shell/trigger-layout.js').TriggerLayoutSpec>} [spec] */
+  function mountGrid(spec) {
+    const dom = mountDom()
+    textarea = dom.textarea
+    popover = new TriggerPopover(new TextareaHost(textarea), [new GridProvider(spec)])
+    return popover
+  }
+
+  const cells = () => Array.from(document.querySelectorAll('.command-hint-item--cell'))
+  const caption = () => /** @type {HTMLElement|null} */ (document.querySelector('.command-hint-caption'))
+  const activeAt = () => cells().findIndex((c) => c.classList.contains('is-active'))
+
+  afterEach(() => {
+    popover.destroy()
+    document.body.innerHTML = ''
+  })
+
+  const press = (key) => textarea.dispatchEvent(new window.KeyboardEvent('keydown', { key, bubbles: true }))
+
+  it('draws one CELL per candidate, and the container as the declared columns', () => {
+    mountGrid()
+    type(textarea, ':x')
+
+    expect(cells().length).toBe(7)
+    expect(cells()[0].textContent).toBe('A')
+    const el = /** @type {HTMLElement} */ (popoverEl())
+    expect(el.style.display).toBe('grid')
+    expect(el.style.gridTemplateColumns).toContain('repeat(3,')
+  })
+
+  it('captions the SELECTED cell, which is what makes a wall of glyphs readable', () => {
+    mountGrid()
+    type(textarea, ':x')
+
+    expect(caption()?.textContent).toBe('letter a')
+    press('ArrowRight')
+    expect(caption()?.textContent).toBe('letter b')
+  })
+
+  it('omits the caption when the layout declares none', () => {
+    mountGrid({ hasCaption: false })
+    type(textarea, ':x')
+
+    expect(cells().length).toBe(7)
+    expect(caption()).toBeNull()
+  })
+
+  it('marks the selected cell, so what is selected is visible without reading it', () => {
+    mountGrid()
+    type(textarea, ':x')
+
+    expect(activeAt()).toBe(0)
+    const marked = /** @type {HTMLElement} */ (cells()[0])
+    expect(marked.style.boxShadow).toContain('inset')
+    expect(marked.style.background).not.toBe('transparent')
+  })
+
+  // THE ARROW MODEL FOLLOWS THE SHAPE. ↑/↓ step by a whole ROW in a grid, and
+  // ←/→ become the picker's only where there is another column to reach.
+  it('steps ↓/↑ by a whole row', () => {
+    mountGrid()
+    type(textarea, ':x')
+
+    press('ArrowDown')
+    expect(activeAt()).toBe(3)
+    press('ArrowUp')
+    expect(activeAt()).toBe(0)
+  })
+
+  it('steps ←/→ by one cell, wrapping at both ends', () => {
+    mountGrid()
+    type(textarea, ':x')
+
+    press('ArrowRight')
+    expect(activeAt()).toBe(1)
+    press('ArrowLeft')
+    expect(activeAt()).toBe(0)
+    press('ArrowLeft')
+    expect(activeAt()).toBe(6)
+  })
+
+  it('caps its height at the declared rows, so a long table scrolls', () => {
+    mountGrid()
+    type(textarea, ':x')
+
+    const el = /** @type {HTMLElement} */ (popoverEl())
+    expect(parseInt(el.style.maxHeight, 10)).toBeLessThan(320)
+  })
+
+  it('accepts a cell on Enter, writing the glyph into the text', () => {
+    mountGrid()
+    type(textarea, 'hi :x')
+
+    press('ArrowRight')
+    press('Enter')
+
+    expect(textarea.value).toBe('hi B ')
+  })
+
+  it('stays SHUT on the bare trigger — minPrefixLength is a scanner rule', () => {
+    mountGrid()
+    type(textarea, 'hello :')
+
+    expect(/** @type {HTMLElement} */ (popoverEl()).style.display).toBe('none')
+
+    type(textarea, 'hello :a')
+    expect(/** @type {HTMLElement} */ (popoverEl()).style.display).not.toBe('none')
+  })
+})
+
+describe('TriggerPopover — a LIST leaves ←/→ to the caret', () => {
+  let textarea
+  let popover
+
+  beforeEach(() => {
+    const dom = mountDom()
+    textarea = dom.textarea
+    popover = new TriggerPopover(new TextareaHost(textarea), [
+      new SlashCommandProvider({ list: () => [{ name: 'btw' }, { name: 'buffer' }] })
+    ])
+  })
+
+  afterEach(() => {
+    popover.destroy()
+    document.body.innerHTML = ''
+  })
+
+  // A completion being narrowed is still text being typed: taking ←/→ from a
+  // one-column list would strand the caret for every trigger that has one.
+  it('does not claim ←/→ in a one-column list', () => {
+    type(textarea, '/b')
+    const e = new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+    textarea.dispatchEvent(e)
+
+    expect(e.defaultPrevented).toBe(false)
+    expect(items()[0].classList.contains('is-active')).toBe(true)
+  })
+
+  it('still steps ↓/↑ by one, which is what a row is in a list', () => {
+    type(textarea, '/b')
+    textarea.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+
+    expect(items()[1].classList.contains('is-active')).toBe(true)
   })
 })
