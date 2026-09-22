@@ -836,7 +836,7 @@ Table replaces the generic Delete Block there: one act, one entry. A caret insid
 a fence adds Language →, whose entries are **the languages the highlighter is
 registered for** (`getLowlight().listLanguages()`, never a hand-written list),
 sorted, with Plain — the absence of a tag — first and a tick on the fence's
-current one. It is the discoverable route to what `{fence:go` types.
+current one. It is the discoverable route to what `{fence=go` types.
 
 **The draft's own two verbs.** Right-clicking on a `@Title` token that the draft
 has attached offers Remove Attachment, which does exactly what the chip's ✕ does
@@ -847,7 +847,7 @@ remember. Clear Draft retires the whole draft — container, lens and undo histo
 — so it is styled as the destructive verb it is; the panel stays open and the
 caret lands in the fresh message.
 
-## Trigger picker (revised 2026-08-19, #74 P4/P5/P6 + #38)
+## Trigger picker (revised 2026-09-22, #74 P4/P5/P6 + #38 + #157)
 
 **ONE picker, two hosts.** The `@`/`/` picker is a single `TriggerPopover` over a
 `TriggerHost`. Both hosts are now ProseMirror carets (`ProseMirrorHost`, a
@@ -872,6 +872,36 @@ declares one, every row of that picker carries the slot — empty for an entry w
 no icon — so the names stay in a column. `/` and `@` declare none and run flush
 left; `{` declares one.
 
+**A picker is a LIST or a GRID, and the provider declares which** (2026-09-22,
+#157). The shape is DATA the provider states — `columns`, how many `rows` are
+visible before it scrolls, and whether it carries a `hasCaption` footer
+(`TriggerProvider.layout`, a `TriggerLayout`) — not a second popover and not
+drawing a provider does itself. The default is the one-column list every trigger
+had before there was a choice; `:` declares nine columns, eight rows and a
+caption. Two rules follow from the shape and are NORMATIVE:
+
+- **↑/↓ step by a whole ROW**, which in a one-column list is one candidate. Both
+  wrap at the ends, as they always have.
+- **←/→ belong to the CARET in a list and to the PICKER in a grid.** A completion
+  being narrowed is still text being typed, so a one-column picker must let the
+  horizontal arrows through; a grid claims them because there is another column
+  to reach. The claim is read off `layout.columns > 1` and nowhere else.
+
+**A caption names the selected candidate** for a layout that declares one: a grid
+of bare glyphs cannot say what is selected, so the name goes in a sticky footer,
+and the selected CELL carries its own affordance (a filled inset border) rather
+than the list row's left bar. What the caption says is
+`TriggerProvider.caption(candidate)` — overridable, defaulting to whichever name
+the candidate already carries.
+
+**A provider MAY require characters past its trigger before opening at all**
+(`TriggerProvider.minPrefixLength`, default 0). It is a SCANNER rule: below the
+floor there is no token, so nothing is searched and nothing is abandoned, and
+backspacing to the bare trigger leaves the next keystroke free to open the picker.
+`/` and `{` keep the floor at 0 — the bare trigger is their browse gesture — and
+`:` sets it to 1, because a colon at the start of a line is punctuation far more
+often than it is an emoji. **`:` therefore has no browse gesture.**
+
 ### In the composer (revised 2026-08-28, #118)
 
 The Ask panel's message is written in a **composer mount** — the document-editor
@@ -890,7 +920,8 @@ Everything else is the editing surface's, unchanged.
 
 | Key | While the picker is open |
 |---|---|
-| ↓ / ↑ | move the selection (wraps; scrolls the active row into view — #63) |
+| ↓ / ↑ | move the selection by a row (wraps; scrolls the active row into view — #63) |
+| ← / → | not claimed — the composer's pickers are all lists (see the layout rule above) |
 | Tab | accept the selected candidate |
 | Enter (no Shift, Mod held or not) | accept the selected candidate — the mount's `Mod+Enter` send claim is **not** reached, even when Mod is held |
 | Escape | **abandon the token** — the picker closes and does not reopen as you type on; the panel's dismiss is **not** reached |
@@ -1032,9 +1063,18 @@ that a message aimed at a command still shows what it will act on.
 
 ### The same picker in the document (#38)
 
-The editor hosts the SAME popover, with two triggers: `@` (mention a document)
-and `{` (insert a block, #91). `/` is a composer verb — a slash command runs
-against the message being written, and a document has no message.
+The editor hosts the SAME popover, with three triggers: `@` (mention a document),
+`{` (insert a block, #91) and `:` (insert an emoji, #157). `/` is a composer verb
+— a slash command runs against the message being written, and a document has no
+message.
+
+**`:` inserts an EMOJI.** Its boundary is the trigger default, so `Note: this`,
+`10:30` and `https://x` are literal colons; it opens only once a character
+follows (above), and never on a bare `:`. It is drawn as a nine-wide grid of
+glyphs with the selected one named underneath, filtered on a curated table of
+names and keywords — the old-school sequences are keywords in that table, so `:)`
+and `:D` narrow to their face and Enter inserts it. Accepting one is a plain text
+completion: the glyph is a character in prose, and no block is made.
 
 **Where the picker's keys sit in the precedence order.** The popover binds
 `keydown` in the CAPTURE phase on `view.dom`. ProseMirror installs exactly one
@@ -1048,7 +1088,8 @@ kind declares anything for it.
 
 | Key | While the picker is open in the editor |
 |---|---|
-| ↓ / ↑ | move the selection — the caret does not move, and no block's arrow behaviour (caret stops included) is reached |
+| ↓ / ↑ | move the selection by a ROW — the caret does not move, and no block's arrow behaviour (caret stops included) is reached |
+| ← / → | in a GRID picker (`:`), move the selection by one cell. In a LIST picker (`@`, `{`), **not claimed** — they move the caret, and the picker follows the token |
 | Tab / Shift+Tab | accept the selected candidate. Shift+Tab is matched as Tab **or** `ISO_Left_Tab` **or** keyCode 9 — WebKitGTK reports the X11 keysym where Chrome says 'Tab', and matching the name alone let Shift+Tab fall through to the policy's Tab backstop |
 | Enter (no Shift) | accept — the paragraph is **not** split, and `policyEnterKeydown` is never reached |
 | Shift+Enter | falls through: the universal block escape keeps its meaning even with a list up |
@@ -1059,7 +1100,9 @@ A SHUT picker intercepts nothing whatsoever — every key above behaves as the
 matrix at the top of this document says.
 
 **The picker never arms where `suppressTriggers` is declared** (Policy
-declaration, above), so a `@Override` in a code or diagram block is text.
+declaration, above), so a `@Override` — or a `:` in a Python dict literal — in a
+code or diagram block is text. It is a PER-BLOCK policy, not a per-provider one,
+so a new trigger inherits it.
 Elsewhere the token rules are the composer's, unchanged: `@` keeps the default
 boundary (so `me@example` is an address), spans up to 4 words / 60 chars, and
 abandons on Escape, on going dry, and on acceptance.
@@ -1071,17 +1114,24 @@ named in one word. A bare `{` lists everything, which is the browse gesture; a
 prefix filters on the entry's label and its second name alike, so `co` and `code`
 both reach Code.
 
-**An entry MAY take an ARGUMENT, carried after `:` in the same token** — `{fence:go`
-matches the Fence entry on `fence` and hands `go` to what it runs. `:` needs no
+**An entry MAY take an ARGUMENT, carried after `=` in the same token** — `{fence=go`
+matches the Fence entry on `fence` and hands `go` to what it runs. `=` needs no
 scanner change: it is not whitespace, so it already passes the token's default
-`acceptsPrefix`, and MATCHING is unaffected — only the text before `:` (the
-HEAD) is compared against an entry's label/name, so `{fen:go` and `{f:go`
+`acceptsPrefix`, and MATCHING is unaffected — only the text before `=` (the
+HEAD) is compared against an entry's label/name, so `{fen=go` and `{f=go`
 (while unambiguous) reach Fence exactly as `{fen`/`{f` would with no argument at
 all. The argument is read off the TOKEN at accept time, not off the candidate
 that matched it, so it survives a partial-head match undamaged. `{fence` with
-no `:` at all carries no argument (`undefined`); `{fence:` with nothing after
+no `=` at all carries no argument (`undefined`); `{fence=` with nothing after
 the separator carries an empty one — an entry that ignores the argument (every
 entry but Fence, today) is unaffected either way.
+
+**THE SEPARATOR MAY NEVER BE A TRIGGER CHARACTER** (revised 2026-09-22, #157 —
+it was `:` until `:` became the emoji trigger). The scan stops at the trigger
+character NEAREST the caret whatever that provider then answers, so a separator
+that is also a trigger claims the scan from inside this token, fails its own
+boundary test on the letter before it, and closes the `{` picker in the middle of
+its own argument.
 
 **MACROS ARE TO THE FRONTEND WHAT COMMANDS ARE TO THE BACKEND.** A command is a
 backend verb: declared in Go beside the logic it runs, enumerated to clients,
@@ -1099,7 +1149,7 @@ The picker offers three kinds of entry, each declared where its capability lives
 | Web Clip | the workspace, which owns the URL dialog | the token is deleted, then the dialog opens |
 | Attach File | the workspace, fronting the toolbar's own attach flow | the token is deleted, then the anchor is captured and the OS file picker opens — the paste pipeline decides the block, exactly as it does for the toolbar button |
 | Table, Quote, Divider | the WYSIWYG surface, as class-level presets — the toolbar's native insert group, offered through a second door | the token is deleted, then the surface runs the toolbar's own command (`insertTable`, `toggleBlockquote`, `setHorizontalRule`) |
-| Fence | the WYSIWYG surface, as a class-level preset — a NATIVE code block, distinct from the Sieve Code block above it | the token is deleted, then the surface runs `setCodeBlock`, tagged with the token's argument as `language` when one was typed (`{fence:go`), untagged otherwise |
+| Fence | the WYSIWYG surface, as a class-level preset — a NATIVE code block, distinct from the Sieve Code block above it | the token is deleted, then the surface runs `setCodeBlock`, tagged with the token's argument as `language` when one was typed (`{fence=go`), untagged otherwise |
 
 The BLOCK KINDS offered are the ones a keystroke can make out of nothing. Every
 other kind is born another way — prose is typed, `ai-block` comes from Ask,

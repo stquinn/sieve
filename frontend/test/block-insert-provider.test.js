@@ -10,7 +10,7 @@
 // kind to create, an ActionMacro clears the token itself and then calls a verb.
 import { describe, it, expect, vi } from 'vitest'
 import {
-  TriggerProvider, SlashCommandProvider, BlockInsertProvider, Macro, BlockMacro, ActionMacro,
+  TriggerProvider, SlashCommandProvider, BlockInsertProvider, EmojiProvider, Macro, BlockMacro, ActionMacro,
   SUBGRID_ROWS,
 } from '../src/static/shell/trigger-providers.js'
 import { TriggerHost } from '../src/static/shell/trigger-host.js'
@@ -33,7 +33,7 @@ function tableMacro(action = () => {}) {
 }
 
 /** The Fence preset's shape (#118 bonus): an ActionMacro whose action reads the
- *  token's argument tail — `{fence:go` — as the language. */
+ *  token's argument tail — `{fence=go` — as the language. */
 function fenceMacro(action = () => {}) {
   return new ActionMacro({
     label: 'Fence', name: 'fence', description: 'A fenced code block',
@@ -118,6 +118,21 @@ describe('BlockInsertProvider — the token under the caret', () => {
     expect(token?.prefix).toBe('log')
     expect(token?.start).toBe(6)
   })
+
+  // WHY THE SEPARATOR IS `=` AND NOT `:` (#157). The scan stops at the NEAREST
+  // trigger character whatever the answer, so once `:` is a trigger a `:` inside
+  // this token would claim the scan, fail its boundary on the letter before it,
+  // and close this picker in the middle of its own argument. The separator has
+  // to be a character no provider triggers on, and this is the test that says so.
+  it('survives an argument while `:` is a LIVE trigger', () => {
+    const all = providers()
+    all.set(':', new EmojiProvider())
+
+    const token = TriggerProvider.scanToken('{fence=go', 9, all)
+
+    expect(token?.provider.trigger).toBe('{')
+    expect(token?.prefix).toBe('fence=go')
+  })
 })
 
 describe('BlockInsertProvider — search', () => {
@@ -148,25 +163,25 @@ describe('BlockInsertProvider — search', () => {
     expect(Array.isArray(provider().search('co'))).toBe(true)
   })
 
-  // THE ARGUMENT SEPARATOR (#118 bonus): `{fence:go` is one token under the
-  // scanner's own default rules (`:` is not whitespace, so acceptsPrefix needs
+  // THE ARGUMENT SEPARATOR (#118 bonus): `{fence=go` is one token under the
+  // scanner's own default rules (`=` is not whitespace, so acceptsPrefix needs
   // no override), and matching stays HEAD-ONLY — the argument tail plays no
   // part in finding the entry, only in what it is handed at accept().
-  describe('the `:` argument separator — matching stops at the head', () => {
+  describe('the `=` argument separator — matching stops at the head', () => {
     it('matches the exact head, ignoring everything past the separator', () => {
-      expect(provider([fenceMacro()]).search('fence:go').map((m) => m.name)).toEqual(['fence'])
+      expect(provider([fenceMacro()]).search('fence=go').map((m) => m.name)).toEqual(['fence'])
     })
 
     it('matches an UNAMBIGUOUS PARTIAL head exactly as an ordinary prefix would', () => {
-      expect(provider([fenceMacro()]).search('fen:go').map((m) => m.name)).toEqual(['fence'])
+      expect(provider([fenceMacro()]).search('fen=go').map((m) => m.name)).toEqual(['fence'])
     })
 
     it('matches down to a single unambiguous letter — the separator changes nothing about matching', () => {
-      expect(provider([fenceMacro()]).search('f:go').map((m) => m.name)).toEqual(['fence'])
+      expect(provider([fenceMacro()]).search('f=go').map((m) => m.name)).toEqual(['fence'])
     })
 
     it('an EMPTY head before the separator lists everything, same as a bare `{`', () => {
-      expect(provider([fenceMacro()]).search(':go').map((m) => m.name).sort())
+      expect(provider([fenceMacro()]).search('=go').map((m) => m.name).sort())
         .toEqual(['code', 'diagram', 'fence', 'log', 'web-clip'].sort())
     })
   })
@@ -233,12 +248,12 @@ describe('BlockInsertProvider — acceptance RUNS THE ENTRY', () => {
   // time, not off the candidate that matched it, so a partial-head match still
   // carries the full typed argument.
   describe('the argument tail travels to run()', () => {
-    it('carries the tail after `:`, even reached via a PARTIAL head match', () => {
+    it('carries the tail after `=`, even reached via a PARTIAL head match', () => {
       const host = new RecordingDocumentHost()
       const action = vi.fn()
       const p = provider([fenceMacro(action)])
-      const item = p.search('fen:go')[0]
-      const token = Object.freeze({ provider: p, start: 0, end: 7, prefix: 'fen:go' })
+      const item = p.search('fen=go')[0]
+      const token = Object.freeze({ provider: p, start: 0, end: 7, prefix: 'fen=go' })
 
       p.accept(item, token, /** @type {any} */ (host))
 
@@ -261,8 +276,8 @@ describe('BlockInsertProvider — acceptance RUNS THE ENTRY', () => {
       const host = new RecordingDocumentHost()
       const action = vi.fn()
       const p = provider([fenceMacro(action)])
-      const item = p.search('fence:')[0]
-      const token = Object.freeze({ provider: p, start: 0, end: 7, prefix: 'fence:' })
+      const item = p.search('fence=')[0]
+      const token = Object.freeze({ provider: p, start: 0, end: 7, prefix: 'fence=' })
 
       p.accept(item, token, /** @type {any} */ (host))
 

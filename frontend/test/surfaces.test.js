@@ -2076,7 +2076,7 @@ describe('WysiwygSurface.macrosFor — composing one mount\'s macros', () => {
   })
 
   // The Fence preset is a `{` macro AND a target of the token's argument tail
-  // (#118 bonus): `{fence:go` carries `go` past the picker into `run` as an
+  // (#118 bonus): `{fence=go` carries `go` past the picker into `run` as an
   // ordinary token argument, not a Fence-specific wire.
   describe('Fence — the language rides the token\'s argument tail', () => {
     it('clears the token, then sets a plain code block when no language was typed', () => {
@@ -2090,7 +2090,7 @@ describe('WysiwygSurface.macrosFor — composing one mount\'s macros', () => {
       expect(pane.calls).toEqual([['focus'], ['setCodeBlock', undefined], ['run']])
     })
 
-    it('tags the language when the trigger runs it with an argument — the `{fence:go` path', () => {
+    it('tags the language when the trigger runs it with an argument — the `{fence=go` path', () => {
       const pane = paneStub()
       const host = /** @type {any} */ ({ replaceRange: () => {} })
 
@@ -2099,7 +2099,7 @@ describe('WysiwygSurface.macrosFor — composing one mount\'s macros', () => {
       expect(pane.calls).toEqual([['focus'], ['setCodeBlock', { language: 'go' }], ['run']])
     })
 
-    it('treats a bare separator (`{fence:`) as no language, same as none typed', () => {
+    it('treats a bare separator (`{fence=`) as no language, same as none typed', () => {
       const pane = paneStub()
       const host = /** @type {any} */ ({ replaceRange: () => {} })
 

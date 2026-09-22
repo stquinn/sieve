@@ -659,7 +659,7 @@ import { listRegisteredLanguages } from '../../renderers/highlighting.js'
         action: paneCommand(editor, 'deleteTable') })
     }
 
-    // The fence's language, as the discoverable route to what `{fence:go` types.
+    // The fence's language, as the discoverable route to what `{fence=go` types.
     var fence = enclosingNode(sel.$from, { codeBlock: true })
     if (fence) {
       items.push({ type: 'divider' })
