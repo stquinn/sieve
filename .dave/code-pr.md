@@ -1,5 +1,3 @@
-image: git.stephenquinn.ie/stephen/sieve-ci:latest
-
 # Sieve: class code-pr
 
 `CLAUDE.md` is the authority on conventions, package boundaries and words; this file only
