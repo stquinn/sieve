@@ -1,6 +1,7 @@
 package processors
 
 import (
+	"encoding/json"
 	"sieve/sieve/block"
 	"testing"
 )
@@ -14,6 +15,20 @@ func aiBlockPaster() *AIBlockProcessor {
 
 func fencedAIBlock(body string) []block.ContentEntry {
 	return []block.ContentEntry{{MIMEType: "text/plain", Content: "```ai-block\n" + body + "\n```"}}
+}
+
+// copiedAIBlock is the clipboard as an in-app copy of a whole ai-block leaves it:
+// the sieve/ai-block view of the block's attrs, plus the text/plain a foreign
+// application would read instead.
+func copiedAIBlock(attrs map[string]interface{}, plain string) []block.ContentEntry {
+	view, err := json.Marshal(attrs)
+	if err != nil {
+		panic(err)
+	}
+	return []block.ContentEntry{
+		{MIMEType: "text/plain", Content: plain},
+		{MIMEType: "sieve/ai-block", Content: string(view)},
+	}
 }
 
 // Pasting an ai-block's own fenced form re-creates the block. It is the form a
@@ -92,5 +107,53 @@ func TestAIBlockPaste_malformedYamlDeclines(t *testing.T) {
 	entries := fencedAIBlock("\tnot: [valid, yaml")
 	if aiBlockPaster().Transform(entries, "doc-1", "ab-new", block.ActionPaste) != nil {
 		t.Error("expected a malformed fence body to yield no attrs")
+	}
+}
+
+// ── The clipboard view ───────────────────────────────────────────────────────
+// The OTHER form IsSupportedContent claims: the sieve/ai-block view an in-app
+// copy of a whole block puts on the clipboard. It reaches FirstPasteMatch's
+// pass 1, so a copied ai-block comes back as an ai-block rather than as whatever
+// its answer text happens to read as.
+
+func TestAIBlockPaste_clipboardViewIsClaimedAndRebuilt(t *testing.T) {
+	p := aiBlockPaster()
+	// An answer holding code: the text/plain half reads as code, so a paste that
+	// fell through to detection would claim it for the code kind.
+	entries := copiedAIBlock(map[string]interface{}{
+		"id": "ab-1", "kind": "ai-block", "status": "COMPLETE", "type": "ASK",
+		"question": "why?", "answer": "```go\nfmt.Println(1)\n```", "ref": "blk-9",
+	}, "```go\nfmt.Println(1)\n```")
+
+	if !p.IsSupportedContent(entries).Has(block.ActionPaste) {
+		t.Fatal("the sieve/ai-block clipboard view should be claimed for paste")
+	}
+
+	overrides := p.Transform(entries, "doc-1", "ab-new", block.ActionPaste)
+	if overrides == nil {
+		t.Fatal("expected the clipboard view to yield attrs")
+	}
+	for key, want := range map[string]interface{}{
+		"status": "COMPLETE", "type": "ASK", "question": "why?",
+		"answer": "```go\nfmt.Println(1)\n```", "ref": "blk-9",
+	} {
+		if overrides[key] != want {
+			t.Errorf("attr %q = %v, want %v", key, overrides[key], want)
+		}
+	}
+	// The pasted block is a NEW block: the framework mints its id.
+	if _, present := overrides["id"]; present {
+		t.Error("a pasted copy must not inherit the original's id")
+	}
+}
+
+func TestAIBlockPaste_declinesAnotherKindsClipboardView(t *testing.T) {
+	p := aiBlockPaster()
+	entries := []block.ContentEntry{{MIMEType: "sieve/code", Content: `{"kind":"code","source":"x"}`}}
+	if p.IsSupportedContent(entries).Has(block.ActionPaste) {
+		t.Error("another kind's clipboard view should not be claimed")
+	}
+	if p.Transform(entries, "doc-1", "ab-new", block.ActionPaste) != nil {
+		t.Error("another kind's clipboard view should yield no attrs")
 	}
 }
