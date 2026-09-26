@@ -10,9 +10,16 @@
 import { Extension, Node, Mark } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
+import { Table } from '@tiptap/extension-table'
+import { TableRow } from '@tiptap/extension-table-row'
+import { TableHeader } from '@tiptap/extension-table-header'
+import { TableCell } from '@tiptap/extension-table-cell'
+import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
+import { common, createLowlight } from 'lowlight'
 
 Object.assign(/** @type {any} */ (globalThis).TipTap, {
   Extension, Node, Mark, Plugin, PluginKey, Decoration, DecorationSet,
+  Table, TableRow, TableHeader, TableCell, CodeBlockLowlight, common, createLowlight,
 })
 
 export {}

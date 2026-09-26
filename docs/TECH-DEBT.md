@@ -449,7 +449,18 @@ The ancestor of all four is `smart-link` itself: introduced 2026-05-02 (`e391458
 
 **Retires when:** either an element-grained mutation exists and the record/edit question is answered for an answered exchange, or the gesture is deliberately re-expressed as a new turn and this entry closes as won't-do.
 
-## S-C: headerless tables serialize as raw HTML (vendored tiptap-markdown fallback)
+## S-C: headerless tables serialize as raw HTML (vendored tiptap-markdown fallback) — ✅ RETIRED 2026-09-26 (#162)
+
+**RETIRED:** The app now owns table serialization outright. `TableMarkdown`
+(`frontend/src/static/lens/document-editor/surfaces/table-markdown.js`) replaces
+tiptap-markdown's table spec on the node itself — the third route this entry did not
+foresee, needing neither a `bundle:tiptap` export nor a copy of the vendored fallback. A
+headerless table is now written as an HTML skeleton whose cells hold MARKDOWN
+(`<tr><td>` ⏎⏎ content ⏎⏎ `</td></tr>`), so the live-DOM dump and its data-ids, classes
+and inline styles are gone and the table loads back as itself. Pinned by the "no header
+row" case in `frontend/test/table-markdown.test.js`. Pipe markdown, the fix this entry
+proposed, turned out to be the wrong target: it cannot hold a headerless table, nor
+anything block-level in a cell. Original entry below for history.
 
 **What:** `tiptap-markdown`'s `isMarkdownSerializable` requires an all-`tableHeader` first row; a headerless table falls back to a raw live-DOM HTML dump (data-ids, classes, inline styles included), which the record renders as escaped tags. The in-app mint paths are closed (#118: the table preset always creates a header; the context menu's only header verb is a conditional "Add Header Row" — the OFF direction was removed because markdown storage cannot hold a headerless GFM table). The REMAINING reachable path is a headerless table arriving via raw HTML paste and going unrepaired.
 

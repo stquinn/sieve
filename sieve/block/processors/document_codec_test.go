@@ -113,6 +113,31 @@ func TestDocumentCodec_UnclaimedFenceCoalescesIntoProse(t *testing.T) {
 	}
 }
 
+// TestDocumentCodec_ComplexHTMLTableStaysOneProseBlock pins the Go half of the
+// content-chosen table file form (#162): a table whose cells hold block content is
+// written as an HTML skeleton with MARKDOWN cell content, which means a prose
+// region now routinely carries HTML tags, blank lines and a fence interleaved. All
+// of that is one prose block, byte for byte — the editor's markdown parse is what
+// splits a region into nodes, and Go must not anticipate it.
+func TestDocumentCodec_ComplexHTMLTableStaysOneProseBlock(t *testing.T) {
+	c := block.NewDocumentCodec(newFakeRegistry())
+	body := "<table>\n<tr><th>\n\nRequest\n\n</th></tr>\n<tr><td>\n\n```json\n{\"id\": 1}\n```\n\n</td></tr>\n</table>"
+	md := "<!--s:pr-1-->\n" + body + "\n<!--/s:pr-1-->"
+	blocks, err := c.Deserialize(md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 1 || blocks[0].Kind != block.KindProse {
+		t.Fatalf("want a single prose block, got %#v", blocks)
+	}
+	if blocks[0].ID != "pr-1" {
+		t.Errorf("prose id = %q, want pr-1", blocks[0].ID)
+	}
+	if blocks[0].Content() != body {
+		t.Errorf("prose content = %q, want verbatim %q", blocks[0].Content(), body)
+	}
+}
+
 func TestFencedDeserializer_AcceptsOnlyMatchingKind(t *testing.T) {
 	d := block.FencedDeserializer{Kind: "code"}
 	if !d.Accepts(block.Region{Kind: "code", Body: "id: co-1\n"}) {
