@@ -263,6 +263,16 @@ const CASES = [
     },
   },
   {
+    // A container puts a delimiter on every line the writer emits. `write` is what
+    // applies it, so a tag moved onto an `ensureNewLine` would lose its prefix and
+    // silently break the table out of its container.
+    name: 'a complex table inside a blockquote keeps the quote delimiter',
+    markdown: [
+      '> <table>', '> <tr><td>', '>', '> ```', '> x', '> ```', '>', '> </td></tr>', '> </table>',
+    ].join('\n'),
+    shape: () => expect(childKinds(cellAt(0, 0))).toEqual(['codeBlock']),
+  },
+  {
     name: '`|` and `<td>` as literal cell text',
     markdown: [
       '<table>', '<tr><th>', '', 'Chars', '', '</th></tr>',
@@ -292,14 +302,18 @@ describe('the complex form is clean, and legacy HTML still loads', () => {
   })
 
   it('rewrites the legacy single-line <table> HTML in the new form', () => {
-    const legacy = '<table style="minWidth: 50px"><colgroup><col><col></colgroup><tbody>'
+    // The bytes the vendor fallback actually wrote — a live-DOM dump, captured
+    // from it verbatim — so this pins what is on disk today, not a paraphrase.
+    const legacy = '<body>\n<table style="min-width: 50px;"><colgroup><col style="min-width: 25px;">'
+      + '<col style="min-width: 25px;"></colgroup><tbody>'
       + '<tr><th colspan="1" rowspan="1"><p>A</p></th><th colspan="1" rowspan="1"><p>B</p></th></tr>'
-      + '<tr><td colspan="1" rowspan="1"><pre><code class="language-json">{"id": 1}</code></pre></td>'
-      + '<td colspan="1" rowspan="1"><p>b</p></td></tr></tbody></table>\n'
+      + '<tr><td colspan="1" rowspan="1"><p>lead</p>'
+      + '<pre class="code-block"><code class="language-json">{"id": 1}</code></pre></td>'
+      + '<td colspan="1" rowspan="1"><p>b</p></td></tr></tbody></table>\n</body>'
     const written = rewrite(legacy)
     expect(written).toBe([
       '<table>', '<tr><th>', '', 'A', '', '</th><th>', '', 'B', '', '</th></tr>',
-      '<tr><td>', '', '```json', '{"id": 1}', '```', '', '</td><td>', '', 'b', '', '</td></tr>',
+      '<tr><td>', '', 'lead', '', '```json', '{"id": 1}', '```', '', '</td><td>', '', 'b', '', '</td></tr>',
       '</table>',
     ].join('\n'))
     expect(rewrite(written)).toBe(written)

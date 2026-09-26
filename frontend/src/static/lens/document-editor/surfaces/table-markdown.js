@@ -4,8 +4,8 @@
 //
 // THE FILE FORM IS CHOSEN BY THE CONTENT. A table whose every cell is exactly one
 // paragraph, under a header row, with no merged cells, is a GFM pipe table — the
-// form markdown readers expect and the one Sieve has always written. Any other
-// table is written as an HTML skeleton whose cell CONTENT is still markdown,
+// form markdown readers expect. Any other table is written as an HTML skeleton
+// whose cell CONTENT is still markdown,
 // separated from its tags by blank lines:
 //
 //     <table>
@@ -27,6 +27,9 @@
 // for the whole table.
 
 import { T } from './tiptap-vendor.js'
+
+/** The span attributes, in the order they are written. @type {readonly string[]} */
+const SPANS = Object.freeze(['colspan', 'rowspan'])
 
 export class TableMarkdown {
   /** @type {any} the `table` node being written */ #node
@@ -135,7 +138,7 @@ export class TableMarkdown {
    *  @param {any} cell @returns {string} */
   static #spanAttrs(cell) {
     let out = ''
-    for (const name of ['colspan', 'rowspan']) {
+    for (const name of SPANS) {
       const span = TableMarkdown.#span(cell, name)
       if (span > 1) out += ` ${name}="${span}"`
     }

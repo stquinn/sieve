@@ -648,10 +648,8 @@ import { listRegisteredLanguages } from '../../renderers/highlighting.js'
         { icon: IC.tableColumnPlusRight, label: 'Add Right', action: paneCommand(editor, 'addColumnAfter') },
         { icon: IC.tableColumnRemove, label: 'Delete Column', action: paneCommand(editor, 'deleteColumn') },
       ])})
-      // GFM pipe markdown requires a header row (tiptap-markdown's table
-      // serializer falls back to a raw HTML dump without one — #118), so the
-      // OFF direction is deliberately gone: a table that already has a header
-      // offers no entry here at all, and `toggleHeaderRow` only ever ADDS one.
+      // `toggleHeaderRow` only ever ADDS one: the OFF direction is deliberately
+      // absent, so a table that already has a header offers no entry here at all.
       if (!tableHasHeaderRow(table.node)) {
         items.push({ icon: IC.tableHeader, label: 'Add Header Row', action: paneCommand(editor, 'toggleHeaderRow') })
       }
