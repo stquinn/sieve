@@ -8,6 +8,11 @@
 // range covering only PART of a block's content is exactly those characters, a
 // range covering the whole block (or a NodeSelection of it) is its whole text.
 //
+// A node whose content HOSTS BLOCKS is a container, and a range lying inside one
+// names its ELEMENTS, not the container: each is composed as a block of its own,
+// exactly as a top-level node is. A range covering the container whole names the
+// one block it is.
+//
 // Cut is copy plus a deletion, so this also names the range a cut may remove.
 // That is NOT always the range the text views were read from: a highlight in a
 // region ProseMirror does not own retargets the views onto the block the user
@@ -21,6 +26,9 @@ import { copyImageToClipboard } from '../../ui/copy-image.js'
 import { resolveImageSrc } from '../../renderers/asset-urls.js'
 
 const SIEVE_PREFIX = 'sieve-'
+// The schema group every sieve block belongs to. A node type whose content admits
+// it hosts BLOCKS — the document top level, and any container kind.
+const SIEVE_GROUP = 'sieveBlock'
 
 /**
  * @typedef {object} ClipboardSliceInput
@@ -104,10 +112,14 @@ export class ClipboardSlice {
     clipboardData.setData('text/plain', composed.plain.filter(Boolean).join('\n\n'))
     clipboardData.setData('text/html', composed.html.filter(Boolean).join('\n'))
     clipboardData.setData('sieve/slice', JSON.stringify(composed.items))
-    // Single sieve block: expose every mime in its ContentEntry array too, so a
-    // cross-context paste hits the same backend matchers.
-    if (composed.items.length === 1 && composed.items[0]._type === 'sieve' && composed.single) {
+    // Single sieve block: expose the rest of its ContentEntry array too, so a
+    // cross-context paste hits the same backend matchers. NOT the text views — a
+    // kind's own entry describes the block WHOLE, while the text views follow the
+    // RANGE, and setData replaces. Only-meaningful-whole governs the sieve views;
+    // the characters a foreign application receives are the selected ones.
+    if (composed.items.length === 1 && composed.single) {
       composed.single.forEach((/** @type {{mimeType: string, content: string}} */ entry) => {
+        if (entry.mimeType === 'text/plain' || entry.mimeType === 'text/html') return
         clipboardData.setData(entry.mimeType, entry.content)
       })
     }
@@ -124,7 +136,8 @@ export class ClipboardSlice {
   }
 
   /**
-   * Walk the top-level nodes the range touches and build every view of each.
+   * Walk the blocks the range touches — the top-level nodes, descending into a
+   * container the range lies inside — and build every view of each.
    * Null when the selection holds no sieve block at all.
    * @returns {{items: any[], single: any[]|null, plain: string[], html: string[]}|null}
    */
@@ -132,43 +145,127 @@ export class ClipboardSlice {
     const view = this.#view
     const doc = view.state.doc
     const range = this.#range
-    /** @type {any[]} */ const items = []
-    /** @type {string[]} */ const plain = []
-    /** @type {string[]} */ const html = []
-    let hasSieve = false
-    /** @type {any[]|null} */ let single = null
+    /** @type {{items: any[], single: any[]|null, plain: string[], html: string[], hasSieve: boolean}} */
+    const out = { items: [], single: null, plain: [], html: [], hasSieve: false }
+    const nodeDOM = (/** @type {number} */ pos) => (view.nodeDOM ? view.nodeDOM(pos) : null)
 
     doc.forEach((/** @type {any} */ node, /** @type {number} */ offset) => {
       const nodeEnd = offset + node.nodeSize
       if (nodeEnd <= range.from || offset >= range.to) return
-      const dom = view.nodeDOM ? view.nodeDOM(offset) : null
-      const entries = this.#entriesOf(node)
-      if (String(node.type.name).indexOf(SIEVE_PREFIX) === 0) {
-        hasSieve = true
-        single = entries
-      }
-      items.push(entries)
-
-      // A block's custom region holds text PM does not own, so a highlight there
-      // is the only reading of the selection there is.
-      const highlighted = BlockSelection.textInside(this.#domSelection, dom)
-      if (highlighted) {
-        plain.push(highlighted)
-        html.push(this.#domHtml || ClipboardSlice.#escape(highlighted))
+      const dom = nodeDOM(offset)
+      if (this.#descendsInto(node, offset, nodeEnd, dom)) {
+        // Descending is itself a sieve selection: the elements must go out as
+        // items even when every one of them is native prose.
+        out.hasSieve = true
+        node.forEach((/** @type {any} */ child, /** @type {number} */ childOffset) => {
+          const from = offset + 1 + childOffset
+          if (from + child.nodeSize <= range.from || from >= range.to) return
+          this.#composeNode(child, from, nodeDOM(from), out)
+        })
         return
       }
-      if (this.#followsRange(node, offset, nodeEnd)) {
-        const text = BlockSelection.selectedText(
-          doc, { from: Math.max(range.from, offset), to: Math.min(range.to, nodeEnd) }, null, '\n')
-        plain.push(text)
-        html.push(ClipboardSlice.#escape(text))
-        return
-      }
-      plain.push(ClipboardSlice.#pick(entries, 'text/plain') || node.textContent || (dom ? dom.innerText : ''))
-      html.push(ClipboardSlice.#pick(entries, 'text/html') || ClipboardSlice.#blockHTML(dom))
+      this.#composeNode(node, offset, dom, out)
     })
 
-    return hasSieve ? { items, single, plain, html } : null
+    return out.hasSieve ? { items: out.items, single: out.single, plain: out.plain, html: out.html } : null
+  }
+
+  /**
+   * Is the range INSIDE a container, so it names that container's elements rather
+   * than the container itself? A block-hosting node holds a list of blocks exactly
+   * as the document top level does, and each element is composed as a block of its
+   * own. A highlight in a region PM does not own claims the whole node instead —
+   * there is no document range under such a highlight to name any element by.
+   * @param {any} node @param {number} from @param {number} to @param {any} dom
+   * @returns {boolean}
+   */
+  #descendsInto(node, from, to, dom) {
+    if (!ClipboardSlice.#hostsBlocks(node)) return false
+    if (this.#range.from <= from || this.#range.to >= to) return false
+    if (!BlockSelection.unownedText(this.#domSelection, dom)) return true
+    // The highlight sits in DOM PM does not own. An ELEMENT's own read-only region
+    // is still an element, and PM owns a position for that — only a highlight in
+    // the container's OWN furniture (its question title) claims the node whole.
+    return this.#holdsHighlight(node, from)
+  }
+
+  /** Does one of this container's children hold the DOM highlight?
+   *  @param {any} node @param {number} from @returns {boolean} */
+  #holdsHighlight(node, from) {
+    let held = false
+    node.forEach((/** @type {any} */ _child, /** @type {number} */ childOffset) => {
+      if (held) return
+      const childDom = this.#view.nodeDOM ? this.#view.nodeDOM(from + 1 + childOffset) : null
+      if (BlockSelection.textInside(this.#domSelection, childDom)) held = true
+    })
+    return held
+  }
+
+  /**
+   * Build every view of ONE block — a top-level node or a container's element —
+   * and append them to `out`.
+   * @param {any} node @param {number} from @param {any} dom
+   * @param {{items: any[], single: any[]|null, plain: string[], html: string[], hasSieve: boolean}} out
+   */
+  #composeNode(node, from, dom, out) {
+    const nodeEnd = from + node.nodeSize
+    const range = this.#range
+    const entries = this.#entriesOf(this.#clipped(node, from))
+    if (String(node.type.name).indexOf(SIEVE_PREFIX) === 0) {
+      out.hasSieve = true
+      out.single = entries
+    }
+    out.items.push(entries)
+
+    // A block's custom region holds text PM does not own, so a highlight there
+    // is the only reading of the selection there is.
+    const highlighted = BlockSelection.unownedText(this.#domSelection, dom)
+    if (highlighted) {
+      out.plain.push(highlighted)
+      out.html.push(this.#domHtml || ClipboardSlice.#escape(highlighted))
+      return
+    }
+    if (this.#followsRange(node, from, nodeEnd)) {
+      const text = BlockSelection.selectedText(
+        this.#view.state.doc, { from: Math.max(range.from, from), to: Math.min(range.to, nodeEnd) }, null, '\n')
+      out.plain.push(text)
+      out.html.push(ClipboardSlice.#escape(text))
+      return
+    }
+    out.plain.push(ClipboardSlice.#pick(entries, 'text/plain') || node.textContent || (dom ? dom.innerText : ''))
+    out.html.push(ClipboardSlice.#pick(entries, 'text/html') || ClipboardSlice.#blockHTML(dom))
+  }
+
+  /** Does this sieve node's content host BLOCKS — a list of them, as the document
+   *  top level does? Read off the schema, by walking the content expression's own
+   *  match graph for a sieveBlock the node admits ANYWHERE: a container that
+   *  declares a caption before its blocks hosts blocks just as much as one that
+   *  opens with them.
+   *  @param {any} node @returns {boolean} */
+  static #hostsBlocks(node) {
+    if (String(node.type.name).indexOf(SIEVE_PREFIX) !== 0) return false
+    /** @type {any[]} */ const reachable = [node.type.contentMatch]
+    for (let i = 0; i < reachable.length; i++) {
+      const match = reachable[i]
+      for (let e = 0; e < match.edgeCount; e++) {
+        const edge = match.edge(e)
+        if (String(edge.type.spec.group || '').split(' ').indexOf(SIEVE_GROUP) >= 0) return true
+        if (reachable.indexOf(edge.next) < 0) reachable.push(edge.next)
+      }
+    }
+    return false
+  }
+
+  /** A prose node cut down to the part of it the range covers, so a paste carries
+   *  the characters selected; a sieve block stays whole, being only meaningful whole.
+   *  @param {any} node @param {number} from the position before `node`
+   *  @returns {any} */
+  #clipped(node, from) {
+    if (String(node.type.name).indexOf(SIEVE_PREFIX) === 0) return node
+    const start = Math.max(0, this.#range.from - (from + 1))
+    const end = Math.min(node.content.size, this.#range.to - (from + 1))
+    if (end <= start || (start === 0 && end === node.content.size)) return node
+    return node.cut(start, end)
   }
 
   /** Every ContentEntry describing one top-level node. @param {any} node @returns {any[]} */

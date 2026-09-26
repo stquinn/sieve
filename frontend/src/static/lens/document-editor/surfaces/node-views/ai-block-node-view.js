@@ -97,9 +97,13 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
     getIcon: function(node) { return window.SieveIcons && window.SieveIcons.sparkle },
     getFriendlyName: function(node) { return node.attrs.type == 'EXPLAIN' ? 'Explain' : 'Ask AI' },
 
+    // A whole block copied INSIDE Sieve rebuilds from the framework's
+    // sieve/ai-block view. text/plain is what a FOREIGN application receives, so
+    // it is the answer as the markdown the answer showed, fenced by kind.
     asContentEntry: function(node) {
-      if (!node.attrs.source) return null
-      return  [{ mimeType: 'text/plain', content: node.attrs.source }]
+      var md = AiBlockRenderer.answerMarkdown(node.attrs.answer)
+      if (!md) return null
+      return [{ mimeType: 'text/plain', content: md }]
     },
 
     parseAttrs: function (data) {

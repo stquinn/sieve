@@ -612,6 +612,47 @@ func TestEditorService_HandlePaste_delegatesToCreateBlock(t *testing.T) {
 	}
 }
 
+// A slice is a sequence of normal pastes, one item per copied block, each claimed
+// by its own kind. It is what a multi-block copy puts on the clipboard — including
+// a range copied from inside an AI block's answer, where the elements ARE blocks
+// (#160): the answer's prose must come back as prose and its code as code, rather
+// than the whole selection reading as one code block.
+func TestEditorService_HandlePasteSlice_oneBlockPerItemInOrder(t *testing.T) {
+	resetRegistry()
+	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+	doc, _ := ds.New()
+	doc.SetBody([]byte(""))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	if err := es.Open(uuid); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer waitJobs(t, es, uuid)
+
+	created, err := es.HandlePasteSlice(uuid, [][]block.ContentEntry{
+		{{MIMEType: "sieve/prose", Content: `{"content":"the pool was exhausted"}`}},
+		{{MIMEType: "sieve/code", Content: `{"source":"db.SetMaxOpenConns(4)","language":"go"}`}},
+	}, 0)
+	if err != nil {
+		t.Fatalf("HandlePasteSlice: %v", err)
+	}
+	if len(created) != 2 {
+		t.Fatalf("expected one block per item, got %d: %+v", len(created), created)
+	}
+	if created[0].Kind != "prose" || created[1].Kind != "code" {
+		t.Errorf("expected [prose code] in the copied order, got [%s %s]", created[0].Kind, created[1].Kind)
+	}
+	if created[0].ID == created[1].ID {
+		t.Error("each pasted item must be its own block with its own id")
+	}
+	if created[1].Attrs["language"] != "go" {
+		t.Errorf("the code item must round-trip its own view; attrs=%v", created[1].Attrs)
+	}
+}
+
 func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 	resetRegistry()
 	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))

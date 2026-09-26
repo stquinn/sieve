@@ -19,8 +19,12 @@ function block() {
   return { b, cell, textNode }
 }
 
-// A minimal Selection stand-in (the helper only reads isCollapsed/toString/anchorNode).
-const sel = (opts) => ({ isCollapsed: false, toString: () => opts.text, anchorNode: opts.anchor, ...opts })
+// A minimal Selection stand-in. focusNode defaults to the anchor — a highlight
+// that stays where it started — so only the tests that care state it.
+const sel = (opts) => ({
+  isCollapsed: false, toString: () => opts.text,
+  anchorNode: opts.anchor, focusNode: opts.focus || opts.anchor, ...opts,
+})
 
 describe('domSelectionTextInside', () => {
   let els
@@ -51,6 +55,66 @@ describe('domSelectionTextInside', () => {
   it('returns empty for a missing selection or block', () => {
     expect(BlockSelection.textInside(null, els.b)).toBe('')
     expect(BlockSelection.textInside(sel({ text: 'x', anchor: els.textNode }), null)).toBe('')
+  })
+})
+
+// unownedText is textInside NARROWED to the regions a DOM highlight is the only
+// reading of. Text PM owns has a document range, and reading such a highlight off
+// the DOM reports the WHOLE highlight for every node it touches — which is how
+// text/plain came to repeat itself across a multi-node selection (#160).
+describe('unownedText', () => {
+  // A block with both kinds of region: a read-only one (contenteditable="false",
+  // an ai-block question title) and PM's own editable body.
+  function regions() {
+    document.body.innerHTML = ''
+    const b = document.createElement('div')
+    b.className = 'sieve-block'
+    const title = document.createElement('div')
+    title.setAttribute('contenteditable', 'false')
+    const titleText = document.createTextNode('the question')
+    title.appendChild(titleText)
+    const body = document.createElement('div')
+    const bodyText = document.createTextNode('the answer')
+    body.appendChild(bodyText)
+    b.appendChild(title)
+    b.appendChild(body)
+    document.body.appendChild(b)
+    return { b, title, titleText, body, bodyText }
+  }
+
+  let els
+  beforeEach(() => { els = regions() })
+
+  it('returns the highlighted text for a highlight confined to a read-only region', () => {
+    expect(BlockSelection.unownedText(sel({ text: 'question', anchor: els.titleText }), els.b))
+      .toBe('question')
+  })
+
+  it('returns empty for a highlight in PM-owned content — the document range is the truth', () => {
+    expect(BlockSelection.unownedText(sel({ text: 'answer', anchor: els.bodyText }), els.b)).toBe('')
+  })
+
+  it('returns empty when the highlight escapes the read-only region it started in', () => {
+    const escaping = sel({ text: 'question\nthe answer', anchor: els.titleText, focus: els.bodyText })
+    expect(BlockSelection.unownedText(escaping, els.b)).toBe('')
+  })
+
+  it('treats a whole block rendered read-only as one unowned region', () => {
+    const atom = document.createElement('div')
+    atom.setAttribute('contenteditable', 'false')
+    const text = document.createTextNode('a card')
+    atom.appendChild(text)
+    document.body.appendChild(atom)
+    expect(BlockSelection.unownedText(sel({ text: 'card', anchor: text }), atom)).toBe('card')
+  })
+
+  it('returns empty whenever textInside does — outside the block, collapsed, blank', () => {
+    const outside = document.createElement('div')
+    outside.setAttribute('contenteditable', 'false')
+    document.body.appendChild(outside)
+    expect(BlockSelection.unownedText(sel({ text: 'x', anchor: outside }), els.b)).toBe('')
+    expect(BlockSelection.unownedText(null, els.b)).toBe('')
+    expect(BlockSelection.unownedText(sel({ text: '  ', anchor: els.titleText }), els.b)).toBe('')
   })
 })
 

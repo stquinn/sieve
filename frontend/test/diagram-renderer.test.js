@@ -480,3 +480,33 @@ describe('DiagramRenderer — plantuml passive display branch', () => {
     expect(msg?.textContent).toContain('server returned 502')
   })
 })
+
+// The clipboard views of a diagram block, off the kind's NodeView adapter. Every
+// mime a single-block copy composes reaches the OS clipboard, so an entry that
+// carries no real content is data a foreign application pastes.
+describe('diagram NodeView — the clipboard views of one block', () => {
+  /** @type {any} */ let adapter
+
+  beforeAll(async () => {
+    const VENDOR = /** @type {any} */ (globalThis).TipTap
+    Object.assign(VENDOR, {
+      PluginKey: class PluginKey {},
+      Extension: { create: (/** @type {any} */ o) => o },
+      Node: { create: (/** @type {any} */ cfg) => ({ __node: cfg.name }) },
+      mergeAttributes: (/** @type {any} */ a, /** @type {any} */ b) => Object.assign({}, a, b),
+    })
+    await import('../src/static/lens/document-editor/surfaces/node-views/diagram-node-view.js')
+    adapter = (await import('../src/static/renderers/block-kinds.js')).getBlockKind('diagram').renderer
+  })
+
+  it('is the source and nothing else — no placeholder SVG for the OS clipboard', () => {
+    const node = { type: { name: 'sieve-diagram' }, textContent: '', attrs: { source: 'graph TD; A-->B' } }
+    expect(adapter.asContentEntry(node)).toEqual([
+      { mimeType: 'text/plain', content: 'graph TD; A-->B' },
+    ])
+  })
+
+  it('is nothing for a block with no source yet', () => {
+    expect(adapter.asContentEntry({ type: { name: 'sieve-diagram' }, textContent: '', attrs: { source: '' } })).toBeNull()
+  })
+})
