@@ -56,11 +56,10 @@ export class BlockSelection {
    * those confined to a region ProseMirror does not own. '' for anything else.
    *
    * Such a region carries `contenteditable="false"` — the browser's own statement
-   * that no caret, and so no document position, lives there. Text PM DOES own has
-   * a document range, and that range is the truth: read off the DOM instead, one
-   * highlight reports itself in full for every node it touches. A highlight that
-   * starts in a read-only region and escapes it is no faithful reading of either
-   * side, so it is not one of these.
+   * that no caret, and so no document position, lives there. Text PM DOES own has a
+   * document range, and the range is the reading of it. A highlight that starts in
+   * a read-only region and escapes it is a faithful reading of neither, so it is
+   * not one of these either.
    * @param {Selection|null} domSelection @param {any} blockDom @returns {string}
    */
   static unownedText(domSelection, blockDom) {

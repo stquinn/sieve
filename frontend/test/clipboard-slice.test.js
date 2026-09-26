@@ -9,6 +9,24 @@ import { EditorState, TextSelection, NodeSelection } from '@tiptap/pm/state'
 
 vi.mock('../src/static/ui/copy-image.js', () => ({ copyImageToClipboard: vi.fn() }))
 
+// A structured kind's own views come from its NodeView adapter, and every one of
+// them leads with a WHOLE-BLOCK text/plain (code, log, diagram, reference,
+// ai-block). Registering a real adapter needs the TipTap runtime, so the lookup is
+// stood in for: without it the framework's sieve/<kind> is the only entry there is,
+// and what a single-block copy does with a kind's own text view goes untested.
+vi.mock('../src/static/lens/document-editor/surfaces/sieve-block-extension.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    rendererFor: (/** @type {string} */ kind) => (kind === 'code' ? {
+      asContentEntry: (/** @type {any} */ node) => {
+        const src = node.textContent || node.attrs.source
+        return src ? [{ mimeType: 'text/plain', content: src }] : null
+      },
+    } : actual.rendererFor(kind)),
+  }
+})
+
 import { ClipboardSlice } from '../src/static/lens/document-editor/clipboard-slice.js'
 import { copyImageToClipboard } from '../src/static/ui/copy-image.js'
 import { registerBlockKind } from '../src/static/renderers/block-kinds.js'
@@ -215,6 +233,18 @@ describe('what goes on the clipboard', () => {
     expect(data.data['sieve/log']).toBeUndefined()
   })
 
+  it('a partial range keeps the selected characters as text while the block goes whole', () => {
+    const code = schema.nodes['sieve-code'].create(null, schema.text('fmt.Println(1)\nfmt.Println(2)'))
+    const view = viewOf([code], (doc) => TextSelection.create(doc, 1, 15))
+    const data = clip()
+    slice(view).write(/** @type {any} */ (data))
+    // The kind's own entry describes the block whole; it must not overwrite the
+    // text views, which follow the range.
+    expect(data.data['text/plain']).toBe('fmt.Println(1)')
+    expect(data.data['text/html']).toBe('fmt.Println(1)')
+    expect(data.data['sieve/code']).toBe(JSON.stringify({ kind: 'code', id: 'c1', language: 'go' }))
+  })
+
   // Every kind's single-block copy rebuilds from that kind's own view, so this
   // holds for a kind whose text reads as code, one whose text reads as a diagram,
   // and one whose content is not text at all.
@@ -313,6 +343,26 @@ describe('a range inside a block-hosting container', () => {
     expect(items).toHaveLength(1)
     expect(items[0].map((e) => e.mimeType)).toContain('sieve/ai-block')
     expect(data.data['sieve/ai-block']).toBe(JSON.stringify({ kind: 'ai-block', id: 'a1', question: 'why?' }))
+  })
+
+  // An element rendered read-only still IS an element: PM owns a position for it,
+  // so a highlight inside one names that element, not the container.
+  it('descends when the highlight lies inside a read-only ELEMENT of the body', () => {
+    const { ai, codeFrom } = answered()
+    const view = viewOf([ai], (doc) => TextSelection.create(doc, codeFrom + 2, codeFrom + 6))
+    const codePre = view.doms[codeFrom].querySelector('pre')
+    codePre.setAttribute('contenteditable', 'false') // as a projected code element is
+    highlightOver(codePre)
+    const data = clip()
+    expect(slice(view, { editor }).write(/** @type {any} */ (data))).toBe(true)
+    const items = JSON.parse(data.data['sieve/slice'])
+    expect(items).toHaveLength(1)
+    expect(items[0].map((e) => e.mimeType)).toContain('sieve/code')
+    expect(data.data['sieve/ai-block']).toBeUndefined()
+    // The highlight is the only reading of that element's text, and the element
+    // goes whole as its own kind.
+    expect(data.data['text/plain']).toBe('fmt.Println(1)')
+    expect(data.data['sieve/code']).toBe(JSON.stringify({ kind: 'code', id: 'c1', language: 'go' }))
   })
 
   it('leaves a container whose content hosts no blocks whole', () => {

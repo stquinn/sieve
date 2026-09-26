@@ -246,6 +246,10 @@ export class LogRenderer extends BlockRenderer {
 
     const exploreArea = document.createElement('div')
     exploreArea.className = 'log-block__explore-area'
+    // A parsed table is read, never typed into. No caret lives here, so no editor
+    // position does either — which is what makes a highlight in it the only reading
+    // of that selection there is.
+    exploreArea.setAttribute('contenteditable', 'false')
 
     const tableContainer = document.createElement('div')
     tableContainer.className = 'log-block__table'

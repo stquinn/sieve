@@ -112,10 +112,14 @@ export class ClipboardSlice {
     clipboardData.setData('text/plain', composed.plain.filter(Boolean).join('\n\n'))
     clipboardData.setData('text/html', composed.html.filter(Boolean).join('\n'))
     clipboardData.setData('sieve/slice', JSON.stringify(composed.items))
-    // Single sieve block: expose every mime in its ContentEntry array too, so a
-    // cross-context paste hits the same backend matchers.
+    // Single sieve block: expose the rest of its ContentEntry array too, so a
+    // cross-context paste hits the same backend matchers. NOT the text views — a
+    // kind's own entry describes the block WHOLE, while the text views follow the
+    // RANGE, and setData replaces. Only-meaningful-whole governs the sieve views;
+    // the characters a foreign application receives are the selected ones.
     if (composed.items.length === 1 && composed.single) {
       composed.single.forEach((/** @type {{mimeType: string, content: string}} */ entry) => {
+        if (entry.mimeType === 'text/plain' || entry.mimeType === 'text/html') return
         clipboardData.setData(entry.mimeType, entry.content)
       })
     }
@@ -175,7 +179,23 @@ export class ClipboardSlice {
   #descendsInto(node, from, to, dom) {
     if (!ClipboardSlice.#hostsBlocks(node)) return false
     if (this.#range.from <= from || this.#range.to >= to) return false
-    return !BlockSelection.unownedText(this.#domSelection, dom)
+    if (!BlockSelection.unownedText(this.#domSelection, dom)) return true
+    // The highlight sits in DOM PM does not own. An ELEMENT's own read-only region
+    // is still an element, and PM owns a position for that — only a highlight in
+    // the container's OWN furniture (its question title) claims the node whole.
+    return this.#holdsHighlight(node, from)
+  }
+
+  /** Does one of this container's children hold the DOM highlight?
+   *  @param {any} node @param {number} from @returns {boolean} */
+  #holdsHighlight(node, from) {
+    let held = false
+    node.forEach((/** @type {any} */ _child, /** @type {number} */ childOffset) => {
+      if (held) return
+      const childDom = this.#view.nodeDOM ? this.#view.nodeDOM(from + 1 + childOffset) : null
+      if (BlockSelection.textInside(this.#domSelection, childDom)) held = true
+    })
+    return held
   }
 
   /**
@@ -214,9 +234,8 @@ export class ClipboardSlice {
   }
 
   /** Does this sieve node's content host BLOCKS — a list of them, as the document
-   *  top level does? Asked of the schema through ProseMirror's own content match,
-   *  so declaring a container's content is the whole declaration and there is no
-   *  second table to drift from it. @param {any} node @returns {boolean} */
+   *  top level does? Read off the schema: its content admits the sieveBlock group.
+   *  @param {any} node @returns {boolean} */
   static #hostsBlocks(node) {
     if (String(node.type.name).indexOf(SIEVE_PREFIX) !== 0) return false
     const types = node.type.schema.nodes
