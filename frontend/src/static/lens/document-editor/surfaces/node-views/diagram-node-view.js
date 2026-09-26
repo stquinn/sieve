@@ -125,13 +125,13 @@ export function renderDiagramSvgEntry(sourceNode, entries) { return DiagramRende
     getFriendlyName: function() { return 'Diagram' },
     getIcon: function() { return window.SieveIcons && window.SieveIcons.diagram },
 
+    // The source alone. A diagram's RENDERED svg is acquired on demand, by
+    // DiagramRenderer.renderDiagramSvgEntry, because it costs a mermaid render or
+    // an asset fetch; a copy names the source and the rendering follows from it.
     asContentEntry: function(node) {
       var src = node.textContent || node.attrs.source
       if (!src) return null
-      return  [
-        { mimeType: 'text/plain', content: src },
-        { mimeType: 'image/svg', content: "<MERMAID RENDERED CONTENT" }
-      ]
+      return [{ mimeType: 'text/plain', content: src }]
     },
 
     parseAttrs: function (data) {
