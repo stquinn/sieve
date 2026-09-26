@@ -61,6 +61,14 @@ const schema = new Schema({
       attrs: { kind: { default: 'ai-block' }, id: { default: 'a1' }, question: { default: 'why?' } },
       toDOM: () => ['div', 0],
     },
+    // A container that hosts blocks only AFTER a leading caption. It stands for a
+    // future container kind: hosting blocks is not a property of the FIRST position
+    // of a content expression.
+    'sieve-captioned': {
+      group: 'sieveBlock', content: 'paragraph (block | sieveBlock)+',
+      attrs: { kind: { default: 'captioned' }, id: { default: 'p1' } },
+      toDOM: () => ['div', 0],
+    },
     // A container whose content admits prose only: it hosts no blocks, so a range
     // inside it stays one item.
     'sieve-web-clip': {
@@ -77,6 +85,10 @@ const schema = new Schema({
 })
 
 const LOG = 'line one\nline two\nline three'
+
+// The node types whose children are rendered as elements of a body, as a real
+// container's contentDOM holds them.
+const CONTAINERS = ['sieve-ai-block', 'sieve-captioned']
 
 // The clipboard reads a paragraph through the shared block-kind registry. The real
 // definition is prose-block.js, which needs the whole TipTap vendor bootstrap; this
@@ -118,14 +130,16 @@ function viewOf(nodes, selection) {
     el.appendChild(chrome)
     doms[pos] = el
 
-    if (node.type.name === 'sieve-ai-block') {
-      // The question TITLE is DOM ProseMirror does not own; the BODY is its
-      // contentDOM, holding one rendered element per child.
-      const title = document.createElement('div')
-      title.className = 'ai-block__question'
-      title.setAttribute('contenteditable', 'false')
-      title.textContent = node.attrs.question
-      el.appendChild(title)
+    if (CONTAINERS.indexOf(node.type.name) >= 0) {
+      if (node.type.name === 'sieve-ai-block') {
+        // The question TITLE is DOM ProseMirror does not own.
+        const title = document.createElement('div')
+        title.className = 'ai-block__question'
+        title.setAttribute('contenteditable', 'false')
+        title.textContent = node.attrs.question
+        el.appendChild(title)
+      }
+      // The BODY is the contentDOM, holding one rendered element per child.
       const body = document.createElement('div')
       body.className = 'sieve-block__content'
       el.appendChild(body)
@@ -363,6 +377,25 @@ describe('a range inside a block-hosting container', () => {
     // goes whole as its own kind.
     expect(data.data['text/plain']).toBe('fmt.Println(1)')
     expect(data.data['sieve/code']).toBe(JSON.stringify({ kind: 'code', id: 'c1', language: 'go' }))
+  })
+
+  // Hosting blocks is a property of the whole content expression, not of its first
+  // position: a container declaring a caption before its blocks hosts them too, and
+  // reading only the first position leaves a range inside it composed as the
+  // container — the very flattening this fixes.
+  it('descends into a container that hosts blocks after a leading caption', () => {
+    const caption = schema.nodes.paragraph.create(null, schema.text('the caption'))
+    const code = schema.nodes['sieve-code'].create(null, schema.text('fmt.Println(1)'))
+    const captioned = schema.nodes['sieve-captioned'].create(null, [caption, code])
+    const codeFrom = 1 + caption.nodeSize
+    const view = viewOf([captioned], (doc) => TextSelection.create(doc, 3, codeFrom + 4))
+    const data = clip()
+    expect(slice(view, { editor }).write(/** @type {any} */ (data))).toBe(true)
+    const items = JSON.parse(data.data['sieve/slice'])
+    expect(items).toHaveLength(2)
+    expect(items[0].map((e) => e.mimeType)).toContain('sieve/prose')
+    expect(items[1].map((e) => e.mimeType)).toContain('sieve/code')
+    expect(data.data['sieve/captioned']).toBeUndefined()
   })
 
   it('leaves a container whose content hosts no blocks whole', () => {

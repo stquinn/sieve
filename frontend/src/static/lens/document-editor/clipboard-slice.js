@@ -234,15 +234,21 @@ export class ClipboardSlice {
   }
 
   /** Does this sieve node's content host BLOCKS — a list of them, as the document
-   *  top level does? Read off the schema: its content admits the sieveBlock group.
+   *  top level does? Read off the schema, by walking the content expression's own
+   *  match graph for a sieveBlock the node admits ANYWHERE: a container that
+   *  declares a caption before its blocks hosts blocks just as much as one that
+   *  opens with them.
    *  @param {any} node @returns {boolean} */
   static #hostsBlocks(node) {
     if (String(node.type.name).indexOf(SIEVE_PREFIX) !== 0) return false
-    const types = node.type.schema.nodes
-    for (const name in types) {
-      const type = types[name]
-      const groups = String(type.spec.group || '').split(' ')
-      if (groups.indexOf(SIEVE_GROUP) >= 0 && node.type.contentMatch.matchType(type)) return true
+    /** @type {any[]} */ const reachable = [node.type.contentMatch]
+    for (let i = 0; i < reachable.length; i++) {
+      const match = reachable[i]
+      for (let e = 0; e < match.edgeCount; e++) {
+        const edge = match.edge(e)
+        if (String(edge.type.spec.group || '').split(' ').indexOf(SIEVE_GROUP) >= 0) return true
+        if (reachable.indexOf(edge.next) < 0) reachable.push(edge.next)
+      }
     }
     return false
   }
