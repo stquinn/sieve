@@ -110,3 +110,29 @@ describe('ai-block NodeView — the answer reaches the scratch renderer the seam
     expect(projected({ type: { name: 'sieve-ai-block' }, attrs })).toBe('the pool was exhausted first')
   })
 })
+
+// ── The clipboard view of a whole AI block ───────────────────────────────────
+// A whole block copied and pasted INSIDE Sieve rebuilds from `sieve/ai-block`.
+// text/plain is what a FOREIGN application receives, so it must be the answer as
+// the markdown the answer showed — fenced by kind — rather than a flattening of
+// whatever the DOM happened to hold.
+
+describe('ai-block NodeView — the clipboard text of a whole block', () => {
+  const ANSWER = [
+    { kind: 'prose', attrs: { content: 'the pool was exhausted' } },
+    { kind: 'code', attrs: { source: 'db.SetMaxOpenConns(4)', language: 'go' } },
+  ]
+
+  it('is the answer as markdown, with its code fenced', () => {
+    const entries = adapter.asContentEntry({ type: { name: 'sieve-ai-block' }, attrs: { answer: ANSWER } })
+    expect(entries).toEqual([
+      { mimeType: 'text/plain', content: AiBlockRenderer.answerMarkdown(ANSWER) },
+    ])
+    expect(entries[0].content).toContain('```go')
+    expect(entries[0].content).toContain('the pool was exhausted')
+  })
+
+  it('is nothing for a block with no answer yet — a status line is not content', () => {
+    expect(adapter.asContentEntry({ type: { name: 'sieve-ai-block' }, attrs: { answer: [] } })).toBeNull()
+  })
+})
