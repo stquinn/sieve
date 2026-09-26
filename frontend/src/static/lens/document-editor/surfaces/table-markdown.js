@@ -31,6 +31,9 @@ import { T } from './tiptap-vendor.js'
 /** The span attributes, in the order they are written. @type {readonly string[]} */
 const SPANS = Object.freeze(['colspan', 'rowspan'])
 
+/** Every `|` in a string: what a pipe row's cell has to escape. @type {RegExp} */
+const PIPE = /\|/g
+
 export class TableMarkdown {
   /** @type {any} the `table` node being written */ #node
 
@@ -80,9 +83,9 @@ export class TableMarkdown {
     else this.#writeHtmlSkeleton(state)
   }
 
-  /** The GFM pipe table, byte-for-byte what tiptap-markdown's built-in writes —
-   *  `state.inTable` included, which is how a hard break in a cell knows to write
-   *  itself as HTML rather than a trailing backslash.
+  /** The GFM pipe table. Byte-for-byte what tiptap-markdown's built-in writes, save
+   *  for the cell escape below — `state.inTable` included, which is how a hard break
+   *  in a cell knows to write itself as HTML rather than a trailing backslash.
    *  @param {any} state */
   #writePipeTable(state) {
     state.inTable = true
@@ -91,7 +94,7 @@ export class TableMarkdown {
       row.forEach((/** @type {any} */ cell, /** @type {number} */ _cp, /** @type {number} */ j) => {
         if (j) state.write(' | ')
         const content = cell.firstChild
-        if (content.textContent.trim()) state.renderInline(content)
+        if (content.textContent.trim()) TableMarkdown.#renderCellInline(state, content)
       })
       state.write(' |')
       state.ensureNewLine()
@@ -132,6 +135,38 @@ export class TableMarkdown {
     })
     state.write('</table>')
     state.closeBlock(this.#node)
+  }
+
+  /** A pipe row's cell: inline content with every `|` escaped.
+   *
+   *  A bare `|` in a cell is a cell boundary, so an unescaped one splits the row on
+   *  the next load and the text after it moves into a cell of its own. GFM resolves
+   *  `\|` before inline parsing, so the escape holds inside a code span and in link
+   *  text exactly as it does in plain text.
+   *
+   *  THE ESCAPE MUST HAPPEN AS THE BYTES ARE WRITTEN, never by rewriting them after
+   *  `renderInline` returns: the serialiser state records absolute offsets into its
+   *  own output for each mark whose enclosing whitespace it may have to expel, and it
+   *  acts on them when it renders the NEXT node — so an insertion below one of those
+   *  offsets makes that pass cut into the cell's text instead of the delimiter.
+   *
+   *  Both seams are needed. `escapeExtraCharacters` is honoured by the state's `esc`,
+   *  which covers every byte written as escapable text; a code span's content and a
+   *  link's destination are written raw, past `esc`, and reach the file only through
+   *  the `text` override.
+   *  @param {any} state @param {any} content the cell's sole paragraph */
+  static #renderCellInline(state, content) {
+    const extra = state.options.escapeExtraCharacters
+    const text = state.text
+    state.options.escapeExtraCharacters = PIPE
+    /** @param {string} raw @param {boolean} [escape] */
+    state.text = (raw, escape = true) => text.call(state, escape ? raw : raw.replace(PIPE, '\\$&'), escape)
+    try {
+      state.renderInline(content)
+    } finally {
+      state.options.escapeExtraCharacters = extra
+      state.text = text
+    }
   }
 
   /** `colspan`/`rowspan` attributes, present only where they say something.

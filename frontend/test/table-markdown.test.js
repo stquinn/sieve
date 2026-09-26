@@ -125,6 +125,73 @@ describe('a simple table is still a GFM pipe table', () => {
   })
 })
 
+// GFM processes `\|` BEFORE inline parsing, so a `|` anywhere in a pipe row's cell —
+// plain text, a code span, link text — has to be written escaped. Unescaped, the next
+// load reads it as a cell boundary and the row gains a cell.
+const PIPE_CASES = [
+  {
+    name: 'plain cell text',
+    markdown: ['| h |', '| --- |', '| a \\| b |', ''].join('\n'),
+    shape: () => expect(cellAt(1, 0).textContent).toBe('a | b'),
+  },
+  {
+    name: 'inside a code span',
+    markdown: ['| h |', '| --- |', '| `x \\| y` |', ''].join('\n'),
+    shape: () => {
+      expect(cellAt(1, 0).textContent).toBe('x | y')
+      expect(cellAt(1, 0).firstChild.firstChild.marks.map((/** @type {any} */ m) => m.type.name)).toEqual(['code'])
+    },
+  },
+  {
+    name: 'a header cell',
+    markdown: ['| a \\| b |', '| --- |', '| x |', ''].join('\n'),
+    row: 0,
+    shape: () => expect(cellAt(0, 0).textContent).toBe('a | b'),
+  },
+  {
+    // A mark that closes at the END of a cell is the case an escape applied after
+    // the fact destroys: the state has recorded where its delimiters are and trims
+    // them when the next node renders, so bytes inserted below those offsets make
+    // it cut into the text. `b` went missing.
+    name: 'inside a mark that closes the cell',
+    markdown: ['| h |', '| --- |', '| **a \\| b** |', ''].join('\n'),
+    shape: () => {
+      expect(cellAt(1, 0).textContent).toBe('a | b')
+      expect(cellAt(1, 0).firstChild.firstChild.marks.map((/** @type {any} */ m) => m.type.name)).toEqual(['bold'])
+    },
+  },
+  {
+    name: 'before a mark that closes the cell',
+    markdown: ['| h |', '| --- |', '| a \\| b and *c* |', ''].join('\n'),
+    shape: () => expect(cellAt(1, 0).textContent).toBe('a | b and c'),
+  },
+  {
+    name: 'inside a link, whose text a mark also closes',
+    markdown: ['| h |', '| --- |', '| [~~a \\| b~~](http://x) |', ''].join('\n'),
+    shape: () => {
+      expect(cellAt(1, 0).textContent).toBe('a | b')
+      expect(cellAt(1, 0).firstChild.firstChild.marks.map((/** @type {any} */ m) => m.type.name).sort())
+        .toEqual(['link', 'strike'])
+    },
+  },
+  {
+    name: 'a mark that closes mid-cell, before the `|`',
+    markdown: ['| h |', '| --- |', '| **a** b \\| c |', ''].join('\n'),
+    shape: () => expect(cellAt(1, 0).textContent).toBe('a b | c'),
+  },
+]
+
+describe('a `|` in a simple table\'s cell stays escaped', () => {
+  for (const { name, markdown, row = 1, shape } of PIPE_CASES) {
+    it(`${name}: the row keeps one cell and its content across a round trip`, () => {
+      expect(rewrite(markdown)).toBe(markdown)
+      expect(rewrite(markdown)).toBe(markdown)
+      expect(loadedTable().child(row).childCount).toBe(1)
+      shape()
+    })
+  }
+})
+
 describe('the reported defect: a fence in a cell (#162)', () => {
   it('keeps the fence and its language in the file', () => {
     const written = rewrite(FENCE_CELL)
