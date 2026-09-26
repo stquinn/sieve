@@ -510,8 +510,10 @@ A block whose content HOSTS BLOCKS is a CONTAINER, and its content is a list of
 blocks exactly as the document top level is. A range lying inside one therefore
 names its ELEMENTS, not the container: each covered element is composed as a
 block in its own right, by the same rules as a top-level node. Whether a kind is
-a container is read off the schema — its content admits the `sieveBlock` group —
-so declaring that content is the whole declaration. Only `ai-block` is one today.
+a container is read off the schema — its content admits the `sieveBlock` group
+ANYWHERE, not merely in its first position, so a kind declaring a caption before
+its blocks is one too — and declaring that content is the whole declaration. Only
+`ai-block` is one today.
 
 | Selection | Result |
 |---|---|
@@ -533,6 +535,7 @@ so declaring that content is the whole declaration. Only `ai-block` is one today
 | Prose | plain text (no match) | local insert |
 | Raw-text block (code/diagram-edit) | anything | literal text (PM `code: true` on the node — NOT a policy read; the old `rawText` flag claimed this and never implemented it) |
 | Anywhere | `sieve/slice` (>1) | Go paste-slice reconstructs blocks |
+| Anywhere | `sieve/<kind>` (a single block) | The kind's own processor rebuilds it from that view (`FirstPasteMatch` pass 1), never by detecting what its text looks like. The copy is a NEW block: a kind whose job OUTPUT is its own — a diagram's render, a smart-card's fetched image — drops that output so the copy produces its own, rather than reading an asset stored under the original block's id. |
 | Anywhere | ```` ```ai-block ```` fence | ai-block re-import |
 | Anywhere | a `text/uri-list` of `file:` URIs (a file-manager COPY) | Forwarded verbatim as a `native-drop` paste and read by Go — the same ingestion a desktop drag takes, at the CARET index rather than a drop coordinate. |
 | Anywhere | **nothing at all** (see below) | `native-clipboard`: Go reads the OS clipboard itself. |

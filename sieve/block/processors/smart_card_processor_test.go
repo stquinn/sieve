@@ -164,6 +164,39 @@ func TestSmartCardProcessor_Transform_linkForms(t *testing.T) {
 	}
 }
 
+// A copied card is a new block, and the fetch's OUTPUT is the original block's:
+// `image` is an asset stored under the ORIGINAL id and named RELATIVE to the
+// document that holds it, so a copy inheriting it reads another block's file —
+// and in another document, a file that is not there at all. Stripping the output
+// leaves href, so InitAttrs makes the copy PENDING and it fetches its own.
+func TestSmartCardProcessor_Transform_copiedCardFetchesItsOwnFace(t *testing.T) {
+	p := NewSmartCardProcessor(block.BlockServices{})
+	copied := `{"id":"crd-original","href":"https://example.com","title":"Example",` +
+		`"description":"d","siteName":"Example","image":"crd-original.png",` +
+		`"status":"COMPLETE","completedAt":"2026-01-01T00:00:00Z","fetchedAt":"2026-01-01T00:00:00Z","error":"x"}`
+	overrides := p.Transform(
+		[]block.ContentEntry{{MIMEType: "sieve/smart-card", Content: copied}}, "u", "crd-copy", block.ActionPaste)
+	if overrides == nil {
+		t.Fatal("Transform declined a copied card")
+	}
+	// The href is the card's identity, and the authored face is worth showing
+	// until the copy's own fetch lands.
+	if overrides["href"] != "https://example.com" {
+		t.Errorf("href: got %v, want the copied href", overrides["href"])
+	}
+	if overrides["title"] != "Example" {
+		t.Errorf("title: got %v, want the copied title", overrides["title"])
+	}
+	for _, field := range []string{"image", "status", "completedAt", "fetchedAt", "error"} {
+		if _, present := overrides[field]; present {
+			t.Errorf("%s must not be inherited: got %v", field, overrides[field])
+		}
+	}
+	if status := p.InitAttrs("crd-copy", overrides)["status"]; status != block.BlockStatusPending {
+		t.Errorf("the copy's status: got %v, want PENDING so it fetches its own face", status)
+	}
+}
+
 func TestSmartCardProcessor_RunJob_fetchesOGData(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")

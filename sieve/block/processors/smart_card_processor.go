@@ -76,7 +76,7 @@ func (p *SmartCardProcessor) IsSupportedContent(entries []block.ContentEntry) bl
 func (p *SmartCardProcessor) Transform(entries []block.ContentEntry, uuid, blockID string, action block.Action) map[string]interface{} {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
-			return e.AsAttrsForNewBlock(p)
+			return p.stripFetchState(e.AsAttrsForNewBlock(p))
 		}
 		l := e.Link()
 		if l.IsZero() || isImageURL(l.Href) {
@@ -90,6 +90,21 @@ func (p *SmartCardProcessor) Transform(entries []block.ContentEntry, uuid, block
 		return overrides
 	}
 	return nil
+}
+
+// stripFetchState removes the fetch job's OUTPUT attrs from a copied card's
+// overrides. `image` is the one that must go: the OG image is stored as an asset
+// named after the ORIGINAL block and addressed RELATIVE to the document holding
+// it, so a copy inheriting it reads another block's file — and in another
+// document, a file that is not there. Dropping the status family with it leaves
+// InitAttrs to treat the copy as newborn: an href present ⇒ PENDING ⇒ its own
+// fetch ⇒ its own image. The authored face (title, description, siteName) stays,
+// so the copy shows something until that lands.
+func (p *SmartCardProcessor) stripFetchState(attrs map[string]interface{}) map[string]interface{} {
+	for _, k := range []string{"image", "status", "completedAt", "fetchedAt", "error"} {
+		delete(attrs, k)
+	}
+	return attrs
 }
 
 func (p *SmartCardProcessor) OnChange(_ *block.SieveBlock) {}
