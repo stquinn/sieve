@@ -154,6 +154,9 @@ export class ClipboardSlice {
       if (nodeEnd <= range.from || offset >= range.to) return
       const dom = nodeDOM(offset)
       if (this.#descendsInto(node, offset, nodeEnd, dom)) {
+        // Descending is itself a sieve selection: the elements must go out as
+        // items even when every one of them is native prose.
+        out.hasSieve = true
         node.forEach((/** @type {any} */ child, /** @type {number} */ childOffset) => {
           const from = offset + 1 + childOffset
           if (from + child.nodeSize <= range.from || from >= range.to) return
@@ -207,7 +210,7 @@ export class ClipboardSlice {
   #composeNode(node, from, dom, out) {
     const nodeEnd = from + node.nodeSize
     const range = this.#range
-    const entries = this.#entriesOf(node)
+    const entries = this.#entriesOf(this.#clipped(node, from))
     if (String(node.type.name).indexOf(SIEVE_PREFIX) === 0) {
       out.hasSieve = true
       out.single = entries
@@ -251,6 +254,18 @@ export class ClipboardSlice {
       }
     }
     return false
+  }
+
+  /** A prose node cut down to the part of it the range covers, so a paste carries
+   *  the characters selected; a sieve block stays whole, being only meaningful whole.
+   *  @param {any} node @param {number} from the position before `node`
+   *  @returns {any} */
+  #clipped(node, from) {
+    if (String(node.type.name).indexOf(SIEVE_PREFIX) === 0) return node
+    const start = Math.max(0, this.#range.from - (from + 1))
+    const end = Math.min(node.content.size, this.#range.to - (from + 1))
+    if (end <= start || (start === 0 && end === node.content.size)) return node
+    return node.cut(start, end)
   }
 
   /** Every ContentEntry describing one top-level node. @param {any} node @returns {any[]} */

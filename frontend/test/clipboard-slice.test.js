@@ -359,6 +359,26 @@ describe('a range inside a block-hosting container', () => {
     expect(data.data['sieve/ai-block']).toBe(JSON.stringify({ kind: 'ai-block', id: 'a1', question: 'why?' }))
   })
 
+  // The answer as the app projects it: every element native prose, no sieve block
+  // among them. Descending must still serve the copy, or ProseMirror's native copy
+  // takes over and flattens the elements into one text run.
+  it('serves an answer whose elements are all native prose, one item per element', () => {
+    const first = schema.nodes.paragraph.create(null, schema.text('Here is the example:'))
+    const second = schema.nodes.paragraph.create(null, schema.text('public class Hello'))
+    const ai = schema.nodes['sieve-ai-block'].create(null, [first, second])
+    const secondFrom = 1 + first.nodeSize
+    const view = viewOf([ai], (doc) => TextSelection.create(doc, 1 + 1 + 8, secondFrom + 1 + 6))
+    const data = clip()
+    expect(slice(view, { editor }).write(/** @type {any} */ (data))).toBe(true)
+
+    const items = JSON.parse(data.data['sieve/slice'])
+    expect(items).toHaveLength(2)
+    // A prose element covered in part carries only its selected characters.
+    expect(items.map((it) => JSON.parse(it.find((e) => e.mimeType === 'sieve/prose').content).content))
+      .toEqual(['the example:', 'public'])
+    expect(data.data['text/plain']).toBe('the example:\n\npublic')
+  })
+
   // An element rendered read-only still IS an element: PM owns a position for it,
   // so a highlight inside one names that element, not the container.
   it('descends when the highlight lies inside a read-only ELEMENT of the body', () => {
