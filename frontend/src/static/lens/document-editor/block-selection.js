@@ -47,9 +47,41 @@ export class BlockSelection {
     if (!domSelection || domSelection.isCollapsed || !blockDom) return ''
     const text = domSelection.toString()
     if (!text || !text.trim()) return ''
-    const a = domSelection.anchorNode
-    const el = a ? (a.nodeType === 1 ? a : a.parentElement) : null
+    const el = BlockSelection.#elementOf(domSelection.anchorNode)
     return (el && blockDom.contains(el)) ? text : ''
+  }
+
+  /**
+   * textInside NARROWED to the highlights a DOM selection is the ONLY reading of:
+   * those confined to a region ProseMirror does not own. '' for anything else.
+   *
+   * Such a region carries `contenteditable="false"` — the browser's own statement
+   * that no caret, and so no document position, lives there. Text PM DOES own has
+   * a document range, and that range is the truth: read off the DOM instead, one
+   * highlight reports itself in full for every node it touches. A highlight that
+   * starts in a read-only region and escapes it is no faithful reading of either
+   * side, so it is not one of these.
+   * @param {Selection|null} domSelection @param {any} blockDom @returns {string}
+   */
+  static unownedText(domSelection, blockDom) {
+    const text = BlockSelection.textInside(domSelection, blockDom)
+    if (!text) return ''
+    const sel = /** @type {Selection} */ (domSelection)
+    const region = BlockSelection.#readOnlyRegion(sel.anchorNode)
+    const focus = BlockSelection.#elementOf(sel.focusNode)
+    return (region && focus && region.contains(focus)) ? text : ''
+  }
+
+  /** The nearest ancestor declaring itself uneditable, or null. @param {any} node */
+  static #readOnlyRegion(node) {
+    const el = BlockSelection.#elementOf(node)
+    return (el && el.closest) ? el.closest('[contenteditable="false"]') : null
+  }
+
+  /** A DOM node as the element to test containment against. @param {any} node */
+  static #elementOf(node) {
+    if (!node) return null
+    return node.nodeType === 1 ? node : node.parentElement
   }
 
   /**
