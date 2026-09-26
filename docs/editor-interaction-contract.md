@@ -19,7 +19,7 @@ regression pass. Source spec:
 | Diagram (edit) | indent 2 (as code) | de-indent ≤2 (as code) | as code (pair expansion, else newline + auto-indent) | **escape: insert ¶ after block** | **toggle to render mode** (cursor position preserved) | exit to next block | exit to previous block | as code | **selected characters** + whole block as `sieve/slice` | selected characters; removes them |
 | Diagram (render) | consume ∅ | consume ∅ | insert ¶ after (block is a caret stop) | **escape: insert ¶ after block** | **toggle to edit mode** (block selected OR render body focused — one function, two entry points) | pass to next block | pass to previous block | n/a | whole block | whole block; removes the block |
 | Log block | consume ∅ | consume ∅ | consume ∅ (read-only text) | **escape: insert ¶ after block** | **toggle raw↔explore** | exit to next block | exit to previous block | native | **selected characters** + whole block as `sieve/slice` | selected characters; **document UNCHANGED** (read-only text) |
-| ai-block | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a | selected characters | selected characters; removes them |
+| ai-block | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a | selected characters, per covered ELEMENT — it is a container (see Copy and cut matrix) | selected characters; removes them |
 | web-clip | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a | selected characters | selected characters; removes them |
 | smart-image | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a | real bitmap | bitmap; removes the block |
 | attachment | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a | whole block | whole block; removes the block |
@@ -506,10 +506,19 @@ transaction** — no kind has a cut rule of its own. Read-only text survives a
 cut because `readOnlyText`'s `filterTransaction` wall refuses the delete, not
 because anything in the clipboard path knows about it.
 
+A block whose content HOSTS BLOCKS is a CONTAINER, and its content is a list of
+blocks exactly as the document top level is. A range lying inside one therefore
+names its ELEMENTS, not the container: each covered element is composed as a
+block in its own right, by the same rules as a top-level node. Whether a kind is
+a container is read off the schema — its content admits the `sieveBlock` group —
+so declaring that content is the whole declaration. Only `ai-block` is one today.
+
 | Selection | Result |
 |---|---|
-| Partial PM range inside a block's content (code, diagram, log, prose, ai-block, web-clip — any non-atom kind) | text/plain + text/html are the selected CHARACTERS; `sieve/slice` + `sieve/<kind>` still carry the WHOLE block (only-meaningful-whole). NEVER deferred to native PM copy — a slice inside a `defining`/`code` block re-wraps the whole node, so native copied everything. The native path agrees: a kind's text serializer clips its output to the serialized range. |
-| A highlight in a block's READ-ONLY region (contentEditable=false DOM PM cannot track — the ai-block question title, the log Explore table) | text/plain + text/html follow the highlight: PM's own selection stays on whatever block last held the caret, so the visited range is re-targeted onto the highlighted block (`BlockSelection.blockRange`). A CUT here still writes the clipboard, but removes nothing — the highlight is real selected content that is simply not PM's to delete. |
+| Partial PM range inside a LEAF block's content (code, diagram, log, prose, web-clip — any non-atom, non-container kind) | text/plain + text/html are the selected CHARACTERS; `sieve/slice` + `sieve/<kind>` still carry the WHOLE block (only-meaningful-whole). NEVER deferred to native PM copy — a slice inside a `defining`/`code` block re-wraps the whole node, so native copied everything. The native path agrees: a kind's text serializer clips its output to the serialized range. |
+| Partial PM range inside a CONTAINER's content (ai-block) | One `sieve/slice` item per covered ELEMENT, each composed as the row above composes a top-level block: an element covered in part gives its characters as text and itself whole as its `sieve/<kind>` view. The container contributes no item of its own, so a paste rebuilds the elements, not the container. |
+| A highlight in a block's READ-ONLY region (contentEditable=false DOM PM cannot track — the ai-block question title, the log Explore table) | text/plain + text/html follow the highlight, and it claims the whole block: a container is NOT descended into, because a highlight PM cannot track names no range to pick elements by. PM's own selection stays on whatever block last held the caret, so where PM's selection is elsewhere the visited range is re-targeted onto the highlighted block (`BlockSelection.blockRange`). A CUT here still writes the clipboard, but removes nothing — the highlight is real selected content that is simply not PM's to delete. |
+| A highlight PM DOES own, spanning more than one block or element | Each block's text views follow the DOCUMENT range, so each contributes its own covered characters exactly once. The DOM highlight is read only where PM owns no position for it — `contentEditable=false` DOM, and the whole highlight confined to one such region (`BlockSelection.unownedText`). Read off the DOM anywhere else, one highlight reports itself in full for the first block and every later block adds its share again. |
 | Single whole sieve block (gutter / NodeSelection) | text/plain + text/html + `sieve/slice` + `sieve/<kind>` + renderer custom views |
 | Gutter block-range | `sieve/slice` = ordered ContentEntry sets, one per block |
 | Smart-image node selection | real bitmap to clipboard |
