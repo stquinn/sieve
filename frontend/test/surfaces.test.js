@@ -11,6 +11,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { EditorState, TextSelection } from '@tiptap/pm/state'
 import { DOMParser as PMDOMParser, Schema } from '@tiptap/pm/model'
+import { Editor } from '@tiptap/core'
+import { StarterKit } from '@tiptap/starter-kit'
+import { Markdown } from 'tiptap-markdown'
+import TaskList from '@tiptap/extension-task-list'
+import TaskItem from '@tiptap/extension-task-item'
 
 // P4.E: WysiwygSurface now imports its app helpers from their OWNING modules (the
 // shared TipTap bus is retired). The three side-effect extension modules build
@@ -409,7 +414,7 @@ function fakeEditorOver(schema, docNodes, caretAt) {
     dispatched,
     state,
     schema,
-    storage: { markdown: { parser: { md: { render: (t) => '<p>' + t + '</p>' } } } },
+    storage: { markdown: { parser: { parse: (t) => '<p>' + t + '</p>' } } },
     view: { dom, dispatch: (tr) => { dispatched.push(tr); calls.push(['dispatch']) } },
     commands: {
       insertContentAt: (pos, content) => { calls.push(['insertContentAt', pos, content]); return true },
@@ -699,7 +704,7 @@ function mountBundle(state) {
       this.state = state
       this.schema = state.schema
       this.view = { dom: document.createElement('div'), dispatch: vi.fn(), state: state }
-      this.storage = { markdown: { parser: { md: { render: (t) => t } } } }
+      this.storage = { markdown: { parser: { parse: (t) => t } } }
       // The event seam a real Editor carries: the surface's trigger picker
       // subscribes to `update`/`blur` through it on every mount.
       this.handlers = {}
@@ -1961,6 +1966,36 @@ describe('WysiwygSurface.paintContainer — a LOAD parks the caret+scroll at the
     // The old two-dispatch mechanism (a separate commands.setTextSelection(0)
     // AFTER the replace landed) is retired — everything rides one transaction.
     expect(ed.calls.some((c) => c[0] === 'setTextSelection')).toBe(false)
+  })
+})
+
+describe('WysiwygSurface.paintContainer — prose renders through tiptap-markdown', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    seedVendor({ ProseMirrorDOMParser: PMDOMParser, TextSelection })
+  })
+
+  // A repaint (a tab switch, a markdown-mode round trip) renders each prose block
+  // from its markdown. It must go through tiptap-markdown's parse, whose extension
+  // hooks are what mark a list as a task list: markdown-it's bare render turned
+  // every task list into a bullet list on the next repaint.
+  it('keeps a task list a task list, checked state and all', () => {
+    const real = new Editor({
+      element: null,
+      extensions: [StarterKit, TaskList, TaskItem.configure({ nested: true }), Markdown.configure({ html: true })],
+      content: '',
+    })
+    const ed = fakeEditorOver(real.schema, [real.schema.nodes.paragraph.create()])
+    ed.storage = real.storage
+    const s = new TestWysiwygSurface('doc-1', wyHost(), ed)
+    s.paintContainer(containerOf(['p1'], {
+      p1: { id: 'p1', kind: 'prose', attrs: { id: 'p1', content: '- [ ] one\n- [x] two' } },
+    }))
+    const items = []
+    ed.dispatched[0].doc.descendants((n) => { if (n.type.name === 'taskItem') items.push(n.attrs.checked) })
+    expect(ed.dispatched[0].doc.firstChild.type.name).toBe('taskList')
+    expect(items).toEqual([false, true])
+    real.destroy()
   })
 })
 

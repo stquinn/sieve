@@ -1799,7 +1799,10 @@ export class WysiwygSurface extends AbstractSurface {
    */
   #blockToNodes(editorPane, b) {
     var T = this.#T
-    var mdRender = function (t) { return editorPane.storage.markdown.parser.md.render(t) }
+    // tiptap-markdown's parse, not markdown-it's bare render: parse also runs every
+    // extension's setup and updateDOM hooks, which is how a task list is told apart
+    // from a bullet list.
+    var mdRender = function (t) { return editorPane.storage.markdown.parser.parse(t) }
     var PMDP = T.ProseMirrorDOMParser || T.DOMParser
     var parser = PMDP.fromSchema(editorPane.state.schema)
     var bhtml = buildBlocksHTML([b], mdRender)
