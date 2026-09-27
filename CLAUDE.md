@@ -96,9 +96,10 @@ CI's `credits` job regenerates and diffs, failing
 the pipeline if a dep change lands without a regen; releases ship the committed artifact
 and never regenerate. Sieve itself is Apache-2.0 (`LICENSE` + `NOTICE` at root).
 
-**Release:** bump `sieveVersion` in `flake.nix` (the number a Nix install reports and
-stamps into `main.version` as `<version>+<commit>`), commit, tag `v<version>`, push. The
-Forgejo release workflow refuses a tag whose number differs from that constant. The Go
+**Release:** `tools/release.sh <version>` — bumps `sieveVersion` in `flake.nix` (the number
+a Nix install reports and stamps into `main.version` as `<version>+<commit>`), commits, tags
+`v<version>` and pushes both atomically. Never tag by hand: the Forgejo release workflow
+refuses a tag whose number differs from that constant, and v0.34.0–v0.36.0 were lost that way. The Go
 module set is pinned by `vendorHash` in the same file; the credits CI job fails when a
 `go.mod`/`go.sum` change lands without the matching bump (the correct hash is in its log).
 
