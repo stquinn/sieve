@@ -222,7 +222,7 @@ func TestShowcase_AssemblesTheFullPrompt(t *testing.T) {
 
 // "Embed in Document" and the markdown export are ONE function: the prose
 // processor's Transform asks the source's MarkdownRepresentation for the
-// ActionTransform verb, and DocView.renderBlockExport asks the same — so the
+// ActionTransform verb, and DocView.markdownRepresentation asks the same — so the
 // exchange a person embeds is byte-for-byte the one a document exports.
 //
 // The output must be WELL-FORMED MARKDOWN whatever the question is made of, and

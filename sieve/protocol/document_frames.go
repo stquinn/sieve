@@ -419,16 +419,16 @@ func NewDetectExtractionsResultFrame(opID string, offers []block.SupportedAction
 	return DetectExtractionsResultFrame{Type: TypeDetectExtractionsResult, OpID: opID, Offers: offers}
 }
 
-// ExportFrame asks for clean whole-document text — the "Copy as Markdown"
-// contract, with AI blocks excluded because prior Q&A is conversation, not
-// document content. It is a clipboard read, never a download.
+// ExportFrame asks for clean whole-document text in an export format — the
+// clipboard exports, with AI blocks excluded because prior Q&A is conversation,
+// not document content. It is a clipboard read, never a download.
 type ExportFrame struct {
 	Type string `json:"type"`
 	OpID string `json:"opId,omitempty" doc:"echoed on the export-content reply"`
-	// Format keeps the frame alive for future export targets. Only "markdown"
-	// exists; absent defaults to it, and an unknown value is refused rather than
-	// silently answered with markdown.
-	Format string `json:"format,omitempty" doc:"markdown, the only format there is"`
+	// Format names the export format: "markdown" or "confluence" (Confluence
+	// wiki markup). Absent defaults to markdown, and an unknown value is refused
+	// rather than silently answered with markdown.
+	Format string `json:"format,omitempty" doc:"markdown (the default) or confluence (Confluence wiki markup)"`
 }
 
 // ExportContentFrame carries the exported document.

@@ -434,6 +434,20 @@ func TestWS_Export_DropsAIBlocksAndServesCleanMarkdown(t *testing.T) {
 		t.Errorf("export leaked prose sentinels, got %q", md)
 	}
 
+	// The confluence format goes through the same filter, rendered as wiki markup.
+	send(t, c, `{"type":"export","opId":"op-wiki","format":"confluence"}`)
+	wiki := readUntil(t, c, "export-content", 2*time.Second)
+	if wiki["opId"] != "op-wiki" || wiki["format"] != "confluence" {
+		t.Errorf("export-content must echo opId and format, got %v", wiki)
+	}
+	content, _ := wiki["content"].(string)
+	if strings.Contains(content, priorAnswer) {
+		t.Errorf("confluence export leaked the ai-block, got %q", content)
+	}
+	if want := "user prose stays\n\n{code:language=go}\nx := 1\n{code}"; content != want {
+		t.Errorf("confluence export = %q, want %q", content, want)
+	}
+
 	// An unknown format is refused, not silently served as markdown.
 	send(t, c, `{"type":"export","opId":"op-pdf","format":"pdf"}`)
 	errFrame := readUntil(t, c, "error", 2*time.Second)

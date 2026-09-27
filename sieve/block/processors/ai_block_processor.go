@@ -576,7 +576,7 @@ func (p *AIBlockProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJo
 
 // MarkdownRepresentation renders an ANSWERED exchange as ordinary document
 // markdown — the one form behind both "Embed in Document" (the prose processor's
-// Transform asks for it) and the markdown export (DocView.renderBlockExport asks
+// Transform asks for it) and the markdown export (DocView.markdownRepresentation asks
 // for it), so what a person embeds is what a document exports.
 //
 // THE TWO REFERENCE ROLES LEAVE BY DIFFERENT DOORS, and the difference is what

@@ -534,6 +534,12 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 			want: &ExportFrame{Type: TypeExport, OpID: "op-11", Format: "markdown"},
 		},
 		{
+			name: "export as confluence",
+			raw:  `{"type":"export","opId":"op-12","format":"confluence"}`,
+			into: &ExportFrame{},
+			want: &ExportFrame{Type: TypeExport, OpID: "op-12", Format: "confluence"},
+		},
+		{
 			name: "focus",
 			raw:  `{"type":"focus"}`,
 			into: &FocusFrame{},

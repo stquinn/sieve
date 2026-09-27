@@ -2534,7 +2534,7 @@ describe('AbstractEditor.reload — the host loads, the lens repaints once', () 
 describe('SieveWorkspace chrome delegation (P2.C transitional; P4.C/P4.D dissolved)', () => {
   // P4.C moved the find bar + the two insert dialogs OUT of the provideChrome
   // registry into Workspace-owned children (FindDialog / InsertDialogs, built by
-  // bootChrome). P4.D retired the registry ENTIRELY: copyDocumentAsMarkdown now
+  // bootChrome). P4.D retired the registry ENTIRELY: copyDocumentAs now
   // delegates DIRECTLY to the active editor's copyAsMarkdown (the editor owns the
   // export). provideChrome / #chromeCall / WorkspaceChrome are GONE. These tests pin
   // the post-P4.D contract.
@@ -2544,11 +2544,11 @@ describe('SieveWorkspace chrome delegation (P2.C transitional; P4.C/P4.D dissolv
     expect(w.provideChrome).toBeUndefined()
   })
 
-  it('copyDocumentAsMarkdown null-guards a tab with no mount (no throw)', () => {
+  it('copyDocumentAs null-guards a tab with no mount (no throw)', () => {
     const w = new SieveWorkspace()
     w.openTab('doc-1')
-    expect(() => w.copyDocumentAsMarkdown()).not.toThrow()
-    expect(() => new SieveWorkspace().copyDocumentAsMarkdown()).not.toThrow()
+    expect(() => w.copyDocumentAs('markdown')).not.toThrow()
+    expect(() => new SieveWorkspace().copyDocumentAs('markdown')).not.toThrow()
   })
 
   it('the find + insert-dialog verbs delegate to the Workspace children, NOT #chromeCall', () => {
@@ -2585,12 +2585,12 @@ describe('SieveWorkspace chrome delegation (P2.C transitional; P4.C/P4.D dissolv
   })
 })
 
-// ── Copy as Markdown is a HOST verb ────────────────────────────────────────────
+// ── Copy as <format> is a HOST verb ────────────────────────────────────────────
 // The menu acts on the workspace, and the filtering the export applies (ai-blocks
 // dropped, cards and clips reduced to links) is Go's, not any lens's projection —
 // so it goes through the MOUNT, not through the wall.
 
-describe('SieveWorkspace.copyDocumentAsMarkdown', () => {
+describe('SieveWorkspace.copyDocumentAs', () => {
   let prevRuntime, prevClip
   beforeEach(() => { prevRuntime = window.runtime; prevClip = navigator.clipboard })
   afterEach(() => {
@@ -2608,15 +2608,15 @@ describe('SieveWorkspace.copyDocumentAsMarkdown', () => {
     return { w, mount }
   }
 
-  it('flushes first, then writes the SERVER\'s export to the Wails pasteboard (primary)', async () => {
+  it.each(['markdown', 'confluence'])('flushes first, then writes the SERVER\'s %s export to the Wails pasteboard (primary)', async (format) => {
     const setText = vi.fn(() => Promise.resolve())
     window.runtime = { ClipboardSetText: setText }
     const { w, mount } = exporting('# clean export')
     const flush = vi.spyOn(w, 'flushSave')
-    await w.copyDocumentAsMarkdown()
+    await w.copyDocumentAs(format)
     // The flush is what makes the export include what the user has just typed.
     expect(flush).toHaveBeenCalled()
-    expect(mount.exportAs).toHaveBeenCalledWith('markdown')
+    expect(mount.exportAs).toHaveBeenCalledWith(format)
     expect(setText).toHaveBeenCalledWith('# clean export')
   })
 
@@ -2625,7 +2625,7 @@ describe('SieveWorkspace.copyDocumentAsMarkdown', () => {
     const writeText = vi.fn(() => Promise.resolve())
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
     const { w } = exporting('body')
-    await w.copyDocumentAsMarkdown()
+    await w.copyDocumentAs('markdown')
     expect(writeText).toHaveBeenCalledWith('body')
   })
 
@@ -2633,7 +2633,7 @@ describe('SieveWorkspace.copyDocumentAsMarkdown', () => {
     const setText = vi.fn(() => Promise.resolve())
     window.runtime = { ClipboardSetText: setText }
     const { w } = exporting(null)
-    await w.copyDocumentAsMarkdown()
+    await w.copyDocumentAs('markdown')
     expect(setText).not.toHaveBeenCalled()
   })
 
@@ -2641,7 +2641,7 @@ describe('SieveWorkspace.copyDocumentAsMarkdown', () => {
     const setText = vi.fn(() => Promise.resolve())
     window.runtime = { ClipboardSetText: setText }
     const w = new SieveWorkspace()
-    await w.copyDocumentAsMarkdown()
+    await w.copyDocumentAs('markdown')
     expect(setText).not.toHaveBeenCalled()
     expect(typeof (/** @type {any} */ (makeNote('n'))).copyAsMarkdown).not.toBe('function')
   })

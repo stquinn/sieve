@@ -258,11 +258,11 @@ components:
     documentExport:
       name: export
       title: export
-      summary: ExportFrame asks for clean whole-document text — the "Copy as Markdown" contract, with AI blocks excluded because prior Q&A is conversation, not document content.
+      summary: ExportFrame asks for clean whole-document text in an export format — the clipboard exports, with AI blocks excluded because prior Q&A is conversation, not document content.
       description: |-
-        ExportFrame asks for clean whole-document text — the "Copy as Markdown"
-        contract, with AI blocks excluded because prior Q&A is conversation, not
-        document content. It is a clipboard read, never a download.
+        ExportFrame asks for clean whole-document text in an export format — the
+        clipboard exports, with AI blocks excluded because prior Q&A is conversation,
+        not document content. It is a clipboard read, never a download.
       contentType: application/json
       correlationId:
         $ref: '#/components/correlationIds/opId'
@@ -1397,9 +1397,9 @@ components:
     ProtocolExportFrame:
       type: object
       description: |-
-        ExportFrame asks for clean whole-document text — the "Copy as Markdown"
-        contract, with AI blocks excluded because prior Q&A is conversation, not
-        document content. It is a clipboard read, never a download.
+        ExportFrame asks for clean whole-document text in an export format — the
+        clipboard exports, with AI blocks excluded because prior Q&A is conversation,
+        not document content. It is a clipboard read, never a download.
       properties:
         type:
           type: string
@@ -1408,7 +1408,7 @@ components:
           description: echoed on the export-content reply
         format:
           type: string
-          description: markdown, the only format there is
+          description: markdown (the default) or confluence (Confluence wiki markup)
       required:
         - type
     ProtocolExtractFrame:

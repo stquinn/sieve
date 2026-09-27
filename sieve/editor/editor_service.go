@@ -608,20 +608,19 @@ func (es *EditorService) readingOf(blk block.SieveBlock) (segments []domain.Text
 	return bearer.NormalisedText(&blk), true
 }
 
-// ExportMarkdown derives CLEAN whole-doc markdown for "Copy as Markdown" from the
-// LIVE shadow: every block surviving the CALLER's filter renders via its
-// MarkdownRepresentation (NOT the on-disk Serialize). The exclusion policy belongs
-// to the call site, which passes a closure (nil exports everything); this service
-// only resolves the shadow and delegates. Returns an error when the document is
-// not open.
-func (es *EditorService) ExportMarkdown(uuid string, filter block.BlockFilter) (string, error) {
+// Export renders the LIVE shadow through generator: every block surviving the
+// CALLER's filter, from its MarkdownRepresentation (NOT the on-disk Serialize).
+// The exclusion policy belongs to the call site, which passes a closure (nil
+// exports everything); this service only resolves the shadow and delegates.
+// Returns an error when the document is not open.
+func (es *EditorService) Export(uuid string, filter block.BlockFilter, generator block.ExportGenerator) (string, error) {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
 	if shadow == nil {
-		return "", fmt.Errorf("export-markdown: no open document for uuid %q", uuid)
+		return "", fmt.Errorf("export: no open document for uuid %q", uuid)
 	}
-	return shadow.ExportMarkdown(filter), nil
+	return shadow.Export(filter, generator), nil
 }
 
 // EnterMarkdown switches the shadow to markdown mode. It derives whole-doc

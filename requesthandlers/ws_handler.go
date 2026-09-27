@@ -794,10 +794,10 @@ func (h *WsHandler) handleDetectExtractions(f inboundFrame) {
 		h.ServiceProvider.Editor.DetectExtractions(f.uuid, msg.SourceKind, msg.Entries)))
 }
 
-// handleExport serves clean whole-document markdown. THIS handler owns the
-// exclusion policy — the closure dropping ai-blocks, because prior Q&A is
-// conversation rather than document content; another caller may filter
-// differently.
+// handleExport serves the whole document in the requested export format (absent
+// means markdown; an unknown format is refused). THIS handler owns the exclusion
+// policy — the closure dropping ai-blocks, because prior Q&A is conversation
+// rather than document content; another caller may filter differently.
 func (h *WsHandler) handleExport(f inboundFrame) {
 	var msg protocol.ExportFrame
 	if err := json.Unmarshal(f.raw, &msg); err != nil {
@@ -806,19 +806,20 @@ func (h *WsHandler) handleExport(f inboundFrame) {
 	}
 	format := msg.Format
 	if format == "" {
-		format = "markdown"
+		format = block.ExportFormatMarkdown
 	}
-	if format != "markdown" {
+	generator, ok := block.ExportGenerators{}.Lookup(format)
+	if !ok {
 		f.reply(protocol.NewErrorFrame(fmt.Sprintf("unsupported export format %q", format)))
 		return
 	}
-	md, err := h.ServiceProvider.Editor.ExportMarkdown(f.uuid,
-		func(b block.SieveBlock) bool { return b.Kind != "ai-block" })
+	content, err := h.ServiceProvider.Editor.Export(f.uuid,
+		func(b block.SieveBlock) bool { return b.Kind != "ai-block" }, generator)
 	if err != nil {
 		f.reply(protocol.NewErrorFrame(fmt.Sprintf("export failed: %v", err)))
 		return
 	}
-	f.reply(protocol.NewExportContentFrame(msg.OpID, format, md))
+	f.reply(protocol.NewExportContentFrame(msg.OpID, format, content))
 }
 
 // handleFocus records that the user is dwelling on this document — as the

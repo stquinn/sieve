@@ -1,0 +1,171 @@
+h1. Confluence export UAT
+
+Each section names what it tests. Paste the export into Confluence and check each section against its expectation.
+
+h2. 1. Headings and inline formatting
+
+h3. Third-level heading
+
+Plain text, *bold*, _italic_, -struck-, and {{inline \{code\}}} with braces. A [web link|https://example.com], a sieve link that should show as text only, and an autolink [https://example.org]. This line ends with a hard break\\and this line follows it.
+
+Expect: a real h3; bold/italic/strike rendered; monospace shows {{\{code\}}} literally; the web link and autolink are clickable; the sieve link is plain text; the two lines break where the backslash is.
+
+h2. 2. Escaping (each paragraph should read exactly as Sieve displays it)
+
+Mid-word stays put: a-b-c, snake_case_name, x^2, well-known.
+
+Word-edge characters: \-not struck-, \_not italic_, \+not underlined+, \^not super^, \~not sub~, \??not a citation?\?
+
+Always-special: \{not a macro\}, \[not a link\], a \| b, \!not an image\!
+
+\h1. this paragraph is not a heading
+
+\bq. this paragraph is not a quote
+
+\* this paragraph is not a bullet
+
+\# this paragraph is not a numbered item
+
+Expect: no formatting, no macro errors, no broken links, and no visible backslashes.
+
+h2. 3. Lists
+
+* bullet one
+** nested bullet
+*** third level
+* bullet two
+
+# first
+# second
+#* mixed bullet under a number
+# third
+
+* item with a second paragraph
+second paragraph of the same item
+* item with a fence under it
+{code:language=go}
+fmt.Println("in a list")
+{code}
+* item after the fence
+
+Expect: correct nesting and mixed {{#\*}}. The fence under the item is a Go code macro, and the list continues after it.
+
+h2. 4. Task list
+
+* ☐ open task
+* ☑ done task
+
+Expect: bullets starting with ☐ and ☑.
+
+h2. 5. Quote
+
+{quote}
+A quoted paragraph.
+
+A second quoted paragraph, with *bold*.
+{quote}
+
+Expect: one quote macro holding both paragraphs.
+
+h2. 6. Fences inside prose
+
+{code:language=go}
+package main
+
+func main() {}
+{code}
+
+{code:language=python}
+def f(x):
+    return {"a": x}
+{code}
+
+{code:language=go}
+// 'golang' should map to Confluence's 'go'
+{code}
+
+{code:language=shell}
+echo "sh should map to shell"
+{code}
+
+{code}
+no language at all
+{code}
+
+{code}
+unknown language: expect a plain code macro, no language
+{code}
+
+{plantuml}
+@startuml
+Alice -> Bob: fence in prose
+@enduml
+{plantuml}
+
+{code}
+graph LR; A-->B
+{code}
+
+Expect, in order: Go, Python, Go, Shell and plain code macros; a plain code macro for the unknown language; a RENDERED PlantUML diagram; the mermaid source as a plain code macro.
+
+h2. 7. Pipe table
+
+||Name||Value||Note||
+|*bold*|{{a \| b}}|[link|https://example.com]|
+|plain|42|-old-|
+
+Expect: a header row, two body rows, formatting inside cells, and the pipe shown literally inside the monospace.
+
+h2. 8. Complex table (HTML form: fences and lists in cells)
+
+||Case||Content||
+|Fence in a cell|{code:language=json}
+{"id": 1, "ok": true}
+{code}|
+|List and fence in one cell|* first point
+* second point
+{code:language=go}
+x := 1
+{code}|
+|PlantUML in a cell|{plantuml}
+@startuml
+A -> B
+@enduml
+{plantuml}|
+
+Expect: a 2-column table with a header row. The cells hold a JSON code macro, then a bullet list followed by a Go code macro, then a rendered PlantUML diagram.
+
+h2. 9. Sieve blocks
+
+{code:language=go}
+func Add(a, b int) int {
+    return a + b
+}
+{code}
+
+{code}
+2026-09-27T10:00:00Z INFO  server started port=8080
+2026-09-27T10:00:01Z ERROR connection refused host=db
+{code}
+
+{plantuml}
+@startuml
+actor User
+User -> Sieve: export
+Sieve -> Confluence: paste
+@enduml
+{plantuml}
+
+{code}
+graph TD; Export-->Paste
+{code}
+
+Expect: a Go code macro; a plain code macro for the log; a RENDERED PlantUML sequence diagram; the mermaid source as a plain code macro. These are real Sieve blocks, not prose fences, and must look the same as section 6.
+
+h2. 10. Rule and images
+
+----
+
+[remote image|https://example.com/logo.png]
+
+Expect: a horizontal rule, then a link labelled "remote image", not an embedded picture.

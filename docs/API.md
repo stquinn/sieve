@@ -37,7 +37,7 @@ alone, so the token appears in no response header.
 | `doc-update` | `protocol.DocUpdateFrame` | — | DocUpdateFrame carries the markdown-mode buffer's current text to the shadow document. |
 | `enter-markdown` | `protocol.EnterMarkdownFrame` | `opId` | EnterMarkdownFrame switches the document to markdown mode: the server embeds the current block state into markdown and answers with a MarkdownContentFrame carrying the merged text to seed the markdown editor. |
 | `enter-wysiwyg` | `protocol.EnterWysiwygFrame` | `opId` | EnterWysiwygFrame switches the document to WYSIWYG mode, re-parsing the block tree from the markdown the client holds and answering with a WysiwygContentFrame. |
-| `export` | `protocol.ExportFrame` | `opId` | ExportFrame asks for clean whole-document text — the "Copy as Markdown" contract, with AI blocks excluded because prior Q&A is conversation, not document content. |
+| `export` | `protocol.ExportFrame` | `opId` | ExportFrame asks for clean whole-document text in an export format — the clipboard exports, with AI blocks excluded because prior Q&A is conversation, not document content. |
 | `extract` | `protocol.ExtractFrame` | `opId` | ExtractFrame creates a block from selected content — the additive extract/paste mechanic and the in-place transform, told apart by Operation. |
 | `feature-control` | `protocol.FeatureControlFrame` | — | FeatureControlFrame switches one text-service feature on or off, and says what it is to work with. |
 | `flush` | `protocol.FlushFrame` | — | FlushFrame asks the shadow document to persist now rather than on its debounce. |
@@ -166,13 +166,13 @@ EnterWysiwygFrame switches the document to WYSIWYG mode, re-parsing the block tr
 
 #### `export` — client → server
 
-ExportFrame asks for clean whole-document text — the "Copy as Markdown" contract, with AI blocks excluded because prior Q&A is conversation, not document content.
+ExportFrame asks for clean whole-document text in an export format — the clipboard exports, with AI blocks excluded because prior Q&A is conversation, not document content.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
 | `type` | `string` | yes |  |
 | `opId` | `string` | no | echoed on the export-content reply |
-| `format` | `string` | no | markdown, the only format there is |
+| `format` | `string` | no | markdown (the default) or confluence (Confluence wiki markup) |
 
 #### `extract` — client → server
 

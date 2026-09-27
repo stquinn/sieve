@@ -78,7 +78,7 @@ func TestDeriveExportMarkdown_IgnoresLegacyExportRepresenter(t *testing.T) {
 		{ID: "lg-1", Kind: "exp-legacy", Attrs: map[string]interface{}{}},
 	}}
 
-	got := doc.deriveExportMarkdown(nil)
+	got := doc.deriveExport(nil, MarkdownGenerator{})
 
 	if !strings.Contains(got, "THE-ONE-TRUE-REPRESENTATION") {
 		t.Fatalf("export must render MarkdownRepresentation, got %q", got)
@@ -107,7 +107,7 @@ func TestDeriveExportMarkdown_FiltersAIBlockAndUsesMarkdownRep(t *testing.T) {
 	}
 	doc := DocView{Blocks: blocks, codec: codec}
 
-	got := doc.deriveExportMarkdown(dropKind("exp-ai"))
+	got := doc.deriveExport(dropKind("exp-ai"), MarkdownGenerator{})
 
 	// ai-block filtered out entirely.
 	if strings.Contains(got, "stale answer") || strings.Contains(got, "what is x?") {
@@ -147,7 +147,7 @@ func TestDeriveExportMarkdown_MarkdownModeReparsesNotPassthrough(t *testing.T) {
 	raw := "intro para\n\n```exp-code\nlang: go\nsource: y := 2\n```"
 	doc := DocView{rawAuthoritative: true, mdModeBuffer: raw, codec: codec}
 
-	got := doc.deriveExportMarkdown(nil)
+	got := doc.deriveExport(nil, MarkdownGenerator{})
 
 	if got == raw {
 		t.Fatalf("markdown-mode export must re-parse, not return the raw buffer verbatim")
@@ -160,5 +160,67 @@ func TestDeriveExportMarkdown_MarkdownModeReparsesNotPassthrough(t *testing.T) {
 	}
 	if !strings.Contains(got, "intro para") {
 		t.Fatalf("export must keep the prose gap text, got %q", got)
+	}
+}
+
+// exportSourceProc stands in for a sourced kind (code, log, diagram): its
+// MarkdownRepresentation is non-empty exactly when the block has a source.
+type exportSourceProc struct{ fakeProc }
+
+func (exportSourceProc) MarkdownRepresentation(b SieveBlock, _ string) string {
+	src, _ := b.Attrs["source"].(string)
+	return src
+}
+
+// The Confluence generator on the export walk: each surviving block, one row per
+// kind of the generator's kind switch, becomes its wiki markup; the filter and
+// the empty-render skip apply exactly as for markdown.
+func TestDeriveExport_Confluence(t *testing.T) {
+	RegisterProcessor(newExportProseProc())
+	defer UnregisterProcessor("exp-prose")
+	for _, kind := range []string{"code", "log", "diagram"} {
+		RegisterProcessor(&exportSourceProc{fakeProc: *newFakeProc(kind)})
+		defer UnregisterProcessor(kind)
+	}
+	codec := NewDocumentCodec(GlobalRegistry())
+
+	cases := []struct {
+		name   string
+		filter BlockFilter
+		blocks []SieveBlock
+		want   string
+	}{
+		{"code names its mapped language", nil, []SieveBlock{
+			{Kind: "code", Attrs: map[string]interface{}{"language": "sh", "source": "ls"}},
+		}, "{code:language=shell}\nls\n{code}"},
+		{"code in an unlisted language", nil, []SieveBlock{
+			{Kind: "code", Attrs: map[string]interface{}{"language": "cobolish", "source": "x"}},
+		}, "{code}\nx\n{code}"},
+		{"log", nil, []SieveBlock{
+			{Kind: "log", Attrs: map[string]interface{}{"source": "ERROR x"}},
+		}, "{code}\nERROR x\n{code}"},
+		{"plantuml diagram", nil, []SieveBlock{
+			{Kind: "diagram", Attrs: map[string]interface{}{"diagramType": "plantuml", "source": "A -> B"}},
+		}, "{plantuml}\nA -> B\n{plantuml}"},
+		{"mermaid diagram", nil, []SieveBlock{
+			{Kind: "diagram", Attrs: map[string]interface{}{"diagramType": "mermaid", "source": "graph LR"}},
+		}, "{code}\ngraph LR\n{code}"},
+		{"prose is transpiled", nil, []SieveBlock{
+			{Kind: "exp-prose", Attrs: map[string]interface{}{"content": "**Hello** [x](https://x.example)"}},
+		}, "*Hello* [x|https://x.example]"},
+		{"filtered and empty blocks are skipped", dropKind("log"), []SieveBlock{
+			{Kind: "exp-prose", Attrs: map[string]interface{}{"content": "kept"}},
+			{Kind: "log", Attrs: map[string]interface{}{"source": "dropped by the filter"}},
+			{Kind: "code", Attrs: map[string]interface{}{"language": "go", "source": ""}},
+			{Kind: "diagram", Attrs: map[string]interface{}{"diagramType": "plantuml", "source": "A -> B"}},
+		}, "kept\n\n{plantuml}\nA -> B\n{plantuml}"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := DocView{Blocks: tc.blocks, codec: codec}
+			if got := doc.deriveExport(tc.filter, NewConfluenceGenerator()); got != tc.want {
+				t.Errorf("got\n%s\nwant\n%s", got, tc.want)
+			}
+		})
 	}
 }

@@ -109,20 +109,20 @@ func (d DocView) deriveMarkdownFiltered(f BlockFilter) string {
 	return md
 }
 
-// deriveExportMarkdown renders the whole document as CLEAN markdown for "Copy as
-// Markdown": apply the caller's filter first, then render each SURVIVING block via
-// its MarkdownRepresentation — NOT the on-disk Serialize. A block has ONE markdown
-// representation; the only export policy hook is the caller's BlockFilter. Empty
-// renders (a pending block, an ai-block with no answer) are skipped; survivors join
-// with a blank line. No frontmatter, no prose <!--s:--> sentinels, no fenced YAML —
-// that is the Serialize (on-disk) form, which this deliberately avoids.
+// deriveExport renders the whole document for an export: apply the caller's
+// filter first, then hand each SURVIVING block and its MarkdownRepresentation —
+// NOT the on-disk Serialize — to the generator. A block has ONE markdown
+// representation; the generator decides the target format and the caller's
+// BlockFilter is the only policy hook. Empty renders (a pending block, an
+// ai-block with no answer) are skipped; survivors join with a blank line. No
+// frontmatter, no prose <!--s:--> sentinels, no fenced YAML.
 //
 // MARKDOWN-MODE — unlike deriveMarkdownFiltered, this does NOT return the raw buffer
 // verbatim (which would leak prose sentinels and cannot honour the filter). It
 // re-parses the raw buffer through the codec (mirroring findBlockByID) so the same
-// per-block export render and filter apply. On a re-parse error it falls back to the
+// per-block render and filter apply. On a re-parse error it falls back to the
 // raw buffer rather than losing the user's content (breakglass-mode best effort).
-func (d DocView) deriveExportMarkdown(f BlockFilter) string {
+func (d DocView) deriveExport(f BlockFilter, generator ExportGenerator) string {
 	blocks := d.Blocks
 	if d.rawAuthoritative {
 		parsed, err := d.codec.Deserialize(d.mdModeBuffer)
@@ -137,18 +137,18 @@ func (d DocView) deriveExportMarkdown(f BlockFilter) string {
 		if f != nil && !f(b) {
 			continue
 		}
-		md := d.renderBlockExport(b)
-		if strings.TrimSpace(md) == "" {
+		out := generator.RenderBlock(b, d.markdownRepresentation(b))
+		if strings.TrimSpace(out) == "" {
 			continue
 		}
-		parts = append(parts, md)
+		parts = append(parts, out)
 	}
 	return strings.Join(parts, "\n\n")
 }
 
-// renderBlockExport asks a single block's processor for its MarkdownRepresentation.
-// A kind with no registered processor contributes nothing (it has no representation).
-func (d DocView) renderBlockExport(b SieveBlock) string {
+// markdownRepresentation asks a single block's processor for its
+// MarkdownRepresentation. A kind with no registered processor has none.
+func (d DocView) markdownRepresentation(b SieveBlock) string {
 	p := d.codec.registry.Get(b.Kind)
 	if p == nil {
 		return ""

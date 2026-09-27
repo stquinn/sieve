@@ -588,27 +588,29 @@ export class SieveWorkspace {
   openUrlCardDialog(url) { this.#insertDialogs?.openUrlCard(url) }
 
   /**
-   * Copies the active container's clean markdown export to the clipboard. A HOST
-   * verb, not a lens one: the filtering the export applies is Go's, not any lens's
-   * projection. The flush first is what includes what the user just typed.
+   * Copies the active container's export in `format` to the clipboard. A HOST
+   * verb, not a lens one: the rendering and filtering the export applies are Go's,
+   * not any lens's projection. The flush first is what includes what the user just
+   * typed.
    *
    * A native menu click carries no DOM gesture and steals focus, so WebKit rejects
    * navigator.clipboard — the Wails pasteboard is primary, the browser API is the
    * non-Wails dev fallback.
+   * @param {'markdown'|'confluence'} format the export format word Go renders
    * @returns {Promise<void>}
    */
-  copyDocumentAsMarkdown() {
+  copyDocumentAs(format) {
     const mount = this.#activeTab ? this.#activeTab.mount : null
     if (!mount) return Promise.resolve()
     return this.flushSave()
-      .then(() => mount.exportAs('markdown'))
-      .then((md) => {
-        if (md == null) return
+      .then(() => mount.exportAs(format))
+      .then((text) => {
+        if (text == null) return
         const rt = /** @type {any} */ (window).runtime
-        if (rt && rt.ClipboardSetText) return rt.ClipboardSetText(md)
-        return navigator.clipboard.writeText(md)
+        if (rt && rt.ClipboardSetText) return rt.ClipboardSetText(text)
+        return navigator.clipboard.writeText(text)
       })
-      .catch((err) => { console.warn('export-markdown copy failed', err) })
+      .catch((err) => { console.warn(`export (${format}) copy failed`, err) })
   }
 
   /**

@@ -1,6 +1,8 @@
 package editor
 
 import (
+	"flag"
+	"os"
 	"strings"
 	"testing"
 
@@ -8,11 +10,11 @@ import (
 	"sieve/sieve/block/processors"
 )
 
-// ExportMarkdown takes the CALLER's BlockFilter (a closure): the exclusion policy
+// Export takes the CALLER's BlockFilter (a closure): the exclusion policy
 // belongs to the call site (the export handler drops ai-blocks; another caller may
 // not), NOT to EditorService — which only resolves the shadow and delegates. A nil
 // filter exports everything; an unopened document is an error.
-func TestEditorService_ExportMarkdown_CallerOwnsFilter(t *testing.T) {
+func TestEditorService_Export_CallerOwnsFilter(t *testing.T) {
 	resetRegistry()
 	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
 	ds, _ := newTestDocumentService(t)
@@ -28,9 +30,9 @@ func TestEditorService_ExportMarkdown_CallerOwnsFilter(t *testing.T) {
 	defer es.Close(uuid)
 
 	// Caller's closure drops code blocks.
-	noCode, err := es.ExportMarkdown(uuid, func(b block.SieveBlock) bool { return b.Kind != "code" })
+	noCode, err := es.Export(uuid, func(b block.SieveBlock) bool { return b.Kind != "code" }, block.MarkdownGenerator{})
 	if err != nil {
-		t.Fatalf("ExportMarkdown(filter): %v", err)
+		t.Fatalf("Export(filter): %v", err)
 	}
 	if strings.Contains(noCode, "x := 1") {
 		t.Errorf("filter must drop code blocks, got %q", noCode)
@@ -40,16 +42,77 @@ func TestEditorService_ExportMarkdown_CallerOwnsFilter(t *testing.T) {
 	}
 
 	// Nil filter exports everything.
-	all, err := es.ExportMarkdown(uuid, nil)
+	all, err := es.Export(uuid, nil, block.MarkdownGenerator{})
 	if err != nil {
-		t.Fatalf("ExportMarkdown(nil): %v", err)
+		t.Fatalf("Export(nil): %v", err)
 	}
 	if !strings.Contains(all, "x := 1") || !strings.Contains(all, "prose stays") {
 		t.Errorf("nil filter must export every block, got %q", all)
 	}
 
 	// Unopened document is an error.
-	if _, err := es.ExportMarkdown("no-such-doc", nil); err == nil {
-		t.Error("ExportMarkdown must error for a document that is not open")
+	if _, err := es.Export("no-such-doc", nil, block.MarkdownGenerator{}); err == nil {
+		t.Error("Export must error for a document that is not open")
+	}
+}
+
+var updateGolden = flag.Bool("update", false, "rewrite golden files from the current output")
+
+// The Confluence UAT document is the corpus: loaded through the real codec (its
+// section 9 becomes code, log and diagram blocks; the rest is prose), exported
+// through ConfluenceGenerator, it must match its golden wiki markup exactly and
+// never reach the transpiler's fallback. Run with -update to rewrite the golden.
+func TestEditorService_Export_ConfluenceUATCorpus(t *testing.T) {
+	resetRegistry()
+	for _, p := range []block.BlockProcessor{
+		processors.NewCodeBlockProcessor(block.BlockServices{}),
+		processors.NewLogProcessor(block.BlockServices{}),
+		processors.NewDiagramProcessor(block.BlockServices{}),
+	} {
+		block.RegisterProcessor(p)
+	}
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+
+	const corpus, golden = "../block/testdata/confluence-uat.md", "../block/testdata/confluence-uat.wiki"
+	raw, err := os.ReadFile(corpus)
+	if err != nil {
+		t.Fatalf("read corpus: %v", err)
+	}
+	doc, _ := ds.New()
+	doc.SetBody(raw)
+	doc, _ = ds.Save(doc)
+	if err := es.Open(doc.UUID()); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer es.Close(doc.UUID())
+
+	var kinds []string
+	for _, b := range es.shadows[doc.UUID()].SnapshotBlocks() {
+		kinds = append(kinds, b.Kind)
+	}
+	if want := "prose code log diagram diagram prose"; strings.Join(kinds, " ") != want {
+		t.Fatalf("corpus deserialized as %v, want %s", kinds, want)
+	}
+
+	generator := block.NewConfluenceGenerator()
+	got, err := es.Export(doc.UUID(), nil, generator)
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if n := generator.Fallbacks(); n != 0 {
+		t.Errorf("corpus reached the transpiler fallback %d times", n)
+	}
+	if *updateGolden {
+		if err := os.WriteFile(golden, []byte(got), 0o644); err != nil {
+			t.Fatalf("write golden: %v", err)
+		}
+	}
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	if got != string(want) {
+		t.Errorf("Confluence export drifted from %s:\n%s", golden, got)
 	}
 }
