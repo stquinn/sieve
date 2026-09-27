@@ -841,10 +841,18 @@ and name what the rest of the section acts on (#147, see *Table selection*). The
 others are
 the stock TipTap table commands, offered in every wysiwyg mount because
 rearranging a table is editing and not authoring. Add Header Row joins them only
-while the table has none: GFM pipe markdown requires a header row, so once one
-exists the entry is gone rather than offering an OFF direction that would mint a
-table markdown cannot represent (`toggleHeaderRow` only ever adds one). Delete
-Table replaces the generic Delete Block there: one act, one entry. A caret inside
+while the table has none: `toggleHeaderRow` only ever adds one, and the OFF
+direction is deliberately absent, so once a header exists the entry is gone.
+Delete Table replaces the generic Delete Block there: one act, one entry.
+
+**What a table is on disk.** Its content chooses the form (#162). A table with a
+header row, exactly one paragraph in every cell and no merged cells is a GFM pipe
+table. Every other table — a cell holding a fence, a list, a heading, a blockquote
+or a second paragraph; a merged cell; no header row — is an HTML skeleton whose
+cells hold MARKDOWN, each cell's content separated from its `<td>`/`<th>` by blank
+lines so that a fence stays a real fence in the file. Both forms load back as the
+same one table node, and a table read in either form is rewritten in whichever the
+rule then chooses. A caret inside
 a fence adds Language →, whose entries are **the languages the highlighter is
 registered for** (`getLowlight().listLanguages()`, never a hand-written list),
 sorted, with Plain — the absence of a tag — first and a tick on the fence's

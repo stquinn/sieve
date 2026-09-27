@@ -43,6 +43,7 @@ import { reloadReplacement } from './render-empty.js'
 import { caretInRawTextBlock } from '../paste-context.js'
 import { CaretTriggerPort } from './caret-trigger-port.js'
 import { CellSelectionGuard } from './cell-selection-guard.js'
+import { TableMarkdown } from './table-markdown.js'
 import { storeFileSrc, storeFileRef } from '../../../renderers/asset-urls.js'
 
 const FORMATTING_GROUPS = Object.freeze([
@@ -299,7 +300,7 @@ export class WysiwygSurface extends AbstractSurface {
         commandVerb.extension,
         spell.extension,
         find.extension,
-        T.Table.configure({ resizable: false }),
+        TableMarkdown.node({ resizable: false }),
         T.TableRow,
         T.TableHeader,
         T.TableCell,
