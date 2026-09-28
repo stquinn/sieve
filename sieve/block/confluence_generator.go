@@ -90,10 +90,13 @@ var confluenceCodeLanguages = map[string]string{
 // confluenceLineBreak matches an inline HTML line break tag.
 var confluenceLineBreak = regexp.MustCompile(`(?i)^<br\s*/?>$`)
 
-// confluenceVoidTag matches an HTML tag for an element that can never hold
-// content, in whatever form it was written. XML has no such elements, so one
-// left open makes the page body unparseable.
-var confluenceVoidTag = regexp.MustCompile(`(?is)<(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)([\s/][^>]*)?>`)
+// confluenceVoidTag matches an HTML tag, opening or closing, for an element that
+// can never hold content, in whatever form it was written. XML has no such
+// elements, so one left open makes the page body unparseable. The attribute
+// pattern is HTML's, not `[^>]*`: a `>` inside a quoted value is part of the
+// value, and cutting the tag there corrupts it.
+var confluenceVoidTag = regexp.MustCompile(`(?is)<(/?)(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)` +
+	"(" + `(?:\s+[^\s"'>/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>` + "`" + `]*))?)*` + ")" + `\s*/?>`)
 
 // confluenceComment matches a complete HTML comment, and confluenceCommentOpen
 // the start of one that is never closed.
@@ -235,25 +238,40 @@ func (s *storageNodes) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 	reg.Register(east.KindTaskCheckBox, s.taskCheckBox)
 }
 
-// htmlBlock passes a raw HTML block through — that is what renders an
-// HTML-skeleton table's cells as markdown — with its comments removed and its
-// void tags closed, either of which Confluence would refuse the whole body over.
-// A comment block is stripped of the comment alone, so text written after one on
-// the same line survives it.
+// htmlBlock renders a raw HTML block in one of three ways. A comment block is
+// the text it shares its lines with, escaped: whatever an author writes beside a
+// comment is words, not markup, and dropping the block to be rid of the comment
+// dropped those words with it. A CDATA block is literal by definition and is
+// written as it stands. Every other block is its own markup, passed through —
+// that is what renders an HTML-skeleton table's cells as markdown — through
+// passthrough.
 func (s *storageNodes) htmlBlock(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
 	block := n.(*ast.HTMLBlock)
-	if block.HTMLBlockType == ast.HTMLBlockType2 {
+	switch block.HTMLBlockType {
+	case ast.HTMLBlockType2:
 		if entering {
-			_, _ = w.WriteString(s.closeVoidTags(s.uncomment(s.lines(source, n) + s.closure(source, block))))
+			_, _ = w.Write(util.EscapeHTML([]byte(s.uncomment(s.lines(source, n) + s.closure(source, block)))))
+		}
+		return ast.WalkContinue, nil
+	case ast.HTMLBlockType5:
+		if entering {
+			_, _ = w.WriteString(s.lines(source, n) + s.closure(source, block))
 		}
 		return ast.WalkContinue, nil
 	}
 	if entering {
-		_, _ = w.WriteString(s.closeVoidTags(s.lines(source, n)))
+		_, _ = w.WriteString(s.passthrough(s.lines(source, n)))
 		return ast.WalkContinue, nil
 	}
-	_, _ = w.WriteString(s.closeVoidTags(s.closure(source, block)))
+	_, _ = w.WriteString(s.passthrough(s.closure(source, block)))
 	return ast.WalkContinue, nil
+}
+
+// passthrough is a raw HTML block's own markup, as it was written but for the
+// two things XML has no form of: a comment, whose `--` it forbids, and a tag for
+// an element that can hold no content, which has to close itself.
+func (s *storageNodes) passthrough(html string) string {
+	return s.closeVoidTags(s.uncomment(html))
 }
 
 // closure is a raw HTML block's closing line, empty when it has none.
@@ -265,8 +283,8 @@ func (s *storageNodes) closure(source []byte, block *ast.HTMLBlock) string {
 }
 
 // uncomment removes every comment from a raw HTML block — an unclosed one takes
-// the rest of the block with it — and reports the remainder, empty when only
-// whitespace is left.
+// the rest of the block with it, because nothing else can end it — and reports
+// the remainder, empty when only whitespace is left.
 func (s *storageNodes) uncomment(html string) string {
 	rest := confluenceCommentOpen.ReplaceAllString(confluenceComment.ReplaceAllString(html, ""), "")
 	if strings.TrimSpace(rest) == "" {
@@ -275,13 +293,15 @@ func (s *storageNodes) uncomment(html string) string {
 	return rest
 }
 
-// closeVoidTags writes every void element in a raw HTML block self-closed. One
-// standing alone on a line is a block of its own, passed through as it was
-// written: `<br>` unclosed loses the whole page body, not the line that held it.
+// closeVoidTags writes every void element self-closed, and drops the closing tag
+// an author sometimes writes after one, which XML has no meaning for.
 func (s *storageNodes) closeVoidTags(html string) string {
 	return confluenceVoidTag.ReplaceAllStringFunc(html, func(tag string) string {
 		parts := confluenceVoidTag.FindStringSubmatch(tag)
-		return "<" + parts[1] + strings.TrimRight(parts[2], " \t\r\n/") + " />"
+		if parts[1] == "/" {
+			return ""
+		}
+		return "<" + parts[2] + parts[3] + " />"
 	})
 }
 
@@ -362,7 +382,7 @@ func (s *storageNodes) link(w util.BufWriter, _ []byte, n ast.Node, entering boo
 
 // autoLink writes an anchor for an address in angle brackets, or found by
 // linkify, that a Confluence reader can follow, and renders any other — a
-// <sieve://…> address — as its text alone.
+// <sieve://…> address among them — as its text alone.
 func (s *storageNodes) autoLink(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
 	if !entering {
 		return ast.WalkContinue, nil

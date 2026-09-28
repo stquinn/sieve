@@ -29,7 +29,11 @@ bq. this paragraph is not a quote
 
 \# this paragraph is not a numbered item
 
-Expect: no formatting, no stray markup, no broken links, and no visible backslashes. Storage format has no character these need escaping from, so each paragraph reads as typed.
+<!-- a -- note -->This sentence shares its line with a comment and must survive it.
+
+<br>
+
+Expect: no formatting, no stray markup, no broken links, and no visible backslashes. Storage format has no character these need escaping from, so each paragraph reads as typed. The comment itself is gone but the sentence beside it is there, and the lone `<br>` is a blank line, not an error — either one unclosed would have cost the whole page.
 
 ## 3. Lists
 
