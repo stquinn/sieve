@@ -60,8 +60,9 @@ var updateGolden = flag.Bool("update", false, "rewrite golden files from the cur
 
 // The Confluence UAT document is the corpus: loaded through the real codec (its
 // section 9 becomes code, log and diagram blocks; the rest is prose), exported
-// through ConfluenceGenerator, it must match its golden wiki markup exactly and
-// never reach the transpiler's fallback. Run with -update to rewrite the golden.
+// through ConfluenceGenerator, it must match its golden storage format exactly —
+// so the text pasted at work is what the suite pins. Run with -update to rewrite
+// the golden.
 func TestEditorService_Export_ConfluenceUATCorpus(t *testing.T) {
 	resetRegistry()
 	for _, p := range []block.BlockProcessor{
@@ -74,7 +75,7 @@ func TestEditorService_Export_ConfluenceUATCorpus(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
 
-	const corpus, golden = "../block/testdata/confluence-uat.md", "../block/testdata/confluence-uat.wiki"
+	const corpus, golden = "../block/testdata/confluence-uat.md", "../block/testdata/confluence-uat.storage"
 	raw, err := os.ReadFile(corpus)
 	if err != nil {
 		t.Fatalf("read corpus: %v", err)
@@ -95,13 +96,9 @@ func TestEditorService_Export_ConfluenceUATCorpus(t *testing.T) {
 		t.Fatalf("corpus deserialized as %v, want %s", kinds, want)
 	}
 
-	generator := block.NewConfluenceGenerator()
-	got, err := es.Export(doc.UUID(), nil, generator)
+	got, err := es.Export(doc.UUID(), nil, block.NewConfluenceGenerator())
 	if err != nil {
 		t.Fatalf("Export: %v", err)
-	}
-	if n := generator.Fallbacks(); n != 0 {
-		t.Errorf("corpus reached the transpiler fallback %d times", n)
 	}
 	if *updateGolden {
 		if err := os.WriteFile(golden, []byte(got), 0o644); err != nil {

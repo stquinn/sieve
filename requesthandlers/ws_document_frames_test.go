@@ -434,17 +434,23 @@ func TestWS_Export_DropsAIBlocksAndServesCleanMarkdown(t *testing.T) {
 		t.Errorf("export leaked prose sentinels, got %q", md)
 	}
 
-	// The confluence format goes through the same filter, rendered as wiki markup.
-	send(t, c, `{"type":"export","opId":"op-wiki","format":"confluence"}`)
-	wiki := readUntil(t, c, "export-content", 2*time.Second)
-	if wiki["opId"] != "op-wiki" || wiki["format"] != "confluence" {
-		t.Errorf("export-content must echo opId and format, got %v", wiki)
+	// The confluence format goes through the same filter, rendered as Confluence
+	// storage format.
+	send(t, c, `{"type":"export","opId":"op-storage","format":"confluence"}`)
+	storage := readUntil(t, c, "export-content", 2*time.Second)
+	if storage["opId"] != "op-storage" || storage["format"] != "confluence" {
+		t.Errorf("export-content must echo opId and format, got %v", storage)
 	}
-	content, _ := wiki["content"].(string)
+	content, _ := storage["content"].(string)
 	if strings.Contains(content, priorAnswer) {
 		t.Errorf("confluence export leaked the ai-block, got %q", content)
 	}
-	if want := "user prose stays\n\n{code:language=go}\nx := 1\n{code}"; content != want {
+	want := "<p>user prose stays</p>\n\n" +
+		"<ac:structured-macro ac:name=\"code\" ac:schema-version=\"1\">\n" +
+		"  <ac:parameter ac:name=\"language\">go</ac:parameter>\n" +
+		"  <ac:plain-text-body><![CDATA[x := 1]]></ac:plain-text-body>\n" +
+		"</ac:structured-macro>"
+	if content != want {
 		t.Errorf("confluence export = %q, want %q", content, want)
 	}
 

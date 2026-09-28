@@ -173,7 +173,7 @@ func (exportSourceProc) MarkdownRepresentation(b SieveBlock, _ string) string {
 }
 
 // The Confluence generator on the export walk: each surviving block, one row per
-// kind of the generator's kind switch, becomes its wiki markup; the filter and
+// kind of the generator's kind switch, becomes its storage format; the filter and
 // the empty-render skip apply exactly as for markdown.
 func TestDeriveExport_Confluence(t *testing.T) {
 	RegisterProcessor(newExportProseProc())
@@ -192,28 +192,28 @@ func TestDeriveExport_Confluence(t *testing.T) {
 	}{
 		{"code names its mapped language", nil, []SieveBlock{
 			{Kind: "code", Attrs: map[string]interface{}{"language": "sh", "source": "ls"}},
-		}, "{code:language=shell}\nls\n{code}"},
+		}, codeMacro("shell", "ls")},
 		{"code in an unlisted language", nil, []SieveBlock{
 			{Kind: "code", Attrs: map[string]interface{}{"language": "cobolish", "source": "x"}},
-		}, "{code}\nx\n{code}"},
+		}, codeMacro("", "x")},
 		{"log", nil, []SieveBlock{
 			{Kind: "log", Attrs: map[string]interface{}{"source": "ERROR x"}},
-		}, "{code}\nERROR x\n{code}"},
+		}, codeMacro("", "ERROR x")},
 		{"plantuml diagram", nil, []SieveBlock{
 			{Kind: "diagram", Attrs: map[string]interface{}{"diagramType": "plantuml", "source": "A -> B"}},
-		}, "{plantuml}\nA -> B\n{plantuml}"},
+		}, plantumlMacro("A -> B")},
 		{"mermaid diagram", nil, []SieveBlock{
 			{Kind: "diagram", Attrs: map[string]interface{}{"diagramType": "mermaid", "source": "graph LR"}},
-		}, "{code}\ngraph LR\n{code}"},
-		{"prose is transpiled", nil, []SieveBlock{
+		}, codeMacro("", "graph LR")},
+		{"prose is rendered as storage format", nil, []SieveBlock{
 			{Kind: "exp-prose", Attrs: map[string]interface{}{"content": "**Hello** [x](https://x.example)"}},
-		}, "*Hello* [x|https://x.example]"},
+		}, `<p><strong>Hello</strong> <a href="https://x.example">x</a></p>`},
 		{"filtered and empty blocks are skipped", dropKind("log"), []SieveBlock{
 			{Kind: "exp-prose", Attrs: map[string]interface{}{"content": "kept"}},
 			{Kind: "log", Attrs: map[string]interface{}{"source": "dropped by the filter"}},
 			{Kind: "code", Attrs: map[string]interface{}{"language": "go", "source": ""}},
 			{Kind: "diagram", Attrs: map[string]interface{}{"diagramType": "plantuml", "source": "A -> B"}},
-		}, "kept\n\n{plantuml}\nA -> B\n{plantuml}"},
+		}, "<p>kept</p>\n\n" + plantumlMacro("A -> B")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
