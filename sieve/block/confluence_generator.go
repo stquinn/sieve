@@ -2,7 +2,9 @@ package block
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
@@ -23,7 +25,13 @@ import (
 // quotes, tables and inline formatting are already storage format, so only the
 // nodes Confluence spells differently are overridden (storageNodes). A fence
 // becomes the same macro wherever it appears — as a block, in prose, in a table
-// cell. Safe for concurrent use.
+// cell.
+//
+// Confluence refuses a page body that is not well-formed XML, so the output is
+// stripped of the characters XML forbids and no inline tag is passed through
+// unclosed. A raw HTML BLOCK is still passed through as itself, because that is
+// what renders an HTML-skeleton table's cells: a malformed one makes the whole
+// body unparseable. Safe for concurrent use.
 type ConfluenceGenerator struct {
 	md goldmark.Markdown
 }
@@ -78,6 +86,9 @@ var confluenceCodeLanguages = map[string]string{
 	"yaml": "yaml", "yml": "yaml",
 }
 
+// confluenceLineBreak matches an inline HTML line break tag.
+var confluenceLineBreak = regexp.MustCompile(`(?i)^<br\s*/?>$`)
+
 // NewConfluenceGenerator returns a generator with its own GFM goldmark instance.
 func NewConfluenceGenerator() *ConfluenceGenerator {
 	g := &ConfluenceGenerator{}
@@ -101,6 +112,11 @@ func (g *ConfluenceGenerator) RenderBlock(b SieveBlock, markdown string) string 
 	if strings.TrimSpace(markdown) == "" {
 		return ""
 	}
+	return g.xmlSafe(g.renderKind(b, markdown))
+}
+
+// renderKind is RenderBlock's kind switch, before the body is made XML-safe.
+func (g *ConfluenceGenerator) renderKind(b SieveBlock, markdown string) string {
 	source, _ := b.Attrs["source"].(string)
 	switch b.Kind {
 	case "code":
@@ -139,7 +155,7 @@ func (g *ConfluenceGenerator) structuredMacro(name, parameter, value, body strin
 	var b strings.Builder
 	b.WriteString(`<ac:structured-macro ac:name="` + name + `" ac:schema-version="1">` + "\n")
 	if value != "" {
-		b.WriteString(`  <ac:parameter ac:name="` + parameter + `">` + value + `</ac:parameter>` + "\n")
+		b.WriteString(`  <ac:parameter ac:name="` + parameter + `">` + string(util.EscapeHTML([]byte(value))) + `</ac:parameter>` + "\n")
 	}
 	b.WriteString(`  <ac:plain-text-body><![CDATA[` + g.cdata(body) + `]]></ac:plain-text-body>` + "\n")
 	b.WriteString(`</ac:structured-macro>`)
@@ -150,6 +166,22 @@ func (g *ConfluenceGenerator) structuredMacro(name, parameter, value, body strin
 // that the section holding it cannot be closed early.
 func (g *ConfluenceGenerator) cdata(body string) string {
 	return strings.ReplaceAll(strings.Trim(body, "\n"), "]]>", "]]]]><![CDATA[>")
+}
+
+// xmlSafe drops the characters XML 1.0 forbids, which a CDATA section does not
+// exempt: a log block pasted from a terminal carries ANSI escapes, and
+// Confluence refuses the whole page body over one of them rather than the block
+// that held it.
+func (g *ConfluenceGenerator) xmlSafe(body string) string {
+	return strings.Map(func(c rune) rune {
+		switch {
+		case c == '\t' || c == '\n' || c == '\r':
+			return c
+		case c < 0x20, c == 0xfffe, c == 0xffff, c == utf8.RuneError:
+			return -1
+		}
+		return c
+	}, body)
 }
 
 // transpile renders prose markdown as storage-format XHTML.
@@ -182,8 +214,50 @@ func (s *storageNodes) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 	reg.Register(ast.KindCodeBlock, s.codeBlock)
 	reg.Register(ast.KindLink, s.link)
 	reg.Register(ast.KindImage, s.image)
+	reg.Register(ast.KindHTMLBlock, s.htmlBlock)
+	reg.Register(ast.KindRawHTML, s.rawHTML)
 	reg.Register(east.KindStrikethrough, s.strikethrough)
 	reg.Register(east.KindTaskCheckBox, s.taskCheckBox)
+}
+
+// htmlBlock passes a raw HTML block through — that is what renders an
+// HTML-skeleton table's cells as markdown — but drops an HTML comment, whose
+// `--` Confluence would refuse the whole body over.
+func (s *storageNodes) htmlBlock(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
+	block := n.(*ast.HTMLBlock)
+	if block.HTMLBlockType == ast.HTMLBlockType2 {
+		return ast.WalkSkipChildren, nil
+	}
+	if entering {
+		_, _ = w.WriteString(s.lines(source, n))
+		return ast.WalkContinue, nil
+	}
+	if block.HasClosure() {
+		_, _ = w.Write(block.ClosureLine.Value(source))
+	}
+	return ast.WalkContinue, nil
+}
+
+// rawHTML keeps a line break, closed as XHTML, and drops any other inline tag:
+// one unclosed <br> or <img> in prose is a page body Confluence refuses whole.
+func (s *storageNodes) rawHTML(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
+	if !entering {
+		return ast.WalkContinue, nil
+	}
+	if confluenceLineBreak.MatchString(strings.TrimSpace(s.segments(source, n.(*ast.RawHTML)))) {
+		_, _ = w.WriteString("<br />")
+	}
+	return ast.WalkSkipChildren, nil
+}
+
+// segments is an inline raw HTML node's source text, verbatim.
+func (s *storageNodes) segments(source []byte, n *ast.RawHTML) string {
+	var b strings.Builder
+	for i := 0; i < n.Segments.Len(); i++ {
+		segment := n.Segments.At(i)
+		b.Write(segment.Value(source))
+	}
+	return b.String()
 }
 
 // fencedCodeBlock writes the fence's macro; the stock renderer's <pre><code> is

@@ -57,7 +57,7 @@ func TestConfluenceGenerator_Transpile(t *testing.T) {
 		{"pipe table keeps its alignment", "| H | I |\n| :-- | --: |\n| **a** | `b \\| c` |",
 			"<table>\n<thead>\n<tr>\n<th align=\"left\">H</th>\n<th align=\"right\">I</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n" +
 				"<td align=\"left\"><strong>a</strong></td>\n<td align=\"right\"><code>b | c</code></td>\n</tr>\n</tbody>\n</table>"},
-		{"html comment passes through", "one\n\n<!-- note -->\n\ntwo", "<p>one</p>\n<!-- note -->\n<p>two</p>"},
+		{"html comment is dropped", "one\n\n<!-- a -- note -->\n\ntwo", "<p>one</p>\n<p>two</p>"},
 		{"autolink", "see https://x.example.", `<p>see <a href="https://x.example">https://x.example</a>.</p>`},
 		{"email autolink", "<a@x.example>", `<p><a href="mailto:a@x.example">a@x.example</a></p>`},
 
@@ -81,8 +81,13 @@ func TestConfluenceGenerator_Transpile(t *testing.T) {
 		{"web image", "![alt](https://x.example/i.png)", `<p><ac:image><ri:url ri:value="https://x.example/i.png"/></ac:image></p>`},
 		{"asset image is its alt text", "![*alt*](assets/i.png)", "<p><em>alt</em></p>"},
 
-		// Raw HTML passes through, which is what makes the HTML-skeleton table
-		// (#162) render its cell content as markdown with no code of our own.
+		{"inline br is closed", "a<br>b", "<p>a<br />b</p>"},
+		{"other inline html is dropped", "a <span>b</span> c", "<p>a b c</p>"},
+		{"characters XML forbids are dropped", "a \x1b[31mb\x00c", "<p>a [31mbc</p>"},
+		{"a fence body's control characters are dropped", "```\nERROR \x1b[31mred\n```", codeMacro("", "ERROR [31mred")},
+
+		// Raw HTML BLOCKS pass through, which is what makes the HTML-skeleton
+		// table (#162) render its cell content as markdown with no code of our own.
 		{"html table with a fence and a list in a cell",
 			"<table>\n<tr><th>\n\nH\n\n</th></tr>\n<tr><td>\n\n- a\n\n```go\nx\n```\n\n</td></tr>\n</table>",
 			"<table>\n<tr><th>\n<p>H</p>\n</th></tr>\n<tr><td>\n<ul>\n<li>a</li>\n</ul>\n" +
@@ -90,10 +95,31 @@ func TestConfluenceGenerator_Transpile(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := transpile(tc.md); got != tc.want {
+			got := transpile(tc.md)
+			if got != tc.want {
 				t.Errorf("got\n%s\nwant\n%s", got, tc.want)
 			}
+			if err := wellFormed(got); err != nil {
+				t.Errorf("output is not well-formed XML: %v\n%s", err, got)
+			}
 		})
+	}
+}
+
+// wellFormed reports whether body parses as XML once the macro namespaces it
+// uses are declared. Confluence refuses a page body that does not: one unclosed
+// tag, one `--` inside a comment or one control character loses the whole paste,
+// not the construct that carried it.
+func wellFormed(body string) error {
+	rooted := `<page xmlns:ac="http://atlassian.com/content" xmlns:ri="http://atlassian.com/resource/identifier">` +
+		body + `</page>`
+	decoder := xml.NewDecoder(strings.NewReader(rooted))
+	for {
+		if _, err := decoder.Token(); err == io.EOF {
+			return nil
+		} else if err != nil {
+			return err
+		}
 	}
 }
 
@@ -134,23 +160,15 @@ func TestConfluenceGenerator_EmptyRepresentationRendersEmpty(t *testing.T) {
 	}
 }
 
-// Confluence refuses a page body that is not well-formed XML, so the exported
-// UAT corpus — every construct the generator can emit, and the exact text pasted
-// at work — must parse to EOF once the macro namespaces it uses are declared.
-func TestConfluenceGenerator_OutputIsWellFormedXML(t *testing.T) {
+// The exact text pasted at work — the whole exported UAT corpus, not one
+// construct at a time — is well-formed XML.
+func TestConfluenceGenerator_GoldenIsWellFormedXML(t *testing.T) {
 	body, err := os.ReadFile("testdata/confluence-uat.storage")
 	if err != nil {
 		t.Fatalf("read golden: %v", err)
 	}
-	rooted := `<page xmlns:ac="http://atlassian.com/content" xmlns:ri="http://atlassian.com/resource/identifier">` +
-		string(body) + `</page>`
-	decoder := xml.NewDecoder(strings.NewReader(rooted))
-	for {
-		if _, err := decoder.Token(); err == io.EOF {
-			return
-		} else if err != nil {
-			t.Fatalf("storage output is not well-formed XML: %v", err)
-		}
+	if err := wellFormed(string(body)); err != nil {
+		t.Fatalf("golden is not well-formed XML: %v", err)
 	}
 }
 
