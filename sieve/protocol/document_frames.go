@@ -426,9 +426,9 @@ type ExportFrame struct {
 	Type string `json:"type"`
 	OpID string `json:"opId,omitempty" doc:"echoed on the export-content reply"`
 	// Format names the export format: "markdown" or "confluence" (Confluence
-	// wiki markup). Absent defaults to markdown, and an unknown value is refused
-	// rather than silently answered with markdown.
-	Format string `json:"format,omitempty" doc:"markdown (the default) or confluence (Confluence wiki markup)"`
+	// storage format, the XHTML a page is stored as). Absent defaults to markdown,
+	// and an unknown value is refused rather than silently answered with markdown.
+	Format string `json:"format,omitempty" doc:"markdown (the default) or confluence (Confluence storage format)"`
 }
 
 // ExportContentFrame carries the exported document.

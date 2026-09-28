@@ -705,7 +705,7 @@ Consequences:
 | Mod+S | File › Save | `window.sieveWorkspace?.activeTab?.editor?.flushSave()` |
 | Mod+W | File › Close Tab | `htmx.ajax` POST `/api/tabs/close/{id}` |
 | (menu-click only) | File › Export › Clipboard (Markdown) | `window.sieveWorkspace?.copyDocumentAs('markdown')` |
-| (menu-click only) | File › Export › Clipboard (Confluence, experimental) | `window.sieveWorkspace?.copyDocumentAs('confluence')` |
+| (menu-click only) | File › Export › Clipboard (Confluence storage, experimental) | `window.sieveWorkspace?.copyDocumentAs('confluence')` |
 | Mod+Shift+O | File › Open Library… | `window.sieveSelectLibrary()` |
 | Mod+, | File › Settings/Preferences | open settings dialog |
 | Mod+Q | File › Quit (non-Mac) | `wailsruntime.Quit` |

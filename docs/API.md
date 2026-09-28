@@ -172,7 +172,7 @@ ExportFrame asks for clean whole-document text in an export format — the clipb
 |---|---|---|---|
 | `type` | `string` | yes |  |
 | `opId` | `string` | no | echoed on the export-content reply |
-| `format` | `string` | no | markdown (the default) or confluence (Confluence wiki markup) |
+| `format` | `string` | no | markdown (the default) or confluence (Confluence storage format) |
 
 #### `extract` — client → server
 

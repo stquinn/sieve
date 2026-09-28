@@ -1,6 +1,6 @@
 # Confluence export UAT
 
-Each section names what it tests. Paste the export into Confluence and check each section against its expectation.
+Each section names what it tests. Export this document as Confluence storage, paste it into a new empty page's `</>` source view, save, and check each section against its expectation.
 
 ## 1. Headings and inline formatting
 
@@ -29,7 +29,7 @@ bq. this paragraph is not a quote
 
 \# this paragraph is not a numbered item
 
-Expect: no formatting, no macro errors, no broken links, and no visible backslashes.
+Expect: no formatting, no stray markup, no broken links, and no visible backslashes. Storage format has no character these need escaping from, so each paragraph reads as typed.
 
 ## 3. Lists
 
@@ -54,7 +54,7 @@ Expect: no formatting, no macro errors, no broken links, and no visible backslas
 
 - item after the fence
 
-Expect: correct nesting and mixed `#*`. The fence under the item is a Go code macro, and the list continues after it.
+Expect: correct nesting, and a bullet list nested under the numbered item. The fence under the item is a Go code macro inside that item, and the list continues after it.
 
 ## 4. Task list
 
@@ -69,7 +69,7 @@ Expect: bullets starting with ☐ and ☑.
 >
 > A second quoted paragraph, with **bold**.
 
-Expect: one quote macro holding both paragraphs.
+Expect: one indented quotation holding both paragraphs.
 
 ## 6. Fences inside prose
 
@@ -215,4 +215,4 @@ Expect: a Go code macro; a plain code macro for the log; a RENDERED PlantUML seq
 
 ![remote image](https://example.com/logo.png)
 
-Expect: a horizontal rule, then a link labelled "remote image", not an embedded picture.
+Expect: a horizontal rule, then an image loaded from the remote URL — example.com serves no logo, so a broken-image placeholder is the pass. A local `assets/…` image would be its alt text instead: Sieve's assets do not resolve outside Sieve.

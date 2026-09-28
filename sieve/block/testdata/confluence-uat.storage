@@ -1,0 +1,199 @@
+<h1>Confluence export UAT</h1>
+<p>Each section names what it tests. Export this document as Confluence storage, paste it into a new empty page's <code>&lt;/&gt;</code> source view, save, and check each section against its expectation.</p>
+<h2>1. Headings and inline formatting</h2>
+<h3>Third-level heading</h3>
+<p>Plain text, <strong>bold</strong>, <em>italic</em>, <span style="text-decoration: line-through;">struck</span>, and <code>inline {code}</code> with braces.
+A <a href="https://example.com">web link</a>, a sieve link that should show as text only, and an autolink <a href="https://example.org">https://example.org</a>.
+This line ends with a hard break<br />
+and this line follows it.</p>
+<p>Expect: a real h3; bold/italic/strike rendered; monospace shows <code>{code}</code> literally; the web link and autolink are clickable; the sieve link is plain text; the two lines break where the backslash is.</p>
+<h2>2. Escaping (each paragraph should read exactly as Sieve displays it)</h2>
+<p>Mid-word stays put: a-b-c, snake_case_name, x^2, well-known.</p>
+<p>Word-edge characters: -not struck-, _not italic_, +not underlined+, ^not super^, ~not sub~, ??not a citation??</p>
+<p>Always-special: {not a macro}, [not a link], a | b, !not an image!</p>
+<p>h1. this paragraph is not a heading</p>
+<p>bq. this paragraph is not a quote</p>
+<p>* this paragraph is not a bullet</p>
+<p># this paragraph is not a numbered item</p>
+<p>Expect: no formatting, no stray markup, no broken links, and no visible backslashes. Storage format has no character these need escaping from, so each paragraph reads as typed.</p>
+<h2>3. Lists</h2>
+<ul>
+<li>bullet one
+<ul>
+<li>nested bullet
+<ul>
+<li>third level</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>bullet two</li>
+</ul>
+<ol>
+<li>first</li>
+<li>second
+<ul>
+<li>mixed bullet under a number</li>
+</ul>
+</li>
+<li>third</li>
+</ol>
+<ul>
+<li>
+<p>item with a second paragraph</p>
+<p>second paragraph of the same item</p>
+</li>
+<li>
+<p>item with a fence under it</p>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">go</ac:parameter>
+  <ac:plain-text-body><![CDATA[fmt.Println("in a list")]]></ac:plain-text-body>
+</ac:structured-macro>
+</li>
+<li>
+<p>item after the fence</p>
+</li>
+</ul>
+<p>Expect: correct nesting, and a bullet list nested under the numbered item. The fence under the item is a Go code macro inside that item, and the list continues after it.</p>
+<h2>4. Task list</h2>
+<ul>
+<li>☐ open task</li>
+<li>☑ done task</li>
+</ul>
+<p>Expect: bullets starting with ☐ and ☑.</p>
+<h2>5. Quote</h2>
+<blockquote>
+<p>A quoted paragraph.</p>
+<p>A second quoted paragraph, with <strong>bold</strong>.</p>
+</blockquote>
+<p>Expect: one indented quotation holding both paragraphs.</p>
+<h2>6. Fences inside prose</h2>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">go</ac:parameter>
+  <ac:plain-text-body><![CDATA[package main
+
+func main() {}]]></ac:plain-text-body>
+</ac:structured-macro>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">python</ac:parameter>
+  <ac:plain-text-body><![CDATA[def f(x):
+    return {"a": x}]]></ac:plain-text-body>
+</ac:structured-macro>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">go</ac:parameter>
+  <ac:plain-text-body><![CDATA[// 'golang' should map to Confluence's 'go']]></ac:plain-text-body>
+</ac:structured-macro>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">shell</ac:parameter>
+  <ac:plain-text-body><![CDATA[echo "sh should map to shell"]]></ac:plain-text-body>
+</ac:structured-macro>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:plain-text-body><![CDATA[no language at all]]></ac:plain-text-body>
+</ac:structured-macro>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:plain-text-body><![CDATA[unknown language: expect a plain code macro, no language]]></ac:plain-text-body>
+</ac:structured-macro>
+<ac:structured-macro ac:name="plantuml" ac:schema-version="1">
+  <ac:parameter ac:name="atlassian-macro-output-type">INLINE</ac:parameter>
+  <ac:plain-text-body><![CDATA[@startuml
+Alice -> Bob: fence in prose
+@enduml]]></ac:plain-text-body>
+</ac:structured-macro>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:plain-text-body><![CDATA[graph LR; A-->B]]></ac:plain-text-body>
+</ac:structured-macro>
+<p>Expect, in order: Go, Python, Go, Shell and plain code macros; a plain code macro for the unknown language; a RENDERED PlantUML diagram; the mermaid source as a plain code macro.</p>
+<h2>7. Pipe table</h2>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Value</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>bold</strong></td>
+<td><code>a | b</code></td>
+<td><a href="https://example.com">link</a></td>
+</tr>
+<tr>
+<td>plain</td>
+<td>42</td>
+<td><span style="text-decoration: line-through;">old</span></td>
+</tr>
+</tbody>
+</table>
+<p>Expect: a header row, two body rows, formatting inside cells, and the pipe shown literally inside the monospace.</p>
+<h2>8. Complex table (HTML form: fences and lists in cells)</h2>
+<table>
+<tr><th>
+<p>Case</p>
+</th><th>
+<p>Content</p>
+</th></tr>
+<tr><td>
+<p>Fence in a cell</p>
+</td><td>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">json</ac:parameter>
+  <ac:plain-text-body><![CDATA[{"id": 1, "ok": true}]]></ac:plain-text-body>
+</ac:structured-macro>
+</td></tr>
+<tr><td>
+<p>List and fence in one cell</p>
+</td><td>
+<ul>
+<li>first point</li>
+<li>second point</li>
+</ul>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">go</ac:parameter>
+  <ac:plain-text-body><![CDATA[x := 1]]></ac:plain-text-body>
+</ac:structured-macro>
+</td></tr>
+<tr><td>
+<p>PlantUML in a cell</p>
+</td><td>
+<ac:structured-macro ac:name="plantuml" ac:schema-version="1">
+  <ac:parameter ac:name="atlassian-macro-output-type">INLINE</ac:parameter>
+  <ac:plain-text-body><![CDATA[@startuml
+A -> B
+@enduml]]></ac:plain-text-body>
+</ac:structured-macro>
+</td></tr>
+</table>
+<p>Expect: a 2-column table with a header row. The cells hold a JSON code macro, then a bullet list followed by a Go code macro, then a rendered PlantUML diagram.</p>
+<h2>9. Sieve blocks</h2>
+
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">go</ac:parameter>
+  <ac:plain-text-body><![CDATA[func Add(a, b int) int {
+    return a + b
+}]]></ac:plain-text-body>
+</ac:structured-macro>
+
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:plain-text-body><![CDATA[2026-09-27T10:00:00Z INFO  server started port=8080
+2026-09-27T10:00:01Z ERROR connection refused host=db]]></ac:plain-text-body>
+</ac:structured-macro>
+
+<ac:structured-macro ac:name="plantuml" ac:schema-version="1">
+  <ac:parameter ac:name="atlassian-macro-output-type">INLINE</ac:parameter>
+  <ac:plain-text-body><![CDATA[@startuml
+actor User
+User -> Sieve: export
+Sieve -> Confluence: paste
+@enduml]]></ac:plain-text-body>
+</ac:structured-macro>
+
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:plain-text-body><![CDATA[graph TD; Export-->Paste]]></ac:plain-text-body>
+</ac:structured-macro>
+
+<p>Expect: a Go code macro; a plain code macro for the log; a RENDERED PlantUML sequence diagram; the mermaid source as a plain code macro. These are real Sieve blocks, not prose fences, and must look the same as section 6.</p>
+<h2>10. Rule and images</h2>
+<hr />
+<p><ac:image><ri:url ri:value="https://example.com/logo.png"/></ac:image></p>
+<p>Expect: a horizontal rule, then an image loaded from the remote URL — example.com serves no logo, so a broken-image placeholder is the pass. A local <code>assets/…</code> image would be its alt text instead: Sieve's assets do not resolve outside Sieve.</p>
