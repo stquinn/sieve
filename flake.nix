@@ -59,6 +59,19 @@
         # either — the loader picks the right libc from each binary's own INTERP.
         wailsWrapped = pkgs.writeShellScriptBin "wails" ''
           export LD_LIBRARY_PATH="${lib.makeLibraryPath linuxLibs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+          # Off NixOS, nix's GL stack finds no drivers: every search path is
+          # baked to /run/opengl-driver, which only NixOS creates. WebKit's EGL
+          # init then fails ("Could not create default EGL display:
+          # EGL_BAD_PARAMETER") and the webview never paints. Point the three
+          # loaders at THIS closure's mesa instead — its userspace driver talks
+          # straight to the kernel DRM, so the app keeps hardware acceleration
+          # without loading a single host library. NixOS needs none of this.
+          if [ ! -e /etc/NIXOS ]; then
+            export LIBGL_DRIVERS_PATH="${pkgs.mesa}/lib/dri"
+            export GBM_BACKENDS_PATH="${pkgs.mesa}/lib/gbm"
+            export __EGL_VENDOR_LIBRARY_FILENAMES="${pkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json"
+          fi
           case "$1" in
             dev|build)
               subcmd="$1"; shift
@@ -172,10 +185,36 @@
           shellHook = ''
             export CGO_ENABLED=1
 
+            # A version manager on the host (mise, asdf) exports GOROOT for the Go
+            # it manages. That export survives into this shell, so the devShell's
+            # `go` driver reaches into the OTHER toolchain for compile/link and
+            # dies with `compile: version "goX" does not match go tool version
+            # "goY"`. Unset it; go finds its own GOROOT from the binary's path.
+            unset GOROOT
+
             ${lib.optionalString isLinux ''
               export GODEBUG=asyncpreemptoff=1
               export GSETTINGS_SCHEMA_DIR="${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}/glib-2.0/schemas:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}/glib-2.0/schemas"
               export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:$XDG_DATA_DIRS"
+              # The GTK stack above is nix's, and nix's glib loads no dconf GSettings
+              # backend: GIO finds no backend module, silently falls back to the
+              # in-memory one, and every gsettings read returns the SCHEMA DEFAULT
+              # rather than the session's value. gtk-theme then resolves to
+              # "Adwaita" — the light one — and the GtkMenuBar renders bright white
+              # on a dark desktop while every other app on the machine is dark.
+              #
+              # Read appearance from the freedesktop settings portal over D-Bus
+              # instead. D-Bus needs no loadable module, so nix's glib can reach it
+              # where it cannot reach dconf, and it is the same cross-toolkit path
+              # GTK4, Qt6, Chromium and Electron already use. Wails opens dialogs
+              # with gtk_file_chooser_dialog_new, not GtkFileChooserNative, so this
+              # changes where settings are READ and nothing else.
+              #
+              # This reaches the app only when it is launched from this shell. A
+              # binary in build/bin/ keeps an rpath into the nix store, so started
+              # any other way it is back to light Adwaita; a nix-packaged build
+              # needs wrapGAppsHook3 (or wrapProgram --set) to carry this itself.
+              export GTK_USE_PORTAL=1
               export PKG_CONFIG_PATH="${lib.makeSearchPathOutput "dev" "lib/pkgconfig" linuxLibs}:$PKG_CONFIG_PATH"
               # NO LD_LIBRARY_PATH here — see wailsWrapped. Compile-time linking is
               # driven by PKG_CONFIG_PATH; only the running app needs the runtime
