@@ -28,10 +28,11 @@ import (
 // cell.
 //
 // Confluence refuses a page body that is not well-formed XML, so the output is
-// stripped of the characters XML forbids and no inline tag is passed through
-// unclosed. A raw HTML BLOCK is still passed through as itself, because that is
-// what renders an HTML-skeleton table's cells: a malformed one makes the whole
-// body unparseable. Safe for concurrent use.
+// stripped of the characters XML forbids and of comments, no inline tag is
+// passed through unclosed, and a tag for an element that cannot hold content is
+// written self-closed. A raw HTML BLOCK is otherwise passed through as itself,
+// because that is what renders an HTML-skeleton table's cells: one whose own
+// tags do not balance makes the whole body unparseable. Safe for concurrent use.
 type ConfluenceGenerator struct {
 	md goldmark.Markdown
 }
@@ -88,6 +89,18 @@ var confluenceCodeLanguages = map[string]string{
 
 // confluenceLineBreak matches an inline HTML line break tag.
 var confluenceLineBreak = regexp.MustCompile(`(?i)^<br\s*/?>$`)
+
+// confluenceVoidTag matches an HTML tag for an element that can never hold
+// content, in whatever form it was written. XML has no such elements, so one
+// left open makes the page body unparseable.
+var confluenceVoidTag = regexp.MustCompile(`(?is)<(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)([\s/][^>]*)?>`)
+
+// confluenceComment matches a complete HTML comment, and confluenceCommentOpen
+// the start of one that is never closed.
+var (
+	confluenceComment     = regexp.MustCompile(`(?s)<!--.*?-->`)
+	confluenceCommentOpen = regexp.MustCompile(`(?s)<!--.*`)
+)
 
 // NewConfluenceGenerator returns a generator with its own GFM goldmark instance.
 func NewConfluenceGenerator() *ConfluenceGenerator {
@@ -163,9 +176,10 @@ func (g *ConfluenceGenerator) structuredMacro(name, parameter, value, body strin
 }
 
 // cdata is a macro body with every `]]>` split across two CDATA sections, so
-// that the section holding it cannot be closed early.
+// that the section holding it cannot be closed early. The newline a fence ends
+// on is dropped; a blank line the body opens on is the author's and is kept.
 func (g *ConfluenceGenerator) cdata(body string) string {
-	return strings.ReplaceAll(strings.Trim(body, "\n"), "]]>", "]]]]><![CDATA[>")
+	return strings.ReplaceAll(strings.TrimRight(body, "\n"), "]]>", "]]]]><![CDATA[>")
 }
 
 // xmlSafe drops the characters XML 1.0 forbids, which a CDATA section does not
@@ -213,6 +227,7 @@ func (s *storageNodes) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 	reg.Register(ast.KindFencedCodeBlock, s.fencedCodeBlock)
 	reg.Register(ast.KindCodeBlock, s.codeBlock)
 	reg.Register(ast.KindLink, s.link)
+	reg.Register(ast.KindAutoLink, s.autoLink)
 	reg.Register(ast.KindImage, s.image)
 	reg.Register(ast.KindHTMLBlock, s.htmlBlock)
 	reg.Register(ast.KindRawHTML, s.rawHTML)
@@ -221,21 +236,53 @@ func (s *storageNodes) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 }
 
 // htmlBlock passes a raw HTML block through — that is what renders an
-// HTML-skeleton table's cells as markdown — but drops an HTML comment, whose
-// `--` Confluence would refuse the whole body over.
+// HTML-skeleton table's cells as markdown — with its comments removed and its
+// void tags closed, either of which Confluence would refuse the whole body over.
+// A comment block is stripped of the comment alone, so text written after one on
+// the same line survives it.
 func (s *storageNodes) htmlBlock(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
 	block := n.(*ast.HTMLBlock)
 	if block.HTMLBlockType == ast.HTMLBlockType2 {
-		return ast.WalkSkipChildren, nil
-	}
-	if entering {
-		_, _ = w.WriteString(s.lines(source, n))
+		if entering {
+			_, _ = w.WriteString(s.closeVoidTags(s.uncomment(s.lines(source, n) + s.closure(source, block))))
+		}
 		return ast.WalkContinue, nil
 	}
-	if block.HasClosure() {
-		_, _ = w.Write(block.ClosureLine.Value(source))
+	if entering {
+		_, _ = w.WriteString(s.closeVoidTags(s.lines(source, n)))
+		return ast.WalkContinue, nil
 	}
+	_, _ = w.WriteString(s.closeVoidTags(s.closure(source, block)))
 	return ast.WalkContinue, nil
+}
+
+// closure is a raw HTML block's closing line, empty when it has none.
+func (s *storageNodes) closure(source []byte, block *ast.HTMLBlock) string {
+	if !block.HasClosure() {
+		return ""
+	}
+	return string(block.ClosureLine.Value(source))
+}
+
+// uncomment removes every comment from a raw HTML block — an unclosed one takes
+// the rest of the block with it — and reports the remainder, empty when only
+// whitespace is left.
+func (s *storageNodes) uncomment(html string) string {
+	rest := confluenceCommentOpen.ReplaceAllString(confluenceComment.ReplaceAllString(html, ""), "")
+	if strings.TrimSpace(rest) == "" {
+		return ""
+	}
+	return rest
+}
+
+// closeVoidTags writes every void element in a raw HTML block self-closed. One
+// standing alone on a line is a block of its own, passed through as it was
+// written: `<br>` unclosed loses the whole page body, not the line that held it.
+func (s *storageNodes) closeVoidTags(html string) string {
+	return confluenceVoidTag.ReplaceAllStringFunc(html, func(tag string) string {
+		parts := confluenceVoidTag.FindStringSubmatch(tag)
+		return "<" + parts[1] + strings.TrimRight(parts[2], " \t\r\n/") + " />"
+	})
 }
 
 // rawHTML keeps a line break, closed as XHTML, and drops any other inline tag:
@@ -309,6 +356,30 @@ func (s *storageNodes) link(w util.BufWriter, _ []byte, n ast.Node, entering boo
 		_, _ = w.WriteString(`">`)
 		return ast.WalkContinue, nil
 	}
+	_, _ = w.WriteString(`</a>`)
+	return ast.WalkContinue, nil
+}
+
+// autoLink writes an anchor for an address in angle brackets, or found by
+// linkify, that a Confluence reader can follow, and renders any other — a
+// <sieve://…> address — as its text alone.
+func (s *storageNodes) autoLink(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
+	if !entering {
+		return ast.WalkContinue, nil
+	}
+	link := n.(*ast.AutoLink)
+	href := link.URL(source)
+	if link.AutoLinkType == ast.AutoLinkEmail && !bytes.HasPrefix(bytes.ToLower(href), []byte("mailto:")) {
+		href = append([]byte("mailto:"), href...)
+	}
+	if !s.g.followable(string(href), true) {
+		_, _ = w.Write(util.EscapeHTML(link.Label(source)))
+		return ast.WalkContinue, nil
+	}
+	_, _ = w.WriteString(`<a href="`)
+	_, _ = w.Write(util.EscapeHTML(util.URLEscape(href, false)))
+	_, _ = w.WriteString(`">`)
+	_, _ = w.Write(util.EscapeHTML(link.Label(source)))
 	_, _ = w.WriteString(`</a>`)
 	return ast.WalkContinue, nil
 }

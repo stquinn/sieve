@@ -115,11 +115,13 @@ Expect, in order: Go, Python, Go, Shell and plain code macros; a plain code macr
 ## 7. Pipe table
 
 | Name | Value | Note |
-| --- | --- | --- |
+| :-- | --: | :-: |
 | **bold** | `a \| b` | [link](https://example.com) |
 | plain | 42 | ~~old~~ |
 
 Expect: a header row, two body rows, formatting inside cells, and the pipe shown literally inside the monospace.
+
+Expect, and report either way: the three columns are aligned left, right and centre. Sieve writes the alignment as `align="right"` on the cell. If Confluence drops it and all three columns read left-aligned, say so — the fix is to write `style="text-align: right;"` instead, and it cannot be decided from here.
 
 ## 8. Complex table (HTML form: fences and lists in cells)
 

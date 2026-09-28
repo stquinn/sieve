@@ -58,14 +58,21 @@ func TestConfluenceGenerator_Transpile(t *testing.T) {
 			"<table>\n<thead>\n<tr>\n<th align=\"left\">H</th>\n<th align=\"right\">I</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n" +
 				"<td align=\"left\"><strong>a</strong></td>\n<td align=\"right\"><code>b | c</code></td>\n</tr>\n</tbody>\n</table>"},
 		{"html comment is dropped", "one\n\n<!-- a -- note -->\n\ntwo", "<p>one</p>\n<p>two</p>"},
+		{"text after a comment survives it", "x\n<!-- c -->y", "<p>x</p>\ny"},
+		{"an unclosed comment takes the rest of its block", "x\n\n<!-- c\nd", "<p>x</p>"},
 		{"autolink", "see https://x.example.", `<p>see <a href="https://x.example">https://x.example</a>.</p>`},
 		{"email autolink", "<a@x.example>", `<p><a href="mailto:a@x.example">a@x.example</a></p>`},
+		{"sieve autolink is its text alone", "<sieve://00000000-0000-7000-8000-000000000000>",
+			"<p>sieve://00000000-0000-7000-8000-000000000000</p>"},
+		{"web autolink in angle brackets", "<https://x.example/a>",
+			`<p><a href="https://x.example/a">https://x.example/a</a></p>`},
 
 		// The overridden node kinds.
 		{"fence with a listed language", "```golang\nx := 1\n```", codeMacro("go", "x := 1")},
 		{"fence with an unlisted language", "```cobolish\nx\n```", codeMacro("", "x")},
 		{"fence without a language", "```\nx\n```", codeMacro("", "x")},
 		{"fence holding a CDATA terminator", "```\na ]]> b\n```", codeMacro("", "a ]]]]><![CDATA[> b")},
+		{"fence opening on a blank line keeps it", "```\n\nx\n```", codeMacro("", "\nx")},
 		{"plantuml fence", "```plantuml\n@startuml\nA -> B\n@enduml\n```",
 			plantumlMacro("@startuml\nA -> B\n@enduml")},
 		{"mermaid fence", "```mermaid\ngraph LR; A-->B\n```", codeMacro("", "graph LR; A-->B")},
@@ -82,6 +89,11 @@ func TestConfluenceGenerator_Transpile(t *testing.T) {
 		{"asset image is its alt text", "![*alt*](assets/i.png)", "<p><em>alt</em></p>"},
 
 		{"inline br is closed", "a<br>b", "<p>a<br />b</p>"},
+		{"a br on its own line is closed", "a\n\n<br>\n\nb", "<p>a</p>\n<br />\n<p>b</p>"},
+		{"an hr on its own line is closed", "<hr>", "<hr />"},
+		{"an img on its own line is closed", `<img src="https://x.example/i.png">`,
+			`<img src="https://x.example/i.png" />`},
+		{"a void tag already closed is left alone", "<hr />", "<hr />"},
 		{"other inline html is dropped", "a <span>b</span> c", "<p>a b c</p>"},
 		{"characters XML forbids are dropped", "a \x1b[31mb\x00c", "<p>a [31mbc</p>"},
 		{"a fence body's control characters are dropped", "```\nERROR \x1b[31mred\n```", codeMacro("", "ERROR [31mred")},
