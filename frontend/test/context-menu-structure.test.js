@@ -750,3 +750,42 @@ describe("the fence's language", () => {
     expect(pane.updates).toEqual([['codeBlock', { language: null }]])
   })
 })
+
+// A fence's Format is the SAME action a code block's is — what it does to the
+// node is code-format-action.test.js's business. What is asserted here is the
+// fence's own offer rule: beside Language, off the fence's own language tag, and
+// only in a mount that holds blocks.
+describe("the fence's Format", () => {
+  /** A lens that can edit blocks and formats `languages`. @param {string[]} languages */
+  function hostFormatting(languages) {
+    return {
+      canEditBlocks: true,
+      codeFormattingService: { supports: (/** @type {string} */ l) => languages.includes(l) },
+    }
+  }
+
+  it('stands beside Language when the fence carries a language the service formats', () => {
+    const labels = labelsOf(openMenu(paneOver(caretInFence('go'), hostFormatting(['go']))))
+    expect(labels).toContain('Format')
+    expect(labels.indexOf('Format')).toBe(labels.indexOf('Language›') + 1)
+  })
+
+  it('is absent for a language nothing formats, and for an untagged fence', () => {
+    expect(labelsOf(openMenu(paneOver(caretInFence('go'), hostFormatting(['json'])))))
+      .not.toContain('Format')
+    expect(labelsOf(openMenu(paneOver(caretInFence(null), hostFormatting(['go'])))))
+      .not.toContain('Format')
+  })
+
+  it('is absent in a mount that cannot edit blocks, and in one with no service', () => {
+    const readOnly = { canEditBlocks: false, codeFormattingService: { supports: () => true } }
+    expect(labelsOf(openMenu(paneOver(caretInFence('go'), readOnly)))).not.toContain('Format')
+    expect(labelsOf(openMenu(paneOver(caretInFence('go'), { canEditBlocks: true }))))
+      .not.toContain('Format')
+  })
+
+  it('is offered nowhere but a fence', () => {
+    expect(labelsOf(openMenu(paneOver(caretInProse(), hostFormatting(['go'])))))
+      .not.toContain('Format')
+  })
+})

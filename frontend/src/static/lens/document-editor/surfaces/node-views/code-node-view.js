@@ -15,6 +15,7 @@ import { T } from '../tiptap-vendor.js'
 import { registerSieveRenderer, sieveBlockFor } from '../sieve-block-extension.js'
 import { CODE_TEXT_POLICY } from '../../interaction-policy.js'
 import { CodeRenderer } from '../../../../renderers/code-renderer.js'
+import { CodeFormatAction } from '../code-format-action.js'
 
 ;(function () {
   'use strict'
@@ -229,19 +230,32 @@ import { CodeRenderer } from '../../../../renderers/code-renderer.js'
     return items
   }
 
-  CodeNodeView.buildContextMenuItems = function ({ node, provider }) {
+  CodeNodeView.buildContextMenuItems = function ({ node, editorPane, getPos, provider, getEditor }) {
     var lang = node.attrs.language
     var label = lang && lang !== 'unknown' ? lang + ' block' : 'Code block'
     var items = [
       { type: 'header', label: label },
     ]
-    if (provider && typeof provider.requestSetBlock === 'function') {
+    // One gate for both verbs: a mount that cannot commit an attr change cannot
+    // be written to at all, so neither picking a language nor formatting the
+    // source is on offer there.
+    var editable = !!(provider && typeof provider.requestSetBlock === 'function')
+    if (editable) {
       items.push({
         icon: (window.SieveIcons || {}).code || '',
         label: 'Language',
         children: blockLanguageItems(node, provider),
       })
     }
+    var format = CodeFormatAction.offer({
+      lens: typeof getEditor === 'function' ? getEditor() : null,
+      pane: editorPane,
+      node: node,
+      getPos: getPos,
+      language: lang || '',
+      editable: editable,
+    })
+    if (format) items.push(format)
     return items
   }
 

@@ -859,6 +859,14 @@ registered for** (`getLowlight().listLanguages()`, never a hand-written list),
 sorted, with Plain — the absence of a tag — first and a tick on the fence's
 current one. It is the discoverable route to what `{fence=go` types.
 
+**Format (#168).** A fence and a Sieve code block each offer Format beside their
+Language entry, on a mount that may be written to and only while the formatting
+service supports the node's language — so a language nothing can format has no
+entry rather than a failing one. The formatter COMPUTES A STRING; the menu writes
+it into the node's own range as one TRACKED change, so undo reverts a format like
+any other edit and it reaches the server by the path that already carries typing.
+A source that does not parse is reported and nothing is written.
+
 **The draft's own two verbs.** Right-clicking on a `@Title` token that the draft
 has attached offers Remove Attachment, which does exactly what the chip's ✕ does
 — detaches the document and takes the token with it, because the two are one

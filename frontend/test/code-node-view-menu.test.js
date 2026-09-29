@@ -91,3 +91,53 @@ describe('CodeNodeView.buildContextMenuItems — the Language flyout', () => {
     expect(items[0]).toEqual({ type: 'header', label: 'go block' })
   })
 })
+
+// Format is CodeFormatAction's, and what it does with the node is asserted in
+// code-format-action.test.js. What belongs here is the WIRING: that this kind
+// hands the action its own node and the lens it is mounted in, and gates it on
+// the same writability Language is gated on.
+describe('CodeNodeView.buildContextMenuItems — the Format entry', () => {
+  /** @param {string[]} languages a formatting service claiming these */
+  function lensWith(languages) {
+    return { codeFormattingService: { supports: (/** @type {string} */ l) => languages.includes(l) } }
+  }
+
+  /** @param {object} arg @param {string} arg.language @param {any} arg.provider @param {any} arg.lens */
+  function menu({ language, provider, lens }) {
+    return adapter.buildContextMenuItems({
+      node: nodeOf({ language }),
+      editorPane: { state: null },
+      getPos: () => 1,
+      provider,
+      getEditor: () => lens,
+    })
+  }
+
+  it('stands after Language for a supported language on an editable block', () => {
+    const { provider } = providerDouble()
+    const labels = menu({ language: 'json', provider, lens: lensWith(['json']) })
+      .map((/** @type {any} */ i) => i.label)
+    expect(labels).toEqual(['json block', 'Language', 'Format'])
+  })
+
+  it('is absent for a language the service does not format', () => {
+    const { provider } = providerDouble()
+    const labels = menu({ language: 'go', provider, lens: lensWith(['json']) })
+      .map((/** @type {any} */ i) => i.label)
+    expect(labels).not.toContain('Format')
+  })
+
+  it('is absent to a mount whose provider cannot set a block', () => {
+    const labels = menu({ language: 'json', provider: {}, lens: lensWith(['json']) })
+      .map((/** @type {any} */ i) => i.label)
+    expect(labels).toEqual(['json block'])
+  })
+
+  it('is absent in a mount with no formatting service, and in a bare pane', () => {
+    const { provider } = providerDouble()
+    expect(menu({ language: 'json', provider, lens: {} })
+      .map((/** @type {any} */ i) => i.label)).not.toContain('Format')
+    expect(menu({ language: 'json', provider, lens: null })
+      .map((/** @type {any} */ i) => i.label)).not.toContain('Format')
+  })
+})

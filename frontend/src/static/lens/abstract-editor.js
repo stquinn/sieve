@@ -57,6 +57,9 @@ const EVERY_CAPABILITY = Object.freeze({
  * @property {object|null} [commandService]
  *   the `/` picker's peer, enumerating the backend verbs this mount may dispatch.
  *   Optional: without it the editor simply has no `/` picker.
+ * @property {object|null} [codeFormattingService]
+ *   what a code menu asks to pretty-print source. Optional: without it no Format
+ *   is offered.
  */
 
 export class AbstractEditor extends Lens {
@@ -95,6 +98,9 @@ export class AbstractEditor extends Lens {
 
   /** @type {object|null} the `/` picker's peer, held for the WYSIWYG surface. */
   #commandService = null
+
+  /** @type {object|null} what a code menu asks to pretty-print source. */
+  #codeFormattingService = null
 
   /** @type {AddressStatus|null} built on demand over the mention peer. */
   #addressStatus = null
@@ -137,6 +143,7 @@ export class AbstractEditor extends Lens {
     this.#mentionService = options.mentionService || null
     this.#macroCatalog = options.macroCatalog || null
     this.#commandService = options.commandService || null
+    this.#codeFormattingService = options.codeFormattingService || null
     this.#capabilities = this.#deriveCapabilities()
 
     // Subscribed before any surface mounts, so a save landing during the initial
@@ -282,6 +289,10 @@ export class AbstractEditor extends Lens {
   /** What the host offers this editor's `{` picker, or null.
    *  @returns {object|null} */
   get macroCatalog() { return this.#macroCatalog }
+
+  /** What a code menu in this editor asks to pretty-print source, or null.
+   *  @returns {object|null} */
+  get codeFormattingService() { return this.#codeFormattingService }
 
   /** What this editor has learned about whether the coordinates its blocks render
    *  still resolve; null in bare constructions. Owned HERE, not by the workspace,
