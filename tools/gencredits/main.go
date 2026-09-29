@@ -231,6 +231,7 @@ func (g *Generator) collectNpmPackages() ([]Entry, error) {
 		{entry: "tiptap-bundle-entry.js", args: []string{"--format=iife", "--global-name=TipTap"}},
 		{entry: "htmx-bundle-entry.js", args: nil},
 		{entry: "node_modules/js-yaml/dist/js-yaml.mjs", args: []string{"--format=iife", "--global-name=jsyaml"}},
+		{entry: "prettier-bundle-entry.js", args: []string{"--format=esm"}},
 	}
 
 	pkgs := map[string]string{} // name -> note
