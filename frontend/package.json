@@ -8,7 +8,8 @@
     "bundle:jsyaml": "esbuild node_modules/js-yaml/dist/js-yaml.mjs --bundle --format=iife --global-name=jsyaml --outfile=./src/static/vendor/js-yaml.js --minify",
     "bundle:mermaid": "cp node_modules/mermaid/dist/mermaid.min.js ./src/static/vendor/mermaid.min.js",
     "bundle:panzoom": "cp node_modules/@panzoom/panzoom/dist/panzoom.min.js ./src/static/vendor/panzoom.min.js",
-    "build": "npm run bundle:htmx && npm run bundle:tiptap && npm run bundle:jsyaml && npm run bundle:mermaid && npm run bundle:panzoom && tailwindcss -i ./src/static/input.css -o ./src/static/tailwind.css --minify",
+    "bundle:prettier": "esbuild prettier-bundle-entry.js --bundle --format=esm --minify --outfile=./src/static/vendor/prettier.js && cp node_modules/prettier-plugin-java/dist/tree-sitter-java_orchard.wasm node_modules/web-tree-sitter/web-tree-sitter.wasm ./src/static/vendor/",
+    "build": "npm run bundle:htmx && npm run bundle:tiptap && npm run bundle:jsyaml && npm run bundle:mermaid && npm run bundle:panzoom && npm run bundle:prettier && tailwindcss -i ./src/static/input.css -o ./src/static/tailwind.css --minify",
     "dev": "tailwindcss -i ./src/static/input.css -o ./src/static/tailwind.css --watch",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -37,6 +38,8 @@
     "markdown-it": "^14.1.1",
     "markdown-it-mark": "^4.0.0",
     "postcss": "^8.4.38",
+    "prettier": "~3.9.9",
+    "prettier-plugin-java": "~2.11.0",
     "tailwindcss": "^3.4.3",
     "tiptap-markdown": "^0.9.0",
     "vitest": "^2.1.8"

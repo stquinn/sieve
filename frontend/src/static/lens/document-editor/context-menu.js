@@ -7,6 +7,7 @@ import { enclosingBlockId } from './surfaces/block-position.js'
 import { TableGrid } from './surfaces/table-grid.js'
 import { ProseLink } from './surfaces/prose-link.js'
 import { WysiwygSurface } from './surfaces/wysiwyg-surface.js'
+import { CodeFormatAction } from './surfaces/code-format-action.js'
 import { SPELL_FEATURE } from './surfaces/spell-decoration.js'
 import { listRegisteredLanguages } from '../../renderers/highlighting.js'
 
@@ -662,6 +663,17 @@ import { listRegisteredLanguages } from '../../renderers/highlighting.js'
     if (fence) {
       items.push({ type: 'divider' })
       items.push({ icon: IC.code, label: 'Language', children: languageItems(editor, fence) })
+      // A fence's language is its own attribute, and formatting it is the same
+      // verb a code block offers — the shared action, over the fence's node.
+      var fenceFormat = CodeFormatAction.offer({
+        lens: mountLens(editor),
+        pane: editor,
+        node: fence.node,
+        getPos: function () { return fence.pos },
+        language: (fence.node.attrs && fence.node.attrs.language) || '',
+        editable: mountHoldsBlocks(editor),
+      })
+      if (fenceFormat) items.push(fenceFormat)
     }
 
     // INSERT items are genuine inserts: they open their dialog and create a NEW block,

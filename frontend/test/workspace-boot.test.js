@@ -85,4 +85,17 @@ describe('the page dials the push channel at boot', () => {
     const { subscribedAtDial } = await bootTheModule()
     expect(subscribedAtDial).toEqual([true])
   })
+
+  // Not a wire tenant — every formatter it holds runs in the browser — but it is
+  // built in the same constructor, and a menu that cannot reach it silently
+  // offers no Format at all.
+  it('builds the code formatting service, ready to answer about a language', async () => {
+    await bootTheModule()
+    const svc = /** @type {any} */ (window).sieveWorkspace.codeFormattingService
+    expect(Array.from(svc.supportedLanguages()).sort())
+      .toEqual(['java', 'javascript', 'json', 'yaml'])
+    // An alias answers, and so the fence that carries one can be formatted.
+    expect(svc.supports('yml')).toBe(true)
+    expect(svc.supports('go')).toBe(false)
+  })
 })

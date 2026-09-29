@@ -18,6 +18,8 @@ import { CommandBadges } from './command-badges.js'
 import { AskPanel } from './ask-panel.js'
 import { InsertDialogs } from './insert-dialogs.js'
 import { MacroCatalog } from './macro-catalog.js'
+import { CodeFormattingService } from '../renderers/code-formatting-service.js'
+import { PrettierFormatter } from '../renderers/prettier-formatter.js'
 import { FindDialog } from './find-dialog.js'
 import { StatusBar } from './status-bar.js'
 import { SidebarView } from './sidebar-view.js'
@@ -76,6 +78,10 @@ export class SieveWorkspace {
   /** @type {MentionService} the plane's `@`-picker tenant. */
   #mentionService
 
+  /** @type {CodeFormattingService} what a menu asks to pretty-print source. Not
+   *  a wire tenant at all — every formatter it holds runs in the browser. */
+  #codeFormattingService
+
   /** @type {InvalidationService} the plane's push tenant, held only so it stays
    *  alive: it claims its frames and republishes them as DOM events. */
   #invalidationService
@@ -101,6 +107,7 @@ export class SieveWorkspace {
       commands: typeof window !== 'undefined' ? /** @type {any} */ (window).__sieveCommands || [] : [],
     })
     this.#mentionService = new MentionService(this.#workspaceService)
+    this.#codeFormattingService = new CodeFormattingService([new PrettierFormatter()])
     // Constructed with its siblings, and before anything can open the socket
     // lazily: the server pushes the jobs snapshot the instant a socket connects,
     // and a tenant registering later would have that first frame dropped.
@@ -117,6 +124,8 @@ export class SieveWorkspace {
   get commandService() { return this.#commandService }
 
   get mentionService() { return this.#mentionService }
+
+  get codeFormattingService() { return this.#codeFormattingService }
 
   get macroCatalog() { return this.#macroCatalog }
 
@@ -326,6 +335,7 @@ export class SieveWorkspace {
         loadContainer: () => mount.load(),
         mentionService: this.#mentionService,
         macroCatalog: this.#macroCatalog,
+        codeFormattingService: this.#codeFormattingService,
       }, options)))
     }
     return tab
