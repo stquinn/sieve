@@ -155,7 +155,6 @@ func TestModuleVersions_Of(t *testing.T) {
 	versions := ModuleVersions{
 		"golang.org/x/net":      "v0.38.0",
 		"golang.org/x/net/http": "v0.1.0",
-		"golang.org/x/netfoo":   "v9.9.9",
 	}
 	cases := []struct {
 		name    string
@@ -165,7 +164,7 @@ func TestModuleVersions_Of(t *testing.T) {
 		{"library under a module", "golang.org/x/net/html", "v0.38.0"},
 		{"the module itself", "golang.org/x/net", "v0.38.0"},
 		{"nested modules: the longer wins", "golang.org/x/net/http/httpguts", "v0.1.0"},
-		{"a sibling sharing a string prefix is not a match", "golang.org/x/netfoo/bar", "v9.9.9"},
+		{"a sibling sharing a string prefix is not a match", "golang.org/x/netfoo/bar", ""},
 		{"unknown path", "example.com/nope", ""},
 	}
 	for _, c := range cases {

@@ -103,7 +103,7 @@ Go stdlib entry are pinned to make it so: the **version** comes from go.mod's `g
 directive (not `go env GOVERSION`), and the **license text** comes from `$GOROOT/LICENSE`
 only — never a walk of GOROOT, which holds ~20 vendored licenses whose shallowest is
 BoringSSL's (nix omits the top-level LICENSE, so a walk shipped OpenSSL's text as the Go
-stdlib's; fixed `b7e8967`, pinned by `tools/gencredits/go_license_test.go`, with
+stdlib's; fixed `b7e8967`, pinned by `tools/gencredits/main_test.go`, with
 `tools/gencredits/go-license.txt` as the fallback for toolchains that omit the file) —
 CI's `credits` job regenerates and diffs, failing
 the pipeline if a dep change lands without a regen; releases ship the committed artifact
