@@ -239,6 +239,7 @@
     },
     {
       "name": "golang.org/x/net/html",
+      "version": "v0.56.0",
       "license": "BSD-3-Clause",
       "copyright": "Copyright 2009 The Go Authors.",
       "source": "go",
@@ -246,6 +247,7 @@
     },
     {
       "name": "golang.org/x/oauth2",
+      "version": "v0.35.0",
       "license": "BSD-3-Clause",
       "copyright": "Copyright 2009 The Go Authors.",
       "source": "go",
@@ -253,6 +255,7 @@
     },
     {
       "name": "golang.org/x/sys",
+      "version": "v0.46.0",
       "license": "BSD-3-Clause",
       "copyright": "Copyright 2009 The Go Authors.",
       "source": "go",
@@ -260,6 +263,7 @@
     },
     {
       "name": "golang.org/x/term",
+      "version": "v0.44.0",
       "license": "BSD-3-Clause",
       "copyright": "Copyright 2009 The Go Authors.",
       "source": "go",
@@ -267,6 +271,7 @@
     },
     {
       "name": "gopkg.in/lumberjack.v2",
+      "version": "v2.0.0",
       "license": "MIT",
       "copyright": "Copyright (c) 2014 Nate Finch",
       "source": "go",
@@ -274,6 +279,7 @@
     },
     {
       "name": "gopkg.in/yaml.v3",
+      "version": "v3.0.1",
       "license": "MIT",
       "copyright": "Copyright (c) 2006-2010 Kirill Simonov",
       "source": "go",

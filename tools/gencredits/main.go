@@ -164,20 +164,25 @@ func (g *Generator) collectGoModules() ([]Entry, error) {
 		return nil, err
 	}
 
+	versions, err := g.moduleVersions()
+	if err != nil {
+		return nil, err
+	}
+
 	var entries []Entry
 	for _, line := range strings.Split(strings.TrimSpace(report), "\n") {
 		parts := strings.Split(line, ",")
 		if len(parts) != 3 {
 			continue
 		}
-		module, url, license := parts[0], parts[1], parts[2]
+		module, license := parts[0], parts[2]
 		if module == "sieve" { // ourselves
 			continue
 		}
 		text := readLicenseFile(filepath.Join(savePath, module))
 		entries = append(entries, Entry{
 			Name:      module,
-			Version:   versionFromLicenseURL(url),
+			Version:   versions.of(module),
 			License:   license,
 			Copyright: copyrightLine(text),
 			Source:    "go",
@@ -207,14 +212,56 @@ func (g *Generator) runGoLicenses(args ...string) (string, error) {
 	return string(out), nil
 }
 
-// versionFromLicenseURL extracts the module version from a go-licenses report
-// URL, e.g. .../blob/v5.2.5/LICENSE or .../+/v0.35.0:LICENSE.
-func versionFromLicenseURL(url string) string {
-	m := regexp.MustCompile(`/(?:blob/|\+/)(v[0-9][^/:]*)`).FindStringSubmatch(url)
-	if m == nil {
-		return ""
+// ModuleVersions answers what version of a module a LIBRARY belongs to.
+// go-licenses reports libraries — `golang.org/x/net/html` — and the version is a
+// property of the module above them, so the answer is the longest module path
+// that prefixes the library's.
+//
+// The versions come from `go list -m`, which reads the build list, NOT from the
+// license URL in go-licenses' own report: go-licenses resolves a vanity import
+// path to its repository over the network, so every golang.org and gopkg.in
+// module lost its version on a machine that could not reach them. The build list
+// is the same answer on every machine, with or without a network.
+type ModuleVersions map[string]string
+
+// of returns the version of the module `library` belongs to, or "" when the build
+// list names none.
+func (m ModuleVersions) of(library string) string {
+	best := ""
+	for path := range m {
+		if len(path) <= len(best) {
+			continue
+		}
+		if library == path || strings.HasPrefix(library, path+"/") {
+			best = path
+		}
 	}
-	return m[1]
+	return m[best]
+}
+
+// moduleVersions reads the build list. `-e` so a module the list cannot load
+// does not fail the whole run; its version is simply absent.
+func (g *Generator) moduleVersions() (ModuleVersions, error) {
+	cmd := exec.Command("go", "list", "-m", "-e", "-f", "{{.Path}} {{.Version}}", "all")
+	cmd.Dir = g.repoRoot
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("go list -m all: %w", err)
+	}
+	versions := ModuleVersions{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		path, version, ok := strings.Cut(line, " ")
+		if !ok || version == "" {
+			continue
+		}
+		versions[path] = version
+	}
+	if len(versions) == 0 {
+		return nil, fmt.Errorf("go list -m all produced no versioned modules")
+	}
+	return versions, nil
 }
 
 // ---- npm packages ----

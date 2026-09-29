@@ -117,7 +117,7 @@ jobs:
             fi
           fi
 
-          CHANGED=$(git diff --name-only $DIFF_BASE HEAD | grep -E '^(go\.mod|go\.sum|frontend/package-lock\.json|frontend/package\.json|frontend/tiptap-bundle-entry\.js|tools/gencredits/|third-party-licenses\.json)' || true)
+          CHANGED=$(git diff --name-only $DIFF_BASE HEAD | grep -E '^(go\.mod|go\.sum|frontend/package-lock\.json|frontend/package\.json|frontend/tiptap-bundle-entry\.js|frontend/prettier-bundle-entry\.js|tools/gencredits/|third-party-licenses\.json)' || true)
 
           if [ -n "$CHANGED" ]; then
             echo "credits=true" >> $GITHUB_OUTPUT
