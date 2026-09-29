@@ -2,9 +2,7 @@
 // The one thing a menu asks to pretty-print source.
 //
 // It is itself a Formatter, composed over an ORDERED list of them: the first
-// whose `supports` answers true for the language is the one that formats. That
-// order is the seam a second formatter joins on — a Go-language formatter backed
-// by gofmt, or an LLM one — without a menu or an action changing.
+// whose `supports` answers true for the language is the one that formats.
 //
 // IT CANONICALISES THE LANGUAGE FIRST, because a fence carries whatever its
 // author typed after the backticks. The alias table mirrors `lang.Canonical-

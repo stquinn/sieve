@@ -9,10 +9,12 @@
 // path that already carries typing — the node view's MutationObserver for a code
 // block, the prose save path for a fence. Nothing here knows about persistence.
 //
-// THE POSITION IS RE-READ AFTER THE AWAIT. Formatting takes milliseconds but the
-// document is free to move underneath it — a watcher reload, an AI job landing a
-// block — so what was at that position is checked to still be the same kind of
-// node before anything is written to it.
+// WHAT IS WRITTEN TO IS RE-READ AFTER THE AWAIT, and it has to be the node that
+// was formatted: the same kind of node, at that position, still holding the same
+// text. Loading Prettier takes a moment and the surface stays editable through
+// it, so a keystroke — or a document that moved under a watcher reload — means
+// the formatted string is of text that is no longer there, and nothing is
+// written.
 
 export class CodeFormatAction {
   /**
@@ -61,9 +63,14 @@ export class CodeFormatAction {
     }
     const pos = typeof getPos === 'function' ? getPos() : null
     const state = pane && pane.state
-    if (!state || pos == null || pos < 0 || pos >= state.doc.content.size) return
+    if (!state || !pane.view || pos == null || pos < 0 || pos >= state.doc.content.size) return
     const current = state.doc.nodeAt(pos)
-    if (!current || current.type !== node.type || current.textContent === formatted) return
+    if (!current || current.type !== node.type) return
+    // What is there has to be what was formatted. A keystroke landing during the
+    // await, or another fence arriving at this position, would otherwise be
+    // overwritten by the formatting of text that is no longer here.
+    if (current.textContent !== node.textContent) return
+    if (current.textContent === formatted) return
     const tr = state.tr
     tr.replaceWith(pos + 1, pos + 1 + current.content.size,
       formatted ? state.schema.text(formatted) : [])

@@ -158,6 +158,34 @@ describe('CodeFormatAction.run — the write', () => {
     expect(pane.dispatched).toEqual([])
   })
 
+  // The surface stays editable while Prettier loads, so the text can move on
+  // under a format that is already running.
+  it('writes nothing when the text changed while the format was running', async () => {
+    const { state, pos } = docWithFence('{"a":1}')
+    const pane = paneOver(state)
+    const node = pane.state.doc.nodeAt(pos)
+    await CodeFormatAction.run({
+      service: serviceDouble(['json'], () => {
+        // A keystroke, landing before the formatted string comes back.
+        const tr = pane.state.tr.insertText('!', pos + 1)
+        pane.state = pane.state.apply(tr)
+        return Promise.resolve('{\n  "a": 1\n}')
+      }),
+      pane, node, getPos: () => pos, language: 'json',
+    })
+    expect(pane.dispatched).toEqual([])
+    expect(pane.state.doc.nodeAt(pos).textContent).toBe('!{"a":1}')
+  })
+
+  it('writes nothing to a pane that has no view', async () => {
+    const { state, pos } = docWithFence('{"a":1}')
+    const service = serviceDouble(['json'], () => Promise.resolve('{}'))
+    await CodeFormatAction.run({
+      service, pane: { state }, node: state.doc.nodeAt(pos), getPos: () => pos, language: 'json',
+    })
+    expect(service.calls.length).toBe(1)
+  })
+
   it('writes nothing when a DIFFERENT kind of node now sits at the position', async () => {
     const { state, pos } = docWithFence('{"a":1}')
     const pane = paneOver(state)

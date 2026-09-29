@@ -13,9 +13,8 @@
 // JSON IS FORMATTED BY TWO PARSERS, in this order: `json-stringify` expands every
 // object and array the way an IDE would and reproduces numbers exactly as
 // written, but rejects comments; `json` tolerates comments but packs short
-// objects onto one line and rewrites `1.50` to `1.5`. A commented file is rarer
-// than a plain one and only the second parser can read it, so the first is tried
-// and the second is the fallback.
+// objects onto one line and rewrites `1.50` to `1.5`. Only the second can read a
+// commented file, so it is the fallback and its error is the one reported.
 
 /** Where the vendored bundle sits, as the app serves it. */
 const VENDOR_URL = '/ui/static/vendor/prettier.js'

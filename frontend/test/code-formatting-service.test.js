@@ -111,6 +111,17 @@ describe('PrettierFormatter — the bundle and the options', () => {
     expect(loader).toHaveBeenCalledTimes(1)
   })
 
+  // A fetch that failed once has no business breaking Format for the session.
+  it('does not remember a FAILED load: the next format tries again', async () => {
+    const bundle = bundleDouble()
+    let attempt = 0
+    const loader = vi.fn(() => ++attempt === 1 ? Promise.reject(new Error('offline')) : Promise.resolve(bundle))
+    const f = new PrettierFormatter(loader)
+    await expect(f.format('yaml', 'a: 1')).rejects.toThrow('offline')
+    expect(await f.format('yaml', 'a: 1')).toBe('formatted')
+    expect(loader).toHaveBeenCalledTimes(2)
+  })
+
   it('passes the per-language parser and width, plus the shared house style', async () => {
     const bundle = bundleDouble()
     const f = new PrettierFormatter(() => Promise.resolve(bundle))
