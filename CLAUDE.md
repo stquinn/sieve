@@ -88,7 +88,11 @@ load-bearing) and copies the Java parser's two `.wasm` files BESIDE it, because 
 locates them with `new URL(name, import.meta.url)`; all three are committed. Nothing references
 it from `index.html`: `PrettierFormatter` `import()`s it on the first Format click. The bundle
 does not run under Node (web-tree-sitter's Node path breaks when bundled), so tests inject the
-npm packages through `PrettierFormatter`'s loader instead.
+npm packages through `PrettierFormatter`'s loader instead. `tree-sitter-java_orchard.wasm` is
+`tree-sitter-java-orchard`'s compiled grammar (MIT), a devDependency of the plugin that npm
+never installs and esbuild never reads — so it is credited from what is on disk: its MIT text
+is committed beside it as `vendor/tree-sitter-java_orchard-MIT.txt` and its version is read
+from the plugin's own pin (`tools/gencredits` `javaGrammarEntry`).
 
 **Third-party credits:** `third-party-licenses.json` (repo root, go:embed'ed, rendered by the
 Help → Open Source Licenses dialog) is GENERATED — never hand-edit. Regenerate only when deps change (`go.mod`,

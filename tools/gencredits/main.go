@@ -13,6 +13,9 @@
 //   - npm packages bundled into frontend/src/static/vendor/ — enumerated from
 //     esbuild --metafile output for each bundle entry, plus the dist-copied
 //     libraries (mermaid, panzoom) and build-time-shipped CSS (tailwind)
+//   - bundled binaries no bundler enumerates: the webfonts under static/fonts
+//     and the compiled Java tree-sitter grammar under static/vendor, each
+//     credited from the license text committed beside it
 //   - fixed entries: the Go standard library/runtime, and system-runtime
 //     courtesy mentions (WebKitGTK) that carry no bundling obligation
 package main
@@ -218,10 +221,9 @@ func (g *Generator) runGoLicenses(args ...string) (string, error) {
 // that prefixes the library's.
 //
 // The versions come from `go list -m`, which reads the build list, NOT from the
-// license URL in go-licenses' own report: go-licenses resolves a vanity import
-// path to its repository over the network, so every golang.org and gopkg.in
-// module lost its version on a machine that could not reach them. The build list
-// is the same answer on every machine, with or without a network.
+// license URL in go-licenses' own report: resolving a vanity import path to a
+// repository needs the network, and the build list is the same answer on every
+// machine, with or without one.
 type ModuleVersions map[string]string
 
 // of returns the version of the module `library` belongs to, or "" when the build
@@ -408,10 +410,15 @@ func (g *Generator) fixedEntries() ([]Entry, error) {
 		return nil, err
 	}
 
-	fontEntries, err := g.bundledFontEntries()
+	bundled, err := g.bundledFontEntries()
 	if err != nil {
 		return nil, err
 	}
+	grammar, err := g.javaGrammarEntry()
+	if err != nil {
+		return nil, err
+	}
+	bundled = append(bundled, grammar)
 
 	return append([]Entry{
 		{
@@ -435,7 +442,70 @@ func (g *Generator) fixedEntries() ([]Entry, error) {
 			Source:  "system",
 			Note:    "bundled themes are original palettes inspired by Catppuccin, Gruvbox, Monokai, Darcula, and Tokyo Night; no third-party code is included",
 		},
-	}, fontEntries...), nil
+	}, bundled...), nil
+}
+
+// javaGrammarPackage is the npm package the shipped Java grammar is built from.
+const javaGrammarPackage = "tree-sitter-java-orchard"
+
+// javaGrammarEntry credits the compiled Java grammar Sieve ships as
+// frontend/src/static/vendor/tree-sitter-java_orchard.wasm.
+//
+// The grammar is a devDependency of prettier-plugin-java, so npm never installs
+// it; the plugin copies the built .wasm into its own dist/ and bundle:prettier
+// copies it from there. esbuild never reads it either — the plugin locates it at
+// runtime with new URL(…, import.meta.url) — so no metafile can name it and the
+// npm pass cannot see it. Both halves are therefore read from what is on disk:
+// the version from the plugin's pin, so a plugin upgrade that changes grammars
+// changes this entry and CI's staleness gate catches it, and the license text
+// from the copy committed beside the wasm.
+func (g *Generator) javaGrammarEntry() (Entry, error) {
+	version, err := g.pinnedJavaGrammarVersion()
+	if err != nil {
+		return Entry{}, err
+	}
+	licensePath := filepath.Join(g.frontendDir, "src", "static", "vendor", "tree-sitter-java_orchard-MIT.txt")
+	raw, err := os.ReadFile(licensePath)
+	if err != nil {
+		return Entry{}, fmt.Errorf("reading bundled Java grammar license: %w", err)
+	}
+	return Entry{
+		Name:      javaGrammarPackage,
+		Version:   version,
+		License:   "MIT",
+		Copyright: copyrightLine(string(raw)),
+		Source:    "bundled",
+		Note: "compiled tree-sitter grammar (tree-sitter-java_orchard.wasm), embedded in the binary and " +
+			"served from /static/vendor; instantiated by prettier-plugin-java to format Java. " +
+			"License shipped alongside at static/vendor/tree-sitter-java_orchard-MIT.txt",
+		Text: string(raw),
+	}, nil
+}
+
+// pinnedJavaGrammarVersion reads the grammar version out of
+// prettier-plugin-java's devDependencies. Only an exact version is accepted: a
+// range names no single grammar, and crediting one we cannot prove we shipped
+// is worse than failing the regen.
+func (g *Generator) pinnedJavaGrammarVersion() (string, error) {
+	path := filepath.Join(g.frontendDir, "node_modules", "prettier-plugin-java", "package.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading prettier-plugin-java manifest: %w", err)
+	}
+	var manifest struct {
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return "", fmt.Errorf("parsing prettier-plugin-java manifest: %w", err)
+	}
+	pin, ok := manifest.DevDependencies[javaGrammarPackage]
+	if !ok {
+		return "", fmt.Errorf("prettier-plugin-java no longer pins %s: find where its shipped grammar comes from and credit that", javaGrammarPackage)
+	}
+	if !regexp.MustCompile(`^\d+\.\d+\.\d+`).MatchString(pin) {
+		return "", fmt.Errorf("prettier-plugin-java pins %s as %q, not an exact version: the shipped grammar cannot be identified", javaGrammarPackage, pin)
+	}
+	return pin, nil
 }
 
 // bundledFontEntries credits the self-hosted webfaces in frontend/src/static/fonts.
