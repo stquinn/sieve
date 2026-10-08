@@ -398,9 +398,22 @@ func TestNotesSource_ResolvesAnAssetLeafByKey(t *testing.T) {
 	if node.Kind != assetKind {
 		t.Errorf("kind = %q, want %q", node.Kind, assetKind)
 	}
-	// A descriptor never streams bytes.
-	if node.Body != "" {
-		t.Errorf("body = %q, want empty — bytes are fetched by URL, not by descriptor", node.Body)
+	// A descriptor never streams bytes — it says where the bytes are instead, so
+	// that a caller handed this answer is not handed a dead end.
+	for _, want := range []string{
+		note.Storable().ExternalRef() + "/diagram.png",
+		"library root",
+		strconv.Itoa(len(pngBytes)) + " bytes",
+	} {
+		if !strings.Contains(node.Body, want) {
+			t.Errorf("body = %q, want it to state %q", node.Body, want)
+		}
+	}
+	if strings.Contains(node.Body, string(pngBytes)) {
+		t.Errorf("body = %q, want the location of the bytes, never the bytes", node.Body)
+	}
+	if node.Summary == "" {
+		t.Error("summary must say what an asset leaf is, so an empty-looking answer is not read as an empty file")
 	}
 }
 

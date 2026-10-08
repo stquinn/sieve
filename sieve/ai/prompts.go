@@ -347,7 +347,7 @@ BACKGROUND — ambient context for disambiguation only. Do not analyze the docum
 - Document summary: {doc_summary}
 - Document uuid: {doc_uuid}
 
-If, and only if, the question genuinely requires the document's actual content, call the Sieve MCP tool get_note with the uuid above to read it. Prefer answering directly without it.
+If, and only if, the question genuinely requires the document's actual content, call the Sieve MCP tool get_note with the bare uuid above to read it. Anything attached below is addressed by a sieve:// uri instead, and those go to get_by_uri verbatim. Prefer answering directly without either.
 
 Keep the answer short: a few sentences, or a compact list or snippet when clearer. No preamble, no closing questions.`
 

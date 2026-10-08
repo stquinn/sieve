@@ -36,7 +36,7 @@ type SearchInput struct {
 
 // UUIDInput is the argument set for get_meta and get_note.
 type UUIDInput struct {
-	UUID string `json:"uuid" jsonschema:"the note's uuid"`
+	UUID string `json:"uuid" jsonschema:"the note's uuid — a bare uuid, never a sieve:// uri (pass one of those to get_by_uri instead)"`
 }
 
 // URIInput is the argument set for get_by_uri: a Sieve coordinate, copied

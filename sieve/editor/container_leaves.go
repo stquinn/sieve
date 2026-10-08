@@ -2,6 +2,7 @@ package editor
 
 import (
 	"fmt"
+	"path"
 	"strings"
 
 	"sieve/ident"
@@ -142,15 +143,30 @@ func (c *containerLeaves) blockNode(b block.SieveBlock) domain.NodeDescriptor {
 }
 
 // assetNode describes an asset leaf. Its key is both its identity and its only
-// name; Body stays empty, because a descriptor is text and bytes are fetched
-// through the served asset URL.
+// name, and Body is a READING NOTE rather than content: a descriptor is text,
+// and the bytes are fetched through the served asset URL or off disk.
+//
+// It must not be empty. A caller that cannot see this type — an MCP client is
+// the one that cannot — reads an empty body as an empty file, so the body says
+// what the address names and where its bytes are.
 func (c *containerLeaves) assetNode(a store.AssetStorable) domain.NodeDescriptor {
 	return domain.NodeDescriptor{
-		URI:   c.leafURI(a.Key()),
-		UUID:  a.Key(),
-		Kind:  assetKind,
-		Title: a.Key(),
+		URI:     c.leafURI(a.Key()),
+		UUID:    a.Key(),
+		Kind:    assetKind,
+		Title:   a.Key(),
+		Summary: "a file this container holds; its bytes are read from disk, not from this descriptor",
+		Body:    c.assetReadingNote(a),
 	}
+}
+
+// assetReadingNote states where an asset's bytes are, in the one form a reader
+// outside this process can act on: the path relative to the library root, which
+// is the directory an AI CLI subprocess is granted beside its own cwd.
+func (c *containerLeaves) assetReadingNote(a store.AssetStorable) string {
+	return fmt.Sprintf(
+		"This address names a file, not text. Its bytes are at %s (relative to the library root), %d bytes. Read it from disk; this descriptor carries no bytes.",
+		path.Join(c.doc.Storable().ExternalRef(), a.Key()), len(a.Body()))
 }
 
 // leafURI rebuilds the coordinate around the leaf spelling the CONTAINER holds,

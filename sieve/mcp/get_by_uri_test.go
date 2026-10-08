@@ -134,6 +134,46 @@ func TestGetByURI_DereferencesABlockAddress(t *testing.T) {
 	}
 }
 
+// An asset leaf is a SUCCESS carrying a reading note. No verb reads bytes, so
+// the one answer the model gets for a file has to say where the file is: an
+// address that resolves to nothing is indistinguishable from an empty file, and
+// that is what sent a model hunting for a verb that does not exist.
+func TestGetByURI_AnAssetLeafStatesWhereItsBytesAre(t *testing.T) {
+	s, ds, fs := newTestServerWithStore(t)
+	uuid := seedNote(t, ds, "Auth Design", "design", "auth-design", nil, "", "# Auth Design\n")
+	const pdf = "%PDF-1.4 not really a pdf"
+	if _, err := fs.CreateAsset(domain.LibraryCategory, uuid, "spec.pdf", []byte(pdf)); err != nil {
+		t.Fatalf("CreateAsset: %v", err)
+	}
+	if _, err := fs.Load(domain.LibraryCategory, uuid); err != nil {
+		t.Fatalf("re-scan after attaching the asset: %v", err)
+	}
+	doc, err := ds.LoadByUUID(uuid)
+	if err != nil {
+		t.Fatalf("reload after attaching the asset: %v", err)
+	}
+
+	_, node, err := s.getByURI(context.Background(), nil,
+		URIInput{URI: domain.NewLeafAddress(uuid, "spec.pdf").String()})
+	if err != nil {
+		t.Fatalf("get_by_uri on an asset leaf must succeed: %v", err)
+	}
+	if node.Kind != "asset" || node.UUID != "spec.pdf" {
+		t.Errorf("node = %+v, want the asset's own kind and key", node)
+	}
+	for _, want := range []string{doc.Storable().ExternalRef() + "/spec.pdf", "library root"} {
+		if !strings.Contains(node.Body, want) {
+			t.Errorf("body = %q, want it to state %q", node.Body, want)
+		}
+	}
+	if node.Summary == "" {
+		t.Error("an asset leaf must say what it is, or an answer with no content reads as an empty file")
+	}
+	if strings.Contains(node.Body, pdf) {
+		t.Errorf("body = %q, want the location of the bytes, never the bytes", node.Body)
+	}
+}
+
 // A leaf read is still greppable BY DOCUMENT. The audit's uuid names what was
 // actually read — a block id, or an asset filename — so the container is recorded
 // beside it, or the document a leaf read came out of survives nowhere but inside
