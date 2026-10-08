@@ -325,7 +325,7 @@ func TestReferenceProcessor_DescribeJob_resolvesACoordinate(t *testing.T) {
 	uuid := ident.New()
 	uri := "sieve://" + uuid
 	p := NewReferenceProcessor(block.BlockServices{Nodes: fakeNodes{nodes: map[string]domain.NodeDescriptor{
-		uri: {URI: uri, UUID: uuid, Kind: "note", Title: "Auth Design", Summary: "Token rotation and session binding"},
+		uri: {URI: uri, ID: uuid, Kind: "note", Title: "Auth Design", Summary: "Token rotation and session binding"},
 	}}})
 	blk := &block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
 		"uri": uri, "status": block.BlockStatusPending,
@@ -488,27 +488,20 @@ func TestReferenceProcessor_BuildContext_heldFile(t *testing.T) {
 	}
 }
 
-// The File tag is the path that OPENS, and every case turns on two questions:
-// does a file exist behind this reference at all (the face answers, never the
-// address), and is it in the directory the CLI is already standing in.
+// The File tag is the path that OPENS, listed first, and every case turns on two
+// questions: does a file exist behind this reference at all (the face answers,
+// never the address), and is it in the asking document's own directory.
 //
 // A blank is an ABSENT tag, not an empty one (AIContext.String drops it), which
 // is the right answer whenever no openable path can be stated.
 func TestReferenceProcessor_BuildContext_fileTag(t *testing.T) {
-	ds, _ := newTestDocumentService(t)
-	owner, err := ds.New()
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
 	askingUUID := ident.New()
 	const blockLeaf = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4c02"
 
 	cases := []struct {
-		name string
-		// documents wires the port the cross-container branch needs.
-		documents bool
-		attrs     map[string]interface{}
-		want      string // "" = no File tag at all
+		name  string
+		attrs map[string]interface{}
+		want  string // "" = no File tag at all
 	}{
 		{
 			name: "its own container's file is the bare key, never the dropped filename",
@@ -519,26 +512,9 @@ func TestReferenceProcessor_BuildContext_fileTag(t *testing.T) {
 			want: "at-1.yml",
 		},
 		{
-			name:      "another container's file is relative to the library root",
-			documents: true,
-			attrs: map[string]interface{}{
-				"uri":   domain.NewLeafAddress(owner.UUID(), "at-1.yml").String(),
-				"cache": map[string]interface{}{"mime": "text/yaml"},
-			},
-			want: owner.Storable().ExternalRef() + "/at-1.yml (relative to the library root)",
-		},
-		{
-			name:      "a container the port cannot load names nothing",
-			documents: true,
+			name: "another container's file names nothing",
 			attrs: map[string]interface{}{
 				"uri":   domain.NewLeafAddress(ident.New(), "at-1.yml").String(),
-				"cache": map[string]interface{}{"mime": "text/yaml"},
-			},
-		},
-		{
-			name: "no port to ask with names nothing",
-			attrs: map[string]interface{}{
-				"uri":   domain.NewLeafAddress(owner.UUID(), "at-1.yml").String(),
 				"cache": map[string]interface{}{"mime": "text/yaml"},
 			},
 		},
@@ -563,20 +539,20 @@ func TestReferenceProcessor_BuildContext_fileTag(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			svc := block.BlockServices{}
-			if c.documents {
-				svc.Documents = ds
-			}
 			blk := block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: c.attrs}
-			got := NewReferenceProcessor(svc).BuildContext(blk, block.DocView{UUID: askingUUID}, map[string]bool{}).String()
+			got := NewReferenceProcessor(block.BlockServices{}).BuildContext(blk, block.DocView{UUID: askingUUID}, map[string]bool{}).String()
 			if c.want == "" {
 				if strings.Contains(got, "File:") {
 					t.Errorf("no openable path exists, so no File tag may appear; got:\n%s", got)
 				}
 				return
 			}
-			if !strings.Contains(got, `File: "`+c.want+`"`) {
-				t.Errorf("File tag must state %q; got:\n%s", c.want, got)
+			file := strings.Index(got, `File: "`+c.want+`"`)
+			if file < 0 {
+				t.Fatalf("File tag must state %q; got:\n%s", c.want, got)
+			}
+			if addr := strings.Index(got, "Address:"); addr < file {
+				t.Errorf("File tag must precede Address; got:\n%s", got)
 			}
 		})
 	}

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
-	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -158,7 +157,6 @@ func (p *ReferenceProcessor) ensureFace(attrs map[string]interface{}) map[string
 func (p *ReferenceProcessor) stampFace(face map[string]interface{}) {
 	face["cachedAt"] = time.Now().UTC().Format(time.RFC3339)
 }
-
 
 // uri reads the block's one address attr.
 func (p *ReferenceProcessor) uri(attrs map[string]interface{}) string {
@@ -637,8 +635,8 @@ func (p *ReferenceProcessor) BuildContext(blk block.SieveBlock, doc block.DocVie
 		NodeIDs: []string{blk.ID},
 		Content: "Reference: " + p.label(blk.Attrs, uri) + "\n",
 		Tags: []block.Tag{
-			{Label: "Address", Values: []string{uri}},
 			{Label: "File", Values: []string{p.heldFilePath(blk.Attrs, doc.UUID)}},
+			{Label: "Address", Values: []string{uri}},
 			{Label: "Type", Values: []string{p.typeLine(blk.Attrs)}},
 			{Label: "Summary", Values: []string{summary}},
 		},
@@ -646,39 +644,24 @@ func (p *ReferenceProcessor) BuildContext(blk block.SieveBlock, doc block.DocVie
 }
 
 // heldFilePath is where a held file's bytes are on disk, as the CLI can open
-// them. The subprocess cwd is the asking document's own directory and a held
-// asset sits in that directory, so a reference to this container's own file is
-// named by its bare key. A reference naming ANOTHER container's asset is named
-// relative to the library root, which is a granted directory.
+// them: its bare key, which is a path relative to the subprocess cwd — the asking
+// document's own directory, where the asset sits. A held file in ANY other
+// container names nothing, because a bare key there would point into the wrong
+// directory.
 //
 // The key is NOT the filename the user dropped (see holdDroppedFile): the face's
 // title carries that, and only this key opens. A pointer has no file at all, and
 // the face is what says so — never the address, which a pointer at a leaf spells
 // identically.
-//
-// An owner nobody can load names NOTHING. A bare key is a cwd-relative path, so
-// it would state the asking document's own directory for a file that is in
-// another's, and a path the model cannot open is worse than the absent tag a
-// blank value leaves behind.
 func (p *ReferenceProcessor) heldFilePath(attrs map[string]interface{}, docUUID string) string {
 	if !p.held(attrs) {
 		return ""
 	}
 	addr, ok := p.heldAddress(attrs)
-	if !ok {
+	if !ok || addr.Container != docUUID {
 		return ""
 	}
-	if addr.Container == docUUID {
-		return addr.Leaf
-	}
-	if p.svc.Documents == nil {
-		return ""
-	}
-	doc, err := p.svc.Documents.LoadByUUID(addr.Container)
-	if err != nil {
-		return ""
-	}
-	return path.Join(doc.Storable().ExternalRef(), addr.Leaf) + " (relative to the library root)"
+	return addr.Leaf
 }
 
 // label is what a reference is called: its cached title, else the file it holds,
