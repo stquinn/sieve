@@ -230,6 +230,14 @@ import { CodeFormatAction } from '../code-format-action.js'
     return items
   }
 
+  /** The block's source as a user would read it: the LIVE PM text, falling back
+   *  to the `source` attr, which the MutationObserver above leaves up to 200ms
+   *  behind the DOM. The same read `asContentEntry` makes.
+   *  @param {any} node @returns {string} */
+  function sourceOf(node) {
+    return node.textContent || node.attrs.source || ''
+  }
+
   CodeNodeView.buildContextMenuItems = function ({ node, editorPane, getPos, provider, getEditor }) {
     var lang = node.attrs.language
     var label = lang && lang !== 'unknown' ? lang + ' block' : 'Code block'
@@ -256,6 +264,18 @@ import { CodeFormatAction } from '../code-format-action.js'
       editable: editable,
     })
     if (format) items.push(format)
+    // A NAMED VERB writing one text/plain payload, as diagram's own entry and
+    // Copy Link do — not the copy GESTURE, which composes `sieve/slice` views in
+    // one place for every kind. It takes the inner text alone: no fence, no
+    // language line. Ungated by `editable`, because it mutates nothing.
+    var source = sourceOf(node)
+    if (source) {
+      items.push({
+        icon: (window.SieveIcons || {}).copy || '',
+        label: 'Copy source',
+        action: function () { navigator.clipboard.writeText(source) },
+      })
+    }
     return items
   }
 
