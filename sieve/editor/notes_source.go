@@ -16,12 +16,11 @@ import (
 	"sieve/store"
 )
 
-// NotesSource is the Router's face on the library: filed documents, offered as
-// candidates and resolved as Nodes.
+// NotesSource is the Router's face on the library's documents.
 //
-// NOTES ONLY. An unfiled buffer is never offered (Search enumerates the library)
-// and never resolved (Resolve refuses a non-note), even though
-// DocumentService.LoadByUUID would happily find one.
+// OFFERED = FILED NOTES; RESOLVED = ANY DOCUMENT. Search enumerates the library,
+// so an unfiled buffer is never offered; Resolve dereferences any document
+// DocumentService.LoadByUUID finds, buffer or note, at every grain.
 type NotesSource struct {
 	documents *services.DocumentService
 }
@@ -59,19 +58,15 @@ func (s *NotesSource) Search(query string, limit int) []domain.Candidate {
 	return out
 }
 
-// Resolve dereferences an address into the note it names, or into the leaf it
-// names inside one — live, or as of the version it pins. Anything this source
-// does not hold — a deleted document, an unfiled buffer, a version nobody wrote,
-// a name the container does not answer to — is domain.ErrNodeNotFound, which the
-// Router reads as "ask the next source".
+// Resolve dereferences an address into the document it names, or into the leaf
+// it names inside one — live, or as of the version it pins. Anything this source
+// does not hold — a deleted document, a version nobody wrote, a name the
+// container does not answer to — is domain.ErrNodeNotFound, which the Router
+// reads as "ask the next source".
 func (s *NotesSource) Resolve(addr domain.Address) (domain.NodeDescriptor, error) {
-	uri := addr.String()
 	doc, err := s.documents.LoadByUUID(addr.Container)
 	if err != nil {
-		return domain.NodeDescriptor{}, fmt.Errorf("%w: %s", domain.ErrNodeNotFound, uri)
-	}
-	if doc.Kind() != domain.KindNote {
-		return domain.NodeDescriptor{}, fmt.Errorf("%w: %s is not a filed note", domain.ErrNodeNotFound, uri)
+		return domain.NodeDescriptor{}, fmt.Errorf("%w: %s: %v", domain.ErrNodeNotFound, addr.String(), err)
 	}
 	// The pin names a CONTAINER version, so it is read — and dangles when nobody
 	// wrote it — whatever grain the address goes on to name.
@@ -89,7 +84,7 @@ func (s *NotesSource) Resolve(addr domain.Address) (domain.NodeDescriptor, error
 	return leaves.resolve()
 }
 
-// nodeOf projects a loaded note into the kind-agnostic NodeDescriptor shape over
+// nodeOf projects a loaded document into the kind-agnostic NodeDescriptor shape over
 // the body the address named.
 //
 // A pinned descriptor is NOT uniformly historical: the body is the snapshot,
@@ -102,8 +97,8 @@ func (s *NotesSource) nodeOf(addr domain.Address, doc domain.Document, body stri
 	}
 	return domain.NodeDescriptor{
 		URI:     addr.String(),
-		UUID:    doc.UUID(),
-		Kind:    string(domain.KindNote),
+		ID:      doc.UUID(),
+		Kind:    string(doc.Kind()),
 		Title:   meta.DisplayName(),
 		Summary: summary,
 		Body:    body,

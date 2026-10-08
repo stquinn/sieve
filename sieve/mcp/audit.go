@@ -7,16 +7,16 @@ import "sieve/logger"
 // and nowhere else, and both write one of these.
 //
 // A read is not always a whole document — get_by_uri dereferences a leaf
-// coordinate too — so container and uuid are separate namings, which is what
+// coordinate too — so container and id are separate namings, which is what
 // keeps the trail greppable by document.
 type bodyRead struct {
 	verb string // the tool that performed the read
 	// container is the document the content came out of. Always a uuid, whatever
 	// grain was read.
 	container string
-	// uuid is the identity of what was ACTUALLY read: the document itself for a
+	// id is the identity of what was ACTUALLY read: the document itself for a
 	// whole-content read, or a block id / asset key for a leaf one.
-	uuid  string
+	id    string
 	uri   string // the coordinate the target was named by
 	title string
 	bytes int
@@ -28,7 +28,7 @@ func (b bodyRead) message() string { return "sieve mcp: " + b.verb + " (body rea
 
 // attrs is the structured half: what was read, and how much of it.
 func (b bodyRead) attrs() []any {
-	return []any{"container", b.container, "uuid", b.uuid, "uri", b.uri, "title", b.title, "bytes", b.bytes}
+	return []any{"container", b.container, "id", b.id, "uri", b.uri, "title", b.title, "bytes", b.bytes}
 }
 
 // bodyReadAuditor is where those records go. Production writes them to the log;

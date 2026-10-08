@@ -54,10 +54,11 @@ func (r *Router) Register(source NodeSource) {
 // travels to the sources whole, and the source holding the container is what
 // reaches inside it and reads its history.
 //
-// A target no source holds is domain.ErrNodeNotFound. A source failing for any
-// other reason surfaces as-is, so a broken library is never mistaken for a
-// deleted document.
+// A target no source holds is domain.ErrNodeNotFound, joining each source's
+// own reason for the miss. A source failing for any other reason surfaces as-is,
+// so a broken library is never mistaken for a deleted document.
 func (r *Router) Resolve(addr domain.Address) (domain.NodeDescriptor, error) {
+	var misses []error
 	for _, source := range r.sources {
 		node, err := source.Resolve(addr)
 		if err == nil {
@@ -66,8 +67,12 @@ func (r *Router) Resolve(addr domain.Address) (domain.NodeDescriptor, error) {
 		if !errors.Is(err, domain.ErrNodeNotFound) {
 			return domain.NodeDescriptor{}, fmt.Errorf("router: source %s: %w", source.Name(), err)
 		}
+		misses = append(misses, fmt.Errorf("source %s: %w", source.Name(), err))
 	}
-	return domain.NodeDescriptor{}, fmt.Errorf("%w: %s", domain.ErrNodeNotFound, addr.String())
+	if len(misses) == 0 {
+		return domain.NodeDescriptor{}, fmt.Errorf("%w: %s", domain.ErrNodeNotFound, addr.String())
+	}
+	return domain.NodeDescriptor{}, errors.Join(misses...)
 }
 
 // Target answers WHERE a coordinate opens: the container to bring up, plus the
@@ -93,7 +98,7 @@ func (r *Router) Target(uri string) (domain.OpenTarget, error) {
 	}
 	return domain.OpenTarget{
 		URI:     uri,
-		UUID:    node.UUID,
+		UUID:    node.ID,
 		BlockID: addr.Leaf, // empty for a container address; an alias stays an alias
 		Kind:    node.Kind,
 		Title:   node.Title,

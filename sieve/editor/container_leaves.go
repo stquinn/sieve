@@ -2,6 +2,7 @@ package editor
 
 import (
 	"fmt"
+	"path"
 	"strings"
 
 	"sieve/ident"
@@ -133,7 +134,7 @@ func (c *containerLeaves) blockNode(b block.SieveBlock) domain.NodeDescriptor {
 	}
 	return domain.NodeDescriptor{
 		URI:     c.leafURI(b.ID),
-		UUID:    b.ID,
+		ID:      b.ID,
 		Kind:    b.Kind,
 		Title:   strings.TrimSpace(b.StringAttr("title")),
 		Summary: strings.TrimSpace(b.StringAttr("summary")),
@@ -142,14 +143,21 @@ func (c *containerLeaves) blockNode(b block.SieveBlock) domain.NodeDescriptor {
 }
 
 // assetNode describes an asset leaf. Its key is both its identity and its only
-// name; Body stays empty, because a descriptor is text and bytes are fetched
-// through the served asset URL.
+// name. A descriptor is text, so it carries no bytes: Body is empty, and Path
+// says where the bytes are, relative to the library root — the directory an AI
+// CLI subprocess is granted beside its own cwd.
+//
+// Summary is cached onto reference chips shown in OTHER documents, so it is
+// worded for a person and names no document.
 func (c *containerLeaves) assetNode(a store.AssetStorable) domain.NodeDescriptor {
 	return domain.NodeDescriptor{
-		URI:   c.leafURI(a.Key()),
-		UUID:  a.Key(),
-		Kind:  assetKind,
-		Title: a.Key(),
+		URI:     c.leafURI(a.Key()),
+		ID:      a.Key(),
+		Kind:    assetKind,
+		Title:   a.Key(),
+		Summary: "A file.",
+		Path:    path.Join(c.doc.Storable().ExternalRef(), a.Key()),
+		Bytes:   len(a.Body()),
 	}
 }
 

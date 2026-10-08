@@ -2,6 +2,7 @@ package editor
 
 import (
 	"errors"
+	"path"
 	"strconv"
 	"strings"
 	"testing"
@@ -88,8 +89,8 @@ func TestNotesSource_ResolvesABlockLeafByID(t *testing.T) {
 	if node.URI != uri {
 		t.Errorf("uri = %q, want %q", node.URI, uri)
 	}
-	if node.UUID != testLowerBlockUUID {
-		t.Errorf("uuid = %q, want the block's id", node.UUID)
+	if node.ID != testLowerBlockUUID {
+		t.Errorf("uuid = %q, want the block's id", node.ID)
 	}
 	if node.Kind != "code" {
 		t.Errorf("kind = %q, want the block's own kind", node.Kind)
@@ -118,8 +119,8 @@ func TestNotesSource_ResolvesABlockLeafByAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve alias leaf: %v", err)
 	}
-	if node.UUID != testLowerBlockUUID {
-		t.Errorf("uuid = %q, want the block the alias names", node.UUID)
+	if node.ID != testLowerBlockUUID {
+		t.Errorf("uuid = %q, want the block the alias names", node.ID)
 	}
 	// An alias is a NAME, not an identity: what comes back is the block's own
 	// coordinate, so a consumer that round-trips it lands on the same block.
@@ -146,8 +147,8 @@ func TestNotesSource_LeafLookupFoldsCase(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Resolve %q: %v", leaf, err)
 			}
-			if node.UUID != testLowerBlockUUID {
-				t.Errorf("uuid = %q, want the block regardless of the caller's case", node.UUID)
+			if node.ID != testLowerBlockUUID {
+				t.Errorf("uuid = %q, want the block regardless of the caller's case", node.ID)
 			}
 			// The CONTAINER's spelling comes back, never the caller's: a
 			// case-forgiving address must not travel onward mis-spelled.
@@ -175,8 +176,8 @@ func TestNotesSource_ExactLeafMatchBeatsAFoldedOne(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Resolve: %v", err)
 		}
-		if node.UUID != testUpperBlockUUID {
-			t.Errorf("uuid = %q, want the exactly-spelled block", node.UUID)
+		if node.ID != testUpperBlockUUID {
+			t.Errorf("uuid = %q, want the exactly-spelled block", node.ID)
 		}
 	})
 
@@ -190,8 +191,8 @@ func TestNotesSource_ExactLeafMatchBeatsAFoldedOne(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Resolve: %v", err)
 		}
-		if node.UUID != testLowerBlockUUID {
-			t.Errorf("uuid = %q, want the exactly-spelled alias's block", node.UUID)
+		if node.ID != testLowerBlockUUID {
+			t.Errorf("uuid = %q, want the exactly-spelled alias's block", node.ID)
 		}
 	})
 }
@@ -212,8 +213,8 @@ func TestNotesSource_TheIDLookupOutranksTheAliasLookup(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Resolve: %v", err)
 		}
-		if node.UUID != testLowerBlockUUID {
-			t.Errorf("uuid = %q, want the block whose ID it is", node.UUID)
+		if node.ID != testLowerBlockUUID {
+			t.Errorf("uuid = %q, want the block whose ID it is", node.ID)
 		}
 	})
 
@@ -227,8 +228,8 @@ func TestNotesSource_TheIDLookupOutranksTheAliasLookup(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Resolve: %v", err)
 		}
-		if node.UUID != testLowerBlockUUID {
-			t.Errorf("uuid = %q, want the id lookup's answer — it runs to completion first", node.UUID)
+		if node.ID != testLowerBlockUUID {
+			t.Errorf("uuid = %q, want the id lookup's answer — it runs to completion first", node.ID)
 		}
 	})
 }
@@ -323,10 +324,8 @@ func TestNotesSource_LeafMissesDangle(t *testing.T) {
 	}
 }
 
-// The source invariant survives the new grain: this source answers for filed
-// notes, so a leaf inside an unfiled buffer is refused exactly as the buffer
-// itself is.
-func TestNotesSource_RefusesALeafInsideABuffer(t *testing.T) {
+// A leaf resolves inside an unfiled buffer exactly as inside a filed note.
+func TestNotesSource_ResolvesALeafInsideABuffer(t *testing.T) {
 	withCodeProcessor(t)
 	src, ds := newTestNotesSource(t)
 	buf, err := ds.New()
@@ -338,9 +337,12 @@ func TestNotesSource_RefusesALeafInsideABuffer(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	uri := leafURI(buf.UUID(), testLowerBlockUUID)
-	if _, err := src.Resolve(mustAddress(t, uri)); !errors.Is(err, domain.ErrNodeNotFound) {
-		t.Fatalf("err = %v, want ErrNodeNotFound", err)
+	node, err := src.Resolve(mustAddress(t, leafURI(buf.UUID(), testLowerBlockUUID)))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if node.ID != testLowerBlockUUID || node.Kind != "code" {
+		t.Errorf("node = %+v, want the buffer's block", node)
 	}
 }
 
@@ -356,7 +358,7 @@ func TestNotesSource_LeafWithNoMarkdownStillResolves(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if node.UUID != testLowerBlockUUID || node.Kind != "code" || node.Title != "Empty so far" {
+	if node.ID != testLowerBlockUUID || node.Kind != "code" || node.Title != "Empty so far" {
 		t.Errorf("node = %+v, want the block identified", node)
 	}
 	if node.Body != "" {
@@ -389,7 +391,7 @@ func TestNotesSource_ResolvesAnAssetLeafByKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve asset leaf: %v", err)
 	}
-	if node.URI != uri || node.UUID != "diagram.png" || node.Title != "diagram.png" {
+	if node.URI != uri || node.ID != "diagram.png" || node.Title != "diagram.png" {
 		t.Errorf("node = %+v, want the asset's own key as identity and name", node)
 	}
 	// Kind is the CONSTANT noun, never a media type sniffed from the extension:
@@ -398,9 +400,14 @@ func TestNotesSource_ResolvesAnAssetLeafByKey(t *testing.T) {
 	if node.Kind != assetKind {
 		t.Errorf("kind = %q, want %q", node.Kind, assetKind)
 	}
-	// A descriptor never streams bytes.
-	if node.Body != "" {
-		t.Errorf("body = %q, want empty — bytes are fetched by URL, not by descriptor", node.Body)
+	// A descriptor never carries bytes: it says where they are, and how many.
+	wantPath := path.Join(note.Storable().ExternalRef(), "diagram.png")
+	if node.Path != wantPath || node.Bytes != len(pngBytes) || node.Body != "" {
+		t.Errorf("path=%q bytes=%d body=%q, want path %q, %d bytes, empty body",
+			node.Path, node.Bytes, node.Body, wantPath, len(pngBytes))
+	}
+	if node.Summary == "" {
+		t.Error("summary must say what an asset leaf is, so an empty-looking answer is not read as an empty file")
 	}
 }
 
@@ -438,8 +445,8 @@ func TestNotesSource_AssetLookupFoldsCaseButPrefersTheExactKey(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Resolve %q: %v", key, err)
 		}
-		if node.UUID != key {
-			t.Errorf("uuid = %q, want the exactly-spelled key %q", node.UUID, key)
+		if node.ID != key {
+			t.Errorf("uuid = %q, want the exactly-spelled key %q", node.ID, key)
 		}
 	}
 
@@ -450,10 +457,10 @@ func TestNotesSource_AssetLookupFoldsCaseButPrefersTheExactKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve folded: %v", err)
 	}
-	if node.UUID != "diagram.png" && node.UUID != "Diagram.png" {
-		t.Errorf("uuid = %q, want one of the keys the container holds", node.UUID)
+	if node.ID != "diagram.png" && node.ID != "Diagram.png" {
+		t.Errorf("uuid = %q, want one of the keys the container holds", node.ID)
 	}
-	if node.URI != leafURI(note.UUID(), node.UUID) {
+	if node.URI != leafURI(note.UUID(), node.ID) {
 		t.Errorf("uri = %q, want it rebuilt from the resolved key", node.URI)
 	}
 }
@@ -473,8 +480,8 @@ func TestNotesSource_TheBlockLookupsOutrankTheAssetLookup(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Resolve: %v", err)
 		}
-		if node.UUID != testLowerBlockUUID {
-			t.Errorf("uuid = %q, want the block whose alias it is", node.UUID)
+		if node.ID != testLowerBlockUUID {
+			t.Errorf("uuid = %q, want the block whose alias it is", node.ID)
 		}
 	})
 
@@ -493,8 +500,8 @@ func TestNotesSource_TheBlockLookupsOutrankTheAssetLookup(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Resolve: %v", err)
 		}
-		if node.UUID != testLowerBlockUUID {
-			t.Errorf("uuid = %q, want the block — lookup order outranks an exact match in a weaker lookup", node.UUID)
+		if node.ID != testLowerBlockUUID {
+			t.Errorf("uuid = %q, want the block — lookup order outranks an exact match in a weaker lookup", node.ID)
 		}
 	})
 }
@@ -520,7 +527,7 @@ func TestNotesSource_PinnedAssetLeafIgnoresThePin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve pinned asset leaf: %v", err)
 	}
-	if node.UUID != "diagram.png" {
+	if node.ID != "diagram.png" {
 		t.Errorf("node = %+v, want the asset, judged against current membership", node)
 	}
 }

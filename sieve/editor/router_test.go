@@ -3,6 +3,7 @@ package editor
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"sieve/sieve/domain"
@@ -68,7 +69,7 @@ func TestRouter_ResolvesThroughTheFirstSourceThatAnswers(t *testing.T) {
 	uri := "sieve://" + testContainerUUID
 	empty := &fakeSource{name: "empty"}
 	notes := &fakeSource{name: "notes", nodes: map[string]domain.NodeDescriptor{
-		uri: {URI: uri, UUID: testContainerUUID, Kind: "note", Title: "Auth Design"},
+		uri: {URI: uri, ID: testContainerUUID, Kind: "note", Title: "Auth Design"},
 	}}
 	r := NewRouter(empty, notes)
 
@@ -85,13 +86,17 @@ func TestRouter_ResolvesThroughTheFirstSourceThatAnswers(t *testing.T) {
 }
 
 // Dangling is a normal state, not a panic: the address was a real coordinate, no
-// source held it.
+// source held it. Each source's reason for the miss survives into the error.
 func TestRouter_DanglingAddressIsATypedError(t *testing.T) {
-	r := NewRouter(&fakeSource{name: "notes"})
+	reason := fmt.Errorf("%w: no such document", domain.ErrNodeNotFound)
+	r := NewRouter(&fakeSource{name: "notes", failWith: reason})
 
 	_, err := r.Resolve(mustAddress(t, "sieve://"+testMissingUUID))
 	if !errors.Is(err, domain.ErrNodeNotFound) {
 		t.Fatalf("err = %v, want ErrNodeNotFound", err)
+	}
+	if !strings.Contains(err.Error(), "source notes") || !strings.Contains(err.Error(), "no such document") {
+		t.Errorf("err = %q, want it to name the source and carry its reason", err)
 	}
 }
 
@@ -121,7 +126,7 @@ func TestRouter_MalformedAddressCannotReachASource(t *testing.T) {
 func TestRouter_LeafAddressReachesItsSourceVerbatim(t *testing.T) {
 	uri := "sieve://" + testContainerUUID + "/" + testBlockUUID
 	notes := &fakeSource{name: "notes", nodes: map[string]domain.NodeDescriptor{
-		uri: {URI: uri, UUID: testBlockUUID, Kind: "code", Body: "backoff()"},
+		uri: {URI: uri, ID: testBlockUUID, Kind: "code", Body: "backoff()"},
 	}}
 	r := NewRouter(notes)
 
@@ -129,7 +134,7 @@ func TestRouter_LeafAddressReachesItsSourceVerbatim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if node.UUID != testBlockUUID || node.Kind != "code" {
+	if node.ID != testBlockUUID || node.Kind != "code" {
 		t.Errorf("node = %+v, want the source's answer for the leaf", node)
 	}
 	if len(notes.resolved) != 1 || notes.resolved[0] != uri {
@@ -144,7 +149,7 @@ func TestRouter_LeafAddressReachesItsSourceVerbatim(t *testing.T) {
 func TestRouter_PinnedAddressReachesItsSourceVerbatim(t *testing.T) {
 	uri := "sieve://" + testContainerUUID + "?version=3"
 	notes := &fakeSource{name: "notes", nodes: map[string]domain.NodeDescriptor{
-		uri: {URI: uri, UUID: testContainerUUID, Kind: "note", Body: "as it stood at 3"},
+		uri: {URI: uri, ID: testContainerUUID, Kind: "note", Body: "as it stood at 3"},
 	}}
 	r := NewRouter(notes)
 
@@ -220,7 +225,7 @@ func TestRouter_SearchIgnoresEmptyQueries(t *testing.T) {
 func TestRouter_TargetOfAContainerAddressIsThatContainer(t *testing.T) {
 	uri := "sieve://" + testContainerUUID
 	notes := &fakeSource{name: "notes", nodes: map[string]domain.NodeDescriptor{
-		uri: {URI: uri, UUID: testContainerUUID, Kind: "note", Title: "Auth Design"},
+		uri: {URI: uri, ID: testContainerUUID, Kind: "note", Title: "Auth Design"},
 	}}
 	r := NewRouter(notes)
 
@@ -242,7 +247,7 @@ func TestRouter_TargetOfAContainerAddressIsThatContainer(t *testing.T) {
 func TestRouter_TargetOfALeafAddressOpensItsContainer(t *testing.T) {
 	containerURI := "sieve://" + testContainerUUID
 	notes := &fakeSource{name: "notes", nodes: map[string]domain.NodeDescriptor{
-		containerURI: {URI: containerURI, UUID: testContainerUUID, Kind: "note", Title: "Auth Design"},
+		containerURI: {URI: containerURI, ID: testContainerUUID, Kind: "note", Title: "Auth Design"},
 	}}
 	r := NewRouter(notes)
 
@@ -263,7 +268,7 @@ func TestRouter_TargetOfALeafAddressOpensItsContainer(t *testing.T) {
 func TestRouter_TargetCarriesAnAliasHandleThrough(t *testing.T) {
 	containerURI := "sieve://" + testContainerUUID
 	notes := &fakeSource{name: "notes", nodes: map[string]domain.NodeDescriptor{
-		containerURI: {URI: containerURI, UUID: testContainerUUID},
+		containerURI: {URI: containerURI, ID: testContainerUUID},
 	}}
 	r := NewRouter(notes)
 
@@ -283,7 +288,7 @@ func TestRouter_TargetCarriesAnAliasHandleThrough(t *testing.T) {
 func TestRouter_TargetOfAPinnedLeafAsksForThePinnedContainer(t *testing.T) {
 	pinnedContainer := "sieve://" + testContainerUUID + "?version=2"
 	notes := &fakeSource{name: "notes", nodes: map[string]domain.NodeDescriptor{
-		pinnedContainer: {URI: pinnedContainer, UUID: testContainerUUID, Kind: "note", Title: "Auth Design"},
+		pinnedContainer: {URI: pinnedContainer, ID: testContainerUUID, Kind: "note", Title: "Auth Design"},
 	}}
 	r := NewRouter(notes)
 

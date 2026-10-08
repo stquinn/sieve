@@ -2,6 +2,8 @@ package ai
 
 import (
 	"fmt"
+	"strings"
+
 	"sieve/store"
 	"testing"
 )
@@ -148,4 +150,20 @@ func TestPromptService(t *testing.T) {
 			t.Error("expected fallback to default after delete")
 		}
 	})
+}
+
+// A /btw turn can carry an attachment manifest, which names get_by_uri, while
+// the prompt names get_note for the open document. A turn naming two retrieval
+// verbs must say which takes which argument, or the model routes a uri to the
+// uuid verb — which fails, and sends it looking for a third verb.
+func TestDefaultBtwPrompt_RoutesEachRetrievalVerbToItsArgument(t *testing.T) {
+	for _, want := range []string{
+		"get_note with the bare uuid",
+		"sieve:// uri",
+		"get_by_uri",
+	} {
+		if !strings.Contains(DefaultBtwPrompt, want) {
+			t.Errorf("the btw prompt must state %q:\n%s", want, DefaultBtwPrompt)
+		}
+	}
 }

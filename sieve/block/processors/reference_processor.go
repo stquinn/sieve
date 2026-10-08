@@ -158,7 +158,6 @@ func (p *ReferenceProcessor) stampFace(face map[string]interface{}) {
 	face["cachedAt"] = time.Now().UTC().Format(time.RFC3339)
 }
 
-
 // uri reads the block's one address attr.
 func (p *ReferenceProcessor) uri(attrs map[string]interface{}) string {
 	u, _ := attrs["uri"].(string)
@@ -619,27 +618,50 @@ func (p *ReferenceProcessor) storedBytes(attrs map[string]interface{}) (int64, b
 	return n, true
 }
 
-// BuildContext contributes the same three facts for both halves of the kind:
-// what this is, where it lives, and what it says. It states facts and never
-// instructs the model to fetch anything. A held file is named by its bare
-// filename, which resolves because the CLI's cwd is the document directory.
-func (p *ReferenceProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
+// BuildContext contributes the same facts for both halves of the kind: what this
+// is, where it lives, and what it says. It states facts and never instructs the
+// model to fetch anything. A held file carries one fact more — the File tag, the
+// path its bytes are at, which is the only name that opens.
+func (p *ReferenceProcessor) BuildContext(blk block.SieveBlock, doc block.DocView, _ map[string]bool) block.AIContext {
 	uri := p.uri(blk.Attrs)
 	if uri == "" {
 		return block.AIContext{}
 	}
 	summary := p.faceStr(blk.Attrs, "summary")
 	// AIContext.String drops a tag whose values are all blank, so an unsummarised
-	// or untyped reference needs no branch here.
+	// or untyped reference — or a pointer, which has no file — needs no branch
+	// here.
 	return block.AIContext{
 		NodeIDs: []string{blk.ID},
 		Content: "Reference: " + p.label(blk.Attrs, uri) + "\n",
 		Tags: []block.Tag{
+			{Label: "File", Values: []string{p.heldFilePath(blk.Attrs, doc.UUID)}},
 			{Label: "Address", Values: []string{uri}},
 			{Label: "Type", Values: []string{p.typeLine(blk.Attrs)}},
 			{Label: "Summary", Values: []string{summary}},
 		},
 	}
+}
+
+// heldFilePath is where a held file's bytes are on disk, as the CLI can open
+// them: its bare key, which is a path relative to the subprocess cwd — the asking
+// document's own directory, where the asset sits. A held file in ANY other
+// container names nothing, because a bare key there would point into the wrong
+// directory.
+//
+// The key is NOT the filename the user dropped (see holdDroppedFile): the face's
+// title carries that, and only this key opens. A pointer has no file at all, and
+// the face is what says so — never the address, which a pointer at a leaf spells
+// identically.
+func (p *ReferenceProcessor) heldFilePath(attrs map[string]interface{}, docUUID string) string {
+	if !p.held(attrs) {
+		return ""
+	}
+	addr, ok := p.heldAddress(attrs)
+	if !ok || addr.Container != docUUID {
+		return ""
+	}
+	return addr.Leaf
 }
 
 // label is what a reference is called: its cached title, else the file it holds,

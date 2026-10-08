@@ -66,17 +66,20 @@ func NewServer(documents *services.DocumentService, nodes NodeResolver) *Server 
 		Description: "Search the knowledge base by a case-insensitive substring matched against note titles, summaries and tags. Returns metadata only (never note bodies). Optionally restrict to a folder.",
 	}, s.search)
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
-		Name:        "get_meta",
-		Description: "Return the full metadata for one note by uuid (title, folder, tags, summary, timestamps, version, AI evaluation). No body.",
+		Name: "get_meta",
+		Description: "Return the full metadata for one note by uuid (title, folder, tags, summary, timestamps, version, AI evaluation). No body. " +
+			"Takes a bare uuid only: a sieve:// uri belongs to get_by_uri.",
 	}, s.getMeta)
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
-		Name:        "get_note",
-		Description: "Return one note by uuid: its metadata plus the full markdown body. Use this when you have a bare uuid; use get_by_uri when you were given a Sieve uri.",
+		Name: "get_note",
+		Description: "Return one note by uuid: its metadata plus the full markdown body. " +
+			"Use this when you have a bare uuid; a sieve:// uri belongs to get_by_uri, which takes it verbatim.",
 	}, s.getNote)
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
 		Name: "get_by_uri",
 		Description: "Return whatever a Sieve uri points at: its title, metadata and full markdown body. " +
-			"Pass the uri exactly as it appears in an ATTACHED DOCUMENTS manifest (e.g. sieve://{uuid}) — copy it, never construct one.",
+			"Pass the uri exactly as it appears in an ATTACHED DOCUMENTS manifest (e.g. sieve://{uuid}) — copy it, never construct one. " +
+			"A uri naming a file answers with kind \"asset\", no body, its size in bytes, and a path relative to the library root (a directory you are granted): read that path from disk, as no tool returns a file's bytes.",
 	}, s.getByURI)
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
 		Name:        "list_facets",

@@ -325,7 +325,7 @@ func TestReferenceProcessor_DescribeJob_resolvesACoordinate(t *testing.T) {
 	uuid := ident.New()
 	uri := "sieve://" + uuid
 	p := NewReferenceProcessor(block.BlockServices{Nodes: fakeNodes{nodes: map[string]domain.NodeDescriptor{
-		uri: {URI: uri, UUID: uuid, Kind: "note", Title: "Auth Design", Summary: "Token rotation and session binding"},
+		uri: {URI: uri, ID: uuid, Kind: "note", Title: "Auth Design", Summary: "Token rotation and session binding"},
 	}}})
 	blk := &block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
 		"uri": uri, "status": block.BlockStatusPending,
@@ -459,8 +459,8 @@ func TestReferenceProcessor_DescribeJob_aBrokenResolverFailsTheJob(t *testing.T)
 
 // ── BuildContext ──────────────────────────────────────────────────────────────
 
-// A held file is named by its BARE FILENAME because the CLI's cwd is the document
-// directory, and it is addressed by the coordinate it already carries.
+// A held file is named by its BARE KEY and addressed by the coordinate it
+// already carries.
 func TestReferenceProcessor_BuildContext_heldFile(t *testing.T) {
 	p := NewReferenceProcessor(block.BlockServices{})
 	docUUID := ident.New()
@@ -485,6 +485,76 @@ func TestReferenceProcessor_BuildContext_heldFile(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("context must state %q; got:\n%s", want, got)
 		}
+	}
+}
+
+// The File tag is the path that OPENS, listed first, and every case turns on two
+// questions: does a file exist behind this reference at all (the face answers,
+// never the address), and is it in the asking document's own directory.
+//
+// A blank is an ABSENT tag, not an empty one (AIContext.String drops it), which
+// is the right answer whenever no openable path can be stated.
+func TestReferenceProcessor_BuildContext_fileTag(t *testing.T) {
+	askingUUID := ident.New()
+	const blockLeaf = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4c02"
+
+	cases := []struct {
+		name  string
+		attrs map[string]interface{}
+		want  string // "" = no File tag at all
+	}{
+		{
+			name: "its own container's file is the bare key, never the dropped filename",
+			attrs: map[string]interface{}{
+				"uri":   domain.NewLeafAddress(askingUUID, "at-1.yml").String(),
+				"cache": map[string]interface{}{"title": "swagger.yml", "mime": "text/yaml"},
+			},
+			want: "at-1.yml",
+		},
+		{
+			name: "another container's file names nothing",
+			attrs: map[string]interface{}{
+				"uri":   domain.NewLeafAddress(ident.New(), "at-1.yml").String(),
+				"cache": map[string]interface{}{"mime": "text/yaml"},
+			},
+		},
+		{
+			name: "a pointer has no file behind it",
+			attrs: map[string]interface{}{
+				"uri":   "sieve://" + ident.New(),
+				"cache": map[string]interface{}{"title": "Auth Design", "mime": "sieve/note"},
+			},
+		},
+		{
+			// A pointer at a leaf spells its address exactly as a held file does, so
+			// the face is the only thing that may decide there is a file to name — a
+			// block id is not a filename.
+			name: "a pointer at a leaf has no file behind it either",
+			attrs: map[string]interface{}{
+				"uri":   domain.NewLeafAddress(ident.New(), blockLeaf).String(),
+				"cache": map[string]interface{}{"title": "The retry loop", "mime": "sieve/code"},
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			blk := block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: c.attrs}
+			got := NewReferenceProcessor(block.BlockServices{}).BuildContext(blk, block.DocView{UUID: askingUUID}, map[string]bool{}).String()
+			if c.want == "" {
+				if strings.Contains(got, "File:") {
+					t.Errorf("no openable path exists, so no File tag may appear; got:\n%s", got)
+				}
+				return
+			}
+			file := strings.Index(got, `File: "`+c.want+`"`)
+			if file < 0 {
+				t.Fatalf("File tag must state %q; got:\n%s", c.want, got)
+			}
+			if addr := strings.Index(got, "Address:"); addr < file {
+				t.Errorf("File tag must precede Address; got:\n%s", got)
+			}
+		})
 	}
 }
 

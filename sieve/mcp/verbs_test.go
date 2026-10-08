@@ -29,11 +29,20 @@ func newTestServer(t *testing.T) *Server {
 	return s
 }
 
-// newTestServerWithDocs builds an EMPTY library and wires the server exactly as
+// newTestServerWithDocs is newTestServerWithStore for the tests that never
+// reach past the document service.
+func newTestServerWithDocs(t *testing.T) (*Server, *services.DocumentService) {
+	t.Helper()
+	s, ds, _ := newTestServerWithStore(t)
+	return s, ds
+}
+
+// newTestServerWithStore builds an EMPTY library and wires the server exactly as
 // the composition root does — the real editor.Router over the real notes source
 // — so the address verb is exercised through the resolver it actually ships
-// with, refusals and all, rather than a fake that could agree with itself.
-func newTestServerWithDocs(t *testing.T) (*Server, *services.DocumentService) {
+// with, refusals and all, rather than a fake that could agree with itself. The
+// store comes back for the tests that seed what only it can create: an asset.
+func newTestServerWithStore(t *testing.T) (*Server, *services.DocumentService, *filestore.FileStore) {
 	t.Helper()
 	fs, err := filestore.NewFileStore(t.TempDir(), "testhost")
 	if err != nil {
@@ -49,7 +58,7 @@ func newTestServerWithDocs(t *testing.T) (*Server, *services.DocumentService) {
 	block.ResetRegistry()
 	block.RegisterProcessor(&processors.ProseProcessor{})
 	t.Cleanup(block.ResetRegistry)
-	return NewServer(ds, editor.NewRouter(editor.NewNotesSource(ds))), ds
+	return NewServer(ds, editor.NewRouter(editor.NewNotesSource(ds))), ds, fs
 }
 
 // seedNote creates a buffer, stamps metadata, and files it into folder.
@@ -186,6 +195,36 @@ func TestGetNote_ReturnsBody(t *testing.T) {
 	}
 	if note.Body == "" || !strings.Contains(note.Body, "channels") {
 		t.Errorf("body = %q, want the markdown body", note.Body)
+	}
+}
+
+// An id that loads no document — typically a block id or an asset key — is still
+// an error, but one that points the model at the verb that reads those.
+func TestByUUIDVerbs_PointAWrongIDAtGetByURI(t *testing.T) {
+	s := newTestServer(t)
+	const blockID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4c02"
+	verbs := map[string]func() error{
+		"get_note": func() error {
+			_, _, err := s.getNote(context.Background(), nil, UUIDInput{UUID: blockID})
+			return err
+		},
+		"get_meta": func() error {
+			_, _, err := s.getMeta(context.Background(), nil, UUIDInput{UUID: blockID})
+			return err
+		},
+	}
+	for verb, call := range verbs {
+		t.Run(verb, func(t *testing.T) {
+			err := call()
+			if err == nil {
+				t.Fatal("an id that names no document must be an error")
+			}
+			for _, want := range []string{verb, blockID, "not a document", "get_by_uri", "sieve://"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("err = %q, want it to contain %q", err, want)
+				}
+			}
+		})
 	}
 }
 
