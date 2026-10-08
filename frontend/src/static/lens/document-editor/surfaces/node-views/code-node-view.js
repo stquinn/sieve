@@ -264,10 +264,6 @@ import { CodeFormatAction } from '../code-format-action.js'
       editable: editable,
     })
     if (format) items.push(format)
-    // A NAMED VERB writing one text/plain payload, as diagram's own entry and
-    // Copy Link do — not the copy GESTURE, which composes `sieve/slice` views in
-    // one place for every kind. It takes the inner text alone: no fence, no
-    // language line. Ungated by `editable`, because it mutates nothing.
     var source = sourceOf(node)
     if (source) {
       items.push({

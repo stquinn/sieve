@@ -11,7 +11,7 @@
 // vendor members at module-eval time, so the bag must hold the real classes
 // before that import is evaluated.
 import './helpers/real-vendor.js'
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { Editor, Node, Extension } from '@tiptap/core'
 import { StarterKit } from '@tiptap/starter-kit'
 import { Table, TableRow, TableCell, TableHeader } from '@tiptap/extension-table'
@@ -22,7 +22,7 @@ import { TableGrid } from '../src/static/lens/document-editor/surfaces/table-gri
 import { CellSelectionGuard } from '../src/static/lens/document-editor/surfaces/cell-selection-guard.js'
 import { BlockChrome } from '../src/static/lens/document-editor/block-chrome.js'
 import { registerBlockKind } from '../src/static/renderers/block-kinds.js'
-import { buildInteractionPolicyExtension, policyEnterKeydown, policySelectAllKeydown, CODE_TEXT_POLICY } from '../src/static/lens/document-editor/interaction-policy.js'
+import { buildInteractionPolicyExtension, policyEnterKeydown, policySelectAllKeydown, selectNextScope, CODE_TEXT_POLICY } from '../src/static/lens/document-editor/interaction-policy.js'
 import { NodeViewRegistry, HOST_BODY_SYNC } from '../src/static/lens/document-editor/surfaces/sieve-block-extension.js'
 
 // The shape every raw-text renderer really has: a text/plain view of the WHOLE
@@ -169,6 +169,21 @@ function caretAt(pos) {
 
 function docText() { return editor.state.doc.textContent }
 
+/** The document position of the cell at row `r`, column `c`: the position BEFORE
+ *  the cell, which is what prosemirror-tables' range helpers take. */
+function cellAt(table, r, c) {
+  let pos = table.pos + 1
+  for (let i = 0; i < r; i++) pos += table.node.child(i).nodeSize
+  let cur = pos + 1
+  for (let i = 0; i < c; i++) cur += table.node.child(r).child(i).nodeSize
+  return cur
+}
+
+/** A caret position INSIDE that cell's first paragraph — past the cell's own
+ *  border and the paragraph's. `cellAt` itself names a position in the row, from
+ *  which a TextSelection has nothing to point into. */
+function inCell(table, r, c) { return cellAt(table, r, c) + 2 }
+
 describe('Tab in plain paragraph (contract: consume ∅)', () => {
   it('consumes Tab, inserts nothing', () => {
     makeEditor({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello' }] }] })
@@ -241,15 +256,6 @@ describe('table selection (contract: Table selection)', () => {
     return { grid: new TableGrid(found.node, found.pos), table: found }
   }
 
-  /** The document position of the cell at row `r`, column `c`. */
-  function cellAt(table, r, c) {
-    let pos = table.pos + 1
-    for (let i = 0; i < r; i++) pos += table.node.child(i).nodeSize
-    let cur = pos + 1
-    for (let i = 0; i < c; i++) cur += table.node.child(r).child(i).nodeSize
-    return cur
-  }
-
   /** How many rows and columns the table in the document has now. */
   function shape() {
     let found = null
@@ -281,7 +287,7 @@ describe('table selection (contract: Table selection)', () => {
 
   it('Backspace over a selected row clears the cells and leaves the structure', () => {
     makeTableGrid(3, 3)
-    caretAt(cellAt(gridNow().table, 1, 1) + 2)
+    caretAt(inCell(gridNow().table, 1, 1))
     editor.commands.insertContent('gone')
     expect(docText()).toBe('gone')
     const { grid, table } = gridNow()
@@ -372,7 +378,7 @@ describe('table selection (contract: Table selection)', () => {
 
     it('with no cell selection live, a right-click in a table is unclaimed', () => {
       makeTableGrid(3, 3)
-      caretAt(cellAt(gridNow().table, 1, 1) + 2)
+      caretAt(inCell(gridNow().table, 1, 1))
       expect(contextClick(1, 1).handled).toBe(false)
     })
   })
@@ -511,13 +517,6 @@ describe('Mod+A select-scope ladder (contract: Select-scope ladder, #153)', () =
     editor.state.doc.descendants((node, pos) => { if (!found && node.type.name === 'table') found = { node, pos } })
     return found
   }
-  function cellPos(table, r, c) {
-    let pos = table.pos + 1
-    for (let i = 0; i < r; i++) pos += table.node.child(i).nodeSize
-    let cur = pos + 1
-    for (let i = 0; i < c; i++) cur += table.node.child(r).child(i).nodeSize
-    return cur
-  }
 
   it('first press in a sieve block selects that block\'s text and nothing else', () => {
     makeCodeDoc('aa\nbb')
@@ -526,10 +525,55 @@ describe('Mod+A select-scope ladder (contract: Select-scope ladder, #153)', () =
     expect(editor.state.doc.textBetween(sel().from, sel().to)).toBe('aa\nbb')
   })
 
-  it('Cmd+A claims the same rung as Ctrl+A', () => {
+  // The chord is the PLATFORM's Mod and nothing else. Off a Mac that is Ctrl
+  // alone: Cmd+A is not an editor chord here, and claiming it would also claim
+  // the Mac's Ctrl+A, which macBaseKeymap binds to selectTextblockStart.
+  it('leaves Cmd+A alone off a Mac', () => {
     makeCodeDoc('aa\nbb')
     caretAt(3)
-    expect(press('a', { metaKey: true }).handled).toBe(true)
+    expect(press('a', { metaKey: true }).handled).toBe(false)
+    expect(sel().empty).toBe(true)
+  })
+
+  it('leaves Ctrl+Cmd+A alone — one Mod, not either', () => {
+    makeCodeDoc('aa\nbb')
+    caretAt(3)
+    expect(press('a', { ctrlKey: true, metaKey: true }).handled).toBe(false)
+    expect(sel().empty).toBe(true)
+  })
+
+  // On a Mac the same ladder hangs off Cmd, and Ctrl+A must be left to
+  // macBaseKeymap's emacs line-start binding. IS_MAC is read once at module
+  // eval, so the platform has to be in place before the import.
+  it('on a Mac the chord is Cmd+A, and Ctrl+A is left to selectTextblockStart', async () => {
+    const platform = navigator.platform
+    Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true })
+    vi.resetModules()
+    try {
+      const mac = await import('../src/static/lens/document-editor/interaction-policy.js')
+      const ctrlA = new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, cancelable: true })
+      expect(mac.policySelectAllKeydown(null, ctrlA)).toBe(false)
+      expect(ctrlA.defaultPrevented).toBe(false)
+    } finally {
+      Object.defineProperty(navigator, 'platform', { value: platform, configurable: true })
+      vi.resetModules()
+    }
+  })
+
+  // prosemirror-keymap falls back to the PHYSICAL key only where event.key is
+  // not ASCII — a Cyrillic or Greek layout. On AZERTY the physical KeyA types
+  // `q`, so reading `code` unconditionally made Ctrl+Q select the scope.
+  it('ignores AZERTY Ctrl+Q, whose code is KeyA', () => {
+    makeCodeDoc('aa\nbb')
+    caretAt(3)
+    expect(press('q', { ctrlKey: true, code: 'KeyA' }).handled).toBe(false)
+    expect(sel().empty).toBe(true)
+  })
+
+  it('still claims a non-ASCII layout whose KeyA is Ctrl+ф', () => {
+    makeCodeDoc('aa\nbb')
+    caretAt(3)
+    expect(press('ф', { ctrlKey: true, code: 'KeyA' }).handled).toBe(true)
     expect(editor.state.doc.textBetween(sel().from, sel().to)).toBe('aa\nbb')
   })
 
@@ -579,7 +623,7 @@ describe('Mod+A select-scope ladder (contract: Select-scope ladder, #153)', () =
       makeEditor({ type: 'doc', content: [{ type: 'paragraph' }] })
       editor.commands.insertTable({ rows: 2, cols: 2, withHeaderRow: false })
       const table = tableNow()
-      caretAt(cellPos(table, 0, 0) + 1)
+      caretAt(inCell(table, 0, 0))
       editor.commands.insertContent('cell')
       return tableNow()
     }
@@ -605,12 +649,29 @@ describe('Mod+A select-scope ladder (contract: Select-scope ladder, #153)', () =
       expect(coversDoc()).toBe(true)
     })
 
+    // The document rung is never reached STRAIGHT from a cell selection. Losing
+    // the `selectedCell` decorations redraws every cell, and prosemirror-view
+    // force-syncs the DOM selection after a redraw on Chrome and IE only — so a
+    // document selection arriving in that same pass went unpainted on WebKit.
+    // The verb declines with a caret in the head cell; the rung after it is a
+    // transaction of its own.
+    it('leaves a caret in the head cell on the way out, not a live cell selection', () => {
+      makeTableDoc()
+      modA(); modA()
+      expect(sel() instanceof CellSelection).toBe(true)
+      expect(selectNextScope(editor.view)).toBe(false)
+      expect(sel() instanceof CellSelection).toBe(false)
+      expect(sel().empty).toBe(true)
+      expect(sel().$head.parent.type.name).toBe('paragraph')
+      expect(sel().$head.node(-1).type.spec.tableRole).toBe('cell')
+    })
+
     // A row selection is already broader than one cell, so the ladder must not
     // demote it to the cell the head happens to be in.
     it('from a row selection the next rung is the table, never back down to a cell', () => {
       const table = makeTableDoc()
       const grid = new TableGrid(table.node, table.pos)
-      editor.commands.setCellSelection(grid.rowRangeAt(cellPos(table, 0, 0)))
+      editor.commands.setCellSelection(grid.rowRangeAt(cellAt(table, 0, 0)))
       expect(sel().ranges.length).toBe(2) // one row of a 2×2
       expect(modA().handled).toBe(true)
       expect(sel() instanceof CellSelection).toBe(true)

@@ -505,11 +505,31 @@ export function policyEnterKeydown(view, event, host) {
  * @param {any} view @param {any} event @returns {boolean}
  */
 export function policySelectAllKeydown(view, event) {
-  if (event.key !== 'a' && event.key !== 'A' && event.code !== 'KeyA') return false
-  if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return false
+  if (!isSelectAllChord(event)) return false
   if (!selectNextScope(view)) return false
   event.preventDefault()
   return true
+}
+
+/**
+ * Is `event` the platform's Mod+A, matched as prosemirror-keymap matches a
+ * character chord?
+ *
+ * The LOGICAL key decides. `event.code` is the fallback for a layout whose
+ * `event.key` is not an ASCII character — Cyrillic, Greek — and must not be
+ * consulted otherwise: AZERTY's physical KeyA types `q`.
+ *
+ * The modifier is the platform's Mod and nothing else. On macOS Ctrl+A is
+ * `selectTextblockStart`, bound by `macBaseKeymap`, and this handler runs
+ * pre-core — so accepting Ctrl there would take the emacs line-start key away.
+ * @param {KeyboardEvent|any} event @returns {boolean}
+ */
+function isSelectAllChord(event) {
+  var key = typeof event.key === 'string' ? event.key : ''
+  var isA = key === 'a' || key === 'A' ||
+    (event.code === 'KeyA' && !(key.length === 1 && key.charCodeAt(0) < 128))
+  if (!isA || event.altKey || event.shiftKey) return false
+  return IS_MAC ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
 }
 
 /**
@@ -523,16 +543,14 @@ export function selectNextScope(view) {
   var sel = state.selection
   var table = enclosingNode(sel.$from, function (node) { return node.type.name === 'table' })
   if (table) {
-    if (coversTable(sel, table)) return false
+    if (coversTable(sel, table)) return leaveCellSelection(view)
     // A multi-cell selection is broader than one cell already — and its
     // from..to enclose its head cell alone, so it names no range the cell rung
     // could be read from. Either way the next rung up is the table.
     var cell = sel.ranges.length > 1 ? null : cellContentRange(sel.$from)
     if (cell && selectScope(view, cell)) return true
     // prosemirror-tables normalises a whole-table NodeSelection into a cell
-    // selection over every cell, which is what the user sees. Asking for the
-    // node is still the right ask: it names the table without this module
-    // reaching for the vendor's CellSelection.
+    // selection over every cell, which is what the user sees.
     view.dispatch(state.tr.setSelection(TT.NodeSelection.create(state.doc, table.pos)).scrollIntoView())
     return true
   }
@@ -540,6 +558,30 @@ export function selectNextScope(view) {
   var top = { node: sel.$from.node(1), pos: sel.$from.before(1) }
   if (kindFromTypeName(top.node.type.name) === 'prose') return false
   return selectScope(view, { from: top.pos + 1, to: top.pos + top.node.nodeSize - 1 })
+}
+
+/**
+ * Hand the document rung on from a covered table, leaving a caret in the head
+ * cell on the way out. Always false: the caller's own next step — native
+ * selectAll under Mod+A, `commands.selectAll` in the menu — takes the document
+ * from that caret.
+ *
+ * The caret is load-bearing, not cosmetic. A cell selection paints as
+ * prosemirror-tables' `selectedCell` node decorations, so losing it redraws
+ * every cell, and prosemirror-view force-syncs the DOM selection after a redraw
+ * on Chrome and IE only (`forceSelUpdate`). A document selection arriving in
+ * that same pass is therefore left unpainted on WebKit — a caret with no
+ * highlight. Two transactions give the redraw and the selection a pass each.
+ * @param {any} view @returns {boolean} false — escalate
+ */
+function leaveCellSelection(view) {
+  var state = view.state
+  // ranges[0] is the HEAD cell's own range, and its $from sits inside that cell
+  // before its first child — a forward search from there stays in the cell. The
+  // selection's $head is that range's END, from which forward leaves the table.
+  var $start = state.selection.ranges[0].$from
+  view.dispatch(state.tr.setSelection(TT.Selection.near($start, 1)))
+  return false
 }
 
 /** The nearest ancestor of `$pos` satisfying `match`, with its document position.

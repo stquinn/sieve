@@ -66,6 +66,20 @@ for why the mechanism is precedence rather than a policy flag.
   is what the user gets — which is also why **Backspace on it deletes the
   table**, the case recorded under *Table selection*.
 
+  The chord is the **platform's Mod and nothing else** — Cmd on macOS, Ctrl
+  elsewhere, never either. On macOS Ctrl+A is `macBaseKeymap`'s
+  `selectTextblockStart`, and a pre-core handler accepting both would take that
+  emacs line-start key away. The physical `KeyA` is honoured only where
+  `event.key` is not an ASCII character, as prosemirror-keymap does it: on AZERTY
+  that key types `q`.
+
+  Leaving a covered table for the document rung goes **through a caret** in the
+  head cell, never straight from the cell selection. A cell selection paints as
+  prosemirror-tables' `selectedCell` decorations, so dropping it redraws every
+  cell, and prosemirror-view force-syncs the DOM selection after a redraw on
+  Chrome and IE only — a document selection arriving in that same pass is left
+  unpainted on WebKit, which is the engine Sieve ships in.
+
   The context menu's **Select All** is a CALLER of the same verb, so the menu
   and the key cannot disagree about what "all" means.
 
