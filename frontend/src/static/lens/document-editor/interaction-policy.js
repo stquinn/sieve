@@ -488,6 +488,129 @@ export function policyEnterKeydown(view, event, host) {
   return handleEnter(view, event, host)
 }
 
+/**
+ * Mod+A: select the SCOPE the caret sits in, escalating a rung on each press —
+ * a sieve block's text, or a table cell's then the whole table — and DECLINING
+ * once that scope is covered, so `baseKeymap`'s Mod-a → selectAll serves the
+ * document as the last rung. Prose therefore keeps native selectAll untouched,
+ * and `false` is never a dead key.
+ *
+ * Called from editorProps.handleKeyDown, like its Enter twin: `baseKeymap` binds
+ * Mod-a at priority 100 and this module's plugin is the priority-50 backstop, so
+ * a handler there would never see the event.
+ *
+ * The ladder holds no state. Which rung comes next is derived from whether the
+ * live selection already covers the current one, so a click between two presses
+ * cannot desync it and the context menu's Select All needs no press count.
+ * @param {any} view @param {any} event @returns {boolean}
+ */
+export function policySelectAllKeydown(view, event) {
+  if (event.key !== 'a' && event.key !== 'A' && event.code !== 'KeyA') return false
+  if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return false
+  if (!selectNextScope(view)) return false
+  event.preventDefault()
+  return true
+}
+
+/**
+ * THE ladder, shared by Mod+A and the context menu's Select All. True when a
+ * narrower scope than the document was selected; false when the caret's scope is
+ * already covered, which is the caller's cue to let the document rung happen.
+ * @param {any} view @returns {boolean}
+ */
+export function selectNextScope(view) {
+  var state = view.state
+  var sel = state.selection
+  var table = enclosingNode(sel.$from, function (node) { return node.type.name === 'table' })
+  if (table) {
+    if (coversTable(sel, table)) return false
+    // A multi-cell selection is broader than one cell already — and its
+    // from..to enclose its head cell alone, so it names no range the cell rung
+    // could be read from. Either way the next rung up is the table.
+    var cell = sel.ranges.length > 1 ? null : cellContentRange(sel.$from)
+    if (cell && selectScope(view, cell)) return true
+    // prosemirror-tables normalises a whole-table NodeSelection into a cell
+    // selection over every cell, which is what the user sees. Asking for the
+    // node is still the right ask: it names the table without this module
+    // reaching for the vendor's CellSelection.
+    view.dispatch(state.tr.setSelection(TT.NodeSelection.create(state.doc, table.pos)).scrollIntoView())
+    return true
+  }
+  if (sel.$from.depth < 1) return false
+  var top = { node: sel.$from.node(1), pos: sel.$from.before(1) }
+  if (kindFromTypeName(top.node.type.name) === 'prose') return false
+  return selectScope(view, { from: top.pos + 1, to: top.pos + top.node.nodeSize - 1 })
+}
+
+/** The nearest ancestor of `$pos` satisfying `match`, with its document position.
+ *  @param {any} $pos @param {(node: any) => boolean} match
+ *  @returns {{node: any, pos: number}|null} */
+function enclosingNode($pos, match) {
+  for (var d = $pos.depth; d >= 1; d--) {
+    if (match($pos.node(d))) return { node: $pos.node(d), pos: $pos.before(d) }
+  }
+  return null
+}
+
+/** The content bounds of the table cell holding `$pos`, read off the vendor's own
+ *  `tableRole` so no cell type name is spelled here.
+ *  @param {any} $pos @returns {{from: number, to: number}|null} */
+function cellContentRange($pos) {
+  for (var d = $pos.depth; d >= 1; d--) {
+    var role = $pos.node(d).type.spec.tableRole
+    if (role === 'cell' || role === 'header_cell') return { from: $pos.start(d), to: $pos.end(d) }
+  }
+  return null
+}
+
+/** @param {any} sel @param {{from: number, to: number}} range */
+function covers(sel, range) {
+  return sel.from <= range.from && sel.to >= range.to
+}
+
+/**
+ * Is every cell of `table` covered? Asked of the RANGES, never of from..to: a
+ * cell selection is a rectangle of separate ranges whose from..to enclose its
+ * head cell alone, so the span between its endpoints says nothing about what it
+ * holds.
+ * @param {any} sel @param {{node: any, pos: number}} table @returns {boolean}
+ */
+function coversTable(sel, table) {
+  var whole = true
+  table.node.forEach(function (row, rowOffset) {
+    row.forEach(function (cell, cellOffset) {
+      var content = table.pos + 1 + rowOffset + 1 + cellOffset + 1
+      if (!rangeCovers(sel.ranges, content, content + cell.content.size)) whole = false
+    })
+  })
+  return whole
+}
+
+/** @param {any[]} ranges @param {number} from @param {number} to @returns {boolean} */
+function rangeCovers(ranges, from, to) {
+  for (var i = 0; i < ranges.length; i++) {
+    if (ranges[i].$from.pos <= from && ranges[i].$to.pos >= to) return true
+  }
+  return false
+}
+
+/**
+ * Take a rung, unless the selection is already on it — the ONE place the ladder
+ * both computes a scope and asks whether it is reached, so the two can never
+ * read different ranges. `between` rather than `create`, because a scope's
+ * bounds sit just inside a container, which is not a text position; the snapped
+ * result is what both the dispatch and the comparison use.
+ * @param {any} view @param {{from: number, to: number}} range
+ * @returns {boolean} true = taken, false = already covered, escalate
+ */
+function selectScope(view, range) {
+  var doc = view.state.doc
+  var target = TT.TextSelection.between(doc.resolve(range.from), doc.resolve(range.to))
+  if (covers(view.state.selection, target)) return false
+  view.dispatch(view.state.tr.setSelection(target).scrollIntoView())
+  return true
+}
+
 function handleEnter(view, event, host) {
   var ctx = resolveContext(view.state, view)
   var isMod = event.metaKey || event.ctrlKey

@@ -88,10 +88,17 @@ function paneFor(lens, opts = {}) {
     nodesBetween: () => {},
     resolve: () => ({ depth: 0 }),
   }
+  // `$from` at depth 0 is a caret in the bare document: no enclosing block, so
+  // the Mod+A scope ladder Select All delegates to declines and the menu falls
+  // back to native selectAll.
+  const state = {
+    doc,
+    selection: opts.selection || { from: 1, to: 1, empty: true, $from: { depth: 0 }, ranges: [] },
+  }
   return {
     sieveHost: lens,
-    state: { doc, selection: opts.selection || { from: 1, to: 1, empty: true } },
-    view: { posAtCoords: () => null },
+    state,
+    view: { state, posAtCoords: () => null },
     isActive: () => false,
     commands: { focus: vi.fn(), selectAll: vi.fn(), setTextSelection: vi.fn() },
   }
@@ -144,6 +151,19 @@ describe('host verbs come from the mount', () => {
     const labels = menuLabels(paneFor(lensWith(DRAFT_CAPS)))
     expect(labels).toContain('Paste')
     expect(labels).toContain('Select All')
+  })
+
+  // Select All is a CALLER of the Mod+A scope ladder, so the menu and the key
+  // cannot disagree about what "all" means. Where the ladder declines — a caret
+  // in bare prose, which it leaves to native selectAll — the menu must still
+  // select the document.
+  it('Select All falls through to native selectAll where the scope ladder declines', () => {
+    const pane = paneFor(lensWith(NOTE_CAPS))
+    menuLabels(pane)
+    const entry = /** @type {any} */ (Array.from(document.querySelectorAll('#sieve-context-menu .ctx-item'))
+      .find((b) => b.textContent === 'Select All'))
+    entry.click()
+    expect(pane.commands.selectAll).toHaveBeenCalled()
   })
 })
 

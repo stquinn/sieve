@@ -22,7 +22,7 @@ import { TableGrid } from '../src/static/lens/document-editor/surfaces/table-gri
 import { CellSelectionGuard } from '../src/static/lens/document-editor/surfaces/cell-selection-guard.js'
 import { BlockChrome } from '../src/static/lens/document-editor/block-chrome.js'
 import { registerBlockKind } from '../src/static/renderers/block-kinds.js'
-import { buildInteractionPolicyExtension, policyEnterKeydown, CODE_TEXT_POLICY } from '../src/static/lens/document-editor/interaction-policy.js'
+import { buildInteractionPolicyExtension, policyEnterKeydown, policySelectAllKeydown, CODE_TEXT_POLICY } from '../src/static/lens/document-editor/interaction-policy.js'
 import { NodeViewRegistry, HOST_BODY_SYNC } from '../src/static/lens/document-editor/surfaces/sieve-block-extension.js'
 
 // The shape every raw-text renderer really has: a text/plain view of the WHOLE
@@ -134,11 +134,13 @@ afterEach(() => { if (editor) { editor.destroy(); editor = null } })
 function makeEditor(contentJSON, extraExtensions = []) {
   editor = new Editor({
     element: document.createElement('div'),
-    // Mirrors editor.js: Enter dispatches pre-core from editorProps (core
-    // Keymap would otherwise claim it in code:true blocks); Tab is the
+    // Mirrors editor.js: Enter and Mod+A dispatch pre-core from editorProps
+    // (core Keymap would otherwise claim Enter in code:true blocks, and
+    // baseKeymap's Mod-a → selectAll would claim Mod+A everywhere); Tab is the
     // post-native backstop plugin inside the extension.
     editorProps: {
-      handleKeyDown: (view, event) => policyEnterKeydown(view, event),
+      handleKeyDown: (view, event) =>
+        policyEnterKeydown(view, event) || policySelectAllKeydown(view, event),
     },
     extensions: [
       StarterKit.configure({ trailingNode: true }), // mirrors editor.js (caret contract clause 1)
@@ -473,6 +475,158 @@ describe('Tab in sieve-code (contract: indent 2)', () => {
     const { handled } = press('Tab', { shiftKey: true })
     expect(handled).toBe(true)
     expect(docText()).toBe('aa')
+  })
+})
+
+// The top rung is NOT ours: the verb declines and `baseKeymap`'s Mod-a →
+// selectAll serves the document. That is why these cases go through the real
+// editor rather than calling the verb — the native keymap is half the ladder,
+// and `press` walks the same chain ProseMirror's own listener does.
+describe('Mod+A select-scope ladder (contract: Select-scope ladder, #153)', () => {
+  /** @param {string} text code alone in the doc, with a trailing paragraph. */
+  function makeCodeDoc(text) {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-code', content: [{ type: 'text', text }] },
+      { type: 'paragraph', content: [{ type: 'text', text: 'after' }] },
+    ] })
+  }
+
+  // Ctrl, not Meta: prosemirror-keymap resolves `Mod-a` per platform and jsdom
+  // is not a Mac, so Ctrl is what `baseKeymap`'s selectAll is bound to here —
+  // and the native keymap IS the ladder's top rung, so these presses must reach
+  // it. The verb itself claims either modifier; `Cmd+A claims the same rung`
+  // below pins that half.
+  function modA() { return press('a', { ctrlKey: true }) }
+
+  function sel() { return editor.state.selection }
+
+  /** Does the selection cover the whole document? The ladder's top rung. */
+  function coversDoc() {
+    return sel().from <= 1 && sel().to >= editor.state.doc.content.size - 1
+  }
+
+  /** The table in the doc now, and the position of the cell at (r, c). */
+  function tableNow() {
+    let found = null
+    editor.state.doc.descendants((node, pos) => { if (!found && node.type.name === 'table') found = { node, pos } })
+    return found
+  }
+  function cellPos(table, r, c) {
+    let pos = table.pos + 1
+    for (let i = 0; i < r; i++) pos += table.node.child(i).nodeSize
+    let cur = pos + 1
+    for (let i = 0; i < c; i++) cur += table.node.child(r).child(i).nodeSize
+    return cur
+  }
+
+  it('first press in a sieve block selects that block\'s text and nothing else', () => {
+    makeCodeDoc('aa\nbb')
+    caretAt(3)
+    expect(modA().handled).toBe(true)
+    expect(editor.state.doc.textBetween(sel().from, sel().to)).toBe('aa\nbb')
+  })
+
+  it('Cmd+A claims the same rung as Ctrl+A', () => {
+    makeCodeDoc('aa\nbb')
+    caretAt(3)
+    expect(press('a', { metaKey: true }).handled).toBe(true)
+    expect(editor.state.doc.textBetween(sel().from, sel().to)).toBe('aa\nbb')
+  })
+
+  it('second press escalates to the document', () => {
+    makeCodeDoc('aa\nbb')
+    caretAt(3)
+    modA()
+    expect(modA().handled).toBe(true)
+    expect(coversDoc()).toBe(true)
+  })
+
+  it('a third press is idle — the document is the last rung', () => {
+    makeCodeDoc('aa\nbb')
+    caretAt(3)
+    modA(); modA()
+    modA()
+    expect(coversDoc()).toBe(true)
+    expect(docText()).toBe('aa\nbbafter')
+  })
+
+  it('prose is untouched: one press takes the document, as native selectAll always did', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'paragraph', content: [{ type: 'text', text: 'one' }] },
+      { type: 'paragraph', content: [{ type: 'text', text: 'two' }] },
+    ] })
+    caretAt(2)
+    expect(modA().handled).toBe(true)
+    expect(coversDoc()).toBe(true)
+  })
+
+  it('a selected caret-stop block goes straight to the document — it is covered already', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-clip', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'clipped' }] }] },
+      { type: 'paragraph' },
+    ] })
+    editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, 0)))
+    expect(modA().handled).toBe(true)
+    expect(coversDoc()).toBe(true)
+  })
+
+  // #153's rungs. The table rung is ASKED for as a NodeSelection on the table,
+  // which is what prosemirror-tables then normalises into a cell selection over
+  // every cell (`allowTableNodeSelection: false`, its default). These cases pin
+  // the normalised result, because that is what the user gets.
+  describe('in a table (#153)', () => {
+    function makeTableDoc() {
+      makeEditor({ type: 'doc', content: [{ type: 'paragraph' }] })
+      editor.commands.insertTable({ rows: 2, cols: 2, withHeaderRow: false })
+      const table = tableNow()
+      caretAt(cellPos(table, 0, 0) + 1)
+      editor.commands.insertContent('cell')
+      return tableNow()
+    }
+
+    it('first press selects the cell\'s own text', () => {
+      makeTableDoc()
+      expect(modA().handled).toBe(true)
+      expect(editor.state.doc.textBetween(sel().from, sel().to)).toBe('cell')
+    })
+
+    it('second press selects the whole table — every cell, as the vendor normalises it', () => {
+      makeTableDoc()
+      modA()
+      expect(modA().handled).toBe(true)
+      expect(sel() instanceof CellSelection).toBe(true)
+      expect(sel().ranges.length).toBe(4) // 2×2
+    })
+
+    it('third press escalates to the document', () => {
+      makeTableDoc()
+      modA(); modA()
+      expect(modA().handled).toBe(true)
+      expect(coversDoc()).toBe(true)
+    })
+
+    // A row selection is already broader than one cell, so the ladder must not
+    // demote it to the cell the head happens to be in.
+    it('from a row selection the next rung is the table, never back down to a cell', () => {
+      const table = makeTableDoc()
+      const grid = new TableGrid(table.node, table.pos)
+      editor.commands.setCellSelection(grid.rowRangeAt(cellPos(table, 0, 0)))
+      expect(sel().ranges.length).toBe(2) // one row of a 2×2
+      expect(modA().handled).toBe(true)
+      expect(sel() instanceof CellSelection).toBe(true)
+      expect(sel().ranges.length).toBe(4) // the whole table
+    })
+  })
+
+  // The ladder is bare Mod+A. The Shift and Alt variants belong to whatever
+  // else claims them, now or later.
+  it('declines Shift+Mod+A and Mod+Alt+A', () => {
+    makeCodeDoc('aa')
+    caretAt(2)
+    const before = sel().from
+    press('a', { metaKey: true, shiftKey: true })
+    press('a', { metaKey: true, altKey: true })
+    expect(sel().from).toBe(before)
   })
 })
 

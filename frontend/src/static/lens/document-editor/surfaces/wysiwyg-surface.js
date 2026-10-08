@@ -25,7 +25,7 @@ import { FindDecorations, FIND_FEATURE } from './find-decoration.js'
 import { FlatText } from './flat-text.js'
 import { VerticalScroll } from './vertical-scroll.js'
 import { SelectionHighlight, HighlightMark, AiShortcuts, HeadingShortcuts } from '../../extensions.js'
-import { policyEnterKeydown, buildInteractionPolicyExtension } from '../interaction-policy.js'
+import { policyEnterKeydown, policySelectAllKeydown, buildInteractionPolicyExtension } from '../interaction-policy.js'
 import { TriggerPopover } from '../../../shell/trigger-popover.js'
 import {
   ActionMacro, BlockInsertProvider, EmojiProvider, MentionProvider, SlashCommandProvider,
@@ -410,6 +410,12 @@ export class WysiwygSurface extends AbstractSurface {
           // code:true blocks.
           if (event.key === 'Enter' && policyEnterKeydown &&
               policyEnterKeydown(view, event, self.#host)) {
+            return true
+          }
+          // Mod+A likewise, and for the mirror reason: baseKeymap binds
+          // Mod-a → selectAll at priority 100, so the ladder's lower rungs
+          // have to be settled before it.
+          if (policySelectAllKeydown(view, event)) {
             return true
           }
           // Tab/Shift+Tab belong to the interaction-policy extension — never
