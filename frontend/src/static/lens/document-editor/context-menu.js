@@ -10,6 +10,7 @@ import { WysiwygSurface } from './surfaces/wysiwyg-surface.js'
 import { CodeFormatAction } from './surfaces/code-format-action.js'
 import { SPELL_FEATURE } from './surfaces/spell-decoration.js'
 import { listRegisteredLanguages } from '../../renderers/highlighting.js'
+import { selectNextScope } from './interaction-policy.js'
 
   var IC = window.SieveIcons || {}
 
@@ -592,9 +593,13 @@ import { listRegisteredLanguages } from '../../renderers/highlighting.js'
       }})
     }
 
+    // The SAME rung the Mod+A ladder would take, so right-clicking in a code
+    // block and choosing Select All selects the code. selectNextScope declining
+    // means the caret's scope is covered already, and the document is the rung
+    // after it.
     items.push({ icon: IC.selectAll, label: 'Select All', action: function () {
       editor.commands.focus()
-      editor.commands.selectAll()
+      if (!selectNextScope(editor.view)) editor.commands.selectAll()
     }})
 
     // In WYSIWYG a link renders as its label alone, so the href is invisible without

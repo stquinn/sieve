@@ -230,6 +230,14 @@ import { CodeFormatAction } from '../code-format-action.js'
     return items
   }
 
+  /** The block's source as a user would read it: the LIVE PM text, falling back
+   *  to the `source` attr, which the MutationObserver above leaves up to 200ms
+   *  behind the DOM. The same read `asContentEntry` makes.
+   *  @param {any} node @returns {string} */
+  function sourceOf(node) {
+    return node.textContent || node.attrs.source || ''
+  }
+
   CodeNodeView.buildContextMenuItems = function ({ node, editorPane, getPos, provider, getEditor }) {
     var lang = node.attrs.language
     var label = lang && lang !== 'unknown' ? lang + ' block' : 'Code block'
@@ -256,6 +264,14 @@ import { CodeFormatAction } from '../code-format-action.js'
       editable: editable,
     })
     if (format) items.push(format)
+    var source = sourceOf(node)
+    if (source) {
+      items.push({
+        icon: (window.SieveIcons || {}).copy || '',
+        label: 'Copy source',
+        action: function () { navigator.clipboard.writeText(source) },
+      })
+    }
     return items
   }
 

@@ -40,6 +40,50 @@ for why the mechanism is precedence rather than a policy flag.
   kind with two view modes declares `modEnterTogglesMode: true` and provides
   an `onModEnter` hook. Current users: diagram (edit↔render, preserving the
   long-standing Ctrl+Enter habit), log (raw↔explore).
+- **Mod+A = select the caret's SCOPE, escalating** (decided 2026-10-08, #171,
+  #153) — not a jump straight to the document. The rungs:
+
+  | Caret in | 1st press | 2nd press | 3rd press |
+  |---|---|---|---|
+  | A sieve block, or a native `codeBlock` | the block's text | the document | — |
+  | A table cell | the cell's text | the whole table | the document |
+  | Prose | the document | — | — |
+
+  The ladder is **stateless**: which rung comes next is derived from whether the
+  live selection already covers the current one, so a click between two presses
+  cannot desync it. Its top rung is NOT Sieve's — once the caret's scope is
+  covered the verb declines, and ProseMirror's own `baseKeymap` Mod-a →
+  `selectAll` serves the document. Prose is therefore untouched by construction,
+  and the key is never dead.
+
+  It is wired **pre-core**, from `editorProps.handleKeyDown`, for the mirror of
+  Enter's reason: `baseKeymap` binds Mod-a at priority 100 and the policy plugin
+  is the priority-50 backstop, so a handler there would never see the event.
+
+  The whole-table rung is ASKED for as a `NodeSelection` on the table;
+  prosemirror-tables normalises that into a cell selection over every cell
+  (`allowTableNodeSelection: false`, its default), and that normalised selection
+  is what the user gets — which is also why **Backspace on it deletes the
+  table**, the case recorded under *Table selection*.
+
+  The chord is the **platform's Mod and nothing else** — Cmd on macOS, Ctrl
+  elsewhere, never either. On macOS Ctrl+A is `macBaseKeymap`'s
+  `selectTextblockStart`, and a pre-core handler accepting both would take that
+  emacs line-start key away. The physical `KeyA` is honoured only where
+  `event.key` is not an ASCII character, as prosemirror-keymap does it: on AZERTY
+  that key types `q`.
+
+  The document rung's DOM range is placed by `BlockChrome`, not left where
+  ProseMirror puts it. ProseMirror sets an `AllSelection` on the editor
+  element's own child boundaries, between the gutter's `contenteditable=false`
+  widgets. WebKitGTK leaves the last block unpainted there, and after a cell
+  selection it collapses the range to the document's end. So the range is set on
+  the first and last editable text instead, and the DOM observer is told it is
+  current: the state stays an `AllSelection`.
+
+  The context menu's **Select All** is a CALLER of the same verb, so the menu
+  and the key cannot disagree about what "all" means.
+
 - **Mod+Alt+E = expand** (decided 2026-07-14, #35) — for any kind declaring
   `interactionPolicy.expandable: true` (with a `getExpandContent(node, dom)`
   renderer callback), open the block in a fit-to-window pan/zoom lightbox
@@ -384,12 +428,14 @@ for a prose row and a table's DOM matches it only for some pointer positions —
 an intermittent grab cursor over a surface whose pointer gestures already mean
 selection. Reordering a table is cut and paste.
 
+**Mod+A escalates cell → table → document** (#153, shipped with #171) — see the
+select-scope ladder under *Key matrix*.
+
 **Not shipped:** row/column grips or a header strip (styles first — a grip is a
-much larger affordance to add speculatively), Mod+A escalation from cell to
-table to document (#153), column resizing (`resizable: false` stays, widths
-having no GFM representation), and a skin of its own for a `NodeSelection` on a
-whole table — the editor-wide `.ProseMirror-selectednode` outline already marks
-one.
+much larger affordance to add speculatively), column resizing (`resizable:
+false` stays, widths having no GFM representation), and a skin of its own for a
+`NodeSelection` on a whole table — the editor-wide `.ProseMirror-selectednode`
+outline already marks one.
 
 ## Caret contract
 
@@ -496,6 +542,14 @@ URL and every processor declines — zero offers, silently.
 
 Copy and cut are served by the interaction-policy extension in ONE place — no
 kind declares anything here, and there is no clipboard handler anywhere else.
+That is about the copy and cut GESTURE: Mod+C, Mod+X and the menu's Copy / Cut.
+A kind may still offer a **named verb** that writes the clipboard — `Copy Link`,
+`Copy URL`, and `Copy source` on code and diagram — and those are not a second
+mechanism: each writes one `text/plain` payload it names in its own label, picks
+no views and reads no selection. `Copy source` takes the block's inner text
+alone, no fence and no language line, and survives `readOnly`, because it
+mutates nothing.
+
 What a PM selection MEANS decides the views: a range covering only part of a
 block's content names exactly those characters; a range covering a block
 whole (or a NodeSelection of it) names the whole block. Atoms (smart-card,
@@ -742,6 +796,7 @@ Editor-owned caret chords (NOT in the menu, and NOT visible to
 | Mod+Shift+X | Explain block (generate tier) | `lens/extensions.js` (`AiShortcuts`) |
 | Mod+K | edit/create a link | `lens/document-editor/interaction-policy.js` |
 | Mod+Alt+E | expand the block into the lightbox (appearance tier) | `interaction-policy.js`, plus a render-mode diagram's own listener |
+| Mod+A | select the caret's scope, escalating (see *Key matrix*) | `interaction-policy.js`, called pre-core from `wysiwyg-surface.js`; the document rung is PM's own `baseKeymap` |
 
 `Mod+E` is **TipTap's inline-code toggle** (the `code` mark; `codeBlock` is
 disabled but the mark is not) and is not Sieve's to take. Explain held it until
@@ -1251,5 +1306,5 @@ without reopening the contract.
 - Bracket/quote auto-pairing in code blocks (`autoPair` policy flag) —
   deferred; must not fight PM input rules.
 - Per-language indent width — uniform 2 until proven insufficient.
-- Table row/column grips, and Mod+A escalation from cell to table to document
-  (#153) — see *Table selection*.
+- Table row/column grips — see *Table selection*. (Mod+A escalation, the other
+  half of #153, shipped with #171.)

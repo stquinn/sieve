@@ -7,7 +7,7 @@
 // Registration needs a TipTap runtime (NodeViewRegistry.register is an inert
 // no-op without one), so a marker Node.create is seeded BEFORE the import, the
 // way reference-node-view.test.js does.
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest'
 import { getBlockKind } from '../src/static/renderers/block-kinds.js'
 
 // The enumeration is the registry's and has its own tests (context-menu-
@@ -92,6 +92,64 @@ describe('CodeNodeView.buildContextMenuItems — the Language flyout', () => {
   })
 })
 
+// `Copy source` is a NAMED VERB writing one text/plain payload, the Copy Link /
+// Copy URL pattern — not a second clipboard handler. So what is pinned here is
+// the payload (the LIVE text, no fence, no language line) and that it survives a
+// mount that cannot be written to.
+describe('CodeNodeView.buildContextMenuItems — the Copy source entry', () => {
+  /** @returns {string[]} what writeText was called with, in order */
+  function captureClipboard() {
+    /** @type {string[]} */ const written = []
+    vi.stubGlobal('navigator', { clipboard: { writeText: (/** @type {string} */ t) => { written.push(t); return Promise.resolve() } } })
+    return written
+  }
+
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  /** @param {any} node @param {any} provider */
+  function copyEntry(node, provider) {
+    return adapter.buildContextMenuItems({ node, provider })
+      .find((/** @type {any} */ i) => i.label === 'Copy source')
+  }
+
+  it('copies the LIVE PM text, not the debounced source attr', () => {
+    const written = captureClipboard()
+    const { provider } = providerDouble()
+    const node = nodeOf({ source: 'stale' })
+    node.textContent = 'fresh = 1\n'
+    copyEntry(node, provider).action()
+    expect(written).toEqual(['fresh = 1\n'])
+  })
+
+  it('falls back to the source attr for a node holding no PM text', () => {
+    const written = captureClipboard()
+    const { provider } = providerDouble()
+    copyEntry(nodeOf({ source: 'from the attr' }), provider).action()
+    expect(written).toEqual(['from the attr'])
+  })
+
+  it('copies the inner text alone — no fence, no language line', () => {
+    const written = captureClipboard()
+    const { provider } = providerDouble()
+    const node = nodeOf({ language: 'go', source: 'package main' })
+    copyEntry(node, provider).action()
+    expect(written).toEqual(['package main'])
+  })
+
+  // It mutates nothing, so the readOnly/unwritable gate that removes Language and
+  // Format must not remove this.
+  it('survives a mount whose provider cannot set a block', () => {
+    const labels = adapter.buildContextMenuItems({ node: nodeOf({ language: 'go', source: 'x' }), provider: {} })
+      .map((/** @type {any} */ i) => i.label)
+    expect(labels).toEqual(['go block', 'Copy source'])
+  })
+
+  it('is not offered by a block with no source at all', () => {
+    const { provider } = providerDouble()
+    expect(copyEntry(nodeOf({ source: '' }), provider)).toBeUndefined()
+  })
+})
+
 // Format is CodeFormatAction's, and what it does with the node is asserted in
 // code-format-action.test.js. What belongs here is the WIRING: that this kind
 // hands the action its own node and the lens it is mounted in, and gates it on
@@ -105,7 +163,7 @@ describe('CodeNodeView.buildContextMenuItems — the Format entry', () => {
   /** @param {object} arg @param {string} arg.language @param {any} arg.provider @param {any} arg.lens */
   function menu({ language, provider, lens }) {
     return adapter.buildContextMenuItems({
-      node: nodeOf({ language }),
+      node: nodeOf({ language, source: 'x = 1' }),
       editorPane: { state: null },
       getPos: () => 1,
       provider,
@@ -117,7 +175,7 @@ describe('CodeNodeView.buildContextMenuItems — the Format entry', () => {
     const { provider } = providerDouble()
     const labels = menu({ language: 'json', provider, lens: lensWith(['json']) })
       .map((/** @type {any} */ i) => i.label)
-    expect(labels).toEqual(['json block', 'Language', 'Format'])
+    expect(labels).toEqual(['json block', 'Language', 'Format', 'Copy source'])
   })
 
   it('is absent for a language the service does not format', () => {
@@ -130,7 +188,7 @@ describe('CodeNodeView.buildContextMenuItems — the Format entry', () => {
   it('is absent to a mount whose provider cannot set a block', () => {
     const labels = menu({ language: 'json', provider: {}, lens: lensWith(['json']) })
       .map((/** @type {any} */ i) => i.label)
-    expect(labels).toEqual(['json block'])
+    expect(labels).toEqual(['json block', 'Copy source'])
   })
 
   it('is absent in a mount with no formatting service, and in a bare pane', () => {
