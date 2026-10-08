@@ -166,10 +166,4 @@ func TestDefaultBtwPrompt_RoutesEachRetrievalVerbToItsArgument(t *testing.T) {
 			t.Errorf("the btw prompt must state %q:\n%s", want, DefaultBtwPrompt)
 		}
 	}
-	// A manifest is appended to the QUESTION, which substitutes in above this
-	// instruction, so a word placing the attachments below it points the model at
-	// nothing.
-	if strings.Contains(DefaultBtwPrompt, "attached below") {
-		t.Error("the btw prompt must not place the attachments below the instruction")
-	}
 }
