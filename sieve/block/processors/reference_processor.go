@@ -655,6 +655,11 @@ func (p *ReferenceProcessor) BuildContext(blk block.SieveBlock, doc block.DocVie
 // title carries that, and only this key opens. A pointer has no file at all, and
 // the face is what says so — never the address, which a pointer at a leaf spells
 // identically.
+//
+// An owner nobody can load names NOTHING. A bare key is a cwd-relative path, so
+// it would state the asking document's own directory for a file that is in
+// another's, and a path the model cannot open is worse than the absent tag a
+// blank value leaves behind.
 func (p *ReferenceProcessor) heldFilePath(attrs map[string]interface{}, docUUID string) string {
 	if !p.held(attrs) {
 		return ""
@@ -663,12 +668,15 @@ func (p *ReferenceProcessor) heldFilePath(attrs map[string]interface{}, docUUID 
 	if !ok {
 		return ""
 	}
-	if addr.Container == docUUID || p.svc.Documents == nil {
+	if addr.Container == docUUID {
 		return addr.Leaf
+	}
+	if p.svc.Documents == nil {
+		return ""
 	}
 	doc, err := p.svc.Documents.LoadByUUID(addr.Container)
 	if err != nil {
-		return addr.Leaf
+		return ""
 	}
 	return path.Join(doc.Storable().ExternalRef(), addr.Leaf) + " (relative to the library root)"
 }

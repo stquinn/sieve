@@ -149,13 +149,18 @@ func (c *containerLeaves) blockNode(b block.SieveBlock) domain.NodeDescriptor {
 // It must not be empty. A caller that cannot see this type — an MCP client is
 // the one that cannot — reads an empty body as an empty file, so the body says
 // what the address names and where its bytes are.
+//
+// SUMMARY IS READ BY A PERSON, BODY BY A TOOL. A resolve caches the summary into
+// the block's face, where it becomes the line a reference chip reveals, so it is
+// worded for a reader; the instruction for reaching the bytes belongs in the
+// body, which only the tool caller sees.
 func (c *containerLeaves) assetNode(a store.AssetStorable) domain.NodeDescriptor {
 	return domain.NodeDescriptor{
 		URI:     c.leafURI(a.Key()),
 		UUID:    a.Key(),
 		Kind:    assetKind,
 		Title:   a.Key(),
-		Summary: "a file this container holds; its bytes are read from disk, not from this descriptor",
+		Summary: "A file this document holds.",
 		Body:    c.assetReadingNote(a),
 	}
 }
