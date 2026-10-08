@@ -87,11 +87,13 @@ type NoteContent struct {
 // the thing calls itself rather than assuming a note.
 type NodeContent struct {
 	URI     string `json:"uri"`  // the coordinate it was resolved from
-	UUID    string `json:"uuid"` // the target's identity
+	ID      string `json:"id"`   // the target's identity; for an asset, its key
 	Kind    string `json:"kind"` // the source's own noun, e.g. "note"
 	Title   string `json:"title"`
 	Summary string `json:"summary"`
-	Body    string `json:"body"`
+	Body    string `json:"body"`            // empty for an asset
+	Path    string `json:"path,omitempty"`  // an asset's bytes, relative to the library root
+	Bytes   int    `json:"bytes,omitempty"` // an asset's size
 }
 
 // FolderFacet / TagFacet / Facets are the orientation view.
@@ -167,7 +169,7 @@ func (s *Server) getMeta(_ context.Context, _ *mcpsdk.CallToolRequest, in UUIDIn
 	doc, err := s.documents.LoadByUUID(strings.TrimSpace(in.UUID))
 	if err != nil {
 		logger.Warn("sieve mcp: get_meta not found", "uuid", in.UUID, "err", err)
-		return nil, NoteMeta{}, fmt.Errorf("get_meta: %w", err)
+		return nil, NoteMeta{}, s.notADocument("get_meta", in.UUID, err)
 	}
 	meta := s.metaOf(scannedNote{uuid: doc.UUID(), folder: s.folderOf(doc), doc: doc})
 	logger.Info("sieve mcp: get_meta", "uuid", in.UUID, "title", meta.Title)
@@ -182,7 +184,7 @@ func (s *Server) getNote(_ context.Context, _ *mcpsdk.CallToolRequest, in UUIDIn
 	doc, err := s.documents.LoadByUUID(uuid)
 	if err != nil {
 		logger.Warn("sieve mcp: get_note not found", "uuid", in.UUID, "err", err)
-		return nil, NoteContent{}, fmt.Errorf("get_note: %w", err)
+		return nil, NoteContent{}, s.notADocument("get_note", uuid, err)
 	}
 	n := scannedNote{uuid: doc.UUID(), folder: s.folderOf(doc), doc: doc}
 	body := string(doc.Body())
@@ -192,12 +194,19 @@ func (s *Server) getNote(_ context.Context, _ *mcpsdk.CallToolRequest, in UUIDIn
 	s.audit.record(bodyRead{
 		verb:      "get_note",
 		container: n.uuid,
-		uuid:      n.uuid,
+		id:        n.uuid,
 		uri:       domain.NewContainerAddress(n.uuid).String(),
 		title:     meta.Title,
 		bytes:     len(body),
 	})
 	return nil, NoteContent{Meta: meta, Body: body}, nil
+}
+
+// notADocument is the error a by-uuid verb returns when the id loads no
+// document. It names the verb that does reach a block or a file, because the id
+// a model passes in that case is usually one of those.
+func (s *Server) notADocument(verb, id string, err error) error {
+	return fmt.Errorf("%s: %q is not a document (%w); a block or file inside a document is read with get_by_uri, passing the sieve:// uri its context gives", verb, id, err)
 }
 
 // getByURI is the Router exposed as a tool: it dereferences a Sieve coordinate
@@ -226,24 +235,26 @@ func (s *Server) getByURI(_ context.Context, _ *mcpsdk.CallToolRequest, in URIIn
 		logger.Warn("sieve mcp: get_by_uri refused", "uri", uri, "err", err)
 		return nil, NodeContent{}, fmt.Errorf("get_by_uri %q: %w", uri, err)
 	}
-	// The audit names BOTH grains: node.UUID may be a leaf identity, so the
+	// The audit names BOTH grains: node.ID may be a leaf identity, so the
 	// container must come off the ADDRESS this verb parsed, or the trail loses
 	// which document a leaf read came out of.
 	s.audit.record(bodyRead{
 		verb:      "get_by_uri",
 		container: addr.Container,
-		uuid:      node.UUID,
+		id:        node.ID,
 		uri:       node.URI,
 		title:     node.Title,
 		bytes:     len(node.Body),
 	})
 	return nil, NodeContent{
 		URI:     node.URI,
-		UUID:    node.UUID,
+		ID:      node.ID,
 		Kind:    node.Kind,
 		Title:   node.Title,
 		Summary: node.Summary,
 		Body:    node.Body,
+		Path:    node.Path,
+		Bytes:   node.Bytes,
 	}, nil
 }
 

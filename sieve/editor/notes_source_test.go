@@ -94,8 +94,8 @@ func TestNotesSource_ResolvesALiveAddress(t *testing.T) {
 	if node.URI != uri {
 		t.Errorf("uri = %q, want %q", node.URI, uri)
 	}
-	if node.UUID != note.UUID() {
-		t.Errorf("uuid = %q, want %q", node.UUID, note.UUID())
+	if node.ID != note.UUID() {
+		t.Errorf("uuid = %q, want %q", node.ID, note.UUID())
 	}
 	if node.Kind != "note" {
 		t.Errorf("kind = %q, want note", node.Kind)
@@ -130,7 +130,7 @@ func TestNotesSource_PinnedAddressResolvesTheSnapshotNotLiveContent(t *testing.T
 	if node.Body != "Bearer tokens only." {
 		t.Errorf("body = %q, want the version-%d snapshot", node.Body, pinned)
 	}
-	if node.UUID != note.UUID() || node.Kind != "note" {
+	if node.ID != note.UUID() || node.Kind != "note" {
 		t.Errorf("node = %+v, want the container's own identity", node)
 	}
 	// The descriptor is not uniformly historical: the body is the snapshot, the
@@ -178,10 +178,9 @@ func TestNotesSource_DeletedAddressDangles(t *testing.T) {
 	}
 }
 
-// THE source invariant: a source may only offer what the AI can dereference, and
-// this source answers for filed library documents only. An unfiled buffer is
-// neither offered nor resolved — even though DocumentService.LoadByUUID finds it.
-func TestNotesSource_RefusesBuffers(t *testing.T) {
+// Offered = filed notes; resolved = any document. An unfiled buffer is never
+// offered, but its address resolves, reporting the buffer's own kind.
+func TestNotesSource_ResolvesButNeverOffersBuffers(t *testing.T) {
 	src, ds := newTestNotesSource(t)
 	buf, err := ds.New()
 	if err != nil {
@@ -192,14 +191,13 @@ func TestNotesSource_RefusesBuffers(t *testing.T) {
 		t.Fatalf("SaveMeta: %v", err)
 	}
 
-	// Sanity: the document service itself does resolve the buffer.
-	if _, err := ds.LoadByUUID(buf.UUID()); err != nil {
-		t.Fatalf("precondition: buffer should be loadable: %v", err)
-	}
-
 	uri := domain.NewContainerAddress(buf.UUID()).String()
-	if _, err := src.Resolve(mustAddress(t, uri)); !errors.Is(err, domain.ErrNodeNotFound) {
-		t.Fatalf("Resolve(buffer) err = %v, want ErrNodeNotFound", err)
+	node, err := src.Resolve(mustAddress(t, uri))
+	if err != nil {
+		t.Fatalf("Resolve(buffer): %v", err)
+	}
+	if node.ID != buf.UUID() || node.Kind != string(domain.KindBuffer) || node.Title != "Scratch Auth Notes" {
+		t.Errorf("node = %+v, want the buffer, kind %q", node, domain.KindBuffer)
 	}
 	for _, c := range src.Search("auth", 10) {
 		if c.URI == uri {

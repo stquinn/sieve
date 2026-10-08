@@ -79,7 +79,7 @@ func NewServer(documents *services.DocumentService, nodes NodeResolver) *Server 
 		Name: "get_by_uri",
 		Description: "Return whatever a Sieve uri points at: its title, metadata and full markdown body. " +
 			"Pass the uri exactly as it appears in an ATTACHED DOCUMENTS manifest (e.g. sieve://{uuid}) — copy it, never construct one. " +
-			"A uri naming a file answers with kind \"asset\" and, in place of content, the path its bytes are at: read that path from disk, as no tool returns bytes.",
+			"A uri naming a file answers with kind \"asset\", no body, its size in bytes, and a path relative to the library root (a directory you are granted): read that path from disk, as no tool returns a file's bytes.",
 	}, s.getByURI)
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
 		Name:        "list_facets",

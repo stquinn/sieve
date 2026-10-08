@@ -198,6 +198,36 @@ func TestGetNote_ReturnsBody(t *testing.T) {
 	}
 }
 
+// An id that loads no document — typically a block id or an asset key — is still
+// an error, but one that points the model at the verb that reads those.
+func TestByUUIDVerbs_PointAWrongIDAtGetByURI(t *testing.T) {
+	s := newTestServer(t)
+	const blockID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4c02"
+	verbs := map[string]func() error{
+		"get_note": func() error {
+			_, _, err := s.getNote(context.Background(), nil, UUIDInput{UUID: blockID})
+			return err
+		},
+		"get_meta": func() error {
+			_, _, err := s.getMeta(context.Background(), nil, UUIDInput{UUID: blockID})
+			return err
+		},
+	}
+	for verb, call := range verbs {
+		t.Run(verb, func(t *testing.T) {
+			err := call()
+			if err == nil {
+				t.Fatal("an id that names no document must be an error")
+			}
+			for _, want := range []string{verb, blockID, "not a document", "get_by_uri", "sieve://"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("err = %q, want it to contain %q", err, want)
+				}
+			}
+		})
+	}
+}
+
 func TestListFacets_FoldersAndTags(t *testing.T) {
 	s := newTestServer(t)
 	_, facets, err := s.listFacets(context.Background(), nil, struct{}{})

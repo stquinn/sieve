@@ -3,11 +3,14 @@ package mcp
 import (
 	"context"
 	"errors"
+	"path"
 	"strings"
 	"testing"
 
 	"sieve/sieve/domain"
 	"sieve/sieve/editor"
+	"sieve/sieve/services"
+	"sieve/store"
 )
 
 // recordingAuditor stands in for the log so the body-read audit — the evidence
@@ -42,8 +45,8 @@ func TestGetByURI_ResolvesAContainerAddressAndReturnsItsContent(t *testing.T) {
 	if node.Title != "Auth Design" {
 		t.Errorf("title = %q", node.Title)
 	}
-	if node.URI != uriOf(uuid) || node.UUID != uuid {
-		t.Errorf("node names the wrong target: uri=%q uuid=%q", node.URI, node.UUID)
+	if node.URI != uriOf(uuid) || node.ID != uuid {
+		t.Errorf("node names the wrong target: uri=%q uuid=%q", node.URI, node.ID)
 	}
 	if node.Kind != string(domain.KindNote) {
 		t.Errorf("kind = %q, want the source's own noun", node.Kind)
@@ -67,7 +70,7 @@ func TestGetByURI_LogsTheBodyReadAudit(t *testing.T) {
 		t.Fatalf("body reads recorded = %d, want exactly 1: %+v", len(rec.reads), rec.reads)
 	}
 	read := rec.reads[0]
-	if read.verb != "get_by_uri" || read.title != "Auth Design" || read.uri != uriOf(uuid) || read.uuid != uuid {
+	if read.verb != "get_by_uri" || read.title != "Auth Design" || read.uri != uriOf(uuid) || read.id != uuid {
 		t.Fatalf("audit record = %+v", read)
 	}
 	if read.container != uuid {
@@ -123,8 +126,8 @@ func TestGetByURI_DereferencesABlockAddress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get_by_uri: %v", err)
 	}
-	if node.URI != uri || node.UUID != blockUUID {
-		t.Errorf("node names the wrong target: uri=%q uuid=%q", node.URI, node.UUID)
+	if node.URI != uri || node.ID != blockUUID {
+		t.Errorf("node names the wrong target: uri=%q uuid=%q", node.URI, node.ID)
 	}
 	if !strings.Contains(node.Body, "Refresh needs the rotation window.") {
 		t.Errorf("body = %q, want the block's markdown", node.Body)
@@ -134,43 +137,62 @@ func TestGetByURI_DereferencesABlockAddress(t *testing.T) {
 	}
 }
 
-// An asset leaf is a SUCCESS carrying a reading note. No verb reads bytes, so
-// the one answer the model gets for a file has to say where the file is: an
-// address that resolves to nothing is indistinguishable from an empty file, and
-// that is what sent a model hunting for a verb that does not exist.
+// An asset leaf is a SUCCESS that says where the file is. No verb reads bytes,
+// so the answer carries the library-root-relative path and the size instead —
+// whether the asset's document is a filed note or an unfiled buffer.
 func TestGetByURI_AnAssetLeafStatesWhereItsBytesAre(t *testing.T) {
-	s, ds, fs := newTestServerWithStore(t)
-	uuid := seedNote(t, ds, "Auth Design", "design", "auth-design", nil, "", "# Auth Design\n")
 	const pdf = "%PDF-1.4 not really a pdf"
-	if _, err := fs.CreateAsset(domain.LibraryCategory, uuid, "spec.pdf", []byte(pdf)); err != nil {
-		t.Fatalf("CreateAsset: %v", err)
+	cases := []struct {
+		name     string
+		category store.Category
+		seed     func(t *testing.T, ds *services.DocumentService) string
+	}{
+		{"in a filed note", domain.LibraryCategory, func(t *testing.T, ds *services.DocumentService) string {
+			return seedNote(t, ds, "Auth Design", "design", "auth-design", nil, "", "# Auth Design\n")
+		}},
+		{"in an unfiled buffer", domain.WorkingCopy, func(t *testing.T, ds *services.DocumentService) string {
+			buf, err := ds.New()
+			if err != nil {
+				t.Fatalf("New buffer: %v", err)
+			}
+			buf.SetBody([]byte("Scratch thoughts.\n"))
+			if _, err := ds.Save(buf); err != nil {
+				t.Fatalf("Save buffer: %v", err)
+			}
+			return buf.UUID()
+		}},
 	}
-	if _, err := fs.Load(domain.LibraryCategory, uuid); err != nil {
-		t.Fatalf("re-scan after attaching the asset: %v", err)
-	}
-	doc, err := ds.LoadByUUID(uuid)
-	if err != nil {
-		t.Fatalf("reload after attaching the asset: %v", err)
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, ds, fs := newTestServerWithStore(t)
+			uuid := tc.seed(t, ds)
+			if _, err := fs.CreateAsset(tc.category, uuid, "spec.pdf", []byte(pdf)); err != nil {
+				t.Fatalf("CreateAsset: %v", err)
+			}
+			if _, err := fs.Load(tc.category, uuid); err != nil {
+				t.Fatalf("re-scan after attaching the asset: %v", err)
+			}
+			doc, err := ds.LoadByUUID(uuid)
+			if err != nil {
+				t.Fatalf("reload after attaching the asset: %v", err)
+			}
 
-	_, node, err := s.getByURI(context.Background(), nil,
-		URIInput{URI: domain.NewLeafAddress(uuid, "spec.pdf").String()})
-	if err != nil {
-		t.Fatalf("get_by_uri on an asset leaf must succeed: %v", err)
-	}
-	if node.Kind != "asset" || node.UUID != "spec.pdf" {
-		t.Errorf("node = %+v, want the asset's own kind and key", node)
-	}
-	for _, want := range []string{doc.Storable().ExternalRef() + "/spec.pdf", "library root"} {
-		if !strings.Contains(node.Body, want) {
-			t.Errorf("body = %q, want it to state %q", node.Body, want)
-		}
-	}
-	if node.Summary == "" {
-		t.Error("an asset leaf must say what it is, or an answer with no content reads as an empty file")
-	}
-	if strings.Contains(node.Body, pdf) {
-		t.Errorf("body = %q, want the location of the bytes, never the bytes", node.Body)
+			_, node, err := s.getByURI(context.Background(), nil,
+				URIInput{URI: domain.NewLeafAddress(uuid, "spec.pdf").String()})
+			if err != nil {
+				t.Fatalf("get_by_uri on an asset leaf must succeed: %v", err)
+			}
+			wantPath := path.Join(doc.Storable().ExternalRef(), "spec.pdf")
+			if node.Kind != "asset" || node.ID != "spec.pdf" || node.Path != wantPath || node.Bytes != len(pdf) {
+				t.Errorf("node = %+v, want kind asset, id spec.pdf, path %q, %d bytes", node, wantPath, len(pdf))
+			}
+			if node.Body != "" {
+				t.Errorf("body = %q, want none: an asset's bytes are read from Path", node.Body)
+			}
+			if node.Summary == "" {
+				t.Error("an asset leaf must say what it is, or an answer with no content reads as an empty file")
+			}
+		})
 	}
 }
 
@@ -193,8 +215,8 @@ func TestGetByURI_AuditNamesTheContainerOfALeafRead(t *testing.T) {
 	if read.container != uuid {
 		t.Errorf("container = %q, want the document the block came out of", read.container)
 	}
-	if read.uuid != blockUUID {
-		t.Errorf("uuid = %q, want the identity of what was actually read", read.uuid)
+	if read.id != blockUUID {
+		t.Errorf("uuid = %q, want the identity of what was actually read", read.id)
 	}
 }
 

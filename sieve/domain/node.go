@@ -7,13 +7,19 @@ import "errors"
 // a consumer never learns which service answered.
 type NodeDescriptor struct {
 	URI     string // the address it was resolved from
-	UUID    string // the target's identity
-	Kind    string // the source's own noun: "note"
+	ID      string // the target's identity: a document uuid, a block id or an asset key
+	Kind    string // the source's own noun: "note", "buffer", a block kind, "asset"
 	Title   string
 	Summary string
 	// Body is the resolved content; MCP get_by_uri is what returns it. No prompt
-	// path reads it — a model dereferences what it decides it needs.
+	// path reads it — a model dereferences what it decides it needs. Empty for an
+	// asset, whose bytes are at Path.
 	Body string
+	// Path is where an asset's bytes are, relative to the library root; empty for
+	// anything else.
+	Path string
+	// Bytes is an asset's size; zero for anything else.
+	Bytes int
 }
 
 // OpenTarget is where a coordinate NAVIGATES: the container to bring up and,
@@ -47,7 +53,8 @@ type Candidate struct {
 }
 
 // ErrNodeNotFound is the dangling case: a well-formed address no source holds —
-// deleted, never addressable (an unfiled buffer), or in an address space this
-// source does not answer for. Dangling is a NORMAL state, not a failure: callers
+// deleted, a version nobody wrote, or in an address space this source does not
+// answer for. Any document resolves, filed or not; only enumeration is limited
+// to filed notes. Dangling is a NORMAL state, not a failure: callers
 // render the cached title and carry on.
 var ErrNodeNotFound = errors.New("node: address resolves to nothing")
