@@ -1,6 +1,8 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-  content: ['./src/templates/**/*.html', './src/static/**/*.js', './src/index.html'],
+  // vendor/ holds minified third-party bundles: any token in them that looks
+  // like a utility class (prettier.js has `m-2`) would otherwise become a rule.
+  content: ['./src/templates/**/*.html', './src/static/**/*.js', '!./src/static/vendor/**', './src/index.html'],
   corePlugins: {
     // Don't let Tailwind's base reset fight our hand-crafted editor CSS
     preflight: false,
