@@ -22,7 +22,7 @@ import { TableGrid } from '../src/static/lens/document-editor/surfaces/table-gri
 import { CellSelectionGuard } from '../src/static/lens/document-editor/surfaces/cell-selection-guard.js'
 import { BlockChrome } from '../src/static/lens/document-editor/block-chrome.js'
 import { registerBlockKind } from '../src/static/renderers/block-kinds.js'
-import { buildInteractionPolicyExtension, policyEnterKeydown, policySelectAllKeydown, selectNextScope, CODE_TEXT_POLICY } from '../src/static/lens/document-editor/interaction-policy.js'
+import { buildInteractionPolicyExtension, policyEnterKeydown, policySelectAllKeydown, CODE_TEXT_POLICY } from '../src/static/lens/document-editor/interaction-policy.js'
 import { NodeViewRegistry, HOST_BODY_SYNC } from '../src/static/lens/document-editor/surfaces/sieve-block-extension.js'
 
 // The shape every raw-text renderer really has: a text/plain view of the WHOLE
@@ -500,8 +500,7 @@ describe('Mod+A select-scope ladder (contract: Select-scope ladder, #153)', () =
   // Ctrl, not Meta: prosemirror-keymap resolves `Mod-a` per platform and jsdom
   // is not a Mac, so Ctrl is what `baseKeymap`'s selectAll is bound to here —
   // and the native keymap IS the ladder's top rung, so these presses must reach
-  // it. The verb itself claims either modifier; `Cmd+A claims the same rung`
-  // below pins that half.
+  // it.
   function modA() { return press('a', { ctrlKey: true }) }
 
   function sel() { return editor.state.selection }
@@ -511,7 +510,7 @@ describe('Mod+A select-scope ladder (contract: Select-scope ladder, #153)', () =
     return sel().from <= 1 && sel().to >= editor.state.doc.content.size - 1
   }
 
-  /** The table in the doc now, and the position of the cell at (r, c). */
+  /** The table in the doc now. */
   function tableNow() {
     let found = null
     editor.state.doc.descendants((node, pos) => { if (!found && node.type.name === 'table') found = { node, pos } })
@@ -594,6 +593,32 @@ describe('Mod+A select-scope ladder (contract: Select-scope ladder, #153)', () =
     expect(docText()).toBe('aa\nbbafter')
   })
 
+  // PM places an AllSelection on the editor element's own child boundaries,
+  // between BlockChrome's contenteditable=false widgets, where WebKitGTK leaves
+  // the last block unpainted. BlockChrome re-anchors it on the text at both ends.
+  it('the document rung\'s DOM selection is anchored on the first and last text', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'paragraph', content: [{ type: 'text', text: 'one' }] },
+      { type: 'paragraph', content: [{ type: 'text', text: 'three' }] },
+    ] }, [BlockChrome])
+    document.body.appendChild(editor.view.dom)
+    try {
+      editor.view.focus()
+      caretAt(2)
+      // happy-dom's Selection does not move on setBaseAndExtent, so the call
+      // itself is what is pinned.
+      const set = vi.spyOn(document.getSelection(), 'setBaseAndExtent')
+      modA()
+      expect(sel().toJSON().type).toBe('all')
+      const [anchor, anchorOffset, focus, focusOffset] = set.mock.calls.at(-1)
+      expect([anchor.nodeValue, anchorOffset, focus.nodeValue, focusOffset]).toEqual(['one', 0, 'three', 5])
+      set.mockRestore()
+    } finally {
+      document.getSelection().removeAllRanges()
+      editor.view.dom.remove()
+    }
+  })
+
   it('prose is untouched: one press takes the document, as native selectAll always did', () => {
     makeEditor({ type: 'doc', content: [
       { type: 'paragraph', content: [{ type: 'text', text: 'one' }] },
@@ -649,23 +674,6 @@ describe('Mod+A select-scope ladder (contract: Select-scope ladder, #153)', () =
       expect(coversDoc()).toBe(true)
     })
 
-    // The document rung is never reached STRAIGHT from a cell selection. Losing
-    // the `selectedCell` decorations redraws every cell, and prosemirror-view
-    // force-syncs the DOM selection after a redraw on Chrome and IE only — so a
-    // document selection arriving in that same pass went unpainted on WebKit.
-    // The verb declines with a caret in the head cell; the rung after it is a
-    // transaction of its own.
-    it('leaves a caret in the head cell on the way out, not a live cell selection', () => {
-      makeTableDoc()
-      modA(); modA()
-      expect(sel() instanceof CellSelection).toBe(true)
-      expect(selectNextScope(editor.view)).toBe(false)
-      expect(sel() instanceof CellSelection).toBe(false)
-      expect(sel().empty).toBe(true)
-      expect(sel().$head.parent.type.name).toBe('paragraph')
-      expect(sel().$head.node(-1).type.spec.tableRole).toBe('cell')
-    })
-
     // A row selection is already broader than one cell, so the ladder must not
     // demote it to the cell the head happens to be in.
     it('from a row selection the next rung is the table, never back down to a cell', () => {
@@ -684,10 +692,11 @@ describe('Mod+A select-scope ladder (contract: Select-scope ladder, #153)', () =
   it('declines Shift+Mod+A and Mod+Alt+A', () => {
     makeCodeDoc('aa')
     caretAt(2)
-    const before = sel().from
-    press('a', { metaKey: true, shiftKey: true })
-    press('a', { metaKey: true, altKey: true })
-    expect(sel().from).toBe(before)
+    for (const mods of [{ shiftKey: true }, { altKey: true }]) {
+      const event = new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, ...mods })
+      expect(policySelectAllKeydown(editor.view, event)).toBe(false)
+    }
+    expect(sel().empty).toBe(true)
   })
 })
 

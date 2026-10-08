@@ -543,7 +543,7 @@ export function selectNextScope(view) {
   var sel = state.selection
   var table = enclosingNode(sel.$from, function (node) { return node.type.name === 'table' })
   if (table) {
-    if (coversTable(sel, table)) return leaveCellSelection(view)
+    if (coversTable(sel, table)) return false
     // A multi-cell selection is broader than one cell already — and its
     // from..to enclose its head cell alone, so it names no range the cell rung
     // could be read from. Either way the next rung up is the table.
@@ -558,30 +558,6 @@ export function selectNextScope(view) {
   var top = { node: sel.$from.node(1), pos: sel.$from.before(1) }
   if (kindFromTypeName(top.node.type.name) === 'prose') return false
   return selectScope(view, { from: top.pos + 1, to: top.pos + top.node.nodeSize - 1 })
-}
-
-/**
- * Hand the document rung on from a covered table, leaving a caret in the head
- * cell on the way out. Always false: the caller's own next step — native
- * selectAll under Mod+A, `commands.selectAll` in the menu — takes the document
- * from that caret.
- *
- * The caret is load-bearing, not cosmetic. A cell selection paints as
- * prosemirror-tables' `selectedCell` node decorations, so losing it redraws
- * every cell, and prosemirror-view force-syncs the DOM selection after a redraw
- * on Chrome and IE only (`forceSelUpdate`). A document selection arriving in
- * that same pass is therefore left unpainted on WebKit — a caret with no
- * highlight. Two transactions give the redraw and the selection a pass each.
- * @param {any} view @returns {boolean} false — escalate
- */
-function leaveCellSelection(view) {
-  var state = view.state
-  // ranges[0] is the HEAD cell's own range, and its $from sits inside that cell
-  // before its first child — a forward search from there stays in the cell. The
-  // selection's $head is that range's END, from which forward leaves the table.
-  var $start = state.selection.ranges[0].$from
-  view.dispatch(state.tr.setSelection(TT.Selection.near($start, 1)))
-  return false
 }
 
 /** The nearest ancestor of `$pos` satisfying `match`, with its document position.

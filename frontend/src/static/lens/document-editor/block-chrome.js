@@ -298,6 +298,42 @@ var DecorationSet = VENDOR.DecorationSet
     })
   }
 
+  /** Places an AllSelection's DOM selection on the first and last editable text
+   *  node. PM's own placement is the editor element's child boundaries, which sit
+   *  between this extension's contenteditable=false chrome widgets; WebKitGTK
+   *  leaves the last block unpainted there, and after a cell selection collapses
+   *  the range to the document's end. The PM state is untouched: the DOM observer
+   *  is told the new range is current, so it is never read back as a selection. */
+  class AllSelectionDomAnchor {
+    /** @param {any} view the EditorView */
+    static apply(view) {
+      if (view.state.selection.toJSON().type !== 'all' || !view.hasFocus()) return
+      var doc = view.dom.ownerDocument
+      var domSel = doc.getSelection()
+      if (!domSel) return
+      var first = AllSelectionDomAnchor.#edgeText(view.dom, false)
+      var last = AllSelectionDomAnchor.#edgeText(view.dom, true)
+      if (!first || !last) return
+      domSel.setBaseAndExtent(first, 0, last, last.length)
+      view.domObserver.setCurSelection()
+    }
+
+    /** The first (or, `fromEnd`, the last) text node under `node`, never one
+     *  inside a contenteditable=false subtree.
+     *  @param {Node} node @param {boolean} fromEnd @returns {Text|null} */
+    static #edgeText(node, fromEnd) {
+      var kids = node.childNodes
+      for (var i = 0; i < kids.length; i++) {
+        var kid = kids[fromEnd ? kids.length - 1 - i : i]
+        if (kid.nodeType === 3) return /** @type {Text} */ (kid)
+        if (kid.nodeType !== 1 || /** @type {Element} */ (kid).getAttribute('contenteditable') === 'false') continue
+        var found = AllSelectionDomAnchor.#edgeText(kid, fromEnd)
+        if (found) return found
+      }
+      return null
+    }
+  }
+
   export var BlockChrome = Extension.create({
     name: 'blockChrome',
     addProseMirrorPlugins: function () {
@@ -424,6 +460,7 @@ var DecorationSet = VENDOR.DecorationSet
                 // has-selection lets CSS and JS suppress hover-driven highlights (chain glows)
                 // while a selection is active.
                 view.dom.classList.toggle('has-selection', !view.state.selection.empty)
+                AllSelectionDomAnchor.apply(view)
 
                 // Expand the gutter for documents with many blocks, or line numbers wrap and
                 // push the rail. 54px is the base width in editor.css (up to 99 blocks).

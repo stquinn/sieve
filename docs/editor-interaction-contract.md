@@ -73,12 +73,13 @@ for why the mechanism is precedence rather than a policy flag.
   `event.key` is not an ASCII character, as prosemirror-keymap does it: on AZERTY
   that key types `q`.
 
-  Leaving a covered table for the document rung goes **through a caret** in the
-  head cell, never straight from the cell selection. A cell selection paints as
-  prosemirror-tables' `selectedCell` decorations, so dropping it redraws every
-  cell, and prosemirror-view force-syncs the DOM selection after a redraw on
-  Chrome and IE only — a document selection arriving in that same pass is left
-  unpainted on WebKit, which is the engine Sieve ships in.
+  The document rung's DOM range is placed by `BlockChrome`, not left where
+  ProseMirror puts it. ProseMirror sets an `AllSelection` on the editor
+  element's own child boundaries, between the gutter's `contenteditable=false`
+  widgets. WebKitGTK leaves the last block unpainted there, and after a cell
+  selection it collapses the range to the document's end. So the range is set on
+  the first and last editable text instead, and the DOM observer is told it is
+  current: the state stays an `AllSelection`.
 
   The context menu's **Select All** is a CALLER of the same verb, so the menu
   and the key cannot disagree about what "all" means.
