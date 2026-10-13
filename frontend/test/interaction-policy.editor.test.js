@@ -685,6 +685,36 @@ describe('Mod+A select-scope ladder (contract: Select-scope ladder, #153)', () =
       expect(sel() instanceof CellSelection).toBe(true)
       expect(sel().ranges.length).toBe(4) // the whole table
     })
+
+    // WebKit refuses the between-cells DOM range PM places for a cell selection
+    // and keeps the first rung's text range, which the DOM observer then reads
+    // back as a one-cell TextSelection — so copy took one cell (#175).
+    // BlockChrome re-anchors the range on the first and last selected text,
+    // skipping empty cells.
+    it('the table rung\'s DOM selection is anchored on the first and last cell text', () => {
+      makeEditor({ type: 'doc', content: [{ type: 'paragraph' }] }, [BlockChrome])
+      document.body.appendChild(editor.view.dom)
+      try {
+        editor.view.focus()
+        editor.commands.insertTable({ rows: 2, cols: 2, withHeaderRow: false })
+        caretAt(inCell(tableNow(), 1, 0))
+        editor.commands.insertContent('last')
+        caretAt(inCell(tableNow(), 0, 0))
+        editor.commands.insertContent('first')
+        const set = vi.spyOn(document.getSelection(), 'setBaseAndExtent')
+        const setCur = vi.spyOn(editor.view.domObserver, 'setCurSelection')
+        modA(); modA()
+        expect(sel() instanceof CellSelection).toBe(true)
+        const [anchor, anchorOffset, focus, focusOffset] = set.mock.calls.at(-1)
+        expect([anchor.nodeValue, anchorOffset, focus.nodeValue, focusOffset]).toEqual(['first', 0, 'last', 4])
+        expect(setCur).toHaveBeenCalled()
+        set.mockRestore()
+        setCur.mockRestore()
+      } finally {
+        document.getSelection().removeAllRanges()
+        editor.view.dom.remove()
+      }
+    })
   })
 
   // The ladder is bare Mod+A. The Shift and Alt variants belong to whatever

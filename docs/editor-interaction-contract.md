@@ -73,13 +73,17 @@ for why the mechanism is precedence rather than a policy flag.
   `event.key` is not an ASCII character, as prosemirror-keymap does it: on AZERTY
   that key types `q`.
 
-  The document rung's DOM range is placed by `BlockChrome`, not left where
-  ProseMirror puts it. ProseMirror sets an `AllSelection` on the editor
-  element's own child boundaries, between the gutter's `contenteditable=false`
-  widgets. WebKitGTK leaves the last block unpainted there, and after a cell
-  selection it collapses the range to the document's end. So the range is set on
-  the first and last editable text instead, and the DOM observer is told it is
-  current: the state stays an `AllSelection`.
+  The DOM range of the document rung and of the table rung is placed by
+  `BlockChrome`, not left where ProseMirror puts it. ProseMirror sets an
+  `AllSelection` on the editor element's own child boundaries, between the
+  gutter's `contenteditable=false` widgets, and a cell selection on the
+  boundaries between cells. WebKitGTK leaves the last block unpainted at the
+  first, and after a cell selection collapses the range to the document's end;
+  macOS WebKit can refuse the second and keep the previous rung's text range, which
+  the DOM observer then reads back as a one-cell `TextSelection` (#175). So the
+  range is set on the first and last editable text of the document, or of the
+  selected cells (skipping empty ones), and the DOM observer is told it is
+  current: the state stays an `AllSelection` or a cell selection.
 
   The context menu's **Select All** is a CALLER of the same verb, so the menu
   and the key cannot disagree about what "all" means.
@@ -396,6 +400,11 @@ paint backgrounds of their own, and a competing one would make the same selectio
 read differently over each. The browser's own highlight is suppressed while a
 cell selection is up (`.ProseMirror-hideselection`), so the rectangle reads as a
 region rather than as a ragged text drag.
+
+**Copying a cell selection copies every selected cell, however it was made**
+(the Mod+A table rung, a drag, Shift+click, Select Row or Select Column). Its
+DOM range is anchored on the selected cells' text, as the ladder describes
+above, so the native copy reads the cell selection and not a stale text range.
 
 **Backspace and Delete over a cell selection clear the cells' CONTENT and leave
 the structure**, with ONE exception: when the selection covers **every** cell of
