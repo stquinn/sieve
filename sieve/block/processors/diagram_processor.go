@@ -231,6 +231,7 @@ func (p *DiagramProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJo
 	effective := p.effectiveSource(source)
 	hash := p.renderHash(effective)
 
+	existingAsset, _ := blk.Attrs["svgAsset"].(string)
 	uuid, id := jctx.UUID, blk.ID
 	return &block.ProcessorJob{
 		Category: block.CategoryDefault,
@@ -241,7 +242,7 @@ func (p *DiagramProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJo
 				logger.Warn("diagram: plantuml render failed", "block", id, "err", err)
 				return nil, err
 			}
-			ref, err := p.saveAsset(uuid, id, svg)
+			ref, err := p.saveAsset(uuid, id, existingAsset, svg)
 			if err != nil {
 				logger.Warn("diagram: asset save failed", "block", id, "err", err)
 				return nil, err
@@ -419,10 +420,11 @@ func (p *DiagramProcessor) renderHash(effective string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// saveAsset persists the rendered SVG as an asset under an opaque key minted
-// from ident.New, attaches it to the document, and returns its relative sieve
-// URI-reference (/{key}).
-func (p *DiagramProcessor) saveAsset(uuid, blockID string, data []byte) (string, error) {
+// saveAsset persists the rendered SVG as an asset, attaches it to the document,
+// and returns its relative sieve URI-reference (/{key}). If existingKey names an
+// existing relative key (/{key}), that key is reused so repeated renders and
+// theme switches overwrite the existing asset rather than accumulating files.
+func (p *DiagramProcessor) saveAsset(uuid, blockID, existingKey string, data []byte) (string, error) {
 	cat := domain.WorkingCopy
 	var doc domain.Document
 	if d, err := p.svc.Documents.LoadByUUID(uuid); err == nil {
@@ -432,7 +434,17 @@ func (p *DiagramProcessor) saveAsset(uuid, blockID string, data []byte) (string,
 		}
 	}
 
-	assetID := ident.New() + ".svg"
+	var assetID string
+	trimmed := strings.TrimPrefix(strings.TrimSpace(existingKey), "/")
+	if trimmed != "" && !strings.Contains(trimmed, "/") && !strings.Contains(trimmed, ":") && !strings.HasPrefix(existingKey, "sieve://") {
+		assetID = trimmed
+		if !strings.HasSuffix(strings.ToLower(assetID), ".svg") {
+			assetID += ".svg"
+		}
+	} else {
+		assetID = ident.New() + ".svg"
+	}
+
 	asset, err := p.svc.Assets.Save(cat, uuid, assetID, data)
 	if err != nil {
 		return "", err

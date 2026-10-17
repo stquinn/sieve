@@ -223,16 +223,24 @@ export class DiagramRenderer extends BlockRenderer {
   // locally (also handling an embedded ```mermaid fence among `entries`),
   // plantuml fetches the persisted same-origin svgAsset. A never-rendered
   // plantuml block yields no entry, exactly as empty-source mermaid does.
-  /** @param {any} sourceNode @param {any[]} entries @returns {Promise<{mimeType:string,content:string}|null>} */
-  static renderDiagramSvgEntry(sourceNode, entries) {
+  /** @param {any} sourceNode @param {any[]} entries @param {string} [containerUuid] @returns {Promise<{mimeType:string,content:string}|null>} */
+  static renderDiagramSvgEntry(sourceNode, entries, containerUuid) {
     const attrs = (sourceNode && sourceNode.attrs) || {}
     const isDiagram = attrs.kind === 'diagram'
 
     if (isDiagram && attrs.diagramType === 'plantuml') {
       const raw = String(attrs.svgAsset || '')
       if (!raw) return Promise.resolve(null)
-      const containerUuid = (sourceNode && (sourceNode.uuid || (sourceNode.attrs && sourceNode.attrs.containerUuid))) || ''
-      const url = resolveImageSrc(raw, containerUuid)
+      let resolvedContainer = containerUuid || (sourceNode && (sourceNode.uuid || sourceNode.containerUuid || (sourceNode.attrs && (sourceNode.attrs.containerUuid || sourceNode.attrs.container)))) || ''
+      if (!resolvedContainer && attrs.id) {
+        for (const inst of DiagramRenderer.#liveInstances) {
+          if (inst.id === attrs.id && inst._container) {
+            resolvedContainer = inst._container
+            break
+          }
+        }
+      }
+      const url = resolveImageSrc(raw, resolvedContainer)
       // no-cache: stable-URL / mutable-content asset (see #fetchAndDisplayPlantuml).
       return fetch(url, { cache: 'no-cache' })
         .then((res) => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.text() })

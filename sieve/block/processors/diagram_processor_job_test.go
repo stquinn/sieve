@@ -47,11 +47,13 @@ func (f *fakePlantuml) Render(source string) ([]byte, error) {
 type recordingAssets struct {
 	saves    int
 	lastData []byte
+	lastID   string
 }
 
 func (r *recordingAssets) Save(_ store.Category, _, assetID string, data []byte) (*domain.ImageAsset, error) {
 	r.saves++
 	r.lastData = data
+	r.lastID = assetID
 	ref := assetID
 	if !strings.HasSuffix(ref, ".svg") {
 		ref += ".svg"
@@ -382,6 +384,74 @@ func TestDiagramProcessor_job_renderErrorNoAssetNoHash(t *testing.T) {
 	}
 	if blk.Attrs["renderedHash"] != "" {
 		t.Errorf("renderedHash must not update on failure; got %v", blk.Attrs["renderedHash"])
+	}
+}
+
+func TestDiagramProcessor_job_reusesExistingRelativeSvgAssetKey(t *testing.T) {
+	assets := &recordingAssets{}
+	pl := &fakePlantuml{svg: []byte("<svg>rerender</svg>")}
+	p := NewDiagramProcessor(block.BlockServices{
+		State:     darkState(),
+		Plantuml:  pl,
+		Assets:    assets,
+		Documents: &fakeDocuments{},
+	})
+
+	existingKey := "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b.svg"
+	blk := plantumlBlock("A -> B", "render", "")
+	blk.Attrs["svgAsset"] = "/" + existingKey
+
+	job := describe(p, blk)
+	if job == nil {
+		t.Fatal("expected a render job")
+	}
+
+	result, err := job.Work()
+	if err != nil {
+		t.Fatalf("Work: %v", err)
+	}
+
+	if assets.lastID != existingKey {
+		t.Errorf("saved assetID: got %q, want %q (reusing existing relative key)", assets.lastID, existingKey)
+	}
+	if result != "/"+existingKey {
+		t.Errorf("result: got %v, want %q", result, "/"+existingKey)
+	}
+
+	job.Apply(result, blk)
+	if blk.Attrs["svgAsset"] != "/"+existingKey {
+		t.Errorf("svgAsset after Apply: got %v, want %q", blk.Attrs["svgAsset"], "/"+existingKey)
+	}
+}
+
+func TestDiagramProcessor_job_foreignSvgAssetMintsFreshKey(t *testing.T) {
+	assets := &recordingAssets{}
+	pl := &fakePlantuml{svg: []byte("<svg>foreign</svg>")}
+	p := NewDiagramProcessor(block.BlockServices{
+		State:     darkState(),
+		Plantuml:  pl,
+		Assets:    assets,
+		Documents: &fakeDocuments{},
+	})
+
+	blk := plantumlBlock("A -> B", "render", "")
+	blk.Attrs["svgAsset"] = "sieve://other-doc-uuid/foreign-asset.svg"
+
+	job := describe(p, blk)
+	if job == nil {
+		t.Fatal("expected a render job")
+	}
+
+	result, err := job.Work()
+	if err != nil {
+		t.Fatalf("Work: %v", err)
+	}
+
+	if assets.lastID == "foreign-asset.svg" || strings.Contains(assets.lastID, "other-doc-uuid") {
+		t.Errorf("foreign asset reference must not overwrite foreign asset; got %q", assets.lastID)
+	}
+	if !strings.HasPrefix(result.(string), "/") || strings.HasPrefix(result.(string), "sieve://") {
+		t.Errorf("result must be local relative reference; got %v", result)
 	}
 }
 

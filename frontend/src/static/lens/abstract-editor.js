@@ -641,7 +641,7 @@ export class AbstractEditor extends Lens {
       wireOp = 'extract'
       this.#consumeSourceRange(sourceRange)
     }
-    const res = resolveEntriesForKind ? resolveEntriesForKind(targetKind, sourceNode, entries) : entries
+    const res = resolveEntriesForKind ? resolveEntriesForKind(targetKind, sourceNode, entries, this.#uuid) : entries
     return Promise.resolve(res).then((resolved) => {
       if (this.canEditBlocks) this.provider.requestTransform(blockId, targetKind, wireOp, resolved)
     })

@@ -238,19 +238,51 @@ func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string
 	}
 	docDir := filepath.Join(s.storePath, doc.Storable().ExternalRef())
 
-	var imagePath string
+	targetDoc := doc
+	targetDir := docDir
 	cleanRel := strings.TrimPrefix(storeRelPath, "/")
-	for _, assetItr := range doc.Storable().Owns() {
+	targetRel := cleanRel
+
+	if strings.HasPrefix(storeRelPath, "sieve://") {
+		if addr, err := domain.ParseAddress(storeRelPath); err == nil && addr.Container != "" && addr.Leaf != "" {
+			if foreignDoc, err := s.documents.LoadByUUID(addr.Container); err == nil && foreignDoc != nil {
+				targetDoc = foreignDoc
+				targetDir = filepath.Join(s.storePath, foreignDoc.Storable().ExternalRef())
+				targetRel = addr.Leaf
+			}
+		}
+	} else {
+		for _, prefix := range [...]string{store.AssetURLPrefix, store.LegacyAssetURLPrefix} {
+			if strings.HasPrefix(storeRelPath, prefix) {
+				rest := strings.TrimPrefix(storeRelPath, prefix)
+				cUUID, filename, hasSlash := strings.Cut(rest, "/")
+				if hasSlash && cUUID != "" && filename != "" {
+					if q := strings.Index(filename, "?"); q != -1 {
+						filename = filename[:q]
+					}
+					if foreignDoc, err := s.documents.LoadByUUID(cUUID); err == nil && foreignDoc != nil {
+						targetDoc = foreignDoc
+						targetDir = filepath.Join(s.storePath, foreignDoc.Storable().ExternalRef())
+						targetRel = filename
+					}
+				}
+				break
+			}
+		}
+	}
+
+	var imagePath string
+	for _, assetItr := range targetDoc.Storable().Owns() {
 		as, ok := assetItr.(store.AssetStorable)
-		if ok && (as.Key() == cleanRel || as.BlkID() == blkId) {
-			imagePath = filepath.Join(docDir, as.Key())
+		if ok && (as.Key() == targetRel || as.BlkID() == blkId) {
+			imagePath = filepath.Join(targetDir, as.Key())
 			break
 		}
 	}
 	if imagePath == "" {
 		// Asset attachment may have been overwritten by a later flush.
-		// Fall back to constructing the path from storeRelPath.
-		candidate := filepath.Join(docDir, cleanRel)
+		// Fall back to constructing the path from targetRel.
+		candidate := filepath.Join(targetDir, targetRel)
 		if _, statErr := os.Stat(candidate); statErr != nil {
 			logger.Warn("DescribeImage: asset not found", "blkId", blkId, "src", storeRelPath, "candidate", candidate)
 			return domain.ImageDesc{}, fmt.Errorf("image file not found for block %s", blkId)

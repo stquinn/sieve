@@ -125,7 +125,7 @@ func TestSmartImageProcessor_acquire_recognisesCurrentAssetRoute(t *testing.T) {
 	p := NewSmartImageProcessor(block.BlockServices{})
 	entry := block.ContentEntry{Content: "/ui/assets/doc-uuid-1/im-1.png"}
 
-	_, ref, err := p.acquire(entry, "blk-1")
+	_, ref, err := p.acquire(entry, "doc-uuid-1", "blk-1")
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestSmartImageProcessor_acquire_recognisesLegacyAssetRoute(t *testing.T) {
 	p := NewSmartImageProcessor(block.BlockServices{})
 	entry := block.ContentEntry{Content: "/sieve/doc-uuid-1/im-1.png"}
 
-	_, ref, err := p.acquire(entry, "blk-1")
+	_, ref, err := p.acquire(entry, "doc-uuid-1", "blk-1")
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -147,10 +147,24 @@ func TestSmartImageProcessor_acquire_recognisesLegacyAssetRoute(t *testing.T) {
 	}
 }
 
+func TestSmartImageProcessor_acquire_foreignAssetRouteBecomesAbsoluteSieveURI(t *testing.T) {
+	p := NewSmartImageProcessor(block.BlockServices{})
+	entry := block.ContentEntry{Content: "/ui/assets/other-doc-uuid/foreign-pic.png"}
+
+	_, ref, err := p.acquire(entry, "this-doc-uuid", "blk-1")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	want := "sieve://other-doc-uuid/foreign-pic.png"
+	if ref != want {
+		t.Errorf("ref = %q, want absolute sieve URI %q", ref, want)
+	}
+}
+
 func TestSmartImageProcessor_acquire_recognisesRelativeAndAbsoluteSieveURIs(t *testing.T) {
 	p := NewSmartImageProcessor(block.BlockServices{})
 
-	_, ref, err := p.acquire(block.ContentEntry{Content: "/shot.png"}, "blk-1")
+	_, ref, err := p.acquire(block.ContentEntry{Content: "/shot.png"}, "doc-1", "blk-1")
 	if err != nil {
 		t.Fatalf("acquire relative: %v", err)
 	}
@@ -158,12 +172,22 @@ func TestSmartImageProcessor_acquire_recognisesRelativeAndAbsoluteSieveURIs(t *t
 		t.Errorf("ref = %q, want /shot.png", ref)
 	}
 
-	_, refAbs, err := p.acquire(block.ContentEntry{Content: "sieve://0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b/shot.png"}, "blk-1")
+	// Foreign sieve:// address stays absolute
+	_, refAbs, err := p.acquire(block.ContentEntry{Content: "sieve://0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b/shot.png"}, "different-doc", "blk-1")
 	if err != nil {
 		t.Fatalf("acquire absolute: %v", err)
 	}
 	if refAbs != "sieve://0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b/shot.png" {
 		t.Errorf("refAbs = %q, want sieve://...", refAbs)
+	}
+
+	// Self sieve:// address folds to relative /{key}
+	_, refSelf, err := p.acquire(block.ContentEntry{Content: "sieve://0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b/shot.png"}, "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b", "blk-1")
+	if err != nil {
+		t.Fatalf("acquire self: %v", err)
+	}
+	if refSelf != "/shot.png" {
+		t.Errorf("refSelf = %q, want /shot.png", refSelf)
 	}
 }
 

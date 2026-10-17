@@ -166,10 +166,10 @@ export function sieveBlockEntries(node, renderer) {
 
 // Looks up the behaviour for ANY block via the uniform block-kind registry — prose
 // resolves identically to structured kinds, with no special case.
-export function resolveEntriesForKind(kind, sourceNode, entries) {
+export function resolveEntriesForKind(kind, sourceNode, entries, containerUuid) {
   var h = getBlockBehaviour && getBlockBehaviour(kind)
   if (h && typeof h.resolveEntries === 'function') {
-    return h.resolveEntries(sourceNode, entries)
+    return h.resolveEntries(sourceNode, entries, containerUuid)
   }
   return entries
 }

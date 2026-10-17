@@ -145,8 +145,8 @@ import { SmartImageRenderer } from '../../../../renderers/smart-image-renderer.j
     // Extract → Image: acquire the diagram's SVG and REPLACE the entries with it,
     // so Transform's saveSVG writes the image. The shared helper branches on the
     // engine; null means nothing to extract, and the entries pass through.
-    resolveEntries: function(sourceNode, entries) {
-      return DiagramRenderer.renderDiagramSvgEntry(sourceNode, entries).then(function (svg) {
+    resolveEntries: function(sourceNode, entries, containerUuid) {
+      return DiagramRenderer.renderDiagramSvgEntry(sourceNode, entries, containerUuid).then(function (svg) {
         return svg ? [svg] : entries
       }).catch(function (err) {
         console.error('[smart-image] diagram render failed for extraction', err)

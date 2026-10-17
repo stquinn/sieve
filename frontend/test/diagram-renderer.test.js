@@ -350,6 +350,17 @@ describe('DiagramRenderer.renderDiagramSvgEntry — engine-branched acquisition'
     vi.stubGlobal('fetch', () => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(text) }))
   }
 
+  /** @param {string} text */
+  function stubCountingFetch(text) {
+    /** @type {string[]} */
+    const calls = []
+    vi.stubGlobal('fetch', (/** @type {any} */ url) => {
+      calls.push(String(url))
+      return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(text) })
+    })
+    return { calls }
+  }
+
   it('plantuml with svgAsset fetches the same-origin asset and returns an image/svg+xml entry', async () => {
     stubFetch('<svg id="puml"></svg>')
     const node = { attrs: { kind: 'diagram', diagramType: 'plantuml', svgAsset: '/ui/assets/doc-uuid/di-x.svg', source: '@startuml' } }
@@ -364,11 +375,37 @@ describe('DiagramRenderer.renderDiagramSvgEntry — engine-branched acquisition'
     expect(entry).toEqual({ mimeType: 'image/svg+xml', content: '<svg id="puml"></svg>' })
   })
 
-  it('plantuml with relative svgAsset resolves against container and fetches the asset', async () => {
-    stubFetch('<svg id="puml"></svg>')
+  it('plantuml with relative svgAsset resolves against containerUuid argument without node attr', async () => {
+    const f = stubCountingFetch('<svg id="puml"></svg>')
+    const node = { attrs: { kind: 'diagram', diagramType: 'plantuml', svgAsset: '/di-x.svg', source: '@startuml' } }
+    const entry = await DiagramRenderer.renderDiagramSvgEntry(node, [], 'doc-uuid')
+    expect(entry).toEqual({ mimeType: 'image/svg+xml', content: '<svg id="puml"></svg>' })
+    expect(f.calls).toContain('/ui/assets/doc-uuid/di-x.svg')
+  })
+
+  it('plantuml with relative svgAsset resolves against live renderer instance container', async () => {
+    const f = stubCountingFetch('<svg id="puml"></svg>')
+    const fakeProvider = { getUuid: () => 'live-doc-uuid', requestSetBlock() {}, flush() {}, requestRetry() {} }
+    const renderer = new DiagramRenderer(blk({
+      id: 'di-live-test', source: '@startuml\nA->B\n@enduml', diagramType: 'plantuml', mode: 'render',
+      status: 'COMPLETE', svgAsset: '/di-live-test.svg', createdAt: '2026-10-17T00:00:00Z',
+    }), /** @type {any} */ (fakeProvider))
+    const dom = renderer.render()
+    document.body.appendChild(dom)
+
+    const node = { attrs: { id: 'di-live-test', kind: 'diagram', diagramType: 'plantuml', svgAsset: '/di-live-test.svg', source: '@startuml' } }
+    const entry = await DiagramRenderer.renderDiagramSvgEntry(node, [])
+    expect(entry).toEqual({ mimeType: 'image/svg+xml', content: '<svg id="puml"></svg>' })
+    expect(f.calls).toContain('/ui/assets/live-doc-uuid/di-live-test.svg')
+    renderer.destroy()
+  })
+
+  it('plantuml with relative svgAsset resolves against container on node.attrs if present', async () => {
+    const f = stubCountingFetch('<svg id="puml"></svg>')
     const node = { attrs: { kind: 'diagram', diagramType: 'plantuml', svgAsset: '/di-x.svg', source: '@startuml', containerUuid: 'doc-uuid' } }
     const entry = await DiagramRenderer.renderDiagramSvgEntry(node, [])
     expect(entry).toEqual({ mimeType: 'image/svg+xml', content: '<svg id="puml"></svg>' })
+    expect(f.calls).toContain('/ui/assets/doc-uuid/di-x.svg')
   })
 
   it('plantuml with no svgAsset yields no entry (never rendered → nothing to extract)', async () => {

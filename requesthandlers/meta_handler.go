@@ -328,6 +328,21 @@ func (h *MetaHandler) assetLabels(d domain.Document) map[string]assetLabel {
 		}
 		if label.Name != "" || label.Detail != "" {
 			out[blk.ID] = label
+			for _, k := range []string{"src", "svgAsset", "asset"} {
+				if ref := str(k); ref != "" {
+					assetName := filepath.Base(ref)
+					if idx := strings.Index(assetName, "?"); idx != -1 {
+						assetName = assetName[:idx]
+					}
+					if assetName != "" && assetName != "." && assetName != "/" {
+						out[assetName] = label
+						stem := strings.TrimSuffix(assetName, filepath.Ext(assetName))
+						if stem != "" {
+							out[stem] = label
+						}
+					}
+				}
+			}
 		}
 	}
 	return out
@@ -349,7 +364,10 @@ func toAssetViews(storables []store.Storable, labels map[string]assetLabel) []as
 					mt = "application/octet-stream"
 				}
 			}
-			label := labels[as.BlkID()]
+			label := labels[name]
+			if label.Name == "" && label.Detail == "" {
+				label = labels[as.BlkID()]
+			}
 			shown := label.Name
 			if shown == "" {
 				// No name, so the description carries the row rather than a uuid.

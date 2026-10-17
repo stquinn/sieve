@@ -28,7 +28,7 @@ import { DiagramRenderer } from '../../../../renderers/diagram-renderer.js'
 // renderDiagramSvgEntry branches on the engine: mermaid renders locally,
 // plantuml fetches its svgAsset.
 export function ensureMermaid() { return DiagramRenderer.ensureMermaid() }
-export function renderDiagramSvgEntry(sourceNode, entries) { return DiagramRenderer.renderDiagramSvgEntry(sourceNode, entries) }
+export function renderDiagramSvgEntry(sourceNode, entries, containerUuid) { return DiagramRenderer.renderDiagramSvgEntry(sourceNode, entries, containerUuid) }
 
 ;(function () {
   'use strict'

@@ -3,6 +3,9 @@ package requesthandlers
 import (
 	"testing"
 
+	"sieve/sieve/block"
+	"sieve/sieve/block/processors"
+	"sieve/sieve/domain"
 	"sieve/store"
 )
 
@@ -102,5 +105,62 @@ func TestAssetViews_nilLabelsAreSafe(t *testing.T) {
 	)
 	if len(views) != 1 || views[0].Name != "01a01bcd-273b.png" {
 		t.Fatalf("got %+v, want the filename fallback", views)
+	}
+}
+
+func TestAssetViews_labelledByOpaqueAssetKeyOrStem(t *testing.T) {
+	assets := []store.Storable{
+		fakeAsset{ref: "store/doc/0194820a-81c2-7d34.png", blkID: "0194820a-81c2-7d34"},
+		fakeAsset{ref: "store/doc/0194820a-9999-7d34.svg", blkID: "0194820a-9999-7d34"},
+	}
+	labels := map[string]assetLabel{
+		"0194820a-81c2-7d34.png": {Name: "Architecture Diagram"},
+		"0194820a-9999-7d34":     {Name: "Flowchart"},
+	}
+
+	views := toAssetViews(assets, labels)
+	if len(views) != 2 {
+		t.Fatalf("views: got %d, want 2", len(views))
+	}
+	if views[0].Name != "Architecture Diagram" {
+		t.Errorf("views[0].Name: got %q, want %q", views[0].Name, "Architecture Diagram")
+	}
+	if views[1].Name != "Flowchart" {
+		t.Errorf("views[1].Name: got %q, want %q", views[1].Name, "Flowchart")
+	}
+}
+
+type fakeDoc struct {
+	domain.Document
+	body []byte
+}
+
+func (f fakeDoc) Body() []byte { return f.body }
+
+func TestAssetLabels_mapsOpaqueKeysFromBlockAttrs(t *testing.T) {
+	block.RegisterProcessor(processors.NewSmartImageProcessor(block.BlockServices{}))
+	block.RegisterProcessor(processors.NewDiagramProcessor(block.BlockServices{}))
+
+	docBody := "```smart-image\nid: img-blk-1\nsrc: /0194820a-81c2-7d34.png\ntitle: Architecture\n```\n\n```diagram\nid: diag-blk-1\nsvgAsset: /0194820a-9999-7d34.svg\nsummary: Flowchart\n```\n"
+	h := &MetaHandler{}
+	labels := h.assetLabels(fakeDoc{body: []byte(docBody)})
+	if labels == nil {
+		t.Fatal("expected labels, got nil")
+	}
+
+	if labels["img-blk-1"].Name != "Architecture" {
+		t.Errorf("labels[img-blk-1].Name: got %q, want Architecture", labels["img-blk-1"].Name)
+	}
+	if labels["0194820a-81c2-7d34.png"].Name != "Architecture" {
+		t.Errorf("labels[0194820a-81c2-7d34.png].Name: got %q, want Architecture", labels["0194820a-81c2-7d34.png"].Name)
+	}
+	if labels["0194820a-81c2-7d34"].Name != "Architecture" {
+		t.Errorf("labels[0194820a-81c2-7d34].Name: got %q, want Architecture", labels["0194820a-81c2-7d34"].Name)
+	}
+	if labels["0194820a-9999-7d34.svg"].Detail != "Flowchart" {
+		t.Errorf("labels[0194820a-9999-7d34.svg].Detail: got %q, want Flowchart", labels["0194820a-9999-7d34.svg"].Detail)
+	}
+	if labels["0194820a-9999-7d34"].Detail != "Flowchart" {
+		t.Errorf("labels[0194820a-9999-7d34].Detail: got %q, want Flowchart", labels["0194820a-9999-7d34"].Detail)
 	}
 }
