@@ -16,13 +16,34 @@ import (
 // (Regression: embedding a smart-image produced ![](im-82d3.png), which 404s.)
 func TestSmartImageProcessor_MarkdownRepresentation_servedURL(t *testing.T) {
 	p := NewSmartImageProcessor(block.BlockServices{})
-	blk := block.SieveBlock{Attrs: map[string]interface{}{"src": "im-82d3.png", "alt": "a sprite"}}
 
-	got := p.MarkdownRepresentation(blk, "doc-uuid-1")
-	want := "![a sprite](/ui/assets/doc-uuid-1/im-82d3.png)"
-	if got != want {
-		t.Errorf("MarkdownRepresentation: got %q, want %q (must carry the served /ui/assets/<uuid>/ URL)", got, want)
-	}
+	t.Run("relative reference", func(t *testing.T) {
+		blk := block.SieveBlock{Attrs: map[string]interface{}{"src": "/im-82d3.png", "alt": "a sprite"}}
+		got := p.MarkdownRepresentation(blk, "doc-uuid-1")
+		want := "![a sprite](/ui/assets/doc-uuid-1/im-82d3.png)"
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("cross-container sieve address", func(t *testing.T) {
+		other := "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+		blk := block.SieveBlock{Attrs: map[string]interface{}{"src": "sieve://" + other + "/remote.png", "alt": "shared"}}
+		got := p.MarkdownRepresentation(blk, "doc-uuid-1")
+		want := "![shared](/ui/assets/" + other + "/remote.png)"
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("legacy bare filename", func(t *testing.T) {
+		blk := block.SieveBlock{Attrs: map[string]interface{}{"src": "im-82d3.png", "alt": "a sprite"}}
+		got := p.MarkdownRepresentation(blk, "doc-uuid-1")
+		want := "![a sprite](/ui/assets/doc-uuid-1/im-82d3.png)"
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
 }
 
 func TestSmartImageProcessor_MarkdownRepresentation_stripsAssetsPrefixAndPath(t *testing.T) {
@@ -108,8 +129,8 @@ func TestSmartImageProcessor_acquire_recognisesCurrentAssetRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	if ref != "im-1.png" {
-		t.Errorf("ref = %q, want the bare filename im-1.png (already local, no re-ingest)", ref)
+	if ref != "/im-1.png" {
+		t.Errorf("ref = %q, want the relative reference /im-1.png (already local, no re-ingest)", ref)
 	}
 }
 
@@ -121,8 +142,28 @@ func TestSmartImageProcessor_acquire_recognisesLegacyAssetRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	if ref != "im-1.png" {
-		t.Errorf("ref = %q, want the bare filename im-1.png — pre-migration content must be recognised as local too", ref)
+	if ref != "/im-1.png" {
+		t.Errorf("ref = %q, want the relative reference /im-1.png — pre-migration content must be recognised as local too", ref)
+	}
+}
+
+func TestSmartImageProcessor_acquire_recognisesRelativeAndAbsoluteSieveURIs(t *testing.T) {
+	p := NewSmartImageProcessor(block.BlockServices{})
+
+	_, ref, err := p.acquire(block.ContentEntry{Content: "/shot.png"}, "blk-1")
+	if err != nil {
+		t.Fatalf("acquire relative: %v", err)
+	}
+	if ref != "/shot.png" {
+		t.Errorf("ref = %q, want /shot.png", ref)
+	}
+
+	_, refAbs, err := p.acquire(block.ContentEntry{Content: "sieve://0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b/shot.png"}, "blk-1")
+	if err != nil {
+		t.Fatalf("acquire absolute: %v", err)
+	}
+	if refAbs != "sieve://0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b/shot.png" {
+		t.Errorf("refAbs = %q, want sieve://...", refAbs)
 	}
 }
 

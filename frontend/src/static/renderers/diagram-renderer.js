@@ -25,6 +25,7 @@ import { StatusBadge } from './status-badge.js'
 import { AdvancedHeaderProvider, HeaderBar, expandButton } from './header-bar.js'
 import { expandBlock } from '../ui/media-lightbox.js'
 import { registerBlockRenderer } from './block-kinds.js'
+import { resolveImageSrc } from './asset-urls.js'
 
 /**
  * @typedef {Object} DiagramAttrs
@@ -228,8 +229,10 @@ export class DiagramRenderer extends BlockRenderer {
     const isDiagram = attrs.kind === 'diagram'
 
     if (isDiagram && attrs.diagramType === 'plantuml') {
-      const url = String(attrs.svgAsset || '')
-      if (!url) return Promise.resolve(null)
+      const raw = String(attrs.svgAsset || '')
+      if (!raw) return Promise.resolve(null)
+      const containerUuid = (sourceNode && (sourceNode.uuid || (sourceNode.attrs && sourceNode.attrs.containerUuid))) || ''
+      const url = resolveImageSrc(raw, containerUuid)
       // no-cache: stable-URL / mutable-content asset (see #fetchAndDisplayPlantuml).
       return fetch(url, { cache: 'no-cache' })
         .then((res) => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.text() })
@@ -542,13 +545,14 @@ export class DiagramRenderer extends BlockRenderer {
     const state = StatusBadge.classify(attrs.status, attrs.createdAt, attrs.id)
     if (state === 'pending') { this.#showLoading(); return }
     if (state === 'complete') {
-      const url = String(attrs.svgAsset || '')
+      const raw = String(attrs.svgAsset || '')
       // COMPLETE without an asset ref is a transient race (status landed before
       // svgAsset) — hold the spinner; the follow-up attrs render-back carries it.
-      if (!url) { this.#showLoading(); return }
+      if (!raw) { this.#showLoading(); return }
       const cached = DiagramRenderer.#cachedSvg(signature)
       if (cached !== undefined) { this.#displaySvg(cached); return }
-      this.#fetchAndDisplayPlantuml(url, signature)
+      const url = resolveImageSrc(raw, this._container)
+      this.#fetchAndDisplayPlantuml(url, signature, raw)
       return
     }
     // stale | timeout | error
@@ -559,8 +563,8 @@ export class DiagramRenderer extends BlockRenderer {
 
   /** Fetch a same-origin rendered-SVG asset and inline it via the shared tail.
    *  Guarded so a fetch that resolves after a newer render-back superseded this
-   *  asset never inserts a stale SVG. @param {string} url @param {string} signature */
-  #fetchAndDisplayPlantuml(url, signature) {
+   *  asset never inserts a stale SVG. @param {string} url @param {string} signature @param {string} raw */
+  #fetchAndDisplayPlantuml(url, signature, raw) {
     // no-cache: the asset lives at a STABLE URL but is overwritten in place on
     // each re-render, so its bytes change while svgAsset does not — revalidate,
     // or a stale pre-theme-switch SVG comes back from the HTTP cache. The
@@ -571,19 +575,19 @@ export class DiagramRenderer extends BlockRenderer {
       .then((res) => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.text() })
       .then((svgText) => {
         DiagramRenderer.#cacheSvg(signature, svgText)
-        if (this.#superseded(signature) || this.#assetSuperseded(url)) return
+        if (this.#superseded(signature) || this.#assetSuperseded(raw)) return
         this.#displaySvg(svgText)
       })
       .catch((err) => {
-        if (this.#superseded(signature) || this.#assetSuperseded(url)) return
+        if (this.#superseded(signature) || this.#assetSuperseded(raw)) return
         this.#displayError((err && err.message) ? err.message : String(err), 'PlantUML render error')
       })
   }
 
   /** True when the block's current svgAsset no longer matches the one this fetch
-   *  was launched for (a newer render-back arrived mid-flight). @param {string} url */
-  #assetSuperseded(url) {
-    return String(/** @type {DiagramAttrs} */ (this.block.payload).svgAsset || '') !== url
+   *  was launched for (a newer render-back arrived mid-flight). @param {string} raw */
+  #assetSuperseded(raw) {
+    return String(/** @type {DiagramAttrs} */ (this.block.payload).svgAsset || '') !== raw
   }
 
   /** Inline SVG text into the panzoom wrap, patch the edge-label escape hatch,

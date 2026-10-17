@@ -239,17 +239,18 @@ func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string
 	docDir := filepath.Join(s.storePath, doc.Storable().ExternalRef())
 
 	var imagePath string
+	cleanRel := strings.TrimPrefix(storeRelPath, "/")
 	for _, assetItr := range doc.Storable().Owns() {
 		as, ok := assetItr.(store.AssetStorable)
-		if ok && as.BlkID() == blkId {
+		if ok && (as.Key() == cleanRel || as.BlkID() == blkId) {
 			imagePath = filepath.Join(docDir, as.Key())
 			break
 		}
 	}
 	if imagePath == "" {
 		// Asset attachment may have been overwritten by a later flush.
-		// Fall back to constructing the path from storeRelPath (= asset.ExternalRef()).
-		candidate := filepath.Join(docDir, storeRelPath)
+		// Fall back to constructing the path from storeRelPath.
+		candidate := filepath.Join(docDir, cleanRel)
 		if _, statErr := os.Stat(candidate); statErr != nil {
 			logger.Warn("DescribeImage: asset not found", "blkId", blkId, "src", storeRelPath, "candidate", candidate)
 			return domain.ImageDesc{}, fmt.Errorf("image file not found for block %s", blkId)

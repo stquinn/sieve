@@ -23,6 +23,9 @@ describe('asset-urls', () => {
 
   it('builds a document asset URL from the reference the document spells', () => {
     expect(documentAssetUrl('doc-1', 'pic.png')).toBe('/ui/assets/doc-1/pic.png')
+    // Sieve URI-references: relative /{key} and absolute sieve://{container}/{key}
+    expect(documentAssetUrl('doc-1', '/pic.png')).toBe('/ui/assets/doc-1/pic.png')
+    expect(documentAssetUrl('doc-1', 'sieve://other-doc/pic.png')).toBe('/ui/assets/other-doc/pic.png')
     // Only the final segment is meaningful: assets are flat within a document.
     expect(documentAssetUrl('doc-1', 'nested/pic.png')).toBe('/ui/assets/doc-1/pic.png')
     expect(documentAssetUrl('doc-1', '')).toBe('')
@@ -36,6 +39,8 @@ describe('asset-urls', () => {
     expect(resolveImageSrc('data:image/png;base64,AAAA')).toBe('data:image/png;base64,AAAA')
     expect(resolveImageSrc('blob:whatever')).toBe('blob:whatever')
     expect(resolveImageSrc('/already/absolute.png')).toBe('/already/absolute.png')
+    expect(resolveImageSrc('/pic.png', 'doc-1')).toBe('/ui/assets/doc-1/pic.png')
+    expect(resolveImageSrc('sieve://other-doc/pic.png', 'doc-1')).toBe('/ui/assets/other-doc/pic.png')
     expect(resolveImageSrc('.assets/pic.png', 'doc-1')).toBe('/ui/assets/doc-1/pic.png')
     expect(resolveImageSrc('pic.png', 'doc-1')).toBe('/ui/assets/doc-1/pic.png')
     expect(resolveImageSrc('')).toBe('')

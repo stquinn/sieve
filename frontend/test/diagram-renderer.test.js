@@ -357,6 +357,20 @@ describe('DiagramRenderer.renderDiagramSvgEntry — engine-branched acquisition'
     expect(entry).toEqual({ mimeType: 'image/svg+xml', content: '<svg id="puml"></svg>' })
   })
 
+  it('plantuml with sieve URI svgAsset resolves and fetches the asset', async () => {
+    stubFetch('<svg id="puml"></svg>')
+    const node = { attrs: { kind: 'diagram', diagramType: 'plantuml', svgAsset: 'sieve://doc-uuid/di-x.svg', source: '@startuml' } }
+    const entry = await DiagramRenderer.renderDiagramSvgEntry(node, [])
+    expect(entry).toEqual({ mimeType: 'image/svg+xml', content: '<svg id="puml"></svg>' })
+  })
+
+  it('plantuml with relative svgAsset resolves against container and fetches the asset', async () => {
+    stubFetch('<svg id="puml"></svg>')
+    const node = { attrs: { kind: 'diagram', diagramType: 'plantuml', svgAsset: '/di-x.svg', source: '@startuml', containerUuid: 'doc-uuid' } }
+    const entry = await DiagramRenderer.renderDiagramSvgEntry(node, [])
+    expect(entry).toEqual({ mimeType: 'image/svg+xml', content: '<svg id="puml"></svg>' })
+  })
+
   it('plantuml with no svgAsset yields no entry (never rendered → nothing to extract)', async () => {
     const node = { attrs: { kind: 'diagram', diagramType: 'plantuml', svgAsset: '', source: '@startuml' } }
     expect(await DiagramRenderer.renderDiagramSvgEntry(node, [])).toBeNull()
@@ -400,6 +414,32 @@ describe('DiagramRenderer — plantuml passive display branch', () => {
     const svg = dom.querySelector('.diagram-block__panzoom svg')
     expect(svg).toBeTruthy()
     expect(svg?.getAttribute('id')).toBe('puml-live')
+  })
+
+  it('COMPLETE with relative svgAsset resolves against provider container and fetches', async () => {
+    const f = countingFetch('<svg id="puml-rel"></svg>')
+    const fakeProvider = { getUuid: () => 'doc-uuid', requestSetBlock() {}, flush() {}, requestRetry() {} }
+    const renderer = new DiagramRenderer(blk({
+      id: 'di-rel', source: '@startuml\nA->B\n@enduml', diagramType: 'plantuml', mode: 'render',
+      status: 'COMPLETE', svgAsset: '/di-rel.svg', createdAt: NOW(),
+    }), /** @type {any} */ (fakeProvider))
+    const dom = renderer.render()
+    document.body.appendChild(dom)
+    await settle()
+    expect(f.calls).toContain('/ui/assets/doc-uuid/di-rel.svg')
+    expect(dom.querySelector('.diagram-block__panzoom svg')).toBeTruthy()
+  })
+
+  it('COMPLETE with sieve URI svgAsset resolves foreign container and fetches', async () => {
+    const f = countingFetch('<svg id="puml-foreign"></svg>')
+    const { dom } = mount({
+      id: 'di-foreign', source: '@startuml\nA->B\n@enduml', diagramType: 'plantuml', mode: 'render',
+      status: 'COMPLETE', svgAsset: 'sieve://foreign-uuid/di-f.svg', createdAt: NOW(),
+    })
+    document.body.appendChild(dom)
+    await settle()
+    expect(f.calls).toContain('/ui/assets/foreign-uuid/di-f.svg')
+    expect(dom.querySelector('.diagram-block__panzoom svg')).toBeTruthy()
   })
 
   /** A fetch that records every URL it was asked for. @param {string} text */

@@ -4,12 +4,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"sieve/logger"
-	"sieve/sieve/block"
-	"sieve/sieve/domain"
 	"strconv"
 	"strings"
 	"time"
+
+	"sieve/ident"
+	"sieve/logger"
+	"sieve/sieve/block"
+	"sieve/sieve/domain"
 )
 
 // mermaidFenceRe / plantumlFenceRe alias the shared patterns so this file reads
@@ -417,9 +419,9 @@ func (p *DiagramProcessor) renderHash(effective string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// saveAsset persists the rendered SVG as this block's single asset (stable id
-// derived from the block id, overwritten each render — no GC), attaches it to the
-// document, and returns its ExternalRef. Mirrors SmartImageProcessor.saveAsset.
+// saveAsset persists the rendered SVG as an asset under an opaque key minted
+// from ident.New, attaches it to the document, and returns its relative sieve
+// URI-reference (/{key}).
 func (p *DiagramProcessor) saveAsset(uuid, blockID string, data []byte) (string, error) {
 	cat := domain.WorkingCopy
 	var doc domain.Document
@@ -430,7 +432,8 @@ func (p *DiagramProcessor) saveAsset(uuid, blockID string, data []byte) (string,
 		}
 	}
 
-	asset, err := p.svc.Assets.Save(cat, uuid, blockID, data)
+	assetID := ident.New() + ".svg"
+	asset, err := p.svc.Assets.Save(cat, uuid, assetID, data)
 	if err != nil {
 		return "", err
 	}
@@ -443,7 +446,7 @@ func (p *DiagramProcessor) saveAsset(uuid, blockID string, data []byte) (string,
 		}
 	}
 
-	return asset.ExternalRef(), nil
+	return "/" + asset.Storable().Key(), nil
 }
 
 func (p *DiagramProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {

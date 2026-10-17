@@ -52,7 +52,11 @@ type recordingAssets struct {
 func (r *recordingAssets) Save(_ store.Category, _, assetID string, data []byte) (*domain.ImageAsset, error) {
 	r.saves++
 	r.lastData = data
-	return &domain.ImageAsset{S: fakeAssetStorable{ref: assetID + ".svg"}}, nil
+	ref := assetID
+	if !strings.HasSuffix(ref, ".svg") {
+		ref += ".svg"
+	}
+	return &domain.ImageAsset{S: fakeAssetStorable{ref: ref}}, nil
 }
 
 // ServeAssetData satisfies the read half of AssetsPort. The diagram job only ever
@@ -344,9 +348,12 @@ func TestDiagramProcessor_job_savesAssetBeforeComplete(t *testing.T) {
 	if blk.Attrs["status"] != block.BlockStatusComplete {
 		t.Errorf("status after Apply: got %v, want COMPLETE", blk.Attrs["status"])
 	}
-	wantRef := "di-0001.svg"
-	if blk.Attrs["svgAsset"] != wantRef {
-		t.Errorf("svgAsset: got %v, want %q", blk.Attrs["svgAsset"], wantRef)
+	svgAsset, _ := blk.Attrs["svgAsset"].(string)
+	if !strings.HasPrefix(svgAsset, "/") || !strings.HasSuffix(svgAsset, ".svg") {
+		t.Errorf("svgAsset: got %v, want relative Sieve reference /{key}.svg", blk.Attrs["svgAsset"])
+	}
+	if strings.Contains(svgAsset, "di-0001") {
+		t.Errorf("svgAsset must not contain block ID: %v", svgAsset)
 	}
 	if blk.Attrs["renderedHash"] != p.renderHash(p.effectiveSource("A -> B")) {
 		t.Errorf("renderedHash not set to the effective-source hash: got %v", blk.Attrs["renderedHash"])

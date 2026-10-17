@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"sieve/ident"
 	"sieve/logger"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
@@ -25,12 +26,10 @@ type documentAssets struct {
 }
 
 // save persists data as an asset of document uuid under assetID, and returns the
-// reference a block stores in its src attr.
+// relative sieve URI-reference (/{key}) a block stores in its src attr.
 //
-// assetID is the caller's choice, and the store derives the on-disk filename from
-// it: an id with no extension gets one sniffed from the magic bytes, an id that
-// carries one keeps it. A caller that knows the true format (a dropped file's own
-// name) therefore says so by passing the extension.
+// assetID is the caller's choice: an empty id (or ident.New()) gets one minted
+// with an extension sniffed from the magic bytes.
 func (a documentAssets) save(uuid, assetID string, data []byte) (string, error) {
 	if a.svc.Assets == nil {
 		return "", fmt.Errorf("%s: no asset service wired", a.kind)
@@ -45,6 +44,10 @@ func (a documentAssets) save(uuid, assetID string, data []byte) (string, error) 
 				cat = domain.LibraryCategory
 			}
 		}
+	}
+
+	if assetID == "" {
+		assetID = ident.New()
 	}
 
 	logger.Info(a.kind+": saving asset", "block", assetID, "uuid", uuid, "bytes", len(data))
@@ -62,7 +65,7 @@ func (a documentAssets) save(uuid, assetID string, data []byte) (string, error) 
 		}
 	}
 
-	return asset.ExternalRef(), nil
+	return "/" + asset.Storable().Key(), nil
 }
 
 // filename recovers the bare asset name from a stored src. A src is always a
@@ -80,6 +83,29 @@ func (a documentAssets) filename(src string) string {
 // is read OUTSIDE Sieve, so a stored src has to leave as a working URL — and
 // both kinds that hold bytes must spell that route the same way.
 func (a documentAssets) url(uuid, src string) string {
+	src = strings.TrimSpace(src)
+	if src == "" {
+		return ""
+	}
+	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+		return src
+	}
+	if uuid != "" {
+		if addr, err := domain.ResolveAddress(src, domain.NewContainerAddress(uuid)); err == nil && addr.Leaf != "" {
+			return store.AssetURL(addr.Container, addr.Leaf)
+		}
+	}
+	if strings.HasPrefix(src, "sieve://") {
+		if addr, err := domain.ParseAddress(src); err == nil && addr.Leaf != "" {
+			return store.AssetURL(addr.Container, addr.Leaf)
+		}
+	}
+	if strings.HasPrefix(src, "/") && !store.ContainsAssetURL(src) {
+		leaf := strings.TrimPrefix(src, "/")
+		if !strings.Contains(leaf, "/") && leaf != "" {
+			return store.AssetURL(uuid, leaf)
+		}
+	}
 	name := a.filename(src)
 	if name == "" {
 		return ""

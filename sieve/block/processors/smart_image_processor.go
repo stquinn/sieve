@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"sieve/ident"
 	"sieve/logger"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
@@ -152,7 +153,7 @@ func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid strin
 				logger.Warn("smart-image: entry is not a usable image", "block", blockID, "bytes", len(data))
 				return nil
 			}
-			if src, err = p.assets.save(uuid, blockID, data); err != nil {
+			if src, err = p.assets.save(uuid, ident.New(), data); err != nil {
 				logger.Warn("smart-image: transform save failed", "block", blockID, "err", err)
 				return nil
 			}
@@ -160,10 +161,10 @@ func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid strin
 
 		attrs := map[string]interface{}{"src": src}
 		// The name the file arrived under, when it arrived as a file at all. The
-		// asset is stored as <blockID>.<ext> so nothing on disk remembers it, and
-		// without this an image is identifiable only by its AI description — which
-		// is a description, not an identity. A clipboard paste has no filename and
-		// correctly stamps none.
+		// asset is stored under an opaque ident.New key so nothing on disk
+		// remembers it, and without this an image is identifiable only by its AI
+		// description — which is a description, not an identity. A clipboard
+		// paste has no filename and correctly stamps none.
 		if name, _ := e.Context["filename"].(string); strings.TrimSpace(name) != "" {
 			attrs["title"] = strings.TrimSpace(name)
 		}
@@ -198,7 +199,18 @@ func (p *SmartImageProcessor) acquire(e block.ContentEntry, blockID string) (dat
 	// Image URL (paste or extract from HTML)
 	s := strings.TrimSpace(e.Content)
 	if isImageURL(s) {
-		// Already a local sieve asset: reference the filename, ingest nothing.
+		// Already an absolute sieve address
+		if strings.HasPrefix(s, "sieve://") {
+			return nil, s, nil
+		}
+		// Already a relative reference (/{key})
+		if strings.HasPrefix(s, "/") && !store.ContainsAssetURL(s) {
+			leaf := strings.TrimPrefix(s, "/")
+			if !strings.Contains(leaf, "/") && leaf != "" {
+				return nil, s, nil
+			}
+		}
+		// Stored route: reference the key as relative /{key}, ingest nothing.
 		// Recognises both the current route and the pre-#19 one, since
 		// unmigrated persisted content can still carry the old form.
 		if store.ContainsAssetURL(s) {
@@ -206,7 +218,7 @@ func (p *SmartImageProcessor) acquire(e block.ContentEntry, blockID string) (dat
 			if idx := strings.Index(filename, "?"); idx != -1 {
 				filename = filename[:idx]
 			}
-			return nil, filename, nil
+			return nil, "/" + filename, nil
 		}
 		raw, err := p.downloadImage(s, blockID)
 		if err != nil {
@@ -392,7 +404,8 @@ func (p *SmartImageProcessor) DescribeJob(jctx block.JobContext) *block.Processo
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 func isImageURL(s string) bool {
-	if !strings.HasPrefix(s, "http://") && !strings.HasPrefix(s, "https://") && !strings.HasPrefix(s, "/") && !store.ContainsAssetURL(s) {
+	if !strings.HasPrefix(s, "http://") && !strings.HasPrefix(s, "https://") &&
+		!strings.HasPrefix(s, "/") && !strings.HasPrefix(s, "sieve://") && !store.ContainsAssetURL(s) {
 		return false
 	}
 	if strings.ContainsAny(s, " \t\n\r") {

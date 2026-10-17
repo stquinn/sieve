@@ -38,16 +38,24 @@ export function imageProxyUrl(remoteUrl) {
 
 /**
  * The served URL of a file stored INSIDE a document. `ref` is whatever the
- * document wrote — a bare filename, or a `.assets/`-prefixed path from the
- * on-disk layout. Only the final segment is meaningful: assets are flat within
- * a document, so any leading path is layout the route does not repeat.
+ * document wrote — a sieve URI-reference (`/{key}` or `sieve://{container}/{key}`),
+ * a bare filename, or a legacy route.
  * @param {string} uuid the document holding the asset
  * @param {string} ref  the asset reference as the document spells it
  * @returns {string}
  */
 export function documentAssetUrl(uuid, ref) {
   if (!ref) return ''
-  if (ref.startsWith('/')) return ref
+  if (ref.startsWith('sieve://')) {
+    const m = ref.match(/^sieve:\/\/([^\/\?#]+)\/([^\/\?#]+)/)
+    if (m) return assetUrl(m[1], m[2])
+  }
+  if (ref.startsWith('/ui/assets/') || ref.startsWith('/sieve/')) return ref
+  if (ref.startsWith('/')) {
+    const key = ref.slice(1)
+    if (!key.includes('/') && key) return assetUrl(uuid || '', key)
+    return ref
+  }
   return assetUrl(uuid || '', String(ref).split('/').pop() || '')
 }
 
@@ -61,7 +69,14 @@ export function documentAssetUrl(uuid, ref) {
 export function resolveImageSrc(src, uuid) {
   if (!src) return ''
   if (src.startsWith('http://') || src.startsWith('https://')) return imageProxyUrl(src)
-  if (isAbsolute(src)) return src
+  if (src.startsWith('data:') || src.startsWith('blob:')) return src
+  if (src.startsWith('sieve://')) return documentAssetUrl(uuid || '', src)
+  if (src.startsWith('/ui/assets/') || src.startsWith('/sieve/') || src.startsWith('/ui/files/')) return src
+  if (src.startsWith('/')) {
+    const key = src.slice(1)
+    if (!key.includes('/') && key) return documentAssetUrl(uuid || '', src)
+    return src
+  }
   if (src.startsWith('.assets/')) src = src.substring(8)
   return documentAssetUrl(uuid || '', src)
 }
