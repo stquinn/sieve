@@ -298,10 +298,9 @@ func toVersionViews(refs []store.VersionRef, uuidEnc string) []versionViewData {
 	return out
 }
 
-// assetLabels maps an asset's block id to the name its block knows it by.
+// assetLabels maps an asset's key, stem, or legacy block id to the label its block knows it by.
 //
-// An asset is stored as <blockID><ext> so that a file cannot overwrite the
-// content.md or meta.json sitting beside it — which leaves the Assets tab
+// Assets are stored with opaque keys (or legacy <blockID><ext>), which leaves the Assets tab
 // listing uuids, and two JSON files indistinguishable. The block holds the real
 // name, so the tab reads it back from there.
 //

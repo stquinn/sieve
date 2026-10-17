@@ -128,6 +128,7 @@ var (
 	_ block.LinkPreviewPort = (*services.LinkPreviewService)(nil)
 	_ block.PlantumlPort    = (*services.PlantumlService)(nil)
 	_ block.NodesPort       = (*editor.Router)(nil)
+	_ ai.NodeResolver       = (*editor.Router)(nil)
 	_ command.DocumentFiler = (*editor.EditorService)(nil)
 )
 
@@ -157,6 +158,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 		return
 	}
 	s.AI = ai.NewAIService(s.State, s.Prompts, s.Documents, storePath)
+	s.AI.SetNodes(s.Nodes)
 	// Internal Sieve MCP: read-only knowledge-base surface mounted at /mcp,
 	// injected into contained CLI calls. Its runtime URL (the localhost listener
 	// port) is set from main once the listener binds; the AI service pulls the

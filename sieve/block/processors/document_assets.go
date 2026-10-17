@@ -90,21 +90,12 @@ func (a documentAssets) url(uuid, src string) string {
 	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
 		return src
 	}
+	base := domain.Address{}
 	if uuid != "" {
-		if addr, err := domain.ResolveAddress(src, domain.NewContainerAddress(uuid)); err == nil && addr.Leaf != "" {
-			return store.AssetURL(addr.Container, addr.Leaf)
-		}
+		base = domain.NewContainerAddress(uuid)
 	}
-	if strings.HasPrefix(src, "sieve://") {
-		if addr, err := domain.ParseAddress(src); err == nil && addr.Leaf != "" {
-			return store.AssetURL(addr.Container, addr.Leaf)
-		}
-	}
-	if strings.HasPrefix(src, "/") && !store.ContainsAssetURL(src) {
-		leaf := strings.TrimPrefix(src, "/")
-		if !strings.Contains(leaf, "/") && leaf != "" {
-			return store.AssetURL(uuid, leaf)
-		}
+	if addr, err := domain.ResolveAssetReference(src, base); err == nil && addr.Leaf != "" {
+		return store.AssetURL(addr.Container, addr.Leaf)
 	}
 	name := a.filename(src)
 	if name == "" {

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"sieve/ident"
+	"sieve/store"
 )
 
 // Scheme is the one internal scheme. Everything Sieve can name lives in it.
@@ -111,6 +112,57 @@ func ResolveAddress(ref string, base Address) (Address, error) {
 	}
 	return addressFromURL(base.url().ResolveReference(refURL), ref)
 }
+
+// ResolveAssetReference resolves an asset reference — whether a relative reference
+// (/{key}), an absolute sieve address (sieve://{container}/{key}), a served route
+// (/ui/assets/{uuid}/{filename} or legacy /sieve/{uuid}/{filename}), or a bare
+// filename (.assets/{filename} or {filename}) — against the base container it was
+// written in. External URLs (http://, https://) and non-asset coordinates are rejected.
+func ResolveAssetReference(ref string, base Address) (Address, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return Address{}, fmt.Errorf("%w: empty reference", ErrBadAddress)
+	}
+	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") || strings.HasPrefix(ref, "data:") {
+		return Address{}, fmt.Errorf("%w: %q is a remote or data URL, not an asset reference", ErrBadAddress, ref)
+	}
+	// 1. Served asset route: /ui/assets/{uuid}/{filename} or legacy /sieve/{uuid}/{filename}
+	if u, f, ok := store.ParseAssetURL(ref); ok {
+		return NewLeafAddress(u, f), nil
+	}
+	// 2. Absolute sieve address: sieve://{container}/{leaf}
+	if strings.HasPrefix(ref, "sieve://") {
+		addr, err := ParseAddress(ref)
+		if err != nil {
+			return Address{}, err
+		}
+		if addr.Leaf == "" {
+			return Address{}, fmt.Errorf("%w: %q has no leaf", ErrBadAddress, ref)
+		}
+		return addr, nil
+	}
+	// 3. Relative reference: /{leaf}
+	if strings.HasPrefix(ref, "/") {
+		leaf := strings.TrimPrefix(ref, "/")
+		if !strings.Contains(leaf, "/") && leaf != "" {
+			if base.Container == "" {
+				return Address{}, fmt.Errorf("%w: no base container to resolve %q against", ErrBadAddress, ref)
+			}
+			return NewLeafAddress(base.Container, leaf), nil
+		}
+		return ResolveAddress(ref, base)
+	}
+	// 4. Bare filename or .assets/ prefix (e.g. "diagram.png" or ".assets/diagram.png")
+	trimmed := strings.TrimPrefix(ref, ".assets/")
+	if trimmed != "" && !strings.Contains(trimmed, "/") && !strings.Contains(trimmed, ":") {
+		if base.Container == "" {
+			return Address{}, fmt.Errorf("%w: no base container to resolve %q against", ErrBadAddress, ref)
+		}
+		return NewLeafAddress(base.Container, trimmed), nil
+	}
+	return Address{}, fmt.Errorf("%w: %q cannot be resolved as an asset reference", ErrBadAddress, ref)
+}
+
 
 // addressFromURL is the single validator, so an address reached by resolution
 // is held to the same rules as a parsed one. raw is the caller's spelling, used

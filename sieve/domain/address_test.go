@@ -431,3 +431,109 @@ func TestAddress_EqualComparesNamedLeaves(t *testing.T) {
 		t.Fatal("two different names must not be equal")
 	}
 }
+
+func TestResolveAssetReference(t *testing.T) {
+	base := NewContainerAddress(cUUID)
+
+	cases := []struct {
+		name          string
+		ref           string
+		base          Address
+		wantContainer string
+		wantLeaf      string
+		wantErr       bool
+	}{
+		{
+			name:          "served route current",
+			ref:           "/ui/assets/" + dUUID + "/diagram.png",
+			base:          base,
+			wantContainer: dUUID,
+			wantLeaf:      "diagram.png",
+		},
+		{
+			name:          "served route legacy",
+			ref:           "/sieve/" + dUUID + "/flow.svg",
+			base:          base,
+			wantContainer: dUUID,
+			wantLeaf:      "flow.svg",
+		},
+		{
+			name:          "sieve URI absolute",
+			ref:           "sieve://" + dUUID + "/shot.png",
+			base:          base,
+			wantContainer: dUUID,
+			wantLeaf:      "shot.png",
+		},
+		{
+			name:          "relative reference with leading slash",
+			ref:           "/local.png",
+			base:          base,
+			wantContainer: cUUID,
+			wantLeaf:      "local.png",
+		},
+		{
+			name:          "bare filename",
+			ref:           "local.png",
+			base:          base,
+			wantContainer: cUUID,
+			wantLeaf:      "local.png",
+		},
+		{
+			name:          "assets prefixed bare filename",
+			ref:           ".assets/local.png",
+			base:          base,
+			wantContainer: cUUID,
+			wantLeaf:      "local.png",
+		},
+		{
+			name:    "http URL is rejected",
+			ref:     "http://example.com/pic.png",
+			base:    base,
+			wantErr: true,
+		},
+		{
+			name:    "https URL is rejected",
+			ref:     "https://example.com/pic.png",
+			base:    base,
+			wantErr: true,
+		},
+		{
+			name:    "data URI is rejected",
+			ref:     "data:image/png;base64,abc",
+			base:    base,
+			wantErr: true,
+		},
+		{
+			name:    "empty ref",
+			ref:     "   ",
+			base:    base,
+			wantErr: true,
+		},
+		{
+			name:    "bare relative with zero base",
+			ref:     "/local.png",
+			base:    Address{},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ResolveAssetReference(tc.ref, tc.base)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("ResolveAssetReference(%q) unexpectedly succeeded: %+v", tc.ref, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ResolveAssetReference(%q) failed: %v", tc.ref, err)
+			}
+			if got.Container != tc.wantContainer || got.Leaf != tc.wantLeaf {
+				t.Errorf("ResolveAssetReference(%q) = {%q, %q}, want {%q, %q}",
+					tc.ref, got.Container, got.Leaf, tc.wantContainer, tc.wantLeaf)
+			}
+		})
+	}
+}
+

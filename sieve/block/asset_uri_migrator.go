@@ -5,7 +5,6 @@ import (
 
 	"sieve/ident"
 	"sieve/sieve/domain"
-	"sieve/store"
 )
 
 // AssetURIMigrator rewrites served asset routes and legacy filenames in
@@ -69,45 +68,14 @@ func (m AssetURIMigrator) migrateAttr(attrs map[string]interface{}, attrKey, doc
 // rewriteRef answers the canonical sieve URI-reference for ref, and whether it
 // differs from the input.
 func (m AssetURIMigrator) rewriteRef(ref, documentUUID string) (string, bool) {
-	// 1. Current or legacy served route prefix: /ui/assets/{uuid}/{key} or /sieve/{uuid}/{key}
-	for _, prefix := range [...]string{store.AssetURLPrefix, store.LegacyAssetURLPrefix} {
-		if strings.HasPrefix(ref, prefix) {
-			rest := strings.TrimPrefix(ref, prefix)
-			uuid, filename, hasSlash := strings.Cut(rest, "/")
-			if hasSlash && ident.Valid(uuid) && filename != "" {
-				if ident.Canonical(uuid) == ident.Canonical(documentUUID) {
-					return "/" + filename, true
-				}
-				return domain.NewLeafAddress(uuid, filename).String(), true
-			}
-		}
-	}
-
-	// 2. Self absolute address: sieve://{thisDoc}/{key} folds to relative /{key}
-	if strings.HasPrefix(ref, "sieve://") {
-		if addr, err := domain.ParseAddress(ref); err == nil {
-			if ident.Canonical(addr.Container) == ident.Canonical(documentUUID) && addr.Leaf != "" {
-				return "/" + addr.Leaf, true
-			}
-		}
+	addr, err := domain.ResolveAssetReference(ref, domain.NewContainerAddress(documentUUID))
+	if err != nil {
 		return ref, false
 	}
-
-	// 3. Already a relative reference: /{key}
-	if strings.HasPrefix(ref, "/") {
-		return ref, false
+	if ident.Canonical(addr.Container) == ident.Canonical(documentUUID) {
+		canonical := "/" + addr.Leaf
+		return canonical, ref != canonical
 	}
-
-	// 4. Remote URLs or inline data URIs stay untouched
-	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") || strings.HasPrefix(ref, "data:") {
-		return ref, false
-	}
-
-	// 5. Bare filename or .assets/ prefix folds to /{key}
-	filename := strings.TrimPrefix(ref, ".assets/")
-	if filename != "" && !strings.Contains(filename, "/") && !strings.Contains(filename, ":") {
-		return "/" + filename, true
-	}
-
-	return ref, false
+	canonical := addr.String()
+	return canonical, ref != canonical
 }

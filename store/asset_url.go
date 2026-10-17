@@ -61,3 +61,25 @@ func RewriteLegacyAssetURLs(s string) string {
 		return AssetURLPrefix + uuid + "/"
 	})
 }
+
+// ParseAssetURL parses a served asset route (/ui/assets/{uuid}/{filename} or legacy
+// /sieve/{uuid}/{filename}) into its container UUID and filename. ok is false if
+// s does not contain a recognized asset route with a container segment.
+func ParseAssetURL(s string) (uuid, filename string, ok bool) {
+	for _, prefix := range [...]string{AssetURLPrefix, LegacyAssetURLPrefix} {
+		if idx := strings.Index(s, prefix); idx != -1 {
+			rest := s[idx+len(prefix):]
+			u, f, hasSlash := strings.Cut(rest, "/")
+			if hasSlash && u != "" {
+				if q := strings.Index(f, "?"); q != -1 {
+					f = f[:q]
+				}
+				if f != "" {
+					return ident.Canonical(u), f, true
+				}
+			}
+		}
+	}
+	return "", "", false
+}
+

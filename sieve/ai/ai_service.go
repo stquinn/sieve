@@ -28,12 +28,18 @@ type MCPEndpoint interface {
 	Endpoint() (url, token string)
 }
 
+// NodeResolver resolves a Sieve address to a NodeDescriptor. Satisfied by editor.Router.
+type NodeResolver interface {
+	Resolve(addr domain.Address) (domain.NodeDescriptor, error)
+}
+
 // AIService owns all AI evaluation and filing operations. It resolves prompt
 // templates, settings, and folder lists internally so callers need no boilerplate.
 type AIService struct {
 	state     *services.StateService
 	prompts   *PromptService
 	documents *services.DocumentService
+	nodes     NodeResolver
 	storePath string
 	runner    CLIRunner   // exec seam; stubbable in tests
 	mcp       MCPEndpoint // internal Sieve MCP endpoint; nil until wired
@@ -53,6 +59,9 @@ func NewAIService(state *services.StateService, prompts *PromptService, document
 // containment profile carries the live server URL + a fresh per-call bearer token
 // in its builtin MCP grant, so the contained CLI can query the knowledge base.
 func (s *AIService) SetMCPEndpoint(e MCPEndpoint) { s.mcp = e }
+
+// SetNodes wires the NodeResolver (editor.Router) for address and asset dereferencing.
+func (s *AIService) SetNodes(nodes NodeResolver) { s.nodes = nodes }
 
 // profile returns the containment floor for a CLI call: the default baseline,
 // with the builtin Sieve MCP grant's runtime URL + per-call token filled in when
@@ -223,7 +232,8 @@ func (s *AIService) RunBtw(question, selection, docTitle, docSummary, docUUID st
 func (s *AIService) Tier() domain.Tier { return s.state.LoadSettings().Tier() }
 
 // DescribeImage sends an image to the configured AI and returns alt text, a
-// summary, and a suggested filename. storeRelPath is relative to the store root.
+// summary, and a suggested filename. storeRelPath is relative to the store root,
+// or a sieve URI-reference (/{key}, sieve://{container}/{key}, /ui/assets/...).
 func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string) (domain.ImageDesc, error) {
 	logger.Info("Describe uuid: " + uuid)
 	logger.Info("Describe storeRelPath: " + storeRelPath)
@@ -232,63 +242,41 @@ func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string
 	if settings.Tier() == domain.TierDumb {
 		return domain.ImageDesc{}, fmt.Errorf("dumb mode")
 	}
-	doc, err := s.documents.LoadByUUID(uuid)
-	if err != nil {
-		return domain.ImageDesc{}, err
-	}
-	docDir := filepath.Join(s.storePath, doc.Storable().ExternalRef())
-
-	targetDoc := doc
-	targetDir := docDir
-	cleanRel := strings.TrimPrefix(storeRelPath, "/")
-	targetRel := cleanRel
-
-	if strings.HasPrefix(storeRelPath, "sieve://") {
-		if addr, err := domain.ParseAddress(storeRelPath); err == nil && addr.Container != "" && addr.Leaf != "" {
-			if foreignDoc, err := s.documents.LoadByUUID(addr.Container); err == nil && foreignDoc != nil {
-				targetDoc = foreignDoc
-				targetDir = filepath.Join(s.storePath, foreignDoc.Storable().ExternalRef())
-				targetRel = addr.Leaf
-			}
-		}
-	} else {
-		for _, prefix := range [...]string{store.AssetURLPrefix, store.LegacyAssetURLPrefix} {
-			if strings.HasPrefix(storeRelPath, prefix) {
-				rest := strings.TrimPrefix(storeRelPath, prefix)
-				cUUID, filename, hasSlash := strings.Cut(rest, "/")
-				if hasSlash && cUUID != "" && filename != "" {
-					if q := strings.Index(filename, "?"); q != -1 {
-						filename = filename[:q]
-					}
-					if foreignDoc, err := s.documents.LoadByUUID(cUUID); err == nil && foreignDoc != nil {
-						targetDoc = foreignDoc
-						targetDir = filepath.Join(s.storePath, foreignDoc.Storable().ExternalRef())
-						targetRel = filename
-					}
-				}
-				break
-			}
-		}
-	}
 
 	var imagePath string
-	for _, assetItr := range targetDoc.Storable().Owns() {
-		as, ok := assetItr.(store.AssetStorable)
-		if ok && (as.Key() == targetRel || as.BlkID() == blkId) {
-			imagePath = filepath.Join(targetDir, as.Key())
-			break
+	addr, err := domain.ResolveAssetReference(storeRelPath, domain.NewContainerAddress(uuid))
+	if err == nil && s.nodes != nil {
+		if node, err := s.nodes.Resolve(addr); err == nil && node.Path != "" {
+			imagePath = filepath.Join(s.storePath, node.Path)
 		}
 	}
 	if imagePath == "" {
-		// Asset attachment may have been overwritten by a later flush.
-		// Fall back to constructing the path from targetRel.
-		candidate := filepath.Join(targetDir, targetRel)
-		if _, statErr := os.Stat(candidate); statErr != nil {
-			logger.Warn("DescribeImage: asset not found", "blkId", blkId, "src", storeRelPath, "candidate", candidate)
-			return domain.ImageDesc{}, fmt.Errorf("image file not found for block %s", blkId)
+		// Fallback when NodeResolver is not wired or for direct storeRelPath lookups.
+		targetDocUUID := uuid
+		targetKey := strings.TrimPrefix(storeRelPath, "/")
+		if err == nil {
+			targetDocUUID = addr.Container
+			targetKey = addr.Leaf
 		}
-		logger.Info("DescribeImage: asset attachment missing, using path fallback", "path", candidate)
-		imagePath = candidate
+		doc, err := s.documents.LoadByUUID(targetDocUUID)
+		if err != nil {
+			return domain.ImageDesc{}, err
+		}
+		targetDir := filepath.Join(s.storePath, doc.Storable().ExternalRef())
+		for _, assetItr := range doc.Storable().Owns() {
+			if as, ok := assetItr.(store.AssetStorable); ok && (as.Key() == targetKey || as.BlkID() == blkId) {
+				imagePath = filepath.Join(targetDir, as.Key())
+				break
+			}
+		}
+		if imagePath == "" {
+			candidate := filepath.Join(targetDir, targetKey)
+			if _, statErr := os.Stat(candidate); statErr != nil {
+				logger.Warn("DescribeImage: asset not found", "blkId", blkId, "src", storeRelPath, "candidate", candidate)
+				return domain.ImageDesc{}, fmt.Errorf("image file not found for block %s", blkId)
+			}
+			imagePath = candidate
+		}
 	}
 
 	prompt, _ := s.prompts.GetPromptContent("image")

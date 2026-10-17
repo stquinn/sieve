@@ -121,3 +121,90 @@ func TestAIService_DescribeImage_resolvesSieveURIForeignAsset(t *testing.T) {
 		t.Errorf("runner cwd: got %q, want %q (foreign doc directory)", cap.cwd, doc2Dir)
 	}
 }
+
+type stubNodeResolver struct {
+	resolveFunc func(addr domain.Address) (domain.NodeDescriptor, error)
+}
+
+func (s *stubNodeResolver) Resolve(addr domain.Address) (domain.NodeDescriptor, error) {
+	if s.resolveFunc != nil {
+		return s.resolveFunc(addr)
+	}
+	return domain.NodeDescriptor{}, domain.ErrNodeNotFound
+}
+
+func TestAIService_DescribeImage_resolvesViaNodeResolver(t *testing.T) {
+	root := t.TempDir()
+	fs, err := filestore.NewFileStore(root, "testhost")
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	state, err := services.NewStateService(fs, "", nil)
+	if err != nil {
+		t.Fatalf("NewStateService: %v", err)
+	}
+	prompts, err := NewPromptService(fs)
+	if err != nil {
+		t.Fatalf("NewPromptService: %v", err)
+	}
+	ds, err := services.NewDocumentService(fs)
+	if err != nil {
+		t.Fatalf("NewDocumentService: %v", err)
+	}
+
+	doc, err := ds.New()
+	if err != nil {
+		t.Fatalf("doc: %v", err)
+	}
+	if doc, err = ds.Save(doc); err != nil {
+		t.Fatalf("save doc: %v", err)
+	}
+
+	docDir := filepath.Join(root, doc.Storable().ExternalRef())
+	assetName := "resolver-test.png"
+	if err := os.WriteFile(filepath.Join(docDir, assetName), []byte("image-data"), 0o644); err != nil {
+		t.Fatalf("write asset: %v", err)
+	}
+
+	settings := domain.DefaultSettings()
+	settings.CLI = "claude"
+	settings.CLIPath = filepath.Join(t.TempDir(), "stub")
+	_ = os.WriteFile(settings.CLIPath, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+	_ = state.SaveSettings(settings)
+
+	cap := &captureRunner{ret: `{"alt":"Resolved Alt","summary":"Via NodeResolver"}`}
+	svc := &AIService{
+		state:     state,
+		prompts:   prompts,
+		storePath: root,
+		documents: ds,
+		runner:    cap,
+	}
+
+	calledResolver := false
+	resolver := &stubNodeResolver{
+		resolveFunc: func(addr domain.Address) (domain.NodeDescriptor, error) {
+			calledResolver = true
+			return domain.NodeDescriptor{
+				Kind: "asset",
+				Path: filepath.Join(doc.Storable().ExternalRef(), assetName),
+			}, nil
+		},
+	}
+	svc.SetNodes(resolver)
+
+	desc, err := svc.DescribeImage(doc.UUID(), "/"+assetName, "blk-1")
+	if err != nil {
+		t.Fatalf("DescribeImage: %v", err)
+	}
+	if !calledResolver {
+		t.Error("expected NodeResolver to be called during DescribeImage")
+	}
+	if desc.Alt != "Resolved Alt" {
+		t.Errorf("got alt %q, want %q", desc.Alt, "Resolved Alt")
+	}
+	if cap.cwd != docDir {
+		t.Errorf("got cwd %q, want %q", cap.cwd, docDir)
+	}
+}
+

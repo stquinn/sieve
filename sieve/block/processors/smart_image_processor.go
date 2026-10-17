@@ -199,50 +199,13 @@ func (p *SmartImageProcessor) acquire(e block.ContentEntry, targetUUID, blockID 
 	// Image URL (paste or extract from HTML)
 	s := strings.TrimSpace(e.Content)
 	if isImageURL(s) {
-		// Already an absolute sieve address: fold to relative if local, keep absolute if foreign.
-		if strings.HasPrefix(s, "sieve://") {
-			if addr, err := domain.ParseAddress(s); err == nil {
-				isSelf := (addr.Container == targetUUID) || (ident.Valid(addr.Container) && ident.Valid(targetUUID) && ident.Canonical(addr.Container) == ident.Canonical(targetUUID))
-				if isSelf && addr.Leaf != "" {
-					return nil, "/" + addr.Leaf, nil
-				}
+		// Sieve asset reference: relative /{key} if belonging to this document,
+		// or absolute sieve://{container}/{key} if foreign. Ingest nothing.
+		if addr, err := domain.ResolveAssetReference(s, domain.NewContainerAddress(targetUUID)); err == nil {
+			if ident.Canonical(addr.Container) == ident.Canonical(targetUUID) {
+				return nil, "/" + addr.Leaf, nil
 			}
-			return nil, s, nil
-		}
-		// Already a relative reference (/{key})
-		if strings.HasPrefix(s, "/") && !store.ContainsAssetURL(s) {
-			leaf := strings.TrimPrefix(s, "/")
-			if !strings.Contains(leaf, "/") && leaf != "" {
-				return nil, s, nil
-			}
-		}
-		// Stored route: reference the key as relative /{key} if belonging to this
-		// document, or absolute sieve://{container}/{key} if foreign. Ingest nothing.
-		// Recognises both the current route and the pre-#19 one, since
-		// unmigrated persisted content can still carry the old form.
-		if store.ContainsAssetURL(s) {
-			var routeUUID, filename string
-			for _, prefix := range [...]string{store.AssetURLPrefix, store.LegacyAssetURLPrefix} {
-				if idx := strings.Index(s, prefix); idx != -1 {
-					rest := s[idx+len(prefix):]
-					u, f, hasSlash := strings.Cut(rest, "/")
-					if hasSlash {
-						routeUUID = u
-						filename = f
-						if q := strings.Index(filename, "?"); q != -1 {
-							filename = filename[:q]
-						}
-						break
-					}
-				}
-			}
-			if filename != "" {
-				isSelf := (routeUUID == targetUUID) || (ident.Valid(routeUUID) && ident.Valid(targetUUID) && ident.Canonical(routeUUID) == ident.Canonical(targetUUID))
-				if !isSelf && routeUUID != "" {
-					return nil, domain.NewLeafAddress(routeUUID, filename).String(), nil
-				}
-				return nil, "/" + filename, nil
-			}
+			return nil, addr.String(), nil
 		}
 		raw, err := p.downloadImage(s, blockID)
 		if err != nil {
