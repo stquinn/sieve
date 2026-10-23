@@ -179,7 +179,7 @@ describe('insert entries read the host catalog, so the menu and the `{` picker a
     // The surface's own PM-native presets require only `markdown`, so a draft
     // still gets them: a question may well contain a table.
     expect(labels.filter((l) => l.startsWith('Insert ')))
-      .toEqual(['Insert Table', 'Insert Quote', 'Insert Divider', 'Insert Fence'])
+      .toEqual(['Insert Table', 'Insert Quote', 'Insert Divider', 'Insert Fence', 'Insert Slide marker'])
   })
 
   it('picking one runs the entry against the lens that published the catalog', () => {
@@ -195,7 +195,7 @@ describe('insert entries read the host catalog, so the menu and the `{` picker a
   it('a mount with NO catalog still offers its surface presets', () => {
     const labels = menuLabels(paneFor(lensWith(NOTE_CAPS, { catalog: null })))
     expect(labels.filter((l) => l.startsWith('Insert ')))
-      .toEqual(['Insert Table', 'Insert Quote', 'Insert Divider', 'Insert Fence'])
+      .toEqual(['Insert Table', 'Insert Quote', 'Insert Divider', 'Insert Fence', 'Insert Slide marker'])
     expect(labels).toContain('Paste')
   })
 })
