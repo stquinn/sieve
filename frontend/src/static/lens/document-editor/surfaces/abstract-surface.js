@@ -147,6 +147,14 @@ export class AbstractSurface {
    *  it. @param {string|null} verb */
   setCommandVerb(verb) {}
 
+  /** Draws only the slide holding the caret, or everything again. A surface
+   *  with no slides to draw ignores it. @param {boolean} presenting */
+  setPresenting(presenting) {}
+
+  /** Whether what this surface holds has a slide marker, which is what makes
+   *  presenting it mean anything. @returns {boolean} */
+  hasSlideMarkers() { return false }
+
   /** Draws one FEATURE's COMPLETE set of text marks for one block, replacing what
    *  was drawn for that pair; an empty set clears it. A surface with no way to
    *  draw a mark ignores them — which is what "a mark is a reading affordance"
