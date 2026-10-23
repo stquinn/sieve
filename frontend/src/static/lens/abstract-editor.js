@@ -111,6 +111,9 @@ export class AbstractEditor extends Lens {
   /** @type {boolean} AI-block visibility for THIS editor (mirrored as a CSS class on the root) */
   #showAiBlocks = true
 
+  /** @type {boolean} whether THIS editor is presenting (mirrored as a CSS class on the root) */
+  #presenting = false
+
   /** @type {boolean} set while a whole-container LOAD is mid-flight. A save
    *  would race the re-render, and a cue names blocks against a model halfway
    *  through being reset; the repaint at the end answers both. */
@@ -434,7 +437,9 @@ export class AbstractEditor extends Lens {
     if (!(next instanceof AbstractSurface)) throw new ContractViolation('AbstractEditor: _createSurface must return an AbstractSurface')
     // A mount root can arrive pre-classed by a PREVIOUS editor's toggle.
     rootEl.classList.toggle('hide-ai-blocks', !this.#showAiBlocks)
+    rootEl.classList.toggle('presenting', this.#presenting)
     next.mount(rootEl, content)
+    next.setPresenting(this.#presenting)
     this.#surface = next
     // Mount LAST: subscribing cues immediately with the whole container, so the
     // surface mounts empty and the bootstrap cue paints it. Painting the WHOLE
@@ -804,6 +809,22 @@ export class AbstractEditor extends Lens {
     this.#showAiBlocks = !this.#showAiBlocks
     if (this.host) this.host.classList.toggle('hide-ai-blocks', !this.#showAiBlocks)
     return this.#showAiBlocks
+  }
+
+  /** Toggles Presentation Mode for THIS editor: only the slide holding the caret
+   *  is drawn, mirrored as the `presenting` class on the editor-owned root.
+   *  Presenting is a WYSIWYG view, so turning it on from markdown flips to
+   *  WYSIWYG first; a flip that fails leaves presenting off.
+   *  @returns {Promise<boolean>} whether the editor is now presenting */
+  async togglePresentation() {
+    if (!this.#presenting && this.mode === EditorMode.MARKDOWN) {
+      await this.setMode(EditorMode.WYSIWYG)
+      if (this.mode !== EditorMode.WYSIWYG) return false
+    }
+    this.#presenting = !this.#presenting
+    if (this.host) this.host.classList.toggle('presenting', this.#presenting)
+    if (this.#surface) this.#surface.setPresenting(this.#presenting)
+    return this.#presenting
   }
 
   /**

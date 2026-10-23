@@ -587,6 +587,12 @@ export class WysiwygSurface extends AbstractSurface {
     if (ed && ed.view && this.#commandVerb) this.#commandVerb.apply(ed.view, verb)
   }
 
+  /** @override @param {boolean} presenting */
+  setPresenting(presenting) {
+    const ed = /** @type {any} */ (this.editorPane)
+    if (ed && ed.view) SlideFocus.setPresenting(ed.view, presenting)
+  }
+
   /**
    * @override — draws one block's marks for the one feature this surface has a
    * decoration set for, replacing what was drawn for that pair; any other

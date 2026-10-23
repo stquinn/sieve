@@ -156,6 +156,7 @@ class FakeSurface extends AbstractSurface {
   // markdown → replaceBody with the host's body). Recorders for those tests.
   paintContainer(provider) { this.painted = provider; this.log.push('paint') }
   replaceBody(body) { this.replacedBody = body; this.bodyValue = body }
+  setPresenting(presenting) { this.presenting = presenting }
   // P3.A: raw selection descriptor the editor pulls on a selection/transaction/
   // focus event. `feedDescriptor` lets a test script what the surface reports.
   feedSelection() { this.feedCount = (this.feedCount || 0) + 1; return this.feedDescriptor || null }
@@ -1982,6 +1983,41 @@ describe('AbstractEditor.toggleAiBlocks (P2.C)', () => {
     expect(root.classList.contains('hide-ai-blocks')).toBe(true)
     ed.presentSurface('markdown', root, 'x') // remount (flip-path parity)
     expect(root.classList.contains('hide-ai-blocks')).toBe(true)
+  })
+})
+
+describe('AbstractEditor.togglePresentation (#178)', () => {
+  function rigWithRoot(mode) {
+    const ed = new FakeSurfaceEditor('u', { provider: fakeProvider() })
+    const root = document.createElement('div')
+    ed.presentSurface(mode, root, mode === 'markdown' ? 'x' : null)
+    return { ed, root }
+  }
+
+  it('turns presenting on and off, mirrored on the root and told to the surface', async () => {
+    const { ed, root } = rigWithRoot('wysiwyg')
+    expect(await ed.togglePresentation()).toBe(true)
+    expect(root.classList.contains('presenting')).toBe(true)
+    expect(ed.surface.presenting).toBe(true)
+    expect(await ed.togglePresentation()).toBe(false)
+    expect(root.classList.contains('presenting')).toBe(false)
+    expect(ed.surface.presenting).toBe(false)
+  })
+
+  it('flips markdown to WYSIWYG before presenting', async () => {
+    const { ed, root } = rigWithRoot('markdown')
+    expect(await ed.togglePresentation()).toBe(true)
+    expect(ed.mode).toBe('wysiwyg')
+    expect(ed.surface.presenting).toBe(true)
+    expect(root.classList.contains('presenting')).toBe(true)
+  })
+
+  it('a remounted surface is told the editor is still presenting', async () => {
+    const { ed, root } = rigWithRoot('wysiwyg')
+    await ed.togglePresentation()
+    ed.presentSurface('wysiwyg', root, null)
+    expect(ed.surface.presenting).toBe(true)
+    expect(root.classList.contains('presenting')).toBe(true)
   })
 })
 

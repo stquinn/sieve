@@ -206,6 +206,7 @@ func buildMenu(app *App) *menu.Menu {
 	view.AddText("Toggle Editor Mode", keys.Combo("m", keys.CmdOrCtrlKey, keys.OptionOrAltKey), js("window.sieveWorkspace?.activeTab?.editor?.toggleMode()"))
 	view.AddSeparator()
 	view.AddText("Toggle AI Blocks", keys.Combo("j", keys.CmdOrCtrlKey, keys.OptionOrAltKey), js("window.sieveWorkspace?.activeTab?.editor?.toggleAiBlocks()"))
+	view.AddText("Toggle Presentation Mode", nil, js("window.sieveWorkspace?.activeTab?.editor?.togglePresentation()"))
 	view.AddText("Quick Switcher", keys.CmdOrCtrl("p"), js("htmx.ajax('GET','/ui/views/search/dialog',{target:'#quickswitcher-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('quickswitcher-dialog').showModal()})"))
 	view.AddSeparator()
 	// The letter is b, for bar: Ctrl+Alt+T is the Linux terminal grab.
