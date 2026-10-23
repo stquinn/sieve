@@ -46,7 +46,7 @@ import { CellSelectionGuard } from './cell-selection-guard.js'
 import { TableMarkdown } from './table-markdown.js'
 import { SlideMarker } from './slide-marker.js'
 import { SlideFocus } from './slide-focus.js'
-import { storeFileSrc, storeFileRef } from '../../../renderers/asset-urls.js'
+import { BlockImage } from './block-image.js'
 
 const FORMATTING_GROUPS = Object.freeze([
   Object.freeze([
@@ -315,22 +315,7 @@ export class WysiwygSurface extends AbstractSurface {
           effectiveRange: function (v) { return getBlockSelectionRange(v) },
         }),
 
-    // An ordinary markdown image may name a file by its path within the store.
-    // The browser would resolve that against the app shell, so the src is pointed
-    // at the store's route on the way OUT and read back on the way IN. Both halves
-    // are attribute-level on purpose: the node's attrs — what tiptap-markdown
-    // serialises — keep the path the document was written with.
-        T.Image.extend({
-          addAttributes: function () {
-            var parent = this.parent ? this.parent() : {}
-            return Object.assign({}, parent, {
-              src: Object.assign({}, parent.src, {
-                parseHTML: function (el) { return storeFileRef(el.getAttribute('src')) },
-                renderHTML: function (attrs) { return attrs.src ? { src: storeFileSrc(attrs.src) } : {} },
-              }),
-            })
-          },
-        }).configure({ inline: false, allowBase64: true, HTMLAttributes: { class: 'editor-image' } }),
+        BlockImage.node(),
         HighlightMark,
         SelectionHighlight,
         // After StarterKit: the heading node type must exist for the autoformat
