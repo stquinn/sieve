@@ -86,6 +86,16 @@ describe('SlideMarker markdown', () => {
     editor.commands.setContent('Before\n\n<!-- slides are fun -->\n\nAfter')
     expect(names()).not.toContain('slideMarker')
   })
+
+  it.each([
+    ['a canonical marker', DECK, true],
+    ['a lenient spelling', 'Before\n\n  <!--slide-->\n', true],
+    ['no marker', '# Title\n\nJust prose', false],
+    ['another comment', '<!-- slides are fun -->', false],
+    ['a marker inside a line', 'text <!-- SLIDE MARKER --> text', false],
+  ])('containsMarker finds %s in raw markdown: %s', (_label, markdown, found) => {
+    expect(SlideMarker.containsMarker(markdown)).toBe(found)
+  })
 })
 
 describe('SlideFocus', () => {
@@ -100,8 +110,14 @@ describe('SlideFocus', () => {
 
   it('a document with no markers is one slide', () => {
     editor.commands.setContent('')
+    expect(SlideFocus.hasMarkers(editor.state.doc)).toBe(false)
     expect(SlideFocus.slideAt(editor.state.doc, 1)).toEqual({ start: 0, end: editor.state.doc.content.size })
     expect(SlideFocus.hiddenRanges(editor.state.doc, 1)).toEqual([])
+  })
+
+  it('hasMarkers is true once the document holds a marker', () => {
+    editor.commands.setContent(DECK)
+    expect(SlideFocus.hasMarkers(editor.state.doc)).toBe(true)
   })
 
   it('draws nothing hidden until presenting, and every off-slide node once it is', () => {

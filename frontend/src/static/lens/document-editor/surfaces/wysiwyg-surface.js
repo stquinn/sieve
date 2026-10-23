@@ -593,6 +593,12 @@ export class WysiwygSurface extends AbstractSurface {
     if (ed && ed.view) SlideFocus.setPresenting(ed.view, presenting)
   }
 
+  /** @override @returns {boolean} */
+  hasSlideMarkers() {
+    const ed = /** @type {any} */ (this.editorPane)
+    return !!(ed && ed.state && SlideFocus.hasMarkers(ed.state.doc))
+  }
+
   /**
    * @override — draws one block's marks for the one feature this surface has a
    * decoration set for, replacing what was drawn for that pair; any other

@@ -814,9 +814,11 @@ export class AbstractEditor extends Lens {
   /** Toggles Presentation Mode for THIS editor: only the slide holding the caret
    *  is drawn, mirrored as the `presenting` class on the editor-owned root.
    *  Presenting is a WYSIWYG view, so turning it on from markdown flips to
-   *  WYSIWYG first; a flip that fails leaves presenting off.
+   *  WYSIWYG first; a flip that fails leaves presenting off. A document with no
+   *  slide markers has nothing to present: turning on does nothing.
    *  @returns {Promise<boolean>} whether the editor is now presenting */
   async togglePresentation() {
+    if (!this.#presenting && !(this.#surface && this.#surface.hasSlideMarkers())) return false
     if (!this.#presenting && this.mode === EditorMode.MARKDOWN) {
       await this.setMode(EditorMode.WYSIWYG)
       if (this.mode !== EditorMode.WYSIWYG) return false

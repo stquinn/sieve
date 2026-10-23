@@ -27,6 +27,15 @@ export class SlideFocus {
     return SlideFocus.#key
   }
 
+  /** Whether `doc` holds a slide marker at the top level.
+   *  @param {any} doc a ProseMirror document
+   *  @returns {boolean} */
+  static hasMarkers(doc) {
+    let found = false
+    doc.forEach((/** @type {any} */ node) => { if (node.type.name === SlideMarker.NAME) found = true })
+    return found
+  }
+
   /** The `[start, end]` document range of the slide holding `head`: from just
    *  after the last marker before it (or 0) to the first marker at or after it
    *  (or the end of the document).

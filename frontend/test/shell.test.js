@@ -142,6 +142,7 @@ class FakeSurface extends AbstractSurface {
     this.bodyValue = 'the body'
     this.editorPaneValue = mode === 'wysiwyg' ? { fake: 'tiptap' } : null
     this.flushCount = 0
+    this.slideMarkers = true
   }
   get mode() { return this._mode }
   get editorPane() { return this.mounted ? this.editorPaneValue : null }
@@ -157,6 +158,7 @@ class FakeSurface extends AbstractSurface {
   paintContainer(provider) { this.painted = provider; this.log.push('paint') }
   replaceBody(body) { this.replacedBody = body; this.bodyValue = body }
   setPresenting(presenting) { this.presenting = presenting }
+  hasSlideMarkers() { return this.slideMarkers }
   // P3.A: raw selection descriptor the editor pulls on a selection/transaction/
   // focus event. `feedDescriptor` lets a test script what the surface reports.
   feedSelection() { this.feedCount = (this.feedCount || 0) + 1; return this.feedDescriptor || null }
@@ -2010,6 +2012,23 @@ describe('AbstractEditor.togglePresentation (#178)', () => {
     expect(ed.mode).toBe('wysiwyg')
     expect(ed.surface.presenting).toBe(true)
     expect(root.classList.contains('presenting')).toBe(true)
+  })
+
+  it.each(['wysiwyg', 'markdown'])('does nothing in a %s document with no slide markers', async (mode) => {
+    const { ed, root } = rigWithRoot(mode)
+    ed.surface.slideMarkers = false
+    expect(await ed.togglePresentation()).toBe(false)
+    expect(ed.mode).toBe(mode)
+    expect(ed.surface.presenting).toBeFalsy()
+    expect(root.classList.contains('presenting')).toBe(false)
+  })
+
+  it('turning off still works once every marker is gone', async () => {
+    const { ed, root } = rigWithRoot('wysiwyg')
+    await ed.togglePresentation()
+    ed.surface.slideMarkers = false
+    expect(await ed.togglePresentation()).toBe(false)
+    expect(root.classList.contains('presenting')).toBe(false)
   })
 
   it('a remounted surface is told the editor is still presenting', async () => {

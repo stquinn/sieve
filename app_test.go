@@ -73,7 +73,7 @@ var menuTaxonomy = map[string]menuChord{
 	"Mod+/":            {item: "Help › Shortcuts", tier: inherited, why: "shortcut sheet, universal"},
 	"Mod+Alt+S":        {item: "View › Toggle Sidebar", tier: appearance},
 	"Mod+Alt+I":        {item: "View › Toggle Meta Panel", tier: appearance},
-	"Mod+Alt+P":        {item: "View › Toggle Prompts", tier: appearance},
+	"Mod+Alt+P":        {item: "View › Toggle Presentation Mode", tier: appearance},
 	"Mod+Alt+M":        {item: "View › Toggle Editor Mode", tier: appearance},
 	"Mod+Alt+J":        {item: "View › Toggle AI Blocks", tier: appearance},
 	"Mod+Alt+B":        {item: "View › Show Toolbar", tier: appearance},

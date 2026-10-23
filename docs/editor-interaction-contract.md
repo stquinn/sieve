@@ -774,7 +774,7 @@ Consequences:
 | Mod+Q | File › Quit (non-Mac) | `wailsruntime.Quit` |
 | Mod+Alt+S | View › Toggle Sidebar | `htmx.ajax` POST `/api/session/sidebar/toggle` |
 | Mod+Alt+I | View › Toggle Meta Panel | `htmx.ajax` POST `/api/session/meta/toggle` |
-| Mod+Alt+P | View › Toggle Prompts | `htmx.ajax` POST `/api/session/prompts/toggle` |
+| (menu-click only) | View › Toggle Prompts | `htmx.ajax` POST `/api/session/prompts/toggle` |
 | (menu-click only) | View › Toggle Line Numbers | `htmx.ajax` POST `/api/session/linenumbers/toggle` |
 | Mod+Alt+M | View › Toggle Editor Mode | `window.sieveWorkspace?.activeTab?.editor?.toggleMode()` |
 | Mod+F | Edit › Find › Find and Replace… (mac: Find › …) | `window.sieveWorkspace?.toggleFind()` |
@@ -784,7 +784,7 @@ Consequences:
 | Mod+Shift+G (mac) | Find › Find Previous | `window.sieveWorkspace?.findPrev()` |
 | Mod+Shift+F | Edit › Find › Find in Notes… (mac: Find › …) | `window.sieveSidebarSearch()` |
 | Mod+Alt+J | View › Toggle AI Blocks | `window.sieveWorkspace?.activeTab?.editor?.toggleAiBlocks()` |
-| (menu-click only) | View › Toggle Presentation Mode | `window.sieveWorkspace?.activeTab?.editor?.togglePresentation()` |
+| Mod+Alt+P | View › Toggle Presentation Mode | `window.sieveWorkspace?.activeTab?.editor?.togglePresentation()` |
 | Mod+P | View › Quick Switcher | open quick-switcher dialog |
 | Mod+Alt+B | View › Show Toolbar | `htmx.ajax` POST `/api/session/toolbar/toggle` |
 | Mod+= | View › Increase Editor Font | `htmx.ajax` POST `/api/settings/editor-scale/step?dir=up` |
@@ -1326,13 +1326,15 @@ prose span; Go sees an HTML comment and nothing more.
 | Backspace / Delete with the marker selected, or across it | removes it, as for a horizontal rule — no key handling of its own |
 | Markdown mode | the comment is typed by hand; it becomes a marker on the flip back |
 
-**Presentation Mode** (View › Toggle Presentation Mode, no chord) is a view state of
+**Presentation Mode** (View › Toggle Presentation Mode, Mod+Alt+P) is a view state of
 the WYSIWYG surface, not an editor mode. While presenting, only the slide holding
 the caret is drawn, in larger type, and the document stays editable. A slide runs
 from just after one marker to the next; whatever precedes the first marker is the
 first slide. The slide is derived from `selection.head` on every state and stored
 nowhere, so any caret move that crosses a marker — arrows, click, find, undo —
-changes the slide. Turning it on from markdown mode flips to WYSIWYG first.
+changes the slide. Turning it on from markdown mode flips to WYSIWYG first. In a
+document with no slide markers the toggle does nothing: it neither presents nor
+flips the mode. Turning it off always works.
 
 **Hidden-marker rule.** While presenting, markers are hidden and must never hold
 the selection: a NodeSelection on a marker is moved to the nearest text position

@@ -24,6 +24,16 @@ export class SlideMarker {
   /** An `html_block` token that is a slide marker. */
   static #COMMENT = /^<!--\s*slide(\s+marker)?\s*-->\s*$/i
 
+  /** A line of raw markdown that is a slide marker. */
+  static #LINE = /^\s*<!--\s*slide(\s+marker)?\s*-->\s*$/im
+
+  /** Whether raw markdown holds a slide marker on a line of its own.
+   *  @param {string} markdown
+   *  @returns {boolean} */
+  static containsMarker(markdown) {
+    return SlideMarker.#LINE.test(markdown)
+  }
+
   /** The shipping `slideMarker` node.
    *  @returns {any} */
   static node() {
