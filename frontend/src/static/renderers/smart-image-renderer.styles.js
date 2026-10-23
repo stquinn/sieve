@@ -82,7 +82,13 @@ export const smartImageStyles = /* css */ `
   /* This kind's own copy of the "block target node" ready-state (shared with
      prose's .block-node and the native-codeblock's .code-block-wrapper in
      editor.css — see this file's header for the surgical split) */
+  /* BLOCK, full width: an image block owns its own line, and side-by-side
+     layout is the column container's job. The root must NOT be shrink-to-fit
+     (fit-content/max-content) — the image carries max-width:100%, and a
+     percentage against an indefinite container resolves circularly. A class
+     rule, never an inline style, so Presentation Mode's .slide-hidden wins. */
   .image-block {
+    display: block;
     border-radius: 8px;
     transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
     border-left: 3px solid transparent;

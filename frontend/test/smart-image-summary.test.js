@@ -65,9 +65,11 @@ describe('SmartImageRenderer description strap', () => {
 
   // Images own their own line; the chrome gutter hangs left of the block root,
   // so two inline-block images sharing a line put one's line number over the other.
+  // The block display is a class rule: an inline one would beat .slide-hidden.
   it('renders the root as a block with the image in a shrink-to-fit frame', () => {
     const { dom } = render({})
-    expect(dom.style.display).toBe('block')
+    expect(dom.style.display).toBe('')
+    expect(SmartImageRenderer.styles).toMatch(/\.image-block \{\s*display: block;/)
     const frame = dom.querySelector('.smart-image-frame')
     expect(frame).not.toBeNull()
     expect(frame.querySelector('img')).not.toBeNull()
