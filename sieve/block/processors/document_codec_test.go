@@ -331,3 +331,62 @@ func TestGlobalRegistry_GetAndOrdered(t *testing.T) {
 		t.Error("Ordered must return the registered processors")
 	}
 }
+
+// TestDocumentCodec_SlideMarkerProseSpan pins that a slide marker is prose: a
+// `<!-- SLIDE MARKER -->` span survives the trip byte for byte, keeps its own
+// block, and is never read as a `<!--s:` handle — written by the editor as its
+// own span, or hand-typed between paragraphs.
+func TestDocumentCodec_SlideMarkerProseSpan(t *testing.T) {
+	c := block.NewDocumentCodec(newFakeRegistry())
+	const marker = "<!-- SLIDE MARKER -->"
+	original := []block.SieveBlock{
+		(ProseProcessor{}).newProseBlock("pr-1", "# Title"),
+		(ProseProcessor{}).newProseBlock("pr-2", marker),
+		(ProseProcessor{}).newProseBlock("pr-3", "First slide."),
+	}
+	md, err := c.Serialize(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name  string
+		in    string
+		exact bool // its own span, and written back byte for byte
+	}{
+		{"editor-written span", md, true},
+		{"hand-typed", "# Title\n\n" + marker + "\n\nFirst slide.", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := c.Deserialize(tc.in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var combined string
+			for _, b := range got {
+				if b.Kind != block.KindProse {
+					t.Errorf("block %q kind = %q, want prose", b.ID, b.Kind)
+				}
+				combined += b.Content()
+			}
+			if !strings.Contains(combined, marker) {
+				t.Errorf("slide marker lost:\n%s", combined)
+			}
+			out, err := c.Serialize(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.exact {
+				if len(got) != len(original) || got[1].ID != "pr-2" || got[1].Content() != marker {
+					t.Fatalf("marker span not kept as its own block: %+v", got)
+				}
+				if out != tc.in {
+					t.Errorf("not byte for byte:\n--- in ---\n%s\n--- out ---\n%s", tc.in, out)
+				}
+			}
+			if !strings.Contains(out, marker) {
+				t.Errorf("serialised output lost the marker:\n%s", out)
+			}
+		})
+	}
+}
