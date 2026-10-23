@@ -784,6 +784,7 @@ Consequences:
 | Mod+Shift+G (mac) | Find › Find Previous | `window.sieveWorkspace?.findPrev()` |
 | Mod+Shift+F | Edit › Find › Find in Notes… (mac: Find › …) | `window.sieveSidebarSearch()` |
 | Mod+Alt+J | View › Toggle AI Blocks | `window.sieveWorkspace?.activeTab?.editor?.toggleAiBlocks()` |
+| (menu-click only) | View › Toggle Presentation Mode | `window.sieveWorkspace?.activeTab?.editor?.togglePresentation()` |
 | Mod+P | View › Quick Switcher | open quick-switcher dialog |
 | Mod+Alt+B | View › Show Toolbar | `htmx.ajax` POST `/api/session/toolbar/toggle` |
 | Mod+= | View › Increase Editor Font | `htmx.ajax` POST `/api/settings/editor-scale/step?dir=up` |
@@ -1242,6 +1243,7 @@ The picker offers three kinds of entry, each declared where its capability lives
 | Web Clip | the workspace, which owns the URL dialog | the token is deleted, then the dialog opens |
 | Attach File | the workspace, fronting the toolbar's own attach flow | the token is deleted, then the anchor is captured and the OS file picker opens — the paste pipeline decides the block, exactly as it does for the toolbar button |
 | Table, Quote, Divider | the WYSIWYG surface, as class-level presets — the toolbar's native insert group, offered through a second door | the token is deleted, then the surface runs the toolbar's own command (`insertTable`, `toggleBlockquote`, `setHorizontalRule`) |
+| Slide marker | the WYSIWYG surface, a class-level preset (`{slide`) | the token is deleted, then the surface inserts a `slideMarker` node at the caret |
 | Fence | the WYSIWYG surface, as a class-level preset — a NATIVE code block, distinct from the Sieve Code block above it | the token is deleted, then the surface runs `setCodeBlock`, tagged with the token's argument as `language` when one was typed (`{fence=go`), untagged otherwise |
 
 The BLOCK KINDS offered are the ones a keystroke can make out of nothing. Every
@@ -1309,6 +1311,33 @@ shows the summary, and for a text asset a preview. The open gesture is an INTENT
 the renderer emits, never a call to a mechanism — the desktop build answers it by
 revealing in the OS file manager, and a hosted build answers it differently
 without reopening the contract.
+
+## Slide markers and Presentation Mode (decided 2026-10-23, #178)
+
+A **slide marker** is a block-level prose atom, `slideMarker`, written to markdown
+as `<!-- SLIDE MARKER -->` (read leniently: `<!-- slide -->`, any case and
+spacing). It is a native prose node, so it owns a block id and saves as its own
+prose span; Go sees an HTML comment and nothing more.
+
+| Gesture | Result |
+|---|---|
+| `{slide` + accept | inserts a marker at the caret |
+| Click / vertical arrow onto a marker (editing) | NodeSelects it, as for a horizontal rule |
+| Backspace / Delete with the marker selected, or across it | removes it, as for a horizontal rule — no key handling of its own |
+| Markdown mode | the comment is typed by hand; it becomes a marker on the flip back |
+
+**Presentation Mode** (View › Toggle Presentation Mode, no chord) is a view state of
+the WYSIWYG surface, not an editor mode. While presenting, only the slide holding
+the caret is drawn, in larger type, and the document stays editable. A slide runs
+from just after one marker to the next; whatever precedes the first marker is the
+first slide. The slide is derived from `selection.head` on every state and stored
+nowhere, so any caret move that crosses a marker — arrows, click, find, undo —
+changes the slide. Turning it on from markdown mode flips to WYSIWYG first.
+
+**Hidden-marker rule.** While presenting, markers are hidden and must never hold
+the selection: a NodeSelection on a marker is moved to the nearest text position
+past it in the direction of travel. One ArrowDown at the end of a slide therefore
+lands on the first line of the next.
 
 ## Deferred (recorded, not shipped)
 
