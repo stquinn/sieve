@@ -177,6 +177,7 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
       path.join('lens', 'document-editor', 'surfaces', 'abstract-surface.js'),
       path.join('lens', 'document-editor', 'surfaces', 'ai-target-decoration.js'),
       path.join('lens', 'document-editor', 'surfaces', 'ai-target.js'),
+      path.join('lens', 'document-editor', 'surfaces', 'block-image.js'),
       path.join('lens', 'document-editor', 'surfaces', 'block-position.js'),
       path.join('lens', 'document-editor', 'surfaces', 'block-render.js'),
       path.join('lens', 'document-editor', 'surfaces', 'caret-trigger-port.js'),

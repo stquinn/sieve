@@ -15,11 +15,12 @@ import { TableRow } from '@tiptap/extension-table-row'
 import { TableHeader } from '@tiptap/extension-table-header'
 import { TableCell } from '@tiptap/extension-table-cell'
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
+import { Image } from '@tiptap/extension-image'
 import { common, createLowlight } from 'lowlight'
 
 Object.assign(/** @type {any} */ (globalThis).TipTap, {
   Extension, Node, Mark, Plugin, PluginKey, Selection, TextSelection, NodeSelection, Decoration, DecorationSet,
-  Table, TableRow, TableHeader, TableCell, CodeBlockLowlight, common, createLowlight,
+  Table, TableRow, TableHeader, TableCell, CodeBlockLowlight, Image, common, createLowlight,
 })
 
 export {}

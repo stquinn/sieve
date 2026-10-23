@@ -1,7 +1,10 @@
 // @ts-check
 // Presentation Mode's view: while presenting, only the slide holding the caret
-// is drawn. A slide is the run of top-level nodes between two slide markers;
-// whatever precedes the first marker is the first slide.
+// is drawn. A slide is the run of units between two slide markers; whatever
+// precedes the first marker is the first slide. A unit is a top-level node, or a
+// child of a `proseGroup` that holds a marker: a multi-node prose block splits
+// at its markers. A marker nested deeper (a list item, a blockquote, a table
+// cell) is not a boundary; it is hidden like every marker while presenting.
 //
 // The current slide is derived from `selection.head` on every state and stored
 // nowhere, so any caret move that crosses a marker — arrows, click, find, undo —
@@ -17,6 +20,9 @@ import { SlideMarker } from './slide-marker.js'
 /** The decoration attrs every node outside the current slide wears. */
 const HIDDEN = Object.freeze({ class: 'slide-hidden' })
 
+/** The multi-node prose container's node name (prose-group.js). */
+const PROSE_GROUP = 'proseGroup'
+
 export class SlideFocus {
   /** @type {any} the plugin key, built on first use so the vendor bag is live */
   static #key = null
@@ -27,13 +33,39 @@ export class SlideFocus {
     return SlideFocus.#key
   }
 
-  /** Whether `doc` holds a slide marker at the top level.
+  /** The children of `parent`, whose content starts at `offset`.
+   *  @param {any} parent @param {number} offset
+   *  @returns {Generator<{node: any, pos: number}>} */
+  static *#children(parent, offset) {
+    let pos = offset
+    for (let i = 0; i < parent.childCount; i++) {
+      const node = parent.child(i)
+      yield { node, pos }
+      pos += node.nodeSize
+    }
+  }
+
+  /** @param {any} node @returns {boolean} */
+  static #isMarker(node) { return node.type.name === SlideMarker.NAME }
+
+  /** The units slides are made of, in document order.
+   *  @param {any} doc
+   *  @returns {Generator<{node: any, pos: number}>} */
+  static *#units(doc) {
+    for (const unit of SlideFocus.#children(doc, 0)) {
+      const split = unit.node.type.name === PROSE_GROUP
+        && [...SlideFocus.#children(unit.node, 0)].some((c) => SlideFocus.#isMarker(c.node))
+      if (split) yield* SlideFocus.#children(unit.node, unit.pos + 1)
+      else yield unit
+    }
+  }
+
+  /** Whether `doc` holds a slide boundary.
    *  @param {any} doc a ProseMirror document
    *  @returns {boolean} */
   static hasMarkers(doc) {
-    let found = false
-    doc.forEach((/** @type {any} */ node) => { if (node.type.name === SlideMarker.NAME) found = true })
-    return found
+    for (const { node } of SlideFocus.#units(doc)) if (SlideFocus.#isMarker(node)) return true
+    return false
   }
 
   /** The `[start, end]` document range of the slide holding `head`: from just
@@ -45,16 +77,16 @@ export class SlideFocus {
   static slideAt(doc, head) {
     let start = 0
     let end = doc.content.size
-    doc.forEach((/** @type {any} */ node, /** @type {number} */ pos) => {
-      if (node.type.name !== SlideMarker.NAME) return
+    for (const { node, pos } of SlideFocus.#units(doc)) {
+      if (!SlideFocus.#isMarker(node)) continue
       if (pos + node.nodeSize <= head) start = pos + node.nodeSize
-      else if (pos >= head && end === doc.content.size) end = pos
-    })
+      else if (pos >= head) { end = pos; break }
+    }
     return { start, end }
   }
 
-  /** The positions of the top-level nodes hidden while presenting with the
-   *  caret at `head`: every marker, and every node outside its slide.
+  /** The positions of the nodes hidden while presenting with the caret at
+   *  `head`: every marker at any depth, and every unit outside its slide.
    *  @param {any} doc
    *  @param {number} head
    *  @returns {Array<{from: number, to: number}>} */
@@ -62,11 +94,15 @@ export class SlideFocus {
     const { start, end } = SlideFocus.slideAt(doc, head)
     /** @type {Array<{from: number, to: number}>} */
     const hidden = []
-    doc.forEach((/** @type {any} */ node, /** @type {number} */ pos) => {
+    for (const { node, pos } of SlideFocus.#units(doc)) {
       const to = pos + node.nodeSize
-      if (node.type.name === SlideMarker.NAME || pos < start || to > end) hidden.push({ from: pos, to })
+      if (!SlideFocus.#isMarker(node) && (pos < start || to > end)) hidden.push({ from: pos, to })
+    }
+    doc.descendants((/** @type {any} */ node, /** @type {number} */ pos) => {
+      if (SlideFocus.#isMarker(node)) hidden.push({ from: pos, to: pos + node.nodeSize })
+      return !node.isTextblock
     })
-    return hidden
+    return hidden.sort((a, b) => a.from - b.from)
   }
 
   /** Whether `state` is presenting.

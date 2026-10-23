@@ -71,11 +71,6 @@ export class SmartImageRenderer extends BlockRenderer {
     this.#badge = badge
     this.#summary = summary
 
-    // BLOCK, full width: an image block owns its own line, and side-by-side
-    // layout is the column container's job. The root must NOT be shrink-to-fit
-    // (fit-content/max-content) — the image carries max-width:100%, and a
-    // percentage against an indefinite container resolves circularly.
-    if (this.root) this.root.style.display = 'block'
     this.#setupResize(img, resizer)
     this.#renderState(/** @type {SmartImagePayload} */ (this.block.payload))
     return frag
