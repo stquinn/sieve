@@ -44,6 +44,8 @@ import { caretInRawTextBlock } from '../paste-context.js'
 import { CaretTriggerPort } from './caret-trigger-port.js'
 import { CellSelectionGuard } from './cell-selection-guard.js'
 import { TableMarkdown } from './table-markdown.js'
+import { SlideMarker } from './slide-marker.js'
+import { SlideFocus } from './slide-focus.js'
 import { storeFileSrc, storeFileRef } from '../../../renderers/asset-urls.js'
 
 const FORMATTING_GROUPS = Object.freeze([
@@ -99,7 +101,7 @@ export const LINK_OPTIONS = Object.freeze({
 const NATIVE_UNIT_LABEL = Object.freeze({
   blockquote: 'Quote', codeBlock: 'Code Block',
   bulletList: 'List', orderedList: 'List', taskList: 'Task List',
-  table: 'Table', image: 'Image', horizontalRule: 'Divider',
+  table: 'Table', image: 'Image', horizontalRule: 'Divider', slideMarker: 'Slide Marker',
 })
 
 /**
@@ -304,6 +306,8 @@ export class WysiwygSurface extends AbstractSurface {
         T.TableRow,
         T.TableHeader,
         T.TableCell,
+        SlideMarker.node(),
+        SlideFocus.extension(),
         // Priority 50, so it runs AFTER native keymaps like list indent and
         // table cell-nav. Per-renderer key handlers are forbidden.
         buildInteractionPolicyExtension(T, {
