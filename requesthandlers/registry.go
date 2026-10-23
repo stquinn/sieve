@@ -83,8 +83,12 @@ func (reg Registry) Mount(r chi.Router) {
 		&PromptsHandler{ServiceProvider: sp, Tmpl: tmpl},
 		&SessionHandler{
 			ServiceProvider: sp,
+			Tmpl:            tmpl,
 			EmitPromptsChanged: func() {
 				broadcast.Invalidate(protocol.TopicPrompts)
+			},
+			EmitSessionChanged: func() {
+				broadcast.Invalidate(protocol.TopicSession)
 			},
 		},
 		&NoteHandler{

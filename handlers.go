@@ -20,6 +20,7 @@ import (
 type apiHandler struct {
 	app    *App
 	tmpl   *template.Template
+	index  *template.Template
 	static http.Handler
 	routes *chi.Mux
 }
@@ -27,6 +28,16 @@ type apiHandler struct {
 func newAPIHandler(app *App, broadcast *requesthandlers.WorkspaceBroadcast, sp *sieve.ServiceProvider) (*apiHandler, error) {
 	tmpl, err := requesthandlers.NewTemplates(uiTemplates)
 	if err != nil {
+		return nil, err
+	}
+
+	// The shell is parsed beside the fragment templates, before any of them
+	// executes, so it can render session_layout.html inline.
+	index, err := tmpl.Clone()
+	if err != nil {
+		return nil, err
+	}
+	if index, err = index.New("index").Parse(uiIndexHTML); err != nil {
 		return nil, err
 	}
 
@@ -38,6 +49,7 @@ func newAPIHandler(app *App, broadcast *requesthandlers.WorkspaceBroadcast, sp *
 	h := &apiHandler{
 		app:    app,
 		tmpl:   tmpl,
+		index:  index,
 		static: http.FileServer(http.FS(staticFS)),
 	}
 	// The job tracker and its wiring into broadcast (constructor-injected, so it
@@ -122,11 +134,6 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	tierStr := "dumb"
-	if info.Tier == 2 { // TierSmart
-		tierStr = "smart"
-	}
-
 	commandsJSON := []byte("[]")
 	if h.app.ServiceProvider != nil && h.app.ServiceProvider.Commands != nil {
 		if b, err := json.Marshal(h.app.ServiceProvider.Commands.List()); err == nil {
@@ -135,17 +142,11 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := struct {
-		StoreRoot        string
-		ThemeName        string
-		Tier             string
+		StoreRoot string
+		ThemeName string
+		requesthandlers.SessionLayoutView
 		SidebarWidth     int
 		MetaWidth        int
-		ShowSidebar      bool
-		ShowMeta         bool
-		ShowPrompts      bool
-		ShowToolbar      bool
-		ShowAskPanel     bool
-		ShowLineNumbers  bool
 		PromptsHeight    int
 		AskPanelHeight   int
 		ActiveUUID       string
@@ -169,15 +170,9 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}{
 		StoreRoot:          info.Root,
 		ThemeName:          info.ThemeName,
-		Tier:               tierStr,
+		SessionLayoutView:  requesthandlers.NewSessionLayoutView(session, info.Tier),
 		SidebarWidth:       session.SidebarWidth,
 		MetaWidth:          session.MetaWidth,
-		ShowSidebar:        session.ShowSidebar,
-		ShowMeta:           session.ShowMeta,
-		ShowPrompts:        session.ShowPrompts,
-		ShowToolbar:        session.ShowToolbar,
-		ShowAskPanel:       session.ShowAskPanel,
-		ShowLineNumbers:    session.ShowLineNumbers,
 		PromptsHeight:      session.PromptsHeight,
 		AskPanelHeight:     session.AskPanelHeight,
 		ActiveUUID:         activeUUID,
@@ -195,14 +190,8 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		data.ThemeName = "tokyo-night"
 	}
 
-	tmpl, err := template.New("index").Parse(uiIndexHTML)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := tmpl.Execute(w, data); err != nil {
+	if err := h.index.ExecuteTemplate(w, "index", data); err != nil {
 		logger.Error("failed to execute index template", "err", err)
 	}
 }
