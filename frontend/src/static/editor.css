@@ -399,6 +399,33 @@ textarea::selection {
   --doc-size: calc(var(--theme-editorBaseSize, 16px) * var(--theme-editorScale, 1));
 }
 
+/* Slide markers: a subtle dashed rule with a muted label while editing. */
+.slide-marker {
+  position: relative;
+  margin: 1.25em 0;
+  border-top: 1px dashed var(--theme-muted);
+  opacity: 0.6;
+  cursor: default;
+}
+.slide-marker::after {
+  content: 'slide';
+  position: absolute;
+  right: 0;
+  top: -0.75em;
+  padding-left: 0.4em;
+  font-size: 11px;
+  color: var(--theme-muted);
+  background: var(--theme-bg, transparent);
+}
+.slide-marker.ProseMirror-selectednode { opacity: 1; border-top-color: var(--theme-accentPrimary); }
+
+/* Presentation Mode: only the caret's slide is drawn, in bigger type. */
+.editor-panel.presenting {
+  --doc-size: calc(var(--theme-editorBaseSize, 16px) * var(--theme-editorScale, 1) * 1.5);
+}
+.editor-panel.presenting .slide-hidden,
+.editor-panel.presenting .block-chrome-host { display: none; }
+
 /* Strategy A (prose nodes): widget is a DOM sibling BEFORE the block inside
    .ProseMirror (position:relative). top:auto uses the CSS static-position
    rule — the element positions itself at where it would be in normal flow,

@@ -8,18 +8,19 @@
 // top-level `Extension.create` runs against the real class. Additive, and never
 // reassigns the bag — tiptap-vendor.js captured that object.
 import { Extension, Node, Mark } from '@tiptap/core'
-import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { Plugin, PluginKey, Selection, TextSelection, NodeSelection } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { Table } from '@tiptap/extension-table'
 import { TableRow } from '@tiptap/extension-table-row'
 import { TableHeader } from '@tiptap/extension-table-header'
 import { TableCell } from '@tiptap/extension-table-cell'
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
+import { Image } from '@tiptap/extension-image'
 import { common, createLowlight } from 'lowlight'
 
 Object.assign(/** @type {any} */ (globalThis).TipTap, {
-  Extension, Node, Mark, Plugin, PluginKey, Decoration, DecorationSet,
-  Table, TableRow, TableHeader, TableCell, CodeBlockLowlight, common, createLowlight,
+  Extension, Node, Mark, Plugin, PluginKey, Selection, TextSelection, NodeSelection, Decoration, DecorationSet,
+  Table, TableRow, TableHeader, TableCell, CodeBlockLowlight, Image, common, createLowlight,
 })
 
 export {}

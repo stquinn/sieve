@@ -45,7 +45,9 @@ import { caretInRawTextBlock } from '../paste-context.js'
 import { CaretTriggerPort } from './caret-trigger-port.js'
 import { CellSelectionGuard } from './cell-selection-guard.js'
 import { TableMarkdown } from './table-markdown.js'
-import { storeFileSrc, storeFileRef } from '../../../renderers/asset-urls.js'
+import { SlideMarker } from './slide-marker.js'
+import { SlideFocus } from './slide-focus.js'
+import { BlockImage } from './block-image.js'
 
 const FORMATTING_GROUPS = Object.freeze([
   Object.freeze([
@@ -100,7 +102,7 @@ export const LINK_OPTIONS = Object.freeze({
 const NATIVE_UNIT_LABEL = Object.freeze({
   blockquote: 'Quote', codeBlock: 'Code Block',
   bulletList: 'List', orderedList: 'List', taskList: 'Task List',
-  table: 'Table', image: 'Image', horizontalRule: 'Divider',
+  table: 'Table', image: 'Image', horizontalRule: 'Divider', slideMarker: 'Slide Marker',
 })
 
 /**
@@ -305,6 +307,8 @@ export class WysiwygSurface extends AbstractSurface {
         T.TableRow,
         T.TableHeader,
         T.TableCell,
+        SlideMarker.node(),
+        SlideFocus.extension(),
         // Priority 50, so it runs AFTER native keymaps like list indent and
         // table cell-nav. Per-renderer key handlers are forbidden.
         buildInteractionPolicyExtension(T, {
@@ -312,22 +316,7 @@ export class WysiwygSurface extends AbstractSurface {
           effectiveRange: function (v) { return getBlockSelectionRange(v) },
         }),
 
-    // An ordinary markdown image may name a file by its path within the store.
-    // The browser would resolve that against the app shell, so the src is pointed
-    // at the store's route on the way OUT and read back on the way IN. Both halves
-    // are attribute-level on purpose: the node's attrs — what tiptap-markdown
-    // serialises — keep the path the document was written with.
-        T.Image.extend({
-          addAttributes: function () {
-            var parent = this.parent ? this.parent() : {}
-            return Object.assign({}, parent, {
-              src: Object.assign({}, parent.src, {
-                parseHTML: function (el) { return storeFileRef(el.getAttribute('src')) },
-                renderHTML: function (attrs) { return attrs.src ? { src: storeFileSrc(attrs.src) } : {} },
-              }),
-            })
-          },
-        }).configure({ inline: false, allowBase64: true, HTMLAttributes: { class: 'editor-image' } }),
+        BlockImage.node(),
         HighlightMark,
         SelectionHighlight,
         // After StarterKit: the heading node type must exist for the autoformat
@@ -584,6 +573,18 @@ export class WysiwygSurface extends AbstractSurface {
     if (ed && ed.view && this.#commandVerb) this.#commandVerb.apply(ed.view, verb)
   }
 
+  /** @override @param {boolean} presenting */
+  setPresenting(presenting) {
+    const ed = /** @type {any} */ (this.editorPane)
+    if (ed && ed.view) SlideFocus.setPresenting(ed.view, presenting)
+  }
+
+  /** @override @returns {boolean} */
+  hasSlideMarkers() {
+    const ed = /** @type {any} */ (this.editorPane)
+    return !!(ed && ed.state && SlideFocus.hasMarkers(ed.state.doc))
+  }
+
   /**
    * @override — draws one block's marks for the one feature this surface has a
    * decoration set for, replacing what was drawn for that pair; any other
@@ -692,6 +693,13 @@ export class WysiwygSurface extends AbstractSurface {
       const language = arg && arg.trim() ? arg.trim() : undefined
       pane.chain().focus().setCodeBlock(language ? { language } : undefined).run()
     },
+  }), Object.freeze({
+    label: 'Slide marker',
+    name: 'slide',
+    description: 'Starts a new slide in Presentation Mode',
+    icon: 'horizontalRule',
+    requires: LensCapability.MARKDOWN,
+    run: (/** @type {any} */ pane) => { pane.chain().focus().insertContent({ type: SlideMarker.NAME }).run() },
   })])
 
   /**

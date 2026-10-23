@@ -2011,6 +2011,7 @@ describe('WysiwygSurface.macrosFor — composing one mount\'s macros', () => {
       toggleBlockquote: () => { calls.push(['toggleBlockquote']); return chain },
       setHorizontalRule: () => { calls.push(['setHorizontalRule']); return chain },
       setCodeBlock: (opts) => { calls.push(['setCodeBlock', opts]); return chain },
+      insertContent: (content) => { calls.push(['insertContent', content]); return chain },
       run: () => { calls.push(['run']); return true },
     }
     return { calls, chain: () => chain }
@@ -2028,11 +2029,11 @@ describe('WysiwygSurface.macrosFor — composing one mount\'s macros', () => {
 
   it('leads with everything the HOST offers, then this surface\'s own presets', () => {
     const macros = WysiwygSurface.macrosFor(catalogOf('Code', 'Web Clip'), paneStub(), NOTE_CAPS)
-    expect(macros.map((m) => m.label)).toEqual(['Code', 'Web Clip', 'Table', 'Quote', 'Divider', 'Fence'])
+    expect(macros.map((m) => m.label)).toEqual(['Code', 'Web Clip', 'Table', 'Quote', 'Divider', 'Fence', 'Slide marker'])
   })
 
   it('offers its presets alone when the host carries no catalog', () => {
-    expect(WysiwygSurface.macrosFor(null, paneStub(), NOTE_CAPS).map((m) => m.name)).toEqual(['table', 'blockquote', 'hr', 'fence'])
+    expect(WysiwygSurface.macrosFor(null, paneStub(), NOTE_CAPS).map((m) => m.name)).toEqual(['table', 'blockquote', 'hr', 'fence', 'slide'])
   })
 
   it('names and describes each preset, so it reads like any other entry', () => {
@@ -2048,7 +2049,7 @@ describe('WysiwygSurface.macrosFor — composing one mount\'s macros', () => {
     const first = WysiwygSurface.macrosFor(catalog, paneStub(), NOTE_CAPS)
     const second = WysiwygSurface.macrosFor(catalog, paneStub(), NOTE_CAPS)
     expect(second.map((m) => m.label)).toEqual(first.map((m) => m.label))
-    expect(second.map((m) => m.label)).toEqual(['Code', 'Table', 'Quote', 'Divider', 'Fence'])
+    expect(second.map((m) => m.label)).toEqual(['Code', 'Table', 'Quote', 'Divider', 'Fence', 'Slide marker'])
     expect(second[1]).not.toBe(first[1])
   })
 
@@ -2094,7 +2095,10 @@ describe('WysiwygSurface.macrosFor — composing one mount\'s macros', () => {
     expect(pane.calls).toEqual([['focus'], ['toggleBlockquote'], ['run']])
   })
 
-  it('clears the token, then runs the toolbar\'s OWN setHorizontalRule command', () => {
+  it.each([
+    ['Divider', 2, ['setHorizontalRule']],
+    ['Slide marker', 4, ['insertContent', { type: 'slideMarker' }]],
+  ])('clears the token, then runs the %s preset\'s own command', (_label, index, call) => {
     const pane = paneStub()
     /** @type {any[]} */ const cleared = []
     const host = /** @type {any} */ ({
@@ -2104,10 +2108,10 @@ describe('WysiwygSurface.macrosFor — composing one mount\'s macros', () => {
       },
     })
 
-    WysiwygSurface.macrosFor(null, pane, NOTE_CAPS)[2].run(host, token(4, 8))
+    WysiwygSurface.macrosFor(null, pane, NOTE_CAPS)[index].run(host, token(4, 8))
 
     expect(cleared).toEqual([[4, 8, '']])
-    expect(pane.calls).toEqual([['focus'], ['setHorizontalRule'], ['run']])
+    expect(pane.calls).toEqual([['focus'], call, ['run']])
   })
 
   // The Fence preset is a `{` macro AND a target of the token's argument tail
@@ -2150,12 +2154,12 @@ describe('WysiwygSurface.macrosFor — composing one mount\'s macros', () => {
 
   it('leaves a NOTE mount\'s list exactly as it was — everything on offer is supported', () => {
     const macros = WysiwygSurface.macrosFor(catalogOf('Code', 'Web Clip'), paneStub(), NOTE_CAPS)
-    expect(macros.map((m) => m.label)).toEqual(['Code', 'Web Clip', 'Table', 'Quote', 'Divider', 'Fence'])
+    expect(macros.map((m) => m.label)).toEqual(['Code', 'Web Clip', 'Table', 'Quote', 'Divider', 'Fence', 'Slide marker'])
   })
 
   it('drops every block-minting entry for a COMPOSER mount, keeping the flow presets', () => {
     const macros = WysiwygSurface.macrosFor(catalogOf('Web Clip', 'Attach File'), paneStub(), COMPOSER_CAPS)
-    expect(macros.map((m) => m.label)).toEqual(['Table', 'Quote', 'Divider', 'Fence'])
+    expect(macros.map((m) => m.label)).toEqual(['Table', 'Quote', 'Divider', 'Fence', 'Slide marker'])
   })
 
   it('offers nothing at all to a mount that supports neither', () => {

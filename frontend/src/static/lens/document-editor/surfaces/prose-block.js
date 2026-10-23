@@ -22,7 +22,7 @@ export let ProseBlock
   var PROSE_NODE_TYPES = [
     'paragraph', 'heading', 'blockquote',
     'bulletList', 'orderedList', 'taskList',
-    'table', 'image', 'horizontalRule', 'codeBlock',
+    'table', 'image', 'horizontalRule', 'slideMarker', 'codeBlock',
   ]
 
   // The identity carrier: a global attribute (native nodes have no NodeView to

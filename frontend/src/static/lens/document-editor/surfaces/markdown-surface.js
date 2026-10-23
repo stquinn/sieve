@@ -12,6 +12,7 @@
 
 import { AbstractSurface, SurfaceEvent } from './abstract-surface.js'
 import { EditorMode } from '../editor-mode.js'
+import { SlideMarker } from './slide-marker.js'
 import {
   DEFAULT_POLICY, textInputEdit, applyTextEdit, handleSubstitutionGuard,
 } from '../interaction-policy.js'
@@ -201,6 +202,9 @@ export class MarkdownSurface extends AbstractSurface {
     this.#textarea = null
     this.#rootEl = null
   }
+
+  /** @override @returns {boolean} */
+  hasSlideMarkers() { return SlideMarker.containsMarker(this.#body) }
 
   /** @override — hands the caret back to the raw buffer, where it was. */
   focusEditor() {
