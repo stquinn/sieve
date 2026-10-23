@@ -1341,6 +1341,16 @@ the selection: a NodeSelection on a marker is moved to the nearest text position
 past it in the direction of travel. One ArrowDown at the end of a slide therefore
 lands on the first line of the next.
 
+**Boundary rule.** A marker is a slide boundary when it is a top-level node or a
+direct child of a `proseGroup` (a prose block that parsed to several nodes: a
+hand-written file opened without block handles, an embedded answer or clip). A
+group holding a marker is split at it while presenting, in the view only — the
+document, the block's identity and its save are untouched. A marker nested deeper,
+in a list item, blockquote or table cell, is not a boundary: it keeps its editing
+look and, like every marker, is hidden while presenting. Every block kind hides
+and shows as one unit with its slide; a renderer must never set `display` inline
+on its root, because an inline style beats the `.slide-hidden` rule.
+
 ## Deferred (recorded, not shipped)
 
 - Bracket/quote auto-pairing in code blocks (`autoPair` policy flag) —

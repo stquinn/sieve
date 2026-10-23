@@ -335,7 +335,10 @@ func TestGlobalRegistry_GetAndOrdered(t *testing.T) {
 // TestDocumentCodec_SlideMarkerProseSpan pins that a slide marker is prose: a
 // `<!-- SLIDE MARKER -->` span survives the trip byte for byte, keeps its own
 // block, and is never read as a `<!--s:` handle — written by the editor as its
-// own span, or hand-typed between paragraphs.
+// own span, or hand-typed between paragraphs. Wherever it lands, it stays on a
+// line of its own with a blank line either side, which is what makes the editor
+// parse it as a block (top-level, or a child of a multi-node prose block), and the
+// written form is stable from the first save.
 func TestDocumentCodec_SlideMarkerProseSpan(t *testing.T) {
 	c := block.NewDocumentCodec(newFakeRegistry())
 	const marker = "<!-- SLIDE MARKER -->"
@@ -386,6 +389,29 @@ func TestDocumentCodec_SlideMarkerProseSpan(t *testing.T) {
 			}
 			if !strings.Contains(out, marker) {
 				t.Errorf("serialised output lost the marker:\n%s", out)
+			}
+			ownLine := false
+			for _, b := range got {
+				lines := strings.Split(b.Content(), "\n")
+				for i, line := range lines {
+					if line != marker {
+						continue
+					}
+					ownLine = true
+					if (i > 0 && lines[i-1] != "") || (i < len(lines)-1 && lines[i+1] != "") {
+						t.Errorf("block %q: marker not a paragraph of its own:\n%s", b.ID, b.Content())
+					}
+				}
+			}
+			if !ownLine {
+				t.Errorf("marker not on a line of its own:\n%s", combined)
+			}
+			again, err := c.Deserialize(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out2, err := c.Serialize(again); err != nil || out2 != out {
+				t.Errorf("second save differs (err %v):\n--- first ---\n%s\n--- second ---\n%s", err, out, out2)
 			}
 		})
 	}
