@@ -9,6 +9,7 @@ import (
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
 	"sieve/sieve/command"
+	"sieve/sieve/domain"
 	"sieve/sieve/editor"
 	"sieve/sieve/mcp"
 	"sieve/sieve/services"
@@ -122,13 +123,11 @@ func (s *ServiceProvider) CommandSet() []command.Command {
 // ports and the concretes.
 var (
 	_ block.DocumentsPort   = (*services.DocumentService)(nil)
-	_ mcp.NodeResolver      = (*editor.Router)(nil)
 	_ block.AssetsPort      = (*services.AssetService)(nil)
 	_ block.StatePort       = (*services.StateService)(nil)
 	_ block.LinkPreviewPort = (*services.LinkPreviewService)(nil)
 	_ block.PlantumlPort    = (*services.PlantumlService)(nil)
-	_ block.NodesPort       = (*editor.Router)(nil)
-	_ ai.NodeResolver       = (*editor.Router)(nil)
+	_ domain.NodeResolver   = (*editor.Router)(nil)
 	_ command.DocumentFiler = (*editor.EditorService)(nil)
 )
 
@@ -157,8 +156,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 		logger.Error("prompts init failed", "err", err)
 		return
 	}
-	s.AI = ai.NewAIService(s.State, s.Prompts, s.Documents, storePath)
-	s.AI.SetNodes(s.Nodes)
+	s.AI = ai.NewAIService(s.State, s.Prompts, s.Documents, s.Nodes, storePath)
 	// Internal Sieve MCP: read-only knowledge-base surface mounted at /mcp,
 	// injected into contained CLI calls. Its runtime URL (the localhost listener
 	// port) is set from main once the listener binds; the AI service pulls the

@@ -42,11 +42,6 @@ func (p *ReferenceProcessor) maxHeldBytes() int {
 // file stays a chip.
 const maxMaterialisedTextBytes = 256 * 1024
 
-// referenceMaxExtLen bounds the suffix a stored asset inherits from a dropped
-// filename, dot included: long enough for .markdown, short enough that a
-// filename ending in a full stop contributes no extension.
-const referenceMaxExtLen = 12
-
 // ReferenceProcessor handles the 'reference' Kind — a chip that either HOLDS a
 // file the document is about, or POINTS at something else Sieve can name.
 //
@@ -193,12 +188,10 @@ func (p *ReferenceProcessor) held(attrs map[string]interface{}) bool {
 	return mimeType != "" && !strings.HasPrefix(mimeType, "sieve/")
 }
 
-// heldAddress recovers where a held file's bytes are — the owning container and
-// the asset key. It decides nothing about held-ness; `held` does that, from the
-// face.
-//
-// The container comes from the address, never from the document being rendered,
-// so a reference copied between documents still reaches the bytes it names.
+// heldAddress parses the block's uri into the container and asset key the bytes
+// live under. It decides nothing about held-ness; `held` does that, from the
+// face. The container comes from the address, never from the document being
+// rendered.
 func (p *ReferenceProcessor) heldAddress(attrs map[string]interface{}) (domain.Address, bool) {
 	addr, err := domain.ParseAddress(p.uri(attrs))
 	if err != nil || addr.Leaf == "" {
@@ -276,7 +269,11 @@ func (p *ReferenceProcessor) pastedCoordinate(e block.ContentEntry) (string, boo
 func (p *ReferenceProcessor) Transform(entries []block.ContentEntry, uuid, blockID string, action block.Action) map[string]interface{} {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
-			return e.AsAttrsForNewBlock(p)
+			attrs := e.AsAttrsForNewBlock(p)
+			if attrs == nil || !p.held(attrs) {
+				return attrs
+			}
+			return p.copyHeld(attrs, uuid, blockID)
 		}
 		if uri, ok := p.pastedCoordinate(e); ok {
 			// The parse's canonical spelling, not the pasted bytes, so no stray
@@ -288,6 +285,49 @@ func (p *ReferenceProcessor) Transform(entries []block.ContentEntry, uuid, block
 		}
 	}
 	return nil
+}
+
+// copyHeld gives a pasted held reference its own bytes: it reads the source's
+// asset and mints it in document uuid under the face's title (else the source
+// key), then points attrs["uri"] at that copy. The face is
+// unchanged, since the bytes are identical, and the copy is made even when the
+// source is in uuid itself, so no two blocks share an asset.
+//
+// A failure (unparseable uri, unreadable source, file over the size limit, save
+// failure) returns nil, which means NO BLOCK: the block must never be left
+// pointing at the source document's bytes.
+func (p *ReferenceProcessor) copyHeld(attrs map[string]interface{}, uuid, blockID string) map[string]interface{} {
+	src, ok := p.heldAddress(attrs)
+	if !ok {
+		logger.Warn("reference: copied file has no readable address", "block", blockID, "uri", p.uri(attrs))
+		return nil
+	}
+	data, err := p.assets.read(src)
+	if err != nil {
+		logger.Warn("reference: copied file unreadable", "block", blockID, "uri", src.String(), "err", err)
+		return nil
+	}
+	if limit := p.maxHeldBytes(); len(data) > limit {
+		logger.Warn("reference: copied file over the size limit",
+			"block", blockID, "bytes", len(data), "limit", limit)
+		return nil
+	}
+	name := p.faceStr(attrs, "title")
+	if name == "" {
+		name = src.Leaf
+	}
+	ref, err := p.assets.mint(uuid, name, data)
+	if err != nil {
+		logger.Warn("reference: copied file save failed", "block", blockID, "err", err)
+		return nil
+	}
+	key := p.assets.filename(ref)
+	if key == "" {
+		logger.Warn("reference: saved asset has no key", "block", blockID, "ref", ref)
+		return nil
+	}
+	attrs["uri"] = ref
+	return attrs
 }
 
 // holdDroppedFile stores a dropped file and returns the attrs the block is born
@@ -307,7 +347,7 @@ func (p *ReferenceProcessor) holdDroppedFile(e block.ContentEntry, filename, uui
 			"block", blockID, "file", filename, "bytes", len(data), "limit", limit)
 		return nil
 	}
-	ref, err := p.assets.save(uuid, blockID+p.assetExt(filename), data)
+	ref, err := p.assets.mint(uuid, filename, data)
 	if err != nil {
 		logger.Warn("reference: dropped file save failed", "block", blockID, "file", filename, "err", err)
 		return nil
@@ -318,8 +358,8 @@ func (p *ReferenceProcessor) holdDroppedFile(e block.ContentEntry, filename, uui
 		return nil
 	}
 	mimeType := p.sniffMIME(key, data)
-	// title is the file the user dropped; the address names the file on disk, and
-	// the two are deliberately different (see assetExt).
+	// title is the file the user dropped; the address names the key it was
+	// minted under, which may differ (sanitised, uniquified).
 	face := map[string]interface{}{
 		"title": filename,
 		"mime":  mimeType,
@@ -334,30 +374,9 @@ func (p *ReferenceProcessor) holdDroppedFile(e block.ContentEntry, filename, uui
 	}
 	p.stampFace(face)
 	return map[string]interface{}{
-		"uri":   domain.NewLeafAddress(uuid, key).String(),
+		"uri":   ref,
 		"cache": face,
 	}
-}
-
-// assetExt is the extension the stored asset inherits from the dropped file. The
-// asset itself is named after the BLOCK, never after the drop: a document
-// directory holds content.md and meta.json beside its assets, so a file free to
-// name itself could overwrite the document it was dropped into.
-//
-// Anything that is not a short alphanumeric suffix returns "", leaving the store
-// to derive one from the bytes.
-func (p *ReferenceProcessor) assetExt(filename string) string {
-	ext := filepath.Ext(filename)
-	if len(ext) < 2 || len(ext) > referenceMaxExtLen {
-		return ""
-	}
-	for _, r := range ext[1:] {
-		alnum := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
-		if !alnum {
-			return ""
-		}
-	}
-	return strings.ToLower(ext)
 }
 
 func (p *ReferenceProcessor) OnChange(_ *block.SieveBlock) {}
@@ -649,8 +668,8 @@ func (p *ReferenceProcessor) BuildContext(blk block.SieveBlock, doc block.DocVie
 // container names nothing, because a bare key there would point into the wrong
 // directory.
 //
-// The key is NOT the filename the user dropped (see holdDroppedFile): the face's
-// title carries that, and only this key opens. A pointer has no file at all, and
+// The key may differ from the filename the user dropped (see
+// documentAssets.keyFor): the face's title carries that, and only this key opens. A pointer has no file at all, and
 // the face is what says so — never the address, which a pointer at a leaf spells
 // identically.
 func (p *ReferenceProcessor) heldFilePath(attrs map[string]interface{}, docUUID string) string {

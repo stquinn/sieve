@@ -1,12 +1,19 @@
 package editor
 
 import (
+	"bytes"
+	"encoding/base64"
 	"errors"
+	"image"
+	"image/png"
+	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
+	"sieve/ident"
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
 	"sieve/sieve/domain"
@@ -529,5 +536,66 @@ func TestNotesSource_PinnedAssetLeafIgnoresThePin(t *testing.T) {
 	}
 	if node.ID != "diagram.png" {
 		t.Errorf("node = %+v, want the asset, judged against current membership", node)
+	}
+}
+
+// An asset a block saves is resolvable at once, with no re-scan between: the
+// Router answers a smart-image's own src the moment the paste that wrote it
+// returns, for a buffer and for a filed note alike.
+func TestRouter_ResolvesAnAssetAPasteJustSaved(t *testing.T) {
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatalf("encode png: %v", err)
+	}
+	pasted := block.ContentEntry{
+		MIMEType: "image/png",
+		Content:  "data:image/png;base64," + base64.StdEncoding.EncodeToString(encoded.Bytes()),
+	}
+	cases := []struct {
+		name string
+		doc  func(t *testing.T, ds *services.DocumentService) domain.Document
+	}{
+		{"a buffer", func(t *testing.T, ds *services.DocumentService) domain.Document {
+			doc, err := ds.New()
+			if err != nil {
+				t.Fatalf("new buffer: %v", err)
+			}
+			return doc
+		}},
+		{"a filed note", func(t *testing.T, ds *services.DocumentService) domain.Document {
+			return seedNoteWithBlocks(t, ds, "")
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetRegistry()
+			t.Cleanup(resetRegistry)
+			ds, fs := newTestDocumentService(t)
+			doc := tc.doc(t, ds)
+			images := processors.NewSmartImageProcessor(block.BlockServices{
+				Documents: ds,
+				Assets:    services.NewAssetService(fs, fs.Root()),
+			})
+			attrs := images.Transform([]block.ContentEntry{pasted}, doc.UUID(), ident.New(), block.ActionPaste)
+			src, _ := attrs["src"].(string)
+			addr, err := domain.ResolveAssetReference(src, domain.NewContainerAddress(doc.UUID()))
+			if err != nil {
+				t.Fatalf("paste stored src %q, which names no asset: %v", src, err)
+			}
+			if addr.Container != doc.UUID() || src != addr.String() {
+				t.Fatalf("paste stored src %q, want the absolute address of an asset of %s", src, doc.UUID())
+			}
+
+			node, err := NewRouter(NewNotesSource(ds)).Resolve(addr)
+			if err != nil {
+				t.Fatalf("Resolve %s straight after the save: %v", addr, err)
+			}
+			if node.Kind != assetKind || node.Path == "" {
+				t.Fatalf("node = %+v, want an asset with a Path", node)
+			}
+			if got, err := os.ReadFile(filepath.Join(fs.Root(), node.Path)); err != nil || !bytes.Equal(got, encoded.Bytes()) {
+				t.Errorf("Path %q reads %d bytes, %v; want the pasted image", node.Path, len(got), err)
+			}
+		})
 	}
 }

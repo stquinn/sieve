@@ -99,10 +99,10 @@ func TestDocumentMigrator_RunsAssetURIStep(t *testing.T) {
 	if !changed {
 		t.Fatal("changed = false for a document carrying stored asset routes")
 	}
-	if got, want := out[0].Attrs["src"], "/shot.png"; got != want {
+	if got, want := out[0].Attrs["src"], "sieve://"+testDocumentUUID+"/shot.png"; got != want {
 		t.Errorf("smart-image src = %v, want %q", got, want)
 	}
-	if got, want := out[1].Attrs["svgAsset"], "/flow.svg"; got != want {
+	if got, want := out[1].Attrs["svgAsset"], "sieve://"+testDocumentUUID+"/flow.svg"; got != want {
 		t.Errorf("diagram svgAsset = %v, want %q", got, want)
 	}
 }
@@ -112,7 +112,7 @@ func TestDocumentMigrator_CleanTreeIsUnchanged(t *testing.T) {
 	in := []SieveBlock{
 		{ID: id, Kind: "smart-image", Attrs: map[string]interface{}{
 			"id":  id,
-			"src": "/im.png",
+			"src": "sieve://" + testDocumentUUID + "/im.png",
 		}},
 	}
 	if _, changed := (DocumentMigrator{}).Migrate(in, testDocumentUUID); changed {

@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"sieve/ident"
 	"sieve/store"
@@ -113,25 +115,31 @@ func ResolveAddress(ref string, base Address) (Address, error) {
 	return addressFromURL(base.url().ResolveReference(refURL), ref)
 }
 
-// ResolveAssetReference resolves an asset reference — whether a relative reference
-// (/{key}), an absolute sieve address (sieve://{container}/{key}), a served route
-// (/ui/assets/{uuid}/{filename} or legacy /sieve/{uuid}/{filename}), or a bare
-// filename (.assets/{filename} or {filename}) — against the base container it was
-// written in. External URLs (http://, https://) and non-asset coordinates are rejected.
+// ResolveAssetReference resolves an asset reference against the container it
+// was written in. It accepts every spelling an asset src takes:
+//
+//	/{key}                                   — relative, names base's asset
+//	sieve://{container}/{key}                — absolute
+//	/ui/assets/{uuid}/{key}, /sieve/{uuid}/{key}
+//	                                         — a served route, with or without
+//	                                           an origin (wails://wails/…,
+//	                                           http://localhost:34115/…)
+//	{key}, .assets/{key}                     — a bare filename in base
+//
+// Any other http(s) URL, a data: URL and a coordinate that names no leaf are
+// rejected: they are not assets Sieve holds.
 func ResolveAssetReference(ref string, base Address) (Address, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return Address{}, fmt.Errorf("%w: empty reference", ErrBadAddress)
 	}
-	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") || strings.HasPrefix(ref, "data:") {
-		return Address{}, fmt.Errorf("%w: %q is a remote or data URL, not an asset reference", ErrBadAddress, ref)
-	}
-	// 1. Served asset route: /ui/assets/{uuid}/{filename} or legacy /sieve/{uuid}/{filename}
 	if u, f, ok := store.ParseAssetURL(ref); ok {
 		return NewLeafAddress(u, f), nil
 	}
-	// 2. Absolute sieve address: sieve://{container}/{leaf}
-	if strings.HasPrefix(ref, "sieve://") {
+	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") || strings.HasPrefix(ref, "data:") {
+		return Address{}, fmt.Errorf("%w: %q is a remote or data URL, not an asset reference", ErrBadAddress, ref)
+	}
+	if strings.HasPrefix(ref, Scheme+"://") {
 		addr, err := ParseAddress(ref)
 		if err != nil {
 			return Address{}, err
@@ -141,28 +149,18 @@ func ResolveAssetReference(ref string, base Address) (Address, error) {
 		}
 		return addr, nil
 	}
-	// 3. Relative reference: /{leaf}
-	if strings.HasPrefix(ref, "/") {
-		leaf := strings.TrimPrefix(ref, "/")
-		if !strings.Contains(leaf, "/") && leaf != "" {
-			if base.Container == "" {
-				return Address{}, fmt.Errorf("%w: no base container to resolve %q against", ErrBadAddress, ref)
-			}
-			return NewLeafAddress(base.Container, leaf), nil
-		}
-		return ResolveAddress(ref, base)
+	if base.Container == "" {
+		return Address{}, fmt.Errorf("%w: no base container to resolve %q against", ErrBadAddress, ref)
 	}
-	// 4. Bare filename or .assets/ prefix (e.g. "diagram.png" or ".assets/diagram.png")
-	trimmed := strings.TrimPrefix(ref, ".assets/")
-	if trimmed != "" && !strings.Contains(trimmed, "/") && !strings.Contains(trimmed, ":") {
-		if base.Container == "" {
-			return Address{}, fmt.Errorf("%w: no base container to resolve %q against", ErrBadAddress, ref)
-		}
-		return NewLeafAddress(base.Container, trimmed), nil
+	key := strings.TrimPrefix(ref, "/")
+	if key == ref {
+		key = strings.TrimPrefix(ref, ".assets/")
+	}
+	if key != "" && !strings.Contains(key, "/") && !strings.Contains(key, ":") {
+		return NewLeafAddress(base.Container, key), nil
 	}
 	return Address{}, fmt.Errorf("%w: %q cannot be resolved as an asset reference", ErrBadAddress, ref)
 }
-
 
 // addressFromURL is the single validator, so an address reached by resolution
 // is held to the same rules as a parsed one. raw is the caller's spelling, used
@@ -243,7 +241,42 @@ func (a Address) url() *url.URL {
 // String renders the canonical spelling. ParseAddress(a.String()) == a for
 // every address ParseAddress or ResolveAddress produced. The round trip does
 // not extend to the constructors, which validate nothing; see NewLeafAddress.
-func (a Address) String() string { return a.url().String() }
+//
+// The leaf keeps its Unicode letters, marks and digits raw, so an asset key
+// stays legible in the document that stores it (sieve://{c}/日本.png). Every
+// other character is percent-encoded as in a URL path (a "/" stays raw and so
+// yields an address ParseAddress rejects; see NewLeafAddress). "%", "?", "#",
+// whitespace, control characters and invalid UTF-8 are therefore always escaped;
+// a block uuid, and an alias or key made of ASCII letters, digits and "._-~",
+// render unchanged.
+func (a Address) String() string {
+	var b strings.Builder
+	b.WriteString(Scheme + "://" + a.Container)
+	if a.Leaf != "" {
+		b.WriteByte('/')
+		a.writeLeaf(&b)
+	}
+	if a.Version > 0 {
+		b.WriteString("?" + versionParam + "=" + strconv.Itoa(a.Version))
+	}
+	return b.String()
+}
+
+// writeLeaf appends the leaf in its stored spelling.
+func (a Address) writeLeaf(b *strings.Builder) {
+	for rest := a.Leaf; rest != ""; {
+		r, size := utf8.DecodeRuneInString(rest)
+		chunk := rest[:size]
+		rest = rest[size:]
+		switch {
+		case r >= utf8.RuneSelf && (r != utf8.RuneError || size > 1) &&
+			(unicode.IsLetter(r) || unicode.IsMark(r) || unicode.IsDigit(r)):
+			b.WriteString(chunk)
+		default:
+			b.WriteString((&url.URL{Path: chunk}).EscapedPath())
+		}
+	}
+}
 
 // IsPinned reports that this address names a frozen container version.
 func (a Address) IsPinned() bool { return a.Version > 0 }

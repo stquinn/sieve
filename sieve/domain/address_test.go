@@ -21,6 +21,9 @@ func TestParseAddress_RoundTrip(t *testing.T) {
 		"sieve://" + cUUID + "/" + bUUID + "?version=7",
 		"sieve://" + cUUID + "/the-retry-loop",
 		"sieve://" + cUUID + "/diagram.png",
+		"sieve://" + cUUID + "/日本.png",
+		"sieve://" + cUUID + "/café.png?version=2",
+		"sieve://" + cUUID + "/a%3Fb%23c%25d%20e.png",
 	} {
 		t.Run(s, func(t *testing.T) {
 			a, err := ParseAddress(s)
@@ -29,6 +32,34 @@ func TestParseAddress_RoundTrip(t *testing.T) {
 			}
 			if got := a.String(); got != s {
 				t.Fatalf("round trip: %q -> %q", s, got)
+			}
+		})
+	}
+}
+
+// A percent-encoded spelling parses to the same address as the raw one and
+// re-renders raw; structural characters stay escaped.
+func TestParseAddress_PercentEncodedLeafRendersRaw(t *testing.T) {
+	for _, tc := range []struct{ in, leaf, want string }{
+		{"%E6%97%A5%E6%9C%AC.png", "日本.png", "日本.png"},
+		{"caf%C3%A9.png", "café.png", "café.png"},
+		{"a%3Fb%23c.png", "a?b#c.png", "a%3Fb%23c.png"},
+		{"a%20b.png", "a b.png", "a%20b.png"},
+	} {
+		t.Run(tc.leaf, func(t *testing.T) {
+			a, err := ParseAddress("sieve://" + cUUID + "/" + tc.in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if a.Leaf != tc.leaf {
+				t.Fatalf("leaf = %q, want %q", a.Leaf, tc.leaf)
+			}
+			if want := "sieve://" + cUUID + "/" + tc.want; a.String() != want {
+				t.Fatalf("String() = %q, want %q", a.String(), want)
+			}
+			raw, err := ParseAddress(a.String())
+			if err != nil || raw != a {
+				t.Fatalf("re-parse = %+v, %v; want %+v", raw, err, a)
 			}
 		})
 	}
@@ -96,6 +127,7 @@ func TestParseAddress_LeavesTheLeafVerbatim(t *testing.T) {
 		"Design Notes.md",
 		"The-Retry-Loop",
 		strings.ToUpper(bUUID),
+		"日本.png",
 	} {
 		t.Run(leaf, func(t *testing.T) {
 			a, err := ParseAddress("sieve://" + cUUID + "/" + url.PathEscape(leaf))
@@ -486,6 +518,39 @@ func TestResolveAssetReference(t *testing.T) {
 			wantLeaf:      "local.png",
 		},
 		{
+			name:          "served route under the desktop origin",
+			ref:           "wails://wails/ui/assets/" + dUUID + "/shot.png",
+			base:          base,
+			wantContainer: dUUID,
+			wantLeaf:      "shot.png",
+		},
+		{
+			name:          "served route under the Windows origin",
+			ref:           "http://wails.localhost/ui/assets/" + dUUID + "/shot.png",
+			base:          base,
+			wantContainer: dUUID,
+			wantLeaf:      "shot.png",
+		},
+		{
+			name:          "served route under the dev-server origin",
+			ref:           "http://localhost:34115/ui/assets/" + dUUID + "/shot.png?v=2",
+			base:          base,
+			wantContainer: dUUID,
+			wantLeaf:      "shot.png",
+		},
+		{
+			name:    "a legacy-prefixed path whose segment is not a uuid is not a route",
+			ref:     "/sieve/img/logo.png",
+			base:    base,
+			wantErr: true,
+		},
+		{
+			name:    "a sieve URI naming no leaf is rejected",
+			ref:     "sieve://" + dUUID,
+			base:    base,
+			wantErr: true,
+		},
+		{
 			name:    "http URL is rejected",
 			ref:     "http://example.com/pic.png",
 			base:    base,
@@ -536,4 +601,3 @@ func TestResolveAssetReference(t *testing.T) {
 		})
 	}
 }
-

@@ -12,12 +12,12 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"path/filepath"
+	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
 
-	"sieve/ident"
 	"sieve/logger"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
@@ -74,9 +74,12 @@ func (p *SmartImageProcessor) InitAttrs(id string, overrides map[string]interfac
 		}
 		attrs[k] = v
 	}
-	// If PasteMatch set a src, we need AI to describe it.
+	// A src that arrives without a summary needs AI to describe it; one that
+	// arrives with its description (a copy) is already complete.
 	if src, _ := attrs["src"].(string); src != "" {
-		attrs["status"] = block.BlockStatusPending
+		if summary, _ := attrs["summary"].(string); summary == "" {
+			attrs["status"] = block.BlockStatusPending
+		}
 		attrs["createdAt"] = time.Now().UTC().Format(time.RFC3339)
 	}
 	return attrs
@@ -134,6 +137,11 @@ func (p *SmartImageProcessor) IsSupportedContent(entries []block.ContentEntry) b
 // size, so unsized means zero — a bare resize handle).
 func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string, action block.Action) map[string]interface{} {
 	for _, e := range entries {
+		if e.IsSieveType(p) {
+			return p.copyStored(e, uuid, blockID)
+		}
+	}
+	for _, e := range entries {
 		data, ref, err := p.acquire(e, uuid, blockID)
 		if errors.Is(err, errEntryNotImage) {
 			continue
@@ -146,6 +154,9 @@ func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid strin
 		// A pre-stored asset is a pure REFERENCE: there are no bytes to persist and
 		// none to measure, so it is the one path that stamps no size (the renderer
 		// lays an unsized image out responsively).
+		name, _ := e.Context["filename"].(string)
+		name = strings.TrimSpace(name)
+
 		src, width, height := ref, 0, 0
 		if src == "" {
 			var ok bool
@@ -153,20 +164,15 @@ func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid strin
 				logger.Warn("smart-image: entry is not a usable image", "block", blockID, "bytes", len(data))
 				return nil
 			}
-			if src, err = p.assets.save(uuid, ident.New(), data); err != nil {
+			if src, err = p.assets.mint(uuid, p.preferredName(e), data); err != nil {
 				logger.Warn("smart-image: transform save failed", "block", blockID, "err", err)
 				return nil
 			}
 		}
 
 		attrs := map[string]interface{}{"src": src}
-		// The name the file arrived under, when it arrived as a file at all. The
-		// asset is stored under an opaque ident.New key so nothing on disk
-		// remembers it, and without this an image is identifiable only by its AI
-		// description — which is a description, not an identity. A clipboard
-		// paste has no filename and correctly stamps none.
-		if name, _ := e.Context["filename"].(string); strings.TrimSpace(name) != "" {
-			attrs["title"] = strings.TrimSpace(name)
+		if name != "" {
+			attrs["title"] = name
 		}
 		if width > 0 {
 			attrs["width"] = strconv.Itoa(width)
@@ -179,9 +185,89 @@ func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid strin
 	return nil
 }
 
+// defaultImageName is the key stem of an ingested image that arrived under no name.
+const defaultImageName = "image"
+
+// preferredName is the name an ingested image's asset is keyed from: the
+// entry's Context["filename"] when set; else the last path segment of the
+// image URL the entry denotes (query and fragment dropped) when that segment
+// carries a file extension; else defaultImageName. It is only a key request:
+// the title attr is stamped from Context["filename"] alone.
+func (p *SmartImageProcessor) preferredName(e block.ContentEntry) string {
+	if name, _ := e.Context["filename"].(string); strings.TrimSpace(name) != "" {
+		return strings.TrimSpace(name)
+	}
+	if raw := p.entryImageURL(e); raw != "" {
+		if u, err := url.Parse(raw); err == nil {
+			base := path.Base(u.Path)
+			if _, ext := p.assets.safeName(base); ext != "" {
+				return base
+			}
+		}
+	}
+	return defaultImageName
+}
+
+// entryImageURL is the image URL e denotes: its trimmed content when that is
+// one, else the <img src> of an HTML entry; "" otherwise.
+func (p *SmartImageProcessor) entryImageURL(e block.ContentEntry) string {
+	if s := strings.TrimSpace(e.Content); isImageURL(s) {
+		return s
+	}
+	if e.MIMEType == "text/html" {
+		if src := extractHTMLImageSrc(e.Content); isImageURL(src) {
+			return src
+		}
+	}
+	return ""
+}
+
+// copiedAttrs are the attrs a copied smart-image carries over: they describe the
+// bytes, and the copy holds the same bytes.
+var copiedAttrs = [...]string{"width", "height", "title", "alt", "summary", "detect", "showSummary"}
+
+// copyStored builds a new block from a copied smart-image's own sieve view. A
+// paste is additive: the source's bytes are copied into document uuid under a
+// new key minted from the source's title, so the new block never points at the
+// source's asset. nil when the source has no src or its bytes cannot be read.
+func (p *SmartImageProcessor) copyStored(e block.ContentEntry, uuid, blockID string) map[string]interface{} {
+	source := e.AsAttrsForNewBlock(p)
+	from, ok := e.SourceContainer()
+	if !ok {
+		from = uuid
+	}
+	src, _ := source["src"].(string)
+	addr, err := domain.ResolveAssetReference(src, domain.NewContainerAddress(from))
+	if err != nil {
+		logger.Warn("smart-image: copied block names no asset", "block", blockID, "src", src, "err", err)
+		return nil
+	}
+	title, _ := source["title"].(string)
+	preferred := strings.TrimSpace(title)
+	if preferred == "" {
+		preferred = addr.Leaf
+	}
+	if preferred == "" {
+		preferred = defaultImageName
+	}
+	ref, err := p.assets.copy(addr, uuid, preferred)
+	if err != nil {
+		logger.Warn("smart-image: copy failed", "block", blockID, "src", addr.String(), "err", err)
+		return nil
+	}
+	attrs := map[string]interface{}{"src": ref}
+	for _, k := range copiedAttrs {
+		if v, present := source[k]; present {
+			attrs[k] = v
+		}
+	}
+	return attrs
+}
+
 // acquire resolves ONE content entry to the image it denotes. Exactly one result is
 // meaningful: `data` is freshly ingested bytes the caller must persist, `ref` is an
-// asset already stored under this document. errEntryNotImage means the entry is not
+// asset already stored under this document (an asset of another document comes
+// back as `data`, so it is saved and measured like any ingested bytes). errEntryNotImage means the entry is not
 // this processor's to take (try the next one); any other error aborts the transform.
 func (p *SmartImageProcessor) acquire(e block.ContentEntry, targetUUID, blockID string) (data []byte, ref string, err error) {
 	// Data URI (paste from clipboard) — raster OR svg; naturalSize sniffs which.
@@ -199,13 +285,8 @@ func (p *SmartImageProcessor) acquire(e block.ContentEntry, targetUUID, blockID 
 	// Image URL (paste or extract from HTML)
 	s := strings.TrimSpace(e.Content)
 	if isImageURL(s) {
-		// Sieve asset reference: relative /{key} if belonging to this document,
-		// or absolute sieve://{container}/{key} if foreign. Ingest nothing.
 		if addr, err := domain.ResolveAssetReference(s, domain.NewContainerAddress(targetUUID)); err == nil {
-			if ident.Canonical(addr.Container) == ident.Canonical(targetUUID) {
-				return nil, "/" + addr.Leaf, nil
-			}
-			return nil, addr.String(), nil
+			return p.storedAsset(addr, targetUUID)
 		}
 		raw, err := p.downloadImage(s, blockID)
 		if err != nil {
@@ -215,6 +296,9 @@ func (p *SmartImageProcessor) acquire(e block.ContentEntry, targetUUID, blockID 
 	}
 	if e.MIMEType == "text/html" {
 		if src := extractHTMLImageSrc(e.Content); src != "" && isImageURL(src) {
+			if addr, err := domain.ResolveAssetReference(src, domain.NewContainerAddress(targetUUID)); err == nil {
+				return p.storedAsset(addr, targetUUID)
+			}
 			raw, err := p.downloadImage(src, blockID)
 			if err != nil {
 				return nil, "", fmt.Errorf("download html <img> %s: %w", src, err)
@@ -228,6 +312,18 @@ func (p *SmartImageProcessor) acquire(e block.ContentEntry, targetUUID, blockID 
 		return nil, "", errors.New("mermaid source reached Transform unresolved; resolveEntries must render SVG locally")
 	}
 	return nil, "", errEntryNotImage
+}
+
+// storedAsset resolves an asset Sieve already holds: its canonical absolute
+// address when targetUUID holds it, else its bytes, which the caller saves into
+// targetUUID. A smart-image src therefore always names an asset of its own
+// document.
+func (p *SmartImageProcessor) storedAsset(addr domain.Address, targetUUID string) (data []byte, ref string, err error) {
+	if addr.Container == domain.NewContainerAddress(targetUUID).Container {
+		return nil, addr.String(), nil
+	}
+	data, err = p.assets.read(addr)
+	return data, "", err
 }
 
 // measure is THE sizing rule, and it reports the image's OWN dimensions — never a
@@ -342,9 +438,8 @@ func (p *SmartImageProcessor) BuildContext(blk block.SieveBlock, _ block.DocView
 	if src == "" {
 		return block.AIContext{}
 	}
-	filename := filepath.Base(src)
 	var sb strings.Builder
-	sb.WriteString("Image: " + filename + "\n")
+	sb.WriteString("Image: " + p.assets.filename(src) + "\n")
 	ctx := block.AIContext{NodeIDs: []string{blk.ID}, Content: sb.String()}
 	ctx.Tags = []block.Tag{
 		{Label: "ALT", Values: []string{alt}},
@@ -448,9 +543,12 @@ func (p *SmartImageProcessor) downloadImage(imageURL, blockID string) ([]byte, e
 	return io.ReadAll(io.LimitReader(resp.Body, 5*1024*1024))
 }
 
+// MarkdownRepresentation is the image as a markdown embed, or "" when its src
+// names nothing an embed could load.
 func (p *SmartImageProcessor) MarkdownRepresentation(blk block.SieveBlock, uuid string) string {
 	src, _ := blk.Attrs["src"].(string)
-	if src == "" {
+	url := p.assets.url(uuid, src)
+	if url == "" {
 		return ""
 	}
 	alt, _ := blk.Attrs["alt"].(string)
@@ -459,5 +557,5 @@ func (p *SmartImageProcessor) MarkdownRepresentation(blk block.SieveBlock, uuid 
 	}
 	// A working URL, not the stored src: prose-embedded images render as a plain
 	// <img>, so the NodeView's resolveSrc never runs on them.
-	return "![" + strings.TrimSpace(alt) + "](" + p.assets.url(uuid, src) + ")"
+	return "![" + strings.TrimSpace(alt) + "](" + url + ")"
 }

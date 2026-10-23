@@ -44,8 +44,8 @@ func TestOpen_AssetURLMigrationPersistsImmediately(t *testing.T) {
 		t.Fatalf("LoadByUUID: %v", err)
 	}
 	body := string(reloaded.Body())
-	if !strings.Contains(body, "src: /x.png") {
-		t.Fatalf("asset route not migrated to relative URI on disk after open:\n%s", body)
+	if !strings.Contains(body, "src: sieve://"+uuid+"/x.png") {
+		t.Fatalf("asset route not migrated to its sieve address on disk after open:\n%s", body)
 	}
 	if strings.Contains(body, legacySrc) || strings.Contains(body, store.AssetURL(uuid, "x.png")) {
 		t.Fatalf("stored route still on disk after open:\n%s", body)

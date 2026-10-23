@@ -38,8 +38,9 @@ export function imageProxyUrl(remoteUrl) {
 
 /**
  * The served URL of a file stored INSIDE a document. `ref` is whatever the
- * document wrote — a sieve URI-reference (`/{key}` or `sieve://{container}/{key}`),
- * a bare filename, or a legacy route.
+ * document wrote — the absolute `sieve://{container}/{key}` (its key passed on
+ * as spelled, raw or percent-encoded), or a legacy spelling: a relative `/{key}`, a
+ * bare filename, or a served route.
  * @param {string} uuid the document holding the asset
  * @param {string} ref  the asset reference as the document spells it
  * @returns {string}
@@ -57,6 +58,19 @@ export function documentAssetUrl(uuid, ref) {
     return ref
   }
   return assetUrl(uuid || '', String(ref).split('/').pop() || '')
+}
+
+/**
+ * True for a reference that names an asset only relative to the container
+ * holding the block: `/{key}` or a bare filename. An absolute sieve address, a
+ * served route, a remote or inline URL and any other path carry their own
+ * resolution.
+ * @param {string} ref @returns {boolean}
+ */
+export function isContainerRelativeAssetRef(ref) {
+  if (!ref) return false
+  if (ref.startsWith('/')) return ref.length > 1 && !ref.slice(1).includes('/')
+  return !ref.startsWith('sieve://') && !isAbsolute(ref)
 }
 
 /**

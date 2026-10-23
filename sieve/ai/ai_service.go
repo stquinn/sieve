@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,7 +13,6 @@ import (
 	"sieve/sieve/domain"
 	lheur "sieve/sieve/lang"
 	"sieve/sieve/services"
-	"sieve/store"
 
 	"golang.org/x/net/html"
 )
@@ -28,28 +26,24 @@ type MCPEndpoint interface {
 	Endpoint() (url, token string)
 }
 
-// NodeResolver resolves a Sieve address to a NodeDescriptor. Satisfied by editor.Router.
-type NodeResolver interface {
-	Resolve(addr domain.Address) (domain.NodeDescriptor, error)
-}
-
 // AIService owns all AI evaluation and filing operations. It resolves prompt
 // templates, settings, and folder lists internally so callers need no boilerplate.
 type AIService struct {
 	state     *services.StateService
 	prompts   *PromptService
 	documents *services.DocumentService
-	nodes     NodeResolver
+	nodes     domain.NodeResolver // dereferences an image block's src to its asset file
 	storePath string
 	runner    CLIRunner   // exec seam; stubbable in tests
 	mcp       MCPEndpoint // internal Sieve MCP endpoint; nil until wired
 }
 
-func NewAIService(state *services.StateService, prompts *PromptService, documents *services.DocumentService, storePath string) *AIService {
+func NewAIService(state *services.StateService, prompts *PromptService, documents *services.DocumentService, nodes domain.NodeResolver, storePath string) *AIService {
 	return &AIService{
 		state:     state,
 		prompts:   prompts,
 		documents: documents,
+		nodes:     nodes,
 		storePath: storePath,
 		runner:    execCLIRunner{},
 	}
@@ -59,9 +53,6 @@ func NewAIService(state *services.StateService, prompts *PromptService, document
 // containment profile carries the live server URL + a fresh per-call bearer token
 // in its builtin MCP grant, so the contained CLI can query the knowledge base.
 func (s *AIService) SetMCPEndpoint(e MCPEndpoint) { s.mcp = e }
-
-// SetNodes wires the NodeResolver (editor.Router) for address and asset dereferencing.
-func (s *AIService) SetNodes(nodes NodeResolver) { s.nodes = nodes }
 
 // profile returns the containment floor for a CLI call: the default baseline,
 // with the builtin Sieve MCP grant's runtime URL + per-call token filled in when
@@ -232,51 +223,19 @@ func (s *AIService) RunBtw(question, selection, docTitle, docSummary, docUUID st
 func (s *AIService) Tier() domain.Tier { return s.state.LoadSettings().Tier() }
 
 // DescribeImage sends an image to the configured AI and returns alt text, a
-// summary, and a suggested filename. storeRelPath is relative to the store root,
-// or a sieve URI-reference (/{key}, sieve://{container}/{key}, /ui/assets/...).
-func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string) (domain.ImageDesc, error) {
-	logger.Info("Describe uuid: " + uuid)
-	logger.Info("Describe storeRelPath: " + storeRelPath)
-	logger.Info("Describe blkId: " + blkId)
+// summary, and a suggested filename. src is the block's stored asset reference
+// (sieve://{container}/{key}, or a legacy spelling ResolveAssetReference reads),
+// resolved against document uuid; the image file is whatever the NodeResolver says it names.
+func (s *AIService) DescribeImage(uuid string, src string, blkId string) (domain.ImageDesc, error) {
 	settings := s.state.LoadSettings()
 	if settings.Tier() == domain.TierDumb {
 		return domain.ImageDesc{}, fmt.Errorf("dumb mode")
 	}
 
-	var imagePath string
-	addr, err := domain.ResolveAssetReference(storeRelPath, domain.NewContainerAddress(uuid))
-	if err == nil && s.nodes != nil {
-		if node, err := s.nodes.Resolve(addr); err == nil && node.Path != "" {
-			imagePath = filepath.Join(s.storePath, node.Path)
-		}
-	}
-	if imagePath == "" {
-		// Fallback when NodeResolver is not wired or for direct storeRelPath lookups.
-		targetDocUUID := uuid
-		targetKey := strings.TrimPrefix(storeRelPath, "/")
-		if err == nil {
-			targetDocUUID = addr.Container
-			targetKey = addr.Leaf
-		}
-		doc, err := s.documents.LoadByUUID(targetDocUUID)
-		if err != nil {
-			return domain.ImageDesc{}, err
-		}
-		targetDir := filepath.Join(s.storePath, doc.Storable().ExternalRef())
-		for _, assetItr := range doc.Storable().Owns() {
-			if as, ok := assetItr.(store.AssetStorable); ok && (as.Key() == targetKey || as.BlkID() == blkId) {
-				imagePath = filepath.Join(targetDir, as.Key())
-				break
-			}
-		}
-		if imagePath == "" {
-			candidate := filepath.Join(targetDir, targetKey)
-			if _, statErr := os.Stat(candidate); statErr != nil {
-				logger.Warn("DescribeImage: asset not found", "blkId", blkId, "src", storeRelPath, "candidate", candidate)
-				return domain.ImageDesc{}, fmt.Errorf("image file not found for block %s", blkId)
-			}
-			imagePath = candidate
-		}
+	imagePath, err := s.assetPath(uuid, src)
+	if err != nil {
+		logger.Warn("DescribeImage: asset not found", "blkId", blkId, "src", src, "err", err)
+		return domain.ImageDesc{}, fmt.Errorf("image file not found for block %s: %w", blkId, err)
 	}
 
 	prompt, _ := s.prompts.GetPromptContent("image")
@@ -296,6 +255,26 @@ func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string
 	}
 	desc.Detect = "ai"
 	return desc, nil
+}
+
+// assetPath is the absolute path of the asset file src names, read off the
+// NodeDescriptor the resolver returns for it.
+func (s *AIService) assetPath(uuid, src string) (string, error) {
+	addr, err := domain.ResolveAssetReference(src, domain.NewContainerAddress(uuid))
+	if err != nil {
+		return "", err
+	}
+	if s.nodes == nil {
+		return "", fmt.Errorf("no node resolver to find %s", addr)
+	}
+	node, err := s.nodes.Resolve(addr)
+	if err != nil {
+		return "", err
+	}
+	if node.Path == "" {
+		return "", fmt.Errorf("%s is not an asset", addr)
+	}
+	return filepath.Join(s.storePath, node.Path), nil
 }
 
 // RefineLanguage asks the AI to identify the programming language of a code

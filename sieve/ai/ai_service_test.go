@@ -1,13 +1,10 @@
 package ai
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
 	"sieve/sieve/domain"
-	"sieve/sieve/services"
-	"sieve/store/filestore"
 )
 
 // timeoutFor reads only settings.PromptTimeouts and settings.CLITimeoutLong, so a
@@ -46,165 +43,72 @@ func TestAIService_timeoutFor(t *testing.T) {
 	}
 }
 
-func TestAIService_DescribeImage_resolvesSieveURIForeignAsset(t *testing.T) {
-	root := t.TempDir()
-	fs, err := filestore.NewFileStore(root, "testhost")
-	if err != nil {
-		t.Fatalf("NewFileStore: %v", err)
-	}
-	state, err := services.NewStateService(fs, "", nil)
-	if err != nil {
-		t.Fatalf("NewStateService: %v", err)
-	}
-	prompts, err := NewPromptService(fs)
-	if err != nil {
-		t.Fatalf("NewPromptService: %v", err)
-	}
-	ds, err := services.NewDocumentService(fs)
-	if err != nil {
-		t.Fatalf("NewDocumentService: %v", err)
-	}
-
-	doc1, err := ds.New()
-	if err != nil {
-		t.Fatalf("doc1: %v", err)
-	}
-	if doc1, err = ds.Save(doc1); err != nil {
-		t.Fatalf("save doc1: %v", err)
-	}
-
-	doc2, err := ds.New()
-	if err != nil {
-		t.Fatalf("doc2: %v", err)
-	}
-	if doc2, err = ds.Save(doc2); err != nil {
-		t.Fatalf("save doc2: %v", err)
-	}
-
-	// Write an asset in doc2's directory on disk
-	doc2Dir := filepath.Join(root, doc2.Storable().ExternalRef())
-	foreignAsset := "0194820a-81c2-7d34.png"
-	if err := os.WriteFile(filepath.Join(doc2Dir, foreignAsset), []byte("fake-image-bytes"), 0o644); err != nil {
-		t.Fatalf("write asset: %v", err)
-	}
-
-	stub := filepath.Join(t.TempDir(), "stub-ai-cli")
-	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write stub CLI: %v", err)
-	}
-	settings := domain.DefaultSettings()
-	settings.CLI = "claude"
-	settings.CLIPath = stub
-	if err := state.SaveSettings(settings); err != nil {
-		t.Fatalf("SaveSettings: %v", err)
-	}
-
-	cap := &captureRunner{ret: `{"alt":"Foreign Diagram","summary":"A cross-container test flow"}`}
-	svc := &AIService{
-		state:     state,
-		prompts:   prompts,
-		storePath: root,
-		documents: ds,
-		runner:    cap,
-	}
-
-	foreignRef := "sieve://" + doc2.UUID() + "/" + foreignAsset
-	desc, err := svc.DescribeImage(doc1.UUID(), foreignRef, "blk-1")
-	if err != nil {
-		t.Fatalf("DescribeImage failed on foreign sieve URI: %v", err)
-	}
-
-	if desc.Alt != "Foreign Diagram" || desc.Summary != "A cross-container test flow" {
-		t.Errorf("unexpected desc: %+v", desc)
-	}
-	if cap.cwd != doc2Dir {
-		t.Errorf("runner cwd: got %q, want %q (foreign doc directory)", cap.cwd, doc2Dir)
-	}
-}
-
+// stubNodeResolver records the address it was asked about and answers with node,
+// or with ErrNodeNotFound when node has no Path.
 type stubNodeResolver struct {
-	resolveFunc func(addr domain.Address) (domain.NodeDescriptor, error)
+	asked domain.Address
+	node  domain.NodeDescriptor
 }
 
 func (s *stubNodeResolver) Resolve(addr domain.Address) (domain.NodeDescriptor, error) {
-	if s.resolveFunc != nil {
-		return s.resolveFunc(addr)
+	s.asked = addr
+	if s.node.Path == "" {
+		return domain.NodeDescriptor{}, domain.ErrNodeNotFound
 	}
-	return domain.NodeDescriptor{}, domain.ErrNodeNotFound
+	return s.node, nil
 }
 
-func TestAIService_DescribeImage_resolvesViaNodeResolver(t *testing.T) {
-	root := t.TempDir()
-	fs, err := filestore.NewFileStore(root, "testhost")
-	if err != nil {
-		t.Fatalf("NewFileStore: %v", err)
+// DescribeImage finds the image through the resolver alone: the src is resolved
+// against the block's own document, the resolver names the file, and the CLI runs
+// in that file's directory. A src the resolver cannot find is an error.
+func TestAIService_DescribeImage_resolvesTheSrcThroughTheResolver(t *testing.T) {
+	const (
+		here  = "0197b1f4-5a5a-7000-8000-00000000c001"
+		other = "0197b1f4-5a5a-7000-8000-00000000c002"
+	)
+	cases := []struct {
+		name      string
+		src       string
+		node      domain.NodeDescriptor
+		wantAsked domain.Address
+		wantErr   bool
+	}{
+		{"a sieve URI names this document's asset", "sieve://" + here + "/shot.png",
+			domain.NodeDescriptor{Kind: "asset", Path: "notes/here/shot.png"}, domain.NewLeafAddress(here, "shot.png"), false},
+		{"a sieve URI names another document's asset", "sieve://" + other + "/shot.png",
+			domain.NodeDescriptor{Kind: "asset", Path: "notes/other/shot.png"}, domain.NewLeafAddress(other, "shot.png"), false},
+		{"a resolver miss is an error", "sieve://" + here + "/gone.png",
+			domain.NodeDescriptor{}, domain.NewLeafAddress(here, "gone.png"), true},
 	}
-	state, err := services.NewStateService(fs, "", nil)
-	if err != nil {
-		t.Fatalf("NewStateService: %v", err)
-	}
-	prompts, err := NewPromptService(fs)
-	if err != nil {
-		t.Fatalf("NewPromptService: %v", err)
-	}
-	ds, err := services.NewDocumentService(fs)
-	if err != nil {
-		t.Fatalf("NewDocumentService: %v", err)
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cap := &captureRunner{ret: `{"alt":"Alt","summary":"Summary"}`}
+			svc := newSmartTestService(t, cap)
+			resolver := &stubNodeResolver{node: tc.node}
+			svc.nodes = resolver
 
-	doc, err := ds.New()
-	if err != nil {
-		t.Fatalf("doc: %v", err)
-	}
-	if doc, err = ds.Save(doc); err != nil {
-		t.Fatalf("save doc: %v", err)
-	}
-
-	docDir := filepath.Join(root, doc.Storable().ExternalRef())
-	assetName := "resolver-test.png"
-	if err := os.WriteFile(filepath.Join(docDir, assetName), []byte("image-data"), 0o644); err != nil {
-		t.Fatalf("write asset: %v", err)
-	}
-
-	settings := domain.DefaultSettings()
-	settings.CLI = "claude"
-	settings.CLIPath = filepath.Join(t.TempDir(), "stub")
-	_ = os.WriteFile(settings.CLIPath, []byte("#!/bin/sh\nexit 0\n"), 0o755)
-	_ = state.SaveSettings(settings)
-
-	cap := &captureRunner{ret: `{"alt":"Resolved Alt","summary":"Via NodeResolver"}`}
-	svc := &AIService{
-		state:     state,
-		prompts:   prompts,
-		storePath: root,
-		documents: ds,
-		runner:    cap,
-	}
-
-	calledResolver := false
-	resolver := &stubNodeResolver{
-		resolveFunc: func(addr domain.Address) (domain.NodeDescriptor, error) {
-			calledResolver = true
-			return domain.NodeDescriptor{
-				Kind: "asset",
-				Path: filepath.Join(doc.Storable().ExternalRef(), assetName),
-			}, nil
-		},
-	}
-	svc.SetNodes(resolver)
-
-	desc, err := svc.DescribeImage(doc.UUID(), "/"+assetName, "blk-1")
-	if err != nil {
-		t.Fatalf("DescribeImage: %v", err)
-	}
-	if !calledResolver {
-		t.Error("expected NodeResolver to be called during DescribeImage")
-	}
-	if desc.Alt != "Resolved Alt" {
-		t.Errorf("got alt %q, want %q", desc.Alt, "Resolved Alt")
-	}
-	if cap.cwd != docDir {
-		t.Errorf("got cwd %q, want %q", cap.cwd, docDir)
+			desc, err := svc.DescribeImage(here, tc.src, "blk-1")
+			if !resolver.asked.Equal(tc.wantAsked) {
+				t.Errorf("resolver asked about %v, want %v", resolver.asked, tc.wantAsked)
+			}
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("DescribeImage succeeded (%+v), want an error", desc)
+				}
+				if cap.op != "" {
+					t.Errorf("the CLI ran (%q) for an image that was not found", cap.op)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("DescribeImage: %v", err)
+			}
+			if desc.Alt != "Alt" || desc.Summary != "Summary" {
+				t.Errorf("desc = %+v", desc)
+			}
+			if want := filepath.Dir(filepath.Join(svc.storePath, tc.node.Path)); cap.cwd != want {
+				t.Errorf("cwd = %q, want the resolved file's directory %q", cap.cwd, want)
+			}
+		})
 	}
 }
-

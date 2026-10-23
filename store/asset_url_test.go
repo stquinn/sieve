@@ -134,11 +134,21 @@ func TestParseAssetURL(t *testing.T) {
 			wantOK:   true,
 		},
 		{
-			name:     "custom or test container string",
-			input:    "/ui/assets/doc-uuid-1/diagram.png",
-			wantUUID: "doc-uuid-1",
+			name:     "a route under an absolute origin",
+			input:    "wails://wails/ui/assets/" + testAssetUUID + "/diagram.png",
+			wantUUID: testAssetUUID,
 			wantFile: "diagram.png",
 			wantOK:   true,
+		},
+		{
+			name:   "a container segment that is not a uuid",
+			input:  "/ui/assets/doc-uuid-1/diagram.png",
+			wantOK: false,
+		},
+		{
+			name:   "a legacy-prefixed path that is not a route",
+			input:  "/sieve/img/logo.png",
+			wantOK: false,
 		},
 		{
 			name:   "no filename in route",
@@ -173,4 +183,3 @@ func TestParseAssetURL(t *testing.T) {
 		})
 	}
 }
-

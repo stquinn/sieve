@@ -84,10 +84,13 @@ func TestDocumentService_FilePromotesBufferAndAssets(t *testing.T) {
 		t.Fatalf("Failed to save document: %v", err)
 	}
 
-	// Set display name so that when it's filed, it takes a specific name
+	// Set display name and folder so that filing moves, reparents and renames it.
 	meta := doc.Storable().Meta()
 	meta["display_name"] = "My Test Note"
 	doc.Storable().SetMeta(meta)
+	folder := "projects"
+	doc.Meta().SetAiFolderSuggestion(&folder)
+	uuid := doc.UUID()
 
 	// 4. File the document (promotes to Library)
 	filedDoc, err := ds.File(doc)
@@ -108,15 +111,22 @@ func TestDocumentService_FilePromotesBufferAndAssets(t *testing.T) {
 		t.Fatal("Owned assets lost during File operation")
 	}
 
-	// In the document-as-directory model, asset URLs are UUID-stable:
-	// /ui/assets/{uuid}/{filename} — the UUID doesn't change on Move/Rename, so
-	// the asset reference in the body is preserved as-is. The old and new
-	// ExternalRefs are identical.
-	newExtRef := newOwns[0].ExternalRef()
+	// A block stores its asset as sieve://{uuid}/{key}, so filing must keep the
+	// uuid and leave the asset reachable under it.
+	if filedDoc.UUID() != uuid {
+		t.Fatalf("filing changed the uuid: %q -> %q", uuid, filedDoc.UUID())
+	}
+	reloaded, err := ds.LoadByUUID(uuid)
+	if err != nil || reloaded.Kind() != domain.KindNote {
+		t.Fatalf("LoadByUUID(%s) after filing = %v, %v; want the filed note", uuid, reloaded, err)
+	}
+	key := newOwns[0].Key()
+	if data, err := NewAssetService(fs, "").ServeAssetData(uuid, key); err != nil || string(data) != "fake-png" {
+		t.Errorf("asset %s/%s after filing = %q, %v; want the original bytes", uuid, key, data, err)
+	}
 	if !strings.Contains(newBody, oldExtRef) {
 		t.Errorf("Expected body to still contain the stable asset ref %q, got: %s", oldExtRef, newBody)
 	}
-	_ = newExtRef
 }
 
 // Search matched tags, summary and body but NOT the display name, so a note

@@ -42,8 +42,8 @@ func (f *fakePlantuml) Render(source string) ([]byte, error) {
 }
 
 // recordingAssets records Save calls so a test can prove the asset write happens
-// (in Work) before the COMPLETE flip (in Apply). Returns a stub asset whose
-// ExternalRef is the derived svg filename.
+// (in Work) before the COMPLETE flip (in Apply). Returns a stub asset keyed by
+// the assetID it was given.
 type recordingAssets struct {
 	saves    int
 	lastData []byte
@@ -54,11 +54,7 @@ func (r *recordingAssets) Save(_ store.Category, _, assetID string, data []byte)
 	r.saves++
 	r.lastData = data
 	r.lastID = assetID
-	ref := assetID
-	if !strings.HasSuffix(ref, ".svg") {
-		ref += ".svg"
-	}
-	return &domain.ImageAsset{S: fakeAssetStorable{ref: ref}}, nil
+	return &domain.ImageAsset{S: fakeAssetStorable{ref: assetID}}, nil
 }
 
 // ServeAssetData satisfies the read half of AssetsPort. The diagram job only ever
@@ -109,8 +105,11 @@ func plantumlBlock(source, mode, renderedHash string) *block.SieveBlock {
 	}
 }
 
+// describeDocUUID is the document every describe()d job renders into.
+const describeDocUUID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a00"
+
 func describe(p *DiagramProcessor, blk *block.SieveBlock) *block.ProcessorJob {
-	return p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "u1", Block: blk})
+	return p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: describeDocUUID, Block: blk})
 }
 
 // ── Theme preamble (Tier 1: per-variable skinparam fidelity) ────────────────
@@ -351,8 +350,8 @@ func TestDiagramProcessor_job_savesAssetBeforeComplete(t *testing.T) {
 		t.Errorf("status after Apply: got %v, want COMPLETE", blk.Attrs["status"])
 	}
 	svgAsset, _ := blk.Attrs["svgAsset"].(string)
-	if !strings.HasPrefix(svgAsset, "/") || !strings.HasSuffix(svgAsset, ".svg") {
-		t.Errorf("svgAsset: got %v, want relative Sieve reference /{key}.svg", blk.Attrs["svgAsset"])
+	if !strings.HasPrefix(svgAsset, "sieve://"+describeDocUUID+"/") || !strings.HasSuffix(svgAsset, ".svg") {
+		t.Errorf("svgAsset: got %v, want the absolute address sieve://{doc}/{key}.svg", blk.Attrs["svgAsset"])
 	}
 	if strings.Contains(svgAsset, "di-0001") {
 		t.Errorf("svgAsset must not contain block ID: %v", svgAsset)
@@ -387,71 +386,54 @@ func TestDiagramProcessor_job_renderErrorNoAssetNoHash(t *testing.T) {
 	}
 }
 
-func TestDiagramProcessor_job_reusesExistingRelativeSvgAssetKey(t *testing.T) {
-	assets := &recordingAssets{}
-	pl := &fakePlantuml{svg: []byte("<svg>rerender</svg>")}
-	p := NewDiagramProcessor(block.BlockServices{
-		State:     darkState(),
-		Plantuml:  pl,
-		Assets:    assets,
-		Documents: &fakeDocuments{},
-	})
-
-	existingKey := "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b.svg"
-	blk := plantumlBlock("A -> B", "render", "")
-	blk.Attrs["svgAsset"] = "/" + existingKey
-
-	job := describe(p, blk)
-	if job == nil {
-		t.Fatal("expected a render job")
+// A re-render overwrites the asset the block already holds, under its exact key,
+// so theme switches never accumulate files; a key another document holds is
+// never written to, and the render mints a key of its own instead.
+func TestDiagramProcessor_job_svgAssetKey(t *testing.T) {
+	const ownKey = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b.svg"
+	const foreignDoc = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4b77"
+	cases := []struct {
+		name     string
+		svgAsset string
+		wantKey  string // "" = a freshly minted key
+	}{
+		{"an own absolute key is reused verbatim", "sieve://" + describeDocUUID + "/" + ownKey, ownKey},
+		{"an own legacy relative key is reused verbatim", "/" + ownKey, ownKey},
+		{"an own key without the svg extension is reused verbatim", "sieve://" + describeDocUUID + "/opaque-key", "opaque-key"},
+		{"a key held by another document is not written to", "sieve://" + foreignDoc + "/" + ownKey, ""},
+		{"no asset yet mints a key", "", ""},
 	}
-
-	result, err := job.Work()
-	if err != nil {
-		t.Fatalf("Work: %v", err)
-	}
-
-	if assets.lastID != existingKey {
-		t.Errorf("saved assetID: got %q, want %q (reusing existing relative key)", assets.lastID, existingKey)
-	}
-	if result != "/"+existingKey {
-		t.Errorf("result: got %v, want %q", result, "/"+existingKey)
-	}
-
-	job.Apply(result, blk)
-	if blk.Attrs["svgAsset"] != "/"+existingKey {
-		t.Errorf("svgAsset after Apply: got %v, want %q", blk.Attrs["svgAsset"], "/"+existingKey)
-	}
-}
-
-func TestDiagramProcessor_job_foreignSvgAssetMintsFreshKey(t *testing.T) {
-	assets := &recordingAssets{}
-	pl := &fakePlantuml{svg: []byte("<svg>foreign</svg>")}
-	p := NewDiagramProcessor(block.BlockServices{
-		State:     darkState(),
-		Plantuml:  pl,
-		Assets:    assets,
-		Documents: &fakeDocuments{},
-	})
-
-	blk := plantumlBlock("A -> B", "render", "")
-	blk.Attrs["svgAsset"] = "sieve://other-doc-uuid/foreign-asset.svg"
-
-	job := describe(p, blk)
-	if job == nil {
-		t.Fatal("expected a render job")
-	}
-
-	result, err := job.Work()
-	if err != nil {
-		t.Fatalf("Work: %v", err)
-	}
-
-	if assets.lastID == "foreign-asset.svg" || strings.Contains(assets.lastID, "other-doc-uuid") {
-		t.Errorf("foreign asset reference must not overwrite foreign asset; got %q", assets.lastID)
-	}
-	if !strings.HasPrefix(result.(string), "/") || strings.HasPrefix(result.(string), "sieve://") {
-		t.Errorf("result must be local relative reference; got %v", result)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assets := &recordingAssets{}
+			p := NewDiagramProcessor(block.BlockServices{
+				State:     darkState(),
+				Plantuml:  &fakePlantuml{svg: []byte("<svg>rerender</svg>")},
+				Assets:    assets,
+				Documents: &fakeDocuments{},
+			})
+			blk := plantumlBlock("A -> B", "render", "")
+			blk.Attrs["svgAsset"] = tc.svgAsset
+			job := describe(p, blk)
+			if job == nil {
+				t.Fatal("expected a render job")
+			}
+			result, err := job.Work()
+			if err != nil {
+				t.Fatalf("Work: %v", err)
+			}
+			if tc.wantKey != "" {
+				if assets.lastID != tc.wantKey {
+					t.Errorf("saved assetID: got %q, want %q", assets.lastID, tc.wantKey)
+				}
+			} else if assets.lastID == ownKey || !strings.HasSuffix(assets.lastID, ".svg") {
+				t.Errorf("saved assetID: got %q, want a freshly minted {uuid}.svg", assets.lastID)
+			}
+			job.Apply(result, blk)
+			if want := "sieve://" + describeDocUUID + "/" + assets.lastID; blk.Attrs["svgAsset"] != want {
+				t.Errorf("svgAsset after Apply: got %v, want the absolute address %q", blk.Attrs["svgAsset"], want)
+			}
+		})
 	}
 }
 

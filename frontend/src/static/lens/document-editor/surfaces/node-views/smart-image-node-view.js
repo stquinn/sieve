@@ -9,6 +9,7 @@
 import { registerSieveRenderer, sieveBlockFor } from '../sieve-block-extension.js'
 import { DiagramRenderer } from '../../../../renderers/diagram-renderer.js'
 import { SmartImageRenderer } from '../../../../renderers/smart-image-renderer.js'
+import { copyImageToClipboard } from '../../../../renderers/copy-image.js'
 
 ;(function () {
   'use strict'
@@ -117,16 +118,7 @@ import { SmartImageRenderer } from '../../../../renderers/smart-image-renderer.j
         { type: 'header', label: "Image"},
         { icon: window.SieveIcons.copy, label: 'Copy Image', action: function () {
           var src = SmartImageRenderer.resolveSrc(n.attrs.src, ctx && ctx.getEditor() && ctx.getEditor().uuid)
-          if (!src) return
-          fetch(src)
-            .then(function (res) { return res.blob() })
-            .then(function (blob) {
-              if (navigator.clipboard && navigator.clipboard.write) {
-                var item = {}
-                item[blob.type] = blob
-                navigator.clipboard.write([new ClipboardItem(item)])
-              }
-            }).catch(function (err) { console.error('Failed to copy image', err) })
+          if (src) copyImageToClipboard(src)
         }},
         // Offered ONLY when there is a description — an item that reveals nothing
         // is a lie. The toggle persists showSummary, so the choice survives a

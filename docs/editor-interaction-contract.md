@@ -21,7 +21,7 @@ regression pass. Source spec:
 | Log block | consume ∅ | consume ∅ | consume ∅ (read-only text) | **escape: insert ¶ after block** | **toggle raw↔explore** | exit to next block | exit to previous block | native | **selected characters** + whole block as `sieve/slice` | selected characters; **document UNCHANGED** (read-only text) |
 | ai-block | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a | selected characters, per covered ELEMENT — it is a container (see Copy and cut matrix) | selected characters; removes them |
 | web-clip | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a | selected characters | selected characters; removes them |
-| smart-image | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a | real bitmap | bitmap; removes the block |
+| smart-image | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a | whole block (the bitmap is the context menu's **Copy Image**) | whole block; removes the block |
 | attachment | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a | whole block | whole block; removes the block |
 
 **THE WHOLE MATRIX IS OVERRIDDEN WHILE A TRIGGER PICKER IS OPEN (#38).** ↑, ↓,
@@ -586,7 +586,7 @@ its blocks is one too — and declaring that content is the whole declaration. O
 | A highlight PM DOES own, spanning more than one block or element | Each block's text views follow the DOCUMENT range, so each contributes its own covered characters exactly once. The DOM highlight is read only where PM owns no position for it — `contentEditable=false` DOM, and the whole highlight confined to one such region (`BlockSelection.unownedText`). Read off the DOM anywhere else, one highlight reports itself in full for the first block and every later block adds its share again. |
 | Single whole sieve block (gutter / NodeSelection) | text/plain + text/html + `sieve/slice` + `sieve/<kind>` + renderer custom views |
 | Gutter block-range | `sieve/slice` = ordered ContentEntry sets, one per block |
-| Smart-image node selection | real bitmap to clipboard |
+| Smart-image node selection | a whole sieve block like any other: text/plain + text/html + `sieve/slice` + `sieve/smart-image` (with `context.container`), so an in-app paste copies the asset verbatim with its name and description. A PNG bitmap for OTHER applications is the block's context-menu **Copy Image** (`renderers/copy-image.js`), never Ctrl/Cmd+C — WebKit accepts only `image/png` there, so any other type is re-encoded, an SVG without an intrinsic size at 1024px wide. |
 | Collapsed caret, no live DOM highlight | COPY still composes the caret's block, as above. CUT is NOT handled — a collapsed PM selection with nothing highlighted names no content to take, so the handler declines and native ProseMirror cut serves it (a no-op, as it always was on an empty selection). The user's existing clipboard is left untouched. |
 | Pure prose | deferred to native ProseMirror copy/cut |
 

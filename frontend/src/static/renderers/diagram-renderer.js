@@ -25,7 +25,7 @@ import { StatusBadge } from './status-badge.js'
 import { AdvancedHeaderProvider, HeaderBar, expandButton } from './header-bar.js'
 import { expandBlock } from '../ui/media-lightbox.js'
 import { registerBlockRenderer } from './block-kinds.js'
-import { resolveImageSrc } from './asset-urls.js'
+import { resolveImageSrc, isContainerRelativeAssetRef } from './asset-urls.js'
 
 /**
  * @typedef {Object} DiagramAttrs
@@ -223,6 +223,8 @@ export class DiagramRenderer extends BlockRenderer {
   // locally (also handling an embedded ```mermaid fence among `entries`),
   // plantuml fetches the persisted same-origin svgAsset. A never-rendered
   // plantuml block yields no entry, exactly as empty-source mermaid does.
+  // containerUuid is the document sourceNode lives in; a relative svgAsset
+  // cannot be fetched without it, and the promise rejects.
   /** @param {any} sourceNode @param {any[]} entries @param {string} [containerUuid] @returns {Promise<{mimeType:string,content:string}|null>} */
   static renderDiagramSvgEntry(sourceNode, entries, containerUuid) {
     const attrs = (sourceNode && sourceNode.attrs) || {}
@@ -231,16 +233,10 @@ export class DiagramRenderer extends BlockRenderer {
     if (isDiagram && attrs.diagramType === 'plantuml') {
       const raw = String(attrs.svgAsset || '')
       if (!raw) return Promise.resolve(null)
-      let resolvedContainer = containerUuid || (sourceNode && (sourceNode.uuid || sourceNode.containerUuid || (sourceNode.attrs && (sourceNode.attrs.containerUuid || sourceNode.attrs.container)))) || ''
-      if (!resolvedContainer && attrs.id) {
-        for (const inst of DiagramRenderer.#liveInstances) {
-          if (inst.id === attrs.id && inst._container) {
-            resolvedContainer = inst._container
-            break
-          }
-        }
+      if (isContainerRelativeAssetRef(raw) && !containerUuid) {
+        return Promise.reject(new Error('diagram: svgAsset ' + raw + ' is relative and no container was given to resolve it against'))
       }
-      const url = resolveImageSrc(raw, resolvedContainer)
+      const url = resolveImageSrc(raw, containerUuid)
       // no-cache: stable-URL / mutable-content asset (see #fetchAndDisplayPlantuml).
       return fetch(url, { cache: 'no-cache' })
         .then((res) => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.text() })

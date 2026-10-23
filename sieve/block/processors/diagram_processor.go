@@ -421,9 +421,10 @@ func (p *DiagramProcessor) renderHash(effective string) string {
 }
 
 // saveAsset persists the rendered SVG as an asset, attaches it to the document,
-// and returns its relative sieve URI-reference (/{key}). If existingKey names an
-// existing relative key (/{key}), that key is reused so repeated renders and
-// theme switches overwrite the existing asset rather than accumulating files.
+// and returns its absolute sieve address (sieve://{uuid}/{key}). When existingKey names an
+// asset of this document, its key is reused verbatim, so repeated renders and
+// theme switches overwrite that asset rather than accumulating files; a key held
+// by another document is never written to.
 func (p *DiagramProcessor) saveAsset(uuid, blockID, existingKey string, data []byte) (string, error) {
 	cat := domain.WorkingCopy
 	var doc domain.Document
@@ -434,15 +435,10 @@ func (p *DiagramProcessor) saveAsset(uuid, blockID, existingKey string, data []b
 		}
 	}
 
-	var assetID string
-	trimmed := strings.TrimPrefix(strings.TrimSpace(existingKey), "/")
-	if trimmed != "" && !strings.Contains(trimmed, "/") && !strings.Contains(trimmed, ":") && !strings.HasPrefix(existingKey, "sieve://") {
-		assetID = trimmed
-		if !strings.HasSuffix(strings.ToLower(assetID), ".svg") {
-			assetID += ".svg"
-		}
-	} else {
-		assetID = ident.New() + ".svg"
+	assetID := ident.New() + ".svg"
+	self := domain.NewContainerAddress(uuid)
+	if addr, err := domain.ResolveAssetReference(existingKey, self); err == nil && addr.Container == self.Container {
+		assetID = addr.Leaf
 	}
 
 	asset, err := p.svc.Assets.Save(cat, uuid, assetID, data)
@@ -458,7 +454,7 @@ func (p *DiagramProcessor) saveAsset(uuid, blockID, existingKey string, data []b
 		}
 	}
 
-	return "/" + asset.Storable().Key(), nil
+	return domain.NewLeafAddress(uuid, asset.Storable().Key()).String(), nil
 }
 
 func (p *DiagramProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {

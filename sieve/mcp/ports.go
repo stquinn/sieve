@@ -19,6 +19,4 @@ import "sieve/sieve/domain"
 //
 // domain.ErrBadAddress is raised BEFORE this port, at get_by_uri's own door,
 // where untrusted input is parsed.
-type NodeResolver interface {
-	Resolve(addr domain.Address) (domain.NodeDescriptor, error)
-}
+type NodeResolver = domain.NodeResolver

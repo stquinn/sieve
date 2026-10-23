@@ -3,22 +3,22 @@ package block
 import (
 	"strings"
 
-	"sieve/ident"
 	"sieve/sieve/domain"
 )
 
-// AssetURIMigrator rewrites served asset routes and legacy filenames in
-// smart-image (src) and diagram (svgAsset) blocks down to sieve URI-references:
-// the relative form `/{key}` for contained assets, and `sieve://{container}/{key}`
-// for foreign cross-container references.
+// AssetURIMigrator rewrites every asset spelling in smart-image (src) and
+// diagram (svgAsset) blocks — a served route, a legacy route, a bare or
+// `.assets/` filename, a relative `/{key}` — to the absolute sieve address
+// `sieve://{container}/{key}` it names, resolving container-less spellings
+// against the document. An attr already in that form is left untouched.
 //
 // It MUST stay gated to Kind == "smart-image" and Kind == "diagram" so it never
 // collides with ReferenceMigrator or alters kinds whose payload does not denote
 // a Sieve asset.
 type AssetURIMigrator struct{}
 
-// Migrate returns the tree with smart-image and diagram asset routes rewritten
-// to sieve URI-references, plus whether anything changed. The input is never
+// Migrate returns the tree with smart-image and diagram asset references
+// rewritten to absolute sieve addresses, plus whether anything changed. The input is never
 // mutated.
 func (m AssetURIMigrator) Migrate(blocks []SieveBlock, documentUUID string) ([]SieveBlock, bool) {
 	if len(blocks) == 0 {
@@ -65,16 +65,13 @@ func (m AssetURIMigrator) migrateAttr(attrs map[string]interface{}, attrKey, doc
 	return cloned, true
 }
 
-// rewriteRef answers the canonical sieve URI-reference for ref, and whether it
-// differs from the input.
+// rewriteRef answers the absolute sieve address ref names, resolved against
+// documentUUID, and whether it differs from the input. A ref that is not an
+// asset reference (an http(s) URL, a data: URL) is returned unchanged.
 func (m AssetURIMigrator) rewriteRef(ref, documentUUID string) (string, bool) {
 	addr, err := domain.ResolveAssetReference(ref, domain.NewContainerAddress(documentUUID))
 	if err != nil {
 		return ref, false
-	}
-	if ident.Canonical(addr.Container) == ident.Canonical(documentUUID) {
-		canonical := "/" + addr.Leaf
-		return canonical, ref != canonical
 	}
 	canonical := addr.String()
 	return canonical, ref != canonical

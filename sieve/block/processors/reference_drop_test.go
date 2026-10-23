@@ -2,7 +2,7 @@ package processors
 
 import (
 	"encoding/base64"
-	"path/filepath"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"testing"
@@ -123,8 +123,8 @@ func TestReferenceProcessor_Transform_savesADroppedFile(t *testing.T) {
 	}
 	// The face lands under cache, never at root: root attrs describe the pointing.
 	face := refFace(t, overrides)
-	// The chip is labelled with what the USER dropped. The stored asset is named
-	// after the block, so without this the chip would wear a UUID.
+	// The chip is labelled with what the USER dropped, which the key need not
+	// spell exactly.
 	if face["title"] != "swagger.yml" {
 		t.Errorf("cache.title: got %v, want the original filename swagger.yml", face["title"])
 	}
@@ -187,11 +187,11 @@ func TestReferenceProcessor_droppedFileIsBornCompleteAndFaced(t *testing.T) {
 	}
 }
 
-// The stored filename keeps the dropped file's EXTENSION, because the mime sniff
-// reads it and the store's own fallback is magic bytes, which cannot tell YAML
-// from any other text. Lose the extension here and a swagger spec's chip reads
-// "txt".
-func TestReferenceProcessor_Transform_storedAssetKeepsTheExtension(t *testing.T) {
+// A dropped file is stored under its own sanitised name, so the document
+// directory, exports and the AI's File tag show what the user dropped. The
+// extension survives because the mime sniff reads it: magic bytes cannot tell
+// YAML from any other text.
+func TestReferenceProcessor_Transform_storedAssetIsNamedAfterTheDrop(t *testing.T) {
 	ds, fs := newTestDocumentService(t)
 	doc, err := ds.New()
 	if err != nil {
@@ -199,24 +199,87 @@ func TestReferenceProcessor_Transform_storedAssetKeepsTheExtension(t *testing.T)
 	}
 	p := NewReferenceProcessor(block.BlockServices{Documents: ds, Assets: services.NewAssetService(fs, "")})
 
-	overrides := p.Transform(
-		[]block.ContentEntry{dropped("text/yaml", "swagger.yml", "openapi: 3.0.0")},
-		doc.UUID(), ident.New(), block.ActionPaste)
-	if overrides == nil {
-		t.Fatal("Transform declined a dropped file")
+	for _, want := range []string{"swagger.yml", "swagger-2.yml"} {
+		overrides := p.Transform(
+			[]block.ContentEntry{dropped("text/yaml", "swagger.yml", "openapi: 3.0.0")},
+			doc.UUID(), ident.New(), block.ActionPaste)
+		if overrides == nil {
+			t.Fatal("Transform declined a dropped file")
+		}
+		addr, err := domain.ParseAddress(overrides["uri"].(string))
+		if err != nil {
+			t.Fatalf("ParseAddress: %v", err)
+		}
+		if addr.Leaf != want {
+			t.Errorf("stored asset = %q, want %q", addr.Leaf, want)
+		}
 	}
-	addr, err := domain.ParseAddress(overrides["uri"].(string))
-	if err != nil {
-		t.Fatalf("ParseAddress: %v", err)
+}
+
+// keyFor's naming policy, end to end through a real store: each case mints its
+// owned names into a fresh document, then mints name and checks the key the
+// store reports. Text bytes sniff to .txt, which is what an extensionless key
+// gains. "{doc}" stands for the document's uuid and "{uuid}" for any fresh one.
+func TestDocumentAssets_mintKeyPolicy(t *testing.T) {
+	cases := []struct {
+		name  string
+		owned []string
+		mint  string
+		want  string
+	}{
+		{name: "a plain name is kept", mint: "holiday.png", want: "holiday.png"},
+		{name: "a taken name is uniquified", owned: []string{"holiday.png"}, mint: "holiday.png", want: "holiday-2.png"},
+		{name: "uniquifying ignores case and the extension is lowercased",
+			owned: []string{"holiday.png", "holiday-2.png"}, mint: "Holiday.PNG", want: "Holiday-3.png"},
+		{name: "path components are dropped", mint: "../../etc/passwd", want: "passwd.txt"},
+		{name: "a Windows path is dropped too", mint: `C:\Users\me\My Report (final).pdf`, want: "My-Report-final.pdf"},
+		{name: "leading dots are dropped", mint: ".bashrc", want: "bashrc.txt"},
+		{name: "a trailing dot is no extension", mint: "notes.", want: "notes.txt"},
+		{name: "a non-alphanumeric suffix stays in the stem", mint: "report.v2-final", want: "report.v2-final"},
+		{name: "the stem is capped", mint: strings.Repeat("a", 100) + ".png", want: strings.Repeat("a", assetStemMax) + ".png"},
+		{name: "an extensionless name collides with an owned stem", owned: []string{"README"}, mint: "README", want: "README-2.txt"},
+		{name: "the content file is reserved", mint: "{doc}.md", want: "{doc}-2.md"},
+		{name: "the content file's temporary is reserved", mint: "{doc}.md.tmp", want: "{doc}.md-2.tmp"},
+		{name: "letters of any script are kept", mint: "日本語.pdf", want: "日本語.pdf"},
+		{name: "accented letters are kept and spaces collapse", mint: "café résumé.PNG", want: "café-résumé.png"},
+		{name: "a decomposed accent stays with its letter", mint: "cafe\u0301.png", want: "cafe\u0301.png"},
+		{name: "a leading combining mark is dropped", mint: "\u0301x.png", want: "x.png"},
+		{name: "the stem cap never splits a rune", mint: "a" + strings.Repeat("é", assetStemMax) + ".png", want: "a" + strings.Repeat("é", assetStemMax/2-1) + ".png"},
+		{name: "nothing usable falls back to a uuid", mint: "???.pdf", want: "{uuid}.pdf"},
+		{name: "no name falls back to a uuid", mint: "", want: "{uuid}.txt"},
 	}
-	if ext := filepath.Ext(addr.Leaf); ext != ".yml" {
-		t.Errorf("stored asset %q has extension %q, want .yml", addr.Leaf, ext)
-	}
-	// …and the asset is named after the BLOCK, never after the dropped file: a
-	// document directory holds meta.json and content.md, and a drop free to name
-	// its own file could overwrite either.
-	if addr.Leaf == "swagger.yml" {
-		t.Error("the stored asset must not be named after the dropped file — it would clobber the document's own files")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ds, fs := newTestDocumentService(t)
+			doc, err := ds.New()
+			if err != nil {
+				t.Fatalf("new document: %v", err)
+			}
+			a := documentAssets{svc: block.BlockServices{Documents: ds, Assets: services.NewAssetService(fs, "")}, kind: "test"}
+			for _, o := range tc.owned {
+				if _, err := a.mint(doc.UUID(), o, []byte("hello")); err != nil {
+					t.Fatalf("seed %s: %v", o, err)
+				}
+			}
+			ref, err := a.mint(doc.UUID(), strings.ReplaceAll(tc.mint, "{doc}", doc.UUID()), []byte("hello"))
+			if err != nil {
+				t.Fatalf("mint: %v", err)
+			}
+			addr, err := domain.ParseAddress(ref)
+			if err != nil || addr.Container != doc.UUID() {
+				t.Fatalf("mint = %q, want the absolute address of an asset of %s (%v)", ref, doc.UUID(), err)
+			}
+			got := addr.Leaf
+			if stem, ok := strings.CutPrefix(tc.want, "{uuid}"); ok {
+				if !strings.HasSuffix(got, stem) || !ident.Valid(strings.TrimSuffix(got, stem)) {
+					t.Errorf("key = %q, want a uuid followed by %q", got, stem)
+				}
+				return
+			}
+			if want := strings.ReplaceAll(tc.want, "{doc}", doc.UUID()); got != want {
+				t.Errorf("key = %q, want %q", got, want)
+			}
+		})
 	}
 }
 
@@ -366,5 +429,148 @@ func TestPasteMatch_aDroppedNonImageBecomesAReference(t *testing.T) {
 	kind, _, _, ok := block.FirstPasteMatch([]block.ContentEntry{dropped("application/pdf", "spec.pdf", "%PDF-1.4")})
 	if !ok || kind != "reference" {
 		t.Errorf("a dropped pdf matched %q (ok=%v), want reference", kind, ok)
+	}
+}
+
+// A pasted reference is additive: a held file is copied into the target document
+// under its face's title, uniquified there, so no two blocks share an asset, while a pointer is
+// copied by reference with its uri unchanged. A held copy that cannot be made
+// creates no block rather than one reading the source's bytes.
+func TestReferenceProcessor_Transform_copiedReference(t *testing.T) {
+	const body = "openapi: 3.0.0\ninfo:\n  title: Payments API\n"
+	ownedKeys := func(t *testing.T, ds *services.DocumentService, uuid string) []string {
+		t.Helper()
+		doc, err := ds.LoadByUUID(uuid)
+		if err != nil {
+			t.Fatalf("load %s: %v", uuid, err)
+		}
+		var keys []string
+		for _, a := range doc.Storable().Owns() {
+			keys = append(keys, a.Key())
+		}
+		return keys
+	}
+	cases := []struct {
+		name string
+		// pointer copies a link to a note instead of a held file.
+		pointer bool
+		// sameDoc pastes into the source document.
+		sameDoc bool
+		// breakSource points the copied uri at a key that does not exist.
+		breakSource bool
+		// ceiling, when set, lowers max_attachment_bytes below the file's size.
+		ceiling int
+		wantNil bool
+	}{
+		{name: "held, across documents"},
+		{name: "held, within one document", sameDoc: true},
+		{name: "pointer is copied by reference", pointer: true},
+		{name: "source asset missing", breakSource: true, wantNil: true},
+		{name: "over the size limit", ceiling: 8, wantNil: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ds, fs := newTestDocumentService(t)
+			assets := services.NewAssetService(fs, "")
+			svc := block.BlockServices{Documents: ds, Assets: assets}
+			src, err := ds.New()
+			if err != nil {
+				t.Fatalf("new document: %v", err)
+			}
+			dst, err := ds.New()
+			if err != nil {
+				t.Fatalf("new document: %v", err)
+			}
+			held := NewReferenceProcessor(svc)
+			srcBlock := ident.New()
+			made := held.Transform([]block.ContentEntry{dropped("text/yaml", "swagger.yml", body)},
+				src.UUID(), srcBlock, block.ActionPaste)
+			if made == nil {
+				t.Fatal("seed drop declined")
+			}
+			attrs := made
+			if tc.pointer {
+				attrs = map[string]interface{}{
+					"uri":   "sieve://" + src.UUID(),
+					"cache": map[string]interface{}{"title": "Notes", "mime": "sieve/note"},
+				}
+			}
+			srcAddr, _ := domain.ParseAddress(made["uri"].(string))
+			if tc.breakSource {
+				attrs["uri"] = domain.NewLeafAddress(src.UUID(), "gone.yml").String()
+			}
+			if tc.ceiling > 0 {
+				settings := domain.DefaultSettings()
+				settings.MaxAttachmentBytes = tc.ceiling
+				svc.State = fakeState{settings: settings}
+			}
+			p := NewReferenceProcessor(svc)
+			wantUUID := dst.UUID()
+			if tc.sameDoc {
+				wantUUID = src.UUID()
+			}
+			beforeSrc, beforeDst := ownedKeys(t, ds, src.UUID()), ownedKeys(t, ds, dst.UUID())
+			beforeTarget := beforeDst
+			if tc.sameDoc {
+				beforeTarget = beforeSrc
+			}
+
+			payload, _ := json.Marshal(attrs)
+			entry := block.ContentEntry{MIMEType: "sieve/reference", Content: string(payload),
+				Context: map[string]interface{}{"container": src.UUID()}}
+			newBlock := ident.New()
+			got := p.Transform([]block.ContentEntry{entry}, wantUUID, newBlock, block.ActionPaste)
+
+			if tc.wantNil {
+				if got != nil {
+					t.Fatalf("Transform = %v, want nil — a block must never point at the source", got)
+				}
+				if n := len(ownedKeys(t, ds, wantUUID)); n != len(beforeTarget) {
+					t.Errorf("a refused copy wrote an asset: %d owned", n)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("Transform declined a copied reference")
+			}
+			if tc.sameDoc && len(ownedKeys(t, ds, src.UUID())) != len(beforeSrc)+1 {
+				t.Error("a same-document copy must add a second asset")
+			}
+			if tc.pointer {
+				if got["uri"] != attrs["uri"] {
+					t.Errorf("uri = %v, want the pointer unchanged (%v)", got["uri"], attrs["uri"])
+				}
+				if n := len(ownedKeys(t, ds, dst.UUID())); n != len(beforeDst) {
+					t.Errorf("a pointer copy wrote an asset: %d owned, had %d", n, len(beforeDst))
+				}
+				return
+			}
+			addr, err := domain.ParseAddress(got["uri"].(string))
+			if err != nil {
+				t.Fatalf("uri %v: %v", got["uri"], err)
+			}
+			if addr.Container != wantUUID {
+				t.Errorf("uri container = %s, want the target %s", addr.Container, wantUUID)
+			}
+			want := "swagger.yml"
+			if tc.sameDoc {
+				want = "swagger-2.yml"
+			}
+			if addr.Leaf != want {
+				t.Errorf("uri leaf = %s, want %s", addr.Leaf, want)
+			}
+			if data, err := assets.ServeAssetData(wantUUID, addr.Leaf); err != nil || string(data) != body {
+				t.Errorf("copied bytes = %q, %v; want the source's", data, err)
+			}
+			if data, err := assets.ServeAssetData(src.UUID(), srcAddr.Leaf); err != nil || string(data) != body {
+				t.Errorf("source asset = %q, %v; want it untouched", data, err)
+			}
+			if face := refFace(t, got); face["title"] != "swagger.yml" || face["mime"] != "text/yaml" {
+				t.Errorf("face = %v, want it carried over", face)
+			}
+			if !tc.sameDoc && len(ownedKeys(t, ds, src.UUID())) != len(beforeSrc) {
+				t.Error("the source document gained an asset")
+			}
+		})
 	}
 }

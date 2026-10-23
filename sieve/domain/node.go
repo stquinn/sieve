@@ -22,6 +22,13 @@ type NodeDescriptor struct {
 	Bytes int
 }
 
+// NodeResolver dereferences a Sieve coordinate: address in, NodeDescriptor out.
+// editor.Router implements it; every consumer that resolves addresses takes it
+// by injection. ErrNodeNotFound is the dangling case.
+type NodeResolver interface {
+	Resolve(addr Address) (NodeDescriptor, error)
+}
+
 // OpenTarget is where a coordinate NAVIGATES: the container to bring up and,
 // when the address qualifies one, the block to reveal inside it.
 //

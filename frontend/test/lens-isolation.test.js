@@ -33,9 +33,9 @@ const ALLOWED_DIRS = Object.freeze(['lens', 'contract', 'renderers', 'ident', 'v
 // The couplings still outstanding. Each is a lens — or a renderer a lens paints
 // through — calling host chrome directly instead of asking through the wall:
 //
-//   • ui/media-lightbox.js, ui/link-edit-dialog.js, ui/copy-image.js — host
-//     chrome the block/prose paths summon inline (expand an image, edit a link,
-//     copy an image). A lens should raise these, not open them.
+//   • ui/media-lightbox.js, ui/link-edit-dialog.js — host chrome the block/prose
+//     paths summon inline (expand an image, edit a link). A lens should raise
+//     these, not open them.
 //   • shell/trigger-*.js — the WysiwygSurface builds the shell's `@`-mention
 //     popover itself rather than exposing its CaretTriggerPort and letting the
 //     host attach one. Three edges, but the closure is the whole trigger family:
@@ -45,7 +45,6 @@ const ALLOWED_DIRS = Object.freeze(['lens', 'contract', 'renderers', 'ident', 'v
 //     whole renderer package (and therefore any lens that paints with it) drags
 //     the protocol in.
 const QUARANTINE = Object.freeze([
-  'lens/document-editor/clipboard-slice.js → ../../ui/copy-image.js',
   'lens/document-editor/interaction-policy.js → ../../ui/media-lightbox.js',
   'lens/document-editor/surfaces/node-views/smart-card-node-view.js → ../../../../ui/link-edit-dialog.js',
   'lens/document-editor/surfaces/prose-link.js → ../../../ui/link-edit-dialog.js',
@@ -65,7 +64,6 @@ const QUARANTINED_MODULES = Object.freeze([
   'shell/trigger-layout.js',
   'shell/trigger-popover.js',
   'shell/trigger-providers.js',
-  'ui/copy-image.js',
   'ui/link-edit-dialog.js',
   'ui/media-lightbox.js',
 ])

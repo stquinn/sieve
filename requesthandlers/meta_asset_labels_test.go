@@ -132,35 +132,40 @@ func TestAssetViews_labelledByOpaqueAssetKeyOrStem(t *testing.T) {
 
 type fakeDoc struct {
 	domain.Document
+	uuid string
 	body []byte
 }
 
+func (f fakeDoc) UUID() string { return f.uuid }
 func (f fakeDoc) Body() []byte { return f.body }
 
 func TestAssetLabels_mapsOpaqueKeysFromBlockAttrs(t *testing.T) {
 	block.RegisterProcessor(processors.NewSmartImageProcessor(block.BlockServices{}))
 	block.RegisterProcessor(processors.NewDiagramProcessor(block.BlockServices{}))
+	block.RegisterProcessor(processors.NewReferenceProcessor(block.BlockServices{}))
 
-	docBody := "```smart-image\nid: img-blk-1\nsrc: /0194820a-81c2-7d34.png\ntitle: Architecture\n```\n\n```diagram\nid: diag-blk-1\nsvgAsset: /0194820a-9999-7d34.svg\nsummary: Flowchart\n```\n"
-	h := &MetaHandler{}
-	labels := h.assetLabels(fakeDoc{body: []byte(docBody)})
-	if labels == nil {
-		t.Fatal("expected labels, got nil")
-	}
-
-	if labels["img-blk-1"].Name != "Architecture" {
-		t.Errorf("labels[img-blk-1].Name: got %q, want Architecture", labels["img-blk-1"].Name)
-	}
-	if labels["0194820a-81c2-7d34.png"].Name != "Architecture" {
-		t.Errorf("labels[0194820a-81c2-7d34.png].Name: got %q, want Architecture", labels["0194820a-81c2-7d34.png"].Name)
-	}
-	if labels["0194820a-81c2-7d34"].Name != "Architecture" {
-		t.Errorf("labels[0194820a-81c2-7d34].Name: got %q, want Architecture", labels["0194820a-81c2-7d34"].Name)
-	}
-	if labels["0194820a-9999-7d34.svg"].Detail != "Flowchart" {
-		t.Errorf("labels[0194820a-9999-7d34.svg].Detail: got %q, want Flowchart", labels["0194820a-9999-7d34.svg"].Detail)
-	}
-	if labels["0194820a-9999-7d34"].Detail != "Flowchart" {
-		t.Errorf("labels[0194820a-9999-7d34].Detail: got %q, want Flowchart", labels["0194820a-9999-7d34"].Detail)
+	const doc = "0194820a-0000-7d34-8000-00000000d0c1"
+	const other = "0194820a-0000-7d34-8000-00000000d0c2"
+	docBody := "```smart-image\nid: img-blk-1\nsrc: sieve://" + doc + "/0194820a-81c2-7d34.png\ntitle: Architecture\n```\n\n" +
+		"```diagram\nid: diag-blk-1\nsvgAsset: /0194820a-9999-7d34.svg\nsummary: Flowchart\n```\n\n" +
+		"```reference\nid: ref-blk-1\nuri: sieve://" + doc + "/日本.pdf\ncache:\n  title: Plan.pdf\n```\n\n" +
+		"```reference\nid: ref-blk-3\nuri: sieve://" + doc + "/caf%C3%A9.pdf\ncache:\n  title: Menu.pdf\n```\n\n" +
+		"```reference\nid: ref-blk-2\nuri: sieve://" + other + "/foreign.pdf\ncache:\n  title: Foreign\n```\n"
+	labels := (&MetaHandler{}).assetLabels(fakeDoc{uuid: doc, body: []byte(docBody)})
+	for _, tc := range []struct {
+		key, name, detail string
+	}{
+		{"img-blk-1", "Architecture", ""},
+		{"0194820a-81c2-7d34.png", "Architecture", ""},
+		{"0194820a-81c2-7d34", "Architecture", ""},
+		{"0194820a-9999-7d34.svg", "", "Flowchart"},
+		{"0194820a-9999-7d34", "", "Flowchart"},
+		{"日本.pdf", "Plan.pdf", ""},
+		{"café.pdf", "Menu.pdf", ""},
+		{"foreign.pdf", "", ""},
+	} {
+		if got := labels[tc.key]; got.Name != tc.name || got.Detail != tc.detail {
+			t.Errorf("labels[%q] = %+v, want Name %q Detail %q", tc.key, got, tc.name, tc.detail)
+		}
 	}
 }
