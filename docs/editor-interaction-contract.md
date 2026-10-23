@@ -772,10 +772,10 @@ Consequences:
 | Mod+Shift+O | File › Open Library… | `window.sieveSelectLibrary()` |
 | Mod+, | File › Settings/Preferences | open settings dialog |
 | Mod+Q | File › Quit (non-Mac) | `wailsruntime.Quit` |
-| Mod+Alt+S | View › Toggle Sidebar | `htmx.ajax` POST `/api/session/sidebar/toggle` |
-| Mod+Alt+I | View › Toggle Meta Panel | `htmx.ajax` POST `/api/session/meta/toggle` |
-| (menu-click only) | View › Toggle Prompts | `htmx.ajax` POST `/api/session/prompts/toggle` |
-| (menu-click only) | View › Toggle Line Numbers | `htmx.ajax` POST `/api/session/linenumbers/toggle` |
+| Mod+Alt+S | View › Toggle Sidebar | `htmx.ajax` POST `/api/session/toggle/sidebar` |
+| Mod+Alt+I | View › Toggle Meta Panel | `htmx.ajax` POST `/api/session/toggle/meta` |
+| (menu-click only) | View › Toggle Prompts | `htmx.ajax` POST `/api/session/toggle/prompts` |
+| (menu-click only) | View › Toggle Line Numbers | `htmx.ajax` POST `/api/session/toggle/linenumbers` |
 | Mod+Alt+M | View › Toggle Editor Mode | `window.sieveWorkspace?.activeTab?.editor?.toggleMode()` |
 | Mod+F | Edit › Find › Find and Replace… (mac: Find › …) | `window.sieveWorkspace?.toggleFind()` |
 | F3 (non-mac) | Edit › Find › Find Next | `window.sieveWorkspace?.findNext()` |
@@ -786,7 +786,7 @@ Consequences:
 | Mod+Alt+J | View › Toggle AI Blocks | `window.sieveWorkspace?.activeTab?.editor?.toggleAiBlocks()` |
 | Mod+Alt+P | View › Toggle Presentation Mode | `window.sieveWorkspace?.activeTab?.editor?.togglePresentation()` |
 | Mod+P | View › Quick Switcher | open quick-switcher dialog |
-| Mod+Alt+B | View › Show Toolbar | `htmx.ajax` POST `/api/session/toolbar/toggle` |
+| Mod+Alt+B | View › Show Toolbar | `htmx.ajax` POST `/api/session/toggle/toolbar` |
 | Mod+= | View › Increase Editor Font | `htmx.ajax` POST `/api/settings/editor-scale/step?dir=up` |
 | Mod+- | View › Decrease Editor Font | `htmx.ajax` POST `/api/settings/editor-scale/step?dir=down` |
 | Mod+0 | View › Reset Editor Font | `htmx.ajax` POST `/api/settings/editor-scale/step?dir=reset` |

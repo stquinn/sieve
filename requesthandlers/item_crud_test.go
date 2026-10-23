@@ -2,6 +2,7 @@ package requesthandlers
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -29,6 +30,15 @@ import (
 // test can watch the push a real client would receive.
 func newItemServer(t *testing.T) (*httptest.Server, *sieve.ServiceProvider) {
 	t.Helper()
+	srv, sp, _ := newItemServerCountingSession(t)
+	return srv, sp
+}
+
+// newItemServerCountingSession is newItemServer that also reports how many
+// times the session handler broadcast a session change.
+func newItemServerCountingSession(t *testing.T) (*httptest.Server, *sieve.ServiceProvider, *int) {
+	t.Helper()
+	sessionChanges := 0
 	fs, err := filestore.NewFileStore(t.TempDir(), "testhost")
 	if err != nil {
 		t.Fatalf("NewFileStore: %v", err)
@@ -59,11 +69,11 @@ func newItemServer(t *testing.T) (*httptest.Server, *sieve.ServiceProvider) {
 		EmitNotesChanged:     func() { broadcast.Invalidate(protocol.TopicNotes) },
 		EmitIntentChanged:    func() { broadcast.Invalidate(protocol.TopicIntent) },
 	}).RegisterPaths(r)
-	(&SessionHandler{ServiceProvider: sp}).RegisterPaths(r)
+	(&SessionHandler{ServiceProvider: sp, Tmpl: tmpl, EmitSessionChanged: func() { sessionChanges++ }}).RegisterPaths(r)
 	NewWsHandler(sp, broadcast, testWSToken).RegisterPaths(r)
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
-	return srv, sp
+	return srv, sp, &sessionChanges
 }
 
 // do sends one request and returns its status and body.
@@ -529,40 +539,121 @@ func TestFolderPatch_NameOnlyLeavesTheOpenStateAlone(t *testing.T) {
 	}
 }
 
-// Every panel toggles through ONE route: the panel is a parameter, the flag it
-// flips and the OOB <style> it answers with are the panel's own.
+// Every panel toggles through ONE route: the panel is a parameter, it flips the
+// panel's own flag, broadcasts the session change and answers with no body.
 func TestSessionToggle_EveryPanelFlipsItsOwnFlag(t *testing.T) {
-	srv, sp := newItemServer(t)
+	srv, sp, sessionChanges := newItemServerCountingSession(t)
 
 	for _, panel := range []struct {
-		name    string
-		styleID string
-		flag    func() bool
+		name string
+		flag func() bool
 	}{
-		{"sidebar", "layout-overrides-sidebar", func() bool { return sp.State.LoadSession().ShowSidebar }},
-		{"meta", "layout-overrides-meta", func() bool { return sp.State.LoadSession().ShowMeta }},
-		{"prompts", "layout-overrides-prompts", func() bool { return sp.State.LoadSession().ShowPrompts }},
-		{"toolbar", "layout-overrides-toolbar", func() bool { return sp.State.LoadSession().ShowToolbar }},
-		{"linenumbers", "layout-overrides-linenumbers", func() bool { return sp.State.LoadSession().ShowLineNumbers }},
-		{"askpanel", "layout-overrides-askpanel", func() bool { return sp.State.LoadSession().ShowAskPanel }},
+		{"sidebar", func() bool { return sp.State.LoadSession().ShowSidebar }},
+		{"meta", func() bool { return sp.State.LoadSession().ShowMeta }},
+		{"prompts", func() bool { return sp.State.LoadSession().ShowPrompts }},
+		{"toolbar", func() bool { return sp.State.LoadSession().ShowToolbar }},
+		{"linenumbers", func() bool { return sp.State.LoadSession().ShowLineNumbers }},
+		{"askpanel", func() bool { return sp.State.LoadSession().ShowAskPanel }},
 	} {
 		t.Run(panel.name, func(t *testing.T) {
-			before := panel.flag()
+			before, changesBefore := panel.flag(), *sessionChanges
 			status, body := do(t, http.MethodPost, srv.URL+"/api/session/toggle/"+panel.name, "", "")
-			if status != http.StatusOK {
-				t.Fatalf("status %d: %s", status, body)
+			if status != http.StatusNoContent || body != "" {
+				t.Fatalf("want 204 with no body, got %d %q", status, body)
 			}
 			if panel.flag() == before {
 				t.Errorf("%s flag did not flip (still %v)", panel.name, before)
 			}
-			if !strings.Contains(body, panel.styleID) || !strings.Contains(body, `hx-swap-oob="true"`) {
-				t.Errorf("answer must be the panel's OOB style, got %q", body)
+			if got := *sessionChanges - changesBefore; got != 1 {
+				t.Errorf("session change broadcast %d times, want 1", got)
 			}
 		})
 	}
 
 	if status, _ := do(t, http.MethodPost, srv.URL+"/api/session/toggle/nonesuch", "", ""); status != http.StatusNotFound {
 		t.Errorf("unknown panel status = %d, want 404", status)
+	}
+}
+
+// The resize POST stores the sizes and broadcasts the session change.
+func TestSessionLayout_ResizeBroadcastsSessionChange(t *testing.T) {
+	srv, sp, sessionChanges := newItemServerCountingSession(t)
+
+	status, _ := do(t, http.MethodPost, srv.URL+"/api/session/layout", "application/x-www-form-urlencoded", "sidebarWidth=321")
+	if status != http.StatusNoContent {
+		t.Fatalf("status %d, want 204", status)
+	}
+	if w := sp.State.LoadSession().SidebarWidth; w != 321 {
+		t.Errorf("SidebarWidth = %d, want 321", w)
+	}
+	if *sessionChanges != 1 {
+		t.Errorf("session change broadcast %d times, want 1", *sessionChanges)
+	}
+}
+
+// The layout view renders each session flag as its own data-* attribute, and the
+// tier as data-tier.
+func TestSessionLayoutView_RendersTheSessionFlags(t *testing.T) {
+	srv, sp := newItemServer(t)
+
+	flags := []struct {
+		attr string
+		set  func(*domain.Session, bool)
+	}{
+		{"data-sidebar", func(s *domain.Session, v bool) { s.ShowSidebar = v }},
+		{"data-meta", func(s *domain.Session, v bool) { s.ShowMeta = v }},
+		{"data-prompts", func(s *domain.Session, v bool) { s.ShowPrompts = v }},
+		{"data-toolbar", func(s *domain.Session, v bool) { s.ShowToolbar = v }},
+		{"data-line-numbers", func(s *domain.Session, v bool) { s.ShowLineNumbers = v }},
+		{"data-askpanel", func(s *domain.Session, v bool) { s.ShowAskPanel = v }},
+	}
+	for _, flag := range flags {
+		for _, on := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s=%v", flag.attr, on), func(t *testing.T) {
+				session := sp.State.LoadSession()
+				for _, other := range flags {
+					other.set(&session, !on)
+				}
+				flag.set(&session, on)
+				if err := sp.State.SaveSession(session); err != nil {
+					t.Fatalf("SaveSession: %v", err)
+				}
+				status, body := do(t, http.MethodGet, srv.URL+"/ui/views/session/layout", "", "")
+				if status != http.StatusOK {
+					t.Fatalf("status %d: %s", status, body)
+				}
+				want, other := "on", "off"
+				if !on {
+					want, other = other, want
+				}
+				for _, f := range flags {
+					expect := other
+					if f.attr == flag.attr {
+						expect = want
+					}
+					if attr := f.attr + `="` + expect + `"`; !strings.Contains(body, attr) {
+						t.Errorf("missing %s in %q", attr, body)
+					}
+				}
+				if !strings.Contains(body, `id="session-layout"`) {
+					t.Errorf("not the state element: %q", body)
+				}
+			})
+		}
+	}
+
+	tmpl, err := NewTemplates(os.DirFS(".."))
+	if err != nil {
+		t.Fatalf("NewTemplates: %v", err)
+	}
+	for tier, want := range map[domain.Tier]string{domain.TierSmart: "smart", domain.TierDumb: "dumb"} {
+		var out strings.Builder
+		if err := tmpl.ExecuteTemplate(&out, "session_layout.html", NewSessionLayoutView(domain.Session{}, tier)); err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		if attr := `data-tier="` + want + `"`; !strings.Contains(out.String(), attr) {
+			t.Errorf("tier %v: missing %s in %q", tier, attr, out.String())
+		}
 	}
 }
 
