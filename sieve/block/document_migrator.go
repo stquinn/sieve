@@ -20,7 +20,8 @@ type DocumentMigrator struct{}
 func (m DocumentMigrator) Migrate(blocks []SieveBlock, documentUUID string) ([]SieveBlock, bool) {
 	blocks, idsChanged := BlockIdentityMigrator{}.Migrate(blocks)
 	blocks, urlsChanged := AssetURLMigrator{}.Migrate(blocks)
+	blocks, assetURIsChanged := AssetURIMigrator{}.Migrate(blocks, documentUUID)
 	blocks, urisChanged := ReferenceMigrator{}.Migrate(blocks, documentUUID)
 	blocks, questionsChanged := AIBlockMigrator{}.Migrate(blocks, documentUUID)
-	return blocks, idsChanged || urlsChanged || urisChanged || questionsChanged
+	return blocks, idsChanged || urlsChanged || assetURIsChanged || urisChanged || questionsChanged
 }

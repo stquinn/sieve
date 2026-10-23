@@ -176,9 +176,9 @@ export let ProseBlock
     // processor calls registerSieveRenderer at its own top level, which needs the
     // vendor bundle already on the bus, so a static import here would fire that at
     // prose-block.js's import time.
-    resolveEntries: function (sourceNode, entries) {
+    resolveEntries: function (sourceNode, entries, containerUuid) {
       return import('./node-views/diagram-node-view.js').then(function (mod) {
-        return mod.renderDiagramSvgEntry(sourceNode, entries)
+        return mod.renderDiagramSvgEntry(sourceNode, entries, containerUuid)
       }).then(function (svg) {
         return svg ? (entries || []).concat([svg]) : entries
       }).catch(function () {

@@ -4,12 +4,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"sieve/logger"
-	"sieve/sieve/block"
-	"sieve/sieve/domain"
 	"strconv"
 	"strings"
 	"time"
+
+	"sieve/ident"
+	"sieve/logger"
+	"sieve/sieve/block"
+	"sieve/sieve/domain"
 )
 
 // mermaidFenceRe / plantumlFenceRe alias the shared patterns so this file reads
@@ -229,6 +231,7 @@ func (p *DiagramProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJo
 	effective := p.effectiveSource(source)
 	hash := p.renderHash(effective)
 
+	existingAsset, _ := blk.Attrs["svgAsset"].(string)
 	uuid, id := jctx.UUID, blk.ID
 	return &block.ProcessorJob{
 		Category: block.CategoryDefault,
@@ -239,7 +242,7 @@ func (p *DiagramProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJo
 				logger.Warn("diagram: plantuml render failed", "block", id, "err", err)
 				return nil, err
 			}
-			ref, err := p.saveAsset(uuid, id, svg)
+			ref, err := p.saveAsset(uuid, id, existingAsset, svg)
 			if err != nil {
 				logger.Warn("diagram: asset save failed", "block", id, "err", err)
 				return nil, err
@@ -417,10 +420,12 @@ func (p *DiagramProcessor) renderHash(effective string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// saveAsset persists the rendered SVG as this block's single asset (stable id
-// derived from the block id, overwritten each render — no GC), attaches it to the
-// document, and returns its ExternalRef. Mirrors SmartImageProcessor.saveAsset.
-func (p *DiagramProcessor) saveAsset(uuid, blockID string, data []byte) (string, error) {
+// saveAsset persists the rendered SVG as an asset, attaches it to the document,
+// and returns its absolute sieve address (sieve://{uuid}/{key}). When existingKey names an
+// asset of this document, its key is reused verbatim, so repeated renders and
+// theme switches overwrite that asset rather than accumulating files; a key held
+// by another document is never written to.
+func (p *DiagramProcessor) saveAsset(uuid, blockID, existingKey string, data []byte) (string, error) {
 	cat := domain.WorkingCopy
 	var doc domain.Document
 	if d, err := p.svc.Documents.LoadByUUID(uuid); err == nil {
@@ -430,7 +435,13 @@ func (p *DiagramProcessor) saveAsset(uuid, blockID string, data []byte) (string,
 		}
 	}
 
-	asset, err := p.svc.Assets.Save(cat, uuid, blockID, data)
+	assetID := ident.New() + ".svg"
+	self := domain.NewContainerAddress(uuid)
+	if addr, err := domain.ResolveAssetReference(existingKey, self); err == nil && addr.Container == self.Container {
+		assetID = addr.Leaf
+	}
+
+	asset, err := p.svc.Assets.Save(cat, uuid, assetID, data)
 	if err != nil {
 		return "", err
 	}
@@ -443,7 +454,7 @@ func (p *DiagramProcessor) saveAsset(uuid, blockID string, data []byte) (string,
 		}
 	}
 
-	return asset.ExternalRef(), nil
+	return domain.NewLeafAddress(uuid, asset.Storable().Key()).String(), nil
 }
 
 func (p *DiagramProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {

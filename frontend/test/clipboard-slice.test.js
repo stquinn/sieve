@@ -7,8 +7,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { Schema } from '@tiptap/pm/model'
 import { EditorState, TextSelection, NodeSelection } from '@tiptap/pm/state'
 
-vi.mock('../src/static/ui/copy-image.js', () => ({ copyImageToClipboard: vi.fn() }))
-
 // A structured kind's own views come from its NodeView adapter, and every one of
 // them leads with a WHOLE-BLOCK text/plain (code, log, diagram, reference,
 // ai-block). Registering a real adapter needs the TipTap runtime, so the lookup is
@@ -28,7 +26,6 @@ vi.mock('../src/static/lens/document-editor/surfaces/sieve-block-extension.js', 
 })
 
 import { ClipboardSlice } from '../src/static/lens/document-editor/clipboard-slice.js'
-import { copyImageToClipboard } from '../src/static/ui/copy-image.js'
 import { registerBlockKind } from '../src/static/renderers/block-kinds.js'
 
 // Sieve nodes form the 'sieveBlock' group, and only a CONTAINER's content admits
@@ -275,6 +272,31 @@ describe('what goes on the clipboard', () => {
     expect(data.data['sieve/' + kind]).toBe(JSON.stringify(attrs))
   })
 
+  it('a block\'s own sieve view says which document it was copied from', () => {
+    const code = schema.nodes['sieve-code'].create(null, schema.text('fmt.Println(1)'))
+    const view = viewOf([code], (doc) => NodeSelection.create(doc, 0))
+    const data = clip()
+    slice(view, { uuid: 'doc-7' }).write(/** @type {any} */ (data))
+    const [item] = JSON.parse(data.data['sieve/slice'])
+    expect(item.find((e) => e.mimeType === 'sieve/code').context).toEqual({ container: 'doc-7' })
+    expect(item.find((e) => e.mimeType === 'text/plain').context).toBeUndefined()
+
+    // The flat single-block view cannot carry it; a paste reads it back off the slice.
+    const flat = [{ mimeType: 'text/plain', content: 'fmt.Println(1)' }, { mimeType: 'sieve/code', content: data.data['sieve/code'] }]
+    const restored = ClipboardSlice.withSliceContext(flat, data.data['sieve/slice'])
+    expect(restored[1].context).toEqual({ container: 'doc-7' })
+    expect(restored[0].context).toBeUndefined()
+  })
+
+  it.each([
+    ['no slice', ''],
+    ['an unparseable slice', '{'],
+    ['a multi-item slice', JSON.stringify([[{ mimeType: 'sieve/code', content: '{}', context: { container: 'a' } }], []])],
+  ])('withSliceContext leaves the entries alone given %s', (_, sliceData) => {
+    const flat = [{ mimeType: 'sieve/code', content: '{}' }]
+    expect(ClipboardSlice.withSliceContext(flat, sliceData)).toEqual(flat)
+  })
+
   it('pure prose is refused, so ProseMirror serves it', () => {
     const view = viewOf(
       [schema.nodes.paragraph.create(null, schema.text('hello'))],
@@ -284,26 +306,22 @@ describe('what goes on the clipboard', () => {
   })
 })
 
-describe('a selected image carries its bitmap', () => {
-  it('copies the resolved src and writes no text view', () => {
+describe('a selected image is copied as a block', () => {
+  it.each([
+    ['with an asset', { src: 'sieve://doc-7/shot.svg' }],
+    ['before its asset exists', {}],
+  ])('%s, every view is composed', (_, attrs) => {
     const view = viewOf(
-      [schema.nodes['sieve-smart-image'].create({ src: 'shot.png' })],
+      [schema.nodes['sieve-smart-image'].create(attrs)],
       (doc) => NodeSelection.create(doc, 0),
     )
     const data = clip()
     expect(slice(view, { uuid: 'doc-7' }).write(/** @type {any} */ (data))).toBe(true)
-    expect(copyImageToClipboard).toHaveBeenCalledTimes(1)
-    expect(/** @type {any} */ (copyImageToClipboard).mock.calls[0][0]).toContain('shot.png')
-    expect(data.data['text/plain']).toBeUndefined()
-  })
-
-  it('with no src yet, defers to ProseMirror rather than copying nothing', () => {
-    const view = viewOf(
-      [schema.nodes['sieve-smart-image'].create()],
-      (doc) => NodeSelection.create(doc, 0),
-    )
-    expect(slice(view).write(/** @type {any} */ (clip()))).toBe(false)
-    expect(copyImageToClipboard).not.toHaveBeenCalled()
+    expect(typeof data.data['text/plain']).toBe('string')
+    expect(data.data['text/html']).toBeTruthy()
+    expect(JSON.parse(data.data['sieve/smart-image'])).toMatchObject(attrs)
+    const [item] = JSON.parse(data.data['sieve/slice'])
+    expect(item.find((e) => e.mimeType === 'sieve/smart-image').context).toEqual({ container: 'doc-7' })
   })
 })
 

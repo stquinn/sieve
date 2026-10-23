@@ -33,6 +33,7 @@ import {
 import { ProseMirrorHost, BlockMakingProseMirrorHost, CaretPlacement } from '../../../shell/trigger-host.js'
 import { getSieveNodes, getSieveBlockLabel, serializeNode, sieveBlockAttrs } from './sieve-block-extension.js'
 import { BlockSelection } from '../block-selection.js'
+import { ClipboardSlice } from '../clipboard-slice.js'
 import { isNativeProseNodeName } from '../../../renderers/block-kinds.js'
 import { SieveBlock } from '../../../contract/sieve-block.js'
 import { LensCapability } from '../../../contract/lens-capabilities.js'
@@ -966,7 +967,9 @@ export class WysiwygSurface extends AbstractSurface {
               promises.push(new Promise(function(resolve) {
                 var reader = new FileReader()
                 reader.onload = function(e) {
-                  resolve({ mimeType: file.type, content: /** @type {any} */ (e.target).result })
+                  const entry = { mimeType: file.type, content: /** @type {any} */ (e.target).result }
+                  if (file.name) entry.context = { filename: file.name }
+                  resolve(entry)
                 }
                 reader.onerror = function() { resolve(null) }
                 reader.readAsDataURL(file)
@@ -988,7 +991,7 @@ export class WysiwygSurface extends AbstractSurface {
         event.preventDefault()
 
         Promise.all(promises).then(function(results) {
-          var validEntries = results.filter(function(r) { return r !== null })
+          var validEntries = ClipboardSlice.withSliceContext(results.filter(function(r) { return r !== null }), sliceData)
           var provider = self.#pasteProvider()
           if (!provider) return
           provider.paste({ kind: 'smart', entries: validEntries }, peek.afterBlockId)

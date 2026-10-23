@@ -329,6 +329,23 @@ func TestWS_Paste_AckIsTheResultUnion(t *testing.T) {
 		}
 	})
 
+	// A matched kind that declines its own entries makes no block: here a copied
+	// smart-image whose asset does not exist.
+	t.Run("a declined transform is nothing", func(t *testing.T) {
+		block.RegisterProcessor(processors.NewSmartImageProcessor(block.BlockServices{
+			Documents: sp.Documents, Assets: services.NewAssetService(sp.Store, ""),
+		}))
+		t.Cleanup(func() { block.UnregisterProcessor("smart-image") })
+
+		got := paste(t, `[{"mimeType":"sieve/smart-image","content":"{\"src\":\"/missing-asset.png\"}"}]`)
+		if got["outcome"] != "none" {
+			t.Fatalf("outcome: got %q, want none (%v)", got["outcome"], got)
+		}
+		if _, has := got["id"]; has {
+			t.Errorf("a declined paste must name no block: %v", got)
+		}
+	})
+
 	t.Run("unclaimed text is nothing", func(t *testing.T) {
 		got := paste(t, `[{"mimeType":"text/plain","content":"just plain text"}]`)
 		if got["outcome"] != "none" {

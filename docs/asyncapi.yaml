@@ -922,7 +922,16 @@ components:
         - index
     BlockContentEntry:
       type: object
-      description: ContentEntry is one item from the browser clipboard DataTransfer.
+      description: |-
+        ContentEntry is one item from the browser clipboard DataTransfer.
+
+        Context carries what the entry's bytes cannot say about themselves. The keys
+        the backend reads:
+
+        	filename   the name a dropped file arrived under
+        	parentId   the composite block a nested source was rendered inside
+        	holderId   the block whose held content this entry carries (framework-stamped)
+        	container  the document a copied sieve/<kind> view was copied from
       properties:
         mimeType:
           type: string

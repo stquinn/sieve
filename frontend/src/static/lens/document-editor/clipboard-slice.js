@@ -7,6 +7,8 @@
 // carry the entire block. The text views follow the selected RANGE instead: a
 // range covering only PART of a block's content is exactly those characters, a
 // range covering the whole block (or a NodeSelection of it) is its whole text.
+// An image block is no exception: copying it copies the block, and the bitmap a
+// foreign application wants is the block's own "Copy Image" menu item.
 //
 // A node whose content HOSTS BLOCKS is a container, and a range lying inside one
 // names its ELEMENTS, not the container: each is composed as a block of its own,
@@ -22,10 +24,9 @@ import { sieveBlockEntries, rendererFor } from './surfaces/sieve-block-extension
 import { getBlockKind } from '../../renderers/block-kinds.js'
 import { BlockSelection } from './block-selection.js'
 import { ContractViolation } from '../../contract/sieve-block.js'
-import { copyImageToClipboard } from '../../ui/copy-image.js'
-import { resolveImageSrc } from '../../renderers/asset-urls.js'
 
 const SIEVE_PREFIX = 'sieve-'
+const SIEVE_VIEW_PREFIX = 'sieve/'
 // The schema group every sieve block belongs to. A node type whose content admits
 // it hosts BLOCKS — the document top level, and any container kind.
 const SIEVE_GROUP = 'sieveBlock'
@@ -38,8 +39,8 @@ const SIEVE_GROUP = 'sieveBlock'
  * @property {{from: number, to: number}|null} [range]  the authoritative selection
  *   range, which spans whole blocks for the gutter gesture PM's own selection
  *   cannot express; omitted, the PM selection is used
- * @property {string} [uuid]     the document the editor is mounted on — a block's
- *   relative asset src resolves against it
+ * @property {string} [uuid]     the document the editor is mounted on — stamped as
+ *   `context.container` on a block's own `sieve/<kind>` view
  */
 
 export class ClipboardSlice {
@@ -92,20 +93,13 @@ export class ClipboardSlice {
    * Write every view of this selection onto `clipboardData`.
    *
    * Returns false when ProseMirror's own copy must serve the selection instead —
-   * pure prose, or a selected image with nothing to copy. Every sieve-involving
-   * selection is served here: a slice inside a `defining`/`code` node re-wraps
-   * the whole node, so native copy takes the entire block.
+   * pure prose. Every sieve-involving selection is served here, an image block
+   * included: a slice inside a `defining`/`code` node re-wraps the whole node, so
+   * native copy takes the entire block.
    * @param {DataTransfer} clipboardData
    * @returns {boolean}
    */
   write(clipboardData) {
-    const image = this.#imageSrc()
-    if (image !== null) {
-      if (!image) return false
-      copyImageToClipboard(image)
-      return true
-    }
-
     const composed = this.#compose()
     if (!composed) return false
 
@@ -126,13 +120,26 @@ export class ClipboardSlice {
     return true
   }
 
-  /** The resolved image src a selected image block puts on the OS clipboard as a
-   *  bitmap — bytes no text view can express. '' when the block has no src yet,
-   *  null when this is not an image selection at all. @returns {string|null} */
-  #imageSrc() {
-    const sel = this.#view.state.selection
-    if (!sel || !sel.node || sel.node.type.name !== 'sieve-smart-image') return null
-    return sel.node.attrs.src ? resolveImageSrc(sel.node.attrs.src, this.#uuid) : ''
+  /**
+   * A paste's entries with the context the clipboard dropped put back. setData
+   * holds one string per mime, so a single block's `sieve/<kind>` view arrives
+   * without its `context`; the lone item of `sieve/slice` still carries it, and
+   * each flat entry adopts the context of its twin there. Anything else is
+   * returned unchanged.
+   * @param {any[]} entries the clipboard as read, `{mimeType, content}` each
+   * @param {string} sliceData the `sieve/slice` payload, or ''
+   * @returns {any[]}
+   */
+  static withSliceContext(entries, sliceData) {
+    /** @type {any} */ let items = null
+    try { items = sliceData ? JSON.parse(sliceData) : null } catch (_) { return entries }
+    if (!Array.isArray(items) || items.length !== 1 || !Array.isArray(items[0])) return entries
+    const item = items[0]
+    return entries.map((entry) => {
+      if (!entry || entry.context) return entry
+      const twin = item.find((/** @type {any} */ e) => e && e.mimeType === entry.mimeType && e.context)
+      return twin ? Object.assign({}, entry, { context: twin.context }) : entry
+    })
   }
 
   /**
@@ -268,10 +275,17 @@ export class ClipboardSlice {
     return node.cut(start, end)
   }
 
-  /** Every ContentEntry describing one top-level node. @param {any} node @returns {any[]} */
+  /** Every ContentEntry describing one top-level node. A sieve block's own
+   *  `sieve/<kind>` view says which document it was copied from
+   *  (`context.container`), so a paste elsewhere can still read what its attrs
+   *  name relative to that document. @param {any} node @returns {any[]} */
   #entriesOf(node) {
     if (String(node.type.name).indexOf(SIEVE_PREFIX) === 0) {
-      return sieveBlockEntries(node, rendererFor(node.attrs.kind))
+      const own = SIEVE_VIEW_PREFIX + node.attrs.kind
+      return sieveBlockEntries(node, rendererFor(node.attrs.kind)).map((/** @type {any} */ entry) =>
+        (this.#uuid && entry.mimeType === own)
+          ? Object.assign({}, entry, { context: Object.assign({}, entry.context, { container: this.#uuid }) })
+          : entry)
     }
     const proseKind = getBlockKind ? getBlockKind('prose') : null
     return (proseKind && proseKind.asContentEntry && proseKind.asContentEntry(node, this.#editor)) || []

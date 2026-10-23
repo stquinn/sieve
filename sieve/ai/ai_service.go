@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,7 +13,6 @@ import (
 	"sieve/sieve/domain"
 	lheur "sieve/sieve/lang"
 	"sieve/sieve/services"
-	"sieve/store"
 
 	"golang.org/x/net/html"
 )
@@ -34,16 +32,18 @@ type AIService struct {
 	state     *services.StateService
 	prompts   *PromptService
 	documents *services.DocumentService
+	nodes     domain.NodeResolver // dereferences an image block's src to its asset file
 	storePath string
 	runner    CLIRunner   // exec seam; stubbable in tests
 	mcp       MCPEndpoint // internal Sieve MCP endpoint; nil until wired
 }
 
-func NewAIService(state *services.StateService, prompts *PromptService, documents *services.DocumentService, storePath string) *AIService {
+func NewAIService(state *services.StateService, prompts *PromptService, documents *services.DocumentService, nodes domain.NodeResolver, storePath string) *AIService {
 	return &AIService{
 		state:     state,
 		prompts:   prompts,
 		documents: documents,
+		nodes:     nodes,
 		storePath: storePath,
 		runner:    execCLIRunner{},
 	}
@@ -223,39 +223,19 @@ func (s *AIService) RunBtw(question, selection, docTitle, docSummary, docUUID st
 func (s *AIService) Tier() domain.Tier { return s.state.LoadSettings().Tier() }
 
 // DescribeImage sends an image to the configured AI and returns alt text, a
-// summary, and a suggested filename. storeRelPath is relative to the store root.
-func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string) (domain.ImageDesc, error) {
-	logger.Info("Describe uuid: " + uuid)
-	logger.Info("Describe storeRelPath: " + storeRelPath)
-	logger.Info("Describe blkId: " + blkId)
+// summary, and a suggested filename. src is the block's stored asset reference
+// (sieve://{container}/{key}, or a legacy spelling ResolveAssetReference reads),
+// resolved against document uuid; the image file is whatever the NodeResolver says it names.
+func (s *AIService) DescribeImage(uuid string, src string, blkId string) (domain.ImageDesc, error) {
 	settings := s.state.LoadSettings()
 	if settings.Tier() == domain.TierDumb {
 		return domain.ImageDesc{}, fmt.Errorf("dumb mode")
 	}
-	doc, err := s.documents.LoadByUUID(uuid)
-	if err != nil {
-		return domain.ImageDesc{}, err
-	}
-	docDir := filepath.Join(s.storePath, doc.Storable().ExternalRef())
 
-	var imagePath string
-	for _, assetItr := range doc.Storable().Owns() {
-		as, ok := assetItr.(store.AssetStorable)
-		if ok && as.BlkID() == blkId {
-			imagePath = filepath.Join(docDir, as.Key())
-			break
-		}
-	}
-	if imagePath == "" {
-		// Asset attachment may have been overwritten by a later flush.
-		// Fall back to constructing the path from storeRelPath (= asset.ExternalRef()).
-		candidate := filepath.Join(docDir, storeRelPath)
-		if _, statErr := os.Stat(candidate); statErr != nil {
-			logger.Warn("DescribeImage: asset not found", "blkId", blkId, "src", storeRelPath, "candidate", candidate)
-			return domain.ImageDesc{}, fmt.Errorf("image file not found for block %s", blkId)
-		}
-		logger.Info("DescribeImage: asset attachment missing, using path fallback", "path", candidate)
-		imagePath = candidate
+	imagePath, err := s.assetPath(uuid, src)
+	if err != nil {
+		logger.Warn("DescribeImage: asset not found", "blkId", blkId, "src", src, "err", err)
+		return domain.ImageDesc{}, fmt.Errorf("image file not found for block %s: %w", blkId, err)
 	}
 
 	prompt, _ := s.prompts.GetPromptContent("image")
@@ -275,6 +255,26 @@ func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string
 	}
 	desc.Detect = "ai"
 	return desc, nil
+}
+
+// assetPath is the absolute path of the asset file src names, read off the
+// NodeDescriptor the resolver returns for it.
+func (s *AIService) assetPath(uuid, src string) (string, error) {
+	addr, err := domain.ResolveAssetReference(src, domain.NewContainerAddress(uuid))
+	if err != nil {
+		return "", err
+	}
+	if s.nodes == nil {
+		return "", fmt.Errorf("no node resolver to find %s", addr)
+	}
+	node, err := s.nodes.Resolve(addr)
+	if err != nil {
+		return "", err
+	}
+	if node.Path == "" {
+		return "", fmt.Errorf("%s is not an asset", addr)
+	}
+	return filepath.Join(s.storePath, node.Path), nil
 }
 
 // RefineLanguage asks the AI to identify the programming language of a code

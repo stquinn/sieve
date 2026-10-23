@@ -252,7 +252,7 @@ func TestCodeBlockProcessor_RunJob_ai(t *testing.T) {
 	// Write the "refine" prompt content (needed by RefineLanguage)
 	_, _ = fs.CreateText(domain.Prompts, "refine.txt", []byte("Refine this: {content}"))
 
-	ai := ai.NewAIService(state, prompts, ds, tmpDir)
+	ai := ai.NewAIService(state, prompts, ds, nil, tmpDir)
 	svc := block.BlockServices{
 		AI:        ai,
 		Documents: ds,
@@ -323,7 +323,7 @@ func TestCodeBlockProcessor_RunJob_aiNonAnswerKeepsHeuristic(t *testing.T) {
 	}
 	_, _ = fs.CreateText(domain.Prompts, "refine.txt", []byte("Refine this: {content}"))
 
-	aiSvc := ai.NewAIService(state, prompts, ds, tmpDir)
+	aiSvc := ai.NewAIService(state, prompts, ds, nil, tmpDir)
 	p := NewCodeBlockProcessor(block.BlockServices{AI: aiSvc, Documents: ds, Assets: assets})
 
 	blk := &block.SieveBlock{
@@ -382,7 +382,7 @@ func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 		t.Fatalf("SaveSettings: %v", err)
 	}
 
-	ai := ai.NewAIService(state, prompts, ds, tmpDir)
+	ai := ai.NewAIService(state, prompts, ds, nil, tmpDir)
 	svc := block.BlockServices{
 		AI:        ai,
 		Documents: ds,

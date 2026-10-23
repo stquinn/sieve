@@ -6,38 +6,64 @@ import (
 	"encoding/json"
 	"image"
 	"image/png"
-	"sieve/sieve/block"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"sieve/ident"
+	"sieve/sieve/block"
+	"sieve/sieve/domain"
+	"sieve/sieve/services"
 )
 
-// A stored smart-image src is a bare asset filename. MarkdownRepresentation must emit a
-// WORKING served URL (/ui/assets/<uuid>/<filename>) — not the bare filename — because the
-// embedded markdown renders as a plain <img> with no NodeView resolveSrc to fix it.
-// (Regression: embedding a smart-image produced ![](im-82d3.png), which 404s.)
-func TestSmartImageProcessor_MarkdownRepresentation_servedURL(t *testing.T) {
-	p := NewSmartImageProcessor(block.BlockServices{})
-	blk := block.SieveBlock{Attrs: map[string]interface{}{"src": "im-82d3.png", "alt": "a sprite"}}
+const (
+	imageDocUUID   = "0197b1f4-5a5a-7000-8000-00000000a001"
+	imageOtherUUID = "0197b1f4-5a5a-7000-8000-00000000a002"
+)
 
-	got := p.MarkdownRepresentation(blk, "doc-uuid-1")
-	want := "![a sprite](/ui/assets/doc-uuid-1/im-82d3.png)"
-	if got != want {
-		t.Errorf("MarkdownRepresentation: got %q, want %q (must carry the served /ui/assets/<uuid>/ URL)", got, want)
+// MarkdownRepresentation must emit a WORKING served URL (/ui/assets/<uuid>/<key>)
+// for whatever spelling the stored src takes, because the embedded markdown
+// renders as a plain <img> with no NodeView resolveSrc to fix it. A src that names
+// no asset has no route, and yields no image at all.
+func TestSmartImageProcessor_MarkdownRepresentation(t *testing.T) {
+	p := NewSmartImageProcessor(block.BlockServices{})
+	cases := []struct {
+		name  string
+		attrs map[string]interface{}
+		want  string
+	}{
+		{"own sieve address", map[string]interface{}{"src": "sieve://" + imageDocUUID + "/im-82d3.png", "alt": "a sprite"}, "![a sprite](/ui/assets/" + imageDocUUID + "/im-82d3.png)"},
+		{"legacy relative reference", map[string]interface{}{"src": "/im-82d3.png", "alt": "a sprite"}, "![a sprite](/ui/assets/" + imageDocUUID + "/im-82d3.png)"},
+		{"cross-container sieve address", map[string]interface{}{"src": "sieve://" + imageOtherUUID + "/remote.png", "alt": "shared"}, "![shared](/ui/assets/" + imageOtherUUID + "/remote.png)"},
+		{"legacy bare filename", map[string]interface{}{"src": "im-82d3.png", "alt": "a sprite"}, "![a sprite](/ui/assets/" + imageDocUUID + "/im-82d3.png)"},
+		{"legacy .assets/ filename", map[string]interface{}{"src": ".assets/im-9.png"}, "![](/ui/assets/" + imageDocUUID + "/im-9.png)"},
+		{"summary stands in for a missing alt", map[string]interface{}{"src": "sieve://" + imageDocUUID + "/im-9.png", "summary": "a chart"}, "![a chart](/ui/assets/" + imageDocUUID + "/im-9.png)"},
+		{"a src naming no asset embeds nothing", map[string]interface{}{"src": ".assets/sub/im-9.png"}, ""},
+		{"empty src", map[string]interface{}{}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := p.MarkdownRepresentation(block.SieveBlock{Attrs: tc.attrs}, imageDocUUID); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
-func TestSmartImageProcessor_MarkdownRepresentation_stripsAssetsPrefixAndPath(t *testing.T) {
+// BuildContext names the image by its asset key, decoded, whatever spelling the
+// src takes.
+func TestSmartImageProcessor_BuildContext_namesTheKey(t *testing.T) {
 	p := NewSmartImageProcessor(block.BlockServices{})
-	blk := block.SieveBlock{Attrs: map[string]interface{}{"src": ".assets/im-9.png"}}
-
-	if got := p.MarkdownRepresentation(blk, "u1"); got != "![](/ui/assets/u1/im-9.png)" {
-		t.Errorf("got %q, want the basename under /ui/assets/u1/", got)
-	}
-}
-
-func TestSmartImageProcessor_MarkdownRepresentation_emptySrc(t *testing.T) {
-	p := NewSmartImageProcessor(block.BlockServices{})
-	if got := p.MarkdownRepresentation(block.SieveBlock{Attrs: map[string]interface{}{}}, "u1"); got != "" {
-		t.Errorf("empty src must yield empty markdown, got %q", got)
+	for _, src := range []string{
+		"sieve://" + imageDocUUID + "/%E6%97%A5%E6%9C%AC.png",
+		"/日本.png",
+		"/ui/assets/" + imageDocUUID + "/日本.png",
+	} {
+		ctx := p.BuildContext(block.SieveBlock{ID: "im-1", Attrs: map[string]interface{}{"src": src}}, block.DocView{}, nil)
+		if ctx.Content != "Image: 日本.png\n" {
+			t.Errorf("BuildContext(%q).Content = %q, want the decoded key", src, ctx.Content)
+		}
 	}
 }
 
@@ -96,34 +122,273 @@ func TestSmartImageProcessor_IsSupportedContent_plantumlFenceNotOffered(t *testi
 	}
 }
 
-// acquire's "already a local sieve asset" branch must recognise a reference under
-// EITHER route: the current one (everything minted going forward) and the one
-// that predates #19's route move (still present in documents nobody has
-// reopened since). Either way the image is a reference, not bytes to re-ingest.
-func TestSmartImageProcessor_acquire_recognisesCurrentAssetRoute(t *testing.T) {
-	p := NewSmartImageProcessor(block.BlockServices{})
-	entry := block.ContentEntry{Content: "/ui/assets/doc-uuid-1/im-1.png"}
+// imageFixture is a smart-image processor over a real store holding two
+// documents: source, which owns one PNG asset minted as chart.png (sourceKey),
+// and target, which owns nothing.
+type imageFixture struct {
+	p              *SmartImageProcessor
+	assets         *services.AssetService
+	source, target string
+	sourceKey      string
+	png            []byte
+}
 
-	_, ref, err := p.acquire(entry, "blk-1")
-	if err != nil {
-		t.Fatalf("acquire: %v", err)
+func newImageFixture(t *testing.T) imageFixture {
+	t.Helper()
+	ds, fs := newTestDocumentService(t)
+	assets := services.NewAssetService(fs, "")
+	svc := block.BlockServices{Documents: ds, Assets: assets}
+	f := imageFixture{p: NewSmartImageProcessor(svc), assets: assets, png: testPNG(t, 4, 3)}
+	for _, uuid := range []*string{&f.source, &f.target} {
+		doc, err := ds.New()
+		if err != nil {
+			t.Fatalf("new document: %v", err)
+		}
+		*uuid = doc.UUID()
 	}
-	if ref != "im-1.png" {
-		t.Errorf("ref = %q, want the bare filename im-1.png (already local, no re-ingest)", ref)
+	ref, err := f.p.assets.mint(f.source, "chart.png", f.png)
+	if err != nil {
+		t.Fatalf("seed source asset: %v", err)
+	}
+	f.sourceKey = f.p.assets.filename(ref)
+	return f
+}
+
+// heldCopy asserts ref is the absolute address of an asset of the target holding
+// the source's bytes, that the source's asset is untouched, and returns the key.
+func (f imageFixture) heldCopy(t *testing.T, ref string) string {
+	t.Helper()
+	addr, err := domain.ParseAddress(ref)
+	if err != nil || addr.Container != f.target || addr.Leaf == "" {
+		t.Fatalf("ref = %q, want the absolute address of an asset of the target (%v)", ref, err)
+	}
+	key := addr.Leaf
+	got, err := f.assets.ServeAssetData(f.target, key)
+	if err != nil || !bytes.Equal(got, f.png) {
+		t.Fatalf("target asset %q = %d bytes, %v; want the source's bytes", key, len(got), err)
+	}
+	if src, err := f.assets.ServeAssetData(f.source, f.sourceKey); err != nil || !bytes.Equal(src, f.png) {
+		t.Errorf("source asset changed: %d bytes, %v", len(src), err)
+	}
+	return key
+}
+
+// acquire's stored-asset branch takes every spelling of an asset Sieve holds. An
+// asset of the target document stays a pure reference, in its absolute form; one held by another
+// document is copied in, so a smart-image src never names a foreign asset.
+func TestSmartImageProcessor_acquire_storedAsset(t *testing.T) {
+	f := newImageFixture(t)
+	img := func(src string) block.ContentEntry {
+		return block.ContentEntry{MIMEType: "text/html", Content: `<img src="` + src + `">`}
+	}
+	own := "sieve://" + f.target + "/"
+	cases := []struct {
+		name    string
+		entry   func(f imageFixture) block.ContentEntry
+		wantRef string // "" = the source asset's bytes, to be saved by the caller
+	}{
+		{"relative reference", func(f imageFixture) block.ContentEntry { return block.ContentEntry{Content: "/shot.png"} }, own + "shot.png"},
+		{"own served route", func(f imageFixture) block.ContentEntry {
+			return block.ContentEntry{Content: "/ui/assets/" + f.target + "/im-1.png"}
+		}, own + "im-1.png"},
+		{"own legacy route", func(f imageFixture) block.ContentEntry {
+			return block.ContentEntry{Content: "/sieve/" + f.target + "/im-1.png"}
+		}, own + "im-1.png"},
+		{"own route under the desktop origin", func(f imageFixture) block.ContentEntry {
+			return block.ContentEntry{Content: "wails://wails/ui/assets/" + f.target + "/im-1.png"}
+		}, own + "im-1.png"},
+		{"own sieve URI", func(f imageFixture) block.ContentEntry {
+			return block.ContentEntry{Content: "sieve://" + f.target + "/shot.png"}
+		}, own + "shot.png"},
+		{"own route in an html <img>", func(f imageFixture) block.ContentEntry { return img("/ui/assets/" + f.target + "/im-1.png") }, own + "im-1.png"},
+		{"foreign served route", func(f imageFixture) block.ContentEntry {
+			return block.ContentEntry{Content: "/ui/assets/" + f.source + "/" + f.sourceKey}
+		}, ""},
+		{"foreign sieve URI", func(f imageFixture) block.ContentEntry {
+			return block.ContentEntry{Content: "sieve://" + f.source + "/" + f.sourceKey}
+		}, ""},
+		{"foreign route in an html <img>", func(f imageFixture) block.ContentEntry { return img("/ui/assets/" + f.source + "/" + f.sourceKey) }, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data, ref, err := f.p.acquire(tc.entry(f), f.target, "blk-1")
+			if err != nil {
+				t.Fatalf("acquire: %v", err)
+			}
+			if tc.wantRef == "" {
+				if ref != "" || !bytes.Equal(data, f.png) {
+					t.Fatalf("foreign asset: ref = %q, %d bytes; want the source's bytes and no ref", ref, len(data))
+				}
+				return
+			}
+			if data != nil {
+				t.Fatalf("an asset this document holds must not come back as bytes to ingest (%d bytes)", len(data))
+			}
+			if ref != tc.wantRef {
+				t.Errorf("ref = %q, want %q", ref, tc.wantRef)
+			}
+		})
 	}
 }
 
-func TestSmartImageProcessor_acquire_recognisesLegacyAssetRoute(t *testing.T) {
-	p := NewSmartImageProcessor(block.BlockServices{})
-	entry := block.ContentEntry{Content: "/sieve/doc-uuid-1/im-1.png"}
+// A foreign asset pasted by reference lands as a held, measured copy. Its key is the
+// source asset's basename.
+func TestSmartImageProcessor_Transform_foreignAssetLandsSized(t *testing.T) {
+	f := newImageFixture(t)
+	attrs := f.p.Transform([]block.ContentEntry{{Content: "sieve://" + f.source + "/" + f.sourceKey}}, f.target, ident.New(), block.ActionPaste)
+	if attrs == nil {
+		t.Fatal("Transform declined a foreign asset reference")
+	}
+	src, _ := attrs["src"].(string)
+	if key := f.heldCopy(t, src); key != f.sourceKey {
+		t.Errorf("key = %q, want the source's basename %q", key, f.sourceKey)
+	}
+	if attrs["width"] != "4" || attrs["height"] != "3" {
+		t.Errorf("size = %vx%v, want 4x3", attrs["width"], attrs["height"])
+	}
+}
 
-	_, ref, err := p.acquire(entry, "blk-1")
-	if err != nil {
-		t.Fatalf("acquire: %v", err)
+// Every ingested image is keyed by a readable name, in order of preference: the
+// filename it arrived under, the basename of the URL it came from, then "image".
+// Repeats in one document are uniquified. Only a filename becomes the title.
+func TestSmartImageProcessor_Transform_ingestedImageKeyIsReadable(t *testing.T) {
+	f := newImageFixture(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(f.png) }))
+	defer srv.Close()
+	own := "sieve://" + f.target + "/"
+	dataURI := "data:image/png;base64," + base64.StdEncoding.EncodeToString(f.png)
+	cases := []struct {
+		name      string
+		entry     block.ContentEntry
+		wantSrc   string
+		wantTitle string
+	}{
+		{"dropped file keeps its filename", dropped("image/png", "holiday.png", string(f.png)), own + "holiday.png", "holiday.png"},
+		{"same filename is uniquified", dropped("image/png", "holiday.png", string(f.png)), own + "holiday-2.png", "holiday.png"},
+		{"nameless bitmap", block.ContentEntry{MIMEType: "image/png", Content: dataURI}, own + "image.png", ""},
+		{"second nameless bitmap", block.ContentEntry{MIMEType: "image/png", Content: dataURI}, own + "image-2.png", ""},
+		{"pasted URL, query dropped", block.ContentEntry{MIMEType: "text/plain", Content: srv.URL + "/a/sunset.png?w=640"}, own + "sunset.png", ""},
+		{"html <img>", block.ContentEntry{MIMEType: "text/html", Content: `<img src="` + srv.URL + `/photo.png">`}, own + "photo.png", ""},
 	}
-	if ref != "im-1.png" {
-		t.Errorf("ref = %q, want the bare filename im-1.png — pre-migration content must be recognised as local too", ref)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			attrs := f.p.Transform([]block.ContentEntry{tc.entry}, f.target, ident.New(), block.ActionPaste)
+			if attrs == nil {
+				t.Fatal("Transform declined the image")
+			}
+			title, _ := attrs["title"].(string)
+			if attrs["src"] != tc.wantSrc || title != tc.wantTitle {
+				t.Errorf("src = %v, title = %q; want %s, %q", attrs["src"], title, tc.wantSrc, tc.wantTitle)
+			}
+		})
 	}
+}
+
+// preferredName falls back to "image" when the URL's last segment has no
+// extension a key could keep.
+func TestSmartImageProcessor_preferredName_urlWithoutExtension(t *testing.T) {
+	f := newImageFixture(t)
+	for _, content := range []string{"https://example.com/download", "https://example.com/a/b.png/"} {
+		e := block.ContentEntry{MIMEType: "text/html", Content: `<img src="` + content + `">`}
+		if got := f.p.preferredName(e); got != "image" {
+			t.Errorf("preferredName(%q) = %q, want image", content, got)
+		}
+	}
+}
+
+// A foreign asset that cannot be read fails the ingest; it is never downloaded
+// and never stored as a pointer at the other document.
+func TestSmartImageProcessor_acquire_unreadableForeignAssetFails(t *testing.T) {
+	f := newImageFixture(t)
+	_, ref, err := f.p.acquire(block.ContentEntry{Content: "sieve://" + f.source + "/missing.png"}, f.target, "blk-1")
+	if err == nil {
+		t.Fatalf("acquire succeeded with ref %q, want an error", ref)
+	}
+}
+
+// A copied smart-image arrives as its uri-list AND its sieve/smart-image view.
+// The sieve view wins, so a container-less src is resolved against the document
+// it was copied FROM, and the paste holds its own copy of the bytes, keyed by the
+// source's title.
+func TestSmartImageProcessor_Transform_copiedBlock(t *testing.T) {
+	f := newImageFixture(t)
+	view := func(container string, src string) []block.ContentEntry {
+		attrs, _ := json.Marshal(map[string]interface{}{
+			"kind": "smart-image", "id": "src-block", "src": src, "width": "4", "height": "3",
+			"title": "chart.png", "alt": "a chart", "summary": "Q3", "detect": "chart", "showSummary": true, "status": "COMPLETE",
+		})
+		sieve := block.ContentEntry{MIMEType: "sieve/smart-image", Content: string(attrs)}
+		if container != "" {
+			sieve.Context = map[string]interface{}{"container": container}
+		}
+		return []block.ContentEntry{{MIMEType: "text/uri-list", Content: src}, sieve}
+	}
+
+	sourceSrc := "sieve://" + f.source + "/" + f.sourceKey
+	t.Run("across documents", func(t *testing.T) {
+		attrs := f.p.Transform(view(f.source, sourceSrc), f.target, ident.New(), block.ActionPaste)
+		if attrs == nil {
+			t.Fatal("Transform declined a copied smart-image")
+		}
+		src, _ := attrs["src"].(string)
+		if key := f.heldCopy(t, src); key != "chart.png" {
+			t.Errorf("key = %q, want the source's title chart.png", key)
+		}
+		for k, want := range map[string]interface{}{"width": "4", "height": "3", "title": "chart.png", "alt": "a chart", "summary": "Q3", "detect": "chart", "showSummary": true} {
+			if attrs[k] != want {
+				t.Errorf("%s = %v, want %v carried over", k, attrs[k], want)
+			}
+		}
+		if _, carried := attrs["status"]; carried {
+			t.Error("status describes the source block's lifecycle and must not be carried over")
+		}
+	})
+
+	t.Run("a described source is born complete, an undescribed one pending", func(t *testing.T) {
+		described := f.p.InitAttrs("b1", f.p.Transform(view(f.source, sourceSrc), f.target, ident.New(), block.ActionPaste))
+		if described["status"] != block.BlockStatusComplete || described["summary"] != "Q3" {
+			t.Errorf("described copy: status = %v, summary = %v; want COMPLETE with the summary", described["status"], described["summary"])
+		}
+		undescribed := f.p.InitAttrs("b2", map[string]interface{}{"src": sourceSrc})
+		if undescribed["status"] != block.BlockStatusPending {
+			t.Errorf("undescribed src: status = %v, want PENDING", undescribed["status"])
+		}
+	})
+
+	t.Run("within one document, a second asset", func(t *testing.T) {
+		attrs := f.p.Transform(view("", sourceSrc), f.source, ident.New(), block.ActionPaste)
+		src, _ := attrs["src"].(string)
+		key := "chart-2.png"
+		if want := "sieve://" + f.source + "/" + key; src != want {
+			t.Fatalf("src = %q, want %q beside %q", src, want, f.sourceKey)
+		}
+		if got, err := f.assets.ServeAssetData(f.source, key); err != nil || !bytes.Equal(got, f.png) {
+			t.Errorf("copy %q = %d bytes, %v; want the source's bytes", key, len(got), err)
+		}
+	})
+
+	t.Run("an untitled source is keyed by its own key", func(t *testing.T) {
+		entries := view(f.source, sourceSrc)
+		entries[1].Content = strings.Replace(entries[1].Content, `"title":"chart.png"`, `"title":""`, 1)
+		attrs := f.p.Transform(entries, f.target, ident.New(), block.ActionPaste)
+		if attrs == nil || !strings.HasPrefix(attrs["src"].(string), "sieve://"+f.target+"/chart") {
+			t.Errorf("Transform = %v, want a src keyed chart…, not a uuid", attrs)
+		}
+	})
+
+	t.Run("a legacy relative src resolves against the source document", func(t *testing.T) {
+		attrs := f.p.Transform(view(f.source, "/"+f.sourceKey), f.target, ident.New(), block.ActionPaste)
+		src, _ := attrs["src"].(string)
+		if key := f.heldCopy(t, src); !strings.HasPrefix(key, "chart") {
+			t.Errorf("key = %q, want a copy keyed from the source's title", key)
+		}
+	})
+
+	t.Run("unreadable source bytes create no block", func(t *testing.T) {
+		if attrs := f.p.Transform(view(f.source, "sieve://"+f.source+"/missing.png"), f.target, ident.New(), block.ActionPaste); attrs != nil {
+			t.Errorf("Transform = %v, want nil — a block must never point at the source", attrs)
+		}
+	})
 }
 
 // --- measure: the ONE sizing rule every ingest path shares (#53) -------------

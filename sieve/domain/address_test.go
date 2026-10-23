@@ -21,6 +21,9 @@ func TestParseAddress_RoundTrip(t *testing.T) {
 		"sieve://" + cUUID + "/" + bUUID + "?version=7",
 		"sieve://" + cUUID + "/the-retry-loop",
 		"sieve://" + cUUID + "/diagram.png",
+		"sieve://" + cUUID + "/日本.png",
+		"sieve://" + cUUID + "/café.png?version=2",
+		"sieve://" + cUUID + "/a%3Fb%23c%25d%20e.png",
 	} {
 		t.Run(s, func(t *testing.T) {
 			a, err := ParseAddress(s)
@@ -29,6 +32,34 @@ func TestParseAddress_RoundTrip(t *testing.T) {
 			}
 			if got := a.String(); got != s {
 				t.Fatalf("round trip: %q -> %q", s, got)
+			}
+		})
+	}
+}
+
+// A percent-encoded spelling parses to the same address as the raw one and
+// re-renders raw; structural characters stay escaped.
+func TestParseAddress_PercentEncodedLeafRendersRaw(t *testing.T) {
+	for _, tc := range []struct{ in, leaf, want string }{
+		{"%E6%97%A5%E6%9C%AC.png", "日本.png", "日本.png"},
+		{"caf%C3%A9.png", "café.png", "café.png"},
+		{"a%3Fb%23c.png", "a?b#c.png", "a%3Fb%23c.png"},
+		{"a%20b.png", "a b.png", "a%20b.png"},
+	} {
+		t.Run(tc.leaf, func(t *testing.T) {
+			a, err := ParseAddress("sieve://" + cUUID + "/" + tc.in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if a.Leaf != tc.leaf {
+				t.Fatalf("leaf = %q, want %q", a.Leaf, tc.leaf)
+			}
+			if want := "sieve://" + cUUID + "/" + tc.want; a.String() != want {
+				t.Fatalf("String() = %q, want %q", a.String(), want)
+			}
+			raw, err := ParseAddress(a.String())
+			if err != nil || raw != a {
+				t.Fatalf("re-parse = %+v, %v; want %+v", raw, err, a)
 			}
 		})
 	}
@@ -96,6 +127,7 @@ func TestParseAddress_LeavesTheLeafVerbatim(t *testing.T) {
 		"Design Notes.md",
 		"The-Retry-Loop",
 		strings.ToUpper(bUUID),
+		"日本.png",
 	} {
 		t.Run(leaf, func(t *testing.T) {
 			a, err := ParseAddress("sieve://" + cUUID + "/" + url.PathEscape(leaf))
@@ -429,5 +461,143 @@ func TestAddress_EqualComparesNamedLeaves(t *testing.T) {
 	}
 	if named.Equal(other) {
 		t.Fatal("two different names must not be equal")
+	}
+}
+
+func TestResolveAssetReference(t *testing.T) {
+	base := NewContainerAddress(cUUID)
+
+	cases := []struct {
+		name          string
+		ref           string
+		base          Address
+		wantContainer string
+		wantLeaf      string
+		wantErr       bool
+	}{
+		{
+			name:          "served route current",
+			ref:           "/ui/assets/" + dUUID + "/diagram.png",
+			base:          base,
+			wantContainer: dUUID,
+			wantLeaf:      "diagram.png",
+		},
+		{
+			name:          "served route legacy",
+			ref:           "/sieve/" + dUUID + "/flow.svg",
+			base:          base,
+			wantContainer: dUUID,
+			wantLeaf:      "flow.svg",
+		},
+		{
+			name:          "sieve URI absolute",
+			ref:           "sieve://" + dUUID + "/shot.png",
+			base:          base,
+			wantContainer: dUUID,
+			wantLeaf:      "shot.png",
+		},
+		{
+			name:          "relative reference with leading slash",
+			ref:           "/local.png",
+			base:          base,
+			wantContainer: cUUID,
+			wantLeaf:      "local.png",
+		},
+		{
+			name:          "bare filename",
+			ref:           "local.png",
+			base:          base,
+			wantContainer: cUUID,
+			wantLeaf:      "local.png",
+		},
+		{
+			name:          "assets prefixed bare filename",
+			ref:           ".assets/local.png",
+			base:          base,
+			wantContainer: cUUID,
+			wantLeaf:      "local.png",
+		},
+		{
+			name:          "served route under the desktop origin",
+			ref:           "wails://wails/ui/assets/" + dUUID + "/shot.png",
+			base:          base,
+			wantContainer: dUUID,
+			wantLeaf:      "shot.png",
+		},
+		{
+			name:          "served route under the Windows origin",
+			ref:           "http://wails.localhost/ui/assets/" + dUUID + "/shot.png",
+			base:          base,
+			wantContainer: dUUID,
+			wantLeaf:      "shot.png",
+		},
+		{
+			name:          "served route under the dev-server origin",
+			ref:           "http://localhost:34115/ui/assets/" + dUUID + "/shot.png?v=2",
+			base:          base,
+			wantContainer: dUUID,
+			wantLeaf:      "shot.png",
+		},
+		{
+			name:    "a legacy-prefixed path whose segment is not a uuid is not a route",
+			ref:     "/sieve/img/logo.png",
+			base:    base,
+			wantErr: true,
+		},
+		{
+			name:    "a sieve URI naming no leaf is rejected",
+			ref:     "sieve://" + dUUID,
+			base:    base,
+			wantErr: true,
+		},
+		{
+			name:    "http URL is rejected",
+			ref:     "http://example.com/pic.png",
+			base:    base,
+			wantErr: true,
+		},
+		{
+			name:    "https URL is rejected",
+			ref:     "https://example.com/pic.png",
+			base:    base,
+			wantErr: true,
+		},
+		{
+			name:    "data URI is rejected",
+			ref:     "data:image/png;base64,abc",
+			base:    base,
+			wantErr: true,
+		},
+		{
+			name:    "empty ref",
+			ref:     "   ",
+			base:    base,
+			wantErr: true,
+		},
+		{
+			name:    "bare relative with zero base",
+			ref:     "/local.png",
+			base:    Address{},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ResolveAssetReference(tc.ref, tc.base)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("ResolveAssetReference(%q) unexpectedly succeeded: %+v", tc.ref, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ResolveAssetReference(%q) failed: %v", tc.ref, err)
+			}
+			if got.Container != tc.wantContainer || got.Leaf != tc.wantLeaf {
+				t.Errorf("ResolveAssetReference(%q) = {%q, %q}, want {%q, %q}",
+					tc.ref, got.Container, got.Leaf, tc.wantContainer, tc.wantLeaf)
+			}
+		})
 	}
 }

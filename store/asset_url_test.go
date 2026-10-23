@@ -96,3 +96,90 @@ func TestRewriteLegacyAssetURLs_RewritesOnlyTheRouteInMixedProse(t *testing.T) {
 		t.Errorf("repo URL disturbed: %q", got)
 	}
 }
+
+func TestParseAssetURL(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    string
+		wantUUID string
+		wantFile string
+		wantOK   bool
+	}{
+		{
+			name:     "current route",
+			input:    "/ui/assets/" + testAssetUUID + "/diagram.png",
+			wantUUID: testAssetUUID,
+			wantFile: "diagram.png",
+			wantOK:   true,
+		},
+		{
+			name:     "current route with query string",
+			input:    "/ui/assets/" + testAssetUUID + "/diagram.png?t=12345",
+			wantUUID: testAssetUUID,
+			wantFile: "diagram.png",
+			wantOK:   true,
+		},
+		{
+			name:     "legacy route",
+			input:    "/sieve/" + testAssetUUID + "/flow.svg",
+			wantUUID: testAssetUUID,
+			wantFile: "flow.svg",
+			wantOK:   true,
+		},
+		{
+			name:     "legacy route with query string",
+			input:    "/sieve/" + testAssetUUID + "/flow.svg?v=1",
+			wantUUID: testAssetUUID,
+			wantFile: "flow.svg",
+			wantOK:   true,
+		},
+		{
+			name:     "a route under an absolute origin",
+			input:    "wails://wails/ui/assets/" + testAssetUUID + "/diagram.png",
+			wantUUID: testAssetUUID,
+			wantFile: "diagram.png",
+			wantOK:   true,
+		},
+		{
+			name:   "a container segment that is not a uuid",
+			input:  "/ui/assets/doc-uuid-1/diagram.png",
+			wantOK: false,
+		},
+		{
+			name:   "a legacy-prefixed path that is not a route",
+			input:  "/sieve/img/logo.png",
+			wantOK: false,
+		},
+		{
+			name:   "no filename in route",
+			input:  "/ui/assets/0197b1f4-2c3d-7a8b-9c0d-1e2f3a4b5c6d/",
+			wantOK: false,
+		},
+		{
+			name:   "not an asset route",
+			input:  "https://example.com/images/diagram.png",
+			wantOK: false,
+		},
+		{
+			name:   "empty string",
+			input:  "",
+			wantOK: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotUUID, gotFile, gotOK := store.ParseAssetURL(tc.input)
+			if gotOK != tc.wantOK {
+				t.Fatalf("ParseAssetURL(%q) ok = %v, want %v", tc.input, gotOK, tc.wantOK)
+			}
+			if tc.wantOK {
+				if gotUUID != tc.wantUUID {
+					t.Errorf("ParseAssetURL(%q) uuid = %q, want %q", tc.input, gotUUID, tc.wantUUID)
+				}
+				if gotFile != tc.wantFile {
+					t.Errorf("ParseAssetURL(%q) filename = %q, want %q", tc.input, gotFile, tc.wantFile)
+				}
+			}
+		})
+	}
+}

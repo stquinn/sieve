@@ -84,12 +84,35 @@ func TestDocumentMigrator_RunsReferenceURIStep(t *testing.T) {
 	}
 }
 
+func TestDocumentMigrator_RunsAssetURIStep(t *testing.T) {
+	in := []SieveBlock{
+		{ID: "im-1", Kind: "smart-image", Attrs: map[string]interface{}{
+			"id":  "im-1",
+			"src": "/ui/assets/" + testDocumentUUID + "/shot.png",
+		}},
+		{ID: "di-1", Kind: "diagram", Attrs: map[string]interface{}{
+			"id":       "di-1",
+			"svgAsset": "/ui/assets/" + testDocumentUUID + "/flow.svg",
+		}},
+	}
+	out, changed := DocumentMigrator{}.Migrate(in, testDocumentUUID)
+	if !changed {
+		t.Fatal("changed = false for a document carrying stored asset routes")
+	}
+	if got, want := out[0].Attrs["src"], "sieve://"+testDocumentUUID+"/shot.png"; got != want {
+		t.Errorf("smart-image src = %v, want %q", got, want)
+	}
+	if got, want := out[1].Attrs["svgAsset"], "sieve://"+testDocumentUUID+"/flow.svg"; got != want {
+		t.Errorf("diagram svgAsset = %v, want %q", got, want)
+	}
+}
+
 func TestDocumentMigrator_CleanTreeIsUnchanged(t *testing.T) {
 	const id = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
 	in := []SieveBlock{
 		{ID: id, Kind: "smart-image", Attrs: map[string]interface{}{
 			"id":  id,
-			"src": "/ui/assets/" + testAssetUUID + "/im.png",
+			"src": "sieve://" + testDocumentUUID + "/im.png",
 		}},
 	}
 	if _, changed := (DocumentMigrator{}).Migrate(in, testDocumentUUID); changed {

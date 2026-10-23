@@ -670,6 +670,24 @@ func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 	}
 }
 
+// A matched kind whose Transform declines makes no block: the outcome is nothing
+// (the frontend replays the clipboard) and the document gains no block.
+func TestEditorService_HandlePaste_declinedTransformMakesNoBlock(t *testing.T) {
+	es, uuid := newDropEditor(t)
+	block.RegisterProcessor(processors.NewSmartImageProcessor(es.services))
+	before := len(es.shadows[uuid].SnapshotBlocks())
+
+	res := es.HandlePaste(uuid, []block.ContentEntry{
+		{MIMEType: "sieve/smart-image", Content: `{"src":"/missing-asset.png"}`},
+	}, -1)
+	if res.Outcome != block.OutcomeNothing {
+		t.Fatalf("a declined transform must produce the nothing outcome, got %q (%+v)", res.Outcome, res)
+	}
+	if after := len(es.shadows[uuid].SnapshotBlocks()); after != before {
+		t.Errorf("a declined transform must add no block: %d -> %d", before, after)
+	}
+}
+
 // A pasted URL claims no kind since #67 — it becomes ordinary content, composed in
 // Go with the title the preview port supplied. The frontend inserts it at the caret.
 func TestEditorService_HandlePaste_urlBecomesContent(t *testing.T) {

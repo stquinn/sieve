@@ -298,26 +298,33 @@ func toVersionViews(refs []store.VersionRef, uuidEnc string) []versionViewData {
 	return out
 }
 
-// assetLabels maps an asset's block id to the name its block knows it by.
+// assetLabels maps an asset's key, stem, or legacy block id to the label its block knows it by.
 //
-// An asset is stored as <blockID><ext> so that a file cannot overwrite the
-// content.md or meta.json sitting beside it — which leaves the Assets tab
-// listing uuids, and two JSON files indistinguishable. The block holds the real
-// name, so the tab reads it back from there.
+// An asset that arrived without a name is keyed by a uuid (or a legacy <blockID><ext>), and a
+// named one's key is sanitised and uniquified, so a key alone may not say what the asset is.
+// The block holds the real name, so the tab reads it back from there.
 //
 // Kind-agnostic ON PURPOSE: it asks every block for the same attrs rather than
 // switching on kind, so a future kind that names its asset is labelled without
-// touching this. A label is a nicety, so a document that will not parse yields no
-// labels rather than failing the panel.
+// touching this. A label attr is read from the block's attrs, else from its
+// cached face (where a reference keeps its title). An asset attr (src, svgAsset,
+// asset, uri) labels only an asset of d itself, in whatever spelling it takes. A
+// label is a nicety, so a document that will not parse yields no labels rather
+// than failing the panel.
 func (h *MetaHandler) assetLabels(d domain.Document) map[string]assetLabel {
 	blocks, err := block.NewDocumentCodec(block.GlobalRegistry()).Deserialize(string(d.Body()))
 	if err != nil {
 		return nil
 	}
+	self := domain.NewContainerAddress(d.UUID())
 	out := make(map[string]assetLabel, len(blocks))
 	for _, blk := range blocks {
+		face, _ := blk.Attrs["cache"].(map[string]interface{})
 		str := func(key string) string {
 			v, _ := blk.Attrs[key].(string)
+			if strings.TrimSpace(v) == "" {
+				v, _ = face[key].(string)
+			}
 			return strings.TrimSpace(v)
 		}
 		label := assetLabel{Name: str("title")}
@@ -326,8 +333,19 @@ func (h *MetaHandler) assetLabels(d domain.Document) map[string]assetLabel {
 				break
 			}
 		}
-		if label.Name != "" || label.Detail != "" {
-			out[blk.ID] = label
+		if label.Name == "" && label.Detail == "" {
+			continue
+		}
+		out[blk.ID] = label
+		for _, k := range []string{"src", "svgAsset", "asset", "uri"} {
+			addr, err := domain.ResolveAssetReference(str(k), self)
+			if err != nil || addr.Container != self.Container {
+				continue
+			}
+			out[addr.Leaf] = label
+			if stem := strings.TrimSuffix(addr.Leaf, filepath.Ext(addr.Leaf)); stem != "" {
+				out[stem] = label
+			}
 		}
 	}
 	return out
@@ -349,7 +367,10 @@ func toAssetViews(storables []store.Storable, labels map[string]assetLabel) []as
 					mt = "application/octet-stream"
 				}
 			}
-			label := labels[as.BlkID()]
+			label := labels[name]
+			if label.Name == "" && label.Detail == "" {
+				label = labels[as.BlkID()]
+			}
 			shown := label.Name
 			if shown == "" {
 				// No name, so the description carries the row rather than a uuid.

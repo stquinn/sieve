@@ -54,6 +54,14 @@ func (s RegionShape) Wraps(content string) bool {
 }
 
 // ContentEntry is one item from the browser clipboard DataTransfer.
+//
+// Context carries what the entry's bytes cannot say about themselves. The keys
+// the backend reads:
+//
+//	filename   the name a dropped file arrived under
+//	parentId   the composite block a nested source was rendered inside
+//	holderId   the block whose held content this entry carries (framework-stamped)
+//	container  the document a copied sieve/<kind> view was copied from
 type ContentEntry struct {
 	MIMEType string                 `json:"mimeType"`
 	Content  string                 `json:"content"`
@@ -109,6 +117,21 @@ func (e ContentEntry) HolderID() (string, bool) {
 	}
 	if s, isStr := e.Context["holderId"].(string); isStr && s != "" {
 		return s, true
+	}
+	return "", false
+}
+
+// SourceContainer reports the uuid of the document a copied sieve/<kind> view
+// came from (the clipboard stamps Context["container"]). ok is false when the
+// entry does not say — an extract, which never leaves its document, or a
+// clipboard written without the stamp — and the caller must then take the
+// target document as the source.
+func (e ContentEntry) SourceContainer() (string, bool) {
+	if e.Context == nil {
+		return "", false
+	}
+	if s, isStr := e.Context["container"].(string); isStr && strings.TrimSpace(s) != "" {
+		return strings.TrimSpace(s), true
 	}
 	return "", false
 }

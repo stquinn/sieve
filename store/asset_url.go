@@ -61,3 +61,26 @@ func RewriteLegacyAssetURLs(s string) string {
 		return AssetURLPrefix + uuid + "/"
 	})
 }
+
+// ParseAssetURL finds a served asset route (/ui/assets/{uuid}/{filename} or
+// legacy /sieve/{uuid}/{filename}) anywhere in s — so an absolute URL under any
+// origin parses too — and returns its canonical container uuid and filename,
+// query dropped. ok is false unless the container segment is one Sieve could
+// have minted (ident.Valid) and a filename follows it.
+func ParseAssetURL(s string) (uuid, filename string, ok bool) {
+	for _, prefix := range [...]string{AssetURLPrefix, LegacyAssetURLPrefix} {
+		idx := strings.Index(s, prefix)
+		if idx == -1 {
+			continue
+		}
+		u, f, hasSlash := strings.Cut(s[idx+len(prefix):], "/")
+		if !hasSlash || !ident.Valid(u) {
+			continue
+		}
+		f, _, _ = strings.Cut(f, "?")
+		if f != "" {
+			return ident.Canonical(u), f, true
+		}
+	}
+	return "", "", false
+}

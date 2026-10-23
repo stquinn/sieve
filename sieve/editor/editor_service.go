@@ -1088,7 +1088,8 @@ func (es *EditorService) HandlePasteSlice(uuid string, slice [][]block.ContentEn
 //
 // The result says what the paste DID, not merely whether a matcher fired: a block
 // was created, Go composed content for the caret, or Sieve did nothing and the
-// frontend replays the clipboard itself.
+// frontend replays the clipboard itself. A matched kind whose Transform declines
+// (returns nil) did nothing: no block is created and the result is PasteNothing.
 func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry, index int) block.PasteResult {
 	matchKind, processor, fromDetection, ok := block.FirstPasteMatch(entries)
 	if !ok {
@@ -1099,10 +1100,11 @@ func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry, 
 	}
 	blockID := ident.New()
 	overrides := processor.Transform(entries, uuid, blockID, block.ActionPaste)
+	if overrides == nil {
+		logger.Warn("paste: processor declined the entries", "uuid", uuid, "kind", matchKind)
+		return block.PasteNothing()
+	}
 	if fromDetection {
-		if overrides == nil {
-			overrides = map[string]interface{}{}
-		}
 		overrides["smartPaste"] = true
 	}
 	id, raw, err := es.createBlockWithID(uuid, matchKind, blockID, overrides, nil, index)

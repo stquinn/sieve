@@ -1,8 +1,10 @@
 package ai
 
 import (
-	"sieve/sieve/domain"
+	"path/filepath"
 	"testing"
+
+	"sieve/sieve/domain"
 )
 
 // timeoutFor reads only settings.PromptTimeouts and settings.CLITimeoutLong, so a
@@ -38,5 +40,75 @@ func TestAIService_timeoutFor(t *testing.T) {
 	// Nil map must not panic and always falls back.
 	if got := s.timeoutFor(domain.Settings{CLITimeoutLong: 42}, "file"); got != 42 {
 		t.Errorf("timeoutFor with nil map = %d, want 42", got)
+	}
+}
+
+// stubNodeResolver records the address it was asked about and answers with node,
+// or with ErrNodeNotFound when node has no Path.
+type stubNodeResolver struct {
+	asked domain.Address
+	node  domain.NodeDescriptor
+}
+
+func (s *stubNodeResolver) Resolve(addr domain.Address) (domain.NodeDescriptor, error) {
+	s.asked = addr
+	if s.node.Path == "" {
+		return domain.NodeDescriptor{}, domain.ErrNodeNotFound
+	}
+	return s.node, nil
+}
+
+// DescribeImage finds the image through the resolver alone: the src is resolved
+// against the block's own document, the resolver names the file, and the CLI runs
+// in that file's directory. A src the resolver cannot find is an error.
+func TestAIService_DescribeImage_resolvesTheSrcThroughTheResolver(t *testing.T) {
+	const (
+		here  = "0197b1f4-5a5a-7000-8000-00000000c001"
+		other = "0197b1f4-5a5a-7000-8000-00000000c002"
+	)
+	cases := []struct {
+		name      string
+		src       string
+		node      domain.NodeDescriptor
+		wantAsked domain.Address
+		wantErr   bool
+	}{
+		{"a sieve URI names this document's asset", "sieve://" + here + "/shot.png",
+			domain.NodeDescriptor{Kind: "asset", Path: "notes/here/shot.png"}, domain.NewLeafAddress(here, "shot.png"), false},
+		{"a sieve URI names another document's asset", "sieve://" + other + "/shot.png",
+			domain.NodeDescriptor{Kind: "asset", Path: "notes/other/shot.png"}, domain.NewLeafAddress(other, "shot.png"), false},
+		{"a resolver miss is an error", "sieve://" + here + "/gone.png",
+			domain.NodeDescriptor{}, domain.NewLeafAddress(here, "gone.png"), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cap := &captureRunner{ret: `{"alt":"Alt","summary":"Summary"}`}
+			svc := newSmartTestService(t, cap)
+			resolver := &stubNodeResolver{node: tc.node}
+			svc.nodes = resolver
+
+			desc, err := svc.DescribeImage(here, tc.src, "blk-1")
+			if !resolver.asked.Equal(tc.wantAsked) {
+				t.Errorf("resolver asked about %v, want %v", resolver.asked, tc.wantAsked)
+			}
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("DescribeImage succeeded (%+v), want an error", desc)
+				}
+				if cap.op != "" {
+					t.Errorf("the CLI ran (%q) for an image that was not found", cap.op)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("DescribeImage: %v", err)
+			}
+			if desc.Alt != "Alt" || desc.Summary != "Summary" {
+				t.Errorf("desc = %+v", desc)
+			}
+			if want := filepath.Dir(filepath.Join(svc.storePath, tc.node.Path)); cap.cwd != want {
+				t.Errorf("cwd = %q, want the resolved file's directory %q", cap.cwd, want)
+			}
+		})
 	}
 }

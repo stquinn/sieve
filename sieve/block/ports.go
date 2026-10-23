@@ -37,9 +37,7 @@ type AssetsPort interface {
 // domain.ErrNodeNotFound — a well-formed address nothing holds — is DANGLING, a
 // normal state a block renders as a cached face with a missing marker, never a
 // failure it reports.
-type NodesPort interface {
-	Resolve(addr domain.Address) (domain.NodeDescriptor, error)
-}
+type NodesPort = domain.NodeResolver
 
 // StatePort is the settings-read surface processors use.
 type StatePort interface {
