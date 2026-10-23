@@ -35,11 +35,13 @@ vi.mock('../src/static/lens/document-editor/surfaces/ai-target-decoration.js', (
 import { setAiTargetGlow } from '../src/static/lens/document-editor/surfaces/ai-target-decoration.js'
 
 // Builds the structural #ask-panel exactly as index.html renders it (the child
-// wires this, never rebuilds it). The panel has no header — the box floats,
+// wires this, never rebuilds it), after the #session-layout state element that
+// carries the persisted pin. The panel has no header — the box floats,
 // carrying its own drag handle as its first child. The composer's fixture is a
 // bare div: what mounts into it is the lens's business, not the panel's.
-function mountPanelDom({ open = false } = {}) {
+function mountPanelDom({ open = false, pinned = false } = {}) {
   document.body.innerHTML = `
+    <div id="session-layout" data-askpanel="${pinned ? 'on' : 'off'}"></div>
     <div id="ask-panel" class="ask-panel ${open ? 'is-open' : ''}">
       <div class="ask-composer">
         <div class="ask-handle"></div>
@@ -50,6 +52,15 @@ function mountPanelDom({ open = false } = {}) {
       </div>
     </div>`
   return document.getElementById('ask-panel')
+}
+
+// Swaps in a fresh #session-layout as htmx does on the session refetch.
+function repin(pinned) {
+  const layout = document.createElement('div')
+  layout.id = 'session-layout'
+  layout.dataset.askpanel = pinned ? 'on' : 'off'
+  document.getElementById('session-layout').replaceWith(layout)
+  layout.dispatchEvent(new window.CustomEvent('htmx:load', { bubbles: true }))
 }
 
 /**
@@ -182,7 +193,6 @@ const escape = () => document.getElementById('ask-panel').dispatchEvent(
 
 beforeEach(() => {
   vi.mocked(setAiTargetGlow).mockClear()
-  window.initAskPanelPinned = false
 })
 afterEach(() => {
   document.body.innerHTML = ''
@@ -234,19 +244,17 @@ describe('AskPanel — DOM wiring + open/close/toggle', () => {
   })
 
   it('close() keeps .is-open when pinned', () => {
-    window.initAskPanelPinned = true
-    const el = mountPanelDom({ open: true })
+    const el = mountPanelDom({ open: true, pinned: true })
     const { panel } = build(fakeWorkspace(fakeEditor()))
     panel.close()
     expect(el.classList.contains('is-open')).toBe(true)
   })
 
   it('Escape while pinned untoggles through the persisted endpoint (no ✕ — the panel has no header)', () => {
-    window.initAskPanelPinned = true
     const ajax = vi.fn(() => Promise.resolve())
     window.htmx = { ajax }
     try {
-      mountPanelDom({ open: true })
+      mountPanelDom({ open: true, pinned: true })
       build(fakeWorkspace(fakeEditor()))
       escape()
       expect(ajax).toHaveBeenCalledWith('POST', '/api/session/toggle/askpanel', { swap: 'none' })
@@ -256,11 +264,10 @@ describe('AskPanel — DOM wiring + open/close/toggle', () => {
   })
 
   it('a Ctrl+Shift+A jump-out (close) while pinned does NOT touch the persisted endpoint', () => {
-    window.initAskPanelPinned = true
     const ajax = vi.fn(() => Promise.resolve())
     window.htmx = { ajax }
     try {
-      mountPanelDom({ open: true })
+      mountPanelDom({ open: true, pinned: true })
       const { panel } = build(fakeWorkspace(fakeEditor()))
       panel.close()                        // jump-out, not dismiss
       expect(ajax).not.toHaveBeenCalled()  // pin state untouched
@@ -393,28 +400,34 @@ describe('AskPanel — F1 send targets the ACTIVE editor with the harvested ques
 // the View-menu pin toggle) — the draft socket must not be left empty on either
 // path, and neither path is a jump-in, so neither may steal focus.
 describe('AskPanel — the draft is mounted whenever the panel is visible (fix round 1)', () => {
-  it('constructing over a panel already carrying is-open mounts the composer', () => {
-    mountPanelDom({ open: true })
+  it('constructing with the pin on opens the panel and mounts the composer', () => {
+    const el = mountPanelDom({ pinned: true })
     const { composer } = build(fakeWorkspace(fakeEditor()))
+    expect(el.classList.contains('is-open')).toBe(true)
     expect(composer.opened).toBe(1)
   })
 
-  it('the sieve:ask-panel-toggled event pinning ON mounts the composer', () => {
-    mountPanelDom()   // closed
+  it('a refetched #session-layout pinning ON opens the panel and mounts the composer; OFF closes it', () => {
+    const el = mountPanelDom()   // closed
     const { composer } = build(fakeWorkspace(fakeEditor()))
     expect(composer.opened).toBe(0)
-    document.dispatchEvent(new window.CustomEvent('sieve:ask-panel-toggled', { detail: true }))
+    repin(true)
+    expect(el.classList.contains('is-open')).toBe(true)
     expect(composer.opened).toBe(1)
+    repin(true)                  // an unrelated session write: no second mount
+    expect(composer.opened).toBe(1)
+    repin(false)
+    expect(el.classList.contains('is-open')).toBe(false)
   })
 
   it('neither boot-mount nor pin-mount focuses the composer — that stays open()\'s job', () => {
-    mountPanelDom({ open: true })
+    mountPanelDom({ pinned: true })
     const { composer: bootComposer } = build(fakeWorkspace(fakeEditor()))
     expect(bootComposer.hasFocus()).toBe(false)
 
     mountPanelDom()   // closed
     const { composer: pinComposer } = build(fakeWorkspace(fakeEditor()))
-    document.dispatchEvent(new window.CustomEvent('sieve:ask-panel-toggled', { detail: true }))
+    repin(true)
     expect(pinComposer.hasFocus()).toBe(false)
   })
 })
@@ -458,7 +471,7 @@ describe('AskPanel — the footer states what the draft answers to (#118 item 4)
   })
 
   it('a PINNED panel, visible without an open(), states them too', () => {
-    mountPanelDom({ open: true })
+    mountPanelDom({ pinned: true })
     build(fakeWorkspace(fakeEditor()))
     expect(hints()).toEqual([`${MOD}+Enter send`, '@ mention', '/ command'])
   })
@@ -888,8 +901,7 @@ describe('AskPanel — Slash command routing (#55)', () => {
   })
 
   it('a command send while pinned keeps the panel open (no dismiss-on-send)', () => {
-    window.initAskPanelPinned = true
-    const el = mountPanelDom({ open: true })
+    const el = mountPanelDom({ open: true, pinned: true })
     const commands = {
       list: () => [{ name: 'btw', description: 'Ask btw' }],
       resolve: vi.fn(() => ({ cmd: { name: 'btw', description: 'Ask btw' }, args: 'x' })),

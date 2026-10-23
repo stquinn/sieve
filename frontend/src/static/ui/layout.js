@@ -39,48 +39,32 @@
         e.preventDefault();
     }
 
-    // The server owns the layout width vars: it renders them into
-    // <style id="layout-overrides-*"> blocks with !important. A drag must therefore
-    // edit THAT stylesheet's rule via CSSOM — an inline style on #app-root either
-    // loses to the stylesheet's !important or, with an !important flag of its own,
-    // permanently beats the server's later hide-toggle and leaves an empty column.
-    // Match by selectorText, not rule index: the block also holds other rules.
-    function setLayoutVar(styleElId, varName, value) {
-        const styleEl = document.getElementById(styleElId);
-        if (!styleEl || !styleEl.sheet) return;
-        for (const rule of styleEl.sheet.cssRules) {
-            if (rule.selectorText === '#app-root') {
-                rule.style.setProperty(varName, value, 'important');
-                break;
-            }
-        }
+    // Panel sizes are custom properties on #app-root, read by shell.css.
+    function setLayoutVar(varName, value) {
+        document.getElementById('app-root').style.setProperty(varName, value);
     }
 
     function onMouseMove(e) {
         if (!isDragging) return;
-
-        const metaPanel = document.getElementById('htmx-meta-panel');
-        const promptsPanel = document.getElementById('prompts-panel');
 
         if (currentHandle.classList.contains('sidebar-handle')) {
             const dx = e.clientX - startX;
             let newWidth = startWidth + dx;
             if (newWidth < 150) newWidth = 150;
             if (newWidth > 600) newWidth = 600;
-            setLayoutVar('layout-overrides-sidebar', '--sidebar-w', newWidth + 'px');
+            setLayoutVar('--sidebar-w', newWidth + 'px');
         } else if (currentHandle.classList.contains('meta-handle')) {
             const dx = startX - e.clientX; // Reverse because it's on the right
             let newWidth = startWidth + dx;
             if (newWidth < 150) newWidth = 150;
             if (newWidth > 600) newWidth = 600;
-            setLayoutVar('layout-overrides-meta', '--meta-w', newWidth + 'px');
-            metaPanel.style.width = newWidth + 'px';
+            setLayoutVar('--meta-w', newWidth + 'px');
         } else if (currentHandle.classList.contains('prompts-handle')) {
             const dy = startY - e.clientY; // Dragging up increases height
             let newHeight = startHeight + dy;
             if (newHeight < 50) newHeight = 50;
             if (newHeight > 600) newHeight = 600;
-            promptsPanel.style.height = newHeight + 'px';
+            setLayoutVar('--prompts-h', newHeight + 'px');
         } else if (currentHandle.classList.contains('ask-handle')) {
             const askPanel = document.getElementById('ask-panel');
             const dy = startY - e.clientY; // handle is at the top → up grows it
@@ -91,7 +75,7 @@
             const max = editorCol ? Math.max(min, editorCol.clientHeight - 100) : 600;
             if (newHeight < min) newHeight = min;
             if (newHeight > max) newHeight = max;
-            askPanel.style.height = newHeight + 'px';
+            setLayoutVar('--ask-panel-h', newHeight + 'px');
         }
     }
 
