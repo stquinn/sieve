@@ -695,6 +695,13 @@ export class WysiwygSurface extends AbstractSurface {
       const language = arg && arg.trim() ? arg.trim() : undefined
       pane.chain().focus().setCodeBlock(language ? { language } : undefined).run()
     },
+  }), Object.freeze({
+    label: 'Slide marker',
+    name: 'slide',
+    description: 'Starts a new slide in Presentation Mode',
+    icon: 'horizontalRule',
+    requires: LensCapability.MARKDOWN,
+    run: (/** @type {any} */ pane) => { pane.chain().focus().insertContent({ type: SlideMarker.NAME }).run() },
   })])
 
   /**
