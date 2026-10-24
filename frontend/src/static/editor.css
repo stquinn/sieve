@@ -399,12 +399,11 @@ textarea::selection {
   --doc-size: calc(var(--theme-editorBaseSize, 16px) * var(--theme-editorScale, 1));
 }
 
-/* Slide markers: a subtle dashed rule with a muted label while editing. */
+/* Slide markers: a dashed rule labelled with the slide it starts while editing. */
 .slide-marker {
   position: relative;
   margin: 1.25em 0;
-  border-top: 1px dashed var(--theme-muted);
-  opacity: 0.6;
+  border-top: 1px dashed var(--theme-textDim);
   cursor: default;
 }
 .slide-marker::after {
@@ -414,9 +413,10 @@ textarea::selection {
   top: -0.75em;
   padding-left: 0.4em;
   font-size: 11px;
-  color: var(--theme-muted);
+  color: var(--theme-textDim);
   background: var(--theme-bg, transparent);
 }
+.slide-marker[data-slide]::after { content: 'slide ' attr(data-slide); }
 .slide-marker.ProseMirror-selectednode { opacity: 1; border-top-color: var(--theme-accentPrimary); }
 
 /* Presentation Mode: only the caret's slide is drawn, in bigger type. */
@@ -424,7 +424,28 @@ textarea::selection {
   --doc-size: calc(var(--theme-editorBaseSize, 16px) * var(--theme-editorScale, 1) * 1.5);
 }
 .editor-panel.presenting .slide-hidden,
-.editor-panel.presenting .block-chrome-host { display: none; }
+.editor-panel.presenting .block-chrome-host,
+.editor-panel.presenting .tiptap p.is-empty::after { display: none; }
+.editor-panel.presenting .sieve-spell-mark { text-decoration-color: transparent; }
+/* Every slide sits in the same centred box at the presentation measure. The width is
+   fixed, not capped: auto margins turn off the flex stretch, so a capped box
+   would shrink to each slide's content and its left edge would move per slide. */
+.editor-panel.presenting > .tiptap {
+  width: min(var(--theme-presentationMeasure, 72ch), calc(100% - 2.25rem));
+  max-width: none;
+  margin-inline: auto;
+}
+/* The deck counter (SlideFocus): read on a glance, never competing with the slide. */
+.slide-counter {
+  position: fixed;
+  right: 1rem;
+  bottom: 0.75rem;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--theme-textDim);
+  pointer-events: none;
+  user-select: none;
+}
 
 /* Strategy A (prose nodes): widget is a DOM sibling BEFORE the block inside
    .ProseMirror (position:relative). top:auto uses the CSS static-position
@@ -601,13 +622,16 @@ textarea::selection {
   z-index: 10;
 }
 
-/* Line numbers off (session_layout.html): the rail, its rule and its padding go.
-   padding-left is set directly because BlockChrome writes --chrome-w inline. */
+/* Line numbers off (session_layout.html) or presenting: the rail, its rule and its
+   padding go. padding-left is set directly because BlockChrome writes --chrome-w
+   inline. */
 #session-layout[data-line-numbers="off"] ~ * .block-chrome-host,
-#session-layout[data-line-numbers="off"] ~ * #tiptap-mount > .tiptap::before {
+#session-layout[data-line-numbers="off"] ~ * #tiptap-mount > .tiptap::before,
+#tiptap-mount.presenting > .tiptap::before {
   display: none;
 }
-#session-layout[data-line-numbers="off"] ~ * #tiptap-mount > .tiptap {
+#session-layout[data-line-numbers="off"] ~ * #tiptap-mount > .tiptap,
+#tiptap-mount.presenting > .tiptap {
   padding-left: 1.25rem;
 }
 
@@ -1525,7 +1549,7 @@ pre.tiptap-code-block code {
   white-space: pre-wrap;
   font-size: 11px;
   color: var(--theme-text);
-  opacity: 0.85;
+  opacity: 1;
   background: color-mix(in srgb, var(--theme-bgDark) 60%, transparent);
   border: 1px solid var(--theme-border);
   border-radius: 4px;

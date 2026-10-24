@@ -2011,7 +2011,7 @@ describe('WysiwygSurface.macrosFor — composing one mount\'s macros', () => {
       toggleBlockquote: () => { calls.push(['toggleBlockquote']); return chain },
       setHorizontalRule: () => { calls.push(['setHorizontalRule']); return chain },
       setCodeBlock: (opts) => { calls.push(['setCodeBlock', opts]); return chain },
-      insertContent: (content) => { calls.push(['insertContent', content]); return chain },
+      insertSlideMarker: () => { calls.push(['insertSlideMarker']); return chain },
       run: () => { calls.push(['run']); return true },
     }
     return { calls, chain: () => chain }
@@ -2097,7 +2097,7 @@ describe('WysiwygSurface.macrosFor — composing one mount\'s macros', () => {
 
   it.each([
     ['Divider', 2, ['setHorizontalRule']],
-    ['Slide marker', 4, ['insertContent', { type: 'slideMarker' }]],
+    ['Slide marker', 4, ['insertSlideMarker']],
   ])('clears the token, then runs the %s preset\'s own command', (_label, index, call) => {
     const pane = paneStub()
     /** @type {any[]} */ const cleared = []

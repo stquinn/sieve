@@ -699,7 +699,7 @@ export class WysiwygSurface extends AbstractSurface {
     description: 'Starts a new slide in Presentation Mode',
     icon: 'horizontalRule',
     requires: LensCapability.MARKDOWN,
-    run: (/** @type {any} */ pane) => { pane.chain().focus().insertContent({ type: SlideMarker.NAME }).run() },
+    run: (/** @type {any} */ pane) => { pane.chain().focus().insertSlideMarker().run() },
   })])
 
   /**
