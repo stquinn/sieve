@@ -427,8 +427,16 @@ export class SieveWorkspace {
           // mode-changed fires only on an actual flip, not on the initial mount.
           if (this.#activeTab) this.#activeTab.recordMode(ed.mode)
           document.body.classList.toggle('markdown-mode', ed.mode === 'markdown')
-          // 0 for a never-seen tab is the park-at-top floor, so one call serves both.
-          ed.restoreScroll(data.scroll || 0)
+          // The tab's own record is fresher than the persisted flag once this
+          // session has one: the frame recording a toggle may still be in flight.
+          const recorded = this.#activeTab?.presenting
+          return ed.setPresenting(recorded ?? data.presenting).then(() => {
+            if (this.#currentUuid !== uuid) return
+            this.#activeTab?.recordPresenting(ed.presenting)
+            this.#mirrorPresenting()
+            // 0 for a never-seen tab is the park-at-top floor, so one call serves both.
+            ed.restoreScroll(data.scroll || 0)
+          })
         })
       })
       .catch((err) => { console.error('[editor] load failed', err) })
@@ -445,6 +453,7 @@ export class SieveWorkspace {
     const existing = this.getTab(uuid)
     const hadEditor = !!(existing && existing.editor)
     const tab = this.activateDocument(uuid)
+    this.#mirrorPresenting()
     if (tab && tab.editor && !hadEditor) {
       tab.editor.onEvent(this.onEditorModeEvent.bind(this))
       // The lazy crash-safety flush, on top of the guaranteed one in
@@ -463,11 +472,35 @@ export class SieveWorkspace {
     }
   }
 
-  /** The two non-toolbar chrome reactions to a surface mode flip: the body
-   *  `markdown-mode` class plus the tab-strip re-render, and the failure alert.
+  /** Toggles Presentation Mode on the active editor, records the outcome on the
+   *  session's tab and mirrors it onto the chrome. An editor that cannot present —
+   *  a prompt, a document with no slide markers — changes nothing and sends nothing.
+   *  @returns {Promise<boolean>} whether the active editor is now presenting */
+  async togglePresentation() {
+    const ed = this.activeEditor
+    if (!ed || !ed.canEditBlocks) return false
+    const before = ed.presenting
+    const now = await ed.togglePresentation()
+    if (now !== before) this.#documentService.setPresenting(ed.uuid, now)
+    this.#mirrorPresenting()
+    return now
+  }
+
+  /** The workspace-owned `presenting` class on `body`, the selector shell.css
+   *  hides the chrome by. It follows the ACTIVE editor, so a tab that is not
+   *  presenting shows the chrome the session configures. */
+  #mirrorPresenting() {
+    document.body.classList.toggle('presenting', !!this.activeEditor?.presenting)
+  }
+
+  /** The non-toolbar chrome reactions to the editor's view events: the body
+   *  `markdown-mode` class plus the tab-strip re-render, the failure alert, and
+   *  the body `presenting` class.
    *  @param {{type: string, mode?: string, error?: unknown}} event */
   onEditorModeEvent(event) {
-    if (event.type === 'mode-changed') {
+    if (event.type === 'presenting-changed') {
+      this.#mirrorPresenting()
+    } else if (event.type === 'mode-changed') {
       document.body.classList.toggle('markdown-mode', this.activeEditor?.mode === 'markdown')
       this.loadTabs()
     } else if (event.type === 'mode-change-failed') {

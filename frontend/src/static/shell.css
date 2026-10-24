@@ -67,6 +67,22 @@ html, body {
     display: none;
 }
 
+/* Presentation Mode: the Workspace sets body.presenting while the active document
+   is presented, and the chrome goes. The #app-root step out-ranks the
+   #session-layout rules above, so a panel the session has on stays hidden; the
+   session's flags are untouched and show again on exit. The table toolbar's
+   rule sits with markdown-mode's below: its display is an inline style. */
+body.presenting #app-root #sidebar-wrapper,
+body.presenting #app-root .sidebar-handle,
+body.presenting #app-root #htmx-meta-panel,
+body.presenting #app-root .meta-handle,
+body.presenting #app-root #ask-panel,
+body.presenting #app-root #editor-toolbar,
+body.presenting #app-root #htmx-tabbar,
+body.presenting #app-root .status-bar {
+    display: none;
+}
+
 #right-panel {
     display: flex;
     flex-direction: column;
@@ -195,7 +211,8 @@ body.markdown-mode #ask-panel {
   display: none !important;
 }
 
-body.markdown-mode #table-toolbar {
+body.markdown-mode #table-toolbar,
+body.presenting #table-toolbar {
   display: none !important;
 }
 

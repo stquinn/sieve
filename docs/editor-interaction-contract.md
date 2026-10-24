@@ -784,7 +784,7 @@ Consequences:
 | Mod+Shift+G (mac) | Find › Find Previous | `window.sieveWorkspace?.findPrev()` |
 | Mod+Shift+F | Edit › Find › Find in Notes… (mac: Find › …) | `window.sieveSidebarSearch()` |
 | Mod+Alt+J | View › Toggle AI Blocks | `window.sieveWorkspace?.activeTab?.editor?.toggleAiBlocks()` |
-| Mod+Alt+P | View › Toggle Presentation Mode | `window.sieveWorkspace?.activeTab?.editor?.togglePresentation()` |
+| Mod+Alt+P | View › Toggle Presentation Mode | `window.sieveWorkspace?.togglePresentation()` |
 | Mod+P | View › Quick Switcher | open quick-switcher dialog |
 | Mod+Alt+B | View › Show Toolbar | `htmx.ajax` POST `/api/session/toggle/toolbar` |
 | Mod+= | View › Increase Editor Font | `htmx.ajax` POST `/api/settings/editor-scale/step?dir=up` |
@@ -1350,6 +1350,22 @@ in a list item, blockquote or table cell, is not a boundary: it keeps its editin
 look and, like every marker, is hidden while presenting. Every block kind hides
 and shows as one unit with its slide; a renderer must never set `display` inline
 on its root, because an inline style beats the `.slide-hidden` rule.
+
+**Chrome while presenting (#184).** Presenting belongs to the document, as markdown
+mode does: the Workspace mirrors the active editor's state onto `body` as the
+`presenting` class, and while it is set the sidebar, meta panel, ask panel, editor
+toolbar, table toolbar, tab bar and status bar are hidden, together with their
+resize handles; the gutter goes with the editor's own `.editor-panel.presenting`
+rule. No session panel flag is written: a panel toggled while presenting changes
+the session and stays hidden, and on exit the chrome shows whatever the session
+says at that moment. Switching to a document that is not presenting brings the
+chrome back; switching back hides it again. The state is recorded on the session's
+tab (`set-presenting`), so a restart reopens a presented document presenting.
+
+| Gesture | Result |
+|---|---|
+| Mod+Alt+P / View › Toggle Presentation Mode | enters or leaves Presentation Mode — the only ways out, since the tab bar is hidden; there is no Esc binding |
+| Toggle in a prompt, or a document with no markers | nothing happens and nothing is sent |
 
 ## Deferred (recorded, not shipped)
 

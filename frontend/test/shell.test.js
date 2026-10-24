@@ -1411,7 +1411,73 @@ describe('SieveWorkspace.activateDocument editor lifecycle (P2.A fix wave)', () 
 describe('SieveWorkspace editor lifecycle (P4.F — moved from editor.js)', () => {
   let origFetch
   beforeEach(() => { FakeSocket.reset(); origFetch = global.fetch })
-  afterEach(() => { global.fetch = origFetch; vi.restoreAllMocks(); document.body.classList.remove('markdown-mode') })
+  afterEach(() => { global.fetch = origFetch; vi.restoreAllMocks(); document.body.classList.remove('markdown-mode', 'presenting') })
+
+  /** A workspace whose active tab holds a real mount with a scripted load answer
+   *  and a mounted fake-surface note editor, so initEditor runs its whole load path.
+   *  @param {object} answer the load answer's typed shape */
+  function loadRig(answer) {
+    const w = new SieveWorkspace()
+    const tab = w.openTab('doc-a')
+    const mount = hostMount('doc-a')
+    vi.spyOn(mount, 'load').mockResolvedValue(Object.assign({ body: '', meta: { mode: 'wysiwyg' }, scroll: 0, version: 0, presenting: false }, answer))
+    tab.attachMount(mount)
+    const ed = new FakeSurfaceNoteEditor('doc-a', { provider: fakeProvider(), toolbar: null })
+    ed.restoreScroll = vi.fn()
+    tab.attachEditor(ed)
+    return { w, tab, ed, el: document.createElement('div') }
+  }
+  const settle = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0)) }
+
+  it.each([
+    ['markdown-mode from the load answer', { meta: { mode: 'markdown' } }, null, 'markdown-mode'],
+    ['presenting from the load answer', { presenting: true }, null, 'presenting'],
+    ["presenting from the tab's own record over a stale persisted flag", { presenting: false }, true, 'presenting'],
+  ])('initEditor mirrors %s onto body', async (_name, answer, recorded, cls) => {
+    const { w, tab, el } = loadRig(answer)
+    if (recorded !== null) tab.recordPresenting(recorded)
+    w.initEditor(el, 'doc-a')
+    await settle()
+    expect(document.body.classList.contains(cls)).toBe(true)
+    if (cls === 'presenting') expect(tab.presenting).toBe(true)
+  })
+
+  it('togglePresentation toggles the active editor, records it on the wire and mirrors it', async () => {
+    const { w, ed, el } = loadRig({})
+    w.initEditor(el, 'doc-a')
+    await settle()
+    const sent = vi.spyOn(w.documentService, 'setPresenting').mockImplementation(() => {})
+    expect(await w.togglePresentation()).toBe(true)
+    expect(ed.presenting).toBe(true)
+    expect(document.body.classList.contains('presenting')).toBe(true)
+    expect(await w.togglePresentation()).toBe(false)
+    expect(document.body.classList.contains('presenting')).toBe(false)
+    expect(sent.mock.calls).toEqual([['doc-a', true], ['doc-a', false]])
+  })
+
+  it.each([
+    ['a document with no slide markers', (ed) => { ed.surface.slideMarkers = false }],
+    ['a lens that cannot edit blocks (a prompt)', (ed) => { Object.defineProperty(ed, 'canEditBlocks', { get: () => false }) }],
+  ])('togglePresentation on %s returns false and sends nothing', async (_name, cripple) => {
+    const { w, ed, el } = loadRig({})
+    w.initEditor(el, 'doc-a')
+    await settle()
+    cripple(ed)
+    const sent = vi.spyOn(w.documentService, 'setPresenting').mockImplementation(() => {})
+    expect(await w.togglePresentation()).toBe(false)
+    expect(sent).not.toHaveBeenCalled()
+    expect(document.body.classList.contains('presenting')).toBe(false)
+  })
+
+  it('a tab switch re-mirrors presenting from the new active editor', async () => {
+    const { w, el } = loadRig({ presenting: true })
+    w.initEditor(el, 'doc-a')
+    await settle()
+    expect(document.body.classList.contains('presenting')).toBe(true)
+    global.fetch = vi.fn(() => new Promise(() => {}))
+    w.initEditor(el, 'prompt:b')
+    expect(document.body.classList.contains('presenting')).toBe(false)
+  })
 
   it('activeEditor mirrors activeTab.editor and is null-safe', () => {
     const w = new SieveWorkspace()
@@ -2029,6 +2095,28 @@ describe('AbstractEditor.togglePresentation (#178)', () => {
     ed.surface.slideMarkers = false
     expect(await ed.togglePresentation()).toBe(false)
     expect(root.classList.contains('presenting')).toBe(false)
+  })
+
+  it('exposes presenting, and emits exactly one presenting-changed per actual change', async () => {
+    const { ed } = rigWithRoot('wysiwyg')
+    const events = []
+    ed.onEvent((e) => { if (e.type === 'presenting-changed') events.push(e.presenting) })
+    expect(ed.presenting).toBe(false)
+    expect(await ed.setPresenting(true)).toBe(true)
+    expect(await ed.setPresenting(true)).toBe(true)
+    expect(ed.presenting).toBe(true)
+    expect(await ed.togglePresentation()).toBe(false)
+    expect(await ed.setPresenting(false)).toBe(false)
+    expect(events).toEqual([true, false])
+  })
+
+  it('setPresenting(true) obeys the no-slide-markers guard and emits nothing', async () => {
+    const { ed } = rigWithRoot('wysiwyg')
+    ed.surface.slideMarkers = false
+    const events = []
+    ed.onEvent((e) => { if (e.type === 'presenting-changed') events.push(e) })
+    expect(await ed.setPresenting(true)).toBe(false)
+    expect(events).toEqual([])
   })
 
   it('a remounted surface is told the editor is still presenting', async () => {

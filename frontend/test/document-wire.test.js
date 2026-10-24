@@ -30,10 +30,10 @@ describe('DocumentService.load — the host facts, and the container to the mode
   it('answers only what the HOST acts on — the blocks are not in it', async () => {
     const rig = serviceRig({ uuid: 'doc-1' })
     const res = await driveLoad(rig, {
-      body: 'B', mode: 'markdown', scroll: 120, version: 7,
+      body: 'B', mode: 'markdown', scroll: 120, version: 7, presenting: true,
       blocks: [{ id: 'l1', kind: 'code', attrs: { source: 'x' } }],
     })
-    expect(res).toEqual({ body: 'B', meta: { mode: 'markdown' }, scroll: 120, version: 7 })
+    expect(res).toEqual({ body: 'B', meta: { mode: 'markdown' }, scroll: 120, version: 7, presenting: true })
   })
 
   it('meta.mode defaults to wysiwyg when the wire omits it', async () => {
@@ -296,18 +296,24 @@ describe('DocumentService.paste — one frame, four kinds', () => {
   })
 })
 
-describe('DocumentService.focus — the dwell ping', () => {
+describe('DocumentService unanswered view verbs — the dwell ping and Presentation Mode', () => {
   beforeEach(() => FakeSocket.reset())
 
-  it('sends an unanswered {type:focus} and awaits nothing', () => {
+  it.each([
+    ['focus', (ds, uuid) => ds.focus(uuid), { type: 'focus' }],
+    ['set-presenting', (ds, uuid) => ds.setPresenting(uuid, true), { type: 'set-presenting', presenting: true }],
+  ])('%s is sent unanswered and awaits nothing', (type, call, frame) => {
     const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
-    expect(documentService.focus('doc-1')).toBeUndefined()
-    expect(sock.sentOfType('focus')).toEqual([{ type: 'focus' }])
+    expect(call(documentService, 'doc-1')).toBeUndefined()
+    expect(sock.sentOfType(type)).toEqual([frame])
   })
 
-  it('drops for a channel-less document rather than throwing', () => {
+  it.each([
+    ['focus', (ds, uuid) => ds.focus(uuid)],
+    ['set-presenting', (ds, uuid) => ds.setPresenting(uuid, false)],
+  ])('%s drops for a channel-less document rather than throwing', (_type, call) => {
     const { documentService } = serviceRig({ uuid: null })
-    expect(() => documentService.focus('prompt:x')).not.toThrow()
+    expect(() => call(documentService, 'prompt:x')).not.toThrow()
   })
 })
 

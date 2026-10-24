@@ -27,6 +27,14 @@ export class SieveTab {
    */
   #mode = EditorMode.WYSIWYG
 
+  /**
+   * Whether the tab's editor was last presenting — the client-side record that
+   * survives a tab switch, as #mode does. null until this session has recorded
+   * one, when the load answer's persisted flag is the only word.
+   * @type {boolean|null}
+   */
+  #presenting = null
+
   /** @type {(() => void)|null} unsubscribe from the attached editor's event stream */
   #unsubEditor = null
 
@@ -70,6 +78,16 @@ export class SieveTab {
    * @param {EditorModeValue} mode
    */
   recordMode(mode) { this.#mode = mode }
+
+  /** @returns {boolean|null} null before this session recorded one */
+  get presenting() { return this.#presenting }
+
+  /**
+   * Records whether the tab's editor is presenting; the load path's sibling of
+   * recordMode.
+   * @param {boolean} presenting
+   */
+  recordPresenting(presenting) { this.#presenting = !!presenting }
 
   /** @returns {AbstractEditor|null} null before one mounts */
   get editor() { return this.#editor }
@@ -129,6 +147,7 @@ export class SieveTab {
     if (this.#mount) ed.setSelectionListener(this.#mount)
     this.#unsubEditor = ed.onEvent((e) => {
       if (e.type === 'mode-changed') this.#mode = e.mode
+      else if (e.type === 'presenting-changed') this.#presenting = e.presenting
       else if (e.type === 'stats') this.#notifyStatsListeners(e)
     })
   }
