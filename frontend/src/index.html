@@ -15,40 +15,15 @@
     <link rel="stylesheet" href="/ui/static/editor.css">
     <link rel="stylesheet" href="/ui/static/shell.css">
     <link rel="stylesheet" href="/ui/static/settings.css">
-    <style id="layout-overrides-sidebar">
-        #app-root { --sidebar-w: {{if .ShowSidebar}}{{.SidebarWidth}}{{else}}0{{end}}px !important; }
-        #htmx-sidebar { display: {{if .ShowSidebar}}flex{{else}}none{{end}} !important; }
-        .sidebar-handle { display: {{if .ShowSidebar}}block{{else}}none{{end}} !important; }
-    </style>
-    <style id="layout-overrides-meta">
-        #app-root { --meta-w: {{if .ShowMeta}}{{.MetaWidth}}{{else}}0{{end}}px !important; }
-        #htmx-meta-panel { display: {{if .ShowMeta}}flex{{else}}none{{end}} !important; }
-        .meta-handle { display: {{if .ShowMeta}}block{{else}}none{{end}} !important; }
-    </style>
-    <style id="layout-overrides-askpanel">
-        {{if .ShowAskPanel}}#ask-panel { display: flex !important; position: relative; z-index: 20; }{{end}}
-    </style>
-    <script id="askpanel-state-sync">
-        window.initAskPanelPinned = {{if .ShowAskPanel}}true{{else}}false{{end}};
-    </script>
-    <style id="layout-overrides-prompts">
-        #prompts-panel { display: {{if .ShowPrompts}}block{{else}}none{{end}}; }
-        .prompts-handle { display: {{if .ShowPrompts}}block{{else}}none{{end}}; }
-    </style>
-    <style id="layout-overrides-toolbar">
-        #editor-toolbar { display: {{if .ShowToolbar}}flex{{else}}none{{end}}; }
-        #app-root { --toolbar-h: {{if .ShowToolbar}}36px{{else}}0px{{end}}; }
-    </style>
-    <style id="layout-overrides-linenumbers">{{if not .ShowLineNumbers}}.block-chrome-host, .tiptap::before { display: none !important; } .tiptap { padding-left: 1.25rem !important; }{{end}}</style>
 </head>
 <body>
     {{if .StoreRoot}}
-    <div id="app-root" class="theme-{{.ThemeName}} tier-{{.Tier}}" style="--sidebar-w: {{if .ShowSidebar}}{{.SidebarWidth}}{{else}}0{{end}}px; --meta-w: {{if .ShowMeta}}{{.MetaWidth}}{{else}}0{{end}}px; --wails-drop-target: drop;">
-        
-        <div id="sidebar-wrapper" style="width: var(--sidebar-w); display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; border-right: 1px solid var(--theme-border);">
-            <div id="htmx-sidebar" class="sidebar" style="flex: 1; min-height: 0; border-right: none; display: flex; flex-direction: column;" hx-get="/ui/views/sidebar" hx-trigger="load, sieve:invalidate-session from:document, sieve:invalidate-notes from:document, session:changed from:body, notes:changed from:body"></div>
+    <div id="app-root" class="theme-{{.ThemeName}}" style="--sidebar-w: {{.SidebarWidth}}px; --meta-w: {{.MetaWidth}}px; --prompts-h: {{.PromptsHeight}}px; --ask-panel-h: {{.AskPanelHeight}}px; --wails-drop-target: drop;">
+        {{template "session_layout.html" .}}
+        <div id="sidebar-wrapper">
+            <div id="htmx-sidebar" class="sidebar" hx-get="/ui/views/sidebar" hx-trigger="load, sieve:invalidate-session from:document, sieve:invalidate-notes from:document, session:changed from:body, notes:changed from:body"></div>
             <div class="prompts-handle"></div>
-            <div id="prompts-panel" style="height: {{.PromptsHeight}}px; flex-shrink: 0;" hx-get="/ui/views/prompts" hx-trigger="load, sieve:invalidate-prompts from:document, sieve:invalidate-notes from:document, prompts:changed from:body, notes:changed from:body"></div>
+            <div id="prompts-panel" hx-get="/ui/views/prompts" hx-trigger="load, sieve:invalidate-prompts from:document, sieve:invalidate-notes from:document, prompts:changed from:body, notes:changed from:body"></div>
         </div>
         <div class="sidebar-handle"></div>
 
@@ -83,8 +58,7 @@
                 <div id="quickswitcher-dialog-content" style="background: var(--theme-bgDark); width: 600px; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);"></div>
             </dialog>
 
-            <!-- Main toolbar — visibility and --toolbar-h controlled by #layout-overrides-toolbar style tag.
-                 P4.D: the toolbar is EDITOR-owned — NoteEditor's EditorToolbar renders its buttons into
+            <!-- P4.D: the toolbar is EDITOR-owned — NoteEditor's EditorToolbar renders its buttons into
                  this host on the first present (the inner button DOM was removed). The hidden image-input
                  stays here (the toolbar image button + the cross-file upload handler both reach it by id). -->
             <div id="editor-toolbar"></div>
@@ -131,7 +105,7 @@
                          The panel itself paints nothing: it is a transparent resize
                          region, and the writing box floats inside it. Height persists
                          via /api/session/layout. -->
-                    <div id="ask-panel" class="ask-panel {{if .ShowAskPanel}}is-open{{end}}" style="height: {{.AskPanelHeight}}px;">
+                    <div id="ask-panel" class="ask-panel">
                         <!-- The writing box: body + chips + footer read as ONE
                              bounded, elevated unit, and it is what carries the focus
                              ring (:focus-within — the caret is in a contentEditable
@@ -149,7 +123,7 @@
                 </div>
 
                 <div class="meta-handle"></div>
-                <div id="htmx-meta-panel" style="width: {{.MetaWidth}}px;" class="flex flex-col flex-shrink-0 overflow-hidden bg-tn-bg-dark border-l border-tn-border text-base" hx-get="/ui/views/meta" hx-vals='js:{"tab": window.__metaActiveTab || "meta"}' hx-trigger="load, sieve:invalidate-session from:document, sieve:invalidate-notes from:document, session:changed from:body, notes:changed from:body"></div>
+                <div id="htmx-meta-panel" class="flex flex-col flex-shrink-0 overflow-hidden bg-tn-bg-dark border-l border-tn-border text-base" hx-get="/ui/views/meta" hx-vals='js:{"tab": window.__metaActiveTab || "meta"}' hx-trigger="load, sieve:invalidate-session from:document, sieve:invalidate-notes from:document, session:changed from:body, notes:changed from:body"></div>
             </div>
 
             <div class="status-bar">
@@ -522,10 +496,7 @@
     // the editor in place — no location.reload() so WebKit never reinstalls its
     // SIGSEGV handler, avoiding the "non-Go code set up signal handler" panic.
     async function sieveApplyLibrarySwitch() {
-      // 1. Layout style overrides (sidebar/meta/toolbar/prompts visibility + widths).
-      await htmx.ajax('GET', '/ui/views/session/layout', { swap: 'none' });
-
-      // 2. Refresh all library-specific panels in parallel.
+      // 1. Refresh all library-specific panels in parallel.
       await Promise.all([
         htmx.ajax('GET', '/ui/views/sidebar', { target: '#htmx-sidebar',    swap: 'innerHTML' }),
         window.sieveWorkspace.loadTabs(),
@@ -533,7 +504,7 @@
         htmx.ajax('GET', '/ui/views/prompts', { target: '#prompts-panel',   swap: 'innerHTML' }),
       ]);
 
-      // 3. Reinitialise editor for the new library's active document.
+      // 2. Reinitialise editor for the new library's active document.
       var newUUID = await window.go.main.App.GetActiveUUID();
       var mount = document.getElementById('tiptap-mount');
       if (mount) {

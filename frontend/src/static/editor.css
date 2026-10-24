@@ -601,6 +601,16 @@ textarea::selection {
   z-index: 10;
 }
 
+/* Line numbers off (session_layout.html): the rail, its rule and its padding go.
+   padding-left is set directly because BlockChrome writes --chrome-w inline. */
+#session-layout[data-line-numbers="off"] ~ * .block-chrome-host,
+#session-layout[data-line-numbers="off"] ~ * #tiptap-mount > .tiptap::before {
+  display: none;
+}
+#session-layout[data-line-numbers="off"] ~ * #tiptap-mount > .tiptap {
+  padding-left: 1.25rem;
+}
+
 /* ── Cursor ──────────────────────────────────────────────────────────── */
 
 .tiptap {
@@ -2016,8 +2026,8 @@ pre.tiptap-code-block code {
 #editor-col { overflow: hidden; overflow: clip; position: relative; }
 
 /* Resizable panel: display toggle + explicit (persisted) height, mirroring
-   #prompts-panel. Height comes from the inline style the template renders;
-   the drag handle (layout.js) overwrites it and persists on mouseup. */
+   #prompts-panel. Height is --ask-panel-h (shell.css); the drag handle
+   (layout.js) sets it and persists on mouseup. */
 .ask-panel {
   flex-shrink: 0;
   overflow: hidden;

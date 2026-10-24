@@ -74,7 +74,6 @@ export class AskPanel {
     this.#mentionService = mentionService || (ws && /** @type {any} */ (ws).mentionService) || null
     this.#badges = badges || (ws && /** @type {any} */ (ws).commandBadges) || null
     this.#panel = document.getElementById('ask-panel')
-    this.#pinned = !!window.initAskPanelPinned
     if (!this.#panel) return
     // The composer is the SOCKET, and it comes first: the chips are a view of the
     // message it holds, so they need it to read from.
@@ -110,10 +109,10 @@ export class AskPanel {
     // tab change.
     this.#ws.onSelectionUpdate((ctx) => this.#onSelectionUpdate(ctx))
     // INVARIANT: whenever the panel is VISIBLE, the draft is MOUNTED. A pinned
-    // panel is visible from the server-rendered `is-open` class before open()
-    // ever runs — mount now so the socket is never empty. Not a jump-in, so it
-    // must not touch #focusReturn/#lastContext or steal focus.
-    if (this.#panel.classList.contains('is-open')) this.#openComposer()
+    // panel is visible from the stylesheet before open() ever runs — mount now so
+    // the socket is never empty. Not a jump-in, so it must not touch
+    // #focusReturn/#lastContext or steal focus.
+    this.#syncPinned()
   }
 
   /** Brings the draft into being and republishes what the footer says about it.
@@ -291,20 +290,29 @@ export class AskPanel {
   /** @returns {string} the message as written ('' before the first open) */
   #composerText() { return this.#composer ? this.#composer.read() : '' }
 
-  /** Reflects the persisted View-menu toggle onto the panel's open state. */
+  /** Re-reads the pin whenever htmx swaps in a fresh #session-layout. */
   #wirePinToggle() {
-    document.addEventListener('sieve:ask-panel-toggled', (e) => {
-      this.#pinned = /** @type {CustomEvent} */ (e).detail
-      if (!this.#panel) return
-      if (this.#pinned) {
-        this.#panel.classList.add('is-open')
-        // Pinning ON makes the panel visible without a jump-in: mount the draft
-        // so the socket is never empty, without stealing focus.
-        this.#openComposer()
-      } else if (!this.#composer || !this.#composer.hasFocus()) {
-        this.#panel.classList.remove('is-open')
-      }
+    document.addEventListener('htmx:load', (e) => {
+      if (/** @type {Element} */ (e.target).id === 'session-layout') this.#syncPinned()
     })
+  }
+
+  /** Reflects the persisted View-menu toggle — #session-layout's
+   *  `data-askpanel` — onto the panel's open state. */
+  #syncPinned() {
+    const layout = document.getElementById('session-layout')
+    const pinned = !!layout && layout.dataset.askpanel === 'on'
+    if (pinned === this.#pinned) return
+    this.#pinned = pinned
+    if (!this.#panel) return
+    if (pinned) {
+      this.#panel.classList.add('is-open')
+      // Pinning ON makes the panel visible without a jump-in: mount the draft
+      // so the socket is never empty, without stealing focus.
+      this.#openComposer()
+    } else if (!this.#composer || !this.#composer.hasFocus()) {
+      this.#panel.classList.remove('is-open')
+    }
   }
 
   /** The Mod+Shift+A entry. The Ask panel owns this chord WHOLESALE — the editor

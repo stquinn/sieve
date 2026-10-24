@@ -15,6 +15,58 @@ html, body {
     width: 100%;
 }
 
+/* ── Session layout ──────────────────────────────────────────────────────
+   #session-layout (session_layout.html) is #app-root's first child and carries
+   the session's panel flags as data-* attributes; every panel is a later sibling
+   of it or a descendant of one, so each "off" rule is a subsequent-sibling
+   selector. The sizes are custom properties on #app-root; a hidden panel keeps
+   its size for when it is shown again. */
+
+#sidebar-wrapper {
+    width: var(--sidebar-w);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow: hidden;
+    border-right: 1px solid var(--theme-border);
+}
+
+#htmx-sidebar {
+    flex: 1;
+    min-height: 0;
+    border-right: none;
+    display: flex;
+    flex-direction: column;
+}
+
+#prompts-panel {
+    height: var(--prompts-h);
+    flex-shrink: 0;
+}
+
+#htmx-meta-panel { width: var(--meta-w); }
+
+#ask-panel { height: var(--ask-panel-h); }
+
+#session-layout[data-askpanel="on"] ~ * #ask-panel {
+    display: flex;
+    position: relative;
+    z-index: 20;
+    border-top: 1px solid var(--theme-border2);
+}
+
+#session-layout[data-sidebar="off"] ~ #sidebar-wrapper,
+#session-layout[data-sidebar="off"] ~ .sidebar-handle,
+#session-layout[data-meta="off"] ~ * #htmx-meta-panel,
+#session-layout[data-meta="off"] ~ * .meta-handle,
+#session-layout[data-prompts="off"] ~ * #prompts-panel,
+#session-layout[data-prompts="off"] ~ * .prompts-handle,
+#session-layout[data-toolbar="off"] ~ * #editor-toolbar,
+#session-layout[data-tier="dumb"] ~ * .tb-ai-query,
+#session-layout[data-tier="dumb"] ~ * .tb-ai-actions {
+    display: none;
+}
+
 #right-panel {
     display: flex;
     flex-direction: column;
@@ -120,10 +172,9 @@ dialog {
 /* ── Editor Toolbar ──────────────────────────────────────────────────────── */
 
 #editor-toolbar {
+  display: flex;
   align-items: center;
-  /* Wrap to additional rows on narrow windows instead of clipping buttons.
-     Height is measured into --toolbar-h by updateToolbarH() so the editor
-     gutter separator tracks the real (possibly multi-row) height. */
+  /* Wrap to additional rows on narrow windows instead of clipping buttons. */
   flex-wrap: wrap;
   min-height: 44px;
   height: auto;
@@ -203,7 +254,6 @@ body.markdown-mode #table-toolbar {
 
 /* AI query (Explain, Ask) — left side, tier-gated */
 .tb-ai-query { display: flex; align-items: center; gap: 1px; }
-.tier-dumb .tb-ai-query { display: none; }
 
 /* Blue/green AI filing actions — right side, tier-gated */
 .tb-ai-actions {
@@ -211,8 +261,6 @@ body.markdown-mode #table-toolbar {
   display: flex; align-items: center; gap: 2px;
 }
 .tb-help { margin-left: 4px; }
-
-.tier-dumb .tb-ai-actions { display: none; }
 
 .tb-ai {
   font-size: 0.8em; font-weight: 700; letter-spacing: .02em;

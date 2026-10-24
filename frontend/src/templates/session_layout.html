@@ -1,0 +1,10 @@
+{{define "session_layout.html"}}<div id="session-layout"
+     data-sidebar="{{if .ShowSidebar}}on{{else}}off{{end}}"
+     data-meta="{{if .ShowMeta}}on{{else}}off{{end}}"
+     data-prompts="{{if .ShowPrompts}}on{{else}}off{{end}}"
+     data-toolbar="{{if .ShowToolbar}}on{{else}}off{{end}}"
+     data-line-numbers="{{if .ShowLineNumbers}}on{{else}}off{{end}}"
+     data-askpanel="{{if .ShowAskPanel}}on{{else}}off{{end}}"
+     data-tier="{{if .Smart}}smart{{else}}dumb{{end}}"
+     hx-get="/ui/views/session/layout" hx-swap="outerHTML"
+     hx-trigger="sieve:invalidate-session from:document, sieve:invalidate-library from:document, settings:changed from:body"></div>{{end}}
