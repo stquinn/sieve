@@ -1,5 +1,5 @@
 {{define "settings.html"}}
-<div class="settings-container" style="display: flex; height: 90vh; min-height: 400px; max-height: 950px;">
+<div class="settings-container" style="display: flex; height: 90vh; min-height: 400px; max-height: 1200px;">
   <!-- Sidebar -->
   <div class="settings-sidebar" style="width: 12rem; background: var(--theme-bgDark); border-right: 1px solid var(--theme-border); padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
     <h2 style="font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem; padding: 0 0.5rem;">Settings</h2>
@@ -356,9 +356,8 @@
         </p>
       </div>
 
-      <!-- Paired: two short numeric fields each took a full row plus a help line,
-           which is most of why this panel scrolled. -->
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem;">
+      <!-- One row: three short numeric fields, each a full row plus a help line, made this panel scroll. -->
+      <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
         <div>
           <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Line height</label>
           <input type="number" name="look_and_feel_editor_line_height" min="1.2" max="2.4" step="0.05" placeholder="1.75" value="{{.LookAndFeel.EditorLineHeight}}" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
@@ -369,7 +368,7 @@
           <input type="number" name="look_and_feel_editor_measure" min="48" max="140" step="1" placeholder="Full width" value="{{trimUnit .LookAndFeel.EditorMeasure}}" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
           <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-top: 0.4rem;">48-140 chars. Blank = full width.</p>
         </div>
-        <div style="grid-column: 2;">
+        <div>
           <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Presentation width</label>
           <input type="number" name="look_and_feel_presentation_measure" min="48" max="140" step="1" placeholder="72" value="{{trimUnit .LookAndFeel.PresentationMeasure}}" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
           <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-top: 0.4rem;">48-140 chars. Blank = 72.</p>
