@@ -105,21 +105,23 @@ func TestLookAndFeel_Overrides_Empty(t *testing.T) {
 
 func TestLookAndFeel_Overrides_SetFields(t *testing.T) {
 	l := LookAndFeel{
-		EditorFont:       `"JetBrains Mono", monospace`,
-		MonoFont:         `"Fira Code", monospace`,
-		UIFont:           "ui-sans-serif, system-ui, sans-serif",
-		EditorScale:      "1.25",
-		EditorLineHeight: "1.6",
-		EditorMeasure:    "72ch",
+		EditorFont:          `"JetBrains Mono", monospace`,
+		MonoFont:            `"Fira Code", monospace`,
+		UIFont:              "ui-sans-serif, system-ui, sans-serif",
+		EditorScale:         "1.25",
+		EditorLineHeight:    "1.6",
+		EditorMeasure:       "72ch",
+		PresentationMeasure: "100ch",
 	}
 	got := l.Overrides()
 	want := map[string]string{
-		"editorFont":       `"JetBrains Mono", monospace`,
-		"monoFont":         `"Fira Code", monospace`,
-		"uiFont":           "ui-sans-serif, system-ui, sans-serif",
-		"editorScale":      "1.25",
-		"editorLineHeight": "1.6",
-		"editorMeasure":    "72ch",
+		"editorFont":          `"JetBrains Mono", monospace`,
+		"monoFont":            `"Fira Code", monospace`,
+		"uiFont":              "ui-sans-serif, system-ui, sans-serif",
+		"editorScale":         "1.25",
+		"editorLineHeight":    "1.6",
+		"editorMeasure":       "72ch",
+		"presentationMeasure": "100ch",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("Overrides() = %v, want %v", got, want)
@@ -177,11 +179,11 @@ func TestLookAndFeel_ValidScale(t *testing.T) {
 	}{
 		{"0.85", true}, {"0.9", true}, {"1.0", true}, {"1.1", true},
 		{"1.25", true}, {"1.5", true}, {"1.75", true}, {"2.0", true},
-		{"1", false},     // not a member of the closed set (must be "1.0")
-		{"1.3", false},   // illegal intermediate value
-		{"0.5", false},   // below range
-		{"3.0", false},   // above range
-		{"", false},      // unset — Overrides() should omit, not include ""
+		{"1", false},      // not a member of the closed set (must be "1.0")
+		{"1.3", false},    // illegal intermediate value
+		{"0.5", false},    // below range
+		{"3.0", false},    // above range
+		{"", false},       // unset — Overrides() should omit, not include ""
 		{"1.0; }", false}, // injection attempt
 	}
 	for _, c := range cases {
@@ -201,10 +203,10 @@ func TestLookAndFeel_ValidLineHeight(t *testing.T) {
 		want  bool
 	}{
 		{"1.2", true}, {"1.75", true}, {"2.4", true}, {"2", true},
-		{"1", false},      // regex-shaped ("[12]") but 1.0 < the 1.2 floor
-		{"1.19", false},   // just below range
-		{"2.41", false},   // just above range
-		{"1.0", false},    // out of the 1.2-2.4 range even though regex-shaped
+		{"1", false},    // regex-shaped ("[12]") but 1.0 < the 1.2 floor
+		{"1.19", false}, // just below range
+		{"2.41", false}, // just above range
+		{"1.0", false},  // out of the 1.2-2.4 range even though regex-shaped
 		{"", false},
 		{"1.5;}", false},
 		{`1.5"; body{display:none}`, false},
@@ -232,14 +234,19 @@ func TestLookAndFeel_ValidMeasure(t *testing.T) {
 		{"72ch; } body { display:none", false},
 		{`72ch"}body{display:none`, false},
 	}
-	for _, c := range cases {
-		t.Run(c.value, func(t *testing.T) {
-			l := LookAndFeel{EditorMeasure: c.value}
-			_, ok := l.Overrides()["editorMeasure"]
-			if ok != c.want {
-				t.Errorf("validMeasure(%q) accepted=%v, want %v", c.value, ok, c.want)
-			}
-		})
+	fields := map[string]func(string) LookAndFeel{
+		"editorMeasure":       func(v string) LookAndFeel { return LookAndFeel{EditorMeasure: v} },
+		"presentationMeasure": func(v string) LookAndFeel { return LookAndFeel{PresentationMeasure: v} },
+	}
+	for key, build := range fields {
+		for _, c := range cases {
+			t.Run(key+"/"+c.value, func(t *testing.T) {
+				_, ok := build(c.value).Overrides()[key]
+				if ok != c.want {
+					t.Errorf("validMeasure(%q) accepted=%v, want %v", c.value, ok, c.want)
+				}
+			})
+		}
 	}
 }
 
@@ -248,12 +255,13 @@ func TestLookAndFeel_ValidMeasure(t *testing.T) {
 func TestLookAndFeel_Overrides_RejectsInjectionAttempts(t *testing.T) {
 	longFont := strings.Repeat("a", 121)
 	l := LookAndFeel{
-		EditorFont:       "16px; } body { display:none",
-		MonoFont:         `"a";}`,
-		UIFont:           longFont,
-		EditorScale:      "1.0; } body { display:none",
-		EditorLineHeight: `1.5"; } body { display:none`,
-		EditorMeasure:    "72ch; } body { display:none",
+		EditorFont:          "16px; } body { display:none",
+		MonoFont:            `"a";}`,
+		UIFont:              longFont,
+		EditorScale:         "1.0; } body { display:none",
+		EditorLineHeight:    `1.5"; } body { display:none`,
+		EditorMeasure:       "72ch; } body { display:none",
+		PresentationMeasure: `100ch"}body{display:none`,
 	}
 	got := l.Overrides()
 	if len(got) != 0 {
@@ -296,12 +304,15 @@ func TestLookAndFeel_StepEditorScale(t *testing.T) {
 // feature (no look_and_feel key at all) must still parse to the zero value —
 // backwards compatibility for existing settings files.
 func TestParseSettings_LookAndFeelRoundTrip(t *testing.T) {
-	loaded := ParseSettings([]byte(`{"look_and_feel":{"editor_scale":"1.25","editor_measure":"72ch"}}`))
+	loaded := ParseSettings([]byte(`{"look_and_feel":{"editor_scale":"1.25","editor_measure":"72ch","presentation_measure":"100ch"}}`))
 	if loaded.LookAndFeel.EditorScale != "1.25" {
 		t.Errorf("LookAndFeel.EditorScale = %q, want 1.25", loaded.LookAndFeel.EditorScale)
 	}
 	if loaded.LookAndFeel.EditorMeasure != "72ch" {
 		t.Errorf("LookAndFeel.EditorMeasure = %q, want 72ch", loaded.LookAndFeel.EditorMeasure)
+	}
+	if loaded.LookAndFeel.PresentationMeasure != "100ch" {
+		t.Errorf("LookAndFeel.PresentationMeasure = %q, want 100ch", loaded.LookAndFeel.PresentationMeasure)
 	}
 }
 

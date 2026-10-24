@@ -158,6 +158,10 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 	if v := strings.TrimSpace(r.FormValue("look_and_feel_editor_measure")); v != "" {
 		settings.LookAndFeel.EditorMeasure = v + "ch"
 	}
+	settings.LookAndFeel.PresentationMeasure = ""
+	if v := strings.TrimSpace(r.FormValue("look_and_feel_presentation_measure")); v != "" {
+		settings.LookAndFeel.PresentationMeasure = v + "ch"
+	}
 	if maxHistStr := r.FormValue("max_history_versions"); maxHistStr != "" {
 		if val, err := strconv.Atoi(maxHistStr); err == nil {
 			settings.MaxHistoryVersions = val

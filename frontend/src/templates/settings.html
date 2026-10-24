@@ -369,6 +369,11 @@
           <input type="number" name="look_and_feel_editor_measure" min="48" max="140" step="1" placeholder="Full width" value="{{trimUnit .LookAndFeel.EditorMeasure}}" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
           <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-top: 0.4rem;">48-140 chars. Blank = full width.</p>
         </div>
+        <div style="grid-column: 2;">
+          <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Presentation width</label>
+          <input type="number" name="look_and_feel_presentation_measure" min="48" max="140" step="1" placeholder="72" value="{{trimUnit .LookAndFeel.PresentationMeasure}}" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+          <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-top: 0.4rem;">48-140 chars. Blank = 72.</p>
+        </div>
       </div>
 
       </div><!-- ── /controls column ── -->
@@ -697,6 +702,7 @@ function toggleMcpTransportFields(select) {
     look_and_feel_editor_scale:      ['--theme-editorScale', ''],
     look_and_feel_editor_line_height:['--theme-editorLineHeight', ''],
     look_and_feel_editor_measure:    ['--theme-editorMeasure', 'ch'],
+    look_and_feel_presentation_measure: ['--theme-presentationMeasure', 'ch'],
   };
 
   function apply(el) {
