@@ -784,7 +784,7 @@ Consequences:
 | Mod+Shift+G (mac) | Find › Find Previous | `window.sieveWorkspace?.findPrev()` |
 | Mod+Shift+F | Edit › Find › Find in Notes… (mac: Find › …) | `window.sieveSidebarSearch()` |
 | Mod+Alt+J | View › Toggle AI Blocks | `window.sieveWorkspace?.activeTab?.editor?.toggleAiBlocks()` |
-| Mod+Alt+P | View › Toggle Presentation Mode | `window.sieveWorkspace?.activeTab?.editor?.togglePresentation()` |
+| Mod+Alt+P | View › Toggle Presentation Mode | `window.sieveWorkspace?.togglePresentation()` |
 | Mod+P | View › Quick Switcher | open quick-switcher dialog |
 | Mod+Alt+B | View › Show Toolbar | `htmx.ajax` POST `/api/session/toggle/toolbar` |
 | Mod+= | View › Increase Editor Font | `htmx.ajax` POST `/api/settings/editor-scale/step?dir=up` |
@@ -1317,11 +1317,14 @@ without reopening the contract.
 A **slide marker** is a block-level prose atom, `slideMarker`, written to markdown
 as `<!-- SLIDE MARKER -->` (read leniently: `<!-- slide -->`, any case and
 spacing). It is a native prose node, so it owns a block id and saves as its own
-prose span; Go sees an HTML comment and nothing more.
+prose span; Go sees an HTML comment and nothing more. While editing it draws as a
+dashed rule labelled `slide N`, N being the slide it starts as Presentation Mode's
+counter numbers it; a marker that starts no counted slide (nested, or before an
+empty slide) is labelled `slide` alone.
 
 | Gesture | Result |
 |---|---|
-| `{slide` + accept | inserts a marker at the caret |
+| `{slide` + accept | inserts a marker at the caret and leaves the caret on the line below it — the next textblock, or a new paragraph when none follows — never on the marker |
 | Click / vertical arrow onto a marker (editing) | NodeSelects it, as for a horizontal rule |
 | Backspace / Delete with the marker selected, or across it | removes it, as for a horizontal rule — no key handling of its own |
 | Markdown mode | the comment is typed by hand; it becomes a marker on the flip back |
@@ -1350,6 +1353,32 @@ in a list item, blockquote or table cell, is not a boundary: it keeps its editin
 look and, like every marker, is hidden while presenting. Every block kind hides
 and shows as one unit with its slide; a renderer must never set `display` inline
 on its root, because an inline style beats the `.slide-hidden` rule.
+
+**Chrome while presenting (#184).** Presenting belongs to the document, as markdown
+mode does: the Workspace mirrors the active editor's state onto `body` as the
+`presenting` class, and while it is set the sidebar, meta panel, ask panel, editor
+toolbar, table toolbar, tab bar and status bar are hidden, together with their
+resize handles; the left block gutter (numbers, rule and padding) goes as it does
+with Toggle Line Numbers off, keyed on the editor's own `presenting` class. No session panel flag is written: a panel toggled while presenting changes
+the session and stays hidden, and on exit the chrome shows whatever the session
+says at that moment. Switching to a document that is not presenting brings the
+chrome back; switching back hides it again. The state is recorded on the session's
+tab (`set-presenting`), so a restart reopens a presented document presenting.
+
+While presenting, the slide is centred at the presentation width (Settings › Presentation
+width, `--theme-presentationMeasure`, 72ch when unset, independent of Line width), spell-check squiggles and empty-paragraph placeholders are not
+drawn, and a muted `n / N` counter sits in the bottom-right corner. The counter and
+slide turning count only non-empty slides: an empty slide holds no caret, so it is
+skipped. Exports drop the markers where the target has no comment form: Confluence
+writes none; the markdown export keeps `<!-- SLIDE MARKER -->`, which renders as nothing.
+
+| Gesture | Result |
+|---|---|
+| Mod+Alt+P / View › Toggle Presentation Mode | enters or leaves Presentation Mode — the only ways out, since the tab bar is hidden; there is no Esc binding |
+| Toggle in a prompt, or a document with no markers | nothing happens and nothing is sent |
+| PageDown / Mod+ArrowDown while presenting | caret to the first position of the next slide; on the last slide, swallowed |
+| PageUp / Mod+ArrowUp while presenting | caret to the first position of the previous slide; on the first slide, swallowed |
+| Mod+Home / Mod+End while presenting | caret to the first position of the first / last slide; a bare Home/End still moves along the line |
 
 ## Deferred (recorded, not shipped)
 

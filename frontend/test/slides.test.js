@@ -298,6 +298,32 @@ describe('Presentation Mode coverage: every row is the middle slide of a deck', 
   })
 })
 
+describe('insertSlideMarker', () => {
+  /** The position inside the first empty paragraph. @returns {number} */
+  const emptyLine = () => {
+    let at = -1
+    editor.state.doc.forEach((/** @type {any} */ n, /** @type {number} */ pos) => { if (at < 0 && n.isTextblock && !n.content.size) at = pos + 1 })
+    return at
+  }
+
+  it.each([
+    ['on an empty last line', '<p>One</p><p></p>', emptyLine, '', ['paragraph', 'slideMarker', 'paragraph']],
+    ['on an empty line before more text', '<p>One</p><p></p><p>Next</p>', emptyLine, 'Next', ['paragraph', 'slideMarker', 'paragraph']],
+    ['at the end of a line', '<p>One</p>', () => posOf('One') + 3, '', ['paragraph', 'slideMarker', 'paragraph']],
+  ])('%s puts the caret on the line below the marker, never on it', (_case, content, caret, lineBelow, shape) => {
+    editor.commands.setContent(content)
+    editor.commands.setTextSelection(caret())
+    editor.commands.insertSlideMarker()
+    const sel = editor.state.selection
+    expect(sel instanceof TextSelection).toBe(true)
+    expect(sel.$from.parent.textContent).toBe(lineBelow)
+    expect(sel.$from.before() > 0 && editor.state.doc.resolve(sel.$from.before()).nodeBefore.type.name).toBe('slideMarker')
+    expect(names()).toEqual(shape)
+    editor.commands.insertContent('x')
+    expect(SlideFocus.hasMarkers(editor.state.doc)).toBe(true)
+  })
+})
+
 describe('SlideFocus', () => {
 
   it('a document with no markers is one slide', () => {
@@ -338,6 +364,104 @@ describe('SlideFocus', () => {
     const sel = editor.state.selection
     expect(sel instanceof TextSelection).toBe(true)
     expect(editor.state.doc.resolve(sel.head).parent.textContent).toBe(to)
+  })
+
+  /** Sends a keydown through the view's handleKeyDown chain.
+   *  @param {string} key @param {KeyboardEventInit} [mods] @returns {boolean} handled */
+  function press(key, mods = {}) {
+    const event = new KeyboardEvent('keydown', { key, ...mods })
+    return !!editor.view.someProp('handleKeyDown', (/** @type {any} */ f) => f(editor.view, event))
+  }
+
+  /** The text of the textblock holding the caret. @returns {string} */
+  const caretText = () => editor.state.doc.resolve(editor.state.selection.head).parent.textContent
+
+  it.each([
+    ['PageDown', {}, 'One', 'Two'],
+    ['PageUp', {}, 'Two more', 'One'],
+    ['ArrowDown', { ctrlKey: true }, 'Title', 'One'],
+    ['ArrowUp', { ctrlKey: true }, 'One', 'Title'],
+    ['ArrowDown', { metaKey: true }, 'One', 'Two'],
+    ['ArrowUp', { metaKey: true }, 'Two', 'One'],
+    ['End', { ctrlKey: true }, 'Title', 'Two'],
+    ['Home', { ctrlKey: true }, 'Two more', 'Title'],
+  ])('%s %o while presenting moves the caret from %s to the start of the slide holding %s', (key, mods, from, to) => {
+    editor.commands.setContent(DECK)
+    SlideFocus.setPresenting(editor.view, true)
+    editor.commands.setTextSelection(posOf(from))
+    expect(press(key, mods)).toBe(true)
+    expect(caretText()).toBe(to)
+    expect(editor.state.selection.head).toBe(posOf(to))
+  })
+
+  it.each([
+    ['PageDown', 'Two more'],
+    ['PageUp', 'Title'],
+  ])('%s at the end of the deck is swallowed and leaves the caret', (key, at) => {
+    editor.commands.setContent(DECK)
+    SlideFocus.setPresenting(editor.view, true)
+    editor.commands.setTextSelection(posOf(at))
+    expect(press(key)).toBe(true)
+    expect(caretText()).toBe(at)
+  })
+
+  it.each([
+    ['not presenting', 'PageDown', {}, false],
+    ['Shift', 'PageDown', { shiftKey: true }, true],
+    ['plain ArrowDown', 'ArrowDown', {}, true],
+    ['plain End', 'End', {}, true],
+    ['Mod+Shift', 'ArrowDown', { ctrlKey: true, shiftKey: true }, true],
+  ])('%s does not turn the slide', (_case, key, mods, presenting) => {
+    editor.commands.setContent(DECK)
+    SlideFocus.setPresenting(editor.view, presenting)
+    editor.commands.setTextSelection(posOf('One'))
+    press(key, mods)
+    expect(caretText()).toBe('One')
+  })
+
+  it('an empty slide is neither counted nor stopped on', () => {
+    editor.commands.setContent(`${SlideMarker.MARKDOWN}\n\nOne\n\n${SlideMarker.MARKDOWN}\n\n${SlideMarker.MARKDOWN}\n\nTwo`)
+    SlideFocus.setPresenting(editor.view, true)
+    expect(SlideFocus.slides(editor.state.doc).length).toBe(2)
+    editor.commands.setTextSelection(posOf('One'))
+    expect(SlideFocus.place(editor.state)).toEqual({ index: 1, count: 2 })
+    press('PageDown')
+    expect(caretText()).toBe('Two')
+    expect(SlideFocus.place(editor.state)).toEqual({ index: 2, count: 2 })
+  })
+
+  it('draws the deck counter only while presenting, following the caret', () => {
+    editor.commands.setContent(DECK)
+    editor.commands.setTextSelection(posOf('One'))
+    const counter = editor.view.dom.parentNode.querySelector('.slide-counter')
+    expect(counter.hidden).toBe(true)
+    SlideFocus.setPresenting(editor.view, true)
+    expect(counter.hidden).toBe(false)
+    expect(counter.textContent).toBe('2 / 3')
+    press('PageDown')
+    expect(counter.textContent).toBe('3 / 3')
+    SlideFocus.setPresenting(editor.view, false)
+    expect(counter.hidden).toBe(true)
+    editor.destroy()
+    expect(counter.isConnected).toBe(false)
+  })
+
+  it.each([
+    ['each counted slide', DECK, [2, 3]],
+    ['not an empty slide', `One\n\n${SlideMarker.MARKDOWN}\n\n${SlideMarker.MARKDOWN}\n\nTwo`, [2]],
+    ['the first slide after a leading marker', `${SlideMarker.MARKDOWN}\n\nOnly`, [1]],
+  ])('numbers the marker that starts %s, as the counter does', (_case, deck, numbers) => {
+    editor.commands.setContent(deck)
+    expect(SlideFocus.numberedMarkers(editor.state.doc).map((m) => m.number)).toEqual(numbers)
+    const drawn = [...editor.view.dom.querySelectorAll('[data-slide-marker][data-slide]')].map((el) => Number(el.getAttribute('data-slide')))
+    expect(drawn).toEqual(numbers)
+  })
+
+  it('renumbers the markers when the document changes', () => {
+    editor.commands.setContent(DECK)
+    editor.commands.setTextSelection(posOf('One') + 3)
+    editor.commands.insertSlideMarker()
+    expect(SlideFocus.numberedMarkers(editor.state.doc).map((m) => m.number)).toEqual([2, 3, 4])
   })
 
   it('leaves a marker NodeSelection alone when not presenting', () => {

@@ -334,7 +334,8 @@ export class AbstractEditor extends Lens {
 
   /**
    * Registers a listener for the editor-domain event stream: the mounted
-   * surface's events plus the editor's OWN mode-changed / mode-change-failed.
+   * surface's events plus the editor's OWN mode-changed / mode-change-failed /
+   * presenting-changed.
    * @param {(event: SurfaceEventMsg) => void} fn
    * @returns {() => void} unsubscribe
    */
@@ -811,22 +812,34 @@ export class AbstractEditor extends Lens {
     return this.#showAiBlocks
   }
 
-  /** Toggles Presentation Mode for THIS editor: only the slide holding the caret
+  /** @returns {boolean} whether THIS editor is in Presentation Mode */
+  get presenting() { return this.#presenting }
+
+  /** Toggles Presentation Mode; see setPresenting.
+   *  @returns {Promise<boolean>} whether the editor is now presenting */
+  togglePresentation() { return this.setPresenting(!this.#presenting) }
+
+  /** Sets Presentation Mode for THIS editor: only the slide holding the caret
    *  is drawn, mirrored as the `presenting` class on the editor-owned root.
    *  Presenting is a WYSIWYG view, so turning it on from markdown flips to
    *  WYSIWYG first; a flip that fails leaves presenting off. A document with no
-   *  slide markers has nothing to present: turning on does nothing.
+   *  slide markers has nothing to present: turning on does nothing. Idempotent:
+   *  exactly one 'presenting-changed' is emitted per actual change.
+   *  @param {boolean} presenting
    *  @returns {Promise<boolean>} whether the editor is now presenting */
-  async togglePresentation() {
-    if (!this.#presenting && !(this.#surface && this.#surface.hasSlideMarkers())) return false
-    if (!this.#presenting && this.mode === EditorMode.MARKDOWN) {
+  async setPresenting(presenting) {
+    const want = !!presenting
+    if (want === this.#presenting) return this.#presenting
+    if (want && !(this.#surface && this.#surface.hasSlideMarkers())) return false
+    if (want && this.mode === EditorMode.MARKDOWN) {
       await this.setMode(EditorMode.WYSIWYG)
       if (this.mode !== EditorMode.WYSIWYG) return false
     }
-    this.#presenting = !this.#presenting
-    if (this.host) this.host.classList.toggle('presenting', this.#presenting)
-    if (this.#surface) this.#surface.setPresenting(this.#presenting)
-    return this.#presenting
+    this.#presenting = want
+    if (this.host) this.host.classList.toggle('presenting', want)
+    if (this.#surface) this.#surface.setPresenting(want)
+    this.#emitEvent({ type: 'presenting-changed', presenting: want })
+    return want
   }
 
   /**

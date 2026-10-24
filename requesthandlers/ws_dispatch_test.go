@@ -127,6 +127,7 @@ func TestWS_EveryServedFrameRefusesAnUnreadablePayload(t *testing.T) {
 		{protocol.TypeExtract, `{"type":"extract","entries":"not-a-list"}`},
 		{protocol.TypeEnterMarkdown, `{"type":"enter-markdown","opId":42}`},
 		{protocol.TypeEnterWysiwyg, `{"type":"enter-wysiwyg","markdown":[1,2]}`},
+		{protocol.TypeSetPresenting, `{"type":"set-presenting","presenting":"yes"}`},
 		{protocol.TypeFeatureControl, `{"type":"feature-control","feature":"spell-check","enabled":"yes"}`},
 	} {
 		t.Run(malformed.name, func(t *testing.T) {

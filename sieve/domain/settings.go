@@ -127,6 +127,9 @@ type LookAndFeel struct {
 	EditorScale      string `json:"editor_scale,omitempty"`       // "1.25" — unitless multiplier
 	EditorLineHeight string `json:"editor_line_height,omitempty"` // "1.75"
 	EditorMeasure    string `json:"editor_measure,omitempty"`     // "72ch"
+	// PresentationMeasure is the slide width in Presentation Mode, independent of
+	// EditorMeasure; unset presents at 72ch.
+	PresentationMeasure string `json:"presentation_measure,omitempty"` // "100ch"
 }
 
 // EditorScaleSteps is the closed set of allowed editor-scale multipliers, in
@@ -188,7 +191,7 @@ func (l LookAndFeel) validMeasure(v string) bool {
 // save) means a hand-edited settings.json can never inject arbitrary CSS via
 // the served stylesheet.
 func (l LookAndFeel) Overrides() map[string]string {
-	overrides := make(map[string]string, 6)
+	overrides := make(map[string]string, 7)
 	if l.EditorFont != "" && l.validFont(l.EditorFont) {
 		overrides["editorFont"] = l.EditorFont
 	}
@@ -206,6 +209,9 @@ func (l LookAndFeel) Overrides() map[string]string {
 	}
 	if l.EditorMeasure != "" && l.validMeasure(l.EditorMeasure) {
 		overrides["editorMeasure"] = l.EditorMeasure
+	}
+	if l.PresentationMeasure != "" && l.validMeasure(l.PresentationMeasure) {
+		overrides["presentationMeasure"] = l.PresentationMeasure
 	}
 	return overrides
 }

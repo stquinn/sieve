@@ -17,6 +17,8 @@
 
 .settings-container input[type="text"],
 .settings-container input[type="number"] {
+  /* Sized by the border box, so a width: 100% field fits its column, padding included. */
+  box-sizing: border-box;
   background-color: var(--theme-bgAlt, #1e2030) !important;
   color: var(--theme-text, #c0caf5) !important;
   border: 1px solid var(--theme-border2, #3b4261) !important;

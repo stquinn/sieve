@@ -43,6 +43,8 @@ channels:
         $ref: '#/components/messages/documentPing'
       documentRetryBlockJob:
         $ref: '#/components/messages/documentRetryBlockJob'
+      documentSetPresenting:
+        $ref: '#/components/messages/documentSetPresenting'
       documentTextReplace:
         $ref: '#/components/messages/documentTextReplace'
       documentBlockAttrsUpdated:
@@ -138,6 +140,7 @@ operations:
       - $ref: '#/channels/document/messages/documentPaste'
       - $ref: '#/channels/document/messages/documentPing'
       - $ref: '#/channels/document/messages/documentRetryBlockJob'
+      - $ref: '#/channels/document/messages/documentSetPresenting'
       - $ref: '#/channels/document/messages/documentTextReplace'
   documentSend:
     action: send
@@ -379,6 +382,17 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolRetryBlockJobFrame'
+    documentSetPresenting:
+      name: set-presenting
+      title: set-presenting
+      summary: SetPresentingFrame records whether the document is in Presentation Mode on the session's tab, so a reopened tab is handed it back on the load answer.
+      description: |-
+        SetPresentingFrame records whether the document is in Presentation Mode on
+        the session's tab, so a reopened tab is handed it back on the load answer. It
+        is fire-and-forget: it changes no document content and is answered by nothing.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProtocolSetPresentingFrame'
     documentTextReplace:
       name: text-replace
       title: text-replace
@@ -1603,6 +1617,9 @@ components:
         version:
           type: integer
           description: the version of the content served here; 0 when the container keeps no version history
+        presenting:
+          type: boolean
+          description: the tab was last left in Presentation Mode; absent when it was not
         blocks:
           type: array
           description: 'WYSIWYG only: the block list, already through the shadow so ids are stable'
@@ -1952,6 +1969,21 @@ components:
         - type
         - id
         - scroll
+    ProtocolSetPresentingFrame:
+      type: object
+      description: |-
+        SetPresentingFrame records whether the document is in Presentation Mode on
+        the session's tab, so a reopened tab is handed it back on the load answer. It
+        is fire-and-forget: it changes no document content and is answered by nothing.
+      properties:
+        type:
+          type: string
+        presenting:
+          type: boolean
+          description: true while the document is presented
+      required:
+        - type
+        - presenting
     ProtocolSpellIgnoreFrame:
       type: object
       description: |-

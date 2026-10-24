@@ -14,6 +14,7 @@ type Tab struct {
 	DisplayName string `json:"displayName,omitempty"` // cached display name — avoids blank label on startup
 	Status      string `json:"status,omitempty"`      // "unfiled" or "filed"
 	UserIntent  string `json:"userIntent,omitempty"`  // "keep" or "trash"
+	Presenting  bool   `json:"presenting,omitempty"`  // left in Presentation Mode
 }
 
 // Window holds the saved window position and size.

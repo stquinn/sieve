@@ -77,7 +77,7 @@ export class MountBinding {
    * Loads the container. The load ANSWER seeds the model through the feed's own
    * subscription; this returns the typed shape only, for the host that presents
    * at open. Requires an open channel for a channel-bearing container.
-   * @returns {Promise<{body: string, blocks: object[], meta: {mode: string}, scroll: number, version: number}>}
+   * @returns {Promise<{body: string, blocks: object[], meta: {mode: string}, scroll: number, version: number, presenting: boolean}>}
    */
   load() { return this.#documents.load(this.#uuid) }
 

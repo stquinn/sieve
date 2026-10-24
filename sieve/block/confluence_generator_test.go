@@ -58,6 +58,7 @@ func TestConfluenceGenerator_Transpile(t *testing.T) {
 			"<table>\n<thead>\n<tr>\n<th align=\"left\">H</th>\n<th align=\"right\">I</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n" +
 				"<td align=\"left\"><strong>a</strong></td>\n<td align=\"right\"><code>b | c</code></td>\n</tr>\n</tbody>\n</table>"},
 		{"html comment is dropped", "one\n\n<!-- a -- note -->\n\ntwo", "<p>one</p>\n<p>two</p>"},
+		{"a slide marker is dropped", "one\n\n<!-- SLIDE MARKER -->\n\ntwo", "<p>one</p>\n<p>two</p>"},
 		{"text after a comment survives it", "x\n<!-- c -->y", "<p>x</p>\ny"},
 		{"text after a comment is text, not markup", "<!-- c -->Tom & Jerry <div>", "Tom &amp; Jerry &lt;div&gt;"},
 		{"an unclosed comment takes the rest of its block", "x\n\n<!-- c\nd", "<p>x</p>"},

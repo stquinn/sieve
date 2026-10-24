@@ -46,6 +46,7 @@ alone, so the token appears in no response header.
 | `paste` | `protocol.PasteFrame` | `opId` | PasteFrame hands a clipboard to the server to make sense of. |
 | `ping` | `protocol.PingFrame` | — | PingFrame is a liveness probe, answered with a PongFrame. |
 | `retry-block-job` | `protocol.RetryBlockJobFrame` | — | RetryBlockJobFrame re-runs the job of one block that failed or was interrupted. |
+| `set-presenting` | `protocol.SetPresentingFrame` | — | SetPresentingFrame records whether the document is in Presentation Mode on the session's tab, so a reopened tab is handed it back on the load answer. |
 | `text-replace` | `protocol.TextReplaceFrame` | `opId` | TextReplaceFrame asks for one anchored run of a block's text to be replaced. |
 
 **Server → client**
@@ -254,6 +255,15 @@ RetryBlockJobFrame re-runs the job of one block that failed or was interrupted.
 | `type` | `string` | yes |  |
 | `id` | `string` | yes | the block whose job re-runs |
 
+#### `set-presenting` — client → server
+
+SetPresentingFrame records whether the document is in Presentation Mode on the session's tab, so a reopened tab is handed it back on the load answer.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `presenting` | `bool` | yes | true while the document is presented |
+
 #### `text-replace` — client → server
 
 TextReplaceFrame asks for one anchored run of a block's text to be replaced.
@@ -358,6 +368,7 @@ LoadContentFrame answers a load.
 | `uuid` | `string` | yes | empty when nothing was found, which the client treats as an empty document |
 | `scroll` | `int` | yes | the tab's saved scroll offset; 0 parks at the top |
 | `version` | `int` | yes | the version of the content served here; 0 when the container keeps no version history |
+| `presenting` | `bool` | no | the tab was last left in Presentation Mode; absent when it was not |
 | `blocks` | `[]block.FrontendBlock` | no | WYSIWYG only: the block list, already through the shadow so ids are stable |
 | `opId` | `string` | no |  |
 
@@ -674,6 +685,7 @@ DocumentContent is a document as the editor mounts it: the buffer, the mode it w
 | `uuid` | `string` | yes | empty when nothing was found, which the client treats as an empty document |
 | `scroll` | `int` | yes | the tab's saved scroll offset; 0 parks at the top |
 | `version` | `int` | yes | the version of the content served here; 0 when the container keeps no version history |
+| `presenting` | `bool` | no | the tab was last left in Presentation Mode; absent when it was not |
 | `blocks` | `[]block.FrontendBlock` | no | WYSIWYG only: the block list, already through the shadow so ids are stable |
 
 ### `POST /api/document/save`

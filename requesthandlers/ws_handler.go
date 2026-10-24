@@ -109,6 +109,7 @@ func NewWsHandler(sp *sieve.ServiceProvider, broadcast *WorkspaceBroadcast, toke
 		protocol.TypeFocus:             h.handleFocus,
 		protocol.TypeTextReplace:       h.handleTextReplace,
 		protocol.TypeFeatureControl:    h.handleDocumentFeatureControl,
+		protocol.TypeSetPresenting:     h.handleSetPresenting,
 	}
 	h.workspaceFrames = map[string]frameHandler{
 		protocol.TypePing:           h.handlePing,
@@ -614,15 +615,37 @@ func (h *WsHandler) handleEnterWysiwyg(f inboundFrame) {
 	}
 }
 
+// handleSetPresenting records Presentation Mode on the session tab and answers
+// nothing. It touches no shadow, so it is not mutating and claims no ownership.
+func (h *WsHandler) handleSetPresenting(f inboundFrame) {
+	var msg protocol.SetPresentingFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeSetPresenting, err)
+		return
+	}
+	h.persistTabPresenting(f.uuid, msg.Presenting)
+}
+
 // persistTabMode updates the session tab's mode field so the tab bar renders correctly.
 func (h *WsHandler) persistTabMode(uuid, mode string) {
+	h.updateSessionTab(uuid, func(t *domain.Tab) { t.Mode = mode })
+}
+
+// persistTabPresenting records whether uuid's tab was left in Presentation Mode.
+func (h *WsHandler) persistTabPresenting(uuid string, presenting bool) {
+	h.updateSessionTab(uuid, func(t *domain.Tab) { t.Presenting = presenting })
+}
+
+// updateSessionTab applies change to uuid's session tab and saves the session.
+// A uuid with no tab changes nothing.
+func (h *WsHandler) updateSessionTab(uuid string, change func(*domain.Tab)) {
 	if h.ServiceProvider.State == nil {
 		return
 	}
 	session := h.ServiceProvider.State.LoadSession()
-	for i, t := range session.Tabs {
-		if t.ID == uuid {
-			session.Tabs[i].Mode = mode
+	for i := range session.Tabs {
+		if session.Tabs[i].ID == uuid {
+			change(&session.Tabs[i])
 			break
 		}
 	}

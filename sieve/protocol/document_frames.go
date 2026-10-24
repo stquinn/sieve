@@ -46,6 +46,14 @@ type EnterWysiwygFrame struct {
 	OpID     string  `json:"opId,omitempty" doc:"echoed on the wysiwyg-content reply"`
 }
 
+// SetPresentingFrame records whether the document is in Presentation Mode on
+// the session's tab, so a reopened tab is handed it back on the load answer. It
+// is fire-and-forget: it changes no document content and is answered by nothing.
+type SetPresentingFrame struct {
+	Type       string `json:"type"`
+	Presenting bool   `json:"presenting" doc:"true while the document is presented"`
+}
+
 // RetryBlockJobFrame re-runs the job of one block that failed or was interrupted.
 type RetryBlockJobFrame struct {
 	Type string `json:"type"`
@@ -293,6 +301,8 @@ type DocumentContent struct {
 	// convention as the fact carries — 0 means the container keeps no version
 	// history, which is every prompt.
 	Version int `json:"version" doc:"the version of the content served here; 0 when the container keeps no version history"`
+	// Presenting is, like Scroll, a per-user view property read from the session's tab.
+	Presenting bool `json:"presenting,omitempty" doc:"the tab was last left in Presentation Mode; absent when it was not"`
 	// Blocks is what WYSIWYG renders from; markdown mode serves Body only and the
 	// client never builds blocks there.
 	Blocks []block.FrontendBlock `json:"blocks,omitempty" doc:"WYSIWYG only: the block list, already through the shadow so ids are stable"`

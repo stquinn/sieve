@@ -114,11 +114,12 @@ export class DocumentService {
    * document. The BLOCKS are not returned — they go into the follower model via
    * the onContent publication. What comes back is what only the HOST acts on.
    * @param {string} uuid
-   * @returns {Promise<{ body: string, meta: { mode: string }, scroll: number, version: number }>}
+   * @returns {Promise<{ body: string, meta: { mode: string }, scroll: number, version: number, presenting: boolean }>}
    *   body: the raw serialized form (markdown-mode surface seed);
    *   meta.mode: the frontmatter mode the workspace boot path reads;
    *   scroll: the session's saved offset (0 for a never-scrolled tab);
-   *   version: the baseline for the container-saved fact (0 when unversioned).
+   *   version: the baseline for the container-saved fact (0 when unversioned);
+   *   presenting: whether the session's tab was left in Presentation Mode.
    */
   load(uuid) {
     return this.#readContent(uuid)
@@ -129,6 +130,7 @@ export class DocumentService {
           meta: { mode: data.mode || 'wysiwyg' },
           scroll: data.scroll || 0,
           version: data.version || 0,
+          presenting: data.presenting === true,
         }
       })
   }
@@ -138,7 +140,7 @@ export class DocumentService {
    * already bound to one document, and a uuid parameter would let a client ask one
    * document's socket for another's content.
    * @param {string} uuid
-   * @returns {Promise<{body?: string, mode?: string, scroll?: number, version?: number, blocks?: object[]}>}
+   * @returns {Promise<{body?: string, mode?: string, scroll?: number, version?: number, presenting?: boolean, blocks?: object[]}>}
    */
   #readContent(uuid) {
     if (this.#transport._hasChannel(uuid)) {
@@ -157,6 +159,13 @@ export class DocumentService {
    */
   persist(uuid) {
     this.#transport._send(uuid, { type: DocumentFrame.FLUSH, uuid: uuid })
+  }
+
+  /** Records on the session's tab whether the document is in Presentation Mode.
+   *  Fire-and-forget and unanswered: it changes no content.
+   *  @param {string} uuid @param {boolean} presenting */
+  setPresenting(uuid, presenting) {
+    this.#transport._send(uuid, { type: DocumentFrame.SET_PRESENTING, presenting: presenting })
   }
 
   /** The dwell ping: the user is looking at this document, which raises its focus
