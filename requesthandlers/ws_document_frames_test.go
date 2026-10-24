@@ -512,3 +512,35 @@ func TestWS_Focus_RaisesTheDocumentsFocusCount(t *testing.T) {
 	}
 	closeAndSettle(c)
 }
+
+// set-presenting records Presentation Mode on the session tab, answers nothing,
+// and claims no ownership; the next load hands the flag back, and clearing it
+// leaves the load answer without one.
+func TestWS_SetPresenting_RecordsOnTheTabAndLoadHandsItBack(t *testing.T) {
+	block.RegisterProcessor(&processors.ProseProcessor{})
+	srv, sp, h, uuid := newWsTestServer(t)
+	session := sp.State.LoadSession()
+	session.Tabs = []domain.Tab{{ID: uuid, Mode: "wysiwyg"}}
+	if err := sp.State.SaveSession(session); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	if h.isMutating(protocol.TypeSetPresenting) {
+		t.Error("set-presenting must not claim listener ownership")
+	}
+
+	c := dialWS(t, srv, uuid)
+	for _, presenting := range []bool{true, false} {
+		send(t, c, `{"type":"set-presenting","presenting":`+map[bool]string{true: "true", false: "false"}[presenting]+`}`)
+		waitFor(t, func() bool {
+			tabs := sp.State.LoadSession().Tabs
+			return len(tabs) == 1 && tabs[0].Presenting == presenting
+		}, "presenting never recorded")
+
+		send(t, c, `{"type":"load","opId":"op-load"}`)
+		reply := readUntil(t, c, protocol.TypeLoadContent, 2*time.Second)
+		if got, _ := reply["presenting"].(bool); got != presenting {
+			t.Errorf("load answer presenting = %v, want %v", reply["presenting"], presenting)
+		}
+	}
+	closeAndSettle(c)
+}

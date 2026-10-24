@@ -165,6 +165,12 @@ func outboundWireCases() []wireCase {
 			golden:  `{"type":"load-content","body":"raw","mode":"markdown","uuid":"prompt:default","scroll":0,"version":0}`,
 		},
 		{
+			name:    "load-content of a tab left presenting",
+			channel: ChannelDocument,
+			frame:   NewLoadContentFrame(DocumentContent{Body: "---", Mode: "wysiwyg", UUID: "doc-1", Presenting: true}),
+			golden:  `{"type":"load-content","body":"---","mode":"wysiwyg","uuid":"doc-1","scroll":0,"version":0,"presenting":true}`,
+		},
+		{
 			name:    "paste-ack for a created block",
 			channel: ChannelDocument,
 			frame:   NewPasteAckFrame("op-9", block.PasteBlock("web-clip", "b7", "kind: web-clip\n")),
@@ -462,6 +468,12 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 			raw:  `{"type":"enter-wysiwyg","uuid":"doc-1"}`,
 			into: &EnterWysiwygFrame{},
 			want: &EnterWysiwygFrame{Type: TypeEnterWysiwyg},
+		},
+		{
+			name: "set-presenting",
+			raw:  `{"type":"set-presenting","presenting":true}`,
+			into: &SetPresentingFrame{},
+			want: &SetPresentingFrame{Type: TypeSetPresenting, Presenting: true},
 		},
 		{
 			name: "retry-block-job",

@@ -98,6 +98,7 @@ func (r *Registry) registerDocumentFrames() {
 	r.addFrame(ChannelDocument, Inbound, TypeFocus, FocusFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeTextReplace, TextReplaceFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeFeatureControl, FeatureControlFrame{})
+	r.addFrame(ChannelDocument, Inbound, TypeSetPresenting, SetPresentingFrame{})
 
 	r.addFrame(ChannelDocument, Outbound, TypePong, PongFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeMarkdownContent, MarkdownContentFrame{})

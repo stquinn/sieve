@@ -218,6 +218,9 @@ components:
         version:
           type: integer
           description: the version of the content served here; 0 when the container keeps no version history
+        presenting:
+          type: boolean
+          description: the tab was last left in Presentation Mode; absent when it was not
         blocks:
           type: array
           description: 'WYSIWYG only: the block list, already through the shadow so ids are stable'

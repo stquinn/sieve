@@ -56,6 +56,7 @@ const (
 	TypeExport            = "export"
 	TypeFocus             = "focus"
 	TypeTextReplace       = "text-replace"
+	TypeSetPresenting     = "set-presenting"
 
 	// Both channels, client → server. Which channel a feature-control frame
 	// arrives on IS the scope it speaks for: the workspace wire controls a

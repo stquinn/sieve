@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"sieve/sieve"
+	"sieve/sieve/domain"
 	"sieve/sieve/protocol"
 )
 
@@ -20,14 +21,14 @@ type documentContent struct {
 // resolves THROUGH the shadow, which mints prose handles, so the editor and the
 // shadow share block identity from the first render.
 func (c documentContent) read(uuid string) (protocol.DocumentContent, bool) {
-	scroll := c.scroll(uuid)
+	tab := c.tab(uuid)
 
 	if name, isPrompt := strings.CutPrefix(uuid, "prompt:"); isPrompt {
 		body, err := c.sp.Prompts.GetPromptContent(name)
 		if err != nil {
 			return protocol.DocumentContent{}, false
 		}
-		return protocol.DocumentContent{Body: body, Mode: "markdown", UUID: uuid, Scroll: scroll}, true
+		return protocol.DocumentContent{Body: body, Mode: "markdown", UUID: uuid, Scroll: tab.Scroll}, true
 	}
 
 	doc, err := c.sp.Documents.LoadByUUID(uuid)
@@ -39,11 +40,12 @@ func (c documentContent) read(uuid string) (protocol.DocumentContent, bool) {
 		mode = "wysiwyg"
 	}
 	content := protocol.DocumentContent{
-		Body:    string(doc.Body()),
-		Mode:    mode,
-		UUID:    doc.UUID(),
-		Scroll:  scroll,
-		Version: doc.Meta().Version(),
+		Body:       string(doc.Body()),
+		Mode:       mode,
+		UUID:       doc.UUID(),
+		Scroll:     tab.Scroll,
+		Version:    doc.Meta().Version(),
+		Presenting: tab.Presenting,
 	}
 	// WYSIWYG renders from the block list, so ensuring the shadow here is the
 	// identity step: whichever of this read and the document channel comes first
@@ -58,17 +60,17 @@ func (c documentContent) read(uuid string) (protocol.DocumentContent, bool) {
 	return content, true
 }
 
-// scroll is the tab's saved offset, or 0 when the tab has none — a tab never
-// opened and a tab never scrolled both park at the top, so they need no
-// distinction.
-func (c documentContent) scroll(uuid string) int {
+// tab is uuid's session tab, or the zero Tab when there is none — a tab never
+// opened parks at the top and is not presenting, the same as a tab never
+// scrolled or presented, so they need no distinction.
+func (c documentContent) tab(uuid string) domain.Tab {
 	if c.sp.State == nil {
-		return 0
+		return domain.Tab{}
 	}
 	for _, t := range c.sp.State.LoadSession().Tabs {
 		if t.ID == uuid {
-			return t.Scroll
+			return t
 		}
 	}
-	return 0
+	return domain.Tab{}
 }

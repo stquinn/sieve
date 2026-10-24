@@ -38,6 +38,7 @@ export const DocumentFrame = Object.freeze({
   PASTE: 'paste',
   PING: 'ping',
   RETRY_BLOCK_JOB: 'retry-block-job',
+  SET_PRESENTING: 'set-presenting',
   TEXT_REPLACE: 'text-replace',
   // server → client
   BLOCK_ATTRS_UPDATED: 'block-attrs-updated',
