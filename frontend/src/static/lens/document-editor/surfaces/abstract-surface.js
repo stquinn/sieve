@@ -122,6 +122,12 @@ export class AbstractSurface {
    *  insert. @param {string} text @returns {Promise<'block'|'content'|'none'>} */
   pasteText(text) { return Promise.resolve('none') }
 
+  /** Places clipboard-shaped entries through this surface's paste path at the
+   *  caret. The base has none, so nothing is made of them.
+   *  @param {import('../../../contract/container-provider.js').ContentEntry[]} entries
+   *  @returns {Promise<'block'|'content'|'none'>} */
+  pasteEntries(entries) { return Promise.resolve('none') }
+
   /**
    * The surface's content as ONE flat string, its text blocks joined by
    * newlines. It exists so a consumer outside the editor — a chip row pairing

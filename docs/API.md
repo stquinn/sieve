@@ -232,8 +232,8 @@ PasteFrame hands a clipboard to the server to make sense of.
 |---|---|---|---|
 | `type` | `string` | yes |  |
 | `opId` | `string` | no | echoed on the paste-ack |
-| `kind` | `protocol.PasteKind` | yes | smart \| slice \| native-drop \| native-clipboard. SECURITY: native-drop and native-clipboard make the server read files the NATIVE side caught (the drop bucket) or the OS clipboard names — never paths from the wire, so the wire carries the GESTURE, not a filesystem address. The socket upgrade gates keep these to the app's own page: an origin allow-list refuses a foreign browser page, and a per-run token refuses every other local process. |
-| `entries` | `[]block.ContentEntry` | no | smart: the clipboard's views. native-drop: absent — the server takes the paths from the native drop bucket the OS-level catch fed (Wails OnFileDrop); the page's own view of a drop is never consulted. native-clipboard: absent — the server reads the clipboard itself |
+| `kind` | `protocol.PasteKind` | yes | smart \| place \| slice \| native-drop \| native-clipboard. SECURITY: native-drop and native-clipboard make the server read files the NATIVE side caught (the drop bucket) or the OS clipboard names — never paths from the wire, so the wire carries the GESTURE, not a filesystem address. The socket upgrade gates keep these to the app's own page: an origin allow-list refuses a foreign browser page, and a per-run token refuses every other local process. |
+| `entries` | `[]block.ContentEntry` | no | smart: the clipboard's views. place: the views the host is placing. native-drop: absent — the server takes the paths from the native drop bucket the OS-level catch fed (Wails OnFileDrop); the page's own view of a drop is never consulted. native-clipboard: absent — the server reads the clipboard itself |
 | `slice` | `[][]block.ContentEntry` | no | slice only: one view set per copied block, in order |
 | `afterBlockId` | `string` | no | insert after this block; an id the document does not hold appends |
 | `atFront` | `bool` | no | insert at position 0; ignored when afterBlockId is set |
@@ -659,6 +659,7 @@ inventory below instead.
 |---|---|---|
 | `GET /api/document/load` | json | DocumentLoadRequest reads a channel-less pseudo-document's content. |
 | `POST /api/document/save` | json | DocumentSaveRequest writes a document's buffer to disk. |
+| `DELETE /api/document/{uuid}/asset/{key}` | none | AssetDeleteRequest deletes one asset of a document, irreversibly: {uuid} is the document and {key} the asset's key, path-escaped. |
 | `POST /api/folder` | fragment | FolderCreateRequest makes a new folder. |
 | `PATCH /api/folder/{id}` | fragment | FolderPatchRequest changes a folder's properties. |
 | `PATCH /api/note/{id}` | fragment | NotePatchRequest changes a note's properties. |
@@ -707,6 +708,16 @@ DocumentSaveResponse reports the version the save produced.
 | Field | Go type | Required | Description |
 |---|---|---|---|
 | `version` | `int` | yes | the saved document's new version number; 0 for a container that keeps no version history |
+
+### `DELETE /api/document/{uuid}/asset/{key}`
+
+Path parameters: `uuid`, `key`
+
+**Request** — `protocol.AssetDeleteRequest`
+
+AssetDeleteRequest deletes one asset of a document, irreversibly: {uuid} is the document and {key} the asset's key, path-escaped.
+
+**Response** — 204, or a body no caller reads.
 
 ### `POST /api/folder`
 
@@ -964,6 +975,7 @@ or another protocol's own transport.
 
 | Method | Path | Contract |
 |---|---|---|
+| `DELETE` | `/api/document/{uuid}/asset/{key}` | typed (none) |
 | `DELETE` | `/api/folder/{id}` | — |
 | `DELETE` | `/api/note/{id}` | — |
 | `DELETE` | `/mcp` | — |
@@ -982,6 +994,7 @@ or another protocol's own transport.
 | `GET` | `/ui/views/library/current` | — |
 | `GET` | `/ui/views/licenses` | — |
 | `GET` | `/ui/views/meta` | — |
+| `GET` | `/ui/views/meta/dialog/delete-asset` | — |
 | `GET` | `/ui/views/meta/dialog/restore` | — |
 | `GET` | `/ui/views/prompts` | — |
 | `GET` | `/ui/views/search` | — |

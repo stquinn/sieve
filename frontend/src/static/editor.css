@@ -2997,3 +2997,19 @@ pre.tiptap-code-block code {
   margin-block: 0;
 }
 
+
+/* The insertion line a placement drag shows at the block boundary it will land
+   on. It takes no layout space, so the blocks do not move under the pointer. */
+.sieve-drop-line {
+  height: 2px;
+  margin: -1px 0;
+  border-radius: 1px;
+  background: var(--theme-accentPrimary);
+  pointer-events: none;
+}
+/* While that line shows, the stock drop cursor — appended to an ancestor of the
+   editor — would draw a second, inline indicator. */
+:has(.sieve-drop-target-active) > .prosemirror-dropcursor-block,
+:has(.sieve-drop-target-active) > .prosemirror-dropcursor-inline {
+  display: none;
+}

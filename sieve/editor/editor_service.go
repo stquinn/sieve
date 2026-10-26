@@ -368,6 +368,41 @@ func (es *EditorService) FrontendBlocks(uuid string) ([]block.FrontendBlock, boo
 	return blocks, true
 }
 
+// Blocks returns document uuid's current blocks: the open shadow's when the
+// document is open, else its stored body parsed. The blocks are copies.
+func (es *EditorService) Blocks(uuid string) ([]block.SieveBlock, error) {
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow != nil {
+		return shadow.SnapshotBlocks(), nil
+	}
+	doc, err := es.documents.LoadByUUID(uuid)
+	if err != nil {
+		return nil, err
+	}
+	return es.codec.Deserialize(string(doc.Body()))
+}
+
+// AssetHolder returns the id of a block of document uuid that holds asset key,
+// and whether any does. It answers from Blocks, so an open document is judged by
+// what the editor holds now rather than by its last save.
+func (es *EditorService) AssetHolder(uuid, key string) (string, bool, error) {
+	blocks, err := es.Blocks(uuid)
+	if err != nil {
+		return "", false, err
+	}
+	self := domain.NewContainerAddress(uuid)
+	for _, blk := range blocks {
+		for _, held := range blk.HeldAssets(self) {
+			if held == key {
+				return blk.ID, true, nil
+			}
+		}
+	}
+	return "", false, nil
+}
+
 // resetStuckDispatched finds DISPATCHED blocks older than dispatchedStuckThreshold
 // and resets them to PENDING so DispatchJobIfNeeded will re-run their jobs.
 func (es *EditorService) resetStuckDispatched(uuid string, shadow *block.ShadowDocument) {
@@ -1091,6 +1126,20 @@ func (es *EditorService) HandlePasteSlice(uuid string, slice [][]block.ContentEn
 // frontend replays the clipboard itself. A matched kind whose Transform declines
 // (returns nil) did nothing: no block is created and the result is PasteNothing.
 func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry, index int) block.PasteResult {
+	return es.paste(uuid, entries, index, block.ActionPaste)
+}
+
+// HandlePlacement is HandlePaste for views the host chose to place rather than a
+// clipboard: the same registry match, but the processor builds the block under
+// ActionPlace, and the block is never marked a smart paste, because a deliberate
+// placement has no guess to undo.
+func (es *EditorService) HandlePlacement(uuid string, entries []block.ContentEntry, index int) block.PasteResult {
+	return es.paste(uuid, entries, index, block.ActionPlace)
+}
+
+// paste creates the block entries match at index, built under action. Only an
+// ActionPaste detection match is recorded on the block as a smart paste.
+func (es *EditorService) paste(uuid string, entries []block.ContentEntry, index int, action block.Action) block.PasteResult {
 	matchKind, processor, fromDetection, ok := block.FirstPasteMatch(entries)
 	if !ok {
 		// No kind claims it. Views that are nothing but a hyperlink still get the one
@@ -1099,12 +1148,12 @@ func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry, 
 		return block.NewLinkPaste(es.services.LinkPreview).Result(entries)
 	}
 	blockID := ident.New()
-	overrides := processor.Transform(entries, uuid, blockID, block.ActionPaste)
+	overrides := processor.Transform(entries, uuid, blockID, action)
 	if overrides == nil {
 		logger.Warn("paste: processor declined the entries", "uuid", uuid, "kind", matchKind)
 		return block.PasteNothing()
 	}
-	if fromDetection {
+	if fromDetection && action == block.ActionPaste {
 		overrides["smartPaste"] = true
 	}
 	id, raw, err := es.createBlockWithID(uuid, matchKind, blockID, overrides, nil, index)

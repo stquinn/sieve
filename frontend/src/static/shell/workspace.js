@@ -23,6 +23,7 @@ import { PrettierFormatter } from '../renderers/prettier-formatter.js'
 import { FindDialog } from './find-dialog.js'
 import { StatusBar } from './status-bar.js'
 import { SidebarView } from './sidebar-view.js'
+import { AssetPlacement } from './asset-placement.js'
 
 export class SieveWorkspace {
   /** @type {Map<string, SieveTab>} uuid → Tab */
@@ -791,6 +792,9 @@ export class SieveWorkspace {
   /** @type {SidebarView|null} keeps the sidebar's tree/search mode across invalidations */
   #sidebarView = null
 
+  /** @type {AssetPlacement|null} the Assets tab's Insert and drag */
+  #assetPlacement = null
+
   /** Constructs the Workspace-owned chrome children, once at module load. Each
    *  null-guards its structural DOM, so a headless import leaves writes no-ops. */
   bootChrome() {
@@ -800,6 +804,7 @@ export class SieveWorkspace {
     if (!this.#findDialog) this.#findDialog = new FindDialog(this)
     if (!this.#statusBar) this.#statusBar = new StatusBar(this)
     if (!this.#sidebarView) this.#sidebarView = new SidebarView().attach()
+    if (!this.#assetPlacement) this.#assetPlacement = new AssetPlacement(this).attach()
   }
 
   /**

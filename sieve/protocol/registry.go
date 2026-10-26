@@ -170,6 +170,10 @@ func (r *Registry) registerEndpoints() {
 		AcceptsForm: true,
 	})
 	r.addEndpoint(EndpointEntry{
+		Method: "DELETE", Path: "/api/document/{uuid}/asset/{key}",
+		Request: reflect.TypeOf(AssetDeleteRequest{}), ResponseKind: ResponseNone,
+	})
+	r.addEndpoint(EndpointEntry{
 		Method: "POST", Path: "/api/tabs/close",
 		Request: reflect.TypeOf(TabsCloseRequest{}), ResponseKind: ResponseFragment,
 	})

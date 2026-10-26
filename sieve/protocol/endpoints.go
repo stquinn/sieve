@@ -34,6 +34,13 @@ type DocumentSaveResponse struct {
 	Version int `json:"version" doc:"the saved document's new version number; 0 for a container that keeps no version history"`
 }
 
+// AssetDeleteRequest deletes one asset of a document, irreversibly: {uuid} is
+// the document and {key} the asset's key, path-escaped. An asset a block of the
+// document still holds is refused with 409, judged against the blocks the editor
+// holds now; deleting the block that holds it is the way to free it. A deleted
+// asset is announced as an invalidate of the notes topic. The request has no body.
+type AssetDeleteRequest struct{}
+
 // NotePatchRequest changes a note's properties.
 type NotePatchRequest struct {
 	Name string `json:"name" doc:"the new display name"`

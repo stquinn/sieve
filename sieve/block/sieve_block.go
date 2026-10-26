@@ -140,6 +140,34 @@ func (b *SieveBlock) SetAttachments(a Attachments) {
 	a.StampAttrs(b.Attrs) // a nil bag with nothing to write is a no-op
 }
 
+// assetAttrs are the attrs a block names a stored asset under, whatever its kind.
+var assetAttrs = [...]string{"src", "svgAsset", "asset", "uri", "image", "parsedAssetRef"}
+
+// HeldAssets returns the keys of the assets of document self this block holds:
+// every asset attr, read from the block's attrs or else its face, in any spelling
+// domain.ResolveAssetReference reads, plus whatever its elements hold. An asset
+// of another document is not held.
+func (b SieveBlock) HeldAssets(self domain.Address) []string {
+	var out []string
+	for _, k := range assetAttrs {
+		ref := strings.TrimSpace(b.StringAttr(k))
+		if ref == "" {
+			ref = strings.TrimSpace(b.FaceString(k))
+		}
+		addr, err := domain.ResolveAssetReference(ref, self)
+		if err != nil || addr.Container != self.Container || addr.Leaf == "" {
+			continue
+		}
+		out = append(out, addr.Leaf)
+	}
+	if parent, ok := GetProcessor(b.Kind).(BlockParent); ok {
+		for _, el := range parent.Children(&b) {
+			out = append(out, el.HeldAssets(self)...)
+		}
+	}
+	return out
+}
+
 // answersTo returns every handle this block resolves to — its primary ID plus
 // any aliases absorbed via merges.
 func (b SieveBlock) answersTo() []string {

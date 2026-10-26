@@ -20,7 +20,15 @@ import { ContractViolation } from '../contract/sieve-block.js'
  *  spells its own failure — a caller reads one word, not two. */
 const REPLACE_FAILED = 'error'
 
+/** How long a run of membership changes settles before one announcement. */
+const MEMBERSHIP_SETTLE_MS = 100
+
 export class MountBinding {
+  /** The DOM event dispatched on `document` when this mount's container gains or
+   *  loses a block, detail `{uuid}`; a burst of changes is announced once. A
+   *  server-rendered view of the container refetches on it. */
+  static MEMBERSHIP_CHANGED = 'sieve:container-membership-changed'
+
   /** @type {string} */ #uuid
   /** @type {import('../container/document-service.js').DocumentService} */ #documents
   /** @type {ContainerModelFeed} */ #feed
@@ -29,6 +37,8 @@ export class MountBinding {
   /** @type {Array<(context: Readonly<any>) => void>} */ #advertListeners = []
   /** @type {Readonly<any>|null} */ #lastAdvert = null
   /** @type {boolean} */ #channelOpen = false
+  /** @type {import('../contract/container-update-listener.js').ContainerUpdateListener|null} */ #membership = null
+  /** @type {ReturnType<typeof setTimeout>|null} */ #membershipTimer = null
 
   /**
    * @param {string} uuid
@@ -48,6 +58,20 @@ export class MountBinding {
     this.#provider = kind === 'prompt'
       ? new WholeContentAdapter(this.#model, documentService)
       : new BlockProviderAdapter(this.#model, documentService)
+    if (kind !== 'prompt') {
+      let seeded = false
+      this.#membership = { onChanged: (change) => { if (seeded && change.orderChanged) this.#announceMembership() } }
+      this.#model.subscribe(this.#membership)
+      seeded = true
+    }
+  }
+
+  #announceMembership() {
+    if (this.#membershipTimer || typeof document === 'undefined') return
+    this.#membershipTimer = setTimeout(() => {
+      this.#membershipTimer = null
+      document.dispatchEvent(new CustomEvent(MountBinding.MEMBERSHIP_CHANGED, { detail: { uuid: this.#uuid } }))
+    }, MEMBERSHIP_SETTLE_MS)
   }
 
   /** @returns {string} */
@@ -130,6 +154,8 @@ export class MountBinding {
       this.#documents.close(this.#uuid)
       this.#channelOpen = false
     }
+    if (this.#membership) { this.#model.unsubscribe(this.#membership); this.#membership = null }
+    if (this.#membershipTimer) { clearTimeout(this.#membershipTimer); this.#membershipTimer = null }
     this.#feed.close(this.#uuid)
     this.#advertListeners = []
     this.#lastAdvert = null

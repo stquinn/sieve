@@ -769,6 +769,43 @@ func TestAssetIsColocatedInDocDir(t *testing.T) {
 	_ = asset
 }
 
+// DeleteAsset removes only a file the document owns as an asset; the document's
+// own files and anything outside its directory are refused and left in place.
+func TestDeleteAssetRemovesOnlyAnOwnedAsset(t *testing.T) {
+	fs := newTestStore(t)
+	doc := mustCreate(t, fs, testLibrary, "my-note", []byte("body"))
+	uuid := doc.(store.MetaStorable).Meta()["uuid"]
+	if _, err := fs.CreateAsset(testLibrary, uuid, "holiday.png", []byte{0x89, 0x50, 0x4E, 0x47}); err != nil {
+		t.Fatalf("CreateAsset: %v", err)
+	}
+	docDir := filepath.Join(fs.Root(), "store", "my-note")
+	outside := filepath.Join(fs.Root(), "store", "keep.png")
+	if err := os.WriteFile(outside, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range []string{uuid + ".md", ".meta", "../keep.png", "missing.png", ""} {
+		if err := fs.DeleteAsset(testLibrary, uuid, key); err == nil {
+			t.Errorf("DeleteAsset(%q) succeeded, want a refusal", key)
+		}
+	}
+	for _, path := range []string{filepath.Join(docDir, uuid+".md"), filepath.Join(docDir, ".meta"), outside} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s was removed by a refused delete: %v", path, err)
+		}
+	}
+
+	if err := fs.DeleteAsset(testLibrary, uuid, "holiday.png"); err != nil {
+		t.Fatalf("DeleteAsset: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(docDir, "holiday.png")); !os.IsNotExist(err) {
+		t.Errorf("asset still on disk: %v", err)
+	}
+	if _, err := fs.LoadAsset(testLibrary, uuid, "holiday.png"); err == nil {
+		t.Error("the document still owns the deleted asset")
+	}
+}
+
 // ── Compile-time interface check ──────────────────────────────────────────────
 
 var _ store.Store = (*filestore.FileStore)(nil)
