@@ -12,6 +12,7 @@ import (
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
 	"sieve/sieve/domain"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -695,31 +696,64 @@ func TestEditorService_HandlePaste_declinedTransformMakesNoBlock(t *testing.T) {
 // Placing an asset a block holds sends that block's sieve view as a placement:
 // the new block shares the file and carries the description, COMPLETE at once.
 // The same view as a paste is a copy under its own key. An asset no block holds
-// is placed by its absolute address, which smart-image claims (and adopts in
-// place — pinned by the processor's own tests). Either way the block lands after
-// the anchor block.
+// is placed by its absolute address: an image's smart-image adopts in place
+// (pinned by the processor's own tests), a file's reference adopts it with its
+// face read from the bytes, and the same address pasted builds no block. Either
+// way a block lands after the anchor block.
 func TestEditorService_placementSharesWherePasteCopies(t *testing.T) {
 	var encoded bytes.Buffer
 	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 4, 3))); err != nil {
 		t.Fatalf("encode png: %v", err)
 	}
+	const fileBody = "Quarterly plan\nsecond line\n"
+	type asset struct {
+		key, copyKey, kind, summary string
+		body                        []byte
+		view                        map[string]interface{}
+		// attr is the attr the block names its file under; describe reads its description.
+		attr     string
+		describe func(attrs map[string]interface{}) interface{}
+	}
+	img := asset{
+		key: "holiday.png", copyKey: "holiday-2.png", kind: "smart-image", summary: "A beach", body: encoded.Bytes(),
+		view: map[string]interface{}{"title": "holiday.png", "summary": "A beach", "width": "4", "height": "3"},
+		attr: "src", describe: func(a map[string]interface{}) interface{} { return a["summary"] },
+	}
+	file := asset{
+		key: "plan.txt", copyKey: "plan-2.txt", kind: "reference", summary: "Quarterly plan", body: []byte(fileBody),
+		view: map[string]interface{}{"cache": map[string]interface{}{
+			"title": "plan.txt", "mime": "text/plain", "bytes": strconv.Itoa(len(fileBody)), "summary": "Quarterly plan",
+		}},
+		attr: "uri", describe: func(a map[string]interface{}) interface{} {
+			face, _ := a["cache"].(map[string]interface{})
+			return face["summary"]
+		},
+	}
 	for _, tc := range []struct {
-		name    string
-		place   bool
+		name  string
+		asset asset
+		place bool
+		// address sends the asset's address instead of its holder's view.
+		address bool
+		// wantKey is the file the new block names; "" expects no block.
 		wantKey string
 	}{
-		{"placement shares the file", true, "holiday.png"},
-		{"paste copies it", false, "holiday-2.png"},
+		{"placed image shares the file", img, true, false, "holiday.png"},
+		{"pasted image copies it", img, false, false, "holiday-2.png"},
+		{"placed reference shares the file", file, true, false, "plan.txt"},
+		{"pasted reference copies it", file, false, false, "plan-2.txt"},
+		{"placed file address is adopted", file, true, true, "plan.txt"},
+		{"pasted file address builds nothing", file, false, true, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			es, uuid := newDropEditor(t)
 			block.RegisterProcessor(processors.NewSmartImageProcessor(es.services))
-			if _, err := es.services.Assets.Save(domain.WorkingCopy, uuid, "holiday.png", encoded.Bytes()); err != nil {
+			if _, err := es.services.Assets.Save(domain.WorkingCopy, uuid, tc.asset.key, tc.asset.body); err != nil {
 				t.Fatalf("seed asset: %v", err)
 			}
-			src := "sieve://" + uuid + "/holiday.png"
-			if kind, _, _, ok := block.FirstPasteMatch([]block.ContentEntry{{MIMEType: "text/uri-list", Content: src}}); !ok || kind != "smart-image" {
-				t.Errorf("an unused asset's address matched %q (%v), want smart-image", kind, ok)
+			src := "sieve://" + uuid + "/" + tc.asset.key
+			if kind, _, _, ok := block.FirstPasteMatch([]block.ContentEntry{{MIMEType: "text/uri-list", Content: src}}, block.ActionPlace); !ok || kind != tc.asset.kind {
+				t.Errorf("an unused asset's address matched %q (%v), want %s", kind, ok, tc.asset.kind)
 			}
 			first, _, err := es.CreateBlock(uuid, "prose", map[string]interface{}{"content": "first"}, block.AppendIndex)
 			if err != nil {
@@ -728,10 +762,15 @@ func TestEditorService_placementSharesWherePasteCopies(t *testing.T) {
 			if _, _, err := es.CreateBlock(uuid, "prose", map[string]interface{}{"content": "last"}, block.AppendIndex); err != nil {
 				t.Fatalf("seed prose: %v", err)
 			}
-			view, _ := json.Marshal(map[string]interface{}{
-				"kind": "smart-image", "id": "held", "src": src, "title": "holiday.png", "summary": "A beach", "width": "4", "height": "3",
-			})
-			entries := []block.ContentEntry{{MIMEType: "sieve/smart-image", Content: string(view), Context: map[string]interface{}{"container": uuid}}}
+			entries := []block.ContentEntry{{MIMEType: "text/uri-list", Content: src}}
+			if !tc.address {
+				view := map[string]interface{}{"kind": tc.asset.kind, "id": "held", tc.asset.attr: src}
+				for k, v := range tc.asset.view {
+					view[k] = v
+				}
+				payload, _ := json.Marshal(view)
+				entries = []block.ContentEntry{{MIMEType: "sieve/" + tc.asset.kind, Content: string(payload), Context: map[string]interface{}{"container": uuid}}}
+			}
 			index := es.ResolveAnchor(uuid, block.Anchor{AfterBlockID: first})
 
 			var res block.PasteResult
@@ -740,8 +779,18 @@ func TestEditorService_placementSharesWherePasteCopies(t *testing.T) {
 			} else {
 				res = es.HandlePaste(uuid, entries, index)
 			}
-			if !res.IsBlock() || res.Kind != "smart-image" {
-				t.Fatalf("result = %+v, want a smart-image block", res)
+			_, copyErr := es.services.Assets.ServeAssetData(uuid, tc.asset.copyKey)
+			if copied, want := copyErr == nil, tc.wantKey == tc.asset.copyKey; copied != want {
+				t.Errorf("%s written = %v, want %v", tc.asset.copyKey, copied, want)
+			}
+			if tc.wantKey == "" {
+				if res.IsBlock() {
+					t.Fatalf("result = %+v, want no block", res)
+				}
+				return
+			}
+			if !res.IsBlock() || res.Kind != tc.asset.kind {
+				t.Fatalf("result = %+v, want a %s block", res, tc.asset.kind)
 			}
 			blocks := es.shadows[uuid].SnapshotBlocks()
 			at := -1
@@ -754,15 +803,11 @@ func TestEditorService_placementSharesWherePasteCopies(t *testing.T) {
 				t.Fatalf("block landed at %d, want directly after the anchor %s", at, first)
 			}
 			placed := blocks[at].Attrs
-			if want := "sieve://" + uuid + "/" + tc.wantKey; placed["src"] != want {
-				t.Errorf("src = %v, want %s", placed["src"], want)
+			if want := "sieve://" + uuid + "/" + tc.wantKey; placed[tc.asset.attr] != want {
+				t.Errorf("%s = %v, want %s", tc.asset.attr, placed[tc.asset.attr], want)
 			}
-			if placed["status"] != block.BlockStatusComplete || placed["summary"] != "A beach" {
-				t.Errorf("status = %v, summary = %v; want COMPLETE carrying the description", placed["status"], placed["summary"])
-			}
-			_, copyErr := es.services.Assets.ServeAssetData(uuid, "holiday-2.png")
-			if copied := copyErr == nil; copied == tc.place {
-				t.Errorf("holiday-2.png written = %v, want %v", copied, !tc.place)
+			if got := tc.asset.describe(placed); placed["status"] != block.BlockStatusComplete || got != tc.asset.summary {
+				t.Errorf("status = %v, description = %v; want COMPLETE carrying %q", placed["status"], got, tc.asset.summary)
 			}
 		})
 	}

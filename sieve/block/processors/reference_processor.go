@@ -86,6 +86,9 @@ func (p *ReferenceProcessor) Kind() string { return p.FencedDeserializer.Kind }
 
 func (p *ReferenceProcessor) Mode() block.BlockMode { return block.BlockModeBlock }
 
+// PlacesHeldAssets implements block.HeldAssetPlacer.
+func (p *ReferenceProcessor) PlacesHeldAssets() bool { return true }
+
 func (p *ReferenceProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
 		"id":                id,
@@ -200,10 +203,11 @@ func (p *ReferenceProcessor) heldAddress(attrs map[string]interface{}) (domain.A
 	return addr, true
 }
 
-// IsSupportedContent claims the three ways content becomes a reference: a copied
-// reference (paste + extract), a pasted Sieve coordinate (transform), and a
-// dropped file (paste) — a drop runs the same paste-match pipeline a paste does,
-// and this kind takes the files nobody else claims.
+// IsSupportedContent claims the four ways content becomes a reference: a copied
+// reference (paste + extract), a pasted Sieve coordinate (transform), a placed
+// asset address (place only), and a dropped file (paste) — a drop runs the same
+// paste-match pipeline a paste does, and this kind takes the files nobody else
+// claims.
 func (p *ReferenceProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
@@ -211,6 +215,9 @@ func (p *ReferenceProcessor) IsSupportedContent(entries []block.ContentEntry) bl
 		}
 		if _, ok := p.pastedCoordinate(e); ok {
 			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionTransform}}
+		}
+		if _, ok := p.placedAsset(e); ok {
+			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPlace}}
 		}
 		// Paste alone: a dropped file is a creation, so it must not appear in the
 		// extract menu.
@@ -266,6 +273,23 @@ func (p *ReferenceProcessor) pastedCoordinate(e block.ContentEntry) (string, boo
 	return addr.String(), true
 }
 
+// placedAsset reports the leaf address an entry carries when it may name a
+// non-image asset this kind would hold. It is offered for ActionPlace only, so a
+// pasted leaf address stays the text it is. Images are refused by the type the
+// key names — the extension an asset's key always carries — so that smart-image,
+// which claims image addresses, wins without the answer depending on
+// registration order. Whether the asset exists is Transform's to find out.
+func (p *ReferenceProcessor) placedAsset(e block.ContentEntry) (domain.Address, bool) {
+	addr, err := domain.ParseAddress(strings.TrimSpace(e.Content))
+	if err != nil || addr.IsContainer() || addr.Leaf == "" {
+		return domain.Address{}, false
+	}
+	if strings.HasPrefix(p.sniffMIME(addr.Leaf, nil), "image/") {
+		return domain.Address{}, false
+	}
+	return addr, true
+}
+
 func (p *ReferenceProcessor) Transform(entries []block.ContentEntry, uuid, blockID string, action block.Action) map[string]interface{} {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
@@ -273,12 +297,18 @@ func (p *ReferenceProcessor) Transform(entries []block.ContentEntry, uuid, block
 			if attrs == nil || !p.held(attrs) {
 				return attrs
 			}
+			if action == block.ActionPlace {
+				return p.shareHeld(attrs, uuid, blockID)
+			}
 			return p.copyHeld(attrs, uuid, blockID)
 		}
 		if uri, ok := p.pastedCoordinate(e); ok {
 			// The parse's canonical spelling, not the pasted bytes, so no stray
 			// whitespace is frozen into an attr that only fails at resolve time.
 			return map[string]interface{}{"uri": uri}
+		}
+		if addr, ok := p.placedAsset(e); ok && action == block.ActionPlace {
+			return p.adoptStored(addr, uuid, blockID)
 		}
 		if name, ok := p.droppedFile(e); ok {
 			return p.holdDroppedFile(e, name, uuid, blockID)
@@ -302,14 +332,8 @@ func (p *ReferenceProcessor) copyHeld(attrs map[string]interface{}, uuid, blockI
 		logger.Warn("reference: copied file has no readable address", "block", blockID, "uri", p.uri(attrs))
 		return nil
 	}
-	data, err := p.assets.read(src)
-	if err != nil {
-		logger.Warn("reference: copied file unreadable", "block", blockID, "uri", src.String(), "err", err)
-		return nil
-	}
-	if limit := p.maxHeldBytes(); len(data) > limit {
-		logger.Warn("reference: copied file over the size limit",
-			"block", blockID, "bytes", len(data), "limit", limit)
+	data, ok := p.readHeld(src, blockID)
+	if !ok {
 		return nil
 	}
 	name := p.faceStr(attrs, "title")
@@ -328,6 +352,63 @@ func (p *ReferenceProcessor) copyHeld(attrs map[string]interface{}, uuid, blockI
 	}
 	attrs["uri"] = ref
 	return attrs
+}
+
+// shareHeld builds a placed held reference: an asset of document uuid is shared —
+// the new block names the same file, its face carried, and no bytes are written.
+// An asset of another document is copied in, as copyHeld does, because a
+// document's assets live in its own folder. nil when the asset cannot be read or
+// is over the size limit.
+func (p *ReferenceProcessor) shareHeld(attrs map[string]interface{}, uuid, blockID string) map[string]interface{} {
+	src, ok := p.heldAddress(attrs)
+	if !ok {
+		logger.Warn("reference: placed file has no readable address", "block", blockID, "uri", p.uri(attrs))
+		return nil
+	}
+	if src.Container != domain.NewContainerAddress(uuid).Container {
+		return p.copyHeld(attrs, uuid, blockID)
+	}
+	if _, ok := p.readHeld(src, blockID); !ok {
+		return nil
+	}
+	attrs["uri"] = src.String()
+	return attrs
+}
+
+// adoptStored builds a held reference to asset addr of document uuid, which no
+// block need hold: the block names that file, and its face is built from the
+// stored bytes as a dropped file's is, titled by the key. nil when the asset is
+// another document's, cannot be read, is over the size limit or is an image.
+func (p *ReferenceProcessor) adoptStored(addr domain.Address, uuid, blockID string) map[string]interface{} {
+	if addr.Container != domain.NewContainerAddress(uuid).Container {
+		logger.Warn("reference: placed asset is another document's", "block", blockID, "uri", addr.String())
+		return nil
+	}
+	data, ok := p.readHeld(addr, blockID)
+	if !ok {
+		return nil
+	}
+	if strings.HasPrefix(p.sniffMIME(addr.Leaf, data), "image/") {
+		logger.Warn("reference: placed asset is an image", "block", blockID, "uri", addr.String())
+		return nil
+	}
+	return p.heldAttrs(addr.String(), addr.Leaf, addr.Leaf, data)
+}
+
+// readHeld reads the bytes a held file's address names, refusing a file over the
+// size limit.
+func (p *ReferenceProcessor) readHeld(addr domain.Address, blockID string) ([]byte, bool) {
+	data, err := p.assets.read(addr)
+	if err != nil {
+		logger.Warn("reference: held file unreadable", "block", blockID, "uri", addr.String(), "err", err)
+		return nil, false
+	}
+	if limit := p.maxHeldBytes(); len(data) > limit {
+		logger.Warn("reference: held file over the size limit",
+			"block", blockID, "uri", addr.String(), "bytes", len(data), "limit", limit)
+		return nil, false
+	}
+	return data, true
 }
 
 // holdDroppedFile stores a dropped file and returns the attrs the block is born
@@ -357,11 +438,17 @@ func (p *ReferenceProcessor) holdDroppedFile(e block.ContentEntry, filename, uui
 		logger.Warn("reference: saved asset has no key", "block", blockID, "file", filename, "ref", ref)
 		return nil
 	}
-	mimeType := p.sniffMIME(key, data)
 	// title is the file the user dropped; the address names the key it was
 	// minted under, which may differ (sanitised, uniquified).
+	return p.heldAttrs(ref, key, filename, data)
+}
+
+// heldAttrs is the attrs of a block holding data at address ref under key: the
+// whole face — title, the mime the key and bytes name, size and excerpt.
+func (p *ReferenceProcessor) heldAttrs(ref, key, title string, data []byte) map[string]interface{} {
+	mimeType := p.sniffMIME(key, data)
 	face := map[string]interface{}{
-		"title": filename,
+		"title": title,
 		"mime":  mimeType,
 		// bytes is stored as a STRING: attrs round-trip through JSON on a paste,
 		// which returns every number as a float64, and yaml.v3 writes a large

@@ -51,6 +51,9 @@ func (p *SmartImageProcessor) Kind() string { return p.FencedDeserializer.Kind }
 
 func (p *SmartImageProcessor) Mode() block.BlockMode { return block.BlockModeBlock }
 
+// PlacesHeldAssets implements block.HeldAssetPlacer.
+func (p *SmartImageProcessor) PlacesHeldAssets() bool { return true }
+
 func (p *SmartImageProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
 		"id":      id,

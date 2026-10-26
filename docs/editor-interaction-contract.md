@@ -516,12 +516,20 @@ cancelled dialog must not eat the blank line (known gap: the async image-upload
 dialog path commits outside the editor and does not consume — acceptable).
 
 **The Assets tab's Insert** is a `place` paste of the asset's entries (matched
-like `smart`, never marked a smart paste; an asset a block already holds is
-shared — the placed block names the same file and carries that block's
-description — where a paste of the block would copy it) placed by this rule at
-the caret, with one difference: when the editor has not held focus
-since it mounted there is no caret, and the asset is placed at the end of the
-document.
+like `smart`, never marked a smart paste) placed by this rule at the caret,
+with one difference: when the editor has not held focus since it mounted there
+is no caret, and the asset is placed at the end of the document. Every asset can
+be placed, an image and any other file alike, and a placement never writes bytes
+into its own document:
+
+- An asset held by a block whose kind places its held assets (a smart-image for
+  an image, a reference for any other file) is sent as that block's view. The
+  placed block names the same file and carries that block's description, where
+  a paste of the block would copy the file under a new key.
+- Any other asset is sent as its absolute address. An image is adopted by a
+  smart-image; any other file is adopted by a reference whose face (title,
+  type, size, excerpt) is read from the stored bytes, within the attachment
+  size ceiling. The same address pasted as text stays text.
 
 ## Converting a prose link (decided 2026-07-27, #67)
 

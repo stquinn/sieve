@@ -98,15 +98,10 @@ type assetViewData struct {
 	InUse bool
 	// Address is the asset's absolute sieve address.
 	Address string
-	// HolderID is the id of a smart-image block holding the asset — the block
-	// whose description a placement carries. "" when no smart-image holds it.
+	// HolderID is the id of a block holding the asset whose own view a placement
+	// is built from (block.SieveBlock.PlacesHeldAssets). "" when no such block
+	// holds it, and a placement sends the asset's address instead.
 	HolderID string
-}
-
-// Placeable reports whether Insert and drag can place the asset: any image. The
-// placed block shares the file with whatever already holds it.
-func (a assetViewData) Placeable() bool {
-	return a.IsImage
 }
 
 // assetIndex is what a document's blocks say about its assets, from one walk:
@@ -255,7 +250,7 @@ func (h *MetaHandler) handleDeleteAsset(w http.ResponseWriter, r *http.Request) 
 
 // assetInUseMessage is why an asset a block holds cannot be deleted, and what to
 // do instead.
-const assetInUseMessage = "Used in this document — delete the image first"
+const assetInUseMessage = "Used in this document — delete the block that holds it first"
 
 func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanelData {
 	isPrompt := strings.HasPrefix(uuidOrPromptName, "prompt:")
@@ -403,7 +398,7 @@ func (h *MetaHandler) indexBlocks(uuid string, blocks []block.SieveBlock) assetI
 	for _, blk := range blocks {
 		held := blk.HeldAssets(self)
 		for _, key := range held {
-			if prev, ok := idx.holders[key]; !ok || (prev.Kind != smartImageKind && blk.Kind == smartImageKind) {
+			if prev, ok := idx.holders[key]; !ok || (!prev.PlacesHeldAssets() && blk.PlacesHeldAssets()) {
 				idx.holders[key] = blk
 			}
 		}
@@ -432,9 +427,6 @@ func (h *MetaHandler) indexBlocks(uuid string, blocks []block.SieveBlock) assetI
 	}
 	return idx
 }
-
-// smartImageKind is the kind whose description a placement of an in-use image carries.
-const smartImageKind = "smart-image"
 
 func toAssetViews(uuid string, storables []store.Storable, idx assetIndex) []assetViewData {
 	labels := idx.labels
@@ -479,7 +471,7 @@ func toAssetViews(uuid string, storables []store.Storable, idx assetIndex) []ass
 				InUse:    held || !idx.known,
 				Address:  domain.NewLeafAddress(uuid, name).String(),
 			}
-			if held && holder.Kind == smartImageKind {
+			if held && holder.PlacesHeldAssets() {
 				view.HolderID = holder.ID
 			}
 			out = append(out, view)

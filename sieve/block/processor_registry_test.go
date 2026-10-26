@@ -149,13 +149,13 @@ func TestFirstPasteMatch_selfKindBeatsUpgrade(t *testing.T) {
 		{MIMEType: "sieve/code", Content: `{"id":"co-1","language":"mermaid","source":"graph TD; A-->B"}`},
 		{MIMEType: "text/plain", Content: "graph TD; A-->B"},
 	}
-	if kind, _, _, ok := FirstPasteMatch(copied); !ok || kind != "code" {
+	if kind, _, _, ok := FirstPasteMatch(copied, ActionPaste); !ok || kind != "code" {
 		t.Fatalf("copied sieve/code (mermaid) should round-trip as code, got kind=%q ok=%v", kind, ok)
 	}
 
 	// Raw mermaid text only (no sieve view): general pass → diagram upgrade.
 	raw := []ContentEntry{{MIMEType: "text/plain", Content: "graph TD; A-->B"}}
-	if kind, _, _, ok := FirstPasteMatch(raw); !ok || kind != "diagram" {
+	if kind, _, _, ok := FirstPasteMatch(raw, ActionPaste); !ok || kind != "diagram" {
 		t.Fatalf("raw mermaid text should upgrade to diagram, got kind=%q ok=%v", kind, ok)
 	}
 }
@@ -299,7 +299,7 @@ func TestFirstPasteMatch_fencedFormIsSelfKind(t *testing.T) {
 	RegisterProcessor(aiBlock)
 
 	fence := []ContentEntry{{MIMEType: "text/plain", Content: "```ai-block\nid: ab-1\nstatus: COMPLETE\n```"}}
-	kind, _, fromDetection, ok := FirstPasteMatch(fence)
+	kind, _, fromDetection, ok := FirstPasteMatch(fence, ActionPaste)
 	if !ok || kind != "ai-block" {
 		t.Fatalf("a pasted ai-block fence should come back as ai-block, got kind=%q ok=%v", kind, ok)
 	}
@@ -310,7 +310,7 @@ func TestFirstPasteMatch_fencedFormIsSelfKind(t *testing.T) {
 	// The promotion is narrow: text that is NOT a registered kind's fence still
 	// goes to whoever claims it in the general pass.
 	plain := []ContentEntry{{MIMEType: "text/plain", Content: "```go\nx := 1\n```"}}
-	if kind, _, _, ok := FirstPasteMatch(plain); !ok || kind != "code" {
+	if kind, _, _, ok := FirstPasteMatch(plain, ActionPaste); !ok || kind != "code" {
 		t.Fatalf("a ```go fence is not a kind's own form, got kind=%q ok=%v", kind, ok)
 	}
 }
@@ -331,7 +331,7 @@ func TestFirstPasteMatch_aliasedFenceIsSelfKind(t *testing.T) {
 	RegisterProcessor(renamed)
 
 	fence := []ContentEntry{{MIMEType: "text/plain", Content: "```legacy-kind\nid: x\n```"}}
-	kind, _, fromDetection, ok := FirstPasteMatch(fence)
+	kind, _, fromDetection, ok := FirstPasteMatch(fence, ActionPaste)
 	if !ok || kind != "canon-kind" {
 		t.Fatalf("a pasted alias fence should come back as the canonical kind, got kind=%q ok=%v", kind, ok)
 	}
@@ -364,7 +364,7 @@ func TestFirstPasteMatch_pass1b_shapeGatesIsSupportedContent(t *testing.T) {
 	RegisterProcessor(real)
 
 	fence := []ContentEntry{{MIMEType: "text/plain", Content: "```real-kind\nid: x\n```"}}
-	kind, _, _, ok := FirstPasteMatch(fence)
+	kind, _, _, ok := FirstPasteMatch(fence, ActionPaste)
 	if !ok || kind != "real-kind" {
 		t.Fatalf("want real-kind, got kind=%q ok=%v", kind, ok)
 	}

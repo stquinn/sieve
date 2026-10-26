@@ -1130,17 +1130,17 @@ func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry, 
 }
 
 // HandlePlacement is HandlePaste for views the host chose to place rather than a
-// clipboard: the same registry match, but the processor builds the block under
+// clipboard: the registry is matched and the processor builds the block under
 // ActionPlace, and the block is never marked a smart paste, because a deliberate
 // placement has no guess to undo.
 func (es *EditorService) HandlePlacement(uuid string, entries []block.ContentEntry, index int) block.PasteResult {
 	return es.paste(uuid, entries, index, block.ActionPlace)
 }
 
-// paste creates the block entries match at index, built under action. Only an
+// paste creates the block entries match under action at index. Only an
 // ActionPaste detection match is recorded on the block as a smart paste.
 func (es *EditorService) paste(uuid string, entries []block.ContentEntry, index int, action block.Action) block.PasteResult {
-	matchKind, processor, fromDetection, ok := block.FirstPasteMatch(entries)
+	matchKind, processor, fromDetection, ok := block.FirstPasteMatch(entries, action)
 	if !ok {
 		// No kind claims it. Views that are nothing but a hyperlink still get the one
 		// smart a link keeps — its title — as ordinary content (#67); everything else

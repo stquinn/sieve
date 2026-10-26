@@ -205,7 +205,8 @@ func TestReferenceProcessor_Mode(t *testing.T) {
 // A pasted coordinate is claimed as a TRANSFORM, mirroring how web-clip claims a
 // pasted link. Recognition goes through domain.ParseAddress — never a prefix test
 // — so only the forms the grammar actually produces are claimed, and only the
-// container grain, which is all the picker offers.
+// container grain, which is all the picker offers. A leaf address of a non-image
+// asset is claimed for a placement only, so a pasted one stays text.
 func TestReferenceProcessor_IsSupportedContent(t *testing.T) {
 	p := NewReferenceProcessor(block.BlockServices{})
 	uuid := ident.New()
@@ -225,8 +226,20 @@ func TestReferenceProcessor_IsSupportedContent(t *testing.T) {
 			want:    []block.Action{block.ActionTransform},
 		},
 		{
-			name:    "leaf coordinate: legal grammar the picker does not offer",
+			name:    "leaf coordinate: placed, never pasted",
 			entries: []block.ContentEntry{{MIMEType: "text/plain", Content: "sieve://" + uuid + "/" + ident.New()}},
+			want:    []block.Action{block.ActionPlace},
+		},
+		{
+			name:    "a file's address: placed, never pasted",
+			entries: []block.ContentEntry{{MIMEType: "text/uri-list", Content: "sieve://" + uuid + "/plan.pdf"}},
+			want:    []block.Action{block.ActionPlace},
+		},
+		{
+			// smart-image claims image addresses; claiming them here too would make
+			// which kind wins a matter of registration order.
+			name:    "an image's address belongs to smart-image",
+			entries: []block.ContentEntry{{MIMEType: "text/uri-list", Content: "sieve://" + uuid + "/holiday.png"}},
 			want:    nil,
 		},
 		{
@@ -255,7 +268,7 @@ func TestReferenceProcessor_IsSupportedContent(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := p.IsSupportedContent(tc.entries)
-			for _, a := range []block.Action{block.ActionPaste, block.ActionExtract, block.ActionTransform} {
+			for _, a := range []block.Action{block.ActionPaste, block.ActionPlace, block.ActionExtract, block.ActionTransform} {
 				want := false
 				for _, w := range tc.want {
 					want = want || w == a
