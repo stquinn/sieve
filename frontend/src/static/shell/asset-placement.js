@@ -9,16 +9,14 @@
 //
 //   [data-asset-document]  the document the listed assets belong to
 //   [data-asset-row]       one asset: data-asset-address (its absolute sieve
-//                          address) and data-asset-holder (the id of a
-//                          smart-image block holding it; empty when none does)
+//                          address) and data-asset-holder (the id of a block
+//                          holding it whose own view a placement is built from;
+//                          empty when none does)
 //   [data-asset-insert]    the row's Insert button
 
 import { ASSET_DRAG_TYPE } from '../contract/container-provider.js'
 
 /** @typedef {import('../contract/container-provider.js').ContentEntry} ContentEntry */
-
-/** The kind whose description a placement of an asset in use carries. */
-const HOLDER_KIND = 'smart-image'
 
 export class AssetPlacement {
   /** @type {{activeTab: any}} */ #ws
@@ -53,7 +51,7 @@ export class AssetPlacement {
 
   /**
    * The paste that places the asset `row` names in the active tab's document.
-   * An asset a smart-image holds is that block's own `sieve/smart-image` view,
+   * An asset the row names a holder for is that block's own `sieve/{kind}` view,
    * which the server places sharing the same file, description carried. Any
    * other asset — including one whose holder the tab's document no longer holds
    * — is its address as a `text/uri-list`, which the server adopts in place.
@@ -69,9 +67,9 @@ export class AssetPlacement {
     const holderId = row.getAttribute('data-asset-holder') || ''
     const provider = tab.mount && tab.mount.provider
     const holder = holderId && provider ? provider.getBlock(holderId) : null
-    if (!holder || holder.kind !== HOLDER_KIND) return address ? [{ mimeType: 'text/uri-list', content: address }] : null
+    if (!holder) return address ? [{ mimeType: 'text/uri-list', content: address }] : null
     return [{
-      mimeType: 'sieve/' + HOLDER_KIND,
+      mimeType: 'sieve/' + holder.kind,
       content: JSON.stringify(Object.assign({}, holder.attrs, { kind: holder.kind })),
       context: { container },
     }]

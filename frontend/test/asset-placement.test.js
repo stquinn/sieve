@@ -1,8 +1,8 @@
 // @ts-check
 // AssetPlacement — the Assets tab's Insert and drag. Both build the same paste:
-// an asset a smart-image holds travels as that block's sieve view (the server
-// shares the file and carries the description), any other as its address (the
-// server adopts the file).
+// an asset the row names a holder for travels as that block's sieve view (the
+// server shares the file and carries the description), any other as its address
+// (the server adopts the file).
 
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { AssetPlacement } from '../src/static/shell/asset-placement.js'
@@ -11,10 +11,11 @@ import { ASSET_DRAG_TYPE } from '../src/static/contract/container-provider.js'
 const DOC = 'doc-1'
 const ADDRESS = 'sieve://doc-1/holiday.png'
 const HOLDER = { id: 'img-1', kind: 'smart-image', attrs: { id: 'img-1', src: ADDRESS, title: 'holiday.png', summary: 'A beach' } }
+const FILE_HOLDER = { id: 'ref-1', kind: 'reference', attrs: { id: 'ref-1', uri: 'sieve://doc-1/plan.pdf', cache: { title: 'plan.pdf', mime: 'application/pdf' } } }
 
-function workspace({ uuid = DOC, block = HOLDER } = {}) {
+function workspace({ uuid = DOC, blocks = [HOLDER, FILE_HOLDER] } = {}) {
   const editor = { pasteEntries: vi.fn(() => Promise.resolve('block')) }
-  const provider = { getBlock: vi.fn((id) => (block && block.id === id ? block : null)) }
+  const provider = { getBlock: vi.fn((id) => blocks.find((b) => b.id === id) || null) }
   return { editor, provider, ws: { activeTab: { uuid, editor, mount: { provider } } } }
 }
 
@@ -33,10 +34,15 @@ afterEach(() => { document.body.innerHTML = '' })
 describe('AssetPlacement.entriesFor', () => {
   it.each([
     ['an unused asset is its address', '', null, [{ mimeType: 'text/uri-list', content: ADDRESS }]],
-    ['an asset whose holder the document no longer holds is its address', 'img-1', { block: null }, [{ mimeType: 'text/uri-list', content: ADDRESS }]],
+    ['an asset whose holder the document no longer holds is its address', 'img-1', { blocks: [] }, [{ mimeType: 'text/uri-list', content: ADDRESS }]],
     ['an asset a smart-image holds is that block\'s view', 'img-1', null, [{
       mimeType: 'sieve/smart-image',
       content: JSON.stringify(Object.assign({}, HOLDER.attrs, { kind: 'smart-image' })),
+      context: { container: DOC },
+    }]],
+    ['a file a reference holds is that block\'s view', 'ref-1', null, [{
+      mimeType: 'sieve/reference',
+      content: JSON.stringify(Object.assign({}, FILE_HOLDER.attrs, { kind: 'reference' })),
       context: { container: DOC },
     }]],
   ])('%s', (_name, holder, wsOpts, want) => {

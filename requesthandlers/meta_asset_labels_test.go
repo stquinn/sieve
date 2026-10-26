@@ -156,8 +156,8 @@ func labelled(labels map[string]assetLabel) assetIndex {
 }
 
 // One walk of the blocks answers both questions: what each asset is called, and
-// which block holds it. Only a smart-image holder is a block whose description a
-// placement carries; every image is placeable.
+// which block holds it. Only a holder whose kind places its held assets (a
+// smart-image, a reference) is named for a placement to carry its view.
 func TestIndexBlocks_labelsAndHoldersFromOneWalk(t *testing.T) {
 	block.RegisterProcessor(processors.NewSmartImageProcessor(block.BlockServices{}))
 	block.RegisterProcessor(processors.NewDiagramProcessor(block.BlockServices{}))
@@ -197,19 +197,18 @@ func TestIndexBlocks_labelsAndHoldersFromOneWalk(t *testing.T) {
 		file("0194820a-81c2-7d34.png"), file("0194820a-9999-7d34.svg"), file("café.pdf"), file("foreign.pdf"), file("loose.png"),
 	}, idx)
 	for i, want := range []struct {
-		inUse     bool
-		holder    string
-		placeable bool
+		inUse  bool
+		holder string
 	}{
-		{true, "img-blk-1", true},
-		{true, "", true},
-		{true, "", false},
-		{false, "", false},
-		{false, "", true},
+		{true, "img-blk-1"},
+		{true, ""},
+		{true, "ref-blk-3"},
+		{false, ""},
+		{false, ""},
 	} {
 		v := views[i]
-		if v.InUse != want.inUse || v.HolderID != want.holder || v.Placeable() != want.placeable {
-			t.Errorf("%s: InUse %v HolderID %q Placeable %v; want %v %q %v", v.FileName, v.InUse, v.HolderID, v.Placeable(), want.inUse, want.holder, want.placeable)
+		if v.InUse != want.inUse || v.HolderID != want.holder {
+			t.Errorf("%s: InUse %v HolderID %q; want %v %q", v.FileName, v.InUse, v.HolderID, want.inUse, want.holder)
 		}
 		if wantAddr := domain.NewLeafAddress(doc, v.FileName).String(); v.Address != wantAddr {
 			t.Errorf("%s: Address %q, want %q", v.FileName, v.Address, wantAddr)

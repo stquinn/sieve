@@ -896,7 +896,7 @@ components:
         Action is an operation a processor can perform on a set of ContentEntry views.
         Recognition (IsSupportedContent) enumerates the actions an entry set supports,
         context-blind; each endpoint filters for the action it cares about (smart-paste →
-        ActionPaste; extract menu → ActionExtract/ActionTransform).
+        ActionPaste; placement → ActionPlace; extract menu → ActionExtract/ActionTransform).
     BlockBlockOp:
       type: object
       description: |-

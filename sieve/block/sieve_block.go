@@ -168,6 +168,13 @@ func (b SieveBlock) HeldAssets(self domain.Address) []string {
 	return out
 }
 
+// PlacesHeldAssets reports whether a placement of an asset this block holds is
+// built from this block's own sieve view (see HeldAssetPlacer).
+func (b SieveBlock) PlacesHeldAssets() bool {
+	placer, ok := GetProcessor(b.Kind).(HeldAssetPlacer)
+	return ok && placer.PlacesHeldAssets()
+}
+
 // answersTo returns every handle this block resolves to — its primary ID plus
 // any aliases absorbed via merges.
 func (b SieveBlock) answersTo() []string {

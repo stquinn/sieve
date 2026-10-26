@@ -194,7 +194,7 @@ const (
 // Action is an operation a processor can perform on a set of ContentEntry views.
 // Recognition (IsSupportedContent) enumerates the actions an entry set supports,
 // context-blind; each endpoint filters for the action it cares about (smart-paste →
-// ActionPaste; extract menu → ActionExtract/ActionTransform).
+// ActionPaste; placement → ActionPlace; extract menu → ActionExtract/ActionTransform).
 type Action string
 
 const (
@@ -221,6 +221,13 @@ func (s SupportedActions) Has(a Action) bool {
 		}
 	}
 	return false
+}
+
+// Builds reports whether this offer builds a new block under creation action a.
+// A placement builds whatever a paste builds, plus what a kind offers to place
+// alone: an offer of ActionPlace without ActionPaste is invisible to a paste.
+func (s SupportedActions) Builds(a Action) bool {
+	return s.Has(a) || (a == ActionPlace && s.Has(ActionPaste))
 }
 
 // asAdditive returns a copy of this offer with any in-place TRANSFORM demoted to an
@@ -689,6 +696,15 @@ type SelfExtractable interface {
 	AllowSelfExtraction() bool
 }
 
+// HeldAssetPlacer is the optional interface a processor implements when its own
+// sieve view, built under ActionPlace, makes a new block naming the same stored
+// assets the viewed block holds, its description carried — the view a placement
+// of an asset that block holds is built from. A kind that does not implement it
+// is placed by the asset's address instead.
+type HeldAssetPlacer interface {
+	PlacesHeldAssets() bool
+}
+
 // RawContenter is the optional interface a processor implements to expose the raw
 // source text its block was built from. Used by "Undo Smart Paste" to recover the
 // pre-detection text, and lets prose embedding avoid hard-coding source-bearing kinds
@@ -877,10 +893,11 @@ type wrapsAnyShaper interface {
 	WrapsAnyShape(content string) bool
 }
 
-// FirstPasteMatch returns the kind and processor that claims these entries on a
-// PASTE (registration order = priority), or ok=false. This is the paste operation
-// ONLY — extract/convert goes through DetectExtractions, which is free to offer
-// cross-kind upgrades the way paste must not.
+// FirstPasteMatch returns the kind and processor that claims these entries for a
+// new block built under action — ActionPaste or ActionPlace, judged by
+// SupportedActions.Builds — (registration order = priority), or ok=false. This
+// is the paste operation ONLY — extract/convert goes through DetectExtractions,
+// which is free to offer cross-kind upgrades the way paste must not.
 //
 // Two passes, because a paste has two jobs and they must not collide:
 //
@@ -899,7 +916,7 @@ type wrapsAnyShaper interface {
 //
 // The registry owns its internals (matcher list + lock); callers ask, they do not
 // iterate pasteMatchers directly.
-func FirstPasteMatch(entries []ContentEntry) (kind string, processor BlockProcessor, fromDetection bool, ok bool) {
+func FirstPasteMatch(entries []ContentEntry, action Action) (kind string, processor BlockProcessor, fromDetection bool, ok bool) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 
@@ -910,7 +927,7 @@ func FirstPasteMatch(entries []ContentEntry) (kind string, processor BlockProces
 			continue
 		}
 		for i := range pasteMatchers {
-			if pasteMatchers[i].Kind == k && pasteMatchers[i].Processor.IsSupportedContent(entries).Has(ActionPaste) {
+			if pasteMatchers[i].Kind == k && pasteMatchers[i].Processor.IsSupportedContent(entries).Builds(action) {
 				return pasteMatchers[i].Kind, pasteMatchers[i].Processor, false, true
 			}
 		}
@@ -927,7 +944,7 @@ func FirstPasteMatch(entries []ContentEntry) (kind string, processor BlockProces
 			if !wrapsSelf || !w.WrapsAnyShape(e.Content) {
 				continue
 			}
-			if pasteMatchers[i].Processor.IsSupportedContent(entries).Has(ActionPaste) {
+			if pasteMatchers[i].Processor.IsSupportedContent(entries).Builds(action) {
 				return pasteMatchers[i].Kind, pasteMatchers[i].Processor, false, true
 			}
 		}
@@ -940,11 +957,11 @@ func FirstPasteMatch(entries []ContentEntry) (kind string, processor BlockProces
 			proseIdx = i
 			continue
 		}
-		if pasteMatchers[i].Processor.IsSupportedContent(entries).Has(ActionPaste) {
+		if pasteMatchers[i].Processor.IsSupportedContent(entries).Builds(action) {
 			return pasteMatchers[i].Kind, pasteMatchers[i].Processor, true, true
 		}
 	}
-	if proseIdx >= 0 && pasteMatchers[proseIdx].Processor.IsSupportedContent(entries).Has(ActionPaste) {
+	if proseIdx >= 0 && pasteMatchers[proseIdx].Processor.IsSupportedContent(entries).Builds(action) {
 		return pasteMatchers[proseIdx].Kind, pasteMatchers[proseIdx].Processor, true, true
 	}
 	return "", nil, false, false

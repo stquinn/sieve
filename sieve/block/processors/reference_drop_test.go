@@ -392,12 +392,20 @@ func TestReferenceProcessor_UnsetCeilingFallsBackToTheDefault(t *testing.T) {
 	}
 }
 
-// A dropped image resolves to smart-image regardless of which of the two kinds is
-// registered first, because reference refuses images outright. Both orders are
-// asserted, so the guarantee cannot become order-dependent.
-func TestPasteMatch_aDroppedImageNeverReachesReference(t *testing.T) {
+// A dropped image, or a placed image address, resolves to smart-image regardless
+// of which of the two kinds is registered first, because reference refuses images
+// outright. Both orders are asserted, so the guarantee cannot become
+// order-dependent.
+func TestPasteMatch_anImageNeverReachesReference(t *testing.T) {
 	svc := block.BlockServices{}
-	image := []block.ContentEntry{dropped("image/png", "shot.png", "\x89PNG\r\n\x1a\n")}
+	images := []struct {
+		name    string
+		entries []block.ContentEntry
+		action  block.Action
+	}{
+		{"dropped", []block.ContentEntry{dropped("image/png", "shot.png", "\x89PNG\r\n\x1a\n")}, block.ActionPaste},
+		{"placed address", []block.ContentEntry{{MIMEType: "text/uri-list", Content: "sieve://" + ident.New() + "/shot.png"}}, block.ActionPlace},
+	}
 	orders := map[string][]block.BlockProcessor{
 		"production order (smart-image first)": {NewSmartImageProcessor(svc), NewReferenceProcessor(svc)},
 		"reversed":                             {NewReferenceProcessor(svc), NewSmartImageProcessor(svc)},
@@ -409,26 +417,40 @@ func TestPasteMatch_aDroppedImageNeverReachesReference(t *testing.T) {
 			for _, proc := range order {
 				block.RegisterProcessor(proc)
 			}
-			kind, _, _, ok := block.FirstPasteMatch(image)
-			if !ok || kind != "smart-image" {
-				t.Errorf("a dropped image matched %q (ok=%v), want smart-image", kind, ok)
+			for _, image := range images {
+				kind, _, _, ok := block.FirstPasteMatch(image.entries, image.action)
+				if !ok || kind != "smart-image" {
+					t.Errorf("%s image matched %q (ok=%v), want smart-image", image.name, kind, ok)
+				}
 			}
 		})
 	}
 }
 
-// The other half of the same property: a dropped NON-image is nobody else's, so
-// reference gets it with both kinds registered as production registers them.
-func TestPasteMatch_aDroppedNonImageBecomesAReference(t *testing.T) {
+// The other half of the same property: a dropped or placed NON-image is nobody
+// else's, so reference gets it with both kinds registered as production registers
+// them. A pasted file address is nobody's: it stays text.
+func TestPasteMatch_aNonImageBecomesAReference(t *testing.T) {
 	resetRegistry()
 	t.Cleanup(resetRegistry)
 	svc := block.BlockServices{}
 	block.RegisterProcessor(NewSmartImageProcessor(svc))
 	block.RegisterProcessor(NewReferenceProcessor(svc))
 
-	kind, _, _, ok := block.FirstPasteMatch([]block.ContentEntry{dropped("application/pdf", "spec.pdf", "%PDF-1.4")})
-	if !ok || kind != "reference" {
-		t.Errorf("a dropped pdf matched %q (ok=%v), want reference", kind, ok)
+	address := []block.ContentEntry{{MIMEType: "text/uri-list", Content: "sieve://" + ident.New() + "/spec.pdf"}}
+	for _, tc := range []struct {
+		name    string
+		entries []block.ContentEntry
+		action  block.Action
+		want    string
+	}{
+		{"dropped pdf", []block.ContentEntry{dropped("application/pdf", "spec.pdf", "%PDF-1.4")}, block.ActionPaste, "reference"},
+		{"placed pdf address", address, block.ActionPlace, "reference"},
+		{"pasted pdf address", address, block.ActionPaste, ""},
+	} {
+		if kind, _, _, _ := block.FirstPasteMatch(tc.entries, tc.action); kind != tc.want {
+			t.Errorf("%s matched %q, want %q", tc.name, kind, tc.want)
+		}
 	}
 }
 
@@ -436,7 +458,12 @@ func TestPasteMatch_aDroppedNonImageBecomesAReference(t *testing.T) {
 // under its face's title, uniquified there, so no two blocks share an asset, while a pointer is
 // copied by reference with its uri unchanged. A held copy that cannot be made
 // creates no block rather than one reading the source's bytes.
-func TestReferenceProcessor_Transform_copiedReference(t *testing.T) {
+//
+// A placed reference shares instead: within its own document the new block names
+// the same file and no bytes are written; across documents it copies as a paste
+// does. A placed address of a document's own file is adopted the same way, its
+// face built from the stored bytes; a pasted one is not.
+func TestReferenceProcessor_Transform_copiedOrPlacedReference(t *testing.T) {
 	const body = "openapi: 3.0.0\ninfo:\n  title: Payments API\n"
 	ownedKeys := func(t *testing.T, ds *services.DocumentService, uuid string) []string {
 		t.Helper()
@@ -460,13 +487,29 @@ func TestReferenceProcessor_Transform_copiedReference(t *testing.T) {
 		breakSource bool
 		// ceiling, when set, lowers max_attachment_bytes below the file's size.
 		ceiling int
-		wantNil bool
+		// place builds under ActionPlace instead of ActionPaste.
+		place bool
+		// address sends the held file's address as text instead of the block's view.
+		address bool
+		// wantShared expects the new block to name the source's own file.
+		wantShared bool
+		wantNil    bool
 	}{
 		{name: "held, across documents"},
 		{name: "held, within one document", sameDoc: true},
 		{name: "pointer is copied by reference", pointer: true},
 		{name: "source asset missing", breakSource: true, wantNil: true},
 		{name: "over the size limit", ceiling: 8, wantNil: true},
+		{name: "placed within one document shares the file", place: true, sameDoc: true, wantShared: true},
+		{name: "placed across documents copies", place: true},
+		{name: "placed pointer is copied by reference", place: true, pointer: true},
+		{name: "placed, source asset missing", place: true, sameDoc: true, breakSource: true, wantNil: true},
+		{name: "placed, over the size limit", place: true, sameDoc: true, ceiling: 8, wantNil: true},
+		{name: "placed address is adopted", place: true, address: true, sameDoc: true, wantShared: true},
+		{name: "placed address of another document", place: true, address: true, wantNil: true},
+		{name: "placed address, asset missing", place: true, address: true, sameDoc: true, breakSource: true, wantNil: true},
+		{name: "placed address, over the size limit", place: true, address: true, sameDoc: true, ceiling: 8, wantNil: true},
+		{name: "pasted address stays text", address: true, sameDoc: true, wantNil: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -518,8 +561,14 @@ func TestReferenceProcessor_Transform_copiedReference(t *testing.T) {
 			payload, _ := json.Marshal(attrs)
 			entry := block.ContentEntry{MIMEType: "sieve/reference", Content: string(payload),
 				Context: map[string]interface{}{"container": src.UUID()}}
-			newBlock := ident.New()
-			got := p.Transform([]block.ContentEntry{entry}, wantUUID, newBlock, block.ActionPaste)
+			if tc.address {
+				entry = block.ContentEntry{MIMEType: "text/uri-list", Content: attrs["uri"].(string)}
+			}
+			action := block.ActionPaste
+			if tc.place {
+				action = block.ActionPlace
+			}
+			got := p.Transform([]block.ContentEntry{entry}, wantUUID, ident.New(), action)
 
 			if tc.wantNil {
 				if got != nil {
@@ -532,6 +581,20 @@ func TestReferenceProcessor_Transform_copiedReference(t *testing.T) {
 			}
 			if got == nil {
 				t.Fatal("Transform declined a copied reference")
+			}
+			if tc.wantShared {
+				if got["uri"] != made["uri"] {
+					t.Errorf("uri = %v, want the source's own file %v", got["uri"], made["uri"])
+				}
+				if n := len(ownedKeys(t, ds, src.UUID())); n != len(beforeSrc) {
+					t.Errorf("a shared placement wrote an asset: %d owned, had %d", n, len(beforeSrc))
+				}
+				face := refFace(t, got)
+				if face["title"] != "swagger.yml" || face["mime"] != "text/yaml" ||
+					face["bytes"] != strconv.Itoa(len(body)) || face["summary"] != "openapi: 3.0.0" {
+					t.Errorf("face = %v, want the file's own", face)
+				}
+				return
 			}
 			if tc.sameDoc && len(ownedKeys(t, ds, src.UUID())) != len(beforeSrc)+1 {
 				t.Error("a same-document copy must add a second asset")
