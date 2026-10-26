@@ -92,7 +92,8 @@ func (m *mockStore) LoadByUUID(uuid string) (store.Storable, error) { return nil
 func (m *mockStore) LoadAsset(cat store.Category, parentKey, assetKey string) (store.AssetStorable, error) {
 	return nil, nil
 }
-func (m *mockStore) SaveMeta(s store.MetaStorable) (store.MetaStorable, error) { return nil, nil }
+func (m *mockStore) SaveMeta(s store.MetaStorable) (store.MetaStorable, error)        { return nil, nil }
+func (m *mockStore) DeleteAsset(cat store.Category, parentKey, assetKey string) error { return nil }
 
 func TestPromptService(t *testing.T) {
 	st := newMockStore()

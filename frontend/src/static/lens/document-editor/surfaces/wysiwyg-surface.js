@@ -48,6 +48,8 @@ import { TableMarkdown } from './table-markdown.js'
 import { SlideMarker } from './slide-marker.js'
 import { SlideFocus } from './slide-focus.js'
 import { BlockImage } from './block-image.js'
+import { BlockDropTarget } from './block-drop-target.js'
+import { ASSET_DRAG_TYPE } from '../../../contract/container-provider.js'
 
 const FORMATTING_GROUPS = Object.freeze([
   Object.freeze([
@@ -188,6 +190,10 @@ export class WysiwygSurface extends AbstractSurface {
    *  right-click that opens a menu over it. */
   #cellSelectionGuard = new CellSelectionGuard()
 
+  /** @type {boolean} whether the editor has held focus since this surface
+   *  mounted; until it has, there is no caret for a placement to follow */
+  #hasCaret = false
+
   /**
    * @param {AbstractEditor} host — the parent editor (supplies uuid + the public API)
    */
@@ -317,6 +323,7 @@ export class WysiwygSurface extends AbstractSurface {
         }),
 
         BlockImage.node(),
+        BlockDropTarget.extension(),
         HighlightMark,
         SelectionHighlight,
         // After StarterKit: the heading node type must exist for the autoformat
@@ -378,9 +385,16 @@ export class WysiwygSurface extends AbstractSurface {
           mousedown: function (view, event) {
             return self.#cellSelectionGuard.handleMouseDown(view, event)
           },
+          dragover: function (view, event) { return self.#trackAssetDrag(view, event) },
+          dragleave: function (view, event) {
+            if (!view.dom.contains(/** @type {any} */ (event).relatedTarget)) BlockDropTarget.show(view, null)
+            return false
+          },
         },
         handlePaste: function (_view, event) { return self.#handleSmartPaste(event) },
-        handleDrop: function (_view, event, slice, moved) { return self.#handleSmartDrop(event, slice, moved) },
+        handleDrop: function (_view, event, slice, moved) {
+          return self.#handleAssetDrop(event) || self.#handleSmartDrop(event, slice, moved)
+        },
         handleKeyDown: function (view, event) {
           // THE MOUNT'S OWN CLAIMS, ahead of everything: pre-core here, so a
           // claimed Enter is settled before the interaction policy and before
@@ -460,6 +474,7 @@ export class WysiwygSurface extends AbstractSurface {
 
     // Inner form controls, where PM's native onSelectionUpdate will not fire.
     editorPane.view.dom.addEventListener('focusin', function() {
+      self.#hasCaret = true
       self.#host.onSurfaceEvent(SurfaceEvent.FOCUS_CHANGED)
     })
 
@@ -888,6 +903,71 @@ export class WysiwygSurface extends AbstractSurface {
         ed.commands.insertContent(text)
         return 'none'
       })
+  }
+
+  /**
+   * @override — places clipboard-shaped entries through the container's paste,
+   * as a `place`, after the caret's block; with no caret placed since
+   * this surface mounted, at the end of the document.
+   * @param {import('../../../contract/container-provider.js').ContentEntry[]} entries
+   * @returns {Promise<'block'|'content'|'none'>}
+   */
+  pasteEntries(entries) {
+    const provider = this.#pasteProvider()
+    if (!provider || !this.#editorPane || !entries || !entries.length) return Promise.resolve('none')
+    const peek = this.#hasCaret
+      ? this.#host.peekInsertAnchorForBlock()
+      : { afterBlockId: undefined, anchor: null }
+    return provider
+      .paste({ kind: 'place', entries }, peek.afterBlockId)
+      .then((decision) => this.#applyPasteResult(decision, { anchor: peek.anchor }))
+      .catch((err) => {
+        console.error('[wysiwyg-surface] entry paste failed', err)
+        return 'none'
+      })
+  }
+
+  /**
+   * Shows the insertion line at the block boundary under a drag carrying
+   * ASSET_DRAG_TYPE, and accepts it as a copy. Any other drag is PM's.
+   * @param {any} view @param {DragEvent} event
+   * @returns {boolean} true when the drag is an asset placement
+   */
+  #trackAssetDrag(view, event) {
+    if (!WysiwygSurface.#carriesAsset(event.dataTransfer) || !this.#pasteProvider()) return false
+    event.preventDefault()
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+    const boundary = BlockDropTarget.boundaryAtCoords(view, event.clientX, event.clientY)
+    BlockDropTarget.show(view, boundary ? boundary.pos : null)
+    return true
+  }
+
+  /**
+   * Places a dropped asset at the block boundary under the pointer: its entries
+   * go to the container as a `place` paste anchored after the boundary's block.
+   * @param {DragEvent} event
+   * @returns {boolean} true when the drop is an asset placement
+   */
+  #handleAssetDrop(event) {
+    const ed = this.#editorPane
+    if (!ed || !WysiwygSurface.#carriesAsset(event.dataTransfer)) return false
+    BlockDropTarget.show(ed.view, null)
+    const provider = this.#pasteProvider()
+    if (!provider) return false
+    event.preventDefault()
+    let entries = null
+    try { entries = JSON.parse(event.dataTransfer?.getData(ASSET_DRAG_TYPE) || 'null') } catch (e) { entries = null }
+    const boundary = BlockDropTarget.boundaryAtCoords(ed.view, event.clientX, event.clientY)
+    if (!Array.isArray(entries) || !entries.length || !boundary) return true
+    provider.paste({ kind: 'place', entries }, boundary.afterBlockId)
+      .then((decision) => this.#applyPasteResult(decision, { anchor: null, at: boundary.pos }))
+      .catch((err) => { console.error('[wysiwyg-surface] asset drop failed', err) })
+    return true
+  }
+
+  /** @param {DataTransfer|null|undefined} transfer @returns {boolean} */
+  static #carriesAsset(transfer) {
+    return !!transfer && Array.from(transfer.types || []).includes(ASSET_DRAG_TYPE)
   }
 
   /** The container's paste query, or null. The prompt pseudo-document is excluded

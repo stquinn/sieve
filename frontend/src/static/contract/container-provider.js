@@ -20,9 +20,12 @@
  */
 
 /**
- * What a paste is, as DATA: one query, four kinds.
+ * What a paste is, as DATA: one query, five kinds.
  *
  * - `smart`            — a clipboard the page could read; `entries` is it.
+ * - `place`            — content the host chose to place (an asset from the
+ *                        Assets tab); `entries` is it. Matched like `smart`, but
+ *                        the block made is never a smart paste.
  * - `slice`            — a multi-block Sieve selection; `slice` is [][]ContentEntry.
  * - `native-drop`      — a file drop landed; `entries` is the page's readable
  *                        text, a HINT the server consults only when the OS-level
@@ -33,6 +36,7 @@
  *                        the payload — the server reads the clipboard itself.
  *
  * @typedef {{kind: 'smart', entries: ContentEntry[]}
+ *   | {kind: 'place', entries: ContentEntry[]}
  *   | {kind: 'slice', slice: ContentEntry[][]}
  *   | {kind: 'native-drop', entries: ContentEntry[]}
  *   | {kind: 'native-clipboard'}} PastePayload
@@ -131,4 +135,10 @@
  * }} WholeContentProvider
  */
 
-export {}
+/**
+ * The DataTransfer type of a host drag that places an asset in a container. Its
+ * data is a JSON `ContentEntry[]`; a lens that takes the drop pastes those entries
+ * at the drop boundary exactly as it would a clipboard holding them. The type is
+ * private, so no other drop target reads it.
+ */
+export const ASSET_DRAG_TYPE = 'application/x-sieve-asset'

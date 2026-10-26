@@ -336,6 +336,12 @@ const (
 	// PasteKindSmart offers one clipboard's views to the block registry and lets a
 	// kind claim them.
 	PasteKindSmart PasteKind = "smart"
+	// PasteKindPlace offers views the host chose to place — an asset from the
+	// Assets tab — to the block registry exactly as smart does, and the block is
+	// built as a placement: a stored asset of this document the views name is
+	// shared by the new block rather than copied. The block is not a smart paste:
+	// nothing was guessed, so there is nothing to undo back to the views.
+	PasteKindPlace PasteKind = "place"
 	// PasteKindSlice reconstructs a copied multi-block selection: an ordered list
 	// of per-block view sets, each paste-matched and created with a fresh id.
 	PasteKindSlice PasteKind = "slice"
@@ -363,8 +369,8 @@ const (
 type PasteFrame struct {
 	Type    string                 `json:"type"`
 	OpID    string                 `json:"opId,omitempty" doc:"echoed on the paste-ack"`
-	Kind    PasteKind              `json:"kind" doc:"smart | slice | native-drop | native-clipboard. SECURITY: native-drop and native-clipboard make the server read files the NATIVE side caught (the drop bucket) or the OS clipboard names — never paths from the wire, so the wire carries the GESTURE, not a filesystem address. The socket upgrade gates keep these to the app's own page: an origin allow-list refuses a foreign browser page, and a per-run token refuses every other local process."`
-	Entries []block.ContentEntry   `json:"entries,omitempty" doc:"smart: the clipboard's views. native-drop: absent — the server takes the paths from the native drop bucket the OS-level catch fed (Wails OnFileDrop); the page's own view of a drop is never consulted. native-clipboard: absent — the server reads the clipboard itself"`
+	Kind    PasteKind              `json:"kind" doc:"smart | place | slice | native-drop | native-clipboard. SECURITY: native-drop and native-clipboard make the server read files the NATIVE side caught (the drop bucket) or the OS clipboard names — never paths from the wire, so the wire carries the GESTURE, not a filesystem address. The socket upgrade gates keep these to the app's own page: an origin allow-list refuses a foreign browser page, and a per-run token refuses every other local process."`
+	Entries []block.ContentEntry   `json:"entries,omitempty" doc:"smart: the clipboard's views. place: the views the host is placing. native-drop: absent — the server takes the paths from the native drop bucket the OS-level catch fed (Wails OnFileDrop); the page's own view of a drop is never consulted. native-clipboard: absent — the server reads the clipboard itself"`
 	Slice   [][]block.ContentEntry `json:"slice,omitempty" doc:"slice only: one view set per copied block, in order"`
 	// Anchor places the FIRST block a paste creates; the rest follow it in order.
 	block.Anchor

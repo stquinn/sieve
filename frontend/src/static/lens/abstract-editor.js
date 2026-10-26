@@ -688,6 +688,14 @@ export class AbstractEditor extends Lens {
     return this.#surface ? this.#surface.pasteText(text) : Promise.resolve('none')
   }
 
+  /** Places clipboard-shaped entries at the caret through the mounted surface's
+   *  paste path, as a `place` paste.
+   *  @param {import('../contract/container-provider.js').ContentEntry[]} entries
+   *  @returns {Promise<'block'|'content'|'none'>} */
+  pasteEntries(entries) {
+    return this.#surface ? this.#surface.pasteEntries(entries) : Promise.resolve('none')
+  }
+
   /** Restores focus/selection from a SelectionContext coordinate — the WRITE side
    *  of getSelectionContext. Safe no-op when no surface is mounted.
    *  @param {import('./document-editor/selection-model.js').SelectionContext} ctx */

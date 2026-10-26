@@ -73,6 +73,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProtocolDocumentSaveResponse'
+  /api/document/{uuid}/asset/{key}:
+    delete:
+      operationId: deleteApiDocumentUuidAssetKey
+      summary: 'AssetDeleteRequest deletes one asset of a document, irreversibly: {uuid} is the document and {key} the asset''s key, path-escaped.'
+      description: |-
+        AssetDeleteRequest deletes one asset of a document, irreversibly: {uuid} is
+        the document and {key} the asset's key, path-escaped. An asset a block of the
+        document still holds is refused with 409, judged against the blocks the editor
+        holds now; deleting the block that holds it is the way to free it. A deleted
+        asset is announced as an invalidate of the notes topic. The request has no body.
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: 204, or a body no caller reads
   /api/folder:
     post:
       operationId: postApiFolder
@@ -197,6 +221,14 @@ components:
       required:
         - id
         - kind
+    ProtocolAssetDeleteRequest:
+      type: object
+      description: |-
+        AssetDeleteRequest deletes one asset of a document, irreversibly: {uuid} is
+        the document and {key} the asset's key, path-escaped. An asset a block of the
+        document still holds is refused with 409, judged against the blocks the editor
+        holds now; deleting the block that holds it is the way to free it. A deleted
+        asset is announced as an invalidate of the notes topic. The request has no body.
     ProtocolDocumentContent:
       type: object
       description: |-

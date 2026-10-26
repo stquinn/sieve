@@ -305,6 +305,17 @@ func TestWS_Paste_AckIsTheResultUnion(t *testing.T) {
 		}
 	})
 
+	t.Run("a placement becomes a block that is not a smart paste", func(t *testing.T) {
+		send(t, c, `{"type":"paste","opId":"op-p","kind":"place","entries":[{"mimeType":"text/plain","content":"`+"```"+`go\nx := 2\n`+"```"+`"}]}`)
+		got := readUntil(t, c, "paste-ack", 2*time.Second)
+		if got["outcome"] != "block" || got["kind"] != "code" {
+			t.Fatalf("got %v, want a code block", got)
+		}
+		if raw, _ := got["rawYaml"].(string); strings.Contains(raw, "smartPaste") {
+			t.Errorf("a placement must not be marked a smart paste: %q", raw)
+		}
+	})
+
 	// A DROPPED FILE takes the same route a paste does: the surface reads it as a
 	// data URI, stamps the filename in the entry's context, and the registry
 	// routes it.

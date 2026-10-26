@@ -169,6 +169,32 @@ describe('MountBinding', () => {
     expect(binding.provider.getOrder()).toEqual(['p2'])
   })
 
+  it('announces a gained or lost block once per burst, and nothing for an edit', () => {
+    vi.useFakeTimers()
+    try {
+      const { binding, sock } = mounted()
+      const heard = vi.fn()
+      document.addEventListener(MountBinding.MEMBERSHIP_CHANGED, heard)
+      vi.runAllTimers()
+      heard.mockClear()
+
+      sock.driveMessage({ type: DocumentFrame.BLOCK_ATTRS_UPDATED, id: 'p1', attrs: { content: 'edited' } })
+      vi.runAllTimers()
+      expect(heard).not.toHaveBeenCalled()
+
+      sock.driveMessage({ type: DocumentFrame.REMOVE_BLOCK, id: 'p1' })
+      sock.driveMessage({ type: DocumentFrame.INSERT_BLOCK, id: 'p3', kind: 'prose', attrs: { content: 'three' }, index: -1 })
+      vi.runAllTimers()
+      expect(heard).toHaveBeenCalledTimes(1)
+      expect(heard.mock.calls[0][0].detail).toEqual({ uuid: UUID })
+
+      binding.close()
+      document.removeEventListener(MountBinding.MEMBERSHIP_CHANGED, heard)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('sends requestSetOrder as a set-order op carrying the complete order', () => {
     const { binding, sock } = mounted()
     binding.provider.requestSetOrder(['p2', 'p1'])

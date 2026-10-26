@@ -1,0 +1,32 @@
+{{define "delete_asset.html"}}
+<div class="delete-modal" style="padding: 1.5rem; background: var(--theme-bgDark); border-radius: 8px;">
+  <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-accentRed); margin-bottom: 1rem;">Delete Asset</h3>
+
+  <p style="font-size: 0.875rem; color: var(--theme-text); margin-bottom: 1.5rem; line-height: 1.4;">
+    Delete <strong>{{.Key}}</strong>? This cannot be undone.
+  </p>
+
+  <p id="asset-delete-error" hidden style="font-size: 0.8125rem; color: var(--theme-accentRed); margin-bottom: 1rem;"></p>
+
+  <form
+    hx-delete="/api/document/{{.UUID | pathenc}}/asset/{{.Key | pathenc}}"
+    hx-swap="none"
+    hx-on::after-request="if (event.detail.successful) { document.getElementById('delete-dialog').close() } else { var e = document.getElementById('asset-delete-error'); e.textContent = event.detail.xhr.responseText; e.hidden = false }"
+    style="display: flex; justify-content: flex-end; gap: 1rem;"
+  >
+    <button
+      type="button"
+      onclick="document.getElementById('delete-dialog').close()"
+      style="padding: 0.5rem 1.25rem; font-size: 0.875rem; font-weight: 500; color: var(--theme-textDim); background: transparent; border: none; cursor: pointer;"
+    >
+      Cancel
+    </button>
+    <button
+      type="submit"
+      style="padding: 0.5rem 1.25rem; font-size: 0.875rem; font-weight: bold; color: var(--theme-bg); background: var(--theme-accentRed); border-radius: 0.5rem; border: none; cursor: pointer;"
+    >
+      Delete
+    </button>
+  </form>
+</div>
+{{end}}

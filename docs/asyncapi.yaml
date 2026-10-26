@@ -1837,7 +1837,7 @@ components:
           $ref: '#/components/schemas/ProtocolPasteKind'
         entries:
           type: array
-          description: 'smart: the clipboard''s views. native-drop: absent — the server takes the paths from the native drop bucket the OS-level catch fed (Wails OnFileDrop); the page''s own view of a drop is never consulted. native-clipboard: absent — the server reads the clipboard itself'
+          description: 'smart: the clipboard''s views. place: the views the host is placing. native-drop: absent — the server takes the paths from the native drop bucket the OS-level catch fed (Wails OnFileDrop); the page''s own view of a drop is never consulted. native-clipboard: absent — the server reads the clipboard itself'
           items:
             $ref: '#/components/schemas/BlockContentEntry'
         slice:

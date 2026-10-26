@@ -801,6 +801,12 @@ func (h *WsHandler) handlePaste(f inboundFrame) {
 		return
 	}
 
+	if msg.Kind == protocol.PasteKindPlace {
+		f.reply(protocol.NewPasteAckFrame(msg.OpID,
+			h.ServiceProvider.Editor.HandlePlacement(f.uuid, msg.Entries, index)))
+		return
+	}
+
 	f.reply(protocol.NewPasteAckFrame(msg.OpID,
 		h.ServiceProvider.Editor.HandlePaste(f.uuid, msg.Entries, index)))
 }

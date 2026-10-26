@@ -248,6 +248,47 @@ func TestSmartImageProcessor_Transform_foreignAssetLandsSized(t *testing.T) {
 	}
 }
 
+// A placement never copies an asset of its own document. Its address is adopted,
+// pending a description; a smart-image's own view is shared with its description
+// carried, so the block is born complete. A view naming another document's asset
+// is still copied in, because a document's assets live in its own folder.
+func TestSmartImageProcessor_Transform_placementShares(t *testing.T) {
+	f := newImageFixture(t)
+	own := "sieve://" + f.source + "/" + f.sourceKey
+	view := func(src string) block.ContentEntry {
+		attrs, _ := json.Marshal(map[string]interface{}{"kind": "smart-image", "id": "held", "src": src, "title": "chart.png", "summary": "Q3", "width": "4"})
+		return block.ContentEntry{MIMEType: "sieve/smart-image", Content: string(attrs), Context: map[string]interface{}{"container": f.source}}
+	}
+	for _, tc := range []struct {
+		name       string
+		entry      block.ContentEntry
+		into       string
+		wantSrc    func(src string) bool
+		wantStatus string
+	}{
+		{"an unused asset's address is adopted", block.ContentEntry{MIMEType: "text/uri-list", Content: own}, f.source,
+			func(src string) bool { return src == own }, block.BlockStatusPending},
+		{"a held asset's view is shared", view(own), f.source,
+			func(src string) bool { return src == own }, block.BlockStatusComplete},
+		{"another document's asset is copied in", view(own), f.target,
+			func(src string) bool { return f.heldCopy(t, src) == "chart.png" }, block.BlockStatusComplete},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			attrs := f.p.Transform([]block.ContentEntry{tc.entry}, tc.into, ident.New(), block.ActionPlace)
+			src, _ := attrs["src"].(string)
+			if attrs == nil || !tc.wantSrc(src) {
+				t.Fatalf("Transform = %v", attrs)
+			}
+			if _, err := f.assets.ServeAssetData(f.source, "chart-2.png"); err == nil {
+				t.Error("a placement wrote a copy into the source document")
+			}
+			if got := f.p.InitAttrs("b1", attrs)["status"]; got != tc.wantStatus {
+				t.Errorf("status = %v, want %s", got, tc.wantStatus)
+			}
+		})
+	}
+}
+
 // Every ingested image is keyed by a readable name, in order of preference: the
 // filename it arrived under, the basename of the URL it came from, then "image".
 // Repeats in one document are uniquified. Only a filename becomes the title.

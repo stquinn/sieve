@@ -28,7 +28,8 @@ func NewTemplates(fsys fs.FS) (*template.Template, error) {
 		"fileIndent": func(depth int) string {
 			return fmt.Sprintf("%.2frem", 1.5+float64(depth)*1.0)
 		},
-		"urlenc": url.QueryEscape,
+		"urlenc":  url.QueryEscape,
+		"pathenc": url.PathEscape,
 		"metaRow": func(label, value string) MetaRow {
 			return MetaRow{Label: label, Value: value}
 		},

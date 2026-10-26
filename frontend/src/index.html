@@ -123,7 +123,7 @@
                 </div>
 
                 <div class="meta-handle"></div>
-                <div id="htmx-meta-panel" class="flex flex-col flex-shrink-0 overflow-hidden bg-tn-bg-dark border-l border-tn-border text-base" hx-get="/ui/views/meta" hx-vals='js:{"tab": window.__metaActiveTab || "meta"}' hx-trigger="load, sieve:invalidate-session from:document, sieve:invalidate-notes from:document, session:changed from:body, notes:changed from:body"></div>
+                <div id="htmx-meta-panel" class="flex flex-col flex-shrink-0 overflow-hidden bg-tn-bg-dark border-l border-tn-border text-base" hx-get="/ui/views/meta" hx-vals='js:{"tab": window.__metaActiveTab || "meta"}' hx-trigger="load, sieve:invalidate-session from:document, sieve:invalidate-notes from:document, sieve:container-membership-changed from:document, session:changed from:body, notes:changed from:body"></div>
             </div>
 
             <div class="status-bar">

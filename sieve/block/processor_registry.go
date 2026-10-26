@@ -199,6 +199,7 @@ type Action string
 
 const (
 	ActionPaste          Action = "paste"            // clipboard/source content -> new block
+	ActionPlace          Action = "place"            // host-placed content -> new block; a stored asset of this document it names is shared, never copied
 	ActionExtract        Action = "extract"          // additive: new block alongside (source survives)
 	ActionTransform      Action = "transform"        // replace the source block in place
 	ActionUndoSmartPaste Action = "undo-smart-paste" // replace a smart-pasted block with its raw text as prose

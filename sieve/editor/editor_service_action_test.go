@@ -53,6 +53,17 @@ func TestHandlePaste_stampsSmartPaste_onDetectionOnly(t *testing.T) {
 	if blk2.Attrs["smartPaste"] == true {
 		t.Errorf("round-trip paste must NOT be tagged smartPaste; attrs=%v", blk2.Attrs)
 	}
+
+	// A placement of the same detected content → NOT tagged.
+	res3 := es.HandlePlacement(uuid, []block.ContentEntry{
+		{MIMEType: "text/plain", Content: "```python\nx = 1\ny = 2\n```"},
+	}, -1)
+	if !res3.IsBlock() {
+		t.Fatalf("expected placement to create a block, got %q", res3.Outcome)
+	}
+	if blk3, _ := es.shadows[uuid].SnapshotBlock(res3.ID); blk3.Attrs["smartPaste"] == true {
+		t.Errorf("placement must NOT be tagged smartPaste; attrs=%v", blk3.Attrs)
+	}
 }
 
 // newTestEditorServiceWithProseBlock creates an EditorService with an open document

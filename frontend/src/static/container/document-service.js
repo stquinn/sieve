@@ -237,13 +237,15 @@ export class DocumentService {
   }
 
   /**
-   * One paste round trip. ONE FRAME, FOUR KINDS: `payload.kind` is the discriminant
+   * One paste round trip. ONE FRAME, FIVE KINDS: `payload.kind` is the discriminant
    * deciding what the server makes of the payload, and what rides with it —
    *
    *   slice            a multi-block clipboard slice, reconstructed server-side.
    *                    The ack NAMES NO BLOCK: a slice created several and can
    *                    single out none.
    *   smart            a clipboard or drop payload, resolved server-side.
+   *   place            content the host chose to place, resolved as smart; the
+   *                    block made is never marked a smart paste.
    *   native-drop      a file drop LANDED; Go takes it from the native drop bucket,
    *                    the OS-level catch that sees every source app identically.
    *                    The entries are the page's readable text, a HINT Go consults

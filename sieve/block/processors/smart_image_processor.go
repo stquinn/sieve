@@ -138,6 +138,9 @@ func (p *SmartImageProcessor) IsSupportedContent(entries []block.ContentEntry) b
 func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string, action block.Action) map[string]interface{} {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
+			if action == block.ActionPlace {
+				return p.placeStored(e, uuid, blockID)
+			}
 			return p.copyStored(e, uuid, blockID)
 		}
 	}
@@ -226,11 +229,9 @@ func (p *SmartImageProcessor) entryImageURL(e block.ContentEntry) string {
 // bytes, and the copy holds the same bytes.
 var copiedAttrs = [...]string{"width", "height", "title", "alt", "summary", "detect", "showSummary"}
 
-// copyStored builds a new block from a copied smart-image's own sieve view. A
-// paste is additive: the source's bytes are copied into document uuid under a
-// new key minted from the source's title, so the new block never points at the
-// source's asset. nil when the source has no src or its bytes cannot be read.
-func (p *SmartImageProcessor) copyStored(e block.ContentEntry, uuid, blockID string) map[string]interface{} {
+// storedSource reads a smart-image's own sieve view: its attrs, and the address
+// of the asset its src names, resolved against the document it came from.
+func (p *SmartImageProcessor) storedSource(e block.ContentEntry, uuid, blockID string) (map[string]interface{}, domain.Address, bool) {
 	source := e.AsAttrsForNewBlock(p)
 	from, ok := e.SourceContainer()
 	if !ok {
@@ -240,6 +241,48 @@ func (p *SmartImageProcessor) copyStored(e block.ContentEntry, uuid, blockID str
 	addr, err := domain.ResolveAssetReference(src, domain.NewContainerAddress(from))
 	if err != nil {
 		logger.Warn("smart-image: copied block names no asset", "block", blockID, "src", src, "err", err)
+		return nil, domain.Address{}, false
+	}
+	return source, addr, true
+}
+
+// carried returns attrs with every copiedAttrs key source holds set on it.
+func (p *SmartImageProcessor) carried(attrs, source map[string]interface{}) map[string]interface{} {
+	for _, k := range copiedAttrs {
+		if v, present := source[k]; present {
+			attrs[k] = v
+		}
+	}
+	return attrs
+}
+
+// placeStored builds a new block from a placed smart-image's own sieve view. An
+// asset of document uuid is shared: the new block names the same file and no
+// bytes are written. An asset of another document is copied in, as copyStored
+// does, because a document's assets live in its own folder. nil when the source
+// has no src or its bytes cannot be read.
+func (p *SmartImageProcessor) placeStored(e block.ContentEntry, uuid, blockID string) map[string]interface{} {
+	source, addr, ok := p.storedSource(e, uuid, blockID)
+	if !ok {
+		return nil
+	}
+	if addr.Container != domain.NewContainerAddress(uuid).Container {
+		return p.copyStored(e, uuid, blockID)
+	}
+	if _, err := p.assets.read(addr); err != nil {
+		logger.Warn("smart-image: placed asset unreadable", "block", blockID, "src", addr.String(), "err", err)
+		return nil
+	}
+	return p.carried(map[string]interface{}{"src": addr.String()}, source)
+}
+
+// copyStored builds a new block from a copied smart-image's own sieve view. A
+// paste is additive: the source's bytes are copied into document uuid under a
+// new key minted from the source's title, so the new block never points at the
+// source's asset. nil when the source has no src or its bytes cannot be read.
+func (p *SmartImageProcessor) copyStored(e block.ContentEntry, uuid, blockID string) map[string]interface{} {
+	source, addr, ok := p.storedSource(e, uuid, blockID)
+	if !ok {
 		return nil
 	}
 	title, _ := source["title"].(string)
@@ -255,13 +298,7 @@ func (p *SmartImageProcessor) copyStored(e block.ContentEntry, uuid, blockID str
 		logger.Warn("smart-image: copy failed", "block", blockID, "src", addr.String(), "err", err)
 		return nil
 	}
-	attrs := map[string]interface{}{"src": ref}
-	for _, k := range copiedAttrs {
-		if v, present := source[k]; present {
-			attrs[k] = v
-		}
-	}
-	return attrs
+	return p.carried(map[string]interface{}{"src": ref}, source)
 }
 
 // acquire resolves ONE content entry to the image it denotes. Exactly one result is

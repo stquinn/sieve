@@ -106,6 +106,7 @@ import { docPosForBlockIndex, blockIndexAfter } from '../src/static/lens/documen
 import { caretInRawTextBlock } from '../src/static/lens/document-editor/paste-context.js'
 import { ActionMacro } from '../src/static/shell/trigger-providers.js'
 import { LensCapability } from '../src/static/contract/lens-capabilities.js'
+import { ASSET_DRAG_TYPE } from '../src/static/contract/container-provider.js'
 import { policyEnterKeydown } from '../src/static/lens/document-editor/interaction-policy.js'
 import { schema as fxSchema, build, docWithCaret, docWithCaretAt, docWithRange, docWithNodeSelection } from './helpers/editor-fixture.js'
 // The REAL token rule: the chips pair against the surface's flat text with it,
@@ -1563,6 +1564,64 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     const { props } = mountPaste(wyPromptHost(), 'prompt:p')
     const event = { clipboardData: clip({ text: 'plain', items: [] }), target: {}, preventDefault: vi.fn() }
     expect(props.handlePaste({}, event)).toBe(false)
+  })
+
+  // Placing an asset from the Assets tab: Insert and drop send the same paste and
+  // differ only in where the anchor comes from.
+  describe('asset placement', () => {
+    const ENTRIES = [{ mimeType: 'text/uri-list', content: 'sieve://doc-1/holiday.png' }]
+
+    it('pasteEntries with no caret placed since mount lands at the end — no anchor', async () => {
+      const host = wyHost()
+      host.provider.paste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
+      const { s } = mountPaste(host, 'doc-1')
+      await expect(s.pasteEntries(ENTRIES)).resolves.toBe('block')
+      expect(host.provider.paste).toHaveBeenCalledWith({ kind: 'place', entries: ENTRIES }, undefined)
+      expect(host.peekInsertAnchorForBlock).not.toHaveBeenCalled()
+    })
+
+    it('pasteEntries once the editor has held focus follows the caret block, consuming its anchor', async () => {
+      const anchor = { id: 'p-1' }
+      const host = wyHost({ peekInsertAnchorForBlock: vi.fn(() => ({ afterBlockId: 'b1', anchor })) })
+      host.provider.paste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
+      const { s, ed } = mountPaste(host, 'doc-1')
+      ed.view.dom.dispatchEvent(new Event('focusin'))
+      await s.pasteEntries(ENTRIES)
+      expect(host.provider.paste).toHaveBeenCalledWith({ kind: 'place', entries: ENTRIES }, 'b1')
+      expect(host.consumeInsertAnchor).toHaveBeenCalledWith(anchor)
+    })
+
+    /** A drag over b1's lower half: its box spans y 0..20. */
+    function assetDrag(ed, types = [ASSET_DRAG_TYPE]) {
+      ed.view.posAtCoords = () => ({ pos: 1 })
+      ed.view.nodeDOM = () => ({ getBoundingClientRect: () => ({ top: 0, height: 20 }) })
+      return {
+        dataTransfer: { types, getData: (t) => (t === ASSET_DRAG_TYPE ? JSON.stringify(ENTRIES) : ''), items: [], dropEffect: '' },
+        clientX: 1, clientY: 15, preventDefault: vi.fn(),
+      }
+    }
+
+    it('a drop carrying the asset type pastes its entries after the boundary block, at the boundary', async () => {
+      const host = wyHost()
+      host.provider.paste.mockReturnValue(Promise.resolve({ outcome: 'block' }))
+      const { ed, props } = mountPaste(host, 'doc-1')
+      const event = assetDrag(ed)
+      expect(props.handleDrop({}, event, null, false)).toBe(true)
+      expect(event.preventDefault).toHaveBeenCalled()
+      expect(host.provider.paste).toHaveBeenCalledWith({ kind: 'place', entries: ENTRIES }, 'b1')
+      expect(host.peekInsertAnchorAt).not.toHaveBeenCalled()
+    })
+
+    it('dragover accepts only the asset type, as a copy', () => {
+      const { ed, props } = mountPaste(wyHost(), 'doc-1')
+      const asset = assetDrag(ed)
+      expect(props.handleDOMEvents.dragover(ed.view, asset)).toBe(true)
+      expect(asset.preventDefault).toHaveBeenCalled()
+      expect(asset.dataTransfer.dropEffect).toBe('copy')
+      const other = assetDrag(ed, ['text/plain'])
+      expect(props.handleDOMEvents.dragover(ed.view, other)).toBe(false)
+      expect(other.preventDefault).not.toHaveBeenCalled()
+    })
   })
 
   // ── insertLink — the Insert-from-URL ladder's "Link" rung (#67) ──────────────

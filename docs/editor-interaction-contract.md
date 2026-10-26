@@ -515,6 +515,14 @@ existing primitives, ordered on one socket. Capture-time never consumes: a
 cancelled dialog must not eat the blank line (known gap: the async image-upload
 dialog path commits outside the editor and does not consume — acceptable).
 
+**The Assets tab's Insert** is a `place` paste of the asset's entries (matched
+like `smart`, never marked a smart paste; an asset a block already holds is
+shared — the placed block names the same file and carries that block's
+description — where a paste of the block would copy it) placed by this rule at
+the caret, with one difference: when the editor has not held focus
+since it mounted there is no caret, and the asset is placed at the end of the
+document.
+
 ## Converting a prose link (decided 2026-07-27, #67)
 
 A link is ordinary markdown, so it is a **mark over a text range**, not a block:
@@ -641,11 +649,12 @@ frame, several blocks in drag order.
 |---|---|
 | Any external file drag, any source app | Claimed; `native-drop` frame with the index only; **Go redeems the bucket** and ingests — one block per file, the registry picking each kind as for any paste. |
 | External text or link drag | Claimed, and the bucket holds no file — nothing happens. External text/link drag-in is NOT a supported gesture (copy-paste covers it); WebKitGTK never let the page read these anyway. |
+| A row dragged from the Assets tab (`application/x-sieve-asset`, carrying the row's paste entries) | Claimed. While it is over the editor, an insertion line (a widget decoration) marks the top-level block boundary nearest the pointer — the half of the block under it picks before or after — and the stock drop cursor is hidden. The drop sends the row's entries as a `place` paste — matched like `smart`, sharing rather than copying a file a block already holds, and never marked a smart paste — anchored after the boundary's block; it never lands inside a block and never consumes an empty paragraph. |
 | Internal PM drag (`slice`/`moved` set) | Not claimed — PM handles it natively (block reorder, moved selections). |
 | Into a prompt pseudo-document | Not claimed — a prompt is a plain file with no block tree. |
 
-Placement follows the block-insertion rule above, at the DROP coordinate rather
-than the caret: the index is PEEKED (side-effect-free) before the round trip and
+An external file drop's placement follows the block-insertion rule above, at
+the DROP coordinate rather than the caret: the index is PEEKED (side-effect-free) before the round trip and
 the empty-paragraph anchor is consumed only once Go confirms a block — a drag
 naming a file this machine no longer has answers `none`, and the caret's blank
 line has to survive that.

@@ -137,6 +137,12 @@ type Store interface {
 
 	LoadAsset(category Category, uuidParent string, assetKey string) (AssetStorable, error)
 
+	// DeleteAsset removes the asset assetKey owned by document uuidParent. The key
+	// must name an asset the document owns on disk; anything else — the document's
+	// own content, a path — is an error and nothing is removed. On success the
+	// document's ownership list no longer holds the asset.
+	DeleteAsset(category Category, uuidParent string, assetKey string) error
+
 	LoadFolder(category Category, key string) (FolderStorable, error)
 
 	// Delete removes s and its entire version history from the Store.

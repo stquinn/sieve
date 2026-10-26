@@ -382,6 +382,39 @@ func (fs *FileStore) LoadAsset(cat store.Category, uuid string, assetKey string)
 	return nil, fmt.Errorf("filestore: LoadAsset: asset %s not found in %s", assetKey, uuid)
 }
 
+func (fs *FileStore) DeleteAsset(cat store.Category, uuid string, assetKey string) error {
+	cached, ok := fs.LookupUUID(uuid)
+	if !ok {
+		return fmt.Errorf("filestore: DeleteAsset: UUID %s not found", uuid)
+	}
+	cat, key := cached.Category(), dirKey(cached)
+	doc, err := fs.Load(cat, key)
+	if err != nil {
+		return fmt.Errorf("filestore: DeleteAsset: %w", err)
+	}
+	ms, ok := doc.(store.MetaStorable)
+	if !ok {
+		return fmt.Errorf("filestore: DeleteAsset: %s is not a MetaStorable", uuid)
+	}
+	owned := false
+	for _, a := range ms.Owns() {
+		if a.Key() == assetKey {
+			owned = true
+			break
+		}
+	}
+	if !owned {
+		return fmt.Errorf("filestore: DeleteAsset: asset %s not found in %s", assetKey, uuid)
+	}
+	if err := os.Remove(filepath.Join(fs.docDir(cat, key), assetKey)); err != nil {
+		return fmt.Errorf("filestore: delete asset %s: %w", assetKey, err)
+	}
+	if _, err := fs.Load(cat, key); err != nil {
+		return fmt.Errorf("filestore: DeleteAsset: reload %s: %w", uuid, err)
+	}
+	return nil
+}
+
 func (fs *FileStore) Delete(s store.Storable) error {
 	path := dirKey(s)
 	logger.Debug("Deleting: %s", s.ExternalRef())

@@ -29,6 +29,8 @@ func (h *MetaHandler) RegisterPaths(r chi.Router) {
 	r.Get("/ui/views/meta", h.handleMeta)
 	r.Get("/ui/views/meta/dialog/restore", h.handleRestorePrompt)
 	r.Post("/api/meta/restore", h.handleRestore)
+	r.Get("/ui/views/meta/dialog/delete-asset", h.handleDeleteAssetPrompt)
+	r.Delete("/api/document/{uuid}/asset/{key}", h.handleDeleteAsset)
 }
 
 type metaPanelData struct {
@@ -43,6 +45,8 @@ type metaPanelData struct {
 	PromptType string
 	Now        string
 	HasAssets  bool
+	// InUseHint is why an in-use asset's Delete is disabled.
+	InUseHint string
 }
 
 type metaViewData struct {
@@ -89,6 +93,29 @@ type assetViewData struct {
 	FileName string
 	MimeType string
 	IsImage  bool
+	// InUse reports that a block of this document holds the asset, or that the
+	// document's blocks could not be read to say otherwise.
+	InUse bool
+	// Address is the asset's absolute sieve address.
+	Address string
+	// HolderID is the id of a smart-image block holding the asset — the block
+	// whose description a placement carries. "" when no smart-image holds it.
+	HolderID string
+}
+
+// Placeable reports whether Insert and drag can place the asset: any image. The
+// placed block shares the file with whatever already holds it.
+func (a assetViewData) Placeable() bool {
+	return a.IsImage
+}
+
+// assetIndex is what a document's blocks say about its assets, from one walk:
+// the label each is known by, and the block holding each. known is false when
+// the blocks could not be read, and nothing can then be said to be unused.
+type assetIndex struct {
+	labels  map[string]assetLabel
+	holders map[string]block.SieveBlock
+	known   bool
 }
 
 // assetLabel is what a block knows about the asset it owns: what to call it, and
@@ -186,6 +213,50 @@ func (h *MetaHandler) handleRestore(w http.ResponseWriter, r *http.Request) {
 
 }
 
+func (h *MetaHandler) handleDeleteAssetPrompt(w http.ResponseWriter, r *http.Request) {
+	data := struct {
+		UUID string
+		Key  string
+	}{
+		UUID: r.URL.Query().Get("uuid"),
+		Key:  r.URL.Query().Get("key"),
+	}
+	if err := h.Tmpl.ExecuteTemplate(w, "delete_asset.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleDeleteAsset removes an asset no block of its document holds. The holder
+// check is the server's own, against the blocks the editor holds now, so a panel
+// rendered before a placement cannot delete what that placement holds.
+func (h *MetaHandler) handleDeleteAsset(w http.ResponseWriter, r *http.Request) {
+	uuid := chi.URLParam(r, "uuid")
+	key, err := url.PathUnescape(chi.URLParam(r, "key"))
+	if err != nil || uuid == "" || key == "" {
+		http.Error(w, "missing document or asset", http.StatusBadRequest)
+		return
+	}
+	_, held, err := h.ServiceProvider.Editor.AssetHolder(uuid, key)
+	if err != nil {
+		http.Error(w, "document not found", http.StatusNotFound)
+		return
+	}
+	if held {
+		http.Error(w, assetInUseMessage, http.StatusConflict)
+		return
+	}
+	if err := h.ServiceProvider.Assets.Delete(uuid, key); err != nil {
+		http.Error(w, "asset not found", http.StatusNotFound)
+		return
+	}
+	h.EmitNotesChanged()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// assetInUseMessage is why an asset a block holds cannot be deleted, and what to
+// do instead.
+const assetInUseMessage = "Used in this document — delete the image first"
+
 func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanelData {
 	isPrompt := strings.HasPrefix(uuidOrPromptName, "prompt:")
 	promptType := ""
@@ -199,6 +270,7 @@ func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanel
 		IsPrompt:   isPrompt,
 		PromptType: promptType,
 		Now:        metaFmtTime(time.Now()),
+		InUseHint:  assetInUseMessage,
 	}
 	if isPrompt {
 		return data
@@ -213,7 +285,7 @@ func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanel
 		}
 		data.Meta = toMetaView(b)
 		data.Versions = toVersionViews(b.Versions(), b.UUID())
-		data.Assets = toAssetViews(b.Storable().Owns(), h.assetLabels(b))
+		data.Assets = toAssetViews(b.UUID(), b.Storable().Owns(), h.indexAssets(b.UUID()))
 		data.HasAssets = len(data.Assets) > 0
 		return data
 	}
@@ -298,34 +370,48 @@ func toVersionViews(refs []store.VersionRef, uuidEnc string) []versionViewData {
 	return out
 }
 
-// assetLabels maps an asset's key, stem, or legacy block id to the label its block knows it by.
+// indexAssets reads document uuid's current blocks once for both answers the
+// Assets tab needs.
 //
-// An asset that arrived without a name is keyed by a uuid (or a legacy <blockID><ext>), and a
-// named one's key is sanitised and uniquified, so a key alone may not say what the asset is.
-// The block holds the real name, so the tab reads it back from there.
+// A label maps an asset's key, stem, or legacy block id to the name its block
+// knows it by: an asset that arrived without a name is keyed by a uuid (or a
+// legacy <blockID><ext>), and a named one's key is sanitised and uniquified, so a
+// key alone may not say what the asset is. A label attr is read from the block's
+// attrs, else from its cached face (where a reference keeps its title).
 //
-// Kind-agnostic ON PURPOSE: it asks every block for the same attrs rather than
-// switching on kind, so a future kind that names its asset is labelled without
-// touching this. A label attr is read from the block's attrs, else from its
-// cached face (where a reference keeps its title). An asset attr (src, svgAsset,
-// asset, uri) labels only an asset of d itself, in whatever spelling it takes. A
-// label is a nicety, so a document that will not parse yields no labels rather
-// than failing the panel.
-func (h *MetaHandler) assetLabels(d domain.Document) map[string]assetLabel {
-	blocks, err := block.NewDocumentCodec(block.GlobalRegistry()).Deserialize(string(d.Body()))
-	if err != nil {
-		return nil
+// Kind-agnostic: every block is asked the same questions, so a future kind that
+// names or holds an asset is covered without touching this.
+func (h *MetaHandler) indexAssets(uuid string) assetIndex {
+	if h.ServiceProvider == nil || h.ServiceProvider.Editor == nil {
+		return assetIndex{}
 	}
-	self := domain.NewContainerAddress(d.UUID())
-	out := make(map[string]assetLabel, len(blocks))
+	blocks, err := h.ServiceProvider.Editor.Blocks(uuid)
+	if err != nil {
+		return assetIndex{}
+	}
+	return h.indexBlocks(uuid, blocks)
+}
+
+// indexBlocks is indexAssets over blocks already read.
+func (h *MetaHandler) indexBlocks(uuid string, blocks []block.SieveBlock) assetIndex {
+	self := domain.NewContainerAddress(uuid)
+	idx := assetIndex{
+		labels:  make(map[string]assetLabel, len(blocks)),
+		holders: make(map[string]block.SieveBlock),
+		known:   true,
+	}
 	for _, blk := range blocks {
-		face, _ := blk.Attrs["cache"].(map[string]interface{})
-		str := func(key string) string {
-			v, _ := blk.Attrs[key].(string)
-			if strings.TrimSpace(v) == "" {
-				v, _ = face[key].(string)
+		held := blk.HeldAssets(self)
+		for _, key := range held {
+			if prev, ok := idx.holders[key]; !ok || (prev.Kind != smartImageKind && blk.Kind == smartImageKind) {
+				idx.holders[key] = blk
 			}
-			return strings.TrimSpace(v)
+		}
+		str := func(key string) string {
+			if v := strings.TrimSpace(blk.StringAttr(key)); v != "" {
+				return v
+			}
+			return strings.TrimSpace(blk.FaceString(key))
 		}
 		label := assetLabel{Name: str("title")}
 		for _, key := range []string{"alt", "summary"} {
@@ -336,22 +422,22 @@ func (h *MetaHandler) assetLabels(d domain.Document) map[string]assetLabel {
 		if label.Name == "" && label.Detail == "" {
 			continue
 		}
-		out[blk.ID] = label
-		for _, k := range []string{"src", "svgAsset", "asset", "uri"} {
-			addr, err := domain.ResolveAssetReference(str(k), self)
-			if err != nil || addr.Container != self.Container {
-				continue
-			}
-			out[addr.Leaf] = label
-			if stem := strings.TrimSuffix(addr.Leaf, filepath.Ext(addr.Leaf)); stem != "" {
-				out[stem] = label
+		idx.labels[blk.ID] = label
+		for _, key := range held {
+			idx.labels[key] = label
+			if stem := strings.TrimSuffix(key, filepath.Ext(key)); stem != "" {
+				idx.labels[stem] = label
 			}
 		}
 	}
-	return out
+	return idx
 }
 
-func toAssetViews(storables []store.Storable, labels map[string]assetLabel) []assetViewData {
+// smartImageKind is the kind whose description a placement of an in-use image carries.
+const smartImageKind = "smart-image"
+
+func toAssetViews(uuid string, storables []store.Storable, idx assetIndex) []assetViewData {
+	labels := idx.labels
 	var out []assetViewData
 	for _, s := range storables {
 		if as, ok := s.(store.AssetStorable); ok {
@@ -382,14 +468,21 @@ func toAssetViews(storables []store.Storable, labels map[string]assetLabel) []as
 			} else if detail == shown {
 				detail = ""
 			}
-			out = append(out, assetViewData{
+			holder, held := idx.holders[name]
+			view := assetViewData{
 				SrcURL:   ref,
 				Name:     shown,
 				Detail:   detail,
 				FileName: name,
 				MimeType: mt,
 				IsImage:  strings.HasPrefix(mt, "image/"),
-			})
+				InUse:    held || !idx.known,
+				Address:  domain.NewLeafAddress(uuid, name).String(),
+			}
+			if held && holder.Kind == smartImageKind {
+				view.HolderID = holder.ID
+			}
+			out = append(out, view)
 		}
 	}
 	return out

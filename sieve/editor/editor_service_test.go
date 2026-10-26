@@ -1,8 +1,12 @@
 package editor
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"image"
+	"image/png"
 	"reflect"
 	"sieve/ident"
 	"sieve/sieve/block"
@@ -685,6 +689,82 @@ func TestEditorService_HandlePaste_declinedTransformMakesNoBlock(t *testing.T) {
 	}
 	if after := len(es.shadows[uuid].SnapshotBlocks()); after != before {
 		t.Errorf("a declined transform must add no block: %d -> %d", before, after)
+	}
+}
+
+// Placing an asset a block holds sends that block's sieve view as a placement:
+// the new block shares the file and carries the description, COMPLETE at once.
+// The same view as a paste is a copy under its own key. An asset no block holds
+// is placed by its absolute address, which smart-image claims (and adopts in
+// place — pinned by the processor's own tests). Either way the block lands after
+// the anchor block.
+func TestEditorService_placementSharesWherePasteCopies(t *testing.T) {
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 4, 3))); err != nil {
+		t.Fatalf("encode png: %v", err)
+	}
+	for _, tc := range []struct {
+		name    string
+		place   bool
+		wantKey string
+	}{
+		{"placement shares the file", true, "holiday.png"},
+		{"paste copies it", false, "holiday-2.png"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			es, uuid := newDropEditor(t)
+			block.RegisterProcessor(processors.NewSmartImageProcessor(es.services))
+			if _, err := es.services.Assets.Save(domain.WorkingCopy, uuid, "holiday.png", encoded.Bytes()); err != nil {
+				t.Fatalf("seed asset: %v", err)
+			}
+			src := "sieve://" + uuid + "/holiday.png"
+			if kind, _, _, ok := block.FirstPasteMatch([]block.ContentEntry{{MIMEType: "text/uri-list", Content: src}}); !ok || kind != "smart-image" {
+				t.Errorf("an unused asset's address matched %q (%v), want smart-image", kind, ok)
+			}
+			first, _, err := es.CreateBlock(uuid, "prose", map[string]interface{}{"content": "first"}, block.AppendIndex)
+			if err != nil {
+				t.Fatalf("seed prose: %v", err)
+			}
+			if _, _, err := es.CreateBlock(uuid, "prose", map[string]interface{}{"content": "last"}, block.AppendIndex); err != nil {
+				t.Fatalf("seed prose: %v", err)
+			}
+			view, _ := json.Marshal(map[string]interface{}{
+				"kind": "smart-image", "id": "held", "src": src, "title": "holiday.png", "summary": "A beach", "width": "4", "height": "3",
+			})
+			entries := []block.ContentEntry{{MIMEType: "sieve/smart-image", Content: string(view), Context: map[string]interface{}{"container": uuid}}}
+			index := es.ResolveAnchor(uuid, block.Anchor{AfterBlockID: first})
+
+			var res block.PasteResult
+			if tc.place {
+				res = es.HandlePlacement(uuid, entries, index)
+			} else {
+				res = es.HandlePaste(uuid, entries, index)
+			}
+			if !res.IsBlock() || res.Kind != "smart-image" {
+				t.Fatalf("result = %+v, want a smart-image block", res)
+			}
+			blocks := es.shadows[uuid].SnapshotBlocks()
+			at := -1
+			for i, b := range blocks {
+				if b.ID == res.ID {
+					at = i
+				}
+			}
+			if at < 1 || blocks[at-1].ID != first {
+				t.Fatalf("block landed at %d, want directly after the anchor %s", at, first)
+			}
+			placed := blocks[at].Attrs
+			if want := "sieve://" + uuid + "/" + tc.wantKey; placed["src"] != want {
+				t.Errorf("src = %v, want %s", placed["src"], want)
+			}
+			if placed["status"] != block.BlockStatusComplete || placed["summary"] != "A beach" {
+				t.Errorf("status = %v, summary = %v; want COMPLETE carrying the description", placed["status"], placed["summary"])
+			}
+			_, copyErr := es.services.Assets.ServeAssetData(uuid, "holiday-2.png")
+			if copied := copyErr == nil; copied == tc.place {
+				t.Errorf("holiday-2.png written = %v, want %v", copied, !tc.place)
+			}
+		})
 	}
 }
 

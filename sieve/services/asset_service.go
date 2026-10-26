@@ -56,6 +56,16 @@ func (as *AssetService) ServeAssetData(docUUID, filename string) ([]byte, error)
 	return nil, fmt.Errorf("asset not found: %s/%s", docUUID, filename)
 }
 
+// Delete removes the asset filename owned by document docUUID, irreversibly.
+// Whether any block still holds it is the caller's question; this removes the
+// file it is told to.
+func (as *AssetService) Delete(docUUID, filename string) error {
+	if err := as.st.DeleteAsset(domain.WorkingCopy, docUUID, filename); err != nil {
+		return fmt.Errorf("asset: delete %s from %s: %w", filename, docUUID, err)
+	}
+	return nil
+}
+
 // Save stores binary data as an asset and returns the resulting ImageAsset.
 // category must be WorkingCopy (for buffer pastes) or LibraryCategory (for note
 // pastes). parentContext is the document logically owning the asset, and assetID

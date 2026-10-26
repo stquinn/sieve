@@ -42,6 +42,7 @@ func walkRoutes(t *testing.T) []string {
 // change to a published contract, and the failure is the point.
 func TestRouteTable(t *testing.T) {
 	want := []string{
+		"DELETE /api/document/{uuid}/asset/{key}",
 		"DELETE /api/folder/{id}",
 		"DELETE /api/note/{id}",
 		"DELETE /mcp",
@@ -60,6 +61,7 @@ func TestRouteTable(t *testing.T) {
 		"GET /ui/views/library/current",
 		"GET /ui/views/licenses",
 		"GET /ui/views/meta",
+		"GET /ui/views/meta/dialog/delete-asset",
 		"GET /ui/views/meta/dialog/restore",
 		"GET /ui/views/prompts",
 		"GET /ui/views/search",
