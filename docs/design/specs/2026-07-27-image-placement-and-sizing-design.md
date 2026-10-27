@@ -122,9 +122,10 @@ Three hover-revealed handles extend the existing `#setupResize`:
 The handle you grab *is* the intent. No lock toggle, no mode, no persisted lock
 state. Min-size clamped on both axes, matching today's `Math.max(40, …)`.
 
-**Reset to natural size** — double-click the corner handle copies
-`naturalWidth`/`naturalHeight` into `width`/`height`. A local attr copy; no
-wire op.
+**Reset to natural size** — double-click the corner handle commits the decoded
+image's `naturalWidth`/`naturalHeight` (the `<img>` element's, not attrs: #53
+stamps natural size into `width`/`height` only, so no natural-size attr exists).
+An image with no intrinsic size commits `resize('', '')`, the unsized default.
 
 All four gestures commit through the **existing** `resize(width, height)`
 semantic verb, whose signature already takes both dimensions.
@@ -152,7 +153,7 @@ DROP (JS)                            meta_panel.html → asset drag source class
 
 RESIZE (JS)                          smart-image-renderer.js  (PM-free)
   corner / right / bottom handles ──► resize(width, height) ──► BlockService
-  dblclick corner ─────────────────► resize(naturalWidth, naturalHeight)
+  dblclick corner ─────────────────► resize(img.naturalWidth, img.naturalHeight)
 ```
 
 Layer discipline this preserves:

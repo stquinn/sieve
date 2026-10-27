@@ -122,6 +122,16 @@ for why the mechanism is precedence rather than a policy flag.
   policy extension owns keys, not pointer/wheel), scoped to a static render
   surface. The pane uses `contain: layout paint` so the zoom transform does
   not repaint the surrounding contentEditable document in WebKit.
+- **Drag a handle = resize, double-click the corner = natural size**
+  (smart-image, #186) — three hover-revealed handles on the image frame, and
+  the handle grabbed is the intent: the **corner** scales proportionally, the
+  **right edge** changes width only, the **bottom edge** height only. Both axes
+  floor at 40px. A press with no movement commits nothing. **Double-click the
+  corner** sets width/height to the decoded image's natural size; an image with
+  no intrinsic size (an SVG without width/height) clears both, back to the
+  responsive default. A per-renderer mouse gesture: `mousedown` on the handle,
+  `mousemove`/`mouseup` on `window` for the drag's life, no pointer capture.
+  Every gesture commits through the kind's `resize(width, height)` verb.
 - **Mod+K = edit / create a link** (#67, 2026-07-27) — the ONE link chord, and
   the only way to make a link out of text ALREADY IN the document (a bare click
   never navigates). It is not the only way a link ENTERS one: pasting a URL is

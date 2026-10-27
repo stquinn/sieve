@@ -70,7 +70,7 @@ describe('SmartImageRenderer (bare-page DoD)', () => {
     expect(matches.length).toBe(1)
   })
 
-  it('render() builds the image wrapper + resizer + hidden badge, styled purely from --theme-* vars', () => {
+  it('render() builds the image wrapper + three resize handles + hidden badge, styled purely from --theme-* vars', () => {
     const { dom } = mount({ id: 'im-a1b2', src: '/ui/assets/doc-uuid/pic.png', alt: 'a cat', status: 'COMPLETE' })
     document.body.appendChild(dom)
 
@@ -79,7 +79,9 @@ describe('SmartImageRenderer (bare-page DoD)', () => {
     const img = /** @type {HTMLImageElement} */ (dom.querySelector('img'))
     expect(img.src).toContain('/ui/assets/doc-uuid/pic.png')
     expect(img.alt).toBe('a cat')
-    expect(dom.querySelector('.image-resizer')).toBeTruthy()
+    expect(Array.from(dom.querySelectorAll('.image-resizer')).map((h) => h.className)).toEqual([
+      'image-resizer image-resizer--corner', 'image-resizer image-resizer--right', 'image-resizer image-resizer--bottom',
+    ])
 
     const badge = /** @type {HTMLElement} */ (dom.querySelector('.smart-image-status'));
     expect(getComputedStyle(badge).display).toBe('none')
@@ -119,20 +121,57 @@ describe('SmartImageRenderer (bare-page DoD)', () => {
     expect(getComputedStyle(badge).display).toBe('none')
   })
 
-  it('resize drag commits width/height through the ContainerTransport (drag release self-invokes the resize verb)', () => {
+  /**
+   * Mount a live 200×100 image (stored, since jsdom has no layout) and drag one
+   * handle by (dx, dy); returns the attrs every update-block carried.
+   * @param {string} handle @param {number} dx @param {number} dy @param {object} [size]
+   */
+  function drag(handle, dx, dy, size = { width: '200', height: '100' }) {
     const { provider, patchesFor } = serviceWithBlock('im-e5f6')
-    const { dom } = mount({ id: 'im-e5f6', src: '/x.png', status: 'COMPLETE' }, provider)
+    const { dom } = mount({ id: 'im-e5f6', src: '/x.png', status: 'COMPLETE', ...size }, provider)
     document.body.appendChild(dom)
-    const resizer = /** @type {HTMLElement} */ (dom.querySelector('.image-resizer'));
-
-    resizer.dispatchEvent(new MouseEvent('mousedown', { clientX: 100, bubbles: true }))
-    window.dispatchEvent(new MouseEvent('mousemove', { clientX: 140, bubbles: true }))
+    const el = /** @type {HTMLElement} */ (dom.querySelector(`.image-resizer--${handle}`))
+    el.dispatchEvent(new MouseEvent('mousedown', { clientX: 100, clientY: 100, bubbles: true }))
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: 100 + dx, clientY: 100 + dy, bubbles: true }))
     window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    return { patches: patchesFor('im-e5f6'), dom }
+  }
 
-    const patches = patchesFor('im-e5f6')
-    expect(patches.length).toBe(1)
-    expect(typeof patches[0].width).toBe('string')
-    expect(typeof patches[0].height).toBe('string')
+  it.each([
+    ['corner keeps the ratio', 'corner', 40, 999, { width: '240', height: '120' }],
+    ['right edge moves width only', 'right', 40, 999, { width: '240', height: '100' }],
+    ['bottom edge moves height only', 'bottom', 999, 40, { width: '200', height: '140' }],
+    ['right edge floors width at 40', 'right', -500, 0, { width: '40', height: '100' }],
+    ['bottom edge floors height at 40', 'bottom', 0, -500, { width: '200', height: '40' }],
+    ['corner floors the short side at 40, ratio kept', 'corner', -500, 0, { width: '80', height: '40' }],
+  ])('drag: %s — commits once through the resize verb', (_name, handle, dx, dy, expected) => {
+    const { patches, dom } = drag(handle, dx, dy)
+    expect(patches).toEqual([expected])
+    expect(/** @type {HTMLImageElement} */ (dom.querySelector('img')).style.width).toBe(expected.width + 'px')
+  })
+
+  it('corner floors the short side at 40 on a tall image too', () => {
+    expect(drag('corner', -500, 0, { width: '100', height: '200' }).patches).toEqual([{ width: '40', height: '80' }])
+  })
+
+  it('a press and release with no movement commits nothing', () => {
+    for (const handle of ['corner', 'right', 'bottom']) expect(drag(handle, 0, 0).patches).toEqual([])
+  })
+
+  it('double-click on the corner resets to the decoded natural size; a sizeless image clears both attrs', () => {
+    const { provider, patchesFor } = serviceWithBlock('im-e5f6')
+    const { dom } = mount({ id: 'im-e5f6', src: '/x.png', status: 'COMPLETE', width: '200', height: '100' }, provider)
+    const img = /** @type {HTMLImageElement} */ (dom.querySelector('img'))
+    const corner = /** @type {HTMLElement} */ (dom.querySelector('.image-resizer--corner'))
+
+    corner.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    Object.defineProperty(img, 'naturalWidth', { value: 1200 })
+    Object.defineProperty(img, 'naturalHeight', { value: 800 })
+    corner.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    const right = /** @type {HTMLElement} */ (dom.querySelector('.image-resizer--right'))
+    right.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+
+    expect(patchesFor('im-e5f6')).toEqual([{ width: '', height: '' }, { width: '1200', height: '800' }])
   })
 
   it('resize(width, height) frames the expected FROZEN block-op via a real ContainerTransport', () => {

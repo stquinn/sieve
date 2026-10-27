@@ -121,17 +121,39 @@ export const smartImageStyles = /* css */ `
 
   .image-resizer {
     position: absolute;
+    background: var(--theme-accentPrimary);
+    border: 1px solid var(--theme-bg);
+    border-radius: 2px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    z-index: 10;
+  }
+
+  .image-resizer--corner {
     right: 0;
     bottom: 0;
     width: 12px;
     height: 12px;
-    background: var(--theme-accentPrimary);
-    border: 1px solid var(--theme-bg);
-    border-radius: 2px;
     cursor: nwse-resize;
-    opacity: 0;
-    transition: opacity 0.2s ease;
-    z-index: 10;
+    z-index: 11;
+  }
+
+  .image-resizer--right {
+    right: 0;
+    top: 50%;
+    width: 6px;
+    height: 28px;
+    transform: translateY(-50%);
+    cursor: ew-resize;
+  }
+
+  .image-resizer--bottom {
+    bottom: 0;
+    left: 50%;
+    width: 28px;
+    height: 6px;
+    transform: translateX(-50%);
+    cursor: ns-resize;
   }
 
   .image-block:hover .image-resizer,
