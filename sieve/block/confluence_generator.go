@@ -6,6 +6,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"sieve/ident"
+
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
@@ -34,7 +36,8 @@ import (
 // because that is what renders an HTML-skeleton table's cells: one whose own
 // tags do not balance makes the whole body unparseable. Safe for concurrent use.
 type ConfluenceGenerator struct {
-	md goldmark.Markdown
+	md       goldmark.Markdown
+	plantuml plantumlWriter
 }
 
 // confluenceRendererPriority registers the storage-format overrides above the
@@ -105,8 +108,25 @@ var (
 	confluenceCommentOpen = regexp.MustCompile(`(?s)<!--.*`)
 )
 
-// NewConfluenceGenerator returns a generator with its own GFM goldmark instance.
+// NewConfluenceGenerator returns a generator for Confluence Server and Data
+// Center, whose PlantUML diagram is the plantuml structured macro.
 func NewConfluenceGenerator() *ConfluenceGenerator {
+	g := newConfluenceGenerator()
+	g.plantuml = serverPlantUML{g: g}
+	return g
+}
+
+// NewConfluenceCloudGenerator returns a generator for Confluence Cloud, whose
+// PlantUML diagram is the PlantUML Forge app's ADF extension node.
+func NewConfluenceCloudGenerator() *ConfluenceGenerator {
+	g := newConfluenceGenerator()
+	g.plantuml = cloudPlantUML{mint: ident.New}
+	return g
+}
+
+// newConfluenceGenerator returns a generator with its own GFM goldmark instance
+// and no PlantUML writer.
+func newConfluenceGenerator() *ConfluenceGenerator {
 	g := &ConfluenceGenerator{}
 	g.md = goldmark.New(
 		goldmark.WithExtensions(
@@ -149,17 +169,17 @@ func (g *ConfluenceGenerator) renderKind(b SieveBlock, markdown string) string {
 	return g.transpile(markdown)
 }
 
-// macro is the one fence → macro rule: a plantuml fence is the plantuml macro, a
-// language Confluence lists is a code macro naming it, and any other fence is a
-// code macro with no language. language is a fence info string; only its first
-// word counts.
+// macro is the one fence → macro rule: a plantuml fence is the edition's PlantUML
+// diagram, a language Confluence lists is a code macro naming it, and any other
+// fence is a code macro with no language. language is a fence info string; only
+// its first word counts.
 func (g *ConfluenceGenerator) macro(language, body string) string {
 	word := ""
 	if fields := strings.Fields(language); len(fields) > 0 {
 		word = strings.ToLower(fields[0])
 	}
 	if word == "plantuml" {
-		return g.structuredMacro("plantuml", "atlassian-macro-output-type", "INLINE", body)
+		return g.plantuml.Macro(body)
 	}
 	return g.structuredMacro("code", "language", confluenceCodeLanguages[word], body)
 }

@@ -2,6 +2,7 @@ package block
 
 import (
 	"encoding/xml"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -143,9 +144,25 @@ func wellFormed(body string) error {
 	}
 }
 
+// newCountingCloudGenerator returns a Cloud generator whose local ids are
+// local-1, local-2, … in the order they are minted.
+func newCountingCloudGenerator() *ConfluenceGenerator {
+	g := NewConfluenceCloudGenerator()
+	n := 0
+	g.plantuml = cloudPlantUML{mint: func() string { n++; return fmt.Sprintf("local-%d", n) }}
+	return g
+}
+
 // A fence is the same macro whether it is a block, a fence in prose, or a fence
-// in a table cell.
+// in a table cell, in either edition.
 func TestConfluenceGenerator_FenceIsOneMacroEverywhere(t *testing.T) {
+	editions := []struct {
+		name string
+		new  func() *ConfluenceGenerator
+	}{
+		{"server", NewConfluenceGenerator},
+		{"cloud", newCountingCloudGenerator},
+	}
 	cases := []struct {
 		name  string
 		block SieveBlock
@@ -158,17 +175,78 @@ func TestConfluenceGenerator_FenceIsOneMacroEverywhere(t *testing.T) {
 		{"mermaid diagram", SieveBlock{Kind: "diagram", Attrs: map[string]interface{}{"diagramType": "mermaid", "source": "graph LR"}}, "```mermaid\ngraph LR\n```"},
 		{"engine-less diagram", SieveBlock{Kind: "diagram", Attrs: map[string]interface{}{"source": "graph LR"}}, "```mermaid\ngraph LR\n```"},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			macro := NewConfluenceGenerator().RenderBlock(tc.block, "non-empty representation")
-			if prose := transpile(tc.fence); prose != macro {
-				t.Errorf("block renders\n%s\nprose fence renders\n%s", macro, prose)
-			}
-			cell := transpile("<table>\n<tr><td>\n\n" + tc.fence + "\n\n</td></tr>\n</table>")
-			if want := "<table>\n<tr><td>\n" + macro + "\n</td></tr>\n</table>"; cell != want {
-				t.Errorf("cell renders\n%s\nwant\n%s", cell, want)
-			}
-		})
+	for _, ed := range editions {
+		for _, tc := range cases {
+			t.Run(ed.name+"/"+tc.name, func(t *testing.T) {
+				prose := func(md string) string { return ed.new().RenderBlock(SieveBlock{Kind: "prose"}, md) }
+				macro := ed.new().RenderBlock(tc.block, "non-empty representation")
+				if got := prose(tc.fence); got != macro {
+					t.Errorf("block renders\n%s\nprose fence renders\n%s", macro, got)
+				}
+				cell := prose("<table>\n<tr><td>\n\n" + tc.fence + "\n\n</td></tr>\n</table>")
+				if want := "<table>\n<tr><td>\n" + macro + "\n</td></tr>\n</table>"; cell != want {
+					t.Errorf("cell renders\n%s\nwant\n%s", cell, want)
+				}
+			})
+		}
+	}
+}
+
+// The Cloud edition writes a PlantUML diagram as the PlantUML app's ADF
+// extension: one fresh local id per diagram, the same id in both of its slots,
+// and the source as escaped text that parses back to itself.
+func TestConfluenceGenerator_CloudPlantUMLNode(t *testing.T) {
+	source := "@startuml\n(*) --> \"Dispute & <Resolution>\"\n@enduml"
+	got := newCountingCloudGenerator().RenderBlock(SieveBlock{Kind: "prose"},
+		"```plantuml\n"+source+"\n```\n\n```plantuml\nA -> B\n```")
+	if err := wellFormed(got); err != nil {
+		t.Fatalf("not well-formed XML: %v\n%s", err, got)
+	}
+	for _, want := range []string{
+		`<ac:adf-attribute key="extension-key">f0d9b32e-808f-4e58-9330-0346bc051ed9/32a28da1-3e65-4244-a865-3244636e10c6/static/plantuml-diagram</ac:adf-attribute>`,
+		`<ac:adf-parameter key="extension-id">ari:cloud:ecosystem::extension/f0d9b32e-808f-4e58-9330-0346bc051ed9/32a28da1-3e65-4244-a865-3244636e10c6/static/plantuml-diagram</ac:adf-parameter>`,
+		`<ac:adf-parameter key="forge-environment">PRODUCTION</ac:adf-parameter>`,
+		`<ac:adf-parameter key="diagram-code">@startuml` + "\n" + `(*) --&gt; &quot;Dispute &amp; &lt;Resolution&gt;&quot;` + "\n" + `@enduml</ac:adf-parameter>`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s\nin\n%s", want, got)
+		}
+	}
+	for _, id := range []string{"local-1", "local-2"} {
+		if n := strings.Count(got, ">"+id+"<"); n != 2 {
+			t.Errorf("%s appears %d times, want 2 (one per local-id slot)", id, n)
+		}
+	}
+	for _, absent := range []string{"embedded-macro-context", "adf-fallback", "structured-macro"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("node carries %s", absent)
+		}
+	}
+
+	var codes []string
+	dec := xml.NewDecoder(strings.NewReader("<r>" + got + "</r>"))
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			break
+		}
+		if se, ok := tok.(xml.StartElement); ok && se.Name.Local == "adf-parameter" && len(se.Attr) > 0 && se.Attr[0].Value == "diagram-code" {
+			var text string
+			_ = dec.DecodeElement(&text, &se)
+			codes = append(codes, text)
+		}
+	}
+	if len(codes) != 2 || codes[0] != source || codes[1] != "A -> B" {
+		t.Errorf("diagram-code parses back as %q, want [%q %q]", codes, source, "A -> B")
+	}
+}
+
+// The production Cloud generator mints a distinct local id for each diagram.
+func TestConfluenceGenerator_CloudMintsFreshIDs(t *testing.T) {
+	b := SieveBlock{Kind: "diagram", Attrs: map[string]interface{}{"diagramType": "plantuml", "source": "A -> B"}}
+	g := NewConfluenceCloudGenerator()
+	if first, second := g.RenderBlock(b, "x"), g.RenderBlock(b, "x"); first == second {
+		t.Errorf("two diagrams share a local id:\n%s", first)
 	}
 }
 
@@ -183,18 +261,20 @@ func TestConfluenceGenerator_EmptyRepresentationRendersEmpty(t *testing.T) {
 // The exact text pasted at work — the whole exported UAT corpus, not one
 // construct at a time — is well-formed XML.
 func TestConfluenceGenerator_GoldenIsWellFormedXML(t *testing.T) {
-	body, err := os.ReadFile("testdata/confluence-uat.storage")
-	if err != nil {
-		t.Fatalf("read golden: %v", err)
-	}
-	if err := wellFormed(string(body)); err != nil {
-		t.Fatalf("golden is not well-formed XML: %v", err)
+	for _, golden := range []string{"testdata/confluence-uat.storage", "testdata/confluence-uat.cloud.storage"} {
+		body, err := os.ReadFile(golden)
+		if err != nil {
+			t.Fatalf("read golden: %v", err)
+		}
+		if err := wellFormed(string(body)); err != nil {
+			t.Errorf("%s is not well-formed XML: %v", golden, err)
+		}
 	}
 }
 
-// The two export generators are found by their format words; nothing else is.
+// The export generators are found by their format words; nothing else is.
 func TestExportGenerators_Lookup(t *testing.T) {
-	for _, format := range []string{ExportFormatMarkdown, ExportFormatConfluence} {
+	for _, format := range []string{ExportFormatMarkdown, ExportFormatConfluence, ExportFormatConfluenceCloud} {
 		if _, ok := (ExportGenerators{}).Lookup(format); !ok {
 			t.Errorf("Lookup(%q) found nothing", format)
 		}
