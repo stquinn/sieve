@@ -482,6 +482,17 @@ func TestWS_Export_DropsAIBlocksAndServesCleanMarkdown(t *testing.T) {
 		t.Errorf("confluence export = %q, want %q", content, want)
 	}
 
+	// confluence-cloud differs only in PlantUML diagrams, which this document
+	// has none of.
+	send(t, c, `{"type":"export","opId":"op-cloud","format":"confluence-cloud"}`)
+	cloud := readUntil(t, c, "export-content", 2*time.Second)
+	if cloud["opId"] != "op-cloud" || cloud["format"] != "confluence-cloud" {
+		t.Errorf("export-content must echo opId and format, got %v", cloud)
+	}
+	if content, _ := cloud["content"].(string); content != want {
+		t.Errorf("confluence-cloud export = %q, want %q", content, want)
+	}
+
 	// An unknown format is refused, not silently served as markdown.
 	send(t, c, `{"type":"export","opId":"op-pdf","format":"pdf"}`)
 	errFrame := readUntil(t, c, "error", 2*time.Second)

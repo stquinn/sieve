@@ -1431,7 +1431,7 @@ components:
           description: echoed on the export-content reply
         format:
           type: string
-          description: markdown (the default) or confluence (Confluence storage format)
+          description: markdown (the default), confluence (Confluence Server/Data Center storage format) or confluence-cloud (Confluence Cloud storage format)
       required:
         - type
     ProtocolExtractFrame:

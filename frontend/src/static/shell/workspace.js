@@ -640,7 +640,7 @@ export class SieveWorkspace {
    * A native menu click carries no DOM gesture and steals focus, so WebKit rejects
    * navigator.clipboard — the Wails pasteboard is primary, the browser API is the
    * non-Wails dev fallback.
-   * @param {'markdown'|'confluence'} format the export format word Go renders
+   * @param {'markdown'|'confluence'|'confluence-cloud'} format the export format word Go renders
    * @returns {Promise<void>}
    */
   copyDocumentAs(format) {
