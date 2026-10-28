@@ -119,7 +119,8 @@ func buildMenu(app *App) *menu.Menu {
 	// API, which fetches the clean export and copies it to the clipboard.
 	exportMenu := file.AddSubmenu("Export")
 	exportMenu.AddText("Clipboard (Markdown)", nil, js("window.sieveWorkspace?.copyDocumentAs('markdown')"))
-	exportMenu.AddText("Clipboard (Confluence storage, experimental)", nil, js("window.sieveWorkspace?.copyDocumentAs('confluence')"))
+	exportMenu.AddText("Clipboard (Confluence Data Center storage)", nil, js("window.sieveWorkspace?.copyDocumentAs('confluence')"))
+	exportMenu.AddText("Clipboard (Confluence Cloud storage, experimental)", nil, js("window.sieveWorkspace?.copyDocumentAs('confluence-cloud')"))
 	file.AddSeparator()
 	file.AddText("Open Library…", keys.Combo("o", keys.CmdOrCtrlKey, keys.ShiftKey),
 		js("window.sieveSelectLibrary()"))

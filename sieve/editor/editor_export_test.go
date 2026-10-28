@@ -2,7 +2,9 @@ package editor
 
 import (
 	"flag"
+	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -58,11 +60,27 @@ func TestEditorService_Export_CallerOwnsFilter(t *testing.T) {
 
 var updateGolden = flag.Bool("update", false, "rewrite golden files from the current output")
 
+// cloudLocalID matches a local id the Cloud generator minted, in either slot.
+var cloudLocalID = regexp.MustCompile(`(key="local-id">)([0-9a-f-]{36})(<)`)
+
+// numberLocalIDs replaces each distinct minted local id with local-1, local-2, …
+// in the order they first appear, so a Cloud export compares against a golden.
+func numberLocalIDs(storage string) string {
+	seen := map[string]string{}
+	return cloudLocalID.ReplaceAllStringFunc(storage, func(m string) string {
+		parts := cloudLocalID.FindStringSubmatch(m)
+		if _, ok := seen[parts[2]]; !ok {
+			seen[parts[2]] = fmt.Sprintf("local-%d", len(seen)+1)
+		}
+		return parts[1] + seen[parts[2]] + parts[3]
+	})
+}
+
 // The Confluence UAT document is the corpus: loaded through the real codec (its
 // section 9 becomes code, log and diagram blocks; the rest is prose), exported
-// through ConfluenceGenerator, it must match its golden storage format exactly —
-// so the text pasted at work is what the suite pins. Run with -update to rewrite
-// the golden.
+// through each edition's ConfluenceGenerator, it must match that edition's
+// golden storage format exactly — so the text pasted at work is what the suite
+// pins. Run with -update to rewrite the goldens.
 func TestEditorService_Export_ConfluenceUATCorpus(t *testing.T) {
 	resetRegistry()
 	for _, p := range []block.BlockProcessor{
@@ -75,7 +93,7 @@ func TestEditorService_Export_ConfluenceUATCorpus(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
 
-	const corpus, golden = "../block/testdata/confluence-uat.md", "../block/testdata/confluence-uat.storage"
+	const corpus = "../block/testdata/confluence-uat.md"
 	raw, err := os.ReadFile(corpus)
 	if err != nil {
 		t.Fatalf("read corpus: %v", err)
@@ -96,20 +114,29 @@ func TestEditorService_Export_ConfluenceUATCorpus(t *testing.T) {
 		t.Fatalf("corpus deserialized as %v, want %s", kinds, want)
 	}
 
-	got, err := es.Export(doc.UUID(), nil, block.NewConfluenceGenerator())
-	if err != nil {
-		t.Fatalf("Export: %v", err)
-	}
-	if *updateGolden {
-		if err := os.WriteFile(golden, []byte(got), 0o644); err != nil {
-			t.Fatalf("write golden: %v", err)
+	for _, edition := range []struct {
+		generator *block.ConfluenceGenerator
+		golden    string
+	}{
+		{block.NewConfluenceGenerator(), "../block/testdata/confluence-uat.storage"},
+		{block.NewConfluenceCloudGenerator(), "../block/testdata/confluence-uat.cloud.storage"},
+	} {
+		got, err := es.Export(doc.UUID(), nil, edition.generator)
+		if err != nil {
+			t.Fatalf("Export: %v", err)
 		}
-	}
-	want, err := os.ReadFile(golden)
-	if err != nil {
-		t.Fatalf("read golden: %v", err)
-	}
-	if got != string(want) {
-		t.Errorf("Confluence export drifted from %s:\n%s", golden, got)
+		got = numberLocalIDs(got)
+		if *updateGolden {
+			if err := os.WriteFile(edition.golden, []byte(got), 0o644); err != nil {
+				t.Fatalf("write golden: %v", err)
+			}
+		}
+		want, err := os.ReadFile(edition.golden)
+		if err != nil {
+			t.Fatalf("read golden: %v", err)
+		}
+		if got != string(want) {
+			t.Errorf("Confluence export drifted from %s:\n%s", edition.golden, got)
+		}
 	}
 }

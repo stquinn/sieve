@@ -2751,7 +2751,7 @@ describe('SieveWorkspace.copyDocumentAs', () => {
     return { w, mount }
   }
 
-  it.each(['markdown', 'confluence'])('flushes first, then writes the SERVER\'s %s export to the Wails pasteboard (primary)', async (format) => {
+  it.each(['markdown', 'confluence', 'confluence-cloud'])('flushes first, then writes the SERVER\'s %s export to the Wails pasteboard (primary)', async (format) => {
     const setText = vi.fn(() => Promise.resolve())
     window.runtime = { ClipboardSetText: setText }
     const { w, mount } = exporting('# clean export')

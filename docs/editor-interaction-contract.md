@@ -795,7 +795,8 @@ Consequences:
 | Mod+S | File › Save | `window.sieveWorkspace?.activeTab?.editor?.flushSave()` |
 | Mod+W | File › Close Tab | `htmx.ajax` POST `/api/tabs/close/{id}` |
 | (menu-click only) | File › Export › Clipboard (Markdown) | `window.sieveWorkspace?.copyDocumentAs('markdown')` |
-| (menu-click only) | File › Export › Clipboard (Confluence storage, experimental) | `window.sieveWorkspace?.copyDocumentAs('confluence')` |
+| (menu-click only) | File › Export › Clipboard (Confluence Data Center storage) | `window.sieveWorkspace?.copyDocumentAs('confluence')` |
+| (menu-click only) | File › Export › Clipboard (Confluence Cloud storage, experimental) | `window.sieveWorkspace?.copyDocumentAs('confluence-cloud')` |
 | Mod+Shift+O | File › Open Library… | `window.sieveSelectLibrary()` |
 | Mod+, | File › Settings/Preferences | open settings dialog |
 | Mod+Q | File › Quit (non-Mac) | `wailsruntime.Quit` |
@@ -824,6 +825,11 @@ Consequences:
 | Mod+Shift+L | Tools › Insert URL Card | `window.sieveWorkspace?.openUrlCardDialog()` |
 | Mod+Shift+D | Tools › Insert Diagram | `window.sieveWorkspace?.activeTab?.editor?.createBlock('diagram', {})` |
 | Mod+/ | Help › Shortcuts | open help dialog |
+
+The two Confluence exports differ only in PlantUML diagrams. Data Center storage writes
+each as the `plantuml` structured macro; Cloud storage writes each as the PlantUML Forge
+app's `<ac:adf-extension>` node, with a fresh `local-id` per diagram and no
+`embedded-macro-context`, since the page, space and site it names are unknown at export.
 
 Editor-owned caret chords (NOT in the menu, and NOT visible to
 `TestBuildMenu_ChordTaxonomy` — this list is what pins them):

@@ -441,10 +441,12 @@ func NewDetectExtractionsResultFrame(opID string, offers []block.SupportedAction
 type ExportFrame struct {
 	Type string `json:"type"`
 	OpID string `json:"opId,omitempty" doc:"echoed on the export-content reply"`
-	// Format names the export format: "markdown" or "confluence" (Confluence
-	// storage format, the XHTML a page is stored as). Absent defaults to markdown,
-	// and an unknown value is refused rather than silently answered with markdown.
-	Format string `json:"format,omitempty" doc:"markdown (the default) or confluence (Confluence storage format)"`
+	// Format names the export format: "markdown", "confluence" (Confluence Server
+	// and Data Center storage format, the XHTML a page is stored as) or
+	// "confluence-cloud" (Confluence Cloud storage format, whose PlantUML diagrams
+	// are the PlantUML app's ADF extension). Absent defaults to markdown, and an
+	// unknown value is refused rather than silently answered with markdown.
+	Format string `json:"format,omitempty" doc:"markdown (the default), confluence (Confluence Server/Data Center storage format) or confluence-cloud (Confluence Cloud storage format)"`
 }
 
 // ExportContentFrame carries the exported document.

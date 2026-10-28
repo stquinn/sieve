@@ -2,8 +2,9 @@ package block
 
 // Export format words, as the export frame's format field spells them.
 const (
-	ExportFormatMarkdown   = "markdown"
-	ExportFormatConfluence = "confluence"
+	ExportFormatMarkdown        = "markdown"
+	ExportFormatConfluence      = "confluence"
+	ExportFormatConfluenceCloud = "confluence-cloud"
 )
 
 // ExportGenerator renders one block of a document export into a target format.
@@ -32,6 +33,8 @@ func (ExportGenerators) Lookup(format string) (ExportGenerator, bool) {
 		return MarkdownGenerator{}, true
 	case ExportFormatConfluence:
 		return NewConfluenceGenerator(), true
+	case ExportFormatConfluenceCloud:
+		return NewConfluenceCloudGenerator(), true
 	}
 	return nil, false
 }
