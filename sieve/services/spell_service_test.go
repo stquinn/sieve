@@ -104,9 +104,9 @@ func TestSpellService_Check(t *testing.T) {
 func TestSpellService_Suggest(t *testing.T) {
 	const unchecked = -1
 	cases := []struct {
-		name      string
-		word      string
-		max       int
+		name       string
+		word       string
+		max        int
 		wantHead   string   // the first offer, when the ordering is the point
 		wantAny    []string // offers that must appear somewhere in the list
 		wantNone   []string // offers that must not

@@ -10,6 +10,7 @@
     <button id="settings-tab-btn-editor" class="settings-tab-btn {{if eq .LastSettingsPanel "editor"}}active{{end}}" onclick="switchSettingsTab(this, 'editor')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "editor"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "editor"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Editor</button>
     <button id="settings-tab-btn-diagrams" class="settings-tab-btn {{if eq .LastSettingsPanel "diagrams"}}active{{end}}" onclick="switchSettingsTab(this, 'diagrams')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "diagrams"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "diagrams"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Diagrams</button>
     <button id="settings-tab-btn-logs" class="settings-tab-btn {{if eq .LastSettingsPanel "logs"}}active{{end}}" onclick="switchSettingsTab(this, 'logs')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "logs"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "logs"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Logs</button>
+    <button id="settings-tab-btn-spelling" class="settings-tab-btn {{if eq .LastSettingsPanel "spelling"}}active{{end}}" onclick="switchSettingsTab(this, 'spelling')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "spelling"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "spelling"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Spelling</button>
   </div>
 
   <!-- Content -->
@@ -482,6 +483,27 @@ if (x &lt;= y) return "ok";</code>
             <input type="text" value="Automatically extracts and isolates timestamps, thread names, class names, and log levels using heuristics" disabled style="flex: 3; font-family: sans-serif; background: var(--theme-bgDark); border: 1px dashed var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-textDim); outline: none; font-size: 0.8rem;">
           </div>
         </div>
+      </div>
+    </div>
+
+    <div class="settings-tab-content" id="settings-tab-spelling" style="display: {{if eq .LastSettingsPanel "spelling"}}block{{else}}none{{end}};">
+      <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1rem;">Spelling</h3>
+      <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Learned Words</label>
+      <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-bottom: 1rem; line-height: 1.4;">Words added to the dictionary. Remove one and save, and it is flagged again wherever it is misspelled.</p>
+
+      <input type="hidden" name="spell_learned_listed" value="1">
+      <div id="spell-learned-list" style="display: flex; flex-direction: column; gap: 0.5rem;">
+        {{range .LearnedWords}}
+        <div class="spell-learned-item" style="display: flex; gap: 0.5rem; align-items: center;">
+          <span style="flex: 1; padding: 0.4rem 1rem; background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; color: var(--theme-text);">{{.}}</span>
+          <input type="hidden" name="spell_learned" value="{{.}}">
+          <button type="button" onclick="this.parentElement.remove()" style="padding: 0.5rem; color: var(--theme-accentRed); background: transparent; border: 1px solid var(--theme-border); border-radius: 0.5rem; cursor: pointer;" title="Remove from dictionary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+          </button>
+        </div>
+        {{else}}
+        <p style="font-size: 0.875rem; color: var(--theme-textDim);">No learned words.</p>
+        {{end}}
       </div>
     </div>
     </div><!-- /settings-scroll -->

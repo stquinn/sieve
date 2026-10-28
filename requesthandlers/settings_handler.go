@@ -3,6 +3,7 @@ package requesthandlers
 import (
 	"html/template"
 	"net/http"
+	"net/url"
 	"sieve/logger"
 	"sieve/sieve"
 	"sieve/sieve/ai"
@@ -20,11 +21,13 @@ type SettingsHandler struct {
 
 // settingsView is the template payload for settings.html. Settings is embedded
 // so its fields (Theme, CLITimeoutLong, PromptTimeouts, …) are promoted; Prompts
-// drives the per-prompt timeout override table.
+// drives the per-prompt timeout override table; LearnedWords drives the
+// Spelling tab.
 type settingsView struct {
 	domain.Settings
 	LastSettingsPanel string
 	Prompts           []ai.PromptEntry
+	LearnedWords      []string
 }
 
 // buildView assembles the template payload, resolving the prompt list from the
@@ -34,10 +37,38 @@ func (h *SettingsHandler) buildView(settings domain.Settings, lastPanel string) 
 	if h.ServiceProvider.Prompts != nil {
 		prompts = h.ServiceProvider.Prompts.ListPrompts()
 	}
+	var learned []string
+	if h.ServiceProvider.Spell != nil {
+		learned = h.ServiceProvider.Spell.Learned()
+	}
 	return settingsView{
 		Settings:          settings,
 		LastSettingsPanel: lastPanel,
 		Prompts:           prompts,
+		LearnedWords:      learned,
+	}
+}
+
+// unlearnRemovedWords unlearns every learned word the Spelling tab's rows no
+// longer carry, in one call. It acts only when the form carried the tab's
+// spell_learned_listed sentinel — without it, a form whose last row was removed
+// posts no spell_learned at all — and it never learns a posted word.
+func (h *SettingsHandler) unlearnRemovedWords(form url.Values) {
+	if h.ServiceProvider.Spell == nil || form.Get("spell_learned_listed") == "" {
+		return
+	}
+	kept := make(map[string]struct{}, len(form["spell_learned"]))
+	for _, word := range form["spell_learned"] {
+		kept[word] = struct{}{}
+	}
+	var removed []string
+	for _, word := range h.ServiceProvider.Spell.Learned() {
+		if _, ok := kept[word]; !ok {
+			removed = append(removed, word)
+		}
+	}
+	if len(removed) > 0 {
+		h.ServiceProvider.Spell.Unlearn(removed...)
 	}
 }
 
@@ -301,6 +332,7 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 	// Apply history retention live so a changed max_history_versions takes effect
 	// without an app restart.
 	h.ServiceProvider.ApplyRetention(settings.MaxHistoryVersions)
+	h.unlearnRemovedWords(r.PostForm)
 
 	w.Header().Set("HX-Trigger", "settings:changed")
 

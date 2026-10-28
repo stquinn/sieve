@@ -8,13 +8,17 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"sieve/sieve"
+	"sieve/sieve/block"
 	"sieve/sieve/domain"
+	"sieve/sieve/editor"
 	"sieve/sieve/services"
 	"sieve/store/filestore"
 )
@@ -318,6 +322,81 @@ func TestSettingsSaveRoute_PersistsCLIPath(t *testing.T) {
 	raw := readSettingsJSON(t, dir)
 	if !strings.Contains(raw, "claude-query.sh") {
 		t.Errorf("settings.json missing persisted cli_path: %s", raw)
+	}
+}
+
+// withLearnedWords wires a spell inspector into h whose dictionary persists
+// through h's own StateService, and teaches it words.
+func withLearnedWords(t *testing.T, h *SettingsHandler, words ...string) {
+	t.Helper()
+	sp := h.ServiceProvider
+	ds, err := services.NewDocumentService(sp.Store)
+	if err != nil {
+		t.Fatalf("NewDocumentService: %v", err)
+	}
+	sp.Editor = editor.NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), time.Hour)
+	sp.Inspection = editor.NewInspectionEngine(sp.Editor)
+	sp.RegisterInspectors(services.NewSpellService(sp.State))
+	for _, word := range words {
+		sp.Spell.Learn(word)
+	}
+}
+
+// The Spelling tab lists the learned words as form rows, and Save unlearns the
+// rows the user removed — only when the tab was rendered, and never learning a
+// posted word.
+func TestSettingsSaveRoute_UnlearnsRemovedSpellingRows(t *testing.T) {
+	cases := []struct {
+		name string
+		form url.Values
+		want []string
+	}{
+		{name: "an omitted row is unlearned", form: url.Values{"spell_learned_listed": {"1"}, "spell_learned": {"zzquux"}}, want: []string{"zzquux"}},
+		{name: "removing every row unlearns all", form: url.Values{"spell_learned_listed": {"1"}}, want: []string{}},
+		{name: "no sentinel leaves the dictionary alone", form: url.Values{}, want: []string{"zzblorp", "zzquux"}},
+		{name: "a posted unknown word is not learned", form: url.Values{"spell_learned_listed": {"1"}, "spell_learned": {"zzblorp", "zzquux", "zznew"}}, want: []string{"zzblorp", "zzquux"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _ := newTestSettingsHandler(t)
+			withLearnedWords(t, h, "zzblorp", "zzquux")
+			r := chi.NewRouter()
+			h.RegisterPaths(r)
+			srv := httptest.NewServer(r)
+			t.Cleanup(srv.Close)
+
+			before, err := http.Get(srv.URL + "/ui/views/settings")
+			if err != nil {
+				t.Fatalf("GET settings: %v", err)
+			}
+			page, _ := io.ReadAll(before.Body)
+			before.Body.Close()
+			for _, word := range []string{"zzblorp", "zzquux"} {
+				if !strings.Contains(string(page), `name="spell_learned" value="`+word+`"`) {
+					t.Errorf("dialog does not list learned word %q", word)
+				}
+			}
+
+			form := tc.form
+			form.Set("cli", "claude")
+			form.Set("cli_timeout_long", "20")
+			resp, err := http.PostForm(srv.URL+"/api/settings", form)
+			if err != nil {
+				t.Fatalf("POST /api/settings: %v", err)
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+
+			if got := h.ServiceProvider.Spell.Learned(); !slices.Equal(got, tc.want) {
+				t.Errorf("Learned() = %v, want %v", got, tc.want)
+			}
+			if got := services.NewSpellService(h.ServiceProvider.State).Learned(); !slices.Equal(got, tc.want) {
+				t.Errorf("persisted dictionary = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
