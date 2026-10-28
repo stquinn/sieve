@@ -111,17 +111,54 @@ func (s *SpellService) Learn(word string) error {
 
 	s.mu.Lock()
 	s.learned[key] = struct{}{}
+	s.mu.Unlock()
+	return s.persist()
+}
+
+// Unlearn removes words from the durable user dictionary, and from the ignored
+// set too, so each one is flagged again wherever it is misspelled. The set is
+// written once, and only when a learned word was actually removed.
+func (s *SpellService) Unlearn(words ...string) error {
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
+
+	removed := false
+	s.mu.Lock()
+	for _, word := range words {
+		key := s.lookupKey(strings.TrimSpace(word))
+		if _, ok := s.learned[key]; ok {
+			delete(s.learned, key)
+			removed = true
+		}
+		delete(s.ignored, key)
+	}
+	s.mu.Unlock()
+
+	if !removed {
+		return nil
+	}
+	return s.persist()
+}
+
+// Learned returns the durable user dictionary, sorted. The words are the folded
+// lookup keys the file holds, not the spelling they were taught with.
+func (s *SpellService) Learned() []string {
+	s.mu.RLock()
 	words := make([]string, 0, len(s.learned))
 	for w := range s.learned {
 		words = append(words, w)
 	}
-	s.mu.Unlock()
+	s.mu.RUnlock()
+	sort.Strings(words) // the file is a set; a stable order keeps it diffable
+	return words
+}
 
+// persist writes the learned set through the store. The caller holds saveMu.
+func (s *SpellService) persist() error {
 	if s.store == nil {
 		return nil
 	}
-	sort.Strings(words) // the file is a set; a stable order keeps it diffable
-	return s.store.SaveUserDictionary(words)
+	return s.store.SaveUserDictionary(s.Learned())
 }
 
 // Ignore stops flagging a word for the rest of this run. Nothing is written:

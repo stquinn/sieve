@@ -340,6 +340,50 @@ func TestSpellService_PersistsASortedSet(t *testing.T) {
 	}
 }
 
+// Unlearning is the inverse of learning: the word is flagged again, the file no
+// longer holds it, Learned stops listing it, and one call writes once however
+// many words it removes — and not at all when it removes none.
+func TestSpellService_UnlearnFlagsTheWordAgain(t *testing.T) {
+	cases := []struct {
+		name       string
+		unlearn    []string
+		wantWrites int
+		wantWords  []string
+		wantFlags  []string
+	}{
+		{name: "one word", unlearn: []string{"Zzblorp"}, wantWrites: 1, wantWords: []string{"zzquux"}, wantFlags: []string{"zzblorp"}},
+		{name: "several words write once", unlearn: []string{"zzblorp", "zzquux"}, wantWrites: 1, wantWords: []string{}, wantFlags: []string{"zzblorp", "zzquux"}},
+		{name: "an unknown word writes nothing", unlearn: []string{"zznever"}, wantWrites: 0, wantWords: []string{"zzblorp", "zzquux"}},
+		{name: "an ignored word is flagged again without a write", unlearn: []string{"zzignored"}, wantWrites: 0, wantWords: []string{"zzblorp", "zzquux"}, wantFlags: []string{"zzignored"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &stubUserDictionary{words: []string{"zzblorp", "zzquux"}}
+			s := NewSpellService(store)
+			s.Ignore("zzignored")
+			if err := s.Unlearn(tc.unlearn...); err != nil {
+				t.Fatalf("Unlearn: %v", err)
+			}
+			if store.writes != tc.wantWrites {
+				t.Errorf("%d writes, want %d", store.writes, tc.wantWrites)
+			}
+			if !slices.Equal(store.words, tc.wantWords) {
+				t.Errorf("persisted %v, want %v", store.words, tc.wantWords)
+			}
+			if got := s.Learned(); !slices.Equal(got, tc.wantWords) {
+				t.Errorf("Learned() = %v, want %v", got, tc.wantWords)
+			}
+			var flagged []string
+			for _, miss := range s.Check("zzblorp zzquux zzignored") {
+				flagged = append(flagged, miss.Word)
+			}
+			if !slices.Equal(flagged, tc.wantFlags) {
+				t.Errorf("Check flagged %v, want %v", flagged, tc.wantFlags)
+			}
+		})
+	}
+}
+
 // A store with no persistence behind it (and one that refuses the write) must
 // still accept the word for this run: the user asked for it to stop flagging,
 // and a failure to write is not a reason to keep flagging it in front of them.

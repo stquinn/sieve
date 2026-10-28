@@ -190,6 +190,40 @@ func TestSpellInspector_ChecksProseSegmentsOnly(t *testing.T) {
 // Accepting a word is a workspace-wide change of mind, so it clears that word
 // in EVERY open document rather than in the one it was accepted from. Both
 // routes are the same act with different durability, so both are driven here.
+// The inverse: a word learned and then unlearned is flagged again in every open
+// document, from one recheck.
+func TestSpellInspector_UnlearningAWordFlagsItAgainInEveryOpenDocument(t *testing.T) {
+	resetRegistry()
+	spell := services.NewSpellService(nil)
+	if err := spell.Learn("zzblorp"); err != nil {
+		t.Fatalf("Learn: %v", err)
+	}
+	engine, inspector, _, uuids := openInspectedDocs(t, spell, 0,
+		proseRegion(proseA, "a zzblorp here"),
+		proseRegion(proseB, "another zzblorp there"))
+	clock, notifier := staged(engine)
+
+	for _, uuid := range uuids {
+		engine.CheckAndPush(uuid)
+	}
+	clock.fire()
+
+	inspector.Unlearn("zzblorp")
+	if ran := clock.fire(); ran != len(uuids) {
+		t.Fatalf("unlearn: fire ran %d drains, want one per open document (%d)", ran, len(uuids))
+	}
+	for i, uuid := range uuids {
+		pushes := notifier.forDocument(uuid)
+		last := pushes[len(pushes)-1]
+		if len(last.marks) != 1 || last.marks[0].Quote != "zzblorp" {
+			t.Errorf("document %d last push = %+v, want one zzblorp mark", i, last.marks)
+		}
+	}
+	if got := inspector.Learned(); len(got) != 0 {
+		t.Errorf("Learned() = %v, want empty", got)
+	}
+}
+
 func TestSpellInspector_AcceptingAWordClearsItInEveryOpenDocument(t *testing.T) {
 	cases := []struct {
 		name   string

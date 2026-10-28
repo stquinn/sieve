@@ -97,3 +97,17 @@ func (s *SpellInspector) Learn(word string) {
 	}
 	s.engine.RecheckAll()
 }
+
+// Unlearn removes words from the user's durable dictionary and re-checks once,
+// so each word is flagged again in every open document where it is misspelled.
+// A dictionary that could not be written is logged; the words are unlearned for
+// this run regardless.
+func (s *SpellInspector) Unlearn(words ...string) {
+	if err := s.spell.Unlearn(words...); err != nil {
+		logger.Error("spell: could not persist the user dictionary", "err", err)
+	}
+	s.engine.RecheckAll()
+}
+
+// Learned returns the user's durable dictionary, sorted.
+func (s *SpellInspector) Learned() []string { return s.spell.Learned() }
