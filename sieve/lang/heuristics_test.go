@@ -73,6 +73,23 @@ func TestDetectByHeuristics_bash_shebang(t *testing.T) {
 	}
 }
 
+// E4: a function in JavaScript is identified as javascript, whichever of its
+// forms it takes.
+func TestDetectByHeuristics_javascript(t *testing.T) {
+	cases := []struct{ name, input string }{
+		{"E4 a 10-line function", "function total(items) {\n  let sum = 0;\n  for (const item of items) {\n    if (item.price === undefined) continue;\n    sum += item.price * item.qty;\n  }\n  const rounded = Math.round(sum * 100) / 100;\n  console.log(`total: ${rounded}`);\n  return rounded;\n}"},
+		{"arrow functions", "const add = (a, b) => a + b;\nconst twice = x => add(x, x);\nexport default twice;"},
+		{"a callback and strict equality", "items.forEach((item) => {\n  if (item.done !== true) queue.push(item);\n});"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if lang, ok := DetectByHeuristics(tc.input, ""); !ok || lang != "javascript" {
+				t.Errorf("expected javascript/true, got %q/%v", lang, ok)
+			}
+		})
+	}
+}
+
 func TestDetectByHeuristics_typescript(t *testing.T) {
 	lang, ok := DetectByHeuristics("export interface User {\n  name: string\n  age: number\n}", "")
 	if !ok || lang != "typescript" {
@@ -104,10 +121,20 @@ func TestDetectByHeuristics_noMatch(t *testing.T) {
 
 // ── LooksLikeCode ────────────────────────────────────────────────────────────
 
-func TestLooksLikeCode_braces(t *testing.T) {
-	src := "function foo() {\n  var x = 1\n  return x\n}"
-	if !LooksLikeCode(src) {
-		t.Error("expected braces to trigger tier-3")
+// A brace that opens a line's block or alone closes one is a code brace; two
+// such lines read as code with no other signal.
+func TestLooksLikeCode_braceLines(t *testing.T) {
+	cases := []struct{ name, input string }{
+		{"opening and closing lines", "if ready {\nstart()\n}"},
+		{"a trailing comment after the brace", "while ok { // loop\nstep()\n};"},
+		{"a closing brace with a paren", "describe(x, {\ndone()\n})"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !LooksLikeCode(tc.input) {
+				t.Errorf("brace lines must read as code: %q", tc.input)
+			}
+		})
 	}
 }
 
@@ -143,6 +170,9 @@ func TestLooksLikeCode_prose(t *testing.T) {
 		{"an inline code span", "Run the `make` target first.\nThen check the output.\nThat is all."},
 		{"a heading", "## Notes\nSome thoughts on the plan.\nAnd a reply."},
 		{"an arrow", "go here -> there\nthen back -> home\nand rest a while"},
+		{"E5 braces wrapping words", "The config uses {name} for the user.\nEach {key} maps to a {value} -> see below.\nThe {docs} page has {more}."},
+		{"a `=>` between words", "map the input => output\nthen the output => store\nand rest a while"},
+		{"a brace pair inside one sentence", "Write it as {a, b} or {c}.\nThen check the set {x}.\nDone."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

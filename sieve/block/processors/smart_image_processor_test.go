@@ -122,6 +122,36 @@ func TestSmartImageProcessor_IsSupportedContent_plantumlFenceNotOffered(t *testi
 	}
 }
 
+// An html paste is a smart-image only when it IS an image: one <img>, alone or
+// wrapped in elements that hold no text. Html holding text, or more than one
+// image, is prose for the editor's native paste (E10, E15).
+func TestSmartImageProcessor_IsSupportedContent_htmlClaimedOnlyWhenItIsAnImage(t *testing.T) {
+	p := NewSmartImageProcessor(block.BlockServices{})
+	const img = `<img src="https://example.com/a/photo.png" alt="A photo">`
+	cases := []struct {
+		name string
+		html string
+		want bool
+	}{
+		{"a bare <img>", img, true},
+		{"browser Copy image: fragment comments and meta", `<meta charset="utf-8"><!--StartFragment-->` + img + `<!--EndFragment-->`, true},
+		{"wrapped in <p> and <a>", "<p>\n  <a href=\"https://example.com/\">" + img + "</a>\n</p>", true},
+		{"E15 text and one reachable <img>", `<p>Intro text</p>` + img + `<p>More text</p>`, false},
+		{"E10 a page: heading, link, image, <pre>", `<h2>Title</h2><p>see <a href="https://example.com/">here</a></p>` + img + `<pre>x := 1</pre>`, false},
+		{"two images", img + img, false},
+		{"an <img> whose src is not an image URL", `<img src="https://example.com/download">`, false},
+		{"html with no image", `<p>just text</p>`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/html", Content: tc.html}}).Has(block.ActionPaste)
+			if got != tc.want {
+				t.Errorf("claimed = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // imageFixture is a smart-image processor over a real store holding two
 // documents: source, which owns one PNG asset minted as chart.png (sourceKey),
 // and target, which owns nothing.

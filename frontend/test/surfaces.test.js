@@ -16,6 +16,7 @@ import { StarterKit } from '@tiptap/starter-kit'
 import { Markdown } from 'tiptap-markdown'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
+import Image from '@tiptap/extension-image'
 import { Table, TableRow, TableHeader, TableCell } from '@tiptap/extension-table'
 
 // P4.E: WysiwygSurface now imports its app helpers from their OWNING modules (the
@@ -430,7 +431,11 @@ function fakeEditorOver(schema, docNodes, caretAt) {
       command: (fn) => { const tr = state.tr; fn({ tr, state }); dispatched.push(tr); return true },
     },
     chain: () => {
-      const c = { focus: () => c, setTextSelection: () => c, run: () => {} }
+      const c = {
+        focus: () => c, setTextSelection: () => c, run: () => {},
+        insertContentAt: (pos, content) => { calls.push(['insertContentAt', pos, content]); return c },
+        command: (fn) => { fn({ tr: state.tr, state }); return c },
+      }
       return c
     },
   }
@@ -1274,7 +1279,7 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     expect(host.provider.paste).not.toHaveBeenCalled()
   })
 
-  it('smart paste: PEEKS the anchor (side-effect-free), asks the container, consumes the anchor on outcome:block, returns true', async () => {
+  it('smart paste: PEEKS the anchor (side-effect-free), asks the container, leaves the anchor to the block\'s placement on outcome:block, returns true', async () => {
     const anchor = { id: 'p-1' }
     const host = wyHost({ peekInsertAnchorForBlock: vi.fn(() => ({ afterBlockId: 'b-4', anchor })) })
     host.provider.paste.mockReturnValue(Promise.resolve({ outcome: 'block', kind: 'code', id: 'co-1' }))
@@ -1288,8 +1293,8 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     expect(event.preventDefault).toHaveBeenCalled()
     await new Promise((r) => setTimeout(r, 0))
     expect(host.provider.paste).toHaveBeenCalledWith(expect.objectContaining({ kind: 'smart' }), 'b-4')
-    // outcome:block → the blank line is consumed NOW, by the peeked anchor handle.
-    expect(host.consumeInsertAnchor).toHaveBeenCalledWith(anchor)
+    // outcome:block before the block has arrived → the blank line waits for its placement.
+    expect(host.consumeInsertAnchor).not.toHaveBeenCalled()
     // The block arrives over the insert-block render-back — the surface must NOT
     // also replay the clipboard locally (the #67 double-paste regression: with the
     // `matched` flag gone, a stale reader saw undefined and took the replay branch).
@@ -1418,7 +1423,7 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
       // NO clipboard rides the payload: there was none to send, and that is the point.
       expect(host.provider.paste).toHaveBeenCalledWith({ kind: 'native-clipboard' }, 'b-4')
       expect(pasteKinds(host)).toEqual(['native-clipboard'])
-      expect(host.consumeInsertAnchor).toHaveBeenCalledWith(anchor)
+      expect(host.consumeInsertAnchor).not.toHaveBeenCalled() // waits for the block's placement
       expect(ed.commands.insertContent).not.toHaveBeenCalled()
     })
 
@@ -1610,12 +1615,12 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
   describe('handleSmartDrop consumes the paste union', () => {
     const LIST = 'file:///home/u/x.png\r\n'
 
-    it('outcome:block → consumes the anchor, inserts nothing locally', async () => {
+    it('outcome:block → the anchor waits for the block, inserts nothing locally', async () => {
       const anchor = { id: 'p-1' }
       const host = wyHost({ peekInsertAnchorAt: vi.fn(() => ({ afterBlockId: 'b-9', anchor })) })
       const { ed } = dropUriList(host, LIST, { outcome: 'block', kind: 'smart-image', id: 'si-1' })
       await new Promise((r) => setTimeout(r, 0))
-      expect(host.consumeInsertAnchor).toHaveBeenCalledWith(anchor)
+      expect(host.consumeInsertAnchor).not.toHaveBeenCalled()
       expect(ed.commands.insertContentAt).not.toHaveBeenCalled()
     })
 
@@ -1736,7 +1741,7 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
       const { s, ed } = mountPaste(host, 'doc-1')
 
       await expect(s.insertLink('https://example.com/cat.png')).resolves.toBe(true)
-      expect(host.consumeInsertAnchor).toHaveBeenCalledWith(anchor)
+      expect(host.consumeInsertAnchor).not.toHaveBeenCalled() // waits for the block's placement
       expect(ed.commands.insertContent).not.toHaveBeenCalled()
     })
 
@@ -1810,6 +1815,7 @@ describe('WysiwygSurface — a declined paste is ProseMirror\'s own paste (#193 
         extensions: [
           StarterKit.configure({ link: LINK_OPTIONS, trailingNode: false }), StandInBlockId,
           Table, TableRow, TableHeader, TableCell, TaskList, TaskItem.configure({ nested: true }),
+          Image.configure({ inline: false, allowBase64: true }),
           Markdown.configure({ html: true, transformPastedText: true }),
         ],
         content: '<p></p>',
@@ -1916,6 +1922,35 @@ describe('WysiwygSurface — a declined paste is ProseMirror\'s own paste (#193 
       [P('p1', 'target')],
       (ed) => { select(ed, find(ed, 'target').to); return { 'text/html': '<meta charset="utf-8"><table><tbody><tr><td>Name</td><td>Qty</td></tr></tbody></table>', 'text/plain': 'Name\tQty' } },
       (ed) => expect(types(ed)).toEqual(['paragraph', 'table'])],
+    ['E10 a web page: prose with its marks, <pre> a code block, the image a link to its URL',
+      [P('p1', 'x'), P('p2', '')],
+      (ed) => {
+        select(ed, ed.state.doc.content.size - 1)
+        return { 'text/html': '<meta charset="utf-8"><h2>Title</h2><p>see <a href="https://example.com/">here</a> and <b>bold</b></p>'
+          + '<p><img src="https://example.com/chart.png" alt="A chart"></p><pre><code>x := 1</code></pre>', 'text/plain': 'Title\n\nsee here and bold\n\nx := 1' }
+      },
+      (ed) => {
+        expect(types(ed)).toEqual(['paragraph', 'heading', 'paragraph', 'paragraph', 'codeBlock'])
+        expect(texts(ed)).toEqual(['x', 'Title', 'see here and bold', 'A chart', 'x := 1'])
+        const json = JSON.stringify(ed.getJSON())
+        expect(json).not.toContain('"type":"image"')
+        expect(json).toContain('"href":"https://example.com/chart.png"')
+        expect(json).toContain('"type":"bold"')
+      }],
+    ['E15 text and one <img>: the text kept, the image a link; an <img> inside a link is its alt text',
+      [P('p1', 'x'), P('p2', '')],
+      (ed) => {
+        select(ed, ed.state.doc.content.size - 1)
+        return { 'text/html': '<p>Intro <img src="https://example.com/a.png"> and <a href="https://example.com/"><img src="https://example.com/b.png" alt="logo"></a> end</p>' }
+      },
+      (ed) => {
+        expect(texts(ed)).toEqual(['x', 'Intro https://example.com/a.png and logo end'])
+        expect(JSON.stringify(ed.getJSON())).not.toContain('"type":"image"')
+      }],
+    ['an image Sieve serves (data: or its own route) stays an image',
+      [P('p1', 'x'), P('p2', '')],
+      (ed) => { select(ed, ed.state.doc.content.size - 1); return { 'text/html': '<img src="/ui/assets/doc/a.png"><p>after</p>' } },
+      (ed) => expect(types(ed)).toEqual(['paragraph', 'image', 'paragraph'])],
     ['E6-js `x := 1` mid-paragraph: inline',
       [P('p1', 'before after')],
       (ed) => { select(ed, find(ed, 'before after').from + 7); return { 'text/plain': 'x := 1' } },
@@ -1973,6 +2008,46 @@ describe('WysiwygSurface — a declined paste is ProseMirror\'s own paste (#193 
     expect(texts(ed)).toEqual(['XYZ', 'before XYZ text'])
     ed.commands.undo()
     expect(JSON.stringify(ed.getJSON())).toBe(before)
+  })
+
+  // The anchor a smart paste holds open and the block Go places there are one
+  // history step, even when the block arrives after ProseMirror's 500ms group
+  // window has closed.
+  it('E14 one undo after a smart paste whose block lands 600ms after the ack', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const content = [P('p1', 'before'), P('p2', ''), P('p3', 'after')]
+      const { s, ed, host } = mountReal(content)
+      s.paintContainer(containerOf([], {}))
+      const loaded = ed.schema.nodeFromJSON({ type: 'doc', content })
+      ed.view.dispatch(ed.state.tr.replaceWith(0, ed.state.doc.content.size, loaded.content).setMeta('addToHistory', false))
+      host.peekInsertAnchorForBlock.mockReturnValue({ afterBlockId: 'p1', anchor: { id: 'p2' } })
+      host.provider.paste.mockResolvedValue({ outcome: 'block', kind: 'prose', id: 'srv-1' })
+      host.consumeInsertAnchor.mockImplementation((anchor, tr) => {
+        const step = tr || ed.state.tr
+        step.doc.forEach((n, off) => { if (n.attrs.id === anchor.id) step.delete(off, off + n.nodeSize) })
+        if (!tr) ed.view.dispatch(step)
+      })
+      vi.mocked(docPosForBlockIndex).mockImplementationOnce((doc, index) => {
+        let pos = 0
+        for (let k = 0; k < index; k++) pos += doc.child(k).nodeSize
+        return pos
+      })
+      const before = JSON.stringify(ed.getJSON())
+      select(ed, startOf(ed, 'p2'))
+
+      await paste(ed, { 'text/plain': 'x := 1\ny := 2\nz := 3' })
+      vi.setSystemTime(Date.now() + 600)
+      s.applyContainerChange({ blockIds: ['srv-1'], orderChanged: false }, containerOf(['p1', 'srv-1', 'p3'], {
+        'srv-1': { id: 'srv-1', kind: 'prose', attrs: { id: 'srv-1', content: 'pasted' } },
+      }))
+
+      expect(texts(ed)).toEqual(['before', 'pasted', 'after'])
+      ed.commands.undo()
+      expect(JSON.stringify(ed.getJSON())).toBe(before)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

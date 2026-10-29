@@ -106,3 +106,36 @@ describe('a pasted prose node carries no copied id', () => {
     expect(template.innerHTML).not.toMatch(/data-(block-)?id/)
   })
 })
+
+// A17: prose text is stored as itself. `<`, `>` and `&` are escaped only where
+// the markdown parser would read html or a blockquote, a marker at any line
+// start is escaped, and the stored markdown loads back to the same document.
+describe('prose text\'s stored markdown', () => {
+  it.each([
+    ['A17 an arrow', '<p>go -&gt; stop</p>', 'go -> stop'],
+    ['comparisons and an ampersand', '<p>1 &lt; 2 &amp; 3 &gt; 2</p>', '1 < 2 & 3 > 2'],
+    ['a `<` that would open a tag', '<p>a &lt;b&gt; c</p>', 'a \\<b> c'],
+    ['an `&` that would spell an entity', '<p>&amp;amp; stays</p>', '\\&amp; stays'],
+    ['a `>` that begins the block', '<p>&gt; not a quote</p>', '\\> not a quote'],
+    ['a `>` that begins a line after a hard break', '<p>first<br>&gt; not a quote</p>', 'first\\\n\\> not a quote'],
+    ['list and heading markers after a hard break', '<p>a<br>1. one<br>+ two<br># three</p>', 'a\\\n1\\. one\\\n\\+ two\\\n\\# three'],
+    ['E13 `__init__` and snake_case', '<p>def __init__(self, snake_case):</p>', 'def \\_\\_init\\_\\_(self, snake_case):'],
+    ['E13 indentation kept as no-break spaces, at a line start too', '<p>\u00a0\u00a0first<br>\u00a0\u00a0\u00a0\u00a0second</p>', '&#160;&#160;first\\\n&#160;&#160;&#160;&#160;second'],
+  ])('%s', async (_label, html, markdown) => {
+    const { Editor, Node } = await import('@tiptap/core')
+    const { StarterKit } = await import('@tiptap/starter-kit')
+    const { Markdown } = await import('tiptap-markdown')
+    globalThis.TipTap.Node = Node
+    const { ProseText } = await import('../src/static/lens/document-editor/surfaces/prose-text.js')
+    const editor = new Editor({
+      extensions: [StarterKit.configure({ text: false }), ProseText.node(), Markdown.configure({ html: true })],
+      content: html,
+    })
+    const before = JSON.stringify(editor.getJSON())
+    const stored = editor.storage.markdown.getMarkdown()
+    expect(stored).toBe(markdown)
+    editor.commands.setContent(stored)
+    expect(JSON.stringify(editor.getJSON())).toBe(before)
+    editor.destroy()
+  })
+})

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sieve/ident"
 	"sieve/sieve/ai"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
@@ -142,20 +143,32 @@ func TestCodeBlockProcessor_Transform_wideFenceWithNestedFences(t *testing.T) {
 	}
 }
 
+// Raw, unfenced source is claimed as code, verbatim, and the block is born with
+// the language heuristics identify (E4).
 func TestCodeBlockProcessor_IsBlock_unfencedCode(t *testing.T) {
 	p := NewCodeBlockProcessor(block.BlockServices{})
-	// Smart-paste of raw, unfenced source must still be detected as code
-	// (restored from the pre-framework PasteMatch).
-	src := "func main() {\n\tfmt.Println(\"hi\")\n\treturn\n}"
-	if !p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: src}}).Has(block.ActionPaste) {
-		t.Fatal("IsSupportedContent must offer paste for unfenced code that heuristics recognise")
+	cases := []struct{ name, src, wantLang string }{
+		{"go", "func main() {\n\tfmt.Println(\"hi\")\n\treturn\n}", "go"},
+		{"E4 javascript", "function total(items) {\n  let sum = 0;\n  for (const item of items) {\n    if (item.price === undefined) continue;\n    sum += item.price * item.qty;\n  }\n  const rounded = Math.round(sum * 100) / 100;\n  console.log(rounded);\n  return rounded;\n}", "javascript"},
+		{"E4 python", "class Greeter:\n    def __init__(self, name):\n        self.name = name\n\n    def greet(self):\n        return f\"hi {self.name}\"", "python"},
 	}
-	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: src}}, "", "", block.ActionPaste)
-	if overrides == nil {
-		t.Fatal("Transform must return non-nil for unfenced code")
-	}
-	if overrides["source"] != src {
-		t.Errorf("unfenced source must be verbatim, got %q", overrides["source"])
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entries := []block.ContentEntry{{MIMEType: "text/plain", Content: tc.src}}
+			if !p.IsSupportedContent(entries).Has(block.ActionPaste) {
+				t.Fatal("IsSupportedContent must offer paste for unfenced code that heuristics recognise")
+			}
+			overrides := p.Transform(entries, "", "", block.ActionPaste)
+			if overrides == nil {
+				t.Fatal("Transform must return non-nil for unfenced code")
+			}
+			if overrides["source"] != tc.src {
+				t.Errorf("unfenced source must be verbatim, got %q", overrides["source"])
+			}
+			if lang := p.InitAttrs(ident.New(), overrides)["language"]; lang != tc.wantLang {
+				t.Errorf("language = %v, want %s", lang, tc.wantLang)
+			}
+		})
 	}
 }
 
@@ -170,6 +183,7 @@ func TestCodeBlockProcessor_IsBlock_unfencedProseIsNotCode(t *testing.T) {
 		{"a bold word", "First line of the notes.\nThis is **important** to remember.\nLast line."},
 		{"an arrow", "go here -> there\nthen back -> home\nand rest a while"},
 		{"a type-like colon in a sentence", "Questions for the team.\nnote: any ideas are welcome\nThanks all."},
+		{"E5 braces wrapping words", "The config uses {name} for the user.\nEach {key} maps to a {value} -> see below.\nThe {docs} page has {more}."},
 		{"under the length floor", "x := 1\ny := 2\nz"},
 	}
 	for _, tc := range cases {

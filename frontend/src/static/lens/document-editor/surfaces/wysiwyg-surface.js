@@ -48,6 +48,7 @@ import { TableMarkdown } from './table-markdown.js'
 import { SlideMarker } from './slide-marker.js'
 import { SlideFocus } from './slide-focus.js'
 import { BlockImage } from './block-image.js'
+import { ProseText } from './prose-text.js'
 import { BlockDropTarget } from './block-drop-target.js'
 import { ASSET_DRAG_TYPE } from '../../../contract/container-provider.js'
 import { BlockIdentity } from '../../../renderers/block-identity.js'
@@ -195,6 +196,11 @@ export class WysiwygSurface extends AbstractSurface {
    *  mounted; until it has, there is no caret for a placement to follow */
   #hasCaret = false
 
+  /** @type {Map<string, {id: string}>} the empty-paragraph anchor of each pasted
+   *  block Go confirmed and this doc does not hold yet, by block id: the block's
+   *  placement consumes it in the same transaction */
+  #pendingAnchors = new Map()
+
   /** @type {boolean} true while a declined paste is replayed through
    *  ProseMirror's own paste, which re-enters `handlePaste` */
   #replaying = false
@@ -308,7 +314,7 @@ export class WysiwygSurface extends AbstractSurface {
         BlockId,
         // trailingNode:true — caret contract clause 1 (no dead-ends). A
         // Gapcursor-only bet fails for non-atom read-only containers.
-        T.StarterKit.configure({ document: false, link: LINK_OPTIONS, codeBlock: false, trailingNode: true, history: { depth: 10000, newGroupDelay: 500 } }),
+        T.StarterKit.configure({ document: false, text: false, link: LINK_OPTIONS, codeBlock: false, trailingNode: true, history: { depth: 10000, newGroupDelay: 500 } }),
         T.Placeholder.configure({ placeholder: function (p) { return p.editor.isEmpty ? self.#host.placeholder : '' } }),
         BlockChrome,
         AiTargetDecoration,
@@ -331,6 +337,7 @@ export class WysiwygSurface extends AbstractSurface {
         }),
 
         BlockImage.node(),
+        ProseText.node(),
         BlockDropTarget.extension(),
         HighlightMark,
         SelectionHighlight,
@@ -400,7 +407,7 @@ export class WysiwygSurface extends AbstractSurface {
           },
         },
         handlePaste: function (_view, event) { return self.#handleSmartPaste(event) },
-        transformPastedHTML: function (html) { return BlockIdentity.stripHTML(html) },
+        transformPastedHTML: function (html) { return WysiwygSurface.#linkRemoteImages(BlockIdentity.stripHTML(html)) },
         handleDrop: function (_view, event, slice, moved) {
           return self.#handleAssetDrop(event) || self.#handleSmartDrop(event, slice, moved)
         },
@@ -513,6 +520,7 @@ export class WysiwygSurface extends AbstractSurface {
 
   unmount() {
     this.#painted = false
+    this.#pendingAnchors.clear()
     // Before the view dies: the picker's subscriptions are ON it, and its popover
     // lives on document.body where an orphan would survive the remount.
     if (this.#triggerPicker) { this.#triggerPicker.destroy(); this.#triggerPicker = null }
@@ -814,7 +822,7 @@ export class WysiwygSurface extends AbstractSurface {
    * not recognise degrades to `none`, including a `content` outcome carrying no
    * fragment: an unknown future outcome must fall back to the native paste of
    * the clipboard, never to a silently swallowed paste.
-   * @param {{outcome?: string, content?: string}|null|undefined} decision
+   * @param {{outcome?: string, content?: string, id?: string}|null|undefined} decision
    * @returns {'block'|'content'|'none'}
    */
   #pasteOutcome(decision) {
@@ -830,13 +838,15 @@ export class WysiwygSurface extends AbstractSurface {
    *
    *   block   — the block arrives over the insert-block render-back at its own
    *             server index; all that is left is consuming the empty-paragraph
-   *             anchor that held its place.
+   *             anchor that held its place. Until the block is placed, the anchor
+   *             waits for it, and the placement consumes it in its own
+   *             transaction, so one undo takes back the whole paste.
    *   content — Go composed a fragment for the caret. The anchor is deliberately
    *             NOT consumed: it was minted to hold a BLOCK's place.
    *   none    — nothing is placed and the anchor is left intact; a caller
    *             holding the clipboard hands it to `#replayNatively`.
    *
-   * @param {{outcome?: string, content?: string}|null|undefined} decision
+   * @param {{outcome?: string, content?: string, id?: string}|null|undefined} decision
    * @param {{anchor: {id: string}|null, at?: number}} placement
    *   `at` — an explicit DROP coordinate; omitted = the live caret.
    * @returns {'block'|'content'|'none'} the outcome that was applied
@@ -846,7 +856,9 @@ export class WysiwygSurface extends AbstractSurface {
     if (!ed) return 'none'
     const outcome = this.#pasteOutcome(decision)
     if (outcome === 'block') {
-      this.#host.consumeInsertAnchor(placement.anchor)
+      const id = decision && decision.id
+      if (id && placement.anchor && !this.#findNodeById(ed, id)) this.#pendingAnchors.set(id, placement.anchor)
+      else this.#host.consumeInsertAnchor(placement.anchor)
       return outcome
     }
     const content = outcome === 'content' ? (decision && decision.content) : null
@@ -987,6 +999,34 @@ export class WysiwygSurface extends AbstractSurface {
       if (html) view.pasteHTML(html)
       else view.pasteText(text)
     })
+  }
+
+  /**
+   * Pasted html with every remote image (an `http(s)` src) made a link to its
+   * URL, labelled with its alt text or else the URL; an image already inside a
+   * link becomes its alt text alone. A native paste stores no asset, so a remote
+   * image kept as an `image` node would load from the network or draw broken; an
+   * image Go recognises is a smart-image and never reaches this paste.
+   * @param {string} html @returns {string}
+   */
+  static #linkRemoteImages(html) {
+    if (!html || !/<img\b/i.test(html)) return html
+    const template = document.createElement('template')
+    template.innerHTML = html
+    for (const img of template.content.querySelectorAll('img')) {
+      const src = (img.getAttribute('src') || '').trim()
+      if (!/^https?:\/\//i.test(src)) continue
+      const alt = (img.getAttribute('alt') || '').trim()
+      if (img.closest('a')) {
+        img.replaceWith(alt)
+        continue
+      }
+      const link = document.createElement('a')
+      link.setAttribute('href', src)
+      link.textContent = alt || src
+      img.replaceWith(link)
+    }
+    return template.innerHTML
   }
 
   /** Runs one of ProseMirror's own pastes, which re-enters `handlePaste`, with
@@ -1815,7 +1855,8 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /** Places a block the container holds but this doc does not, at the container
-   *  position it occupies — a TRACKED transaction, so it is one undoable step.
+   *  position it occupies — a TRACKED transaction, so it is one undoable step,
+   *  which also consumes the anchor a paste of this block left waiting.
    *  @param {{id: string, kind: string, attrs: Record<string, any>}} node
    *  @param {number} index the block's position in the container */
   #placeBlock(node, index) {
@@ -1829,7 +1870,12 @@ export class WysiwygSurface extends AbstractSurface {
 
     // Go's index is the CONTAINER's; a negative index appends.
     var at = index >= 0 ? this.#docPosForBlockIndex(ed, index) : ed.state.doc.content.size
-    ed.commands.insertContentAt(at, content)
+    var anchor = this.#pendingAnchors.get(node.id) || null
+    this.#pendingAnchors.delete(node.id)
+    ed.chain().insertContentAt(at, content)
+      .command(function (/** @type {any} */ ctx) { self.#host.consumeInsertAnchor(anchor, ctx.tr); return true })
+      .run()
+    if (anchor) this.flushPending()
 
     // A server-authored block is authoritative — baseline it so the observer
     // never re-creates it (prose especially, which it otherwise owns).

@@ -38,7 +38,7 @@ Every row below cites the rules it follows from. A rule names the decision of re
 
 | Gesture | Result | Status |
 |---|---|---|
-| Ctrl/Cmd+Shift+V, and context menu "Paste as plain text" | The clipboard's `text/plain`, literal, at the caret. No smart paste, no markdown parse. | planned (decision 5) |
+| Ctrl/Cmd+Shift+V, and context menu "Paste as plain text" | The clipboard's `text/plain`, literal, at the caret. No smart paste, no markdown parse. | pass |
 | Undo Smart Paste (context menu on a smart-pasted block) | The pasted text back verbatim, at the paste location, as prose: indentation, blank lines and spacing kept, no markdown parse. | open: R8 |
 | Copy source (code, diagram) | The block's inner text alone: no fence, no language line. | pass |
 | Copy Image (smart-image) | A PNG on the clipboard, for other applications. | pass |
@@ -96,15 +96,15 @@ Root causes (written `R1`…`R9`, distinct from the rules `R-1`…`R-9`):
 | ID | Scenario | Expected | Rules | Verified by | Status |
 |---|---|---|---|---|---|
 | B1 | Cell text → another cell | The text goes into the target cell. No inner table. | R-1 | `surfaces.test.js` "caret in %s, clipboard holds %s → native paste, Go never asked"; `paste-context.test.js` "caret in %s → %s" | pass |
-| B2 | A 2×2 cell selection → a cell | The 2×2 cells are pasted over the 2×2 starting at the target cell; the table grows if needed. | R-1 | auto: to pin | pass |
+| B2 | A 2×2 cell selection → a cell | The 2×2 cells are pasted over the 2×2 starting at the target cell; the table grows if needed. | R-1 | The text view: `interaction-policy.editor.test.js` "clipboard text/plain keeps structure (R-5)" "B10 a cell selection is only the selected cells" (only the selected cells); paste half auto: to pin | pass |
 | B3 | Paragraph text → a cell | The text is in the cell; nothing appears below the table. | R-1 | `surfaces.test.js` "caret in %s, clipboard holds %s → native paste, Go never asked" | pass |
 | B4 | Multi-paragraph text → a cell | The paragraphs are inside the cell. No block outside the table. | R-1 | auto: to pin | pass |
 | B5 | A list, a code block, or a URL → a cell | List: the first item merges into the cell's paragraph, the rest nest as a list inside the cell. Code: its text, literal. URL: a link whose text is the whole URL. No block outside the table. | R-1 | `surfaces.test.js` "caret in %s, clipboard holds %s → native paste, Go never asked" | open: defect[^b5] |
 | B6 | Cell text → a top-level paragraph | The cell's text only, inline at the caret; not a one-cell table. | R-1, R-2 | `surfaces.test.js` "WysiwygSurface — a declined paste is ProseMirror's own paste (#193 paste matrix)" "B6 cell text at the end of a paragraph: inline"; "B6b cell text mid-paragraph: inline, no split" | pass |
 | B7 | A whole table (gutter selection) → top level | A new table with the same cells. | R-3 | auto: to pin | pass |
 | B8 | html `<table>` (browser page) or TSV (spreadsheet) → top level | html: a Sieve table with the same cells. TSV pasted as text into a paragraph stays text. | R-2, R-7 | `surfaces.test.js` "WysiwygSurface — a declined paste is ProseMirror's own paste (#193 paste matrix)" "B8 an html table behind <meta charset>: no stray paragraph"; live app | pass[^b8] |
-| B9 | Copy a table (`Fruit`/`Qty`, `Apple`/`3`) → a plain-text editor | `text/plain` is `Fruit\tQty` newline `Apple\t3`; no html, no blank lines between rows. | R-5 | auto: to pin (text view); manual: copy the table, paste into a text editor | open: R4 |
-| B10 | A CellSelection of some cells → a plain-text editor | `text/plain` holds only the selected cells, tab- and newline-separated as B9. | R-5 | auto: to pin | open: R4 |
+| B9 | Copy a table (`Fruit`/`Qty`, `Apple`/`3`) → a plain-text editor | `text/plain` is `Fruit\tQty` newline `Apple\t3`; no html, no blank lines between rows. | R-5 | `interaction-policy.editor.test.js` "clipboard text/plain keeps structure (R-5)" "B9 a table: rows by newline, cells by tab"; manual: copy the table, paste into a text editor | pass |
+| B10 | A CellSelection of some cells → a plain-text editor | `text/plain` holds only the selected cells, tab- and newline-separated as B9. | R-5 | `interaction-policy.editor.test.js` "clipboard text/plain keeps structure (R-5)" "B10 a cell selection is only the selected cells" | pass |
 
 [^b5]: `x`, then a URL, then `x` pasted into one cell gives a link missing the URL's last character (TipTap Link paste rule).
 [^b8]: Live app: pass for all three shapes.
@@ -124,14 +124,14 @@ C1 has one row per kind.
 | C1 web-clip | Whole web-clip → top level, same document | New web-clip, same source and body, new id. | R-3, R-6 | `TestEditorService_HandlePaste_wholeBlockCopyPerKind` "C1-web-clip" | pass |
 | C1 ai-block | Whole ai-block → top level, same document | New ai-block, question and answers kept, new id. | R-3, R-6 | `TestAIBlockPaste_clipboardViewIsClaimedAndRebuilt` | pass |
 | C2 | C1, into another open document (second tab) | As C1. An asset-bearing block holds its own copy: `src` = `sieve://{target}/{key}`, never the source document's address. | R-3, R-6, R-9 | `TestSmartImageProcessor_Transform_copiedBlock` "across documents"; `TestEditorService_HandlePaste_wholeBlockCopyPerKind` (another document); manual: copy a code block and an image in tab 1, paste in tab 2;<br>check kind, language, and that the image's `src` names tab 2's document | pass (Go); manual half unrun |
-| C3 | Partial range inside code → a paragraph | The selected characters only, as prose text. No block. | R-3 | auto: to pin (changes with decision 3: supersedes `clipboard-slice.test.js` "a partial range inside a block carries the characters as text, the whole block as sieve/slice, or both") | planned |
+| C3 | Partial range inside code → a paragraph | The selected characters, pasted as any text is: prose, or a block if smart paste is confident. No `sieve/*` view is written. | R-3 | `interaction-policy.editor.test.js` "%s: C3 a partial range writes no sieve/* view"; `clipboard-slice.test.js` "what goes on the clipboard" "C3: a partial %s range writes its characters and no sieve/* view"; "a range of several blocks: one covered in part is its characters as prose, one covered whole keeps its views" | pass |
 | C4 | Partial range inside code → another code block | The selected characters, literal, at the caret. | R-1, R-3 | `paste-context.test.js` "caret inside a code:true block → true (paste stays literal)"; `surfaces.test.js` "caret in a raw-text block → returns false (native paste), no insert" | pass |
 | C5 | Gutter range of prose + code + diagram → top level | Three blocks in source order, each a new id, code keeping its language. | R-3, R-6 | `TestEditorService_HandlePasteSlice_oneBlockPerItemInOrder` (order); `TestEditorService_HandlePaste_wholeBlockCopyPerKind` (language) | pass |
 | C6 | Cut a code block, paste it elsewhere | Moved: same kind, content and language, new id. Undo puts it back. | R-3, R-6 | `TestEditorService_HandlePaste_wholeBlockCopyPerKind` (the paste half); cut + undo auto: to pin | pass |
 | C7 | Copy a range of elements inside an ai-block → top level | The elements as top-level blocks; no ai-block. | R-3 | `clipboard-slice.test.js` "is composed per element — the answer pastes as the blocks it showed" | pass |
 | C8 | Copy the whole ai-block → top level | The ai-block re-imported, question and answers kept. | R-3 | `TestAIBlockPaste_clipboardViewIsClaimedAndRebuilt`; `TestAIBlockPaste_fencedFormIsClaimedAndParsed` | pass |
 | C9 | Code "Copy source" → a paragraph | The source text only, no fence; then smart paste as for any multi-line text. | R-8 | `code-node-view-menu.test.js` "copies the inner text alone — no fence, no language line" | pass |
-| C10 | Smart-image Copy Image → paste in Sieve; and into an image application; and Ctrl/Cmd+C of the image → a text editor | Sieve: a smart-image whose asset is stored in the target document. Image application: the PNG. Text editor: no gutter number, handle or badge text. | R-5, R-9 | auto: to pin (text view); manual: Copy Image, paste into Sieve and into GIMP;<br>Ctrl+C the image, paste into a text editor | open: R4 |
+| C10 | Smart-image Copy Image → paste in Sieve; and into an image application; and Ctrl/Cmd+C of the image → a text editor | Sieve: a smart-image whose asset is stored in the target document. Image application: the PNG. Text editor: no gutter number, handle or badge text. | R-5, R-9 | `clipboard-slice.test.js` "a selected image is copied as a block" "%s, every view is composed" (text/plain is the asset address, no chrome); bitmap and paste halves: manual: Copy Image, paste into Sieve and into GIMP;<br>Ctrl+C the image, paste into a text editor | pass |
 | C11 | Copy Link / Copy URL → a paragraph | A link whose text is the page title (the URL when no title arrives). | R-2 | `TestLinkPaste_Result` | pass |
 | C12 | Copy an ai-block, paste it | Every element inside the pasted ai-block has a fresh id; none shares an id with the source. | R-6 | `TestAIBlockPaste_elementsGetFreshIDs`; `TestEditorService_HandlePaste_wholeBlockCopyPerKind` "C1-ai-block/C12" | pass |
 | C13 | Copy a smart-image with a title, paste | The pasted image keeps the `title`. | R-3 | `smart-image-summary.test.js` "SmartImageNodeView schema"; `TestEditorService_HandlePaste_wholeBlockCopyPerKind` "C1-smart-image/C13" | pass |
@@ -180,9 +180,9 @@ C1 has one row per kind.
 
 | ID | Scenario | Expected | Rules | Verified by | Status |
 |---|---|---|---|---|---|
-| G1 | Prose with a heading, a list and bold → a plain-text editor | `text/plain`: `Title`, blank line, `- one` newline `- two`, blank line, `a bold word`. No entities, no escapes, no `**`. | R-5 | auto: to pin (text view) | open: R4 |
+| G1 | Prose with a heading, a list and bold → a plain-text editor | `text/plain`: `Title`, blank line, `- one` newline `- two`, blank line, `a bold word`. No entities, no escapes, no `**`. | R-5 | `interaction-policy.editor.test.js` "clipboard text/plain keeps structure (R-5)" "G1 heading, list and bold: no markup, one blank line between blocks"; "an ordered list numbers from its start; a nested list sits two spaces in"; "task items carry their box"; "a hard break is a newline" | pass |
 | G2 | Prose → a rich editor (LibreOffice, a mail client) | Formatting kept through `text/html`. | R-5 | manual: copy formatted prose, paste into LibreOffice Writer;<br>check headings, lists, bold and links survive | unrun[^g2] |
-| G3 | A whole code block → a plain-text editor | The source only; no fence. | R-3, R-5 | auto: to pin (text view); manual: gutter-select a code block, Ctrl+C, paste into a text editor | pass[^g3] |
+| G3 | A whole code block → a plain-text editor | The source only; no fence. | R-3, R-5 | `interaction-policy.editor.test.js` "clipboard text/plain keeps structure (R-5)" "G3 a whole code block is its source"; manual: gutter-select a code block, Ctrl+C, paste into a text editor | pass[^g3] |
 | G4 | File › Export › Clipboard as Markdown / Confluence | The whole document in the chosen format, images included. | — | `shell.test.js` "flushes first, then writes the SERVER's %s export to the Wails pasteboard (primary)"; manual: export each format, paste into a text editor;<br>check every block and image is present | open: defect[^g4], R9 |
 
 [^g2]: The `text/html` view carries WebKit inline `color: rgb(0,0,0)` styles.
@@ -193,15 +193,15 @@ C1 has one row per kind.
 
 | ID | Scenario | Expected | Rules | Verified by | Status |
 |---|---|---|---|---|---|
-| H1 | M-Copy a code block → K-Paste | The same result as C1 code. | R-4 | auto: to pin | open: R5 |
-| H2 | K-Copy a code block → M-Paste | A text paste of the block's source, through smart paste (a code block if detection is confident); never a `sieve/*` rebuild. | R-4, R-8 | manual: gutter-select a code block, Ctrl+C, then context-menu Paste in a paragraph;<br>check the result equals pasting the same source as text (changes with decision 2) | planned |
-| H3 | M-Cut a selection spanning blocks | The same as K-Cut: the clipboard as A13/C6 compose it, the range removed. | R-4 | auto: to pin | open: R5 |
-| H4 | Ctrl/Cmd+Shift+V, or menu "Paste as plain text" | The clipboard's `text/plain`, literal, at the caret: no smart paste, no markdown parse. | R-8 | auto: to pin | planned |
+| H1 | M-Copy a code block → K-Paste | The same result as C1 code. | R-4 | `context-menu-structure.test.js` "the clipboard items" "%s runs the keyboard's %s on the selection" (H1 Copy) | pass |
+| H2 | K-Copy a code block → M-Paste | A text paste of the block's source, through smart paste (a code block if detection is confident); never a `sieve/*` rebuild. | R-4, R-8 | `context-menu-structure.test.js` "the clipboard items" "H2 Paste hands the lens %s; never execCommand" (the three clipboard shapes: text and html, text alone, text alone after a refused `clipboard.read()`); `surfaces.test.js` "H2 context-menu Paste of %s: Go asked with those views, a decline pastes them natively"; manual: gutter-select a code block, Ctrl+C, then context-menu Paste in a paragraph;<br>check the result equals pasting the same source as text | unrun |
+| H3 | M-Cut a selection spanning blocks | The same as K-Cut: the clipboard as A13/C6 compose it, the range removed. | R-4 | `context-menu-structure.test.js` "the clipboard items" "%s runs the keyboard's %s on the selection" (H3 Cut) | pass |
+| H4 | Ctrl/Cmd+Shift+V, or menu "Paste as plain text" | The clipboard's `text/plain`, literal, at the caret: no smart paste, no markdown parse. | R-8 | `interaction-policy.editor.test.js` "Mod+Shift+V paste as plain text (H4)"; `context-menu-structure.test.js` "the clipboard items" "H4 Paste as plain text hands the lens the clipboard's text/plain"; `surfaces.test.js` "H4 paste as plain text in a read-only region: nothing pasted, Go never asked"; "H4 paste as plain text: %s" (six literal cases on the real editor) | pass (live: WebKitGTK delivers the chord's paste event) |
 | H5 | Markdown mode: copy and paste inside the textarea | Native textarea behaviour; literal text. | R-1 | manual: switch to markdown mode, copy a line, paste it below;<br>check it is byte-identical | pass |
-| H6 | Copy in WYSIWYG, paste into markdown mode | `text/plain` with structure kept (R-5): list markers, tab-separated cells. No html, no `sieve/` noise. | R-5 | auto: to pin (synthetic clipboard) | open: R4 |
+| H6 | Copy in WYSIWYG, paste into markdown mode | `text/plain` with structure kept (R-5): `- ` markers, tab-separated cells, one blank line between blocks. No html, no `sieve/` noise. | R-5 | `interaction-policy.editor.test.js` "clipboard text/plain keeps structure (R-5)" "H6 a range of heading, code block and list: every block keeps its structure" | pass |
 | H7 | Copy in markdown mode, paste into WYSIWYG | Rendered as E9. | R-7 | auto: to pin (synthetic clipboard) | pass |
 | H8 | Ask composer: paste markdown or code | The composer is a WYSIWYG surface: markdown renders; code keeps its indentation and tabs. | R-2, R-7 | manual: open Ask, paste a markdown block, then a tab-indented Python function;<br>check the markdown renders and the indentation survives | unrun |
-| H9 | ai-block node menu Copy / Cut | The same clipboard as K-Copy / K-Cut of the whole ai-block (C8). | R-4 | auto: to pin | open: R5 |
+| H9 | ai-block node menu Copy / Cut | The same clipboard as K-Copy / K-Cut of the whole ai-block (C8). | R-4 | `context-menu-ai-block.test.js` "context-menu.js — ai-block Copy / Cut (H9)" "%s selects the block, then runs the keyboard's %s" | pass |
 
 ## Maintenance
 

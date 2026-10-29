@@ -525,6 +525,11 @@ existing primitives, ordered on one socket. Capture-time never consumes: a
 cancelled dialog must not eat the blank line (known gap: the async image-upload
 dialog path commits outside the editor and does not consume — acceptable).
 
+A paste or drop instead PEEKS the anchor and consumes it only once Go confirms a
+block, in the same transaction that places the block, so one undo removes the
+block and restores the blank line however late the block arrives after the
+confirmation. A block already in the document at confirmation consumes it then.
+
 **The Assets tab's Insert** is a `place` paste of the asset's entries (matched
 like `smart`, never marked a smart paste) placed by this rule at the caret,
 with one difference: when the editor has not held focus since it mounted there
@@ -640,6 +645,7 @@ plugin, and would answer before the policy's.
 | Target | Content | Outcome |
 |---|---|---|
 | Prose | URL / HTML / image / matchable | silent smart conversion (Go FirstPasteMatch) — by design |
+| Prose | `text/html` | a smart-image only when the html IS one image: a single `<img>` with an image URL, alone or wrapped in elements holding no text (a browser's Copy image). Html holding text, or more than one image, is declined and pasted natively as prose with its marks, a `<pre>` as a native `codeBlock`. In that native paste every remote image (an `http(s)` src) becomes a link to its URL labelled with its alt text or the URL, and one already inside a link becomes its alt text (`transformPastedHTML`), because a native paste stores no asset; an image Sieve serves itself (`data:`, its own routes) stays an image. |
 | Prose | anything Go declines (outcome `none`) | ProseMirror's own paste of the ORIGINAL clipboard, as an unclaimed Ctrl+V: the text/html view when there is one (`view.pasteHTML`), so a copied slice keeps its open depth and context (a word lands inline, a list item or task item stays one, a blockquote stays a blockquote); otherwise the text as an ordinary text paste, through the view's `clipboardTextParser`, so markdown source renders and `->` stays `->`. Never `insertContent`. The context-menu Paste, the Link rung and a failed round-trip replay the same way. The literal paste is Paste as plain text's (below). |
 | Prose | markdown-shaped prose (a `> ` quote line, `**bold**`, a heading, an inline code span), or anything shorter than 30 characters | never a code block: markdown is evidence of prose, and smart paste claims code only when it is at least as certain as language guessing (`minSourceLength`) |
 | Table cell (`tableCell` / `tableHeader`) | anything, `sieve/slice` included | native ProseMirror paste into the cell (prosemirror-tables merges a copied cell as its contents, never a nested table). Smart paste and the context-menu Paste step aside, so no block is ever created outside the cell the caret is in. "Anywhere" below means anywhere but a cell. |
@@ -652,6 +658,7 @@ plugin, and would answer before the policy's.
 | Anywhere | a `text/uri-list` of `file:` URIs (a file-manager COPY) | Forwarded verbatim as a `native-drop` paste and read by Go — the same ingestion a desktop drag takes, at the CARET index rather than a drop coordinate. |
 | Anywhere | **nothing at all** (see below) | `native-clipboard`: Go reads the OS clipboard itself. |
 | Read-only region: a body inside a kind declaring `readOnlyText` or `caretStop: true` (log, web-clip, ai-block) | anything | consumed by the region's node view; Go is never asked. |
+| A smart-pasted block | **Undo Smart Paste** (its context menu) | the pasted text back verbatim, as one prose paragraph in the block's place: a hard break per line, a blank line kept as an empty line, every markdown-significant character escaped so nothing is read as markdown (`__init__` stays `__init__`), and indentation and runs of spaces kept as no-break spaces (a tab as four). |
 | Anywhere | HTML carrying `data-id` / `data-block-id` | the identity markers are stripped before the parse (`transformPastedHTML`): ids are minted, never copied, so a pasted block or paragraph gets a fresh id and its source keeps its own. |
 
 ### The empty clipboard (2026-08-21, #87)

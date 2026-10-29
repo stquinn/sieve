@@ -236,11 +236,15 @@ func TestDocumentCodec_RoundTrip(t *testing.T) {
 	original := []block.SieveBlock{
 		(ProseProcessor{}).newProseBlock("pr-1", "An intro paragraph."),
 		block.NewSieveBlock("code", "co-1", map[string]interface{}{"id": "co-1", "source": "x := 1"}),
-		(ProseProcessor{}).newProseBlock("pr-2", "A closing paragraph."),
+		(ProseProcessor{}).newProseBlock("pr-2", "A closing paragraph: go -> stop, 1 < 2 & done."),
 	}
 	md, err := c.Serialize(original)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// A17: prose markdown is stored as the editor wrote it, `->` included.
+	if !strings.Contains(md, "go -> stop, 1 < 2 & done.") {
+		t.Errorf("prose content not stored verbatim:\n%s", md)
 	}
 	got, err := c.Deserialize(md)
 	if err != nil {
