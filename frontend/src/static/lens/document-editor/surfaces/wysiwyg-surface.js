@@ -881,7 +881,8 @@ export class WysiwygSurface extends AbstractSurface {
 
   /**
    * @override — pastes plain text through the SAME pipeline a keyboard paste
-   * takes. A container with no paste query falls back to the local insert.
+   * takes. A container with no paste query, or a caret in a table cell, falls
+   * back to the local insert.
    * @param {string} text
    * @returns {Promise<'block'|'content'|'none'>}
    */
