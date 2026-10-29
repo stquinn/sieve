@@ -135,6 +135,7 @@ C1 has one row per kind.
 | C11 | Copy Link / Copy URL → a paragraph | A link whose text is the page title (the URL when no title arrives). | R-2 | `TestLinkPaste_Result` | pass |
 | C12 | Copy an ai-block, paste it | Every element inside the pasted ai-block has a fresh id; none shares an id with the source. | R-6 | `TestAIBlockPaste_elementsGetFreshIDs`; `TestEditorService_HandlePaste_wholeBlockCopyPerKind` "C1-ai-block/C12" | pass |
 | C13 | Copy a smart-image with a title, paste | The pasted image keeps the `title`. | R-3 | `smart-image-summary.test.js` "SmartImageNodeView schema"; `TestEditorService_HandlePaste_wholeBlockCopyPerKind` "C1-smart-image/C13" | pass |
+| C14 | Partial range inside an ai-block's prose element (text into its code fence) → mid-paragraph elsewhere | The characters land inline at the caret; the fence lands as a code block after them; the rest of the target paragraph follows. Marks and links are kept. No block is created after the paragraph. | R-2, R-3, R-5 | `clipboard-slice.test.js` "%s, covered in part: text/plain and ProseMirror's text/html, no sieve/* view" (C14 rows); `surfaces.test.js` "C14 partial prose + fence from a container pasted mid-paragraph: text inline, fence as a code block, tail paragraph follows" | pass |
 
 
 ### D. Paste into blocks that are not prose

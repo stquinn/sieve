@@ -6,11 +6,14 @@
 // PART OF A BLOCK IS ITS CHARACTERS; A WHOLE BLOCK IS THE BLOCK. A range covering
 // a block whole (or a NodeSelection of it) carries that block's own views. A range
 // covering only PART of a block's content carries those characters and no view of
-// the block: alone, it writes text/plain + text/html only, so a paste reads it as
-// it reads the same text copied from any other application; in a range of several
-// blocks, its `sieve/slice` item is the characters as prose. An image block is no
-// exception: copying it copies the block, and the bitmap a foreign application
-// wants is the block's own "Copy Image" menu item.
+// the block. A selection covering no block whole writes text/plain + text/html
+// only, so a paste reads it as it reads the same text copied from any other
+// application; in a range that covers some block whole, a part-covered block's
+// `sieve/slice` item is its characters as prose. A native prose node, whole or in
+// part, is structured prose: its text/html is ProseMirror's own clipboard
+// serialization of the part covered, so marks, links and code blocks are kept. An
+// image block is no exception to the rule: copying it copies the block, and the
+// bitmap a foreign application wants is the block's own "Copy Image" menu item.
 //
 // A node whose content HOSTS BLOCKS is a container, and a range lying inside one
 // names its ELEMENTS, not the container: each is composed as a block of its own,
@@ -118,8 +121,9 @@ export class ClipboardSlice {
 
     clipboardData.setData('text/plain', composed.plain.filter(Boolean).join('\n\n'))
     clipboardData.setData('text/html', composed.html.filter(Boolean).join('\n'))
+    // Only a block covered whole has views of its own; characters alone are text.
     const items = composed.items
-    if (!items.length || (items.length === 1 && !items[0].whole)) return true
+    if (!items.some((item) => item.whole)) return true
     clipboardData.setData('sieve/slice', JSON.stringify(items.map((item) => item.entries)))
     // A single whole sieve block also exposes the rest of its ContentEntry array,
     // so a cross-context paste hits the same backend matchers. Not its text views:
@@ -180,11 +184,11 @@ export class ClipboardSlice {
         node.forEach((/** @type {any} */ child, /** @type {number} */ childOffset) => {
           const from = offset + 1 + childOffset
           if (from + child.nodeSize <= range.from || from >= range.to) return
-          this.#composeNode(child, from, nodeDOM(from), out)
+          this.#composeNode(child, from, nodeDOM(from), { node, base: offset + 1 }, out)
         })
         return
       }
-      this.#composeNode(node, offset, dom, out)
+      this.#composeNode(node, offset, dom, { node: doc, base: 0 }, out)
     })
 
     return out.hasSieve ? { items: out.items, plain: out.plain, html: out.html } : null
@@ -225,9 +229,12 @@ export class ClipboardSlice {
    * Build every view of ONE block — a top-level node or a container's element —
    * and append them to `out`.
    * @param {any} node @param {number} from @param {any} dom
+   * @param {{node: any, base: number}} level the node whose content lists `node`
+   *   (the document, or the container descended into) and the position its
+   *   content starts at
    * @param {Composition} out
    */
-  #composeNode(node, from, dom, out) {
+  #composeNode(node, from, dom, level, out) {
     const nodeEnd = from + node.nodeSize
     const sieve = String(node.type.name).indexOf(SIEVE_PREFIX) === 0
     if (sieve) out.hasSieve = true
@@ -238,16 +245,17 @@ export class ClipboardSlice {
     const whole = highlighted
       ? highlighted.trim() === ClipboardText.ofNode(node).trim()
       : this.#coversWhole(from, nodeEnd)
-    const text = highlighted || (whole
-      ? ClipboardText.ofNode(node)
-      : ClipboardText.ofSlice(this.#view.state.doc.slice(
-        Math.max(this.#range.from, from), Math.min(this.#range.to, nodeEnd))))
+    const covered = whole
+      ? level.node.slice(from - level.base, nodeEnd - level.base)
+      : level.node.slice(Math.max(this.#range.from, from) - level.base, Math.min(this.#range.to, nodeEnd) - level.base)
+    const text = highlighted || (whole ? ClipboardText.ofNode(node) : ClipboardText.ofSlice(covered))
     if (!whole && !text) return
 
     const entries = whole ? this.#entriesOf(node) : this.#entriesOf(this.#characters(node, from, text))
     out.items.push({ entries, whole, sieve })
     out.plain.push(text)
     if (highlighted) out.html.push(this.#domHtml || ClipboardSlice.#escape(highlighted))
+    else if (!sieve) out.html.push(this.#view.serializeForClipboard(covered).dom.innerHTML)
     else if (!whole) out.html.push(ClipboardSlice.#escape(text).replace(/\n/g, '<br>'))
     else out.html.push(ClipboardSlice.#pick(entries, 'text/html') || ClipboardSlice.#blockHTML(dom))
   }

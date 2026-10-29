@@ -1959,6 +1959,19 @@ describe('WysiwygSurface — a declined paste is ProseMirror\'s own paste (#193 
       [P('p1', 'x'), P('p2', '')],
       (ed) => { select(ed, ed.state.doc.content.size - 1); return { 'text/plain': 'go -> stop' } },
       (ed) => expect(texts(ed)).toEqual(['x', 'go -> stop'])],
+    ['C14 partial prose + fence from a container pasted mid-paragraph: text inline, fence as a code block, tail paragraph follows',
+      [P('p1', 'alpha beta')],
+      (ed) => {
+        select(ed, find(ed, 'alpha beta').from + 5)
+        // What clipboard-slice.test.js "C14 a paragraph into its code fence" composes.
+        return { 'text/html': '<p data-pm-slice="1 0 []">this:</p>\n<pre data-pm-slice="0 1 []"><code class="language-go">fmt.Pri</code></pre>',
+          'text/plain': 'this:\n\nfmt.Pri' }
+      },
+      (ed) => {
+        expect(types(ed)).toEqual(['paragraph', 'codeBlock', 'paragraph'])
+        expect(texts(ed)).toEqual(['alphathis:', 'fmt.Pri', ' beta'])
+        expect(ed.state.doc.child(1).attrs.language).toBe('go')
+      }],
     ['E9 markdown source as text still renders',
       [P('p1', 'x'), P('p2', '')],
       (ed) => { select(ed, ed.state.doc.content.size - 1); return { 'text/plain': '# Title\n\n- one\n- two\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nSome **bold** text.' } },

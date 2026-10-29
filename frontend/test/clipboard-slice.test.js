@@ -6,6 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { Schema } from '@tiptap/pm/model'
 import { EditorState, TextSelection, NodeSelection } from '@tiptap/pm/state'
+import { EditorView } from '@tiptap/pm/view'
 
 // A structured kind's own views come from its NodeView adapter, and every one of
 // them leads with a WHOLE-BLOCK text/plain (code, log, diagram, reference,
@@ -45,6 +46,11 @@ const schema = new Schema({
   nodes: {
     doc: { content: '(block | sieveBlock)+' },
     paragraph: { group: 'block', content: 'text*', toDOM: () => ['p', 0] },
+    codeBlock: {
+      group: 'block', content: 'text*', marks: '', code: true,
+      attrs: { language: { default: 'go' } },
+      toDOM: (n) => ['pre', ['code', { class: 'language-' + n.attrs.language }, 0]],
+    },
     text: { group: 'inline' },
     'sieve-log': {
       group: 'sieveBlock', content: 'text*', code: true,
@@ -88,6 +94,10 @@ const schema = new Schema({
       attrs: { kind: { default: 'smart-image' }, id: { default: 'i1' }, src: { default: '' } },
       toDOM: (n) => ['img', { src: n.attrs.src }],
     },
+  },
+  marks: {
+    strong: { toDOM: () => ['strong', 0] },
+    link: { attrs: { href: {} }, toDOM: (m) => ['a', { href: m.attrs.href }, 0] },
   },
 })
 
@@ -166,7 +176,10 @@ function viewOf(nodes, selection) {
   const withSel = selection
     ? state.apply(state.tr.setSelection(selection(doc)))
     : state
-  return { state: withSel, nodeDOM: (pos) => doms[pos] || null, doms }
+  // ProseMirror's own clipboard serializer, over this state's schema.
+  const serializeForClipboard = (s) =>
+    EditorView.prototype.serializeForClipboard.call({ state: withSel, someProp: () => undefined }, s)
+  return { state: withSel, nodeDOM: (pos) => doms[pos] || null, doms, serializeForClipboard }
 }
 
 /** A live DOM highlight over `el`'s body text. */
@@ -356,23 +369,23 @@ describe('a range inside a block-hosting container', () => {
     return { ai, para, code, paraFrom: 1, codeFrom: 1 + para.nodeSize }
   }
 
-  it('C7: is composed per element — the answer pastes as the blocks it showed, each part as its characters', () => {
-    const { ai, paraFrom, codeFrom } = answered()
-    const view = viewOf([ai], (doc) => TextSelection.create(doc, paraFrom + 2, codeFrom + 4))
+  it('C7: is composed per element — the answer pastes as the blocks it showed, a part as its characters', () => {
+    const { ai, code, paraFrom, codeFrom } = answered()
+    const view = viewOf([ai], (doc) => TextSelection.create(doc, paraFrom + 2, codeFrom + code.nodeSize))
     const data = clip()
     expect(slice(view, { editor }).write(/** @type {any} */ (data))).toBe(true)
 
     const items = JSON.parse(data.data['sieve/slice'])
-    expect(items).toHaveLength(2)
-    expect(items[0].map((e) => e.mimeType)).toContain('sieve/prose')
-    // The code element is covered in part, so it is its characters, not a code block.
-    expect(items[1].map((e) => e.mimeType)).toEqual(['sieve/prose', 'text/plain'])
-    expect(JSON.parse(items[1][0].content).content).toBe('fmt')
+    expect(items.map((item) => item.map((e) => e.mimeType))).toEqual([
+      ['sieve/prose', 'text/plain'],
+      ['text/plain', 'sieve/code'],
+    ])
+    expect(JSON.parse(items[0][0].content).content).toBe('he prose')
     // The container itself is not one of the items, and so cannot be rebuilt whole.
     expect(JSON.stringify(items)).not.toContain('sieve/ai-block')
     expect(data.data['sieve/ai-block']).toBeUndefined()
     // Each element's own covered characters, once.
-    expect(data.data['text/plain']).toBe('he prose\n\nfmt')
+    expect(data.data['text/plain']).toBe('he prose\n\nfmt.Println(1)')
   })
 
   it('carries an element covered whole as that element\'s own kind', () => {
@@ -397,24 +410,25 @@ describe('a range inside a block-hosting container', () => {
     expect(data.data['sieve/ai-block']).toBe(JSON.stringify({ kind: 'ai-block', id: 'a1', question: 'why?' }))
   })
 
-  // The answer as the app projects it: every element native prose, no sieve block
-  // among them. Descending must still serve the copy, or ProseMirror's native copy
-  // takes over and flattens the elements into one text run.
-  it('serves an answer whose elements are all native prose, one item per element', () => {
-    const first = schema.nodes.paragraph.create(null, schema.text('Here is the example:'))
-    const second = schema.nodes.paragraph.create(null, schema.text('public class Hello'))
-    const ai = schema.nodes['sieve-ai-block'].create(null, [first, second])
-    const secondFrom = 1 + first.nodeSize
-    const view = viewOf([ai], (doc) => TextSelection.create(doc, 1 + 1 + 8, secondFrom + 1 + 6))
+  // A range covering no element whole is characters only: text/plain and the
+  // text/html ProseMirror's own copy would write, each element its own slice, so
+  // a paste places them natively — inline at the caret, a code block as one.
+  const P = (...inline) => schema.nodes.paragraph.create(null, inline)
+  const T = (text, ...marks) => schema.text(text, marks)
+  it.each([
+    ['C14 bold text', () => [P(T('a '), T('bold', schema.marks.strong.create()), T(' word'))], 4, 11,
+      'bold wo', '<strong data-pm-slice="0 0 []">bold</strong> wo'],
+    ['C14 a link', () => [P(T('see '), T('here', schema.marks.link.create({ href: 'https://example.com/' })), T(' now'))], 5, 12,
+      ' here n', ' <a href="https://example.com/">here</a> n'],
+    ['C14 a paragraph into its code fence', () => [P(T('Run this:')), schema.nodes.codeBlock.create(null, T('fmt.Println(1)'))], 6, 20,
+      'this:\n\nfmt.Pri', '<p data-pm-slice="1 0 []">this:</p>\n<pre data-pm-slice="0 1 []"><code class="language-go">fmt.Pri</code></pre>'],
+    ['an answer whose elements are all paragraphs', () => [P(T('Here is the example:')), P(T('public class Hello'))], 10, 30,
+      'the example:\n\npublic', '<p data-pm-slice="1 0 []">the example:</p>\n<p data-pm-slice="0 1 []">public</p>'],
+  ])('%s, covered in part: text/plain and ProseMirror\'s text/html, no sieve/* view', (_row, children, from, to, text, html) => {
+    const view = viewOf([schema.nodes['sieve-ai-block'].create(null, children())], (doc) => TextSelection.create(doc, from, to))
     const data = clip()
     expect(slice(view, { editor }).write(/** @type {any} */ (data))).toBe(true)
-
-    const items = JSON.parse(data.data['sieve/slice'])
-    expect(items).toHaveLength(2)
-    // A prose element covered in part carries only its selected characters.
-    expect(items.map((it) => JSON.parse(it.find((e) => e.mimeType === 'sieve/prose').content).content))
-      .toEqual(['the example:', 'public'])
-    expect(data.data['text/plain']).toBe('the example:\n\npublic')
+    expect(data.data).toEqual({ 'text/plain': text, 'text/html': html })
   })
 
   // An element rendered read-only still IS an element: PM owns a position for it,
@@ -449,10 +463,9 @@ describe('a range inside a block-hosting container', () => {
     const view = viewOf([captioned], (doc) => TextSelection.create(doc, 3, codeFrom + 4))
     const data = clip()
     expect(slice(view, { editor }).write(/** @type {any} */ (data))).toBe(true)
-    const items = JSON.parse(data.data['sieve/slice'])
-    expect(items).toHaveLength(2)
-    expect(JSON.parse(items[0][0].content).content).toBe('he caption')
-    expect(JSON.parse(items[1][0].content).content).toBe('fmt')
+    // Descended: the caption is a prose element of its own, the code element its characters.
+    expect(data.data['text/html']).toBe('<p data-pm-slice="1 0 []">he caption</p>\nfmt')
+    expect(data.data['text/plain']).toBe('he caption\n\nfmt')
     expect(data.data['sieve/captioned']).toBeUndefined()
   })
 })
