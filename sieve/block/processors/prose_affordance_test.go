@@ -35,18 +35,6 @@ func TestProse_IsSupportedContent_plainText_noMatch(t *testing.T) {
 	}
 }
 
-// ActionUndoSmartPaste on a code source returns the raw source text (the escape hatch).
-func TestProse_Transform_codeSource_embedsRawSourceText(t *testing.T) {
-	block.ResetRegistry()
-	block.RegisterProcessor(&CodeBlockProcessor{FencedDeserializer: block.FencedDeserializer{Kind: "code"}})
-	defer block.UnregisterProcessor("code")
-	p := NewProseProcessor(block.BlockServices{})
-	out := p.Transform([]block.ContentEntry{{MIMEType: "sieve/code", Content: `{"source":"x := 1","language":"go"}`}}, "uuid", "id", block.ActionUndoSmartPaste)
-	if out["content"] != "x := 1" {
-		t.Fatalf("code source should embed as its raw source text for undo, got %v", out["content"])
-	}
-}
-
 // Guards the data-loss bug: a code source with a MISSING "source" key must NOT yield
 // content:nil (a silent blank block) — it falls through instead.
 func TestProse_Transform_codeNoSource_neverNilContent(t *testing.T) {

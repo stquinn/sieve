@@ -592,23 +592,6 @@ describe('the table section', () => {
     })
   })
 
-  // Copy reads the same rectangle as the Cut that deletes it: `from..to` would
-  // take the head cell alone while deleteSelection clears every selected cell.
-  it('Copy over a cell selection takes every selected cell, in document order', async () => {
-    const grid = caretInGridTable()
-    const doc = grid.state.doc
-    const state = grid.state.apply(grid.state.tr.setSelection(
-      new CellSelection(doc.resolve(grid.pos[0][1]), doc.resolve(grid.pos[1][1]))))
-    const pane = paneOver(state)
-    const written = []
-    Object.defineProperty(globalThis.navigator, 'clipboard', {
-      value: { writeText: (t) => { written.push(t); return Promise.resolve() } },
-      configurable: true,
-    })
-    itemNamed(openMenu(pane), 'Copy').click()
-    expect(written).toEqual(['b\nd'])
-  })
-
   // GFM pipe markdown requires a header row (#118): the OFF direction is gone,
   // so the entry exists only while the table has none, and never offers to
   // remove one that does.
@@ -632,6 +615,59 @@ describe('the table section', () => {
 // jsdom does no real layout: offsetTop never reflects a just-set style.top on
 // its own, so it is shimmed here to derive from it — the one feedback loop a
 // real browser gives placeSubmenu for free and this suite has to fake.
+// R-4: keyboard and menu agree. Copy and Cut are the browser's own command, so
+// the ClipboardEvent reaches the interaction policy as Mod+C / Mod+X do; Paste is
+// a text paste of whatever the async clipboard can read.
+describe('the clipboard items', () => {
+  const realClipboard = navigator.clipboard
+  const stubClipboard = (value) => Object.defineProperty(navigator, 'clipboard', { value, configurable: true })
+  const settle = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)) }
+  let execCommand
+  beforeEach(() => { execCommand = vi.fn(() => true); document.execCommand = execCommand })
+  afterEach(() => { delete document.execCommand; stubClipboard(realClipboard) })
+
+  const rangeOver = () => {
+    const state = caretInProse()
+    return state.apply(state.tr.setSelection(TextSelection.create(state.doc, 1, 4)))
+  }
+  const blob = (text) => ({ text: () => Promise.resolve(text) })
+
+  it.each([['H1 Copy', 'Copy', 'copy'], ['H3 Cut', 'Cut', 'cut']])('%s runs the keyboard\'s %s on the selection', (_row, label, command) => {
+    const pane = paneOver(rangeOver())
+    stubClipboard({ writeText: vi.fn() })
+    itemNamed(openMenu(pane), label).click()
+    expect(pane.commands.focus).toHaveBeenCalled()
+    expect(execCommand.mock.calls).toEqual([[command]])
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['text and html, where clipboard.read() offers them',
+      { read: () => Promise.resolve([{ types: ['text/plain', 'text/html'], getType: (m) => Promise.resolve(blob(m === 'text/html' ? '<b>hi</b>' : 'hi')) }]) },
+      ['hi', '<b>hi</b>']],
+    ['text alone, where only readText() is there', { readText: () => Promise.resolve('hi') }, ['hi', '']],
+    ['text alone, where clipboard.read() is refused',
+      { read: () => Promise.reject(new Error('denied')), readText: () => Promise.resolve('hi') }, ['hi', '']],
+  ])('H2 Paste hands the lens %s; never execCommand', async (_label, clipboard, args) => {
+    const host = { pasteText: vi.fn(), pastePlainText: vi.fn() }
+    stubClipboard(clipboard)
+    itemNamed(openMenu(paneOver(caretInProse(), host)), 'Paste').click()
+    await settle()
+    expect(host.pasteText.mock.calls).toEqual([args])
+    expect(host.pastePlainText).not.toHaveBeenCalled()
+    expect(execCommand).not.toHaveBeenCalled()
+  })
+
+  it('H4 Paste as plain text hands the lens the clipboard\'s text/plain', async () => {
+    const host = { pasteText: vi.fn(), pastePlainText: vi.fn() }
+    stubClipboard({ readText: () => Promise.resolve('# Title') })
+    itemNamed(openMenu(paneOver(caretInProse(), host)), 'Paste as plain text').click()
+    await settle()
+    expect(host.pastePlainText.mock.calls).toEqual([['# Title']])
+    expect(host.pasteText).not.toHaveBeenCalled()
+  })
+})
+
 describe('the flyout placement', () => {
   /** @type {any} */ let originalOffsetTop
 

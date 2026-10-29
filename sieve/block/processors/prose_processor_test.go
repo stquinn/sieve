@@ -2,6 +2,7 @@ package processors
 
 import (
 	"bytes"
+	"html"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
 	"strconv"
@@ -42,34 +43,43 @@ func TestProseProcessor_Transform_embedMarkdownCodeUnwraps(t *testing.T) {
 	}
 }
 
-// Undo Smart Paste (ActionUndoSmartPaste) is the escape hatch: raw text, no stray fence.
+// Undo Smart Paste (ActionUndoSmartPaste) is the escape hatch: the pasted text
+// back verbatim as prose (E13). Read as markdown, the content is one paragraph
+// whose text is the source's, line for line: indentation, blank lines and runs
+// of spaces kept (as no-break spaces, a tab as four), no fence, no emphasis.
 func TestProseProcessor_Transform_undoReturnsSafePlainText(t *testing.T) {
 	block.ResetRegistry()
 	block.RegisterProcessor(&CodeBlockProcessor{FencedDeserializer: block.FencedDeserializer{Kind: "code"}})
 	defer block.UnregisterProcessor("code")
 	var p ProseProcessor
-	src := "public class Greeter {\n    private final String name;\n\n    public Greeter(String name) {\n        this.name = name;\n    }\n}"
-	entries := []block.ContentEntry{{MIMEType: "sieve/code", Content: `{"language":"java","source":` + strconv.Quote(src) + `}`}}
-
-	content, _ := p.Transform(entries, "", "", block.ActionUndoSmartPaste)["content"].(string)
-	if strings.TrimSpace(content) == "" {
-		t.Fatal("expected content, got empty")
+	cases := []struct{ name, src string }{
+		{"java: indentation and a blank line", "public class Greeter {\n    private final String name;\n\n    public Greeter(String name) {\n        this.name = name;\n    }\n}"},
+		{"E13 python: __init__ and indentation", "class Greeter:\n    def __init__(self, name):\n        self.name = name  # keep  two spaces"},
+		{"E13 a log line with *star*", "2026-10-29 12:00:01 WARN *star* matched [x] <none> & `id` == 2 | ok"},
+		{"E13 blank lines and list-like lines", "- not a list\n\n\n1. not ordered\n+ plus\n# not a heading\n> not a quote\n\tindented by a tab"},
 	}
-	var buf bytes.Buffer
-	if err := goldmark.New().Convert([]byte(content), &buf); err != nil {
-		t.Fatal(err)
-	}
-	html := buf.String()
-	if strings.Contains(html, "<pre") {
-		t.Errorf("undo rendered as a code block (stray fence):\n%s", html)
-	}
-	if !strings.Contains(html, "<br") {
-		t.Errorf("undo lines soft-joined (no hard break):\n%s", html)
-	}
-	for _, want := range []string{"public class Greeter {", "private final String name;", "this.name = name;"} {
-		if !strings.Contains(html, want) {
-			t.Errorf("expected source line %q preserved, got:\n%s", want, html)
-		}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entries := []block.ContentEntry{{MIMEType: "sieve/code", Content: `{"language":"java","source":` + strconv.Quote(tc.src) + `}`}}
+			content, _ := p.Transform(entries, "", "", block.ActionUndoSmartPaste)["content"].(string)
+			var buf bytes.Buffer
+			if err := goldmark.New().Convert([]byte(content), &buf); err != nil {
+				t.Fatal(err)
+			}
+			rendered := strings.TrimSpace(buf.String())
+			inner, ok := strings.CutPrefix(rendered, "<p>")
+			if inner, ok = strings.CutSuffix(inner, "</p>"); !ok || strings.Contains(inner, "<p>") {
+				t.Fatalf("undo must be one paragraph, got:\n%s", rendered)
+			}
+			text := strings.ReplaceAll(inner, "<br>\n", "\n")
+			if strings.ContainsAny(text, "<>") {
+				t.Fatalf("undo rendered markup:\n%s", rendered)
+			}
+			text = strings.ReplaceAll(html.UnescapeString(text), "\u00a0", " ")
+			if want := strings.ReplaceAll(tc.src, "\t", "    "); text != want {
+				t.Errorf("read back:\n%q\nwant:\n%q\ncontent:\n%s", text, want, content)
+			}
+		})
 	}
 }
 

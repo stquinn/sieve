@@ -59,6 +59,12 @@ export const schema = new Schema({
     // a generic sieve atom (e.g. sieve-code), and the ai-block follow-up atom
     'sieve-code': sieveAtom('code'),
     'sieve-ai-block': sieveAtom('ai-block'),
+    // a sieve CONTAINER: a non-atom block whose body holds blocks
+    'sieve-web-clip': {
+      group: 'block', content: 'block+',
+      attrs: { id: { default: '' }, kind: { default: 'web-clip' } },
+      toDOM: (nd) => ['div', { 'data-id': nd.attrs.id, 'data-type': 'sieve-web-clip' }, 0],
+    },
   },
   marks: {
     highlight: { toDOM: () => ['mark', 0], parseDOM: [{ tag: 'mark' }] },
@@ -147,6 +153,7 @@ export const build = {
   sieveCode: (id) => n['sieve-code'].create({ id, kind: 'code', serialisedForm: '' }),
   proseGroup: (id, texts) => n.proseGroup.create(id ? { id } : null,
     (texts || ['one', 'two']).map((s) => n.paragraph.create(null, t(s)))),
+  webClip: (id, text) => n['sieve-web-clip'].create({ id }, n.paragraph.create(null, t(text || 'body'))),
   aiBlock: (id, ref) => n['sieve-ai-block'].create({ id, kind: 'ai-block', serialisedForm: '', ref: ref || '' }),
   br: () => n.hardBreak.create(),
   // A paragraph over arbitrary inline content — the builder a break needs, since

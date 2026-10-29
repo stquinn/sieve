@@ -681,11 +681,18 @@ export class AbstractEditor extends Lens {
     if (this.#surface) this.#surface.flushPending()
   }
 
-  /** Pastes plain text through the mounted surface's paste path, so it produces
-   *  the same document a Mod+V of the same clipboard would.
-   *  @param {string} text @returns {Promise<'block'|'content'|'none'>} */
-  pasteText(text) {
-    return this.#surface ? this.#surface.pasteText(text) : Promise.resolve('none')
+  /** Pastes a clipboard's text views through the mounted surface's paste path, so
+   *  it produces the same document a Mod+V of a clipboard holding only them would.
+   *  @param {string} text its text/plain view @param {string} [html] its text/html view
+   *  @returns {Promise<'block'|'content'|'none'>} */
+  pasteText(text, html) {
+    return this.#surface ? this.#surface.pasteText(text, html) : Promise.resolve('none')
+  }
+
+  /** Pastes text literally at the caret of the mounted surface: no smart paste, no
+   *  markdown parse. @param {string} text @returns {boolean} true when pasted */
+  pastePlainText(text) {
+    return this.#surface ? this.#surface.pastePlainText(text) : false
   }
 
   /** Places clipboard-shaped entries at the caret through the mounted surface's
@@ -1051,19 +1058,27 @@ export class AbstractEditor extends Lens {
 
   /**
    * The DEFERRED second half: once the server CONFIRMED the insert, delete the
-   * empty paragraph that held its place, as a TRACKED prose edit, and flush.
-   * Located BY ID, never by a captured position — the arrival can shift positions
-   * first. No-op when the handle is absent, not found, the doc's sole child, or no
-   * longer empty.
+   * empty paragraph that held its place, as a TRACKED prose edit. Located BY ID,
+   * never by a captured position — the arrival can shift positions first. No-op
+   * when the handle is absent, not found, the doc's sole child, or no longer
+   * empty.
+   *
+   * With `tr` — the transaction placing the confirmed block — the delete is added
+   * to it, so the placement and the consume are one undo step however late the
+   * block arrives; the caller dispatches and flushes. Without it, the delete is
+   * dispatched and flushed here.
    * @param {{id: string}|null} anchor
+   * @param {any} [tr]
    */
-  consumeInsertAnchor(anchor) {
+  consumeInsertAnchor(anchor, tr) {
     if (!anchor || !anchor.id) return
     const ed = /** @type {any} */ (this.editorPane)
-    if (!ed || ed.state.doc.childCount <= 1) return
+    if (!ed) return
+    const doc = tr ? tr.doc : ed.state.doc
+    if (doc.childCount <= 1) return
     let pos = -1
     let node = null
-    ed.state.doc.forEach((child, offset) => {
+    doc.forEach((/** @type {any} */ child, /** @type {number} */ offset) => {
       if (pos >= 0) return
       if (child && child.attrs && child.attrs.id === anchor.id) {
         pos = offset
@@ -1074,7 +1089,10 @@ export class AbstractEditor extends Lens {
     // Only ever consume a still-empty paragraph: a stray blank line is benign,
     // losing typed content is not.
     if ((/** @type {any} */ (node).textContent || '').trim() !== '') return
-    ed.view.dispatch(ed.state.tr.delete(pos, pos + (/** @type {any} */ (node).nodeSize)))
+    const deleting = tr || ed.state.tr
+    deleting.delete(pos, pos + (/** @type {any} */ (node).nodeSize))
+    if (tr) return
+    ed.view.dispatch(deleting)
     if (this.#surface) this.#surface.flushPending()
   }
 

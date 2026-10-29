@@ -132,6 +132,18 @@ func MintElementIDs(attrs map[string]interface{}, key string) {
 	DecodeElements(attrs[key])
 }
 
+// RenewElementIDs gives every element b holds as parent's children a freshly
+// minted id, written into the stored entry on both sides of the id invariant. A
+// pasted container is a new block, and so is every element inside it: an id is
+// never copied.
+func (b SieveBlock) RenewElementIDs(parent BlockParent) {
+	for _, el := range parent.Children(&b) {
+		id := ident.New()
+		el.ID = id
+		el.Attrs["id"] = id
+	}
+}
+
 // attrValue renders the list into the canonical attrs-bag form: []interface{}
 // of map[string]interface{}. It must stay this form and not []SieveBlock — a
 // struct marshals its fields in declaration order and a map in sorted-key order,

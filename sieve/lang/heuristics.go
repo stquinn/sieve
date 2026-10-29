@@ -141,6 +141,11 @@ var tier2 = []struct {
 	{regexp.MustCompile(`\bColumn\s*\(\s*children:`), "dart"},
 	{regexp.MustCompile(`\bfinal\s+\w+\s+\w+\s*=`), "dart"},
 	{regexp.MustCompile(`\bconst\s+\w+\s+\w+\s*=`), "typescript"},
+	{regexp.MustCompile(`\bfunction\b\s*\*?\s*\w*\s*\([^)\n]*\)\s*\{`), "javascript"},
+	{regexp.MustCompile(`\([^()\n]*\)\s*=>|=>\s*\{`), "javascript"},
+	{regexp.MustCompile(`(?m)^\s*(?:const|let|var)\s+[\w$]+\s*=`), "javascript"},
+	{regexp.MustCompile(`\bconsole\.(?:log|error|warn|info|debug)\(`), "javascript"},
+	{regexp.MustCompile(`[\w)\]]\s*[!=]==\s*[\w'"(\[]`), "javascript"},
 	// An annotation ends at punctuation or the line's end; "note: any ideas" is English.
 	{regexp.MustCompile(`(?m)\w\??\s*:\s*(?:string|number|boolean|any)(?:\[\])?\s*(?:[,;)=|>{}\]]|$)`), "typescript"},
 	// Markdown (Tier 2 signals)
@@ -153,13 +158,14 @@ var tier2 = []struct {
 
 // LooksLikeCode is the tier-3 gate. It returns true when source has structural
 // signals that make it code-likely, even when no specific language can be
-// identified. This preserves the original paste-pipeline behaviour where:
+// identified:
 //   - tier 1/2 → language identified → code block
 //   - tier 3   → structurally code   → code block (AI detects language)
 //   - tier 4   → no signals          → plain text, falls through to TipTap
 //
-// Mirrors the JS tier-3 check: braceCount>2 || semicolonCount>2 ||
-// anyWeakSignal || indentedLines > 40% of total lines.
+// The structural signals are: two or more brace lines (codeBraceLineRe — a brace
+// wrapping a word inside a sentence is not one), more than two semicolons, any
+// non-markdown tier-2 hit, more than 40% of lines indented, or SQL's shape.
 func LooksLikeCode(source string) bool {
 	trimmed := strings.TrimSpace(source)
 	lines := strings.Split(trimmed, "\n")
@@ -167,7 +173,7 @@ func LooksLikeCode(source string) bool {
 		return false // too short to be confident
 	}
 
-	braceCount := strings.Count(trimmed, "{") + strings.Count(trimmed, "}")
+	braceLines := len(codeBraceLineRe.FindAllString(trimmed, -1))
 	semicolonCount := strings.Count(trimmed, ";")
 
 	indented := 0
@@ -191,9 +197,14 @@ func LooksLikeCode(source string) bool {
 	// and a single statement has one semicolon at most — so its shape is asked for
 	// directly.
 	// indented > 40% of lines  →  indented*10 > len(lines)*4
-	return braceCount > 2 || semicolonCount > 2 || anyWeakSignal ||
+	return braceLines >= 2 || semicolonCount > 2 || anyWeakSignal ||
 		indented*10 > len(lines)*4 || sqlStatements.matches(trimmed)
 }
+
+// codeBraceLineRe matches a line a code brace shapes: one that opens a block (it
+// ends in `{`, a trailing comment allowed) or one that only closes it (`}`, with
+// at most a `)`, `;` or `,` after it).
+var codeBraceLineRe = regexp.MustCompile(`(?m)(?:\{[ \t]*(?://.*)?$|^[ \t]*\}[)\];,]*[ \t]*$)`)
 
 // IsConfidentLanguage reports whether lang names a specific programming language
 // rather than a non-answer. "", "unknown" and "text" are non-answers: a detector
@@ -251,18 +262,20 @@ func DetectByHeuristics(source, hint string) (string, bool) {
 		}
 	}
 
-	// Tier 2: need 2+ hits per language
+	// Tier 2: need 2+ hits; the language with the most wins, and on a tie the
+	// one that reached that count first in tier2's order.
 	hits := map[string]int{}
+	best := ""
 	for _, rule := range tier2 {
 		if rule.re.MatchString(trimmed) {
 			hits[rule.lang]++
+			if hits[rule.lang] > hits[best] {
+				best = rule.lang
+			}
 		}
 	}
-	for lang, count := range hits {
-		if count >= 2 {
-			return lang, true
-		}
+	if hits[best] >= 2 {
+		return best, true
 	}
-
 	return "", false
 }

@@ -384,23 +384,46 @@ func (p *ProseProcessor) embedImageMarkdown(entries []block.ContentEntry, uuid, 
 	return md, true
 }
 
-// sourceAsPlainText renders a structured block's raw source for embedding into prose
-// as plain TEXT (the "Embed in Document" escape hatch when smart-detection grabbed
-// text as code — brackets like {}<>[] trip a language match). Markdown can't carry
-// code as text verbatim: a 4-space indent IS an indented code block (a stray fence)
-// and a bare newline soft-joins lines (the split header/tail). So de-indent every
-// line and join with markdown hard breaks, dropping blank lines (a blank line re-opens
-// a code block before the next indented line). The result reads as the user's text,
-// never a fence — indentation is intentionally dropped (it's text now, not code).
+// sourceAsPlainText is src as prose markdown that reads back as exactly src's
+// text (Undo Smart Paste): one hard break per line, a blank line kept as an
+// empty line, and no character read as markdown. See literalLine.
 func (p *ProseProcessor) sourceAsPlainText(src string) string {
-	var lines []string
-	for _, line := range strings.Split(src, "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			lines = append(lines, line)
-		}
+	lines := strings.Split(strings.Trim(strings.ReplaceAll(src, "\r\n", "\n"), "\n"), "\n")
+	for i, line := range lines {
+		lines[i] = p.literalLine(line)
 	}
-	return strings.Join(lines, "  \n") // two-space suffix = markdown hard break
+	return strings.Join(lines, "\\\n") // a backslash at the end of a line = hard break
 }
+
+// literalLine is one line of text as inline markdown that reads back as that
+// text. Every character markdown would interpret (emphasis, code, links, html,
+// entities, highlight, tables, headings) is backslash-escaped, as is a leading
+// list marker (`-`, `+`, `1.`). A tab is four spaces, and a space markdown or
+// html would drop or collapse — at either end of the line or beside another
+// space — is written as `&#160;`, so the text holds a no-break space there.
+func (p *ProseProcessor) literalLine(line string) string {
+	line = strings.ReplaceAll(line, "\t", "    ")
+	line = markdownLiteralRe.ReplaceAllString(line, `\$0`)
+	if strings.HasPrefix(line, "-") || strings.HasPrefix(line, "+") {
+		line = `\` + line
+	}
+	line = orderedMarkerRe.ReplaceAllString(line, `$1\$2`)
+	runes := []rune(line)
+	var b strings.Builder
+	for i, r := range runes {
+		if r == ' ' && (i == 0 || i == len(runes)-1 || runes[i-1] == ' ' || runes[i+1] == ' ') {
+			b.WriteString("&#160;")
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+var (
+	markdownLiteralRe = regexp.MustCompile("[\\\\`*_\\[\\]<>&~=|#]")
+	orderedMarkerRe   = regexp.MustCompile(`^(\d+)([.)])`)
+)
 
 // DescribeJob is the rewrite/enrich seam — nil (no async work) until a prose job
 // is wired, but the seam exists so prose can be a producer/consumer like any

@@ -157,3 +157,36 @@ func TestAIBlockPaste_declinesAnotherKindsClipboardView(t *testing.T) {
 		t.Error("another kind's clipboard view should yield no attrs")
 	}
 }
+
+// C12: a pasted ai-block is a new block, and so is every element inside it.
+// Both forms a copy arrives in hand Transform elements carrying the source's
+// ids; each comes out under a fresh one, on both sides of the id invariant.
+func TestAIBlockPaste_elementsGetFreshIDs(t *testing.T) {
+	question := []interface{}{map[string]interface{}{"kind": "prose", "attrs": map[string]interface{}{"id": "q-1", "content": "why?"}}}
+	answer := []interface{}{
+		map[string]interface{}{"kind": "prose", "attrs": map[string]interface{}{"id": "a-1", "content": "because"}},
+		map[string]interface{}{"kind": "code", "attrs": map[string]interface{}{"id": "a-2", "source": "x := 1", "language": "go"}},
+	}
+	for name, entries := range map[string][]block.ContentEntry{
+		"clipboard view": copiedAIBlock(map[string]interface{}{
+			"id": "ab-1", "kind": "ai-block", "status": "COMPLETE", "question": question, "answer": answer,
+		}, "because"),
+		"fenced form": fencedAIBlock("id: ab-1\nstatus: COMPLETE\nquestion:\n  - kind: prose\n    attrs:\n      id: q-1\n      content: why?\n" +
+			"answer:\n  - kind: prose\n    attrs:\n      id: a-1\n      content: because\n  - kind: code\n    attrs:\n      id: a-2\n      source: x := 1\n      language: go"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := aiBlockPaster()
+			blk := block.NewSieveBlock("ai-block", "ab-new", p.InitAttrs("ab-new", p.Transform(entries, "doc-1", "ab-new", block.ActionPaste)))
+			var kinds string
+			for _, el := range p.Children(&blk) {
+				kinds += el.Kind + " "
+				if el.ID == "q-1" || el.ID == "a-1" || el.ID == "a-2" || el.ID == "" || el.Attrs["id"] != el.ID {
+					t.Errorf("%s element kept or broke its id: ID=%q attrs[id]=%v", el.Kind, el.ID, el.Attrs["id"])
+				}
+			}
+			if kinds != "prose prose code " {
+				t.Errorf("elements = %q, want the question's prose then the answer's prose and code", kinds)
+			}
+		})
+	}
+}

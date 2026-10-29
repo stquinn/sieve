@@ -15,6 +15,8 @@ import { describe, it, expect, afterEach, vi } from 'vitest'
 import { Editor, Node, Extension } from '@tiptap/core'
 import { StarterKit } from '@tiptap/starter-kit'
 import { Table, TableRow, TableCell, TableHeader } from '@tiptap/extension-table'
+import TaskList from '@tiptap/extension-task-list'
+import TaskItem from '@tiptap/extension-task-item'
 import { Plugin, Selection, TextSelection, NodeSelection } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { CellSelection } from '@tiptap/pm/tables'
@@ -131,9 +133,11 @@ const SieveClip = Node.create({
 let editor = null
 afterEach(() => { if (editor) { editor.destroy(); editor = null } })
 
-function makeEditor(contentJSON, extraExtensions = []) {
+function makeEditor(contentJSON, extraExtensions = [], clipboardHost = undefined) {
   editor = new Editor({
     element: document.createElement('div'),
+    // Mirrors wysiwyg-surface.js: the policy serializes the clipboard's text/plain.
+    enableCoreExtensions: { clipboardTextSerializer: false },
     // Mirrors editor.js: Enter and Mod+A dispatch pre-core from editorProps
     // (core Keymap would otherwise claim Enter in code:true blocks, and
     // baseKeymap's Mod-a → selectAll would claim Mod+A everywhere); Tab is the
@@ -147,7 +151,7 @@ function makeEditor(contentJSON, extraExtensions = []) {
       Table.configure({ resizable: false }),
       TableRow, TableHeader, TableCell,
       SieveCode, SieveDiagram, SieveLog, SieveClip,
-      buildInteractionPolicyExtension({ Extension, Plugin, Selection, TextSelection, NodeSelection, Decoration, DecorationSet }),
+      buildInteractionPolicyExtension({ Extension, Plugin, Selection, TextSelection, NodeSelection, Decoration, DecorationSet }, clipboardHost),
       ...extraExtensions,
     ],
     content: contentJSON,
@@ -1162,8 +1166,7 @@ function clip() {
 // The exact chain prosemirror-view walks for a clipboard event: the first
 // handleDOMEvents map with a handler for the type wins, and preventDefault also
 // counts as handled.
-function fireClipboard(type) {
-  const clipboardData = clip()
+function fireClipboard(type, clipboardData = clip()) {
   const event = { type, clipboardData, defaultPrevented: false, preventDefault() { this.defaultPrevented = true } }
   const handled = editor.view.someProp('handleDOMEvents', (handlers) => {
     const handler = handlers[type]
@@ -1200,14 +1203,11 @@ describe('copy (contract: a partial PM range copies the selected characters — 
       expect(data['text/plain']).toBe('line two')
     })
 
-    it(`${c.kind}: a partial range still carries the WHOLE block as sieve/slice`, () => {
+    it(`${c.kind}: C3 a partial range writes no sieve/* view`, () => {
       oneBlock(c.node)
       rangeAt(MIDDLE.from, MIDDLE.to)
       const { data } = fireClipboard('copy')
-      const slice = JSON.parse(data['sieve/slice'])
-      expect(slice).toHaveLength(1)
-      const framework = slice[0].find((e) => e.mimeType === `sieve/${c.kind}`)
-      expect(JSON.parse(framework.content).kind).toBe(c.kind)
+      expect(Object.keys(data).sort()).toEqual(['text/html', 'text/plain'])
     })
 
     it(`${c.kind}: a whole-block NodeSelection copies the whole source`, () => {
@@ -1301,7 +1301,7 @@ describe('cut (contract: copy plus an ordinary delete — no kind has a cut rule
   })
 })
 
-describe('the native clipboard path (renderText honours the serialized range)', () => {
+describe('the native clipboard path (the policy\'s text serializer)', () => {
   it('a partial range serializes as the selected characters, not the whole block', () => {
     oneBlock('sieve-code')
     rangeAt(MIDDLE.from, MIDDLE.to)
@@ -1318,6 +1318,128 @@ describe('the native clipboard path (renderText honours the serialized range)', 
   it('editor.getText() still reads the whole block', () => {
     oneBlock('sieve-code')
     expect(editor.getText()).toBe(SOURCE)
+  })
+})
+
+// R-5: text/plain is readable plain text with its structure kept. Pure prose and
+// cell selections reach it through ProseMirror's own copy; a range holding a sieve
+// block through ClipboardSlice. Both render through ClipboardText.
+describe('clipboard text/plain keeps structure (R-5)', () => {
+  const text = (t) => ({ type: 'text', text: t })
+  const para = (...inline) => ({ type: 'paragraph', content: inline })
+  const bold = (t) => ({ type: 'text', text: t, marks: [{ type: 'bold' }] })
+  const item = (...blocks) => ({ type: 'listItem', content: blocks })
+  const cell = (t, type = 'tableCell') => ({ type, content: [para(text(t))] })
+  const table = (rows) => ({ type: 'table', content: rows.map((r, i) => ({ type: 'tableRow', content: r.map((t) => cell(t, i === 0 ? 'tableHeader' : 'tableCell')) })) })
+  const nativeText = () => editor.view.serializeForClipboard(editor.state.selection.content()).text
+  const selectAll = () => editor.commands.selectAll()
+
+  it.each([
+    ['B9 a table: rows by newline, cells by tab', [table([['Fruit', 'Qty'], ['Apple', '3']])], () => selectBlock(0),
+      'Fruit\tQty\nApple\t3'],
+    ['G1 heading, list and bold: no markup, one blank line between blocks',
+      [{ type: 'heading', attrs: { level: 1 }, content: [text('Title')] },
+        { type: 'bulletList', content: [item(para(text('one'))), item(para(text('two')))] },
+        para(text('a '), bold('bold'), text(' word'))], selectAll,
+      'Title\n\n- one\n- two\n\na bold word'],
+    ['an ordered list numbers from its start; a nested list sits two spaces in',
+      [{ type: 'orderedList', attrs: { start: 3 }, content: [
+        item(para(text('three')), { type: 'bulletList', content: [item(para(text('inner')))] }), item(para(text('four')))] }], selectAll,
+      '3. three\n  - inner\n4. four'],
+    ['task items carry their box', [{ type: 'taskList', content: [
+      { type: 'taskItem', attrs: { checked: true }, content: [para(text('done'))] },
+      { type: 'taskItem', attrs: { checked: false }, content: [para(text('todo'))] }] }], selectAll,
+      '- [x] done\n- [ ] todo'],
+    ['a hard break is a newline', [para(text('one'), { type: 'hardBreak' }, text('two'))], selectAll, 'one\ntwo'],
+    ['G3 a whole code block is its source', [{ type: 'codeBlock', attrs: { language: 'go' }, content: [text('x := 1\ny := 2')] }], () => selectBlock(0),
+      'x := 1\ny := 2'],
+  ])('%s', (_row, content, select, expected) => {
+    makeEditor({ type: 'doc', content }, [TaskList, TaskItem.configure({ nested: true })])
+    select()
+    expect(nativeText()).toBe(expected)
+  })
+
+  it('B10 a cell selection is only the selected cells', () => {
+    makeEditor({ type: 'doc', content: [table([['a', 'b', 'c'], ['d', 'e', 'f'], ['g', 'h', 'i']])] })
+    const t = { node: editor.state.doc.child(0), pos: 0 }
+    const $anchor = editor.state.doc.resolve(cellAt(t, 1, 1))
+    const $head = editor.state.doc.resolve(cellAt(t, 2, 2))
+    editor.view.dispatch(editor.state.tr.setSelection(new CellSelection($anchor, $head)))
+    expect(nativeText()).toBe('e\tf\nh\ti')
+  })
+
+  it('H6 a range of heading, code block and list: every block keeps its structure', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'heading', attrs: { level: 2 }, content: [text('Head')] },
+      { type: 'sieve-code', content: [text('src()')] },
+      { type: 'bulletList', content: [item(para(text('item one'))), item(para(text('item two')))] },
+    ] })
+    selectAll()
+    const { handled, data } = fireClipboard('copy')
+    expect(handled).toBe(true)
+    expect(data['text/plain']).toBe('Head\n\nsrc()\n\n- item one\n- item two')
+  })
+})
+
+// H4: Mod+Shift+V pastes the clipboard's text/plain literally. The keydown is left
+// to the browser, so an engine that fires its own paste event for the chord does.
+describe('Mod+Shift+V paste as plain text (H4)', () => {
+  const chord = { ctrlKey: true, shiftKey: true }
+  const pasteEvent = (text) => {
+    const clipboardData = clip()
+    if (text !== undefined) clipboardData.setData('text/plain', text)
+    return fireClipboard('paste', clipboardData)
+  }
+  let host
+  let readText
+  function plainEditor() {
+    host = { pastePlainText: vi.fn() }
+    makeEditor({ type: 'doc', content: [{ type: 'paragraph' }] }, [], host)
+  }
+  const stubClipboard = (value) => Object.defineProperty(navigator, 'clipboard', { value, configurable: true })
+  const realClipboard = navigator.clipboard
+  afterEach(() => { vi.useRealTimers(); stubClipboard(realClipboard) })
+
+  it.each([['Ctrl', { ctrlKey: true }], ['Cmd', { metaKey: true }]])(
+    '%s+Shift+V then the engine\'s paste event: its text/plain, pasted plainly and consumed', (_mod, mod) => {
+    plainEditor()
+    expect(press('V', { ...mod, shiftKey: true }).handled).toBe(false)
+    expect(pasteEvent('# Title').handled).toBe(true)
+    expect(host.pastePlainText).toHaveBeenCalledWith('# Title')
+  })
+
+  it('with no paste event in the window, the clipboard is read and pasted plainly — once', async () => {
+    vi.useFakeTimers()
+    readText = vi.fn(() => Promise.resolve('go -> stop'))
+    stubClipboard({ readText })
+    plainEditor()
+    press('v', chord)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(readText).toHaveBeenCalledTimes(1)
+    expect(host.pastePlainText.mock.calls).toEqual([['go -> stop']])
+  })
+
+  it('a paste event after the chord cancels the read', async () => {
+    vi.useFakeTimers()
+    readText = vi.fn(() => Promise.resolve('late'))
+    stubClipboard({ readText })
+    plainEditor()
+    press('v', chord)
+    pasteEvent('now')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(readText).not.toHaveBeenCalled()
+    expect(host.pastePlainText.mock.calls).toEqual([['now']])
+  })
+
+  it.each([
+    ['a Mod+V paste', () => {}],
+    ['a second paste after the chord\'s one', () => { press('v', chord); pasteEvent('first') }],
+  ])('%s is not consumed', (_label, before) => {
+    plainEditor()
+    before()
+    host.pastePlainText.mockClear()
+    expect(pasteEvent('x').handled).toBe(false)
+    expect(host.pastePlainText).not.toHaveBeenCalled()
   })
 })
 

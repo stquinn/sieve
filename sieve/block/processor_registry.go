@@ -150,6 +150,34 @@ func (e ContentEntry) heldBy(blockID string) ContentEntry {
 	return e
 }
 
+// ContentEntries is one paste's views, in the order the clipboard carried them.
+type ContentEntries []ContentEntry
+
+// ViewFirst returns the entries with every sieve/<kind> view of kind moved to
+// the front, the rest in their carried order. A processor reads entries in order
+// and builds from the first it can read, while a copied block's own view rides
+// behind the text and link views other applications read; handing a processor
+// its entries through this is what makes it rebuild a copied block from that
+// block's own view. Entries carrying no such view are returned as they are, and
+// sieve/slice is never moved: it is a payload, not a view of one kind.
+func (es ContentEntries) ViewFirst(kind string) ContentEntries {
+	own := make(ContentEntries, 0, len(es))
+	for _, e := range es {
+		if k, _, ok := e.SieveAttrs(); ok && k == kind {
+			own = append(own, e)
+		}
+	}
+	if len(own) == 0 {
+		return es
+	}
+	for _, e := range es {
+		if k, _, ok := e.SieveAttrs(); !ok || k != kind {
+			own = append(own, e)
+		}
+	}
+	return own
+}
+
 func (e ContentEntry) IsSieveType(p BlockProcessor) bool {
 	kind, _, ok := e.SieveAttrs()
 	return ok && kind == p.Kind()
@@ -168,6 +196,9 @@ func (e ContentEntry) AsAttrsForNewBlock(p BlockProcessor) map[string]interface{
 		if k != "id" {
 			dst[k] = v
 		}
+	}
+	if parent, isParent := p.(BlockParent); isParent {
+		NewSieveBlock(p.Kind(), "", dst).RenewElementIDs(parent)
 	}
 	return dst
 }
@@ -914,11 +945,20 @@ type wrapsAnyShaper interface {
 //     claimer wins, with PROSE consulted LAST (it is the terminal flavour and can
 //     claim any sieve view). This is where "paste raw mermaid text → diagram" lives.
 //
+// Every processor is asked with its own view in front (ContentEntries.ViewFirst),
+// and the caller must hand the matched processor's Transform the entries in that
+// same order, or it builds from something other than what was recognised.
+//
 // The registry owns its internals (matcher list + lock); callers ask, they do not
 // iterate pasteMatchers directly.
 func FirstPasteMatch(entries []ContentEntry, action Action) (kind string, processor BlockProcessor, fromDetection bool, ok bool) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
+
+	claims := func(i int) bool {
+		own := ContentEntries(entries).ViewFirst(pasteMatchers[i].Kind)
+		return pasteMatchers[i].Processor.IsSupportedContent(own).Builds(action)
+	}
 
 	// Pass 1 — self-kind round-trip (NOT detection), by clipboard view…
 	for _, e := range entries {
@@ -927,7 +967,7 @@ func FirstPasteMatch(entries []ContentEntry, action Action) (kind string, proces
 			continue
 		}
 		for i := range pasteMatchers {
-			if pasteMatchers[i].Kind == k && pasteMatchers[i].Processor.IsSupportedContent(entries).Builds(action) {
+			if pasteMatchers[i].Kind == k && claims(i) {
 				return pasteMatchers[i].Kind, pasteMatchers[i].Processor, false, true
 			}
 		}
@@ -944,7 +984,7 @@ func FirstPasteMatch(entries []ContentEntry, action Action) (kind string, proces
 			if !wrapsSelf || !w.WrapsAnyShape(e.Content) {
 				continue
 			}
-			if pasteMatchers[i].Processor.IsSupportedContent(entries).Builds(action) {
+			if claims(i) {
 				return pasteMatchers[i].Kind, pasteMatchers[i].Processor, false, true
 			}
 		}
@@ -957,11 +997,11 @@ func FirstPasteMatch(entries []ContentEntry, action Action) (kind string, proces
 			proseIdx = i
 			continue
 		}
-		if pasteMatchers[i].Processor.IsSupportedContent(entries).Builds(action) {
+		if claims(i) {
 			return pasteMatchers[i].Kind, pasteMatchers[i].Processor, true, true
 		}
 	}
-	if proseIdx >= 0 && pasteMatchers[proseIdx].Processor.IsSupportedContent(entries).Builds(action) {
+	if proseIdx >= 0 && claims(proseIdx) {
 		return pasteMatchers[proseIdx].Kind, pasteMatchers[proseIdx].Processor, true, true
 	}
 	return "", nil, false, false

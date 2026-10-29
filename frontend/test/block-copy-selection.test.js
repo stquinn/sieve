@@ -3,8 +3,8 @@ import { BlockSelection } from '../src/static/lens/document-editor/block-selecti
 
 // On copy, text/plain + text/html must follow a native DOM highlight inside a
 // block's custom region (the log Explore table) — where PM's selection is a
-// whole-block NodeSelection that knows nothing of the highlight. sieve/slice +
-// sieve/<kind> still carry the whole block (asserted by the copy handler, not here).
+// whole-block NodeSelection that knows nothing of the highlight. Which views the
+// copy writes for it is ClipboardSlice's (clipboard-slice.test.js), not here.
 
 function block() {
   const b = document.createElement('div')

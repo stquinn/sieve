@@ -93,9 +93,10 @@ func (p *AIBlockProcessor) Transform(entries []block.ContentEntry, uuid, blockID
 // processor already embeds — the same one the document load path uses — so the
 // paste never grows a second parser for bytes that already have one.
 //
-// The id goes, because this is a new block. So do the aliases, which Deserialize
-// lifts off the attrs for us: an alias is a name inside ONE document, given by a
-// deliberate act, and a copy inherits neither the name nor the act.
+// The id goes, because this is a new block, and every element gets a new one for
+// the same reason. So do the aliases, which Deserialize lifts off the attrs for
+// us: an alias is a name inside ONE document, given by a deliberate act, and a
+// copy inherits neither the name nor the act.
 func (p *AIBlockProcessor) attrsFromFence(content string) map[string]interface{} {
 	span := strings.TrimSpace(content)
 	if !p.WrapsAnyShape(span) {
@@ -105,6 +106,7 @@ func (p *AIBlockProcessor) attrsFromFence(content string) map[string]interface{}
 	if err != nil || len(blocks) == 0 {
 		return nil
 	}
+	blocks[0].RenewElementIDs(p)
 	attrs := blocks[0].Attrs
 	delete(attrs, "id")
 	return attrs

@@ -18,6 +18,9 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
+
 	"sieve/logger"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
@@ -101,7 +104,7 @@ func (p *SmartImageProcessor) IsSupportedContent(entries []block.ContentEntry) b
 		if e.IsSieveType(p) {
 			return block.SupportedActions{Kind: p.Kind(), Actions: sieve}
 		}
-		if isImageURL(strings.TrimSpace(e.Content)) {
+		if p.entryImageURL(e) != "" {
 			return block.SupportedActions{Kind: p.Kind(), Actions: native}
 		}
 		if block.MermaidFenceRe.MatchString(e.Content) {
@@ -120,11 +123,6 @@ func (p *SmartImageProcessor) IsSupportedContent(entries []block.ContentEntry) b
 				if svg, _ := attrs["svgAsset"].(string); strings.TrimSpace(svg) != "" {
 					return block.SupportedActions{Kind: p.Kind(), Actions: sieve}
 				}
-			}
-		}
-		if e.MIMEType == "text/html" {
-			if src := extractHTMLImageSrc(e.Content); src != "" && isImageURL(src) {
-				return block.SupportedActions{Kind: p.Kind(), Actions: native}
 			}
 		}
 	}
@@ -215,15 +213,13 @@ func (p *SmartImageProcessor) preferredName(e block.ContentEntry) string {
 }
 
 // entryImageURL is the image URL e denotes: its trimmed content when that is
-// one, else the <img src> of an HTML entry; "" otherwise.
+// one, else the src of the one <img> an html entry consists of; "" otherwise.
 func (p *SmartImageProcessor) entryImageURL(e block.ContentEntry) string {
 	if s := strings.TrimSpace(e.Content); isImageURL(s) {
 		return s
 	}
-	if e.MIMEType == "text/html" {
-		if src := extractHTMLImageSrc(e.Content); isImageURL(src) {
-			return src
-		}
+	if src := p.soleHTMLImageSrc(e); isImageURL(src) {
+		return src
 	}
 	return ""
 }
@@ -322,9 +318,8 @@ func (p *SmartImageProcessor) acquire(e block.ContentEntry, targetUUID, blockID 
 	if e.MIMEType == "image/svg+xml" {
 		return []byte(e.Content), "", nil
 	}
-	// Image URL (paste or extract from HTML)
-	s := strings.TrimSpace(e.Content)
-	if isImageURL(s) {
+	// An image URL, pasted alone or as the html of one <img>
+	if s := p.entryImageURL(e); s != "" {
 		if addr, err := domain.ResolveAssetReference(s, domain.NewContainerAddress(targetUUID)); err == nil {
 			return p.storedAsset(addr, targetUUID)
 		}
@@ -333,18 +328,6 @@ func (p *SmartImageProcessor) acquire(e block.ContentEntry, targetUUID, blockID 
 			return nil, "", fmt.Errorf("download %s: %w", s, err)
 		}
 		return raw, "", nil
-	}
-	if e.MIMEType == "text/html" {
-		if src := extractHTMLImageSrc(e.Content); src != "" && isImageURL(src) {
-			if addr, err := domain.ResolveAssetReference(src, domain.NewContainerAddress(targetUUID)); err == nil {
-				return p.storedAsset(addr, targetUUID)
-			}
-			raw, err := p.downloadImage(src, blockID)
-			if err != nil {
-				return nil, "", fmt.Errorf("download html <img> %s: %w", src, err)
-			}
-			return raw, "", nil
-		}
 	}
 	// Mermaid source arriving without JS pre-processing — cannot render server-side.
 	// resolveEntries in SmartImageRenderer must convert mermaid to SVG before this is called.
@@ -548,20 +531,37 @@ func isImageURL(s string) bool {
 		strings.HasSuffix(lower, ".webp") || strings.HasSuffix(lower, ".svg")
 }
 
-func extractHTMLImageSrc(html string) string {
-	if !strings.Contains(html, "<img ") && !strings.Contains(html, "<img\n") {
+// soleHTMLImageSrc is the src of the one <img> a text/html entry consists of,
+// or "" when the entry is not html or holds anything besides that image: text,
+// a second image. Wrapping elements without text (a <p>, an <a>, a fragment
+// comment, <meta>) do not count, so a browser's "Copy image" html qualifies and
+// a page selection holding text and an image does not.
+func (p *SmartImageProcessor) soleHTMLImageSrc(e block.ContentEntry) string {
+	if e.MIMEType != "text/html" {
 		return ""
 	}
-	idx := strings.Index(html, `src="`)
-	if idx == -1 {
+	root, err := html.Parse(strings.NewReader(e.Content))
+	if err != nil {
 		return ""
 	}
-	rest := html[idx+5:]
-	end := strings.Index(rest, `"`)
-	if end == -1 {
+	src, images, texted := "", 0, false
+	for n := range root.Descendants() {
+		switch {
+		case n.Type == html.TextNode && strings.TrimSpace(n.Data) != "":
+			texted = true
+		case n.Type == html.ElementNode && n.DataAtom == atom.Img:
+			images++
+			for _, a := range n.Attr {
+				if a.Key == "src" {
+					src = strings.TrimSpace(a.Val)
+				}
+			}
+		}
+	}
+	if images != 1 || texted {
 		return ""
 	}
-	return rest[:end]
+	return src
 }
 
 // downloadImage fetches the bytes at imageURL. Like every other acquisition path it

@@ -35,6 +35,22 @@ export class BlockIdentity {
   }
 
   /**
+   * The same strip over an HTML string: what a paste parses carries no identity,
+   * so every block it makes is minted fresh and its source keeps its own id.
+   * @param {string} html
+   * @returns {string} the HTML with every identity marker removed
+   */
+  static stripHTML(html) {
+    if (!html || !BlockIdentity.ATTRS.some((attr) => html.includes(attr))) return html
+    const template = document.createElement('template')
+    template.innerHTML = html
+    for (const attr of BlockIdentity.ATTRS) {
+      for (const el of template.content.querySelectorAll('[' + attr + ']')) el.removeAttribute(attr)
+    }
+    return template.innerHTML
+  }
+
+  /**
    * Keeps `el` anonymous FOR AS LONG AS IT IS DRAWN: whatever a kind adds or
    * stamps later is stripped as it lands.
    * @param {HTMLElement} el

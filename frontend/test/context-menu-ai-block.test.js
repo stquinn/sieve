@@ -1,20 +1,10 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
-import { serializeNode } from '../src/static/lens/document-editor/surfaces/sieve-block-extension.js'
 
-// context-menu.js:292 `yaml()` fed the ai-block Copy/Cut actions via a
-// bus-published serializeAiBlockYaml — a symbol deleted in 45db37b (2026-06-04)
-// while this consumer stayed, so Copy/Cut on an ai-block THREW at runtime
-// (latent pre-existing defect). The fix rewires yaml() to the real
-// serializeNode(editor, node) export. These tests pin the wiring:
-//   non-empty payload → written to the clipboard, Cut deletes after the write;
-//   EMPTY payload (structured sieve atoms currently serialize to '' — Go owns
-//   their markdown) → warn + abort: NO clipboard write (Copy must not clear
-//   the user's clipboard with '') and NO delete (Cut must not destroy the
-//   block after copying nothing — silent data loss).
+// H9: the ai-block node menu's Copy / Cut are Mod+C / Mod+X over the block's
+// NodeSelection, so they write exactly the clipboard the keyboard does.
 vi.mock('../src/static/lens/document-editor/surfaces/sieve-block-extension.js', () => ({
   extractContentEntryFromEditor: vi.fn(),
   detectAndAppendExtractions: vi.fn(),
-  serializeNode: vi.fn(),
 }))
 
 // context-menu.js imports applyTargetHighlight from lens/extensions.js, which
@@ -53,12 +43,9 @@ afterAll(() => {
   for (const name of STUBBED_VENDOR_MEMBERS) delete globalThis.TipTap[name]
 })
 
-const PAYLOAD = '```ai-block\nid: ai-1\nquestion: hi\n```'
+describe('context-menu.js — ai-block Copy / Cut (H9)', () => {
+  let editor, node, execCommand, selected
 
-describe('context-menu.js — ai-block Copy/Cut (serializeAiBlockYaml rewire)', () => {
-  let prevClip, warnSpy, editor, node
-
-  // Opens the ai-block context menu and returns the item whose label includes `label`.
   function openMenuItem(label) {
     document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
       detail: { x: 10, y: 10, context: { type: 'aiBlock', editor, node, getPos: () => 3 } },
@@ -68,74 +55,33 @@ describe('context-menu.js — ai-block Copy/Cut (serializeAiBlockYaml rewire)', 
   }
 
   beforeEach(() => {
-    prevClip = navigator.clipboard
-    Object.defineProperty(navigator, 'clipboard', {
-      value: { writeText: vi.fn(() => Promise.resolve()) },
-      configurable: true,
-    })
-    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     node = { attrs: { id: 'ai-1', status: 'COMPLETE', question: 'hi' }, nodeSize: 1 }
-    // del() reaches editor.state.tr.delete(...) then editor.view.dispatch(...) —
-    // dispatch is the observable "the block was deleted" signal.
+    selected = []
+    const chain = {
+      focus: () => chain,
+      setNodeSelection: (pos) => { selected.push(pos); return chain },
+      run: () => true,
+    }
     editor = {
+      chain: () => chain,
+      commands: { focus: vi.fn() },
       state: { tr: { delete: vi.fn(() => 'del-tr') } },
       view: { dispatch: vi.fn() },
     }
-    serializeNode.mockReset()
+    execCommand = vi.fn(() => true)
+    document.execCommand = execCommand
   })
 
   afterEach(() => {
     document.getElementById('sieve-context-menu')?.remove()
-    warnSpy.mockRestore()
-    if (prevClip !== undefined) {
-      Object.defineProperty(navigator, 'clipboard', { value: prevClip, configurable: true })
-    }
+    delete document.execCommand
   })
 
-  it('Copy with a non-empty payload writes it to the clipboard without throwing', () => {
-    serializeNode.mockReturnValue(PAYLOAD)
-    const copyBtn = openMenuItem('Copy')
-    expect(copyBtn).toBeTruthy()
-
-    expect(() => copyBtn.click()).not.toThrow()
-
-    expect(navigator.clipboard.writeText).toHaveBeenCalledTimes(1)
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(PAYLOAD)
-  })
-
-  it('Cut with a non-empty payload writes it, then deletes the block', async () => {
-    serializeNode.mockReturnValue(PAYLOAD)
-    const cutBtn = openMenuItem('Cut')
-    expect(cutBtn).toBeTruthy()
-
-    cutBtn.click()
-    await new Promise((r) => setTimeout(r, 0)) // let writeText's .then(del) run
-
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(PAYLOAD)
-    expect(editor.view.dispatch).toHaveBeenCalledTimes(1)
-  })
-
-  it('Copy with an EMPTY payload warns and does NOT write the clipboard', () => {
-    serializeNode.mockReturnValue('')
-    const copyBtn = openMenuItem('Copy')
-    expect(copyBtn).toBeTruthy()
-
-    copyBtn.click()
-
-    expect(navigator.clipboard.writeText).not.toHaveBeenCalled()
-    expect(warnSpy).toHaveBeenCalledWith('[sieve] ai-block serialize returned empty; copy aborted')
-  })
-
-  it('Cut with an EMPTY payload warns, does NOT write the clipboard, and does NOT delete the block', async () => {
-    serializeNode.mockReturnValue('')
-    const cutBtn = openMenuItem('Cut')
-    expect(cutBtn).toBeTruthy()
-
-    cutBtn.click()
-    await new Promise((r) => setTimeout(r, 0)) // any stray .then(del) would run here
-
-    expect(navigator.clipboard.writeText).not.toHaveBeenCalled()
+  it.each([['Copy', 'copy'], ['Cut', 'cut']])('%s selects the block, then runs the keyboard\'s %s', (label, command) => {
+    openMenuItem(label).click()
+    expect(selected).toEqual([3])
+    expect(execCommand.mock.calls).toEqual([[command]])
+    // A cut's delete is the policy's, through the event: the menu deletes nothing.
     expect(editor.view.dispatch).not.toHaveBeenCalled()
-    expect(warnSpy).toHaveBeenCalledWith('[sieve] ai-block serialize returned empty; copy aborted')
   })
 })

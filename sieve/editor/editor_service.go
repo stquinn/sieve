@@ -1148,7 +1148,7 @@ func (es *EditorService) paste(uuid string, entries []block.ContentEntry, index 
 		return block.NewLinkPaste(es.services.LinkPreview).Result(entries)
 	}
 	blockID := ident.New()
-	overrides := processor.Transform(entries, uuid, blockID, action)
+	overrides := processor.Transform(block.ContentEntries(entries).ViewFirst(matchKind), uuid, blockID, action)
 	if overrides == nil {
 		logger.Warn("paste: processor declined the entries", "uuid", uuid, "kind", matchKind)
 		return block.PasteNothing()

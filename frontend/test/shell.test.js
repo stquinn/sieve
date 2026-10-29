@@ -2563,6 +2563,16 @@ describe('AbstractEditor deferred anchor consume (issue #33)', () => {
     expect(ed.surface.flushCount).toBe(1)
   })
 
+  it('consume WITH the placing transaction adds the delete to it: no dispatch and no flush of its own (E14)', () => {
+    const { ed, pane } = anchorEditor([pnode({ id: 'a', text: 'a' }), pnode({ id: 'p-1' }), pnode({ id: 'c', text: 'code', size: 4 })])
+    const placing = pane.state.tr
+    placing.doc = pane.state.doc
+    ed.consumeInsertAnchor({ id: 'p-1' }, placing)
+    expect(placing.deletedRange).toEqual({ from: 2, to: 4 })
+    expect(pane.dispatched).toEqual([])
+    expect(ed.surface.flushCount).toBe(0)
+  })
+
   it('consume is a no-op when the handle is null (the no-match / error path)', () => {
     const { ed, pane } = anchorEditor([pnode({ id: 'p-1' }), pnode({ id: 'c', text: 'code', size: 4 })])
     ed.consumeInsertAnchor(null)

@@ -20,6 +20,7 @@ import { MODE } from '../../contract/sieve-block.js'
 import { sieveBlockFor, HOST_BODY_SYNC } from './surfaces/sieve-block-extension.js'
 import { ProseLink } from './surfaces/prose-link.js'
 import { ClipboardSlice } from './clipboard-slice.js'
+import { ClipboardText } from './clipboard-text.js'
 
 /** @typedef {import('../../contract/sieve-block.js').SieveBlock} SieveBlock */
 
@@ -141,6 +142,17 @@ function kindFromTypeName(name) {
   // contract's Code row applies to BOTH code surfaces.
   if (name === 'codeBlock') return 'code'
   return 'prose'
+}
+
+/**
+ * Whether a node of this type is a READ-ONLY REGION: its kind declares
+ * `readOnlyText`, or is always a caret stop (a read-only container). The caret
+ * may sit inside one, but nothing typed or pasted there edits it.
+ * @param {string} typeName @returns {boolean}
+ */
+export function isReadOnlyRegion(typeName) {
+  var policy = policyFor(kindFromTypeName(typeName))
+  return policy.readOnlyText || policy.caretStop === true
 }
 
 export function classifyContext(info) {
@@ -865,7 +877,75 @@ function buildLiteralGlyphsPlugin(T) {
  * @property {(view: any) => {from: number, to: number}} [effectiveRange]
  *   the authoritative selection range, which spans whole blocks for the gutter
  *   gesture PM's own selection cannot express
+ * @property {(text: string) => void} [pastePlainText]
+ *   pastes text literally at the caret: no smart paste, no markdown parse. Without
+ *   it Mod+Shift+V is left to the browser.
  */
+
+/**
+ * Mod+Shift+V, paste as plain text. The keydown arms a one-shot flag and the
+ * browser's own paste event, when the engine delivers one for the chord, consumes
+ * it and pastes that event's text/plain. When no paste event follows within
+ * `WINDOW_MS`, the clipboard is read through `navigator.clipboard.readText()`
+ * instead.
+ */
+class PlainPasteChord {
+  static WINDOW_MS = 250
+
+  /** @type {(text: string) => void} */ #paste
+  /** @type {boolean} */ #armed = false
+  /** @type {any} */ #timer = null
+
+  /** @param {(text: string) => void} paste */
+  constructor(paste) {
+    this.#paste = paste
+  }
+
+  /** Is this keydown the chord? @param {KeyboardEvent} event @returns {boolean} */
+  static matches(event) {
+    return (event.key === 'v' || event.key === 'V' || event.code === 'KeyV') &&
+      (event.metaKey || event.ctrlKey) && event.shiftKey && !event.altKey
+  }
+
+  arm() {
+    this.#disarm()
+    this.#armed = true
+    this.#timer = setTimeout(() => {
+      this.#timer = null
+      if (!this.#armed) return
+      this.#armed = false
+      this.#readAndPaste()
+    }, PlainPasteChord.WINDOW_MS)
+  }
+
+  /**
+   * Consumes the paste event the chord armed for, or declines any other.
+   * @param {ClipboardEvent} event @returns {boolean} true when consumed
+   */
+  takePaste(event) {
+    if (!this.#armed) return false
+    this.#disarm()
+    event.preventDefault()
+    const text = event.clipboardData ? event.clipboardData.getData('text/plain') : ''
+    if (text) this.#paste(text)
+    else this.#readAndPaste()
+    return true
+  }
+
+  #disarm() {
+    this.#armed = false
+    if (this.#timer !== null) clearTimeout(this.#timer)
+    this.#timer = null
+  }
+
+  #readAndPaste() {
+    const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null
+    if (!clipboard || typeof clipboard.readText !== 'function') return
+    clipboard.readText()
+      .then((text) => { if (text) this.#paste(text) })
+      .catch((err) => { console.error('[interaction-policy] plain paste: clipboard read failed', err) })
+  }
+}
 
 /** @param {any} view @param {any} editor @param {ClipboardHost|null} host */
 function clipboardFor(view, editor, host) {
@@ -925,10 +1005,17 @@ export function buildInteractionPolicyExtension(T, clipboardHost) {
     priority: 50,
     addProseMirrorPlugins: function () {
       var editor = this.editor
+      var plainPaste = (clipboardHost && clipboardHost.pastePlainText)
+        ? new PlainPasteChord(clipboardHost.pastePlainText)
+        : null
       return [
         new T.Plugin({
           filterTransaction: function (tr) { return readOnlyTextPermits(tr) },
           props: {
+            // The text/plain of every native copy. It wins only because the
+            // surface disables TipTap's core `clipboardTextSerializer`, whose
+            // priority-100 plugin would otherwise answer first.
+            clipboardTextSerializer: function (slice) { return ClipboardText.ofSlice(slice) },
             // Pair behaviours (surround / autoclose / type-over). Here rather
             // than in handleKeyDown so IME and dead-key layouts work.
             handleTextInput: function (view, from, to, text) {
@@ -962,8 +1049,17 @@ export function buildInteractionPolicyExtension(T, clipboardHost) {
                 if (cut) view.dispatch(view.state.tr.delete(cut.from, cut.to).scrollIntoView())
                 return true
               },
+              paste: function (_view, event) {
+                return !!plainPaste && plainPaste.takePaste(event)
+              },
             },
             handleKeyDown: function (view, event) {
+              // Left unclaimed, so an engine that delivers its own paste event
+              // for the chord still does.
+              if (plainPaste && PlainPasteChord.matches(event)) {
+                plainPaste.arm()
+                return false
+              }
               if (event.key === 'Backspace' && !event.metaKey && !event.ctrlKey && !event.altKey) {
                 if (handlePairBackspace(view)) { event.preventDefault(); return true }
               }
