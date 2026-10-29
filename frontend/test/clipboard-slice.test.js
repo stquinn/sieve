@@ -89,8 +89,8 @@ const CONTAINERS = ['sieve-ai-block', 'sieve-captioned']
 
 // The clipboard reads a paragraph through the shared block-kind registry. The real
 // definition is prose-block.js, which needs the whole TipTap vendor bootstrap; this
-// is the half of its contract that matters here — sieve/prose plus text/plain, both
-// the node's markdown, from the editor's serializer.
+// is the half of its contract that matters here — sieve/prose (the node's markdown,
+// from the editor's serializer) plus text/plain (its plain text).
 registerBlockKind({
   kind: 'prose',
   native: true,
@@ -98,7 +98,7 @@ registerBlockKind({
     const md = editor ? editor.serialize(node) : ''
     return md ? [
       { mimeType: 'sieve/prose', content: JSON.stringify({ content: md }) },
-      { mimeType: 'text/plain', content: md },
+      { mimeType: 'text/plain', content: node.textContent },
     ] : null
   },
 })
