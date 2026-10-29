@@ -90,6 +90,7 @@ vi.mock('../src/static/lens/document-editor/surfaces/block-position.js', async (
 }))
 vi.mock('../src/static/lens/document-editor/paste-context.js', () => ({
   caretInRawTextBlock: vi.fn(() => false),
+  caretInTableCell: vi.fn(() => false),
 }))
 
 import { AbstractSurface, SurfaceEvent } from '../src/static/lens/document-editor/surfaces/abstract-surface.js'
@@ -103,7 +104,7 @@ import { getBlockSelectionRange } from '../src/static/lens/document-editor/block
 import { BlockSelection } from '../src/static/lens/document-editor/block-selection.js'
 import { computeBlockSync, computeOrderOp } from '../src/static/lens/document-editor/block-sync.js'
 import { docPosForBlockIndex, blockIndexAfter } from '../src/static/lens/document-editor/surfaces/block-position.js'
-import { caretInRawTextBlock } from '../src/static/lens/document-editor/paste-context.js'
+import { caretInRawTextBlock, caretInTableCell } from '../src/static/lens/document-editor/paste-context.js'
 import { ActionMacro } from '../src/static/shell/trigger-providers.js'
 import { LensCapability } from '../src/static/contract/lens-capabilities.js'
 import { ASSET_DRAG_TYPE } from '../src/static/contract/container-provider.js'
@@ -158,6 +159,7 @@ beforeEach(() => {
   vi.mocked(blockIndexAfter).mockReturnValue(-1)
   vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [] })
   vi.mocked(caretInRawTextBlock).mockReturnValue(false)
+  vi.mocked(caretInTableCell).mockReturnValue(false)
 })
 
 // ── MarkdownSurface ───────────────────────────────────────────────────────────
@@ -1137,6 +1139,7 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
   // handlers (the wiring the editor gives ProseMirror) + the fake editor + host.
   function mountPaste(host = wyHost(), uuid = 'doc-1', opts = {}) {
     if (opts.caretInRawTextBlock) vi.mocked(caretInRawTextBlock).mockImplementation(opts.caretInRawTextBlock)
+    if (opts.caretInTableCell) vi.mocked(caretInTableCell).mockImplementation(opts.caretInTableCell)
     const doc = fxSchema.nodes.doc.create(null, [build.p('one', 'b1')])
     const state = EditorState.create({ schema: fxSchema, doc })
     const bundle = mountBundle(state)
@@ -1152,9 +1155,9 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
   /** The kinds this host's provider was asked about, in order. */
   const pasteKinds = (host) => host.provider.paste.mock.calls.map((c) => c[0].kind)
 
-  function clip({ text = '', html = '', slice = '', items = [] } = {}) {
+  function clip({ text = '', html = '', slice = '', prose = '', items = [] } = {}) {
     return {
-      getData: (mime) => ({ 'text/plain': text, 'text/html': html, 'sieve/slice': slice }[mime] || ''),
+      getData: (mime) => ({ 'text/plain': text, 'text/html': html, 'sieve/slice': slice, 'sieve/prose': prose }[mime] || ''),
       items,
       files: [],
     }
@@ -1194,6 +1197,33 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     const event = { clipboardData: clip({ text: 'plain' }), target: {}, preventDefault: vi.fn() }
     expect(props.handlePaste({}, event)).toBe(false)
     expect(ed.commands.insertContent).not.toHaveBeenCalled()
+  })
+
+  // A table cell takes inline text but no blocks: every clipboard shape is the
+  // native paste, which prosemirror-tables merges into the cell (#192). Go is
+  // never asked, so no block can land below the table.
+  const SENTENCE = 'go here -> there'
+  it.each([
+    ['plain text', { text: SENTENCE }],
+    ['a list item copied as html', { text: SENTENCE, html: '<ul><li><p>go here -&gt; there</p></li></ul>' }],
+    ['another cell (PM cell html)', { text: 'alpha', html: '<table><tbody><tr><td><p>alpha</p></td></tr></tbody></table>' }],
+    ['a prose copy', { text: SENTENCE, prose: JSON.stringify({ content: SENTENCE }) }],
+    ['a multi-block slice', { slice: JSON.stringify([{ kind: 'prose', content: 'a' }, { kind: 'code', content: 'b' }]) }],
+  ])('caret in a table cell, clipboard holds %s → native paste, Go never asked', (_label, data) => {
+    const { ed, props, host } = mountPaste(wyHost(), 'doc-1', { caretInTableCell: () => true })
+    const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb(data.text || '') }
+    const event = { clipboardData: Object.assign(clip(data), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
+    expect(props.handlePaste({}, event)).toBe(false)
+    expect(event.preventDefault).not.toHaveBeenCalled()
+    expect(host.provider.paste).not.toHaveBeenCalled()
+    expect(ed.commands.insertContent).not.toHaveBeenCalled()
+  })
+
+  it('context-menu Paste in a table cell inserts the text locally, Go never asked', async () => {
+    const { s, ed, host } = mountPaste(wyHost(), 'doc-1', { caretInTableCell: () => true })
+    expect(await s.pasteText(SENTENCE)).toBe('none')
+    expect(host.provider.paste).not.toHaveBeenCalled()
+    expect(ed.commands.insertContent).toHaveBeenCalledWith(SENTENCE)
   })
 
   it('smart paste: PEEKS the anchor (side-effect-free), asks the container, consumes the anchor on outcome:block, returns true', async () => {

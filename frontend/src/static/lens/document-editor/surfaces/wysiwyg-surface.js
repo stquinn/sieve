@@ -41,7 +41,7 @@ import { buildBlocksHTML, proseContent } from './block-render.js'
 import { seedBaseline, computeBlockSync, computeOrderOp } from '../block-sync.js'
 import { docPosForBlockIndex, blockIndexAfter, blockOffsetOf, posForBlockOffset } from './block-position.js'
 import { reloadReplacement } from './render-empty.js'
-import { caretInRawTextBlock } from '../paste-context.js'
+import { caretInRawTextBlock, caretInTableCell } from '../paste-context.js'
 import { CaretTriggerPort } from './caret-trigger-port.js'
 import { CellSelectionGuard } from './cell-selection-guard.js'
 import { TableMarkdown } from './table-markdown.js'
@@ -888,7 +888,7 @@ export class WysiwygSurface extends AbstractSurface {
   pasteText(text) {
     const ed = this.#editorPane
     if (!ed || !text) return Promise.resolve('none')
-    const provider = this.#pasteProvider()
+    const provider = caretInTableCell(ed) ? null : this.#pasteProvider()
     if (!provider) {
       ed.commands.insertContent(text)
       ed.commands.scrollIntoView()
@@ -992,6 +992,12 @@ export class WysiwygSurface extends AbstractSurface {
     // Caret inside a raw-text fenced block: paste is a literal text paste into
     // that block, not a smart-paste. Step aside.
     if (caretInRawTextBlock && caretInRawTextBlock(this.#editorPane)) {
+      return false
+    }
+
+    // Caret inside a table cell: the cell takes text, never a block, so the
+    // native paste (prosemirror-tables' cell merge) runs instead.
+    if (caretInTableCell(this.#editorPane)) {
       return false
     }
 

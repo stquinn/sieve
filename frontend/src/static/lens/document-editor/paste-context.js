@@ -7,3 +7,17 @@ export function caretInRawTextBlock(editor) {
   var parent = sel && sel.$from && sel.$from.parent
   return !!(parent && parent.type && parent.type.spec && parent.type.spec.code)
 }
+
+// True when the caret sits inside a table cell (body or header). A cell takes
+// inline text but no blocks, so a paste there is the native text paste that
+// prosemirror-tables merges into the cell, never a smart-paste.
+export function caretInTableCell(editor) {
+  var sel = editor && editor.state && editor.state.selection
+  var $from = sel && sel.$from
+  if (!$from) return false
+  for (var d = $from.depth; d > 0; d--) {
+    var name = $from.node(d).type.name
+    if (name === 'tableCell' || name === 'tableHeader') return true
+  }
+  return false
+}
