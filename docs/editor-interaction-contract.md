@@ -622,6 +622,8 @@ its blocks is one too — and declaring that content is the whole declaration. O
 |---|---|---|
 | Prose | URL / HTML / image / matchable | silent smart conversion (Go FirstPasteMatch) — by design |
 | Prose | plain text (no match) | local insert |
+| Prose | markdown-shaped prose (a `> ` quote line, `**bold**`, a heading, an inline code span), or anything shorter than 30 characters | never a code block: markdown is evidence of prose, and smart paste claims code only when it is at least as certain as language guessing (`minSourceLength`) |
+| Table cell (`tableCell` / `tableHeader`) | anything, `sieve/slice` included | native ProseMirror paste into the cell (prosemirror-tables merges a copied cell as its contents, never a nested table). Smart paste and the context-menu Paste step aside, so no block is ever created outside the cell the caret is in. "Anywhere" below means anywhere but a cell. |
 | Raw-text block (code/diagram-edit) | anything | literal text (PM `code: true` on the node — NOT a policy read; the old `rawText` flag claimed this and never implemented it) |
 | Anywhere | `sieve/slice` (>1) | Go paste-slice reconstructs blocks |
 | Anywhere | `sieve/<kind>` (a single block) | The kind's own processor rebuilds it from that view (`FirstPasteMatch` pass 1), never by detecting what its text looks like. The copy is a NEW block: a kind whose job OUTPUT is its own — a diagram's render, a smart-card's fetched image — drops that output so the copy produces its own, rather than reading an asset stored under the original block's id. |
