@@ -141,12 +141,13 @@ var tier2 = []struct {
 	{regexp.MustCompile(`\bColumn\s*\(\s*children:`), "dart"},
 	{regexp.MustCompile(`\bfinal\s+\w+\s+\w+\s*=`), "dart"},
 	{regexp.MustCompile(`\bconst\s+\w+\s+\w+\s*=`), "typescript"},
-	{regexp.MustCompile(`:\s*(?:string|number|boolean|any)\b`), "typescript"},
+	// An annotation ends at punctuation or the line's end; "note: any ideas" is English.
+	{regexp.MustCompile(`(?m)\w\??\s*:\s*(?:string|number|boolean|any)(?:\[\])?\s*(?:[,;)=|>{}\]]|$)`), "typescript"},
 	// Markdown (Tier 2 signals)
 	{regexp.MustCompile(`(?m)^##+\s+`), "markdown"},
 	{regexp.MustCompile(`(?m)^>\s+`), "markdown"},
 	{regexp.MustCompile(`(?m)\*\*([^\*\n]+)\*\*|__([^\_\n]+)__`), "markdown"},
-	{regexp.MustCompile(`(?m)\\x60([^\\x60\\n]+)\\x60`), "markdown"},
+	{regexp.MustCompile("(?m)`([^`\n]+)`"), "markdown"},
 	{regexp.MustCompile(`(?m)!\[([^\]\n]*)\]\([^)\n]+\)`), "markdown"},
 }
 
@@ -176,10 +177,11 @@ func LooksLikeCode(source string) bool {
 		}
 	}
 
-	// Any single tier2 hit is a weak signal worth acting on
+	// Any single tier2 hit is a weak signal worth acting on, except markdown's:
+	// markdown is evidence of prose.
 	anyWeakSignal := false
 	for _, rule := range tier2 {
-		if rule.re.MatchString(trimmed) {
+		if rule.lang != "markdown" && rule.re.MatchString(trimmed) {
 			anyWeakSignal = true
 			break
 		}

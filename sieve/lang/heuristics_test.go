@@ -133,10 +133,23 @@ func TestLooksLikeCode_weakSignal(t *testing.T) {
 	}
 }
 
+// Markdown is evidence of prose, not of code: a quote, a bold word or an inline
+// code span in three lines of writing does not make them source.
 func TestLooksLikeCode_prose(t *testing.T) {
-	src := "This is a normal paragraph.\nIt has two sentences.\nNo code here at all."
-	if LooksLikeCode(src) {
-		t.Error("expected plain prose to NOT trigger tier-3")
+	cases := []struct{ name, input string }{
+		{"plain", "This is a normal paragraph.\nIt has two sentences.\nNo code here at all."},
+		{"a quote line", "Some thoughts on the plan.\n> the part I disagree with\nAnd my reply to it."},
+		{"a bold word", "First line of the notes.\nThis is **important** to remember.\nLast line."},
+		{"an inline code span", "Run the `make` target first.\nThen check the output.\nThat is all."},
+		{"a heading", "## Notes\nSome thoughts on the plan.\nAnd a reply."},
+		{"an arrow", "go here -> there\nthen back -> home\nand rest a while"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if LooksLikeCode(tc.input) {
+				t.Errorf("prose must not read as code: %q", tc.input)
+			}
+		})
 	}
 }
 
@@ -203,6 +216,10 @@ func TestDetectByHeuristics_markdown(t *testing.T) {
 		{
 			name:  "Tier 2 Combination (Header + Bold)",
 			input: "## Heading\nThis is some **bold** text to explain concepts.",
+		},
+		{
+			name:  "Tier 2 Combination (Inline Code + Bold)",
+			input: "Call `render` once, and **never** twice.",
 		},
 	}
 	for _, tc := range cases {

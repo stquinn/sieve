@@ -68,3 +68,23 @@ describe('the prose kind declares its own icon', () => {
     expect(getSieveIcon('prose')).toBe('<svg id="prose"/>')
   })
 })
+
+// A prose copy's clipboard views: `sieve/prose` keeps the markdown so the block
+// round-trips, while `text/plain` is the text a reader sees. tiptap-markdown
+// writes `>` as `&gt;`, which must never reach text/plain (#192).
+describe('the prose kind\'s clipboard views', () => {
+  it.each([
+    ['a list item with an arrow', '<ul><li><p>go here -&gt; there</p></li></ul>', 'go here -> there'],
+    ['a paragraph with angle brackets', '<p>a &lt;b&gt; c</p>', 'a <b> c'],
+  ])('%s: text/plain is the plain text, sieve/prose the markdown', async (_label, html, plain) => {
+    const { Editor } = await import('@tiptap/core')
+    const { StarterKit } = await import('@tiptap/starter-kit')
+    const { Markdown } = await import('tiptap-markdown')
+    const editor = new Editor({ extensions: [StarterKit, Markdown.configure({ html: true })], content: html })
+    const entries = ProseBlock.asContentEntry(editor.state.doc.firstChild, editor)
+    const view = (mime) => entries.find((e) => e.mimeType === mime).content
+    expect(view('text/plain')).toBe(plain)
+    expect(JSON.parse(view('sieve/prose')).content).toBe(editor.storage.markdown.serializer.serialize(editor.state.doc).trim())
+    editor.destroy()
+  })
+})

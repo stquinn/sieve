@@ -159,14 +159,17 @@ export let ProseBlock
     interactionPolicy: { surroundSelection: true },
     getIcon: function () { return window.SieveIcons && window.SieveIcons.blockquote },
     fromBlock: function (b, mdRender) { return renderProseContent(proseContent(b), mdRender) },
-    // A prose block's clipboard views: `sieve/prose` (so ProseProcessor claims it
-    // server-side) plus plain text, both carrying the node's clean markdown.
+    // A prose block's clipboard views: `sieve/prose` carries the node's markdown
+    // (so ProseProcessor claims it server-side) and `text/plain` its plain text,
+    // as ProseMirror's own copy writes it. The markdown is not plain text: it
+    // spells `>` as `&gt;`.
     asContentEntry: function (node, editor) {
       var md = (serializeNode(editor, node) || '').trim()
       if (!md) return null
+      var text = node.textBetween(0, node.content.size, '\n\n', '\n').trim()
       return [
         { mimeType: 'sieve/prose', content: JSON.stringify({ content: md }) },
-        { mimeType: 'text/plain', content: md },
+        { mimeType: 'text/plain', content: text || md },
       ]
     },
     // When the source is a diagram (or carries a ```mermaid fence), render it to

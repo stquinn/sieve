@@ -150,7 +150,7 @@ func unfencedCodeContent(entry block.ContentEntry) (string, bool) {
 	if trimmed == "" || codeFenceRe.MatchString(trimmed) {
 		return "", false
 	}
-	if !strings.Contains(trimmed, "\n") {
+	if !strings.Contains(trimmed, "\n") || len(trimmed) < minSourceLength {
 		return "", false
 	}
 	if lang, ok := lheur.DetectByHeuristics(trimmed, ""); ok {

@@ -27,9 +27,12 @@ export const schema = new Schema({
     },
     listItem: { content: 'paragraph+', toDOM: () => ['li', 0] },
     table: {
-      group: 'block', content: 'paragraph+', attrs: { id: { default: '' } },
+      group: 'block', content: 'tableRow+', attrs: { id: { default: '' } },
       toDOM: (nd) => ['table', { 'data-id': nd.attrs.id }, ['tbody', 0]],
     },
+    tableRow: { content: '(tableCell | tableHeader)+', toDOM: () => ['tr', 0] },
+    tableCell: { content: 'paragraph+', toDOM: () => ['td', 0] },
+    tableHeader: { content: 'paragraph+', toDOM: () => ['th', 0] },
     codeBlock: {
       group: 'block', content: 'text*', code: true, attrs: { id: { default: '' } },
       toDOM: (nd) => ['pre', { 'data-id': nd.attrs.id }, ['code', 0]],
@@ -137,7 +140,8 @@ export const build = {
   blockquote: (id, inner) => n.blockquote.create(id ? { id } : null, inner || [n.paragraph.create(null, t('quote'))]),
   bulletList: (id, items) => n.bulletList.create(id ? { id } : null,
     (items || ['item']).map((s) => n.listItem.create(null, n.paragraph.create(null, t(s))))),
-  table: (id, text) => n.table.create(id ? { id } : null, n.paragraph.create(null, t(text || 'cell'))),
+  table: (id, text, cell = 'tableCell') => n.table.create(id ? { id } : null,
+    n.tableRow.create(null, n[cell].create(null, n.paragraph.create(null, t(text || 'cell'))))),
   image: (id) => n.image.create({ id: id || '', src: 'x.png' }),
   hr: (id) => n.horizontalRule.create(id ? { id } : null),
   sieveCode: (id) => n['sieve-code'].create({ id, kind: 'code', serialisedForm: '' }),
