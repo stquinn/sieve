@@ -61,6 +61,7 @@ import { copyImageToClipboard } from '../../../../renderers/copy-image.js'
 
     attrs: {
       src:     { default: '', parseHTML: function (el) { return el.getAttribute('data-src')     || '' } },
+      title:   { default: '', parseHTML: function (el) { return el.getAttribute('data-title')   || '' } },
       alt:     { default: '', parseHTML: function (el) { return el.getAttribute('data-alt')     || '' } },
       summary: { default: '', parseHTML: function (el) { return el.getAttribute('data-summary') || '' } },
       detect:  { default: '', parseHTML: function (el) { return el.getAttribute('data-detect')  || '' } },
@@ -103,6 +104,7 @@ import { copyImageToClipboard } from '../../../../renderers/copy-image.js'
     parseAttrs: function (data) {
       return {
         src:     data.src     || '',
+        title:   data.title   || '',
         alt:     data.alt     || '',
         summary: data.summary || '',
         detect:  data.detect  || '',

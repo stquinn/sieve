@@ -56,6 +56,18 @@ func TestCodeBlockProcessor_InitAttrs_heuristicsApplied(t *testing.T) {
 	}
 }
 
+// A language the block arrives with is kept: Go source carrying "rust" (a copied
+// block whose language was picked) is not re-detected as go.
+func TestCodeBlockProcessor_InitAttrs_suppliedLanguageIsKept(t *testing.T) {
+	p := NewCodeBlockProcessor(block.BlockServices{})
+	attrs := p.InitAttrs("co-0005", map[string]interface{}{
+		"source": "package main\n\nfunc main() {}", "language": "rust", "detectionMethod": "manual",
+	})
+	if attrs["language"] != "rust" || attrs["detectionMethod"] != "manual" {
+		t.Errorf("language = %v (%v), want the supplied rust (manual)", attrs["language"], attrs["detectionMethod"])
+	}
+}
+
 func TestCodeBlockProcessor_InitAttrs_withOverrides(t *testing.T) {
 	p := NewCodeBlockProcessor(block.BlockServices{})
 	attrs := p.InitAttrs("co-0003", map[string]interface{}{

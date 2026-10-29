@@ -144,10 +144,11 @@ func TestFirstPasteMatch_selfKindBeatsUpgrade(t *testing.T) {
 	RegisterProcessor(diagram)
 	RegisterProcessor(code)
 
-	// Copied mermaid code block: sieve/code (lang=mermaid) + its text view.
+	// Copied mermaid code block, in the order the clipboard carries it: the text
+	// view first, the block's own sieve/code (lang=mermaid) view last.
 	copied := []ContentEntry{
-		{MIMEType: "sieve/code", Content: `{"id":"co-1","language":"mermaid","source":"graph TD; A-->B"}`},
 		{MIMEType: "text/plain", Content: "graph TD; A-->B"},
+		{MIMEType: "sieve/code", Content: `{"id":"co-1","language":"mermaid","source":"graph TD; A-->B"}`},
 	}
 	if kind, _, _, ok := FirstPasteMatch(copied, ActionPaste); !ok || kind != "code" {
 		t.Fatalf("copied sieve/code (mermaid) should round-trip as code, got kind=%q ok=%v", kind, ok)
@@ -157,6 +158,96 @@ func TestFirstPasteMatch_selfKindBeatsUpgrade(t *testing.T) {
 	raw := []ContentEntry{{MIMEType: "text/plain", Content: "graph TD; A-->B"}}
 	if kind, _, _, ok := FirstPasteMatch(raw, ActionPaste); !ok || kind != "diagram" {
 		t.Fatalf("raw mermaid text should upgrade to diagram, got kind=%q ok=%v", kind, ok)
+	}
+}
+
+// A copied block's own view rides LAST on a real clipboard, behind the text and
+// link views other applications read, and every processor reads its entries in
+// order and answers on the first it can read. The registry hands each processor
+// its own view first, so a kind that would take a leading link as a mere
+// transform still claims its own copy; with no view (a partial-range copy) the
+// order is the clipboard's and the link stays a link.
+func TestFirstPasteMatch_ownViewFirstInRealClipboardOrder(t *testing.T) {
+	const view = `{"kind":"card","id":"card-src-1","href":"https://example.com/a"}`
+	slice := ContentEntry{MIMEType: "sieve/slice", Content: `[[{"mimeType":"sieve/card","content":"{}"}]]`}
+	for _, tc := range []struct {
+		name    string
+		entries []ContentEntry
+		wantOK  bool
+	}{
+		{"C1-smart-card: own view last, behind a link", []ContentEntry{
+			{MIMEType: "text/plain", Content: ""},
+			{MIMEType: "text/html", Content: `<div data-type="sieve-card"></div>`},
+			slice,
+			{MIMEType: "text/uri-list", Content: "https://example.com/a"},
+			{MIMEType: "sieve/card", Content: view},
+		}, true},
+		{"partial range: no view, the link is not claimed", []ContentEntry{
+			{MIMEType: "text/plain", Content: "https://example.com/a"},
+			{MIMEType: "text/uri-list", Content: "https://example.com/a"},
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ResetRegistry()
+			var seen []ContentEntry
+			RegisterProcessor(&mockProcessor{
+				FencedDeserializer: FencedDeserializer{Kind: "card"},
+				actionsFn: func(entries []ContentEntry) SupportedActions {
+					seen = entries
+					for _, e := range entries {
+						if k, _, ok := e.SieveAttrs(); ok && k == "card" {
+							return SupportedActions{Kind: "card", Actions: []Action{ActionPaste}}
+						}
+						if e.MIMEType == "text/uri-list" {
+							return SupportedActions{Kind: "card", Actions: []Action{ActionTransform}}
+						}
+					}
+					return SupportedActions{Kind: "card"}
+				},
+			})
+			kind, _, fromDetection, ok := FirstPasteMatch(tc.entries, ActionPaste)
+			if ok != tc.wantOK {
+				t.Fatalf("FirstPasteMatch ok = %v (kind %q), want %v", ok, kind, tc.wantOK)
+			}
+			if !ok {
+				if len(seen) != len(tc.entries) || seen[0].MIMEType != tc.entries[0].MIMEType {
+					t.Errorf("with no view the processor must see the clipboard's order, saw %v", seen)
+				}
+				return
+			}
+			if kind != "card" || fromDetection {
+				t.Errorf("claimed by %q (detection %v), want the self-kind card", kind, fromDetection)
+			}
+			if seen[0].MIMEType != "sieve/card" {
+				t.Errorf("the processor must see its own view first, saw %s first", seen[0].MIMEType)
+			}
+		})
+	}
+}
+
+// ViewFirst moves only the named kind's views, keeps everything else in its
+// carried order, never moves sieve/slice, and is the identity without a view.
+func TestContentEntries_ViewFirst(t *testing.T) {
+	plain := ContentEntry{MIMEType: "text/plain", Content: "x"}
+	slice := ContentEntry{MIMEType: "sieve/slice", Content: `[[]]`}
+	code := ContentEntry{MIMEType: "sieve/code", Content: `{"source":"x"}`}
+	diagram := ContentEntry{MIMEType: "sieve/diagram", Content: `{"source":"x"}`}
+	in := ContentEntries{plain, slice, diagram, code}
+
+	got := in.ViewFirst("code")
+	want := ContentEntries{code, plain, slice, diagram}
+	if len(got) != len(want) {
+		t.Fatalf("ViewFirst(code) = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i].MIMEType != want[i].MIMEType {
+			t.Fatalf("ViewFirst(code) = %v, want %v", got, want)
+		}
+	}
+	for _, kind := range []string{"slice", "log"} {
+		if same := in.ViewFirst(kind); &same[0] != &in[0] {
+			t.Errorf("ViewFirst(%s) must return the entries as they are", kind)
+		}
 	}
 }
 

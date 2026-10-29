@@ -2,9 +2,10 @@
 // The description strap (#73) — replaced the hover tooltip that rendered centred
 // OVER the image. Read-only chrome, gated by the PERSISTED showSummary attribute.
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
 import { SmartImageRenderer } from '../src/static/renderers/smart-image-renderer.js'
 import { SieveBlock } from '../src/static/contract/sieve-block.js'
+import { getBlockKind } from '../src/static/renderers/block-kinds.js'
 
 /** @param {Record<string, any>} payload */
 function render(payload) {
@@ -74,5 +75,35 @@ describe('SmartImageRenderer description strap', () => {
     expect(frame).not.toBeNull()
     expect(frame.querySelector('img')).not.toBeNull()
     expect(frame.querySelector('.image-resizer')).not.toBeNull()
+  })
+})
+
+// The node schema is what a copy reads the block's attrs back out of, so an attr
+// it does not declare is dropped from the node and from every sieve/smart-image
+// view (C13). Registration needs a TipTap runtime, seeded before the import.
+describe('SmartImageNodeView schema', () => {
+  const VENDOR = /** @type {any} */ (globalThis).TipTap
+  /** @type {any} */ let adapter
+  /** @type {any} */ let buildSieveBlockHTML
+
+  beforeAll(async () => {
+    VENDOR.Node = { create: (/** @type {any} */ cfg) => ({ __node: cfg.name }) }
+    VENDOR.mergeAttributes = (/** @type {any} */ a, /** @type {any} */ b) => Object.assign({}, a, b)
+    await import('../src/static/lens/document-editor/surfaces/node-views/smart-image-node-view.js')
+    buildSieveBlockHTML = (await import('../src/static/lens/document-editor/surfaces/sieve-block-extension.js')).buildSieveBlockHTML
+    adapter = getBlockKind('smart-image').renderer
+  })
+
+  afterAll(() => { delete VENDOR.Node; delete VENDOR.mergeAttributes })
+
+  it.each([
+    ['title', 'Holiday'],
+    ['alt', 'holiday.png'],
+    ['summary', 'A beach'],
+  ])('%s survives the costume the node is parsed from', (attr, value) => {
+    const holder = document.createElement('div')
+    holder.innerHTML = buildSieveBlockHTML('smart-image', { id: 'im-1', src: 'sieve://doc/holiday.png', [attr]: value })
+    const el = /** @type {HTMLElement} */ (holder.firstElementChild)
+    expect(adapter.attrs[attr].parseHTML(el)).toBe(value)
   })
 })

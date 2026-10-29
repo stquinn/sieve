@@ -658,6 +658,205 @@ func TestEditorService_HandlePasteSlice_oneBlockPerItemInOrder(t *testing.T) {
 	}
 }
 
+// realClipboard is a whole-block copy of a kind's block as ClipboardSlice writes
+// it, in its order: text/plain, text/html, sieve/slice, the kind's link view when
+// it has one, and the block's own sieve/<kind> view LAST, stamped with the
+// document it was copied from.
+func realClipboard(kind, container, plain, uriList string, attrs map[string]interface{}) []block.ContentEntry {
+	attrs["kind"] = kind
+	payload, _ := json.Marshal(attrs)
+	own := block.ContentEntry{MIMEType: "sieve/" + kind, Content: string(payload), Context: map[string]interface{}{"container": container}}
+	item := []block.ContentEntry{{MIMEType: "text/plain", Content: plain}}
+	if uriList != "" {
+		item = []block.ContentEntry{{MIMEType: "text/uri-list", Content: uriList}}
+	}
+	slice, _ := json.Marshal([][]block.ContentEntry{append(item, own)})
+	entries := []block.ContentEntry{
+		{MIMEType: "text/plain", Content: plain},
+		{MIMEType: "text/html", Content: `<div data-type="sieve-` + kind + `" data-id="` + attrs["id"].(string) + `"></div>`},
+		{MIMEType: "sieve/slice", Content: string(slice)},
+	}
+	if uriList != "" {
+		entries = append(entries, block.ContentEntry{MIMEType: "text/uri-list", Content: uriList})
+	}
+	return append(entries, own)
+}
+
+// A whole-block copy pasted back — into its own document (C1) or another (C2) —
+// is the same kind under a new id, built from its own view however far behind
+// the text and link views that view rides. Each row is one kind's real clipboard.
+func TestEditorService_HandlePaste_wholeBlockCopyPerKind(t *testing.T) {
+	var pngBuf bytes.Buffer
+	_ = png.Encode(&pngBuf, image.NewRGBA(image.Rect(0, 0, 4, 3)))
+	const (
+		codeSrc = "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}"
+		logSrc  = "2026-08-27 11:04:06 WARN pool exhausted\n2026-08-27 11:04:10 ERROR giving up"
+	)
+	type row struct {
+		name, kind, origID, plain, uriList string
+		attrs                              func(src string) map[string]interface{}
+		check                              func(t *testing.T, got map[string]interface{}, b block.SieveBlock)
+	}
+	keeps := func(want map[string]interface{}) func(*testing.T, map[string]interface{}, block.SieveBlock) {
+		return func(t *testing.T, got map[string]interface{}, _ block.SieveBlock) {
+			for k, v := range want {
+				if !reflect.DeepEqual(got[k], v) {
+					t.Errorf("%s = %v, want %v", k, got[k], v)
+				}
+			}
+		}
+	}
+	rows := []row{
+		{name: "C1-code", kind: "code", origID: "code-src-1", plain: codeSrc,
+			// A language the source does not read as, so a re-detection would show.
+			attrs: func(string) map[string]interface{} {
+				return map[string]interface{}{"id": "code-src-1", "status": "COMPLETE", "source": codeSrc, "language": "rust", "detectionMethod": "manual"}
+			},
+			check: keeps(map[string]interface{}{"source": codeSrc, "language": "rust", "detectionMethod": "manual", "status": block.BlockStatusComplete})},
+		{name: "C1-diagram", kind: "diagram", origID: "diag-src-1", plain: "graph TD\n    A[start] --> B{ok?}",
+			attrs: func(src string) map[string]interface{} {
+				return map[string]interface{}{"id": "diag-src-1", "status": "COMPLETE", "source": "graph TD\n    A[start] --> B{ok?}",
+					"diagramType": "mermaid", "mode": "render", "svgAsset": "sieve://" + src + "/diagram-diag-src-1.svg"}
+			},
+			check: func(t *testing.T, got map[string]interface{}, _ block.SieveBlock) {
+				if got["source"] != "graph TD\n    A[start] --> B{ok?}" || got["diagramType"] != "mermaid" || got["mode"] != "render" {
+					t.Errorf("diagram content lost: %v", got)
+				}
+				if svg, _ := got["svgAsset"].(string); strings.Contains(svg, "diag-src-1") {
+					t.Errorf("the copy must not carry the source's render, svgAsset = %q", svg)
+				}
+			}},
+		{name: "C1-log", kind: "log", origID: "log-src-1", plain: logSrc,
+			attrs: func(string) map[string]interface{} {
+				return map[string]interface{}{"id": "log-src-1", "status": "COMPLETE", "source": logSrc, "language": "log", "filter": "ERROR", "hideNoise": true}
+			},
+			check: keeps(map[string]interface{}{"source": logSrc, "filter": "ERROR", "hideNoise": true})},
+		{name: "C1-smart-image/C13", kind: "smart-image", origID: "img-src-1",
+			attrs: func(src string) map[string]interface{} {
+				return map[string]interface{}{"id": "img-src-1", "status": "COMPLETE", "src": "sieve://" + src + "/holiday.png",
+					"title": "Holiday", "alt": "holiday.png", "summary": "A beach", "width": "4", "height": "3"}
+			},
+			check: keeps(map[string]interface{}{"title": "Holiday", "alt": "holiday.png", "summary": "A beach", "status": block.BlockStatusComplete})},
+		{name: "C1-smart-card", kind: "smart-card", origID: "card-src-1", uriList: "https://example.com/a",
+			attrs: func(string) map[string]interface{} {
+				return map[string]interface{}{"id": "card-src-1", "status": "COMPLETE", "href": "https://example.com/a",
+					"title": "Example", "description": "An example", "siteName": "example.com"}
+			},
+			// A copy re-fetches its preview, which the stub answers with no description.
+			check: keeps(map[string]interface{}{"href": "https://example.com/a", "title": "Example", "status": block.BlockStatusComplete})},
+		{name: "C1-reference", kind: "reference", origID: "ref-src-1", plain: "sieve://SRCDOC/plan.txt",
+			attrs: func(src string) map[string]interface{} {
+				return map[string]interface{}{"id": "ref-src-1", "status": "COMPLETE", "uri": "sieve://" + src + "/plan.txt",
+					"cache": map[string]interface{}{"title": "plan.txt", "mime": "text/plain", "bytes": "27", "summary": "Quarterly plan"}}
+			},
+			check: func(t *testing.T, got map[string]interface{}, _ block.SieveBlock) {
+				face, _ := got["cache"].(map[string]interface{})
+				if uri, _ := got["uri"].(string); !strings.HasSuffix(uri, ".txt") || face["summary"] != "Quarterly plan" {
+					t.Errorf("reference lost its file or face: uri=%v cache=%v", got["uri"], got["cache"])
+				}
+			}},
+		{name: "C1-web-clip", kind: "web-clip", origID: "clip-src-1", plain: "Clipped body text.", uriList: "https://example.com/article",
+			attrs: func(string) map[string]interface{} {
+				return map[string]interface{}{"id": "clip-src-1", "status": "COMPLETE", "source": "https://example.com/article",
+					"title": "Article", "mode": "fetch", "content": "Clipped body text."}
+			},
+			check: keeps(map[string]interface{}{"source": "https://example.com/article", "title": "Article", "content": "Clipped body text.", "status": block.BlockStatusComplete})},
+		{name: "C1-ai-block/C12", kind: "ai-block", origID: "ai-src-1",
+			plain: "The pool was exhausted.\n\n```go\ndb.SetMaxOpenConns(4)\n```\n\nRaise the ceiling.",
+			attrs: func(string) map[string]interface{} {
+				el := func(kind, id string, attrs map[string]interface{}) map[string]interface{} {
+					attrs["id"] = id
+					return map[string]interface{}{"kind": kind, "attrs": attrs}
+				}
+				return map[string]interface{}{"id": "ai-src-1", "status": "COMPLETE", "type": "ASK", "ref": "doc",
+					"question": []interface{}{el("prose", "q-1", map[string]interface{}{"content": "why does it fail?"})},
+					"answer": []interface{}{
+						el("prose", "a-1", map[string]interface{}{"content": "The pool was exhausted."}),
+						el("code", "a-2", map[string]interface{}{"language": "go", "source": "db.SetMaxOpenConns(4)"}),
+					}}
+			},
+			check: func(t *testing.T, got map[string]interface{}, b block.SieveBlock) {
+				if got["status"] != block.BlockStatusComplete {
+					t.Errorf("the pasted answer must stay answered, status = %v", got["status"])
+				}
+				var kinds []string
+				for _, slot := range []string{block.QuestionAttr, block.AnswerAttr} {
+					for _, el := range b.Elements(slot) {
+						kinds = append(kinds, el.Kind)
+						if el.ID == "q-1" || el.ID == "a-1" || el.ID == "a-2" || !ident.Valid(el.ID) || el.Attrs["id"] != el.ID {
+							t.Errorf("%s element kept or broke its id: ID=%q attrs[id]=%v", slot, el.ID, el.Attrs["id"])
+						}
+					}
+				}
+				if want := []string{"prose", "prose", "code"}; !reflect.DeepEqual(kinds, want) {
+					t.Errorf("elements = %v, want %v", kinds, want)
+				}
+			}},
+	}
+	for _, target := range []string{"same-doc", "other-doc"} {
+		for _, tc := range rows {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				es, src := newDropEditor(t)
+				svc := es.services
+				svc.LinkPreview = fakeLinkPreview{title: "Example Domain"}
+				svc.State = pasteState{}
+				es.SetServices(svc)
+				resetRegistry()
+				for _, p := range []block.BlockProcessor{
+					processors.NewDiagramProcessor(svc), processors.NewSmartImageProcessor(svc),
+					processors.NewSmartCardProcessor(svc), processors.NewReferenceProcessor(svc),
+					processors.NewWebClipBlockProcessor(svc), processors.NewLogProcessor(svc),
+					processors.NewCodeBlockProcessor(svc), processors.NewAIBlockProcessor(svc),
+				} {
+					block.RegisterProcessor(p)
+				}
+				for key, body := range map[string][]byte{
+					"holiday.png": pngBuf.Bytes(), "plan.txt": []byte("Quarterly plan\nsecond line\n"),
+					"diagram-diag-src-1.svg": []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`),
+				} {
+					if _, err := svc.Assets.Save(domain.WorkingCopy, src, key, body); err != nil {
+						t.Fatalf("seed %s: %v", key, err)
+					}
+				}
+				into := src
+				if target == "other-doc" {
+					doc, _ := es.documents.New()
+					doc, _ = es.documents.Save(doc)
+					if err := es.Open(doc.UUID()); err != nil {
+						t.Fatalf("Open: %v", err)
+					}
+					into = doc.UUID()
+					t.Cleanup(func() { waitJobs(t, es, into) })
+				}
+
+				plain := strings.ReplaceAll(tc.plain, "SRCDOC", src)
+				res := es.HandlePaste(into, realClipboard(tc.kind, src, plain, tc.uriList, tc.attrs(src)), 0)
+				if !res.IsBlock() || res.Kind != tc.kind {
+					t.Fatalf("result = %+v, want a %s block", res, tc.kind)
+				}
+				es.WaitForJobs()
+				b, ok := es.shadows[into].SnapshotBlock(res.ID)
+				if !ok {
+					t.Fatalf("pasted block %s not in the document", res.ID)
+				}
+				if b.ID == tc.origID || !ident.Valid(b.ID) || b.Attrs["id"] != b.ID {
+					t.Errorf("identity: ID=%q attrs[id]=%v, want a new id on both sides", b.ID, b.Attrs["id"])
+				}
+				if b.Attrs["smartPaste"] == true {
+					t.Error("a copied block is no smart-paste guess")
+				}
+				tc.check(t, b.Attrs, b)
+			})
+		}
+	}
+}
+
+// pasteState is the settings port a paste reads: a log reads its custom parsers.
+type pasteState struct{}
+
+func (pasteState) LoadSettings() domain.Settings     { return domain.Settings{} }
+func (pasteState) ActiveThemeVars() domain.ThemeVars { return domain.ThemeVars{} }
+
 func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 	resetRegistry()
 	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))

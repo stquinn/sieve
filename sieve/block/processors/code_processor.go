@@ -51,9 +51,13 @@ func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface
 	logger.Debug("CodeBlockProcessor InitAttrs: initial attrs: %+v", attrs)
 	source, _ := attrs["source"].(string)
 	hint, _ := attrs["hint"].(string)
-	if l, ok := lheur.DetectByHeuristics(source, hint); ok {
-		attrs["language"] = l
-		attrs["detectionMethod"] = "heuristic"
+	// A language the block arrives with — a copied block's, a fence's — is kept;
+	// heuristics only fill an empty one.
+	if lang, _ := attrs["language"].(string); lang == "" {
+		if l, ok := lheur.DetectByHeuristics(source, hint); ok {
+			attrs["language"] = l
+			attrs["detectionMethod"] = "heuristic"
+		}
 	}
 	// Complete-vs-pending predicate MUST mirror DescribeJob: an empty-source block
 	// has no async refine job, so it is born COMPLETE (never dispatched); the hint,
