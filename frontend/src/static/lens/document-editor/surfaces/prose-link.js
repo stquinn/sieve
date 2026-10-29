@@ -112,6 +112,29 @@ export class ProseLink {
     return new ProseLink(view, { from: sel.from, to: sel.to, href: '', label: text, isNew: true })
   }
 
+  /** A whole text that is one http(s) URL, with no whitespace inside it. */
+  static #BARE_URL = /^https?:\/\/\S+$/i
+
+  /**
+   * Pastes `text` as one link when it is a single bare http(s) URL once trimmed:
+   * the URL replaces the selection as text carrying a link mark whose href is the
+   * URL, and the text around it is untouched. Pastes nothing for any other text,
+   * or for a selection that is not inside one textblock.
+   * @param {any} view @param {string} text @returns {boolean} true when pasted
+   */
+  static pasteURL(view, text) {
+    const url = (text || '').trim()
+    if (!ProseLink.#BARE_URL.test(url)) return false
+    const state = view && view.state
+    const type = state && state.schema.marks.link
+    if (!type) return false
+    const { $from, $to } = state.selection
+    if (!$from.parent.isTextblock || !$from.sameParent($to)) return false
+    const link = state.schema.text(url, [type.create({ href: url })])
+    view.dispatch(state.tr.replaceSelectionWith(link, false).scrollIntoView().setMeta('paste', true))
+    return true
+  }
+
   /** @returns {string} */ get href() { return this.#href }
   /** @returns {string} */ get label() { return this.#label }
   /** @returns {number} */ get from() { return this.#from }

@@ -18,6 +18,7 @@ import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import Image from '@tiptap/extension-image'
 import { Table, TableRow, TableHeader, TableCell } from '@tiptap/extension-table'
+import Link from '@tiptap/extension-link'
 
 // P4.E: WysiwygSurface now imports its app helpers from their OWNING modules (the
 // shared TipTap bus is retired). The three side-effect extension modules build
@@ -99,7 +100,7 @@ vi.mock('../src/static/lens/document-editor/paste-context.js', () => ({
 
 import { AbstractSurface, SurfaceEvent } from '../src/static/lens/document-editor/surfaces/abstract-surface.js'
 import { MarkdownSurface } from '../src/static/lens/document-editor/surfaces/markdown-surface.js'
-import { WysiwygSurface, LINK_OPTIONS } from '../src/static/lens/document-editor/surfaces/wysiwyg-surface.js'
+import { WysiwygSurface } from '../src/static/lens/document-editor/surfaces/wysiwyg-surface.js'
 import { SPELL_FEATURE } from '../src/static/lens/document-editor/surfaces/spell-decoration.js'
 import { FIND_FEATURE } from '../src/static/lens/document-editor/surfaces/find-decoration.js'
 import { buildBlocksHTML } from '../src/static/lens/document-editor/surfaces/block-render.js'
@@ -699,7 +700,7 @@ function mountBundle(state) {
     PluginKey: function (name) { this.name = name; this.getState = (s) => (s && s[name]) || null },
     DecorationSet: { empty: [], create: () => [] },
     Decoration: { node: () => ({}), inline: () => ({}) },
-    StarterKit: ext, Placeholder: ext, Table: ext, Image: ext, Markdown: ext,
+    StarterKit: ext, Placeholder: ext, Link: ext, Table: ext, Image: ext, Markdown: ext,
     AiShortcuts: ext, TaskItem: ext,
     TableRow: {}, TableHeader: {}, TableCell: {}, TaskList: {},
     BlockChrome: {}, AiTargetDecoration: {},
@@ -1230,6 +1231,7 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     ['a list item copied as html', { text: SENTENCE, html: '<ul><li><p>go here -&gt; there</p></li></ul>' }],
     ['another cell (PM cell html)', { text: 'alpha', html: '<table><tbody><tr><td><p>alpha</p></td></tr></tbody></table>' }],
     ['a prose copy', { text: SENTENCE, prose: JSON.stringify({ content: SENTENCE }) }],
+    ['a URL with words', { text: 'see https://example.com/x here' }],
     ['a multi-block slice', { slice: JSON.stringify([{ kind: 'prose', content: 'a' }, { kind: 'code', content: 'b' }]) }],
   ]
   const GATES = [
@@ -1809,11 +1811,13 @@ describe('WysiwygSurface — a declined paste is ProseMirror\'s own paste (#193 
   function mountReal(content) {
     const doc = fxSchema.nodes.doc.create(null, [build.p('seed')])
     const { T } = mountBundle(EditorState.create({ schema: fxSchema, doc }))
+    T.Link = Link
     T.Editor = function (opts) {
       mounted = new Editor({
         ...opts,
         extensions: [
-          StarterKit.configure({ link: LINK_OPTIONS, trailingNode: false }), StandInBlockId,
+          StarterKit.configure({ link: false, trailingNode: false }), StandInBlockId,
+          opts.extensions.find((e) => e && e.name === 'link'),
           Table, TableRow, TableHeader, TableCell, TaskList, TaskItem.configure({ nested: true }),
           Image.configure({ inline: false, allowBase64: true }),
           Markdown.configure({ html: true, transformPastedText: true }),
@@ -2007,6 +2011,28 @@ describe('WysiwygSurface — a declined paste is ProseMirror\'s own paste (#193 
     expect(types(ed)).toEqual(expectedTypes)
     expect(texts(ed)).toEqual(expectedTexts)
     expect(JSON.stringify(ed.getJSON())).not.toContain('"marks"')
+    expect(host.provider.paste).not.toHaveBeenCalled()
+  })
+
+  // B5: a cell takes text, never a block. A bare URL is one link over exactly
+  // its characters; a URL among words is text.
+  it.each([
+    ['a bare URL between letters: a link over exactly the URL', 'https://example.com/x',
+      [{ text: 'x' }, { text: 'https://example.com/x', href: 'https://example.com/x' }, { text: 'x' }]],
+    ['a URL with words: text', ' see https://example.com/x here ', [{ text: 'x see https://example.com/x here x' }]],
+  ])('B5 Mod+V into a table cell, %s', async (_row, text, runs) => {
+    const actual = /** @type {any} */ (await vi.importActual('../src/static/lens/document-editor/paste-context.js'))
+    vi.mocked(caretInTableCell).mockImplementation(actual.caretInTableCell)
+    const { ed, host } = mountReal([CELL('xx')])
+    select(ed, find(ed, 'xx').from + 1)
+    const clipboardData = { getData: (mime) => (mime === 'text/plain' ? text : ''), items: [], files: [] }
+    ed.view.pasteText(text, { clipboardData, target: ed.view.dom, preventDefault() {} })
+    const cellRuns = []
+    ed.state.doc.child(0).firstChild.firstChild.firstChild.forEach((n) => {
+      const link = n.marks.find((m) => m.type.name === 'link')
+      cellRuns.push(link ? { text: n.text, href: link.attrs.href } : { text: n.text })
+    })
+    expect(cellRuns).toEqual(runs)
     expect(host.provider.paste).not.toHaveBeenCalled()
   })
 

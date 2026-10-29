@@ -99,14 +99,13 @@ Root causes (written `R1`…`R9`, distinct from the rules `R-1`…`R-9`):
 | B2 | A 2×2 cell selection → a cell | The 2×2 cells are pasted over the 2×2 starting at the target cell; the table grows if needed. | R-1 | The text view: `interaction-policy.editor.test.js` "clipboard text/plain keeps structure (R-5)" "B10 a cell selection is only the selected cells" (only the selected cells); paste half auto: to pin | pass |
 | B3 | Paragraph text → a cell | The text is in the cell; nothing appears below the table. | R-1 | `surfaces.test.js` "caret in %s, clipboard holds %s → native paste, Go never asked" | pass |
 | B4 | Multi-paragraph text → a cell | The paragraphs are inside the cell. No block outside the table. | R-1 | auto: to pin | pass |
-| B5 | A list, a code block, or a URL → a cell | List: the first item merges into the cell's paragraph, the rest nest as a list inside the cell. Code: its text, literal. URL: a link whose text is the whole URL. No block outside the table. | R-1 | `surfaces.test.js` "caret in %s, clipboard holds %s → native paste, Go never asked" | open: defect[^b5] |
+| B5 | A list, a code block, or a URL → a cell | List: the first item merges into the cell's paragraph, the rest nest as a list inside the cell. Code: its text, literal. URL: a link whose text and href are the whole URL, with the characters around it untouched; a URL among words is text. No block outside the table. | R-1 | `surfaces.test.js` "caret in %s, clipboard holds %s → native paste, Go never asked"; "B5 Mod+V into a table cell, %s" | pass |
 | B6 | Cell text → a top-level paragraph | The cell's text only, inline at the caret; not a one-cell table. | R-1, R-2 | `surfaces.test.js` "WysiwygSurface — a declined paste is ProseMirror's own paste (#193 paste matrix)" "B6 cell text at the end of a paragraph: inline"; "B6b cell text mid-paragraph: inline, no split" | pass |
 | B7 | A whole table (gutter selection) → top level | A new table with the same cells. | R-3 | auto: to pin | pass |
 | B8 | html `<table>` (browser page) or TSV (spreadsheet) → top level | html: a Sieve table with the same cells. TSV pasted as text into a paragraph stays text. | R-2, R-7 | `surfaces.test.js` "WysiwygSurface — a declined paste is ProseMirror's own paste (#193 paste matrix)" "B8 an html table behind <meta charset>: no stray paragraph"; live app | pass[^b8] |
 | B9 | Copy a table (`Fruit`/`Qty`, `Apple`/`3`) → a plain-text editor | `text/plain` is `Fruit\tQty` newline `Apple\t3`; no html, no blank lines between rows. | R-5 | `interaction-policy.editor.test.js` "clipboard text/plain keeps structure (R-5)" "B9 a table: rows by newline, cells by tab"; manual: copy the table, paste into a text editor | pass |
 | B10 | A CellSelection of some cells → a plain-text editor | `text/plain` holds only the selected cells, tab- and newline-separated as B9. | R-5 | `interaction-policy.editor.test.js` "clipboard text/plain keeps structure (R-5)" "B10 a cell selection is only the selected cells" | pass |
 
-[^b5]: `x`, then a URL, then `x` pasted into one cell gives a link missing the URL's last character (TipTap Link paste rule).
 [^b8]: Live app: pass for all three shapes.
 
 ### C. Sieve blocks: copy, then paste in Sieve
@@ -187,11 +186,10 @@ C1 has one row per kind.
 | G1 | Prose with a heading, a list and bold → a plain-text editor | `text/plain`: `Title`, blank line, `- one` newline `- two`, blank line, `a bold word`. No entities, no escapes, no `**`. | R-5 | `interaction-policy.editor.test.js` "clipboard text/plain keeps structure (R-5)" "G1 heading, list and bold: no markup, one blank line between blocks"; "an ordered list numbers from its start; a nested list sits two spaces in"; "task items carry their box"; "a hard break is a newline" | pass |
 | G2 | Prose → a rich editor (LibreOffice, a mail client) | Formatting kept through `text/html`. | R-5 | manual: copy formatted prose, paste into LibreOffice Writer;<br>check headings, lists, bold and links survive | unrun[^g2] |
 | G3 | A whole code block → a plain-text editor | The source only; no fence. | R-3, R-5 | `interaction-policy.editor.test.js` "clipboard text/plain keeps structure (R-5)" "G3 a whole code block is its source"; manual: gutter-select a code block, Ctrl+C, paste into a text editor | pass[^g3] |
-| G4 | File › Export › Clipboard as Markdown / Confluence | The whole document in the chosen format, images included. | — | `shell.test.js` "flushes first, then writes the SERVER's %s export to the Wails pasteboard (primary)"; manual: export each format, paste into a text editor;<br>check every block and image is present | open: defect[^g4] |
+| G4 | File › Export › Clipboard as Markdown / Confluence | The whole document in the chosen format. Markdown: images as `sieve://` addresses. Confluence: a placeholder paragraph `[image: name]` (attachments cannot travel on the clipboard). | — | `shell.test.js` "flushes first, then writes the SERVER's %s export to the Wails pasteboard (primary)"; manual: export each format, paste into a text editor;<br>check every block and image is present; `editor_export_test.go` "TestEditorService_Export_ImagesLeaveAsAddresses" | pass |
 
 [^g2]: The `text/html` view carries WebKit inline `color: rgb(0,0,0)` styles.
 [^g3]: `text/plain` is the bare source. `text/html` is the rendered block, not a `<pre>`.
-[^g4]: Markdown export writes images as `/ui/assets/…`, not `sieve://` addresses; Confluence DC export drops images to empty paragraphs.
 
 ### H. Gesture parity and other surfaces
 

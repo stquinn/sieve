@@ -1,9 +1,12 @@
 package block
 
 import (
+	"regexp"
 	"strings"
 
 	"sieve/logger"
+	"sieve/sieve/domain"
+	"sieve/store"
 )
 
 // DocView is an immutable, lock-free SNAPSHOT of a document's data: the block
@@ -111,7 +114,8 @@ func (d DocView) deriveMarkdownFiltered(f BlockFilter) string {
 
 // deriveExport renders the whole document for an export: apply the caller's
 // filter first, then hand each SURVIVING block and its MarkdownRepresentation —
-// NOT the on-disk Serialize — to the generator. A block has ONE markdown
+// NOT the on-disk Serialize, and with asset routes as addresses
+// (exportRepresentation) — to the generator. A block has ONE markdown
 // representation; the generator decides the target format and the caller's
 // BlockFilter is the only policy hook. Empty renders (a pending block, an
 // ai-block with no answer) are skipped; survivors join with a blank line. No
@@ -137,13 +141,32 @@ func (d DocView) deriveExport(f BlockFilter, generator ExportGenerator) string {
 		if f != nil && !f(b) {
 			continue
 		}
-		out := generator.RenderBlock(b, d.markdownRepresentation(b))
+		out := generator.RenderBlock(b, d.exportRepresentation(b))
 		if strings.TrimSpace(out) == "" {
 			continue
 		}
 		parts = append(parts, out)
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+// servedAssetRoute matches an asset route Sieve serves: store.AssetURLPrefix, a
+// uuid segment and a key, with or without an origin in front.
+var servedAssetRoute = regexp.MustCompile(`(?:[A-Za-z][A-Za-z0-9+.-]*://[^/\s"'<>()]*)?` +
+	regexp.QuoteMeta(store.AssetURLPrefix) + `[0-9a-fA-F-]{36}/[^\s"'<>()?#]+`)
+
+// exportRepresentation is b's MarkdownRepresentation with every asset route Sieve
+// serves written as the asset's sieve:// address. An export is read outside the
+// running app, where a served route names nothing and the address still names the
+// asset; every generator therefore receives addresses, never app URLs.
+func (d DocView) exportRepresentation(b SieveBlock) string {
+	return servedAssetRoute.ReplaceAllStringFunc(d.markdownRepresentation(b), func(route string) string {
+		addr, err := domain.ResolveAssetReference(route, domain.Address{})
+		if err != nil {
+			return route
+		}
+		return addr.String()
+	})
 }
 
 // markdownRepresentation asks a single block's processor for its

@@ -596,6 +596,7 @@ func (p *SmartImageProcessor) MarkdownRepresentation(blk block.SieveBlock, uuid 
 		alt, _ = blk.Attrs["summary"].(string)
 	}
 	// A working URL, not the stored src: prose-embedded images render as a plain
-	// <img>, so the NodeView's resolveSrc never runs on them.
+	// <img>, so the NodeView's resolveSrc never runs on them. An export writes it
+	// back as the stored address (block.DocView).
 	return "![" + strings.TrimSpace(alt) + "](" + url + ")"
 }
