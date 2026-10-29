@@ -147,11 +147,25 @@ func TestCodeBlockProcessor_IsBlock_unfencedCode(t *testing.T) {
 	}
 }
 
+// Smart paste must be MORE certain than language guessing: prose shaped like
+// markdown, and anything under the length OnChange needs to guess a language,
+// stays prose.
 func TestCodeBlockProcessor_IsBlock_unfencedProseIsNotCode(t *testing.T) {
 	p := NewCodeBlockProcessor(block.BlockServices{})
-	prose := "This is a normal paragraph of prose.\nIt spans a couple of lines.\nNothing here resembles source code at all."
-	if p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: prose}}).Has(block.ActionPaste) {
-		t.Fatal("IsSupportedContent must not offer paste for ordinary multi-line prose")
+	cases := []struct{ name, input string }{
+		{"plain", "This is a normal paragraph of prose.\nIt spans a couple of lines.\nNothing here resembles source code at all."},
+		{"a quote line", "Some thoughts on the plan.\n> the part I disagree with\nAnd my reply to it."},
+		{"a bold word", "First line of the notes.\nThis is **important** to remember.\nLast line."},
+		{"an arrow", "go here -> there\nthen back -> home\nand rest a while"},
+		{"a type-like colon in a sentence", "Questions for the team.\nnote: any ideas are welcome\nThanks all."},
+		{"under the length floor", "x := 1\ny := 2\nz"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: tc.input}}).Has(block.ActionPaste) {
+				t.Errorf("IsSupportedContent must not offer paste for prose: %q", tc.input)
+			}
+		})
 	}
 }
 
