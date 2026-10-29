@@ -39,7 +39,7 @@ Every row below cites the rules it follows from. A rule names the decision of re
 | Gesture | Result | Status |
 |---|---|---|
 | Ctrl/Cmd+Shift+V, and context menu "Paste as plain text" | The clipboard's `text/plain`, literal, at the caret. No smart paste, no markdown parse. | pass |
-| Undo Smart Paste (context menu on a smart-pasted block) | The pasted text back verbatim, at the paste location, as prose: indentation, blank lines and spacing kept, no markdown parse. | open: R8 |
+| Undo Smart Paste (context menu on a smart-pasted block) | The pasted text back verbatim, at the paste location, as prose: indentation and blank lines kept, runs of spaces as no-break spaces (a tab as four spaces), no markdown parse. | pass |
 | Copy source (code, diagram) | The block's inner text alone: no fence, no language line. | pass |
 | Copy Image (smart-image) | A PNG on the clipboard, for other applications. | pass |
 | File › Export › Clipboard | The whole document as Markdown, Confluence or Confluence Cloud. | pass |
@@ -89,7 +89,7 @@ Root causes (written `R1`…`R9`, distinct from the rules `R-1`…`R-9`):
 | A14 | Cut a paragraph, paste it further down | Moved, with a new id. The first undo removes the paste, the second restores the cut. | R-2, R-6 | auto: to pin | pass |
 | A15 | Copy prose, paste three times | Three copies; each paste is its own undo step. | R-2 | auto: to pin | pass |
 | A16 | Copy a paragraph, paste it ABOVE its source | The source paragraph keeps its id; the pasted paragraph has a new one. | R-6 | `surfaces.test.js` "WysiwygSurface — a declined paste is ProseMirror's own paste (#193 paste matrix)" "ids never ride the clipboard: whole paragraphs pasted above their source arrive id-less"; `prose-identity.test.js` "a pasted prose node carries no copied id" | pass |
-| A17 | Type or paste `go -> stop`, save | The file on disk holds `go -> stop` | R-5 | auto: to pin | open: R9 |
+| A17 | Type or paste `go -> stop`, save | The file on disk holds `go -> stop` | R-5 | `prose-identity.test.js` "prose text's stored markdown" "%s" ("A17 an arrow"); `TestDocumentCodec_RoundTrip` (holds `go -> stop, 1 < 2 & done.`); live app | pass |
 
 ### B. Tables
 
@@ -153,18 +153,21 @@ C1 has one row per kind.
 |---|---|---|---|---|---|
 | E1 | A bare https URL into an empty paragraph | A link whose text is the fetched title (3 s deadline); on timeout, a link whose text is the URL. | R-2 | `TestLinkPaste_Result`; `TestLinkPaste_BoundsTheFetch`; `TestEditorService_HandlePaste_urlBecomesContent`; `surfaces.test.js` "WysiwygSurface — a declined paste is ProseMirror's own paste (#193 paste matrix)" "smart-paste outcome:content → pastes GO's fragment as html, not the clipboard, and never consumes the anchor" | pass |
 | E3 | An image URL | A smart-image, asset stored in the document. | R-8, R-9 | `TestSmartImageProcessor_IsSupportedContent_nativeURL_offersTransform` | pass |
-| E4 | A 10-line Go, JS or Python function | A code block with that language (`go`, `javascript`, `python`). | R-8 | `TestCodeBlockProcessor_IsBlock_unfencedCode`; JS language auto: to pin | open: R7 |
-| E5 | 2–3 lines of prose holding `->`, `: `, `> `, `**`, `{}` | Prose, never code; `->` shows as `->`. (The `->` display holds; the brace case is the open part.) | R-7, R-8 | `TestLooksLikeCode_prose`; `TestCodeBlockProcessor_IsBlock_unfencedProseIsNotCode`; `surfaces.test.js` "WysiwygSurface — a declined paste is ProseMirror's own paste (#193 paste matrix)" "#192 `->` as text reads `->`" (the `->` display); the brace case auto: to pin | open: R7 |
+| E4 | A 10-line Go, JS or Python function | A code block with that language (`go`, `javascript`, `python`). | R-8 | `TestCodeBlockProcessor_IsBlock_unfencedCode` "E4 javascript", "E4 python" (claimed, and the language checked); `TestDetectByHeuristics_javascript` "%s"; live app | pass |
+| E5 | 2–3 lines of prose holding `->`, `: `, `> `, `**`, `{}` | Prose, never code; `->` shows as `->`. | R-7, R-8 | `TestLooksLikeCode_prose` "E5 braces wrapping words"; `TestLooksLikeCode_braceLines` "%s"; `TestCodeBlockProcessor_IsBlock_unfencedProseIsNotCode` "E5 braces wrapping words"; `surfaces.test.js` "WysiwygSurface — a declined paste is ProseMirror's own paste (#193 paste matrix)" "#192 `->` as text reads `->`" (the `->` display) | pass |
 | E6 | A single line of code (`x := 1`) | Inline text at the caret; under the length floor. | R-2, R-8 | `surfaces.test.js` "WysiwygSurface — a declined paste is ProseMirror's own paste (#193 paste matrix)" "E6-js `x := 1` mid-paragraph: inline"; `TestLooksLikeCode_tooShort`; `TestCodeBlockProcessor_IsBlock_unfencedProseIsNotCode` "under the length floor" | pass |
 | E7 | Log lines (timestamps and levels) | A log block. | R-8 | `TestLogProcessor_IsBlock` | pass |
 | E8 | A ```` ```mermaid ```` fence; a ```` ```go ```` fence | Mermaid: a diagram. Go: a code block, language `go`. | R-8 | `TestDiagramProcessor_IsBlock_mermaidFence`; `TestCodeBlockProcessor_IsBlock_withLanguage` | pass |
 | E9 | Markdown text: headings, lists, a pipe table, `**bold**` | Rendered prose: heading, list, table, bold. | R-7 | `TestCodeBlockProcessor_IsBlock_unfencedMarkdownIsNotCode` (Go declines); `surfaces.test.js` "WysiwygSurface — a declined paste is ProseMirror's own paste (#193 paste matrix)" "E9 markdown source as text still renders" | pass |
-| E10 | Rich html from a web page (headings, links, inline images, `<pre>`) | Prose with its marks; `<pre>` becomes a code block; each image becomes a smart-image or is dropped, never a broken image. | R-2, R-8 | auto: to pin (synthetic clipboard) | open: R6 |
+| E10 | Rich html from a web page (headings, links, inline images, `<pre>`) | Prose with its marks; `<pre>` becomes a code block; a remote image becomes a link to its URL (its alt text as the label), never a broken image. | R-2, R-8 | `TestSmartImageProcessor_IsSupportedContent_htmlClaimedOnlyWhenItIsAnImage` "%s" (E10); `surfaces.test.js` "WysiwygSurface — a declined paste is ProseMirror's own paste (#193 paste matrix)" "E10 a web page: prose with its marks, <pre> a code block, the image a link to its URL"; "an image Sieve serves (data: or its own route) stays an image"; live app | pass |
 | E11 | Text out of VS Code (html with inline styles + text/plain) | A code block from the text, not styled prose. | R-8 | auto: to pin (synthetic clipboard) | pass |
 | E12 | Text out of a terminal | Treated as any `text/plain`. | R-2 | manual: copy three lines from a terminal, paste into a paragraph;<br>check the outcome matches the same text pasted from a text editor | pass |
-| E13 | Undo Smart Paste after E4, E7 or E8 | The pasted text back verbatim as prose at the paste location: indentation, blank lines and spacing kept; `__init__` stays `__init__`. | R-8 | `TestProseProcessor_Transform_undoReturnsSafePlainText`; `TestProseProcessor_IsSupportedContent_offersUndoForTaggedSource` | open: R8 |
-| E14 | Ctrl/Cmd+Z straight after a smart paste | One undo removes the block and leaves the document as before the paste. | R-8 | auto: to pin | open: R8 |
-| E15 | Rich html with text and one reachable `<img>` | The text is kept as prose; the image is one smart-image element among it, not the whole paste. | R-2, R-8 | auto: to pin (synthetic clipboard) | open: R6 |
+| E13 | Undo Smart Paste after E4, E7 or E8 | The pasted text back verbatim as prose at the paste location: indentation and blank lines kept, runs of spaces as no-break spaces (a tab as four spaces)[^e13]; `__init__` stays `__init__`. | R-8 | `TestProseProcessor_Transform_undoReturnsSafePlainText` "%s"; `TestProseProcessor_IsSupportedContent_offersUndoForTaggedSource` | pass |
+| E14 | Ctrl/Cmd+Z straight after a smart paste | One undo removes the block and leaves the document as before the paste, however late the block renders back. | R-8 | `surfaces.test.js` "E14 one undo after a smart paste whose block lands 600ms after the ack" (render-back at +600 ms, one undo) | pass |
+| E15 | Rich html with text and one reachable `<img>` | The text is kept as prose; the image becomes a link to its URL.[^e15] | R-2, R-8 | `TestSmartImageProcessor_IsSupportedContent_htmlClaimedOnlyWhenItIsAnImage` "%s" (E15); `surfaces.test.js` "WysiwygSurface — a declined paste is ProseMirror's own paste (#193 paste matrix)" "E15 text and one <img>: the text kept, the image a link; an <img> inside a link is its alt text" | pass |
+
+[^e13]: Spacing reads back as no-break spaces and a tab as four spaces: visually exact, not byte-identical.
+[^e15]: A smart-image among the text would need Go to split mixed html; a link loses nothing and never renders broken.
 
 ### F. OS clipboard and files (WebKitGTK)
 
@@ -183,11 +186,11 @@ C1 has one row per kind.
 | G1 | Prose with a heading, a list and bold → a plain-text editor | `text/plain`: `Title`, blank line, `- one` newline `- two`, blank line, `a bold word`. No entities, no escapes, no `**`. | R-5 | `interaction-policy.editor.test.js` "clipboard text/plain keeps structure (R-5)" "G1 heading, list and bold: no markup, one blank line between blocks"; "an ordered list numbers from its start; a nested list sits two spaces in"; "task items carry their box"; "a hard break is a newline" | pass |
 | G2 | Prose → a rich editor (LibreOffice, a mail client) | Formatting kept through `text/html`. | R-5 | manual: copy formatted prose, paste into LibreOffice Writer;<br>check headings, lists, bold and links survive | unrun[^g2] |
 | G3 | A whole code block → a plain-text editor | The source only; no fence. | R-3, R-5 | `interaction-policy.editor.test.js` "clipboard text/plain keeps structure (R-5)" "G3 a whole code block is its source"; manual: gutter-select a code block, Ctrl+C, paste into a text editor | pass[^g3] |
-| G4 | File › Export › Clipboard as Markdown / Confluence | The whole document in the chosen format, images included. | — | `shell.test.js` "flushes first, then writes the SERVER's %s export to the Wails pasteboard (primary)"; manual: export each format, paste into a text editor;<br>check every block and image is present | open: defect[^g4], R9 |
+| G4 | File › Export › Clipboard as Markdown / Confluence | The whole document in the chosen format, images included. | — | `shell.test.js` "flushes first, then writes the SERVER's %s export to the Wails pasteboard (primary)"; manual: export each format, paste into a text editor;<br>check every block and image is present | open: defect[^g4] |
 
 [^g2]: The `text/html` view carries WebKit inline `color: rgb(0,0,0)` styles.
 [^g3]: `text/plain` is the bare source. `text/html` is the rendered block, not a `<pre>`.
-[^g4]: Markdown export writes images as `/ui/assets/…`, not `sieve://` addresses; Confluence DC export drops images to empty paragraphs. Markdown export also writes `>` as `&gt;` (R9).
+[^g4]: Markdown export writes images as `/ui/assets/…`, not `sieve://` addresses; Confluence DC export drops images to empty paragraphs.
 
 ### H. Gesture parity and other surfaces
 
