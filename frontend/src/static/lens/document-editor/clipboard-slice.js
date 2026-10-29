@@ -3,12 +3,14 @@
 // backend rebuilds a paste from, the `sieve/<kind>` view a single block also
 // exposes, and the text/plain + text/html a foreign application receives.
 //
-// A BLOCK IS ONLY MEANINGFUL WHOLE, so `sieve/slice` and `sieve/<kind>` always
-// carry the entire block. The text views follow the selected RANGE instead: a
-// range covering only PART of a block's content is exactly those characters, a
-// range covering the whole block (or a NodeSelection of it) is its whole text.
-// An image block is no exception: copying it copies the block, and the bitmap a
-// foreign application wants is the block's own "Copy Image" menu item.
+// PART OF A BLOCK IS ITS CHARACTERS; A WHOLE BLOCK IS THE BLOCK. A range covering
+// a block whole (or a NodeSelection of it) carries that block's own views. A range
+// covering only PART of a block's content carries those characters and no view of
+// the block: alone, it writes text/plain + text/html only, so a paste reads it as
+// it reads the same text copied from any other application; in a range of several
+// blocks, its `sieve/slice` item is the characters as prose. An image block is no
+// exception: copying it copies the block, and the bitmap a foreign application
+// wants is the block's own "Copy Image" menu item.
 //
 // A node whose content HOSTS BLOCKS is a container, and a range lying inside one
 // names its ELEMENTS, not the container: each is composed as a block of its own,
@@ -24,6 +26,7 @@ import { sieveBlockEntries, rendererFor } from './surfaces/sieve-block-extension
 import { getBlockKind } from '../../renderers/block-kinds.js'
 import { BlockSelection } from './block-selection.js'
 import { ContractViolation } from '../../contract/sieve-block.js'
+import { ClipboardText } from './clipboard-text.js'
 
 const SIEVE_PREFIX = 'sieve-'
 const SIEVE_VIEW_PREFIX = 'sieve/'
@@ -41,6 +44,16 @@ const SIEVE_GROUP = 'sieveBlock'
  *   cannot express; omitted, the PM selection is used
  * @property {string} [uuid]     the document the editor is mounted on — stamped as
  *   `context.container` on a block's own `sieve/<kind>` view
+ */
+
+/**
+ * One `sieve/slice` item: a block's ContentEntry set, whether the range covered
+ * that block whole, and whether it is a sieve block.
+ * @typedef {{entries: any[], whole: boolean, sieve: boolean}} SliceItem
+ */
+
+/**
+ * @typedef {{items: SliceItem[], plain: string[], html: string[], hasSieve: boolean}} Composition
  */
 
 export class ClipboardSlice {
@@ -105,14 +118,14 @@ export class ClipboardSlice {
 
     clipboardData.setData('text/plain', composed.plain.filter(Boolean).join('\n\n'))
     clipboardData.setData('text/html', composed.html.filter(Boolean).join('\n'))
-    clipboardData.setData('sieve/slice', JSON.stringify(composed.items))
-    // Single sieve block: expose the rest of its ContentEntry array too, so a
-    // cross-context paste hits the same backend matchers. NOT the text views — a
-    // kind's own entry describes the block WHOLE, while the text views follow the
-    // RANGE, and setData replaces. Only-meaningful-whole governs the sieve views;
-    // the characters a foreign application receives are the selected ones.
-    if (composed.items.length === 1 && composed.single) {
-      composed.single.forEach((/** @type {{mimeType: string, content: string}} */ entry) => {
+    const items = composed.items
+    if (!items.length || (items.length === 1 && !items[0].whole)) return true
+    clipboardData.setData('sieve/slice', JSON.stringify(items.map((item) => item.entries)))
+    // A single whole sieve block also exposes the rest of its ContentEntry array,
+    // so a cross-context paste hits the same backend matchers. Not its text views:
+    // setData replaces, and those were composed above.
+    if (items.length === 1 && items[0].sieve) {
+      items[0].entries.forEach((/** @type {{mimeType: string, content: string}} */ entry) => {
         if (entry.mimeType === 'text/plain' || entry.mimeType === 'text/html') return
         clipboardData.setData(entry.mimeType, entry.content)
       })
@@ -146,14 +159,14 @@ export class ClipboardSlice {
    * Walk the blocks the range touches — the top-level nodes, descending into a
    * container the range lies inside — and build every view of each.
    * Null when the selection holds no sieve block at all.
-   * @returns {{items: any[], single: any[]|null, plain: string[], html: string[]}|null}
+   * @returns {{items: SliceItem[], plain: string[], html: string[]}|null}
    */
   #compose() {
     const view = this.#view
     const doc = view.state.doc
     const range = this.#range
-    /** @type {{items: any[], single: any[]|null, plain: string[], html: string[], hasSieve: boolean}} */
-    const out = { items: [], single: null, plain: [], html: [], hasSieve: false }
+    /** @type {Composition} */
+    const out = { items: [], plain: [], html: [], hasSieve: false }
     const nodeDOM = (/** @type {number} */ pos) => (view.nodeDOM ? view.nodeDOM(pos) : null)
 
     doc.forEach((/** @type {any} */ node, /** @type {number} */ offset) => {
@@ -174,7 +187,7 @@ export class ClipboardSlice {
       this.#composeNode(node, offset, dom, out)
     })
 
-    return out.hasSieve ? { items: out.items, single: out.single, plain: out.plain, html: out.html } : null
+    return out.hasSieve ? { items: out.items, plain: out.plain, html: out.html } : null
   }
 
   /**
@@ -212,35 +225,31 @@ export class ClipboardSlice {
    * Build every view of ONE block — a top-level node or a container's element —
    * and append them to `out`.
    * @param {any} node @param {number} from @param {any} dom
-   * @param {{items: any[], single: any[]|null, plain: string[], html: string[], hasSieve: boolean}} out
+   * @param {Composition} out
    */
   #composeNode(node, from, dom, out) {
     const nodeEnd = from + node.nodeSize
-    const range = this.#range
-    const entries = this.#entriesOf(this.#clipped(node, from))
-    if (String(node.type.name).indexOf(SIEVE_PREFIX) === 0) {
-      out.hasSieve = true
-      out.single = entries
-    }
-    out.items.push(entries)
+    const sieve = String(node.type.name).indexOf(SIEVE_PREFIX) === 0
+    if (sieve) out.hasSieve = true
 
     // A block's custom region holds text PM does not own, so a highlight there
     // is the only reading of the selection there is.
     const highlighted = BlockSelection.unownedText(this.#domSelection, dom)
-    if (highlighted) {
-      out.plain.push(highlighted)
-      out.html.push(this.#domHtml || ClipboardSlice.#escape(highlighted))
-      return
-    }
-    if (this.#followsRange(node, from, nodeEnd)) {
-      const text = BlockSelection.selectedText(
-        this.#view.state.doc, { from: Math.max(range.from, from), to: Math.min(range.to, nodeEnd) }, null, '\n')
-      out.plain.push(text)
-      out.html.push(ClipboardSlice.#escape(text))
-      return
-    }
-    out.plain.push(ClipboardSlice.#pick(entries, 'text/plain') || node.textContent || (dom ? dom.innerText : ''))
-    out.html.push(ClipboardSlice.#pick(entries, 'text/html') || ClipboardSlice.#blockHTML(dom))
+    const whole = highlighted
+      ? highlighted.trim() === ClipboardText.ofNode(node).trim()
+      : this.#coversWhole(from, nodeEnd)
+    const text = highlighted || (whole
+      ? ClipboardText.ofNode(node)
+      : ClipboardText.ofSlice(this.#view.state.doc.slice(
+        Math.max(this.#range.from, from), Math.min(this.#range.to, nodeEnd))))
+    if (!whole && !text) return
+
+    const entries = whole ? this.#entriesOf(node) : this.#entriesOf(this.#characters(node, from, text))
+    out.items.push({ entries, whole, sieve })
+    out.plain.push(text)
+    if (highlighted) out.html.push(this.#domHtml || ClipboardSlice.#escape(highlighted))
+    else if (!whole) out.html.push(ClipboardSlice.#escape(text).replace(/\n/g, '<br>'))
+    else out.html.push(ClipboardSlice.#pick(entries, 'text/html') || ClipboardSlice.#blockHTML(dom))
   }
 
   /** Does this sieve node's content host BLOCKS — a list of them, as the document
@@ -263,16 +272,25 @@ export class ClipboardSlice {
     return false
   }
 
-  /** A prose node cut down to the part of it the range covers, so a paste carries
-   *  the characters selected; a sieve block stays whole, being only meaningful whole.
+  /** The prose holding the characters a range covers of one block: a prose node
+   *  cut down to that part, or a paragraph of another kind's covered characters.
    *  @param {any} node @param {number} from the position before `node`
+   *  @param {string} text the covered characters
    *  @returns {any} */
-  #clipped(node, from) {
-    if (String(node.type.name).indexOf(SIEVE_PREFIX) === 0) return node
-    const start = Math.max(0, this.#range.from - (from + 1))
-    const end = Math.min(node.content.size, this.#range.to - (from + 1))
-    if (end <= start || (start === 0 && end === node.content.size)) return node
-    return node.cut(start, end)
+  #characters(node, from, text) {
+    if (String(node.type.name).indexOf(SIEVE_PREFIX) !== 0) {
+      const start = Math.max(0, this.#range.from - (from + 1))
+      const end = Math.min(node.content.size, this.#range.to - (from + 1))
+      return node.cut(start, end)
+    }
+    const schema = this.#view.state.schema
+    const lineBreak = schema.nodes.hardBreak
+    /** @type {any[]} */ const inline = []
+    text.split('\n').forEach((line, i) => {
+      if (i > 0) inline.push(lineBreak ? lineBreak.create() : schema.text(' '))
+      if (line) inline.push(schema.text(line))
+    })
+    return schema.nodes.paragraph.create(null, inline)
   }
 
   /** Every ContentEntry describing one top-level node. A sieve block's own
@@ -291,15 +309,12 @@ export class ClipboardSlice {
     return (proseKind && proseKind.asContentEntry && proseKind.asContentEntry(node, this.#editor)) || []
   }
 
-  /** Do this node's text views follow the selection rather than describe the whole
-   *  block? Only when the range is non-empty and covers PART of the node — an
-   *  empty range or one spanning it in full (a NodeSelection's range always does)
-   *  means the whole block.
-   *  @param {any} node @param {number} from @param {number} to */
-  #followsRange(node, from, to) {
-    if (this.#range.to <= this.#range.from) return false
-    if (this.#range.from <= from && this.#range.to >= to) return false
-    return true
+  /** Does the range cover this block whole? An empty range names the caret's
+   *  block, and a NodeSelection's range always spans its node.
+   *  @param {number} from @param {number} to */
+  #coversWhole(from, to) {
+    if (this.#range.to <= this.#range.from) return true
+    return this.#range.from <= from && this.#range.to >= to
   }
 
   /**

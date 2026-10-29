@@ -117,10 +117,16 @@ export class AbstractSurface {
     throw new Error(this.constructor.name + ' must implement paintContainer()')
   }
 
-  /** Pastes plain text through this surface's paste path. The base has none, so it
-   *  reports that nothing was made of it and the caller falls back to a local
-   *  insert. @param {string} text @returns {Promise<'block'|'content'|'none'>} */
-  pasteText(text) { return Promise.resolve('none') }
+  /** Pastes a clipboard's text views through this surface's paste path. The base
+   *  has none, so it reports that nothing was made of them and the caller falls
+   *  back to a local insert.
+   *  @param {string} text its text/plain view @param {string} [html] its text/html view
+   *  @returns {Promise<'block'|'content'|'none'>} */
+  pasteText(text, html) { return Promise.resolve('none') }
+
+  /** Pastes text literally at the caret. The base has no caret, so nothing is
+   *  pasted. @param {string} text @returns {boolean} true when the text was pasted */
+  pastePlainText(text) { return false }
 
   /** Places clipboard-shaped entries through this surface's paste path at the
    *  caret. The base has none, so nothing is made of them.

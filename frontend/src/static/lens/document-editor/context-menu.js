@@ -2,7 +2,7 @@
 // with { x, y, context } in the detail; context.type must be one of
 // 'editor' | 'sieveBlock' | 'aiBlock' | 'note' | 'folder' | 'prompt'.
 import { applyTargetHighlight } from '../extensions.js'
-import { NodeViewRegistry, detectAndAppendExtractions, serializeNode } from './surfaces/sieve-block-extension.js'
+import { NodeViewRegistry, detectAndAppendExtractions } from './surfaces/sieve-block-extension.js'
 import { enclosingBlockId } from './surfaces/block-position.js'
 import { TableGrid } from './surfaces/table-grid.js'
 import { ProseLink } from './surfaces/prose-link.js'
@@ -103,19 +103,31 @@ import { selectNextScope } from './interaction-policy.js'
     return false
   }
 
-  /** The text a selection covers, range by range in document order — the same
-   *  reason: `textBetween(from, to)` over a cell selection yields the head cell
-   *  only, while the Cut that follows it deletes every cell.
-   *  @param {any} state @returns {string} */
-  function selectionText(state) {
-    var ranges = state.selection.ranges.slice()
-    ranges.sort(function (a, b) { return a.$from.pos - b.$from.pos })
-    var parts = []
-    for (var i = 0; i < ranges.length; i++) {
-      var text = state.doc.textBetween(ranges[i].$from.pos, ranges[i].$to.pos, '\n')
-      if (text) parts.push(text)
+  /** Runs the browser's own copy or cut on the editor's selection, so the
+   *  ClipboardEvent reaches the interaction policy exactly as Mod+C / Mod+X do.
+   *  @param {any} editor @param {'copy'|'cut'} command */
+  function clipboardCommand(editor, command) {
+    editor.commands.focus()
+    if (!document.execCommand(command)) console.warn('[context-menu] the webview refused ' + command)
+  }
+
+  /** The clipboard's text/plain and, where the platform reads it, its text/html.
+   *  The async clipboard exposes no other type in any engine.
+   *  @returns {Promise<{text: string, html: string}>} */
+  function readClipboardText() {
+    var clipboard = navigator.clipboard
+    var textOnly = function () {
+      return clipboard.readText().then(function (text) { return { text: text || '', html: '' } })
     }
-    return parts.join('\n')
+    if (typeof clipboard.read !== 'function') return textOnly()
+    return clipboard.read().then(function (items) {
+      var read = function (mime) {
+        var item = items.find(function (it) { return it.types.indexOf(mime) >= 0 })
+        return item ? item.getType(mime).then(function (blob) { return blob.text() }) : Promise.resolve('')
+      }
+      return Promise.all([read('text/plain'), read('text/html')])
+        .then(function (views) { return { text: views[0], html: views[1] } })
+    }).catch(textOnly)
   }
 
   /** A menu entry selecting the whole row or column the caret's cell sits in.
@@ -557,34 +569,28 @@ import { selectNextScope } from './interaction-policy.js'
     }
 
     if (hasSelection) {
-      items.push({ icon: IC.copy, label: 'Copy', action: function () {
-        var text = selectionText(editor.state)
-        if (text) navigator.clipboard.writeText(text).catch(console.error)
-      }})
-      items.push({ icon: IC.cut, label: 'Cut', action: function () {
-        var text = selectionText(editor.state)
-        if (text) navigator.clipboard.writeText(text).then(function () {
-          editor.commands.deleteSelection()
-          editor.commands.focus()
-        }).catch(console.error)
-      }})
+      items.push({ icon: IC.copy, label: 'Copy', action: function () { clipboardCommand(editor, 'copy') } })
+      items.push({ icon: IC.cut, label: 'Cut', action: function () { clipboardCommand(editor, 'cut') } })
     }
 
-    // Paste is a CALLER of the paste path, never a second mechanism: recognising a
-    // block's serialized form is the pipeline's job, and Go's ai-block processor
-    // claims its own fence.
+    // Paste is a TEXT paste: the page can read only the clipboard's text views,
+    // and they go down the same smart-paste path a Mod+V of them would. Rebuilding
+    // a block from its `sieve/*` view is Mod+V's alone.
     items.push({ icon: IC.paste, label: 'Paste', action: function () {
       editor.commands.focus()
-      navigator.clipboard.readText().then(function (text) {
-        if (!text) return
+      readClipboardText().then(function (clip) {
+        if (!clip.text && !clip.html) return
         var host = editor.sieveHost
-        if (host && typeof host.pasteText === 'function') { host.pasteText(text); return }
-        editor.commands.insertContent(text)
-      }).catch(function (err) {
-        console.error('[context-menu] clipboard read failed, falling back to execCommand', err)
-        editor.commands.focus()
-        document.execCommand('paste')
-      })
+        if (host && typeof host.pasteText === 'function') { host.pasteText(clip.text, clip.html); return }
+        editor.commands.insertContent(clip.text)
+      }).catch(function (err) { console.error('[context-menu] clipboard read failed', err) })
+    }})
+    items.push({ icon: IC.paste, label: 'Paste as plain text', action: function () {
+      editor.commands.focus()
+      navigator.clipboard.readText().then(function (text) {
+        var host = editor.sieveHost
+        if (text && host && typeof host.pastePlainText === 'function') host.pastePlainText(text)
+      }).catch(function (err) { console.error('[context-menu] clipboard read failed', err) })
     }})
 
     if (hasSelection) {
@@ -810,8 +816,12 @@ import { selectNextScope } from './interaction-policy.js'
   function buildAiBlockItems(ctx) {
     var editor = ctx.editor, getPos = ctx.getPos, n = ctx.node
 
-    function yaml() {
-      return serializeNode(editor, n)
+    /** Copy and Cut of the whole block are Mod+C / Mod+X over its NodeSelection.
+     *  @param {'copy'|'cut'} command */
+    function clipboardBlock(command) {
+      if (typeof getPos !== 'function') return
+      editor.chain().focus().setNodeSelection(getPos()).run()
+      clipboardCommand(editor, command)
     }
 
     function del() {
@@ -824,16 +834,8 @@ import { selectNextScope } from './interaction-policy.js'
     var isError = n.attrs.status === 'TIMEOUT' || n.attrs.status === 'PENDING'
 
     return [
-      { icon: IC.copy, label: 'Copy', action: function () {
-        var md = yaml()
-        if (!md) { console.warn('[sieve] ai-block serialize returned empty; copy aborted'); return }
-        navigator.clipboard.writeText(md).catch(console.error)
-      }},
-      { icon: IC.cut, label: 'Cut', action: function () {
-        var md = yaml()
-        if (!md) { console.warn('[sieve] ai-block serialize returned empty; copy aborted'); return }
-        navigator.clipboard.writeText(md).then(del).catch(console.error)
-      }},
+      { icon: IC.copy, label: 'Copy', action: function () { clipboardBlock('copy') } },
+      { icon: IC.cut, label: 'Cut', action: function () { clipboardBlock('cut') } },
       { icon: IC.trash, label: 'Delete', action: del },
       { type: 'divider' },
       { icon: IC.sparkle, label: 'Ask AI...', action: function () {

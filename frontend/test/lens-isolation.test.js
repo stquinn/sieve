@@ -164,6 +164,7 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
       path.join('lens', 'document-editor', 'block-selection.js'),
       path.join('lens', 'document-editor', 'block-sync.js'),
       path.join('lens', 'document-editor', 'clipboard-slice.js'),
+      path.join('lens', 'document-editor', 'clipboard-text.js'),
       path.join('lens', 'document-editor', 'context-menu.js'),
       path.join('lens', 'document-editor', 'editor-mode.js'),
       path.join('lens', 'document-editor', 'editor-shell.js'),

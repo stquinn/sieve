@@ -15,10 +15,10 @@ regression pass. Source spec:
 | Plain paragraph | consume ∅ | consume ∅ | native (split para) | native (soft break) | native | native | native | native | selected characters | selected characters |
 | List item | native (indent) | native (outdent) | native | native (soft break) | native | native | native | native | selected characters | selected characters |
 | Table cell | native (next cell; last cell appends row — adopted TipTap default) | native (prev cell; consume ∅ in first cell) | native | native (soft break) | native | native | native | native | selected characters | selected characters |
-| Code block (sieve `code` AND native `codeBlock` — one policy for both) | indent 2 (multi-line: indent each selected line) | de-indent ≤2 per line | between an empty pair: expand to a block (see Pair characters); else newline + auto-indent (copy previous line's leading whitespace) | **escape: insert ¶ after block** | native (core exitCode — same effect as escape; undocumented alias) | exit to next block, content unchanged | exit to previous block | 1st press: first non-ws char; 2nd: column 0 | **selected characters** + whole block as `sieve/slice` | selected characters; removes them |
-| Diagram (edit) | indent 2 (as code) | de-indent ≤2 (as code) | as code (pair expansion, else newline + auto-indent) | **escape: insert ¶ after block** | **toggle to render mode** (cursor position preserved) | exit to next block | exit to previous block | as code | **selected characters** + whole block as `sieve/slice` | selected characters; removes them |
+| Code block (sieve `code` AND native `codeBlock` — one policy for both) | indent 2 (multi-line: indent each selected line) | de-indent ≤2 per line | between an empty pair: expand to a block (see Pair characters); else newline + auto-indent (copy previous line's leading whitespace) | **escape: insert ¶ after block** | native (core exitCode — same effect as escape; undocumented alias) | exit to next block, content unchanged | exit to previous block | 1st press: first non-ws char; 2nd: column 0 | **selected characters** (text views only, no `sieve/*` view) | selected characters; removes them |
+| Diagram (edit) | indent 2 (as code) | de-indent ≤2 (as code) | as code (pair expansion, else newline + auto-indent) | **escape: insert ¶ after block** | **toggle to render mode** (cursor position preserved) | exit to next block | exit to previous block | as code | **selected characters** (text views only, no `sieve/*` view) | selected characters; removes them |
 | Diagram (render) | consume ∅ | consume ∅ | insert ¶ after (block is a caret stop) | **escape: insert ¶ after block** | **toggle to edit mode** (block selected OR render body focused — one function, two entry points) | pass to next block | pass to previous block | n/a | whole block | whole block; removes the block |
-| Log block | consume ∅ | consume ∅ | consume ∅ (read-only text) | **escape: insert ¶ after block** | **toggle raw↔explore** | exit to next block | exit to previous block | native | **selected characters** + whole block as `sieve/slice` | selected characters; **document UNCHANGED** (read-only text) |
+| Log block | consume ∅ | consume ∅ | consume ∅ (read-only text) | **escape: insert ¶ after block** | **toggle raw↔explore** | exit to next block | exit to previous block | native | **selected characters** (text views only, no `sieve/*` view) | selected characters; **document UNCHANGED** (read-only text) |
 | ai-block | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a | selected characters, per covered ELEMENT — it is a container (see Copy and cut matrix) | selected characters; removes them |
 | web-clip | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a | selected characters | selected characters; removes them |
 | smart-image | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a | whole block (the bitmap is the context menu's **Copy Image**) | whole block; removes the block |
@@ -578,6 +578,10 @@ URL and every processor declines — zero offers, silently.
 Copy and cut are served by the interaction-policy extension in ONE place — no
 kind declares anything here, and there is no clipboard handler anywhere else.
 That is about the copy and cut GESTURE: Mod+C, Mod+X and the menu's Copy / Cut.
+The menu items, the editor menu's and the ai-block node menu's alike, run
+`document.execCommand('copy' | 'cut')` on the editor's selection (the ai-block's
+first selects its node), so the real ClipboardEvent reaches the same handler and
+the clipboard is the keyboard's, view for view.
 A kind may still offer a **named verb** that writes the clipboard — `Copy Link`,
 `Copy URL`, and `Copy source` on code and diagram — and those are not a second
 mechanism: each writes one `text/plain` payload it names in its own label, picks
@@ -586,8 +590,8 @@ alone, no fence and no language line, and survives `readOnly`, because it
 mutates nothing.
 
 What a PM selection MEANS decides the views: a range covering only part of a
-block's content names exactly those characters; a range covering a block
-whole (or a NodeSelection of it) names the whole block. Atoms (smart-card,
+block's content names exactly those characters and no view of the block; a
+range covering a block whole (or a NodeSelection of it) names the whole block. Atoms (smart-card,
 reference, smart-image) never have a partial range — a NodeSelection is the
 only selection they can hold — so they always read as whole-block. **Cut is
 the copy plus a delete of what the copy took, dispatched as an ordinary
@@ -606,9 +610,10 @@ its blocks is one too — and declaring that content is the whole declaration. O
 
 | Selection | Result |
 |---|---|
-| Partial PM range inside a LEAF block's content (code, diagram, log, prose, web-clip — any non-atom, non-container kind) | text/plain + text/html are the selected CHARACTERS; `sieve/slice` + `sieve/<kind>` still carry the WHOLE block (only-meaningful-whole). NEVER deferred to native PM copy — a slice inside a `defining`/`code` block re-wraps the whole node, so native copied everything. The native path agrees: a kind's text serializer clips its output to the serialized range. |
-| Partial PM range inside a CONTAINER's content (ai-block) | One `sieve/slice` item per covered ELEMENT, each composed as the row above composes a top-level block: an element covered in part gives its characters as text and itself whole as its `sieve/<kind>` view. The container contributes no item of its own, so a paste rebuilds the elements, not the container. A range covering only PROSE elements holds no sieve block, so it defers to native ProseMirror copy like any prose selection. |
-| A highlight in a block's READ-ONLY region (contentEditable=false DOM PM cannot track — the ai-block question title, the log Explore table) | text/plain + text/html follow the highlight, and it claims the whole block: a container is NOT descended into, because a highlight PM cannot track names no range to pick elements by. PM's own selection stays on whatever block last held the caret, so where PM's selection is elsewhere the visited range is re-targeted onto the highlighted block (`BlockSelection.blockRange`). A CUT here still writes the clipboard, but removes nothing — the highlight is real selected content that is simply not PM's to delete. |
+| Partial PM range inside a LEAF block's content (code, diagram, log, prose, web-clip — any non-atom, non-container kind) | text/plain + text/html are the selected CHARACTERS, and NOTHING else: no `sieve/slice`, no `sieve/<kind>`. A paste reads them as it reads the same text copied from any other application — prose, or a block where smart paste is confident (R-3). NEVER deferred to native PM copy — a slice inside a `defining`/`code` block re-wraps the whole node, so native copied everything. |
+| A range over several blocks, some covered only in part | One `sieve/slice` item per block. A block covered whole carries its own views; a block covered in part carries its characters as PROSE (`sieve/prose` + text/plain: a prose node cut to the range, or a paragraph of another kind's covered characters), never a view of the block it was cut from. |
+| Partial PM range inside a CONTAINER's content (ai-block) | One `sieve/slice` item per covered ELEMENT, each composed by the rows above: an element covered whole is its own kind, an element covered in part is its characters as prose. The container contributes no item of its own, so a paste rebuilds the elements, not the container. A range covering only PROSE elements holds no sieve block, so it defers to native ProseMirror copy like any prose selection. |
+| A highlight in a block's READ-ONLY region (contentEditable=false DOM PM cannot track — the ai-block question title, the log Explore table) | text/plain + text/html follow the highlight. The highlight names the whole block only when its text IS the block's whole text view; otherwise it is part of the block, and the rows above apply. A container is NOT descended into, because a highlight PM cannot track names no range to pick elements by. PM's own selection stays on whatever block last held the caret, so where PM's selection is elsewhere the visited range is re-targeted onto the highlighted block (`BlockSelection.blockRange`). A CUT here still writes the clipboard, but removes nothing — the highlight is real selected content that is simply not PM's to delete. |
 | A highlight PM DOES own, spanning more than one block or element | Each block's text views follow the DOCUMENT range, so each contributes its own covered characters exactly once. The DOM highlight is read only where PM owns no position for it — `contentEditable=false` DOM, and the whole highlight confined to one such region (`BlockSelection.unownedText`). Read off the DOM anywhere else, one highlight reports itself in full for the first block and every later block adds its share again. |
 | Single whole sieve block (gutter / NodeSelection) | text/plain + text/html + `sieve/slice` + `sieve/<kind>` + renderer custom views |
 | Gutter block-range | `sieve/slice` = ordered ContentEntry sets, one per block |
@@ -616,21 +621,38 @@ its blocks is one too — and declaring that content is the whole declaration. O
 | Collapsed caret, no live DOM highlight | COPY still composes the caret's block, as above. CUT is NOT handled — a collapsed PM selection with nothing highlighted names no content to take, so the handler declines and native ProseMirror cut serves it (a no-op, as it always was on an empty selection). The user's existing clipboard is left untouched. |
 | Pure prose | deferred to native ProseMirror copy/cut |
 
+**text/plain is readable plain text with its structure kept** (R-5), rendered in
+ONE place, `ClipboardText` (`lens/document-editor/clipboard-text.js`): the policy
+plugin's `clipboardTextSerializer` for native copy, and every text view
+`ClipboardSlice` composes. Table rows are separated by a newline and cells by a
+tab (a cell selection: only the selected cells); a list item carries `- `, `1. `
+(numbered from the list's start) or `- [x] ` / `- [ ] `, a nested list two spaces
+in per level; a hard break is a newline; blocks are separated by one blank line;
+marks and links are their text; a code block is its source. A sieve block covered
+whole is its kind's own `text/plain` view, else its content, else the address its
+`text/uri-list` view names, and never the chrome its node view draws (gutter
+number, handle, badge). The surface switches TipTap's core
+`clipboardTextSerializer` off (`enableCoreExtensions`): it is a priority-100
+plugin, and would answer before the policy's.
+
 ## Paste matrix
 
 | Target | Content | Outcome |
 |---|---|---|
 | Prose | URL / HTML / image / matchable | silent smart conversion (Go FirstPasteMatch) — by design |
-| Prose | plain text (no match) | local insert |
+| Prose | anything Go declines (outcome `none`) | ProseMirror's own paste of the ORIGINAL clipboard, as an unclaimed Ctrl+V: the text/html view when there is one (`view.pasteHTML`), so a copied slice keeps its open depth and context (a word lands inline, a list item or task item stays one, a blockquote stays a blockquote); otherwise the text as an ordinary text paste, through the view's `clipboardTextParser`, so markdown source renders and `->` stays `->`. Never `insertContent`. The context-menu Paste, the Link rung and a failed round-trip replay the same way. The literal paste is Paste as plain text's (below). |
 | Prose | markdown-shaped prose (a `> ` quote line, `**bold**`, a heading, an inline code span), or anything shorter than 30 characters | never a code block: markdown is evidence of prose, and smart paste claims code only when it is at least as certain as language guessing (`minSourceLength`) |
 | Table cell (`tableCell` / `tableHeader`) | anything, `sieve/slice` included | native ProseMirror paste into the cell (prosemirror-tables merges a copied cell as its contents, never a nested table). Smart paste and the context-menu Paste step aside, so no block is ever created outside the cell the caret is in. "Anywhere" below means anywhere but a cell. |
+| Anywhere | the context-menu **Paste** | a TEXT paste: the clipboard's `text/plain`, and its `text/html` where `navigator.clipboard.read()` offers it (no engine exposes a custom type there, and `execCommand('paste')` is refused by the webview), down the same smart path as a Mod+V holding only those views, then ProseMirror's own paste. A block is rebuilt from its `sieve/*` view by Mod+V alone. |
+| Anywhere but a read-only region | **Paste as plain text** — Mod+Shift+V, or the context-menu item | the clipboard's `text/plain`, LITERAL, at the caret: no smart paste, no markdown parse, no paste rule. One paragraph per line, the first and last joining the caret's paragraph; in a code block or a table cell, inside it. The transaction carries `paste` but not `uiEvent: 'paste'`, which is what TipTap's paste rules (`**b**` → bold) run on. The chord arms a one-shot flag and is left to the browser: the paste event the engine delivers for it is consumed and its text/plain pasted; with no paste event within 250 ms the clipboard is read through `navigator.clipboard.readText()`. |
 | Raw-text block (code/diagram-edit) | anything | literal text (PM `code: true` on the node — NOT a policy read; the old `rawText` flag claimed this and never implemented it) |
 | Anywhere | `sieve/slice` (>1) | Go paste-slice reconstructs blocks |
 | Anywhere | `sieve/<kind>` (a single block) | The kind's own processor rebuilds it from that view (`FirstPasteMatch` pass 1), never by detecting what its text looks like. The copy is a NEW block: a kind whose job OUTPUT is its own — a diagram's render, a smart-card's fetched image — drops that output so the copy produces its own, rather than reading an asset stored under the original block's id. |
 | Anywhere | ```` ```ai-block ```` fence | ai-block re-import |
 | Anywhere | a `text/uri-list` of `file:` URIs (a file-manager COPY) | Forwarded verbatim as a `native-drop` paste and read by Go — the same ingestion a desktop drag takes, at the CARET index rather than a drop coordinate. |
 | Anywhere | **nothing at all** (see below) | `native-clipboard`: Go reads the OS clipboard itself. |
-| Log block | anything | consumed (read-only) |
+| Read-only region: a body inside a kind declaring `readOnlyText` or `caretStop: true` (log, web-clip, ai-block) | anything | consumed by the region's node view; Go is never asked. |
+| Anywhere | HTML carrying `data-id` / `data-block-id` | the identity markers are stripped before the parse (`transformPastedHTML`): ids are minted, never copied, so a pasted block or paragraph gets a fresh id and its source keeps its own. |
 
 ### The empty clipboard (2026-08-21, #87)
 
@@ -842,6 +864,7 @@ Editor-owned caret chords (NOT in the menu, and NOT visible to
 | Mod+K | edit/create a link | `lens/document-editor/interaction-policy.js` |
 | Mod+Alt+E | expand the block into the lightbox (appearance tier) | `interaction-policy.js`, plus a render-mode diagram's own listener |
 | Mod+A | select the caret's scope, escalating (see *Key matrix*) | `interaction-policy.js`, called pre-core from `wysiwyg-surface.js`; the document rung is PM's own `baseKeymap` |
+| Mod+Shift+V | paste as plain text (an inherited chord: the platform's plain-paste variant of Mod+V) | `interaction-policy.js` (`PlainPasteChord`); see *Paste matrix* |
 
 `Mod+E` is **TipTap's inline-code toggle** (the `code` mark; `codeBlock` is
 disabled but the mark is not) and is not Sieve's to take. Explain held it until

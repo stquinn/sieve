@@ -16,14 +16,24 @@ vi.mock('../src/static/lens/document-editor/surfaces/sieve-block-extension.js', 
   const actual = await importOriginal()
   return {
     ...actual,
-    rendererFor: (/** @type {string} */ kind) => (kind === 'code' ? {
-      asContentEntry: (/** @type {any} */ node) => {
-        const src = node.textContent || node.attrs.source
-        return src ? [{ mimeType: 'text/plain', content: src }] : null
-      },
-    } : actual.rendererFor(kind)),
+    rendererFor: (/** @type {string} */ kind) => (RENDERERS[kind] || actual.rendererFor(kind)),
   }
 })
+
+// The views code and smart-image really declare (code-node-view.js,
+// smart-image-node-view.js): code a whole-source text/plain, an image only the
+// address its asset is at.
+const RENDERERS = vi.hoisted(() => ({
+  code: {
+    asContentEntry: (/** @type {any} */ node) => {
+      const src = node.textContent || node.attrs.source
+      return src ? [{ mimeType: 'text/plain', content: src }] : null
+    },
+  },
+  'smart-image': {
+    asContentEntry: (/** @type {any} */ node) => (node.attrs.src ? [{ mimeType: 'text/uri-list', content: node.attrs.src }] : null),
+  },
+}))
 
 import { ClipboardSlice } from '../src/static/lens/document-editor/clipboard-slice.js'
 import { registerBlockKind } from '../src/static/renderers/block-kinds.js'
@@ -202,21 +212,38 @@ beforeEach(() => {
 })
 
 describe('what goes on the clipboard', () => {
-  it('a partial range inside a block carries the characters as text, the whole block as sieve/slice, or both', () => {
-    const view = viewOf(
-      [schema.nodes['sieve-log'].create(null, schema.text(LOG))],
-      (doc) => TextSelection.create(doc, 10, 18),
-    )
+  // C3/C4: part of a block is its characters, exactly as the same text copied from
+  // another application would be, so a paste can only read it as text.
+  it.each([
+    ['log', () => schema.nodes['sieve-log'].create(null, schema.text(LOG)), 10, 18, 'line two', 'line two'],
+    ['code across a line end', () => schema.nodes['sieve-code'].create(null, schema.text('fmt.Println(1)\nfmt.Println(2)')), 6, 20,
+      'rintln(1)\nfmt.', 'rintln(1)<br>fmt.'],
+    ['web-clip', () => schema.nodes['sieve-web-clip'].create(null, [schema.nodes.paragraph.create(null, schema.text('clipped prose'))]), 3, 8,
+      'lippe', 'lippe'],
+  ])('C3: a partial %s range writes its characters and no sieve/* view', (_kind, make, from, to, text, html) => {
+    const view = viewOf([make()], (doc) => TextSelection.create(doc, from, to))
     const data = clip()
-    expect(slice(view).write(/** @type {any} */ (data))).toBe(true)
-    expect(data.data['text/plain']).toBe('line two')
-    expect(data.data['text/html']).toBe('line two')
-    expect(JSON.parse(data.data['sieve/slice'])[0]).toEqual([
-      { mimeType: 'sieve/log', content: JSON.stringify({ kind: 'log', id: 'l1' }) },
+    expect(slice(view, { editor }).write(/** @type {any} */ (data))).toBe(true)
+    expect(data.data).toEqual({ 'text/plain': text, 'text/html': html })
+  })
+
+  it('a range of several blocks: one covered in part is its characters as prose, one covered whole keeps its views', () => {
+    const para = schema.nodes.paragraph.create(null, schema.text('prose here'))
+    const code = schema.nodes['sieve-code'].create(null, schema.text('fmt.Println(1)'))
+    const log = schema.nodes['sieve-log'].create(null, schema.text(LOG))
+    const logFrom = para.nodeSize + code.nodeSize
+    const view = viewOf([para, code, log], (doc) => TextSelection.create(doc, 3, logFrom + 5))
+    const data = clip()
+    expect(slice(view, { editor }).write(/** @type {any} */ (data))).toBe(true)
+    const items = JSON.parse(data.data['sieve/slice'])
+    expect(items.map((item) => item.map((e) => e.mimeType))).toEqual([
+      ['sieve/prose', 'text/plain'],
+      ['text/plain', 'sieve/code'],
+      ['sieve/prose', 'text/plain'],
     ])
-    // A single block also exposes its own kind's mime, so the backend rebuilds it
-    // from its own view rather than by detecting what its text looks like.
-    expect(data.data['sieve/log']).toBe(JSON.stringify({ kind: 'log', id: 'l1' }))
+    expect(JSON.parse(items[2][0].content).content).toBe('line')
+    expect(data.data['text/plain']).toBe('ose here\n\nfmt.Println(1)\n\nline')
+    expect(data.data['sieve/code']).toBeUndefined()
   })
 
   it('a whole-block selection falls back to the node text and its rendered DOM', () => {
@@ -242,18 +269,6 @@ describe('what goes on the clipboard', () => {
     expect(data.data['text/plain']).toBe('x\n\nx')
     // Two blocks: no single-block view, or the backend would rebuild one of them twice.
     expect(data.data['sieve/log']).toBeUndefined()
-  })
-
-  it('a partial range keeps the selected characters as text while the block goes whole', () => {
-    const code = schema.nodes['sieve-code'].create(null, schema.text('fmt.Println(1)\nfmt.Println(2)'))
-    const view = viewOf([code], (doc) => TextSelection.create(doc, 1, 15))
-    const data = clip()
-    slice(view).write(/** @type {any} */ (data))
-    // The kind's own entry describes the block whole; it must not overwrite the
-    // text views, which follow the range.
-    expect(data.data['text/plain']).toBe('fmt.Println(1)')
-    expect(data.data['text/html']).toBe('fmt.Println(1)')
-    expect(data.data['sieve/code']).toBe(JSON.stringify({ kind: 'code', id: 'c1', language: 'go' }))
   })
 
   // Every kind's single-block copy rebuilds from that kind's own view, so this
@@ -307,17 +322,20 @@ describe('what goes on the clipboard', () => {
 })
 
 describe('a selected image is copied as a block', () => {
+  // C10: its text view is the address of its asset, never the chrome the host
+  // draws around it (gutter number, handle, badge).
   it.each([
-    ['with an asset', { src: 'sieve://doc-7/shot.svg' }],
-    ['before its asset exists', {}],
-  ])('%s, every view is composed', (_, attrs) => {
+    ['with an asset', { src: 'sieve://doc-7/shot.svg' }, 'sieve://doc-7/shot.svg'],
+    ['before its asset exists', {}, ''],
+  ])('%s, every view is composed', (_, attrs, text) => {
     const view = viewOf(
       [schema.nodes['sieve-smart-image'].create(attrs)],
       (doc) => NodeSelection.create(doc, 0),
     )
+    view.doms[0].querySelector('.block-chrome-host').textContent = '2 ⠿ dumb mode'
     const data = clip()
     expect(slice(view, { uuid: 'doc-7' }).write(/** @type {any} */ (data))).toBe(true)
-    expect(typeof data.data['text/plain']).toBe('string')
+    expect(data.data['text/plain']).toBe(text)
     expect(data.data['text/html']).toBeTruthy()
     expect(JSON.parse(data.data['sieve/smart-image'])).toMatchObject(attrs)
     const [item] = JSON.parse(data.data['sieve/slice'])
@@ -338,7 +356,7 @@ describe('a range inside a block-hosting container', () => {
     return { ai, para, code, paraFrom: 1, codeFrom: 1 + para.nodeSize }
   }
 
-  it('is composed per element — the answer pastes as the blocks it showed', () => {
+  it('C7: is composed per element — the answer pastes as the blocks it showed, each part as its characters', () => {
     const { ai, paraFrom, codeFrom } = answered()
     const view = viewOf([ai], (doc) => TextSelection.create(doc, paraFrom + 2, codeFrom + 4))
     const data = clip()
@@ -347,7 +365,9 @@ describe('a range inside a block-hosting container', () => {
     const items = JSON.parse(data.data['sieve/slice'])
     expect(items).toHaveLength(2)
     expect(items[0].map((e) => e.mimeType)).toContain('sieve/prose')
-    expect(items[1].map((e) => e.mimeType)).toContain('sieve/code')
+    // The code element is covered in part, so it is its characters, not a code block.
+    expect(items[1].map((e) => e.mimeType)).toEqual(['sieve/prose', 'text/plain'])
+    expect(JSON.parse(items[1][0].content).content).toBe('fmt')
     // The container itself is not one of the items, and so cannot be rebuilt whole.
     expect(JSON.stringify(items)).not.toContain('sieve/ai-block')
     expect(data.data['sieve/ai-block']).toBeUndefined()
@@ -431,20 +451,9 @@ describe('a range inside a block-hosting container', () => {
     expect(slice(view, { editor }).write(/** @type {any} */ (data))).toBe(true)
     const items = JSON.parse(data.data['sieve/slice'])
     expect(items).toHaveLength(2)
-    expect(items[0].map((e) => e.mimeType)).toContain('sieve/prose')
-    expect(items[1].map((e) => e.mimeType)).toContain('sieve/code')
+    expect(JSON.parse(items[0][0].content).content).toBe('he caption')
+    expect(JSON.parse(items[1][0].content).content).toBe('fmt')
     expect(data.data['sieve/captioned']).toBeUndefined()
-  })
-
-  it('leaves a container whose content hosts no blocks whole', () => {
-    const para = schema.nodes.paragraph.create(null, schema.text('clipped prose'))
-    const clipNode = schema.nodes['sieve-web-clip'].create(null, [para])
-    const view = viewOf([clipNode], (doc) => TextSelection.create(doc, 3, 8))
-    const data = clip()
-    slice(view, { editor }).write(/** @type {any} */ (data))
-    const items = JSON.parse(data.data['sieve/slice'])
-    expect(items).toHaveLength(1)
-    expect(items[0].map((e) => e.mimeType)).toContain('sieve/web-clip')
   })
 })
 
@@ -482,7 +491,7 @@ describe('a highlight in a region ProseMirror does not own', () => {
   // are the highlighted characters. This holds even when PM's caret sits in the
   // body, where the retarget cannot fire because PM's selection already covers the
   // block.
-  it('claims a container whole rather than descending into its elements', () => {
+  it('is the container\'s own characters, never its elements', () => {
     const para = schema.nodes.paragraph.create(null, schema.text('the prose'))
     const code = schema.nodes['sieve-code'].create(null, schema.text('fmt.Println(1)'))
     const ai = schema.nodes['sieve-ai-block'].create(null, [para, code])
@@ -490,9 +499,10 @@ describe('a highlight in a region ProseMirror does not own', () => {
     highlightOver(view.doms[0].querySelector('.ai-block__question'))
     const data = clip()
     expect(slice(view, { editor }).write(/** @type {any} */ (data))).toBe(true)
+    // The title is part of the block, so it is copied as the characters it is.
     expect(data.data['text/plain']).toBe('why?')
-    expect(JSON.parse(data.data['sieve/slice'])).toHaveLength(1)
-    expect(data.data['sieve/ai-block']).toBe(JSON.stringify({ kind: 'ai-block', id: 'a1', question: 'why?' }))
+    expect(data.data['sieve/slice']).toBeUndefined()
+    expect(data.data['sieve/ai-block']).toBeUndefined()
   })
 
   it('retargets the text views onto the block the user highlighted', () => {

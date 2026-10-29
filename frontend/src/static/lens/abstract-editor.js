@@ -681,11 +681,18 @@ export class AbstractEditor extends Lens {
     if (this.#surface) this.#surface.flushPending()
   }
 
-  /** Pastes plain text through the mounted surface's paste path, so it produces
-   *  the same document a Mod+V of the same clipboard would.
-   *  @param {string} text @returns {Promise<'block'|'content'|'none'>} */
-  pasteText(text) {
-    return this.#surface ? this.#surface.pasteText(text) : Promise.resolve('none')
+  /** Pastes a clipboard's text views through the mounted surface's paste path, so
+   *  it produces the same document a Mod+V of a clipboard holding only them would.
+   *  @param {string} text its text/plain view @param {string} [html] its text/html view
+   *  @returns {Promise<'block'|'content'|'none'>} */
+  pasteText(text, html) {
+    return this.#surface ? this.#surface.pasteText(text, html) : Promise.resolve('none')
+  }
+
+  /** Pastes text literally at the caret of the mounted surface: no smart paste, no
+   *  markdown parse. @param {string} text @returns {boolean} true when pasted */
+  pastePlainText(text) {
+    return this.#surface ? this.#surface.pastePlainText(text) : false
   }
 
   /** Places clipboard-shaped entries at the caret through the mounted surface's

@@ -41,7 +41,7 @@ import { buildBlocksHTML, proseContent } from './block-render.js'
 import { seedBaseline, computeBlockSync, computeOrderOp } from '../block-sync.js'
 import { docPosForBlockIndex, blockIndexAfter, blockOffsetOf, posForBlockOffset } from './block-position.js'
 import { reloadReplacement } from './render-empty.js'
-import { caretInRawTextBlock, caretInTableCell } from '../paste-context.js'
+import { caretInRawTextBlock, caretInTableCell, caretInReadOnlyRegion } from '../paste-context.js'
 import { CaretTriggerPort } from './caret-trigger-port.js'
 import { CellSelectionGuard } from './cell-selection-guard.js'
 import { TableMarkdown } from './table-markdown.js'
@@ -50,6 +50,7 @@ import { SlideFocus } from './slide-focus.js'
 import { BlockImage } from './block-image.js'
 import { BlockDropTarget } from './block-drop-target.js'
 import { ASSET_DRAG_TYPE } from '../../../contract/container-provider.js'
+import { BlockIdentity } from '../../../renderers/block-identity.js'
 
 const FORMATTING_GROUPS = Object.freeze([
   Object.freeze([
@@ -194,6 +195,10 @@ export class WysiwygSurface extends AbstractSurface {
    *  mounted; until it has, there is no caret for a placement to follow */
   #hasCaret = false
 
+  /** @type {boolean} true while a declined paste is replayed through
+   *  ProseMirror's own paste, which re-enters `handlePaste` */
+  #replaying = false
+
   /**
    * @param {AbstractEditor} host — the parent editor (supplies uuid + the public API)
    */
@@ -296,6 +301,8 @@ export class WysiwygSurface extends AbstractSurface {
 
     var editorPane = new T.Editor({
       element: el,
+      // The interaction policy serializes the clipboard's text/plain.
+      enableCoreExtensions: { clipboardTextSerializer: false },
       extensions: [
         SieveDocument,
         BlockId,
@@ -320,6 +327,7 @@ export class WysiwygSurface extends AbstractSurface {
         buildInteractionPolicyExtension(T, {
           uuid: uuid,
           effectiveRange: function (v) { return getBlockSelectionRange(v) },
+          pastePlainText: function (text) { self.pastePlainText(text) },
         }),
 
         BlockImage.node(),
@@ -392,6 +400,7 @@ export class WysiwygSurface extends AbstractSurface {
           },
         },
         handlePaste: function (_view, event) { return self.#handleSmartPaste(event) },
+        transformPastedHTML: function (html) { return BlockIdentity.stripHTML(html) },
         handleDrop: function (_view, event, slice, moved) {
           return self.#handleAssetDrop(event) || self.#handleSmartDrop(event, slice, moved)
         },
@@ -803,8 +812,8 @@ export class WysiwygSurface extends AbstractSurface {
   /**
    * The container's paste DECISION, read defensively. Anything this build does
    * not recognise degrades to `none`, including a `content` outcome carrying no
-   * fragment: an unknown future outcome must fall back to replaying the
-   * clipboard, never to a silently swallowed paste.
+   * fragment: an unknown future outcome must fall back to the native paste of
+   * the clipboard, never to a silently swallowed paste.
    * @param {{outcome?: string, content?: string}|null|undefined} decision
    * @returns {'block'|'content'|'none'}
    */
@@ -824,14 +833,12 @@ export class WysiwygSurface extends AbstractSurface {
    *             anchor that held its place.
    *   content — Go composed a fragment for the caret. The anchor is deliberately
    *             NOT consumed: it was minted to hold a BLOCK's place.
-   *   none    — the blank line was never eaten, so `replay` lands at the intact
-   *             caret. The gesture was preventDefault()'d, so PM never ran its
-   *             native scroll-to-caret — restore it explicitly.
+   *   none    — nothing is placed and the anchor is left intact; a caller
+   *             holding the clipboard hands it to `#replayNatively`.
    *
    * @param {{outcome?: string, content?: string}|null|undefined} decision
-   * @param {{anchor: {id: string}|null, at?: number, replay?: string|null}} placement
-   *   `at` — an explicit DROP coordinate; omitted = the live caret. `replay` —
-   *   the local content for `none`; omitted = nothing to replay.
+   * @param {{anchor: {id: string}|null, at?: number}} placement
+   *   `at` — an explicit DROP coordinate; omitted = the live caret.
    * @returns {'block'|'content'|'none'} the outcome that was applied
    */
   #applyPasteResult(decision, placement) {
@@ -842,13 +849,16 @@ export class WysiwygSurface extends AbstractSurface {
       this.#host.consumeInsertAnchor(placement.anchor)
       return outcome
     }
-    // `outcome === 'content'` already implies a fragment; the guard is for the
-    // type-checker.
-    const content = outcome === 'content' ? (decision && decision.content) : placement.replay
+    const content = outcome === 'content' ? (decision && decision.content) : null
     if (!content) return outcome
-    if (placement.at != null) ed.commands.insertContentAt(placement.at, content)
-    else ed.commands.insertContent(content)
-    ed.commands.scrollIntoView()
+    if (placement.at != null) {
+      ed.commands.insertContentAt(placement.at, content)
+      ed.commands.scrollIntoView()
+    } else {
+      // Go's fragment is inline html (a link): pasted as html so it joins the
+      // paragraph the caret is in, as the clipboard itself would.
+      this.#replayNatively(content, '')
+    }
     return outcome
   }
 
@@ -870,9 +880,11 @@ export class WysiwygSurface extends AbstractSurface {
     const peek = this.#host.peekInsertAnchorForBlock()
     return provider
       .paste({ kind: 'smart', entries: [{ mimeType: 'text/plain', content: url }] }, peek.afterBlockId)
-      // `none` replays the bare URL. Not reachable while Go composes an anchor
-      // for every http(s) URL.
-      .then((decision) => this.#applyPasteResult(decision, { anchor: peek.anchor, replay: url }) !== 'none')
+      .then((decision) => {
+        if (this.#applyPasteResult(decision, { anchor: peek.anchor }) !== 'none') return true
+        this.#replayNatively('', url)
+        return false
+      })
       .catch((err) => {
         console.error('[wysiwyg-surface] insert link failed', err)
         return false
@@ -880,30 +892,128 @@ export class WysiwygSurface extends AbstractSurface {
   }
 
   /**
-   * @override — pastes plain text through the SAME pipeline a keyboard paste
-   * takes. A container with no paste query, or a caret in a table cell, falls
-   * back to the local insert.
-   * @param {string} text
+   * @override — pastes a clipboard's text views through the SAME pipeline a
+   * keyboard paste takes. A container with no paste query, a caret in a table
+   * cell, a declined paste and a failed one all paste natively; a caret in a
+   * read-only region pastes nothing.
+   * @param {string} text its text/plain view
+   * @param {string} [html] its text/html view, where the platform offers one
    * @returns {Promise<'block'|'content'|'none'>}
    */
-  pasteText(text) {
+  pasteText(text, html = '') {
     const ed = this.#editorPane
-    if (!ed || !text) return Promise.resolve('none')
+    if (!ed || (!text && !html) || caretInReadOnlyRegion(ed)) return Promise.resolve('none')
     const provider = caretInTableCell(ed) ? null : this.#pasteProvider()
     if (!provider) {
-      ed.commands.insertContent(text)
-      ed.commands.scrollIntoView()
+      this.#replayNatively(html, text)
       return Promise.resolve('none')
     }
+    const entries = [{ mimeType: 'text/plain', content: text }, { mimeType: 'text/html', content: html }]
+      .filter((entry) => entry.content)
     const peek = this.#host.peekInsertAnchorForBlock()
     return provider
-      .paste({ kind: 'smart', entries: [{ mimeType: 'text/plain', content: text }] }, peek.afterBlockId)
-      .then((decision) => this.#applyPasteResult(decision, { anchor: peek.anchor, replay: text }))
+      .paste({ kind: 'smart', entries }, peek.afterBlockId)
+      .then((decision) => {
+        const outcome = this.#applyPasteResult(decision, { anchor: peek.anchor })
+        if (outcome === 'none') this.#replayNatively(html, text)
+        return outcome
+      })
       .catch((err) => {
         console.error('[wysiwyg-surface] menu paste failed', err)
-        ed.commands.insertContent(text)
+        this.#replayNatively(html, text)
         return 'none'
       })
+  }
+
+  /**
+   * @override — pastes `text` literally at the caret: no smart paste, no markdown
+   * parse and no paste rules. Each line is a paragraph, as in ProseMirror's own
+   * plain-text paste; in a code block the text goes in as it is. A caret in a
+   * read-only region pastes nothing.
+   *
+   * The transaction carries `paste` but not the `uiEvent: 'paste'` that
+   * `view.pasteText` stamps, because TipTap's paste rules run on that one and
+   * would turn `**b**` bold.
+   * @param {string} text
+   * @returns {boolean} true when the text was pasted
+   */
+  pastePlainText(text) {
+    const ed = this.#editorPane
+    if (!ed || !text || caretInReadOnlyRegion(ed)) return false
+    const state = ed.view.state
+    const tr = state.selection.$from.parent.type.spec.code
+      ? state.tr.insertText(text.replace(/\r\n?/g, '\n'))
+      : state.tr.replaceSelection(WysiwygSurface.#plainTextSlice(state, text))
+    ed.view.dispatch(tr.scrollIntoView().setMeta('paste', true))
+    return true
+  }
+
+  /** `text` as ProseMirror's plain-text paste parses it: one paragraph per line,
+   *  open at both ends so the first and last lines join the caret's paragraph.
+   *  @param {any} state @param {string} text @returns {any} the slice */
+  static #plainTextSlice(state, text) {
+    const dom = document.createElement('div')
+    text.split(/(?:\r\n?|\n)+/).forEach((line) => {
+      dom.appendChild(document.createElement('p')).textContent = line
+    })
+    return T.ProseMirrorDOMParser.fromSchema(state.schema)
+      .parseSlice(dom, { preserveWhitespace: true, context: state.selection.$from })
+  }
+
+  /**
+   * Pastes a clipboard the container declined through ProseMirror's own paste,
+   * exactly as an unclaimed Ctrl+V: a copied slice keeps its open depth and
+   * context, `transformPasted*` and `clipboardTextParser` run, and the Link and
+   * table paste handling applies. Text is an ordinary text paste, never a
+   * plain-text one, so markdown source renders.
+   *
+   * `view.pasteHTML` re-enters `handlePaste`; `#replaying` makes
+   * `#handleSmartPaste` step aside for it. The text branch dispatches its own
+   * transaction and runs no `handlePaste`, so the gates that need one (cells,
+   * read-only regions) must have stepped aside before Go was asked.
+   * @param {string} html the clipboard's text/html view, or ''
+   * @param {string} text its text/plain view, or ''
+   */
+  #replayNatively(html, text) {
+    const view = this.#editorPane && this.#editorPane.view
+    if (!view || (!html && !text)) return
+    const slice = html ? null : WysiwygSurface.#textPasteSlice(view, text)
+    if (slice) {
+      view.dispatch(view.state.tr.replaceSelection(slice)
+        .scrollIntoView().setMeta('paste', true).setMeta('uiEvent', 'paste'))
+      return
+    }
+    this.#asReplay(() => {
+      if (html) view.pasteHTML(html)
+      else view.pasteText(text)
+    })
+  }
+
+  /** Runs one of ProseMirror's own pastes, which re-enters `handlePaste`, with
+   *  `#handleSmartPaste` stepping aside for it. @param {() => void} paste */
+  #asReplay(paste) {
+    this.#replaying = true
+    try {
+      paste()
+    } finally {
+      this.#replaying = false
+    }
+  }
+
+  /**
+   * The slice ProseMirror builds for an ordinary (non-plain) text paste at the
+   * selection, through the view's `transformPastedText`, `clipboardTextParser`
+   * (tiptap-markdown's parse) and `transformPasted`.
+   * @param {any} view @param {string} text
+   * @returns {any} the slice, or null when no text parser claims the text
+   */
+  static #textPasteSlice(view, text) {
+    let input = text
+    view.someProp('transformPastedText', (f) => { input = f(input, false, view) })
+    let slice = view.someProp('clipboardTextParser', (f) => f(input, view.state.selection.$from, false, view))
+    if (!slice) return null
+    view.someProp('transformPasted', (f) => { slice = f(slice, view, false) })
+    return slice
   }
 
   /**
@@ -984,7 +1094,7 @@ export class WysiwygSurface extends AbstractSurface {
    * @returns {boolean} true when handled (native paste suppressed)
    */
   #handleSmartPaste(event) {
-    if (!event.clipboardData || !this.#editorPane) return false
+    if (this.#replaying || !event.clipboardData || !this.#editorPane) return false
 
     if (event.target && (/** @type {any} */ (event.target).tagName === 'INPUT' || /** @type {any} */ (event.target).tagName === 'TEXTAREA')) {
       return false
@@ -999,6 +1109,11 @@ export class WysiwygSurface extends AbstractSurface {
     // Caret inside a table cell: the cell takes text, never a block, so the
     // native paste (prosemirror-tables' cell merge) runs instead.
     if (caretInTableCell(this.#editorPane)) {
+      return false
+    }
+
+    // Caret inside a read-only region: its node view's paste guard consumes it.
+    if (caretInReadOnlyRegion(this.#editorPane)) {
       return false
     }
 
@@ -1073,24 +1188,31 @@ export class WysiwygSurface extends AbstractSurface {
 
         // PEEK, not consume: the caret's empty-paragraph anchor is eaten ONLY
         // once a match is confirmed, so a no-match leaves the blank line and
-        // caret intact and the fallback pastes there.
+        // caret intact and the native paste lands there.
         var peek = this.#host.peekInsertAnchorForBlock()
         event.preventDefault()
 
         Promise.all(promises).then(function(results) {
-          var validEntries = ClipboardSlice.withSliceContext(results.filter(function(r) { return r !== null }), sliceData)
+          var read = results.filter(function(r) { return r !== null })
+          // The strings the replay pastes: the ones read from `items`, which
+          // WebKitGTK delivers where the synchronous getData comes back empty.
+          var readView = function (mime) {
+            var hit = read.find(function (r) { return r.mimeType === mime })
+            return (hit && hit.content) || ''
+          }
+          var replayHTML = readView('text/html') || html
+          var replayText = readView('text/plain') || text
           var provider = self.#pasteProvider()
           if (!provider) return
-          provider.paste({ kind: 'smart', entries: validEntries }, peek.afterBlockId)
+          provider.paste({ kind: 'smart', entries: ClipboardSlice.withSliceContext(read, sliceData) }, peek.afterBlockId)
             .then(function (decision) {
-              self.#applyPasteResult(decision, { anchor: peek.anchor, replay: html || text })
+              if (self.#applyPasteResult(decision, { anchor: peek.anchor }) === 'none') {
+                self.#replayNatively(replayHTML, replayText)
+              }
             })
             .catch(function (err) {
               console.error('[wysiwyg-surface] smart paste failed', err)
-              if (self.#editorPane) {
-                self.#editorPane.commands.insertContent(text)
-                self.#editorPane.commands.scrollIntoView()
-              }
+              self.#replayNatively(replayHTML, replayText)
             })
         })
         return true
@@ -1106,8 +1228,7 @@ export class WysiwygSurface extends AbstractSurface {
    *
    * BOTH native paste shapes are ONE payload kind — `native-clipboard` — because
    * they are one question: the page cannot read this, please read it yourself.
-   * There is deliberately no `replay`: the page never held the content, so a
-   * `none` outcome has nothing to put back.
+   * The page never held the content, so a `none` outcome has nothing to paste.
    * @param {ClipboardEvent} event
    * @param {string} label named in the failure log
    * @returns {boolean} always true — the gesture is claimed either way

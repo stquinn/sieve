@@ -88,3 +88,21 @@ describe('the prose kind\'s clipboard views', () => {
     editor.destroy()
   })
 })
+
+// Ids are minted, never copied: a paste strips every identity marker before the
+// parse, so no pasted prose node can claim its source's id.
+describe('a pasted prose node carries no copied id', () => {
+  it.each([
+    ['a paragraph', '<p data-id="p-1">a</p>'],
+    ['a pm-slice heading and list', '<h2 data-pm-slice="1 1 []" data-id="h-1">t</h2><ul data-id="l-1"><li><p>x</p></li></ul>'],
+    ['a page behind <meta charset>', '<meta charset="utf-8"><blockquote data-id="q-1"><p data-block-id="q-2">q</p></blockquote>'],
+  ])('%s: the id parse rule reads nothing after the paste strip', async (_label, html) => {
+    const { BlockIdentity } = await import('../src/static/renderers/block-identity.js')
+    const parse = BlockId.addGlobalAttributes()[0].attributes.id.parseHTML
+    const template = document.createElement('template')
+    template.innerHTML = BlockIdentity.stripHTML(html)
+    const els = Array.from(template.content.querySelectorAll('*'))
+    expect(els.map((el) => parse(el))).toEqual(els.map(() => ''))
+    expect(template.innerHTML).not.toMatch(/data-(block-)?id/)
+  })
+})
