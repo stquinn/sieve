@@ -25,7 +25,7 @@ import { Editor } from '@tiptap/core'
 import { StarterKit } from '@tiptap/starter-kit'
 import { Markdown } from 'tiptap-markdown'
 
-// AbstractEditor statically imports the side-effect extension modules, which
+// NoteEditor statically imports the side-effect extension modules, which
 // build Extension.create() at module-eval time off the vendor bag (shell.test.js
 // carries the same note). These tests never mount a real WysiwygSurface — the
 // fake surface hands over a REAL TipTap editor as its editorPane — so inert
@@ -43,7 +43,7 @@ vi.mock('../src/static/lens/document-editor/surfaces/prose-block.js', () => ({ B
 
 import { ProseLink } from '../src/static/lens/document-editor/surfaces/prose-link.js'
 import { LINK_OPTIONS } from '../src/static/lens/document-editor/surfaces/wysiwyg-surface.js'
-import { AbstractEditor } from '../src/static/lens/abstract-editor.js'
+import { NoteEditor } from '../src/static/lens/document-editor/note-editor.js'
 import { AbstractSurface } from '../src/static/lens/document-editor/surfaces/abstract-surface.js'
 import { LinkEditDialog } from '../src/static/ui/link-edit-dialog.js'
 
@@ -83,10 +83,10 @@ function makeEditor(pane) {
     subscribe() {}, unsubscribe() {},
     getUuid: () => 'doc-1', getKind: () => 'note', getOrder: () => [], getBlock: () => null,
   }
-  class TestEditor extends AbstractEditor {
+  class TestEditor extends NoteEditor {
     _createSurface() { return new PaneSurface(pane) }
   }
-  const ed = new TestEditor('doc-1', { provider })
+  const ed = new TestEditor('doc-1', { provider, toolbar: null })
   const surface = ed.presentSurface('wysiwyg', document.createElement('div'), null)
   return { ed, sent, surface }
 }

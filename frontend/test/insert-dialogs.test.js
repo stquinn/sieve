@@ -6,11 +6,8 @@
 // inserts through the editor's own verbs. Backs workspace.openUrlCardDialog(url?) /
 // openWebClipDialog(url?).
 //
-// The CONTRACT SHIFT pinned here (vs the old editor.js free functions): the insert
-// guard is now "an active editor exists + (has editorPane OR markdown mode)" — the old
-// currentUuid guard collapsed into "activeTab.editor exists" — and the create path
-// is createBlock (index-native; derives the caret block index itself), not a
-// captureInsertPos/setInsertPos/applyBlockOps dance.
+// The insert guard is "the workspace has an active BLOCK editor", and the create
+// path is createBlock (it derives the caret anchor itself).
 //
 // TWO editor verbs, pinned here because the asymmetry is deliberate (#67): the three
 // block rungs call createBlock; the LINK rung calls insertLink, because a link is an
@@ -21,13 +18,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { InsertDialogs } from '../src/static/shell/insert-dialogs.js'
 
-// A fake editor exposing exactly the public AbstractEditor surface InsertDialogs
-// touches: mode + editorPane (the insert guard), createBlock (the block create path)
+// A fake editor exposing exactly the public NoteEditor surface InsertDialogs
+// touches: mode (the link rung's guard), createBlock (the block create path)
 // and insertLink (the inline one).
-function fakeEditor({ mode = 'wysiwyg', hasEditorPane = true } = {}) {
+function fakeEditor({ mode = 'wysiwyg' } = {}) {
   return {
     mode,
-    editorPane: hasEditorPane ? {} : null,
     createBlock: vi.fn(),
     insertLink: vi.fn(() => Promise.resolve(true)),
   }
@@ -37,6 +33,7 @@ function fakeWorkspace(editor) {
   return {
     _editor: editor,
     get activeTab() { return this._editor ? { editor: this._editor } : null },
+    activeBlockEditor() { return this._editor || null },
   }
 }
 
@@ -171,7 +168,7 @@ describe('InsertDialogs — Insert from URL ladder (Link / Card / Summarise / Fe
   // the markdown there). The rung must SAY so, not close on a silent no-op — while
   // the three block rungs keep working in that mode.
   it('Link in markdown mode explains itself instead of silently doing nothing', () => {
-    const editor = fakeEditor({ mode: 'markdown', hasEditorPane: false })
+    const editor = fakeEditor({ mode: 'markdown' })
     const dialog = openClip(editor)
     ;[...dialog.querySelectorAll('.internalize-popup__btn')].find((b) => b.textContent === 'Link').click()
     expect(editor.insertLink).not.toHaveBeenCalled()
@@ -182,28 +179,18 @@ describe('InsertDialogs — Insert from URL ladder (Link / Card / Summarise / Fe
   })
 
   it('the block rungs still insert in markdown mode', () => {
-    const editor = fakeEditor({ mode: 'markdown', hasEditorPane: false })
+    const editor = fakeEditor({ mode: 'markdown' })
     const dialog = openClip(editor)
     ;[...dialog.querySelectorAll('.internalize-popup__btn')].find((b) => b.textContent === 'Card').click()
     expect(editor.createBlock).toHaveBeenCalledWith('smart-card', { href: 'https://clip.example' })
   })
 })
 
-describe('InsertDialogs — insert guard (CONTRACT SHIFT)', () => {
-  it('inserts in markdown mode even with no editorPane surface', () => {
-    const editor = fakeEditor({ mode: 'markdown', hasEditorPane: false })
-    const dialogs = new InsertDialogs(fakeWorkspace(editor))
-    dialogs.openUrlCard()
-    const dialog = document.querySelector('dialog.internalize-popup')
-    dialog.querySelector('input').value = 'https://ok.example'
-    dialog.querySelector('.internalize-popup__btn').click()
-    expect(editor.createBlock).toHaveBeenCalled()
-  })
-
-  it('does NOT insert when there is neither an editorPane surface nor markdown mode', () => {
-    const editor = fakeEditor({ mode: 'wysiwyg', hasEditorPane: false })
-    const dialogs = new InsertDialogs(fakeWorkspace(editor))
-    dialogs.openUrlCard()
+describe('InsertDialogs — insert guard', () => {
+  it('does NOT insert when the active editor is not a block editor', () => {
+    const editor = fakeEditor({ mode: 'markdown' })
+    const ws = Object.assign(fakeWorkspace(editor), { activeBlockEditor: () => null })
+    new InsertDialogs(ws).openUrlCard()
     const dialog = document.querySelector('dialog.internalize-popup')
     dialog.querySelector('input').value = 'https://ok.example'
     dialog.querySelector('.internalize-popup__btn').click()

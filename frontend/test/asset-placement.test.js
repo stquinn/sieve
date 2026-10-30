@@ -16,7 +16,7 @@ const FILE_HOLDER = { id: 'ref-1', kind: 'reference', attrs: { id: 'ref-1', uri:
 function workspace({ uuid = DOC, blocks = [HOLDER, FILE_HOLDER] } = {}) {
   const editor = { pasteEntries: vi.fn(() => Promise.resolve('block')) }
   const provider = { getBlock: vi.fn((id) => blocks.find((b) => b.id === id) || null) }
-  return { editor, provider, ws: { activeTab: { uuid, editor, mount: { provider } } } }
+  return { editor, provider, ws: { activeTab: { uuid, editor, mount: { provider } }, activeBlockEditor: () => editor } }
 }
 
 /** One Assets tab row, as the server renders it. */

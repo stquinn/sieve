@@ -13,10 +13,11 @@
 // doing the typing, and knows nothing about ProseMirror.
 
 import { InMemoryContainerProvider } from '../container/in-memory-container-provider.js'
-import { ComposerEditor } from '../lens/composer/composer-editor.js'
+import { ComposerEditor } from '../lens/document-editor/composer/composer-editor.js'
 import { EditorMode } from '../lens/document-editor/editor-mode.js'
 import { QuestionList } from '../renderers/question-list.js'
 import { Ident } from '../ident/ident.js'
+import { PanelPlacement } from './trigger-host.js'
 
 /**
  * A fenced code block, written on its own: the whole of a draft block, opening
@@ -71,8 +72,11 @@ export class ComposerMount {
     if (this.#editor) return this.#editor
     if (!this.#el) return null
     this.#provider = new InMemoryContainerProvider()
+    // The picker is the panel's: pinned above its top edge at its full width,
+    // not hung off a caret that sits at the bottom of the screen.
     const editor = new ComposerEditor(Ident.mint(), Object.assign({}, this.#deps, {
       provider: this.#provider,
+      triggerPlacement: new PanelPlacement(),
     }))
     this.#unsubs = [
       editor.onSubmit(() => this.#notify(this.#submitListeners)),
@@ -110,7 +114,7 @@ export class ComposerMount {
 
   /** Puts the caret in the message. */
   focus() {
-    const pane = /** @type {any} */ (this.#editor && this.#editor.editorPane)
+    const pane = this.#editor && this.#editor.editorPane
     if (pane) pane.commands.focus()
   }
 

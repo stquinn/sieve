@@ -14,6 +14,9 @@ import { MarkdownSurface } from '../document-editor/surfaces/markdown-surface.js
  * @property {() => Promise<{body?: string, version?: number, scroll?: number}>} [loadContainer] — the host's loader (see AbstractEditor)
  */
 
+/** The one surface a prompt has. */
+const PROMPT_MODES = Object.freeze([EditorMode.MARKDOWN])
+
 export class PromptEditor extends AbstractEditor {
   /**
    * @param {string}              uuid
@@ -28,6 +31,9 @@ export class PromptEditor extends AbstractEditor {
    * @returns {import('../document-editor/editor-mode.js').EditorModeValue}
    */
   get _defaultMode() { return EditorMode.MARKDOWN }
+
+  /** @protected @returns {ReadonlyArray<import('../document-editor/editor-mode.js').EditorModeValue>} */
+  get _modes() { return PROMPT_MODES }
 
   /**
    * Markdown ONLY — `mode` is deliberately ignored; a prompt has no other surface.

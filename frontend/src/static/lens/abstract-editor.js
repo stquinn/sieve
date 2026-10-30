@@ -2,26 +2,19 @@
 // The stable identity for one open document's editing session: the uuid, dirty
 // state, the save/destroy contract, and the document's INPUT SURFACE.
 //
-// Mode and the TipTap handle are DERIVED from the mounted surface, so there is
-// no stored mode to fall out of sync. Nothing here computes a document position
-// for Go: every anchor is a BLOCK ID.
+// Mode is DERIVED from the mounted surface, so there is no stored mode to fall
+// out of sync. WHICH modes there are is the concrete lens's vocabulary: this
+// class names none of them.
 
 import { Lens } from './lens.js'
 import { ContractViolation } from '../contract/sieve-block.js'
 import { LensCapability } from '../contract/lens-capabilities.js'
-import { AbstractSurface } from './document-editor/surfaces/abstract-surface.js'
-import { EditorMode } from './document-editor/editor-mode.js'
 import { SelectionModel } from './document-editor/selection-model.js'
-import { blockInsertPos } from './document-editor/surfaces/ai-target.js'
-import { emptyParagraphAnchor, blockIndexForInsert, blockIndexAt, docPosForBlockIndex } from './document-editor/surfaces/block-position.js'
-import { buildAiContext, applyTargetHighlight } from './extensions.js'
-import { resolveEntriesForKind } from './document-editor/surfaces/sieve-block-extension.js'
 import { AddressStatus } from '../renderers/address-status.js'
-import { QuestionList } from '../renderers/question-list.js'
 
 /**
+ * @typedef {import('./document-editor/surfaces/abstract-surface.js').AbstractSurface} AbstractSurface
  * @typedef {import('./document-editor/surfaces/abstract-surface.js').SurfaceEventMsg} SurfaceEventMsg
- * @typedef {import('./document-editor/editor-mode.js').EditorModeValue} EditorModeValue
  * @typedef {import('../contract/container-provider.js').BlockContainerProvider} BlockContainerProvider
  * @typedef {import('../contract/lens-capabilities.js').LensCapabilities} LensCapabilities
  */
@@ -98,6 +91,9 @@ export class AbstractEditor extends Lens {
 
   /** @type {object|null} the `/` picker's peer, held for the WYSIWYG surface. */
   #commandService = null
+  /** @type {import('../shell/trigger-host.js').TriggerPlacement|null} where the
+   *  host wants this editor's trigger picker placed; null leaves it to the surface. */
+  #triggerPlacement = null
 
   /** @type {object|null} what a code menu asks to pretty-print source. */
   #codeFormattingService = null
@@ -146,6 +142,7 @@ export class AbstractEditor extends Lens {
     this.#mentionService = options.mentionService || null
     this.#macroCatalog = options.macroCatalog || null
     this.#commandService = options.commandService || null
+    this.#triggerPlacement = options.triggerPlacement || null
     this.#codeFormattingService = options.codeFormattingService || null
     this.#capabilities = this.#deriveCapabilities()
 
@@ -293,6 +290,11 @@ export class AbstractEditor extends Lens {
    *  @returns {object|null} */
   get macroCatalog() { return this.#macroCatalog }
 
+  /** The placement the host chose for this editor's trigger picker, or null when
+   *  the surface decides for itself.
+   *  @returns {import('../shell/trigger-host.js').TriggerPlacement|null} */
+  get triggerPlacement() { return this.#triggerPlacement }
+
   /** What a code menu in this editor asks to pretty-print source, or null.
    *  @returns {object|null} */
   get codeFormattingService() { return this.#codeFormattingService }
@@ -313,16 +315,41 @@ export class AbstractEditor extends Lens {
 
   /** Current editing mode, DERIVED from the mounted surface; the subclass default
    *  applies before any surface mounts.
-   *  @returns {EditorModeValue} */
-  get mode() { return this.#surface ? /** @type {EditorModeValue} */ (this.#surface.mode) : this._defaultMode }
+   *  @returns {string} */
+  get mode() { return this.#surface ? this.#surface.mode : this._defaultMode }
 
   /**
+   * The modes this lens can be presented in. ABSTRACT: the repertoire is the
+   * concrete lens's vocabulary, and `setMode` refuses any target outside it.
    * @protected
-   * @returns {EditorModeValue}
+   * @returns {ReadonlyArray<string>}
    */
-  get _defaultMode() { return EditorMode.WYSIWYG }
+  get _modes() {
+    throw new ContractViolation('AbstractEditor: _modes must be declared by the concrete editor type')
+  }
 
-  /** @returns {unknown|null} The live TipTap instance, or null (markdown / unmounted). */
+  /**
+   * The mode in force before any surface mounts. ABSTRACT, for the reason
+   * `_modes` is.
+   * @protected
+   * @returns {string}
+   */
+  get _defaultMode() {
+    throw new ContractViolation('AbstractEditor: _defaultMode must be declared by the concrete editor type')
+  }
+
+  /**
+   * The one mode whose surface presents the container AS BLOCKS, reading the
+   * model on its bootstrap cue. Every other mode of the repertoire is a verbatim
+   * buffer, seeded by the container's own projection. Null for a lens that never
+   * presents blocks.
+   * @protected
+   * @returns {string|null}
+   */
+  get _blockMode() { return null }
+
+  /** @returns {unknown|null} the mounted surface's own editing engine, opaque to
+   *  this class; null when no surface is mounted or the surface exposes none. */
   get editorPane() { return this.#surface ? this.#surface.editorPane : null }
 
   /** @returns {boolean} */
@@ -401,11 +428,11 @@ export class AbstractEditor extends Lens {
   }
 
   /** Derives the focus zone from live DOM focus plus the mounted surface:
-   *  'block-inner' for an inner form control inside a sieve block, 'markdown' for
-   *  the markdown surface, else 'editor'.
+   *  'markdown' for a verbatim buffer, 'block-inner' for an inner form control
+   *  inside a sieve block, else 'editor'.
    *  @returns {import('./document-editor/selection-model.js').SelectionContext['focusZone']} */
   #deriveFocusZone() {
-    if (this.mode === EditorMode.MARKDOWN) return 'markdown'
+    if (this.mode !== this._blockMode) return 'markdown'
     const active = (typeof document !== 'undefined') ? document.activeElement : null
     if (active && typeof active.closest === 'function' && active.closest('.sieve-block__edit')) {
       return 'block-inner'
@@ -418,7 +445,7 @@ export class AbstractEditor extends Lens {
    * editor can present is TYPE-DEFINING knowledge on the concrete editor, which
    * hands the surface THIS editor (`host`) — no services bag.
    * @protected
-   * @param {EditorModeValue} mode
+   * @param {string} mode
    * @returns {AbstractSurface}
    */
   _createSurface(mode) {
@@ -427,7 +454,7 @@ export class AbstractEditor extends Lens {
 
   /**
    * Presents the input surface for a mode. The ONE place surfaces are swapped.
-   * @param {EditorModeValue} mode
+   * @param {string} mode
    * @param {HTMLElement} rootEl  — the editor's root
    * @param {unknown}     content — surface seed (markdown string, or {body, blocks})
    * @returns {AbstractSurface} the mounted surface
@@ -435,7 +462,9 @@ export class AbstractEditor extends Lens {
   presentSurface(mode, rootEl, content) {
     if (this.isMounted) this.unmount()
     const next = this._createSurface(mode)
-    if (!(next instanceof AbstractSurface)) throw new ContractViolation('AbstractEditor: _createSurface must return an AbstractSurface')
+    if (!next || typeof next.mount !== 'function' || typeof next.unmount !== 'function') {
+      throw new ContractViolation('AbstractEditor: _createSurface must return a surface')
+    }
     // A mount root can arrive pre-classed by a PREVIOUS editor's toggle.
     rootEl.classList.toggle('hide-ai-blocks', !this.#showAiBlocks)
     rootEl.classList.toggle('presenting', this.#presenting)
@@ -462,7 +491,7 @@ export class AbstractEditor extends Lens {
    * container with a block tree is then presented as blocks — the shape it can
    * always be read in — and one without has nothing else to be, so the failure
    * reaches the caller.
-   * @param {EditorModeValue} mode
+   * @param {string} mode
    * @param {HTMLElement} rootEl — the editor's root
    * @returns {Promise<AbstractSurface>} the mounted surface
    */
@@ -473,7 +502,7 @@ export class AbstractEditor extends Lens {
     } catch (err) {
       if (!this.canEditBlocks) throw err
       console.error('[editor] the container did not project its text; presenting its blocks instead', err)
-      return this.presentSurface(EditorMode.WYSIWYG, rootEl, null)
+      return this.presentSurface(/** @type {string} */ (this._blockMode), rootEl, null)
     }
     return this.presentSurface(mode, rootEl, seed)
   }
@@ -481,18 +510,18 @@ export class AbstractEditor extends Lens {
   /**
    * The seed a surface needs to be presented in `mode`.
    *
-   * MARKDOWN is a verbatim buffer, so it is seeded by the container's own
-   * projection — the ask that also hands the container's text over to that
-   * buffer, which is why a markdown surface is never presented without it.
-   * WYSIWYG reads the model on its bootstrap cue and needs no seed at all.
+   * A verbatim buffer is seeded by the container's own projection — the ask that
+   * also hands the container's text over to that buffer, which is why a buffer
+   * surface is never presented without it. The block mode reads the model on its
+   * bootstrap cue and needs no seed at all.
    *
    * REJECTS when the projection does not arrive: an unseeded verbatim buffer
    * would state that the container is empty.
-   * @param {EditorModeValue} mode
+   * @param {string} mode
    * @returns {Promise<string|null>}
    */
   #seedFor(mode) {
-    if (mode !== EditorMode.MARKDOWN) return Promise.resolve(null)
+    if (mode === this._blockMode) return Promise.resolve(null)
     return this.provider.getContents()
   }
 
@@ -624,63 +653,6 @@ export class AbstractEditor extends Lens {
     }
   }
 
-  /**
-   * Requests a block extraction/transform: stamps the caller context onto the
-   * first entry, resolves the entries for the target kind, then names the SOURCE
-   * BLOCK and the operation. Where the result lands is Go's — an additive extract
-   * follows its source, a transform keeps the source's slot.
-   *
-   * RANGE SOURCES (`sourceRange`). A prose link is a mark over a text range, not a
-   * block, so an in-place TRANSFORM has nothing to replace and would destroy the
-   * surrounding sentence. Its playback is #consumeSourceRange instead — an
-   * ordinary additive create, so the wire verb stays `extract`.
-   * @param {{blockId: string, targetKind: string, operation: string, sourceNode?: object, entries: object[], context?: object, sourceRange?: {from: number, to: number}}} payload
-   * @returns {Promise<void>}
-   */
-  extract({ blockId, targetKind, operation, sourceNode, entries, context, sourceRange }) {
-    entries = entries || []
-    if (entries.length > 0 && context && Object.keys(context).length > 0) {
-      entries[0].context = context
-    }
-    let wireOp = operation
-    if (sourceRange) {
-      wireOp = 'extract'
-      this.#consumeSourceRange(sourceRange)
-    }
-    const res = resolveEntriesForKind ? resolveEntriesForKind(targetKind, sourceNode, entries, this.#uuid) : entries
-    return Promise.resolve(res).then((resolved) => {
-      if (this.canEditBlocks) this.provider.requestTransform(blockId, targetKind, wireOp, resolved)
-    })
-  }
-
-  /**
-   * Consumes a RANGE SOURCE and returns the block index its replacement is created
-   * at: delete the range, then the enclosing paragraph too if that emptied it
-   * (never the doc's sole child — schema-invalid). Both are TRACKED prose edits,
-   * never addToHistory:false, because converting a link must be ONE undoable step.
-   * The anchor derives from the RANGE, not a block id: a freshly typed paragraph
-   * may not have been minted one yet.
-   * @param {{from: number, to: number}} range
-   */
-  #consumeSourceRange(range) {
-    const ed = /** @type {any} */ (this.editorPane)
-    if (!ed) return
-    // Stale range: tr.delete THROWS out of range, and a throw here would take the
-    // whole conversion with it.
-    if (range.to > ed.state.doc.content.size || range.from < 0) return
-    const paraIdx = blockIndexAt(ed.state.doc, range.from)
-    if (paraIdx < 0) return
-    if (range.to > range.from) ed.view.dispatch(ed.state.tr.delete(range.from, range.to))
-
-    const doc = ed.state.doc
-    const para = paraIdx < doc.childCount ? doc.child(paraIdx) : null
-    if (para && doc.childCount > 1 && para.type.name === 'paragraph' && para.textContent.trim() === '') {
-      const from = docPosForBlockIndex(doc, paraIdx)
-      ed.view.dispatch(ed.state.tr.delete(from, from + para.nodeSize))
-    }
-    if (this.#surface) this.#surface.flushPending()
-  }
-
   /** Pastes a clipboard's text views through the mounted surface's paste path, so
    *  it produces the same document a Mod+V of a clipboard holding only them would.
    *  @param {string} text its text/plain view @param {string} [html] its text/html view
@@ -736,11 +708,11 @@ export class AbstractEditor extends Lens {
    * coalesced, and ONE 'mode-change-failed' per failure; their handlers attach
    * here so a caller that ignores the promise never produces an unhandled
    * rejection.
-   * @param {EditorModeValue} target
+   * @param {string} target
    * @returns {Promise<boolean>} whether the mode changed
    */
   setMode(target) {
-    if (target !== EditorMode.WYSIWYG && target !== EditorMode.MARKDOWN) return Promise.resolve(false)
+    if (!this._modes.includes(target)) return Promise.resolve(false)
     // A container with no block extension has one shape to be in — a prompt IS
     // its text.
     if (!this.canEditBlocks) return Promise.resolve(false)
@@ -754,16 +726,16 @@ export class AbstractEditor extends Lens {
     return this.#modeFlip
   }
 
-  /** BINARY-FLIP SUGAR over setMode, the N-mode primitive: a third mode adds
-   *  setMode call sites rather than growing this.
+  /** Sugar over setMode: steps to the mode after the current one in the
+   *  repertoire, wrapping round — with two modes, a flip.
    *  @returns {Promise<boolean>} whether the mode changed */
   toggleMode() {
-    const target = this.mode === EditorMode.MARKDOWN ? EditorMode.WYSIWYG : EditorMode.MARKDOWN
-    return this.setMode(target)
+    const modes = this._modes
+    return this.setMode(modes[(modes.indexOf(this.mode) + 1) % modes.length])
   }
 
   /**
-   * @param {EditorModeValue} target
+   * @param {string} target
    * @returns {Promise<boolean>}
    */
   async #flipTo(target) {
@@ -774,7 +746,7 @@ export class AbstractEditor extends Lens {
     // Both directions speak WHOLE-CONTENT through the same provider.
     const provider = this.provider
     let payload
-    if (target === EditorMode.MARKDOWN) {
+    if (target !== this._blockMode) {
       // The frontend never serialises a document; that stays Go's job.
       payload = await this.#seedFor(target)
     } else {
@@ -836,8 +808,8 @@ export class AbstractEditor extends Lens {
 
   /** Sets Presentation Mode for THIS editor: only the slide holding the caret
    *  is drawn, mirrored as the `presenting` class on the editor-owned root.
-   *  Presenting is a WYSIWYG view, so turning it on from markdown flips to
-   *  WYSIWYG first; a flip that fails leaves presenting off. A document with no
+   *  Presenting is a view of blocks, so turning it on from a buffer flips to the
+   *  block mode first; a flip that fails leaves presenting off. A document with no
    *  slide markers has nothing to present: turning on does nothing. Idempotent:
    *  exactly one 'presenting-changed' is emitted per actual change.
    *  @param {boolean} presenting
@@ -846,9 +818,9 @@ export class AbstractEditor extends Lens {
     const want = !!presenting
     if (want === this.#presenting) return this.#presenting
     if (want && !(this.#surface && this.#surface.hasSlideMarkers())) return false
-    if (want && this.mode === EditorMode.MARKDOWN) {
-      await this.setMode(EditorMode.WYSIWYG)
-      if (this.mode !== EditorMode.WYSIWYG) return false
+    if (want && this.mode !== this._blockMode) {
+      await this.setMode(/** @type {string} */ (this._blockMode))
+      if (this.mode !== this._blockMode) return false
     }
     this.#presenting = want
     if (this.host) this.host.classList.toggle('presenting', want)
@@ -860,9 +832,7 @@ export class AbstractEditor extends Lens {
   /**
    * The ONE create path: asks the container for a new block, anchored after a
    * BLOCK ID. Callers pass a stable id or nothing, NEVER a document position.
-   * OMITTED derives the anchor from the caret with the empty-paragraph consume;
-   * `null` means the front; a stale or unknown id appends, as markdown mode
-   * always does, having no caret to read.
+   * `null` means the front; OMITTED, or a stale or unknown id, appends.
    * @param {string} kind
    * @param {object} [attrs]
    * @param {string|null} [afterBlockId] — a stable block id, never a position
@@ -872,8 +842,7 @@ export class AbstractEditor extends Lens {
     // diagram default: an empty (source-less) diagram opens straight into edit mode.
     if (kind === 'diagram' && !attrs.source) attrs.mode = 'edit'
     if (!this.canEditBlocks) return
-    const anchor = (afterBlockId === undefined) ? this.#anchorFromCaret() : afterBlockId
-    this.provider.requestAddBlock(kind, attrs, anchor)
+    this.provider.requestAddBlock(kind, attrs, afterBlockId)
   }
 
   /**
@@ -886,214 +855,6 @@ export class AbstractEditor extends Lens {
    */
   insertLink(url) {
     return this.#surface ? this.#surface.insertLink(url) : Promise.resolve(false)
-  }
-
-  /**
-   * Stashes the caret's insert ANCHOR for an async insert that outlives the caret:
-   * the image insert opens a file dialog, which blurs the editor. NON-consuming,
-   * because a cancelled upload must leave the blank line.
-   * @returns {string|null|undefined} the block the upload should follow
-   */
-  captureImageInsert() {
-    if (!this.editorPane) return undefined
-    const ed = /** @type {any} */ (this.editorPane)
-    return this.#anchorAtIndex(blockIndexForInsert(ed.state.doc, this.captureInsertPos()))
-  }
-
-  /**
-   * The SINGLE AI-job seam, for every entry point. PURE over `context` — the
-   * SelectionContext the panel LAST RENDERED, i.e. the label the user saw. It
-   * NEVER re-reads the live selection on write: that would race the label (panel
-   * shows target C1, editor acts on a drifted C2).
-   *
-   * MINTS THE QUESTION AS A LIST OF BLOCKS, in gesture order: what the message is
-   * about (the resolved target, or the parent exchange of a follow-up), the text
-   * as prose, then what the `@` picker attached. Every reference it mints
-   * declares its role.
-   *
-   * Applies the == target highlight, anchors the insert AFTER the target's
-   * top-level block, flushes the pending sync, creates the ai-block, and
-   * collapses the caret to the target end. EXPLAIN in markdown is a no-op; ASK
-   * still works.
-   * @param {{ type: 'ask'|'explain', question?: string|ReadonlyArray<import('../renderers/question-list.js').QuestionElement>, context?: import('./document-editor/selection-model.js').SelectionContext, attachments?: Array<{uri: string, title?: string}> }} job
-   *   `question` is either the text of a one-line ask or the element list a
-   *   composer authored; both land in the body slot, between the target and the
-   *   attachments. `attachments` is the composer's manifest; each entry becomes a
-   *   reference element of the question declaring `attach`.
-   * @returns {Promise<void>}
-   */
-  askAi({ type, question, context, attachments }) {
-    // EXPLAIN needs an inline target; markdown mode has none → nothing to explain.
-    if (type === 'explain' && this.mode === EditorMode.MARKDOWN) return Promise.resolve()
-    const ctx = context || this.getSelectionContext()
-    const aiCtx = buildAiContext(ctx)
-    const blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
-    const target = ctx && ctx.target
-    const ed = /** @type {any} */ (this.editorPane)
-    // Anchor AFTER the target's LAST block from the CONTEXT's ids, not the live
-    // selection, so it survives a caret that drifted after the label rendered.
-    const ids = (ctx.blockIds && ctx.blockIds.length) ? ctx.blockIds : (ctx.blockId ? [ctx.blockId] : [])
-    const anchorId = ids[ids.length - 1]
-    if (ed) {
-      // Protocol-significant: the == mark tells Go which words the answer is
-      // about. Only a ranged wysiwyg selection marks.
-      if (target && target.kind === 'selection' && this.mode !== EditorMode.MARKDOWN && target.range) {
-        applyTargetHighlight(ed, target.range)
-      }
-      ed.commands.focus()
-    }
-    const done = this.flushSave()
-      .then(() => {
-        const list = new QuestionList(this.uuid)
-          .about((aiCtx && aiCtx.blockRef) || 'doc')
-        if (Array.isArray(question)) list.body(question)
-        else list.ask(/** @type {string|undefined} */ (question))
-        list.attach(attachments)
-        this.createBlock('ai-block', { type: blockType, question: list.elements }, anchorId)
-      })
-      .catch((err) => { console.error('[editor] askAi flush error:', err) })
-    // Editor owns its cursor: collapse focus to the target end.
-    if (ed && ed.view) {
-      try { ed.commands.setTextSelection(ed.state.selection.to) } catch (e) { /* best-effort */ }
-    }
-    return done
-  }
-
-  // The anchor vocabulary is three-valued: `undefined` = "no anchor, append";
-  // `null` = "the front"; an id = "after that one".
-
-  /** Resolves WHERE the next inserted block goes — the single way every additive
-   *  creation path stamps the insert position. Block answers always land after the
-   *  top-level block, never at the caret.
-   *  @returns {number|null} */
-  captureInsertPos() {
-    const ed = /** @type {any} */ (this.editorPane)
-    return ed ? blockInsertPos(ed.state) : null
-  }
-
-  /** The block id a new child taking top-level index `index` should follow. Walks
-   *  BACK past any node with no id: the trailing editing surface is not a block Go
-   *  knows about, so it cannot anchor anything.
-   *  @param {number} index @returns {string|null|undefined} */
-  #anchorAtIndex(index) {
-    const ed = /** @type {any} */ (this.editorPane)
-    if (!ed || index < 0) return undefined     // no document / no anchor → append
-    if (index === 0) return null               // the front of the container
-    const doc = ed.state.doc
-    for (let i = Math.min(index, doc.childCount) - 1; i >= 0; i--) {
-      const id = doc.child(i).attrs && doc.child(i).attrs.id
-      if (id) return id
-    }
-    return null
-  }
-
-  /**
-   * Maps a captured insert position to the anchor a new block should follow,
-   * applying the empty-paragraph placement rule AT COMMIT TIME — never at capture,
-   * because a cancelled dialog must not eat the blank line. A bare empty paragraph
-   * there is deleted and the new block anchored where it was, then the sync is
-   * flushed so Go's shadow applies the delete BEFORE the create arrives.
-   *
-   * UNDO SANCTITY: a PLAIN TRACKED prose edit — never addToHistory:false.
-   * @param {number|null} pos
-   * @returns {string|null|undefined}
-   */
-  #commitAnchor(pos) {
-    const ed = /** @type {any} */ (this.editorPane)
-    if (!ed) return undefined
-    const anchor = emptyParagraphAnchor(ed.state.doc, pos)
-    if (!anchor) return this.#anchorAtIndex(blockIndexForInsert(ed.state.doc, pos))
-    // Sole-block doc: keep the paragraph (deleting the doc's only child is
-    // schema-invalid).
-    if (ed.state.doc.childCount > 1) {
-      ed.view.dispatch(ed.state.tr.delete(anchor.from, anchor.to))
-      if (this.#surface) this.#surface.flushPending()
-    }
-    return this.#anchorAtIndex(anchor.index)
-  }
-
-  /** The caret-derived anchor, with the empty-paragraph consume. createBlock's
-   *  default. @returns {string|null|undefined} */
-  #anchorFromCaret() { return this.#commitAnchor(this.captureInsertPos()) }
-
-  /** The caret-derived anchor, for a surface that creates blocks of its own.
-   *  @returns {string|null|undefined} */
-  insertAnchorForBlock() { return this.#anchorFromCaret() }
-
-  /** @param {number} pos @returns {string|null|undefined} */
-  insertAnchorAt(pos) { return this.#commitAnchor(pos) }
-
-  // #commitAnchor eats the empty-paragraph anchor EAGERLY, which is right when
-  // the call point IS the confirmation (a dialog). A paste commits BEFORE it knows
-  // the server matched, and on a no-match the eager delete has already remapped
-  // the orphaned caret into the adjacent block. So: peek, ask Go, and consume ONLY
-  // on the `block` outcome.
-
-  /** The SIDE-EFFECT-FREE half: the anchor plus a HANDLE to the empty paragraph,
-   *  to consume once the server confirms. Null handle when there is none, or it is
-   *  the doc's sole child.
-   *  @param {number|null} pos
-   *  @returns {{ afterBlockId: string|null|undefined, anchor: {id: string}|null }} */
-  peekInsertAnchor(pos) {
-    const ed = /** @type {any} */ (this.editorPane)
-    if (!ed) return { afterBlockId: undefined, anchor: null }
-    const anchor = emptyParagraphAnchor(ed.state.doc, pos)
-    if (!anchor) {
-      return { afterBlockId: this.#anchorAtIndex(blockIndexForInsert(ed.state.doc, pos)), anchor: null }
-    }
-    if (ed.state.doc.childCount <= 1) return { afterBlockId: this.#anchorAtIndex(anchor.index), anchor: null }
-    const node = ed.state.doc.child(anchor.index)
-    const id = ((node && node.attrs) || {}).id || ''
-    // The anchor sits AT `anchor.index`, so the new block follows whatever
-    // precedes it.
-    return { afterBlockId: this.#anchorAtIndex(anchor.index), anchor: id ? { id: id } : null }
-  }
-
-  /** @returns {{ afterBlockId: string|null|undefined, anchor: {id: string}|null }} */
-  peekInsertAnchorForBlock() { return this.peekInsertAnchor(this.captureInsertPos()) }
-
-  /** @param {number} pos
-   *  @returns {{ afterBlockId: string|null|undefined, anchor: {id: string}|null }} */
-  peekInsertAnchorAt(pos) { return this.peekInsertAnchor(pos) }
-
-  /**
-   * The DEFERRED second half: once the server CONFIRMED the insert, delete the
-   * empty paragraph that held its place, as a TRACKED prose edit. Located BY ID,
-   * never by a captured position — the arrival can shift positions first. No-op
-   * when the handle is absent, not found, the doc's sole child, or no longer
-   * empty.
-   *
-   * With `tr` — the transaction placing the confirmed block — the delete is added
-   * to it, so the placement and the consume are one undo step however late the
-   * block arrives; the caller dispatches and flushes. Without it, the delete is
-   * dispatched and flushed here.
-   * @param {{id: string}|null} anchor
-   * @param {any} [tr]
-   */
-  consumeInsertAnchor(anchor, tr) {
-    if (!anchor || !anchor.id) return
-    const ed = /** @type {any} */ (this.editorPane)
-    if (!ed) return
-    const doc = tr ? tr.doc : ed.state.doc
-    if (doc.childCount <= 1) return
-    let pos = -1
-    let node = null
-    doc.forEach((/** @type {any} */ child, /** @type {number} */ offset) => {
-      if (pos >= 0) return
-      if (child && child.attrs && child.attrs.id === anchor.id) {
-        pos = offset
-        node = child
-      }
-    })
-    if (pos < 0 || !node) return
-    // Only ever consume a still-empty paragraph: a stray blank line is benign,
-    // losing typed content is not.
-    if ((/** @type {any} */ (node).textContent || '').trim() !== '') return
-    const deleting = tr || ed.state.tr
-    deleting.delete(pos, pos + (/** @type {any} */ (node).nodeSize))
-    if (tr) return
-    ed.view.dispatch(deleting)
-    if (this.#surface) this.#surface.flushPending()
   }
 
   /**
@@ -1114,8 +875,9 @@ export class AbstractEditor extends Lens {
    */
   async reload() {
     const mode = this.mode
-    if (mode !== 'wysiwyg' && mode !== 'markdown') return
-    if (mode === 'wysiwyg' && !this.editorPane) return
+    if (!this._modes.includes(mode)) return
+    const painted = mode === this._blockMode
+    if (painted && !this.#surface) return
     if (!this.#loadContainer) return // no loader: nothing to reload from
     this.#reloadInProgress = true
     // Pull the focus coordinate before the async load so the caret survives.
@@ -1124,13 +886,13 @@ export class AbstractEditor extends Lens {
       const data = (await this.#loadContainer()) || {}
       this.seedVersion(data.version || 0)
       const surface = this.#surface
-      if (mode === 'wysiwyg' && this.editorPane && surface) {
+      if (painted && surface) {
         // The container model is the truth the repaint reads — the same reads
         // every cue uses, so a load and a change paint from ONE source.
         surface.paintContainer(this.provider)
         this.#reloadInProgress = false
         this.applyPosition(focus)
-      } else if (mode === 'markdown' && surface) {
+      } else if (surface) {
         surface.replaceBody(data.body || '')
         this.#reloadInProgress = false
       } else {

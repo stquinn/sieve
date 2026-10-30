@@ -159,12 +159,12 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
     // edit here rather than a silently smaller check.
     expect(lensFiles.map((f) => path.relative(STATIC, f))).toEqual([
       path.join('lens', 'abstract-editor.js'),
-      path.join('lens', 'composer', 'composer-editor.js'),
       path.join('lens', 'document-editor', 'block-chrome.js'),
       path.join('lens', 'document-editor', 'block-selection.js'),
       path.join('lens', 'document-editor', 'block-sync.js'),
       path.join('lens', 'document-editor', 'clipboard-slice.js'),
       path.join('lens', 'document-editor', 'clipboard-text.js'),
+      path.join('lens', 'document-editor', 'composer', 'composer-editor.js'),
       path.join('lens', 'document-editor', 'context-menu.js'),
       path.join('lens', 'document-editor', 'editor-mode.js'),
       path.join('lens', 'document-editor', 'editor-shell.js'),
@@ -172,6 +172,7 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
       path.join('lens', 'document-editor', 'interaction-policy.js'),
       path.join('lens', 'document-editor', 'note-editor.js'),
       path.join('lens', 'document-editor', 'paste-context.js'),
+      path.join('lens', 'document-editor', 'prosemirror-editor.js'),
       path.join('lens', 'document-editor', 'selection-model.js'),
       path.join('lens', 'document-editor', 'surfaces', 'abstract-surface.js'),
       path.join('lens', 'document-editor', 'surfaces', 'ai-target-decoration.js'),
@@ -254,5 +255,22 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
     const reached = open.walk([path.join(STATIC, 'renderers', 'block-renderer.js')]).reached
     expect(reached).toContain(path.join('contract', 'sieve-block.js'))
     expect(reached).toContain(path.join('generated', 'protocol.js'))
+  })
+})
+
+describe('the lens bases are not ProseMirror', () => {
+  // AbstractEditor is the base a lens that is NOT ProseMirror extends, so its
+  // statement-import closure stops short of the document editor's PM world.
+  const PM_WORLD = Object.freeze([
+    path.join('lens', 'document-editor', 'surfaces') + path.sep,
+    path.join('lens', 'extensions.js'),
+  ])
+
+  it.each([
+    path.join('lens', 'lens.js'),
+    path.join('lens', 'abstract-editor.js'),
+  ])('%s reaches no surface, no extensions.js and no tiptap-vendor.js', (entry) => {
+    const reached = new ImportGraph([]).walk([path.join(STATIC, entry)]).reached
+    expect(reached.filter((file) => PM_WORLD.some((pm) => file.startsWith(pm)))).toEqual([])
   })
 })

@@ -11,12 +11,14 @@
 
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { ComposerMount } from '../src/static/shell/composer-mount.js'
-import { ComposerEditor } from '../src/static/lens/composer/composer-editor.js'
+import { ComposerEditor } from '../src/static/lens/document-editor/composer/composer-editor.js'
 import { AbstractEditor } from '../src/static/lens/abstract-editor.js'
+import { NoteEditor } from '../src/static/lens/document-editor/note-editor.js'
 import { EditorMode } from '../src/static/lens/document-editor/editor-mode.js'
 import { InMemoryContainerProvider } from '../src/static/container/in-memory-container-provider.js'
 import { QuestionList, QuestionRel } from '../src/static/renderers/question-list.js'
 import { Ident } from '../src/static/ident/ident.js'
+import { PanelPlacement } from '../src/static/shell/trigger-host.js'
 
 // The owner modules that run vendor calls at IMPORT time and would crash under
 // the bare test/setup.js TipTap seed. Nothing here mounts a surface.
@@ -60,6 +62,21 @@ function attachmentBlock(uri, title, id = 'att-0') {
 
 const A_KEY = (key, mods = {}) => /** @type {any} */ (Object.assign(
   { key, shiftKey: false, altKey: false, metaKey: false, ctrlKey: false }, mods))
+
+describe('ComposerMount — the lens it opens', () => {
+  it('hands the composer the PANEL placement, so its picker rises off the panel and not the caret', () => {
+    // The lens is constructed for real; only its TipTap surface is stubbed out,
+    // since the placement is fixed at construction, before any surface mounts.
+    const present = vi.spyOn(ComposerEditor.prototype, 'presentSurface').mockImplementation(() => null)
+    try {
+      const mount = new ComposerMount(document.createElement('div'))
+      const editor = mount.open()
+      expect(editor).not.toBeNull()
+      expect(/** @type {any} */ (editor).triggerPlacement).toBeInstanceOf(PanelPlacement)
+      mount.destroy()
+    } finally { present.mockRestore() }
+  })
+})
 
 describe('ComposerMount — the harvest', () => {
   it('one prose block becomes one prose element, carrying the id the lens minted', () => {
@@ -370,10 +387,10 @@ describe('a composer-authored question reaches the ask seam as a #101 question',
   /** A lens with no surface, so askAi exercises the QUESTION BUILDING alone:
    *  what it hands createBlock is the whole of what is under test. */
   function askingLens(provider) {
-    class BareLens extends AbstractEditor {
+    class BareLens extends NoteEditor {
       paint() {}
     }
-    const lens = new BareLens(CONTAINER, { provider })
+    const lens = new BareLens(CONTAINER, { provider, toolbar: null })
     built.push(lens)
     return lens
   }

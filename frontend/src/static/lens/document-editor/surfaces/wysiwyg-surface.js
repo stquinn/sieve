@@ -113,15 +113,13 @@ const NATIVE_UNIT_LABEL = Object.freeze({
   table: 'Table', image: 'Image', horizontalRule: 'Divider', slideMarker: 'Slide Marker',
 })
 
-/**
- * @typedef {import('../../abstract-editor.js').AbstractEditor} AbstractEditor
- */
+/** @typedef {import('../prosemirror-editor.js').ProseMirrorEditor} WysiwygHost */
 
 export class WysiwygSurface extends AbstractSurface {
   /** @type {string} */
   #uuid
 
-  /** @type {AbstractEditor} the parent editor, whose public API this calls
+  /** @type {WysiwygHost} the parent editor, whose public API this calls
    *  directly. Block-domain intents leave through its `provider`. */
   #host
 
@@ -210,7 +208,7 @@ export class WysiwygSurface extends AbstractSurface {
   #replaying = false
 
   /**
-   * @param {AbstractEditor} host — the parent editor (supplies uuid + the public API)
+   * @param {WysiwygHost} host — the parent editor (supplies uuid + the public API)
    */
   constructor(host) {
     super()
@@ -810,7 +808,7 @@ export class WysiwygSurface extends AbstractSurface {
     const triggerHost = caps[LensCapability.BLOCKS]
       ? new BlockMakingProseMirrorHost(port)
       : new ProseMirrorHost(port)
-    this.#triggerPicker = new TriggerPopover(triggerHost, providers, new CaretPlacement())
+    this.#triggerPicker = new TriggerPopover(triggerHost, providers, host.triggerPlacement || new CaretPlacement())
   }
 
   // Tiptap-bound clipboard/drag I/O, wired at editorProps.handlePaste/handleDrop.

@@ -29,7 +29,7 @@ vi.mock('../src/static/lens/document-editor/block-chrome.js', () => ({
 }))
 vi.mock('../src/static/lens/document-editor/surfaces/ai-target-decoration.js', () => ({ AiTargetDecoration: {} }))
 vi.mock('../src/static/lens/document-editor/surfaces/prose-block.js', () => ({ BlockId: {} }))
-// P4.E: AbstractEditor's insert-position math now imports these (was the shared bus).
+// ProseMirrorEditor's insert-position math imports these.
 // Mock them so the insert-position + askAi tests drive the delegation via vi.mocked.
 vi.mock('../src/static/lens/document-editor/surfaces/ai-target.js', () => ({
   blockInsertPos: vi.fn(() => 42),
@@ -47,7 +47,9 @@ import { SieveEditor } from '../src/static/lens/document-editor/editor-shell.js'
 import { SieveTab } from '../src/static/shell/tab.js'
 import { SieveWorkspace } from '../src/static/shell/workspace.js'
 import { AbstractEditor } from '../src/static/lens/abstract-editor.js'
+import { ProseMirrorEditor } from '../src/static/lens/document-editor/prosemirror-editor.js'
 import { NoteEditor } from '../src/static/lens/document-editor/note-editor.js'
+import { ComposerEditor } from '../src/static/lens/document-editor/composer/composer-editor.js'
 import { PromptEditor } from '../src/static/lens/prompt/prompt-editor.js'
 import { AbstractSurface } from '../src/static/lens/document-editor/surfaces/abstract-surface.js'
 import { EditorMode } from '../src/static/lens/document-editor/editor-mode.js'
@@ -183,8 +185,18 @@ function withFakeSurfaces(Base) {
     }
   }
 }
-const FakeSurfaceEditor = withFakeSurfaces(AbstractEditor)
-const FakeSurfaceSieveEditor = withFakeSurfaces(SieveEditor) // P1 alias kept exercised
+// The base names no mode: a lens declares its repertoire. These declare the
+// document editor's two, as plain words, to drive the base's own mode logic.
+const TWO_MODES = Object.freeze(['wysiwyg', 'markdown'])
+function withTwoModes(Base) {
+  return class extends Base {
+    get _modes() { return TWO_MODES }
+    get _defaultMode() { return 'wysiwyg' }
+    get _blockMode() { return 'wysiwyg' }
+  }
+}
+const FakeSurfaceEditor = withFakeSurfaces(withTwoModes(AbstractEditor))
+const FakeSurfaceSieveEditor = withFakeSurfaces(withTwoModes(SieveEditor)) // P1 alias kept exercised
 const FakeSurfaceNoteEditor = withFakeSurfaces(NoteEditor)
 
 // Builds a NoteEditor over a fake container — its ONE business dependency, plus
@@ -209,11 +221,17 @@ describe('SieveEditor (P1 identity, P2.B surface-derived)', () => {
     expect(ed.uuid).toBe('abc-123')
   })
 
-  it('mode defaults to wysiwyg with no surface, and derives from the mounted surface', () => {
+  it('mode is the declared default with no surface, and derives from the mounted surface', () => {
     const ed = new FakeSurfaceSieveEditor('abc-123', { provider: fakeProvider() })
     expect(ed.mode).toBe('wysiwyg')
     ed.presentSurface('markdown', document.createElement('div'), 'body')
     expect(ed.mode).toBe('markdown') // live derivation
+  })
+
+  it('triggerPlacement is the host\'s option, passed through untouched; null when the host chose none', () => {
+    const placement = { place() {} }
+    expect(new FakeSurfaceSieveEditor('abc-123', { provider: fakeProvider(), triggerPlacement: placement }).triggerPlacement).toBe(placement)
+    expect(new FakeSurfaceSieveEditor('abc-123', { provider: fakeProvider() }).triggerPlacement).toBeNull()
   })
 
   it('editorPane is null with no surface and derives from the mounted surface', () => {
@@ -445,11 +463,6 @@ describe('AbstractEditor (P2.A base, P2.B surfaces)', () => {
     expect(ed.isDirty).toBe(true)
     ed.clearDirty()
     expect(ed.isDirty).toBe(false)
-  })
-
-  it('NoteEditor and PromptEditor are AbstractEditor instances', () => {
-    expect(makeNote('n')).toBeInstanceOf(AbstractEditor)
-    expect(new PromptEditor('prompt:p', { provider: wholeContentProvider() })).toBeInstanceOf(AbstractEditor)
   })
 
   it('a whole-content container has no mode to flip to — setMode resolves false', async () => {
@@ -1115,6 +1128,13 @@ describe('NoteEditor.setMode — the flip is ONE lens using both of its containe
     await expect(noteRig('n').ed.setMode('markdown')).resolves.toBe(false)
   })
 
+  it('a mode outside the lens\'s repertoire is refused, and the container is not asked', async () => {
+    const rig = flipRig('markdown')
+    await expect(rig.ed.setMode('outline')).resolves.toBe(false)
+    expect(rig.provider.setContents).not.toHaveBeenCalled()
+    expect(rig.ed.mode).toBe('markdown')
+  })
+
   it('a WHOLE-CONTENT container has no second shape — the flip is refused by TYPE', async () => {
     // The refusal is not a uuid test or a subclass override: the provider carries
     // no block extension, so there is no block tree to present.
@@ -1719,11 +1739,28 @@ describe('the wall is the whole surface (issue #96)', () => {
         expect(typeof it[name]).not.toBe('function')
       }
       // The surviving lens surface is uniform across the hierarchy.
-      for (const name of ['extract', 'flushSave', 'createBlock', 'setRawContent', 'reload', 'onChanged']) {
+      for (const name of ['flushSave', 'createBlock', 'setRawContent', 'reload', 'onChanged']) {
         expect(typeof it[name]).toBe('function')
       }
     }
     note.destroy(); prompt.destroy()
+  })
+
+  // The caret-reading verbs are a ProseMirror editor's; extract and askAi are a note's.
+  const CARET_VERBS = ['captureImageInsert', 'captureInsertPos', 'insertAnchorForBlock', 'insertAnchorAt',
+    'peekInsertAnchor', 'peekInsertAnchorForBlock', 'peekInsertAnchorAt', 'consumeInsertAnchor']
+  const NOTE_VERBS = ['extract', 'askAi']
+  it.each([
+    { lens: 'NoteEditor', make: () => makeNote('n'), proseMirror: true, note: true },
+    { lens: 'ComposerEditor', make: () => new ComposerEditor('d', { provider: fakeProvider() }), proseMirror: true, note: false },
+    { lens: 'PromptEditor', make: () => new PromptEditor('prompt:p', { provider: wholeContentProvider() }), proseMirror: false, note: false },
+  ])('$lens: the hierarchy decides which caret and note verbs exist', ({ make, proseMirror, note }) => {
+    const ed = /** @type {any} */ (make())
+    expect(ed).toBeInstanceOf(AbstractEditor)
+    expect(ed instanceof ProseMirrorEditor).toBe(proseMirror)
+    for (const name of CARET_VERBS) expect(typeof ed[name], name).toBe(proseMirror ? 'function' : 'undefined')
+    for (const name of NOTE_VERBS) expect(typeof ed[name], name).toBe(note ? 'function' : 'undefined')
+    ed.destroy()
   })
 
   it('a lens holds exactly ONE business object, and that object is the provider', () => {
@@ -2128,22 +2165,27 @@ describe('AbstractEditor.togglePresentation (#178)', () => {
   })
 })
 
-// ── AbstractEditor.createBlock — the ONE create path, said in BLOCK IDS ─────────
+// ── ProseMirrorEditor.createBlock — the ONE create path, said in BLOCK IDS ──
 // A lens never computes a document position. What it has is a caret or a drop
 // coordinate; what the wall accepts is an ANCHOR, and the anchor vocabulary is
 // three-valued: `undefined` = "no anchor, append", `null` = "the front", an id =
 // "after that one". Turning an id into a position is the host's arithmetic
 // against its own follower model.
-describe('AbstractEditor.createBlock (block-id-anchored; the host resolves the position)', () => {
+describe('ProseMirrorEditor.createBlock (block-id-anchored; the host resolves the position)', () => {
   beforeEach(() => {
     vi.mocked(blockInsertPos).mockClear().mockImplementation(() => 42)
     vi.mocked(blockIndexForInsert).mockClear().mockReturnValue(3)
     vi.mocked(emptyParagraphAnchor).mockClear().mockReturnValue(null)
   })
 
+  const FakeSurfaceProseMirrorEditor = withFakeSurfaces(withTwoModes(ProseMirrorEditor))
+  function pmRig(provider = fakeProvider()) {
+    return { ed: new FakeSurfaceProseMirrorEditor('u', { provider }), provider }
+  }
+
   /** A wysiwyg lens whose fake editorPane carries a doc of id-bearing children. */
   function wysiwygEd(ids = ['b0', 'b1', 'b2', 'b3', 'b4']) {
-    const rig = noteRig('u')
+    const rig = pmRig()
     rig.ed.presentSurface('wysiwyg', document.createElement('div'), null)
     const children = ids.map((id) => ({ attrs: { id } }))
     rig.ed.surface.editorPaneValue = {
@@ -2199,21 +2241,20 @@ describe('AbstractEditor.createBlock (block-id-anchored; the host resolves the p
   })
 
   it('markdown mode has no caret to read, so a dialog insert APPENDS', () => {
-    const rig = noteRig('u')
+    const rig = pmRig()
     rig.ed.presentSurface('markdown', document.createElement('div'), 'body')
     expect(() => rig.ed.createBlock('smart-card', { href: 'https://x' })).not.toThrow()
     expect(rig.provider.requestAddBlock).toHaveBeenCalledWith('smart-card', { href: 'https://x' }, undefined)
   })
 
   it('a container with no block extension gets no verb at all', () => {
-    const provider = wholeContentProvider()
-    const ed = makeNote('u', { provider })
+    const { ed } = pmRig(wholeContentProvider())
     expect(() => ed.createBlock('code', {})).not.toThrow()
     ed.destroy()
   })
 })
 
-// ── AbstractEditor.askAi — the SINGLE AI-job seam, PURE over context ────────────
+// ── NoteEditor.askAi — the SINGLE AI-job seam, PURE over context ────────────
 // ONE method for both ask and explain (they differ only by type + whether a
 // question exists). It is a pure operator over the SelectionContext the caller
 // PASSES — the context the panel LAST RENDERED, i.e. the label the user saw.
@@ -2221,7 +2262,7 @@ describe('AbstractEditor.createBlock (block-id-anchored; the host resolves the p
 // (context.blockIds) all derive from that context, NEVER a live re-read: a live
 // read would race the label (panel shows target C1, editor acts on drifted C2).
 
-describe('AbstractEditor.askAi (the single AI-job seam, pure over context)', () => {
+describe('NoteEditor.askAi (the single AI-job seam, pure over context)', () => {
   // A wysiwyg lens with a scripted selection descriptor + a fake editorPane
   // carrying the handles askAi touches (state/view/commands). buildAiContext +
   // applyTargetHighlight are module-mocked (top of file).
@@ -2421,7 +2462,7 @@ function pnode({ id = '', text = '', size = 2 } = {}) {
 }
 
 // A minimal surface exposing an injected editorPane + a flushPending recorder, so
-// an AbstractEditor's anchor methods have a live `this.editorPane` / `this.surface`.
+// a ProseMirrorEditor's anchor methods have a live `this.editorPane` / `this.surface`.
 class AnchorSurface extends AbstractSurface {
   constructor(editorPane) { super(); this._tt = editorPane; this.flushCount = 0 }
   get mode() { return 'wysiwyg' }
@@ -2433,7 +2474,7 @@ class AnchorSurface extends AbstractSurface {
   feedSelection() { return null }
 }
 
-class AnchorEditor extends AbstractEditor {
+class AnchorEditor extends withTwoModes(ProseMirrorEditor) {
   constructor(uuid, editorPane, options) { super(uuid, options); this._tt = editorPane }
   _createSurface() { return new AnchorSurface(this._tt) }
 }
@@ -2445,7 +2486,7 @@ function anchorEditor(children = [pnode({ id: 'a', text: 'a' }), pnode({ id: 'b'
   return { ed, pane }
 }
 
-describe('AbstractEditor insert anchors — the caret becomes a block id', () => {
+describe('ProseMirrorEditor insert anchors — the caret becomes a block id', () => {
   beforeEach(() => {
     vi.mocked(blockInsertPos).mockImplementation(() => 42)
     vi.mocked(blockIndexForInsert).mockReturnValue(2)
@@ -2522,7 +2563,7 @@ describe('AbstractEditor insert anchors — the caret becomes a block id', () =>
 //
 // The paragraph being held open is a PLACEHOLDER, not an identity. That is why it
 // stayed its own mechanism when block identity stopped needing one.
-describe('AbstractEditor deferred anchor consume (issue #33)', () => {
+describe('ProseMirrorEditor deferred anchor consume (issue #33)', () => {
   beforeEach(() => {
     vi.mocked(blockInsertPos).mockImplementation(() => 42)
     vi.mocked(blockIndexForInsert).mockReturnValue(2)
@@ -2616,7 +2657,7 @@ describe('AbstractEditor.reload — the host loads, the lens repaints once', () 
     paintContainer(provider) { this.painted = provider }
     replaceBody(body) { this.replaced = body }
   }
-  class ReloadEditor extends AbstractEditor {
+  class ReloadEditor extends withTwoModes(AbstractEditor) {
     _createSurface(mode) { return new ReloadSurface(mode) }
   }
 
@@ -2797,6 +2838,66 @@ describe('SieveWorkspace.copyDocumentAs', () => {
     await w.copyDocumentAs('markdown')
     expect(setText).not.toHaveBeenCalled()
     expect(typeof (/** @type {any} */ (makeNote('n'))).copyAsMarkdown).not.toBe('function')
+  })
+})
+
+describe('SieveWorkspace block verbs — addressed to the active BLOCK editor', () => {
+  /** A workspace whose active tab holds `ed` over a channel-less mount. */
+  function activeWith(ed) {
+    const w = new SieveWorkspace()
+    const tab = w.openTab(ed.uuid)
+    const mount = hostMount(ed.uuid)
+    tab.attachMount(mount)
+    tab.attachEditor(ed)
+    return { w, mount }
+  }
+
+  afterEach(() => { document.body.innerHTML = '' })
+
+  it.each([
+    ['a note', () => makeNote('n'), true],
+    ['a prompt', () => new PromptEditor('prompt:p', { provider: wholeContentProvider() }), false],
+  ])('activeBlockEditor answers for %s only when it can edit blocks', (_label, make, isBlockEditor) => {
+    const ed = make()
+    const { w } = activeWith(ed)
+    expect(w.activeBlockEditor()).toBe(isBlockEditor ? ed : null)
+    ed.destroy()
+  })
+
+  it('with no tab open there is no block editor', () => {
+    expect(new SieveWorkspace().activeBlockEditor()).toBeNull()
+  })
+
+  it('beginFileAttach captures the anchor BEFORE the picker opens, and attachFile spends it once', async () => {
+    document.body.innerHTML = '<input id="tb-attach-input" type="file">'
+    const input = /** @type {HTMLInputElement} */ (document.getElementById('tb-attach-input'))
+    const ed = makeNote('n')
+    const order = []
+    vi.spyOn(ed, 'captureImageInsert').mockImplementation(() => { order.push('capture'); return 'b2' })
+    vi.spyOn(input, 'click').mockImplementation(() => { order.push('picker') })
+    const { w, mount } = activeWith(ed)
+    const paste = vi.spyOn(/** @type {any} */ (mount.provider), 'paste').mockResolvedValue({ outcome: 'block' })
+
+    w.beginFileAttach()
+    expect(order).toEqual(['capture', 'picker'])
+    const file = { mimeType: 'image/png', content: 'data:image/png;base64,AA', filename: 'a.png' }
+    await w.attachFile(file)
+    await w.attachFile(file)
+    expect(paste.mock.calls.map((c) => c[1])).toEqual(['b2', undefined])
+    expect(paste.mock.calls[0][0]).toEqual({
+      kind: 'smart',
+      entries: [{ mimeType: 'image/png', content: 'data:image/png;base64,AA', context: { filename: 'a.png' } }],
+    })
+    ed.destroy()
+  })
+
+  it('beginFileAttach opens no picker without a block editor', () => {
+    document.body.innerHTML = '<input id="tb-attach-input" type="file">'
+    const clicked = vi.spyOn(/** @type {HTMLInputElement} */ (document.getElementById('tb-attach-input')), 'click')
+    const ed = new PromptEditor('prompt:p', { provider: wholeContentProvider() })
+    activeWith(ed).w.beginFileAttach()
+    expect(clicked).not.toHaveBeenCalled()
+    ed.destroy()
   })
 })
 

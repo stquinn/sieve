@@ -11,7 +11,7 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { AbstractEditor } from '../src/static/lens/abstract-editor.js'
-import { ComposerEditor } from '../src/static/lens/composer/composer-editor.js'
+import { ComposerEditor } from '../src/static/lens/document-editor/composer/composer-editor.js'
 import { NoteEditor } from '../src/static/lens/document-editor/note-editor.js'
 import { PromptEditor } from '../src/static/lens/prompt/prompt-editor.js'
 import { EditorMode } from '../src/static/lens/document-editor/editor-mode.js'

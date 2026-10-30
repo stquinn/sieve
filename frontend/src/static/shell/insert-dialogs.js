@@ -5,10 +5,10 @@
 // because the ladder's "Card" rung routes to the SAME smart-card create path.
 //
 // TWO insert paths, because there are genuinely two kinds of outcome:
-//   • Card / Summarise / Fetch MAKE BLOCKS → AbstractEditor.createBlock(kind, attrs)
-//     via workspace.activeTab.editor, which derives the caret block index itself.
+//   • Card / Summarise / Fetch MAKE BLOCKS → NoteEditor.createBlock(kind, attrs)
+//     via workspace.activeBlockEditor(), which derives the caret anchor itself.
 //   • Link is an INLINE MARK at the caret, which has no block to create →
-//     AbstractEditor.insertLink(url), the Go paste round-trip that fetches the title.
+//     NoteEditor.insertLink(url), the Go paste round-trip that fetches the title.
 
 // Dialog copy that more than one rung needs.
 const MSG = Object.freeze({
@@ -48,11 +48,6 @@ export class InsertDialogs {
     if (urlInput) urlInput.value = prefillUrl || ''
     if (!dialog.open) dialog.showModal()
     if (urlInput) urlInput.focus()
-  }
-
-  /** @returns {any} the live active editor, or null */
-  #activeEditor() {
-    return (this.#ws.activeTab && this.#ws.activeTab.editor) || null
   }
 
   /** @returns {HTMLDialogElement|null} */
@@ -180,14 +175,12 @@ export class InsertDialogs {
   }
 
   /**
-   * Inserts a smart-card block at the caret. Requires an active editor with
-   * either an editorPane or markdown mode.
+   * Inserts a smart-card block at the caret of the active block editor.
    * @param {string} href
    */
   #createCard(href) {
-    const ed = this.#activeEditor()
+    const ed = this.#ws.activeBlockEditor()
     if (!ed) return
-    if (!ed.editorPane && ed.mode !== 'markdown') return
     ed.createBlock('smart-card', { href })
   }
 
@@ -203,21 +196,20 @@ export class InsertDialogs {
    * @returns {boolean} whether the insert was dispatched
    */
   #insertLink(href) {
-    const ed = this.#activeEditor()
-    if (!ed || !ed.editorPane) return false
+    const ed = this.#ws.activeBlockEditor()
+    if (!ed || ed.mode === 'markdown') return false
     ed.insertLink(href)
     return true
   }
 
   /**
-   * Inserts a web-clip block at the caret.
+   * Inserts a web-clip block at the caret of the active block editor.
    * @param {string} source
    * @param {string} mode
    */
   #internalize(source, mode) {
-    const ed = this.#activeEditor()
+    const ed = this.#ws.activeBlockEditor()
     if (!ed) return
-    if (!ed.editorPane && ed.mode !== 'markdown') return
     ed.createBlock('web-clip', { source, mode })
   }
 

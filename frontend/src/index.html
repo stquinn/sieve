@@ -640,14 +640,11 @@
           var reader = new FileReader();
           reader.onload = function(ev) {
             if (!ev.target || !ev.target.result) return;
-            // Use the ANCHOR captured BEFORE the file dialog opened (the dialog
-            // blurred the editor, so re-deriving the caret now would land at the end).
             // Reached through the Workspace rather than by importing anything: this
-            // inline script is not a module. The created block arrives as a container
-            // change, so there is nothing to act on here — only a failure.
+            // inline script is not a module. The Workspace holds the anchor it
+            // captured before the picker opened.
             ws.attachFile(
-              { mimeType: file.type, content: ev.target.result, filename: file.name },
-              window.__sieveCapturedInsertAnchor
+              { mimeType: file.type, content: ev.target.result, filename: file.name }
             ).catch(function(err) { console.error('[toolbar] file attach failed', err); });
           };
           reader.readAsDataURL(file);

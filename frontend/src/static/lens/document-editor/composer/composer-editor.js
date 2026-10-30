@@ -20,12 +20,15 @@
 // flush alone: pending edits reach the draft container, and persisting is a
 // local no-op, because a draft persists nowhere.
 
-import { AbstractEditor } from '../abstract-editor.js'
-import { EditorMode } from '../document-editor/editor-mode.js'
-import { WysiwygSurface } from '../document-editor/surfaces/wysiwyg-surface.js'
-import { LensCapability } from '../../contract/lens-capabilities.js'
+import { ProseMirrorEditor } from '../prosemirror-editor.js'
+import { EditorMode } from '../editor-mode.js'
+import { WysiwygSurface } from '../surfaces/wysiwyg-surface.js'
+import { LensCapability } from '../../../contract/lens-capabilities.js'
 
-export class ComposerEditor extends AbstractEditor {
+/** The one surface a draft has. */
+const COMPOSER_MODES = Object.freeze([EditorMode.WYSIWYG])
+
+export class ComposerEditor extends ProseMirrorEditor {
   /** @type {Array<() => void>} who is told the message is finished */
   #submitListeners = []
 
@@ -40,9 +43,12 @@ export class ComposerEditor extends AbstractEditor {
 
   /**
    * @protected
-   * @returns {import('../document-editor/editor-mode.js').EditorModeValue}
+   * @returns {import('../editor-mode.js').EditorModeValue}
    */
   get _defaultMode() { return EditorMode.WYSIWYG }
+
+  /** @protected @returns {ReadonlyArray<import('../editor-mode.js').EditorModeValue>} */
+  get _modes() { return COMPOSER_MODES }
 
   /** @override — no invitation at all. The footer's chords, the Send button and
    *  the focus ring already say this is an input; ghost text inside it would be
@@ -52,7 +58,7 @@ export class ComposerEditor extends AbstractEditor {
 
   /**
    * @protected
-   * @returns {Readonly<import('../../contract/lens-capabilities.js').LensCapabilities>}
+   * @returns {Readonly<import('../../../contract/lens-capabilities.js').LensCapabilities>}
    */
   get _innateCapabilities() {
     return Object.freeze(Object.assign({}, super._innateCapabilities, {
@@ -63,8 +69,8 @@ export class ComposerEditor extends AbstractEditor {
   /**
    * WYSIWYG ONLY — `mode` is deliberately ignored; a draft has no other surface.
    * @protected
-   * @param {import('../document-editor/editor-mode.js').EditorModeValue} mode
-   * @returns {import('../document-editor/surfaces/abstract-surface.js').AbstractSurface}
+   * @param {import('../editor-mode.js').EditorModeValue} mode
+   * @returns {import('../surfaces/abstract-surface.js').AbstractSurface}
    */
   _createSurface(mode) {
     return new WysiwygSurface(this)
