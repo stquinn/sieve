@@ -569,7 +569,7 @@ Mechanism — **no new server operation**: the two deletes are ordinary TRACKED
 prose edits (the same undo sanctity as the empty-paragraph consume above), the
 block-sync is flushed so Go's shadow applies them before the create arrives on
 the same socket, and the create is the existing additive `extract` at the freed
-index. `AbstractEditor.extract` owns it (`sourceRange` ⇒ `#consumeSourceRange`);
+index. `NoteEditor.extract` owns it (`sourceRange` ⇒ `#consumeSourceRange`);
 the MENU keeps the user-facing verb it was offered ("Convert to …") — which wire
 op carries it is not the user's concern. This is the frontend twin of Go's
 `SupportedActions.asAdditive` demotion for a source nested inside a composite.

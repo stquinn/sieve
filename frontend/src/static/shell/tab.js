@@ -10,8 +10,6 @@ import { PromptEditor } from '../lens/prompt/prompt-editor.js'
 import { EditorMode } from '../lens/document-editor/editor-mode.js'
 import { MountBinding } from './mount-binding.js'
 
-/** @typedef {import('../lens/document-editor/editor-mode.js').EditorModeValue} EditorModeValue */
-
 export class SieveTab {
   /** @type {string} */
   #uuid
@@ -23,7 +21,7 @@ export class SieveTab {
    * The tab's editing mode — the CLIENT-SIDE record that survives a tab switch:
    * the editor is destroyed on switch, the Tab identity persists. The server
    * persists mode independently, so this is a hint, not the source of truth.
-   * @type {EditorModeValue}
+   * @type {string}
    */
   #mode = EditorMode.WYSIWYG
 
@@ -69,13 +67,13 @@ export class SieveTab {
   /** @returns {string} */
   get uuid() { return this.#uuid }
 
-  /** @returns {EditorModeValue} */
+  /** @returns {string} */
   get mode() { return this.#mode }
 
   /**
    * Records the tab's editing mode. Needed on the load path because
    * `mode-changed` does not fire on the initial surface present.
-   * @param {EditorModeValue} mode
+   * @param {string} mode
    */
   recordMode(mode) { this.#mode = mode }
 

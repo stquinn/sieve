@@ -26,12 +26,11 @@ import { ContractViolation } from '../contract/sieve-block.js'
 import { LensCapability } from '../contract/lens-capabilities.js'
 
 /**
- * The workspace verbs this catalog fronts — the one-call dialog opener the
- * toolbar and the context menu already call, and the active Tab the Attach
- * File verb reads its editor from.
+ * The workspace verbs this catalog fronts — the one-call dialog opener and the
+ * file attach the toolbar and the context menu already call.
  * @typedef {object} InsertDialogHost
  * @property {(url?: string) => void} openWebClipDialog
- * @property {{editor: import('../lens/abstract-editor.js').AbstractEditor|null}|null} activeTab
+ * @property {() => void} beginFileAttach
  */
 
 export class MacroCatalog {
@@ -70,26 +69,9 @@ export class MacroCatalog {
         description: 'A file — the paste pipeline decides its block',
         icon: MacroCatalog.#attachIcon(),
         requires: LensCapability.BLOCKS,
-        action: () => MacroCatalog.#attachFile(dialogs),
+        action: () => dialogs.beginFileAttach(),
       }),
     ])
-  }
-
-  /**
-   * Mirrors the toolbar's Attach File button exactly: capture the insert
-   * anchor before the OS file picker opens (opening it blurs the editor and
-   * the caret would re-derive to document end), stash it where the app
-   * shell's change handler reads it, and click the hidden file input. This
-   * macro never names or creates a block kind — the paste-match registry
-   * decides that from the bytes the picker returns.
-   * @param {InsertDialogHost} dialogs
-   */
-  static #attachFile(dialogs) {
-    const editor = dialogs.activeTab && dialogs.activeTab.editor
-    if (!editor) return
-    /** @type {any} */ (window).__sieveCapturedInsertAnchor = editor.captureImageInsert()
-    const input = document.getElementById('tb-attach-input')
-    if (input) /** @type {HTMLInputElement} */ (input).click()
   }
 
   /** @returns {string} the toolbar's own paperclip icon, read the same way it does */

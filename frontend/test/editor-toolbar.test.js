@@ -176,9 +176,8 @@ function fakeEditor({ mode = 'wysiwyg', surface = null } = {}) {
     setMode(m) { this.mode = m },
     setSurface(s) { this._surface = s },
     // P4.F: the insert buttons call the editor's self-sufficient create path
-    // (createBlock) / captureImageInsert directly — no create-block CustomEvent.
+    // (createBlock) directly — no create-block CustomEvent.
     createBlock: vi.fn(),
-    captureImageInsert: vi.fn(),
   }
 }
 
@@ -342,20 +341,18 @@ describe('EditorToolbar composition (P4.D)', () => {
     expect(ed.createBlock).not.toHaveBeenCalled()
   })
 
-  it('the attach button calls editor.captureImageInsert then clicks the file input', () => {
+  it('the attach button asks the workspace to begin the attach', () => {
     const host = mountHost()
-    const input = document.createElement('input')
-    input.id = 'tb-attach-input'
-    document.body.appendChild(input)
-    const clicked = vi.fn()
-    input.addEventListener('click', clicked)
-    const ed = fakeEditor({ mode: 'wysiwyg', surface: { toolbarContents: () => [] } })
-    new EditorToolbar(ed, host).mount()
-    // The attach button is the 4th in the insert group (code, diagram, clip, attach).
-    const attachBtn = host.querySelectorAll('.tb-group')[1].querySelectorAll('button')[3]
-    attachBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    expect(ed.captureImageInsert).toHaveBeenCalledTimes(1)
-    expect(clicked).toHaveBeenCalledTimes(1)
+    const beginFileAttach = vi.fn()
+    const prevWs = window.sieveWorkspace
+    window.sieveWorkspace = { beginFileAttach }
+    try {
+      new EditorToolbar(fakeEditor({ mode: 'wysiwyg', surface: { toolbarContents: () => [] } }), host).mount()
+      // The attach button is the 4th in the insert group (code, diagram, clip, attach).
+      const attachBtn = host.querySelectorAll('.tb-group')[1].querySelectorAll('button')[3]
+      attachBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      expect(beginFileAttach).toHaveBeenCalledTimes(1)
+    } finally { window.sieveWorkspace = prevWs }
   })
 
   it('names no block kind — the paste-match registry routes the file', () => {

@@ -2,7 +2,7 @@
 // (shell/ask-panel.js), constructed once, wiring the STRUCTURAL #ask-panel DOM
 // (index.html) — never rebuilding it. It owns the target-chip debounce, the
 // focus round-trip (ws.getSelectionContext/setPosition), the pinned flag, and
-// the ws.onSelectionUpdate subscription. On SEND it targets ws.activeTab.editor
+// the ws.onSelectionUpdate subscription. On SEND it targets ws.activeBlockEditor()
 // and calls the ONE editor seam (editor.askAi) — never a workspace proxy.
 //
 // #118 fix round 4: the panel has no header — no label, no ✕ button. The box
@@ -172,6 +172,7 @@ function fakeWorkspace(editor) {
     get activeTab() {
       return this._editor ? { editor: this._editor, mount: this._mount } : null
     },
+    activeBlockEditor() { return this._editor || null },
     onSelectionUpdate: (fn) => { subs.push(fn); return () => {} },
     emit: (ctx) => subs.forEach((fn) => fn(ctx)),
     getSelectionContext: vi.fn(() => (editor ? editor.getSelectionContext() : null)),
@@ -294,7 +295,7 @@ describe('AskPanel — DOM wiring + open/close/toggle', () => {
 })
 
 describe('AskPanel — F1 send targets the ACTIVE editor with the harvested question', () => {
-  it('send calls activeTab.editor.askAi with the DRAFT AS A LIST and retires the draft', () => {
+  it('send calls the active block editor\'s askAi with the DRAFT AS A LIST and retires the draft', () => {
     mountPanelDom({ open: true })
     const editor = fakeEditor()
     const { composer } = build(fakeWorkspace(editor))
@@ -331,7 +332,7 @@ describe('AskPanel — F1 send targets the ACTIVE editor with the harvested ques
     expect(editor.askAi).not.toHaveBeenCalled()
   })
 
-  it('send targets whatever editor is active AT SEND (re-pointed via activeTab)', () => {
+  it('send targets whatever editor is active AT SEND (re-pointed via activeBlockEditor)', () => {
     mountPanelDom({ open: true })
     const first = fakeEditor()
     const ws = fakeWorkspace(first)

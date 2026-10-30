@@ -19,13 +19,13 @@ import { ASSET_DRAG_TYPE } from '../contract/container-provider.js'
 /** @typedef {import('../contract/container-provider.js').ContentEntry} ContentEntry */
 
 export class AssetPlacement {
-  /** @type {{activeTab: any}} */ #ws
+  /** @type {{activeTab: any, activeBlockEditor: () => any}} */ #ws
   /** @type {EventTarget} */ #root
   /** @type {(e: Event) => void} */ #onClick
   /** @type {(e: Event) => void} */ #onDragStart
 
   /**
-   * @param {{activeTab: any}} ws the workspace whose active tab receives placements
+   * @param {{activeTab: any, activeBlockEditor: () => any}} ws the workspace whose active tab receives placements
    * @param {EventTarget} [root] the stable ancestor listened on (the document in the app)
    */
   constructor(ws, root) {
@@ -81,7 +81,7 @@ export class AssetPlacement {
     const row = button && button.closest('[data-asset-row]')
     if (!row) return
     const entries = this.entriesFor(row)
-    const editor = this.#ws.activeTab && this.#ws.activeTab.editor
+    const editor = this.#ws.activeBlockEditor()
     if (!entries || !editor) return
     editor.pasteEntries(entries)
   }

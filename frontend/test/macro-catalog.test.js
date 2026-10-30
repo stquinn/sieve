@@ -110,19 +110,10 @@ describe('MacroCatalog — accepting a URL verb', () => {
 })
 
 describe('MacroCatalog — accepting Attach File', () => {
-  /** A workspace-shaped host with an active Tab whose editor records the
-   *  toolbar's own capture call. */
-  function attachHost(anchor = 'anchor-block-id') {
-    return Object.assign(dialogHost(), {
-      activeTab: { editor: { captureImageInsert: vi.fn(() => anchor) } },
-    })
+  /** A workspace-shaped host recording the attach it is asked to begin. */
+  function attachHost() {
+    return Object.assign(dialogHost(), { beginFileAttach: vi.fn() })
   }
-
-  beforeEach(() => { document.body.innerHTML = '<input id="tb-attach-input" type="file">' })
-  afterEach(() => {
-    document.body.innerHTML = ''
-    delete (/** @type {any} */ (window)).__sieveCapturedInsertAnchor
-  })
 
   it('clears the typed token FIRST, exactly like the URL verbs', () => {
     const host = new RecordingDocumentHost()
@@ -130,29 +121,15 @@ describe('MacroCatalog — accepting Attach File', () => {
     expect(host.replaced).toEqual([[6, 10, '']])
   })
 
-  it('captures the insert anchor and clicks the hidden file input, mirroring the toolbar', () => {
-    const dialogs = attachHost('the-anchor')
-    const input = /** @type {HTMLInputElement} */ (document.getElementById('tb-attach-input'))
-    const clickSpy = vi.spyOn(input, 'click')
+  it('asks the workspace to begin the attach — the same verb the toolbar button calls', () => {
+    const dialogs = attachHost()
     byName(new MacroCatalog(dialogs), 'image').run(/** @type {any} */ (new RecordingDocumentHost()), tokenFor(null))
-    expect(dialogs.activeTab.editor.captureImageInsert).toHaveBeenCalledTimes(1)
-    expect(/** @type {any} */ (window).__sieveCapturedInsertAnchor).toBe('the-anchor')
-    expect(clickSpy).toHaveBeenCalledTimes(1)
+    expect(dialogs.beginFileAttach).toHaveBeenCalledTimes(1)
   })
 
   it('creates nothing itself — the paste pipeline decides the block', () => {
     const host = new RecordingDocumentHost()
     byName(new MacroCatalog(attachHost()), 'image').run(/** @type {any} */ (host), tokenFor(null))
     expect(host.created).toEqual([])
-  })
-
-  it('no-ops without an active editor, having already cleared the token', () => {
-    const host = new RecordingDocumentHost()
-    const dialogs = Object.assign(dialogHost(), { activeTab: null })
-    const input = /** @type {HTMLInputElement} */ (document.getElementById('tb-attach-input'))
-    const clickSpy = vi.spyOn(input, 'click')
-    byName(new MacroCatalog(dialogs), 'image').run(/** @type {any} */ (host), tokenFor(null))
-    expect(host.replaced).toEqual([[6, 10, '']])
-    expect(clickSpy).not.toHaveBeenCalled()
   })
 })

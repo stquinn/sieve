@@ -188,17 +188,12 @@ export class AskPanel {
    *  Explain is caret-contextual, so "what is at the caret now" IS the target
    *  and no target chip is involved. The editor owns the markdown abort. */
   explainActive() {
-    const ed = this.#activeEditor()
+    const ed = this.#ws.activeBlockEditor()
     if (ed) ed.askAi({ type: 'explain', context: ed.getSelectionContext() })
   }
 
   /** @returns {ComposerMount|null} the draft socket this panel writes in */
   get composer() { return this.#composer }
-
-  /** @returns {any} the live active editor, or null */
-  #activeEditor() {
-    return (this.#ws.activeTab && this.#ws.activeTab.editor) || null
-  }
 
   /**
    * Takes up the composer's three streams.
@@ -379,7 +374,7 @@ export class AskPanel {
       return
     }
 
-    const ed = this.#activeEditor()
+    const ed = this.#ws.activeBlockEditor()
     if (!ed) return
     const context = this.#lastContext || ed.getSelectionContext()
     // NO separate attachments: the harvested list already carries them as the

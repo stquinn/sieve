@@ -14,7 +14,7 @@ import { EditorMode } from './editor-mode.js'
 import { getSieveIcon } from '../../renderers/block-kinds.js'
 
 export class EditorToolbar {
-  /** @type {import('../abstract-editor.js').AbstractEditor} */
+  /** @type {import('./note-editor.js').NoteEditor} */
   #editor
   /** @type {HTMLElement|null} the #editor-toolbar host (null → all methods no-op) */
   #host = null
@@ -28,11 +28,11 @@ export class EditorToolbar {
   #modeButton = null
   /** @type {(() => void)|null} unsubscribe from the editor's raw event stream */
   #unsub = null
-  /** @type {import('./editor-mode.js').EditorModeValue|null} the mode the surface section was last built for */
+  /** @type {string|null} the mode the surface section was last built for */
   #renderedMode = null
 
   /**
-   * @param {import('../abstract-editor.js').AbstractEditor} editor
+   * @param {import('./note-editor.js').NoteEditor} editor
    * @param {HTMLElement|null} [host] — the #editor-toolbar host (defaults to the DOM element)
    */
   constructor(editor, host) {
@@ -188,7 +188,7 @@ export class EditorToolbar {
       }),
       new ToolbarButton({
         id: 'tb-attach-btn', iconHtml: EditorToolbar.#icon('paperclip'), title: 'Attach a file',
-        onClick: () => this.#attachFile(),
+        onClick: () => { const w = ws(); w && w.beginFileAttach() },
       }),
     ])
 
@@ -222,22 +222,6 @@ export class EditorToolbar {
   #insertBlock(kind) {
     if (this.#editor.mode === EditorMode.MARKDOWN) return
     this.#editor.createBlock(kind, {})
-  }
-
-  /**
-   * Attach a file. ONE affordance for every file type: the button never names a
-   * block kind — it hands bytes and a mime type to smart-paste and the paste-match
-   * registry decides, so adding a kind extends this button without touching it.
-   *
-   * The insert ANCHOR is captured BEFORE the dialog opens, because opening it blurs
-   * the editor and the caret would re-derive to the end of the document. It is
-   * stashed on the window because the picker's change handler lives in the app
-   * shell's inline script, which is not a module.
-   */
-  #attachFile() {
-    /** @type {any} */ (window).__sieveCapturedInsertAnchor = this.#editor.captureImageInsert()
-    const input = document.getElementById('tb-attach-input')
-    if (input) /** @type {HTMLInputElement} */ (input).click()
   }
 
   /** @param {string} key @returns {string} the SieveIcons SVG for a key, or '' */

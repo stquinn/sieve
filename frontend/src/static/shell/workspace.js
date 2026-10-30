@@ -57,6 +57,11 @@ export class SieveWorkspace {
   /** @type {ReturnType<typeof setTimeout>|null} lazy scroll-persist debounce, for the active tab only */
   #scrollPersistTimer = null
 
+  /** @type {string|null|undefined} the insert anchor `beginFileAttach` captured
+   *  before the file picker blurred the editor, held for `attachFile` to spend.
+   *  `undefined` is "append", as every insert anchor reads it. */
+  #pendingAttachAnchor = undefined
+
   /** @type {ContainerTransport} the app-wide wire owner, constructed HERE and
    *  reachable only through the DocumentService composed over it. Never window.*. */
   #blockService
@@ -347,6 +352,14 @@ export class SieveWorkspace {
    *  @returns {import('../lens/abstract-editor.js').AbstractEditor|null} */
   get activeEditor() {
     return this.#activeTab ? this.#activeTab.editor : null
+  }
+
+  /** The active editor when it can edit blocks — the one a block verb (a caret
+   *  anchor, an Ask, a placement) is addressed to — or null.
+   *  @returns {import('../lens/document-editor/note-editor.js').NoteEditor|null} */
+  activeBlockEditor() {
+    const ed = this.activeEditor
+    return ed && ed.getCapabilities().blocks ? /** @type {any} */ (ed) : null
   }
 
   /** Every lens this host has mounted right now — the active tab's, and the
@@ -658,13 +671,30 @@ export class SieveWorkspace {
   }
 
   /**
-   * The toolbar's file-attach path. It lives here because the picker's dialog
-   * blurs the editor — the ANCHOR was captured before it opened and comes back in.
+   * Opens the file picker for an attach, capturing the insert ANCHOR first:
+   * opening the picker blurs the editor, and the caret would re-derive to the end
+   * of the document. NON-consuming, so a cancelled pick leaves the blank line.
+   * It names no block kind: the paste-match registry decides that from the bytes.
+   * No-op without a block-capable active editor.
+   */
+  beginFileAttach() {
+    const editor = this.activeBlockEditor()
+    if (!editor) return
+    this.#pendingAttachAnchor = editor.captureImageInsert()
+    const input = document.getElementById('tb-attach-input')
+    if (input) /** @type {HTMLInputElement} */ (input).click()
+  }
+
+  /**
+   * Attaches the file the picker returned, after the anchor `beginFileAttach`
+   * captured, and spends that anchor. The created block arrives as a container
+   * change; the promise reports only a failure.
    * @param {{mimeType: string, content: string, filename: string}} file
-   * @param {string|null|undefined} afterBlockId
    * @returns {Promise<unknown>}
    */
-  attachFile(file, afterBlockId) {
+  attachFile(file) {
+    const afterBlockId = this.#pendingAttachAnchor
+    this.#pendingAttachAnchor = undefined
     const mount = this.#activeTab ? this.#activeTab.mount : null
     const provider = mount ? /** @type {any} */ (mount.provider) : null
     if (!provider || typeof provider.paste !== 'function') return Promise.resolve()
