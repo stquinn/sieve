@@ -227,11 +227,10 @@ func (a documentAssets) filename(src string) string {
 	return filepath.Base(trimmed)
 }
 
-// url is the served route the document renders an asset through. Export markdown
-// is read OUTSIDE Sieve, so a stored src has to leave as a working URL — and
-// both kinds that hold bytes must spell that route the same way. An http(s) src
-// is already one; a src that is not an asset reference has no route, and yields
-// "".
+// url is the served route the document renders an asset through, spelled the same
+// way for both kinds that hold bytes. An http(s) src is already one; a src that
+// is not an asset reference has no route, and yields "". An export writes the
+// route back as the asset's address (block.DocView).
 func (a documentAssets) url(uuid, src string) string {
 	src = strings.TrimSpace(src)
 	if src == "" {

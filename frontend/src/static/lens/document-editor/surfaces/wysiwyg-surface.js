@@ -49,6 +49,7 @@ import { SlideMarker } from './slide-marker.js'
 import { SlideFocus } from './slide-focus.js'
 import { BlockImage } from './block-image.js'
 import { ProseText } from './prose-text.js'
+import { ProseLink } from './prose-link.js'
 import { BlockDropTarget } from './block-drop-target.js'
 import { ASSET_DRAG_TYPE } from '../../../contract/container-provider.js'
 import { BlockIdentity } from '../../../renderers/block-identity.js'
@@ -84,7 +85,10 @@ const FORMATTING_GROUPS = Object.freeze([
 //     running application. Opening is Mod+Click, owned app-globally by
 //     shell/workspace.js's document capture listener.
 //   linkOnPaste:false / autolink:false — GO owns paste, and TipTap must not race
-//     it by minting its own marks from pasted or typed text.
+//     it by minting its own marks from pasted or typed text. The Link mark's
+//     paste RULES are not governed by either flag, so the surface installs the
+//     mark with `addPasteRules` emptied (`Link.extend`), and StarterKit's own
+//     copy is switched off.
 //   HTMLAttributes — seeds the MARK's attribute defaults, so nulling target/rel
 //     drops the default target="_blank": a new-window request is
 //     meaningless-to-hazardous in a webview. There is deliberately no `title`
@@ -314,7 +318,8 @@ export class WysiwygSurface extends AbstractSurface {
         BlockId,
         // trailingNode:true — caret contract clause 1 (no dead-ends). A
         // Gapcursor-only bet fails for non-atom read-only containers.
-        T.StarterKit.configure({ document: false, text: false, link: LINK_OPTIONS, codeBlock: false, trailingNode: true, history: { depth: 10000, newGroupDelay: 500 } }),
+        T.StarterKit.configure({ document: false, text: false, link: false, codeBlock: false, trailingNode: true, history: { depth: 10000, newGroupDelay: 500 } }),
+        T.Link.extend({ addPasteRules: function () { return [] } }).configure(LINK_OPTIONS),
         T.Placeholder.configure({ placeholder: function (p) { return p.editor.isEmpty ? self.#host.placeholder : '' } }),
         BlockChrome,
         AiTargetDecoration,
@@ -906,8 +911,9 @@ export class WysiwygSurface extends AbstractSurface {
   /**
    * @override — pastes a clipboard's text views through the SAME pipeline a
    * keyboard paste takes. A container with no paste query, a caret in a table
-   * cell, a declined paste and a failed one all paste natively; a caret in a
-   * read-only region pastes nothing.
+   * cell, a declined paste and a failed one all paste natively, except that a
+   * bare URL in a cell is pasted as a link; a caret in a read-only region pastes
+   * nothing.
    * @param {string} text its text/plain view
    * @param {string} [html] its text/html view, where the platform offers one
    * @returns {Promise<'block'|'content'|'none'>}
@@ -915,7 +921,9 @@ export class WysiwygSurface extends AbstractSurface {
   pasteText(text, html = '') {
     const ed = this.#editorPane
     if (!ed || (!text && !html) || caretInReadOnlyRegion(ed)) return Promise.resolve('none')
-    const provider = caretInTableCell(ed) ? null : this.#pasteProvider()
+    const inCell = caretInTableCell(ed)
+    if (inCell && ProseLink.pasteURL(ed.view, text)) return Promise.resolve('none')
+    const provider = inCell ? null : this.#pasteProvider()
     if (!provider) {
       this.#replayNatively(html, text)
       return Promise.resolve('none')
@@ -1147,9 +1155,12 @@ export class WysiwygSurface extends AbstractSurface {
     }
 
     // Caret inside a table cell: the cell takes text, never a block, so the
-    // native paste (prosemirror-tables' cell merge) runs instead.
+    // native paste (prosemirror-tables' cell merge) runs instead; a bare URL is
+    // the one exception, pasted as a link over exactly its characters.
     if (caretInTableCell(this.#editorPane)) {
-      return false
+      if (!ProseLink.pasteURL(this.#editorPane.view, event.clipboardData.getData('text/plain'))) return false
+      event.preventDefault()
+      return true
     }
 
     // Caret inside a read-only region: its node view's paste guard consumes it.

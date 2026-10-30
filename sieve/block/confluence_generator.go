@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"sieve/ident"
+	"sieve/sieve/domain"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
@@ -425,20 +426,61 @@ func (s *storageNodes) autoLink(w util.BufWriter, source []byte, n ast.Node, ent
 }
 
 // image writes a web image as an image attached by URL — <img> is not storage
-// format — and renders any other image as its alt text alone.
-func (s *storageNodes) image(w util.BufWriter, _ []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
-	dest := n.(*ast.Image).Destination
-	if !s.g.followable(string(dest), false) {
-		// The alt text's own inline nodes render in the image's place.
-		return ast.WalkContinue, nil
-	}
+// format — and any other image as the text `[image: name]`, because a Sieve asset
+// would need a page attachment and a clipboard paste cannot carry one. name is
+// the alt text, else the title, else the key of a sieve:// asset address; with
+// none of them the text is `[image]`.
+func (s *storageNodes) image(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
 	if !entering {
 		return ast.WalkContinue, nil
 	}
-	_, _ = w.WriteString(`<ac:image><ri:url ri:value="`)
-	_, _ = w.Write(util.EscapeHTML(util.URLEscape(dest, true)))
-	_, _ = w.WriteString(`"/></ac:image>`)
+	img := n.(*ast.Image)
+	if s.g.followable(string(img.Destination), false) {
+		_, _ = w.WriteString(`<ac:image><ri:url ri:value="`)
+		_, _ = w.Write(util.EscapeHTML(util.URLEscape(img.Destination, true)))
+		_, _ = w.WriteString(`"/></ac:image>`)
+		return ast.WalkSkipChildren, nil
+	}
+	_, _ = w.WriteString("[image")
+	if name := s.imageName(source, img); name != "" {
+		_, _ = w.WriteString(": ")
+		_, _ = w.Write(util.EscapeHTML([]byte(name)))
+	}
+	_, _ = w.WriteString("]")
 	return ast.WalkSkipChildren, nil
+}
+
+// imageName is the name an image placeholder shows: its alt text, else its
+// title, else the asset key its sieve:// destination names, else "".
+func (s *storageNodes) imageName(source []byte, img *ast.Image) string {
+	if alt := strings.TrimSpace(s.plainText(source, img)); alt != "" {
+		return alt
+	}
+	if title := strings.TrimSpace(string(img.Title)); title != "" {
+		return title
+	}
+	if addr, err := domain.ParseAddress(string(img.Destination)); err == nil {
+		return addr.Leaf
+	}
+	return ""
+}
+
+// plainText is the text of n's inline descendants with their markup dropped.
+func (s *storageNodes) plainText(source []byte, n ast.Node) string {
+	var b strings.Builder
+	_ = ast.Walk(n, func(c ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		switch t := c.(type) {
+		case *ast.Text:
+			b.Write(t.Segment.Value(source))
+		case *ast.String:
+			b.Write(t.Value)
+		}
+		return ast.WalkContinue, nil
+	})
+	return b.String()
 }
 
 // strikethrough writes the span Confluence's storage subset carries; <del> is

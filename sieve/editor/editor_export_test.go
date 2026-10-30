@@ -58,6 +58,55 @@ func TestEditorService_Export_CallerOwnsFilter(t *testing.T) {
 	}
 }
 
+// An export writes an image's stored address, never the app URL the editor
+// renders it through: Markdown as `sieve://` addresses — a smart-image's and one
+// embedded in prose alike — and each Confluence edition as a `[image: name]`
+// placeholder, since an attachment cannot travel on the clipboard.
+func TestEditorService_Export_ImagesLeaveAsAddresses(t *testing.T) {
+	resetRegistry()
+	block.RegisterProcessor(processors.NewSmartImageProcessor(block.BlockServices{}))
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+
+	doc, _ := ds.New()
+	uuid := doc.UUID()
+	doc.SetBody([]byte("see ![](/ui/assets/" + uuid + "/inline.png)\n\n" +
+		"```smart-image\nid: si-1\nsrc: sieve://" + uuid + "/chart.png\nalt: A chart\nstatus: COMPLETE\n```"))
+	doc, _ = ds.Save(doc)
+	if err := es.Open(uuid); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer es.Close(uuid)
+
+	for _, tc := range []struct {
+		name      string
+		generator block.ExportGenerator
+		want      []string
+	}{
+		{"markdown", block.MarkdownGenerator{}, []string{
+			"see ![](sieve://" + uuid + "/inline.png)", "![A chart](sieve://" + uuid + "/chart.png)"}},
+		{"confluence", block.NewConfluenceGenerator(), []string{"<p>see [image: inline.png]</p>", "<p>[image: A chart]</p>"}},
+		{"confluence cloud", block.NewConfluenceCloudGenerator(), []string{"<p>see [image: inline.png]</p>", "<p>[image: A chart]</p>"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := es.Export(uuid, nil, tc.generator)
+			if err != nil {
+				t.Fatalf("Export: %v", err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("export lacks %q:\n%s", want, got)
+				}
+			}
+			for _, absent := range []string{"/ui/assets", "ac:image"} {
+				if strings.Contains(got, absent) {
+					t.Errorf("export carries %q:\n%s", absent, got)
+				}
+			}
+		})
+	}
+}
+
 var updateGolden = flag.Bool("update", false, "rewrite golden files from the current output")
 
 // cloudLocalID matches a local id the Cloud generator minted, in either slot.

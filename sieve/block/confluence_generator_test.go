@@ -91,7 +91,12 @@ func TestConfluenceGenerator_Transpile(t *testing.T) {
 		{"reference link and its definition", "[a][r]\n\n[r]: https://x.example", `<p><a href="https://x.example">a</a></p>`},
 		{"strikethrough", "~~a~~", `<p><span style="text-decoration: line-through;">a</span></p>`},
 		{"web image", "![alt](https://x.example/i.png)", `<p><ac:image><ri:url ri:value="https://x.example/i.png"/></ac:image></p>`},
-		{"asset image is its alt text", "![*alt*](assets/i.png)", "<p><em>alt</em></p>"},
+		{"asset image is a placeholder naming its alt text", "![*alt*](assets/i.png)", "<p>[image: alt]</p>"},
+		{"placeholder falls back to the title", `![](sieve://00000000-0000-7000-8000-000000000000/i.png "Chart")`, "<p>[image: Chart]</p>"},
+		{"placeholder falls back to the asset key", "![](sieve://00000000-0000-7000-8000-000000000000/i.png)", "<p>[image: i.png]</p>"},
+		{"placeholder with no name", "![](assets/i.png)", "<p>[image]</p>"},
+		{"placeholder name is escaped", "![a & b < c](assets/i.png)", "<p>[image: a &amp; b &lt; c]</p>"},
+		{"placeholder inside a sentence", "see ![x](assets/i.png) here", "<p>see [image: x] here</p>"},
 
 		{"inline br is closed", "a<br>b", "<p>a<br />b</p>"},
 		{"a br on its own line is closed", "a\n\n<br>\n\nb", "<p>a</p>\n<br />\n<p>b</p>"},
