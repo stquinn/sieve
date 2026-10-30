@@ -316,23 +316,23 @@ Code:
 {content}
 `
 
-const DefaultWebClipFetchPrompt = `Please retrieve the content at the following URL and return it as clean, well-structured markdown. Preserve all meaningful content including headings, lists, tables, and code blocks.
+const DefaultWebClipFetchPrompt = `Call fetch_page for this URL and read the asset it returns. If Sieve cannot retrieve it, use whatever other means you have (your own fetch tool, your configured MCP servers). If nothing can retrieve it, answer with the first line UNRETRIEVABLE: {reason} and nothing else.
+
+Please return the retrieved content as clean, well-structured markdown. Preserve all meaningful content including headings, lists, tables, and code blocks.
 Please ensure to grab any relevant images and include those as well.
-Do not summarise - preserve content as is.  Your job is to simply retrieve the document and translate to markdown as per the instructions above.
+Do not summarise - preserve content as is. Your job is to simply retrieve the document and translate to markdown as per the instructions above.
 URL: {source}
 `
 
-const DefaultWebClipSummarisePrompt = `Please retrieve the content at the following URL and return a
-  concise markdown summary targeted to the context of the document below. Focus on aspects of the
-  retrieved content that are most relevant to what is already in the document. Omit navigation,
-  boilerplate, author bios, and related links.
-  Only include an image if it directly illustrates a key point in your summary and cannot be adequately
-  conveyed in text alone, and it relates to the document context below.
-  URL: {source}
+const DefaultWebClipSummarisePrompt = `Call fetch_page for this URL and read the asset it returns. If Sieve cannot retrieve it, use whatever other means you have (your own fetch tool, your configured MCP servers). If nothing can retrieve it, answer with the first line UNRETRIEVABLE: {reason} and nothing else.
 
-  Current document context:
-  {document}
-  `
+Please return a concise markdown summary of the retrieved content targeted to the context of the document below. Focus on aspects of the retrieved content that are most relevant to what is already in the document. Omit navigation, boilerplate, author bios, and related links.
+Only include an image if it directly illustrates a key point in your summary and cannot be adequately conveyed in text alone, and it relates to the document context below.
+URL: {source}
+
+Current document context:
+{document}
+`
 
 const DefaultBtwPrompt = `You are answering a quick side-question a writer asked ("/btw") while working on a document. Answer the question concisely and directly, in markdown.
 

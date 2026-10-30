@@ -282,6 +282,14 @@ func claudeScopedFileRule(verb, dir string) string {
 func claudeToolRules(profile domain.ContainmentProfile, cwd, libraryDir string) []string {
 	scopeDirs := fileScopeDirs(profile, cwd, libraryDir)
 	var rules []string
+	seen := make(map[string]bool)
+	addRule := func(r string) {
+		if r == "" || seen[r] {
+			return
+		}
+		seen[r] = true
+		rules = append(rules, r)
+	}
 	for _, t := range profile.Tools {
 		verb := t.NameFor("claude")
 		if verb == "" {
@@ -289,18 +297,20 @@ func claudeToolRules(profile domain.ContainmentProfile, cwd, libraryDir string) 
 		}
 		switch t.Type {
 		case "network":
-			rules = append(rules, networkRules(verb, t.Constraint, func(d string) string {
+			for _, r := range networkRules(verb, t.Constraint, func(d string) string {
 				return verb + "(domain:" + d + ")"
-			})...)
+			}) {
+				addRule(r)
+			}
 		case "other":
 			if c := strings.TrimSpace(t.Constraint); c != "" {
-				rules = append(rules, c)
+				addRule(c)
 			} else {
-				rules = append(rules, verb)
+				addRule(verb)
 			}
 		default: // file
 			for _, dir := range scopeDirs {
-				rules = append(rules, claudeScopedFileRule(verb, dir))
+				addRule(claudeScopedFileRule(verb, dir))
 			}
 		}
 	}

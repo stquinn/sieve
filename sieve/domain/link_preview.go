@@ -12,3 +12,10 @@ type LinkPreviewResult struct {
 	OGImageURL  string
 	SiteName    string
 }
+
+// ReadablePage holds the extracted title and markdown body of a fetched HTML page.
+type ReadablePage struct {
+	Title    string
+	Markdown string
+}
+

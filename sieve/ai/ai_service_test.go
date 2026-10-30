@@ -2,9 +2,12 @@ package ai
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"sieve/sieve/domain"
+	"sieve/sieve/services"
+	"sieve/store/filestore"
 )
 
 // timeoutFor reads only settings.PromptTimeouts and settings.CLITimeoutLong, so a
@@ -112,3 +115,119 @@ func TestAIService_DescribeImage_resolvesTheSrcThroughTheResolver(t *testing.T) 
 		})
 	}
 }
+
+type fakeDocMCPEndpoint struct {
+	url     string
+	lastDoc string
+}
+
+func (f *fakeDocMCPEndpoint) Endpoint() (string, string) {
+	return f.url, "tok-unscoped"
+}
+
+func (f *fakeDocMCPEndpoint) EndpointForDoc(docUUID string) (string, string) {
+	f.lastDoc = docUUID
+	return f.url, "tok-doc-" + docUUID
+}
+
+func TestAIService_RunWebClip_PromptAssemblyAndDocScopedProfile(t *testing.T) {
+	cap := &captureRunner{ret: "# Suzuka Schedule\n\nGates open at 08:00."}
+	svc := newSmartTestService(t, cap)
+	fs, err := filestore.NewFileStore(svc.storePath, "testhost")
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	ds, err := services.NewDocumentService(fs)
+	if err != nil {
+		t.Fatalf("NewDocumentService: %v", err)
+	}
+	svc.documents = ds
+	mcpEp := &fakeDocMCPEndpoint{url: "http://127.0.0.1:41234/mcp"}
+	svc.SetMCPEndpoint(mcpEp)
+
+	doc, err := ds.New()
+	if err != nil {
+		t.Fatalf("New doc: %v", err)
+	}
+	doc.SetBody([]byte("# My Trip Notes"))
+	doc, err = ds.Save(doc)
+	if err != nil {
+		t.Fatalf("Save doc: %v", err)
+	}
+	uuid := doc.UUID()
+	sourceURL := "https://example.com/suzuka"
+
+	for _, mode := range []string{"fetch", "summarise"} {
+		t.Run(mode, func(t *testing.T) {
+			title, content, err := svc.RunWebClip(uuid, "wc-1", sourceURL, mode, "# My Trip Notes")
+			if err != nil {
+				t.Fatalf("RunWebClip(%s): %v", mode, err)
+			}
+			if title != "Suzuka Schedule" || !strings.Contains(content, "Gates open at 08:00.") {
+				t.Errorf("got title=%q content=%q", title, content)
+			}
+			if mcpEp.lastDoc != uuid {
+				t.Errorf("EndpointForDoc called with %q, want %q", mcpEp.lastDoc, uuid)
+			}
+			for _, want := range []string{
+				sourceURL,
+				"fetch_page",
+				"UNRETRIEVABLE:",
+			} {
+				if !strings.Contains(cap.prompt, want) {
+					t.Errorf("mode %s prompt missing %q:\n%s", mode, want, cap.prompt)
+				}
+			}
+			if mode == "summarise" && !strings.Contains(cap.prompt, "# My Trip Notes") {
+				t.Errorf("summarise prompt missing document context:\n%s", cap.prompt)
+			}
+			args := buildBaseArgs(cap.dialect, cap.model, cap.prompt, cap.profile, cap.cwd, cap.libraryDir)
+			if cfg := flagValue(args, "--mcp-config"); !strings.Contains(cfg, "Bearer tok-doc-"+uuid) {
+				t.Errorf("--mcp-config missing document-scoped bearer token: %s", cfg)
+			}
+			if allow := flagValue(args, "--allowedTools"); !strings.Contains(allow, "mcp__sieve__*") {
+				t.Errorf("--allowedTools missing mcp__sieve__*: %s", allow)
+			}
+		})
+	}
+
+	if got := svc.PageAssetAddress(uuid, sourceURL); got != "" {
+		t.Errorf("PageAssetAddress before asset write = %q, want empty", got)
+	}
+	key := ds.PageAssetKey(sourceURL)
+	if _, err := ds.SaveAsset(doc, key, []byte("# Suzuka Schedule\n")); err != nil {
+		t.Fatalf("SaveAsset: %v", err)
+	}
+	wantAddr := "sieve://" + uuid + "/" + key
+	if got := svc.PageAssetAddress(uuid, sourceURL); got != wantAddr {
+		t.Errorf("PageAssetAddress after asset write = %q, want %q", got, wantAddr)
+	}
+}
+
+func TestAIService_RunWebClip_UnretrievableSentinelReturnsError(t *testing.T) {
+	cap := &captureRunner{ret: "\n  UNRETRIEVABLE: HTTP 403 Forbidden from suzuka-circuit.jp\nExtra line ignored\n"}
+	svc := newSmartTestService(t, cap)
+	fs, err := filestore.NewFileStore(svc.storePath, "testhost")
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	ds, err := services.NewDocumentService(fs)
+	if err != nil {
+		t.Fatalf("NewDocumentService: %v", err)
+	}
+	svc.documents = ds
+	doc, _ := ds.New()
+	doc, _ = ds.Save(doc)
+
+	title, content, err := svc.RunWebClip(doc.UUID(), "wc-1", "https://suzuka-circuit.jp/en", "summarise", "")
+	if err == nil {
+		t.Fatalf("expected error on UNRETRIEVABLE sentinel, got title=%q content=%q", title, content)
+	}
+	if err.Error() != "HTTP 403 Forbidden from suzuka-circuit.jp" {
+		t.Errorf("error = %q, want %q", err.Error(), "HTTP 403 Forbidden from suzuka-circuit.jp")
+	}
+	if title != "" || content != "" {
+		t.Errorf("expected empty title and content on UNRETRIEVABLE error, got title=%q content=%q", title, content)
+	}
+}
+

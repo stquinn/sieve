@@ -6,18 +6,18 @@ import (
 	"sieve/sieve/domain"
 )
 
-// AssetURIMigrator rewrites every asset spelling in smart-image (src) and
-// diagram (svgAsset) blocks — a served route, a legacy route, a bare or
-// `.assets/` filename, a relative `/{key}` — to the absolute sieve address
-// `sieve://{container}/{key}` it names, resolving container-less spellings
-// against the document. An attr already in that form is left untouched.
+// AssetURIMigrator rewrites every asset spelling in smart-image (src),
+// diagram (svgAsset) and web-clip (page) blocks — a served route, a legacy
+// route, a bare or `.assets/` filename, a relative `/{key}` — to the absolute
+// sieve address `sieve://{container}/{key}` it names, resolving container-less
+// spellings against the document. An attr already in that form is left untouched.
 //
-// It MUST stay gated to Kind == "smart-image" and Kind == "diagram" so it never
-// collides with ReferenceMigrator or alters kinds whose payload does not denote
-// a Sieve asset.
+// It MUST stay gated to Kind == "smart-image", Kind == "diagram" and
+// Kind == "web-clip" so it never collides with ReferenceMigrator or alters
+// kinds whose payload does not denote a Sieve asset.
 type AssetURIMigrator struct{}
 
-// Migrate returns the tree with smart-image and diagram asset references
+// Migrate returns the tree with smart-image, diagram and web-clip asset references
 // rewritten to absolute sieve addresses, plus whether anything changed. The input is never
 // mutated.
 func (m AssetURIMigrator) Migrate(blocks []SieveBlock, documentUUID string) ([]SieveBlock, bool) {
@@ -35,6 +35,11 @@ func (m AssetURIMigrator) Migrate(blocks []SieveBlock, documentUUID string) ([]S
 			}
 		case "diagram":
 			if rewritten, dirty := m.migrateAttr(b.Attrs, "svgAsset", documentUUID); dirty {
+				b.Attrs = rewritten
+				changed = true
+			}
+		case "web-clip":
+			if rewritten, dirty := m.migrateAttr(b.Attrs, "page", documentUUID); dirty {
 				b.Attrs = rewritten
 				changed = true
 			}

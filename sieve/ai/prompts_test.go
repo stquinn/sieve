@@ -168,3 +168,21 @@ func TestDefaultBtwPrompt_RoutesEachRetrievalVerbToItsArgument(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultWebClipPrompts_NameRetrievalOrderAndSentinel(t *testing.T) {
+	for name, prompt := range map[string]string{
+		"web-clip-fetch":     DefaultWebClipFetchPrompt,
+		"web-clip-summarise": DefaultWebClipSummarisePrompt,
+	} {
+		for _, want := range []string{
+			"Call fetch_page for this URL and read the asset it returns.",
+			"If Sieve cannot retrieve it, use whatever other means you have (your own fetch tool, your configured MCP servers).",
+			"If nothing can retrieve it, answer with the first line UNRETRIEVABLE:",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("%s prompt missing %q:\n%s", name, want, prompt)
+			}
+		}
+	}
+}
+

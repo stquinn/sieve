@@ -45,6 +45,12 @@ type URIInput struct {
 	URI string `json:"uri" jsonschema:"a Sieve coordinate, e.g. sieve://{uuid}; copy it exactly as it was given (an attachment manifest lists them) rather than constructing one"`
 }
 
+// FetchPageInput is the argument set for fetch_page.
+type FetchPageInput struct {
+	URL string `json:"url" jsonschema:"the http or https URL of the web page to fetch and store as a markdown asset in the job's document"`
+}
+
+
 // NoteSummary is one search hit: metadata only, never a body.
 type NoteSummary struct {
 	UUID     string   `json:"uuid"`
@@ -292,7 +298,102 @@ func (s *Server) listFacets(_ context.Context, _ *mcpsdk.CallToolRequest, _ stru
 	return nil, out, nil
 }
 
+// fetchPage retrieves an http or https URL, extracts its readable article as
+// markdown via LinkPreviewService, and stores it as a URL-keyed asset in the
+// calling job's document. A second call for the same URL in the same document
+// reuses the stored asset without re-fetching.
+//
+// Writing is strictly bounded to the document bound to the caller's session
+// context. Any retrieval or boundary failure returns a structured
+// "cannot retrieve: {reason}" error so the AI can fall back to other tools.
+func (s *Server) fetchPage(ctx context.Context, _ *mcpsdk.CallToolRequest, in FetchPageInput) (*mcpsdk.CallToolResult, NodeContent, error) {
+	docUUID := DocumentFromContext(ctx)
+	if docUUID == "" {
+		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: no target document for this session")
+	}
+	rawURL := strings.TrimSpace(in.URL)
+	if rawURL == "" {
+		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: empty URL")
+	}
+	if s.documents == nil || s.nodes == nil {
+		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: document store is not wired")
+	}
+	doc, err := s.documents.LoadByUUID(docUUID)
+	if err != nil {
+		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: document %q not found: %w", docUUID, err)
+	}
+
+	key := s.documents.PageAssetKey(rawURL)
+	addr := domain.NewLeafAddress(doc.UUID(), key)
+
+	for _, owned := range doc.Storable().Owns() {
+		if owned.Key() == key {
+			node, err := s.nodes.Resolve(addr)
+			if err != nil {
+				return nil, NodeContent{}, fmt.Errorf("cannot retrieve: %w", err)
+			}
+			title := s.headingTitle(string(owned.Body()))
+			if title == "" {
+				title = node.Title
+			}
+			return nil, NodeContent{
+				URI:     node.URI,
+				ID:      node.ID,
+				Kind:    node.Kind,
+				Title:   title,
+				Summary: node.Summary,
+				Body:    node.Body,
+				Path:    node.Path,
+				Bytes:   node.Bytes,
+			}, nil
+		}
+	}
+
+	lp := s.linkPreview
+	if lp == nil {
+		lp = services.NewLinkPreviewService()
+	}
+	page, err := lp.FetchReadable(rawURL, s.fetchTimeout)
+	if err != nil {
+		logger.Warn("sieve mcp: fetch_page refused", "url", rawURL, "doc", doc.UUID(), "err", err)
+		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: %w", err)
+	}
+	if _, err := s.documents.SaveAsset(doc, key, []byte(page.Markdown)); err != nil {
+		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: save asset: %w", err)
+	}
+	node, err := s.nodes.Resolve(addr)
+	if err != nil {
+		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: %w", err)
+	}
+	title := page.Title
+	if title == "" {
+		title = node.Title
+	}
+	logger.Info("sieve mcp: fetch_page", "url", rawURL, "doc", doc.UUID(), "asset", key, "bytes", node.Bytes)
+	return nil, NodeContent{
+		URI:     node.URI,
+		ID:      node.ID,
+		Kind:    node.Kind,
+		Title:   title,
+		Summary: node.Summary,
+		Body:    node.Body,
+		Path:    node.Path,
+		Bytes:   node.Bytes,
+	}, nil
+}
+
+func (s *Server) headingTitle(md string) string {
+	for _, line := range strings.Split(md, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "# ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "# "))
+		}
+	}
+	return ""
+}
+
 // ── Scan + projection helpers ─────────────────────────────────────────────────
+
 
 // scannedNote is a loaded library note plus its derived folder path.
 type scannedNote struct {

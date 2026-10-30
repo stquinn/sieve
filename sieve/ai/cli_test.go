@@ -146,3 +146,22 @@ func TestBuildArgs_Model(t *testing.T) {
 		t.Errorf("claude --model = %q, want sonnet; args=%v", flagValue(args, "--model"), args)
 	}
 }
+
+func TestBuildArgs_Claude_DeduplicatesToolRules(t *testing.T) {
+	p := domain.DefaultContainmentProfile()
+	// Duplicate the baseline Fetch (WebFetch) and Read grants.
+	p.Tools = append(p.Tools,
+		domain.ToolGrant{Type: "network", Label: "Fetch", Names: map[string]string{"claude": "WebFetch"}},
+		domain.ToolGrant{Type: "file", Label: "Read", Names: map[string]string{"claude": "Read"}},
+	)
+	args := buildBaseArgs("claude", "", "p", p, "", libDir)
+	got := flagValue(args, "--allowedTools")
+	seen := make(map[string]int)
+	for _, tok := range strings.Split(got, ",") {
+		seen[tok]++
+		if seen[tok] > 1 {
+			t.Errorf("claude --allowedTools contains duplicate rule %q in %q", tok, got)
+		}
+	}
+}
+
