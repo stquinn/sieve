@@ -90,7 +90,7 @@
 
         # The release number, bumped with each tag (a flake cannot read tags);
         # the commit is appended so a Nix-built binary states what it was built from.
-        sieveVersion = "0.37.10";
+        sieveVersion = "0.37.11";
         sieveBuildVersion = "${sieveVersion}+${self.shortRev or self.dirtyShortRev or "dirty"}";
 
         sieve = pkgs.buildGoModule {
