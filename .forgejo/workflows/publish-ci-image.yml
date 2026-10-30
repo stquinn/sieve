@@ -51,10 +51,14 @@ jobs:
           echo "building $REGISTRY/$IMAGE:$TAG"
           nix shell nixpkgs#docker-client -c docker build --pull -t "$IMAGE:$TAG" -f Containerfile .
           mkdir -p /var/tmp # skopeo spools the image here
-          nix run nixpkgs#skopeo -- --insecure-policy copy \
-            --dest-creds "$REGISTRY_USER:$REGISTRY_TOKEN" \
-            --dest-compress-format zstd \
-            "docker-daemon:$IMAGE:$TAG" "docker://$REGISTRY/$IMAGE:$TAG"
+          # docker save, not skopeo's docker-daemon transport: that transport reaches a remote
+          # daemon only through its own flags and wants TLS files in a layout dind does not
+          # write; the docker client reads the job's DOCKER_HOST and certs, as the build did.
+          nix shell nixpkgs#docker-client -c docker save "$IMAGE:$TAG" \
+            | nix run nixpkgs#skopeo -- --insecure-policy copy \
+                --dest-creds "$REGISTRY_USER:$REGISTRY_TOKEN" \
+                --dest-compress-format zstd \
+                docker-archive:/dev/stdin "docker://$REGISTRY/$IMAGE:$TAG"
 
   probe:
     needs: publish
