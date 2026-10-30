@@ -406,19 +406,39 @@ func (copilotBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryD
 // --add-dir), and network grants become URL-axis args (--allow-url <domains> or
 // --allow-all-urls when unrestricted). A grant with no copilot name is omitted
 // from the tool axis (fail closed) — e.g. baseline Fetch, whose copilot column is
-// intentionally empty because it belongs on the URL axis.
+// intentionally empty because it belongs on the URL axis. A name, domain or
+// --allow-all-urls already rendered by an earlier grant is not repeated.
 func copilotToolAxes(profile domain.ContainmentProfile) (toolNames, urlArgs []string) {
+	seen := make(map[string]bool)
+	first := func(key string) bool {
+		if seen[key] {
+			return false
+		}
+		seen[key] = true
+		return true
+	}
 	for _, t := range profile.Tools {
 		if t.Type == "network" {
-			if domains := splitConstraint(t.Constraint); len(domains) > 0 {
-				urlArgs = append(urlArgs, "--allow-url", strings.Join(domains, ","))
-			} else {
-				urlArgs = append(urlArgs, "--allow-all-urls")
+			domains := splitConstraint(t.Constraint)
+			if len(domains) == 0 {
+				if first("--allow-all-urls") {
+					urlArgs = append(urlArgs, "--allow-all-urls")
+				}
+				continue
+			}
+			var fresh []string
+			for _, d := range domains {
+				if first("url:" + d) {
+					fresh = append(fresh, d)
+				}
+			}
+			if len(fresh) > 0 {
+				urlArgs = append(urlArgs, "--allow-url", strings.Join(fresh, ","))
 			}
 			continue
 		}
 		// file + other: a plain tool name, path-gated by --add-dir.
-		if name := t.NameFor("copilot"); name != "" {
+		if name := t.NameFor("copilot"); name != "" && first("tool:"+name) {
 			toolNames = append(toolNames, name)
 		}
 	}

@@ -169,17 +169,10 @@ func TestAIService_RunWebClip_PromptAssemblyAndDocScopedProfile(t *testing.T) {
 			if mcpEp.lastDoc != uuid {
 				t.Errorf("EndpointForDoc called with %q, want %q", mcpEp.lastDoc, uuid)
 			}
-			for _, want := range []string{
-				sourceURL,
-				"fetch_page",
-				"UNRETRIEVABLE:",
-			} {
-				if !strings.Contains(cap.prompt, want) {
-					t.Errorf("mode %s prompt missing %q:\n%s", mode, want, cap.prompt)
-				}
-			}
-			if mode == "summarise" && !strings.Contains(cap.prompt, "# My Trip Notes") {
-				t.Errorf("summarise prompt missing document context:\n%s", cap.prompt)
+			template, _ := svc.prompts.GetPromptContent("web-clip-" + mode)
+			want := strings.ReplaceAll(strings.ReplaceAll(template, "{source}", sourceURL), "{document}", "# My Trip Notes")
+			if cap.prompt != want {
+				t.Errorf("mode %s prompt = %q, want the filled template %q", mode, cap.prompt, want)
 			}
 			args := buildBaseArgs(cap.dialect, cap.model, cap.prompt, cap.profile, cap.cwd, cap.libraryDir)
 			if cfg := flagValue(args, "--mcp-config"); !strings.Contains(cfg, "Bearer tok-doc-"+uuid) {
@@ -190,44 +183,4 @@ func TestAIService_RunWebClip_PromptAssemblyAndDocScopedProfile(t *testing.T) {
 			}
 		})
 	}
-
-	if got := svc.PageAssetAddress(uuid, sourceURL); got != "" {
-		t.Errorf("PageAssetAddress before asset write = %q, want empty", got)
-	}
-	key := ds.PageAssetKey(sourceURL)
-	if _, err := ds.SaveAsset(doc, key, []byte("# Suzuka Schedule\n")); err != nil {
-		t.Fatalf("SaveAsset: %v", err)
-	}
-	wantAddr := "sieve://" + uuid + "/" + key
-	if got := svc.PageAssetAddress(uuid, sourceURL); got != wantAddr {
-		t.Errorf("PageAssetAddress after asset write = %q, want %q", got, wantAddr)
-	}
 }
-
-func TestAIService_RunWebClip_UnretrievableSentinelReturnsError(t *testing.T) {
-	cap := &captureRunner{ret: "\n  UNRETRIEVABLE: HTTP 403 Forbidden from suzuka-circuit.jp\nExtra line ignored\n"}
-	svc := newSmartTestService(t, cap)
-	fs, err := filestore.NewFileStore(svc.storePath, "testhost")
-	if err != nil {
-		t.Fatalf("NewFileStore: %v", err)
-	}
-	ds, err := services.NewDocumentService(fs)
-	if err != nil {
-		t.Fatalf("NewDocumentService: %v", err)
-	}
-	svc.documents = ds
-	doc, _ := ds.New()
-	doc, _ = ds.Save(doc)
-
-	title, content, err := svc.RunWebClip(doc.UUID(), "wc-1", "https://suzuka-circuit.jp/en", "summarise", "")
-	if err == nil {
-		t.Fatalf("expected error on UNRETRIEVABLE sentinel, got title=%q content=%q", title, content)
-	}
-	if err.Error() != "HTTP 403 Forbidden from suzuka-circuit.jp" {
-		t.Errorf("error = %q, want %q", err.Error(), "HTTP 403 Forbidden from suzuka-circuit.jp")
-	}
-	if title != "" || content != "" {
-		t.Errorf("expected empty title and content on UNRETRIEVABLE error, got title=%q content=%q", title, content)
-	}
-}
-

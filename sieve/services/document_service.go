@@ -223,7 +223,8 @@ func attachUniqueAsset(ms store.MetaStorable, asset store.AssetStorable) {
 	ms.AttachAsset(asset)
 }
 
-// PageAssetKey returns the deterministic markdown asset filename for rawURL.
+// PageAssetKey returns the deterministic HTML asset filename for rawURL,
+// page-{slug}-{hash}.html.
 // Two calls for the same URL address the same asset key within a document.
 func (ds *DocumentService) PageAssetKey(rawURL string) string {
 	trimmed := strings.TrimSpace(rawURL)
@@ -231,9 +232,9 @@ func (ds *DocumentService) PageAssetKey(rawURL string) string {
 	shortHash := hex.EncodeToString(sum[:6])
 	slug := ds.urlSlug(trimmed)
 	if slug == "" {
-		return "page-" + shortHash + ".md"
+		return "page-" + shortHash + ".html"
 	}
-	return "page-" + slug + "-" + shortHash + ".md"
+	return "page-" + slug + "-" + shortHash + ".html"
 }
 
 // PageAssetAddress returns the absolute sieve://{doc}/{key} coordinate of the
@@ -288,7 +289,6 @@ func (ds *DocumentService) urlSlug(rawURL string) string {
 	}
 	return strings.Trim(b.String(), "-")
 }
-
 
 // IncrementFocusCount increments the focus_count in metadata and saves it.
 func (ds *DocumentService) IncrementFocusCount(n domain.Document) (domain.Document, error) {

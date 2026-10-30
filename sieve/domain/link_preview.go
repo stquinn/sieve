@@ -13,9 +13,10 @@ type LinkPreviewResult struct {
 	SiteName    string
 }
 
-// ReadablePage holds the extracted title and markdown body of a fetched HTML page.
+// ReadablePage is a fetched page's readable article: its title, and HTML, a
+// complete HTML document whose <title> carries Title and whose <body> is the
+// extracted article content.
 type ReadablePage struct {
-	Title    string
-	Markdown string
+	Title string
+	HTML  string
 }
-

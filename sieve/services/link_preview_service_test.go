@@ -498,27 +498,52 @@ func TestFetchReadable_ExtractsArticleAndDropsBoilerplate(t *testing.T) {
 	if page.Title != "Verstappen Wins in Suzuka" {
 		t.Errorf("Title = %q, want %q", page.Title, "Verstappen Wins in Suzuka")
 	}
+	const head = `<!doctype html><html><head><meta charset="utf-8"><title>Verstappen Wins in Suzuka</title></head><body>`
+	if !strings.HasPrefix(page.HTML, head) || !strings.HasSuffix(page.HTML, "</body></html>") {
+		t.Errorf("HTML is not the titled document wrapper;\ngot:\n%s", page.HTML)
+	}
 	for _, want := range []string{
-		"# Verstappen Wins in Suzuka",
 		"Max Verstappen controlled the Japanese Grand Prix from pole position",
-		"## Race Highlights",
-		"[championship standings](" + srv.URL + "/sport/f1/standings)",
-		"- Pit stop window opened on lap 16",
-		"- Fastest lap set on the final stint",
+		"Race Highlights",
+		`href="` + srv.URL + `/sport/f1/standings"`,
+		"Pit stop window opened on lap 16",
+		"Fastest lap set on the final stint",
 	} {
-		if !strings.Contains(page.Markdown, want) {
-			t.Errorf("Markdown missing %q;\ngot:\n%s", want, page.Markdown)
+		if !strings.Contains(page.HTML, want) {
+			t.Errorf("HTML missing %q;\ngot:\n%s", want, page.HTML)
 		}
 	}
 	for _, boilerplate := range []string{
 		"Subscribe Now",
+		"Trending gossip",
 		"window.track",
 		"cookie-banner",
 		"Privacy Policy",
 	} {
-		if strings.Contains(page.Markdown, boilerplate) {
-			t.Errorf("Markdown retained boilerplate %q;\ngot:\n%s", boilerplate, page.Markdown)
+		if strings.Contains(page.HTML, boilerplate) {
+			t.Errorf("HTML retained boilerplate %q;\ngot:\n%s", boilerplate, page.HTML)
 		}
+	}
+}
+
+// A page Readability strips to no text is kept as its <body>, less scripts and
+// styles, under the head title.
+func TestFetchReadable_FallsBackToBodyWhenReadabilityFindsNoArticle(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><head><title>Status &amp; Uptime</title></head><body>` +
+			`<script>boot()</script><style>.x{}</style><footer>All systems operational</footer></body></html>`))
+	}))
+	defer srv.Close()
+
+	page, err := NewLinkPreviewService().FetchReadable(srv.URL, 5*time.Second)
+	if err != nil {
+		t.Fatalf("FetchReadable: %v", err)
+	}
+	want := `<!doctype html><html><head><meta charset="utf-8"><title>Status &amp; Uptime</title></head>` +
+		`<body><footer>All systems operational</footer></body></html>`
+	if page.Title != "Status & Uptime" || page.HTML != want {
+		t.Errorf("FetchReadable = {%q, %q}, want {%q, %q}", page.Title, page.HTML, "Status & Uptime", want)
 	}
 }
 
@@ -583,4 +608,3 @@ func TestFetchReadable_RefusesNonHTMLStatusTimeoutAndEmpty(t *testing.T) {
 		})
 	}
 }
-

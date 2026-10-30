@@ -15,6 +15,9 @@ import (
 type DocumentsPort interface {
 	LoadByUUID(uuid string) (domain.Document, error)
 	Save(d domain.Document) (domain.Document, error)
+	// PageAssetAddress returns the absolute sieve://{uuid}/{key} address of the
+	// page asset fetched for rawURL when document uuid holds one, else empty.
+	PageAssetAddress(uuid, rawURL string) string
 }
 
 // AssetsPort is the binary-asset surface processors use. It carries both halves

@@ -65,16 +65,6 @@ func (s *AIService) SetMCPEndpoint(e MCPEndpoint) { s.mcp = e }
 // SetRunner overrides the CLI execution seam.
 func (s *AIService) SetRunner(r CLIRunner) { s.runner = r }
 
-// PageAssetAddress returns the canonical sieve://{uuid}/{key} address when the
-// deterministic page asset for source exists in document uuid, or empty string
-// otherwise.
-func (s *AIService) PageAssetAddress(uuid, source string) string {
-	if s.documents == nil {
-		return ""
-	}
-	return s.documents.PageAssetAddress(uuid, source)
-}
-
 // profile returns the containment floor for a CLI call: the default baseline,
 // with the builtin Sieve MCP grant's runtime URL + per-call token filled in when
 // an endpoint is wired and reachable. When no endpoint is running the builtin
@@ -591,28 +581,6 @@ func (s *AIService) extractFirstHeading(content string) string {
 	return ""
 }
 
-// unretrievableReason checks whether the first non-empty line of a web-clip
-// response is the UNRETRIEVABLE: {reason} sentinel, returning the extracted
-// reason when present.
-func (s *AIService) unretrievableReason(raw string) (string, bool) {
-	const prefix = "UNRETRIEVABLE:"
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, prefix) {
-			reason := strings.TrimSpace(strings.TrimPrefix(line, prefix))
-			if reason == "" {
-				reason = "page could not be retrieved"
-			}
-			return reason, true
-		}
-		return "", false
-	}
-	return "", false
-}
-
 // RunWebClip retrieves a URL via the configured CLI using the overridable prompt
 // for the given mode ("web-clip-fetch" or "web-clip-summarise"), runs image
 // localisation on the result, and returns (title, content, error).
@@ -647,9 +615,6 @@ func (s *AIService) RunWebClip(uuid, id, source, mode, docContent string) (title
 	raw, err := s.runner.Run(promptName, binary, dialect, prompt, settings.Model, s.timeoutFor(settings, promptName), cwd, s.profileForDoc(uuid), s.storePath)
 	if err != nil {
 		return "", "", err
-	}
-	if reason, ok := s.unretrievableReason(raw); ok {
-		return "", "", fmt.Errorf("%s", reason)
 	}
 
 	content = localiseImages(raw, docDir, uuid)

@@ -168,7 +168,7 @@ func TestIndexBlocks_labelsAndHoldersFromOneWalk(t *testing.T) {
 	const other = "0194820a-0000-7d34-8000-00000000d0c2"
 	docBody := "```smart-image\nid: img-blk-1\nsrc: sieve://" + doc + "/0194820a-81c2-7d34.png\ntitle: Architecture\n```\n\n" +
 		"```diagram\nid: diag-blk-1\nsvgAsset: /0194820a-9999-7d34.svg\nsummary: Flowchart\n```\n\n" +
-		"```web-clip\nid: clip-blk-1\npage: sieve://" + doc + "/page-suzuka.md\ntitle: Suzuka Report\n```\n\n" +
+		"```web-clip\nid: clip-blk-1\npage: sieve://" + doc + "/page-suzuka.html\ntitle: Suzuka Report\n```\n\n" +
 		"```reference\nid: ref-blk-1\nuri: sieve://" + doc + "/日本.pdf\ncache:\n  title: Plan.pdf\n```\n\n" +
 		"```reference\nid: ref-blk-3\nuri: sieve://" + doc + "/caf%C3%A9.pdf\ncache:\n  title: Menu.pdf\n```\n\n" +
 		"```reference\nid: ref-blk-2\nuri: sieve://" + other + "/foreign.pdf\ncache:\n  title: Foreign\n```\n"
@@ -185,7 +185,7 @@ func TestIndexBlocks_labelsAndHoldersFromOneWalk(t *testing.T) {
 		{"0194820a-81c2-7d34", "Architecture", ""},
 		{"0194820a-9999-7d34.svg", "", "Flowchart"},
 		{"0194820a-9999-7d34", "", "Flowchart"},
-		{"page-suzuka.md", "Suzuka Report", ""},
+		{"page-suzuka.html", "Suzuka Report", ""},
 		{"page-suzuka", "Suzuka Report", ""},
 		{"日本.pdf", "Plan.pdf", ""},
 		{"café.pdf", "Menu.pdf", ""},
@@ -198,7 +198,7 @@ func TestIndexBlocks_labelsAndHoldersFromOneWalk(t *testing.T) {
 
 	file := func(name string) store.Storable { return fakeAsset{ref: "/ui/assets/" + doc + "/" + name, blkID: name} }
 	views := toAssetViews(doc, []store.Storable{
-		file("0194820a-81c2-7d34.png"), file("0194820a-9999-7d34.svg"), file("page-suzuka.md"), file("café.pdf"), file("foreign.pdf"), file("loose.png"),
+		file("0194820a-81c2-7d34.png"), file("0194820a-9999-7d34.svg"), file("page-suzuka.html"), file("café.pdf"), file("foreign.pdf"), file("loose.png"),
 	}, idx)
 	for i, want := range []struct {
 		inUse  bool
@@ -220,7 +220,6 @@ func TestIndexBlocks_labelsAndHoldersFromOneWalk(t *testing.T) {
 		}
 	}
 }
-
 
 // The delete endpoint removes only an asset no block holds, judged against the
 // blocks the editor holds now, and announces the removal so open panels re-render.
@@ -249,7 +248,7 @@ func TestDeleteAsset_refusesHeldRemovesUnused(t *testing.T) {
 
 	doc, _ := ds.New()
 	uuid := doc.UUID()
-	for _, key := range []string{"held.png", "page-suzuka.md", "café.png", "placed.png"} {
+	for _, key := range []string{"held.png", "page-suzuka.html", "café.png", "placed.png"} {
 		if _, err := assets.Save(domain.WorkingCopy, uuid, key, []byte{0x89, 0x50, 0x4E, 0x47}); err != nil {
 			t.Fatalf("seed %s: %v", key, err)
 		}
@@ -257,7 +256,7 @@ func TestDeleteAsset_refusesHeldRemovesUnused(t *testing.T) {
 	doc, _ = ds.LoadByUUID(uuid)
 	doc.SetBody([]byte(
 		"```smart-image\nid: img-1\nsrc: sieve://" + uuid + "/held.png\nstatus: COMPLETE\n```\n\n" +
-			"```web-clip\nid: clip-1\npage: sieve://" + uuid + "/page-suzuka.md\nstatus: COMPLETE\n```\n",
+			"```web-clip\nid: clip-1\npage: sieve://" + uuid + "/page-suzuka.html\nstatus: COMPLETE\n```\n",
 	))
 	if _, err := ds.Save(doc); err != nil {
 		t.Fatalf("save: %v", err)
@@ -288,7 +287,7 @@ func TestDeleteAsset_refusesHeldRemovesUnused(t *testing.T) {
 		wantGone   bool
 	}{
 		{"saved holder", "held.png", nil, http.StatusConflict, false},
-		{"held by web-clip page", "page-suzuka.md", nil, http.StatusConflict, false},
+		{"held by web-clip page", "page-suzuka.html", nil, http.StatusConflict, false},
 		{"two holders not yet saved", "placed.png", nil, http.StatusConflict, false},
 		{"one of two sharing blocks deleted", "placed.png", removeBlock(sharing[0]), http.StatusConflict, false},
 		{"both sharing blocks deleted", "placed.png", removeBlock(sharing[1]), http.StatusNoContent, true},

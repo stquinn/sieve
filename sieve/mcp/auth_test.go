@@ -12,7 +12,6 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-
 // authProbe posts to the server's ServeHTTP with the given Authorization header
 // and returns the status code.
 func authProbe(t *testing.T, s *Server, auth string) int {
@@ -145,4 +144,3 @@ func TestAuth_EndpointForDocBindsDocumentOverHTTP(t *testing.T) {
 		t.Fatalf("document owns %d assets after HTTP fetch_page, want 1", len(reloaded.Storable().Owns()))
 	}
 }
-

@@ -5,11 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sieve/sieve/ai"
 	"sieve/sieve/block"
-	"sieve/sieve/domain"
 	"sieve/sieve/services"
-	"sieve/store/filestore"
 	"testing"
 	"time"
 )
@@ -324,93 +321,3 @@ func TestSmartCardProcessor_BuildContext(t *testing.T) {
 		t.Error("BuildContext must return non-empty string for complete block")
 	}
 }
-
-type stubWebClipRunner struct {
-	ret string
-	err error
-}
-
-func (s stubWebClipRunner) Run(_, _, _, _, _ string, _ int, _ string, _ domain.ContainmentProfile, _ string) (string, error) {
-	return s.ret, s.err
-}
-
-func TestWebClipProcessor_RunJob_stampsPageAttrAndMapsUnretrievableToError(t *testing.T) {
-	root := t.TempDir()
-	fs, err := filestore.NewFileStore(root, "testhost")
-	if err != nil {
-		t.Fatalf("NewFileStore: %v", err)
-	}
-	ds, err := services.NewDocumentService(fs)
-	if err != nil {
-		t.Fatalf("NewDocumentService: %v", err)
-	}
-	state, err := services.NewStateService(fs, "", nil)
-	if err != nil {
-		t.Fatalf("NewStateService: %v", err)
-	}
-	prompts, err := ai.NewPromptService(fs)
-	if err != nil {
-		t.Fatalf("NewPromptService: %v", err)
-	}
-	aiSvc := ai.NewAIService(state, prompts, ds, nil, root)
-
-	doc, err := ds.New()
-	if err != nil {
-		t.Fatalf("New doc: %v", err)
-	}
-	doc, err = ds.Save(doc)
-	if err != nil {
-		t.Fatalf("Save doc: %v", err)
-	}
-	uuid := doc.UUID()
-	sourceURL := "https://example.com/suzuka"
-
-	p := NewWebClipBlockProcessor(block.BlockServices{AI: aiSvc, Documents: ds, State: state})
-
-	t.Run("stamps page attr when page asset exists", func(t *testing.T) {
-		key := ds.PageAssetKey(sourceURL)
-		if _, err := ds.SaveAsset(doc, key, []byte("# Suzuka Schedule\n\nGates open at 08:00.\n")); err != nil {
-			t.Fatalf("SaveAsset: %v", err)
-		}
-		aiSvc.SetRunner(stubWebClipRunner{ret: "# Suzuka Schedule\n\nGates open at 08:00."})
-
-		attrs := p.InitAttrs("wc-1", map[string]interface{}{"source": sourceURL, "mode": "summarise"})
-		if attrs["page"] != "" {
-			t.Errorf("InitAttrs page = %v, want empty string", attrs["page"])
-		}
-		blk := &block.SieveBlock{ID: "wc-1", Kind: "web-clip", Attrs: attrs}
-		job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: uuid, Block: blk})
-		res, werr := job.Work()
-		if werr != nil {
-			t.Fatalf("Work error: %v", werr)
-		}
-		job.Apply(res, blk)
-
-		if blk.Attrs["status"] != block.BlockStatusComplete {
-			t.Errorf("status = %v, want COMPLETE", blk.Attrs["status"])
-		}
-		wantPage := "sieve://" + uuid + "/" + key
-		if blk.Attrs["page"] != wantPage {
-			t.Errorf("page = %v, want %q", blk.Attrs["page"], wantPage)
-		}
-		if blk.Attrs["title"] != "Suzuka Schedule" {
-			t.Errorf("title = %v, want Suzuka Schedule", blk.Attrs["title"])
-		}
-	})
-
-	t.Run("returns Work error when AI returns UNRETRIEVABLE sentinel", func(t *testing.T) {
-		aiSvc.SetRunner(stubWebClipRunner{ret: "UNRETRIEVABLE: HTTP 403 Forbidden from suzuka-circuit.jp"})
-
-		attrs := p.InitAttrs("wc-2", map[string]interface{}{"source": "https://suzuka-circuit.jp/en", "mode": "summarise"})
-		blk := &block.SieveBlock{ID: "wc-2", Kind: "web-clip", Attrs: attrs}
-		job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: uuid, Block: blk})
-		res, werr := job.Work()
-		if werr == nil {
-			t.Fatalf("expected Work error for UNRETRIEVABLE sentinel, got res=%+v", res)
-		}
-		if werr.Error() != "HTTP 403 Forbidden from suzuka-circuit.jp" {
-			t.Errorf("Work error = %q, want %q", werr.Error(), "HTTP 403 Forbidden from suzuka-circuit.jp")
-		}
-	})
-}
-

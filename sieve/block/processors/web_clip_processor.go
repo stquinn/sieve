@@ -45,7 +45,6 @@ func (p *WebClipBlockProcessor) InitAttrs(id string, overrides map[string]interf
 	return attrs
 }
 
-
 // IsSupportedContent claims a copied clip (round-trip: paste + extract) and any
 // view carrying an ordinary link — bare URL, markdown link, or rendered <a> — as a
 // TRANSFORM only. A pasted URL is NOT claimed for paste: it stays an ordinary
@@ -134,8 +133,8 @@ func (p *WebClipBlockProcessor) Mode() block.BlockMode {
 }
 
 // DescribeJob declares the AI clip job. The document body is read synchronously
-// here (before the AI call, mirroring the old RunJob), then captured by Work. A
-// web-clip always has async work (born PENDING), so DescribeJob never returns nil.
+// here, before the AI call, then captured by Work. A web-clip always has async
+// work (born PENDING), so DescribeJob never returns nil.
 // Apply writes the success attrs; the error path (status ERROR/TIMEOUT) is the
 // framework's job in EditorService.finish, so Apply is success-only.
 func (p *WebClipBlockProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJob {
@@ -171,7 +170,7 @@ func (p *WebClipBlockProcessor) DescribeJob(jctx block.JobContext) *block.Proces
 			return webClipResult{
 				title:   title,
 				content: content,
-				page:    p.svc.AI.PageAssetAddress(uuid, source),
+				page:    p.svc.Documents.PageAssetAddress(uuid, source),
 			}, nil
 		},
 		Apply: func(result any, b *block.SieveBlock) {

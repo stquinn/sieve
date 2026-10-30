@@ -71,6 +71,7 @@ func (f *fakeDocuments) LoadByUUID(string) (domain.Document, error) {
 	return nil, errors.New("no doc")
 }
 func (f *fakeDocuments) Save(d domain.Document) (domain.Document, error) { f.saves++; return d, nil }
+func (f *fakeDocuments) PageAssetAddress(string, string) string          { return "" }
 
 type fakeAssetStorable struct{ ref string }
 

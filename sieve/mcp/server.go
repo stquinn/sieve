@@ -49,7 +49,7 @@ func DocumentFromContext(ctx context.Context) string {
 // and both MUST record the same bodyRead audit through one auditor, which is
 // what keeps bulk-read visible at a single boundary.
 //
-// Side-effecting verb: fetch_page writes a readable markdown asset into the
+// Side-effecting verb: fetch_page writes a readable HTML asset into the
 // calling job's own document (and nowhere else), returning its NodeDescriptor.
 type Server struct {
 	documents    *services.DocumentService
@@ -66,17 +66,21 @@ type Server struct {
 	tokens  map[string]string // valid per-run bearer tokens → bound document UUID ("" when unscoped)
 }
 
-// NewServer builds the Sieve MCP over the document service and the node
-// resolver, registers the verbs, and prepares the streamable HTTP handler. The
-// base URL is not known yet (the listener binds after construction) — SetBaseURL
-// supplies it.
-func NewServer(documents *services.DocumentService, nodes NodeResolver) *Server {
+// pageFetchTimeout is fetch_page's deadline for retrieving one page.
+const pageFetchTimeout = 15 * time.Second
+
+// NewServer builds the Sieve MCP over the document service, the node resolver
+// and the link-preview service fetch_page retrieves pages through, registers the
+// verbs, and prepares the streamable HTTP handler. The base URL is not known yet
+// (the listener binds after construction) — SetBaseURL supplies it.
+func NewServer(documents *services.DocumentService, nodes NodeResolver, linkPreview *services.LinkPreviewService) *Server {
 	s := &Server{
-		documents:   documents,
-		nodes:       nodes,
-		linkPreview: services.NewLinkPreviewService(),
-		audit:       logAuditor{},
-		tokens:      make(map[string]string),
+		documents:    documents,
+		nodes:        nodes,
+		linkPreview:  linkPreview,
+		fetchTimeout: pageFetchTimeout,
+		audit:        logAuditor{},
+		tokens:       make(map[string]string),
 	}
 
 	sdk := mcpsdk.NewServer(&mcpsdk.Implementation{
@@ -111,8 +115,8 @@ func NewServer(documents *services.DocumentService, nodes NodeResolver) *Server 
 	}, s.listFacets)
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
 		Name: "fetch_page",
-		Description: "Fetch an http or https URL, extract its readable article content as markdown, and write it as an asset into the job's own document. " +
-			"Returns the asset's NodeDescriptor (uri, id, kind \"asset\", title, path, bytes) so you can read the markdown file from disk. " +
+		Description: "Fetch an http or https URL, extract its readable article content as HTML, and write it as an asset into the job's own document. " +
+			"Returns the asset's NodeDescriptor (uri, id, kind \"asset\", title, path, bytes); the asset is an HTML file you can read from disk at path. " +
 			"On failure returns 'cannot retrieve: {reason}' so you can fall back to other tools.",
 	}, s.fetchPage)
 
@@ -209,4 +213,3 @@ func (s *Server) bearerToken(r *http.Request) string {
 	}
 	return ""
 }
-

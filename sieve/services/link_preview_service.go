@@ -14,8 +14,9 @@ import (
 	"strings"
 	"time"
 
-	readability "github.com/go-shiori/go-readability"
+	readability "codeberg.org/readeck/go-readability/v2"
 	"golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 )
 
 const (
@@ -52,10 +53,12 @@ func NewLinkPreviewService() *LinkPreviewService {
 	return &LinkPreviewService{}
 }
 
-// FetchReadable retrieves targetURL within timeout, extracts its main article
-// content via Readability, and renders that content as Markdown. Returns an
-// error describing the failure reason on non-200 status, timeout, non-HTML
-// content-type, or an empty/unreadable body.
+// FetchReadable retrieves targetURL within timeout and extracts its main article
+// content via Readability, returned as a complete HTML document (see
+// domain.ReadablePage). A page Readability strips to no text falls back to its
+// <body>, less scripts and styles. Returns an error describing the failure
+// reason on non-200 status, timeout, non-HTML content-type, binary content, or
+// an empty/unreadable body.
 func (s *LinkPreviewService) FetchReadable(targetURL string, timeout time.Duration) (domain.ReadablePage, error) {
 	if timeout <= 0 {
 		timeout = fullPreviewTimeout
@@ -113,22 +116,70 @@ func (s *LinkPreviewService) FetchReadable(targetURL string, timeout time.Durati
 		return domain.ReadablePage{}, fmt.Errorf("empty or unreadable HTML: %w", err)
 	}
 
-	title := first(hm.bestTitle(), article.Title)
-	renderer := markdownRenderer{baseURL: parsedURL}
-	md := renderer.render(article.Node)
-	if md == "" {
-		md = strings.TrimSpace(article.TextContent)
+	var text, content strings.Builder
+	if article.RenderText(&text) != nil || strings.TrimSpace(text.String()) == "" ||
+		article.RenderHTML(&content) != nil {
+		content.Reset()
+		content.WriteString(s.bodyHTML(body))
 	}
-	if md == "" {
+	if content.Len() == 0 {
 		return domain.ReadablePage{}, fmt.Errorf("empty body")
 	}
-	if title != "" && !strings.HasPrefix(md, "# ") {
-		md = "# " + title + "\n\n" + md
-	}
+	title := first(article.Title(), hm.bestTitle())
 	return domain.ReadablePage{
-		Title:    title,
-		Markdown: md,
+		Title: title,
+		HTML: `<!doctype html><html><head><meta charset="utf-8"><title>` + html.EscapeString(title) +
+			`</title></head><body>` + content.String() + `</body></html>`,
 	}, nil
+}
+
+// bodyHTML renders the children of page's <body> with script, style, noscript
+// and template elements removed, or returns empty when that leaves no text.
+func (s *LinkPreviewService) bodyHTML(page []byte) string {
+	doc, err := html.Parse(bytes.NewReader(page))
+	if err != nil {
+		return ""
+	}
+	var body *html.Node
+	var dropped []*html.Node
+	for n := range doc.Descendants() {
+		switch {
+		case n.Type == html.ElementNode && n.DataAtom == atom.Body && body == nil:
+			body = n
+		case n.Type == html.ElementNode && (n.DataAtom == atom.Script || n.DataAtom == atom.Style ||
+			n.DataAtom == atom.Noscript || n.DataAtom == atom.Template):
+			dropped = append(dropped, n)
+		}
+	}
+	if body == nil {
+		return ""
+	}
+	for _, n := range dropped {
+		if n.Parent != nil {
+			n.Parent.RemoveChild(n)
+		}
+	}
+	if strings.TrimSpace(s.textOf(body)) == "" {
+		return ""
+	}
+	var b strings.Builder
+	for c := range body.ChildNodes() {
+		if err := html.Render(&b, c); err != nil {
+			return ""
+		}
+	}
+	return b.String()
+}
+
+// textOf concatenates the text nodes beneath n.
+func (s *LinkPreviewService) textOf(n *html.Node) string {
+	var b strings.Builder
+	for d := range n.Descendants() {
+		if d.Type == html.TextNode {
+			b.WriteString(d.Data)
+		}
+	}
+	return b.String()
 }
 
 // FetchTitle returns the best available title for targetURL, giving up after
@@ -215,7 +266,6 @@ func (s *LinkPreviewService) scanHead(targetURL string, timeout time.Duration) (
 	meta.scan(io.LimitReader(resp.Body, maxHeadBytes))
 	return meta, true
 }
-
 
 // headMeta is everything the two views need, collected in one pass over a page's
 // <head>. Fields are raw as the page gave them; the priority between them is the
@@ -338,223 +388,3 @@ func resolveURL(base, ref string) string {
 	}
 	return b.ResolveReference(r).String()
 }
-
-// markdownRenderer converts a Readability-extracted HTML subtree into clean
-// Markdown, resolving relative links and images against baseURL and dropping
-// non-content tags.
-type markdownRenderer struct {
-	baseURL *url.URL
-}
-
-func (r markdownRenderer) render(root *html.Node) string {
-	if root == nil {
-		return ""
-	}
-	var b strings.Builder
-	r.writeNode(&b, root)
-	return r.normalize(b.String())
-}
-
-func (r markdownRenderer) writeNode(b *strings.Builder, n *html.Node) {
-	if n == nil {
-		return
-	}
-	switch n.Type {
-	case html.TextNode:
-		b.WriteString(r.collapseInlineSpace(n.Data))
-	case html.DocumentNode:
-		r.writeChildren(b, n)
-	case html.ElementNode:
-		tag := strings.ToLower(n.Data)
-		switch tag {
-		case "script", "style", "noscript", "nav", "footer", "aside", "svg", "form", "button", "iframe":
-			return
-		case "h1", "h2", "h3", "h4", "h5", "h6":
-			level := int(tag[1] - '0')
-			if text := strings.TrimSpace(r.renderChildren(n)); text != "" {
-				b.WriteString("\n\n")
-				b.WriteString(strings.Repeat("#", level))
-				b.WriteByte(' ')
-				b.WriteString(text)
-				b.WriteString("\n\n")
-			}
-		case "p":
-			if text := strings.TrimSpace(r.renderChildren(n)); text != "" {
-				b.WriteString("\n\n")
-				b.WriteString(text)
-				b.WriteString("\n\n")
-			}
-		case "br":
-			b.WriteByte('\n')
-		case "hr":
-			b.WriteString("\n\n---\n\n")
-		case "pre":
-			if raw := strings.Trim(r.rawText(n), "\n"); raw != "" {
-				b.WriteString("\n\n```\n")
-				b.WriteString(raw)
-				b.WriteString("\n```\n\n")
-			}
-		case "code":
-			if text := strings.TrimSpace(r.rawText(n)); text != "" {
-				b.WriteByte('`')
-				b.WriteString(text)
-				b.WriteByte('`')
-			}
-		case "strong", "b":
-			if text := strings.TrimSpace(r.renderChildren(n)); text != "" {
-				b.WriteString("**")
-				b.WriteString(text)
-				b.WriteString("**")
-			}
-		case "em", "i":
-			if text := strings.TrimSpace(r.renderChildren(n)); text != "" {
-				b.WriteByte('*')
-				b.WriteString(text)
-				b.WriteByte('*')
-			}
-		case "a":
-			text := strings.TrimSpace(r.renderChildren(n))
-			href := strings.TrimSpace(r.attr(n, "href"))
-			if href != "" && !strings.HasPrefix(strings.ToLower(href), "javascript:") {
-				if r.baseURL != nil {
-					href = resolveURL(r.baseURL.String(), href)
-				}
-				if text == "" {
-					text = href
-				}
-				b.WriteByte('[')
-				b.WriteString(text)
-				b.WriteString("](")
-				b.WriteString(href)
-				b.WriteByte(')')
-			} else if text != "" {
-				b.WriteString(text)
-			}
-		case "img":
-			src := strings.TrimSpace(r.attr(n, "src"))
-			if src != "" && !strings.HasPrefix(strings.ToLower(src), "data:") {
-				if r.baseURL != nil {
-					src = resolveURL(r.baseURL.String(), src)
-				}
-				alt := strings.TrimSpace(r.attr(n, "alt"))
-				b.WriteString("![")
-				b.WriteString(alt)
-				b.WriteString("](")
-				b.WriteString(src)
-				b.WriteByte(')')
-			}
-		case "ul", "ol":
-			b.WriteString("\n\n")
-			idx := 1
-			for c := n.FirstChild; c != nil; c = c.NextSibling {
-				if c.Type == html.ElementNode && strings.EqualFold(c.Data, "li") {
-					item := strings.TrimSpace(r.renderChildren(c))
-					if item != "" {
-						if tag == "ol" {
-							fmt.Fprintf(b, "%d. %s\n", idx, item)
-							idx++
-						} else {
-							b.WriteString("- ")
-							b.WriteString(item)
-							b.WriteByte('\n')
-						}
-					}
-				}
-			}
-			b.WriteByte('\n')
-		case "blockquote":
-			inner := r.normalize(r.renderChildren(n))
-			if inner != "" {
-				b.WriteString("\n\n")
-				for _, line := range strings.Split(inner, "\n") {
-					if strings.TrimSpace(line) == "" {
-						b.WriteString(">\n")
-					} else {
-						b.WriteString("> ")
-						b.WriteString(line)
-						b.WriteByte('\n')
-					}
-				}
-				b.WriteByte('\n')
-			}
-		default:
-			r.writeChildren(b, n)
-		}
-	}
-}
-
-func (r markdownRenderer) writeChildren(b *strings.Builder, n *html.Node) {
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		r.writeNode(b, c)
-	}
-}
-
-func (r markdownRenderer) renderChildren(n *html.Node) string {
-	var b strings.Builder
-	r.writeChildren(&b, n)
-	return b.String()
-}
-
-func (r markdownRenderer) rawText(n *html.Node) string {
-	var b strings.Builder
-	var walk func(*html.Node)
-	walk = func(cur *html.Node) {
-		if cur == nil {
-			return
-		}
-		if cur.Type == html.TextNode {
-			b.WriteString(cur.Data)
-		}
-		for c := cur.FirstChild; c != nil; c = c.NextSibling {
-			walk(c)
-		}
-	}
-	walk(n)
-	return b.String()
-}
-
-func (r markdownRenderer) attr(n *html.Node, key string) string {
-	for _, a := range n.Attr {
-		if strings.EqualFold(a.Key, key) {
-			return a.Val
-		}
-	}
-	return ""
-}
-
-func (r markdownRenderer) collapseInlineSpace(s string) string {
-	var b strings.Builder
-	inSpace := false
-	for _, ch := range s {
-		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
-			if !inSpace {
-				b.WriteByte(' ')
-				inSpace = true
-			}
-			continue
-		}
-		inSpace = false
-		b.WriteRune(ch)
-	}
-	return b.String()
-}
-
-func (r markdownRenderer) normalize(s string) string {
-	lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
-	var out []string
-	blankCount := 0
-	for _, line := range lines {
-		trimmed := strings.TrimRight(line, " \t")
-		if strings.TrimSpace(trimmed) == "" {
-			blankCount++
-			if blankCount <= 1 && len(out) > 0 {
-				out = append(out, "")
-			}
-			continue
-		}
-		blankCount = 0
-		out = append(out, trimmed)
-	}
-	return strings.TrimSpace(strings.Join(out, "\n"))
-}
-

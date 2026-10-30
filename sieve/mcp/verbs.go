@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"path"
@@ -14,6 +15,7 @@ import (
 	"sieve/sieve/services"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/net/html"
 )
 
 const (
@@ -47,9 +49,8 @@ type URIInput struct {
 
 // FetchPageInput is the argument set for fetch_page.
 type FetchPageInput struct {
-	URL string `json:"url" jsonschema:"the http or https URL of the web page to fetch and store as a markdown asset in the job's document"`
+	URL string `json:"url" jsonschema:"the http or https URL of the web page to fetch and store as an HTML asset in the job's document"`
 }
-
 
 // NoteSummary is one search hit: metadata only, never a body.
 type NoteSummary struct {
@@ -298,8 +299,8 @@ func (s *Server) listFacets(_ context.Context, _ *mcpsdk.CallToolRequest, _ stru
 	return nil, out, nil
 }
 
-// fetchPage retrieves an http or https URL, extracts its readable article as
-// markdown via LinkPreviewService, and stores it as a URL-keyed asset in the
+// fetchPage retrieves an http or https URL, extracts its readable article as an
+// HTML document via LinkPreviewService, and stores it as a URL-keyed asset in the
 // calling job's document. A second call for the same URL in the same document
 // reuses the stored asset without re-fetching.
 //
@@ -332,7 +333,7 @@ func (s *Server) fetchPage(ctx context.Context, _ *mcpsdk.CallToolRequest, in Fe
 			if err != nil {
 				return nil, NodeContent{}, fmt.Errorf("cannot retrieve: %w", err)
 			}
-			title := s.headingTitle(string(owned.Body()))
+			title := s.htmlTitle(owned.Body())
 			if title == "" {
 				title = node.Title
 			}
@@ -349,16 +350,12 @@ func (s *Server) fetchPage(ctx context.Context, _ *mcpsdk.CallToolRequest, in Fe
 		}
 	}
 
-	lp := s.linkPreview
-	if lp == nil {
-		lp = services.NewLinkPreviewService()
-	}
-	page, err := lp.FetchReadable(rawURL, s.fetchTimeout)
+	page, err := s.linkPreview.FetchReadable(rawURL, s.fetchTimeout)
 	if err != nil {
 		logger.Warn("sieve mcp: fetch_page refused", "url", rawURL, "doc", doc.UUID(), "err", err)
 		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: %w", err)
 	}
-	if _, err := s.documents.SaveAsset(doc, key, []byte(page.Markdown)); err != nil {
+	if _, err := s.documents.SaveAsset(doc, key, []byte(page.HTML)); err != nil {
 		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: save asset: %w", err)
 	}
 	node, err := s.nodes.Resolve(addr)
@@ -382,18 +379,26 @@ func (s *Server) fetchPage(ctx context.Context, _ *mcpsdk.CallToolRequest, in Fe
 	}, nil
 }
 
-func (s *Server) headingTitle(md string) string {
-	for _, line := range strings.Split(md, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "# ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "# "))
+// htmlTitle returns the trimmed text of doc's first <title>, or empty when it
+// has none.
+func (s *Server) htmlTitle(doc []byte) string {
+	z := html.NewTokenizer(bytes.NewReader(doc))
+	for {
+		switch z.Next() {
+		case html.ErrorToken:
+			return ""
+		case html.StartTagToken:
+			if name, _ := z.TagName(); string(name) == "title" {
+				if z.Next() == html.TextToken {
+					return strings.TrimSpace(string(z.Text()))
+				}
+				return ""
+			}
 		}
 	}
-	return ""
 }
 
 // ── Scan + projection helpers ─────────────────────────────────────────────────
-
 
 // scannedNote is a loaded library note plus its derived folder path.
 type scannedNote struct {

@@ -18,7 +18,6 @@ import (
 	"sieve/store/filestore"
 )
 
-
 // newTestServer builds a Server over a real FileStore + DocumentService in a
 // temp library, seeded with a few filed notes across folders.
 func newTestServer(t *testing.T) *Server {
@@ -65,7 +64,7 @@ func newTestServerWithStore(t *testing.T) (*Server, *services.DocumentService, *
 	block.ResetRegistry()
 	block.RegisterProcessor(&processors.ProseProcessor{})
 	t.Cleanup(block.ResetRegistry)
-	return NewServer(ds, editor.NewRouter(editor.NewNotesSource(ds))), ds, fs
+	return NewServer(ds, editor.NewRouter(editor.NewNotesSource(ds)), services.NewLinkPreviewService()), ds, fs
 }
 
 // seedNote creates a buffer, stamps metadata, and files it into folder.
@@ -261,7 +260,7 @@ func TestListFacets_FoldersAndTags(t *testing.T) {
 	}
 }
 
-func TestFetchPage_WritesMarkdownAssetAndReusesOnSecondCall(t *testing.T) {
+func TestFetchPage_WritesHTMLAssetAndReusesOnSecondCall(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
@@ -304,8 +303,8 @@ func TestFetchPage_WritesMarkdownAssetAndReusesOnSecondCall(t *testing.T) {
 	if node.Kind != "asset" {
 		t.Errorf("Kind = %q, want asset", node.Kind)
 	}
-	if !strings.HasSuffix(node.ID, ".md") {
-		t.Errorf("ID = %q, want .md asset filename", node.ID)
+	if node.ID != ds.PageAssetKey(pageURL) || !strings.HasSuffix(node.ID, ".html") {
+		t.Errorf("ID = %q, want the .html page asset key %q", node.ID, ds.PageAssetKey(pageURL))
 	}
 	wantURI := domain.NewLeafAddress(uuid, node.ID).String()
 	if node.URI != wantURI {
@@ -319,7 +318,7 @@ func TestFetchPage_WritesMarkdownAssetAndReusesOnSecondCall(t *testing.T) {
 		t.Errorf("Path = %q, want %q", node.Path, wantPath)
 	}
 	if node.Bytes == 0 {
-		t.Error("Bytes = 0, want non-zero markdown asset size")
+		t.Error("Bytes = 0, want non-zero HTML asset size")
 	}
 	if node.Body != "" {
 		t.Errorf("Body = %q, want empty (asset bytes live on disk at Path)", node.Body)
@@ -339,11 +338,12 @@ func TestFetchPage_WritesMarkdownAssetAndReusesOnSecondCall(t *testing.T) {
 	if savedBody == "" {
 		t.Fatalf("asset %q not found in document %s owns", node.ID, uuid)
 	}
-	if !strings.Contains(savedBody, "# Verstappen Wins in Suzuka") || !strings.Contains(savedBody, "Max Verstappen controlled the Japanese Grand Prix") {
-		t.Errorf("saved markdown missing article text:\n%s", savedBody)
+	if !strings.HasPrefix(savedBody, `<!doctype html><html><head><meta charset="utf-8"><title>Verstappen Wins in Suzuka</title></head><body>`) ||
+		!strings.Contains(savedBody, "Max Verstappen controlled the Japanese Grand Prix") {
+		t.Errorf("saved asset is not the titled readable HTML document:\n%s", savedBody)
 	}
-	if strings.Contains(savedBody, "Skip to content") || strings.Contains(savedBody, "<article>") {
-		t.Errorf("saved markdown retained boilerplate or raw HTML:\n%s", savedBody)
+	if strings.Contains(savedBody, "Skip to content") || strings.Contains(savedBody, "BBC Terms of Use") {
+		t.Errorf("saved asset retained boilerplate:\n%s", savedBody)
 	}
 
 	// Second call for the same URL must reuse the existing asset without re-fetching.
@@ -410,6 +410,9 @@ func TestFetchPage_RefusesOn403TimeoutNonHTMLAndEmpty(t *testing.T) {
 			defer srv.Close()
 
 			s, ds := newTestServerWithDocs(t)
+			if s.fetchTimeout != pageFetchTimeout {
+				t.Fatalf("fetchTimeout = %s, want pageFetchTimeout %s", s.fetchTimeout, pageFetchTimeout)
+			}
 			s.fetchTimeout = tt.timeout
 			buf, err := ds.New()
 			if err != nil {
@@ -446,4 +449,3 @@ func TestFetchPage_RefusesWhenSessionHasNoDocument(t *testing.T) {
 		t.Fatalf("unscoped fetch_page err = %v, want 'cannot retrieve:' refusal", err)
 	}
 }
-

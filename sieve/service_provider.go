@@ -158,7 +158,8 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 		return
 	}
 	s.AI = ai.NewAIService(s.State, s.Prompts, s.Documents, s.Nodes, storePath)
-	// Internal Sieve MCP: read-only knowledge-base surface mounted at /mcp,
+	s.LinkPreview = services.NewLinkPreviewService()
+	// Internal Sieve MCP: the knowledge-base surface mounted at /mcp,
 	// injected into contained CLI calls. Its runtime URL (the localhost listener
 	// port) is set from main once the listener binds; the AI service pulls the
 	// URL + a per-call bearer token from it at profile-render time.
@@ -166,10 +167,9 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	// The Router goes in as mcp.NodeResolver — the one-method interface the MCP
 	// package declares for itself — so get_by_uri dereferences addresses through
 	// the same registry the @ picker offers them from.
-	s.MCP = mcp.NewServer(s.Documents, s.Nodes)
+	s.MCP = mcp.NewServer(s.Documents, s.Nodes, s.LinkPreview)
 	s.AI.SetMCPEndpoint(s.MCP)
 	s.Commands = command.NewRegistry()
-	s.LinkPreview = services.NewLinkPreviewService()
 	s.Plantuml = services.NewPlantumlService(s.State)
 	settings := s.State.LoadSettings()
 	s.ApplyRetention(settings.MaxHistoryVersions)
