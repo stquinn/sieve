@@ -9,15 +9,9 @@
     nixpkgs-darwin-intel.url = "github:NixOS/nixpkgs/nixpkgs-26.05-darwin";
     
     flake-utils.url = "github:numtide/flake-utils";
-
-    # The Forgejo Actions base image and its mkCIImage builder. https, not ssh:
-    # the publish job runs on the bare base with no ssh key and must fetch this
-    # to evaluate the flake, which it does with a netrc over https.
-    ci-base.url = "git+https://git.stephenquinn.ie/stephen/ci-base.git";
-    ci-base.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, nixpkgs-darwin-intel, flake-utils, ci-base }:
+  outputs = { self, nixpkgs, nixpkgs-darwin-intel, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         # Route to the working nixpkgs depending on platform compatibility
@@ -148,24 +142,6 @@
             )
           '';
         };
-
-        # Every locked input source tree, transitively. Evaluating this flake
-        # walks the whole input graph, so an image that carries only the direct
-        # inputs still reaches for flake-utils' `systems` and ci-base's
-        # `nixpkgs-tea` over the network.
-        inputTrees = inputs:
-          lib.concatMap (i: [ i.outPath ] ++ inputTrees (i.inputs or { }))
-            (builtins.attrValues inputs);
-
-        # The CI image: ci-base's package list plus this devShell's whole closure
-        # and those input trees, so a job runs `nix develop --offline` and
-        # downloads nothing. x86_64-linux only — that is the runners' arch and the
-        # only system ci-base builds for.
-        ciImage = ci-base.lib.${system}.mkCIImage {
-          name = "stephen/sieve-ci";
-          shells = [ self.devShells.${system}.default ];
-          flakeInputs = lib.unique (inputTrees self.inputs);
-        };
       in
       {
         devShells.default = pkgs.mkShell {
@@ -231,12 +207,6 @@
         };
       }
       // lib.optionalAttrs isLinux {
-        packages = { default = sieve; }
-          // lib.optionalAttrs (system == "x86_64-linux") { ci-image = ciImage; };
-      }
-      // lib.optionalAttrs (system == "x86_64-linux") {
-        # streamLayeredImage's output is the script itself, not bin/<name>, so
-        # `nix run .#ci-image` needs an explicit app.
-        apps.ci-image = { type = "app"; program = "${ciImage}"; };
+        packages.default = sieve;
       });
 }

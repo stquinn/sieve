@@ -38,11 +38,16 @@ nixpkgs and works, but it is a third version again.
 - **Nix.** No install step needed; `nix run` fetches the binary (~6.7 MiB) and
   caches it.
 - **The project image, built locally.** Jobs run in `stephen/sieve-ci`, which
-  the cluster pulls from a registry your machine cannot reach. Build and load it
-  first — about 3 GB, a minute when the store is warm:
+  the cluster pulls from a registry your machine cannot reach. Build it first
+  from `Containerfile`, whose `FROM` names ci-base by its in-cluster mirror
+  address, so tag the base under that name before building (about 3 GB):
 
   ```bash
-  nix run .#ci-image | docker load
+  docker login git.stephenquinn.ie
+  docker pull git.stephenquinn.ie/stephen/ci-base:latest
+  docker tag git.stephenquinn.ie/stephen/ci-base:latest \
+    registry-mirror.image-repository.svc.cluster.local:5002/stephen/ci-base:latest
+  docker build -t stephen/sieve-ci:latest -f Containerfile .
   docker tag stephen/sieve-ci:latest \
     registry-mirror.image-repository.svc.cluster.local:5002/stephen/sieve-ci:latest
   ```
@@ -151,8 +156,7 @@ command under `bashInteractive`, which is in no mkShell's closure and so is not 
 the image. Offline it cannot be built, nix prints the whole 531-derivation
 dependency cascade and `error (ignored)`, then falls back and runs the step. It is
 noise, not a failure — the step's own exit code is what counts. It belongs in
-ci-base's `basePackages`; `extraPackages` cannot carry it (the layer builder fails
-creating its gcroot).
+the ci-base image.
 
 **Piping hides the exit code.** `... | tail -60` reports `tail`'s status, not the
 runner's. Redirect to a file and check `$?`, or read the last lines afterwards.
