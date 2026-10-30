@@ -146,3 +146,47 @@ func TestBuildArgs_Model(t *testing.T) {
 		t.Errorf("claude --model = %q, want sonnet; args=%v", flagValue(args, "--model"), args)
 	}
 }
+
+// A user grant repeating a job grant renders each rule once, in every dialect.
+// agy renders no tool grants, so it has nothing to repeat.
+func TestBuildArgs_DeduplicatesRepeatedGrants(t *testing.T) {
+	p := domain.DefaultContainmentProfile()
+	p.Tools = append(p.Tools,
+		domain.ToolGrant{Type: "network", Label: "Fetch", Names: map[string]string{"claude": "WebFetch"}},
+		domain.ToolGrant{Type: "file", Label: "Read", Names: map[string]string{"claude": "Read", "copilot": "view"}},
+		domain.ToolGrant{Type: "network", Label: "Docs", Constraint: "go.dev", Names: map[string]string{"claude": "WebFetch"}},
+		domain.ToolGrant{Type: "network", Label: "Docs again", Constraint: "go.dev, pkg.go.dev", Names: map[string]string{"claude": "WebFetch"}},
+	)
+	for _, tc := range []struct {
+		dialect string
+		lists   []string // flags whose comma-list values, across every occurrence, hold no repeat
+		singles []string // flags that appear at most once
+	}{
+		{"claude", []string{"--allowedTools"}, nil},
+		{"copilot", []string{"--allow-tool", "--allow-url"}, []string{"--allow-all-urls"}},
+	} {
+		t.Run(tc.dialect, func(t *testing.T) {
+			args := buildBaseArgs(tc.dialect, "", "p", p, "", libDir)
+			seen := make(map[string]int)
+			for i, a := range args {
+				for _, flag := range tc.singles {
+					if a == flag {
+						if seen[a]++; seen[a] > 1 {
+							t.Errorf("%s appears more than once; args=%v", a, args)
+						}
+					}
+				}
+				for _, flag := range tc.lists {
+					if a != flag || i+1 >= len(args) {
+						continue
+					}
+					for _, tok := range strings.Split(args[i+1], ",") {
+						if seen[flag+" "+tok]++; seen[flag+" "+tok] > 1 {
+							t.Errorf("%s repeats %q; args=%v", flag, tok, args)
+						}
+					}
+				}
+			}
+		})
+	}
+}

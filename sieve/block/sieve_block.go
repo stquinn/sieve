@@ -141,7 +141,7 @@ func (b *SieveBlock) SetAttachments(a Attachments) {
 }
 
 // assetAttrs are the attrs a block names a stored asset under, whatever its kind.
-var assetAttrs = [...]string{"src", "svgAsset", "asset", "uri", "image", "parsedAssetRef"}
+var assetAttrs = [...]string{"src", "svgAsset", "page", "asset", "uri", "image", "parsedAssetRef"}
 
 // HeldAssets returns the keys of the assets of document self this block holds:
 // every asset attr, read from the block's attrs or else its face, in any spelling

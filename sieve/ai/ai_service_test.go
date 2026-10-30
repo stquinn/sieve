@@ -2,9 +2,12 @@ package ai
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"sieve/sieve/domain"
+	"sieve/sieve/services"
+	"sieve/store/filestore"
 )
 
 // timeoutFor reads only settings.PromptTimeouts and settings.CLITimeoutLong, so a
@@ -108,6 +111,75 @@ func TestAIService_DescribeImage_resolvesTheSrcThroughTheResolver(t *testing.T) 
 			}
 			if want := filepath.Dir(filepath.Join(svc.storePath, tc.node.Path)); cap.cwd != want {
 				t.Errorf("cwd = %q, want the resolved file's directory %q", cap.cwd, want)
+			}
+		})
+	}
+}
+
+type fakeDocMCPEndpoint struct {
+	url     string
+	lastDoc string
+}
+
+func (f *fakeDocMCPEndpoint) Endpoint() (string, string) {
+	return f.url, "tok-unscoped"
+}
+
+func (f *fakeDocMCPEndpoint) EndpointForDoc(docUUID string) (string, string) {
+	f.lastDoc = docUUID
+	return f.url, "tok-doc-" + docUUID
+}
+
+func TestAIService_RunWebClip_PromptAssemblyAndDocScopedProfile(t *testing.T) {
+	cap := &captureRunner{ret: "# Suzuka Schedule\n\nGates open at 08:00."}
+	svc := newSmartTestService(t, cap)
+	fs, err := filestore.NewFileStore(svc.storePath, "testhost")
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	ds, err := services.NewDocumentService(fs)
+	if err != nil {
+		t.Fatalf("NewDocumentService: %v", err)
+	}
+	svc.documents = ds
+	mcpEp := &fakeDocMCPEndpoint{url: "http://127.0.0.1:41234/mcp"}
+	svc.SetMCPEndpoint(mcpEp)
+
+	doc, err := ds.New()
+	if err != nil {
+		t.Fatalf("New doc: %v", err)
+	}
+	doc.SetBody([]byte("# My Trip Notes"))
+	doc, err = ds.Save(doc)
+	if err != nil {
+		t.Fatalf("Save doc: %v", err)
+	}
+	uuid := doc.UUID()
+	sourceURL := "https://example.com/suzuka"
+
+	for _, mode := range []string{"fetch", "summarise"} {
+		t.Run(mode, func(t *testing.T) {
+			title, content, err := svc.RunWebClip(uuid, "wc-1", sourceURL, mode, "# My Trip Notes")
+			if err != nil {
+				t.Fatalf("RunWebClip(%s): %v", mode, err)
+			}
+			if title != "Suzuka Schedule" || !strings.Contains(content, "Gates open at 08:00.") {
+				t.Errorf("got title=%q content=%q", title, content)
+			}
+			if mcpEp.lastDoc != uuid {
+				t.Errorf("EndpointForDoc called with %q, want %q", mcpEp.lastDoc, uuid)
+			}
+			template, _ := svc.prompts.GetPromptContent("web-clip-" + mode)
+			want := strings.ReplaceAll(strings.ReplaceAll(template, "{source}", sourceURL), "{document}", "# My Trip Notes")
+			if cap.prompt != want {
+				t.Errorf("mode %s prompt = %q, want the filled template %q", mode, cap.prompt, want)
+			}
+			args := buildBaseArgs(cap.dialect, cap.model, cap.prompt, cap.profile, cap.cwd, cap.libraryDir)
+			if cfg := flagValue(args, "--mcp-config"); !strings.Contains(cfg, "Bearer tok-doc-"+uuid) {
+				t.Errorf("--mcp-config missing document-scoped bearer token: %s", cfg)
+			}
+			if allow := flagValue(args, "--allowedTools"); !strings.Contains(allow, "mcp__sieve__*") {
+				t.Errorf("--allowedTools missing mcp__sieve__*: %s", allow)
 			}
 		})
 	}

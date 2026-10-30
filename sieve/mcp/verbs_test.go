@@ -2,11 +2,17 @@ package mcp
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"path"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
+	"sieve/sieve/domain"
 	"sieve/sieve/editor"
 	"sieve/sieve/services"
 	"sieve/store/filestore"
@@ -58,7 +64,7 @@ func newTestServerWithStore(t *testing.T) (*Server, *services.DocumentService, *
 	block.ResetRegistry()
 	block.RegisterProcessor(&processors.ProseProcessor{})
 	t.Cleanup(block.ResetRegistry)
-	return NewServer(ds, editor.NewRouter(editor.NewNotesSource(ds))), ds, fs
+	return NewServer(ds, editor.NewRouter(editor.NewNotesSource(ds)), services.NewLinkPreviewService()), ds, fs
 }
 
 // seedNote creates a buffer, stamps metadata, and files it into folder.
@@ -251,5 +257,195 @@ func TestListFacets_FoldersAndTags(t *testing.T) {
 	}
 	if tagCounts["go"] != 1 || tagCounts["python"] != 1 || tagCounts["personal"] != 1 {
 		t.Errorf("tag counts = %+v, want go/python/personal each 1", facets.Tags)
+	}
+}
+
+func TestFetchPage_WritesHTMLAssetAndReusesOnSecondCall(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte(`<!DOCTYPE html><html><head>
+<title>Noisy Title | BBC Sport</title>
+<meta property="og:title" content="Verstappen Wins in Suzuka"/>
+</head><body>
+<nav>Skip to content | Live scores</nav>
+<article>
+  <h1>Verstappen Wins in Suzuka</h1>
+  <p>Max Verstappen controlled the Japanese Grand Prix from pole position, leading every lap after the restart to secure victory.</p>
+</article>
+<footer>BBC Terms of Use</footer>
+</body></html>`))
+	}))
+	defer srv.Close()
+
+	s, ds := newTestServerWithDocs(t)
+	buf, err := ds.New()
+	if err != nil {
+		t.Fatalf("New buffer: %v", err)
+	}
+	buf.SetBody([]byte("Initial notes.\n"))
+	doc, err := ds.Save(buf)
+	if err != nil {
+		t.Fatalf("Save buffer: %v", err)
+	}
+	uuid := doc.UUID()
+
+	ctx := WithDocument(context.Background(), uuid)
+	pageURL := srv.URL + "/sport/formula1/articles/cmvg9z1v33keo"
+	_, node, err := s.fetchPage(ctx, nil, FetchPageInput{URL: pageURL})
+	if err != nil {
+		t.Fatalf("fetch_page first call: %v", err)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("HTTP hits after first call = %d, want 1", hits.Load())
+	}
+	if node.Kind != "asset" {
+		t.Errorf("Kind = %q, want asset", node.Kind)
+	}
+	if node.ID != ds.PageAssetKey(pageURL) || !strings.HasSuffix(node.ID, ".html") {
+		t.Errorf("ID = %q, want the .html page asset key %q", node.ID, ds.PageAssetKey(pageURL))
+	}
+	wantURI := domain.NewLeafAddress(uuid, node.ID).String()
+	if node.URI != wantURI {
+		t.Errorf("URI = %q, want %q", node.URI, wantURI)
+	}
+	if node.Title != "Verstappen Wins in Suzuka" {
+		t.Errorf("Title = %q, want %q", node.Title, "Verstappen Wins in Suzuka")
+	}
+	wantPath := path.Join(doc.Storable().ExternalRef(), node.ID)
+	if node.Path != wantPath {
+		t.Errorf("Path = %q, want %q", node.Path, wantPath)
+	}
+	if node.Bytes == 0 {
+		t.Error("Bytes = 0, want non-zero HTML asset size")
+	}
+	if node.Body != "" {
+		t.Errorf("Body = %q, want empty (asset bytes live on disk at Path)", node.Body)
+	}
+
+	reloaded, err := ds.LoadByUUID(uuid)
+	if err != nil {
+		t.Fatalf("LoadByUUID: %v", err)
+	}
+	var savedBody string
+	for _, owned := range reloaded.Storable().Owns() {
+		if owned.Key() == node.ID {
+			savedBody = string(owned.Body())
+			break
+		}
+	}
+	if savedBody == "" {
+		t.Fatalf("asset %q not found in document %s owns", node.ID, uuid)
+	}
+	if !strings.HasPrefix(savedBody, `<!doctype html><html><head><meta charset="utf-8"><title>Verstappen Wins in Suzuka</title></head><body>`) ||
+		!strings.Contains(savedBody, "Max Verstappen controlled the Japanese Grand Prix") {
+		t.Errorf("saved asset is not the titled readable HTML document:\n%s", savedBody)
+	}
+	if strings.Contains(savedBody, "Skip to content") || strings.Contains(savedBody, "BBC Terms of Use") {
+		t.Errorf("saved asset retained boilerplate:\n%s", savedBody)
+	}
+
+	// Second call for the same URL must reuse the existing asset without re-fetching.
+	_, node2, err := s.fetchPage(ctx, nil, FetchPageInput{URL: pageURL})
+	if err != nil {
+		t.Fatalf("fetch_page second call: %v", err)
+	}
+	if hits.Load() != 1 {
+		t.Errorf("HTTP hits after second call = %d, want 1 (existing asset should be reused)", hits.Load())
+	}
+	if node2.URI != node.URI || node2.ID != node.ID || node2.Bytes != node.Bytes || node2.Title != node.Title {
+		t.Errorf("second call descriptor = %+v, want %+v", node2, node)
+	}
+}
+
+func TestFetchPage_RefusesOn403TimeoutNonHTMLAndEmpty(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		timeout time.Duration
+		wantErr string
+	}{
+		{
+			name: "403 status",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "forbidden", http.StatusForbidden)
+			},
+			timeout: 2 * time.Second,
+			wantErr: "403",
+		},
+		{
+			name: "timeout",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				time.Sleep(250 * time.Millisecond)
+				w.Header().Set("Content-Type", "text/html")
+				w.Write([]byte(`<html><body><p>slow</p></body></html>`))
+			},
+			timeout: 30 * time.Millisecond,
+			wantErr: "timeout",
+		},
+		{
+			name: "non-HTML",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/pdf")
+				w.Write([]byte("%PDF-1.4 binary"))
+			},
+			timeout: 2 * time.Second,
+			wantErr: "non-HTML",
+		},
+		{
+			name: "empty body",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/html")
+				w.Write([]byte(`<html><body></body></html>`))
+			},
+			timeout: 2 * time.Second,
+			wantErr: "empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(tt.handler)
+			defer srv.Close()
+
+			s, ds := newTestServerWithDocs(t)
+			if s.fetchTimeout != pageFetchTimeout {
+				t.Fatalf("fetchTimeout = %s, want pageFetchTimeout %s", s.fetchTimeout, pageFetchTimeout)
+			}
+			s.fetchTimeout = tt.timeout
+			buf, err := ds.New()
+			if err != nil {
+				t.Fatalf("New buffer: %v", err)
+			}
+			doc, err := ds.Save(buf)
+			if err != nil {
+				t.Fatalf("Save buffer: %v", err)
+			}
+
+			ctx := WithDocument(context.Background(), doc.UUID())
+			_, _, err = s.fetchPage(ctx, nil, FetchPageInput{URL: srv.URL + "/page"})
+			if err == nil {
+				t.Fatalf("fetch_page(%s) succeeded, want refusal", tt.name)
+			}
+			if !strings.HasPrefix(err.Error(), "cannot retrieve:") {
+				t.Errorf("err = %q, want 'cannot retrieve: {reason}' prefix", err.Error())
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tt.wantErr)) {
+				t.Errorf("err = %q, want it to contain %q", err.Error(), tt.wantErr)
+			}
+			reloaded, _ := ds.LoadByUUID(doc.UUID())
+			if len(reloaded.Storable().Owns()) != 0 {
+				t.Errorf("refused fetch_page must not write any asset; owns = %d", len(reloaded.Storable().Owns()))
+			}
+		})
+	}
+}
+
+func TestFetchPage_RefusesWhenSessionHasNoDocument(t *testing.T) {
+	s := newTestServer(t)
+	_, _, err := s.fetchPage(context.Background(), nil, FetchPageInput{URL: "https://example.com"})
+	if err == nil || !strings.HasPrefix(err.Error(), "cannot retrieve:") {
+		t.Fatalf("unscoped fetch_page err = %v, want 'cannot retrieve:' refusal", err)
 	}
 }

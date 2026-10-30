@@ -26,6 +26,14 @@ type MCPEndpoint interface {
 	Endpoint() (url, token string)
 }
 
+// DocumentMCPEndpoint extends MCPEndpoint with document-scoped token issuance,
+// binding the bearer token to a single document UUID so verbs that write into a
+// document (such as fetch_page) can only touch the owning job's document.
+type DocumentMCPEndpoint interface {
+	MCPEndpoint
+	EndpointForDoc(docUUID string) (url, token string)
+}
+
 // AIService owns all AI evaluation and filing operations. It resolves prompt
 // templates, settings, and folder lists internally so callers need no boilerplate.
 type AIService struct {
@@ -54,16 +62,35 @@ func NewAIService(state *services.StateService, prompts *PromptService, document
 // in its builtin MCP grant, so the contained CLI can query the knowledge base.
 func (s *AIService) SetMCPEndpoint(e MCPEndpoint) { s.mcp = e }
 
+// SetRunner overrides the CLI execution seam.
+func (s *AIService) SetRunner(r CLIRunner) { s.runner = r }
+
 // profile returns the containment floor for a CLI call: the default baseline,
 // with the builtin Sieve MCP grant's runtime URL + per-call token filled in when
 // an endpoint is wired and reachable. When no endpoint is running the builtin
 // grant keeps its empty URL and the backend renders no MCP flags.
 func (s *AIService) profile() domain.ContainmentProfile {
+	return s.profileForDoc("")
+}
+
+// profileForDoc returns the containment floor for a CLI call scoped to docUUID:
+// when docUUID is non-empty and the wired MCP endpoint implements
+// DocumentMCPEndpoint, the per-call bearer token is bound to docUUID.
+func (s *AIService) profileForDoc(docUUID string) domain.ContainmentProfile {
 	p := s.savedProfile()
 	if s.mcp == nil {
 		return p
 	}
-	url, token := s.mcp.Endpoint()
+	var url, token string
+	if docUUID != "" {
+		if dmcp, ok := s.mcp.(DocumentMCPEndpoint); ok {
+			url, token = dmcp.EndpointForDoc(docUUID)
+		} else {
+			url, token = s.mcp.Endpoint()
+		}
+	} else {
+		url, token = s.mcp.Endpoint()
+	}
 	if url == "" {
 		return p
 	}
@@ -171,7 +198,7 @@ func (s *AIService) RunExplain(content, history, question, noteUUID string) (str
 	p = strings.ReplaceAll(p, "{action}", question)
 
 	binary, dialect := settings.ResolveCLI()
-	return s.runner.Run("explain", binary, dialect, p, settings.Model, s.timeoutFor(settings, "explain"), noteCwd, s.profile(), s.storePath)
+	return s.runner.Run("explain", binary, dialect, p, settings.Model, s.timeoutFor(settings, "explain"), noteCwd, s.profileForDoc(noteUUID), s.storePath)
 }
 
 // RunAsk asks the AI a question with the given content as context. history may
@@ -192,7 +219,7 @@ func (s *AIService) RunAsk(content, history, question, noteUUID string) (string,
 	p = strings.ReplaceAll(p, "{action}", question)
 
 	binary, dialect := settings.ResolveCLI()
-	return s.runner.Run("ask", binary, dialect, p, settings.Model, s.timeoutFor(settings, "ask"), noteCwd, s.profile(), s.storePath)
+	return s.runner.Run("ask", binary, dialect, p, settings.Model, s.timeoutFor(settings, "ask"), noteCwd, s.profileForDoc(noteUUID), s.storePath)
 }
 
 // RunBtw answers a quick /btw side-question. The document is pointer context
@@ -214,7 +241,7 @@ func (s *AIService) RunBtw(question, selection, docTitle, docSummary, docUUID st
 	p = strings.ReplaceAll(p, "{doc_summary}", docSummary)
 	p = strings.ReplaceAll(p, "{doc_uuid}", docUUID)
 	binary, dialect := settings.ResolveCLI()
-	return s.runner.Run("btw", binary, dialect, p, settings.Model, s.timeoutFor(settings, "btw"), cwd, s.profile(), s.storePath)
+	return s.runner.Run("btw", binary, dialect, p, settings.Model, s.timeoutFor(settings, "btw"), cwd, s.profileForDoc(docUUID), s.storePath)
 }
 
 // Tier exposes the current capability tier so AI-backed commands can fail
@@ -243,7 +270,7 @@ func (s *AIService) DescribeImage(uuid string, src string, blkId string) (domain
 	p := strings.ReplaceAll(prompt, "{image_filename}", filepath.Base(imagePath))
 	cwd := filepath.Dir(imagePath)
 	binary, dialect := settings.ResolveCLI()
-	resp, err := s.runner.Run("image", binary, dialect, p, settings.Model, s.timeoutFor(settings, "image"), cwd, s.profile(), s.storePath)
+	resp, err := s.runner.Run("image", binary, dialect, p, settings.Model, s.timeoutFor(settings, "image"), cwd, s.profileForDoc(uuid), s.storePath)
 	if err != nil {
 		return domain.ImageDesc{}, err
 	}
@@ -569,10 +596,14 @@ func (s *AIService) RunWebClip(uuid, id, source, mode, docContent string) (title
 	prompt := strings.ReplaceAll(promptTemplate, "{source}", source)
 	prompt = strings.ReplaceAll(prompt, "{document}", docContent)
 
-	doc, loadErr := s.documents.LoadByUUID(uuid)
+	var doc domain.Document
+	var loadErr error
+	if s.documents != nil {
+		doc, loadErr = s.documents.LoadByUUID(uuid)
+	}
 	cwd := ""
 	docDir := ""
-	if loadErr == nil {
+	if loadErr == nil && doc != nil {
 		// cwd is the note's OWN folder (== docDir), not its parent — same as the
 		// other AI ops (see noteDir). filepath.Dir here over-scoped to the
 		// category/buffers root.
@@ -581,7 +612,7 @@ func (s *AIService) RunWebClip(uuid, id, source, mode, docContent string) (title
 	}
 
 	binary, dialect := settings.ResolveCLI()
-	raw, err := s.runner.Run(promptName, binary, dialect, prompt, settings.Model, s.timeoutFor(settings, promptName), cwd, s.profile(), s.storePath)
+	raw, err := s.runner.Run(promptName, binary, dialect, prompt, settings.Model, s.timeoutFor(settings, promptName), cwd, s.profileForDoc(uuid), s.storePath)
 	if err != nil {
 		return "", "", err
 	}

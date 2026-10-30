@@ -35,6 +35,8 @@ func TestAssetURIMigrator_RewritesToAbsoluteAddress(t *testing.T) {
 		{"diagram dot-assets prefix", "diagram", "svgAsset", ".assets/di-1.svg", self + "di-1.svg"},
 		{"diagram relative reference lifts to absolute", "diagram", "svgAsset", "/di-1.svg", self + "di-1.svg"},
 		{"diagram foreign current route", "diagram", "svgAsset", "/ui/assets/" + testForeignDocUUID + "/shared.svg", foreign + "shared.svg"},
+		{"web-clip bare filename", "web-clip", "page", "page-bbc-123456.html", self + "page-bbc-123456.html"},
+		{"web-clip relative reference lifts to absolute", "web-clip", "page", "/page-bbc-123456.html", self + "page-bbc-123456.html"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			in := []SieveBlock{
@@ -59,7 +61,10 @@ func TestAssetURIMigrator_AlreadyMigrated_AllocatesNothing(t *testing.T) {
 		{ID: "di-1", Kind: "diagram", Attrs: map[string]interface{}{"id": "di-1", "svgAsset": "sieve://" + testAssetDocUUID + "/flow.svg"}},
 		{ID: "di-2", Kind: "diagram", Attrs: map[string]interface{}{"id": "di-2", "svgAsset": "sieve://" + testForeignDocUUID + "/flow.svg"}},
 		{ID: "di-3", Kind: "diagram", Attrs: map[string]interface{}{"id": "di-3", "svgAsset": ""}},
+		{ID: "wc-1", Kind: "web-clip", Attrs: map[string]interface{}{"id": "wc-1", "page": "sieve://" + testAssetDocUUID + "/page-1.html"}},
+		{ID: "wc-2", Kind: "web-clip", Attrs: map[string]interface{}{"id": "wc-2", "page": ""}},
 	}
+
 	out, changed := AssetURIMigrator{}.Migrate(in, testAssetDocUUID)
 	if changed {
 		t.Fatal("changed = true for already-migrated blocks")

@@ -1,12 +1,15 @@
 package mcp
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // authProbe posts to the server's ServeHTTP with the given Authorization header
@@ -78,5 +81,66 @@ func TestEndpoint_EmptyWhenNoBaseURL(t *testing.T) {
 	url, token := s.Endpoint()
 	if url != "" || token != "" {
 		t.Errorf("no base URL: Endpoint = (%q, %q), want empty", url, token)
+	}
+}
+
+type bearerRoundTripper struct {
+	token string
+	base  http.RoundTripper
+}
+
+func (b bearerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.Header.Set("Authorization", "Bearer "+b.token)
+	return b.base.RoundTrip(clone)
+}
+
+func TestAuth_EndpointForDocBindsDocumentOverHTTP(t *testing.T) {
+	pageSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<!DOCTYPE html><html><head><title>Scoped Page</title></head><body><article><p>Article body over HTTP transport.</p></article></body></html>`))
+	}))
+	defer pageSrv.Close()
+
+	s, ds := newTestServerWithDocs(t)
+	buf, err := ds.New()
+	if err != nil {
+		t.Fatalf("New buffer: %v", err)
+	}
+	doc, err := ds.Save(buf)
+	if err != nil {
+		t.Fatalf("Save buffer: %v", err)
+	}
+
+	mcpSrv := httptest.NewServer(s)
+	defer mcpSrv.Close()
+	s.SetBaseURL(mcpSrv.URL)
+
+	mcpURL, token := s.EndpointForDoc(doc.UUID())
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test-cli", Version: "v1"}, nil)
+	session, err := client.Connect(context.Background(), &mcpsdk.StreamableClientTransport{
+		Endpoint: mcpURL,
+		HTTPClient: &http.Client{
+			Transport: bearerRoundTripper{token: token, base: http.DefaultTransport},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer session.Close()
+
+	res, err := session.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name:      "fetch_page",
+		Arguments: map[string]any{"url": pageSrv.URL + "/article"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(fetch_page): %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("CallTool(fetch_page) returned tool error: %+v", res.Content)
+	}
+	reloaded, _ := ds.LoadByUUID(doc.UUID())
+	if len(reloaded.Storable().Owns()) != 1 {
+		t.Fatalf("document owns %d assets after HTTP fetch_page, want 1", len(reloaded.Storable().Owns()))
 	}
 }

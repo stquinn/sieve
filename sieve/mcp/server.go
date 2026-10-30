@@ -10,11 +10,13 @@
 package mcp
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"sieve/logger"
 	"sieve/sieve/services"
@@ -22,37 +24,63 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+type docContextKey struct{}
+
+// WithDocument binds a target document UUID to ctx for side-effecting MCP verbs.
+func WithDocument(ctx context.Context, docUUID string) context.Context {
+	return context.WithValue(ctx, docContextKey{}, strings.TrimSpace(docUUID))
+}
+
+// DocumentFromContext returns the target document UUID bound to ctx, or empty string.
+func DocumentFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	v, _ := ctx.Value(docContextKey{}).(string)
+	return v
+}
+
 // Server is the internal Sieve MCP. It owns the transport-agnostic verb handlers
 // (methods over the services), the SDK server + HTTP handler, and the per-run
 // bearer-token registry that authenticates the CLI Sieve launches.
 //
-// Read-only v1: search, get_meta, get_note, get_by_uri, list_facets. TWO verbs
+// Read verbs: search, get_meta, get_note, get_by_uri, list_facets. TWO verbs
 // return bodies — get_note names its target by uuid, get_by_uri by coordinate —
 // and both MUST record the same bodyRead audit through one auditor, which is
 // what keeps bulk-read visible at a single boundary.
+//
+// Side-effecting verb: fetch_page writes a readable HTML asset into the
+// calling job's own document (and nowhere else), returning its NodeDescriptor.
 type Server struct {
-	documents *services.DocumentService
-	nodes     NodeResolver    // address → NodeDescriptor; the concrete Router is injected at the root
-	audit     bodyReadAuditor // every body read, recorded at one place
+	documents    *services.DocumentService
+	nodes        NodeResolver // address → NodeDescriptor; the concrete Router is injected at the root
+	linkPreview  *services.LinkPreviewService
+	fetchTimeout time.Duration
+	audit        bodyReadAuditor // every body read, recorded at one place
 
 	sdk     *mcpsdk.Server
 	handler http.Handler // StreamableHTTPHandler, built once
 
 	mu      sync.RWMutex
-	baseURL string              // e.g. "http://127.0.0.1:34115"; set once the listener is bound
-	tokens  map[string]struct{} // valid per-run bearer tokens
+	baseURL string            // e.g. "http://127.0.0.1:34115"; set once the listener is bound
+	tokens  map[string]string // valid per-run bearer tokens → bound document UUID ("" when unscoped)
 }
 
-// NewServer builds the Sieve MCP over the document service and the node
-// resolver, registers the read-only verbs, and prepares the streamable HTTP
-// handler. The base URL is not known yet (the listener binds after construction)
-// — SetBaseURL supplies it.
-func NewServer(documents *services.DocumentService, nodes NodeResolver) *Server {
+// pageFetchTimeout is fetch_page's deadline for retrieving one page.
+const pageFetchTimeout = 15 * time.Second
+
+// NewServer builds the Sieve MCP over the document service, the node resolver
+// and the link-preview service fetch_page retrieves pages through, registers the
+// verbs, and prepares the streamable HTTP handler. The base URL is not known yet
+// (the listener binds after construction) — SetBaseURL supplies it.
+func NewServer(documents *services.DocumentService, nodes NodeResolver, linkPreview *services.LinkPreviewService) *Server {
 	s := &Server{
-		documents: documents,
-		nodes:     nodes,
-		audit:     logAuditor{},
-		tokens:    make(map[string]struct{}),
+		documents:    documents,
+		nodes:        nodes,
+		linkPreview:  linkPreview,
+		fetchTimeout: pageFetchTimeout,
+		audit:        logAuditor{},
+		tokens:       make(map[string]string),
 	}
 
 	sdk := mcpsdk.NewServer(&mcpsdk.Implementation{
@@ -85,6 +113,12 @@ func NewServer(documents *services.DocumentService, nodes NodeResolver) *Server 
 		Name:        "list_facets",
 		Description: "Return the knowledge base's orientation facets: folders with note counts and tags with counts.",
 	}, s.listFacets)
+	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
+		Name: "fetch_page",
+		Description: "Fetch an http or https URL, extract its readable article content as HTML, and write it as an asset into the job's own document. " +
+			"Returns the asset's NodeDescriptor (uri, id, kind \"asset\", title, path, bytes); the asset is an HTML file you can read from disk at path. " +
+			"On failure returns 'cannot retrieve: {reason}' so you can fall back to other tools.",
+	}, s.fetchPage)
 
 	s.sdk = sdk
 	s.handler = mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server {
@@ -111,17 +145,23 @@ func (s *Server) SetBaseURL(base string) {
 // 127.0.0.1, and live only for the app session. This is an accepted minor
 // accumulation for v1 (noted; revoke-on-completion is a future refinement).
 func (s *Server) Endpoint() (url, token string) {
+	return s.EndpointForDoc("")
+}
+
+// EndpointForDoc issues a per-call bearer token bound to docUUID so
+// side-effecting verbs (fetch_page) write only into that document's assets.
+func (s *Server) EndpointForDoc(docUUID string) (url, token string) {
 	s.mu.RLock()
 	base := s.baseURL
 	s.mu.RUnlock()
 	if base == "" {
 		return "", ""
 	}
-	tok := s.issueToken()
+	tok := s.issueToken(docUUID)
 	return base + "/mcp", tok
 }
 
-func (s *Server) issueToken() string {
+func (s *Server) issueToken(docUUID string) string {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		logger.Error("sieve mcp: token generation failed", "err", err)
@@ -129,32 +169,37 @@ func (s *Server) issueToken() string {
 	}
 	tok := hex.EncodeToString(buf)
 	s.mu.Lock()
-	s.tokens[tok] = struct{}{}
+	s.tokens[tok] = strings.TrimSpace(docUUID)
 	s.mu.Unlock()
 	return tok
 }
 
-func (s *Server) tokenValid(tok string) bool {
+func (s *Server) tokenDoc(tok string) (string, bool) {
 	if tok == "" {
-		return false
+		return "", false
 	}
 	s.mu.RLock()
-	_, ok := s.tokens[tok]
+	docUUID, ok := s.tokens[tok]
 	s.mu.RUnlock()
-	return ok
+	return docUUID, ok
 }
 
 // ServeHTTP authenticates the request against the per-run bearer token registry,
-// then delegates to the streamable MCP handler. Unauthenticated requests are
+// binds the token's document UUID into the request context when present, and
+// delegates to the streamable MCP handler. Unauthenticated requests are
 // rejected — only the CLI Sieve launched (holding the injected token) may reach
 // the knowledge base.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !s.tokenValid(s.bearerToken(r)) {
+	docUUID, ok := s.tokenDoc(s.bearerToken(r))
+	if !ok {
 		// A hit on the localhost MCP without a valid per-run token is security-
 		// relevant (only the CLI Sieve launched should reach it) — surface it.
 		logger.Warn("sieve mcp: unauthorized request rejected", "remote", r.RemoteAddr, "path", r.URL.Path)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
+	}
+	if docUUID != "" {
+		r = r.WithContext(WithDocument(r.Context(), docUUID))
 	}
 	s.handler.ServeHTTP(w, r)
 }

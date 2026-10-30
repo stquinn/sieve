@@ -463,3 +463,148 @@ func TestFetch_RedirectCap(t *testing.T) {
 		}
 	})
 }
+
+func TestFetchReadable_ExtractsArticleAndDropsBoilerplate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte(`<!DOCTYPE html><html><head>
+<title>Noisy Title | Publisher</title>
+<meta property="og:title" content="Verstappen Wins in Suzuka"/>
+<style>.cookie-banner { display: block; }</style>
+<script>window.track("page_view");</script>
+</head><body>
+<nav><a href="/home">Home</a> | <a href="/subscribe">Subscribe Now</a></nav>
+<aside class="sidebar">Trending gossip and newsletter signup boilerplate</aside>
+<article>
+  <h1>Verstappen Wins in Suzuka</h1>
+  <p>Max Verstappen controlled the Japanese Grand Prix from pole position, leading every lap after the restart to secure victory.</p>
+  <h2>Race Highlights</h2>
+  <p>Read the <a href="/sport/f1/standings">championship standings</a> for full constructor points and driver gaps.</p>
+  <ul>
+    <li>Pit stop window opened on lap 16</li>
+    <li>Fastest lap set on the final stint</li>
+  </ul>
+</article>
+<footer>Copyright 2026 Publisher Terms Privacy Policy</footer>
+</body></html>`))
+	}))
+	defer srv.Close()
+
+	s := NewLinkPreviewService()
+	page, err := s.FetchReadable(srv.URL+"/sport/f1/report", 5*time.Second)
+	if err != nil {
+		t.Fatalf("FetchReadable: %v", err)
+	}
+	if page.Title != "Verstappen Wins in Suzuka" {
+		t.Errorf("Title = %q, want %q", page.Title, "Verstappen Wins in Suzuka")
+	}
+	const head = `<!doctype html><html><head><meta charset="utf-8"><title>Verstappen Wins in Suzuka</title></head><body>`
+	if !strings.HasPrefix(page.HTML, head) || !strings.HasSuffix(page.HTML, "</body></html>") {
+		t.Errorf("HTML is not the titled document wrapper;\ngot:\n%s", page.HTML)
+	}
+	for _, want := range []string{
+		"Max Verstappen controlled the Japanese Grand Prix from pole position",
+		"Race Highlights",
+		`href="` + srv.URL + `/sport/f1/standings"`,
+		"Pit stop window opened on lap 16",
+		"Fastest lap set on the final stint",
+	} {
+		if !strings.Contains(page.HTML, want) {
+			t.Errorf("HTML missing %q;\ngot:\n%s", want, page.HTML)
+		}
+	}
+	for _, boilerplate := range []string{
+		"Subscribe Now",
+		"Trending gossip",
+		"window.track",
+		"cookie-banner",
+		"Privacy Policy",
+	} {
+		if strings.Contains(page.HTML, boilerplate) {
+			t.Errorf("HTML retained boilerplate %q;\ngot:\n%s", boilerplate, page.HTML)
+		}
+	}
+}
+
+// A page Readability strips to no text is kept as its <body>, less scripts and
+// styles, under the head title.
+func TestFetchReadable_FallsBackToBodyWhenReadabilityFindsNoArticle(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><head><title>Status &amp; Uptime</title></head><body>` +
+			`<script>boot()</script><style>.x{}</style><footer>All systems operational</footer></body></html>`))
+	}))
+	defer srv.Close()
+
+	page, err := NewLinkPreviewService().FetchReadable(srv.URL, 5*time.Second)
+	if err != nil {
+		t.Fatalf("FetchReadable: %v", err)
+	}
+	want := `<!doctype html><html><head><meta charset="utf-8"><title>Status &amp; Uptime</title></head>` +
+		`<body><footer>All systems operational</footer></body></html>`
+	if page.Title != "Status & Uptime" || page.HTML != want {
+		t.Errorf("FetchReadable = {%q, %q}, want {%q, %q}", page.Title, page.HTML, "Status & Uptime", want)
+	}
+}
+
+func TestFetchReadable_RefusesNonHTMLStatusTimeoutAndEmpty(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		timeout time.Duration
+		wantErr string
+	}{
+		{
+			name: "403 forbidden",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "forbidden", http.StatusForbidden)
+			},
+			timeout: 2 * time.Second,
+			wantErr: "403",
+		},
+		{
+			name: "timeout",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				time.Sleep(250 * time.Millisecond)
+				w.Header().Set("Content-Type", "text/html")
+				w.Write([]byte(`<html><body><p>Too slow</p></body></html>`))
+			},
+			timeout: 30 * time.Millisecond,
+			wantErr: "timeout",
+		},
+		{
+			name: "non-HTML content-type",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/pdf")
+				w.Write([]byte("%PDF-1.4 fake pdf bytes"))
+			},
+			timeout: 2 * time.Second,
+			wantErr: "non-HTML",
+		},
+		{
+			name: "empty body",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/html")
+				w.Write([]byte(`<html><head><title>Blank</title></head><body>   </body></html>`))
+			},
+			timeout: 2 * time.Second,
+			wantErr: "empty",
+		},
+	}
+
+	s := NewLinkPreviewService()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(tt.handler)
+			defer srv.Close()
+
+			_, err := s.FetchReadable(srv.URL, tt.timeout)
+			if err == nil {
+				t.Fatalf("FetchReadable(%s) succeeded, want error containing %q", tt.name, tt.wantErr)
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tt.wantErr)) {
+				t.Errorf("FetchReadable(%s) err = %q, want it to contain %q", tt.name, err.Error(), tt.wantErr)
+			}
+		})
+	}
+}

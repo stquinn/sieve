@@ -25,6 +25,7 @@ func (p *WebClipBlockProcessor) InitAttrs(id string, overrides map[string]interf
 	attrs := map[string]interface{}{
 		"id":                id,
 		"source":            "",
+		"page":              "",
 		"title":             "",
 		"mode":              "fetch",
 		"status":            block.BlockStatusPending,
@@ -132,8 +133,8 @@ func (p *WebClipBlockProcessor) Mode() block.BlockMode {
 }
 
 // DescribeJob declares the AI clip job. The document body is read synchronously
-// here (before the AI call, mirroring the old RunJob), then captured by Work. A
-// web-clip always has async work (born PENDING), so DescribeJob never returns nil.
+// here, before the AI call, then captured by Work. A web-clip always has async
+// work (born PENDING), so DescribeJob never returns nil.
 // Apply writes the success attrs; the error path (status ERROR/TIMEOUT) is the
 // framework's job in EditorService.finish, so Apply is success-only.
 func (p *WebClipBlockProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJob {
@@ -150,6 +151,11 @@ func (p *WebClipBlockProcessor) DescribeJob(jctx block.JobContext) *block.Proces
 		docContent = string(doc.Body())
 	}
 
+	type webClipResult struct {
+		title   string
+		content string
+		page    string
+	}
 	return &block.ProcessorJob{
 		Category: block.CategoryAI,
 		Label:    p.webClipLabel(blk),
@@ -161,15 +167,22 @@ func (p *WebClipBlockProcessor) DescribeJob(jctx block.JobContext) *block.Proces
 			if cliErr != nil {
 				return nil, cliErr
 			}
-			return []string{title, content}, nil
+			return webClipResult{
+				title:   title,
+				content: content,
+				page:    p.svc.Documents.PageAssetAddress(uuid, source),
+			}, nil
 		},
 		Apply: func(result any, b *block.SieveBlock) {
-			tc := result.([]string)
+			res := result.(webClipResult)
 			b.Attrs["status"] = block.BlockStatusComplete
-			if tc[0] != "" {
-				b.Attrs["title"] = tc[0] // else keep the link's own text
+			if res.title != "" {
+				b.Attrs["title"] = res.title // else keep the link's own text
 			}
-			b.Attrs["content"] = tc[1]
+			if res.page != "" {
+				b.Attrs["page"] = res.page
+			}
+			b.Attrs["content"] = res.content
 			b.Attrs["completedAt"] = time.Now().UTC().Format(time.RFC3339)
 			b.Attrs["model"] = p.svc.State.LoadSettings().Model
 		},

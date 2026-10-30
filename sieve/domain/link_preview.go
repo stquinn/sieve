@@ -12,3 +12,11 @@ type LinkPreviewResult struct {
 	OGImageURL  string
 	SiteName    string
 }
+
+// ReadablePage is a fetched page's readable article: its title, and HTML, a
+// complete HTML document whose <title> carries Title and whose <body> is the
+// extracted article content.
+type ReadablePage struct {
+	Title string
+	HTML  string
+}

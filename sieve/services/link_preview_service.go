@@ -1,16 +1,22 @@
 package services
 
 import (
+	"bytes"
+	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"sieve/sieve/domain"
 	"strings"
 	"time"
 
+	readability "codeberg.org/readeck/go-readability/v2"
 	"golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 )
 
 const (
@@ -19,6 +25,10 @@ const (
 	// the page that never emits one — malformed, hostile, or an endless stream —
 	// which would otherwise read until the caller's deadline expired.
 	maxHeadBytes = 256 << 10 // 256 KiB
+
+	// maxReadableBytes caps the response body read for full-page Readability
+	// extraction so an unbounded stream cannot exhaust memory.
+	maxReadableBytes = 8 << 20 // 8 MiB
 
 	// maxLinkRedirects caps the redirect chain. Shortened and tracking links
 	// (t.co, newsletter wrappers, doi.org) spend a full round-trip per hop and can
@@ -36,11 +46,140 @@ const (
 	fullPreviewTimeout = 8 * time.Second
 )
 
-// LinkPreviewService fetches metadata for URLs.
+// LinkPreviewService fetches metadata and readable content for URLs.
 type LinkPreviewService struct{}
 
 func NewLinkPreviewService() *LinkPreviewService {
 	return &LinkPreviewService{}
+}
+
+// FetchReadable retrieves targetURL within timeout and extracts its main article
+// content via Readability, returned as a complete HTML document (see
+// domain.ReadablePage). A page Readability strips to no text falls back to its
+// <body>, less scripts and styles. Returns an error describing the failure
+// reason on non-200 status, timeout, non-HTML content-type, binary content, or
+// an empty/unreadable body.
+func (s *LinkPreviewService) FetchReadable(targetURL string, timeout time.Duration) (domain.ReadablePage, error) {
+	if timeout <= 0 {
+		timeout = fullPreviewTimeout
+	}
+	parsedURL, err := url.ParseRequestURI(strings.TrimSpace(targetURL))
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+		return domain.ReadablePage{}, fmt.Errorf("invalid URL %q", targetURL)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, parsedURL.String(), nil)
+	if err != nil {
+		return domain.ReadablePage{}, fmt.Errorf("invalid request: %w", err)
+	}
+	req.Header.Set("User-Agent", linkPreviewUserAgent)
+
+	resp, err := s.httpClient(timeout).Do(req)
+	if err != nil {
+		var netErr net.Error
+		if (errors.As(err, &netErr) && netErr.Timeout()) || errors.Is(err, context.DeadlineExceeded) {
+			return domain.ReadablePage{}, fmt.Errorf("timeout after %s", timeout)
+		}
+		return domain.ReadablePage{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return domain.ReadablePage{}, fmt.Errorf("status %d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
+	}
+
+	ct := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type")))
+	if ct != "" && !strings.Contains(ct, "text/html") && !strings.Contains(ct, "application/xhtml+xml") {
+		return domain.ReadablePage{}, fmt.Errorf("non-HTML content-type %q", resp.Header.Get("Content-Type"))
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxReadableBytes))
+	if err != nil {
+		var netErr net.Error
+		if (errors.As(err, &netErr) && netErr.Timeout()) || errors.Is(err, context.DeadlineExceeded) {
+			return domain.ReadablePage{}, fmt.Errorf("timeout reading body")
+		}
+		return domain.ReadablePage{}, fmt.Errorf("read body: %w", err)
+	}
+	if bytes.Contains(body, []byte{0}) {
+		return domain.ReadablePage{}, fmt.Errorf("non-HTML binary content")
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		return domain.ReadablePage{}, fmt.Errorf("empty body")
+	}
+
+	var hm headMeta
+	hm.scan(bytes.NewReader(body))
+
+	article, err := readability.FromReader(bytes.NewReader(body), parsedURL)
+	if err != nil {
+		return domain.ReadablePage{}, fmt.Errorf("empty or unreadable HTML: %w", err)
+	}
+
+	var text, content strings.Builder
+	if article.RenderText(&text) != nil || strings.TrimSpace(text.String()) == "" ||
+		article.RenderHTML(&content) != nil {
+		content.Reset()
+		content.WriteString(s.bodyHTML(body))
+	}
+	if content.Len() == 0 {
+		return domain.ReadablePage{}, fmt.Errorf("empty body")
+	}
+	title := first(article.Title(), hm.bestTitle())
+	return domain.ReadablePage{
+		Title: title,
+		HTML: `<!doctype html><html><head><meta charset="utf-8"><title>` + html.EscapeString(title) +
+			`</title></head><body>` + content.String() + `</body></html>`,
+	}, nil
+}
+
+// bodyHTML renders the children of page's <body> with script, style, noscript
+// and template elements removed, or returns empty when that leaves no text.
+func (s *LinkPreviewService) bodyHTML(page []byte) string {
+	doc, err := html.Parse(bytes.NewReader(page))
+	if err != nil {
+		return ""
+	}
+	var body *html.Node
+	var dropped []*html.Node
+	for n := range doc.Descendants() {
+		switch {
+		case n.Type == html.ElementNode && n.DataAtom == atom.Body && body == nil:
+			body = n
+		case n.Type == html.ElementNode && (n.DataAtom == atom.Script || n.DataAtom == atom.Style ||
+			n.DataAtom == atom.Noscript || n.DataAtom == atom.Template):
+			dropped = append(dropped, n)
+		}
+	}
+	if body == nil {
+		return ""
+	}
+	for _, n := range dropped {
+		if n.Parent != nil {
+			n.Parent.RemoveChild(n)
+		}
+	}
+	if strings.TrimSpace(s.textOf(body)) == "" {
+		return ""
+	}
+	var b strings.Builder
+	for c := range body.ChildNodes() {
+		if err := html.Render(&b, c); err != nil {
+			return ""
+		}
+	}
+	return b.String()
+}
+
+// textOf concatenates the text nodes beneath n.
+func (s *LinkPreviewService) textOf(n *html.Node) string {
+	var b strings.Builder
+	for d := range n.Descendants() {
+		if d.Type == html.TextNode {
+			b.WriteString(d.Data)
+		}
+	}
+	return b.String()
 }
 
 // FetchTitle returns the best available title for targetURL, giving up after
@@ -84,14 +223,8 @@ func (s *LinkPreviewService) FetchFull(targetURL string) domain.LinkPreviewResul
 	return result
 }
 
-// scanHead is the one fetch-and-parse path behind both public methods; FetchTitle
-// and FetchFull are two views over its result, not two fetchers. It streams the
-// response through a tokeniser and stops at <body>, so a title costs a few KiB
-// rather than a whole page — which is what makes the fetch survivable inside a
-// paste's three-second budget. Reports false for any failure to reach a readable
-// 200; both callers degrade to their own fallback rather than surfacing an error.
-func (s *LinkPreviewService) scanHead(targetURL string, timeout time.Duration) (headMeta, bool) {
-	client := &http.Client{
+func (s *LinkPreviewService) httpClient(timeout time.Duration) *http.Client {
+	return &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		},
@@ -103,13 +236,22 @@ func (s *LinkPreviewService) scanHead(targetURL string, timeout time.Duration) (
 			return nil
 		},
 	}
+}
+
+// scanHead is the one fetch-and-parse path behind both public methods; FetchTitle
+// and FetchFull are two views over its result, not two fetchers. It streams the
+// response through a tokeniser and stops at <body>, so a title costs a few KiB
+// rather than a whole page — which is what makes the fetch survivable inside a
+// paste's three-second budget. Reports false for any failure to reach a readable
+// 200; both callers degrade to their own fallback rather than surfacing an error.
+func (s *LinkPreviewService) scanHead(targetURL string, timeout time.Duration) (headMeta, bool) {
 	req, err := http.NewRequest(http.MethodGet, targetURL, nil)
 	if err != nil {
 		return headMeta{}, false
 	}
 	req.Header.Set("User-Agent", linkPreviewUserAgent)
 
-	resp, err := client.Do(req)
+	resp, err := s.httpClient(timeout).Do(req)
 	if err != nil {
 		// On a CheckRedirect refusal Do returns a response too, with its body
 		// already closed — there is nothing here to release.

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"path"
@@ -14,6 +15,7 @@ import (
 	"sieve/sieve/services"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/net/html"
 )
 
 const (
@@ -43,6 +45,11 @@ type UUIDInput struct {
 // verbatim from wherever the model was given it.
 type URIInput struct {
 	URI string `json:"uri" jsonschema:"a Sieve coordinate, e.g. sieve://{uuid}; copy it exactly as it was given (an attachment manifest lists them) rather than constructing one"`
+}
+
+// FetchPageInput is the argument set for fetch_page.
+type FetchPageInput struct {
+	URL string `json:"url" jsonschema:"the http or https URL of the web page to fetch and store as an HTML asset in the job's document"`
 }
 
 // NoteSummary is one search hit: metadata only, never a body.
@@ -290,6 +297,105 @@ func (s *Server) listFacets(_ context.Context, _ *mcpsdk.CallToolRequest, _ stru
 	sort.Slice(out.Tags, func(i, j int) bool { return out.Tags[i].Name < out.Tags[j].Name })
 	logger.Info("sieve mcp: list_facets", "folders", len(out.Folders), "tags", len(out.Tags))
 	return nil, out, nil
+}
+
+// fetchPage retrieves an http or https URL, extracts its readable article as an
+// HTML document via LinkPreviewService, and stores it as a URL-keyed asset in the
+// calling job's document. A second call for the same URL in the same document
+// reuses the stored asset without re-fetching.
+//
+// Writing is strictly bounded to the document bound to the caller's session
+// context. Any retrieval or boundary failure returns a structured
+// "cannot retrieve: {reason}" error so the AI can fall back to other tools.
+func (s *Server) fetchPage(ctx context.Context, _ *mcpsdk.CallToolRequest, in FetchPageInput) (*mcpsdk.CallToolResult, NodeContent, error) {
+	docUUID := DocumentFromContext(ctx)
+	if docUUID == "" {
+		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: no target document for this session")
+	}
+	rawURL := strings.TrimSpace(in.URL)
+	if rawURL == "" {
+		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: empty URL")
+	}
+	if s.documents == nil || s.nodes == nil {
+		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: document store is not wired")
+	}
+	doc, err := s.documents.LoadByUUID(docUUID)
+	if err != nil {
+		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: document %q not found: %w", docUUID, err)
+	}
+
+	key := s.documents.PageAssetKey(rawURL)
+	addr := domain.NewLeafAddress(doc.UUID(), key)
+
+	for _, owned := range doc.Storable().Owns() {
+		if owned.Key() == key {
+			node, err := s.nodes.Resolve(addr)
+			if err != nil {
+				return nil, NodeContent{}, fmt.Errorf("cannot retrieve: %w", err)
+			}
+			title := s.htmlTitle(owned.Body())
+			if title == "" {
+				title = node.Title
+			}
+			return nil, NodeContent{
+				URI:     node.URI,
+				ID:      node.ID,
+				Kind:    node.Kind,
+				Title:   title,
+				Summary: node.Summary,
+				Body:    node.Body,
+				Path:    node.Path,
+				Bytes:   node.Bytes,
+			}, nil
+		}
+	}
+
+	page, err := s.linkPreview.FetchReadable(rawURL, s.fetchTimeout)
+	if err != nil {
+		logger.Warn("sieve mcp: fetch_page refused", "url", rawURL, "doc", doc.UUID(), "err", err)
+		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: %w", err)
+	}
+	if _, err := s.documents.SaveAsset(doc, key, []byte(page.HTML)); err != nil {
+		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: save asset: %w", err)
+	}
+	node, err := s.nodes.Resolve(addr)
+	if err != nil {
+		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: %w", err)
+	}
+	title := page.Title
+	if title == "" {
+		title = node.Title
+	}
+	logger.Info("sieve mcp: fetch_page", "url", rawURL, "doc", doc.UUID(), "asset", key, "bytes", node.Bytes)
+	return nil, NodeContent{
+		URI:     node.URI,
+		ID:      node.ID,
+		Kind:    node.Kind,
+		Title:   title,
+		Summary: node.Summary,
+		Body:    node.Body,
+		Path:    node.Path,
+		Bytes:   node.Bytes,
+	}, nil
+}
+
+// htmlTitle returns the trimmed text of doc's first <title>, or empty when it
+// has none.
+func (s *Server) htmlTitle(doc []byte) string {
+	z := html.NewTokenizer(bytes.NewReader(doc))
+	for {
+		switch z.Next() {
+		case html.ErrorToken:
+			return ""
+		case html.StartTagToken:
+			if name, _ := z.TagName(); string(name) == "title" {
+				if z.Next() == html.TextToken {
+					return strings.TrimSpace(string(z.Text()))
+				}
+				return ""
+			}
+		}
+	}
 }
 
 // ── Scan + projection helpers ─────────────────────────────────────────────────

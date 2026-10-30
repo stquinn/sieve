@@ -77,6 +77,7 @@ import { WebClipRenderer } from '../../../../renderers/web-clip-renderer.js'
 
     attrs: {
       source:      { default: '',      parseHTML: function (el) { return el.getAttribute('data-source')       || '' } },
+      page:        { default: '',      parseHTML: function (el) { return el.getAttribute('data-page')         || '' } },
       title:       { default: null,    parseHTML: function (el) { return el.getAttribute('data-title')        || null } },
       mode:        { default: 'fetch', parseHTML: function (el) { return el.getAttribute('data-mode')         || 'fetch' } },
       model:       { default: null,    parseHTML: function (el) { return el.getAttribute('data-model')        || null } },
@@ -88,6 +89,7 @@ import { WebClipRenderer } from '../../../../renderers/web-clip-renderer.js'
     parseAttrs: function (data) {
       return {
         source:      data.source      || '',
+        page:        typeof data.page === 'string' ? data.page : '',
         title:       data.title       || null,
         mode:        data.mode        || 'fetch',
         model:       data.model       || null,
