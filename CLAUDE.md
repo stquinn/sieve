@@ -116,11 +116,12 @@ refuses a tag whose number differs from that constant, and v0.34.0–v0.36.0 wer
 module set is pinned by `vendorHash` in the same file; the credits CI job fails when a
 `go.mod`/`go.sum` change lands without the matching bump (the correct hash is in its log).
 
-**CI image:** `nix run .#ci-image | docker load` builds `stephen/sieve-ci` — ci-base's
-package list plus this devShell's whole closure and every locked flake input, so a CI
-job enters the shell with no network. `.forgejo/workflows/publish-ci-image.yml` rebuilds
-and publishes it on any change to `flake.nix`/`flake.lock`, probes the new tag and only
-then moves `latest`; every job in `ci.yml` runs in it as `nix develop -c <cmd>`, with no
+**CI image:** `stephen/sieve-ci` is a child of ci-base (stephen/ci-base#13): `Containerfile`
+starts from ci-base `latest` (agy, claude-code, tea, git) and adds this devShell's whole
+closure and every locked flake input, so a CI job enters the shell with no network.
+`.forgejo/workflows/publish-ci-image.yml` rebuilds it Monday nights, on any push to main
+changing `flake.nix`/`flake.lock`/`Containerfile`, and on dispatch, probes the new tag and
+only then moves `latest`; every job in `ci.yml` runs in it as `nix develop -c <cmd>`, with no
 setup-go, no setup-node and no apt. `ci.yml` is deliberately NOT `--offline`: a commit that
 changes the flake runs once against the previous image, Nix fetches the difference, and the
 next run is warm once publish has moved `latest`. The publish probe is where `--offline` is
