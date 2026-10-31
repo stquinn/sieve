@@ -184,10 +184,11 @@ Gradle `assembleRelease` in place of `flutter build apk`. Phase 2 ends with the 
 published this way and installed on the Note Air 2 from the collective app.
 
 **Language choice.** Java, by the architect's preference; the Onyx SDK is a Java library
-and Android supports Java apps fully. Flutter was considered and deferred: the Onyx SDK has
-no Dart binding, and `TouchHelper` binds to a native Android View, so under Flutter the
-canvas would still be this same Java `InkSurface` hosted in a platform view, with Dart
-owning only the chrome. That remains possible later precisely because the surface is behind
+and Android supports Java apps fully. Flutter was considered and deferred: the one Dart package
+(`onyxsdk_pen`, Saber's extract) is a stripped-down accelerator widget that exposes no
+stroke callbacks, pressure or erase events and is maintained best-effort without a device,
+and `TouchHelper` binds to a native Android View, so under Flutter the canvas would still
+be this same Java `InkSurface` hosted in a platform view, with Dart owning only the chrome. That remains possible later precisely because the surface is behind
 an interface, but it adds a second language for the easy half of the app. Go via gomobile
 cannot reach the SDK.
 
