@@ -174,6 +174,15 @@ Sync screen names the Sieve; a connecting Sieve must prove it holds that pairing
 Sieve: ink is written to the local log first and streamed second. Background sync with no
 user present is not in this design.
 
+**Distribution.** SieveInk is published through the architect's own app centre
+(`stephen/appcentre` on the forge), not by cable. The contract is a directory per app under
+the app-centre root, `/mnt/media/app_centre/SieveInk/`, holding `SieveInk.apk`, `app.png`,
+`release_date` (a `YYYYMMDD-HHMM` stamp), an `old/` archive of previous builds and a
+`release_in_progress` marker while a copy is under way; the collective app on each device
+installs from it. SieveInk's `release.sh` does what `toastie_app/release.sh` does, with a
+Gradle `assembleRelease` in place of `flutter build apk`. Phase 2 ends with the first build
+published this way and installed on the Note Air 2 from the collective app.
+
 **Language choice.** Java, by the architect's preference; the Onyx SDK is a Java library
 and Android supports Java apps fully. Flutter was considered and deferred: the Onyx SDK has
 no Dart binding, and `TouchHelper` binds to a native Android View, so under Flutter the
@@ -649,8 +658,8 @@ its own issues, referencing the contract by section.
 2. **Companion v1:** notes, pages, pen/pencil/widths/eraser/undo, templates, local log,
    Sync button, GATT + L2CAP server, pairing by key. `InkSurface` with both
    implementations and runtime selection; the generic surface is how the app is developed
-   and tested on an emulator or any tablet.
-   Renders the fixtures in its tests.
+   and tested on an emulator or any tablet. Renders the fixtures in its tests. Ships
+   through the app centre (§4 Distribution) and is installed from the collective app.
 3. **Sieve replication:** `InkService` (scan, pair, HELLO/ACK, append to the replica),
    `DigitalNoteKind` with `StrokeBasedNote` and its face, Settings → Ink. **Depends on #198
    D1.** The page can be inspected only via the fixtures and a debug dump at this point.
