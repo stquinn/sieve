@@ -57,9 +57,12 @@ not a feature toggle (§2 anti-goals).
 
 **Anti-goals** (a build that does these has failed even if it works)
 
-- Any path by which content reaches the Boox from a Sieve. The protocol carries sequence
-  acks and the pairing handshake from Sieve to companion, and nothing else. There is no
-  "two-way" option to leave off.
+- Any path by which **content** reaches the Boox from a Sieve. The protocol carries, from
+  Sieve to companion, the handshake, sequence acks and one bounded exception: a typed
+  **description of a note the companion offered** (title, keywords, categories, a one-line
+  summary) derived from the user's own ink, so the companion can name and find notes (§7.2).
+  Never a body, never anything from another document. There is no "two-way" option to
+  leave off.
 - The companion displaying anything a Sieve holds. It shows its own notes only.
 - Strokes stored as pixels. Strokes are the stored truth on both sides; images are derived.
 - Sieve becoming an ongoing writer of any ink log. The one exception is minting a clip
@@ -408,8 +411,8 @@ unchanged note costs one line of `NOTES` and nothing more.
 - `haveSeq = 0` means "I have never seen this note": full replay.
 - The companion may stream ahead of acks; acks exist so the companion can show "synced to
   seq N" and so a dropped connection resumes from the right place.
-- Nothing else travels Sieve → companion. A frame that is not `HELLO`, `LIST`, `OPEN` or
-  `ACK` is a protocol error and the companion disconnects. `LIST` carries no selector:
+- Nothing else travels Sieve → companion. A frame that is not `HELLO`, `LIST`, `OPEN`,
+  `ACK` or `META` (§7.2) is a protocol error and the companion disconnects. `LIST` carries no selector:
   what is listed is decided on the Boox by consent, never requested by the Sieve. The handshake frames carry no note
   content, so the one-way rule holds.
 - Only the selected target is served per Sync. Each Sieve keeps its own `haveSeq` per
@@ -438,6 +441,28 @@ only ever appears as a dropped connection. The replica still never trusts that:
   path, and there is no merge. The mismatch is surfaced in the Sieve log, not hidden.
 - **Acks are not the loss mechanism.** They tell the companion what to show as "synced to
   seq N" and where a resume will start; correctness never depends on them.
+
+### 7.2 Filing metadata back to the companion
+
+The one thing a Sieve sends the companion beyond the handshake and acks. After a reading
+exists for a note (§8), or when the user renames the Thing, Sieve sends
+
+```
+Sieve → companion   META    {noteId, title, keywords[], categories[], summary, asOfSeq}
+```
+
+- Only for a note this companion offered on this connection; the companion drops a `META`
+  for any other id.
+- Every field is a **description of the user's own note**, computed from its ink: the face
+  fields Sieve already keeps for every document (display name, tags, folder suggestion,
+  summary). Nothing in it comes from any other document, so the classification boundary
+  holds: the Boox learns what it already holds, named.
+- The companion stores it on the note header, shows the title in the notes list, and uses
+  keywords and categories for search, sort and grouping. A user-typed title on the Boox
+  wins over a received one. `asOfSeq` says which version of the ink the description is of;
+  a newer reading replaces an older one.
+- Per Sieve, the companion has a toggle "accept filing metadata from this Sieve", default
+  on, so the corporate instance can be told to stay silent.
 
 ## 8. The Thing in Sieve
 
@@ -687,8 +712,9 @@ its own issues, referencing the contract by section.
 2. **Companion v1:** notes, pages, pen/pencil/widths/eraser/undo, templates, local log,
    Sync button, GATT + L2CAP server, pairing by key. `InkSurface` with both
    implementations and runtime selection; the generic surface is how the app is developed
-   and tested on an emulator or any tablet. Renders the fixtures in its tests. Ships
-   through the app centre (§4 Distribution) and is installed from the collective app.
+   and tested on an emulator or any tablet. Ships through the app centre (§4 Distribution)
+   and is installed from the collective app. The notes list stores and shows received
+   filing metadata (§7.2): title, search over keywords, grouping by category.
 3. **Sieve replication:** `InkService` (scan, pair, HELLO/ACK, append to the replica),
    `DigitalNoteKind` with `StrokeBasedNote` and its face, Settings → Ink. **Depends on #198
    D1.** The page can be inspected only via the fixtures and a debug dump at this point.
