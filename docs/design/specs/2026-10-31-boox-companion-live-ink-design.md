@@ -538,8 +538,8 @@ has no source face and therefore no dependency on the source editor or #71.
 
 **View one — the page.** The `page` mode, PM-free, mounted where the editor would be. The
 lens is a **displayer of SVG**: Go renders each page of the log to an SVG (template as a
-background group, then one `<path>` per stroke carrying the stroke id and its sequence
-number, pencil grain as a group of circles) and caches it as an asset keyed by the page's
+background group, then one `<path>` per stroke carrying the stroke id, its sequence number and its timing
+as data attributes, pencil grain as a group of circles) and caches it as an asset keyed by the page's
 stroke hash, exactly as a diagram's source is rendered to its `svgAsset`. The lens draws
 no geometry. Chrome: page `n / N`, previous, next, jump, zoom to fit / 100%. Live: as
 records arrive for the displayed page, Go pushes the new stroke's `<path>` (or the id of an
@@ -568,7 +568,12 @@ slowly (the digitiser samples at 100–200 Hz and `t` is in milliseconds, which 
 Between strokes the real gap from `start` is used, clamped to about a quarter of a second,
 so the rhythm between letters and words stays real while a coffee break becomes a beat.
 The animation is fun, not provenance, and it is cheap because every stroke is its own
-`<path>`: replay reveals paths in sequence order and animates each along its own points.
+`<path>` and Go writes the timing onto it: a `data-seq`, a `data-start` and a `data-t`
+attribute holding the cumulative milliseconds at each vertex. The lens reveals paths in
+sequence order and animates each with the standard dash trick (`stroke-dasharray` equal to
+the path length, `stroke-dashoffset` driven by elapsed time mapped through `data-t`), so
+the lens still computes no geometry; pencil grain circles carry their position along the
+stroke and appear with it.
 The same fact gives a **timeline**: a scrubber over seq N shows or hides elements whose
 sequence is at or below N, erasures included, with no re-rendering at all. Desktop only;
 the companion needs neither. Erasures replay as
