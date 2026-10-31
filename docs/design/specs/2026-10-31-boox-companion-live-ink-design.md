@@ -88,12 +88,15 @@ Three things, one contract between them:
   Air 2 runs Android 11). So the companion is the BLE peripheral: GATT for control, an
   L2CAP connection-oriented channel for the log stream. Sieve is the central on both Linux
   (BlueZ) and macOS (CoreBluetooth).
-- **Same canvas = shared stroke spec, not shared code; the SVG is the render.** The
-  companion renders natively for the e-ink fast path. In Sieve, the lens renders each page
-  of the log to an SVG in JS, shows it, and saves it as the page's asset, the way a Mermaid
-  diagram is rendered in the browser and its SVG saved as `svgAsset`; the AI's PNG is
-  rasterised from that asset. Go stores and serves and never renders. Two implementations
-  of the stroke rule, SieveInk and the lens, pinned to one set of golden fixtures.
+- **Same ink, not same pixels: the tablet renders the manufacturer's way, Sieve renders
+  once.** On the Boox every stroke, live and committed, is drawn by the Onyx pen engines,
+  exactly as Onyx's own notebook does; SieveInk owns no stroke rule there. What travels is
+  the data: tool, width class, and per point x, y, pressure, tilt, size and time. In Sieve
+  the lens renders that data to an SVG in JS, shows it, and saves it as the page's asset,
+  the way a Mermaid diagram is rendered in the browser and its SVG saved as `svgAsset`; the
+  AI's PNG is rasterised from that asset. Go stores and serves and never renders. The lens's
+  look is tuned by eye against a bitmap the tablet exported of the same page; it is a
+  look-and-feel target, not an identity target.
 - **The Thing is a Digital Note, an interface with implementations.** One new `ThingKind`
   in the Things store #198 D1 builds (`.meta` `type: block`, `kind: digital-note`,
   payload in `{uuid}.block`, folder `blocks/digital-note/`), opened by a full-body lens the
@@ -108,6 +111,12 @@ A Java Android app, API 30 target, sideloaded. On the Boox it draws through the 
 `onyxsdk-pen` `TouchHelper` / `RawInputCallback` path: begin / move / point-list / end for
 the pen and the parallel erase callbacks. This is the same low-latency EPD path the Notes
 app uses and is why the companion feels like a pen surface rather than a browser canvas.
+
+**On the Boox the SDK draws everything.** Live ink and the committed page bitmap both come
+from the Onyx pen engines, the way Onyx's notebook demo (`PenDemoActivity`/`PenManager`)
+does it, so a pen-up repaint reproduces the live stroke exactly and no SieveInk rendering
+rule exists on the device. The companion's only rendering code is the generic surface's,
+for non-Onyx devices.
 
 **The Onyx SDK sits behind one interface and nothing else sees it.** The app is layered so
 the vendor dependency is a leaf:
@@ -267,7 +276,10 @@ Point
   t         milliseconds since stroke start, uint16
 ```
 
-**Rendering rules** (normative, with golden fixtures):
+**Rendering.** The companion does not implement a stroke rule on the Boox: the Onyx pen
+engines draw live and committed ink (fountain for pen, charcoal for pencil). The rule below
+is **Sieve's**, implemented once in the lens, and also used by SieveInk's generic surface on
+non-Onyx devices. It is normative for the lens and pinned by fixtures there:
 
 - Points are smoothed with Catmull–Rom into a path; the companion may draw raw points
   live on the EPD for latency and re-render on pen-up.
@@ -287,15 +299,14 @@ catalogue both sides carry: `blank`, `ruled {spacing, margin}`, `grid {spacing}`
 `dots {spacing}`. Unknown id → draw `blank` and mark the page "unknown template" in the
 lens. Adding a template is a contract bump on both sides.
 
-### 5.5 Golden fixtures
+### 5.5 Fixtures and the reference
 
-A fixtures directory holds `{name}.log` + `{name}.svg` pairs. The stroke rule has exactly
-two implementations, SieveInk's (Android Canvas, for the e-ink) and the lens's (JS,
-producing the SVG). Both expose the rule as a pure geometry function (stroke → vertices,
-widths, alphas, grain dots) and both emit that geometry as SVG, so parity is checked as a
-**text diff of SVG**, byte for byte, in each side's unit tests; SieveInk's debug Export
-writes a real page as JSON plus its own SVG, which is the same check over real
-handwriting. This is how "same canvas" is kept true over time.
+A fixtures directory holds `{name}.json` (a page as SieveInk exports it: the note header and
+every stroke with every point field) + `{name}.svg` (what the lens must emit for it) +
+`{name}.png` (the bitmap the tablet itself drew for that page, exported beside the JSON).
+The SVG pins the lens's determinism: the same data always yields the same SVG. The PNG is
+the look-and-feel reference the lens is tuned against by eye; it is never diffed. SieveInk
+has no SVG to match and no fixture to pass beyond exporting the data faithfully.
 
 ## 6. Transport
 
@@ -670,9 +681,9 @@ its own issues, referencing the contract by section.
    build as it is actually installed there; device management, not CoreBluetooth, is the
    risk. If the Mac bridge is not viable, fall back to GATT notifications for the log
    (slower, still correct) and say so here.
-1. **Contract:** §5 as a `docs/` document plus the golden fixtures and the JS stroke
-   renderer (log → SVG) that produces them, checked against SieveInk's SVG emission by text
-   diff. Tests only; no UI.
+1. **Contract:** §5 as a `docs/` document, the fixtures (exported JSON pages with the
+   tablet's own PNG beside each), and the JS stroke renderer (log → SVG) tuned against those
+   PNGs and pinned by its SVG output. Tests only; no UI.
 2. **Companion v1:** notes, pages, pen/pencil/widths/eraser/undo, templates, local log,
    Sync button, GATT + L2CAP server, pairing by key. `InkSurface` with both
    implementations and runtime selection; the generic surface is how the app is developed
