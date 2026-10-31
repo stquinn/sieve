@@ -99,7 +99,7 @@ Three things, one contract between them:
   `FileBasedNote` are the implementations and the only code that knows where pages came
   from. This design builds `StrokeBasedNote`; folder sync would add `FileBasedNote`.
 
-## 4. The companion
+## 4. The companion: SieveInk
 
 A Java Android app, API 30 target, sideloaded. On the Boox it draws through the Onyx
 `onyxsdk-pen` `TouchHelper` / `RawInputCallback` path: begin / move / point-list / end for
@@ -635,7 +635,9 @@ blank tab.
 Each phase is a Forgejo issue under one epic; the companion has its own repository and
 its own issues, referencing the contract by section.
 
-0. **Spike (throwaway):** Sieve on Linux and **on the actual corporate Mac** opens an
+0. **Spikes (throwaway, #205).** Two, independent. **A, the pen surface, first:** a bare
+   Onyx raw-input canvas on the Note Air 2, judged by hand against the Notes app, with
+   sample rate and pressure measured. **B, the stream:** Sieve on Linux and **on the actual corporate Mac** opens an
    L2CAP channel to a stock Android 11 device running a 50-line Java app and moves 1 MB.
    Measure throughput and connection time. The Mac run also proves the Bluetooth privacy
    prompt (`NSBluetoothAlwaysUsageDescription` in the Wails `Info.plist`) is granted to the
@@ -688,8 +690,11 @@ hashes them exactly.
 
 ## 13. Open questions for the architect
 
-1. Repository and name for the companion.
-2. For a clip, should the selected strokes be re-based to the rectangle (default) or keep
+The companion is **SieveInk**, in its own repository. The epic hinges on two things, and
+phase 0 (#205) tests both before anything is built: technically, will the stream work; and
+how usable will SieveInk be under the nib.
+
+1. For a clip, should the selected strokes be re-based to the rectangle (default) or keep
    page coordinates with the rectangle as a viewport?
-3. Does the corporate Mac get the AI reading at all, given it sends page images to the
+2. Does the corporate Mac get the AI reading at all, given it sends page images to the
    corporate provider? Default: yes, per instance, same as every other AI job there.
