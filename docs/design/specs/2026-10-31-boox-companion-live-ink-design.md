@@ -186,8 +186,7 @@ In both cases the companion is in the foreground and needs no background service
 edited out of range catches up at the next Sync of either kind. Target selection on the
 Sync screen names the Sieve; a connecting Sieve must prove it holds that pairing's key
 (§6) and any other Sieve, paired or not, is refused. The companion never blocks on a
-Sieve: ink is written to the local log first and streamed second. Background sync with no
-user present is not in this design.
+Sieve: ink is written to the local log first and streamed second. Background sync with no user present is not in this design; a background *reachable* mode for Open in e-ink (§7.3) is a later iteration.
 
 **Distribution.** SieveInk is published through the architect's own app centre
 (`stephen/appcentre` on the forge), not by cable. The contract is a directory per app under
@@ -412,7 +411,8 @@ unchanged note costs one line of `NOTES` and nothing more.
 - The companion may stream ahead of acks; acks exist so the companion can show "synced to
   seq N" and so a dropped connection resumes from the right place.
 - Nothing else travels Sieve → companion. A frame that is not `HELLO`, `LIST`, `OPEN`,
-  `ACK` or `META` (§7.2) is a protocol error and the companion disconnects. `LIST` carries no selector:
+  `ACK`, `META` (§7.2) or `OPEN-NOTE` (§7.3) is a protocol error and the companion
+  disconnects. `LIST` carries no selector:
   what is listed is decided on the Boox by consent, never requested by the Sieve. The handshake frames carry no note
   content, so the one-way rule holds.
 - Only the selected target is served per Sync. Each Sieve keeps its own `haveSeq` per
@@ -463,6 +463,27 @@ Sieve → companion   META    {noteId, title, keywords[], categories[], summary,
   a newer reading replaces an older one.
 - Per Sieve, the companion has a toggle "accept filing metadata from this Sieve", default
   on, so the corporate instance can be told to stay silent.
+
+### 7.3 Open in e-ink
+
+The use case: a search in Sieve found the ink note, and the user wants to add to it. A
+Digital Note's lens offers **Open in e-ink**. Sieve sends
+
+```
+Sieve → companion   OPEN-NOTE {noteId}
+```
+
+for a note the companion already holds; the companion opens that note and starts its live
+sync to the Sieve that asked, under the consent that already exists for the pair. It is a
+command, not content: a note the Boox does not have cannot be sent to it, from any Sieve,
+because the boundary is only safe if it never depends on which Sieve is asking.
+
+**Iteration 1:** works while SieveInk is in the foreground and listening (a library offer or
+the notes list with Sync armed). **Iteration 2 (nice to have):** a *reachable* mode, a
+background service that keeps the companion advertising so Sieve can reach it with the Boox
+idle, bringing SieveInk to the front or waking the device on `OPEN-NOTE`. That softens the
+"no background presence" non-goal to "no background syncing": the companion still only
+streams when asked. Battery and behaviour through the Boox's sleep are measured then.
 
 ## 8. The Thing in Sieve
 
