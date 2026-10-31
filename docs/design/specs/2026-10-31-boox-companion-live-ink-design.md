@@ -273,9 +273,10 @@ Point
   live on the EPD for latency and re-render on pen-up.
 - **Pen**: stroke width = `base(width) × (0.6 + 0.8·p)`, round caps and joins, opaque ink
   colour from the theme.
-- **Pencil**: constant width `base(width)`, opacity `0.35 + 0.55·p`, with a deterministic
-  stipple derived from the stroke id as the seed, so both sides draw the same grain. Pencil
-  is a rule, never a bitmap texture.
+- **Pencil**: width `base(width) × (0.7 + 0.6·p)`, opacity `0.35 + 0.55·p`, with a
+  deterministic stipple derived from the stroke id as the seed, so both sides draw the same
+  grain. Width carries pressure because e-ink shows few grey levels and opacity alone was
+  invisible on the Note Air 2. Pencil is a rule, never a bitmap texture.
 - `base(1..3)` in page units is fixed in the spec, not per device, so the Boox and a
   4K monitor agree.
 
