@@ -88,9 +88,12 @@ Three things, one contract between them:
   Air 2 runs Android 11). So the companion is the BLE peripheral: GATT for control, an
   L2CAP connection-oriented channel for the log stream. Sieve is the central on both Linux
   (BlueZ) and macOS (CoreBluetooth).
-- **Same canvas = shared stroke spec, not shared code.** The companion renders natively for
-  the e-ink fast path; Sieve renders in Go (for the AI's PNG) and in the browser (for the
-  lens). All three implement one written spec and pass the same golden fixtures.
+- **Same canvas = shared stroke spec, not shared code; the SVG is the render.** The
+  companion renders natively for the e-ink fast path. In Sieve, Go renders each page of the
+  log to an SVG that is cached as an asset, the way a diagram's source is rendered to its
+  `svgAsset`; the lens displays that SVG and computes nothing, and the AI's PNG is rasterised
+  from it. Two implementations of the stroke rule, SieveInk and Go, pinned to one set of
+  golden fixtures.
 - **The Thing is a Digital Note, an interface with implementations.** One new `ThingKind`
   in the Things store #198 D1 builds (`.meta` `type: block`, `kind: digital-note`,
   payload in `{uuid}.block`, folder `blocks/digital-note/`), opened by a full-body lens the
@@ -285,10 +288,13 @@ lens. Adding a template is a contract bump on both sides.
 
 ### 5.5 Golden fixtures
 
-A fixtures directory holds `{name}.log` + `{name}.svg` + `{name}.png` pairs. Both the Go
-rasteriser and the JS lens must reproduce the SVG path data byte-for-byte and the PNG
-within a fixed pixel tolerance; the companion renders the same fixtures in its test suite
-and compares against the PNG. This is how "same canvas" is kept true over time.
+A fixtures directory holds `{name}.log` + `{name}.svg` + `{name}.png` triples. The stroke
+rule has exactly two implementations, SieveInk's (Android Canvas, for the e-ink) and Sieve's
+(Go, producing the SVG and its PNG). Both expose the rule as a pure geometry function
+(stroke → vertices, widths, alphas, grain dots) and both can emit that geometry as SVG path
+data, so parity is checked as a **text diff of SVG**, byte for byte, with the PNG within a
+fixed pixel tolerance as the second check. The browser never implements the rule: it
+displays the SVG Go made. This is how "same canvas" is kept true over time.
 
 ## 6. Transport
 
@@ -442,7 +448,7 @@ FileBasedNote     implements DigitalNote: pages are a PDF's pages or one image e
 
 | implementation | pages from | `PageKey` | lens draws | live | clip yields |
 |---|---|---|---|---|---|
-| `StrokeBasedNote` | replaying the op log in the block | hash of the page's stroke set | SVG paths from the shared spec | yes | a stroke set → a `StrokeBasedNote` clip |
+| `StrokeBasedNote` | replaying the op log in the block | hash of the page's stroke set | the SVG Go rendered from the log, cached as an asset | yes | a stroke set → a `StrokeBasedNote` clip |
 | `FileBasedNote` | a synced PDF, or PNG/JPG pages (future; also raster clips) | hash of the page's bytes | a bitmap | no | a bitmap → a `FileBasedNote` clip |
 
 The reading view, the AI job, the cache, Mod+Enter, copy and "New document from this
@@ -530,19 +536,23 @@ Explain, the insert dialogs, attach and asset insert ignore it by construction, 
 kind the tab bar carries: `'block:digital-note': DigitalNoteLens`. Unlike `ApiSpecLens` it
 has no source face and therefore no dependency on the source editor or #71.
 
-**View one — the page.** The `page` mode, PM-free, mounted where the editor would be.
-Template behind strokes, rendered from the replica by the shared spec. Chrome: page
-`n / N`, previous, next, jump, zoom to fit / 100%. Live: as records arrive for the
-displayed page the lens repaints; a page indicator shows which pages have unseen ink.
-Read-only is structural: the lens has no verbs that produce ops.
+**View one — the page.** The `page` mode, PM-free, mounted where the editor would be. The
+lens is a **displayer of SVG**: Go renders each page of the log to an SVG (template as a
+background group, then one `<path>` per stroke carrying the stroke id and its sequence
+number, pencil grain as a group of circles) and caches it as an asset keyed by the page's
+stroke hash, exactly as a diagram's source is rendered to its `svgAsset`. The lens draws
+no geometry. Chrome: page `n / N`, previous, next, jump, zoom to fit / 100%. Live: as
+records arrive for the displayed page, Go pushes the new stroke's `<path>` (or the id of an
+erased one) over the document wire and the lens appends or removes that element; a page
+indicator shows which pages have unseen ink. Read-only is structural: the lens has no verbs
+that produce ops.
 
 **Mod+Enter — the flip.** The lens's mode repertoire, the same mechanism `ApiSpecLens`
 uses for `rendered`/`source`. `page` ⇄ `reading` for the current page.
 
 **View two — the reading.** The `reading` mode. Per page, Sieve hashes the page's current stroke set (ids and
-points, not pixels). Cache hit → show the stored reading. Miss → Go rasterises the page to
-PNG with the shared spec, submits it through the AI subsystem as a job, and stores the
-result under the hash. The reading is a list of blocks: prose, PlantUML diagram blocks
+points, not pixels). Cache hit → show the stored reading. Miss → Go rasterises the page's SVG to
+PNG, submits it through the AI subsystem as a job, and stores the result under the hash. The reading is a list of blocks: prose, PlantUML diagram blocks
 validated in Go through the existing PlantUML service (one retry with the render error,
 then fall back to a PNG cut), and PNG cuts for regions the model cannot decipher.
 Mermaid is excluded from readings in this design because it renders only in the browser
@@ -557,11 +567,11 @@ on its own `t` timeline, so a sharp flick lands in a few frames and a lazy pull 
 slowly (the digitiser samples at 100–200 Hz and `t` is in milliseconds, which is ample).
 Between strokes the real gap from `start` is used, clamped to about a quarter of a second,
 so the rhythm between letters and words stays real while a coffee break becomes a beat.
-The animation is fun, not provenance. The same fact gives a **timeline**: the page at any
-moment is the log replayed to seq N, so a scrubber over N shows the page as it was,
-erasures and all, dragging back and forth. Replay from the start per tick is fine at the
-sizes involved; a cached state every few hundred ops is the fix if a long notebook ever
-makes it sluggish. Desktop only; the companion needs neither. Erasures replay as
+The animation is fun, not provenance, and it is cheap because every stroke is its own
+`<path>`: replay reveals paths in sequence order and animates each along its own points.
+The same fact gives a **timeline**: a scrubber over seq N shows or hides elements whose
+sequence is at or below N, erasures included, with no re-rendering at all. Desktop only;
+the companion needs neither. Erasures replay as
 erasures, so the page un-draws where it was corrected. It is the same renderer driven by a
 clock instead of all at once; a file-based note has no log and no Replay. Build it last, if
 at all.
@@ -581,8 +591,8 @@ rectangle is enough and far easier on both sides). Dragging a rectangle selects 
 stroke with at least one point inside it. Whole strokes, never cut strokes, so the result
 is still a valid stroke set. The selection is lens state, not an op; nothing is written.
 
-**Copy.** Copies the selection as a PNG rendered by the shared spec at the lens's current
-scale, plus an `application/x-sieve-ink` payload holding the selected strokes re-based to
+**Copy.** Copies the selection as a PNG that Go rasterises from the selected strokes, plus
+an `application/x-sieve-ink` payload holding the selected strokes re-based to
 the selection's bounding box. Pasting into a markdown document yields a smart-image block
 from the PNG today; a future ink block kind could consume the stroke payload instead.
 
@@ -654,8 +664,9 @@ its own issues, referencing the contract by section.
    build as it is actually installed there; device management, not CoreBluetooth, is the
    risk. If the Mac bridge is not viable, fall back to GATT notifications for the log
    (slower, still correct) and say so here.
-1. **Contract:** §5 as a `docs/` document plus the golden fixtures and the Go rasteriser
-   that produces them. Tests only; no UI.
+1. **Contract:** §5 as a `docs/` document plus the golden fixtures and the Go renderer
+   (log → SVG → PNG) that produces them, checked against SieveInk's SVG emission by text
+   diff. Tests only; no UI.
 2. **Companion v1:** notes, pages, pen/pencil/widths/eraser/undo, templates, local log,
    Sync button, GATT + L2CAP server, pairing by key. `InkSurface` with both
    implementations and runtime selection; the generic surface is how the app is developed
