@@ -211,6 +211,8 @@ cannot reach the SDK.
 
 ## 5. The shared contract
 
+The normative contract is `docs/ink-contract.md`; this section is the design that produced it.
+
 This section is the interface between the two repositories. It is written here because
 Sieve is the consumer and the longer-lived of the two. Both sides vendor the golden
 fixtures.
