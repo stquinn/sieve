@@ -169,27 +169,26 @@ equal to one that streamed live: either can ask for the log from seq 1 and get t
 history, erasures and timeline included. Deleting a note on the Boox does not delete
 anything in any Sieve; the Thing simply stops receiving.
 
-**Sync semantics.** Consent is **per note, per Sieve, remembered**: the first time a note
-is sent to a Sieve is a deliberate act on the Boox, and the companion records the pair.
-Nothing lands on a Sieve a note was never consented to. There are two Sync buttons and one
-mechanism:
+**Sync semantics (2026-11-02: pairing is the consent).** SieveInk is a companion: slaving
+the Boox to a Sieve by typing that Sieve's key is the one deliberate act, and from then on
+every note goes to that Sieve with no per-note decision, ever. There is no per-note consent,
+no tick list and no Sync-this-note verb. One mechanism:
 
-- **In a note: Sync.** Advertises with this note's id, serves the selected Sieve's catch-up
-  for it from the sequence it asks for, then keeps streaming live as ink is written. First
-  use records the consent. Advertising stops when the user leaves the note or presses Sync
-  again.
-- **On the notes list: Sync to <Sieve>.** Advertises a *library* offer. The Sieve lists the
-  notes, and the companion serves catch-up for every note already consented to that Sieve,
-  one after another over the same connection. Notes not yet consented are shown on the
-  Boox as a tick list; ticking one records consent and includes it. This is how a **new
-  Sieve receives an existing library** in one sitting, and how the corporate Mac receives
-  only what is ticked. Nothing is live here; it ends with a summary and stops advertising.
+- **While the app is open it advertises a library offer** (a foreground service keeps the
+  advertisement up on any screen; this is reachable mode's first form). A paired Sieve
+  connects when it likes, lists the notes, and catches up every note whose `headSeq` is past
+  its own cursor. **While a note is open it is also live**: the §7.4 point feed streams to
+  the connected Sieve as ink is written, and the committed records follow.
+- **Sync now** on the Sieves screen is a nudge, not a gate: it wakes a Sieve in range to
+  connect at once rather than on its next scan.
+- **Several Sieves** (home Linux, corporate Mac) are each paired and each receive
+  everything; each keeps its own cursor per note. One connection at a time in v1. The
+  `HELLO` names the Sieve, so the companion verifies the proof against that pairing's key;
+  any other Sieve, paired or not, is refused.
 
-In both cases the companion is in the foreground and needs no background service; a note
-edited out of range catches up at the next Sync of either kind. Target selection on the
-Sync screen names the Sieve; a connecting Sieve must prove it holds that pairing's key
-(§6) and any other Sieve, paired or not, is refused. The companion never blocks on a
-Sieve: ink is written to the local log first and streamed second. Background sync with no user present is not in this design; a background *reachable* mode for Open in e-ink (§7.3) is a later iteration.
+A note edited out of range catches up at the next connection. The companion never blocks on
+a Sieve: ink is written to the local log first and streamed second. Waking the Boox from
+sleep for Open in e-ink (§7.3) is a later iteration; nothing else is background.
 
 **Distribution.** SieveInk is published through the architect's own app centre
 (`stephen/appcentre` on the forge), not by cable. The contract is a directory per app under
@@ -422,7 +421,7 @@ Sieve → companion   HELLO   {sieveId, sNonce, proof}      proof = HMAC(key, cN
 companion → Sieve   OK      {proof}                      | REFUSE {reason}   proof = HMAC(key, sNonce ‖ "companion")
             — session key derived; every frame below is encrypted —
 Sieve → companion   LIST                                   (library offer only)
-companion → Sieve   NOTES   [{noteId, title, pages, headSeq}…]   consented notes only
+companion → Sieve   NOTES   [{noteId, title, pages, headSeq}…]   every note
 Sieve → companion   OPEN    {noteId, haveSeq}                 once per note it wants
 companion → Sieve   HEAD    {noteId, headSeq, headHash} | REFUSE {reason}
 companion → Sieve   OP*     log records from haveSeq+1; in a note offer, then live as written
@@ -442,12 +441,10 @@ unchanged note costs one line of `NOTES` and nothing more.
   seq N" and so a dropped connection resumes from the right place.
 - Nothing else travels Sieve → companion. A frame that is not `HELLO`, `LIST`, `OPEN`,
   `ACK`, `META` (§7.2) or `OPEN-NOTE` (§7.3) is a protocol error and the companion
-  disconnects. `LIST` carries no selector:
-  what is listed is decided on the Boox by consent, never requested by the Sieve. The handshake frames carry no note
-  content, so the one-way rule holds.
-- Only the selected target is served per Sync. Each Sieve keeps its own `haveSeq` per
-  note; the companion's only per-Sieve state is the pairing and the set of notes consented
-  to it.
+  disconnects. `LIST` carries no selector: every note is listed, because pairing is the
+  consent. The handshake frames carry no note content, so the one-way rule holds.
+- Each paired Sieve keeps its own `haveSeq` per note; the companion's only per-Sieve state
+  is the pairing and the cursors.
 
 ### 7.1 Loss and reconciliation
 
@@ -807,8 +804,8 @@ or Bluetooth anywhere else is a failing test, not a review comment.
 
 | Failure | Behaviour |
 |---|---|
-| No Sieve in range | Companion writes locally; indicator shows "not synced since seq N"; the next Sync of either kind catches up |
-| New Sieve, existing library | Pair, then **Sync to <Sieve>** on the notes list; tick the notes to consent; all catch up from seq 1 |
+| No Sieve in range | Companion writes locally; indicator shows "not synced since seq N"; the next connection catches up |
+| New Sieve, existing library | Pair; the Sieve connects to the library offer and every note catches up from seq 1 |
 | Connection drops mid-stream | Sieve reconnects on next advertisement with its `haveSeq`; companion resumes |
 | Proof mismatch | Companion refuses, shows "unknown Sieve"; Sieve shows "key rejected, re-enter the key on the Boox" |
 | Unknown op or template version | Replica stores the raw record, lens shows the page with a version warning; a Sieve upgrade replays |
