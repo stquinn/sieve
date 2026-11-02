@@ -181,8 +181,15 @@ no tick list and no Sync-this-note verb. One mechanism:
   the connected Sieve as ink is written, and the committed records follow.
 - **Sync now** on the Sieves screen is a nudge, not a gate: it wakes a Sieve in range to
   connect at once rather than on its next scan.
-- **Several Sieves** (home Linux, corporate Mac) are each paired and each receive
-  everything; each keeps its own cursor per note. One connection at a time in v1. The
+- **Folders decide which Sieve gets what.** Folders are Boox-local organisation (a note
+  lives in one folder or at the root; Sieve's categories are metadata that still come back
+  and still filter within a folder). Pairing a Sieve ticks the folders it receives, editable
+  later per Sieve; its library offer lists the notes in those folders and nothing else. So
+  a Work folder syncs to the corporate Mac and everything else to home, decided once.
+  Moving a note between folders changes who receives it from then on; a Sieve that already
+  holds it keeps what it has (nothing flows back or deletes).
+- **Several Sieves** (home Linux, corporate Mac) are each paired to their folders; each
+  keeps its own cursor per note. One connection at a time in v1. The
   `HELLO` names the Sieve, so the companion verifies the proof against that pairing's key;
   any other Sieve, paired or not, is refused.
 
@@ -421,7 +428,7 @@ Sieve → companion   HELLO   {sieveId, sNonce, proof}      proof = HMAC(key, cN
 companion → Sieve   OK      {proof}                      | REFUSE {reason}   proof = HMAC(key, sNonce ‖ "companion")
             — session key derived; every frame below is encrypted —
 Sieve → companion   LIST                                   (library offer only)
-companion → Sieve   NOTES   [{noteId, title, pages, headSeq}…]   every note
+companion → Sieve   NOTES   [{noteId, title, pages, headSeq}…]   the notes in this Sieve's folders
 Sieve → companion   OPEN    {noteId, haveSeq}                 once per note it wants
 companion → Sieve   HEAD    {noteId, headSeq, headHash} | REFUSE {reason}
 companion → Sieve   OP*     log records from haveSeq+1; in a note offer, then live as written
@@ -441,8 +448,8 @@ unchanged note costs one line of `NOTES` and nothing more.
   seq N" and so a dropped connection resumes from the right place.
 - Nothing else travels Sieve → companion. A frame that is not `HELLO`, `LIST`, `OPEN`,
   `ACK`, `META` (§7.2) or `OPEN-NOTE` (§7.3) is a protocol error and the companion
-  disconnects. `LIST` carries no selector: every note is listed, because pairing is the
-  consent. The handshake frames carry no note content, so the one-way rule holds.
+  disconnects. `LIST` carries no selector: the notes in the folders ticked for this Sieve at
+  pairing are listed, because pairing is the consent. The handshake frames carry no note content, so the one-way rule holds.
 - Each paired Sieve keeps its own `haveSeq` per note; the companion's only per-Sieve state
   is the pairing and the cursors.
 
