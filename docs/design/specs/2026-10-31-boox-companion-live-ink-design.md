@@ -282,20 +282,15 @@ Point
 ```
 
 **Rendering.** The companion does not implement a stroke rule on the Boox: the Onyx pen
-engines draw live and committed ink (fountain for pen, charcoal for pencil). The rule below
-is **Sieve's**, implemented once in the lens, and also used by SieveInk's generic surface on
-non-Onyx devices. It is normative for the lens and pinned by fixtures there:
-
-- Points are smoothed with Catmull–Rom into a path; the companion may draw raw points
-  live on the EPD for latency and re-render on pen-up.
-- **Pen**: stroke width = `base(width) × (0.6 + 0.8·p)`, round caps and joins, opaque ink
-  colour from the theme.
-- **Pencil**: width `base(width) × (0.7 + 0.6·p)`, opacity `0.35 + 0.55·p`, with a
-  deterministic stipple derived from the stroke id as the seed, so both sides draw the same
-  grain. Width carries pressure because e-ink shows few grey levels and opacity alone was
-  invisible on the Note Air 2. Pencil is a rule, never a bitmap texture.
-- `base(1..3)` in page units is fixed in the spec, not per device, so the Boox and a
-  4K monitor agree.
+engines draw live and committed ink (fountain for pen, charcoal for pencil). The rule is
+**Sieve's**, implemented once in the lens renderer, also used by SieveInk's generic surface
+on non-Onyx devices, normative and pinned by the fixtures (§5.5). It was **measured, not
+chosen** (the ladder fixture, 2026-11-02; the contract document #206 writes carries the
+numbers): widths are affine in the nominal class width, not proportional; tilt has no
+effect on anything; pen is one pressure-thinned outline per stroke; pencil width saturates
+with pressure by about 0.8 and its tone is **dot density**, a deterministic stipple, never
+opacity and never a bitmap texture. `base(1..3)` in page units is fixed in the contract,
+not per device, so the Boox and a 4K monitor agree.
 
 ### 5.4 Templates
 
@@ -557,23 +552,41 @@ payload's shape (an op log, or a `src` asset address) says which implementation 
 and the lens table one entry. The two implementations differ only in where the block's
 content lives:
 
-- **`StrokeBasedNote`:** the block's source *is* the note. Its YAML payload holds the note
-  header and the operation log as an array of records, in the shared contract's shape
-  (§5.2), so the file is readable and diffable and the block is self-contained.
-- **`FileBasedNote`:** the block's `src` is an **asset** that sits beside it in the same
-  directory, addressed absolutely as `sieve://{thing}/{key}` like every asset-bearing attr.
-  The block carries title, provenance and reading state; the asset carries the pages. The
-  two change independently: a producer replacing the PDF touches the asset and not the
-  block, and `PageKey` is the hash of the asset's page, so a changed asset simply misses
-  the reading cache and a changed block does not.
+The block is the same shape whatever the source is; only the source differs.
 
-In both cases the per-page reading cache lives in the Thing's directory keyed by `PageKey`.
-`InkService` appends records to the `StrokeBasedNote` block as they arrive whether or not
-the Thing is open; the open lens is a follower, not the owner. Appends are debounced
-(the in-memory replica is written through on a short timer and on disconnect) so a live
-pen does not rewrite a YAML file per stroke; the hash chain (§7.1) makes a crash between
-writes a resumable gap, not corruption. The wire format (§7) and the companion's own
-on-device log are independent of this storage; only the record *shape* is shared.
+- **The block** (`{uuid}.block`, YAML, the standard block format) holds the id, the kind,
+  the title, the note header (page aspect, template, page list), provenance
+  (`note_companion`, `note_source_id`, `note_synced_seq`), reading state, and `source`:
+  an **asset** beside it in the same directory, addressed absolutely as
+  `sieve://{thing}/{key}` like every asset-bearing attr. The block never carries ink.
+- **`StrokeBasedNote`:** `source` is `strokes.jsonl`, the operation log (§5.2) as
+  **JSON Lines**, one record per line in the contract's shape, so an append is an append,
+  a diff is exactly the new records, and a person or the MCP can still read it. Points are
+  compact arrays, not objects (~600 KB a page).
+- **`FileBasedNote`:** `source` is the PDF or PNG a producer delivered; the asset carries
+  the pages.
+
+The block and its source change independently: a stroke touches the asset and not the
+block; a producer replacing the PDF touches the asset and not the block. `PageKey` is the
+page's stroke-set hash for one and the asset page's hash for the other, so a changed source
+simply misses the reading cache and a changed block does not. The per-page reading cache
+and the rendered SVG live in the same directory keyed by `PageKey`.
+
+**Two destinations, one line between them.** `InkService` writes each committed record
+(`stroke-add`, `stroke-remove`, the page ops) to the JSON Lines asset first and then to the
+open lens over the document wire if the note is open; the asset is the replica, the socket
+is a window on it. The §7.4 points under the pen go to the socket only and never touch the
+file. The lens is a follower, never the owner. Appends are debounced (written through on a
+short timer and on disconnect) so a live pen does not rewrite the asset per stroke; the
+hash chain (§7.1) makes a crash between writes a resumable gap, not corruption. Catch-up
+is the sequence number: the last record in the asset is the cursor (`note_synced_seq` in
+the face), `OPEN {noteId, haveSeq}` resumes from it, and a lens opened late loads the
+replayed page from the asset and joins the socket from there — nothing need be online at
+the same time as anything else except for the live window. The wire format (§7) and the
+companion's own on-device log are independent of this storage; only the record *shape* is
+shared. `DigitalNoteKind.Serialize` writes the block YAML only, which is what the save
+spine asks a kind for; the log's two codecs — JSON Lines for the asset, the binary records
+of §7.4 for the radio — belong to the replica.
 
 **Identity.** The Thing's uuid is Sieve's, minted by `ident.New` like every id, and the
 companion's note id is held as a **property**, `note_source_id`, beside `note_companion`
