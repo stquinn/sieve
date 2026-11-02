@@ -1,6 +1,6 @@
 import { getStroke } from 'perfect-freehand';
 import { readFileSync, writeFileSync } from 'node:fs';
-const [,, inFile, outFile, freqArg = '0.7', gainArg = '1.0', widthMode = 'tilt'] = process.argv;
+const [,, inFile, outFile, freqArg = '0.7', gainArg = '1.0', widthMode = 'ladder'] = process.argv;
 const FREQ = Number(freqArg), GAIN = Number(gainArg);
 const d = JSON.parse(readFileSync(inFile, 'utf8'));
 const W = 1404, H = Math.round(W / d.note.pageAspect);
@@ -32,7 +32,8 @@ for (const s of d.strokes) {
   const base = BASE[s.widthClass] * W;
   if (s.tool === 'pen') {
     const pts = s.points.map(p => [p.x * W, p.y * W, p.pressure]);
-    out.push(`<path d="${pathFrom(getStroke(pts, { size: base * 1.35, thinning: 0.75, smoothing: 0.5, streamline: 0.3, simulatePressure: false, last: true }))}" fill="#000"/>`);
+    const penSize = widthMode === 'ladder' ? (4.2 + 0.76 * base) / 1.675 : base * 1.35;
+    out.push(`<path d="${pathFrom(getStroke(pts, { size: penSize, thinning: 0.75, smoothing: 0.5, streamline: 0.3, simulatePressure: false, last: true }))}" fill="#000"/>`);
     continue;
   }
   const P = s.points;
@@ -41,10 +42,10 @@ for (const s of d.strokes) {
     if (seg.length < 2) continue;
     const p = mean(seg.map(q => q.pressure)), tilt = mean(seg.map(q => q.tiltX));
     const t = Math.max(0, (tilt - 15) / 10);
-    const size = widthMode === 'narrow' ? base * 1.4 * (0.8 + 0.4 * p) : base * 1.2 * (1 + 0.9 * t * t) * (1.1 - 0.4 * p);
+    const size = widthMode === 'ladder' ? (4.2 + 1.09 * base) * Math.pow(Math.min(1, p / 0.8), 0.8) : widthMode === 'narrow' ? base * 1.4 * (0.8 + 0.4 * p) : base * 1.2 * (1 + 0.9 * t * t) * (1.1 - 0.4 * p);
     const dark = Math.min(1, 0.10 + 0.95 * Math.pow(p, 1.3));               // c's tone curve
     let band = 0; while (band < BANDS.length - 1 && dark > BANDS[band]) band++;
-    const o = getStroke(seg.map(q => [q.x * W, q.y * W, q.pressure]), { size, thinning: 0.3, smoothing: 0.5, streamline: 0.2, simulatePressure: false, last: true, start: { taper: 0, cap: true }, end: { taper: 0, cap: true } });
+    const o = getStroke(seg.map(q => [q.x * W, q.y * W, q.pressure]), { size, thinning: widthMode === 'ladder' ? 0 : 0.3, smoothing: 0.5, streamline: 0.2, simulatePressure: false, last: true, start: { taper: 0, cap: true }, end: { taper: 0, cap: true } });
     groups[band].push(`<path d="${pathFrom(o)}"/>`);
   }
 }
