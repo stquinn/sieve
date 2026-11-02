@@ -50,8 +50,8 @@ import { ContractViolation } from '../contract/sieve-block.js'
 
 /**
  * The rendering rules. Widths and the nominal class widths are in page units
- * (page width = 1); `grid` is the SVG user-space width of a page, and
- * `tone.baseFrequency` is per grid unit.
+ * (page width = 1); `grid` is the SVG user-space width of a page, and the
+ * tone pattern's sizes are in grid units.
  */
 export const INK_RULES = Object.freeze({
   grid: 1404,
@@ -66,14 +66,14 @@ export const INK_RULES = Object.freeze({
   }),
   tone: Object.freeze({
     floor: 0.10, gain: 0.95, exponent: 1.3,
-    /** fraction of stipple dots each band keeps, lightest first */
+    /** fraction of a band's area its dots cover, lightest first */
     keep: Object.freeze([0.12, 0.22, 0.34, 0.48, 0.64, 0.82, 0.96]),
-    /** measured [keep fraction, threshold] pairs for the filter chain below */
-    coverage: Object.freeze([
-      [1.0, -0.05], [0.98, 0], [0.95, 0.04], [0.88, 0.08], [0.79, 0.12], [0.68, 0.16],
-      [0.57, 0.20], [0.45, 0.25], [0.34, 0.30], [0.23, 0.36], [0.14, 0.42], [0.05, 0.55],
-    ].map((pair) => Object.freeze(pair))),
-    baseFrequency: 0.7, numOctaves: 2, seed: 11, slope: 40,
+    /** a band whose keep fraction reaches this is filled solid */
+    solid: 0.96,
+    /** dot pattern: tile side and dot radius in grid units, PRNG seed of band 0 */
+    tile: 96, dotRadius: 0.95, seed: 1000,
+    /** dot count multiplier making up the area lost where random dots overlap */
+    overlap: 1.15,
   }),
   /** outline vertices are dropped while within this many grid units of the simplified outline */
   simplify: 0.25,
@@ -139,7 +139,7 @@ export class InkRenderer {
     }
     return [
       `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
-      `<defs>${this.#filterDefs()}</defs>`,
+      `<defs>${this.#patternDefs()}</defs>`,
       '<rect width="100%" height="100%" fill="#fff"/>',
       ...INK_LAYERS.map((name, i) => InkRenderer.#layer(name, layers[i])),
       '</svg>',
@@ -258,24 +258,38 @@ export class InkRenderer {
     return d + 'z'
   }
 
-  /** @returns {string} the seven tone-band filters, built once */
-  #filterDefs() {
+  /**
+   * The seven tone-band patterns, built once: band i tiles a square of round
+   * dots of radius `dotRadius` at positions drawn from a PRNG seeded `seed + i`,
+   * as many as cover the band's keep fraction of the tile; a band at `solid` or
+   * above is a filled tile. Each dot is a zero-length subpath under a round cap,
+   * which every SVG renderer draws as a disc of the stroke's width.
+   * @returns {string}
+   */
+  #patternDefs() {
     if (this.#defs !== undefined) return this.#defs
-    const { keep, coverage, baseFrequency, numOctaves, seed, slope } = INK_RULES.tone
+    const { keep, solid, tile, dotRadius, seed, overlap } = INK_RULES.tone
     this.#defs = keep.map((fraction, i) => {
-      let k = 1
-      while (k < coverage.length - 1 && coverage[k][0] > fraction) k++
-      const [c0, t0] = coverage[k - 1]
-      const [c1, t1] = coverage[k]
-      const threshold = t0 + (t1 - t0) * ((c0 - fraction) / (c0 - c1 || 1))
-      return `<filter id="ink-b${i}" x="0" y="0" width="1" height="1">` +
-        `<feTurbulence type="turbulence" baseFrequency="${baseFrequency}" numOctaves="${numOctaves}" seed="${seed}" result="n"/>` +
-        '<feColorMatrix in="n" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0 1" result="o"/>' +
-        `<feComponentTransfer in="o" result="s"><feFuncR type="linear" slope="${slope}" intercept="${(-slope * threshold).toFixed(2)}"/></feComponentTransfer>` +
-        '<feColorMatrix in="s" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  1 0 0 0 0" result="m"/>' +
-        '<feComposite in="SourceGraphic" in2="m" operator="in"/></filter>'
+      const open = `<pattern id="ink-b${i}" patternUnits="userSpaceOnUse" width="${tile}" height="${tile}">`
+      if (fraction >= solid) return `${open}<rect width="${tile}" height="${tile}"/></pattern>`
+      const count = Math.round(fraction * tile * tile / (Math.PI * dotRadius * dotRadius) * overlap)
+      const next = InkRenderer.#mulberry32(seed + i)
+      let d = ''
+      for (let k = 0; k < count; k++) d += `M${(next() * tile).toFixed(1)} ${(next() * tile).toFixed(1)}h0`
+      return `${open}<path stroke="#000" stroke-width="${2 * dotRadius}" stroke-linecap="round" d="${d}"/></pattern>`
     }).join('')
     return this.#defs
+  }
+
+  /** @param {number} seed @returns {() => number} mulberry32: a deterministic stream in [0, 1) */
+  static #mulberry32(seed) {
+    let t = seed >>> 0
+    return () => {
+      t = (t + 0x6D2B79F5) >>> 0
+      let x = Math.imul(t ^ (t >>> 15), 1 | t)
+      x ^= x + Math.imul(x ^ (x >>> 7), 61 | x)
+      return ((x ^ (x >>> 14)) >>> 0) / 4294967296
+    }
   }
 
   /** @param {number} thinning @param {number} p @returns {number} perfect-freehand's radius factor */
@@ -292,9 +306,8 @@ export class InkRenderer {
 
   /** @param {string} name @param {string[]} parts @returns {string} */
   static #layer(name, parts) {
-    const band = name.startsWith('b') ? ` filter="url(#ink-${name})"` : ''
-    const fill = name === 'live' ? '' : ' fill="#000"'
-    return `<g data-ink="${name}"${fill}${band}>${parts.length ? '\n' + parts.join('\n') + '\n' : ''}</g>`
+    const fill = name === 'live' ? '' : name === 'pen' ? ' fill="#000"' : ` fill="url(#ink-${name})"`
+    return `<g data-ink="${name}"${fill}>${parts.length ? '\n' + parts.join('\n') + '\n' : ''}</g>`
   }
 
   /**
