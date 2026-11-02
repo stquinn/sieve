@@ -228,11 +228,28 @@ Note
 Page
   id          UUIDv7
   template    TemplateRef | null (null = inherit note default)
+  bounds      fixed | unbounded   (fixed = a sheet with the note's aspect, every page
+                                   today; unbounded = a whiteboard: plane units, no edge,
+                                   grows in every direction)
   strokes     ordered list of Stroke, derived by replaying the log
 ```
 
 Pages and strokes are never edited in place in the model; the log is the truth and the
 model is a replay of it. That is what makes a replica trivially correct.
+
+**A whiteboard is a note.** It is a page whose `bounds` is `unbounded`, not a second kind:
+the same ops, the same replay, the same renderer given a viewBox, the same reading cache
+keyed on the stroke set. Only the viewport discipline differs — a fixed page is the screen,
+and "next" adds a page; an unbounded page is a window over a plane, and you move the
+window. **The viewport is not data:** where the window sits is UI state on each side, like
+scroll position, never a record in the log. **The Boox pans; Sieve zooms.** On the Boox an
+unbounded page is panned at one to one (a two-finger drag moves the window, the bitmap is
+re-rendered at the new offset, strokes are translated to plane units on commit) and never
+zoomed — zoom would change the nib's width in plane units for no gain, since once the page
+is an SVG in Sieve, zoom is free. Panning on the raw-drawing surface is a companion
+iteration 2 feature with a feel spike of its own; nothing in phases 1–4 waits on it. The
+reading job reads a fixed page whole; an unbounded page is tiled or read by the framed
+region, a later decision the contract does not need.
 
 ### 5.2 Operation log
 
