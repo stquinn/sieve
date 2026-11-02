@@ -605,15 +605,17 @@ shared. `DigitalNoteKind.Serialize` writes the block YAML only, which is what th
 spine asks a kind for; the log's two codecs — JSON Lines for the asset, the binary records
 of §7.4 for the radio — belong to the replica.
 
-**Iteration 1 lands ink notes in their own library.** Settings → Ink names the library a
-synced note is filed into, defaulting to a dedicated one. This is a filing default, not a
-rule of the kind: inside that library filing is ordinary, and when the experiment settles
-the notes are moved into the main library with `Move`, nothing re-encoded. The point is
-quarantine — the main library's sidebar, search, triage and AI jobs never see experimental
-Things until chosen. Libraries are per store, so a document in one library cannot address
-an ink note in another until they share a root; nothing in phases 1–4 needs that, and the
-reference card (above) comes later. Overlaying libraries in the UX is a library feature,
-out of scope here.
+**Iteration 1 lands ink notes in a `Blocks` category.** A new store category, key
+`blocks`, a sibling of `store` (the shared notes library) and `buffers` (the machine's
+working copy), metadata enabled like both, **`Isolated`** like the working copy: an ink
+note's replica is per Sieve by design (each machine syncs from the Boox itself and holds
+its own Thing for the same source note), so a folder that travelled between hosts would
+show each machine the other's replica beside its own. This is a filing default while
+Things settles, not a rule of the kind: filing inside the category is ordinary, and when
+the experiment settles the notes are moved into the library with `Move`, nothing
+re-encoded. The point is quarantine — the library's sidebar, search, triage and AI jobs
+never see experimental Things until chosen — inside one store, so addresses resolve and a
+document can reference an ink note from day one.
 
 **Identity.** The Thing's uuid is Sieve's, minted by `ident.New` like every id, and the
 companion's note id is held as a **property**, `note_source_id`, beside `note_companion`
