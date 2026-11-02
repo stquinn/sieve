@@ -237,32 +237,40 @@ has no effect on any rule.
 `max(0, i−1) .. i+10` (inclusive), skipping a chunk of fewer than two points. Each chunk is
 one outline at the chunk's mean pressure p̄: `size` = the pencil width at p̄ in grid units,
 `thinning 0, smoothing 0.5, streamline 0.2, simulatePressure false, last true`, start and end
-`{taper: 0, cap: true}`. Fill black, then toned.
+`{taper: 0, cap: true}`. Filled with its band's tone.
 
 **Tone** is dot density. A chunk's darkness is `min(1, 0.10 + 0.95·p̄^1.3)`; its band is
 the first of the keep fractions `0.12, 0.22, 0.34, 0.48, 0.64, 0.82, 0.96` that is ≥ the
-darkness (the last band otherwise). Each band is one group under one filter that keeps that
-fraction of a shared stipple:
+darkness (the last band otherwise). Each band is one group filled with one pattern of round
+black dots covering that fraction of its area. The tone is geometry, never a filter: a filter
+is rasterised at the display's pixel size, so its stipple changes with zoom, while a dot
+pattern scales with the page.
 
 ```
-<filter id="ink-b{i}" x="0" y="0" width="1" height="1">
-  <feTurbulence type="turbulence" baseFrequency="0.7" numOctaves="2" seed="11" result="n"/>
-  <feColorMatrix in="n" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0 1" result="o"/>
-  <feComponentTransfer in="o" result="s"><feFuncR type="linear" slope="40" intercept="{−40·t}"/></feComponentTransfer>
-  <feColorMatrix in="s" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  1 0 0 0 0" result="m"/>
-  <feComposite in="SourceGraphic" in2="m" operator="in"/>
-</filter>
+<pattern id="ink-b{i}" patternUnits="userSpaceOnUse" width="96" height="96">
+  <path stroke="#000" stroke-width="1.9" stroke-linecap="round" d="M{x} {y}h0M{x} {y}h0…"/>
+</pattern>
 ```
 
-The threshold `t` for a keep fraction k is interpolated linearly in this measured table of
-(keep, threshold): (1.0, −0.05) (0.98, 0) (0.95, 0.04) (0.88, 0.08) (0.79, 0.12) (0.68, 0.16)
-(0.57, 0.20) (0.45, 0.25) (0.34, 0.30) (0.23, 0.36) (0.14, 0.42) (0.05, 0.55), and the
-intercept is written to two decimals. `baseFrequency` is per grid unit (982.8 per page width);
-1.1 aliases into pixel rows and columns.
+The tile is 96 grid units square; each dot is a zero-length subpath under a round cap, a disc
+of radius 0.95 grid units. Band i (keep fraction k) holds `round(k · 96² / (π · 0.95²) · 1.15)`
+dots — the 1.15 makes up the area lost where random dots overlap. Dot positions are drawn in
+order, x then y, each `rnd() · 96` written with one decimal, from mulberry32 with state t starting at the seed `1000 + i`:
 
-**Document.** In paint order: a white background; group `pen`; groups `b0`…`b6`, each under
-filter `ink-b{i}`; group `live`. Each group is `<g data-ink="{name}">`. A pen stroke is
-`<path data-stroke="{id}">`; a pencil stroke is, in each band it touches,
+```
+t = (t + 0x6D2B79F5) mod 2³²
+z = imul(t ^ (t >>> 15), 1 | t)
+z ^= z + imul(z ^ (z >>> 7), 61 | z)
+rnd = ((z ^ (z >>> 14)) >>> 0) / 2³²
+```
+
+A band whose keep fraction is ≥ 0.96 (the last) is a solid tile:
+`<pattern …><rect width="96" height="96"/></pattern>`.
+
+**Document.** In paint order: a white background; group `pen`; groups `b0`…`b6`, each filled
+with pattern `ink-b{i}`; group `live`. Each group is `<g data-ink="{name}">`; `pen` carries
+`fill="#000"` and `b{i}` carries `fill="url(#ink-b{i})"`, which every path in it inherits. A
+pen stroke is `<path data-stroke="{id}">`; a pencil stroke is, in each band it touches,
 `<g data-stroke="{id}">` of one `<path>` per chunk.
 
 **Path data.** For an outline o₀…oₘ: Douglas–Peucker with tolerance 0.25 grid units, vertices

@@ -526,7 +526,7 @@ MoveReceived`, ~364 Hz, a few dozen bytes per flush at the connection interval),
 `OP` with the whole stroke at pen-up, which is the only record the log keeps. Points are
 ephemeral: never logged, never acked, never reconciled; a Sieve that joins mid-stroke draws
 from the next `BEGIN`. The lens draws the pen live and replaces the stroke with the committed
-one at pen-up; charcoal, whose look needs the density filters of §8, is drawn at pen-up only.
+one at pen-up; charcoal, whose look needs the density patterns of §8, is drawn at pen-up only.
 Spike C (#205, 2026-11-02) proved it at the desk: 49 strokes drawn by hand grew under the nib
 in a browser with no visible lag, every point delivered, at 17 bytes a point (~6 kB/s of a
 ~70 kB/s link). This is why the Boox is a whiteboard input for Sieve and not only a notebook
@@ -679,7 +679,7 @@ has no source face and therefore no dependency on the source editor or #71.
 **View one — the page.** The `page` mode, PM-free, mounted where the editor would be. The
 lens renders the page's strokes to one SVG in JS (template as a background group, then one
 `<path>` per pen stroke carrying the stroke id, pencil strokes as chunk paths grouped per
-stroke inside seven tone bands, each band under its density filter — the contract's
+stroke inside seven tone bands, each band under its density pattern — the contract's
 §Rendering) and saves that SVG as the page's asset keyed by the page's stroke hash, exactly
 as a Mermaid diagram is rendered in the browser and saved as its `svgAsset`. Chrome: page
 `n / N`, previous, next, jump, zoom to fit / 100%. Live: as records arrive for the displayed

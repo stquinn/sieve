@@ -25,4 +25,4 @@ The calibration page: the same marks at every width class and tool, five pencil 
 ## The renderer rules this fixes (`ladder` mode)
 
 - **Pen:** perfect-freehand `size = (4.2 + 0.76·nominal) / 1.675`, thinning 0.75 (so the width at p≈0.95 is the measured one), one outline per stroke.
-- **Pencil:** 10-point chunks; width `(4.2 + 1.09·nominal) × min(1, p/0.8)^0.8`, constant within a chunk (thinning 0), no tilt term; tone = dot density through the seven calibrated feTurbulence masks (keep 0.10 + 0.95·p^1.3), baseFrequency 0.7.
+- **Pencil:** 10-point chunks; width `(4.2 + 1.09·nominal) × min(1, p/0.8)^0.8`, constant within a chunk (thinning 0), no tilt term; tone = dot density in seven bands (darkness 0.10 + 0.95·p^1.3 picks the band). The `.mjs` thresholds a feTurbulence mask per band (baseFrequency 0.7); `docs/ink-contract.md` §Rendering draws each band as a deterministic vector dot pattern instead, which keeps its look at every display size.
