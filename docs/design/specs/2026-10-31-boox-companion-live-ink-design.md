@@ -601,7 +601,11 @@ endpoint #198 D2 adds, and the lens replays the log in JS. While a sync is runni
 lens must learn of new records without refetching a growing YAML every tick: `InkService`
 pushes appended records to the open lens over the DOCUMENT wire's per-uuid channel as a
 new frame in `sieve/protocol`, and the lens applies them to its replay. A `things`
-invalidate topic (#198 D2) still fires on disconnect so closed views catch up on open.
+invalidate topic (#198 D2) still fires on disconnect so closed views catch up on open. The
+§7.4 point feed rides the same per-uuid channel as a second frame family and is the one
+thing that bypasses the `ContainerModel`: points under the pen are not document state, so
+they reach the lens through a listener in `contract/` (the presence seam), never through
+the provider; committed strokes arrive as model changes like everything else (§8b).
 
 **Reference card.** A note that `@`-mentions a Digital Note gets the existing reference
 card stamped from the `ThingsSource` face: title, `"{n} pages"`, last synced. Opening it
@@ -713,6 +717,45 @@ case:
 This is why the log, not the page image, had to be the stored truth: a clip is a
 projection of the log, and a clip of a clip is the same operation again.
 
+## 8b. Where ink lives in Sieve
+
+Ink and Bluetooth are confined to two new directories and a short list of registrations.
+Nothing else in Sieve learns either word.
+
+**Backend: one package, `sieve/ink/`.** The business service: the BLE central, pairing,
+the replication protocol of §7, the replica and its op log, the live subscription per
+note. It is the only package in the module that imports a Bluetooth library. It sits
+beside the other services in the DAG — it imports `services/` for the store and `domain/`
+for types, and nothing above it imports it except the composition root. It owns the
+Digital Note's serialiser, which is the rule that serialisation is a processor concern
+applied to a body that is not markdown. `ServiceProvider` constructs it; `App` starts it
+the way it starts the watcher; it scans only while a pairing exists.
+
+**EditorService learns a container kind, not a radio.** An ink note is a container like
+any other (#198 reframing, 2026-11-02): it is opened through the Router by a source beside
+`NotesSource`, saved through the same spine, addressed by the same `sieve://` form.
+EditorService calls the ink service the way it calls any service.
+
+**No third wire.** The document wire `GET /api/ws/document/{uuid}` is already a socket
+opened per container when the container is opened. The live feed (§7.4) and the appended
+records (§8) are frame families on it, declared in `sieve/protocol` like every frame, with
+the generated artifacts rebuilt. The feed bypasses the `ContainerModel`, not the
+transport: lenses stay transport-blind, which `lens-isolation` pins.
+
+**Frontend: a lens and a renderer.** `lens/ink/` holds `DigitalNoteLens` extending
+`AbstractEditor` with its `page` and `reading` modes; `renderers/ink-renderer.js` is the
+PM-free renderer phase 1 builds. The lens imports `contract/` and `renderers/` only.
+`Workspace`, the composition root, constructs it by `OpenTarget.Kind`.
+
+**The touch points in existing code, all of them registrations:** the kind in the registry
+#198 D1 builds; a Router source; the protocol frames; the lens in `Workspace`; the service
+in `ServiceProvider`; `requesthandlers/ink.go` with its template for Settings → Ink.
+
+**Pinned, not hoped for.** A Go test walks the module's imports and fails if any package
+other than `sieve/ink` imports a Bluetooth package; the `lens-isolation` closure test is
+extended so `lens/ink/` reaches nothing beyond `contract/` and `renderers/`. Dripping ink
+or Bluetooth anywhere else is a failing test, not a review comment.
+
 ## 9. Failure handling
 
 | Failure | Behaviour |
@@ -805,7 +848,6 @@ hashes them exactly.
 - Exact layout and iconography of the companion and the lens chrome; the look follows the
   Sieve theme tokens on the Sieve side and e-ink legibility on the Boox side.
 - The AI prompt and the JSON shape of a reading; follow the ai-block conventions.
-- How `InkService` is wired into `ServiceProvider` and which package owns the BLE code.
 
 ## 13. Open questions for the architect
 
