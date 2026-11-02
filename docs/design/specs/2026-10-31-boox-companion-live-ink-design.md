@@ -102,9 +102,12 @@ Three things, one contract between them:
   look-and-feel target, not an identity target.
 - **The Thing is a Digital Note, an interface with implementations.** One new `ThingKind`
   in the Things store #198 D1 builds (`.meta` `type: block`, `kind: digital-note`,
-  payload in `{uuid}.block`, folder `blocks/digital-note/`), opened by a full-body lens the
-  tab bar selects through `OpenTarget.Kind = block:digital-note`, exactly as #198 does for
-  `block:openapi`. `DigitalNote` is what every lens and job sees; `StrokeBasedNote` and
+  payload in `{uuid}.block`), opened by a full-body lens the tab bar selects through
+  `OpenTarget.Kind = block:digital-note`, exactly as #198 does for `block:openapi`. The kind
+  carries no location: a Digital Note has filing metadata (§7.2) and is filed in the folders
+  like any document, by the one filing mechanism; a "Things" view filters by kind, and the
+  `blocks/{kind}/` shelf is only for containers with no filing identity of their own (#198
+  reframing, 2026-11-02). `DigitalNote` is what every lens and job sees; `StrokeBasedNote` and
   `FileBasedNote` are the implementations and the only code that knows where pages came
   from. This design builds `StrokeBasedNote`; folder sync would add `FileBasedNote`.
 
@@ -342,6 +345,16 @@ CoreBluetooth exposes it as `CBPeripheral.openL2CAPChannel(psm)`; the Go library
 does not wrap it, so the Mac needs a small Objective-C bridge. **That bridge is the spike
 that must pass before anything else is built** (§10).
 
+Three facts the Linux spike (#205, 2026-11-02) fixed in the contract. The channel is opened
+with the *insecure* listener (`listenUsingInsecureL2capChannel`): there is no bonding, and the
+secure variant demands an encrypted link. The PSM is dynamic and changes whenever the
+companion's adapter restarts, so **Sieve reads `psm` on every connect** and never caches it.
+Throughput is governed by the LE connection interval, which a GATT server cannot request, so
+**the companion opens a GATT client handle on the same link and requests
+`CONNECTION_PRIORITY_HIGH` once the channel is accepted** (requested earlier, the stack's own
+interval update overrides it and throughput halves). Measured at 15 ms: 63–75 kB/s over a
+4096-byte SDU, versus a pen's ~4 kB/s in binary form.
+
 **Pairing and trust.** Pairing is a **pre-shared key**, chosen over a PAKE and over OS
 pairing because it is the simplest scheme that is actually sound, uses only standard
 library primitives on both sides (HMAC-SHA256, HKDF, ChaCha20-Poly1305: Go's `crypto`
@@ -397,6 +410,7 @@ companion → Sieve   NOTES   [{noteId, title, pages, headSeq}…]   consented n
 Sieve → companion   OPEN    {noteId, haveSeq}                 once per note it wants
 companion → Sieve   HEAD    {noteId, headSeq, headHash} | REFUSE {reason}
 companion → Sieve   OP*     log records from haveSeq+1; in a note offer, then live as written
+companion → Sieve   POINT*  the stroke under the pen, every sample as it arrives (§7.4)
 Sieve → companion   ACK     {seq}  every N records or 500 ms, whichever first
 companion → Sieve   DONE    {noteId}   end of catch-up for this note (library offer);
                                        Sieve may OPEN the next
@@ -484,6 +498,24 @@ background service that keeps the companion advertising so Sieve can reach it wi
 idle, bringing SieveInk to the front or waking the device on `OPEN-NOTE`. That softens the
 "no background presence" non-goal to "no background syncing": the companion still only
 streams when asked. Battery and behaviour through the Boox's sleep are measured then.
+
+### 7.4 The live point feed
+
+The op log is stroke-grained: an `OP` exists when the pen lifts. That is right for storage
+and replay and wrong for watching someone write, which is the use that makes the Boox a
+whiteboard input rather than a notebook that syncs. So while a note is open live, the
+companion also sends the stroke *under* the pen: `BEGIN {stroke, tool, width}`, then a
+`POINT` for every sample as the Onyx raw-input callback delivers it (`onRawDrawingTouchPoint-
+MoveReceived`, ~364 Hz, a few dozen bytes per flush at the connection interval), then the
+`OP` with the whole stroke at pen-up, which is the only record the log keeps. Points are
+ephemeral: never logged, never acked, never reconciled; a Sieve that joins mid-stroke draws
+from the next `BEGIN`. The lens draws the pen live and replaces the stroke with the committed
+one at pen-up; charcoal, whose look needs the density filters of §8, is drawn at pen-up only.
+Spike C (#205, 2026-11-02) proved it at the desk: 49 strokes drawn by hand grew under the nib
+in a browser with no visible lag, every point delivered, at 17 bytes a point (~6 kB/s of a
+~70 kB/s link). This is why the Boox is a whiteboard input for Sieve and not only a notebook
+that syncs, and it is the reason the live pen path is phase 1 work and reachable mode (§7.3)
+is not optional.
 
 ## 8. The Thing in Sieve
 
@@ -765,7 +797,9 @@ hashes them exactly.
 ## 12. Left to the builder
 
 - Binary framing of the companion's on-device log and of the L2CAP frames (CBOR or a hand-rolled TLV; pick
-  one and write it into the §5 contract document).
+  one and write it into the §5 contract document). Binary is not optional: the export JSON is
+  ~98 bytes per point, which at 364 Hz is ~36 kB/s, half the measured link; a ~16-byte record
+  is ~6 kB/s.
 - GATT UUID values, PSM allocation, advertisement layout.
 - The Catmull–Rom tension and `base(width)` constants, settled when the fixtures are made.
 - Exact layout and iconography of the companion and the lens chrome; the look follows the
