@@ -464,7 +464,17 @@ type FencedSerializer struct{}
 // Serialize renders any block-mode kind as ```kind\n<yaml>\n``` using the shared
 // literal-style machinery — registry-free, so it serializes code, diagram, etc.
 // uniformly without needing a BlockProcessor.
-func (FencedSerializer) Serialize(block SieveBlock) (string, error) {
+func (f FencedSerializer) Serialize(block SieveBlock) (string, error) {
+	body, err := f.SerializeAttrs(block)
+	if err != nil {
+		return "", err
+	}
+	return "```" + block.Kind + "\n" + body + "\n```", nil
+}
+
+// SerializeAttrs renders the block's YAML map: the interior of its fence, and the
+// whole body of a block container. It does not name the kind.
+func (FencedSerializer) SerializeAttrs(block SieveBlock) (string, error) {
 	attrs := block.Attrs
 	// Aliases live on the STRUCT, not in Attrs — unlike id: Merge replaces
 	// Aliases wholesale, so a mirrored copy in Attrs would go stale. They are
@@ -477,11 +487,7 @@ func (FencedSerializer) Serialize(block SieveBlock) (string, error) {
 		}
 		attrs["aliases"] = append([]string(nil), block.Aliases...)
 	}
-	body, err := fencedblock.SerializeYaml(attrs)
-	if err != nil {
-		return "", err
-	}
-	return "```" + block.Kind + "\n" + body + "\n```", nil
+	return fencedblock.SerializeYaml(attrs)
 }
 
 // FencedDeserializer is the ONE shared deserialization for YAML/fenced flavours —
@@ -521,10 +527,19 @@ func (d FencedDeserializer) Deserialize(region Region) ([]SieveBlock, error) {
 	// region.Body == region.Raw (shape-driven scanner: verbatim span).
 	// Strip the opening fence line ("```kind\n") and closing fence line ("```"
 	// with optional trailing newline) to recover the YAML interior.
-	body := d.fencedBody(region.Raw)
-	attrs, err := fencedblock.DeserializeYaml(body)
+	blk, err := d.DeserializeAttrs(d.fencedBody(region.Raw))
 	if err != nil {
 		return nil, err
+	}
+	return []SieveBlock{blk}, nil
+}
+
+// DeserializeAttrs is the inverse of FencedSerializer.SerializeAttrs: it builds a
+// block of this flavour's Kind from its YAML map.
+func (d FencedDeserializer) DeserializeAttrs(body string) (SieveBlock, error) {
+	attrs, err := fencedblock.DeserializeYaml(body)
+	if err != nil {
+		return SieveBlock{}, err
 	}
 	id, _ := attrs["id"].(string)
 	// Lift aliases BEFORE NewSieveBlock: it may clone attrs when the id differs,
@@ -532,7 +547,7 @@ func (d FencedDeserializer) Deserialize(region Region) ([]SieveBlock, error) {
 	aliases := d.liftAliases(attrs)
 	blk := NewSieveBlock(d.Kind, id, attrs)
 	blk.Aliases = aliases
-	return []SieveBlock{blk}, nil
+	return blk, nil
 }
 
 // liftAliases REMOVES the persisted aliases key from attrs and returns it as the
