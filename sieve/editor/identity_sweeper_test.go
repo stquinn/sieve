@@ -7,6 +7,7 @@ import (
 	"sieve/ident"
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
+	"sieve/sieve/domain"
 	"sieve/sieve/services"
 )
 
@@ -141,5 +142,39 @@ func TestSweepLibrary_EmptyLibraryIsClean(t *testing.T) {
 	got := sweeper.SweepLibrary()
 	if got.Scanned != 0 || got.Migrated != 0 || len(got.Failures) != 0 {
 		t.Fatalf("empty library: %+v", got)
+	}
+}
+
+// The sweep walks documents only: a block container is neither scanned nor
+// rewritten, even one moved into the library.
+func TestSweepLibrary_NeverTouchesABlockContainer(t *testing.T) {
+	resetRegistry()
+	containers, ds, fs := newTestContainers(t)
+	sweeper := NewIdentitySweeper(ds, block.NewDocumentCodec(block.GlobalRegistry()))
+	stayed, err := containers.Create(stickyKind, map[string]interface{}{"title": "stayed"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	filed, err := containers.Create(stickyKind, map[string]interface{}{"title": "filed"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := fs.Move(filed.storable, domain.LibraryCategory); err != nil {
+		t.Fatalf("Move: %v", err)
+	}
+	saveDoc(t, ds, "plain prose")
+
+	got := sweeper.SweepLibrary()
+	if got.Scanned != 1 || len(got.Failures) != 0 {
+		t.Fatalf("result = %+v, want only the document scanned", got)
+	}
+	for _, uuid := range []string{stayed.UUID(), filed.UUID()} {
+		c, err := containers.Load(uuid)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if len(c.Versions()) != 0 {
+			t.Errorf("%s was rewritten by the sweep", uuid)
+		}
 	}
 }

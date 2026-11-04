@@ -26,7 +26,7 @@ const assetKind = "asset"
 // the same string in turn and the first hit wins.
 type containerLeaves struct {
 	addr     domain.Address
-	doc      domain.Document
+	owner    store.MetaStorable
 	registry block.ProcessorRegistry
 	blocks   []block.SieveBlock
 }
@@ -43,7 +43,7 @@ func newContainerLeaves(addr domain.Address, doc domain.Document, body string) (
 	if err != nil {
 		return nil, fmt.Errorf("container %s: parse body: %w", addr.Container, err)
 	}
-	return &containerLeaves{addr: addr, doc: doc, registry: registry, blocks: blocks}, nil
+	return &containerLeaves{addr: addr, owner: doc.Storable(), registry: registry, blocks: blocks}, nil
 }
 
 // resolve dereferences the address's leaf against the three indexes, in order:
@@ -108,7 +108,7 @@ func (c *containerLeaves) blockNamed(leaf string) (block.SieveBlock, bool) {
 // mean.
 func (c *containerLeaves) assetNamed(leaf string) (store.AssetStorable, bool) {
 	var folded store.AssetStorable
-	for _, owned := range c.doc.Storable().Owns() {
+	for _, owned := range c.owner.Owns() {
 		asset, ok := owned.(store.AssetStorable)
 		if !ok {
 			continue
@@ -139,6 +139,7 @@ func (c *containerLeaves) blockNode(b block.SieveBlock) domain.NodeDescriptor {
 		Title:   strings.TrimSpace(b.StringAttr("title")),
 		Summary: strings.TrimSpace(b.StringAttr("summary")),
 		Body:    body,
+		Attrs:   b.Attrs,
 	}
 }
 
@@ -156,7 +157,7 @@ func (c *containerLeaves) assetNode(a store.AssetStorable) domain.NodeDescriptor
 		Kind:    assetKind,
 		Title:   a.Key(),
 		Summary: "A file.",
-		Path:    path.Join(c.doc.Storable().ExternalRef(), a.Key()),
+		Path:    path.Join(c.owner.ExternalRef(), a.Key()),
 		Bytes:   len(a.Body()),
 	}
 }

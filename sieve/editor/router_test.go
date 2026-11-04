@@ -316,3 +316,37 @@ func TestRouter_TargetSurfacesTheGrammarAndDanglingSentinels(t *testing.T) {
 		t.Fatalf("err = %v, want ErrBadAddress", err)
 	}
 }
+
+// The two real sources federate: each uuid reaches the source that owns its type,
+// and a block's OpenTarget carries the block kind.
+func TestRouter_FederatesDocumentsAndBlockContainers(t *testing.T) {
+	resetRegistry()
+	containers, ds, _ := newTestContainers(t)
+	router := NewRouter(NewNotesSource(ds), NewBlockSource(containers))
+
+	note := seedFiledNote(t, ds, "A Note", "", nil, "", "body")
+	c, err := containers.Create(stickyKind, map[string]interface{}{"title": "A Sticky"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	for _, tc := range []struct{ uuid, kind, title string }{
+		{note.UUID(), string(domain.KindNote), "A Note"},
+		{c.UUID(), stickyKind, "A Sticky"},
+	} {
+		target, err := router.Target("sieve://" + tc.uuid)
+		if err != nil {
+			t.Fatalf("Target(%s): %v", tc.title, err)
+		}
+		if target.UUID != tc.uuid || target.Kind != tc.kind || target.Title != tc.title {
+			t.Errorf("Target(%s) = %+v", tc.title, target)
+		}
+	}
+
+	if _, err := router.Target("sieve://" + testMissingUUID); !errors.Is(err, domain.ErrNodeNotFound) {
+		t.Errorf("missing uuid: err = %v, want ErrNodeNotFound", err)
+	}
+	if hits := router.Search("Sticky", 10); len(hits) != 0 {
+		t.Errorf("Search offered a block container: %+v", hits)
+	}
+}

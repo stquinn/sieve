@@ -20,6 +20,10 @@ type NodeDescriptor struct {
 	Path string
 	// Bytes is an asset's size; zero for anything else.
 	Bytes int
+	// Attrs is the block's YAML map when the target is a block; nil otherwise. It
+	// is shared with the source's copy of the block, so a consumer must not mutate
+	// it.
+	Attrs map[string]interface{}
 }
 
 // NodeResolver dereferences a Sieve coordinate: address in, NodeDescriptor out.
@@ -39,7 +43,7 @@ type OpenTarget struct {
 	URI     string // the address it was derived from
 	UUID    string // the container to open
 	BlockID string // the block to reveal inside it; empty for a whole container
-	Kind    string // the container's own noun: "note"
+	Kind    string // the container's own noun: "note", "buffer", a block kind
 	Title   string
 }
 

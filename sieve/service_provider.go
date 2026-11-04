@@ -21,6 +21,7 @@ type ServiceProvider struct {
 	Store       store.Store
 	Library     services.LibraryService
 	Documents   *services.DocumentService
+	Containers  *editor.BlockContainerService
 	Nodes       *editor.Router
 	Assets      *services.AssetService
 	State       *services.StateService
@@ -141,11 +142,15 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 		logger.Error("buffers init failed", "err", err)
 		return
 	}
+	s.Containers, err = editor.NewBlockContainerService(store, block.GlobalRegistry())
+	if err != nil {
+		logger.Error("block containers init failed", "err", err)
+		return
+	}
 	// The Router: address → NodeDescriptor. Registering a source is the ONE line
-	// that makes a container kind mentionable, and a source may only offer what
-	// can also be dereferenced — so notes only, because that is what MCP
-	// get_by_uri reaches through this same Router.
-	s.Nodes = editor.NewRouter(editor.NewNotesSource(s.Documents))
+	// that makes a container kind addressable, and MCP get_by_uri reaches through
+	// this same Router.
+	s.Nodes = editor.NewRouter(editor.NewNotesSource(s.Documents), editor.NewBlockSource(s.Containers))
 	s.Assets = services.NewAssetService(store, storePath)
 	s.State, err = services.NewStateService(store, storePath, themesFS)
 	if err != nil {

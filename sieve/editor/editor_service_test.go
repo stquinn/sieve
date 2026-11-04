@@ -1735,3 +1735,25 @@ func TestEditorService_AReplacementIsAutosavedLikeAnyOtherEdit(t *testing.T) {
 		t.Errorf("on-disk body = %q, want the corrected text", string(doc.Body()))
 	}
 }
+
+// A block container has no markdown shadow: open refuses at the DocumentService
+// wall and leaves no session behind.
+func TestEditorService_OpenRefusesABlockContainer(t *testing.T) {
+	resetRegistry()
+	containers, ds, _ := newTestContainers(t)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+	c, err := containers.Create(stickyKind, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := es.Open(c.UUID()); !errors.Is(err, domain.ErrNotADocument) {
+		t.Fatalf("Open = %v, want ErrNotADocument", err)
+	}
+	if es.shadowFor(c.UUID()) != nil {
+		t.Error("a shadow was left behind for the block container")
+	}
+	if _, err := es.Blocks(c.UUID()); !errors.Is(err, domain.ErrNotADocument) {
+		t.Errorf("Blocks = %v, want ErrNotADocument", err)
+	}
+}
