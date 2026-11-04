@@ -834,10 +834,23 @@ about location; "Things" is a view, a filter by kind. Concretely:
 
 | #198 dispatch | What it provides here | Status |
 |---|---|---|
-| D1 content-kind seam (headless Go) | The content file name picked from `.meta` `type`, `Document.ContentKind()`, `NewOfKind`, `ListByContentKind`, the `ThingKind` registry, the category table in `documentFromStoreable`, `ContentKind` on `NodeDescriptor` and `OpenTarget` | Unblocked in #198; **phase 3 here needs it**. This epic adds the `Blocks` category as a row in that table |
+| D1 content-kind seam (headless Go) | The content file name picked from `.meta` `type`, creation by kind, a kind on `NodeDescriptor` and `OpenTarget` | **Built by #208**, on the type model below, before phase 3. `OpenAPIKind`, `Sniff` and the AI filing change stay in #198 |
 | D2a wire + mount | Load/save serving a content kind, `WholeContentAdapter` serving it, the one lens table keyed by content kind, the lens mode flip in the interaction contract | Unblocked, built once by whichever of #198 and #204 goes first. **Phase 4 here needs it** |
 | D2b source face + Things view | The filter-by-kind view | Blocked on the source editor; nothing here needs it |
 | D4 reference card from the descriptor | `@`-mention card for a Digital Note | Reused as is |
+
+**The type model (#208), which replaces #198's `ContentKind()` axis.** A Block is not a
+Document. A `SieveBlock` is a YAML map whose processor writes it as markdown; a
+`BlockContainer` is that same map written directly to a file, and a live reference (later)
+draws it through its kind's renderer. A container is a serialiser over one or more blocks,
+the service that owns it and its category: `Document` is a list of blocks written as
+markdown, `BlockContainer` one block written as YAML, a chat later a list with its own
+serialiser and service. All sit directly on `store.MetaStorable`, which holds bytes. A
+container's kind is a block kind in the existing `ProcessorRegistry`, never a second
+registry. Document code paths do not change; `EditorService` learns about blocks at one door
+in phase 4, and `DocumentService` refuses anything that is not `type: document`. Where §8
+says `ThingKind`, `Things` store or `blocks/digital-note/`, read the block's processor, a
+`BlockContainer` and the `Blocks` category.
 
 Where the two designs differ, and why it is coherent: lifecycle (born published vs born
 Isolated) is per kind by #198's own rule; one kind with two implementations rather than
@@ -863,8 +876,7 @@ its own issues, referencing the contract by section.
    and is installed from the collective app. The notes list stores and shows received
    filing metadata (§7.2): title, search over keywords, grouping by category.
 3. **Sieve replication:** `InkService` (scan, pair, HELLO/ACK, append to the replica),
-   `DigitalNoteKind` with `StrokeBasedNote` and its face, Settings → Ink. **Depends on #198
-   D1.** The page can be inspected only via the fixtures and a debug dump at this point.
+   `DigitalNoteKind` with `StrokeBasedNote` and its face, Settings → Ink. **Depends on #208.** The page can be inspected only via the fixtures and a debug dump at this point.
    The radio sits behind one interface inside `sieve/ink`, implemented per platform, so the
    Mac half is a second implementation and not a change to replication. **The Mac is
    proven here, on the released build as installed on the corporate Mac:** the Objective-C
