@@ -1,6 +1,14 @@
 package domain
 
-import "sieve/store"
+import (
+	"errors"
+
+	"sieve/store"
+)
+
+// ErrNotADocument reports a storable whose .meta type is not store.TypeDocument,
+// whatever category holds it.
+var ErrNotADocument = errors.New("document: storable is not a document")
 
 type DocumentKind string
 

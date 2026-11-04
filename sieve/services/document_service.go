@@ -27,9 +27,15 @@ func NewDocumentService(st store.Store) (*DocumentService, error) {
 	return &DocumentService{store: st}, nil
 }
 
+// documentFromStoreable is the wall between documents and every other
+// MetaStorable: anything not of type document is domain.ErrNotADocument, in every
+// category, because the category alone does not say what a body holds.
 func (ds *DocumentService) documentFromStoreable(item store.MetaStorable) (domain.Document, error) {
 	if item == nil {
 		return nil, fmt.Errorf("Nill MetaStoreable not allowed")
+	}
+	if item.Type() != store.TypeDocument {
+		return nil, fmt.Errorf("%w: %s has type %q", domain.ErrNotADocument, item.Key(), item.Type())
 	}
 	if item.Category().Key == domain.LibraryCategory.Key {
 		result := domain.NewNote(item)
@@ -85,7 +91,7 @@ func (ns *DocumentService) Delete(n domain.Document) error {
 
 // DeleteFolder removes the folder and everything beneath it — the Store deletes
 // the whole directory, subfolders included — and returns the uuid of every
-// document that went with it.
+// container that went with it, whatever its type.
 //
 // Those uuids are the point of the return value: a deleted document is news the
 // rest of the app has to hear, and once the directory is gone there is nothing
@@ -95,10 +101,7 @@ func (ns *DocumentService) DeleteFolder(id string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var deleted []string
-	for _, doc := range flattenDocs(folder.Owns()) {
-		deleted = append(deleted, doc.Key())
-	}
+	deleted := ns.uuidsBeneath(folder.Owns())
 	if err := ns.store.Delete(folder); err != nil {
 		return nil, err
 	}
@@ -107,6 +110,21 @@ func (ns *DocumentService) DeleteFolder(id string) ([]string, error) {
 	// use: the uuids collected above are exactly what has to stop resolving.
 	ns.store.ForgetUUIDs(deleted)
 	return deleted, nil
+}
+
+// uuidsBeneath collects the uuid of every MetaStorable at every depth, documents
+// or not: this is what a folder delete destroys.
+func (ns *DocumentService) uuidsBeneath(children []store.Storable) []string {
+	var uuids []string
+	for _, child := range children {
+		switch child := child.(type) {
+		case store.MetaStorable:
+			uuids = append(uuids, child.Key())
+		case store.FolderStorable:
+			uuids = append(uuids, ns.uuidsBeneath(child.Owns())...)
+		}
+	}
+	return uuids
 }
 
 // FolderContents is what a folder delete would destroy, counted before it is
@@ -193,34 +211,7 @@ func (ds *DocumentService) AttachAsset(n domain.Document, a store.AssetStorable)
 // attaches it to doc's in-memory ownership list without bumping the document's
 // metadata version.
 func (ds *DocumentService) SaveAsset(doc domain.Document, assetKey string, data []byte) (store.AssetStorable, error) {
-	asset, err := ds.store.CreateAsset(doc.Storable().Category(), doc.UUID(), assetKey, data)
-	if err != nil {
-		return nil, err
-	}
-	attachUniqueAsset(doc.Storable(), asset)
-	if current, err := ds.store.LoadByUUID(doc.UUID()); err == nil {
-		if ms, ok := current.(store.MetaStorable); ok && ms != doc.Storable() {
-			attachUniqueAsset(ms, asset)
-		}
-	}
-	return asset, nil
-}
-
-func attachUniqueAsset(ms store.MetaStorable, asset store.AssetStorable) {
-	existing := ms.Owns()
-	for i, item := range existing {
-		if item.Key() == asset.Key() {
-			updated := make([]store.Storable, len(existing))
-			copy(updated, existing)
-			updated[i] = asset
-			ms.ClearOwns()
-			for _, u := range updated {
-				ms.AttachAsset(u)
-			}
-			return
-		}
-	}
-	ms.AttachAsset(asset)
+	return store.OwnedAssets{Store: ds.store}.Save(doc.Storable(), assetKey, data)
 }
 
 // PageAssetKey returns the deterministic HTML asset filename for rawURL,
@@ -622,7 +613,7 @@ func (bs *DocumentService) nextUntitledNumber() int {
 	max := 0
 	for _, s := range storables {
 		ms, ok := s.(store.MetaStorable)
-		if !ok {
+		if !ok || ms.Type() != store.TypeDocument {
 			continue
 		}
 		dn := domain.NewDocumentMeta(ms.Meta(), ms.SetMeta).DisplayName()
@@ -701,14 +692,16 @@ func deriveFolderFromMeta(meta domain.DocumentMeta) string {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-// flattenDocs recursively collects all MetaStorable documents from a List()
-// result, traversing into FolderStorable.Owns() for nested items.
+// flattenDocs recursively collects the documents from a List() result, traversing
+// into FolderStorable.Owns() for nested items. Any other MetaStorable is left out.
 func flattenDocs(storables []store.Storable) []store.MetaStorable {
 	var docs []store.MetaStorable
 	for _, s := range storables {
 		switch s := s.(type) {
 		case store.MetaStorable:
-			docs = append(docs, s)
+			if s.Type() == store.TypeDocument {
+				docs = append(docs, s)
+			}
 		case store.FolderStorable:
 			docs = append(docs, flattenDocs(s.Owns())...)
 		}
@@ -728,6 +721,9 @@ func buildNoteTree(storables []store.Storable) []NoteEntry {
 		case store.MetaStorable:
 			// MetaStorable before FolderStorable: fileMetaStorable satisfies both;
 			// documents must not render as folders.
+			if s.Type() != store.TypeDocument {
+				continue
+			}
 			dm := domain.NewDocumentMeta(s.Meta(), s.SetMeta)
 			entries = append(entries, NoteEntry{
 				ID:          s.Key(),
@@ -756,6 +752,9 @@ func buildFolderChildren(owns []store.Storable) []NoteEntry {
 		case store.MetaStorable:
 			// MetaStorable before FolderStorable: fileMetaStorable satisfies both;
 			// documents must not render as folders.
+			if s.Type() != store.TypeDocument {
+				continue
+			}
 			dm := domain.NewDocumentMeta(s.Meta(), s.SetMeta)
 			children = append(children, NoteEntry{
 				ID:          s.Key(),
