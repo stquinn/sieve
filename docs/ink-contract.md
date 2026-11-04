@@ -27,7 +27,13 @@ Note
   title       string, may be empty
   pageAspect  number > 0, page width / page height (Note Air 2 portrait: 1404/1872)
   template    TemplateRef | null          the note default
+  device      DeviceInfo                  the device it was written on, for the note's life
   pages       ordered list of Page
+
+DeviceInfo
+  id          string, a stable opaque id for the device under the companion's signing key
+  name        string, what the user called the device when the note was created
+  model       string, manufacturer and model
 
 Page
   id          uuid
@@ -39,7 +45,7 @@ Stroke
   id           uuid
   tool         "pen" | "pencil"
   widthClass   1 | 2 | 3
-  startMillis  uint32
+  startMillis  uint64
   points       list of Point, at least one
 
 Point
@@ -55,6 +61,10 @@ Point
 - `bounds` is chosen when the note is created and never changes, in either direction. A
   whiteboard note has exactly one page, `unbounded`; every other note has only `fixed` pages.
   The producer enforces this at creation; a consumer replays what it receives.
+- `device` is fixed when the note is created and is the same in every `note-header` of the note. A
+  later change of the device's name does not reach existing notes. The same physical device may
+  report different ids under different signing keys or after a factory reset, so `id` identifies a
+  device for display and grouping and MUST NOT be used as a security credential.
 - Strokes are never edited in place. The model is the replay of the log (§3).
 
 ## 3. Operation log
@@ -64,7 +74,7 @@ than the previous; the first record is `seq` 1.
 
 | op | fields | |
 |---|---|---|
-| `note-header` | `id`, `created`, `title`, `pageAspect`, `template` | `seq` 1; re-emitted with a new `seq` on any header change |
+| `note-header` | `id`, `created`, `title`, `pageAspect`, `template`, `device` | `seq` 1; re-emitted with a new `seq` on any header change |
 | `page-add` | `page`, `index`, `template`, `bounds` | |
 | `page-remove` | `page` | |
 | `page-template` | `page`, `template` | |
@@ -84,11 +94,15 @@ Replay rules:
 5. Pages are never reordered.
 6. Neither side compacts or rewrites the log. A replica holding `seq` 1..N holds the complete
    history to N.
+7. A `page-add` of a removed page's id restores that page with the strokes it had and takes the
+   record's `template`. A `page-add` of an id present is a no-op. A stroke record naming a page not
+   currently present is a no-op.
 
 ## 4. Codecs
 
-One record shape (§3), three encodings: the **JSON Lines** asset (§4.1), the **export page**
-that fixtures use (§4.2), and the **binary** records of the radio (§4.3).
+One record shape (§3), and its encodings: the **JSON Lines** asset (§4.1), the **export page**
+that fixtures use (§4.2), the **binary** live point feed (§4.3) and the **binary** log records
+of the device and the radio (§4.4).
 
 ### 4.1 JSON Lines — the log on disk
 
@@ -103,7 +117,7 @@ that fixtures use (§4.2), and the **binary** records of the radio (§4.3).
 - `template` is `null` or a TemplateRef object `{"id": …, "params": {…}}` (§6).
 
 ```
-{"seq":1,"op":"note-header","id":U,"created":T,"title":S,"pageAspect":F,"template":R}
+{"seq":1,"op":"note-header","id":U,"created":T,"title":S,"pageAspect":F,"template":R,"device":D}
 {"seq":N,"op":"page-add","page":U,"index":I,"template":R,"bounds":"fixed"|"unbounded"}
 {"seq":N,"op":"page-remove","page":U}
 {"seq":N,"op":"page-template","page":U,"template":R}
@@ -111,6 +125,7 @@ that fixtures use (§4.2), and the **binary** records of the radio (§4.3).
 {"seq":N,"op":"stroke-remove","page":U,"id":U}
 
 P = [x, y, pressure, tMillis, tiltX, tiltY]
+D = {"id": S, "name": S, "model": S}
 ```
 
 ### 4.2 Export page — fixtures
@@ -118,13 +133,14 @@ P = [x, y, pressure, tMillis, tiltX, tiltY]
 What SieveInk's Export writes and what the renderer takes: one page, already replayed.
 
 ```json
-{"note": {"id": U, "created": T, "title": S, "pageAspect": F, "template": R},
+{"note": {"id": U, "created": T, "title": S, "pageAspect": F, "template": R,
+          "device": {"id": S, "name": S, "model": S}},
  "strokes": [{"id": U, "tool": "pen", "widthClass": 2, "startMillis": I,
               "points": [{"x": F, "y": F, "pressure": F, "tMillis": I, "tiltX": I, "tiltY": I, "size": F}]}]}
 ```
 
-`size` is the Onyx touch size, carried for fidelity; it is not part of the record and no rule
-reads it.
+`size` is the Onyx touch size. It is not part of the record, no rule reads it, and a page exported
+from its replay carries 0. A fixture that predates `device` has none, and no rule reads that either.
 
 ### 4.3 Binary — the live point feed
 
@@ -149,26 +165,58 @@ connection.
 - Points are ephemeral: never logged, acked or reconciled. The committed stroke arrives as a
   `stroke-add` record of the log. A receiver that joins mid-stroke draws from the next BEGIN.
 
-The binary encoding of log records on the replication channel (design §7: length-prefixed,
-CRC32 per record, the `HEAD` hash chain over records) is not fixed by this version.
+### 4.4 Binary: log records
+
+The same encoding on the device's log and on the replication channel. All integers little-endian.
+
+```
+log file  := "SINKLOG2" frame*
+frame     := length u32, body, crc u32       crc = CRC-32 (IEEE) of body; 1 <= length <= 16 MiB
+body      := op u8, seq u32, fields
+```
+
+| op | name | fields |
+|---|---|---|
+| 16 | note-header | id, created i64 (Unix ms), title string, pageAspect f32, template, device |
+| 17 | page-add | page id, index u32, template, bounds u8 (0 fixed, 1 unbounded) |
+| 18 | page-remove | page id |
+| 19 | page-template | page id, template |
+| 20 | stroke-add | page id, stroke id, tool u8 (0 pen, 1 pencil), widthClass u8, startMillis u64, count u32, count × (x f32, y f32, pressure f32, tMillis u32, tiltX i8, tiltY i8) |
+| 21 | stroke-remove | page id, stroke id |
+
+An id is its 16 RFC 9562 bytes, most significant first. A string is u16 byte length + UTF-8. f32 is
+IEEE 754 binary32. A template is u8 0 for null, or u8 1, id string, u8 count, count × (name string,
+value f32), params in the order §6 lists them. A device is its id, name and model, each a string. Op
+values do not overlap §4.3's type bytes.
+
+The magic's last byte is the format's version. A log of another version is refused, not truncated,
+and is left unaltered.
+
+A reader stops at the first frame that is short, fails its CRC, does not decode, or whose seq is not
+one greater than the last; everything before it is the log. What follows is not part of the log.
+
+`headHash`: `h(n) = SHA-256(h(n-1) ‖ body(n))`, `h(0)` = 32 zero bytes. The encoding is canonical: a
+replica holding JSON Lines (§4.1) re-encodes each record to its body to compute the chain, which holds
+because §4.1 floats are shortest round-tripping binary32.
 
 ## 5. On-disk form
 
-A Digital Note is a Things block (`.meta` `type: block`, `kind: digital-note`) whose payload
-is `{uuid}.block`, YAML, beside its **source** asset in the same directory. The block never
-carries ink.
+A Digital Note is a `BlockContainer` (`.meta` `type: block`): one block written as YAML to
+`{uuid}.block`, whose first line is `kind: digital-note`, beside its **source** asset in the same
+directory. The block never carries ink.
 
 | field | |
 |---|---|
-| `id` | the Thing's uuid, Sieve's own (`ident.New`), never the companion's note id |
-| `kind` | `digital-note` |
+| `id` | the container's uuid, Sieve's own (`ident.New`), never the companion's note id |
+| `kind` | `digital-note`, the file's first line |
 | `title` | the note title |
 | `note` | the header: `created`, `pageAspect`, `template`, and `pages`, a list of `{id, template, bounds}` |
+| `note_device` | the note's `device` from its header: `{id, name, model}` |
 | `note_companion` | the companion's identity (the GATT `identity` value) |
 | `note_source_id` | the companion's note id |
 | `note_synced_seq` | the `seq` of the last record in the source |
 | `reading` | the reading job's state; owned by the reading job |
-| `source` | the source asset's absolute address, `sieve://{thing}/{key}` |
+| `source` | the source asset's absolute address, `sieve://{container}/{key}` |
 
 - **StrokeBasedNote:** `source` is `strokes.jsonl` (§4.1).
 - **FileBasedNote:** `source` is the PDF or PNG a producer delivered.
@@ -176,7 +224,9 @@ carries ink.
   the live feed go to an open lens only and never to the source.
 - `note_synced_seq` is the catch-up cursor: replication resumes with `OPEN {noteId, haveSeq =
   note_synced_seq}`.
-- One Sieve holds at most one live Thing per `(note_companion, note_source_id)`.
+- `note_device` is copied from the `note-header` and never edited. It says which device a note came
+  from; `note_companion` remains the companion's identity on the link.
+- One Sieve holds at most one live container per `(note_companion, note_source_id)`.
 
 ## 6. Templates
 
@@ -185,13 +235,36 @@ A template is data, never an image: `TemplateRef = {id, params}`, lengths in pag
 | id | params |
 |---|---|
 | `blank` | none |
-| `ruled` | `spacing`, `margin` |
+| `ruled` | `spacing`, `margin` (optional) |
 | `grid` | `spacing` |
 | `dots` | `spacing` |
 
-An unknown id is drawn as `blank` and the page is marked "unknown template". The drawing rules
-for `ruled`, `grid` and `dots` are fixed with the first fixture that uses one; until then
-every template is drawn as `blank`.
+An unknown id is drawn as `blank` and the page is marked "unknown template".
+
+A template is drawn under the strokes, in `#888888`, from these rules. Positions are in the §8 grid
+(1404 units across a page), with `round(p · 1404)` for a position p in page units.
+
+- `ruled`: a horizontal line at every y = k·spacing. When `margin` is present and above 0, a vertical
+  line at x = margin + k (one per page width). Absent or 0 draws no vertical line.
+- `grid`: horizontal and vertical lines at every k·spacing.
+- `dots`: a dot at every crossing of (k·spacing, l·spacing).
+- A line is 1 grid unit wide, covering c to c + 1 from its position c, across the page's full extent.
+  A dot is a disc of radius 3 grid units (2.1368e-3 page units) centred on its position.
+- A missing or zero `spacing` draws no marks. k and l are all integers: a fixed page shows those inside
+  it, and an unbounded page tiles without end, into negative coordinates, on the plane's own origin,
+  so marks never move with the viewer's window.
+
+The companion offers these presets:
+
+| name | id | params |
+|---|---|---|
+| blank | `blank` | |
+| ruled (default) | `ruled` | spacing 0.05, margin 0.12 |
+| ruled, no margin | `ruled` | spacing 0.05 |
+| narrow | `ruled` | spacing 0.038, margin 0.12 |
+| narrow, no margin | `ruled` | spacing 0.038 |
+| grid | `grid` | spacing 0.04 |
+| dots | `dots` | spacing 0.04 |
 
 ## 7. Transport
 
@@ -270,7 +343,8 @@ rnd = ((z ^ (z >>> 14)) >>> 0) / 2³²
 A band whose keep fraction is ≥ 0.96 (the last) is a solid tile:
 `<pattern …><rect width="96" height="96"/></pattern>`.
 
-**Document.** In paint order: a white background; group `pen`; groups `b0`…`b6`, each filled
+**Document.** In paint order: a white background; group `ruling`, `<g data-ink="ruling">`, holding the
+page's template marks (§6); group `pen`; groups `b0`…`b6`, each filled
 with pattern `ink-b{i}`; group `live`. Each group is `<g data-ink="{name}">`; `pen` carries
 `fill="#000"` and `b{i}` carries `fill="url(#ink-b{i})"`, which every path in it inherits. A
 pen stroke is `<path data-stroke="{id}">`; a pencil stroke is, in each band it touches,
