@@ -58,6 +58,8 @@ Point
 - `bounds: fixed` is a sheet of the note's aspect. `bounds: unbounded` is a whiteboard: the
   plane has no edge and coordinates MAY fall outside 0..1 and below 0. Where a viewer's
   window sits on an unbounded page is UI state and MUST NOT appear in the log.
+  A live feed may carry the window (§4.3 VIEW), and a consumer may ignore it. A replay, if ever
+  built, derives its framing from the strokes, or gets a new additive op then.
 - `bounds` is chosen when the note is created and never changes, in either direction. A
   whiteboard note has exactly one page, `unbounded`; every other note has only `fixed` pages.
   The producer enforces this at creation; a consumer replays what it receives.
@@ -145,19 +147,29 @@ from its replay carries 0. A fixture that predates `device` has none, and no rul
 ### 4.3 Binary — the live point feed
 
 The stroke under the pen (design §7.4) travels as fixed-size records: little-endian, type
-byte first, the size fixed per type. A record MAY span transport SDUs; a receiver buffers
-until the record is whole. An unknown type byte is a framing loss: the receiver MUST drop the
-connection.
+byte first, the size fixed per type. An unknown type byte is a framing loss: the receiver MUST
+drop the connection.
 
 | type | name | bytes | fields after the type byte |
 |---|---|---|---|
 | 1 | CLOCK | 7 | `tabletMs` u32, `pageAspect` u16 (×10000) |
-| 2 | BEGIN | 11 | `strokeSeq` u32, `tool` u8 (0 pen, 1 pencil), `widthClass` u8, `tabletMs` u32 |
+| 2 | BEGIN | 19 | `strokeSeq` u32, `tool` u8 (0 pen, 1 pencil), `widthClass` u8, `tabletMs` u32, `originX` i32, `originY` i32 |
 | 3 | POINT | 17 | `strokeSeq` u32, `x` u16, `y` u16, `pressure` u16, `tiltX` i8, `tiltY` i8, `tabletMs` u32 |
 | 4 | END | 13 | `strokeSeq` u32, `pointCount` u32, `tabletMs` u32 |
 | 5 | REMOVE | 5 | `strokeSeq` u32 |
+| 6 | VIEW | 9 | `originX` i32, `originY` i32 |
 
-- `x`, `y` are page units × 32768 (range [0, 2)); `pressure` is × 65535.
+- `x`, `y` are page units × 32768 (range [0, 2)), relative to the stroke's origin; `pressure`
+  is × 65535.
+- A BEGIN's origin is in page units × 32768. A point's place is origin + (x, y). A fixed page
+  sends 0,0. An unbounded page sends the view's top-left when the pen landed, rounded down.
+- VIEW is the top-left of an unbounded page's view, in the same units. It is sent when the
+  page goes live, when a receiver joins, on a pan's steps at most once per 100 ms, and at a
+  pan's end; never for a fixed page. It is ephemeral: never logged, acked or reconciled. A
+  sender MAY drop it when the link falls behind, since only the latest matters. A receiver
+  holding no VIEW places its window from BEGIN's origin.
+- Records travel only inside INK frames (§7), whole. CLOCK goes on connect and every 2 s,
+  with `pageAspect` 0 when no consented note is live.
 - `tabletMs` is the tablet's monotonic clock in ms, truncated to u32, taken when the record
   is made. A point's `tMillis` is its `tabletMs` minus its BEGIN's.
 - `strokeSeq` names a stroke within one connection; it is not the stroke id. `pointCount` is
@@ -276,6 +288,13 @@ The companion offers these presets:
   | `a378dfef-96d7-4aa8-a37f-3bd6e376da00` | Sieve ink service, advertised |
   | `a378dfef-96d7-4aa8-a37f-3bd6e376da01` | `psm`: read, u16 little-endian |
   | `a378dfef-96d7-4aa8-a37f-3bd6e376da02` | `identity`: read, UTF-8 |
+  | `a378dfef-96d7-4aa8-a37f-3bd6e376da03` | `offer`: read + notify, UTF-8 `library/{catalogue}`, `catalogue` an unsigned decimal |
+
+- **Advertisement.** The advertisement holds the service UUID. The scan response holds service
+  data on that UUID: `catalogue` u32 LE. No device name fits the 31-byte legacy limit.
+  `catalogue` changes on Sync now, and a scanning Sieve seeing a change should connect at once.
+- **Identity.** `identity` is a stable random UUID string minted once per install, and is what
+  `note_companion` holds.
 
 - **Channel.** An LE L2CAP connection-oriented channel opened by the companion with the
   *insecure* listener (`listenUsingInsecureL2capChannel`). The PSM is dynamic: Sieve MUST
@@ -285,6 +304,63 @@ The companion offers these presets:
   overridden.
 - **Matching.** Sieve matches a companion by the service UUID, never by its address, which
   is a resolvable private address that changes when the tablet's adapter restarts.
+- **Bounds.** Sieve MUST bound its GATT connect on every platform; a stack may never answer.
+
+### 7.1 Pairing and session
+
+- **Key.** 16 RFC 4648 base32 characters, decoding to 10 bytes; whitespace, hyphens and case are
+  ignored. It never travels.
+- **`sieveId`.** Lowercase hex of the first 8 bytes of `HMAC-SHA256(key, "sieve-id")`. The name a
+  Sieve is paired under is a local label.
+- **Proofs.** Sieve: `HMAC-SHA256(key, cNonce ‖ "sieve")`. Companion:
+  `HMAC-SHA256(key, sNonce ‖ "companion")`. The companion checks Sieve's proof before any ink moves.
+- **Session key.** `HKDF-SHA256(salt = cNonce ‖ sNonce, ikm = key, info = "sieve-ink session v1", L = 32)`.
+- **Sealing.** ChaCha20-Poly1305 with no AAD. The nonce is direction u32 LE (0 companion→Sieve,
+  1 Sieve→companion) then counter u64 LE, starting at 0, one per sealed frame per direction.
+- **Framing.** `length u32 LE, payload`: the plaintext frame or ciphertext + tag.
+- **Limits.** 256 bytes before proof, 64 KiB from a proved Sieve, 16 MiB + 1 KiB from the
+  companion; sealed frames get 16 more for the tag. Over the limit drops the link. A peer has
+  10 s to prove, or the link drops. One connection at a time; a second is turned away.
+
+### 7.2 Frames
+
+All integers little-endian. An id is 16 RFC 9562 bytes; a string is u16 + UTF-8; a list is u8
+count + strings; a seq is u32, at most 2³¹−1. Everything after `OK` is sealed.
+
+| type | name | direction | fields |
+|---|---|---|---|
+| 32 | CHALLENGE | C→S, clear | `version` u8 (1), `cNonce` 16 |
+| 33 | HELLO | S→C, clear | `sieveId` string, `sNonce` 16, `proof` 32 |
+| 34 | OK | C→S, clear | `proof` 32 |
+| 35 | REFUSE | C→S | note id (nil if none), `reason` string; clear only answering HELLO |
+| 36 | LIST | S→C | |
+| 37 | NOTES | C→S | `count` u32, count × (note id, `title` string, `pages` u32, `headSeq` u32) |
+| 38 | OPEN | S→C | note id, `haveSeq` u32 |
+| 39 | HEAD | C→S | note id, `headSeq` u32, `headHash` 32 |
+| 40 | OP | C→S | note id, the record's log frame (§4.4) |
+| 41 | ACK | S→C | note id, `seq` u32 |
+| 42 | DONE | C→S | note id |
+| 43 | META | S→C | note id, `title` string, `keywords` list, `categories` list, `summary` string, `asOfSeq` u32 |
+| 44 | OPEN-NOTE | S→C | note id |
+| 45 | LIVE | C→S | note id, page id; both nil = no note live |
+| 46 | INK | C→S | one or more whole §4.3 records |
+
+`REFUSE` reasons: `refused`, `not-offered`, `ahead` (`haveSeq` is past the head),
+`not-foreground`. A companion accepts only `HELLO` before proof, and only `LIST`, `OPEN`, `ACK`,
+`META` and `OPEN-NOTE` after it; anything else drops the link.
+
+### 7.3 Behaviour
+
+- The companion sends `CHALLENGE` on accept.
+- `LIVE` names the note and page being written, and is sent only for notes this Sieve receives.
+  After it names a note, the Sieve sends `OPEN` with its cursor; committed records then keep
+  following after `DONE` until the note stops being live, and `OPEN` is needed again next time.
+- A Sieve ignores `OP` and `DONE` of a note between sending `OPEN` and receiving its `HEAD` or
+  `REFUSE`.
+- `NOTES.title` is the log header's title. A title one Sieve gave is never sent to another.
+- `META`: title at most 512 bytes, summary 4 KiB, at most 64 terms of 128 bytes. It is dropped if
+  the note was not offered on this connection, over limit, past the known head, or the Sieve's
+  tick is off. An older `asOfSeq` does not replace a newer one.
 
 ## 8. Rendering
 

@@ -424,7 +424,7 @@ user action. Settings → Ink shows this instance's key and name and lists the c
 
 ## 7. Replication protocol
 
-Over the L2CAP stream, framed, Sieve speaks first.
+Over the L2CAP stream, framed, the companion speaks first. Frame encodings, and `LIVE` and `INK`, are in `docs/ink-contract.md` §7.
 
 ```
 companion → Sieve   CHALLENGE {cNonce}
@@ -437,7 +437,7 @@ Sieve → companion   OPEN    {noteId, haveSeq}                 once per note it
 companion → Sieve   HEAD    {noteId, headSeq, headHash} | REFUSE {reason}
 companion → Sieve   OP*     log records from haveSeq+1; in a note offer, then live as written
 companion → Sieve   POINT*  the stroke under the pen, every sample as it arrives (§7.4)
-Sieve → companion   ACK     {seq}  every N records or 500 ms, whichever first
+Sieve → companion   ACK     {noteId, seq}  every N records or 500 ms, whichever first
 companion → Sieve   DONE    {noteId}   end of catch-up for this note (library offer);
                                        Sieve may OPEN the next
 ```
@@ -496,8 +496,10 @@ Sieve → companion   META    {noteId, title, keywords[], categories[], summary,
   summary). Nothing in it comes from any other document, so the classification boundary
   holds: the Boox learns what it already holds, named.
 - The companion stores it on the note header, shows the title in the notes list, and uses
-  keywords and categories for search, sort and grouping. A user-typed title on the Boox
-  wins over a received one. `asOfSeq` says which version of the ink the description is of;
+  keywords and categories for search, sort and grouping. On the Boox the most recent of the
+  user's name and a received title shows, by seq: a `META` whose `asOfSeq` is at or past the
+  header's takes over, and a later rename wins until a later `META`. In Sieve a user's name is
+  a hint, not a rule. `asOfSeq` says which version of the ink the description is of;
   a newer reading replaces an older one.
 - Per Sieve, the companion has a toggle "accept filing metadata from this Sieve", default
   on, so the corporate instance can be told to stay silent.
