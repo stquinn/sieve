@@ -211,6 +211,8 @@ cannot reach the SDK.
 
 ## 5. The shared contract
 
+The normative contract is `docs/ink-contract.md`; this section is the design that produced it.
+
 This section is the interface between the two repositories. It is written here because
 Sieve is the consumer and the longer-lived of the two. Both sides vendor the golden
 fixtures.
@@ -253,7 +255,7 @@ region, a later decision the contract does not need.
 
 ### 5.2 Operation log
 
-Binary, length-prefixed records, each `seq` exactly one greater than the previous.
+Records each with a `seq` exactly one greater than the previous; the encodings (JSON Lines on disk, binary on the wire) are the contract's (`docs/ink-contract.md` §4).
 
 | op | payload | notes |
 |---|---|---|
@@ -287,15 +289,17 @@ Rules that make the log a frozen contract:
 Stroke
   id        UUIDv7
   tool      pen | pencil            (extensible: marker, highlighter)
-  width     1 | 2 | 3               (nominal width class; the renderer maps to units)
-  start     milliseconds since the note's creation, uint32 (when the stroke was made;
-            cheap to carry, informational, nothing depends on it)
+  widthClass 1 | 2 | 3              (nominal width class; the renderer maps to units)
+  startMillis milliseconds since the note's creation (when the stroke was made; cheap
+            to carry, informational, nothing depends on it)
   points    [Point…]
 Point
   x, y      normalised page coordinates: x in [0,1] across the page width,
             y in [0, 1/pageAspect] down the page height, so a page is square-pixel
-  p         pressure 0..1
-  t         milliseconds since stroke start, uint16
+  pressure  0..1
+  tMillis   milliseconds since stroke start
+  tiltX, tiltY  degrees, carried as measured (no rule reads them)
+(field names and widths are the contract's, `docs/ink-contract.md` §2)
 ```
 
 **Rendering.** The companion does not implement a stroke rule on the Boox: the Onyx pen
@@ -522,7 +526,7 @@ MoveReceived`, ~364 Hz, a few dozen bytes per flush at the connection interval),
 `OP` with the whole stroke at pen-up, which is the only record the log keeps. Points are
 ephemeral: never logged, never acked, never reconciled; a Sieve that joins mid-stroke draws
 from the next `BEGIN`. The lens draws the pen live and replaces the stroke with the committed
-one at pen-up; charcoal, whose look needs the density filters of §8, is drawn at pen-up only.
+one at pen-up; charcoal, whose look needs the density patterns of §8, is drawn at pen-up only.
 Spike C (#205, 2026-11-02) proved it at the desk: 49 strokes drawn by hand grew under the nib
 in a browser with no visible lag, every point delivered, at 17 bytes a point (~6 kB/s of a
 ~70 kB/s link). This is why the Boox is a whiteboard input for Sieve and not only a notebook
@@ -674,8 +678,9 @@ has no source face and therefore no dependency on the source editor or #71.
 
 **View one — the page.** The `page` mode, PM-free, mounted where the editor would be. The
 lens renders the page's strokes to one SVG in JS (template as a background group, then one
-`<path>` per stroke carrying the stroke id and its sequence number, pencil grain as a group
-of circles) and saves that SVG as the page's asset keyed by the page's stroke hash, exactly
+`<path>` per pen stroke carrying the stroke id, pencil strokes as chunk paths grouped per
+stroke inside seven tone bands, each band under its density pattern — the contract's
+§Rendering) and saves that SVG as the page's asset keyed by the page's stroke hash, exactly
 as a Mermaid diagram is rendered in the browser and saved as its `svgAsset`. Chrome: page
 `n / N`, previous, next, jump, zoom to fit / 100%. Live: as records arrive for the displayed
 page over the document wire, the lens renders the new stroke's `<path>` and appends it (or
