@@ -52,6 +52,9 @@ Point
 - `bounds: fixed` is a sheet of the note's aspect. `bounds: unbounded` is a whiteboard: the
   plane has no edge and coordinates MAY fall outside 0..1 and below 0. Where a viewer's
   window sits on an unbounded page is UI state and MUST NOT appear in the log.
+- `bounds` is chosen when the note is created and never changes, in either direction. A
+  whiteboard note has exactly one page, `unbounded`; every other note has only `fixed` pages.
+  The producer enforces this at creation; a consumer replays what it receives.
 - Strokes are never edited in place. The model is the replay of the log (§3).
 
 ## 3. Operation log

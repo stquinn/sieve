@@ -254,9 +254,13 @@ scroll position, never a record in the log. **The Boox pans; Sieve zooms.** On t
 unbounded page is panned at one to one (a two-finger drag moves the window, the bitmap is
 re-rendered at the new offset, strokes are translated to plane units on commit) and never
 zoomed — zoom would change the nib's width in plane units for no gain, since once the page
-is an SVG in Sieve, zoom is free. Panning on the raw-drawing surface is a companion
-iteration 2 feature with a feel spike of its own; nothing in phases 1–4 waits on it. The
-reading job reads a fixed page whole; an unbounded page is tiled or read by the framed
+is an SVG in Sieve, zoom is free. Panning on the raw-drawing surface is gated by a feel
+spike at the start of phase 2: if it fails, v1 offers no whiteboard and the log format is
+unchanged. **A note is made a whiteboard at creation and never converts**, by one
+"Whiteboard" tick box in the companion's New dialog, off by default: a whiteboard has
+strokes a sheet has nowhere to put, and a sheet turned whiteboard would have to decide what
+its other pages mean. A fixed page's sheet size (device, A4, A3) may become changeable
+later; that is scale, a different question from `bounds`, and not in v1. The reading job reads a fixed page whole; an unbounded page is tiled or read by the framed
 region, a later decision the contract does not need.
 
 ### 5.2 Operation log
