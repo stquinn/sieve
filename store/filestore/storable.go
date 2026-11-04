@@ -54,9 +54,12 @@ func (s *fileStorable) IsModified() bool {
 // and modified timestamps. The input is stale after Save returns.
 type fileMetaStorable struct {
 	fileStorable
-	meta map[string]string
-	owns []store.Storable
+	contentType string // the .meta type; immutable, and the source of truth over meta["type"]
+	meta        map[string]string
+	owns        []store.Storable
 }
+
+func (s *fileMetaStorable) Type() string { return s.contentType }
 
 func (s *fileMetaStorable) Meta() map[string]string {
 	s.mu.RLock()

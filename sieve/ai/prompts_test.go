@@ -59,6 +59,9 @@ func (m *mockStore) PrepareCategory(cat store.Category) error { return nil }
 func (m *mockStore) CreateMetaText(cat store.Category, key string, body []byte) (store.MetaStorable, error) {
 	return nil, nil
 }
+func (m *mockStore) CreateTyped(category store.Category, key string, contentType string, meta map[string]string, body []byte) (store.MetaStorable, error) {
+	return nil, nil
+}
 func (m *mockStore) CreateAsset(cat store.Category, parentKey, assetID string, body []byte) (store.AssetStorable, error) {
 	return nil, nil
 }

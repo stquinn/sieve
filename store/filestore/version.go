@@ -12,7 +12,9 @@ import (
 	"sieve/store"
 )
 
-var snapshotRe = regexp.MustCompile(`^(.+)\.(\d+)\.md$`)
+// snapshotRe reads the version out of a snapshot file name. The extension is
+// selected by the glob that found the file, so it is not matched here.
+var snapshotRe = regexp.MustCompile(`^(.+)\.(\d+)\.[^.]+$`)
 
 // historyDir returns the absolute path of the .history directory for a
 // document. History is now co-located inside the document directory.
@@ -21,19 +23,19 @@ func (fs *FileStore) historyDir(cat store.Category, key string) string {
 }
 
 // snapshotPath returns the path for a specific version snapshot.
-// Format: {docDir}/.history/{uuid}.{version}.md
-func (fs *FileStore) snapshotPath(cat store.Category, key string, uuid string, version int) string {
-	name := fmt.Sprintf("%s.%d.md", uuid, version)
+// Format: {docDir}/.history/{uuid}.{version}{extension of contentType}
+func (fs *FileStore) snapshotPath(cat store.Category, key, uuid, contentType string, version int) string {
+	name := fmt.Sprintf("%s.%d%s", uuid, version, contentExtensions[contentType])
 	return filepath.Join(fs.historyDir(cat, key), name)
 }
 
 // writeSnapshot persists a body-only snapshot for the given document.
-func (fs *FileStore) writeSnapshot(cat store.Category, key string, uuid string, version int, body []byte) error {
+func (fs *FileStore) writeSnapshot(cat store.Category, key, uuid, contentType string, version int, body []byte) error {
 	dir := fs.historyDir(cat, key)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("filestore: create history dir: %w", err)
 	}
-	path := fs.snapshotPath(cat, key, uuid, version)
+	path := fs.snapshotPath(cat, key, uuid, contentType, version)
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		return fmt.Errorf("filestore: write snapshot: %w", err)
 	}
@@ -42,12 +44,12 @@ func (fs *FileStore) writeSnapshot(cat store.Category, key string, uuid string, 
 
 // loadVersions scans the document's .history directory and returns VersionRef
 // values newest-first.
-func (fs *FileStore) loadVersions(uuid string, cat store.Category, key string) []store.VersionRef {
+func (fs *FileStore) loadVersions(uuid, contentType string, cat store.Category, key string) []store.VersionRef {
 	if uuid == "" {
 		return []store.VersionRef{}
 	}
 	dir := fs.historyDir(cat, key)
-	pattern := filepath.Join(dir, uuid+".*.md")
+	pattern := filepath.Join(dir, uuid+".*"+contentExtensions[contentType])
 	matches, err := filepath.Glob(pattern)
 	if err != nil || len(matches) == 0 {
 		return []store.VersionRef{}
@@ -94,12 +96,12 @@ func (fs *FileStore) loadVersions(uuid string, cat store.Category, key string) [
 
 // pruneVersions deletes the oldest snapshots for uuid, keeping the newest
 // maxVersions entries. No-op if maxVersions <= 0.
-func (fs *FileStore) pruneVersions(cat store.Category, key string, uuid string, maxVersions int) {
+func (fs *FileStore) pruneVersions(cat store.Category, key, uuid, contentType string, maxVersions int) {
 	if maxVersions <= 0 || uuid == "" {
 		return
 	}
 	dir := fs.historyDir(cat, key)
-	pattern := filepath.Join(dir, uuid+".*.md")
+	pattern := filepath.Join(dir, uuid+".*"+contentExtensions[contentType])
 	matches, err := filepath.Glob(pattern)
 	if err != nil || len(matches) <= maxVersions {
 		return
@@ -134,13 +136,13 @@ func (fs *FileStore) pruneVersions(cat store.Category, key string, uuid string, 
 }
 
 // retrieveVersion reads a body-only snapshot and returns a VersionedStorable.
-func (fs *FileStore) retrieveVersion(cat store.Category, key string, uuid string, ref store.VersionRef) (store.VersionedStorable, error) {
+func (fs *FileStore) retrieveVersion(cat store.Category, key, uuid, contentType string, ref store.VersionRef) (store.VersionedStorable, error) {
 	ver, err := strconv.Atoi(ref.ID)
 	if err != nil {
 		return store.VersionedStorable{}, fmt.Errorf("filestore: invalid version ref %q: %w", ref.ID, err)
 	}
 
-	path := fs.snapshotPath(cat, key, uuid, ver)
+	path := fs.snapshotPath(cat, key, uuid, contentType, ver)
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return store.VersionedStorable{}, fmt.Errorf("filestore: read snapshot %s: %w", path, err)

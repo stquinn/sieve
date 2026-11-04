@@ -167,7 +167,7 @@ func (fs *FileStore) migrateDocument(cat store.Category, mdPath string) error {
 
 	// 3. Write .meta.
 	dm := mapToDocMeta(meta)
-	dm.Type = "document"
+	dm.Type = store.TypeDocument
 	dm.Names = []nameEntry{{Name: name, From: meta["created"]}}
 	if err := writeMetaJSONToPath(filepath.Join(docDir, ".meta"), dm); err != nil {
 		return err

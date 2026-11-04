@@ -6,18 +6,18 @@
 //	{root}/store/                          Library notes (Shared)
 //	{root}/store/{note-name}/              Document directory
 //	{root}/store/{note-name}/.meta         JSON metadata
-//	{root}/store/{note-name}/{uuid}.md     Pure markdown body
+//	{root}/store/{note-name}/{uuid}.md     Content file; extension per .meta type
 //	{root}/store/{note-name}/.history/     Body-only snapshots
 //	{root}/store/{note-name}/.cache/       Derived data (sessions, links)
 //	{root}/{hostname}/buffers/             WorkingCopy buffers (Isolated)
+//	{root}/{hostname}/blocks/{uuid}/       Block containers (Isolated)
 //	{root}/{hostname}/config/              State — settings, session (Isolated)
 //	{root}/.sieve                          Store marker / migration state
 //
 // # Keys
 //
-// A key is the directory name relative to its category directory. Documents no
-// longer carry a .md extension — the extension lives only on the content file
-// inside the document directory.
+// A key is the directory name relative to its category directory. It carries no
+// extension — the extension lives only on the content file inside the directory.
 //
 //	Library      "sub/my-note"      → {root}/store/sub/my-note/
 //	WorkingCopy  "buf-20240102-1504" → {root}/{hostname}/buffers/buf-20240102-1504/
@@ -52,6 +52,14 @@ import (
 	"sieve/logger"
 	"sieve/store"
 )
+
+// contentExtensions maps each content-bearing .meta type to its content file's
+// extension, which its snapshots share. A type absent from this table holds no
+// content: it does not load as a MetaStorable and scans skip it.
+var contentExtensions = map[string]string{
+	store.TypeDocument: ".md",
+	store.TypeBlock:    ".block",
+}
 
 // FileStore is a filesystem-backed implementation of store.Store.
 // Create one with NewFileStore — do not construct directly.
@@ -93,6 +101,16 @@ func (fs *FileStore) CreateMetaText(cat store.Category, key string, body []byte)
 	}
 	key = strings.TrimSuffix(key, ".md")
 	return fs.createMeta(cat, key, body)
+}
+
+func (fs *FileStore) CreateTyped(cat store.Category, key, contentType string, meta map[string]string, body []byte) (store.MetaStorable, error) {
+	if !fs.holdsContent(contentType) {
+		return nil, fmt.Errorf("filestore: create %s: type %q holds no content", key, contentType)
+	}
+	if key == "" {
+		key = fs.generateKey(cat)
+	}
+	return fs.createContent(cat, key, contentType, cloneMeta(meta), body)
 }
 
 func (fs *FileStore) CreateAsset(cat store.Category, parentKey string, assetID string, body []byte) (store.AssetStorable, error) {
@@ -214,7 +232,7 @@ func (fs *FileStore) ensureFolderMeta(category store.Category, key string) error
 	}
 	fm := &folderMeta{
 		UUID:    newUUID(),
-		Type:    "folder",
+		Type:    store.TypeFolder,
 		Created: time.Now().Format("2006-01-02T15:04:05"),
 	}
 	return writeFolderMetaToPath(mp, fm)
@@ -263,7 +281,7 @@ func (fs *FileStore) SaveMeta(s store.MetaStorable) (store.MetaStorable, error) 
 	existingDM, _ := readMetaJSONFromPath(fs.metaPath(ms.category, path))
 
 	newDM := mapToDocMeta(ms.meta)
-	newDM.Type = "document"
+	newDM.Type = ms.contentType
 	if existingDM != nil {
 		newDM.Names = existingDM.Names
 	}
@@ -281,7 +299,8 @@ func (fs *FileStore) SaveMeta(s store.MetaStorable) (store.MetaStorable, error) 
 			extRef:   ms.ExternalRef(),
 			versions: ms.Versions(),
 		},
-		meta: docMetaToMap(newDM),
+		contentType: ms.contentType,
+		meta:        docMetaToMap(newDM),
 	}
 	fs.indexSet(ms.Key(), saved)
 	return saved, nil
@@ -300,6 +319,13 @@ func (fs *FileStore) Load(cat store.Category, key string) (store.Storable, error
 		cat = cached.Category()
 		key = dirKey(cached)
 	}
+	return fs.loadAt(cat, key)
+}
+
+// loadAt reads the storable at exactly (cat, key) and refreshes its index entry.
+// Unlike Load it never resolves key as a uuid, so it reads the new location of a
+// directory named by its uuid while the index still holds the old one.
+func (fs *FileStore) loadAt(cat store.Category, key string) (store.Storable, error) {
 	if cat.MetaEnabled {
 		key = strings.TrimSuffix(key, ".md")
 	}
@@ -339,13 +365,13 @@ func (fs *FileStore) Load(cat store.Category, key string) (store.Storable, error
 		return nil, fmt.Errorf("filestore: load .meta for %s: %w", key, err)
 	}
 
-	if dm.Type != "document" {
-		return nil, fmt.Errorf("filestore: %s is not a document (type=%s)", key, dm.Type)
+	if !fs.holdsContent(dm.Type) {
+		return nil, fmt.Errorf("filestore: %s holds no content (type=%s)", key, dm.Type)
 	}
 
-	body, _ := os.ReadFile(fs.contentPath(cat, key, dm.UUID))
-	versions := fs.loadVersions(dm.UUID, cat, key)
-	owns := fs.scanDocAssets(cat, key, dm.UUID)
+	body, _ := os.ReadFile(fs.contentPath(cat, key, dm.UUID, dm.Type))
+	versions := fs.loadVersions(dm.UUID, dm.Type, cat, key)
+	owns := fs.scanDocAssets(cat, key, dm.UUID, dm.Type)
 
 	s := &fileMetaStorable{
 		fileStorable: fileStorable{
@@ -356,8 +382,9 @@ func (fs *FileStore) Load(cat store.Category, key string) (store.Storable, error
 			extRef:   fs.externalRef(cat, key),
 			versions: versions,
 		},
-		meta: docMetaToMap(dm),
-		owns: owns,
+		contentType: dm.Type,
+		meta:        docMetaToMap(dm),
+		owns:        owns,
 	}
 	fs.indexSet(dm.UUID, s)
 	return s, nil
@@ -462,7 +489,7 @@ func (fs *FileStore) Move(s store.Storable, to store.Category) (store.Storable, 
 		return nil, fmt.Errorf("filestore: Move %s: %w", s.Key(), err)
 	}
 
-	return fs.Load(to, path) // Load updates the cache with the new location.
+	return fs.loadAt(to, path) // loadAt updates the cache with the new location.
 }
 
 // Reparent moves s under folder by directory rename.
@@ -496,7 +523,7 @@ func (fs *FileStore) RetrieveVersion(s store.Storable, ref store.VersionRef) (st
 		return store.VersionedStorable{}, fmt.Errorf("filestore: RetrieveVersion: storable has no uuid")
 	}
 	path := dirKey(s)
-	return fs.retrieveVersion(s.Category(), path, uuid, ref)
+	return fs.retrieveVersion(s.Category(), path, uuid, ms.Type(), ref)
 }
 
 // ── Path helpers ──────────────────────────────────────────────────────────────
@@ -525,9 +552,20 @@ func (fs *FileStore) metaPath(cat store.Category, key string) string {
 	return filepath.Join(fs.docDir(cat, key), ".meta")
 }
 
-// contentPath returns the path to the {uuid}.md content file.
-func (fs *FileStore) contentPath(cat store.Category, key string, uuid string) string {
-	return filepath.Join(fs.docDir(cat, key), uuid+".md")
+// contentPath returns the path to a storable's content file.
+func (fs *FileStore) contentPath(cat store.Category, key, uuid, contentType string) string {
+	return filepath.Join(fs.docDir(cat, key), fs.contentFileName(uuid, contentType))
+}
+
+// contentFileName returns the content file's name inside its directory.
+func (fs *FileStore) contentFileName(uuid, contentType string) string {
+	return uuid + contentExtensions[contentType]
+}
+
+// holdsContent reports whether contentType has a row in contentExtensions.
+func (fs *FileStore) holdsContent(contentType string) bool {
+	_, ok := contentExtensions[contentType]
+	return ok
 }
 
 // externalRef returns the ExternalRef for a Storable — store-root relative.
@@ -663,10 +701,10 @@ func (fs *FileStore) walkIndexDir(dir string) {
 					dk = strings.Join(parts[1:], "/")
 				}
 				if dk != "" {
-					switch dm.Type {
-					case "document":
+					switch {
+					case fs.holdsContent(dm.Type):
 						fs.buildDocStorable(cat, dk, dm) // registers in index
-					case "folder":
+					case dm.Type == store.TypeFolder:
 						if folder, err := fs.scanFolder(cat, dk); err == nil {
 							fs.indexSet(dm.UUID, folder)
 						}
@@ -676,7 +714,7 @@ func (fs *FileStore) walkIndexDir(dir string) {
 		}
 		// Recurse for nested folders (folders don't get indexed but their
 		// children do).
-		if dm.Type == "folder" {
+		if dm.Type == store.TypeFolder {
 			fs.walkIndexDir(subDir)
 		}
 	}
@@ -691,11 +729,17 @@ func (fs *FileStore) createMeta(cat store.Category, key string, body []byte) (st
 		return nil, fmt.Errorf("filestore: create %s: %w", key, err)
 	}
 
-	fs.stampCreate(initialMeta)
+	return fs.createContent(cat, key, store.TypeDocument, initialMeta, pureBody)
+}
 
-	dm := mapToDocMeta(initialMeta)
-	dm.Type = "document"
-	dm.Names = []nameEntry{{Name: filepath.Base(key), From: initialMeta["created"]}}
+// createContent writes a new content-bearing directory: its .meta, stamped from
+// meta, and its content file holding body verbatim.
+func (fs *FileStore) createContent(cat store.Category, key, contentType string, meta map[string]string, body []byte) (store.MetaStorable, error) {
+	fs.stampCreate(meta)
+
+	dm := mapToDocMeta(meta)
+	dm.Type = contentType
+	dm.Names = []nameEntry{{Name: filepath.Base(key), From: meta["created"]}}
 
 	dir := fs.docDir(cat, key)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -706,7 +750,7 @@ func (fs *FileStore) createMeta(cat store.Category, key string, body []byte) (st
 		return nil, fmt.Errorf("filestore: write .meta for %s: %w", key, err)
 	}
 
-	if err := writeAtomic(fs.contentPath(cat, key, dm.UUID), pureBody); err != nil {
+	if err := writeAtomic(fs.contentPath(cat, key, dm.UUID, contentType), body); err != nil {
 		return nil, fmt.Errorf("filestore: write content for %s: %w", key, err)
 	}
 
@@ -715,11 +759,12 @@ func (fs *FileStore) createMeta(cat store.Category, key string, body []byte) (st
 			key:      dm.UUID,
 			path:     key,
 			category: cat,
-			body:     pureBody,
+			body:     body,
 			extRef:   fs.externalRef(cat, key),
-			versions: fs.loadVersions(dm.UUID, cat, key),
+			versions: fs.loadVersions(dm.UUID, contentType, cat, key),
 		},
-		meta: docMetaToMap(dm),
+		contentType: contentType,
+		meta:        docMetaToMap(dm),
 	}
 	fs.indexSet(dm.UUID, s)
 	return s, nil
@@ -783,13 +828,13 @@ func (fs *FileStore) saveContent(s *fileMetaStorable) (store.Storable, error) {
 	uuid := meta["uuid"]
 
 	// Write content file.
-	if err := writeAtomic(fs.contentPath(s.category, path, uuid), s.body); err != nil {
+	if err := writeAtomic(fs.contentPath(s.category, path, uuid, s.contentType), s.body); err != nil {
 		return nil, fmt.Errorf("filestore: save content %s: %w", path, err)
 	}
 
 	// Write .meta, preserving names from disk.
 	newDM := mapToDocMeta(meta)
-	newDM.Type = "document"
+	newDM.Type = s.contentType
 	if existingDM, err := readMetaJSONFromPath(fs.metaPath(s.category, path)); err == nil {
 		newDM.Names = existingDM.Names
 	}
@@ -799,11 +844,11 @@ func (fs *FileStore) saveContent(s *fileMetaStorable) (store.Storable, error) {
 
 	// Write body-only snapshot.
 	if uuid != "" {
-		_ = fs.writeSnapshot(s.category, path, uuid, nextVer, s.body)
-		fs.pruneVersions(s.category, path, uuid, fs.maxVersions)
+		_ = fs.writeSnapshot(s.category, path, uuid, s.contentType, nextVer, s.body)
+		fs.pruneVersions(s.category, path, uuid, s.contentType, fs.maxVersions)
 	}
 
-	versions := fs.loadVersions(uuid, s.category, path)
+	versions := fs.loadVersions(uuid, s.contentType, s.category, path)
 	saved := &fileMetaStorable{
 		fileStorable: fileStorable{
 			key:      uuid,
@@ -813,8 +858,9 @@ func (fs *FileStore) saveContent(s *fileMetaStorable) (store.Storable, error) {
 			extRef:   s.extRef,
 			versions: versions,
 		},
-		meta: docMetaToMap(newDM),
-		owns: s.owns,
+		contentType: s.contentType,
+		meta:        docMetaToMap(newDM),
+		owns:        s.owns,
 	}
 	fs.indexSet(uuid, saved)
 	return saved, nil

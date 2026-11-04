@@ -1,5 +1,18 @@
 package store
 
+// The .meta type values. A type is what a directory in the store holds; it says
+// nothing about where that directory lives. TypeDocument and TypeBlock carry a
+// content file, TypeFolder does not.
+const (
+	TypeDocument = "document"
+	TypeBlock    = "block"
+	TypeFolder   = "folder"
+)
+
+// MetaKeyKind is the metadata key naming a TypeBlock storable's block kind. The
+// Store persists it and never interprets it.
+const MetaKeyKind = "kind"
+
 // Storable is the base contract for anything the Store can persist. It is a
 // pure value object — no logic, no path awareness, no knowledge of how or
 // where it lives on disk.
@@ -15,8 +28,9 @@ type Storable interface {
 	// creation and immutable — use Store.Move to change category.
 	Category() Category
 
-	// Body returns the raw content bytes. For MetaStorables the body is pure
-	// markdown with frontmatter stripped; the Store owns serialisation.
+	// Body returns the raw content bytes. The Store holds them and never
+	// interprets them: what they mean is decided by the MetaStorable's Type and
+	// the service that owns that type.
 	Body() []byte
 
 	// ExternalRef returns the string used to reference this Storable from
@@ -33,15 +47,20 @@ type Storable interface {
 	IsModified() bool
 }
 
-// MetaStorable extends Storable with structured metadata. Used for notes and
-// buffers. The Store serialises Meta as YAML frontmatter; no code outside the
-// store package ever constructs or parses frontmatter directly.
+// MetaStorable extends Storable with structured metadata. It is the root of
+// everything stored as a directory holding a .meta, a content file, versions and
+// assets; its Type says which service owns it. The Store owns the .meta format;
+// no code outside the store package ever constructs or parses it directly.
 //
 // SetBody, SetMeta are the in-place mutable surfaces. Changes are local until
 // Store.Save is called, which returns a new Storable stamping the updated
 // version and modified timestamp.
 type MetaStorable interface {
 	Storable
+
+	// Type returns the .meta type (TypeDocument, TypeBlock). Stamped at creation
+	// and immutable: SetMeta cannot change it, and neither can Move.
+	Type() string
 
 	// Meta returns the raw metadata map. In business code, access fields
 	// through a typed DocumentMeta accessor rather than the raw map.
@@ -115,6 +134,13 @@ type Store interface {
 	// ExternalRef, and infers Encoding for AssetStorables. Returns the created
 	// Storable.
 	CreateMetaText(category Category, key string, body []byte) (MetaStorable, error)
+
+	// CreateTyped makes a new MetaStorable of the given content-bearing type,
+	// seeded with meta. body is stored verbatim, never parsed for frontmatter. A
+	// type that carries no content is an error. As with CreateMetaText an empty
+	// key is generated, and uuid, version and timestamps absent from meta are
+	// stamped.
+	CreateTyped(category Category, key string, contentType string, meta map[string]string, body []byte) (MetaStorable, error)
 
 	// CreateAsset creates a new AssetStorable. The key is managed internally
 	// by the store based on the parent document that logically owns it.
