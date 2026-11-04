@@ -364,8 +364,8 @@ stream with real throughput, which GATT notifications are not. Android exposes i
 `BluetoothAdapter.listenUsingL2capChannel()` (public since API 29). BlueZ exposes it as an
 `AF_BLUETOOTH` / `BTPROTO_L2CAP` socket over LE, reachable from Go without cgo.
 CoreBluetooth exposes it as `CBPeripheral.openL2CAPChannel(psm)`; the Go library in use
-does not wrap it, so the Mac needs a small Objective-C bridge. **That bridge is the spike
-that must pass before anything else is built** (§10).
+does not wrap it, so the Mac needs a small Objective-C bridge, proven in phase 3 on the
+installed build (§10).
 
 Three facts the Linux spike (#205, 2026-11-02) fixed in the contract. The channel is opened
 with the *insecure* listener (`listenUsingInsecureL2capChannel`): there is no bonding, and the
@@ -823,19 +823,21 @@ or Bluetooth anywhere else is a failing test, not a review comment.
 
 ## 9a. Coherence with #198 and what this epic depends on
 
-This design rides the Things store and lens-by-kind mechanism that #198 defines; it adds
-a second `ThingKind` and a second lens and invents no parallel mechanism. Concretely:
+This design rides the content-kind seam and lens-by-kind mechanism that #198 defines; it
+adds a second kind and a second lens and invents no parallel mechanism. `.meta` `type` and
+`kind` decide the lens, the body format, the operations and the lifecycle rule, and nothing
+about location; "Things" is a view, a filter by kind. Concretely:
 
 | #198 dispatch | What it provides here | Status |
 |---|---|---|
-| D1 Things store (headless Go) | `.meta type: block`, `{uuid}.block`, `Things` category, `ThingService`, `ThingKind` registry, `ThingsSource` on the Router, `OpenTarget.Kind` | Unblocked in #198; **phase 3 here needs it**, unchanged |
-| D2 wire + mount | Thing load/save endpoints, `WholeContentAdapter` serving a Thing, the lens table keyed by kind, tab bar carrying kind, the `things` invalidate topic, the interaction-contract entry for lens modes | #198 says blocked on #71 and the source editor, **but only its source face is**; the wire-and-mount half is separable and this lens needs only that half. **Phase 4 here needs it**, and could be the pathfinder that lands it |
-| D2 `ApiSpecLens` modes via `AbstractEditor` | the lens-level Mod+Enter flip | #199 merged; the repertoire mechanism exists, the contract-doc entry lands with whichever lens ships first |
-| D4 reference card from the face | `@`-mention card for a Digital Note | reused as is |
+| D1 content-kind seam (headless Go) | The content file name picked from `.meta` `type`, `Document.ContentKind()`, `NewOfKind`, `ListByContentKind`, the `ThingKind` registry, the category table in `documentFromStoreable`, `ContentKind` on `NodeDescriptor` and `OpenTarget` | Unblocked in #198; **phase 3 here needs it**. This epic adds the `Blocks` category as a row in that table |
+| D2a wire + mount | Load/save serving a content kind, `WholeContentAdapter` serving it, the one lens table keyed by content kind, the lens mode flip in the interaction contract | Unblocked, built once by whichever of #198 and #204 goes first. **Phase 4 here needs it** |
+| D2b source face + Things view | The filter-by-kind view | Blocked on the source editor; nothing here needs it |
+| D4 reference card from the descriptor | `@`-mention card for a Digital Note | Reused as is |
 
 Where the two designs differ, and why it is coherent: lifecycle (born published vs born
 Isolated) is per kind by #198's own rule; one kind with two implementations rather than
-one kind per face is a choice inside this kind. The sidebar's new-tab chooser (#198 D2)
+one kind per face is a choice inside this kind. The sidebar's new-tab chooser (#198 D2b)
 does not list Digital Notes: they are born from a companion or from a clip, never from a
 blank tab.
 
@@ -844,15 +846,9 @@ blank tab.
 Each phase is a Forgejo issue under one epic; the companion has its own repository and
 its own issues, referencing the contract by section.
 
-0. **Spikes (throwaway, #205).** Two, independent. **A, the pen surface, first:** a bare
-   Onyx raw-input canvas on the Note Air 2, judged by hand against the Notes app, with
-   sample rate and pressure measured. **B, the stream:** Sieve on Linux and **on the actual corporate Mac** opens an
-   L2CAP channel to a stock Android 11 device running a 50-line Java app and moves 1 MB.
-   Measure throughput and connection time. The Mac run also proves the Bluetooth privacy
-   prompt (`NSBluetoothAlwaysUsageDescription` in the Wails `Info.plist`) is granted to the
-   build as it is actually installed there; device management, not CoreBluetooth, is the
-   risk. If the Mac bridge is not viable, fall back to GATT notifications for the log
-   (slower, still correct) and say so here.
+0. **Spikes (throwaway, #205).** A, the pen surface on the Note Air 2; B, the L2CAP stream
+   from Go on Linux; C, the live point feed. All passed. The macOS half of B moved into
+   phase 3, because a standalone app is not practical to install on the corporate Mac.
 1. **Contract:** §5 as a `docs/` document, the fixtures (exported JSON pages with the
    tablet's own PNG beside each), and the JS stroke renderer (log → SVG) tuned against those
    PNGs and pinned by its SVG output. Tests only; no UI.
@@ -865,6 +861,14 @@ its own issues, referencing the contract by section.
 3. **Sieve replication:** `InkService` (scan, pair, HELLO/ACK, append to the replica),
    `DigitalNoteKind` with `StrokeBasedNote` and its face, Settings → Ink. **Depends on #198
    D1.** The page can be inspected only via the fixtures and a debug dump at this point.
+   The radio sits behind one interface inside `sieve/ink`, implemented per platform, so the
+   Mac half is a second implementation and not a change to replication. **The Mac is
+   proven here, on the released build as installed on the corporate Mac:** the Objective-C
+   L2CAP bridge, `NSBluetoothAlwaysUsageDescription` in `build/darwin/Info.plist`, the
+   privacy prompt under device management, throughput and connect time against Linux's
+   numbers. If the bridge is not viable, the Mac implementation falls back to GATT
+   notifications: the log stays correct and slower, and whether the live feed survives on
+   that link is measured there. Linux does not wait on this result.
 4. **Page lens:** `DigitalNoteLens` in `page` mode, live repaint over the document wire,
    page chrome. **Depends on #198 D2's wire-and-mount half**, which this phase lands if
    #198 has not.
@@ -903,8 +907,9 @@ hashes them exactly.
 ## 13. Open questions for the architect
 
 The companion is **SieveInk**, in its own repository. The epic hinges on two things, and
-phase 0 (#205) tests both before anything is built: technically, will the stream work; and
-how usable will SieveInk be under the nib.
+phase 0 (#205) tested both before anything was built: technically, will the stream work; and
+how usable will SieveInk be under the nib. The corporate Mac's half of the first is answered
+in phase 3, on the installed build.
 
 1. For a clip, should the selected strokes be re-based to the rectangle (default) or keep
    page coordinates with the rectangle as a viewport?
