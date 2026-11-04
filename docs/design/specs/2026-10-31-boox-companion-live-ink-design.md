@@ -583,9 +583,9 @@ content lives:
 
 The block is the same shape whatever the source is; only the source differs.
 
-- **The block** (`{uuid}.block`, the bare YAML map of the standard block format; the kind
-  lives in `.meta`, as a fence's tag lives outside its map) holds the id, the title, the
-  note header (page aspect, template, page list), provenance
+- **The block** (`{uuid}.block`, YAML: the file names its kind on its first line and holds
+  the map of the standard block format; `.meta` carries the kind too, for listing) holds
+  the id, the title, the note header (page aspect, template, page list), provenance
   (`note_companion`, `note_source_id`, `note_synced_seq`), reading state, and `source`:
   an **asset** beside it in the same directory, addressed absolutely as
   `sieve://{thing}/{key}` like every asset-bearing attr. The block never carries ink.

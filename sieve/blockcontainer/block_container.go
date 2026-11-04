@@ -17,9 +17,15 @@ import (
 // all, or a storable of another type.
 var ErrNotBlockContainer = errors.New("block container: uuid names no block container")
 
-// BlockContainer is one block written directly to a file: its content file holds
-// the block's YAML map, exactly what its fence would hold inside a document. The
-// kind lives in .meta, and the container's uuid IS the block's id.
+// bodyKindKey is the key of the first line of a container's content file. It is
+// never an attr, so a kind whose attrs carry this key cannot be held in a container.
+const bodyKindKey = "kind"
+
+// BlockContainer is one block written directly to a file: its content file opens
+// with a kind line, then holds the block's YAML map, exactly what its fence would
+// hold inside a document. .meta carries the kind too, set at creation, so listings
+// need not parse bodies; the two disagreeing is a parse error. The container's uuid
+// IS the block's id.
 //
 // It is a sibling of domain.Document over store.MetaStorable, and every store
 // mutation returns a new one: a BlockContainer is stale once it has been passed
@@ -66,7 +72,9 @@ func (c *BlockContainer) Storable() store.MetaStorable { return c.storable }
 func (c *BlockContainer) Assets() []store.Storable { return c.storable.Owns() }
 
 // parse reads content-file bytes, live or from a snapshot, into a block of this
-// container's kind. The container's uuid overrides any id the bytes carry.
+// container's kind. Bytes that name no kind, or another kind than .meta does, are
+// an error. The kind line never reaches Attrs, and the container's uuid overrides
+// any id the bytes carry.
 func (c *BlockContainer) parse(body []byte) (block.SieveBlock, error) {
 	kind := c.Kind()
 	if kind == "" {
@@ -76,6 +84,10 @@ func (c *BlockContainer) parse(body []byte) (block.SieveBlock, error) {
 	if err != nil {
 		return block.SieveBlock{}, fmt.Errorf("block container %s: parse body: %w", c.UUID(), err)
 	}
+	if named, _ := parsed.Attrs[bodyKindKey].(string); named != kind {
+		return block.SieveBlock{}, fmt.Errorf("block container %s: body names kind %q, .meta names %q", c.UUID(), named, kind)
+	}
+	delete(parsed.Attrs, bodyKindKey)
 	blk := block.NewSieveBlock(kind, c.UUID(), parsed.Attrs)
 	blk.Aliases = parsed.Aliases
 	return blk, nil
@@ -184,12 +196,16 @@ func (s *BlockContainerService) DeleteAsset(c *BlockContainer, assetKey string) 
 	return s.store.DeleteAsset(c.storable.Category(), c.UUID(), assetKey)
 }
 
-// render produces a container's content file: the block's map through the same
-// YAML writer the fenced form uses.
+// render produces a container's content file: the kind line, then the block's map
+// through the same YAML writer the fenced form uses. An attr named like the kind
+// line is refused, since the file would hold the key twice.
 func (s *BlockContainerService) render(blk block.SieveBlock) ([]byte, error) {
+	if _, clash := blk.Attrs[bodyKindKey]; clash {
+		return nil, fmt.Errorf("block container %s: attr %q is reserved", blk.ID, bodyKindKey)
+	}
 	yaml, err := block.FencedSerializer{}.SerializeAttrs(blk)
 	if err != nil {
 		return nil, fmt.Errorf("block container %s: serialize: %w", blk.ID, err)
 	}
-	return []byte(yaml + "\n"), nil
+	return []byte(bodyKindKey + ": " + blk.Kind + "\n" + yaml + "\n"), nil
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"sieve/ident"
@@ -109,6 +110,19 @@ func TestBlockContainer_CreateSaveReloadKeepsVersionsAndAssets(t *testing.T) {
 		}
 	}
 
+	for _, name := range []string{uuid + ".block", ".history/" + uuid + ".1.block"} {
+		raw, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if first, _, _ := strings.Cut(string(raw), "\n"); first != "kind: "+stickyKind {
+			t.Errorf("%s opens with %q, want the kind line", name, first)
+		}
+	}
+	if _, present := saved.Block().Attrs["kind"]; present {
+		t.Errorf("attrs hold the kind: %v", saved.Block().Attrs)
+	}
+
 	// A fresh store resolves everything from disk.
 	fresh, err := filestore.NewFileStore(st.Root(), "testhost")
 	if err != nil {
@@ -137,8 +151,11 @@ func TestBlockContainer_CreateSaveReloadKeepsVersionsAndAssets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Version: %v", err)
 	}
-	if old.StringAttr("title") != "second" || old.ID != uuid {
+	if old.StringAttr("title") != "second" || old.ID != uuid || old.Kind != stickyKind {
 		t.Errorf("version 1 = %+v", old)
+	}
+	if _, present := old.Attrs["kind"]; present {
+		t.Errorf("a version's attrs hold the kind: %v", old.Attrs)
 	}
 	if _, err := reopened.Version(loaded, store.VersionRef{ID: "99"}); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("unwritten version: err = %v, want fs.ErrNotExist", err)
@@ -218,6 +235,9 @@ func TestBlockContainer_AttrsRoundTripFencedAndAsAContainer(t *testing.T) {
 			if got.ID != parsed[0].ID || got.Kind != parsed[0].Kind {
 				t.Errorf("identity: container %s/%s, fence %s/%s", got.ID, got.Kind, parsed[0].ID, parsed[0].Kind)
 			}
+			if strings.Contains(fence, "\nkind:") {
+				t.Errorf("the fence interior names its kind:\n%s", fence)
+			}
 			if !reflect.DeepEqual(got.Attrs, parsed[0].Attrs) {
 				t.Errorf("attrs differ:\ncontainer %#v\nfenced    %#v", got.Attrs, parsed[0].Attrs)
 			}
@@ -254,12 +274,60 @@ func TestBlockContainer_RefusesWhatItDoesNotOwn(t *testing.T) {
 	if _, err := containers.Load(broken.Key()); err == nil || errors.Is(err, ErrNotBlockContainer) {
 		t.Errorf("broken body: err = %v, want a parse failure", err)
 	}
-	kindless, err := st.CreateTyped(domain.Blocks, "kindless", store.TypeBlock, nil, []byte("a: b\n"))
-	if err != nil {
-		t.Fatalf("CreateTyped: %v", err)
+	for name, tc := range map[string]struct {
+		metaKind string
+		body     string
+	}{
+		"no kind in .meta": {"", "kind: " + stickyKind + "\na: b\n"},
+		"no kind in body":  {stickyKind, "a: b\n"},
+		"kinds disagree":   {stickyKind, "kind: another\na: b\n"},
+		"kind not text":    {stickyKind, "kind: [a]\na: b\n"},
+	} {
+		meta := map[string]string{}
+		if tc.metaKind != "" {
+			meta[store.MetaKeyKind] = tc.metaKind
+		}
+		ms, err := st.CreateTyped(domain.Blocks, strings.ReplaceAll(name, " ", "-"), store.TypeBlock, meta, []byte(tc.body))
+		if err != nil {
+			t.Fatalf("CreateTyped: %v", err)
+		}
+		if _, err := containers.Load(ms.Key()); err == nil || errors.Is(err, ErrNotBlockContainer) {
+			t.Errorf("%s: err = %v, want a parse failure", name, err)
+		}
 	}
-	if _, err := containers.Load(kindless.Key()); err == nil || errors.Is(err, ErrNotBlockContainer) {
-		t.Errorf("no kind: err = %v, want a failure naming it", err)
+
+	// The kind line's key is reserved: no attr can take it, by either door.
+	if _, err := containers.Create(stickyKind, map[string]interface{}{"kind": "x"}); err == nil {
+		t.Error("Create with an attr named kind succeeded")
+	}
+	c, err := containers.Create(stickyKind, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	c.Merge(map[string]interface{}{"kind": "x"})
+	if _, err := containers.Save(c); err == nil {
+		t.Error("Save with an attr named kind succeeded")
+	}
+}
+
+// A snapshot is read with the same check as the live file.
+func TestBlockContainer_VersionRefusesASnapshotNamingAnotherKind(t *testing.T) {
+	containers, st := newTestContainers(t)
+	c, err := containers.Create(stickyKind, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	c.Merge(map[string]interface{}{"title": "v1"})
+	c, err = containers.Save(c)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	snapshot := filepath.Join(st.Root(), "testhost", domain.Blocks.Key, c.UUID(), ".history", c.UUID()+".1.block")
+	if err := os.WriteFile(snapshot, []byte("kind: another\ntitle: v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := containers.Version(c, c.Versions()[0]); err == nil {
+		t.Error("Version read a snapshot naming another kind")
 	}
 }
 
