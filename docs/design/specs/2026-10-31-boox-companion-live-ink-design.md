@@ -837,6 +837,7 @@ or Bluetooth anywhere else is a failing test, not a review comment.
 | AI read fails | Reading view shows the page PNG with a failed badge and retry; page view unaffected |
 | Diagram won't render after retry | That region becomes a PNG cut |
 | Companion deletes the note | Nothing happens in Sieve; the Thing is a snapshot from here on |
+| SieveInk is uninstalled, or its pairing lost or forgotten | Nothing happens in Sieve. Sieve's replica is Sieve's own copy, and only a deliberate delete in Sieve removes it. A reinstalled companion is a new identity: it pairs afresh and its notes arrive as new Things beside the old |
 | Sieve forgets the Thing, companion syncs the note again | A fresh Thing with the same `note_source_id`, replayed from seq 1 |
 
 ## 9a. Coherence with #198 and what this epic depends on
