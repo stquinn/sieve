@@ -798,6 +798,19 @@ records (§8) are frame families on it, declared in `sieve/protocol` like every 
 the generated artifacts rebuilt. The feed bypasses the `ContainerModel`, not the
 transport: lenses stay transport-blind, which `lens-isolation` pins.
 
+**Workspace uniform, Sidebar discerning.** The Workspace treats every container alike: read
+its type and kind, pick the lens, mount it in the tab. The Sidebar gives each its own
+affordance: documents their tree, ink notes an Ink section, chats theirs later, and any other
+block kind its own section or a general Blocks bucket, so no block is ever invisible. The Ink
+section exists only when Ink is enabled in Settings, per machine and off by default; off, the
+service does not start and Bluetooth is not touched, notes stay on disk and addresses still
+resolve. Expanded, it shows **Current**, present only while a paired Boox is broadcasting, and
+below it the synced notes, filed in Sieve's own folders. Opening Current gives a tab that
+always shows what the Boox is broadcasting: when the Boox changes note, the Ink section asks
+the Workspace, through a generic "show this uuid in that tab" verb, to change what the tab
+shows. A note opened any other way stays on that note. Within a live note the view follows the
+page being written on.
+
 **Frontend: a lens and a renderer.** `lens/ink/` holds `DigitalNoteLens` extending
 `AbstractEditor` with its `page` and `reading` modes; `renderers/ink-renderer.js` is the
 PM-free renderer phase 1 builds. The lens imports `contract/` and `renderers/` only.
