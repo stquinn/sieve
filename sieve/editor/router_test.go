@@ -320,19 +320,18 @@ func TestRouter_TargetSurfacesTheGrammarAndDanglingSentinels(t *testing.T) {
 // The two real sources federate: each uuid reaches the source that owns its type,
 // and a block's OpenTarget carries the block kind.
 func TestRouter_FederatesDocumentsAndBlockContainers(t *testing.T) {
-	resetRegistry()
 	containers, ds, _ := newTestContainers(t)
 	router := NewRouter(NewNotesSource(ds), NewBlockSource(containers))
 
 	note := seedFiledNote(t, ds, "A Note", "", nil, "", "body")
-	c, err := containers.Create(stickyKind, map[string]interface{}{"title": "A Sticky"})
+	c, err := containers.Create(containerKind, map[string]interface{}{"title": "A Sticky"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	for _, tc := range []struct{ uuid, kind, title string }{
 		{note.UUID(), string(domain.KindNote), "A Note"},
-		{c.UUID(), stickyKind, "A Sticky"},
+		{c.UUID(), containerKind, "A Sticky"},
 	} {
 		target, err := router.Target("sieve://" + tc.uuid)
 		if err != nil {

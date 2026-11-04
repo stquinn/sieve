@@ -1,4 +1,7 @@
-package editor
+// Package blockcontainer stores one block as a container of its own, beside
+// documents over store.MetaStorable. It sits directly over block and store, so a
+// service that creates containers does not depend on the editor.
+package blockcontainer
 
 import (
 	"errors"
@@ -55,6 +58,9 @@ func (c *BlockContainer) Merge(attrs map[string]interface{}) {
 
 // Versions lists the saved snapshots, newest first.
 func (c *BlockContainer) Versions() []store.VersionRef { return c.storable.Versions() }
+
+// Storable returns the underlying MetaStorable for direct Store operations.
+func (c *BlockContainer) Storable() store.MetaStorable { return c.storable }
 
 // Assets lists the assets beside the block.
 func (c *BlockContainer) Assets() []store.Storable { return c.storable.Owns() }

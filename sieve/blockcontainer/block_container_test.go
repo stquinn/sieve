@@ -1,23 +1,26 @@
-package editor
+package blockcontainer
 
 import (
 	"errors"
+	"go/build"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
-	"strconv"
 	"testing"
 
 	"sieve/ident"
 	"sieve/sieve/block"
+	"sieve/sieve/block/processors"
 	"sieve/sieve/domain"
-	"sieve/sieve/services"
 	"sieve/store"
 	"sieve/store/filestore"
 )
 
-const stickyKind = "test-sticky"
+const (
+	stickyKind  = "test-sticky"
+	missingUUID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a77"
+)
 
 // stickyProc is the small test kind: a block-mode kind through the shared fenced
 // machinery, as any existing processor is, with no container-specific method.
@@ -51,23 +54,27 @@ func (stickyProc) MarkdownRepresentation(b block.SieveBlock, _ string) string {
 	return "> " + b.StringAttr("title")
 }
 
-// newTestContainers builds the container service over a temporary store with the
-// test kind registered.
-func newTestContainers(t *testing.T) (*BlockContainerService, *services.DocumentService, *filestore.FileStore) {
+// newTestContainers builds the service over a temporary store, with the test kind
+// registered on top of the prose terminal the document codec needs.
+func newTestContainers(t *testing.T) (*BlockContainerService, *filestore.FileStore) {
 	t.Helper()
-	ds, st := newTestDocumentService(t)
+	st, err := filestore.NewFileStore(t.TempDir(), "testhost")
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	block.ResetRegistry()
+	block.RegisterProcessor(&processors.ProseProcessor{})
 	block.RegisterProcessor(stickyProc{FencedDeserializer: block.FencedDeserializer{Kind: stickyKind}})
-	t.Cleanup(func() { block.UnregisterProcessor(stickyKind) })
+	t.Cleanup(block.ResetRegistry)
 	containers, err := NewBlockContainerService(st, block.GlobalRegistry())
 	if err != nil {
 		t.Fatalf("NewBlockContainerService: %v", err)
 	}
-	return containers, ds, st
+	return containers, st
 }
 
 func TestBlockContainer_CreateSaveReloadKeepsVersionsAndAssets(t *testing.T) {
-	resetRegistry()
-	containers, _, st := newTestContainers(t)
+	containers, st := newTestContainers(t)
 
 	c, err := containers.Create(stickyKind, map[string]interface{}{"title": "first"})
 	if err != nil {
@@ -165,8 +172,7 @@ func TestBlockContainer_CreateSaveReloadKeepsVersionsAndAssets(t *testing.T) {
 // One map, two forms: what a document's fence holds and what a container's file
 // holds parse back to the same block.
 func TestBlockContainer_AttrsRoundTripFencedAndAsAContainer(t *testing.T) {
-	resetRegistry()
-	containers, _, _ := newTestContainers(t)
+	containers, _ := newTestContainers(t)
 	cases := map[string]map[string]interface{}{
 		"plain": {"title": "plain", "count": 3, "ratio": 1.5, "on": true},
 		"inner fence and multiline": {
@@ -223,18 +229,17 @@ func TestBlockContainer_AttrsRoundTripFencedAndAsAContainer(t *testing.T) {
 }
 
 func TestBlockContainer_RefusesWhatItDoesNotOwn(t *testing.T) {
-	resetRegistry()
-	containers, ds, st := newTestContainers(t)
+	containers, st := newTestContainers(t)
 
 	if _, err := containers.Create("no-such-kind", nil); err == nil {
 		t.Error("Create of an unregistered kind succeeded")
 	}
 
-	doc, err := ds.New()
+	doc, err := st.CreateMetaText(domain.WorkingCopy, "a-document", []byte("prose"))
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatalf("CreateMetaText: %v", err)
 	}
-	for _, uuid := range []string{doc.UUID(), testMissingUUID} {
+	for _, uuid := range []string{doc.Key(), missingUUID} {
 		if _, err := containers.Load(uuid); !errors.Is(err, ErrNotBlockContainer) {
 			t.Errorf("Load(%s) = %v, want ErrNotBlockContainer", uuid, err)
 		}
@@ -258,10 +263,9 @@ func TestBlockContainer_RefusesWhatItDoesNotOwn(t *testing.T) {
 	}
 }
 
-// A container moved out of Blocks stays a container, and stays refused as a document.
+// A container moved out of Blocks stays a container.
 func TestBlockContainer_MovedToTheLibraryIsStillABlock(t *testing.T) {
-	resetRegistry()
-	containers, ds, st := newTestContainers(t)
+	containers, st := newTestContainers(t)
 	c, err := containers.Create(stickyKind, map[string]interface{}{"title": "moved"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -277,76 +281,23 @@ func TestBlockContainer_MovedToTheLibraryIsStillABlock(t *testing.T) {
 	if loaded.Block().StringAttr("title") != "moved" {
 		t.Errorf("loaded = %+v", loaded.Block())
 	}
-	if _, err := ds.LoadByUUID(c.UUID()); !errors.Is(err, domain.ErrNotADocument) {
-		t.Errorf("LoadByUUID = %v, want ErrNotADocument", err)
-	}
 }
 
-func TestBlockSource_Resolve(t *testing.T) {
-	resetRegistry()
-	containers, ds, _ := newTestContainers(t)
-	source := NewBlockSource(containers)
-
-	c, err := containers.Create(stickyKind, map[string]interface{}{"title": "old", "summary": "the summary"})
+// The package stays below the editor and beside the document layer: sieve/ink
+// creates containers while EditorService calls sieve/ink.
+func TestBlockContainer_ImportsNothingAboveBlock(t *testing.T) {
+	forbidden := map[string]bool{
+		"sieve/sieve/editor":   true,
+		"sieve/sieve/services": true,
+		"sieve/sieve/ai":       true,
+	}
+	pkg, err := build.ImportDir(".", 0)
 	if err != nil {
-		t.Fatalf("Create: %v", err)
+		t.Fatalf("ImportDir: %v", err)
 	}
-	uuid := c.UUID()
-	held := c.Block()
-	held.Aliases = []string{"sticky-name"}
-	c.block = held
-	if _, err := containers.SaveAsset(c, "strokes.jsonl", []byte("12345")); err != nil {
-		t.Fatalf("SaveAsset: %v", err)
-	}
-	c, err = containers.Save(c)
-	if err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	pinned := c.Versions()[0].ID
-	c.Merge(map[string]interface{}{"title": "new"})
-	if _, err := containers.Save(c); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	for _, tc := range []struct {
-		name, uri, wantID, wantKind, wantTitle, wantBody string
-		wantAttrs                                        bool
-	}{
-		{"container", "sieve://" + uuid, uuid, stickyKind, "new", "> new", true},
-		{"pinned container", "sieve://" + uuid + "?version=" + pinned, uuid, stickyKind, "old", "> old", true},
-		{"block leaf", "sieve://" + uuid + "/" + uuid, uuid, stickyKind, "new", "> new", true},
-		{"alias leaf", "sieve://" + uuid + "/sticky-name", uuid, stickyKind, "new", "> new", true},
-		{"asset leaf", "sieve://" + uuid + "/strokes.jsonl", "strokes.jsonl", assetKind, "strokes.jsonl", "", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			node, err := source.Resolve(mustAddress(t, tc.uri))
-			if err != nil {
-				t.Fatalf("Resolve: %v", err)
-			}
-			if node.ID != tc.wantID || node.Kind != tc.wantKind || node.Title != tc.wantTitle || node.Body != tc.wantBody {
-				t.Errorf("node = %+v", node)
-			}
-			if tc.wantAttrs != (node.Attrs != nil) {
-				t.Errorf("Attrs = %v, want present=%v", node.Attrs, tc.wantAttrs)
-			}
-			if tc.wantAttrs && (node.Attrs["color"] != "yellow" || node.Summary != "the summary") {
-				t.Errorf("descriptor lost the map: %+v", node)
-			}
-		})
-	}
-
-	doc, err := ds.New()
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	for name, uri := range map[string]string{
-		"a document":        "sieve://" + doc.UUID(),
-		"nothing":           "sieve://" + testMissingUUID,
-		"unwritten version": "sieve://" + uuid + "?version=" + strconv.Itoa(99),
-		"unknown leaf":      "sieve://" + uuid + "/no-such-leaf",
-	} {
-		if _, err := source.Resolve(mustAddress(t, uri)); !errors.Is(err, domain.ErrNodeNotFound) {
-			t.Errorf("%s: err = %v, want ErrNodeNotFound", name, err)
+	for _, path := range pkg.Imports {
+		if forbidden[path] {
+			t.Errorf("imports %s", path)
 		}
 	}
 }

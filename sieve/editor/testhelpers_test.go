@@ -5,6 +5,7 @@ import (
 
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
+	"sieve/sieve/blockcontainer"
 	"sieve/sieve/services"
 	"sieve/store/filestore"
 )
@@ -31,4 +32,20 @@ func newTestDocumentService(t *testing.T) (*services.DocumentService, *filestore
 	}
 
 	return ds, fs
+}
+
+// containerKind is the block kind the editor's tests put in a container.
+const containerKind = "code"
+
+// newTestContainers builds the container service beside the document service over
+// one temporary store, with containerKind registered.
+func newTestContainers(t *testing.T) (*blockcontainer.BlockContainerService, *services.DocumentService, *filestore.FileStore) {
+	t.Helper()
+	withCodeProcessor(t)
+	ds, st := newTestDocumentService(t)
+	containers, err := blockcontainer.NewBlockContainerService(st, block.GlobalRegistry())
+	if err != nil {
+		t.Fatalf("NewBlockContainerService: %v", err)
+	}
+	return containers, ds, st
 }

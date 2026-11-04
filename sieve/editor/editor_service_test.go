@@ -1739,10 +1739,9 @@ func TestEditorService_AReplacementIsAutosavedLikeAnyOtherEdit(t *testing.T) {
 // A block container has no markdown shadow: open refuses at the DocumentService
 // wall and leaves no session behind.
 func TestEditorService_OpenRefusesABlockContainer(t *testing.T) {
-	resetRegistry()
 	containers, ds, _ := newTestContainers(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
-	c, err := containers.Create(stickyKind, nil)
+	c, err := containers.Create(containerKind, nil)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

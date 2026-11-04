@@ -148,18 +148,17 @@ func TestSweepLibrary_EmptyLibraryIsClean(t *testing.T) {
 // The sweep walks documents only: a block container is neither scanned nor
 // rewritten, even one moved into the library.
 func TestSweepLibrary_NeverTouchesABlockContainer(t *testing.T) {
-	resetRegistry()
 	containers, ds, fs := newTestContainers(t)
 	sweeper := NewIdentitySweeper(ds, block.NewDocumentCodec(block.GlobalRegistry()))
-	stayed, err := containers.Create(stickyKind, map[string]interface{}{"title": "stayed"})
+	stayed, err := containers.Create(containerKind, map[string]interface{}{"title": "stayed"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	filed, err := containers.Create(stickyKind, map[string]interface{}{"title": "filed"})
+	filed, err := containers.Create(containerKind, map[string]interface{}{"title": "filed"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := fs.Move(filed.storable, domain.LibraryCategory); err != nil {
+	if _, err := fs.Move(filed.Storable(), domain.LibraryCategory); err != nil {
 		t.Fatalf("Move: %v", err)
 	}
 	saveDoc(t, ds, "plain prose")

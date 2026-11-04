@@ -8,6 +8,7 @@ import (
 	"sieve/sieve/ai"
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
+	"sieve/sieve/blockcontainer"
 	"sieve/sieve/command"
 	"sieve/sieve/domain"
 	"sieve/sieve/editor"
@@ -21,7 +22,7 @@ type ServiceProvider struct {
 	Store       store.Store
 	Library     services.LibraryService
 	Documents   *services.DocumentService
-	Containers  *editor.BlockContainerService
+	Containers  *blockcontainer.BlockContainerService
 	Nodes       *editor.Router
 	Assets      *services.AssetService
 	State       *services.StateService
@@ -142,7 +143,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 		logger.Error("buffers init failed", "err", err)
 		return
 	}
-	s.Containers, err = editor.NewBlockContainerService(store, block.GlobalRegistry())
+	s.Containers, err = blockcontainer.NewBlockContainerService(store, block.GlobalRegistry())
 	if err != nil {
 		logger.Error("block containers init failed", "err", err)
 		return

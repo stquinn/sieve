@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"sieve/sieve/block"
+	"sieve/sieve/blockcontainer"
 	"sieve/sieve/domain"
 	"sieve/store"
 )
@@ -18,11 +19,11 @@ import (
 // a leaf naming the block or an asset beside it, into a descriptor whose Kind is
 // the block's kind and whose Attrs carries its map.
 type BlockSource struct {
-	containers *BlockContainerService
+	containers *blockcontainer.BlockContainerService
 }
 
 // NewBlockSource builds the source over the container service.
-func NewBlockSource(containers *BlockContainerService) *BlockSource {
+func NewBlockSource(containers *blockcontainer.BlockContainerService) *BlockSource {
 	return &BlockSource{containers: containers}
 }
 
@@ -37,7 +38,7 @@ func (s *BlockSource) Search(string, int) []domain.Candidate { return nil }
 // or a leaf the container does not answer to is domain.ErrNodeNotFound.
 func (s *BlockSource) Resolve(addr domain.Address) (domain.NodeDescriptor, error) {
 	c, err := s.containers.Load(addr.Container)
-	if errors.Is(err, ErrNotBlockContainer) {
+	if errors.Is(err, blockcontainer.ErrNotBlockContainer) {
 		return domain.NodeDescriptor{}, fmt.Errorf("%w: %s: %v", domain.ErrNodeNotFound, addr.String(), err)
 	}
 	if err != nil {
@@ -55,7 +56,7 @@ func (s *BlockSource) Resolve(addr domain.Address) (domain.NodeDescriptor, error
 	}
 	leaves := &containerLeaves{
 		addr:     addr,
-		owner:    c.storable,
+		owner:    c.Storable(),
 		registry: block.GlobalRegistry(),
 		blocks:   []block.SieveBlock{blk},
 	}
