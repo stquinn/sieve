@@ -9,7 +9,8 @@
 //	nix develop -c go run ./tools/gencredits
 //
 // Sources merged:
-//   - Go modules statically compiled into the binary (go-licenses report/save)
+//   - Go modules statically compiled into any shipped binary — the union over
+//     every BuildTarget (go-licenses report/save)
 //   - npm packages bundled into frontend/src/static/vendor/ — enumerated from
 //     esbuild --metafile output for each bundle entry, plus the dist-copied
 //     libraries (mermaid, panzoom) and build-time-shipped CSS (tailwind)
@@ -154,17 +155,142 @@ func (g *Generator) copyleftGate(entries []Entry) error {
 
 // ---- Go modules ----
 
-// collectGoModules runs go-licenses report (name/url/license id) and
-// go-licenses save (license texts) and joins the two.
+// BuildTarget is one shipped binary's package-resolution environment. go-licenses
+// loads packages with go/packages, which honours GOOS, GOARCH, CGO_ENABLED and
+// the -tags in GOFLAGS, so a target's package set is resolved by build
+// constraints alone: nothing is compiled and no foreign toolchain is needed.
+type BuildTarget struct {
+	GOOS   string
+	GOARCH string
+	Cgo    bool
+	Tags   []string
+}
+
+// shippedTargets is every binary Sieve releases, with the tags its build passes:
+// `wails build` adds desktop and production to the user's tags, and the Linux
+// builds add webkit2_41. The nix package builds with wails instead of desktop.
+// A module imported from only one target's files is still redistributed.
+var shippedTargets = []BuildTarget{
+	{GOOS: "linux", GOARCH: "amd64", Cgo: true, Tags: []string{"desktop", "production", "webkit2_41"}},
+	{GOOS: "linux", GOARCH: "amd64", Cgo: true, Tags: []string{"wails", "production", "webkit2_41"}},
+	{GOOS: "darwin", GOARCH: "arm64", Cgo: true, Tags: []string{"desktop", "production"}},
+	{GOOS: "darwin", GOARCH: "amd64", Cgo: true, Tags: []string{"desktop", "production"}},
+}
+
+// Name identifies the target in scratch paths and error messages.
+func (t BuildTarget) Name() string {
+	return t.GOOS + "-" + t.GOARCH + "-" + strings.Join(t.Tags, "+")
+}
+
+// Env returns the environment overrides that make the go tool resolve this
+// target's package set. GOFLAGS is replaced outright so an ambient value cannot
+// leak host tags into the resolution.
+func (t BuildTarget) Env() []string {
+	cgo := "0"
+	if t.Cgo {
+		cgo = "1"
+	}
+	return []string{
+		"GOOS=" + t.GOOS,
+		"GOARCH=" + t.GOARCH,
+		"CGO_ENABLED=" + cgo,
+		"GOFLAGS=-tags=" + strings.Join(t.Tags, ","),
+	}
+}
+
+// Library is one go-licenses report row: a package path, its license id, and the
+// directory of the target run whose `save` holds its license text.
+type Library struct {
+	Name    string
+	License string
+	TextDir string
+}
+
+// LibrarySet is the union of the libraries reported across targets, keyed by
+// package path.
+type LibrarySet map[string]Library
+
+// Add merges one target's go-licenses report. Rows are `library,url,license`;
+// malformed rows and Sieve's own packages are skipped, and a library already in
+// the set keeps its first row, so the result is the same whatever order targets
+// are visited in as long as that order is fixed.
+func (s LibrarySet) Add(report, textDir string) {
+	for _, line := range strings.Split(strings.TrimSpace(report), "\n") {
+		parts := strings.Split(line, ",")
+		if len(parts) != 3 || parts[0] == "sieve" {
+			continue
+		}
+		if _, ok := s[parts[0]]; !ok {
+			s[parts[0]] = Library{Name: parts[0], License: parts[2], TextDir: textDir}
+		}
+	}
+}
+
+// Sorted returns the libraries in name order.
+func (s LibrarySet) Sorted() []Library {
+	out := make([]Library, 0, len(s))
+	for _, l := range s {
+		out = append(out, l)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// GoLicenses is a pinned go-licenses binary, built once for the host.
+type GoLicenses struct {
+	binary string
+	dir    string
+}
+
+// NewGoLicenses installs the pinned go-licenses into scratchDir. It is built for
+// the host with CGO disabled so it links statically — the nix dev shell's glibc
+// paths make dynamically linked artifacts unexecutable (same root cause as the
+// CGO_ENABLED=0 rule for go test). Running the binary afterwards lets a target's
+// environment apply to package loading without applying to building the tool.
+func NewGoLicenses(repoRoot, scratchDir string) (*GoLicenses, error) {
+	cmd := exec.Command("go", "install", "github.com/google/go-licenses@v1.6.0")
+	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOBIN="+scratchDir)
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("building go-licenses: %w", err)
+	}
+	return &GoLicenses{binary: filepath.Join(scratchDir, "go-licenses"), dir: repoRoot}, nil
+}
+
+// Run invokes go-licenses against `./...` as resolved for the target.
+func (l *GoLicenses) Run(target BuildTarget, args ...string) (string, error) {
+	cmd := exec.Command(l.binary, args...)
+	cmd.Dir = l.dir
+	cmd.Env = append(os.Environ(), target.Env()...)
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("go-licenses %s (%s): %w", strings.Join(args, " "), target.Name(), err)
+	}
+	return string(out), nil
+}
+
+// collectGoModules runs go-licenses report (library/license id) and save
+// (license texts) for every shipped target, unions the libraries, and joins them
+// with the build list's versions.
 func (g *Generator) collectGoModules() ([]Entry, error) {
-	report, err := g.runGoLicenses("report", "./...")
+	tool, err := NewGoLicenses(g.repoRoot, g.scratchDir)
 	if err != nil {
 		return nil, err
 	}
 
-	savePath := filepath.Join(g.scratchDir, "go-license-texts")
-	if _, err := g.runGoLicenses("save", "./...", "--save_path="+savePath, "--force"); err != nil {
-		return nil, err
+	libraries := LibrarySet{}
+	for _, target := range shippedTargets {
+		report, err := tool.Run(target, "report", "./...")
+		if err != nil {
+			return nil, err
+		}
+		savePath := filepath.Join(g.scratchDir, "go-license-texts", target.Name())
+		if _, err := tool.Run(target, "save", "./...", "--save_path="+savePath, "--force"); err != nil {
+			return nil, err
+		}
+		libraries.Add(report, savePath)
 	}
 
 	versions, err := g.moduleVersions()
@@ -173,20 +299,12 @@ func (g *Generator) collectGoModules() ([]Entry, error) {
 	}
 
 	var entries []Entry
-	for _, line := range strings.Split(strings.TrimSpace(report), "\n") {
-		parts := strings.Split(line, ",")
-		if len(parts) != 3 {
-			continue
-		}
-		module, license := parts[0], parts[2]
-		if module == "sieve" { // ourselves
-			continue
-		}
-		text := readLicenseFile(filepath.Join(savePath, module))
+	for _, lib := range libraries.Sorted() {
+		text := readLicenseFile(filepath.Join(lib.TextDir, lib.Name))
 		entries = append(entries, Entry{
-			Name:      module,
-			Version:   versions.of(module),
-			License:   license,
+			Name:      lib.Name,
+			Version:   versions.of(lib.Name),
+			License:   lib.License,
 			Copyright: copyrightLine(text),
 			Source:    "go",
 			Text:      text,
@@ -196,23 +314,6 @@ func (g *Generator) collectGoModules() ([]Entry, error) {
 		return nil, fmt.Errorf("go-licenses report produced no modules")
 	}
 	return entries, nil
-}
-
-// runGoLicenses invokes a pinned go-licenses via `go run`. CGO is disabled so
-// the tool binary links statically — the nix dev shell's glibc paths make
-// dynamically linked `go run` artifacts unexecutable (same root cause as the
-// CGO_ENABLED=0 rule for go test).
-func (g *Generator) runGoLicenses(args ...string) (string, error) {
-	full := append([]string{"run", "github.com/google/go-licenses@v1.6.0"}, args...)
-	cmd := exec.Command("go", full...)
-	cmd.Dir = g.repoRoot
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
-	cmd.Stderr = os.Stderr
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("go-licenses %s: %w", strings.Join(args, " "), err)
-	}
-	return string(out), nil
 }
 
 // ModuleVersions answers what version of a module a LIBRARY belongs to.
