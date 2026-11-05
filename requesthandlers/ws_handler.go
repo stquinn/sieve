@@ -19,6 +19,7 @@ import (
 	"sieve/sieve/command"
 	"sieve/sieve/domain"
 	"sieve/sieve/editor"
+	"sieve/sieve/ink"
 	"sieve/sieve/protocol"
 
 	"github.com/go-chi/chi/v5"
@@ -39,6 +40,8 @@ type WsHandler struct {
 	workspaceFrames map[string]frameHandler
 	channelsMu      sync.RWMutex
 	channels        map[string]*wsConn // uuid (or the workspace sentinel) -> the LATEST connection's channel
+	inkMu           sync.Mutex
+	ink             *inkStream // bound to the ServiceProvider's current InkService by inkStream()
 }
 
 // wsConn identifies one live connection's write channel. The uuid's channel —
@@ -111,6 +114,7 @@ func NewWsHandler(sp *sieve.ServiceProvider, broadcast *WorkspaceBroadcast, toke
 		protocol.TypeTextReplace:       h.handleTextReplace,
 		protocol.TypeFeatureControl:    h.handleDocumentFeatureControl,
 		protocol.TypeSetPresenting:     h.handleSetPresenting,
+		protocol.TypeInkPage:           h.handleInkPage,
 	}
 	h.workspaceFrames = map[string]frameHandler{
 		protocol.TypePing:           h.handlePing,
@@ -445,6 +449,7 @@ func (h *WsHandler) handleDocumentWS(w http.ResponseWriter, r *http.Request) {
 	if h.ServiceProvider.Editor != nil {
 		h.ServiceProvider.Editor.SetLifecycleListener(h)
 	}
+	h.inkStream()
 
 	writeMsg := h.writerFor(conn, protocol.ChannelDocument, uuid)
 
@@ -460,6 +465,9 @@ func (h *WsHandler) handleDocumentWS(w http.ResponseWriter, r *http.Request) {
 		ch.closed.Store(true)
 		if h.unregister(uuid, ch) {
 			h.ServiceProvider.Editor.Close(uuid)
+			if stream := h.inkStream(); stream != nil {
+				stream.release(uuid)
+			}
 		} else {
 			logger.Info("ws: stale teardown — successor active, skipping close", "uuid", uuid)
 		}
@@ -627,6 +635,41 @@ func (h *WsHandler) handleEnterWysiwyg(f inboundFrame) {
 		}
 		f.reply(reply)
 	}
+}
+
+// inkStream is the stream over the ServiceProvider's current InkService, subscribed on first use
+// and replaced when the service is; nil while there is none.
+func (h *WsHandler) inkStream() *inkStream {
+	h.inkMu.Lock()
+	defer h.inkMu.Unlock()
+	var svc *ink.InkService
+	if h.ServiceProvider != nil {
+		svc = h.ServiceProvider.Ink
+	}
+	if h.ink != nil && h.ink.svc != svc {
+		h.ink.close()
+		h.ink = nil
+	}
+	if h.ink == nil && svc != nil {
+		h.ink = newInkStream(svc, h.sendTo)
+	}
+	return h.ink
+}
+
+// handleInkPage answers with a page of this channel's Digital Note. It is the ink side's alone:
+// the editor holds the note's block and nothing drawn on it.
+func (h *WsHandler) handleInkPage(f inboundFrame) {
+	var msg protocol.InkPageFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeInkPage, err)
+		return
+	}
+	stream := h.inkStream()
+	if stream == nil {
+		f.reply(protocol.NewInkPageRefusedFrame(msg.OpID, msg.PageID, errors.New("ink is unavailable")))
+		return
+	}
+	stream.answerPage(f.uuid, msg, f.reply)
 }
 
 // handleSetPresenting records Presentation Mode on the session tab and answers

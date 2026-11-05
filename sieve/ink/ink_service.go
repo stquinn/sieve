@@ -310,12 +310,9 @@ func (s *InkService) Status() Status {
 // ExportPage is the page at index page of the Digital Note in container uuid, in the §4.2 export
 // shape. A container that is not a Digital Note, or a page it does not have, is ErrNoSuchPage.
 func (s *InkService) ExportPage(uuid string, page int) ([]byte, error) {
-	c, err := s.containers.Load(uuid)
+	c, err := s.digitalNote(uuid)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", ErrNoSuchPage, uuid, err)
-	}
-	if c.Kind() != KindDigitalNote {
-		return nil, fmt.Errorf("%w: %s is a %s", ErrNoSuchPage, uuid, c.Kind())
+		return nil, err
 	}
 	var log []byte
 	if asset, err := s.containers.LoadAsset(c, StrokesKey); err == nil {
@@ -326,6 +323,40 @@ func (s *InkService) ExportPage(uuid string, page int) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %s has %d pages, not page %d", ErrNoSuchPage, uuid, note.PageCount(), page)
 	}
 	return note.ExportPage(page)
+}
+
+// noteLog is the whole log of the Digital Note in container uuid as it stands now: the open
+// session's replica of it, queue included, otherwise its asset. A container that is not a
+// Digital Note is ErrNoSuchPage.
+func (s *InkService) noteLog(uuid string) ([]byte, error) {
+	c, err := s.digitalNote(uuid)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	run := s.run
+	s.mu.Unlock()
+	if run != nil {
+		if log, ok := run.replicas.log(uuid); ok {
+			return log, nil
+		}
+	}
+	if asset, err := s.containers.LoadAsset(c, StrokesKey); err == nil {
+		return asset.Body(), nil
+	}
+	return nil, nil
+}
+
+// digitalNote is the container uuid, which must be a Digital Note; otherwise ErrNoSuchPage.
+func (s *InkService) digitalNote(uuid string) (*domain.BlockContainer, error) {
+	c, err := s.containers.Load(uuid)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %v", ErrNoSuchPage, uuid, err)
+	}
+	if c.Kind() != KindDigitalNote {
+		return nil, fmt.Errorf("%w: %s is a %s", ErrNoSuchPage, uuid, c.Kind())
+	}
+	return c, nil
 }
 
 // ensureKey is the key in settings, minted and saved when there is none.

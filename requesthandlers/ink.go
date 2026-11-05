@@ -1,6 +1,7 @@
 package requesthandlers
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -11,6 +12,8 @@ import (
 	"sieve/logger"
 	"sieve/sieve"
 	"sieve/sieve/ink"
+	"sieve/sieve/ink/link"
+	"sieve/sieve/protocol"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -164,6 +167,132 @@ func (v *inkSessionView) duration(d time.Duration) string {
 		return fmt.Sprintf("%d ms", ms.Milliseconds())
 	default:
 		return fmt.Sprintf("%.1f s", d.Seconds())
+	}
+}
+
+// inkStream carries one InkService's events to the document socket of the container each concerns,
+// and answers that socket's page requests from the notes it holds open for them. It is the
+// service's Listener, so its listener methods run one at a time on the service's goroutine for
+// it: a socket slow to take a frame holds back only this stream's queue, never the link.
+type inkStream struct {
+	svc   *ink.InkService
+	send  func(uuid string, frame interface{})
+	notes *ink.OpenNotes
+
+	// pen and live are the listener's own, touched only by its methods.
+	pen ink.LivePen
+	// live is the container the service last named live, "" when none.
+	live string
+}
+
+var _ ink.Listener = (*inkStream)(nil)
+
+// newInkStream subscribes a stream to svc that sends through send, a container's uuid naming the
+// socket that has it open.
+func newInkStream(svc *ink.InkService, send func(uuid string, frame interface{})) *inkStream {
+	s := &inkStream{svc: svc, send: send, notes: ink.NewOpenNotes(svc)}
+	svc.Subscribe(s)
+	return s
+}
+
+// close unsubscribes the stream.
+func (s *inkStream) close() { s.svc.Unsubscribe(s) }
+
+// answerPage answers an ink-page for container uuid through reply, holding the container's note
+// open from now until release.
+func (s *inkStream) answerPage(uuid string, msg protocol.InkPageFrame, reply func(interface{})) {
+	refuse := func(err error) { reply(protocol.NewInkPageRefusedFrame(msg.OpID, msg.PageID, err)) }
+	page, err := link.ParseID(msg.PageID)
+	if err != nil {
+		refuse(fmt.Errorf("%w: page %q: %v", ink.ErrNoSuchPage, msg.PageID, err))
+		return
+	}
+	note, err := s.notes.Open(uuid)
+	if err != nil {
+		refuse(err)
+		return
+	}
+	err = note.AnswerPage(page, func(export []byte, seq uint32) error {
+		var decoded protocol.InkPageExport
+		if err := json.Unmarshal(export, &decoded); err != nil {
+			return err
+		}
+		reply(protocol.NewInkPageContentFrame(msg.OpID, msg.PageID, seq, decoded))
+		return nil
+	})
+	if err != nil {
+		refuse(err)
+	}
+}
+
+// release stops holding container uuid's note open.
+func (s *inkStream) release(uuid string) { s.notes.Release(uuid) }
+
+func (s *inkStream) LinkChanged(ink.LinkState) {}
+
+// RecordCommitted sends the stroke change rec made, if any, to the container's socket when its
+// note is held open.
+func (s *inkStream) RecordCommitted(container string, _ link.ID, rec link.Record) {
+	s.notes.Commit(container, rec, func(c ink.StrokeChange) {
+		if c.Added == nil {
+			s.send(container, protocol.NewInkStrokeRemovedFrame(c.Page.String(), c.Seq, c.Removed.String()))
+			return
+		}
+		raw, err := c.ExportStroke()
+		var stroke protocol.InkExportStroke
+		if err == nil {
+			err = json.Unmarshal(raw, &stroke)
+		}
+		if err != nil {
+			logger.Error("ink: exporting a committed stroke", "container", container, "seq", c.Seq, "err", err.Error())
+			return
+		}
+		s.send(container, protocol.NewInkStrokeAddedFrame(c.Page.String(), c.Seq, stroke))
+	})
+}
+
+// LiveInk sends records, as marks in page units, to the live container's socket.
+func (s *inkStream) LiveInk(records []link.LiveRecord) {
+	marks := s.pen.Marks(records)
+	if s.live == "" || len(marks) == 0 {
+		return
+	}
+	wire := make([]protocol.InkLiveRecord, len(marks))
+	for i, m := range marks {
+		wire[i] = protocol.InkLiveRecord{Record: s.recordWord(m.Type), Stroke: m.Stroke, X: m.X, Y: m.Y,
+			Pressure: m.Pressure, TMillis: m.TMillis, TiltX: m.TiltX, TiltY: m.TiltY}
+		if m.Type == link.LiveBegin {
+			wire[i].Tool, wire[i].WidthClass = m.Tool.String(), m.WidthClass
+		}
+	}
+	s.send(s.live, protocol.NewInkLiveFrame(wire))
+}
+
+// LiveChanged tells the container that stops being live that it has, and the live one which page.
+func (s *inkStream) LiveChanged(live ink.LiveNote) {
+	was := s.live
+	s.live = live.Container
+	if was != "" && was != live.Container {
+		s.send(was, protocol.NewInkLivePageFrame(""))
+	}
+	if live.Container != "" {
+		s.send(live.Container, protocol.NewInkLivePageFrame(live.Page.String()))
+	}
+}
+
+// recordWord is a live mark's type as an ink-live record names it.
+func (s *inkStream) recordWord(t link.LiveType) string {
+	switch t {
+	case link.LiveBegin:
+		return protocol.InkLiveBegin
+	case link.LivePoint:
+		return protocol.InkLivePoint
+	case link.LiveEnd:
+		return protocol.InkLiveEnd
+	case link.LiveRemove:
+		return protocol.InkLiveRemove
+	default:
+		return protocol.InkLiveView
 	}
 }
 

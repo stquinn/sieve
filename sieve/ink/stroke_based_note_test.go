@@ -187,6 +187,55 @@ func TestReplayFollowsTheContractRules(t *testing.T) {
 	}
 }
 
+// Each record reports what it did on top of a note of two pages, page 1 holding stroke 1 and page
+// 2 removed holding stroke 2.
+func TestApplyReportsWhatEachRecordDid(t *testing.T) {
+	before := []link.Record{header("n"), pageAdd(page(1), 0, nil, link.BoundsFixed), strokeAdd(page(1), stroke(1)),
+		pageAdd(page(2), 1, nil, link.BoundsFixed), strokeAdd(page(2), stroke(2)), pageRemove(page(2))}
+	for _, tc := range []struct {
+		name string
+		rec  link.Record
+		want Effect
+		// fold is what a note keeping no strokes reports.
+		fold Effect
+	}{
+		{"a stroke-add of a new id", strokeAdd(page(1), stroke(3)), StrokeAdded, NoEffect},
+		{"a stroke-add of a present id", strokeAdd(page(1), stroke(1)), NoEffect, NoEffect},
+		{"a stroke-add on a removed page", strokeAdd(page(2), stroke(3)), NoEffect, NoEffect},
+		{"a stroke-add on an unknown page", strokeAdd(page(9), stroke(3)), NoEffect, NoEffect},
+		{"a stroke-remove of a present id", strokeRemove(page(1), stroke(1)), StrokeRemoved, NoEffect},
+		{"a stroke-remove of an absent id", strokeRemove(page(1), stroke(9)), NoEffect, NoEffect},
+		{"a stroke-remove on a removed page", strokeRemove(page(2), stroke(2)), NoEffect, NoEffect},
+		{"a page-add of a new page", pageAdd(page(3), 2, nil, link.BoundsFixed), NoteChanged, NoteChanged},
+		{"a page-add restoring a removed page", pageAdd(page(2), 1, dots, link.BoundsFixed), NoteChanged, NoteChanged},
+		{"a page-add of a present page", pageAdd(page(1), 0, dots, link.BoundsFixed), NoEffect, NoEffect},
+		{"a page-remove of a present page", pageRemove(page(1)), NoteChanged, NoteChanged},
+		{"a page-remove of a removed page", pageRemove(page(2)), NoEffect, NoEffect},
+		{"a page-template of a present page", pageTemplate(page(1), dots), NoteChanged, NoteChanged},
+		{"a page-template of a removed page", pageTemplate(page(2), dots), NoEffect, NoEffect},
+		{"a note-header", header("again"), NoteChanged, NoteChanged},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, n := range []struct {
+				note *StrokeBasedNote
+				want Effect
+			}{{NewStrokeBasedNote("c"), tc.want}, {NewHeaderFold("c"), tc.fold}} {
+				for _, r := range before {
+					n.note.Apply(r)
+				}
+				if got := n.note.Apply(tc.rec); got != n.want {
+					t.Errorf("keeping strokes %t: effect %d, want %d", n.note.keepStrokes, got, n.want)
+				}
+			}
+		})
+	}
+	n := ReadStrokeBasedNote("c", jsonlOf(t, logOf(before...)))
+	n.Apply(pageAdd(page(2), 1, nil, link.BoundsFixed))
+	if got := shape(n); got != "p1[- fixed]:1 p2[- fixed]:2" {
+		t.Errorf("a restored page holds %q", got)
+	}
+}
+
 func TestReadStopsAtTheFirstLineThatDoesNotFollow(t *testing.T) {
 	good := strokesLog(3)
 	whole := jsonlOf(t, good)

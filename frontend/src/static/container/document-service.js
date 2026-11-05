@@ -18,8 +18,8 @@
 // flushContents and setContents fall back to the HTTP save; getContents and exportAs
 // fall back to the load answer; focus, persist, retry and setFeature drop; the
 // membership verbs and extract resolve {ok:false}; detectExtractions resolves no
-// offers and replaceText resolves `error`. paste REJECTS, so a channel-less caller
-// of it needs its own catch.
+// offers and replaceText resolves `error`. paste and inkPage REJECT, so a
+// channel-less caller of either needs its own catch.
 
 import { ContractViolation } from '../contract/sieve-block.js'
 import { DocumentFrame } from '../generated/protocol.js'
@@ -453,6 +453,46 @@ export class DocumentService {
       parameters: parameters || {},
     })
   }
+
+  /**
+   * One page of this container's Digital Note as it is drawn now, in the export
+   * shape, and the seq of the last record of the note's log it reflects. Every
+   * later change to the page arrives as an ink frame naming a seq above it.
+   *
+   * REJECTS when Go refuses — the container is no Digital Note, or the note has
+   * no such page — on a timeout, and on a channel-less uuid.
+   * @param {string} uuid @param {string} pageId
+   * @returns {Promise<{page: Record<string, any>, seq: number}>}
+   */
+  inkPage(uuid, pageId) {
+    return this.#transport._awaitReply(uuid, { type: DocumentFrame.INK_PAGE, pageId: pageId }, 'ink-page ' + pageId)
+      .then((reply) => {
+        if (reply.error || !reply.page) throw new Error('ink-page ' + pageId + ' refused: ' + (reply.error || 'no page'))
+        return { page: reply.page, seq: reply.seq || 0 }
+      })
+  }
+
+  /**
+   * Subscribe to this container's ink frames — strokes added and removed, live
+   * records and the live page — as Go sent them, in arrival order. The page
+   * answer is correlated and is not among them.
+   * @param {string} uuid @param {(msg: Record<string, any>) => void} observer
+   * @returns {() => void} unsubscribe
+   */
+  observeInk(uuid, observer) {
+    if (typeof observer !== 'function') throw new ContractViolation('DocumentService.observeInk: observer must be a function')
+    return this.#transport.observeFrames(uuid, (msg) => {
+      if (DocumentService.#INK_FRAMES.includes(msg.type)) observer(msg)
+    })
+  }
+
+  /** The ink frames a Digital Note's channel pushes. */
+  static #INK_FRAMES = Object.freeze([
+    DocumentFrame.INK_STROKE_ADDED,
+    DocumentFrame.INK_STROKE_REMOVED,
+    DocumentFrame.INK_LIVE,
+    DocumentFrame.INK_LIVE_PAGE,
+  ])
 
   /**
    * The block-op envelope. Every membership verb rides it, and the document is named

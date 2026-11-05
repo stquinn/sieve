@@ -114,18 +114,35 @@ func (n *StrokeBasedNote) Strokes(page int) []link.Record {
 	return append([]link.Record(nil), n.pages[page].strokes...)
 }
 
-// Apply replays one record. Records the rules make no-ops change nothing: a stroke-add of an id
-// the page holds, a removal of what is absent, a page-add of a present page, and any page or
-// stroke record naming a page not currently present. A page-add of a removed page restores it
-// with its strokes and the record's template; a page is inserted at its index, clamped to the
-// pages present, and never moved after.
-func (n *StrokeBasedNote) Apply(r link.Record) {
+// Effect is what applying one record did to a note.
+type Effect uint8
+
+const (
+	// NoEffect is a record the replay rules make a no-op.
+	NoEffect Effect = iota
+	// StrokeAdded is the record's stroke now present on the record's page.
+	StrokeAdded
+	// StrokeRemoved is the record's stroke gone from the record's page.
+	StrokeRemoved
+	// NoteChanged is the header or the page list changed: a page added, removed, restored or
+	// given another template, or a note-header. A restored page's strokes are present again.
+	NoteChanged
+)
+
+// Apply replays one record and reports what it did. Records the rules make no-ops change
+// nothing: a stroke-add of an id the page holds, a removal of what is absent, a page-add of a
+// present page, and any page or stroke record naming a page not currently present. A page-add of
+// a removed page restores it with its strokes and the record's template; a page is inserted at
+// its index, clamped to the pages present, and never moved after. A note that keeps no strokes
+// reports no stroke effect.
+func (n *StrokeBasedNote) Apply(r link.Record) Effect {
 	switch r.Op {
 	case link.OpNoteHeader:
 		n.header = r
+		return NoteChanged
 	case link.OpPageAdd:
 		if n.present(r.Page) >= 0 {
-			return
+			return NoEffect
 		}
 		p, wasRemoved := n.removed[r.Page]
 		if wasRemoved {
@@ -136,19 +153,23 @@ func (n *StrokeBasedNote) Apply(r link.Record) {
 		}
 		at := min(int(r.Index), len(n.pages))
 		n.pages = slices.Insert(n.pages, at, p)
+		return NoteChanged
 	case link.OpPageRemove:
 		if i := n.present(r.Page); i >= 0 {
 			n.removed[r.Page] = n.pages[i]
 			n.pages = slices.Delete(n.pages, i, i+1)
+			return NoteChanged
 		}
 	case link.OpPageTemplate:
 		if i := n.present(r.Page); i >= 0 {
 			n.pages[i].Template = r.Template
+			return NoteChanged
 		}
 	case link.OpStrokeAdd:
 		if i := n.present(r.Page); i >= 0 && n.keepStrokes && !n.pages[i].held[r.Stroke] {
 			n.pages[i].strokes = append(n.pages[i].strokes, r)
 			n.pages[i].held[r.Stroke] = true
+			return StrokeAdded
 		}
 	case link.OpStrokeRemove:
 		if i := n.present(r.Page); i >= 0 && n.pages[i].held[r.Stroke] {
@@ -160,8 +181,10 @@ func (n *StrokeBasedNote) Apply(r link.Record) {
 					break
 				}
 			}
+			return StrokeRemoved
 		}
 	}
+	return NoEffect
 }
 
 // present is the index of the page among the pages present, -1 when it is not present.
@@ -216,13 +239,18 @@ func (n *StrokeBasedNote) ExportPage(page int) ([]byte, error) {
 		Strokes: []exportStroke{},
 	}
 	for _, s := range n.pages[page].strokes {
-		points := make([]exportPoint, len(s.Points))
-		for i, p := range s.Points {
-			points[i] = exportPoint{p.X, p.Y, p.Pressure, p.TMillis, p.TiltX, p.TiltY, 0}
-		}
-		out.Strokes = append(out.Strokes, exportStroke{s.Stroke.String(), s.Tool.String(), s.WidthClass, s.StartMillis, points})
+		out.Strokes = append(out.Strokes, newExportStroke(s))
 	}
 	return json.Marshal(out)
+}
+
+// newExportStroke is the stroke of stroke-add record s in the §4.2 export shape.
+func newExportStroke(s link.Record) exportStroke {
+	points := make([]exportPoint, len(s.Points))
+	for i, p := range s.Points {
+		points[i] = exportPoint{p.X, p.Y, p.Pressure, p.TMillis, p.TiltX, p.TiltY, 0}
+	}
+	return exportStroke{s.Stroke.String(), s.Tool.String(), s.WidthClass, s.StartMillis, points}
 }
 
 // The §4.2 export page, keys in the contract's order.

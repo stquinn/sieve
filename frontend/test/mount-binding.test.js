@@ -14,6 +14,7 @@ import { MountBinding } from '../src/static/shell/mount-binding.js'
 import { BlockProviderAdapter } from '../src/static/container/block-provider-adapter.js'
 import { WholeContentAdapter } from '../src/static/container/whole-content-adapter.js'
 import { ProviderAdapter } from '../src/static/container/provider-adapter.js'
+import { InkProviderAdapter } from '../src/static/container/ink-provider-adapter.js'
 import { DocumentFrame } from '../src/static/generated/protocol.js'
 import { ContractViolation } from '../src/static/contract/sieve-block.js'
 
@@ -60,6 +61,7 @@ describe('MountBinding', () => {
     ['a document', 'note', BlockProviderAdapter, true],
     ['a prompt', 'prompt', WholeContentAdapter, false],
     ['a block container', 'code', ProviderAdapter, true],
+    ['a digital note', 'digital-note', InkProviderAdapter, true],
   ])('mounts %s over the provider its Mounting names, announcing membership only on a channel', async (_name, kind, provider, channel) => {
     const rig = serviceRig({ uuid: null })
     const binding = new MountBinding(UUID, rig.documentService, new ContainerModelFeed(rig.documentService), kind, { lens: Object, provider: provider, channel: channel })

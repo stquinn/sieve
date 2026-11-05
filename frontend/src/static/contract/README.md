@@ -122,6 +122,16 @@ first keystroke, and it recognises the block's arrival by the plain id it chose.
   complete set of the host's derived text marks. `onChanged` carries nothing
   and is re-read from; `onMarksChanged` carries its answer, because marks are
   not container state there is anything to read back.
+- `container-feed-listener.js` — `onFeed`, the inbound channel for what happens
+  to a container that is not its state: events whose shape the container's kind
+  defines, never replayed, never part of a load, safe to miss, in order. Every
+  provider has `subscribeFeed`/`unsubscribeFeed`; a kind with no feed delivers
+  nothing.
+- `ink-container-provider.js` — `InkContainerProvider`, a Digital Note's
+  provider: the read minimum plus `loadPage(pageId)` (a query: the page in the
+  export shape and the seq it reflects), and the `InkFeed` event shapes its feed
+  delivers (a stroke added or removed above that seq, the live records, the live
+  page).
 - `selection-listener.js` — the one channel that flows the other way: a
   lens's selection/focus/caret advertisement, host-consumed.
 

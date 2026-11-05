@@ -42,6 +42,7 @@ alone, so the token appears in no response header.
 | `feature-control` | `protocol.FeatureControlFrame` | — | FeatureControlFrame switches one text-service feature on or off, and says what it is to work with. |
 | `flush` | `protocol.FlushFrame` | — | FlushFrame asks the shadow document to persist now rather than on its debounce. |
 | `focus` | `protocol.FocusFrame` | — | FocusFrame is the dwell ping: the user is looking at this document, which raises its focus count. |
+| `ink-page` | `protocol.InkPageFrame` | `opId` | InkPageFrame asks for one page of this channel's Digital Note as it is drawn now. |
 | `load` | `protocol.LoadFrame` | `opId` | LoadFrame asks for the document this channel is bound to, as the editor mounts it. |
 | `paste` | `protocol.PasteFrame` | `opId` | PasteFrame hands a clipboard to the server to make sense of. |
 | `ping` | `protocol.PingFrame` | — | PingFrame is a liveness probe, answered with a PongFrame. |
@@ -59,6 +60,11 @@ alone, so the token appears in no response header.
 | `error` | `protocol.ErrorFrame` | — | ErrorFrame reports that an operation failed, in words meant for the user. |
 | `export-content` | `protocol.ExportContentFrame` | `opId` | ExportContentFrame carries the exported document. |
 | `extract-ack` | `protocol.AckFrame` | `opId` | AckFrame is the request-correlated outcome of a block-op or an extract. |
+| `ink-live` | `protocol.InkLiveFrame` | — | InkLiveFrame is live records in the order the tablet sent them. |
+| `ink-live-page` | `protocol.InkLivePageFrame` | — | InkLivePageFrame is which page of this channel's note the tablet shows as being written, or that none is. |
+| `ink-page-content` | `protocol.InkPageContentFrame` | `opId` | InkPageContentFrame answers an ink-page: the page in the export shape and the seq of the last record it reflects, or why there is none. |
+| `ink-stroke-added` | `protocol.InkStrokeAddedFrame` | — | InkStrokeAddedFrame is a stroke now present on a page, committed by the record of Seq. |
+| `ink-stroke-removed` | `protocol.InkStrokeRemovedFrame` | — | InkStrokeRemovedFrame is a stroke gone from a page, removed by the record of Seq. |
 | `insert-block` | `protocol.InsertBlockFrame` | — | InsertBlockFrame is the render-back for a block the SERVER created: the client places this authoritative node at this index as a tracked transaction, and never computes a position of its own. |
 | `load-content` | `protocol.LoadContentFrame` | `opId` | LoadContentFrame answers a load. |
 | `markdown-content` | `protocol.MarkdownContentFrame` | `opId` | MarkdownContentFrame is the merged markdown that seeds the markdown editor after a mode switch. |
@@ -216,6 +222,16 @@ FocusFrame is the dwell ping: the user is looking at this document, which raises
 |---|---|---|---|
 | `type` | `string` | yes |  |
 
+#### `ink-page` — client → server
+
+InkPageFrame asks for one page of this channel's Digital Note as it is drawn now.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | no | echoed on the ink-page-content reply |
+| `pageId` | `string` | yes | the page's id, as the block's note.pages lists it |
+
 #### `load` — client → server
 
 LoadFrame asks for the document this channel is bound to, as the editor mounts it.
@@ -343,6 +359,60 @@ AckFrame is the request-correlated outcome of a block-op or an extract.
 | `opId` | `string` | yes |  |
 | `ok` | `bool` | yes |  |
 | `error` | `string` | no | present only when ok is false |
+
+#### `ink-live` — server → client
+
+InkLiveFrame is live records in the order the tablet sent them.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `records` | `[]protocol.InkLiveRecord` | yes | never empty |
+
+#### `ink-live-page` — server → client
+
+InkLivePageFrame is which page of this channel's note the tablet shows as being written, or that none is.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `live` | `bool` | yes | false when no page of this note is live any more |
+| `pageId` | `string` | no | the live page; absent when live is false |
+
+#### `ink-page-content` — server → client
+
+InkPageContentFrame answers an ink-page: the page in the export shape and the seq of the last record it reflects, or why there is none.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | no |  |
+| `pageId` | `string` | yes | the page asked for, echoed |
+| `seq` | `uint32` | yes | the seq of the last record of the note's log the page reflects; 0 when refused |
+| `page` | `*protocol.InkPageExport` | no | the page's strokes in the export shape; null when refused |
+| `error` | `string` | no | present only when there is no page: the channel holds no Digital Note, or the note has no page of that id |
+
+#### `ink-stroke-added` — server → client
+
+InkStrokeAddedFrame is a stroke now present on a page, committed by the record of Seq.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `pageId` | `string` | yes |  |
+| `seq` | `uint32` | yes | the seq of the record that added the stroke |
+| `stroke` | `protocol.InkExportStroke` | yes | the stroke in the export shape a page's strokes take |
+
+#### `ink-stroke-removed` — server → client
+
+InkStrokeRemovedFrame is a stroke gone from a page, removed by the record of Seq.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `pageId` | `string` | yes |  |
+| `seq` | `uint32` | yes | the seq of the record that removed the stroke |
+| `strokeId` | `string` | yes |  |
 
 #### `insert-block` — server → client
 
@@ -988,6 +1058,23 @@ InkExportTemplate is a page template: its id and its parameters by name.
 |---|---|---|---|
 | `id` | `string` | yes |  |
 | `params` | `map[string]float64` | yes |  |
+
+### `protocol.InkLiveRecord`
+
+InkLiveRecord is one record about the stroke under the pen on the live page, or about the window a whiteboard is viewed through, in page units.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `record` | `string` | yes | begin \| point \| end \| remove \| view |
+| `stroke` | `uint32` | yes | numbers the stroke within one connection to the tablet, not its id; 0 on a view |
+| `tool` | `string` | no | begin only: pen \| pencil |
+| `widthClass` | `uint8` | no | begin only: 1, 2 or 3 |
+| `x` | `float64` | yes | page units: a begin's origin, a point's place, a view's left edge; 0 otherwise |
+| `y` | `float64` | yes | page units: a begin's origin, a point's place, a view's top edge; 0 otherwise |
+| `pressure` | `float64` | yes | point only: 0 to 1 |
+| `tMillis` | `uint32` | yes | point only: milliseconds since its stroke's begin |
+| `tiltX` | `int8` | yes | point only: degrees |
+| `tiltY` | `int8` | yes | point only: degrees |
 
 ### `protocol.JobsSnapshot`
 

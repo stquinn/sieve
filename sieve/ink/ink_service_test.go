@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -660,5 +661,287 @@ func TestInkService_ExportsAHeldPageInTheExportShape(t *testing.T) {
 		if _, err := rig.svc.ExportPage(tc.uuid, tc.page); !errors.Is(err, ErrNoSuchPage) {
 			t.Errorf("%s: %v", tc.name, err)
 		}
+	}
+}
+
+// logsFunc is a noteLogs that answers with a function.
+type logsFunc func(uuid string) ([]byte, error)
+
+func (f logsFunc) noteLog(uuid string) ([]byte, error) { return f(uuid) }
+
+// openNotesOver holds notes open over a log source that answers every container with log.
+func openNotesOver(t *testing.T, log []link.Record) *OpenNotes {
+	jsonl := jsonlOf(t, log)
+	return &OpenNotes{logs: logsFunc(func(string) ([]byte, error) { return jsonl, nil }), notes: map[string]*OpenNote{}}
+}
+
+// pageView is a page as a consumer holds it: the answer's strokes, then every change above the
+// answer's seq, changes at or below it dropped.
+type pageView struct {
+	seq     uint32
+	strokes []string
+}
+
+func (v *pageView) answer(t *testing.T, export []byte, seq uint32) {
+	t.Helper()
+	var page protocol.InkPageExport
+	if err := json.Unmarshal(export, &page); err != nil {
+		t.Fatal(err)
+	}
+	v.seq, v.strokes = seq, nil
+	for _, s := range page.Strokes {
+		v.strokes = append(v.strokes, s.ID)
+	}
+}
+
+func (v *pageView) take(c StrokeChange) {
+	if c.Seq <= v.seq {
+		return
+	}
+	if c.Added != nil {
+		v.strokes = append(v.strokes, c.Added.Stroke.String())
+		return
+	}
+	v.strokes = slices.DeleteFunc(v.strokes, func(id string) bool { return id == c.Removed.String() })
+}
+
+// strokeIDs are the ids of a replay's strokes on its page at index i.
+func strokeIDs(n *StrokeBasedNote, i int) []string {
+	var ids []string
+	for _, s := range n.Strokes(i) {
+		ids = append(ids, s.Stroke.String())
+	}
+	return ids
+}
+
+// A page is answered with the strokes the whole log puts on it and the seq that log reaches: the
+// asset when no session holds the note, the open replica's asset and queue when one does.
+func TestOpenNotes_AnswerAPageAtTheSeqItsLogReaches(t *testing.T) {
+	records := inkLog()
+	for _, tc := range []struct {
+		name string
+		// hold opens the rig's note in a session that has written none of records to disk.
+		hold bool
+	}{{"from the asset", false}, {"from an open replica's unwritten queue", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newInkRig(t, records)
+			var uuid string
+			if tc.hold {
+				replicas := NewNoteReplicas(rig.containers, companionID)
+				replicas.flushBytes, replicas.flushAfter = 1<<30, time.Hour
+				opened, err := replicas.Open(noteID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, rec := range records {
+					body, _ := rec.Body()
+					if err := opened.Append(rec, body); err != nil {
+						t.Fatal(err)
+					}
+				}
+				t.Cleanup(func() { _ = replicas.End() })
+				uuid = opened.(*NoteReplica).UUID()
+				if _, err := rig.containers.LoadAsset(rig.container(), StrokesKey); err == nil {
+					t.Fatal("the queue reached the asset")
+				}
+				rig.svc.mu.Lock()
+				rig.svc.run = &sessionRun{replicas: replicas}
+				rig.svc.mu.Unlock()
+			} else {
+				if err := rig.sync(); err != nil {
+					t.Fatal(err)
+				}
+				uuid = rig.container().UUID()
+			}
+			notes := NewOpenNotes(rig.svc)
+			note, err := notes.Open(uuid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			replay := ReadStrokeBasedNote(uuid, jsonlOf(t, records))
+			for i, p := range replay.Pages() {
+				var view pageView
+				if err := note.AnswerPage(p.ID, func(export []byte, seq uint32) error { view.answer(t, export, seq); return nil }); err != nil {
+					t.Fatal(err)
+				}
+				if view.seq != uint32(len(records)) || fmt.Sprint(view.strokes) != fmt.Sprint(strokeIDs(replay, i)) {
+					t.Errorf("page %d answered at seq %d with %v, want seq %d with %v", i, view.seq, view.strokes, len(records), strokeIDs(replay, i))
+				}
+			}
+			if !notes.Holds(uuid) {
+				t.Error("the note is not held")
+			}
+		})
+	}
+}
+
+func TestOpenNotes_RefuseWhatIsNoDigitalNotePage(t *testing.T) {
+	rig := newInkRig(t, inkLog())
+	if err := rig.sync(); err != nil {
+		t.Fatal(err)
+	}
+	notes := NewOpenNotes(rig.svc)
+	unknown := "0199aaaa-0000-7000-8000-000000000000"
+	if _, err := notes.Open(unknown); !errors.Is(err, ErrNoSuchPage) || notes.Holds(unknown) {
+		t.Errorf("an unknown container: %v, held %t", err, notes.Holds(unknown))
+	}
+	note, err := notes.Open(rig.container().UUID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	if err := note.AnswerPage(page(9), func([]byte, uint32) error { called = true; return nil }); !errors.Is(err, ErrNoSuchPage) || called {
+		t.Errorf("an absent page: %v, answered %t", err, called)
+	}
+}
+
+// Each committed record hands out the stroke change the replay says it made, once.
+func TestOpenNote_CommitHandsOutEachStrokeChangeOnce(t *testing.T) {
+	base := logOf(header("n"), pageAdd(page(1), 0, nil, link.BoundsFixed), strokeAdd(page(1), stroke(1)),
+		pageAdd(page(2), 1, nil, link.BoundsFixed), pageRemove(page(2)))
+	at := func(seq int, r link.Record) link.Record { r.Seq = uint32(seq); return r }
+	next := func(r link.Record) link.Record { return at(len(base)+1, r) }
+	for _, tc := range []struct {
+		name string
+		rec  link.Record
+		want string
+	}{
+		{"a new stroke", next(strokeAdd(page(1), stroke(2))), "6 add p1 s2"},
+		{"a present stroke added again", next(strokeAdd(page(1), stroke(1))), ""},
+		{"a stroke removed", next(strokeRemove(page(1), stroke(1))), "6 remove p1 s1"},
+		{"an absent stroke removed", next(strokeRemove(page(1), stroke(9))), ""},
+		{"a stroke on a removed page", next(strokeAdd(page(2), stroke(2))), ""},
+		{"a page added", next(pageAdd(page(3), 2, nil, link.BoundsFixed)), ""},
+		{"a note-header", next(header("again")), ""},
+		{"a record already held", at(len(base), strokeAdd(page(1), stroke(2))), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			note, err := openNotesOver(t, base).Open("c")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			record := func(c StrokeChange) {
+				if c.Added != nil {
+					got = append(got, fmt.Sprintf("%d add p%x s%x", c.Seq, c.Page[15]-0x10, c.Added.Stroke[15]-0x40))
+				} else {
+					got = append(got, fmt.Sprintf("%d remove p%x s%x", c.Seq, c.Page[15]-0x10, c.Removed[15]-0x40))
+				}
+			}
+			note.Commit(tc.rec, record)
+			note.Commit(tc.rec, record)
+			if strings.Join(got, ",") != tc.want {
+				t.Errorf("changes %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A record past the next seq replays the log again, so the note stands where the log does.
+func TestOpenNote_ARecordPastAGapReplaysTheLog(t *testing.T) {
+	records := strokesLog(4)
+	served := records[:3]
+	notes := &OpenNotes{logs: logsFunc(func(string) ([]byte, error) { return jsonlOf(t, served), nil }), notes: map[string]*OpenNote{}}
+	note, err := notes.Open("c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	served = records
+	var changes int
+	note.Commit(records[5], func(StrokeChange) { changes++ })
+	var view pageView
+	if err := note.AnswerPage(page(1), func(export []byte, seq uint32) error { view.answer(t, export, seq); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if changes != 0 || view.seq != 6 || len(view.strokes) != 4 {
+		t.Errorf("%d changes; answered at seq %d with %d strokes", changes, view.seq, len(view.strokes))
+	}
+}
+
+// A consumer holding an answer and taking every change above its seq holds the replay of the
+// whole log, whichever side of the answer each record is committed on: before the log is read but
+// heard after, while the answer is being sent, or after.
+func TestOpenNote_AStrokeCommittedAroundAnAnswerIsNeitherLostNorDoubled(t *testing.T) {
+	records := strokesLog(3)
+	inLog := records[:4]
+	notes := &OpenNotes{logs: logsFunc(func(string) ([]byte, error) { return jsonlOf(t, inLog), nil }), notes: map[string]*OpenNote{}}
+	note, err := notes.Open("c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view pageView
+	var mu sync.Mutex
+	take := func(c StrokeChange) {
+		mu.Lock()
+		defer mu.Unlock()
+		view.take(c)
+	}
+	sent := make(chan struct{})
+	err = note.AnswerPage(page(1), func(export []byte, seq uint32) error {
+		mu.Lock()
+		view.answer(t, export, seq)
+		mu.Unlock()
+		// The record before the answer is heard only now; the next is committed while it is sent.
+		go func() {
+			notes.Commit("c", records[3], take)
+			notes.Commit("c", records[4], take)
+			close(sent)
+		}()
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-sent:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the commits never ran")
+	}
+	notes.Commit("c", records[4], take)
+	want := strokeIDs(ReadStrokeBasedNote("c", jsonlOf(t, records)), 0)
+	if fmt.Sprint(view.strokes) != fmt.Sprint(want) {
+		t.Errorf("the consumer holds %v, want %v", view.strokes, want)
+	}
+}
+
+// A note is registered before its log is read, so a record committed during the read reaches it.
+func TestOpenNotes_ARecordCommittedWhileTheLogIsReadReachesTheNote(t *testing.T) {
+	records := strokesLog(3)
+	changes := make(chan StrokeChange, 1)
+	var notes *OpenNotes
+	notes = &OpenNotes{logs: logsFunc(func(uuid string) ([]byte, error) {
+		go notes.Commit(uuid, records[4], func(c StrokeChange) { changes <- c })
+		return jsonlOf(t, records[:4]), nil
+	}), notes: map[string]*OpenNote{}}
+	if _, err := notes.Open("c"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case c := <-changes:
+		if c.Seq != 5 || c.Added == nil {
+			t.Errorf("change %+v", c)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the record committed during the read was lost")
+	}
+}
+
+// Records for a container whose note is not held, or no longer is, reach nothing.
+func TestOpenNotes_HoldNothingUnaskedAndReleaseWhatWasAsked(t *testing.T) {
+	records := strokesLog(2)
+	notes := openNotesOver(t, records[:3])
+	var changes int
+	count := func(StrokeChange) { changes++ }
+	notes.Commit("c", records[3], count)
+	if notes.Holds("c") || changes != 0 {
+		t.Fatalf("an unasked note: held %t, %d changes", notes.Holds("c"), changes)
+	}
+	if _, err := notes.Open("c"); err != nil {
+		t.Fatal(err)
+	}
+	notes.Release("c")
+	notes.Commit("c", records[3], count)
+	if notes.Holds("c") || changes != 0 {
+		t.Errorf("a released note: held %t, %d changes", notes.Holds("c"), changes)
 	}
 }

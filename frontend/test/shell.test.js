@@ -54,6 +54,7 @@ import { PromptEditor } from '../src/static/lens/prompt/prompt-editor.js'
 import { BlockLens } from '../src/static/lens/block/block-lens.js'
 import { LensTable } from '../src/static/shell/lens-table.js'
 import { ProviderAdapter } from '../src/static/container/provider-adapter.js'
+import { InkProviderAdapter } from '../src/static/container/ink-provider-adapter.js'
 import { WholeContentAdapter } from '../src/static/container/whole-content-adapter.js'
 import { BlockProviderAdapter } from '../src/static/container/block-provider-adapter.js'
 import { AbstractSurface } from '../src/static/lens/abstract-surface.js'
@@ -953,6 +954,7 @@ describe('the workspace LensTable — a kind decides the lens, never a uuid', ()
     ['buffer', NoteEditor, BlockProviderAdapter, true],
     ['prompt', PromptEditor, WholeContentAdapter, false],
     ['code', BlockLens, ProviderAdapter, true],
+    ['digital-note', BlockLens, InkProviderAdapter, true],
     ['a-kind-nothing-draws', BlockLens, ProviderAdapter, true],
     ['', NoteEditor, BlockProviderAdapter, true],
   ])('%j mounts its lens over its provider', (kind, lens, provider, channel) => {

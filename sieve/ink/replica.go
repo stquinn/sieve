@@ -139,6 +139,20 @@ func (rs *NoteReplicas) Notes() []SyncedNote {
 	return notes
 }
 
+// log is the whole log of the open replica whose container is uuid, as it stands now: its asset
+// followed by its queue, so it holds every record appended so far. False when no open replica
+// holds that container.
+func (rs *NoteReplicas) log(uuid string) ([]byte, bool) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	for _, r := range rs.open {
+		if r.UUID() == uuid {
+			return r.log(), true
+		}
+	}
+	return nil, false
+}
+
 // End writes every open replica's queue, then saves the block of each that changed since its
 // last save, and releases them all. A replica whose write failed is released unsaved, so its
 // block stays behind its asset. The next Have or Open looks for containers again.
@@ -412,6 +426,18 @@ func (r *NoteReplica) synced() (SyncedNote, bool) {
 	}
 	return SyncedNote{UUID: r.container.UUID(), Title: r.fold.Title(), Pages: r.fold.PageCount(), Seq: r.cursor.Seq,
 		Companion: r.owner.companion, Device: r.fold.Header().Device.Name}, true
+}
+
+// log is the asset followed by the queue, read under r.mu so no append falls between the two. r.mu
+// is not held.
+func (r *NoteReplica) log() []byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []byte
+	if asset, err := r.owner.containers.LoadAsset(r.container, StrokesKey); err == nil {
+		out = append(out, asset.Body()...)
+	}
+	return append(out, r.queue...)
 }
 
 // flush appends the queue to the asset; a failure sticks. r.mu is held.

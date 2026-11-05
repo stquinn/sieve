@@ -122,6 +122,43 @@ describe('DocumentService.detectExtractions — capability discovery over the do
   })
 })
 
+describe('DocumentService ink — a page asked for, and the ink frames observed', () => {
+  beforeEach(() => FakeSocket.reset())
+  const page = { note: { pageAspect: 0.75 }, strokes: [] }
+
+  it('sends {pageId} and resolves the page with the seq it reflects', async () => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    const pending = documentService.inkPage('doc-1', 'p1')
+    expect(sock.sentOfType('ink-page')[0]).toEqual({ type: 'ink-page', pageId: 'p1', opId: lastOpId(sock, 'ink-page') })
+    sock.driveMessage({ type: 'ink-page-content', opId: lastOpId(sock, 'ink-page'), pageId: 'p1', seq: 7, page })
+    await expect(pending).resolves.toEqual({ page, seq: 7 })
+  })
+
+  it('rejects a refusal, naming why', async () => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    const pending = documentService.inkPage('doc-1', 'p9')
+    sock.driveMessage({ type: 'ink-page-content', opId: lastOpId(sock, 'ink-page'), pageId: 'p9', seq: 0, page: null, error: 'no page p9' })
+    await expect(pending).rejects.toThrow('no page p9')
+  })
+
+  it('rejects with no channel', async () => {
+    const { documentService } = serviceRig({ uuid: null })
+    await expect(documentService.inkPage('doc-1', 'p1')).rejects.toThrow()
+  })
+
+  it('observes the four pushed ink frames, in order, and nothing else', () => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    /** @type {string[]} */ const types = []
+    const stop = documentService.observeInk('doc-1', (msg) => types.push(msg.type))
+    for (const type of ['ink-live-page', 'insert-block', 'ink-live', 'ink-stroke-added', 'block-attrs-updated', 'ink-stroke-removed']) {
+      sock.driveMessage({ type })
+    }
+    stop()
+    sock.driveMessage({ type: 'ink-live' })
+    expect(types).toEqual(['ink-live-page', 'ink-live', 'ink-stroke-added', 'ink-stroke-removed'])
+  })
+})
+
 // ONE MAPPING FROM MARK TO FRAME, and every door takes it — the lens's void
 // `requestReplaceText` and the shell's answering `MountBinding.replaceText` alike.
 // A second mapping would be a second chance to send an anchor the server cannot

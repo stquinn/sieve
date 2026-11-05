@@ -38,6 +38,15 @@ func outboundWireCases() []wireCase {
 		Grain: domain.GrainWord, Start: 15, End: 18, Class: domain.TextClassProse,
 	}}
 	boom := errors.New("boom")
+	inkStroke := InkExportStroke{ID: "s1", Tool: "pen", WidthClass: 2, StartMillis: 5,
+		Points: []InkExportPoint{{X: 0.25, Y: 0.5, Pressure: 0.75, TiltX: 30, TiltY: -30}}}
+	inkStrokeJSON := `{"id":"s1","tool":"pen","widthClass":2,"startMillis":5,"points":[{"x":0.25,"y":0.5,"pressure":0.75,"tMillis":0,"tiltX":30,"tiltY":-30,"size":0}]}`
+	inkPage := InkPageExport{
+		Note: InkExportNote{ID: "n1", Created: "2023-11-14T22:13:20Z", Title: "Ideas", PageAspect: 0.75,
+			Template: &InkExportTemplate{ID: "ruled", Params: map[string]float64{"spacing": 0.05}},
+			Device:   InkExportDevice{ID: "d", Name: "Note Air 2", Model: "ONYX"}},
+		Strokes: []InkExportStroke{inkStroke},
+	}
 
 	return []wireCase{
 		{
@@ -263,6 +272,58 @@ func outboundWireCases() []wireCase {
 			golden:  `{"type":"text-replace-ack","opId":"op-1","outcome":"error","error":"boom"}`,
 		},
 		{
+			name:    "ink-page-content",
+			channel: ChannelDocument,
+			frame:   NewInkPageContentFrame("op-1", "p1", 7, inkPage),
+			golden: `{"type":"ink-page-content","opId":"op-1","pageId":"p1","seq":7,"page":{"note":{"id":"n1","created":"2023-11-14T22:13:20Z",` +
+				`"title":"Ideas","pageAspect":0.75,"template":{"id":"ruled","params":{"spacing":0.05}},"device":{"id":"d","name":"Note Air 2","model":"ONYX"}},` +
+				`"strokes":[` + inkStrokeJSON + `]}}`,
+		},
+		{
+			// A refusal is told apart from a page by its error and its null page.
+			name:    "ink-page-content refused",
+			channel: ChannelDocument,
+			frame:   NewInkPageRefusedFrame("op-1", "p9", errors.New("no such page")),
+			golden:  `{"type":"ink-page-content","opId":"op-1","pageId":"p9","seq":0,"page":null,"error":"no such page"}`,
+		},
+		{
+			name:    "ink-stroke-added",
+			channel: ChannelDocument,
+			frame:   NewInkStrokeAddedFrame("p1", 8, inkStroke),
+			golden:  `{"type":"ink-stroke-added","pageId":"p1","seq":8,"stroke":` + inkStrokeJSON + `}`,
+		},
+		{
+			name:    "ink-stroke-removed",
+			channel: ChannelDocument,
+			frame:   NewInkStrokeRemovedFrame("p1", 9, "s1"),
+			golden:  `{"type":"ink-stroke-removed","pageId":"p1","seq":9,"strokeId":"s1"}`,
+		},
+		{
+			name:    "ink-live",
+			channel: ChannelDocument,
+			frame: NewInkLiveFrame([]InkLiveRecord{
+				{Record: InkLiveBegin, Stroke: 3, Tool: "pencil", WidthClass: 2, X: -0.5, Y: 1.25},
+				{Record: InkLivePoint, Stroke: 3, X: -0.25, Y: 1.5, Pressure: 0.5, TMillis: 16, TiltX: 10, TiltY: -10},
+				{Record: InkLiveView, X: -1, Y: 2},
+			}),
+			golden: `{"type":"ink-live","records":[` +
+				`{"record":"begin","stroke":3,"tool":"pencil","widthClass":2,"x":-0.5,"y":1.25,"pressure":0,"tMillis":0,"tiltX":0,"tiltY":0},` +
+				`{"record":"point","stroke":3,"x":-0.25,"y":1.5,"pressure":0.5,"tMillis":16,"tiltX":10,"tiltY":-10},` +
+				`{"record":"view","stroke":0,"x":-1,"y":2,"pressure":0,"tMillis":0,"tiltX":0,"tiltY":0}]}`,
+		},
+		{
+			name:    "ink-live-page",
+			channel: ChannelDocument,
+			frame:   NewInkLivePageFrame("p1"),
+			golden:  `{"type":"ink-live-page","live":true,"pageId":"p1"}`,
+		},
+		{
+			name:    "ink-live-page off",
+			channel: ChannelDocument,
+			frame:   NewInkLivePageFrame(""),
+			golden:  `{"type":"ink-live-page","live":false}`,
+		},
+		{
 			name:    "error",
 			channel: ChannelDocument,
 			frame:   NewErrorFrame("block-op create-block failed: nope"),
@@ -479,6 +540,12 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 			raw:  `{"type":"enter-wysiwyg","uuid":"doc-1"}`,
 			into: &EnterWysiwygFrame{},
 			want: &EnterWysiwygFrame{Type: TypeEnterWysiwyg},
+		},
+		{
+			name: "ink-page",
+			raw:  `{"type":"ink-page","opId":"op-7","pageId":"019a0000-0000-7000-8000-000000000011"}`,
+			into: &InkPageFrame{},
+			want: &InkPageFrame{Type: TypeInkPage, OpID: "op-7", PageID: "019a0000-0000-7000-8000-000000000011"},
 		},
 		{
 			name: "set-presenting",

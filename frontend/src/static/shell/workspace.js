@@ -13,6 +13,7 @@ import { DocumentService } from '../container/document-service.js'
 import { ProviderAdapter } from '../container/provider-adapter.js'
 import { WholeContentAdapter } from '../container/whole-content-adapter.js'
 import { BlockProviderAdapter } from '../container/block-provider-adapter.js'
+import { InkProviderAdapter } from '../container/ink-provider-adapter.js'
 import { NoteEditor } from '../lens/document-editor/note-editor.js'
 import { PromptEditor } from '../lens/prompt/prompt-editor.js'
 import { BlockLens } from '../lens/block/block-lens.js'
@@ -42,6 +43,7 @@ export class SieveWorkspace {
     note: DOCUMENT_MOUNTING,
     buffer: DOCUMENT_MOUNTING,
     prompt: Object.freeze({ lens: PromptEditor, provider: WholeContentAdapter, channel: false }),
+    'digital-note': Object.freeze({ lens: BlockLens, provider: InkProviderAdapter, channel: true }),
   }), Object.freeze({ lens: BlockLens, provider: ProviderAdapter, channel: true }))
 
   /** @type {Map<string, SieveTab>} uuid → Tab */

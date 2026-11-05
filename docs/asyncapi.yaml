@@ -35,6 +35,8 @@ channels:
         $ref: '#/components/messages/documentFlush'
       documentFocus:
         $ref: '#/components/messages/documentFocus'
+      documentInkPage:
+        $ref: '#/components/messages/documentInkPage'
       documentLoad:
         $ref: '#/components/messages/documentLoad'
       documentPaste:
@@ -59,6 +61,16 @@ channels:
         $ref: '#/components/messages/documentExportContent'
       documentExtractAck:
         $ref: '#/components/messages/documentExtractAck'
+      documentInkLive:
+        $ref: '#/components/messages/documentInkLive'
+      documentInkLivePage:
+        $ref: '#/components/messages/documentInkLivePage'
+      documentInkPageContent:
+        $ref: '#/components/messages/documentInkPageContent'
+      documentInkStrokeAdded:
+        $ref: '#/components/messages/documentInkStrokeAdded'
+      documentInkStrokeRemoved:
+        $ref: '#/components/messages/documentInkStrokeRemoved'
       documentInsertBlock:
         $ref: '#/components/messages/documentInsertBlock'
       documentLoadContent:
@@ -136,6 +148,7 @@ operations:
       - $ref: '#/channels/document/messages/documentFeatureControl'
       - $ref: '#/channels/document/messages/documentFlush'
       - $ref: '#/channels/document/messages/documentFocus'
+      - $ref: '#/channels/document/messages/documentInkPage'
       - $ref: '#/channels/document/messages/documentLoad'
       - $ref: '#/channels/document/messages/documentPaste'
       - $ref: '#/channels/document/messages/documentPing'
@@ -154,6 +167,11 @@ operations:
       - $ref: '#/channels/document/messages/documentError'
       - $ref: '#/channels/document/messages/documentExportContent'
       - $ref: '#/channels/document/messages/documentExtractAck'
+      - $ref: '#/channels/document/messages/documentInkLive'
+      - $ref: '#/channels/document/messages/documentInkLivePage'
+      - $ref: '#/channels/document/messages/documentInkPageContent'
+      - $ref: '#/channels/document/messages/documentInkStrokeAdded'
+      - $ref: '#/channels/document/messages/documentInkStrokeRemoved'
       - $ref: '#/channels/document/messages/documentInsertBlock'
       - $ref: '#/channels/document/messages/documentLoadContent'
       - $ref: '#/channels/document/messages/documentMarkdownContent'
@@ -337,6 +355,16 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolFocusFrame'
+    documentInkPage:
+      name: ink-page
+      title: ink-page
+      summary: InkPageFrame asks for one page of this channel's Digital Note as it is drawn now.
+      description: InkPageFrame asks for one page of this channel's Digital Note as it is drawn now.
+      contentType: application/json
+      correlationId:
+        $ref: '#/components/correlationIds/opId'
+      payload:
+        $ref: '#/components/schemas/ProtocolInkPageFrame'
     documentLoad:
       name: load
       title: load
@@ -486,6 +514,54 @@ components:
         $ref: '#/components/correlationIds/opId'
       payload:
         $ref: '#/components/schemas/ProtocolAckFrame'
+    documentInkLive:
+      name: ink-live
+      title: ink-live
+      summary: InkLiveFrame is live records in the order the tablet sent them.
+      description: InkLiveFrame is live records in the order the tablet sent them.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProtocolInkLiveFrame'
+    documentInkLivePage:
+      name: ink-live-page
+      title: ink-live-page
+      summary: InkLivePageFrame is which page of this channel's note the tablet shows as being written, or that none is.
+      description: |-
+        InkLivePageFrame is which page of this channel's note the tablet shows as being written, or
+        that none is. Live records reach the channel only while one is.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProtocolInkLivePageFrame'
+    documentInkPageContent:
+      name: ink-page-content
+      title: ink-page-content
+      summary: 'InkPageContentFrame answers an ink-page: the page in the export shape and the seq of the last record it reflects, or why there is none.'
+      description: |-
+        InkPageContentFrame answers an ink-page: the page in the export shape and the seq of the last
+        record it reflects, or why there is none. A client holding the page drops every stroke frame for
+        it whose seq is at or below Seq; every later change to the page arrives as a stroke frame above
+        it.
+      contentType: application/json
+      correlationId:
+        $ref: '#/components/correlationIds/opId'
+      payload:
+        $ref: '#/components/schemas/ProtocolInkPageContentFrame'
+    documentInkStrokeAdded:
+      name: ink-stroke-added
+      title: ink-stroke-added
+      summary: InkStrokeAddedFrame is a stroke now present on a page, committed by the record of Seq.
+      description: InkStrokeAddedFrame is a stroke now present on a page, committed by the record of Seq.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProtocolInkStrokeAddedFrame'
+    documentInkStrokeRemoved:
+      name: ink-stroke-removed
+      title: ink-stroke-removed
+      summary: InkStrokeRemovedFrame is a stroke gone from a page, removed by the record of Seq.
+      description: InkStrokeRemovedFrame is a stroke gone from a page, removed by the record of Seq.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProtocolInkStrokeRemovedFrame'
     documentInsertBlock:
       name: insert-block
       title: insert-block
@@ -1528,6 +1604,281 @@ components:
           type: string
       required:
         - type
+    ProtocolInkExportDevice:
+      type: object
+      description: InkExportDevice is the tablet the note was written on.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        model:
+          type: string
+      required:
+        - id
+        - name
+        - model
+    ProtocolInkExportNote:
+      type: object
+      description: InkExportNote is the header of the note a page belongs to.
+      properties:
+        id:
+          type: string
+          description: the companion's note id
+        created:
+          type: string
+          description: RFC 3339 in UTC
+        title:
+          type: string
+        pageAspect:
+          type: number
+          description: page width over page height
+        template:
+          $ref: '#/components/schemas/ProtocolInkExportTemplate'
+        device:
+          $ref: '#/components/schemas/ProtocolInkExportDevice'
+      required:
+        - id
+        - created
+        - title
+        - pageAspect
+        - device
+    ProtocolInkExportPoint:
+      type: object
+      description: InkExportPoint is one sampled pen point, in page units.
+      properties:
+        x:
+          type: number
+        y:
+          type: number
+        pressure:
+          type: number
+          description: 0 to 1
+        tMillis:
+          type: integer
+          description: milliseconds from the stroke's first point
+        tiltX:
+          type: integer
+        tiltY:
+          type: integer
+        size:
+          type: number
+          description: always 0 in an export
+      required:
+        - x
+        - y
+        - pressure
+        - tMillis
+        - tiltX
+        - tiltY
+        - size
+    ProtocolInkExportStroke:
+      type: object
+      description: InkExportStroke is one stroke on the page.
+      properties:
+        id:
+          type: string
+        tool:
+          type: string
+        widthClass:
+          type: integer
+        startMillis:
+          type: integer
+          description: milliseconds since the note's created
+        points:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProtocolInkExportPoint'
+      required:
+        - id
+        - tool
+        - widthClass
+        - startMillis
+        - points
+    ProtocolInkExportTemplate:
+      type: object
+      description: 'InkExportTemplate is a page template: its id and its parameters by name.'
+      properties:
+        id:
+          type: string
+        params:
+          type: object
+          additionalProperties:
+            type: number
+      required:
+        - id
+        - params
+    ProtocolInkLiveFrame:
+      type: object
+      description: InkLiveFrame is live records in the order the tablet sent them.
+      properties:
+        type:
+          type: string
+        records:
+          type: array
+          description: never empty
+          items:
+            $ref: '#/components/schemas/ProtocolInkLiveRecord'
+      required:
+        - type
+        - records
+    ProtocolInkLivePageFrame:
+      type: object
+      description: |-
+        InkLivePageFrame is which page of this channel's note the tablet shows as being written, or
+        that none is. Live records reach the channel only while one is.
+      properties:
+        type:
+          type: string
+        live:
+          type: boolean
+          description: false when no page of this note is live any more
+        pageId:
+          type: string
+          description: the live page; absent when live is false
+      required:
+        - type
+        - live
+    ProtocolInkLiveRecord:
+      type: object
+      description: |-
+        InkLiveRecord is one record about the stroke under the pen on the live page, or about the
+        window a whiteboard is viewed through, in page units. It is never logged: the committed stroke
+        arrives as an ink-stroke-added. A stroke is drawn from its begin; a point whose begin a client
+        did not see is dropped.
+      properties:
+        record:
+          type: string
+          description: begin | point | end | remove | view
+        stroke:
+          type: integer
+          description: numbers the stroke within one connection to the tablet, not its id; 0 on a view
+        tool:
+          type: string
+          description: 'begin only: pen | pencil'
+        widthClass:
+          type: integer
+          description: 'begin only: 1, 2 or 3'
+        x:
+          type: number
+          description: 'page units: a begin''s origin, a point''s place, a view''s left edge; 0 otherwise'
+        y:
+          type: number
+          description: 'page units: a begin''s origin, a point''s place, a view''s top edge; 0 otherwise'
+        pressure:
+          type: number
+          description: 'point only: 0 to 1'
+        tMillis:
+          type: integer
+          description: 'point only: milliseconds since its stroke''s begin'
+        tiltX:
+          type: integer
+          description: 'point only: degrees'
+        tiltY:
+          type: integer
+          description: 'point only: degrees'
+      required:
+        - record
+        - stroke
+        - x
+        - y
+        - pressure
+        - tMillis
+        - tiltX
+        - tiltY
+    ProtocolInkPageContentFrame:
+      type: object
+      description: |-
+        InkPageContentFrame answers an ink-page: the page in the export shape and the seq of the last
+        record it reflects, or why there is none. A client holding the page drops every stroke frame for
+        it whose seq is at or below Seq; every later change to the page arrives as a stroke frame above
+        it.
+      properties:
+        type:
+          type: string
+        opId:
+          type: string
+        pageId:
+          type: string
+          description: the page asked for, echoed
+        seq:
+          type: integer
+          description: the seq of the last record of the note's log the page reflects; 0 when refused
+        page:
+          $ref: '#/components/schemas/ProtocolInkPageExport'
+        error:
+          type: string
+          description: 'present only when there is no page: the channel holds no Digital Note, or the note has no page of that id'
+      required:
+        - type
+        - pageId
+        - seq
+    ProtocolInkPageExport:
+      type: object
+      description: |-
+        InkPageExport is one page of a Digital Note as the ink renderer takes it: the note's header and
+        the page's strokes in the order they were added.
+      properties:
+        note:
+          $ref: '#/components/schemas/ProtocolInkExportNote'
+        strokes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProtocolInkExportStroke'
+      required:
+        - note
+        - strokes
+    ProtocolInkPageFrame:
+      type: object
+      description: InkPageFrame asks for one page of this channel's Digital Note as it is drawn now.
+      properties:
+        type:
+          type: string
+        opId:
+          type: string
+          description: echoed on the ink-page-content reply
+        pageId:
+          type: string
+          description: the page's id, as the block's note.pages lists it
+      required:
+        - type
+        - pageId
+    ProtocolInkStrokeAddedFrame:
+      type: object
+      description: InkStrokeAddedFrame is a stroke now present on a page, committed by the record of Seq.
+      properties:
+        type:
+          type: string
+        pageId:
+          type: string
+        seq:
+          type: integer
+          description: the seq of the record that added the stroke
+        stroke:
+          $ref: '#/components/schemas/ProtocolInkExportStroke'
+      required:
+        - type
+        - pageId
+        - seq
+        - stroke
+    ProtocolInkStrokeRemovedFrame:
+      type: object
+      description: InkStrokeRemovedFrame is a stroke gone from a page, removed by the record of Seq.
+      properties:
+        type:
+          type: string
+        pageId:
+          type: string
+        seq:
+          type: integer
+          description: the seq of the record that removed the stroke
+        strokeId:
+          type: string
+      required:
+        - type
+        - pageId
+        - seq
+        - strokeId
     ProtocolInsertBlockFrame:
       type: object
       description: |-

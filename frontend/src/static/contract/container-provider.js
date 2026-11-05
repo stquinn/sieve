@@ -75,6 +75,9 @@
  * @property {(listener: import('./container-update-listener.js').ContainerUpdateListener) => void} subscribe
  *   cues the listener with the whole container immediately: bootstrap IS the first `onChanged`
  * @property {(listener: import('./container-update-listener.js').ContainerUpdateListener) => void} unsubscribe
+ * @property {(listener: import('./container-feed-listener.js').ContainerFeedListener) => void} subscribeFeed
+ *   hears the container's feed from now on; nothing that happened before is delivered
+ * @property {(listener: import('./container-feed-listener.js').ContainerFeedListener) => void} unsubscribeFeed
  */
 
 /**
