@@ -367,9 +367,10 @@ UUID is reserved for discovery.
 stream with real throughput, which GATT notifications are not. Android exposes it as
 `BluetoothAdapter.listenUsingL2capChannel()` (public since API 29). BlueZ exposes it as an
 `AF_BLUETOOTH` / `BTPROTO_L2CAP` socket over LE, reachable from Go without cgo.
-CoreBluetooth exposes it as `CBPeripheral.openL2CAPChannel(psm)`; the Go library in use
-does not wrap it, so the Mac needs a small Objective-C bridge, proven in phase 3 on the
-installed build (§10).
+CoreBluetooth exposes it as `CBPeripheral.openL2CAPChannel(psm)`. The Go Bluetooth library
+used on Linux does not offer it on macOS, but the CoreBluetooth binding beneath that library
+(`cbgo`) does, so the Mac radio is Go written against the binding, inside the Sieve process,
+with no Objective-C of Sieve's own; proven in phase 3 on the installed build (§10).
 
 Three facts the Linux spike (#205, 2026-11-02) fixed in the contract. The channel is opened
 with the *insecure* listener (`listenUsingInsecureL2capChannel`): there is no bonding, and the
@@ -896,10 +897,10 @@ its own issues, referencing the contract by section.
    `DigitalNoteKind` with `StrokeBasedNote` and its face, Settings → Ink. **Depends on #208.** The page can be inspected only via the fixtures and a debug dump at this point.
    The radio sits behind one interface inside `sieve/ink`, implemented per platform, so the
    Mac half is a second implementation and not a change to replication. **The Mac is
-   proven here, on the released build as installed on the corporate Mac:** the Objective-C
-   L2CAP bridge, `NSBluetoothAlwaysUsageDescription` in `build/darwin/Info.plist`, the
+   proven here, on the released build as installed on the corporate Mac:** the L2CAP channel
+   through the CoreBluetooth binding, `NSBluetoothAlwaysUsageDescription` in `build/darwin/Info.plist`, the
    privacy prompt under device management, throughput and connect time against Linux's
-   numbers. If the bridge is not viable, the Mac implementation falls back to GATT
+   numbers. If the channel is not viable there, the Mac implementation falls back to GATT
    notifications: the log stays correct and slower, and whether the live feed survives on
    that link is measured there. Linux does not wait on this result.
 4. **Page lens:** `DigitalNoteLens` in `page` mode, live repaint over the document wire,
