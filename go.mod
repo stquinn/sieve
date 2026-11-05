@@ -9,6 +9,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/modelcontextprotocol/go-sdk v1.6.1
+	github.com/tinygo-org/cbgo v0.1.0
 	github.com/wailsapp/wails/v2 v2.15.0
 	github.com/yuin/goldmark v1.8.2
 	golang.org/x/crypto v0.53.0
@@ -51,7 +52,6 @@ require (
 	github.com/soypat/cyw43439 v0.2.0 // indirect
 	github.com/soypat/lneto v0.4.0 // indirect
 	github.com/soypat/seqs v0.0.0-20260125140838-2c1c6b1bd69e // indirect
-	github.com/tinygo-org/cbgo v0.1.0 // indirect
 	github.com/tinygo-org/pio v0.3.0 // indirect
 	github.com/tkrajina/go-reflector v0.5.8 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect

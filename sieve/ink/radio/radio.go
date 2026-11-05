@@ -5,8 +5,17 @@ package radio
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
+)
+
+// The states of a host's Bluetooth that a person must change before a Dial can
+// succeed. A Dial wraps one of these when it fails for that reason.
+var (
+	ErrBluetoothOff           = errors.New("Bluetooth is off")
+	ErrBluetoothNotAuthorised = errors.New("Sieve is not authorised to use Bluetooth")
+	ErrBluetoothUnsupported   = errors.New("this computer does not support Bluetooth Low Energy")
 )
 
 // Radio finds a companion and opens a Link to it.

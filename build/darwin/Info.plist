@@ -23,6 +23,8 @@
         <string>true</string>
         <key>NSHumanReadableCopyright</key>
         <string>{{.Info.Copyright}}</string>
+        <key>NSBluetoothAlwaysUsageDescription</key>
+        <string>Sieve uses Bluetooth to receive handwritten notes from a paired SieveInk tablet.</string>
         {{if .Info.FileAssociations}}
         <key>CFBundleDocumentTypes</key>
         <array>
