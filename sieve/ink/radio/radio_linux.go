@@ -26,7 +26,11 @@ const (
 	solBluetooth   = 274
 	btSndMTU       = 12
 	btRcvMTU       = 13
-	wantRcvMTU     = 65535
+
+	// The largest SDU this end accepts, which is the largest the companion will
+	// send in one piece. It must stay at 4096: an Android companion delivers
+	// larger SDUs with bytes altered, and the frame they carry does not open.
+	wantRcvMTU = 4096
 
 	scanLimit       = 30 * time.Second
 	connectAttempts = 3

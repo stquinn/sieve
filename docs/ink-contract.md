@@ -303,6 +303,10 @@ The companion offers these presets:
 - **Channel.** An LE L2CAP connection-oriented channel opened by the companion with the
   *insecure* listener (`listenUsingInsecureL2capChannel`). The PSM is dynamic: Sieve MUST
   read `psm` on every connect and MUST NOT cache it.
+- **SDU size.** No SDU on the channel is larger than 4096 bytes. Sieve advertises that as its
+  receive MTU; the companion writes a longer frame as successive SDUs of at most 4096 bytes. A
+  frame is a run of bytes on the stream and may span SDUs. Android delivers larger SDUs with
+  bytes altered.
 - **Link priority.** Once the channel is accepted, the companion MUST open a GATT client
   handle on the same link and request `CONNECTION_PRIORITY_HIGH`. Requested earlier, it is
   overridden.
