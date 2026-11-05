@@ -7,8 +7,8 @@ import (
 	"strconv"
 
 	"sieve/sieve/block"
-	"sieve/sieve/blockcontainer"
 	"sieve/sieve/domain"
+	"sieve/sieve/services"
 	"sieve/store"
 )
 
@@ -19,11 +19,11 @@ import (
 // a leaf naming the block or an asset beside it, into a descriptor whose Kind is
 // the block's kind and whose Attrs carries its map.
 type BlockSource struct {
-	containers *blockcontainer.BlockContainerService
+	containers *services.BlockContainerService
 }
 
 // NewBlockSource builds the source over the container service.
-func NewBlockSource(containers *blockcontainer.BlockContainerService) *BlockSource {
+func NewBlockSource(containers *services.BlockContainerService) *BlockSource {
 	return &BlockSource{containers: containers}
 }
 

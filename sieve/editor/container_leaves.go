@@ -158,7 +158,7 @@ func (c *containerLeaves) assetNode(a store.AssetStorable) domain.NodeDescriptor
 		Title:   a.Key(),
 		Summary: "A file.",
 		Path:    path.Join(c.owner.ExternalRef(), a.Key()),
-		Bytes:   len(a.Body()),
+		Bytes:   int(a.Size()),
 	}
 }
 

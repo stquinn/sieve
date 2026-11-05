@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"sieve/logger"
-	"sieve/sieve/blockcontainer"
 	"sieve/sieve/domain"
 	"sieve/sieve/ink/link"
+	"sieve/sieve/services"
 )
 
 // The queue of a replica reaches its asset once it holds this many bytes, or this long after its
@@ -28,7 +28,7 @@ const (
 // container's strokes.jsonl asset is the log and the truth; its block's note_synced_seq is a copy
 // written after the asset, and so never ahead of it. Call End after every session.
 type NoteReplicas struct {
-	containers *blockcontainer.BlockContainerService
+	containers *services.BlockContainerService
 	kind       DigitalNoteKind
 	companion  string
 	flushBytes int
@@ -50,7 +50,7 @@ var _ link.Replicas = (*NoteReplicas)(nil)
 
 // NewNoteReplicas holds the replicas of the companion of identity companion in containers. The
 // digital-note kind must be registered in the registry containers was built over.
-func NewNoteReplicas(containers *blockcontainer.BlockContainerService, companion string) *NoteReplicas {
+func NewNoteReplicas(containers *services.BlockContainerService, companion string) *NoteReplicas {
 	return &NoteReplicas{
 		containers: containers, kind: NewDigitalNoteKind(), companion: companion,
 		flushBytes: flushBytes, flushAfter: flushAfter, open: map[link.ID]*NoteReplica{},

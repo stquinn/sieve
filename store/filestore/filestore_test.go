@@ -1289,6 +1289,9 @@ func TestAssetStorableIsBackedByItsFile(t *testing.T) {
 				if !bytes.Equal(as.Body(), af.data) {
 					t.Errorf("Body = %q, want %q", as.Body(), af.data)
 				}
+				if as.Size() != int64(len(af.data)) {
+					t.Errorf("Size = %d, want %d", as.Size(), len(af.data))
+				}
 
 				path := filepath.Join(fs.Root(), "store", "my-note", af.key)
 				if err := os.WriteFile(path, []byte("changed on disk"), 0o644); err != nil {
@@ -1302,6 +1305,9 @@ func TestAssetStorableIsBackedByItsFile(t *testing.T) {
 				}
 				if as.Body() != nil {
 					t.Errorf("Body of a missing file = %q, want nil", as.Body())
+				}
+				if as.Size() != 0 {
+					t.Errorf("Size of a missing file = %d, want 0", as.Size())
 				}
 			})
 		}

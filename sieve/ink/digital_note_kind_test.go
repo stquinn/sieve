@@ -10,9 +10,9 @@ import (
 
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
-	"sieve/sieve/blockcontainer"
 	"sieve/sieve/domain"
 	"sieve/sieve/ink/link"
+	"sieve/sieve/services"
 	"sieve/store/filestore"
 )
 
@@ -20,7 +20,7 @@ const companionID = "companion-identity"
 
 // newTestContainers builds the container service over a temporary store, with the digital-note
 // kind registered.
-func newTestContainers(t *testing.T) (*blockcontainer.BlockContainerService, *filestore.FileStore) {
+func newTestContainers(t *testing.T) (*services.BlockContainerService, *filestore.FileStore) {
 	t.Helper()
 	st, err := filestore.NewFileStore(t.TempDir(), "testhost")
 	if err != nil {
@@ -30,7 +30,7 @@ func newTestContainers(t *testing.T) (*blockcontainer.BlockContainerService, *fi
 	block.RegisterProcessor(&processors.ProseProcessor{})
 	block.RegisterProcessor(NewDigitalNoteKind())
 	t.Cleanup(block.ResetRegistry)
-	containers, err := blockcontainer.NewBlockContainerService(st, block.GlobalRegistry())
+	containers, err := services.NewBlockContainerService(st, block.GlobalRegistry())
 	if err != nil {
 		t.Fatalf("NewBlockContainerService: %v", err)
 	}
@@ -38,13 +38,13 @@ func newTestContainers(t *testing.T) (*blockcontainer.BlockContainerService, *fi
 }
 
 // reopen is a service over a fresh store at st's root, resolving everything from disk.
-func reopen(t *testing.T, st *filestore.FileStore) *blockcontainer.BlockContainerService {
+func reopen(t *testing.T, st *filestore.FileStore) *services.BlockContainerService {
 	t.Helper()
 	fresh, err := filestore.NewFileStore(st.Root(), "testhost")
 	if err != nil {
 		t.Fatal(err)
 	}
-	containers, err := blockcontainer.NewBlockContainerService(fresh, block.GlobalRegistry())
+	containers, err := services.NewBlockContainerService(fresh, block.GlobalRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,8 +181,8 @@ func TestDigitalNoteKind_FoundByItsFaceWithoutItsBody(t *testing.T) {
 	}
 }
 
-// The package sits below the editor and beside the services: EditorService and the composition
-// root call it, never the reverse.
+// The package sits below the editor and the AI subsystem: EditorService and the
+// composition root call it, never the reverse.
 func TestDigitalNoteKind_PackageImportsNothingAboveBlockContainers(t *testing.T) {
 	pkg, err := build.ImportDir(".", 0)
 	if err != nil {
@@ -190,7 +190,7 @@ func TestDigitalNoteKind_PackageImportsNothingAboveBlockContainers(t *testing.T)
 	}
 	for _, path := range pkg.Imports {
 		switch path {
-		case "sieve/sieve/editor", "sieve/sieve/services", "sieve/sieve/ai":
+		case "sieve/sieve/editor", "sieve/sieve/ai":
 			t.Errorf("imports %s", path)
 		}
 	}

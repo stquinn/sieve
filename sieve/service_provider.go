@@ -8,7 +8,6 @@ import (
 	"sieve/sieve/ai"
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
-	"sieve/sieve/blockcontainer"
 	"sieve/sieve/command"
 	"sieve/sieve/domain"
 	"sieve/sieve/editor"
@@ -23,7 +22,7 @@ type ServiceProvider struct {
 	Store       store.Store
 	Library     services.LibraryService
 	Documents   *services.DocumentService
-	Containers  *blockcontainer.BlockContainerService
+	Containers  *services.BlockContainerService
 	Nodes       *editor.Router
 	Assets      *services.AssetService
 	State       *services.StateService
@@ -125,14 +124,15 @@ func (s *ServiceProvider) CommandSet() []command.Command {
 // declare. Lives at the composition root — the only place that knows both the
 // ports and the concretes.
 var (
-	_ block.DocumentsPort    = (*services.DocumentService)(nil)
-	_ block.AssetsPort       = (*services.AssetService)(nil)
-	_ block.StatePort        = (*services.StateService)(nil)
-	_ block.LinkPreviewPort  = (*services.LinkPreviewService)(nil)
-	_ block.PlantumlPort     = (*services.PlantumlService)(nil)
-	_ domain.NodeResolver    = (*editor.Router)(nil)
-	_ command.DocumentFiler  = (*editor.EditorService)(nil)
-	_ ai.DocumentMCPEndpoint = (*mcp.Server)(nil)
+	_ block.DocumentsPort       = (*services.DocumentService)(nil)
+	_ block.AssetsPort          = (*services.AssetService)(nil)
+	_ block.StatePort           = (*services.StateService)(nil)
+	_ block.LinkPreviewPort     = (*services.LinkPreviewService)(nil)
+	_ block.PlantumlPort        = (*services.PlantumlService)(nil)
+	_ services.ContainableKinds = block.Registry{}
+	_ domain.NodeResolver       = (*editor.Router)(nil)
+	_ command.DocumentFiler     = (*editor.EditorService)(nil)
+	_ ai.DocumentMCPEndpoint    = (*mcp.Server)(nil)
 )
 
 func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.FS) {
@@ -144,7 +144,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 		logger.Error("buffers init failed", "err", err)
 		return
 	}
-	s.Containers, err = blockcontainer.NewBlockContainerService(store, block.GlobalRegistry())
+	s.Containers, err = services.NewBlockContainerService(store, block.GlobalRegistry())
 	if err != nil {
 		logger.Error("block containers init failed", "err", err)
 		return

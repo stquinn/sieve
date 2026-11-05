@@ -1,8 +1,7 @@
-package blockcontainer
+package services_test
 
 import (
 	"errors"
-	"go/build"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,6 +13,7 @@ import (
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
 	"sieve/sieve/domain"
+	"sieve/sieve/services"
 	"sieve/store"
 	"sieve/store/filestore"
 )
@@ -65,7 +65,7 @@ func (facedProc) Face(b domain.SieveBlock) map[string]string {
 
 // newTestContainers builds the service over a temporary store, with the test kind
 // registered on top of the prose terminal the document codec needs.
-func newTestContainers(t *testing.T) (*BlockContainerService, *filestore.FileStore) {
+func newTestContainers(t *testing.T) (*services.BlockContainerService, *filestore.FileStore) {
 	t.Helper()
 	st, err := filestore.NewFileStore(t.TempDir(), "testhost")
 	if err != nil {
@@ -76,7 +76,7 @@ func newTestContainers(t *testing.T) (*BlockContainerService, *filestore.FileSto
 	block.RegisterProcessor(stickyProc{FencedDeserializer: block.FencedDeserializer{Kind: stickyKind}})
 	block.RegisterProcessor(facedProc{stickyProc{FencedDeserializer: block.FencedDeserializer{Kind: facedKind}}})
 	t.Cleanup(block.ResetRegistry)
-	containers, err := NewBlockContainerService(st, block.GlobalRegistry())
+	containers, err := services.NewBlockContainerService(st, block.GlobalRegistry())
 	if err != nil {
 		t.Fatalf("NewBlockContainerService: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestBlockContainer_CreateSaveReloadKeepsVersionsAndAssets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileStore: %v", err)
 	}
-	reopened, err := NewBlockContainerService(fresh, block.GlobalRegistry())
+	reopened, err := services.NewBlockContainerService(fresh, block.GlobalRegistry())
 	if err != nil {
 		t.Fatalf("NewBlockContainerService: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestBlockContainer_FaceIsStampedAndFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := NewBlockContainerService(fresh, block.GlobalRegistry())
+	reopened, err := services.NewBlockContainerService(fresh, block.GlobalRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,24 +437,5 @@ func TestBlockContainer_MovedToTheLibraryIsStillABlock(t *testing.T) {
 	}
 	if loaded.Block().StringAttr("title") != "moved" {
 		t.Errorf("loaded = %+v", loaded.Block())
-	}
-}
-
-// The package stays below the editor and beside the document layer: sieve/ink
-// creates containers while EditorService calls sieve/ink.
-func TestBlockContainer_ImportsNothingAboveBlock(t *testing.T) {
-	forbidden := map[string]bool{
-		"sieve/sieve/editor":   true,
-		"sieve/sieve/services": true,
-		"sieve/sieve/ai":       true,
-	}
-	pkg, err := build.ImportDir(".", 0)
-	if err != nil {
-		t.Fatalf("ImportDir: %v", err)
-	}
-	for _, path := range pkg.Imports {
-		if forbidden[path] {
-			t.Errorf("imports %s", path)
-		}
 	}
 }

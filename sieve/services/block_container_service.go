@@ -1,14 +1,10 @@
-// Package blockcontainer stores one block as a container of its own, beside
-// documents over store.MetaStorable. It sits directly over block and store, so a
-// service that creates containers does not depend on the editor.
-package blockcontainer
+package services
 
 import (
 	"fmt"
 	"maps"
 
 	"sieve/ident"
-	"sieve/sieve/block"
 	"sieve/sieve/domain"
 	"sieve/store"
 )
@@ -17,32 +13,50 @@ import (
 // never an attr, so a kind whose attrs carry this key cannot be held in a container.
 const bodyKindKey = "kind"
 
+// ContainableKinds is what a container needs of the kinds of block it can hold.
+// block.Registry implements it.
+type ContainableKinds interface {
+	// InitialAttrs returns the attrs of a fresh block of kind with the given id,
+	// seeded from overrides. ok is false when no such kind exists.
+	InitialAttrs(kind, id string, overrides map[string]interface{}) (attrs map[string]interface{}, ok bool)
+
+	// Face returns the fields blk's kind shows in a container's .meta; nil for a
+	// kind that shows none.
+	Face(blk domain.SieveBlock) map[string]string
+
+	// WriteMap renders blk as the YAML map a fenced block holds.
+	WriteMap(blk domain.SieveBlock) (string, error)
+
+	// ReadMap parses a YAML map into a block of kind.
+	ReadMap(kind, yaml string) (domain.SieveBlock, error)
+}
+
 // BlockContainerService owns every store.TypeBlock storable: it is to a
 // domain.BlockContainer what services.DocumentService is to a domain.Document. A
 // container may be in any category; new ones are born in domain.Blocks.
 type BlockContainerService struct {
-	store    store.Store
-	registry block.ProcessorRegistry
+	store store.Store
+	kinds ContainableKinds
 }
 
 // NewBlockContainerService prepares the Blocks category and builds the service.
-func NewBlockContainerService(st store.Store, registry block.ProcessorRegistry) (*BlockContainerService, error) {
+func NewBlockContainerService(st store.Store, kinds ContainableKinds) (*BlockContainerService, error) {
 	if err := st.PrepareCategory(domain.Blocks); err != nil {
 		return nil, err
 	}
-	return &BlockContainerService{store: st, registry: registry}, nil
+	return &BlockContainerService{store: st, kinds: kinds}, nil
 }
 
 // Create makes a new container holding a fresh block of kind, seeded by the kind's
 // InitAttrs from overrides. A kind with no registered processor is an error. Its
 // uuid is minted here and names its directory.
 func (s *BlockContainerService) Create(kind string, overrides map[string]interface{}) (*domain.BlockContainer, error) {
-	processor := s.registry.Get(kind)
-	if processor == nil {
+	id := ident.New()
+	attrs, ok := s.kinds.InitialAttrs(kind, id, overrides)
+	if !ok {
 		return nil, fmt.Errorf("block container: no processor for kind %q", kind)
 	}
-	id := ident.New()
-	blk := domain.NewSieveBlock(kind, id, processor.InitAttrs(id, overrides))
+	blk := domain.NewSieveBlock(kind, id, attrs)
 	body, err := s.render(blk)
 	if err != nil {
 		return nil, err
@@ -173,9 +187,7 @@ func (s *BlockContainerService) shows(meta, face map[string]string) bool {
 // withFace returns a copy of meta carrying blk's face, for a kind that shows one.
 func (s *BlockContainerService) withFace(meta map[string]string, blk domain.SieveBlock) map[string]string {
 	out := maps.Clone(meta)
-	if bearer, ok := s.registry.Get(blk.Kind).(block.FaceBearer); ok {
-		maps.Copy(out, bearer.Face(blk))
-	}
+	maps.Copy(out, s.kinds.Face(blk))
 	return out
 }
 
@@ -197,7 +209,7 @@ func (s *BlockContainerService) parse(ms store.MetaStorable, body []byte) (domai
 	if kind == "" {
 		return domain.SieveBlock{}, fmt.Errorf("block container %s: .meta names no kind", uuid)
 	}
-	parsed, err := block.FencedDeserializer{Kind: kind}.DeserializeAttrs(string(body))
+	parsed, err := s.kinds.ReadMap(kind, string(body))
 	if err != nil {
 		return domain.SieveBlock{}, fmt.Errorf("block container %s: parse body: %w", uuid, err)
 	}
@@ -217,7 +229,7 @@ func (s *BlockContainerService) render(blk domain.SieveBlock) ([]byte, error) {
 	if _, clash := blk.Attrs[bodyKindKey]; clash {
 		return nil, fmt.Errorf("block container %s: attr %q is reserved", blk.ID, bodyKindKey)
 	}
-	yaml, err := block.FencedSerializer{}.SerializeAttrs(blk)
+	yaml, err := s.kinds.WriteMap(blk)
 	if err != nil {
 		return nil, fmt.Errorf("block container %s: serialize: %w", blk.ID, err)
 	}

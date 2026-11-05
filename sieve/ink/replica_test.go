@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"sieve/sieve/blockcontainer"
 	"sieve/sieve/domain"
 	"sieve/sieve/ink/link"
+	"sieve/sieve/services"
 	"sieve/store/filestore"
 )
 
@@ -33,7 +33,7 @@ func (quietObserver) Refused(link.ID, string)        {}
 type replicaRig struct {
 	t          *testing.T
 	st         *filestore.FileStore
-	containers *blockcontainer.BlockContainerService
+	containers *services.BlockContainerService
 	companion  *link.ScriptedCompanion
 	replicas   *NoteReplicas
 }

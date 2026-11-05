@@ -86,3 +86,33 @@ func (r Registry) elementRefs(b domain.SieveBlock, container string) []string {
 	}
 	return out
 }
+
+// InitialAttrs returns the attrs of a fresh block of kind with the given id,
+// seeded from overrides by the kind's processor. ok is false for an unregistered
+// kind.
+func (r Registry) InitialAttrs(kind, id string, overrides map[string]interface{}) (map[string]interface{}, bool) {
+	processor := r.Get(kind)
+	if processor == nil {
+		return nil, false
+	}
+	return processor.InitAttrs(id, overrides), true
+}
+
+// Face returns the fields blk's kind shows in a container's .meta (FaceBearer);
+// nil for a kind that shows none.
+func (r Registry) Face(blk domain.SieveBlock) map[string]string {
+	if bearer, ok := r.Get(blk.Kind).(FaceBearer); ok {
+		return bearer.Face(blk)
+	}
+	return nil
+}
+
+// WriteMap renders blk as the YAML map a fenced block holds.
+func (Registry) WriteMap(blk domain.SieveBlock) (string, error) {
+	return FencedSerializer{}.SerializeAttrs(blk)
+}
+
+// ReadMap parses a YAML map into a block of kind.
+func (Registry) ReadMap(kind, yaml string) (domain.SieveBlock, error) {
+	return FencedDeserializer{Kind: kind}.DeserializeAttrs(yaml)
+}

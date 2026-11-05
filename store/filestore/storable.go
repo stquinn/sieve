@@ -116,6 +116,15 @@ type fileAssetStorable struct {
 func (s *fileAssetStorable) Encoding() store.Encoding { return s.encoding }
 func (s *fileAssetStorable) BlkID() string            { return s.blkId }
 
+// Size is the file's current length; 0 when the file cannot be stat'd.
+func (s *fileAssetStorable) Size() int64 {
+	info, err := os.Stat(s.file)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
 // Body is the file's current bytes; nil when the file cannot be read. A nil
 // Body means "unreadable", never "empty asset": an empty file yields a non-nil
 // empty slice.

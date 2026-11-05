@@ -83,6 +83,7 @@ func (f fakeAssetStorable) Versions() []store.VersionRef { return nil }
 func (f fakeAssetStorable) IsModified() bool             { return false }
 func (f fakeAssetStorable) Encoding() store.Encoding     { return store.Raw }
 func (f fakeAssetStorable) BlkID() string                { return f.ref }
+func (f fakeAssetStorable) Size() int64                  { return 0 }
 
 // darkState/lightState build a processor whose backend theme is dark/light.
 func darkState() fakeState {

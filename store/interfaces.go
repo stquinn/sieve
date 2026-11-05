@@ -97,6 +97,10 @@ type AssetStorable interface {
 	// (key without extension), e.g. "blk-a1b2" for "blk-a1b2.png".
 	// Derived once at load/create time from the filename.
 	BlkID() string
+
+	// Size returns the asset's current length in bytes without reading it; 0
+	// when it cannot be measured.
+	Size() int64
 }
 
 // FolderStorable is a first-class node in the ownership graph. Folders own
