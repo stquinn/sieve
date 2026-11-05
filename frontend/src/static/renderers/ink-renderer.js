@@ -33,9 +33,21 @@ import { ContractViolation } from '../contract/sieve-block.js'
  */
 
 /**
+ * A template as the note header carries it: an id and its params, lengths in
+ * page units. Ids other than `blank`, `ruled`, `grid` and `dots` draw as `blank`.
+ * @typedef {{id: string, params?: {spacing?: number, margin?: number}}} InkTemplate
+ */
+
+/**
+ * A rectangle of the page plane in page units, `x0 < x1`, `y0 < y1`. The origin
+ * may be negative: marks sit on the plane's own multiples, not the window's.
+ * @typedef {{x0: number, y0: number, x1: number, y1: number}} InkWindow
+ */
+
+/**
  * A page as SieveInk exports it: the note header and the page's strokes.
  * @typedef {object} InkPage
- * @property {{pageAspect: number, [field: string]: any}} note
+ * @property {{pageAspect: number, template?: InkTemplate|null, [field: string]: any}} note
  * @property {InkStroke[]} strokes
  */
 
@@ -75,13 +87,15 @@ export const INK_RULES = Object.freeze({
     /** dot count multiplier making up the area lost where random dots overlap */
     overlap: 1.15,
   }),
+  /** template marks: colour, line width and dot radius, in grid units */
+  ruling: Object.freeze({ color: '#888888', line: 1, dotRadius: 3 }),
   /** outline vertices are dropped while within this many grid units of the simplified outline */
   simplify: 0.25,
 })
 
-/** Layer names, in paint order: the pen layer, the seven tone bands, the live layer. */
+/** Layer names, in paint order: the ruling, the pen layer, the seven tone bands, the live layer. */
 export const INK_LAYERS = Object.freeze([
-  'pen', ...INK_RULES.tone.keep.map((_, i) => `b${i}`), 'live',
+  'ruling', 'pen', ...INK_RULES.tone.keep.map((_, i) => `b${i}`), 'live',
 ])
 
 export class InkRenderer {
@@ -132,18 +146,85 @@ export class InkRenderer {
     const height = Math.round(width / aspect)
     /** @type {string[][]} */
     const layers = INK_LAYERS.map(() => [])
+    const pen = INK_LAYERS.indexOf('pen')
     for (const stroke of page.strokes) {
       const markup = this.renderStroke(stroke)
-      if (markup.pen) layers[0].push(markup.pen)
-      markup.bands.forEach((part, i) => { if (part) layers[i + 1].push(part) })
+      if (markup.pen) layers[pen].push(markup.pen)
+      markup.bands.forEach((part, i) => { if (part) layers[pen + 1 + i].push(part) })
     }
+    const ruling = this.renderRuling(page.note.template, { x0: 0, y0: 0, x1: 1, y1: 1 / aspect })
     return [
       `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
       `<defs>${this.#patternDefs()}</defs>`,
       '<rect width="100%" height="100%" fill="#fff"/>',
-      ...INK_LAYERS.map((name, i) => InkRenderer.#layer(name, layers[i])),
+      ...INK_LAYERS.map((name, i) => (name === 'ruling' ? ruling : InkRenderer.#layer(name, layers[i]))),
       '</svg>',
     ].join('\n')
+  }
+
+  /**
+   * The `ruling` group: a template's marks over a window of the plane.
+   *
+   * A mark sits at `round(p · grid)` of its own position p = k·spacing (the
+   * margin line at margin + k) for every integer k (and l), so it is where it
+   * is whatever the window. A mark is drawn when its extent overlaps the
+   * window's interior; lines are clipped to the window. Horizontal lines,
+   * vertical lines and dots are one `<path>` each, filled from the group:
+   * a line is `M{x} {y}h{w}v1h-{w}z` (vertical: `M{x} {y}v{h}h1v-{h}z`) and a
+   * dot is `M{cx} {cy}m-3 0a3 3 0 1 0 6 0a3 3 0 1 0-6 0z`.
+   *
+   * A null template, `blank`, and a missing or zero spacing draw no marks; the
+   * group is always present. An id that is not a known template draws as
+   * `blank` and the group carries `data-ink-template="unknown"`.
+   * @param {InkTemplate|null|undefined} template
+   * @param {InkWindow} window
+   * @returns {string} the group's markup
+   */
+  renderRuling(template, window) {
+    const { color, dotRadius: r } = INK_RULES.ruling
+    const known = !!template && ['blank', 'ruled', 'grid', 'dots'].includes(template.id)
+    const attrs = ` fill="${color}"` + (template && !known ? ' data-ink-template="unknown"' : '')
+    const spacing = Number(template?.params?.spacing)
+    if (!template || !known || !(spacing > 0)) return InkRenderer.#layer('ruling', [], attrs)
+    const g = INK_RULES.grid
+    const [x0, y0, x1, y1] = [window.x0 * g, window.y0 * g, window.x1 * g, window.y1 * g]
+    const w = InkRenderer.#grid(x1 - x0)
+    const h = InkRenderer.#grid(y1 - y0)
+    const margin = Number(template.params?.margin)
+    /** @type {string[]} */
+    const paths = []
+    if (template.id === 'dots') {
+      const cols = this.#positions(spacing, 0, x0, x1, r, r)
+      const rows = this.#positions(spacing, 0, y0, y1, r, r)
+      paths.push(rows.flatMap((y) => cols.map((x) => `M${x} ${y}m-${r} 0a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0-${2 * r} 0z`)).join(''))
+    } else {
+      const line = INK_RULES.ruling.line
+      const verticals = template.id === 'grid' ? this.#positions(spacing, 0, x0, x1, 0, line)
+        : margin > 0 ? this.#positions(1, margin, x0, x1, 0, line) : []
+      paths.push(this.#positions(spacing, 0, y0, y1, 0, line).map((y) => `M${InkRenderer.#grid(x0)} ${y}h${w}v${line}h-${w}z`).join(''))
+      paths.push(verticals.map((x) => `M${x} ${InkRenderer.#grid(y0)}v${h}h${line}v-${h}z`).join(''))
+    }
+    return InkRenderer.#layer('ruling', paths.filter(Boolean).map((d) => `<path d="${d}"/>`), attrs)
+  }
+
+  /**
+   * Grid positions `round((offset + k·step) · grid)` for every integer k whose
+   * mark, spanning `before` to `after` grid units either side of the position,
+   * overlaps the open interval (lo, hi).
+   * @param {number} step page units @param {number} offset page units
+   * @param {number} lo grid units @param {number} hi grid units
+   * @param {number} before @param {number} after
+   * @returns {number[]} ascending
+   */
+  #positions(step, offset, lo, hi, before, after) {
+    const g = INK_RULES.grid
+    const out = []
+    const to = Math.ceil((hi / g - offset) / step) + 1
+    for (let k = Math.floor((lo / g - offset) / step) - 1; k <= to; k++) {
+      const c = Math.round((offset + k * step) * g)
+      if (c + after > lo && c - before < hi) out.push(c)
+    }
+    return out
   }
 
   /**
@@ -304,9 +385,12 @@ export class InkRenderer {
     return band
   }
 
-  /** @param {string} name @param {string[]} parts @returns {string} */
-  static #layer(name, parts) {
-    const fill = name === 'live' ? '' : name === 'pen' ? ' fill="#000"' : ` fill="url(#ink-${name})"`
+  /** @param {number} n grid units @returns {string} n to one decimal, no redundant zeros */
+  static #grid(n) { return String(Math.round(n * 10) / 10) }
+
+  /** @param {string} name @param {string[]} parts @param {string} [attrs] the group's attributes after data-ink; default: its fill @returns {string} */
+  static #layer(name, parts, attrs) {
+    const fill = attrs ?? (name === 'live' ? '' : name === 'pen' ? ' fill="#000"' : ` fill="url(#ink-${name})"`)
     return `<g data-ink="${name}"${fill}>${parts.length ? '\n' + parts.join('\n') + '\n' : ''}</g>`
   }
 

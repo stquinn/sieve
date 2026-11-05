@@ -267,6 +267,8 @@ A template is drawn under the strokes, in `#888888`, from these rules. Positions
 - A missing or zero `spacing` draws no marks. k and l are all integers: a fixed page shows those inside
   it, and an unbounded page tiles without end, into negative coordinates, on the plane's own origin,
   so marks never move with the viewer's window.
+- A mark is drawn where its extent overlaps what is shown: a line at the far edge of a fixed page lies
+  outside it, and a dot centred on an edge is drawn and cut by it.
 
 The companion offers these presets:
 
