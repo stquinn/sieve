@@ -85,7 +85,7 @@ func (k DigitalNoteKind) InitAttrs(id string, overrides map[string]interface{}) 
 }
 
 // Face is title, page count, source type, provenance and synced seq, for .meta.
-func (k DigitalNoteKind) Face(b block.SieveBlock) map[string]string {
+func (k DigitalNoteKind) Face(b domain.SieveBlock) map[string]string {
 	note, _ := b.Attrs["note"].(map[string]interface{})
 	pages, _ := note["pages"].([]interface{})
 	return map[string]string{
@@ -107,15 +107,15 @@ func (k DigitalNoteKind) Transform([]block.ContentEntry, string, string, block.A
 }
 
 func (k DigitalNoteKind) DescribeJob(block.JobContext) *block.ProcessorJob { return nil }
-func (k DigitalNoteKind) OnChange(*block.SieveBlock)                       {}
+func (k DigitalNoteKind) OnChange(*domain.SieveBlock)                      {}
 func (k DigitalNoteKind) Mode() block.BlockMode                            { return block.BlockModeBlock }
 
-func (k DigitalNoteKind) BuildContext(block.SieveBlock, block.DocView, map[string]bool) block.AIContext {
+func (k DigitalNoteKind) BuildContext(domain.SieveBlock, block.DocView, map[string]bool) block.AIContext {
 	return block.AIContext{}
 }
 
 // MarkdownRepresentation names the note; its ink has no markdown form.
-func (k DigitalNoteKind) MarkdownRepresentation(b block.SieveBlock, _ string) string {
+func (k DigitalNoteKind) MarkdownRepresentation(b domain.SieveBlock, _ string) string {
 	return fmt.Sprintf("> Digital note: %s (%s pages)", b.StringAttr("title"), k.Face(b)["note_pages"])
 }
 

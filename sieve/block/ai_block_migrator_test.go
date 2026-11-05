@@ -2,6 +2,8 @@ package block
 
 import (
 	"testing"
+
+	"sieve/sieve/domain"
 )
 
 // aiDocUUID is the container the ai-block under test lives in — what the
@@ -15,23 +17,23 @@ const (
 	aiTargetTwo = "0197b1f4-5678-7888-8999-aaaabbbbcccc"
 )
 
-func aiBlock(attrs map[string]interface{}) SieveBlock {
+func aiBlock(attrs map[string]interface{}) domain.SieveBlock {
 	full := map[string]interface{}{"id": "0197b1f4-0000-7888-8999-aaaabbbbcccc"}
 	for k, v := range attrs {
 		full[k] = v
 	}
-	return SieveBlock{ID: full["id"].(string), Kind: "ai-block", Attrs: full}
+	return domain.SieveBlock{ID: full["id"].(string), Kind: "ai-block", Attrs: full}
 }
 
 // migratedElements runs the migrator over one ai-block and returns its question
 // elements, failing the test when the record was not converted.
-func migratedElements(t *testing.T, attrs map[string]interface{}) Elements {
+func migratedElements(t *testing.T, attrs map[string]interface{}) domain.Elements {
 	t.Helper()
-	out, changed := AIBlockMigrator{}.Migrate([]SieveBlock{aiBlock(attrs)}, aiDocUUID)
+	out, changed := AIBlockMigrator{}.Migrate([]domain.SieveBlock{aiBlock(attrs)}, aiDocUUID)
 	if !changed {
 		t.Fatalf("changed = false for a legacy record: %+v", attrs)
 	}
-	got := DecodeElements(out[0].Attrs[QuestionAttr])
+	got := domain.DecodeElements(out[0].Attrs[QuestionAttr])
 	if len(got) == 0 {
 		t.Fatalf("conversion produced no elements: %+v", out[0].Attrs)
 	}
@@ -165,7 +167,7 @@ func TestAIBlockMigrator_AttachmentsBecomeReferenceElements(t *testing.T) {
 // Conversion consumes what it reads: the list is the record now, and the attrs
 // it was built from must not survive to be read again.
 func TestAIBlockMigrator_ConsumedAttrsAreRemoved(t *testing.T) {
-	out, _ := AIBlockMigrator{}.Migrate([]SieveBlock{aiBlock(map[string]interface{}{
+	out, _ := AIBlockMigrator{}.Migrate([]domain.SieveBlock{aiBlock(map[string]interface{}{
 		"question":    "Why?",
 		"ref":         aiTargetID,
 		"attachments": []interface{}{map[string]interface{}{"uri": "sieve://" + testAssetUUID}},
@@ -183,7 +185,7 @@ func TestAIBlockMigrator_ConsumedAttrsAreRemoved(t *testing.T) {
 
 // The input tree is never mutated: undo and the caller's snapshot depend on it.
 func TestAIBlockMigrator_DoesNotMutateInput(t *testing.T) {
-	in := []SieveBlock{aiBlock(map[string]interface{}{"question": "Why?", "ref": aiTargetID})}
+	in := []domain.SieveBlock{aiBlock(map[string]interface{}{"question": "Why?", "ref": aiTargetID})}
 	AIBlockMigrator{}.Migrate(in, aiDocUUID)
 	if in[0].Attrs["question"] != "Why?" || in[0].Attrs["ref"] != aiTargetID {
 		t.Errorf("the input record was rewritten in place: %+v", in[0].Attrs)
@@ -193,18 +195,18 @@ func TestAIBlockMigrator_DoesNotMutateInput(t *testing.T) {
 // A record showing BOTH forms cannot be reconciled without guessing which one
 // the author meant, so it is left exactly as stored.
 func TestAIBlockMigrator_BothFormsAreLeftAsStored(t *testing.T) {
-	elements := Elements{NewSieveBlock(KindProse, "", map[string]interface{}{"content": "current"})}
+	elements := domain.Elements{domain.NewSieveBlock(KindProse, "", map[string]interface{}{"content": "current"})}
 	in := aiBlock(map[string]interface{}{"ref": aiTargetID})
 	in.SetElements(QuestionAttr, elements)
 
-	out, changed := AIBlockMigrator{}.Migrate([]SieveBlock{in}, aiDocUUID)
+	out, changed := AIBlockMigrator{}.Migrate([]domain.SieveBlock{in}, aiDocUUID)
 	if changed {
 		t.Fatal("changed = true for an incoherent record")
 	}
 	if out[0].Attrs["ref"] != aiTargetID {
 		t.Errorf("the legacy ref was consumed anyway: %v", out[0].Attrs["ref"])
 	}
-	if got := DecodeElements(out[0].Attrs[QuestionAttr]); len(got) != 1 || got[0].Content() != "current" {
+	if got := domain.DecodeElements(out[0].Attrs[QuestionAttr]); len(got) != 1 || got[0].Content() != "current" {
 		t.Errorf("the stored list was disturbed: %+v", got)
 	}
 }
@@ -212,7 +214,7 @@ func TestAIBlockMigrator_BothFormsAreLeftAsStored(t *testing.T) {
 // A record carrying NEITHER form has no question to convert, and one is never
 // invented for it.
 func TestAIBlockMigrator_NeitherFormIsLeftAsStored(t *testing.T) {
-	in := []SieveBlock{aiBlock(map[string]interface{}{"question": "", "ref": "", "type": "ASK"})}
+	in := []domain.SieveBlock{aiBlock(map[string]interface{}{"question": "", "ref": "", "type": "ASK"})}
 	out, changed := AIBlockMigrator{}.Migrate(in, aiDocUUID)
 	if changed {
 		t.Fatal("changed = true for a record with no question at all")
@@ -225,7 +227,7 @@ func TestAIBlockMigrator_NeitherFormIsLeftAsStored(t *testing.T) {
 // A record already in the current form is clean: a second load must not report a
 // change, or every open would rewrite the document.
 func TestAIBlockMigrator_CurrentFormIsUnchanged(t *testing.T) {
-	out, _ := AIBlockMigrator{}.Migrate([]SieveBlock{aiBlock(map[string]interface{}{
+	out, _ := AIBlockMigrator{}.Migrate([]domain.SieveBlock{aiBlock(map[string]interface{}{
 		"question": "Why?", "ref": aiTargetID,
 	})}, aiDocUUID)
 	if _, changed := (AIBlockMigrator{}).Migrate(out, aiDocUUID); changed {
@@ -236,7 +238,7 @@ func TestAIBlockMigrator_CurrentFormIsUnchanged(t *testing.T) {
 // `ref` is the generic edge every other kind still uses; only the ai-block stops
 // reading it.
 func TestAIBlockMigrator_LeavesOtherKindsAlone(t *testing.T) {
-	in := []SieveBlock{{ID: "wc-1", Kind: "web-clip", Attrs: map[string]interface{}{
+	in := []domain.SieveBlock{{ID: "wc-1", Kind: "web-clip", Attrs: map[string]interface{}{
 		"id": "wc-1", "ref": aiTargetID, "question": "Why?",
 	}}}
 	out, changed := AIBlockMigrator{}.Migrate(in, aiDocUUID)
@@ -252,7 +254,7 @@ func TestAIBlockMigrator_LeavesOtherKindsAlone(t *testing.T) {
 // are the ones ReferenceMigrator already rewrote, and the ids it turns into leaf
 // addresses are the uuids BlockIdentityMigrator already assigned.
 func TestDocumentMigrator_RunsAIBlockStepAfterTheReferenceStep(t *testing.T) {
-	in := []SieveBlock{
+	in := []domain.SieveBlock{
 		{ID: "pr-target", Kind: KindProse, Attrs: map[string]interface{}{"id": "pr-target", "content": "target"}},
 		aiBlock(map[string]interface{}{
 			"question":    "Why?",
@@ -264,7 +266,7 @@ func TestDocumentMigrator_RunsAIBlockStepAfterTheReferenceStep(t *testing.T) {
 	if !changed {
 		t.Fatal("changed = false")
 	}
-	got := DecodeElements(out[1].Attrs[QuestionAttr])
+	got := domain.DecodeElements(out[1].Attrs[QuestionAttr])
 	if len(got) != 3 {
 		t.Fatalf("got %d elements, want 3: %+v", len(got), got)
 	}
@@ -278,13 +280,13 @@ func TestDocumentMigrator_RunsAIBlockStepAfterTheReferenceStep(t *testing.T) {
 
 // migratedAnswer runs the migrator over one ai-block and returns its answer
 // elements, failing the test when the record was not converted.
-func migratedAnswer(t *testing.T, attrs map[string]interface{}) Elements {
+func migratedAnswer(t *testing.T, attrs map[string]interface{}) domain.Elements {
 	t.Helper()
-	out, changed := AIBlockMigrator{}.Migrate([]SieveBlock{aiBlock(attrs)}, aiDocUUID)
+	out, changed := AIBlockMigrator{}.Migrate([]domain.SieveBlock{aiBlock(attrs)}, aiDocUUID)
 	if !changed {
 		t.Fatalf("changed = false for a legacy record: %+v", attrs)
 	}
-	got := DecodeElements(out[0].Attrs[AnswerAttr])
+	got := domain.DecodeElements(out[0].Attrs[AnswerAttr])
 	if len(got) == 0 {
 		t.Fatalf("conversion produced no answer elements: %+v", out[0].Attrs)
 	}
@@ -320,7 +322,7 @@ func TestAIBlockMigrator_ResponseIsCarriedVerbatim(t *testing.T) {
 
 // Conversion consumes what it reads on the answer side too.
 func TestAIBlockMigrator_ConsumedResponseIsRemoved(t *testing.T) {
-	out, _ := AIBlockMigrator{}.Migrate([]SieveBlock{aiBlock(map[string]interface{}{
+	out, _ := AIBlockMigrator{}.Migrate([]domain.SieveBlock{aiBlock(map[string]interface{}{
 		"response": "an answer",
 	})}, aiDocUUID)
 	if v, ok := out[0].Attrs["response"]; ok {
@@ -332,7 +334,7 @@ func TestAIBlockMigrator_ConsumedResponseIsRemoved(t *testing.T) {
 // invented — and a record carrying only one is not dirtied by a load.
 func TestAIBlockMigrator_EmptyResponseConvertsNothing(t *testing.T) {
 	for _, response := range []string{"", "   \n "} {
-		in := []SieveBlock{aiBlock(map[string]interface{}{"response": response, "type": "ASK"})}
+		in := []domain.SieveBlock{aiBlock(map[string]interface{}{"response": response, "type": "ASK"})}
 		out, changed := AIBlockMigrator{}.Migrate(in, aiDocUUID)
 		if changed {
 			t.Fatalf("changed = true for response %q", response)
@@ -347,16 +349,16 @@ func TestAIBlockMigrator_EmptyResponseConvertsNothing(t *testing.T) {
 // the question side is: the two cannot be reconciled without guessing.
 func TestAIBlockMigrator_BothAnswerFormsAreLeftAsStored(t *testing.T) {
 	in := aiBlock(map[string]interface{}{"response": "the legacy one"})
-	in.SetElements(AnswerAttr, Elements{NewSieveBlock(KindProse, "", map[string]interface{}{"content": "current"})})
+	in.SetElements(AnswerAttr, domain.Elements{domain.NewSieveBlock(KindProse, "", map[string]interface{}{"content": "current"})})
 
-	out, changed := AIBlockMigrator{}.Migrate([]SieveBlock{in}, aiDocUUID)
+	out, changed := AIBlockMigrator{}.Migrate([]domain.SieveBlock{in}, aiDocUUID)
 	if changed {
 		t.Fatal("changed = true for an incoherent record")
 	}
 	if out[0].Attrs["response"] != "the legacy one" {
 		t.Errorf("the legacy response was consumed anyway: %v", out[0].Attrs["response"])
 	}
-	if got := DecodeElements(out[0].Attrs[AnswerAttr]); len(got) != 1 || got[0].Content() != "current" {
+	if got := domain.DecodeElements(out[0].Attrs[AnswerAttr]); len(got) != 1 || got[0].Content() != "current" {
 		t.Errorf("the stored list was disturbed: %+v", got)
 	}
 }
@@ -366,16 +368,16 @@ func TestAIBlockMigrator_BothAnswerFormsAreLeftAsStored(t *testing.T) {
 // folded, and the question it already holds is not disturbed.
 func TestAIBlockMigrator_ASlotAlreadyConvertedDoesNotBlockTheOther(t *testing.T) {
 	in := aiBlock(map[string]interface{}{"response": "an answer"})
-	in.SetElements(QuestionAttr, Elements{NewSieveBlock(KindProse, "", map[string]interface{}{"content": "why?"})})
+	in.SetElements(QuestionAttr, domain.Elements{domain.NewSieveBlock(KindProse, "", map[string]interface{}{"content": "why?"})})
 
-	out, changed := AIBlockMigrator{}.Migrate([]SieveBlock{in}, aiDocUUID)
+	out, changed := AIBlockMigrator{}.Migrate([]domain.SieveBlock{in}, aiDocUUID)
 	if !changed {
 		t.Fatal("changed = false: the legacy answer was not converted")
 	}
-	if got := DecodeElements(out[0].Attrs[QuestionAttr]); len(got) != 1 || got[0].Content() != "why?" {
+	if got := domain.DecodeElements(out[0].Attrs[QuestionAttr]); len(got) != 1 || got[0].Content() != "why?" {
 		t.Errorf("the stored question was disturbed: %+v", got)
 	}
-	if got := DecodeElements(out[0].Attrs[AnswerAttr]); len(got) != 1 || got[0].Content() != "an answer" {
+	if got := domain.DecodeElements(out[0].Attrs[AnswerAttr]); len(got) != 1 || got[0].Content() != "an answer" {
 		t.Errorf("answer = %+v, want the folded legacy response", got)
 	}
 }
@@ -383,7 +385,7 @@ func TestAIBlockMigrator_ASlotAlreadyConvertedDoesNotBlockTheOther(t *testing.T)
 // A converted record is clean: a second load must not report a change, or every
 // open would rewrite the document.
 func TestAIBlockMigrator_ConvertedAnswerIsUnchangedOnTheNextLoad(t *testing.T) {
-	out, _ := AIBlockMigrator{}.Migrate([]SieveBlock{aiBlock(map[string]interface{}{
+	out, _ := AIBlockMigrator{}.Migrate([]domain.SieveBlock{aiBlock(map[string]interface{}{
 		"question": "Why?", "ref": aiTargetID, "response": "because",
 	})}, aiDocUUID)
 	if _, changed := (AIBlockMigrator{}).Migrate(out, aiDocUUID); changed {
@@ -393,7 +395,7 @@ func TestAIBlockMigrator_ConvertedAnswerIsUnchangedOnTheNextLoad(t *testing.T) {
 
 // The input tree is never mutated on the answer side either.
 func TestAIBlockMigrator_DoesNotMutateInputOnTheAnswerSide(t *testing.T) {
-	in := []SieveBlock{aiBlock(map[string]interface{}{"response": "an answer"})}
+	in := []domain.SieveBlock{aiBlock(map[string]interface{}{"response": "an answer"})}
 	AIBlockMigrator{}.Migrate(in, aiDocUUID)
 	if in[0].Attrs["response"] != "an answer" {
 		t.Errorf("the input record was rewritten in place: %+v", in[0].Attrs)

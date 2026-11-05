@@ -452,9 +452,9 @@ func (p *SmartImageProcessor) parseCSSLength(s string) float64 {
 	return v
 }
 
-func (p *SmartImageProcessor) OnChange(_ *block.SieveBlock) {}
+func (p *SmartImageProcessor) OnChange(_ *domain.SieveBlock) {}
 
-func (p *SmartImageProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, seen map[string]bool) block.AIContext {
+func (p *SmartImageProcessor) BuildContext(blk domain.SieveBlock, _ block.DocView, seen map[string]bool) block.AIContext {
 	src, _ := blk.Attrs["src"].(string)
 	alt, _ := blk.Attrs["alt"].(string)
 	summary, _ := blk.Attrs["summary"].(string)
@@ -496,7 +496,7 @@ func (p *SmartImageProcessor) DescribeJob(jctx block.JobContext) *block.Processo
 			logger.Info("smart-image: DescribeImage complete", "block", id, "summary_len", len(desc.Summary))
 			return desc, nil
 		},
-		Apply: func(result any, b *block.SieveBlock) {
+		Apply: func(result any, b *domain.SieveBlock) {
 			desc := result.(domain.ImageDesc)
 			b.Attrs["summary"] = desc.Summary
 			b.Attrs["alt"] = desc.Alt
@@ -585,7 +585,7 @@ func (p *SmartImageProcessor) downloadImage(imageURL, blockID string) ([]byte, e
 
 // MarkdownRepresentation is the image as a markdown embed, or "" when its src
 // names nothing an embed could load.
-func (p *SmartImageProcessor) MarkdownRepresentation(blk block.SieveBlock, uuid string) string {
+func (p *SmartImageProcessor) MarkdownRepresentation(blk domain.SieveBlock, uuid string) string {
 	src, _ := blk.Attrs["src"].(string)
 	url := p.assets.url(uuid, src)
 	if url == "" {

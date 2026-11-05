@@ -28,7 +28,7 @@ type containerLeaves struct {
 	addr     domain.Address
 	owner    store.MetaStorable
 	registry block.ProcessorRegistry
-	blocks   []block.SieveBlock
+	blocks   []domain.SieveBlock
 }
 
 // newContainerLeaves indexes a container for leaf lookup. body must be the
@@ -67,8 +67,8 @@ func (c *containerLeaves) resolve() (domain.NodeDescriptor, error) {
 // alias second. Both lookups fold case (ids through ident.Canonical), with an
 // exact match beating a folded one within each. The two lookups are ordered,
 // not merged: an exact alias hit does not outrank a folded id hit.
-func (c *containerLeaves) blockNamed(leaf string) (block.SieveBlock, bool) {
-	var foldedID, exactAlias, foldedAlias *block.SieveBlock
+func (c *containerLeaves) blockNamed(leaf string) (domain.SieveBlock, bool) {
+	var foldedID, exactAlias, foldedAlias *domain.SieveBlock
 	canonical := ident.Canonical(leaf)
 	for i := range c.blocks {
 		b := &c.blocks[i]
@@ -88,12 +88,12 @@ func (c *containerLeaves) blockNamed(leaf string) (block.SieveBlock, bool) {
 			}
 		}
 	}
-	for _, hit := range []*block.SieveBlock{foldedID, exactAlias, foldedAlias} {
+	for _, hit := range []*domain.SieveBlock{foldedID, exactAlias, foldedAlias} {
 		if hit != nil {
 			return *hit, true
 		}
 	}
-	return block.SieveBlock{}, false
+	return domain.SieveBlock{}, false
 }
 
 // assetNamed finds the asset a leaf names by its full key — the filename,
@@ -127,7 +127,7 @@ func (c *containerLeaves) assetNamed(leaf string) (store.AssetStorable, bool) {
 // the block's markdown representation, not its on-disk Serialize form, which
 // wraps every kind in fenced YAML. A kind with no registered processor
 // contributes an empty body.
-func (c *containerLeaves) blockNode(b block.SieveBlock) domain.NodeDescriptor {
+func (c *containerLeaves) blockNode(b domain.SieveBlock) domain.NodeDescriptor {
 	body := ""
 	if p := c.registry.Get(b.Kind); p != nil {
 		body = p.MarkdownRepresentation(b, c.addr.Container)

@@ -113,7 +113,7 @@ func TestDiagramProcessor_Transform_notIsBlock(t *testing.T) {
 
 func TestDiagramProcessor_BuildContext_withSource(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
-	blk := block.SieveBlock{
+	blk := domain.SieveBlock{
 		ID:    "di-0001",
 		Kind:  "diagram",
 		Attrs: map[string]interface{}{"source": "graph TD\n  A-->B"},
@@ -132,7 +132,7 @@ func TestDiagramProcessor_BuildContext_withSource(t *testing.T) {
 
 func TestDiagramProcessor_BuildContext_emptySource(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
-	blk := block.SieveBlock{ID: "di-0001", Kind: "diagram", Attrs: map[string]interface{}{"source": ""}}
+	blk := domain.SieveBlock{ID: "di-0001", Kind: "diagram", Attrs: map[string]interface{}{"source": ""}}
 	if ctx := p.BuildContext(blk, block.DocView{}, map[string]bool{}); !ctx.IsEmpty() {
 		t.Errorf("BuildContext must return empty for empty source; got %q", ctx)
 	}
@@ -140,7 +140,7 @@ func TestDiagramProcessor_BuildContext_emptySource(t *testing.T) {
 
 func TestDiagramProcessor_MarkdownRepresentation_withSource(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
-	blk := block.SieveBlock{Attrs: map[string]interface{}{"source": "graph TD\n  A-->B"}}
+	blk := domain.SieveBlock{Attrs: map[string]interface{}{"source": "graph TD\n  A-->B"}}
 	got := p.MarkdownRepresentation(blk, "")
 	want := "```mermaid\ngraph TD\n  A-->B\n```"
 	if got != want {
@@ -150,7 +150,7 @@ func TestDiagramProcessor_MarkdownRepresentation_withSource(t *testing.T) {
 
 func TestDiagramProcessor_MarkdownRepresentation_emptySource(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
-	blk := block.SieveBlock{Attrs: map[string]interface{}{"source": ""}}
+	blk := domain.SieveBlock{Attrs: map[string]interface{}{"source": ""}}
 	if got := p.MarkdownRepresentation(blk, ""); got != "" {
 		t.Errorf("MarkdownRepresentation must return empty string for empty source; got %q", got)
 	}
@@ -158,7 +158,7 @@ func TestDiagramProcessor_MarkdownRepresentation_emptySource(t *testing.T) {
 
 func TestDiagramProcessor_DescribeJob_noJob(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
-	blk := &block.SieveBlock{
+	blk := &domain.SieveBlock{
 		ID:   "di-0001",
 		Kind: "diagram",
 		Attrs: map[string]interface{}{
@@ -214,7 +214,7 @@ func TestDiagramProcessor_NormalisedText(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			blk := block.SieveBlock{Kind: "diagram", Attrs: tc.attrs}
+			blk := domain.SieveBlock{Kind: "diagram", Attrs: tc.attrs}
 			got := p.NormalisedText(&blk)
 			if len(got) != len(tc.want) {
 				t.Fatalf("got %d segments, want %d: %#v", len(got), len(tc.want), got)
@@ -237,7 +237,7 @@ func TestDiagramProcessor_NormalisedText(t *testing.T) {
 // different content mints a different one.
 func TestDiagramProcessor_NormalisedTextLocatorIsMintedNotBare(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
-	blk := block.SieveBlock{Kind: "diagram", Attrs: map[string]interface{}{"source": "a", "title": "t"}}
+	blk := domain.SieveBlock{Kind: "diagram", Attrs: map[string]interface{}{"source": "a", "title": "t"}}
 	segs := p.NormalisedText(&blk)
 	if segs[0].Locator == DiagramSourceLocator || segs[1].Locator == DiagramTitleLocator {
 		t.Errorf("locator must not be the bare slot name: %q, %q", segs[0].Locator, segs[1].Locator)
@@ -245,7 +245,7 @@ func TestDiagramProcessor_NormalisedTextLocatorIsMintedNotBare(t *testing.T) {
 	if segs[0].Locator == segs[1].Locator {
 		t.Errorf("source and title minted the same locator %q", segs[0].Locator)
 	}
-	other := block.SieveBlock{Kind: "diagram", Attrs: map[string]interface{}{"source": "b", "title": "t"}}
+	other := domain.SieveBlock{Kind: "diagram", Attrs: map[string]interface{}{"source": "b", "title": "t"}}
 	if p.NormalisedText(&other)[0].Locator == segs[0].Locator {
 		t.Error("different source content minted the same locator")
 	}
@@ -253,12 +253,12 @@ func TestDiagramProcessor_NormalisedTextLocatorIsMintedNotBare(t *testing.T) {
 
 // diagramBlockFrom builds a diagram over exactly the two slots UpdateText can
 // write: source, and title when non-empty.
-func diagramBlockFrom(source, title string) block.SieveBlock {
+func diagramBlockFrom(source, title string) domain.SieveBlock {
 	attrs := map[string]interface{}{"source": source}
 	if title != "" {
 		attrs["title"] = title
 	}
-	return block.SieveBlock{Kind: "diagram", ID: "di-1", Attrs: attrs}
+	return domain.SieveBlock{Kind: "diagram", ID: "di-1", Attrs: attrs}
 }
 
 // diagramAnchoredEdit mints an anchor the way the substrate does — read
@@ -279,7 +279,7 @@ func diagramAnchoredEdit(t *testing.T, source, title, slot, quote string, occurr
 
 // diagramSpend applies edits to a fresh block built from source/title and
 // reports what the block now holds.
-func diagramSpend(t *testing.T, source, title string, edits ...domain.TextEdit) (block.SieveBlock, error) {
+func diagramSpend(t *testing.T, source, title string, edits ...domain.TextEdit) (domain.SieveBlock, error) {
 	t.Helper()
 	p := NewDiagramProcessor(block.BlockServices{})
 	blk := diagramBlockFrom(source, title)
@@ -449,7 +449,7 @@ func TestDiagramProcessor_UpdateTextReplacementContainingAFenceRoundTrips(t *tes
 	const source = "flowchart TD\n  a[recieve] --> b\n"
 	const fencedReplacement = "a label\n```\nnode[x]\n```\nend"
 
-	blk := block.NewSieveBlock("diagram", "019ff758-7aaf-79b1-a2e3-4221af4bb71b", map[string]interface{}{
+	blk := domain.NewSieveBlock("diagram", "019ff758-7aaf-79b1-a2e3-4221af4bb71b", map[string]interface{}{
 		"diagramType": "mermaid", "mode": "edit", "status": block.BlockStatusComplete, "source": source,
 	})
 	edit := diagramAnchoredEdit(t, source, "", DiagramSourceLocator, "recieve", 0, domain.GrainWord, fencedReplacement)
@@ -462,7 +462,7 @@ func TestDiagramProcessor_UpdateTextReplacementContainingAFenceRoundTrips(t *tes
 	}
 
 	codec := block.NewDocumentCodec(block.GlobalRegistry())
-	md, err := codec.Serialize([]block.SieveBlock{blk})
+	md, err := codec.Serialize([]domain.SieveBlock{blk})
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
 	}

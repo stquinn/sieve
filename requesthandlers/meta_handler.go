@@ -99,7 +99,7 @@ type assetViewData struct {
 	// Address is the asset's absolute sieve address.
 	Address string
 	// HolderID is the id of a block holding the asset whose own view a placement
-	// is built from (block.SieveBlock.PlacesHeldAssets). "" when no such block
+	// is built from (block.Registry.PlacesHeldAssets). "" when no such block
 	// holds it, and a placement sends the asset's address instead.
 	HolderID string
 }
@@ -109,7 +109,7 @@ type assetViewData struct {
 // the blocks could not be read, and nothing can then be said to be unused.
 type assetIndex struct {
 	labels  map[string]assetLabel
-	holders map[string]block.SieveBlock
+	holders map[string]domain.SieveBlock
 	known   bool
 }
 
@@ -388,17 +388,18 @@ func (h *MetaHandler) indexAssets(uuid string) assetIndex {
 }
 
 // indexBlocks is indexAssets over blocks already read.
-func (h *MetaHandler) indexBlocks(uuid string, blocks []block.SieveBlock) assetIndex {
+func (h *MetaHandler) indexBlocks(uuid string, blocks []domain.SieveBlock) assetIndex {
 	self := domain.NewContainerAddress(uuid)
 	idx := assetIndex{
 		labels:  make(map[string]assetLabel, len(blocks)),
-		holders: make(map[string]block.SieveBlock),
+		holders: make(map[string]domain.SieveBlock),
 		known:   true,
 	}
+	registry := block.GlobalRegistry()
 	for _, blk := range blocks {
-		held := blk.HeldAssets(self)
+		held := registry.HeldAssets(blk, self)
 		for _, key := range held {
-			if prev, ok := idx.holders[key]; !ok || (!prev.PlacesHeldAssets() && blk.PlacesHeldAssets()) {
+			if prev, ok := idx.holders[key]; !ok || (!registry.PlacesHeldAssets(prev) && registry.PlacesHeldAssets(blk)) {
 				idx.holders[key] = blk
 			}
 		}
@@ -471,7 +472,7 @@ func toAssetViews(uuid string, storables []store.Storable, idx assetIndex) []ass
 				InUse:    held || !idx.known,
 				Address:  domain.NewLeafAddress(uuid, name).String(),
 			}
-			if held && holder.PlacesHeldAssets() {
+			if held && block.GlobalRegistry().PlacesHeldAssets(holder) {
 				view.HolderID = holder.ID
 			}
 			out = append(out, view)

@@ -156,7 +156,7 @@ func TestEditorService_FlushWritesToDisk(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	es.UpdateMarkdown(uuid, "# Hello\n\n```ai-block\nid: ab-1234\nresponse: original\nstatus: COMPLETE\n```")
-	es.UpdateBlock(uuid, block.SieveBlock{
+	es.UpdateBlock(uuid, domain.SieveBlock{
 		Kind: "ai-block",
 		ID:   "ab-1234",
 		Attrs: map[string]interface{}{
@@ -192,7 +192,7 @@ func TestEditorService_EnterMarkdownEmbedsBlocks(t *testing.T) {
 
 	_ = es.Open(uuid)
 	es.UpdateMarkdown(uuid, "# Doc\n\n```code\nid: cb-0001\nsource: old\nstatus: COMPLETE\n```")
-	es.UpdateBlock(uuid, block.SieveBlock{
+	es.UpdateBlock(uuid, domain.SieveBlock{
 		Kind: "code",
 		ID:   "cb-0001",
 		Attrs: map[string]interface{}{
@@ -288,7 +288,7 @@ func TestEditorService_UpdateMarkdown_NoShadowIsNoop(t *testing.T) {
 func TestEditorService_UpdateBlock_NoShadowIsNoop(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), time.Second)
-	es.UpdateBlock("nonexistent-uuid", block.SieveBlock{Kind: "ai-block", ID: "ab-0001", Attrs: map[string]interface{}{"id": "ab-0001"}})
+	es.UpdateBlock("nonexistent-uuid", domain.SieveBlock{Kind: "ai-block", ID: "ab-0001", Attrs: map[string]interface{}{"id": "ab-0001"}})
 }
 
 func TestEditorService_EnterMarkdown_NoShadowReturnsEmpty(t *testing.T) {
@@ -491,7 +491,7 @@ func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
 
 	es.EnterWysiwyg(uuid)
 
-	es.UpdateBlock(uuid, block.SieveBlock{
+	es.UpdateBlock(uuid, domain.SieveBlock{
 		Kind: "code",
 		ID:   "cb-0001",
 		Attrs: map[string]interface{}{
@@ -695,10 +695,10 @@ func TestEditorService_HandlePaste_wholeBlockCopyPerKind(t *testing.T) {
 	type row struct {
 		name, kind, origID, plain, uriList string
 		attrs                              func(src string) map[string]interface{}
-		check                              func(t *testing.T, got map[string]interface{}, b block.SieveBlock)
+		check                              func(t *testing.T, got map[string]interface{}, b domain.SieveBlock)
 	}
-	keeps := func(want map[string]interface{}) func(*testing.T, map[string]interface{}, block.SieveBlock) {
-		return func(t *testing.T, got map[string]interface{}, _ block.SieveBlock) {
+	keeps := func(want map[string]interface{}) func(*testing.T, map[string]interface{}, domain.SieveBlock) {
+		return func(t *testing.T, got map[string]interface{}, _ domain.SieveBlock) {
 			for k, v := range want {
 				if !reflect.DeepEqual(got[k], v) {
 					t.Errorf("%s = %v, want %v", k, got[k], v)
@@ -718,7 +718,7 @@ func TestEditorService_HandlePaste_wholeBlockCopyPerKind(t *testing.T) {
 				return map[string]interface{}{"id": "diag-src-1", "status": "COMPLETE", "source": "graph TD\n    A[start] --> B{ok?}",
 					"diagramType": "mermaid", "mode": "render", "svgAsset": "sieve://" + src + "/diagram-diag-src-1.svg"}
 			},
-			check: func(t *testing.T, got map[string]interface{}, _ block.SieveBlock) {
+			check: func(t *testing.T, got map[string]interface{}, _ domain.SieveBlock) {
 				if got["source"] != "graph TD\n    A[start] --> B{ok?}" || got["diagramType"] != "mermaid" || got["mode"] != "render" {
 					t.Errorf("diagram content lost: %v", got)
 				}
@@ -749,7 +749,7 @@ func TestEditorService_HandlePaste_wholeBlockCopyPerKind(t *testing.T) {
 				return map[string]interface{}{"id": "ref-src-1", "status": "COMPLETE", "uri": "sieve://" + src + "/plan.txt",
 					"cache": map[string]interface{}{"title": "plan.txt", "mime": "text/plain", "bytes": "27", "summary": "Quarterly plan"}}
 			},
-			check: func(t *testing.T, got map[string]interface{}, _ block.SieveBlock) {
+			check: func(t *testing.T, got map[string]interface{}, _ domain.SieveBlock) {
 				face, _ := got["cache"].(map[string]interface{})
 				if uri, _ := got["uri"].(string); !strings.HasSuffix(uri, ".txt") || face["summary"] != "Quarterly plan" {
 					t.Errorf("reference lost its file or face: uri=%v cache=%v", got["uri"], got["cache"])
@@ -775,7 +775,7 @@ func TestEditorService_HandlePaste_wholeBlockCopyPerKind(t *testing.T) {
 						el("code", "a-2", map[string]interface{}{"language": "go", "source": "db.SetMaxOpenConns(4)"}),
 					}}
 			},
-			check: func(t *testing.T, got map[string]interface{}, b block.SieveBlock) {
+			check: func(t *testing.T, got map[string]interface{}, b domain.SieveBlock) {
 				if got["status"] != block.BlockStatusComplete {
 					t.Errorf("the pasted answer must stay answered, status = %v", got["status"])
 				}
@@ -1213,13 +1213,13 @@ func (p *testRunJobProcessor) IsSupportedContent(entries []block.ContentEntry) b
 func (p *testRunJobProcessor) Transform(entries []block.ContentEntry, _ string, _ string, action block.Action) map[string]interface{} {
 	return nil
 }
-func (p *testRunJobProcessor) BuildContext(_ block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
+func (p *testRunJobProcessor) BuildContext(_ domain.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
 	return block.AIContext{}
 }
-func (p *testRunJobProcessor) MarkdownRepresentation(_ block.SieveBlock, _ string) string {
+func (p *testRunJobProcessor) MarkdownRepresentation(_ domain.SieveBlock, _ string) string {
 	return ""
 }
-func (p *testRunJobProcessor) OnChange(_ *block.SieveBlock) {}
+func (p *testRunJobProcessor) OnChange(_ *domain.SieveBlock) {}
 func (p *testRunJobProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJob {
 	if p.describe != nil {
 		return p.describe(jctx)
@@ -1258,10 +1258,10 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 					es.mu.Lock()
 					shadow := es.shadows[uuid]
 					es.mu.Unlock()
-					shadow.MergeBlock(block.SieveBlock{ID: blockID, Attrs: map[string]interface{}{"source": "concurrent user edit"}})
+					shadow.MergeBlock(domain.SieveBlock{ID: blockID, Attrs: map[string]interface{}{"source": "concurrent user edit"}})
 					return nil, nil
 				},
-				Apply: func(_ any, blk *block.SieveBlock) {
+				Apply: func(_ any, blk *domain.SieveBlock) {
 					blk.Attrs["language"] = "go"         // modified
 					blk.Attrs["added_key"] = "new value" // added
 					blk.Attrs["status"] = block.BlockStatusComplete
@@ -1348,7 +1348,7 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 					}
 					return nil, nil
 				},
-				Apply: func(_ any, blk *block.SieveBlock) {
+				Apply: func(_ any, blk *domain.SieveBlock) {
 					blk.Attrs["status"] = block.BlockStatusComplete
 				},
 			}

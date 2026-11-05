@@ -10,6 +10,7 @@ import (
 
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
+	"sieve/sieve/domain"
 )
 
 // Export takes the CALLER's BlockFilter (a closure): the exclusion policy
@@ -32,7 +33,7 @@ func TestEditorService_Export_CallerOwnsFilter(t *testing.T) {
 	defer es.Close(uuid)
 
 	// Caller's closure drops code blocks.
-	noCode, err := es.Export(uuid, func(b block.SieveBlock) bool { return b.Kind != "code" }, block.MarkdownGenerator{})
+	noCode, err := es.Export(uuid, func(b domain.SieveBlock) bool { return b.Kind != "code" }, block.MarkdownGenerator{})
 	if err != nil {
 		t.Fatalf("Export(filter): %v", err)
 	}

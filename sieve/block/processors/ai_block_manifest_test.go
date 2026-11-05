@@ -23,8 +23,8 @@ const chainDocUUID = "0197b1f4-dddd-7eee-8fff-a1b2c3d4e5f6"
 
 // aiBlockWithAttachments builds one chain turn in the legacy flat form, which
 // the document load path converts to a question list.
-func aiBlockWithAttachments(id, ref, question, response string, atts ...domain.Attachment) block.SieveBlock {
-	blk := block.NewSieveBlock("ai-block", id, map[string]interface{}{
+func aiBlockWithAttachments(id, ref, question, response string, atts ...domain.Attachment) domain.SieveBlock {
+	blk := domain.NewSieveBlock("ai-block", id, map[string]interface{}{
 		"id": id, "ref": ref, "type": "ASK",
 		"status": block.BlockStatusComplete, "question": question, "response": response,
 	})
@@ -36,20 +36,20 @@ func aiBlockWithAttachments(id, ref, question, response string, atts ...domain.A
 // whole-document target, the question text and one reference element per
 // attachment — for a test that assembles a prompt without a load path to
 // convert a legacy record for it.
-func askAbout(container, id, question, response string, atts ...domain.Attachment) block.SieveBlock {
-	blk := block.NewSieveBlock("ai-block", id, map[string]interface{}{
+func askAbout(container, id, question, response string, atts ...domain.Attachment) domain.SieveBlock {
+	blk := domain.NewSieveBlock("ai-block", id, map[string]interface{}{
 		"id": id, "type": "ASK", "status": block.BlockStatusComplete, "response": response,
 	})
-	els := block.Elements{
-		block.NewSieveBlock(block.KindReference, "", map[string]interface{}{
+	els := domain.Elements{
+		domain.NewSieveBlock(block.KindReference, "", map[string]interface{}{
 			"uri": domain.NewContainerAddress(container).String(), "rel": block.RelTarget,
 		}),
-		block.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": question}),
+		domain.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": question}),
 	}
 	for _, a := range atts {
-		els = append(els, block.NewSieveBlock(block.KindReference, "", map[string]interface{}{
+		els = append(els, domain.NewSieveBlock(block.KindReference, "", map[string]interface{}{
 			"uri": a.URI, "rel": block.RelAttach,
-			block.FaceAttr: map[string]interface{}{"title": a.Title},
+			domain.FaceAttr: map[string]interface{}{"title": a.Title},
 		}))
 	}
 	blk.SetElements(block.QuestionAttr, els)
@@ -67,8 +67,8 @@ func TestAIBlock_ThreeTurnChain_EachTurnRendersItsOwnManifest(t *testing.T) {
 
 	p := NewAIBlockProcessor(svc)
 	codec := block.NewDocumentCodec(block.GlobalRegistry())
-	seed := []block.SieveBlock{
-		block.NewSieveBlock(block.KindProse, "pr-1", map[string]interface{}{"content": "the grass is green"}),
+	seed := []domain.SieveBlock{
+		domain.NewSieveBlock(block.KindProse, "pr-1", map[string]interface{}{"content": "the grass is green"}),
 		aiBlockWithAttachments("ab-1", "doc", "turn one?", "answer one", domain.Attachment{URI: authURI, Title: "Auth Design"}),
 		aiBlockWithAttachments("ab-2", "ab-1", "turn two?", "answer two", domain.Attachment{URI: retryURI, Title: "Retry RFC"}),
 		aiBlockWithAttachments("ab-3", "ab-2", "turn three?", "", domain.Attachment{URI: rateURI, Title: "Rate Limits"}),

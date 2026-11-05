@@ -7,11 +7,13 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"sieve/sieve/domain"
 )
 
 // transpile runs prose markdown through a fresh generator.
 func transpile(md string) string {
-	return NewConfluenceGenerator().RenderBlock(SieveBlock{Kind: "prose"}, md)
+	return NewConfluenceGenerator().RenderBlock(domain.SieveBlock{Kind: "prose"}, md)
 }
 
 // codeMacro is the storage-format code macro a test row expects: language is
@@ -170,20 +172,20 @@ func TestConfluenceGenerator_FenceIsOneMacroEverywhere(t *testing.T) {
 	}
 	cases := []struct {
 		name  string
-		block SieveBlock
+		block domain.SieveBlock
 		fence string
 	}{
-		{"code", SieveBlock{Kind: "code", Attrs: map[string]interface{}{"language": "golang", "source": "x := 1\n"}}, "```golang\nx := 1\n```"},
-		{"code without a language", SieveBlock{Kind: "code", Attrs: map[string]interface{}{"source": "x"}}, "```\nx\n```"},
-		{"log", SieveBlock{Kind: "log", Attrs: map[string]interface{}{"source": "ERROR x"}}, "```\nERROR x\n```"},
-		{"plantuml diagram", SieveBlock{Kind: "diagram", Attrs: map[string]interface{}{"diagramType": "plantuml", "source": "A -> B"}}, "```plantuml\nA -> B\n```"},
-		{"mermaid diagram", SieveBlock{Kind: "diagram", Attrs: map[string]interface{}{"diagramType": "mermaid", "source": "graph LR"}}, "```mermaid\ngraph LR\n```"},
-		{"engine-less diagram", SieveBlock{Kind: "diagram", Attrs: map[string]interface{}{"source": "graph LR"}}, "```mermaid\ngraph LR\n```"},
+		{"code", domain.SieveBlock{Kind: "code", Attrs: map[string]interface{}{"language": "golang", "source": "x := 1\n"}}, "```golang\nx := 1\n```"},
+		{"code without a language", domain.SieveBlock{Kind: "code", Attrs: map[string]interface{}{"source": "x"}}, "```\nx\n```"},
+		{"log", domain.SieveBlock{Kind: "log", Attrs: map[string]interface{}{"source": "ERROR x"}}, "```\nERROR x\n```"},
+		{"plantuml diagram", domain.SieveBlock{Kind: "diagram", Attrs: map[string]interface{}{"diagramType": "plantuml", "source": "A -> B"}}, "```plantuml\nA -> B\n```"},
+		{"mermaid diagram", domain.SieveBlock{Kind: "diagram", Attrs: map[string]interface{}{"diagramType": "mermaid", "source": "graph LR"}}, "```mermaid\ngraph LR\n```"},
+		{"engine-less diagram", domain.SieveBlock{Kind: "diagram", Attrs: map[string]interface{}{"source": "graph LR"}}, "```mermaid\ngraph LR\n```"},
 	}
 	for _, ed := range editions {
 		for _, tc := range cases {
 			t.Run(ed.name+"/"+tc.name, func(t *testing.T) {
-				prose := func(md string) string { return ed.new().RenderBlock(SieveBlock{Kind: "prose"}, md) }
+				prose := func(md string) string { return ed.new().RenderBlock(domain.SieveBlock{Kind: "prose"}, md) }
 				macro := ed.new().RenderBlock(tc.block, "non-empty representation")
 				if got := prose(tc.fence); got != macro {
 					t.Errorf("block renders\n%s\nprose fence renders\n%s", macro, got)
@@ -202,7 +204,7 @@ func TestConfluenceGenerator_FenceIsOneMacroEverywhere(t *testing.T) {
 // and the source as escaped text that parses back to itself.
 func TestConfluenceGenerator_CloudPlantUMLNode(t *testing.T) {
 	source := "@startuml\n(*) --> \"Dispute & <Resolution>\"\n@enduml"
-	got := newCountingCloudGenerator().RenderBlock(SieveBlock{Kind: "prose"},
+	got := newCountingCloudGenerator().RenderBlock(domain.SieveBlock{Kind: "prose"},
 		"```plantuml\n"+source+"\n```\n\n```plantuml\nA -> B\n```")
 	if err := wellFormed(got); err != nil {
 		t.Fatalf("not well-formed XML: %v\n%s", err, got)
@@ -248,7 +250,7 @@ func TestConfluenceGenerator_CloudPlantUMLNode(t *testing.T) {
 
 // The production Cloud generator mints a distinct local id for each diagram.
 func TestConfluenceGenerator_CloudMintsFreshIDs(t *testing.T) {
-	b := SieveBlock{Kind: "diagram", Attrs: map[string]interface{}{"diagramType": "plantuml", "source": "A -> B"}}
+	b := domain.SieveBlock{Kind: "diagram", Attrs: map[string]interface{}{"diagramType": "plantuml", "source": "A -> B"}}
 	g := NewConfluenceCloudGenerator()
 	if first, second := g.RenderBlock(b, "x"), g.RenderBlock(b, "x"); first == second {
 		t.Errorf("two diagrams share a local id:\n%s", first)
@@ -257,7 +259,7 @@ func TestConfluenceGenerator_CloudMintsFreshIDs(t *testing.T) {
 
 // A block whose markdown representation is empty is left out of the export.
 func TestConfluenceGenerator_EmptyRepresentationRendersEmpty(t *testing.T) {
-	b := SieveBlock{Kind: "code", Attrs: map[string]interface{}{"language": "go", "source": ""}}
+	b := domain.SieveBlock{Kind: "code", Attrs: map[string]interface{}{"language": "go", "source": ""}}
 	if got := NewConfluenceGenerator().RenderBlock(b, ""); got != "" {
 		t.Errorf("got %q, want empty", got)
 	}

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 )
 
 const (
@@ -17,11 +18,11 @@ const (
 // answered builds the ai-block under test: an exchange of blockType whose
 // question is one target plus one line of prose, answered by whatever answer
 // holds — the composed list, or the degraded string a producer writes.
-func answered(blockType string, answer any) block.SieveBlock {
-	blk := block.NewSieveBlock("ai-block", answerAskID, map[string]interface{}{
+func answered(blockType string, answer any) domain.SieveBlock {
+	blk := domain.NewSieveBlock("ai-block", answerAskID, map[string]interface{}{
 		"type": blockType, "status": block.BlockStatusComplete, block.AnswerAttr: answer,
 	})
-	blk.SetElements(block.QuestionAttr, block.Elements{foldTarget(foldLeafID), foldProse("What is Go?")})
+	blk.SetElements(block.QuestionAttr, domain.Elements{foldTarget(foldLeafID), foldProse("What is Go?")})
 	return blk
 }
 
@@ -62,7 +63,7 @@ func TestAIBlockAnswer_SingleProseRendersAsTheStringDid(t *testing.T) {
 		name   string
 		answer any
 	}{
-		{"composed list", block.Elements{foldProse(answerText)}},
+		{"composed list", domain.Elements{foldProse(answerText)}},
 		{"stored list", []interface{}{answerElement(block.KindProse, map[string]interface{}{"content": answerText})}},
 		{"degraded string", answerText},
 	}
@@ -210,7 +211,7 @@ func TestAIBlockAnswer_ApplyWritesTheList(t *testing.T) {
 	registerAnswerKinds(t)
 	p := NewAIBlockProcessor(block.BlockServices{})
 
-	blk := block.NewSieveBlock("ai-block", answerAskID, map[string]interface{}{"type": "ASK"})
+	blk := domain.NewSieveBlock("ai-block", answerAskID, map[string]interface{}{"type": "ASK"})
 	job := p.DescribeJob(block.JobContext{Block: &blk, UUID: foldDocUUID, Doc: block.DocView{UUID: foldDocUUID}})
 	if job == nil {
 		t.Fatal("an ai-block always has async work")

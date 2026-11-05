@@ -3,6 +3,7 @@ package processors
 import (
 	"encoding/json"
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"testing"
 )
 
@@ -176,7 +177,7 @@ func TestAIBlockPaste_elementsGetFreshIDs(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := aiBlockPaster()
-			blk := block.NewSieveBlock("ai-block", "ab-new", p.InitAttrs("ab-new", p.Transform(entries, "doc-1", "ab-new", block.ActionPaste)))
+			blk := domain.NewSieveBlock("ai-block", "ab-new", p.InitAttrs("ab-new", p.Transform(entries, "doc-1", "ab-new", block.ActionPaste)))
 			var kinds string
 			for _, el := range p.Children(&blk) {
 				kinds += el.Kind + " "

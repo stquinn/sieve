@@ -155,7 +155,7 @@ type sourceTextBearerProcessor struct {
 	testRunJobProcessor
 }
 
-func (p *sourceTextBearerProcessor) NormalisedText(blk *block.SieveBlock) []domain.TextSegment {
+func (p *sourceTextBearerProcessor) NormalisedText(blk *domain.SieveBlock) []domain.TextSegment {
 	source, _ := blk.Attrs["source"].(string)
 	return []domain.TextSegment{
 		{Locator: "source", Text: source, Class: domain.TextClassCode},

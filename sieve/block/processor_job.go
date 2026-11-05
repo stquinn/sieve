@@ -1,5 +1,7 @@
 package block
 
+import "sieve/sieve/domain"
+
 // ProcessorJob is the block-level descriptor a processor returns (by pointer)
 // from DescribeJob. The framework owns the lifecycle; a processor writes no
 // tracking/finish code. A DescribeJob that returns nil means "no async work" —
@@ -8,10 +10,10 @@ package block
 // Label on submit). "No async work" blocks settle to COMPLETE at creation
 // (InitAttrs), never through a job.
 type ProcessorJob struct {
-	Category string                            // producer-owned category, e.g. CategoryAI
-	Label    string                            // status-bar label — MUST be non-empty for a returned job
-	Work     func() (any, error)               // the blocking backend call (e.g. an AI CLI)
-	Apply    func(result any, blk *SieveBlock) // mutate blk.Attrs from Work's result
+	Category string                                   // producer-owned category, e.g. CategoryAI
+	Label    string                                   // status-bar label — MUST be non-empty for a returned job
+	Work     func() (any, error)                      // the blocking backend call (e.g. an AI CLI)
+	Apply    func(result any, blk *domain.SieveBlock) // mutate blk.Attrs from Work's result
 }
 
 // CategoryAI is the engine category for AI (claude CLI) work. It is

@@ -313,7 +313,7 @@ func TestReferenceProcessor_Transform_declinesNonCoordinates(t *testing.T) {
 
 func TestReferenceProcessor_DescribeJob_noAddressNoJob(t *testing.T) {
 	p := NewReferenceProcessor(block.BlockServices{Nodes: fakeNodes{}, Assets: fakeAssets{}})
-	blk := &block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
+	blk := &domain.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
 		"uri": "", "status": block.BlockStatusComplete,
 	}}
 	if job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "u", Block: blk}); job != nil {
@@ -325,7 +325,7 @@ func TestReferenceProcessor_DescribeJob_noAddressNoJob(t *testing.T) {
 // same method, so a block born COMPLETE never describes work nothing dispatches.
 func TestReferenceProcessor_DescribeJob_aFilledFaceDescribesNoJob(t *testing.T) {
 	p := NewReferenceProcessor(block.BlockServices{Nodes: fakeNodes{}})
-	blk := &block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: p.InitAttrs("at-1", map[string]interface{}{
+	blk := &domain.SieveBlock{ID: "at-1", Kind: "reference", Attrs: p.InitAttrs("at-1", map[string]interface{}{
 		"uri":   "sieve://" + ident.New(),
 		"cache": map[string]interface{}{"title": "Auth Design", "mime": "sieve/note"},
 	})}
@@ -340,7 +340,7 @@ func TestReferenceProcessor_DescribeJob_resolvesACoordinate(t *testing.T) {
 	p := NewReferenceProcessor(block.BlockServices{Nodes: fakeNodes{nodes: map[string]domain.NodeDescriptor{
 		uri: {URI: uri, ID: uuid, Kind: "note", Title: "Auth Design", Summary: "Token rotation and session binding"},
 	}}})
-	blk := &block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
+	blk := &domain.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
 		"uri": uri, "status": block.BlockStatusPending,
 	}}
 
@@ -399,7 +399,7 @@ func TestReferenceProcessor_DescribeJob_resolvesACoordinate(t *testing.T) {
 // is a malformed reference, and web pages belong to web-clip.
 func TestReferenceProcessor_DescribeJob_aNonCoordinateDangles(t *testing.T) {
 	p := NewReferenceProcessor(block.BlockServices{Nodes: fakeNodes{}})
-	blk := &block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
+	blk := &domain.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
 		"uri":    "https://example.com/spec",
 		"cache":  map[string]interface{}{"title": "The Spec"},
 		"status": block.BlockStatusPending,
@@ -432,7 +432,7 @@ func TestReferenceProcessor_DescribeJob_aNonCoordinateDangles(t *testing.T) {
 func TestReferenceProcessor_DescribeJob_danglingIsNotAFailure(t *testing.T) {
 	uri := "sieve://" + ident.New()
 	p := NewReferenceProcessor(block.BlockServices{Nodes: fakeNodes{nodes: map[string]domain.NodeDescriptor{}}})
-	blk := &block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
+	blk := &domain.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
 		"uri":    uri,
 		"cache":  map[string]interface{}{"title": "Deleted Note"},
 		"status": block.BlockStatusPending,
@@ -461,7 +461,7 @@ func TestReferenceProcessor_DescribeJob_danglingIsNotAFailure(t *testing.T) {
 func TestReferenceProcessor_DescribeJob_aBrokenResolverFailsTheJob(t *testing.T) {
 	boom := errors.New("library is unreadable")
 	p := NewReferenceProcessor(block.BlockServices{Nodes: fakeNodes{err: boom}})
-	blk := &block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
+	blk := &domain.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
 		"uri": "sieve://" + ident.New(), "status": block.BlockStatusPending,
 	}}
 	job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "doc", Block: blk})
@@ -478,7 +478,7 @@ func TestReferenceProcessor_BuildContext_heldFile(t *testing.T) {
 	p := NewReferenceProcessor(block.BlockServices{})
 	docUUID := ident.New()
 	uri := domain.NewLeafAddress(docUUID, "at-1.yml").String()
-	blk := block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
+	blk := domain.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
 		"uri": uri,
 		"cache": map[string]interface{}{
 			"mime": "text/yaml", "bytes": "421888", "summary": "openapi: 3.0.0",
@@ -552,7 +552,7 @@ func TestReferenceProcessor_BuildContext_fileTag(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			blk := block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: c.attrs}
+			blk := domain.SieveBlock{ID: "at-1", Kind: "reference", Attrs: c.attrs}
 			got := NewReferenceProcessor(block.BlockServices{}).BuildContext(blk, block.DocView{UUID: askingUUID}, map[string]bool{}).String()
 			if c.want == "" {
 				if strings.Contains(got, "File:") {
@@ -576,7 +576,7 @@ func TestReferenceProcessor_BuildContext_fileTag(t *testing.T) {
 func TestReferenceProcessor_BuildContext_pointer(t *testing.T) {
 	p := NewReferenceProcessor(block.BlockServices{})
 	uri := "sieve://" + ident.New()
-	blk := block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
+	blk := domain.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
 		"uri": uri,
 		"cache": map[string]interface{}{
 			"title": "Auth Design", "mime": "sieve/note",
@@ -598,7 +598,7 @@ func TestReferenceProcessor_BuildContext_pointer(t *testing.T) {
 
 func TestReferenceProcessor_BuildContext_addresslessIsEmpty(t *testing.T) {
 	p := NewReferenceProcessor(block.BlockServices{})
-	blk := block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{}}
+	blk := domain.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{}}
 	if !p.BuildContext(blk, block.DocView{UUID: ident.New()}, map[string]bool{}).IsEmpty() {
 		t.Error("an addressless reference contributes nothing")
 	}
@@ -646,7 +646,7 @@ func TestReferenceProcessor_MarkdownRepresentation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			blk := block.SieveBlock{ID: "at-1", Kind: "reference", Attrs: tc.attrs}
+			blk := domain.SieveBlock{ID: "at-1", Kind: "reference", Attrs: tc.attrs}
 			if got := p.MarkdownRepresentation(blk, docUUID); got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
@@ -660,7 +660,7 @@ func TestReferenceProcessor_MarkdownRepresentation(t *testing.T) {
 func TestReferenceProcessor_SerializeRoundTrip(t *testing.T) {
 	p := NewReferenceProcessor(block.BlockServices{})
 	id := ident.New()
-	blk := block.NewSieveBlock("reference", id, map[string]interface{}{
+	blk := domain.NewSieveBlock("reference", id, map[string]interface{}{
 		"uri":   "sieve://" + ident.New(),
 		"cache": map[string]interface{}{"title": "Auth Design", "mime": "sieve/note"},
 	})

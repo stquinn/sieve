@@ -36,12 +36,12 @@ type ReferenceMigrator struct{}
 
 // Migrate returns the tree with every reference's uri rewritten to its current
 // spelling, plus whether anything changed. The input is never mutated.
-func (m ReferenceMigrator) Migrate(blocks []SieveBlock, documentUUID string) ([]SieveBlock, bool) {
+func (m ReferenceMigrator) Migrate(blocks []domain.SieveBlock, documentUUID string) ([]domain.SieveBlock, bool) {
 	if len(blocks) == 0 {
 		return blocks, false
 	}
 	changed := false
-	out := make([]SieveBlock, len(blocks))
+	out := make([]domain.SieveBlock, len(blocks))
 	for i, b := range blocks {
 		switch b.Kind {
 		case "reference":

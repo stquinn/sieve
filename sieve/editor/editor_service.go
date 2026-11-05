@@ -184,7 +184,7 @@ func (es *EditorService) notifySaved(uuid string, version int) {
 	}
 }
 
-func (es *EditorService) notifyBlockCreated(uuid string, blk block.SieveBlock, index int) {
+func (es *EditorService) notifyBlockCreated(uuid string, blk domain.SieveBlock, index int) {
 	es.mu.RLock()
 	l := es.listener
 	inspection := es.inspection
@@ -205,7 +205,7 @@ func (es *EditorService) notifyBlockCreated(uuid string, blk block.SieveBlock, i
 	}
 }
 
-func (es *EditorService) notifyBlockUpdated(uuid string, blk block.SieveBlock) {
+func (es *EditorService) notifyBlockUpdated(uuid string, blk domain.SieveBlock) {
 	es.mu.RLock()
 	l := es.listener
 	inspection := es.inspection
@@ -218,7 +218,7 @@ func (es *EditorService) notifyBlockUpdated(uuid string, blk block.SieveBlock) {
 	}
 }
 
-func (es *EditorService) notifyBlockReplaced(uuid, oldID string, blk block.SieveBlock) {
+func (es *EditorService) notifyBlockReplaced(uuid, oldID string, blk domain.SieveBlock) {
 	es.mu.RLock()
 	l := es.listener
 	inspection := es.inspection
@@ -370,7 +370,7 @@ func (es *EditorService) FrontendBlocks(uuid string) ([]block.FrontendBlock, boo
 
 // Blocks returns document uuid's current blocks: the open shadow's when the
 // document is open, else its stored body parsed. The blocks are copies.
-func (es *EditorService) Blocks(uuid string) ([]block.SieveBlock, error) {
+func (es *EditorService) Blocks(uuid string) ([]domain.SieveBlock, error) {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
@@ -393,8 +393,9 @@ func (es *EditorService) AssetHolder(uuid, key string) (string, bool, error) {
 		return "", false, err
 	}
 	self := domain.NewContainerAddress(uuid)
+	registry := block.GlobalRegistry()
 	for _, blk := range blocks {
-		for _, held := range blk.HeldAssets(self) {
+		for _, held := range registry.HeldAssets(blk, self) {
 			if held == key {
 				return blk.ID, true, nil
 			}
@@ -521,7 +522,7 @@ func (es *EditorService) HandleBlockOp(uuid string, op block.BlockOp) error {
 
 // UpdateBlock merges attrs into the named block, creating it if needed.
 // kind is only used when creating a new block entry.
-func (es *EditorService) UpdateBlock(uuid string, blk block.SieveBlock) {
+func (es *EditorService) UpdateBlock(uuid string, blk domain.SieveBlock) {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
@@ -614,7 +615,7 @@ func (es *EditorService) ReplaceTextBatch(uuid, blockID string, edits []domain.T
 // the caller an error rather than the process. Same containment as the spell
 // checker's read of NormalisedText: this runs on the WS read loop, where an
 // unrecovered panic takes down more than the request that caused it.
-func (es *EditorService) updateText(updater block.TextUpdater, blk *block.SieveBlock, edits []domain.TextEdit) (err error) {
+func (es *EditorService) updateText(updater block.TextUpdater, blk *domain.SieveBlock, edits []domain.TextEdit) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Error("editor: UpdateText panicked", "kind", blk.Kind, "block", blk.ID, "err", r)
@@ -629,7 +630,7 @@ func (es *EditorService) updateText(updater block.TextUpdater, blk *block.SieveB
 // nothing else: this is called from the WS read loop and from timer goroutines
 // alike, where an unrecovered panic takes down more than the read that caused
 // it.
-func (es *EditorService) readingOf(blk block.SieveBlock) (segments []domain.TextSegment, bearsText bool) {
+func (es *EditorService) readingOf(blk domain.SieveBlock) (segments []domain.TextSegment, bearsText bool) {
 	bearer, bearsText := block.TextBearerFor(blk.Kind)
 	if !bearsText {
 		return nil, false
@@ -949,7 +950,7 @@ func (es *EditorService) KeepAndFile(uuid string) {
 // INVARIANT: every submitted job has a non-empty Label — a nil DescribeJob is
 // never submitted, and a non-nil ProcessorJob is real async work that MUST label
 // itself for the status bar. An empty Label is a processor programming error.
-func (es *EditorService) submitBlockJob(job block.ProcessorJob, meta domain.JobInfo, blk *block.SieveBlock, onDone func(err error)) {
+func (es *EditorService) submitBlockJob(job block.ProcessorJob, meta domain.JobInfo, blk *domain.SieveBlock, onDone func(err error)) {
 	if meta.Label == "" {
 		panic(fmt.Sprintf("submitBlockJob: block %q (kind via meta) has an empty Label — a submitted ProcessorJob must declare a non-empty Label", meta.JobID))
 	}
@@ -1061,7 +1062,7 @@ func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[s
 	}
 	id = blockID
 	attrs := processor.InitAttrs(id, overrides)
-	sieveBlock := block.SieveBlock{ID: id, Kind: kind, Attrs: attrs, Aliases: aliases}
+	sieveBlock := domain.SieveBlock{ID: id, Kind: kind, Attrs: attrs, Aliases: aliases}
 	if err = shadow.ApplyOp(block.BlockOp{Type: "create-block", BlockID: id, Kind: kind, Attrs: attrs, Aliases: aliases, Index: index}); err != nil {
 		return "", "", err
 	}
@@ -1218,7 +1219,7 @@ func (es *EditorService) transformInPlace(uuid, kind string, processor block.Blo
 		return "", "", fmt.Errorf("transform: processor %q could not transform entries", kind)
 	}
 	attrs := processor.InitAttrs(sourceID, overrides)
-	newBlock := block.SieveBlock{ID: sourceID, Kind: kind, Attrs: attrs}
+	newBlock := domain.SieveBlock{ID: sourceID, Kind: kind, Attrs: attrs}
 	if !shadow.ReplaceBlock(sourceID, newBlock) {
 		return "", "", fmt.Errorf("transform: source block %q not found", sourceID)
 	}
@@ -1260,30 +1261,30 @@ func (es *EditorService) applyBlockUpdate(uuid string, op block.BlockOp) error {
 //
 // present is false when there is nothing to render back at all: no processor is
 // registered for the kind, or the block did not survive the merge.
-func (es *EditorService) mergeAndReact(uuid string, op block.BlockOp) (blk block.SieveBlock, present bool, err error) {
+func (es *EditorService) mergeAndReact(uuid string, op block.BlockOp) (blk domain.SieveBlock, present bool, err error) {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
 	if shadow == nil {
-		return block.SieveBlock{}, false, fmt.Errorf("update-block: no open document for uuid %q", uuid)
+		return domain.SieveBlock{}, false, fmt.Errorf("update-block: no open document for uuid %q", uuid)
 	}
 
 	// Prose's body is just Attrs["content"], merged like any other key — no
 	// kind-special handling.
-	shadow.MergeBlock(block.SieveBlock{ID: op.BlockID, Kind: op.Kind, Attrs: op.Attrs, Aliases: op.Aliases})
+	shadow.MergeBlock(domain.SieveBlock{ID: op.BlockID, Kind: op.Kind, Attrs: op.Attrs, Aliases: op.Aliases})
 
 	processor := block.GetProcessor(op.Kind)
 	if processor == nil {
-		return block.SieveBlock{}, false, nil
+		return domain.SieveBlock{}, false, nil
 	}
 
 	// Snapshot the merged state (patch + existing attrs) for OnChange, then merge
 	// back only what OnChange itself changed.
 	snap, ok := shadow.SnapshotBlock(op.BlockID)
 	if !ok {
-		return block.SieveBlock{}, false, nil
+		return domain.SieveBlock{}, false, nil
 	}
-	blkCopy := &block.SieveBlock{ID: snap.ID, Kind: snap.Kind, Attrs: snap.Attrs}
+	blkCopy := &domain.SieveBlock{ID: snap.ID, Kind: snap.Kind, Attrs: snap.Attrs}
 	attrsBefore := make(map[string]interface{}, len(snap.Attrs))
 	for k, v := range snap.Attrs {
 		attrsBefore[k] = v
@@ -1298,14 +1299,14 @@ func (es *EditorService) mergeAndReact(uuid string, op block.BlockOp) (blk block
 		}
 	}
 	if len(attrsChanged) > 0 {
-		shadow.MergeBlock(block.SieveBlock{ID: op.BlockID, Kind: op.Kind, Attrs: attrsChanged})
+		shadow.MergeBlock(domain.SieveBlock{ID: op.BlockID, Kind: op.Kind, Attrs: attrsChanged})
 	}
 
 	blkFinal, okFinal := shadow.SnapshotBlock(op.BlockID)
 	if !okFinal {
-		return block.SieveBlock{}, false, nil
+		return domain.SieveBlock{}, false, nil
 	}
-	return block.SieveBlock{ID: op.BlockID, Kind: op.Kind, Attrs: blkFinal.Attrs}, true, nil
+	return domain.SieveBlock{ID: op.BlockID, Kind: op.Kind, Attrs: blkFinal.Attrs}, true, nil
 }
 
 // DispatchJobIfNeeded checks if the block has status PENDING. If so, it transitions the block
@@ -1377,7 +1378,7 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 	}
 
 	if len(updates) > 0 {
-		shadow.MergeBlock(block.SieveBlock{ID: blockID, Kind: kind, Attrs: updates})
+		shadow.MergeBlock(domain.SieveBlock{ID: blockID, Kind: kind, Attrs: updates})
 	}
 	for _, k := range deletes {
 		shadow.DeleteBlockAttr(blockID, k)
@@ -1387,7 +1388,7 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 	}
 
 	if blk, ok := shadow.SnapshotBlock(blockID); ok {
-		es.notifyBlockUpdated(uuid, block.SieveBlock{ID: blockID, Kind: kind, Attrs: blk.Attrs})
+		es.notifyBlockUpdated(uuid, domain.SieveBlock{ID: blockID, Kind: kind, Attrs: blk.Attrs})
 	}
 
 	if openedTransiently {
@@ -1418,7 +1419,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 		return
 	}
 	kind := snap.Kind
-	blkCopy := &block.SieveBlock{ID: snap.ID, Kind: snap.Kind, Attrs: snap.Attrs}
+	blkCopy := &domain.SieveBlock{ID: snap.ID, Kind: snap.Kind, Attrs: snap.Attrs}
 	attrsBefore := make(map[string]interface{}, len(snap.Attrs))
 	for k, v := range snap.Attrs {
 		attrsBefore[k] = v

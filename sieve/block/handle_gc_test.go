@@ -3,10 +3,12 @@ package block
 import (
 	"strings"
 	"testing"
+
+	"sieve/sieve/domain"
 )
 
 func TestCollectHandles_IndexesEveryHandle(t *testing.T) {
-	doc := []SieveBlock{
+	doc := []domain.SieveBlock{
 		{ID: "pr-a", Kind: KindProse, Aliases: []string{"pr-x"}},
 		{ID: "pr-b", Kind: KindProse},
 		{ID: "co-1", Kind: "code"},
@@ -21,9 +23,9 @@ func TestCollectHandles_IndexesEveryHandle(t *testing.T) {
 }
 
 func TestGCRefs_DropsDangling(t *testing.T) {
-	b := SieveBlock{ID: "co-self", Attrs: map[string]interface{}{"ref": "pr-a,pr-gone,co-1,pr-a"}}
+	b := domain.SieveBlock{ID: "co-self", Attrs: map[string]interface{}{"ref": "pr-a,pr-gone,co-1,pr-a"}}
 	resolvable := map[string]bool{"pr-a": true, "co-1": true}
-	got := b.gcRefs("", resolvable)
+	got := (&ShadowDocument{}).gcRefs(b, resolvable)
 	want := "pr-a,co-1" // dangling pr-gone stripped, duplicate pr-a deduped, order kept
 	if strings.Join(got, ",") != want {
 		t.Fatalf("gcRefs: want %q got %v", want, got)
@@ -39,18 +41,18 @@ func TestGCRefs_DropsDangling(t *testing.T) {
 // GC, and by extension the INTERIOR/LEAF chain classification built on them —
 // must not see a coordinate, and must not prune one either.
 func TestRefSemanticsUnchangedByAttachments(t *testing.T) {
-	b := SieveBlock{ID: "ai-c71e", Kind: "ai-block", Attrs: map[string]interface{}{
+	b := domain.SieveBlock{ID: "ai-c71e", Kind: "ai-block", Attrs: map[string]interface{}{
 		"ref": "pr-a,blk-gone",
-		AttachmentsAttr: []interface{}{
+		domain.AttachmentsAttr: []interface{}{
 			map[string]interface{}{"uri": "sieve://9f2b", "title": "Auth Design"},
 		},
 	}}
 
-	if got := b.outgoingRefs(""); strings.Join(got, ",") != "pr-a,blk-gone" {
+	if got := GlobalRegistry().outgoingRefs(b, ""); strings.Join(got, ",") != "pr-a,blk-gone" {
 		t.Fatalf("outgoingRefs saw something other than the local chain: %v", got)
 	}
 
-	kept := b.gcRefs("", map[string]bool{"pr-a": true})
+	kept := (&ShadowDocument{}).gcRefs(b, map[string]bool{"pr-a": true})
 	if strings.Join(kept, ",") != "pr-a" {
 		t.Fatalf("gcRefs = %v, want [pr-a] — no coordinate may enter the ref set", kept)
 	}

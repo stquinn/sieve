@@ -3,6 +3,7 @@ package block
 import (
 	"strings"
 
+	"sieve/sieve/domain"
 	"sieve/store"
 )
 
@@ -19,12 +20,12 @@ type AssetURLMigrator struct{}
 
 // Migrate returns the tree with every legacy asset route rewritten to the
 // current one, plus whether anything changed. The input is never mutated.
-func (m AssetURLMigrator) Migrate(blocks []SieveBlock) ([]SieveBlock, bool) {
+func (m AssetURLMigrator) Migrate(blocks []domain.SieveBlock) ([]domain.SieveBlock, bool) {
 	if len(blocks) == 0 {
 		return blocks, false
 	}
 	changed := false
-	out := make([]SieveBlock, len(blocks))
+	out := make([]domain.SieveBlock, len(blocks))
 	for i, b := range blocks {
 		if rewritten, dirty := m.rewriteAttrs(b.Attrs); dirty {
 			b.Attrs = rewritten

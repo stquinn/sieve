@@ -2,6 +2,7 @@ package processors
 
 import (
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"strings"
 	"testing"
 )
@@ -15,7 +16,7 @@ func TestSerialize_IsProcessorOwned_NoKindSwitch(t *testing.T) {
 	block.RegisterProcessor(NewCodeBlockProcessor(block.BlockServices{}))
 	t.Cleanup(func() { block.UnregisterProcessor("code") })
 
-	blocks := []block.SieveBlock{
+	blocks := []domain.SieveBlock{
 		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "Hello **world**."}},
 		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"id": "co-1", "source": "x = 1"}},
 	}
@@ -44,7 +45,7 @@ func TestSerialize_RoundTripsThroughProductionParser(t *testing.T) {
 	block.RegisterProcessor(NewCodeBlockProcessor(block.BlockServices{}))
 	t.Cleanup(func() { resetRegistry() })
 
-	blocks := []block.SieveBlock{
+	blocks := []domain.SieveBlock{
 		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "Intro **prose**."}},
 		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"id": "co-1", "source": "x = 1"}},
 		{ID: "pr-2", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "Tail."}},
@@ -77,7 +78,7 @@ func TestSerialize_RoundTripsThroughProductionParser(t *testing.T) {
 // flavour, not in the spine.
 func TestProseProcessor_Serialize_InjectsHandleDelimiters(t *testing.T) {
 	p := &ProseProcessor{}
-	got, err := p.Serialize(block.SieveBlock{
+	got, err := p.Serialize(domain.SieveBlock{
 		ID:      "pr-aaaa",
 		Kind:    block.KindProse,
 		Attrs:   map[string]interface{}{"content": "Merged block."},
@@ -111,7 +112,7 @@ func TestProseProcessor_Transform_ExtractsEntriesToContent(t *testing.T) {
 // drop-on-save.
 func TestFencedBlock_AliasesRoundTrip(t *testing.T) {
 	const id = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
-	original := block.SieveBlock{
+	original := domain.SieveBlock{
 		ID:      id,
 		Kind:    "code",
 		Attrs:   map[string]interface{}{"id": id, "source": "x := 1"},
@@ -144,7 +145,7 @@ func TestFencedBlock_AliasesRoundTrip(t *testing.T) {
 
 func TestFencedBlock_NoAliasesEmitsNoKey(t *testing.T) {
 	const id = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
-	md, err := block.FencedSerializer{}.Serialize(block.SieveBlock{
+	md, err := block.FencedSerializer{}.Serialize(domain.SieveBlock{
 		ID: id, Kind: "code", Attrs: map[string]interface{}{"id": id},
 	})
 	if err != nil {
@@ -160,7 +161,7 @@ func TestFencedBlock_NoAliasesEmitsNoKey(t *testing.T) {
 func TestFencedBlock_SerializeDoesNotMutateCallerAttrs(t *testing.T) {
 	const id = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
 	attrs := map[string]interface{}{"id": id}
-	_, err := block.FencedSerializer{}.Serialize(block.SieveBlock{
+	_, err := block.FencedSerializer{}.Serialize(domain.SieveBlock{
 		ID: id, Kind: "code", Attrs: attrs, Aliases: []string{"cd-1a2b"},
 	})
 	if err != nil {

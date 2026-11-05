@@ -300,7 +300,7 @@ func TestCodeBlockProcessor_RunJob_ai(t *testing.T) {
 	}
 
 	p := NewCodeBlockProcessor(svc)
-	blk := &block.SieveBlock{
+	blk := &domain.SieveBlock{
 		ID:   "co-1234",
 		Kind: "code",
 		Attrs: map[string]interface{}{
@@ -366,7 +366,7 @@ func TestCodeBlockProcessor_RunJob_aiNonAnswerKeepsHeuristic(t *testing.T) {
 	aiSvc := ai.NewAIService(state, prompts, ds, nil, tmpDir)
 	p := NewCodeBlockProcessor(block.BlockServices{AI: aiSvc, Documents: ds, Assets: assets})
 
-	blk := &block.SieveBlock{
+	blk := &domain.SieveBlock{
 		ID:   "cod-9999",
 		Kind: "code",
 		Attrs: map[string]interface{}{
@@ -430,7 +430,7 @@ func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 	}
 
 	p := NewCodeBlockProcessor(svc)
-	blk := &block.SieveBlock{
+	blk := &domain.SieveBlock{
 		ID:   "co-1234",
 		Kind: "code",
 		Attrs: map[string]interface{}{
@@ -455,7 +455,7 @@ func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 
 func TestCodeBlockProcessor_RunJob_returnsErrorOnAIFailure(t *testing.T) {
 	proc := NewCodeBlockProcessor(block.BlockServices{})
-	blk := &block.SieveBlock{
+	blk := &domain.SieveBlock{
 		ID:   "co-test",
 		Kind: "code",
 		Attrs: map[string]interface{}{
@@ -479,7 +479,7 @@ func TestCodeBlockProcessor_RunJob_returnsErrorOnAIFailure(t *testing.T) {
 func TestOnChange_alwaysRunsHeuristicsWhenLanguageAlreadySet(t *testing.T) {
 	proc := NewCodeBlockProcessor(block.BlockServices{})
 
-	blk := &block.SieveBlock{
+	blk := &domain.SieveBlock{
 		ID:   "co-0001",
 		Kind: "code",
 		Attrs: map[string]interface{}{
@@ -505,7 +505,7 @@ func TestOnChange_manualLanguageSurvivesHeuristicRedetection(t *testing.T) {
 
 	// The same Go-looking source the test above proves heuristics rewrite —
 	// with the language picked by hand, nothing may touch it.
-	blk := &block.SieveBlock{
+	blk := &domain.SieveBlock{
 		ID:   "co-0002",
 		Kind: "code",
 		Attrs: map[string]interface{}{
@@ -532,7 +532,7 @@ func TestOnChange_manualPlainDoesNotDispatchDetection(t *testing.T) {
 
 	// "Plain" by hand is an empty language with a manual method: the empty
 	// language must not re-enter the detection pipeline as a PENDING dispatch.
-	blk := &block.SieveBlock{
+	blk := &domain.SieveBlock{
 		ID:   "co-0003",
 		Kind: "code",
 		Attrs: map[string]interface{}{
@@ -564,7 +564,7 @@ func TestOnChange_doesNotClobberAIAuthoredLanguage(t *testing.T) {
 
 	// Java source the Go heuristic mis-detects as "go" (the `package` line).
 	java := "package com.example.demo;\n\nimport java.util.List;\n\npublic class Greeter {\n\tprivate final String name;\n}"
-	blk := &block.SieveBlock{
+	blk := &domain.SieveBlock{
 		ID:   "cod-0007",
 		Kind: "code",
 		Attrs: map[string]interface{}{
@@ -592,7 +592,7 @@ func TestOnChange_doesNotClobberAIAuthoredLanguage(t *testing.T) {
 func TestOnChange_replacesNonAnswerAIWithConfidentHeuristic(t *testing.T) {
 	proc := NewCodeBlockProcessor(block.BlockServices{})
 
-	blk := &block.SieveBlock{
+	blk := &domain.SieveBlock{
 		ID:   "cod-0008",
 		Kind: "code",
 		Attrs: map[string]interface{}{
@@ -618,7 +618,7 @@ func TestOnChange_replacesNonAnswerAIWithConfidentHeuristic(t *testing.T) {
 func TestOnChange_doesNotScheduleAIWhenLanguageSetAndHeuristicsBlind(t *testing.T) {
 	proc := NewCodeBlockProcessor(block.BlockServices{})
 
-	blk := &block.SieveBlock{
+	blk := &domain.SieveBlock{
 		ID:   "co-0002",
 		Kind: "code",
 		Attrs: map[string]interface{}{
@@ -642,7 +642,7 @@ func TestOnChange_doesNotScheduleAIWhenLanguageSetAndHeuristicsBlind(t *testing.
 func TestOnChange_schedulesAIWhenNoLanguageAndHeuristicsBlind(t *testing.T) {
 	proc := NewCodeBlockProcessor(block.BlockServices{})
 
-	blk := &block.SieveBlock{
+	blk := &domain.SieveBlock{
 		ID:   "co-0003",
 		Kind: "code",
 		Attrs: map[string]interface{}{
@@ -662,11 +662,11 @@ func TestOnChange_schedulesAIWhenNoLanguageAndHeuristicsBlind(t *testing.T) {
 
 func TestCodeBlockProcessor_RawContent_returnsSource(t *testing.T) {
 	var p CodeBlockProcessor
-	blk := block.NewSieveBlock("code", "co-1", map[string]interface{}{"source": "x = 1\ny = 2"})
+	blk := domain.NewSieveBlock("code", "co-1", map[string]interface{}{"source": "x = 1\ny = 2"})
 	if got := p.RawContent(blk); got != "x = 1\ny = 2" {
 		t.Errorf("RawContent = %q, want the source verbatim", got)
 	}
-	empty := block.NewSieveBlock("code", "co-2", map[string]interface{}{})
+	empty := domain.NewSieveBlock("code", "co-2", map[string]interface{}{})
 	if got := p.RawContent(empty); got != "" {
 		t.Errorf("RawContent of source-less block = %q, want empty", got)
 	}
@@ -713,7 +713,7 @@ func TestCodeBlockProcessor_NormalisedText(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			blk := block.SieveBlock{Kind: "code", Attrs: tc.attrs}
+			blk := domain.SieveBlock{Kind: "code", Attrs: tc.attrs}
 			got := p.NormalisedText(&blk)
 			if len(got) != len(tc.want) {
 				t.Fatalf("got %d segments, want %d: %#v", len(got), len(tc.want), got)
@@ -737,7 +737,7 @@ func TestCodeBlockProcessor_NormalisedText(t *testing.T) {
 // different content mints a different one.
 func TestCodeBlockProcessor_NormalisedTextLocatorIsMintedNotBare(t *testing.T) {
 	p := NewCodeBlockProcessor(block.BlockServices{})
-	blk := block.SieveBlock{Kind: "code", Attrs: map[string]interface{}{"source": "a", "filename": "f"}}
+	blk := domain.SieveBlock{Kind: "code", Attrs: map[string]interface{}{"source": "a", "filename": "f"}}
 	segs := p.NormalisedText(&blk)
 	if segs[0].Locator == CodeSourceLocator || segs[1].Locator == CodeFilenameLocator {
 		t.Errorf("locator must not be the bare slot name: %q, %q", segs[0].Locator, segs[1].Locator)
@@ -745,7 +745,7 @@ func TestCodeBlockProcessor_NormalisedTextLocatorIsMintedNotBare(t *testing.T) {
 	if segs[0].Locator == segs[1].Locator {
 		t.Errorf("source and filename minted the same locator %q", segs[0].Locator)
 	}
-	other := block.SieveBlock{Kind: "code", Attrs: map[string]interface{}{"source": "b", "filename": "f"}}
+	other := domain.SieveBlock{Kind: "code", Attrs: map[string]interface{}{"source": "b", "filename": "f"}}
 	if p.NormalisedText(&other)[0].Locator == segs[0].Locator {
 		t.Error("different source content minted the same locator")
 	}
@@ -753,12 +753,12 @@ func TestCodeBlockProcessor_NormalisedTextLocatorIsMintedNotBare(t *testing.T) {
 
 // codeBlockFrom builds a code block over exactly the two slots UpdateText
 // can write: source, and filename when non-empty.
-func codeBlockFrom(source, filename string) block.SieveBlock {
+func codeBlockFrom(source, filename string) domain.SieveBlock {
 	attrs := map[string]interface{}{"source": source}
 	if filename != "" {
 		attrs["filename"] = filename
 	}
-	return block.SieveBlock{Kind: "code", ID: "co-1", Attrs: attrs}
+	return domain.SieveBlock{Kind: "code", ID: "co-1", Attrs: attrs}
 }
 
 // codeAnchoredEdit mints an anchor the way the substrate does — read slot's
@@ -779,7 +779,7 @@ func codeAnchoredEdit(t *testing.T, source, filename, slot, quote string, occurr
 
 // codeSpend applies edits to a fresh block built from source/filename and
 // reports what the block now holds.
-func codeSpend(t *testing.T, source, filename string, edits ...domain.TextEdit) (block.SieveBlock, error) {
+func codeSpend(t *testing.T, source, filename string, edits ...domain.TextEdit) (domain.SieveBlock, error) {
 	t.Helper()
 	p := NewCodeBlockProcessor(block.BlockServices{})
 	blk := codeBlockFrom(source, filename)

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 )
 
 // The answer-list showcase is a REAL NOTE in store form — a document directory
@@ -122,7 +123,7 @@ func TestAnswerShowcase_EmbedsTheWholeAnswer(t *testing.T) {
 	_, shadow := loadAnswerShowcase(t)
 
 	p := NewAIBlockProcessor(block.BlockServices{})
-	var ask block.SieveBlock
+	var ask domain.SieveBlock
 	for _, b := range shadow.SnapshotBlocks() {
 		if b.ID == answerShowcaseAskID {
 			ask = b

@@ -10,6 +10,7 @@ import (
 
 	"sieve/logger"
 	"sieve/sieve/blockcontainer"
+	"sieve/sieve/domain"
 	"sieve/sieve/ink/link"
 )
 
@@ -148,7 +149,7 @@ type NoteReplica struct {
 	note  link.ID
 
 	mu        sync.Mutex
-	container *blockcontainer.BlockContainer
+	container *domain.BlockContainer
 	cursor    link.Cursor
 	fold      *StrokeBasedNote
 	queue     []byte

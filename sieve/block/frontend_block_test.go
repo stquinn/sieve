@@ -1,9 +1,13 @@
 package block
 
-import "testing"
+import (
+	"testing"
+
+	"sieve/sieve/domain"
+)
 
 func TestBlockDocToFrontendBlocks_ProseAndStructured(t *testing.T) {
-	doc := []SieveBlock{
+	doc := []domain.SieveBlock{
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Hello **world**."}, Aliases: []string{"pr-0"}},
 		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"id": "co-1", "source": "x = 1"}},
 		{Kind: KindProse, Attrs: map[string]interface{}{"content": "Tail."}},
@@ -43,7 +47,7 @@ func TestBlockDocToFrontendBlocks_ProseAndStructured(t *testing.T) {
 // blocks carry their YAML props; prose carries its body at Attrs["content"]. The
 // client renders the right thing by KIND, not by which field holds the payload.
 func TestBlockDocToFrontendBlocks_StructuredCarriesAttrs(t *testing.T) {
-	doc := []SieveBlock{
+	doc := []domain.SieveBlock{
 		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"id": "co-1", "source": "x = 1"}},
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Prose."}},
 	}
@@ -56,5 +60,18 @@ func TestBlockDocToFrontendBlocks_StructuredCarriesAttrs(t *testing.T) {
 	}
 	if fbs[1].Attrs == nil || fbs[1].Attrs["content"] != "Prose." {
 		t.Fatalf("prose block must carry its body in Attrs[content]: %+v", fbs[1].Attrs)
+	}
+}
+
+// The wire projection the WYSIWYG load consumes must carry Attrs["id"] for a block
+// whose id was minted (the end-to-end guard for the vanishing code block).
+func TestBlockDocToFrontendBlocks_carriesID(t *testing.T) {
+	b := domain.NewSieveBlock("code", "", map[string]interface{}{"source": "x"})
+	fb, err := BlockDocToFrontendBlocks([]domain.SieveBlock{b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := fb[0].Attrs["id"].(string); got != b.ID || got == "" {
+		t.Fatalf("wire Attrs[\"id\"] = %q, want %q", got, b.ID)
 	}
 }

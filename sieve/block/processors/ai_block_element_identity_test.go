@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 )
 
 // A JOB SNAPSHOT SHARES ITS ELEMENT PAYLOADS WITH THE LIVE TREE. SnapshotForJob
@@ -55,7 +56,7 @@ func TestSnapshotForJob_foldingAFreshAskWritesNothingIntoTheLiveTree(t *testing.
 		t.Fatal("expected SnapshotForJob to find the ai-block")
 	}
 	// Exactly what EditorService.RunJob hands the processor, off the lock.
-	(&AIBlockProcessor{}).buildPrompt(&block.SieveBlock{ID: snap.ID, Kind: snap.Kind, Attrs: snap.Attrs}, doc)
+	(&AIBlockProcessor{}).buildPrompt(&domain.SieveBlock{ID: snap.ID, Kind: snap.Kind, Attrs: snap.Attrs}, doc)
 
 	if after := questionJSON(t, attrs); after != before {
 		t.Errorf("the fold wrote into the live question payload:\nbefore %s\nafter  %s", before, after)

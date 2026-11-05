@@ -20,14 +20,14 @@ func newEngineEditor(t *testing.T) *EditorService {
 
 func TestSubmitBlockJob_AppliesThenFinishesOnSuccess(t *testing.T) {
 	es := newEngineEditor(t)
-	blk := &block.SieveBlock{ID: "b1", Kind: "code", Attrs: map[string]interface{}{}}
+	blk := &domain.SieveBlock{ID: "b1", Kind: "code", Attrs: map[string]interface{}{}}
 	var order []string
 	var mu sync.Mutex
 	done := make(chan struct{})
 	job := block.ProcessorJob{
 		Category: block.CategoryAI, Label: "Refining…",
 		Work: func() (any, error) { mu.Lock(); order = append(order, "work"); mu.Unlock(); return "go", nil },
-		Apply: func(result any, b *block.SieveBlock) {
+		Apply: func(result any, b *domain.SieveBlock) {
 			mu.Lock()
 			order = append(order, "apply")
 			mu.Unlock()
@@ -58,13 +58,13 @@ func TestSubmitBlockJob_AppliesThenFinishesOnSuccess(t *testing.T) {
 
 func TestSubmitBlockJob_ErrorSkipsApply(t *testing.T) {
 	es := newEngineEditor(t)
-	blk := &block.SieveBlock{ID: "b1", Attrs: map[string]interface{}{}}
+	blk := &domain.SieveBlock{ID: "b1", Attrs: map[string]interface{}{}}
 	applied := false
 	done := make(chan error, 1)
 	job := block.ProcessorJob{
 		Category: block.CategoryAI,
 		Work:     func() (any, error) { return nil, errors.New("boom") },
-		Apply:    func(any, *block.SieveBlock) { applied = true },
+		Apply:    func(any, *domain.SieveBlock) { applied = true },
 	}
 	es.submitBlockJob(job, domain.JobInfo{JobID: "b1", Label: "Boom…"}, blk, func(err error) { done <- err })
 	select {
@@ -82,7 +82,7 @@ func TestSubmitBlockJob_ErrorSkipsApply(t *testing.T) {
 
 func TestSubmitBlockJob_panicsOnEmptyLabel(t *testing.T) {
 	es := newEngineEditor(t)
-	blk := &block.SieveBlock{ID: "b1", Attrs: map[string]interface{}{}}
+	blk := &domain.SieveBlock{ID: "b1", Attrs: map[string]interface{}{}}
 	job := block.ProcessorJob{Category: block.CategoryAI, Label: "Refining…", Work: func() (any, error) { return nil, nil }}
 	defer func() {
 		if r := recover(); r == nil {
@@ -95,9 +95,9 @@ func TestSubmitBlockJob_panicsOnEmptyLabel(t *testing.T) {
 
 func TestSubmitBlockJob_NilWorkStillApplies(t *testing.T) {
 	es := newEngineEditor(t)
-	blk := &block.SieveBlock{ID: "b1", Attrs: map[string]interface{}{}}
+	blk := &domain.SieveBlock{ID: "b1", Attrs: map[string]interface{}{}}
 	done := make(chan struct{})
-	job := block.ProcessorJob{Category: block.CategoryAI, Label: "Settling…", Apply: func(_ any, b *block.SieveBlock) { b.Attrs["applied"] = true }}
+	job := block.ProcessorJob{Category: block.CategoryAI, Label: "Settling…", Apply: func(_ any, b *domain.SieveBlock) { b.Attrs["applied"] = true }}
 	es.submitBlockJob(job, domain.JobInfo{JobID: "b1", Label: "Settling…"}, blk, func(err error) {
 		if err != nil {
 			t.Errorf("nil Work should be success, got %v", err)

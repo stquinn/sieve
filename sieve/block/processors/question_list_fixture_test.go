@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 )
 
 // The question-list showcase is a REAL NOTE in store form — a document directory
@@ -311,8 +312,8 @@ func TestAIBlock_EmbedHeadingIsOneLineOfProseOrNothing(t *testing.T) {
 	registerShowcaseKinds(t)
 	p := NewAIBlockProcessor(block.BlockServices{})
 
-	answered := func(question []interface{}) block.SieveBlock {
-		return block.NewSieveBlock("ai-block", showcaseAskID, map[string]interface{}{
+	answered := func(question []interface{}) domain.SieveBlock {
+		return domain.NewSieveBlock("ai-block", showcaseAskID, map[string]interface{}{
 			"id": showcaseAskID, "type": "ASK", "status": block.BlockStatusComplete,
 			block.QuestionAttr: question, block.AnswerAttr: "an answer",
 		})
@@ -363,7 +364,7 @@ func TestAIBlock_EmbedHeadingIsOneLineOfProseOrNothing(t *testing.T) {
 				element(block.KindProse, map[string]interface{}{"content": "why?"}),
 				element(block.KindReference, map[string]interface{}{
 					"uri": showcaseForeign, "rel": block.RelAttach,
-					block.FaceAttr: map[string]interface{}{"title": "Retry RFC §4"},
+					domain.FaceAttr: map[string]interface{}{"title": "Retry RFC §4"},
 				}),
 			},
 			want: "### why?\n\n[Retry RFC §4](" + showcaseForeign + ")\n\nan answer",
@@ -379,7 +380,7 @@ func TestAIBlock_EmbedHeadingIsOneLineOfProseOrNothing(t *testing.T) {
 			name: "an attachment with no address is no coordinate, and renders nothing",
 			question: []interface{}{
 				element(block.KindReference, map[string]interface{}{
-					"rel": block.RelAttach, block.FaceAttr: map[string]interface{}{"title": "Nowhere"},
+					"rel": block.RelAttach, domain.FaceAttr: map[string]interface{}{"title": "Nowhere"},
 				}),
 			},
 			want: "an answer",
@@ -391,7 +392,7 @@ func TestAIBlock_EmbedHeadingIsOneLineOfProseOrNothing(t *testing.T) {
 			question: []interface{}{
 				element(block.KindReference, map[string]interface{}{
 					"uri": "sieve://" + showcaseOther, "rel": block.RelAttach,
-					block.FaceAttr: map[string]interface{}{"title": `RFC [4] \ (draft]`},
+					domain.FaceAttr: map[string]interface{}{"title": `RFC [4] \ (draft]`},
 				}),
 			},
 			want: `[RFC \[4\] \\ (draft\]](sieve://` + showcaseOther + ")\n\nan answer",
@@ -403,7 +404,7 @@ func TestAIBlock_EmbedHeadingIsOneLineOfProseOrNothing(t *testing.T) {
 			question: []interface{}{
 				element(block.KindReference, map[string]interface{}{
 					"uri": "sieve://" + showcaseOther + "/spec (v2).pdf", "rel": block.RelAttach,
-					block.FaceAttr: map[string]interface{}{"title": "The Spec"},
+					domain.FaceAttr: map[string]interface{}{"title": "The Spec"},
 				}),
 			},
 			want: "[The Spec](<sieve://" + showcaseOther + "/spec (v2).pdf>)\n\nan answer",
@@ -440,7 +441,7 @@ func TestShowcase_TheParsedLogAssetIsWhatTheParserProduces(t *testing.T) {
 	registerShowcaseKinds(t)
 	_, shadow := loadShowcase(t)
 
-	var el *block.SieveBlock
+	var el *domain.SieveBlock
 	for _, e := range showcaseBlock(t, shadow, showcaseAskID).Elements(block.QuestionAttr) {
 		if e.ID == showcaseParsedLogID {
 			el = e
@@ -504,7 +505,7 @@ func TestShowcase_CarriesBothLogArms(t *testing.T) {
 }
 
 // showcaseBlock returns one block of the loaded showcase by id.
-func showcaseBlock(t *testing.T, shadow *block.ShadowDocument, id string) block.SieveBlock {
+func showcaseBlock(t *testing.T, shadow *block.ShadowDocument, id string) domain.SieveBlock {
 	t.Helper()
 	for _, b := range shadow.SnapshotBlocks() {
 		if b.ID == id {
@@ -512,5 +513,5 @@ func showcaseBlock(t *testing.T, shadow *block.ShadowDocument, id string) block.
 		}
 	}
 	t.Fatalf("showcase has no block %s", id)
-	return block.SieveBlock{}
+	return domain.SieveBlock{}
 }

@@ -2,6 +2,7 @@ package processors
 
 import (
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"strings"
 	"testing"
 )
@@ -27,7 +28,7 @@ const hostileDiagramSource = "flowchart TD\n" +
 // serializeDiagram builds a one-diagram document and returns its on-disk form.
 func serializeDiagram(t *testing.T, source string) string {
 	t.Helper()
-	blocks := []block.SieveBlock{{
+	blocks := []domain.SieveBlock{{
 		ID:   "019ff758-7aaf-79b1-a2e3-4221af4bb71a",
 		Kind: "diagram",
 		Attrs: map[string]interface{}{

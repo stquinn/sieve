@@ -34,14 +34,14 @@ type DocView struct {
 	// "markdown"). A DocView is a pure value, so it carries the derived boolean.
 	rawAuthoritative bool
 	mdModeBuffer     string
-	Blocks           []SieveBlock
+	Blocks           []domain.SieveBlock
 	codec            *DocumentCodec
 }
 
 // GetBlock resolves a block by id from the snapshot tree, regardless of kind. It
 // is the SOLE accessor: "everything is a block", so lookup never discriminates on
 // kind; only context/serialisation does. Returns the block and true, or nil/false.
-func (d DocView) GetBlock(id string) (*SieveBlock, bool) {
+func (d DocView) GetBlock(id string) (*domain.SieveBlock, bool) {
 	if id == "" {
 		return nil, false
 	}
@@ -75,7 +75,7 @@ func (d DocView) deriveMarkdown() string {
 // call site — TARGET assembly drops ai-blocks so prior answers don't leak into the
 // document-truth slot; the export handler drops ai-blocks from "Copy as Markdown".
 // Nil accepts everything.
-type BlockFilter func(b SieveBlock) bool
+type BlockFilter func(b domain.SieveBlock) bool
 
 // deriveMarkdownFiltered is deriveMarkdown with a per-block filter: a block is
 // serialized only when f.Accept(b). A nil filter accepts everything, so it is
@@ -98,7 +98,7 @@ func (d DocView) deriveMarkdownFiltered(f BlockFilter) string {
 	if d.rawAuthoritative {
 		return d.mdModeBuffer
 	}
-	kept := make([]SieveBlock, 0, len(d.Blocks))
+	kept := make([]domain.SieveBlock, 0, len(d.Blocks))
 	for _, b := range d.Blocks {
 		if f(b) {
 			kept = append(kept, b)
@@ -159,7 +159,7 @@ var servedAssetRoute = regexp.MustCompile(`(?:[A-Za-z][A-Za-z0-9+.-]*://[^/\s"'<
 // serves written as the asset's sieve:// address. An export is read outside the
 // running app, where a served route names nothing and the address still names the
 // asset; every generator therefore receives addresses, never app URLs.
-func (d DocView) exportRepresentation(b SieveBlock) string {
+func (d DocView) exportRepresentation(b domain.SieveBlock) string {
 	return servedAssetRoute.ReplaceAllStringFunc(d.markdownRepresentation(b), func(route string) string {
 		addr, err := domain.ResolveAssetReference(route, domain.Address{})
 		if err != nil {
@@ -171,7 +171,7 @@ func (d DocView) exportRepresentation(b SieveBlock) string {
 
 // markdownRepresentation asks a single block's processor for its
 // MarkdownRepresentation. A kind with no registered processor has none.
-func (d DocView) markdownRepresentation(b SieveBlock) string {
+func (d DocView) markdownRepresentation(b domain.SieveBlock) string {
 	p := d.codec.registry.Get(b.Kind)
 	if p == nil {
 		return ""

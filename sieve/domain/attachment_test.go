@@ -101,3 +101,34 @@ func TestAttachments_StampAttrs(t *testing.T) {
 	}
 	Attachments{{URI: "sieve://9f2b"}}.StampAttrs(nil) // must not panic
 }
+
+func TestSieveBlock_AttachmentsRoundTripThroughTheAttrsBag(t *testing.T) {
+	b := NewSieveBlock("ai-block", "ai-c71e", nil)
+	b.SetAttachments(Attachments{
+		{URI: "sieve://9f2b", Title: "Auth Design"},
+		{URI: "sieve://7a1c", Title: "Retry RFC"},
+	})
+
+	got := b.Attachments()
+	if len(got) != 2 || got[0].URI != "sieve://9f2b" || got[1].Title != "Retry RFC" {
+		t.Fatalf("Attachments() = %+v", got)
+	}
+	if _, ok := b.Attrs[AttachmentsAttr].([]interface{}); !ok {
+		t.Errorf("the attr must hold the canonical wire form, got %#v", b.Attrs[AttachmentsAttr])
+	}
+}
+
+// Absent IS the empty case: a block that attached nothing must carry no attr at
+// all, so it serializes exactly as it did before the attr existed.
+func TestSieveBlock_SetAttachmentsEmptyRemovesTheAttr(t *testing.T) {
+	b := NewSieveBlock("ai-block", "ai-c71e", nil)
+	b.SetAttachments(Attachments{{URI: "sieve://9f2b"}})
+	b.SetAttachments(nil)
+
+	if _, present := b.Attrs[AttachmentsAttr]; present {
+		t.Fatalf("empty list left the attr behind: %#v", b.Attrs)
+	}
+	if got := b.Attachments(); len(got) != 0 {
+		t.Errorf("Attachments() = %+v, want nothing", got)
+	}
+}

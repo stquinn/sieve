@@ -1,10 +1,12 @@
 package block
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
 	"sieve/ident"
+	"sieve/sieve/domain"
 )
 
 type mockProcessor struct {
@@ -39,12 +41,12 @@ func (p *mockProcessor) Transform(entries []ContentEntry, _ string, _ string, ac
 	}
 	return nil
 }
-func (p *mockProcessor) BuildContext(_ SieveBlock, _ DocView, _ map[string]bool) AIContext {
+func (p *mockProcessor) BuildContext(_ domain.SieveBlock, _ DocView, _ map[string]bool) AIContext {
 	return AIContext{}
 }
-func (p *mockProcessor) MarkdownRepresentation(_ SieveBlock, _ string) string { return "" }
-func (p *mockProcessor) DescribeJob(_ JobContext) *ProcessorJob               { return nil }
-func (p *mockProcessor) OnChange(_ *SieveBlock)                               {}
+func (p *mockProcessor) MarkdownRepresentation(_ domain.SieveBlock, _ string) string { return "" }
+func (p *mockProcessor) DescribeJob(_ JobContext) *ProcessorJob                      { return nil }
+func (p *mockProcessor) OnChange(_ *domain.SieveBlock)                               {}
 
 func TestRegisterProcessor_storesInRegistry(t *testing.T) {
 	ResetRegistry()
@@ -337,20 +339,20 @@ func TestDetectExtractions_nestedSourceNeverOffersTransform(t *testing.T) {
 // Ids are opaque UUIDs and carry no kind. NewSieveBlock mints on BOTH sides of the
 // id invariant.
 func TestNewSieveBlock_MintsUUID(t *testing.T) {
-	b := NewSieveBlock(KindProse, "", map[string]interface{}{"content": "hi"})
+	b := domain.NewSieveBlock(KindProse, "", map[string]interface{}{"content": "hi"})
 	if !ident.Valid(b.ID) {
 		t.Fatalf("minted id %q is not a uuid", b.ID)
 	}
 	if b.Attrs["id"] != b.ID {
 		t.Fatalf("two-sided invariant broken: ID=%q Attrs[id]=%v", b.ID, b.Attrs["id"])
 	}
-	if other := NewSieveBlock(KindProse, "", nil); other.ID == b.ID {
+	if other := domain.NewSieveBlock(KindProse, "", nil); other.ID == b.ID {
 		t.Fatalf("expected unique ids, got %q twice", b.ID)
 	}
 }
 
 func TestNewSieveBlock_KeepsGivenID(t *testing.T) {
-	b := NewSieveBlock(KindProse, "pr-3f2a", nil)
+	b := domain.NewSieveBlock(KindProse, "pr-3f2a", nil)
 	if b.ID != "pr-3f2a" || b.Attrs["id"] != "pr-3f2a" {
 		t.Fatalf("given id not preserved on both sides: ID=%q Attrs[id]=%v", b.ID, b.Attrs["id"])
 	}
@@ -513,5 +515,38 @@ func TestRegionShape_Wraps(t *testing.T) {
 	}
 	if (RegionShape{}).Wraps("```\nx\n```") {
 		t.Error("a processor that declares no region must claim nothing")
+	}
+}
+
+// HeldAssets reads every asset attr, in every spelling an asset reference takes,
+// from the attrs or the face, and from a parent's elements; an asset of another
+// document and a remote URL are not held.
+func TestRegistry_HeldAssets(t *testing.T) {
+	registerParentKind(t, "fk-parent")
+	self := domain.NewContainerAddress(elemDocUUID)
+	own := "sieve://" + elemDocUUID + "/"
+	cases := []struct {
+		name  string
+		block domain.SieveBlock
+		want  []string
+	}{
+		{"smart-image src, absolute", domain.SieveBlock{Kind: "smart-image", Attrs: map[string]interface{}{"src": own + "holiday.png"}}, []string{"holiday.png"}},
+		{"diagram svgAsset, relative", domain.SieveBlock{Kind: "diagram", Attrs: map[string]interface{}{"svgAsset": "/flow.svg"}}, []string{"flow.svg"}},
+		{"served route", domain.SieveBlock{Kind: "smart-image", Attrs: map[string]interface{}{"src": "/ui/assets/" + elemDocUUID + "/a.png"}}, []string{"a.png"}},
+		{"legacy bare filename", domain.SieveBlock{Kind: "smart-image", Attrs: map[string]interface{}{"src": ".assets/b.png"}}, []string{"b.png"}},
+		{"reference uri on the face", domain.SieveBlock{Kind: "reference", Attrs: map[string]interface{}{domain.FaceAttr: map[string]interface{}{"uri": own + "plan.pdf"}}}, []string{"plan.pdf"}},
+		{"held attachment asset", domain.SieveBlock{Kind: "reference", Attrs: map[string]interface{}{"asset": own + "spec.json"}}, []string{"spec.json"}},
+		{"smart-card image", domain.SieveBlock{Kind: "smart-card", Attrs: map[string]interface{}{"image": "/ui/assets/" + elemDocUUID + "/card-img.png"}}, []string{"card-img.png"}},
+		{"log parsed asset", domain.SieveBlock{Kind: "log", Attrs: map[string]interface{}{"parsedAssetRef": "/ui/assets/" + elemDocUUID + "/l-parsed.json"}}, []string{"l-parsed.json"}},
+		{"another document's asset", domain.SieveBlock{Kind: "smart-image", Attrs: map[string]interface{}{"src": "sieve://" + elemOtherUUID + "/x.png"}}, nil},
+		{"remote URL", domain.SieveBlock{Kind: "smart-card", Attrs: map[string]interface{}{"image": "https://example.com/x.png"}}, nil},
+		{"an element's image", parentBlock("fk-parent", element("smart-image", map[string]interface{}{"src": own + "answer.png"})), []string{"answer.png"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := GlobalRegistry().HeldAssets(tc.block, self); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("HeldAssets = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

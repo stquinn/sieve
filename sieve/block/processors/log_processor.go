@@ -144,9 +144,9 @@ func (p *LogProcessor) Transform(entries []block.ContentEntry, uuid string, bloc
 	return nil
 }
 
-func (p *LogProcessor) OnChange(_ *block.SieveBlock) {}
+func (p *LogProcessor) OnChange(_ *domain.SieveBlock) {}
 
-func (p *LogProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, seen map[string]bool) block.AIContext {
+func (p *LogProcessor) BuildContext(blk domain.SieveBlock, _ block.DocView, seen map[string]bool) block.AIContext {
 	src, _ := blk.Attrs["source"].(string)
 	if strings.TrimSpace(src) == "" {
 		return block.AIContext{}
@@ -485,7 +485,7 @@ func (p *LogProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJob {
 				formatRe:   parsedData.Pattern,
 			}, nil
 		},
-		Apply: func(result any, b *block.SieveBlock) {
+		Apply: func(result any, b *domain.SieveBlock) {
 			r := result.(logParseResult)
 			b.Attrs["parsedAssetRef"] = r.assetRef
 			b.Attrs["logFormatName"] = r.formatName
@@ -495,7 +495,7 @@ func (p *LogProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJob {
 	}
 }
 
-func (p *LogProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {
+func (p *LogProcessor) MarkdownRepresentation(blk domain.SieveBlock, _ string) string {
 	source, _ := blk.Attrs["source"].(string)
 	source = strings.TrimSpace(source)
 	if source == "" {
@@ -506,7 +506,7 @@ func (p *LogProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) st
 }
 
 // RawContent returns the source text this block was built from (block.RawContenter).
-func (p *LogProcessor) RawContent(blk block.SieveBlock) string {
+func (p *LogProcessor) RawContent(blk domain.SieveBlock) string {
 	src, _ := blk.Attrs["source"].(string)
 	return src
 }
@@ -533,7 +533,7 @@ const LogSourceLocator = "source"
 // WRITE: TextUpdaterFor("log") is false, so a write is refused before any
 // locator here is ever decoded, and nothing this kind mints is ever asked
 // to vouch for anything.
-func (p *LogProcessor) NormalisedText(blk *block.SieveBlock) []domain.TextSegment {
+func (p *LogProcessor) NormalisedText(blk *domain.SieveBlock) []domain.TextSegment {
 	if blk == nil {
 		return nil
 	}

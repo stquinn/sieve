@@ -423,12 +423,12 @@ func TestWS_Export_DropsAIBlocksAndServesCleanMarkdown(t *testing.T) {
 	srv, sp, _, uuid := newWsTestServer(t)
 
 	const priorAnswer = "PRIOR-ANSWER-must-not-export"
-	body, err := block.NewDocumentCodec(block.GlobalRegistry()).Serialize([]block.SieveBlock{
-		block.NewSieveBlock(block.KindProse, "pr-1", map[string]interface{}{"content": "user prose stays"}),
-		block.NewSieveBlock("code", "co-1", map[string]interface{}{
+	body, err := block.NewDocumentCodec(block.GlobalRegistry()).Serialize([]domain.SieveBlock{
+		domain.NewSieveBlock(block.KindProse, "pr-1", map[string]interface{}{"content": "user prose stays"}),
+		domain.NewSieveBlock("code", "co-1", map[string]interface{}{
 			"id": "co-1", "language": "go", "source": "x := 1", "status": block.BlockStatusComplete,
 		}),
-		block.NewSieveBlock("ai-block", "ab-1", map[string]interface{}{
+		domain.NewSieveBlock("ai-block", "ab-1", map[string]interface{}{
 			"id": "ab-1", "ref": "doc", "type": "ASK", "status": block.BlockStatusComplete,
 			"question": "what is x?", "response": priorAnswer,
 		}),

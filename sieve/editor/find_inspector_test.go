@@ -103,7 +103,7 @@ func TestFindInspector_MarksEveryMatchAtLiteralGrain(t *testing.T) {
 			// still worth finding even though it can never be rewritten.
 			name: "find surfaces a match inside a real log block's captured output",
 			segments: processors.NewLogProcessor(block.BlockServices{}).NormalisedText(
-				&block.SieveBlock{Kind: "log", Attrs: map[string]interface{}{"source": "2026-09-02 ERROR connection refused"}},
+				&domain.SieveBlock{Kind: "log", Attrs: map[string]interface{}{"source": "2026-09-02 ERROR connection refused"}},
 			),
 			parameters: map[string]any{"term": "refused"},
 			want:       []string{"refused@0 in code"},

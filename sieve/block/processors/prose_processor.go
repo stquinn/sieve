@@ -40,7 +40,7 @@ func (p *ProseProcessor) Mode() block.BlockMode { return block.BlockModeProse }
 // markers; the open marker lists the full handle-set, the close the primary id.
 // Handle-less prose (not yet minted) emits bare content. This is the only thing
 // that makes prose's on-disk form a flavour concern instead of a spine if-branch.
-func (p *ProseProcessor) Serialize(blk block.SieveBlock) (string, error) {
+func (p *ProseProcessor) Serialize(blk domain.SieveBlock) (string, error) {
 	if blk.ID == "" {
 		return blk.Content(), nil
 	}
@@ -55,7 +55,7 @@ func (p *ProseProcessor) Serialize(blk block.SieveBlock) (string, error) {
 // appended to the string here. The framework's collection merge unions that Tag
 // across a multi-block target into ONE focus line, rendered once via
 // AIContext.String.
-func (p *ProseProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
+func (p *ProseProcessor) BuildContext(blk domain.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
 	content := blk.Content()
 	ctx := block.AIContext{NodeIDs: []string{blk.ID}, Content: content}
 	if targets := extractTargets(content); len(targets) > 0 {
@@ -154,7 +154,7 @@ func (p *ProseProcessor) readLocator(locator, contentHash string) error {
 // which is what lets an anchor made against it be honoured — or refused — long
 // after. Content that parses to nothing reads as nothing, and is still one
 // segment.
-func (p *ProseProcessor) NormalisedText(blk *block.SieveBlock) []domain.TextSegment {
+func (p *ProseProcessor) NormalisedText(blk *domain.SieveBlock) []domain.TextSegment {
 	if blk == nil {
 		return nil
 	}
@@ -184,7 +184,7 @@ func (p *ProseProcessor) NormalisedText(blk *block.SieveBlock) []domain.TextSegm
 // and the user's own line breaks, emphasis characters and spacing are not this
 // processor's to normalise. Every byte outside a resolved range is the byte
 // that was there before.
-func (p *ProseProcessor) UpdateText(blk *block.SieveBlock, edits []domain.TextEdit) error {
+func (p *ProseProcessor) UpdateText(blk *domain.SieveBlock, edits []domain.TextEdit) error {
 	if blk == nil {
 		return fmt.Errorf("%w: prose: no block to update", block.ErrTextMalformed)
 	}
@@ -232,7 +232,7 @@ type proseSplice struct {
 }
 
 // MarkdownRepresentation: prose's markdown is its content verbatim.
-func (p *ProseProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {
+func (p *ProseProcessor) MarkdownRepresentation(blk domain.SieveBlock, _ string) string {
 	return blk.Content()
 }
 
@@ -290,7 +290,7 @@ func (p *ProseProcessor) taggedSourceHasRawText(e block.ContentEntry) bool {
 	if proc == nil || !isRaw {
 		return false
 	}
-	return strings.TrimSpace(rc.RawContent(block.NewSieveBlock(kind, "", attrs))) != ""
+	return strings.TrimSpace(rc.RawContent(domain.NewSieveBlock(kind, "", attrs))) != ""
 }
 
 // Transform turns entries into a prose block's content. A `sieve/prose` view carries
@@ -319,13 +319,13 @@ func (p *ProseProcessor) Transform(entries []block.ContentEntry, uuid string, bl
 			proc := block.GetProcessor(kind)
 			if action == block.ActionUndoSmartPaste {
 				if rc, isRaw := proc.(block.RawContenter); isRaw {
-					if raw := rc.RawContent(block.NewSieveBlock(kind, "", attrs)); strings.TrimSpace(raw) != "" {
+					if raw := rc.RawContent(domain.NewSieveBlock(kind, "", attrs)); strings.TrimSpace(raw) != "" {
 						return map[string]interface{}{"content": p.sourceAsPlainText(raw)}
 					}
 				}
 			}
 			if proc != nil {
-				src := block.NewSieveBlock(kind, "", attrs)
+				src := domain.NewSieveBlock(kind, "", attrs)
 				// Markdown-bearing source (block.MarkdownContenter — e.g. a code
 				// block whose language is markdown): the content already IS
 				// document markdown, so embed the raw source directly instead of
@@ -377,7 +377,7 @@ func (p *ProseProcessor) embedImageMarkdown(entries []block.ContentEntry, uuid, 
 	if attrs == nil {
 		return "", false
 	}
-	md := si.MarkdownRepresentation(block.NewSieveBlock("smart-image", "", attrs), uuid)
+	md := si.MarkdownRepresentation(domain.NewSieveBlock("smart-image", "", attrs), uuid)
 	if strings.TrimSpace(md) == "" {
 		return "", false
 	}
@@ -433,7 +433,7 @@ func (p *ProseProcessor) DescribeJob(_ block.JobContext) *block.ProcessorJob {
 }
 
 // OnChange: prose has no synchronous reaction.
-func (p *ProseProcessor) OnChange(_ *block.SieveBlock) {}
+func (p *ProseProcessor) OnChange(_ *domain.SieveBlock) {}
 
 // markerOpenRe / markerCloseRe match the paired comment-tag delimiters that
 // bound every block (spec §"Storage format: a comment-tag block tree"). The open
@@ -465,13 +465,13 @@ var (
 // that knows prose keeps its body in Attrs["content"] (prose's schema, exactly as
 // code's is "source"). Production parsing and tests both build prose blocks through
 // here so that knowledge is never copy-pasted. An empty id mints one on parse.
-func (ProseProcessor) newProseBlock(id, content string) block.SieveBlock {
-	return block.NewSieveBlock(block.KindProse, id, map[string]interface{}{"content": content})
+func (ProseProcessor) newProseBlock(id, content string) domain.SieveBlock {
+	return domain.NewSieveBlock(block.KindProse, id, map[string]interface{}{"content": content})
 }
 
-func (p ProseProcessor) scanProseRegion(region string) []block.SieveBlock {
+func (p ProseProcessor) scanProseRegion(region string) []domain.SieveBlock {
 	lines := strings.Split(region, "\n")
-	var out []block.SieveBlock
+	var out []domain.SieveBlock
 	var pending []string
 
 	flushPending := func() {
@@ -578,6 +578,6 @@ func (p *ProseProcessor) Accepts(region block.Region) bool { return true }
 // <!--s:ID--> / <!--/s:ID--> markers (delimited blocks keep their handle; an
 // undelimited run mints one). The inverse of ProseProcessor.Serialize, which
 // writes those markers. Owns both sides of prose's SerDes.
-func (p *ProseProcessor) Deserialize(region block.Region) ([]block.SieveBlock, error) {
+func (p *ProseProcessor) Deserialize(region block.Region) ([]domain.SieveBlock, error) {
 	return p.scanProseRegion(region.Raw), nil
 }

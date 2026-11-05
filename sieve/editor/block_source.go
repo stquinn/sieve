@@ -38,7 +38,7 @@ func (s *BlockSource) Search(string, int) []domain.Candidate { return nil }
 // or a leaf the container does not answer to is domain.ErrNodeNotFound.
 func (s *BlockSource) Resolve(addr domain.Address) (domain.NodeDescriptor, error) {
 	c, err := s.containers.Load(addr.Container)
-	if errors.Is(err, blockcontainer.ErrNotBlockContainer) {
+	if errors.Is(err, domain.ErrNotBlockContainer) {
 		return domain.NodeDescriptor{}, fmt.Errorf("%w: %s: %v", domain.ErrNodeNotFound, addr.String(), err)
 	}
 	if err != nil {
@@ -58,7 +58,7 @@ func (s *BlockSource) Resolve(addr domain.Address) (domain.NodeDescriptor, error
 		addr:     addr,
 		owner:    c.Storable(),
 		registry: block.GlobalRegistry(),
-		blocks:   []block.SieveBlock{blk},
+		blocks:   []domain.SieveBlock{blk},
 	}
 	if addr.IsContainer() {
 		node := leaves.blockNode(blk)

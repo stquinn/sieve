@@ -2,6 +2,7 @@ package processors
 
 import (
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"testing"
 )
 
@@ -10,7 +11,7 @@ import (
 // derives ONLY from these delimiters, never from blank lines.
 
 func TestPairedDelimiter_SerializeProse(t *testing.T) {
-	doc := []block.SieveBlock{
+	doc := []domain.SieveBlock{
 		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "Hello."}},
 	}
 	got, err := block.NewDocumentCodec(block.GlobalRegistry()).Serialize(doc)
@@ -48,7 +49,7 @@ func TestPairedDelimiter_RoundTripProse(t *testing.T) {
 // Aliases (post-merge handle-set, spec §7) ride in the open marker as a
 // space-separated handle list; the close marker carries the primary id only.
 func TestPairedDelimiter_AliasesRoundTrip(t *testing.T) {
-	doc := []block.SieveBlock{
+	doc := []domain.SieveBlock{
 		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "Merged."}, Aliases: []string{"pr-0", "pr-9"}},
 	}
 	md, err := block.NewDocumentCodec(block.GlobalRegistry()).Serialize(doc)
@@ -112,7 +113,7 @@ func TestUndelimited_IsSingleBlock(t *testing.T) {
 // blank-line collapsing never merges them. The frontend decides which empties to
 // persist (block-sync: content-after = structural); the codec stores faithfully.
 func TestPairedDelimiter_EmptyStructuralBlocksRoundTrip(t *testing.T) {
-	doc := []block.SieveBlock{
+	doc := []domain.SieveBlock{
 		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "A"}},
 		{ID: "pr-2", Kind: block.KindProse, Attrs: map[string]interface{}{"content": ""}},
 		{ID: "pr-3", Kind: block.KindProse, Attrs: map[string]interface{}{"content": ""}},

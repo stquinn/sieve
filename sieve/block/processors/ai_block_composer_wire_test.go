@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 )
 
 // THE COMPOSER'S WIRE SHAPE, held to the fold that reads it.
@@ -77,13 +78,13 @@ func composerCases(t *testing.T) map[string]composerCase {
 
 // composerBlock is one case's payload as it lands in the tree: through the
 // create path, which converts nothing.
-func composerBlock(t *testing.T, name string) block.SieveBlock {
+func composerBlock(t *testing.T, name string) domain.SieveBlock {
 	t.Helper()
 	c, ok := composerCases(t)[name]
 	if !ok {
 		t.Fatalf("the shared composer fixture names no case %q", name)
 	}
-	return block.SieveBlock{
+	return domain.SieveBlock{
 		ID:    "ai-1",
 		Kind:  "ai-block",
 		Attrs: (&AIBlockProcessor{}).InitAttrs("ai-1", c.Attrs),
@@ -156,7 +157,7 @@ func TestComposerWire_IdlessElementsAreIdentifiedAtCreate(t *testing.T) {
 		t.Fatalf("the stored entry carries no id after create: %+v", entry)
 	}
 
-	blk := block.SieveBlock{ID: "ai-1", Kind: "ai-block", Attrs: attrs}
+	blk := domain.SieveBlock{ID: "ai-1", Kind: "ai-block", Attrs: attrs}
 	first := blk.Elements(block.QuestionAttr)
 	if len(first) != 1 || first[0].ID != id || first[0].StringAttr("id") != id {
 		t.Fatalf("element identity = %+v, want both sides carrying %q", first, id)
@@ -174,7 +175,7 @@ func TestComposerWire_IdlessElementsAreIdentifiedAtCreate(t *testing.T) {
 func TestComposerWire_EveryMintedReferenceDeclaresItsRole(t *testing.T) {
 	roles := map[string]bool{block.RelTarget: true, block.RelAttach: true}
 	for name, c := range composerCases(t) {
-		blk := block.SieveBlock{ID: "ai-1", Kind: "ai-block", Attrs: c.Attrs}
+		blk := domain.SieveBlock{ID: "ai-1", Kind: "ai-block", Attrs: c.Attrs}
 		for _, el := range blk.Elements(block.QuestionAttr) {
 			if el.Kind != block.KindReference {
 				continue

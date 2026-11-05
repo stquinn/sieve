@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"sieve/logger"
+	"sieve/sieve/domain"
 )
 
 // This file holds ShadowDocument's snapshot + atomic-mutation methods. Together
@@ -14,26 +15,26 @@ import (
 
 // SnapshotBlock returns a deep copy of the block with id (fresh Attrs map), or
 // false if absent. The copy is safe to read/mutate outside the lock.
-func (s *ShadowDocument) SnapshotBlock(id string) (SieveBlock, bool) {
+func (s *ShadowDocument) SnapshotBlock(id string) (domain.SieveBlock, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b := s.findBlock(id)
 	if b == nil {
-		return SieveBlock{}, false
+		return domain.SieveBlock{}, false
 	}
-	return b.cloneDeep(), true
+	return b.Clone(), true
 }
 
 // SnapshotBlocks returns a DEEP copy of the live tree (each block's Attrs is a
 // fresh map). The copy is therefore safe to read after the lock is released, even
 // while a concurrent job mutates the live tree — callers (FrontendBlocks, status
 // polls) must not race the live Attrs maps, which an aliased copy would.
-func (s *ShadowDocument) SnapshotBlocks() []SieveBlock {
+func (s *ShadowDocument) SnapshotBlocks() []domain.SieveBlock {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]SieveBlock, len(s.Blocks))
+	out := make([]domain.SieveBlock, len(s.Blocks))
 	for i := range s.Blocks {
-		out[i] = s.Blocks[i].cloneDeep()
+		out[i] = s.Blocks[i].Clone()
 	}
 	return out
 }
@@ -53,7 +54,7 @@ func (s *ShadowDocument) SnapshotBlocks() []SieveBlock {
 // would see stale content. Derive the tree from the authoritative buffer instead, so
 // the snapshot is internally consistent. Save is unaffected: deriveMarkdown returns
 // the buffer verbatim in markdown mode, never a re-serialization of this tree.
-func (s *ShadowDocument) SnapshotForJob(blockID string) (SieveBlock, DocView, bool) {
+func (s *ShadowDocument) SnapshotForJob(blockID string) (domain.SieveBlock, DocView, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	blocks := s.Blocks
@@ -64,7 +65,7 @@ func (s *ShadowDocument) SnapshotForJob(blockID string) (SieveBlock, DocView, bo
 			logger.Warn("editor: markdown-mode snapshot reparse failed", "uuid", s.UUID, "err", err)
 		}
 	}
-	var target *SieveBlock
+	var target *domain.SieveBlock
 	for i := range blocks {
 		if blocks[i].ID == blockID {
 			target = &blocks[i]
@@ -72,31 +73,31 @@ func (s *ShadowDocument) SnapshotForJob(blockID string) (SieveBlock, DocView, bo
 		}
 	}
 	if target == nil {
-		return SieveBlock{}, DocView{}, false
+		return domain.SieveBlock{}, DocView{}, false
 	}
 	doc := DocView{
 		UUID:             s.UUID,
 		rawAuthoritative: s.rawAuthoritative,
 		mdModeBuffer:     s.mdModeBuffer,
-		Blocks:           append([]SieveBlock(nil), blocks...),
+		Blocks:           append([]domain.SieveBlock(nil), blocks...),
 		codec:            s.codec,
 	}
-	return target.cloneDeep(), doc, true
+	return target.Clone(), doc, true
 }
 
 // TryDispatch atomically transitions the block from PENDING to DISPATCHED and
 // returns a deep copy of the now-DISPATCHED block. Returns false (no change) if
 // the block is absent or not PENDING — so the caller dispatches a job exactly
 // once even under concurrent calls.
-func (s *ShadowDocument) TryDispatch(id string) (SieveBlock, bool) {
+func (s *ShadowDocument) TryDispatch(id string) (domain.SieveBlock, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b := s.findBlock(id)
 	if b == nil || b.Status() != BlockStatusPending {
-		return SieveBlock{}, false
+		return domain.SieveBlock{}, false
 	}
 	b.Attrs["status"] = BlockStatusDispatched
-	return b.cloneDeep(), true
+	return b.Clone(), true
 }
 
 // ResetStuckDispatched flips every DISPATCHED block older than threshold (or with

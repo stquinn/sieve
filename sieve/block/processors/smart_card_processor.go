@@ -107,9 +107,9 @@ func (p *SmartCardProcessor) stripFetchState(attrs map[string]interface{}) map[s
 	return attrs
 }
 
-func (p *SmartCardProcessor) OnChange(_ *block.SieveBlock) {}
+func (p *SmartCardProcessor) OnChange(_ *domain.SieveBlock) {}
 
-func (p *SmartCardProcessor) smartCardLabel(blk *block.SieveBlock) string {
+func (p *SmartCardProcessor) smartCardLabel(blk *domain.SieveBlock) string {
 	href, _ := blk.Attrs["href"].(string)
 	if href == "" {
 		return "Fetching link…"
@@ -126,7 +126,7 @@ type smartCardFetch struct {
 	imageRef string
 }
 
-func (p *SmartCardProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
+func (p *SmartCardProcessor) BuildContext(blk domain.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
 	href, _ := blk.Attrs["href"].(string)
 	if href == "" {
 		return block.AIContext{}
@@ -176,7 +176,7 @@ func (p *SmartCardProcessor) DescribeJob(jctx block.JobContext) *block.Processor
 			}
 			return smartCardFetch{preview: result, imageRef: imageRef}, nil
 		},
-		Apply: func(result any, b *block.SieveBlock) {
+		Apply: func(result any, b *domain.SieveBlock) {
 			f := result.(smartCardFetch)
 			now := time.Now().UTC().Format(time.RFC3339)
 			if f.preview.Title != "" {
@@ -224,7 +224,7 @@ func (p *SmartCardProcessor) downloadImage(uuid, blockID, imageURL string) (stri
 	return asset.ExternalRef(), nil
 }
 
-func (p *SmartCardProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {
+func (p *SmartCardProcessor) MarkdownRepresentation(blk domain.SieveBlock, _ string) string {
 	href, _ := blk.Attrs["href"].(string)
 	if href == "" {
 		return ""

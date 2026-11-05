@@ -10,6 +10,7 @@ import (
 
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
+	"sieve/sieve/domain"
 	"sieve/sieve/services"
 )
 
@@ -29,7 +30,7 @@ func (p *onChangeProbeProcessor) InitAttrs(id string, overrides map[string]inter
 	return attrs
 }
 
-func (p *onChangeProbeProcessor) OnChange(blk *block.SieveBlock) {
+func (p *onChangeProbeProcessor) OnChange(blk *domain.SieveBlock) {
 	if blk.Attrs == nil {
 		blk.Attrs = map[string]interface{}{}
 	}

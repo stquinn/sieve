@@ -66,12 +66,12 @@ func (p *fakeImageKind) Transform(entries []block.ContentEntry, _ string, _ stri
 	return map[string]interface{}{"src": entries[0].Content}
 }
 
-func (p *fakeImageKind) BuildContext(_ block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
+func (p *fakeImageKind) BuildContext(_ domain.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
 	return block.AIContext{}
 }
-func (p *fakeImageKind) MarkdownRepresentation(_ block.SieveBlock, _ string) string { return "" }
-func (p *fakeImageKind) OnChange(_ *block.SieveBlock)                               {}
-func (p *fakeImageKind) DescribeJob(_ block.JobContext) *block.ProcessorJob         { return nil }
+func (p *fakeImageKind) MarkdownRepresentation(_ domain.SieveBlock, _ string) string { return "" }
+func (p *fakeImageKind) OnChange(_ *domain.SieveBlock)                               {}
+func (p *fakeImageKind) DescribeJob(_ block.JobContext) *block.ProcessorJob          { return nil }
 
 // onePixelPNG is the smallest thing that is unambiguously a PNG, in the shape the
 // GTK reader hands it over: a data URI.

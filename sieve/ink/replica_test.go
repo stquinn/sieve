@@ -102,7 +102,7 @@ func (rig *replicaRig) opens() []uint32 {
 }
 
 // container is the one container holding noteID, or nil.
-func (rig *replicaRig) container() *blockcontainer.BlockContainer {
+func (rig *replicaRig) container() *domain.BlockContainer {
 	rig.t.Helper()
 	found, err := reopen(rig.t, rig.st).Find(KindDigitalNote, map[string]string{"note_source_id": noteID.String()})
 	if err != nil || len(found) > 1 {
@@ -119,12 +119,12 @@ func (rig *replicaRig) container() *blockcontainer.BlockContainer {
 }
 
 // dir is a container's directory.
-func (rig *replicaRig) dir(c *blockcontainer.BlockContainer) string {
+func (rig *replicaRig) dir(c *domain.BlockContainer) string {
 	return filepath.Join(rig.st.Root(), "testhost", domain.Blocks.Key, c.UUID())
 }
 
 // asset reads an asset of c from disk.
-func (rig *replicaRig) asset(c *blockcontainer.BlockContainer, key string) []byte {
+func (rig *replicaRig) asset(c *domain.BlockContainer, key string) []byte {
 	rig.t.Helper()
 	raw, err := os.ReadFile(filepath.Join(rig.dir(c), key))
 	if err != nil {
@@ -134,14 +134,14 @@ func (rig *replicaRig) asset(c *blockcontainer.BlockContainer, key string) []byt
 }
 
 // assetOrNil reads an asset of c from disk, nil while there is none.
-func (rig *replicaRig) assetOrNil(c *blockcontainer.BlockContainer, key string) []byte {
+func (rig *replicaRig) assetOrNil(c *domain.BlockContainer, key string) []byte {
 	raw, _ := os.ReadFile(filepath.Join(rig.dir(c), key))
 	return raw
 }
 
 // expectHeld checks that the container holds exactly records: every line re-parses, their chain
 // is the companion's, and the block's synced seq and face agree with them.
-func (rig *replicaRig) expectHeld(records []link.Record) *blockcontainer.BlockContainer {
+func (rig *replicaRig) expectHeld(records []link.Record) *domain.BlockContainer {
 	rig.t.Helper()
 	c := rig.container()
 	if c == nil {

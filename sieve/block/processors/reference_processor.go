@@ -466,7 +466,7 @@ func (p *ReferenceProcessor) heldAttrs(ref, key, title string, data []byte) map[
 	}
 }
 
-func (p *ReferenceProcessor) OnChange(_ *block.SieveBlock) {}
+func (p *ReferenceProcessor) OnChange(_ *domain.SieveBlock) {}
 
 // DescribeJob describes the one piece of work this kind has: dereferencing an
 // address it has no face for. What the address names is not asked here — the
@@ -518,7 +518,7 @@ func (p *ReferenceProcessor) resolveJob(uri string) *block.ProcessorJob {
 			}
 			return referenceFace{node: node}, nil
 		},
-		Apply: func(result any, b *block.SieveBlock) {
+		Apply: func(result any, b *domain.SieveBlock) {
 			f := result.(referenceFace)
 			if f.dangling != "" {
 				// The cached face survives, so a reference whose target is gone
@@ -728,7 +728,7 @@ func (p *ReferenceProcessor) storedBytes(attrs map[string]interface{}) (int64, b
 // is, where it lives, and what it says. It states facts and never instructs the
 // model to fetch anything. A held file carries one fact more — the File tag, the
 // path its bytes are at, which is the only name that opens.
-func (p *ReferenceProcessor) BuildContext(blk block.SieveBlock, doc block.DocView, _ map[string]bool) block.AIContext {
+func (p *ReferenceProcessor) BuildContext(blk domain.SieveBlock, doc block.DocView, _ map[string]bool) block.AIContext {
 	uri := p.uri(blk.Attrs)
 	if uri == "" {
 		return block.AIContext{}
@@ -825,7 +825,7 @@ func (p *ReferenceProcessor) humanSize(attrs map[string]interface{}) string {
 // MarkdownRepresentation renders the block as a link. Export markdown is read
 // outside Sieve, so a held file points at its served asset URL; a pointer
 // carries its coordinate verbatim, because no URL exists for a Sieve address.
-func (p *ReferenceProcessor) MarkdownRepresentation(blk block.SieveBlock, uuid string) string {
+func (p *ReferenceProcessor) MarkdownRepresentation(blk domain.SieveBlock, uuid string) string {
 	uri := p.uri(blk.Attrs)
 	if uri == "" {
 		return ""

@@ -665,7 +665,7 @@ func (h *WsHandler) handleRetryBlockJob(f inboundFrame) {
 	// Reset both status and createdAt. The DISPATCHED notifyBlockUpdated that fires
 	// immediately will carry the fresh createdAt, so the frontend's isJobStale()
 	// won't fire and re-show "interrupted" instead of the spinner.
-	h.ServiceProvider.Editor.UpdateBlock(f.uuid, block.SieveBlock{
+	h.ServiceProvider.Editor.UpdateBlock(f.uuid, domain.SieveBlock{
 		ID: msg.ID,
 		Attrs: map[string]interface{}{
 			"status":    block.BlockStatusPending,
@@ -843,7 +843,7 @@ func (h *WsHandler) handleExport(f inboundFrame) {
 		return
 	}
 	content, err := h.ServiceProvider.Editor.Export(f.uuid,
-		func(b block.SieveBlock) bool { return b.Kind != "ai-block" }, generator)
+		func(b domain.SieveBlock) bool { return b.Kind != "ai-block" }, generator)
 	if err != nil {
 		f.reply(protocol.NewErrorFrame(fmt.Sprintf("export failed: %v", err)))
 		return

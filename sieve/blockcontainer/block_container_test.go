@@ -47,19 +47,19 @@ func (stickyProc) Transform([]block.ContentEntry, string, string, block.Action) 
 	return nil
 }
 func (stickyProc) DescribeJob(block.JobContext) *block.ProcessorJob { return nil }
-func (stickyProc) OnChange(*block.SieveBlock)                       {}
+func (stickyProc) OnChange(*domain.SieveBlock)                      {}
 func (stickyProc) Mode() block.BlockMode                            { return block.BlockModeBlock }
-func (stickyProc) BuildContext(block.SieveBlock, block.DocView, map[string]bool) block.AIContext {
+func (stickyProc) BuildContext(domain.SieveBlock, block.DocView, map[string]bool) block.AIContext {
 	return block.AIContext{}
 }
-func (stickyProc) MarkdownRepresentation(b block.SieveBlock, _ string) string {
+func (stickyProc) MarkdownRepresentation(b domain.SieveBlock, _ string) string {
 	return "> " + b.StringAttr("title")
 }
 
 // facedProc is the test kind that shows a face: its title, as sticky_title.
 type facedProc struct{ stickyProc }
 
-func (facedProc) Face(b block.SieveBlock) map[string]string {
+func (facedProc) Face(b domain.SieveBlock) map[string]string {
 	return map[string]string{"sticky_title": b.StringAttr("title")}
 }
 
@@ -190,7 +190,7 @@ func TestBlockContainer_CreateSaveReloadKeepsVersionsAndAssets(t *testing.T) {
 	if err := reopened.Delete(loaded); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, err := reopened.Load(uuid); !errors.Is(err, ErrNotBlockContainer) {
+	if _, err := reopened.Load(uuid); !errors.Is(err, domain.ErrNotBlockContainer) {
 		t.Errorf("Load after Delete: %v, want ErrNotBlockContainer", err)
 	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
@@ -301,7 +301,7 @@ func TestBlockContainer_AttrsRoundTripFencedAndAsAContainer(t *testing.T) {
 			}
 			held := c.Block()
 			held.Aliases = []string{"sticky-name"}
-			c.block = held
+			c = domain.NewBlockContainer(c.Storable(), held)
 			saved, err := containers.Save(c)
 			if err != nil {
 				t.Fatalf("Save: %v", err)
@@ -349,7 +349,7 @@ func TestBlockContainer_RefusesWhatItDoesNotOwn(t *testing.T) {
 		t.Fatalf("CreateMetaText: %v", err)
 	}
 	for _, uuid := range []string{doc.Key(), missingUUID} {
-		if _, err := containers.Load(uuid); !errors.Is(err, ErrNotBlockContainer) {
+		if _, err := containers.Load(uuid); !errors.Is(err, domain.ErrNotBlockContainer) {
 			t.Errorf("Load(%s) = %v, want ErrNotBlockContainer", uuid, err)
 		}
 	}
@@ -360,7 +360,7 @@ func TestBlockContainer_RefusesWhatItDoesNotOwn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTyped: %v", err)
 	}
-	if _, err := containers.Load(broken.Key()); err == nil || errors.Is(err, ErrNotBlockContainer) {
+	if _, err := containers.Load(broken.Key()); err == nil || errors.Is(err, domain.ErrNotBlockContainer) {
 		t.Errorf("broken body: err = %v, want a parse failure", err)
 	}
 	for name, tc := range map[string]struct {
@@ -380,7 +380,7 @@ func TestBlockContainer_RefusesWhatItDoesNotOwn(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateTyped: %v", err)
 		}
-		if _, err := containers.Load(ms.Key()); err == nil || errors.Is(err, ErrNotBlockContainer) {
+		if _, err := containers.Load(ms.Key()); err == nil || errors.Is(err, domain.ErrNotBlockContainer) {
 			t.Errorf("%s: err = %v, want a parse failure", name, err)
 		}
 	}
@@ -427,7 +427,7 @@ func TestBlockContainer_MovedToTheLibraryIsStillABlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := st.Move(c.storable, domain.LibraryCategory); err != nil {
+	if _, err := st.Move(c.Storable(), domain.LibraryCategory); err != nil {
 		t.Fatalf("Move: %v", err)
 	}
 

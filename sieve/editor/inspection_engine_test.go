@@ -286,7 +286,7 @@ type panickyTextBearerProcessor struct {
 	testRunJobProcessor
 }
 
-func (p *panickyTextBearerProcessor) NormalisedText(_ *block.SieveBlock) []domain.TextSegment {
+func (p *panickyTextBearerProcessor) NormalisedText(_ *domain.SieveBlock) []domain.TextSegment {
 	panic("boom")
 }
 

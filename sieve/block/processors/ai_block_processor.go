@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"sieve/ident"
 	"sieve/logger"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
@@ -56,8 +57,8 @@ func (p *AIBlockProcessor) InitAttrs(id string, overrides map[string]interface{}
 		}
 		attrs[k] = v
 	}
-	block.MintElementIDs(attrs, block.QuestionAttr)
-	block.MintElementIDs(attrs, block.AnswerAttr)
+	domain.MintElementIDs(attrs, block.QuestionAttr)
+	domain.MintElementIDs(attrs, block.AnswerAttr)
 	return attrs
 }
 
@@ -106,19 +107,21 @@ func (p *AIBlockProcessor) attrsFromFence(content string) map[string]interface{}
 	if err != nil || len(blocks) == 0 {
 		return nil
 	}
-	blocks[0].RenewElementIDs(p)
+	for _, el := range p.Children(&blocks[0]) {
+		el.Reidentify(ident.New())
+	}
 	attrs := blocks[0].Attrs
 	delete(attrs, "id")
 	return attrs
 }
 
-func (p *AIBlockProcessor) OnChange(blk *block.SieveBlock) {}
+func (p *AIBlockProcessor) OnChange(blk *domain.SieveBlock) {}
 
 // Children returns the ordered blocks this exchange is composed of — the
 // BlockParent capability. The question's elements come first, then the answer's:
 // both slots hold elements, which live in this block's payload and nowhere else,
 // so nothing in the document tree addresses them.
-func (p *AIBlockProcessor) Children(blk *block.SieveBlock) []*block.SieveBlock {
+func (p *AIBlockProcessor) Children(blk *domain.SieveBlock) []*domain.SieveBlock {
 	return append(blk.Elements(block.QuestionAttr), p.answerElements(*blk)...)
 }
 
@@ -128,13 +131,13 @@ func (p *AIBlockProcessor) Children(blk *block.SieveBlock) []*block.SieveBlock {
 // Every consumer reads the answer here, so the degraded form is normalised once
 // and nothing downstream carries a second arm: a producer that cannot compose
 // blocks writes a bare string, and a bare string IS one prose block.
-func (p *AIBlockProcessor) answerElements(blk block.SieveBlock) []*block.SieveBlock {
+func (p *AIBlockProcessor) answerElements(blk domain.SieveBlock) []*domain.SieveBlock {
 	raw, degraded := blk.Attrs[block.AnswerAttr].(string)
 	if !degraded {
 		return blk.Elements(block.AnswerAttr)
 	}
 	folded := p.proseElements(raw)
-	out := make([]*block.SieveBlock, len(folded))
+	out := make([]*domain.SieveBlock, len(folded))
 	for i := range folded {
 		out[i] = &folded[i]
 	}
@@ -148,25 +151,25 @@ func (p *AIBlockProcessor) answerElements(blk block.SieveBlock) []*block.SieveBl
 //   - a string, or a list of strings, becomes one prose element apiece;
 //   - a blank string is no answer at all and folds to nothing, because an answer
 //     that is not there is never invented.
-func (p *AIBlockProcessor) foldAnswer(result any) block.Elements {
+func (p *AIBlockProcessor) foldAnswer(result any) domain.Elements {
 	switch v := result.(type) {
 	case string:
 		return p.proseElements(v)
 	case []string:
 		return p.proseElements(v...)
 	default:
-		return block.DecodeElements(result)
+		return domain.DecodeElements(result)
 	}
 }
 
 // proseElements mints one identified prose element per non-blank span.
-func (p *AIBlockProcessor) proseElements(spans ...string) block.Elements {
-	out := make(block.Elements, 0, len(spans))
+func (p *AIBlockProcessor) proseElements(spans ...string) domain.Elements {
+	out := make(domain.Elements, 0, len(spans))
 	for _, s := range spans {
 		if strings.TrimSpace(s) == "" {
 			continue
 		}
-		out = append(out, block.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": s}))
+		out = append(out, domain.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": s}))
 	}
 	return out
 }
@@ -174,12 +177,12 @@ func (p *AIBlockProcessor) proseElements(spans ...string) block.Elements {
 // answerText renders the answer slot: the merged CONTENT of its elements,
 // through the same per-kind AI seam the question body renders through — so an
 // answer composed of any kind reads to a model the way that kind reads.
-func (p *AIBlockProcessor) answerText(blk block.SieveBlock, doc block.DocView) string {
+func (p *AIBlockProcessor) answerText(blk domain.SieveBlock, doc block.DocView) string {
 	return strings.TrimSpace(block.MergeContexts(p.elementContexts(p.answerElements(blk), doc)).Content)
 }
 
 // aiBlockLabel is the in-flight status label for an ai-block job.
-func (p *AIBlockProcessor) aiBlockLabel(blk *block.SieveBlock) string {
+func (p *AIBlockProcessor) aiBlockLabel(blk *domain.SieveBlock) string {
 	if t, _ := blk.Attrs["type"].(string); t == "EXPLAIN" {
 		return "Explaining…"
 	}
@@ -198,7 +201,7 @@ func (p *AIBlockProcessor) aiBlockLabel(blk *block.SieveBlock) string {
 // question, and this is the one place a question is rendered, so every turn in a
 // thread carries the documents it was given. The order falls out — QUESTION,
 // then ATTACHED DOCUMENTS, then the answer BuildContext appends.
-func (p *AIBlockProcessor) qaHeader(blk block.SieveBlock, doc block.DocView) string {
+func (p *AIBlockProcessor) qaHeader(blk domain.SieveBlock, doc block.DocView) string {
 	q := p.foldQuestion(blk, doc)
 	t, _ := blk.Attrs["type"].(string)
 
@@ -223,7 +226,7 @@ func (p *AIBlockProcessor) qaHeader(blk block.SieveBlock, doc block.DocView) str
 type questionSlots struct {
 	targets questionTargets
 	// body is every non-reference element, in list order, whatever its kind.
-	body []*block.SieveBlock
+	body []*domain.SieveBlock
 	// attachments is the per-turn manifest the reference elements describe.
 	attachments domain.Attachments
 }
@@ -238,13 +241,13 @@ type questionTargets struct {
 	// own is the live address of the container the question lives in — what
 	// "in this document" is measured against.
 	own domain.Address
-	els []*block.SieveBlock
+	els []*domain.SieveBlock
 }
 
 // targets is THE target seam: which of blk's question elements name material it
 // is ABOUT. The fold's target slot and the chain walk both read it, so the
 // target predicate has exactly one home.
-func (p *AIBlockProcessor) targets(blk block.SieveBlock, doc block.DocView) questionTargets {
+func (p *AIBlockProcessor) targets(blk domain.SieveBlock, doc block.DocView) questionTargets {
 	return p.foldQuestion(blk, doc).targets
 }
 
@@ -263,7 +266,7 @@ func (p *AIBlockProcessor) targets(blk block.SieveBlock, doc block.DocView) ques
 //
 // A list with no target element at all is a DETACHED question — one about
 // nothing — and is distinct from a question about the whole document.
-func (p *AIBlockProcessor) foldQuestion(blk block.SieveBlock, doc block.DocView) questionSlots {
+func (p *AIBlockProcessor) foldQuestion(blk domain.SieveBlock, doc block.DocView) questionSlots {
 	q := questionSlots{targets: questionTargets{own: domain.NewContainerAddress(doc.UUID)}}
 	for _, el := range blk.Elements(block.QuestionAttr) {
 		switch {
@@ -283,7 +286,7 @@ func (p *AIBlockProcessor) foldQuestion(blk block.SieveBlock, doc block.DocView)
 
 // isTarget reports whether el is material the question is ABOUT rather than
 // material it was HANDED.
-func (t questionTargets) isTarget(el *block.SieveBlock) bool {
+func (t questionTargets) isTarget(el *domain.SieveBlock) bool {
 	switch el.StringAttr("rel") {
 	case block.RelTarget:
 		return true
@@ -301,7 +304,7 @@ func (t questionTargets) isTarget(el *block.SieveBlock) bool {
 // A target naming another container has none, and neither does one whose
 // address the grammar rejects: the chain walks handles within a single
 // container, and neither of those is one.
-func (t questionTargets) localToken(el *block.SieveBlock) (string, bool) {
+func (t questionTargets) localToken(el *domain.SieveBlock) (string, bool) {
 	addr, err := domain.ParseAddress(el.StringAttr("uri"))
 	switch {
 	case err != nil:
@@ -319,7 +322,7 @@ func (t questionTargets) localToken(el *block.SieveBlock) (string, bool) {
 // because a chain can now name nodes in more than one container and a bare
 // handle no longer identifies one. An address the grammar rejects keys on
 // itself: it names nothing, but it is still the same nothing on a second visit.
-func (t questionTargets) address(el *block.SieveBlock) string {
+func (t questionTargets) address(el *domain.SieveBlock) string {
 	uri := el.StringAttr("uri")
 	if addr, err := domain.ParseAddress(uri); err == nil {
 		return addr.String()
@@ -353,7 +356,7 @@ func (t questionTargets) names() string {
 //
 // doc is forwarded to each provider as the snapshot it renders against; an
 // element is not in that tree, so a provider resolving ids finds nothing there.
-func (p *AIBlockProcessor) elementContexts(els []*block.SieveBlock, doc block.DocView) []block.AIContext {
+func (p *AIBlockProcessor) elementContexts(els []*domain.SieveBlock, doc block.DocView) []block.AIContext {
 	out := make([]block.AIContext, 0, len(els))
 	for _, el := range els {
 		cp := block.GetContextProvider(el.Kind)
@@ -371,7 +374,7 @@ func (p *AIBlockProcessor) elementContexts(els []*block.SieveBlock, doc block.Do
 // questionText renders the body slot: the merged CONTENT of its elements. A
 // trailer is dropped with it — it belongs to the block it was extracted from,
 // not to the question asking about that block.
-func (p *AIBlockProcessor) questionText(body []*block.SieveBlock, doc block.DocView) string {
+func (p *AIBlockProcessor) questionText(body []*domain.SieveBlock, doc block.DocView) string {
 	return block.MergeContexts(p.elementContexts(body, doc)).Content
 }
 
@@ -380,7 +383,7 @@ func (p *AIBlockProcessor) questionText(body []*block.SieveBlock, doc block.DocV
 // QUESTION ABOUT / EXPLAIN NODE line stays in Content because it is a header before
 // the Q&A, not a mergeable trailer. Unlike the ACTION assembly (qaHeader) this DOES
 // append the block's own answer — a ref-chain / THREAD entry is conversation history.
-func (p *AIBlockProcessor) BuildContext(blk block.SieveBlock, doc block.DocView, seen map[string]bool) block.AIContext {
+func (p *AIBlockProcessor) BuildContext(blk domain.SieveBlock, doc block.DocView, seen map[string]bool) block.AIContext {
 	t, _ := blk.Attrs["type"].(string)
 
 	sb := strings.Builder{}
@@ -405,7 +408,7 @@ type chainWalk struct {
 	// whole-document sentinel, or a block id.
 	local []string
 	// foreign are the terminal targets naming another container.
-	foreign []*block.SieveBlock
+	foreign []*domain.SieveBlock
 	// thread is the interior nodes, oldest-first. All local, because the walk
 	// does not cross a container boundary.
 	thread []string
@@ -429,7 +432,7 @@ type chainWalk struct {
 // The seen-guard keys on each node's CANONICAL ADDRESS rather than its bare
 // handle — a chain can name nodes in more than one container, where a bare
 // handle no longer identifies one — and makes cyclic graphs terminate.
-func (p *AIBlockProcessor) resolveChain(blk block.SieveBlock, doc block.DocView) chainWalk {
+func (p *AIBlockProcessor) resolveChain(blk domain.SieveBlock, doc block.DocView) chainWalk {
 	var w chainWalk
 	seen := map[string]bool{}
 	if blk.ID != "" {
@@ -492,7 +495,7 @@ func (p *AIBlockProcessor) buildTargets(w chainWalk, doc block.DocView) string {
 	// model fixate on its own stale output and resurrect document text quoted inside
 	// old answers. THREAD (a separate slot) still carries the conversation. A
 	// specific-block target ignores the filter (returned as-is).
-	noSelfKind := func(b block.SieveBlock) bool { return b.Kind != p.Kind() }
+	noSelfKind := func(b domain.SieveBlock) bool { return b.Kind != p.Kind() }
 	for _, id := range w.local {
 		if c := block.BuildContextForID(id, doc, map[string]bool{}, noSelfKind); !c.IsEmpty() {
 			ctxs = append(ctxs, c)
@@ -521,7 +524,7 @@ func (p *AIBlockProcessor) buildTargets(w chainWalk, doc block.DocView) string {
 //
 // Split out of DescribeJob so the assembled prompt is assertable without running
 // a job or reaching a CLI.
-func (p *AIBlockProcessor) buildPrompt(blk *block.SieveBlock, doc block.DocView) (content, history, question string) {
+func (p *AIBlockProcessor) buildPrompt(blk *domain.SieveBlock, doc block.DocView) (content, history, question string) {
 	w := p.resolveChain(*blk, doc)
 
 	content = p.buildTargets(w, doc)
@@ -568,7 +571,7 @@ func (p *AIBlockProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJo
 			}
 			return p.svc.AI.RunAsk(content, history, questionCtx, uuid)
 		},
-		Apply: func(result any, b *block.SieveBlock) {
+		Apply: func(result any, b *domain.SieveBlock) {
 			b.Attrs["status"] = block.BlockStatusComplete
 			b.SetElements(block.AnswerAttr, p.foldAnswer(result))
 			b.Attrs["completedAt"] = time.Now().UTC().Format(time.RFC3339)
@@ -597,7 +600,7 @@ func (p *AIBlockProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJo
 // first newline, so an element whose rendering opens a fence can never sit on
 // one: a question leading with code or a log renders its body from the top and
 // the exchange is titled by its answer's position instead.
-func (p *AIBlockProcessor) MarkdownRepresentation(blk block.SieveBlock, uuid string) string {
+func (p *AIBlockProcessor) MarkdownRepresentation(blk domain.SieveBlock, uuid string) string {
 	status, _ := blk.Attrs["status"].(string)
 	doc := block.DocView{UUID: uuid}
 	answer := p.answerText(blk, doc)
@@ -676,7 +679,7 @@ var linkDestEscaper = strings.NewReplacer(`\`, `\\`, "<", `\<`, ">", `\>`, "\n",
 // Only the LEADING element is ever a candidate, so nothing is reordered. A body
 // leading with anything else — or with prose whose first line is blank — is
 // titleless and renders whole.
-func (p *AIBlockProcessor) embedHeading(body []*block.SieveBlock) (string, []*block.SieveBlock) {
+func (p *AIBlockProcessor) embedHeading(body []*domain.SieveBlock) (string, []*domain.SieveBlock) {
 	if len(body) == 0 || body[0].Kind != block.KindProse {
 		return "", body
 	}
@@ -687,6 +690,6 @@ func (p *AIBlockProcessor) embedHeading(body []*block.SieveBlock) (string, []*bl
 	if strings.TrimSpace(rest) == "" {
 		return head, body[1:]
 	}
-	remainder := block.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": rest})
-	return head, append([]*block.SieveBlock{&remainder}, body[1:]...)
+	remainder := domain.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": rest})
+	return head, append([]*domain.SieveBlock{&remainder}, body[1:]...)
 }

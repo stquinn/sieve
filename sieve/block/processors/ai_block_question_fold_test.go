@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 )
 
 const (
@@ -22,32 +23,32 @@ const (
 // foldReference builds one reference element: the address it points at, the role
 // it declares, and the face it cached. rel == "" is an element that never
 // declared a role.
-func foldReference(uri, rel, title string) block.SieveBlock {
+func foldReference(uri, rel, title string) domain.SieveBlock {
 	attrs := map[string]interface{}{"uri": uri}
 	if rel != "" {
 		attrs["rel"] = rel
 	}
 	if title != "" {
-		attrs[block.FaceAttr] = map[string]interface{}{"title": title}
+		attrs[domain.FaceAttr] = map[string]interface{}{"title": title}
 	}
-	return block.NewSieveBlock(block.KindReference, "", attrs)
+	return domain.NewSieveBlock(block.KindReference, "", attrs)
 }
 
 // foldTarget builds a reference element naming a block in THIS document — the
 // current form of a legacy `ref` token.
-func foldTarget(blockID string) block.SieveBlock {
+func foldTarget(blockID string) domain.SieveBlock {
 	return foldReference("sieve://"+foldDocUUID+"/"+blockID, block.RelTarget, "")
 }
 
 // foldProse builds the question-text element — the current form of the legacy
 // `question` attr.
-func foldProse(text string) block.SieveBlock {
-	return block.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": text})
+func foldProse(text string) domain.SieveBlock {
+	return domain.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": text})
 }
 
 // foldAsk builds the ai-block under test: an ASK whose question is els.
-func foldAsk(els ...block.SieveBlock) block.SieveBlock {
-	blk := block.NewSieveBlock("ai-block", "0197b2aa-4444-7888-8999-aaaabbbbcccc", map[string]interface{}{"type": "ASK"})
+func foldAsk(els ...domain.SieveBlock) domain.SieveBlock {
+	blk := domain.NewSieveBlock("ai-block", "0197b2aa-4444-7888-8999-aaaabbbbcccc", map[string]interface{}{"type": "ASK"})
 	blk.SetElements(block.QuestionAttr, els)
 	return blk
 }
@@ -133,7 +134,7 @@ func TestAIBlockFold_AForeignTargetRendersInPlace(t *testing.T) {
 	p := NewAIBlockProcessor(block.BlockServices{})
 	blk := foldAsk(
 		foldReference(foldOtherLeaf, block.RelTarget, "Auth Design"),
-		block.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": "what does this say?"}),
+		domain.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": "what does this say?"}),
 	)
 	content, _, question := p.buildPrompt(&blk, block.DocView{UUID: foldDocUUID})
 
@@ -176,9 +177,9 @@ func TestAIBlockFold_BodyRendersEveryKindThroughItsOwnSeam(t *testing.T) {
 
 	p := &AIBlockProcessor{}
 	q := p.foldQuestion(foldAsk(
-		block.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": "why is this slow?"}),
-		block.NewSieveBlock("code", "", map[string]interface{}{"source": "for {}", "language": "go"}),
-		block.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": "be brief"}),
+		domain.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": "why is this slow?"}),
+		domain.NewSieveBlock("code", "", map[string]interface{}{"source": "for {}", "language": "go"}),
+		domain.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": "be brief"}),
 	), block.DocView{UUID: foldDocUUID})
 
 	if len(q.body) != 3 {
@@ -199,7 +200,7 @@ func TestAIBlockFold_EachSlotReachesItsPromptShape(t *testing.T) {
 	p := &AIBlockProcessor{}
 	header := p.qaHeader(foldAsk(
 		foldReference(foldSelfLeaf, block.RelTarget, ""),
-		block.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": "compare these"}),
+		domain.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": "compare these"}),
 		foldReference(foldOther, block.RelAttach, "Auth Design"),
 	), block.DocView{UUID: foldDocUUID})
 
@@ -218,7 +219,7 @@ func TestAIBlockFold_AListlessBlockIsDetached(t *testing.T) {
 	t.Cleanup(resetRegistry)
 
 	p := &AIBlockProcessor{}
-	blk := block.NewSieveBlock("ai-block", "0197b2aa-5555-7888-8999-aaaabbbbcccc", map[string]interface{}{
+	blk := domain.NewSieveBlock("ai-block", "0197b2aa-5555-7888-8999-aaaabbbbcccc", map[string]interface{}{
 		"type": "ASK", "ref": "doc", "question": "legacy text",
 	})
 	if header := p.qaHeader(blk, block.DocView{UUID: foldDocUUID}); header != "QUESTION ABOUT: " {
