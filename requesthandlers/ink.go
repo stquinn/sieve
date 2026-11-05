@@ -39,12 +39,16 @@ type inkView struct {
 
 // inkSessionView is a session's numbers as they are shown.
 type inkSessionView struct {
-	Connect    string
-	Records    int
-	Received   string
-	CatchUp    string
+	Connect  string
+	Records  int
+	Received string
+	CatchUp  string
+	// Throughput is "" when the catch-up was too short for a rate to mean anything.
 	Throughput string
 }
+
+// inkRateFloor is the shortest catch-up a throughput is shown for.
+const inkRateFloor = 50 * time.Millisecond
 
 func (h *InkHandler) RegisterPaths(r chi.Router) {
 	r.Get("/ui/views/settings/ink", h.handleStatus)
@@ -132,16 +136,35 @@ func (h *InkHandler) view(st ink.Status) inkView {
 		Link: h.linkText(st.Link), Problem: st.Link.Problem, Companions: st.Companions, Notes: st.Notes,
 	}
 	if st.HasSession {
-		n := st.Session
-		v.Session = &inkSessionView{
-			Connect:    h.duration(n.Connect),
-			Records:    n.Records,
-			Received:   fmt.Sprintf("%.1f kB", float64(n.Bytes)/1000),
-			CatchUp:    h.duration(n.CatchUp),
-			Throughput: fmt.Sprintf("%.1f kB/s", n.KBps()),
-		}
+		v.Session = &inkSessionView{}
+		v.Session.show(st.Session)
 	}
 	return v
+}
+
+// show fills the view with n.
+func (v *inkSessionView) show(n ink.SessionNumbers) {
+	v.Connect, v.Records, v.CatchUp = v.duration(n.Connect), n.Records, v.duration(n.CatchUp)
+	v.Received = fmt.Sprintf("%.1f kB", float64(n.Bytes)/1000)
+	v.Throughput = ""
+	if n.CatchUp >= inkRateFloor {
+		v.Throughput = fmt.Sprintf("%.1f kB/s", n.KBps())
+	}
+}
+
+// duration is d in whole milliseconds under a second, and in seconds to a tenth from one up.
+func (v *inkSessionView) duration(d time.Duration) string {
+	ms := d.Round(time.Millisecond)
+	switch {
+	case d <= 0:
+		return "0 ms"
+	case ms == 0:
+		return "under 1 ms"
+	case ms < time.Second:
+		return fmt.Sprintf("%d ms", ms.Milliseconds())
+	default:
+		return fmt.Sprintf("%.1f s", d.Seconds())
+	}
 }
 
 // linkText is the link's state in words.
@@ -154,9 +177,4 @@ func (h *InkHandler) linkText(state ink.LinkState) string {
 	default:
 		return "Off"
 	}
-}
-
-// duration is d to the millisecond.
-func (h *InkHandler) duration(d time.Duration) string {
-	return d.Round(time.Millisecond).String()
 }

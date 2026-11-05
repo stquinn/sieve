@@ -93,6 +93,18 @@ func (n *StrokeBasedNote) Pages() []Page {
 	return out
 }
 
+// PageTemplate is the template the page at index page is drawn with: its own, otherwise the note
+// header's; nil for a page out of range or when both are null.
+func (n *StrokeBasedNote) PageTemplate(page int) *link.Template {
+	if page < 0 || page >= len(n.pages) {
+		return nil
+	}
+	if t := n.pages[page].Template; t != nil {
+		return t
+	}
+	return n.header.Template
+}
+
 // Strokes are the stroke-add records of the page at index page, in the order they were added;
 // nil for a page out of range or a note that keeps no strokes.
 func (n *StrokeBasedNote) Strokes(page int) []link.Record {
@@ -191,7 +203,8 @@ func (n *StrokeBasedNote) Read(jsonl []byte) (link.Cursor, int) {
 }
 
 // ExportPage is the page at index page in the §4.2 export shape, which the ink renderer takes:
-// the note header and the page's strokes, each point carrying size 0.
+// the note header, with the template that page is drawn with, and the page's strokes, each point
+// carrying size 0.
 func (n *StrokeBasedNote) ExportPage(page int) ([]byte, error) {
 	if page < 0 || page >= len(n.pages) {
 		return nil, fmt.Errorf("ink: page %d of %d", page, len(n.pages))
@@ -199,7 +212,7 @@ func (n *StrokeBasedNote) ExportPage(page int) ([]byte, error) {
 	h := n.header
 	out := exportPage{
 		Note: exportNote{ID: h.Note.String(), Created: n.Created(), Title: h.Title, PageAspect: h.PageAspect,
-			Template: exportTemplate{h.Template}, Device: exportDevice{h.Device.ID, h.Device.Name, h.Device.Model}},
+			Template: exportTemplate{n.PageTemplate(page)}, Device: exportDevice{h.Device.ID, h.Device.Name, h.Device.Model}},
 		Strokes: []exportStroke{},
 	}
 	for _, s := range n.pages[page].strokes {

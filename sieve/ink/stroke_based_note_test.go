@@ -272,6 +272,38 @@ func TestExportPageHasTheFixturesShape(t *testing.T) {
 	}
 }
 
+// Each page exports the template it is drawn with: its own, or the note default when it has none.
+func TestExportPageCarriesTheTemplateThePageIsDrawnWith(t *testing.T) {
+	grid := &link.Template{ID: "grid", Params: []link.TemplateParam{{Name: "pitch", Value: 0.05}}}
+	n := ReadStrokeBasedNote("c", jsonlOf(t, logOf(header("n"), pageAdd(page(1), 0, grid, link.BoundsFixed),
+		pageAdd(page(2), 1, nil, link.BoundsFixed), pageAdd(page(3), 2, nil, link.BoundsFixed), pageTemplate(page(3), dots))))
+	for _, tc := range []struct {
+		name string
+		page int
+		want string
+	}{
+		{"a page added with its own template", 0, `{"id":"grid","params":{"pitch":0.05}}`},
+		{"a page with a null template", 1, `{"id":"ruled","params":{"spacing":0.05,"margin":0.12}}`},
+		{"a page whose template a page-template changed", 2, `{"id":"dots","params":{"pitch":0.025}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			exported, err := n.ExportPage(tc.page)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got struct {
+				Note struct{ Template json.RawMessage }
+			}
+			if err := json.Unmarshal(exported, &got); err != nil {
+				t.Fatal(err)
+			}
+			if string(got.Note.Template) != tc.want {
+				t.Errorf("template %s, want %s", got.Note.Template, tc.want)
+			}
+		})
+	}
+}
+
 // keysOf maps "", "note", "note.device", "strokes", "strokes.points" to their sorted keys.
 func keysOf(t *testing.T, raw []byte) map[string][]string {
 	t.Helper()

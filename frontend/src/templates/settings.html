@@ -510,7 +510,7 @@ if (x &lt;= y) return "ok";</code>
 
     <div class="settings-tab-content" id="settings-tab-ink" style="display: {{if eq .LastSettingsPanel "ink"}}block{{else}}none{{end}};">
       <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1.5rem;">Ink</h3>
-      <div id="ink-status" hx-get="/ui/views/settings/ink" hx-trigger="load, sieve:invalidate-ink from:document"></div>
+      <div id="ink-status" hx-get="/ui/views/settings/ink" hx-trigger="load, sieve:invalidate-ink from:document" hx-target="this" hx-swap="innerHTML" hx-params="none"></div>
     </div>
     </div><!-- /settings-scroll -->
 

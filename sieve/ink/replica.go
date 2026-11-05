@@ -24,9 +24,12 @@ const (
 // NoteReplicas is this Sieve's replicas of one companion's notes, each a digital-note block
 // container found by (note_companion, note_source_id) in its face. It implements link.Replicas.
 //
-// A container is created on the first record appended to its replica, never on Open. The
-// container's strokes.jsonl asset is the log and the truth; its block's note_synced_seq is a copy
-// written after the asset, and so never ahead of it. Call End after every session.
+// A container is created on the first record appended to its replica, never on Open, with that
+// record folded in. The container's strokes.jsonl asset is the log and the truth; its block is a
+// copy of the replica's fold and cursor, saved only after the queue has reached the asset, and so
+// its note_synced_seq is never ahead of the asset. The block is saved when the note is caught up
+// (CaughtUp), when a note-header or page record is appended after that, and by End when anything
+// changed since the last save; a stroke record alone never saves it. Call End after every session.
 type NoteReplicas struct {
 	containers *services.BlockContainerService
 	kind       DigitalNoteKind
@@ -109,10 +112,36 @@ func (rs *NoteReplicas) UUID(note link.ID) (string, error) {
 	return rs.held[note].uuid, nil
 }
 
-// End writes every open replica's queue, then saves the block of each that changed since it was
-// opened, once, which is also its one snapshot, and releases them all. A replica whose write
-// failed is released unsaved, so its block stays behind its asset. The next Have or Open looks
-// for containers again.
+// CaughtUp is the companion having sent the note to its head: the open replica's queue is written
+// and its block saved if it changed since its last save, and from now on a note-header or page
+// record appended to it saves the block too. A note with no open replica is left alone.
+func (rs *NoteReplicas) CaughtUp(note link.ID) error {
+	rs.mu.Lock()
+	r, ok := rs.open[note]
+	rs.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	return r.caughtUp()
+}
+
+// Notes are the open replicas that hold a container, as their folds and cursors stand, which may
+// be ahead of what their blocks show.
+func (rs *NoteReplicas) Notes() []SyncedNote {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	var notes []SyncedNote
+	for _, r := range rs.open {
+		if n, ok := r.synced(); ok {
+			notes = append(notes, n)
+		}
+	}
+	return notes
+}
+
+// End writes every open replica's queue, then saves the block of each that changed since its
+// last save, and releases them all. A replica whose write failed is released unsaved, so its
+// block stays behind its asset. The next Have or Open looks for containers again.
 func (rs *NoteReplicas) End() error {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -158,8 +187,8 @@ func (rs *NoteReplicas) find() error {
 
 // NoteReplica is one note's replica: a digital-note container's strokes.jsonl, read once on
 // open and then only appended to. Appended lines are queued and reach the asset when the queue
-// passes its size, on a short timer, and on Flush, SetAside or End; a failed write is reported
-// by every later Append and Flush. It is safe for concurrent use.
+// passes its size, on a short timer, before every save of its block, and on Flush, SetAside or End;
+// a failed write is reported by every later Append and Flush. It is safe for concurrent use.
 type NoteReplica struct {
 	owner *NoteReplicas
 	note  link.ID
@@ -171,7 +200,10 @@ type NoteReplica struct {
 	queue     []byte
 	timer     *time.Timer
 	err       error
-	changed   bool
+	// changed is the fold or cursor having moved since the block was last saved.
+	changed bool
+	// following is the note caught up to its head, so that a structural record saves the block.
+	following bool
 }
 
 var _ link.Replica = (*NoteReplica)(nil)
@@ -193,7 +225,10 @@ func (r *NoteReplica) UUID() string {
 }
 
 // Append takes rec if Cursor.Accept does, folds it into the header and queues its line; the
-// first record taken creates the note's container. Any error leaves the cursor as it was.
+// first record taken creates the note's container with it folded in. Once the note is caught up, a
+// note-header, page-add, page-remove or page-template record also writes the queue and saves the
+// block; a failure of that save is logged and left to the next save. Any error leaves the cursor as
+// it was.
 func (r *NoteReplica) Append(rec link.Record, body []byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -213,17 +248,24 @@ func (r *NoteReplica) Append(rec link.Record, body []byte) error {
 			return err
 		}
 	}
+	r.fold.Apply(rec)
 	if r.container == nil {
 		c, err := r.owner.containers.Create(KindDigitalNote, r.attrs())
 		if err != nil {
+			r.fold = NewHeaderFold("")
 			return err
 		}
 		r.container, r.fold.id = c, c.UUID()
 	}
 	r.cursor = next
-	r.fold.Apply(rec)
 	r.queue = append(r.queue, line...)
 	r.changed = true
+	if r.following && rec.Op != link.OpStrokeAdd && rec.Op != link.OpStrokeRemove {
+		if err := r.save(); err != nil {
+			logger.Error("ink: saving a note's block", "note", r.note.String(), "err", err.Error())
+		}
+		return nil
+	}
 	if r.timer == nil {
 		r.timer = time.AfterFunc(r.owner.flushAfter, r.flushLater)
 	}
@@ -253,7 +295,7 @@ func (r *NoteReplica) SetAside() error {
 		}
 		logger.Warn("ink: replica set aside", "note", r.note.String(), "container", r.container.UUID())
 	}
-	r.cursor, r.fold, r.changed = link.Cursor{}, NewHeaderFold(r.uuid()), true
+	r.cursor, r.fold, r.changed, r.following = link.Cursor{}, NewHeaderFold(r.uuid()), true, false
 	return nil
 }
 
@@ -323,10 +365,24 @@ func (r *NoteReplica) load(uuid string) error {
 	return nil
 }
 
-// end writes the queue and, when the replica changed, saves its block. r.mu is not held.
+// caughtUp saves the block and marks the note followed. r.mu is not held.
+func (r *NoteReplica) caughtUp() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.following = true
+	return r.save()
+}
+
+// end writes the queue and saves the block. r.mu is not held.
 func (r *NoteReplica) end() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.save()
+}
+
+// save writes the queue and, when the replica changed since its last save, saves its block. r.mu
+// is held.
+func (r *NoteReplica) save() error {
 	if r.timer != nil {
 		r.timer.Stop()
 		r.timer = nil
@@ -344,6 +400,18 @@ func (r *NoteReplica) end() error {
 	}
 	r.container, r.changed = saved, false
 	return nil
+}
+
+// synced is the replica as Settings shows a note, false before it has a container. r.mu is not
+// held.
+func (r *NoteReplica) synced() (SyncedNote, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.container == nil {
+		return SyncedNote{}, false
+	}
+	return SyncedNote{UUID: r.container.UUID(), Title: r.fold.Title(), Pages: r.fold.PageCount(), Seq: r.cursor.Seq,
+		Companion: r.owner.companion, Device: r.fold.Header().Device.Name}, true
 }
 
 // flush appends the queue to the asset; a failure sticks. r.mu is held.

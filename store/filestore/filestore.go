@@ -663,7 +663,7 @@ func (fs *FileStore) LookupUUID(uuid string) (store.Storable, bool) {
 		return nil, false
 	}
 
-	logger.Warn("filestore: UUID index miss for %s — scanning", uuid)
+	logger.Warn("filestore: UUID index miss — scanning", "uuid", uuid)
 	fs.rebuildIndex()
 
 	fs.indexMu.RLock()

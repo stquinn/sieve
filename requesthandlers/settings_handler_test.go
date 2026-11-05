@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 
 	"sieve/sieve"
 	"sieve/sieve/block"
@@ -499,7 +501,7 @@ func TestInkFragment_RendersEachState(t *testing.T) {
 		{"connected", ink.Status{Enabled: true, Supported: true, Key: key,
 			Link: ink.LinkState{Phase: ink.LinkConnected, Companion: "boox-1"}, HasSession: true,
 			Session: ink.SessionNumbers{Connect: 1500 * time.Millisecond, Records: 300, Bytes: 64000, CatchUp: time.Second}},
-			[]string{"Connected to boox-1", "1.5s", "300", "64.0 kB", "64.0 kB/s"},
+			[]string{"Connected to boox-1", "1.5 s", "300", "64.0 kB", "64.0 kB/s"},
 			[]string{"No session yet"}},
 		{"key rejected", ink.Status{Enabled: true, Supported: true, Key: key,
 			Link: ink.LinkState{Phase: ink.LinkLooking, Problem: ink.ProblemKeyRejected}},
@@ -522,6 +524,35 @@ func TestInkFragment_RendersEachState(t *testing.T) {
 				if strings.Contains(out.String(), absent) {
 					t.Errorf("%q in\n%s", absent, out.String())
 				}
+			}
+		})
+	}
+}
+
+// A session's numbers read in units that fit them, and a rate is shown only over a catch-up long
+// enough for one to mean anything.
+func TestInkSessionView_ShowsDurationsInFittingUnitsAndRatesOnlyWhenMeaningful(t *testing.T) {
+	for _, tc := range []struct {
+		name                         string
+		numbers                      ink.SessionNumbers
+		connect, catchUp, throughput string
+	}{
+		{"nothing to catch up", ink.SessionNumbers{Connect: 1500 * time.Millisecond}, "1.5 s", "0 ms", ""},
+		{"under a millisecond", ink.SessionNumbers{Connect: 400 * time.Microsecond, Bytes: 1800, CatchUp: 400 * time.Microsecond},
+			"under 1 ms", "under 1 ms", ""},
+		{"under the rate floor", ink.SessionNumbers{Connect: 820 * time.Millisecond, Bytes: 9000, CatchUp: 49 * time.Millisecond},
+			"820 ms", "49 ms", ""},
+		{"at the rate floor", ink.SessionNumbers{Bytes: 5000, CatchUp: 50 * time.Millisecond}, "0 ms", "50 ms", "100.0 kB/s"},
+		{"just under a second", ink.SessionNumbers{Bytes: 1000, CatchUp: 999*time.Millisecond + 600*time.Microsecond},
+			"0 ms", "1.0 s", "1.0 kB/s"},
+		{"seconds", ink.SessionNumbers{Bytes: 64000, CatchUp: 12340 * time.Millisecond}, "0 ms", "12.3 s", "5.2 kB/s"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var v inkSessionView
+			v.show(tc.numbers)
+			if v.Connect != tc.connect || v.CatchUp != tc.catchUp || v.Throughput != tc.throughput {
+				t.Errorf("connect %q catch-up %q throughput %q, want %q %q %q",
+					v.Connect, v.CatchUp, v.Throughput, tc.connect, tc.catchUp, tc.throughput)
 			}
 		})
 	}
@@ -558,5 +589,84 @@ func TestInkActions_TakeEffectAndSurviveTheSettingsSave(t *testing.T) {
 	}
 	if got := sp.State.LoadSettings().Ink.Key; got != second.Key {
 		t.Errorf("disabling dropped the key: %q", got)
+	}
+}
+
+// htmx hands a form's hx-target down to every element inside it, so an element in the settings
+// form that makes its own request and names no target replaces the whole dialog with its answer.
+// Every such element — in the settings page and in each fragment swapped into it — names its own.
+func TestSettingsForm_EveryRequestInsideItNamesItsOwnTarget(t *testing.T) {
+	srv, _ := newInkServer(t)
+	postInk(t, srv, "/api/ink/enabled", url.Values{"ink_enabled": {"on"}})
+	get := func(path string) string {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s: %d %s", path, resp.StatusCode, body)
+		}
+		return string(body)
+	}
+	attr := func(n *html.Node, key string) (string, bool) {
+		for _, a := range n.Attr {
+			if a.Key == key {
+				return a.Val, true
+			}
+		}
+		return "", false
+	}
+	doc, err := html.Parse(strings.NewReader(get("/ui/views/settings")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var form *html.Node
+	for n := range doc.Descendants() {
+		if id, _ := attr(n, "id"); n.Type == html.ElementNode && n.Data == "form" && id == "settings-form" {
+			form = n
+		}
+	}
+	if form == nil {
+		t.Fatal("no settings form")
+	}
+	if _, ok := attr(form, "hx-target"); !ok {
+		t.Fatal("the settings form names no target, so nothing inherits one")
+	}
+	checked := 0
+	var check func(root *html.Node, where string)
+	check = func(root *html.Node, where string) {
+		for n := range root.Descendants() {
+			if n.Type != html.ElementNode {
+				continue
+			}
+			for _, verb := range []string{"hx-get", "hx-post", "hx-put", "hx-patch", "hx-delete"} {
+				path, ok := attr(n, verb)
+				if !ok {
+					continue
+				}
+				checked++
+				if _, ok := attr(n, "hx-target"); !ok {
+					t.Errorf("%s: <%s %s=%q> names no hx-target, so it inherits the form's", where, n.Data, verb, path)
+				}
+				if verb != "hx-get" {
+					continue
+				}
+				fragment, err := html.ParseFragment(strings.NewReader(get(path)), &html.Node{Type: html.ElementNode, Data: "div", DataAtom: atom.Div})
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, f := range fragment {
+					holder := &html.Node{Type: html.ElementNode, Data: "div"}
+					holder.AppendChild(f)
+					check(holder, path)
+				}
+			}
+		}
+	}
+	check(form, "settings form")
+	if checked < 3 {
+		t.Errorf("checked %d requesting elements; the Ink mount, toggle and New key make three", checked)
 	}
 }

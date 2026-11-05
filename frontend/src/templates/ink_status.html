@@ -35,7 +35,7 @@
     <span style="color: var(--theme-textDim);">Records caught up</span><span>{{.Records}}</span>
     <span style="color: var(--theme-textDim);">Received</span><span>{{.Received}}</span>
     <span style="color: var(--theme-textDim);">Catch-up took</span><span>{{.CatchUp}}</span>
-    <span style="color: var(--theme-textDim);">Throughput</span><span>{{.Throughput}}</span>
+    {{if .Throughput}}<span style="color: var(--theme-textDim);">Throughput</span><span>{{.Throughput}}</span>{{end}}
   </div>
   {{else}}
   <p style="font-size: 0.875rem; color: var(--theme-textDim);">No session yet.</p>

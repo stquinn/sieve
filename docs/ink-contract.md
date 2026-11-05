@@ -228,7 +228,7 @@ directory. The block never carries ink.
 | `note_device` | the note's `device` from its header: `{id, name, model}` |
 | `note_companion` | the companion's identity (the GATT `identity` value) |
 | `note_source_id` | the companion's note id |
-| `note_synced_seq` | the `seq` of the last record in the source |
+| `note_synced_seq` | the `seq` of the last record of the source the block describes; the source holds at least that far, and the block may lag it between saves |
 | `reading` | the reading job's state; owned by the reading job |
 | `source` | the source asset's absolute address, `sieve://{container}/{key}` |
 
@@ -236,8 +236,8 @@ directory. The block never carries ink.
 - **FileBasedNote:** `source` is the PDF or PNG a producer delivered.
 - A committed record is appended to the source first, then sent to an open lens. Points of
   the live feed go to an open lens only and never to the source.
-- `note_synced_seq` is the catch-up cursor: replication resumes with `OPEN {noteId, haveSeq =
-  note_synced_seq}`.
+- The catch-up cursor is the `seq` the source replays to: replication resumes with `OPEN {noteId,
+  haveSeq}` from there. `note_synced_seq` is a copy of it and is never ahead of the source.
 - `note_device` is copied from the `note-header` and never edited. It says which device a note came
   from; `note_companion` remains the companion's identity on the link.
 - One Sieve holds at most one live container per `(note_companion, note_source_id)`.

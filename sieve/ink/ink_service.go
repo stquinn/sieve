@@ -110,13 +110,16 @@ type Companion struct {
 	Notes  int
 }
 
-// SyncedNote is a Digital Note this Sieve holds, read from its container's face.
+// SyncedNote is a Digital Note this Sieve holds: read from its replica while a session has it
+// open, otherwise from its container's face.
 type SyncedNote struct {
 	UUID      string
 	Title     string
 	Pages     int
 	Seq       uint32
 	Companion string
+	// Device is the name of the device the note was written on.
+	Device string
 }
 
 // Status is everything Settings → Ink shows.
@@ -146,8 +149,11 @@ type InkService struct {
 	containers  *services.BlockContainerService
 	radio       radio.Radio
 	invalidator Invalidator
-	pause       time.Duration
 	throttle    time.Duration
+	// after is the clock the loop waits on between sessions.
+	after func(time.Duration) <-chan time.Time
+	// wake cuts the loop's wait short, to wait the base pause instead.
+	wake chan struct{}
 
 	mu          sync.Mutex
 	cancel      context.CancelFunc
@@ -163,6 +169,9 @@ type InkService struct {
 	hasNumbers   bool
 	invalidated  time.Time
 	feeds        []*listenerFeed
+	redial       redialPause
+	// lastFailure is the error the last session ended on before connecting, "" after one connects.
+	lastFailure string
 }
 
 // NewInkService is the service over this machine's settings, the container store and r. inv,
@@ -170,7 +179,8 @@ type InkService struct {
 func NewInkService(settings *services.StateService, containers *services.BlockContainerService, r radio.Radio, inv Invalidator) *InkService {
 	return &InkService{
 		settings: settings, containers: containers, radio: r, invalidator: inv,
-		pause: time.Second, throttle: time.Second, state: LinkState{Phase: LinkOff},
+		throttle: time.Second, after: time.After, wake: make(chan struct{}, 1), state: LinkState{Phase: LinkOff},
+		redial: redialPause{base: time.Second, max: 30 * time.Second},
 	}
 }
 
@@ -192,6 +202,7 @@ func (s *InkService) Start() error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.key, s.cancel, s.done = key, cancel, make(chan struct{})
+	s.redial.reset()
 	go s.loop(ctx, s.done)
 	return nil
 }
@@ -225,8 +236,8 @@ func (s *InkService) SetEnabled(on bool) error {
 	return s.Start()
 }
 
-// NewKey replaces this Sieve's key, so every paired companion must be paired again, and drops the
-// open link so the next one proves the new key.
+// NewKey replaces this Sieve's key, so every paired companion must be paired again, drops the
+// open link so the next one proves the new key, and dials again after the base pause.
 func (s *InkService) NewKey() error {
 	key, err := link.NewKey()
 	if err != nil {
@@ -239,6 +250,7 @@ func (s *InkService) NewKey() error {
 	}
 	s.mu.Lock()
 	s.key = key
+	s.redial.reset()
 	run := s.run
 	if run != nil {
 		run.dropped.Store(true)
@@ -246,6 +258,10 @@ func (s *InkService) NewKey() error {
 	s.mu.Unlock()
 	if run != nil {
 		run.link.Close()
+	}
+	select {
+	case s.wake <- struct{}{}:
+	default:
 	}
 	s.invalidate()
 	return nil
@@ -281,8 +297,13 @@ func (s *InkService) Status() Status {
 	s.mu.Lock()
 	st.Supported, st.Link = !s.unsupported, s.state
 	st.Session, st.HasSession = s.numbers, s.hasNumbers
+	run := s.run
 	s.mu.Unlock()
-	st.Notes, st.Companions = s.synced()
+	var open []SyncedNote
+	if run != nil {
+		open = run.replicas.Notes()
+	}
+	st.Notes, st.Companions = s.synced(open)
 	return st
 }
 
@@ -320,29 +341,45 @@ func (s *InkService) ensureKey(settings domain.Settings) (link.Key, error) {
 	return key, s.settings.SaveSettings(settings)
 }
 
-// loop runs sessions until ctx ends, pausing between them; a radio this platform does not support
-// is not dialled again.
+// loop runs sessions until ctx ends, pausing between them as redial says; a radio this platform
+// does not support is not dialled again.
 func (s *InkService) loop(ctx context.Context, done chan struct{}) {
 	defer close(done)
 	for {
-		s.session(ctx)
+		rejected := s.session(ctx)
 		s.mu.Lock()
 		unsupported := s.unsupported
+		pause := s.redial.next(rejected)
 		s.mu.Unlock()
 		if unsupported {
 			<-ctx.Done()
 			return
 		}
-		select {
-		case <-ctx.Done():
+		if !s.wait(ctx, pause) {
 			return
-		case <-time.After(s.pause):
 		}
 	}
 }
 
-// session dials once and, when a companion answers, runs one session over it to its end.
-func (s *InkService) session(ctx context.Context) {
+// wait pauses for d, or for the base pause from a wake on, and reports whether ctx is still live.
+func (s *InkService) wait(ctx context.Context, d time.Duration) bool {
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-s.wake:
+			s.mu.Lock()
+			d = s.redial.base
+			s.mu.Unlock()
+		case <-s.after(d):
+			return true
+		}
+	}
+}
+
+// session dials once and, when a companion answers, runs one session over it to its end. It
+// reports whether the companion refused this Sieve's key or could not prove it.
+func (s *InkService) session(ctx context.Context) bool {
 	s.mu.Lock()
 	problem := s.state.Problem
 	s.mu.Unlock()
@@ -350,22 +387,22 @@ func (s *InkService) session(ctx context.Context) {
 	l, err := s.radio.Dial(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
-			return
+			return false
 		}
 		if errors.Is(err, radio.ErrBluetoothUnsupported) {
 			s.mu.Lock()
 			s.unsupported = true
 			s.mu.Unlock()
 			s.invalidate()
-			return
+			return false
 		}
 		if errors.Is(err, radio.ErrBluetoothOff) || errors.Is(err, radio.ErrBluetoothNotAuthorised) {
 			s.setRadioProblem(err.Error())
-			return
+			return false
 		}
 		s.setRadioProblem("")
 		logger.Debug("ink: no companion", "err", err.Error())
-		return
+		return false
 	}
 	s.setRadioProblem("")
 	run := &sessionRun{svc: s, link: l, received: &countedReader{r: l},
@@ -384,13 +421,15 @@ func (s *InkService) session(ctx context.Context) {
 	s.mu.Lock()
 	s.run = nil
 	s.mu.Unlock()
-	run.end(ctx, err)
+	return run.end(ctx, err)
 }
 
 // connected starts a session's numbers and enters the connected state.
 func (s *InkService) connected(companion string, connect time.Duration) {
 	s.mu.Lock()
 	s.numbers, s.hasNumbers = SessionNumbers{Companion: companion, Connect: connect}, true
+	s.redial.reset()
+	s.lastFailure = ""
 	s.mu.Unlock()
 	s.setState(LinkState{Phase: LinkConnected, Companion: companion})
 }
@@ -454,41 +493,44 @@ func (s *InkService) invalidateSoon() {
 	}
 }
 
-// synced lists the held Digital Notes by title and the companions they came from, from the faces
-// alone.
-func (s *InkService) synced() ([]SyncedNote, []Companion) {
+// synced lists the held Digital Notes by title and the companions they came from: each note in
+// open as it stands there, every other from its face.
+func (s *InkService) synced(open []SyncedNote) ([]SyncedNote, []Companion) {
 	found, err := s.containers.Find(KindDigitalNote, nil)
 	if err != nil {
 		logger.Error("ink: listing synced notes", "err", err.Error())
 		return nil, nil
 	}
-	uuids := make([]string, 0, len(found))
-	for uuid := range found {
-		uuids = append(uuids, uuid)
-	}
-	sort.Strings(uuids)
-	notes := make([]SyncedNote, 0, len(uuids))
-	byIdentity := map[string]*Companion{}
-	var companions []Companion
-	for _, uuid := range uuids {
-		face := found[uuid]
+	byUUID := map[string]SyncedNote{}
+	for uuid, face := range found {
 		pages, _ := strconv.Atoi(face["note_pages"])
 		seq, _ := strconv.ParseUint(face["note_synced_seq"], 10, 32)
-		notes = append(notes, SyncedNote{UUID: uuid, Title: face["note_title"], Pages: pages, Seq: uint32(seq),
-			Companion: face["note_companion"]})
-		identity := face["note_companion"]
-		if identity == "" {
+		byUUID[uuid] = SyncedNote{UUID: uuid, Title: face["note_title"], Pages: pages, Seq: uint32(seq),
+			Companion: face["note_companion"], Device: face["note_device"]}
+	}
+	for _, n := range open {
+		byUUID[n.UUID] = n
+	}
+	notes := make([]SyncedNote, 0, len(byUUID))
+	for _, n := range byUUID {
+		notes = append(notes, n)
+	}
+	sort.Slice(notes, func(i, j int) bool { return notes[i].UUID < notes[j].UUID })
+	byIdentity := map[string]int{}
+	var companions []Companion
+	for _, n := range notes {
+		if n.Companion == "" {
 			continue
 		}
-		c, ok := byIdentity[identity]
+		i, ok := byIdentity[n.Companion]
 		if !ok {
-			companions = append(companions, Companion{Identity: identity})
-			c = &companions[len(companions)-1]
-			byIdentity[identity] = c
+			i = len(companions)
+			companions = append(companions, Companion{Identity: n.Companion})
+			byIdentity[n.Companion] = i
 		}
-		c.Notes++
-		if device := face["note_device"]; device != "" {
-			c.Device = device
+		companions[i].Notes++
+		if n.Device != "" {
+			companions[i].Device = n.Device
 		}
 	}
 	sort.SliceStable(notes, func(i, j int) bool { return notes[i].Title < notes[j].Title })
@@ -556,7 +598,11 @@ func (r *sessionRun) Committed(note link.ID, rec link.Record) {
 	}
 }
 
+// Done is the note at its head: its replica saves what it holds, and the catch-up's numbers move.
 func (r *sessionRun) Done(note link.ID, _ uint32, records int) {
+	if err := r.replicas.CaughtUp(note); err != nil {
+		logger.Error("ink: saving a caught-up note", "note", note.String(), "err", err.Error())
+	}
 	if !r.pending[note] {
 		return
 	}
@@ -607,30 +653,73 @@ func (r *sessionRun) measure() {
 }
 
 // end is the session over on err: nothing is live any more, and a failure the user must see is
-// kept as the state's problem. A session ended by Stop or by a new key is no failure.
-func (r *sessionRun) end(ctx context.Context, err error) {
+// kept as the state's problem. A session ended by Stop or by a new key is no failure. It reports
+// whether the companion refused this Sieve's key or could not prove it. A session that ends
+// before connecting on the error the one before it ended on is logged at Debug.
+func (r *sessionRun) end(ctx context.Context, err error) bool {
 	if r.live {
 		r.svc.publish(func(l Listener) { l.LiveChanged(LiveNote{}) })
 	}
-	logger.Info("ink: session ended", "companion", r.link.Identity(), "err", fmt.Sprint(err))
+	text := fmt.Sprint(err)
+	s := r.svc
+	s.mu.Lock()
+	repeat := !r.connected && err != nil && text == s.lastFailure
+	if !r.connected && err != nil {
+		s.lastFailure = text
+	} else {
+		s.lastFailure = ""
+	}
+	s.mu.Unlock()
+	if repeat {
+		logger.Debug("ink: session ended", "companion", r.link.Identity(), "err", text)
+	} else {
+		logger.Info("ink: session ended", "companion", r.link.Identity(), "err", text)
+	}
 	if ctx.Err() != nil {
-		r.svc.invalidate()
-		return
+		s.invalidate()
+		return false
 	}
 	state := LinkState{Phase: LinkLooking}
+	rejected := false
 	switch {
 	case r.dropped.Load() || err == nil:
 	case errors.Is(err, link.ErrRefused):
-		state.Problem = ProblemKeyRejected
+		state.Problem, rejected = ProblemKeyRejected, true
 	case errors.Is(err, link.ErrBadCompanion):
-		state.Problem = ProblemCompanionKey
+		state.Problem, rejected = ProblemCompanionKey, true
 	default:
 		state.Problem = "the link ended: " + err.Error()
 	}
-	if !r.svc.setState(state) {
-		r.svc.invalidate()
-	}
+	s.setState(state)
+	return rejected
 }
+
+// redialPause is the pause before the next dial: the base pause, doubled after each session in a
+// row that the companion refused or could not prove the key on, up to max. Its zero value is not
+// usable; base and max must be set.
+type redialPause struct {
+	base, max time.Duration
+	// last is the pause after the last rejected session in the current run of them, 0 when the
+	// last session was not rejected.
+	last time.Duration
+}
+
+// next is the pause after a session that was rejected or not.
+func (p *redialPause) next(rejected bool) time.Duration {
+	if !rejected {
+		p.last = 0
+		return p.base
+	}
+	if p.last == 0 {
+		p.last = p.base
+	} else {
+		p.last = min(2*p.last, p.max)
+	}
+	return p.last
+}
+
+// reset starts the doubling again from the base pause.
+func (p *redialPause) reset() { p.last = 0 }
 
 // countedReader is a reader that counts the bytes read through it.
 type countedReader struct {

@@ -613,7 +613,7 @@ file. The lens is a follower, never the owner. Appends are debounced (written th
 short timer and on disconnect) so a live pen does not rewrite the asset per stroke; the
 hash chain (§7.1) makes a crash between writes a resumable gap, not corruption. Catch-up
 is the sequence number: the last record in the asset is the cursor (`note_synced_seq` in
-the face), `OPEN {noteId, haveSeq}` resumes from it, and a lens opened late loads the
+the face is a copy that may lag it between saves), `OPEN {noteId, haveSeq}` resumes from it, and a lens opened late loads the
 replayed page from the asset and joins the socket from there — nothing need be online at
 the same time as anything else except for the live window. The wire format (§7) and the
 companion's own on-device log are independent of this storage; only the record *shape* is
@@ -650,9 +650,10 @@ yields `note_title`, `note_pages`, `note_source` (`strokes` | `file`), `note_sou
 `note_companion` and `note_synced_seq` into `.meta`. The sidebar, the reference card and any triage read the
 face and never the body.
 
-**Snapshots.** A live pen would make a version per debounced write. The replica path
-snapshots once per sync session, on disconnect, not per write. My call; the builder may
-pick a different cadence, but never per record.
+**Snapshots.** A live pen would make a version per debounced write. The replica path saves
+the block, and so snapshots, when a note is caught up, when a `note-header` or page record
+arrives after that, and at disconnect if anything changed since. A stroke record alone never
+saves it, so a note costs a handful of versions per session and never one per record.
 
 **Live path to an open lens.** Initial load is whole-content through the Thing load
 endpoint #198 D2 adds, and the lens replays the log in JS. While a sync is running the

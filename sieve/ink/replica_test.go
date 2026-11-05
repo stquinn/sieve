@@ -16,16 +16,24 @@ import (
 	"sieve/store/filestore"
 )
 
-// quietObserver hears a session and keeps nothing.
-type quietObserver struct{}
+// catchUpObserver hears a session and keeps nothing; as InkService does, it tells the replicas
+// each note the companion has sent to its head.
+type catchUpObserver struct {
+	t        *testing.T
+	replicas *NoteReplicas
+}
 
-func (quietObserver) Notes([]link.NoteEntry)         {}
-func (quietObserver) Opened(link.ID, uint32, uint32) {}
-func (quietObserver) Committed(link.ID, link.Record) {}
-func (quietObserver) Done(link.ID, uint32, int)      {}
-func (quietObserver) Live(link.ID, link.ID)          {}
-func (quietObserver) Ink([]link.LiveRecord)          {}
-func (quietObserver) Refused(link.ID, string)        {}
+func (catchUpObserver) Notes([]link.NoteEntry)         {}
+func (catchUpObserver) Opened(link.ID, uint32, uint32) {}
+func (catchUpObserver) Committed(link.ID, link.Record) {}
+func (o catchUpObserver) Done(note link.ID, _ uint32, _ int) {
+	if err := o.replicas.CaughtUp(note); err != nil {
+		o.t.Errorf("CaughtUp: %v", err)
+	}
+}
+func (catchUpObserver) Live(link.ID, link.ID)   {}
+func (catchUpObserver) Ink([]link.LiveRecord)   {}
+func (catchUpObserver) Refused(link.ID, string) {}
 
 // replicaRig is one Sieve's store and one companion serving noteID, synced by real sessions.
 type replicaRig struct {
@@ -73,7 +81,7 @@ func (rig *replicaRig) sync() error {
 	}()
 	done := make(chan error, 1)
 	go func() {
-		done <- link.NewSession(ours, linkKey, rig.replicas, quietObserver{}, link.Plan{CatchUp: true}).Run()
+		done <- link.NewSession(ours, linkKey, rig.replicas, catchUpObserver{rig.t, rig.replicas}, link.Plan{CatchUp: true}).Run()
 	}()
 	select {
 	case err = <-done:
@@ -293,8 +301,9 @@ func TestReplica_ALogTheCompanionDisownsIsSetAsideAndReplayed(t *testing.T) {
 	}
 }
 
-// A session saves a changed note's block once, however many records it takes; a session that
-// changes nothing saves nothing, and one that skips a note never replays its asset.
+// A catch-up saves a changed note's block once, when the note reaches its head, however many
+// records it takes; a session that changes nothing saves nothing, and one that skips a note never
+// replays its asset.
 func TestReplica_SavesOncePerSessionAndSkipsWhatIsHeld(t *testing.T) {
 	records := strokesLog(300)
 	rig := newReplicaRig(t, records[:200])
@@ -336,6 +345,79 @@ func TestReplica_SavesOncePerSessionAndSkipsWhatIsHeld(t *testing.T) {
 	}
 	if v := rig.container().Versions(); len(v) != 2 {
 		t.Errorf("an unchanged note was saved: %d versions", len(v))
+	}
+}
+
+// The first block of a note already describes its header. Once the note is caught up its block and
+// face equal what the asset holds, with the session still open; after that a structural record
+// saves the block at once and a stroke record never does, so End saves only what strokes moved.
+// A session's versions are at most one for the catch-up, one per structural record after it, and
+// one at End.
+func TestReplica_SavesWhenCaughtUpAndOnStructureButNeverPerStroke(t *testing.T) {
+	caughtUp := strokesLog(3)
+	strokes := func(from, n int) []link.Record {
+		var out []link.Record
+		for i := 0; i < n; i++ {
+			out = append(out, strokeAdd(page(1), stroke(byte(from+i))))
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name string
+		live []link.Record
+		// live and ended are the versions after the live records and after End.
+		live1, ended int
+	}{
+		{"nothing after the catch-up", nil, 1, 1},
+		{"a run of strokes", strokes(10, 20), 1, 2},
+		{"a page added", []link.Record{pageAdd(page(2), 1, dots, link.BoundsFixed)}, 2, 2},
+		{"a page added and drawn on", append([]link.Record{pageAdd(page(2), 1, nil, link.BoundsFixed)}, strokes(10, 3)...), 2, 3},
+		{"a template, a removal and a new header", []link.Record{pageTemplate(page(1), dots), pageRemove(page(1)), header("Renamed")}, 4, 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			all := logOf(append(append([]link.Record(nil), caughtUp...), tc.live...)...)
+			rig := newReplicaRig(t, nil)
+			opened, err := rig.replicas.Open(noteID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := opened.(*NoteReplica)
+			appendAll := func(records []link.Record) {
+				for _, rec := range records {
+					body, err := rec.Body()
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := r.Append(rec, body); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			appendAll(all[:1])
+			if c := rig.container(); c.Block().StringAttr("title") != "Strokes" || c.Storable().Meta()["note_device"] != aDevice.Name ||
+				c.Block().Attrs["note_synced_seq"] != 0 {
+				t.Errorf("first block %v", c.Block().Attrs)
+			}
+			appendAll(all[1:len(caughtUp)])
+			if err := rig.replicas.CaughtUp(noteID); err != nil {
+				t.Fatal(err)
+			}
+			c := rig.expectHeld(all[:len(caughtUp)])
+			if c.Storable().Meta()["note_pages"] != "1" || len(c.Versions()) != 1 {
+				t.Errorf("caught up: face %v, %d versions", c.Storable().Meta(), len(c.Versions()))
+			}
+			appendAll(all[len(caughtUp):])
+			if v := len(rig.container().Versions()); v != tc.live1 {
+				t.Errorf("%d versions after the live records, want %d", v, tc.live1)
+			}
+			if err := rig.replicas.End(); err != nil {
+				t.Fatal(err)
+			}
+			rig.expectHeld(all)
+			if v := len(rig.container().Versions()); v != tc.ended || v > 2+len(tc.live) {
+				t.Errorf("%d versions after End, want %d", v, tc.ended)
+			}
+		})
 	}
 }
 

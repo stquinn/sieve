@@ -114,7 +114,7 @@ func (rig *inkRig) InkChanged() { rig.invalidations.Add(1) }
 // newService is a service over the rig, as a Sieve starting again builds it.
 func (rig *inkRig) newService() *InkService {
 	svc := NewInkService(rig.state, reopen(rig.t, rig.st), rig.radio, rig)
-	svc.pause = 10 * time.Millisecond
+	svc.redial.base = 10 * time.Millisecond
 	rig.t.Cleanup(svc.Stop)
 	return svc
 }
@@ -234,16 +234,72 @@ func TestInkService_ASessionLandsNotesAndStatusListsThem(t *testing.T) {
 		st.Session.CatchUp <= 0 || st.Session.KBps() <= 0 {
 		t.Errorf("session %+v link %+v", st.Session, st.Link)
 	}
+	expectListed := func(when string, st Status) {
+		t.Helper()
+		if len(st.Notes) != 1 || st.Notes[0].Title != "Ideas" || st.Notes[0].Pages != 2 ||
+			st.Notes[0].Seq != uint32(len(records)) || st.Notes[0].Companion != companionID {
+			t.Fatalf("%s: notes %+v", when, st.Notes)
+		}
+		if want := []Companion{{Identity: companionID, Device: aDevice.Name, Notes: 1}}; fmt.Sprint(st.Companions) != fmt.Sprint(want) {
+			t.Errorf("%s: companions %+v, want %+v", when, st.Companions, want)
+		}
+	}
+	expectListed("following", st)
+	if c := rig.expectHeld(records); c.Storable().Meta()["note_title"] != "Ideas" || c.Storable().Meta()["note_pages"] != "2" ||
+		c.Storable().Meta()["note_device"] != aDevice.Name {
+		t.Errorf("face while following %v", c.Storable().Meta())
+	}
 	rig.stopPromptly()
-	st = rig.svc.Status()
-	if len(st.Notes) != 1 || st.Notes[0].Title != "Ideas" || st.Notes[0].Pages != 2 ||
-		st.Notes[0].Seq != uint32(len(records)) || st.Notes[0].Companion != companionID {
-		t.Fatalf("notes %+v", st.Notes)
+	expectListed("stopped", rig.svc.Status())
+	if v := rig.expectHeld(records).Versions(); len(v) != 1 {
+		t.Errorf("%d versions after a session that only caught up", len(v))
 	}
-	if want := []Companion{{Identity: companionID, Device: aDevice.Name, Notes: 1}}; fmt.Sprint(st.Companions) != fmt.Sprint(want) {
-		t.Errorf("companions %+v, want %+v", st.Companions, want)
+}
+
+// While a session has a note open, Status shows it as its replica stands, ahead of its face;
+// otherwise as its face says.
+func TestInkService_StatusShowsAnOpenNoteAsItsReplicaStands(t *testing.T) {
+	rig := newInkRig(t, nil)
+	records := strokesLog(3)
+	replicas := NewNoteReplicas(rig.containers, companionID)
+	opened, err := replicas.Open(noteID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	rig.expectHeld(records)
+	for _, rec := range records {
+		body, err := rec.Body()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := opened.Append(rec, body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name  string
+		run   *sessionRun
+		pages int
+		seq   uint32
+	}{
+		{"from the face", nil, 0, 0},
+		{"from the open replica", &sessionRun{replicas: replicas}, 1, uint32(len(records))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig.svc.mu.Lock()
+			rig.svc.run = tc.run
+			rig.svc.mu.Unlock()
+			st := rig.svc.Status()
+			if len(st.Notes) != 1 || st.Notes[0].Title != "Strokes" || st.Notes[0].Pages != tc.pages || st.Notes[0].Seq != tc.seq {
+				t.Errorf("notes %+v", st.Notes)
+			}
+			if want := []Companion{{Identity: companionID, Device: aDevice.Name, Notes: 1}}; fmt.Sprint(st.Companions) != fmt.Sprint(want) {
+				t.Errorf("companions %+v, want %+v", st.Companions, want)
+			}
+		})
+	}
+	if err := replicas.End(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestInkService_ADroppedLinkIsRedialledAndResumesFromTheCursor(t *testing.T) {
@@ -342,6 +398,120 @@ func TestInkService_ANewKeyChangesTheSieveIDAndDropsTheLink(t *testing.T) {
 	if n := rig.radio.dials.Load(); n < 2 {
 		t.Errorf("%d dials", n)
 	}
+}
+
+// steppedClock is the loop's clock, moved by the test: each pause the loop asks for is handed to
+// the test, and the loop waits until the test lets it pass.
+type steppedClock struct {
+	pauses chan time.Duration
+	fire   chan time.Time
+}
+
+func newSteppedClock() *steppedClock {
+	return &steppedClock{pauses: make(chan time.Duration, 64), fire: make(chan time.Time)}
+}
+
+func (c *steppedClock) after(d time.Duration) <-chan time.Time {
+	c.pauses <- d
+	return c.fire
+}
+
+// asked is the next pause the loop asks for; the loop waits in it until pass.
+func (c *steppedClock) asked(t *testing.T) time.Duration {
+	t.Helper()
+	select {
+	case d := <-c.pauses:
+		return d
+	case <-time.After(5 * time.Second):
+		t.Fatal("the loop asked for no pause")
+		return 0
+	}
+}
+
+// pass ends the pause the loop is waiting in.
+func (c *steppedClock) pass(t *testing.T) {
+	t.Helper()
+	select {
+	case c.fire <- time.Now():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the loop was not waiting")
+	}
+}
+
+func TestRedialPause_DoublesOverRejectionsAndStartsAgain(t *testing.T) {
+	const reject, accept, reset = "reject", "accept", "reset"
+	for _, tc := range []struct {
+		name  string
+		steps []string
+		want  []time.Duration
+	}{
+		{"a refusing companion", []string{reject, reject, reject, reject, reject, reject, reject},
+			[]time.Duration{1, 2, 4, 8, 16, 30, 30}},
+		{"a session that is not rejected", []string{reject, reject, accept, reject}, []time.Duration{1, 2, 1, 1}},
+		{"no companion in range", []string{accept, accept}, []time.Duration{1, 1}},
+		{"a reset", []string{reject, reject, reject, reset, reject, reject}, []time.Duration{1, 2, 4, 1, 2}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := redialPause{base: time.Second, max: 30 * time.Second}
+			var got []time.Duration
+			for _, step := range tc.steps {
+				if step == reset {
+					p.reset()
+					continue
+				}
+				got = append(got, p.next(step == reject)/time.Second)
+			}
+			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Errorf("pauses %v s, want %v s", got, tc.want)
+			}
+		})
+	}
+}
+
+// A companion that keeps refusing the key is dialled ever less often, and nothing is invalidated
+// while nothing shown changes; a new key starts the pauses again from the base.
+func TestInkService_ARefusingCompanionIsDialledLessOftenAndQuietly(t *testing.T) {
+	rig := newInkRig(t, inkLog())
+	clock := newSteppedClock()
+	rig.svc.after, rig.svc.redial = clock.after, redialPause{base: time.Second, max: 30 * time.Second}
+	rig.enable(link.Key{9})
+	rig.start()
+	var pauses []time.Duration
+	var shown int32
+	for i := int32(1); i <= 7; i++ {
+		pauses = append(pauses, clock.asked(t)/time.Second)
+		if n := rig.radio.dials.Load(); n != i {
+			t.Fatalf("%d dials before pause %d", n, i)
+		}
+		if i == 1 {
+			shown = rig.invalidations.Load()
+		} else if n := rig.invalidations.Load(); n != shown {
+			t.Errorf("refusal %d invalidated: %d invalidations, %d after the first", i, n, shown)
+		}
+		clock.pass(t)
+	}
+	if want := []time.Duration{1, 2, 4, 8, 16, 30, 30}; fmt.Sprint(pauses) != fmt.Sprint(want) {
+		t.Errorf("pauses %v s, want %v s", pauses, want)
+	}
+	if st := rig.svc.Status(); st.Link.Problem != ProblemKeyRejected {
+		t.Errorf("status %+v", st.Link)
+	}
+
+	if d := clock.asked(t); d != 30*time.Second {
+		t.Fatalf("pause %v before the new key", d)
+	}
+	if err := rig.svc.NewKey(); err != nil {
+		t.Fatal(err)
+	}
+	pauses = nil
+	for i := 0; i < 3; i++ {
+		pauses = append(pauses, clock.asked(t)/time.Second)
+		clock.pass(t)
+	}
+	if want := []time.Duration{1, 1, 2}; fmt.Sprint(pauses) != fmt.Sprint(want) {
+		t.Errorf("pauses after a new key %v s, want %v s", pauses, want)
+	}
+	rig.stopPromptly()
 }
 
 // recordingListener keeps every event it hears as a line. With a gate, each call waits on it.

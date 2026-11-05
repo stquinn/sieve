@@ -21,7 +21,8 @@ type Provenance struct {
 	Companion string
 	// SourceID is the companion's note id.
 	SourceID link.ID
-	// SyncedSeq is the seq of the last record the source holds.
+	// SyncedSeq is the seq of the last record of the source these attrs describe; the source asset
+	// holds at least that far.
 	SyncedSeq uint32
 }
 
