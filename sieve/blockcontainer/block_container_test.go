@@ -20,6 +20,7 @@ import (
 
 const (
 	stickyKind  = "test-sticky"
+	facedKind   = "test-faced"
 	missingUUID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a77"
 )
 
@@ -55,6 +56,13 @@ func (stickyProc) MarkdownRepresentation(b block.SieveBlock, _ string) string {
 	return "> " + b.StringAttr("title")
 }
 
+// facedProc is the test kind that shows a face: its title, as sticky_title.
+type facedProc struct{ stickyProc }
+
+func (facedProc) Face(b block.SieveBlock) map[string]string {
+	return map[string]string{"sticky_title": b.StringAttr("title")}
+}
+
 // newTestContainers builds the service over a temporary store, with the test kind
 // registered on top of the prose terminal the document codec needs.
 func newTestContainers(t *testing.T) (*BlockContainerService, *filestore.FileStore) {
@@ -66,6 +74,7 @@ func newTestContainers(t *testing.T) (*BlockContainerService, *filestore.FileSto
 	block.ResetRegistry()
 	block.RegisterProcessor(&processors.ProseProcessor{})
 	block.RegisterProcessor(stickyProc{FencedDeserializer: block.FencedDeserializer{Kind: stickyKind}})
+	block.RegisterProcessor(facedProc{stickyProc{FencedDeserializer: block.FencedDeserializer{Kind: facedKind}}})
 	t.Cleanup(block.ResetRegistry)
 	containers, err := NewBlockContainerService(st, block.GlobalRegistry())
 	if err != nil {
@@ -91,6 +100,9 @@ func TestBlockContainer_CreateSaveReloadKeepsVersionsAndAssets(t *testing.T) {
 
 	if _, err := containers.SaveAsset(c, "strokes.jsonl", []byte(`{"seq":1}`)); err != nil {
 		t.Fatalf("SaveAsset: %v", err)
+	}
+	if _, err := containers.AppendAsset(c, "strokes.jsonl", []byte("\n{\"seq\":2}")); err != nil {
+		t.Fatalf("AppendAsset: %v", err)
 	}
 	c.Merge(map[string]interface{}{"title": "second", "id": "not-this"})
 	saved, err := containers.Save(c)
@@ -165,7 +177,7 @@ func TestBlockContainer_CreateSaveReloadKeepsVersionsAndAssets(t *testing.T) {
 		t.Fatalf("assets = %v, want only strokes.jsonl", assets)
 	}
 	asset, err := reopened.LoadAsset(loaded, "strokes.jsonl")
-	if err != nil || string(asset.Body()) != `{"seq":1}` {
+	if err != nil || string(asset.Body()) != "{\"seq\":1}\n{\"seq\":2}" {
 		t.Fatalf("LoadAsset = %v, %v", asset, err)
 	}
 	if err := reopened.DeleteAsset(loaded, "strokes.jsonl"); err != nil {
@@ -183,6 +195,83 @@ func TestBlockContainer_CreateSaveReloadKeepsVersionsAndAssets(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Errorf("directory survives Delete: %v", err)
+	}
+}
+
+// A kind's face lands in .meta on Create and on every Save, and Find reads it
+// there: it matches by kind and face in any category and folder, and never
+// parses a body. A kind showing no face writes none.
+func TestBlockContainer_FaceIsStampedAndFound(t *testing.T) {
+	containers, st := newTestContainers(t)
+
+	plain, err := containers.Create(stickyKind, map[string]interface{}{"title": "a"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, shown := plain.Storable().Meta()["sticky_title"]; shown {
+		t.Errorf("a kind with no face shows one: %v", plain.Storable().Meta())
+	}
+	first, err := containers.Create(facedKind, map[string]interface{}{"title": "a"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	second, err := containers.Create(facedKind, map[string]interface{}{"title": "b"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	second.Merge(map[string]interface{}{"title": "c"})
+	if second, err = containers.Save(second); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if v := second.Versions(); len(v) != 1 {
+		t.Errorf("one save made %d versions", len(v))
+	}
+	if _, err := st.Move(first.Storable(), domain.LibraryCategory); err != nil {
+		t.Fatalf("Move: %v", err)
+	}
+	// A body no parser reads: Find must still find it by its .meta.
+	unparsable, err := st.CreateTyped(domain.Blocks, "unparsable", store.TypeBlock,
+		map[string]string{store.MetaKeyKind: facedKind, "sticky_title": "d"}, []byte("a: [unclosed\n"))
+	if err != nil {
+		t.Fatalf("CreateTyped: %v", err)
+	}
+
+	fresh, err := filestore.NewFileStore(st.Root(), "testhost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := NewBlockContainerService(fresh, block.GlobalRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		kind string
+		face map[string]string
+		want []string
+	}{
+		{"by kind alone", facedKind, nil, []string{first.UUID(), second.UUID(), unparsable.Key()}},
+		{"moved to the library", facedKind, map[string]string{"sticky_title": "a"}, []string{first.UUID()}},
+		{"the face of the last save", facedKind, map[string]string{"sticky_title": "c"}, []string{second.UUID()}},
+		{"without parsing the body", facedKind, map[string]string{"sticky_title": "d"}, []string{unparsable.Key()}},
+		{"an earlier face", facedKind, map[string]string{"sticky_title": "b"}, nil},
+		{"another kind", stickyKind, map[string]string{"sticky_title": "a"}, nil},
+		{"a field nobody shows", facedKind, map[string]string{"other": ""}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			found, err := reopened.Find(tc.kind, tc.face)
+			if err != nil {
+				t.Fatalf("Find: %v", err)
+			}
+			if len(found) != len(tc.want) {
+				t.Fatalf("found %v, want %v", found, tc.want)
+			}
+			for _, uuid := range tc.want {
+				if meta, ok := found[uuid]; !ok || meta[store.MetaKeyKind] != tc.kind {
+					t.Errorf("%s not found: %v", uuid, found)
+				}
+			}
+		})
 	}
 }
 

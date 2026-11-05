@@ -6,6 +6,7 @@ package blockcontainer
 import (
 	"errors"
 	"fmt"
+	"maps"
 
 	"sieve/ident"
 	"sieve/sieve/block"
@@ -118,12 +119,13 @@ func (s *BlockContainerService) Create(kind string, overrides map[string]interfa
 		return nil, fmt.Errorf("block container: no processor for kind %q", kind)
 	}
 	id := ident.New()
-	body, err := s.render(block.NewSieveBlock(kind, id, processor.InitAttrs(id, overrides)))
+	blk := block.NewSieveBlock(kind, id, processor.InitAttrs(id, overrides))
+	body, err := s.render(blk)
 	if err != nil {
 		return nil, err
 	}
-	ms, err := s.store.CreateTyped(domain.Blocks, id, store.TypeBlock,
-		map[string]string{"uuid": id, store.MetaKeyKind: kind}, body)
+	meta := s.withFace(map[string]string{"uuid": id, store.MetaKeyKind: kind}, blk)
+	ms, err := s.store.CreateTyped(domain.Blocks, id, store.TypeBlock, meta, body)
 	if err != nil {
 		return nil, fmt.Errorf("block container: create %s: %w", kind, err)
 	}
@@ -145,13 +147,15 @@ func (s *BlockContainerService) Load(uuid string) (*BlockContainer, error) {
 	return newBlockContainer(ms)
 }
 
-// Save writes the held block, bumping the version and writing a snapshot. It
-// returns the new container; c is stale. store.ErrStaleStorable is surfaced.
+// Save writes the held block and its kind's face, bumping the version and
+// writing a snapshot. It returns the new container; c is stale.
+// store.ErrStaleStorable is surfaced.
 func (s *BlockContainerService) Save(c *BlockContainer) (*BlockContainer, error) {
 	body, err := s.render(c.block)
 	if err != nil {
 		return nil, err
 	}
+	c.storable.SetMeta(s.withFace(c.storable.Meta(), c.block))
 	c.storable.SetBody(body)
 	saved, err := s.store.Save(c.storable)
 	if err != nil {
@@ -185,6 +189,13 @@ func (s *BlockContainerService) SaveAsset(c *BlockContainer, assetKey string, da
 	return store.OwnedAssets{Store: s.store}.Save(c.storable, assetKey, data)
 }
 
+// AppendAsset appends data to an asset beside the block, creating it when
+// absent, without reading or rewriting what the asset already holds. The
+// container's version does not move.
+func (s *BlockContainerService) AppendAsset(c *BlockContainer, assetKey string, data []byte) (store.AssetStorable, error) {
+	return store.OwnedAssets{Store: s.store}.Append(c.storable, assetKey, data)
+}
+
 // LoadAsset reads an asset the container owns.
 func (s *BlockContainerService) LoadAsset(c *BlockContainer, assetKey string) (store.AssetStorable, error) {
 	return s.store.LoadAsset(c.storable.Category(), c.UUID(), assetKey)
@@ -194,6 +205,54 @@ func (s *BlockContainerService) LoadAsset(c *BlockContainer, assetKey string) (s
 // afterwards; Load again to read it.
 func (s *BlockContainerService) DeleteAsset(c *BlockContainer, assetKey string) error {
 	return s.store.DeleteAsset(c.storable.Category(), c.UUID(), assetKey)
+}
+
+// searchedCategories are the categories Find looks in: every one that holds
+// content storables.
+var searchedCategories = []store.Category{domain.Blocks, domain.LibraryCategory, domain.WorkingCopy}
+
+// Find returns the .meta of every container of kind whose .meta holds each of
+// face's fields with the same value, keyed by uuid, in any category and at any
+// folder depth. It reads .meta only and parses no body.
+func (s *BlockContainerService) Find(kind string, face map[string]string) (map[string]map[string]string, error) {
+	listed, err := s.store.ListFrom(searchedCategories, "")
+	if err != nil {
+		return nil, fmt.Errorf("block container: find %s: %w", kind, err)
+	}
+	found := map[string]map[string]string{}
+	for len(listed) > 0 {
+		item := listed[0]
+		listed = listed[1:]
+		if folder, ok := item.(store.FolderStorable); ok {
+			listed = append(listed, folder.Owns()...)
+			continue
+		}
+		ms, ok := item.(store.MetaStorable)
+		if !ok || ms.Type() != store.TypeBlock || ms.Meta()[store.MetaKeyKind] != kind || !s.shows(ms.Meta(), face) {
+			continue
+		}
+		found[ms.Key()] = maps.Clone(ms.Meta())
+	}
+	return found, nil
+}
+
+// shows reports whether meta holds every field of face with the same value.
+func (s *BlockContainerService) shows(meta, face map[string]string) bool {
+	for k, v := range face {
+		if got, ok := meta[k]; !ok || got != v {
+			return false
+		}
+	}
+	return true
+}
+
+// withFace returns a copy of meta carrying blk's face, for a kind that shows one.
+func (s *BlockContainerService) withFace(meta map[string]string, blk block.SieveBlock) map[string]string {
+	out := maps.Clone(meta)
+	if bearer, ok := s.registry.Get(blk.Kind).(block.FaceBearer); ok {
+		maps.Copy(out, bearer.Face(blk))
+	}
+	return out
 }
 
 // render produces a container's content file: the kind line, then the block's map

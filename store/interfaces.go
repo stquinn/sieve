@@ -146,6 +146,13 @@ type Store interface {
 	// by the store based on the parent document that logically owns it.
 	CreateAsset(category Category, parentKey string, assetID string, body []byte) (AssetStorable, error)
 
+	// AppendAsset appends data to the asset assetKey of the MetaStorable
+	// uuidParent, creating the asset when absent. assetKey is a filename,
+	// extension included. The bytes already stored are neither read nor
+	// rewritten, and the returned asset holds none of them: its Body reads the
+	// asset as stored at the time of the call to Body.
+	AppendAsset(category Category, uuidParent string, assetKey string, data []byte) (AssetStorable, error)
+
 	CreateOrLoadFolder(category Category, name string) (FolderStorable, error)
 
 	// Save persists the current state of s. The Store stamps the version and

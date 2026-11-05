@@ -65,6 +65,9 @@ func (m *mockStore) CreateTyped(category store.Category, key string, contentType
 func (m *mockStore) CreateAsset(cat store.Category, parentKey, assetID string, body []byte) (store.AssetStorable, error) {
 	return nil, nil
 }
+func (m *mockStore) AppendAsset(cat store.Category, parentKey, assetKey string, data []byte) (store.AssetStorable, error) {
+	return nil, nil
+}
 func (m *mockStore) Save(s store.Storable) (store.Storable, error) { return nil, nil }
 func (m *mockStore) List(cat store.Category, prefix string) ([]store.Storable, error) {
 	return nil, nil

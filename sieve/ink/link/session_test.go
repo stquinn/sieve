@@ -2,7 +2,6 @@ package link
 
 import (
 	"bytes"
-	"crypto/rand"
 	"errors"
 	"io"
 	"net"
@@ -12,144 +11,6 @@ import (
 )
 
 var testKey = Key{'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'}
-
-// fakeCompanion is the companion's end of the protocol, enough to drive a session: it proves
-// itself with its key and serves its log of vectorNote.
-type fakeCompanion struct {
-	key Key
-
-	mu      sync.Mutex
-	records []Record
-	// corruptHead sends one HEAD whose hash does not hold.
-	corruptHead bool
-	// refuseAhead answers one OPEN with REFUSE ahead.
-	refuseAhead bool
-	// staleBeforeHead sends, before answering each OPEN, an OP and a DONE the session must ignore.
-	staleBeforeHead bool
-	// live sends LIVE of vectorNote after each NOTES.
-	live bool
-	// gapAt skips the record of this seq.
-	gapAt uint32
-
-	metas chan Meta
-	opens chan uint32
-	acks  chan uint32
-}
-
-func newFakeCompanion(records []Record) *fakeCompanion {
-	return &fakeCompanion{key: testKey, records: records, metas: make(chan Meta, 8), opens: make(chan uint32, 8), acks: make(chan uint32, 512)}
-}
-
-func (c *fakeCompanion) setRecords(records []Record) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.records = records
-}
-
-// serve runs the protocol until the link closes or the session misbehaves.
-func (c *fakeCompanion) serve(link io.ReadWriter) error {
-	stream := newFrameStream(link)
-	cNonce := make([]byte, nonceBytes)
-	_, _ = rand.Read(cNonce)
-	if err := stream.write(newFrame(frameChallenge).u8(protocolVersion).raw(cNonce).b); err != nil {
-		return err
-	}
-	frame, err := stream.read(limitBeforeProof)
-	if err != nil {
-		return err
-	}
-	in := &frameReader{b: frame[1:]}
-	name, sNonce, proof := in.string(), append([]byte{}, in.take(nonceBytes)...), in.take(proofBytes)
-	if name != c.key.SieveID() || !bytes.Equal(proof, c.key.SieveProof(cNonce)) {
-		return stream.write(newFrame(frameRefuse).id(ID{}).string(RefuseRefused).b)
-	}
-	if err := stream.write(newFrame(frameOK).raw(c.key.CompanionProof(sNonce)).b); err != nil {
-		return err
-	}
-	sessionKey, err := c.key.SessionKey(cNonce, sNonce)
-	if err != nil {
-		return err
-	}
-	if err := stream.upgrade(sessionKey, CompanionToSieve, SieveToCompanion); err != nil {
-		return err
-	}
-	for {
-		frame, err := stream.read(limitFromSieve)
-		if err != nil {
-			return err
-		}
-		in := &frameReader{b: frame[1:]}
-		switch frame[0] {
-		case frameList:
-			err = c.sendNotes(stream)
-		case frameOpen:
-			in.id()
-			err = c.sendFrom(stream, in.u32())
-		case frameAck:
-			in.id()
-			c.acks <- in.u32()
-		case frameMeta:
-			c.metas <- Meta{in.id(), in.string(), in.strings(), in.strings(), in.string(), in.u32()}
-		}
-		if err != nil {
-			return err
-		}
-	}
-}
-
-func (c *fakeCompanion) sendNotes(stream *frameStream) error {
-	c.mu.Lock()
-	head, live := uint32(len(c.records)), c.live
-	c.mu.Unlock()
-	if err := stream.write(newFrame(frameNotes).u32(1).id(vectorNote).string("").u32(1).u32(head).b); err != nil {
-		return err
-	}
-	if live {
-		return stream.write(newFrame(frameLive).id(vectorNote).id(vectorPage).b)
-	}
-	return nil
-}
-
-func (c *fakeCompanion) sendFrom(stream *frameStream, have uint32) error {
-	c.opens <- have
-	c.mu.Lock()
-	records, corrupt, ahead, stale, gapAt := c.records, c.corruptHead, c.refuseAhead, c.staleBeforeHead, c.gapAt
-	c.corruptHead, c.refuseAhead = false, false
-	c.mu.Unlock()
-	if stale {
-		body, _ := Record{Seq: 99, Op: OpPageRemove, Page: vectorPage}.Body()
-		if err := stream.write(newFrame(frameOp).id(vectorNote).raw(NewLogFrame(body)).b); err != nil {
-			return err
-		}
-		if err := stream.write(newFrame(frameDone).id(vectorNote).b); err != nil {
-			return err
-		}
-	}
-	if ahead {
-		return stream.write(newFrame(frameRefuse).id(vectorNote).string(RefuseAhead).b)
-	}
-	var cursor Cursor
-	bodies := make([][]byte, len(records))
-	for i, r := range records {
-		bodies[i], _ = r.Body()
-		_ = cursor.Accept(r, bodies[i])
-	}
-	if corrupt {
-		cursor.Hash[0] ^= 1
-	}
-	if err := stream.write(newFrame(frameHead).id(vectorNote).u32(cursor.Seq).raw(cursor.Hash[:]).b); err != nil {
-		return err
-	}
-	for i := int(have); i < len(bodies); i++ {
-		if uint32(i+1) == gapAt {
-			continue
-		}
-		if err := stream.write(newFrame(frameOp).id(vectorNote).raw(NewLogFrame(bodies[i])).b); err != nil {
-			return err
-		}
-	}
-	return stream.write(newFrame(frameDone).id(vectorNote).b)
-}
 
 // recorder is an Observer that keeps what it is told.
 type recorder struct {
@@ -183,12 +44,36 @@ func (r *recorder) Live(note, _ ID) {
 // them as a real link has, so neither side's write waits for the other to read.
 type harness struct {
 	t         *testing.T
-	companion *fakeCompanion
-	replicas  *MemoryReplicas
+	companion *ScriptedCompanion
+	replicas  *countingReplicas
+}
+
+// countingReplicas counts the replicas a session opens.
+type countingReplicas struct {
+	*MemoryReplicas
+	mu     sync.Mutex
+	opened int
+}
+
+func (c *countingReplicas) Open(note ID) (Replica, error) {
+	c.mu.Lock()
+	c.opened++
+	c.mu.Unlock()
+	return c.MemoryReplicas.Open(note)
+}
+
+// takeOpened is how many replicas were opened since it was last asked.
+func (c *countingReplicas) takeOpened() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := c.opened
+	c.opened = 0
+	return n
 }
 
 func newHarness(t *testing.T, records []Record) *harness {
-	return &harness{t: t, companion: newFakeCompanion(records), replicas: NewMemoryReplicas()}
+	return &harness{t: t, companion: NewScriptedCompanion(testKey, vectorNote, vectorPage, records),
+		replicas: &countingReplicas{MemoryReplicas: NewMemoryReplicas()}}
 }
 
 func (h *harness) pair() (ours, theirs net.Conn) {
@@ -214,7 +99,7 @@ func (h *harness) run(key Key, p Plan) error {
 	h.t.Helper()
 	ours, theirs := h.pair()
 	go func() {
-		_ = h.companion.serve(theirs)
+		_ = h.companion.Serve(theirs)
 		theirs.Close()
 	}()
 	defer ours.Close()
@@ -236,13 +121,13 @@ func (h *harness) opens(n int) []uint32 {
 	out := make([]uint32, n)
 	for i := range out {
 		select {
-		case out[i] = <-h.companion.opens:
+		case out[i] = <-h.companion.Opens:
 		case <-time.After(time.Second):
 			h.t.Fatalf("OPEN %d did not come", i+1)
 		}
 	}
 	select {
-	case extra := <-h.companion.opens:
+	case extra := <-h.companion.Opens:
 		h.t.Errorf("an OPEN beyond %v, from %d", out, extra)
 	default:
 	}
@@ -254,7 +139,7 @@ func TestCatchUpResumesFromTheCursor(t *testing.T) {
 	if err := h.run(testKey, Plan{CatchUp: true}); err != nil {
 		t.Fatalf("first session: %v", err)
 	}
-	h.companion.setRecords(vectorRecords)
+	h.companion.SetRecords(vectorRecords)
 	if err := h.run(testKey, Plan{CatchUp: true}); err != nil {
 		t.Fatalf("second session: %v", err)
 	}
@@ -264,10 +149,14 @@ func TestCatchUpResumesFromTheCursor(t *testing.T) {
 	if got := h.held().Cursor().Seq; got != uint32(len(vectorRecords)) {
 		t.Errorf("held %d", got)
 	}
+	h.replicas.takeOpened()
 	if err := h.run(testKey, Plan{CatchUp: true}); err != nil {
 		t.Fatalf("third session: %v", err)
 	}
 	h.opens(0)
+	if n := h.replicas.takeOpened(); n != 0 {
+		t.Errorf("a note known to be held to its head opened %d replicas", n)
+	}
 }
 
 func TestAcksAreSentForWhatIsHeld(t *testing.T) {
@@ -276,7 +165,7 @@ func TestAcksAreSentForWhatIsHeld(t *testing.T) {
 		t.Fatal(err)
 	}
 	select {
-	case seq := <-h.companion.acks:
+	case seq := <-h.companion.Acks:
 		if seq != uint32(len(vectorRecords)) {
 			t.Errorf("acked %d", seq)
 		}
@@ -288,11 +177,11 @@ func TestAcksAreSentForWhatIsHeld(t *testing.T) {
 func TestAReplicaTheCompanionDisownsIsSetAsideAndAskedForAgain(t *testing.T) {
 	for _, c := range []struct {
 		name  string
-		setup func(*fakeCompanion)
+		setup func(*ScriptedCompanion)
 		aside int
 	}{
-		{"a HEAD whose hash differs", func(c *fakeCompanion) { c.corruptHead = true }, len(vectorRecords)},
-		{"REFUSE ahead", func(c *fakeCompanion) { c.refuseAhead = true }, 2},
+		{"a HEAD whose hash differs", func(c *ScriptedCompanion) { c.CorruptHead = true }, len(vectorRecords)},
+		{"REFUSE ahead", func(c *ScriptedCompanion) { c.RefuseAhead = true }, 2},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h := newHarness(t, vectorRecords[:2])
@@ -300,7 +189,7 @@ func TestAReplicaTheCompanionDisownsIsSetAsideAndAskedForAgain(t *testing.T) {
 				t.Fatal(err)
 			}
 			h.opens(1)
-			h.companion.setRecords(vectorRecords)
+			h.companion.SetRecords(vectorRecords)
 			c.setup(h.companion)
 			if err := h.run(testKey, Plan{CatchUp: true}); err != nil {
 				t.Fatal(err)
@@ -320,7 +209,7 @@ func TestAReplicaTheCompanionDisownsIsSetAsideAndAskedForAgain(t *testing.T) {
 
 func TestOpAndDoneBeforeTheHeadAreIgnored(t *testing.T) {
 	h := newHarness(t, vectorRecords)
-	h.companion.staleBeforeHead = true
+	h.companion.StaleBeforeHead = true
 	if err := h.run(testKey, Plan{CatchUp: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +220,7 @@ func TestOpAndDoneBeforeTheHeadAreIgnored(t *testing.T) {
 
 func TestAGapDropsTheLinkAndKeepsTheContiguousRecords(t *testing.T) {
 	h := newHarness(t, vectorRecords)
-	h.companion.gapAt = 3
+	h.companion.GapAt = 3
 	if err := h.run(testKey, Plan{CatchUp: true}); err == nil {
 		t.Fatal("a gap was accepted")
 	}
@@ -342,9 +231,9 @@ func TestAGapDropsTheLinkAndKeepsTheContiguousRecords(t *testing.T) {
 
 func TestFollowOpensTheLiveNote(t *testing.T) {
 	h := newHarness(t, vectorRecords)
-	h.companion.live = true
+	h.companion.Live = true
 	ours, theirs := h.pair()
-	go func() { _ = h.companion.serve(theirs) }()
+	go func() { _ = h.companion.Serve(theirs) }()
 	obs := newRecorder()
 	ended := make(chan error, 1)
 	go func() { ended <- NewSession(ours, testKey, h.replicas, obs, Plan{List: true, Follow: true}).Run() }()
@@ -374,7 +263,7 @@ func TestMetaReachesTheCompanionBeforeThePlanEnds(t *testing.T) {
 	if err := h.run(testKey, Plan{Meta: &meta}); err != nil {
 		t.Fatal(err)
 	}
-	if got := <-h.companion.metas; got.Title != "A title" || got.Categories[0] != "Work" || got.AsOfSeq != 6 {
+	if got := <-h.companion.Metas; got.Title != "A title" || got.Categories[0] != "Work" || got.AsOfSeq != 6 {
 		t.Errorf("%+v", got)
 	}
 }

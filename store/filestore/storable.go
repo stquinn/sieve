@@ -1,6 +1,7 @@
 package filestore
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -105,14 +106,38 @@ func (s *fileMetaStorable) ClearOwns() {
 // Encoding is inferred by FileStore at Create time from magic bytes — never
 // declared by the caller.
 // It satisfies store.AssetStorable.
+//
+// An asset built by newAppendedAssetStorable holds no body: file names the
+// asset on disk, and Body reads it there, so the asset is never held stale
+// while it grows.
 type fileAssetStorable struct {
 	fileStorable
 	encoding store.Encoding
 	blkId    string
+	file     string
 }
 
 func (s *fileAssetStorable) Encoding() store.Encoding { return s.encoding }
 func (s *fileAssetStorable) BlkID() string            { return s.blkId }
+
+// Body is the asset's bytes; nil when an appended asset's file cannot be read.
+func (s *fileAssetStorable) Body() []byte {
+	if s.file == "" {
+		return s.fileStorable.Body()
+	}
+	data, err := os.ReadFile(s.file)
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+// newAppendedAssetStorable is the asset at file, read from disk on each Body.
+func newAppendedAssetStorable(key string, cat store.Category, file, extRef string, enc store.Encoding) *fileAssetStorable {
+	a := newFileAssetStorable(key, key, cat, nil, extRef, enc)
+	a.file = file
+	return a
+}
 
 func newFileAssetStorable(key, path string, cat store.Category, body []byte, extRef string, enc store.Encoding) *fileAssetStorable {
 	blkId := key

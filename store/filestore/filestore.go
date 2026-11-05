@@ -168,6 +168,38 @@ func (fs *FileStore) CreateAsset(cat store.Category, parentKey string, assetID s
 	return newFileAssetStorable(filename, key, cat, body, extRef, enc), nil
 }
 
+// AppendAsset implements store.Store with one append to the asset's file. A key
+// that is not a plain filename, or that names the owner's .meta or content
+// file, is refused.
+func (fs *FileStore) AppendAsset(cat store.Category, uuid string, assetKey string, data []byte) (store.AssetStorable, error) {
+	cached, ok := fs.LookupUUID(uuid)
+	if !ok {
+		return nil, fmt.Errorf("filestore: AppendAsset: UUID %s not found", uuid)
+	}
+	owner, ok := cached.(*fileMetaStorable)
+	if !ok {
+		return nil, fmt.Errorf("filestore: AppendAsset: %s is not a MetaStorable", uuid)
+	}
+	if assetKey == "" || assetKey != filepath.Base(assetKey) || strings.HasPrefix(assetKey, ".") ||
+		assetKey == fs.contentFileName(uuid, owner.contentType) {
+		return nil, fmt.Errorf("filestore: AppendAsset: %q is not an asset key", assetKey)
+	}
+	cat = owner.Category()
+	path := filepath.Join(fs.docDir(cat, owner.path), assetKey)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("filestore: append asset %s: %w", assetKey, err)
+	}
+	_, err = f.Write(data)
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return nil, fmt.Errorf("filestore: append asset %s: %w", assetKey, err)
+	}
+	return newAppendedAssetStorable(assetKey, cat, path, store.AssetURL(uuid, assetKey), inferEncoding(data)), nil
+}
+
 func (fs *FileStore) CreateText(cat store.Category, key string, body []byte) (store.Storable, error) {
 	if key == "" {
 		key = fs.generateKey(cat)

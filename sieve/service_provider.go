@@ -12,6 +12,7 @@ import (
 	"sieve/sieve/command"
 	"sieve/sieve/domain"
 	"sieve/sieve/editor"
+	"sieve/sieve/ink"
 	"sieve/sieve/mcp"
 	"sieve/sieve/services"
 	"sieve/store"
@@ -233,6 +234,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	block.RegisterProcessor(processors.NewWebClipBlockProcessor(svc))
 	block.RegisterProcessor(processors.NewLogProcessor(svc))
 	block.RegisterProcessor(processors.NewCodeBlockProcessor(svc))
+	block.RegisterProcessor(ink.NewDigitalNoteKind())
 
 	block.RegisterProcessor(processors.NewAIBlockProcessor(svc))
 }

@@ -14,10 +14,13 @@ type Replica interface {
 	SetAside() error
 }
 
-// Replicas opens the replica of a note by the companion's note id, creating an empty one if
-// none is held.
+// Replicas holds this Sieve's replicas of a companion's notes, by the companion's note id.
 type Replicas interface {
+	// Open returns the note's replica, an empty one if none is held.
 	Open(note ID) (Replica, error)
+	// Have is a seq the note's replica is known to hold at least, 0 when none is held, found
+	// without opening the replica.
+	Have(note ID) (uint32, error)
 }
 
 // MemoryReplicas holds replicas in memory. It is safe for concurrent use.
@@ -31,6 +34,17 @@ func NewMemoryReplicas() *MemoryReplicas { return &MemoryReplicas{notes: map[ID]
 
 // Open returns Replica(note).
 func (m *MemoryReplicas) Open(note ID) (Replica, error) { return m.Replica(note), nil }
+
+// Have is the held replica's cursor seq, 0 for a note not held; it creates no replica.
+func (m *MemoryReplicas) Have(note ID) (uint32, error) {
+	m.mu.Lock()
+	r, ok := m.notes[note]
+	m.mu.Unlock()
+	if !ok {
+		return 0, nil
+	}
+	return r.Cursor().Seq, nil
+}
 
 // Replica returns the note's replica, creating an empty one if none is held.
 func (m *MemoryReplicas) Replica(note ID) *MemoryReplica {

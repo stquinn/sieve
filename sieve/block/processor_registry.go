@@ -920,6 +920,18 @@ func TextUpdaterFor(kind string) (TextUpdater, bool) {
 	return updater, ok
 }
 
+// FaceBearer is the optional capability a processor implements when a block of
+// its kind, held as a block container, shows fields in the container's .meta, so
+// a listing reads them without parsing the body. A kind that does not implement
+// it shows none.
+//
+// Face is computed from the block alone. Its keys must not be ones the store
+// itself writes to .meta (uuid, type, kind, version, created, modified and the
+// other fields the store names).
+type FaceBearer interface {
+	Face(blk SieveBlock) map[string]string
+}
+
 // MarkdownContenter is the optional interface a processor implements when a given
 // block's raw content can itself BE document markdown (e.g. a code block whose
 // language is markdown). Prose embedding ("Embed in Document") consults it to

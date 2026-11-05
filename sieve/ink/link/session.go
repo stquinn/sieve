@@ -49,8 +49,8 @@ type Observer interface {
 type Plan struct {
 	// List sends LIST and reports NOTES.
 	List bool
-	// CatchUp opens, in id order and one at a time, every listed note whose headSeq is past its
-	// replica's cursor.
+	// CatchUp opens, in id order and one at a time, every listed note whose headSeq is past what
+	// Replicas.Have reports for it; a note it does not pass is not opened.
 	CatchUp bool
 	// Only, when set, narrows CatchUp to one note.
 	Only *ID
@@ -265,11 +265,11 @@ func (s *Session) onNotes(notes []NoteEntry) (bool, error) {
 			if s.plan.Only != nil && *s.plan.Only != n.ID {
 				continue
 			}
-			r, err := s.replica(n.ID)
+			have, err := s.have(n.ID)
 			if err != nil {
 				return false, err
 			}
-			if n.HeadSeq > r.Cursor().Seq {
+			if n.HeadSeq > have {
 				s.queue = append(s.queue, n.ID)
 			}
 		}
@@ -420,6 +420,15 @@ func (s *Session) replica(note ID) (Replica, error) {
 	}
 	s.open[note] = r
 	return r, nil
+}
+
+// have is the seq the note's replica holds at least: its cursor when this session has it open,
+// otherwise what Replicas.Have reports without opening it.
+func (s *Session) have(note ID) (uint32, error) {
+	if r, ok := s.open[note]; ok {
+		return r.Cursor().Seq, nil
+	}
+	return s.replicas.Have(note)
 }
 
 func (s *Session) noteAck(note ID, seq uint32) {

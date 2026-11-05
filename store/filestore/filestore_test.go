@@ -1120,36 +1120,80 @@ func TestDeleteAssetRemovesOnlyAnOwnedAsset(t *testing.T) {
 }
 
 // OwnedAssets attaches to the owner it was handed and to the Store's current
-// instance, replacing an asset of the same key, and leaves the version alone.
-func TestOwnedAssetsSaveAttachesWithoutAVersionBump(t *testing.T) {
+// instance, replacing an asset of the same key, and leaves the version alone,
+// whether it saves the asset whole or appends to it. An appended asset reads as
+// stored, through every owner and through a fresh load.
+func TestOwnedAssetsWriteAttachesWithoutAVersionBump(t *testing.T) {
+	for _, verb := range []struct {
+		name  string
+		write func(store.OwnedAssets, store.MetaStorable, []byte) (store.AssetStorable, error)
+		want  string
+	}{
+		{"save", func(o store.OwnedAssets, ms store.MetaStorable, b []byte) (store.AssetStorable, error) {
+			return o.Save(ms, "strokes.jsonl", b)
+		}, "two\n"},
+		{"append", func(o store.OwnedAssets, ms store.MetaStorable, b []byte) (store.AssetStorable, error) {
+			return o.Append(ms, "strokes.jsonl", b)
+		}, "one\ntwo\n"},
+	} {
+		for _, tc := range contentTypes {
+			t.Run(verb.name+"/"+tc.contentType, func(t *testing.T) {
+				fs := newTestStore(t)
+				first := mustCreateTyped(t, fs, testLibrary, "my-note", tc.contentType, []byte("body"))
+				// A second load replaces the index entry, so first is no longer current.
+				reloaded, err := fs.Load(testLibrary, "my-note")
+				if err != nil {
+					t.Fatalf("Load: %v", err)
+				}
+				assets := store.OwnedAssets{Store: fs}
+				for _, data := range []string{"one\n", "two\n"} {
+					if _, err := verb.write(assets, first, []byte(data)); err != nil {
+						t.Fatalf("%s: %v", verb.name, err)
+					}
+				}
+
+				for name, ms := range map[string]store.MetaStorable{"handed": first, "current": reloaded.(store.MetaStorable)} {
+					owned := ms.Owns()
+					if len(owned) != 1 || string(owned[0].Body()) != verb.want {
+						t.Errorf("%s owner holds %d assets, want the one asset holding %q", name, len(owned), verb.want)
+					}
+					if ms.Meta()["version"] != "0" {
+						t.Errorf("%s owner version = %q, want 0", name, ms.Meta()["version"])
+					}
+				}
+				got, err := fs.LoadAsset(testLibrary, first.Key(), "strokes.jsonl")
+				if err != nil || string(got.Body()) != verb.want {
+					t.Errorf("LoadAsset = %v, %v", got, err)
+				}
+				fresh, err := filestore.NewFileStore(fs.Root(), "testhost")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got, err := fresh.LoadAsset(testLibrary, first.Key(), "strokes.jsonl"); err != nil || string(got.Body()) != verb.want {
+					t.Errorf("a fresh store's LoadAsset = %v, %v", got, err)
+				}
+			})
+		}
+	}
+}
+
+// AppendAsset writes only beside its owner's own files, never over them.
+func TestAppendAssetRefusesWhatIsNotAnAssetKey(t *testing.T) {
 	for _, tc := range contentTypes {
 		t.Run(tc.contentType, func(t *testing.T) {
 			fs := newTestStore(t)
-			first := mustCreateTyped(t, fs, testLibrary, "my-note", tc.contentType, []byte("body"))
-			// A second load replaces the index entry, so first is no longer current.
-			reloaded, err := fs.Load(testLibrary, "my-note")
-			if err != nil {
-				t.Fatalf("Load: %v", err)
-			}
-			assets := store.OwnedAssets{Store: fs}
-			for _, data := range []string{"one", "two"} {
-				if _, err := assets.Save(first, "strokes.jsonl", []byte(data)); err != nil {
-					t.Fatalf("Save: %v", err)
+			doc := mustCreateTyped(t, fs, testLibrary, "my-note", tc.contentType, []byte("body"))
+			uuid := doc.Meta()["uuid"]
+			for _, key := range []string{uuid + tc.ext, ".meta", "../keep.jsonl", "sub/a.jsonl", ""} {
+				if _, err := fs.AppendAsset(testLibrary, uuid, key, []byte("x")); err == nil {
+					t.Errorf("AppendAsset(%q) succeeded, want a refusal", key)
 				}
 			}
-
-			for name, ms := range map[string]store.MetaStorable{"handed": first, "current": reloaded.(store.MetaStorable)} {
-				owned := ms.Owns()
-				if len(owned) != 1 || string(owned[0].Body()) != "two" {
-					t.Errorf("%s owner holds %d assets, want the one replaced asset", name, len(owned))
-				}
-				if ms.Meta()["version"] != "0" {
-					t.Errorf("%s owner version = %q, want 0", name, ms.Meta()["version"])
-				}
+			if _, err := fs.AppendAsset(testLibrary, "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a77", "a.jsonl", []byte("x")); err == nil {
+				t.Error("AppendAsset to an unknown owner succeeded")
 			}
-			got, err := fs.LoadAsset(testLibrary, first.Key(), "strokes.jsonl")
-			if err != nil || string(got.Body()) != "two" {
-				t.Errorf("LoadAsset = %v, %v", got, err)
+			if body, _ := os.ReadFile(filepath.Join(fs.Root(), "store", "my-note", uuid+tc.ext)); string(body) != "body" {
+				t.Errorf("content file = %q", body)
 			}
 		})
 	}
