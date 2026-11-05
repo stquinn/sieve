@@ -117,6 +117,8 @@ of the device and the radio (§4.4).
   unknown `op`.
 - Numbers are JSON numbers; a float is written in its shortest round-tripping form.
 - `template` is `null` or a TemplateRef object `{"id": …, "params": {…}}` (§6).
+- `created` is an RFC 3339 time in UTC with `Z`, to the millisecond, the fraction left out when
+  it is zero. A reader rejects anything finer, and keys that are missing, extra or out of order.
 
 ```
 {"seq":1,"op":"note-header","id":U,"created":T,"title":S,"pageAspect":F,"template":R,"device":D}
