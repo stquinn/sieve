@@ -9,7 +9,7 @@ import { ToolbarButton, ButtonGroup } from '../src/static/lens/document-editor/t
 import { EditorToolbar } from '../src/static/lens/document-editor/editor-toolbar.js'
 import { WysiwygSurface } from '../src/static/lens/document-editor/surfaces/wysiwyg-surface.js'
 import { MarkdownSurface } from '../src/static/lens/document-editor/surfaces/markdown-surface.js'
-import { AbstractSurface } from '../src/static/lens/document-editor/surfaces/abstract-surface.js'
+import { AbstractSurface } from '../src/static/lens/abstract-surface.js'
 import { registerBlockKind } from '../src/static/renderers/block-kinds.js'
 
 // P4.E: wysiwyg-surface imports its app helpers from their owner modules; four of

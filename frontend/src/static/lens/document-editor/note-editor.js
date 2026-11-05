@@ -76,7 +76,7 @@ export class NoteEditor extends ProseMirrorEditor {
    * editor as its single constructor arg and calls its public API directly.
    * @protected
    * @param {import('./editor-mode.js').EditorModeValue} mode
-   * @returns {import('./surfaces/abstract-surface.js').AbstractSurface}
+   * @returns {import('../abstract-surface.js').AbstractSurface}
    */
   _createSurface(mode) {
     if (mode === EditorMode.MARKDOWN) return new MarkdownSurface(this)

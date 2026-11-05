@@ -18,6 +18,7 @@ import (
 	"sieve/sieve/block"
 	"sieve/sieve/command"
 	"sieve/sieve/domain"
+	"sieve/sieve/editor"
 	"sieve/sieve/protocol"
 
 	"github.com/go-chi/chi/v5"
@@ -564,7 +565,9 @@ func (h *WsHandler) handleDocUpdate(f inboundFrame) {
 		h.refuse(f, protocol.TypeDocUpdate, err)
 		return
 	}
-	h.ServiceProvider.Editor.UpdateMarkdown(f.uuid, msg.Markdown)
+	if err := h.ServiceProvider.Editor.UpdateMarkdown(f.uuid, msg.Markdown); err != nil {
+		logger.Warn("ws: doc-update dropped", "uuid", f.uuid, "err", err)
+	}
 }
 
 // handleFlush persists and answers nothing. The envelope is never decoded —
@@ -583,7 +586,12 @@ func (h *WsHandler) handleEnterMarkdown(f inboundFrame) {
 		h.refuse(f, protocol.TypeEnterMarkdown, err)
 		return
 	}
-	merged := h.ServiceProvider.Editor.EnterMarkdown(f.uuid)
+	merged, err := h.ServiceProvider.Editor.EnterMarkdown(f.uuid)
+	if err != nil {
+		logger.Warn("ws: enter-markdown refused", "uuid", f.uuid, "err", err)
+		f.reply(protocol.NewErrorFrame(fmt.Sprintf("enter-markdown refused: %v", err)))
+		return
+	}
 	h.persistTabMode(f.uuid, "markdown")
 	reply := protocol.NewMarkdownContentFrame(f.uuid, merged)
 	if msg.OpID != "" {
@@ -602,9 +610,15 @@ func (h *WsHandler) handleEnterWysiwyg(f inboundFrame) {
 		return
 	}
 	if msg.Markdown != nil {
-		h.ServiceProvider.Editor.UpdateMarkdown(f.uuid, *msg.Markdown)
+		_ = h.ServiceProvider.Editor.UpdateMarkdown(f.uuid, *msg.Markdown)
 	}
-	h.ServiceProvider.Editor.EnterWysiwyg(f.uuid)
+	if err := h.ServiceProvider.Editor.EnterWysiwyg(f.uuid); err != nil {
+		logger.Warn("ws: enter-wysiwyg refused", "uuid", f.uuid, "err", err)
+		if errors.Is(err, editor.ErrNotDocument) {
+			f.reply(protocol.NewErrorFrame(fmt.Sprintf("enter-wysiwyg refused: %v", err)))
+			return
+		}
+	}
 	h.persistTabMode(f.uuid, "wysiwyg")
 	if blocks, ok := h.ServiceProvider.Editor.FrontendBlocks(f.uuid); ok {
 		reply := protocol.NewWysiwygContentFrame(f.uuid, blocks)
@@ -665,14 +679,17 @@ func (h *WsHandler) handleRetryBlockJob(f inboundFrame) {
 	// Reset both status and createdAt. The DISPATCHED notifyBlockUpdated that fires
 	// immediately will carry the fresh createdAt, so the frontend's isJobStale()
 	// won't fire and re-show "interrupted" instead of the spinner.
-	h.ServiceProvider.Editor.UpdateBlock(f.uuid, domain.SieveBlock{
+	if err := h.ServiceProvider.Editor.UpdateBlock(f.uuid, domain.SieveBlock{
 		ID: msg.ID,
 		Attrs: map[string]interface{}{
 			"status":    block.BlockStatusPending,
 			"createdAt": time.Now().UTC().Format(time.RFC3339),
 			"error":     "",
 		},
-	})
+	}); err != nil {
+		logger.Warn("ws: retry-block-job dropped", "uuid", f.uuid, "block", msg.ID, "err", err)
+		return
+	}
 	h.ServiceProvider.Editor.DispatchJobIfNeeded(f.uuid, msg.ID)
 }
 

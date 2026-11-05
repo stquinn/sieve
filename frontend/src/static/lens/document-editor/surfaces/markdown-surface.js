@@ -10,7 +10,7 @@
 // so it asks the host for a reload, and everything else has no representation in a
 // verbatim buffer and is correctly ignored.
 
-import { AbstractSurface, SurfaceEvent } from './abstract-surface.js'
+import { AbstractSurface, SurfaceEvent } from '../../abstract-surface.js'
 import { EditorMode } from '../editor-mode.js'
 import { SlideMarker } from './slide-marker.js'
 import {

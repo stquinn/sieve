@@ -1611,6 +1611,9 @@ components:
         uuid:
           type: string
           description: empty when nothing was found, which the client treats as an empty document
+        kind:
+          type: string
+          description: 'the container''s own noun: note | buffer | prompt | a block kind; absent when nothing was found'
         scroll:
           type: integer
           description: the tab's saved scroll offset; 0 parks at the top

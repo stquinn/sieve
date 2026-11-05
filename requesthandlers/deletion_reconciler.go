@@ -115,6 +115,7 @@ func (d deletionReconciler) pruneSession(deleted []string) domain.Session {
 		newNote, _ := d.sp.Documents.New()
 		session.Tabs = []domain.Tab{{
 			ID:          newNote.UUID(),
+			Kind:        string(newNote.Kind()),
 			Mode:        "wysiwyg",
 			DisplayName: newNote.Meta().DisplayName(),
 			Status:      "unfiled",

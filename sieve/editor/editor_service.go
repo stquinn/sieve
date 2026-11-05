@@ -46,10 +46,13 @@ type FocusListener interface {
 	OnFocusChanged(uuid string)
 }
 
-// EditorService is the Go-side editor model. It holds one ShadowDocument per
-// open document and coordinates all save operations. DocumentService owns disk.
+// EditorService is the Go-side editor model. It holds one session per open
+// container — a ShadowDocument for a document, the container itself for a block
+// container — and coordinates all save operations. DocumentService and
+// BlockContainerService own disk.
 type EditorService struct {
 	documents  *services.DocumentService
+	containers *services.BlockContainerService // nil leaves block containers unopenable
 	codec      *block.DocumentCodec
 	services   block.BlockServices
 	jobs       *services.JobTracker // not a processor concern; EditorService tracks job spinners directly
@@ -57,7 +60,7 @@ type EditorService struct {
 	ai         docFiler // synchronous AI brain; document-lifecycle jobs call it inside their Work
 	debounce   time.Duration
 	mu         sync.RWMutex
-	shadows    map[string]*block.ShadowDocument
+	sessions   map[string]session
 	listener   block.BlockLifecycleListener
 	saved      ContainerSavedNotifier
 	inspection *InspectionEngine // observed after every op lands on a shadow; nil is a no-op (most tests never wire inspection)
@@ -88,8 +91,16 @@ func NewEditorService(documents *services.DocumentService, codec *block.Document
 		documents: documents,
 		codec:     codec,
 		debounce:  d,
-		shadows:   make(map[string]*block.ShadowDocument),
+		sessions:  make(map[string]session),
 	}
+}
+
+// SetContainers registers the service block containers open through. Without
+// one, a uuid that names no document does not open.
+func (es *EditorService) SetContainers(c *services.BlockContainerService) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	es.containers = c
 }
 
 // SetLifecycleListener registers the block lifecycle event listener.
@@ -206,15 +217,22 @@ func (es *EditorService) notifyBlockCreated(uuid string, blk domain.SieveBlock, 
 }
 
 func (es *EditorService) notifyBlockUpdated(uuid string, blk domain.SieveBlock) {
+	es.pushBlockAttrs(uuid, blk)
+	es.mu.RLock()
+	inspection := es.inspection
+	es.mu.RUnlock()
+	if inspection != nil {
+		inspection.enqueue(uuid, blk.ID)
+	}
+}
+
+// pushBlockAttrs tells the client blk's attrs as they now stand.
+func (es *EditorService) pushBlockAttrs(uuid string, blk domain.SieveBlock) {
 	es.mu.RLock()
 	l := es.listener
-	inspection := es.inspection
 	es.mu.RUnlock()
 	if l != nil {
 		l.OnBlockUpdated(uuid, blk.ID, blk.Attrs)
-	}
-	if inspection != nil {
-		inspection.enqueue(uuid, blk.ID)
 	}
 }
 
@@ -260,8 +278,9 @@ func (es *EditorService) notifyOrderChanged(uuid string, order []string) {
 // assumed stuck (server crash, OOM) and reset to PENDING on reconnect.
 const dispatchedStuckThreshold = 10 * time.Minute
 
-// Open ensures a shadow for uuid (idempotent) and recovers stuck DISPATCHED
-// blocks — the user-open path. Background callers that must not trigger recovery
+// Open ensures a session for uuid (idempotent): a shadow for a document, whose
+// stuck DISPATCHED blocks it recovers, or a read-only session for a block
+// container — the user-open path. Background callers that must not trigger recovery
 // (a transient open to apply a job result) use open() with recoverStuck=false.
 func (es *EditorService) Open(uuid string) error {
 	return es.open(uuid, true)
@@ -272,18 +291,15 @@ func (es *EditorService) Open(uuid string) error {
 // that would both churn (the doc would reopen ~10s later) and RACE the immediate
 // Close. Recovery is a user-open concern.
 func (es *EditorService) open(uuid string, recoverStuck bool) error {
-	// Idempotent: reuse an already-open shadow, so every caller for a uuid shares
+	// Idempotent: reuse an already-open session, so every caller for a uuid shares
 	// ONE identity and minted ids stay stable.
-	es.mu.Lock()
-	if _, ok := es.shadows[uuid]; ok {
-		es.mu.Unlock()
+	if es.sessionFor(uuid) != nil {
 		return nil
 	}
-	es.mu.Unlock()
 
 	doc, err := es.documents.LoadByUUID(uuid)
 	if err != nil {
-		return err
+		return es.openContainer(uuid, err)
 	}
 	// Declare shadow before the closure so the closure can capture the variable.
 	var shadow *block.ShadowDocument
@@ -296,12 +312,12 @@ func (es *EditorService) open(uuid string, recoverStuck bool) error {
 	es.mu.Lock()
 	// Another goroutine may have opened the same uuid between the check above and
 	// here; if so, discard ours and reuse theirs.
-	if _, ok := es.shadows[uuid]; ok {
+	if _, ok := es.sessions[uuid]; ok {
 		es.mu.Unlock()
 		shadow.StopDebounce()
 		return nil
 	}
-	es.shadows[uuid] = shadow
+	es.sessions[uuid] = documentSession{shadow: shadow}
 	es.mu.Unlock()
 
 	// A document whose block ids were just upgraded (#75) owes disk a rewrite NOW,
@@ -326,60 +342,111 @@ func (es *EditorService) open(uuid string, recoverStuck bool) error {
 	return nil
 }
 
-// shadowFor returns uuid's open shadow, or nil. It is the read a same-package
-// collaborator (the spell checker) takes instead of touching es.shadows, so the
-// map and its lock stay this type's alone.
-func (es *EditorService) shadowFor(uuid string) *block.ShadowDocument {
+// openContainer opens uuid as a block container: no shadow, no identity
+// migration, no job recovery. notDocument is why uuid did not open as a document,
+// and is what a uuid naming no container either answers.
+func (es *EditorService) openContainer(uuid string, notDocument error) error {
 	es.mu.RLock()
-	defer es.mu.RUnlock()
-	return es.shadows[uuid]
+	containers := es.containers
+	es.mu.RUnlock()
+	if containers == nil {
+		return notDocument
+	}
+	c, err := containers.Load(uuid)
+	if errors.Is(err, domain.ErrNotBlockContainer) {
+		return notDocument
+	}
+	if err != nil {
+		return err
+	}
+	es.mu.Lock()
+	if _, ok := es.sessions[uuid]; !ok {
+		es.sessions[uuid] = &containerSession{container: c}
+	}
+	es.mu.Unlock()
+	logger.Info("editor: open block container", "uuid", uuid, "kind", c.Kind())
+	return nil
 }
 
-// openUUIDs returns the documents currently open, in no order. It is the same
-// same-package read as shadowFor, for a collaborator that must act on ALL of
-// them — the spell checker answering a workspace-wide change of mind about a
-// word. A uuid closed between this read and the act on it is a no-op there.
+// sessionFor returns uuid's open session, or nil.
+func (es *EditorService) sessionFor(uuid string) session {
+	es.mu.RLock()
+	defer es.mu.RUnlock()
+	return es.sessions[uuid]
+}
+
+// documentOf returns uuid's open document. Nothing open is ErrNotOpen; a block
+// container is ErrNotDocument.
+func (es *EditorService) documentOf(uuid string) (*block.ShadowDocument, error) {
+	s := es.sessionFor(uuid)
+	if s == nil {
+		return nil, fmt.Errorf("%w for uuid %q", ErrNotOpen, uuid)
+	}
+	return s.document()
+}
+
+// shadowFor returns uuid's open document's shadow, or nil — also for a block
+// container. It is the read a same-package collaborator (the spell checker)
+// takes instead of touching es.sessions, so the map and its lock stay this
+// type's alone.
+func (es *EditorService) shadowFor(uuid string) *block.ShadowDocument {
+	shadow, _ := es.documentOf(uuid)
+	return shadow
+}
+
+// openUUIDs returns the documents currently open, in no order; an open block
+// container is not one. It is the same same-package read as shadowFor, for a
+// collaborator that must act on ALL of them — the spell checker answering a
+// workspace-wide change of mind about a word. A uuid closed between this read
+// and the act on it is a no-op there.
 func (es *EditorService) openUUIDs() []string {
 	es.mu.RLock()
 	defer es.mu.RUnlock()
-	uuids := make([]string, 0, len(es.shadows))
-	for uuid := range es.shadows {
-		uuids = append(uuids, uuid)
+	uuids := make([]string, 0, len(es.sessions))
+	for uuid, s := range es.sessions {
+		if _, err := s.document(); err == nil {
+			uuids = append(uuids, uuid)
+		}
 	}
 	return uuids
 }
 
-// FrontendBlocks projects the OPEN shadow's authoritative Doc into the wire
-// shape the WYSIWYG load renders from — the load-through-shadow path, so the
-// client sees the shadow's minted handles (real data-id) and identity is shared.
-// Returns false when the uuid has no open shadow.
+// FrontendBlocks projects the OPEN session's blocks into the wire shape the
+// WYSIWYG load renders from — the load-through-shadow path, so the client sees
+// the shadow's minted handles (real data-id) and identity is shared. A block
+// container's is its one block. Returns false when the uuid has no open session.
 func (es *EditorService) FrontendBlocks(uuid string) ([]block.FrontendBlock, bool) {
-	es.mu.Lock()
-	shadow := es.shadows[uuid]
-	es.mu.Unlock()
-	if shadow == nil {
+	s := es.sessionFor(uuid)
+	if s == nil {
 		return nil, false
 	}
-	tree := shadow.SnapshotBlocks()
-	blocks, err := block.BlockDocToFrontendBlocks(tree)
+	blocks, err := block.BlockDocToFrontendBlocks(s.blocks())
 	if err != nil {
 		return nil, false
 	}
 	return blocks, true
 }
 
-// Blocks returns document uuid's current blocks: the open shadow's when the
-// document is open, else its stored body parsed. The blocks are copies.
+// Blocks returns container uuid's current blocks: the open session's when it is
+// open, else a document's stored body parsed or a block container's one block.
+// The blocks are copies.
 func (es *EditorService) Blocks(uuid string) ([]domain.SieveBlock, error) {
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
-	if shadow != nil {
-		return shadow.SnapshotBlocks(), nil
+	if s := es.sessionFor(uuid); s != nil {
+		return s.blocks(), nil
 	}
 	doc, err := es.documents.LoadByUUID(uuid)
 	if err != nil {
-		return nil, err
+		es.mu.RLock()
+		containers := es.containers
+		es.mu.RUnlock()
+		if containers == nil {
+			return nil, err
+		}
+		c, cerr := containers.Load(uuid)
+		if cerr != nil {
+			return nil, err
+		}
+		return []domain.SieveBlock{c.Block()}, nil
 	}
 	return es.codec.Deserialize(string(doc.Body()))
 }
@@ -414,12 +481,13 @@ func (es *EditorService) resetStuckDispatched(uuid string, shadow *block.ShadowD
 	}
 }
 
-// Close atomically removes the shadow and flushes it. Capturing the pointer
-// before deleting prevents a concurrent Open() from being deleted by mistake.
+// Close atomically removes the session and ends it: a document's shadow is
+// flushed, a block container writes nothing. Capturing the session before
+// deleting prevents a concurrent Open() from being deleted by mistake.
 func (es *EditorService) Close(uuid string) {
 	es.mu.Lock()
-	shadow, ok := es.shadows[uuid]
-	delete(es.shadows, uuid)
+	s, ok := es.sessions[uuid]
+	delete(es.sessions, uuid)
 	inspection := es.inspection
 	es.mu.Unlock()
 
@@ -439,20 +507,17 @@ func (es *EditorService) Close(uuid string) {
 		return
 	}
 	logger.Info("editor: close", "uuid", uuid)
-	shadow.StopDebounce()
-	_ = es.flushShadow(shadow, "close")
+	s.close(es, "close")
 }
 
 // UpdateMarkdown stores the latest full markdown from TipTap and resets the debounce.
-func (es *EditorService) UpdateMarkdown(uuid, markdown string) {
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
-	if shadow == nil {
-		logger.Warn("editor: doc-update dropped — no shadow", "uuid", uuid)
-		return
+func (es *EditorService) UpdateMarkdown(uuid, markdown string) error {
+	shadow, err := es.documentOf(uuid)
+	if err != nil {
+		return fmt.Errorf("doc-update: %w", err)
 	}
 	shadow.SetMarkdown(markdown)
+	return nil
 }
 
 // HandleBlockOp applies a granular wire op (create/update/delete/move) to the
@@ -496,11 +561,9 @@ func (es *EditorService) HandleBlockOp(uuid string, op block.BlockOp) error {
 		return es.applyBlockUpdate(uuid, op)
 	}
 
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
-	if shadow == nil {
-		return fmt.Errorf("block-op: no open document for uuid %q", uuid)
+	shadow, err := es.documentOf(uuid)
+	if err != nil {
+		return fmt.Errorf("block-op: %w", err)
 	}
 	if err := shadow.ApplyOp(op); err != nil {
 		return err
@@ -522,15 +585,13 @@ func (es *EditorService) HandleBlockOp(uuid string, op block.BlockOp) error {
 
 // UpdateBlock merges attrs into the named block, creating it if needed.
 // kind is only used when creating a new block entry.
-func (es *EditorService) UpdateBlock(uuid string, blk domain.SieveBlock) {
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
-	if shadow == nil {
-		logger.Warn("editor: block-update dropped — no shadow", "uuid", uuid, "block", blk.ID)
-		return
+func (es *EditorService) UpdateBlock(uuid string, blk domain.SieveBlock) error {
+	shadow, err := es.documentOf(uuid)
+	if err != nil {
+		return fmt.Errorf("block-update %s: %w", blk.ID, err)
 	}
 	shadow.MergeBlock(blk)
+	return nil
 }
 
 // ReplaceText applies one anchored text edit to a block and returns what
@@ -579,9 +640,9 @@ func (es *EditorService) ReplaceTextBatch(uuid, blockID string, edits []domain.T
 	if len(edits) == 0 {
 		return nil
 	}
-	shadow := es.shadowFor(uuid)
-	if shadow == nil {
-		return fmt.Errorf("text-replace: no open document for uuid %q", uuid)
+	shadow, err := es.documentOf(uuid)
+	if err != nil {
+		return fmt.Errorf("text-replace: %w", err)
 	}
 	blk, found := shadow.SnapshotBlock(blockID)
 	if !found {
@@ -650,42 +711,39 @@ func (es *EditorService) readingOf(blk domain.SieveBlock) (segments []domain.Tex
 // exports everything); this service only resolves the shadow and delegates.
 // Returns an error when the document is not open.
 func (es *EditorService) Export(uuid string, filter block.BlockFilter, generator block.ExportGenerator) (string, error) {
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
-	if shadow == nil {
-		return "", fmt.Errorf("export: no open document for uuid %q", uuid)
+	shadow, err := es.documentOf(uuid)
+	if err != nil {
+		return "", fmt.Errorf("export: %w", err)
 	}
 	return shadow.Export(filter, generator), nil
 }
 
 // EnterMarkdown switches the shadow to markdown mode. It derives whole-doc
 // markdown from the tree, seeds the markdown-mode raw buffer with it, then flips
-// mode so subsequent Flush calls save the raw buffer verbatim. Returns the seed.
-func (es *EditorService) EnterMarkdown(uuid string) string {
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
-	if shadow == nil {
+// mode so subsequent Flush calls save the raw buffer verbatim. Returns the seed;
+// nothing open seeds the empty buffer.
+func (es *EditorService) EnterMarkdown(uuid string) (string, error) {
+	shadow, err := es.documentOf(uuid)
+	if errors.Is(err, ErrNotOpen) {
 		logger.Warn("editor: enter-markdown — no shadow", "uuid", uuid)
-		return ""
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("enter-markdown: %w", err)
 	}
 	merged := shadow.ContentForSave() // derives from the tree before the mode switch
 	shadow.EnterMarkdownMode(merged)
 	logger.Info("editor: enter-markdown", "uuid", uuid, "bytes", len(merged))
-	return merged
+	return merged, nil
 }
 
 // EnterWysiwyg switches the shadow back to WYSIWYG mode. It re-parses the
 // authoritative Doc from the markdown-mode raw buffer so any block YAML the user
 // edited directly in markdown mode is picked up for save.
-func (es *EditorService) EnterWysiwyg(uuid string) {
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
-	if shadow == nil {
-		logger.Warn("editor: enter-wysiwyg — no shadow", "uuid", uuid)
-		return
+func (es *EditorService) EnterWysiwyg(uuid string) error {
+	shadow, err := es.documentOf(uuid)
+	if err != nil {
+		return fmt.Errorf("enter-wysiwyg: %w", err)
 	}
 	prior := len(shadow.BlockIDs())
 	n := shadow.EnterWysiwygMode()
@@ -698,16 +756,19 @@ func (es *EditorService) EnterWysiwyg(uuid string) {
 			"uuid", uuid, "prior_blocks", prior)
 	}
 	logger.Info("editor: enter-wysiwyg", "uuid", uuid, "blocks_reparsed", n)
+	return nil
 }
 
-// Flush writes the shadow's ContentForSave to disk via DocumentService.
+// Flush writes the shadow's ContentForSave to disk via DocumentService. Nothing
+// open is a no-op; a block container is refused.
 func (es *EditorService) Flush(uuid string) error {
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
-	if shadow == nil {
+	shadow, err := es.documentOf(uuid)
+	if errors.Is(err, ErrNotOpen) {
 		logger.Warn("editor: flush called but no shadow", "uuid", uuid)
 		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("flush: %w", err)
 	}
 	return es.flushShadow(shadow, "explicit")
 }
@@ -751,74 +812,62 @@ func (es *EditorService) flushShadow(shadow *block.ShadowDocument, source string
 	})
 }
 
-// ReloadFromDisk replaces the open shadow's content with the on-disk document,
-// reparsed through the codec (so marker ids survive — the frontend can't recover
-// them). Used after an OUT-OF-BAND disk change such as a version restore, which
-// writes the file behind the shadow's back: without this the stale shadow is both
-// served to the editor AND overwrites the restored file on the next flush. No-op
-// when the doc isn't open. It does NOT flush — the disk is already authoritative.
+// ReloadFromDisk is "this container changed on disk": an open session adopts what
+// is stored now. Used after an OUT-OF-BAND write such as a version restore or a
+// block container's own service saving it.
+//
+// A document's shadow is reparsed through the codec (so marker ids survive — the
+// frontend can't recover them); without this the stale shadow is both served to
+// the editor AND overwrites the restored file on the next flush. The client is
+// not told: whoever wrote decides how it reloads. A block container's block is
+// read again and its attrs pushed to the client as a block attr update.
+//
+// No-op when nothing is open. It does NOT flush — the disk is already
+// authoritative.
 func (es *EditorService) ReloadFromDisk(uuid string) error {
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
-	if shadow == nil {
+	s := es.sessionFor(uuid)
+	if s == nil {
 		return nil
 	}
-	doc, err := es.documents.LoadByUUID(uuid)
-	if err != nil {
-		logger.Warn("editor: reload-from-disk load failed", "uuid", uuid, "err", err)
-		return err
-	}
-	shadow.SetMarkdown(string(doc.Body()))
-	logger.Info("editor: reloaded shadow from disk", "uuid", uuid, "bytes", len(doc.Body()))
-	return nil
+	return s.reload(es)
 }
 
 // FlushAll writes all open shadows to disk. Called on application shutdown.
 func (es *EditorService) FlushAll() {
-	es.mu.RLock()
-	uuids := make([]string, 0, len(es.shadows))
-	for uuid := range es.shadows {
-		uuids = append(uuids, uuid)
-	}
-	es.mu.RUnlock()
+	uuids := es.openUUIDs()
 	logger.Info("editor: flush-all", "count", len(uuids))
 	for _, uuid := range uuids {
 		_ = es.Flush(uuid)
 	}
 }
 
-// CloseAll stops every shadow's autosave timer, flushes it to disk, and drops
-// all shadows. Use this (not FlushAll) when the EditorService itself is being
+// CloseAll ends every session — a document's autosave timer is stopped and its
+// shadow flushed to disk — and drops them all. Use this (not FlushAll) when the EditorService itself is being
 // retired — e.g. a library switch replaces it via ServiceProvider.Init. FlushAll
 // leaves the armed time.AfterFunc timers running; they capture the old
 // DocumentService/FileStore and would fire a delayed write against the previous
 // library after the switch, leaking the old store handle until they do.
 func (es *EditorService) CloseAll() {
 	es.mu.Lock()
-	shadows := make([]*block.ShadowDocument, 0, len(es.shadows))
-	for _, sh := range es.shadows {
-		shadows = append(shadows, sh)
-	}
-	es.shadows = make(map[string]*block.ShadowDocument)
+	sessions := es.sessions
+	es.sessions = make(map[string]session)
 	inspection := es.inspection
 	es.mu.Unlock()
-	logger.Info("editor: close-all", "count", len(shadows))
-	for _, sh := range shadows {
+	logger.Info("editor: close-all", "count", len(sessions))
+	for uuid, s := range sessions {
 		// Dropping the inspection queue is unconditional for the same reason
 		// Close's is: nil only when the field is unwired (tests).
 		if inspection != nil {
-			inspection.closeDocument(sh.UUID)
+			inspection.closeDocument(uuid)
 		}
-		es.clearFocus(sh.UUID)
-		sh.StopDebounce()
-		_ = es.flushShadow(sh, "close-all")
+		es.clearFocus(uuid)
+		s.close(es, "close-all")
 	}
 	// Drain in-flight job goroutines. Retiring the service (e.g. a library switch)
 	// must not leave a completing job writing a flush against the store we are
-	// abandoning — that would leak the old handle and race the successor. StopDebounce
-	// above already set closed=true on every dropped shadow, so a late job flush cannot
-	// re-arm a timer; here we simply wait for the flush itself to finish.
+	// abandoning — that would leak the old handle and race the successor. Closing
+	// a document session above already set closed=true on its shadow, so a late job
+	// flush cannot re-arm a timer; here we simply wait for the flush itself to finish.
 	es.jobsWG.Wait()
 }
 
@@ -861,7 +910,14 @@ func (es *EditorService) closeFilingAllowed() bool {
 
 // submitDocFiling builds and submits one document filing JobDescriptor. label
 // must be non-empty. Filing failure is non-fatal — it is logged, never surfaced.
+//
+// A block container is never filed: it is refused here, so every filing verb
+// refuses it.
 func (es *EditorService) submitDocFiling(id, jobPrefix, label string, fileAfter, allowDiscard, spinTab bool) {
+	if es.isBlockContainer(id) {
+		logger.Info("editor: filing refused for a block container", "uuid", id, "job", jobPrefix+id)
+		return
+	}
 	es.engine.Submit(services.JobDescriptor{
 		Category: block.CategoryAI,
 		Meta:     domain.JobInfo{JobID: jobPrefix + id, Label: label, DocID: id, SpinTab: spinTab},
@@ -870,6 +926,22 @@ func (es *EditorService) submitDocFiling(id, jobPrefix, label string, fileAfter,
 			logger.Warn("editor: document filing failed", "job", jobPrefix+id, "uuid", id, "err", err)
 		},
 	})
+}
+
+// isBlockContainer reports whether id names a block container, open or not.
+func (es *EditorService) isBlockContainer(id string) bool {
+	if s := es.sessionFor(id); s != nil {
+		_, err := s.document()
+		return errors.Is(err, ErrNotDocument)
+	}
+	es.mu.RLock()
+	containers := es.containers
+	es.mu.RUnlock()
+	if containers == nil {
+		return false
+	}
+	_, err := containers.Load(id)
+	return err == nil
 }
 
 // alreadyFiled reports whether id names a document that has already been promoted
@@ -911,7 +983,7 @@ func (es *EditorService) CloseAllAndFile(ids []string) {
 // submits one close-time filing job. Replaces AIService.EvaluateOnClose(id) for
 // the single-tab HTTP close path. Flush no-ops when the doc is not open. An
 // already-filed note is flushed but NOT re-filed — smart filing on close is only
-// for unfiled buffers.
+// for unfiled buffers. A block container is neither flushed nor filed.
 func (es *EditorService) CloseDocument(id string) {
 	if !es.closeFilingAllowed() {
 		return
@@ -999,11 +1071,9 @@ func (es *EditorService) validateClientID(uuid, blockID string) error {
 	if !ident.Valid(blockID) {
 		return fmt.Errorf("create-block: refusing malformed block id %q", blockID)
 	}
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
-	if shadow == nil {
-		return fmt.Errorf("create-block: no open document for uuid %q", uuid)
+	shadow, err := es.documentOf(uuid)
+	if err != nil {
+		return fmt.Errorf("create-block: %w", err)
 	}
 	if _, taken := shadow.SnapshotBlock(blockID); taken {
 		return fmt.Errorf("create-block: block id %q is already in document %q", blockID, uuid)
@@ -1017,9 +1087,7 @@ func (es *EditorService) validateClientID(uuid, blockID string) error {
 // document nobody has open resolves to block.AppendIndex, as does an anchor
 // naming a block the document does not hold; block.Anchor says why.
 func (es *EditorService) ResolveAnchor(uuid string, anchor block.Anchor) int {
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
+	shadow := es.shadowFor(uuid)
 	if shadow == nil {
 		return block.AppendIndex
 	}
@@ -1047,11 +1115,9 @@ func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[s
 		}
 	}()
 
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
-	if shadow == nil {
-		return "", "", fmt.Errorf("create-block: no open document for uuid %q", uuid)
+	shadow, err := es.documentOf(uuid)
+	if err != nil {
+		return "", "", fmt.Errorf("create-block: %w", err)
 	}
 	if err = es.validateClientID(uuid, blockID); err != nil {
 		return "", "", err
@@ -1088,11 +1154,9 @@ func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[s
 // selection round-trips into Go's tree, positioned, ids and all. Returns the created
 // blocks in order for the frontend to render in one batch (no per-block WS push).
 func (es *EditorService) HandlePasteSlice(uuid string, slice [][]block.ContentEntry, index int) ([]block.FrontendBlock, error) {
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
-	if shadow == nil {
-		return nil, fmt.Errorf("paste-slice: no open document for uuid %q", uuid)
+	shadow, err := es.documentOf(uuid)
+	if err != nil {
+		return nil, fmt.Errorf("paste-slice: %w", err)
 	}
 	if index < 0 {
 		index = len(shadow.SnapshotBlocks())
@@ -1140,7 +1204,14 @@ func (es *EditorService) HandlePlacement(uuid string, entries []block.ContentEnt
 
 // paste creates the block entries match under action at index. Only an
 // ActionPaste detection match is recorded on the block as a smart paste.
+//
+// A block container is refused before anything is matched: it takes no paste,
+// and a matcher's Transform may do real work.
 func (es *EditorService) paste(uuid string, entries []block.ContentEntry, index int, action block.Action) block.PasteResult {
+	if _, err := es.documentOf(uuid); errors.Is(err, ErrNotDocument) {
+		logger.Warn("paste: refused", "uuid", uuid, "err", err)
+		return block.PasteNothing()
+	}
 	matchKind, processor, fromDetection, ok := block.FirstPasteMatch(entries, action)
 	if !ok {
 		// No kind claims it. Views that are nothing but a hyperlink still get the one
@@ -1181,6 +1252,9 @@ func (es *EditorService) DetectExtractions(uuid, sourceKind string, entries []bl
 // sourceID is also the POSITION: an additive extract lands directly after the block
 // it came from, so the caller states no index. An empty or unknown sourceID appends.
 func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []block.ContentEntry, action block.Action, sourceID string) (id, rawYaml string, err error) {
+	if _, err := es.documentOf(uuid); errors.Is(err, ErrNotDocument) {
+		return "", "", fmt.Errorf("%s: %w", action, err)
+	}
 	processor := block.GetProcessor(kind)
 	if processor == nil {
 		return "", "", fmt.Errorf("no processor registered for kind %q", kind)
@@ -1205,11 +1279,9 @@ func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []blo
 // transformInPlace replaces sourceID with a new block of kind, preserving the source's
 // id and document position (the OpTransform definition).
 func (es *EditorService) transformInPlace(uuid, kind string, processor block.BlockProcessor, entries []block.ContentEntry, sourceID string, action block.Action) (id, rawYaml string, err error) {
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
-	if shadow == nil {
-		return "", "", fmt.Errorf("transform: no open document for uuid %q", uuid)
+	shadow, err := es.documentOf(uuid)
+	if err != nil {
+		return "", "", fmt.Errorf("transform: %w", err)
 	}
 	if sourceID == "" {
 		return "", "", fmt.Errorf("transform: no source block id")
@@ -1262,11 +1334,9 @@ func (es *EditorService) applyBlockUpdate(uuid string, op block.BlockOp) error {
 // present is false when there is nothing to render back at all: no processor is
 // registered for the kind, or the block did not survive the merge.
 func (es *EditorService) mergeAndReact(uuid string, op block.BlockOp) (blk domain.SieveBlock, present bool, err error) {
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
-	if shadow == nil {
-		return domain.SieveBlock{}, false, fmt.Errorf("update-block: no open document for uuid %q", uuid)
+	shadow, err := es.documentOf(uuid)
+	if err != nil {
+		return domain.SieveBlock{}, false, fmt.Errorf("update-block: %w", err)
 	}
 
 	// Prose's body is just Attrs["content"], merged like any other key — no
@@ -1312,9 +1382,7 @@ func (es *EditorService) mergeAndReact(uuid string, op block.BlockOp) (blk domai
 // DispatchJobIfNeeded checks if the block has status PENDING. If so, it transitions the block
 // to DISPATCHED, notifies the listener of the transition, flushes to disk, and runs the job.
 func (es *EditorService) DispatchJobIfNeeded(uuid, blockID string) {
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
+	shadow := es.shadowFor(uuid)
 	if shadow == nil {
 		return
 	}
@@ -1353,9 +1421,7 @@ func (es *EditorService) WaitForJobs() {
 // path. If the document is closed (no shadow), we open it transiently, apply
 // through the same path, then close it (Close flushes to disk with reason "close").
 func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[string]interface{}, deletes []string, flushReason string) {
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
+	shadow := es.shadowFor(uuid)
 
 	openedTransiently := false
 	if shadow == nil {
@@ -1368,11 +1434,11 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 		}
 		openedTransiently = true
 
-		es.mu.RLock()
-		shadow = es.shadows[uuid]
-		es.mu.RUnlock()
+		shadow = es.shadowFor(uuid)
 		if shadow == nil {
+			// A block container opens without a shadow: no job writes into one.
 			logger.Warn("editor: job update shadow missing after transient open", "uuid", uuid)
+			es.Close(uuid)
 			return
 		}
 	}
@@ -1405,9 +1471,7 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 // the shadow (applyJobUpdate). On error the finish closure sets status=ERROR — the
 // framework's uniform error handling, so no processor writes tracking/finish code.
 func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
+	shadow := es.shadowFor(uuid)
 	if shadow == nil {
 		return
 	}

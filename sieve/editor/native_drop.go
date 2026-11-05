@@ -74,11 +74,9 @@ func (es *EditorService) HandleNativeDrop(uuid string, entries []block.ContentEn
 // A file that cannot be read is skipped rather than failing the whole batch.
 // Everything skipped leaves the outcome as PasteNothing.
 func (es *EditorService) ingestFiles(uuid string, files []droppedFile, index int) block.PasteResult {
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
-	if shadow == nil {
-		logger.Warn("native files: no open document", "uuid", uuid)
+	shadow, err := es.documentOf(uuid)
+	if err != nil {
+		logger.Warn("native files: refused", "uuid", uuid, "err", err)
 		return block.PasteNothing()
 	}
 	if index < 0 {

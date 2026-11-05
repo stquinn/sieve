@@ -138,15 +138,16 @@ func (s *ServiceProvider) CommandSet() []command.Command {
 // declare. Lives at the composition root — the only place that knows both the
 // ports and the concretes.
 var (
-	_ block.DocumentsPort       = (*services.DocumentService)(nil)
-	_ block.AssetsPort          = (*services.AssetService)(nil)
-	_ block.StatePort           = (*services.StateService)(nil)
-	_ block.LinkPreviewPort     = (*services.LinkPreviewService)(nil)
-	_ block.PlantumlPort        = (*services.PlantumlService)(nil)
-	_ services.ContainableKinds = block.Registry{}
-	_ domain.NodeResolver       = (*editor.Router)(nil)
-	_ command.DocumentFiler     = (*editor.EditorService)(nil)
-	_ ai.DocumentMCPEndpoint    = (*mcp.Server)(nil)
+	_ block.DocumentsPort             = (*services.DocumentService)(nil)
+	_ block.AssetsPort                = (*services.AssetService)(nil)
+	_ block.StatePort                 = (*services.StateService)(nil)
+	_ block.LinkPreviewPort           = (*services.LinkPreviewService)(nil)
+	_ block.PlantumlPort              = (*services.PlantumlService)(nil)
+	_ services.ContainableKinds       = block.Registry{}
+	_ services.ContainerSavedListener = (*editor.EditorService)(nil)
+	_ domain.NodeResolver             = (*editor.Router)(nil)
+	_ command.DocumentFiler           = (*editor.EditorService)(nil)
+	_ ai.DocumentMCPEndpoint          = (*mcp.Server)(nil)
 )
 
 func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.FS) {
@@ -198,6 +199,8 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
 	s.Editor = editor.NewEditorService(s.Documents, block.NewDocumentCodec(block.GlobalRegistry()), autosave)
 	s.Editor.SetServices(s.BlockServices())
+	s.Editor.SetContainers(s.Containers)
+	s.Containers.SetSavedListener(s.Editor)
 	// The OS clipboard, read outside the webview. On a cgo-off build this is the
 	// package's no-op half, so a native-clipboard paste answers "nothing" rather
 	// than failing.

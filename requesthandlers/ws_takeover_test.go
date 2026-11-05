@@ -67,7 +67,13 @@ func newWsTestServerWithJobs(t *testing.T, debounce time.Duration, jobs JobsSour
 	if err != nil {
 		t.Fatalf("NewStateService: %v", err)
 	}
-	sp := &sieve.ServiceProvider{Store: fs, Documents: ds, Editor: es, State: st}
+	containers, err := services.NewBlockContainerService(fs, block.GlobalRegistry())
+	if err != nil {
+		t.Fatalf("NewBlockContainerService: %v", err)
+	}
+	es.SetContainers(containers)
+	containers.SetSavedListener(es)
+	sp := &sieve.ServiceProvider{Store: fs, Documents: ds, Containers: containers, Editor: es, State: st}
 	// The composition root's own wiring, minus the settings read: every producer
 	// the app registers, spelling switched on, and the editor observing the engine
 	// back. Registration goes through the root's own method so a producer added

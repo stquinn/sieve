@@ -25,7 +25,7 @@ import { SpellDecorations, SPELL_MARK_CLASS, SPELL_FEATURE } from '../src/static
 import { FindDecorations, FIND_MARK_CLASS, FIND_CURRENT_CLASS, FIND_SETTLE_CLASS, FIND_FEATURE } from '../src/static/lens/document-editor/surfaces/find-decoration.js'
 import { Feature } from '../src/static/generated/protocol.js'
 import { AbstractEditor } from '../src/static/lens/abstract-editor.js'
-import { AbstractSurface } from '../src/static/lens/document-editor/surfaces/abstract-surface.js'
+import { AbstractSurface } from '../src/static/lens/abstract-surface.js'
 import { EditorMode } from '../src/static/lens/document-editor/editor-mode.js'
 
 // The last layer — the lens verb that asks for a correction — pulls in

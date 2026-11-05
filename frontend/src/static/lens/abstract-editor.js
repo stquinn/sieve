@@ -13,8 +13,8 @@ import { SelectionModel } from './document-editor/selection-model.js'
 import { AddressStatus } from '../renderers/address-status.js'
 
 /**
- * @typedef {import('./document-editor/surfaces/abstract-surface.js').AbstractSurface} AbstractSurface
- * @typedef {import('./document-editor/surfaces/abstract-surface.js').SurfaceEventMsg} SurfaceEventMsg
+ * @typedef {import('./abstract-surface.js').AbstractSurface} AbstractSurface
+ * @typedef {import('./abstract-surface.js').SurfaceEventMsg} SurfaceEventMsg
  * @typedef {import('../contract/container-provider.js').BlockContainerProvider} BlockContainerProvider
  * @typedef {import('../contract/lens-capabilities.js').LensCapabilities} LensCapabilities
  */
@@ -487,6 +487,10 @@ export class AbstractEditor extends Lens {
    * supplied the content could seed a verbatim buffer with something the
    * container never said.
    *
+   * A mode outside this lens's repertoire presents its default mode: the host
+   * states the shape the reader left the container in, and a lens with fewer
+   * shapes has only its own to offer.
+   *
    * A markdown projection that never arrives leaves the buffer unpresentable. A
    * container with a block tree is then presented as blocks — the shape it can
    * always be read in — and one without has nothing else to be, so the failure
@@ -496,15 +500,16 @@ export class AbstractEditor extends Lens {
    * @returns {Promise<AbstractSurface>} the mounted surface
    */
   async presentMode(mode, rootEl) {
+    const shape = this._modes.includes(mode) ? mode : this._defaultMode
     let seed
     try {
-      seed = await this.#seedFor(mode)
+      seed = await this.#seedFor(shape)
     } catch (err) {
       if (!this.canEditBlocks) throw err
       console.error('[editor] the container did not project its text; presenting its blocks instead', err)
       return this.presentSurface(/** @type {string} */ (this._blockMode), rootEl, null)
     }
-    return this.presentSurface(mode, rootEl, seed)
+    return this.presentSurface(shape, rootEl, seed)
   }
 
   /**
@@ -739,7 +744,7 @@ export class AbstractEditor extends Lens {
    * @returns {Promise<boolean>}
    */
   async #flipTo(target) {
-    const old = /** @type {import('./document-editor/surfaces/abstract-surface.js').AbstractSurface} */ (this.#surface)
+    const old = /** @type {import('./abstract-surface.js').AbstractSurface} */ (this.#surface)
     // Flush pending edits BEFORE the handshake so Go's shadow is current.
     old.flushPending()
 

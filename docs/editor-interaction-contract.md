@@ -227,6 +227,7 @@ The resulting order for one keystroke, highest first:
 | Note / document (`NoteEditor`) | **nothing** | the matrix above, unchanged |
 | Prompt (`PromptEditor`) | **nothing** | the matrix above, unchanged |
 | Composer (`ComposerEditor`) | `Mod+Enter` → send the message | the matrix above, unchanged |
+| Block container whose kind has no lens (`BlockLens`) | **nothing** | none of the matrix: there is no editing surface. The block is drawn read-only by its kind's renderer, which keeps its read affordances (selection, copy, pan, filters) and drops every edit |
 
 **The composer is EDITOR-FIRST (revised 2026-08-28, #118):** it claims exactly
 one chord, `Mod+Enter`, and nothing else. Bare `Enter`, `Shift+Enter` and

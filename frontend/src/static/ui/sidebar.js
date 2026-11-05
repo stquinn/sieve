@@ -98,7 +98,7 @@
     var isVirtual = target.dataset.ctxIsVirtual === 'true';
     var name = target.dataset.ctxName || '';
     var intent = target.dataset.ctxIntent || '';
-    var ctxType = target.dataset.ctxType || (id.startsWith('prompt:') ? 'prompt' : 'note');
+    var ctxType = target.dataset.ctxType || 'note';
     if (isDir) ctxType = 'folder';
     document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
       detail: {

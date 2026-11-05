@@ -98,7 +98,7 @@ vi.mock('../src/static/lens/document-editor/paste-context.js', () => ({
   caretInReadOnlyRegion: vi.fn(() => false),
 }))
 
-import { AbstractSurface, SurfaceEvent } from '../src/static/lens/document-editor/surfaces/abstract-surface.js'
+import { AbstractSurface, SurfaceEvent } from '../src/static/lens/abstract-surface.js'
 import { MarkdownSurface } from '../src/static/lens/document-editor/surfaces/markdown-surface.js'
 import { WysiwygSurface } from '../src/static/lens/document-editor/surfaces/wysiwyg-surface.js'
 import { SPELL_FEATURE } from '../src/static/lens/document-editor/surfaces/spell-decoration.js'

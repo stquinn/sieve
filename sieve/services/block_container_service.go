@@ -5,6 +5,7 @@ import (
 	"maps"
 
 	"sieve/ident"
+	"sieve/logger"
 	"sieve/sieve/domain"
 	"sieve/store"
 )
@@ -31,12 +32,19 @@ type ContainableKinds interface {
 	ReadMap(kind, yaml string) (domain.SieveBlock, error)
 }
 
+// ContainerSavedListener hears that a container's content on disk changed behind
+// whoever holds it open. editor.EditorService implements it.
+type ContainerSavedListener interface {
+	ReloadFromDisk(uuid string) error
+}
+
 // BlockContainerService owns every store.TypeBlock storable: it is to a
 // domain.BlockContainer what services.DocumentService is to a domain.Document. A
 // container may be in any category; new ones are born in domain.Blocks.
 type BlockContainerService struct {
-	store store.Store
-	kinds ContainableKinds
+	store    store.Store
+	kinds    ContainableKinds
+	listener ContainerSavedListener
 }
 
 // NewBlockContainerService prepares the Blocks category and builds the service.
@@ -45,6 +53,12 @@ func NewBlockContainerService(st store.Store, kinds ContainableKinds) (*BlockCon
 		return nil, err
 	}
 	return &BlockContainerService{store: st, kinds: kinds}, nil
+}
+
+// SetSavedListener registers who hears each successful Save. It must be called
+// before the service is shared: the field is read without a lock.
+func (s *BlockContainerService) SetSavedListener(l ContainerSavedListener) {
+	s.listener = l
 }
 
 // Create makes a new container holding a fresh block of kind, seeded by the kind's
@@ -103,7 +117,16 @@ func (s *BlockContainerService) Save(c *domain.BlockContainer) (*domain.BlockCon
 	if !ok {
 		return nil, fmt.Errorf("block container %s: save: not MetaStorable", c.UUID())
 	}
-	return s.open(savedMS)
+	opened, err := s.open(savedMS)
+	if err != nil {
+		return nil, err
+	}
+	if s.listener != nil {
+		if err := s.listener.ReloadFromDisk(opened.UUID()); err != nil {
+			logger.Warn("block container: listener could not reload", "uuid", opened.UUID(), "err", err)
+		}
+	}
+	return opened, nil
 }
 
 // Delete removes the container, its history and its assets.

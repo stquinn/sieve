@@ -1,6 +1,6 @@
 // Single source of truth for all context menus. Components fire 'sieve:contextmenu'
 // with { x, y, context } in the detail; context.type must be one of
-// 'editor' | 'sieveBlock' | 'aiBlock' | 'note' | 'folder' | 'prompt'.
+// 'editor' | 'sieveBlock' | 'aiBlock' | 'note' | 'folder' | 'prompt' | 'tab'.
 import { applyTargetHighlight } from '../extensions.js'
 import { NodeViewRegistry, detectAndAppendExtractions } from './surfaces/sieve-block-extension.js'
 import { enclosingBlockId } from './surfaces/block-position.js'
@@ -937,6 +937,14 @@ import { selectNextScope } from './interaction-policy.js'
     return items
   }
 
+  // A tab whose container is neither a document nor a prompt: only the tab's own
+  // verbs apply to it.
+  function buildTabItems(ctx) {
+    var items = []
+    if (ctx.name) items.push({ type: 'header', label: ctx.name })
+    return items.concat(tabItems(ctx.id))
+  }
+
   function buildPromptItems(ctx) {
     var id = ctx.id, name = ctx.name, isVirtual = ctx.isVirtual, isTab = ctx.isTab
     var items = []
@@ -965,6 +973,7 @@ import { selectNextScope } from './interaction-policy.js'
       case 'note':      items = buildNoteItems(ctx); break
       case 'folder':    items = buildFolderItems(ctx); break
       case 'prompt':    items = buildPromptItems(ctx); break
+      case 'tab':       items = buildTabItems(ctx); break
       case 'sieveBlock': items = ctx.items || []; break
       default: return
     }

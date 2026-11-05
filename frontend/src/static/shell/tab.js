@@ -1,18 +1,19 @@
 // @ts-check
-// tab.js — a Tab is the identity of one open document session: a uuid, the mount
-// bound to it, and its editor once one is attached. The Tab is also the editor
-// FACTORY: createEditor is the ONE place that decides NoteEditor vs PromptEditor
-// from the uuid.
+// tab.js — a Tab is the identity of one open container session: a uuid, the
+// container's kind as the server stated it, the mount bound to it, and its
+// editor once one is attached. Which lens a kind gets is the workspace's
+// LensTable's to say.
 
 import { AbstractEditor } from '../lens/abstract-editor.js'
-import { NoteEditor } from '../lens/document-editor/note-editor.js'
-import { PromptEditor } from '../lens/prompt/prompt-editor.js'
 import { EditorMode } from '../lens/document-editor/editor-mode.js'
 import { MountBinding } from './mount-binding.js'
 
 export class SieveTab {
   /** @type {string} */
   #uuid
+
+  /** @type {string} the container's kind; empty when the server stated none */
+  #kind
 
   /** @type {AbstractEditor|null} */
   #editor = null
@@ -58,14 +59,21 @@ export class SieveTab {
   /** @type {Array<(ev: { chars: number, lines: number, blockCount: number }) => void>} */
   #statsListeners = []
 
-  /** @param {string} uuid — document uuid for this tab */
-  constructor(uuid) {
+  /**
+   * @param {string} uuid — the container's uuid
+   * @param {string} [kind] — the container's kind, as the server stated it
+   */
+  constructor(uuid, kind) {
     if (!uuid) throw new Error('SieveTab: uuid is required')
     this.#uuid = uuid
+    this.#kind = kind || ''
   }
 
   /** @returns {string} */
   get uuid() { return this.#uuid }
+
+  /** @returns {string} the container's kind; empty when the server stated none */
+  get kind() { return this.#kind }
 
   /** @returns {string} */
   get mode() { return this.#mode }
@@ -118,20 +126,6 @@ export class SieveTab {
    * @returns {any|null}
    */
   getSelectionContext() { return this.#mount ? this.#mount.getSelectionContext() : null }
-
-  /**
-   * Editor factory — the SOLE place the `prompt:` prefix decides a lens type. It
-   * is a CAPABILITY decision: a prompt's container speaks whole-content only, so
-   * it gets the lens whose constructor demands only that.
-   * @param {string} uuid — document uuid (matches this tab's uuid)
-   * @param {object} [options] — passed to the concrete editor constructor
-   * @returns {AbstractEditor}
-   */
-  createEditor(uuid, options = {}) {
-    return uuid.startsWith('prompt:')
-      ? new PromptEditor(uuid, options)
-      : new NoteEditor(uuid, options)
-  }
 
   /**
    * Takes up the editor's event stream so the Tab self-records mode on each flip.

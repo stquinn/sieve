@@ -202,7 +202,7 @@ func TestEditorService_EnterMarkdownEmbedsBlocks(t *testing.T) {
 		},
 	})
 
-	seed := es.EnterMarkdown(uuid)
+	seed, _ := es.EnterMarkdown(uuid)
 	if !strings.Contains(seed, "updated source") {
 		t.Errorf("expected EnterMarkdown seed to include updated block, got:\n%s", seed)
 	}
@@ -233,9 +233,7 @@ func TestEditorService_CloseFlushesAndRemovesShadow(t *testing.T) {
 	es.Close(uuid)
 
 	// Shadow must be gone after Close.
-	es.mu.RLock()
-	_, stillOpen := es.shadows[uuid]
-	es.mu.RUnlock()
+	stillOpen := es.sessionFor(uuid) != nil
 	if stillOpen {
 		t.Error("expected shadow to be removed after Close")
 	}
@@ -294,7 +292,7 @@ func TestEditorService_UpdateBlock_NoShadowIsNoop(t *testing.T) {
 func TestEditorService_EnterMarkdown_NoShadowReturnsEmpty(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), time.Second)
-	result := es.EnterMarkdown("nonexistent-uuid")
+	result, _ := es.EnterMarkdown("nonexistent-uuid")
 	if result != "" {
 		t.Errorf("expected empty string for missing shadow, got %q", result)
 	}
@@ -484,7 +482,7 @@ func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
 	uuid := doc.UUID()
 
 	_ = es.Open(uuid)
-	_ = es.EnterMarkdown(uuid)
+	_, _ = es.EnterMarkdown(uuid)
 
 	// User edits block YAML directly in markdown mode
 	es.UpdateMarkdown(uuid, "# Doc\n\n```code\nid: cb-0001\nsource: hand-edited\nstatus: COMPLETE\n```")
@@ -540,9 +538,7 @@ func TestEditorService_CreateBlock_code(t *testing.T) {
 	}
 
 	// Block must be in shadow with complete attrs
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
+	shadow := es.shadowFor(uuid)
 	blkSnap, _ := shadow.SnapshotBlock(id)
 	blk := &blkSnap
 	if blk == nil {
@@ -835,7 +831,7 @@ func TestEditorService_HandlePaste_wholeBlockCopyPerKind(t *testing.T) {
 					t.Fatalf("result = %+v, want a %s block", res, tc.kind)
 				}
 				es.WaitForJobs()
-				b, ok := es.shadows[into].SnapshotBlock(res.ID)
+				b, ok := es.shadowFor(into).SnapshotBlock(res.ID)
 				if !ok {
 					t.Fatalf("pasted block %s not in the document", res.ID)
 				}
@@ -879,7 +875,7 @@ func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 func TestEditorService_HandlePaste_declinedTransformMakesNoBlock(t *testing.T) {
 	es, uuid := newDropEditor(t)
 	block.RegisterProcessor(processors.NewSmartImageProcessor(es.services))
-	before := len(es.shadows[uuid].SnapshotBlocks())
+	before := len(es.shadowFor(uuid).SnapshotBlocks())
 
 	res := es.HandlePaste(uuid, []block.ContentEntry{
 		{MIMEType: "sieve/smart-image", Content: `{"src":"/missing-asset.png"}`},
@@ -887,7 +883,7 @@ func TestEditorService_HandlePaste_declinedTransformMakesNoBlock(t *testing.T) {
 	if res.Outcome != block.OutcomeNothing {
 		t.Fatalf("a declined transform must produce the nothing outcome, got %q (%+v)", res.Outcome, res)
 	}
-	if after := len(es.shadows[uuid].SnapshotBlocks()); after != before {
+	if after := len(es.shadowFor(uuid).SnapshotBlocks()); after != before {
 		t.Errorf("a declined transform must add no block: %d -> %d", before, after)
 	}
 }
@@ -991,7 +987,7 @@ func TestEditorService_placementSharesWherePasteCopies(t *testing.T) {
 			if !res.IsBlock() || res.Kind != tc.asset.kind {
 				t.Fatalf("result = %+v, want a %s block", res, tc.asset.kind)
 			}
-			blocks := es.shadows[uuid].SnapshotBlocks()
+			blocks := es.shadowFor(uuid).SnapshotBlocks()
 			at := -1
 			for i, b := range blocks {
 				if b.ID == res.ID {
@@ -1255,9 +1251,7 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 			return &block.ProcessorJob{
 				Work: func() (any, error) {
 					// Simulate a concurrent user edit to "source" while the job runs.
-					es.mu.Lock()
-					shadow := es.shadows[uuid]
-					es.mu.Unlock()
+					shadow := es.shadowFor(uuid)
 					shadow.MergeBlock(domain.SieveBlock{ID: blockID, Attrs: map[string]interface{}{"source": "concurrent user edit"}})
 					return nil, nil
 				},
@@ -1281,9 +1275,7 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 	es.RunJob(context.Background(), uuid, blockID)
 
 	// Check final attributes in shadow
-	es.mu.Lock()
-	shadow := es.shadows[uuid]
-	es.mu.Unlock()
+	shadow := es.shadowFor(uuid)
 
 	blkSnap, _ := shadow.SnapshotBlock(blockID)
 	blk := &blkSnap
@@ -1364,9 +1356,7 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 	es.RunJob(context.Background(), uuid, blockID)
 
 	// Ensure the NEW shadow has the COMPLETE state
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
+	shadow := es.shadowFor(uuid)
 
 	if shadow == nil {
 		t.Fatal("expected new shadow to exist")
@@ -1386,7 +1376,7 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 
 // TestApplyJobUpdate_closedDoc verifies that a job update targeting a document
 // that is NOT open in memory (no shadow) is persisted to disk via a transient
-// Open→apply→Close cycle, and that no shadow leaks into es.shadows afterward.
+// Open→apply→Close cycle, and that no session leaks into es.sessions afterward.
 // Uses the "code" kind (real CodeBlockProcessor) so the fenced block is
 // properly deserialized by the shadow and its block-id is recognized.
 func TestApplyJobUpdate_closedDoc(t *testing.T) {
@@ -1419,9 +1409,7 @@ func TestApplyJobUpdate_closedDoc(t *testing.T) {
 	uuid := doc.UUID()
 
 	// Confirm no shadow exists before the update.
-	es.mu.RLock()
-	_, hasShadow := es.shadows[uuid]
-	es.mu.RUnlock()
+	hasShadow := es.sessionFor(uuid) != nil
 	if hasShadow {
 		t.Fatal("precondition: expected no open shadow before applyJobUpdate")
 	}
@@ -1434,9 +1422,7 @@ func TestApplyJobUpdate_closedDoc(t *testing.T) {
 	)
 
 	// Shadow must be gone after the transient open+close.
-	es.mu.RLock()
-	_, stillOpen := es.shadows[uuid]
-	es.mu.RUnlock()
+	stillOpen := es.sessionFor(uuid) != nil
 	if stillOpen {
 		t.Error("expected no shadow to remain after transient applyJobUpdate on closed doc")
 	}

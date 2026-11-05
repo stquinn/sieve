@@ -285,12 +285,16 @@ type LoadFrame struct {
 	OpID string `json:"opId,omitempty" doc:"echoed on the load-content reply"`
 }
 
-// DocumentContent is a document as the editor mounts it: the buffer, the mode it
-// was last in, and — in WYSIWYG — the block list it renders from.
+// DocumentContent is a container as the editor mounts it: for a document the
+// buffer, the mode it was last in, and — in WYSIWYG — the block list it renders
+// from; for a block container its one block.
 type DocumentContent struct {
 	Body string `json:"body" doc:"raw markdown, frontmatter already stripped"`
 	Mode string `json:"mode" doc:"wysiwyg | markdown — the mode this document was last in"`
 	UUID string `json:"uuid" doc:"empty when nothing was found, which the client treats as an empty document"`
+	// Kind is what the host mounts the content with: a block container is drawn
+	// from its one block and edited by nobody.
+	Kind string `json:"kind,omitempty" doc:"the container's own noun: note | buffer | prompt | a block kind; absent when nothing was found"`
 	// Scroll is a per-user VIEW property, not document metadata, so it rides the
 	// session's tab list. Zero means park at top — the same answer for a tab never
 	// scrolled and a tab never opened, which need no distinction.

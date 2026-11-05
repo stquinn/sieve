@@ -31,29 +31,26 @@ func NewAssetService(st store.Store, rootPath string) *AssetService {
 	return &AssetService{st: st, rootPath: rootPath}
 }
 
-// ServeAssetData returns the raw bytes of the asset identified by (docUUID,
-// filename). Bypasses the Document layer entirely so concurrent asset requests
-// for the same UUID do not race on shared in-memory state.
+// ServeAssetData returns the raw bytes of the asset filename owned by ownerUUID,
+// wherever its owner lives. Bypasses the owner's own service so concurrent asset
+// requests for the same UUID do not race on shared in-memory state.
 //
-// On a cache miss it forces a fresh document load (which re-scans the doc
-// directory) before retrying. This handles the web-clip case where image files
-// are written to disk after the document was last loaded into cache.
-func (as *AssetService) ServeAssetData(docUUID, filename string) ([]byte, error) {
-	cats := []store.Category{domain.WorkingCopy, domain.LibraryCategory}
-	for _, cat := range cats {
-		if a, err := as.st.LoadAsset(cat, docUUID, filename); err == nil {
+// On a miss it reloads the owner, which re-scans its directory, before retrying:
+// an asset can be written after the owner was last read.
+func (as *AssetService) ServeAssetData(ownerUUID, filename string) ([]byte, error) {
+	owner, err := as.st.LoadByUUID(ownerUUID)
+	if err != nil {
+		return nil, fmt.Errorf("asset not found: %s/%s: %w", ownerUUID, filename, err)
+	}
+	if a, err := as.st.LoadAsset(owner.Category(), ownerUUID, filename); err == nil {
+		return a.Body(), nil
+	}
+	if _, err := as.st.Load(owner.Category(), ownerUUID); err == nil {
+		if a, err := as.st.LoadAsset(owner.Category(), ownerUUID, filename); err == nil {
 			return a.Body(), nil
 		}
 	}
-	// Asset not in cached owns — force a fresh load to re-scan the doc directory.
-	for _, cat := range cats {
-		if _, err := as.st.Load(cat, docUUID); err == nil {
-			if a, err2 := as.st.LoadAsset(cat, docUUID, filename); err2 == nil {
-				return a.Body(), nil
-			}
-		}
-	}
-	return nil, fmt.Errorf("asset not found: %s/%s", docUUID, filename)
+	return nil, fmt.Errorf("asset not found: %s/%s", ownerUUID, filename)
 }
 
 // Delete removes the asset filename owned by document docUUID, irreversibly.

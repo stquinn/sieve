@@ -8,10 +8,10 @@ import (
 	"sieve/sieve/protocol"
 )
 
-// documentContent assembles a document as the editor mounts it. Two transports
-// ask for the same thing — the document wire's load frame for a note, HTTP for a
-// prompt pseudo-document, which opens no channel — so the assembly lives on one
-// type rather than once per handler.
+// documentContent assembles a container as the editor mounts it. Two transports
+// ask for the same thing — the document wire's load frame for a note or a block
+// container, HTTP for a prompt pseudo-document, which opens no channel — so the
+// assembly lives on one type rather than once per handler.
 type documentContent struct {
 	sp *sieve.ServiceProvider
 }
@@ -19,7 +19,8 @@ type documentContent struct {
 // read returns the content for uuid, or false when nothing is stored under it.
 // A prompt id (prompt:{name}) resolves to its raw text in markdown mode; a note
 // resolves THROUGH the shadow, which mints prose handles, so the editor and the
-// shadow share block identity from the first render.
+// shadow share block identity from the first render; a block container resolves
+// to its one block, through the same open session its channel reads.
 func (c documentContent) read(uuid string) (protocol.DocumentContent, bool) {
 	tab := c.tab(uuid)
 
@@ -28,12 +29,12 @@ func (c documentContent) read(uuid string) (protocol.DocumentContent, bool) {
 		if err != nil {
 			return protocol.DocumentContent{}, false
 		}
-		return protocol.DocumentContent{Body: body, Mode: "markdown", UUID: uuid, Scroll: tab.Scroll}, true
+		return protocol.DocumentContent{Body: body, Mode: "markdown", UUID: uuid, Kind: domain.TabKindPrompt, Scroll: tab.Scroll}, true
 	}
 
 	doc, err := c.sp.Documents.LoadByUUID(uuid)
 	if err != nil {
-		return protocol.DocumentContent{}, false
+		return c.readContainer(uuid, tab)
 	}
 	mode := doc.Meta().All()["mode"]
 	if mode == "" {
@@ -43,6 +44,7 @@ func (c documentContent) read(uuid string) (protocol.DocumentContent, bool) {
 		Body:       string(doc.Body()),
 		Mode:       mode,
 		UUID:       doc.UUID(),
+		Kind:       string(doc.Kind()),
 		Scroll:     tab.Scroll,
 		Version:    doc.Meta().Version(),
 		Presenting: tab.Presenting,
@@ -58,6 +60,30 @@ func (c documentContent) read(uuid string) (protocol.DocumentContent, bool) {
 		}
 	}
 	return content, true
+}
+
+// readContainer returns block container uuid's content, or false when uuid names
+// no block container.
+func (c documentContent) readContainer(uuid string, tab domain.Tab) (protocol.DocumentContent, bool) {
+	if c.sp.Containers == nil {
+		return protocol.DocumentContent{}, false
+	}
+	container, err := c.sp.Containers.Load(uuid)
+	if err != nil {
+		return protocol.DocumentContent{}, false
+	}
+	if err := c.sp.Editor.Open(uuid); err != nil {
+		return protocol.DocumentContent{}, false
+	}
+	blocks, _ := c.sp.Editor.FrontendBlocks(uuid)
+	return protocol.DocumentContent{
+		Mode:    "wysiwyg",
+		UUID:    uuid,
+		Kind:    container.Kind(),
+		Scroll:  tab.Scroll,
+		Version: container.Version(),
+		Blocks:  blocks,
+	}, true
 }
 
 // tab is uuid's session tab, or the zero Tab when there is none — a tab never

@@ -46,6 +46,9 @@ func (c *BlockContainer) Merge(attrs map[string]interface{}) {
 	c.block.Attrs["id"] = c.UUID()
 }
 
+// Version is the store's version of the container's last save.
+func (c *BlockContainer) Version() int { return metaInt(c.storable.Meta(), "version") }
+
 // Versions lists the saved snapshots, newest first.
 func (c *BlockContainer) Versions() []store.VersionRef { return c.storable.Versions() }
 

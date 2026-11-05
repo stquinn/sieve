@@ -23,11 +23,6 @@ type EditorHandler struct {
 	EmitPromptsChanged func()
 }
 
-type editorShellData struct {
-	UUID string
-	Mode string
-}
-
 // RegisterPaths mounts the editor shell fragment and the CHANNEL-LESS document
 // pair. Loading, saving, exporting and pasting a note all ride its document
 // channel; a prompt pseudo-document opens none, so its read and its write stay
@@ -46,9 +41,22 @@ func (h *EditorHandler) handleEditorShell(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.Tmpl.ExecuteTemplate(w, "editor.html", editorShellData{UUID: uuid, Mode: mode}); err != nil {
+	if err := h.Tmpl.ExecuteTemplate(w, "editor.html", editorSwap{UUID: uuid, Mode: mode, Kind: h.tabKind(uuid)}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// tabKind is the kind of uuid's session tab, or empty when no tab shows it.
+func (h *EditorHandler) tabKind(uuid string) string {
+	if h.ServiceProvider.State == nil {
+		return ""
+	}
+	for _, t := range h.ServiceProvider.State.LoadSession().Tabs {
+		if t.ID == uuid {
+			return t.ContainerKind()
+		}
+	}
+	return ""
 }
 
 // handleDocumentLoad serves a PROMPT pseudo-document's content: it opens no

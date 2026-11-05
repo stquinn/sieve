@@ -1,6 +1,9 @@
 package domain
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func tabsSession(active int, ids ...string) Session {
 	ts := make([]Tab, len(ids))
@@ -74,14 +77,21 @@ func TestCloseTabs_closeAllEmptiesAndFilesDocs(t *testing.T) {
 	}
 }
 
-// Prompt tabs are removed but never filed (they are not documents).
-func TestCloseTabs_promptTabsRemovedButNotFiled(t *testing.T) {
-	s := tabsSession(0, "prompt:file", "A")
-	filed := s.CloseTabs([]string{"prompt:file", "A"})
+// Only document tabs are filed: a prompt or a block container is removed and
+// handed back to nobody, whether its tab names its kind or predates kinds.
+func TestCloseTabs_onlyDocumentTabsAreFiled(t *testing.T) {
+	s := Session{Tabs: []Tab{
+		{ID: "prompt:file"},
+		{ID: "A"},
+		{ID: "C", Kind: "code"},
+		{ID: "N", Kind: string(KindNote)},
+		{ID: "P", Kind: TabKindPrompt},
+	}}
+	filed := s.CloseTabs([]string{"prompt:file", "A", "C", "N", "P"})
 	if len(s.Tabs) != 0 {
 		t.Fatalf("tabs = %d, want 0", len(s.Tabs))
 	}
-	if len(filed) != 1 || filed[0] != "A" {
-		t.Fatalf("filed = %v, want [A] (prompt excluded)", filed)
+	if strings.Join(filed, ",") != "A,N" {
+		t.Fatalf("filed = %v, want [A N]", filed)
 	}
 }

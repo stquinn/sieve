@@ -367,6 +367,7 @@ LoadContentFrame answers a load.
 | `body` | `string` | yes | raw markdown, frontmatter already stripped |
 | `mode` | `string` | yes | wysiwyg \| markdown — the mode this document was last in |
 | `uuid` | `string` | yes | empty when nothing was found, which the client treats as an empty document |
+| `kind` | `string` | no | the container's own noun: note \| buffer \| prompt \| a block kind; absent when nothing was found |
 | `scroll` | `int` | yes | the tab's saved scroll offset; 0 parks at the top |
 | `version` | `int` | yes | the version of the content served here; 0 when the container keeps no version history |
 | `presenting` | `bool` | no | the tab was last left in Presentation Mode; absent when it was not |
@@ -679,13 +680,14 @@ DocumentLoadRequest reads a channel-less pseudo-document's content.
 
 **Response** — `protocol.DocumentContent`
 
-DocumentContent is a document as the editor mounts it: the buffer, the mode it was last in, and — in WYSIWYG — the block list it renders from.
+DocumentContent is a container as the editor mounts it: for a document the buffer, the mode it was last in, and — in WYSIWYG — the block list it renders from; for a block container its one block.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
 | `body` | `string` | yes | raw markdown, frontmatter already stripped |
 | `mode` | `string` | yes | wysiwyg \| markdown — the mode this document was last in |
 | `uuid` | `string` | yes | empty when nothing was found, which the client treats as an empty document |
+| `kind` | `string` | no | the container's own noun: note \| buffer \| prompt \| a block kind; absent when nothing was found |
 | `scroll` | `int` | yes | the tab's saved scroll offset; 0 parks at the top |
 | `version` | `int` | yes | the version of the content served here; 0 when the container keeps no version history |
 | `presenting` | `bool` | no | the tab was last left in Presentation Mode; absent when it was not |

@@ -165,6 +165,17 @@ func outboundWireCases() []wireCase {
 			golden:  `{"type":"load-content","body":"raw","mode":"markdown","uuid":"prompt:default","scroll":0,"version":0}`,
 		},
 		{
+			// A block container is served as its one block, and says what kind of
+			// container it is so the host mounts it with that kind's lens.
+			name:    "load-content of a block container",
+			channel: ChannelDocument,
+			frame: NewLoadContentFrame(DocumentContent{
+				Mode: "wysiwyg", UUID: "c-1", Kind: "code", Version: 3,
+				Blocks: []block.FrontendBlock{{ID: "c-1", Kind: "code", Attrs: map[string]interface{}{"source": "x"}}},
+			}),
+			golden: `{"type":"load-content","body":"","mode":"wysiwyg","uuid":"c-1","kind":"code","scroll":0,"version":3,"blocks":[{"id":"c-1","kind":"code","attrs":{"source":"x"}}]}`,
+		},
+		{
 			name:    "load-content of a tab left presenting",
 			channel: ChannelDocument,
 			frame:   NewLoadContentFrame(DocumentContent{Body: "---", Mode: "wysiwyg", UUID: "doc-1", Presenting: true}),

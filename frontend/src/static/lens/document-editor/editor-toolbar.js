@@ -102,7 +102,7 @@ export class EditorToolbar {
     if (appRoot) appRoot.style.setProperty('--table-toolbar-h', inTable ? '32px' : '0px')
   }
 
-  /** @param {import('./surfaces/abstract-surface.js').SurfaceEventMsg} ev */
+  /** @param {import('../abstract-surface.js').SurfaceEventMsg} ev */
   #onEditorEvent(ev) {
     const t = ev && ev.type
     if (t === 'selection-changed' || t === 'transaction') {

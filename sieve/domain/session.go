@@ -5,9 +5,16 @@ import (
 	"strings"
 )
 
+// TabKindPrompt is the kind of a tab showing a prompt.
+const TabKindPrompt = "prompt"
+
 // Tab represents one open tab in a session.
 type Tab struct {
-	ID          string `json:"id"` // UUID (or "prompt:name" for prompts)
+	ID string `json:"id"` // UUID (or "prompt:name" for prompts)
+	// Kind is the shown container's own noun: a DocumentKind, a block kind, or
+	// TabKindPrompt. A session written before tabs carried one leaves it empty, so
+	// read it through ContainerKind.
+	Kind        string `json:"kind,omitempty"`
 	Scroll      int    `json:"scroll"`
 	Active      bool   `json:"active"`
 	Mode        string `json:"mode"`                  // "wysiwyg" or "markdown"
@@ -15,6 +22,29 @@ type Tab struct {
 	Status      string `json:"status,omitempty"`      // "unfiled" or "filed"
 	UserIntent  string `json:"userIntent,omitempty"`  // "keep" or "trash"
 	Presenting  bool   `json:"presenting,omitempty"`  // left in Presentation Mode
+}
+
+// ContainerKind is the kind of container the tab shows. A tab saved without a kind
+// is a prompt tab when its id is a prompt id, and otherwise a document: a filed
+// one is a note, anything else a buffer.
+func (t Tab) ContainerKind() string {
+	switch {
+	case t.Kind != "":
+		return t.Kind
+	case strings.HasPrefix(t.ID, "prompt:"):
+		return TabKindPrompt
+	case t.Status == KindNote.FiledStatus():
+		return string(KindNote)
+	default:
+		return string(KindBuffer)
+	}
+}
+
+// IsDocument reports whether the tab shows a document, which is what a close
+// files and a status refresh re-reads.
+func (t Tab) IsDocument() bool {
+	kind := t.ContainerKind()
+	return kind == string(KindNote) || kind == string(KindBuffer)
 }
 
 // Window holds the saved window position and size.
@@ -104,7 +134,7 @@ func (s *Session) CloseTabs(ids []string) []string {
 			if i < oldIdx {
 				removedBefore++
 			}
-			if !strings.HasPrefix(t.ID, "prompt:") {
+			if t.IsDocument() {
 				filed = append(filed, t.ID)
 			}
 			continue

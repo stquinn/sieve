@@ -128,8 +128,10 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	// on every other mount.
 	activeUUID := ""
 	activeMode := "wysiwyg"
+	activeKind := ""
 	if session.ActiveIdx >= 0 && session.ActiveIdx < len(session.Tabs) {
 		activeUUID = session.Tabs[session.ActiveIdx].ID
+		activeKind = session.Tabs[session.ActiveIdx].ContainerKind()
 		if m := session.Tabs[session.ActiveIdx].Mode; m != "" {
 			activeMode = m
 		}
@@ -152,6 +154,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		AskPanelHeight   int
 		ActiveUUID       string
 		ActiveMode       string
+		ActiveKind       string
 		AutosaveDebounce int
 		CLITimeoutLong   int
 		// MaxAttachmentBytes is the user's attachment ceiling (#84). The client
@@ -178,6 +181,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		AskPanelHeight:     session.AskPanelHeight,
 		ActiveUUID:         activeUUID,
 		ActiveMode:         activeMode,
+		ActiveKind:         activeKind,
 		AutosaveDebounce:   info.AutosaveDebounce,
 		CLITimeoutLong:     info.CLITimeoutLong,
 		MaxAttachmentBytes: info.MaxAttachmentBytes,

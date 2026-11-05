@@ -44,7 +44,7 @@ vi.mock('../src/static/lens/document-editor/surfaces/prose-block.js', () => ({ B
 import { ProseLink } from '../src/static/lens/document-editor/surfaces/prose-link.js'
 import { LINK_OPTIONS } from '../src/static/lens/document-editor/surfaces/wysiwyg-surface.js'
 import { NoteEditor } from '../src/static/lens/document-editor/note-editor.js'
-import { AbstractSurface } from '../src/static/lens/document-editor/surfaces/abstract-surface.js'
+import { AbstractSurface } from '../src/static/lens/abstract-surface.js'
 import { LinkEditDialog } from '../src/static/ui/link-edit-dialog.js'
 
 // ── Harness ──────────────────────────────────────────────────────────────────

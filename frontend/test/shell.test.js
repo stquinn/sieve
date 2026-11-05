@@ -51,7 +51,12 @@ import { ProseMirrorEditor } from '../src/static/lens/document-editor/prosemirro
 import { NoteEditor } from '../src/static/lens/document-editor/note-editor.js'
 import { ComposerEditor } from '../src/static/lens/document-editor/composer/composer-editor.js'
 import { PromptEditor } from '../src/static/lens/prompt/prompt-editor.js'
-import { AbstractSurface } from '../src/static/lens/document-editor/surfaces/abstract-surface.js'
+import { BlockLens } from '../src/static/lens/block/block-lens.js'
+import { LensTable } from '../src/static/shell/lens-table.js'
+import { ProviderAdapter } from '../src/static/container/provider-adapter.js'
+import { WholeContentAdapter } from '../src/static/container/whole-content-adapter.js'
+import { BlockProviderAdapter } from '../src/static/container/block-provider-adapter.js'
+import { AbstractSurface } from '../src/static/lens/abstract-surface.js'
 import { EditorMode } from '../src/static/lens/document-editor/editor-mode.js'
 import { blockInsertPos } from '../src/static/lens/document-editor/surfaces/ai-target.js'
 import { blockIndexForInsert, emptyParagraphAnchor } from '../src/static/lens/document-editor/surfaces/block-position.js'
@@ -71,7 +76,7 @@ import { serviceRig, FakeSocket } from './helpers/service-rig.js'
  */
 function hostMount(uuid = 'u', kind = 'note') {
   const { documentService } = serviceRig({ uuid: null })
-  return new MountBinding(uuid, documentService, new ContainerModelFeed(documentService), kind)
+  return new MountBinding(uuid, documentService, new ContainerModelFeed(documentService), kind, SieveWorkspace.lensTable.lookup(kind))
 }
 
 /**
@@ -942,25 +947,30 @@ describe('AbstractEditor.presentMode — the host names a mode, the lens fetches
   })
 })
 
-describe('SieveTab.createEditor factory (P2.A)', () => {
-  it('creates a NoteEditor for a note uuid', () => {
-    const tab = new SieveTab('note-1')
-    expect(tab.createEditor('note-1', { provider: fakeProvider(), toolbar: null })).toBeInstanceOf(NoteEditor)
+describe('the workspace LensTable — a kind decides the lens, never a uuid', () => {
+  it.each([
+    ['note', NoteEditor, BlockProviderAdapter, true],
+    ['buffer', NoteEditor, BlockProviderAdapter, true],
+    ['prompt', PromptEditor, WholeContentAdapter, false],
+    ['code', BlockLens, ProviderAdapter, true],
+    ['a-kind-nothing-draws', BlockLens, ProviderAdapter, true],
+    ['', NoteEditor, BlockProviderAdapter, true],
+  ])('%j mounts its lens over its provider', (kind, lens, provider, channel) => {
+    const mounting = SieveWorkspace.lensTable.lookup(kind)
+    expect(mounting.lens).toBe(lens)
+    expect(mounting.provider).toBe(provider)
+    expect(mounting.channel).toBe(channel)
+    expect(Object.isFrozen(mounting)).toBe(true)
   })
 
-  it('creates a PromptEditor for a prompt: uuid', () => {
-    const tab = new SieveTab('prompt:daily')
-    expect(tab.createEditor('prompt:daily', { provider: wholeContentProvider() })).toBeInstanceOf(PromptEditor)
+  it('refuses a table that cannot mount a document or has no fallback', () => {
+    const fallback = { lens: BlockLens, provider: ProviderAdapter, channel: true }
+    expect(() => new LensTable({}, fallback)).toThrow('must say how a note is mounted')
+    expect(() => new LensTable({ note: fallback }, /** @type {any} */ (null))).toThrow('fallback')
   })
 
-  it('constructing a lens opens NOTHING — the container was mounted before it existed', () => {
-    // The lens holds one object, and that object is not a socket. Which container
-    // it edits, and when that container's channel opens, are decided by the host
-    // (activateDocument → MountBinding) before this constructor runs.
-    FakeSocket.reset()
-    new SieveTab('note-2').createEditor('note-2', { provider: fakeProvider(), toolbar: null })
-    new SieveTab('prompt:x').createEditor('prompt:x', { provider: wholeContentProvider() })
-    expect(FakeSocket.instances).toEqual([])
+  it('a kind word the table holds only through Object.prototype is still the fallback', () => {
+    expect(SieveWorkspace.lensTable.lookup('constructor').lens).toBe(BlockLens)
   })
 })
 
@@ -1415,11 +1425,29 @@ describe('SieveWorkspace.activateDocument editor lifecycle (P2.A fix wave)', () 
     const log = []
     const w = loggingWorkspace(log)
     w.activateDocument('doc-a', edOpts)
-    const promptTab = w.activateDocument('prompt:p', edOpts)
+    const promptTab = w.activateDocument('p', edOpts, 'prompt')
 
     expect(promptTab.editor).toBeInstanceOf(PromptEditor)
+    expect(promptTab.kind).toBe('prompt')
     expect(log.filter((e) => e.startsWith('close:')).length).toBe(1) // note's socket closed on switch
     expect(FakeSocket.instances.length).toBe(1) // no socket created for the prompt
+  })
+
+  it('the lens follows the stated kind: a prompt-shaped id stated a note is a note', () => {
+    const w = loggingWorkspace([])
+    const tab = w.activateDocument('prompt:p', edOpts, 'note')
+    expect(tab.editor).toBeInstanceOf(NoteEditor)
+    expect(FakeSocket.instances.length).toBe(1)
+  })
+
+  it('a block container mounts the fallback lens, read-only, on its own channel', () => {
+    const log = []
+    const w = loggingWorkspace(log)
+    const tab = w.activateDocument('blk-1', edOpts, 'code')
+    expect(tab.editor).toBeInstanceOf(BlockLens)
+    expect(tab.mount.provider.constructor).toBe(ProviderAdapter)
+    expect(tab.editor.getCapabilities()).toEqual({ markdown: false, mentions: false, commands: false, blocks: false })
+    expect(log).toEqual(['open:ws://test/api/ws/document/blk-1'])
   })
 })
 
@@ -1495,8 +1523,26 @@ describe('SieveWorkspace editor lifecycle (P4.F — moved from editor.js)', () =
     await settle()
     expect(document.body.classList.contains('presenting')).toBe(true)
     global.fetch = vi.fn(() => new Promise(() => {}))
-    w.initEditor(el, 'prompt:b')
+    w.initEditor(el, 'prompt:b', undefined, 'prompt')
     expect(document.body.classList.contains('presenting')).toBe(false)
+  })
+
+  it.each([
+    ['a prompt, which has no channel to hear its changes on, reloads', 'prompt', 1],
+    ['a block container, which hears them on its channel, does not', 'code', 0],
+  ])('on prompts:changed %s', (_name, kind, reloads) => {
+    const w = /** @type {SieveWorkspace} */ (window.sieveWorkspace)
+    vi.stubGlobal('WebSocket', FakeSocket)
+    global.fetch = vi.fn(() => new Promise(() => {}))
+    const el = document.createElement('div')
+    w.initEditor(el, 'reload-' + kind, undefined, kind)
+    const init = vi.spyOn(w, 'initEditor')
+    document.dispatchEvent(new CustomEvent('prompts:changed'))
+    expect(init).toHaveBeenCalledTimes(reloads)
+    if (reloads) expect(init).toHaveBeenCalledWith(el, 'reload-' + kind, expect.anything(), kind)
+    init.mockRestore()
+    w.initEditor(null, '')
+    vi.unstubAllGlobals()
   })
 
   it('activeEditor mirrors activeTab.editor and is null-safe', () => {
@@ -1569,8 +1615,8 @@ describe('SieveWorkspace editor lifecycle (P4.F — moved from editor.js)', () =
     }
     const mount = document.createElement('div')
 
-    w.initEditor(mount, 'prompt:a', 'markdown') // load A pending, currentUuid='prompt:a'
-    w.initEditor(mount, 'prompt:b', 'markdown') // supersedes A, currentUuid='prompt:b'
+    w.initEditor(mount, 'prompt:a', 'markdown', 'prompt') // load A pending, currentUuid='prompt:a'
+    w.initEditor(mount, 'prompt:b', 'markdown', 'prompt') // supersedes A, currentUuid='prompt:b'
     const edB = w.activeEditor
     const present = vi.spyOn(edB, 'presentSurface').mockImplementation(() => {})
 
@@ -1589,10 +1635,10 @@ describe('SieveWorkspace editor lifecycle (P4.F — moved from editor.js)', () =
     const onEventSpy = vi.spyOn(PromptEditor.prototype, 'onEvent')
     const mount = document.createElement('div')
 
-    w.initEditor(mount, 'prompt:a', 'markdown')
+    w.initEditor(mount, 'prompt:a', 'markdown', 'prompt')
     const afterFirst = onEventSpy.mock.calls.length // Tab.attachEditor + #syncShell subscribed
     expect(afterFirst).toBeGreaterThan(0)
-    w.initEditor(mount, 'prompt:a', 'markdown') // same uuid: editor + subscription KEPT
+    w.initEditor(mount, 'prompt:a', 'markdown', 'prompt') // same uuid: editor + subscription KEPT
     expect(onEventSpy.mock.calls.length).toBe(afterFirst) // no new subscription — mode-changed won't double-fire
   })
 })

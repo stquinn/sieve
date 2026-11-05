@@ -10,7 +10,7 @@
 // a reorder — is addToHistory:false. Prose the editor already holds is skipped.
 // A whole repaint is only ever used for a LOAD, never for a change.
 
-import { AbstractSurface, SurfaceEvent } from './abstract-surface.js'
+import { AbstractSurface, SurfaceEvent } from '../../abstract-surface.js'
 import { EditorMode } from '../editor-mode.js'
 import { ToolbarButton, ButtonGroup } from '../toolbar-button.js'
 import { T } from './tiptap-vendor.js'

@@ -1,6 +1,6 @@
 // @ts-check
-// A Surface is one PRIVATE input surface of an editor: the TipTap WYSIWYG island
-// or the raw-markdown textarea. The editor swaps surfaces in place via setMode;
+// A Surface is one PRIVATE input surface of an editor: the TipTap WYSIWYG island,
+// the raw-markdown textarea, or a lens's own drawing of its container. The editor swaps surfaces in place via setMode;
 // the surface owns its own DOM subtree, its debounced doc-sync, and how a
 // container change lands in its representation. The editor never reaches into a
 // surface's DOM — it drives only this contract.
@@ -130,7 +130,7 @@ export class AbstractSurface {
 
   /** Places clipboard-shaped entries through this surface's paste path at the
    *  caret. The base has none, so nothing is made of them.
-   *  @param {import('../../../contract/container-provider.js').ContentEntry[]} entries
+   *  @param {import('../contract/container-provider.js').ContentEntry[]} entries
    *  @returns {Promise<'block'|'content'|'none'>} */
   pasteEntries(entries) { return Promise.resolve('none') }
 
@@ -173,7 +173,7 @@ export class AbstractSurface {
    *  means — and a surface that draws one producer's findings ignores the rest.
    *  @param {string} feature which producer found them
    *  @param {string} blockId
-   *  @param {ReadonlyArray<import('../../../contract/container-update-listener.js').SieveTextMark>} marks */
+   *  @param {ReadonlyArray<import('../contract/container-update-listener.js').SieveTextMark>} marks */
   setTextMarks(feature, blockId, marks) {}
 
   /** The title of the `@Title` token at `pos`, or null where there is none. A
@@ -205,7 +205,7 @@ export class AbstractSurface {
    * this section on a mode flip. A surface with no rich commands returns [], so
    * its formatting buttons are ABSENT rather than dimmed. Each button's
    * onClick/active closure runs on the surface's OWN live view.
-   * @returns {import('../toolbar-button.js').ButtonGroup[]}
+   * @returns {import('./document-editor/toolbar-button.js').ButtonGroup[]}
    */
   toolbarContents() { return [] }
 
@@ -221,7 +221,7 @@ export class AbstractSurface {
    * WRITE side of feedSelection. The concrete surface turns the plain coordinate
    * back into a PM selection / block-inner focus / textarea focus. Base surfaces
    * have no live view, so the default is a no-op focus fallback.
-   * @param {import('../selection-model.js').SelectionContext} ctx
+   * @param {import('./document-editor/selection-model.js').SelectionContext} ctx
    */
   applyPosition(ctx) { /* base: nothing to focus */ }
 

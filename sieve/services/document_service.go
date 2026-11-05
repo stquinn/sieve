@@ -288,24 +288,25 @@ func (ds *DocumentService) IncrementFocusCount(n domain.Document) (domain.Docume
 	return ds.SaveMeta(n)
 }
 
-// RefreshTabStatus re-derives each open tab's presentation fields (Status,
-// DisplayName, UserIntent) from the live document, so a tab whose buffer was
+// RefreshTabStatus re-derives each open document tab's presentation fields
+// (Kind, Status, DisplayName, UserIntent) from the live document, so a tab whose buffer was
 // filed (buffer→note, which happens asynchronously on close) reflects the new
 // state on the very next render. The stored session values are only a startup
-// snapshot; the backend document is the source of truth. Prompt tabs and tabs
-// whose document no longer loads keep their stored values untouched. The input
+// snapshot; the backend document is the source of truth. A tab that shows no
+// document, and one whose document no longer loads, keeps its stored values. The input
 // slice is not mutated — a refreshed copy is returned.
 func (ds *DocumentService) RefreshTabStatus(tabs []domain.Tab) []domain.Tab {
 	out := make([]domain.Tab, len(tabs))
 	copy(out, tabs)
 	for i := range out {
-		if strings.HasPrefix(out[i].ID, "prompt:") {
-			continue // prompt tabs are not documents
+		if !out[i].IsDocument() {
+			continue
 		}
 		doc, err := ds.LoadByUUID(out[i].ID)
 		if err != nil {
 			continue // unknown/deleted — keep the stored snapshot
 		}
+		out[i].Kind = string(doc.Kind())
 		out[i].Status = doc.Kind().FiledStatus()
 		if dn := doc.Meta().DisplayName(); dn != "" {
 			out[i].DisplayName = dn

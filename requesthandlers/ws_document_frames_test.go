@@ -566,3 +566,94 @@ func TestWS_SetPresenting_RecordsOnTheTabAndLoadHandsItBack(t *testing.T) {
 	}
 	closeAndSettle(c)
 }
+
+// newContainerOnWire creates a code block container in the harness's store. The
+// code kind registers for the test: the harness wires only prose.
+func newContainerOnWire(t *testing.T, sp *sieve.ServiceProvider) *domain.BlockContainer {
+	t.Helper()
+	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
+	c, err := sp.Containers.Create("code", map[string]interface{}{"title": "a snippet", "source": "x := 1"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	return c
+}
+
+// A block container's channel loads its one block with its kind, refuses every
+// frame that would edit it — an ack or an error frame, never silence — runs no
+// text inspection, and writes nothing when it closes.
+func TestWS_BlockContainer_LoadsItsBlockAndRefusesEdits(t *testing.T) {
+	srv, sp, _, _ := newWsTestServer(t)
+	c := newContainerOnWire(t, sp)
+	uuid := c.UUID()
+
+	conn := dialWS(t, srv, uuid)
+	send(t, conn, `{"type":"load","opId":"op-load"}`)
+	reply := readUntil(t, conn, protocol.TypeLoadContent, 2*time.Second)
+	blocks, _ := reply["blocks"].([]interface{})
+	if reply["kind"] != "code" || reply["uuid"] != uuid || len(blocks) != 1 || reply["version"] != float64(c.Version()) {
+		t.Fatalf("load = %v, want the container's one code block at its version", reply)
+	}
+	if first, _ := blocks[0].(map[string]interface{}); first["id"] != uuid {
+		t.Errorf("block id = %v, want the container's uuid", first["id"])
+	}
+
+	// An ack names its refusal in "error"; a frame with no ack is answered by an
+	// error frame naming the verb, so a refusal left over from an earlier case
+	// cannot answer for a later one.
+	for _, tc := range []struct{ name, frame, answer, field, says string }{
+		{"block-op", `{"type":"block-op","opId":"o1","op":{"type":"update-block","blockId":"` + uuid + `","kind":"code","attrs":{"source":"y"}}}`, protocol.TypeBlockOpAck, "error", "update-block"},
+		{"text-replace", `{"type":"text-replace","opId":"o2","blockId":"` + uuid + `","quote":"x","grain":"literal"}`, protocol.TypeTextReplaceAck, "error", "text-replace"},
+		{"extract", `{"type":"extract","opId":"o3","blockId":"` + uuid + `","targetKind":"code","entries":[{"mimeType":"text/plain","content":"y"}]}`, protocol.TypeExtractAck, "error", "extract"},
+		{"enter-markdown", `{"type":"enter-markdown","opId":"o4"}`, protocol.TypeError, "message", "enter-markdown"},
+		{"export", `{"type":"export","opId":"o5"}`, protocol.TypeError, "message", "export"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			send(t, conn, tc.frame)
+			for {
+				answer := readUntil(t, conn, tc.answer, 2*time.Second)
+				msg, _ := answer[tc.field].(string)
+				if !strings.Contains(msg, tc.says) {
+					continue
+				}
+				if !strings.Contains(msg, "block container") {
+					t.Errorf("%s = %v, want the block container refusal", tc.answer, answer)
+				}
+				return
+			}
+		})
+	}
+	send(t, conn, `{"type":"paste","opId":"o6","kind":"smart","entries":[{"mimeType":"text/plain","content":"y"}]}`)
+	if ack := readUntil(t, conn, protocol.TypePasteAck, 2*time.Second); ack["outcome"] != "none" {
+		t.Errorf("paste-ack = %v, want nothing pasted", ack)
+	}
+	expectNoMessage(t, conn, protocol.TypeTextMarks, 300*time.Millisecond)
+	closeAndSettle(conn)
+
+	stored, err := sp.Containers.Load(uuid)
+	if err != nil || stored.Version() != c.Version() || stored.Block().Attrs["source"] != "x := 1" {
+		t.Errorf("the container changed: %+v, %v", stored, err)
+	}
+}
+
+// A block container saved by its own service while a tab has it open reaches
+// that tab as the attrs frame a document block's update takes.
+func TestWS_BlockContainer_ASaveReachesTheOpenSocket(t *testing.T) {
+	srv, sp, _, _ := newWsTestServer(t)
+	c := newContainerOnWire(t, sp)
+
+	conn := dialWS(t, srv, c.UUID())
+	send(t, conn, `{"type":"load","opId":"op-load"}`)
+	readUntil(t, conn, protocol.TypeLoadContent, 2*time.Second)
+
+	c.Merge(map[string]interface{}{"source": "y := 2"})
+	if _, err := sp.Containers.Save(c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	frame := readUntil(t, conn, protocol.TypeBlockAttrsUpdated, 2*time.Second)
+	attrs, _ := frame["attrs"].(map[string]interface{})
+	if frame["id"] != c.UUID() || attrs["source"] != "y := 2" {
+		t.Errorf("attrs frame = %v, want the saved source on the container's block", frame)
+	}
+	closeAndSettle(conn)
+}

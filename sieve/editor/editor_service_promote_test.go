@@ -60,7 +60,7 @@ func TestEditorService_TransformToProse(t *testing.T) {
 
 	// Replicate the retired PromoteBlock body: snapshot the block, build the
 	// sieve/<kind> content entry, and ask CreateBlockFromEntries to transform it.
-	src, found := es.shadows[uuid].SnapshotBlock("tm-0001")
+	src, found := es.shadowFor(uuid).SnapshotBlock("tm-0001")
 	if !found {
 		t.Fatalf("block tm-0001 not found in shadow")
 	}

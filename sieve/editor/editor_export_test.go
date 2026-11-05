@@ -157,7 +157,7 @@ func TestEditorService_Export_ConfluenceUATCorpus(t *testing.T) {
 	defer es.Close(doc.UUID())
 
 	var kinds []string
-	for _, b := range es.shadows[doc.UUID()].SnapshotBlocks() {
+	for _, b := range es.shadowFor(doc.UUID()).SnapshotBlocks() {
 		kinds = append(kinds, b.Kind)
 	}
 	if want := "prose code log diagram diagram prose"; strings.Join(kinds, " ") != want {
