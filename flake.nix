@@ -99,7 +99,7 @@
           src = ./.;
 
           proxyVendor = true;
-          vendorHash = "sha256-5DUGCJC3cDV+zHzeOEsXZx4nlA2KOTSdtZpo5MTjHTw=";
+          vendorHash = "sha256-JFIHFRyoJgO35Lix1XiyIMt0tq1frpWJ4yqS2CvuY2I=";
 
           buildFlags = [ "-tags=wails,production,webkit2_41" "-trimpath" ];
 
