@@ -104,6 +104,11 @@ func (b *WorkspaceBroadcast) NotesChanged() {
 	b.Invalidate(protocol.TopicNotes)
 }
 
+// InkChanged satisfies ink.Invalidator: what Settings → Ink shows is stale.
+func (b *WorkspaceBroadcast) InkChanged() {
+	b.Invalidate(protocol.TopicInk)
+}
+
 // ContainerDeleted tells every workspace socket that a container is gone —
 // see protocol.ContainerDeletedFrame for the reconciliation contract and the
 // CONTAINER-not-"document" naming rationale.

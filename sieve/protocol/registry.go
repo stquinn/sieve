@@ -177,6 +177,11 @@ func (r *Registry) registerEndpoints() {
 		Method: "POST", Path: "/api/tabs/close",
 		Request: reflect.TypeOf(TabsCloseRequest{}), ResponseKind: ResponseFragment,
 	})
+	r.addEndpoint(EndpointEntry{
+		Method: "GET", Path: "/api/ink/notes/{uuid}/pages/{page}/export",
+		Request: reflect.TypeOf(InkPageExportRequest{}), Response: reflect.TypeOf(InkPageExport{}),
+		ResponseKind: ResponseJSON,
+	})
 }
 
 func (r *Registry) addFrame(channel Channel, direction Direction, frameType string, payload interface{}) {
@@ -263,5 +268,5 @@ func (r *Registry) Features() []string {
 // owns the vocabulary: a client resyncing after a reconnect walks exactly this,
 // and a topic missing from it is a view that silently never refreshes.
 func (r *Registry) Topics() []Topic {
-	return []Topic{TopicNotes, TopicSession, TopicPrompts, TopicLibrary, TopicIntent}
+	return []Topic{TopicNotes, TopicSession, TopicPrompts, TopicLibrary, TopicIntent, TopicInk}
 }

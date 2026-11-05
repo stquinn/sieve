@@ -68,3 +68,59 @@ type FolderCreateRequest struct {
 type TabsCloseRequest struct {
 	IDs []string `json:"ids" doc:"the tabs to close"`
 }
+
+// InkPageExportRequest reads one page of a synced Digital Note in the export shape of
+// docs/ink-contract.md §4.2: {uuid} is the note's block container and {page} the page's index
+// among the pages present, from 0. An unknown container, a container that is not a Digital Note
+// and a page out of range are 404. The request has no body.
+type InkPageExportRequest struct{}
+
+// InkPageExport is one page of a Digital Note as the ink renderer takes it: the note's header and
+// the page's strokes in the order they were added.
+type InkPageExport struct {
+	Note    InkExportNote     `json:"note"`
+	Strokes []InkExportStroke `json:"strokes"`
+}
+
+// InkExportNote is the header of the note a page belongs to.
+type InkExportNote struct {
+	ID         string             `json:"id" doc:"the companion's note id"`
+	Created    string             `json:"created" doc:"RFC 3339 in UTC"`
+	Title      string             `json:"title"`
+	PageAspect float32            `json:"pageAspect" doc:"page width over page height"`
+	Template   *InkExportTemplate `json:"template" doc:"the note's default page template; null when it has none"`
+	Device     InkExportDevice    `json:"device"`
+}
+
+// InkExportTemplate is a page template: its id and its parameters by name.
+type InkExportTemplate struct {
+	ID     string             `json:"id"`
+	Params map[string]float64 `json:"params"`
+}
+
+// InkExportDevice is the tablet the note was written on.
+type InkExportDevice struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Model string `json:"model"`
+}
+
+// InkExportStroke is one stroke on the page.
+type InkExportStroke struct {
+	ID          string           `json:"id"`
+	Tool        string           `json:"tool"`
+	WidthClass  uint8            `json:"widthClass"`
+	StartMillis uint64           `json:"startMillis" doc:"milliseconds since the note's created"`
+	Points      []InkExportPoint `json:"points"`
+}
+
+// InkExportPoint is one sampled pen point, in page units.
+type InkExportPoint struct {
+	X        float32 `json:"x"`
+	Y        float32 `json:"y"`
+	Pressure float32 `json:"pressure" doc:"0 to 1"`
+	TMillis  uint32  `json:"tMillis" doc:"milliseconds from the stroke's first point"`
+	TiltX    int8    `json:"tiltX"`
+	TiltY    int8    `json:"tiltY"`
+	Size     float32 `json:"size" doc:"always 0 in an export"`
+}

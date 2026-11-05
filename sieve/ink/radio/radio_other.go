@@ -2,10 +2,7 @@
 
 package radio
 
-import (
-	"context"
-	"errors"
-)
+import "context"
 
 type unsupported struct{}
 
@@ -14,5 +11,5 @@ type unsupported struct{}
 func NewBluetooth() Radio { return unsupported{} }
 
 func (unsupported) Dial(context.Context) (Link, error) {
-	return nil, errors.New("Bluetooth ink is not supported on this platform")
+	return nil, ErrBluetoothUnsupported
 }

@@ -84,13 +84,16 @@ func (k DigitalNoteKind) InitAttrs(id string, overrides map[string]interface{}) 
 	return attrs
 }
 
-// Face is title, page count, source type, provenance and synced seq, for .meta.
+// Face is title, page count, the device's name, source type, provenance and synced seq, for .meta.
 func (k DigitalNoteKind) Face(b domain.SieveBlock) map[string]string {
 	note, _ := b.Attrs["note"].(map[string]interface{})
 	pages, _ := note["pages"].([]interface{})
+	device, _ := b.Attrs["note_device"].(map[string]interface{})
+	name, _ := device["name"].(string)
 	return map[string]string{
 		"note_title":      b.StringAttr("title"),
 		"note_pages":      strconv.Itoa(len(pages)),
+		"note_device":     name,
 		"note_source":     "strokes",
 		"note_source_id":  b.StringAttr("note_source_id"),
 		"note_companion":  b.StringAttr("note_companion"),

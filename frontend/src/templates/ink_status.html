@@ -1,0 +1,73 @@
+{{define "ink_status.html"}}
+<div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.5rem;">
+  <input type="checkbox" id="ink-enabled" name="ink_enabled" {{if .Enabled}}checked{{end}} hx-post="/api/ink/enabled" hx-params="ink_enabled" hx-target="#ink-status" style="width: 1rem; height: 1rem; border-radius: 0.25rem; background: var(--theme-bg); border: 1px solid var(--theme-border);">
+  <label for="ink-enabled" style="font-size: 0.875rem; color: var(--theme-text);">Sync notes from SieveInk on a Boox</label>
+</div>
+{{if .Error}}
+<p style="font-size: 0.875rem; color: var(--theme-accentRed); margin-bottom: 1.5rem;">{{.Error}}</p>
+{{end}}
+{{if .Enabled}}
+<div style="margin-bottom: 1.5rem;">
+  <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Pairing Key</label>
+  <div style="display: flex; gap: 0.5rem; align-items: center;">
+    <span id="ink-key" style="flex: 1; font-family: monospace; font-size: 1.125rem; letter-spacing: 0.1em; padding: 0.4rem 1rem; background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; color: var(--theme-text);">{{.Key}}</span>
+    <button type="button" hx-post="/api/ink/key" hx-params="none" hx-target="#ink-status" style="padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 500; color: var(--theme-text); background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; cursor: pointer;">New key</button>
+  </div>
+  <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-top: 0.4rem; line-height: 1.4;">Type this key into SieveInk under Pair new. This Sieve is named {{.SieveID}} there.</p>
+  <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-top: 0.4rem; line-height: 1.4;">A new key unpairs every tablet: each one must be paired again with the new key.</p>
+</div>
+
+<div style="margin-bottom: 1.5rem;">
+  <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Link</label>
+  {{if .Supported}}
+  <p id="ink-link" style="font-size: 0.875rem; color: var(--theme-text);">{{.Link}}</p>
+  {{if .Problem}}<p id="ink-problem" style="font-size: 0.875rem; color: var(--theme-accentRed); margin-top: 0.4rem;">{{.Problem}}</p>{{end}}
+  {{else}}
+  <p id="ink-link" style="font-size: 0.875rem; color: var(--theme-textDim);">Bluetooth ink is not supported on this computer.</p>
+  {{end}}
+</div>
+
+<div style="margin-bottom: 1.5rem;">
+  <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Last Session</label>
+  {{with .Session}}
+  <div id="ink-session" style="display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 1rem; font-size: 0.875rem; color: var(--theme-text);">
+    <span style="color: var(--theme-textDim);">Time to connect</span><span>{{.Connect}}</span>
+    <span style="color: var(--theme-textDim);">Records caught up</span><span>{{.Records}}</span>
+    <span style="color: var(--theme-textDim);">Received</span><span>{{.Received}}</span>
+    <span style="color: var(--theme-textDim);">Catch-up took</span><span>{{.CatchUp}}</span>
+    <span style="color: var(--theme-textDim);">Throughput</span><span>{{.Throughput}}</span>
+  </div>
+  {{else}}
+  <p style="font-size: 0.875rem; color: var(--theme-textDim);">No session yet.</p>
+  {{end}}
+</div>
+{{end}}
+
+<div style="margin-bottom: 1.5rem;">
+  <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Companions</label>
+  <div id="ink-companions" style="display: flex; flex-direction: column; gap: 0.5rem;">
+    {{range .Companions}}
+    <div style="display: flex; gap: 0.5rem; align-items: center; padding: 0.4rem 1rem; background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; font-size: 0.875rem;">
+      <span style="flex: 1; color: var(--theme-text);">{{if .Device}}{{.Device}}{{else}}{{.Identity}}{{end}}</span>
+      <span style="color: var(--theme-textDim);">{{.Notes}} {{if eq .Notes 1}}note{{else}}notes{{end}}</span>
+    </div>
+    {{else}}
+    <p style="font-size: 0.875rem; color: var(--theme-textDim);">No notes have come from a companion yet.</p>
+    {{end}}
+  </div>
+</div>
+
+<div>
+  <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Synced Notes</label>
+  <div id="ink-notes" style="display: flex; flex-direction: column; gap: 0.5rem;">
+    {{range .Notes}}
+    <div style="display: flex; gap: 0.5rem; align-items: center; padding: 0.4rem 1rem; background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; font-size: 0.875rem;">
+      <span style="flex: 1; color: var(--theme-text);">{{if .Title}}{{.Title}}{{else}}Untitled{{end}}</span>
+      <span style="color: var(--theme-textDim);">{{.Pages}} {{if eq .Pages 1}}page{{else}}pages{{end}} · seq {{.Seq}}</span>
+    </div>
+    {{else}}
+    <p style="font-size: 0.875rem; color: var(--theme-textDim);">No synced notes.</p>
+    {{end}}
+  </div>
+</div>
+{{end}}

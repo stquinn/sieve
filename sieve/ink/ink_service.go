@@ -1,0 +1,690 @@
+package ink
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"slices"
+	"sort"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"sieve/logger"
+	"sieve/sieve/domain"
+	"sieve/sieve/ink/link"
+	"sieve/sieve/ink/radio"
+	"sieve/sieve/services"
+)
+
+// Invalidator is told that what Settings → Ink shows has changed: the link, the last session's
+// numbers or the synced notes.
+type Invalidator interface {
+	InkChanged()
+}
+
+// LinkPhase is where the link to a companion stands.
+type LinkPhase string
+
+const (
+	LinkOff       LinkPhase = "off"
+	LinkLooking   LinkPhase = "looking"
+	LinkConnected LinkPhase = "connected"
+)
+
+// The problems a session can end on that the user must act on.
+const (
+	ProblemKeyRejected  = "key rejected — re-enter the key on the Boox"
+	ProblemCompanionKey = "the companion could not prove the key"
+)
+
+// ErrNoSuchPage is an export of a container that is not a held Digital Note, or of a page it
+// does not have.
+var ErrNoSuchPage = errors.New("ink: no such note page")
+
+// LinkState is the link as the user sees it.
+type LinkState struct {
+	Phase LinkPhase
+	// Companion is the identity of the companion connected to, "" unless Phase is LinkConnected.
+	Companion string
+	// Problem is the failure the last session ended on, kept until a session next connects; ""
+	// when there is none.
+	Problem string
+}
+
+// LiveNote is the note and page a companion shows as being written. The zero LiveNote is none.
+type LiveNote struct {
+	// Container is the uuid of the container holding the note, "" when none holds it yet.
+	Container string
+	Note      link.ID
+	Page      link.ID
+}
+
+// Listener hears what the service sees. Each listener is called on a goroutine of its own, one
+// call at a time, in the order the events happened; the service never waits for a listener and
+// holds none of its locks during a call. A slow listener therefore only falls behind, and its
+// backlog is held in memory until it catches up, so a listener must return promptly. A listener
+// may call any method of the service. Records and slices it is given are shared: it must not
+// modify them.
+type Listener interface {
+	// LinkChanged is the link entering state.
+	LinkChanged(state LinkState)
+	// RecordCommitted is rec appended to the replica of the companion's note, held in container.
+	RecordCommitted(container string, note link.ID, rec link.Record)
+	// LiveInk is the live records of one INK frame.
+	LiveInk(records []link.LiveRecord)
+	// LiveChanged is the companion showing another note or page as live, or none.
+	LiveChanged(live LiveNote)
+}
+
+// SessionNumbers are one session's measurements. The catch-up runs from the first note the
+// session opens to bring it up to its head to the last such note done.
+type SessionNumbers struct {
+	// Companion is the companion's identity.
+	Companion string
+	// Connect is the time from the companion being seen to the stream being open.
+	Connect time.Duration
+	// Records is how many records the catch-up committed.
+	Records int
+	// Bytes is how many bytes the link received during the catch-up.
+	Bytes int64
+	// CatchUp is how long the catch-up took; zero when there was nothing to catch up.
+	CatchUp time.Duration
+}
+
+// KBps is the catch-up's throughput in kilobytes a second, 0 when there was no catch-up.
+func (n SessionNumbers) KBps() float64 {
+	if n.CatchUp <= 0 {
+		return 0
+	}
+	return float64(n.Bytes) / 1000 / n.CatchUp.Seconds()
+}
+
+// Companion is a companion this Sieve holds notes from.
+type Companion struct {
+	Identity string
+	// Device is the name of the device its newest note was written on.
+	Device string
+	Notes  int
+}
+
+// SyncedNote is a Digital Note this Sieve holds, read from its container's face.
+type SyncedNote struct {
+	UUID      string
+	Title     string
+	Pages     int
+	Seq       uint32
+	Companion string
+}
+
+// Status is everything Settings → Ink shows.
+type Status struct {
+	Enabled bool
+	// Key is this Sieve's pairing key in groups of four, "" before Ink is first enabled.
+	Key string
+	// SieveID is the name the key gives this Sieve on the link.
+	SieveID string
+	// Supported is false once the radio has said this platform has no Bluetooth ink.
+	Supported bool
+	Link      LinkState
+	// Session is the current session's numbers, otherwise the last one's; HasSession is false
+	// before any session connected.
+	Session    SessionNumbers
+	HasSession bool
+	Companions []Companion
+	Notes      []SyncedNote
+}
+
+// InkService makes this Sieve the central for SieveInk companions. While Ink is enabled it dials
+// a companion, replicates every note past this Sieve's cursor into a digital-note container,
+// follows the note shown live, and dials again whenever the link ends. While it is disabled the
+// radio is never dialled. It is safe for concurrent use.
+type InkService struct {
+	settings    *services.StateService
+	containers  *services.BlockContainerService
+	radio       radio.Radio
+	invalidator Invalidator
+	pause       time.Duration
+	throttle    time.Duration
+
+	mu          sync.Mutex
+	cancel      context.CancelFunc
+	done        chan struct{}
+	key         link.Key
+	run         *sessionRun
+	state       LinkState
+	unsupported bool
+	// radioProblem is the problem the radio itself last reported: Bluetooth off, or Sieve not
+	// allowed to use it. It is shown until a Dial fails for another reason or succeeds.
+	radioProblem string
+	numbers      SessionNumbers
+	hasNumbers   bool
+	invalidated  time.Time
+	feeds        []*listenerFeed
+}
+
+// NewInkService is the service over this machine's settings, the container store and r. inv,
+// which may be nil, hears every change Settings → Ink shows. It does nothing until Start.
+func NewInkService(settings *services.StateService, containers *services.BlockContainerService, r radio.Radio, inv Invalidator) *InkService {
+	return &InkService{
+		settings: settings, containers: containers, radio: r, invalidator: inv,
+		pause: time.Second, throttle: time.Second, state: LinkState{Phase: LinkOff},
+	}
+}
+
+// Start begins looking for a companion when Ink is enabled, minting the key if there is none; it
+// does nothing when Ink is disabled or the service is already running.
+func (s *InkService) Start() error {
+	settings := s.settings.LoadSettings()
+	if !settings.Ink.Enabled {
+		return nil
+	}
+	key, err := s.ensureKey(settings)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cancel != nil {
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.key, s.cancel, s.done = key, cancel, make(chan struct{})
+	go s.loop(ctx, s.done)
+	return nil
+}
+
+// Stop ends the link and the loop, and returns once the open session's replicas are written.
+func (s *InkService) Stop() {
+	s.mu.Lock()
+	cancel, done := s.cancel, s.done
+	s.cancel, s.done = nil, nil
+	s.mu.Unlock()
+	if cancel == nil {
+		return
+	}
+	cancel()
+	<-done
+	s.setState(LinkState{Phase: LinkOff})
+}
+
+// SetEnabled persists the setting and starts or stops the service to match. Enabling mints the
+// key the first time.
+func (s *InkService) SetEnabled(on bool) error {
+	settings := s.settings.LoadSettings()
+	settings.Ink.Enabled = on
+	if err := s.settings.SaveSettings(settings); err != nil {
+		return err
+	}
+	if !on {
+		s.Stop()
+		return nil
+	}
+	return s.Start()
+}
+
+// NewKey replaces this Sieve's key, so every paired companion must be paired again, and drops the
+// open link so the next one proves the new key.
+func (s *InkService) NewKey() error {
+	key, err := link.NewKey()
+	if err != nil {
+		return err
+	}
+	settings := s.settings.LoadSettings()
+	settings.Ink.Key = key.Text()
+	if err := s.settings.SaveSettings(settings); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.key = key
+	run := s.run
+	if run != nil {
+		run.dropped.Store(true)
+	}
+	s.mu.Unlock()
+	if run != nil {
+		run.link.Close()
+	}
+	s.invalidate()
+	return nil
+}
+
+// Subscribe adds l, which must be comparable, to the listeners; it hears events from now on.
+func (s *InkService) Subscribe(l Listener) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.feeds = append(s.feeds, &listenerFeed{listener: l})
+}
+
+// Unsubscribe removes l. A call already running finishes; nothing queued for l is delivered.
+func (s *InkService) Unsubscribe(l Listener) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, f := range s.feeds {
+		if f.listener == l {
+			f.close()
+			s.feeds = slices.Delete(s.feeds, i, i+1)
+			return
+		}
+	}
+}
+
+// Status is the service's state as Settings → Ink shows it.
+func (s *InkService) Status() Status {
+	settings := s.settings.LoadSettings()
+	st := Status{Enabled: settings.Ink.Enabled}
+	if key, err := link.ParseKey(settings.Ink.Key); err == nil {
+		st.Key, st.SieveID = key.Text(), key.SieveID()
+	}
+	s.mu.Lock()
+	st.Supported, st.Link = !s.unsupported, s.state
+	st.Session, st.HasSession = s.numbers, s.hasNumbers
+	s.mu.Unlock()
+	st.Notes, st.Companions = s.synced()
+	return st
+}
+
+// ExportPage is the page at index page of the Digital Note in container uuid, in the §4.2 export
+// shape. A container that is not a Digital Note, or a page it does not have, is ErrNoSuchPage.
+func (s *InkService) ExportPage(uuid string, page int) ([]byte, error) {
+	c, err := s.containers.Load(uuid)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %v", ErrNoSuchPage, uuid, err)
+	}
+	if c.Kind() != KindDigitalNote {
+		return nil, fmt.Errorf("%w: %s is a %s", ErrNoSuchPage, uuid, c.Kind())
+	}
+	var log []byte
+	if asset, err := s.containers.LoadAsset(c, StrokesKey); err == nil {
+		log = asset.Body()
+	}
+	note := ReadStrokeBasedNote(uuid, log)
+	if page < 0 || page >= note.PageCount() {
+		return nil, fmt.Errorf("%w: %s has %d pages, not page %d", ErrNoSuchPage, uuid, note.PageCount(), page)
+	}
+	return note.ExportPage(page)
+}
+
+// ensureKey is the key in settings, minted and saved when there is none.
+func (s *InkService) ensureKey(settings domain.Settings) (link.Key, error) {
+	if key, err := link.ParseKey(settings.Ink.Key); err == nil {
+		return key, nil
+	}
+	key, err := link.NewKey()
+	if err != nil {
+		return key, err
+	}
+	settings.Ink.Key = key.Text()
+	return key, s.settings.SaveSettings(settings)
+}
+
+// loop runs sessions until ctx ends, pausing between them; a radio this platform does not support
+// is not dialled again.
+func (s *InkService) loop(ctx context.Context, done chan struct{}) {
+	defer close(done)
+	for {
+		s.session(ctx)
+		s.mu.Lock()
+		unsupported := s.unsupported
+		s.mu.Unlock()
+		if unsupported {
+			<-ctx.Done()
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(s.pause):
+		}
+	}
+}
+
+// session dials once and, when a companion answers, runs one session over it to its end.
+func (s *InkService) session(ctx context.Context) {
+	s.mu.Lock()
+	problem := s.state.Problem
+	s.mu.Unlock()
+	s.setState(LinkState{Phase: LinkLooking, Problem: problem})
+	l, err := s.radio.Dial(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		if errors.Is(err, radio.ErrBluetoothUnsupported) {
+			s.mu.Lock()
+			s.unsupported = true
+			s.mu.Unlock()
+			s.invalidate()
+			return
+		}
+		if errors.Is(err, radio.ErrBluetoothOff) || errors.Is(err, radio.ErrBluetoothNotAuthorised) {
+			s.setRadioProblem(err.Error())
+			return
+		}
+		s.setRadioProblem("")
+		logger.Debug("ink: no companion", "err", err.Error())
+		return
+	}
+	s.setRadioProblem("")
+	run := &sessionRun{svc: s, link: l, received: &countedReader{r: l},
+		replicas: NewNoteReplicas(s.containers, l.Identity())}
+	s.mu.Lock()
+	s.run = run
+	key := s.key
+	s.mu.Unlock()
+	stop := context.AfterFunc(ctx, func() { l.Close() })
+	err = link.NewSession(run, key, run.replicas, run, link.Plan{CatchUp: true, Follow: true}).Run()
+	stop()
+	l.Close()
+	if endErr := run.replicas.End(); endErr != nil {
+		logger.Error("ink: ending a session's replicas", "err", endErr.Error())
+	}
+	s.mu.Lock()
+	s.run = nil
+	s.mu.Unlock()
+	run.end(ctx, err)
+}
+
+// connected starts a session's numbers and enters the connected state.
+func (s *InkService) connected(companion string, connect time.Duration) {
+	s.mu.Lock()
+	s.numbers, s.hasNumbers = SessionNumbers{Companion: companion, Connect: connect}, true
+	s.mu.Unlock()
+	s.setState(LinkState{Phase: LinkConnected, Companion: companion})
+}
+
+// setState enters state and reports whether it changed; a change is published and invalidated.
+func (s *InkService) setState(state LinkState) bool {
+	s.mu.Lock()
+	changed := s.state != state
+	s.state = state
+	s.mu.Unlock()
+	if changed {
+		s.publish(func(l Listener) { l.LinkChanged(state) })
+		s.invalidate()
+	}
+	return changed
+}
+
+// setRadioProblem shows problem as the link's problem, and with "" withdraws the one it showed
+// last, leaving a problem a session ended on in place.
+func (s *InkService) setRadioProblem(problem string) {
+	s.mu.Lock()
+	state, shown := s.state, s.radioProblem
+	s.radioProblem = problem
+	s.mu.Unlock()
+	if problem == shown {
+		return
+	}
+	if problem != "" || state.Problem == shown {
+		state.Problem = problem
+		s.setState(state)
+	}
+}
+
+// publish queues event for every listener.
+func (s *InkService) publish(event func(Listener)) {
+	s.mu.Lock()
+	feeds := append([]*listenerFeed(nil), s.feeds...)
+	s.mu.Unlock()
+	for _, f := range feeds {
+		f.push(event)
+	}
+}
+
+// invalidate tells the invalidator now.
+func (s *InkService) invalidate() {
+	s.mu.Lock()
+	s.invalidated = time.Now()
+	s.mu.Unlock()
+	if s.invalidator != nil {
+		s.invalidator.InkChanged()
+	}
+}
+
+// invalidateSoon tells the invalidator unless it was told within the throttle.
+func (s *InkService) invalidateSoon() {
+	s.mu.Lock()
+	due := time.Since(s.invalidated) >= s.throttle
+	s.mu.Unlock()
+	if due {
+		s.invalidate()
+	}
+}
+
+// synced lists the held Digital Notes by title and the companions they came from, from the faces
+// alone.
+func (s *InkService) synced() ([]SyncedNote, []Companion) {
+	found, err := s.containers.Find(KindDigitalNote, nil)
+	if err != nil {
+		logger.Error("ink: listing synced notes", "err", err.Error())
+		return nil, nil
+	}
+	uuids := make([]string, 0, len(found))
+	for uuid := range found {
+		uuids = append(uuids, uuid)
+	}
+	sort.Strings(uuids)
+	notes := make([]SyncedNote, 0, len(uuids))
+	byIdentity := map[string]*Companion{}
+	var companions []Companion
+	for _, uuid := range uuids {
+		face := found[uuid]
+		pages, _ := strconv.Atoi(face["note_pages"])
+		seq, _ := strconv.ParseUint(face["note_synced_seq"], 10, 32)
+		notes = append(notes, SyncedNote{UUID: uuid, Title: face["note_title"], Pages: pages, Seq: uint32(seq),
+			Companion: face["note_companion"]})
+		identity := face["note_companion"]
+		if identity == "" {
+			continue
+		}
+		c, ok := byIdentity[identity]
+		if !ok {
+			companions = append(companions, Companion{Identity: identity})
+			c = &companions[len(companions)-1]
+			byIdentity[identity] = c
+		}
+		c.Notes++
+		if device := face["note_device"]; device != "" {
+			c.Device = device
+		}
+	}
+	sort.SliceStable(notes, func(i, j int) bool { return notes[i].Title < notes[j].Title })
+	sort.Slice(companions, func(i, j int) bool { return companions[i].Identity < companions[j].Identity })
+	return notes, companions
+}
+
+// sessionRun is one session: the link it runs over, counted as it is read, and its replicas. It
+// is the session's Observer and is called on the session's goroutine only.
+type sessionRun struct {
+	svc      *InkService
+	link     radio.Link
+	received *countedReader
+	replicas *NoteReplicas
+	// dropped marks a link the service closed on purpose, whose error is no failure.
+	dropped atomic.Bool
+
+	connected bool
+	// pending are the notes the catch-up has still to bring to their heads.
+	pending  map[link.ID]bool
+	started  time.Time
+	from     int64
+	caughtUp int
+	live     bool
+}
+
+var (
+	_ link.Observer = (*sessionRun)(nil)
+	_ io.ReadWriter = (*sessionRun)(nil)
+)
+
+func (r *sessionRun) Read(p []byte) (int, error)  { return r.received.Read(p) }
+func (r *sessionRun) Write(p []byte) (int, error) { return r.link.Write(p) }
+
+// Notes is the first sign the handshake held: the session is connected, and the notes past what
+// this Sieve holds are the catch-up.
+func (r *sessionRun) Notes(notes []link.NoteEntry) {
+	if r.connected {
+		return
+	}
+	r.connected = true
+	r.pending = map[link.ID]bool{}
+	for _, n := range notes {
+		if have, err := r.replicas.Have(n.ID); err == nil && n.HeadSeq > have {
+			r.pending[n.ID] = true
+		}
+	}
+	r.svc.connected(r.link.Identity(), r.link.Elapsed())
+}
+
+func (r *sessionRun) Opened(note link.ID, _, _ uint32) {
+	if r.pending[note] && r.started.IsZero() {
+		r.started, r.from = time.Now(), r.received.n.Load()
+	}
+}
+
+func (r *sessionRun) Committed(note link.ID, rec link.Record) {
+	uuid, err := r.replicas.UUID(note)
+	if err != nil {
+		logger.Warn("ink: finding a committed note's container", "note", note.String(), "err", err.Error())
+	}
+	r.svc.publish(func(l Listener) { l.RecordCommitted(uuid, note, rec) })
+	if len(r.pending) > 0 {
+		r.svc.invalidateSoon()
+	}
+}
+
+func (r *sessionRun) Done(note link.ID, _ uint32, records int) {
+	if !r.pending[note] {
+		return
+	}
+	delete(r.pending, note)
+	r.caughtUp += records
+	r.measure()
+}
+
+func (r *sessionRun) Live(note, page link.ID) {
+	live := LiveNote{Note: note, Page: page}
+	if note != (link.ID{}) {
+		uuid, err := r.replicas.UUID(note)
+		if err != nil {
+			logger.Warn("ink: finding the live note's container", "note", note.String(), "err", err.Error())
+		}
+		live.Container = uuid
+	}
+	r.live = note != (link.ID{})
+	r.svc.publish(func(l Listener) { l.LiveChanged(live) })
+}
+
+func (r *sessionRun) Ink(records []link.LiveRecord) {
+	r.svc.publish(func(l Listener) { l.LiveInk(records) })
+}
+
+func (r *sessionRun) Refused(note link.ID, reason string) {
+	logger.Warn("ink: the companion refused a note", "note", note.String(), "reason", reason)
+	if reason != link.RefuseAhead && r.pending[note] {
+		delete(r.pending, note)
+		r.measure()
+	}
+}
+
+// measure writes the catch-up's numbers so far, and tells the invalidator when it is over.
+func (r *sessionRun) measure() {
+	var elapsed time.Duration
+	var bytes int64
+	if !r.started.IsZero() {
+		elapsed, bytes = time.Since(r.started), r.received.n.Load()-r.from
+	}
+	s := r.svc
+	s.mu.Lock()
+	s.numbers.Records, s.numbers.Bytes, s.numbers.CatchUp = r.caughtUp, bytes, elapsed
+	s.mu.Unlock()
+	if len(r.pending) == 0 {
+		s.invalidate()
+	}
+}
+
+// end is the session over on err: nothing is live any more, and a failure the user must see is
+// kept as the state's problem. A session ended by Stop or by a new key is no failure.
+func (r *sessionRun) end(ctx context.Context, err error) {
+	if r.live {
+		r.svc.publish(func(l Listener) { l.LiveChanged(LiveNote{}) })
+	}
+	logger.Info("ink: session ended", "companion", r.link.Identity(), "err", fmt.Sprint(err))
+	if ctx.Err() != nil {
+		r.svc.invalidate()
+		return
+	}
+	state := LinkState{Phase: LinkLooking}
+	switch {
+	case r.dropped.Load() || err == nil:
+	case errors.Is(err, link.ErrRefused):
+		state.Problem = ProblemKeyRejected
+	case errors.Is(err, link.ErrBadCompanion):
+		state.Problem = ProblemCompanionKey
+	default:
+		state.Problem = "the link ended: " + err.Error()
+	}
+	if !r.svc.setState(state) {
+		r.svc.invalidate()
+	}
+}
+
+// countedReader is a reader that counts the bytes read through it.
+type countedReader struct {
+	r io.Reader
+	n atomic.Int64
+}
+
+func (c *countedReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n.Add(int64(n))
+	return n, err
+}
+
+// listenerFeed delivers events to one listener in order, on at most one goroutine at a time,
+// which runs only while events are queued.
+type listenerFeed struct {
+	listener Listener
+
+	mu      sync.Mutex
+	queue   []func(Listener)
+	running bool
+	closed  bool
+}
+
+func (f *listenerFeed) push(event func(Listener)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.closed {
+		return
+	}
+	f.queue = append(f.queue, event)
+	if !f.running {
+		f.running = true
+		go f.drain()
+	}
+}
+
+func (f *listenerFeed) drain() {
+	for {
+		f.mu.Lock()
+		if len(f.queue) == 0 || f.closed {
+			f.queue, f.running = nil, false
+			f.mu.Unlock()
+			return
+		}
+		event := f.queue[0]
+		f.queue = f.queue[1:]
+		f.mu.Unlock()
+		event(f.listener)
+	}
+}
+
+func (f *listenerFeed) close() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed, f.queue = true, nil
+}

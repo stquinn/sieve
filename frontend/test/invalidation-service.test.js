@@ -8,7 +8,7 @@ import { InvalidationService } from '../src/static/shell/invalidation-service.js
 import { ContractViolation } from '../src/static/contract/sieve-block.js'
 
 /** Every topic the contract names, in the order the resync fires them. */
-const TOPICS = ['notes', 'session', 'prompts', 'library', 'intent']
+const TOPICS = ['notes', 'session', 'prompts', 'library', 'intent', 'ink']
 
 class FakeWebSocket {
   /** @type {any} */ onopen = null

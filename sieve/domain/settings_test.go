@@ -561,3 +561,23 @@ func TestSettings_WithSpellcheckPersistsBothAnswers(t *testing.T) {
 		}
 	}
 }
+
+func TestParseSettings_InkRoundTrip(t *testing.T) {
+	for _, want := range []InkSettings{
+		{},
+		{Enabled: true, Key: "MFRG GZDF MZTW Q2LK", TCP: "127.0.0.1:7777"},
+	} {
+		s := DefaultSettings()
+		s.Ink = want
+		data, err := s.Marshal()
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		if got := ParseSettings(data).Ink; got != want {
+			t.Errorf("round trip of %+v read back as %+v", want, got)
+		}
+	}
+	if got := ParseSettings([]byte(`{"theme":"nord"}`)).Ink; got != (InkSettings{}) {
+		t.Errorf("a file without ink reads %+v", got)
+	}
+}

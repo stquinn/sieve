@@ -93,6 +93,22 @@ func (rs *NoteReplicas) Open(note link.ID) (link.Replica, error) {
 	return r, nil
 }
 
+// UUID is the container uuid of the note's open replica, otherwise of its held container; "" when
+// neither holds one.
+func (rs *NoteReplicas) UUID(note link.ID) (string, error) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if r, ok := rs.open[note]; ok {
+		if uuid := r.UUID(); uuid != "" {
+			return uuid, nil
+		}
+	}
+	if err := rs.find(); err != nil {
+		return "", err
+	}
+	return rs.held[note].uuid, nil
+}
+
 // End writes every open replica's queue, then saves the block of each that changed since it was
 // opened, once, which is also its one snapshot, and releases them all. A replica whose write
 // failed is released unsaved, so its block stays behind its asset. The next Have or Open looks

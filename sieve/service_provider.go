@@ -12,6 +12,7 @@ import (
 	"sieve/sieve/domain"
 	"sieve/sieve/editor"
 	"sieve/sieve/ink"
+	"sieve/sieve/ink/radio"
 	"sieve/sieve/mcp"
 	"sieve/sieve/services"
 	"sieve/store"
@@ -38,6 +39,7 @@ type ServiceProvider struct {
 	LinkPreview *services.LinkPreviewService
 	Plantuml    *services.PlantumlService
 	MCP         *mcp.Server
+	Ink         *ink.InkService
 	// Invalidator carries a command's "this changed" to the connected clients. It
 	// is set by the composition root before Init, because the push side lives
 	// above this package and a command may only name the port.
@@ -46,6 +48,18 @@ type ServiceProvider struct {
 	// connected clients. Set by the composition root before Init for the same
 	// reason Invalidator is, and handed to the Editor there.
 	SavedNotifier editor.ContainerSavedNotifier
+	// InkInvalidator hears every change Settings → Ink shows. Set by the composition root before
+	// Init, for the reason Invalidator is.
+	InkInvalidator ink.Invalidator
+}
+
+// InkRadio is the radio Ink dials: the TCP companion at settings.TCP when one is set, otherwise
+// this platform's Bluetooth.
+func (s *ServiceProvider) InkRadio(settings domain.InkSettings) radio.Radio {
+	if settings.TCP != "" {
+		return radio.NewTCP(settings.TCP, "tcp:"+settings.TCP)
+	}
+	return radio.NewBluetooth()
 }
 
 // RegisterInspectors admits every text-service producer to the inspection
@@ -179,6 +193,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	s.Commands = command.NewRegistry()
 	s.Plantuml = services.NewPlantumlService(s.State)
 	settings := s.State.LoadSettings()
+	s.Ink = ink.NewInkService(s.State, s.Containers, s.InkRadio(settings.Ink), s.InkInvalidator)
 	s.ApplyRetention(settings.MaxHistoryVersions)
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
 	s.Editor = editor.NewEditorService(s.Documents, block.NewDocumentCodec(block.GlobalRegistry()), autosave)

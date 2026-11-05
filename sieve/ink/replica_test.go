@@ -16,8 +16,6 @@ import (
 	"sieve/store/filestore"
 )
 
-var linkKey = link.Key{'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'}
-
 // quietObserver hears a session and keeps nothing.
 type quietObserver struct{}
 

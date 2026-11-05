@@ -112,6 +112,7 @@ const (
 	TopicPrompts Topic = "prompts" // the prompt library changed
 	TopicLibrary Topic = "library" // the open library changed
 	TopicIntent  Topic = "intent"  // a document's user_intent changed
+	TopicInk     Topic = "ink"     // the ink link, its last session's numbers or the synced notes changed
 )
 
 // PingFrame is a liveness probe, answered with a PongFrame. Both channels carry

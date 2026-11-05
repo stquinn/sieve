@@ -97,6 +97,8 @@ export const Topic = Object.freeze({
   LIBRARY: 'library',
   // a document's user_intent changed
   INTENT: 'intent',
+  // the ink link, its last session's numbers or the synced notes changed
+  INK: 'ink',
 })
 /** @typedef {typeof Topic[keyof typeof Topic]} TopicName */
 

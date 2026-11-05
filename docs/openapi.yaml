@@ -148,6 +148,33 @@ paths:
             text/html:
               schema:
                 type: string
+  /api/ink/notes/{uuid}/pages/{page}/export:
+    get:
+      operationId: getApiInkNotesUuidPagesPageExport
+      summary: 'InkPageExportRequest reads one page of a synced Digital Note in the export shape of docs/ink-contract.md §4.2: {uuid} is the note''s block container and {page} the page''s index among the pages present, from 0.'
+      description: |-
+        InkPageExportRequest reads one page of a synced Digital Note in the export shape of
+        docs/ink-contract.md §4.2: {uuid} is the note's block container and {page} the page's index
+        among the pages present, from 0. An unknown container, a container that is not a Digital Note
+        and a page out of range are 404. The request has no body.
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: page
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: a typed body, described by the entry's Response type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProtocolInkPageExport'
   /api/note/{id}:
     patch:
       operationId: patchApiNoteId
@@ -298,6 +325,132 @@ components:
         open:
           type: boolean
           description: whether the folder is expanded in the tree; absent leaves it alone
+    ProtocolInkExportDevice:
+      type: object
+      description: InkExportDevice is the tablet the note was written on.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        model:
+          type: string
+      required:
+        - id
+        - name
+        - model
+    ProtocolInkExportNote:
+      type: object
+      description: InkExportNote is the header of the note a page belongs to.
+      properties:
+        id:
+          type: string
+          description: the companion's note id
+        created:
+          type: string
+          description: RFC 3339 in UTC
+        title:
+          type: string
+        pageAspect:
+          type: number
+          description: page width over page height
+        template:
+          $ref: '#/components/schemas/ProtocolInkExportTemplate'
+        device:
+          $ref: '#/components/schemas/ProtocolInkExportDevice'
+      required:
+        - id
+        - created
+        - title
+        - pageAspect
+        - device
+    ProtocolInkExportPoint:
+      type: object
+      description: InkExportPoint is one sampled pen point, in page units.
+      properties:
+        x:
+          type: number
+        y:
+          type: number
+        pressure:
+          type: number
+          description: 0 to 1
+        tMillis:
+          type: integer
+          description: milliseconds from the stroke's first point
+        tiltX:
+          type: integer
+        tiltY:
+          type: integer
+        size:
+          type: number
+          description: always 0 in an export
+      required:
+        - x
+        - y
+        - pressure
+        - tMillis
+        - tiltX
+        - tiltY
+        - size
+    ProtocolInkExportStroke:
+      type: object
+      description: InkExportStroke is one stroke on the page.
+      properties:
+        id:
+          type: string
+        tool:
+          type: string
+        widthClass:
+          type: integer
+        startMillis:
+          type: integer
+          description: milliseconds since the note's created
+        points:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProtocolInkExportPoint'
+      required:
+        - id
+        - tool
+        - widthClass
+        - startMillis
+        - points
+    ProtocolInkExportTemplate:
+      type: object
+      description: 'InkExportTemplate is a page template: its id and its parameters by name.'
+      properties:
+        id:
+          type: string
+        params:
+          type: object
+          additionalProperties:
+            type: number
+      required:
+        - id
+        - params
+    ProtocolInkPageExport:
+      type: object
+      description: |-
+        InkPageExport is one page of a Digital Note as the ink renderer takes it: the note's header and
+        the page's strokes in the order they were added.
+      properties:
+        note:
+          $ref: '#/components/schemas/ProtocolInkExportNote'
+        strokes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProtocolInkExportStroke'
+      required:
+        - note
+        - strokes
+    ProtocolInkPageExportRequest:
+      type: object
+      description: |-
+        InkPageExportRequest reads one page of a synced Digital Note in the export shape of
+        docs/ink-contract.md §4.2: {uuid} is the note's block container and {page} the page's index
+        among the pages present, from 0. An unknown container, a container that is not a Digital Note
+        and a page out of range are 404. The request has no body.
     ProtocolNotePatchRequest:
       type: object
       description: NotePatchRequest changes a note's properties.

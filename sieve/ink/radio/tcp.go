@@ -36,5 +36,5 @@ type tcpLink struct {
 	elapsed  time.Duration
 }
 
-func (l *tcpLink) Identity() string      { return l.identity }
+func (l *tcpLink) Identity() string       { return l.identity }
 func (l *tcpLink) Elapsed() time.Duration { return l.elapsed }

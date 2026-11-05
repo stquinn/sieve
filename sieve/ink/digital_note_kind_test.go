@@ -8,48 +8,10 @@ import (
 	"reflect"
 	"testing"
 
-	"sieve/sieve/block"
-	"sieve/sieve/block/processors"
 	"sieve/sieve/domain"
 	"sieve/sieve/ink/link"
-	"sieve/sieve/services"
 	"sieve/store/filestore"
 )
-
-const companionID = "companion-identity"
-
-// newTestContainers builds the container service over a temporary store, with the digital-note
-// kind registered.
-func newTestContainers(t *testing.T) (*services.BlockContainerService, *filestore.FileStore) {
-	t.Helper()
-	st, err := filestore.NewFileStore(t.TempDir(), "testhost")
-	if err != nil {
-		t.Fatalf("NewFileStore: %v", err)
-	}
-	block.ResetRegistry()
-	block.RegisterProcessor(&processors.ProseProcessor{})
-	block.RegisterProcessor(NewDigitalNoteKind())
-	t.Cleanup(block.ResetRegistry)
-	containers, err := services.NewBlockContainerService(st, block.GlobalRegistry())
-	if err != nil {
-		t.Fatalf("NewBlockContainerService: %v", err)
-	}
-	return containers, st
-}
-
-// reopen is a service over a fresh store at st's root, resolving everything from disk.
-func reopen(t *testing.T, st *filestore.FileStore) *services.BlockContainerService {
-	t.Helper()
-	fresh, err := filestore.NewFileStore(st.Root(), "testhost")
-	if err != nil {
-		t.Fatal(err)
-	}
-	containers, err := services.NewBlockContainerService(fresh, block.GlobalRegistry())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return containers
-}
 
 // metaOf reads a container's .meta from disk.
 func metaOf(t *testing.T, st *filestore.FileStore, uuid string) map[string]interface{} {
@@ -74,13 +36,13 @@ func TestDigitalNoteKind_AttrsFaceAndSourceThroughAContainer(t *testing.T) {
 		wantPages int
 	}{
 		{"an empty note", nil,
-			map[string]string{"note_title": "", "note_pages": "0", "note_source": "strokes", "note_synced_seq": "0"}, 0},
+			map[string]string{"note_title": "", "note_pages": "0", "note_device": "", "note_source": "strokes", "note_synced_seq": "0"}, 0},
 		{"a note of two pages",
 			logOf(header("Ideas"), pageAdd(page(1), 0, ruled, link.BoundsFixed), pageAdd(page(2), 1, dots, link.BoundsFixed),
 				strokeAdd(page(1), stroke(1))),
-			map[string]string{"note_title": "Ideas", "note_pages": "2", "note_source": "strokes", "note_synced_seq": "4"}, 2},
+			map[string]string{"note_title": "Ideas", "note_pages": "2", "note_device": aDevice.Name, "note_source": "strokes", "note_synced_seq": "4"}, 2},
 		{"a whiteboard", logOf(header("Board"), pageAdd(page(1), 0, nil, link.BoundsUnbounded)),
-			map[string]string{"note_title": "Board", "note_pages": "1", "note_source": "strokes", "note_synced_seq": "2"}, 1},
+			map[string]string{"note_title": "Board", "note_pages": "1", "note_device": aDevice.Name, "note_source": "strokes", "note_synced_seq": "2"}, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			containers, st := newTestContainers(t)
@@ -190,7 +152,7 @@ func TestDigitalNoteKind_PackageImportsNothingAboveBlockContainers(t *testing.T)
 	}
 	for _, path := range pkg.Imports {
 		switch path {
-		case "sieve/sieve/editor", "sieve/sieve/ai":
+		case "sieve/sieve/editor", "sieve/sieve/ai", "sieve/requesthandlers":
 			t.Errorf("imports %s", path)
 		}
 	}

@@ -111,6 +111,7 @@ Topic is what an invalidate frame invalidates — the subject a view refetches w
 | `prompts` | the prompt library changed |
 | `library` | the open library changed |
 | `intent` | a document's user_intent changed |
+| `ink` | the ink link, its last session's numbers or the synced notes changed |
 
 ## Frame reference
 
@@ -662,6 +663,7 @@ inventory below instead.
 | `DELETE /api/document/{uuid}/asset/{key}` | none | AssetDeleteRequest deletes one asset of a document, irreversibly: {uuid} is the document and {key} the asset's key, path-escaped. |
 | `POST /api/folder` | fragment | FolderCreateRequest makes a new folder. |
 | `PATCH /api/folder/{id}` | fragment | FolderPatchRequest changes a folder's properties. |
+| `GET /api/ink/notes/{uuid}/pages/{page}/export` | json | InkPageExportRequest reads one page of a synced Digital Note in the export shape of docs/ink-contract.md §4.2: {uuid} is the note's block container and {page} the page's index among the pages present, from 0. |
 | `PATCH /api/note/{id}` | fragment | NotePatchRequest changes a note's properties. |
 | `POST /api/tabs/close` | fragment | TabsCloseRequest closes every listed tab — the ONE close mechanism. |
 
@@ -749,6 +751,23 @@ FolderPatchRequest changes a folder's properties.
 | `open` | `*bool` | no | whether the folder is expanded in the tree; absent leaves it alone |
 
 **Response** — HTML for HTMX to swap in; the template is its contract.
+
+### `GET /api/ink/notes/{uuid}/pages/{page}/export`
+
+Path parameters: `uuid`, `page`
+
+**Request** — `protocol.InkPageExportRequest`
+
+InkPageExportRequest reads one page of a synced Digital Note in the export shape of docs/ink-contract.md §4.2: {uuid} is the note's block container and {page} the page's index among the pages present, from 0.
+
+**Response** — `protocol.InkPageExport`
+
+InkPageExport is one page of a Digital Note as the ink renderer takes it: the note's header and the page's strokes in the order they were added.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `note` | `protocol.InkExportNote` | yes |  |
+| `strokes` | `[]protocol.InkExportStroke` | yes |  |
 
 ### `PATCH /api/note/{id}`
 
@@ -910,6 +929,64 @@ CommandBlock is a block as the command wire carries it, in either direction: the
 | `kind` | `string` | yes |  |
 | `attrs` | `map[string]interface {}` | yes |  |
 
+### `protocol.InkExportDevice`
+
+InkExportDevice is the tablet the note was written on.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `id` | `string` | yes |  |
+| `name` | `string` | yes |  |
+| `model` | `string` | yes |  |
+
+### `protocol.InkExportNote`
+
+InkExportNote is the header of the note a page belongs to.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `id` | `string` | yes | the companion's note id |
+| `created` | `string` | yes | RFC 3339 in UTC |
+| `title` | `string` | yes |  |
+| `pageAspect` | `float32` | yes | page width over page height |
+| `template` | `*protocol.InkExportTemplate` | no | the note's default page template; null when it has none |
+| `device` | `protocol.InkExportDevice` | yes |  |
+
+### `protocol.InkExportPoint`
+
+InkExportPoint is one sampled pen point, in page units.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `x` | `float32` | yes |  |
+| `y` | `float32` | yes |  |
+| `pressure` | `float32` | yes | 0 to 1 |
+| `tMillis` | `uint32` | yes | milliseconds from the stroke's first point |
+| `tiltX` | `int8` | yes |  |
+| `tiltY` | `int8` | yes |  |
+| `size` | `float32` | yes | always 0 in an export |
+
+### `protocol.InkExportStroke`
+
+InkExportStroke is one stroke on the page.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `id` | `string` | yes |  |
+| `tool` | `string` | yes |  |
+| `widthClass` | `uint8` | yes |  |
+| `startMillis` | `uint64` | yes | milliseconds since the note's created |
+| `points` | `[]protocol.InkExportPoint` | yes |  |
+
+### `protocol.InkExportTemplate`
+
+InkExportTemplate is a page template: its id and its parameters by name.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `id` | `string` | yes |  |
+| `params` | `map[string]float64` | yes |  |
+
 ### `protocol.JobsSnapshot`
 
 JobsSnapshot is every job the UI can see, in insertion order.
@@ -981,6 +1058,7 @@ or another protocol's own transport.
 | `DELETE` | `/mcp` | — |
 | `GET` | `/` | — |
 | `GET` | `/api/document/load` | typed (json) |
+| `GET` | `/api/ink/notes/{uuid}/pages/{page}/export` | typed (json) |
 | `GET` | `/api/ws/document/{uuid}` | WebSocket channel |
 | `GET` | `/api/ws/workspace` | WebSocket channel |
 | `GET` | `/mcp` | — |
@@ -1001,6 +1079,7 @@ or another protocol's own transport.
 | `GET` | `/ui/views/search/dialog` | — |
 | `GET` | `/ui/views/session/layout` | — |
 | `GET` | `/ui/views/settings` | — |
+| `GET` | `/ui/views/settings/ink` | — |
 | `GET` | `/ui/views/sidebar` | — |
 | `GET` | `/ui/views/sidebar/dialog/{kind}` | — |
 | `GET` | `/ui/views/sidebar/search` | — |
@@ -1009,6 +1088,8 @@ or another protocol's own transport.
 | `PATCH` | `/api/note/{id}` | typed (fragment) |
 | `POST` | `/api/document/save` | typed (json) |
 | `POST` | `/api/folder` | typed (fragment) |
+| `POST` | `/api/ink/enabled` | — |
+| `POST` | `/api/ink/key` | — |
 | `POST` | `/api/meta/restore` | — |
 | `POST` | `/api/note` | — |
 | `POST` | `/api/note/open/{id}` | — |

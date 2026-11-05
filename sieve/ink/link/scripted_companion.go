@@ -27,6 +27,8 @@ type ScriptedCompanion struct {
 	StaleBeforeHead bool
 	// Live sends LIVE of Note and Page after each NOTES.
 	Live bool
+	// Ink, when set, is sent as one INK frame after each LIVE.
+	Ink []byte
 	// GapAt skips the record of this seq.
 	GapAt uint32
 
@@ -104,13 +106,19 @@ func (c *ScriptedCompanion) Serve(link io.ReadWriter) error {
 
 func (c *ScriptedCompanion) sendNotes(stream *frameStream) error {
 	c.mu.Lock()
-	head, live := uint32(len(c.records)), c.Live
+	head, live, ink := uint32(len(c.records)), c.Live, c.Ink
 	c.mu.Unlock()
 	if err := stream.write(newFrame(frameNotes).u32(1).id(c.Note).string("").u32(1).u32(head).b); err != nil {
 		return err
 	}
-	if live {
-		return stream.write(newFrame(frameLive).id(c.Note).id(c.Page).b)
+	if !live {
+		return nil
+	}
+	if err := stream.write(newFrame(frameLive).id(c.Note).id(c.Page).b); err != nil {
+		return err
+	}
+	if len(ink) > 0 {
+		return stream.write(newFrame(frameInk).raw(ink).b)
 	}
 	return nil
 }

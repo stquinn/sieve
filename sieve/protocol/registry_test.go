@@ -261,7 +261,7 @@ func TestRegistry_TopicsAreTheInvalidationVocabulary(t *testing.T) {
 		got = append(got, string(topic))
 	}
 	sort.Strings(got)
-	want := []string{"intent", "library", "notes", "prompts", "session"}
+	want := []string{"ink", "intent", "library", "notes", "prompts", "session"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("topics\n got: %v\nwant: %v", got, want)
 	}

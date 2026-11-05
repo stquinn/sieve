@@ -1,6 +1,7 @@
 package requesthandlers
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -19,6 +20,8 @@ import (
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
 	"sieve/sieve/editor"
+	"sieve/sieve/ink"
+	"sieve/sieve/ink/radio"
 	"sieve/sieve/services"
 	"sieve/store/filestore"
 )
@@ -425,4 +428,135 @@ func readSettingsJSON(t *testing.T, root string) string {
 		t.Fatalf("read %s: %v", found, err)
 	}
 	return string(b)
+}
+
+// holdingRadio is a radio whose every scan finds nothing until it is cancelled.
+type holdingRadio struct{}
+
+func (holdingRadio) Dial(ctx context.Context) (radio.Link, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// newInkServer serves the settings and Ink handlers over one store, with Ink built over a radio
+// that never finds a companion.
+func newInkServer(t *testing.T) (*httptest.Server, *sieve.ServiceProvider) {
+	t.Helper()
+	h, _ := newTestSettingsHandler(t)
+	sp := h.ServiceProvider
+	block.RegisterProcessor(ink.NewDigitalNoteKind())
+	containers, err := services.NewBlockContainerService(sp.Store, block.GlobalRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp.Containers = containers
+	sp.Ink = ink.NewInkService(sp.State, containers, holdingRadio{}, nil)
+	t.Cleanup(sp.Ink.Stop)
+	r := chi.NewRouter()
+	h.RegisterPaths(r)
+	(&InkHandler{ServiceProvider: sp, Tmpl: h.Tmpl}).RegisterPaths(r)
+	srv := httptest.NewServer(r)
+	t.Cleanup(srv.Close)
+	return srv, sp
+}
+
+// postInk posts form to an Ink action and returns the fragment it answers with.
+func postInk(t *testing.T, srv *httptest.Server, path string, form url.Values) string {
+	t.Helper()
+	resp, err := http.PostForm(srv.URL+path, form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
+		t.Fatalf("POST %s: %d %s", path, resp.StatusCode, body)
+	}
+	return string(body)
+}
+
+// Each state of the link reads as words, and an unsupported platform says so instead.
+func TestInkFragment_RendersEachState(t *testing.T) {
+	h, _ := newTestSettingsHandler(t)
+	ih := &InkHandler{ServiceProvider: h.ServiceProvider, Tmpl: h.Tmpl}
+	key := "MFRG GZDF MZTW Q2LK"
+	notes := []ink.SyncedNote{{UUID: "u", Title: "Ideas", Pages: 2, Seq: 9, Companion: "c"}}
+	companions := []ink.Companion{{Identity: "c", Device: "Note Air 2", Notes: 1}}
+	for _, tc := range []struct {
+		name   string
+		status ink.Status
+		want   []string
+		absent []string
+	}{
+		{"off", ink.Status{Supported: true, Link: ink.LinkState{Phase: ink.LinkOff}, Notes: notes, Companions: companions},
+			[]string{`id="ink-enabled"`, "Ideas", "2 pages · seq 9", "Note Air 2", "1 note"},
+			[]string{"checked", key, "New key", `id="ink-link"`}},
+		{"looking", ink.Status{Enabled: true, Supported: true, Key: key, SieveID: "0123abcd",
+			Link: ink.LinkState{Phase: ink.LinkLooking}},
+			[]string{"checked", key, "Type this key into SieveInk under Pair new", "0123abcd", "New key",
+				"every tablet", "Looking for a companion", "No session yet", "No synced notes"},
+			[]string{`id="ink-problem"`}},
+		{"connected", ink.Status{Enabled: true, Supported: true, Key: key,
+			Link: ink.LinkState{Phase: ink.LinkConnected, Companion: "boox-1"}, HasSession: true,
+			Session: ink.SessionNumbers{Connect: 1500 * time.Millisecond, Records: 300, Bytes: 64000, CatchUp: time.Second}},
+			[]string{"Connected to boox-1", "1.5s", "300", "64.0 kB", "64.0 kB/s"},
+			[]string{"No session yet"}},
+		{"key rejected", ink.Status{Enabled: true, Supported: true, Key: key,
+			Link: ink.LinkState{Phase: ink.LinkLooking, Problem: ink.ProblemKeyRejected}},
+			[]string{"Looking for a companion", `id="ink-problem"`, "re-enter the key on the Boox"}, nil},
+		{"unsupported", ink.Status{Enabled: true, Key: key, Link: ink.LinkState{Phase: ink.LinkLooking}},
+			[]string{"Bluetooth ink is not supported on this computer"},
+			[]string{"Looking for a companion"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out strings.Builder
+			if err := h.Tmpl.ExecuteTemplate(&out, "ink_status.html", ih.view(tc.status)); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("no %q in\n%s", want, out.String())
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(out.String(), absent) {
+					t.Errorf("%q in\n%s", absent, out.String())
+				}
+			}
+		})
+	}
+}
+
+// The toggle and the new key take effect at once and answer with the fragment, and the big
+// settings Save leaves what they wrote alone.
+func TestInkActions_TakeEffectAndSurviveTheSettingsSave(t *testing.T) {
+	srv, sp := newInkServer(t)
+	on := postInk(t, srv, "/api/ink/enabled", url.Values{"ink_enabled": {"on"}})
+	first := sp.Ink.Status()
+	if !first.Enabled || first.Key == "" || !strings.Contains(on, first.Key) || !strings.Contains(on, "checked") {
+		t.Fatalf("enabling: %+v\n%s", first, on)
+	}
+	renewed := postInk(t, srv, "/api/ink/key", nil)
+	second := sp.Ink.Status()
+	if second.Key == first.Key || !strings.Contains(renewed, second.Key) {
+		t.Errorf("new key %q after %q", second.Key, first.Key)
+	}
+
+	resp, err := http.PostForm(srv.URL+"/api/settings", url.Values{"cli": {"claude"}, "theme": {"nord"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if got := sp.State.LoadSettings().Ink; !got.Enabled || got.Key != second.Key {
+		t.Errorf("the settings save left ink as %+v", got)
+	}
+
+	off := postInk(t, srv, "/api/ink/enabled", url.Values{})
+	if st := sp.Ink.Status(); st.Enabled || st.Link.Phase != ink.LinkOff || strings.Contains(off, "checked") {
+		t.Errorf("disabling: %+v", st)
+	}
+	if got := sp.State.LoadSettings().Ink.Key; got != second.Key {
+		t.Errorf("disabling dropped the key: %q", got)
+	}
 }

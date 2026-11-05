@@ -63,6 +63,7 @@ func newAPIHandler(app *App, broadcast *requesthandlers.WorkspaceBroadcast, sp *
 	// through the same fan-out. Set here for the same reason Invalidator is: the
 	// port lives below this package and the concrete above it. Init reads it.
 	sp.SavedNotifier = broadcast
+	sp.InkInvalidator = broadcast
 	// NOTE: the JobEngine and the Editor's SetJobs/SetEngine/SetAI wiring live in
 	// ServiceProvider.Init (runs at Wails startup, AFTER this) — that is where
 	// State/AI/Editor exist. Doing it here nil-derefs: sp is an empty struct until

@@ -15,7 +15,7 @@ import (
 var (
 	ErrBluetoothOff           = errors.New("Bluetooth is off")
 	ErrBluetoothNotAuthorised = errors.New("Sieve is not authorised to use Bluetooth")
-	ErrBluetoothUnsupported   = errors.New("this computer does not support Bluetooth Low Energy")
+	ErrBluetoothUnsupported   = errors.New("Bluetooth ink is not supported on this computer")
 )
 
 // Radio finds a companion and opens a Link to it.
