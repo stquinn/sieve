@@ -28,9 +28,11 @@ type Storable interface {
 	// creation and immutable — use Store.Move to change category.
 	Category() Category
 
-	// Body returns the raw content bytes. The Store holds them and never
-	// interprets them: what they mean is decided by the MetaStorable's Type and
-	// the service that owns that type.
+	// Body returns the raw content bytes. The Store never interprets them: what
+	// they mean is decided by the MetaStorable's Type and the service that owns
+	// that type. An AssetStorable holds no bytes: its Body reads the asset as it
+	// is stored at the time of the call, costs a read each call, and is nil when
+	// the asset cannot be read.
 	Body() []byte
 
 	// ExternalRef returns the string used to reference this Storable from
@@ -83,12 +85,12 @@ type MetaStorable interface {
 }
 
 // AssetStorable extends Storable for binary content such as images and voice
-// notes. The Store infers and stamps Encoding from magic bytes at Create time;
-// the caller never declares the encoding.
+// notes. The Store infers and stamps Encoding from the asset's leading bytes
+// when the storable is built; the caller never declares the encoding.
 type AssetStorable interface {
 	Storable
 
-	// Encoding returns the encoding inferred from the raw bytes at creation.
+	// Encoding returns the encoding inferred from the asset's leading bytes.
 	Encoding() Encoding
 
 	// BlkID returns the block identifier for this asset — the filename stem

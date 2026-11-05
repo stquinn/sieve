@@ -102,29 +102,24 @@ func (s *fileMetaStorable) ClearOwns() {
 	s.isModified = true
 }
 
-// fileAssetStorable extends fileStorable for binary content such as images.
-// Encoding is inferred by FileStore at Create time from magic bytes — never
-// declared by the caller.
+// fileAssetStorable is an asset named by the file that holds it. It keeps no
+// bytes: Body reads the file when called, so a handle always reads the file as
+// it is now, and a listing of assets reads none of their content.
 // It satisfies store.AssetStorable.
-//
-// An asset built by newAppendedAssetStorable holds no body: file names the
-// asset on disk, and Body reads it there, so the asset is never held stale
-// while it grows.
 type fileAssetStorable struct {
 	fileStorable
 	encoding store.Encoding
 	blkId    string
-	file     string
+	file     string // absolute path of the asset's file
 }
 
 func (s *fileAssetStorable) Encoding() store.Encoding { return s.encoding }
 func (s *fileAssetStorable) BlkID() string            { return s.blkId }
 
-// Body is the asset's bytes; nil when an appended asset's file cannot be read.
+// Body is the file's current bytes; nil when the file cannot be read. A nil
+// Body means "unreadable", never "empty asset": an empty file yields a non-nil
+// empty slice.
 func (s *fileAssetStorable) Body() []byte {
-	if s.file == "" {
-		return s.fileStorable.Body()
-	}
 	data, err := os.ReadFile(s.file)
 	if err != nil {
 		return nil
@@ -132,22 +127,17 @@ func (s *fileAssetStorable) Body() []byte {
 	return data
 }
 
-// newAppendedAssetStorable is the asset at file, read from disk on each Body.
-func newAppendedAssetStorable(key string, cat store.Category, file, extRef string, enc store.Encoding) *fileAssetStorable {
-	a := newFileAssetStorable(key, key, cat, nil, extRef, enc)
-	a.file = file
-	return a
-}
-
-func newFileAssetStorable(key, path string, cat store.Category, body []byte, extRef string, enc store.Encoding) *fileAssetStorable {
+// newFileAssetStorable is the asset at file, with its encoding already inferred.
+func newFileAssetStorable(key, path string, cat store.Category, file, extRef string, enc store.Encoding) *fileAssetStorable {
 	blkId := key
 	if dot := strings.LastIndex(key, "."); dot > 0 {
 		blkId = key[:dot]
 	}
 	return &fileAssetStorable{
-		fileStorable: fileStorable{key: key, path: path, category: cat, body: body, extRef: extRef},
+		fileStorable: fileStorable{key: key, path: path, category: cat, extRef: extRef},
 		encoding:     enc,
 		blkId:        blkId,
+		file:         file,
 	}
 }
 

@@ -39,6 +39,7 @@ package filestore
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -46,6 +47,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"sieve/ident"
@@ -70,6 +72,8 @@ type FileStore struct {
 
 	indexMu   sync.RWMutex
 	uuidIndex map[string]store.Storable // uuid → cached Storable
+
+	sniffedBytes atomic.Int64 // bytes read from asset files to infer encodings
 }
 
 // NewFileStore initialises a FileStore rooted at root for the given hostname.
@@ -149,8 +153,6 @@ func (fs *FileStore) CreateAsset(cat store.Category, parentKey string, assetID s
 		return nil, fmt.Errorf("filestore: create asset %s: %w", filename, err)
 	}
 
-	enc := inferEncoding(body)
-
 	var extRef string
 	if docUUID != "" {
 		extRef = store.AssetURL(docUUID, filename)
@@ -165,7 +167,7 @@ func (fs *FileStore) CreateAsset(cat store.Category, parentKey string, assetID s
 		key = ".assets/" + filename
 	}
 
-	return newFileAssetStorable(filename, key, cat, body, extRef, enc), nil
+	return fs.newAssetStorable(filename, key, cat, assetPath, extRef)
 }
 
 // AppendAsset implements store.Store with one append to the asset's file. A key
@@ -197,7 +199,7 @@ func (fs *FileStore) AppendAsset(cat store.Category, uuid string, assetKey strin
 	if err != nil {
 		return nil, fmt.Errorf("filestore: append asset %s: %w", assetKey, err)
 	}
-	return newAppendedAssetStorable(assetKey, cat, path, store.AssetURL(uuid, assetKey), inferEncoding(data)), nil
+	return fs.newAssetStorable(assetKey, assetKey, cat, path, store.AssetURL(uuid, assetKey))
 }
 
 func (fs *FileStore) CreateText(cat store.Category, key string, body []byte) (store.Storable, error) {
@@ -802,13 +804,25 @@ func (fs *FileStore) createContent(cat store.Category, key, contentType string, 
 	return s, nil
 }
 
-func (fs *FileStore) createAsset(cat store.Category, key, absPath string, body []byte) (store.AssetStorable, error) {
-	if err := os.WriteFile(absPath, body, 0o644); err != nil {
-		return nil, fmt.Errorf("filestore: create asset %s: %w", key, err)
+// newAssetStorable is the asset stored at file. It reads at most sniffLen bytes
+// of the file to infer the encoding and holds none of them.
+func (fs *FileStore) newAssetStorable(key, path string, cat store.Category, file, extRef string) (*fileAssetStorable, error) {
+	f, err := os.Open(file)
+	if err != nil {
+		return nil, fmt.Errorf("filestore: open asset %s: %w", key, err)
 	}
-	enc := inferEncoding(body)
-	extRef := fs.externalRef(cat, key)
-	return newFileAssetStorable(key, key, cat, body, extRef, enc), nil
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("filestore: stat asset %s: %w", key, err)
+	}
+	head := make([]byte, sniffLen)
+	n, err := io.ReadFull(f, head)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return nil, fmt.Errorf("filestore: read asset %s: %w", key, err)
+	}
+	fs.sniffedBytes.Add(int64(n))
+	return newFileAssetStorable(key, path, cat, file, extRef, inferEncoding(head[:n], info.Size())), nil
 }
 
 func (fs *FileStore) createPlain(cat store.Category, key, absPath string, body []byte) (store.Storable, error) {
@@ -898,13 +912,10 @@ func (fs *FileStore) saveContent(s *fileMetaStorable) (store.Storable, error) {
 	return saved, nil
 }
 
+// saveAsset writes nothing: an asset's bytes are its file, which changes only
+// through CreateAsset and AppendAsset. It returns a handle on the file as it is.
 func (fs *FileStore) saveAsset(s *fileAssetStorable) (store.Storable, error) {
-	absPath := fs.absPath(s.category, s.key)
-	if err := os.WriteFile(absPath, s.body, 0o644); err != nil {
-		return nil, fmt.Errorf("filestore: save asset %s: %w", s.key, err)
-	}
-	enc := inferEncoding(s.body)
-	return newFileAssetStorable(s.key, s.key, s.category, s.body, s.extRef, enc), nil
+	return fs.newAssetStorable(s.key, s.path, s.category, s.file, s.extRef)
 }
 
 func (fs *FileStore) savePlain(s *fileStorable) (store.Storable, error) {

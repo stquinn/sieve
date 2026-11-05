@@ -1,6 +1,7 @@
 package filestore_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -1196,6 +1197,114 @@ func TestAppendAssetRefusesWhatIsNotAnAssetKey(t *testing.T) {
 				t.Errorf("content file = %q", body)
 			}
 		})
+	}
+}
+
+// Every verb that yields an asset yields the one file-backed kind: Body is the
+// file's bytes at the moment of the call, so a file changed on disk after the
+// storable was obtained is seen by the next Body, and the encoding is inferred
+// from the file's leading bytes.
+func TestAssetStorableIsBackedByItsFile(t *testing.T) {
+	assetFiles := []struct {
+		key  string
+		data []byte
+		enc  store.Encoding
+	}{
+		{"pic.png", []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00}, store.Raw},
+		{"diagram.svg", []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), store.Raw},
+		{"strokes.jsonl", []byte("{\"x\":1}\n"), store.Raw},
+		{"b64.txt", []byte("aGVsbG8gd29ybGQ="), store.Base64},
+		{"pack.zip", []byte("PK\x03\x04rest"), store.Zipped},
+	}
+	verbs := []struct {
+		name string
+		get  func(t *testing.T, fs *filestore.FileStore, owner store.MetaStorable, key string, data []byte) store.Storable
+	}{
+		{"create", func(t *testing.T, fs *filestore.FileStore, owner store.MetaStorable, key string, data []byte) store.Storable {
+			a, err := fs.CreateAsset(testLibrary, owner.Key(), key, data)
+			if err != nil {
+				t.Fatalf("CreateAsset: %v", err)
+			}
+			return a
+		}},
+		{"append", func(t *testing.T, fs *filestore.FileStore, owner store.MetaStorable, key string, data []byte) store.Storable {
+			a, err := fs.AppendAsset(testLibrary, owner.Key(), key, data)
+			if err != nil {
+				t.Fatalf("AppendAsset: %v", err)
+			}
+			return a
+		}},
+		{"load", func(t *testing.T, fs *filestore.FileStore, owner store.MetaStorable, key string, data []byte) store.Storable {
+			if _, err := (store.OwnedAssets{Store: fs}).Save(owner, key, data); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			a, err := fs.LoadAsset(testLibrary, owner.Key(), key)
+			if err != nil {
+				t.Fatalf("LoadAsset: %v", err)
+			}
+			return a
+		}},
+		{"list", func(t *testing.T, fs *filestore.FileStore, owner store.MetaStorable, key string, data []byte) store.Storable {
+			if _, err := fs.CreateAsset(testLibrary, owner.Key(), key, data); err != nil {
+				t.Fatalf("CreateAsset: %v", err)
+			}
+			loaded, err := fs.Load(testLibrary, "my-note")
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			for _, a := range loaded.(store.MetaStorable).Owns() {
+				if a.Key() == key {
+					return a
+				}
+			}
+			t.Fatalf("scan did not list %s", key)
+			return nil
+		}},
+		{"save", func(t *testing.T, fs *filestore.FileStore, owner store.MetaStorable, key string, data []byte) store.Storable {
+			a, err := fs.CreateAsset(testLibrary, owner.Key(), key, data)
+			if err != nil {
+				t.Fatalf("CreateAsset: %v", err)
+			}
+			saved, err := fs.Save(a)
+			if err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			return saved
+		}},
+	}
+	for _, verb := range verbs {
+		for _, af := range assetFiles {
+			t.Run(verb.name+"/"+af.key, func(t *testing.T) {
+				fs := newTestStore(t)
+				owner := mustCreateTyped(t, fs, testLibrary, "my-note", "document", []byte("body"))
+				got := verb.get(t, fs, owner, af.key, af.data)
+
+				as, ok := got.(store.AssetStorable)
+				if !ok {
+					t.Fatalf("%T is not an AssetStorable", got)
+				}
+				if as.Encoding() != af.enc {
+					t.Errorf("encoding = %v, want %v", as.Encoding(), af.enc)
+				}
+				if !bytes.Equal(as.Body(), af.data) {
+					t.Errorf("Body = %q, want %q", as.Body(), af.data)
+				}
+
+				path := filepath.Join(fs.Root(), "store", "my-note", af.key)
+				if err := os.WriteFile(path, []byte("changed on disk"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if string(as.Body()) != "changed on disk" {
+					t.Errorf("Body after the file changed = %q", as.Body())
+				}
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if as.Body() != nil {
+					t.Errorf("Body of a missing file = %q, want nil", as.Body())
+				}
+			})
+		}
 	}
 }
 

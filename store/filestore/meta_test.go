@@ -1,7 +1,12 @@
 package filestore
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"sieve/store"
 )
 
 // TestNewUUID_IsVersion7 pins the minted form to UUIDv7 (time-ordered), which is
@@ -133,5 +138,37 @@ func TestDocMetaExtraFieldsPreserved(t *testing.T) {
 	restored := docMetaToMap(dm)
 	if restored["custom_field"] != "hello" {
 		t.Errorf("custom_field not preserved in round-trip: %q", restored["custom_field"])
+	}
+}
+
+// Listing a category builds every asset storable from at most sniffLen bytes of
+// its file: a large asset's bytes are neither read nor held.
+func TestListingReadsNoMoreThanTheHeadOfAnAsset(t *testing.T) {
+	cat := store.Category{Key: "store", DisplayName: "Library", Isolation: store.Shared}
+	fs, err := NewFileStore(t.TempDir(), "testhost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.PrepareCategory(cat)
+	_, err = fs.CreateTyped(cat, "my-note", store.TypeBlock, map[string]string{store.MetaKeyKind: "k"}, []byte("body"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	large := bytes.Repeat([]byte("{\"stroke\":1}\n"), 1<<18)
+	if err := os.WriteFile(filepath.Join(fs.Root(), "store", "my-note", "strokes.jsonl"), large, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fs.sniffedBytes.Store(0)
+	listed, err := fs.List(cat, "")
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("List = %v, %v", listed, err)
+	}
+	owned := listed[0].(store.MetaStorable).Owns()
+	if len(owned) != 1 || owned[0].Key() != "strokes.jsonl" {
+		t.Fatalf("listing owns %d assets, want strokes.jsonl", len(owned))
+	}
+	if got := fs.sniffedBytes.Load(); got != sniffLen {
+		t.Errorf("listing read %d bytes of a %d-byte asset, want %d", got, len(large), sniffLen)
 	}
 }

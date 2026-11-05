@@ -171,13 +171,11 @@ func (fs *FileStore) scanDocAssets(cat store.Category, key, uuid, contentType st
 			continue
 		}
 		// Any remaining file is treated as an asset.
-		assetPath := filepath.Join(dir, e.Name())
-		data, err := os.ReadFile(assetPath)
+		asset, err := fs.newAssetStorable(e.Name(), e.Name(), cat, filepath.Join(dir, e.Name()), store.AssetURL(uuid, e.Name()))
 		if err != nil {
 			continue
 		}
-		assetExtRef := store.AssetURL(uuid, e.Name())
-		assets = append(assets, newFileAssetStorable(e.Name(), e.Name(), cat, data, assetExtRef, inferEncoding(data)))
+		assets = append(assets, asset)
 	}
 	return assets
 }
