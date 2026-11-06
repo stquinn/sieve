@@ -979,6 +979,11 @@ import { selectNextScope } from './interaction-policy.js'
           .then(function () { sayStatus('Naming ' + called + '…') })
           .catch(function (err) { sayStatus(err.message, true) })
       }},
+      { icon: IC.edit, label: 'Rename...', action: function () {
+        hx('GET', '/ui/views/sidebar/dialog/rename?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name || '') + '&type=notebook',
+          { target: '#rename-dialog-content', swap: 'innerHTML' }
+        ).then(function () { document.getElementById('rename-dialog').showModal() })
+      }},
     ]
   }
 

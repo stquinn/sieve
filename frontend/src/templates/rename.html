@@ -1,15 +1,21 @@
 {{define "rename.html"}}
 <div class="rename-modal" style="padding: 1.5rem; background: var(--theme-bgDark); border-radius: 8px;">
-  <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1rem;">Rename {{if eq .Type "folder"}}Folder{{else}}Note{{end}}</h3>
+  <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1rem;">Rename {{if eq .Type "folder"}}Folder{{else if eq .Type "notebook"}}Notebook{{else}}Note{{end}}</h3>
   
   <form 
     {{if eq .Type "folder"}}
       hx-patch="/api/folder/{{.ID}}"
+      hx-target="#htmx-sidebar"
+      hx-swap="innerHTML"
+    {{else if eq .Type "notebook"}}
+      hx-post="/api/ink/notes/{{.ID}}/rename"
+      hx-swap="none"
+      hx-on::after-request="if (!event.detail.successful) document.dispatchEvent(new CustomEvent('sieve:status-message', { detail: { text: event.detail.xhr.responseText, error: true } }))"
     {{else}}
       hx-patch="/api/note/{{.ID}}"
+      hx-target="#htmx-sidebar"
+      hx-swap="innerHTML"
     {{end}}
-    hx-target="#htmx-sidebar"
-    hx-swap="innerHTML"
     onsubmit="document.getElementById('rename-dialog').close()"
     style="display: flex; flex-direction: column; gap: 1rem;"
   >
@@ -19,6 +25,7 @@
         name="name" 
         value="{{.Name}}" 
         id="rename-input"
+        {{if eq .Type "notebook"}}placeholder="Empty: the tablet's title, until the AI names it"{{end}}
         autofocus 
         onfocus="this.select()"
         style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none; font-size: 0.875rem;"

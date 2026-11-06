@@ -104,9 +104,6 @@ const inkDeleteRefused = "The tablet still has this notebook. Delete it there, o
 // inkDescribeDrawWait bounds how long naming a note now waits for its first page to be drawn.
 const inkDescribeDrawWait = 10 * time.Second
 
-// untitledNotebook is what a synced note with no name and no title from its tablet is called.
-const untitledNotebook = "Untitled notebook"
-
 // inkRateFloor is the shortest catch-up a throughput is shown for.
 const inkRateFloor = 50 * time.Millisecond
 
@@ -118,6 +115,7 @@ func (h *InkHandler) RegisterPaths(r chi.Router) {
 	r.Get("/api/ink/notes/{uuid}/pages/{page}/export", h.handleExport)
 	r.Get("/api/ink/notes/{uuid}/pages/{page}/image", h.handleImage)
 	r.Post("/api/ink/notes/{uuid}/describe", h.handleDescribe)
+	r.Post("/api/ink/notes/{uuid}/rename", h.handleRename)
 	r.Delete("/api/ink/notes/{uuid}", h.handleDelete)
 	r.Post("/api/ink/notes/{uuid}/open-on-tablet", h.handleOpenOnTablet)
 	r.Get("/api/ink/live/note", h.handleLiveNote)
@@ -149,6 +147,28 @@ func (h *InkHandler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		sp: h.ServiceProvider, tmpl: h.Tmpl,
 		emitSessionChanged: h.EmitSessionChanged, emitNotesChanged: h.EmitNotesChanged,
 	}.reconcile(w, uuid)
+}
+
+// handleRename gives a synced note the form's name by hand, a blank one handing naming back to the
+// AI, and answers 204, or with why not in words: a name too long for the tablet is 400, a container
+// that is not a Digital Note 404.
+func (h *InkHandler) handleRename(w http.ResponseWriter, r *http.Request) {
+	if h.ServiceProvider.Ink == nil {
+		http.Error(w, "Notebooks are unavailable.", http.StatusServiceUnavailable)
+		return
+	}
+	err := h.ServiceProvider.Ink.Rename(chi.URLParam(r, "uuid"), r.FormValue("name"))
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, ink.ErrNameTooLong):
+		http.Error(w, fmt.Sprintf("A notebook's name can be at most %d bytes long.", ink.MaxNameBytes), http.StatusBadRequest)
+	case errors.Is(err, ink.ErrNoSuchPage):
+		http.Error(w, "No such notebook.", http.StatusNotFound)
+	default:
+		logger.Error("ink: renaming a note", "err", err.Error())
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 // handleDescribe names a synced note now, answering 204 once its job is submitted or with why
@@ -246,7 +266,7 @@ func (v *inkSidebarView) show(st ink.Status, session domain.Session) {
 	for _, n := range st.Notes {
 		title := n.Name
 		if title == "" {
-			title = untitledNotebook
+			title = ink.UntitledNotebook
 		}
 		refused := ""
 		if n.Deletion == ink.DeleteRefused {

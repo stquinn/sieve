@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"slices"
+
 	"sieve/sieve"
+	"sieve/sieve/domain"
 	"sieve/sieve/services"
 
 	"github.com/go-chi/chi/v5"
@@ -17,6 +20,78 @@ type SideBarHandler struct {
 
 func (s *SideBarHandler) RegisterPaths(r chi.Router) {
 	r.Get("/ui/views/sidebar", s.handleSidebar)
+	r.Get("/ui/views/sidebar/buffers", s.handleBuffers)
+}
+
+// buffersTreeID is the Buffers item's id among the tree's expanded folders
+// (domain.Session.OpenFolders). A folder's id is a uuid, so it is never this.
+const buffersTreeID = "buffers"
+
+// buffersSidebarView is the payload of buffers_sidebar.html, the Buffers item at
+// the foot of the sidebar's tree, which is there also when it holds nothing.
+type buffersSidebarView struct {
+	// ID is the item's id among the expanded folders; Open is its being expanded.
+	ID      string
+	Open    bool
+	Buffers []bufferItem
+}
+
+// bufferItem is a buffer as the sidebar lists it.
+type bufferItem struct {
+	UUID string
+	// Title is the buffer's display name, the one its tab shows.
+	Title string
+	// Intent is the user_intent its open tab carries; empty for a buffer not open.
+	Intent string
+	Active bool
+}
+
+// bufferCriteria is what the Buffers item asks the search for: every buffer.
+func (s SideBarHandler) bufferCriteria() domain.SearchCriteria {
+	return domain.SearchCriteria{
+		Fields: domain.SearchFields{domain.SearchName},
+		Kinds:  []string{string(domain.KindBuffer)},
+	}
+}
+
+// buffers is the Buffers item as session shows it; no buffers when no search is wired.
+func (s SideBarHandler) buffers(session domain.Session) buffersSidebarView {
+	var hits []domain.Candidate
+	if s.ServiceProvider.Search != nil {
+		hits = s.ServiceProvider.Search.Search(s.bufferCriteria())
+	}
+	var v buffersSidebarView
+	v.show(hits, session)
+	return v
+}
+
+// show fills the view with hits as the tree's Buffers item shows them in session:
+// expanded as session remembers it, the active tab's row marked.
+func (v *buffersSidebarView) show(hits []domain.Candidate, session domain.Session) {
+	intents := make(map[string]string, len(session.Tabs))
+	for _, t := range session.Tabs {
+		intents[t.ID] = t.UserIntent
+	}
+	active := session.ActiveID()
+	*v = buffersSidebarView{ID: buffersTreeID, Open: slices.Contains(session.OpenFolders, buffersTreeID)}
+	v.Buffers = make([]bufferItem, 0, len(hits))
+	for _, hit := range hits {
+		id := hit.Container()
+		v.Buffers = append(v.Buffers, bufferItem{UUID: id, Title: hit.Title, Intent: intents[id], Active: id != "" && id == active})
+	}
+}
+
+// handleBuffers writes the Buffers item of the sidebar's tree, which the tree
+// also renders in place.
+func (s *SideBarHandler) handleBuffers(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if s.ServiceProvider.State == nil {
+		return
+	}
+	if err := s.Tmpl.ExecuteTemplate(w, "buffers_sidebar.html", s.buffers(s.ServiceProvider.State.LoadSession())); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 type sidebarEntry struct {
@@ -56,10 +131,12 @@ func prepSidebarEntries(entries []services.NoteEntry, openFolders map[string]boo
 	return out
 }
 
-// sidebarTree is the payload of sidebar.html: the Ink item above the library's tree.
+// sidebarTree is the payload of sidebar.html: the Ink item above the library's
+// tree and the Buffers item below it.
 type sidebarTree struct {
 	Ink     inkSidebarView
 	Entries []sidebarEntry
+	Buffers buffersSidebarView
 }
 
 // Render writes the sidebar HTML fragment to w. It is shared by the sidebar
@@ -90,7 +167,7 @@ func (s SideBarHandler) Render(w http.ResponseWriter) {
 		return
 	}
 
-	data := sidebarTree{Entries: prepSidebarEntries(entries, openFolders, 0, "", activeID)}
+	data := sidebarTree{Entries: prepSidebarEntries(entries, openFolders, 0, "", activeID), Buffers: s.buffers(session)}
 	if s.ServiceProvider.Ink != nil {
 		data.Ink.show(s.ServiceProvider.Ink.Status(), session)
 	}

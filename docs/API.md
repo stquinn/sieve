@@ -1418,6 +1418,7 @@ or another protocol's own transport.
 | `GET` | `/ui/views/settings` | — |
 | `GET` | `/ui/views/settings/ink` | — |
 | `GET` | `/ui/views/sidebar` | — |
+| `GET` | `/ui/views/sidebar/buffers` | — |
 | `GET` | `/ui/views/sidebar/dialog/{kind}` | — |
 | `GET` | `/ui/views/sidebar/ink` | — |
 | `GET` | `/ui/views/sidebar/search` | — |
@@ -1431,6 +1432,7 @@ or another protocol's own transport.
 | `POST` | `/api/ink/key` | — |
 | `POST` | `/api/ink/notes/{uuid}/describe` | typed (none) |
 | `POST` | `/api/ink/notes/{uuid}/open-on-tablet` | typed (json) |
+| `POST` | `/api/ink/notes/{uuid}/rename` | — |
 | `POST` | `/api/meta/restore` | — |
 | `POST` | `/api/note` | — |
 | `POST` | `/api/session/layout` | — |

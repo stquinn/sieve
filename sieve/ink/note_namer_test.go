@@ -369,6 +369,43 @@ func TestNoteNamer_NameNowNamesANoteAtOnce(t *testing.T) {
 	}
 }
 
+// A name given by hand is kept, by the namer and by NameNow alike, while they keep the summary and
+// keywords current; cleared, the note is called by its tablet's title until the namer, finding it
+// undescribed, names it again once it has settled.
+func TestNoteNamer_KeepsANameGivenByHandUntilItIsCleared(t *testing.T) {
+	rig := newNamerRig(t, inkLog()...)
+	if err := rig.svc.Rename(rig.uuid(), "  My kitchen  "); err != nil {
+		t.Fatal(err)
+	}
+	named := func(name, summary, seq string) {
+		t.Helper()
+		kind, meta := NewDigitalNoteKind(), rig.meta()
+		d, _, _ := kind.Description(meta)
+		if kind.Name(meta, "Ideas") != name || d.Summary != summary || meta["note_meta_seq"] != seq {
+			t.Errorf("named %q, summary %q, of seq %q; want %q, %q, %q", kind.Name(meta, "Ideas"), d.Summary, meta["note_meta_seq"], name, summary, seq)
+		}
+	}
+	named("My kitchen", "", "")
+	rig.settled(testSettle)
+	named("My kitchen", kitchen.Summary, "6")
+
+	rig.describer.set(func(d *fakeDescriber) { d.answer = domain.NoteMetadata{Title: "Kitchen, again", Summary: "Revised."} })
+	if err := rig.nameNow(); err != nil {
+		t.Fatal(err)
+	}
+	named("My kitchen", "Revised.", "6")
+
+	if err := rig.svc.Rename(rig.uuid(), ""); err != nil {
+		t.Fatal(err)
+	}
+	named("Ideas", "Revised.", "")
+	rig.settled(0)
+	if calls := rig.describer.calls(); len(calls) != 3 {
+		t.Errorf("described %d times, want 3", len(calls))
+	}
+	named("Kitchen, again", "Revised.", "6")
+}
+
 // NameNow refuses a note it cannot name now, submitting nothing, and Refusal says why in words.
 func TestNoteNamer_NameNowRefusesWhatItCannotName(t *testing.T) {
 	for _, tc := range []struct {

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -183,6 +184,9 @@ const (
 	// the tablet still has it.
 	DeleteReturns
 )
+
+// ErrNameTooLong is a name given by hand longer than MaxNameBytes.
+var ErrNameTooLong = fmt.Errorf("ink: a notebook's name is at most %d bytes", MaxNameBytes)
 
 // ErrStillOffered is a delete of a note whose Deletion is DeleteRefused.
 var ErrStillOffered = errors.New("ink: the tablet still offers this note")
@@ -599,14 +603,47 @@ func (s *InkService) noteName(uuid string) string {
 }
 
 // keepDescription keeps d as the description of the Digital Note in container uuid as its log
-// stood at seq, in its .meta, and then shows it: the ink views are invalidated, every session tab
-// of the note takes its name, the Live view is told when it mirrors the note, and the description
-// is sent to the tablet as sendDescription sends it. The block, and the title the tablet wrote in
-// it, are not touched.
+// stood at seq, in its .meta, and then shows it as metaChanged does. The block, and the title the
+// tablet wrote in it, are not touched.
 func (s *InkService) keepDescription(uuid string, seq uint32, d domain.NoteMetadata) error {
 	if err := s.writeNoteMeta(uuid, func(m domain.DocumentMeta) { NewDigitalNoteKind().Describe(m, d, seq) }); err != nil {
 		return err
 	}
+	s.metaChanged(uuid)
+	return nil
+}
+
+// Rename gives the Digital Note in container uuid name, trimmed, by hand, and shows it as
+// keepDescription shows a description: the namer then keeps the note's summary and keywords
+// current and never its name, and the name is sent to the tablet as a description is. A blank name
+// hands naming back to the namer, which names the note when it is next due; meanwhile it is called
+// by its tablet's title. A name longer than MaxNameBytes is ErrNameTooLong; a container that is not
+// a Digital Note is ErrNoSuchPage.
+func (s *InkService) Rename(uuid, name string) error {
+	name = strings.TrimSpace(name)
+	if len(name) > MaxNameBytes {
+		return fmt.Errorf("%w: %d bytes", ErrNameTooLong, len(name))
+	}
+	if _, err := s.digitalNote(uuid); err != nil {
+		return err
+	}
+	if err := s.writeNoteMeta(uuid, func(m domain.DocumentMeta) { NewDigitalNoteKind().NameByHand(m, name) }); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	namer := s.namer
+	s.mu.Unlock()
+	if name == "" && namer != nil {
+		namer.undescribed(uuid)
+	}
+	s.metaChanged(uuid)
+	return nil
+}
+
+// metaChanged shows what the .meta of the Digital Note in container uuid holds now: the ink views
+// are invalidated, every session tab of the note takes its name, the Live view is told when it
+// mirrors the note, and its description is sent to the tablet as sendDescription sends it.
+func (s *InkService) metaChanged(uuid string) {
 	s.invalidate()
 	renamed, err := s.settings.RenameTabs(uuid, s.noteName(uuid))
 	if err != nil {
@@ -617,7 +654,6 @@ func (s *InkService) keepDescription(uuid string, seq uint32, d domain.NoteMetad
 	}
 	s.view.noteChanged(uuid)
 	s.sendDescription(uuid)
-	return nil
 }
 
 // writeNoteMeta applies edit to the .meta of container uuid: under the open replica holding it,
@@ -637,9 +673,9 @@ func (s *InkService) writeNoteMeta(uuid string, edit func(domain.DocumentMeta)) 
 
 // sendDescription sends META of the Digital Note in container uuid, and records the seq sent, when
 // the session running now is with the tablet the note came from, that tablet listed the note on
-// this connection, and the note's stored description is of a later seq than the one last sent,
-// and not past the head the tablet listed. META carries the description's fields and seq, and
-// nothing else.
+// this connection, and the note's stored description is unsent (DigitalNoteKind.Unsent) and not
+// past the head the tablet listed. META carries the description's fields, its name the one a
+// person gave when one did, and its seq, and nothing else.
 func (s *InkService) sendDescription(uuid string) {
 	s.sending.Lock()
 	defer s.sending.Unlock()
@@ -648,10 +684,10 @@ func (s *InkService) sendDescription(uuid string) {
 		return
 	}
 	kind, meta := NewDigitalNoteKind(), c.Storable().Meta()
-	d, seq, ok := kind.Description(meta)
-	if !ok || seq <= kind.SentSeq(meta) {
+	if !kind.Unsent(meta) {
 		return
 	}
+	d, seq, _ := kind.Description(meta)
 	note, err := link.ParseID(meta["note_source_id"])
 	if err != nil {
 		return
@@ -676,7 +712,7 @@ func (s *InkService) sendDescription(uuid string) {
 }
 
 // sendDescriptions sends, as sendDescription does, the description of every note of run's tablet
-// whose stored description is of a later seq than the one last sent.
+// whose stored description is unsent.
 func (s *InkService) sendDescriptions(run *sessionRun) {
 	found, err := s.containers.Find(KindDigitalNote, map[string]string{"note_companion": run.link.Identity()})
 	if err != nil {
@@ -685,7 +721,7 @@ func (s *InkService) sendDescriptions(run *sessionRun) {
 	}
 	kind := NewDigitalNoteKind()
 	for uuid, meta := range found {
-		if kind.DescribedSeq(meta) > kind.SentSeq(meta) {
+		if kind.Unsent(meta) {
 			s.sendDescription(uuid)
 		}
 	}

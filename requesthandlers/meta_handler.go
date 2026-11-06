@@ -330,7 +330,7 @@ func (h *MetaHandler) notebookView(tab domain.Tab) *metaNotebookView {
 	v := &metaNotebookView{UUID: uuid, Name: note.Name, Summary: d.Summary, Keywords: d.Keywords, Categories: d.Categories,
 		Device: note.Device, Pages: note.Pages, Seq: note.Seq, Described: described}
 	if v.Name == "" {
-		v.Name = untitledNotebook
+		v.Name = ink.UntitledNotebook
 	}
 	if note.Title != "" && note.Title != v.Name {
 		v.TabletTitle = note.Title

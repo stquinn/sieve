@@ -29,6 +29,7 @@
   {{else}}
   {{range .Entries}}{{template "entry" .}}{{end}}
   {{end}}
+  <div id="sidebar-buffers" class="buffers-tree">{{template "buffers_sidebar.html" .Buffers}}</div>
 </div>
 {{end}}
 

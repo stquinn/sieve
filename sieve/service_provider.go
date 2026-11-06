@@ -72,6 +72,19 @@ func (s *ServiceProvider) InkRadio(settings domain.InkSettings) radio.Radio {
 	return radio.NewBluetooth()
 }
 
+// RegisterNodeSources registers with the Router, in offer order, every source it federates: the
+// documents, the notebooks, every other block container, and the Live view. Registering a source
+// is the one line that makes a container kind addressable and found. The documents come first so
+// that a document's address is read from the store once; the notebooks precede the block source,
+// which resolves any container and offers none.
+func (s *ServiceProvider) RegisterNodeSources() {
+	blocks := editor.NewBlockSource(s.Containers)
+	s.Nodes.Register(editor.NewNotesSource(s.Documents))
+	s.Nodes.Register(ink.NewNotebooks(s.Ink, blocks))
+	s.Nodes.Register(blocks)
+	s.Nodes.Register(s.Ink.LiveView())
+}
+
 // RegisterInspectors admits every text-service producer to the inspection
 // engine, under the channel that controls it: spelling has one answer for the
 // whole app and is switched from the workspace wire, find belongs to the dialog
@@ -156,6 +169,8 @@ var (
 	_ services.ContainableKinds        = block.Registry{}
 	_ services.ContainerChangeListener = (*editor.EditorService)(nil)
 	_ editor.NodeSource                = (*ink.LiveView)(nil)
+	_ editor.NodeSource                = (*ink.Notebooks)(nil)
+	_ ink.ContainerNodes               = (*editor.BlockSource)(nil)
 	_ domain.NodeResolver              = (*editor.Router)(nil)
 	_ domain.SearchService             = (*editor.Router)(nil)
 	_ command.DocumentFiler            = (*editor.EditorService)(nil)
@@ -179,10 +194,10 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 		logger.Error("block containers init failed", "err", err)
 		return
 	}
-	// The Router: address → NodeDescriptor. Registering a source is the ONE line
-	// that makes a container kind addressable, and MCP get_by_uri reaches through
-	// this same Router.
-	s.Nodes = editor.NewRouter(editor.NewNotesSource(s.Documents), editor.NewBlockSource(s.Containers))
+	// The Router: address → NodeDescriptor, and the one search. MCP get_by_uri
+	// reaches through this same Router. Its sources are registered once the ink
+	// service exists (RegisterNodeSources).
+	s.Nodes = editor.NewRouter()
 	s.Search = s.Nodes
 	s.Assets = services.NewAssetService(store, storePath)
 	s.State, err = services.NewStateService(store, storePath, themesFS)
@@ -212,7 +227,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	s.Plantuml = services.NewPlantumlService(s.State)
 	settings := s.State.LoadSettings()
 	s.Ink = ink.NewInkService(s.State, s.Containers, s.InkRadio(settings.Ink), s.InkInvalidator)
-	s.Nodes.Register(s.Ink.LiveView())
+	s.RegisterNodeSources()
 	s.InkImages = ink.NewPageImages(s.Ink, s.InkDrawer)
 	// A Live view's uuid is minted per run, so a tab of one saved by an earlier run names nothing.
 	if _, err := s.State.CloseTabs(func(t domain.Tab) bool { return t.ContainerKind() == ink.KindLive }); err != nil {

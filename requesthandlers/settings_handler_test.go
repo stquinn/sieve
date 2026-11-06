@@ -18,6 +18,7 @@ import (
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 
+	"sieve/ident"
 	"sieve/sieve"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
@@ -441,7 +442,7 @@ func (holdingRadio) Dial(ctx context.Context) (radio.Link, error) {
 }
 
 // newInkServer serves the settings and Ink handlers over one store, with Ink built over a radio
-// that never finds a companion.
+// that never finds a companion, and the search the composition root builds.
 func newInkServer(t *testing.T) (*httptest.Server, *sieve.ServiceProvider) {
 	t.Helper()
 	h, _ := newTestSettingsHandler(t)
@@ -457,6 +458,9 @@ func newInkServer(t *testing.T) (*httptest.Server, *sieve.ServiceProvider) {
 	}
 	sp.Ink = ink.NewInkService(sp.State, containers, holdingRadio{}, nil)
 	t.Cleanup(sp.Ink.Stop)
+	sp.Nodes = editor.NewRouter()
+	sp.RegisterNodeSources()
+	sp.Search = sp.Nodes
 	r := chi.NewRouter()
 	h.RegisterPaths(r)
 	(&InkHandler{ServiceProvider: sp, Tmpl: h.Tmpl}).RegisterPaths(r)
@@ -620,6 +624,76 @@ func TestInkSidebar_RendersEachState(t *testing.T) {
 	}
 }
 
+// The tree's Buffers item is always a row that expands and collapses as a folder's does, through
+// the folder patch under its own id, and counts what it holds. Expanded it lists every buffer the
+// search answers, in the search's order, or says there are none; each row is named by the hit's
+// title, opens its buffer through the workspace's open, carries a note's menu context with the
+// intent its open tab knows, is not draggable, and the active tab's row is marked.
+func TestBuffersSidebar_RendersEachState(t *testing.T) {
+	h, _ := newTestSettingsHandler(t)
+	scratch, later := ident.New(), ident.New()
+	hits := []domain.Candidate{
+		{URI: domain.NewContainerAddress(scratch).String(), Title: "Untitled 3", Kind: "buffer"},
+		{URI: domain.NewContainerAddress(later).String(), Title: "Auth sketch", Kind: "buffer"},
+	}
+	collapsed := domain.Session{Tabs: []domain.Tab{{ID: later, UserIntent: "trash"}, {ID: "other"}}, ActiveIdx: 0}
+	expanded := collapsed
+	expanded.OpenFolders = []string{"a-folder", buffersTreeID}
+	row := []string{">Buffers<", `hx-patch="/api/folder/buffers"`, `hx-target="#htmx-sidebar"`}
+	for _, tc := range []struct {
+		name    string
+		hits    []domain.Candidate
+		session domain.Session
+		want    []string
+		absent  []string
+	}{
+		{"collapsed", hits, collapsed,
+			append([]string{`aria-expanded="false"`, `{"open": true}`, `buffers-tree__count">2<`}, row...),
+			[]string{"data-ctx-id", "No buffers"}},
+		{"none", nil, expanded,
+			append([]string{`aria-expanded="true"`, `{"open": false}`, "No buffers", `buffers-tree__count">0<`}, row...),
+			[]string{"data-ctx-id"}},
+		{"buffers", hits, expanded, []string{
+			`window.sieveWorkspace.open('` + scratch + `')`, `title="Untitled 3"`, `title="Auth sketch"`, `padding-left:2.50rem;`,
+			`data-ctx-id="` + scratch + `"
+  data-ctx-type="note"
+  data-ctx-name="Untitled 3"
+  data-ctx-intent=""
+  data-ctx-is-dir="false"
+  style=`,
+			`data-ctx-id="` + later + `"
+  data-ctx-type="note"
+  data-ctx-name="Auth sketch"
+  data-ctx-intent="trash"
+  data-ctx-is-dir="false"
+  data-active`,
+			"buffers-tree__trash",
+		}, []string{"No buffers", "draggable"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var v buffersSidebarView
+			v.show(tc.hits, tc.session)
+			var out strings.Builder
+			if err := h.Tmpl.ExecuteTemplate(&out, "buffers_sidebar.html", v); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("no %q in\n%s", want, out.String())
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(out.String(), absent) {
+					t.Errorf("%q in\n%s", absent, out.String())
+				}
+			}
+			if tc.name == "buffers" && strings.Index(out.String(), scratch) > strings.Index(out.String(), later) {
+				t.Error("the rows are not in the search's order")
+			}
+		})
+	}
+}
+
 // The Notebooks item is the tree's first, above the library's folders and above an empty
 // library's line, and only while Ink is enabled; the tree holds it in a mount of its own that
 // refreshes on the ink invalidation, which is also where the item is served. Expanding it is
@@ -710,6 +784,62 @@ func TestInkDelete_RemovesSievesCopyAndItsTab(t *testing.T) {
 	}
 	if status, _ := do(t, http.MethodDelete, srv.URL+"/api/ink/notes/"+c.UUID(), "", ""); status != http.StatusNotFound {
 		t.Errorf("deleting it again: %d, want 404", status)
+	}
+}
+
+// Renaming a notebook offers the rename dialog posting its own route, which answers 204 and gives
+// the name the tab, the sidebar's Notebooks item and the search read; an empty name gives back the
+// tablet's title; a name too long for the tablet is 400 and what is no Digital Note 404.
+func TestInkRename_NamesTheNotebookEverywhereItIsShown(t *testing.T) {
+	srv, sp := newInkServer(t)
+	settings := sp.State.LoadSettings()
+	settings.Ink.Enabled = true
+	if err := sp.State.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	c, err := sp.Containers.Create(ink.KindDigitalNote, map[string]interface{}{"title": "Ideas"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := sp.State.LoadSession()
+	session.Tabs, session.OpenFolders = []domain.Tab{{ID: c.UUID(), Kind: ink.KindDigitalNote, DisplayName: "Ideas"}}, []string{inkTreeID}
+	if err := sp.State.SaveSession(session); err != nil {
+		t.Fatal(err)
+	}
+	status, body := do(t, http.MethodGet, srv.URL+"/ui/views/sidebar/dialog/rename?id="+c.UUID()+"&name=Ideas&type=notebook", "", "")
+	if status != http.StatusOK || !strings.Contains(body, `hx-post="/api/ink/notes/`+c.UUID()+`/rename"`) || !strings.Contains(body, "Rename Notebook") {
+		t.Errorf("the dialog: %d\n%s", status, body)
+	}
+	rename := func(name string) int {
+		t.Helper()
+		status, _ := do(t, http.MethodPost, srv.URL+"/api/ink/notes/"+c.UUID()+"/rename", "application/x-www-form-urlencoded", url.Values{"name": {name}}.Encode())
+		return status
+	}
+	shown := func(name string) {
+		t.Helper()
+		if tab := sp.State.LoadSession().Tabs[0]; tab.DisplayName != name {
+			t.Errorf("the tab reads %q, want %q", tab.DisplayName, name)
+		}
+		if _, body := do(t, http.MethodGet, srv.URL+"/ui/views/sidebar/ink", "", ""); !strings.Contains(body, name) {
+			t.Errorf("the Notebooks item lacks %q:\n%s", name, body)
+		}
+		if _, body := do(t, http.MethodGet, srv.URL+"/ui/views/search?q="+url.QueryEscape(name), "", ""); !strings.Contains(body, "open('"+c.UUID()+"')") {
+			t.Errorf("the quick switcher does not find %q:\n%s", name, body)
+		}
+	}
+	if status := rename("Kitchen plans"); status != http.StatusNoContent {
+		t.Fatalf("rename: %d", status)
+	}
+	shown("Kitchen plans")
+	if status := rename(""); status != http.StatusNoContent {
+		t.Fatalf("clearing the name: %d", status)
+	}
+	shown("Ideas")
+	if status := rename(strings.Repeat("x", ink.MaxNameBytes+1)); status != http.StatusBadRequest {
+		t.Errorf("a name too long: %d, want 400", status)
+	}
+	if status, _ := do(t, http.MethodPost, srv.URL+"/api/ink/notes/"+ident.New()+"/rename", "application/x-www-form-urlencoded", "name=x"); status != http.StatusNotFound {
+		t.Errorf("renaming what is no notebook: %d, want 404", status)
 	}
 }
 

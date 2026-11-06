@@ -10,6 +10,7 @@ import (
 
 	"sieve/ident"
 	"sieve/sieve/domain"
+	"sieve/sieve/ink"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -97,9 +98,9 @@ func TestSearchHandler_EachViewAsksForWhatItShows(t *testing.T) {
 		{
 			name:  "sidebar search: what the sidebar shows, on every field",
 			path:  "/ui/views/sidebar/search?list_only=true&q=auth",
-			asked: []domain.SearchCriteria{{Terms: "auth", Fields: all, Kinds: []string{"note", "digital-note"}}},
+			asked: []domain.SearchCriteria{{Terms: "auth", Fields: all, Kinds: []string{"note", "digital-note", "buffer"}}},
 			renders: []string{"open('" + note + "')", "Auth Design", "design · the auth flow",
-				`store-search__badge">Title`, "Content</span>"},
+				`store-search__badge">Title`, "Content</span>", "open('" + buffer + "')", "Scratch"},
 		},
 		{
 			name:    "sidebar search: no query asks nothing",
@@ -179,5 +180,33 @@ func TestSearchHandler_QuickSwitcherMarksWhatIsOpen(t *testing.T) {
 	}
 	if strings.Contains(filed, "M18.5 2.5") || !strings.Contains(scratch, "M18.5 2.5") {
 		t.Errorf("only the buffer is drawn with the buffer icon")
+	}
+}
+
+// Through the search the composition root builds, the sidebar search finds a notebook by its name,
+// a word of its summary and a keyword, and the quick switcher lists it.
+func TestSearchHandler_FindsANotebook(t *testing.T) {
+	srv, sp := newInkServer(t)
+	c, err := sp.Containers.Create(ink.KindDigitalNote, map[string]interface{}{"title": "Untitled 05/11"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sp.Containers.SaveMeta(c.UUID(), func(m domain.DocumentMeta) {
+		ink.NewDigitalNoteKind().Describe(m, domain.NoteMetadata{Title: "Kitchen plans", Summary: "A rough budget.", Keywords: []string{"extension"}}, 3)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	opens := "open('" + c.UUID() + "')"
+	for _, tc := range []struct{ path, badge string }{
+		{"/ui/views/sidebar/search?list_only=true&q=kitchen", `store-search__badge">Title`},
+		{"/ui/views/sidebar/search?list_only=true&q=budget", `store-search__badge">Summary`},
+		{"/ui/views/sidebar/search?list_only=true&q=extension", `store-search__badge">Tag`},
+		{"/ui/views/search?q=", ""},
+		{"/ui/views/search?q=plans", ""},
+	} {
+		body := getBody(t, srv, tc.path)
+		if !strings.Contains(body, opens) || !strings.Contains(body, "Kitchen plans") || !strings.Contains(body, tc.badge) {
+			t.Errorf("%s lacks the notebook:\n%s", tc.path, body)
+		}
 	}
 }

@@ -14,7 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"sieve/ident"
 	"sieve/sieve/domain"
+	"sieve/sieve/editor"
 	"sieve/sieve/ink/link"
 	"sieve/sieve/ink/radio"
 	"sieve/sieve/protocol"
@@ -1403,6 +1405,156 @@ func TestLiveView_FollowsTheLiveNoteFromPageToPageAndNoteToNote(t *testing.T) {
 	}
 }
 
+// The Live view is offered, while it exists, to a search on names that admits what is not durable
+// and its kind, and whose terms its title holds; never to a durable-only search, one on other
+// fields, one for other kinds or one in a folder, and never once it has ended.
+func TestLiveView_IsFoundByNameWhileItExists(t *testing.T) {
+	rig := newInkRig(t, nil)
+	view := rig.svc.LiveView()
+	name := domain.SearchFields{domain.SearchName}
+	if hits := view.Search(domain.SearchCriteria{Fields: name}); len(hits) != 0 {
+		t.Fatalf("before anything is live: %+v", hits)
+	}
+	view.follow(LiveNote{Container: "x", Note: noteID, Page: page(1)})
+	for _, tc := range []struct {
+		name     string
+		criteria domain.SearchCriteria
+		found    bool
+	}{
+		{"everything by name", domain.SearchCriteria{Fields: name}, true},
+		{"its name", domain.SearchCriteria{Terms: "LIV", Fields: name}, true},
+		{"its kind", domain.SearchCriteria{Terms: "live", Fields: name, Kinds: []string{KindLive}}, true},
+		{"another name", domain.SearchCriteria{Terms: "kitchen", Fields: name}, false},
+		{"other fields", domain.SearchCriteria{Terms: "live", Fields: domain.SearchFields{domain.SearchSummary, domain.SearchContent}}, false},
+		{"durable only", domain.SearchCriteria{Terms: "live", Fields: name, DurableOnly: true}, false},
+		{"other kinds", domain.SearchCriteria{Terms: "live", Fields: name, Kinds: []string{"note", KindDigitalNote}}, false},
+		{"a folder", domain.SearchCriteria{Terms: "live", Fields: name, Folder: "design"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hits := view.Search(tc.criteria)
+			if !tc.found {
+				if len(hits) != 0 {
+					t.Errorf("found %+v", hits)
+				}
+				return
+			}
+			if len(hits) != 1 || hits[0].URI != domain.NewContainerAddress(view.UUID()).String() || hits[0].Title != "Live" || hits[0].Kind != KindLive {
+				t.Errorf("found %+v", hits)
+			}
+		})
+	}
+	timer := &graceTimer{}
+	view.afterFunc = timer.afterFunc
+	view.follow(LiveNote{})
+	timer.pass()
+	if hits := view.Search(domain.SearchCriteria{Fields: name}); len(hits) != 0 {
+		t.Errorf("after the view ended: %+v", hits)
+	}
+}
+
+// newNotebook is a Digital Note held by svc whose tablet titled it title, described as d when d is
+// not nil.
+func newNotebook(t *testing.T, svc *InkService, title string, d *domain.NoteMetadata) string {
+	t.Helper()
+	c, err := svc.containers.Create(KindDigitalNote, map[string]interface{}{"title": title, "note_device": map[string]interface{}{"name": "Note Air"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d != nil {
+		if _, err := svc.containers.SaveMeta(c.UUID(), func(m domain.DocumentMeta) { NewDigitalNoteKind().Describe(m, *d, 4) }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return c.UUID()
+}
+
+// The notebooks source offers the Digital Notes a search asks for, in order of name, matched from
+// their .meta on the name they are called by, their summary, and their keywords and categories as
+// their tags; never on content, never for a folder, and never to a search for other kinds. Each is
+// durable. It resolves a Digital Note as the block source does, with its name and summary at
+// container grain, and nothing else.
+func TestNotebooks_AreFoundByTheirFaceAndResolveAsTheirOwn(t *testing.T) {
+	rig := newInkRig(t, nil)
+	svc := rig.svc
+	named := newNotebook(t, svc, "Untitled 05/11", &kitchen)
+	titled := newNotebook(t, svc, "Garden", nil)
+	untitled := newNotebook(t, svc, "", nil)
+	prose, err := svc.containers.Create("prose", map[string]interface{}{"text": "kitchen"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := NewNotebooks(svc, editor.NewBlockSource(svc.containers))
+	all := domain.SearchFields{domain.SearchName, domain.SearchSummary, domain.SearchTags, domain.SearchContent}
+	for _, tc := range []struct {
+		name     string
+		criteria domain.SearchCriteria
+		want     []string
+		matched  domain.SearchFields
+	}{
+		{"everything", domain.SearchCriteria{Fields: all}, []string{titled, named, untitled}, nil},
+		{"the name it was given", domain.SearchCriteria{Terms: "kitchen ext", Fields: all}, []string{named}, domain.SearchFields{domain.SearchName}},
+		{"not the tablet's title it was named over", domain.SearchCriteria{Terms: "05/11", Fields: all}, nil, nil},
+		{"the tablet's title", domain.SearchCriteria{Terms: "garden", Fields: all}, []string{titled}, domain.SearchFields{domain.SearchName}},
+		{"untitled", domain.SearchCriteria{Terms: "untitled notebook", Fields: all}, []string{untitled}, domain.SearchFields{domain.SearchName}},
+		{"a summary word", domain.SearchCriteria{Terms: "rough budget", Fields: all}, []string{named}, domain.SearchFields{domain.SearchSummary}},
+		{"a keyword", domain.SearchCriteria{Terms: "budget, rough", Fields: all}, []string{named}, domain.SearchFields{domain.SearchTags}},
+		{"a category", domain.SearchCriteria{Terms: "home", Fields: all}, []string{named}, domain.SearchFields{domain.SearchTags}},
+		{"content alone", domain.SearchCriteria{Terms: "kitchen", Fields: domain.SearchFields{domain.SearchContent}}, nil, nil},
+		{"durable only", domain.SearchCriteria{Terms: "kitchen", Fields: all, DurableOnly: true}, []string{named}, domain.SearchFields{domain.SearchName, domain.SearchSummary}},
+		{"its kind", domain.SearchCriteria{Terms: "kitchen", Fields: all, Kinds: []string{"note", KindDigitalNote}}, []string{named}, domain.SearchFields{domain.SearchName, domain.SearchSummary}},
+		{"other kinds", domain.SearchCriteria{Terms: "kitchen", Fields: all, Kinds: []string{"note", "buffer"}}, nil, nil},
+		{"a folder", domain.SearchCriteria{Terms: "kitchen", Fields: all, Folder: "home"}, nil, nil},
+		{"a limit", domain.SearchCriteria{Fields: all, Limit: 2}, []string{titled, named}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hits := source.Search(tc.criteria)
+			var got []string
+			for _, hit := range hits {
+				got = append(got, hit.Container())
+				if hit.Kind != KindDigitalNote || fmt.Sprint(hit.Matched) != fmt.Sprint(tc.matched) || hit.Detail != "Note Air" {
+					t.Errorf("hit %+v", hit)
+				}
+			}
+			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Errorf("found %v, want %v", got, tc.want)
+			}
+		})
+	}
+	hit := source.Search(domain.SearchCriteria{Terms: "kitchen", Fields: all})[0]
+	if hit.URI != "sieve://"+named || hit.Title != kitchen.Title || hit.Summary != kitchen.Summary ||
+		fmt.Sprint(hit.Tags) != fmt.Sprint([]string{"extension", "budget, rough", "Home"}) || hit.Modified == "" {
+		t.Errorf("the named notebook's hit %+v", hit)
+	}
+
+	c, err := svc.containers.Load(named)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.containers.SaveAsset(c, StrokesKey, []byte("{}\n")); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		addr                     domain.Address
+		id, kind, title, summary string
+	}{
+		{domain.NewContainerAddress(named), named, KindDigitalNote, kitchen.Title, kitchen.Summary},
+		{domain.NewContainerAddress(untitled), untitled, KindDigitalNote, UntitledNotebook, ""},
+		{domain.NewLeafAddress(named, StrokesKey), StrokesKey, "asset", StrokesKey, "A file."},
+	} {
+		node, err := source.Resolve(tc.addr)
+		if err != nil || node.ID != tc.id || node.Kind != tc.kind || node.Title != tc.title || node.Summary != tc.summary {
+			t.Errorf("Resolve(%s) = %+v, %v", tc.addr.String(), node, err)
+		}
+	}
+	for _, addr := range []domain.Address{
+		domain.NewContainerAddress(prose.UUID()), domain.NewContainerAddress(ident.New()), domain.NewLeafAddress(named, "no-such-leaf"),
+	} {
+		if node, err := source.Resolve(addr); !errors.Is(err, domain.ErrNodeNotFound) {
+			t.Errorf("Resolve(%s) = %+v, %v", addr.String(), node, err)
+		}
+	}
+}
+
 // OpenOnTablet sends the note's id and the page's to the tablet it came from and words the
 // tablet's answer: live on the note, or refused with its reason. With no tablet connected, or another tablet than the
 // note's, nothing is sent; a container that is no Digital Note is ErrNoSuchNote.
@@ -1580,7 +1732,10 @@ func (rig *inkRig) awaitMetas(n int) []link.Meta {
 // A description kept for a note goes to the tablet it came from while that tablet is connected
 // and listed the note, as META of the description's fields and seq, and the seq sent is recorded:
 // never for another tablet's note or one this tablet did not list, and not again for the same seq.
-// A description kept while no tablet is connected goes once the tablet next lists the note.
+// A description kept while no tablet is connected goes once the tablet next lists the note. A name
+// given by hand goes at once at the seq already sent, and its tab and listing take it; one too long
+// for META is refused; cleared, the note is called by its tablet's title and nothing is sent until
+// it is described again.
 func TestInkService_ADescriptionGoesToTheTabletItsNoteCameFrom(t *testing.T) {
 	records := inkLog()
 	rig := newInkRig(t, records)
@@ -1649,6 +1804,41 @@ func TestInkService_ADescriptionGoesToTheTabletItsNoteCameFrom(t *testing.T) {
 	}
 	if s := sent(uuid); s != "7" {
 		t.Errorf("recorded as sent at %q after the next session", s)
+	}
+
+	session := rig.state.LoadSession()
+	session.Tabs = []domain.Tab{{ID: uuid, Kind: KindDigitalNote, DisplayName: renamed.Title}}
+	if err := rig.state.SaveSession(session); err != nil {
+		t.Fatal(err)
+	}
+	if err := rig.svc.Rename(uuid, strings.Repeat("é", MaxNameBytes/2+1)); !errors.Is(err, ErrNameTooLong) {
+		t.Errorf("a name too long for META: %v", err)
+	}
+	if err := rig.svc.Rename(others[0]+"-not-held", "Mine"); !errors.Is(err, ErrNoSuchPage) {
+		t.Errorf("renaming what is no Digital Note: %v", err)
+	}
+	if err := rig.svc.Rename(uuid, "Mine"); err != nil {
+		t.Fatal(err)
+	}
+	got = rig.awaitMetas(3)[2]
+	if got.Title != "Mine" || got.Summary != renamed.Summary || got.AsOfSeq != uint32(len(next)) {
+		t.Errorf("META of a name given by hand %+v", got)
+	}
+	listed := ""
+	for _, n := range rig.svc.Status().Notes {
+		if n.UUID == uuid {
+			listed = n.Name
+		}
+	}
+	if tab := rig.state.LoadSession().Tabs[0]; tab.DisplayName != "Mine" || listed != "Mine" {
+		t.Errorf("the tab reads %q, the note is listed as %q", tab.DisplayName, listed)
+	}
+	if err := rig.svc.Rename(uuid, ""); err != nil {
+		t.Fatal(err)
+	}
+	rig.awaitMetas(3)
+	if tab := rig.state.LoadSession().Tabs[0]; tab.DisplayName != "Ideas" {
+		t.Errorf("cleared, the tab reads %q", tab.DisplayName)
 	}
 }
 
