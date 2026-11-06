@@ -353,6 +353,55 @@ func TestExportPageCarriesTheTemplateThePageIsDrawnWith(t *testing.T) {
 	}
 }
 
+// A page's key is the same for the same page on every run, and another for any change to what is
+// drawn on it or for another page. The pinned key is what any machine computes for that page.
+func TestPageKeyNamesWhatIsOnThePage(t *testing.T) {
+	keyOf := func(t *testing.T, at int, ops ...link.Record) string {
+		t.Helper()
+		key, err := ReadStrokeBasedNote("c", jsonlOf(t, logOf(ops...))).PageKey(at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return key
+	}
+	base := []link.Record{header("n"), pageAdd(page(1), 0, nil, link.BoundsFixed),
+		pageAdd(page(2), 1, nil, link.BoundsFixed), strokeAdd(page(1), stroke(1))}
+	with := func(ops ...link.Record) []link.Record { return append(append([]link.Record(nil), base...), ops...) }
+	moved := strokeAdd(page(1), stroke(1), offSheet)
+	baseKey := keyOf(t, 0, base...)
+	if baseKey != "2ce2e9cf31ae0dfe" {
+		t.Errorf("the page's key is %s on this machine", baseKey)
+	}
+	for _, tc := range []struct {
+		name string
+		page int
+		ops  []link.Record
+		same bool
+	}{
+		{"the same page replayed again", 0, with(), true},
+		{"a stroke on another page", 0, with(strokeAdd(page(2), stroke(2))), true},
+		{"a stroke added", 0, with(strokeAdd(page(1), stroke(2))), false},
+		{"a stroke removed", 0, with(strokeRemove(page(1), stroke(1))), false},
+		{"a stroke changed", 0, append([]link.Record{base[0], base[1], base[2]}, moved), false},
+		{"another template", 0, with(pageTemplate(page(1), dots)), false},
+		{"another title", 0, append(with(), header("renamed")), false},
+		{"another page with the same ink", 1, append([]link.Record{base[0], base[1], base[2]}, strokeAdd(page(2), stroke(1))), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := keyOf(t, tc.page, tc.ops...)
+			if len(got) != 16 || strings.Trim(got, "0123456789abcdef") != "" {
+				t.Fatalf("key %q is not 16 lowercase hex digits", got)
+			}
+			if (got == baseKey) != tc.same {
+				t.Errorf("key %s, base %s, same = %v", got, baseKey, tc.same)
+			}
+		})
+	}
+	if _, err := ReadStrokeBasedNote("c", jsonlOf(t, logOf(base...))).PageKey(2); err == nil {
+		t.Error("a page out of range has a key")
+	}
+}
+
 // keysOf maps "", "note", "note.device", "strokes", "strokes.points" to their sorted keys.
 func keysOf(t *testing.T, raw []byte) map[string][]string {
 	t.Helper()

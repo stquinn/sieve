@@ -457,6 +457,15 @@ func outboundWireCases() []wireCase {
 			frame:   NewContainerSavedFrame("0198f3c1-1b2a-7000-8000-000000000001", 7),
 			golden:  `{"type":"container-saved","uuid":"0198f3c1-1b2a-7000-8000-000000000001","version":7}`,
 		},
+		{
+			name:    "ink-draw-page",
+			channel: ChannelWorkspace,
+			frame:   NewInkDrawPageFrame("c-1", "0198f3c1-1b2a-7000-8000-000000000001", "p1", "2ce2e9cf31ae0dfe", "fixed", inkPage),
+			golden: `{"type":"ink-draw-page","correlationId":"c-1","container":"0198f3c1-1b2a-7000-8000-000000000001",` +
+				`"pageId":"p1","pageKey":"2ce2e9cf31ae0dfe","bounds":"fixed","page":{"note":{"id":"n1","created":"2023-11-14T22:13:20Z",` +
+				`"title":"Ideas","pageAspect":0.75,"template":{"id":"ruled","params":{"spacing":0.05}},` +
+				`"device":{"id":"d","name":"Note Air 2","model":"ONYX"}},"strokes":[` + inkStrokeJSON + `]}}`,
+		},
 	}
 }
 
@@ -564,6 +573,18 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 			raw:  `{"type":"ink-page","opId":"op-7","pageId":"019a0000-0000-7000-8000-000000000011"}`,
 			into: &InkPageFrame{},
 			want: &InkPageFrame{Type: TypeInkPage, OpID: "op-7", PageID: "019a0000-0000-7000-8000-000000000011"},
+		},
+		{
+			name: "ink-page-drawn",
+			raw:  `{"type":"ink-page-drawn","correlationId":"c-1","png":"iVBORw0KGgo="}`,
+			into: &InkPageDrawnFrame{},
+			want: &InkPageDrawnFrame{Type: TypeInkPageDrawn, CorrelationID: "c-1", PNG: "iVBORw0KGgo="},
+		},
+		{
+			name: "ink-page-drawn that could not draw",
+			raw:  `{"type":"ink-page-drawn","correlationId":"c-1","error":"no 2d canvas context"}`,
+			into: &InkPageDrawnFrame{},
+			want: &InkPageDrawnFrame{Type: TypeInkPageDrawn, CorrelationID: "c-1", Error: "no 2d canvas context"},
 		},
 		{
 			name: "ink-open-on-tablet",

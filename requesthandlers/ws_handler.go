@@ -127,6 +127,7 @@ func NewWsHandler(sp *sieve.ServiceProvider, broadcast *WorkspaceBroadcast, toke
 		protocol.TypeSpellIgnore:    h.handleSpellIgnore,
 		protocol.TypeSpellLearn:     h.handleSpellLearn,
 		protocol.TypeFeatureControl: h.handleWorkspaceFeatureControl,
+		protocol.TypeInkPageDrawn:   h.handleInkPageDrawn,
 	}
 	return h
 }

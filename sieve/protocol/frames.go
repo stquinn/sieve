@@ -98,6 +98,7 @@ const (
 	TypeSessionScroll  = "session-scroll"
 	TypeSpellIgnore    = "spell-ignore"
 	TypeSpellLearn     = "spell-learn"
+	TypeInkPageDrawn   = "ink-page-drawn"
 
 	// Workspace channel, server → client.
 	TypeCommandResult    = "command-result"
@@ -107,6 +108,7 @@ const (
 	TypeJobsChanged      = "jobs-changed"
 	TypeContainerDeleted = "container-deleted"
 	TypeContainerSaved   = "container-saved"
+	TypeInkDrawPage      = "ink-draw-page"
 )
 
 // Topic is what an invalidate frame invalidates — the subject a view refetches

@@ -89,6 +89,7 @@ alone, so the token appears in no response header.
 | `command` | `protocol.CommandFrame` | `correlationId` | CommandFrame dispatches one slash command. |
 | `command-cancel` | `protocol.CommandCancelFrame` | `correlationId` | CommandCancelFrame cancels an in-flight command by its correlation id. |
 | `feature-control` | `protocol.FeatureControlFrame` | — | FeatureControlFrame switches one text-service feature on or off, and says what it is to work with. |
+| `ink-page-drawn` | `protocol.InkPageDrawnFrame` | `correlationId` | InkPageDrawnFrame answers an ink-draw-page with the page as a PNG, or why it could not be drawn. |
 | `mention-query` | `protocol.MentionQueryFrame` | `correlationId` | MentionQueryFrame is the `@`-picker's typeahead question. |
 | `mention-resolve` | `protocol.MentionResolveFrame` | `correlationId` | MentionResolveFrame asks where a coordinate opens. |
 | `ping` | `protocol.PingFrame` | — | PingFrame is a liveness probe, answered with a PongFrame. |
@@ -103,6 +104,7 @@ alone, so the token appears in no response header.
 | `command-result` | `protocol.CommandResultFrame` | `correlationId` | CommandResultFrame reports one step of a command's lifecycle. |
 | `container-deleted` | `protocol.ContainerDeletedFrame` | — | ContainerDeletedFrame is NEWS, not an instruction: the container it names is already gone from the store, and every workspace socket hears so. |
 | `container-saved` | `protocol.ContainerSavedFrame` | — | ContainerSavedFrame is NEWS: the container it names has just reached disk, and every workspace socket hears so. |
+| `ink-draw-page` | `protocol.InkDrawPageFrame` | `correlationId` | InkDrawPageFrame asks one workspace client to draw a page of a Digital Note as a PNG, and is answered by an ink-page-drawn carrying the same correlation id. |
 | `invalidate` | `protocol.InvalidateFrame` | — | InvalidateFrame tells every connected workspace socket that a subject changed and the views showing it are stale. |
 | `jobs-changed` | `protocol.JobsChangedFrame` | — | JobsChangedFrame broadcasts the whole job snapshot whenever it changes. |
 | `mention-resolved` | `protocol.MentionResolvedFrame` | `correlationId` | MentionResolvedFrame answers "where does this coordinate open" with something the client can ACT on — a document to open, a block to reveal — and never anything it would have to parse. |
@@ -612,6 +614,17 @@ FeatureControlFrame switches one text-service feature on or off, and says what i
 | `enabled` | `bool` | yes | the state the feature is being put INTO, not a request to flip |
 | `parameters` | `map[string]interface {}` | no | what the feature is to work with; interpreted by that feature alone |
 
+#### `ink-page-drawn` — client → server
+
+InkPageDrawnFrame answers an ink-draw-page with the page as a PNG, or why it could not be drawn.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `correlationId` | `string` | yes | the ink-draw-page's, echoed |
+| `png` | `string` | no | the image, base64; absent with error |
+| `error` | `string` | no | present only when the page could not be drawn |
+
 #### `mention-query` — client → server
 
 MentionQueryFrame is the `@`-picker's typeahead question.
@@ -701,6 +714,20 @@ ContainerSavedFrame is NEWS: the container it names has just reached disk, and e
 | `uuid` | `string` | yes | the container whose content just reached disk |
 | `version` | `int` | yes | the document version this save produced; 0 when the container keeps no version history |
 
+#### `ink-draw-page` — server → client
+
+InkDrawPageFrame asks one workspace client to draw a page of a Digital Note as a PNG, and is answered by an ink-page-drawn carrying the same correlation id.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `correlationId` | `string` | yes | echoed on the ink-page-drawn answer |
+| `container` | `string` | yes | the uuid of the note's block container |
+| `pageId` | `string` | yes | the page's id, as the block's note.pages lists it |
+| `pageKey` | `string` | yes | the hash of what is on the page, which the image is kept under |
+| `bounds` | `string` | yes | fixed \| unbounded |
+| `page` | `protocol.InkPageExport` | yes | the page in the export shape |
+
 #### `invalidate` — server → client
 
 InvalidateFrame tells every connected workspace socket that a subject changed and the views showing it are stale.
@@ -768,6 +795,7 @@ inventory below instead.
 | `POST /api/folder` | fragment | FolderCreateRequest makes a new folder. |
 | `PATCH /api/folder/{id}` | fragment | FolderPatchRequest changes a folder's properties. |
 | `GET /api/ink/notes/{uuid}/pages/{page}/export` | json | InkPageExportRequest reads one page of a synced Digital Note in the export shape of docs/ink-contract.md §4.2: {uuid} is the note's block container and {page} the page's index among the pages present, from 0. |
+| `GET /api/ink/notes/{uuid}/pages/{page}/image` | image | InkPageImageRequest reads one page of a synced Digital Note as a PNG, drawn by the app's window when no image of the page as it stands is kept: {uuid} is the note's block container and {page} the page's index among the pages present, from 0. |
 | `PATCH /api/note/{id}` | fragment | NotePatchRequest changes a note's properties. |
 | `POST /api/tabs/close` | fragment | TabsCloseRequest closes every listed tab — the ONE close mechanism. |
 
@@ -873,6 +901,16 @@ InkPageExport is one page of a Digital Note as the ink renderer takes it: the no
 |---|---|---|---|
 | `note` | `protocol.InkExportNote` | yes |  |
 | `strokes` | `[]protocol.InkExportStroke` | yes |  |
+
+### `GET /api/ink/notes/{uuid}/pages/{page}/image`
+
+Path parameters: `uuid`, `page`
+
+**Request** — `protocol.InkPageImageRequest`
+
+InkPageImageRequest reads one page of a synced Digital Note as a PNG, drawn by the app's window when no image of the page as it stands is kept: {uuid} is the note's block container and {page} the page's index among the pages present, from 0.
+
+**Response** — a PNG, image/png.
 
 ### `PATCH /api/note/{id}`
 
@@ -1181,6 +1219,7 @@ or another protocol's own transport.
 | `GET` | `/` | — |
 | `GET` | `/api/document/load` | typed (json) |
 | `GET` | `/api/ink/notes/{uuid}/pages/{page}/export` | typed (json) |
+| `GET` | `/api/ink/notes/{uuid}/pages/{page}/image` | typed (image) |
 | `GET` | `/api/ws/document/{uuid}` | WebSocket channel |
 | `GET` | `/api/ws/workspace` | WebSocket channel |
 | `GET` | `/mcp` | — |

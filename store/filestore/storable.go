@@ -3,6 +3,7 @@ package filestore
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -88,17 +89,19 @@ func (s *fileMetaStorable) Owns() []store.Storable {
 	return s.owns
 }
 
+// AttachAsset replaces the owned asset of a's key with a, in its place, or adds a at the end when
+// there is none, as one step under the storable's lock. The list is copied, never written in
+// place, so a slice Owns returned earlier is not changed under its reader.
 func (s *fileMetaStorable) AttachAsset(a store.Storable) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.owns = append(s.owns, a)
-	s.isModified = true
-}
-
-func (s *fileMetaStorable) ClearOwns() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.owns = nil
+	owns := slices.Clone(s.owns)
+	if i := slices.IndexFunc(owns, func(owned store.Storable) bool { return owned.Key() == a.Key() }); i >= 0 {
+		owns[i] = a
+	} else {
+		owns = append(owns, a)
+	}
+	s.owns = owns
 	s.isModified = true
 }
 

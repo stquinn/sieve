@@ -88,6 +88,7 @@ func (h *InkHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/ink/enabled", h.handleEnabled)
 	r.Post("/api/ink/key", h.handleNewKey)
 	r.Get("/api/ink/notes/{uuid}/pages/{page}/export", h.handleExport)
+	r.Get("/api/ink/notes/{uuid}/pages/{page}/image", h.handleImage)
 }
 
 func (h *InkHandler) handleStatus(w http.ResponseWriter, r *http.Request) {

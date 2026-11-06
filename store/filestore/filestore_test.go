@@ -2,10 +2,14 @@ package filestore_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"sieve/store"
@@ -1175,6 +1179,68 @@ func TestOwnedAssetsWriteAttachesWithoutAVersionBump(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// A content save through a handle loaded before another handle wrote and deleted assets leaves
+// the owner owning what its directory holds: the asset written since is kept, the one deleted
+// since is gone. Writers attaching to one handle at once, some replacing an asset it owns and some
+// adding one, lose none of them.
+func TestContentSaveOwnsWhatTheDirectoryHolds(t *testing.T) {
+	for _, tc := range contentTypes {
+		t.Run(tc.contentType, func(t *testing.T) {
+			fs := newTestStore(t)
+			held := mustCreateTyped(t, fs, testLibrary, "my-note", tc.contentType, []byte("body"))
+			assets := store.OwnedAssets{Store: fs}
+			if _, err := assets.Save(held, "old.png", []byte("old")); err != nil {
+				t.Fatal(err)
+			}
+			if err := fs.DeleteAsset(testLibrary, held.Key(), "old.png"); err != nil {
+				t.Fatal(err)
+			}
+			other, err := fs.LoadByUUID(held.Key())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := assets.Save(other.(store.MetaStorable), "new.png", []byte("new")); err != nil {
+				t.Fatal(err)
+			}
+			var wg sync.WaitGroup
+			for i := range 8 {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					if _, err := assets.Append(held, "log.jsonl", []byte("x\n")); err != nil {
+						t.Error(err)
+					}
+					if _, err := assets.Save(held, fmt.Sprintf("img-%d.png", i), []byte("img")); err != nil {
+						t.Error(err)
+					}
+				}()
+			}
+			wg.Wait()
+
+			held.SetBody([]byte("edited"))
+			saved, err := fs.Save(held)
+			if err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			want := []string{"img-0.png", "img-1.png", "img-2.png", "img-3.png", "img-4.png", "img-5.png", "img-6.png", "img-7.png", "log.jsonl", "new.png"}
+			current, _ := fs.LoadByUUID(held.Key())
+			for name, ms := range map[string]store.Storable{"saved": saved, "current": current} {
+				var keys []string
+				for _, a := range ms.(store.MetaStorable).Owns() {
+					keys = append(keys, a.Key())
+				}
+				sort.Strings(keys)
+				if !reflect.DeepEqual(keys, want) {
+					t.Errorf("%s owns %v, want %v", name, keys, want)
+				}
+			}
+			if got, err := fs.LoadAsset(testLibrary, held.Key(), "new.png"); err != nil || string(got.Body()) != "new" {
+				t.Errorf("LoadAsset(new.png) = %v, %v", got, err)
+			}
+		})
 	}
 }
 

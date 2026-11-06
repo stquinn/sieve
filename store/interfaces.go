@@ -77,11 +77,8 @@ type MetaStorable interface {
 	// Owns returns the assets owned by this document.
 	Owns() []Storable
 
-	// AttachAsset adds an asset to the ownership list.
+	// AttachAsset adds an asset to the ownership list, replacing the one of the same key.
 	AttachAsset(a Storable)
-
-	// ClearOwns removes all owned assets.
-	ClearOwns()
 }
 
 // AssetStorable extends Storable for binary content such as images and voice

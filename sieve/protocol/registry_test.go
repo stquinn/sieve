@@ -31,11 +31,11 @@ func TestRegistry_HoldsTheWholeVocabulary(t *testing.T) {
 		}},
 		{ChannelWorkspace, Inbound, []string{
 			"ping", "command", "command-cancel", "mention-query", "mention-resolve",
-			"session-scroll", "spell-ignore", "spell-learn", "feature-control",
+			"session-scroll", "spell-ignore", "spell-learn", "feature-control", "ink-page-drawn",
 		}},
 		{ChannelWorkspace, Outbound, []string{
 			"pong", "command-result", "mention-result", "mention-resolved",
-			"invalidate", "jobs-changed", "container-deleted", "container-saved",
+			"invalidate", "jobs-changed", "container-deleted", "container-saved", "ink-draw-page",
 		}},
 	}
 

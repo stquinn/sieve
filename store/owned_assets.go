@@ -34,27 +34,10 @@ func (o OwnedAssets) Append(owner MetaStorable, assetKey string, data []byte) (A
 // attachEverywhere attaches asset to owner and to the Store's current storable
 // for owner when that is a different instance.
 func (o OwnedAssets) attachEverywhere(owner MetaStorable, asset AssetStorable) {
-	o.attach(owner, asset)
+	owner.AttachAsset(asset)
 	if current, err := o.Store.LoadByUUID(owner.Key()); err == nil {
 		if ms, ok := current.(MetaStorable); ok && ms != owner {
-			o.attach(ms, asset)
+			ms.AttachAsset(asset)
 		}
 	}
-}
-
-func (o OwnedAssets) attach(ms MetaStorable, asset AssetStorable) {
-	existing := ms.Owns()
-	for i, item := range existing {
-		if item.Key() == asset.Key() {
-			updated := make([]Storable, len(existing))
-			copy(updated, existing)
-			updated[i] = asset
-			ms.ClearOwns()
-			for _, u := range updated {
-				ms.AttachAsset(u)
-			}
-			return
-		}
-	}
-	ms.AttachAsset(asset)
 }

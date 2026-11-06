@@ -894,6 +894,9 @@ func (fs *FileStore) saveContent(s *fileMetaStorable) (store.Storable, error) {
 		fs.pruneVersions(s.category, path, uuid, s.contentType, fs.maxVersions)
 	}
 
+	// The saved storable owns the assets the directory holds now, not the ones s was handed: an
+	// asset is its file, and another handle on the same owner may have written or deleted one
+	// since s was loaded.
 	versions := fs.loadVersions(uuid, s.contentType, s.category, path)
 	saved := &fileMetaStorable{
 		fileStorable: fileStorable{
@@ -906,7 +909,7 @@ func (fs *FileStore) saveContent(s *fileMetaStorable) (store.Storable, error) {
 		},
 		contentType: s.contentType,
 		meta:        docMetaToMap(newDM),
-		owns:        s.owns,
+		owns:        fs.scanDocAssets(s.category, path, uuid, s.contentType),
 	}
 	fs.indexSet(uuid, saved)
 	return saved, nil

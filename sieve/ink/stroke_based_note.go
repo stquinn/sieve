@@ -4,6 +4,8 @@ package ink
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -242,6 +244,24 @@ func (n *StrokeBasedNote) ExportPage(page int) ([]byte, error) {
 		out.Strokes = append(out.Strokes, newExportStroke(s))
 	}
 	return json.Marshal(out)
+}
+
+// pageKeyDigits is how many hex digits of its hash a page key keeps: 64 bits.
+const pageKeyDigits = 16
+
+// PageKey names what is on the page at index page: the first 16 lowercase hex digits of the
+// SHA-256 of the page's id, a newline and its ExportPage. The export is deterministic, so an
+// unchanged page has the same key on every run and machine; a stroke added, removed or changed,
+// another template, a changed note header, or another page gives another key.
+func (n *StrokeBasedNote) PageKey(page int) (string, error) {
+	export, err := n.ExportPage(page)
+	if err != nil {
+		return "", err
+	}
+	h := sha256.New()
+	h.Write([]byte(n.pages[page].ID.String() + "\n"))
+	h.Write(export)
+	return hex.EncodeToString(h.Sum(nil))[:pageKeyDigits], nil
 }
 
 // newExportStroke is the stroke of stroke-add record s in the §4.2 export shape.
