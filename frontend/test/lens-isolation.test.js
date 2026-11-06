@@ -171,7 +171,6 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
       path.join('lens', 'document-editor', 'context-menu.js'),
       path.join('lens', 'document-editor', 'editor-mode.js'),
       path.join('lens', 'document-editor', 'editor-shell.js'),
-      path.join('lens', 'document-editor', 'editor-toolbar.js'),
       path.join('lens', 'document-editor', 'interaction-policy.js'),
       path.join('lens', 'document-editor', 'note-editor.js'),
       path.join('lens', 'document-editor', 'paste-context.js'),
@@ -216,17 +215,17 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
       path.join('lens', 'document-editor', 'surfaces', 'tiptap-vendor.js'),
       path.join('lens', 'document-editor', 'surfaces', 'vertical-scroll.js'),
       path.join('lens', 'document-editor', 'surfaces', 'wysiwyg-surface.js'),
-      path.join('lens', 'document-editor', 'toolbar-button.js'),
       path.join('lens', 'extensions.js'),
       path.join('lens', 'ink', 'action-status.js'),
       path.join('lens', 'ink', 'digital-note-lens.js'),
       path.join('lens', 'ink', 'ink-sheet.js'),
       path.join('lens', 'ink', 'live-ink-lens.js'),
       path.join('lens', 'ink', 'live-surface.js'),
-      path.join('lens', 'ink', 'note-chrome.js'),
+      path.join('lens', 'ink', 'note-pager.js'),
       path.join('lens', 'ink', 'page-surface.js'),
       path.join('lens', 'ink', 'plane-window.js'),
       path.join('lens', 'ink', 'reading-surface.js'),
+      path.join('lens', 'ink', 'tablet-opener.js'),
       path.join('lens', 'lens.js'),
       path.join('lens', 'outline', 'outline-lens.js'),
       path.join('lens', 'prompt', 'prompt-editor.js'),
@@ -307,5 +306,18 @@ describe.each([
     // A file that imports must be seen to: the pattern finding nothing there is the pattern broken.
     expect(imported.length > 0).toBe(/^import\s/m.test(source))
     expect(imported.filter((f) => !BASES.includes(f) && !ALLOWED.some((dir) => f.startsWith(dir + path.sep)))).toEqual([])
+  })
+})
+
+describe('the workspace toolbar and its widgets name no lens and no ProseMirror', () => {
+  // The toolbar is host chrome that any lens fills, so neither it nor the
+  // widgets a lens fills it with may reach into one lens's world: the widgets are
+  // look-and-feel a lens and the host both import, and the toolbar knows a lens
+  // only as the surface contract's event word.
+  it.each([
+    [path.join('renderers', 'toolbar-button.js'), [path.join('renderers', 'toolbar-button.js')]],
+    [path.join('shell', 'workspace-toolbar.js'), [path.join('lens', 'abstract-surface.js'), path.join('shell', 'workspace-toolbar.js')]],
+  ])('%s reaches only %j', (entry, closure) => {
+    expect(new ImportGraph([]).walk([path.join(STATIC, entry)]).reached).toEqual(closure)
   })
 })

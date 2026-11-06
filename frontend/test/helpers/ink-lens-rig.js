@@ -2,12 +2,14 @@
 // ink-lens-rig.js — what the ink lens suites share: an InkContainerProvider over
 // one block whose pages the test answers, animation frames run when the test
 // says, the strokes, pages and live records they feed, the reads of what the
-// mounted SVG shows, and the images copied from it.
+// mounted SVG shows, the workspace toolbar a lens fills, and the images copied
+// from it.
 
 import { vi, expect } from 'vitest'
 import { getStroke } from 'perfect-freehand'
 import { InkRenderer } from '../../src/static/renderers/ink-renderer.js'
 import { ImageClipboard } from '../../src/static/renderers/copy-image.js'
+import { WorkspaceToolbar } from '../../src/static/shell/workspace-toolbar.js'
 
 export const UUID = '019a0000-0000-7000-8000-0000000000aa'
 export const RULED = Object.freeze({ id: 'ruled', params: { spacing: 0.05, margin: 0.12 } })
@@ -116,8 +118,9 @@ export class FakeInkProvider {
     return answer ? Promise.resolve(deepFrozen(structuredClone(answer))) : Promise.reject(new Error('no page ' + pageId))
   }
 
-  openOnTablet() {
-    this.calls.push('openOnTablet')
+  /** @param {string|null} pageId */
+  openOnTablet(pageId) {
+    this.calls.push('openOnTablet ' + pageId)
     return Promise.resolve(this.opening).then((o) => {
       if (o instanceof Error) throw o
       return deepFrozen(structuredClone(o))
@@ -144,12 +147,6 @@ export class FakeInkProvider {
       if (m instanceof Error) throw m
       return m
     })
-  }
-
-  /** The container is called `name` now, and every follower is cued. @param {string} name */
-  rename(name) {
-    this.name = name
-    for (const listener of [...this.modelListeners]) listener.onChanged({ blockIds: [], orderChanged: false, replaced: [] })
   }
 
   /** @returns {number} how many pages have been asked for */
@@ -263,6 +260,25 @@ export const layOut = (root, rect) => {
   return box
 }
 
+/**
+ * The workspace toolbar, over a host of its own in the document, showing `lens`.
+ * @param {any} lens
+ * @returns {{bar: HTMLElement, toolbar: WorkspaceToolbar}}
+ */
+export const toolbarFor = (lens) => {
+  const bar = document.createElement('div')
+  bar.id = 'editor-toolbar'
+  document.body.appendChild(bar)
+  const toolbar = new WorkspaceToolbar(bar)
+  toolbar.show(lens)
+  return { bar, toolbar }
+}
+/** @param {HTMLElement} bar @param {string} id @returns {HTMLButtonElement|null} the toolbar item of that id */
+export const item = (bar, id) => /** @type {HTMLButtonElement|null} */ (bar.querySelector(`[id="${id}"]`))
+/** @param {HTMLElement} bar @param {string} id */
+export const tap = (bar, id) => /** @type {HTMLButtonElement} */ (item(bar, id)).click()
+/** @param {HTMLElement} bar @returns {string[]} the ids of the toolbar's items, in order, each group's own in it */
+export const toolbarIds = (bar) => [...bar.querySelectorAll('[id]')].map((el) => el.id)
 /** @param {HTMLElement} root @param {string} action */
 export const press = (root, action) => /** @type {HTMLButtonElement} */ (root.querySelector(`[data-ink-action="${action}"]`)).click()
 /** @param {HTMLElement} root @param {string} key @param {KeyboardEventInit} [mods] */

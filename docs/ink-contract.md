@@ -467,8 +467,11 @@ relative, in tenths, with no redundant zeros or separators. Fewer than three ver
 nothing.
 
 **Live.** A stroke under the pen is drawn in the `live` group from the points so far: a pen
-stroke exactly as it will commit; a pencil stroke as its chunk outlines in one `#808080` path,
-untoned. At END the live path is replaced by the committed markup.
+stroke exactly as it will commit; a pencil stroke as `<g data-stroke="{id}">` of one `<path>` per
+chunk, each with `fill="url(#ink-b{i})"` of its band, toned from its first points. A chunk all of
+whose points (`max(0, i−1) .. i+10`) have arrived is exactly the outline, in exactly the band, it
+commits with, so it is drawn once and kept; only the last chunk, still growing, may differ. At END
+the live markup is replaced by the committed markup, which draws the same.
 
 ## 9. Conformance set
 

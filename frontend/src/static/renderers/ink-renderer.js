@@ -74,7 +74,7 @@ export const INK_RULES = Object.freeze({
   }),
   pencil: Object.freeze({
     floor: 0.002991, slope: 1.09, saturation: 0.8, exponent: 0.8,
-    chunk: 10, smoothing: 0.5, streamline: 0.2, liveFill: '#808080',
+    chunk: 10, smoothing: 0.5, streamline: 0.2,
   }),
   tone: Object.freeze({
     floor: 0.10, gain: 0.95, exponent: 1.3,
@@ -286,17 +286,47 @@ export class InkRenderer {
   }
 
   /**
-   * A stroke still under the pen, as one `<path>` for the `live` layer: a pen
-   * stroke exactly as it will commit; a pencil stroke as its chunk outlines in
-   * plain grey, with no tone.
+   * A stroke still under the pen, for the `live` layer: a pen stroke as one
+   * `<path>`, exactly as it will commit; a pencil stroke as a `<g data-stroke>`
+   * of its chunks as `renderLivePencil` draws them.
    * @param {InkStroke} stroke the points received so far
    * @returns {string} '' while there are too few points to draw
    */
   renderLiveStroke(stroke) {
     if (stroke.tool === 'pen') return this.#penPath(stroke)
-    const d = this.#pencilChunks(stroke).map((chunk) => chunk.d).join('')
-    if (!d) return ''
-    return `<path data-stroke="${esc(stroke.id)}" fill="${INK_RULES.pencil.liveFill}" d="${d}"/>`
+    const { settled, tail } = this.renderLivePencil(stroke, 0)
+    const paths = tail ? [...settled, tail] : settled
+    return paths.length ? `<g data-stroke="${esc(stroke.id)}">${paths.join('')}</g>` : ''
+  }
+
+  /**
+   * The chunks of a pencil stroke under the pen from chunk `from` on, each one
+   * `<path>` filled with its band's tone, the same outline in the same band as
+   * `renderStroke` draws it. A chunk is SETTLED once every point it spans has
+   * arrived: it is then exactly as it will commit, and a caller holding it never
+   * needs it again. Only the chunk after the settled ones, the tail, may still
+   * change.
+   * @param {InkStroke} stroke the points received so far
+   * @param {number} from the first chunk wanted, by its index in the stroke
+   * @returns {Readonly<{settled: ReadonlyArray<string>, next: number, tail: string}>}
+   *   `settled`: the settled chunks from `from` on that draw anything; `next`: the
+   *   index of the first chunk not settled; `tail`: that chunk, '' when it draws
+   *   nothing or there is none
+   */
+  renderLivePencil(stroke, from) {
+    const { chunk } = INK_RULES.pencil
+    const points = stroke.points
+    const slots = Math.ceil(points.length / chunk)
+    const path = (/** @type {{band: number, d: string}|null} */ c) => (c ? `<path fill="url(#ink-b${c.band})" d="${c.d}"/>` : '')
+    /** @type {string[]} */
+    const settled = []
+    let k = Math.max(0, from)
+    for (; k < slots && points.length >= (k + 1) * chunk + 1; k++) {
+      const markup = path(this.#pencilChunk(stroke, k))
+      if (markup) settled.push(markup)
+    }
+    const tail = k < slots ? path(this.#pencilChunk(stroke, k)) : ''
+    return Object.freeze({ settled: Object.freeze(settled), next: k, tail })
   }
 
   /** @param {InkStroke} stroke @returns {string} */
@@ -316,21 +346,32 @@ export class InkRenderer {
    * @returns {{band: number, d: string}[]}
    */
   #pencilChunks(stroke) {
-    const { chunk, smoothing, streamline } = INK_RULES.pencil
-    const caps = { taper: 0, cap: true }
-    const points = stroke.points
     const chunks = []
-    for (let i = 0; i < points.length; i += chunk) {
-      const run = points.slice(Math.max(0, i - 1), i + chunk + 1)
-      if (run.length < 2) continue
-      const pressure = run.reduce((sum, q) => sum + q.pressure, 0) / run.length
-      const size = this.widthFor('pencil', stroke.widthClass, pressure) * INK_RULES.grid
-      const d = this.#pathData(this.#strokeOutline(run, {
-        size, thinning: 0, smoothing, streamline, simulatePressure: false, last: true, start: caps, end: caps,
-      }))
-      if (d) chunks.push({ band: InkRenderer.#band(pressure), d })
+    for (let k = 0; k * INK_RULES.pencil.chunk < stroke.points.length; k++) {
+      const c = this.#pencilChunk(stroke, k)
+      if (c) chunks.push(c)
     }
     return chunks
+  }
+
+  /**
+   * Chunk `k` of a pencil stroke: the points `max(0, k·chunk − 1) .. (k+1)·chunk`
+   * of those it has, or null when that is under two points or draws nothing.
+   * @param {InkStroke} stroke @param {number} k
+   * @returns {{band: number, d: string}|null}
+   */
+  #pencilChunk(stroke, k) {
+    const { chunk, smoothing, streamline } = INK_RULES.pencil
+    const caps = { taper: 0, cap: true }
+    const i = k * chunk
+    const run = stroke.points.slice(Math.max(0, i - 1), i + chunk + 1)
+    if (run.length < 2) return null
+    const pressure = run.reduce((sum, q) => sum + q.pressure, 0) / run.length
+    const size = this.widthFor('pencil', stroke.widthClass, pressure) * INK_RULES.grid
+    const d = this.#pathData(this.#strokeOutline(run, {
+      size, thinning: 0, smoothing, streamline, simulatePressure: false, last: true, start: caps, end: caps,
+    }))
+    return d ? { band: InkRenderer.#band(pressure), d } : null
   }
 
   /**

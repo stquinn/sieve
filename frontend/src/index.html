@@ -59,9 +59,9 @@
                 <div id="quickswitcher-dialog-content" style="background: var(--theme-bgDark); width: 600px; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);"></div>
             </dialog>
 
-            <!-- P4.D: the toolbar is EDITOR-owned — NoteEditor's EditorToolbar renders its buttons into
-                 this host on the first present (the inner button DOM was removed). The hidden image-input
-                 stays here (the toolbar image button + the cross-file upload handler both reach it by id). -->
+            <!-- The workspace toolbar: shell/workspace-toolbar.js draws the active lens's own buttons
+                 into it. The hidden file input stays here: the attach button and the upload handler
+                 below both reach it by id. -->
             <div id="editor-toolbar"></div>
             <input id="tb-attach-input" type="file" style="display:none">
 
@@ -590,10 +590,8 @@
     window.addEventListener('DOMContentLoaded', function() {
 
         // ── Table toolbar command dispatch ──────────────────────────────────────
-        // P4.D: the MAIN toolbar is EDITOR-owned (EditorToolbar — buttons carry
-        // their own click closures, no delegation). The #table-toolbar is left
-        // static this phase, so its delegated command dispatch stays here (table
-        // commands run on window.__tiptap — the icon bus retires in P4.E).
+        // The #table-toolbar is static, so its delegated command dispatch lives
+        // here; table commands run on window.__tiptap.
         function handleTableToolbarClick(e) {
           var btn = e.target.closest('button,[data-cmd]');
           if (!btn) return;

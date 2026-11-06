@@ -1,21 +1,24 @@
 // @ts-check
 // The reader's surface of a Digital Note: one page at a time on an InkSheet,
-// with the page chrome above it. It hears the container's feed itself, so the
-// page shown takes committed strokes as they arrive and the stroke under the pen
-// while it is the page being written; and it never moves the reader. Which page
+// its pager, scale and actions offered to the workspace toolbar. It hears the
+// container's feed itself, so the page shown takes committed strokes as they
+// arrive and the stroke under the pen while it is the page being written; and it
+// never moves the reader. Which page
 // is shown, and on a whiteboard which part of the plane, is the reader's alone,
 // and is handed to the next surface over the note as a ReaderView.
 
 import { AbstractSurface, SurfaceEvent, SurfaceIntent } from '../abstract-surface.js'
 import { INK_RULES } from '../../renderers/ink-renderer.js'
-import { InkFeed, InkOpening, InkRefusal } from '../../contract/ink-container-provider.js'
+import { InkFeed } from '../../contract/ink-container-provider.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
+import { ButtonGroup, ToolbarButton, ToolbarLabel } from '../../renderers/toolbar-button.js'
+import { ActionStatus } from './action-status.js'
 import { InkSheet } from './ink-sheet.js'
-import { NoteChrome } from './note-chrome.js'
+import { NotePager } from './note-pager.js'
+import { TabletOpener } from './tablet-opener.js'
 
 /** @typedef {import('../../contract/ink-container-provider.js').InkContainerProvider} InkContainerProvider */
 /** @typedef {import('../../contract/ink-container-provider.js').InkFeedEvent} InkFeedEvent */
-/** @typedef {import('../../contract/ink-container-provider.js').InkOpeningResult} InkOpeningResult */
 /** @typedef {import('../../renderers/ink-renderer.js').InkWindow} InkWindow */
 /** @typedef {import('../abstract-surface.js').SurfaceStats} SurfaceStats */
 /** @typedef {import('./plane-window.js').PlaneWindow} PlaneWindow */
@@ -33,12 +36,10 @@ import { NoteChrome } from './note-chrome.js'
 
 /**
  * What the surface asks of the lens that made it: the key claim, asked first
- * for every key pressed in the surface, where its events are reported, and the
- * switch to the lens's other mode.
+ * for every key pressed in the surface, and where its events are reported.
  * @typedef {object} PageSurfaceHost
  * @property {(event: KeyboardEvent) => boolean} claimKey
  * @property {(event: import('../abstract-surface.js').SurfaceEventMsg) => void} onSurfaceEvent
- * @property {() => Promise<boolean>} toggleMode
  */
 
 /** The zoom factor of one press of a zoom key or button. */
@@ -53,25 +54,20 @@ const WHEEL_LINE_PX = 16
 /** What the sheet says when the note has no page. */
 const NO_PAGES = 'This note has no pages yet.'
 
-/** What is said of each outcome of Open in e-ink but opened and refused. */
-const OPENING_WORDS = Object.freeze({
-  [InkOpening.NO_TABLET]: 'No tablet connected',
-  [InkOpening.OTHER_TABLET]: 'Connected to another tablet',
-  [InkOpening.NO_ANSWER]: 'The tablet did not answer',
-})
-
-/** What is said of each reason the tablet gives for refusing Open in e-ink. */
-const REFUSAL_WORDS = Object.freeze({
-  [InkRefusal.NOT_FOREGROUND]: 'SieveInk is not open on the tablet',
-  [InkRefusal.NOT_OFFERED]: 'This note is not shared with this Sieve',
-})
-
 export class PageSurface extends AbstractSurface {
   /** The mode this surface presents. */
-  static MODE = NoteChrome.Mode.PAGE
+  static MODE = 'page'
 
-  /** How a fixed page's sheet is sized: to the surround's width, or one grid unit to a CSS pixel. */
-  static Scale = Object.freeze({ FIT: InkSheet.Scale.FIT, ACTUAL: InkSheet.Scale.ACTUAL })
+  /** How a fixed page's sheet is sized: whole in the surround, to the surround's
+   *  width, or one grid unit to a CSS pixel. */
+  static Scale = Object.freeze({ PAGE: InkSheet.Scale.PAGE, FIT: InkSheet.Scale.FIT, ACTUAL: InkSheet.Scale.ACTUAL })
+
+  /** The scale control's choices, in order, and what each is called. */
+  static SCALES = Object.freeze([
+    Object.freeze({ scale: InkSheet.Scale.PAGE, id: 'tb-scale-page', text: 'Fit page', title: 'Show the whole page' }),
+    Object.freeze({ scale: InkSheet.Scale.FIT, id: 'tb-scale-width', text: 'Fit width', title: 'Fit the page to the width' }),
+    Object.freeze({ scale: InkSheet.Scale.ACTUAL, id: 'tb-scale-actual', text: '100%', title: 'Show the page at actual size' }),
+  ])
 
   /** What Copy page says: copied, no page drawn to copy, or the clipboard not taking it. */
   static CopyWords = Object.freeze({ COPIED: 'Copied', NOTHING: 'Nothing to copy yet', FAILED: 'Could not copy the page' })
@@ -88,156 +84,6 @@ export class PageSurface extends AbstractSurface {
 
   .ink-page [hidden] { display: none; }
 
-  .ink-page__chrome {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 6px 16px;
-    padding: 8px 24px;
-    background: var(--theme-bg);
-    border-bottom: 1px solid var(--theme-border);
-    color: var(--theme-textDim);
-    font-family: var(--theme-uiFont);
-    font-size: 0.85em;
-  }
-
-  .ink-page__heading {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    min-width: 0;
-    flex: 1 1 auto;
-  }
-
-  .ink-page__title {
-    color: var(--theme-text);
-    font-size: 1.1em;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .ink-page__device { color: var(--theme-muted); white-space: nowrap; }
-
-  .ink-page__notice { color: var(--theme-accentYellow); }
-
-  .ink-page__pager {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .ink-page__pages { display: flex; align-items: center; gap: 6px; }
-
-  .ink-page__chrome button {
-    border: 1px solid transparent;
-    border-radius: 4px;
-    background: none;
-    color: var(--theme-textDim);
-    font: inherit;
-    padding: 2px 8px;
-    cursor: pointer;
-  }
-
-  .ink-page__chrome button:hover:not(:disabled) {
-    color: var(--theme-text);
-    border-color: var(--theme-border2);
-  }
-
-  .ink-page__chrome button:disabled { opacity: 0.4; cursor: default; }
-
-  .ink-page__chrome button:focus-visible {
-    outline: 2px solid var(--theme-accentPrimary);
-    outline-offset: 1px;
-  }
-
-  .ink-page__position {
-    font-variant-numeric: tabular-nums;
-    color: var(--theme-text);
-    min-width: 4.5em;
-    text-align: center;
-  }
-
-  .ink-page__dots { display: flex; gap: 2px; }
-
-  .ink-page__pager .ink-page__dot {
-    position: relative;
-    width: 14px;
-    height: 14px;
-    padding: 0;
-  }
-
-  .ink-page__dot::before {
-    content: '';
-    position: absolute;
-    inset: 4px;
-    border-radius: 50%;
-    background: var(--theme-border2);
-  }
-
-  .ink-page__dot[aria-current="page"]::before { background: var(--theme-text); }
-
-  .ink-page__dot[data-unseen]::before { inset: 2px; background: var(--theme-accentPrimary); }
-
-  .ink-page__pager .ink-page__unseen { white-space: nowrap; color: var(--theme-text); }
-
-  .ink-page__unseen::before {
-    content: '';
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    margin-right: 6px;
-    border-radius: 50%;
-    background: var(--theme-accentPrimary);
-    vertical-align: 0;
-  }
-
-  .ink-page__view { display: flex; align-items: center; gap: 2px; }
-
-  .ink-page__modes {
-    display: flex;
-    border: 1px solid var(--theme-border2);
-    border-radius: 4px;
-    overflow: hidden;
-  }
-
-  .ink-page__chrome .ink-page__modes button { border: none; border-radius: 0; padding: 2px 10px; }
-
-  .ink-page__chrome .ink-page__modes button[aria-pressed="true"] {
-    background: var(--theme-bgAlt);
-    color: var(--theme-text);
-    cursor: default;
-  }
-
-  .ink-page__actions { display: flex; align-items: center; gap: 6px; }
-
-  .ink-page__status { flex-shrink: 100; color: var(--theme-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-  .ink-page__chrome .ink-page__open-live {
-    border-color: var(--theme-border2);
-    font-size: 0.9em;
-  }
-
-  .ink-page__chrome .ink-page__open-live:hover,
-  .ink-page__chrome .ink-page__open-live:focus-visible {
-    background: var(--theme-bgAlt);
-    color: var(--theme-text);
-  }
-
-  .ink-page__open-live::after { content: ' ↗'; }
-
-  .ink-page__open-live::before,
-  .ink-page__indicator::before {
-    content: '';
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    margin-right: 6px;
-    border-radius: 50%;
-    background: var(--theme-accentRed);
-    vertical-align: 1px;
-  }
-
   .ink-page--reader .ink-page__surround[data-bounds="unbounded"] .ink-page__sheet {
     cursor: grab;
     touch-action: none;
@@ -252,14 +98,9 @@ export class PageSurface extends AbstractSurface {
 
   /** @type {boolean} between mount and unmount */ #mounted = false
   /** @type {HTMLElement} */ #root
-  /** @type {NoteChrome} */ #chrome = new NoteChrome(PageSurface.MODE)
-  /** @type {HTMLElement} */ #notice
-  /** @type {HTMLButtonElement} */ #scaleButton
-  /** @type {HTMLElement} the whiteboard's zoom and framing buttons */ #viewTools
-  /** @type {HTMLButtonElement} */ #openLive
-  /** @type {HTMLButtonElement} */ #openOnTablet
-  /** @type {string} the name of the device the note was written on; '' when unknown */ #deviceName = ''
-  /** @type {Promise<void>|null} the Open in e-ink under way */ #opening = null
+  /** @type {ActionStatus} what came of Copy page and Open in e-ink */ #status = new ActionStatus(() => this.#toolbarChanged())
+  /** @type {TabletOpener} */ #opener
+  /** @type {NotePager} */ #pager = new NotePager(this)
 
   /** @type {boolean} whether a page, or the note's having none, has been shown */ #painted = false
   /** @type {Set<string>} pages with ink not seen since it arrived */ #unseen = new Set()
@@ -282,7 +123,8 @@ export class PageSurface extends AbstractSurface {
     this.#provider = provider
     this.#host = host
     rendererStyles.register(PageSurface)
-    const scale = view && view.scale === PageSurface.Scale.ACTUAL ? PageSurface.Scale.ACTUAL : PageSurface.Scale.FIT
+    this.#opener = new TabletOpener(provider, this.#status, () => this.#toolbarChanged())
+    const scale = view && PageSurface.#isScale(view.scale) ? view.scale : PageSurface.Scale.PAGE
     this.#sheet = new InkSheet(provider, {
       onSheetChanged: () => this.#sheetChanged(),
       onAnswered: (answer) => this.#answered(answer),
@@ -295,31 +137,7 @@ export class PageSurface extends AbstractSurface {
     }
     this.#root = this.#el('div', 'ink-page ink-page--reader')
     this.#root.tabIndex = 0
-    this.#notice = this.#el('span', 'ink-page__notice')
-    this.#notice.hidden = true
-    this.#notice.textContent = 'Unknown template, drawn blank'
-    this.#chrome.addNotice(this.#notice)
-    this.#scaleButton = this.#button('scale', '', '')
-    this.#viewTools = this.#el('span', 'ink-page__view')
-    this.#viewTools.hidden = true
-    this.#viewTools.append(
-      this.#button('zoom-out', '−', 'Zoom out'),
-      this.#button('zoom-in', '+', 'Zoom in'),
-      this.#button('actual', '100%', 'One grid unit to a pixel'),
-      this.#button('fit', 'Fit all', 'Frame all the ink'),
-    )
-    this.#openLive = this.#button('open-live', 'Open Live view', '')
-    this.#openLive.className = 'ink-page__open-live'
-    this.#openLive.title = 'This note is being written on the tablet: open the Live view'
-    this.#openLive.hidden = true
-    this.#chrome.addToPager(this.#scaleButton, this.#viewTools, this.#openLive)
-    const copy = this.#button('copy-page', 'Copy page', 'Copy the page as an image')
-    copy.title = 'Copy the page as an image'
-    this.#openOnTablet = this.#button('open-on-tablet', 'Open in e-ink', '')
-    this.#openOnTablet.title = 'Open this note on the tablet it was written on'
-    this.#openOnTablet.hidden = true
-    this.#chrome.addActions(copy, this.#openOnTablet)
-    this.#root.append(this.#chrome.element, this.#sheet.element)
+    this.#root.append(this.#sheet.element)
   }
 
   /** @returns {string} */
@@ -327,7 +145,8 @@ export class PageSurface extends AbstractSurface {
 
   /**
    * Where the reader is and how much ink it holds: the page's place in the note
-   * (or that it is the whiteboard) and the strokes drawn on it.
+   * (or that it is the whiteboard), the strokes drawn on it, and the device the
+   * note was written on, when it is known.
    * @returns {SurfaceStats}
    */
   stats() {
@@ -342,8 +161,61 @@ export class PageSurface extends AbstractSurface {
       readout: Object.freeze([
         Object.freeze({ text: where, title: 'Page' }),
         Object.freeze({ text: `${count} stroke${count === 1 ? '' : 's'}`, title: 'Strokes on this page' }),
+        ...(this.#opener.device ? [Object.freeze({ text: this.#opener.device, title: 'Written on' })] : []),
       ]),
     }
+  }
+
+  /**
+   * What the surface offers the toolbar: the pager (but on a whiteboard of one
+   * page), the scale on a fixed page or the window on a whiteboard, then Copy
+   * page, Open in e-ink for a note from a tablet, Live while the note is being
+   * written, what came of the last of those, and that the template is unknown.
+   * @returns {ButtonGroup[]}
+   */
+  toolbarContents() {
+    const sheet = this.#sheet
+    const whiteboard = sheet.isUnbounded(sheet.shown)
+    /** @type {ButtonGroup[]} */
+    const groups = []
+    if (!(whiteboard && sheet.pages.length === 1)) groups.push(this.#pager.group(sheet.pages, sheet.shown, this.#unseen))
+    groups.push(whiteboard ? this.#windowGroup() : this.#scaleGroup())
+    /** @type {Array<ToolbarButton|ToolbarLabel>} */
+    const actions = [new ToolbarButton({
+      id: 'tb-copy-page', text: 'Copy page', title: 'Copy the page as an image', onClick: () => { this.copyPage() },
+    })]
+    if (this.#opener.offered) actions.push(this.#opener.button(() => this.#sheet.shown))
+    if (this.#liveView !== null) {
+      actions.push(new ToolbarButton({
+        id: 'tb-open-live', text: 'Live', className: 'tb-live',
+        title: 'This note is being written on the tablet: open the Live view', onClick: () => this.openLive(),
+      }))
+    }
+    if (this.#status.text) actions.push(new ToolbarLabel({ id: 'tb-ink-status', text: () => this.#status.text, live: true }))
+    if (sheet.unknownTemplate) {
+      actions.push(new ToolbarLabel({ id: 'tb-ink-notice', className: 'tb-notice', text: () => 'Unknown template, drawn blank' }))
+    }
+    groups.push(new ButtonGroup(actions))
+    return groups
+  }
+
+  /** @returns {ButtonGroup} Fit page, Fit width and 100%, the one in force active */
+  #scaleGroup() {
+    return new ButtonGroup(PageSurface.SCALES.map((choice) => new ToolbarButton({
+      id: choice.id, text: choice.text, title: choice.title,
+      active: () => this.#sheet.scale === choice.scale,
+      onClick: () => this.setScale(choice.scale),
+    })), { className: 'tb-segmented', label: 'Size' })
+  }
+
+  /** @returns {ButtonGroup} a whiteboard's zoom and framing */
+  #windowGroup() {
+    return new ButtonGroup([
+      new ToolbarButton({ id: 'tb-zoom-out', text: '−', title: 'Zoom out', onClick: () => { this.zoomBy(1 / ZOOM_STEP) } }),
+      new ToolbarButton({ id: 'tb-zoom-in', text: '+', title: 'Zoom in', onClick: () => { this.zoomBy(ZOOM_STEP) } }),
+      new ToolbarButton({ id: 'tb-zoom-actual', text: '100%', title: 'One grid unit to a pixel', onClick: () => { this.showActualSize() } }),
+      new ToolbarButton({ id: 'tb-zoom-fit', text: 'Fit all', title: 'Frame all the ink', onClick: () => { this.fitAll() } }),
+    ], { label: 'Window' })
   }
 
   /** @returns {string|null} the id of the page shown */
@@ -410,7 +282,7 @@ export class PageSurface extends AbstractSurface {
     this.#provider.unsubscribeFeed(this)
     this.#mounted = false
     this.#sheet.detach()
-    this.#chrome.status.clear()
+    this.#status.clear()
     this.#drag = null
     this.#root.removeEventListener('click', this.#onClick)
     this.#root.removeEventListener('keydown', this.#onKeyDown)
@@ -425,7 +297,7 @@ export class PageSurface extends AbstractSurface {
   }
 
   /**
-   * The note's block changed: the chrome is redrawn from it, and a page is drawn
+   * The note's block changed: the toolbar is asked again, and a page is drawn
    * only when the page to show is another one, its own entry changed, or it is
    * not drawn (its load failed).
    * @param {unknown} _change @param {InkContainerProvider} provider
@@ -440,7 +312,7 @@ export class PageSurface extends AbstractSurface {
     const undrawn = target !== null && target !== sheet.drawn && !sheet.loading
     if (!this.#painted || undrawn || target !== shown || sheet.drawnWith(target) !== before) this.#show(target)
     else {
-      this.#renderChrome()
+      this.#toolbarChanged()
       this.#measured()
     }
   }
@@ -485,7 +357,7 @@ export class PageSurface extends AbstractSurface {
         this.#heard(event.seq, event.type === InkFeed.STROKE_ADDED ? [event.stroke] : [])
         if (!this.#sheet.takeStroke(event)) {
           this.#unseen.add(event.pageId)
-          this.#renderChrome()
+          this.#toolbarChanged()
         }
         break
       case InkFeed.LIVE:
@@ -494,7 +366,7 @@ export class PageSurface extends AbstractSurface {
       case InkFeed.LIVE_PAGE:
         this.#sheet.livePage = event.live ? event.pageId : null
         this.#liveView = event.live && event.view ? event.view : null
-        this.#renderChrome()
+        this.#toolbarChanged()
         break
       case InkFeed.LOG_RESTARTED:
         this.#unseen.clear()
@@ -503,6 +375,11 @@ export class PageSurface extends AbstractSurface {
         if (this.#sheet.shown === null && this.#sheet.pages.length) this.#show(this.#sheet.pages[0].id)
         break
     }
+  }
+
+  /** Shows the page `pageId`. @param {string} pageId */
+  showPage(pageId) {
+    if (pageId !== this.#sheet.shown) this.#show(pageId)
   }
 
   /**
@@ -538,60 +415,33 @@ export class PageSurface extends AbstractSurface {
   }
 
   /**
-   * Puts the page shown on the clipboard as an image, and says so in place.
+   * Puts the page shown on the clipboard as an image, and says so.
    * @returns {Promise<void>}
    */
   copyPage() {
     const words = PageSurface.CopyWords
     return this.#sheet.copyPage().then(
-      (copied) => this.#chrome.status.showResult(copied ? words.COPIED : words.NOTHING),
+      (copied) => this.#status.showResult(copied ? words.COPIED : words.NOTHING),
       (err) => {
         console.warn('[ink] the page could not be copied', err)
-        this.#chrome.status.showResult(words.FAILED)
+        this.#status.showResult(words.FAILED)
       })
   }
 
   /**
-   * Asks the tablet the note came from to open it, saying in place that it is
-   * asking and then what came of it. A second ask while one is under way is the
-   * same ask.
+   * Asks the tablet the note came from to open it at the page shown.
    * @returns {Promise<void>}
    */
-  openOnTablet() {
-    if (this.#opening) return this.#opening
-    const device = this.#deviceName || 'the tablet'
-    this.#openOnTablet.disabled = true
-    const status = this.#chrome.status
-    status.showPending(`Opening on ${device}…`)
-    this.#opening = this.#provider.openOnTablet()
-      .then((result) => status.showResult(this.#openingWords(result, device)), (err) => {
-        console.warn('[ink] the tablet could not be asked to open the note', err)
-        status.showResult('Could not ask the tablet')
-      })
-      .finally(() => {
-        this.#opening = null
-        this.#openOnTablet.disabled = false
-      })
-    return this.#opening
-  }
+  openOnTablet() { return this.#opener.open(this.#sheet.shown) }
 
-  /** @param {InkOpeningResult} result @param {string} device @returns {string} */
-  #openingWords(result, device) {
-    if (result.outcome === InkOpening.OPENED) return `Opened on ${device}`
-    if (result.outcome === InkOpening.REFUSED) {
-      return Object.hasOwn(REFUSAL_WORDS, result.reason)
-        ? REFUSAL_WORDS[/** @type {keyof typeof REFUSAL_WORDS} */ (result.reason)]
-        : `The tablet refused (${result.reason || 'no reason given'})`
-    }
-    return Object.hasOwn(OPENING_WORDS, result.outcome)
-      ? OPENING_WORDS[/** @type {keyof typeof OPENING_WORDS} */ (result.outcome)]
-      : 'Could not ask the tablet'
-  }
+  /** @param {string} scale @returns {boolean} whether it is one of PageSurface.Scale */
+  static #isScale(scale) { return /** @type {ReadonlyArray<string>} */ (Object.values(PageSurface.Scale)).includes(scale) }
 
-  /** Switches a fixed page's sheet between fitting the surround's width and actual size. */
-  toggleScale() {
-    this.#sheet.scale = this.#sheet.scale === PageSurface.Scale.FIT ? PageSurface.Scale.ACTUAL : PageSurface.Scale.FIT
-    this.#renderChrome()
+  /** @param {string} scale one of PageSurface.Scale: how a fixed page is sized from now on */
+  setScale(scale) {
+    if (!PageSurface.#isScale(scale) || scale === this.#sheet.scale) return
+    this.#sheet.scale = scale
+    this.#toolbarChanged()
   }
 
   /**
@@ -633,9 +483,7 @@ export class PageSurface extends AbstractSurface {
     const block = id ? provider.getBlock(id) : null
     const attrs = (block && block.attrs) || {}
     this.#sheet.setNote(attrs.note)
-    this.#deviceName = String((attrs.note_device && attrs.note_device.name) || '')
-    this.#chrome.setNote(provider.getName() || String(attrs.title || '') || 'Untitled note', this.#deviceName)
-    this.#openOnTablet.hidden = !attrs.note_source_id
+    this.#opener.setNote(attrs)
   }
 
   /** @param {string|null} pageId */
@@ -644,7 +492,7 @@ export class PageSurface extends AbstractSurface {
     if (pageId !== null) this.#unseen.delete(pageId)
     const restored = this.#restored
     this.#sheet.show(pageId, NO_PAGES, restored && restored.page === pageId ? restored.window : null)
-    this.#renderChrome()
+    this.#toolbarChanged()
   }
 
   /**
@@ -666,7 +514,7 @@ export class PageSurface extends AbstractSurface {
         this.#heard(other.seq, other.page.strokes)
         if (page.id === this.#sheet.shown || !other.page.strokes.some((s) => s.startMillis > restored.startMillis)) return
         this.#unseen.add(page.id)
-        this.#renderChrome()
+        this.#toolbarChanged()
       }, () => {})
     }
   }
@@ -681,20 +529,13 @@ export class PageSurface extends AbstractSurface {
   }
 
   #sheetChanged() {
-    this.#notice.hidden = !this.#sheet.unknownTemplate
+    this.#toolbarChanged()
     this.#measured()
   }
 
-  #renderChrome() {
-    const sheet = this.#sheet
-    const whiteboard = sheet.isUnbounded(sheet.shown)
-    this.#chrome.renderPager(sheet.pages, sheet.shown, this.#unseen, whiteboard && sheet.pages.length === 1)
-    const actual = sheet.scale === PageSurface.Scale.ACTUAL
-    this.#scaleButton.hidden = whiteboard
-    this.#scaleButton.textContent = actual ? 'Fit width' : '100%'
-    this.#scaleButton.title = actual ? 'Fit the page to the width' : 'Show the page at actual size'
-    this.#viewTools.hidden = !whiteboard
-    this.#openLive.hidden = this.#liveView === null
+  /** Reports that what toolbarContents() offers may have changed. */
+  #toolbarChanged() {
+    if (this.#mounted) this.#host.onSurfaceEvent(SurfaceEvent.TOOLBAR_CHANGED)
   }
 
   /** Reports that what stats() measures may have changed. */
@@ -702,33 +543,10 @@ export class PageSurface extends AbstractSurface {
     this.#host.onSurfaceEvent(SurfaceEvent.DOC_PROJECTED)
   }
 
-  /** @param {Event} event */
+  /** A click on the sheet puts the keyboard on the page. @param {Event} event */
   #onClick = (event) => {
     const target = /** @type {Element} */ (event.target)
-    const button = target && typeof target.closest === 'function' ? target.closest('button') : null
-    if (!button) {
-      if (target && this.#sheet.sheetElement.contains(target)) this.#root.focus()
-      return
-    }
-    const page = button.getAttribute('data-ink-page')
-    if (page !== null) {
-      if (page !== this.#sheet.shown) this.#show(page)
-      return
-    }
-    switch (button.getAttribute('data-ink-action')) {
-      case 'mode': if (button.getAttribute('data-ink-mode') !== PageSurface.MODE) this.#host.toggleMode(); break
-      case 'prev': this.turn(-1); break
-      case 'next': this.turn(1); break
-      case 'unseen': this.showNextUnseen(); break
-      case 'scale': this.toggleScale(); break
-      case 'zoom-in': this.zoomBy(ZOOM_STEP); break
-      case 'zoom-out': this.zoomBy(1 / ZOOM_STEP); break
-      case 'actual': this.showActualSize(); break
-      case 'fit': this.fitAll(); break
-      case 'open-live': this.openLive(); break
-      case 'copy-page': this.copyPage(); break
-      case 'open-on-tablet': this.openOnTablet(); break
-    }
+    if (target && this.#sheet.sheetElement.contains(target)) this.#root.focus()
   }
 
   /** @param {KeyboardEvent} event */
@@ -817,15 +635,5 @@ export class PageSurface extends AbstractSurface {
     const el = document.createElement(tag)
     el.className = className
     return el
-  }
-
-  /** @param {string} action @param {string} text @param {string} label @returns {HTMLButtonElement} */
-  #button(action, text, label) {
-    const button = document.createElement('button')
-    button.type = 'button'
-    if (action) button.dataset.inkAction = action
-    button.textContent = text
-    if (label) button.setAttribute('aria-label', label)
-    return button
   }
 }

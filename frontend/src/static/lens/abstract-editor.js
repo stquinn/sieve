@@ -11,12 +11,21 @@ import { ContractViolation } from '../contract/sieve-block.js'
 import { LensCapability } from '../contract/lens-capabilities.js'
 import { SelectionModel } from './document-editor/selection-model.js'
 import { AddressStatus } from '../renderers/address-status.js'
+import { ButtonGroup, ToolbarButton, ToolbarSeparator } from '../renderers/toolbar-button.js'
+import { SurfaceEvent } from './abstract-surface.js'
 
 /**
  * @typedef {import('./abstract-surface.js').AbstractSurface} AbstractSurface
  * @typedef {import('./abstract-surface.js').SurfaceEventMsg} SurfaceEventMsg
  * @typedef {import('../contract/container-provider.js').BlockContainerProvider} BlockContainerProvider
  * @typedef {import('../contract/lens-capabilities.js').LensCapabilities} LensCapabilities
+ * @typedef {import('../renderers/toolbar-button.js').ToolbarItem} ToolbarItem
+ */
+
+/**
+ * How the mode toggle is drawn while a mode is in force: an icon or a text, and
+ * a title saying what pressing it does.
+ * @typedef {Readonly<{iconHtml?: string, text?: string, title: string}>} ModeToggleFace
  */
 
 /** The one kind whose whole payload is text, so an empty one carries nothing. */
@@ -508,6 +517,7 @@ export class AbstractEditor extends Lens {
     super.mount(rootEl)
     // Seed stats for the new surface; doc-changed emits them thereafter.
     this.#emitStats()
+    this.#emitEvent(SurfaceEvent.TOOLBAR_CHANGED)
     return next
   }
 
@@ -769,6 +779,66 @@ export class AbstractEditor extends Lens {
     const modes = this._modes
     return this.setMode(modes[(modes.indexOf(this.mode) + 1) % modes.length])
   }
+
+  /**
+   * What this lens puts in the workspace toolbar, left to right: the mounted
+   * surface's groups, each followed by a separator unless nothing follows it,
+   * then the lens's own groups. A fresh answer each time it is asked; the lens
+   * emits `toolbar-changed` when it would answer otherwise.
+   * @returns {ToolbarItem[]}
+   */
+  toolbarContents() {
+    const surface = this.#surface ? this.#surface.toolbarContents() : []
+    const own = this._toolbarGroups()
+    /** @type {ToolbarItem[]} */
+    const items = []
+    surface.forEach((group, i) => {
+      items.push(group)
+      if (i < surface.length - 1 || own.length) items.push(new ToolbarSeparator())
+    })
+    items.push(...own)
+    return items
+  }
+
+  /**
+   * The lens's own toolbar groups, after the surface's. The base offers the mode
+   * toggle alone; a lens with groups of its own places the toggle among them.
+   * @protected
+   * @returns {ToolbarItem[]}
+   */
+  _toolbarGroups() {
+    const toggle = this.modeToggle()
+    return toggle ? [new ButtonGroup([toggle])] : []
+  }
+
+  /**
+   * The ONE mode toggle every lens draws: a button that steps to the next mode
+   * of the repertoire, as `toggleMode` does, drawn with the face the lens gives
+   * the mode in force. Null for a lens of one mode.
+   * @returns {ToolbarButton|null}
+   */
+  modeToggle() {
+    const modes = this._modes
+    if (modes.length < 2) return null
+    const next = modes[(modes.indexOf(this.mode) + 1) % modes.length]
+    const face = this._modeToggleFace(this.mode) || { text: next, title: 'Show ' + next }
+    return new ToolbarButton({
+      id: 'tb-toggle-mode-btn',
+      iconHtml: face.iconHtml,
+      text: face.text,
+      title: face.title,
+      onClick: () => { this.toggleMode() },
+    })
+  }
+
+  /**
+   * How the mode toggle is drawn while `mode` is in force; null draws it with
+   * the next mode's name.
+   * @protected
+   * @param {string} _mode
+   * @returns {ModeToggleFace|null}
+   */
+  _modeToggleFace(_mode) { return null }
 
   /**
    * @param {string} target

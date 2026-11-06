@@ -2,7 +2,8 @@
 // The reader's surface of a Digital Note's reading: the page the reader is on,
 // read as text and diagrams, drawn read-only by the renderers every block kind
 // has, on the editor's own background and at its text width. Beside the reading
-// it offers to read the page, and to make a new document from what was read.
+// it offers to read the page, and to make a new document from what was read;
+// the workspace toolbar is offered its pager and Open in e-ink.
 // What it draws is what the host says of the page's reading: it never decides
 // whether a reading is current, and hears the feed so that a reading that
 // changes, or ink that lands on the page, is asked of the host again.
@@ -11,9 +12,11 @@ import { AbstractSurface, SurfaceEvent, SurfaceIntent } from '../abstract-surfac
 import { InkFeed, InkReadingState } from '../../contract/ink-container-provider.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
 import { QuestionListView } from '../../renderers/question-list-view.js'
+import { ButtonGroup, ToolbarLabel } from '../../renderers/toolbar-button.js'
 import { ActionStatus } from './action-status.js'
-import { NoteChrome } from './note-chrome.js'
+import { NotePager } from './note-pager.js'
 import { PageSurface } from './page-surface.js'
+import { TabletOpener } from './tablet-opener.js'
 
 /** @typedef {import('../../contract/ink-container-provider.js').InkContainerProvider} InkContainerProvider */
 /** @typedef {import('../../contract/ink-container-provider.js').InkFeedEvent} InkFeedEvent */
@@ -24,7 +27,7 @@ import { PageSurface } from './page-surface.js'
 
 export class ReadingSurface extends AbstractSurface {
   /** The mode this surface presents. */
-  static MODE = NoteChrome.Mode.READING
+  static MODE = 'reading'
 
   /** What the surface says, by the state of the page's reading. */
   static Words = Object.freeze({
@@ -69,6 +72,8 @@ export class ReadingSurface extends AbstractSurface {
 
   .ink-reading__notice { flex: 1 1 auto; }
 
+  .ink-reading__bar .ink-page__status { color: var(--theme-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
   .ink-reading__notice[data-tone="warn"] { color: var(--theme-accentYellow); }
 
   .ink-reading__bar button {
@@ -101,9 +106,11 @@ export class ReadingSurface extends AbstractSurface {
 
   /** @type {InkContainerProvider} */ #provider
   /** @type {PageSurfaceHost} */ #host
-  /** @type {NoteChrome} */ #chrome = new NoteChrome(ReadingSurface.MODE)
   /** @type {QuestionListView} */ #list
   /** @type {ActionStatus} what is under way, or came of the last New document */ #status = new ActionStatus()
+  /** @type {ActionStatus} what came of Open in e-ink */ #opened = new ActionStatus(() => this.#toolbarChanged())
+  /** @type {TabletOpener} */ #opener
+  /** @type {NotePager} */ #pager = new NotePager(this)
 
   /** @type {boolean} between mount and unmount */ #mounted = false
   /** @type {HTMLElement} */ #root
@@ -133,6 +140,7 @@ export class ReadingSurface extends AbstractSurface {
     super()
     this.#provider = provider
     this.#host = host
+    this.#opener = new TabletOpener(provider, this.#opened, () => this.#toolbarChanged())
     this.#handed = view
     if (view) {
       this.#unseen = new Set(view.unseen)
@@ -154,7 +162,7 @@ export class ReadingSurface extends AbstractSurface {
     this.#blocks = this.#element('div', 'ink-reading__blocks tiptap')
     page.append(this.#bar, this.#blocks)
     body.append(page)
-    this.#root.append(this.#chrome.element, body)
+    this.#root.append(body)
   }
 
   /** @returns {string} */
@@ -170,7 +178,8 @@ export class ReadingSurface extends AbstractSurface {
   get reading() { return this.#reading }
 
   /**
-   * Where the reader is and how much of the page was read.
+   * Where the reader is, how much of the page was read, and the device the note
+   * was written on, when it is known.
    * @returns {SurfaceStats}
    */
   stats() {
@@ -182,8 +191,24 @@ export class ReadingSurface extends AbstractSurface {
       readout: Object.freeze([
         Object.freeze({ text: where, title: 'Page' }),
         Object.freeze({ text: this.#reading && this.#reading.state !== InkReadingState.NONE ? `Read, ${count} block${count === 1 ? '' : 's'}` : 'Not read', title: 'Reading' }),
+        ...(this.#opener.device ? [Object.freeze({ text: this.#opener.device, title: 'Written on' })] : []),
       ]),
     }
+  }
+
+  /**
+   * What the surface offers the toolbar: the pager, then Open in e-ink for a
+   * note from a tablet and what came of it.
+   * @returns {ButtonGroup[]}
+   */
+  toolbarContents() {
+    const groups = [this.#pager.group(this.#pages, this.#shown, this.#unseen)]
+    /** @type {Array<import('../../renderers/toolbar-button.js').ToolbarItem>} */
+    const actions = []
+    if (this.#opener.offered) actions.push(this.#opener.button(() => this.#shown))
+    if (this.#opened.text) actions.push(new ToolbarLabel({ id: 'tb-ink-status', text: () => this.#opened.text, live: true }))
+    if (actions.length) groups.push(new ButtonGroup(actions))
+    return groups
   }
 
   /**
@@ -198,7 +223,7 @@ export class ReadingSurface extends AbstractSurface {
       mode: ReadingSurface.MODE,
       page: this.#shown ?? (handed ? handed.page : null),
       window: handed ? handed.window : null,
-      scale: handed ? handed.scale : PageSurface.Scale.FIT,
+      scale: handed ? handed.scale : PageSurface.Scale.PAGE,
       unseen: Object.freeze([...this.#unseen]),
       seq: this.#heardSeq,
       startMillis: this.#heardMillis,
@@ -221,6 +246,7 @@ export class ReadingSurface extends AbstractSurface {
     this.#mounted = false
     this.#asked++
     this.#status.clear()
+    this.#opened.clear()
     this.#list.destroy()
     this.#root.removeEventListener('click', this.#onClick)
     this.#root.removeEventListener('keydown', this.#onKeyDown)
@@ -233,8 +259,8 @@ export class ReadingSurface extends AbstractSurface {
   flushPending() {}
 
   /**
-   * The note's block or name changed: the chrome is redrawn, and the reading
-   * asked for again when the page to show is another one.
+   * The note's block changed: the toolbar is asked again, and the reading asked
+   * for again when the page to show is another one.
    * @param {unknown} _change @param {InkContainerProvider} provider
    */
   applyContainerChange(_change, provider) {
@@ -242,7 +268,7 @@ export class ReadingSurface extends AbstractSurface {
     this.#readNote(provider)
     const target = this.#target()
     if (target !== before || this.#reading === null) this.#show(target)
-    else this.#renderChrome()
+    else this.#toolbarChanged()
   }
 
   /** @param {InkContainerProvider} provider */
@@ -267,7 +293,7 @@ export class ReadingSurface extends AbstractSurface {
         if (event.pageId === this.#shown) this.#ask()
         else {
           this.#unseen.add(event.pageId)
-          this.#renderChrome()
+          this.#toolbarChanged()
         }
         break
       case InkFeed.READING:
@@ -280,6 +306,17 @@ export class ReadingSurface extends AbstractSurface {
         break
     }
   }
+
+  /** Shows the page `pageId`. @param {string} pageId */
+  showPage(pageId) {
+    if (pageId !== this.#shown) this.#show(pageId)
+  }
+
+  /**
+   * Asks the tablet the note came from to open it at the page shown.
+   * @returns {Promise<void>}
+   */
+  openOnTablet() { return this.#opener.open(this.#shown) }
 
   /**
    * Shows the page `delta` pages on from the shown one, clamped to the note.
@@ -353,8 +390,7 @@ export class ReadingSurface extends AbstractSurface {
     const attrs = (block && block.attrs) || {}
     const pages = attrs.note && Array.isArray(attrs.note.pages) ? attrs.note.pages : []
     this.#pages = pages.map((/** @type {Record<string, any>} */ p) => Object.freeze({ id: String(p.id) }))
-    const device = String((attrs.note_device && attrs.note_device.name) || '')
-    this.#chrome.setNote(provider.getName() || String(attrs.title || '') || 'Untitled note', device)
+    this.#opener.setNote(attrs)
   }
 
   /** @returns {string|null} the page to show: the page shown while the note lists it,
@@ -375,7 +411,7 @@ export class ReadingSurface extends AbstractSurface {
     if (pageId !== this.#shown) this.#reading = null
     this.#shown = pageId
     if (pageId !== null) this.#unseen.delete(pageId)
-    this.#renderChrome()
+    this.#toolbarChanged()
     if (pageId === null) {
       this.#drawNothing(ReadingSurface.Words.NO_PAGES)
       return
@@ -460,8 +496,10 @@ export class ReadingSurface extends AbstractSurface {
     else delete this.#blocks.dataset.stale
   }
 
-  #renderChrome() {
-    this.#chrome.renderPager(this.#pages, this.#shown, this.#unseen, false)
+  /** Reports that what toolbarContents() offers, and what stats() measures, may have changed. */
+  #toolbarChanged() {
+    if (!this.#mounted) return
+    this.#host.onSurfaceEvent(SurfaceEvent.TOOLBAR_CHANGED)
     this.#host.onSurfaceEvent(SurfaceEvent.DOC_PROJECTED)
   }
 
@@ -470,16 +508,7 @@ export class ReadingSurface extends AbstractSurface {
     const target = /** @type {Element} */ (event.target)
     const button = target && typeof target.closest === 'function' ? target.closest('button') : null
     if (!button || !this.#root.contains(button)) return
-    const page = button.getAttribute('data-ink-page')
-    if (page !== null) {
-      if (page !== this.#shown) this.#show(page)
-      return
-    }
     switch (button.getAttribute('data-ink-action')) {
-      case 'mode': if (button.getAttribute('data-ink-mode') !== ReadingSurface.MODE) this.#host.toggleMode(); break
-      case 'prev': this.turn(-1); break
-      case 'next': this.turn(1); break
-      case 'unseen': this.showNextUnseen(); break
       case 'read': this.readPage(); break
       case 'new-document': this.newDocument(); break
     }

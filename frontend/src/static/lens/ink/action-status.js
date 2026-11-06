@@ -1,6 +1,8 @@
 // @ts-check
-// A line of chrome that says what came of the reader's last action, in place and
-// briefly: it clears itself, unless it says an action is still under way.
+// What came of the reader's last action, said briefly: it clears itself, unless
+// it says an action is still under way. It is a line of its own (`element`), and
+// it tells `onChange` each time what it says changes, for chrome that shows it
+// elsewhere.
 
 export class ActionStatus {
   /** How long a result is shown. */
@@ -8,8 +10,11 @@ export class ActionStatus {
 
   /** @type {HTMLElement} */ #el
   /** @type {ReturnType<typeof setTimeout>|null} */ #timer = null
+  /** @type {() => void} */ #onChange
 
-  constructor() {
+  /** @param {() => void} [onChange] told each time what it says changes */
+  constructor(onChange = () => {}) {
+    this.#onChange = onChange
     this.#el = document.createElement('span')
     this.#el.className = 'ink-page__status'
     this.#el.setAttribute('role', 'status')
@@ -42,8 +47,10 @@ export class ActionStatus {
   /** Says nothing. */
   clear() {
     this.#stopTimer()
+    const said = this.text
     this.#el.hidden = true
     this.#el.textContent = ''
+    if (said) this.#onChange()
   }
 
   /** @param {string} text */
@@ -51,6 +58,7 @@ export class ActionStatus {
     this.#stopTimer()
     this.#el.textContent = text
     this.#el.hidden = false
+    this.#onChange()
   }
 
   #stopTimer() {

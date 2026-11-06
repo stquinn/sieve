@@ -214,9 +214,7 @@ const FakeSurfaceNoteEditor = withFakeSurfaces(NoteEditor)
 function noteRig(uuid = 'n', options = {}) {
   const provider = options.provider || fakeProvider()
   const loadContainer = options.loadContainer || vi.fn(() => Promise.resolve({ body: '', version: 0, scroll: 0 }))
-  const ed = new FakeSurfaceNoteEditor(uuid, Object.assign({}, options, {
-    provider, loadContainer, toolbar: options.toolbar !== undefined ? options.toolbar : null,
-  }))
+  const ed = new FakeSurfaceNoteEditor(uuid, Object.assign({}, options, { provider, loadContainer }))
   return { ed, provider, loadContainer, log: ed.surfaceLog, made: ed.made }
 }
 
@@ -1497,6 +1495,42 @@ describe('SieveWorkspace.activateDocument editor lifecycle (P2.A fix wave)', () 
     expect(FakeSocket.instances.length).toBe(1)
   })
 
+  describe('the workspace toolbar', () => {
+    /** A workspace over a toolbar host in the document. */
+    function withToolbar() {
+      const bar = document.createElement('div')
+      bar.id = 'editor-toolbar'
+      document.body.appendChild(bar)
+      return { bar, w: loggingWorkspace([]) }
+    }
+    afterEach(() => { document.body.innerHTML = '' })
+
+    it('shows the active lens\'s answer on every switch, and empties for a lens with none and on teardown', () => {
+      const { bar, w } = withToolbar()
+      const ids = () => [...bar.querySelectorAll('[id]')].map((el) => el.id)
+      w.activateDocument('doc-a', edOpts)
+      expect(ids()).toEqual(['tb-toggle-mode-btn', 'tb-spellcheck-btn', 'tb-clip-btn', 'tb-attach-btn', 'tb-explain-btn', 'tb-ask-btn', 'tb-help-btn'])
+      w.activateDocument('p', edOpts, 'prompt')
+      expect(bar.childElementCount).toBe(0)
+      w.activateDocument('blk-1', edOpts, 'code')
+      expect(bar.childElementCount).toBe(0)
+      w.activateDocument('doc-a', edOpts)
+      expect(ids()[0]).toBe('tb-toggle-mode-btn')
+      w.activateDocument('', edOpts)
+      expect(bar.childElementCount).toBe(0)
+    })
+
+    it('asks the lens again when it presents a surface, and follows the tab closed under it', () => {
+      const { bar, w } = withToolbar()
+      const tab = w.activateDocument('doc-a', edOpts)
+      const asked = vi.spyOn(tab.editor, 'toolbarContents')
+      tab.editor.presentSurface('markdown', document.createElement('div'), 'the body')
+      expect(asked).toHaveBeenCalledTimes(1)
+      w.closeTab('doc-a')
+      expect(bar.childElementCount).toBe(0)
+    })
+  })
+
   it('a block container mounts the fallback lens, read-only, on its own channel', () => {
     const log = []
     const w = loggingWorkspace(log)
@@ -1527,7 +1561,7 @@ describe('SieveWorkspace editor lifecycle (P4.F — moved from editor.js)', () =
     const mount = hostMount('doc-a')
     vi.spyOn(mount, 'load').mockResolvedValue(Object.assign({ body: '', meta: { mode: 'wysiwyg' }, scroll: 0, version: 0, presenting: false }, answer))
     tab.attachMount(mount)
-    const ed = new FakeSurfaceNoteEditor('doc-a', { provider: fakeProvider(), toolbar: null })
+    const ed = new FakeSurfaceNoteEditor('doc-a', { provider: fakeProvider() })
     ed.restoreScroll = vi.fn()
     tab.attachEditor(ed)
     return { w, tab, ed, el: document.createElement('div') }
@@ -1721,7 +1755,7 @@ describe('SieveWorkspace container-deleted reconciliation (shell/workspace.js bo
     mount.openChannel(/** @type {any} */ ({ onMessage: () => {} }))
     const socket = FakeSocket.instances[FakeSocket.instances.length - 1]
     tab.attachMount(mount)
-    const editor = new FakeSurfaceNoteEditor(uuid, { provider: mount.provider, toolbar: null })
+    const editor = new FakeSurfaceNoteEditor(uuid, { provider: mount.provider })
     const destroy = vi.spyOn(editor, 'destroy')
     tab.attachEditor(editor)
     return { tab, editor, destroy, socket }
@@ -2111,9 +2145,9 @@ describe('AbstractEditor.toggleMode (P2.C — binary-flip sugar over setMode)', 
     const root = document.createElement('div')
     rig.ed.presentSurface(startMode, root, startMode === 'markdown' ? 'seed' : null)
     const events = []
-    // presentSurface (the flip mount) also emits a `stats` event; these tests pin
-    // the mode-changed/failed emissions only — filter stats out.
-    rig.ed.onEvent((ev) => { if (ev.type !== 'stats') events.push(ev) })
+    // presentSurface (the flip mount) also emits `stats` and `toolbar-changed`;
+    // these tests pin the mode-changed/failed emissions only.
+    rig.ed.onEvent((ev) => { if (ev.type !== 'stats' && ev.type !== 'toolbar-changed') events.push(ev) })
     return Object.assign(rig, { root, events })
   }
 
@@ -3078,47 +3112,6 @@ describe('AbstractEditor stats producer (P4.D)', () => {
     ed.onSurfaceEvent({ type: 'doc-changed' })
     expect(events).toContain('doc-changed')
     expect(events).toContain('stats')
-  })
-})
-
-// ── P4.D: NoteEditor owns the toolbar (mount on present, destroy on teardown) ─────
-
-describe('NoteEditor toolbar ownership (P4.D)', () => {
-  // A fake toolbar recording mount/refresh/destroy calls (injected via options).
-  function fakeToolbar() {
-    return { _mounted: false, mount: vi.fn(function () { this._mounted = true }), get mounted() { return this._mounted },
-      refreshSurfaceSection: vi.fn(), destroy: vi.fn() }
-  }
-
-  it('mounts the toolbar on the FIRST present; re-renders its surface section on the next', () => {
-    const tb = fakeToolbar()
-    const ed = new (withFakeSurfaces(NoteEditor))('n', {
-      provider: fakeProvider(), toolbar: tb,
-    })
-    ed.presentSurface('wysiwyg', document.createElement('div'), null)
-    expect(tb.mount).toHaveBeenCalledTimes(1)
-    expect(tb.refreshSurfaceSection).not.toHaveBeenCalled()
-    // Second present (same-uuid re-init) → re-render the surface section, no re-mount.
-    ed.presentSurface('wysiwyg', document.createElement('div'), null)
-    expect(tb.mount).toHaveBeenCalledTimes(1)
-    expect(tb.refreshSurfaceSection).toHaveBeenCalledTimes(1)
-  })
-
-  it('destroy tears down the toolbar subscription', () => {
-    const tb = fakeToolbar()
-    const ed = new (withFakeSurfaces(NoteEditor))('n', {
-      provider: fakeProvider(), toolbar: tb,
-    })
-    ed.presentSurface('markdown', document.createElement('div'), 'x')
-    ed.destroy()
-    expect(tb.destroy).toHaveBeenCalledTimes(1)
-  })
-
-  it('a null toolbar (injected) is a safe no-op through present + destroy', () => {
-    const ed = new (withFakeSurfaces(NoteEditor))('n', {
-      provider: fakeProvider(), toolbar: null,
-    })
-    expect(() => { ed.presentSurface('markdown', document.createElement('div'), 'x'); ed.destroy() }).not.toThrow()
   })
 })
 

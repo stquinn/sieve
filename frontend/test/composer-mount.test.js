@@ -390,7 +390,7 @@ describe('a composer-authored question reaches the ask seam as a #101 question',
     class BareLens extends NoteEditor {
       paint() {}
     }
-    const lens = new BareLens(CONTAINER, { provider, toolbar: null })
+    const lens = new BareLens(CONTAINER, { provider })
     built.push(lens)
     return lens
   }

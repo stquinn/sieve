@@ -47,6 +47,9 @@ export const SurfaceEvent = Object.freeze({
    * re-derives the whole descriptor.
    */
   SCROLL_CHANGED: Object.freeze({ type: 'scroll-changed' }),
+  /** What the surface offers the toolbar changed, its state included: the host
+   *  asks for the toolbar's contents again. */
+  TOOLBAR_CHANGED: Object.freeze({ type: 'toolbar-changed' }),
 })
 
 /**
@@ -218,12 +221,12 @@ export class AbstractSurface {
   insertLink(url) { return Promise.resolve(false) }
 
   /**
-   * The surface's OWN formatting button groups for the editor toolbar. The editor
-   * composes these AFTER its persistent editor-level groups and re-renders ONLY
-   * this section on a mode flip. A surface with no rich commands returns [], so
-   * its formatting buttons are ABSENT rather than dimmed. Each button's
-   * onClick/active closure runs on the surface's OWN live view.
-   * @returns {import('./document-editor/toolbar-button.js').ButtonGroup[]}
+   * The surface's own groups for the workspace toolbar, which its editor shows
+   * ahead of the editor's own groups. A surface with nothing to offer returns
+   * [], so its buttons are ABSENT rather than dimmed. Each button's closures run
+   * on the surface's OWN live view. A surface whose answer changes reports
+   * TOOLBAR_CHANGED.
+   * @returns {import('../renderers/toolbar-button.js').ButtonGroup[]}
    */
   toolbarContents() { return [] }
 

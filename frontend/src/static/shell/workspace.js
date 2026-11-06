@@ -36,6 +36,7 @@ import { FindDialog } from './find-dialog.js'
 import { StatusBar } from './status-bar.js'
 import { SidebarView } from './sidebar-view.js'
 import { AssetPlacement } from './asset-placement.js'
+import { WorkspaceToolbar } from './workspace-toolbar.js'
 
 /** A document: a block tree that also projects itself as text. */
 const DOCUMENT_MOUNTING = Object.freeze({ lens: NoteEditor, provider: BlockProviderAdapter, channel: true, document: true })
@@ -127,6 +128,9 @@ export class SieveWorkspace {
   /** @type {SpellControl} the workspace's spelling verbs, and the toggle's state. */
   #spell
 
+  /** @type {WorkspaceToolbar} the toolbar, showing the active tab's lens's answer */
+  #toolbar
+
   /** @type {MacroCatalog} what this host offers a `{` picker: the block kinds,
    *  plus the URL verbs it owns the dialogs for. Built ONCE — a surface composes
    *  its own presets onto a read of it, and registers nothing. */
@@ -154,6 +158,7 @@ export class SieveWorkspace {
     this.#spell = new SpellControl(this.#workspaceService,
       typeof window !== 'undefined' ? /** @type {any} */ (window).__sieveSpellcheckEnabled !== false : true)
     this.#macroCatalog = new MacroCatalog(this)
+    this.#toolbar = new WorkspaceToolbar(typeof document !== 'undefined' ? document.getElementById('editor-toolbar') : null)
   }
 
   get documentService() { return this.#documentService }
@@ -202,6 +207,7 @@ export class SieveWorkspace {
       this.#activeTab = null
       this.#switchSelectionSource(null)
       this.#notifyActiveTabListeners()
+      this.#toolbar.show(null)
     }
   }
 
@@ -399,6 +405,7 @@ export class SieveWorkspace {
         viewState: tab.viewState,
       }, options)))
     }
+    this.#toolbar.show(tab.editor)
     return tab
   }
 

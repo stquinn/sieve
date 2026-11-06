@@ -7,8 +7,9 @@
 //
 // The SVG is built once per page shown and is then only added to and trimmed:
 // a committed stroke's markup is parsed into nodes and appended to its layers, a
-// removed stroke's nodes are taken out, and a live stroke's one path is swapped
-// in the `live` layer. Only showing a page — another one, a change to its own
+// removed stroke's nodes are taken out, and a live stroke is drawn in the `live`
+// layer: a pen stroke's one path swapped, a pencil stroke's settled chunks kept
+// and only its growing tail swapped. Only showing a page — another one, a change to its own
 // entry in the note, a restarted log — draws the SVG again.
 //
 // An unbounded page is drawn through a PlaneWindow. Moving it rewrites the SVG's
@@ -60,14 +61,17 @@ import { PlaneWindow, WindowEdge } from './plane-window.js'
  */
 
 /**
- * A stroke under the pen: what its begin said, the points so far, and the path
- * drawn for it.
+ * A stroke under the pen: what its begin said, the points so far, and what is
+ * drawn for it — a pen stroke's path, or a pencil stroke's group, which holds the
+ * `settled` chunks drawn so far and then its `tail`.
  * @typedef {object} LiveStroke
  * @property {'pen'|'pencil'} tool
  * @property {1|2|3} widthClass
  * @property {{x: number, y: number, pressure: number, tMillis: number}[]} points
  * @property {boolean} ended
  * @property {Element|null} el
+ * @property {number} settled
+ * @property {Element|null} tail
  * @property {ReturnType<typeof setTimeout>|null} linger
  */
 
@@ -96,10 +100,12 @@ export class InkSheet {
   })
 
   /**
-   * How a fixed page's sheet is sized: to the surround's width, one grid unit to
-   * a CSS pixel, or whole within the surround but never under half its width.
+   * How a fixed page's sheet is sized: whole within the surround, to the
+   * surround's width, one grid unit to a CSS pixel, or whole within the surround
+   * but never under half its width. The two that fit the surround follow its
+   * size as it changes.
    */
-  static Scale = Object.freeze({ FIT: 'fit', ACTUAL: 'actual', WHOLE: 'whole' })
+  static Scale = Object.freeze({ PAGE: 'page', FIT: 'fit', ACTUAL: 'actual', WHOLE: 'whole' })
 
   static styles = /* css */ `
   .ink-page__surround {
@@ -117,8 +123,13 @@ export class InkSheet {
 
   .ink-page__surround[data-scale="fit"] .ink-page__sheet { width: auto; max-width: 100%; }
 
+  .ink-page__surround[data-scale="page"],
   .ink-page__surround[data-scale="whole"],
   .ink-page__surround[data-bounds="unbounded"] { container-type: size; min-height: 240px; }
+
+  .ink-page__surround[data-scale="page"] .ink-page__sheet {
+    width: min(100cqw, calc(100cqh * var(--ink-aspect, 1)));
+  }
 
   .ink-page__surround[data-scale="whole"] .ink-page__sheet {
     width: max(50cqw, min(100cqw, calc(100cqh * var(--ink-aspect, 1))));
@@ -417,7 +428,7 @@ export class InkSheet {
           this.#live.set(r.stroke, {
             tool: r.tool === 'pencil' ? 'pencil' : 'pen',
             widthClass: /** @type {1|2|3} */ ([1, 2, 3].includes(r.widthClass) ? r.widthClass : 2),
-            points: [], ended: false, el: null, linger: null,
+            points: [], ended: false, el: null, settled: 0, tail: null, linger: null,
           })
           break
         case 'point': {
@@ -584,7 +595,7 @@ export class InkSheet {
     this.#drawn = this.#shown
     this.#applyScale()
     for (const n of this.#live.keys()) this.#stale.add(n)
-    for (const stroke of this.#live.values()) stroke.el = null
+    for (const stroke of this.#live.values()) Object.assign(stroke, { el: null, settled: 0, tail: null })
     this.#schedule()
     this.#host.onSheetChanged()
   }
@@ -742,7 +753,12 @@ export class InkSheet {
     for (const n of this.#stale) {
       const stroke = this.#live.get(n)
       if (!stroke) continue
-      const markup = this.#renderer.renderLiveStroke({ id: `live-${n}`, tool: stroke.tool, widthClass: stroke.widthClass, points: stroke.points })
+      const drawn = { id: `live-${n}`, tool: stroke.tool, widthClass: stroke.widthClass, points: stroke.points }
+      if (stroke.tool === 'pencil') {
+        this.#redrawLivePencil(stroke, drawn, group)
+        continue
+      }
+      const markup = this.#renderer.renderLiveStroke(drawn)
       const el = markup ? this.#fragment(markup)[0] : null
       if (stroke.el && el) stroke.el.replaceWith(el)
       else if (stroke.el) stroke.el.remove()
@@ -751,6 +767,28 @@ export class InkSheet {
     }
     this.#stale.clear()
     this.#revealLive()
+  }
+
+  /**
+   * Adds the chunks of a pencil stroke under the pen that settled since it was
+   * last drawn, and swaps its tail: a settled chunk is drawn once.
+   * @param {LiveStroke} stroke
+   * @param {import('../../renderers/ink-renderer.js').InkStroke} drawn
+   * @param {Element} group the `live` layer
+   */
+  #redrawLivePencil(stroke, drawn, group) {
+    const { settled, next, tail } = this.#renderer.renderLivePencil(drawn, stroke.settled)
+    if (stroke.tail) stroke.tail.remove()
+    stroke.tail = null
+    stroke.settled = next
+    if (!settled.length && !tail) return
+    if (!stroke.el) {
+      stroke.el = /** @type {Element} */ (this.#fragment(`<g data-stroke="${drawn.id}"></g>`)[0])
+      group.appendChild(stroke.el)
+    }
+    const els = this.#fragment(settled.join('') + tail)
+    stroke.el.append(...els)
+    if (tail) stroke.tail = els[els.length - 1]
   }
 
   /**

@@ -12,7 +12,7 @@
 
 import { AbstractSurface, SurfaceEvent } from '../../abstract-surface.js'
 import { EditorMode } from '../editor-mode.js'
-import { ToolbarButton, ButtonGroup } from '../toolbar-button.js'
+import { ToolbarButton, ButtonGroup } from '../../../renderers/toolbar-button.js'
 import { T } from './tiptap-vendor.js'
 import { BlockId } from './prose-block.js'
 import { ProseGroup, proseBlockNodes } from './prose-group.js'

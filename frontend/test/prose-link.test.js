@@ -86,7 +86,7 @@ function makeEditor(pane) {
   class TestEditor extends NoteEditor {
     _createSurface() { return new PaneSurface(pane) }
   }
-  const ed = new TestEditor('doc-1', { provider, toolbar: null })
+  const ed = new TestEditor('doc-1', { provider })
   const surface = ed.presentSurface('wysiwyg', document.createElement('div'), null)
   return { ed, sent, surface }
 }

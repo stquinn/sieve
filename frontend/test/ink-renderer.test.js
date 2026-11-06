@@ -125,17 +125,38 @@ describe('InkRenderer.renderLiveStroke', () => {
     expect(svg).toContain(live)
   })
 
-  it('draws a pencil stroke as the page chunk outlines, untoned', () => {
+  /** @param {string} markup @returns {string[]} each path's band and outline, as `b{band} {d}` */
+  const toned = (markup) => [...markup.matchAll(/<path fill="url\(#ink-b(\d)\)" d="([^"]*)"\/>/g)].map((m) => `b${m[1]} ${m[2]}`)
+  /** @param {any} stroke @returns {string[]} the committed chunks, as `toned` reads live ones, sorted */
+  const committed = (stroke) => renderer.renderStroke(stroke).bands
+    .flatMap((part, i) => [...part.matchAll(/<path d="([^"]*)"\/>/g)].map((m) => `b${i} ${m[1]}`))
+    .sort()
+
+  it('draws a whole pencil stroke as a group of its chunks, each in its band\'s tone, exactly as the page does', () => {
     const live = renderer.renderLiveStroke(pencil)
-    const liveSubpaths = (/ d="([^"]*)"/.exec(live)?.[1] ?? '').split(/(?=M)/)
-    const pageSubpaths = renderer.renderStroke(pencil).bands.join('')
-      .match(/<path d="[^"]*"/g)?.map((p) => p.slice(9, -1)) ?? []
-    expect(live).toContain(`fill="${INK_RULES.pencil.liveFill}"`)
-    expect(liveSubpaths.length).toBeGreaterThan(1)
-    expect([...liveSubpaths].sort()).toEqual([...pageSubpaths].sort())
-    for (const part of renderer.renderStroke(pencil).bands) if (part) expect(svg).toContain(part)
+    expect(live).toMatch(new RegExp(`^<g data-stroke="${pencil.id}">`))
+    expect(toned(live).length).toBeGreaterThan(1)
+    expect(new Set(toned(live).map((p) => p.slice(0, 2))).size).toBeGreaterThan(1)
+    expect([...toned(live)].sort()).toEqual(committed(pencil))
   })
 
+  it.each([1, 3, 10, 37])('settles each pencil chunk, arriving %i points at a time, exactly as it will commit, and draws it once', (batch) => {
+    const chunk = INK_RULES.pencil.chunk
+    /** @type {string[]} */ const drawn = []
+    let next = 0
+    for (let n = batch; ; n = Math.min(n + batch, pencil.points.length)) {
+      const sofar = { ...pencil, points: pencil.points.slice(0, n) }
+      const answer = renderer.renderLivePencil(sofar, next)
+      drawn.push(...answer.settled)
+      next = answer.next
+      expect(next).toBe(Math.max(0, Math.floor((n - 1) / chunk)))
+      const whole = renderer.renderLivePencil(sofar, 0)
+      expect([...drawn, answer.tail]).toEqual([...whole.settled, whole.tail])
+      if (n === pencil.points.length) break
+    }
+    const commit = renderer.renderLivePencil(pencil, 0)
+    expect([...toned(drawn.join('')), ...toned(commit.tail)].sort()).toEqual(committed(pencil))
+  })
   it('draws nothing from a single point', () => {
     expect(renderer.renderLiveStroke({ ...pencil, points: pencil.points.slice(0, 1) })).toBe('')
   })

@@ -2,8 +2,8 @@
 // The reader's lens of a Digital Note, in two modes. In `page`, one page at a time
 // as the tablet drew it, the committed strokes and the stroke under the pen
 // arriving as they are written, and a whiteboard through a window the reader
-// moves and zooms; its chrome copies the page as an image and asks the tablet the
-// note came from to open it. In `reading`, the page the reader is on read as text
+// moves and zooms; it copies the page as an image and asks the tablet the note
+// came from to open it at the page. In `reading`, the page the reader is on read as text
 // and diagrams, which the reader asks for and can take away as a new document.
 // The reader is never moved: what is shown changes only by the reader's hand, and
 // the page and the marks carry from one mode to the other. It is read-only by
@@ -18,6 +18,12 @@ import { ReadingSurface } from './reading-surface.js'
 
 /** The modes a note is presented in; neither needs a seed. */
 const MODES = Object.freeze([PageSurface.MODE, ReadingSurface.MODE])
+
+/** How the mode toggle is drawn in each mode: what pressing it shows. */
+const MODE_TOGGLE = Object.freeze({
+  [PageSurface.MODE]: Object.freeze({ text: 'Reading', title: 'Show the page read as text and diagrams' }),
+  [ReadingSurface.MODE]: Object.freeze({ text: 'Page', title: 'Show the page as it was written' }),
+})
 
 const NO_CAPABILITY = Object.freeze({
   [LensCapability.MARKDOWN]: false,
@@ -74,6 +80,12 @@ export class DigitalNoteLens extends AbstractEditor {
 
   /** @returns {string} */
   get placeholder() { return '' }
+
+  /** @override @protected @param {string} mode
+   *  @returns {import('../abstract-editor.js').ModeToggleFace} */
+  _modeToggleFace(mode) {
+    return mode === ReadingSurface.MODE ? MODE_TOGGLE[ReadingSurface.MODE] : MODE_TOGGLE[PageSurface.MODE]
+  }
 
   /**
    * Mod+Enter switches between the two modes. Bare PageUp and PageDown turn the

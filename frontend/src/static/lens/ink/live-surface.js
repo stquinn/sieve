@@ -1,15 +1,16 @@
 // @ts-check
 // The mirror's surface: the page the tablet is writing on, on an InkSheet that
 // follows the tablet — on a whiteboard the tablet's window, on a fixed page the
-// stroke under the pen — under a chrome that names the device, the note and the
-// page and says whether the tablet is live. The Live view's block says which
-// note and page those are; the container's feed brings what is drawn on them.
-// Nothing here turns, pans or zooms: the reader's gestures are Open this note and
-// Copy page.
+// stroke under the pen. The Live view's block says which note and page those
+// are; the container's feed brings what is drawn on them. Whether the tablet is
+// live, the note, the page and the device are its readout. Nothing here turns,
+// pans or zooms: the reader's gestures, offered to the workspace toolbar, are
+// Open this note and Copy page.
 
 import { AbstractSurface, SurfaceEvent, SurfaceIntent } from '../abstract-surface.js'
 import { InkFeed } from '../../contract/ink-container-provider.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
+import { ButtonGroup, ToolbarButton, ToolbarLabel } from '../../renderers/toolbar-button.js'
 import { ActionStatus } from './action-status.js'
 import { InkSheet } from './ink-sheet.js'
 import { PageSurface } from './page-surface.js'
@@ -39,26 +40,14 @@ export class LiveSurface extends AbstractSurface {
   /** The mode this surface presents. */
   static MODE = 'mirror'
 
-  static styles = /* css */ `
-  .ink-page__indicator { color: var(--theme-accentRed); white-space: nowrap; }
-
-  .ink-page__indicator[data-waiting] { color: var(--theme-muted); }
-
-  .ink-page__indicator[data-waiting]::before { background: none; box-shadow: inset 0 0 0 1px var(--theme-muted); }
-`
-
   /** @type {InkContainerProvider} */ #provider
   /** @type {LiveSurfaceHost} */ #host
   /** @type {InkSheet} */ #sheet
 
   /** @type {boolean} between mount and unmount */ #mounted = false
   /** @type {HTMLElement} */ #root
-  /** @type {HTMLElement} */ #title
-  /** @type {HTMLElement} */ #device
-  /** @type {HTMLElement} */ #position
-  /** @type {HTMLElement} */ #indicator
-  /** @type {HTMLButtonElement} */ #openNote
-  /** @type {ActionStatus} */ #status = new ActionStatus()
+  /** @type {string} the name of the device the note is written on; '' when unknown */ #device = ''
+  /** @type {ActionStatus} what came of Copy page */ #status = new ActionStatus(() => this.#toolbarChanged())
 
   /** @type {Mirrored} */ #mirrored = Object.freeze({ container: '', title: '', page: '', waiting: false })
   /** @type {boolean} whether a page, or there being none, has been shown */ #painted = false
@@ -73,29 +62,9 @@ export class LiveSurface extends AbstractSurface {
     this.#provider = provider
     this.#host = host
     rendererStyles.register(PageSurface)
-    rendererStyles.register(LiveSurface)
     this.#sheet = new InkSheet(provider, { onSheetChanged: () => this.#measured() }, InkSheet.Policy.MIRROR, InkSheet.Scale.WHOLE)
     this.#root = this.#el('div', 'ink-page ink-page--mirror')
-    const chrome = this.#el('header', 'ink-page__chrome')
-    const heading = this.#el('div', 'ink-page__heading')
-    this.#title = this.#el('span', 'ink-page__title')
-    this.#device = this.#el('span', 'ink-page__device')
-    heading.append(this.#title, this.#device, this.#status.element)
-    this.#position = this.#el('span', 'ink-page__position')
-    this.#indicator = this.#el('span', 'ink-page__indicator')
-    this.#openNote = document.createElement('button')
-    this.#openNote.type = 'button'
-    this.#openNote.dataset.inkAction = 'open-note'
-    this.#openNote.textContent = 'Open this note'
-    const copy = document.createElement('button')
-    copy.type = 'button'
-    copy.dataset.inkAction = 'copy-page'
-    copy.textContent = 'Copy page'
-    copy.title = 'Copy the page as an image'
-    const actions = this.#el('span', 'ink-page__actions')
-    actions.append(this.#openNote, copy)
-    chrome.append(heading, this.#position, this.#indicator, actions)
-    this.#root.append(chrome, this.#sheet.element)
+    this.#root.append(this.#sheet.element)
   }
 
   /** @returns {string} */
@@ -111,7 +80,8 @@ export class LiveSurface extends AbstractSurface {
   get window() { return this.#sheet.window }
 
   /**
-   * That the view is live or waiting, where the page is in the note, and the ink on it.
+   * That the view is live or waiting, the note mirrored, where the page is in it,
+   * the ink on it, and the device, when each is known.
    * @returns {SurfaceStats}
    */
   stats() {
@@ -124,11 +94,33 @@ export class LiveSurface extends AbstractSurface {
     return {
       chars: 0, lines: 0, blockCount: 0,
       readout: Object.freeze([
-        Object.freeze({ text: this.#mirrored.waiting ? 'Waiting' : 'Live', title: 'The tablet' }),
+        Object.freeze({ text: this.#mirrored.waiting ? 'Waiting for the tablet' : 'Live', title: 'The tablet' }),
+        ...(this.#mirrored.container ? [Object.freeze({ text: this.#mirrored.title || 'Untitled note', title: 'The note' })] : []),
         Object.freeze({ text: where, title: 'Page' }),
         Object.freeze({ text: `${count} stroke${count === 1 ? '' : 's'}`, title: 'Strokes on this page' }),
+        ...(this.#device ? [Object.freeze({ text: this.#device, title: 'Written on' })] : []),
       ]),
     }
+  }
+
+  /**
+   * What the surface offers the toolbar: Open this note (disabled before a note
+   * is mirrored), Copy page, and what came of it.
+   * @returns {ButtonGroup[]}
+   */
+  toolbarContents() {
+    /** @type {Array<ToolbarButton|ToolbarLabel>} */
+    const actions = [
+      new ToolbarButton({
+        id: 'tb-open-note', text: 'Open this note', title: 'Open the note being written in a tab of its own',
+        enabled: () => this.#mirrored.container !== '', onClick: () => this.openNote(),
+      }),
+      new ToolbarButton({
+        id: 'tb-copy-page', text: 'Copy page', title: 'Copy the page as an image', onClick: () => { this.copyPage() },
+      }),
+    ]
+    if (this.#status.text) actions.push(new ToolbarLabel({ id: 'tb-ink-status', text: () => this.#status.text, live: true }))
+    return [new ButtonGroup(actions)]
   }
 
   /**
@@ -136,7 +128,6 @@ export class LiveSurface extends AbstractSurface {
    * @param {HTMLElement} rootEl
    */
   mount(rootEl) {
-    this.#root.addEventListener('click', this.#onClick)
     rootEl.appendChild(this.#root)
     this.#mounted = true
     this.#sheet.attach()
@@ -149,7 +140,6 @@ export class LiveSurface extends AbstractSurface {
     this.#mounted = false
     this.#sheet.detach()
     this.#status.clear()
-    this.#root.removeEventListener('click', this.#onClick)
     this.#root.remove()
   }
 
@@ -167,7 +157,7 @@ export class LiveSurface extends AbstractSurface {
     const moved = target !== sheet.shown || this.#mirrored.container !== before.container
     if (!this.#painted || undrawn || moved || sheet.drawnWith(target) !== before.drawnWith) this.#show(target)
     else {
-      this.#renderChrome()
+      this.#toolbarChanged()
       this.#measured()
     }
   }
@@ -209,7 +199,7 @@ export class LiveSurface extends AbstractSurface {
 
   /**
    * Puts the page shown, as the tablet's window frames it, on the clipboard as an
-   * image, and says so in place.
+   * image, and says so.
    * @returns {Promise<void>}
    */
   copyPage() {
@@ -240,42 +230,24 @@ export class LiveSurface extends AbstractSurface {
     })
     this.#sheet.setNote(attrs.note)
     this.#sheet.livePage = this.#mirrored.waiting || !this.#mirrored.page ? null : this.#mirrored.page
-    this.#title.textContent = this.#mirrored.title || (container ? 'Untitled note' : 'Live')
-    this.#device.textContent = String((attrs.note_device && attrs.note_device.name) || '')
+    this.#device = String((attrs.note_device && attrs.note_device.name) || '')
   }
 
   /** @param {string|null} pageId */
   #show(pageId) {
     this.#painted = true
     this.#sheet.show(pageId, NOTHING)
-    this.#renderChrome()
+    this.#toolbarChanged()
   }
 
-  #renderChrome() {
-    const sheet = this.#sheet
-    const index = sheet.indexOf(sheet.shown)
-    const count = sheet.pages.length
-    this.#position.hidden = index < 0
-    this.#position.textContent = sheet.isUnbounded(sheet.shown) ? 'Whiteboard' : `Page ${index + 1} / ${count}`
-    const waiting = this.#mirrored.waiting
-    this.#indicator.textContent = waiting ? 'Waiting for the tablet…' : 'Live'
-    if (waiting) this.#indicator.dataset.waiting = ''
-    else delete this.#indicator.dataset.waiting
-    this.#openNote.disabled = !this.#mirrored.container
+  /** Reports that what toolbarContents() offers may have changed. */
+  #toolbarChanged() {
+    if (this.#mounted) this.#host.onSurfaceEvent(SurfaceEvent.TOOLBAR_CHANGED)
   }
 
   /** Reports that what stats() measures may have changed. */
   #measured() {
     this.#host.onSurfaceEvent(SurfaceEvent.DOC_PROJECTED)
-  }
-
-  /** @param {Event} event */
-  #onClick = (event) => {
-    const target = /** @type {Element} */ (event.target)
-    const button = target && typeof target.closest === 'function' ? target.closest('button') : null
-    const action = button ? button.getAttribute('data-ink-action') : null
-    if (action === 'open-note') this.openNote()
-    else if (action === 'copy-page') this.copyPage()
   }
 
   /** @param {string} tag @param {string} className @returns {HTMLElement} */

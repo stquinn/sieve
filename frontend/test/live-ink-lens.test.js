@@ -2,8 +2,8 @@
 // LiveInkLens — the Live view drawn by the real InkRenderer over a fake
 // InkContainerProvider: it shows the page its block names, of the note its
 // block names, moves when the block moves, follows the tablet's window and the
-// nib, offers the reader no gesture but Open this note, and says when it is
-// waiting for the tablet.
+// nib, offers the workspace toolbar no gesture but Open this note and Copy page,
+// and says when it is waiting for the tablet.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { getStroke } from 'perfect-freehand'
@@ -12,7 +12,7 @@ import { LiveSurface } from '../src/static/lens/ink/live-surface.js'
 import { InkFeed } from '../src/static/contract/ink-container-provider.js'
 import {
   ASPECT, DOTS, FakeInkProvider, Frames, GRID, Resizes, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, points,
-  renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, viewBoxOf, wheel, copiedImages, press,
+  renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, viewBoxOf, wheel, copiedImages, item, tap, toolbarFor, toolbarIds,
 } from './helpers/ink-lens-rig.js'
 
 const LIVE = '019a0000-0000-7000-8000-00000000live'
@@ -40,9 +40,10 @@ async function presented(attrs, opts = {}) {
   const lens = new LiveInkLens(LIVE, { provider })
   const root = document.createElement('div')
   document.body.appendChild(root)
+  const { bar } = toolbarFor(lens)
   await lens.presentMode('wysiwyg', root)
   await settle()
-  return { provider, lens, root, surface: /** @type {LiveSurface} */ (lens.surface) }
+  return { provider, lens, root, bar, surface: /** @type {LiveSurface} */ (lens.surface) }
 }
 
 /** A whiteboard being written, laid out 600 by 800 at (100, 50). */
@@ -53,10 +54,10 @@ async function whiteboard() {
   return shown
 }
 
-/** @param {HTMLElement} root @param {string} selector */
-const text = (root, selector) => root.querySelector(selector)?.textContent
-/** @param {HTMLElement} root */
-const openNote = (root) => /** @type {HTMLButtonElement} */ (root.querySelector('[data-ink-action="open-note"]'))
+/** @param {LiveInkLens} lens @returns {string[]} the status bar's readout */
+const readout = (lens) => (lens.stats().readout || []).map((c) => c.text)
+/** @param {HTMLElement} bar */
+const openNote = (bar) => /** @type {HTMLButtonElement} */ (item(bar, 'tb-open-note'))
 
 describe('LiveInkLens', () => {
   /** @type {Frames} */ let frames
@@ -72,14 +73,13 @@ describe('LiveInkLens', () => {
     document.body.innerHTML = ''
   })
 
-  it('shows the page its block names, with the device, the note and the page as plain text', async () => {
+  it('shows the page its block names, and reads out that it is live, the note, the page, the ink and the device', async () => {
     const { provider, root, lens } = await presented(liveAttrs({ page: 'p2' }))
     expect(lens.mode).toBe(LiveSurface.MODE)
     expect(provider.calls.slice(0, 3)).toEqual(['subscribeFeed', 'subscribe', 'loadPage p2'])
-    expect([text(root, '.ink-page__title'), text(root, '.ink-page__device'), text(root, '.ink-page__position'), text(root, '.ink-page__indicator')])
-      .toEqual(['Ideas', 'Note Air 2', 'Page 2 / 2', 'Live'])
+    expect(root.querySelectorAll('button, header')).toHaveLength(0)
     expect(strokeEls(root, 's-p2')).toHaveLength(1)
-    expect(lens.stats().readout?.map((c) => c.text)).toEqual(['Live', 'Page 2 of 2', '1 stroke'])
+    expect(readout(lens)).toEqual(['Live', 'Ideas', 'Page 2 of 2', '1 stroke', 'Note Air 2'])
   })
 
   it('draws the committed strokes and the pen live on the page written, and nothing of another page', async () => {
@@ -94,42 +94,41 @@ describe('LiveInkLens', () => {
   })
 
   it.each([
-    ['to another page of the note', { page: 'p2' }, 'p2', 'Page 2 / 2', 'Ideas'],
-    ['to another note', { container: 'note-y', title: 'Board', ids: ['q1'], page: 'q1' }, 'q1', 'Page 1 / 1', 'Board'],
+    ['to another page of the note', { page: 'p2' }, 'p2', 'Page 2 of 2', 'Ideas'],
+    ['to another note', { container: 'note-y', title: 'Board', ids: ['q1'], page: 'q1' }, 'q1', 'Page 1 of 1', 'Board'],
   ])('moves with its block %s', async (_name, next, shows, position, title) => {
-    const { provider, root, surface } = await presented(liveAttrs())
+    const { provider, root, lens, surface } = await presented(liveAttrs())
     provider.setAttrs(liveAttrs(next))
     await settle()
-    expect([surface.shownPage, text(root, '.ink-page__position'), text(root, '.ink-page__title'), provider.loads]).toEqual([shows, position, title, 2])
+    expect([surface.shownPage, readout(lens)[2], readout(lens)[1], provider.loads]).toEqual([shows, position, title, 2])
     provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p1', seq: 11, stroke: pen('old-page') })
     expect(strokeEls(root, 'old-page')).toHaveLength(0)
   })
 
   it('says it is waiting for the tablet, keeps the last page and draws no pen, until the tablet is live again', async () => {
-    const { provider, root, surface } = await presented(liveAttrs({ page: 'p2' }))
+    const { provider, root, lens, surface } = await presented(liveAttrs({ page: 'p2' }))
     provider.setAttrs(liveAttrs({ page: 'p2', waiting: true }))
     await settle()
     provider.emit({ type: InkFeed.LIVE, records: [begin(7), ...points(7, 0, 4)] })
     frames.run()
-    expect([surface.shownPage, provider.loads, text(root, '.ink-page__indicator'), layer(root, 'live').children.length])
-      .toEqual(['p2', 1, 'Waiting for the tablet…', 0])
-    expect(root.querySelector('.ink-page__indicator')?.hasAttribute('data-waiting')).toBe(true)
+    expect([surface.shownPage, provider.loads, readout(lens)[0], layer(root, 'live').children.length])
+      .toEqual(['p2', 1, 'Waiting for the tablet', 0])
     provider.setAttrs(liveAttrs({ page: 'p2' }))
     provider.emit({ type: InkFeed.LIVE, records: [begin(8), ...points(8, 0, 4)] })
     frames.run()
-    expect([text(root, '.ink-page__indicator'), layer(root, 'live').children.length, provider.loads]).toEqual(['Live', 1, 1])
+    expect([readout(lens)[0], layer(root, 'live').children.length, provider.loads]).toEqual(['Live', 1, 1])
   })
 
   it('Open this note asks the host to open the mirrored note, and does nothing before one is mirrored', async () => {
-    const { provider, root, lens, surface } = await presented(liveAttrs())
+    const { provider, root, bar, lens, surface } = await presented(liveAttrs())
     /** @type {any[]} */
     const intents = []
     lens.onEvent((e) => { if (e.type === 'open-container') intents.push(e) })
-    openNote(root).click()
+    openNote(bar).click()
     expect(intents).toEqual([{ type: 'open-container', uuid: 'note-x' }])
     provider.setAttrs(liveAttrs({ container: '', title: '', page: '', ids: [] }))
     await settle()
-    expect(openNote(root).disabled).toBe(true)
+    expect(openNote(bar).disabled).toBe(true)
     surface.openNote()
     expect(intents).toHaveLength(1)
     expect(root.querySelector('.ink-page__empty')?.textContent).toMatch(/Nothing has been written/)
@@ -202,7 +201,7 @@ describe('LiveInkLens', () => {
   })
 
   it('offers the reader no gesture that moves the view: no pager, zoom or scale, and the wheel, a drag and the keys move nothing', async () => {
-    const { provider, root, lens, surface } = await whiteboard()
+    const { provider, root, bar, lens, surface } = await whiteboard()
     provider.emit({ type: InkFeed.LIVE, records: [view(2, 3)] })
     frames.run()
     const before = svgOf(root).getAttribute('viewBox')
@@ -217,7 +216,7 @@ describe('LiveInkLens', () => {
     frames.run()
     expect(svgOf(root).getAttribute('viewBox')).toBe(before)
     expectWindow(shownWindow(root), tabletWindow(2, 3))
-    expect([...root.querySelectorAll('button')].map((b) => b.getAttribute('data-ink-action'))).toEqual(['open-note', 'copy-page'])
+    expect([root.querySelectorAll('button').length, toolbarIds(bar), bar.querySelectorAll('.tb-sep').length]).toEqual([0, ['tb-open-note', 'tb-copy-page'], 0])
     expect(surface.window).not.toBeNull()
   })
 
@@ -269,18 +268,18 @@ describe('LiveInkLens', () => {
   })
 
   it("Copy page copies the page as the tablet's window frames it, and Open in e-ink is not offered", async () => {
-    const { provider, root } = await whiteboard()
+    const { provider, bar } = await whiteboard()
     const copied = copiedImages()
     provider.emit({ type: InkFeed.LIVE, records: [view(2, 3)] })
     frames.run()
-    press(root, 'copy-page')
+    tap(bar, 'tb-copy-page')
     await settle()
     expect(copied).toHaveLength(1)
     expect(copied[0].svg).toContain(`viewBox="${viewBoxOf(tabletWindow(2, 3))}"`)
     expect([copied[0].width, copied[0].height]).toEqual([GRID, Math.round(GRID / ASPECT)])
-    expect(text(root, '.ink-page__status')).toBe('Copied')
-    expect(root.querySelector('[data-ink-action="open-on-tablet"]')).toBeNull()
-    expect(provider.calls).not.toContain('openOnTablet')
+    expect(item(bar, 'tb-ink-status')?.textContent).toBe('Copied')
+    expect(item(bar, 'tb-open-on-tablet')).toBeNull()
+    expect(provider.calls.filter((c) => c.startsWith('openOnTablet'))).toEqual([])
   })
 
   it('is read-only by construction', async () => {

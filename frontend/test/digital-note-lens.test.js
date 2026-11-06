@@ -4,7 +4,8 @@
 // a page as it is answered, every committed stroke added to and trimmed from
 // that same SVG, the stroke under the pen drawn once a frame and handed over to
 // its committed markup, and a whiteboard's window moved by the reader without
-// the page being drawn again — and never by the tablet.
+// the page being drawn again — and never by the tablet. Its controls are what it
+// puts in the workspace toolbar, drawn by the real WorkspaceToolbar.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { getStroke } from 'perfect-freehand'
@@ -13,11 +14,12 @@ import { PageSurface } from '../src/static/lens/ink/page-surface.js'
 import { ReadingSurface } from '../src/static/lens/ink/reading-surface.js'
 import { SurfaceIntent } from '../src/static/lens/abstract-surface.js'
 import { ActionStatus } from '../src/static/lens/ink/action-status.js'
+import { NotePager } from '../src/static/lens/ink/note-pager.js'
 import { ImageClipboard } from '../src/static/renderers/copy-image.js'
 import { InkFeed, InkOpening, InkReadingState, InkRefusal } from '../src/static/contract/ink-container-provider.js'
 import {
   ASPECT, DOTS, FakeInkProvider, Frames, GRID, Resizes, UUID, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, pencil, points, press, renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, viewBoxOf, wheel,
-  copiedImages, reading, READ_BLOCKS,
+  copiedImages, reading, READ_BLOCKS, item, tap, toolbarFor, toolbarIds,
 } from './helpers/ink-lens-rig.js'
 
 /**
@@ -31,17 +33,20 @@ async function presented(opts = {}) {
   const lens = new DigitalNoteLens(UUID, { provider })
   const root = document.createElement('div')
   document.body.appendChild(root)
+  const { bar, toolbar } = toolbarFor(lens)
   await lens.presentMode('wysiwyg', root)
   await settle()
-  return { provider, lens, root, surface: /** @type {PageSurface} */ (lens.surface) }
+  return { provider, lens, root, bar, toolbar, surface: /** @type {PageSurface} */ (lens.surface) }
 }
 
-/** @param {HTMLElement} root */
-const position = (root) => root.querySelector('.ink-page__position')?.textContent
-/** @param {HTMLElement} root */
-const openLive = (root) => /** @type {HTMLButtonElement} */ (root.querySelector('[data-ink-action="open-live"]'))
-/** @param {HTMLElement} root @param {string} pageId */
-const dot = (root, pageId) => /** @type {HTMLElement} */ (root.querySelector(`[data-ink-page="${pageId}"]`))
+/** @param {HTMLElement} bar */
+const position = (bar) => item(bar, 'tb-page-position')?.textContent
+/** @param {HTMLElement} bar */
+const openLive = (bar) => item(bar, 'tb-open-live')
+/** @param {HTMLElement} bar @param {number} n the page's place, from 1 @returns {HTMLButtonElement} */
+const dot = (bar, n) => /** @type {HTMLButtonElement} */ (item(bar, `tb-page-dot-${n}`))
+/** @param {HTMLElement} bar @param {number} n */
+const unseenDot = (bar, n) => dot(bar, n).classList.contains('tb-attention')
 
 /** The reader's surround, and so a whiteboard's window, is twice as wide as it is high. */
 const SURROUND = Object.freeze({ width: 1000, height: 500 })
@@ -75,16 +80,30 @@ describe('DigitalNoteLens', () => {
     document.body.innerHTML = ''
   })
 
-  it("shows the block's first page as it is answered, hearing the feed before asking for it", async () => {
-    const { provider, root, lens } = await presented()
+  it("shows the block's first page as it is answered, hearing the feed before asking for it, with no bar of its own", async () => {
+    const { provider, root, bar, lens } = await presented()
     expect(lens.mode).toBe(PageSurface.MODE)
     expect(provider.calls.slice(0, 3)).toEqual(['subscribeFeed', 'subscribe', 'loadPage p1'])
-    expect(position(root)).toBe('1 / 2')
-    expect(root.querySelector('.ink-page__title')?.textContent).toBe('Ideas')
-    expect(root.querySelector('.ink-page__device')?.textContent).toBe('Note Air 2')
+    expect(position(bar)).toBe('1 / 2')
+    expect(root.querySelectorAll('button, header')).toHaveLength(0)
     expect(strokeEls(root, 's1')).toHaveLength(1)
     expect(layer(root, 'ruling').children.length).toBeGreaterThan(0)
-    expect(/** @type {HTMLElement} */ (root.querySelector('.ink-page__notice')).hidden).toBe(true)
+    expect(item(bar, 'tb-ink-notice')).toBeNull()
+  })
+
+  it.each([
+    ['a fixed page of a note from a tablet', {}, null,
+      ['tb-page-prev', 'tb-page-position', 'tb-page-next', 'tb-page-dot-1', 'tb-page-dot-2', 'tb-scale-page', 'tb-scale-width', 'tb-scale-actual', 'tb-copy-page', 'tb-open-on-tablet', 'tb-toggle-mode-btn']],
+    ['a whiteboard of one page', { ids: ['w1'], bounds: 'unbounded' }, null,
+      ['tb-zoom-out', 'tb-zoom-in', 'tb-zoom-actual', 'tb-zoom-fit', 'tb-copy-page', 'tb-open-on-tablet', 'tb-toggle-mode-btn']],
+    ['a page being written on the tablet', {}, { type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1', view: 'live-view' },
+      ['tb-page-prev', 'tb-page-position', 'tb-page-next', 'tb-page-dot-1', 'tb-page-dot-2', 'tb-scale-page', 'tb-scale-width', 'tb-scale-actual', 'tb-copy-page', 'tb-open-on-tablet', 'tb-open-live', 'tb-toggle-mode-btn']],
+  ])('puts in the toolbar, for %s, its pager, its sizing and its actions, then the mode toggle', async (_name, opts, event, ids) => {
+    const { provider, bar } = await presented(opts)
+    if (event) provider.emit(event)
+    expect(toolbarIds(bar)).toEqual(ids)
+    expect(bar.querySelectorAll('.tb-sep').length).toBe(bar.querySelectorAll('.tb-group').length - 1)
+    expect(item(bar, 'tb-toggle-mode-btn')?.textContent).toBe('Reading')
   })
 
   it.each([
@@ -137,15 +156,28 @@ describe('DigitalNoteLens', () => {
   })
 
   it('marks a page with ink not seen, and showing it clears the mark', async () => {
-    const { provider, root } = await presented()
+    const { provider, root, bar } = await presented()
     provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p2', seq: 11, stroke: pen('s2') })
-    expect(dot(root, 'p2').hasAttribute('data-unseen')).toBe(true)
-    expect(dot(root, 'p1').hasAttribute('data-unseen')).toBe(false)
+    expect([unseenDot(bar, 2), unseenDot(bar, 1), dot(bar, 1).classList.contains('active')]).toEqual([true, false, true])
     expect(strokeEls(root, 's2')).toHaveLength(0)
-    dot(root, 'p2').click()
+    dot(bar, 2).click()
     await settle()
-    expect(position(root)).toBe('2 / 2')
-    expect(dot(root, 'p2').hasAttribute('data-unseen')).toBe(false)
+    expect(position(bar)).toBe('2 / 2')
+    expect([unseenDot(bar, 2), dot(bar, 2).classList.contains('active')]).toEqual([false, true])
+  })
+
+  it.each([
+    ['previous', 'tb-page-prev', 'p2', 'p1'],
+    ['next', 'tb-page-next', 'p1', 'p2'],
+  ])('turns to the %s page from the toolbar, and dims the turn that would leave the note', async (_name, id, from, to) => {
+    const { bar, surface } = await presented()
+    surface.showPage(from)
+    await settle()
+    expect(item(bar, id)?.disabled).toBe(false)
+    tap(bar, id)
+    await settle()
+    expect(surface.shownPage).toBe(to)
+    expect(item(bar, id)?.disabled).toBe(true)
   })
 
   it('draws the stroke under the pen in the live layer, once a frame', async () => {
@@ -164,6 +196,34 @@ describe('DigitalNoteLens', () => {
     expect(layer(root, 'live').children).toHaveLength(1)
     expect(layer(root, 'live').firstElementChild).not.toBe(first)
     expect(layer(root, 'live').firstElementChild?.getAttribute('d')).not.toBe(first?.getAttribute('d'))
+  })
+
+  it('draws a pencil stroke under the pen in its tone, each settled chunk once, and its commit changes nothing drawn', async () => {
+    const { provider, root } = await presented()
+    const stroke = { ...pencil('s7'), points: pencil('s7').points.slice(0, 36) }
+    const records = stroke.points.map((q) => ({ record: 'point', stroke: 7, tool: null, widthClass: 0, ...q }))
+    /** @param {Element} scope @returns {string[]} each path's band and outline */
+    const toned = (scope) => [...scope.querySelectorAll('path')].map((el) => {
+      const fill = el.getAttribute('fill') || String(el.closest('[fill]')?.getAttribute('fill'))
+      return `${fill} ${el.getAttribute('d')}`
+    }).sort()
+    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1', view: 'live-view' })
+    provider.emit({ type: InkFeed.LIVE, records: [{ ...begin(7, 'pencil'), widthClass: stroke.widthClass }, ...records.slice(0, 12)] })
+    frames.run()
+    const first = layer(root, 'live').querySelector('path')
+    expect(first?.getAttribute('fill')).toMatch(/^url\(#ink-b\d\)$/)
+    for (let n = 12; n < records.length; n += 5) {
+      provider.emit({ type: InkFeed.LIVE, records: records.slice(n, n + 5) })
+      frames.run()
+    }
+    expect(layer(root, 'live').querySelector('path')).toBe(first)
+    const live = toned(layer(root, 'live'))
+    provider.emit({ type: InkFeed.LIVE, records: [mark('end', 7)] })
+    provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p1', seq: 11, stroke })
+    expect(layer(root, 'live').children).toHaveLength(0)
+    const drawn = strokeEls(root, 's7')
+    expect(drawn.length).toBeGreaterThan(1)
+    expect(drawn.flatMap((g) => toned(g)).sort()).toEqual(live)
   })
 
   it('keeps an ended live stroke until its committed stroke is drawn, and then only that', async () => {
@@ -209,17 +269,16 @@ describe('DigitalNoteLens', () => {
   })
 
   it('never moves the reader off the page shown, marks the live page while it is written, and offers the Live view', async () => {
-    const { provider, root, surface, lens } = await presented()
+    const { provider, root, bar, surface, lens } = await presented()
     /** @type {any[]} */
     const intents = []
     lens.onEvent((e) => { if (e.type === 'open-container') intents.push(e) })
-    expect(openLive(root).hidden).toBe(true)
+    expect(openLive(bar)).toBeNull()
     provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p2', view: 'live-view' })
     provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p2', seq: 11, stroke: pen('s2') })
     await settle()
-    expect([surface.shownPage, position(root), provider.loads, dot(root, 'p2').hasAttribute('data-unseen')]).toEqual(['p1', '1 / 2', 1, true])
-    expect(openLive(root).hidden).toBe(false)
-    openLive(root).click()
+    expect([surface.shownPage, position(bar), provider.loads, unseenDot(bar, 2)]).toEqual(['p1', '1 / 2', 1, true])
+    openLive(bar)?.click()
     expect(intents).toEqual([{ type: 'open-container', uuid: 'live-view' }])
 
     surface.turn(1)
@@ -232,8 +291,8 @@ describe('DigitalNoteLens', () => {
     expect([surface.shownPage, provider.loads]).toEqual(['p2', 2])
 
     provider.emit({ type: InkFeed.LIVE_PAGE, live: false, pageId: null, view: null })
-    expect(openLive(root).hidden).toBe(true)
-    openLive(root).click()
+    expect(openLive(bar)).toBeNull()
+    surface.openLive()
     expect(intents).toHaveLength(1)
   })
 
@@ -252,11 +311,11 @@ describe('DigitalNoteLens', () => {
     ['a page added', ['p1', 'p2', 'p3'], '1 / 3', 1],
     ['the shown page removed', ['p2'], '1 / 1', 2],
   ])('follows the block when %s', async (_name, ids, shows, loads) => {
-    const { provider, root } = await presented()
+    const { provider, bar } = await presented()
     provider.answers.set('p3', { page: exportPage([]), seq: 10 })
     provider.setAttrs(noteAttrs(ids))
     await settle()
-    expect(position(root)).toBe(shows)
+    expect(position(bar)).toBe(shows)
     expect(provider.loads).toBe(loads)
   })
 
@@ -345,23 +404,23 @@ describe('DigitalNoteLens', () => {
         expect((before.x1 - before.x0) / (after.x1 - after.x0)).toBeCloseTo(1.25, 4)
         expect((after.x0 + after.x1) / 2).toBeCloseTo((before.x0 + before.x1) / 2, 4)
       }],
-    ['the zoom out button, after two zooms in', (/** @type {HTMLElement} */ root) => { press(root, 'zoom-in'); press(root, 'zoom-in'); press(root, 'zoom-out') },
+    ['the zoom out button, after two zooms in', (/** @type {HTMLElement} */ _root, /** @type {HTMLElement} */ bar) => { tap(bar, 'tb-zoom-in'); tap(bar, 'tb-zoom-in'); tap(bar, 'tb-zoom-out') },
       (/** @type {any} */ before, /** @type {any} */ after) => {
         expect((before.x1 - before.x0) / (after.x1 - after.x0)).toBeCloseTo(1.25, 4)
         expect((after.y0 + after.y1) / 2).toBeCloseTo((before.y0 + before.y1) / 2, 4)
       }],
-    ['the 100% button', (/** @type {HTMLElement} */ root) => press(root, 'actual'),
+    ['the 100% button', (/** @type {HTMLElement} */ _root, /** @type {HTMLElement} */ bar) => tap(bar, 'tb-zoom-actual'),
       (/** @type {any} */ before, /** @type {any} */ after) => {
         expect((after.x1 - after.x0) * GRID).toBeCloseTo(SURROUND.width, 1)
         expect((after.x0 + after.x1) / 2).toBeCloseTo((before.x0 + before.x1) / 2, 4)
       }],
-    ['the fit all button', (/** @type {HTMLElement} */ root) => press(root, 'fit'),
+    ['the fit all button', (/** @type {HTMLElement} */ _root, /** @type {HTMLElement} */ bar) => tap(bar, 'tb-zoom-fit'),
       (/** @type {any} */ _before, /** @type {any} */ after) => {
         expect(after.x0).toBeLessThan(0.2)
         expect(after.x1).toBeGreaterThan(2.51)
       }],
   ])('%s moves the window, redrawing only the ruling, and the tablet does not move it back', async (_name, gesture, check) => {
-    const { provider, root } = await whiteboard()
+    const { provider, root, bar } = await whiteboard()
     provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'w1', view: 'live-view' })
     provider.emit({ type: InkFeed.LIVE, records: [view(2, 3)] })
     frames.run()
@@ -369,7 +428,7 @@ describe('DigitalNoteLens', () => {
     const svg = svgOf(root)
     const nodes = [...root.querySelectorAll('[data-stroke]')]
     const ruling = layer(root, 'ruling')
-    gesture(root)
+    gesture(root, bar)
     frames.run()
     check(before, shownWindow(root), root)
     expect([svgOf(root), [...root.querySelectorAll('[data-stroke]')], layer(root, 'ruling')]).toEqual([svg, nodes, ruling])
@@ -419,7 +478,7 @@ describe('DigitalNoteLens', () => {
   })
 
   it('leaves a fixed page to scroll: no gesture or zoom key moves it', async () => {
-    const { root, surface } = await presented()
+    const { root, bar, surface } = await presented()
     layOut(root, {})
     const viewBox = svgOf(root).getAttribute('viewBox')
     expect(wheel(root, { deltaY: 100 }).defaultPrevented).toBe(false)
@@ -430,8 +489,7 @@ describe('DigitalNoteLens', () => {
     expect([surface.pannable, surface.panBy(0.1, 0), surface.fitAll(), surface.window]).toEqual([false, false, false, null])
     expect(frames.queued.size).toBe(0)
     expect(svgOf(root).getAttribute('viewBox')).toBe(viewBox)
-    expect(root.querySelector('.ink-page__view')?.hasAttribute('hidden')).toBe(true)
-    expect(/** @type {HTMLElement} */ (root.querySelector('[data-ink-action="scale"]')).hidden).toBe(false)
+    expect([item(bar, 'tb-zoom-in'), item(bar, 'tb-scale-page') !== null]).toEqual([null, true])
   })
 
   it('never scrolls the reader to a live stroke written out of view', async () => {
@@ -449,22 +507,14 @@ describe('DigitalNoteLens', () => {
   })
 
   it.each([
-    ['a whiteboard of one page', { ids: ['w1'], bounds: 'unbounded' }, true],
-    ['a note of several pages', {}, false],
-  ])('hides the pager on %s', async (_name, opts, hidden) => {
-    const { root } = await presented(opts)
-    expect(/** @type {HTMLElement} */ (root.querySelector('.ink-page__pages')).hidden).toBe(hidden)
-  })
-
-  it.each([
-    ['a fixed page', {}, ['Page 1 of 2', '2 strokes']],
-    ['a whiteboard', { ids: ['w1'], bounds: 'unbounded' }, ['Whiteboard', '2 strokes']],
-  ])('reports where the reader is and the ink on %s to the status bar', async (_name, opts, readout) => {
+    ['a fixed page', {}, ['Page 1 of 2', '2 strokes', 'Note Air 2']],
+    ['a whiteboard', { ids: ['w1'], bounds: 'unbounded' }, ['Whiteboard', '2 strokes', 'Note Air 2']],
+  ])('reports where the reader is, the ink on %s and the device it was written on to the status bar', async (_name, opts, readout) => {
     const { provider, lens } = await presented({ ...opts, strokes: [pen('s1')] })
     /** @type {any[]} */
     const seen = []
     lens.onEvent((e) => { if (e.type === 'stats') seen.push(e) })
-    expect(lens.stats().readout?.map((c) => c.text)).toEqual([readout[0], '1 stroke'])
+    expect(lens.stats().readout?.map((c) => c.text)).toEqual([readout[0], '1 stroke', 'Note Air 2'])
     provider.emit({ type: InkFeed.STROKE_ADDED, pageId: opts.ids ? 'w1' : 'p1', seq: 11, stroke: pen('s2') })
     expect(seen.at(-1).readout.map((/** @type {any} */ c) => c.text)).toEqual(readout)
   })
@@ -473,7 +523,7 @@ describe('DigitalNoteLens', () => {
     const dot = { ...pencil('dot'), points: pencil('dot').points.slice(0, 1) }
     const { root, lens } = await presented({ strokes: [pen('s1'), dot] })
     expect(strokeEls(root, 'dot')).toHaveLength(0)
-    expect(lens.stats().readout?.map((c) => c.text)).toEqual(['Page 1 of 2', '2 strokes'])
+    expect(lens.stats().readout?.map((c) => c.text)).toEqual(['Page 1 of 2', '2 strokes', 'Note Air 2'])
   })
 
   it("gives a whiteboard's window the surround's shape: framed again while it frames the ink, otherwise kept about its centre", async () => {
@@ -501,12 +551,13 @@ describe('DigitalNoteLens', () => {
     /**
      * Destroys the lens, as a tab switch does, and presents another over the
      * same note with the view state the first one reported.
-     * @param {{provider: FakeInkProvider, lens: DigitalNoteLens, root: HTMLElement}} shown
+     * @param {{provider: FakeInkProvider, lens: DigitalNoteLens, root: HTMLElement, toolbar: any}} shown
      */
     const remount = async (shown) => {
       const viewState = shown.lens.viewState
       shown.lens.destroy()
       const lens = new DigitalNoteLens(UUID, { provider: shown.provider, viewState })
+      shown.toolbar.show(lens)
       await lens.presentMode('wysiwyg', shown.root)
       await settle()
       return { ...shown, lens, surface: /** @type {PageSurface} */ (lens.surface) }
@@ -517,12 +568,12 @@ describe('DigitalNoteLens', () => {
     it("keeps the page shown, the sheet's scale and the pages marked unseen", async () => {
       const shown = await presented({ ids: ['p1', 'p2', 'p3'] })
       shown.surface.turn(1)
-      shown.surface.toggleScale()
+      shown.surface.setScale(PageSurface.Scale.ACTUAL)
       shown.provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p3', seq: 11, stroke: pen('s3') })
       await settle()
-      const { surface, root, provider } = await remount(shown)
+      const { surface, bar, provider } = await remount(shown)
       expect([surface.shownPage, surface.scale, [...surface.unseenPages]]).toEqual(['p2', PageSurface.Scale.ACTUAL, ['p3']])
-      expect([dot(root, 'p3').hasAttribute('data-unseen'), dot(root, 'p2').getAttribute('aria-current')]).toEqual([true, 'page'])
+      expect([unseenDot(bar, 3), dot(bar, 2).classList.contains('active'), item(bar, 'tb-scale-actual')?.classList.contains('active')]).toEqual([true, true, true])
       expect(provider.loads).toBe(3)
     })
 
@@ -542,14 +593,14 @@ describe('DigitalNoteLens', () => {
       await settle()
       for (const id of ['p2', 'p3']) shown.provider.answers.set(id, { page: exportPage([at('old', 100)]), seq: 12 })
       shown.provider.answers.set('p1', { page: exportPage([at('old', 100), at('new', 500)]), seq: 12 })
-      const { surface, root } = await remount(shown)
+      const { surface, bar } = await remount(shown)
       await settle()
       expect([surface.shownPage, [...surface.unseenPages]]).toEqual(['p2', ['p1']])
-      expect(dot(root, 'p1').hasAttribute('data-unseen')).toBe(true)
+      expect(unseenDot(bar, 1)).toBe(true)
       surface.turn(1)
       await settle()
       expect([...surface.unseenPages]).toEqual(['p1'])
-      dot(root, 'p1').click()
+      dot(bar, 1).click()
       await settle()
       expect([surface.shownPage, [...surface.unseenPages]]).toEqual(['p1', []])
     })
@@ -564,13 +615,13 @@ describe('DigitalNoteLens', () => {
   })
 
   it('counts the pages with unseen ink past twelve pages, and the count shows each in turn', async () => {
-    const ids = Array.from({ length: 13 }, (_, i) => `p${i + 1}`)
-    const { provider, root, surface } = await presented({ ids })
-    expect(root.querySelectorAll('.ink-page__dot')).toHaveLength(0)
-    expect(root.querySelector('[data-ink-action="unseen"]')).toBeNull()
+    const ids = Array.from({ length: NotePager.MAX_DOTS + 1 }, (_, i) => `p${i + 1}`)
+    const { provider, bar, surface } = await presented({ ids })
+    expect(bar.querySelectorAll('.tb-dot')).toHaveLength(0)
+    expect(item(bar, 'tb-page-unseen')).toBeNull()
     provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p9', seq: 11, stroke: pen('s2') })
     provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p5', seq: 12, stroke: pen('s3') })
-    const unseen = () => /** @type {HTMLButtonElement|null} */ (root.querySelector('[data-ink-action="unseen"]'))
+    const unseen = () => item(bar, 'tb-page-unseen')
     expect(unseen()?.textContent).toBe('2 unseen')
     unseen()?.click()
     await settle()
@@ -580,19 +631,39 @@ describe('DigitalNoteLens', () => {
     expect([surface.shownPage, unseen()]).toEqual(['p9', null])
   })
 
-  it('shows a notice for a template it cannot draw', async () => {
-    const { root } = await presented({ template: { id: 'hexagons', params: {} } })
-    const notice = /** @type {HTMLElement} */ (root.querySelector('.ink-page__notice'))
-    expect(notice.hidden).toBe(false)
-    expect(notice.textContent).toMatch(/unknown template/i)
+  it('shows a notice in the toolbar for a template it cannot draw', async () => {
+    const { bar } = await presented({ template: { id: 'hexagons', params: {} } })
+    expect(item(bar, 'tb-ink-notice')?.textContent).toMatch(/unknown template/i)
   })
 
-  it('switches the sheet between fitting the width and actual size', async () => {
-    const { root, surface } = await presented()
-    expect(svgOf(root).style.width).toBe('100%')
-    surface.toggleScale()
-    expect(svgOf(root).style.width).toBe('1404px')
-    expect(root.querySelector('[data-ink-action="scale"]')?.textContent).toBe('Fit width')
+  /** @param {HTMLElement} root */
+  const scaleOf = (root) => /** @type {HTMLElement} */ (root.querySelector('.ink-page__surround')).dataset.scale
+
+  it('opens a note it has no view of at Fit page, the whole page in the surround, and says so', async () => {
+    const { root, bar, surface } = await presented()
+    expect([surface.scale, scaleOf(root), svgOf(root).style.width]).toEqual([PageSurface.Scale.PAGE, 'page', '100%'])
+    expect(PageSurface.SCALES.map((c) => [item(bar, c.id)?.textContent, item(bar, c.id)?.classList.contains('active')]))
+      .toEqual([['Fit page', true], ['Fit width', false], ['100%', false]])
+  })
+
+  it.each([
+    ['Fit width', 'tb-scale-width', 'fit', '100%'],
+    ['100%', 'tb-scale-actual', 'actual', '1404px'],
+    ['Fit page', 'tb-scale-page', 'page', '100%'],
+  ])('sizes the sheet %s from the toolbar, that choice shown pressed, and keeps it across a tab switch', async (_name, id, scale, width) => {
+    const shown = await presented()
+    if (id === 'tb-scale-page') tap(shown.bar, 'tb-scale-actual')
+    tap(shown.bar, id)
+    expect([scaleOf(shown.root), svgOf(shown.root).style.width, shown.surface.scale]).toEqual([scale, width, scale])
+    expect(PageSurface.SCALES.filter((c) => item(shown.bar, c.id)?.classList.contains('active')).map((c) => c.id)).toEqual([id])
+    const viewState = shown.lens.viewState
+    shown.lens.destroy()
+    const lens = new DigitalNoteLens(UUID, { provider: shown.provider, viewState })
+    shown.toolbar.show(lens)
+    await lens.presentMode('page', shown.root)
+    await settle()
+    expect([scaleOf(shown.root), /** @type {PageSurface} */ (lens.surface).scale]).toEqual([scale, scale])
+    expect(item(shown.bar, id)?.classList.contains('active')).toBe(true)
   })
 
   it.each([
@@ -610,10 +681,10 @@ describe('DigitalNoteLens', () => {
   })
 
   describe('Open in e-ink', () => {
-    /** @param {HTMLElement} root */
-    const action = (root) => /** @type {HTMLButtonElement} */ (root.querySelector('[data-ink-action="open-on-tablet"]'))
-    /** @param {HTMLElement} root */
-    const status = (root) => /** @type {HTMLElement} */ (root.querySelector('.ink-page__status'))
+    /** @param {HTMLElement} bar */
+    const action = (bar) => /** @type {HTMLButtonElement} */ (item(bar, 'tb-open-on-tablet'))
+    /** @param {HTMLElement} bar @returns {string} what the toolbar says; '' when it says nothing */
+    const status = (bar) => String(item(bar, 'tb-ink-status')?.textContent ?? '')
 
     it.each([
       ['the tablet goes live', { outcome: InkOpening.OPENED, reason: '' }, 'Opened on Note Air 2'],
@@ -624,45 +695,60 @@ describe('DigitalNoteLens', () => {
       ['refused for another reason', { outcome: InkOpening.REFUSED, reason: 'busy' }, 'The tablet refused (busy)'],
       ['no answer', { outcome: InkOpening.NO_ANSWER, reason: '' }, 'The tablet did not answer'],
       ['nothing could be asked', new Error('no note'), 'Could not ask the tablet'],
-    ])('words %s in place, briefly', async (_, opening, words) => {
-      const { provider, root } = await presented()
+    ])('words %s in the toolbar, briefly', async (_, opening, words) => {
+      const { provider, bar } = await presented()
       provider.opening = opening
       vi.spyOn(console, 'warn').mockImplementation(() => {})
       vi.useFakeTimers()
-      action(root).click()
-      expect(status(root).textContent).toBe('Opening on Note Air 2…')
+      action(bar).click()
+      expect(status(bar)).toBe('Opening on Note Air 2…')
       await vi.advanceTimersByTimeAsync(0)
-      expect([status(root).hidden, status(root).textContent, action(root).disabled]).toEqual([false, words, false])
-      expect(provider.calls.filter((c) => c === 'openOnTablet')).toHaveLength(1)
+      expect([status(bar), action(bar).disabled]).toEqual([words, false])
+      expect(provider.calls.filter((c) => c.startsWith('openOnTablet'))).toHaveLength(1)
       await vi.advanceTimersByTimeAsync(ActionStatus.SHOWN_MS)
-      expect(status(root).hidden).toBe(true)
+      expect(item(bar, 'tb-ink-status')).toBeNull()
     })
 
     it('is one ask while one is under way, disabled meanwhile', async () => {
-      const { provider, root, surface } = await presented()
+      const { provider, bar, surface } = await presented()
       /** @type {(v: any) => void} */ let answer = () => {}
       provider.opening = new Promise((resolve) => { answer = resolve })
-      action(root).click()
+      action(bar).click()
       const again = surface.openOnTablet()
-      expect([action(root).disabled, provider.calls.filter((c) => c === 'openOnTablet').length]).toEqual([true, 1])
+      expect([action(bar).disabled, provider.calls.filter((c) => c.startsWith('openOnTablet')).length]).toEqual([true, 1])
       answer({ outcome: InkOpening.OPENED, reason: '' })
       await again
-      expect([action(root).disabled, status(root).textContent]).toEqual([false, 'Opened on Note Air 2'])
+      expect([action(bar).disabled, status(bar)]).toEqual([false, 'Opened on Note Air 2'])
+    })
+
+    it.each([
+      ['the first page', [], 'p1'],
+      ['the second page, turned to', [['PageDown']], 'p2'],
+      ['the page shown in reading', [['PageDown'], ['Enter', { ctrlKey: true }]], 'p2'],
+    ])('asks for the page the reader is on: %s', async (_name, keys, page) => {
+      const { provider, root, bar } = await presented()
+      for (const [k, mods] of /** @type {Array<[string, any?]>} */ (keys)) {
+        key(root, k, mods)
+        await settle()
+      }
+      action(bar).click()
+      await settle()
+      expect(provider.calls.filter((c) => c.startsWith('openOnTablet'))).toEqual([`openOnTablet ${page}`])
     })
 
     it('is offered only for a note that came from a tablet', async () => {
-      const { provider, root } = await presented()
-      expect(action(root).hidden).toBe(false)
+      const { provider, bar } = await presented()
+      expect(action(bar)).not.toBeNull()
       const { note_source_id: _, ...attrs } = noteAttrs(['p1', 'p2'])
       provider.setAttrs(attrs)
       await settle()
-      expect(action(root).hidden).toBe(true)
+      expect(action(bar)).toBeNull()
     })
   })
 
   describe('Copy page', () => {
-    /** @param {HTMLElement} root */
-    const status = (root) => root.querySelector('.ink-page__status')?.textContent
+    /** @param {HTMLElement} bar */
+    const status = (bar) => item(bar, 'tb-ink-status')?.textContent
     /** @param {string} svg @returns {Element} the SVG document's root, as HTML parses inline SVG */
     const parsed = (svg) => {
       const template = document.createElement('template')
@@ -671,13 +757,13 @@ describe('DigitalNoteLens', () => {
     }
 
     it('copies the page drawn as a self-contained SVG, the whole sheet 1404 across, pencil tone and all, without the pen', async () => {
-      const { provider, root } = await presented({ strokes: [pen('s1'), pencil('t1')] })
+      const { provider, root, bar } = await presented({ strokes: [pen('s1'), pencil('t1')] })
       const copied = copiedImages()
       provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1', view: 'live-view' })
       provider.emit({ type: InkFeed.LIVE, records: [begin(7), ...points(7, 0, 12)] })
       frames.run()
       expect(layer(root, 'live').children.length).toBe(1)
-      press(root, 'copy-page')
+      tap(bar, 'tb-copy-page')
       await settle()
       expect(copied).toHaveLength(1)
       const { svg, width, height } = copied[0]
@@ -694,14 +780,14 @@ describe('DigitalNoteLens', () => {
       expect(doc.querySelector('g[data-ink="live"]')?.children.length).toBe(0)
       expect(svg).not.toMatch(/<image|<style|<foreignObject|href=|@import|font-family|class=/)
       expect(layer(root, 'live').children.length).toBe(1)
-      expect(status(root)).toBe('Copied')
+      expect(status(bar)).toBe('Copied')
     })
 
     it("copies a whiteboard's window as it is shown, 1404 across", async () => {
-      const { root, surface } = await whiteboard()
+      const { bar, surface } = await whiteboard()
       const copied = copiedImages()
       surface.zoomBy(2)
-      press(root, 'copy-page')
+      tap(bar, 'tb-copy-page')
       await settle()
       const w = /** @type {any} */ (surface.window)
       const doc = parsed(copied[0].svg)
@@ -710,19 +796,19 @@ describe('DigitalNoteLens', () => {
     })
 
     it('says when there is nothing to copy, and when the clipboard does not take it', async () => {
-      const { provider, root } = await presented({ ids: [] })
+      const { provider, bar } = await presented({ ids: [] })
       copiedImages()
-      press(root, 'copy-page')
+      tap(bar, 'tb-copy-page')
       await settle()
-      expect(status(root)).toBe(PageSurface.CopyWords.NOTHING)
+      expect(status(bar)).toBe(PageSurface.CopyWords.NOTHING)
       provider.answers.set('p1', { page: exportPage([pen('s1')]), seq: 10 })
       provider.setAttrs(noteAttrs(['p1']))
       await settle()
       vi.spyOn(ImageClipboard.prototype, 'copySvg').mockRejectedValue(new Error('denied'))
       vi.spyOn(console, 'warn').mockImplementation(() => {})
-      press(root, 'copy-page')
+      tap(bar, 'tb-copy-page')
       await settle()
-      expect(status(root)).toBe(PageSurface.CopyWords.FAILED)
+      expect(status(bar)).toBe(PageSurface.CopyWords.FAILED)
     })
   })
 
@@ -746,13 +832,6 @@ describe('DigitalNoteLens', () => {
     expect(root.childElementCount).toBe(0)
   })
 
-  it("heads the page with what the note is called, the tablet's title until it has a name, and takes a name given while it is shown", async () => {
-    const { provider, root } = await presented()
-    expect(root.querySelector('.ink-page__title')?.textContent).toBe('Ideas')
-    provider.rename('Kitchen extension planning')
-    expect(root.querySelector('.ink-page__title')?.textContent).toBe('Kitchen extension planning')
-  })
-
   describe('the reading', () => {
     /** @param {HTMLElement} root @returns {string} */
     const notice = (root) => {
@@ -768,10 +847,8 @@ describe('DigitalNoteLens', () => {
     const drawn = (root) => [...root.querySelectorAll('.ink-reading__blocks > [data-kind]')].map((el) => String(el.getAttribute('data-kind')))
     /** @param {HTMLElement} root @returns {string} */
     const working = (root) => String(root.querySelector('.ink-reading__bar .ink-page__status')?.textContent || '')
-    /** @param {HTMLElement} root @param {string} mode */
-    const modeButton = (root, mode) => /** @type {HTMLButtonElement} */ (root.querySelector(`[data-ink-action="mode"][data-ink-mode="${mode}"]`))
-    /** @param {HTMLElement} root @param {string} mode */
-    const pressed = (root, mode) => modeButton(root, mode).getAttribute('aria-pressed')
+    /** @param {HTMLElement} bar */
+    const toggle = (bar) => /** @type {HTMLButtonElement} */ (item(bar, 'tb-toggle-mode-btn'))
 
     // The Mermaid in a reading is drawn by a stand-in: the real one is a script the page loads.
     beforeEach(() => {
@@ -786,22 +863,22 @@ describe('DigitalNoteLens', () => {
       return { ...shown, surface: /** @type {ReadingSurface} */ (shown.lens.surface) }
     }
 
-    it('Mod+Enter and the chrome switch between the page and its reading, the keyboard going with them', async () => {
-      const { lens, root, provider } = await presented()
-      expect(pressed(root, 'page')).toBe('true')
+    it('Mod+Enter and the toolbar toggle switch between the page and its reading, the keyboard and the toolbar going with them', async () => {
+      const { lens, root, bar, provider } = await presented()
+      expect([toggle(bar).textContent, toggle(bar).title]).toEqual(['Reading', 'Show the page read as text and diagrams'])
       /** @type {string[]} */ const modes = []
       lens.onEvent((e) => { if (e.type === 'mode-changed') modes.push(String(e.mode)) })
       expect(key(root, 'Enter', { metaKey: true }).defaultPrevented).toBe(true)
       await settle()
       expect(lens.mode).toBe(ReadingSurface.MODE)
       expect(document.activeElement).toBe(root.querySelector('.ink-page--reading'))
-      expect([pressed(root, 'page'), pressed(root, 'reading')]).toEqual(['false', 'true'])
-      modeButton(root, 'page').click()
+      expect([toggle(bar).textContent, toggle(bar).title]).toEqual(['Page', 'Show the page as it was written'])
+      expect(toolbarIds(bar)).toEqual(['tb-page-prev', 'tb-page-position', 'tb-page-next', 'tb-page-dot-1', 'tb-page-dot-2', 'tb-open-on-tablet', 'tb-toggle-mode-btn'])
+      toggle(bar).click()
       await settle()
       expect(lens.mode).toBe(PageSurface.MODE)
       expect(document.activeElement).toBe(root.querySelector('.ink-page--reader'))
-      modeButton(root, 'page').click()
-      await settle()
+      expect(item(bar, 'tb-scale-page')).not.toBeNull()
       expect(modes).toEqual([ReadingSurface.MODE, PageSurface.MODE])
       expect(provider.calls.filter((c) => c.startsWith('loadReading'))).toEqual(['loadReading p1'])
       expect(key(root, 'Enter', { altKey: true, ctrlKey: true }).defaultPrevented).toBe(false)
@@ -834,11 +911,11 @@ describe('DigitalNoteLens', () => {
       shown.provider.readings.set('p1', reading('p1', { state: InkReadingState.READY, blocks: READ_BLOCKS }))
       key(shown.root, 'Enter', { ctrlKey: true })
       await settle()
-      expect([position(shown.root), drawn(shown.root)]).toEqual(['1 / 2', ['prose', 'diagram']])
+      expect([position(shown.bar), drawn(shown.root)]).toEqual(['1 / 2', ['prose', 'diagram']])
       key(shown.root, 'PageDown')
       await settle()
-      expect([position(shown.root), drawn(shown.root), notice(shown.root)]).toEqual(['2 / 2', [], ReadingSurface.Words.INVITE])
-      press(shown.root, 'prev')
+      expect([position(shown.bar), drawn(shown.root), notice(shown.root)]).toEqual(['2 / 2', [], ReadingSurface.Words.INVITE])
+      tap(shown.bar, 'tb-page-prev')
       await settle()
       expect(drawn(shown.root)).toEqual(['prose', 'diagram'])
       expect(shown.provider.calls.filter((c) => c.startsWith('loadReading'))).toEqual(['loadReading p1', 'loadReading p2', 'loadReading p1'])
@@ -857,7 +934,7 @@ describe('DigitalNoteLens', () => {
     })
 
     it('asks again when ink lands on the page shown, which is how it learns the reading is stale; ink elsewhere marks its page', async () => {
-      const { provider, root } = await reading_()
+      const { provider, root, bar } = await reading_()
       provider.readings.set('p1', reading('p1', { state: InkReadingState.READY, blocks: READ_BLOCKS }))
       provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p1', seq: 11, stroke: pen('s2') })
       await settle()
@@ -867,7 +944,7 @@ describe('DigitalNoteLens', () => {
       await settle()
       expect([notice(root), button(root, 'read'), drawn(root)]).toEqual([ReadingSurface.Words.STALE, 'Read again', ['prose', 'diagram']])
       provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p2', seq: 13, stroke: pen('s4') })
-      expect(dot(root, 'p2').hasAttribute('data-unseen')).toBe(true)
+      expect(unseenDot(bar, 2)).toBe(true)
       expect(provider.calls.filter((c) => c === 'loadReading p1')).toHaveLength(3)
     })
 
@@ -896,6 +973,7 @@ describe('DigitalNoteLens', () => {
       const viewState = shown.lens.viewState
       shown.lens.destroy()
       const lens = new DigitalNoteLens(UUID, { provider: shown.provider, viewState })
+      shown.toolbar.show(lens)
       await lens.presentMode('wysiwyg', shown.root)
       await settle()
       const surface = /** @type {ReadingSurface} */ (lens.surface)

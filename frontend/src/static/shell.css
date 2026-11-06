@@ -348,6 +348,42 @@ body.presenting #table-toolbar {
 }
 .tb-help { margin-left: 4px; }
 
+/* A button that says what it does in words, and text that is not a button. */
+.tb-btn.tb-text { padding: 0 8px; font-size: 0.9em; font-weight: 500; }
+.tb-btn:disabled { opacity: 0.4; cursor: default; }
+.tb-btn:disabled:hover { background: transparent; }
+.tb-btn:focus-visible { outline: 2px solid var(--theme-accentPrimary); outline-offset: -2px; }
+.tb-readout {
+  display: flex; align-items: center; height: 35px; padding: 0 6px;
+  color: var(--theme-text); font-size: 0.9em; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.tb-readout.tb-notice { color: var(--theme-accentYellow); }
+.tb-page-position { min-width: 4.5em; justify-content: center; }
+.tb-btn.tb-page-turn { min-width: 28px; font-size: 1.3em; }
+
+/* One choice of several, the one in force pressed. */
+.tb-group.tb-segmented { border: 1px solid var(--theme-border2); border-radius: 4px; overflow: hidden; gap: 0; }
+.tb-segmented .tb-btn { margin-right: 0; border-radius: 0; height: 33px; }
+.tb-segmented .tb-btn.active { background: var(--theme-bgAlt); color: var(--theme-text); }
+
+/* A page dot; one with something not yet seen draws for attention. */
+.tb-btn.tb-dot { position: relative; min-width: 14px; width: 14px; padding: 0; margin-right: 2px; }
+.tb-btn.tb-dot:hover, .tb-btn.tb-dot.active { background: transparent; }
+.tb-btn.tb-dot::before {
+  content: ''; position: absolute; inset: 14px 3px; border-radius: 50%;
+  background: var(--theme-border2);
+}
+.tb-btn.tb-dot.active::before { background: var(--theme-text); }
+.tb-btn.tb-dot.tb-attention::before { inset: 12px 1px; background: var(--theme-accentPrimary); }
+.tb-btn.tb-attention:not(.tb-dot)::before,
+.tb-btn.tb-live::before {
+  content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 6px;
+  border-radius: 50%; background: var(--theme-accentPrimary);
+}
+.tb-btn.tb-live::before { background: var(--theme-accentRed); }
+.tb-btn.tb-live::after { content: ' ↗'; white-space: pre; }
+
 .tb-ai {
   font-size: 0.8em; font-weight: 700; letter-spacing: .02em;
   padding: 10px; height: 35px; border-radius: 3px; margin-right: 6px;
