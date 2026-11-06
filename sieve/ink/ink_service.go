@@ -417,12 +417,14 @@ func (s *InkService) ExportPage(uuid string, page int) ([]byte, error) {
 	return note.ExportPage(page)
 }
 
-// OpenOnTablet asks the tablet the Digital Note in container uuid came from to open it, sending it
-// the note's id and nothing else, and waits a few seconds at most for its answer. The tablet must
-// be connected now: nothing is queued for a later session. A container that is not a Digital Note
-// from a companion is ErrNoSuchNote. It may be called from any goroutine and never holds up the
-// session.
-func (s *InkService) OpenOnTablet(uuid string) (OpenResult, error) {
+// OpenOnTablet asks the tablet the Digital Note in container uuid came from to open it at the page
+// pageID names, sending it the note's id and that page's, and waits a few seconds at most for its
+// answer. pageID is a page id as the note's pages list it; "", or one that does not parse or is
+// not one of the note's pages, is sent as the nil page id, leaving the page to the tablet. The
+// tablet must be connected now: nothing is queued for a later session. A container that is not a
+// Digital Note from a companion is ErrNoSuchNote. It may be called from any goroutine and never
+// holds up the session.
+func (s *InkService) OpenOnTablet(uuid, pageID string) (OpenResult, error) {
 	attrs := s.noteAttrs(uuid)
 	if attrs == nil {
 		return OpenResult{}, fmt.Errorf("%w: %s", ErrNoSuchNote, uuid)
@@ -442,7 +444,7 @@ func (s *InkService) OpenOnTablet(uuid string) (OpenResult, error) {
 	if run.link.Identity() != companion {
 		return OpenResult{Outcome: OpenOtherTablet}, nil
 	}
-	answer, err := run.session.OpenNote(note)
+	answer, err := run.session.OpenNote(note, s.pageOf(uuid, pageID))
 	if err != nil {
 		return OpenResult{Outcome: OpenNoTablet}, nil
 	}
@@ -460,6 +462,25 @@ func (s *InkService) OpenOnTablet(uuid string) (OpenResult, error) {
 	case <-wait(openAnswerWait):
 		return OpenResult{Outcome: OpenNoAnswer}, nil
 	}
+}
+
+// pageOf is the page of the Digital Note in container uuid that pageID names, the zero ID when
+// pageID does not parse or the note has no such page now.
+func (s *InkService) pageOf(uuid, pageID string) link.ID {
+	page, err := link.ParseID(pageID)
+	if err != nil {
+		return link.ID{}
+	}
+	log, err := s.noteLog(uuid)
+	if err != nil {
+		return link.ID{}
+	}
+	note := NewHeaderFold(uuid)
+	note.Read(log)
+	if note.present(page) < 0 {
+		return link.ID{}
+	}
+	return page
 }
 
 // noteLog is the whole log of the Digital Note in container uuid as it stands now: the open

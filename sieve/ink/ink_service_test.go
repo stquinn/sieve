@@ -1280,8 +1280,8 @@ func TestLiveView_FollowsTheLiveNoteFromPageToPageAndNoteToNote(t *testing.T) {
 	}
 }
 
-// OpenOnTablet sends the note's id to the tablet it came from and words the tablet's answer: live
-// on the note, or refused with its reason. With no tablet connected, or another tablet than the
+// OpenOnTablet sends the note's id and the page's to the tablet it came from and words the
+// tablet's answer: live on the note, or refused with its reason. With no tablet connected, or another tablet than the
 // note's, nothing is sent; a container that is no Digital Note is ErrNoSuchNote.
 func TestInkService_OpenOnTabletAnswersWithTheTabletsOutcome(t *testing.T) {
 	for _, c := range []struct {
@@ -1313,14 +1313,14 @@ func TestInkService_OpenOnTabletAnswersWithTheTabletsOutcome(t *testing.T) {
 				rig.start()
 				rig.await("connected", connected)
 			}
-			got, err := rig.svc.OpenOnTablet(uuid)
+			got, err := rig.svc.OpenOnTablet(uuid, page(2).String())
 			if err != nil || got != c.want {
 				t.Fatalf("%+v, %v; want %+v", got, err, c.want)
 			}
 			sent := 0
 			for len(rig.companion.OpenNotes) > 0 {
-				if note := <-rig.companion.OpenNotes; note != noteID {
-					t.Errorf("OPEN-NOTE of %s", note)
+				if asked := <-rig.companion.OpenNotes; asked != (link.OpenNoteRequest{Note: noteID, Page: page(2)}) {
+					t.Errorf("OPEN-NOTE of %+v", asked)
 				}
 				sent++
 			}
@@ -1334,8 +1334,54 @@ func TestInkService_OpenOnTabletAnswersWithTheTabletsOutcome(t *testing.T) {
 	}
 
 	rig := newInkRig(t, nil)
-	if _, err := rig.svc.OpenOnTablet("no-such-container"); !errors.Is(err, ErrNoSuchNote) {
+	if _, err := rig.svc.OpenOnTablet("no-such-container", ""); !errors.Is(err, ErrNoSuchNote) {
 		t.Errorf("a container that is no Digital Note: %v", err)
+	}
+}
+
+// OpenOnTablet sends the page asked for when the note has it and the nil page id otherwise, and the
+// LIVE that answers completes the request whether or not it moves anything: the note already live
+// on the page asked for stays as it is, and the Live view follows a LIVE naming another page.
+func TestInkService_OpenOnTabletAsksForThePageWhenTheNoteHasIt(t *testing.T) {
+	for _, c := range []struct {
+		name        string
+		pageID      string
+		live        bool
+		sent, shown link.ID
+	}{
+		{"a page of the note", page(2).String(), false, page(2), page(2)},
+		{"no page", "", false, link.ID{}, page(1)},
+		{"a page id that does not parse", "page-2", false, link.ID{}, page(1)},
+		{"a page the note does not have", page(9).String(), false, link.ID{}, page(1)},
+		{"the page already live", page(1).String(), true, page(1), page(1)},
+		{"another page of the note already live", page(2).String(), true, page(2), page(2)},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rig := newInkRig(t, inkLog())
+			if err := rig.sync(); err != nil {
+				t.Fatal(err)
+			}
+			uuid := rig.container().UUID()
+			heard := &liveRecorder{view: rig.svc.LiveView()}
+			rig.svc.SetChangeListener(heard)
+			rig.companion.Live = c.live
+			rig.enable(linkKey)
+			rig.start()
+			rig.await("connected", func(st Status) bool {
+				return connected(st) && (!c.live || rig.svc.Live() == LiveNote{Container: uuid, Note: noteID, Page: page(1)})
+			})
+			got, err := rig.svc.OpenOnTablet(uuid, c.pageID)
+			if err != nil || got != (OpenResult{Outcome: OpenOpened}) {
+				t.Fatalf("%+v, %v", got, err)
+			}
+			if asked := <-rig.companion.OpenNotes; asked != (link.OpenNoteRequest{Note: noteID, Page: c.sent}) {
+				t.Errorf("OPEN-NOTE of %+v, want page %s", asked, c.sent)
+			}
+			want := uuid + " page=" + c.shown.String() + " waiting=false"
+			rig.await("the page shown live", func(Status) bool {
+				return rig.svc.Live() == LiveNote{Container: uuid, Note: noteID, Page: c.shown} && heard.last() == want
+			})
+		})
 	}
 }
 
@@ -1369,7 +1415,7 @@ func TestInkService_OpenOnTabletWaitsABoundedTimeAndHoldsNothingUp(t *testing.T)
 			rig.await("connected", connected)
 			result := make(chan OpenResult, 1)
 			go func() {
-				r, err := rig.svc.OpenOnTablet(uuid)
+				r, err := rig.svc.OpenOnTablet(uuid, "")
 				if err != nil {
 					t.Error(err)
 				}

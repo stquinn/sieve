@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"sieve/logger"
 	"sieve/sieve"
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"sieve/sieve/ink"
 	"sieve/sieve/ink/link"
 	"sieve/sieve/protocol"
@@ -21,8 +23,8 @@ import (
 )
 
 // InkHandler serves Settings → Ink: the status fragment, its two actions, which take effect at
-// once and answer with the fragment, and the export of a synced note's page; and the sidebar's Ink
-// section.
+// once and answer with the fragment, and the export of a synced note's page; and the Ink item of
+// the sidebar's tree.
 type InkHandler struct {
 	ServiceProvider *sieve.ServiceProvider
 	Tmpl            *template.Template
@@ -53,9 +55,17 @@ type inkSessionView struct {
 	Throughput string
 }
 
-// inkSidebarView is the payload of ink_sidebar.html, which shows nothing while Ink is disabled.
+// inkTreeID is the Ink item's id among the tree's expanded folders (domain.Session.OpenFolders).
+// A folder's id is a uuid, so it is never this.
+const inkTreeID = "ink"
+
+// inkSidebarView is the payload of ink_sidebar.html, the Ink item at the top of the sidebar's
+// tree, which shows nothing while Ink is disabled.
 type inkSidebarView struct {
 	Enabled bool
+	// ID is the item's id among the expanded folders; Open is its being expanded.
+	ID   string
+	Open bool
 	// Live is the Live view while it exists, otherwise nil.
 	Live  *inkLiveItem
 	Notes []inkNoteItem
@@ -96,28 +106,33 @@ func (h *InkHandler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	h.render(w, "")
 }
 
-// handleSidebar writes the sidebar's Ink section.
+// handleSidebar writes the Ink item of the sidebar's tree, which the tree also renders in place.
 func (h *InkHandler) handleSidebar(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if h.ServiceProvider.Ink == nil || h.ServiceProvider.State == nil {
 		return
 	}
-	if err := h.Tmpl.ExecuteTemplate(w, "ink_sidebar.html", h.sidebarView(h.ServiceProvider.Ink.Status())); err != nil {
+	var v inkSidebarView
+	v.show(h.ServiceProvider.Ink.Status(), h.ServiceProvider.State.LoadSession())
+	if err := h.Tmpl.ExecuteTemplate(w, "ink_sidebar.html", v); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-// sidebarView is st as the sidebar's Ink section shows it, the active tab's item marked.
-func (h *InkHandler) sidebarView(st ink.Status) inkSidebarView {
+// show fills the view with st as the tree's Ink item shows it in session: expanded as session
+// remembers it, the active tab's row marked; nothing while Ink is disabled.
+func (v *inkSidebarView) show(st ink.Status, session domain.Session) {
+	*v = inkSidebarView{}
 	if !st.Enabled {
-		return inkSidebarView{}
+		return
 	}
 	active := ""
-	if session := h.ServiceProvider.State.LoadSession(); session.ActiveIdx >= 0 && session.ActiveIdx < len(session.Tabs) {
+	if session.ActiveIdx >= 0 && session.ActiveIdx < len(session.Tabs) {
 		active = session.Tabs[session.ActiveIdx].ID
 	}
-	v := inkSidebarView{Enabled: true, Notes: make([]inkNoteItem, 0, len(st.Notes))}
+	v.Enabled, v.ID, v.Open = true, inkTreeID, slices.Contains(session.OpenFolders, inkTreeID)
+	v.Notes = make([]inkNoteItem, 0, len(st.Notes))
 	if live := st.Live; live.Present {
 		v.Live = &inkLiveItem{UUID: live.UUID, Device: live.Device, Note: live.NoteTitle, Waiting: live.Waiting, Active: live.UUID == active}
 	}
@@ -128,7 +143,6 @@ func (h *InkHandler) sidebarView(st ink.Status) inkSidebarView {
 		}
 		v.Notes = append(v.Notes, inkNoteItem{UUID: n.UUID, Title: title, Pages: n.Pages, Active: n.UUID == active})
 	}
-	return v
 }
 
 // handleEnabled turns Ink on when the form carries ink_enabled, and off when it does not.
@@ -419,10 +433,11 @@ func (s *inkStream) answerPage(socket string, msg protocol.InkPageFrame, reply f
 	}
 }
 
-// openOnTablet asks the tablet to open the Digital Note in container, and answers through reply
-// with what came of it. It waits for the tablet, so it runs on a goroutine of its own.
+// openOnTablet asks the tablet to open the Digital Note in container at the page msg names, and
+// answers through reply with what came of it. It waits for the tablet, so it runs on a goroutine
+// of its own.
 func (s *inkStream) openOnTablet(container string, msg protocol.InkOpenOnTabletFrame, reply func(interface{})) {
-	result, err := s.svc.OpenOnTablet(container)
+	result, err := s.svc.OpenOnTablet(container, msg.PageID)
 	if err != nil {
 		reply(protocol.NewInkOpenOnTabletFailedFrame(msg.OpID, err))
 		return

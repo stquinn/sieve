@@ -365,13 +365,14 @@ count + strings; a seq is u32, at most 2³¹−1. Everything after `OK` is seale
 | 41 | ACK | S→C | note id, `seq` u32 |
 | 42 | DONE | C→S | note id |
 | 43 | META | S→C | note id, `title` string, `keywords` list, `categories` list, `summary` string, `asOfSeq` u32 |
-| 44 | OPEN-NOTE | S→C | note id |
+| 44 | OPEN-NOTE | S→C | note id, page id; a nil page id = the companion's own choice of page |
 | 45 | LIVE | C→S | note id, page id; both nil = no note live |
 | 46 | INK | C→S | one or more whole §4.3 records |
 
 `REFUSE` reasons: `refused`, `not-offered`, `ahead` (`haveSeq` is past the head),
 `not-foreground`. A companion accepts only `HELLO` before proof, and only `LIST`, `OPEN`, `ACK`,
-`META` and `OPEN-NOTE` after it; anything else drops the link.
+`META` and `OPEN-NOTE` after it; anything else drops the link, as does a frame of the wrong
+length: `OPEN-NOTE` is always 1 + 16 + 16 bytes, and one carrying a note id alone is malformed.
 
 ### 7.3 Behaviour
 
@@ -379,6 +380,13 @@ count + strings; a seq is u32, at most 2³¹−1. Everything after `OK` is seale
 - A companion answers a note's requests in the order it reads them: `HEAD` or `REFUSE` for an
   `OPEN`, `LIVE` or `REFUSE` for an `OPEN-NOTE`. A `REFUSE` names the note and not the request,
   so that order is how a Sieve tells which request was refused.
+- `OPEN-NOTE` asks the companion to show the note at the page it names. A page the note has: the
+  companion opens the note at it, or turns to it when the note is already in front, and stays
+  put when it is already shown. A nil page id, or a page the note does not have: the companion
+  opens the note at the page it would open it at by itself, and a note already in front does not
+  move.
+- A companion answers every `OPEN-NOTE` it does not refuse with `LIVE` naming the note and the
+  page now shown, also when nothing moved.
 - `LIVE` names the note and page being written, and is sent only for notes this Sieve receives.
   After it names a note, the Sieve sends `OPEN` with its cursor; committed records then keep
   following after `DONE` until the note stops being live, and `OPEN` is needed again next time.

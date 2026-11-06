@@ -394,10 +394,10 @@ components:
     documentInkOpenOnTablet:
       name: ink-open-on-tablet
       title: ink-open-on-tablet
-      summary: InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it.
+      summary: InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it at a page.
       description: |-
-        InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it. Only the
-        note's id reaches the tablet.
+        InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it at a page.
+        Only the note's id and the page's reach the tablet.
       contentType: application/json
       correlationId:
         $ref: '#/components/correlationIds/opId'
@@ -2035,14 +2035,17 @@ components:
     ProtocolInkOpenOnTabletFrame:
       type: object
       description: |-
-        InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it. Only the
-        note's id reaches the tablet.
+        InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it at a page.
+        Only the note's id and the page's reach the tablet.
       properties:
         type:
           type: string
         opId:
           type: string
           description: echoed on the ink-open-on-tablet-result reply
+        pageId:
+          type: string
+          description: the page to open the note at, as the block's note.pages lists it; absent, or a page the note does not have, leaves the page to the tablet
       required:
         - type
     ProtocolInkOpenOnTabletResultFrame:

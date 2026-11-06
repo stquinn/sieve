@@ -47,14 +47,14 @@ Editor → Enable Debug Mode shows the radio's found and connected lines.
 
 ## Phase 4 — the lens and Live (#211)
 
-With Ink enabled, the sidebar has an **Ink** section under Library: **Live** while the tablet is
-writing, then the synced notes. Live is SieveInk's own view, whichever note that is; a note's own
+With Ink enabled, the library tree starts with an **Ink** item; expanded, it holds **Live** while
+the tablet is writing, then the synced notes. Live is SieveInk's own view, whichever note that is; a note's own
 tab is the reader's.
 
 ### A note's own tab
 
 - [ ] **A synced page looks like the page.** Open a note with pen and pencil on a ruled page from
-  the Ink section. The sheet is white whatever the theme, the ruling sits under the ink, pen
+  the Ink item. The sheet is white whatever the theme, the ruling sits under the ink, pen
   strokes are solid and pencil strokes are grained, and it is recognisably what the tablet shows.
   Fit width ⇄ 100% both read well; PageUp and PageDown turn pages.
 - [ ] **It is the reader's.** With the note open on page 1, write on page 2 on the Boox: the tab
@@ -84,7 +84,7 @@ tab is the reader's.
 
 ### Live
 
-- [ ] **Live appears and goes.** Start writing: **Live · {device}** appears in the Ink section
+- [ ] **Live appears and goes.** Start writing: **Live · {device}** appears in the Ink item
   without a reload, with the note's name. Stop (close the note, or put the Boox to sleep): the Live
   tab says "Waiting for the tablet…" and keeps the last page. Resume within 30 seconds: nothing
   closes. Leave it for more than 30 seconds: the item and the tab go, and the note tabs stay.
@@ -119,7 +119,7 @@ shorten the wait while testing, add `"settle_seconds": 30` inside `"ink"` in
 `{store}/{hostname}/config/settings.json` and restart.
 
 - [ ] **A sensible name.** Write a note about something specific, close it on the Boox and wait.
-  One "Naming …" job appears in the status bar; afterwards the sidebar's Ink section, the note's
+  One "Naming …" job appears in the status bar; afterwards the sidebar's Ink item, the note's
   tab and Settings → Ink show a short, specific title instead of the tablet's "Untitled …".
   Judge the title, and the summary and keywords in the note's `.meta`.
 - [ ] **The model really sees the pages.** The name reflects what was written, not a guess. If it

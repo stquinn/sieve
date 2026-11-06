@@ -42,7 +42,7 @@ alone, so the token appears in no response header.
 | `feature-control` | `protocol.FeatureControlFrame` | — | FeatureControlFrame switches one text-service feature on or off, and says what it is to work with. |
 | `flush` | `protocol.FlushFrame` | — | FlushFrame asks the shadow document to persist now rather than on its debounce. |
 | `focus` | `protocol.FocusFrame` | — | FocusFrame is the dwell ping: the user is looking at this document, which raises its focus count. |
-| `ink-open-on-tablet` | `protocol.InkOpenOnTabletFrame` | `opId` | InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it. |
+| `ink-open-on-tablet` | `protocol.InkOpenOnTabletFrame` | `opId` | InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it at a page. |
 | `ink-page` | `protocol.InkPageFrame` | `opId` | InkPageFrame asks for one page of this channel's Digital Note as it is drawn now. |
 | `ink-read-page` | `protocol.InkReadPageFrame` | `opId` | InkReadPageFrame asks for one page of this channel's Digital Note to be read, unless it has a reading of what it holds now or is being read. |
 | `ink-reading` | `protocol.InkReadingFrame` | `opId` | InkReadingFrame asks what is known of the reading of one page of this channel's Digital Note. |
@@ -236,12 +236,13 @@ FocusFrame is the dwell ping: the user is looking at this document, which raises
 
 #### `ink-open-on-tablet` — client → server
 
-InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it.
+InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it at a page.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
 | `type` | `string` | yes |  |
 | `opId` | `string` | no | echoed on the ink-open-on-tablet-result reply |
+| `pageId` | `string` | no | the page to open the note at, as the block's note.pages lists it; absent, or a page the note does not have, leaves the page to the tablet |
 
 #### `ink-page` — client → server
 

@@ -282,10 +282,11 @@ type ackFrame struct {
 
 func (a ackFrame) encode() []byte { return newFrame(frameAck).id(a.note).u32(a.seq).b }
 
-// openNoteFrame is OPEN-NOTE: show a note on the companion.
-type openNoteFrame struct{ note ID }
+// openNoteFrame is OPEN-NOTE: show a note on the companion at page, or at the page of the
+// companion's own choosing when page is the zero ID.
+type openNoteFrame struct{ note, page ID }
 
-func (o openNoteFrame) encode() []byte { return newFrame(frameOpenNote).id(o.note).b }
+func (o openNoteFrame) encode() []byte { return newFrame(frameOpenNote).id(o.note).id(o.page).b }
 
 // listFrame is LIST: ask for NOTES.
 type listFrame struct{}

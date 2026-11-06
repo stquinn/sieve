@@ -37,9 +37,9 @@ export class InkProviderAdapter extends ProviderAdapter {
       .then((answer) => /** @type {InkPageAnswer} */ (ProviderAdapter._frozen({ page: answer.page, seq: answer.seq })))
   }
 
-  /** @returns {Promise<InkOpeningResult>} */
-  openOnTablet() {
-    return this.#documents.inkOpenOnTablet(this.getUuid())
+  /** @param {string} pageId @returns {Promise<InkOpeningResult>} */
+  openOnTablet(pageId) {
+    return this.#documents.inkOpenOnTablet(this.getUuid(), pageId)
       .then((answer) => /** @type {InkOpeningResult} */ (ProviderAdapter._frozen({ outcome: answer.outcome, reason: answer.reason })))
   }
 

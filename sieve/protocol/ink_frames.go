@@ -133,11 +133,12 @@ func NewInkLogRestartedFrame() InkLogRestartedFrame {
 	return InkLogRestartedFrame{Type: TypeInkLogRestarted}
 }
 
-// InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it. Only the
-// note's id reaches the tablet.
+// InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it at a page.
+// Only the note's id and the page's reach the tablet.
 type InkOpenOnTabletFrame struct {
-	Type string `json:"type"`
-	OpID string `json:"opId,omitempty" doc:"echoed on the ink-open-on-tablet-result reply"`
+	Type   string `json:"type"`
+	OpID   string `json:"opId,omitempty" doc:"echoed on the ink-open-on-tablet-result reply"`
+	PageID string `json:"pageId,omitempty" doc:"the page to open the note at, as the block's note.pages lists it; absent, or a page the note does not have, leaves the page to the tablet"`
 }
 
 // What came of an ink-open-on-tablet.

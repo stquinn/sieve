@@ -13,7 +13,8 @@ import (
 type ScriptedCompanion struct {
 	Key  Key
 	Note ID
-	// Page is the page a LIVE names, and a stale record removes.
+	// Page is the page a LIVE names, and a stale record removes. An OPEN-NOTE answered with LIVE
+	// sets it to the page that LIVE names.
 	Page ID
 
 	mu      sync.Mutex
@@ -41,26 +42,33 @@ type ScriptedCompanion struct {
 	metas []Meta
 
 	// Metas receives each META while it has room, Opens each OPEN's haveSeq, OpenNotes each
-	// OPEN-NOTE's note, and Acks each ACK's seq. ReceivedMetas holds every META whether or not
+	// OPEN-NOTE, and Acks each ACK's seq. ReceivedMetas holds every META whether or not
 	// Metas had room for it.
 	Metas     chan Meta
 	Opens     chan uint32
-	OpenNotes chan ID
+	OpenNotes chan OpenNoteRequest
 	Acks      chan uint32
 }
 
-// OpenNoteAnswer is how a ScriptedCompanion answers OPEN-NOTE: with LIVE of the note and Page
-// when Refuse is "", otherwise with REFUSE of the note for Refuse; not at all when Silent.
+// OpenNoteAnswer is how a ScriptedCompanion answers OPEN-NOTE: when Refuse is "", with LIVE of
+// the note and the page asked for if the note's log holds that page, otherwise of the note and
+// Page; with REFUSE of the note for Refuse otherwise; not at all when Silent.
 type OpenNoteAnswer struct {
 	Refuse string
 	Silent bool
+}
+
+// OpenNoteRequest is one OPEN-NOTE as a ScriptedCompanion read it: the note, and the page asked
+// for, the zero ID when none was.
+type OpenNoteRequest struct {
+	Note, Page ID
 }
 
 // NewScriptedCompanion serves records as the log of note, under key.
 func NewScriptedCompanion(key Key, note, page ID, records []Record) *ScriptedCompanion {
 	return &ScriptedCompanion{
 		Key: key, Note: note, Page: page, records: records,
-		Metas: make(chan Meta, 8), Opens: make(chan uint32, 64), OpenNotes: make(chan ID, 64), Acks: make(chan uint32, 4096),
+		Metas: make(chan Meta, 8), Opens: make(chan uint32, 64), OpenNotes: make(chan OpenNoteRequest, 64), Acks: make(chan uint32, 4096),
 	}
 }
 
@@ -93,6 +101,17 @@ func (c *ScriptedCompanion) ReceivedMetas() []Meta {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]Meta(nil), c.metas...)
+}
+
+// hasPage reports whether note's log adds page and does not remove it after. c.mu is held.
+func (c *ScriptedCompanion) hasPage(note, page ID) bool {
+	has := false
+	for _, r := range c.log(note) {
+		if r.Page == page && (r.Op == OpPageAdd || r.Op == OpPageRemove) {
+			has = r.Op == OpPageAdd
+		}
+	}
+	return has
 }
 
 // log is the records served as note's log. c.mu is held.
@@ -148,7 +167,10 @@ func (c *ScriptedCompanion) Serve(link io.ReadWriter) error {
 		case frameMeta:
 			c.receiveMeta(Meta{in.id(), in.string(), in.strings(), in.strings(), in.string(), in.u32()})
 		case frameOpenNote:
-			err = c.answerOpenNote(stream, in.id())
+			asked := OpenNoteRequest{in.id(), in.id()}
+			if err = in.finish(); err == nil {
+				err = c.answerOpenNote(stream, asked)
+			}
 		}
 		if err != nil {
 			return err
@@ -192,18 +214,22 @@ func (c *ScriptedCompanion) sendNotes(stream *frameStream) error {
 	return nil
 }
 
-func (c *ScriptedCompanion) answerOpenNote(stream *frameStream, note ID) error {
-	c.OpenNotes <- note
+func (c *ScriptedCompanion) answerOpenNote(stream *frameStream, asked OpenNoteRequest) error {
+	c.OpenNotes <- asked
 	c.mu.Lock()
 	answer := c.openNote
+	if answer.Refuse == "" && !answer.Silent && asked.Page != (ID{}) && c.hasPage(asked.Note, asked.Page) {
+		c.Page = asked.Page
+	}
+	shown := c.Page
 	c.mu.Unlock()
 	switch {
 	case answer.Silent:
 		return nil
 	case answer.Refuse != "":
-		return stream.write(newFrame(frameRefuse).id(note).string(answer.Refuse).b)
+		return stream.write(newFrame(frameRefuse).id(asked.Note).string(answer.Refuse).b)
 	default:
-		return stream.write(newFrame(frameLive).id(note).id(c.Page).b)
+		return stream.write(newFrame(frameLive).id(asked.Note).id(shown).b)
 	}
 }
 

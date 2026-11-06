@@ -328,7 +328,7 @@ func (h *NoteHandler) handleNotePatch(w http.ResponseWriter, r *http.Request) {
 		h.EmitNotesChanged()
 	}
 	w.Header().Set("HX-Trigger", "notes:changed")
-	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
+	SideBarHandler{h.ServiceProvider, h.Tmpl}.Render(w)
 }
 
 func (h *NoteHandler) handleNoteDelete(w http.ResponseWriter, r *http.Request) {
