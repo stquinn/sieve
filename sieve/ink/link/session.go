@@ -247,8 +247,20 @@ func (s *Session) handle(frame []byte) (bool, error) {
 	return false, fmt.Errorf("the companion may not send frame type %d", frame[0])
 }
 
+// onNotes reports notes, lets go of the replica of every note they do not list, which Replicas
+// is asked for afresh if the note is offered again, and queues the catch-up of what they list.
 func (s *Session) onNotes(notes []NoteEntry) (bool, error) {
 	s.obs.Notes(notes)
+	listed := make(map[ID]bool, len(notes))
+	for _, n := range notes {
+		listed[n.ID] = true
+	}
+	for note := range s.open {
+		if !listed[note] && (s.current == nil || *s.current != note) {
+			delete(s.open, note)
+			delete(s.heads, note)
+		}
+	}
 	if s.plan.CatchUp {
 		sort.Slice(notes, func(i, j int) bool { return bytes.Compare(notes[i].ID[:], notes[j].ID[:]) < 0 })
 		for _, n := range notes {

@@ -10,6 +10,8 @@
 .ctx-item--danger { color:var(--theme-accentRed); }
 .ctx-item--active { background:var(--theme-border2); font-weight:700; }
 .ctx-item--disabled { opacity:0.4; pointer-events:none; cursor:default; }
+.ctx-item:has(.ctx-item__hint) { flex-wrap:wrap; }
+.ctx-item__hint { flex-basis:100%; max-width:260px; padding-left:24px; font-size:12px; white-space:normal; }
 .ctx-separator { height:1px;background:var(--theme-muted);margin:4px 0; }
 .ctx-header {
   padding: 6px 12px;

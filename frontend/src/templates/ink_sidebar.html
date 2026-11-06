@@ -53,7 +53,8 @@
   data-ink-whiteboard{{end}}{{if .Absent}}
   data-ink-absent{{end}}
   data-ctx-id="{{.UUID}}"
-  data-ctx-type="notebook"
+  data-ctx-type="notebook"{{if .DeleteRefused}}
+  data-ctx-delete-refused="{{.DeleteRefused}}"{{end}}
   data-ctx-name="{{.Title}}"{{if .Active}}
   data-active{{end}}
   style="padding-left:{{fileIndent 1}};"

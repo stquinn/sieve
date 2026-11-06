@@ -166,7 +166,26 @@ type SyncedNote struct {
 	// Absent is the note missing from the last NOTES its companion sent in this run: deleted on
 	// the tablet or no longer shared with this Sieve. False until that companion has listed.
 	Absent bool
+	// Deletion is whether Sieve's copy may be deleted now, and what that means.
+	Deletion Deletion
 }
+
+// Deletion is whether Sieve's copy of a Digital Note may be deleted now, and what that means.
+type Deletion int
+
+const (
+	// DeleteRefused is the note's tablet connected and offering it, or not yet having listed what
+	// it offers: a deleted copy would come straight back.
+	DeleteRefused Deletion = iota
+	// DeleteLast is the note's tablet connected and no longer having it: this copy is the last.
+	DeleteLast
+	// DeleteReturns is the note's tablet not connected: the note comes back at its next sync if
+	// the tablet still has it.
+	DeleteReturns
+)
+
+// ErrStillOffered is a delete of a note whose Deletion is DeleteRefused.
+var ErrStillOffered = errors.New("ink: the tablet still offers this note")
 
 // Status is everything Settings → Ink and the sidebar's Ink section show.
 type Status struct {
@@ -691,10 +710,25 @@ func (s *InkService) offer(companion string, notes []link.NoteEntry) {
 	}
 }
 
+// Deletion returns whether Sieve's copy of the Digital Note in container uuid may be deleted now,
+// and what its deletion means. A container that is not a Digital Note is ErrNoSuchPage.
+func (s *InkService) Deletion(uuid string) (Deletion, error) {
+	c, err := s.digitalNote(uuid)
+	if err != nil {
+		return DeleteRefused, err
+	}
+	face := NewDigitalNoteKind().Face(c.Block())
+	s.mu.Lock()
+	run := s.run
+	s.mu.Unlock()
+	return run.deletion(face), nil
+}
+
 // Delete removes Sieve's copy of the Digital Note in container uuid, closes its tabs and tells
 // the invalidator. A session holding the note open stops writing it. Nothing remembers the
-// deletion: a note its companion still offers is synced again whole at its next listing. A
-// container that is not a Digital Note is ErrNoSuchPage.
+// deletion: a note its companion still has is synced again whole at its next listing. A note
+// whose Deletion is DeleteRefused is ErrStillOffered; a container that is not a Digital Note is
+// ErrNoSuchPage.
 func (s *InkService) Delete(uuid string) error {
 	c, err := s.digitalNote(uuid)
 	if err != nil {
@@ -703,11 +737,14 @@ func (s *InkService) Delete(uuid string) error {
 	s.mu.Lock()
 	run := s.run
 	s.mu.Unlock()
-	if run != nil {
-		run.replicas.forget(uuid)
+	if run.deletion(NewDigitalNoteKind().Face(c.Block())) == DeleteRefused {
+		return fmt.Errorf("%w: %s", ErrStillOffered, uuid)
 	}
 	if err := s.containers.Delete(c); err != nil {
 		return err
+	}
+	if run != nil {
+		run.replicas.forget(uuid)
 	}
 	if _, err := s.settings.CloseTabs(func(t domain.Tab) bool { return t.ID == uuid }); err != nil {
 		logger.Error("ink: closing a deleted note's tabs", "err", err.Error())
@@ -821,6 +858,7 @@ func (s *InkService) session(ctx context.Context) bool {
 	s.mu.Lock()
 	run.session = link.NewSession(run, s.key, run.replicas, run, link.Plan{CatchUp: true, Follow: true})
 	s.run = run
+	delete(s.offered, l.Identity())
 	s.mu.Unlock()
 	stop := context.AfterFunc(ctx, func() { l.Close() })
 	err = run.session.Run()
@@ -924,11 +962,12 @@ func (s *InkService) synced(open []SyncedNote) ([]SyncedNote, []Companion) {
 	}
 	kind := NewDigitalNoteKind()
 	s.mu.Lock()
-	offered := s.offered
+	offered, run := maps.Clone(s.offered), s.run
 	s.mu.Unlock()
 	notes := make([]SyncedNote, 0, len(byUUID))
 	for uuid, n := range byUUID {
 		n.Name = kind.Name(found[uuid], n.Title)
+		n.Deletion = run.deletion(found[uuid])
 		if listed, ok := offered[n.Companion]; ok {
 			if source, err := link.ParseID(found[uuid]["note_source_id"]); err == nil {
 				n.Absent = !listed[source]
@@ -1014,6 +1053,21 @@ func (r *sessionRun) Notes(notes []link.NoteEntry) {
 		}
 	}
 	r.svc.connected(r.link.Identity(), r.link.Elapsed())
+}
+
+// deletion is what deleting the note whose container face is face means while r runs; r may be
+// nil, when no session runs. It may be called from any goroutine.
+func (r *sessionRun) deletion(face map[string]string) Deletion {
+	if r == nil || r.link.Identity() != face["note_companion"] {
+		return DeleteReturns
+	}
+	source, err := link.ParseID(face["note_source_id"])
+	r.listedMu.Lock()
+	defer r.listedMu.Unlock()
+	if _, listed := r.listed[source]; r.listed == nil || (err == nil && listed) {
+		return DeleteRefused
+	}
+	return DeleteLast
 }
 
 // listedHead is the head the companion listed note at on this connection; false when it did not

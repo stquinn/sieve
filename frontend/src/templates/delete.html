@@ -14,11 +14,16 @@
     inside it, along with every version and asset they hold. This cannot be undone.
     {{- else if $folder}}
     Are you sure you want to delete <strong>{{.Name}}</strong>? It is empty. This cannot be undone.
+    {{- else if and $notebook .Refused}}
+    {{.Refused}}
     {{- else if $notebook}}
     This deletes Sieve's copy of <strong>{{.Name}}</strong>: its pages, its name and its transcripts.
-    Documents made from its transcripts are kept. If the tablet still offers it, it comes back at
-    the next sync; to be rid of it for good, delete it or stop sharing it on the tablet. If the
-    tablet no longer has it, this copy is the last one and cannot be recovered.
+    Documents made from its transcripts are kept.
+    {{- if .Last}} The tablet no longer has this notebook, so this copy is the last one and cannot be
+    recovered.
+    {{- else}} The tablet is not connected: if it still has this notebook, it comes back at the next
+    sync.
+    {{- end}}
     {{- else}}
     Are you sure you want to delete <strong>{{.Name}}</strong>? This cannot be undone.
     {{- end}}
@@ -76,6 +81,7 @@
       >
         Cancel
       </button>
+      {{- if not .Refused}}
       <button
         type="submit"
         id="delete-confirm-btn"
@@ -84,6 +90,7 @@
       >
         {{if $guarded}}Delete everything{{else}}Delete{{end}}
       </button>
+      {{- end}}
     </div>
   </form>
 </div>

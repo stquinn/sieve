@@ -94,7 +94,12 @@ type inkNoteItem struct {
 	Whiteboard bool
 	// Absent is the note not on its tablet now (ink.SyncedNote.Absent).
 	Absent bool
+	// DeleteRefused is why Delete is refused now, "" when it is allowed.
+	DeleteRefused string
 }
+
+// inkDeleteRefused is why Sieve's copy of a notebook its tablet still offers is not deleted.
+const inkDeleteRefused = "The tablet still has this notebook. Delete it there, or stop sharing it, first."
 
 // inkDescribeDrawWait bounds how long naming a note now waits for its first page to be drawn.
 const inkDescribeDrawWait = 10 * time.Second
@@ -119,7 +124,8 @@ func (h *InkHandler) RegisterPaths(r chi.Router) {
 }
 
 // handleDelete deletes Sieve's copy of a synced note and answers with the workspace, as a note's
-// delete does; a container that is not a Digital Note is 404.
+// delete does; a notebook its tablet still offers is 409, a container that is not a Digital Note
+// is 404.
 func (h *InkHandler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if h.ServiceProvider.Ink == nil {
 		http.Error(w, "Notebooks are unavailable.", http.StatusServiceUnavailable)
@@ -129,6 +135,10 @@ func (h *InkHandler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if err := h.ServiceProvider.Ink.Delete(uuid); err != nil {
 		if errors.Is(err, ink.ErrNoSuchPage) {
 			http.Error(w, "No such notebook.", http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, ink.ErrStillOffered) {
+			http.Error(w, inkDeleteRefused, http.StatusConflict)
 			return
 		}
 		logger.Error("ink: deleting a note", "err", err.Error())
@@ -238,8 +248,12 @@ func (v *inkSidebarView) show(st ink.Status, session domain.Session) {
 		if title == "" {
 			title = untitledNotebook
 		}
+		refused := ""
+		if n.Deletion == ink.DeleteRefused {
+			refused = inkDeleteRefused
+		}
 		v.Notes = append(v.Notes, inkNoteItem{UUID: n.UUID, Title: title, Pages: n.Pages, Active: n.UUID == active,
-			Whiteboard: n.Whiteboard, Absent: n.Absent})
+			Whiteboard: n.Whiteboard, Absent: n.Absent, DeleteRefused: refused})
 	}
 }
 

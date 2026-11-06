@@ -285,6 +285,13 @@ import { selectNextScope } from './interaction-policy.js'
     var lbl = document.createElement('span')
     lbl.textContent = item.label
     btn.appendChild(lbl)
+    if (item.hint) {
+      var hint = document.createElement('span')
+      hint.className = 'ctx-item__hint'
+      hint.textContent = item.hint
+      btn.appendChild(hint)
+      btn.title = item.hint
+    }
     if (item.children && item.children.length) return btn
     btn.addEventListener('click', function (/** @type {Event} */ ev) {
       ev.stopPropagation()
@@ -920,12 +927,14 @@ import { selectNextScope } from './interaction-policy.js'
 
   // The items every library item gets — a note, a folder, a notebook: Show in
   // Files, and Delete behind the delete dialog of its type, which says what goes.
-  function libraryItems(id, name, type, noun) {
+  // When `refused` is set, Delete is disabled and says why.
+  function libraryItems(id, name, type, noun, refused) {
     return [
       { icon: IC.folder, label: 'Show in Files', action: function () {
         window.sieveShowInFiles && window.sieveShowInFiles(id)
       }},
-      { icon: IC.trash, label: 'Delete ' + noun + '...', cls: 'ctx-item--danger', action: function () {
+      { type: 'divider' },
+      { icon: IC.trash, label: 'Delete ' + noun + '...', cls: 'ctx-item--danger', disabled: !!refused, hint: refused || '', action: function () {
         hx('GET', '/ui/views/sidebar/dialog/delete?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name || '') + '&type=' + type,
           { target: '#delete-dialog-content', swap: 'innerHTML' }
         ).then(function () { document.getElementById('delete-dialog').showModal() })
@@ -973,6 +982,16 @@ import { selectNextScope } from './interaction-policy.js'
     ]
   }
 
+  // Why Delete is refused on a notebook, "" when it is allowed: the row's own
+  // word, or on a tab the word of its row in the sidebar's Notebooks list, which
+  // is redrawn whenever ink changes. A tab with no row there leaves it to the
+  // delete dialog, which asks the server.
+  function notebookDeleteRefused(ctx) {
+    if (!ctx.isTab) return ctx.deleteRefused || ''
+    var row = document.querySelector('[data-ink-note="' + ctx.id + '"]')
+    return (row && row.getAttribute('data-ctx-delete-refused')) || ''
+  }
+
   // A synced notebook, as a row of the tree or as a tab: its own actions, every
   // library item's, and on a tab every tab's verbs.
   function buildNotebookItems(ctx) {
@@ -983,7 +1002,7 @@ import { selectNextScope } from './interaction-policy.js'
     }
     items = items.concat(notebookActions(ctx.id, ctx.name))
     items.push({ type: 'divider' })
-    items = items.concat(libraryItems(ctx.id, ctx.name, 'notebook', 'Notebook'))
+    items = items.concat(libraryItems(ctx.id, ctx.name, 'notebook', 'Notebook', notebookDeleteRefused(ctx)))
     if (ctx.isTab) items = items.concat(tabItems(ctx.id))
     return items
   }
