@@ -1,7 +1,7 @@
 # Boox companion and live ink — a pen notebook that replicates into Sieve over Bluetooth
 
-**Status:** Designed
-**Tracked:** #204 (epic; per-phase issues are filed as each phase starts)
+**Status:** Phases 0–5 shipped (Sieve replication, the note lens and Live, names and transcripts). Phase 6, selection and clips (§8a), is not built. Where this text and the code differ, `docs/ink-contract.md`, `docs/editor-interaction-contract.md` and the phase issues (#210, #211, #212) are what was built.
+**Tracked:** #204 (epic); what v1 leaves open is #214
 **Date:** 2026-10-31
 **Supersedes nothing.** The folder-sync design (2026-10-29, not committed) remains a valid
 second producer of the same Thing, bringing exported files in through a remote folder.
