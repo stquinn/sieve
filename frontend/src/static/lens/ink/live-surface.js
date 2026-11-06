@@ -94,7 +94,7 @@ export class LiveSurface extends AbstractSurface {
       chars: 0, lines: 0, blockCount: 0,
       readout: Object.freeze([
         Object.freeze({ text: this.#mirrored.waiting ? 'Waiting for the tablet' : 'Live', title: 'The tablet' }),
-        ...(this.#mirrored.container ? [Object.freeze({ text: this.#mirrored.title || 'Untitled note', title: 'The note' })] : []),
+        ...(this.#mirrored.container ? [Object.freeze({ text: this.#mirrored.title || 'Untitled notebook', title: 'The notebook' })] : []),
         Object.freeze({ text: where, title: 'Page' }),
         Object.freeze({ text: `${count} stroke${count === 1 ? '' : 's'}`, title: 'Strokes on this page' }),
         ...(this.#device ? [Object.freeze({ text: this.#device, title: 'Written on' })] : []),
