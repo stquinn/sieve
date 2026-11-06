@@ -58,7 +58,8 @@ var (
 // per note at a time: the describer is shown images of its first eight pages and
 // InkService.keepDescription keeps what it answers, of the seq the log stood at when the job
 // began. A note that receives a record while its job runs is due again once it settles again.
-// NameNow describes a note at once, due or not.
+// NameNow describes a note at once, due or not. A note a person named keeps that name: what is
+// described of it is its summary, keywords and categories.
 //
 // Which notes are due is read from the faces of the notes held, without reading their logs, when
 // the namer starts and whenever its one timer fires; the timer is set for the earliest moment a
@@ -195,6 +196,19 @@ func (n *NoteNamer) NameNow(ctx context.Context, uuid string) error {
 	logger.Info("ink: naming a note now, as asked", "container", uuid, "seq", cursor.Seq)
 	n.submit(uuid, cursor.Seq, min(note.PageCount(), maxNamedPages))
 	return nil
+}
+
+// undescribed is the note in uuid holding no description now: the namer reads it from its face
+// again at once, and names it when it is due.
+func (n *NoteNamer) undescribed(uuid string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if held, ok := n.held[uuid]; ok {
+		held.described = 0
+	}
+	if n.running {
+		n.setTimer(n.now())
+	}
 }
 
 // Refusal is what a person asking NameNow is told of err, the error it returned.

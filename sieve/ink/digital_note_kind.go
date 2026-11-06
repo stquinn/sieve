@@ -19,14 +19,21 @@ const KindDigitalNote = "digital-note"
 const StrokesKey = "strokes.jsonl"
 
 // The .meta keys of a note's description beside display_name, summary and tags: its keywords and
-// categories as JSON arrays of strings, the seq of the log the description is of, and the seq of
-// the description last sent to the tablet.
+// categories as JSON arrays of strings, the seq of the log the description is of, the seq of the
+// description last sent to the tablet, and who gave its name, namedByHand when a person did.
 const (
 	metaKeywords   = "note_keywords"
 	metaCategories = "note_categories"
 	metaDescribed  = "note_meta_seq"
 	metaSent       = "note_meta_sent_seq"
+	metaNamedBy    = "note_named_by"
 )
+
+// namedByHand is the note_named_by of a note a person named.
+const namedByHand = "hand"
+
+// MaxNameBytes is the longest name META carries to the tablet (docs/ink-contract.md §7.3).
+const MaxNameBytes = 512
 
 // Provenance is where a Digital Note's log comes from, and how far this Sieve holds it.
 type Provenance struct {
@@ -165,10 +172,13 @@ func (k DigitalNoteKind) ContainerName(b domain.SieveBlock, meta map[string]stri
 }
 
 // Describe writes d into meta as the description of the note's log to seq: Title as display_name,
-// Summary, Keywords as tags, and Keywords and Categories whole under the kind's own keys. A comma
-// in a keyword is a semicolon in tags, whose stored form splits on commas.
+// unless a person named the note, Summary, Keywords as tags, and Keywords and Categories whole
+// under the kind's own keys. A comma in a keyword is a semicolon in tags, whose stored form splits
+// on commas.
 func (k DigitalNoteKind) Describe(meta domain.DocumentMeta, d domain.NoteMetadata, seq uint32) {
-	meta.SetDisplayName(strings.TrimSpace(d.Title))
+	if !k.HandNamed(meta.All()) {
+		meta.SetDisplayName(strings.TrimSpace(d.Title))
+	}
 	summary := strings.TrimSpace(d.Summary)
 	if summary == "" {
 		meta.SetSummary(nil)
@@ -187,7 +197,28 @@ func (k DigitalNoteKind) Describe(meta domain.DocumentMeta, d domain.NoteMetadat
 	all[metaDescribed] = strconv.FormatUint(uint64(seq), 10)
 }
 
-// Description is the description meta holds and the seq it is of; false when it is of no seq.
+// NameByHand writes into meta name as the note's name given by a person, which Describe keeps and
+// the tablet is sent again. A blank name clears it: the note is called by its tablet's title, its
+// description is of no seq, so the namer describes it again, and what is next described is sent.
+func (k DigitalNoteKind) NameByHand(meta domain.DocumentMeta, name string) {
+	meta.SetDisplayName(name)
+	all := meta.All()
+	delete(all, metaSent)
+	if name != "" {
+		all[metaNamedBy] = namedByHand
+		return
+	}
+	delete(all, metaNamedBy)
+	delete(all, metaDescribed)
+}
+
+// HandNamed is whether a person gave the note the name meta holds.
+func (k DigitalNoteKind) HandNamed(meta map[string]string) bool {
+	return meta[metaNamedBy] == namedByHand
+}
+
+// Description is the description meta holds and the seq it is of; false when it is of no seq and
+// no person named the note.
 func (k DigitalNoteKind) Description(meta map[string]string) (domain.NoteMetadata, uint32, bool) {
 	seq := k.seq(meta, metaDescribed)
 	d := domain.NoteMetadata{Title: meta["display_name"], Summary: meta["summary"]}
@@ -199,7 +230,7 @@ func (k DigitalNoteKind) Description(meta map[string]string) (domain.NoteMetadat
 	}
 	_ = json.Unmarshal([]byte(meta[metaKeywords]), &d.Keywords)
 	_ = json.Unmarshal([]byte(meta[metaCategories]), &d.Categories)
-	return d, seq, seq > 0
+	return d, seq, seq > 0 || k.HandNamed(meta)
 }
 
 // DescribedSeq is the seq of the log meta's description is of, 0 when it holds none.
@@ -209,6 +240,14 @@ func (k DigitalNoteKind) DescribedSeq(meta map[string]string) uint32 {
 
 // SentSeq is the seq of the description last sent to the tablet, 0 when none was.
 func (k DigitalNoteKind) SentSeq(meta map[string]string) uint32 { return k.seq(meta, metaSent) }
+
+// Unsent is whether meta holds a description the tablet has not been sent: one of a later seq
+// than the one last sent, or any since NameByHand.
+func (k DigitalNoteKind) Unsent(meta map[string]string) bool {
+	_, seq, ok := k.Description(meta)
+	_, sent := meta[metaSent]
+	return ok && (!sent || seq > k.SentSeq(meta))
+}
 
 // MarkSent records in meta that the description of the log to seq was sent to the tablet.
 func (k DigitalNoteKind) MarkSent(meta domain.DocumentMeta, seq uint32) {

@@ -18,6 +18,7 @@ import (
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 
+	"sieve/ident"
 	"sieve/sieve"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
@@ -713,6 +714,62 @@ func TestInkDelete_RemovesSievesCopyAndItsTab(t *testing.T) {
 	}
 	if status, _ := do(t, http.MethodDelete, srv.URL+"/api/ink/notes/"+c.UUID(), "", ""); status != http.StatusNotFound {
 		t.Errorf("deleting it again: %d, want 404", status)
+	}
+}
+
+// Renaming a notebook offers the rename dialog posting its own route, which answers 204 and gives
+// the name the tab, the sidebar's Notebooks item and the search read; an empty name gives back the
+// tablet's title; a name too long for the tablet is 400 and what is no Digital Note 404.
+func TestInkRename_NamesTheNotebookEverywhereItIsShown(t *testing.T) {
+	srv, sp := newInkServer(t)
+	settings := sp.State.LoadSettings()
+	settings.Ink.Enabled = true
+	if err := sp.State.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	c, err := sp.Containers.Create(ink.KindDigitalNote, map[string]interface{}{"title": "Ideas"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := sp.State.LoadSession()
+	session.Tabs, session.OpenFolders = []domain.Tab{{ID: c.UUID(), Kind: ink.KindDigitalNote, DisplayName: "Ideas"}}, []string{inkTreeID}
+	if err := sp.State.SaveSession(session); err != nil {
+		t.Fatal(err)
+	}
+	status, body := do(t, http.MethodGet, srv.URL+"/ui/views/sidebar/dialog/rename?id="+c.UUID()+"&name=Ideas&type=notebook", "", "")
+	if status != http.StatusOK || !strings.Contains(body, `hx-post="/api/ink/notes/`+c.UUID()+`/rename"`) || !strings.Contains(body, "Rename Notebook") {
+		t.Errorf("the dialog: %d\n%s", status, body)
+	}
+	rename := func(name string) int {
+		t.Helper()
+		status, _ := do(t, http.MethodPost, srv.URL+"/api/ink/notes/"+c.UUID()+"/rename", "application/x-www-form-urlencoded", url.Values{"name": {name}}.Encode())
+		return status
+	}
+	shown := func(name string) {
+		t.Helper()
+		if tab := sp.State.LoadSession().Tabs[0]; tab.DisplayName != name {
+			t.Errorf("the tab reads %q, want %q", tab.DisplayName, name)
+		}
+		if _, body := do(t, http.MethodGet, srv.URL+"/ui/views/sidebar/ink", "", ""); !strings.Contains(body, name) {
+			t.Errorf("the Notebooks item lacks %q:\n%s", name, body)
+		}
+		if _, body := do(t, http.MethodGet, srv.URL+"/ui/views/search?q="+url.QueryEscape(name), "", ""); !strings.Contains(body, "open('"+c.UUID()+"')") {
+			t.Errorf("the quick switcher does not find %q:\n%s", name, body)
+		}
+	}
+	if status := rename("Kitchen plans"); status != http.StatusNoContent {
+		t.Fatalf("rename: %d", status)
+	}
+	shown("Kitchen plans")
+	if status := rename(""); status != http.StatusNoContent {
+		t.Fatalf("clearing the name: %d", status)
+	}
+	shown("Ideas")
+	if status := rename(strings.Repeat("x", ink.MaxNameBytes+1)); status != http.StatusBadRequest {
+		t.Errorf("a name too long: %d, want 400", status)
+	}
+	if status, _ := do(t, http.MethodPost, srv.URL+"/api/ink/notes/"+ident.New()+"/rename", "application/x-www-form-urlencoded", "name=x"); status != http.StatusNotFound {
+		t.Errorf("renaming what is no notebook: %d, want 404", status)
 	}
 }
 

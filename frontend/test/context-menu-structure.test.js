@@ -858,9 +858,9 @@ describe('the notebook and Live menus', () => {
 
   it.each([
     ['a tree row', { type: 'notebook', id: 'n1', name: 'Ideas', isTab: false },
-      ['Open', 'Open on device', 'Refresh name and summary', 'Show in Files', 'Delete Notebook...']],
+      ['Open', 'Open on device', 'Refresh name and summary', 'Rename...', 'Show in Files', 'Delete Notebook...']],
     ['a tab', { type: 'notebook', id: 'n1', name: 'Ideas', isTab: true },
-      ['Open on device', 'Refresh name and summary', 'Show in Files', 'Delete Notebook...', 'Close Tab', 'Close Others', 'Close All Tabs']],
+      ['Open on device', 'Refresh name and summary', 'Rename...', 'Show in Files', 'Delete Notebook...', 'Close Tab', 'Close Others', 'Close All Tabs']],
     ['the Live row', { type: 'inkLive', id: 'v1', name: 'Live', isTab: false }, ['Open this note']],
     ['the Live tab', { type: 'inkLive', id: 'v1', name: 'Live', isTab: true }, ['Open this note', 'Close Tab', 'Close Others', 'Close All Tabs']],
   ])('%s offers its own items', (_, context, want) => {
@@ -913,6 +913,24 @@ describe('the notebook and Live menus', () => {
     itemNamed(openOn({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: false }), 'Refresh name and summary').click()
     await settle()
     expect(said.at(-1)?.detail).toEqual({ text: 'No AI is configured in Settings, so nothing can name this notebook.', error: true })
+  })
+
+  it.each([
+    ['row', false],
+    ['tab', true],
+  ])('Rename... on a notebook %s opens the rename dialog for a notebook, with its name', async (_, isTab) => {
+    const dialog = Object.assign(document.createElement('dialog'), { id: 'rename-dialog' })
+    dialog.showModal = vi.fn()
+    document.body.appendChild(dialog)
+    const ajax = vi.fn(() => Promise.resolve())
+    ;/** @type {any} */ (window).htmx = { ajax }
+    itemNamed(openOn({ type: 'notebook', id: 'n1', name: 'Ideas & plans', isTab }), 'Rename...').click()
+    await settle()
+    expect(ajax).toHaveBeenCalledWith('GET', '/ui/views/sidebar/dialog/rename?id=n1&name=Ideas%20%26%20plans&type=notebook',
+      { target: '#rename-dialog-content', swap: 'innerHTML' })
+    expect(dialog.showModal).toHaveBeenCalled()
+    dialog.remove()
+    delete (/** @type {any} */ (window)).htmx
   })
 
   it('Open on device posts the open-on-tablet route and says what came of it', async () => {

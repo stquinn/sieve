@@ -1732,7 +1732,10 @@ func (rig *inkRig) awaitMetas(n int) []link.Meta {
 // A description kept for a note goes to the tablet it came from while that tablet is connected
 // and listed the note, as META of the description's fields and seq, and the seq sent is recorded:
 // never for another tablet's note or one this tablet did not list, and not again for the same seq.
-// A description kept while no tablet is connected goes once the tablet next lists the note.
+// A description kept while no tablet is connected goes once the tablet next lists the note. A name
+// given by hand goes at once at the seq already sent, and its tab and listing take it; one too long
+// for META is refused; cleared, the note is called by its tablet's title and nothing is sent until
+// it is described again.
 func TestInkService_ADescriptionGoesToTheTabletItsNoteCameFrom(t *testing.T) {
 	records := inkLog()
 	rig := newInkRig(t, records)
@@ -1801,6 +1804,41 @@ func TestInkService_ADescriptionGoesToTheTabletItsNoteCameFrom(t *testing.T) {
 	}
 	if s := sent(uuid); s != "7" {
 		t.Errorf("recorded as sent at %q after the next session", s)
+	}
+
+	session := rig.state.LoadSession()
+	session.Tabs = []domain.Tab{{ID: uuid, Kind: KindDigitalNote, DisplayName: renamed.Title}}
+	if err := rig.state.SaveSession(session); err != nil {
+		t.Fatal(err)
+	}
+	if err := rig.svc.Rename(uuid, strings.Repeat("é", MaxNameBytes/2+1)); !errors.Is(err, ErrNameTooLong) {
+		t.Errorf("a name too long for META: %v", err)
+	}
+	if err := rig.svc.Rename(others[0]+"-not-held", "Mine"); !errors.Is(err, ErrNoSuchPage) {
+		t.Errorf("renaming what is no Digital Note: %v", err)
+	}
+	if err := rig.svc.Rename(uuid, "Mine"); err != nil {
+		t.Fatal(err)
+	}
+	got = rig.awaitMetas(3)[2]
+	if got.Title != "Mine" || got.Summary != renamed.Summary || got.AsOfSeq != uint32(len(next)) {
+		t.Errorf("META of a name given by hand %+v", got)
+	}
+	listed := ""
+	for _, n := range rig.svc.Status().Notes {
+		if n.UUID == uuid {
+			listed = n.Name
+		}
+	}
+	if tab := rig.state.LoadSession().Tabs[0]; tab.DisplayName != "Mine" || listed != "Mine" {
+		t.Errorf("the tab reads %q, the note is listed as %q", tab.DisplayName, listed)
+	}
+	if err := rig.svc.Rename(uuid, ""); err != nil {
+		t.Fatal(err)
+	}
+	rig.awaitMetas(3)
+	if tab := rig.state.LoadSession().Tabs[0]; tab.DisplayName != "Ideas" {
+		t.Errorf("cleared, the tab reads %q", tab.DisplayName)
 	}
 }
 

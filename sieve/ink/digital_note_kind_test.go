@@ -205,9 +205,49 @@ func TestDigitalNoteKind_NameAndDescriptionReadFromMeta(t *testing.T) {
 	if !ok || seq != 7 || fmt.Sprint(d) != fmt.Sprint(kitchen) {
 		t.Errorf("Description = %+v at %d, %t", d, seq, ok)
 	}
+	if !kind.Unsent(meta) {
+		t.Error("a description never sent is not unsent")
+	}
 	kind.MarkSent(domain.NewDocumentMeta(meta, func(map[string]string) {}), 7)
-	if kind.SentSeq(meta) != 7 || kind.DescribedSeq(meta) != 7 {
-		t.Errorf("sent %d, described %d", kind.SentSeq(meta), kind.DescribedSeq(meta))
+	if kind.SentSeq(meta) != 7 || kind.DescribedSeq(meta) != 7 || kind.Unsent(meta) {
+		t.Errorf("sent %d, described %d, unsent %t", kind.SentSeq(meta), kind.DescribedSeq(meta), kind.Unsent(meta))
+	}
+}
+
+// A name given by hand is the note's name and its description's title, kept by Describe, which
+// still writes the rest, and is unsent at the seq already sent; with no description it is one of
+// no seq. Cleared, the note is called by its tablet's title and holds no description of any seq.
+func TestDigitalNoteKind_ANameGivenByHand(t *testing.T) {
+	kind := NewDigitalNoteKind()
+	edit := func(meta map[string]string) domain.DocumentMeta {
+		return domain.NewDocumentMeta(meta, func(map[string]string) {})
+	}
+
+	fresh := map[string]string{}
+	kind.NameByHand(edit(fresh), "Mine")
+	if d, seq, ok := kind.Description(fresh); !ok || seq != 0 || d.Title != "Mine" || !kind.Unsent(fresh) || !kind.HandNamed(fresh) {
+		t.Errorf("an undescribed note named by hand: %+v at %d, %t, unsent %t", d, seq, ok, kind.Unsent(fresh))
+	}
+
+	meta := map[string]string{}
+	kind.Describe(edit(meta), kitchen, 7)
+	kind.MarkSent(edit(meta), 7)
+	kind.NameByHand(edit(meta), "Mine")
+	if kind.Name(meta, "Ideas") != "Mine" || !kind.Unsent(meta) {
+		t.Errorf("named by hand: %q, unsent %t", kind.Name(meta, "Ideas"), kind.Unsent(meta))
+	}
+	kind.Describe(edit(meta), domain.NoteMetadata{Title: "The AI's", Summary: "Revised."}, 9)
+	if d, seq, _ := kind.Description(meta); d.Title != "Mine" || d.Summary != "Revised." || seq != 9 {
+		t.Errorf("described over a name given by hand: %+v at %d", d, seq)
+	}
+
+	kind.NameByHand(edit(meta), "")
+	if _, seq, ok := kind.Description(meta); kind.Name(meta, "Ideas") != "Ideas" || ok || seq != 0 || kind.HandNamed(meta) || kind.Unsent(meta) {
+		t.Errorf("cleared: called %q, a description of %d (%t)", kind.Name(meta, "Ideas"), seq, ok)
+	}
+	kind.Describe(edit(meta), kitchen, 9)
+	if kind.Name(meta, "Ideas") != kitchen.Title || !kind.Unsent(meta) {
+		t.Errorf("described after clearing: %q, unsent %t", kind.Name(meta, "Ideas"), kind.Unsent(meta))
 	}
 }
 

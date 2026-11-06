@@ -91,6 +91,7 @@ func TestRouteTable(t *testing.T) {
 		"POST /api/ink/key",
 		"POST /api/ink/notes/{uuid}/describe",
 		"POST /api/ink/notes/{uuid}/open-on-tablet",
+		"POST /api/ink/notes/{uuid}/rename",
 		"POST /api/settings",
 		"POST /api/settings/editor-scale/step",
 		"POST /api/settings/panel",
