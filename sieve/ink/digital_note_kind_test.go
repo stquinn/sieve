@@ -17,7 +17,8 @@ import (
 // metaOf reads a container's .meta from disk.
 func metaOf(t *testing.T, st *filestore.FileStore, uuid string) map[string]interface{} {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(st.Root(), "testhost", domain.Blocks.Key, uuid, ".meta"))
+	dir, _ := st.DocDirByUUID(uuid)
+	raw, err := os.ReadFile(filepath.Join(dir, ".meta"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +117,8 @@ func TestDigitalNoteKind_FoundByItsFaceWithoutItsBody(t *testing.T) {
 	if _, err := containers.Create(KindDigitalNote, kind.Attrs(NewHeaderFold(""), Provenance{Companion: "another", SourceID: noteID})); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(st.Root(), "testhost", domain.Blocks.Key, ours.UUID(), ours.UUID()+".block"), []byte("a: [unclosed\n"), 0o644); err != nil {
+	dir, _ := st.DocDirByUUID(ours.UUID())
+	if err := os.WriteFile(filepath.Join(dir, ours.UUID()+".block"), []byte("a: [unclosed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	fresh := reopen(t, st)

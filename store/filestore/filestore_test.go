@@ -64,6 +64,16 @@ func mustCreateTyped(t *testing.T, fs *filestore.FileStore, cat store.Category, 
 	return ms
 }
 
+// mustDocDir returns the directory the store holds the storable uuid in.
+func mustDocDir(t *testing.T, fs *filestore.FileStore, uuid string) string {
+	t.Helper()
+	dir, ok := fs.DocDirByUUID(uuid)
+	if !ok {
+		t.Fatalf("DocDirByUUID(%s): not found", uuid)
+	}
+	return dir
+}
+
 // ── PrepareCategory ───────────────────────────────────────────────────────────
 
 func TestPrepareCategoryCreatesDirectories(t *testing.T) {
@@ -356,8 +366,8 @@ func TestSaveWritesVersionSnapshot(t *testing.T) {
 				t.Fatalf("Versions() = %d after first save, want 1", len(saved.Versions()))
 			}
 
-			dir := filepath.Join(fs.Root(), "testhost", "buffers", "buf")
 			uuid := saved.Key()
+			dir := mustDocDir(t, fs, uuid)
 			for _, path := range []string{
 				filepath.Join(dir, uuid+tc.ext),
 				filepath.Join(dir, ".history", uuid+".1"+tc.ext),
@@ -389,7 +399,7 @@ func TestSavePrunesOldestSnapshots(t *testing.T) {
 			if len(versions) != 2 || versions[0].ID != "4" || versions[1].ID != "3" {
 				t.Fatalf("versions = %+v, want the newest two, newest first", versions)
 			}
-			entries, err := os.ReadDir(filepath.Join(fs.Root(), "testhost", "buffers", "buf", ".history"))
+			entries, err := os.ReadDir(filepath.Join(mustDocDir(t, fs, current.Key()), ".history"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -477,11 +487,11 @@ func TestDeleteRemovesHistory(t *testing.T) {
 			ms := mustCreateTyped(t, fs, testWorkingCopy, "buf", tc.contentType, nil)
 			ms.SetBody([]byte("v1"))
 			saved, _ := fs.Save(ms)
+			histDir := filepath.Join(mustDocDir(t, fs, saved.Key()), ".history")
 
 			fs.Delete(saved)
 
 			// History directory should not exist (RemoveAll deleted the doc dir).
-			histDir := filepath.Join(fs.Root(), "testhost", "buffers", "buf", ".history")
 			if _, err := os.Stat(histDir); !os.IsNotExist(err) {
 				t.Errorf("history dir should be gone after Delete: %s", histDir)
 			}
@@ -824,7 +834,7 @@ func TestMoveOfADirectoryNamedByItsUUID(t *testing.T) {
 		t.Run(tc.contentType, func(t *testing.T) {
 			fs := newTestStore(t)
 			const uuid = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
-			ms, err := fs.CreateTyped(testWorkingCopy, uuid, tc.contentType, map[string]string{"uuid": uuid}, []byte("body"))
+			ms, err := fs.CreateTyped(testWorkingCopy, uuid, tc.contentType, map[string]string{"uuid": uuid, store.MetaKeyKind: "test-kind"}, []byte("body"))
 			if err != nil {
 				t.Fatalf("CreateTyped: %v", err)
 			}
@@ -916,6 +926,57 @@ func TestCreateTypedStoresBytesAndRefusesContentlessTypes(t *testing.T) {
 	for _, contentType := range []string{store.TypeFolder, "", "whiteboard"} {
 		if _, err := fs.CreateTyped(testWorkingCopy, "x", contentType, nil, nil); err == nil {
 			t.Errorf("CreateTyped(type %q) succeeded, want a refusal", contentType)
+		}
+	}
+}
+
+// A block is created on the shelf of its kind, {category}/{kind}/{key}, in either
+// isolation, while every caller still addresses it by its uuid; a kind or key that
+// cannot name one directory is refused.
+func TestABlockLivesOnTheShelfOfItsKind(t *testing.T) {
+	for _, tc := range []struct {
+		cat     store.Category
+		wantRef string
+	}{
+		{testLibrary, "store/test-kind/blk"},
+		{testWorkingCopy, "testhost/buffers/test-kind/blk"},
+	} {
+		t.Run(tc.cat.Key, func(t *testing.T) {
+			fs := newTestStore(t)
+			ms := mustCreateTyped(t, fs, tc.cat, "blk", store.TypeBlock, []byte("body"))
+			if ms.Key() != ms.Meta()["uuid"] || ms.ExternalRef() != tc.wantRef {
+				t.Errorf("key %q ref %q, want the uuid and %q", ms.Key(), ms.ExternalRef(), tc.wantRef)
+			}
+			if dir := mustDocDir(t, fs, ms.Key()); dir != filepath.Join(fs.Root(), filepath.FromSlash(tc.wantRef)) {
+				t.Errorf("DocDirByUUID = %s, want %s", dir, tc.wantRef)
+			}
+			for _, load := range []func() (store.Storable, error){
+				func() (store.Storable, error) { return fs.Load(tc.cat, ms.Key()) },
+				func() (store.Storable, error) {
+					fresh, err := filestore.NewFileStore(fs.Root(), "testhost")
+					if err != nil {
+						return nil, err
+					}
+					return fresh.LoadByUUID(ms.Key())
+				},
+			} {
+				if got, err := load(); err != nil || string(got.Body()) != "body" {
+					t.Errorf("load = %v, %v", got, err)
+				}
+			}
+			listed, err := fs.List(tc.cat, "")
+			if err != nil || len(listed) != 1 || listed[0].Key() != ms.Key() {
+				t.Errorf("List = %v, %v; want the block alone, without its shelf", listed, err)
+			}
+		})
+	}
+
+	fs := newTestStore(t)
+	for _, bad := range []struct{ key, kind string }{
+		{"blk", ""}, {"blk", ".hidden"}, {"blk", "a/b"}, {"blk", `a\b`}, {"sub/blk", "test-kind"},
+	} {
+		if _, err := fs.CreateTyped(testLibrary, bad.key, store.TypeBlock, map[string]string{store.MetaKeyKind: bad.kind}, nil); err == nil {
+			t.Errorf("CreateTyped(key %q, kind %q) succeeded, want a refusal", bad.key, bad.kind)
 		}
 	}
 }
@@ -1094,8 +1155,8 @@ func TestDeleteAssetRemovesOnlyAnOwnedAsset(t *testing.T) {
 			if _, err := fs.CreateAsset(testLibrary, uuid, "holiday.png", []byte{0x89, 0x50, 0x4E, 0x47}); err != nil {
 				t.Fatalf("CreateAsset: %v", err)
 			}
-			docDir := filepath.Join(fs.Root(), "store", "my-note")
-			outside := filepath.Join(fs.Root(), "store", "keep.png")
+			docDir := mustDocDir(t, fs, uuid)
+			outside := filepath.Join(filepath.Dir(docDir), "keep.png")
 			if err := os.WriteFile(outside, []byte("x"), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -1146,7 +1207,7 @@ func TestOwnedAssetsWriteAttachesWithoutAVersionBump(t *testing.T) {
 				fs := newTestStore(t)
 				first := mustCreateTyped(t, fs, testLibrary, "my-note", tc.contentType, []byte("body"))
 				// A second load replaces the index entry, so first is no longer current.
-				reloaded, err := fs.Load(testLibrary, "my-note")
+				reloaded, err := fs.Load(testLibrary, first.Key())
 				if err != nil {
 					t.Fatalf("Load: %v", err)
 				}
@@ -1259,7 +1320,7 @@ func TestAppendAssetRefusesWhatIsNotAnAssetKey(t *testing.T) {
 			if _, err := fs.AppendAsset(testLibrary, "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a77", "a.jsonl", []byte("x")); err == nil {
 				t.Error("AppendAsset to an unknown owner succeeded")
 			}
-			if body, _ := os.ReadFile(filepath.Join(fs.Root(), "store", "my-note", uuid+tc.ext)); string(body) != "body" {
+			if body, _ := os.ReadFile(filepath.Join(mustDocDir(t, fs, uuid), uuid+tc.ext)); string(body) != "body" {
 				t.Errorf("content file = %q", body)
 			}
 		})

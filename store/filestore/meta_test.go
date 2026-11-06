@@ -150,12 +150,13 @@ func TestListingReadsNoMoreThanTheHeadOfAnAsset(t *testing.T) {
 		t.Fatal(err)
 	}
 	fs.PrepareCategory(cat)
-	_, err = fs.CreateTyped(cat, "my-note", store.TypeBlock, map[string]string{store.MetaKeyKind: "k"}, []byte("body"))
+	ms, err := fs.CreateTyped(cat, "my-note", store.TypeBlock, map[string]string{store.MetaKeyKind: "k"}, []byte("body"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	dir, _ := fs.DocDirByUUID(ms.Key())
 	large := bytes.Repeat([]byte("{\"stroke\":1}\n"), 1<<18)
-	if err := os.WriteFile(filepath.Join(fs.Root(), "store", "my-note", "strokes.jsonl"), large, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "strokes.jsonl"), large, 0o644); err != nil {
 		t.Fatal(err)
 	}
 

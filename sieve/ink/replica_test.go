@@ -128,7 +128,8 @@ func (rig *replicaRig) container() *domain.BlockContainer {
 
 // dir is a container's directory.
 func (rig *replicaRig) dir(c *domain.BlockContainer) string {
-	return filepath.Join(rig.st.Root(), "testhost", domain.Blocks.Key, c.UUID())
+	dir, _ := rig.st.DocDirByUUID(c.UUID())
+	return dir
 }
 
 // asset reads an asset of c from disk.
