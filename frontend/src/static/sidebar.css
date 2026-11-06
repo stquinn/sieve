@@ -200,3 +200,95 @@
 
 .ink-tree__item:hover .ink-tree__meta,
 .ink-tree__item[data-active] .ink-tree__meta { color: var(--theme-textDim); }
+
+/* ── Buffers: the tree's last item, what is written and not yet filed ── */
+
+.buffers-tree {
+  display: flex;
+  flex-direction: column;
+  margin-top: 0.5rem;
+  border-top: 1px dashed var(--theme-border2);
+}
+
+.buffers-tree__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  height: 28px;
+  flex-shrink: 0;
+  padding-right: 1rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  color: var(--theme-muted);
+}
+
+.buffers-tree__row:hover { background: var(--theme-bgAlt); color: var(--theme-textDim); }
+
+.buffers-tree__chevron {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.buffers-icon { flex-shrink: 0; }
+
+.buffers-tree__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 15px;
+  font-weight: 600;
+  font-style: italic;
+}
+
+.buffers-tree__count {
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 0 6px;
+  border: 1px dashed var(--theme-border2);
+  border-radius: 8px;
+}
+
+.sidebar__file.buffers-tree__item {
+  position: relative;
+  text-align: left;
+  gap: 8px;
+  color: var(--theme-muted);
+}
+
+.sidebar__file.buffers-tree__item:hover { color: var(--theme-textDim); }
+
+.buffers-tree__item .buffers-icon { opacity: 0.7; }
+
+.sidebar__file.buffers-tree__item[data-active] {
+  background: var(--theme-bgAlt);
+  color: var(--theme-text);
+  box-shadow: inset 2px 0 0 var(--theme-accentPrimary);
+}
+
+.buffers-tree__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 500;
+  font-style: italic;
+}
+
+.buffers-tree__item[data-active] .buffers-tree__label { font-weight: 600; }
+
+.buffers-tree__trash {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--theme-accentRed);
+}

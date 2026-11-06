@@ -18,6 +18,7 @@ import (
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 
+	"sieve/ident"
 	"sieve/sieve"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
@@ -607,6 +608,76 @@ func TestInkSidebar_RendersEachState(t *testing.T) {
 				if strings.Contains(out.String(), absent) {
 					t.Errorf("%q in\n%s", absent, out.String())
 				}
+			}
+		})
+	}
+}
+
+// The tree's Buffers item is always a row that expands and collapses as a folder's does, through
+// the folder patch under its own id, and counts what it holds. Expanded it lists every buffer the
+// search answers, in the search's order, or says there are none; each row is named by the hit's
+// title, opens its buffer through the workspace's open, carries a note's menu context with the
+// intent its open tab knows, is not draggable, and the active tab's row is marked.
+func TestBuffersSidebar_RendersEachState(t *testing.T) {
+	h, _ := newTestSettingsHandler(t)
+	scratch, later := ident.New(), ident.New()
+	hits := []domain.Candidate{
+		{URI: domain.NewContainerAddress(scratch).String(), Title: "Untitled 3", Kind: "buffer"},
+		{URI: domain.NewContainerAddress(later).String(), Title: "Auth sketch", Kind: "buffer"},
+	}
+	collapsed := domain.Session{Tabs: []domain.Tab{{ID: later, UserIntent: "trash"}, {ID: "other"}}, ActiveIdx: 0}
+	expanded := collapsed
+	expanded.OpenFolders = []string{"a-folder", buffersTreeID}
+	row := []string{">Buffers<", `hx-patch="/api/folder/buffers"`, `hx-target="#htmx-sidebar"`}
+	for _, tc := range []struct {
+		name    string
+		hits    []domain.Candidate
+		session domain.Session
+		want    []string
+		absent  []string
+	}{
+		{"collapsed", hits, collapsed,
+			append([]string{`aria-expanded="false"`, `{"open": true}`, `buffers-tree__count">2<`}, row...),
+			[]string{"data-ctx-id", "No buffers"}},
+		{"none", nil, expanded,
+			append([]string{`aria-expanded="true"`, `{"open": false}`, "No buffers", `buffers-tree__count">0<`}, row...),
+			[]string{"data-ctx-id"}},
+		{"buffers", hits, expanded, []string{
+			`window.sieveWorkspace.open('` + scratch + `')`, `title="Untitled 3"`, `title="Auth sketch"`, `padding-left:2.50rem;`,
+			`data-ctx-id="` + scratch + `"
+  data-ctx-type="note"
+  data-ctx-name="Untitled 3"
+  data-ctx-intent=""
+  data-ctx-is-dir="false"
+  style=`,
+			`data-ctx-id="` + later + `"
+  data-ctx-type="note"
+  data-ctx-name="Auth sketch"
+  data-ctx-intent="trash"
+  data-ctx-is-dir="false"
+  data-active`,
+			"buffers-tree__trash",
+		}, []string{"No buffers", "draggable"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var v buffersSidebarView
+			v.show(tc.hits, tc.session)
+			var out strings.Builder
+			if err := h.Tmpl.ExecuteTemplate(&out, "buffers_sidebar.html", v); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("no %q in\n%s", want, out.String())
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(out.String(), absent) {
+					t.Errorf("%q in\n%s", absent, out.String())
+				}
+			}
+			if tc.name == "buffers" && strings.Index(out.String(), scratch) > strings.Index(out.String(), later) {
+				t.Error("the rows are not in the search's order")
 			}
 		})
 	}

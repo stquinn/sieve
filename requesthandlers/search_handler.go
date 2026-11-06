@@ -27,12 +27,12 @@ func (h *SearchHandler) RegisterPaths(r chi.Router) {
 }
 
 // sidebarCriteria is what the sidebar search asks for: what the sidebar shows —
-// filed notes and notebooks — whose name, summary, tags or content hold q.
+// filed notes, notebooks and buffers — whose name, summary, tags or content hold q.
 func (h *SearchHandler) sidebarCriteria(q string) domain.SearchCriteria {
 	return domain.SearchCriteria{
 		Terms:  q,
 		Fields: domain.SearchFields{domain.SearchName, domain.SearchSummary, domain.SearchTags, domain.SearchContent},
-		Kinds:  []string{string(domain.KindNote), ink.KindDigitalNote},
+		Kinds:  []string{string(domain.KindNote), ink.KindDigitalNote, string(domain.KindBuffer)},
 	}
 }
 

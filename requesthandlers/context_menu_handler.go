@@ -73,6 +73,7 @@ func (h *ContextMenuHandler) handleIntent(w http.ResponseWriter, r *http.Request
 			}
 			session.Tabs[i].Status = status
 			session.Tabs[i].DisplayName = doc.Meta().DisplayName()
+			session.Tabs[i].UserIntent = ""
 			if doc.Meta().UserIntent() != nil {
 				session.Tabs[i].UserIntent = *doc.Meta().UserIntent()
 			}
