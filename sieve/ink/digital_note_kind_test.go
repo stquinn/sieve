@@ -28,6 +28,21 @@ func metaOf(t *testing.T, st *filestore.FileStore, uuid string) map[string]inter
 	return meta
 }
 
+// dropWhiteboard rewrites container uuid's .meta without note_whiteboard, as a face saved before
+// that field existed.
+func dropWhiteboard(t *testing.T, st *filestore.FileStore, uuid string) {
+	t.Helper()
+	meta := metaOf(t, st, uuid)
+	delete(meta["extra"].(map[string]interface{}), "note_whiteboard")
+	raw, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(st.Root(), "testhost", domain.Blocks.Key, uuid, ".meta"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDigitalNoteKind_AttrsFaceAndSourceThroughAContainer(t *testing.T) {
 	kind := NewDigitalNoteKind()
 	for _, tc := range []struct {

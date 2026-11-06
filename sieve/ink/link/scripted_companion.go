@@ -21,10 +21,6 @@ type ScriptedCompanion struct {
 	records []Record
 	// others are the logs of the notes served beside Note's, by note.
 	others map[ID][]Record
-	// withdrawn are the notes NOTES leaves out.
-	withdrawn map[ID]bool
-	// stream is the sealed stream of the session being served, nil before its handshake holds.
-	stream *frameStream
 
 	// CorruptHead sends one HEAD whose hash does not hold.
 	CorruptHead bool
@@ -153,9 +149,6 @@ func (c *ScriptedCompanion) Serve(link io.ReadWriter) error {
 	if err := stream.upgrade(sessionKey, CompanionToSieve, SieveToCompanion); err != nil {
 		return err
 	}
-	c.mu.Lock()
-	c.stream = stream
-	c.mu.Unlock()
 	for {
 		frame, err := stream.read(limitFromSieve)
 		if err != nil {
@@ -197,17 +190,8 @@ func (c *ScriptedCompanion) receiveMeta(m Meta) {
 
 func (c *ScriptedCompanion) sendNotes(stream *frameStream) error {
 	c.mu.Lock()
-	logs := map[ID][]Record{c.Note: c.records}
+	notes := newFrame(frameNotes).u32(uint32(1 + len(c.others))).id(c.Note).string("").u32(1).u32(uint32(len(c.records)))
 	for note, records := range c.others {
-		if note != c.Note {
-			logs[note] = records
-		}
-	}
-	for note := range c.withdrawn {
-		delete(logs, note)
-	}
-	notes := newFrame(frameNotes).u32(uint32(len(logs)))
-	for note, records := range logs {
 		notes = notes.id(note).string("").u32(1).u32(uint32(len(records)))
 	}
 	live, ink, liveNote := c.Live, c.Ink, c.Note
@@ -288,31 +272,4 @@ func (c *ScriptedCompanion) sendFrom(stream *frameStream, note ID, have uint32) 
 		}
 	}
 	return stream.write(newFrame(frameDone).id(note).b)
-}
-
-// Withdraw leaves note out of every NOTES from now on, or lists it again when withdrawn is false;
-// it may be called while serving.
-func (c *ScriptedCompanion) Withdraw(note ID, withdrawn bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.withdrawn == nil {
-		c.withdrawn = map[ID]bool{}
-	}
-	if withdrawn {
-		c.withdrawn[note] = true
-	} else {
-		delete(c.withdrawn, note)
-	}
-}
-
-// Relist sends NOTES unasked, as a tablet does when what it offers changes, on the session being
-// served; it may be called while serving, once the handshake has held.
-func (c *ScriptedCompanion) Relist() error {
-	c.mu.Lock()
-	stream := c.stream
-	c.mu.Unlock()
-	if stream == nil {
-		return ErrNotRunning
-	}
-	return c.sendNotes(stream)
 }

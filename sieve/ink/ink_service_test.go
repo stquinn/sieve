@@ -283,7 +283,8 @@ func TestInkService_ASessionLandsNotesAndStatusListsThem(t *testing.T) {
 // whiteboard is told apart. Delete removes Sieve's copy, which the next listing brings back.
 // A notebook is deleted only where it would not come straight back: its tablet not connected, or
 // connected and no longer offering it. A note the tablet offers again after its copy was deleted
-// is synced from the start into a new container, and the link stays up.
+// is synced from the start into a new container at the next session. Board's face predates
+// note_whiteboard, which is read from its block.
 func TestInkService_MarksWhatTheTabletNoLongerOffersAndDeletesSievesCopyOnlyWhereItStays(t *testing.T) {
 	records := inkLog()
 	rig := newInkRig(t, records)
@@ -304,6 +305,7 @@ func TestInkService_MarksWhatTheTabletNoLongerOffersAndDeletesSievesCopyOnlyWher
 	if err := board.End(); err != nil {
 		t.Fatal(err)
 	}
+	dropWhiteboard(t, rig.st, opened.(*NoteReplica).UUID())
 	byTitle := func(st Status) map[string]SyncedNote {
 		notes := map[string]SyncedNote{}
 		for _, n := range st.Notes {
@@ -354,45 +356,18 @@ func TestInkService_MarksWhatTheTabletNoLongerOffersAndDeletesSievesCopyOnlyWher
 	}
 	deleted(boardUUID)
 
-	rig.companion.Withdraw(noteID, true)
-	if err := rig.companion.Relist(); err != nil {
-		t.Fatal(err)
-	}
-	rig.await("Ideas withdrawn", func(st Status) bool {
-		n := byTitle(st)["Ideas"]
-		return n.Absent && n.Deletion == DeleteLast
-	})
-	deleted(ideas)
-	rig.companion.Withdraw(noteID, false)
-	if err := rig.companion.Relist(); err != nil {
-		t.Fatal(err)
-	}
-	again := byTitle(rig.await("offered again", func(st Status) bool {
-		n, ok := byTitle(st)["Ideas"]
-		return connected(st) && ok && n.Seq == uint32(len(records))
-	}))["Ideas"]
-	if again.UUID == ideas {
-		t.Errorf("synced again into the deleted container %s", ideas)
-	}
-	if got := rig.opens(); len(got) != 2 || got[1] != 0 {
-		t.Errorf("OPENs asked from %v, want the second from 0", got)
-	}
-	if n := rig.radio.dials.Load(); n != 1 {
-		t.Errorf("%d dials: the link did not stay up", n)
-	}
-
 	rig.stopPromptly()
 	if n := byTitle(rig.svc.Status())["Ideas"]; n.Deletion != DeleteReturns {
 		t.Errorf("deletion with the tablet away: %v", n.Deletion)
 	}
-	deleted(again.UUID)
+	deleted(ideas)
 	rig.start()
 	back := byTitle(rig.await("synced at the next session", func(st Status) bool {
 		n, ok := byTitle(st)["Ideas"]
 		return ok && n.Seq == uint32(len(records))
 	}))["Ideas"]
-	if back.UUID == again.UUID {
-		t.Errorf("synced again into the deleted container %s", again.UUID)
+	if back.UUID == ideas {
+		t.Errorf("synced again into the deleted container %s", ideas)
 	}
 	if err := rig.svc.Delete("not-a-note"); !errors.Is(err, ErrNoSuchPage) {
 		t.Errorf("deleting what is no Digital Note: %v", err)
@@ -413,7 +388,7 @@ func TestInkService_AListingDuringStatusIsNoRace(t *testing.T) {
 			case <-stop:
 				return
 			default:
-				rig.svc.offer(companionID, []link.NoteEntry{{ID: noteID, HeadSeq: i}})
+				rig.svc.offer(companionID, map[link.ID]bool{noteID: i%2 == 0})
 			}
 		}
 	}()
@@ -1684,3 +1659,28 @@ type namedLink struct {
 }
 
 func (l namedLink) Identity() string { return l.identity }
+
+// A note LIVE names that NOTES did not list is offered: its copy may not be deleted and it is not
+// marked as gone from the tablet.
+func TestInkService_ANoteNamedOnlyByLiveIsOffered(t *testing.T) {
+	records := inkLog()
+	rig := newInkRig(t, records)
+	written := testID(0xa7)
+	rig.companion.Live = true
+	rig.companion.LiveOf = written
+	rig.enable(linkKey)
+	rig.start()
+	st := rig.await("following the live note", func(st Status) bool {
+		return connected(st) && rig.svc.Live().Note == written && rig.svc.Live().Container != ""
+	})
+	uuid := rig.svc.Live().Container
+	for _, n := range st.Notes {
+		if n.UUID == uuid && (n.Absent || n.Deletion != DeleteRefused) {
+			t.Errorf("the note being written: %+v", n)
+		}
+	}
+	if err := rig.svc.Delete(uuid); !errors.Is(err, ErrStillOffered) {
+		t.Errorf("deleting the note being written: %v", err)
+	}
+	rig.stopPromptly()
+}

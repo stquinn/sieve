@@ -123,9 +123,9 @@ func (k DigitalNoteKind) Face(b domain.SieveBlock) map[string]string {
 	}
 }
 
-// Lifted is meta, a note's .meta as found, with every field of the face that it lacks read from the
-// block load gives: a face saved before that field existed. meta itself is returned when it lacks
-// none, and when load fails.
+// Lifted is meta, a note's .meta as found, with note_whiteboard read from the block load gives
+// when meta lacks it: a face saved before that field existed. meta itself is returned when it has
+// note_whiteboard, and when load fails.
 func (k DigitalNoteKind) Lifted(meta map[string]string, load func() (domain.SieveBlock, error)) map[string]string {
 	if _, ok := meta["note_whiteboard"]; ok {
 		return meta
@@ -135,11 +135,7 @@ func (k DigitalNoteKind) Lifted(meta map[string]string, load func() (domain.Siev
 		return meta
 	}
 	lifted := maps.Clone(meta)
-	for key, v := range k.Face(b) {
-		if _, ok := lifted[key]; !ok {
-			lifted[key] = v
-		}
-	}
+	lifted["note_whiteboard"] = k.Face(b)["note_whiteboard"]
 	return lifted
 }
 

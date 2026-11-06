@@ -691,13 +691,9 @@ func (s *InkService) sendDescriptions(run *sessionRun) {
 	}
 }
 
-// offer records notes as what companion offers this Sieve now, and tells the invalidator when a
+// offer records listed as what companion offers this Sieve now, and tells the invalidator when a
 // later listing changes it; the session being connected tells it of the first.
-func (s *InkService) offer(companion string, notes []link.NoteEntry) {
-	listed := make(map[link.ID]bool, len(notes))
-	for _, n := range notes {
-		listed[n.ID] = true
-	}
+func (s *InkService) offer(companion string, listed map[link.ID]bool) {
 	s.mu.Lock()
 	prior, had := s.offered[companion]
 	if s.offered == nil {
@@ -740,11 +736,14 @@ func (s *InkService) Delete(uuid string) error {
 	if run.deletion(NewDigitalNoteKind().Face(c.Block())) == DeleteRefused {
 		return fmt.Errorf("%w: %s", ErrStillOffered, uuid)
 	}
-	if err := s.containers.Delete(c); err != nil {
-		return err
-	}
 	if run != nil {
-		run.replicas.forget(uuid)
+		restore := run.replicas.forget(uuid)
+		if err := s.containers.Delete(c); err != nil {
+			restore()
+			return err
+		}
+	} else if err := s.containers.Delete(c); err != nil {
+		return err
 	}
 	if _, err := s.settings.CloseTabs(func(t domain.Tab) bool { return t.ID == uuid }); err != nil {
 		logger.Error("ink: closing a deleted note's tabs", "err", err.Error())
@@ -826,7 +825,8 @@ func (s *InkService) wait(ctx context.Context, d time.Duration) bool {
 }
 
 // session dials once and, when a companion answers, runs one session over it to its end. It
-// reports whether the companion refused this Sieve's key or could not prove it.
+// reports whether the companion refused this Sieve's key or could not prove it. A session with the tablet
+// a held note came from tells the invalidator as it starts: that note may not be deleted from then.
 func (s *InkService) session(ctx context.Context) bool {
 	s.mu.Lock()
 	problem := s.state.Problem
@@ -860,6 +860,9 @@ func (s *InkService) session(ctx context.Context) bool {
 	s.run = run
 	delete(s.offered, l.Identity())
 	s.mu.Unlock()
+	if held, err := s.containers.Find(KindDigitalNote, map[string]string{"note_companion": l.Identity()}); err == nil && len(held) > 0 {
+		s.invalidate()
+	}
 	stop := context.AfterFunc(ctx, func() { l.Close() })
 	err = run.session.Run()
 	stop()
@@ -1020,6 +1023,9 @@ type sessionRun struct {
 	// listed is the head of each note the companion listed on this connection, by note.
 	listedMu sync.Mutex
 	listed   map[link.ID]uint32
+	// named are the notes LIVE named on this connection, which the companion offers as it offers
+	// what it listed.
+	named map[link.ID]bool
 
 	connected bool
 	// pending are the notes the catch-up has still to bring to their heads.
@@ -1047,8 +1053,9 @@ func (r *sessionRun) Notes(notes []link.NoteEntry) {
 	for _, n := range notes {
 		r.listed[n.ID] = n.HeadSeq
 	}
+	offered := r.offeredLocked()
 	r.listedMu.Unlock()
-	r.svc.offer(r.link.Identity(), notes)
+	r.svc.offer(r.link.Identity(), offered)
 	go r.svc.sendDescriptions(r)
 	if r.connected {
 		return
@@ -1072,10 +1079,45 @@ func (r *sessionRun) deletion(face map[string]string) Deletion {
 	source, err := link.ParseID(face["note_source_id"])
 	r.listedMu.Lock()
 	defer r.listedMu.Unlock()
-	if _, listed := r.listed[source]; r.listed == nil || (err == nil && listed) {
+	if _, listed := r.listed[source]; r.listed == nil || (err == nil && (listed || r.named[source])) {
 		return DeleteRefused
 	}
 	return DeleteLast
+}
+
+// offeredLocked is every note the companion offers on this connection: those it listed and those
+// LIVE named. r.listedMu is held.
+func (r *sessionRun) offeredLocked() map[link.ID]bool {
+	offered := make(map[link.ID]bool, len(r.listed)+len(r.named))
+	for note := range r.listed {
+		offered[note] = true
+	}
+	for note := range r.named {
+		offered[note] = true
+	}
+	return offered
+}
+
+// name records note as named by LIVE, and so offered; once the companion has listed, the service
+// is told what it now offers.
+func (r *sessionRun) name(note link.ID) {
+	r.listedMu.Lock()
+	if r.named[note] {
+		r.listedMu.Unlock()
+		return
+	}
+	if r.named == nil {
+		r.named = map[link.ID]bool{}
+	}
+	r.named[note] = true
+	var offered map[link.ID]bool
+	if r.listed != nil {
+		offered = r.offeredLocked()
+	}
+	r.listedMu.Unlock()
+	if offered != nil {
+		r.svc.offer(r.link.Identity(), offered)
+	}
 }
 
 // listedHead is the head the companion listed note at on this connection; false when it did not
@@ -1130,6 +1172,7 @@ func (r *sessionRun) Done(note link.ID, _ uint32, records int) {
 func (r *sessionRun) Live(note, page link.ID) {
 	live := LiveNote{Note: note, Page: page}
 	if note != (link.ID{}) {
+		r.name(note)
 		uuid, err := r.replicas.UUID(note)
 		if err != nil {
 			logger.Warn("ink: finding the live note's container", "note", note.String(), "err", err.Error())

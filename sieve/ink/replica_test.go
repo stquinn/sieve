@@ -2,6 +2,7 @@ package ink
 
 import (
 	"bytes"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -563,5 +564,46 @@ func TestReplica_WritesOnTheTimerAndReportsAFailedWrite(t *testing.T) {
 	}
 	if err := rig.replicas.End(); err == nil {
 		t.Error("End hid a failed write")
+	}
+}
+
+// A forgotten replica takes nothing and is not ended; restored, it takes records again and its
+// queue is written as if it had never been forgotten.
+func TestReplica_ForgetStopsWritesAndRestorePutsThemBack(t *testing.T) {
+	records := strokesLog(2)
+	rig := newReplicaRig(t, records)
+	rig.replicas.flushAfter = time.Hour
+	opened, err := rig.replicas.Open(noteID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := opened.(*NoteReplica)
+	appendRecord := func(rec link.Record) error {
+		body, err := rec.Body()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r.Append(rec, body)
+	}
+	if err := appendRecord(records[0]); err != nil {
+		t.Fatal(err)
+	}
+	restore := rig.replicas.forget(r.UUID())
+	if err := appendRecord(records[1]); !errors.Is(err, errForgotten) {
+		t.Errorf("an Append to a forgotten replica: %v", err)
+	}
+	restore()
+	if err := appendRecord(records[1]); err != nil {
+		t.Fatalf("an Append after restore: %v", err)
+	}
+	c, err := rig.containers.Load(r.UUID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rig.replicas.End(); err != nil {
+		t.Fatal(err)
+	}
+	if got := rig.assetOrNil(c, StrokesKey); !bytes.Equal(got, jsonlOf(t, records[:2])) {
+		t.Errorf("asset after restore and End: %q", got)
 	}
 }
