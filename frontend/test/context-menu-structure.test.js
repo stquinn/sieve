@@ -884,7 +884,7 @@ describe('the notebook and Live menus', () => {
     delete (/** @type {any} */ (window)).sieveShowInFiles
   })
 
-  it('Delete on a notebook the tablet still offers is disabled and says why: a row from its own word, a tab from its row\'s', () => {
+  it('Delete on a notebook the tablet still offers is disabled and says why: a row from its own word, a tab from the Notebooks item\'s marker, expanded or collapsed', () => {
     const why = 'The tablet still has this notebook.'
     const refusedDelete = (/** @type {object} */ context) => itemNamed(openOn(context), 'Delete Notebook...')
     const row = refusedDelete({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: false, deleteRefused: why })
@@ -892,13 +892,14 @@ describe('the notebook and Live menus', () => {
     expect([row.querySelector('.ctx-item__hint')?.textContent, row.title]).toEqual([why, why])
 
     expect(refusedDelete({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: true }).hasAttribute('disabled')).toBe(false)
-    const sidebarRow = document.createElement('button')
-    sidebarRow.setAttribute('data-ink-note', 'n1')
-    sidebarRow.setAttribute('data-ctx-delete-refused', why)
-    document.body.appendChild(sidebarRow)
+    const marker = document.createElement('span')
+    marker.hidden = true
+    marker.setAttribute('data-ink-refused', 'n1')
+    marker.setAttribute('data-ctx-delete-refused', why)
+    document.body.appendChild(marker)
     const tab = refusedDelete({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: true })
     expect([tab.hasAttribute('disabled'), tab.querySelector('.ctx-item__hint')?.textContent]).toEqual([true, why])
-    sidebarRow.remove()
+    marker.remove()
   })
 
   it('Refresh name and summary posts the describe route and says it is naming, or the route\'s words', async () => {

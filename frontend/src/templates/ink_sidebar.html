@@ -23,6 +23,7 @@
   <span class="ink-tree__name">Notebooks</span>
   {{if and (not .Open) .Live}}{{if not .Live.Waiting}}<span class="ink-tree__live-dot" data-ink-live-dot title="The tablet is writing"></span>{{end}}{{end}}
 </button>
+{{range .Notes}}{{if .DeleteRefused}}<span hidden data-ink-refused="{{.UUID}}" data-ctx-delete-refused="{{.DeleteRefused}}"></span>{{end}}{{end}}
 {{if .Open}}
 {{with .Live}}
 <button

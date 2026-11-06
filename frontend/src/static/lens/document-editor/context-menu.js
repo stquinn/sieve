@@ -983,13 +983,13 @@ import { selectNextScope } from './interaction-policy.js'
   }
 
   // Why Delete is refused on a notebook, "" when it is allowed: the row's own
-  // word, or on a tab the word of its row in the sidebar's Notebooks list, which
-  // is redrawn whenever ink changes. A tab with no row there leaves it to the
-  // delete dialog, which asks the server.
+  // word, or on a tab the word of the Notebooks item's refusal marker for it,
+  // which the item carries expanded or collapsed and redraws whenever ink
+  // changes. Where the item is not shown the delete dialog asks the server.
   function notebookDeleteRefused(ctx) {
     if (!ctx.isTab) return ctx.deleteRefused || ''
-    var row = document.querySelector('[data-ink-note="' + ctx.id + '"]')
-    return (row && row.getAttribute('data-ctx-delete-refused')) || ''
+    var marker = document.querySelector('[data-ink-refused="' + ctx.id + '"]')
+    return (marker && marker.getAttribute('data-ctx-delete-refused')) || ''
   }
 
   // A synced notebook, as a row of the tree or as a tab: its own actions, every
