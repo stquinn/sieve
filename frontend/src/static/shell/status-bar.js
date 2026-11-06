@@ -4,14 +4,23 @@
 // editor. It owns the three JS-written slots of the static .status-bar DOM:
 // __save (+ the #meta-dirty-dot), __blockid, __stats, and REFLECTS the active
 // editor by subscribing to its `stats` stream, re-pointing on
-// ws.onActiveTabChanged. It is also the sole consumer of two DOM CustomEvents
-// whose producers are not migrated: sieve:meta-dirty and editor:blockhover.
+// ws.onActiveTabChanged. It is also the sole consumer of three DOM CustomEvents
+// whose producers are not migrated: sieve:meta-dirty, editor:blockhover and
+// sieve:status-message, which it says in its __message slot for
+// StatusBar.MESSAGE_MS.
 //
 // The META panel (#htmx-meta-panel) stays HTMX-owned and untouched here.
 
 export class StatusBar {
+  /** How long a status message stays, in ms. */
+  static MESSAGE_MS = 6000
+
   /** @type {import('./workspace.js').SieveWorkspace} */
   #ws
+  /** @type {HTMLElement|null} .status-bar__message */
+  #messageSlot = null
+  /** @type {ReturnType<typeof setTimeout>|null} clears the message shown */
+  #messageTimer = null
   /** @type {HTMLElement|null} .status-bar__save */
   #saveSlot = null
   /** @type {HTMLElement|null} .status-bar__blockid */
@@ -31,6 +40,8 @@ export class StatusBar {
     this.#saveSlot = document.querySelector('.status-bar__save')
     this.#blockIdSlot = document.querySelector('.status-bar__blockid')
     this.#statsSlot = document.querySelector('.status-bar__stats')
+    this.#messageSlot = document.querySelector('.status-bar__message')
+    document.addEventListener('sieve:status-message', (e) => this.#say(/** @type {CustomEvent} */ (e).detail))
     document.addEventListener('sieve:meta-dirty', (e) => this.#onDirty(/** @type {CustomEvent} */ (e).detail))
     document.addEventListener('editor:blockhover', (e) => this.#onBlockHover(/** @type {CustomEvent} */ (e).detail))
     if (this.#blockIdSlot) this.#blockIdSlot.addEventListener('click', () => this.#copyBlockId())
@@ -81,6 +92,26 @@ export class StatusBar {
       span.textContent = cell.text
       return span
     }))
+  }
+
+  /**
+   * Shows a message in the __message slot, replacing any shown, and clears it
+   * StatusBar.MESSAGE_MS later.
+   * @param {{ text?: string, error?: boolean }|null} detail
+   */
+  #say(detail) {
+    const slot = this.#messageSlot
+    const text = String((detail && detail.text) || '')
+    if (!slot || !text) return
+    if (this.#messageTimer) clearTimeout(this.#messageTimer)
+    slot.textContent = text
+    slot.title = text
+    slot.style.color = detail && detail.error ? 'var(--theme-accentRed)' : 'var(--theme-textDim)'
+    this.#messageTimer = setTimeout(() => {
+      slot.textContent = ''
+      slot.title = ''
+      this.#messageTimer = null
+    }, StatusBar.MESSAGE_MS)
   }
 
   /**

@@ -11,7 +11,7 @@
     <button id="settings-tab-btn-diagrams" class="settings-tab-btn {{if eq .LastSettingsPanel "diagrams"}}active{{end}}" onclick="switchSettingsTab(this, 'diagrams')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "diagrams"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "diagrams"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Diagrams</button>
     <button id="settings-tab-btn-logs" class="settings-tab-btn {{if eq .LastSettingsPanel "logs"}}active{{end}}" onclick="switchSettingsTab(this, 'logs')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "logs"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "logs"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Logs</button>
     <button id="settings-tab-btn-spelling" class="settings-tab-btn {{if eq .LastSettingsPanel "spelling"}}active{{end}}" onclick="switchSettingsTab(this, 'spelling')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "spelling"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "spelling"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Spelling</button>
-    <button id="settings-tab-btn-ink" class="settings-tab-btn {{if eq .LastSettingsPanel "ink"}}active{{end}}" onclick="switchSettingsTab(this, 'ink')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "ink"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "ink"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Ink</button>
+    <button id="settings-tab-btn-ink" class="settings-tab-btn {{if eq .LastSettingsPanel "ink"}}active{{end}}" onclick="switchSettingsTab(this, 'ink')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "ink"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "ink"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Notebooks</button>
   </div>
 
   <!-- Content -->
@@ -509,7 +509,7 @@ if (x &lt;= y) return "ok";</code>
     </div>
 
     <div class="settings-tab-content" id="settings-tab-ink" style="display: {{if eq .LastSettingsPanel "ink"}}block{{else}}none{{end}};">
-      <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1.5rem;">Ink</h3>
+      <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1.5rem;">Notebooks</h3>
       <div id="ink-status" hx-get="/ui/views/settings/ink" hx-trigger="load, sieve:invalidate-ink from:document" hx-target="this" hx-swap="innerHTML" hx-params="none"></div>
     </div>
     </div><!-- /settings-scroll -->

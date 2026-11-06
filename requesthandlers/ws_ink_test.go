@@ -157,6 +157,20 @@ func newInkWireOver(t *testing.T, records []link.Record, st store.Store) *inkWir
 	return w
 }
 
+// routes serves the Ink handler's routes over the wire's services.
+func (w *inkWire) routes() *httptest.Server {
+	w.t.Helper()
+	tmpl, err := NewTemplates(os.DirFS(".."))
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	r := chi.NewRouter()
+	(&InkHandler{ServiceProvider: w.sp, Tmpl: tmpl}).RegisterPaths(r)
+	srv := httptest.NewServer(r)
+	w.t.Cleanup(srv.Close)
+	return srv
+}
+
 // untilNotLive reads c until a live-page frame says nothing is live.
 func untilNotLive(t *testing.T, c *websocket.Conn) {
 	t.Helper()
@@ -468,6 +482,9 @@ func TestWS_Ink_TheLiveViewMirrorsTheLiveNoteBesideItsOwnSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { mirrored, _ := w.sp.Ink.LiveView().Mirrors(); return mirrored == uuid }, "the Live view to mirror the note")
+	if status, body := do(t, http.MethodGet, w.routes().URL+"/api/ink/live/note", "", ""); status != http.StatusOK || body != `{"note":"`+uuid+`"}`+"\n" {
+		t.Errorf("the Live view's note is answered %d %s", status, body)
+	}
 
 	own, live := dialWS(t, w.srv, uuid), dialWS(t, w.srv, view)
 	send(t, live, `{"type":"load","opId":"op-load"}`)
@@ -885,18 +902,20 @@ func TestWS_InkOpenOnTablet_AnswersWithWhatCameOfIt(t *testing.T) {
 	w.session(records)
 	uuid := w.container()
 	ours := w.sp.Ink
+	routes := w.routes()
 	for _, c := range []struct {
 		name    string
 		answer  link.OpenNoteAnswer
 		connect string
 		outcome string
 		reason  string
+		message string
 	}{
-		{"live", link.OpenNoteAnswer{}, "companion", protocol.InkOpenOpened, ""},
-		{"not in front", link.OpenNoteAnswer{Refuse: link.RefuseNotForeground}, "companion", protocol.InkOpenRefused, link.RefuseNotForeground},
-		{"not offered", link.OpenNoteAnswer{Refuse: link.RefuseNotOffered}, "companion", protocol.InkOpenRefused, link.RefuseNotOffered},
-		{"another tablet", link.OpenNoteAnswer{}, "another-companion", protocol.InkOpenOtherTablet, ""},
-		{"no tablet", link.OpenNoteAnswer{}, "", protocol.InkOpenNoTablet, ""},
+		{"live", link.OpenNoteAnswer{}, "companion", protocol.InkOpenOpened, "", "Opened on "},
+		{"not in front", link.OpenNoteAnswer{Refuse: link.RefuseNotForeground}, "companion", protocol.InkOpenRefused, link.RefuseNotForeground, "SieveInk is not open on the tablet"},
+		{"not offered", link.OpenNoteAnswer{Refuse: link.RefuseNotOffered}, "companion", protocol.InkOpenRefused, link.RefuseNotOffered, "not shared with this Sieve"},
+		{"another tablet", link.OpenNoteAnswer{}, "another-companion", protocol.InkOpenOtherTablet, "", "Connected to another tablet"},
+		{"no tablet", link.OpenNoteAnswer{}, "", protocol.InkOpenNoTablet, "", "No tablet connected"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w.companion.SetOpenNoteAnswer(c.answer)
@@ -924,15 +943,31 @@ func TestWS_InkOpenOnTablet_AnswersWithWhatCameOfIt(t *testing.T) {
 					t.Errorf("the tablet was asked for %+v", asked)
 				}
 			}
+
+			status, body := do(t, http.MethodPost, routes.URL+"/api/ink/notes/"+uuid+"/open-on-tablet", "", "")
+			var answer protocol.InkOpenOnTabletResponse
+			if err := json.Unmarshal([]byte(body), &answer); status != http.StatusOK || err != nil || answer.Outcome != c.outcome ||
+				answer.Reason != c.reason || !strings.Contains(answer.Message, c.message) {
+				t.Errorf("the route answered %d %s, want %s %q saying %q", status, body, c.outcome, c.reason, c.message)
+			}
+			if c.connect == "companion" {
+				if asked := <-w.companion.OpenNotes; asked != (link.OpenNoteRequest{Note: inkNoteID}) {
+					t.Errorf("the route asked the tablet for %+v, want the page left to it", asked)
+				}
+			}
 		})
 	}
 
-	other := dialWS(t, w.srv, newContainerOnWire(t, w.sp).UUID())
-	send(t, other, `{"type":"ink-open-on-tablet","opId":"op-open"}`)
-	if got := readUntil(t, other, protocol.TypeInkOpenOnTabletResult, 2*time.Second); got["error"] == nil || got["outcome"] != nil {
+	other := newContainerOnWire(t, w.sp).UUID()
+	sock := dialWS(t, w.srv, other)
+	send(t, sock, `{"type":"ink-open-on-tablet","opId":"op-open"}`)
+	if got := readUntil(t, sock, protocol.TypeInkOpenOnTabletResult, 2*time.Second); got["error"] == nil || got["outcome"] != nil {
 		t.Errorf("a code container answered %v", got)
 	}
-	closeAndSettle(other)
+	closeAndSettle(sock)
+	if status, body := do(t, http.MethodPost, routes.URL+"/api/ink/notes/"+other+"/open-on-tablet", "", ""); status != http.StatusNotFound {
+		t.Errorf("the route answered a code container %d %s", status, body)
+	}
 }
 
 // namingImages answers every page of a note with an image address beside its log.
@@ -1040,6 +1075,205 @@ func TestWS_Ink_ANoteIsShownByTheNameSieveGaveIt(t *testing.T) {
 	}
 	if tab := open(); tab.DisplayName != "Kitchen extension planning" {
 		t.Errorf("a named note's tab opened afresh is %q", tab.DisplayName)
+	}
+}
+
+// switchedImages answers every page as namingImages does, or fails with err while it is set.
+type switchedImages struct {
+	mu  sync.Mutex
+	err error
+}
+
+func (i *switchedImages) Image(ctx context.Context, uuid string, page int) (ink.PageImage, error) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.err != nil {
+		return ink.PageImage{}, i.err
+	}
+	return namingImages{}.Image(ctx, uuid, page)
+}
+
+// countingDescriber names every note as namingDescriber does at its tier, counting the notes it
+// describes.
+type countingDescriber struct {
+	mu    sync.Mutex
+	tier  domain.Tier
+	calls int
+}
+
+func (d *countingDescriber) Tier() domain.Tier {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.tier
+}
+
+func (d *countingDescriber) DescribeNote(uuid string, pages []domain.Address) (domain.NoteMetadata, error) {
+	d.mu.Lock()
+	d.calls++
+	d.mu.Unlock()
+	return namingDescriber{}.DescribeNote(uuid, pages)
+}
+
+func (d *countingDescriber) count() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.calls
+}
+
+// A note is named on demand through its socket's ink-describe and through its describe route,
+// named or not: each answers once the naming is submitted, and with why not, in words, when no AI
+// is configured or nothing can draw its pages, submitting nothing. A container that is not a note
+// is refused by both.
+func TestInkDescribe_NamesANoteOnDemandThroughItsSocketAndItsRoute(t *testing.T) {
+	records := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)))
+	w := newInkWire(t, records)
+	w.session(records)
+	note := w.container()
+	images, describer := &switchedImages{}, &countingDescriber{tier: domain.TierSmart}
+	w.sp.InkNamer = ink.NewNoteNamer(w.sp.Ink, images, describer, services.NewJobEngine(nil, 1, nil))
+	routes := w.routes()
+	c := dialWS(t, w.srv, note)
+	defer closeAndSettle(c)
+
+	// ask names the note through door and answers its refusal, "" when it was submitted.
+	ask := func(door, uuid string, sock *websocket.Conn) string {
+		t.Helper()
+		if door == "socket" {
+			send(t, sock, `{"type":"ink-describe","opId":"op-describe"}`)
+			got := readUntil(t, sock, protocol.TypeInkDescribeResult, 5*time.Second)
+			if got["opId"] != "op-describe" {
+				t.Errorf("answered %v", got)
+			}
+			refusal, _ := got["error"].(string)
+			return refusal
+		}
+		status, body := do(t, http.MethodPost, routes.URL+"/api/ink/notes/"+uuid+"/describe", "", "")
+		if status == http.StatusNoContent {
+			return ""
+		}
+		return fmt.Sprintf("%d %s", status, strings.TrimSpace(body))
+	}
+	for _, door := range []string{"socket", "route"} {
+		for _, tc := range []struct {
+			name  string
+			block func()
+			says  string
+		}{
+			{"no AI", func() { describer.mu.Lock(); describer.tier = domain.TierDumb; describer.mu.Unlock() }, "No AI is configured"},
+			{"no window", func() { images.mu.Lock(); images.err = fmt.Errorf("%w: none", ink.ErrNoDrawer); images.mu.Unlock() }, "Open Sieve's window"},
+			{"named", func() {}, ""},
+		} {
+			t.Run(door+"/"+tc.name, func(t *testing.T) {
+				describer.mu.Lock()
+				describer.tier = domain.TierSmart
+				describer.mu.Unlock()
+				images.mu.Lock()
+				images.err = nil
+				images.mu.Unlock()
+				tc.block()
+				before := describer.count()
+				refusal := ask(door, note, c)
+				if tc.says == "" {
+					if refusal != "" {
+						t.Fatalf("refused: %s", refusal)
+					}
+					waitFor(t, func() bool { return describer.count() == before+1 }, "the note to be described")
+					waitFor(t, func() bool {
+						notes := w.sp.Ink.Status().Notes
+						return len(notes) == 1 && notes[0].Name == "Kitchen extension planning"
+					}, "the note to be named")
+					return
+				}
+				if !strings.Contains(refusal, tc.says) || (door == "route" && !strings.HasPrefix(refusal, "409 ")) {
+					t.Errorf("refused %q, want it to say %q", refusal, tc.says)
+				}
+				if got := describer.count(); got != before {
+					t.Errorf("described %d times", got-before)
+				}
+			})
+		}
+	}
+
+	other := newContainerOnWire(t, w.sp).UUID()
+	sock := dialWS(t, w.srv, other)
+	defer closeAndSettle(sock)
+	if refusal := ask("socket", other, sock); !strings.Contains(refusal, "not a notebook") {
+		t.Errorf("a code container's socket was answered %q", refusal)
+	}
+	if refusal := ask("route", other, nil); !strings.HasPrefix(refusal, "404 ") {
+		t.Errorf("a code container's route answered %q", refusal)
+	}
+}
+
+// A notebook's Meta tab shows, read-only, its name and its tablet's title where they differ, its
+// summary, keywords and categories, device, pages, the seq it is synced to and the seq it is
+// described as of, or that it is not yet named, and its uuid, with a button that names it now
+// through its describe route and says what came of that beside itself; it refreshes on the ink
+// invalidation, and History and Assets are not offered. The Live view's tab shows no meta.
+func TestMetaPanel_ShowsANotebooksMetadata(t *testing.T) {
+	records := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)))
+	w := newInkWire(t, records)
+	w.session(records)
+	note := w.container()
+	view := w.sp.Ink.LiveView().UUID()
+	tmpl, err := NewTemplates(os.DirFS(".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := chi.NewRouter()
+	(&MetaHandler{ServiceProvider: w.sp, Tmpl: tmpl, EmitNotesChanged: func() {}}).RegisterPaths(r)
+	views := httptest.NewServer(r)
+	defer views.Close()
+	if err := w.sp.State.SaveSession(domain.Session{Tabs: []domain.Tab{
+		{ID: note, Kind: ink.KindDigitalNote, DisplayName: "Ideas"}, {ID: view, Kind: ink.KindLive, DisplayName: "Live"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	panel := func(uuid, tab string) string {
+		t.Helper()
+		status, body := do(t, http.MethodGet, views.URL+"/ui/views/meta?uuid="+uuid+"&tab="+tab, "", "")
+		if status != http.StatusOK {
+			t.Fatalf("GET meta: %d %s", status, body)
+		}
+		return body
+	}
+	row := func(label, value string) string {
+		return label + `</span>
+  <span class="text-tn-text text-base break-words flex-1">` + value + `</span>`
+	}
+	button := `hx-post="/api/ink/notes/` + note + `/describe"
+      hx-target="this"
+      hx-swap="none"`
+	refresh := `hx-get="/ui/views/meta?uuid=` + note + `&tab=meta" hx-trigger="sieve:invalidate-ink from:document" hx-target="#htmx-meta-panel"`
+	unnamed := panel(note, "history")
+	for _, want := range []string{row("Name", "Ideas"), row("Keywords", "—"), row("Categories", "—"), row("Pages", "1"),
+		row("Synced to", fmt.Sprintf("seq %d", len(records))), row("Described as of", "not yet named"), note, button,
+		">Refresh name and summary<", "data-notebook-describe-status", refresh, `data-active-tab="meta"`} {
+		if !strings.Contains(unnamed, want) {
+			t.Errorf("an unnamed notebook's panel lacks %q:\n%s", want, unnamed)
+		}
+	}
+	for _, absent := range []string{"Tablet title", ">History<", ">Assets<", "Focus count"} {
+		if strings.Contains(unnamed, absent) {
+			t.Errorf("an unnamed notebook's panel shows %q", absent)
+		}
+	}
+
+	if _, err := w.sp.Containers.SaveMeta(note, func(m domain.DocumentMeta) {
+		ink.NewDigitalNoteKind().Describe(m, domain.NoteMetadata{Title: "Kitchen extension planning", Summary: "Plans.",
+			Keywords: []string{"extension", "budget"}, Categories: []string{"Home"}}, 1)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	named := panel(note, "meta")
+	for _, want := range []string{row("Name", "Kitchen extension planning"), row("Tablet title", "Ideas"), "Plans.",
+		">extension<", ">budget<", "data-notebook-categories", ">Home<", row("Described as of", "seq 1")} {
+		if !strings.Contains(named, want) {
+			t.Errorf("a named notebook's panel lacks %q:\n%s", want, named)
+		}
+	}
+	if live := panel(view, "meta"); !strings.Contains(live, "No meta") || strings.Contains(live, "Refresh name and summary") {
+		t.Errorf("the Live view's panel is\n%s", live)
 	}
 }
 

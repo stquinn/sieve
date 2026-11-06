@@ -3120,6 +3120,7 @@ describe('AbstractEditor stats producer (P4.D)', () => {
 // calls). close/closeAll/closeOthers funnel through #closeTabs: a JSON POST to
 // /api/tabs/close applied with htmx.swap, pruning in the afterSettleCallback — so
 // those tests stub fetch + htmx.swap and drive the settle to fire the prune.
+// reorder is fetched and swapped the same way.
 
 describe('SieveWorkspace tab-lifecycle verbs (P2.D facade)', () => {
   let ws
@@ -3187,11 +3188,17 @@ describe('SieveWorkspace tab-lifecycle verbs (P2.D facade)', () => {
     ])
   })
 
-  it('reorder posts to /api/tabs/reorder with from/to values', () => {
-    ws.reorder(2, 0)
-    expect(ajaxCalls).toEqual([
-      { method: 'POST', url: '/api/tabs/reorder', opts: { target: '#htmx-tabbar', swap: 'innerHTML', values: { from: 2, to: 0 } } },
-    ])
+  it('reorder posts from/to to /api/tabs/reorder outside htmx\'s request queue and resolves once the strip has settled', async () => {
+    /** @type {any[]} */ const swaps = []
+    window.htmx.swap = (target, content, swapSpec, swapOptions) => {
+      swaps.push({ target, content, swapSpec })
+      swapOptions.afterSettleCallback()
+    }
+    await ws.reorder(2, 0)
+    expect(ajaxCalls).toEqual([])
+    expect(fetchCalls[0].url).toBe('/api/tabs/reorder')
+    expect(Object.fromEntries(fetchCalls[0].body)).toEqual({ from: '2', to: '0' })
+    expect(swaps).toEqual([{ target: '#htmx-tabbar', content: '<div>tabbar</div>', swapSpec: { swapStyle: 'innerHTML' } }])
   })
 
   it('loadTabs GETs /ui/views/tabs into the tabbar', () => {

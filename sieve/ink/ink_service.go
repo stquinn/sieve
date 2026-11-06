@@ -391,6 +391,36 @@ func (s *InkService) Status() Status {
 	return st
 }
 
+// Notebook is the Digital Note in container uuid as the Meta panel shows it: the note as Status
+// lists it and its stored description, with the seq that description is of (0 before it is
+// named). A container that is not a Digital Note is ErrNoSuchPage.
+func (s *InkService) Notebook(uuid string) (SyncedNote, domain.NoteMetadata, uint32, error) {
+	c, err := s.digitalNote(uuid)
+	if err != nil {
+		return SyncedNote{}, domain.NoteMetadata{}, 0, err
+	}
+	meta := c.Storable().Meta()
+	face := NewDigitalNoteKind().Face(c.Block())
+	pages, _ := strconv.Atoi(face["note_pages"])
+	seq, _ := strconv.ParseUint(face["note_synced_seq"], 10, 32)
+	note := SyncedNote{UUID: uuid, Title: face["note_title"], Pages: pages, Seq: uint32(seq),
+		Companion: face["note_companion"], Device: face["note_device"]}
+	s.mu.Lock()
+	run := s.run
+	s.mu.Unlock()
+	if run != nil {
+		for _, open := range run.replicas.Notes() {
+			if open.UUID == uuid {
+				note = open
+			}
+		}
+	}
+	kind := NewDigitalNoteKind()
+	note.Name = kind.Name(meta, note.Title)
+	d, described, _ := kind.Description(meta)
+	return note, d, described, nil
+}
+
 // Live is the note and page a companion shows as being written now; the zero LiveNote when none
 // is. Listeners hear each change as LiveChanged after it has happened.
 func (s *InkService) Live() LiveNote {

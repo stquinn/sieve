@@ -179,6 +179,13 @@ export const InkRefusal = Object.freeze({
  *   the page's reading, linked to nothing, and resolves its uuid; it REJECTS when
  *   the page has no reading, and when the host cannot answer. Nothing of the
  *   note or its reading changes.
+ * - `refreshDescription` asks for the note to be named now — its name, summary,
+ *   keywords and categories described again from its pages, whether or not they
+ *   are of the note as it stands — and resolves once the host has accepted the
+ *   request (one already under way included). It REJECTS with an Error whose
+ *   message is the host's words, fit to show a person, when nothing could be
+ *   asked: no AI is configured, the note has no ink, nothing can draw its pages,
+ *   or the host did not answer. The new name arrives as the container's name.
  *
  * @typedef {import('./container-provider.js').ContainerProvider & {
  *   loadPage: (pageId: string) => Promise<InkPageAnswer>,
@@ -186,5 +193,6 @@ export const InkRefusal = Object.freeze({
  *   loadReading: (pageId: string) => Promise<InkReading>,
  *   readPage: (pageId: string) => Promise<InkReading>,
  *   newDocumentFromReading: (pageId: string) => Promise<string>,
+ *   refreshDescription: () => Promise<void>,
  * }} InkContainerProvider
  */

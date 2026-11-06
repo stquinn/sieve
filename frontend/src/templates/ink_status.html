@@ -1,7 +1,7 @@
 {{define "ink_status.html"}}
 <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.5rem;">
   <input type="checkbox" id="ink-enabled" name="ink_enabled" {{if .Enabled}}checked{{end}} hx-post="/api/ink/enabled" hx-params="ink_enabled" hx-target="#ink-status" style="width: 1rem; height: 1rem; border-radius: 0.25rem; background: var(--theme-bg); border: 1px solid var(--theme-border);">
-  <label for="ink-enabled" style="font-size: 0.875rem; color: var(--theme-text);">Sync notes from SieveInk on a Boox</label>
+  <label for="ink-enabled" style="font-size: 0.875rem; color: var(--theme-text);">Sync notebooks from SieveInk on a Boox</label>
 </div>
 {{if .Error}}
 <p style="font-size: 0.875rem; color: var(--theme-accentRed); margin-bottom: 1.5rem;">{{.Error}}</p>
@@ -49,24 +49,24 @@
     {{range .Companions}}
     <div style="display: flex; gap: 0.5rem; align-items: center; padding: 0.4rem 1rem; background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; font-size: 0.875rem;">
       <span style="flex: 1; color: var(--theme-text);">{{if .Device}}{{.Device}}{{else}}{{.Identity}}{{end}}</span>
-      <span style="color: var(--theme-textDim);">{{.Notes}} {{if eq .Notes 1}}note{{else}}notes{{end}}</span>
+      <span style="color: var(--theme-textDim);">{{.Notes}} {{if eq .Notes 1}}notebook{{else}}notebooks{{end}}</span>
     </div>
     {{else}}
-    <p style="font-size: 0.875rem; color: var(--theme-textDim);">No notes have come from a companion yet.</p>
+    <p style="font-size: 0.875rem; color: var(--theme-textDim);">No notebooks have come from a companion yet.</p>
     {{end}}
   </div>
 </div>
 
 <div>
-  <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Synced Notes</label>
+  <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Synced Notebooks</label>
   <div id="ink-notes" style="display: flex; flex-direction: column; gap: 0.5rem;">
     {{range .Notes}}
     <div style="display: flex; gap: 0.5rem; align-items: center; padding: 0.4rem 1rem; background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; font-size: 0.875rem;">
-      <span style="flex: 1; color: var(--theme-text);">{{if .Name}}{{.Name}}{{else}}Untitled{{end}}</span>
+      <span style="flex: 1; color: var(--theme-text);">{{if .Name}}{{.Name}}{{else}}Untitled notebook{{end}}</span>
       <span style="color: var(--theme-textDim);">{{.Pages}} {{if eq .Pages 1}}page{{else}}pages{{end}} · seq {{.Seq}}</span>
     </div>
     {{else}}
-    <p style="font-size: 0.875rem; color: var(--theme-textDim);">No synced notes.</p>
+    <p style="font-size: 0.875rem; color: var(--theme-textDim);">No synced notebooks.</p>
     {{end}}
   </div>
 </div>

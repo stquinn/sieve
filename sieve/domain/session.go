@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"strings"
+	"time"
 )
 
 // TabKindPrompt is the kind of a tab showing a prompt.
@@ -22,6 +23,9 @@ type Tab struct {
 	Status      string `json:"status,omitempty"`      // "unfiled" or "filed"
 	UserIntent  string `json:"userIntent,omitempty"`  // "keep" or "trash"
 	Presenting  bool   `json:"presenting,omitempty"`  // left in Presentation Mode
+	// LastViewed is when the tab last became the active one, in Unix milliseconds; 0 for a tab
+	// never made active since tabs carried it. Session.Activate stamps it.
+	LastViewed int64 `json:"lastViewed,omitempty"`
 }
 
 // ContainerKind is the kind of container the tab shows. A tab saved without a kind
@@ -119,6 +123,23 @@ func (s Session) Tab(id string) (Tab, bool) {
 		}
 	}
 	return Tab{}, false
+}
+
+// ActiveID is the id of the active tab, "" when there is none.
+func (s Session) ActiveID() string {
+	if s.ActiveIdx < 0 || s.ActiveIdx >= len(s.Tabs) {
+		return ""
+	}
+	return s.Tabs[s.ActiveIdx].ID
+}
+
+// Activate makes the tab at idx the active one, viewed at at. An idx with no tab changes nothing.
+func (s *Session) Activate(idx int, at time.Time) {
+	if idx < 0 || idx >= len(s.Tabs) {
+		return
+	}
+	s.ActiveIdx = idx
+	s.Tabs[idx].LastViewed = at.UnixMilli()
 }
 
 // ShowsNonDocument reports whether the session's tab of id shows something other

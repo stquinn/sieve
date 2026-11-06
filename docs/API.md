@@ -42,6 +42,7 @@ alone, so the token appears in no response header.
 | `feature-control` | `protocol.FeatureControlFrame` | — | FeatureControlFrame switches one text-service feature on or off, and says what it is to work with. |
 | `flush` | `protocol.FlushFrame` | — | FlushFrame asks the shadow document to persist now rather than on its debounce. |
 | `focus` | `protocol.FocusFrame` | — | FocusFrame is the dwell ping: the user is looking at this document, which raises its focus count. |
+| `ink-describe` | `protocol.InkDescribeFrame` | `opId` | InkDescribeFrame asks for this channel's Digital Note to be named now: its name, summary, keywords and categories described again from its pages, whether or not they are of the note as it stands. |
 | `ink-open-on-tablet` | `protocol.InkOpenOnTabletFrame` | `opId` | InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it at a page. |
 | `ink-page` | `protocol.InkPageFrame` | `opId` | InkPageFrame asks for one page of this channel's Digital Note as it is drawn now. |
 | `ink-read-page` | `protocol.InkReadPageFrame` | `opId` | InkReadPageFrame asks for one page of this channel's Digital Note to be read, unless it has a reading of what it holds now or is being read. |
@@ -65,6 +66,7 @@ alone, so the token appears in no response header.
 | `error` | `protocol.ErrorFrame` | — | ErrorFrame reports that an operation failed, in words meant for the user. |
 | `export-content` | `protocol.ExportContentFrame` | `opId` | ExportContentFrame carries the exported document. |
 | `extract-ack` | `protocol.AckFrame` | `opId` | AckFrame is the request-correlated outcome of a block-op or an extract. |
+| `ink-describe-result` | `protocol.InkDescribeResultFrame` | `opId` | InkDescribeResultFrame answers an ink-describe: the job submitted, or a note already being named, when Error is absent. |
 | `ink-live` | `protocol.InkLiveFrame` | — | InkLiveFrame is live records in the order the tablet sent them. |
 | `ink-live-page` | `protocol.InkLivePageFrame` | — | InkLivePageFrame is which page of this channel's note the tablet shows as being written, or that none is, and the Live view that mirrors it. |
 | `ink-log-restarted` | `protocol.InkLogRestartedFrame` | — | InkLogRestartedFrame is the note's log started again from its first record in this channel's container. |
@@ -233,6 +235,15 @@ FocusFrame is the dwell ping: the user is looking at this document, which raises
 | Field | Go type | Required | Description |
 |---|---|---|---|
 | `type` | `string` | yes |  |
+
+#### `ink-describe` — client → server
+
+InkDescribeFrame asks for this channel's Digital Note to be named now: its name, summary, keywords and categories described again from its pages, whether or not they are of the note as it stands.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | no | echoed on the ink-describe-result reply |
 
 #### `ink-open-on-tablet` — client → server
 
@@ -420,6 +431,16 @@ AckFrame is the request-correlated outcome of a block-op or an extract.
 | `opId` | `string` | yes |  |
 | `ok` | `bool` | yes |  |
 | `error` | `string` | no | present only when ok is false |
+
+#### `ink-describe-result` — server → client
+
+InkDescribeResultFrame answers an ink-describe: the job submitted, or a note already being named, when Error is absent.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | no |  |
+| `error` | `string` | no | present only when nothing was submitted, in words a person can be shown: no AI is configured, the note has no ink, nothing is open that can draw its pages, or ink is unavailable |
 
 #### `ink-live` — server → client
 
@@ -875,6 +896,9 @@ inventory below instead.
 | `DELETE /api/document/{uuid}/asset/{key}` | none | AssetDeleteRequest deletes one asset of a document, irreversibly: {uuid} is the document and {key} the asset's key, path-escaped. |
 | `POST /api/folder` | fragment | FolderCreateRequest makes a new folder. |
 | `PATCH /api/folder/{id}` | fragment | FolderPatchRequest changes a folder's properties. |
+| `GET /api/ink/live/note` | json | InkLiveNoteRequest asks which synced Digital Note the Live view mirrors. |
+| `POST /api/ink/notes/{uuid}/describe` | none | InkDescribeRequest names a synced Digital Note now: {uuid} is the note's block container, and its name, summary, keywords and categories are described again from its pages, whether or not they are of the note as it stands. |
+| `POST /api/ink/notes/{uuid}/open-on-tablet` | json | InkOpenOnTabletRequest asks the tablet a synced Digital Note came from to open it, leaving the page to the tablet: {uuid} is the note's block container. |
 | `GET /api/ink/notes/{uuid}/pages/{page}/export` | json | InkPageExportRequest reads one page of a synced Digital Note in the export shape of docs/ink-contract.md §4.2: {uuid} is the note's block container and {page} the page's index among the pages present, from 0. |
 | `GET /api/ink/notes/{uuid}/pages/{page}/image` | image | InkPageImageRequest reads one page of a synced Digital Note as a PNG, drawn by the app's window when no image of the page as it stands is kept: {uuid} is the note's block container and {page} the page's index among the pages present, from 0. |
 | `PATCH /api/note/{id}` | fragment | NotePatchRequest changes a note's properties. |
@@ -966,6 +990,48 @@ FolderPatchRequest changes a folder's properties.
 | `open` | `*bool` | no | whether the folder is expanded in the tree; absent leaves it alone |
 
 **Response** — HTML for HTMX to swap in; the template is its contract.
+
+### `GET /api/ink/live/note`
+
+**Request** — `protocol.InkLiveNoteRequest`
+
+InkLiveNoteRequest asks which synced Digital Note the Live view mirrors.
+
+**Response** — `protocol.InkLiveNoteResponse`
+
+InkLiveNoteResponse names the note the Live view mirrors.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `note` | `string` | yes | the uuid of the block container holding the mirrored note; empty when there is no Live view or no container holds its note yet |
+
+### `POST /api/ink/notes/{uuid}/describe`
+
+Path parameters: `uuid`
+
+**Request** — `protocol.InkDescribeRequest`
+
+InkDescribeRequest names a synced Digital Note now: {uuid} is the note's block container, and its name, summary, keywords and categories are described again from its pages, whether or not they are of the note as it stands.
+
+**Response** — 204, or a body no caller reads.
+
+### `POST /api/ink/notes/{uuid}/open-on-tablet`
+
+Path parameters: `uuid`
+
+**Request** — `protocol.InkOpenOnTabletRequest`
+
+InkOpenOnTabletRequest asks the tablet a synced Digital Note came from to open it, leaving the page to the tablet: {uuid} is the note's block container.
+
+**Response** — `protocol.InkOpenOnTabletResponse`
+
+InkOpenOnTabletResponse is what came of an InkOpenOnTabletRequest.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `outcome` | `string` | yes | opened \| no-tablet \| other-tablet \| refused \| no-answer, as ink-open-on-tablet-result names them |
+| `reason` | `string` | no | refused only: the tablet's reason, not-foreground \| not-offered \| another |
+| `message` | `string` | yes | what came of it, in words a person can be shown |
 
 ### `GET /api/ink/notes/{uuid}/pages/{page}/export`
 
@@ -1314,6 +1380,7 @@ or another protocol's own transport.
 | `DELETE` | `/mcp` | — |
 | `GET` | `/` | — |
 | `GET` | `/api/document/load` | typed (json) |
+| `GET` | `/api/ink/live/note` | typed (json) |
 | `GET` | `/api/ink/notes/{uuid}/pages/{page}/export` | typed (json) |
 | `GET` | `/api/ink/notes/{uuid}/pages/{page}/image` | typed (image) |
 | `GET` | `/api/ws/document/{uuid}` | WebSocket channel |
@@ -1349,6 +1416,8 @@ or another protocol's own transport.
 | `POST` | `/api/folder` | typed (fragment) |
 | `POST` | `/api/ink/enabled` | — |
 | `POST` | `/api/ink/key` | — |
+| `POST` | `/api/ink/notes/{uuid}/describe` | typed (none) |
+| `POST` | `/api/ink/notes/{uuid}/open-on-tablet` | typed (json) |
 | `POST` | `/api/meta/restore` | — |
 | `POST` | `/api/note` | — |
 | `POST` | `/api/session/layout` | — |

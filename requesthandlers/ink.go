@@ -1,6 +1,7 @@
 package requesthandlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -90,6 +91,12 @@ type inkNoteItem struct {
 	Active bool
 }
 
+// inkDescribeDrawWait bounds how long naming a note now waits for its first page to be drawn.
+const inkDescribeDrawWait = 10 * time.Second
+
+// untitledNotebook is what a synced note with no name and no title from its tablet is called.
+const untitledNotebook = "Untitled notebook"
+
 // inkRateFloor is the shortest catch-up a throughput is shown for.
 const inkRateFloor = 50 * time.Millisecond
 
@@ -100,6 +107,67 @@ func (h *InkHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/ink/key", h.handleNewKey)
 	r.Get("/api/ink/notes/{uuid}/pages/{page}/export", h.handleExport)
 	r.Get("/api/ink/notes/{uuid}/pages/{page}/image", h.handleImage)
+	r.Post("/api/ink/notes/{uuid}/describe", h.handleDescribe)
+	r.Post("/api/ink/notes/{uuid}/open-on-tablet", h.handleOpenOnTablet)
+	r.Get("/api/ink/live/note", h.handleLiveNote)
+}
+
+// handleDescribe names a synced note now, answering 204 once its job is submitted or with why
+// not in words.
+func (h *InkHandler) handleDescribe(w http.ResponseWriter, r *http.Request) {
+	namer := h.ServiceProvider.InkNamer
+	if namer == nil {
+		http.Error(w, "Notebooks are unavailable.", http.StatusServiceUnavailable)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), inkDescribeDrawWait)
+	defer cancel()
+	err := namer.NameNow(ctx, chi.URLParam(r, "uuid"))
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, ink.ErrNoSuchPage):
+		http.Error(w, namer.Refusal(err), http.StatusNotFound)
+	case errors.Is(err, ink.ErrNamingUnavailable), errors.Is(err, ink.ErrNoInk), errors.Is(err, ink.ErrNoDrawer):
+		http.Error(w, namer.Refusal(err), http.StatusConflict)
+	default:
+		logger.Error("ink: naming a note now", "err", err.Error())
+		http.Error(w, namer.Refusal(err), http.StatusInternalServerError)
+	}
+}
+
+// handleOpenOnTablet asks the tablet a synced note came from to open it at the page of its own
+// choosing, and answers with what came of it.
+func (h *InkHandler) handleOpenOnTablet(w http.ResponseWriter, r *http.Request) {
+	svc := h.ServiceProvider.Ink
+	if svc == nil {
+		http.Error(w, "Notebooks are unavailable.", http.StatusServiceUnavailable)
+		return
+	}
+	uuid := chi.URLParam(r, "uuid")
+	result, err := svc.OpenOnTablet(uuid, "")
+	if err != nil {
+		http.Error(w, "This notebook did not come from a tablet.", http.StatusNotFound)
+		return
+	}
+	device := ""
+	if note, _, _, err := svc.Notebook(uuid); err == nil {
+		device = note.Device
+	}
+	opening := inkOpening(result)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(protocol.InkOpenOnTabletResponse{Outcome: opening.word(), Reason: result.Reason, Message: opening.message(device)})
+}
+
+// handleLiveNote answers which synced note the Live view mirrors.
+func (h *InkHandler) handleLiveNote(w http.ResponseWriter, r *http.Request) {
+	var answer protocol.InkLiveNoteResponse
+	if svc := h.ServiceProvider.Ink; svc != nil {
+		answer.Note, _ = svc.LiveView().Mirrors()
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(answer)
 }
 
 func (h *InkHandler) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -139,7 +207,7 @@ func (v *inkSidebarView) show(st ink.Status, session domain.Session) {
 	for _, n := range st.Notes {
 		title := n.Name
 		if title == "" {
-			title = "Untitled note"
+			title = untitledNotebook
 		}
 		v.Notes = append(v.Notes, inkNoteItem{UUID: n.UUID, Title: title, Pages: n.Pages, Active: n.UUID == active})
 	}
@@ -158,7 +226,7 @@ func (h *InkHandler) handleEnabled(w http.ResponseWriter, r *http.Request) {
 	failure := ""
 	if err := h.ServiceProvider.Ink.SetEnabled(r.PostForm.Get("ink_enabled") != ""); err != nil {
 		logger.Error("ink: switching failed", "err", err.Error())
-		failure = "Could not switch Ink: " + err.Error()
+		failure = "Could not switch Notebooks: " + err.Error()
 	}
 	h.render(w, failure)
 }
@@ -442,12 +510,27 @@ func (s *inkStream) openOnTablet(container string, msg protocol.InkOpenOnTabletF
 		reply(protocol.NewInkOpenOnTabletFailedFrame(msg.OpID, err))
 		return
 	}
-	reply(protocol.NewInkOpenOnTabletResultFrame(msg.OpID, s.outcomeWord(result.Outcome), result.Reason))
+	reply(protocol.NewInkOpenOnTabletResultFrame(msg.OpID, inkOpening(result).word(), result.Reason))
 }
 
-// outcomeWord is an outcome as an ink-open-on-tablet-result names it.
-func (s *inkStream) outcomeWord(o ink.OpenOutcome) string {
-	switch o {
+// describe names the Digital Note in container now, and answers through reply once its job is
+// submitted, or with why not. It may draw a page first, so it runs on a goroutine of its own.
+func (s *inkStream) describe(namer *ink.NoteNamer, container string, msg protocol.InkDescribeFrame, reply func(interface{})) {
+	ctx, cancel := context.WithTimeout(context.Background(), inkDescribeDrawWait)
+	defer cancel()
+	if err := namer.NameNow(ctx, container); err != nil {
+		reply(protocol.NewInkDescribeRefusedFrame(msg.OpID, namer.Refusal(err)))
+		return
+	}
+	reply(protocol.NewInkDescribeResultFrame(msg.OpID))
+}
+
+// inkOpening is what came of asking the tablet to open a note, as the host says it.
+type inkOpening ink.OpenResult
+
+// word is the outcome as an ink-open-on-tablet-result names it.
+func (o inkOpening) word() string {
+	switch o.Outcome {
 	case ink.OpenOpened:
 		return protocol.InkOpenOpened
 	case ink.OpenOtherTablet:
@@ -458,6 +541,33 @@ func (s *inkStream) outcomeWord(o ink.OpenOutcome) string {
 		return protocol.InkOpenNoAnswer
 	default:
 		return protocol.InkOpenNoTablet
+	}
+}
+
+// message is what came of it in words, device naming the tablet the note was written on, "" when
+// that is not known.
+func (o inkOpening) message(device string) string {
+	if device == "" {
+		device = "the tablet"
+	}
+	switch o.Outcome {
+	case ink.OpenOpened:
+		return "Opened on " + device
+	case ink.OpenOtherTablet:
+		return "Connected to another tablet"
+	case ink.OpenNoAnswer:
+		return "The tablet did not answer"
+	case ink.OpenRefused:
+		switch o.Reason {
+		case link.RefuseNotForeground:
+			return "SieveInk is not open on the tablet"
+		case link.RefuseNotOffered:
+			return "This notebook is not shared with this Sieve"
+		default:
+			return "The tablet refused: " + o.Reason
+		}
+	default:
+		return "No tablet connected"
 	}
 }
 

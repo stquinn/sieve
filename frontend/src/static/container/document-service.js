@@ -39,6 +39,10 @@ const TEXT_REPLACE_ERROR = 'error'
 // ink-open-on-tablet; the reply must not be given up on before that.
 const OPEN_ON_TABLET_TIMEOUT_MS = 8000
 
+// Go waits at most ten seconds for a note's first page to be drawn before it
+// answers an ink-describe; the reply must not be given up on before that.
+const DESCRIBE_TIMEOUT_MS = 15000
+
 /** @typedef {import('./container-transport.js').ChannelDelegate} ChannelDelegate */
 
 /**
@@ -534,6 +538,24 @@ export class DocumentService {
       .then((reply) => {
         if (reply.error || !reply.uuid) throw new Error('ink-reading-document refused: ' + (reply.error || 'no document'))
         return String(reply.uuid)
+      })
+  }
+
+  /**
+   * Asks for this container's Digital Note to be named now, and resolves once
+   * Go has submitted the naming, or found it already under way. The new name
+   * arrives as the container's name and the ink invalidation.
+   *
+   * REJECTS with Go's words when it submitted nothing — no AI is configured, the
+   * note has no ink, nothing can draw its pages, or ink is unavailable — on a
+   * timeout, and on a channel-less uuid.
+   * @param {string} uuid
+   * @returns {Promise<void>}
+   */
+  inkDescribe(uuid) {
+    return this.#transport._awaitReply(uuid, { type: DocumentFrame.INK_DESCRIBE }, 'ink-describe', DESCRIBE_TIMEOUT_MS)
+      .then((reply) => {
+        if (reply.error) throw new Error(String(reply.error))
       })
   }
 

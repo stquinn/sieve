@@ -35,6 +35,8 @@ channels:
         $ref: '#/components/messages/documentFlush'
       documentFocus:
         $ref: '#/components/messages/documentFocus'
+      documentInkDescribe:
+        $ref: '#/components/messages/documentInkDescribe'
       documentInkOpenOnTablet:
         $ref: '#/components/messages/documentInkOpenOnTablet'
       documentInkPage:
@@ -71,6 +73,8 @@ channels:
         $ref: '#/components/messages/documentExportContent'
       documentExtractAck:
         $ref: '#/components/messages/documentExtractAck'
+      documentInkDescribeResult:
+        $ref: '#/components/messages/documentInkDescribeResult'
       documentInkLive:
         $ref: '#/components/messages/documentInkLive'
       documentInkLivePage:
@@ -172,6 +176,7 @@ operations:
       - $ref: '#/channels/document/messages/documentFeatureControl'
       - $ref: '#/channels/document/messages/documentFlush'
       - $ref: '#/channels/document/messages/documentFocus'
+      - $ref: '#/channels/document/messages/documentInkDescribe'
       - $ref: '#/channels/document/messages/documentInkOpenOnTablet'
       - $ref: '#/channels/document/messages/documentInkPage'
       - $ref: '#/channels/document/messages/documentInkReadPage'
@@ -196,6 +201,7 @@ operations:
       - $ref: '#/channels/document/messages/documentError'
       - $ref: '#/channels/document/messages/documentExportContent'
       - $ref: '#/channels/document/messages/documentExtractAck'
+      - $ref: '#/channels/document/messages/documentInkDescribeResult'
       - $ref: '#/channels/document/messages/documentInkLive'
       - $ref: '#/channels/document/messages/documentInkLivePage'
       - $ref: '#/channels/document/messages/documentInkLogRestarted'
@@ -391,6 +397,20 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolFocusFrame'
+    documentInkDescribe:
+      name: ink-describe
+      title: ink-describe
+      summary: 'InkDescribeFrame asks for this channel''s Digital Note to be named now: its name, summary, keywords and categories described again from its pages, whether or not they are of the note as it stands.'
+      description: |-
+        InkDescribeFrame asks for this channel's Digital Note to be named now: its name, summary,
+        keywords and categories described again from its pages, whether or not they are of the note as
+        it stands. It is answered once the job is submitted, or with why it was not; the new name
+        arrives as the note's container-named and the ink invalidation.
+      contentType: application/json
+      correlationId:
+        $ref: '#/components/correlationIds/opId'
+      payload:
+        $ref: '#/components/schemas/ProtocolInkDescribeFrame'
     documentInkOpenOnTablet:
       name: ink-open-on-tablet
       title: ink-open-on-tablet
@@ -606,6 +626,18 @@ components:
         $ref: '#/components/correlationIds/opId'
       payload:
         $ref: '#/components/schemas/ProtocolAckFrame'
+    documentInkDescribeResult:
+      name: ink-describe-result
+      title: ink-describe-result
+      summary: 'InkDescribeResultFrame answers an ink-describe: the job submitted, or a note already being named, when Error is absent.'
+      description: |-
+        InkDescribeResultFrame answers an ink-describe: the job submitted, or a note already being
+        named, when Error is absent.
+      contentType: application/json
+      correlationId:
+        $ref: '#/components/correlationIds/opId'
+      payload:
+        $ref: '#/components/schemas/ProtocolInkDescribeResultFrame'
     documentInkLive:
       name: ink-live
       title: ink-live
@@ -1794,6 +1826,36 @@ components:
       properties:
         type:
           type: string
+      required:
+        - type
+    ProtocolInkDescribeFrame:
+      type: object
+      description: |-
+        InkDescribeFrame asks for this channel's Digital Note to be named now: its name, summary,
+        keywords and categories described again from its pages, whether or not they are of the note as
+        it stands. It is answered once the job is submitted, or with why it was not; the new name
+        arrives as the note's container-named and the ink invalidation.
+      properties:
+        type:
+          type: string
+        opId:
+          type: string
+          description: echoed on the ink-describe-result reply
+      required:
+        - type
+    ProtocolInkDescribeResultFrame:
+      type: object
+      description: |-
+        InkDescribeResultFrame answers an ink-describe: the job submitted, or a note already being
+        named, when Error is absent.
+      properties:
+        type:
+          type: string
+        opId:
+          type: string
+        error:
+          type: string
+          description: 'present only when nothing was submitted, in words a person can be shown: no AI is configured, the note has no ink, nothing is open that can draw its pages, or ink is unavailable'
       required:
         - type
     ProtocolInkDrawPageFrame:

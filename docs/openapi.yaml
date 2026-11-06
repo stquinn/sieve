@@ -148,6 +148,62 @@ paths:
             text/html:
               schema:
                 type: string
+  /api/ink/live/note:
+    get:
+      operationId: getApiInkLiveNote
+      summary: InkLiveNoteRequest asks which synced Digital Note the Live view mirrors.
+      description: |-
+        InkLiveNoteRequest asks which synced Digital Note the Live view mirrors. The request has no
+        body.
+      responses:
+        "200":
+          description: a typed body, described by the entry's Response type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProtocolInkLiveNoteResponse'
+  /api/ink/notes/{uuid}/describe:
+    post:
+      operationId: postApiInkNotesUuidDescribe
+      summary: 'InkDescribeRequest names a synced Digital Note now: {uuid} is the note''s block container, and its name, summary, keywords and categories are described again from its pages, whether or not they are of the note as it stands.'
+      description: |-
+        InkDescribeRequest names a synced Digital Note now: {uuid} is the note's block container, and
+        its name, summary, keywords and categories are described again from its pages, whether or not
+        they are of the note as it stands. 204 is the job submitted, or one already naming the note.
+        Otherwise the body is plain text a person can be shown: 404 for a container that is not a held
+        Digital Note, 409 when nothing can name it now (no AI is configured, the note has no ink, or
+        nothing is open that can draw its pages), 503 when ink is unavailable. The request has no body.
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: 204, or a body no caller reads
+  /api/ink/notes/{uuid}/open-on-tablet:
+    post:
+      operationId: postApiInkNotesUuidOpenOnTablet
+      summary: 'InkOpenOnTabletRequest asks the tablet a synced Digital Note came from to open it, leaving the page to the tablet: {uuid} is the note''s block container.'
+      description: |-
+        InkOpenOnTabletRequest asks the tablet a synced Digital Note came from to open it, leaving the
+        page to the tablet: {uuid} is the note's block container. It waits a few seconds at most for
+        the tablet. A container that is not a Digital Note from a tablet is 404, with a plain-text body,
+        and ink being unavailable 503. The request has no body.
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: a typed body, described by the entry's Response type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProtocolInkOpenOnTabletResponse'
   /api/ink/notes/{uuid}/pages/{page}/export:
     get:
       operationId: getApiInkNotesUuidPagesPageExport
@@ -362,6 +418,15 @@ components:
         open:
           type: boolean
           description: whether the folder is expanded in the tree; absent leaves it alone
+    ProtocolInkDescribeRequest:
+      type: object
+      description: |-
+        InkDescribeRequest names a synced Digital Note now: {uuid} is the note's block container, and
+        its name, summary, keywords and categories are described again from its pages, whether or not
+        they are of the note as it stands. 204 is the job submitted, or one already naming the note.
+        Otherwise the body is plain text a person can be shown: 404 for a container that is not a held
+        Digital Note, 409 when nothing can name it now (no AI is configured, the note has no ink, or
+        nothing is open that can draw its pages), 503 when ink is unavailable. The request has no body.
     ProtocolInkExportDevice:
       type: object
       description: InkExportDevice is the tablet the note was written on.
@@ -466,6 +531,43 @@ components:
       required:
         - id
         - params
+    ProtocolInkLiveNoteRequest:
+      type: object
+      description: |-
+        InkLiveNoteRequest asks which synced Digital Note the Live view mirrors. The request has no
+        body.
+    ProtocolInkLiveNoteResponse:
+      type: object
+      description: InkLiveNoteResponse names the note the Live view mirrors.
+      properties:
+        note:
+          type: string
+          description: the uuid of the block container holding the mirrored note; empty when there is no Live view or no container holds its note yet
+      required:
+        - note
+    ProtocolInkOpenOnTabletRequest:
+      type: object
+      description: |-
+        InkOpenOnTabletRequest asks the tablet a synced Digital Note came from to open it, leaving the
+        page to the tablet: {uuid} is the note's block container. It waits a few seconds at most for
+        the tablet. A container that is not a Digital Note from a tablet is 404, with a plain-text body,
+        and ink being unavailable 503. The request has no body.
+    ProtocolInkOpenOnTabletResponse:
+      type: object
+      description: InkOpenOnTabletResponse is what came of an InkOpenOnTabletRequest.
+      properties:
+        outcome:
+          type: string
+          description: opened | no-tablet | other-tablet | refused | no-answer, as ink-open-on-tablet-result names them
+        reason:
+          type: string
+          description: 'refused only: the tablet''s reason, not-foreground | not-offered | another'
+        message:
+          type: string
+          description: what came of it, in words a person can be shown
+      required:
+        - outcome
+        - message
     ProtocolInkPageExport:
       type: object
       description: |-

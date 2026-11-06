@@ -265,3 +265,31 @@ func NewInkReadingDocumentResultFrame(opID, uuid string) InkReadingDocumentResul
 func NewInkReadingDocumentFailedFrame(opID string, err error) InkReadingDocumentResultFrame {
 	return InkReadingDocumentResultFrame{Type: TypeInkReadingDocumentResult, OpID: opID, Error: err.Error()}
 }
+
+// InkDescribeFrame asks for this channel's Digital Note to be named now: its name, summary,
+// keywords and categories described again from its pages, whether or not they are of the note as
+// it stands. It is answered once the job is submitted, or with why it was not; the new name
+// arrives as the note's container-named and the ink invalidation.
+type InkDescribeFrame struct {
+	Type string `json:"type"`
+	OpID string `json:"opId,omitempty" doc:"echoed on the ink-describe-result reply"`
+}
+
+// InkDescribeResultFrame answers an ink-describe: the job submitted, or a note already being
+// named, when Error is absent.
+type InkDescribeResultFrame struct {
+	Type  string `json:"type"`
+	OpID  string `json:"opId,omitempty"`
+	Error string `json:"error,omitempty" doc:"present only when nothing was submitted, in words a person can be shown: no AI is configured, the note has no ink, nothing is open that can draw its pages, or ink is unavailable"`
+}
+
+// NewInkDescribeResultFrame builds the answer to an ink-describe whose job was submitted.
+func NewInkDescribeResultFrame(opID string) InkDescribeResultFrame {
+	return InkDescribeResultFrame{Type: TypeInkDescribeResult, OpID: opID}
+}
+
+// NewInkDescribeRefusedFrame builds the answer to an ink-describe that submitted nothing, saying
+// why in refusal.
+func NewInkDescribeRefusedFrame(opID, refusal string) InkDescribeResultFrame {
+	return InkDescribeResultFrame{Type: TypeInkDescribeResult, OpID: opID, Error: refusal}
+}

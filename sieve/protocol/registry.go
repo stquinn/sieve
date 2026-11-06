@@ -105,6 +105,7 @@ func (r *Registry) registerDocumentFrames() {
 	r.addFrame(ChannelDocument, Inbound, TypeInkReading, InkReadingFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeInkReadPage, InkReadPageFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeInkReadingDocument, InkReadingDocumentFrame{})
+	r.addFrame(ChannelDocument, Inbound, TypeInkDescribe, InkDescribeFrame{})
 
 	r.addFrame(ChannelDocument, Outbound, TypePong, PongFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeMarkdownContent, MarkdownContentFrame{})
@@ -133,6 +134,7 @@ func (r *Registry) registerDocumentFrames() {
 	r.addFrame(ChannelDocument, Outbound, TypeInkReadingContent, InkReadingContentFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeInkReadingChanged, InkReadingChangedFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeInkReadingDocumentResult, InkReadingDocumentResultFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeInkDescribeResult, InkDescribeResultFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeContainerNamed, ContainerNamedFrame{})
 }
 
@@ -204,6 +206,20 @@ func (r *Registry) registerEndpoints() {
 	r.addEndpoint(EndpointEntry{
 		Method: "GET", Path: "/api/ink/notes/{uuid}/pages/{page}/image",
 		Request: reflect.TypeOf(InkPageImageRequest{}), ResponseKind: ResponseImage,
+	})
+	r.addEndpoint(EndpointEntry{
+		Method: "POST", Path: "/api/ink/notes/{uuid}/describe",
+		Request: reflect.TypeOf(InkDescribeRequest{}), ResponseKind: ResponseNone,
+	})
+	r.addEndpoint(EndpointEntry{
+		Method: "POST", Path: "/api/ink/notes/{uuid}/open-on-tablet",
+		Request: reflect.TypeOf(InkOpenOnTabletRequest{}), Response: reflect.TypeOf(InkOpenOnTabletResponse{}),
+		ResponseKind: ResponseJSON,
+	})
+	r.addEndpoint(EndpointEntry{
+		Method: "GET", Path: "/api/ink/live/note",
+		Request: reflect.TypeOf(InkLiveNoteRequest{}), Response: reflect.TypeOf(InkLiveNoteResponse{}),
+		ResponseKind: ResponseJSON,
 	})
 }
 

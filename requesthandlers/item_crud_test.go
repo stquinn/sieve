@@ -21,6 +21,7 @@ import (
 	"sieve/sieve/block/processors"
 	"sieve/sieve/domain"
 	"sieve/sieve/editor"
+	"sieve/sieve/ink"
 	"sieve/sieve/protocol"
 	"sieve/sieve/services"
 	"sieve/store"
@@ -909,14 +910,126 @@ func TestTabStrip_ASessionWithoutKindsRendersAsBefore(t *testing.T) {
      data-tab-idx="0"
      data-tab-kind="buffer"`,
 		`data-tab-kind="note"
+     data-tab-viewed="0"
      data-ctx-id="01a1adb4-6ba7-752e-888e-a38846df8200"
      data-ctx-type="note"`,
 		`data-tab-kind="prompt"
+     data-tab-viewed="0"
      data-ctx-id="prompt:file"
      data-ctx-type="prompt"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("tab strip lacks %q", want)
 		}
+	}
+}
+
+// A tab is stamped as viewed when it becomes the active one — opened, opened again, made new, or
+// made active by the close of the tab before it — and at no other time: a reorder, a strip
+// rendered from the session and a close that leaves the active tab active stamp nothing. The
+// stamp is saved in the session and rendered on the tab.
+func TestTabStrip_ATabIsStampedViewedWhenItBecomesActive(t *testing.T) {
+	srv, sp, _, _ := newItemServerCountingJobs(t)
+	var docs []string
+	for i := 0; i < 3; i++ {
+		d, err := sp.Documents.New()
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		docs = append(docs, d.UUID())
+	}
+	viewed := func() map[string]int64 {
+		out := map[string]int64{}
+		for _, tab := range sp.State.LoadSession().Tabs {
+			out[tab.ID] = tab.LastViewed
+		}
+		return out
+	}
+	post := func(path, contentType, body string) {
+		t.Helper()
+		if status, out := do(t, http.MethodPost, srv.URL+path, contentType, body); status != http.StatusOK {
+			t.Fatalf("POST %s: %d %s", path, status, out)
+		}
+	}
+	tick := func() { time.Sleep(2 * time.Millisecond) }
+
+	for _, id := range docs {
+		post("/api/container/open/"+id, "", "")
+		tick()
+	}
+	first := viewed()
+	if !(first[docs[0]] > 0 && first[docs[0]] < first[docs[1]] && first[docs[1]] < first[docs[2]]) {
+		t.Fatalf("opening stamped %v", first)
+	}
+	post("/api/container/open/"+docs[0], "", "")
+	tick()
+	if again := viewed(); again[docs[0]] <= first[docs[2]] || again[docs[1]] != first[docs[1]] {
+		t.Errorf("opening a tab again stamped %v", again)
+	}
+
+	before := viewed()
+	post("/api/tabs/reorder", "application/x-www-form-urlencoded", "from=2&to=0")
+	do(t, http.MethodGet, srv.URL+"/ui/views/tabs", "", "")
+	post("/api/tabs/close", "application/json", `{"ids":["`+docs[1]+`"]}`)
+	if after := viewed(); !reflect.DeepEqual(after, map[string]int64{docs[0]: before[docs[0]], docs[2]: before[docs[2]]}) {
+		t.Errorf("a reorder, a render and a close of another tab stamped %v, want %v", after, before)
+	}
+
+	session := sp.State.LoadSession()
+	if session.ActiveID() != docs[0] || session.Tabs[1].ID != docs[0] {
+		t.Fatalf("the session is %+v", session)
+	}
+	tick()
+	post("/api/tabs/close", "application/json", `{"ids":["`+docs[0]+`"]}`)
+	if after := viewed(); sp.State.LoadSession().ActiveID() != docs[2] || after[docs[2]] <= before[docs[0]] {
+		t.Errorf("the tab made active by a close is stamped %d, the closed one was %d", after[docs[2]], before[docs[0]])
+	}
+
+	post("/api/note", "", "")
+	session = sp.State.LoadSession()
+	if fresh := session.Tabs[session.ActiveIdx]; fresh.LastViewed <= viewed()[docs[2]] {
+		t.Errorf("a new note's tab is stamped %d", fresh.LastViewed)
+	}
+	_, body := do(t, http.MethodGet, srv.URL+"/ui/views/tabs", "", "")
+	if want := fmt.Sprintf(`data-tab-viewed="%d"`, viewed()[docs[2]]); !strings.Contains(body, want) {
+		t.Errorf("the strip lacks %s:\n%s", want, body)
+	}
+}
+
+// A synced notebook's tab and the Live view's carry their own menus, and a notebook with no name
+// and no title from its tablet reads as an untitled notebook, never as its kind.
+func TestTabStrip_NotebookTabsCarryTheirOwnMenus(t *testing.T) {
+	srv, sp, _, _ := newItemServerCountingJobs(t)
+	block.RegisterProcessor(ink.NewDigitalNoteKind())
+	c, err := sp.Containers.Create(ink.KindDigitalNote, map[string]interface{}{"title": ""})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	status, body := do(t, http.MethodPost, srv.URL+"/api/container/open/"+c.UUID(), "", "")
+	if status != http.StatusOK {
+		t.Fatalf("open: %d %s", status, body)
+	}
+	if tab := sp.State.LoadSession().Tabs[0]; tab.DisplayName != "Untitled notebook" {
+		t.Errorf("an untitled notebook's tab reads %q", tab.DisplayName)
+	}
+	session := sp.State.LoadSession()
+	session.Tabs = append(session.Tabs, domain.Tab{ID: "v-live", Kind: ink.KindLive, DisplayName: "Live"})
+	if err := sp.State.SaveSession(session); err != nil {
+		t.Fatal(err)
+	}
+	_, body = do(t, http.MethodGet, srv.URL+"/ui/views/tabs", "", "")
+	for _, want := range []string{
+		`data-ctx-id="` + c.UUID() + `"
+     data-ctx-type="notebook"
+     data-ctx-name="Untitled notebook"`,
+		`data-ctx-id="v-live"
+     data-ctx-type="inkLive"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the strip lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, ">digital-note<") {
+		t.Errorf("a tab reads its kind:\n%s", body)
 	}
 }

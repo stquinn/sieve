@@ -11,6 +11,7 @@ import { StatusBar } from '../src/static/shell/status-bar.js'
 function mountStatusDom() {
   document.body.innerHTML = `
     <div class="status-bar">
+      <div class="status-bar__message"></div>
       <div class="status-bar__save"></div>
       <div class="status-bar__blockid"></div>
       <div class="status-bar__stats"></div>
@@ -280,5 +281,26 @@ describe('StatusBar (P4.D)', () => {
     const slot = document.querySelector('.status-bar__stats')
     expect(slot.innerHTML).toContain('5 chars')
     expect(slot.innerHTML).toContain('2 lines')
+  })
+
+  it('says a status message, an error in red, and clears it after a while', () => {
+    vi.useFakeTimers()
+    try {
+      mountStatusDom()
+      new StatusBar(fakeWorkspace())
+      const slot = /** @type {HTMLElement} */ (document.querySelector('.status-bar__message'))
+      document.dispatchEvent(new CustomEvent('sieve:status-message', { detail: { text: 'Naming Ideas…' } }))
+      expect(slot.textContent).toBe('Naming Ideas…')
+      vi.advanceTimersByTime(StatusBar.MESSAGE_MS - 1)
+      document.dispatchEvent(new CustomEvent('sieve:status-message', { detail: { text: 'No tablet connected', error: true } }))
+      expect(slot.textContent).toBe('No tablet connected')
+      expect(slot.style.color).toBe('var(--theme-accentRed)')
+      vi.advanceTimersByTime(StatusBar.MESSAGE_MS - 1)
+      expect(slot.textContent).toBe('No tablet connected')
+      vi.advanceTimersByTime(1)
+      expect(slot.textContent).toBe('')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

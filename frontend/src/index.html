@@ -131,6 +131,7 @@
                      into its own element, so no update can clobber another.
                        __lib     — library chip       (GET /ui/views/library/current)
                        __jobs    — AI job spinner      (ai-actions.js updateStatusBar)
+                       __message — what a menu action came to (sieve:status-message handler)
                        __save    — save indicator      (editor:saved handler)
                        __blockid — hovered block kind·id (editor:blockhover handler)
                        __stats   — document stats       (editor:stats handler) -->
@@ -138,6 +139,7 @@
                   <div class="status-bar__lib" hx-get="/ui/views/library/current" hx-trigger="load" hx-swap="innerHTML"></div>
                   <div class="status-bar__jobs"></div>
                   <div class="status-bar__command-badges"></div>
+                  <div class="status-bar__message" role="status" style="margin-left: 0.75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;"></div>
                 </div>
                 <div class="status-bar__right flex items-center">
                   <div class="status-bar__save" style="margin-right: 8px; color: var(--theme-muted); transition: opacity 0.5s; opacity: 0;"></div>
@@ -245,7 +247,7 @@
     <script type="module" src="/ui/static/shell/tab.js"></script>
     <script type="module" src="/ui/static/shell/workspace.js"></script>
     <script src="/ui/static/ai/ai-actions.js"></script>
-    <script src="/ui/static/ui/tabbar.js"></script>
+    <script type="module" src="/ui/static/ui/tabbar.js"></script>
     <script src="/ui/static/ui/sidebar.js"></script>
     <script type="module" src="/ui/static/lens/document-editor/context-menu.js"></script>
     <script src="/ui/static/ui/layout.js"></script>

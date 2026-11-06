@@ -62,6 +62,7 @@ const (
 	TypeInkReading         = "ink-reading"
 	TypeInkReadPage        = "ink-read-page"
 	TypeInkReadingDocument = "ink-reading-document"
+	TypeInkDescribe        = "ink-describe"
 
 	// Both channels, client → server. Which channel a feature-control frame
 	// arrives on IS the scope it speaks for: the workspace wire controls a
@@ -95,6 +96,7 @@ const (
 	TypeInkReadingContent        = "ink-reading-content"
 	TypeInkReadingChanged        = "ink-reading-changed"
 	TypeInkReadingDocumentResult = "ink-reading-document-result"
+	TypeInkDescribeResult        = "ink-describe-result"
 	TypeContainerNamed           = "container-named"
 
 	// Workspace channel, client → server.

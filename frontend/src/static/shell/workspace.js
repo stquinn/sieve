@@ -292,26 +292,48 @@ export class SieveWorkspace {
    */
   #closeTabs(uuids) {
     if (!window.htmx || !uuids.length) return Promise.resolve()
-    return fetch('/api/tabs/close', {
+    return this.#swapStrip(fetch('/api/tabs/close', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids: uuids }),
-    })
-      .then((res) => res.text())
-      .then((html) => {
-        window.htmx.swap('#htmx-tabbar', html, { swapStyle: 'innerHTML' }, {
-          afterSettleCallback: () => { for (const uuid of uuids) this.closeTab(uuid) },
-        })
-      })
+    }), () => { for (const uuid of uuids) this.closeTab(uuid) })
   }
 
   /**
+   * Moves the tab at `fromIdx` to insertion position `toPos` and resolves once
+   * the strip the server answers with has settled. It is fetched and swapped
+   * rather than sent through htmx.ajax: htmx keeps one request in flight per
+   * source and queues only the last, so a move asked while the strip is being
+   * refetched would be dropped.
    * @param {number} fromIdx — source tab index
    * @param {number} toPos — target insertion position
    * @returns {Promise<any>}
    */
   reorder(fromIdx, toPos) {
-    return this.#ajax('POST', '/api/tabs/reorder', { values: { from: fromIdx, to: toPos } })
+    return this.#swapStrip(fetch('/api/tabs/reorder', {
+      method: 'POST',
+      body: new URLSearchParams({ from: String(fromIdx), to: String(toPos) }),
+    }))
+  }
+
+  /**
+   * Swaps the strip `response` answers with into #htmx-tabbar, settling as a
+   * request's swap does, and resolves once it has settled.
+   * @param {Promise<Response>} response
+   * @param {() => void} [settled] run once the strip has settled
+   * @returns {Promise<void>}
+   */
+  #swapStrip(response, settled) {
+    if (!window.htmx) return Promise.resolve()
+    return response
+      .then((res) => res.text())
+      .then((html) => new Promise((resolve) => {
+        const target = document.getElementById('htmx-tabbar')
+        window.htmx.swap('#htmx-tabbar', html, { swapStyle: 'innerHTML' }, {
+          eventInfo: { target },
+          afterSettleCallback: () => { if (settled) settled(); resolve() },
+        })
+      }))
   }
 
   /** Fetches and renders the tab strip. The boot and invalidation refetch entry

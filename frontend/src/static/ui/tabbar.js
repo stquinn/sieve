@@ -1,7 +1,16 @@
+import { TabSeating } from './tab-seating.js';
+
 (function () {
   let dragFromIdx = null;
   let dragToPos = null;
   let activeRo = null;
+  // dropped is a drop's reorder under way: the strip it renders is taken as placed.
+  let dropped = false;
+  // booted is a strip having been rendered since the page loaded; areaWidth is the strip's width
+  // as last measured, so a resize can be told from a render.
+  let booted = false;
+  let areaWidth = null;
+  const seating = new TabSeating();
 
   function clearIndicators() {
     document.querySelectorAll('.tab-drop-indicator-left, .tab-drop-indicator-right').forEach(el => {
@@ -12,6 +21,7 @@
   function commitDrop() {
     if (dragFromIdx !== null && dragToPos !== null &&
         dragToPos !== dragFromIdx && dragToPos !== dragFromIdx + 1) {
+      dropped = true;
       window.sieveWorkspace.reorder(dragFromIdx, dragToPos);
     }
     dragFromIdx = null;
@@ -101,7 +111,7 @@
     clearIndicators();
   });
 
-  function initOverflow(area, overflowWrap, overflowBtn) {
+  function initOverflow(area, overflowWrap, overflowBtn, seatThisRender) {
     let showDropdown = false;
 
     const closeDropdown = () => {
@@ -110,7 +120,7 @@
       if (dd) dd.remove();
     };
 
-    const update = () => {
+    const update = (seatIt) => {
       if (!area.isConnected) return;
       const areaRight = area.getBoundingClientRect().right;
       const tabs = area.querySelectorAll('[data-tab-idx]');
@@ -122,6 +132,7 @@
         }
       }
       const hiddenCount = tabs.length - firstHidden;
+      if (seatIt) seat(tabs, firstHidden);
       if (hiddenCount > 0) {
         overflowWrap.style.display = 'flex';
         overflowWrap.style.alignItems = 'stretch';
@@ -133,14 +144,39 @@
       }
     };
 
+    // Seats the active tab when it is past the fold — however this window made it
+    // active, and when the strip narrows — with TabSeating's rule, through the same
+    // reorder verb a drag uses; a strip a drop rendered is left where the drop put
+    // it. A strip refetched because the session changed elsewhere is not seated:
+    // the window that changed it seats it, and a late refetch shows an old order.
+    const seat = (tabs, visible) => {
+      const strip = {
+        tabs: Array.from(tabs, (t) => ({ id: t.dataset.tabId, viewed: Number(t.dataset.tabViewed) || 0 })),
+        active: Array.from(tabs).findIndex((t) => t.dataset.tabActive === 'true'),
+        visible,
+      };
+      if (dropped) {
+        dropped = false;
+        seating.accept(strip);
+        return;
+      }
+      seating.seat(strip, (from, to) => window.sieveWorkspace.reorder(from, to));
+    };
+
     if (activeRo) activeRo.disconnect();
-    activeRo = new ResizeObserver(update);
+    activeRo = new ResizeObserver(() => {
+      const width = area.getBoundingClientRect().width;
+      const resized = width !== areaWidth;
+      areaWidth = width;
+      update(resized);
+    });
+    areaWidth = area.getBoundingClientRect().width;
     activeRo.observe(area);
-    update();
+    update(seatThisRender);
 
     // Opens a list of the tabs past `_firstHidden`, each activated through the
-    // SAME verb a visible tab's onmousedown uses (window.sieveWorkspace.open) \u2014
-    // there is no second path to focusing a tab.
+    // SAME verb a visible tab's onmousedown uses (window.sieveWorkspace.open),
+    // which renders the strip that then seats it.
     overflowBtn.addEventListener('click', () => {
       if (showDropdown) { closeDropdown(); return; }
       showDropdown = true;
@@ -161,17 +197,7 @@
         btn.onmouseenter = () => { btn.style.background = 'var(--theme-bg)'; };
         btn.onmouseleave = () => { btn.style.background = 'transparent'; };
         btn.onclick = () => {
-          // The strip does not scroll, so a summoned tab must be SEATED where
-          // it can be seen: the last visible slot, displacing that tab toward
-          // the overflow. The move SETTLES FIRST — reorder is index-based and
-          // the server tracks the active tab as one, so activating during the
-          // move can land on whichever tab slid into the old slot. Open is
-          // id-based and goes last, which no completed reorder can invalidate.
-          const seat = Math.max(0, firstHidden - 1);
-          const moved = (i >= firstHidden && seat < i)
-            ? window.sieveWorkspace.reorder(i, seat)
-            : null;
-          Promise.resolve(moved).then(() => window.sieveWorkspace.open(id));
+          window.sieveWorkspace.open(id);
           closeDropdown();
         };
         dd.appendChild(btn);
@@ -188,17 +214,22 @@
     });
   }
 
-  function init() {
+  // init wires the strip just rendered; refetched is its being a GET of the strip.
+  function init(refetched) {
     const area = document.getElementById('tabs-area');
     const overflowWrap = document.getElementById('tab-overflow');
     const overflowBtn = document.getElementById('tab-overflow-btn');
-    if (area && overflowWrap && overflowBtn) initOverflow(area, overflowWrap, overflowBtn);
+    if (!area || !overflowWrap || !overflowBtn) return;
+    initOverflow(area, overflowWrap, overflowBtn, !refetched || !booted);
+    booted = true;
   }
 
   document.addEventListener('htmx:afterSettle', function(e) {
-    if (e.detail && e.detail.target && e.detail.target.id === 'htmx-tabbar') init();
+    if (!e.detail || !e.detail.target || e.detail.target.id !== 'htmx-tabbar') return;
+    const config = e.detail.requestConfig;
+    init(!!config && String(config.verb).toLowerCase() === 'get');
   });
 
-  if (document.readyState !== 'loading') init();
-  else document.addEventListener('DOMContentLoaded', init);
+  if (document.readyState !== 'loading') init(false);
+  else document.addEventListener('DOMContentLoaded', () => init(false));
 })();
