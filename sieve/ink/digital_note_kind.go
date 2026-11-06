@@ -3,6 +3,7 @@ package ink
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 
@@ -120,6 +121,26 @@ func (k DigitalNoteKind) Face(b domain.SieveBlock) map[string]string {
 		"note_synced_seq": fmt.Sprint(b.Attrs["note_synced_seq"]),
 		"note_whiteboard": strconv.FormatBool(whiteboard),
 	}
+}
+
+// Lifted is meta, a note's .meta as found, with every field of the face that it lacks read from the
+// block load gives: a face saved before that field existed. meta itself is returned when it lacks
+// none, and when load fails.
+func (k DigitalNoteKind) Lifted(meta map[string]string, load func() (domain.SieveBlock, error)) map[string]string {
+	if _, ok := meta["note_whiteboard"]; ok {
+		return meta
+	}
+	b, err := load()
+	if err != nil {
+		return meta
+	}
+	lifted := maps.Clone(meta)
+	for key, v := range k.Face(b) {
+		if _, ok := lifted[key]; !ok {
+			lifted[key] = v
+		}
+	}
+	return lifted
 }
 
 // Name is what a note is called wherever it is shown: the name Sieve gave it, the display_name of

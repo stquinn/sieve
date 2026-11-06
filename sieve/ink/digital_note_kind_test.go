@@ -98,6 +98,16 @@ func TestDigitalNoteKind_AttrsFaceAndSourceThroughAContainer(t *testing.T) {
 					t.Errorf("face %s = %v, want %q", k, face[k], v)
 				}
 			}
+			before := map[string]string{}
+			for k, v := range face {
+				if s, ok := v.(string); ok && k != "note_whiteboard" {
+					before[k] = s
+				}
+			}
+			lifted := kind.Lifted(before, func() (domain.SieveBlock, error) { return loaded.Block(), nil })
+			if lifted["note_whiteboard"] != tc.wantFace["note_whiteboard"] || lifted["note_title"] != tc.wantFace["note_title"] {
+				t.Errorf("a face saved before note_whiteboard, lifted: %v", lifted)
+			}
 			if versions := len(saved.Versions()); versions != min(len(tc.log), 1) {
 				t.Errorf("%d versions; a save that changes nothing makes none, any other one", versions)
 			}

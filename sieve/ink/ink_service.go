@@ -950,8 +950,17 @@ func (s *InkService) synced(open []SyncedNote) ([]SyncedNote, []Companion) {
 		logger.Error("ink: listing synced notes", "err", err.Error())
 		return nil, nil
 	}
+	kind := NewDigitalNoteKind()
 	byUUID := map[string]SyncedNote{}
 	for uuid, face := range found {
+		face = kind.Lifted(face, func() (domain.SieveBlock, error) {
+			c, err := s.containers.Load(uuid)
+			if err != nil {
+				return domain.SieveBlock{}, err
+			}
+			return c.Block(), nil
+		})
+		found[uuid] = face
 		pages, _ := strconv.Atoi(face["note_pages"])
 		seq, _ := strconv.ParseUint(face["note_synced_seq"], 10, 32)
 		byUUID[uuid] = SyncedNote{UUID: uuid, Title: face["note_title"], Pages: pages, Seq: uint32(seq),
@@ -960,7 +969,6 @@ func (s *InkService) synced(open []SyncedNote) ([]SyncedNote, []Companion) {
 	for _, n := range open {
 		byUUID[n.UUID] = n
 	}
-	kind := NewDigitalNoteKind()
 	s.mu.Lock()
 	offered, run := maps.Clone(s.offered), s.run
 	s.mu.Unlock()

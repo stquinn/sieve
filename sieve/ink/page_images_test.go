@@ -70,7 +70,7 @@ func newImagesRig(t *testing.T, records ...link.Record) *imagesRig {
 	t.Helper()
 	rig := &imagesRig{replicaRig: newReplicaRig(t, nil), drawer: &fakeDrawer{}}
 	rig.svc = NewInkService(nil, rig.containers, nil, nil)
-	rig.svc.run = &sessionRun{replicas: rig.replicas}
+	rig.svc.run = &sessionRun{replicas: rig.replicas, link: namedLink{identity: companionID}}
 	opened, err := rig.replicas.Open(noteID)
 	if err != nil {
 		t.Fatal(err)

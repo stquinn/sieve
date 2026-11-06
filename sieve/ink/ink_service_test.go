@@ -450,7 +450,7 @@ func TestInkService_StatusShowsAnOpenNoteAsItsReplicaStands(t *testing.T) {
 		seq   uint32
 	}{
 		{"from the face", nil, 0, 0},
-		{"from the open replica", &sessionRun{replicas: replicas}, 1, uint32(len(records))},
+		{"from the open replica", &sessionRun{replicas: replicas, link: namedLink{identity: "another-companion"}}, 1, uint32(len(records))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rig.svc.mu.Lock()
@@ -972,7 +972,7 @@ func TestOpenNotes_AnswerAPageAtTheSeqItsLogReaches(t *testing.T) {
 					t.Fatal("the queue reached the asset")
 				}
 				rig.svc.mu.Lock()
-				rig.svc.run = &sessionRun{replicas: replicas}
+				rig.svc.run = &sessionRun{replicas: replicas, link: namedLink{identity: companionID}}
 				rig.svc.mu.Unlock()
 			} else {
 				if err := rig.sync(); err != nil {
@@ -1676,3 +1676,11 @@ func TestInkService_ADescriptionGoesToTheTabletItsNoteCameFrom(t *testing.T) {
 		t.Errorf("recorded as sent at %q after the next session", s)
 	}
 }
+
+// namedLink is a link that is only ever asked whose it is.
+type namedLink struct {
+	radio.Link
+	identity string
+}
+
+func (l namedLink) Identity() string { return l.identity }

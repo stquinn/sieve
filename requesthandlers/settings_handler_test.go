@@ -674,7 +674,8 @@ func TestInkSidebar_IsTheFirstItemOfTheTreeWhileInkIsEnabled(t *testing.T) {
 	}
 }
 
-// Deleting a notebook removes Sieve's copy and answers with the workspace, its tab gone; what is
+// Deleting a notebook whose tablet is away asks, saying it comes back if the tablet still has it,
+// then removes Sieve's copy and answers with the workspace, its tab gone; what is
 // no Digital Note is 404.
 func TestInkDelete_RemovesSievesCopyAndItsTab(t *testing.T) {
 	srv, sp := newInkServer(t)
@@ -688,7 +689,11 @@ func TestInkDelete_RemovesSievesCopyAndItsTab(t *testing.T) {
 	if err := sp.State.SaveSession(session); err != nil {
 		t.Fatal(err)
 	}
-	status, body := do(t, http.MethodDelete, srv.URL+"/api/ink/notes/"+c.UUID(), "", "")
+	status, body := do(t, http.MethodGet, srv.URL+"/ui/views/sidebar/dialog/delete?id="+c.UUID()+"&name=Ideas&type=notebook", "", "")
+	if status != http.StatusOK || !strings.Contains(body, "comes back at the next") || !strings.Contains(body, `type="submit"`) {
+		t.Errorf("the dialog with the tablet away: %d\n%s", status, body)
+	}
+	status, body = do(t, http.MethodDelete, srv.URL+"/api/ink/notes/"+c.UUID(), "", "")
 	if status != http.StatusOK || strings.Contains(body, c.UUID()) {
 		t.Fatalf("delete: %d\n%s", status, body)
 	}
