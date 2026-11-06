@@ -84,9 +84,10 @@ func newItemServerCountingJobs(t *testing.T) (*httptest.Server, *sieve.ServicePr
 	es.SetJobs(jobs)
 	es.SetEngine(services.NewJobEngine(map[string]int{block.CategoryAI: 1}, 1, jobs))
 	t.Cleanup(es.CloseAll)
+	nodes := editor.NewRouter(editor.NewNotesSource(ds), editor.NewBlockSource(containers))
 	sp := &sieve.ServiceProvider{
 		Store: fs, Documents: ds, State: state, Containers: containers, Editor: es, Jobs: jobs,
-		Nodes:  editor.NewRouter(editor.NewNotesSource(ds), editor.NewBlockSource(containers)),
+		Nodes: nodes, Search: nodes,
 		Assets: services.NewAssetService(fs, ""),
 	}
 
@@ -571,6 +572,86 @@ func TestFolderPatch_NameOnlyLeavesTheOpenStateAlone(t *testing.T) {
 
 	if open := sp.State.LoadSession().OpenFolders; len(open) != 1 || open[0] != id {
 		t.Errorf("a name-only patch changed the open state: %v", open)
+	}
+}
+
+// The Buffers item is the tree's last, below the library's folders and below an empty library's
+// line, and there also when no buffer is. The tree holds it in a mount of its own that refreshes
+// on the session and notes invalidations, which is also where the item is served. It lists every
+// buffer by its display name, open in a tab or not, and nothing filed; expanding it is remembered
+// as a folder's expansion is.
+func TestBuffersSidebar_IsTheLastItemOfTheTreeAndListsEveryBuffer(t *testing.T) {
+	srv, sp := newItemServer(t)
+	get := func(path string) string {
+		t.Helper()
+		status, body := do(t, http.MethodGet, srv.URL+path, "", "")
+		if status != http.StatusOK {
+			t.Fatalf("GET %s: %d %s", path, status, body)
+		}
+		return body
+	}
+	mount := `<div id="sidebar-buffers" class="buffers-tree">`
+	tree := get("/ui/views/sidebar")
+	if at, empty := strings.Index(tree, mount), strings.Index(tree, "No filed documents yet"); empty < 0 || at < empty ||
+		!strings.Contains(tree, `buffers-tree__count">0<`) || !strings.Contains(get("/ui/views/sidebar/buffers"), ">Buffers<") {
+		t.Fatalf("an empty library's tree is\n%s", tree)
+	}
+
+	_, filed := seedNotesInFolder(t, srv, sp, "Work", "Filed plan")
+	if status, body := do(t, http.MethodPost, srv.URL+"/api/note", "", ""); status != http.StatusOK {
+		t.Fatalf("new note: %d %s", status, body)
+	}
+	open := sp.State.LoadSession().ActiveID()
+	closed := newSavedNote(t, sp)
+	var names []string
+	for _, id := range []string{open, closed} {
+		doc, err := sp.Documents.LoadByUUID(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, doc.Meta().DisplayName())
+	}
+
+	status, body := do(t, http.MethodPatch, srv.URL+"/api/folder/"+buffersTreeID, "application/x-www-form-urlencoded", "open=true")
+	if status != http.StatusOK {
+		t.Fatalf("expanding Buffers: %d\n%s", status, body)
+	}
+	if at, folder := strings.Index(body, "buffers-tree__row"), strings.Index(body, ">Work<"); folder < 0 || at < folder {
+		t.Errorf("the Buffers item is not below the folders:\n%s", body)
+	}
+	item := get("/ui/views/sidebar/buffers")
+	for _, want := range []string{
+		`title="` + names[0] + `"`, `title="` + names[1] + `"`, `buffers-tree__count">2<`,
+		`data-ctx-id="` + open + `"`, `data-ctx-id="` + closed + `"`, "data-active",
+	} {
+		if !strings.Contains(item, want) {
+			t.Errorf("no %q in\n%s", want, item)
+		}
+	}
+	if strings.Contains(item, "Filed plan") || !strings.HasPrefix(names[0], "Untitled ") {
+		t.Errorf("the item lists %v as\n%s", names, item)
+	}
+	for _, intent := range []string{"trash", ""} {
+		if status, body := do(t, http.MethodPost, srv.URL+"/api/sidebar/intent?id="+open+"&value="+intent, "", ""); status != http.StatusOK {
+			t.Fatalf("intent %q: %d %s", intent, status, body)
+		}
+		if marked := strings.Contains(get("/ui/views/sidebar/buffers"), `data-ctx-intent="trash"`); marked != (intent == "trash") {
+			t.Errorf("after the intent %q the open buffer's row is marked trash: %v", intent, marked)
+		}
+	}
+
+	for id := range filed {
+		if status, body := do(t, http.MethodPost, srv.URL+"/api/container/open/"+id, "", ""); status != http.StatusOK {
+			t.Fatalf("open the filed note: %d %s", status, body)
+		}
+	}
+	for _, id := range []string{open, closed} {
+		if status, body := do(t, http.MethodDelete, srv.URL+"/api/note/"+id, "", ""); status != http.StatusOK {
+			t.Fatalf("delete %s: %d %s", id, status, body)
+		}
+	}
+	if !strings.Contains(get("/ui/views/sidebar/buffers"), "No buffers") || !strings.Contains(get("/ui/views/sidebar"), "No buffers") {
+		t.Error("the item went with the last buffer, or forgot it was expanded")
 	}
 }
 
