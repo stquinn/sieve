@@ -2,13 +2,14 @@
 // widget family (ToolbarButton / ToolbarLabel / ToolbarSeparator / ButtonGroup /
 // ToolbarSelect), the ActionList a lens draws as buttons and as menu entries,
 // the surfaces' groups, the WorkspaceToolbar drawing the active lens's answer
-// (asked again on `toolbar-changed`, refreshed on the lens's RAW event stream),
+// in the places its items declare (asked again on `toolbar-changed`, refreshed
+// on the lens's RAW event stream),
 // NoteEditor's answer button for button, and the one mode toggle every lens
 // draws. Headless (happy-dom) with fake surfaces where a real one would mount
 // ProseMirror.
 
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { ToolbarButton, ToolbarLabel, ToolbarSeparator, ButtonGroup, ToolbarSelect } from '../src/static/renderers/toolbar-button.js'
+import { ToolbarButton, ToolbarLabel, ToolbarSeparator, ButtonGroup, ToolbarSelect, ToolbarPlace } from '../src/static/renderers/toolbar-button.js'
 import { ActionList } from '../src/static/renderers/action-list.js'
 import { WorkspaceToolbar } from '../src/static/shell/workspace-toolbar.js'
 import { WysiwygSurface } from '../src/static/lens/document-editor/surfaces/wysiwyg-surface.js'
@@ -105,6 +106,14 @@ describe('ToolbarLabel and ToolbarSeparator', () => {
     expect(sep.el.className).toBe('tb-sep')
     expect(() => sep.refresh()).not.toThrow()
   })
+
+  it.each([
+    ['a label', (/** @type {any} */ place) => new ToolbarLabel({ text: () => '', place })],
+    ['a separator', (/** @type {any} */ place) => new ToolbarSeparator(place)],
+    ['a group', (/** @type {any} */ place) => new ButtonGroup([], { place })],
+  ])('%s is at the start of the strip unless it says another place', (_name, make) => {
+    expect([make(undefined).place, make(ToolbarPlace.MIDDLE).place, make(ToolbarPlace.END).place]).toEqual(['start', 'middle', 'end'])
+  })
 })
 
 describe('ButtonGroup', () => {
@@ -177,16 +186,22 @@ describe('ActionList', () => {
     { id: 'open', label: 'Open in e-ink', modes: [PAGE, READING], enabled: () => !state.busy, run: () => ran.push('open') },
     { id: 'live', label: 'Go to Live', short: 'Live', className: 'tb-live', modes: [PAGE], applies: () => !!state.live, run: () => ran.push('live') },
     { id: 'read', label: () => String(state.label), modes: [READING], run: () => ran.push('read') },
+    { id: 'name', label: 'Refresh name', modes: [PAGE, READING], menuOnly: true, run: () => ran.push('name') },
   ])
 
   it.each([
-    ['the page', PAGE, {}, ['copy', 'open'], ['Copy page', 'Open in e-ink']],
-    ['the page, while live', PAGE, { live: true }, ['copy', 'open', 'live'], ['Copy page', 'Open in e-ink', 'Go to Live']],
-    ['the reading', READING, { label: 'Read again' }, ['open', 'read'], ['Open in e-ink', 'Read again']],
-  ])('offers in %s only the actions of that mode that apply now', (_name, mode, state, ids, labels) => {
+    ['the page', PAGE, {}, ['copy', 'open', 'name'], ['Copy page', 'Open in e-ink', 'Refresh name']],
+    ['the page, while live', PAGE, { live: true }, ['copy', 'open', 'live', 'name'], ['Copy page', 'Open in e-ink', 'Go to Live', 'Refresh name']],
+    ['the reading', READING, { label: 'Read again' }, ['open', 'read', 'name'], ['Open in e-ink', 'Read again', 'Refresh name']],
+  ])('offers in %s only the actions of that mode that apply now: all in the menu, the menu-only ones not in the toolbar', (_name, mode, state, ids, labels) => {
     const actions = list(state, [])
     expect([actions.offered(mode).map((a) => a.id), actions.menuItems(mode).map((i) => /** @type {any} */ (i).label)]).toEqual([ids, labels])
-    expect(actions.toolbarButtons(mode).map((b) => b.el.id)).toEqual(ids.map((id) => 'tb-' + id))
+    expect(actions.toolbarButtons(mode).map((b) => b.el.id)).toEqual(ids.filter((id) => id !== 'name').map((id) => 'tb-' + id))
+  })
+
+  it('draws as toolbar buttons only the actions the caller asks for, in order', () => {
+    const actions = list({ live: true }, [])
+    expect(actions.toolbarButtons(PAGE, (a) => a.id !== 'open').map((b) => b.el.id)).toEqual(['tb-copy', 'tb-live'])
   })
 
   it('draws each as a toolbar button saying its short face, and as a menu entry saying its label, both running it', () => {
@@ -210,7 +225,7 @@ describe('ActionList', () => {
     state.label = 'Try again'
     button.refresh()
     expect([button.el.disabled, actions.menuItems(READING).map((i) => [/** @type {any} */ (i).label, /** @type {any} */ (i).disabled])])
-      .toEqual([false, [['Open in e-ink', false], ['Try again', false]]])
+      .toEqual([false, [['Open in e-ink', false], ['Try again', false], ['Refresh name', false]]])
   })
 
   it('is frozen: what was declared is what both draw', () => {
@@ -261,6 +276,9 @@ class FakeLens {
 /** @param {string} id @param {Partial<import('../src/static/renderers/toolbar-button.js').ToolbarButtonSpec>} [spec] */
 const button = (id, spec = {}) => new ToolbarButton({ id, onClick: () => {}, ...spec })
 
+/** @param {HTMLElement} el @returns {Array<[string, string[]]>} each place drawn, and the classes of what it holds */
+const places = (el) => [...el.children].map((p) => [p.className, [...p.children].map((c) => c.className)])
+
 describe('WorkspaceToolbar', () => {
   it("draws the lens's answer when shown, each item refreshed, and nothing for no lens", () => {
     const el = host()
@@ -268,10 +286,28 @@ describe('WorkspaceToolbar', () => {
     lens.items = [new ButtonGroup([button('a', { active: () => true })]), new ToolbarSeparator(), new ButtonGroup([button('b')])]
     const toolbar = new WorkspaceToolbar(el)
     toolbar.show(lens)
-    expect([[...el.children].map((c) => c.className), el.querySelector('#a')?.classList.contains('active')])
-      .toEqual([['tb-group', 'tb-sep', 'tb-group'], true])
+    expect([places(el), el.querySelector('#a')?.classList.contains('active')])
+      .toEqual([[['tb-place tb-place--start', ['tb-group', 'tb-sep', 'tb-group']]], true])
     toolbar.show(null)
     expect([el.childElementCount, toolbar.lens]).toEqual([0, null])
+  })
+
+  const { START, MIDDLE, END } = ToolbarPlace
+  it.each([
+    ['at the start, middle and end', [START, MIDDLE, END, END],
+      [['tb-place tb-place--start', ['g0']], ['tb-place tb-place--middle', ['g1']], ['tb-place tb-place--end', ['g2', 'g3']]]],
+    ['at the start and the end, the middle empty between them', [END, START, END],
+      [['tb-place tb-place--start', ['g1']], ['tb-place tb-place--middle', []], ['tb-place tb-place--end', ['g0', 'g2']]]],
+    ['in the middle alone, the start and end empty round it', [MIDDLE],
+      [['tb-place tb-place--start', []], ['tb-place tb-place--middle', ['g0']], ['tb-place tb-place--end', []]]],
+    ['at the start alone, as one place', [START, undefined],
+      [['tb-place tb-place--start', ['g0', 'g1']]]],
+  ])('draws the items %s, each place holding its items in the order given', (_name, placed, drawn) => {
+    const el = host()
+    const lens = new FakeLens()
+    lens.items = placed.map((place, i) => new ButtonGroup([], { place, className: 'g' + i }))
+    new WorkspaceToolbar(el).show(lens)
+    expect(places(el).map(([p, items]) => [p, items.map((c) => c.replace('tb-group ', ''))])).toEqual(drawn)
   })
 
   it('draws nothing for a lens that offers nothing, so no other lens\'s buttons are left behind', () => {
@@ -394,16 +430,19 @@ function shownNote(mode = 'wysiwyg') {
   return { el, editor, toolbar }
 }
 
-/** @param {HTMLElement} el @returns {string[]} every top-level item, a group as its buttons' ids or titles */
-const layout = (el) => [...el.children].map((c) => (c.classList.contains('tb-sep')
-  ? '|'
-  : [...c.querySelectorAll('button')].map((b) => b.id || b.title).join(',')))
+/** @param {HTMLElement} el @returns {string[]} every item of the one place drawn, a group as its buttons' ids or titles */
+const layout = (el) => {
+  expect([...el.children].map((c) => c.className)).toEqual(['tb-place tb-place--start'])
+  return [.../** @type {HTMLElement} */ (el.firstElementChild).children].map((c) => (c.classList.contains('tb-sep')
+    ? '|'
+    : [...c.querySelectorAll('button')].map((b) => b.id || b.title).join(',')))
+}
 
 describe("NoteEditor's toolbar", () => {
   const prevWs = window.sieveWorkspace
   afterEach(() => { window.sieveWorkspace = prevWs })
 
-  it('is the surface\'s groups, each with a separator after, then the mode toggle and spelling, insert, Explain and Ask, Help', () => {
+  it('is the surface\'s groups, each with a separator after, then the mode toggle and spelling, insert, Explain and Ask, Help, all at the start of the strip', () => {
     const { el } = shownNote()
     expect(layout(el)).toEqual([
       'fmt-wysiwyg', '|',
@@ -412,7 +451,7 @@ describe("NoteEditor's toolbar", () => {
       'tb-explain-btn,tb-ask-btn',
       'tb-help-btn',
     ])
-    expect([...el.children].map((c) => c.className).slice(2)).toEqual(['tb-group', 'tb-group', 'tb-group tb-ai-query', 'tb-group tb-help'])
+    expect([.../** @type {HTMLElement} */ (el.firstElementChild).children].map((c) => c.className).slice(2)).toEqual(['tb-group', 'tb-group', 'tb-group tb-ai-query', 'tb-group tb-help'])
   })
 
   it('is asked again when the mode flips: the markdown surface offers nothing and the toggle says the way back', async () => {

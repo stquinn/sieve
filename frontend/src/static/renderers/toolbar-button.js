@@ -11,8 +11,17 @@
 // `iconHtml`, which keeps every widget content-blind.
 
 /**
- * What a toolbar shows: an element, and a refresh of the state it reflects.
- * @typedef {{ readonly el: HTMLElement, refresh(): void }} ToolbarItem
+ * Where in the toolbar's strip an item the toolbar shows is drawn: at its
+ * start, in its middle or at its end. An item that says nothing is at the start.
+ */
+export const ToolbarPlace = Object.freeze({ START: 'start', MIDDLE: 'middle', END: 'end' })
+
+/** @typedef {typeof ToolbarPlace[keyof typeof ToolbarPlace]} ToolbarPlaceName */
+
+/**
+ * What a toolbar shows: an element, where it is drawn, and a refresh of the
+ * state it reflects.
+ * @typedef {{ readonly el: HTMLElement, readonly place?: ToolbarPlaceName, refresh(): void }} ToolbarItem
  */
 
 /**
@@ -76,6 +85,7 @@ export class ToolbarButton {
  * @property {string} [title]
  * @property {string} [className] extra class(es) beyond `tb-readout`
  * @property {boolean} [live] announced to assistive technology as it changes (`role="status"`)
+ * @property {ToolbarPlaceName} [place] where the toolbar draws it, when it is one of its items
  */
 
 export class ToolbarLabel {
@@ -83,9 +93,11 @@ export class ToolbarLabel {
   #el
   /** @type {() => string} */
   #text
+  /** @type {ToolbarPlaceName} */
+  #place
 
   /** @param {ToolbarLabelSpec} spec */
-  constructor({ id, text, title, className, live }) {
+  constructor({ id, text, title, className, live, place = ToolbarPlace.START }) {
     const span = document.createElement('span')
     span.className = className ? 'tb-readout ' + className : 'tb-readout'
     if (id) span.id = id
@@ -93,11 +105,15 @@ export class ToolbarLabel {
     if (live) span.setAttribute('role', 'status')
     this.#el = span
     this.#text = text
+    this.#place = place
     this.refresh()
   }
 
   /** @returns {HTMLSpanElement} */
   get el() { return this.#el }
+
+  /** @returns {ToolbarPlaceName} */
+  get place() { return this.#place }
 
   refresh() {
     const text = String(this.#text() ?? '')
@@ -192,11 +208,20 @@ export class ToolbarSelect {
 export class ToolbarSeparator {
   /** @type {HTMLDivElement} */
   #el = document.createElement('div')
+  /** @type {ToolbarPlaceName} */
+  #place
 
-  constructor() { this.#el.className = 'tb-sep' }
+  /** @param {ToolbarPlaceName} [place] where the two sections it divides are drawn */
+  constructor(place = ToolbarPlace.START) {
+    this.#el.className = 'tb-sep'
+    this.#place = place
+  }
 
   /** @returns {HTMLDivElement} */
   get el() { return this.#el }
+
+  /** @returns {ToolbarPlaceName} */
+  get place() { return this.#place }
 
   refresh() {}
 }
@@ -206,11 +231,14 @@ export class ButtonGroup {
   #el
   /** @type {ToolbarItem[]} */
   #buttons
+  /** @type {ToolbarPlaceName} */
+  #place
 
   /**
    * @param {ToolbarItem[]} buttons ordered; appended left→right into the .tb-group
-   * @param {{ className?: string, label?: string }} [opts] `label` names the group
-   *   for assistive technology
+   * @param {{ className?: string, label?: string, place?: ToolbarPlaceName }} [opts]
+   *   `label` names the group for assistive technology; `place` is where the
+   *   toolbar draws it
    */
   constructor(buttons, opts = {}) {
     const div = document.createElement('div')
@@ -222,10 +250,14 @@ export class ButtonGroup {
     for (const b of buttons) div.appendChild(b.el)
     this.#el = div
     this.#buttons = buttons.slice()
+    this.#place = opts.place || ToolbarPlace.START
   }
 
   /** @returns {HTMLDivElement} the `.tb-group` element */
   get el() { return this.#el }
+
+  /** @returns {ToolbarPlaceName} */
+  get place() { return this.#place }
 
   /** @returns {ToolbarItem[]} the group's widgets, in order */
   get buttons() { return this.#buttons.slice() }

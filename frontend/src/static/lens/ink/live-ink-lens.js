@@ -2,11 +2,12 @@
 // The lens of the Live view: a strict mirror of the tablet — the note being
 // written, the page written on and, on a whiteboard, the tablet's window — that
 // the reader cannot turn, pan or zoom. What it can do is open the note in a tab
-// of its own and copy the page as an image, from the toolbar or its context
-// menu.
+// of its own, drawn at the start of the toolbar, and copy the page as an image,
+// at its end, both also in its context menu.
 
 import { InkLens } from './ink-lens.js'
 import { ActionList } from '../../renderers/action-list.js'
+import { ToolbarPlace } from '../../renderers/toolbar-button.js'
 import { LiveSurface } from './live-surface.js'
 
 /** The one mode the Live view is presented in. */
@@ -39,6 +40,11 @@ export class LiveInkLens extends InkLens {
       },
     ])
   }
+
+  /** @override @protected
+   *  @param {Readonly<import('../../renderers/action-list.js').LensAction>} action
+   *  @returns {import('../../renderers/toolbar-button.js').ToolbarPlaceName} */
+  _actionPlace(action) { return action.id === 'open-note' ? ToolbarPlace.START : ToolbarPlace.END }
 
   /**
    * @protected

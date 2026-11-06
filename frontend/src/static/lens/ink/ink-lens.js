@@ -1,15 +1,15 @@
 // @ts-check
 // What the ink lenses share. Mounted over an InkContainerProvider, an ink lens
 // declares no capability and writes nothing. What it can do is one ActionList,
-// drawn twice: in the workspace toolbar, after the surface's view controls and
-// followed by what came of the last action and the mode toggle, and as the
-// context menu its surface raises, followed by the mode toggle.
+// drawn twice: in the workspace toolbar, at the end of the strip after what came
+// of the last action and before the mode toggle, and as the context menu its
+// surface raises, followed by the mode toggle.
 
 import { AbstractEditor } from '../abstract-editor.js'
 import { SurfaceEvent, SurfaceIntent } from '../abstract-surface.js'
 import { LensCapability } from '../../contract/lens-capabilities.js'
 import { ContractViolation } from '../../contract/sieve-block.js'
-import { ButtonGroup, ToolbarLabel, ToolbarSeparator } from '../../renderers/toolbar-button.js'
+import { ButtonGroup, ToolbarLabel, ToolbarPlace, ToolbarSeparator } from '../../renderers/toolbar-button.js'
 import { ActionStatus } from './action-status.js'
 
 /** @typedef {import('../../renderers/action-list.js').ActionList} ActionList */
@@ -62,24 +62,38 @@ export class InkLens extends AbstractEditor {
   }
 
   /**
-   * The actions offered in the mode in force and what came of the last of them,
-   * then the mode toggle.
+   * The actions the toolbar draws in the mode in force, each where
+   * `_actionPlace` puts it, then, at the end, what came of the last action, the
+   * actions placed there and the mode toggle.
    * @override @protected
    * @returns {import('../../renderers/toolbar-button.js').ToolbarItem[]}
    */
   _toolbarGroups() {
+    const { START, MIDDLE, END } = ToolbarPlace
     /** @type {import('../../renderers/toolbar-button.js').ToolbarItem[]} */
-    const actions = this.actions.toolbarButtons(this.mode)
-    if (this.#status.text) actions.push(new ToolbarLabel({ id: 'tb-ink-status', className: 'tb-status', text: () => this.#status.text, live: true }))
-    const toggle = this.modeToggle()
-    /** @type {import('../../renderers/toolbar-button.js').ToolbarItem[]} */
-    const groups = actions.length ? [new ButtonGroup(actions)] : []
-    if (toggle) {
-      if (groups.length) groups.push(new ToolbarSeparator())
-      groups.push(new ButtonGroup([toggle]))
+    const items = []
+    for (const place of [START, MIDDLE]) {
+      const buttons = this.actions.toolbarButtons(this.mode, (a) => this._actionPlace(a) === place)
+      if (buttons.length) items.push(new ButtonGroup(buttons, { place }))
     }
-    return groups
+    if (this.#status.text) items.push(new ToolbarLabel({ id: 'tb-ink-status', className: 'tb-status', text: () => this.#status.text, live: true, place: END }))
+    const end = this.actions.toolbarButtons(this.mode, (a) => this._actionPlace(a) === END)
+    if (end.length) items.push(new ButtonGroup(end, { place: END }))
+    const toggle = this.modeToggle()
+    if (toggle) {
+      if (end.length) items.push(new ToolbarSeparator(END))
+      items.push(new ButtonGroup([toggle], { place: END }))
+    }
+    return items
   }
+
+  /**
+   * Where the toolbar draws an action's button.
+   * @protected
+   * @param {Readonly<import('../../renderers/action-list.js').LensAction>} _action
+   * @returns {import('../../renderers/toolbar-button.js').ToolbarPlaceName} the end, unless a lens says otherwise
+   */
+  _actionPlace(_action) { return ToolbarPlace.END }
 
   /**
    * The context menu: the actions offered in the mode in force, disabled while

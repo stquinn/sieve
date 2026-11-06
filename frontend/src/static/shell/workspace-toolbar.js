@@ -10,8 +10,15 @@
 // items' state: the raw stream carries every caret move (`selection-changed`,
 // `transaction`), which the coalesced selection update drops, and a bold
 // button's active state must follow a caret that only moved.
+//
+// The strip is laid out in the places its items declare (ToolbarPlace): each
+// place is a `.tb-place` drawn in order, the start and the end sharing the room
+// the middle leaves, so the middle sits between them and the end against the
+// right edge. An answer whose items are all at the start is drawn as one start
+// place, which lays its items out as the strip's own.
 
 import { SurfaceEvent } from '../lens/abstract-surface.js'
+import { ToolbarPlace } from '../renderers/toolbar-button.js'
 
 /**
  * What the toolbar asks of the active lens.
@@ -62,12 +69,31 @@ export class WorkspaceToolbar {
     const active = typeof document !== 'undefined' ? document.activeElement : null
     const focusedId = active && host.contains(active) ? active.id : ''
     this.#items = this.#lens ? this.#lens.toolbarContents() : []
-    host.replaceChildren(...this.#items.map((item) => item.el))
+    host.replaceChildren(...this.#places())
     this.refresh()
     if (focusedId) {
       const again = [...host.querySelectorAll('[id]')].find((el) => el.id === focusedId)
       if (again) /** @type {HTMLElement} */ (again).focus()
     }
+  }
+
+  /** @returns {HTMLElement[]} a `.tb-place` for each place, holding its items in order;
+   *  the start's alone while no item is placed elsewhere, none while there are no items */
+  #places() {
+    if (!this.#items.length) return []
+    /** @type {Map<string, HTMLElement>} */
+    const places = new Map()
+    const placed = this.#items.some((item) => (item.place ?? ToolbarPlace.START) !== ToolbarPlace.START)
+    for (const place of placed ? Object.values(ToolbarPlace) : [ToolbarPlace.START]) {
+      const el = document.createElement('div')
+      el.className = 'tb-place tb-place--' + place
+      places.set(place, el)
+    }
+    for (const item of this.#items) {
+      const place = places.get(item.place ?? ToolbarPlace.START) || /** @type {HTMLElement} */ (places.get(ToolbarPlace.START))
+      place.appendChild(item.el)
+    }
+    return [...places.values()]
   }
 
   /** Re-reads every drawn item's state. */

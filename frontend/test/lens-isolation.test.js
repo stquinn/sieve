@@ -315,11 +315,12 @@ describe('the workspace toolbar and its widgets name no lens and no ProseMirror'
   // The toolbar is host chrome that any lens fills, so neither it nor the
   // widgets a lens fills it with may reach into one lens's world: the widgets are
   // look-and-feel a lens and the host both import, and the toolbar knows a lens
-  // only as the surface contract's event word.
+  // only as the surface contract's event word and its items only as the places
+  // they declare.
   it.each([
     [path.join('renderers', 'toolbar-button.js'), [path.join('renderers', 'toolbar-button.js')]],
     [path.join('renderers', 'action-list.js'), [path.join('renderers', 'action-list.js'), path.join('renderers', 'toolbar-button.js')]],
-    [path.join('shell', 'workspace-toolbar.js'), [path.join('lens', 'abstract-surface.js'), path.join('shell', 'workspace-toolbar.js')]],
+    [path.join('shell', 'workspace-toolbar.js'), [path.join('lens', 'abstract-surface.js'), path.join('renderers', 'toolbar-button.js'), path.join('shell', 'workspace-toolbar.js')]],
   ])('%s reaches only %j', (entry, closure) => {
     expect(new ImportGraph([]).walk([path.join(STATIC, entry)]).reached).toEqual(closure)
   })

@@ -16,7 +16,10 @@
 // viewBox, size and background and redraws the `ruling` group alone; every stroke
 // node stays where it is. Whether the window and the surround's scroll move on
 // their own, and whether the window takes the surround's shape or the page's, is
-// the sheet's SheetPolicy.
+// the sheet's SheetPolicy. A window that is fitting (PlaneWindow) frames the ink
+// again when a stroke is committed or removed, when a stroke under the pen ends
+// or is taken away, and, while the pen is outside it, at each frame, so the pen
+// stays in view; a live point inside it moves nothing.
 
 import { InkRenderer, INK_LAYERS, INK_RULES } from '../../renderers/ink-renderer.js'
 import { InkFeed } from '../../contract/ink-container-provider.js'
@@ -61,8 +64,10 @@ import { PlaneWindow, WindowEdge } from './plane-window.js'
  */
 
 /**
- * Where a whiteboard's window is: its top-left, in page units, and its zoom.
- * @typedef {Readonly<{x0: number, y0: number, zoom: number}>} WindowPlacement
+ * Where a whiteboard's window is: its top-left, in page units, its zoom, and
+ * whether it frames all the ink and follows it. A fitting placement is framed
+ * round the ink as it is when the window opens there.
+ * @typedef {Readonly<{x0: number, y0: number, zoom: number, fitting?: boolean}>} WindowPlacement
  */
 
 /**
@@ -275,8 +280,11 @@ export class InkSheet {
   /** @returns {WindowPlacement|null} where the window is; null for a fixed page */
   get placement() {
     const plane = this.#plane
-    return plane ? Object.freeze({ x0: plane.window.x0, y0: plane.window.y0, zoom: plane.zoom }) : null
+    return plane ? Object.freeze({ x0: plane.window.x0, y0: plane.window.y0, zoom: plane.zoom, fitting: plane.fitting }) : null
   }
+
+  /** @returns {boolean} whether a whiteboard's window frames all its ink and follows it */
+  get fitting() { return !!this.#plane && this.#plane.fitting }
 
   /** @returns {SheetScale} */
   get scale() { return this.#scale }
@@ -454,6 +462,7 @@ export class InkSheet {
    */
   takeLive(records) {
     if (this.#livePage === null || this.#livePage !== this.#shown) return
+    let refit = false
     for (const r of records) {
       switch (r.record) {
         case 'view':
@@ -485,14 +494,20 @@ export class InkSheet {
           const stroke = this.#live.get(r.stroke)
           if (!stroke || stroke.ended) break
           stroke.ended = true
-          stroke.linger = setTimeout(() => this.#dropLive(r.stroke), LIVE_LINGER_MS)
+          stroke.linger = setTimeout(() => {
+            this.#dropLive(r.stroke)
+            this.#followInk()
+          }, LIVE_LINGER_MS)
+          refit = true
           break
         }
         case 'remove':
           this.#dropLive(r.stroke)
+          refit = true
           break
       }
     }
+    if (refit) this.#followInk()
     this.#schedule()
   }
 
@@ -510,8 +525,11 @@ export class InkSheet {
    */
   moveWindow(move) {
     if (!this.pannable) return false
-    move(/** @type {PlaneWindow} */ (this.#plane))
+    const plane = /** @type {PlaneWindow} */ (this.#plane)
+    const fitting = plane.fitting
+    move(plane)
     this.#windowMoved()
+    if (plane.fitting !== fitting) this.#host.onSheetChanged()
     return true
   }
 
@@ -609,9 +627,12 @@ export class InkSheet {
       }
       const plane = /** @type {PlaneWindow} */ (this.#plane)
       plane.setStrokes(page.strokes)
-      if (!same && placeNext && placeNext.page === this.#shown) plane.place(placeNext.at.x0, placeNext.at.y0, placeNext.at.zoom)
+      const at = !same && placeNext && placeNext.page === this.#shown ? placeNext.at : null
+      if (at && at.fitting) plane.fitAll()
+      else if (at) plane.place(at.x0, at.y0, at.zoom)
       else if (!same && this.#policy.followsTablet) plane.place(0, 0, 1)
       else if (!same) plane.fitAll()
+      else plane.follow(this.#liveBox())
       if (this.#policy.followsTablet) plane.showTablet()
     } else {
       this.#plane = null
@@ -701,6 +722,7 @@ export class InkSheet {
       this.#strokeIds.delete(e.strokeId)
       if (this.#plane) {
         this.#plane.removeStroke(e.strokeId)
+        this.#followInk()
         this.#markEdges()
       }
       this.#host.onSheetChanged()
@@ -710,13 +732,14 @@ export class InkSheet {
     const markup = this.#renderer.renderStroke(/** @type {any} */ (e.stroke))
     this.#append('pen', markup.pen)
     markup.bands.forEach((part, i) => this.#append(`b${i}`, part))
+    if (this.#shown === this.#livePage) this.#claimLive(e.stroke)
     if (this.#plane) {
       this.#plane.addStroke(e.stroke)
+      this.#followInk()
       const extent = this.#plane.extentOf(e.stroke.id)
       if (extent && !this.#plane.shows(extent)) this.#offWindow.add(e.stroke.id)
       this.#markEdges()
     }
-    if (this.#shown === this.#livePage) this.#claimLive(e.stroke)
     this.#host.onSheetChanged()
   }
 
@@ -763,6 +786,23 @@ export class InkSheet {
     this.#schedule()
   }
 
+  /** A fitting window frames the ink and the strokes under the pen again, when that moves it. */
+  #followInk() {
+    if (this.#plane && this.#plane.follow(this.#liveBox())) this.#windowMoved()
+  }
+
+  /** @returns {InkWindow|null} the extent of every stroke under the pen; null while there is none */
+  #liveBox() {
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity]
+    for (const stroke of this.#live.values()) {
+      for (const p of stroke.points) {
+        x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y)
+        x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y)
+      }
+    }
+    return x1 >= x0 ? { x0, y0, x1, y1 } : null
+  }
+
   /** The surround took another shape: a window that fills it takes the same one.
    *  @param {number} shape width over height */
   #reshape(shape) {
@@ -779,9 +819,13 @@ export class InkSheet {
     this.#frame = requestAnimationFrame(() => this.#onFrame())
   }
 
-  /** One frame: the window brought up to date, then every changed live stroke. */
+  /** One frame: a fitting window grown to hold the pen when it has left it, the window
+   *  brought up to date, then every changed live stroke. */
   #onFrame() {
     this.#frame = 0
+    const plane = this.#plane
+    const live = plane && plane.fitting && this.#stale.size ? this.#liveBox() : null
+    if (plane && live && !plane.holds(live) && plane.follow(live)) this.#windowStale = true
     if (this.#windowStale) {
       this.#windowStale = false
       this.#applyWindow()

@@ -5,6 +5,10 @@
 // which at the page aspect is the tablet's own view; zoom 2 shows half a sheet's
 // width. It also holds the extent of every committed stroke, which framing all
 // ink and finding ink outside the window are computed from.
+//
+// Framing all ink is a state, not a move: from fitAll until the window is next
+// placed, panned or zoomed, the window is `fitting`, and follow() frames the ink
+// again whenever what it should frame has changed.
 
 /** @typedef {import('../../renderers/ink-renderer.js').InkWindow} InkWindow */
 
@@ -25,7 +29,8 @@ export class PlaneWindow {
   /** @type {number} */ #x0 = 0
   /** @type {number} */ #y0 = 0
   /** @type {number} */ #zoom = 1
-  /** @type {boolean} whether the window is where fitAll put it */ #fitted = false
+  /** @type {boolean} whether the window frames all ink and follows it */ #fitting = false
+  /** @type {InkWindow|null} the box last framed, margin included; null for the sheet at the origin */ #framed = null
   /** @type {Map<string, InkWindow>} each committed stroke's extent, by stroke id */ #extents = new Map()
   /** @type {InkWindow|null|undefined} the union of the extents; undefined while out of date */ #ink = null
   /** @type {{x: number, y: number}|null} the top-left of the tablet's view; null until one is heard */ #tablet = null
@@ -44,16 +49,16 @@ export class PlaneWindow {
   get shape() { return this.#shape }
 
   /**
-   * Gives the window another shape, keeping its zoom: one framing all ink is
-   * framed again, any other keeps its centre.
+   * Gives the window another shape, keeping its zoom: one fitting is framed
+   * again round what it framed, any other keeps its centre.
    * @param {number} shape width over height, > 0
    */
   set shape(shape) {
     if (!(shape > 0) || shape === this.#shape) return
     const w = this.window
     this.#shape = shape
-    if (this.#fitted) {
-      this.fitAll()
+    if (this.#fitting) {
+      this.#frame(this.#framed)
       return
     }
     const half = 1 / this.#zoom / 2
@@ -128,18 +133,36 @@ export class PlaneWindow {
   /** @param {string} id @returns {InkWindow|undefined} */
   extentOf(id) { return this.#extents.get(id) }
 
-  /** Frames all ink with a margin, or shows the sheet at the origin when there is none. */
-  fitAll() {
-    const ink = this.#inkBox()
-    if (!ink) {
-      this.#place(0, 0, 1)
-    } else {
-      const zoom = this.#fitZoom(ink)
-      const cx = (ink.x0 + ink.x1) / 2
-      const cy = (ink.y0 + ink.y1) / 2
-      this.#place(cx - 1 / (2 * zoom), cy - 1 / (2 * zoom * this.#shape), zoom)
-    }
-    this.#fitted = true
+  /** @returns {boolean} whether the window frames all ink, and follows it, until it is next moved */
+  get fitting() { return this.#fitting }
+
+  /**
+   * Frames all ink and `also` with a margin, or shows the sheet at the origin
+   * when there is neither, and is fitting from now on.
+   * @param {InkWindow|null} [also] more of the plane to frame, as the stroke under the pen
+   */
+  fitAll(also = null) {
+    this.#frame(this.#fitBox(also))
+  }
+
+  /**
+   * While fitting, frames all ink and `also` again when that is not what the
+   * window frames; otherwise does nothing.
+   * @param {InkWindow|null} [also] more of the plane to frame, as the stroke under the pen
+   * @returns {boolean} whether the window moved
+   */
+  follow(also = null) {
+    if (!this.#fitting) return false
+    const box = this.#fitBox(also)
+    if (PlaneWindow.#sameBox(box, this.#framed)) return false
+    this.#frame(box)
+    return true
+  }
+
+  /** @param {InkWindow} box @returns {boolean} whether all of the box is in the window */
+  holds(box) {
+    const w = this.window
+    return box.x0 >= w.x0 && box.x1 <= w.x1 && box.y0 >= w.y0 && box.y1 <= w.y1
   }
 
   /**
@@ -212,6 +235,38 @@ export class PlaneWindow {
     return this.#ink
   }
 
+  /** @param {InkWindow|null} also @returns {InkWindow|null} all ink and `also`, with a margin */
+  #fitBox(also) {
+    const ink = this.#inkBox()
+    if (!also) return ink
+    const m = PlaneWindow.MARGIN
+    const more = { x0: also.x0 - m, y0: also.y0 - m, x1: also.x1 + m, y1: also.y1 + m }
+    return Object.freeze(ink ? {
+      x0: Math.min(ink.x0, more.x0), y0: Math.min(ink.y0, more.y0), x1: Math.max(ink.x1, more.x1), y1: Math.max(ink.y1, more.y1),
+    } : more)
+  }
+
+  /** Puts the window round a box, or the sheet at the origin for none, and is fitting.
+   *  @param {InkWindow|null} box */
+  #frame(box) {
+    if (!box) {
+      this.#place(0, 0, 1)
+    } else {
+      const zoom = this.#fitZoom(box)
+      const cx = (box.x0 + box.x1) / 2
+      const cy = (box.y0 + box.y1) / 2
+      this.#place(cx - 1 / (2 * zoom), cy - 1 / (2 * zoom * this.#shape), zoom)
+    }
+    this.#framed = box
+    this.#fitting = true
+  }
+
+  /** @param {InkWindow|null} a @param {InkWindow|null} b @returns {boolean} */
+  static #sameBox(a, b) {
+    if (!a || !b) return a === b
+    return a.x0 === b.x0 && a.y0 === b.y0 && a.x1 === b.x1 && a.y1 === b.y1
+  }
+
   /** @param {InkWindow} box @returns {number} the zoom whose window just holds the box, at most MAX_ZOOM */
   #fitZoom(box) {
     return Math.min(PlaneWindow.MAX_ZOOM, 1 / (box.x1 - box.x0), 1 / ((box.y1 - box.y0) * this.#shape))
@@ -222,6 +277,6 @@ export class PlaneWindow {
     this.#x0 = x0
     this.#y0 = y0
     this.#zoom = zoom
-    this.#fitted = false
+    this.#fitting = false
   }
 }

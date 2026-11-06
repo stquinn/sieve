@@ -13,7 +13,7 @@ import { InkFeed } from '../src/static/contract/ink-container-provider.js'
 import {
   ASPECT, DOTS, FakeInkProvider, Frames, GRID, Resizes, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, points,
   renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, viewBoxOf, wheel, copiedImages, item, tap, toolbarFor, toolbarIds,
-  rightClick, menuOf,
+  placesOf, rightClick, menuOf,
 } from './helpers/ink-lens-rig.js'
 
 const LIVE = '019a0000-0000-7000-8000-00000000live'
@@ -144,7 +144,8 @@ describe('LiveInkLens', () => {
     const intents = []
     lens.onEvent((e) => { if (e.type === 'open-container') intents.push(e) })
     const { event, intents: menus, escaped } = rightClick(lens, /** @type {Element} */ (root.querySelector('.ink-page')))
-    expect([event.defaultPrevented, escaped, menuOf(menus[0]), toolbarIds(bar)]).toEqual([true, false, menu, ['tb-open-note', 'tb-copy-page']])
+    expect([event.defaultPrevented, escaped, menuOf(menus[0]), placesOf(bar)])
+      .toEqual([true, false, menu, { start: ['tb-open-note'], middle: [], end: ['tb-copy-page'] }])
     menus[0].items[0].action()
     expect(intents).toHaveLength(opened)
   })
@@ -292,7 +293,7 @@ describe('LiveInkLens', () => {
     expect(copied).toHaveLength(1)
     expect(copied[0].svg).toContain(`viewBox="${viewBoxOf(tabletWindow(2, 3))}"`)
     expect([copied[0].width, copied[0].height]).toEqual([GRID, Math.round(GRID / ASPECT)])
-    expect(item(bar, 'tb-ink-status')?.textContent).toBe('Copied')
+    expect([item(bar, 'tb-ink-status')?.textContent, placesOf(bar).end]).toEqual(['Copied', ['tb-ink-status', 'tb-copy-page']])
     expect(item(bar, 'tb-open-on-tablet')).toBeNull()
     expect(provider.calls.filter((c) => c.startsWith('openOnTablet'))).toEqual([])
   })

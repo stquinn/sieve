@@ -8,7 +8,8 @@
 // the page and the marks carry from one mode to the other. What it can do — open
 // the page on the tablet, copy it, read it, make a document of the reading, go
 // to the Live view, have the note named and summarised again — is one list,
-// drawn in the toolbar and as its context menu. It writes nothing of the note.
+// drawn as its context menu and, reading and naming aside, in the toolbar. It
+// writes nothing of the note.
 
 import { InkLens } from './ink-lens.js'
 import { SurfaceEvent } from '../abstract-surface.js'
@@ -89,7 +90,7 @@ export class DigitalNoteLens extends InkLens {
       },
       {
         id: 'read-page', label: () => reading()?.readLabel || 'Read this page', title: 'Read this page as text and diagrams', modes: MODES,
-        applies: () => (reading() ? reading()?.readLabel !== '' : page()?.shownPage != null), run: () => this.readThisPage(),
+        applies: () => (reading() ? reading()?.readLabel !== '' : page()?.shownPage != null), menuOnly: true, run: () => this.readThisPage(),
       },
       {
         id: 'new-document', label: 'New document', title: 'Make an ordinary document from this reading', modes: READING_ONLY,
@@ -103,7 +104,7 @@ export class DigitalNoteLens extends InkLens {
       {
         id: 'refresh-description', label: 'Refresh name and summary', short: 'Refresh name', modes: MODES,
         title: 'Ask for the note to be named and summarised again from its ink',
-        enabled: () => this.#refreshing === null, run: () => this.refreshDescription(),
+        enabled: () => this.#refreshing === null, menuOnly: true, run: () => this.refreshDescription(),
       },
     ])
   }

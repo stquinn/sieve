@@ -317,6 +317,11 @@ export const rightClick = (lens, target, clientX = 300, clientY = 200) => {
 export const menuOf = (intent) => intent.items.map((i) => (i.type === 'divider' ? '—' : i.disabled ? `[${i.label}]` : i.label))
 /** @param {HTMLElement} bar @returns {string[]} the ids of the toolbar's items, in order, each group's own in it */
 export const toolbarIds = (bar) => [...bar.querySelectorAll('[id]')].map((el) => el.id)
+/** @param {HTMLElement} bar @returns {Record<string, string[]>} each place of the toolbar drawn, by name, and the ids of its items in order, a separator as `|` */
+export const placesOf = (bar) => Object.fromEntries([...bar.children].map((place) => [
+  String(place.className).replace('tb-place tb-place--', ''),
+  [...place.querySelectorAll('[id], .tb-sep')].map((el) => (el.classList.contains('tb-sep') ? '|' : el.id)),
+]))
 /** @param {HTMLElement} root @param {string} action */
 export const press = (root, action) => /** @type {HTMLButtonElement} */ (root.querySelector(`[data-ink-action="${action}"]`)).click()
 /** @param {HTMLElement} root @param {string} key @param {KeyboardEventInit} [mods] */

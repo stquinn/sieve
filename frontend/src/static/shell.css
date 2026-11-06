@@ -236,6 +236,16 @@ body.presenting #table-toolbar {
 
 .tb-group { display: flex; align-items: center; gap: 1px; }
 
+/* The toolbar's places. The start and the end share the room the middle leaves, so the
+   middle sits between them and the end's items against the right edge; neither is drawn
+   narrower than its items, so the strip wraps a place to the next row before it clips one.
+   A start that is the only place is no box at all: its items are the strip's own. */
+.tb-place { display: flex; align-items: center; gap: 2px; }
+.tb-place--start, .tb-place--end { flex: 1 1 0; }
+.tb-place--middle { flex: 0 0 auto; }
+.tb-place--end { justify-content: flex-end; }
+.tb-place--start:only-child { display: contents; }
+
 /* P4.D: the editor-owned toolbar wraps the surface's formatting groups in a
    .tb-surface-section span (so the editor can re-render ONLY that section on a mode
    flip). display:contents dissolves the wrapper from layout — its child .tb-group /
@@ -291,6 +301,9 @@ body.presenting #table-toolbar {
 }
 .tb-readout.tb-notice { color: var(--theme-accentYellow); }
 .tb-readout.tb-status { display: block; max-width: 18em; overflow: hidden; text-overflow: ellipsis; line-height: 35px; }
+/* At the end of the strip what came of an action takes what room is left, up to 18em, and
+   is the first thing to give way: it counts for nothing when the strip decides to wrap. */
+.tb-place--end > .tb-readout.tb-status { flex: 1 1 auto; width: 0; min-width: 0; text-align: right; }
 .tb-btn.tb-page-turn { min-width: 28px; font-size: 1.3em; }
 
 /* A drop-down: a transparent native <select> laid over a face saying what is chosen. */

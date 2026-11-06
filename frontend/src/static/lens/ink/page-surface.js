@@ -12,7 +12,7 @@ import { AbstractSurface, SurfaceEvent, SurfaceIntent } from '../abstract-surfac
 import { INK_RULES } from '../../renderers/ink-renderer.js'
 import { InkFeed } from '../../contract/ink-container-provider.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
-import { ButtonGroup, ToolbarButton, ToolbarLabel, ToolbarSelect } from '../../renderers/toolbar-button.js'
+import { ButtonGroup, ToolbarButton, ToolbarLabel, ToolbarPlace, ToolbarSelect } from '../../renderers/toolbar-button.js'
 import { InkSheet } from './ink-sheet.js'
 import { NotePager } from './note-pager.js'
 
@@ -174,9 +174,9 @@ export class PageSurface extends AbstractSurface {
   }
 
   /**
-   * What the surface offers the toolbar: the pager (but on a whiteboard of one
-   * page), the scale on a fixed page or the window on a whiteboard, and that the
-   * template is unknown.
+   * What the surface offers the toolbar: at the start, the pager (but on a
+   * whiteboard of one page) and that the template is unknown; in the middle,
+   * the scale on a fixed page or the window on a whiteboard.
    * @returns {ButtonGroup[]}
    */
   toolbarContents() {
@@ -185,10 +185,10 @@ export class PageSurface extends AbstractSurface {
     /** @type {ButtonGroup[]} */
     const groups = []
     if (!(whiteboard && sheet.pages.length === 1)) groups.push(this.#pager.group(sheet.pages, sheet.shown, this.#unseen))
-    groups.push(whiteboard ? this.#windowGroup() : this.#scaleGroup())
     if (sheet.unknownTemplate) {
       groups.push(new ButtonGroup([new ToolbarLabel({ id: 'tb-ink-notice', className: 'tb-notice', text: () => 'Unknown template, drawn blank' })]))
     }
+    groups.push(whiteboard ? this.#windowGroup() : this.#scaleGroup())
     return groups
   }
 
@@ -199,17 +199,20 @@ export class PageSurface extends AbstractSurface {
       options: PageSurface.SCALES.map((choice) => ({ value: String(choice.scale), label: choice.label })),
       value: () => String(this.#sheet.scale),
       onChange: (value) => this.setScale(/^\d+$/.test(value) ? Number(value) : value),
-    })], { label: 'Size' })
+    })], { label: 'Size', place: ToolbarPlace.MIDDLE })
   }
 
-  /** @returns {ButtonGroup} a whiteboard's zoom and framing */
+  /** @returns {ButtonGroup} a whiteboard's zoom and framing, Fit all pressed while the window follows the ink */
   #windowGroup() {
     return new ButtonGroup([
       new ToolbarButton({ id: 'tb-zoom-out', text: '−', title: 'Zoom out', onClick: () => { this.zoomBy(1 / ZOOM_STEP) } }),
       new ToolbarButton({ id: 'tb-zoom-in', text: '+', title: 'Zoom in', onClick: () => { this.zoomBy(ZOOM_STEP) } }),
       new ToolbarButton({ id: 'tb-zoom-actual', text: '100%', title: 'One grid unit to a pixel', onClick: () => { this.showActualSize() } }),
-      new ToolbarButton({ id: 'tb-zoom-fit', text: 'Fit all', title: 'Frame all the ink', onClick: () => { this.fitAll() } }),
-    ], { label: 'Window' })
+      new ToolbarButton({
+        id: 'tb-zoom-fit', text: 'Fit all', title: 'Frame all the ink, and keep framing it as it changes',
+        active: () => this.#sheet.fitting, onClick: () => { this.fitAll() },
+      }),
+    ], { label: 'Window', place: ToolbarPlace.MIDDLE })
   }
 
   /** @returns {string|null} the id of the page shown */
@@ -478,7 +481,8 @@ export class PageSurface extends AbstractSurface {
     return this.#sheet.moveWindow((plane) => plane.zoomBy(INK_RULES.grid / width / plane.zoom))
   }
 
-  /** Frames all of a whiteboard's ink. @returns {boolean} false when the page shown is not a whiteboard */
+  /** Frames all of a whiteboard's ink, and goes on framing it until the reader moves
+   *  the window. @returns {boolean} false when the page shown is not a whiteboard */
   fitAll() {
     return this.#sheet.moveWindow((plane) => plane.fitAll())
   }

@@ -1,10 +1,10 @@
 // @ts-check
 // What a lens can do, declared once and drawn twice: as toolbar buttons and as
 // the entries of a context menu. Each action says the modes it belongs to,
-// whether it applies now (one that does not is absent from both drawings) and
-// whether it can run now (one that cannot is drawn disabled in both). Both
-// drawings read the same closures each time they are drawn, so they never
-// disagree.
+// whether it applies now (one that does not is absent from both drawings),
+// whether it can run now (one that cannot is drawn disabled in both) and whether
+// it is offered in the menu alone. Both drawings read the same closures each
+// time they are drawn, so they never disagree.
 
 import { ToolbarButton } from './toolbar-button.js'
 
@@ -20,6 +20,7 @@ import { ToolbarButton } from './toolbar-button.js'
  * @property {ReadonlyArray<string>} modes the lens modes it belongs to
  * @property {() => boolean} [applies] default: always
  * @property {() => boolean} [enabled] default: always
+ * @property {boolean} [menuOnly] drawn in the menu and never as a toolbar button; default false
  * @property {() => unknown} run
  */
 
@@ -50,12 +51,14 @@ export class ActionList {
   }
 
   /**
-   * A toolbar button for each action offered in `mode`.
+   * A toolbar button for each action offered in `mode` that is not menu-only
+   * and that `which` accepts, in order.
    * @param {string} mode
+   * @param {(action: Readonly<LensAction>) => boolean} [which] default: every one
    * @returns {ToolbarButton[]}
    */
-  toolbarButtons(mode) {
-    return this.offered(mode).map((a) => new ToolbarButton({
+  toolbarButtons(mode, which = () => true) {
+    return this.offered(mode).filter((a) => !a.menuOnly && which(a)).map((a) => new ToolbarButton({
       id: 'tb-' + a.id,
       text: ActionList.#read(a.short ?? a.label),
       title: a.title,

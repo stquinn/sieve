@@ -11,7 +11,7 @@ import { ContractViolation } from '../contract/sieve-block.js'
 import { LensCapability } from '../contract/lens-capabilities.js'
 import { SelectionModel } from './document-editor/selection-model.js'
 import { AddressStatus } from '../renderers/address-status.js'
-import { ButtonGroup, ToolbarButton, ToolbarSeparator } from '../renderers/toolbar-button.js'
+import { ButtonGroup, ToolbarButton, ToolbarPlace, ToolbarSeparator } from '../renderers/toolbar-button.js'
 import { SurfaceEvent } from './abstract-surface.js'
 
 /**
@@ -781,20 +781,23 @@ export class AbstractEditor extends Lens {
   }
 
   /**
-   * What this lens puts in the workspace toolbar, left to right: the mounted
-   * surface's groups, each followed by a separator unless nothing follows it,
-   * then the lens's own groups. A fresh answer each time it is asked; the lens
-   * emits `toolbar-changed` when it would answer otherwise.
+   * What this lens puts in the workspace toolbar, in order: the mounted
+   * surface's groups, each followed by a separator when the item after it is
+   * drawn in the same place, then the lens's own groups. A fresh answer each
+   * time it is asked; the lens emits `toolbar-changed` when it would answer
+   * otherwise.
    * @returns {ToolbarItem[]}
    */
   toolbarContents() {
     const surface = this.#surface ? this.#surface.toolbarContents() : []
     const own = this._toolbarGroups()
+    const all = [...surface, ...own]
     /** @type {ToolbarItem[]} */
     const items = []
     surface.forEach((group, i) => {
       items.push(group)
-      if (i < surface.length - 1 || own.length) items.push(new ToolbarSeparator())
+      const place = group.place ?? ToolbarPlace.START
+      if (i + 1 < all.length && (all[i + 1].place ?? ToolbarPlace.START) === place) items.push(new ToolbarSeparator(place))
     })
     items.push(...own)
     return items
