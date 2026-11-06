@@ -102,6 +102,9 @@ type NodeContent struct {
 	Body    string `json:"body"`            // empty for an asset
 	Path    string `json:"path,omitempty"`  // an asset's bytes, relative to the library root
 	Bytes   int    `json:"bytes,omitempty"` // an asset's size
+	// Assets lists what a whole container owns, each fetchable by its uri;
+	// absent at leaf grain and for a container that owns none.
+	Assets []domain.NodeAsset `json:"assets,omitempty"`
 }
 
 // FolderFacet / TagFacet / Facets are the orientation view.
@@ -247,6 +250,7 @@ func (s *Server) getByURI(_ context.Context, _ *mcpsdk.CallToolRequest, in URIIn
 		Body:    node.Body,
 		Path:    node.Path,
 		Bytes:   node.Bytes,
+		Assets:  node.Assets,
 	}, nil
 }
 

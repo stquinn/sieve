@@ -27,6 +27,19 @@ type NodeDescriptor struct {
 	// is shared with the source's copy of the block, so a consumer must not mutate
 	// it.
 	Attrs map[string]interface{}
+	// Assets is every asset the container owns now, ordered by key, when the
+	// address names a whole container; nil at leaf grain. A pin does not narrow
+	// it: assets are immutable.
+	Assets []NodeAsset
+}
+
+// NodeAsset is one asset a container owns, as a container's node lists it. URI
+// resolves to the asset itself.
+type NodeAsset struct {
+	URI   string `json:"uri"`   // sieve://{container}/{key}
+	Key   string `json:"key"`   // the asset's file name, extension included
+	Path  string `json:"path"`  // where its bytes are, relative to the library root
+	Bytes int    `json:"bytes"` // its size
 }
 
 // Block is the node as the one block a session over it holds: of the node's kind,

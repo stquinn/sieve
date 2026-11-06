@@ -36,9 +36,9 @@ func (s *BlockSource) Search(domain.SearchCriteria) []domain.Candidate { return 
 
 // Resolve dereferences an address into the container it names, live or as of the
 // version it pins; at container grain its title is what the container is called
-// (block.Registry.ContainerName). Anything that is not a block container, a
-// version nobody wrote or a leaf the container does not answer to is
-// domain.ErrNodeNotFound.
+// (block.Registry.ContainerName) and it lists the container's assets. Anything
+// that is not a block container, a version nobody wrote or a leaf the container
+// does not answer to is domain.ErrNodeNotFound.
 func (s *BlockSource) Resolve(addr domain.Address) (domain.NodeDescriptor, error) {
 	c, err := s.containers.Load(addr.Container)
 	if errors.Is(err, domain.ErrNotBlockContainer) {
@@ -67,6 +67,7 @@ func (s *BlockSource) Resolve(addr domain.Address) (domain.NodeDescriptor, error
 		node := leaves.blockNode(blk)
 		node.URI = addr.String()
 		node.Title = block.GlobalRegistry().ContainerName(blk, c.Storable().Meta())
+		node.Assets = leaves.assetList()
 		return node, nil
 	}
 	return leaves.resolve()
