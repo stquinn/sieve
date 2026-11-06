@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"testing"
 
 	"golang.org/x/term"
 	"gopkg.in/lumberjack.v2"
@@ -41,7 +42,10 @@ func SetDebug(on bool) {
 func init() {
 	var handler slog.Handler
 
-	if term.IsTerminal(int(os.Stderr.Fd())) {
+	if testing.Testing() {
+		out = io.Discard
+		handler = slog.NewTextHandler(out, handlerOpts())
+	} else if term.IsTerminal(int(os.Stderr.Fd())) {
 		out = os.Stderr
 		handler = slog.NewTextHandler(out, handlerOpts())
 	} else {
