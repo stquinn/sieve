@@ -59,6 +59,7 @@ describe('InkRenderer.renderPage through a window', () => {
     expect(svg.split('\n')[0]).toBe('<svg xmlns="http://www.w3.org/2000/svg" width="1404" height="1053" viewBox="-351 -702 1404 1053">')
     expect(svg).toContain('<rect x="-351" y="-702" width="1404" height="1053" fill="#fff"/>')
     expect(svg).toContain(renderer.renderRuling(page().note.template, WINDOW))
+    expect(renderer.windowBox(WINDOW)).toEqual({ x: '-351', y: '-702', width: '1404', height: '1053' })
   })
 
   it('places every stroke on the plane exactly as a fixed page does', () => {

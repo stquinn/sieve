@@ -160,8 +160,7 @@ export class InkRenderer {
     const ruling = this.renderRuling(page.note.template, window ?? { x0: 0, y0: 0, x1: 1, y1: 1 / aspect })
     let frame
     if (window) {
-      const [x, y] = [InkRenderer.#grid(window.x0 * g), InkRenderer.#grid(window.y0 * g)]
-      const [w, h] = [InkRenderer.#grid((window.x1 - window.x0) * g), InkRenderer.#grid((window.y1 - window.y0) * g)]
+      const { x, y, width: w, height: h } = this.windowBox(window)
       frame = [
         `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="${x} ${y} ${w} ${h}">`,
         `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#fff"/>`,
@@ -180,6 +179,22 @@ export class InkRenderer {
       ...INK_LAYERS.map((name, i) => (name === 'ruling' ? ruling : InkRenderer.#layer(name, layers[i]))),
       '</svg>',
     ].join('\n')
+  }
+
+  /**
+   * A window in grid units, each to one decimal, as `renderPage` writes it: the
+   * `viewBox` is `x y width height`, and the background `<rect>` is that box.
+   * @param {InkWindow} window
+   * @returns {Readonly<{x: string, y: string, width: string, height: string}>}
+   */
+  windowBox(window) {
+    const g = INK_RULES.grid
+    return Object.freeze({
+      x: InkRenderer.#grid(window.x0 * g),
+      y: InkRenderer.#grid(window.y0 * g),
+      width: InkRenderer.#grid((window.x1 - window.x0) * g),
+      height: InkRenderer.#grid((window.y1 - window.y0) * g),
+    })
   }
 
   /**

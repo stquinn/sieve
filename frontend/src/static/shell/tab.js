@@ -56,7 +56,7 @@ export class SieveTab {
    */
   #selectionListeners = []
 
-  /** @type {Array<(ev: { chars: number, lines: number, blockCount: number }) => void>} */
+  /** @type {Array<(ev: import('../lens/abstract-surface.js').SurfaceStats) => void>} */
   #statsListeners = []
 
   /**
@@ -165,7 +165,7 @@ export class SieveTab {
   /**
    * Registers a listener for this tab's `stats` stream — the attached editor's
    * doc-stats event, forwarded here.
-   * @param {(ev: { chars: number, lines: number, blockCount: number }) => void} fn
+   * @param {(ev: import('../lens/abstract-surface.js').SurfaceStats) => void} fn
    * @returns {() => void} unsubscribe
    */
   onStats(fn) {
@@ -173,7 +173,7 @@ export class SieveTab {
     return () => { this.#statsListeners = this.#statsListeners.filter((l) => l !== fn) }
   }
 
-  /** @param {{ chars: number, lines: number, blockCount: number }} ev */
+  /** @param {import('../lens/abstract-surface.js').SurfaceStats} ev */
   #notifyStatsListeners(ev) {
     for (const fn of this.#statsListeners) {
       try { fn(ev) } catch (e) { console.error('[SieveTab] stats listener threw', e) }

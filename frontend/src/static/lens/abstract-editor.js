@@ -610,7 +610,7 @@ export class AbstractEditor extends Lens {
 
   /** The current document stats, DELEGATED to the active surface. A PULL seam, so
    *  a consumer arriving after the initial seed reads the current value.
-   *  @returns {{ chars: number, lines: number, blockCount: number }} */
+   *  @returns {import('./abstract-surface.js').SurfaceStats} */
   stats() {
     return this.#surface ? this.#surface.stats() : { chars: 0, lines: 0, blockCount: 0 }
   }

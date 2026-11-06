@@ -1,7 +1,8 @@
 // @ts-check
 // The lens of a Digital Note: one page at a time as the tablet drew it, the
 // committed strokes and the stroke under the pen arriving as they are written,
-// and the page being written followed while the note is live. It is read-only
+// a whiteboard through a window the reader moves and zooms, and the page being
+// written, and the tablet's window, followed while the note is live. It is read-only
 // by construction: mounted over an InkContainerProvider, which has no verbs, it
 // declares no capability and writes nothing.
 
@@ -20,8 +21,19 @@ const NO_CAPABILITY = Object.freeze({
   [LensCapability.BLOCKS]: false,
 })
 
-/** The page each key this mount claims turns by. Only bare keys are claimed. */
+/** The page each page key turns by. */
 const PAGE_KEYS = Object.freeze({ PageUp: -1, PageDown: 1 })
+
+/** The fraction of a whiteboard's window each arrow key moves it by, across and down. */
+const PAN_KEYS = Object.freeze({
+  ArrowLeft: Object.freeze([-0.1, 0]),
+  ArrowRight: Object.freeze([0.1, 0]),
+  ArrowUp: Object.freeze([0, -0.1]),
+  ArrowDown: Object.freeze([0, 0.1]),
+})
+
+/** The factor each zoom key zooms a whiteboard's window by, about its centre. */
+const ZOOM_KEYS = Object.freeze({ '+': 1.25, '=': 1.25, '-': 0.8, '_': 0.8 })
 
 export class DigitalNoteLens extends AbstractEditor {
   /**
@@ -52,16 +64,26 @@ export class DigitalNoteLens extends AbstractEditor {
   get placeholder() { return '' }
 
   /**
-   * PageUp and PageDown turn the page; nothing else is claimed.
+   * Bare PageUp and PageDown turn the page. On a whiteboard, where the surround
+   * does not scroll, the bare arrows move the window and `+`/`=` and `-`/`_`
+   * zoom it, Shift allowed since it is how `+` is typed. Nothing with Alt, Ctrl
+   * or Cmd is claimed.
    * @param {KeyboardEvent} event
    * @returns {boolean}
    */
   claimKey(event) {
     const surface = this.surface
     if (!(surface instanceof PageSurface)) return false
-    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false
-    if (!Object.hasOwn(PAGE_KEYS, event.key)) return false
-    surface.turn(PAGE_KEYS[/** @type {keyof typeof PAGE_KEYS} */ (event.key)])
+    if (event.altKey || event.ctrlKey || event.metaKey) return false
+    const key = event.key
+    if (Object.hasOwn(ZOOM_KEYS, key)) return surface.zoomBy(ZOOM_KEYS[/** @type {keyof typeof ZOOM_KEYS} */ (key)])
+    if (event.shiftKey) return false
+    if (Object.hasOwn(PAN_KEYS, key)) {
+      const [fx, fy] = PAN_KEYS[/** @type {keyof typeof PAN_KEYS} */ (key)]
+      return surface.panBy(fx, fy)
+    }
+    if (!Object.hasOwn(PAGE_KEYS, key)) return false
+    surface.turn(PAGE_KEYS[/** @type {keyof typeof PAGE_KEYS} */ (key)])
     return true
   }
 
@@ -70,5 +92,5 @@ export class DigitalNoteLens extends AbstractEditor {
    * @param {string} _mode
    * @returns {PageSurface}
    */
-  _createSurface(_mode) { return new PageSurface(this.provider, (event) => this.claimKey(event)) }
+  _createSurface(_mode) { return new PageSurface(this.provider, this) }
 }

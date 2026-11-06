@@ -165,11 +165,12 @@ drop the connection.
   is × 65535.
 - A BEGIN's origin is in page units × 32768. A point's place is origin + (x, y). A fixed page
   sends 0,0. An unbounded page sends the view's top-left when the pen landed, rounded down.
-- VIEW is the top-left of an unbounded page's view, in the same units. It is sent when the
-  page goes live, when a receiver joins, on a pan's steps at most once per 100 ms, and at a
-  pan's end; never for a fixed page. It is ephemeral: never logged, acked or reconciled. A
-  sender MAY drop it when the link falls behind, since only the latest matters. A receiver
-  holding no VIEW places its window from BEGIN's origin.
+- VIEW is the top-left of an unbounded page's view, in the same units. The view is one sheet of
+  the note's aspect at one to one, 1 by 1/pageAspect page units: the sender pans and never zooms.
+  It is sent when the page goes live, when a receiver joins, on a pan's steps at most once per
+  100 ms, and at a pan's end; never for a fixed page. It is ephemeral: never logged, acked or
+  reconciled. A sender MAY drop it when the link falls behind, since only the latest matters. A
+  receiver holding no VIEW places its window from BEGIN's origin.
 - Records travel only inside INK frames (§7), whole. CLOCK goes on connect and every 2 s,
   with `pageAspect` 0 when no consented note is live.
 - `tabletMs` is the tablet's monotonic clock in ms, truncated to u32, taken when the record

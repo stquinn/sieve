@@ -77,6 +77,19 @@ describe('StatusBar (P4.D)', () => {
     expect(document.documentElement.style.getPropertyValue('--line-digits')).toBe('3') // "128" → 3 digits
   })
 
+  it("stats carrying a readout paint its cells, text as text, in place of chars/lines", () => {
+    mountStatusDom()
+    const readout = [{ text: 'Page 2 of 5', title: 'Page' }, { text: '<b>7</b> strokes', title: 'Strokes on this page' }]
+    const ws = fakeWorkspace()
+    ws._tab = fakeTab(fakeEditor({ chars: 0, lines: 0, blockCount: 0, readout }))
+    new StatusBar(ws)
+    const cells = [...document.querySelectorAll('.status-bar__stats > span')]
+    expect(cells.map((c) => [c.textContent, c.title, c.className])).toEqual([
+      ['Page 2 of 5', 'Page', ''],
+      ['<b>7</b> strokes', 'Strokes on this page', 'status-bar__sep'],
+    ])
+  })
+
   it('COLD BOOT: subscribes at the TAB level, so a stats seed emitted AFTER the editor attaches still paints', () => {
     mountStatusDom()
     const ws = fakeWorkspace()

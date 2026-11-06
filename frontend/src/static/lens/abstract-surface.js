@@ -17,6 +17,14 @@
  * surface must not know an Ask panel or toolbar exists.
  * @typedef {{type: string, feature?: string}} SurfaceEventMsg
  */
+/**
+ * What a surface measures of what it shows, for the status bar. When `readout`
+ * is present the bar shows its cells, in order, in place of the character and
+ * line counts.
+ * @typedef {{chars: number, lines: number, blockCount: number,
+ *   readout?: ReadonlyArray<Readonly<{text: string, title: string}>>}} SurfaceStats
+ */
+
 export const SurfaceEvent = Object.freeze({
   /** The document content changed (a user edit settled into the surface). */
   DOC_CHANGED: Object.freeze({ type: 'doc-changed' }),
@@ -62,7 +70,7 @@ export class AbstractSurface {
 
   /** The surface's current document stats, from its OWN plain-text view. The
    *  editor delegates here so ALL TipTap access stays surface-private.
-   *  @returns {{ chars: number, lines: number, blockCount: number }} */
+   *  @returns {SurfaceStats} */
   stats() {
     const text = this.body || ''
     const lines = text === '' ? 0 : text.split('\n').length

@@ -228,7 +228,7 @@ The resulting order for one keystroke, highest first:
 | Prompt (`PromptEditor`) | **nothing** | the matrix above, unchanged |
 | Composer (`ComposerEditor`) | `Mod+Enter` → send the message | the matrix above, unchanged |
 | Block container whose kind has no lens (`BlockLens`) | **nothing** | none of the matrix: there is no editing surface. The block is drawn read-only by its kind's renderer, which keeps its read affordances (selection, copy, pan, filters) and drops every edit |
-| Digital Note (`DigitalNoteLens`) | bare `PageUp` → previous page, bare `PageDown` → next page | none of the matrix: there is no editing surface (below) |
+| Digital Note (`DigitalNoteLens`) | bare `PageUp` → previous page, bare `PageDown` → next page; on a whiteboard also the bare arrows → move the window, `+`/`=` and `-`/`_` → zoom | none of the matrix: there is no editing surface (below) |
 
 **The composer is EDITOR-FIRST (revised 2026-08-28, #118):** it claims exactly
 one chord, `Mod+Enter`, and nothing else. Bare `Enter`, `Shift+Enter` and
@@ -259,16 +259,36 @@ Mode) and `Mod+Alt+P` (Presentation Mode) do nothing in it.
 
 - **Keys.** The page element is focusable (a click on the sheet focuses it). Its keydown asks the
   lens's `claimKey` first, which claims bare `PageUp` (previous page) and bare `PageDown` (next
-  page) and nothing else; a turn at the first or last page does nothing. Any modifier leaves the
-  key unclaimed. Arrow keys, `Home`/`End` and `Space` are not claimed and scroll as the browser
-  scrolls.
-- **Pointer.** Previous and next, one dot per page (a click shows that page; a dot carries a mark
-  while its page has ink not yet seen), fit-to-width ⇄ 100% (one grid unit to one CSS pixel,
-  1404 across a fixed page), and, while the note is live, the live button.
+  page); a turn at the first or last page does nothing. On a fixed page nothing else is claimed:
+  arrow keys, `Home`/`End` and `Space` scroll as the browser scrolls. On a whiteboard the surround
+  does not scroll, so the lens also claims the bare arrows (move the window a tenth of its width or
+  height) and `+`/`=` and `-`/`_` (zoom in and out by 1.25 about the window's centre; Shift is
+  allowed, since it is how `+` is typed). Alt, Ctrl or Cmd leaves every key unclaimed.
+- **Pointer.** Previous and next; one dot per page (a click shows that page; a dot carries a mark
+  while its page has ink not yet seen), or, past twelve pages, one `n unseen` button, shown while
+  any page has ink not yet seen, that shows the next such page after the one shown, from the first
+  again past the last; and, while the note is live, the live button. A fixed page has fit-to-width ⇄
+  100% (one grid unit to one CSS pixel, 1404 across) and scrolls in its surround. A whiteboard has
+  `−` and `+` (zoom about the centre), `100%` (one grid unit to one CSS pixel, about the centre) and
+  `Fit all` (frame all the ink with a margin; the sheet at the origin when there is none).
+- **The whiteboard's window.** A whiteboard is shown through a window with the note's page aspect,
+  as large as fits the surround. Dragging the sheet with the primary button moves the window with
+  the pointer; the wheel moves it (Shift turns a vertical wheel horizontal); Ctrl or Cmd with the
+  wheel, and a trackpad pinch, zoom about the point under the pointer, which stays under it. Zoom
+  runs from all the ink framed (or one sheet, whichever is farther) to a quarter of a sheet's width.
+  A whiteboard that is not live opens with all its ink framed.
 - **Following.** While the tablet shows a page of the note as being written, the lens shows that
   page and follows it as it changes. Turning to another page by hand pauses following; turning
-  back to the live page by hand, or pressing the live button, resumes it. The live button shows
-  `Live` while following and `Back to live` while paused, and is gone when the note is not live.
+  back to the live page by hand, or pressing the live button, resumes it. On a whiteboard following
+  also means the window is the tablet's (one sheet at one to one, where the tablet says its view
+  is, or where its last stroke began while it has said nothing), and moves with it; any move of the
+  window by the reader — drag, wheel, zoom, a key, a button — pauses following, and the live
+  button resumes it, putting the window back on the tablet's. The live button shows `Live` while
+  following and `Back to live` while paused, and is gone when the note is not live.
+- **Out of view.** While a fixed page is followed and the stroke under the pen runs out of the
+  surround's view, the surround scrolls the least that brings the pen back within 48 px of its
+  edge, unless the reader has scrolled it in the last 0.8 s. On a whiteboard, a stroke that arrives
+  wholly outside the window marks the edge of the sheet it lies beyond, until the window shows it.
 
 ## Policy declaration (revised 2026-07-29)
 

@@ -57,9 +57,9 @@ export class StatusBar {
   }
 
   /**
-   * Paints chars/lines into the __stats slot and sets the --line-digits gutter
-   * width.
-   * @param {{ chars?: number, lines?: number, blockCount?: number }} ev
+   * Paints the stats' readout, or their chars/lines when they carry none, into
+   * the __stats slot and sets the --line-digits gutter width.
+   * @param {Partial<import('../lens/abstract-surface.js').SurfaceStats>} ev
    */
   #onStats(ev) {
     if (typeof ev.blockCount === 'number') {
@@ -67,9 +67,17 @@ export class StatusBar {
       document.documentElement.style.setProperty('--line-digits', String(digits))
     }
     if (!this.#statsSlot) return
-    this.#statsSlot.innerHTML =
-      '<span title="Characters">' + (ev.chars || 0) + ' chars</span>' +
-      '<span class="status-bar__sep" title="Lines">' + (ev.lines || 0) + ' lines</span>'
+    const cells = Array.isArray(ev.readout) ? ev.readout : [
+      { text: (ev.chars || 0) + ' chars', title: 'Characters' },
+      { text: (ev.lines || 0) + ' lines', title: 'Lines' },
+    ]
+    this.#statsSlot.replaceChildren(...cells.map((cell, i) => {
+      const span = document.createElement('span')
+      if (i > 0) span.className = 'status-bar__sep'
+      span.title = cell.title
+      span.textContent = cell.text
+      return span
+    }))
   }
 
   /**
