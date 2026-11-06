@@ -985,6 +985,7 @@ func TestTabStrip_ATabIsStampedViewedWhenItBecomesActive(t *testing.T) {
 		t.Errorf("the tab made active by a close is stamped %d, the closed one was %d", after[docs[2]], before[docs[0]])
 	}
 
+	tick()
 	post("/api/note", "", "")
 	session = sp.State.LoadSession()
 	if fresh := session.Tabs[session.ActiveIdx]; fresh.LastViewed <= viewed()[docs[2]] {
