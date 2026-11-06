@@ -1,12 +1,15 @@
 package sieve
 
 import (
+	"errors"
 	"reflect"
 	"sort"
 	"testing"
 
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"sieve/sieve/editor"
+	"sieve/sieve/ink"
 	"sieve/sieve/protocol"
 	"sieve/sieve/services"
 	"sieve/store/filestore"
@@ -52,4 +55,35 @@ func registrationReady(t *testing.T) *ServiceProvider {
 	t.Cleanup(s.Editor.CloseAll)
 	s.Inspection = editor.NewInspectionEngine(s.Editor)
 	return s
+}
+
+// A Live view lasts one run, so a tab of one saved by an earlier run is gone once a provider is
+// built over the store again, and every other tab stays as it was.
+func TestServiceProvider_InitClosesAnEarlierRunsLiveTabs(t *testing.T) {
+	dir := t.TempDir()
+	fs, err := filestore.NewFileStore(dir, "testhost")
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	state, err := services.NewStateService(fs, dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := state.LoadSession()
+	session.Tabs = []domain.Tab{{ID: "a-note", Kind: "note"}, {ID: "an-old-live-view", Kind: ink.KindLive}, {ID: "code", Kind: "code"}}
+	session.ActiveIdx = 1
+	if err := state.SaveSession(session); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &ServiceProvider{Jobs: services.NewJobTracker()}
+	s.Init(fs, dir, nil)
+	t.Cleanup(s.Editor.CloseAll)
+	tabs := s.State.LoadSession().Tabs
+	if len(tabs) != 2 || tabs[0].ID != "a-note" || tabs[1].ID != "code" {
+		t.Errorf("tabs %+v, want the Live tab gone and the rest kept", tabs)
+	}
+	if node, err := s.Nodes.Resolve(domain.NewContainerAddress(s.Ink.LiveView().UUID())); !errors.Is(err, domain.ErrNodeNotFound) {
+		t.Errorf("a Live view nothing is live in resolved: %+v, %v", node, err)
+	}
 }

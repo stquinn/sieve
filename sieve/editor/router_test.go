@@ -85,6 +85,48 @@ func TestRouter_ResolvesThroughTheFirstSourceThatAnswers(t *testing.T) {
 	}
 }
 
+// claimingSource is a fakeSource that claims every address of one container.
+type claimingSource struct {
+	fakeSource
+	claims string
+}
+
+func (c *claimingSource) Claims(addr domain.Address) bool { return addr.Container == c.claims }
+
+// A claimed address is resolved by its claimer alone, wherever it is registered, and dangles
+// there without any other source being asked; an address nobody claims is offered in order.
+func TestRouter_AClaimedAddressIsAskedOfItsClaimerAlone(t *testing.T) {
+	claimed, other := "sieve://"+testContainerUUID, "sieve://"+testMissingUUID
+	for _, c := range []struct {
+		name      string
+		uri       string
+		held      bool
+		wantFound bool
+		wantStore int
+	}{
+		{"claimed and held", claimed, true, true, 0},
+		{"claimed and gone", claimed, false, false, 0},
+		{"claimed by nobody", other, true, false, 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			stored := &fakeSource{name: "store"}
+			claimer := &claimingSource{fakeSource: fakeSource{name: "claimer", nodes: map[string]domain.NodeDescriptor{}}, claims: testContainerUUID}
+			if c.held {
+				claimer.nodes[claimed] = domain.NodeDescriptor{URI: claimed, ID: testContainerUUID, Kind: "live"}
+			}
+			r := NewRouter(stored, claimer)
+			addr := mustAddress(t, c.uri)
+			_, err := r.Resolve(addr)
+			if found := err == nil; found != c.wantFound || (!found && !errors.Is(err, domain.ErrNodeNotFound)) {
+				t.Errorf("Resolve: %v, want found %t", err, c.wantFound)
+			}
+			if len(stored.resolved) != c.wantStore || r.Claims(addr) != (c.uri == claimed) {
+				t.Errorf("the store source was asked %v; Claims %t", stored.resolved, r.Claims(addr))
+			}
+		})
+	}
+}
+
 // Dangling is a normal state, not a panic: the address was a real coordinate, no
 // source held it. Each source's reason for the miss survives into the error.
 func TestRouter_DanglingAddressIsATypedError(t *testing.T) {
@@ -314,5 +356,38 @@ func TestRouter_TargetSurfacesTheGrammarAndDanglingSentinels(t *testing.T) {
 	}
 	if _, err := r.Target("not-an-address"); !errors.Is(err, domain.ErrBadAddress) {
 		t.Fatalf("err = %v, want ErrBadAddress", err)
+	}
+}
+
+// The two real sources federate: each uuid reaches the source that owns its type,
+// and a block's OpenTarget carries the block kind.
+func TestRouter_FederatesDocumentsAndBlockContainers(t *testing.T) {
+	containers, ds, _ := newTestContainers(t)
+	router := NewRouter(NewNotesSource(ds), NewBlockSource(containers))
+
+	note := seedFiledNote(t, ds, "A Note", "", nil, "", "body")
+	c, err := containers.Create(containerKind, map[string]interface{}{"title": "A Sticky"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	for _, tc := range []struct{ uuid, kind, title string }{
+		{note.UUID(), string(domain.KindNote), "A Note"},
+		{c.UUID(), containerKind, "A Sticky"},
+	} {
+		target, err := router.Target("sieve://" + tc.uuid)
+		if err != nil {
+			t.Fatalf("Target(%s): %v", tc.title, err)
+		}
+		if target.UUID != tc.uuid || target.Kind != tc.kind || target.Title != tc.title {
+			t.Errorf("Target(%s) = %+v", tc.title, target)
+		}
+	}
+
+	if _, err := router.Target("sieve://" + testMissingUUID); !errors.Is(err, domain.ErrNodeNotFound) {
+		t.Errorf("missing uuid: err = %v, want ErrNodeNotFound", err)
+	}
+	if hits := router.Search("Sticky", 10); len(hits) != 0 {
+		t.Errorf("Search offered a block container: %+v", hits)
 	}
 }

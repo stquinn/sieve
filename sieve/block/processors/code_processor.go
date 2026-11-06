@@ -174,7 +174,7 @@ func unfencedCodeContent(entry block.ContentEntry) (string, bool) {
 	return "", false
 }
 
-func (p *CodeBlockProcessor) OnChange(blk *block.SieveBlock) {
+func (p *CodeBlockProcessor) OnChange(blk *domain.SieveBlock) {
 	status, _ := blk.Attrs["status"].(string)
 	if status == block.BlockStatusDispatched {
 		return
@@ -225,7 +225,7 @@ func (p *CodeBlockProcessor) OnChange(blk *block.SieveBlock) {
 	blk.Attrs["status"] = block.BlockStatusPending
 }
 
-func (p *CodeBlockProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, seen map[string]bool) block.AIContext {
+func (p *CodeBlockProcessor) BuildContext(blk domain.SieveBlock, _ block.DocView, seen map[string]bool) block.AIContext {
 	src, _ := blk.Attrs["source"].(string)
 	language, _ := blk.Attrs["language"].(string)
 	if src == "" {
@@ -268,7 +268,7 @@ func (p *CodeBlockProcessor) DescribeJob(jctx block.JobContext) *block.Processor
 			}
 			return lang, nil
 		},
-		Apply: func(result any, b *block.SieveBlock) {
+		Apply: func(result any, b *domain.SieveBlock) {
 			lang, _ := result.(string)
 			// Read LIVE, not from the describe-time closure: a manual pick made
 			// while this job was in flight still wins — the job settles the
@@ -288,7 +288,7 @@ func (p *CodeBlockProcessor) DescribeJob(jctx block.JobContext) *block.Processor
 }
 
 // RawContent returns the source text this block was built from (block.RawContenter).
-func (p *CodeBlockProcessor) RawContent(blk block.SieveBlock) string {
+func (p *CodeBlockProcessor) RawContent(blk domain.SieveBlock) string {
 	src, _ := blk.Attrs["source"].(string)
 	return src
 }
@@ -314,7 +314,7 @@ func (p *CodeBlockProcessor) mintLocator(slot, text string) string {
 // slotText returns blk's current stored text for slot, and whether slot is
 // one this processor has ever minted a locator for. source and filename are
 // the only two; naming anything else is a locator this processor never made.
-func (p *CodeBlockProcessor) slotText(blk *block.SieveBlock, slot string) (string, bool) {
+func (p *CodeBlockProcessor) slotText(blk *domain.SieveBlock, slot string) (string, bool) {
 	switch slot {
 	case CodeSourceLocator:
 		return p.RawContent(*blk), true
@@ -327,7 +327,7 @@ func (p *CodeBlockProcessor) slotText(blk *block.SieveBlock, slot string) (strin
 
 // readLocator answers which slot locator names and whether it still names
 // that slot's CURRENT bytes, given blk's live payload.
-func (p *CodeBlockProcessor) readLocator(blk *block.SieveBlock, locator string) (slot, text string, err error) {
+func (p *CodeBlockProcessor) readLocator(blk *domain.SieveBlock, locator string) (slot, text string, err error) {
 	return codeLocator.Read(locator, func(slot string) (string, bool) { return p.slotText(blk, slot) })
 }
 
@@ -336,7 +336,7 @@ func (p *CodeBlockProcessor) readLocator(blk *block.SieveBlock, locator string) 
 // leave a variable name alone — and a filename it carries is a label. Both
 // segments are the stored bytes verbatim, and each carries a locator minted
 // from its own slot and bytes (mintLocator).
-func (p *CodeBlockProcessor) NormalisedText(blk *block.SieveBlock) []domain.TextSegment {
+func (p *CodeBlockProcessor) NormalisedText(blk *domain.SieveBlock) []domain.TextSegment {
 	if blk == nil {
 		return nil
 	}
@@ -366,7 +366,7 @@ func (p *CodeBlockProcessor) NormalisedText(blk *block.SieveBlock) []domain.Text
 // validate every edit against its slot's current text, splice back to
 // front, all-or-nothing — are identityTextEditor's (identity_text_editor.go),
 // shared with diagram, the other kind whose reading is its stored bytes.
-func (p *CodeBlockProcessor) UpdateText(blk *block.SieveBlock, edits []domain.TextEdit) error {
+func (p *CodeBlockProcessor) UpdateText(blk *domain.SieveBlock, edits []domain.TextEdit) error {
 	if blk == nil {
 		return fmt.Errorf("%w: code: no block to update", block.ErrTextMalformed)
 	}
@@ -392,13 +392,13 @@ func (p *CodeBlockProcessor) UpdateText(blk *block.SieveBlock, edits []domain.Te
 // ContentIsMarkdown reports whether this block's source is itself document
 // markdown (block.MarkdownContenter): embedding such a block in the document
 // inserts the source directly rather than a ```markdown fence.
-func (p *CodeBlockProcessor) ContentIsMarkdown(blk block.SieveBlock) bool {
+func (p *CodeBlockProcessor) ContentIsMarkdown(blk domain.SieveBlock) bool {
 	lang, _ := blk.Attrs["language"].(string)
 	lang = strings.ToLower(strings.TrimSpace(lang))
 	return lang == "markdown" || lang == "md"
 }
 
-func (p *CodeBlockProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {
+func (p *CodeBlockProcessor) MarkdownRepresentation(blk domain.SieveBlock, _ string) string {
 	source, _ := blk.Attrs["source"].(string)
 	source = strings.TrimSpace(source)
 	if source == "" {

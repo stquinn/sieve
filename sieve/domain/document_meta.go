@@ -253,7 +253,9 @@ func listVal(v []string) string {
 	return "[" + strings.Join(v, ", ") + "]"
 }
 
+// metaTime is the time m holds under key, which the store stamps as local wall-clock time with no
+// zone; the zero time when it holds none.
 func metaTime(m map[string]string, key string) time.Time {
-	t, _ := time.Parse("2006-01-02T15:04:05", m[key])
+	t, _ := time.ParseInLocation("2006-01-02T15:04:05", m[key], time.Local)
 	return t
 }

@@ -70,11 +70,15 @@
  * @typedef {object} ContainerProvider
  * @property {() => string} getUuid
  * @property {() => string} getKind                    the container's kind as a DATA word ('note' today); affordances read it, nothing subclasses on it
+ * @property {() => string} getName                    what the container is called; '' when it has no name. A new name arrives as an `onChanged` naming no block
  * @property {() => ReadonlyArray<string>} getOrder     child ids in container order
  * @property {(id: string) => Readonly<BlockData>|null} getBlock
  * @property {(listener: import('./container-update-listener.js').ContainerUpdateListener) => void} subscribe
  *   cues the listener with the whole container immediately: bootstrap IS the first `onChanged`
  * @property {(listener: import('./container-update-listener.js').ContainerUpdateListener) => void} unsubscribe
+ * @property {(listener: import('./container-feed-listener.js').ContainerFeedListener) => void} subscribeFeed
+ *   hears the container's feed from now on; nothing that happened before is delivered
+ * @property {(listener: import('./container-feed-listener.js').ContainerFeedListener) => void} unsubscribeFeed
  */
 
 /**

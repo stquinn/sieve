@@ -3,6 +3,8 @@ package block
 import (
 	"fmt"
 	"strings"
+
+	"sieve/sieve/domain"
 )
 
 // DocumentCodec owns BOTH directions of document SerDes. It sees only the
@@ -42,9 +44,9 @@ func (c *DocumentCodec) scanner() *RegionScanner {
 // unsupported fences without ever shadowing a structured recogniser. No coalescing:
 // the shape parser already delivers maximal units, so a prose block containing a
 // fence is one region, and an unsupported fence stays inside its surrounding gap.
-func (c *DocumentCodec) Deserialize(markdown string) ([]SieveBlock, error) {
+func (c *DocumentCodec) Deserialize(markdown string) ([]domain.SieveBlock, error) {
 	ordered := c.orderedProseLast()
-	var out []SieveBlock
+	var out []domain.SieveBlock
 	for _, region := range c.scanner().Scan(markdown) {
 		p := c.firstAccepting(ordered, region)
 		if p == nil {
@@ -62,7 +64,7 @@ func (c *DocumentCodec) Deserialize(markdown string) ([]SieveBlock, error) {
 // Serialize renders the block slice to markdown by asking each block's flavour to
 // serialize ITSELF — the mirror of Deserialize. The spine never decides format by
 // kind. A block must carry an id (persistence-boundary invariant).
-func (c *DocumentCodec) Serialize(blocks []SieveBlock) (string, error) {
+func (c *DocumentCodec) Serialize(blocks []domain.SieveBlock) (string, error) {
 	parts := make([]string, 0, len(blocks))
 	for _, b := range blocks {
 		if b.ID == "" {
@@ -109,7 +111,7 @@ func (c *DocumentCodec) firstAccepting(ordered []BlockProcessor, region Region) 
 // serializeBlock dispatches one block to its flavour's Serialize via the INJECTED
 // registry (not the package global) — the codec is the serialization authority.
 // The fence fallback covers any block-mode kind with no registered processor.
-func (c *DocumentCodec) serializeBlock(b SieveBlock) (string, error) {
+func (c *DocumentCodec) serializeBlock(b domain.SieveBlock) (string, error) {
 	if p := c.registry.Get(b.Kind); p != nil {
 		return p.Serialize(b)
 	}
@@ -119,17 +121,17 @@ func (c *DocumentCodec) serializeBlock(b SieveBlock) (string, error) {
 // findBlockByID parses markdown and returns the SieveBlock whose ID matches id,
 // or (SieveBlock{}, false) if not found. Used as a fallback in BuildContextForID
 // when the document is in markdown mode and its blocks tree is not populated.
-func (c *DocumentCodec) findBlockByID(markdown string, id string) (SieveBlock, bool) {
+func (c *DocumentCodec) findBlockByID(markdown string, id string) (domain.SieveBlock, bool) {
 	blocks, err := c.Deserialize(markdown)
 	if err != nil {
-		return SieveBlock{}, false
+		return domain.SieveBlock{}, false
 	}
 	for _, b := range blocks {
 		if b.ID == id {
 			return b, true
 		}
 	}
-	return SieveBlock{}, false
+	return domain.SieveBlock{}, false
 }
 
 // ProcessorRegistry is the narrow read-only seam DocumentCodec needs over the
@@ -139,20 +141,3 @@ type ProcessorRegistry interface {
 	Get(kind string) BlockProcessor
 	Ordered() []BlockProcessor // registry priority order, for the Accepts loop
 }
-
-// registryAdapter satisfies ProcessorRegistry over the package-global registry.
-type registryAdapter struct{}
-
-func (registryAdapter) Get(kind string) BlockProcessor { return GetProcessor(kind) }
-
-func (registryAdapter) Ordered() []BlockProcessor {
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-	out := make([]BlockProcessor, 0, len(pasteMatchers))
-	for _, pm := range pasteMatchers {
-		out = append(out, pm.Processor)
-	}
-	return out
-}
-
-func GlobalRegistry() ProcessorRegistry { return registryAdapter{} }

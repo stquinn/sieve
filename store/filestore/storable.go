@@ -1,7 +1,9 @@
 package filestore
 
 import (
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -54,9 +56,12 @@ func (s *fileStorable) IsModified() bool {
 // and modified timestamps. The input is stale after Save returns.
 type fileMetaStorable struct {
 	fileStorable
-	meta map[string]string
-	owns []store.Storable
+	contentType string // the .meta type; immutable, and the source of truth over meta["type"]
+	meta        map[string]string
+	owns        []store.Storable
 }
+
+func (s *fileMetaStorable) Type() string { return s.contentType }
 
 func (s *fileMetaStorable) Meta() map[string]string {
 	s.mu.RLock()
@@ -84,42 +89,67 @@ func (s *fileMetaStorable) Owns() []store.Storable {
 	return s.owns
 }
 
+// AttachAsset replaces the owned asset of a's key with a, in its place, or adds a at the end when
+// there is none, as one step under the storable's lock. The list is copied, never written in
+// place, so a slice Owns returned earlier is not changed under its reader.
 func (s *fileMetaStorable) AttachAsset(a store.Storable) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.owns = append(s.owns, a)
+	owns := slices.Clone(s.owns)
+	if i := slices.IndexFunc(owns, func(owned store.Storable) bool { return owned.Key() == a.Key() }); i >= 0 {
+		owns[i] = a
+	} else {
+		owns = append(owns, a)
+	}
+	s.owns = owns
 	s.isModified = true
 }
 
-func (s *fileMetaStorable) ClearOwns() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.owns = nil
-	s.isModified = true
-}
-
-// fileAssetStorable extends fileStorable for binary content such as images.
-// Encoding is inferred by FileStore at Create time from magic bytes — never
-// declared by the caller.
+// fileAssetStorable is an asset named by the file that holds it. It keeps no
+// bytes: Body reads the file when called, so a handle always reads the file as
+// it is now, and a listing of assets reads none of their content.
 // It satisfies store.AssetStorable.
 type fileAssetStorable struct {
 	fileStorable
 	encoding store.Encoding
 	blkId    string
+	file     string // absolute path of the asset's file
 }
 
 func (s *fileAssetStorable) Encoding() store.Encoding { return s.encoding }
 func (s *fileAssetStorable) BlkID() string            { return s.blkId }
 
-func newFileAssetStorable(key, path string, cat store.Category, body []byte, extRef string, enc store.Encoding) *fileAssetStorable {
+// Size is the file's current length; 0 when the file cannot be stat'd.
+func (s *fileAssetStorable) Size() int64 {
+	info, err := os.Stat(s.file)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+// Body is the file's current bytes; nil when the file cannot be read. A nil
+// Body means "unreadable", never "empty asset": an empty file yields a non-nil
+// empty slice.
+func (s *fileAssetStorable) Body() []byte {
+	data, err := os.ReadFile(s.file)
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+// newFileAssetStorable is the asset at file, with its encoding already inferred.
+func newFileAssetStorable(key, path string, cat store.Category, file, extRef string, enc store.Encoding) *fileAssetStorable {
 	blkId := key
 	if dot := strings.LastIndex(key, "."); dot > 0 {
 		blkId = key[:dot]
 	}
 	return &fileAssetStorable{
-		fileStorable: fileStorable{key: key, path: path, category: cat, body: body, extRef: extRef},
+		fileStorable: fileStorable{key: key, path: path, category: cat, extRef: extRef},
 		encoding:     enc,
 		blkId:        blkId,
+		file:         file,
 	}
 }
 

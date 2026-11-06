@@ -51,7 +51,15 @@ import { ProseMirrorEditor } from '../src/static/lens/document-editor/prosemirro
 import { NoteEditor } from '../src/static/lens/document-editor/note-editor.js'
 import { ComposerEditor } from '../src/static/lens/document-editor/composer/composer-editor.js'
 import { PromptEditor } from '../src/static/lens/prompt/prompt-editor.js'
-import { AbstractSurface } from '../src/static/lens/document-editor/surfaces/abstract-surface.js'
+import { BlockLens } from '../src/static/lens/block/block-lens.js'
+import { DigitalNoteLens } from '../src/static/lens/ink/digital-note-lens.js'
+import { LiveInkLens } from '../src/static/lens/ink/live-ink-lens.js'
+import { LensTable } from '../src/static/shell/lens-table.js'
+import { ProviderAdapter } from '../src/static/container/provider-adapter.js'
+import { InkProviderAdapter } from '../src/static/container/ink-provider-adapter.js'
+import { WholeContentAdapter } from '../src/static/container/whole-content-adapter.js'
+import { BlockProviderAdapter } from '../src/static/container/block-provider-adapter.js'
+import { AbstractSurface } from '../src/static/lens/abstract-surface.js'
 import { EditorMode } from '../src/static/lens/document-editor/editor-mode.js'
 import { blockInsertPos } from '../src/static/lens/document-editor/surfaces/ai-target.js'
 import { blockIndexForInsert, emptyParagraphAnchor } from '../src/static/lens/document-editor/surfaces/block-position.js'
@@ -59,6 +67,7 @@ import { buildAiContext, applyTargetHighlight } from '../src/static/lens/extensi
 import { MountBinding } from '../src/static/shell/mount-binding.js'
 import { ContainerModelFeed } from '../src/static/container/container-model-feed.js'
 import { serviceRig, FakeSocket } from './helpers/service-rig.js'
+import { WorkspaceFrame } from '../src/static/generated/protocol.js'
 
 // ── Test doubles ─────────────────────────────────────────────────────────────
 
@@ -71,7 +80,7 @@ import { serviceRig, FakeSocket } from './helpers/service-rig.js'
  */
 function hostMount(uuid = 'u', kind = 'note') {
   const { documentService } = serviceRig({ uuid: null })
-  return new MountBinding(uuid, documentService, new ContainerModelFeed(documentService), kind)
+  return new MountBinding(uuid, documentService, new ContainerModelFeed(documentService), kind, SieveWorkspace.lensTable.lookup(kind))
 }
 
 /**
@@ -205,9 +214,7 @@ const FakeSurfaceNoteEditor = withFakeSurfaces(NoteEditor)
 function noteRig(uuid = 'n', options = {}) {
   const provider = options.provider || fakeProvider()
   const loadContainer = options.loadContainer || vi.fn(() => Promise.resolve({ body: '', version: 0, scroll: 0 }))
-  const ed = new FakeSurfaceNoteEditor(uuid, Object.assign({}, options, {
-    provider, loadContainer, toolbar: options.toolbar !== undefined ? options.toolbar : null,
-  }))
+  const ed = new FakeSurfaceNoteEditor(uuid, Object.assign({}, options, { provider, loadContainer }))
   return { ed, provider, loadContainer, log: ed.surfaceLog, made: ed.made }
 }
 
@@ -430,6 +437,11 @@ describe('SieveWorkspace', () => {
     expect(window.SieveTab).toBe(SieveTab)
     expect(window.SieveEditor).toBe(SieveEditor)
     expect(window.SieveSurface).toBe(AbstractSurface)
+  })
+
+  it('the workspace channel has a tenant drawing ink pages from construction', () => {
+    const claim = () => ws.workspaceService.registerTenant({ frameTypes: [WorkspaceFrame.INK_DRAW_PAGE], onFrame() {} })
+    expect(claim).toThrow(/already claimed: ink-draw-page/)
   })
 
   it('workspace.activeTab.editor.uuid chain works', () => {
@@ -942,25 +954,33 @@ describe('AbstractEditor.presentMode — the host names a mode, the lens fetches
   })
 })
 
-describe('SieveTab.createEditor factory (P2.A)', () => {
-  it('creates a NoteEditor for a note uuid', () => {
-    const tab = new SieveTab('note-1')
-    expect(tab.createEditor('note-1', { provider: fakeProvider(), toolbar: null })).toBeInstanceOf(NoteEditor)
+describe('the workspace LensTable — a kind decides the lens, never a uuid', () => {
+  it.each([
+    ['note', NoteEditor, BlockProviderAdapter, true, true],
+    ['buffer', NoteEditor, BlockProviderAdapter, true, true],
+    ['prompt', PromptEditor, WholeContentAdapter, false, false],
+    ['code', BlockLens, ProviderAdapter, true, false],
+    ['digital-note', DigitalNoteLens, InkProviderAdapter, true, false],
+    ['ink-live', LiveInkLens, InkProviderAdapter, true, false],
+    ['a-kind-nothing-draws', BlockLens, ProviderAdapter, true, false],
+    ['', NoteEditor, BlockProviderAdapter, true, true],
+  ])('%j mounts its lens over its provider', (kind, lens, provider, channel, isDocument) => {
+    const mounting = SieveWorkspace.lensTable.lookup(kind)
+    expect(mounting.lens).toBe(lens)
+    expect(mounting.provider).toBe(provider)
+    expect(mounting.channel).toBe(channel)
+    expect(mounting.document).toBe(isDocument)
+    expect(Object.isFrozen(mounting)).toBe(true)
   })
 
-  it('creates a PromptEditor for a prompt: uuid', () => {
-    const tab = new SieveTab('prompt:daily')
-    expect(tab.createEditor('prompt:daily', { provider: wholeContentProvider() })).toBeInstanceOf(PromptEditor)
+  it('refuses a table that cannot mount a document or has no fallback', () => {
+    const fallback = { lens: BlockLens, provider: ProviderAdapter, channel: true }
+    expect(() => new LensTable({}, fallback)).toThrow('must say how a note is mounted')
+    expect(() => new LensTable({ note: fallback }, /** @type {any} */ (null))).toThrow('fallback')
   })
 
-  it('constructing a lens opens NOTHING — the container was mounted before it existed', () => {
-    // The lens holds one object, and that object is not a socket. Which container
-    // it edits, and when that container's channel opens, are decided by the host
-    // (activateDocument → MountBinding) before this constructor runs.
-    FakeSocket.reset()
-    new SieveTab('note-2').createEditor('note-2', { provider: fakeProvider(), toolbar: null })
-    new SieveTab('prompt:x').createEditor('prompt:x', { provider: wholeContentProvider() })
-    expect(FakeSocket.instances).toEqual([])
+  it('a kind word the table holds only through Object.prototype is still the fallback', () => {
+    expect(SieveWorkspace.lensTable.lookup('constructor').lens).toBe(BlockLens)
   })
 })
 
@@ -1141,6 +1161,40 @@ describe('NoteEditor.setMode — the flip is ONE lens using both of its containe
     const ed = new FakeSurfaceEditor('prompt:p', { provider: wholeContentProvider() })
     ed.presentSurface('markdown', document.createElement('div'), 'x')
     await expect(ed.setMode('wysiwyg')).resolves.toBe(false)
+  })
+
+  it('two modes that need no seed flip with no blocks capability, ask the container nothing, and hand the view over', async () => {
+    // A lens whose modes are two views of one container, neither a verbatim
+    // buffer: the flip is a surface swap, and the surface left says where the
+    // reader was to the one presented.
+    class TwoViews extends withFakeSurfaces(AbstractEditor) {
+      get _modes() { return ['first', 'second'] }
+      get _defaultMode() { return 'first' }
+      get _blockMode() { return 'first' }
+      get _seedlessModes() { return ['first', 'second'] }
+      get _innateCapabilities() { return { markdown: false, mentions: false, commands: false, blocks: false } }
+      _createSurface(mode) {
+        const s = super._createSurface(mode)
+        s.handed = this._handedViewState
+        s.viewState = () => ({ left: mode })
+        return s
+      }
+    }
+    const provider = wholeContentProvider()
+    const ed = new TwoViews('u', { provider, viewState: { left: 'before' } })
+    const root = document.createElement('div')
+    await ed.presentMode('first', root)
+    expect(ed.canEditBlocks).toBe(false)
+    /** @type {any[]} */ const events = []
+    ed.onEvent((e) => events.push(e.type))
+    await expect(ed.setMode('second')).resolves.toBe(true)
+    await expect(ed.toggleMode()).resolves.toBe(true)
+    expect(ed.made.map((m) => [m.mode, m.mountArgs[1], m.handed])).toEqual([
+      ['first', null, { left: 'before' }], ['second', null, { left: 'first' }], ['first', null, { left: 'second' }],
+    ])
+    expect(provider.getContents).not.toHaveBeenCalled()
+    expect(provider.setContents).not.toHaveBeenCalled()
+    expect(events.filter((t) => t === 'mode-changed')).toHaveLength(2)
   })
 
   it('reentrant setMode while a flip is in flight coalesces to the same promise', async () => {
@@ -1360,6 +1414,17 @@ describe('SieveWorkspace.activateDocument editor lifecycle (P2.A fix wave)', () 
     expect(w.activeTab).toBe(tabB)
   })
 
+  it("tab switch: the outgoing editor's view state is kept on its tab and handed to that tab's next editor", () => {
+    const w = loggingWorkspace([])
+    const tabA = w.activateDocument('doc-a', edOpts)
+    const state = Object.freeze({ page: 'p2' })
+    Object.defineProperty(tabA.editor, 'viewState', { get: () => state })
+    w.activateDocument('doc-b', edOpts)
+    expect(tabA.viewState).toBe(state)
+    w.activateDocument('doc-a', edOpts)
+    expect([tabA.editor.viewState, w.getTab('doc-b').viewState]).toEqual([state, null])
+  })
+
   it('same-uuid re-activation keeps the editor instance and its socket', () => {
     const log = []
     const w = loggingWorkspace(log)
@@ -1415,11 +1480,65 @@ describe('SieveWorkspace.activateDocument editor lifecycle (P2.A fix wave)', () 
     const log = []
     const w = loggingWorkspace(log)
     w.activateDocument('doc-a', edOpts)
-    const promptTab = w.activateDocument('prompt:p', edOpts)
+    const promptTab = w.activateDocument('p', edOpts, 'prompt')
 
     expect(promptTab.editor).toBeInstanceOf(PromptEditor)
+    expect(promptTab.kind).toBe('prompt')
     expect(log.filter((e) => e.startsWith('close:')).length).toBe(1) // note's socket closed on switch
     expect(FakeSocket.instances.length).toBe(1) // no socket created for the prompt
+  })
+
+  it('the lens follows the stated kind: a prompt-shaped id stated a note is a note', () => {
+    const w = loggingWorkspace([])
+    const tab = w.activateDocument('prompt:p', edOpts, 'note')
+    expect(tab.editor).toBeInstanceOf(NoteEditor)
+    expect(FakeSocket.instances.length).toBe(1)
+  })
+
+  describe('the workspace toolbar', () => {
+    /** A workspace over a toolbar host in the document. */
+    function withToolbar() {
+      const bar = document.createElement('div')
+      bar.id = 'editor-toolbar'
+      document.body.appendChild(bar)
+      return { bar, w: loggingWorkspace([]) }
+    }
+    afterEach(() => { document.body.innerHTML = '' })
+
+    it('shows the active lens\'s answer on every switch, and empties for a lens with none and on teardown', () => {
+      const { bar, w } = withToolbar()
+      const ids = () => [...bar.querySelectorAll('[id]')].map((el) => el.id)
+      w.activateDocument('doc-a', edOpts)
+      expect(ids()).toEqual(['tb-toggle-mode-btn', 'tb-spellcheck-btn', 'tb-clip-btn', 'tb-attach-btn', 'tb-explain-btn', 'tb-ask-btn', 'tb-help-btn'])
+      w.activateDocument('p', edOpts, 'prompt')
+      expect(bar.childElementCount).toBe(0)
+      w.activateDocument('blk-1', edOpts, 'code')
+      expect(bar.childElementCount).toBe(0)
+      w.activateDocument('doc-a', edOpts)
+      expect(ids()[0]).toBe('tb-toggle-mode-btn')
+      w.activateDocument('', edOpts)
+      expect(bar.childElementCount).toBe(0)
+    })
+
+    it('asks the lens again when it presents a surface, and follows the tab closed under it', () => {
+      const { bar, w } = withToolbar()
+      const tab = w.activateDocument('doc-a', edOpts)
+      const asked = vi.spyOn(tab.editor, 'toolbarContents')
+      tab.editor.presentSurface('markdown', document.createElement('div'), 'the body')
+      expect(asked).toHaveBeenCalledTimes(1)
+      w.closeTab('doc-a')
+      expect(bar.childElementCount).toBe(0)
+    })
+  })
+
+  it('a block container mounts the fallback lens, read-only, on its own channel', () => {
+    const log = []
+    const w = loggingWorkspace(log)
+    const tab = w.activateDocument('blk-1', edOpts, 'code')
+    expect(tab.editor).toBeInstanceOf(BlockLens)
+    expect(tab.mount.provider.constructor).toBe(ProviderAdapter)
+    expect(tab.editor.getCapabilities()).toEqual({ markdown: false, mentions: false, commands: false, blocks: false })
+    expect(log).toEqual(['open:ws://test/api/ws/document/blk-1'])
   })
 })
 
@@ -1442,7 +1561,7 @@ describe('SieveWorkspace editor lifecycle (P4.F — moved from editor.js)', () =
     const mount = hostMount('doc-a')
     vi.spyOn(mount, 'load').mockResolvedValue(Object.assign({ body: '', meta: { mode: 'wysiwyg' }, scroll: 0, version: 0, presenting: false }, answer))
     tab.attachMount(mount)
-    const ed = new FakeSurfaceNoteEditor('doc-a', { provider: fakeProvider(), toolbar: null })
+    const ed = new FakeSurfaceNoteEditor('doc-a', { provider: fakeProvider() })
     ed.restoreScroll = vi.fn()
     tab.attachEditor(ed)
     return { w, tab, ed, el: document.createElement('div') }
@@ -1495,8 +1614,26 @@ describe('SieveWorkspace editor lifecycle (P4.F — moved from editor.js)', () =
     await settle()
     expect(document.body.classList.contains('presenting')).toBe(true)
     global.fetch = vi.fn(() => new Promise(() => {}))
-    w.initEditor(el, 'prompt:b')
+    w.initEditor(el, 'prompt:b', undefined, 'prompt')
     expect(document.body.classList.contains('presenting')).toBe(false)
+  })
+
+  it.each([
+    ['a prompt, which has no channel to hear its changes on, reloads', 'prompt', 1],
+    ['a block container, which hears them on its channel, does not', 'code', 0],
+  ])('on prompts:changed %s', (_name, kind, reloads) => {
+    const w = /** @type {SieveWorkspace} */ (window.sieveWorkspace)
+    vi.stubGlobal('WebSocket', FakeSocket)
+    global.fetch = vi.fn(() => new Promise(() => {}))
+    const el = document.createElement('div')
+    w.initEditor(el, 'reload-' + kind, undefined, kind)
+    const init = vi.spyOn(w, 'initEditor')
+    document.dispatchEvent(new CustomEvent('prompts:changed'))
+    expect(init).toHaveBeenCalledTimes(reloads)
+    if (reloads) expect(init).toHaveBeenCalledWith(el, 'reload-' + kind, expect.anything(), kind)
+    init.mockRestore()
+    w.initEditor(null, '')
+    vi.unstubAllGlobals()
   })
 
   it('activeEditor mirrors activeTab.editor and is null-safe', () => {
@@ -1569,8 +1706,8 @@ describe('SieveWorkspace editor lifecycle (P4.F — moved from editor.js)', () =
     }
     const mount = document.createElement('div')
 
-    w.initEditor(mount, 'prompt:a', 'markdown') // load A pending, currentUuid='prompt:a'
-    w.initEditor(mount, 'prompt:b', 'markdown') // supersedes A, currentUuid='prompt:b'
+    w.initEditor(mount, 'prompt:a', 'markdown', 'prompt') // load A pending, currentUuid='prompt:a'
+    w.initEditor(mount, 'prompt:b', 'markdown', 'prompt') // supersedes A, currentUuid='prompt:b'
     const edB = w.activeEditor
     const present = vi.spyOn(edB, 'presentSurface').mockImplementation(() => {})
 
@@ -1589,10 +1726,10 @@ describe('SieveWorkspace editor lifecycle (P4.F — moved from editor.js)', () =
     const onEventSpy = vi.spyOn(PromptEditor.prototype, 'onEvent')
     const mount = document.createElement('div')
 
-    w.initEditor(mount, 'prompt:a', 'markdown')
+    w.initEditor(mount, 'prompt:a', 'markdown', 'prompt')
     const afterFirst = onEventSpy.mock.calls.length // Tab.attachEditor + #syncShell subscribed
     expect(afterFirst).toBeGreaterThan(0)
-    w.initEditor(mount, 'prompt:a', 'markdown') // same uuid: editor + subscription KEPT
+    w.initEditor(mount, 'prompt:a', 'markdown', 'prompt') // same uuid: editor + subscription KEPT
     expect(onEventSpy.mock.calls.length).toBe(afterFirst) // no new subscription — mode-changed won't double-fire
   })
 })
@@ -1618,7 +1755,7 @@ describe('SieveWorkspace container-deleted reconciliation (shell/workspace.js bo
     mount.openChannel(/** @type {any} */ ({ onMessage: () => {} }))
     const socket = FakeSocket.instances[FakeSocket.instances.length - 1]
     tab.attachMount(mount)
-    const editor = new FakeSurfaceNoteEditor(uuid, { provider: mount.provider, toolbar: null })
+    const editor = new FakeSurfaceNoteEditor(uuid, { provider: mount.provider })
     const destroy = vi.spyOn(editor, 'destroy')
     tab.attachEditor(editor)
     return { tab, editor, destroy, socket }
@@ -1705,6 +1842,47 @@ describe('SieveWorkspace container-deleted reconciliation (shell/workspace.js bo
     )).not.toThrow()
     expect(w.getTab('doc-active')).toBeNull()
     expect(w.activeTab).toBeNull()
+  })
+
+  describe('a deletion that took the active tab', () => {
+    let prevHtmx
+    beforeEach(() => {
+      prevHtmx = window.htmx
+      window.htmx = /** @type {any} */ ({
+        ajax: () => {
+          document.body.innerHTML = '<div id="tabs-area"><div data-tab-id="doc-next" data-tab-active="true"></div></div>'
+          return Promise.resolve()
+        },
+      })
+    })
+    afterEach(() => { window.htmx = prevHtmx; document.body.innerHTML = '' })
+
+    it.each([
+      ['nothing else has become active', false, ['doc-next']],
+      ['another tab became active before the strip landed', true, []],
+    ])('opens the tab the next strip marks active, once, when %s', async (_name, replaced, opened) => {
+      const w = new SieveWorkspace()
+      w.bootEditorLifecycle()
+      withEditor(w, 'doc-gone')
+      const open = vi.spyOn(w, 'open').mockResolvedValue(undefined)
+      document.dispatchEvent(new CustomEvent('sieve:container-deleted', { detail: { uuid: 'doc-gone' } }))
+      if (replaced) w.openTab('doc-mounted')
+      await w.loadTabs()
+      await w.loadTabs()
+      expect(open.mock.calls.map(([uuid]) => uuid)).toEqual(opened)
+    })
+
+    it('a background deletion reopens nothing', async () => {
+      const w = new SieveWorkspace()
+      w.bootEditorLifecycle()
+      withEditor(w, 'doc-bg')
+      w.openTab('doc-active')
+      const open = vi.spyOn(w, 'open').mockResolvedValue(undefined)
+      document.dispatchEvent(new CustomEvent('sieve:container-deleted', { detail: { uuid: 'doc-bg' } }))
+      w.closeTab('doc-active')
+      await w.loadTabs()
+      expect(open).not.toHaveBeenCalled()
+    })
   })
 
   it('a background reconciliation leaves the active tab standing', () => {
@@ -1967,9 +2145,9 @@ describe('AbstractEditor.toggleMode (P2.C — binary-flip sugar over setMode)', 
     const root = document.createElement('div')
     rig.ed.presentSurface(startMode, root, startMode === 'markdown' ? 'seed' : null)
     const events = []
-    // presentSurface (the flip mount) also emits a `stats` event; these tests pin
-    // the mode-changed/failed emissions only — filter stats out.
-    rig.ed.onEvent((ev) => { if (ev.type !== 'stats') events.push(ev) })
+    // presentSurface (the flip mount) also emits `stats` and `toolbar-changed`;
+    // these tests pin the mode-changed/failed emissions only.
+    rig.ed.onEvent((ev) => { if (ev.type !== 'stats' && ev.type !== 'toolbar-changed') events.push(ev) })
     return Object.assign(rig, { root, events })
   }
 
@@ -2792,10 +2970,11 @@ describe('SieveWorkspace.copyDocumentAs', () => {
     if (prevClip !== undefined) Object.defineProperty(navigator, 'clipboard', { value: prevClip, configurable: true })
   })
 
-  /** A workspace with one open tab whose mount answers a scripted export. */
-  function exporting(md) {
+  /** A workspace with one open tab, of `kind`, whose mount answers a scripted export.
+   *  @param {string|null} md @param {string} [kind] */
+  function exporting(md, kind) {
     const w = new SieveWorkspace()
-    const tab = w.openTab('doc-9')
+    const tab = w.openTab('doc-9', kind)
     const mount = hostMount('doc-9')
     vi.spyOn(mount, 'exportAs').mockResolvedValue(md)
     tab.attachMount(mount)
@@ -2829,6 +3008,17 @@ describe('SieveWorkspace.copyDocumentAs', () => {
     const { w } = exporting(null)
     await w.copyDocumentAs('markdown')
     expect(setText).not.toHaveBeenCalled()
+  })
+
+  it.each(['digital-note', 'ink-live', 'code', 'prompt'])('a %s tab holds no document: nothing is asked, copied or shown', async (kind) => {
+    const setText = vi.fn(() => Promise.resolve())
+    window.runtime = { ClipboardSetText: setText }
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    const { w, mount } = exporting('# never', kind)
+    const flush = vi.spyOn(w, 'flushSave')
+    await w.copyDocumentAs('markdown')
+    expect([mount.exportAs, flush, setText, alert].map((spy) => spy.mock.calls.length)).toEqual([0, 0, 0, 0])
+    alert.mockRestore()
   })
 
   it('no mount, nothing to copy — and no lens ever had this verb', async () => {
@@ -2925,52 +3115,12 @@ describe('AbstractEditor stats producer (P4.D)', () => {
   })
 })
 
-// ── P4.D: NoteEditor owns the toolbar (mount on present, destroy on teardown) ─────
-
-describe('NoteEditor toolbar ownership (P4.D)', () => {
-  // A fake toolbar recording mount/refresh/destroy calls (injected via options).
-  function fakeToolbar() {
-    return { _mounted: false, mount: vi.fn(function () { this._mounted = true }), get mounted() { return this._mounted },
-      refreshSurfaceSection: vi.fn(), destroy: vi.fn() }
-  }
-
-  it('mounts the toolbar on the FIRST present; re-renders its surface section on the next', () => {
-    const tb = fakeToolbar()
-    const ed = new (withFakeSurfaces(NoteEditor))('n', {
-      provider: fakeProvider(), toolbar: tb,
-    })
-    ed.presentSurface('wysiwyg', document.createElement('div'), null)
-    expect(tb.mount).toHaveBeenCalledTimes(1)
-    expect(tb.refreshSurfaceSection).not.toHaveBeenCalled()
-    // Second present (same-uuid re-init) → re-render the surface section, no re-mount.
-    ed.presentSurface('wysiwyg', document.createElement('div'), null)
-    expect(tb.mount).toHaveBeenCalledTimes(1)
-    expect(tb.refreshSurfaceSection).toHaveBeenCalledTimes(1)
-  })
-
-  it('destroy tears down the toolbar subscription', () => {
-    const tb = fakeToolbar()
-    const ed = new (withFakeSurfaces(NoteEditor))('n', {
-      provider: fakeProvider(), toolbar: tb,
-    })
-    ed.presentSurface('markdown', document.createElement('div'), 'x')
-    ed.destroy()
-    expect(tb.destroy).toHaveBeenCalledTimes(1)
-  })
-
-  it('a null toolbar (injected) is a safe no-op through present + destroy', () => {
-    const ed = new (withFakeSurfaces(NoteEditor))('n', {
-      provider: fakeProvider(), toolbar: null,
-    })
-    expect(() => { ed.presentSurface('markdown', document.createElement('div'), 'x'); ed.destroy() }).not.toThrow()
-  })
-})
-
 // ── P2.D: Workspace tab-lifecycle verbs (the external API facade) ─────────────
 // open/newNote/reorder/loadTabs are thin owners over htmx.ajax (stubbed to record
 // calls). close/closeAll/closeOthers funnel through #closeTabs: a JSON POST to
 // /api/tabs/close applied with htmx.swap, pruning in the afterSettleCallback — so
 // those tests stub fetch + htmx.swap and drive the settle to fire the prune.
+// reorder is fetched and swapped the same way.
 
 describe('SieveWorkspace tab-lifecycle verbs (P2.D facade)', () => {
   let ws
@@ -3016,11 +3166,34 @@ describe('SieveWorkspace tab-lifecycle verbs (P2.D facade)', () => {
       ids.map((id) => `<div data-tab-id="${id}"></div>`).join('') + '</div></div>'
   }
 
-  it('open posts to /api/note/open/{uuid} with the tabbar swap', () => {
+  it('open posts to /api/container/open/{uuid} with the tabbar swap', () => {
     ws.open('doc-1')
     expect(ajaxCalls).toEqual([
-      { method: 'POST', url: '/api/note/open/doc-1', opts: { target: '#htmx-tabbar', swap: 'innerHTML' } },
+      { method: 'POST', url: '/api/container/open/doc-1', opts: { target: '#htmx-tabbar', swap: 'innerHTML' } },
     ])
+  })
+
+  it("opens the container a lens asks for, through the same open, and nothing for an intent naming none", () => {
+    ws.onEditorModeEvent({ type: 'open-container', uuid: 'note-x' })
+    ws.onEditorModeEvent({ type: 'open-container' })
+    expect(ajaxCalls).toEqual([
+      { method: 'POST', url: '/api/container/open/note-x', opts: { target: '#htmx-tabbar', swap: 'innerHTML' } },
+    ])
+  })
+
+  it.each([
+    ['its items at its point', { x: 120, y: 80, items: [{ label: 'Copy page', action: () => {} }] }, { x: 120, y: 80, labels: ['Copy page'] }],
+    ['an empty menu for an intent with none', { x: 5, y: 6 }, { x: 5, y: 6, labels: [] }],
+  ])("shows the menu a lens asks for through the app's one context menu: %s", (_name, intent, shown) => {
+    /** @type {any[]} */
+    const raised = []
+    const hear = (/** @type {any} */ e) => raised.push(e.detail)
+    document.addEventListener('sieve:contextmenu', hear)
+    ws.onEditorModeEvent({ type: 'context-menu', ...intent })
+    document.removeEventListener('sieve:contextmenu', hear)
+    expect(raised.map((d) => ({ x: d.x, y: d.y, type: d.context.type, labels: d.context.items.map((/** @type {any} */ i) => i.label) })))
+      .toEqual([{ x: shown.x, y: shown.y, type: 'sieveBlock', labels: shown.labels }])
+    expect(ajaxCalls).toEqual([])
   })
 
   it('newNote posts to /api/note with the tabbar swap', () => {
@@ -3030,11 +3203,17 @@ describe('SieveWorkspace tab-lifecycle verbs (P2.D facade)', () => {
     ])
   })
 
-  it('reorder posts to /api/tabs/reorder with from/to values', () => {
-    ws.reorder(2, 0)
-    expect(ajaxCalls).toEqual([
-      { method: 'POST', url: '/api/tabs/reorder', opts: { target: '#htmx-tabbar', swap: 'innerHTML', values: { from: 2, to: 0 } } },
-    ])
+  it('reorder posts from/to to /api/tabs/reorder outside htmx\'s request queue and resolves once the strip has settled', async () => {
+    /** @type {any[]} */ const swaps = []
+    window.htmx.swap = (target, content, swapSpec, swapOptions) => {
+      swaps.push({ target, content, swapSpec })
+      swapOptions.afterSettleCallback()
+    }
+    await ws.reorder(2, 0)
+    expect(ajaxCalls).toEqual([])
+    expect(fetchCalls[0].url).toBe('/api/tabs/reorder')
+    expect(Object.fromEntries(fetchCalls[0].body)).toEqual({ from: '2', to: '0' })
+    expect(swaps).toEqual([{ target: '#htmx-tabbar', content: '<div>tabbar</div>', swapSpec: { swapStyle: 'innerHTML' } }])
   })
 
   it('loadTabs GETs /ui/views/tabs into the tabbar', () => {

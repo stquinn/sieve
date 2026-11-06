@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"sieve/logger"
-	"sieve/sieve/block"
 	"sieve/sieve/domain"
 )
 
@@ -605,7 +604,7 @@ func (e *InspectionEngine) enabledLocked(uuid, feature string) bool {
 // A panic is recovered so a bad producer costs that block its marks and nothing
 // else: this runs unsupervised in a timer goroutine, where an unwind would take
 // the process rather than the request.
-func (e *InspectionEngine) inspect(feature activeFeature, segments []domain.TextSegment, blk block.SieveBlock) (marks []domain.TextMark) {
+func (e *InspectionEngine) inspect(feature activeFeature, segments []domain.TextSegment, blk domain.SieveBlock) (marks []domain.TextMark) {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Error("inspection: Inspect panicked", "feature", feature.inspector.Feature(), "block", blk.ID, "err", r)

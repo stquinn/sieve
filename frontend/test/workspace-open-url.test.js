@@ -1,5 +1,5 @@
 // workspace-open-url.test.js — regression guard for prompt documents failing
-// to open. open() drives the chi path-param route /api/note/open/{id}; the Go
+// to open. open() drives the chi path-param route /api/container/open/{id}; the Go
 // handler assumes a DECODED id (strings.HasPrefix(id, "prompt:")) and
 // chi.URLParam does NOT unescape. A `prompt:` uuid must therefore travel the
 // path RAW — exactly as the pre-P2.D templates sent `{{.ID}}`. Percent-encoding
@@ -10,10 +10,12 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-// Workspace pulls its children at module-eval; SieveTab drags in the editor →
+// Workspace pulls its children at module-eval; SieveTab and the lens table drag in the editor →
 // TipTap chain, which the bare test vendor bag can't build. open()/close() only
 // touch window.htmx, so stub the children out (surfaces/ai-target pattern).
 vi.mock('../src/static/shell/tab.js', () => ({ SieveTab: class {} }))
+vi.mock('../src/static/lens/document-editor/note-editor.js', () => ({ NoteEditor: class {} }))
+vi.mock('../src/static/lens/prompt/prompt-editor.js', () => ({ PromptEditor: class {} }))
 vi.mock('../src/static/shell/ask-panel.js', () => ({ AskPanel: class {} }))
 vi.mock('../src/static/shell/insert-dialogs.js', () => ({ InsertDialogs: class {} }))
 vi.mock('../src/static/shell/find-dialog.js', () => ({ FindDialog: class {} }))
@@ -83,7 +85,7 @@ describe('SieveWorkspace.openAddress — Go decides what a coordinate opens', ()
       uri: frame.uri, found: true, uuid: '2f1c9a4e-0b7d-4a11-9c3e-6d5f8b2a1e00', blockId: '',
     })
     await opened
-    expect(ajax).toHaveBeenCalledWith('POST', '/api/note/open/2f1c9a4e-0b7d-4a11-9c3e-6d5f8b2a1e00', expect.anything())
+    expect(ajax).toHaveBeenCalledWith('POST', '/api/container/open/2f1c9a4e-0b7d-4a11-9c3e-6d5f8b2a1e00', expect.anything())
   })
 
   // The form the retired JS decode dropped on the floor: its `container:` guard
@@ -98,7 +100,7 @@ describe('SieveWorkspace.openAddress — Go decides what a coordinate opens', ()
       found: true, uuid: '2f1c9a4e-0b7d-4a11-9c3e-6d5f8b2a1e00', blockId: 'b7',
     })
     await opened
-    expect(ajax).toHaveBeenCalledWith('POST', '/api/note/open/2f1c9a4e-0b7d-4a11-9c3e-6d5f8b2a1e00', expect.anything())
+    expect(ajax).toHaveBeenCalledWith('POST', '/api/container/open/2f1c9a4e-0b7d-4a11-9c3e-6d5f8b2a1e00', expect.anything())
   })
 
   it('opens nothing when Go says the address resolves to nothing', async () => {
@@ -114,7 +116,7 @@ describe('SieveWorkspace.openAddress — Go decides what a coordinate opens', ()
     // Named specifically: this module's Workspace singleton (created at import,
     // subscribed to the invalidation events) refetches the tab strip when the
     // fake socket connects, so "no ajax at all" would be asserting the harness.
-    expect(ajax).not.toHaveBeenCalledWith('POST', expect.stringContaining('/api/note/open/'), expect.anything())
+    expect(ajax).not.toHaveBeenCalledWith('POST', expect.stringContaining('/api/container/open/'), expect.anything())
   })
 
   it('an empty address opens nothing and never reaches the wire', async () => {
@@ -128,12 +130,12 @@ describe('SieveWorkspace.openAddress — Go decides what a coordinate opens', ()
 describe('SieveWorkspace tab-lifecycle URLs', () => {
   it('opens a prompt document with a RAW (unencoded) path id', () => {
     new SieveWorkspace().open('prompt:file')
-    expect(ajax).toHaveBeenCalledWith('POST', '/api/note/open/prompt:file', expect.anything())
+    expect(ajax).toHaveBeenCalledWith('POST', '/api/container/open/prompt:file', expect.anything())
   })
 
   it('leaves plain (URL-safe) note uuids untouched', () => {
     const uuid = '2f1c9a4e-0b7d-4a11-9c3e-6d5f8b2a1e00'
     new SieveWorkspace().open(uuid)
-    expect(ajax).toHaveBeenCalledWith('POST', '/api/note/open/' + uuid, expect.anything())
+    expect(ajax).toHaveBeenCalledWith('POST', '/api/container/open/' + uuid, expect.anything())
   })
 })

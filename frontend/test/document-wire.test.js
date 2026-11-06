@@ -122,6 +122,125 @@ describe('DocumentService.detectExtractions — capability discovery over the do
   })
 })
 
+describe('DocumentService ink — a page asked for, and the ink frames observed', () => {
+  beforeEach(() => FakeSocket.reset())
+  const page = { note: { pageAspect: 0.75 }, strokes: [] }
+
+  it('sends {pageId} and resolves the page with the seq it reflects', async () => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    const pending = documentService.inkPage('doc-1', 'p1')
+    expect(sock.sentOfType('ink-page')[0]).toEqual({ type: 'ink-page', pageId: 'p1', opId: lastOpId(sock, 'ink-page') })
+    sock.driveMessage({ type: 'ink-page-content', opId: lastOpId(sock, 'ink-page'), pageId: 'p1', seq: 7, page })
+    await expect(pending).resolves.toEqual({ page, seq: 7 })
+  })
+
+  it('rejects a refusal, naming why', async () => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    const pending = documentService.inkPage('doc-1', 'p9')
+    sock.driveMessage({ type: 'ink-page-content', opId: lastOpId(sock, 'ink-page'), pageId: 'p9', seq: 0, page: null, error: 'no page p9' })
+    await expect(pending).rejects.toThrow('no page p9')
+  })
+
+  it('rejects with no channel', async () => {
+    const { documentService } = serviceRig({ uuid: null })
+    await expect(documentService.inkPage('doc-1', 'p1')).rejects.toThrow()
+  })
+
+  it('asks the tablet to open the note at a page and resolves the outcome and reason, past the wire default 5s', async () => {
+    vi.useFakeTimers()
+    try {
+      const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+      const pending = documentService.inkOpenOnTablet('doc-1', 'p2')
+      expect(sock.sentOfType('ink-open-on-tablet')[0]).toEqual({ type: 'ink-open-on-tablet', opId: lastOpId(sock, 'ink-open-on-tablet'), pageId: 'p2' })
+      await vi.advanceTimersByTimeAsync(5500)
+      sock.driveMessage({ type: 'ink-open-on-tablet-result', opId: lastOpId(sock, 'ink-open-on-tablet'), outcome: 'refused', reason: 'not-foreground' })
+      await expect(pending).resolves.toEqual({ outcome: 'refused', reason: 'not-foreground' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('rejects an ink-open-on-tablet that asked nothing, and with no channel', async () => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    const pending = documentService.inkOpenOnTablet('doc-1', 'p1')
+    sock.driveMessage({ type: 'ink-open-on-tablet-result', opId: lastOpId(sock, 'ink-open-on-tablet'), error: 'no note' })
+    await expect(pending).rejects.toThrow('no note')
+    await expect(serviceRig({ uuid: null }).documentService.inkOpenOnTablet('doc-1', 'p1')).rejects.toThrow()
+  })
+
+  it('asks for the note to be named now and resolves once Go accepted it, past the wire default 5s', async () => {
+    vi.useFakeTimers()
+    try {
+      const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+      const pending = documentService.inkDescribe('doc-1')
+      expect(sock.sentOfType('ink-describe')[0]).toEqual({ type: 'ink-describe', opId: lastOpId(sock, 'ink-describe') })
+      await vi.advanceTimersByTimeAsync(9000)
+      sock.driveMessage({ type: 'ink-describe-result', opId: lastOpId(sock, 'ink-describe') })
+      await expect(pending).resolves.toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('rejects an ink-describe that submitted nothing with Go\'s words, and with no channel', async () => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    const pending = documentService.inkDescribe('doc-1')
+    sock.driveMessage({ type: 'ink-describe-result', opId: lastOpId(sock, 'ink-describe'), error: 'No AI is configured in Settings.' })
+    await expect(pending).rejects.toThrow(/^No AI is configured in Settings\.$/)
+    await expect(serviceRig({ uuid: null }).documentService.inkDescribe('doc-1')).rejects.toThrow()
+  })
+
+  it('observes the pushed ink frames, in order, and nothing else', () => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    /** @type {string[]} */ const types = []
+    const stop = documentService.observeInk('doc-1', (msg) => types.push(msg.type))
+    for (const type of ['ink-live-page', 'insert-block', 'ink-live', 'ink-stroke-added', 'block-attrs-updated', 'ink-stroke-removed',
+      'ink-transcript-changed', 'container-named', 'ink-describe-result', 'ink-log-restarted']) {
+      sock.driveMessage({ type })
+    }
+    stop()
+    sock.driveMessage({ type: 'ink-live' })
+    expect(types).toEqual(['ink-live-page', 'ink-live', 'ink-stroke-added', 'ink-stroke-removed', 'ink-transcript-changed', 'ink-log-restarted'])
+  })
+
+  const transcript = { state: 'ready', key: 'k1', blocks: [{ id: 'b1', kind: 'prose', attrs: { content: '# Kitchen' } }], running: false, available: true }
+
+  it.each([
+    ['inkTranscript', 'ink-transcript'],
+    ['inkTranscribePage', 'ink-transcribe-page'],
+  ])('%s sends {pageId} as %s and resolves the transcript the answer carries', async (verb, type) => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    const pending = /** @type {any} */ (documentService)[verb]('doc-1', 'p1')
+    expect(sock.sentOfType(type)[0]).toEqual({ type, pageId: 'p1', opId: lastOpId(sock, type) })
+    sock.driveMessage({ type: 'ink-transcript-content', opId: lastOpId(sock, type), pageId: 'p1', transcript })
+    await expect(pending).resolves.toEqual(transcript)
+  })
+
+  it.each([
+    ['inkTranscript', 'ink-transcript'],
+    ['inkTranscribePage', 'ink-transcribe-page'],
+  ])('%s rejects a refusal, naming why, and with no channel', async (verb, type) => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    const pending = /** @type {any} */ (documentService)[verb]('doc-1', 'p9')
+    sock.driveMessage({ type: 'ink-transcript-content', opId: lastOpId(sock, type), pageId: 'p9', transcript: null, error: 'no page p9' })
+    await expect(pending).rejects.toThrow('no page p9')
+    await expect(/** @type {any} */ (serviceRig({ uuid: null }).documentService)[verb]('doc-1', 'p1')).rejects.toThrow()
+  })
+
+  it('asks for a document from a page\'s transcript and resolves its uuid, and rejects one made of nothing', async () => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    const pending = documentService.inkTranscriptDocument('doc-1', 'p1')
+    const opId = () => lastOpId(sock, 'ink-transcript-document')
+    expect(sock.sentOfType('ink-transcript-document')[0]).toEqual({ type: 'ink-transcript-document', pageId: 'p1', opId: opId() })
+    sock.driveMessage({ type: 'ink-transcript-document-result', opId: opId(), uuid: 'doc-2' })
+    await expect(pending).resolves.toBe('doc-2')
+    const refused = documentService.inkTranscriptDocument('doc-1', 'p2')
+    sock.driveMessage({ type: 'ink-transcript-document-result', opId: opId(), error: 'not transcribed' })
+    await expect(refused).rejects.toThrow('not transcribed')
+    await expect(serviceRig({ uuid: null }).documentService.inkTranscriptDocument('doc-1', 'p1')).rejects.toThrow()
+  })
+})
+
 // ONE MAPPING FROM MARK TO FRAME, and every door takes it — the lens's void
 // `requestReplaceText` and the shell's answering `MountBinding.replaceText` alike.
 // A second mapping would be a second chance to send an anchor the server cannot

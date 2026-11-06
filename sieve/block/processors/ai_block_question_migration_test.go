@@ -18,15 +18,15 @@ const (
 // migrationTree is the document under test: two prose blocks and the ai-block
 // asking about them, in the legacy flat form. response drives the export path,
 // which renders nothing until a block is answered.
-func migrationTree(ref, blockType, response string) []block.SieveBlock {
-	ask := block.NewSieveBlock("ai-block", migrationAskID, map[string]interface{}{
+func migrationTree(ref, blockType, response string) []domain.SieveBlock {
+	ask := domain.NewSieveBlock("ai-block", migrationAskID, map[string]interface{}{
 		"id": migrationAskID, "ref": ref, "type": blockType,
 		"status": block.BlockStatusComplete, "question": migrationQuestion, "response": response,
 	})
 	ask.SetAttachments(domain.Attachments{{URI: authURI, Title: "Auth Design"}})
-	return []block.SieveBlock{
-		block.NewSieveBlock(block.KindProse, migrationProseID, map[string]interface{}{"content": "the grass is green"}),
-		block.NewSieveBlock(block.KindProse, migrationProseTwo, map[string]interface{}{"content": "the sky is blue"}),
+	return []domain.SieveBlock{
+		domain.NewSieveBlock(block.KindProse, migrationProseID, map[string]interface{}{"content": "the grass is green"}),
+		domain.NewSieveBlock(block.KindProse, migrationProseTwo, map[string]interface{}{"content": "the sky is blue"}),
 		ask,
 	}
 }
@@ -34,11 +34,11 @@ func migrationTree(ref, blockType, response string) []block.SieveBlock {
 // migrationDocView returns a DocView for the document under test, carrying the
 // codec and uuid a literal cannot set. Its tree is replaced per case, so both
 // halves of a comparison are read through the same view.
-func migrationDocView(t *testing.T, blocks []block.SieveBlock) block.DocView {
+func migrationDocView(t *testing.T, blocks []domain.SieveBlock) block.DocView {
 	t.Helper()
 	codec := block.NewDocumentCodec(block.GlobalRegistry())
-	body, err := codec.Serialize([]block.SieveBlock{
-		block.NewSieveBlock(block.KindProse, migrationProseID, map[string]interface{}{"content": "seed"}),
+	body, err := codec.Serialize([]domain.SieveBlock{
+		domain.NewSieveBlock(block.KindProse, migrationProseID, map[string]interface{}{"content": "seed"}),
 	})
 	if err != nil {
 		t.Fatalf("seed serialize: %v", err)
@@ -92,7 +92,7 @@ func (c migrationCase) action() string {
 // nothing, one block, several blocks, and the EXPLAIN branch of the header.
 //
 // The multi-target spelling has NO space after the comma. That is the canonical
-// form — SieveBlock.withRefs is the only writer of the list and joins without
+// form — SieveBlock.WithRefs is the only writer of the list and joins without
 // one — and byte-identity is owed to canonical records; a hand-spaced "a, b"
 // normalises to "a,b" on conversion.
 var migrationCases = []migrationCase{

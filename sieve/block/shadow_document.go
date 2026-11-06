@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"sieve/logger"
+	"sieve/sieve/domain"
 )
 
 // DefaultAutosaveDebounce is the fallback autosave delay when none is configured.
@@ -20,7 +21,7 @@ type ShadowDocument struct {
 	// no BlockDoc wrapper, no nested "document inside a document". In WYSIWYG mode
 	// it is the single source of truth for what gets saved (ContentForSave just
 	// serializes it); markdown is derived on demand, never stored.
-	Blocks []SieveBlock
+	Blocks []domain.SieveBlock
 	// mdModeBuffer holds the raw text the user edits in MARKDOWN MODE ONLY. In
 	// WYSIWYG mode the tree (Doc) is authoritative and whole-doc markdown is
 	// derived on demand (deriveMarkdown) — there is no stored markdown to drift
@@ -146,13 +147,13 @@ func (s *ShadowDocument) SetMarkdown(md string) {
 // it appends a fresh block. kind is only used when creating the entry; subsequent
 // merges preserve the existing Kind. The locked entry point for external callers;
 // applyOpTo's update-block calls SieveBlock.Merge directly under its own lock.
-func (s *ShadowDocument) MergeBlock(patch SieveBlock) {
+func (s *ShadowDocument) MergeBlock(patch domain.SieveBlock) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if b := s.findBlock(patch.ID); b != nil {
 		b.Merge(patch)
 	} else {
-		nb := SieveBlock{ID: patch.ID, Kind: patch.Kind}
+		nb := domain.SieveBlock{ID: patch.ID, Kind: patch.Kind}
 		nb.Merge(patch)
 		s.Blocks = append(s.Blocks, nb)
 	}
@@ -163,7 +164,7 @@ func (s *ShadowDocument) MergeBlock(patch SieveBlock) {
 // its document position. It is the primitive promote-to-prose needs: update-block
 // cannot change a block's Kind, and delete+insert would lose position. Returns
 // false if no block with id exists. Caller must NOT hold s.mu.
-func (s *ShadowDocument) ReplaceBlock(id string, newBlock SieveBlock) bool {
+func (s *ShadowDocument) ReplaceBlock(id string, newBlock domain.SieveBlock) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.Blocks {
@@ -290,7 +291,7 @@ func (s *ShadowDocument) BlockIDs() []string {
 // findBlock returns a pointer to the block with the given ID within the live
 // tree, or nil. ASSUMES s.mu is held by the caller — the returned pointer
 // aliases the live slice and the caller must mutate it under that lock.
-func (s *ShadowDocument) findBlock(id string) *SieveBlock {
+func (s *ShadowDocument) findBlock(id string) *domain.SieveBlock {
 	return s.findBlockIn(id)
 }
 
@@ -354,7 +355,7 @@ func (s *ShadowDocument) applyOpTo(op BlockOp) error {
 		// One block-patch semantic for every kind: attrs MERGE (a partial patch keeps
 		// existing keys), aliases REPLACE when present. Prose's body is just
 		// Attrs["content"], carried in the merge like any other key — no kind branch.
-		b.Merge(SieveBlock{Attrs: op.Attrs, Aliases: op.Aliases})
+		b.Merge(domain.SieveBlock{Attrs: op.Attrs, Aliases: op.Aliases})
 		return nil
 
 	case "create-block":
@@ -365,7 +366,7 @@ func (s *ShadowDocument) applyOpTo(op BlockOp) error {
 		if op.ParentID != "" {
 			return fmt.Errorf("create-block: nesting into parent %q is Stage E (no Children yet)", op.ParentID)
 		}
-		nb := NewSieveBlock(op.Kind, op.BlockID, op.Attrs)
+		nb := domain.NewSieveBlock(op.Kind, op.BlockID, op.Attrs)
 		nb.Aliases = op.Aliases
 		s.insertBlockAt(op.Index, nb)
 		return nil
@@ -404,11 +405,11 @@ func (s *ShadowDocument) setOrder(order []string) error {
 	if len(order) != len(s.Blocks) {
 		return fmt.Errorf("set-order: names %d blocks, document has %d", len(order), len(s.Blocks))
 	}
-	byID := make(map[string]SieveBlock, len(s.Blocks))
+	byID := make(map[string]domain.SieveBlock, len(s.Blocks))
 	for _, b := range s.Blocks {
 		byID[b.ID] = b
 	}
-	reordered := make([]SieveBlock, 0, len(order))
+	reordered := make([]domain.SieveBlock, 0, len(order))
 	seen := make(map[string]bool, len(order))
 	for _, id := range order {
 		b, ok := byID[id]
@@ -427,7 +428,7 @@ func (s *ShadowDocument) setOrder(order []string) error {
 
 // removeBlock deletes the block with id from the tree rooted at *blocks,
 // returning the removed block and whether it was found.
-func (s *ShadowDocument) removeBlock(id string) (SieveBlock, bool) {
+func (s *ShadowDocument) removeBlock(id string) (domain.SieveBlock, bool) {
 	for i := range s.Blocks {
 		if (s.Blocks)[i].ID == id {
 			removed := (s.Blocks)[i]
@@ -435,25 +436,25 @@ func (s *ShadowDocument) removeBlock(id string) (SieveBlock, bool) {
 			return removed, true
 		}
 	}
-	return SieveBlock{}, false
+	return domain.SieveBlock{}, false
 }
 
 // insertBlockAt inserts b at index in *blocks. AppendIndex — and any other
 // negative index — appends, matching what an unresolved Anchor means; an index
 // past the end clamps there (a robustness choice — the wire layer may send a
 // stale index).
-func (s *ShadowDocument) insertBlockAt(index int, b SieveBlock) {
+func (s *ShadowDocument) insertBlockAt(index int, b domain.SieveBlock) {
 	if index < 0 || index > len(s.Blocks) {
 		index = len(s.Blocks)
 	}
-	s.Blocks = append(s.Blocks, SieveBlock{})
+	s.Blocks = append(s.Blocks, domain.SieveBlock{})
 	copy(s.Blocks[index+1:], s.Blocks[index:])
 	s.Blocks[index] = b
 }
 
 // findBlockIn returns a pointer to the block with the given ID, or nil. The
 // pointer aliases the live slice so callers can mutate it.
-func (s *ShadowDocument) findBlockIn(id string) *SieveBlock {
+func (s *ShadowDocument) findBlockIn(id string) *domain.SieveBlock {
 	for i := range s.Blocks {
 		if s.Blocks[i].ID == id {
 			return &s.Blocks[i]

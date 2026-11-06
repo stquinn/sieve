@@ -1,6 +1,6 @@
 // @ts-check
-// A Surface is one PRIVATE input surface of an editor: the TipTap WYSIWYG island
-// or the raw-markdown textarea. The editor swaps surfaces in place via setMode;
+// A Surface is one PRIVATE input surface of an editor: the TipTap WYSIWYG island,
+// the raw-markdown textarea, or a lens's own drawing of its container. The editor swaps surfaces in place via setMode;
 // the surface owns its own DOM subtree, its debounced doc-sync, and how a
 // container change lands in its representation. The editor never reaches into a
 // surface's DOM — it drives only this contract.
@@ -15,8 +15,17 @@
  * An editor-domain event a surface REPORTS OUTWARD via the host editor's
  * `onSurfaceEvent` handler — producer-named plain data, never a consumer name: a
  * surface must not know an Ask panel or toolbar exists.
- * @typedef {{type: string, feature?: string}} SurfaceEventMsg
+ * @typedef {{type: string, feature?: string, uuid?: string, x?: number, y?: number,
+ *   items?: ReadonlyArray<import('../renderers/action-list.js').ContextMenuItem>}} SurfaceEventMsg
  */
+/**
+ * What a surface measures of what it shows, for the status bar. When `readout`
+ * is present the bar shows its cells, in order, in place of the character and
+ * line counts.
+ * @typedef {{chars: number, lines: number, blockCount: number,
+ *   readout?: ReadonlyArray<Readonly<{text: string, title: string}>>}} SurfaceStats
+ */
+
 export const SurfaceEvent = Object.freeze({
   /** The document content changed (a user edit settled into the surface). */
   DOC_CHANGED: Object.freeze({ type: 'doc-changed' }),
@@ -39,6 +48,23 @@ export const SurfaceEvent = Object.freeze({
    * re-derives the whole descriptor.
    */
   SCROLL_CHANGED: Object.freeze({ type: 'scroll-changed' }),
+  /** What the surface offers the toolbar changed, its state included: the host
+   *  asks for the toolbar's contents again. */
+  TOOLBAR_CHANGED: Object.freeze({ type: 'toolbar-changed' }),
+})
+
+/**
+ * The `type` of each surface event that asks the host for something rather than
+ * reporting what happened. Each carries what the host needs to answer it:
+ *
+ *   open-container   uuid — open that container in a tab of its own
+ *   context-menu     x, y, items — show the app's context menu of `items` at
+ *                    that client point. A surface raises it with no items; the
+ *                    lens it reports to supplies them.
+ */
+export const SurfaceIntent = Object.freeze({
+  OPEN_CONTAINER: 'open-container',
+  CONTEXT_MENU: 'context-menu',
 })
 
 export class AbstractSurface {
@@ -62,7 +88,7 @@ export class AbstractSurface {
 
   /** The surface's current document stats, from its OWN plain-text view. The
    *  editor delegates here so ALL TipTap access stays surface-private.
-   *  @returns {{ chars: number, lines: number, blockCount: number }} */
+   *  @returns {SurfaceStats} */
   stats() {
     const text = this.body || ''
     const lines = text === '' ? 0 : text.split('\n').length
@@ -130,7 +156,7 @@ export class AbstractSurface {
 
   /** Places clipboard-shaped entries through this surface's paste path at the
    *  caret. The base has none, so nothing is made of them.
-   *  @param {import('../../../contract/container-provider.js').ContentEntry[]} entries
+   *  @param {import('../contract/container-provider.js').ContentEntry[]} entries
    *  @returns {Promise<'block'|'content'|'none'>} */
   pasteEntries(entries) { return Promise.resolve('none') }
 
@@ -173,7 +199,7 @@ export class AbstractSurface {
    *  means — and a surface that draws one producer's findings ignores the rest.
    *  @param {string} feature which producer found them
    *  @param {string} blockId
-   *  @param {ReadonlyArray<import('../../../contract/container-update-listener.js').SieveTextMark>} marks */
+   *  @param {ReadonlyArray<import('../contract/container-update-listener.js').SieveTextMark>} marks */
   setTextMarks(feature, blockId, marks) {}
 
   /** The title of the `@Title` token at `pos`, or null where there is none. A
@@ -200,12 +226,12 @@ export class AbstractSurface {
   insertLink(url) { return Promise.resolve(false) }
 
   /**
-   * The surface's OWN formatting button groups for the editor toolbar. The editor
-   * composes these AFTER its persistent editor-level groups and re-renders ONLY
-   * this section on a mode flip. A surface with no rich commands returns [], so
-   * its formatting buttons are ABSENT rather than dimmed. Each button's
-   * onClick/active closure runs on the surface's OWN live view.
-   * @returns {import('../toolbar-button.js').ButtonGroup[]}
+   * The surface's own groups for the workspace toolbar, which its editor shows
+   * ahead of the editor's own groups. A surface with nothing to offer returns
+   * [], so its buttons are ABSENT rather than dimmed. Each button's closures run
+   * on the surface's OWN live view. A surface whose answer changes reports
+   * TOOLBAR_CHANGED.
+   * @returns {import('../renderers/toolbar-button.js').ButtonGroup[]}
    */
   toolbarContents() { return [] }
 
@@ -221,7 +247,7 @@ export class AbstractSurface {
    * WRITE side of feedSelection. The concrete surface turns the plain coordinate
    * back into a PM selection / block-inner focus / textarea focus. Base surfaces
    * have no live view, so the default is a no-op focus fallback.
-   * @param {import('../selection-model.js').SelectionContext} ctx
+   * @param {import('./document-editor/selection-model.js').SelectionContext} ctx
    */
   applyPosition(ctx) { /* base: nothing to focus */ }
 
@@ -249,6 +275,29 @@ export class AbstractSurface {
    * @param {number|null|undefined} value
    */
   applyScroll(value) { /* base: nothing to scroll */ }
+
+  /**
+   * The reader's view of the container, as a value the host keeps while no
+   * surface shows it and hands back to the next surface of the same lens over
+   * the same container. It is opaque to the host. Null when the surface keeps
+   * none.
+   * @returns {unknown}
+   */
+  viewState() { return null }
+
+  /**
+   * The context-menu intent for a `contextmenu` event on this surface, at the
+   * event's point; one raised from the keyboard, which has none, at the top-left
+   * of `el`, inset.
+   * @param {MouseEvent} event
+   * @param {HTMLElement} el the surface's own element
+   * @returns {SurfaceEventMsg}
+   */
+  contextMenuIntent(event, el) {
+    if (event.clientX || event.clientY) return { type: SurfaceIntent.CONTEXT_MENU, x: event.clientX, y: event.clientY }
+    const box = el.getBoundingClientRect()
+    return { type: SurfaceIntent.CONTEXT_MENU, x: box.left + 16, y: box.top + 16 }
+  }
 
   /**
    * Quote and truncate a snippet on a word boundary near 20 chars — the ONE

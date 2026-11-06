@@ -15,10 +15,12 @@
 
 import { describe, it, expect, afterEach, vi } from 'vitest'
 
-// Workspace pulls its children at module-eval; SieveTab drags in the editor →
+// Workspace pulls its children at module-eval; SieveTab and the lens table drag in the editor →
 // TipTap chain, which the bare test vendor bag can't build (workspace-open-url
 // pattern). None of them participates in the dial.
 vi.mock('../src/static/shell/tab.js', () => ({ SieveTab: class {} }))
+vi.mock('../src/static/lens/document-editor/note-editor.js', () => ({ NoteEditor: class {} }))
+vi.mock('../src/static/lens/prompt/prompt-editor.js', () => ({ PromptEditor: class {} }))
 vi.mock('../src/static/shell/ask-panel.js', () => ({ AskPanel: class {} }))
 vi.mock('../src/static/shell/insert-dialogs.js', () => ({ InsertDialogs: class {} }))
 vi.mock('../src/static/shell/find-dialog.js', () => ({ FindDialog: class {} }))

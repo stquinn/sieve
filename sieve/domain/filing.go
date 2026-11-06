@@ -26,3 +26,13 @@ type ImageDesc struct {
 	Summary  string `json:"summary"`
 	Detect   string `json:"detect,omitempty"`
 }
+
+// NoteMetadata is what a model says of a handwritten note from images of its pages: a title, its
+// keywords, the categories it belongs to and a summary. It is what AIService.DescribeNote answers
+// and what ink keeps on the note and sends to the tablet; nothing checks it beyond its parse.
+type NoteMetadata struct {
+	Title      string   `json:"title"`
+	Keywords   []string `json:"keywords"`
+	Categories []string `json:"categories"`
+	Summary    string   `json:"summary"`
+}

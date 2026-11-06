@@ -3,6 +3,8 @@ package block
 import (
 	"strings"
 	"testing"
+
+	"sieve/sieve/domain"
 )
 
 // exportCodeProc is a fenced fake whose MarkdownRepresentation is a clean ```lang
@@ -12,7 +14,7 @@ type exportCodeProc struct{ fakeProc }
 
 func newExportCodeProc() *exportCodeProc { return &exportCodeProc{fakeProc: *newFakeProc("exp-code")} }
 
-func (exportCodeProc) MarkdownRepresentation(b SieveBlock, _ string) string {
+func (exportCodeProc) MarkdownRepresentation(b domain.SieveBlock, _ string) string {
 	lang, _ := b.Attrs["lang"].(string)
 	src, _ := b.Attrs["source"].(string)
 	return "```" + lang + "\n" + src + "\n```"
@@ -30,13 +32,15 @@ func newExportProseProc() *exportProseProc {
 func (exportProseProc) Mode() BlockMode       { return BlockModeProse }
 func (exportProseProc) Accepts(Region) bool   { return true }
 func (exportProseProc) Shapes() []RegionShape { return nil }
-func (exportProseProc) Deserialize(r Region) ([]SieveBlock, error) {
-	return []SieveBlock{NewSieveBlock("exp-prose", "", map[string]interface{}{"content": r.Raw})}, nil
+func (exportProseProc) Deserialize(r Region) ([]domain.SieveBlock, error) {
+	return []domain.SieveBlock{domain.NewSieveBlock("exp-prose", "", map[string]interface{}{"content": r.Raw})}, nil
 }
-func (exportProseProc) Serialize(b SieveBlock) (string, error) {
+func (exportProseProc) Serialize(b domain.SieveBlock) (string, error) {
 	return "<!--s:" + b.ID + "-->\n" + b.Content() + "\n<!--/s:" + b.ID + "-->", nil
 }
-func (exportProseProc) MarkdownRepresentation(b SieveBlock, _ string) string { return b.Content() }
+func (exportProseProc) MarkdownRepresentation(b domain.SieveBlock, _ string) string {
+	return b.Content()
+}
 
 // exportAIProc is an ai-block-shaped fake whose MarkdownRepresentation would render
 // a recognisable Q&A — so a test can prove the filter removed it.
@@ -44,7 +48,7 @@ type exportAIProc struct{ fakeProc }
 
 func newExportAIProc() *exportAIProc { return &exportAIProc{fakeProc: *newFakeProc("exp-ai")} }
 
-func (exportAIProc) MarkdownRepresentation(b SieveBlock, _ string) string {
+func (exportAIProc) MarkdownRepresentation(b domain.SieveBlock, _ string) string {
 	q, _ := b.Attrs["question"].(string)
 	r, _ := b.Attrs["response"].(string)
 	return "### " + q + "\n\n" + r
@@ -60,10 +64,10 @@ func newLegacyExportProc() *legacyExportProc {
 	return &legacyExportProc{fakeProc: *newFakeProc("exp-legacy")}
 }
 
-func (legacyExportProc) MarkdownRepresentation(b SieveBlock, _ string) string {
+func (legacyExportProc) MarkdownRepresentation(b domain.SieveBlock, _ string) string {
 	return "THE-ONE-TRUE-REPRESENTATION"
 }
-func (legacyExportProc) ExportMarkdown(b SieveBlock, _ string) string {
+func (legacyExportProc) ExportMarkdown(b domain.SieveBlock, _ string) string {
 	return "LEGACY-EXPORT-FORM-MUST-NOT-APPEAR"
 }
 
@@ -74,7 +78,7 @@ func TestDeriveExportMarkdown_IgnoresLegacyExportRepresenter(t *testing.T) {
 	defer UnregisterProcessor("exp-legacy")
 
 	codec := NewDocumentCodec(GlobalRegistry())
-	doc := DocView{codec: codec, Blocks: []SieveBlock{
+	doc := DocView{codec: codec, Blocks: []domain.SieveBlock{
 		{ID: "lg-1", Kind: "exp-legacy", Attrs: map[string]interface{}{}},
 	}}
 
@@ -100,7 +104,7 @@ func TestDeriveExportMarkdown_FiltersAIBlockAndUsesMarkdownRep(t *testing.T) {
 	defer UnregisterProcessor("exp-ai")
 
 	codec := NewDocumentCodec(GlobalRegistry())
-	blocks := []SieveBlock{
+	blocks := []domain.SieveBlock{
 		{ID: "pr-1", Kind: "exp-prose", Attrs: map[string]interface{}{"content": "Hello ==world=="}},
 		{ID: "co-1", Kind: "exp-code", Attrs: map[string]interface{}{"id": "co-1", "lang": "go", "source": "x := 1"}},
 		{ID: "ab-1", Kind: "exp-ai", Attrs: map[string]interface{}{"id": "ab-1", "question": "what is x?", "response": "stale answer"}},
@@ -167,7 +171,7 @@ func TestDeriveExportMarkdown_MarkdownModeReparsesNotPassthrough(t *testing.T) {
 // MarkdownRepresentation is non-empty exactly when the block has a source.
 type exportSourceProc struct{ fakeProc }
 
-func (exportSourceProc) MarkdownRepresentation(b SieveBlock, _ string) string {
+func (exportSourceProc) MarkdownRepresentation(b domain.SieveBlock, _ string) string {
 	src, _ := b.Attrs["source"].(string)
 	return src
 }
@@ -187,28 +191,28 @@ func TestDeriveExport_Confluence(t *testing.T) {
 	cases := []struct {
 		name   string
 		filter BlockFilter
-		blocks []SieveBlock
+		blocks []domain.SieveBlock
 		want   string
 	}{
-		{"code names its mapped language", nil, []SieveBlock{
+		{"code names its mapped language", nil, []domain.SieveBlock{
 			{Kind: "code", Attrs: map[string]interface{}{"language": "sh", "source": "ls"}},
 		}, codeMacro("shell", "ls")},
-		{"code in an unlisted language", nil, []SieveBlock{
+		{"code in an unlisted language", nil, []domain.SieveBlock{
 			{Kind: "code", Attrs: map[string]interface{}{"language": "cobolish", "source": "x"}},
 		}, codeMacro("", "x")},
-		{"log", nil, []SieveBlock{
+		{"log", nil, []domain.SieveBlock{
 			{Kind: "log", Attrs: map[string]interface{}{"source": "ERROR x"}},
 		}, codeMacro("", "ERROR x")},
-		{"plantuml diagram", nil, []SieveBlock{
+		{"plantuml diagram", nil, []domain.SieveBlock{
 			{Kind: "diagram", Attrs: map[string]interface{}{"diagramType": "plantuml", "source": "A -> B"}},
 		}, plantumlMacro("A -> B")},
-		{"mermaid diagram", nil, []SieveBlock{
+		{"mermaid diagram", nil, []domain.SieveBlock{
 			{Kind: "diagram", Attrs: map[string]interface{}{"diagramType": "mermaid", "source": "graph LR"}},
 		}, codeMacro("", "graph LR")},
-		{"prose is rendered as storage format", nil, []SieveBlock{
+		{"prose is rendered as storage format", nil, []domain.SieveBlock{
 			{Kind: "exp-prose", Attrs: map[string]interface{}{"content": "**Hello** [x](https://x.example)"}},
 		}, `<p><strong>Hello</strong> <a href="https://x.example">x</a></p>`},
-		{"filtered and empty blocks are skipped", dropKind("log"), []SieveBlock{
+		{"filtered and empty blocks are skipped", dropKind("log"), []domain.SieveBlock{
 			{Kind: "exp-prose", Attrs: map[string]interface{}{"content": "kept"}},
 			{Kind: "log", Attrs: map[string]interface{}{"source": "dropped by the filter"}},
 			{Kind: "code", Attrs: map[string]interface{}{"language": "go", "source": ""}},

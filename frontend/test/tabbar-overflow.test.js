@@ -1,8 +1,9 @@
-// tabbar-overflow.test.js — #122: the tab-bar overflow dropdown. Tabs must be
-// NON-SHRINKING (fixed width) for the detector to ever see a tab's right edge
-// pass the (overflow-hidden) area's edge; this pins the detector's fire
-// condition and the dropdown it opens, both regressed by 0d68547's shrinking
-// tab wrappers.
+// tabbar-overflow.test.js — the tab-bar overflow dropdown and the seating of an
+// active tab rendered past the fold. Tabs must be NON-SHRINKING (fixed width)
+// for the detector to ever see a tab's right edge pass the (overflow-hidden)
+// area's edge; this pins the detector's fire condition, the dropdown it opens,
+// and the moves seating asks of the reorder verb (the rule is TabSeating's,
+// tab-seating.test.js).
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
@@ -54,7 +55,7 @@ describe('tab-bar overflow detector and dropdown (#122)', () => {
     vi.resetModules()
     document.body.innerHTML = ''
     const win = /** @type {any} */ (window)
-    win.sieveWorkspace = { open: vi.fn(), close: vi.fn(), reorder: vi.fn() }
+    win.sieveWorkspace = { open: vi.fn(), close: vi.fn(), reorder: vi.fn(() => Promise.resolve()) }
   })
 
   it('stays hidden when every tab fits inside the area', async () => {
@@ -72,7 +73,7 @@ describe('tab-bar overflow detector and dropdown (#122)', () => {
     expect(overflowBtn.textContent).toBe('▼ 2')
   })
 
-  it('opens a list of the hidden tabs and activates one via window.sieveWorkspace.open', async () => {
+  it('opens a list of the hidden tabs and activates one via window.sieveWorkspace.open, moving nothing itself', async () => {
     const { area, overflowBtn } = renderTabbar(6)
     stubLayout(area, 900, 4)
     await import('../src/static/ui/tabbar.js')
@@ -84,14 +85,50 @@ describe('tab-bar overflow detector and dropdown (#122)', () => {
     expect(Array.from(rows).map((r) => r.textContent)).toEqual(['Tab 4', 'Tab 5'])
 
     rows[0].click()
-    // Summoning a hidden tab SEATS it in the last visible slot first (the strip
-    // does not scroll, so visibility is a position), and ACTIVATES it only once
-    // the move settles — the reorder is index-based, so opening mid-move can
-    // land on whichever tab slid into the old slot.
-    expect(/** @type {any} */ (window).sieveWorkspace.reorder).toHaveBeenCalledWith(4, 3)
-    expect(/** @type {any} */ (window).sieveWorkspace.open).not.toHaveBeenCalled()
-    await new Promise((r) => setTimeout(r, 0))
     expect(/** @type {any} */ (window).sieveWorkspace.open).toHaveBeenCalledWith('uuid-4')
+    expect(/** @type {any} */ (window).sieveWorkspace.reorder).not.toHaveBeenCalled()
     expect(document.getElementById('tab-overflow-dropdown')).toBeNull()
+  })
+
+  it('seats an active tab rendered past the fold in the last visible slot, in place of the least recently viewed', async () => {
+    const { area } = renderTabbar(6)
+    const tabs = /** @type {NodeListOf<HTMLElement>} */ (area.querySelectorAll('[data-tab-idx]'))
+    ;['50', '10', '30', '40', '0', '60'].forEach((viewed, i) => { tabs[i].dataset.tabViewed = viewed })
+    tabs[5].dataset.tabActive = 'true'
+    stubLayout(area, 900, 4)
+    await import('../src/static/ui/tabbar.js')
+    await new Promise((r) => setTimeout(r, 0))
+    const reorder = /** @type {any} */ (window).sieveWorkspace.reorder
+    expect(reorder.mock.calls).toEqual([[1, 4], [5, 3]])
+  })
+
+  it('leaves a strip refetched after the first alone, and seats one this window\'s own request rendered', async () => {
+    const { area } = renderTabbar(6)
+    stubLayout(area, 900, 4)
+    await import('../src/static/ui/tabbar.js')
+    const reorder = /** @type {any} */ (window).sieveWorkspace.reorder
+    const render = (/** @type {string} */ verb) => {
+      const tabs = /** @type {NodeListOf<HTMLElement>} */ (area.querySelectorAll('[data-tab-idx]'))
+      tabs.forEach((t) => { delete t.dataset.tabActive })
+      tabs[5].dataset.tabActive = 'true'
+      const target = document.createElement('div')
+      target.id = 'htmx-tabbar'
+      document.dispatchEvent(new CustomEvent('htmx:afterSettle', { detail: { target, requestConfig: { verb } } }))
+    }
+    render('get')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(reorder).not.toHaveBeenCalled()
+    render('post')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(reorder).toHaveBeenCalled()
+  })
+
+  it('leaves a visible active tab where it is', async () => {
+    const { area } = renderTabbar(6)
+    ;/** @type {HTMLElement} */ (area.querySelectorAll('[data-tab-idx]')[2]).dataset.tabActive = 'true'
+    stubLayout(area, 900, 4)
+    await import('../src/static/ui/tabbar.js')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(/** @type {any} */ (window).sieveWorkspace.reorder).not.toHaveBeenCalled()
   })
 })

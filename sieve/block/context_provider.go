@@ -2,6 +2,7 @@ package block
 
 import (
 	"sieve/logger"
+	"sieve/sieve/domain"
 	"sync"
 )
 
@@ -10,7 +11,7 @@ import (
 // seen is threaded through recursion to prevent cycles — pass it on
 // whenever calling BuildContextForID from within BuildContext.
 type ContextProvider interface {
-	BuildContext(block SieveBlock, doc DocView, seen map[string]bool) AIContext
+	BuildContext(block domain.SieveBlock, doc DocView, seen map[string]bool) AIContext
 }
 
 var (
@@ -70,7 +71,7 @@ func BuildContextForID(id string, doc DocView, seen map[string]bool, filter Bloc
 			logger.Warn("ContextProvider: no provider registered for block kind %q", b.Kind)
 			return AIContext{}
 		}
-		return cp.BuildContext(SieveBlock{ID: b.ID, Kind: b.Kind, Attrs: b.Attrs}, doc, seen)
+		return cp.BuildContext(domain.SieveBlock{ID: b.ID, Kind: b.Kind, Attrs: b.Attrs}, doc, seen)
 	}
 	// Fallback: structured blocks parseable straight from markdown (markdown mode).
 	found, ok := NewDocumentCodec(GlobalRegistry()).findBlockByID(doc.deriveMarkdown(), id)

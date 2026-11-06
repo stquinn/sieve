@@ -1,5 +1,7 @@
 package block
 
+import "sieve/sieve/domain"
+
 // FrontendBlock is the wire shape the WYSIWYG editor renders from (Stage D.2).
 // It is a flattened, presentation-oriented projection of a SieveBlock with ONE
 // uniform shape per kind: the payload always rides in Attrs (prose's body at
@@ -22,7 +24,7 @@ type FrontendBlock struct {
 // payload in Attrs (prose's body is Attrs["content"], the same bag code keeps
 // "source" in); the client renderer branches on kind, not on where the payload
 // lives. No markdown is produced — Go serializes fences only at the disk boundary.
-func BlockDocToFrontendBlocks(blocks []SieveBlock) ([]FrontendBlock, error) {
+func BlockDocToFrontendBlocks(blocks []domain.SieveBlock) ([]FrontendBlock, error) {
 	out := make([]FrontendBlock, 0, len(blocks))
 	for _, b := range blocks {
 		out = append(out, FrontendBlock{ID: b.ID, Kind: b.Kind, Aliases: b.Aliases, Attrs: b.Attrs})

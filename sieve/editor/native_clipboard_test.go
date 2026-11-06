@@ -66,12 +66,12 @@ func (p *fakeImageKind) Transform(entries []block.ContentEntry, _ string, _ stri
 	return map[string]interface{}{"src": entries[0].Content}
 }
 
-func (p *fakeImageKind) BuildContext(_ block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
+func (p *fakeImageKind) BuildContext(_ domain.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
 	return block.AIContext{}
 }
-func (p *fakeImageKind) MarkdownRepresentation(_ block.SieveBlock, _ string) string { return "" }
-func (p *fakeImageKind) OnChange(_ *block.SieveBlock)                               {}
-func (p *fakeImageKind) DescribeJob(_ block.JobContext) *block.ProcessorJob         { return nil }
+func (p *fakeImageKind) MarkdownRepresentation(_ domain.SieveBlock, _ string) string { return "" }
+func (p *fakeImageKind) OnChange(_ *domain.SieveBlock)                               {}
+func (p *fakeImageKind) DescribeJob(_ block.JobContext) *block.ProcessorJob          { return nil }
 
 // onePixelPNG is the smallest thing that is unambiguously a PNG, in the shape the
 // GTK reader hands it over: a data URI.
@@ -121,7 +121,7 @@ func TestHandleNativeClipboard_ImageTakesTheOrdinaryPastePath(t *testing.T) {
 	if res.ID == "" {
 		t.Error("a single created block must name itself")
 	}
-	blocks := es.shadows[uuid].SnapshotBlocks()
+	blocks := es.shadowFor(uuid).SnapshotBlocks()
 	if len(blocks) != 1 || blocks[0].Kind != "fake-image" {
 		t.Fatalf("want one image block, got %+v", blocks)
 	}
@@ -150,7 +150,7 @@ func TestHandleNativeClipboard_ImageLandsAtTheGivenIndex(t *testing.T) {
 		t.Fatalf("image paste failed: %q", res.Outcome)
 	}
 
-	blocks := es.shadows[uuid].SnapshotBlocks()
+	blocks := es.shadowFor(uuid).SnapshotBlocks()
 	if len(blocks) != 2 {
 		t.Fatalf("want 2 blocks, got %d", len(blocks))
 	}
@@ -175,7 +175,7 @@ func TestHandleNativeClipboard_CopiedFilesTakeTheDropIngestion(t *testing.T) {
 	if res := es.HandleNativeClipboard(uuid, 0); !res.IsBlock() {
 		t.Fatalf("copied files must create blocks, got %q", res.Outcome)
 	}
-	blocks := es.shadows[uuid].SnapshotBlocks()
+	blocks := es.shadowFor(uuid).SnapshotBlocks()
 	if len(blocks) != 2 {
 		t.Fatalf("want one block per copied file, got %d: %+v", len(blocks), blocks)
 	}
@@ -213,7 +213,7 @@ func TestHandleNativeClipboard_CopiedFileOverTheCeilingIsSkipped(t *testing.T) {
 	if res := es.HandleNativeClipboard(uuid, 0); res.Outcome != block.OutcomeNothing {
 		t.Errorf("outcome = %q, want nothing", res.Outcome)
 	}
-	if got := len(es.shadows[uuid].SnapshotBlocks()); got != 0 {
+	if got := len(es.shadowFor(uuid).SnapshotBlocks()); got != 0 {
 		t.Errorf("a file over the ceiling must create no block, got %d", got)
 	}
 }
@@ -234,7 +234,7 @@ func TestHandleNativeClipboard_NothingUsableIsNothing(t *testing.T) {
 			if res := es.HandleNativeClipboard(uuid, 0); res.Outcome != block.OutcomeNothing {
 				t.Errorf("outcome = %q, want nothing", res.Outcome)
 			}
-			if got := len(es.shadows[uuid].SnapshotBlocks()); got != 0 {
+			if got := len(es.shadowFor(uuid).SnapshotBlocks()); got != 0 {
 				t.Errorf("nothing usable must create no blocks, got %d", got)
 			}
 		})

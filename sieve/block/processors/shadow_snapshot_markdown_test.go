@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 )
 
 // In markdown (breakglass) mode the live Blocks tree is FROZEN while the user edits
@@ -65,7 +66,7 @@ func TestEnterWysiwygMode_roundTripLeavesTreeAuthoritative(t *testing.T) {
 
 	// Now edit the TREE. If the shadow were still (wrongly) raw-authoritative on a
 	// leftover buffer, this update would be invisible to save. It must win.
-	shadow.MergeBlock(block.SieveBlock{ID: "ab-1", Kind: "ai-block", Attrs: map[string]interface{}{"response": "FROM_TREE"}})
+	shadow.MergeBlock(domain.SieveBlock{ID: "ab-1", Kind: "ai-block", Attrs: map[string]interface{}{"response": "FROM_TREE"}})
 	got := shadow.ContentForSave()
 	if !strings.Contains(got, "FROM_TREE") {
 		t.Errorf("post-round-trip tree edit lost — shadow is not wysiwyg-authoritative:\n%s", got)

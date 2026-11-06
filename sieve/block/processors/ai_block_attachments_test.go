@@ -5,12 +5,13 @@ import (
 	"testing"
 
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 )
 
 // serializeThroughProductionCodec round-trips blocks through the real codec and
 // returns both spellings, so a test can assert the fixpoint rather than a
 // hand-rolled YAML expectation.
-func serializeReparseSerialize(t *testing.T, blocks []block.SieveBlock) (first, second string, back []block.SieveBlock) {
+func serializeReparseSerialize(t *testing.T, blocks []domain.SieveBlock) (first, second string, back []domain.SieveBlock) {
 	t.Helper()
 	codec := block.NewDocumentCodec(block.GlobalRegistry())
 	first, err := codec.Serialize(blocks)
@@ -33,18 +34,18 @@ func TestAIBlock_AttachmentsRoundTripByteStable(t *testing.T) {
 	block.RegisterProcessor(NewAIBlockProcessor(block.BlockServices{}))
 	t.Cleanup(resetRegistry)
 
-	blk := block.NewSieveBlock("ai-block", "ai-c71e", map[string]interface{}{
+	blk := domain.NewSieveBlock("ai-block", "ai-c71e", map[string]interface{}{
 		"question": "How does @Auth Design handle this?",
 		"ref":      "blk-3",
 		"type":     "ASK",
 		"status":   block.BlockStatusPending,
 	})
-	blk.SetAttachments(block.Attachments{
+	blk.SetAttachments(domain.Attachments{
 		{URI: "sieve://9f2b3c4d-1a2b-4c5d-8e9f-a1b2c3d4e5f6", Title: "Auth Design"},
 		{URI: "sieve://7a1c9b2e-3d4f-4a5b-9c8d-0e1f2a3b4c5d", Title: "Retry RFC"},
 	})
 
-	first, second, back := serializeReparseSerialize(t, []block.SieveBlock{blk})
+	first, second, back := serializeReparseSerialize(t, []domain.SieveBlock{blk})
 
 	// The persisted shape, pinned: a YAML sequence of uri (+ cached title) under
 	// `attachments`, indented — a sequence at column zero would put "- " where the
@@ -87,13 +88,13 @@ func TestAIBlock_NoAttachmentsPersistsNoAttr(t *testing.T) {
 	block.RegisterProcessor(NewAIBlockProcessor(block.BlockServices{}))
 	t.Cleanup(resetRegistry)
 
-	blk := block.NewSieveBlock("ai-block", "ai-c71e", map[string]interface{}{
+	blk := domain.NewSieveBlock("ai-block", "ai-c71e", map[string]interface{}{
 		"question": "Plain question?",
 		"ref":      "doc",
 		"type":     "ASK",
 	})
 
-	first, second, back := serializeReparseSerialize(t, []block.SieveBlock{blk})
+	first, second, back := serializeReparseSerialize(t, []domain.SieveBlock{blk})
 
 	if strings.Contains(first, "attachments") {
 		t.Fatalf("an attachment-less block must carry no attr:\n%s", first)

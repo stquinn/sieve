@@ -1,5 +1,7 @@
 package block
 
+import "sieve/sieve/domain"
+
 // Export format words, as the export frame's format field spells them.
 const (
 	ExportFormatMarkdown        = "markdown"
@@ -12,14 +14,14 @@ const (
 // block's text in the target format; an empty result drops the block from the
 // export.
 type ExportGenerator interface {
-	RenderBlock(b SieveBlock, markdown string) string
+	RenderBlock(b domain.SieveBlock, markdown string) string
 }
 
 // MarkdownGenerator exports each block as its MarkdownRepresentation, unchanged.
 type MarkdownGenerator struct{}
 
 // RenderBlock returns markdown as given.
-func (MarkdownGenerator) RenderBlock(_ SieveBlock, markdown string) string { return markdown }
+func (MarkdownGenerator) RenderBlock(_ domain.SieveBlock, markdown string) string { return markdown }
 
 // ExportGenerators resolves an export format word to the generator that
 // produces it.

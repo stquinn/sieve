@@ -50,12 +50,12 @@ type AIBlockMigrator struct{}
 
 // Migrate returns the tree with every ai-block's legacy exchange folded into its
 // element lists, plus whether anything changed. The input is never mutated.
-func (m AIBlockMigrator) Migrate(blocks []SieveBlock, documentUUID string) ([]SieveBlock, bool) {
+func (m AIBlockMigrator) Migrate(blocks []domain.SieveBlock, documentUUID string) ([]domain.SieveBlock, bool) {
 	if len(blocks) == 0 {
 		return blocks, false
 	}
 	changed := false
-	out := make([]SieveBlock, len(blocks))
+	out := make([]domain.SieveBlock, len(blocks))
 	for i, b := range blocks {
 		if b.Kind == "ai-block" {
 			if rewritten, dirty := m.migrateAttrs(b.Attrs, documentUUID); dirty {
@@ -104,9 +104,9 @@ const legacyResponseAttr = "response"
 
 // convertedQuestion is the element list the legacy question record describes, or
 // nil when there is nothing to convert.
-func (m AIBlockMigrator) convertedQuestion(attrs map[string]interface{}, documentUUID string) Elements {
+func (m AIBlockMigrator) convertedQuestion(attrs map[string]interface{}, documentUUID string) domain.Elements {
 	converted := m.legacyElements(attrs, documentUUID)
-	if stored := DecodeElements(attrs[QuestionAttr]); len(stored) > 0 {
+	if stored := domain.DecodeElements(attrs[QuestionAttr]); len(stored) > 0 {
 		if len(converted) > 0 {
 			logger.Warn("migrate: ai-block carries both question forms; leaving it as stored",
 				"id", attrs["id"], "elements", len(stored))
@@ -119,9 +119,9 @@ func (m AIBlockMigrator) convertedQuestion(attrs map[string]interface{}, documen
 // convertedAnswer is the one prose element the legacy `response` string
 // describes, or nil when there is nothing to convert. A blank response is not an
 // answer, so it converts to nothing and stays where it is.
-func (m AIBlockMigrator) convertedAnswer(attrs map[string]interface{}) Elements {
+func (m AIBlockMigrator) convertedAnswer(attrs map[string]interface{}) domain.Elements {
 	response, _ := attrs[legacyResponseAttr].(string)
-	if stored := DecodeElements(attrs[AnswerAttr]); len(stored) > 0 {
+	if stored := domain.DecodeElements(attrs[AnswerAttr]); len(stored) > 0 {
 		if strings.TrimSpace(response) != "" {
 			logger.Warn("migrate: ai-block carries both answer forms; leaving it as stored",
 				"id", attrs["id"], "elements", len(stored))
@@ -133,13 +133,13 @@ func (m AIBlockMigrator) convertedAnswer(attrs map[string]interface{}) Elements 
 	}
 	// The string is carried VERBATIM: only its blankness was measured, and an
 	// answer's leading whitespace can be markdown a trim would change.
-	return Elements{NewSieveBlock(KindProse, "", map[string]interface{}{"content": response})}
+	return domain.Elements{domain.NewSieveBlock(KindProse, "", map[string]interface{}{"content": response})}
 }
 
 // legacyElements builds the element list the legacy record describes, or nil
 // when it describes no question at all.
-func (m AIBlockMigrator) legacyElements(attrs map[string]interface{}, documentUUID string) Elements {
-	var out Elements
+func (m AIBlockMigrator) legacyElements(attrs map[string]interface{}, documentUUID string) domain.Elements {
+	var out domain.Elements
 
 	ref, _ := attrs["ref"].(string)
 	for _, raw := range strings.Split(ref, ",") {
@@ -155,7 +155,7 @@ func (m AIBlockMigrator) legacyElements(attrs map[string]interface{}, documentUU
 	}
 
 	if question, _ := attrs[QuestionAttr].(string); strings.TrimSpace(question) != "" {
-		out = append(out, NewSieveBlock(KindProse, "", map[string]interface{}{"content": question}))
+		out = append(out, domain.NewSieveBlock(KindProse, "", map[string]interface{}{"content": question}))
 	}
 
 	for _, a := range domain.DecodeAttachments(attrs[domain.AttachmentsAttr]) {
@@ -168,10 +168,10 @@ func (m AIBlockMigrator) legacyElements(attrs map[string]interface{}, documentUU
 // else: title, when the legacy record had one, is the FACE — what was taken from
 // the target — and so goes under `cache`, never at the root, which means the
 // pointing.
-func (m AIBlockMigrator) reference(uri, rel, title string) SieveBlock {
+func (m AIBlockMigrator) reference(uri, rel, title string) domain.SieveBlock {
 	attrs := map[string]interface{}{"uri": uri, "rel": rel}
 	if title != "" {
-		attrs[FaceAttr] = map[string]interface{}{"title": title}
+		attrs[domain.FaceAttr] = map[string]interface{}{"title": title}
 	}
-	return NewSieveBlock(KindReference, "", attrs)
+	return domain.NewSieveBlock(KindReference, "", attrs)
 }

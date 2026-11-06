@@ -70,7 +70,7 @@ export class ComposerEditor extends ProseMirrorEditor {
    * WYSIWYG ONLY — `mode` is deliberately ignored; a draft has no other surface.
    * @protected
    * @param {import('../editor-mode.js').EditorModeValue} mode
-   * @returns {import('../surfaces/abstract-surface.js').AbstractSurface}
+   * @returns {import('../../abstract-surface.js').AbstractSurface}
    */
   _createSurface(mode) {
     return new WysiwygSurface(this)

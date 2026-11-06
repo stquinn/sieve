@@ -1,6 +1,10 @@
 package block
 
-import "testing"
+import (
+	"testing"
+
+	"sieve/sieve/domain"
+)
 
 // testDocumentUUID stands in for the container ReferenceURIMigrator mints
 // against; these fixtures carry no reference blocks, so its value is inert.
@@ -29,7 +33,7 @@ func TestDeserialize_DoesNotMigrateAssetURLs(t *testing.T) {
 // every call site (NewShadow, the /migrate-ids sweep) gets every migration, and a
 // document carrying a legacy handle AND a legacy asset route converges on one load.
 func TestDocumentMigrator_RunsIdentityAndAssetURLSteps(t *testing.T) {
-	in := []SieveBlock{
+	in := []domain.SieveBlock{
 		{ID: "pr-aaaa", Kind: KindProse, Attrs: map[string]interface{}{
 			"id":  "pr-aaaa",
 			"src": "/sieve/" + testAssetUUID + "/im.png",
@@ -51,7 +55,7 @@ func TestDocumentMigrator_RunsIdentityAndAssetURLSteps(t *testing.T) {
 // changed, or the opener would never flush the rewrite to disk.
 func TestDocumentMigrator_AssetURLOnlyStillReportsChanged(t *testing.T) {
 	const id = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
-	in := []SieveBlock{
+	in := []domain.SieveBlock{
 		{ID: id, Kind: "smart-image", Attrs: map[string]interface{}{
 			"id":  id,
 			"src": "/sieve/" + testAssetUUID + "/im.png",
@@ -69,7 +73,7 @@ func TestDocumentMigrator_AssetURLOnlyStillReportsChanged(t *testing.T) {
 // The reference step runs as part of the same pipeline, keyed off the document
 // uuid DocumentMigrator now carries.
 func TestDocumentMigrator_RunsReferenceURIStep(t *testing.T) {
-	in := []SieveBlock{
+	in := []domain.SieveBlock{
 		{ID: "rf-1", Kind: "reference", Attrs: map[string]interface{}{
 			"id":  "rf-1",
 			"uri": "container:" + testAssetUUID,
@@ -85,7 +89,7 @@ func TestDocumentMigrator_RunsReferenceURIStep(t *testing.T) {
 }
 
 func TestDocumentMigrator_RunsAssetURIStep(t *testing.T) {
-	in := []SieveBlock{
+	in := []domain.SieveBlock{
 		{ID: "im-1", Kind: "smart-image", Attrs: map[string]interface{}{
 			"id":  "im-1",
 			"src": "/ui/assets/" + testDocumentUUID + "/shot.png",
@@ -109,7 +113,7 @@ func TestDocumentMigrator_RunsAssetURIStep(t *testing.T) {
 
 func TestDocumentMigrator_CleanTreeIsUnchanged(t *testing.T) {
 	const id = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
-	in := []SieveBlock{
+	in := []domain.SieveBlock{
 		{ID: id, Kind: "smart-image", Attrs: map[string]interface{}{
 			"id":  id,
 			"src": "sieve://" + testDocumentUUID + "/im.png",

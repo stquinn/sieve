@@ -118,6 +118,11 @@ func (g *Generator) operation(e protocol.EndpointEntry) (*yamlMap, error) {
 			Set("description", g.responseKindProse(e.ResponseKind)).
 			Set("content", newYAMLMap().Set("text/html",
 				newYAMLMap().Set("schema", newYAMLMap().Set("type", "string")))))
+	case protocol.ResponseImage:
+		responses.Set("200", newYAMLMap().
+			Set("description", g.responseKindProse(e.ResponseKind)).
+			Set("content", newYAMLMap().Set("image/png",
+				newYAMLMap().Set("schema", newYAMLMap().Set("type", "string").Set("format", "binary")))))
 	default:
 		responses.Set("204", newYAMLMap().Set("description", g.responseKindProse(e.ResponseKind)))
 	}

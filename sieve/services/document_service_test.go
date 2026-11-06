@@ -1,10 +1,12 @@
 package services
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	"sieve/sieve/domain"
+	"sieve/store"
 	"sieve/store/filestore"
 )
 
@@ -22,6 +24,19 @@ func newTestDocumentService(t *testing.T) (*DocumentService, *filestore.FileStor
 	}
 
 	return ds, fs
+}
+
+// seedBlockIn creates a type: block storable whose name and body carry the word
+// the search assertions look for.
+func seedBlockIn(t *testing.T, fs *filestore.FileStore, cat store.Category, key string) store.MetaStorable {
+	t.Helper()
+	ms, err := fs.CreateTyped(cat, key, store.TypeBlock,
+		map[string]string{store.MetaKeyKind: "test-kind", "display_name": "Untitled 41 quarantined"},
+		[]byte("title: quarantined\n"))
+	if err != nil {
+		t.Fatalf("CreateTyped: %v", err)
+	}
+	return ms
 }
 
 // seedFiledNote creates a buffer, stamps metadata, and files it into the library.
@@ -187,7 +202,7 @@ func TestDocumentService_SearchKeepsBodySummaryAndTagMatches(t *testing.T) {
 // keeps handing back a storable for a document whose directory is gone — a
 // dangling read that succeeds, which is worse than the honest failure below.
 func TestDocumentService_DeleteFolderStopsResolvingTheUUIDsItTook(t *testing.T) {
-	ds, _ := newTestDocumentService(t)
+	ds, fs := newTestDocumentService(t)
 
 	buried := map[string]bool{}
 	for _, title := range []string{"First", "Second"} {
@@ -197,6 +212,16 @@ func TestDocumentService_DeleteFolderStopsResolvingTheUUIDsItTook(t *testing.T) 
 		}
 		buried[doc.UUID()] = true
 	}
+	// A block beneath the folder goes with it, so its uuid must stop resolving too.
+	blk := seedBlockIn(t, fs, domain.LibraryCategory, "doomed-block")
+	folderStorable, err := fs.CreateOrLoadFolder(domain.LibraryCategory, domain.CleanFolderPath("Doomed"))
+	if err != nil {
+		t.Fatalf("CreateOrLoadFolder: %v", err)
+	}
+	if _, err := fs.Reparent(blk, folderStorable); err != nil {
+		t.Fatalf("Reparent: %v", err)
+	}
+	buried[blk.Key()] = true
 
 	entries, err := ds.List()
 	if err != nil {
@@ -221,11 +246,11 @@ func TestDocumentService_DeleteFolderStopsResolvingTheUUIDsItTook(t *testing.T) 
 		got[uuid] = true
 	}
 	if len(got) != len(buried) {
-		t.Fatalf("DeleteFolder reported %v, want the two buried notes %v", got, buried)
+		t.Fatalf("DeleteFolder reported %v, want everything buried %v", got, buried)
 	}
 
 	for uuid := range buried {
-		if _, err := ds.LoadByUUID(uuid); err == nil {
+		if _, err := fs.LoadByUUID(uuid); err == nil {
 			t.Errorf("uuid %s still resolves after the folder that held it was deleted", uuid)
 		}
 	}
@@ -291,5 +316,96 @@ func TestDocumentService_FolderContents_CountsEverythingBeneath(t *testing.T) {
 	}
 	if !empty.IsEmpty() || empty.Notes != 0 || empty.Folders != 0 {
 		t.Errorf("empty folder counted as %+v", empty)
+	}
+}
+
+// A block is refused and unseen in every category it can reach, directly or by a
+// move: the category alone must never make a YAML body read as a Note.
+func TestDocumentService_RefusesABlockInEveryCategory(t *testing.T) {
+	placements := []struct {
+		name string
+		seed func(t *testing.T, fs *filestore.FileStore) string
+	}{
+		{"working copy", func(t *testing.T, fs *filestore.FileStore) string {
+			return seedBlockIn(t, fs, domain.WorkingCopy, "b").Key()
+		}},
+		{"library", func(t *testing.T, fs *filestore.FileStore) string {
+			return seedBlockIn(t, fs, domain.LibraryCategory, "b").Key()
+		}},
+		{"blocks", func(t *testing.T, fs *filestore.FileStore) string {
+			return seedBlockIn(t, fs, domain.Blocks, "b").Key()
+		}},
+		{"moved to the library", func(t *testing.T, fs *filestore.FileStore) string {
+			moved, err := fs.Move(seedBlockIn(t, fs, domain.Blocks, "b"), domain.LibraryCategory)
+			if err != nil {
+				t.Fatalf("Move: %v", err)
+			}
+			return moved.Key()
+		}},
+		{"in a library folder", func(t *testing.T, fs *filestore.FileStore) string {
+			folder, err := fs.CreateOrLoadFolder(domain.LibraryCategory, "folder")
+			if err != nil {
+				t.Fatalf("CreateOrLoadFolder: %v", err)
+			}
+			moved, err := fs.Reparent(seedBlockIn(t, fs, domain.LibraryCategory, "b"), folder)
+			if err != nil {
+				t.Fatalf("Reparent: %v", err)
+			}
+			return moved.Key()
+		}},
+	}
+	for _, tc := range placements {
+		t.Run(tc.name, func(t *testing.T) {
+			ds, fs := newTestDocumentService(t)
+			note := seedFiledNote(t, ds, "Real Note", "", nil, "", "body mentioning quarantined")
+			uuid := tc.seed(t, fs)
+
+			if doc, err := ds.LoadByUUID(uuid); !errors.Is(err, domain.ErrNotADocument) {
+				t.Errorf("LoadByUUID = %v, %v; want ErrNotADocument", doc, err)
+			}
+
+			uuids, err := ds.AllUUIDs()
+			if err != nil {
+				t.Fatalf("AllUUIDs: %v", err)
+			}
+			if len(uuids) != 1 || uuids[0] != note.UUID() {
+				t.Errorf("AllUUIDs = %v, want only the note", uuids)
+			}
+
+			results, err := ds.Search("quarantined")
+			if err != nil {
+				t.Fatalf("Search: %v", err)
+			}
+			if len(results) != 1 || results[0].ID != note.UUID() {
+				t.Errorf("Search = %+v, want only the note", results)
+			}
+
+			if got := ds.Count(); got != 1 {
+				t.Errorf("Count = %d, want 1", got)
+			}
+
+			entries, err := ds.List()
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			var walk func(es []NoteEntry)
+			walk = func(es []NoteEntry) {
+				for _, e := range es {
+					if e.ID == uuid {
+						t.Errorf("the sidebar tree holds the block: %+v", e)
+					}
+					walk(e.Children)
+				}
+			}
+			walk(entries)
+
+			buffer, err := ds.New()
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if got := buffer.Meta().DisplayName(); got != "Untitled 1" {
+				t.Errorf("new buffer named %q; a block's name must not advance the counter", got)
+			}
+		})
 	}
 }

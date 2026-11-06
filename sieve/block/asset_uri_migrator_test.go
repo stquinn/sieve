@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"sieve/ident"
+	"sieve/sieve/domain"
 )
 
 var (
@@ -39,7 +40,7 @@ func TestAssetURIMigrator_RewritesToAbsoluteAddress(t *testing.T) {
 		{"web-clip relative reference lifts to absolute", "web-clip", "page", "/page-bbc-123456.html", self + "page-bbc-123456.html"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			in := []SieveBlock{
+			in := []domain.SieveBlock{
 				{ID: "b-1", Kind: tc.kind, Attrs: map[string]interface{}{"id": "b-1", tc.attrKey: tc.input}},
 			}
 			out, changed := AssetURIMigrator{}.Migrate(in, testAssetDocUUID)
@@ -54,7 +55,7 @@ func TestAssetURIMigrator_RewritesToAbsoluteAddress(t *testing.T) {
 }
 
 func TestAssetURIMigrator_AlreadyMigrated_AllocatesNothing(t *testing.T) {
-	in := []SieveBlock{
+	in := []domain.SieveBlock{
 		{ID: "im-1", Kind: "smart-image", Attrs: map[string]interface{}{"id": "im-1", "src": "sieve://" + testAssetDocUUID + "/photo.png"}},
 		{ID: "im-2", Kind: "smart-image", Attrs: map[string]interface{}{"id": "im-2", "src": "sieve://" + testForeignDocUUID + "/photo.png"}},
 		{ID: "im-3", Kind: "smart-image", Attrs: map[string]interface{}{"id": "im-3", "src": "https://example.com/photo.png"}},
@@ -78,7 +79,7 @@ func TestAssetURIMigrator_AlreadyMigrated_AllocatesNothing(t *testing.T) {
 }
 
 func TestAssetURIMigrator_IgnoresOtherKinds(t *testing.T) {
-	in := []SieveBlock{
+	in := []domain.SieveBlock{
 		{ID: "rf-1", Kind: "reference", Attrs: map[string]interface{}{"id": "rf-1", "src": "im-1.png", "uri": ""}},
 		{ID: "pr-1", Kind: "prose", Attrs: map[string]interface{}{"content": "some text /ui/assets/whatever"}},
 		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"source": "fmt.Println(/ui/assets/)"}},

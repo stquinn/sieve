@@ -22,6 +22,22 @@ const loadPage = (fixture) => JSON.parse(readFileSync(path.join(ASSETS, fixture,
 
 const renderer = new InkRenderer({ getStroke })
 
+const AIR2_ASPECT = 0.8292971
+const PAGE = Object.freeze({ x0: 0, y0: 0, x1: 1, y1: 1 / AIR2_ASPECT })
+
+/**
+ * The marks of a `ruling` group, read back from its markup.
+ * @param {string} group
+ * @returns {{h: number[], v: number[], dots: number[][], flagged: boolean, paths: number}}
+ */
+const marksOf = (group) => ({
+  h: [...group.matchAll(/M-?[\d.]+ (-?[\d.]+)h[\d.]+v1h-/g)].map((m) => Number(m[1])),
+  v: [...group.matchAll(/M(-?[\d.]+) -?[\d.]+v[\d.]+h1v-/g)].map((m) => Number(m[1])),
+  dots: [...group.matchAll(/M(-?\d+) (-?\d+)m-3 0a3 3 0 1 0 6 0a3 3 0 1 0-6 0z/g)].map((m) => [Number(m[1]), Number(m[2])]),
+  flagged: group.includes('data-ink-template="unknown"'),
+  paths: (group.match(/<path /g) ?? []).length,
+})
+
 describe('InkRenderer renders the conformance set', () => {
   it.each(FIXTURES)('%s matches its committed SVG', async (fixture) => {
     await expect(renderer.renderPage(loadPage(fixture)))
@@ -31,6 +47,30 @@ describe('InkRenderer renders the conformance set', () => {
   it.each(FIXTURES)('%s renders the same bytes from a fresh renderer', (fixture) => {
     const page = loadPage(fixture)
     expect(new InkRenderer({ getStroke }).renderPage(page)).toBe(renderer.renderPage(page))
+  })
+})
+
+describe('InkRenderer.renderPage through a window', () => {
+  const page = () => loadPage('2026-10-31-boox-test-page')
+  const WINDOW = Object.freeze({ x0: -0.25, y0: -0.5, x1: 0.75, y1: 0.25 })
+
+  it('has the window in grid units as its viewBox, filled white, with the ruling over the window', () => {
+    const svg = renderer.renderPage(page(), WINDOW)
+    expect(svg.split('\n')[0]).toBe('<svg xmlns="http://www.w3.org/2000/svg" width="1404" height="1053" viewBox="-351 -702 1404 1053">')
+    expect(svg).toContain('<rect x="-351" y="-702" width="1404" height="1053" fill="#fff"/>')
+    expect(svg).toContain(renderer.renderRuling(page().note.template, WINDOW))
+    expect(renderer.windowBox(WINDOW)).toEqual({ x: '-351', y: '-702', width: '1404', height: '1053' })
+  })
+
+  it('places every stroke on the plane exactly as a fixed page does', () => {
+    const fixed = renderer.renderPage(page()).split('\n').filter((line) => line.includes('data-stroke'))
+    const windowed = renderer.renderPage(page(), WINDOW).split('\n').filter((line) => line.includes('data-stroke'))
+    expect(windowed.length).toBeGreaterThan(0)
+    expect(windowed).toEqual(fixed)
+  })
+
+  it('refuses a window with no area', () => {
+    expect(() => renderer.renderPage(page(), { x0: 0, y0: 0, x1: 0, y1: 1 })).toThrow('window')
   })
 })
 
@@ -85,18 +125,142 @@ describe('InkRenderer.renderLiveStroke', () => {
     expect(svg).toContain(live)
   })
 
-  it('draws a pencil stroke as the page chunk outlines, untoned', () => {
+  /** @param {string} markup @returns {string[]} each path's band and outline, as `b{band} {d}` */
+  const toned = (markup) => [...markup.matchAll(/<path fill="url\(#ink-b(\d)\)" d="([^"]*)"\/>/g)].map((m) => `b${m[1]} ${m[2]}`)
+  /** @param {any} stroke @returns {string[]} the committed chunks, as `toned` reads live ones, sorted */
+  const committed = (stroke) => renderer.renderStroke(stroke).bands
+    .flatMap((part, i) => [...part.matchAll(/<path d="([^"]*)"\/>/g)].map((m) => `b${i} ${m[1]}`))
+    .sort()
+
+  it('draws a whole pencil stroke as a group of its chunks, each in its band\'s tone, exactly as the page does', () => {
     const live = renderer.renderLiveStroke(pencil)
-    const liveSubpaths = (/ d="([^"]*)"/.exec(live)?.[1] ?? '').split(/(?=M)/)
-    const pageSubpaths = renderer.renderStroke(pencil).bands.join('')
-      .match(/<path d="[^"]*"/g)?.map((p) => p.slice(9, -1)) ?? []
-    expect(live).toContain(`fill="${INK_RULES.pencil.liveFill}"`)
-    expect(liveSubpaths.length).toBeGreaterThan(1)
-    expect([...liveSubpaths].sort()).toEqual([...pageSubpaths].sort())
-    for (const part of renderer.renderStroke(pencil).bands) if (part) expect(svg).toContain(part)
+    expect(live).toMatch(new RegExp(`^<g data-stroke="${pencil.id}">`))
+    expect(toned(live).length).toBeGreaterThan(1)
+    expect(new Set(toned(live).map((p) => p.slice(0, 2))).size).toBeGreaterThan(1)
+    expect([...toned(live)].sort()).toEqual(committed(pencil))
   })
 
+  it.each([1, 3, 10, 37])('settles each pencil chunk, arriving %i points at a time, exactly as it will commit, and draws it once', (batch) => {
+    const chunk = INK_RULES.pencil.chunk
+    /** @type {string[]} */ const drawn = []
+    let next = 0
+    for (let n = batch; ; n = Math.min(n + batch, pencil.points.length)) {
+      const sofar = { ...pencil, points: pencil.points.slice(0, n) }
+      const answer = renderer.renderLivePencil(sofar, next)
+      drawn.push(...answer.settled)
+      next = answer.next
+      expect(next).toBe(Math.max(0, Math.floor((n - 1) / chunk)))
+      const whole = renderer.renderLivePencil(sofar, 0)
+      expect([...drawn, answer.tail]).toEqual([...whole.settled, whole.tail])
+      if (n === pencil.points.length) break
+    }
+    const commit = renderer.renderLivePencil(pencil, 0)
+    expect([...toned(drawn.join('')), ...toned(commit.tail)].sort()).toEqual(committed(pencil))
+  })
   it('draws nothing from a single point', () => {
     expect(renderer.renderLiveStroke({ ...pencil, points: pencil.points.slice(0, 1) })).toBe('')
+  })
+})
+
+describe('InkRenderer.renderRuling', () => {
+  const ruling = (/** @type {any} */ template, /** @type {any} */ window = PAGE) => marksOf(renderer.renderRuling(template, window))
+
+  // The contract's presets on a fixed Note Air 2 page (1404 x 1693 grid units).
+  it.each([
+    ['ruled', { spacing: 0.05, margin: 0.12 }, { h: [25, 0, 1685], v: [168] }],
+    ['ruled', { spacing: 0.05 }, { h: [25, 0, 1685], v: [] }],
+    ['ruled', { spacing: 0.038, margin: 0.12 }, { h: [32, 0, 1654], v: [168] }],
+    ['ruled', { spacing: 0.038 }, { h: [32, 0, 1654], v: [] }],
+    ['grid', { spacing: 0.04 }, { h: [31, 0, 1685], v: [0, 1348], vCount: 25 }],
+  ])('%s %j draws its lines', (id, params, want) => {
+    const m = ruling({ id, params })
+    expect([m.h.length, m.h[0], m.h[m.h.length - 1]]).toEqual(want.h)
+    expect(m.v.length).toBe(want.vCount ?? want.v.length)
+    expect(want.v.every((x) => m.v.includes(x))).toBe(true)
+    expect(m.dots).toEqual([])
+    expect(m.flagged).toBe(false)
+  })
+
+  it('draws dots at every crossing of a dots template', () => {
+    const m = ruling({ id: 'dots', params: { spacing: 0.04 } })
+    expect(m.dots.length).toBe(26 * 31)
+    expect(m.dots[0]).toEqual([0, 0])
+    expect(m.dots[m.dots.length - 1]).toEqual([1404, 1685])
+    expect([m.h, m.v]).toEqual([[], []])
+    expect(m.paths).toBe(1)
+  })
+
+  it('paints the ruling first after the background, in the mark colour', () => {
+    const group = renderer.renderRuling({ id: 'ruled', params: { spacing: 0.05 } }, PAGE)
+    expect(group.startsWith('<g data-ink="ruling" fill="#888888">')).toBe(true)
+    const svg = renderer.renderPage({ note: { pageAspect: AIR2_ASPECT, template: { id: 'ruled', params: { spacing: 0.05 } } }, strokes: [] })
+    const lines = svg.split('\n')
+    expect(lines[2]).toMatch(/^<rect /)
+    expect(lines[3]).toBe(group.split('\n')[0])
+    expect(svg).toContain(group)
+    expect(svg.indexOf('data-ink="ruling"')).toBeLessThan(svg.indexOf('data-ink="pen"'))
+  })
+
+  it.each([
+    ['blank', { id: 'blank' }],
+    ['no template', null],
+    ['no spacing', { id: 'grid', params: {} }],
+    ['no params', { id: 'ruled' }],
+    ['zero spacing', { id: 'dots', params: { spacing: 0 } }],
+    ['zero spacing with margin', { id: 'ruled', params: { spacing: 0, margin: 0.12 } }],
+  ])('%s draws an empty group, unflagged', (_, template) => {
+    const group = renderer.renderRuling(template, PAGE)
+    expect(group).toBe('<g data-ink="ruling" fill="#888888"></g>')
+  })
+
+  it('treats margin 0 like an absent margin', () => {
+    expect(ruling({ id: 'ruled', params: { spacing: 0.05, margin: 0 } }).v).toEqual([])
+  })
+
+  it('draws an unknown id as blank and flags the group', () => {
+    const group = renderer.renderRuling({ id: 'isometric', params: { spacing: 0.05 } }, PAGE)
+    expect(marksOf(group)).toMatchObject({ h: [], v: [], dots: [], flagged: true })
+    expect(group).toBe('<g data-ink="ruling" fill="#888888" data-ink-template="unknown"></g>')
+  })
+
+  it('rounds each mark position, not the spacing', () => {
+    // 0.05 is 70.2 grid units: accumulated rounding of 70 would give 210, not 211.
+    expect(ruling({ id: 'ruled', params: { spacing: 0.05 } }, { x0: 0, y0: 0, x1: 1, y1: 0.2 }).h).toEqual([0, 70, 140, 211])
+  })
+
+  it('tiles an unbounded plane on its own origin into negative coordinates', () => {
+    const m = ruling({ id: 'ruled', params: { spacing: 0.05, margin: 0.12 } }, { x0: -1.5, y0: -0.3, x1: 0.5, y1: 0.3 })
+    expect(m.h.length).toBe(13)
+    expect([m.h[0], m.h[6], m.h[12]]).toEqual([-421, 0, 421])
+    expect(m.v).toEqual([-1236, 168])
+  })
+
+  it('clips lines to the window', () => {
+    const group = renderer.renderRuling({ id: 'ruled', params: { spacing: 0.5 } }, { x0: -1.5, y0: 0, x1: 0.5, y1: 1 })
+    expect(group).toContain('M-2106 0h2808v1h-2808z')
+  })
+
+  it.each([
+    ['grid', { spacing: 0.04 }],
+    ['ruled', { spacing: 0.05, margin: 0.12 }],
+    ['dots', { spacing: 0.04 }],
+  ])('%s marks are identical in the overlap of two windows', (id, params) => {
+    const template = { id, params }
+    const wide = ruling(template, { x0: -1, y0: -1, x1: 1, y1: 1 })
+    const narrow = ruling(template, { x0: -0.5, y0: -0.5, x1: 0.5, y1: 0.5 })
+    const g = INK_RULES.grid
+    const inside = (/** @type {number} */ c) => c >= -0.5 * g && c < 0.5 * g
+    expect(narrow.h.length + narrow.v.length + narrow.dots.length).toBeGreaterThan(0)
+    expect(wide.h.filter(inside)).toEqual(narrow.h)
+    expect(wide.v.filter(inside)).toEqual(narrow.v)
+    expect(wide.dots.filter(([x, y]) => inside(x) && inside(y))).toEqual(narrow.dots)
+  })
+
+  it('counts a mark touching the window only when it overlaps its interior', () => {
+    const at = (/** @type {number} */ y0, /** @type {number} */ y1) =>
+      ruling({ id: 'ruled', params: { spacing: 0.5 } }, { x0: 0, y0, x1: 1, y1 }).h
+    expect(at(0, 0.5)).toEqual([0])
+    expect(at(0.5, 1)).toEqual([702])
+    expect(at(0, 0.5001)).toEqual([0, 702])
   })
 })

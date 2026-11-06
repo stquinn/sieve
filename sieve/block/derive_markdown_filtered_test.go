@@ -3,11 +3,13 @@ package block
 import (
 	"strings"
 	"testing"
+
+	"sieve/sieve/domain"
 )
 
 // dropKind builds the closure BlockFilter callers pass to drop exactly one kind.
 func dropKind(kind string) BlockFilter {
-	return func(b SieveBlock) bool { return b.Kind != kind }
+	return func(b domain.SieveBlock) bool { return b.Kind != kind }
 }
 
 // deriveMarkdownFiltered with a filter dropping ai-blocks must serialize prose +
@@ -16,7 +18,7 @@ func dropKind(kind string) BlockFilter {
 // yields today's full output. This is the TARGET-leak fix at the DocView seam.
 func TestDeriveMarkdownFiltered_DropsAIBlock(t *testing.T) {
 	codec := NewDocumentCodec(GlobalRegistry())
-	blocks := []SieveBlock{
+	blocks := []domain.SieveBlock{
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Original prose."}},
 		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"id": "co-1", "source": "x = 1"}},
 		{ID: "ab-1", Kind: "ai-block", Attrs: map[string]interface{}{
@@ -41,7 +43,7 @@ func TestDeriveMarkdownFiltered_DropsAIBlock(t *testing.T) {
 	}
 
 	// Byte-identical to serializing just the surviving blocks.
-	want, err := codec.Serialize([]SieveBlock{blocks[0], blocks[1]})
+	want, err := codec.Serialize([]domain.SieveBlock{blocks[0], blocks[1]})
 	if err != nil {
 		t.Fatalf("serialize survivors: %v", err)
 	}

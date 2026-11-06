@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"strings"
 	"time"
 )
@@ -93,9 +94,9 @@ func (p *WebClipBlockProcessor) Transform(entries []block.ContentEntry, uuid, bl
 	return nil
 }
 
-func (p *WebClipBlockProcessor) OnChange(_ *block.SieveBlock) {}
+func (p *WebClipBlockProcessor) OnChange(_ *domain.SieveBlock) {}
 
-func (p *WebClipBlockProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, seen map[string]bool) block.AIContext {
+func (p *WebClipBlockProcessor) BuildContext(blk domain.SieveBlock, _ block.DocView, seen map[string]bool) block.AIContext {
 	source, _ := blk.Attrs["source"].(string)
 	title, _ := blk.Attrs["title"].(string)
 	content, _ := blk.Attrs["content"].(string)
@@ -115,7 +116,7 @@ func (p *WebClipBlockProcessor) BuildContext(blk block.SieveBlock, _ block.DocVi
 }
 
 // webClipLabel is the in-flight status label for a clip job (kind-qualified host).
-func (p *WebClipBlockProcessor) webClipLabel(blk *block.SieveBlock) string {
+func (p *WebClipBlockProcessor) webClipLabel(blk *domain.SieveBlock) string {
 	mode, _ := blk.Attrs["mode"].(string)
 	source, _ := blk.Attrs["source"].(string)
 	host := source
@@ -173,7 +174,7 @@ func (p *WebClipBlockProcessor) DescribeJob(jctx block.JobContext) *block.Proces
 				page:    p.svc.Documents.PageAssetAddress(uuid, source),
 			}, nil
 		},
-		Apply: func(result any, b *block.SieveBlock) {
+		Apply: func(result any, b *domain.SieveBlock) {
 			res := result.(webClipResult)
 			b.Attrs["status"] = block.BlockStatusComplete
 			if res.title != "" {
@@ -189,7 +190,7 @@ func (p *WebClipBlockProcessor) DescribeJob(jctx block.JobContext) *block.Proces
 	}
 }
 
-func (p *WebClipBlockProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {
+func (p *WebClipBlockProcessor) MarkdownRepresentation(blk domain.SieveBlock, _ string) string {
 	content, _ := blk.Attrs["content"].(string)
 	content = strings.TrimSpace(content)
 	if content == "" {

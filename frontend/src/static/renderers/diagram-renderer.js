@@ -563,6 +563,14 @@ export class DiagramRenderer extends BlockRenderer {
     const msg = (attrs.error || '').trim() ||
       (state === 'timeout' ? 'Render timed out.' : 'Render failed.')
     this.#displayError(msg, 'PlantUML render error')
+    // A record has no edit mode to read the source in, so the source is shown under the error.
+    const text = this.readOnly && this.#renderBody ? this.#renderBody.querySelector('.diagram-block__error > div:last-child') : null
+    if (text) {
+      const pre = document.createElement('pre')
+      pre.className = 'diagram-block__source'
+      pre.textContent = src
+      text.appendChild(pre)
+    }
   }
 
   /** Fetch a same-origin rendered-SVG asset and inline it via the shared tail.

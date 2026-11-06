@@ -172,7 +172,7 @@ func TestReferenceProcessor_droppedFileIsBornCompleteAndFaced(t *testing.T) {
 		t.Fatal("Transform declined a dropped file")
 	}
 
-	blk := &block.SieveBlock{ID: blockID, Kind: "reference", Attrs: p.InitAttrs(blockID, overrides)}
+	blk := &domain.SieveBlock{ID: blockID, Kind: "reference", Attrs: p.InitAttrs(blockID, overrides)}
 	if blk.Attrs["status"] != block.BlockStatusComplete {
 		t.Errorf("status: got %v, want COMPLETE — the face is filled at mint", blk.Attrs["status"])
 	}

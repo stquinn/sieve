@@ -42,14 +42,14 @@ func (fs *FileStore) scanCategory(cat store.Category, prefix string) ([]store.St
 			continue // no .meta = not a Sieve node
 		}
 
-		switch metaType {
-		case "folder":
+		switch {
+		case metaType == store.TypeFolder:
 			folder, err := fs.scanFolderNode(cat, name)
 			if err != nil {
 				continue
 			}
 			results = append(results, folder)
-		case "document":
+		case fs.holdsContent(metaType):
 			dm, err := readMetaJSONFromPath(metaPath)
 			if err != nil {
 				continue
@@ -98,8 +98,8 @@ func (fs *FileStore) scanFolderNode(cat store.Category, dirKey string) (*fileFol
 			continue
 		}
 
-		switch metaType {
-		case "document":
+		switch {
+		case fs.holdsContent(metaType):
 			dm, err := readMetaJSONFromPath(childMetaPath)
 			if err != nil {
 				continue
@@ -108,7 +108,7 @@ func (fs *FileStore) scanFolderNode(cat store.Category, dirKey string) (*fileFol
 			if s != nil {
 				owns = append(owns, s)
 			}
-		case "folder":
+		case metaType == store.TypeFolder:
 			sub, err := fs.scanFolderNode(cat, childKey)
 			if err == nil && sub != nil {
 				owns = append(owns, sub)
@@ -127,14 +127,13 @@ func (fs *FileStore) scanFolderNode(cat store.Category, dirKey string) (*fileFol
 	}, nil
 }
 
-// buildDocStorable constructs a fileMetaStorable from a pre-read docMeta.
 // buildDocStorable constructs a fileMetaStorable from a pre-read docMeta and
 // registers it in the UUID index. Versions are always loaded — every access
 // goes through the cache, so the cost is paid once per List call.
 func (fs *FileStore) buildDocStorable(cat store.Category, key string, dm *docMeta) store.Storable {
-	body, _ := os.ReadFile(fs.contentPath(cat, key, dm.UUID))
-	versions := fs.loadVersions(dm.UUID, cat, key)
-	owns := fs.scanDocAssets(cat, key, dm.UUID)
+	body, _ := os.ReadFile(fs.contentPath(cat, key, dm.UUID, dm.Type))
+	versions := fs.loadVersions(dm.UUID, dm.Type, cat, key)
+	owns := fs.scanDocAssets(cat, key, dm.UUID, dm.Type)
 
 	s := &fileMetaStorable{
 		fileStorable: fileStorable{
@@ -145,23 +144,24 @@ func (fs *FileStore) buildDocStorable(cat store.Category, key string, dm *docMet
 			extRef:   fs.externalRef(cat, key),
 			versions: versions,
 		},
-		meta: docMetaToMap(dm),
-		owns: owns,
+		contentType: dm.Type,
+		meta:        docMetaToMap(dm),
+		owns:        owns,
 	}
 	fs.indexSet(dm.UUID, s)
 	return s
 }
 
 // scanDocAssets scans a document directory for co-located asset files and
-// returns them as AssetStorables. Skips .meta, {uuid}.md, dot-dirs, and
+// returns them as AssetStorables. Skips .meta, the content file, dot-dirs, and
 // any directory entries.
-func (fs *FileStore) scanDocAssets(cat store.Category, key string, uuid string) []store.Storable {
+func (fs *FileStore) scanDocAssets(cat store.Category, key, uuid, contentType string) []store.Storable {
 	dir := fs.docDir(cat, key)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
-	contentFile := uuid + ".md"
+	contentFile := fs.contentFileName(uuid, contentType)
 	var assets []store.Storable
 	for _, e := range entries {
 		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
@@ -171,13 +171,11 @@ func (fs *FileStore) scanDocAssets(cat store.Category, key string, uuid string) 
 			continue
 		}
 		// Any remaining file is treated as an asset.
-		assetPath := filepath.Join(dir, e.Name())
-		data, err := os.ReadFile(assetPath)
+		asset, err := fs.newAssetStorable(e.Name(), e.Name(), cat, filepath.Join(dir, e.Name()), store.AssetURL(uuid, e.Name()))
 		if err != nil {
 			continue
 		}
-		assetExtRef := store.AssetURL(uuid, e.Name())
-		assets = append(assets, newFileAssetStorable(e.Name(), e.Name(), cat, data, assetExtRef, inferEncoding(data)))
+		assets = append(assets, asset)
 	}
 	return assets
 }

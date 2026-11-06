@@ -27,7 +27,13 @@ Note
   title       string, may be empty
   pageAspect  number > 0, page width / page height (Note Air 2 portrait: 1404/1872)
   template    TemplateRef | null          the note default
+  device      DeviceInfo                  the device it was written on, for the note's life
   pages       ordered list of Page
+
+DeviceInfo
+  id          string, a stable opaque id for the device under the companion's signing key
+  name        string, what the user called the device when the note was created
+  model       string, manufacturer and model
 
 Page
   id          uuid
@@ -39,7 +45,7 @@ Stroke
   id           uuid
   tool         "pen" | "pencil"
   widthClass   1 | 2 | 3
-  startMillis  uint32
+  startMillis  uint64
   points       list of Point, at least one
 
 Point
@@ -52,9 +58,15 @@ Point
 - `bounds: fixed` is a sheet of the note's aspect. `bounds: unbounded` is a whiteboard: the
   plane has no edge and coordinates MAY fall outside 0..1 and below 0. Where a viewer's
   window sits on an unbounded page is UI state and MUST NOT appear in the log.
+  A live feed may carry the window (§4.3 VIEW), and a consumer may ignore it. A replay, if ever
+  built, derives its framing from the strokes, or gets a new additive op then.
 - `bounds` is chosen when the note is created and never changes, in either direction. A
   whiteboard note has exactly one page, `unbounded`; every other note has only `fixed` pages.
   The producer enforces this at creation; a consumer replays what it receives.
+- `device` is fixed when the note is created and is the same in every `note-header` of the note. A
+  later change of the device's name does not reach existing notes. The same physical device may
+  report different ids under different signing keys or after a factory reset, so `id` identifies a
+  device for display and grouping and MUST NOT be used as a security credential.
 - Strokes are never edited in place. The model is the replay of the log (§3).
 
 ## 3. Operation log
@@ -64,7 +76,7 @@ than the previous; the first record is `seq` 1.
 
 | op | fields | |
 |---|---|---|
-| `note-header` | `id`, `created`, `title`, `pageAspect`, `template` | `seq` 1; re-emitted with a new `seq` on any header change |
+| `note-header` | `id`, `created`, `title`, `pageAspect`, `template`, `device` | `seq` 1; re-emitted with a new `seq` on any header change |
 | `page-add` | `page`, `index`, `template`, `bounds` | |
 | `page-remove` | `page` | |
 | `page-template` | `page`, `template` | |
@@ -84,11 +96,15 @@ Replay rules:
 5. Pages are never reordered.
 6. Neither side compacts or rewrites the log. A replica holding `seq` 1..N holds the complete
    history to N.
+7. A `page-add` of a removed page's id restores that page with the strokes it had and takes the
+   record's `template`. A `page-add` of an id present is a no-op. A stroke record naming a page not
+   currently present is a no-op.
 
 ## 4. Codecs
 
-One record shape (§3), three encodings: the **JSON Lines** asset (§4.1), the **export page**
-that fixtures use (§4.2), and the **binary** records of the radio (§4.3).
+One record shape (§3), and its encodings: the **JSON Lines** asset (§4.1), the **export page**
+that fixtures use (§4.2), the **binary** live point feed (§4.3) and the **binary** log records
+of the device and the radio (§4.4).
 
 ### 4.1 JSON Lines — the log on disk
 
@@ -101,9 +117,11 @@ that fixtures use (§4.2), and the **binary** records of the radio (§4.3).
   unknown `op`.
 - Numbers are JSON numbers; a float is written in its shortest round-tripping form.
 - `template` is `null` or a TemplateRef object `{"id": …, "params": {…}}` (§6).
+- `created` is an RFC 3339 time in UTC with `Z`, to the millisecond, the fraction left out when
+  it is zero. A reader rejects anything finer, and keys that are missing, extra or out of order.
 
 ```
-{"seq":1,"op":"note-header","id":U,"created":T,"title":S,"pageAspect":F,"template":R}
+{"seq":1,"op":"note-header","id":U,"created":T,"title":S,"pageAspect":F,"template":R,"device":D}
 {"seq":N,"op":"page-add","page":U,"index":I,"template":R,"bounds":"fixed"|"unbounded"}
 {"seq":N,"op":"page-remove","page":U}
 {"seq":N,"op":"page-template","page":U,"template":R}
@@ -111,6 +129,7 @@ that fixtures use (§4.2), and the **binary** records of the radio (§4.3).
 {"seq":N,"op":"stroke-remove","page":U,"id":U}
 
 P = [x, y, pressure, tMillis, tiltX, tiltY]
+D = {"id": S, "name": S, "model": S}
 ```
 
 ### 4.2 Export page — fixtures
@@ -118,30 +137,42 @@ P = [x, y, pressure, tMillis, tiltX, tiltY]
 What SieveInk's Export writes and what the renderer takes: one page, already replayed.
 
 ```json
-{"note": {"id": U, "created": T, "title": S, "pageAspect": F, "template": R},
+{"note": {"id": U, "created": T, "title": S, "pageAspect": F, "template": R,
+          "device": {"id": S, "name": S, "model": S}},
  "strokes": [{"id": U, "tool": "pen", "widthClass": 2, "startMillis": I,
               "points": [{"x": F, "y": F, "pressure": F, "tMillis": I, "tiltX": I, "tiltY": I, "size": F}]}]}
 ```
 
-`size` is the Onyx touch size, carried for fidelity; it is not part of the record and no rule
-reads it.
+`size` is the Onyx touch size. It is not part of the record, no rule reads it, and a page exported
+from its replay carries 0. A fixture that predates `device` has none, and no rule reads that either.
 
 ### 4.3 Binary — the live point feed
 
 The stroke under the pen (design §7.4) travels as fixed-size records: little-endian, type
-byte first, the size fixed per type. A record MAY span transport SDUs; a receiver buffers
-until the record is whole. An unknown type byte is a framing loss: the receiver MUST drop the
-connection.
+byte first, the size fixed per type. An unknown type byte is a framing loss: the receiver MUST
+drop the connection.
 
 | type | name | bytes | fields after the type byte |
 |---|---|---|---|
 | 1 | CLOCK | 7 | `tabletMs` u32, `pageAspect` u16 (×10000) |
-| 2 | BEGIN | 11 | `strokeSeq` u32, `tool` u8 (0 pen, 1 pencil), `widthClass` u8, `tabletMs` u32 |
+| 2 | BEGIN | 19 | `strokeSeq` u32, `tool` u8 (0 pen, 1 pencil), `widthClass` u8, `tabletMs` u32, `originX` i32, `originY` i32 |
 | 3 | POINT | 17 | `strokeSeq` u32, `x` u16, `y` u16, `pressure` u16, `tiltX` i8, `tiltY` i8, `tabletMs` u32 |
 | 4 | END | 13 | `strokeSeq` u32, `pointCount` u32, `tabletMs` u32 |
 | 5 | REMOVE | 5 | `strokeSeq` u32 |
+| 6 | VIEW | 9 | `originX` i32, `originY` i32 |
 
-- `x`, `y` are page units × 32768 (range [0, 2)); `pressure` is × 65535.
+- `x`, `y` are page units × 32768 (range [0, 2)), relative to the stroke's origin; `pressure`
+  is × 65535.
+- A BEGIN's origin is in page units × 32768. A point's place is origin + (x, y). A fixed page
+  sends 0,0. An unbounded page sends the view's top-left when the pen landed, rounded down.
+- VIEW is the top-left of an unbounded page's view, in the same units. The view is one sheet of
+  the note's aspect at one to one, 1 by 1/pageAspect page units: the sender pans and never zooms.
+  It is sent when the page goes live, when a receiver joins, on a pan's steps at most once per
+  100 ms, and at a pan's end; never for a fixed page. It is ephemeral: never logged, acked or
+  reconciled. A sender MAY drop it when the link falls behind, since only the latest matters. A
+  receiver holding no VIEW places its window from BEGIN's origin.
+- Records travel only inside INK frames (§7), whole. CLOCK goes on connect and every 2 s,
+  with `pageAspect` 0 when no consented note is live.
 - `tabletMs` is the tablet's monotonic clock in ms, truncated to u32, taken when the record
   is made. A point's `tMillis` is its `tabletMs` minus its BEGIN's.
 - `strokeSeq` names a stroke within one connection; it is not the stroke id. `pointCount` is
@@ -149,34 +180,83 @@ connection.
 - Points are ephemeral: never logged, acked or reconciled. The committed stroke arrives as a
   `stroke-add` record of the log. A receiver that joins mid-stroke draws from the next BEGIN.
 
-The binary encoding of log records on the replication channel (design §7: length-prefixed,
-CRC32 per record, the `HEAD` hash chain over records) is not fixed by this version.
+### 4.4 Binary: log records
+
+The same encoding on the device's log and on the replication channel. All integers little-endian.
+
+```
+log file  := "SINKLOG2" frame*
+frame     := length u32, body, crc u32       crc = CRC-32 (IEEE) of body; 1 <= length <= 16 MiB
+body      := op u8, seq u32, fields
+```
+
+| op | name | fields |
+|---|---|---|
+| 16 | note-header | id, created i64 (Unix ms), title string, pageAspect f32, template, device |
+| 17 | page-add | page id, index u32, template, bounds u8 (0 fixed, 1 unbounded) |
+| 18 | page-remove | page id |
+| 19 | page-template | page id, template |
+| 20 | stroke-add | page id, stroke id, tool u8 (0 pen, 1 pencil), widthClass u8, startMillis u64, count u32, count × (x f32, y f32, pressure f32, tMillis u32, tiltX i8, tiltY i8) |
+| 21 | stroke-remove | page id, stroke id |
+
+An id is its 16 RFC 9562 bytes, most significant first. A string is u16 byte length + UTF-8. f32 is
+IEEE 754 binary32. A template is u8 0 for null, or u8 1, id string, u8 count, count × (name string,
+value f32), params in the order §6 lists them. A device is its id, name and model, each a string. Op
+values do not overlap §4.3's type bytes.
+
+The magic's last byte is the format's version. A log of another version is refused, not truncated,
+and is left unaltered.
+
+A reader stops at the first frame that is short, fails its CRC, does not decode, or whose seq is not
+one greater than the last; everything before it is the log. What follows is not part of the log.
+
+`headHash`: `h(n) = SHA-256(h(n-1) ‖ body(n))`, `h(0)` = 32 zero bytes. The encoding is canonical: a
+replica holding JSON Lines (§4.1) re-encodes each record to its body to compute the chain, which holds
+because §4.1 floats are shortest round-tripping binary32.
 
 ## 5. On-disk form
 
-A Digital Note is a Things block (`.meta` `type: block`, `kind: digital-note`) whose payload
-is `{uuid}.block`, YAML, beside its **source** asset in the same directory. The block never
-carries ink.
+A Digital Note is a `BlockContainer` (`.meta` `type: block`): one block written as YAML to
+`{uuid}.block`, whose first line is `kind: digital-note`, beside its **source** asset in the same
+directory. The block never carries ink.
 
 | field | |
 |---|---|
-| `id` | the Thing's uuid, Sieve's own (`ident.New`), never the companion's note id |
-| `kind` | `digital-note` |
+| `id` | the container's uuid, Sieve's own (`ident.New`), never the companion's note id |
+| `kind` | `digital-note`, the file's first line |
 | `title` | the note title |
 | `note` | the header: `created`, `pageAspect`, `template`, and `pages`, a list of `{id, template, bounds}` |
+| `note_device` | the note's `device` from its header: `{id, name, model}` |
 | `note_companion` | the companion's identity (the GATT `identity` value) |
 | `note_source_id` | the companion's note id |
-| `note_synced_seq` | the `seq` of the last record in the source |
-| `reading` | the reading job's state; owned by the reading job |
-| `source` | the source asset's absolute address, `sieve://{thing}/{key}` |
+| `note_synced_seq` | the `seq` of the last record of the source the block describes; the source holds at least that far, and the block may lag it between saves |
+| `source` | the source asset's absolute address, `sieve://{container}/{key}` |
 
 - **StrokeBasedNote:** `source` is `strokes.jsonl` (§4.1).
 - **FileBasedNote:** `source` is the PDF or PNG a producer delivered.
 - A committed record is appended to the source first, then sent to an open lens. Points of
   the live feed go to an open lens only and never to the source.
-- `note_synced_seq` is the catch-up cursor: replication resumes with `OPEN {noteId, haveSeq =
-  note_synced_seq}`.
-- One Sieve holds at most one live Thing per `(note_companion, note_source_id)`.
+- The catch-up cursor is the `seq` the source replays to: replication resumes with `OPEN {noteId,
+  haveSeq}` from there. `note_synced_seq` is a copy of it and is never ahead of the source.
+- `note_device` is copied from the `note-header` and never edited. It says which device a note came
+  from; `note_companion` remains the companion's identity on the link.
+- One Sieve holds at most one live container per `(note_companion, note_source_id)`.
+- **Description.** What Sieve says of a note is kept in `.meta` and never in the block: `display_name`
+  (its name), `summary`, `tags` (its keywords, a comma within one written as `;`), `note_keywords`
+  and `note_categories` (JSON arrays of strings, as described), `note_meta_seq` (the `seq` the
+  description is of) and `note_meta_sent_seq` (the `seq` of the description last sent as `META`).
+  `title` stays what the tablet wrote. A note is shown by `display_name` when it has one, otherwise
+  by `title`.
+- **Transcript.** A page is transcribed only when the reader asks. Its transcript is the asset
+  `transcript-{pageId}-{key}.json` beside the source, where `key` is the page key (16 hex digits of a
+  SHA-256 of what is on the page, `StrokeBasedNote.PageKey`, as for its image
+  `page-{pageId}-{key}.png`): `{"key": …, "blocks": [{"id",
+  "kind", "attrs"}, …]}`, the page's text as `prose` blocks and its diagrams as `diagram` blocks, in
+  the page's order, every id minted by `ident.New`. A PlantUML diagram's SVG is kept beside it as
+  `transcript-{pageId}-{key}-{blockId}.svg`, and the block's `svgAsset` is its absolute address. A page
+  whose key has a transcript is never transcribed again. Keeping a transcript removes the page's transcripts of
+  every other key, and their SVGs, while its key is still the page's. Neither the block nor the
+  source changes.
 
 ## 6. Templates
 
@@ -185,13 +265,38 @@ A template is data, never an image: `TemplateRef = {id, params}`, lengths in pag
 | id | params |
 |---|---|
 | `blank` | none |
-| `ruled` | `spacing`, `margin` |
+| `ruled` | `spacing`, `margin` (optional) |
 | `grid` | `spacing` |
 | `dots` | `spacing` |
 
-An unknown id is drawn as `blank` and the page is marked "unknown template". The drawing rules
-for `ruled`, `grid` and `dots` are fixed with the first fixture that uses one; until then
-every template is drawn as `blank`.
+An unknown id is drawn as `blank` and the page is marked "unknown template".
+
+A template is drawn under the strokes, in `#888888`, from these rules. Positions are in the §8 grid
+(1404 units across a page), with `round(p · 1404)` for a position p in page units.
+
+- `ruled`: a horizontal line at every y = k·spacing. When `margin` is present and above 0, a vertical
+  line at x = margin + k (one per page width). Absent or 0 draws no vertical line.
+- `grid`: horizontal and vertical lines at every k·spacing.
+- `dots`: a dot at every crossing of (k·spacing, l·spacing).
+- A line is 1 grid unit wide, covering c to c + 1 from its position c, across the page's full extent.
+  A dot is a disc of radius 3 grid units (2.1368e-3 page units) centred on its position.
+- A missing or zero `spacing` draws no marks. k and l are all integers: a fixed page shows those inside
+  it, and an unbounded page tiles without end, into negative coordinates, on the plane's own origin,
+  so marks never move with the viewer's window.
+- A mark is drawn where its extent overlaps what is shown: a line at the far edge of a fixed page lies
+  outside it, and a dot centred on an edge is drawn and cut by it.
+
+The companion offers these presets:
+
+| name | id | params |
+|---|---|---|
+| blank | `blank` | |
+| ruled (default) | `ruled` | spacing 0.05, margin 0.12 |
+| ruled, no margin | `ruled` | spacing 0.05 |
+| narrow | `ruled` | spacing 0.038, margin 0.12 |
+| narrow, no margin | `ruled` | spacing 0.038 |
+| grid | `grid` | spacing 0.04 |
+| dots | `dots` | spacing 0.04 |
 
 ## 7. Transport
 
@@ -203,15 +308,94 @@ every template is drawn as `blank`.
   | `a378dfef-96d7-4aa8-a37f-3bd6e376da00` | Sieve ink service, advertised |
   | `a378dfef-96d7-4aa8-a37f-3bd6e376da01` | `psm`: read, u16 little-endian |
   | `a378dfef-96d7-4aa8-a37f-3bd6e376da02` | `identity`: read, UTF-8 |
+  | `a378dfef-96d7-4aa8-a37f-3bd6e376da03` | `offer`: read + notify, UTF-8 `library/{catalogue}`, `catalogue` an unsigned decimal |
+
+- **Advertisement.** The advertisement holds the service UUID. The scan response holds service
+  data on that UUID: `catalogue` u32 LE. No device name fits the 31-byte legacy limit.
+  `catalogue` changes on Sync now, and a scanning Sieve seeing a change should connect at once.
+- **Identity.** `identity` is a stable random UUID string minted once per install, and is what
+  `note_companion` holds.
 
 - **Channel.** An LE L2CAP connection-oriented channel opened by the companion with the
   *insecure* listener (`listenUsingInsecureL2capChannel`). The PSM is dynamic: Sieve MUST
   read `psm` on every connect and MUST NOT cache it.
+- **SDU size.** No SDU on the channel is larger than 4096 bytes. Sieve advertises that as its
+  receive MTU; the companion writes a longer frame as successive SDUs of at most 4096 bytes. A
+  frame is a run of bytes on the stream and may span SDUs. Android delivers larger SDUs with
+  bytes altered.
 - **Link priority.** Once the channel is accepted, the companion MUST open a GATT client
   handle on the same link and request `CONNECTION_PRIORITY_HIGH`. Requested earlier, it is
   overridden.
 - **Matching.** Sieve matches a companion by the service UUID, never by its address, which
   is a resolvable private address that changes when the tablet's adapter restarts.
+- **Bounds.** Sieve MUST bound its GATT connect on every platform; a stack may never answer.
+
+### 7.1 Pairing and session
+
+- **Key.** 16 RFC 4648 base32 characters, decoding to 10 bytes; whitespace, hyphens and case are
+  ignored. It never travels.
+- **`sieveId`.** Lowercase hex of the first 8 bytes of `HMAC-SHA256(key, "sieve-id")`. The name a
+  Sieve is paired under is a local label.
+- **Proofs.** Sieve: `HMAC-SHA256(key, cNonce ‖ "sieve")`. Companion:
+  `HMAC-SHA256(key, sNonce ‖ "companion")`. The companion checks Sieve's proof before any ink moves.
+- **Session key.** `HKDF-SHA256(salt = cNonce ‖ sNonce, ikm = key, info = "sieve-ink session v1", L = 32)`.
+- **Sealing.** ChaCha20-Poly1305 with no AAD. The nonce is direction u32 LE (0 companion→Sieve,
+  1 Sieve→companion) then counter u64 LE, starting at 0, one per sealed frame per direction.
+- **Framing.** `length u32 LE, payload`: the plaintext frame or ciphertext + tag.
+- **Limits.** 256 bytes before proof, 64 KiB from a proved Sieve, 16 MiB + 1 KiB from the
+  companion; sealed frames get 16 more for the tag. Over the limit drops the link. A peer has
+  10 s to prove, or the link drops. One connection at a time; a second is turned away.
+
+### 7.2 Frames
+
+All integers little-endian. An id is 16 RFC 9562 bytes; a string is u16 + UTF-8; a list is u8
+count + strings; a seq is u32, at most 2³¹−1. Everything after `OK` is sealed.
+
+| type | name | direction | fields |
+|---|---|---|---|
+| 32 | CHALLENGE | C→S, clear | `version` u8 (1), `cNonce` 16 |
+| 33 | HELLO | S→C, clear | `sieveId` string, `sNonce` 16, `proof` 32 |
+| 34 | OK | C→S, clear | `proof` 32 |
+| 35 | REFUSE | C→S | note id (nil if none), `reason` string; clear only answering HELLO |
+| 36 | LIST | S→C | |
+| 37 | NOTES | C→S | `count` u32, count × (note id, `title` string, `pages` u32, `headSeq` u32) |
+| 38 | OPEN | S→C | note id, `haveSeq` u32 |
+| 39 | HEAD | C→S | note id, `headSeq` u32, `headHash` 32 |
+| 40 | OP | C→S | note id, the record's log frame (§4.4) |
+| 41 | ACK | S→C | note id, `seq` u32 |
+| 42 | DONE | C→S | note id |
+| 43 | META | S→C | note id, `title` string, `keywords` list, `categories` list, `summary` string, `asOfSeq` u32 |
+| 44 | OPEN-NOTE | S→C | note id, page id; a nil page id = the companion's own choice of page |
+| 45 | LIVE | C→S | note id, page id; both nil = no note live |
+| 46 | INK | C→S | one or more whole §4.3 records |
+
+`REFUSE` reasons: `refused`, `not-offered`, `ahead` (`haveSeq` is past the head),
+`not-foreground`. A companion accepts only `HELLO` before proof, and only `LIST`, `OPEN`, `ACK`,
+`META` and `OPEN-NOTE` after it; anything else drops the link, as does a frame of the wrong
+length: `OPEN-NOTE` is always 1 + 16 + 16 bytes, and one carrying a note id alone is malformed.
+
+### 7.3 Behaviour
+
+- The companion sends `CHALLENGE` on accept.
+- A companion answers a note's requests in the order it reads them: `HEAD` or `REFUSE` for an
+  `OPEN`, `LIVE` or `REFUSE` for an `OPEN-NOTE`. A `REFUSE` names the note and not the request,
+  so that order is how a Sieve tells which request was refused.
+- `OPEN-NOTE` asks the companion to show the note at the page it names. A page the note has: the
+  companion opens the note at it, or turns to it when the note is already in front, and stays
+  put when it is already shown. A nil page id, or a page the note does not have: the companion
+  opens the note at the page it would open it at by itself, and a note already in front does not
+  move.
+- A companion answers every `OPEN-NOTE` it does not refuse with `LIVE` naming the note and the
+  page now shown, also when nothing moved.
+- `LIVE` names the note and page being written, and is sent only for notes this Sieve receives.
+  After it names a note, the Sieve sends `OPEN` with its cursor; committed records then keep
+  following after `DONE` until the note stops being live, and `OPEN` is needed again next time.
+- A Sieve ignores `OP` and `DONE` of a note between sending `OPEN` and receiving its `HEAD` or
+  `REFUSE`.
+- `NOTES.title` is the log header's title. A title one Sieve gave is never sent to another.
+- `META`: title at most 512 bytes, summary 4 KiB, at most 64 terms of 128 bytes. It is dropped if
+  the note was not offered on this connection, over limit, past the known head, or the Sieve's
+  tick is off. An older `asOfSeq` does not replace a newer one.
 
 ## 8. Rendering
 
@@ -270,11 +454,18 @@ rnd = ((z ^ (z >>> 14)) >>> 0) / 2³²
 A band whose keep fraction is ≥ 0.96 (the last) is a solid tile:
 `<pattern …><rect width="96" height="96"/></pattern>`.
 
-**Document.** In paint order: a white background; group `pen`; groups `b0`…`b6`, each filled
+**Document.** In paint order: a white background; group `ruling`, `<g data-ink="ruling">`, holding the
+page's template marks (§6); group `pen`; groups `b0`…`b6`, each filled
 with pattern `ink-b{i}`; group `live`. Each group is `<g data-ink="{name}">`; `pen` carries
 `fill="#000"` and `b{i}` carries `fill="url(#ink-b{i})"`, which every path in it inherits. A
 pen stroke is `<path data-stroke="{id}">`; a pencil stroke is, in each band it touches,
 `<g data-stroke="{id}">` of one `<path>` per chunk.
+
+**Window.** An unbounded page is drawn through a window, a rectangle `x0 < x1`, `y0 < y1` of the
+plane in page units: the `viewBox` is the window in grid units, `x0·1404 y0·1404 (x1−x0)·1404
+(y1−y0)·1404` (each to one decimal), with `width` and `height` its two sizes; the white background
+is a `<rect>` filling exactly that box; and strokes and the ruling are placed on the plane, so they
+do not move when the window does. A fixed page is drawn with no window.
 
 **Path data.** For an outline o₀…oₘ: Douglas–Peucker with tolerance 0.25 grid units, vertices
 snapped to multiples of 0.2 and consecutive duplicates dropped; then `M o₀`, a quadratic with
@@ -284,8 +475,11 @@ relative, in tenths, with no redundant zeros or separators. Fewer than three ver
 nothing.
 
 **Live.** A stroke under the pen is drawn in the `live` group from the points so far: a pen
-stroke exactly as it will commit; a pencil stroke as its chunk outlines in one `#808080` path,
-untoned. At END the live path is replaced by the committed markup.
+stroke exactly as it will commit; a pencil stroke as `<g data-stroke="{id}">` of one `<path>` per
+chunk, each with `fill="url(#ink-b{i})"` of its band, toned from its first points. A chunk all of
+whose points (`max(0, i−1) .. i+10`) have arrived is exactly the outline, in exactly the band, it
+commits with, so it is drawn once and kept; only the last chunk, still growing, may differ. At END
+the live markup is replaced by the committed markup, which draws the same.
 
 ## 9. Conformance set
 

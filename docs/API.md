@@ -42,6 +42,12 @@ alone, so the token appears in no response header.
 | `feature-control` | `protocol.FeatureControlFrame` | — | FeatureControlFrame switches one text-service feature on or off, and says what it is to work with. |
 | `flush` | `protocol.FlushFrame` | — | FlushFrame asks the shadow document to persist now rather than on its debounce. |
 | `focus` | `protocol.FocusFrame` | — | FocusFrame is the dwell ping: the user is looking at this document, which raises its focus count. |
+| `ink-describe` | `protocol.InkDescribeFrame` | `opId` | InkDescribeFrame asks for this channel's Digital Note to be named now: its name, summary, keywords and categories described again from its pages, whether or not they are of the note as it stands. |
+| `ink-open-on-tablet` | `protocol.InkOpenOnTabletFrame` | `opId` | InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it at a page. |
+| `ink-page` | `protocol.InkPageFrame` | `opId` | InkPageFrame asks for one page of this channel's Digital Note as it is drawn now. |
+| `ink-transcribe-page` | `protocol.InkTranscribePageFrame` | `opId` | InkTranscribePageFrame asks for one page of this channel's Digital Note to be transcribed, unless it has a transcript of what it holds now or is being transcribed. |
+| `ink-transcript` | `protocol.InkTranscriptFrame` | `opId` | InkTranscriptFrame asks what is known of the transcript of one page of this channel's Digital Note. |
+| `ink-transcript-document` | `protocol.InkTranscriptDocumentFrame` | `opId` | InkTranscriptDocumentFrame asks for a new document made from the transcript of one page of this channel's Digital Note: an ordinary untitled note holding a copy of the transcript's blocks, linked to nothing. |
 | `load` | `protocol.LoadFrame` | `opId` | LoadFrame asks for the document this channel is bound to, as the editor mounts it. |
 | `paste` | `protocol.PasteFrame` | `opId` | PasteFrame hands a clipboard to the server to make sense of. |
 | `ping` | `protocol.PingFrame` | — | PingFrame is a liveness probe, answered with a PongFrame. |
@@ -55,10 +61,22 @@ alone, so the token appears in no response header.
 |---|---|---|---|
 | `block-attrs-updated` | `protocol.BlockAttrsUpdatedFrame` | — | BlockAttrsUpdatedFrame is the render-back for a block whose attrs the server changed — a finished job's result, a status transition. |
 | `block-op-ack` | `protocol.AckFrame` | `opId` | AckFrame is the request-correlated outcome of a block-op or an extract. |
+| `container-named` | `protocol.ContainerNamedFrame` | — | ContainerNamedFrame is this channel's block container called something else now. |
 | `detect-extractions-result` | `protocol.DetectExtractionsResultFrame` | `opId` | DetectExtractionsResultFrame is one offer per kind that would accept the selection. |
 | `error` | `protocol.ErrorFrame` | — | ErrorFrame reports that an operation failed, in words meant for the user. |
 | `export-content` | `protocol.ExportContentFrame` | `opId` | ExportContentFrame carries the exported document. |
 | `extract-ack` | `protocol.AckFrame` | `opId` | AckFrame is the request-correlated outcome of a block-op or an extract. |
+| `ink-describe-result` | `protocol.InkDescribeResultFrame` | `opId` | InkDescribeResultFrame answers an ink-describe: the job submitted, or a note already being named, when Error is absent. |
+| `ink-live` | `protocol.InkLiveFrame` | — | InkLiveFrame is live records in the order the tablet sent them. |
+| `ink-live-page` | `protocol.InkLivePageFrame` | — | InkLivePageFrame is which page of this channel's note the tablet shows as being written, or that none is, and the Live view that mirrors it. |
+| `ink-log-restarted` | `protocol.InkLogRestartedFrame` | — | InkLogRestartedFrame is the note's log started again from its first record in this channel's container. |
+| `ink-open-on-tablet-result` | `protocol.InkOpenOnTabletResultFrame` | `opId` | InkOpenOnTabletResultFrame answers an ink-open-on-tablet with what came of it, or why it could not be asked. |
+| `ink-page-content` | `protocol.InkPageContentFrame` | `opId` | InkPageContentFrame answers an ink-page: the page in the export shape and the seq of the last record it reflects, or why there is none. |
+| `ink-stroke-added` | `protocol.InkStrokeAddedFrame` | — | InkStrokeAddedFrame is a stroke now present on a page, committed by the record of Seq. |
+| `ink-stroke-removed` | `protocol.InkStrokeRemovedFrame` | — | InkStrokeRemovedFrame is a stroke gone from a page, removed by the record of Seq. |
+| `ink-transcript-changed` | `protocol.InkTranscriptChangedFrame` | — | InkTranscriptChangedFrame is what is known of the transcript of a page of this channel's note now that it has changed: a transcript began, or ended in a transcript kept or in a failure. |
+| `ink-transcript-content` | `protocol.InkTranscriptContentFrame` | `opId` | InkTranscriptContentFrame answers an ink-transcript or an ink-transcribe-page with what is known of the page's transcript, or why there is none to say. |
+| `ink-transcript-document-result` | `protocol.InkTranscriptDocumentResultFrame` | `opId` | InkTranscriptDocumentResultFrame answers an ink-transcript-document with the new document's uuid, or why none was made. |
 | `insert-block` | `protocol.InsertBlockFrame` | — | InsertBlockFrame is the render-back for a block the SERVER created: the client places this authoritative node at this index as a tracked transaction, and never computes a position of its own. |
 | `load-content` | `protocol.LoadContentFrame` | `opId` | LoadContentFrame answers a load. |
 | `markdown-content` | `protocol.MarkdownContentFrame` | `opId` | MarkdownContentFrame is the merged markdown that seeds the markdown editor after a mode switch. |
@@ -80,6 +98,7 @@ alone, so the token appears in no response header.
 | `command` | `protocol.CommandFrame` | `correlationId` | CommandFrame dispatches one slash command. |
 | `command-cancel` | `protocol.CommandCancelFrame` | `correlationId` | CommandCancelFrame cancels an in-flight command by its correlation id. |
 | `feature-control` | `protocol.FeatureControlFrame` | — | FeatureControlFrame switches one text-service feature on or off, and says what it is to work with. |
+| `ink-page-drawn` | `protocol.InkPageDrawnFrame` | `correlationId` | InkPageDrawnFrame answers an ink-draw-page with the page as a PNG, or why it could not be drawn. |
 | `mention-query` | `protocol.MentionQueryFrame` | `correlationId` | MentionQueryFrame is the `@`-picker's typeahead question. |
 | `mention-resolve` | `protocol.MentionResolveFrame` | `correlationId` | MentionResolveFrame asks where a coordinate opens. |
 | `ping` | `protocol.PingFrame` | — | PingFrame is a liveness probe, answered with a PongFrame. |
@@ -94,6 +113,7 @@ alone, so the token appears in no response header.
 | `command-result` | `protocol.CommandResultFrame` | `correlationId` | CommandResultFrame reports one step of a command's lifecycle. |
 | `container-deleted` | `protocol.ContainerDeletedFrame` | — | ContainerDeletedFrame is NEWS, not an instruction: the container it names is already gone from the store, and every workspace socket hears so. |
 | `container-saved` | `protocol.ContainerSavedFrame` | — | ContainerSavedFrame is NEWS: the container it names has just reached disk, and every workspace socket hears so. |
+| `ink-draw-page` | `protocol.InkDrawPageFrame` | `correlationId` | InkDrawPageFrame asks one workspace client to draw a page of a Digital Note as a PNG, and is answered by an ink-page-drawn carrying the same correlation id. |
 | `invalidate` | `protocol.InvalidateFrame` | — | InvalidateFrame tells every connected workspace socket that a subject changed and the views showing it are stale. |
 | `jobs-changed` | `protocol.JobsChangedFrame` | — | JobsChangedFrame broadcasts the whole job snapshot whenever it changes. |
 | `mention-resolved` | `protocol.MentionResolvedFrame` | `correlationId` | MentionResolvedFrame answers "where does this coordinate open" with something the client can ACT on — a document to open, a block to reveal — and never anything it would have to parse. |
@@ -111,6 +131,7 @@ Topic is what an invalidate frame invalidates — the subject a view refetches w
 | `prompts` | the prompt library changed |
 | `library` | the open library changed |
 | `intent` | a document's user_intent changed |
+| `ink` | the ink link, its last session's numbers or the synced notes changed |
 
 ## Frame reference
 
@@ -215,6 +236,65 @@ FocusFrame is the dwell ping: the user is looking at this document, which raises
 |---|---|---|---|
 | `type` | `string` | yes |  |
 
+#### `ink-describe` — client → server
+
+InkDescribeFrame asks for this channel's Digital Note to be named now: its name, summary, keywords and categories described again from its pages, whether or not they are of the note as it stands.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | no | echoed on the ink-describe-result reply |
+
+#### `ink-open-on-tablet` — client → server
+
+InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it at a page.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | no | echoed on the ink-open-on-tablet-result reply |
+| `pageId` | `string` | no | the page to open the note at, as the block's note.pages lists it; absent, or a page the note does not have, leaves the page to the tablet |
+
+#### `ink-page` — client → server
+
+InkPageFrame asks for one page of this channel's Digital Note as it is drawn now.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | no | echoed on the ink-page-content reply |
+| `pageId` | `string` | yes | the page's id, as the block's note.pages lists it |
+
+#### `ink-transcribe-page` — client → server
+
+InkTranscribePageFrame asks for one page of this channel's Digital Note to be transcribed, unless it has a transcript of what it holds now or is being transcribed.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | no | echoed on the ink-transcript-content reply |
+| `pageId` | `string` | yes | the page's id, as the block's note.pages lists it |
+
+#### `ink-transcript` — client → server
+
+InkTranscriptFrame asks what is known of the transcript of one page of this channel's Digital Note.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | no | echoed on the ink-transcript-content reply |
+| `pageId` | `string` | yes | the page's id, as the block's note.pages lists it |
+
+#### `ink-transcript-document` — client → server
+
+InkTranscriptDocumentFrame asks for a new document made from the transcript of one page of this channel's Digital Note: an ordinary untitled note holding a copy of the transcript's blocks, linked to nothing.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | no | echoed on the ink-transcript-document-result reply |
+| `pageId` | `string` | yes | the page whose transcript the document is made from |
+
 #### `load` — client → server
 
 LoadFrame asks for the document this channel is bound to, as the editor mounts it.
@@ -302,6 +382,15 @@ AckFrame is the request-correlated outcome of a block-op or an extract.
 | `ok` | `bool` | yes |  |
 | `error` | `string` | no | present only when ok is false |
 
+#### `container-named` — server → client
+
+ContainerNamedFrame is this channel's block container called something else now.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `name` | `string` | yes | what the container is called now; empty when it has no name |
+
 #### `detect-extractions-result` — server → client
 
 DetectExtractionsResultFrame is one offer per kind that would accept the selection.
@@ -343,6 +432,124 @@ AckFrame is the request-correlated outcome of a block-op or an extract.
 | `ok` | `bool` | yes |  |
 | `error` | `string` | no | present only when ok is false |
 
+#### `ink-describe-result` — server → client
+
+InkDescribeResultFrame answers an ink-describe: the job submitted, or a note already being named, when Error is absent.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | no |  |
+| `error` | `string` | no | present only when nothing was submitted, in words a person can be shown: no AI is configured, the note has no ink, nothing is open that can draw its pages, or ink is unavailable |
+
+#### `ink-live` — server → client
+
+InkLiveFrame is live records in the order the tablet sent them.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `records` | `[]protocol.InkLiveRecord` | yes | never empty |
+
+#### `ink-live-page` — server → client
+
+InkLivePageFrame is which page of this channel's note the tablet shows as being written, or that none is, and the Live view that mirrors it.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `live` | `bool` | yes | false when no page of this note is live any more |
+| `pageId` | `string` | no | the live page; absent when live is false |
+| `view` | `string` | no | the uuid of the Live view mirroring the tablet; absent when live is false |
+
+#### `ink-log-restarted` — server → client
+
+InkLogRestartedFrame is the note's log started again from its first record in this channel's container.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+
+#### `ink-open-on-tablet-result` — server → client
+
+InkOpenOnTabletResultFrame answers an ink-open-on-tablet with what came of it, or why it could not be asked.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | no |  |
+| `outcome` | `string` | no | opened (the tablet shows the note, live) \| no-tablet \| other-tablet (a tablet is connected that the note did not come from) \| refused \| no-answer; absent with error |
+| `reason` | `string` | no | refused only: the tablet's reason, not-foreground (SieveInk is not in front) \| not-offered (the note is not in a folder this Sieve receives) \| another |
+| `error` | `string` | no | present only when nothing was asked: the channel holds no Digital Note from a tablet, or ink is unavailable |
+
+#### `ink-page-content` — server → client
+
+InkPageContentFrame answers an ink-page: the page in the export shape and the seq of the last record it reflects, or why there is none.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | no |  |
+| `pageId` | `string` | yes | the page asked for, echoed |
+| `seq` | `uint32` | yes | the seq of the last record of the note's log the page reflects; 0 when refused |
+| `page` | `*protocol.InkPageExport` | no | the page's strokes in the export shape; null when refused |
+| `error` | `string` | no | present only when there is no page: the channel holds no Digital Note, or the note has no page of that id |
+
+#### `ink-stroke-added` — server → client
+
+InkStrokeAddedFrame is a stroke now present on a page, committed by the record of Seq.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `pageId` | `string` | yes |  |
+| `seq` | `uint32` | yes | the seq of the record that added the stroke |
+| `stroke` | `protocol.InkExportStroke` | yes | the stroke in the export shape a page's strokes take |
+
+#### `ink-stroke-removed` — server → client
+
+InkStrokeRemovedFrame is a stroke gone from a page, removed by the record of Seq.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `pageId` | `string` | yes |  |
+| `seq` | `uint32` | yes | the seq of the record that removed the stroke |
+| `strokeId` | `string` | yes |  |
+
+#### `ink-transcript-changed` — server → client
+
+InkTranscriptChangedFrame is what is known of the transcript of a page of this channel's note now that it has changed: a transcript began, or ended in a transcript kept or in a failure.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `pageId` | `string` | yes |  |
+| `transcript` | `protocol.InkTranscript` | yes |  |
+
+#### `ink-transcript-content` — server → client
+
+InkTranscriptContentFrame answers an ink-transcript or an ink-transcribe-page with what is known of the page's transcript, or why there is none to say.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | no |  |
+| `pageId` | `string` | yes | the page asked of, echoed |
+| `transcript` | `*protocol.InkTranscript` | no | null when refused |
+| `error` | `string` | no | present only when refused: the channel holds no Digital Note, the note has no page of that id, or ink is unavailable |
+
+#### `ink-transcript-document-result` — server → client
+
+InkTranscriptDocumentResultFrame answers an ink-transcript-document with the new document's uuid, or why none was made.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | no |  |
+| `uuid` | `string` | no | the new document; absent with error |
+| `error` | `string` | no | present only when no document was made: the page has no transcript, or ink is unavailable |
+
 #### `insert-block` — server → client
 
 InsertBlockFrame is the render-back for a block the SERVER created: the client places this authoritative node at this index as a tracked transaction, and never computes a position of its own.
@@ -366,6 +573,8 @@ LoadContentFrame answers a load.
 | `body` | `string` | yes | raw markdown, frontmatter already stripped |
 | `mode` | `string` | yes | wysiwyg \| markdown — the mode this document was last in |
 | `uuid` | `string` | yes | empty when nothing was found, which the client treats as an empty document |
+| `kind` | `string` | no | the container's own noun: note \| buffer \| prompt \| a block kind; absent when nothing was found |
+| `name` | `string` | no | what the container is called; absent when it has no name |
 | `scroll` | `int` | yes | the tab's saved scroll offset; 0 parks at the top |
 | `version` | `int` | yes | the version of the content served here; 0 when the container keeps no version history |
 | `presenting` | `bool` | no | the tab was last left in Presentation Mode; absent when it was not |
@@ -507,6 +716,17 @@ FeatureControlFrame switches one text-service feature on or off, and says what i
 | `enabled` | `bool` | yes | the state the feature is being put INTO, not a request to flip |
 | `parameters` | `map[string]interface {}` | no | what the feature is to work with; interpreted by that feature alone |
 
+#### `ink-page-drawn` — client → server
+
+InkPageDrawnFrame answers an ink-draw-page with the page as a PNG, or why it could not be drawn.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `correlationId` | `string` | yes | the ink-draw-page's, echoed |
+| `png` | `string` | no | the image, base64; absent with error |
+| `error` | `string` | no | present only when the page could not be drawn |
+
 #### `mention-query` — client → server
 
 MentionQueryFrame is the `@`-picker's typeahead question.
@@ -596,6 +816,20 @@ ContainerSavedFrame is NEWS: the container it names has just reached disk, and e
 | `uuid` | `string` | yes | the container whose content just reached disk |
 | `version` | `int` | yes | the document version this save produced; 0 when the container keeps no version history |
 
+#### `ink-draw-page` — server → client
+
+InkDrawPageFrame asks one workspace client to draw a page of a Digital Note as a PNG, and is answered by an ink-page-drawn carrying the same correlation id.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `correlationId` | `string` | yes | echoed on the ink-page-drawn answer |
+| `container` | `string` | yes | the uuid of the note's block container |
+| `pageId` | `string` | yes | the page's id, as the block's note.pages lists it |
+| `pageKey` | `string` | yes | the hash of what is on the page, which the image is kept under |
+| `bounds` | `string` | yes | fixed \| unbounded |
+| `page` | `protocol.InkPageExport` | yes | the page in the export shape |
+
 #### `invalidate` — server → client
 
 InvalidateFrame tells every connected workspace socket that a subject changed and the views showing it are stale.
@@ -662,6 +896,11 @@ inventory below instead.
 | `DELETE /api/document/{uuid}/asset/{key}` | none | AssetDeleteRequest deletes one asset of a document, irreversibly: {uuid} is the document and {key} the asset's key, path-escaped. |
 | `POST /api/folder` | fragment | FolderCreateRequest makes a new folder. |
 | `PATCH /api/folder/{id}` | fragment | FolderPatchRequest changes a folder's properties. |
+| `GET /api/ink/live/note` | json | InkLiveNoteRequest asks which synced Digital Note the Live view mirrors. |
+| `POST /api/ink/notes/{uuid}/describe` | none | InkDescribeRequest names a synced Digital Note now: {uuid} is the note's block container, and its name, summary, keywords and categories are described again from its pages, whether or not they are of the note as it stands. |
+| `POST /api/ink/notes/{uuid}/open-on-tablet` | json | InkOpenOnTabletRequest asks the tablet a synced Digital Note came from to open it, leaving the page to the tablet: {uuid} is the note's block container. |
+| `GET /api/ink/notes/{uuid}/pages/{page}/export` | json | InkPageExportRequest reads one page of a synced Digital Note in the export shape of docs/ink-contract.md §4.2: {uuid} is the note's block container and {page} the page's index among the pages present, from 0. |
+| `GET /api/ink/notes/{uuid}/pages/{page}/image` | image | InkPageImageRequest reads one page of a synced Digital Note as a PNG, drawn by the app's window when no image of the page as it stands is kept: {uuid} is the note's block container and {page} the page's index among the pages present, from 0. |
 | `PATCH /api/note/{id}` | fragment | NotePatchRequest changes a note's properties. |
 | `POST /api/tabs/close` | fragment | TabsCloseRequest closes every listed tab — the ONE close mechanism. |
 
@@ -677,13 +916,15 @@ DocumentLoadRequest reads a channel-less pseudo-document's content.
 
 **Response** — `protocol.DocumentContent`
 
-DocumentContent is a document as the editor mounts it: the buffer, the mode it was last in, and — in WYSIWYG — the block list it renders from.
+DocumentContent is a container as the editor mounts it: for a document the buffer, the mode it was last in, and — in WYSIWYG — the block list it renders from; for a block container its one block.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
 | `body` | `string` | yes | raw markdown, frontmatter already stripped |
 | `mode` | `string` | yes | wysiwyg \| markdown — the mode this document was last in |
 | `uuid` | `string` | yes | empty when nothing was found, which the client treats as an empty document |
+| `kind` | `string` | no | the container's own noun: note \| buffer \| prompt \| a block kind; absent when nothing was found |
+| `name` | `string` | no | what the container is called; absent when it has no name |
 | `scroll` | `int` | yes | the tab's saved scroll offset; 0 parks at the top |
 | `version` | `int` | yes | the version of the content served here; 0 when the container keeps no version history |
 | `presenting` | `bool` | no | the tab was last left in Presentation Mode; absent when it was not |
@@ -749,6 +990,75 @@ FolderPatchRequest changes a folder's properties.
 | `open` | `*bool` | no | whether the folder is expanded in the tree; absent leaves it alone |
 
 **Response** — HTML for HTMX to swap in; the template is its contract.
+
+### `GET /api/ink/live/note`
+
+**Request** — `protocol.InkLiveNoteRequest`
+
+InkLiveNoteRequest asks which synced Digital Note the Live view mirrors.
+
+**Response** — `protocol.InkLiveNoteResponse`
+
+InkLiveNoteResponse names the note the Live view mirrors.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `note` | `string` | yes | the uuid of the block container holding the mirrored note; empty when there is no Live view or no container holds its note yet |
+
+### `POST /api/ink/notes/{uuid}/describe`
+
+Path parameters: `uuid`
+
+**Request** — `protocol.InkDescribeRequest`
+
+InkDescribeRequest names a synced Digital Note now: {uuid} is the note's block container, and its name, summary, keywords and categories are described again from its pages, whether or not they are of the note as it stands.
+
+**Response** — 204, or a body no caller reads.
+
+### `POST /api/ink/notes/{uuid}/open-on-tablet`
+
+Path parameters: `uuid`
+
+**Request** — `protocol.InkOpenOnTabletRequest`
+
+InkOpenOnTabletRequest asks the tablet a synced Digital Note came from to open it, leaving the page to the tablet: {uuid} is the note's block container.
+
+**Response** — `protocol.InkOpenOnTabletResponse`
+
+InkOpenOnTabletResponse is what came of an InkOpenOnTabletRequest.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `outcome` | `string` | yes | opened \| no-tablet \| other-tablet \| refused \| no-answer, as ink-open-on-tablet-result names them |
+| `reason` | `string` | no | refused only: the tablet's reason, not-foreground \| not-offered \| another |
+| `message` | `string` | yes | what came of it, in words a person can be shown |
+
+### `GET /api/ink/notes/{uuid}/pages/{page}/export`
+
+Path parameters: `uuid`, `page`
+
+**Request** — `protocol.InkPageExportRequest`
+
+InkPageExportRequest reads one page of a synced Digital Note in the export shape of docs/ink-contract.md §4.2: {uuid} is the note's block container and {page} the page's index among the pages present, from 0.
+
+**Response** — `protocol.InkPageExport`
+
+InkPageExport is one page of a Digital Note as the ink renderer takes it: the note's header and the page's strokes in the order they were added.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `note` | `protocol.InkExportNote` | yes |  |
+| `strokes` | `[]protocol.InkExportStroke` | yes |  |
+
+### `GET /api/ink/notes/{uuid}/pages/{page}/image`
+
+Path parameters: `uuid`, `page`
+
+**Request** — `protocol.InkPageImageRequest`
+
+InkPageImageRequest reads one page of a synced Digital Note as a PNG, drawn by the app's window when no image of the page as it stands is kept: {uuid} is the note's block container and {page} the page's index among the pages present, from 0.
+
+**Response** — a PNG, image/png.
 
 ### `PATCH /api/note/{id}`
 
@@ -910,6 +1220,95 @@ CommandBlock is a block as the command wire carries it, in either direction: the
 | `kind` | `string` | yes |  |
 | `attrs` | `map[string]interface {}` | yes |  |
 
+### `protocol.InkExportDevice`
+
+InkExportDevice is the tablet the note was written on.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `id` | `string` | yes |  |
+| `name` | `string` | yes |  |
+| `model` | `string` | yes |  |
+
+### `protocol.InkExportNote`
+
+InkExportNote is the header of the note a page belongs to.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `id` | `string` | yes | the companion's note id |
+| `created` | `string` | yes | RFC 3339 in UTC |
+| `title` | `string` | yes |  |
+| `pageAspect` | `float32` | yes | page width over page height |
+| `template` | `*protocol.InkExportTemplate` | no | the note's default page template; null when it has none |
+| `device` | `protocol.InkExportDevice` | yes |  |
+
+### `protocol.InkExportPoint`
+
+InkExportPoint is one sampled pen point, in page units.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `x` | `float32` | yes |  |
+| `y` | `float32` | yes |  |
+| `pressure` | `float32` | yes | 0 to 1 |
+| `tMillis` | `uint32` | yes | milliseconds from the stroke's first point |
+| `tiltX` | `int8` | yes |  |
+| `tiltY` | `int8` | yes |  |
+| `size` | `float32` | yes | always 0 in an export |
+
+### `protocol.InkExportStroke`
+
+InkExportStroke is one stroke on the page.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `id` | `string` | yes |  |
+| `tool` | `string` | yes |  |
+| `widthClass` | `uint8` | yes |  |
+| `startMillis` | `uint64` | yes | milliseconds since the note's created |
+| `points` | `[]protocol.InkExportPoint` | yes |  |
+
+### `protocol.InkExportTemplate`
+
+InkExportTemplate is a page template: its id and its parameters by name.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `id` | `string` | yes |  |
+| `params` | `map[string]float64` | yes |  |
+
+### `protocol.InkLiveRecord`
+
+InkLiveRecord is one record about the stroke under the pen on the live page, or about the window a whiteboard is viewed through, in page units.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `record` | `string` | yes | begin \| point \| end \| remove \| view |
+| `stroke` | `uint32` | yes | numbers the stroke within one connection to the tablet, not its id; 0 on a view |
+| `tool` | `string` | no | begin only: pen \| pencil |
+| `widthClass` | `uint8` | no | begin only: 1, 2 or 3 |
+| `x` | `float64` | yes | page units: a begin's origin, a point's place, a view's left edge; 0 otherwise |
+| `y` | `float64` | yes | page units: a begin's origin, a point's place, a view's top edge; 0 otherwise |
+| `pressure` | `float64` | yes | point only: 0 to 1 |
+| `tMillis` | `uint32` | yes | point only: milliseconds since its stroke's begin |
+| `tiltX` | `int8` | yes | point only: degrees |
+| `tiltY` | `int8` | yes | point only: degrees |
+
+### `protocol.InkTranscript`
+
+InkTranscript is what is known of the transcript of one page.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `state` | `string` | yes | none \| ready (a transcript of the page as it is now) \| stale (a transcript of the page as it was before it changed) |
+| `key` | `string` | no | the page key the transcript is of; absent with none |
+| `blocks` | `[]block.FrontendBlock` | no | the transcript, in the page's order, in the shape a load's blocks take; absent with none |
+| `running` | `bool` | yes | a transcript of the page is under way |
+| `available` | `bool` | yes | false while nothing can transcribe a page |
+| `unavailable` | `string` | no | why nothing can transcribe a page; present only when available is false |
+| `failed` | `string` | no | what went wrong the last time the page was transcribed; absent when nothing did |
+
 ### `protocol.JobsSnapshot`
 
 JobsSnapshot is every job the UI can see, in insertion order.
@@ -981,6 +1380,9 @@ or another protocol's own transport.
 | `DELETE` | `/mcp` | — |
 | `GET` | `/` | — |
 | `GET` | `/api/document/load` | typed (json) |
+| `GET` | `/api/ink/live/note` | typed (json) |
+| `GET` | `/api/ink/notes/{uuid}/pages/{page}/export` | typed (json) |
+| `GET` | `/api/ink/notes/{uuid}/pages/{page}/image` | typed (image) |
 | `GET` | `/api/ws/document/{uuid}` | WebSocket channel |
 | `GET` | `/api/ws/workspace` | WebSocket channel |
 | `GET` | `/mcp` | — |
@@ -1001,17 +1403,23 @@ or another protocol's own transport.
 | `GET` | `/ui/views/search/dialog` | — |
 | `GET` | `/ui/views/session/layout` | — |
 | `GET` | `/ui/views/settings` | — |
+| `GET` | `/ui/views/settings/ink` | — |
 | `GET` | `/ui/views/sidebar` | — |
 | `GET` | `/ui/views/sidebar/dialog/{kind}` | — |
+| `GET` | `/ui/views/sidebar/ink` | — |
 | `GET` | `/ui/views/sidebar/search` | — |
 | `GET` | `/ui/views/tabs` | — |
 | `PATCH` | `/api/folder/{id}` | typed (fragment) |
 | `PATCH` | `/api/note/{id}` | typed (fragment) |
+| `POST` | `/api/container/open/{id}` | — |
 | `POST` | `/api/document/save` | typed (json) |
 | `POST` | `/api/folder` | typed (fragment) |
+| `POST` | `/api/ink/enabled` | — |
+| `POST` | `/api/ink/key` | — |
+| `POST` | `/api/ink/notes/{uuid}/describe` | typed (none) |
+| `POST` | `/api/ink/notes/{uuid}/open-on-tablet` | typed (json) |
 | `POST` | `/api/meta/restore` | — |
 | `POST` | `/api/note` | — |
-| `POST` | `/api/note/open/{id}` | — |
 | `POST` | `/api/session/layout` | — |
 | `POST` | `/api/session/toggle/{panel}` | — |
 | `POST` | `/api/settings` | — |

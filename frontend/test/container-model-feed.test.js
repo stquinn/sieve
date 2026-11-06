@@ -30,14 +30,15 @@ function feedRig(uuid = 'doc-1') {
   return Object.assign({ feed, model }, rig)
 }
 
-/** Drives a load round trip with the given raw wire blocks.
- *  @param {any} rig @param {object[]} blocks */
-async function driveLoad(rig, blocks) {
+/** Drives a load round trip with the given raw wire blocks, the container called name.
+ *  @param {any} rig @param {object[]} blocks @param {string} [name] */
+async function driveLoad(rig, blocks, name = 'Kitchen notes') {
   const pending = rig.documentService.load(rig.uuid)
   rig.sock.driveMessage({
     type: DocumentFrame.LOAD_CONTENT,
     opId: lastOpId(rig.sock, DocumentFrame.LOAD),
     uuid: rig.uuid,
+    name: name,
     body: '',
     mode: 'wysiwyg',
     blocks: blocks,
@@ -68,6 +69,7 @@ describe('ContainerModelFeed', () => {
     ])
     expect(rig.model.getOrder()).toEqual(['p1', 'c1'])
     expect(rig.model.getBlock('c1')).toEqual({ id: 'c1', kind: 'code', attrs: { source: 'x=1', id: 'c1' } })
+    expect(rig.model.getName()).toBe('Kitchen notes')
   })
 
   it('re-seeds from the enter-wysiwyg reparse, which is a whole-container answer too', async () => {
@@ -83,9 +85,11 @@ describe('ContainerModelFeed', () => {
     })
     await pending
 
-    // A whole-container answer is a RESET: p1 is not in it, so it is gone.
+    // A whole-container answer is a RESET: p1 is not in it, so it is gone. It says
+    // nothing of the name, which is kept.
     expect(rig.model.getOrder()).toEqual(['p9'])
     expect(rig.model.getBlock('p1')).toBeNull()
+    expect(rig.model.getName()).toBe('Kitchen notes')
   })
 
   it('folds every mutation echo the wire delivers — including the two the old editor path dropped', async () => {

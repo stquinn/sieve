@@ -2,6 +2,7 @@ package processors
 
 import (
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"testing"
 )
 
@@ -10,7 +11,7 @@ import (
 // is owned in ONE place rather than swept after the fact. (Go has no enforced
 // constructors; this factory + the serialize-time guard are the idiomatic teeth.)
 func TestNewSieveBlock_MintsWhenNoID(t *testing.T) {
-	b := block.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": "hello"})
+	b := domain.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": "hello"})
 	if b.ID == "" {
 		t.Fatalf("expected a minted id, got empty")
 	}
@@ -20,7 +21,7 @@ func TestNewSieveBlock_MintsWhenNoID(t *testing.T) {
 }
 
 func TestNewSieveBlock_KeepsGivenID(t *testing.T) {
-	b := block.NewSieveBlock(block.KindProse, "pr-given", map[string]interface{}{"content": "hi"})
+	b := domain.NewSieveBlock(block.KindProse, "pr-given", map[string]interface{}{"content": "hi"})
 	if b.ID != "pr-given" {
 		t.Fatalf("id = %q, want the supplied %q", b.ID, "pr-given")
 	}
@@ -30,7 +31,7 @@ func TestNewSieveBlock_KeepsGivenID(t *testing.T) {
 // block (the runtime backstop behind the factory). A block built by a rogue path
 // that bypassed the factory can never reach disk silently.
 func TestSerialize_RefusesIdlessProse(t *testing.T) {
-	doc := []block.SieveBlock{{Kind: block.KindProse, Attrs: map[string]interface{}{"content": "x"}}} // bypasses the factory
+	doc := []domain.SieveBlock{{Kind: block.KindProse, Attrs: map[string]interface{}{"content": "x"}}} // bypasses the factory
 	if _, err := block.NewDocumentCodec(block.GlobalRegistry()).Serialize(doc); err == nil {
 		t.Fatalf("expected an error refusing to persist an id-less prose block")
 	}
@@ -100,9 +101,9 @@ func TestBlockDoc_RoundTripStable(t *testing.T) {
 	// (Stage B.1) preserves the block count through the round-trip. Only kinds
 	// with a registered processor (prose, code) stay structured through the codec;
 	// processor-less kinds coalesce to prose, so they are not exercised here.
-	doc := []block.SieveBlock{
+	doc := []domain.SieveBlock{
 		(ProseProcessor{}).newProseBlock("pr-1", "# Title"),
-		block.NewSieveBlock("code", "co-1", map[string]interface{}{"id": "co-1", "source": "x = 1"}),
+		domain.NewSieveBlock("code", "co-1", map[string]interface{}{"id": "co-1", "source": "x = 1"}),
 		(ProseProcessor{}).newProseBlock("pr-2", "Between."),
 		(ProseProcessor{}).newProseBlock("pr-3", "Tail."),
 	}

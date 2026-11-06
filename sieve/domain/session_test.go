@@ -67,3 +67,45 @@ func TestParseSession_AskPanelHeight(t *testing.T) {
 		t.Fatalf("expected AskPanelHeight=360, got %d", set.AskPanelHeight)
 	}
 }
+
+// A tab's kind round-trips, and a session.json predating the field reads as
+// before: a prompt id is a prompt, any other tab a document of its filed status.
+func TestTab_ContainerKind(t *testing.T) {
+	round := ParseSession(mustMarshal(t, Session{Tabs: []Tab{{ID: "c-1", Kind: "code"}}}))
+	if got := round.Tabs[0].ContainerKind(); got != "code" {
+		t.Fatalf("round-tripped kind = %q, want code", got)
+	}
+
+	legacy := ParseSession([]byte(`{"tabs": [
+		{"id": "prompt:file", "mode": "markdown", "status": "filed"},
+		{"id": "doc-1", "mode": "wysiwyg", "status": "filed"},
+		{"id": "doc-2", "mode": "wysiwyg", "status": "unfiled"},
+		{"id": "doc-3", "mode": "wysiwyg"}
+	]}`))
+	for i, want := range []struct {
+		kind     string
+		document bool
+	}{
+		{TabKindPrompt, false},
+		{string(KindNote), true},
+		{string(KindBuffer), true},
+		{string(KindBuffer), true},
+	} {
+		tab := legacy.Tabs[i]
+		if tab.ContainerKind() != want.kind || tab.IsDocument() != want.document || legacy.ShowsNonDocument(tab.ID) == want.document {
+			t.Errorf("%s: kind %q document %v, want %q %v", tab.ID, tab.ContainerKind(), tab.IsDocument(), want.kind, want.document)
+		}
+	}
+	if legacy.ShowsNonDocument("no-such-tab") || !round.ShowsNonDocument("c-1") {
+		t.Error("ShowsNonDocument: a tab nobody has open is not a non-document; a code tab is one")
+	}
+}
+
+func mustMarshal(t *testing.T, s Session) []byte {
+	t.Helper()
+	data, err := s.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	return data
+}

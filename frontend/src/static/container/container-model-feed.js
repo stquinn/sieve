@@ -75,12 +75,13 @@ export class ContainerModelFeed {
   /**
    * The load answer as the model's ContainerContent. Go answers load-content and
    * wysiwyg-content from one assembly, so both already carry `blocks`; only the uuid
-   * field differs, and a shape carrying neither seeds by position alone.
+   * field differs, and a shape carrying neither seeds by position alone. Only the
+   * load carries the name.
    * @param {Record<string, any>} content
    * @returns {import('./container-model.js').ContainerContent}
    */
   #asContent(content) {
     const c = content || {}
-    return { uuid: c.uuid, blocks: c.blocks || [] }
+    return { uuid: c.uuid, name: c.name, blocks: c.blocks || [] }
   }
 }

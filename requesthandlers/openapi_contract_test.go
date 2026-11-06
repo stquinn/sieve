@@ -12,6 +12,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"sieve/sieve/ink"
+	"sieve/sieve/ink/link"
 	"sieve/sieve/protocol"
 )
 
@@ -384,6 +386,7 @@ func TestOpenAPI_PublishesEveryRegisteredEndpointInItsDeclaredKind(t *testing.T)
 	want := map[protocol.ResponseKind]string{
 		protocol.ResponseJSON:     "application/json",
 		protocol.ResponseFragment: "text/html",
+		protocol.ResponseImage:    "image/png",
 	}
 	for _, entry := range protocol.NewRegistry().Endpoints() {
 		media, published := want[entry.ResponseKind]
@@ -393,6 +396,57 @@ func TestOpenAPI_PublishesEveryRegisteredEndpointInItsDeclaredKind(t *testing.T)
 		if got := contract.mediaTypes(t, entry.Method, entry.Path); len(got) != 1 || got[0] != media {
 			t.Errorf("%s %s answers %s, but the spec publishes %v",
 				entry.Method, entry.Path, entry.ResponseKind, got)
+		}
+	}
+}
+
+// The export of a synced note's page is the InkPageExport the spec publishes, and a container or
+// page the note does not have is a 404.
+func TestOpenAPI_InkPageExportAnswersWhatItPublishes(t *testing.T) {
+	contract := loadOpenAPIContract(t)
+	srv, sp := newInkServer(t)
+	note, pg := link.ID{1, 0x9a, 6: 0x70, 8: 0x80, 15: 1}, link.ID{1, 0x9a, 6: 0x70, 8: 0x80, 15: 2}
+	var jsonl []byte
+	for _, rec := range []link.Record{
+		{Seq: 1, Op: link.OpNoteHeader, Note: note, CreatedMillis: 1_700_000_000_000, Title: "Ideas", PageAspect: 0.75,
+			Template: &link.Template{ID: "ruled", Params: []link.TemplateParam{{Name: "spacing", Value: 0.05}}},
+			Device:   link.Device{ID: "d", Name: "Note Air 2", Model: "ONYX"}},
+		{Seq: 2, Op: link.OpPageAdd, Page: pg, Bounds: link.BoundsFixed},
+		{Seq: 3, Op: link.OpStrokeAdd, Page: pg, Stroke: note, Tool: link.ToolPen, WidthClass: 2, StartMillis: 5,
+			Points: []link.Point{{X: 0.25, Y: 0.5, Pressure: 0.75}}},
+	} {
+		line, err := rec.JSONLine()
+		if err != nil {
+			t.Fatal(err)
+		}
+		jsonl = append(jsonl, line...)
+	}
+	c, err := sp.Containers.Create(ink.KindDigitalNote, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sp.Containers.SaveAsset(c, ink.StrokesKey, jsonl); err != nil {
+		t.Fatal(err)
+	}
+
+	pattern := "/api/ink/notes/{uuid}/pages/{page}/export"
+	status, media, body := answer(t, http.MethodGet, srv.URL+"/api/ink/notes/"+c.UUID()+"/pages/0/export", "", "")
+	if status != http.StatusOK || !strings.HasPrefix(media, "application/json") {
+		t.Fatalf("status %d, %s: %s", status, media, body)
+	}
+	var decoded interface{}
+	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+		t.Fatalf("the answer is not JSON: %v", err)
+	}
+	contract.validate(t, "InkPageExport", contract.responseSchema(t, http.MethodGet, pattern, "application/json"), decoded)
+
+	for _, path := range []string{
+		"/api/ink/notes/0199aaaa-0000-7000-8000-000000000000/pages/0/export",
+		"/api/ink/notes/" + c.UUID() + "/pages/1/export",
+		"/api/ink/notes/" + c.UUID() + "/pages/first/export",
+	} {
+		if status, _, body := answer(t, http.MethodGet, srv.URL+path, "", ""); status != http.StatusNotFound {
+			t.Errorf("%s: %d %s", path, status, body)
 		}
 	}
 }

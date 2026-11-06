@@ -145,7 +145,7 @@ func newConfluenceGenerator() *ConfluenceGenerator {
 // RenderBlock renders one exported block as storage format: a code, log or
 // diagram block as its macro, anything else by rendering its markdown. A block
 // whose markdown is empty renders empty.
-func (g *ConfluenceGenerator) RenderBlock(b SieveBlock, markdown string) string {
+func (g *ConfluenceGenerator) RenderBlock(b domain.SieveBlock, markdown string) string {
 	if strings.TrimSpace(markdown) == "" {
 		return ""
 	}
@@ -153,7 +153,7 @@ func (g *ConfluenceGenerator) RenderBlock(b SieveBlock, markdown string) string 
 }
 
 // renderKind is RenderBlock's kind switch, before the body is made XML-safe.
-func (g *ConfluenceGenerator) renderKind(b SieveBlock, markdown string) string {
+func (g *ConfluenceGenerator) renderKind(b domain.SieveBlock, markdown string) string {
 	source, _ := b.Attrs["source"].(string)
 	switch b.Kind {
 	case "code":

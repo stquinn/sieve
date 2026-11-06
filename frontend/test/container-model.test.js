@@ -52,6 +52,23 @@ describe('ContainerModel construction', () => {
   })
 })
 
+describe('ContainerModel name', () => {
+  it('is what the load says, kept by an answer that does not say, and changed by a container-named frame', () => {
+    const model = new ContainerModel('doc-1', 'digital-note')
+    expect(model.getName()).toBe('')
+    model.applyLoad({ uuid: 'doc-1', name: 'Untitled 05/11', blocks: [] })
+    expect(model.getName()).toBe('Untitled 05/11')
+    model.applyLoad({ uuid: 'doc-1', blocks: [] })
+    expect(model.getName()).toBe('Untitled 05/11')
+    /** @type {any[]} */ const seen = []
+    model.subscribe({ onChanged: (change) => seen.push(change) })
+    model.applyFrame({ type: 'container-named', name: 'Kitchen extension planning' })
+    model.applyFrame({ type: 'container-named', name: 'Kitchen extension planning' })
+    expect(model.getName()).toBe('Kitchen extension planning')
+    expect(seen.slice(1)).toEqual([{ blockIds: [], orderChanged: false, replaced: [] }])
+  })
+})
+
 describe('ContainerModel.applyLoad', () => {
   it('seeds order and nodes from the load answer', () => {
     const model = seeded()

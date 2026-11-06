@@ -175,3 +175,73 @@ func TestModuleVersions_Of(t *testing.T) {
 		})
 	}
 }
+
+// A target's environment replaces GOFLAGS outright, so the package set is
+// resolved from the target's own tags and nothing ambient.
+func TestBuildTarget_Env(t *testing.T) {
+	cases := []struct {
+		name   string
+		target BuildTarget
+		want   []string
+	}{
+		{"darwin with cgo", BuildTarget{GOOS: "darwin", GOARCH: "arm64", Cgo: true, Tags: []string{"desktop", "production"}},
+			[]string{"GOOS=darwin", "GOARCH=arm64", "CGO_ENABLED=1", "GOFLAGS=-tags=desktop,production"}},
+		{"linux without cgo", BuildTarget{GOOS: "linux", GOARCH: "amd64", Tags: []string{"webkit2_41"}},
+			[]string{"GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0", "GOFLAGS=-tags=webkit2_41"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := strings.Join(c.target.Env(), " "); got != strings.Join(c.want, " ") {
+				t.Errorf("Env() = %q, want %q", got, strings.Join(c.want, " "))
+			}
+		})
+	}
+}
+
+// Every shipped target must resolve under its own name, or two targets would
+// share a license-text directory and one would overwrite the other.
+func TestShippedTargets_NamesAreUnique(t *testing.T) {
+	seen := map[string]bool{}
+	for _, target := range shippedTargets {
+		if seen[target.Name()] {
+			t.Errorf("duplicate target %q", target.Name())
+		}
+		seen[target.Name()] = true
+	}
+}
+
+// The library set is the union of the targets' reports: a row seen first keeps
+// its text directory, malformed rows and Sieve's own packages are dropped, and
+// the result is name-ordered.
+func TestLibrarySet_AddUnionsReports(t *testing.T) {
+	linux := "golang.org/x/net/html,https://x,BSD-3-Clause\nsieve,Unknown,Unknown\ngithub.com/a/b,https://x,MIT\n"
+	darwin := "github.com/a/b,https://x,MIT\ngithub.com/tinygo-org/cbgo,https://x,Apache-2.0\nmalformed row\n"
+
+	set := LibrarySet{}
+	set.Add(linux, "linux-dir")
+	set.Add(darwin, "darwin-dir")
+
+	var got []string
+	for _, l := range set.Sorted() {
+		got = append(got, l.Name+"|"+l.License+"|"+l.TextDir)
+	}
+	want := []string{
+		"github.com/a/b|MIT|linux-dir",
+		"github.com/tinygo-org/cbgo|Apache-2.0|darwin-dir",
+		"golang.org/x/net/html|BSD-3-Clause|linux-dir",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// The gate sees every platform's set because it runs over the unioned entries.
+func TestCopyleftGate_FailsOnAnyEntry(t *testing.T) {
+	g := &Generator{}
+	if err := g.copyleftGate([]Entry{{Name: "m", License: "MIT"}, {Name: "darwin-only", License: "GPL-3.0", Source: "go"}}); err == nil {
+		t.Error("a copyleft entry must fail the gate")
+	}
+	if err := g.copyleftGate([]Entry{{Name: "WebKitGTK", License: "LGPL-2.1", Source: "system"}}); err != nil {
+		t.Errorf("system mentions are exempt: %v", err)
+	}
+}

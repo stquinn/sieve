@@ -5,24 +5,25 @@ import (
 	"testing"
 
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 )
 
 // questionElements builds a question composed of a target reference and the
 // authored text — the two element shapes an ai-block holds.
-func questionElements() block.Elements {
-	return block.Elements{
-		block.NewSieveBlock("reference", "0198a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a01", map[string]interface{}{
+func questionElements() domain.Elements {
+	return domain.Elements{
+		domain.NewSieveBlock("reference", "0198a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a01", map[string]interface{}{
 			"uri": "sieve://0197b1f4-1111-7222-8333-444455556666/0197b1f4-2222-7222-8333-444455556666",
 			"rel": "target",
 		}),
-		block.NewSieveBlock(block.KindProse, "0198a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a02", map[string]interface{}{
+		domain.NewSieveBlock(block.KindProse, "0198a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a02", map[string]interface{}{
 			"content": "What does this mean?",
 		}),
 	}
 }
 
-func aiBlockWithQuestion() block.SieveBlock {
-	blk := block.NewSieveBlock("ai-block", "0197b1f4-0000-7888-8999-aaaabbbbcccc", map[string]interface{}{
+func aiBlockWithQuestion() domain.SieveBlock {
+	blk := domain.NewSieveBlock("ai-block", "0197b1f4-0000-7888-8999-aaaabbbbcccc", map[string]interface{}{
 		"type": "ASK",
 	})
 	blk.SetElements(block.QuestionAttr, questionElements())
@@ -69,7 +70,7 @@ func TestAIBlock_ChildrenAreLive(t *testing.T) {
 
 func TestAIBlock_ChildrenOfAQuestionlessBlock(t *testing.T) {
 	p := &AIBlockProcessor{}
-	blk := block.NewSieveBlock("ai-block", "ai-1", map[string]interface{}{"type": "ASK"})
+	blk := domain.NewSieveBlock("ai-block", "ai-1", map[string]interface{}{"type": "ASK"})
 	if got := p.Children(&blk); got != nil {
 		t.Errorf("Children = %v for a block holding no question", got)
 	}
@@ -111,9 +112,9 @@ func TestAIBlock_QuestionElementsRoundTripThroughTheFence(t *testing.T) {
 func TestAIBlock_QuestionElementCannotCloseTheParentFence(t *testing.T) {
 	p := NewAIBlockProcessor(block.BlockServices{})
 	const authored = "Why does this fail?\n\n```go\nfunc main() {}\n```\n"
-	blk := block.NewSieveBlock("ai-block", "ai-1", map[string]interface{}{"type": "ASK"})
-	blk.SetElements(block.QuestionAttr, block.Elements{
-		block.NewSieveBlock(block.KindProse, "el-1", map[string]interface{}{"content": authored}),
+	blk := domain.NewSieveBlock("ai-block", "ai-1", map[string]interface{}{"type": "ASK"})
+	blk.SetElements(block.QuestionAttr, domain.Elements{
+		domain.NewSieveBlock(block.KindProse, "el-1", map[string]interface{}{"content": authored}),
 	})
 
 	fence, err := p.Serialize(blk)

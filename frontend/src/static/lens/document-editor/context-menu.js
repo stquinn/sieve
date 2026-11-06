@@ -1,6 +1,6 @@
 // Single source of truth for all context menus. Components fire 'sieve:contextmenu'
 // with { x, y, context } in the detail; context.type must be one of
-// 'editor' | 'sieveBlock' | 'aiBlock' | 'note' | 'folder' | 'prompt'.
+// 'editor' | 'sieveBlock' | 'aiBlock' | 'note' | 'folder' | 'prompt' | 'tab'.
 import { applyTargetHighlight } from '../extensions.js'
 import { NodeViewRegistry, detectAndAppendExtractions } from './surfaces/sieve-block-extension.js'
 import { enclosingBlockId } from './surfaces/block-position.js'
@@ -937,6 +937,77 @@ import { selectNextScope } from './interaction-policy.js'
     return items
   }
 
+  // A tab whose container is neither a document nor a prompt: only the tab's own
+  // verbs apply to it.
+  function buildTabItems(ctx) {
+    var items = []
+    if (ctx.name) items.push({ type: 'header', label: ctx.name })
+    return items.concat(tabItems(ctx.id))
+  }
+
+  // Says text in the status bar, as an error when `error` is set.
+  function sayStatus(text, error) {
+    document.dispatchEvent(new CustomEvent('sieve:status-message', { detail: { text: text, error: !!error } }))
+  }
+
+  // POSTs to a notebook's action route and resolves its response; a failure
+  // rejects with the plain-text body the route answers.
+  function notebookRequest(url) {
+    return fetch(url, { method: 'POST' }).then(function (res) {
+      if (res.ok) return res
+      return res.text().then(function (text) { throw new Error(text.trim() || 'The request failed') })
+    })
+  }
+
+  function notebookActions(id, name) {
+    var called = name || 'the notebook'
+    return [
+      { icon: IC.externalLink, label: 'Open on device', action: function () {
+        sayStatus('Opening ' + called + ' on the tablet…')
+        notebookRequest('/api/ink/notes/' + id + '/open-on-tablet')
+          .then(function (res) { return res.json() })
+          .then(function (answer) { sayStatus(answer.message, answer.outcome !== 'opened') })
+          .catch(function (err) { sayStatus(err.message, true) })
+      }},
+      { icon: IC.refresh, label: 'Refresh name and summary', action: function () {
+        notebookRequest('/api/ink/notes/' + id + '/describe')
+          .then(function () { sayStatus('Naming ' + called + '…') })
+          .catch(function (err) { sayStatus(err.message, true) })
+      }},
+    ]
+  }
+
+  // A synced notebook, as a row of the tree or as a tab: its own actions, and on
+  // a tab every tab's verbs. Nothing folder-like acts on it.
+  function buildNotebookItems(ctx) {
+    var items = []
+    if (ctx.name) items.push({ type: 'header', label: ctx.name })
+    if (!ctx.isTab) {
+      items.push({ icon: IC.eye, label: 'Open', action: function () { window.sieveWorkspace.open(ctx.id) } })
+    }
+    items = items.concat(notebookActions(ctx.id, ctx.name))
+    if (ctx.isTab) items = items.concat(tabItems(ctx.id))
+    return items
+  }
+
+  // The Live view, as the tree's Live row or as its tab: the notebook it mirrors
+  // opened in a tab of its own, and on a tab every tab's verbs.
+  function buildInkLiveItems(ctx) {
+    var items = []
+    if (ctx.name) items.push({ type: 'header', label: ctx.name })
+    items.push({ icon: IC.eye, label: 'Open this note', action: function () {
+      fetch('/api/ink/live/note')
+        .then(function (res) { return res.json() })
+        .then(function (answer) {
+          if (answer.note) return window.sieveWorkspace.open(answer.note)
+          sayStatus('The tablet is not writing in a notebook', true)
+        })
+        .catch(function (err) { sayStatus('Could not find the live notebook: ' + err.message, true) })
+    }})
+    if (ctx.isTab) items = items.concat(tabItems(ctx.id))
+    return items
+  }
+
   function buildPromptItems(ctx) {
     var id = ctx.id, name = ctx.name, isVirtual = ctx.isVirtual, isTab = ctx.isTab
     var items = []
@@ -965,6 +1036,9 @@ import { selectNextScope } from './interaction-policy.js'
       case 'note':      items = buildNoteItems(ctx); break
       case 'folder':    items = buildFolderItems(ctx); break
       case 'prompt':    items = buildPromptItems(ctx); break
+      case 'tab':       items = buildTabItems(ctx); break
+      case 'notebook':  items = buildNotebookItems(ctx); break
+      case 'inkLive':   items = buildInkLiveItems(ctx); break
       case 'sieveBlock': items = ctx.items || []; break
       default: return
     }

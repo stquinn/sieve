@@ -11,6 +11,8 @@ import (
 	"sieve/sieve/command"
 	"sieve/sieve/domain"
 	"sieve/sieve/editor"
+	"sieve/sieve/ink"
+	"sieve/sieve/ink/radio"
 	"sieve/sieve/mcp"
 	"sieve/sieve/services"
 	"sieve/store"
@@ -21,6 +23,7 @@ type ServiceProvider struct {
 	Store       store.Store
 	Library     services.LibraryService
 	Documents   *services.DocumentService
+	Containers  *services.BlockContainerService
 	Nodes       *editor.Router
 	Assets      *services.AssetService
 	State       *services.StateService
@@ -36,6 +39,7 @@ type ServiceProvider struct {
 	LinkPreview *services.LinkPreviewService
 	Plantuml    *services.PlantumlService
 	MCP         *mcp.Server
+	Ink         *ink.InkService
 	// Invalidator carries a command's "this changed" to the connected clients. It
 	// is set by the composition root before Init, because the push side lives
 	// above this package and a command may only name the port.
@@ -44,6 +48,27 @@ type ServiceProvider struct {
 	// connected clients. Set by the composition root before Init for the same
 	// reason Invalidator is, and handed to the Editor there.
 	SavedNotifier editor.ContainerSavedNotifier
+	// InkInvalidator hears every change Settings → Ink shows. Set by the composition root before
+	// Init, for the reason Invalidator is.
+	InkInvalidator ink.Invalidator
+	// InkDrawer draws a note's page as a PNG. Set by the composition root before Init, for the
+	// reason Invalidator is; nil is nothing that can draw.
+	InkDrawer ink.PageDrawer
+	// InkImages keeps the images of synced notes' pages.
+	InkImages *ink.PageImages
+	// InkTranscripts keeps the transcripts of synced notes' pages.
+	InkTranscripts *ink.PageTranscripts
+	// InkNamer names the synced notes.
+	InkNamer *ink.NoteNamer
+}
+
+// InkRadio is the radio Ink dials: the TCP companion at settings.TCP when one is set, otherwise
+// this platform's Bluetooth.
+func (s *ServiceProvider) InkRadio(settings domain.InkSettings) radio.Radio {
+	if settings.TCP != "" {
+		return radio.NewTCP(settings.TCP, "tcp:"+settings.TCP)
+	}
+	return radio.NewBluetooth()
 }
 
 // RegisterInspectors admits every text-service producer to the inspection
@@ -122,14 +147,20 @@ func (s *ServiceProvider) CommandSet() []command.Command {
 // declare. Lives at the composition root — the only place that knows both the
 // ports and the concretes.
 var (
-	_ block.DocumentsPort    = (*services.DocumentService)(nil)
-	_ block.AssetsPort       = (*services.AssetService)(nil)
-	_ block.StatePort        = (*services.StateService)(nil)
-	_ block.LinkPreviewPort  = (*services.LinkPreviewService)(nil)
-	_ block.PlantumlPort     = (*services.PlantumlService)(nil)
-	_ domain.NodeResolver    = (*editor.Router)(nil)
-	_ command.DocumentFiler  = (*editor.EditorService)(nil)
-	_ ai.DocumentMCPEndpoint = (*mcp.Server)(nil)
+	_ block.DocumentsPort              = (*services.DocumentService)(nil)
+	_ block.AssetsPort                 = (*services.AssetService)(nil)
+	_ block.StatePort                  = (*services.StateService)(nil)
+	_ block.LinkPreviewPort            = (*services.LinkPreviewService)(nil)
+	_ block.PlantumlPort               = (*services.PlantumlService)(nil)
+	_ services.ContainableKinds        = block.Registry{}
+	_ services.ContainerChangeListener = (*editor.EditorService)(nil)
+	_ editor.NodeSource                = (*ink.LiveView)(nil)
+	_ domain.NodeResolver              = (*editor.Router)(nil)
+	_ command.DocumentFiler            = (*editor.EditorService)(nil)
+	_ ai.DocumentMCPEndpoint           = (*mcp.Server)(nil)
+	_ ink.NoteDescriber                = (*ai.AIService)(nil)
+	_ ink.PageTranscriber                   = (*ai.AIService)(nil)
+	_ ink.DiagramDrawer                = (*services.PlantumlService)(nil)
 )
 
 func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.FS) {
@@ -141,11 +172,15 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 		logger.Error("buffers init failed", "err", err)
 		return
 	}
+	s.Containers, err = services.NewBlockContainerService(store, block.GlobalRegistry())
+	if err != nil {
+		logger.Error("block containers init failed", "err", err)
+		return
+	}
 	// The Router: address → NodeDescriptor. Registering a source is the ONE line
-	// that makes a container kind mentionable, and a source may only offer what
-	// can also be dereferenced — so notes only, because that is what MCP
-	// get_by_uri reaches through this same Router.
-	s.Nodes = editor.NewRouter(editor.NewNotesSource(s.Documents))
+	// that makes a container kind addressable, and MCP get_by_uri reaches through
+	// this same Router.
+	s.Nodes = editor.NewRouter(editor.NewNotesSource(s.Documents), editor.NewBlockSource(s.Containers))
 	s.Assets = services.NewAssetService(store, storePath)
 	s.State, err = services.NewStateService(store, storePath, themesFS)
 	if err != nil {
@@ -172,10 +207,21 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	s.Commands = command.NewRegistry()
 	s.Plantuml = services.NewPlantumlService(s.State)
 	settings := s.State.LoadSettings()
+	s.Ink = ink.NewInkService(s.State, s.Containers, s.InkRadio(settings.Ink), s.InkInvalidator)
+	s.Nodes.Register(s.Ink.LiveView())
+	s.InkImages = ink.NewPageImages(s.Ink, s.InkDrawer)
+	// A Live view's uuid is minted per run, so a tab of one saved by an earlier run names nothing.
+	if _, err := s.State.CloseTabs(func(t domain.Tab) bool { return t.ContainerKind() == ink.KindLive }); err != nil {
+		logger.Error("sieve: could not close an earlier run's Live tabs", "err", err)
+	}
 	s.ApplyRetention(settings.MaxHistoryVersions)
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
 	s.Editor = editor.NewEditorService(s.Documents, block.NewDocumentCodec(block.GlobalRegistry()), autosave)
 	s.Editor.SetServices(s.BlockServices())
+	s.Editor.SetContainers(s.Containers)
+	s.Editor.SetNodes(s.Nodes)
+	s.Containers.SetChangeListener(s.Editor)
+	s.Ink.SetChangeListener(s.Editor)
 	// The OS clipboard, read outside the webview. On a cgo-off build this is the
 	// package's no-op half, so a native-clipboard paste answers "nothing" rather
 	// than failing.
@@ -216,6 +262,8 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	s.Editor.SetEngine(s.Engine)
 	s.Editor.SetAI(s.AI)
 	s.Commands.SetEngine(s.Engine)
+	s.InkNamer = ink.NewNoteNamer(s.Ink, s.InkImages, s.AI, s.Engine)
+	s.InkTranscripts = ink.NewPageTranscripts(s.Ink, s.InkImages, s.AI, s.Plantuml, block.NewDocumentCodec(block.GlobalRegistry()), s.Engine)
 	for _, cmd := range s.CommandSet() {
 		s.Commands.Register(cmd)
 	}
@@ -227,6 +275,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	block.RegisterProcessor(processors.NewWebClipBlockProcessor(svc))
 	block.RegisterProcessor(processors.NewLogProcessor(svc))
 	block.RegisterProcessor(processors.NewCodeBlockProcessor(svc))
+	block.RegisterProcessor(ink.NewDigitalNoteKind())
 
 	block.RegisterProcessor(processors.NewAIBlockProcessor(svc))
 }

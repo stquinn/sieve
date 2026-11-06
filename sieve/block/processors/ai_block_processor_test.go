@@ -2,6 +2,7 @@ package processors
 
 import (
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"strings"
 	"testing"
 )
@@ -31,7 +32,7 @@ func TestAIBlockInitAttrs(t *testing.T) {
 // particular.
 func TestAIBlockInitAttrs_SeedsNoQuestion(t *testing.T) {
 	attrs := (&AIBlockProcessor{}).InitAttrs("ai-ab12", nil)
-	for _, key := range []string{"ref", block.QuestionAttr, block.AttachmentsAttr} {
+	for _, key := range []string{"ref", block.QuestionAttr, domain.AttachmentsAttr} {
 		if v, seeded := attrs[key]; seeded {
 			t.Errorf("creation seeded %q = %v", key, v)
 		}
@@ -41,10 +42,10 @@ func TestAIBlockInitAttrs_SeedsNoQuestion(t *testing.T) {
 // The question the composer minted rides through creation as it was composed:
 // the list is the payload, and nothing here re-reads or rewrites it.
 func TestAIBlockInitAttrs_CarriesTheComposedQuestion(t *testing.T) {
-	minted := block.Elements{foldTarget(foldLeafID), foldProse("why?")}
+	minted := domain.Elements{foldTarget(foldLeafID), foldProse("why?")}
 	attrs := (&AIBlockProcessor{}).InitAttrs("ai-ab12", map[string]interface{}{block.QuestionAttr: minted})
 
-	els := block.SieveBlock{Attrs: attrs}.Elements(block.QuestionAttr)
+	els := domain.SieveBlock{Attrs: attrs}.Elements(block.QuestionAttr)
 	if len(els) != 2 || els[0].Kind != block.KindReference || els[1].Kind != block.KindProse {
 		t.Fatalf("question = %+v, want the minted list", els)
 	}
@@ -64,14 +65,14 @@ func TestAIBlockMode(t *testing.T) {
 
 func TestAIBlockJobLabel(t *testing.T) {
 	p := &AIBlockProcessor{}
-	ask := p.DescribeJob(block.JobContext{Block: &block.SieveBlock{ID: "ai-ask", Attrs: map[string]interface{}{"type": "ASK"}}})
+	ask := p.DescribeJob(block.JobContext{Block: &domain.SieveBlock{ID: "ai-ask", Attrs: map[string]interface{}{"type": "ASK"}}})
 	if ask.Label == "" {
 		t.Error("expected non-empty label for ASK")
 	}
 	if ask.Category != block.CategoryAI {
 		t.Errorf("expected CategoryAI, got %q", ask.Category)
 	}
-	explain := p.DescribeJob(block.JobContext{Block: &block.SieveBlock{ID: "ai-exp", Attrs: map[string]interface{}{"type": "EXPLAIN"}}})
+	explain := p.DescribeJob(block.JobContext{Block: &domain.SieveBlock{ID: "ai-exp", Attrs: map[string]interface{}{"type": "EXPLAIN"}}})
 	if explain.Label == "" {
 		t.Error("expected non-empty label for EXPLAIN")
 	}
@@ -82,8 +83,8 @@ func TestAIBlockBuildContext(t *testing.T) {
 	t.Cleanup(resetRegistry)
 
 	p := &AIBlockProcessor{}
-	blk := block.NewSieveBlock("ai-block", "ai-ab12", map[string]interface{}{block.AnswerAttr: "A compiled language."})
-	blk.SetElements(block.QuestionAttr, block.Elements{foldProse("What is Go?")})
+	blk := domain.NewSieveBlock("ai-block", "ai-ab12", map[string]interface{}{block.AnswerAttr: "A compiled language."})
+	blk.SetElements(block.QuestionAttr, domain.Elements{foldProse("What is Go?")})
 
 	ctx := p.BuildContext(blk, block.DocView{UUID: foldDocUUID}, map[string]bool{})
 	if !strings.Contains(ctx.String(), "What is Go?") || !strings.Contains(ctx.String(), "A compiled language.") {
@@ -103,11 +104,11 @@ func TestAIBlock_qaHeader_ASK_omitsOwnAnswer(t *testing.T) {
 
 	p := &AIBlockProcessor{}
 	doc := block.DocView{UUID: foldDocUUID}
-	blk := block.NewSieveBlock("ai-block", "ai-retry", map[string]interface{}{
+	blk := domain.NewSieveBlock("ai-block", "ai-retry", map[string]interface{}{
 		block.AnswerAttr: "STALE-PRIOR-ANSWER-a-compiled-language",
-		"type":     "ASK",
+		"type":           "ASK",
 	})
-	blk.SetElements(block.QuestionAttr, block.Elements{foldTarget(foldLeafID), foldProse("What is Go?")})
+	blk.SetElements(block.QuestionAttr, domain.Elements{foldTarget(foldLeafID), foldProse("What is Go?")})
 
 	header := p.qaHeader(blk, doc)
 	if !strings.Contains(header, "QUESTION ABOUT: "+foldLeafID) {
@@ -135,11 +136,11 @@ func TestAIBlock_qaHeader_EXPLAIN_omitsOwnAnswer(t *testing.T) {
 
 	p := &AIBlockProcessor{}
 	doc := block.DocView{UUID: foldDocUUID}
-	blk := block.NewSieveBlock("ai-block", "ai-exp", map[string]interface{}{
+	blk := domain.NewSieveBlock("ai-block", "ai-exp", map[string]interface{}{
 		block.AnswerAttr: "STALE-EXPLANATION-do-not-reuse",
-		"type":     "EXPLAIN",
+		"type":           "EXPLAIN",
 	})
-	blk.SetElements(block.QuestionAttr, block.Elements{foldTarget(foldLeafID)})
+	blk.SetElements(block.QuestionAttr, domain.Elements{foldTarget(foldLeafID)})
 
 	header := p.qaHeader(blk, doc)
 	if !strings.Contains(header, "EXPLAIN NODE: "+foldLeafID) {
@@ -162,11 +163,11 @@ func TestAIBlock_actionContext_hasNodeIdHeaderButNoOwnAnswer(t *testing.T) {
 	t.Cleanup(resetRegistry)
 
 	p := &AIBlockProcessor{}
-	blk := block.NewSieveBlock("ai-block", "ai-act", map[string]interface{}{
+	blk := domain.NewSieveBlock("ai-block", "ai-act", map[string]interface{}{
 		block.AnswerAttr: "STALE-ACTION-ANSWER",
-		"type":     "ASK",
+		"type":           "ASK",
 	})
-	blk.SetElements(block.QuestionAttr, block.Elements{foldTarget(foldLeafID), foldProse("Follow up?")})
+	blk.SetElements(block.QuestionAttr, domain.Elements{foldTarget(foldLeafID), foldProse("Follow up?")})
 
 	actionCtx := block.AIContext{NodeIDs: []string{blk.ID},
 		Content: p.qaHeader(blk, block.DocView{UUID: foldDocUUID})}.String()

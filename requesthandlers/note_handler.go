@@ -2,19 +2,26 @@ package requesthandlers
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"html/template"
 	"net/http"
 	"sieve/sieve"
 	"sieve/sieve/domain"
+	"sieve/sieve/ink"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 )
 
+// editorSwap is what editor.html mounts: the container, its kind and the mode
+// it was last in.
 type editorSwap struct {
 	UUID string
 	Mode string
+	Kind string
 }
 
 type NoteHandler struct {
@@ -28,44 +35,28 @@ type NoteHandler struct {
 	EmitNotesChanged     func()
 }
 
-// RegisterPaths mounts the note's own lifecycle — create, open, rename, delete —
-// plus the tab operations that follow from it. A note is a RESOURCE here: the
-// method says what happens to it, so there is one path per note rather than one
-// path per verb.
+// RegisterPaths mounts the note's own lifecycle — create, rename, delete — the
+// opening of any container in a tab, and the tab operations that follow from it.
+// A note is a RESOURCE here: the method says what happens to it, so there is one
+// path per note rather than one path per verb.
 func (h *NoteHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/note", h.handleNoteCreate)
-	r.Post("/api/note/open/{id}", h.handleNoteOpen)
+	r.Post("/api/container/open/{id}", h.handleContainerOpen)
 	r.Patch("/api/note/{id}", h.handleNotePatch)
 	r.Delete("/api/note/{id}", h.handleNoteDelete)
 	r.Post("/api/tabs/close", h.handleTabsClose)
 	r.Post("/api/tabs/reorder", h.handleTabsReorder)
 }
 
-func (h *NoteHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
+// handleContainerOpen opens a tab for any container — a prompt, a document, a
+// block container or another node the Router resolves — or focuses the one
+// already open, and answers with the tab strip and the editor mount.
+func (h *NoteHandler) handleContainerOpen(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
-	var displayName string
-	var status string
-	var userIntent string
-	note, err := h.ServiceProvider.Documents.LoadByUUID(id)
-	if err == nil {
-		displayName = note.Meta().DisplayName()
-		status = note.Kind().FiledStatus()
-		if note.Meta().UserIntent() != nil {
-			userIntent = *note.Meta().UserIntent()
-		}
-	} else if strings.HasPrefix(id, "prompt:") {
-		promptName := strings.TrimPrefix(id, "prompt:")
-		displayName = promptName + " Prompt"
-		for _, pe := range h.ServiceProvider.Prompts.ListPrompts() {
-			if pe.ID == id {
-				displayName = pe.DisplayName
-				break
-			}
-		}
-		status = "filed"
-	} else {
-		http.Error(w, "document not found", http.StatusNotFound)
+	opened, err := h.tabFor(id)
+	if err != nil {
+		http.Error(w, "nothing to open: "+err.Error(), http.StatusNotFound)
 		return
 	}
 	session := h.ServiceProvider.State.LoadSession()
@@ -73,29 +64,15 @@ func (h *NoteHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
 	exists := false
 	for i, t := range session.Tabs {
 		if t.ID == id {
-			session.ActiveIdx = i
+			session.Activate(i, time.Now())
 			exists = true
 			break
 		}
 	}
 
 	if !exists {
-		tabMode := "wysiwyg"
-		if strings.HasPrefix(id, "prompt:") {
-			tabMode = "markdown"
-		} else if note != nil {
-			if m := note.Meta().All()["mode"]; m != "" {
-				tabMode = m
-			}
-		}
-		session.Tabs = append(session.Tabs, domain.Tab{
-			ID:          id,
-			Mode:        tabMode,
-			DisplayName: displayName,
-			Status:      status,
-			UserIntent:  userIntent,
-		})
-		session.ActiveIdx = len(session.Tabs) - 1
+		session.Tabs = append(session.Tabs, opened)
+		session.Activate(len(session.Tabs)-1, time.Now())
 	}
 
 	_ = h.ServiceProvider.State.SaveSession(session)
@@ -112,10 +89,73 @@ func (h *NoteHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
 	}
 
 	activeTab := session.Tabs[session.ActiveIdx]
-	if err := h.Tmpl.ExecuteTemplate(w, "editor.html", editorSwap{UUID: activeTab.ID, Mode: activeTab.Mode}); err != nil {
+	if err := h.Tmpl.ExecuteTemplate(w, "editor.html", editorSwap{UUID: activeTab.ID, Mode: activeTab.Mode, Kind: activeTab.ContainerKind()}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+}
+
+// tabFor builds the tab that opens id. A prompt id is a prompt; anything else is
+// what the Router resolves it to — a document, with its filed status, intent and
+// last mode, or any other node, with its kind and title.
+func (h *NoteHandler) tabFor(id string) (domain.Tab, error) {
+	if name, isPrompt := strings.CutPrefix(id, "prompt:"); isPrompt {
+		displayName := name + " Prompt"
+		for _, pe := range h.ServiceProvider.Prompts.ListPrompts() {
+			if pe.ID == id {
+				displayName = pe.DisplayName
+				break
+			}
+		}
+		return domain.Tab{ID: id, Kind: domain.TabKindPrompt, Mode: "markdown", DisplayName: displayName, Status: "filed"}, nil
+	}
+	if h.ServiceProvider.Nodes == nil {
+		return domain.Tab{}, errors.New("address resolution is unavailable")
+	}
+	node, err := h.ServiceProvider.Nodes.Resolve(domain.NewContainerAddress(id))
+	if err != nil {
+		return domain.Tab{}, err
+	}
+	note, err := h.documentOf(node)
+	if err != nil {
+		name := node.Title
+		if name == "" {
+			name = h.untitled(node.Kind)
+		}
+		return domain.Tab{ID: id, Kind: node.Kind, DisplayName: name}, nil
+	}
+	tab := domain.Tab{
+		ID:          id,
+		Kind:        string(note.Kind()),
+		Mode:        "wysiwyg",
+		DisplayName: note.Meta().DisplayName(),
+		Status:      note.Kind().FiledStatus(),
+	}
+	if m := note.Meta().All()["mode"]; m != "" {
+		tab.Mode = m
+	}
+	if note.Meta().UserIntent() != nil {
+		tab.UserIntent = *note.Meta().UserIntent()
+	}
+	return tab, nil
+}
+
+// untitled is what a tab of a container of kind with no title reads: "Untitled notebook" for a
+// synced Digital Note, otherwise the kind.
+func (h *NoteHandler) untitled(kind string) string {
+	if kind == ink.KindDigitalNote {
+		return untitledNotebook
+	}
+	return kind
+}
+
+// documentOf is the document node is, read from the store only when node is of a
+// document kind.
+func (h *NoteHandler) documentOf(node domain.NodeDescriptor) (domain.Document, error) {
+	if !domain.DocumentKind(node.Kind).IsDocument() {
+		return nil, fmt.Errorf("%s is a %s, not a document", node.ID, node.Kind)
+	}
+	return h.ServiceProvider.Documents.LoadByUUID(node.ID)
 }
 
 func (h *NoteHandler) handleNoteCreate(w http.ResponseWriter, r *http.Request) {
@@ -127,11 +167,12 @@ func (h *NoteHandler) handleNoteCreate(w http.ResponseWriter, r *http.Request) {
 	session := h.ServiceProvider.State.LoadSession()
 	session.Tabs = append(session.Tabs, domain.Tab{
 		ID:          newNote.UUID(),
+		Kind:        string(newNote.Kind()),
 		Mode:        "wysiwyg",
 		DisplayName: newNote.Meta().DisplayName(),
 		Status:      "unfiled",
 	})
-	session.ActiveIdx = len(session.Tabs) - 1
+	session.Activate(len(session.Tabs)-1, time.Now())
 	_ = h.ServiceProvider.State.SaveSession(session)
 	if h.EmitSessionChanged != nil {
 		h.EmitSessionChanged()
@@ -145,7 +186,7 @@ func (h *NoteHandler) handleNoteCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Tmpl.ExecuteTemplate(w, "editor.html", editorSwap{UUID: newNote.UUID(), Mode: "wysiwyg"}); err != nil {
+	if err := h.Tmpl.ExecuteTemplate(w, "editor.html", editorSwap{UUID: newNote.UUID(), Mode: "wysiwyg", Kind: string(newNote.Kind())}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -156,8 +197,9 @@ func (h *NoteHandler) handleNoteCreate(w http.ResponseWriter, r *http.Request) {
 // and closes every listed tab. A single close sends one id, Close All sends every
 // tab's id, Close Others sends the complement of the kept tab — the frontend
 // computes the set; the server closes it. Session.CloseTabs owns the tab-list +
-// active-index math; each closed DOC (non-prompt) rides the SAME Smart-Close
-// filing path a single close always used (Editor.CloseDocument). An emptied
+// active-index math; each closed DOCUMENT rides the SAME Smart-Close filing path
+// a single close always used (Editor.CloseDocument), and a prompt or block
+// container tab is only removed. An emptied
 // session mints a fresh note, exactly as closing the last tab did before.
 func (h *NoteHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
@@ -168,11 +210,15 @@ func (h *NoteHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session := h.ServiceProvider.State.LoadSession()
+	wasActive := session.ActiveID()
 
 	// Smart Close background filing for every closed document — the SAME per-doc
-	// path a single close used. Prompt tabs return nothing to file.
+	// path a single close used.
 	for _, docID := range session.CloseTabs(payload.IDs) {
 		h.ServiceProvider.Editor.CloseDocument(docID)
+	}
+	if session.ActiveID() != wasActive {
+		session.Activate(session.ActiveIdx, time.Now())
 	}
 
 	if len(session.Tabs) == 0 {
@@ -183,11 +229,12 @@ func (h *NoteHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 		}
 		session.Tabs = []domain.Tab{{
 			ID:          newNote.UUID(),
+			Kind:        string(newNote.Kind()),
 			Mode:        "wysiwyg",
 			DisplayName: newNote.Meta().DisplayName(),
 			Status:      "unfiled",
 		}}
-		session.ActiveIdx = 0
+		session.Activate(0, time.Now())
 	}
 
 	_ = h.ServiceProvider.State.SaveSession(session)
@@ -204,7 +251,7 @@ func (h *NoteHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 	}
 
 	activeTab := session.Tabs[session.ActiveIdx]
-	if err := h.Tmpl.ExecuteTemplate(w, "editor.html", editorSwap{UUID: activeTab.ID, Mode: activeTab.Mode}); err != nil {
+	if err := h.Tmpl.ExecuteTemplate(w, "editor.html", editorSwap{UUID: activeTab.ID, Mode: activeTab.Mode, Kind: activeTab.ContainerKind()}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -296,7 +343,7 @@ func (h *NoteHandler) handleNotePatch(w http.ResponseWriter, r *http.Request) {
 		h.EmitNotesChanged()
 	}
 	w.Header().Set("HX-Trigger", "notes:changed")
-	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
+	SideBarHandler{h.ServiceProvider, h.Tmpl}.Render(w)
 }
 
 func (h *NoteHandler) handleNoteDelete(w http.ResponseWriter, r *http.Request) {

@@ -63,6 +63,8 @@ func newAPIHandler(app *App, broadcast *requesthandlers.WorkspaceBroadcast, sp *
 	// through the same fan-out. Set here for the same reason Invalidator is: the
 	// port lives below this package and the concrete above it. Init reads it.
 	sp.SavedNotifier = broadcast
+	sp.InkInvalidator = broadcast
+	sp.InkDrawer = requesthandlers.NewInkPageDrawer(broadcast.Requests())
 	// NOTE: the JobEngine and the Editor's SetJobs/SetEngine/SetAI wiring live in
 	// ServiceProvider.Init (runs at Wails startup, AFTER this) — that is where
 	// State/AI/Editor exist. Doing it here nil-derefs: sp is an empty struct until
@@ -127,8 +129,10 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	// on every other mount.
 	activeUUID := ""
 	activeMode := "wysiwyg"
+	activeKind := ""
 	if session.ActiveIdx >= 0 && session.ActiveIdx < len(session.Tabs) {
 		activeUUID = session.Tabs[session.ActiveIdx].ID
+		activeKind = session.Tabs[session.ActiveIdx].ContainerKind()
 		if m := session.Tabs[session.ActiveIdx].Mode; m != "" {
 			activeMode = m
 		}
@@ -151,6 +155,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		AskPanelHeight   int
 		ActiveUUID       string
 		ActiveMode       string
+		ActiveKind       string
 		AutosaveDebounce int
 		CLITimeoutLong   int
 		// MaxAttachmentBytes is the user's attachment ceiling (#84). The client
@@ -177,6 +182,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		AskPanelHeight:     session.AskPanelHeight,
 		ActiveUUID:         activeUUID,
 		ActiveMode:         activeMode,
+		ActiveKind:         activeKind,
 		AutosaveDebounce:   info.AutosaveDebounce,
 		CLITimeoutLong:     info.CLITimeoutLong,
 		MaxAttachmentBytes: info.MaxAttachmentBytes,

@@ -6,14 +6,26 @@
 
 import { SieveTab } from './tab.js'
 import { MountBinding } from './mount-binding.js'
+import { LensTable } from './lens-table.js'
 import { ContainerModelFeed } from '../container/container-model-feed.js'
 import { ContainerTransport } from '../container/container-transport.js'
 import { DocumentService } from '../container/document-service.js'
+import { ProviderAdapter } from '../container/provider-adapter.js'
+import { WholeContentAdapter } from '../container/whole-content-adapter.js'
+import { BlockProviderAdapter } from '../container/block-provider-adapter.js'
+import { InkProviderAdapter } from '../container/ink-provider-adapter.js'
+import { NoteEditor } from '../lens/document-editor/note-editor.js'
+import { PromptEditor } from '../lens/prompt/prompt-editor.js'
+import { BlockLens } from '../lens/block/block-lens.js'
+import { DigitalNoteLens } from '../lens/ink/digital-note-lens.js'
+import { LiveInkLens } from '../lens/ink/live-ink-lens.js'
+import { SurfaceIntent } from '../lens/abstract-surface.js'
 import { SpellControl } from './spell-control.js'
 import { WorkspaceService } from './workspace-service.js'
 import { CommandService } from './command-service.js'
 import { MentionService } from './mention-service.js'
 import { InvalidationService } from './invalidation-service.js'
+import { InkPageDrawer } from './ink-page-drawer.js'
 import { CommandBadges } from './command-badges.js'
 import { AskPanel } from './ask-panel.js'
 import { InsertDialogs } from './insert-dialogs.js'
@@ -24,8 +36,22 @@ import { FindDialog } from './find-dialog.js'
 import { StatusBar } from './status-bar.js'
 import { SidebarView } from './sidebar-view.js'
 import { AssetPlacement } from './asset-placement.js'
+import { WorkspaceToolbar } from './workspace-toolbar.js'
+
+/** A document: a block tree that also projects itself as text. */
+const DOCUMENT_MOUNTING = Object.freeze({ lens: NoteEditor, provider: BlockProviderAdapter, channel: true, document: true })
 
 export class SieveWorkspace {
+  /** How each container kind is mounted: one line per kind with a lens of its
+   *  own, and every other block kind read-only in the fallback lens. */
+  static #LENSES = new LensTable(Object.freeze({
+    note: DOCUMENT_MOUNTING,
+    buffer: DOCUMENT_MOUNTING,
+    prompt: Object.freeze({ lens: PromptEditor, provider: WholeContentAdapter, channel: false, document: false }),
+    'digital-note': Object.freeze({ lens: DigitalNoteLens, provider: InkProviderAdapter, channel: true, document: false }),
+    'ink-live': Object.freeze({ lens: LiveInkLens, provider: InkProviderAdapter, channel: true, document: false }),
+  }), Object.freeze({ lens: BlockLens, provider: ProviderAdapter, channel: true, document: false }))
+
   /** @type {Map<string, SieveTab>} uuid → Tab */
   #tabs = new Map()
 
@@ -56,6 +82,10 @@ export class SieveWorkspace {
 
   /** @type {ReturnType<typeof setTimeout>|null} lazy scroll-persist debounce, for the active tab only */
   #scrollPersistTimer = null
+
+  /** @type {boolean} a deletion took the active tab away, and the next tab strip
+   *  rendered opens the tab it marks active unless something else is mounted by then */
+  #reopenAfterDeletion = false
 
   /** @type {string|null|undefined} the insert anchor `beginFileAttach` captured
    *  before the file picker blurred the editor, held for `attachFile` to spend.
@@ -92,8 +122,14 @@ export class SieveWorkspace {
    *  alive: it claims its frames and republishes them as DOM events. */
   #invalidationService
 
+  /** @type {InkPageDrawer} the plane's tenant that draws a note's page when the server asks. */
+  #inkPageDrawer
+
   /** @type {SpellControl} the workspace's spelling verbs, and the toggle's state. */
   #spell
+
+  /** @type {WorkspaceToolbar} the toolbar, showing the active tab's lens's answer */
+  #toolbar
 
   /** @type {MacroCatalog} what this host offers a `{` picker: the block kinds,
    *  plus the URL verbs it owns the dialogs for. Built ONCE — a surface composes
@@ -118,9 +154,11 @@ export class SieveWorkspace {
     // lazily: the server pushes the jobs snapshot the instant a socket connects,
     // and a tenant registering later would have that first frame dropped.
     this.#invalidationService = new InvalidationService(this.#workspaceService)
+    this.#inkPageDrawer = new InkPageDrawer(this.#workspaceService)
     this.#spell = new SpellControl(this.#workspaceService,
       typeof window !== 'undefined' ? /** @type {any} */ (window).__sieveSpellcheckEnabled !== false : true)
     this.#macroCatalog = new MacroCatalog(this)
+    this.#toolbar = new WorkspaceToolbar(typeof document !== 'undefined' ? document.getElementById('editor-toolbar') : null)
   }
 
   get documentService() { return this.#documentService }
@@ -137,18 +175,22 @@ export class SieveWorkspace {
 
   get spell() { return this.#spell }
 
+  /** @returns {LensTable} which lens and provider each container kind is mounted with */
+  static get lensTable() { return SieveWorkspace.#LENSES }
+
   /** @param {string} uuid @returns {SieveTab|null} */
   getTab(uuid) {
     return this.#tabs.get(uuid) ?? null
   }
 
   /** Opens (creates) a Tab for the uuid if not already tracked, marks it active.
-   *  @param {string} uuid @returns {SieveTab} */
-  openTab(uuid) {
+   *  @param {string} uuid @param {string} [kind] the container's kind, as the server stated it
+   *  @returns {SieveTab} */
+  openTab(uuid, kind) {
     if (!uuid) throw new Error('SieveWorkspace.openTab: uuid is required')
     let tab = this.#tabs.get(uuid)
     if (!tab) {
-      tab = new SieveTab(uuid)
+      tab = new SieveTab(uuid, kind)
       this.#tabs.set(uuid, tab)
     }
     this.#setActiveTab(tab)
@@ -165,6 +207,7 @@ export class SieveWorkspace {
       this.#activeTab = null
       this.#switchSelectionSource(null)
       this.#notifyActiveTabListeners()
+      this.#toolbar.show(null)
     }
   }
 
@@ -176,16 +219,17 @@ export class SieveWorkspace {
   // its promise.
 
   /**
-   * Opens (or focuses) the document for a uuid, swapping the tabbar. The server
-   * re-renders the strip and OOB-mounts the editor, whose re-init drives
-   * activateDocument — so there is no client prune here.
+   * Opens (or focuses) the container for a uuid, swapping the tabbar. The server
+   * decides what the uuid is, re-renders the strip and OOB-mounts the editor with
+   * the container's kind, whose re-init drives activateDocument — so there is no
+   * client prune here.
    * @param {string} uuid @returns {Promise<any>}
    */
   open(uuid) {
     // RAW id in the path: chi.URLParam does not unescape and the Go handlers
     // compare against decoded ids, so a `prompt:` uuid must arrive with a literal
     // colon. Percent-encoding it makes prompt opens 404.
-    return this.#ajax('POST', '/api/note/open/' + uuid)
+    return this.#ajax('POST', '/api/container/open/' + uuid)
   }
 
   /**
@@ -248,33 +292,69 @@ export class SieveWorkspace {
    */
   #closeTabs(uuids) {
     if (!window.htmx || !uuids.length) return Promise.resolve()
-    return fetch('/api/tabs/close', {
+    return this.#swapStrip(fetch('/api/tabs/close', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids: uuids }),
-    })
-      .then((res) => res.text())
-      .then((html) => {
-        window.htmx.swap('#htmx-tabbar', html, { swapStyle: 'innerHTML' }, {
-          afterSettleCallback: () => { for (const uuid of uuids) this.closeTab(uuid) },
-        })
-      })
+    }), () => { for (const uuid of uuids) this.closeTab(uuid) })
   }
 
   /**
+   * Moves the tab at `fromIdx` to insertion position `toPos` and resolves once
+   * the strip the server answers with has settled. It is fetched and swapped
+   * rather than sent through htmx.ajax: htmx keeps one request in flight per
+   * source and queues only the last, so a move asked while the strip is being
+   * refetched would be dropped.
    * @param {number} fromIdx — source tab index
    * @param {number} toPos — target insertion position
    * @returns {Promise<any>}
    */
   reorder(fromIdx, toPos) {
-    return this.#ajax('POST', '/api/tabs/reorder', { values: { from: fromIdx, to: toPos } })
+    return this.#swapStrip(fetch('/api/tabs/reorder', {
+      method: 'POST',
+      body: new URLSearchParams({ from: String(fromIdx), to: String(toPos) }),
+    }))
+  }
+
+  /**
+   * Swaps the strip `response` answers with into #htmx-tabbar, settling as a
+   * request's swap does, and resolves once it has settled.
+   * @param {Promise<Response>} response
+   * @param {() => void} [settled] run once the strip has settled
+   * @returns {Promise<void>}
+   */
+  #swapStrip(response, settled) {
+    if (!window.htmx) return Promise.resolve()
+    return response
+      .then((res) => res.text())
+      .then((html) => new Promise((resolve) => {
+        const target = document.getElementById('htmx-tabbar')
+        window.htmx.swap('#htmx-tabbar', html, { swapStyle: 'innerHTML' }, {
+          eventInfo: { target },
+          afterSettleCallback: () => { if (settled) settled(); resolve() },
+        })
+      }))
   }
 
   /** Fetches and renders the tab strip. The boot and invalidation refetch entry
-   *  point — #htmx-tabbar carries no hx-get/hx-trigger of its own.
+   *  point — #htmx-tabbar carries no hx-get/hx-trigger of its own. After a
+   *  deletion took the active tab away, the strip's active tab is opened once it
+   *  lands, unless a tab has become active meanwhile.
    *  @returns {Promise<any>} */
   loadTabs() {
-    return this.#ajax('GET', '/ui/views/tabs')
+    return Promise.resolve(this.#ajax('GET', '/ui/views/tabs')).then((result) => {
+      this.#reopenActive()
+      return result
+    })
+  }
+
+  #reopenActive() {
+    if (!this.#reopenAfterDeletion) return
+    this.#reopenAfterDeletion = false
+    if (this.#activeTab) return
+    const active = /** @type {HTMLElement|null} */ (document.querySelector('#tabs-area [data-tab-active]'))
+    const uuid = active ? active.dataset.tabId : ''
+    if (uuid) this.open(uuid)
   }
 
   /**
@@ -300,18 +380,20 @@ export class SieveWorkspace {
    * - TEARDOWN (uuid ''): the active editor is destroyed and its tab closed.
    * - Same-uuid re-activation: the editor and its live socket are KEPT.
    *
-   * @param {string} uuid — target document uuid, or '' to tear down
-   * @param {object} [options] — passed to the Tab's editor factory; the provider
-   *   and loader are the host's own
+   * @param {string} uuid — target container uuid, or '' to tear down
+   * @param {object} [options] — passed to the lens constructor; the provider and
+   *   loader are the host's own
+   * @param {string} [kind] the container's kind, as the server stated it
    * @returns {SieveTab|null} the activated Tab, or null after a teardown
    */
-  activateDocument(uuid, options) {
+  activateDocument(uuid, options, kind) {
     const prev = this.#activeTab
     if (prev && prev.uuid !== uuid) {
       if (prev.editor) {
     // The ONE place a tab's editor goes away: pull its scroll coordinate and flush
     // it BEFORE the SelectionModel holding it is destroyed.
         this.#persistScroll(prev)
+        prev.recordViewState(prev.editor.viewState)
         prev.editor.destroy()
         prev.detachEditor()
       }
@@ -322,28 +404,30 @@ export class SieveWorkspace {
     }
     if (!uuid) return null
 
-    const tab = this.openTab(uuid)
+    const tab = this.openTab(uuid, kind)
     if (!tab.editor) {
     // Close-before-open on ONE uuid is the whole rule: two live claims on a
     // container's channel is a takeover, and the loser is a silently dead UI.
       tab.detachMount()
     // THE MOUNT SEQUENCE. The host resolves the container, opens its channel, and
-    // hands the lens ONE dependency: the provider. Which provider depends on what
-    // the container IS, and that decision lives in the MountBinding.
-      const kind = uuid.startsWith('prompt:') ? 'prompt' : 'note'
-      const mount = new MountBinding(uuid, this.#documentService, this.#feed, kind)
+    // hands the lens ONE dependency: the provider. Which lens and which provider
+    // depend on what the container IS, and that decision is the LensTable's.
+      const mounting = SieveWorkspace.#LENSES.lookup(tab.kind)
+      const mount = new MountBinding(uuid, this.#documentService, this.#feed, tab.kind, mounting)
     // Transport routing, NOT a repaint path: content reaches the lens through its
     // subscription, and what is left is nobody's document truth.
-      if (kind !== 'prompt') mount.openChannel({ onMessage: (msg) => this.routeServerMessage(msg) })
+      if (mounting.channel) mount.openChannel({ onMessage: (msg) => this.routeServerMessage(msg) })
       tab.attachMount(mount)
-      tab.attachEditor(tab.createEditor(uuid, Object.assign({
+      tab.attachEditor(new mounting.lens(uuid, Object.assign({
         provider: mount.provider,
         loadContainer: () => mount.load(),
         mentionService: this.#mentionService,
         macroCatalog: this.#macroCatalog,
         codeFormattingService: this.#codeFormattingService,
+        viewState: tab.viewState,
       }, options)))
     }
+    this.#toolbar.show(tab.editor)
     return tab
   }
 
@@ -391,8 +475,9 @@ export class SieveWorkspace {
    * @param {HTMLElement|null} mountEl
    * @param {string} uuid
    * @param {string} [mode]
+   * @param {string} [kind] the container's kind, as the server stated it
    */
-  initEditor(mountEl, uuid, mode) {
+  initEditor(mountEl, uuid, mode, kind) {
     // Flush the previous editor while it is still attached, so its edits go out on
     // ITS socket before any teardown.
     const prev = this.activeEditor
@@ -410,7 +495,7 @@ export class SieveWorkspace {
     // Set the staleness guard SYNCHRONOUSLY before the fetch: the load's `.then`
     // re-checks it, so a later init supersedes this load.
     this.#currentUuid = uuid
-    this.#syncShell(uuid)
+    this.#syncShell(uuid, kind)
     this.#currentMountEl = mountEl
     const wantMode = mode || this.#activeTab?.mode || 'wysiwyg'
 
@@ -424,7 +509,7 @@ export class SieveWorkspace {
       .then((data) => {
         if (this.#currentUuid !== uuid) return // a later init superseded this load
 
-        const isMarkdown = wantMode === 'markdown' || data.meta.mode === 'markdown' || uuid.startsWith('prompt:')
+        const isMarkdown = wantMode === 'markdown' || data.meta.mode === 'markdown'
 
         const ed = this.activeEditor
         if (!ed) return
@@ -462,11 +547,12 @@ export class SieveWorkspace {
    * ATTACH-ONCE-PER-EDITOR-INSTANCE: a same-uuid re-init reuses the existing
    * editor and must NOT re-subscribe, or mode-changed would double-fire.
    * @param {string} uuid — target uuid, or '' to tear down
+   * @param {string} [kind] the container's kind, as the server stated it
    */
-  #syncShell(uuid) {
+  #syncShell(uuid, kind) {
     const existing = this.getTab(uuid)
     const hadEditor = !!(existing && existing.editor)
-    const tab = this.activateDocument(uuid)
+    const tab = this.activateDocument(uuid, undefined, kind)
     this.#mirrorPresenting()
     if (tab && tab.editor && !hadEditor) {
       tab.editor.onEvent(this.onEditorModeEvent.bind(this))
@@ -508,11 +594,18 @@ export class SieveWorkspace {
   }
 
   /** The non-toolbar chrome reactions to the editor's view events: the body
-   *  `markdown-mode` class plus the tab-strip re-render, the failure alert, and
-   *  the body `presenting` class.
-   *  @param {{type: string, mode?: string, error?: unknown}} event */
+   *  `markdown-mode` class plus the tab-strip re-render, the failure alert, the
+   *  body `presenting` class, a lens asking for a container to be opened, and a
+   *  lens asking for its own menu, which the app's one context menu shows.
+   *  @param {{type: string, mode?: string, error?: unknown, uuid?: string, x?: number, y?: number, items?: ReadonlyArray<any>}} event */
   onEditorModeEvent(event) {
-    if (event.type === 'presenting-changed') {
+    if (event.type === SurfaceIntent.OPEN_CONTAINER) {
+      if (event.uuid) this.open(event.uuid)
+    } else if (event.type === SurfaceIntent.CONTEXT_MENU) {
+      document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
+        detail: { x: event.x || 0, y: event.y || 0, context: { type: 'sieveBlock', items: [...(event.items || [])] } },
+      }))
+    } else if (event.type === 'presenting-changed') {
       this.#mirrorPresenting()
     } else if (event.type === 'mode-changed') {
       document.body.classList.toggle('markdown-mode', this.activeEditor?.mode === 'markdown')
@@ -536,24 +629,24 @@ export class SieveWorkspace {
 
   /** Registers the app-level editor DOM listeners. Called once at module load. */
   bootEditorLifecycle() {
-    // The backend emits BOTH prompts:changed and notes:changed on a prompt revert,
-    // and regular notes are left alone while typing, so both listeners guard on
-    // the `prompt:` uuid prefix.
-    document.addEventListener('prompts:changed', () => {
-      if (this.#currentUuid?.startsWith('prompt:')) {
-        this.initEditor(this.#currentMountEl, this.#currentUuid, this.activeEditor?.mode)
+    // The backend emits BOTH prompts:changed and notes:changed on a prompt revert.
+    // A container on a channel hears its own changes there and is left alone
+    // while typing; one without hears of them only this way, and reloads.
+    const reloadChannelless = () => {
+      const tab = this.#activeTab
+      if (tab && tab.uuid === this.#currentUuid && !SieveWorkspace.#LENSES.lookup(tab.kind).channel) {
+        this.initEditor(this.#currentMountEl, this.#currentUuid, this.activeEditor?.mode, tab.kind)
       }
-    })
-    document.addEventListener('notes:changed', () => {
-      if (this.#currentUuid?.startsWith('prompt:')) {
-        this.initEditor(this.#currentMountEl, this.#currentUuid, this.activeEditor?.mode)
-      }
-    })
+    }
+    document.addEventListener('prompts:changed', reloadChannelless)
+    document.addEventListener('notes:changed', reloadChannelless)
 
     // RECONCILIATION, not an operation: the server broadcasts that a container is
     // already gone, and everything this workspace still holds for it goes too.
     // Deleting a BACKGROUND note reaches no element the delete's own response
-    // swaps, which is why the news arrives on the workspace wire.
+    // swaps, which is why the news arrives on the workspace wire. A container that
+    // goes with no response at all (the Live view ending) leaves the active tab
+    // to the next tab strip rendered.
     //
     // Tearing down a MOUNTED editor here is the ORDINARY path, and it is safe:
     // destroy() performs exactly the unmount and channel-close activateDocument
@@ -564,6 +657,7 @@ export class SieveWorkspace {
       if (!uuid) return
       const tab = this.getTab(uuid)
       if (!tab) return
+      if (this.#activeTab === tab) this.#reopenAfterDeletion = true
       if (tab.editor) {
         tab.editor.destroy()
         tab.detachEditor()
@@ -652,13 +746,15 @@ export class SieveWorkspace {
    *
    * A native menu click carries no DOM gesture and steals focus, so WebKit rejects
    * navigator.clipboard — the Wails pasteboard is primary, the browser API is the
-   * non-Wails dev fallback.
+   * non-Wails dev fallback. A tab whose kind is mounted as no document has nothing
+   * to export, and nothing is asked or shown.
    * @param {'markdown'|'confluence'|'confluence-cloud'} format the export format word Go renders
    * @returns {Promise<void>}
    */
   copyDocumentAs(format) {
-    const mount = this.#activeTab ? this.#activeTab.mount : null
-    if (!mount) return Promise.resolve()
+    const tab = this.#activeTab
+    const mount = tab ? tab.mount : null
+    if (!tab || !mount || !SieveWorkspace.#LENSES.lookup(tab.kind).document) return Promise.resolve()
     return this.flushSave()
       .then(() => mount.exportAs(format))
       .then((text) => {

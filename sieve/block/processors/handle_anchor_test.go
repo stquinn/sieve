@@ -2,6 +2,7 @@ package processors
 
 import (
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"strings"
 	"testing"
 )
@@ -48,7 +49,7 @@ func TestHandles_MergedHandleSetPersists(t *testing.T) {
 	// A block that answers to a primary handle plus absorbed aliases (post-merge,
 	// spec §7) must persist every handle to disk so refs survive reopen. In the
 	// paired-delimiter format the whole handle-set rides in the open marker.
-	doc := []block.SieveBlock{
+	doc := []domain.SieveBlock{
 		{ID: "pr-aaaa", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "Merged block."}, Aliases: []string{"pr-bbbb", "pr-cccc"}},
 	}
 	md, err := block.NewDocumentCodec(block.GlobalRegistry()).Serialize(doc)

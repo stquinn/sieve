@@ -1,5 +1,7 @@
 package block
 
+import "sieve/sieve/domain"
+
 // Handle / ref resolution helpers.
 //
 // Refs are best-effort pointers: resolution, not referential integrity. A
@@ -22,25 +24,30 @@ package block
 // has no referrers BY DEFINITION — that is the point of it — so collecting
 // unreferenced aliases would drop exactly the ones worth keeping.
 
+// WholeDocumentRef is the ref token naming the whole document rather than a
+// block in it. No block answers to it: every resolver that walks refs has to
+// recognise it before it looks a handle up.
+const WholeDocumentRef = "doc"
+
 // collectHandles builds the resolution index over this document's blocks: every
 // block's primary ID plus its aliases. A ref resolves iff its target is here.
 func (s *ShadowDocument) collectHandles() map[string]bool {
 	out := map[string]bool{}
 	for _, b := range s.Blocks {
-		for _, h := range b.answersTo() {
+		for _, h := range b.AnswersTo() {
 			out[h] = true
 		}
 	}
 	return out
 }
 
-// gcRefs returns this block's outgoing refs filtered to those that resolve
-// against the index, deduped in first-seen order. container is the document the
-// block lives in, which outgoingRefs needs to recognise a local element edge.
-func (b SieveBlock) gcRefs(container string, resolvable map[string]bool) []string {
+// gcRefs returns b's outgoing refs filtered to those that resolve against the
+// index, deduped in first-seen order. b is a block of this document, whose uuid
+// outgoingRefs needs to recognise a local element edge.
+func (s *ShadowDocument) gcRefs(b domain.SieveBlock, resolvable map[string]bool) []string {
 	var out []string
 	seen := map[string]bool{}
-	for _, r := range b.outgoingRefs(container) {
+	for _, r := range GlobalRegistry().outgoingRefs(b, s.UUID) {
 		if resolvable[r] && !seen[r] {
 			seen[r] = true
 			out = append(out, r)

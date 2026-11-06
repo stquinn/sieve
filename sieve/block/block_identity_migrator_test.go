@@ -4,10 +4,11 @@ import (
 	"testing"
 
 	"sieve/ident"
+	"sieve/sieve/domain"
 )
 
 func TestMigrate_UpgradesLegacyIDs(t *testing.T) {
-	in := []SieveBlock{
+	in := []domain.SieveBlock{
 		{ID: "pr-aaaa", Kind: KindProse, Attrs: map[string]interface{}{"id": "pr-aaaa", "content": "one"}},
 		{ID: "pr-bbbb", Kind: KindProse, Attrs: map[string]interface{}{"id": "pr-bbbb", "content": "two"}},
 	}
@@ -35,7 +36,7 @@ func TestMigrate_UpgradesLegacyIDs(t *testing.T) {
 }
 
 func TestMigrate_CreatesNoAliases(t *testing.T) {
-	out, _ := BlockIdentityMigrator{}.Migrate([]SieveBlock{
+	out, _ := BlockIdentityMigrator{}.Migrate([]domain.SieveBlock{
 		{ID: "pr-aaaa", Kind: KindProse, Attrs: map[string]interface{}{"id": "pr-aaaa"}},
 	})
 	if len(out[0].Aliases) != 0 {
@@ -44,7 +45,7 @@ func TestMigrate_CreatesNoAliases(t *testing.T) {
 }
 
 func TestMigrate_PreservesExistingAliases(t *testing.T) {
-	out, _ := BlockIdentityMigrator{}.Migrate([]SieveBlock{
+	out, _ := BlockIdentityMigrator{}.Migrate([]domain.SieveBlock{
 		{ID: "pr-aaaa", Kind: KindProse, Attrs: map[string]interface{}{"id": "pr-aaaa"},
 			Aliases: []string{"the-opening-para"}},
 	})
@@ -54,7 +55,7 @@ func TestMigrate_PreservesExistingAliases(t *testing.T) {
 }
 
 func TestMigrate_RewritesRefs(t *testing.T) {
-	in := []SieveBlock{
+	in := []domain.SieveBlock{
 		{ID: "pr-aaaa", Kind: KindProse, Attrs: map[string]interface{}{"id": "pr-aaaa", "content": "target"}},
 		{ID: "ai-bbbb", Kind: "ai-block", Attrs: map[string]interface{}{"id": "ai-bbbb", "ref": "pr-aaaa"}},
 	}
@@ -65,7 +66,7 @@ func TestMigrate_RewritesRefs(t *testing.T) {
 }
 
 func TestMigrate_RewritesMultiRefsAndLeavesUnknownAlone(t *testing.T) {
-	in := []SieveBlock{
+	in := []domain.SieveBlock{
 		{ID: "pr-aaaa", Kind: KindProse, Attrs: map[string]interface{}{"id": "pr-aaaa"}},
 		{ID: "ai-bbbb", Kind: "ai-block", Attrs: map[string]interface{}{"id": "ai-bbbb", "ref": "pr-aaaa, pr-gone"}},
 	}
@@ -77,7 +78,7 @@ func TestMigrate_RewritesMultiRefsAndLeavesUnknownAlone(t *testing.T) {
 }
 
 func TestMigrate_IsIdempotent(t *testing.T) {
-	in := []SieveBlock{
+	in := []domain.SieveBlock{
 		{ID: "pr-aaaa", Kind: KindProse, Attrs: map[string]interface{}{"id": "pr-aaaa"}},
 		{ID: "ai-bbbb", Kind: "ai-block", Attrs: map[string]interface{}{"id": "ai-bbbb", "ref": "pr-aaaa"}},
 	}
@@ -97,7 +98,7 @@ func TestMigrate_IsIdempotent(t *testing.T) {
 // handle. Each must end up distinct, and refs must bind to the FIRST in document
 // order — the pre-migration resolution order.
 func TestMigrate_LegacyDuplicateHandleBindsFirstWins(t *testing.T) {
-	in := []SieveBlock{
+	in := []domain.SieveBlock{
 		{ID: "pr-dup", Kind: KindProse, Attrs: map[string]interface{}{"id": "pr-dup", "content": "first"}},
 		{ID: "pr-dup", Kind: KindProse, Attrs: map[string]interface{}{"id": "pr-dup", "content": "second"}},
 		{ID: "ai-cccc", Kind: "ai-block", Attrs: map[string]interface{}{"id": "ai-cccc", "ref": "pr-dup"}},
@@ -116,7 +117,7 @@ func TestMigrate_LegacyDuplicateHandleBindsFirstWins(t *testing.T) {
 func TestMigrate_RepairsDuplicateUUIDAndKeepsRefsWithFirstHolder(t *testing.T) {
 	const dup = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
 	const other = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a99"
-	in := []SieveBlock{
+	in := []domain.SieveBlock{
 		{ID: dup, Kind: KindProse, Attrs: map[string]interface{}{"id": dup, "content": "first"}},
 		{ID: dup, Kind: KindProse, Attrs: map[string]interface{}{"id": dup, "content": "second"}},
 		{ID: other, Kind: "ai-block", Attrs: map[string]interface{}{"id": other, "ref": dup}},
@@ -139,7 +140,7 @@ func TestMigrate_RepairsDuplicateUUIDAndKeepsRefsWithFirstHolder(t *testing.T) {
 func TestMigrate_CleanTreeIsUnchanged(t *testing.T) {
 	const a = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
 	const b = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a99"
-	out, changed := BlockIdentityMigrator{}.Migrate([]SieveBlock{
+	out, changed := BlockIdentityMigrator{}.Migrate([]domain.SieveBlock{
 		{ID: a, Kind: KindProse, Attrs: map[string]interface{}{"id": a}},
 		{ID: b, Kind: "ai-block", Attrs: map[string]interface{}{"id": b, "ref": a}},
 	})
@@ -156,7 +157,7 @@ func TestMigrate_EmptyAndNil(t *testing.T) {
 	if out, changed := m.Migrate(nil); out != nil || changed {
 		t.Fatalf("nil input: got %v, %v", out, changed)
 	}
-	if out, changed := m.Migrate([]SieveBlock{}); len(out) != 0 || changed {
+	if out, changed := m.Migrate([]domain.SieveBlock{}); len(out) != 0 || changed {
 		t.Fatalf("empty input: got %v, %v", out, changed)
 	}
 }

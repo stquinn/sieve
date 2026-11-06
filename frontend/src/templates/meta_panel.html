@@ -9,7 +9,7 @@
         hx-get="/ui/views/meta?uuid={{.UUID | urlenc}}&tab=meta"
         hx-target="#htmx-meta-panel"
         hx-swap="innerHTML">Meta</button>
-      {{if not .IsPrompt}}
+      {{if not (or .IsPrompt .Notebook)}}
       <button
         class="flex items-center bg-transparent border-0 cursor-pointer text-[13px] font-semibold uppercase tracking-[0.05em] transition-colors h-full border-b-2 border-solid -mb-px px-0{{if eq .Tab "history"}} text-tn-text border-tn-blue{{else}} text-tn-muted border-transparent hover:text-tn-text-dim{{end}}"
         hx-get="/ui/views/meta?uuid={{.UUID | urlenc}}&tab=history"
@@ -39,7 +39,9 @@
   {{/* Scrollable content */}}
   <div class="flex-1 min-h-0 overflow-y-auto bg-tn-bg-dark">
     {{if eq .Tab "meta"}}
-      {{if not .Meta}}
+      {{if .Notebook}}
+        {{template "meta_notebook_tab" .Notebook}}
+      {{else if not .Meta}}
         <div class="text-xs text-tn-subtle px-[0.9rem] py-[0.6rem] italic">No meta</div>
         {{template "meta_prompt_vars" .}}
       {{else}}
@@ -147,6 +149,66 @@
   </div>
 
   {{template "meta_prompt_vars" .}}
+</div>
+{{end}}
+
+
+{{define "meta_notebook_tab"}}
+<div class="py-[0.3rem]">
+  <div hidden hx-get="/ui/views/meta?uuid={{.UUID | urlenc}}&tab=meta" hx-trigger="sieve:invalidate-ink from:document" hx-target="#htmx-meta-panel" hx-swap="innerHTML"></div>
+  {{template "meta_row" (metaRow "Name" .Name)}}
+  {{if .TabletTitle}}{{template "meta_row" (metaRow "Tablet title" .TabletTitle)}}{{end}}
+
+  <div class="flex px-[0.9rem] py-[0.18rem] gap-[0.4rem] leading-[1.5]">
+    <span class="text-tn-text-dim shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem] font-medium">Summary</span>
+    <span class="text-tn-text-dim italic text-[15px] leading-[1.5] flex-1 break-words">{{if .Summary}}{{.Summary}}{{else}}—{{end}}</span>
+  </div>
+
+  {{if .Keywords}}
+  <div class="flex px-[0.9rem] py-[0.18rem] gap-[0.4rem] items-start" data-notebook-keywords>
+    <span class="text-tn-text-dim shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem] font-medium">Keywords</span>
+    <div class="flex flex-wrap gap-1 flex-1">
+      {{range .Keywords}}<span class="bg-tn-bg-alt border border-solid border-tn-border-2 rounded-[3px] text-tn-blue text-[10px] px-[0.35rem] py-[0.05rem] whitespace-nowrap">{{.}}</span>{{end}}
+    </div>
+  </div>
+  {{else}}
+  {{template "meta_row" (metaRow "Keywords" "—")}}
+  {{end}}
+
+  {{if .Categories}}
+  <div class="flex px-[0.9rem] py-[0.18rem] gap-[0.4rem] items-start" data-notebook-categories>
+    <span class="text-tn-text-dim shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem] font-medium">Categories</span>
+    <div class="flex flex-wrap gap-1 flex-1">
+      {{range .Categories}}<span class="bg-tn-bg-alt border border-solid border-tn-border-2 rounded-[3px] text-tn-blue text-[10px] px-[0.35rem] py-[0.05rem] whitespace-nowrap">{{.}}</span>{{end}}
+    </div>
+  </div>
+  {{else}}
+  {{template "meta_row" (metaRow "Categories" "—")}}
+  {{end}}
+
+  <div class="h-px bg-tn-border my-[0.3rem]"></div>
+
+  {{template "meta_row" (metaRow "Device" (or .Device "—"))}}
+  {{template "meta_row" (metaRow "Pages" (printf "%d" .Pages))}}
+  {{template "meta_row" (metaRow "Synced to" (printf "seq %d" .Seq))}}
+  {{template "meta_row" (metaRow "Described as of" (or (and .Described (printf "seq %d" .Described)) "not yet named"))}}
+
+  <div class="h-px bg-tn-border my-[0.3rem]"></div>
+
+  <div class="flex px-[0.9rem] py-[0.18rem] gap-[0.4rem] leading-[1.5]">
+    <span class="text-tn-text-dim shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem] font-medium">UUID</span>
+    <span class="font-mono text-[11px] text-tn-muted break-all select-all flex-1">{{.UUID}}</span>
+  </div>
+
+  <div class="flex items-center gap-[0.6rem] px-[0.9rem] py-[0.6rem]">
+    <button type="button" data-notebook-describe
+      class="bg-tn-bg-alt border border-solid border-tn-border-2 text-tn-text text-[13px] px-[0.6rem] py-[0.25rem] rounded-[4px] cursor-pointer hover:bg-tn-blue hover:border-tn-blue hover:text-white transition-colors"
+      hx-post="/api/ink/notes/{{.UUID}}/describe"
+      hx-target="this"
+      hx-swap="none"
+      hx-on::after-request="this.nextElementSibling.textContent = event.detail.successful ? 'Naming…' : (event.detail.xhr.responseText || 'Could not name this notebook')">Refresh name and summary</button>
+    <span class="text-[12px] text-tn-text-dim" data-notebook-describe-status role="status"></span>
+  </div>
 </div>
 {{end}}
 

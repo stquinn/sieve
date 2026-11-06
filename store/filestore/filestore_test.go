@@ -1,10 +1,15 @@
 package filestore_test
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"sieve/store"
@@ -40,6 +45,23 @@ func mustCreate(t *testing.T, fs *filestore.FileStore, cat store.Category, key s
 		t.Fatalf("CreateMetaText(%s, %q): %v", cat.Key, key, err)
 	}
 	return s
+}
+
+// contentTypes is every content-bearing .meta type with the extension its content
+// file and snapshots must carry on disk.
+var contentTypes = []struct{ contentType, ext string }{
+	{store.TypeDocument, ".md"},
+	{store.TypeBlock, ".block"},
+}
+
+// mustCreateTyped creates a storable of contentType with body held verbatim.
+func mustCreateTyped(t *testing.T, fs *filestore.FileStore, cat store.Category, key, contentType string, body []byte) store.MetaStorable {
+	t.Helper()
+	ms, err := fs.CreateTyped(cat, key, contentType, map[string]string{store.MetaKeyKind: "test-kind"}, body)
+	if err != nil {
+		t.Fatalf("CreateTyped(%s, %q, %s): %v", cat.Key, key, contentType, err)
+	}
+	return ms
 }
 
 // ── PrepareCategory ───────────────────────────────────────────────────────────
@@ -320,17 +342,61 @@ func TestSaveMetaMutationPersisted(t *testing.T) {
 }
 
 func TestSaveWritesVersionSnapshot(t *testing.T) {
-	fs := newTestStore(t)
-	s := mustCreate(t, fs, testWorkingCopy, "buf", nil)
-	ms := s.(store.MetaStorable)
-	ms.SetBody([]byte("v1 content"))
+	for _, tc := range contentTypes {
+		t.Run(tc.contentType, func(t *testing.T) {
+			fs := newTestStore(t)
+			ms := mustCreateTyped(t, fs, testWorkingCopy, "buf", tc.contentType, nil)
+			ms.SetBody([]byte("v1 content"))
 
-	saved, err := fs.Save(ms)
-	if err != nil {
-		t.Fatalf("Save: %v", err)
+			saved, err := fs.Save(ms)
+			if err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			if len(saved.Versions()) != 1 {
+				t.Fatalf("Versions() = %d after first save, want 1", len(saved.Versions()))
+			}
+
+			dir := filepath.Join(fs.Root(), "testhost", "buffers", "buf")
+			uuid := saved.Key()
+			for _, path := range []string{
+				filepath.Join(dir, uuid+tc.ext),
+				filepath.Join(dir, ".history", uuid+".1"+tc.ext),
+			} {
+				if got, err := os.ReadFile(path); err != nil || string(got) != "v1 content" {
+					t.Errorf("%s = %q, %v; want the saved body", path, got, err)
+				}
+			}
+		})
 	}
-	if len(saved.Versions()) == 0 {
-		t.Error("Versions() should be non-empty after first save")
+}
+
+// Retention counts and deletes a storable's own snapshots, whatever their extension.
+func TestSavePrunesOldestSnapshots(t *testing.T) {
+	for _, tc := range contentTypes {
+		t.Run(tc.contentType, func(t *testing.T) {
+			fs := newTestStore(t)
+			fs.SetMaxVersions(2)
+			var current store.Storable = mustCreateTyped(t, fs, testWorkingCopy, "buf", tc.contentType, nil)
+			for i := 1; i <= 4; i++ {
+				current.(store.MetaStorable).SetBody([]byte("v" + strconv.Itoa(i)))
+				saved, err := fs.Save(current)
+				if err != nil {
+					t.Fatalf("Save %d: %v", i, err)
+				}
+				current = saved
+			}
+			versions := current.Versions()
+			if len(versions) != 2 || versions[0].ID != "4" || versions[1].ID != "3" {
+				t.Fatalf("versions = %+v, want the newest two, newest first", versions)
+			}
+			entries, err := os.ReadDir(filepath.Join(fs.Root(), "testhost", "buffers", "buf", ".history"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 2 {
+				t.Errorf("%d snapshot files left, want 2", len(entries))
+			}
+		})
 	}
 }
 
@@ -405,20 +471,24 @@ func TestDeleteRemovesDocument(t *testing.T) {
 }
 
 func TestDeleteRemovesHistory(t *testing.T) {
-	fs := newTestStore(t)
-	s := mustCreate(t, fs, testWorkingCopy, "buf", nil)
-	ms := s.(store.MetaStorable)
-	ms.SetBody([]byte("v1"))
-	saved, _ := fs.Save(ms)
+	for _, tc := range contentTypes {
+		t.Run(tc.contentType, func(t *testing.T) {
+			fs := newTestStore(t)
+			ms := mustCreateTyped(t, fs, testWorkingCopy, "buf", tc.contentType, nil)
+			ms.SetBody([]byte("v1"))
+			saved, _ := fs.Save(ms)
 
-	fs.Delete(saved)
+			fs.Delete(saved)
 
-	// History directory should not exist (RemoveAll deleted the doc dir).
-	root := fs.Root()
-	uuid := saved.(store.MetaStorable).Meta()["uuid"]
-	histDir := filepath.Join(root, "testhost", "buffers", "buf", ".history")
-	if _, err := os.Stat(histDir); !os.IsNotExist(err) {
-		t.Errorf("history dir should be gone after Delete: %s (uuid=%s)", histDir, uuid)
+			// History directory should not exist (RemoveAll deleted the doc dir).
+			histDir := filepath.Join(fs.Root(), "testhost", "buffers", "buf", ".history")
+			if _, err := os.Stat(histDir); !os.IsNotExist(err) {
+				t.Errorf("history dir should be gone after Delete: %s", histDir)
+			}
+			if _, err := fs.LoadByUUID(saved.Key()); err == nil {
+				t.Error("uuid still resolves after Delete")
+			}
+		})
 	}
 }
 
@@ -485,16 +555,23 @@ func TestRenameChangesKey(t *testing.T) {
 }
 
 func TestRenamePreservesUUID(t *testing.T) {
-	fs := newTestStore(t)
-	s := mustCreate(t, fs, testLibrary, "old-name", nil)
-	originalUUID := s.(store.MetaStorable).Meta()["uuid"]
+	for _, tc := range contentTypes {
+		t.Run(tc.contentType, func(t *testing.T) {
+			fs := newTestStore(t)
+			ms := mustCreateTyped(t, fs, testLibrary, "old-name", tc.contentType, []byte("body"))
 
-	renamed, err := fs.Rename(s, "new-name")
-	if err != nil {
-		t.Fatalf("Rename: %v", err)
-	}
-	if renamed.(store.MetaStorable).Meta()["uuid"] != originalUUID {
-		t.Error("UUID must be preserved after rename")
+			renamed, err := fs.Rename(ms, "new-name")
+			if err != nil {
+				t.Fatalf("Rename: %v", err)
+			}
+			got := renamed.(store.MetaStorable)
+			if got.Meta()["uuid"] != ms.Meta()["uuid"] {
+				t.Error("UUID must be preserved after rename")
+			}
+			if got.Type() != tc.contentType || string(got.Body()) != "body" {
+				t.Errorf("after rename: type %q body %q", got.Type(), got.Body())
+			}
+		})
 	}
 }
 
@@ -673,27 +750,264 @@ func TestCreateOrLoadFolderNestedPathIsIdempotent(t *testing.T) {
 // ── RetrieveVersion ───────────────────────────────────────────────────────────
 
 func TestRetrieveVersionRoundTrip(t *testing.T) {
-	fs := newTestStore(t)
-	s := mustCreate(t, fs, testWorkingCopy, "buf", nil)
-	ms := s.(store.MetaStorable)
-	ms.SetBody([]byte("snapshot content"))
+	for _, tc := range contentTypes {
+		t.Run(tc.contentType, func(t *testing.T) {
+			fs := newTestStore(t)
+			ms := mustCreateTyped(t, fs, testWorkingCopy, "buf", tc.contentType, nil)
+			ms.SetBody([]byte("snapshot content"))
 
+			saved, err := fs.Save(ms)
+			if err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+
+			versions := saved.Versions()
+			if len(versions) == 0 {
+				t.Fatal("no versions after save")
+			}
+
+			vs, err := fs.RetrieveVersion(saved, versions[0])
+			if err != nil {
+				t.Fatalf("RetrieveVersion: %v", err)
+			}
+			if string(vs.Body) != "snapshot content" {
+				t.Errorf("snapshot body = %q, want 'snapshot content'", vs.Body)
+			}
+		})
+	}
+}
+
+// A .meta type is stamped once: SetMeta cannot overwrite it, and neither saves nor
+// a move between categories rewrite it.
+func TestMetaTypeSurvivesEveryWrite(t *testing.T) {
+	for _, tc := range contentTypes {
+		t.Run(tc.contentType, func(t *testing.T) {
+			fs := newTestStore(t)
+			ms := mustCreateTyped(t, fs, testWorkingCopy, "buf", tc.contentType, []byte("body"))
+
+			meta := cloneMeta(ms.Meta())
+			delete(meta, "type")
+			meta["focus_count"] = "3"
+			ms.SetMeta(meta)
+			afterMeta, err := fs.SaveMeta(ms)
+			if err != nil {
+				t.Fatalf("SaveMeta: %v", err)
+			}
+			afterMeta.SetBody([]byte("edited"))
+			afterSave, err := fs.Save(afterMeta)
+			if err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			moved, err := fs.Move(afterSave, testLibrary)
+			if err != nil {
+				t.Fatalf("Move: %v", err)
+			}
+
+			got := moved.(store.MetaStorable)
+			if got.Type() != tc.contentType || got.Meta()["type"] != tc.contentType {
+				t.Errorf("after the writes: Type()=%q meta type=%q, want %q", got.Type(), got.Meta()["type"], tc.contentType)
+			}
+			if got.Meta()[store.MetaKeyKind] != "test-kind" {
+				t.Errorf("kind = %q, want it kept", got.Meta()[store.MetaKeyKind])
+			}
+			if string(got.Body()) != "edited" {
+				t.Errorf("body = %q after the move", got.Body())
+			}
+		})
+	}
+}
+
+// A directory may be named by its own uuid, which is also a key Load resolves
+// through the index: a move must land on the new location, not the stale entry.
+func TestMoveOfADirectoryNamedByItsUUID(t *testing.T) {
+	for _, tc := range contentTypes {
+		t.Run(tc.contentType, func(t *testing.T) {
+			fs := newTestStore(t)
+			const uuid = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+			ms, err := fs.CreateTyped(testWorkingCopy, uuid, tc.contentType, map[string]string{"uuid": uuid}, []byte("body"))
+			if err != nil {
+				t.Fatalf("CreateTyped: %v", err)
+			}
+			moved, err := fs.Move(ms, testLibrary)
+			if err != nil {
+				t.Fatalf("Move: %v", err)
+			}
+			if moved.Category().Key != testLibrary.Key || string(moved.Body()) != "body" {
+				t.Errorf("moved = %s body %q", moved.Category().Key, moved.Body())
+			}
+			current, err := fs.LoadByUUID(uuid)
+			if err != nil || current.Category().Key != testLibrary.Key {
+				t.Errorf("index after Move: %v, %v", current, err)
+			}
+		})
+	}
+}
+
+// A fresh FileStore has an empty index: each type must come back through the
+// index rebuild, the category scan and a folder's children, with its content
+// file read and not mistaken for an asset.
+func TestContentTypesAreFoundByAFreshStore(t *testing.T) {
+	for _, tc := range contentTypes {
+		t.Run(tc.contentType, func(t *testing.T) {
+			fs := newTestStore(t)
+			top := mustCreateTyped(t, fs, testLibrary, "top", tc.contentType, []byte("top body"))
+			nested := mustCreateTyped(t, fs, testLibrary, "nested", tc.contentType, []byte("nested body"))
+			folder, err := fs.CreateOrLoadFolder(testLibrary, "folder")
+			if err != nil {
+				t.Fatalf("CreateOrLoadFolder: %v", err)
+			}
+			if _, err := fs.Reparent(nested, folder); err != nil {
+				t.Fatalf("Reparent: %v", err)
+			}
+
+			fresh, err := filestore.NewFileStore(fs.Root(), "testhost")
+			if err != nil {
+				t.Fatalf("NewFileStore: %v", err)
+			}
+			for uuid, body := range map[string]string{top.Key(): "top body", nested.Key(): "nested body"} {
+				s, err := fresh.LoadByUUID(uuid)
+				if err != nil {
+					t.Fatalf("LoadByUUID(%s) on a fresh store: %v", body, err)
+				}
+				ms := s.(store.MetaStorable)
+				if ms.Type() != tc.contentType || string(ms.Body()) != body {
+					t.Errorf("%s: type %q body %q", uuid, ms.Type(), ms.Body())
+				}
+				if len(ms.Owns()) != 0 {
+					t.Errorf("%s: content file listed as an asset: %d owned", uuid, len(ms.Owns()))
+				}
+			}
+
+			listed, err := fresh.List(testLibrary, "")
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			var topSeen, nestedSeen bool
+			for _, s := range listed {
+				switch s := s.(type) {
+				case store.MetaStorable:
+					topSeen = topSeen || s.Key() == top.Key()
+				case store.FolderStorable:
+					for _, child := range s.Owns() {
+						nestedSeen = nestedSeen || child.Key() == nested.Key()
+					}
+				}
+			}
+			if !topSeen || !nestedSeen {
+				t.Errorf("List: top seen %v, nested seen %v", topSeen, nestedSeen)
+			}
+		})
+	}
+}
+
+// CreateTyped stores the body verbatim, so a block whose text opens like
+// frontmatter is not split, and it refuses a type with no content file.
+func TestCreateTypedStoresBytesAndRefusesContentlessTypes(t *testing.T) {
+	fs := newTestStore(t)
+	body := []byte("---\ntitle: not frontmatter\n---\nrest")
+	ms := mustCreateTyped(t, fs, testWorkingCopy, "blk", store.TypeBlock, body)
+	if string(ms.Body()) != string(body) {
+		t.Errorf("body = %q, want it verbatim", ms.Body())
+	}
+	if _, present := ms.Meta()["title"]; present {
+		t.Error("the body was parsed as frontmatter")
+	}
+
+	for _, contentType := range []string{store.TypeFolder, "", "whiteboard"} {
+		if _, err := fs.CreateTyped(testWorkingCopy, "x", contentType, nil, nil); err == nil {
+			t.Errorf("CreateTyped(type %q) succeeded, want a refusal", contentType)
+		}
+	}
+}
+
+// A store written before block containers existed loads and rewrites its files
+// byte for byte: same .meta, same content file, same snapshot names.
+func TestExistingMarkdownStoreIsUntouched(t *testing.T) {
+	fs := newTestStore(t)
+	const uuid = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+	dir := filepath.Join(fs.Root(), "store", "legacy-note")
+	if err := os.MkdirAll(filepath.Join(dir, ".history"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	metaBytes := []byte(`{
+  "uuid": "` + uuid + `",
+  "type": "document",
+  "status": "filed",
+  "version": 3,
+  "display_name": "Legacy Note",
+  "tags": [
+    "a",
+    "b"
+  ],
+  "created": "2026-05-22T10:00:00",
+  "modified": "2026-05-23T10:00:00",
+  "names": [
+    {
+      "name": "legacy-note",
+      "from": "2026-05-22T10:00:00"
+    }
+  ]
+}`)
+	body := []byte("# Legacy\n\n<!--s:pr-aaaa-->\nProse.\n<!--/s:pr-aaaa-->\n")
+	for name, content := range map[string][]byte{
+		".meta":                      metaBytes,
+		uuid + ".md":                 body,
+		".history/" + uuid + ".3.md": []byte("snapshot three"),
+		".history/" + uuid + ".2.md": []byte("snapshot two"),
+		"image.png":                  {0x89, 0x50, 0x4E, 0x47},
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s, err := fs.Load(testLibrary, "legacy-note")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	ms := s.(store.MetaStorable)
+	if ms.Type() != store.TypeDocument || string(ms.Body()) != string(body) {
+		t.Fatalf("loaded type %q body %q", ms.Type(), ms.Body())
+	}
+	if vs := ms.Versions(); len(vs) != 2 || vs[0].ID != "3" || vs[1].ID != "2" {
+		t.Errorf("versions = %+v", vs)
+	}
+	if owned := ms.Owns(); len(owned) != 1 || owned[0].Key() != "image.png" {
+		t.Errorf("assets = %v, want only image.png", owned)
+	}
+	if vs, err := fs.RetrieveVersion(ms, store.VersionRef{ID: "2"}); err != nil || string(vs.Body) != "snapshot two" {
+		t.Errorf("RetrieveVersion = %q, %v", vs.Body, err)
+	}
+
+	if _, err := fs.SaveMeta(ms); err != nil {
+		t.Fatalf("SaveMeta: %v", err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, ".meta")); string(got) != string(metaBytes) {
+		t.Errorf(".meta changed by SaveMeta:\n%s", got)
+	}
+
+	ms.SetBody([]byte("edited"))
 	saved, err := fs.Save(ms)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-
-	versions := saved.Versions()
-	if len(versions) == 0 {
-		t.Fatal("no versions after save")
+	if got, _ := os.ReadFile(filepath.Join(dir, uuid+".md")); string(got) != "edited" {
+		t.Errorf("content file = %q", got)
 	}
-
-	vs, err := fs.RetrieveVersion(saved, versions[0])
-	if err != nil {
-		t.Fatalf("RetrieveVersion: %v", err)
+	if got, _ := os.ReadFile(filepath.Join(dir, ".history", uuid+".4.md")); string(got) != "edited" {
+		t.Errorf("snapshot 4 = %q", got)
 	}
-	if string(vs.Body) != "snapshot content" {
-		t.Errorf("snapshot body = %q, want 'snapshot content'", vs.Body)
+	if len(saved.Versions()) != 3 {
+		t.Errorf("versions after save = %d, want 3", len(saved.Versions()))
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".block") {
+			t.Errorf("a markdown document grew %s", e.Name())
+		}
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, ".meta")); strings.Contains(string(got), `"kind"`) {
+		t.Errorf(".meta grew a kind:\n%s", got)
 	}
 }
 
@@ -772,37 +1086,297 @@ func TestAssetIsColocatedInDocDir(t *testing.T) {
 // DeleteAsset removes only a file the document owns as an asset; the document's
 // own files and anything outside its directory are refused and left in place.
 func TestDeleteAssetRemovesOnlyAnOwnedAsset(t *testing.T) {
-	fs := newTestStore(t)
-	doc := mustCreate(t, fs, testLibrary, "my-note", []byte("body"))
-	uuid := doc.(store.MetaStorable).Meta()["uuid"]
-	if _, err := fs.CreateAsset(testLibrary, uuid, "holiday.png", []byte{0x89, 0x50, 0x4E, 0x47}); err != nil {
-		t.Fatalf("CreateAsset: %v", err)
-	}
-	docDir := filepath.Join(fs.Root(), "store", "my-note")
-	outside := filepath.Join(fs.Root(), "store", "keep.png")
-	if err := os.WriteFile(outside, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	for _, tc := range contentTypes {
+		t.Run(tc.contentType, func(t *testing.T) {
+			fs := newTestStore(t)
+			doc := mustCreateTyped(t, fs, testLibrary, "my-note", tc.contentType, []byte("body"))
+			uuid := doc.Meta()["uuid"]
+			if _, err := fs.CreateAsset(testLibrary, uuid, "holiday.png", []byte{0x89, 0x50, 0x4E, 0x47}); err != nil {
+				t.Fatalf("CreateAsset: %v", err)
+			}
+			docDir := filepath.Join(fs.Root(), "store", "my-note")
+			outside := filepath.Join(fs.Root(), "store", "keep.png")
+			if err := os.WriteFile(outside, []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
 
-	for _, key := range []string{uuid + ".md", ".meta", "../keep.png", "missing.png", ""} {
-		if err := fs.DeleteAsset(testLibrary, uuid, key); err == nil {
-			t.Errorf("DeleteAsset(%q) succeeded, want a refusal", key)
+			for _, key := range []string{uuid + tc.ext, ".meta", "../keep.png", "missing.png", ""} {
+				if err := fs.DeleteAsset(testLibrary, uuid, key); err == nil {
+					t.Errorf("DeleteAsset(%q) succeeded, want a refusal", key)
+				}
+			}
+			for _, path := range []string{filepath.Join(docDir, uuid+tc.ext), filepath.Join(docDir, ".meta"), outside} {
+				if _, err := os.Stat(path); err != nil {
+					t.Errorf("%s was removed by a refused delete: %v", path, err)
+				}
+			}
+
+			if err := fs.DeleteAsset(testLibrary, uuid, "holiday.png"); err != nil {
+				t.Fatalf("DeleteAsset: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(docDir, "holiday.png")); !os.IsNotExist(err) {
+				t.Errorf("asset still on disk: %v", err)
+			}
+			if _, err := fs.LoadAsset(testLibrary, uuid, "holiday.png"); err == nil {
+				t.Error("the document still owns the deleted asset")
+			}
+		})
+	}
+}
+
+// OwnedAssets attaches to the owner it was handed and to the Store's current
+// instance, replacing an asset of the same key, and leaves the version alone,
+// whether it saves the asset whole or appends to it. An appended asset reads as
+// stored, through every owner and through a fresh load.
+func TestOwnedAssetsWriteAttachesWithoutAVersionBump(t *testing.T) {
+	for _, verb := range []struct {
+		name  string
+		write func(store.OwnedAssets, store.MetaStorable, []byte) (store.AssetStorable, error)
+		want  string
+	}{
+		{"save", func(o store.OwnedAssets, ms store.MetaStorable, b []byte) (store.AssetStorable, error) {
+			return o.Save(ms, "strokes.jsonl", b)
+		}, "two\n"},
+		{"append", func(o store.OwnedAssets, ms store.MetaStorable, b []byte) (store.AssetStorable, error) {
+			return o.Append(ms, "strokes.jsonl", b)
+		}, "one\ntwo\n"},
+	} {
+		for _, tc := range contentTypes {
+			t.Run(verb.name+"/"+tc.contentType, func(t *testing.T) {
+				fs := newTestStore(t)
+				first := mustCreateTyped(t, fs, testLibrary, "my-note", tc.contentType, []byte("body"))
+				// A second load replaces the index entry, so first is no longer current.
+				reloaded, err := fs.Load(testLibrary, "my-note")
+				if err != nil {
+					t.Fatalf("Load: %v", err)
+				}
+				assets := store.OwnedAssets{Store: fs}
+				for _, data := range []string{"one\n", "two\n"} {
+					if _, err := verb.write(assets, first, []byte(data)); err != nil {
+						t.Fatalf("%s: %v", verb.name, err)
+					}
+				}
+
+				for name, ms := range map[string]store.MetaStorable{"handed": first, "current": reloaded.(store.MetaStorable)} {
+					owned := ms.Owns()
+					if len(owned) != 1 || string(owned[0].Body()) != verb.want {
+						t.Errorf("%s owner holds %d assets, want the one asset holding %q", name, len(owned), verb.want)
+					}
+					if ms.Meta()["version"] != "0" {
+						t.Errorf("%s owner version = %q, want 0", name, ms.Meta()["version"])
+					}
+				}
+				got, err := fs.LoadAsset(testLibrary, first.Key(), "strokes.jsonl")
+				if err != nil || string(got.Body()) != verb.want {
+					t.Errorf("LoadAsset = %v, %v", got, err)
+				}
+				fresh, err := filestore.NewFileStore(fs.Root(), "testhost")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got, err := fresh.LoadAsset(testLibrary, first.Key(), "strokes.jsonl"); err != nil || string(got.Body()) != verb.want {
+					t.Errorf("a fresh store's LoadAsset = %v, %v", got, err)
+				}
+			})
 		}
 	}
-	for _, path := range []string{filepath.Join(docDir, uuid+".md"), filepath.Join(docDir, ".meta"), outside} {
-		if _, err := os.Stat(path); err != nil {
-			t.Errorf("%s was removed by a refused delete: %v", path, err)
-		}
-	}
+}
 
-	if err := fs.DeleteAsset(testLibrary, uuid, "holiday.png"); err != nil {
-		t.Fatalf("DeleteAsset: %v", err)
+// A content save through a handle loaded before another handle wrote and deleted assets leaves
+// the owner owning what its directory holds: the asset written since is kept, the one deleted
+// since is gone. Writers attaching to one handle at once, some replacing an asset it owns and some
+// adding one, lose none of them.
+func TestContentSaveOwnsWhatTheDirectoryHolds(t *testing.T) {
+	for _, tc := range contentTypes {
+		t.Run(tc.contentType, func(t *testing.T) {
+			fs := newTestStore(t)
+			held := mustCreateTyped(t, fs, testLibrary, "my-note", tc.contentType, []byte("body"))
+			assets := store.OwnedAssets{Store: fs}
+			if _, err := assets.Save(held, "old.png", []byte("old")); err != nil {
+				t.Fatal(err)
+			}
+			if err := fs.DeleteAsset(testLibrary, held.Key(), "old.png"); err != nil {
+				t.Fatal(err)
+			}
+			other, err := fs.LoadByUUID(held.Key())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := assets.Save(other.(store.MetaStorable), "new.png", []byte("new")); err != nil {
+				t.Fatal(err)
+			}
+			var wg sync.WaitGroup
+			for i := range 8 {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					if _, err := assets.Append(held, "log.jsonl", []byte("x\n")); err != nil {
+						t.Error(err)
+					}
+					if _, err := assets.Save(held, fmt.Sprintf("img-%d.png", i), []byte("img")); err != nil {
+						t.Error(err)
+					}
+				}()
+			}
+			wg.Wait()
+
+			held.SetBody([]byte("edited"))
+			saved, err := fs.Save(held)
+			if err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			want := []string{"img-0.png", "img-1.png", "img-2.png", "img-3.png", "img-4.png", "img-5.png", "img-6.png", "img-7.png", "log.jsonl", "new.png"}
+			current, _ := fs.LoadByUUID(held.Key())
+			for name, ms := range map[string]store.Storable{"saved": saved, "current": current} {
+				var keys []string
+				for _, a := range ms.(store.MetaStorable).Owns() {
+					keys = append(keys, a.Key())
+				}
+				sort.Strings(keys)
+				if !reflect.DeepEqual(keys, want) {
+					t.Errorf("%s owns %v, want %v", name, keys, want)
+				}
+			}
+			if got, err := fs.LoadAsset(testLibrary, held.Key(), "new.png"); err != nil || string(got.Body()) != "new" {
+				t.Errorf("LoadAsset(new.png) = %v, %v", got, err)
+			}
+		})
 	}
-	if _, err := os.Stat(filepath.Join(docDir, "holiday.png")); !os.IsNotExist(err) {
-		t.Errorf("asset still on disk: %v", err)
+}
+
+// AppendAsset writes only beside its owner's own files, never over them.
+func TestAppendAssetRefusesWhatIsNotAnAssetKey(t *testing.T) {
+	for _, tc := range contentTypes {
+		t.Run(tc.contentType, func(t *testing.T) {
+			fs := newTestStore(t)
+			doc := mustCreateTyped(t, fs, testLibrary, "my-note", tc.contentType, []byte("body"))
+			uuid := doc.Meta()["uuid"]
+			for _, key := range []string{uuid + tc.ext, ".meta", "../keep.jsonl", "sub/a.jsonl", ""} {
+				if _, err := fs.AppendAsset(testLibrary, uuid, key, []byte("x")); err == nil {
+					t.Errorf("AppendAsset(%q) succeeded, want a refusal", key)
+				}
+			}
+			if _, err := fs.AppendAsset(testLibrary, "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a77", "a.jsonl", []byte("x")); err == nil {
+				t.Error("AppendAsset to an unknown owner succeeded")
+			}
+			if body, _ := os.ReadFile(filepath.Join(fs.Root(), "store", "my-note", uuid+tc.ext)); string(body) != "body" {
+				t.Errorf("content file = %q", body)
+			}
+		})
 	}
-	if _, err := fs.LoadAsset(testLibrary, uuid, "holiday.png"); err == nil {
-		t.Error("the document still owns the deleted asset")
+}
+
+// Every verb that yields an asset yields the one file-backed kind: Body is the
+// file's bytes at the moment of the call, so a file changed on disk after the
+// storable was obtained is seen by the next Body, and the encoding is inferred
+// from the file's leading bytes.
+func TestAssetStorableIsBackedByItsFile(t *testing.T) {
+	assetFiles := []struct {
+		key  string
+		data []byte
+		enc  store.Encoding
+	}{
+		{"pic.png", []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00}, store.Raw},
+		{"diagram.svg", []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), store.Raw},
+		{"strokes.jsonl", []byte("{\"x\":1}\n"), store.Raw},
+		{"b64.txt", []byte("aGVsbG8gd29ybGQ="), store.Base64},
+		{"pack.zip", []byte("PK\x03\x04rest"), store.Zipped},
+	}
+	verbs := []struct {
+		name string
+		get  func(t *testing.T, fs *filestore.FileStore, owner store.MetaStorable, key string, data []byte) store.Storable
+	}{
+		{"create", func(t *testing.T, fs *filestore.FileStore, owner store.MetaStorable, key string, data []byte) store.Storable {
+			a, err := fs.CreateAsset(testLibrary, owner.Key(), key, data)
+			if err != nil {
+				t.Fatalf("CreateAsset: %v", err)
+			}
+			return a
+		}},
+		{"append", func(t *testing.T, fs *filestore.FileStore, owner store.MetaStorable, key string, data []byte) store.Storable {
+			a, err := fs.AppendAsset(testLibrary, owner.Key(), key, data)
+			if err != nil {
+				t.Fatalf("AppendAsset: %v", err)
+			}
+			return a
+		}},
+		{"load", func(t *testing.T, fs *filestore.FileStore, owner store.MetaStorable, key string, data []byte) store.Storable {
+			if _, err := (store.OwnedAssets{Store: fs}).Save(owner, key, data); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			a, err := fs.LoadAsset(testLibrary, owner.Key(), key)
+			if err != nil {
+				t.Fatalf("LoadAsset: %v", err)
+			}
+			return a
+		}},
+		{"list", func(t *testing.T, fs *filestore.FileStore, owner store.MetaStorable, key string, data []byte) store.Storable {
+			if _, err := fs.CreateAsset(testLibrary, owner.Key(), key, data); err != nil {
+				t.Fatalf("CreateAsset: %v", err)
+			}
+			loaded, err := fs.Load(testLibrary, "my-note")
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			for _, a := range loaded.(store.MetaStorable).Owns() {
+				if a.Key() == key {
+					return a
+				}
+			}
+			t.Fatalf("scan did not list %s", key)
+			return nil
+		}},
+		{"save", func(t *testing.T, fs *filestore.FileStore, owner store.MetaStorable, key string, data []byte) store.Storable {
+			a, err := fs.CreateAsset(testLibrary, owner.Key(), key, data)
+			if err != nil {
+				t.Fatalf("CreateAsset: %v", err)
+			}
+			saved, err := fs.Save(a)
+			if err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			return saved
+		}},
+	}
+	for _, verb := range verbs {
+		for _, af := range assetFiles {
+			t.Run(verb.name+"/"+af.key, func(t *testing.T) {
+				fs := newTestStore(t)
+				owner := mustCreateTyped(t, fs, testLibrary, "my-note", "document", []byte("body"))
+				got := verb.get(t, fs, owner, af.key, af.data)
+
+				as, ok := got.(store.AssetStorable)
+				if !ok {
+					t.Fatalf("%T is not an AssetStorable", got)
+				}
+				if as.Encoding() != af.enc {
+					t.Errorf("encoding = %v, want %v", as.Encoding(), af.enc)
+				}
+				if !bytes.Equal(as.Body(), af.data) {
+					t.Errorf("Body = %q, want %q", as.Body(), af.data)
+				}
+				if as.Size() != int64(len(af.data)) {
+					t.Errorf("Size = %d, want %d", as.Size(), len(af.data))
+				}
+
+				path := filepath.Join(fs.Root(), "store", "my-note", af.key)
+				if err := os.WriteFile(path, []byte("changed on disk"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if string(as.Body()) != "changed on disk" {
+					t.Errorf("Body after the file changed = %q", as.Body())
+				}
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if as.Body() != nil {
+					t.Errorf("Body of a missing file = %q, want nil", as.Body())
+				}
+				if as.Size() != 0 {
+					t.Errorf("Size of a missing file = %d, want 0", as.Size())
+				}
+			})
+		}
 	}
 }
 

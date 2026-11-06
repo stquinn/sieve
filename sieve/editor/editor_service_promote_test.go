@@ -3,6 +3,7 @@ package editor
 import (
 	"encoding/json"
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"strings"
 	"testing"
 )
@@ -28,12 +29,12 @@ func (p *testMarkdownProcessor) Transform(_ []block.ContentEntry, _, _ string, a
 func (p *testMarkdownProcessor) DescribeJob(_ block.JobContext) *block.ProcessorJob {
 	return nil
 }
-func (p *testMarkdownProcessor) OnChange(_ *block.SieveBlock) {}
-func (p *testMarkdownProcessor) Mode() block.BlockMode        { return block.BlockModeBlock }
-func (p *testMarkdownProcessor) BuildContext(_ block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
+func (p *testMarkdownProcessor) OnChange(_ *domain.SieveBlock) {}
+func (p *testMarkdownProcessor) Mode() block.BlockMode         { return block.BlockModeBlock }
+func (p *testMarkdownProcessor) BuildContext(_ domain.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
 	return block.AIContext{}
 }
-func (p *testMarkdownProcessor) MarkdownRepresentation(_ block.SieveBlock, _ string) string {
+func (p *testMarkdownProcessor) MarkdownRepresentation(_ domain.SieveBlock, _ string) string {
 	return p.md
 }
 
@@ -59,7 +60,7 @@ func TestEditorService_TransformToProse(t *testing.T) {
 
 	// Replicate the retired PromoteBlock body: snapshot the block, build the
 	// sieve/<kind> content entry, and ask CreateBlockFromEntries to transform it.
-	src, found := es.shadows[uuid].SnapshotBlock("tm-0001")
+	src, found := es.shadowFor(uuid).SnapshotBlock("tm-0001")
 	if !found {
 		t.Fatalf("block tm-0001 not found in shadow")
 	}

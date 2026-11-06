@@ -227,6 +227,9 @@ The resulting order for one keystroke, highest first:
 | Note / document (`NoteEditor`) | **nothing** | the matrix above, unchanged |
 | Prompt (`PromptEditor`) | **nothing** | the matrix above, unchanged |
 | Composer (`ComposerEditor`) | `Mod+Enter` → send the message | the matrix above, unchanged |
+| Block container whose kind has no lens (`BlockLens`) | **nothing** | none of the matrix: there is no editing surface. The block is drawn read-only by its kind's renderer, which keeps its read affordances (selection, copy, pan, filters) and drops every edit |
+| Digital Note (`DigitalNoteLens`) | `Mod+Enter` → switch between `page` and `transcript`; bare `PageUp` → previous page, bare `PageDown` → next page, in either mode; on a whiteboard shown as a page also the bare arrows → move the window, `+`/`=` and `-`/`_` → zoom | none of the matrix: there is no editing surface (below) |
+| Live view (`LiveInkLens`) | **nothing** | none of the matrix: there is no editing surface, and no gesture moves the view (below) |
 
 **The composer is EDITOR-FIRST (revised 2026-08-28, #118):** it claims exactly
 one chord, `Mod+Enter`, and nothing else. Bare `Enter`, `Shift+Enter` and
@@ -248,6 +251,221 @@ this block's mode" in the note editor, and each mount's `claimKey` is the
 sole place either meaning is decided. `Escape` is unclaimed in the composer
 too — it belongs to the picker while one is open, and to the host panel
 otherwise (below).
+
+### The workspace toolbar
+
+The toolbar under the tab strip is the workspace's, and what it holds is the active tab's lens's
+answer: the mounted surface's groups, each followed by a separator when the next is drawn in the
+same place, then the lens's own groups. Each item says where in the strip it is drawn — at its
+start (the default), in its middle or at its end (`ToolbarPlace`). The start and the end share the
+room the middle leaves, so the middle sits between them and the end's items against the right
+edge; no separator divides two places. An answer that places nothing beyond the start is laid out
+as its items alone, left to right. A place is never drawn narrower than its items: when they do not
+fit, what came of the last action (at the end) gives way first, cut short with an ellipsis down to
+nothing, and only then does the strip wrap a place to a second row. It is asked again whenever the active lens changes (a tab switch, a mount, a close) and whenever the
+lens says its answer changed (a mode flip, a page turned, a page or a state that changes what is
+offered); a lens that offers nothing, or no lens, leaves it empty. Buttons reflect their state
+(pressed, disabled) on every event the lens reports, a caret-only move included. Pressing a toolbar
+button never takes the keyboard from the lens: its `mousedown` is cancelled, so the caret or the
+focused page stays where it was. A button reached by Tab shows a focus ring, and keeps the focus
+when the toolbar is redrawn under it. A drop-down (`ToolbarSelect`) is a native `<select>` laid
+transparent over a face saying what is chosen: the list, its keys and what assistive technology
+reads are the platform's. Opening it with the pointer takes the keyboard for the choice, and choosing
+hands it back to whatever held it before (the caret, or the focused page); a choice made from the
+keyboard leaves the focus on the drop-down.
+
+**Actions are declared once.** A lens whose verbs are offered both in the toolbar and in a context
+menu declares them as one `ActionList` (`renderers/action-list.js`): each action names the modes it
+belongs to, whether it applies now (one that does not is absent from both) and whether it can run
+now (one that cannot is drawn disabled in both). An action may be menu-only: it is in the menu and
+never a toolbar button. Both drawings are made from that list each time they are drawn, so an
+action added to it appears in the menu, and in the toolbar unless it is menu-only. The ink lenses
+are drawn this way; view controls (a pager, a scale) are the toolbar's alone.
+
+**The mode toggle** is one button, `#tb-toggle-mode-btn`, offered by every lens with two or more
+modes, which steps to the lens's next mode exactly as Toggle Editor Mode (`Mod+Alt+M`) does; it is
+drawn with the face the lens gives the mode in force, saying what pressing it shows. A note shows
+the Markdown icon (`View Markdown Source`) in WYSIWYG and the eye (`Return to WYSIWYG`) in Markdown;
+a Digital Note shows `Transcript` on the page and `Page` in its transcript. A prompt, a block with no
+lens of its own and the Live view have one mode and offer no toggle.
+
+| Lens | Start | Middle | End |
+|---|---|---|---|
+| Note / document (`NoteEditor`) | the WYSIWYG surface's formatting groups (none in Markdown), then the mode toggle and Spell check; insert code, diagram, web clip, attach; Explain, Ask; Help | | |
+| Prompt (`PromptEditor`) | nothing | | |
+| Block container whose kind has no lens (`BlockLens`) | nothing | | |
+| Digital Note, page | the pager (`‹`, the page drop-down, `›`, `n unseen`) and, for a template it cannot draw, its notice | the scale drop-down on a fixed page, or `−` `+` `100%` `Fit all` on a whiteboard | what came of the last action, `Open on device`, `Copy page`, `Live ↗`; then the mode toggle, last |
+| Digital Note, transcript | the pager | | what came of the last action, `Open on device`, `New document` (once there is a transcript of the page as it is); then the mode toggle, last |
+| Live view (`LiveInkLens`) | `Open this note` | | what came of the last action, `Copy page` |
+
+A Digital Note's **Transcribe this page** (with its transcript's `Transcribe again` and `Try again`) and **Refresh
+name and summary** are menu-only: on the page the mode toggle beside the actions shows the transcript,
+and the transcript's own row transcribes the page.
+
+### The Digital Note lens
+
+`DigitalNoteLens` presents a Digital Note one page at a time, in two modes: `page`, the page as the
+tablet drew it, and `transcript`, the same page as text and diagrams. It is read-only: it declares
+no capability and writes nothing of the note, and `Mod+Alt+P` (Presentation Mode) does nothing in
+it.
+
+- **Modes.** `Mod+Enter` (claimed by the lens, so it never reaches an editor core) and `Mod+Alt+M`
+  (Toggle Editor Mode) switch between `page` and `transcript`, and so does the toolbar's mode toggle,
+  which says `Transcript` on the page and `Page` in the transcript. The keyboard goes to the surface the
+  switch presents, and the toolbar is filled again for it. The page shown, the pages marked unseen
+  and, for the page, its scale and whiteboard window carry from one mode to the other, and the mode
+  is kept across a tab switch as the page is. Both modes have the pager in the toolbar and the bare
+  `PageUp`/`PageDown` turns.
+
+- **Keys.** The page element is focusable (a click on the sheet focuses it). Its keydown asks the
+  lens's `claimKey` first, which claims bare `PageUp` (previous page) and bare `PageDown` (next
+  page); a turn at the first or last page does nothing. On a fixed page nothing else is claimed:
+  arrow keys, `Home`/`End` and `Space` scroll as the browser scrolls. On a whiteboard the surround
+  does not scroll, so the lens also claims the bare arrows (move the window a tenth of its width or
+  height) and `+`/`=` and `-`/`_` (zoom in and out by 1.25 about the window's centre; Shift is
+  allowed, since it is how `+` is typed). Alt, Ctrl or Cmd leaves every other key unclaimed
+  (`Mod+Enter` switches mode, above).
+- **Pointer.** Every control is in the workspace toolbar (above); the lens draws no bar of its own.
+  The pager is previous, a drop-down of every page, and next; previous and next are disabled at the
+  first and last page. The drop-down's closed face is the page's place (`3 / 12`); its list names
+  each page by the name the note's page list gives it, else `Page n`, and a page with ink not yet
+  seen is led by `● `. While any page other than the one shown has ink not yet seen, an `n unseen`
+  button led by a dot in the accent colour follows the pager and shows the next such page after the
+  one shown, from the first again past the last. The pager is the same in both modes. A whiteboard
+  of one page has no pager. A fixed page is sized by the scale drop-down: `25%`, `50%`, `75%`,
+  `100%`, `150%`, `200%` (at `100%` one grid unit is one CSS pixel, 1404 across; at N%, N% of that;
+  the page scrolls), `Fit width` (the surround's width; the page scrolls) and `Fit page` (the whole
+  page in the surround, both ways); both fits follow the surround as the window or the Ask panel
+  changes it. A note opens at `Fit page` until the reader chooses otherwise. A whiteboard has `−`
+  and `+` (zoom about the centre), `100%` (one grid unit to one CSS pixel, about the centre) and
+  `Fit all` (frame all the ink with a margin, and keep framing it — below; the sheet at the origin
+  when there is none), and no scale drop-down. A template the lens cannot draw is said in the toolbar (`Unknown template, drawn
+  blank`). The device the note was written on is the last cell of the status bar's readout, after
+  the page and its strokes.
+- **Zooming a fixed page.** The wheel scrolls it. Ctrl or Cmd with the wheel steps the scale one
+  level for every 40 px of travel (at most one level an event; a change of direction starts the
+  count again): up for larger, down for smaller. A WebKit trackpad pinch steps one level each time
+  it spreads or closes by a fifth since the last step. From a fit, the step is to the nearest level
+  beyond the size the fit shows the page at, in that direction; at `200%` larger, and at `25%`
+  smaller, nothing changes, nor does a fit with no level beyond it. The point under the pointer
+  stays where it is, as far as the surround's scroll allows.
+- **Actions and the context menu.** What the lens can do is one list (`ActionList`, above), drawn
+  at the end of the toolbar (bar the menu-only actions) and as the menu a right-click — or the menu key, which
+  places it at the surface's top-left — raises over the page or the transcript, a block of the
+  transcript included. The menu is the app's one context menu (`sieve:contextmenu`, the supplied-items
+  path); the browser's own never shows over the lens. It lists the actions that apply, in the
+  list's order, those that cannot run now disabled, then a divider and the mode toggle (`Transcript`
+  or `Page`). On the page: **Open on device** (a note from a tablet), **Copy page**, **Transcribe this
+  page**, **Go to Live** (while the note is being written on the tablet; `Live ↗` in the toolbar,
+  led by a red dot, opening the Live view in its own tab) and **Refresh name and summary**. In the
+  transcript: Open on device, the transcript's **Transcribe this page**, **Transcribe again** or **Try again**, or
+  **New document** (whichever the row above the transcript offers, below), and Refresh name and
+  summary. What came of the last action is said in the toolbar before the actions, briefly, cut
+  short with an ellipsis past 18em (or sooner, when the strip has less room), and carries across a
+  mode switch.
+- **Transcribe this page**, on the page, shows the transcript and, once the host says the page has no
+  transcript (and something can transcribe it and it is not being transcribed), has it transcribed; a page that has one is
+  shown as it is. In the transcript it does what the row's button of the same name does.
+- **Refresh name and summary** asks the host to name and summarise the note again from its ink. While
+  it asks, the toolbar says `Asking for a new name and summary…` and the action is disabled; then,
+  briefly, `A new name and summary were asked for`, or the reason the host gives that it cannot (no
+  AI configured, no ink, no window to draw), or `Could not ask for a new name and summary`. The new
+  name arrives as any rename does.
+- **Copy page** puts the page shown on the clipboard as a PNG, 1404 pixels across: the white sheet,
+  its ruling and its committed ink, pencil tone included, without the stroke under the
+  pen. A fixed page is copied whole, whatever its scroll or scale; a whiteboard is copied as its
+  window shows it. It is a named verb and has no key: Mod+C claims nothing here (a bitmap for other
+  applications is a named verb everywhere, as smart-image's **Copy Image** is). A brief `Copied`
+  follows in the toolbar, or `Nothing to copy yet` while no page is drawn, or `Could not copy the
+  page`.
+- **Open on device** asks the tablet the note came from to open it at the page the reader is on, in
+  either mode: the note's id and that page's id are sent, and only while that tablet is connected —
+  nothing is queued. While it asks, the toolbar says `Opening on {device}…` and the button is
+  disabled; then, briefly and beside it, `Opened on {device}`
+  (the tablet shows the note and is live on it, so the sidebar's Live item appears), `No tablet
+  connected`, `Connected to another tablet`, `SieveInk is not open on the tablet` (refused
+  `not-foreground`), `This note is not shared with this Sieve` (refused `not-offered`), `The tablet
+  did not answer` (after five seconds), or `Could not ask the tablet`. It is offered only for a note
+  that came from a tablet, and has no key.
+- **The whiteboard's window.** A whiteboard is shown through a window that fills the surround and
+  takes its shape. Dragging the sheet with the primary button moves the window with the pointer;
+  the wheel moves it (Shift turns a vertical wheel horizontal); Ctrl or Cmd with the wheel, and a
+  trackpad pinch, zoom about the point under the pointer, which stays under it. Zoom runs from all
+  the ink framed (or one sheet, whichever is farther) to a quarter of a sheet's width.
+- **Fit all is a state.** A whiteboard opened with no window of the reader's to return to, and one
+  on which `Fit all` is pressed, is *fitting*: `Fit all` is drawn pressed, and the window goes on
+  framing all the ink. A stroke committed or removed frames it again (tighter, when the ink
+  shrinks); a stroke under the pen inside the window moves nothing until it ends, when it is
+  framed with the rest; one that runs out of the window grows the window at each frame so the pen
+  stays in view. When the surround changes shape a fitting window frames the ink again; any other
+  keeps its zoom and its centre. Fitting ends the moment the reader moves the window — a drag, the
+  wheel, Ctrl or Cmd with the wheel, a pinch, an arrow key, `+`/`-`, or `−` `+` `100%` — and from
+  then on the window is the reader's until `Fit all` is pressed again.
+- **The reader is never moved.** The page shown changes only by the reader's hand, and so does the
+  whiteboard's window, but for a fitting window following the ink. While the tablet writes on
+  another page of the note, its ink arrives there unseen and marks that page; while it writes on
+  the page shown, the committed strokes and the stroke under the pen are drawn where they land, the
+  surround is not scrolled to them, and the tablet's own window does not move the reader's. On a
+  whiteboard the reader has moved, a stroke that arrives wholly outside the window marks the edge
+  of the sheet it lies beyond, until the window shows it.
+- **The reader's place is kept.** Switching to another tab and back shows the same page, the same
+  scale, the same whiteboard window (a fitting one fitting still, framed round the ink as it now
+  is) and the same pages marked, for as long as the tab
+  is open. Ink written while the tab was in the background marks the pages it landed on, as if it
+  had arrived while the tab was shown; a mark goes only when its page is shown.
+
+### The transcript of a page
+
+In `transcript` the lens shows the transcript of the page the reader is on, on the editor's own background
+and at its text width, its blocks drawn read-only by each kind's own renderer (a PlantUML diagram
+that could not be drawn shows its error and, beneath it, its source). Above the blocks one row says
+what is known of the page's transcript, as the host tells it — the lens never decides whether a transcript
+is current:
+
+| The page's transcript | The row |
+|---|---|
+| none | `This page has not been transcribed yet. …` and **Transcribe this page** |
+| under way | `Transcribing this page…`; no button (a stale transcript stays drawn beneath) |
+| of the page as it is | **New document** |
+| of the page before it changed | `This page has changed since it was transcribed.` and **Transcribe again**; the old transcript drawn, dimmed |
+| nothing can transcribe a page | why (no AI configured); no button |
+| the last transcribing failed | what went wrong, and **Try again** |
+
+A transcript of the page as it is offers no **Transcribe again**: a page is never transcribed twice at one key.
+Ink that lands on the page shown asks the host again, which is how a transcript becomes stale; ink on
+another page marks that page unseen. **New document** makes an ordinary untitled note named
+`{note} — page {n}` holding a copy of the transcript, linked to nothing, and opens it in its own tab,
+focused; while it is made the row says `Making a document…`, and `Could not make a document` if it
+fails. No key reads a page or makes a document.
+
+### The Live view lens
+
+`LiveInkLens` presents the Live view, in its one mode, `mirror`: whichever note the tablet is
+writing, on the page it is writing on. It is read-only as `DigitalNoteLens` is, and it is a strict
+mirror: the reader cannot turn its pages, move or zoom its window, or scroll it away from the nib.
+
+- **Keys.** None is claimed; no key moves the view.
+- **Pointer.** In the workspace toolbar (Open this note at its start, Copy page at its end), and in
+  the context menu a right-click or the menu key raises over the view (drawn from the same list, as
+  the Digital Note lens's is, with no mode toggle), **Open this note** opens the note being mirrored in a tab of its own (disabled before the note
+  has reached this Sieve). **Copy page** copies the page as the Digital Note lens's does, a
+  whiteboard as the tablet's window frames it. There is no Open on device: the view is already the
+  tablet's. There is no pager, no zoom or scale control, no Fit all and no edge mark; a drag and the wheel,
+  Ctrl or Cmd held or not, move nothing.
+- **What it shows.** The page the tablet writes on, changing as the tablet turns or changes note. A
+  fixed page is shown whole in the surround, sized as a note's Fit page sizes it, so it gives way to
+  whatever shares the window with it. Should the surround be too small to hold the page it
+  scrolls, and while the stroke under the pen runs out of view the surround
+  scrolls the least that brings the pen back within 48 px of its edge, unless the reader has
+  scrolled it in the last 0.8 s. A whiteboard is shown through the tablet's window (one sheet at one
+  to one, where the tablet says its view is, or where its last stroke began while it has said
+  nothing), and moves with it. A Live tab opened, or returned to, after the tablet last moved is
+  put on the tablet's window as soon as its page is drawn; while the tablet's window is not known
+  at all, the sheet is shown at the origin, one sheet at one to one.
+- **Readout.** The status bar says `Live`, the note's title, the page as `Page n of N` (or
+  `Whiteboard`), its strokes and the device; while the tablet is not live and the view waits for
+  it, `Waiting for the tablet` and the last page written. Thirty seconds after the last live note
+  the view, and its tab, are gone.
 
 ## Policy declaration (revised 2026-07-29)
 
@@ -588,7 +806,8 @@ The menu items, the editor menu's and the ai-block node menu's alike, run
 first selects its node), so the real ClipboardEvent reaches the same handler and
 the clipboard is the keyboard's, view for view.
 A kind may still offer a **named verb** that writes the clipboard — `Copy Link`,
-`Copy URL`, and `Copy source` on code and diagram — and those are not a second
+`Copy URL`, and `Copy source` on code and diagram (an ink lens's `Copy page` and
+smart-image's `Copy Image` write a PNG the same way) — and those are not a second
 mechanism: each writes one `text/plain` payload it names in its own label, picks
 no views and reads no selection. `Copy source` takes the block's inner text
 alone, no fence and no language line, and survives `readOnly`, because it
@@ -935,7 +1154,10 @@ claims the gesture for the one whose fixture contains the target. A lens
 publishes the element it was mounted in, so the resolution names no mount and a
 third arrangement needs no third listener. Inside a claimed mount the browser's
 own menu is always suppressed; a sieve block raises its own menu instead and the
-editor menu stands down.
+editor menu stands down. A lens that draws its own surface (the ink lenses) raises
+its own menu the same way: its surface asks its lens with the `context-menu`
+surface intent, the lens supplies the entries from its `ActionList`, and the
+shell shows them through the supplied-items path — no second menu exists.
 
 **An ELEMENT raises no menu of its own.** A sieve node living inside another
 sieve block's content — the blocks an ai-block's answer is composed of, projected

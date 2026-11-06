@@ -17,6 +17,7 @@ import (
 	"sieve/sieve/editor"
 	"sieve/sieve/protocol"
 	"sieve/sieve/services"
+	"sieve/store"
 	"sieve/store/filestore"
 )
 
@@ -54,10 +55,22 @@ var testSpellService = sync.OnceValue(func() *services.SpellService {
 // h.broadcast after the fact.
 func newWsTestServerWithJobs(t *testing.T, debounce time.Duration, jobs JobsSource) (*httptest.Server, *sieve.ServiceProvider, *WsHandler, string) {
 	t.Helper()
+	return newWsTestServerOver(t, debounce, jobs, newTestFileStore(t))
+}
+
+// newTestFileStore is a FileStore over a temp dir.
+func newTestFileStore(t *testing.T) *filestore.FileStore {
+	t.Helper()
 	fs, err := filestore.NewFileStore(t.TempDir(), "testhost")
 	if err != nil {
 		t.Fatalf("NewFileStore: %v", err)
 	}
+	return fs
+}
+
+// newWsTestServerOver is newWsTestServerWithJobs over the store fs.
+func newWsTestServerOver(t *testing.T, debounce time.Duration, jobs JobsSource, fs store.Store) (*httptest.Server, *sieve.ServiceProvider, *WsHandler, string) {
+	t.Helper()
 	ds, err := services.NewDocumentService(fs)
 	if err != nil {
 		t.Fatalf("NewDocumentService: %v", err)
@@ -67,7 +80,13 @@ func newWsTestServerWithJobs(t *testing.T, debounce time.Duration, jobs JobsSour
 	if err != nil {
 		t.Fatalf("NewStateService: %v", err)
 	}
-	sp := &sieve.ServiceProvider{Store: fs, Documents: ds, Editor: es, State: st}
+	containers, err := services.NewBlockContainerService(fs, block.GlobalRegistry())
+	if err != nil {
+		t.Fatalf("NewBlockContainerService: %v", err)
+	}
+	es.SetContainers(containers)
+	containers.SetChangeListener(es)
+	sp := &sieve.ServiceProvider{Store: fs, Documents: ds, Containers: containers, Editor: es, State: st}
 	// The composition root's own wiring, minus the settings read: every producer
 	// the app registers, spelling switched on, and the editor observing the engine
 	// back. Registration goes through the root's own method so a producer added

@@ -39,7 +39,7 @@ export class PromptEditor extends AbstractEditor {
    * Markdown ONLY — `mode` is deliberately ignored; a prompt has no other surface.
    * @protected
    * @param {import('../document-editor/editor-mode.js').EditorModeValue} mode
-   * @returns {import('../document-editor/surfaces/abstract-surface.js').AbstractSurface}
+   * @returns {import('../abstract-surface.js').AbstractSurface}
    */
   _createSurface(mode) {
     return new MarkdownSurface(this)

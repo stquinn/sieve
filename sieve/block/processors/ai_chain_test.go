@@ -19,22 +19,22 @@ const (
 // chainAsk builds an ai-block in its current form: a question list naming the
 // blocks in THIS container it is about, then its text. The handles stay readable
 // — an address's leaf is whatever the container will be asked to look up.
-func chainAsk(id, question string, targets ...string) block.SieveBlock {
+func chainAsk(id, question string, targets ...string) domain.SieveBlock {
 	return chainAskIn(chainUUID, id, question, targets...)
 }
 
 // chainAskIn is chainAsk with the container its targets are named against, so a
 // fixture can point at a block in another document.
-func chainAskIn(container, id, question string, targets ...string) block.SieveBlock {
-	blk := block.NewSieveBlock("ai-block", id, map[string]interface{}{"id": id, "type": "ASK"})
-	var els block.Elements
+func chainAskIn(container, id, question string, targets ...string) domain.SieveBlock {
+	blk := domain.NewSieveBlock("ai-block", id, map[string]interface{}{"id": id, "type": "ASK"})
+	var els domain.Elements
 	for _, t := range targets {
-		els = append(els, block.NewSieveBlock(block.KindReference, "", map[string]interface{}{
+		els = append(els, domain.NewSieveBlock(block.KindReference, "", map[string]interface{}{
 			"uri": domain.NewLeafAddress(container, t).String(), "rel": block.RelTarget,
 		}))
 	}
 	if question != "" {
-		els = append(els, block.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": question}))
+		els = append(els, domain.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": question}))
 	}
 	blk.SetElements(block.QuestionAttr, els)
 	return blk
@@ -45,7 +45,7 @@ func chainAskIn(container, id, question string, targets ...string) block.SieveBl
 // reported defect — previously the first block became TARGET and the rest were
 // mis-filed as THREAD (prior Q&A history).
 func TestResolveChain_multiBlockSelection_allTargetsNoThread(t *testing.T) {
-	doc := block.DocView{UUID: chainUUID, Blocks: []block.SieveBlock{
+	doc := block.DocView{UUID: chainUUID, Blocks: []domain.SieveBlock{
 		{ID: "pr-a", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "alpha"}},
 		{ID: "pr-b", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "beta"}},
 		{ID: "pr-c", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "gamma"}},
@@ -64,7 +64,7 @@ func TestResolveChain_multiBlockSelection_allTargetsNoThread(t *testing.T) {
 // of leaves (TARGET) — the one-level expandAIBlockRefs could not, so the source data
 // was unreachable on a pointer chain.
 func TestResolveChain_deepPointerChain_terminalManyIsTarget(t *testing.T) {
-	doc := block.DocView{UUID: chainUUID, Blocks: []block.SieveBlock{
+	doc := block.DocView{UUID: chainUUID, Blocks: []domain.SieveBlock{
 		chainAsk("ai-cef2", "q1", "pr-1", "pr-2"),
 		chainAsk("ai-8af1", "q2", "ai-cef2"),
 		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "alpha"}},
@@ -82,7 +82,7 @@ func TestResolveChain_deepPointerChain_terminalManyIsTarget(t *testing.T) {
 
 // A cyclic graph must terminate (the seen-guard) rather than loop forever.
 func TestResolveChain_cycle_terminates(t *testing.T) {
-	doc := block.DocView{UUID: chainUUID, Blocks: []block.SieveBlock{
+	doc := block.DocView{UUID: chainUUID, Blocks: []domain.SieveBlock{
 		chainAsk("ai-1", "", "ai-2"),
 		chainAsk("ai-2", "", "ai-1"),
 	}}
@@ -101,7 +101,7 @@ func TestResolveChain_cycle_terminates(t *testing.T) {
 // terminates rather than re-walking it — and the guard recognises it by ADDRESS,
 // which is how a node is named once a chain can leave its container.
 func TestResolveChain_selfReferenceTerminates(t *testing.T) {
-	doc := block.DocView{UUID: chainUUID, Blocks: []block.SieveBlock{
+	doc := block.DocView{UUID: chainUUID, Blocks: []domain.SieveBlock{
 		chainAsk("ai-1", "", "ai-self"),
 	}}
 	self := chainAsk("ai-self", "", "ai-1")
@@ -122,7 +122,7 @@ func TestResolveChain_selfReferenceTerminates(t *testing.T) {
 // a walk that keyed on the bare handle rather than the address would descend
 // into the local block and cross the boundary unnoticed.
 func TestResolveChain_foreignLinkTerminatesTheWalk(t *testing.T) {
-	doc := block.DocView{UUID: chainUUID, Blocks: []block.SieveBlock{
+	doc := block.DocView{UUID: chainUUID, Blocks: []domain.SieveBlock{
 		chainAsk("ai-mine", "", "pr-1"),
 		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "alpha"}},
 	}}
@@ -141,9 +141,9 @@ func TestResolveChain_foreignLinkTerminatesTheWalk(t *testing.T) {
 
 // The whole document is a leaf — a valid target terminus.
 func TestResolveChain_docSentinelIsATargetLeaf(t *testing.T) {
-	blk := block.NewSieveBlock("ai-block", "ai-x", map[string]interface{}{"type": "ASK"})
-	blk.SetElements(block.QuestionAttr, block.Elements{
-		block.NewSieveBlock(block.KindReference, "", map[string]interface{}{
+	blk := domain.NewSieveBlock("ai-block", "ai-x", map[string]interface{}{"type": "ASK"})
+	blk.SetElements(block.QuestionAttr, domain.Elements{
+		domain.NewSieveBlock(block.KindReference, "", map[string]interface{}{
 			"uri": domain.NewContainerAddress(chainUUID).String(), "rel": block.RelTarget,
 		}),
 	})

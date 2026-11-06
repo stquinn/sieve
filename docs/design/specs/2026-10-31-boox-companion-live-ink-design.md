@@ -1,7 +1,7 @@
 # Boox companion and live ink — a pen notebook that replicates into Sieve over Bluetooth
 
-**Status:** Designed
-**Tracked:** #204 (epic; per-phase issues are filed as each phase starts)
+**Status:** Phases 0–5 shipped (Sieve replication, the note lens and Live, names and transcripts). Phase 6, selection and clips (§8a), is not built. Where this text and the code differ, `docs/ink-contract.md`, `docs/editor-interaction-contract.md` and the phase issues (#210, #211, #212) are what was built.
+**Tracked:** #204 (epic); what v1 leaves open is #214
 **Date:** 2026-10-31
 **Supersedes nothing.** The folder-sync design (2026-10-29, not committed) remains a valid
 second producer of the same Thing, bringing exported files in through a remote folder.
@@ -367,9 +367,10 @@ UUID is reserved for discovery.
 stream with real throughput, which GATT notifications are not. Android exposes it as
 `BluetoothAdapter.listenUsingL2capChannel()` (public since API 29). BlueZ exposes it as an
 `AF_BLUETOOTH` / `BTPROTO_L2CAP` socket over LE, reachable from Go without cgo.
-CoreBluetooth exposes it as `CBPeripheral.openL2CAPChannel(psm)`; the Go library in use
-does not wrap it, so the Mac needs a small Objective-C bridge, proven in phase 3 on the
-installed build (§10).
+CoreBluetooth exposes it as `CBPeripheral.openL2CAPChannel(psm)`. The Go Bluetooth library
+used on Linux does not offer it on macOS, but the CoreBluetooth binding beneath that library
+(`cbgo`) does, so the Mac radio is Go written against the binding, inside the Sieve process,
+with no Objective-C of Sieve's own; proven in phase 3 on the installed build (§10).
 
 Three facts the Linux spike (#205, 2026-11-02) fixed in the contract. The channel is opened
 with the *insecure* listener (`listenUsingInsecureL2capChannel`): there is no bonding, and the
@@ -424,7 +425,7 @@ user action. Settings → Ink shows this instance's key and name and lists the c
 
 ## 7. Replication protocol
 
-Over the L2CAP stream, framed, Sieve speaks first.
+Over the L2CAP stream, framed, the companion speaks first. Frame encodings, and `LIVE` and `INK`, are in `docs/ink-contract.md` §7.
 
 ```
 companion → Sieve   CHALLENGE {cNonce}
@@ -437,7 +438,7 @@ Sieve → companion   OPEN    {noteId, haveSeq}                 once per note it
 companion → Sieve   HEAD    {noteId, headSeq, headHash} | REFUSE {reason}
 companion → Sieve   OP*     log records from haveSeq+1; in a note offer, then live as written
 companion → Sieve   POINT*  the stroke under the pen, every sample as it arrives (§7.4)
-Sieve → companion   ACK     {seq}  every N records or 500 ms, whichever first
+Sieve → companion   ACK     {noteId, seq}  every N records or 500 ms, whichever first
 companion → Sieve   DONE    {noteId}   end of catch-up for this note (library offer);
                                        Sieve may OPEN the next
 ```
@@ -496,8 +497,10 @@ Sieve → companion   META    {noteId, title, keywords[], categories[], summary,
   summary). Nothing in it comes from any other document, so the classification boundary
   holds: the Boox learns what it already holds, named.
 - The companion stores it on the note header, shows the title in the notes list, and uses
-  keywords and categories for search, sort and grouping. A user-typed title on the Boox
-  wins over a received one. `asOfSeq` says which version of the ink the description is of;
+  keywords and categories for search, sort and grouping. On the Boox the most recent of the
+  user's name and a received title shows, by seq: a `META` whose `asOfSeq` is at or past the
+  header's takes over, and a later rename wins until a later `META`. In Sieve a user's name is
+  a hint, not a rule. `asOfSeq` says which version of the ink the description is of;
   a newer reading replaces an older one.
 - Per Sieve, the companion has a toggle "accept filing metadata from this Sieve", default
   on, so the corporate instance can be told to stay silent.
@@ -508,10 +511,11 @@ The use case: a search in Sieve found the ink note, and the user wants to add to
 Digital Note's lens offers **Open in e-ink**. Sieve sends
 
 ```
-Sieve → companion   OPEN-NOTE {noteId}
+Sieve → companion   OPEN-NOTE {noteId, pageId}
 ```
 
-for a note the companion already holds; the companion opens that note and starts its live
+for a note the companion already holds, at the page Sieve is showing; the companion opens that
+note at that page and starts its live
 sync to the Sieve that asked, under the consent that already exists for the pair. It is a
 command, not content: a note the Boox does not have cannot be sent to it, from any Sieve,
 because the boundary is only safe if it never depends on which Sieve is asking.
@@ -583,8 +587,9 @@ content lives:
 
 The block is the same shape whatever the source is; only the source differs.
 
-- **The block** (`{uuid}.block`, YAML, the standard block format) holds the id, the kind,
-  the title, the note header (page aspect, template, page list), provenance
+- **The block** (`{uuid}.block`, YAML: the file names its kind on its first line and holds
+  the map of the standard block format; `.meta` carries the kind too, for listing) holds
+  the id, the title, the note header (page aspect, template, page list), provenance
   (`note_companion`, `note_source_id`, `note_synced_seq`), reading state, and `source`:
   an **asset** beside it in the same directory, addressed absolutely as
   `sieve://{thing}/{key}` like every asset-bearing attr. The block never carries ink.
@@ -609,7 +614,7 @@ file. The lens is a follower, never the owner. Appends are debounced (written th
 short timer and on disconnect) so a live pen does not rewrite the asset per stroke; the
 hash chain (§7.1) makes a crash between writes a resumable gap, not corruption. Catch-up
 is the sequence number: the last record in the asset is the cursor (`note_synced_seq` in
-the face), `OPEN {noteId, haveSeq}` resumes from it, and a lens opened late loads the
+the face is a copy that may lag it between saves), `OPEN {noteId, haveSeq}` resumes from it, and a lens opened late loads the
 replayed page from the asset and joins the socket from there — nothing need be online at
 the same time as anything else except for the live window. The wire format (§7) and the
 companion's own on-device log are independent of this storage; only the record *shape* is
@@ -646,9 +651,10 @@ yields `note_title`, `note_pages`, `note_source` (`strokes` | `file`), `note_sou
 `note_companion` and `note_synced_seq` into `.meta`. The sidebar, the reference card and any triage read the
 face and never the body.
 
-**Snapshots.** A live pen would make a version per debounced write. The replica path
-snapshots once per sync session, on disconnect, not per write. My call; the builder may
-pick a different cadence, but never per record.
+**Snapshots.** A live pen would make a version per debounced write. The replica path saves
+the block, and so snapshots, when a note is caught up, when a `note-header` or page record
+arrives after that, and at disconnect if anything changed since. A stroke record alone never
+saves it, so a note costs a handful of versions per session and never one per record.
 
 **Live path to an open lens.** Initial load is whole-content through the Thing load
 endpoint #198 D2 adds, and the lens replays the log in JS. While a sync is running the
@@ -797,6 +803,24 @@ records (§8) are frame families on it, declared in `sieve/protocol` like every 
 the generated artifacts rebuilt. The feed bypasses the `ContainerModel`, not the
 transport: lenses stay transport-blind, which `lens-isolation` pins.
 
+**Workspace uniform, Sidebar discerning.** The Workspace treats every container alike: read
+its type and kind, pick the lens, mount it in the tab. The Sidebar gives each its own
+affordance: documents their tree, ink notes an Ink section, chats theirs later, and any other
+block kind its own section or a general Blocks bucket, so no block is ever invisible. The Ink
+section exists only when Ink is enabled in Settings, per machine and off by default; off, the
+service does not start and Bluetooth is not touched, notes stay on disk and addresses still
+resolve. Expanded, it shows **Live**, present from the first live note until 30 seconds after the
+last, and below it the synced notes. Live is the tablet's live view, not a copy of any note: it
+is a container of its own, with a uuid minted for the run and stored nowhere, that the server
+feeds from whichever note is live. Its tab is a strict mirror of the tablet — the note being
+written, the page written on and, on a whiteboard, the tablet's window — that the reader cannot
+turn, pan or zoom, and it offers **Open this note**, which opens that note in a tab of its own.
+While the tablet is not live it says it is waiting and keeps the last page; when the 30 seconds
+run out the item and the tab go. A note's own tab is the reader's: ink arrives in it as it is
+written and pages with unseen ink are marked, but nothing moves the reader, and while the note
+is live a quiet affordance opens the Live view. There is no verb that shows another uuid in a
+tab.
+
 **Frontend: a lens and a renderer.** `lens/ink/` holds `DigitalNoteLens` extending
 `AbstractEditor` with its `page` and `reading` modes; `renderers/ink-renderer.js` is the
 PM-free renderer phase 1 builds. The lens imports `contract/` and `renderers/` only.
@@ -823,6 +847,7 @@ or Bluetooth anywhere else is a failing test, not a review comment.
 | AI read fails | Reading view shows the page PNG with a failed badge and retry; page view unaffected |
 | Diagram won't render after retry | That region becomes a PNG cut |
 | Companion deletes the note | Nothing happens in Sieve; the Thing is a snapshot from here on |
+| SieveInk is uninstalled, or its pairing lost or forgotten | Nothing happens in Sieve. Sieve's replica is Sieve's own copy, and only a deliberate delete in Sieve removes it. A reinstalled companion is a new identity: it pairs afresh and its notes arrive as new Things beside the old |
 | Sieve forgets the Thing, companion syncs the note again | A fresh Thing with the same `note_source_id`, replayed from seq 1 |
 
 ## 9a. Coherence with #198 and what this epic depends on
@@ -879,10 +904,10 @@ its own issues, referencing the contract by section.
    `DigitalNoteKind` with `StrokeBasedNote` and its face, Settings → Ink. **Depends on #208.** The page can be inspected only via the fixtures and a debug dump at this point.
    The radio sits behind one interface inside `sieve/ink`, implemented per platform, so the
    Mac half is a second implementation and not a change to replication. **The Mac is
-   proven here, on the released build as installed on the corporate Mac:** the Objective-C
-   L2CAP bridge, `NSBluetoothAlwaysUsageDescription` in `build/darwin/Info.plist`, the
+   proven here, on the released build as installed on the corporate Mac:** the L2CAP channel
+   through the CoreBluetooth binding, `NSBluetoothAlwaysUsageDescription` in `build/darwin/Info.plist`, the
    privacy prompt under device management, throughput and connect time against Linux's
-   numbers. If the bridge is not viable, the Mac implementation falls back to GATT
+   numbers. If the channel is not viable there, the Mac implementation falls back to GATT
    notifications: the log stays correct and slower, and whether the live feed survives on
    that link is measured there. Linux does not wait on this result.
 4. **Page lens:** `DigitalNoteLens` in `page` mode, live repaint over the document wire,

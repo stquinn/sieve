@@ -3,6 +3,8 @@ package block
 import (
 	"strings"
 	"testing"
+
+	"sieve/sieve/domain"
 )
 
 // fakeParentProc is a fake block-mode kind whose payload holds elements — the
@@ -14,7 +16,7 @@ func newFakeParentProc(kind string) *fakeParentProc {
 	return &fakeParentProc{fakeProc{FencedDeserializer: FencedDeserializer{Kind: kind}}}
 }
 
-func (p *fakeParentProc) Children(blk *SieveBlock) []*SieveBlock {
+func (p *fakeParentProc) Children(blk *domain.SieveBlock) []*domain.SieveBlock {
 	return blk.Elements(QuestionAttr)
 }
 
@@ -39,8 +41,8 @@ func element(kind string, attrs map[string]interface{}) map[string]interface{} {
 }
 
 // parentBlock builds a block of the parent kind holding the given elements.
-func parentBlock(kind string, elements ...interface{}) SieveBlock {
-	return SieveBlock{ID: "parent-1", Kind: kind, Attrs: map[string]interface{}{
+func parentBlock(kind string, elements ...interface{}) domain.SieveBlock {
+	return domain.SieveBlock{ID: "parent-1", Kind: kind, Attrs: map[string]interface{}{
 		"id":         "parent-1",
 		QuestionAttr: elements,
 	}}
@@ -57,7 +59,7 @@ func TestOutgoingRefs_HarvestsLocalBlockGrainElements(t *testing.T) {
 		element("reference", map[string]interface{}{"uri": "sieve://" + elemDocUUID + "/" + elemSecondBlock}),
 	)
 
-	got := b.outgoingRefs(elemDocUUID)
+	got := GlobalRegistry().outgoingRefs(b, elemDocUUID)
 	if want := elemTargetBlock + "," + elemSecondBlock; strings.Join(got, ",") != want {
 		t.Fatalf("outgoingRefs = %v, want %q in element order", got, want)
 	}
@@ -83,7 +85,7 @@ func TestOutgoingRefs_RejectsEverythingButALocalLeaf(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := parentBlock("fk-parent", tc.el).outgoingRefs(elemDocUUID); len(got) != 0 {
+			if got := GlobalRegistry().outgoingRefs(parentBlock("fk-parent", tc.el), elemDocUUID); len(got) != 0 {
 				t.Fatalf("outgoingRefs = %v, want none — %s is not a local block edge", got, tc.name)
 			}
 		})
@@ -95,14 +97,14 @@ func TestOutgoingRefs_RejectsEverythingButALocalLeaf(t *testing.T) {
 func TestOutgoingRefs_NonParentKindReadsOnlyTheRefAttr(t *testing.T) {
 	registerParentKind(t, "fk-parent")
 
-	b := SieveBlock{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{
+	b := domain.SieveBlock{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{
 		"ref": "pr-a, pr-b",
 		QuestionAttr: []interface{}{
 			element("reference", map[string]interface{}{"uri": "sieve://" + elemDocUUID + "/" + elemTargetBlock}),
 		},
 	}}
 
-	if got := b.outgoingRefs(elemDocUUID); strings.Join(got, ",") != "pr-a,pr-b" {
+	if got := GlobalRegistry().outgoingRefs(b, elemDocUUID); strings.Join(got, ",") != "pr-a,pr-b" {
 		t.Fatalf("outgoingRefs = %v, want the ref attr alone — code holds no elements", got)
 	}
 }
@@ -115,7 +117,7 @@ func TestOutgoingRefs_NoContainerClaimsNoElementEdge(t *testing.T) {
 	b := parentBlock("fk-parent",
 		element("reference", map[string]interface{}{"uri": "sieve://" + elemDocUUID + "/" + elemTargetBlock}),
 	)
-	if got := b.outgoingRefs(""); len(got) != 0 {
+	if got := GlobalRegistry().outgoingRefs(b, ""); len(got) != 0 {
 		t.Fatalf("outgoingRefs = %v, want none without a naming authority", got)
 	}
 }
@@ -130,7 +132,7 @@ func TestGCRefs_PrunesDanglingElementEdges(t *testing.T) {
 		element("reference", map[string]interface{}{"uri": "sieve://" + elemDocUUID + "/" + elemTargetBlock}),
 	)
 
-	got := b.gcRefs(elemDocUUID, map[string]bool{elemTargetBlock: true})
+	got := (&ShadowDocument{UUID: elemDocUUID}).gcRefs(b, map[string]bool{elemTargetBlock: true})
 	if strings.Join(got, ",") != elemTargetBlock {
 		t.Fatalf("gcRefs = %v, want [%s] — dangling dropped, duplicate deduped", got, elemTargetBlock)
 	}
@@ -147,12 +149,12 @@ func TestAnswersTo_ElementIDsAreNotHandles(t *testing.T) {
 	)
 	b.Aliases = []string{"named"}
 
-	got := b.answersTo()
+	got := b.AnswersTo()
 	if strings.Join(got, ",") != "parent-1,named" {
-		t.Fatalf("answersTo = %v, want the block's own handles only", got)
+		t.Fatalf("AnswersTo = %v, want the block's own handles only", got)
 	}
 
-	sd := ShadowDocument{Blocks: []SieveBlock{b}}
+	sd := ShadowDocument{Blocks: []domain.SieveBlock{b}}
 	handles := sd.collectHandles()
 	for _, id := range []string{"element-prose", "element-ref"} {
 		if handles[id] {
@@ -161,18 +163,18 @@ func TestAnswersTo_ElementIDsAreNotHandles(t *testing.T) {
 	}
 }
 
-// rewriteRefs upgrades the legacy `ref` attr, whose inverse is withRefs. It must
+// rewriteRefs upgrades the legacy `ref` attr, whose inverse is WithRefs. It must
 // never answer an element edge by writing a `ref` attr back onto a parent, which
 // would resurrect the form the question list replaced.
 func TestBlockIdentityMigrator_LeavesAParentsRefAttrAbsent(t *testing.T) {
 	registerParentKind(t, "fk-parent")
 
-	legacy := SieveBlock{ID: "pr-a", Kind: KindProse, Attrs: map[string]interface{}{"id": "pr-a"}}
+	legacy := domain.SieveBlock{ID: "pr-a", Kind: KindProse, Attrs: map[string]interface{}{"id": "pr-a"}}
 	parent := parentBlock("fk-parent",
 		element("reference", map[string]interface{}{"uri": "sieve://" + elemDocUUID + "/pr-a"}),
 	)
 
-	out, _ := BlockIdentityMigrator{}.Migrate([]SieveBlock{legacy, parent})
+	out, _ := BlockIdentityMigrator{}.Migrate([]domain.SieveBlock{legacy, parent})
 
 	if _, present := out[1].Attrs["ref"]; present {
 		t.Fatalf("a parent grew a ref attr: %#v", out[1].Attrs["ref"])

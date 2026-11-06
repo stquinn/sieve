@@ -1,10 +1,9 @@
-package block
+package domain
 
 import (
 	"strings"
 
 	"sieve/ident"
-	"sieve/sieve/domain"
 )
 
 // SieveBlock is a node in the unified, ordered block tree. EVERY kind — prose
@@ -83,11 +82,6 @@ func (b SieveBlock) Source() string { return b.StringAttr("source") }
 // Ref is the AI-chain reference list (Attrs["ref"]), comma-separated block ids.
 func (b SieveBlock) Ref() string { return b.StringAttr("ref") }
 
-// WholeDocumentRef is the ref token naming the whole document rather than a
-// block in it. No block answers to it: every resolver that walks refs has to
-// recognise it before it looks a handle up.
-const WholeDocumentRef = "doc"
-
 // Status is the job lifecycle state (Attrs["status"]): PENDING/DISPATCHED/…
 func (b SieveBlock) Status() string { return b.StringAttr("status") }
 
@@ -105,30 +99,12 @@ func (b SieveBlock) FaceString(key string) string {
 	return s
 }
 
-// AttachmentsAttr is the attrs-bag key the attachment list lives under.
-const AttachmentsAttr = domain.AttachmentsAttr
-
-// Attachments is a block's ordered attachment list — the `attachments` attr,
-// persisted as:
-//
-//	attachments:
-//	    - uri: sieve://9f2b-…
-//	      title: Auth Design
-//
-// The type itself lives in domain (it has several carriers, including the
-// command envelope); this is its block-side name.
+// Attachments is this block's attachment list.
 //
 // An attachment is a per-turn MANIFEST ENTRY, not a block: it records one
 // document an ai-block turn was handed and lives only in that turn's attrs.
-//
-// An attachment is NOT a ref. `ref` is the document-local chain the ai-block
-// walks and the GC prunes; an attachment is a global address that nothing walks
-// and nothing GCs.
-type Attachments = domain.Attachments
-
-// Attachments is this block's attachment list.
 func (b SieveBlock) Attachments() Attachments {
-	return domain.DecodeAttachments(b.Attrs[AttachmentsAttr])
+	return DecodeAttachments(b.Attrs[AttachmentsAttr])
 }
 
 // SetAttachments writes the list in canonical form. An empty list REMOVES the
@@ -143,41 +119,30 @@ func (b *SieveBlock) SetAttachments(a Attachments) {
 // assetAttrs are the attrs a block names a stored asset under, whatever its kind.
 var assetAttrs = [...]string{"src", "svgAsset", "page", "asset", "uri", "image", "parsedAssetRef"}
 
-// HeldAssets returns the keys of the assets of document self this block holds:
-// every asset attr, read from the block's attrs or else its face, in any spelling
-// domain.ResolveAssetReference reads, plus whatever its elements hold. An asset
-// of another document is not held.
-func (b SieveBlock) HeldAssets(self domain.Address) []string {
+// OwnHeldAssets returns the keys of the assets of document self this block's
+// own attrs hold: every asset attr, read from the attrs or else the face, in any
+// spelling ResolveAssetReference reads. An asset of another document is not
+// held. What the block's elements hold is not counted here: only its kind knows
+// whether it has any.
+func (b SieveBlock) OwnHeldAssets(self Address) []string {
 	var out []string
 	for _, k := range assetAttrs {
 		ref := strings.TrimSpace(b.StringAttr(k))
 		if ref == "" {
 			ref = strings.TrimSpace(b.FaceString(k))
 		}
-		addr, err := domain.ResolveAssetReference(ref, self)
+		addr, err := ResolveAssetReference(ref, self)
 		if err != nil || addr.Container != self.Container || addr.Leaf == "" {
 			continue
 		}
 		out = append(out, addr.Leaf)
 	}
-	if parent, ok := GetProcessor(b.Kind).(BlockParent); ok {
-		for _, el := range parent.Children(&b) {
-			out = append(out, el.HeldAssets(self)...)
-		}
-	}
 	return out
 }
 
-// PlacesHeldAssets reports whether a placement of an asset this block holds is
-// built from this block's own sieve view (see HeldAssetPlacer).
-func (b SieveBlock) PlacesHeldAssets() bool {
-	placer, ok := GetProcessor(b.Kind).(HeldAssetPlacer)
-	return ok && placer.PlacesHeldAssets()
-}
-
-// answersTo returns every handle this block resolves to — its primary ID plus
+// AnswersTo returns every handle this block resolves to — its primary ID plus
 // any aliases absorbed via merges.
-func (b SieveBlock) answersTo() []string {
+func (b SieveBlock) AnswersTo() []string {
 	out := make([]string, 0, 1+len(b.Aliases))
 	if b.ID != "" {
 		out = append(out, b.ID)
@@ -185,18 +150,10 @@ func (b SieveBlock) answersTo() []string {
 	return append(out, b.Aliases...)
 }
 
-// outgoingRefs returns every in-document handle this block points at, in order:
-// the tokens of its `ref` attr, then the handles its elements address. container
-// is the document the block lives in — the naming authority an element address
-// is recognised as local against; "" claims no element edge.
-func (b SieveBlock) outgoingRefs(container string) []string {
-	return append(b.refAttrTokens(), b.elementRefs(container)...)
-}
-
-// refAttrTokens returns this block's `ref` attr as an ordered,
-// whitespace-trimmed, non-empty slice — the tokenized form of the
-// comma-separated Ref() string, and the exact inverse of withRefs.
-func (b SieveBlock) refAttrTokens() []string {
+// RefTokens returns this block's `ref` attr as an ordered, whitespace-trimmed,
+// non-empty slice — the tokenized form of the comma-separated Ref() string, and
+// the exact inverse of WithRefs.
+func (b SieveBlock) RefTokens() []string {
 	ref := b.Ref()
 	if ref == "" {
 		return nil
@@ -211,44 +168,10 @@ func (b SieveBlock) refAttrTokens() []string {
 	return out
 }
 
-// elementRefs returns the handles this block's elements point at. A kind whose
-// processor is not a BlockParent holds no elements and answers nothing, so every
-// other kind's edges are exactly its `ref` attr.
-//
-// KIND AND ADDRESS DECIDE, never `rel`. A document edge is ROLE-INDEPENDENT —
-// what the question was about and what it was handed are equally edges of the
-// block holding them — and this is the one place that must stay so: reading a
-// role here would hide half a block's edges from the document that resolves
-// them. An element is an edge iff it is a reference whose address names a
-// LEAF of container's LIVE version: a whole-container address names a document
-// rather than a block in one, a leaf elsewhere is not this document's chain, and
-// a pinned address names a frozen snapshot instead of the block that is here
-// now. None of those is a handle the document resolves, and `ref` is the
-// document-local chain and nothing else.
-func (b SieveBlock) elementRefs(container string) []string {
-	parent, ok := GetProcessor(b.Kind).(BlockParent)
-	if !ok || container == "" {
-		return nil
-	}
-	own := domain.NewContainerAddress(container)
-	var out []string
-	for _, el := range parent.Children(&b) {
-		if el.Kind != KindReference {
-			continue
-		}
-		addr, err := domain.ParseAddress(el.StringAttr("uri"))
-		if err != nil || addr.IsContainer() || !addr.ContainerAddress().Equal(own) {
-			continue
-		}
-		out = append(out, addr.Leaf)
-	}
-	return out
-}
-
-// cloneDeep returns a value copy of b with a freshly-allocated Attrs map and
+// Clone returns a value copy of b with a freshly-allocated Attrs map and
 // Aliases slice, so a caller can hand it to a background job that mutates Attrs
 // without racing the live tree.
-func (b SieveBlock) cloneDeep() SieveBlock {
+func (b SieveBlock) Clone() SieveBlock {
 	cp := SieveBlock{ID: b.ID, Kind: b.Kind, Attrs: make(map[string]interface{}, len(b.Attrs))}
 	for k, v := range b.Attrs {
 		cp.Attrs[k] = v
@@ -259,21 +182,27 @@ func (b SieveBlock) cloneDeep() SieveBlock {
 	return cp
 }
 
-// reidentify returns a copy of b carrying newID on BOTH sides of the id
-// invariant — the ID field AND Attrs["id"]. Writing only one side drops the
-// block on load and on save. Aliases ride along.
-func (b SieveBlock) reidentify(newID string) SieveBlock {
-	cp := b.cloneDeep()
-	cp.ID = newID
-	cp.Attrs["id"] = newID
-	return cp
+// Reidentify gives b newID on BOTH sides of the id invariant — the ID field AND
+// Attrs["id"] — and is the one way to change the id of a block that already has
+// one. Writing only one side drops the block on load and on save. Aliases are
+// untouched.
+//
+// It writes IN PLACE, into the Attrs map b holds: an element renewed through the
+// pointer its parent's reader returned lands in the parent's payload. A caller
+// whose block shares its Attrs with a tree it must not change renews a Clone.
+func (b *SieveBlock) Reidentify(newID string) {
+	if b.Attrs == nil {
+		b.Attrs = map[string]interface{}{}
+	}
+	b.ID = newID
+	b.Attrs["id"] = newID
 }
 
-// withRefs returns a copy of b whose `ref` attr is refs, in the comma-separated
-// form refAttrTokens reads back. It writes the attr and only the attr: a caller
+// WithRefs returns a copy of b whose `ref` attr is refs, in the comma-separated
+// form RefTokens reads back. It writes the attr and only the attr: a caller
 // rewriting a parent's element edges goes through SetElements.
-func (b SieveBlock) withRefs(refs []string) SieveBlock {
-	cp := b.cloneDeep()
+func (b SieveBlock) WithRefs(refs []string) SieveBlock {
+	cp := b.Clone()
 	cp.Attrs["ref"] = strings.Join(refs, ",")
 	return cp
 }

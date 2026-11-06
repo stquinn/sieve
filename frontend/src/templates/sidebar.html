@@ -23,10 +23,11 @@
   </div>
 </div>
 <div style="flex:1;overflow-y:auto;display:flex;flex-direction:column;min-height:0;">
-  {{if not .}}
+  <div id="sidebar-ink" class="ink-tree" hx-get="/ui/views/sidebar/ink" hx-trigger="sieve:invalidate-ink from:document" hx-swap="innerHTML">{{template "ink_sidebar.html" .Ink}}</div>
+  {{if not .Entries}}
   <div class="sidebar__empty">No filed documents yet</div>
   {{else}}
-  {{range .}}{{template "entry" .}}{{end}}
+  {{range .Entries}}{{template "entry" .}}{{end}}
   {{end}}
 </div>
 {{end}}

@@ -49,6 +49,9 @@ export class InMemoryContainerProvider {
   /** @returns {string} */
   getKind() { return this.#model.getKind() }
 
+  /** @returns {string} */
+  getName() { return this.#model.getName() }
+
   /** @returns {ReadonlyArray<string>} the child ids in container order */
   getOrder() { return this.#model.getOrder() }
 
@@ -60,6 +63,13 @@ export class InMemoryContainerProvider {
 
   /** @param {import('./container-model.js').ContainerUpdateListener} listener */
   unsubscribe(listener) { this.#model.unsubscribe(listener) }
+
+  /** A draft has no feed, so a listener never hears an event.
+   *  @param {import('../contract/container-feed-listener.js').ContainerFeedListener} listener */
+  subscribeFeed(listener) {}
+
+  /** @param {import('../contract/container-feed-listener.js').ContainerFeedListener} listener */
+  unsubscribeFeed(listener) {}
 
   // ── The block verbs. Void, and answered only by a later cue ────────────────
 

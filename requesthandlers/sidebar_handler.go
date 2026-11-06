@@ -56,9 +56,16 @@ func prepSidebarEntries(entries []services.NoteEntry, openFolders map[string]boo
 	return out
 }
 
-// RenderSidebar writes the sidebar HTML fragment to w. It is shared by the
-// sidebar handler and any action handler that needs to return a refreshed tree.
-func RenderSidebar(w http.ResponseWriter, notes *services.DocumentService, state *services.StateService, tmpl *template.Template) {
+// sidebarTree is the payload of sidebar.html: the Ink item above the library's tree.
+type sidebarTree struct {
+	Ink     inkSidebarView
+	Entries []sidebarEntry
+}
+
+// Render writes the sidebar HTML fragment to w. It is shared by the sidebar
+// handler and any action handler that needs to return a refreshed tree.
+func (s SideBarHandler) Render(w http.ResponseWriter) {
+	notes, state := s.ServiceProvider.Documents, s.ServiceProvider.State
 	w.Header().Set("Cache-Control", "no-store")
 	if notes == nil {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -83,9 +90,12 @@ func RenderSidebar(w http.ResponseWriter, notes *services.DocumentService, state
 		return
 	}
 
-	data := prepSidebarEntries(entries, openFolders, 0, "", activeID)
+	data := sidebarTree{Entries: prepSidebarEntries(entries, openFolders, 0, "", activeID)}
+	if s.ServiceProvider.Ink != nil {
+		data.Ink.show(s.ServiceProvider.Ink.Status(), session)
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := tmpl.ExecuteTemplate(w, "sidebar.html", data); err != nil {
+	if err := s.Tmpl.ExecuteTemplate(w, "sidebar.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -98,5 +108,5 @@ func (s *SideBarHandler) handleSidebar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	RenderSidebar(w, s.ServiceProvider.Documents, s.ServiceProvider.State, s.Tmpl)
+	s.Render(w)
 }

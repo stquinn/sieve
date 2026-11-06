@@ -21,7 +21,7 @@ import { LensCapability, LENS_CAPABILITIES } from '../src/static/contract/lens-c
 
 // The four owner modules that run vendor calls at IMPORT time and would crash
 // under the bare test/setup.js TipTap seed. Nothing here mounts a surface, so
-// inert mocks satisfy the imports (the editor-toolbar.test.js pattern).
+// inert mocks satisfy the imports (the workspace-toolbar.test.js pattern).
 vi.mock('../src/static/lens/extensions.js', () => ({
   SelectionHighlight: {}, HighlightMark: {},
   AiShortcuts: { configure: () => ({}) },
@@ -81,7 +81,6 @@ function note(options = {}) {
     provider: blockProvider(),
     mentionService,
     macroCatalog: { list: () => [] },
-    toolbar: null,
   }, options)))
 }
 

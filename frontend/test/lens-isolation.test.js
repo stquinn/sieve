@@ -159,6 +159,9 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
     // edit here rather than a silently smaller check.
     expect(lensFiles.map((f) => path.relative(STATIC, f))).toEqual([
       path.join('lens', 'abstract-editor.js'),
+      path.join('lens', 'abstract-surface.js'),
+      path.join('lens', 'block', 'block-lens.js'),
+      path.join('lens', 'block', 'block-record-surface.js'),
       path.join('lens', 'document-editor', 'block-chrome.js'),
       path.join('lens', 'document-editor', 'block-selection.js'),
       path.join('lens', 'document-editor', 'block-sync.js'),
@@ -168,13 +171,11 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
       path.join('lens', 'document-editor', 'context-menu.js'),
       path.join('lens', 'document-editor', 'editor-mode.js'),
       path.join('lens', 'document-editor', 'editor-shell.js'),
-      path.join('lens', 'document-editor', 'editor-toolbar.js'),
       path.join('lens', 'document-editor', 'interaction-policy.js'),
       path.join('lens', 'document-editor', 'note-editor.js'),
       path.join('lens', 'document-editor', 'paste-context.js'),
       path.join('lens', 'document-editor', 'prosemirror-editor.js'),
       path.join('lens', 'document-editor', 'selection-model.js'),
-      path.join('lens', 'document-editor', 'surfaces', 'abstract-surface.js'),
       path.join('lens', 'document-editor', 'surfaces', 'ai-target-decoration.js'),
       path.join('lens', 'document-editor', 'surfaces', 'ai-target.js'),
       path.join('lens', 'document-editor', 'surfaces', 'block-drop-target.js'),
@@ -214,8 +215,18 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
       path.join('lens', 'document-editor', 'surfaces', 'tiptap-vendor.js'),
       path.join('lens', 'document-editor', 'surfaces', 'vertical-scroll.js'),
       path.join('lens', 'document-editor', 'surfaces', 'wysiwyg-surface.js'),
-      path.join('lens', 'document-editor', 'toolbar-button.js'),
       path.join('lens', 'extensions.js'),
+      path.join('lens', 'ink', 'action-status.js'),
+      path.join('lens', 'ink', 'digital-note-lens.js'),
+      path.join('lens', 'ink', 'ink-lens.js'),
+      path.join('lens', 'ink', 'ink-sheet.js'),
+      path.join('lens', 'ink', 'live-ink-lens.js'),
+      path.join('lens', 'ink', 'live-surface.js'),
+      path.join('lens', 'ink', 'note-pager.js'),
+      path.join('lens', 'ink', 'page-surface.js'),
+      path.join('lens', 'ink', 'plane-window.js'),
+      path.join('lens', 'ink', 'tablet-opener.js'),
+      path.join('lens', 'ink', 'transcript-surface.js'),
       path.join('lens', 'lens.js'),
       path.join('lens', 'outline', 'outline-lens.js'),
       path.join('lens', 'prompt', 'prompt-editor.js'),
@@ -269,8 +280,48 @@ describe('the lens bases are not ProseMirror', () => {
   it.each([
     path.join('lens', 'lens.js'),
     path.join('lens', 'abstract-editor.js'),
+    path.join('lens', 'abstract-surface.js'),
+    path.join('lens', 'block', 'block-lens.js'),
+    path.join('lens', 'ink', 'ink-lens.js'),
+    path.join('lens', 'ink', 'digital-note-lens.js'),
+    path.join('lens', 'ink', 'live-ink-lens.js'),
   ])('%s reaches no surface, no extensions.js and no tiptap-vendor.js', (entry) => {
     const reached = new ImportGraph([]).walk([path.join(STATIC, entry)]).reached
     expect(reached.filter((file) => PM_WORLD.some((pm) => file.startsWith(pm)))).toEqual([])
+  })
+})
+
+describe.each([
+  ['the fallback lens', 'block'],
+  ['the ink lenses', 'ink'],
+])('%s import only the lens bases, contract/, renderers/ and their own directory', (_name, dir) => {
+  // A lens of its own kind sits beside the editor: what it may name is the wall,
+  // the look-and-feel, and the two bases a lens is built on.
+  const BASES = Object.freeze([path.join('lens', 'abstract-editor.js'), path.join('lens', 'abstract-surface.js')])
+  const ALLOWED = Object.freeze(['contract', 'renderers', path.join('lens', dir)])
+  const files = ImportGraph.sources(path.join(LENS_DIR, dir))
+
+  it.each(files.map((f) => [path.relative(STATIC, f), f]))('%s', (_rel, file) => {
+    const source = readFileSync(file, 'utf8')
+    const imported = [...source.matchAll(/\bfrom\s*['"]([^'"]+)['"]\s*;?\s*$/gm)]
+      .map((m) => path.relative(STATIC, path.resolve(path.dirname(file), m[1])))
+    // A file that imports must be seen to: the pattern finding nothing there is the pattern broken.
+    expect(imported.length > 0).toBe(/^import\s/m.test(source))
+    expect(imported.filter((f) => !BASES.includes(f) && !ALLOWED.some((dir) => f.startsWith(dir + path.sep)))).toEqual([])
+  })
+})
+
+describe('the workspace toolbar and its widgets name no lens and no ProseMirror', () => {
+  // The toolbar is host chrome that any lens fills, so neither it nor the
+  // widgets a lens fills it with may reach into one lens's world: the widgets are
+  // look-and-feel a lens and the host both import, and the toolbar knows a lens
+  // only as the surface contract's event word and its items only as the places
+  // they declare.
+  it.each([
+    [path.join('renderers', 'toolbar-button.js'), [path.join('renderers', 'toolbar-button.js')]],
+    [path.join('renderers', 'action-list.js'), [path.join('renderers', 'action-list.js'), path.join('renderers', 'toolbar-button.js')]],
+    [path.join('shell', 'workspace-toolbar.js'), [path.join('lens', 'abstract-surface.js'), path.join('renderers', 'toolbar-button.js'), path.join('shell', 'workspace-toolbar.js')]],
+  ])('%s reaches only %j', (entry, closure) => {
+    expect(new ImportGraph([]).walk([path.join(STATIC, entry)]).reached).toEqual(closure)
   })
 })

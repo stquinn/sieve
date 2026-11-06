@@ -26,6 +26,7 @@ const (
 	ResponseJSON     ResponseKind = "json"     // a typed body, described by the entry's Response type
 	ResponseFragment ResponseKind = "fragment" // HTML for HTMX to swap in; the template is its contract
 	ResponseNone     ResponseKind = "none"     // 204, or a body no caller reads
+	ResponseImage    ResponseKind = "image"    // a PNG, image/png
 )
 
 // EndpointEntry is one HTTP operation whose contract is typed data. Request
@@ -99,6 +100,12 @@ func (r *Registry) registerDocumentFrames() {
 	r.addFrame(ChannelDocument, Inbound, TypeTextReplace, TextReplaceFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeFeatureControl, FeatureControlFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeSetPresenting, SetPresentingFrame{})
+	r.addFrame(ChannelDocument, Inbound, TypeInkPage, InkPageFrame{})
+	r.addFrame(ChannelDocument, Inbound, TypeInkOpenOnTablet, InkOpenOnTabletFrame{})
+	r.addFrame(ChannelDocument, Inbound, TypeInkTranscript, InkTranscriptFrame{})
+	r.addFrame(ChannelDocument, Inbound, TypeInkTranscribePage, InkTranscribePageFrame{})
+	r.addFrame(ChannelDocument, Inbound, TypeInkTranscriptDocument, InkTranscriptDocumentFrame{})
+	r.addFrame(ChannelDocument, Inbound, TypeInkDescribe, InkDescribeFrame{})
 
 	r.addFrame(ChannelDocument, Outbound, TypePong, PongFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeMarkdownContent, MarkdownContentFrame{})
@@ -117,6 +124,18 @@ func (r *Registry) registerDocumentFrames() {
 	r.addFrame(ChannelDocument, Outbound, TypeExportContent, ExportContentFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeTextMarks, TextMarksFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeTextReplaceAck, TextReplaceAckFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeInkPageContent, InkPageContentFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeInkStrokeAdded, InkStrokeAddedFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeInkStrokeRemoved, InkStrokeRemovedFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeInkLive, InkLiveFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeInkLivePage, InkLivePageFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeInkLogRestarted, InkLogRestartedFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeInkOpenOnTabletResult, InkOpenOnTabletResultFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeInkTranscriptContent, InkTranscriptContentFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeInkTranscriptChanged, InkTranscriptChangedFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeInkTranscriptDocumentResult, InkTranscriptDocumentResultFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeInkDescribeResult, InkDescribeResultFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeContainerNamed, ContainerNamedFrame{})
 }
 
 func (r *Registry) registerWorkspaceFrames() {
@@ -129,6 +148,7 @@ func (r *Registry) registerWorkspaceFrames() {
 	r.addFrame(ChannelWorkspace, Inbound, TypeSpellIgnore, SpellIgnoreFrame{})
 	r.addFrame(ChannelWorkspace, Inbound, TypeSpellLearn, SpellLearnFrame{})
 	r.addFrame(ChannelWorkspace, Inbound, TypeFeatureControl, FeatureControlFrame{})
+	r.addFrame(ChannelWorkspace, Inbound, TypeInkPageDrawn, InkPageDrawnFrame{})
 
 	r.addFrame(ChannelWorkspace, Outbound, TypePong, PongFrame{})
 	r.addFrame(ChannelWorkspace, Outbound, TypeCommandResult, CommandResultFrame{})
@@ -138,6 +158,7 @@ func (r *Registry) registerWorkspaceFrames() {
 	r.addFrame(ChannelWorkspace, Outbound, TypeJobsChanged, JobsChangedFrame{})
 	r.addFrame(ChannelWorkspace, Outbound, TypeContainerDeleted, ContainerDeletedFrame{})
 	r.addFrame(ChannelWorkspace, Outbound, TypeContainerSaved, ContainerSavedFrame{})
+	r.addFrame(ChannelWorkspace, Outbound, TypeInkDrawPage, InkDrawPageFrame{})
 }
 
 func (r *Registry) registerEndpoints() {
@@ -176,6 +197,29 @@ func (r *Registry) registerEndpoints() {
 	r.addEndpoint(EndpointEntry{
 		Method: "POST", Path: "/api/tabs/close",
 		Request: reflect.TypeOf(TabsCloseRequest{}), ResponseKind: ResponseFragment,
+	})
+	r.addEndpoint(EndpointEntry{
+		Method: "GET", Path: "/api/ink/notes/{uuid}/pages/{page}/export",
+		Request: reflect.TypeOf(InkPageExportRequest{}), Response: reflect.TypeOf(InkPageExport{}),
+		ResponseKind: ResponseJSON,
+	})
+	r.addEndpoint(EndpointEntry{
+		Method: "GET", Path: "/api/ink/notes/{uuid}/pages/{page}/image",
+		Request: reflect.TypeOf(InkPageImageRequest{}), ResponseKind: ResponseImage,
+	})
+	r.addEndpoint(EndpointEntry{
+		Method: "POST", Path: "/api/ink/notes/{uuid}/describe",
+		Request: reflect.TypeOf(InkDescribeRequest{}), ResponseKind: ResponseNone,
+	})
+	r.addEndpoint(EndpointEntry{
+		Method: "POST", Path: "/api/ink/notes/{uuid}/open-on-tablet",
+		Request: reflect.TypeOf(InkOpenOnTabletRequest{}), Response: reflect.TypeOf(InkOpenOnTabletResponse{}),
+		ResponseKind: ResponseJSON,
+	})
+	r.addEndpoint(EndpointEntry{
+		Method: "GET", Path: "/api/ink/live/note",
+		Request: reflect.TypeOf(InkLiveNoteRequest{}), Response: reflect.TypeOf(InkLiveNoteResponse{}),
+		ResponseKind: ResponseJSON,
 	})
 }
 
@@ -263,5 +307,5 @@ func (r *Registry) Features() []string {
 // owns the vocabulary: a client resyncing after a reconnect walks exactly this,
 // and a topic missing from it is a view that silently never refreshes.
 func (r *Registry) Topics() []Topic {
-	return []Topic{TopicNotes, TopicSession, TopicPrompts, TopicLibrary, TopicIntent}
+	return []Topic{TopicNotes, TopicSession, TopicPrompts, TopicLibrary, TopicIntent, TopicInk}
 }

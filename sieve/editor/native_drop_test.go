@@ -281,7 +281,7 @@ func TestHandleNativeDrop_OneBlockPerFileInDragOrder(t *testing.T) {
 		t.Errorf("a multi-file drop must name no block, got %+v", res)
 	}
 
-	blocks := es.shadows[uuid].SnapshotBlocks()
+	blocks := es.shadowFor(uuid).SnapshotBlocks()
 	if len(blocks) != 2 {
 		t.Fatalf("want one block per dropped file, got %d: %+v", len(blocks), blocks)
 	}
@@ -309,7 +309,7 @@ func TestHandleNativeDrop_NegativeIndexAppends(t *testing.T) {
 		t.Fatalf("append drop failed: %q", res.Outcome)
 	}
 
-	blocks := es.shadows[uuid].SnapshotBlocks()
+	blocks := es.shadowFor(uuid).SnapshotBlocks()
 	if len(blocks) != 2 {
 		t.Fatalf("want 2 blocks, got %d", len(blocks))
 	}
@@ -329,7 +329,7 @@ func TestHandleNativeDrop_SkipsUnreadableFiles(t *testing.T) {
 	if res := es.HandleNativeDrop(uuid, nil, 0); !res.IsBlock() {
 		t.Fatalf("the readable file must still land, got %q", res.Outcome)
 	}
-	blocks := es.shadows[uuid].SnapshotBlocks()
+	blocks := es.shadowFor(uuid).SnapshotBlocks()
 	if len(blocks) != 1 {
 		t.Fatalf("want the one readable file's block, got %d: %+v", len(blocks), blocks)
 	}
@@ -356,7 +356,7 @@ func TestHandleNativeDrop_NothingRedeemableIsNothing(t *testing.T) {
 			}
 		})
 	}
-	if got := len(es.shadows[uuid].SnapshotBlocks()); got != 0 {
+	if got := len(es.shadowFor(uuid).SnapshotBlocks()); got != 0 {
 		t.Errorf("nothing redeemable must create no blocks, got %d", got)
 	}
 }
@@ -398,7 +398,7 @@ func TestHandleNativeDrop_BucketWinsOverTheHint(t *testing.T) {
 	}, 0); !res.IsBlock() {
 		t.Fatalf("want block, got %q", res.Outcome)
 	}
-	blocks := es.shadows[uuid].SnapshotBlocks()
+	blocks := es.shadowFor(uuid).SnapshotBlocks()
 	if len(blocks) != 1 {
 		t.Fatalf("want ONE block (the bucket's), got %d", len(blocks))
 	}

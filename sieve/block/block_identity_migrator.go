@@ -3,6 +3,7 @@ package block
 import (
 	"sieve/ident"
 	"sieve/logger"
+	"sieve/sieve/domain"
 )
 
 // BlockIdentityMigrator upgrades a parsed block tree from the legacy short-handle
@@ -36,7 +37,7 @@ type BlockIdentityMigrator struct{}
 // Migrate returns the tree with every id a unique UUID and every `ref` attr
 // pointed at the new ids, plus whether anything changed. The input is never
 // mutated: undo and the caller's snapshot both depend on that.
-func (m BlockIdentityMigrator) Migrate(blocks []SieveBlock) ([]SieveBlock, bool) {
+func (m BlockIdentityMigrator) Migrate(blocks []domain.SieveBlock) ([]domain.SieveBlock, bool) {
 	if len(blocks) == 0 {
 		return blocks, false
 	}
@@ -49,8 +50,8 @@ func (m BlockIdentityMigrator) Migrate(blocks []SieveBlock) ([]SieveBlock, bool)
 
 // assignIDs gives every block a unique UUID, returning the rewritten tree, the
 // old→new map for legacy handles, and whether any id moved.
-func (m BlockIdentityMigrator) assignIDs(blocks []SieveBlock) ([]SieveBlock, map[string]string, bool) {
-	out := make([]SieveBlock, len(blocks))
+func (m BlockIdentityMigrator) assignIDs(blocks []domain.SieveBlock) ([]domain.SieveBlock, map[string]string, bool) {
+	out := make([]domain.SieveBlock, len(blocks))
 	rename := make(map[string]string, len(blocks))
 	taken := make(map[string]bool, len(blocks))
 	changed := false
@@ -66,7 +67,8 @@ func (m BlockIdentityMigrator) assignIDs(blocks []SieveBlock) ([]SieveBlock, map
 				rename[b.ID] = newID
 			}
 			logger.Info("migrate: block id upgraded", "old", b.ID, "new", newID, "kind", b.Kind)
-			b = b.reidentify(newID)
+			b = b.Clone()
+			b.Reidentify(newID)
 			changed = true
 
 		case taken[b.ID]:
@@ -77,7 +79,8 @@ func (m BlockIdentityMigrator) assignIDs(blocks []SieveBlock) ([]SieveBlock, map
 			// uuid belong to the first, legitimate holder.
 			newID := ident.New()
 			logger.Warn("migrate: duplicate block id repaired", "duplicate", b.ID, "new", newID, "kind", b.Kind)
-			b = b.reidentify(newID)
+			b = b.Clone()
+			b.Reidentify(newID)
 			changed = true
 		}
 		taken[b.ID] = true
@@ -90,17 +93,17 @@ func (m BlockIdentityMigrator) assignIDs(blocks []SieveBlock) ([]SieveBlock, map
 // already-copied tree. Tokens absent from rename are left VERBATIM — they name a
 // block this document does not contain, and guessing is worse than preserving.
 //
-// It reads and writes the ATTR — refAttrTokens and its inverse withRefs — never
+// It reads and writes the ATTR — RefTokens and its inverse WithRefs — never
 // the wider edge set outgoingRefs harvests: an edge carried as an element is
 // rewritten where it is stored, and rebuilding one into a `ref` attr would leave
 // the block holding both forms at once.
-func (m BlockIdentityMigrator) rewriteRefs(blocks []SieveBlock, rename map[string]string) bool {
+func (m BlockIdentityMigrator) rewriteRefs(blocks []domain.SieveBlock, rename map[string]string) bool {
 	if len(rename) == 0 {
 		return false
 	}
 	changed := false
 	for i, b := range blocks {
-		refs := b.refAttrTokens()
+		refs := b.RefTokens()
 		if len(refs) == 0 {
 			continue
 		}
@@ -113,7 +116,7 @@ func (m BlockIdentityMigrator) rewriteRefs(blocks []SieveBlock, rename map[strin
 			rewritten[j] = r
 		}
 		if dirty {
-			blocks[i] = b.withRefs(rewritten)
+			blocks[i] = b.WithRefs(rewritten)
 			changed = true
 		}
 	}

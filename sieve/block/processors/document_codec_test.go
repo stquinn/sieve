@@ -2,6 +2,7 @@ package processors
 
 import (
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"strings"
 	"testing"
 )
@@ -233,9 +234,9 @@ func TestDocumentCodec_RoundTrip(t *testing.T) {
 	t.Cleanup(func() { block.UnregisterProcessor("code") })
 
 	c := block.NewDocumentCodec(block.GlobalRegistry()) // REAL registry — production path
-	original := []block.SieveBlock{
+	original := []domain.SieveBlock{
 		(ProseProcessor{}).newProseBlock("pr-1", "An intro paragraph."),
-		block.NewSieveBlock("code", "co-1", map[string]interface{}{"id": "co-1", "source": "x := 1"}),
+		domain.NewSieveBlock("code", "co-1", map[string]interface{}{"id": "co-1", "source": "x := 1"}),
 		(ProseProcessor{}).newProseBlock("pr-2", "A closing paragraph: go -> stop, 1 < 2 & done."),
 	}
 	md, err := c.Serialize(original)
@@ -346,7 +347,7 @@ func TestGlobalRegistry_GetAndOrdered(t *testing.T) {
 func TestDocumentCodec_SlideMarkerProseSpan(t *testing.T) {
 	c := block.NewDocumentCodec(newFakeRegistry())
 	const marker = "<!-- SLIDE MARKER -->"
-	original := []block.SieveBlock{
+	original := []domain.SieveBlock{
 		(ProseProcessor{}).newProseBlock("pr-1", "# Title"),
 		(ProseProcessor{}).newProseBlock("pr-2", marker),
 		(ProseProcessor{}).newProseBlock("pr-3", "First slide."),

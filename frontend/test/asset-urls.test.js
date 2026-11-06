@@ -12,7 +12,6 @@ import {
   storeFileSrc,
   storeFileRef,
 } from '../src/static/renderers/asset-urls.js'
-import { rasterSizeFor } from '../src/static/renderers/copy-image.js'
 
 describe('asset-urls', () => {
   it('proxies a remote image through /ui/image-proxy, origin-qualified', () => {
@@ -84,20 +83,5 @@ describe('asset-urls', () => {
     expect(storeFileRef('https://example.com/x.png')).toBe('https://example.com/x.png')
     expect(storeFileRef('/ui/assets/doc-1/pic.png')).toBe('/ui/assets/doc-1/pic.png')
     expect(storeFileRef(null)).toBe(null)
-  })
-})
-
-describe('rasterSizeFor', () => {
-  it.each([
-    ['a decoded intrinsic size wins', '<svg viewBox="0 0 10 10">', 640, 480, { width: 640, height: 480 }],
-    ['the viewBox aspect, 1024 wide', '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100">', 0, 0, { width: 1024, height: 512 }],
-    ['a comma-separated viewBox', "<svg viewBox='0,0,100,300'>", 0, 0, { width: 1024, height: 3072 }],
-    ['the width/height attributes when no viewBox', '<svg width="400px" height="200px">', 0, 0, { width: 1024, height: 512 }],
-    ['width/height attributes in proportion', '<svg width="50" height="100">', 0, 0, { width: 1024, height: 2048 }],
-    ['a percentage size declares nothing', '<svg width="100%" height="50%">', 0, 0, { width: 1024, height: 768 }],
-    ['nothing declared', '<svg>', 0, 0, { width: 1024, height: 768 }],
-    ['not an SVG at all', '', 0, 0, { width: 1024, height: 768 }],
-  ])('%s', (_, svg, w, h, want) => {
-    expect(rasterSizeFor(svg, w, h)).toEqual(want)
   })
 })

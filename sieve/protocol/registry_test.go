@@ -18,7 +18,8 @@ func TestRegistry_HoldsTheWholeVocabulary(t *testing.T) {
 			"ping", "doc-update", "flush", "enter-markdown", "enter-wysiwyg",
 			"retry-block-job", "extract", "block-op",
 			"load", "paste", "detect-extractions", "export", "focus", "text-replace",
-			"feature-control", "set-presenting",
+			"feature-control", "set-presenting", "ink-page", "ink-open-on-tablet",
+			"ink-transcript", "ink-transcribe-page", "ink-transcript-document", "ink-describe",
 		}},
 		{ChannelDocument, Outbound, []string{
 			"pong", "markdown-content", "wysiwyg-content", "extract-ack",
@@ -26,14 +27,17 @@ func TestRegistry_HoldsTheWholeVocabulary(t *testing.T) {
 			"remove-block", "order-changed", "error",
 			"load-content", "paste-ack", "detect-extractions-result", "export-content",
 			"text-marks", "text-replace-ack",
+			"ink-page-content", "ink-stroke-added", "ink-stroke-removed", "ink-live", "ink-live-page", "ink-log-restarted",
+			"ink-open-on-tablet-result", "ink-transcript-content", "ink-transcript-changed", "ink-transcript-document-result", "ink-describe-result",
+			"container-named",
 		}},
 		{ChannelWorkspace, Inbound, []string{
 			"ping", "command", "command-cancel", "mention-query", "mention-resolve",
-			"session-scroll", "spell-ignore", "spell-learn", "feature-control",
+			"session-scroll", "spell-ignore", "spell-learn", "feature-control", "ink-page-drawn",
 		}},
 		{ChannelWorkspace, Outbound, []string{
 			"pong", "command-result", "mention-result", "mention-resolved",
-			"invalidate", "jobs-changed", "container-deleted", "container-saved",
+			"invalidate", "jobs-changed", "container-deleted", "container-saved", "ink-draw-page",
 		}},
 	}
 
@@ -261,7 +265,7 @@ func TestRegistry_TopicsAreTheInvalidationVocabulary(t *testing.T) {
 		got = append(got, string(topic))
 	}
 	sort.Strings(got)
-	want := []string{"intent", "library", "notes", "prompts", "session"}
+	want := []string{"ink", "intent", "library", "notes", "prompts", "session"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("topics\n got: %v\nwant: %v", got, want)
 	}

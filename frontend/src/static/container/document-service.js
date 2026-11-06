@@ -18,8 +18,8 @@
 // flushContents and setContents fall back to the HTTP save; getContents and exportAs
 // fall back to the load answer; focus, persist, retry and setFeature drop; the
 // membership verbs and extract resolve {ok:false}; detectExtractions resolves no
-// offers and replaceText resolves `error`. paste REJECTS, so a channel-less caller
-// of it needs its own catch.
+// offers and replaceText resolves `error`. paste and the ink verbs REJECT, so a
+// channel-less caller of any of them needs its own catch.
 
 import { ContractViolation } from '../contract/sieve-block.js'
 import { DocumentFrame } from '../generated/protocol.js'
@@ -34,6 +34,14 @@ const PASTE_ACK_TIMEOUT_MS = 12000
 // it. The other two words — applied, and the anchor no longer resolves — are read
 // by nobody here: both mean the container is now what Go says it is.
 const TEXT_REPLACE_ERROR = 'error'
+
+// Go waits at most five seconds for the tablet before it answers an
+// ink-open-on-tablet; the reply must not be given up on before that.
+const OPEN_ON_TABLET_TIMEOUT_MS = 8000
+
+// Go waits at most ten seconds for a note's first page to be drawn before it
+// answers an ink-describe; the reply must not be given up on before that.
+const DESCRIBE_TIMEOUT_MS = 15000
 
 /** @typedef {import('./container-transport.js').ChannelDelegate} ChannelDelegate */
 
@@ -453,6 +461,138 @@ export class DocumentService {
       parameters: parameters || {},
     })
   }
+
+  /**
+   * One page of this container's Digital Note as it is drawn now, in the export
+   * shape, and the seq of the last record of the note's log it reflects. Every
+   * later change to the page arrives as an ink frame naming a seq above it.
+   *
+   * REJECTS when Go refuses — the container is no Digital Note, or the note has
+   * no such page — on a timeout, and on a channel-less uuid.
+   * @param {string} uuid @param {string} pageId
+   * @returns {Promise<{page: Record<string, any>, seq: number}>}
+   */
+  inkPage(uuid, pageId) {
+    return this.#transport._awaitReply(uuid, { type: DocumentFrame.INK_PAGE, pageId: pageId }, 'ink-page ' + pageId)
+      .then((reply) => {
+        if (reply.error || !reply.page) throw new Error('ink-page ' + pageId + ' refused: ' + (reply.error || 'no page'))
+        return { page: reply.page, seq: reply.seq || 0 }
+      })
+  }
+
+  /**
+   * Asks the tablet this container's Digital Note came from to open it at the
+   * page `pageId` names, and resolves with what came of that: `outcome` as the
+   * wire names it and the tablet's `reason` ('' unless refused). A page the note
+   * does not have leaves the page to the tablet.
+   *
+   * REJECTS when Go asked nothing — the container holds no note from a tablet, or
+   * ink is unavailable — on a timeout, and on a channel-less uuid.
+   * @param {string} uuid @param {string} pageId
+   * @returns {Promise<{outcome: string, reason: string}>}
+   */
+  inkOpenOnTablet(uuid, pageId) {
+    return this.#transport._awaitReply(uuid, { type: DocumentFrame.INK_OPEN_ON_TABLET, pageId: pageId }, 'ink-open-on-tablet', OPEN_ON_TABLET_TIMEOUT_MS)
+      .then((reply) => {
+        if (reply.error || !reply.outcome) throw new Error('ink-open-on-tablet refused: ' + (reply.error || 'no outcome'))
+        return { outcome: String(reply.outcome), reason: String(reply.reason || '') }
+      })
+  }
+
+  /**
+   * What is known of the transcript of one page of this container's Digital Note,
+   * as the wire carries it.
+   *
+   * REJECTS when Go refuses — the container is no Digital Note, or the note has
+   * no such page — on a timeout, and on a channel-less uuid.
+   * @param {string} uuid @param {string} pageId
+   * @returns {Promise<Record<string, any>>}
+   */
+  inkTranscript(uuid, pageId) {
+    return this.#transcriptReply(uuid, { type: DocumentFrame.INK_TRANSCRIPT, pageId: pageId }, 'ink-transcript ' + pageId)
+  }
+
+  /**
+   * Starts transcript one page of this container's Digital Note, unless it has a
+   * transcript of what it holds now or is being read, and resolves what is then
+   * known of its transcript, as the wire carries it. The transcript's end arrives as an
+   * ink frame. Rejects as inkTranscript does.
+   * @param {string} uuid @param {string} pageId
+   * @returns {Promise<Record<string, any>>}
+   */
+  inkTranscribePage(uuid, pageId) {
+    return this.#transcriptReply(uuid, { type: DocumentFrame.INK_TRANSCRIBE_PAGE, pageId: pageId }, 'ink-transcribe-page ' + pageId)
+  }
+
+  /**
+   * Makes a new document from the transcript of one page of this container's
+   * Digital Note and resolves its uuid.
+   *
+   * REJECTS when Go made nothing — the page has no transcript, or ink is
+   * unavailable — on a timeout, and on a channel-less uuid.
+   * @param {string} uuid @param {string} pageId
+   * @returns {Promise<string>}
+   */
+  inkTranscriptDocument(uuid, pageId) {
+    return this.#transport._awaitReply(uuid, { type: DocumentFrame.INK_TRANSCRIPT_DOCUMENT, pageId: pageId }, 'ink-transcript-document ' + pageId)
+      .then((reply) => {
+        if (reply.error || !reply.uuid) throw new Error('ink-transcript-document refused: ' + (reply.error || 'no document'))
+        return String(reply.uuid)
+      })
+  }
+
+  /**
+   * Asks for this container's Digital Note to be named now, and resolves once
+   * Go has submitted the naming, or found it already under way. The new name
+   * arrives as the container's name and the ink invalidation.
+   *
+   * REJECTS with Go's words when it submitted nothing — no AI is configured, the
+   * note has no ink, nothing can draw its pages, or ink is unavailable — on a
+   * timeout, and on a channel-less uuid.
+   * @param {string} uuid
+   * @returns {Promise<void>}
+   */
+  inkDescribe(uuid) {
+    return this.#transport._awaitReply(uuid, { type: DocumentFrame.INK_DESCRIBE }, 'ink-describe', DESCRIBE_TIMEOUT_MS)
+      .then((reply) => {
+        if (reply.error) throw new Error(String(reply.error))
+      })
+  }
+
+  /** @param {string} uuid @param {object} frame @param {string} label
+   *  @returns {Promise<Record<string, any>>} the transcript of an ink-transcript-content */
+  #transcriptReply(uuid, frame, label) {
+    return this.#transport._awaitReply(uuid, frame, label)
+      .then((reply) => {
+        if (reply.error || !reply.transcript) throw new Error(label + ' refused: ' + (reply.error || 'no transcript'))
+        return reply.transcript
+      })
+  }
+
+  /**
+   * Subscribe to this container's ink frames — strokes added and removed, live
+   * records, the live page, a restarted log and a page's transcript changed — as Go
+   * sent them, in arrival order. The answers to an ask are correlated and are not
+   * among them.
+   * @param {string} uuid @param {(msg: Record<string, any>) => void} observer
+   * @returns {() => void} unsubscribe
+   */
+  observeInk(uuid, observer) {
+    if (typeof observer !== 'function') throw new ContractViolation('DocumentService.observeInk: observer must be a function')
+    return this.#transport.observeFrames(uuid, (msg) => {
+      if (DocumentService.#INK_FRAMES.includes(msg.type)) observer(msg)
+    })
+  }
+
+  /** The ink frames a Digital Note's channel pushes. */
+  static #INK_FRAMES = Object.freeze([
+    DocumentFrame.INK_STROKE_ADDED,
+    DocumentFrame.INK_STROKE_REMOVED,
+    DocumentFrame.INK_LIVE,
+    DocumentFrame.INK_LIVE_PAGE,
+    DocumentFrame.INK_LOG_RESTARTED,
+    DocumentFrame.INK_TRANSCRIPT_CHANGED,
+  ])
 
   /**
    * The block-op envelope. Every membership verb rides it, and the document is named

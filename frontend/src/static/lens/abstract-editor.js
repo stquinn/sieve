@@ -11,12 +11,21 @@ import { ContractViolation } from '../contract/sieve-block.js'
 import { LensCapability } from '../contract/lens-capabilities.js'
 import { SelectionModel } from './document-editor/selection-model.js'
 import { AddressStatus } from '../renderers/address-status.js'
+import { ButtonGroup, ToolbarButton, ToolbarPlace, ToolbarSeparator } from '../renderers/toolbar-button.js'
+import { SurfaceEvent } from './abstract-surface.js'
 
 /**
- * @typedef {import('./document-editor/surfaces/abstract-surface.js').AbstractSurface} AbstractSurface
- * @typedef {import('./document-editor/surfaces/abstract-surface.js').SurfaceEventMsg} SurfaceEventMsg
+ * @typedef {import('./abstract-surface.js').AbstractSurface} AbstractSurface
+ * @typedef {import('./abstract-surface.js').SurfaceEventMsg} SurfaceEventMsg
  * @typedef {import('../contract/container-provider.js').BlockContainerProvider} BlockContainerProvider
  * @typedef {import('../contract/lens-capabilities.js').LensCapabilities} LensCapabilities
+ * @typedef {import('../renderers/toolbar-button.js').ToolbarItem} ToolbarItem
+ */
+
+/**
+ * How the mode toggle is drawn while a mode is in force: an icon or a text, and
+ * a title saying what pressing it does.
+ * @typedef {Readonly<{iconHtml?: string, text?: string, title: string}>} ModeToggleFace
  */
 
 /** The one kind whose whole payload is text, so an empty one carries nothing. */
@@ -53,6 +62,10 @@ const EVERY_CAPABILITY = Object.freeze({
  * @property {object|null} [codeFormattingService]
  *   what a code menu asks to pretty-print source. Optional: without it no Format
  *   is offered.
+ * @property {unknown} [viewState]
+ *   what `viewState` answered on an earlier editor of the same lens over the
+ *   same container, for the surface this editor creates to open where that one
+ *   was left. Optional: without it the surface opens as for a first reading.
  */
 
 export class AbstractEditor extends Lens {
@@ -97,6 +110,9 @@ export class AbstractEditor extends Lens {
 
   /** @type {object|null} what a code menu asks to pretty-print source. */
   #codeFormattingService = null
+
+  /** @type {unknown} the view state this editor was handed */
+  #viewState = null
 
   /** @type {AddressStatus|null} built on demand over the mention peer. */
   #addressStatus = null
@@ -144,6 +160,7 @@ export class AbstractEditor extends Lens {
     this.#commandService = options.commandService || null
     this.#triggerPlacement = options.triggerPlacement || null
     this.#codeFormattingService = options.codeFormattingService || null
+    this.#viewState = options.viewState ?? null
     this.#capabilities = this.#deriveCapabilities()
 
     // Subscribed before any surface mounts, so a save landing during the initial
@@ -163,6 +180,17 @@ export class AbstractEditor extends Lens {
    * @returns {string}
    */
   get uuid() { return this.#uuid }
+
+  /**
+   * The reader's view of the container: the surface's own while one is
+   * presented, else the one this editor was handed. The host keeps it across a
+   * tab switch and hands it to the next editor over the container.
+   * @returns {unknown}
+   */
+  get viewState() { return this.#surface ? this.#surface.viewState() : this.#viewState }
+
+  /** @protected @returns {unknown} the view state this editor was handed, for the surface it creates */
+  get _handedViewState() { return this.#viewState }
 
   /**
    * @override — the base's provider, WIDENED: which verbs are present IS the
@@ -348,6 +376,18 @@ export class AbstractEditor extends Lens {
    */
   get _blockMode() { return null }
 
+  /**
+   * The modes whose surface needs no seed: it reads the container on its
+   * bootstrap cue, as the block mode's does. A lens whose other modes are further
+   * views of the container, rather than verbatim buffers, names them here too.
+   * Two seedless modes are flipped between without the container being asked for
+   * anything, so a lens that cannot edit blocks flips between them, and the
+   * surface it leaves hands the next one where the reader was.
+   * @protected
+   * @returns {ReadonlyArray<string>}
+   */
+  get _seedlessModes() { return this._blockMode === null ? [] : [this._blockMode] }
+
   /** @returns {unknown|null} the mounted surface's own editing engine, opaque to
    *  this class; null when no surface is mounted or the surface exposes none. */
   get editorPane() { return this.#surface ? this.#surface.editorPane : null }
@@ -477,6 +517,7 @@ export class AbstractEditor extends Lens {
     super.mount(rootEl)
     // Seed stats for the new surface; doc-changed emits them thereafter.
     this.#emitStats()
+    this.#emitEvent(SurfaceEvent.TOOLBAR_CHANGED)
     return next
   }
 
@@ -487,6 +528,10 @@ export class AbstractEditor extends Lens {
    * supplied the content could seed a verbatim buffer with something the
    * container never said.
    *
+   * A mode outside this lens's repertoire presents its default mode: the host
+   * states the shape the reader left the container in, and a lens with fewer
+   * shapes has only its own to offer.
+   *
    * A markdown projection that never arrives leaves the buffer unpresentable. A
    * container with a block tree is then presented as blocks — the shape it can
    * always be read in — and one without has nothing else to be, so the failure
@@ -496,15 +541,16 @@ export class AbstractEditor extends Lens {
    * @returns {Promise<AbstractSurface>} the mounted surface
    */
   async presentMode(mode, rootEl) {
+    const shape = this._modes.includes(mode) ? mode : this._defaultMode
     let seed
     try {
-      seed = await this.#seedFor(mode)
+      seed = await this.#seedFor(shape)
     } catch (err) {
       if (!this.canEditBlocks) throw err
       console.error('[editor] the container did not project its text; presenting its blocks instead', err)
       return this.presentSurface(/** @type {string} */ (this._blockMode), rootEl, null)
     }
-    return this.presentSurface(mode, rootEl, seed)
+    return this.presentSurface(shape, rootEl, seed)
   }
 
   /**
@@ -512,7 +558,7 @@ export class AbstractEditor extends Lens {
    *
    * A verbatim buffer is seeded by the container's own projection — the ask that
    * also hands the container's text over to that buffer, which is why a buffer
-   * surface is never presented without it. The block mode reads the model on its
+   * surface is never presented without it. A seedless mode reads the model on its
    * bootstrap cue and needs no seed at all.
    *
    * REJECTS when the projection does not arrive: an unseeded verbatim buffer
@@ -521,7 +567,7 @@ export class AbstractEditor extends Lens {
    * @returns {Promise<string|null>}
    */
   #seedFor(mode) {
-    if (mode === this._blockMode) return Promise.resolve(null)
+    if (this._seedlessModes.includes(mode)) return Promise.resolve(null)
     return this.provider.getContents()
   }
 
@@ -605,7 +651,7 @@ export class AbstractEditor extends Lens {
 
   /** The current document stats, DELEGATED to the active surface. A PULL seam, so
    *  a consumer arriving after the initial seed reads the current value.
-   *  @returns {{ chars: number, lines: number, blockCount: number }} */
+   *  @returns {import('./abstract-surface.js').SurfaceStats} */
   stats() {
     return this.#surface ? this.#surface.stats() : { chars: 0, lines: 0, blockCount: 0 }
   }
@@ -713,9 +759,9 @@ export class AbstractEditor extends Lens {
    */
   setMode(target) {
     if (!this._modes.includes(target)) return Promise.resolve(false)
-    // A container with no block extension has one shape to be in — a prompt IS
-    // its text.
-    if (!this.canEditBlocks) return Promise.resolve(false)
+    // A container with no block extension has one shape to be in as text — a
+    // prompt IS its text — and flips only between views that need no seed.
+    if (!this.canEditBlocks && !this.#seedlessFlip(target)) return Promise.resolve(false)
     if (!this.#surface || target === this.mode) return Promise.resolve(false)
     if (this.#modeFlip) return this.#modeFlip
     this.#modeFlip = this.#flipTo(target).finally(() => { this.#modeFlip = null })
@@ -735,13 +781,92 @@ export class AbstractEditor extends Lens {
   }
 
   /**
+   * What this lens puts in the workspace toolbar, in order: the mounted
+   * surface's groups, each followed by a separator when the item after it is
+   * drawn in the same place, then the lens's own groups. A fresh answer each
+   * time it is asked; the lens emits `toolbar-changed` when it would answer
+   * otherwise.
+   * @returns {ToolbarItem[]}
+   */
+  toolbarContents() {
+    const surface = this.#surface ? this.#surface.toolbarContents() : []
+    const own = this._toolbarGroups()
+    const all = [...surface, ...own]
+    /** @type {ToolbarItem[]} */
+    const items = []
+    surface.forEach((group, i) => {
+      items.push(group)
+      const place = group.place ?? ToolbarPlace.START
+      if (i + 1 < all.length && (all[i + 1].place ?? ToolbarPlace.START) === place) items.push(new ToolbarSeparator(place))
+    })
+    items.push(...own)
+    return items
+  }
+
+  /**
+   * The lens's own toolbar groups, after the surface's. The base offers the mode
+   * toggle alone; a lens with groups of its own places the toggle among them.
+   * @protected
+   * @returns {ToolbarItem[]}
+   */
+  _toolbarGroups() {
+    const toggle = this.modeToggle()
+    return toggle ? [new ButtonGroup([toggle])] : []
+  }
+
+  /**
+   * The ONE mode toggle every lens draws: a button that steps to the next mode
+   * of the repertoire, as `toggleMode` does, drawn with the face the lens gives
+   * the mode in force. Null for a lens of one mode.
+   * @returns {ToolbarButton|null}
+   */
+  modeToggle() {
+    const face = this.modeToggleFace
+    if (!face) return null
+    return new ToolbarButton({
+      id: 'tb-toggle-mode-btn',
+      iconHtml: face.iconHtml,
+      text: face.text,
+      title: face.title,
+      onClick: () => { this.toggleMode() },
+    })
+  }
+
+  /**
+   * How the mode toggle is drawn now: the face the lens gives the mode in force,
+   * else the next mode's name. Null for a lens of one mode.
+   * @returns {ModeToggleFace|null}
+   */
+  get modeToggleFace() {
+    const modes = this._modes
+    if (modes.length < 2) return null
+    const next = modes[(modes.indexOf(this.mode) + 1) % modes.length]
+    return this._modeToggleFace(this.mode) || { text: next, title: 'Show ' + next }
+  }
+
+  /**
+   * How the mode toggle is drawn while `mode` is in force; null draws it with
+   * the next mode's name.
+   * @protected
+   * @param {string} _mode
+   * @returns {ModeToggleFace|null}
+   */
+  _modeToggleFace(_mode) { return null }
+
+  /**
    * @param {string} target
    * @returns {Promise<boolean>}
    */
   async #flipTo(target) {
-    const old = /** @type {import('./document-editor/surfaces/abstract-surface.js').AbstractSurface} */ (this.#surface)
+    const old = /** @type {import('./abstract-surface.js').AbstractSurface} */ (this.#surface)
     // Flush pending edits BEFORE the handshake so Go's shadow is current.
     old.flushPending()
+
+    if (this.#seedlessFlip(target)) {
+      this.#viewState = old.viewState()
+      this.presentSurface(target, /** @type {HTMLElement} */ (this.host), null)
+      return true
+    }
 
     // Both directions speak WHOLE-CONTENT through the same provider.
     const provider = this.provider
@@ -768,6 +893,13 @@ export class AbstractEditor extends Lens {
     // Success only — the swap is unreachable on timeout/error.
     this.presentSurface(target, /** @type {HTMLElement} */ (this.host), payload)
     return true
+  }
+
+  /** @param {string} target @returns {boolean} whether the mode in force and
+   *  `target` both need no seed */
+  #seedlessFlip(target) {
+    const seedless = this._seedlessModes
+    return seedless.includes(this.mode) && seedless.includes(target)
   }
 
   /**
@@ -876,7 +1008,7 @@ export class AbstractEditor extends Lens {
   async reload() {
     const mode = this.mode
     if (!this._modes.includes(mode)) return
-    const painted = mode === this._blockMode
+    const painted = this._seedlessModes.includes(mode)
     if (painted && !this.#surface) return
     if (!this.#loadContainer) return // no loader: nothing to reload from
     this.#reloadInProgress = true

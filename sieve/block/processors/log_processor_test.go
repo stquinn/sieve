@@ -196,7 +196,7 @@ func TestLogProcessor_NormalisedText(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			blk := block.SieveBlock{Kind: "log", Attrs: tc.attrs}
+			blk := domain.SieveBlock{Kind: "log", Attrs: tc.attrs}
 			got := p.NormalisedText(&blk)
 			if len(got) != 1 {
 				t.Fatalf("got %d segments, want exactly 1: %#v", len(got), got)

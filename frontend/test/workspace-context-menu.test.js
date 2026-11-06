@@ -13,7 +13,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-// The Workspace pulls its children at module-eval; SieveTab drags in the editor →
+// The Workspace pulls its children at module-eval; SieveTab and the lens table drag in the editor →
 // TipTap chain, which the bare test vendor bag cannot build. None of them
 // participates in the resolution — the lenses are handed in directly.
 vi.mock('../src/static/shell/tab.js', () => ({
@@ -24,6 +24,8 @@ vi.mock('../src/static/shell/tab.js', () => ({
     getSelectionContext() { return null }
   },
 }))
+vi.mock('../src/static/lens/document-editor/note-editor.js', () => ({ NoteEditor: class {} }))
+vi.mock('../src/static/lens/prompt/prompt-editor.js', () => ({ PromptEditor: class {} }))
 vi.mock('../src/static/shell/ask-panel.js', () => ({
   AskPanel: class { constructor() { this.composer = { editor: null } } },
 }))

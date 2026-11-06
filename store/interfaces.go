@@ -1,5 +1,18 @@
 package store
 
+// The .meta type values. A type is what a directory in the store holds; it says
+// nothing about where that directory lives. TypeDocument and TypeBlock carry a
+// content file, TypeFolder does not.
+const (
+	TypeDocument = "document"
+	TypeBlock    = "block"
+	TypeFolder   = "folder"
+)
+
+// MetaKeyKind is the metadata key naming a TypeBlock storable's block kind. The
+// Store persists it and never interprets it.
+const MetaKeyKind = "kind"
+
 // Storable is the base contract for anything the Store can persist. It is a
 // pure value object — no logic, no path awareness, no knowledge of how or
 // where it lives on disk.
@@ -15,8 +28,11 @@ type Storable interface {
 	// creation and immutable — use Store.Move to change category.
 	Category() Category
 
-	// Body returns the raw content bytes. For MetaStorables the body is pure
-	// markdown with frontmatter stripped; the Store owns serialisation.
+	// Body returns the raw content bytes. The Store never interprets them: what
+	// they mean is decided by the MetaStorable's Type and the service that owns
+	// that type. An AssetStorable holds no bytes: its Body reads the asset as it
+	// is stored at the time of the call, costs a read each call, and is nil when
+	// the asset cannot be read.
 	Body() []byte
 
 	// ExternalRef returns the string used to reference this Storable from
@@ -33,15 +49,20 @@ type Storable interface {
 	IsModified() bool
 }
 
-// MetaStorable extends Storable with structured metadata. Used for notes and
-// buffers. The Store serialises Meta as YAML frontmatter; no code outside the
-// store package ever constructs or parses frontmatter directly.
+// MetaStorable extends Storable with structured metadata. It is the root of
+// everything stored as a directory holding a .meta, a content file, versions and
+// assets; its Type says which service owns it. The Store owns the .meta format;
+// no code outside the store package ever constructs or parses it directly.
 //
 // SetBody, SetMeta are the in-place mutable surfaces. Changes are local until
 // Store.Save is called, which returns a new Storable stamping the updated
 // version and modified timestamp.
 type MetaStorable interface {
 	Storable
+
+	// Type returns the .meta type (TypeDocument, TypeBlock). Stamped at creation
+	// and immutable: SetMeta cannot change it, and neither can Move.
+	Type() string
 
 	// Meta returns the raw metadata map. In business code, access fields
 	// through a typed DocumentMeta accessor rather than the raw map.
@@ -56,26 +77,27 @@ type MetaStorable interface {
 	// Owns returns the assets owned by this document.
 	Owns() []Storable
 
-	// AttachAsset adds an asset to the ownership list.
+	// AttachAsset adds an asset to the ownership list, replacing the one of the same key.
 	AttachAsset(a Storable)
-
-	// ClearOwns removes all owned assets.
-	ClearOwns()
 }
 
 // AssetStorable extends Storable for binary content such as images and voice
-// notes. The Store infers and stamps Encoding from magic bytes at Create time;
-// the caller never declares the encoding.
+// notes. The Store infers and stamps Encoding from the asset's leading bytes
+// when the storable is built; the caller never declares the encoding.
 type AssetStorable interface {
 	Storable
 
-	// Encoding returns the encoding inferred from the raw bytes at creation.
+	// Encoding returns the encoding inferred from the asset's leading bytes.
 	Encoding() Encoding
 
 	// BlkID returns the block identifier for this asset — the filename stem
 	// (key without extension), e.g. "blk-a1b2" for "blk-a1b2.png".
 	// Derived once at load/create time from the filename.
 	BlkID() string
+
+	// Size returns the asset's current length in bytes without reading it; 0
+	// when it cannot be measured.
+	Size() int64
 }
 
 // FolderStorable is a first-class node in the ownership graph. Folders own
@@ -116,9 +138,23 @@ type Store interface {
 	// Storable.
 	CreateMetaText(category Category, key string, body []byte) (MetaStorable, error)
 
+	// CreateTyped makes a new MetaStorable of the given content-bearing type,
+	// seeded with meta. body is stored verbatim, never parsed for frontmatter. A
+	// type that carries no content is an error. As with CreateMetaText an empty
+	// key is generated, and uuid, version and timestamps absent from meta are
+	// stamped.
+	CreateTyped(category Category, key string, contentType string, meta map[string]string, body []byte) (MetaStorable, error)
+
 	// CreateAsset creates a new AssetStorable. The key is managed internally
 	// by the store based on the parent document that logically owns it.
 	CreateAsset(category Category, parentKey string, assetID string, body []byte) (AssetStorable, error)
+
+	// AppendAsset appends data to the asset assetKey of the MetaStorable
+	// uuidParent, creating the asset when absent. assetKey is a filename,
+	// extension included. The bytes already stored are neither read nor
+	// rewritten, and the returned asset holds none of them: its Body reads the
+	// asset as stored at the time of the call to Body.
+	AppendAsset(category Category, uuidParent string, assetKey string, data []byte) (AssetStorable, error)
 
 	CreateOrLoadFolder(category Category, name string) (FolderStorable, error)
 

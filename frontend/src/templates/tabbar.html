@@ -4,7 +4,11 @@
 <div class="flex items-stretch shrink-0 w-[250px]"
      data-tab-id="{{$t.ID}}"
      data-tab-idx="{{$i}}"
+     data-tab-kind="{{$t.ContainerKind}}"
+     data-tab-viewed="{{$t.LastViewed}}"{{if eq $i $.ActiveIdx}}
+     data-tab-active="true"{{end}}
      data-ctx-id="{{$t.ID}}"
+     data-ctx-type="{{if $t.IsDocument}}note{{else if eq $t.ContainerKind "prompt"}}prompt{{else if eq $t.ContainerKind "digital-note"}}notebook{{else if eq $t.ContainerKind "ink-live"}}inkLive{{else}}tab{{end}}"
      data-ctx-name="{{if $t.DisplayName}}{{$t.DisplayName}}{{else}}Untitled{{end}}"
      data-ctx-intent="{{$t.UserIntent}}"
      data-ctx-is-dir="false"
@@ -18,6 +22,10 @@
       <div class="tab-icon-normal flex items-center justify-center">
         {{if eq $t.UserIntent "trash"}}
         <span class="w-1.5 h-1.5 rounded-full shrink-0 bg-tn-red{{if ne $i $.ActiveIdx}} opacity-40{{end}}"></span>
+        {{else if eq $t.ContainerKind "digital-note"}}
+        <span class="flex opacity-40 shrink-0">{{template "ink_note_icon"}}</span>
+        {{else if eq $t.ContainerKind "ink-live"}}
+        <span class="flex shrink-0" style="color:var(--theme-accentRed);">{{template "ink_live_icon"}}</span>
         {{else if eq $t.Status "filed"}}
         <svg viewBox="0 0 24 24" class="w-3.5 h-3.5 opacity-40 shrink-0" fill="none" stroke-linecap="round" stroke-linejoin="round">
           <defs>

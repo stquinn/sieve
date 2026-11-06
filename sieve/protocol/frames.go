@@ -43,20 +43,26 @@ const (
 	TypePong = "pong"
 
 	// Document channel, client → server.
-	TypeDocUpdate         = "doc-update"
-	TypeFlush             = "flush"
-	TypeEnterMarkdown     = "enter-markdown"
-	TypeEnterWysiwyg      = "enter-wysiwyg"
-	TypeRetryBlockJob     = "retry-block-job"
-	TypeExtract           = "extract"
-	TypeBlockOp           = "block-op"
-	TypeLoad              = "load"
-	TypePaste             = "paste"
-	TypeDetectExtractions = "detect-extractions"
-	TypeExport            = "export"
-	TypeFocus             = "focus"
-	TypeTextReplace       = "text-replace"
-	TypeSetPresenting     = "set-presenting"
+	TypeDocUpdate          = "doc-update"
+	TypeFlush              = "flush"
+	TypeEnterMarkdown      = "enter-markdown"
+	TypeEnterWysiwyg       = "enter-wysiwyg"
+	TypeRetryBlockJob      = "retry-block-job"
+	TypeExtract            = "extract"
+	TypeBlockOp            = "block-op"
+	TypeLoad               = "load"
+	TypePaste              = "paste"
+	TypeDetectExtractions  = "detect-extractions"
+	TypeExport             = "export"
+	TypeFocus              = "focus"
+	TypeTextReplace        = "text-replace"
+	TypeSetPresenting      = "set-presenting"
+	TypeInkPage            = "ink-page"
+	TypeInkOpenOnTablet    = "ink-open-on-tablet"
+	TypeInkTranscript         = "ink-transcript"
+	TypeInkTranscribePage        = "ink-transcribe-page"
+	TypeInkTranscriptDocument = "ink-transcript-document"
+	TypeInkDescribe        = "ink-describe"
 
 	// Both channels, client → server. Which channel a feature-control frame
 	// arrives on IS the scope it speaks for: the workspace wire controls a
@@ -64,22 +70,34 @@ const (
 	TypeFeatureControl = "feature-control"
 
 	// Document channel, server → client.
-	TypeMarkdownContent         = "markdown-content"
-	TypeWysiwygContent          = "wysiwyg-content"
-	TypeExtractAck              = "extract-ack"
-	TypeBlockOpAck              = "block-op-ack"
-	TypeInsertBlock             = "insert-block"
-	TypeBlockAttrsUpdated       = "block-attrs-updated"
-	TypeReplaceBlock            = "replace-block"
-	TypeRemoveBlock             = "remove-block"
-	TypeOrderChanged            = "order-changed"
-	TypeError                   = "error"
-	TypeLoadContent             = "load-content"
-	TypePasteAck                = "paste-ack"
-	TypeDetectExtractionsResult = "detect-extractions-result"
-	TypeExportContent           = "export-content"
-	TypeTextMarks               = "text-marks"
-	TypeTextReplaceAck          = "text-replace-ack"
+	TypeMarkdownContent          = "markdown-content"
+	TypeWysiwygContent           = "wysiwyg-content"
+	TypeExtractAck               = "extract-ack"
+	TypeBlockOpAck               = "block-op-ack"
+	TypeInsertBlock              = "insert-block"
+	TypeBlockAttrsUpdated        = "block-attrs-updated"
+	TypeReplaceBlock             = "replace-block"
+	TypeRemoveBlock              = "remove-block"
+	TypeOrderChanged             = "order-changed"
+	TypeError                    = "error"
+	TypeLoadContent              = "load-content"
+	TypePasteAck                 = "paste-ack"
+	TypeDetectExtractionsResult  = "detect-extractions-result"
+	TypeExportContent            = "export-content"
+	TypeTextMarks                = "text-marks"
+	TypeTextReplaceAck           = "text-replace-ack"
+	TypeInkPageContent           = "ink-page-content"
+	TypeInkStrokeAdded           = "ink-stroke-added"
+	TypeInkStrokeRemoved         = "ink-stroke-removed"
+	TypeInkLive                  = "ink-live"
+	TypeInkLivePage              = "ink-live-page"
+	TypeInkLogRestarted          = "ink-log-restarted"
+	TypeInkOpenOnTabletResult    = "ink-open-on-tablet-result"
+	TypeInkTranscriptContent        = "ink-transcript-content"
+	TypeInkTranscriptChanged        = "ink-transcript-changed"
+	TypeInkTranscriptDocumentResult = "ink-transcript-document-result"
+	TypeInkDescribeResult        = "ink-describe-result"
+	TypeContainerNamed           = "container-named"
 
 	// Workspace channel, client → server.
 	TypeCommand        = "command"
@@ -89,6 +107,7 @@ const (
 	TypeSessionScroll  = "session-scroll"
 	TypeSpellIgnore    = "spell-ignore"
 	TypeSpellLearn     = "spell-learn"
+	TypeInkPageDrawn   = "ink-page-drawn"
 
 	// Workspace channel, server → client.
 	TypeCommandResult    = "command-result"
@@ -98,6 +117,7 @@ const (
 	TypeJobsChanged      = "jobs-changed"
 	TypeContainerDeleted = "container-deleted"
 	TypeContainerSaved   = "container-saved"
+	TypeInkDrawPage      = "ink-draw-page"
 )
 
 // Topic is what an invalidate frame invalidates — the subject a view refetches
@@ -112,6 +132,7 @@ const (
 	TopicPrompts Topic = "prompts" // the prompt library changed
 	TopicLibrary Topic = "library" // the open library changed
 	TopicIntent  Topic = "intent"  // a document's user_intent changed
+	TopicInk     Topic = "ink"     // the ink link, its last session's numbers or the synced notes changed
 )
 
 // PingFrame is a liveness probe, answered with a PongFrame. Both channels carry

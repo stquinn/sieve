@@ -34,16 +34,13 @@
 // what keeps a gesture inside a question resolving to the block hosting it.
 
 import { BlockIdentity } from './block-identity.js'
-import { SieveBlock } from '../contract/sieve-block.js'
-import { getBlockRenderer } from './block-renderers.js'
-import { documentAssetUrl } from './asset-urls.js'
+import { BlockRecordView } from './block-record-view.js'
 import { badgeEl } from './header-bar.js'
-import { getLowlight, hastToHtml } from './highlighting.js'
 
 /** @typedef {import('./question-list.js').QuestionElement} QuestionElement */
 
 export class QuestionListView {
-  /** @type {Array<{destroy: () => void}>} composed renderers this draw owns */ #composed = []
+  /** @type {Array<BlockRecordView>} the record views this draw owns */ #composed = []
   /** @type {MutationObserver|null} keeps late content anonymous */ #watcher = null
   /** @type {string} the container whose assets an element's refs name */ #container
 
@@ -101,69 +98,20 @@ export class QuestionListView {
 
   /**
    * An element's rendering: the kind's OWN renderer, drawing the whole block it
-   * would draw anywhere else, marked READ-ONLY — a question is a record, so a
-   * kind's editing and mutating affordances are off while its chrome is not.
+   * would draw anywhere else, as a record (BlockRecordView).
    *
    * The kind comes from the all-blocks registry, so there is no per-kind arm
    * here and never will be: the day a kind is drawable, it is drawable inside a
-   * question. What text a composed renderer would take from a lens is written in
-   * afterwards, because in a question there is no lens to take it from.
+   * question.
    * @param {QuestionElement} element
    * @returns {HTMLElement}
    */
   #content(element) {
-    const Renderer = getBlockRenderer(element.kind)
-    if (!Renderer) return QuestionListView.#unknown(element)
-    const renderer = new Renderer(new SieveBlock(element.kind, this.#resolved(element)), null, undefined, { readOnly: true })
-    const dom = BlockIdentity.strip(renderer.render())
-    QuestionListView.#writeOwnText(renderer, element.attrs || {})
-    this.#composed.push(renderer)
-    return dom
-  }
-
-  /**
-   * An element's attrs with what a LENS would have resolved for it added.
-   *
-   * A kind whose content was processed server-side names the result by a
-   * reference the document holds, and turning that into a fetchable url takes
-   * the container it lives in — a host concern, which is why in the document a
-   * NodeView overlays it. A record is hosted here, so this is where it happens.
-   * An element that was never processed gets nothing, and its kind falls back to
-   * whatever it can show from its own text — as does one whose reference names a
-   * container this view was not told, which is the honest answer rather than a
-   * url built around a hole.
-   * @param {QuestionElement} element
-   * @returns {Record<string, any>}
-   */
-  #resolved(element) {
-    const attrs = element.attrs || {}
-    const ref = String(attrs.parsedAssetRef || '')
-    // A ref the store minted is already a served route and needs no container;
-    // only a bare one has to be resolved against the document holding it.
-    if (!ref || (!ref.startsWith('/') && !this.#container)) return attrs
-    return Object.assign({}, attrs, { resolvedAssetUrl: documentAssetUrl(this.#container, ref) })
-  }
-
-  /**
-   * Writes the text a lens would otherwise own into a composed renderer.
-   *
-   * A kind whose content is literal source text renders it through a ProseMirror
-   * contentDOM in the document — the renderer builds the `<code>` and PM fills
-   * it. There is no ProseMirror here, so the record fills it, and highlights the
-   * element rather than the subtree: the shared subtree pass wraps every `<pre>`
-   * in a line gutter, and the renderer already drew one.
-   * @param {any} renderer @param {Record<string, any>} attrs
-   */
-  static #writeOwnText(renderer, attrs) {
-    const code = typeof renderer.codeElement === 'undefined' ? null : renderer.codeElement
-    if (!code) return
-    const source = String(attrs.source || '')
-    code.textContent = source
-    if (typeof renderer.syncGutterLineCount === 'function') renderer.syncGutterLineCount(source)
-    const lang = String(attrs.language || '').trim()
-    const low = getLowlight()
-    if (!lang || lang === 'unknown' || !low || !source) return
-    try { code.innerHTML = hastToHtml(low.highlight(lang, source).children) } catch (e) { /* unknown language: the plain text stands */ }
+    const view = new BlockRecordView(this.#container)
+    const dom = view.draw(element.kind, element.attrs || {})
+    if (!dom) return QuestionListView.#unknown(element)
+    this.#composed.push(view)
+    return BlockIdentity.strip(dom)
   }
 
   /**

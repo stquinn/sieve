@@ -38,6 +38,15 @@ func outboundWireCases() []wireCase {
 		Grain: domain.GrainWord, Start: 15, End: 18, Class: domain.TextClassProse,
 	}}
 	boom := errors.New("boom")
+	inkStroke := InkExportStroke{ID: "s1", Tool: "pen", WidthClass: 2, StartMillis: 5,
+		Points: []InkExportPoint{{X: 0.25, Y: 0.5, Pressure: 0.75, TiltX: 30, TiltY: -30}}}
+	inkStrokeJSON := `{"id":"s1","tool":"pen","widthClass":2,"startMillis":5,"points":[{"x":0.25,"y":0.5,"pressure":0.75,"tMillis":0,"tiltX":30,"tiltY":-30,"size":0}]}`
+	inkPage := InkPageExport{
+		Note: InkExportNote{ID: "n1", Created: "2023-11-14T22:13:20Z", Title: "Ideas", PageAspect: 0.75,
+			Template: &InkExportTemplate{ID: "ruled", Params: map[string]float64{"spacing": 0.05}},
+			Device:   InkExportDevice{ID: "d", Name: "Note Air 2", Model: "ONYX"}},
+		Strokes: []InkExportStroke{inkStroke},
+	}
 
 	return []wireCase{
 		{
@@ -165,6 +174,24 @@ func outboundWireCases() []wireCase {
 			golden:  `{"type":"load-content","body":"raw","mode":"markdown","uuid":"prompt:default","scroll":0,"version":0}`,
 		},
 		{
+			// A block container is served as its one block, and says what kind of
+			// container it is so the host mounts it with that kind's lens, and what
+			// it is called.
+			name:    "load-content of a block container",
+			channel: ChannelDocument,
+			frame: NewLoadContentFrame(DocumentContent{
+				Mode: "wysiwyg", UUID: "c-1", Kind: "code", Name: "a snippet", Version: 3,
+				Blocks: []block.FrontendBlock{{ID: "c-1", Kind: "code", Attrs: map[string]interface{}{"source": "x"}}},
+			}),
+			golden: `{"type":"load-content","body":"","mode":"wysiwyg","uuid":"c-1","kind":"code","name":"a snippet","scroll":0,"version":3,"blocks":[{"id":"c-1","kind":"code","attrs":{"source":"x"}}]}`,
+		},
+		{
+			name:    "container-named",
+			channel: ChannelDocument,
+			frame:   NewContainerNamedFrame("Kitchen extension planning"),
+			golden:  `{"type":"container-named","name":"Kitchen extension planning"}`,
+		},
+		{
 			name:    "load-content of a tab left presenting",
 			channel: ChannelDocument,
 			frame:   NewLoadContentFrame(DocumentContent{Body: "---", Mode: "wysiwyg", UUID: "doc-1", Presenting: true}),
@@ -250,6 +277,128 @@ func outboundWireCases() []wireCase {
 			channel: ChannelDocument,
 			frame:   NewTextReplaceAckFrame("op-1", boom),
 			golden:  `{"type":"text-replace-ack","opId":"op-1","outcome":"error","error":"boom"}`,
+		},
+		{
+			name:    "ink-page-content",
+			channel: ChannelDocument,
+			frame:   NewInkPageContentFrame("op-1", "p1", 7, inkPage),
+			golden: `{"type":"ink-page-content","opId":"op-1","pageId":"p1","seq":7,"page":{"note":{"id":"n1","created":"2023-11-14T22:13:20Z",` +
+				`"title":"Ideas","pageAspect":0.75,"template":{"id":"ruled","params":{"spacing":0.05}},"device":{"id":"d","name":"Note Air 2","model":"ONYX"}},` +
+				`"strokes":[` + inkStrokeJSON + `]}}`,
+		},
+		{
+			// A refusal is told apart from a page by its error and its null page.
+			name:    "ink-page-content refused",
+			channel: ChannelDocument,
+			frame:   NewInkPageRefusedFrame("op-1", "p9", errors.New("no such page")),
+			golden:  `{"type":"ink-page-content","opId":"op-1","pageId":"p9","seq":0,"page":null,"error":"no such page"}`,
+		},
+		{
+			name:    "ink-open-on-tablet-result",
+			channel: ChannelDocument,
+			frame:   NewInkOpenOnTabletResultFrame("op-1", InkOpenRefused, "not-foreground"),
+			golden:  `{"type":"ink-open-on-tablet-result","opId":"op-1","outcome":"refused","reason":"not-foreground"}`,
+		},
+		{
+			name:    "ink-open-on-tablet-result failed",
+			channel: ChannelDocument,
+			frame:   NewInkOpenOnTabletFailedFrame("op-1", errors.New("no note")),
+			golden:  `{"type":"ink-open-on-tablet-result","opId":"op-1","error":"no note"}`,
+		},
+		{
+			name:    "ink-transcript-content",
+			channel: ChannelDocument,
+			frame: NewInkTranscriptContentFrame("op-1", "p1", InkTranscript{State: InkTranscriptReady, Key: "k1", Running: true, Available: true,
+				Blocks: []block.FrontendBlock{{ID: "b1", Kind: "prose", Attrs: map[string]interface{}{"content": "# Kitchen"}}}}),
+			golden: `{"type":"ink-transcript-content","opId":"op-1","pageId":"p1","transcript":{"state":"ready","key":"k1",` +
+				`"blocks":[{"id":"b1","kind":"prose","attrs":{"content":"# Kitchen"}}],"running":true,"available":true}}`,
+		},
+		{
+			// A transcript that cannot be had says why, and a failed one what went wrong.
+			name:    "ink-transcript-content unavailable and failed",
+			channel: ChannelDocument,
+			frame:   NewInkTranscriptContentFrame("op-1", "p1", InkTranscript{State: InkTranscriptNone, Unavailable: "no AI", Failed: "timed out"}),
+			golden: `{"type":"ink-transcript-content","opId":"op-1","pageId":"p1","transcript":{"state":"none","running":false,"available":false,` +
+				`"unavailable":"no AI","failed":"timed out"}}`,
+		},
+		{
+			name:    "ink-transcript-content refused",
+			channel: ChannelDocument,
+			frame:   NewInkTranscriptRefusedFrame("op-1", "p9", errors.New("no such page")),
+			golden:  `{"type":"ink-transcript-content","opId":"op-1","pageId":"p9","transcript":null,"error":"no such page"}`,
+		},
+		{
+			name:    "ink-transcript-changed",
+			channel: ChannelDocument,
+			frame:   NewInkTranscriptChangedFrame("p1", InkTranscript{State: InkTranscriptStale, Key: "k0", Running: true, Available: true}),
+			golden:  `{"type":"ink-transcript-changed","pageId":"p1","transcript":{"state":"stale","key":"k0","running":true,"available":true}}`,
+		},
+		{
+			name:    "ink-transcript-document-result",
+			channel: ChannelDocument,
+			frame:   NewInkTranscriptDocumentResultFrame("op-1", "doc-2"),
+			golden:  `{"type":"ink-transcript-document-result","opId":"op-1","uuid":"doc-2"}`,
+		},
+		{
+			name:    "ink-transcript-document-result failed",
+			channel: ChannelDocument,
+			frame:   NewInkTranscriptDocumentFailedFrame("op-1", errors.New("not read")),
+			golden:  `{"type":"ink-transcript-document-result","opId":"op-1","error":"not read"}`,
+		},
+		{
+			name:    "ink-describe-result",
+			channel: ChannelDocument,
+			frame:   NewInkDescribeResultFrame("op-1"),
+			golden:  `{"type":"ink-describe-result","opId":"op-1"}`,
+		},
+		{
+			name:    "ink-describe-result refused",
+			channel: ChannelDocument,
+			frame:   NewInkDescribeRefusedFrame("op-1", "No AI is configured."),
+			golden:  `{"type":"ink-describe-result","opId":"op-1","error":"No AI is configured."}`,
+		},
+		{
+			name:    "ink-stroke-added",
+			channel: ChannelDocument,
+			frame:   NewInkStrokeAddedFrame("p1", 8, inkStroke),
+			golden:  `{"type":"ink-stroke-added","pageId":"p1","seq":8,"stroke":` + inkStrokeJSON + `}`,
+		},
+		{
+			name:    "ink-stroke-removed",
+			channel: ChannelDocument,
+			frame:   NewInkStrokeRemovedFrame("p1", 9, "s1"),
+			golden:  `{"type":"ink-stroke-removed","pageId":"p1","seq":9,"strokeId":"s1"}`,
+		},
+		{
+			name:    "ink-live",
+			channel: ChannelDocument,
+			frame: NewInkLiveFrame([]InkLiveRecord{
+				{Record: InkLiveBegin, Stroke: 3, Tool: "pencil", WidthClass: 2, X: -0.5, Y: 1.25},
+				{Record: InkLivePoint, Stroke: 3, X: -0.25, Y: 1.5, Pressure: 0.5, TMillis: 16, TiltX: 10, TiltY: -10},
+				{Record: InkLiveView, X: -1, Y: 2},
+			}),
+			golden: `{"type":"ink-live","records":[` +
+				`{"record":"begin","stroke":3,"tool":"pencil","widthClass":2,"x":-0.5,"y":1.25,"pressure":0,"tMillis":0,"tiltX":0,"tiltY":0},` +
+				`{"record":"point","stroke":3,"x":-0.25,"y":1.5,"pressure":0.5,"tMillis":16,"tiltX":10,"tiltY":-10},` +
+				`{"record":"view","stroke":0,"x":-1,"y":2,"pressure":0,"tMillis":0,"tiltX":0,"tiltY":0}]}`,
+		},
+		{
+			name:    "ink-live-page",
+			channel: ChannelDocument,
+			frame:   NewInkLivePageFrame("p1", "v1"),
+			golden:  `{"type":"ink-live-page","live":true,"pageId":"p1","view":"v1"}`,
+		},
+		{
+			name:    "ink-live-page off",
+			channel: ChannelDocument,
+			frame:   NewInkLivePageFrame("", "v1"),
+			golden:  `{"type":"ink-live-page","live":false}`,
+		},
+		{
+			name:    "ink-log-restarted",
+			channel: ChannelDocument,
+			frame:   NewInkLogRestartedFrame(),
+			golden:  `{"type":"ink-log-restarted"}`,
 		},
 		{
 			name:    "error",
@@ -367,6 +516,15 @@ func outboundWireCases() []wireCase {
 			frame:   NewContainerSavedFrame("0198f3c1-1b2a-7000-8000-000000000001", 7),
 			golden:  `{"type":"container-saved","uuid":"0198f3c1-1b2a-7000-8000-000000000001","version":7}`,
 		},
+		{
+			name:    "ink-draw-page",
+			channel: ChannelWorkspace,
+			frame:   NewInkDrawPageFrame("c-1", "0198f3c1-1b2a-7000-8000-000000000001", "p1", "2ce2e9cf31ae0dfe", "fixed", inkPage),
+			golden: `{"type":"ink-draw-page","correlationId":"c-1","container":"0198f3c1-1b2a-7000-8000-000000000001",` +
+				`"pageId":"p1","pageKey":"2ce2e9cf31ae0dfe","bounds":"fixed","page":{"note":{"id":"n1","created":"2023-11-14T22:13:20Z",` +
+				`"title":"Ideas","pageAspect":0.75,"template":{"id":"ruled","params":{"spacing":0.05}},` +
+				`"device":{"id":"d","name":"Note Air 2","model":"ONYX"}},"strokes":[` + inkStrokeJSON + `]}}`,
+		},
 	}
 }
 
@@ -468,6 +626,42 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 			raw:  `{"type":"enter-wysiwyg","uuid":"doc-1"}`,
 			into: &EnterWysiwygFrame{},
 			want: &EnterWysiwygFrame{Type: TypeEnterWysiwyg},
+		},
+		{
+			name: "ink-page",
+			raw:  `{"type":"ink-page","opId":"op-7","pageId":"019a0000-0000-7000-8000-000000000011"}`,
+			into: &InkPageFrame{},
+			want: &InkPageFrame{Type: TypeInkPage, OpID: "op-7", PageID: "019a0000-0000-7000-8000-000000000011"},
+		},
+		{
+			name: "ink-page-drawn",
+			raw:  `{"type":"ink-page-drawn","correlationId":"c-1","png":"iVBORw0KGgo="}`,
+			into: &InkPageDrawnFrame{},
+			want: &InkPageDrawnFrame{Type: TypeInkPageDrawn, CorrelationID: "c-1", PNG: "iVBORw0KGgo="},
+		},
+		{
+			name: "ink-page-drawn that could not draw",
+			raw:  `{"type":"ink-page-drawn","correlationId":"c-1","error":"no 2d canvas context"}`,
+			into: &InkPageDrawnFrame{},
+			want: &InkPageDrawnFrame{Type: TypeInkPageDrawn, CorrelationID: "c-1", Error: "no 2d canvas context"},
+		},
+		{
+			name: "ink-open-on-tablet",
+			raw:  `{"type":"ink-open-on-tablet","opId":"op-7","pageId":"019a0000-0000-7000-8000-000000000002"}`,
+			into: &InkOpenOnTabletFrame{},
+			want: &InkOpenOnTabletFrame{Type: TypeInkOpenOnTablet, OpID: "op-7", PageID: "019a0000-0000-7000-8000-000000000002"},
+		},
+		{
+			name: "ink-open-on-tablet naming no page",
+			raw:  `{"type":"ink-open-on-tablet","opId":"op-7"}`,
+			into: &InkOpenOnTabletFrame{},
+			want: &InkOpenOnTabletFrame{Type: TypeInkOpenOnTablet, OpID: "op-7"},
+		},
+		{
+			name: "ink-describe",
+			raw:  `{"type":"ink-describe","opId":"op-7"}`,
+			into: &InkDescribeFrame{},
+			want: &InkDescribeFrame{Type: TypeInkDescribe, OpID: "op-7"},
 		},
 		{
 			name: "set-presenting",

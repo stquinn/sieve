@@ -156,7 +156,7 @@ func TestEditorService_FlushWritesToDisk(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	es.UpdateMarkdown(uuid, "# Hello\n\n```ai-block\nid: ab-1234\nresponse: original\nstatus: COMPLETE\n```")
-	es.UpdateBlock(uuid, block.SieveBlock{
+	es.UpdateBlock(uuid, domain.SieveBlock{
 		Kind: "ai-block",
 		ID:   "ab-1234",
 		Attrs: map[string]interface{}{
@@ -192,7 +192,7 @@ func TestEditorService_EnterMarkdownEmbedsBlocks(t *testing.T) {
 
 	_ = es.Open(uuid)
 	es.UpdateMarkdown(uuid, "# Doc\n\n```code\nid: cb-0001\nsource: old\nstatus: COMPLETE\n```")
-	es.UpdateBlock(uuid, block.SieveBlock{
+	es.UpdateBlock(uuid, domain.SieveBlock{
 		Kind: "code",
 		ID:   "cb-0001",
 		Attrs: map[string]interface{}{
@@ -202,7 +202,7 @@ func TestEditorService_EnterMarkdownEmbedsBlocks(t *testing.T) {
 		},
 	})
 
-	seed := es.EnterMarkdown(uuid)
+	seed, _ := es.EnterMarkdown(uuid)
 	if !strings.Contains(seed, "updated source") {
 		t.Errorf("expected EnterMarkdown seed to include updated block, got:\n%s", seed)
 	}
@@ -233,9 +233,7 @@ func TestEditorService_CloseFlushesAndRemovesShadow(t *testing.T) {
 	es.Close(uuid)
 
 	// Shadow must be gone after Close.
-	es.mu.RLock()
-	_, stillOpen := es.shadows[uuid]
-	es.mu.RUnlock()
+	stillOpen := es.sessionFor(uuid) != nil
 	if stillOpen {
 		t.Error("expected shadow to be removed after Close")
 	}
@@ -288,13 +286,13 @@ func TestEditorService_UpdateMarkdown_NoShadowIsNoop(t *testing.T) {
 func TestEditorService_UpdateBlock_NoShadowIsNoop(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), time.Second)
-	es.UpdateBlock("nonexistent-uuid", block.SieveBlock{Kind: "ai-block", ID: "ab-0001", Attrs: map[string]interface{}{"id": "ab-0001"}})
+	es.UpdateBlock("nonexistent-uuid", domain.SieveBlock{Kind: "ai-block", ID: "ab-0001", Attrs: map[string]interface{}{"id": "ab-0001"}})
 }
 
 func TestEditorService_EnterMarkdown_NoShadowReturnsEmpty(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), time.Second)
-	result := es.EnterMarkdown("nonexistent-uuid")
+	result, _ := es.EnterMarkdown("nonexistent-uuid")
 	if result != "" {
 		t.Errorf("expected empty string for missing shadow, got %q", result)
 	}
@@ -402,9 +400,9 @@ func TestEditorService_ARefusedSaveAnnouncesNothing(t *testing.T) {
 // Version restore writes the good document straight to disk (ReplaceWithVersion),
 // behind the open shadow's back. Without a from-disk reload, the stale shadow (a)
 // is served by /api/editor/load and (b) overwrites the restored file on the next
-// flush — corrupting it. ReloadFromDisk must replace the shadow with the on-disk
+// flush — corrupting it. Refresh must replace the shadow with the on-disk
 // content (codec-parsed, so marker ids survive), so neither happens.
-func TestEditorService_ReloadFromDisk_replacesStaleShadowAndPreservesIDs(t *testing.T) {
+func TestEditorService_Refresh_replacesStaleShadowAndPreservesIDs(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), time.Hour)
 
@@ -422,8 +420,8 @@ func TestEditorService_ReloadFromDisk_replacesStaleShadowAndPreservesIDs(t *test
 	doc.SetBody([]byte("<!--s:co-1-->\nrestored\n<!--/s:co-1-->"))
 	_, _ = ds.Save(doc)
 
-	if err := es.ReloadFromDisk(uuid); err != nil {
-		t.Fatalf("ReloadFromDisk: %v", err)
+	if err := es.Refresh(uuid); err != nil {
+		t.Fatalf("Refresh: %v", err)
 	}
 
 	// Shadow now reflects the restored disk — marker id co-1 preserved.
@@ -484,14 +482,14 @@ func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
 	uuid := doc.UUID()
 
 	_ = es.Open(uuid)
-	_ = es.EnterMarkdown(uuid)
+	_, _ = es.EnterMarkdown(uuid)
 
 	// User edits block YAML directly in markdown mode
 	es.UpdateMarkdown(uuid, "# Doc\n\n```code\nid: cb-0001\nsource: hand-edited\nstatus: COMPLETE\n```")
 
 	es.EnterWysiwyg(uuid)
 
-	es.UpdateBlock(uuid, block.SieveBlock{
+	es.UpdateBlock(uuid, domain.SieveBlock{
 		Kind: "code",
 		ID:   "cb-0001",
 		Attrs: map[string]interface{}{
@@ -540,9 +538,7 @@ func TestEditorService_CreateBlock_code(t *testing.T) {
 	}
 
 	// Block must be in shadow with complete attrs
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
+	shadow := es.shadowFor(uuid)
 	blkSnap, _ := shadow.SnapshotBlock(id)
 	blk := &blkSnap
 	if blk == nil {
@@ -695,10 +691,10 @@ func TestEditorService_HandlePaste_wholeBlockCopyPerKind(t *testing.T) {
 	type row struct {
 		name, kind, origID, plain, uriList string
 		attrs                              func(src string) map[string]interface{}
-		check                              func(t *testing.T, got map[string]interface{}, b block.SieveBlock)
+		check                              func(t *testing.T, got map[string]interface{}, b domain.SieveBlock)
 	}
-	keeps := func(want map[string]interface{}) func(*testing.T, map[string]interface{}, block.SieveBlock) {
-		return func(t *testing.T, got map[string]interface{}, _ block.SieveBlock) {
+	keeps := func(want map[string]interface{}) func(*testing.T, map[string]interface{}, domain.SieveBlock) {
+		return func(t *testing.T, got map[string]interface{}, _ domain.SieveBlock) {
 			for k, v := range want {
 				if !reflect.DeepEqual(got[k], v) {
 					t.Errorf("%s = %v, want %v", k, got[k], v)
@@ -718,7 +714,7 @@ func TestEditorService_HandlePaste_wholeBlockCopyPerKind(t *testing.T) {
 				return map[string]interface{}{"id": "diag-src-1", "status": "COMPLETE", "source": "graph TD\n    A[start] --> B{ok?}",
 					"diagramType": "mermaid", "mode": "render", "svgAsset": "sieve://" + src + "/diagram-diag-src-1.svg"}
 			},
-			check: func(t *testing.T, got map[string]interface{}, _ block.SieveBlock) {
+			check: func(t *testing.T, got map[string]interface{}, _ domain.SieveBlock) {
 				if got["source"] != "graph TD\n    A[start] --> B{ok?}" || got["diagramType"] != "mermaid" || got["mode"] != "render" {
 					t.Errorf("diagram content lost: %v", got)
 				}
@@ -749,7 +745,7 @@ func TestEditorService_HandlePaste_wholeBlockCopyPerKind(t *testing.T) {
 				return map[string]interface{}{"id": "ref-src-1", "status": "COMPLETE", "uri": "sieve://" + src + "/plan.txt",
 					"cache": map[string]interface{}{"title": "plan.txt", "mime": "text/plain", "bytes": "27", "summary": "Quarterly plan"}}
 			},
-			check: func(t *testing.T, got map[string]interface{}, _ block.SieveBlock) {
+			check: func(t *testing.T, got map[string]interface{}, _ domain.SieveBlock) {
 				face, _ := got["cache"].(map[string]interface{})
 				if uri, _ := got["uri"].(string); !strings.HasSuffix(uri, ".txt") || face["summary"] != "Quarterly plan" {
 					t.Errorf("reference lost its file or face: uri=%v cache=%v", got["uri"], got["cache"])
@@ -775,7 +771,7 @@ func TestEditorService_HandlePaste_wholeBlockCopyPerKind(t *testing.T) {
 						el("code", "a-2", map[string]interface{}{"language": "go", "source": "db.SetMaxOpenConns(4)"}),
 					}}
 			},
-			check: func(t *testing.T, got map[string]interface{}, b block.SieveBlock) {
+			check: func(t *testing.T, got map[string]interface{}, b domain.SieveBlock) {
 				if got["status"] != block.BlockStatusComplete {
 					t.Errorf("the pasted answer must stay answered, status = %v", got["status"])
 				}
@@ -835,7 +831,7 @@ func TestEditorService_HandlePaste_wholeBlockCopyPerKind(t *testing.T) {
 					t.Fatalf("result = %+v, want a %s block", res, tc.kind)
 				}
 				es.WaitForJobs()
-				b, ok := es.shadows[into].SnapshotBlock(res.ID)
+				b, ok := es.shadowFor(into).SnapshotBlock(res.ID)
 				if !ok {
 					t.Fatalf("pasted block %s not in the document", res.ID)
 				}
@@ -856,6 +852,112 @@ type pasteState struct{}
 
 func (pasteState) LoadSettings() domain.Settings     { return domain.Settings{} }
 func (pasteState) ActiveThemeVars() domain.ThemeVars { return domain.ThemeVars{} }
+
+// drawnPlantuml draws every source as the same SVG.
+type drawnPlantuml struct{}
+
+func (drawnPlantuml) Render(string) ([]byte, error) { return []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), nil }
+
+// A new document made from blocks is an ordinary untitled note, named as asked, holding a copy of
+// each block in order under fresh ids, element ids included, as a paste of it copied out of the
+// source would: an image it holds of the source is the new document's own copy, and a PlantUML
+// diagram drawn for the source is drawn again by the copy's own job. The source is untouched, and
+// the new document opens, takes an edit and saves like any other.
+func TestEditorService_NewDocument_HoldsACopyOfTheBlocks(t *testing.T) {
+	var pngBuf bytes.Buffer
+	_ = png.Encode(&pngBuf, image.NewRGBA(image.Rect(0, 0, 4, 3)))
+	es, src := newDropEditor(t)
+	svc := es.services
+	svc.State, svc.Plantuml = pasteState{}, drawnPlantuml{}
+	es.SetServices(svc)
+	resetRegistry()
+	for _, p := range []block.BlockProcessor{processors.NewDiagramProcessor(svc), processors.NewSmartImageProcessor(svc), processors.NewAIBlockProcessor(svc)} {
+		block.RegisterProcessor(p)
+	}
+	for key, body := range map[string][]byte{"holiday.png": pngBuf.Bytes(), "drawn.svg": []byte("<svg/>")} {
+		if _, err := svc.Assets.Save(domain.WorkingCopy, src, key, body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srcDoc, _ := es.documents.LoadByUUID(src)
+	before := string(srcDoc.Body())
+	el := func(kind, id string, attrs map[string]interface{}) map[string]interface{} {
+		attrs["id"] = id
+		return map[string]interface{}{"kind": kind, "attrs": attrs}
+	}
+	blocks := []domain.SieveBlock{
+		domain.NewSieveBlock("prose", "p-1", map[string]interface{}{"content": "# Kitchen\n\n- tiles [?]"}),
+		domain.NewSieveBlock("diagram", "d-1", map[string]interface{}{"source": "flowchart TD\n  A --> B", "diagramType": "mermaid", "mode": "render", "status": "COMPLETE"}),
+		domain.NewSieveBlock("diagram", "d-2", map[string]interface{}{"source": "Alice -> Bob: hi", "diagramType": "plantuml", "mode": "render",
+			"status": "COMPLETE", "svgAsset": "sieve://" + src + "/drawn.svg", "renderedHash": "x"}),
+		domain.NewSieveBlock("smart-image", "i-1", map[string]interface{}{"src": "sieve://" + src + "/holiday.png", "status": "COMPLETE",
+			"title": "Holiday", "alt": "holiday.png", "summary": "A beach", "width": "4", "height": "3"}),
+		domain.NewSieveBlock("ai-block", "a-1", map[string]interface{}{"status": "COMPLETE", "type": "ASK",
+			"question": []interface{}{el("prose", "q-1", map[string]interface{}{"content": "why?"})},
+			"answer":   []interface{}{el("prose", "an-1", map[string]interface{}{"content": "because."})}}),
+	}
+
+	uuid, err := es.NewDocument("Ideas — page 1", src, blocks)
+	if err != nil {
+		t.Fatalf("NewDocument: %v", err)
+	}
+	es.WaitForJobs()
+	doc, err := es.documents.LoadByUUID(uuid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.Meta().DisplayName() != "Ideas — page 1" || doc.Kind() != domain.KindBuffer || doc.Kind().FiledStatus() != "unfiled" ||
+		doc.Meta().UserIntent() != nil {
+		t.Errorf("the new document is %q, a %s, %s, intent %v", doc.Meta().DisplayName(), doc.Kind(), doc.Kind().FiledStatus(), doc.Meta().UserIntent())
+	}
+	got, err := es.Blocks(uuid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	for _, b := range got {
+		kinds = append(kinds, b.Kind)
+		if !ident.Valid(b.ID) || b.Attrs["id"] != b.ID {
+			t.Errorf("%s: ID %q, attrs id %v", b.Kind, b.ID, b.Attrs["id"])
+		}
+	}
+	if want := []string{"prose", "diagram", "diagram", "smart-image", "ai-block"}; !reflect.DeepEqual(kinds, want) {
+		t.Fatalf("kinds %v, want %v", kinds, want)
+	}
+	if got[0].Content() != "# Kitchen\n\n- tiles [?]" || got[1].StringAttr("source") != "flowchart TD\n  A --> B" {
+		t.Errorf("content: %q, %q", got[0].Content(), got[1].StringAttr("source"))
+	}
+	own := "sieve://" + uuid + "/"
+	if svg := got[2].StringAttr("svgAsset"); !strings.HasPrefix(svg, own) || got[2].StringAttr("status") != block.BlockStatusComplete {
+		t.Errorf("the PlantUML copy is %v", got[2].Attrs)
+	}
+	if img := got[3].StringAttr("src"); !strings.HasPrefix(img, own) {
+		t.Errorf("the image copy names %q", img)
+	}
+	for _, slot := range []string{block.QuestionAttr, block.AnswerAttr} {
+		for _, e := range got[4].Elements(slot) {
+			if e.ID == "q-1" || e.ID == "an-1" || !ident.Valid(e.ID) || e.Attrs["id"] != e.ID {
+				t.Errorf("%s element ID %q, attrs id %v", slot, e.ID, e.Attrs["id"])
+			}
+		}
+	}
+	if srcDoc, _ := es.documents.LoadByUUID(src); string(srcDoc.Body()) != before {
+		t.Errorf("the source changed")
+	}
+
+	if err := es.Open(uuid); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := es.CreateBlock(uuid, "prose", map[string]interface{}{"content": "Typed afterwards."}, block.AppendIndex); err != nil {
+		t.Fatal(err)
+	}
+	if err := es.Flush(uuid); err != nil {
+		t.Fatal(err)
+	}
+	if saved, _ := es.documents.LoadByUUID(uuid); !strings.Contains(string(saved.Body()), "Typed afterwards.") {
+		t.Errorf("the edit was not saved:\n%s", saved.Body())
+	}
+}
 
 func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 	resetRegistry()
@@ -879,7 +981,7 @@ func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 func TestEditorService_HandlePaste_declinedTransformMakesNoBlock(t *testing.T) {
 	es, uuid := newDropEditor(t)
 	block.RegisterProcessor(processors.NewSmartImageProcessor(es.services))
-	before := len(es.shadows[uuid].SnapshotBlocks())
+	before := len(es.shadowFor(uuid).SnapshotBlocks())
 
 	res := es.HandlePaste(uuid, []block.ContentEntry{
 		{MIMEType: "sieve/smart-image", Content: `{"src":"/missing-asset.png"}`},
@@ -887,7 +989,7 @@ func TestEditorService_HandlePaste_declinedTransformMakesNoBlock(t *testing.T) {
 	if res.Outcome != block.OutcomeNothing {
 		t.Fatalf("a declined transform must produce the nothing outcome, got %q (%+v)", res.Outcome, res)
 	}
-	if after := len(es.shadows[uuid].SnapshotBlocks()); after != before {
+	if after := len(es.shadowFor(uuid).SnapshotBlocks()); after != before {
 		t.Errorf("a declined transform must add no block: %d -> %d", before, after)
 	}
 }
@@ -991,7 +1093,7 @@ func TestEditorService_placementSharesWherePasteCopies(t *testing.T) {
 			if !res.IsBlock() || res.Kind != tc.asset.kind {
 				t.Fatalf("result = %+v, want a %s block", res, tc.asset.kind)
 			}
-			blocks := es.shadows[uuid].SnapshotBlocks()
+			blocks := es.shadowFor(uuid).SnapshotBlocks()
 			at := -1
 			for i, b := range blocks {
 				if b.ID == res.ID {
@@ -1213,13 +1315,13 @@ func (p *testRunJobProcessor) IsSupportedContent(entries []block.ContentEntry) b
 func (p *testRunJobProcessor) Transform(entries []block.ContentEntry, _ string, _ string, action block.Action) map[string]interface{} {
 	return nil
 }
-func (p *testRunJobProcessor) BuildContext(_ block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
+func (p *testRunJobProcessor) BuildContext(_ domain.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
 	return block.AIContext{}
 }
-func (p *testRunJobProcessor) MarkdownRepresentation(_ block.SieveBlock, _ string) string {
+func (p *testRunJobProcessor) MarkdownRepresentation(_ domain.SieveBlock, _ string) string {
 	return ""
 }
-func (p *testRunJobProcessor) OnChange(_ *block.SieveBlock) {}
+func (p *testRunJobProcessor) OnChange(_ *domain.SieveBlock) {}
 func (p *testRunJobProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJob {
 	if p.describe != nil {
 		return p.describe(jctx)
@@ -1255,13 +1357,11 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 			return &block.ProcessorJob{
 				Work: func() (any, error) {
 					// Simulate a concurrent user edit to "source" while the job runs.
-					es.mu.Lock()
-					shadow := es.shadows[uuid]
-					es.mu.Unlock()
-					shadow.MergeBlock(block.SieveBlock{ID: blockID, Attrs: map[string]interface{}{"source": "concurrent user edit"}})
+					shadow := es.shadowFor(uuid)
+					shadow.MergeBlock(domain.SieveBlock{ID: blockID, Attrs: map[string]interface{}{"source": "concurrent user edit"}})
 					return nil, nil
 				},
-				Apply: func(_ any, blk *block.SieveBlock) {
+				Apply: func(_ any, blk *domain.SieveBlock) {
 					blk.Attrs["language"] = "go"         // modified
 					blk.Attrs["added_key"] = "new value" // added
 					blk.Attrs["status"] = block.BlockStatusComplete
@@ -1281,9 +1381,7 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 	es.RunJob(context.Background(), uuid, blockID)
 
 	// Check final attributes in shadow
-	es.mu.Lock()
-	shadow := es.shadows[uuid]
-	es.mu.Unlock()
+	shadow := es.shadowFor(uuid)
 
 	blkSnap, _ := shadow.SnapshotBlock(blockID)
 	blk := &blkSnap
@@ -1348,7 +1446,7 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 					}
 					return nil, nil
 				},
-				Apply: func(_ any, blk *block.SieveBlock) {
+				Apply: func(_ any, blk *domain.SieveBlock) {
 					blk.Attrs["status"] = block.BlockStatusComplete
 				},
 			}
@@ -1364,9 +1462,7 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 	es.RunJob(context.Background(), uuid, blockID)
 
 	// Ensure the NEW shadow has the COMPLETE state
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
+	shadow := es.shadowFor(uuid)
 
 	if shadow == nil {
 		t.Fatal("expected new shadow to exist")
@@ -1386,7 +1482,7 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 
 // TestApplyJobUpdate_closedDoc verifies that a job update targeting a document
 // that is NOT open in memory (no shadow) is persisted to disk via a transient
-// Open→apply→Close cycle, and that no shadow leaks into es.shadows afterward.
+// Open→apply→Close cycle, and that no session leaks into es.sessions afterward.
 // Uses the "code" kind (real CodeBlockProcessor) so the fenced block is
 // properly deserialized by the shadow and its block-id is recognized.
 func TestApplyJobUpdate_closedDoc(t *testing.T) {
@@ -1419,9 +1515,7 @@ func TestApplyJobUpdate_closedDoc(t *testing.T) {
 	uuid := doc.UUID()
 
 	// Confirm no shadow exists before the update.
-	es.mu.RLock()
-	_, hasShadow := es.shadows[uuid]
-	es.mu.RUnlock()
+	hasShadow := es.sessionFor(uuid) != nil
 	if hasShadow {
 		t.Fatal("precondition: expected no open shadow before applyJobUpdate")
 	}
@@ -1434,9 +1528,7 @@ func TestApplyJobUpdate_closedDoc(t *testing.T) {
 	)
 
 	// Shadow must be gone after the transient open+close.
-	es.mu.RLock()
-	_, stillOpen := es.shadows[uuid]
-	es.mu.RUnlock()
+	stillOpen := es.sessionFor(uuid) != nil
 	if stillOpen {
 		t.Error("expected no shadow to remain after transient applyJobUpdate on closed doc")
 	}
@@ -1733,5 +1825,26 @@ func TestEditorService_AReplacementIsAutosavedLikeAnyOtherEdit(t *testing.T) {
 	}
 	if !strings.Contains(string(doc.Body()), "a hello here") {
 		t.Errorf("on-disk body = %q, want the corrected text", string(doc.Body()))
+	}
+}
+
+// A block container has no markdown shadow: open refuses at the DocumentService
+// wall and leaves no session behind.
+func TestEditorService_OpenRefusesABlockContainer(t *testing.T) {
+	containers, ds, _ := newTestContainers(t)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+	c, err := containers.Create(containerKind, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := es.Open(c.UUID()); !errors.Is(err, domain.ErrNotADocument) {
+		t.Fatalf("Open = %v, want ErrNotADocument", err)
+	}
+	if es.shadowFor(c.UUID()) != nil {
+		t.Error("a shadow was left behind for the block container")
+	}
+	if _, err := es.Blocks(c.UUID()); !errors.Is(err, domain.ErrNotADocument) {
+		t.Errorf("Blocks = %v, want ErrNotADocument", err)
 	}
 }

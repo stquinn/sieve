@@ -31,9 +31,13 @@ type WorkspaceBroadcast struct {
 	// construction by the composition root; a nil jobs (e.g. in a test that
 	// never wires one) simply composes an empty snapshot.
 	jobs JobsSource
+	// requests asks one of these sockets' clients for something and waits for its answer.
+	requests *WorkspaceRequests
 
-	mu    sync.RWMutex
-	conns map[*wsConn]struct{}
+	mu sync.RWMutex
+	// conns is every connected socket and the order it joined in, from 1.
+	conns  map[*wsConn]uint64
+	joined uint64
 }
 
 // NewWorkspaceBroadcast returns an empty fan-out wired to jobs (nil is valid —
@@ -45,23 +49,44 @@ type WorkspaceBroadcast struct {
 // before any socket can dial in — a mutable exported field would let a caller
 // reassign it after sockets are already reading it.
 func NewWorkspaceBroadcast(jobs JobsSource) *WorkspaceBroadcast {
-	return &WorkspaceBroadcast{jobs: jobs, conns: make(map[*wsConn]struct{})}
+	b := &WorkspaceBroadcast{jobs: jobs, conns: make(map[*wsConn]uint64)}
+	b.requests = newWorkspaceRequests(b)
+	return b
 }
+
+// Requests is the asking side of the workspace wire, over these sockets.
+func (b *WorkspaceBroadcast) Requests() *WorkspaceRequests { return b.requests }
 
 // join adds a freshly connected workspace socket to the fan-out.
 func (b *WorkspaceBroadcast) join(c *wsConn) {
 	b.mu.Lock()
-	b.conns[c] = struct{}{}
+	b.joined++
+	b.conns[c] = b.joined
 	b.mu.Unlock()
 }
 
-// leave removes a dead workspace socket. Unlike the channels map there is no
-// ownership question here: every live socket is a member, so a departure is
-// unconditional.
+// leave removes a dead workspace socket, and fails every request waiting on its
+// answer. Unlike the channels map there is no ownership question here: every
+// live socket is a member, so a departure is unconditional.
 func (b *WorkspaceBroadcast) leave(c *wsConn) {
 	b.mu.Lock()
 	delete(b.conns, c)
 	b.mu.Unlock()
+	b.requests.left(c)
+}
+
+// newest is the socket that joined last of those still connected; nil when none is.
+func (b *WorkspaceBroadcast) newest() *wsConn {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	var newest *wsConn
+	var at uint64
+	for c, joined := range b.conns {
+		if joined > at {
+			newest, at = c, joined
+		}
+	}
+	return newest
 }
 
 // size reports the current fan-out membership. It exists so a test can pin
@@ -102,6 +127,17 @@ func (b *WorkspaceBroadcast) Invalidate(topic protocol.Topic) {
 // edge runs protocol → block → ai → command), so the topic is chosen here.
 func (b *WorkspaceBroadcast) NotesChanged() {
 	b.Invalidate(protocol.TopicNotes)
+}
+
+// InkChanged satisfies ink.Invalidator: what Settings → Ink and the sidebar's Ink
+// section show is stale.
+func (b *WorkspaceBroadcast) InkChanged() {
+	b.Invalidate(protocol.TopicInk)
+}
+
+// SessionChanged satisfies ink.Invalidator: the session's tabs changed.
+func (b *WorkspaceBroadcast) SessionChanged() {
+	b.Invalidate(protocol.TopicSession)
 }
 
 // ContainerDeleted tells every workspace socket that a container is gone —

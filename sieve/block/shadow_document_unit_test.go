@@ -3,6 +3,8 @@ package block
 import (
 	"strings"
 	"testing"
+
+	"sieve/sieve/domain"
 )
 
 // ShadowDocument unit tests (white-box: same package as ShadowDocument). These
@@ -35,13 +37,13 @@ func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
 	shadow := &ShadowDocument{
 		UUID:  "test-uuid",
 		codec: NewDocumentCodec(GlobalRegistry()),
-		Blocks: []SieveBlock{
+		Blocks: []domain.SieveBlock{
 			{ID: "fk-1", Kind: "fk", Attrs: map[string]interface{}{"id": "fk-1", "response": "Old answer"}},
 			{ID: "fk-2", Kind: "fk", Attrs: map[string]interface{}{"id": "fk-2", "keep": "me"}},
 		},
 	}
 
-	shadow.MergeBlock(SieveBlock{ID: "fk-1", Kind: "fk", Attrs: map[string]interface{}{"response": "New answer"}})
+	shadow.MergeBlock(domain.SieveBlock{ID: "fk-1", Kind: "fk", Attrs: map[string]interface{}{"response": "New answer"}})
 
 	result := shadow.ContentForSave()
 	if !strings.Contains(result, "response: New answer") {
@@ -58,7 +60,7 @@ func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
 func TestShadowDocument_setBlockCreatesEntry(t *testing.T) {
 	shadow := &ShadowDocument{UUID: "test-uuid"}
 
-	shadow.MergeBlock(SieveBlock{
+	shadow.MergeBlock(domain.SieveBlock{
 		Kind:  "code",
 		ID:    "cb-0001",
 		Attrs: map[string]interface{}{"id": "cb-0001", "source": "fmt.Println()"},
@@ -76,14 +78,14 @@ func TestShadowDocument_setBlockCreatesEntry(t *testing.T) {
 func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
 	shadow := &ShadowDocument{
 		UUID: "test-uuid",
-		Blocks: []SieveBlock{
+		Blocks: []domain.SieveBlock{
 			{ID: "cb-0001", Kind: "code", Attrs: map[string]interface{}{
 				"id": "cb-0001", "source": "old", "language": "unknown",
 			}},
 		},
 	}
 
-	shadow.MergeBlock(SieveBlock{
+	shadow.MergeBlock(domain.SieveBlock{
 		Kind:  "code",
 		ID:    "cb-0001",
 		Attrs: map[string]interface{}{"language": "python", "status": "COMPLETE"},
@@ -107,7 +109,7 @@ func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
 func TestShadowDocument_ResolveAnchor(t *testing.T) {
 	shadow := &ShadowDocument{
 		UUID:   "test-uuid",
-		Blocks: []SieveBlock{{ID: "b1", Kind: "code"}, {ID: "b2", Kind: "code"}, {ID: "b3", Kind: "code"}},
+		Blocks: []domain.SieveBlock{{ID: "b1", Kind: "code"}, {ID: "b2", Kind: "code"}, {ID: "b3", Kind: "code"}},
 	}
 	for _, tc := range []struct {
 		name   string
@@ -132,8 +134,8 @@ func TestShadowDocument_ResolveAnchor(t *testing.T) {
 // A resolved AppendIndex must reach the end of the document, never the front —
 // the direction a naive negative clamp gets wrong.
 func TestShadowDocument_insertBlockAtAppendsOnAppendIndex(t *testing.T) {
-	shadow := &ShadowDocument{UUID: "test-uuid", Blocks: []SieveBlock{{ID: "b1"}, {ID: "b2"}}}
-	shadow.insertBlockAt(AppendIndex, SieveBlock{ID: "new"})
+	shadow := &ShadowDocument{UUID: "test-uuid", Blocks: []domain.SieveBlock{{ID: "b1"}, {ID: "b2"}}}
+	shadow.insertBlockAt(AppendIndex, domain.SieveBlock{ID: "new"})
 	if got := shadow.Blocks[len(shadow.Blocks)-1].ID; got != "new" {
 		t.Errorf("AppendIndex must land at the end; document is %v", shadow.Blocks)
 	}

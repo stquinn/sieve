@@ -10,6 +10,7 @@ import (
 
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
+	"sieve/sieve/domain"
 )
 
 // Export takes the CALLER's BlockFilter (a closure): the exclusion policy
@@ -32,7 +33,7 @@ func TestEditorService_Export_CallerOwnsFilter(t *testing.T) {
 	defer es.Close(uuid)
 
 	// Caller's closure drops code blocks.
-	noCode, err := es.Export(uuid, func(b block.SieveBlock) bool { return b.Kind != "code" }, block.MarkdownGenerator{})
+	noCode, err := es.Export(uuid, func(b domain.SieveBlock) bool { return b.Kind != "code" }, block.MarkdownGenerator{})
 	if err != nil {
 		t.Fatalf("Export(filter): %v", err)
 	}
@@ -156,7 +157,7 @@ func TestEditorService_Export_ConfluenceUATCorpus(t *testing.T) {
 	defer es.Close(doc.UUID())
 
 	var kinds []string
-	for _, b := range es.shadows[doc.UUID()].SnapshotBlocks() {
+	for _, b := range es.shadowFor(doc.UUID()).SnapshotBlocks() {
 		kinds = append(kinds, b.Kind)
 	}
 	if want := "prose code log diagram diagram prose"; strings.Join(kinds, " ") != want {

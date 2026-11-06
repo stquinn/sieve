@@ -12,16 +12,23 @@ import { serviceRig, FakeSocket, fakeDelegate } from './helpers/service-rig.js'
 import { ContainerModelFeed } from '../src/static/container/container-model-feed.js'
 import { MountBinding } from '../src/static/shell/mount-binding.js'
 import { BlockProviderAdapter } from '../src/static/container/block-provider-adapter.js'
+import { WholeContentAdapter } from '../src/static/container/whole-content-adapter.js'
+import { ProviderAdapter } from '../src/static/container/provider-adapter.js'
+import { InkProviderAdapter } from '../src/static/container/ink-provider-adapter.js'
 import { DocumentFrame } from '../src/static/generated/protocol.js'
 import { ContractViolation } from '../src/static/contract/sieve-block.js'
 
 const UUID = 'doc-1'
 
+/** What a document is mounted with, as the workspace's LensTable states it. The
+ *  binding reads only the provider and the channel flag, so no lens is named. */
+const DOCUMENT = Object.freeze({ lens: Object, provider: BlockProviderAdapter, channel: true })
+
 /** A rig whose channel this binding opened, seeded with two prose blocks. */
 function mounted() {
   const rig = serviceRig({ uuid: null })
   const feed = new ContainerModelFeed(rig.documentService)
-  const binding = new MountBinding(UUID, rig.documentService, feed)
+  const binding = new MountBinding(UUID, rig.documentService, feed, 'note', DOCUMENT)
   const delegate = fakeDelegate()
   binding.openChannel(/** @type {any} */ (delegate))
   const sock = FakeSocket.instances[FakeSocket.instances.length - 1]
@@ -41,12 +48,38 @@ function lastSent(sock, type) {
 describe('MountBinding', () => {
   beforeEach(() => FakeSocket.reset())
 
-  it('demands a uuid, a DocumentService and a real feed', () => {
+  it('demands a uuid, a DocumentService, a real feed and a Mounting', () => {
     const rig = serviceRig({ uuid: null })
     const feed = new ContainerModelFeed(rig.documentService)
-    expect(() => new MountBinding('', rig.documentService, feed)).toThrow(ContractViolation)
-    expect(() => new MountBinding(UUID, /** @type {any} */ (null), feed)).toThrow(ContractViolation)
-    expect(() => new MountBinding(UUID, rig.documentService, /** @type {any} */ ({}))).toThrow(ContractViolation)
+    expect(() => new MountBinding('', rig.documentService, feed, 'note', DOCUMENT)).toThrow(ContractViolation)
+    expect(() => new MountBinding(UUID, /** @type {any} */ (null), feed, 'note', DOCUMENT)).toThrow(ContractViolation)
+    expect(() => new MountBinding(UUID, rig.documentService, /** @type {any} */ ({}), 'note', DOCUMENT)).toThrow(ContractViolation)
+    expect(() => new MountBinding(UUID, rig.documentService, feed, 'note', /** @type {any} */ (undefined))).toThrow(ContractViolation)
+  })
+
+  it.each([
+    ['a document', 'note', BlockProviderAdapter, true],
+    ['a prompt', 'prompt', WholeContentAdapter, false],
+    ['a block container', 'code', ProviderAdapter, true],
+    ['a digital note', 'digital-note', InkProviderAdapter, true],
+  ])('mounts %s over the provider its Mounting names, announcing membership only on a channel', async (_name, kind, provider, channel) => {
+    const rig = serviceRig({ uuid: null })
+    const binding = new MountBinding(UUID, rig.documentService, new ContainerModelFeed(rig.documentService), kind, { lens: Object, provider: provider, channel: channel })
+    expect(binding.provider.constructor).toBe(provider)
+    expect(binding.provider.getKind()).toBe(kind)
+
+    const heard = vi.fn()
+    document.addEventListener(MountBinding.MEMBERSHIP_CHANGED, heard)
+    if (channel) {
+      binding.openChannel(/** @type {any} */ (fakeDelegate()))
+      const sock = FakeSocket.instances[FakeSocket.instances.length - 1]
+      sock.driveOpen()
+      sock.driveMessage({ type: DocumentFrame.INSERT_BLOCK, id: 'b1', kind: 'prose', attrs: {}, index: -1 })
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    document.removeEventListener(MountBinding.MEMBERSHIP_CHANGED, heard)
+    expect(heard).toHaveBeenCalledTimes(channel ? 1 : 0)
+    binding.close()
   })
 
   it('hands out a provider bound to this container and nothing else', () => {
@@ -261,7 +294,7 @@ describe('MountBinding', () => {
     // binding's uuid, not "the open channel", has to pick that channel: with a
     // second document open the guess would be a coin toss.
     const { rig, feed, sock } = mounted()
-    const other = new MountBinding('doc-2', rig.documentService, feed)
+    const other = new MountBinding('doc-2', rig.documentService, feed, 'note', DOCUMENT)
     other.openChannel(/** @type {any} */ (fakeDelegate()))
     const otherSock = FakeSocket.instances[FakeSocket.instances.length - 1]
     otherSock.driveOpen()

@@ -6,6 +6,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"sieve/store"
 )
 
 // nameEntry records a single friendly name and the timestamp it was assigned.
@@ -18,6 +20,7 @@ type nameEntry struct {
 type docMeta struct {
 	UUID               string            `json:"uuid"`
 	Type               string            `json:"type"`
+	Kind               string            `json:"kind,omitempty"`
 	Status             string            `json:"status,omitempty"`
 	Version            int               `json:"version"`
 	FocusCount         int               `json:"focus_count,omitempty"`
@@ -107,7 +110,7 @@ func readMetaType(path string) (string, error) {
 // knownMetaFields lists all map keys handled by docMetaToMap / mapToDocMeta.
 // Any key not in this set is stored in docMeta.Extra for round-trip fidelity.
 var knownMetaFields = map[string]bool{
-	"uuid": true, "type": true, "version": true, "created": true, "modified": true,
+	"uuid": true, "type": true, "kind": true, "version": true, "created": true, "modified": true,
 	"status": true, "focus_count": true,
 	"user_intent": true, "ai_eval": true, "ai_last_evaluated": true,
 	"ai_folder_suggestion": true, "user_suggested_name": true,
@@ -128,6 +131,9 @@ func docMetaToMap(dm *docMeta) map[string]string {
 		"version":  strconv.Itoa(dm.Version),
 		"created":  dm.Created,
 		"modified": dm.Modified,
+	}
+	if dm.Kind != "" {
+		m[store.MetaKeyKind] = dm.Kind
 	}
 	if dm.Status != "" {
 		m["status"] = dm.Status
@@ -187,6 +193,7 @@ func mapToDocMeta(m map[string]string) *docMeta {
 	dm := &docMeta{
 		UUID:               m["uuid"],
 		Type:               m["type"],
+		Kind:               m[store.MetaKeyKind],
 		Created:            m["created"],
 		Modified:           m["modified"],
 		Status:             m["status"],

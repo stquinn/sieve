@@ -36,7 +36,7 @@ type DiagramProcessor struct {
 }
 
 func NewDiagramProcessor(svc block.BlockServices) *DiagramProcessor {
-	return &DiagramProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: "diagram"}}
+	return &DiagramProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: block.KindDiagram}}
 }
 
 func (p *DiagramProcessor) Kind() string { return p.FencedDeserializer.Kind }
@@ -158,7 +158,7 @@ func (p *DiagramProcessor) stripRenderState(attrs map[string]interface{}) map[st
 // anything — see needsRender and DescribeJob's doc comments. Never clobbers a
 // job already PENDING or in flight (DISPATCHED) — this only arms an idle stale
 // block.
-func (p *DiagramProcessor) OnChange(blk *block.SieveBlock) {
+func (p *DiagramProcessor) OnChange(blk *domain.SieveBlock) {
 	if !p.needsRender(*blk) {
 		return
 	}
@@ -175,7 +175,7 @@ func (p *DiagramProcessor) OnChange(blk *block.SieveBlock) {
 // engine is plantuml, there is a non-empty source, and the block is showing the
 // render surface (not mid-edit). It says nothing about staleness — that is
 // needsRender's job, layered on top for the ARMING decision only.
-func (p *DiagramProcessor) isRenderable(blk block.SieveBlock) bool {
+func (p *DiagramProcessor) isRenderable(blk domain.SieveBlock) bool {
 	if dt, _ := blk.Attrs["diagramType"].(string); dt != "plantuml" {
 		return false // mermaid renders client-side
 	}
@@ -192,7 +192,7 @@ func (p *DiagramProcessor) isRenderable(blk block.SieveBlock) bool {
 // render. This is where the no-redundant-render guarantee lives — nothing arms
 // PENDING for an unchanged hash, so DescribeJob never needs to re-check it (see
 // DescribeJob's doc comment).
-func (p *DiagramProcessor) needsRender(blk block.SieveBlock) bool {
+func (p *DiagramProcessor) needsRender(blk domain.SieveBlock) bool {
 	if !p.isRenderable(blk) {
 		return false
 	}
@@ -201,7 +201,7 @@ func (p *DiagramProcessor) needsRender(blk block.SieveBlock) bool {
 	return prev != p.renderHash(p.effectiveSource(source))
 }
 
-func (p *DiagramProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
+func (p *DiagramProcessor) BuildContext(blk domain.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
 	src, _ := blk.Attrs["source"].(string)
 	if strings.TrimSpace(src) == "" {
 		return block.AIContext{}
@@ -252,12 +252,39 @@ func (p *DiagramProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJo
 		// Apply runs only after Work succeeds, so the asset provably exists before
 		// COMPLETE reaches the frontend — the status attr is the synchronization,
 		// the renderer never polls. The framework writes the ERROR state on failure.
-		Apply: func(result any, b *block.SieveBlock) {
+		Apply: func(result any, b *domain.SieveBlock) {
 			b.Attrs["svgAsset"] = result.(string)
 			b.Attrs["renderedHash"] = hash
 			b.Attrs["status"] = block.BlockStatusComplete
 		},
 	}
+}
+
+// DrawingSource is what PlantUML is given for blk — the source DescribeJob would
+// render — and false for a block DescribeJob would not render.
+func (p *DiagramProcessor) DrawingSource(blk domain.SieveBlock) (string, bool) {
+	if !p.isRenderable(blk) {
+		return "", false
+	}
+	source, _ := blk.Attrs["source"].(string)
+	return p.effectiveSource(source), true
+}
+
+// Drawn records on blk what DescribeJob's Apply records: the SVG kept at address,
+// rendered from blk's current source.
+func (p *DiagramProcessor) Drawn(blk *domain.SieveBlock, address string) {
+	source, _ := blk.Attrs["source"].(string)
+	blk.Attrs["svgAsset"] = address
+	blk.Attrs["renderedHash"] = p.renderHash(p.effectiveSource(source))
+	blk.Attrs["status"] = block.BlockStatusComplete
+	blk.Attrs["error"] = ""
+}
+
+// NotDrawn records on blk the error state the framework writes when DescribeJob's
+// render fails.
+func (p *DiagramProcessor) NotDrawn(blk *domain.SieveBlock, err error) {
+	blk.Attrs["status"] = block.BlockStatusError
+	blk.Attrs["error"] = err.Error()
 }
 
 // effectiveSource is the actual render input: the theme preamble, then the user
@@ -457,7 +484,7 @@ func (p *DiagramProcessor) saveAsset(uuid, blockID, existingKey string, data []b
 	return domain.NewLeafAddress(uuid, asset.Storable().Key()).String(), nil
 }
 
-func (p *DiagramProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {
+func (p *DiagramProcessor) MarkdownRepresentation(blk domain.SieveBlock, _ string) string {
 	src, _ := blk.Attrs["source"].(string)
 	src = strings.TrimSpace(src)
 	if src == "" {
@@ -468,7 +495,7 @@ func (p *DiagramProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string
 
 // fence wraps source in a code fence whose language follows the block's engine
 // (empty diagramType → mermaid, the legacy default).
-func (p *DiagramProcessor) fence(blk block.SieveBlock, src string) string {
+func (p *DiagramProcessor) fence(blk domain.SieveBlock, src string) string {
 	lang, _ := blk.Attrs["diagramType"].(string)
 	if strings.TrimSpace(lang) == "" {
 		lang = "mermaid"
@@ -497,7 +524,7 @@ func (p *DiagramProcessor) mintLocator(slot, text string) string {
 // slotText returns blk's current stored text for slot, and whether slot is
 // one this processor has ever minted a locator for. source and title are
 // the only two; naming anything else is a locator this processor never made.
-func (p *DiagramProcessor) slotText(blk *block.SieveBlock, slot string) (string, bool) {
+func (p *DiagramProcessor) slotText(blk *domain.SieveBlock, slot string) (string, bool) {
 	switch slot {
 	case DiagramSourceLocator:
 		return p.RawContent(*blk), true
@@ -510,7 +537,7 @@ func (p *DiagramProcessor) slotText(blk *block.SieveBlock, slot string) (string,
 
 // readLocator answers which slot locator names and whether it still names
 // that slot's CURRENT bytes, given blk's live payload.
-func (p *DiagramProcessor) readLocator(blk *block.SieveBlock, locator string) (slot, text string, err error) {
+func (p *DiagramProcessor) readLocator(blk *domain.SieveBlock, locator string) (slot, text string, err error) {
 	return diagramLocator.Read(locator, func(slot string) (string, bool) { return p.slotText(blk, slot) })
 }
 
@@ -519,7 +546,7 @@ func (p *DiagramProcessor) readLocator(blk *block.SieveBlock, locator string) (s
 // kind — and a title it carries is a label. Both segments are the stored bytes
 // verbatim, and each carries a locator minted from its own slot and bytes
 // (mintLocator).
-func (p *DiagramProcessor) NormalisedText(blk *block.SieveBlock) []domain.TextSegment {
+func (p *DiagramProcessor) NormalisedText(blk *domain.SieveBlock) []domain.TextSegment {
 	if blk == nil {
 		return nil
 	}
@@ -555,7 +582,7 @@ func (p *DiagramProcessor) NormalisedText(blk *block.SieveBlock) []domain.TextSe
 // slot's current text, splice back to front, all-or-nothing — are
 // identityTextEditor's (identity_text_editor.go), shared with code, the
 // other kind whose reading is its stored bytes.
-func (p *DiagramProcessor) UpdateText(blk *block.SieveBlock, edits []domain.TextEdit) error {
+func (p *DiagramProcessor) UpdateText(blk *domain.SieveBlock, edits []domain.TextEdit) error {
 	if blk == nil {
 		return fmt.Errorf("%w: diagram: no block to update", block.ErrTextMalformed)
 	}
@@ -579,7 +606,7 @@ func (p *DiagramProcessor) UpdateText(blk *block.SieveBlock, edits []domain.Text
 }
 
 // RawContent returns the source text this block was built from (block.RawContenter).
-func (p *DiagramProcessor) RawContent(blk block.SieveBlock) string {
+func (p *DiagramProcessor) RawContent(blk domain.SieveBlock) string {
 	src, _ := blk.Attrs["source"].(string)
 	return src
 }

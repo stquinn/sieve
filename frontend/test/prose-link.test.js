@@ -44,7 +44,7 @@ vi.mock('../src/static/lens/document-editor/surfaces/prose-block.js', () => ({ B
 import { ProseLink } from '../src/static/lens/document-editor/surfaces/prose-link.js'
 import { LINK_OPTIONS } from '../src/static/lens/document-editor/surfaces/wysiwyg-surface.js'
 import { NoteEditor } from '../src/static/lens/document-editor/note-editor.js'
-import { AbstractSurface } from '../src/static/lens/document-editor/surfaces/abstract-surface.js'
+import { AbstractSurface } from '../src/static/lens/abstract-surface.js'
 import { LinkEditDialog } from '../src/static/ui/link-edit-dialog.js'
 
 // ── Harness ──────────────────────────────────────────────────────────────────
@@ -86,7 +86,7 @@ function makeEditor(pane) {
   class TestEditor extends NoteEditor {
     _createSurface() { return new PaneSurface(pane) }
   }
-  const ed = new TestEditor('doc-1', { provider, toolbar: null })
+  const ed = new TestEditor('doc-1', { provider })
   const surface = ed.presentSurface('wysiwyg', document.createElement('div'), null)
   return { ed, sent, surface }
 }

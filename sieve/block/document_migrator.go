@@ -1,5 +1,7 @@
 package block
 
+import "sieve/sieve/domain"
+
 // DocumentMigrator is the one load-time migration pipeline: the document load
 // path (NewShadow) and the /migrate-ids sweep both run it, and a new migration is
 // added here rather than at each caller.
@@ -17,7 +19,7 @@ type DocumentMigrator struct{}
 // ORDER IS LOAD-BEARING at both ends: identity runs first so every later step
 // sees canonical ids, and AIBlockMigrator runs last so the addresses it copies
 // into question elements have already been rewritten to their current spelling.
-func (m DocumentMigrator) Migrate(blocks []SieveBlock, documentUUID string) ([]SieveBlock, bool) {
+func (m DocumentMigrator) Migrate(blocks []domain.SieveBlock, documentUUID string) ([]domain.SieveBlock, bool) {
 	blocks, idsChanged := BlockIdentityMigrator{}.Migrate(blocks)
 	blocks, urlsChanged := AssetURLMigrator{}.Migrate(blocks)
 	blocks, assetURIsChanged := AssetURIMigrator{}.Migrate(blocks, documentUUID)

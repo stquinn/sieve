@@ -199,6 +199,9 @@ func (a *App) startup(ctx context.Context) {
 		a.watcher.Close()
 		a.watcher = nil
 	}
+	if a.ServiceProvider.Ink != nil {
+		a.ServiceProvider.Ink.Stop()
+	}
 
 	// ── One-time state migration: move settings/session to config/ ────────────
 	migrateStateFiles(
@@ -277,6 +280,11 @@ func (a *App) startup(ctx context.Context) {
 	} else {
 		a.watcher = w
 	}
+	if a.ServiceProvider.Ink != nil {
+		if err := a.ServiceProvider.Ink.Start(); err != nil {
+			logger.Warn("could not start ink", "err", err)
+		}
+	}
 }
 
 func (a *App) beforeClose(ctx context.Context) bool {
@@ -326,6 +334,9 @@ func (a *App) Quit() {
 	logger.Info("App.Quit: exiting")
 	if a.watcher != nil {
 		a.watcher.Close()
+	}
+	if a.ServiceProvider.Ink != nil {
+		a.ServiceProvider.Ink.Stop()
 	}
 	runtime.Quit(a.ctx)
 	go func() {

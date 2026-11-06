@@ -31,7 +31,7 @@ func TestHandlePaste_stampsSmartPaste_onDetectionOnly(t *testing.T) {
 	if !res.IsBlock() {
 		t.Fatalf("expected detection paste to create a block, got %q", res.Outcome)
 	}
-	blk, found := es.shadows[uuid].SnapshotBlock(res.ID)
+	blk, found := es.shadowFor(uuid).SnapshotBlock(res.ID)
 	if !found {
 		t.Fatal("block not found in shadow")
 	}
@@ -46,7 +46,7 @@ func TestHandlePaste_stampsSmartPaste_onDetectionOnly(t *testing.T) {
 	if !res2.IsBlock() {
 		t.Fatalf("expected round-trip paste to create a block, got %q", res2.Outcome)
 	}
-	blk2, found2 := es.shadows[uuid].SnapshotBlock(res2.ID)
+	blk2, found2 := es.shadowFor(uuid).SnapshotBlock(res2.ID)
 	if !found2 {
 		t.Fatal("block2 not found in shadow")
 	}
@@ -61,7 +61,7 @@ func TestHandlePaste_stampsSmartPaste_onDetectionOnly(t *testing.T) {
 	if !res3.IsBlock() {
 		t.Fatalf("expected placement to create a block, got %q", res3.Outcome)
 	}
-	if blk3, _ := es.shadows[uuid].SnapshotBlock(res3.ID); blk3.Attrs["smartPaste"] == true {
+	if blk3, _ := es.shadowFor(uuid).SnapshotBlock(res3.ID); blk3.Attrs["smartPaste"] == true {
 		t.Errorf("placement must NOT be tagged smartPaste; attrs=%v", blk3.Attrs)
 	}
 }
@@ -102,24 +102,24 @@ func TestCreateBlockFromEntries_transform_replacesInPlace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("transform failed: %v", err)
 	}
-	blk, found := es.shadows[uuid].SnapshotBlock(id)
+	blk, found := es.shadowFor(uuid).SnapshotBlock(id)
 	if !found || blk.Kind != "code" {
 		t.Fatalf("expected code block in place, found=%v blk=%+v", found, blk)
 	}
-	if _, stillThere := es.shadows[uuid].SnapshotBlock("pr-1"); stillThere && id != "pr-1" {
+	if _, stillThere := es.shadowFor(uuid).SnapshotBlock("pr-1"); stillThere && id != "pr-1" {
 		t.Fatalf("source pr-1 should have been replaced, not survive alongside")
 	}
 }
 
 func TestCreateBlockFromEntries_extract_isAdditive(t *testing.T) {
 	es, uuid := newTestEditorServiceWithProseBlock(t)
-	before := len(es.shadows[uuid].SnapshotBlocks())
+	before := len(es.shadowFor(uuid).SnapshotBlocks())
 	entries := []block.ContentEntry{{MIMEType: "text/plain", Content: "```go\nx := 1\n```"}}
 	_, _, err := es.CreateBlockFromEntries(uuid, "code", entries, block.ActionExtract, "")
 	if err != nil {
 		t.Fatalf("extract failed: %v", err)
 	}
-	if got := len(es.shadows[uuid].SnapshotBlocks()); got != before+1 {
+	if got := len(es.shadowFor(uuid).SnapshotBlocks()); got != before+1 {
 		t.Fatalf("extract should add one block: before=%d after=%d", before, got)
 	}
 }

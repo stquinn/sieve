@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 )
 
 // Integration-style: a doc-targeted follow-up ai-block. TARGET (whole-doc content)
@@ -35,15 +36,15 @@ func TestAIBlock_DocTarget_ExcludesPriorAnswerButThreadKeepsIt(t *testing.T) {
 	)
 
 	codec := block.NewDocumentCodec(block.GlobalRegistry())
-	seedBlocks := []block.SieveBlock{
-		block.NewSieveBlock(block.KindProse, proseID, map[string]interface{}{"content": proseText}),
+	seedBlocks := []domain.SieveBlock{
+		domain.NewSieveBlock(block.KindProse, proseID, map[string]interface{}{"content": proseText}),
 		// Completed prior ask, asked about the whole doc.
-		block.NewSieveBlock("ai-block", priorID, map[string]interface{}{
+		domain.NewSieveBlock("ai-block", priorID, map[string]interface{}{
 			"id": priorID, "ref": "doc", "type": "ASK", "status": block.BlockStatusComplete,
 			"question": "what colour is the sky?", "response": priorAnswer,
 		}),
 		// The follow-up (ACTION) block: threads off the prior ask.
-		block.NewSieveBlock("ai-block", followID, map[string]interface{}{
+		domain.NewSieveBlock("ai-block", followID, map[string]interface{}{
 			"id": followID, "ref": priorID, "type": "ASK", "status": block.BlockStatusPending,
 			"question": "expand on that",
 		}),

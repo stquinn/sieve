@@ -337,6 +337,7 @@ export class DiagramTheme {
 
   /* Error state */
   .diagram-block__error {
+    min-width: 0;
     padding: 14px 16px;
     display: flex;
     align-items: flex-start;
@@ -366,6 +367,18 @@ export class DiagramTheme {
     color: var(--theme-fg2);
     line-height: 1.5;
     margin-bottom: 10px;
+    overflow-wrap: anywhere;
+  }
+
+  .diagram-block__source {
+    margin: 0;
+    padding: 10px 12px;
+    white-space: pre-wrap;
+    font-family: var(--theme-monoFont);
+    font-size: calc(var(--doc-size) * 0.85);
+    color: var(--theme-text);
+    background: var(--theme-bgAlt);
+    border-radius: 4px;
   }
 
   /* Loading state while mermaid.js loads */

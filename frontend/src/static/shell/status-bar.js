@@ -4,14 +4,23 @@
 // editor. It owns the three JS-written slots of the static .status-bar DOM:
 // __save (+ the #meta-dirty-dot), __blockid, __stats, and REFLECTS the active
 // editor by subscribing to its `stats` stream, re-pointing on
-// ws.onActiveTabChanged. It is also the sole consumer of two DOM CustomEvents
-// whose producers are not migrated: sieve:meta-dirty and editor:blockhover.
+// ws.onActiveTabChanged. It is also the sole consumer of three DOM CustomEvents
+// whose producers are not migrated: sieve:meta-dirty, editor:blockhover and
+// sieve:status-message, which it says in its __message slot for
+// StatusBar.MESSAGE_MS.
 //
 // The META panel (#htmx-meta-panel) stays HTMX-owned and untouched here.
 
 export class StatusBar {
+  /** How long a status message stays, in ms. */
+  static MESSAGE_MS = 6000
+
   /** @type {import('./workspace.js').SieveWorkspace} */
   #ws
+  /** @type {HTMLElement|null} .status-bar__message */
+  #messageSlot = null
+  /** @type {ReturnType<typeof setTimeout>|null} clears the message shown */
+  #messageTimer = null
   /** @type {HTMLElement|null} .status-bar__save */
   #saveSlot = null
   /** @type {HTMLElement|null} .status-bar__blockid */
@@ -22,6 +31,8 @@ export class StatusBar {
   #unsubEditor = null
   /** @type {string} full id of the last hovered block — what click-to-copy yields */
   #hoveredBlockId = ''
+  /** @type {Map<string, boolean>} whether each container that has reported a save state is dirty, by uuid */
+  #dirtyBy = new Map()
 
   /** @param {import('./workspace.js').SieveWorkspace} ws */
   constructor(ws) {
@@ -29,6 +40,8 @@ export class StatusBar {
     this.#saveSlot = document.querySelector('.status-bar__save')
     this.#blockIdSlot = document.querySelector('.status-bar__blockid')
     this.#statsSlot = document.querySelector('.status-bar__stats')
+    this.#messageSlot = document.querySelector('.status-bar__message')
+    document.addEventListener('sieve:status-message', (e) => this.#say(/** @type {CustomEvent} */ (e).detail))
     document.addEventListener('sieve:meta-dirty', (e) => this.#onDirty(/** @type {CustomEvent} */ (e).detail))
     document.addEventListener('editor:blockhover', (e) => this.#onBlockHover(/** @type {CustomEvent} */ (e).detail))
     if (this.#blockIdSlot) this.#blockIdSlot.addEventListener('click', () => this.#copyBlockId())
@@ -45,6 +58,7 @@ export class StatusBar {
   #pointAt(tab) {
     if (this.#unsubEditor) { this.#unsubEditor(); this.#unsubEditor = null }
     if (!tab) return
+    this.#paintSave(this.#dirtyBy.get(tab.uuid))
     // Subscribe at the TAB level, not the editor: the tab-identity forward
     // survives an editor that attaches AFTER the tab is active. On COLD BOOT
     // openTab makes the tab active before activateDocument attaches the editor,
@@ -57,9 +71,9 @@ export class StatusBar {
   }
 
   /**
-   * Paints chars/lines into the __stats slot and sets the --line-digits gutter
-   * width.
-   * @param {{ chars?: number, lines?: number, blockCount?: number }} ev
+   * Paints the stats' readout, or their chars/lines when they carry none, into
+   * the __stats slot and sets the --line-digits gutter width.
+   * @param {Partial<import('../lens/abstract-surface.js').SurfaceStats>} ev
    */
   #onStats(ev) {
     if (typeof ev.blockCount === 'number') {
@@ -67,24 +81,67 @@ export class StatusBar {
       document.documentElement.style.setProperty('--line-digits', String(digits))
     }
     if (!this.#statsSlot) return
-    this.#statsSlot.innerHTML =
-      '<span title="Characters">' + (ev.chars || 0) + ' chars</span>' +
-      '<span class="status-bar__sep" title="Lines">' + (ev.lines || 0) + ' lines</span>'
+    const cells = Array.isArray(ev.readout) ? ev.readout : [
+      { text: (ev.chars || 0) + ' chars', title: 'Characters' },
+      { text: (ev.lines || 0) + ' lines', title: 'Lines' },
+    ]
+    this.#statsSlot.replaceChildren(...cells.map((cell, i) => {
+      const span = document.createElement('span')
+      if (i > 0) span.className = 'status-bar__sep'
+      span.title = cell.title
+      span.textContent = cell.text
+      return span
+    }))
   }
 
   /**
-   * Paints the save indicator and the #meta-dirty-dot. detail.dirty true → red
-   * "Unsaved"; false → green "Saved".
+   * Shows a message in the __message slot, replacing any shown, and clears it
+   * StatusBar.MESSAGE_MS later.
+   * @param {{ text?: string, error?: boolean }|null} detail
+   */
+  #say(detail) {
+    const slot = this.#messageSlot
+    const text = String((detail && detail.text) || '')
+    if (!slot || !text) return
+    if (this.#messageTimer) clearTimeout(this.#messageTimer)
+    slot.textContent = text
+    slot.title = text
+    slot.style.color = detail && detail.error ? 'var(--theme-accentRed)' : 'var(--theme-textDim)'
+    this.#messageTimer = setTimeout(() => {
+      slot.textContent = ''
+      slot.title = ''
+      this.#messageTimer = null
+    }, StatusBar.MESSAGE_MS)
+  }
+
+  /**
+   * Records a container's save state and paints it when the container is the
+   * active tab's. detail.dirty true → red "Unsaved"; false → green "Saved".
    *
    * THE BAR SPEAKS FOR THE ACTIVE TAB, AND ONLY IT. Several editing lenses are
    * live at once — a note and the Ask composer's draft, say — and each announces
    * its own dirty state, so a fact naming another container is not this bar's to
-   * paint. A fact naming NO container is addressed to whatever is active.
+   * paint. A fact naming NO container is addressed to whatever is active. A tab
+   * whose lens has reported no save state, having nothing to save, shows none.
    * @param {{ dirty?: boolean, uuid?: string }|null} detail
    */
   #onDirty(detail) {
-    if (!this.#isActive(detail && detail.uuid)) return
     const dirty = !!(detail && detail.dirty)
+    const uuid = (detail && detail.uuid) || (this.#ws.activeTab ? this.#ws.activeTab.uuid : '')
+    if (uuid) this.#dirtyBy.set(uuid, dirty)
+    if (this.#isActive(detail && detail.uuid)) this.#paintSave(dirty)
+  }
+
+  /**
+   * Paints the save indicator and the #meta-dirty-dot, or clears the indicator
+   * when there is no save state to show.
+   * @param {boolean|undefined} dirty
+   */
+  #paintSave(dirty) {
+    if (dirty === undefined) {
+      if (this.#saveSlot) this.#saveSlot.replaceChildren()
+      return
+    }
     const dot = document.getElementById('meta-dirty-dot')
     if (dot) {
       dot.classList.toggle('bg-tn-red', dirty)

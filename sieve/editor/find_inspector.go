@@ -167,7 +167,7 @@ func (f *FindInspector) replaceAll(uuid string, parameters map[string]any) {
 // asking for the same replacement. Minting them all from ONE reading is what
 // stops a replacement that contains the term from cascading: the matches are
 // the ones that were there before any of them was written.
-func (f *FindInspector) editsFor(blk block.SieveBlock, term string, caseSensitive bool, replacement string) []domain.TextEdit {
+func (f *FindInspector) editsFor(blk domain.SieveBlock, term string, caseSensitive bool, replacement string) []domain.TextEdit {
 	segments, bearsText := f.documents.readingOf(blk)
 	if !bearsText {
 		return nil

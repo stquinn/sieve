@@ -3,6 +3,8 @@ package block
 import (
 	"fmt"
 	"testing"
+
+	"sieve/sieve/domain"
 )
 
 // testRefDocUUID is the document a reference block lives in for these fixtures —
@@ -10,16 +12,16 @@ import (
 // points at.
 const testRefDocUUID = "0197b1f4-9999-7aaa-8bbb-ccccddddeeee"
 
-func referenceBlock(id string, attrs map[string]interface{}) SieveBlock {
+func referenceBlock(id string, attrs map[string]interface{}) domain.SieveBlock {
 	full := map[string]interface{}{"id": id}
 	for k, v := range attrs {
 		full[k] = v
 	}
-	return SieveBlock{ID: id, Kind: "reference", Attrs: full}
+	return domain.SieveBlock{ID: id, Kind: "reference", Attrs: full}
 }
 
 func TestReferenceMigrator_ContainerMapping(t *testing.T) {
-	in := []SieveBlock{referenceBlock("rf-1", map[string]interface{}{"uri": "container:" + testAssetUUID})}
+	in := []domain.SieveBlock{referenceBlock("rf-1", map[string]interface{}{"uri": "container:" + testAssetUUID})}
 	out, changed := ReferenceMigrator{}.Migrate(in, testRefDocUUID)
 	if !changed {
 		t.Fatal("changed = false")
@@ -30,7 +32,7 @@ func TestReferenceMigrator_ContainerMapping(t *testing.T) {
 }
 
 func TestReferenceMigrator_PinnedContainerMapping(t *testing.T) {
-	in := []SieveBlock{referenceBlock("rf-1", map[string]interface{}{"uri": "container:" + testAssetUUID + "@v3"})}
+	in := []domain.SieveBlock{referenceBlock("rf-1", map[string]interface{}{"uri": "container:" + testAssetUUID + "@v3"})}
 	out, changed := ReferenceMigrator{}.Migrate(in, testRefDocUUID)
 	if !changed {
 		t.Fatal("changed = false")
@@ -41,7 +43,7 @@ func TestReferenceMigrator_PinnedContainerMapping(t *testing.T) {
 }
 
 func TestReferenceMigrator_BlockLeafMapping(t *testing.T) {
-	in := []SieveBlock{referenceBlock("rf-1", map[string]interface{}{"uri": "block:" + testAssetUUID + "/my-handle"})}
+	in := []domain.SieveBlock{referenceBlock("rf-1", map[string]interface{}{"uri": "block:" + testAssetUUID + "/my-handle"})}
 	out, changed := ReferenceMigrator{}.Migrate(in, testRefDocUUID)
 	if !changed {
 		t.Fatal("changed = false")
@@ -52,7 +54,7 @@ func TestReferenceMigrator_BlockLeafMapping(t *testing.T) {
 }
 
 func TestReferenceMigrator_PinnedBlockLeafMapping(t *testing.T) {
-	in := []SieveBlock{referenceBlock("rf-1", map[string]interface{}{"uri": "block:" + testAssetUUID + "@v7/my-handle"})}
+	in := []domain.SieveBlock{referenceBlock("rf-1", map[string]interface{}{"uri": "block:" + testAssetUUID + "@v7/my-handle"})}
 	out, changed := ReferenceMigrator{}.Migrate(in, testRefDocUUID)
 	if !changed {
 		t.Fatal("changed = false")
@@ -66,7 +68,7 @@ func TestReferenceMigrator_PinnedBlockLeafMapping(t *testing.T) {
 // untouched rather than guessed at, and goes on resolving dangling.
 func TestReferenceMigrator_BareBlockUUIDLeftUntouched(t *testing.T) {
 	legacy := "block:" + testAssetUUID
-	in := []SieveBlock{referenceBlock("rf-1", map[string]interface{}{"uri": legacy})}
+	in := []domain.SieveBlock{referenceBlock("rf-1", map[string]interface{}{"uri": legacy})}
 	out, changed := ReferenceMigrator{}.Migrate(in, testRefDocUUID)
 	if changed {
 		t.Fatal("changed = true for a bare block:{uuid}, which has no sieve:// spelling")
@@ -77,7 +79,7 @@ func TestReferenceMigrator_BareBlockUUIDLeftUntouched(t *testing.T) {
 }
 
 func TestReferenceMigrator_SrcFold(t *testing.T) {
-	in := []SieveBlock{referenceBlock("rf-1", map[string]interface{}{"src": "notes.txt"})}
+	in := []domain.SieveBlock{referenceBlock("rf-1", map[string]interface{}{"src": "notes.txt"})}
 	out, changed := ReferenceMigrator{}.Migrate(in, testRefDocUUID)
 	if !changed {
 		t.Fatal("changed = false")
@@ -91,7 +93,7 @@ func TestReferenceMigrator_SrcFold(t *testing.T) {
 }
 
 func TestReferenceMigrator_RelativeURIAbsolutised(t *testing.T) {
-	in := []SieveBlock{referenceBlock("rf-1", map[string]interface{}{"uri": "/notes.txt"})}
+	in := []domain.SieveBlock{referenceBlock("rf-1", map[string]interface{}{"uri": "/notes.txt"})}
 	out, changed := ReferenceMigrator{}.Migrate(in, testRefDocUUID)
 	if !changed {
 		t.Fatal("changed = false")
@@ -103,7 +105,7 @@ func TestReferenceMigrator_RelativeURIAbsolutised(t *testing.T) {
 
 func TestReferenceMigrator_BothSetURIWins(t *testing.T) {
 	held := "sieve://" + testAssetUUID + "/held.txt"
-	in := []SieveBlock{referenceBlock("rf-1", map[string]interface{}{"uri": held, "src": "stale.txt"})}
+	in := []domain.SieveBlock{referenceBlock("rf-1", map[string]interface{}{"uri": held, "src": "stale.txt"})}
 	out, changed := ReferenceMigrator{}.Migrate(in, testRefDocUUID)
 	if !changed {
 		t.Fatal("changed = false")
@@ -119,7 +121,7 @@ func TestReferenceMigrator_BothSetURIWins(t *testing.T) {
 // smart-image also carries a `src` attr, with an unrelated meaning (its own held
 // asset route). The kind gate must keep this migrator off it.
 func TestReferenceMigrator_IgnoresNonReferenceKinds(t *testing.T) {
-	in := []SieveBlock{
+	in := []domain.SieveBlock{
 		{ID: "im-1", Kind: "smart-image", Attrs: map[string]interface{}{"id": "im-1", "src": "im-1.png"}},
 	}
 	out, changed := ReferenceMigrator{}.Migrate(in, testRefDocUUID)
@@ -135,7 +137,7 @@ func TestReferenceMigrator_IgnoresNonReferenceKinds(t *testing.T) {
 }
 
 func TestReferenceMigrator_CleanTreeAllocatesNothing(t *testing.T) {
-	in := []SieveBlock{referenceBlock("rf-1", map[string]interface{}{"uri": "sieve://" + testAssetUUID + "/leaf"})}
+	in := []domain.SieveBlock{referenceBlock("rf-1", map[string]interface{}{"uri": "sieve://" + testAssetUUID + "/leaf"})}
 	out, changed := ReferenceMigrator{}.Migrate(in, testRefDocUUID)
 	if changed {
 		t.Fatal("changed = true for an already-migrated tree")
@@ -149,7 +151,7 @@ func TestReferenceMigrator_CleanTreeAllocatesNothing(t *testing.T) {
 }
 
 func TestReferenceMigrator_DoesNotMutateInput(t *testing.T) {
-	in := []SieveBlock{referenceBlock("rf-1", map[string]interface{}{"src": "notes.txt"})}
+	in := []domain.SieveBlock{referenceBlock("rf-1", map[string]interface{}{"src": "notes.txt"})}
 	ReferenceMigrator{}.Migrate(in, testRefDocUUID)
 	if _, ok := in[0].Attrs["uri"]; ok {
 		t.Fatal("Migrate mutated its input's Attrs map — undo and the caller's snapshot depend on it not doing that")
@@ -164,7 +166,7 @@ func TestReferenceMigrator_EmptyAndNil(t *testing.T) {
 	if out, changed := m.Migrate(nil, testRefDocUUID); out != nil || changed {
 		t.Fatalf("nil input: got %v, %v", out, changed)
 	}
-	if out, changed := m.Migrate([]SieveBlock{}, testRefDocUUID); len(out) != 0 || changed {
+	if out, changed := m.Migrate([]domain.SieveBlock{}, testRefDocUUID); len(out) != 0 || changed {
 		t.Fatalf("empty input: got %v, %v", out, changed)
 	}
 }
@@ -172,8 +174,8 @@ func TestReferenceMigrator_EmptyAndNil(t *testing.T) {
 // ── the face fold: legacy root face attrs move under `cache` ─────────────────
 
 func TestReferenceMigrator_FoldsLegacyFace(t *testing.T) {
-	in := []SieveBlock{referenceBlock("rf-1", map[string]interface{}{
-		"uri": "sieve://" + testAssetUUID,
+	in := []domain.SieveBlock{referenceBlock("rf-1", map[string]interface{}{
+		"uri":   "sieve://" + testAssetUUID,
 		"title": "Auth Design", "mime": "sieve/note",
 		"summary": "Token rotation", "bytes": "42",
 	})}
@@ -205,7 +207,7 @@ func TestReferenceMigrator_FoldsLegacyFace(t *testing.T) {
 }
 
 func TestReferenceMigrator_CacheWinsOverLegacyRoot(t *testing.T) {
-	in := []SieveBlock{referenceBlock("rf-1", map[string]interface{}{
+	in := []domain.SieveBlock{referenceBlock("rf-1", map[string]interface{}{
 		"uri":   "sieve://" + testAssetUUID,
 		"title": "Stale Root",
 		"cache": map[string]interface{}{"title": "Fresh Cache"},
@@ -227,7 +229,7 @@ func TestReferenceMigrator_CacheWinsOverLegacyRoot(t *testing.T) {
 // strings: those leave the root WITHOUT minting a cache — an empty face stays an
 // absent attr.
 func TestReferenceMigrator_EmptyLegacyFaceDropsWithoutACache(t *testing.T) {
-	in := []SieveBlock{referenceBlock("rf-1", map[string]interface{}{
+	in := []domain.SieveBlock{referenceBlock("rf-1", map[string]interface{}{
 		"uri": "sieve://" + testAssetUUID, "title": "", "mime": "", "summary": "", "bytes": "",
 	})}
 	out, changed := ReferenceMigrator{}.Migrate(in, testRefDocUUID)
@@ -247,7 +249,7 @@ func TestReferenceMigrator_EmptyLegacyFaceDropsWithoutACache(t *testing.T) {
 // The src fold and the face fold are one pass: the full pre-rename attachment
 // shape — src plus a root face — comes out with a sieve:// uri and a cache.
 func TestReferenceMigrator_SrcAndFaceFoldTogether(t *testing.T) {
-	in := []SieveBlock{referenceBlock("rf-1", map[string]interface{}{
+	in := []domain.SieveBlock{referenceBlock("rf-1", map[string]interface{}{
 		"src": "rf-1.yml", "title": "swagger.yml", "mime": "text/yaml",
 	})}
 	out, changed := ReferenceMigrator{}.Migrate(in, testRefDocUUID)
@@ -264,7 +266,7 @@ func TestReferenceMigrator_SrcAndFaceFoldTogether(t *testing.T) {
 }
 
 func TestReferenceMigrator_FoldedShapeIsAlreadyClean(t *testing.T) {
-	in := []SieveBlock{referenceBlock("rf-1", map[string]interface{}{
+	in := []domain.SieveBlock{referenceBlock("rf-1", map[string]interface{}{
 		"uri":   "sieve://" + testAssetUUID,
 		"cache": map[string]interface{}{"title": "Auth Design", "mime": "sieve/note"},
 	})}
@@ -275,17 +277,17 @@ func TestReferenceMigrator_FoldedShapeIsAlreadyClean(t *testing.T) {
 
 // ── ai-block attachments: the same legacy spellings, one attr deeper ─────────
 
-func aiBlockWithAttachments(entries ...map[string]interface{}) SieveBlock {
+func aiBlockWithAttachments(entries ...map[string]interface{}) domain.SieveBlock {
 	list := make([]interface{}, 0, len(entries))
 	for _, e := range entries {
 		list = append(list, e)
 	}
-	return SieveBlock{ID: "ai-1", Kind: "ai-block", Attrs: map[string]interface{}{
+	return domain.SieveBlock{ID: "ai-1", Kind: "ai-block", Attrs: map[string]interface{}{
 		"id": "ai-1", "question": "why?", "attachments": list,
 	}}
 }
 
-func attachmentURIs(t *testing.T, b SieveBlock) []string {
+func attachmentURIs(t *testing.T, b domain.SieveBlock) []string {
 	t.Helper()
 	list, _ := b.Attrs["attachments"].([]interface{})
 	uris := make([]string, 0, len(list))
@@ -298,7 +300,7 @@ func attachmentURIs(t *testing.T, b SieveBlock) []string {
 }
 
 func TestReferenceMigrator_AiBlockAttachmentContainerMapping(t *testing.T) {
-	in := []SieveBlock{aiBlockWithAttachments(
+	in := []domain.SieveBlock{aiBlockWithAttachments(
 		map[string]interface{}{"uri": "container:" + testAssetUUID, "title": "Godot Notes"},
 	)}
 	out, changed := ReferenceMigrator{}.Migrate(in, testRefDocUUID)
@@ -320,7 +322,7 @@ func TestReferenceMigrator_AiBlockAttachmentContainerMapping(t *testing.T) {
 }
 
 func TestReferenceMigrator_AiBlockAttachmentPinnedMapping(t *testing.T) {
-	in := []SieveBlock{aiBlockWithAttachments(
+	in := []domain.SieveBlock{aiBlockWithAttachments(
 		map[string]interface{}{"uri": "container:" + testAssetUUID + "@v3"},
 	)}
 	out, changed := ReferenceMigrator{}.Migrate(in, testRefDocUUID)
@@ -337,7 +339,7 @@ func TestReferenceMigrator_AiBlockAttachmentPinnedMapping(t *testing.T) {
 // always did).
 func TestReferenceMigrator_AiBlockAttachmentsCurrentAndUnrecognisedUntouched(t *testing.T) {
 	current := "sieve://" + testAssetUUID
-	in := []SieveBlock{aiBlockWithAttachments(
+	in := []domain.SieveBlock{aiBlockWithAttachments(
 		map[string]interface{}{"uri": current, "title": "Fine"},
 		map[string]interface{}{"uri": "container:not-a-uuid"},
 	)}
@@ -346,14 +348,14 @@ func TestReferenceMigrator_AiBlockAttachmentsCurrentAndUnrecognisedUntouched(t *
 		t.Errorf("nothing rewritable must report no change; got %v", attachmentURIs(t, out[0]))
 	}
 
-	clean := []SieveBlock{aiBlockWithAttachments(map[string]interface{}{"uri": current})}
+	clean := []domain.SieveBlock{aiBlockWithAttachments(map[string]interface{}{"uri": current})}
 	if _, changed := (ReferenceMigrator{}).Migrate(clean, testRefDocUUID); changed {
 		t.Error("a current attachment list must not report a change")
 	}
 }
 
 func TestReferenceMigrator_AiBlockWithoutAttachmentsUntouched(t *testing.T) {
-	in := []SieveBlock{{ID: "ai-1", Kind: "ai-block", Attrs: map[string]interface{}{"id": "ai-1", "question": "why?"}}}
+	in := []domain.SieveBlock{{ID: "ai-1", Kind: "ai-block", Attrs: map[string]interface{}{"id": "ai-1", "question": "why?"}}}
 	if _, changed := (ReferenceMigrator{}).Migrate(in, testRefDocUUID); changed {
 		t.Error("an attachment-less ai-block must not report a change")
 	}

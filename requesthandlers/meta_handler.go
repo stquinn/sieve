@@ -14,6 +14,7 @@ import (
 	"sieve/sieve"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
+	"sieve/sieve/ink"
 	"sieve/store"
 
 	"github.com/go-chi/chi/v5"
@@ -47,6 +48,25 @@ type metaPanelData struct {
 	HasAssets  bool
 	// InUseHint is why an in-use asset's Delete is disabled.
 	InUseHint string
+	// Notebook is the synced Digital Note shown, nil for anything else. A notebook shows its Meta
+	// tab only.
+	Notebook *metaNotebookView
+}
+
+// metaNotebookView is a synced Digital Note as the Meta tab shows it.
+type metaNotebookView struct {
+	UUID string
+	// Name is what it is called; TabletTitle is the title the tablet wrote, "" when it is the name.
+	Name        string
+	TabletTitle string
+	Summary     string
+	Keywords    []string
+	Categories  []string
+	Device      string
+	Pages       int
+	Seq         uint32
+	// Described is the seq its description is of, 0 before it is named.
+	Described uint32
 }
 
 type metaViewData struct {
@@ -99,7 +119,7 @@ type assetViewData struct {
 	// Address is the asset's absolute sieve address.
 	Address string
 	// HolderID is the id of a block holding the asset whose own view a placement
-	// is built from (block.SieveBlock.PlacesHeldAssets). "" when no such block
+	// is built from (block.Registry.PlacesHeldAssets). "" when no such block
 	// holds it, and a placement sends the asset's address instead.
 	HolderID string
 }
@@ -109,7 +129,7 @@ type assetViewData struct {
 // the blocks could not be read, and nothing can then be said to be unused.
 type assetIndex struct {
 	labels  map[string]assetLabel
-	holders map[string]block.SieveBlock
+	holders map[string]domain.SieveBlock
 	known   bool
 }
 
@@ -198,7 +218,7 @@ func (h *MetaHandler) handleRestore(w http.ResponseWriter, r *http.Request) {
 	// NOT a frontend setContent re-parse, which can't read <!--s:ID--> markers and
 	// would re-mint ids, then persist that corruption on save-back. Send only the
 	// uuid; the frontend asks its document channel to load again (the fresh shadow).
-	_ = h.ServiceProvider.Editor.ReloadFromDisk(doc.UUID())
+	_ = h.ServiceProvider.Editor.Refresh(doc.UUID())
 
 	trigger, _ := json.Marshal(map[string]interface{}{
 		"editor:restore": map[string]string{"uuid": doc.UUID()},
@@ -270,6 +290,15 @@ func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanel
 	if isPrompt {
 		return data
 	}
+	if h.ServiceProvider.State != nil {
+		session := h.ServiceProvider.State.LoadSession()
+		if tab, open := session.Tab(uuidOrPromptName); open && !tab.IsDocument() {
+			if nb := h.notebookView(tab); nb != nil {
+				data.Notebook, data.Tab, data.FileName = nb, "meta", nb.Name
+			}
+			return data
+		}
+	}
 	if b, err := h.ServiceProvider.Documents.LoadByUUID(uuidOrPromptName); err == nil {
 		data.UUID = b.UUID()
 		if fname := b.Meta().Filename(); fname != nil {
@@ -285,6 +314,28 @@ func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanel
 		return data
 	}
 	return data
+}
+
+// notebookView is the synced Digital Note tab shows as the Meta tab shows it; nil when tab shows
+// none.
+func (h *MetaHandler) notebookView(tab domain.Tab) *metaNotebookView {
+	if h.ServiceProvider.Ink == nil || tab.ContainerKind() != ink.KindDigitalNote {
+		return nil
+	}
+	uuid := tab.ID
+	note, d, described, err := h.ServiceProvider.Ink.Notebook(uuid)
+	if err != nil {
+		return nil
+	}
+	v := &metaNotebookView{UUID: uuid, Name: note.Name, Summary: d.Summary, Keywords: d.Keywords, Categories: d.Categories,
+		Device: note.Device, Pages: note.Pages, Seq: note.Seq, Described: described}
+	if v.Name == "" {
+		v.Name = untitledNotebook
+	}
+	if note.Title != "" && note.Title != v.Name {
+		v.TabletTitle = note.Title
+	}
+	return v
 }
 
 func toMetaView(d domain.Document) *metaViewData {
@@ -388,17 +439,18 @@ func (h *MetaHandler) indexAssets(uuid string) assetIndex {
 }
 
 // indexBlocks is indexAssets over blocks already read.
-func (h *MetaHandler) indexBlocks(uuid string, blocks []block.SieveBlock) assetIndex {
+func (h *MetaHandler) indexBlocks(uuid string, blocks []domain.SieveBlock) assetIndex {
 	self := domain.NewContainerAddress(uuid)
 	idx := assetIndex{
 		labels:  make(map[string]assetLabel, len(blocks)),
-		holders: make(map[string]block.SieveBlock),
+		holders: make(map[string]domain.SieveBlock),
 		known:   true,
 	}
+	registry := block.GlobalRegistry()
 	for _, blk := range blocks {
-		held := blk.HeldAssets(self)
+		held := registry.HeldAssets(blk, self)
 		for _, key := range held {
-			if prev, ok := idx.holders[key]; !ok || (!prev.PlacesHeldAssets() && blk.PlacesHeldAssets()) {
+			if prev, ok := idx.holders[key]; !ok || (!registry.PlacesHeldAssets(prev) && registry.PlacesHeldAssets(blk)) {
 				idx.holders[key] = blk
 			}
 		}
@@ -471,7 +523,7 @@ func toAssetViews(uuid string, storables []store.Storable, idx assetIndex) []ass
 				InUse:    held || !idx.known,
 				Address:  domain.NewLeafAddress(uuid, name).String(),
 			}
-			if held && holder.PlacesHeldAssets() {
+			if held && block.GlobalRegistry().PlacesHeldAssets(holder) {
 				view.HolderID = holder.ID
 			}
 			out = append(out, view)

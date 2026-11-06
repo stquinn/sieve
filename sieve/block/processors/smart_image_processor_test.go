@@ -44,7 +44,7 @@ func TestSmartImageProcessor_MarkdownRepresentation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := p.MarkdownRepresentation(block.SieveBlock{Attrs: tc.attrs}, imageDocUUID); got != tc.want {
+			if got := p.MarkdownRepresentation(domain.SieveBlock{Attrs: tc.attrs}, imageDocUUID); got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
@@ -60,7 +60,7 @@ func TestSmartImageProcessor_BuildContext_namesTheKey(t *testing.T) {
 		"/日本.png",
 		"/ui/assets/" + imageDocUUID + "/日本.png",
 	} {
-		ctx := p.BuildContext(block.SieveBlock{ID: "im-1", Attrs: map[string]interface{}{"src": src}}, block.DocView{}, nil)
+		ctx := p.BuildContext(domain.SieveBlock{ID: "im-1", Attrs: map[string]interface{}{"src": src}}, block.DocView{}, nil)
 		if ctx.Content != "Image: 日本.png\n" {
 			t.Errorf("BuildContext(%q).Content = %q, want the decoded key", src, ctx.Content)
 		}

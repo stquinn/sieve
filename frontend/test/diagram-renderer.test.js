@@ -425,6 +425,18 @@ describe('DiagramRenderer — plantuml passive display branch', () => {
     expect(dom.querySelector('.diagram-block__error')).toBeFalsy()
   })
 
+  it.each([
+    ['a record shows the source under the error card', true, 1],
+    ['an editable block keeps its source for edit mode', false, 0],
+  ])('ERROR: %s', (_name, readOnly, sources) => {
+    const renderer = new DiagramRenderer(blk({ id: 'di-e', source: 'Alice -> Bob: hi', diagramType: 'plantuml', mode: 'render', status: 'ERROR', error: 'no server', createdAt: NOW() }),
+      null, undefined, { readOnly })
+    const dom = renderer.render()
+    document.body.appendChild(dom)
+    expect(dom.querySelector('.diagram-block__error-msg')?.textContent).toBe('no server')
+    expect([...dom.querySelectorAll('.diagram-block__source')].map((el) => el.textContent)).toEqual(sources ? ['Alice -> Bob: hi'] : [])
+  })
+
   it('COMPLETE fetches the svgAsset and inlines it into the panzoom wrap', async () => {
     stubFetch('<svg id="puml-live"></svg>')
     const { dom } = mount({ id: 'di-c', source: '@startuml\nA->B\n@enduml', diagramType: 'plantuml', mode: 'render', status: 'COMPLETE', svgAsset: 'sieve://doc-uuid/di-c.svg', createdAt: NOW() })

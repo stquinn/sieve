@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"sieve/logger"
 )
@@ -54,6 +55,33 @@ type Settings struct {
 	AI             AISettings      `json:"ai,omitempty"`
 	Diagram        DiagramSettings `json:"diagram,omitempty"`
 	LookAndFeel    LookAndFeel     `json:"look_and_feel"`
+	Ink            InkSettings     `json:"ink"`
+}
+
+// InkSettings are this machine's SieveInk settings, under a nested "ink" object.
+type InkSettings struct {
+	// Enabled is whether Sieve looks for a companion at all; off, the radio is never touched.
+	Enabled bool `json:"enabled,omitempty"`
+	// Key is this Sieve's pairing key as it is shown: 16 base32 characters in groups of four.
+	// It is held here, beside the notes it guards on the radio, and is minted on first enable.
+	Key string `json:"key,omitempty"`
+	// TCP, when set, is a host:port the companion is dialled at instead of over Bluetooth.
+	TCP string `json:"tcp,omitempty"`
+	// SettleSeconds, when above 0, is how long a note must go without a new record to be named;
+	// otherwise it is DefaultInkSettle.
+	SettleSeconds int `json:"settle_seconds,omitempty"`
+}
+
+// DefaultInkSettle is how long a note goes without a new record before it is named, unless
+// InkSettings.SettleSeconds says otherwise.
+const DefaultInkSettle = 5 * time.Minute
+
+// Settle is how long a note must go without a new record to be named.
+func (s InkSettings) Settle() time.Duration {
+	if s.SettleSeconds > 0 {
+		return time.Duration(s.SettleSeconds) * time.Second
+	}
+	return DefaultInkSettle
 }
 
 // DefaultMaxAttachmentBytes is the out-of-the-box attachment ceiling.
@@ -379,6 +407,7 @@ func ParseSettings(data []byte) Settings {
 	// LookAndFeel has no non-empty defaults (zero value = follow theme), so the
 	// loaded struct can be assigned wholesale rather than field-by-field.
 	s.LookAndFeel = loaded.LookAndFeel
+	s.Ink = loaded.Ink
 	// Overlay persisted containment overrides onto the default profile so the
 	// in-memory settings always carry the full profile (defaults + additions).
 	s.AI.Containment = LoadContainmentProfile(loaded.AI.Containment)

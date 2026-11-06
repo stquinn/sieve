@@ -77,7 +77,7 @@ func newEditorHoldingFile(t *testing.T, filename string, data []byte) (*EditorSe
 // else — a held file has no text form on the client at all.
 func referenceEntries(t *testing.T, es *EditorService, uuid, blockID string) []block.ContentEntry {
 	t.Helper()
-	blk, ok := es.shadows[uuid].SnapshotBlock(blockID)
+	blk, ok := es.shadowFor(uuid).SnapshotBlock(blockID)
 	if !ok {
 		t.Fatalf("reference %q not in shadow", blockID)
 	}
@@ -168,7 +168,7 @@ func TestCreateBlockFromEntries_extractCodeFromReference_keepsTheReference(t *te
 		t.Fatalf("CreateBlockFromEntries: %v", err)
 	}
 
-	blocks := es.shadows[uuid].SnapshotBlocks()
+	blocks := es.shadowFor(uuid).SnapshotBlocks()
 	var order []string
 	for _, b := range blocks {
 		order = append(order, b.ID)
@@ -177,7 +177,7 @@ func TestCreateBlockFromEntries_extractCodeFromReference_keepsTheReference(t *te
 		t.Fatalf("extraction is additive: want [reference, code] = [%s %s], got %v", referenceID, codeID, order)
 	}
 
-	code, _ := es.shadows[uuid].SnapshotBlock(codeID)
+	code, _ := es.shadowFor(uuid).SnapshotBlock(codeID)
 	// CodeBlockProcessor trims its source, as it does for every source it claims.
 	if src, _ := code.Attrs["source"].(string); src != strings.TrimSpace(heldGo) {
 		t.Errorf("held file must reach the code block verbatim:\n got %q\nwant %q", src, strings.TrimSpace(heldGo))
@@ -186,7 +186,7 @@ func TestCreateBlockFromEntries_extractCodeFromReference_keepsTheReference(t *te
 		t.Errorf("language must come from the code kind's own recognition of the bytes; got %q", lang)
 	}
 
-	ref, ok := es.shadows[uuid].SnapshotBlock(referenceID)
+	ref, ok := es.shadowFor(uuid).SnapshotBlock(referenceID)
 	if !ok {
 		t.Fatal("the reference is the file's provenance and must survive extraction")
 	}
@@ -212,11 +212,11 @@ func TestDetectExtractions_referenceHoldingSQL_offersCodeExtract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateBlockFromEntries: %v", err)
 	}
-	extracted, _ := es.shadows[uuid].SnapshotBlock(codeID)
+	extracted, _ := es.shadowFor(uuid).SnapshotBlock(codeID)
 	if lang, _ := extracted.Attrs["language"].(string); lang != "sql" {
 		t.Errorf("language: got %q, want sql", lang)
 	}
-	if _, survived := es.shadows[uuid].SnapshotBlock(blockID); !survived {
+	if _, survived := es.shadowFor(uuid).SnapshotBlock(blockID); !survived {
 		t.Error("the reference must survive the extraction")
 	}
 }

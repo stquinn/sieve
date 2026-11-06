@@ -9,6 +9,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,7 +17,11 @@ import (
 
 	"sieve/sieve"
 	"sieve/sieve/ai"
+	"sieve/sieve/block"
+	"sieve/sieve/block/processors"
 	"sieve/sieve/domain"
+	"sieve/sieve/editor"
+	"sieve/sieve/ink"
 	"sieve/sieve/protocol"
 	"sieve/sieve/services"
 	"sieve/store"
@@ -38,6 +43,17 @@ func newItemServer(t *testing.T) (*httptest.Server, *sieve.ServiceProvider) {
 // times the session handler broadcast a session change.
 func newItemServerCountingSession(t *testing.T) (*httptest.Server, *sieve.ServiceProvider, *int) {
 	t.Helper()
+	srv, sp, sessionChanges, _ := newItemServerCountingJobs(t)
+	return srv, sp, sessionChanges
+}
+
+// newItemServerCountingJobs is newItemServerCountingSession that also counts the
+// job tracker's transitions — what a close that files would move. Block
+// containers open beside documents, the tab strip and the asset route are
+// mounted, and the AI brain is absent, so a filing job that does run fails in
+// its worker without a CLI.
+func newItemServerCountingJobs(t *testing.T) (*httptest.Server, *sieve.ServiceProvider, *int, *atomic.Int32) {
+	t.Helper()
 	sessionChanges := 0
 	fs, err := filestore.NewFileStore(t.TempDir(), "testhost")
 	if err != nil {
@@ -55,7 +71,24 @@ func newItemServerCountingSession(t *testing.T) (*httptest.Server, *sieve.Servic
 	if err != nil {
 		t.Fatalf("NewTemplates: %v", err)
 	}
-	sp := &sieve.ServiceProvider{Store: fs, Documents: ds, State: state}
+	containers, err := services.NewBlockContainerService(fs, block.GlobalRegistry())
+	if err != nil {
+		t.Fatalf("NewBlockContainerService: %v", err)
+	}
+	es := editor.NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+	es.SetContainers(containers)
+	containers.SetChangeListener(es)
+	jobs := services.NewJobTracker()
+	transitions := &atomic.Int32{}
+	jobs.Notify = func() { transitions.Add(1) }
+	es.SetJobs(jobs)
+	es.SetEngine(services.NewJobEngine(map[string]int{block.CategoryAI: 1}, 1, jobs))
+	t.Cleanup(es.CloseAll)
+	sp := &sieve.ServiceProvider{
+		Store: fs, Documents: ds, State: state, Containers: containers, Editor: es, Jobs: jobs,
+		Nodes:  editor.NewRouter(editor.NewNotesSource(ds), editor.NewBlockSource(containers)),
+		Assets: services.NewAssetService(fs, ""),
+	}
 
 	broadcast := NewWorkspaceBroadcast(nil)
 
@@ -70,10 +103,12 @@ func newItemServerCountingSession(t *testing.T) (*httptest.Server, *sieve.Servic
 		EmitIntentChanged:    func() { broadcast.Invalidate(protocol.TopicIntent) },
 	}).RegisterPaths(r)
 	(&SessionHandler{ServiceProvider: sp, Tmpl: tmpl, EmitSessionChanged: func() { sessionChanges++ }}).RegisterPaths(r)
+	(&TabHandler{ServiceProvider: sp, Tmpl: tmpl}).RegisterPaths(r)
+	NewAssetHandler(sp, nil).RegisterPaths(r)
 	NewWsHandler(sp, broadcast, testWSToken).RegisterPaths(r)
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
-	return srv, sp, &sessionChanges
+	return srv, sp, &sessionChanges, transitions
 }
 
 // do sends one request and returns its status and body.
@@ -367,12 +402,12 @@ func TestFolderDelete_HandsBackAWorkspaceWhenItTookTheActiveNote(t *testing.T) {
 	// Open a survivor first, then the doomed notes, so the active tab is one the
 	// folder takes and a tab that must SURVIVE sits ahead of them in the strip.
 	survivor := newSavedNote(t, sp)
-	if status, body := do(t, http.MethodPost, srv.URL+"/api/note/open/"+survivor, "", ""); status != http.StatusOK {
+	if status, body := do(t, http.MethodPost, srv.URL+"/api/container/open/"+survivor, "", ""); status != http.StatusOK {
 		t.Fatalf("open survivor status %d: %s", status, body)
 	}
 	var active string
 	for uuid := range held {
-		if status, body := do(t, http.MethodPost, srv.URL+"/api/note/open/"+uuid, "", ""); status != http.StatusOK {
+		if status, body := do(t, http.MethodPost, srv.URL+"/api/container/open/"+uuid, "", ""); status != http.StatusOK {
 			t.Fatalf("open doomed status %d: %s", status, body)
 		}
 		active = uuid
@@ -445,7 +480,7 @@ func TestFolderDelete_KeepsTheReaderOnTheNoteTheyWereReading(t *testing.T) {
 	reading := newSavedNote(t, sp)
 	trailing := newSavedNote(t, sp)
 	for _, uuid := range append(openUUIDs, reading, trailing, reading) {
-		if status, body := do(t, http.MethodPost, srv.URL+"/api/note/open/"+uuid, "", ""); status != http.StatusOK {
+		if status, body := do(t, http.MethodPost, srv.URL+"/api/container/open/"+uuid, "", ""); status != http.StatusOK {
 			t.Fatalf("open %s status %d: %s", uuid, status, body)
 		}
 	}
@@ -793,5 +828,209 @@ func TestRevertPrompt_AnnouncesNothingWhenTheDeleteFails(t *testing.T) {
 	}
 	if len(announced) != 0 {
 		t.Errorf("announced %v, want nothing — the override is still on disk", announced)
+	}
+}
+
+// A block container opens in a tab of its own kind through the one open route,
+// named for its block, mounted with its kind; its asset is served; and closing
+// the tab removes it and nothing else — no flush, no filing job — while closing
+// a buffer files it.
+func TestContainerTab_OpensServesItsAssetAndClosesWithoutFiling(t *testing.T) {
+	srv, sp, _, transitions := newItemServerCountingJobs(t)
+	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
+	c, err := sp.Containers.Create("code", map[string]interface{}{"title": "a snippet", "source": "x := 1"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	uuid := c.UUID()
+	if _, err := sp.Containers.SaveAsset(c, "strokes.jsonl", []byte("12345")); err != nil {
+		t.Fatalf("SaveAsset: %v", err)
+	}
+
+	status, body := do(t, http.MethodPost, srv.URL+"/api/container/open/"+uuid, "", "")
+	if status != http.StatusOK {
+		t.Fatalf("open: %d %s", status, body)
+	}
+	for _, want := range []string{`data-tab-kind="code"`, `data-ctx-type="tab"`, `data-ctx-name="a snippet"`, `data-uuid="` + uuid + `"`, `data-kind="code"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("open response lacks %s", want)
+		}
+	}
+	tabs := sp.State.LoadSession().Tabs
+	if len(tabs) != 1 || tabs[0].ID != uuid || tabs[0].Kind != "code" || tabs[0].IsDocument() {
+		t.Fatalf("session tabs = %+v, want the container's tab, saved with its kind", tabs)
+	}
+	if _, body := do(t, http.MethodGet, srv.URL+"/ui/views/tabs", "", ""); !strings.Contains(body, `data-tab-kind="code"`) {
+		t.Errorf("the tab strip refreshed the container's tab away: %s", body)
+	}
+	if status, body := do(t, http.MethodGet, srv.URL+"/ui/assets/"+uuid+"/strokes.jsonl", "", ""); status != http.StatusOK || body != "12345" {
+		t.Errorf("asset = %d %q, want the container's bytes", status, body)
+	}
+
+	before := transitions.Load()
+	if status, body := do(t, http.MethodPost, srv.URL+"/api/tabs/close", "application/json", `{"ids":["`+uuid+`"]}`); status != http.StatusOK {
+		t.Fatalf("close: %d %s", status, body)
+	}
+	sp.Editor.WaitForJobs()
+	if got := transitions.Load(); got != before {
+		t.Errorf("closing a block container moved the job tracker %d time(s)", got-before)
+	}
+	if stored, err := sp.Containers.Load(uuid); err != nil || stored.Version() != c.Version() {
+		t.Errorf("closing wrote the container: %v, %v", stored, err)
+	}
+	for _, tab := range sp.State.LoadSession().Tabs {
+		if tab.ID == uuid {
+			t.Fatalf("the container's tab survived its close")
+		}
+	}
+
+	buffer := sp.State.LoadSession().Tabs[0].ID // the fresh buffer an emptied strip mints
+	do(t, http.MethodPost, srv.URL+"/api/tabs/close", "application/json", `{"ids":["`+buffer+`"]}`)
+	waitFor(t, func() bool { return transitions.Load() > before }, "closing a buffer files it")
+}
+
+// A session written before tabs carried a kind renders exactly as it did: a
+// prompt id is a prompt, every other tab a document of its filed status.
+func TestTabStrip_ASessionWithoutKindsRendersAsBefore(t *testing.T) {
+	srv, sp, _, _ := newItemServerCountingJobs(t)
+	buf, err := sp.Documents.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := sp.State.SaveSession(domain.Session{Tabs: []domain.Tab{
+		{ID: buf.UUID(), Mode: "wysiwyg", Status: "unfiled"},
+		{ID: "01a1adb4-6ba7-752e-888e-a38846df8200", Mode: "wysiwyg", Status: "filed"},
+		{ID: "prompt:file", Mode: "markdown", Status: "filed"},
+	}}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	_, body := do(t, http.MethodGet, srv.URL+"/ui/views/tabs", "", "")
+	for _, want := range []string{
+		`data-tab-id="` + buf.UUID() + `"
+     data-tab-idx="0"
+     data-tab-kind="buffer"`,
+		`data-tab-kind="note"
+     data-tab-viewed="0"
+     data-ctx-id="01a1adb4-6ba7-752e-888e-a38846df8200"
+     data-ctx-type="note"`,
+		`data-tab-kind="prompt"
+     data-tab-viewed="0"
+     data-ctx-id="prompt:file"
+     data-ctx-type="prompt"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("tab strip lacks %q", want)
+		}
+	}
+}
+
+// A tab is stamped as viewed when it becomes the active one — opened, opened again, made new, or
+// made active by the close of the tab before it — and at no other time: a reorder, a strip
+// rendered from the session and a close that leaves the active tab active stamp nothing. The
+// stamp is saved in the session and rendered on the tab.
+func TestTabStrip_ATabIsStampedViewedWhenItBecomesActive(t *testing.T) {
+	srv, sp, _, _ := newItemServerCountingJobs(t)
+	var docs []string
+	for i := 0; i < 3; i++ {
+		d, err := sp.Documents.New()
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		docs = append(docs, d.UUID())
+	}
+	viewed := func() map[string]int64 {
+		out := map[string]int64{}
+		for _, tab := range sp.State.LoadSession().Tabs {
+			out[tab.ID] = tab.LastViewed
+		}
+		return out
+	}
+	post := func(path, contentType, body string) {
+		t.Helper()
+		if status, out := do(t, http.MethodPost, srv.URL+path, contentType, body); status != http.StatusOK {
+			t.Fatalf("POST %s: %d %s", path, status, out)
+		}
+	}
+	tick := func() { time.Sleep(2 * time.Millisecond) }
+
+	for _, id := range docs {
+		post("/api/container/open/"+id, "", "")
+		tick()
+	}
+	first := viewed()
+	if !(first[docs[0]] > 0 && first[docs[0]] < first[docs[1]] && first[docs[1]] < first[docs[2]]) {
+		t.Fatalf("opening stamped %v", first)
+	}
+	post("/api/container/open/"+docs[0], "", "")
+	tick()
+	if again := viewed(); again[docs[0]] <= first[docs[2]] || again[docs[1]] != first[docs[1]] {
+		t.Errorf("opening a tab again stamped %v", again)
+	}
+
+	before := viewed()
+	post("/api/tabs/reorder", "application/x-www-form-urlencoded", "from=2&to=0")
+	do(t, http.MethodGet, srv.URL+"/ui/views/tabs", "", "")
+	post("/api/tabs/close", "application/json", `{"ids":["`+docs[1]+`"]}`)
+	if after := viewed(); !reflect.DeepEqual(after, map[string]int64{docs[0]: before[docs[0]], docs[2]: before[docs[2]]}) {
+		t.Errorf("a reorder, a render and a close of another tab stamped %v, want %v", after, before)
+	}
+
+	session := sp.State.LoadSession()
+	if session.ActiveID() != docs[0] || session.Tabs[1].ID != docs[0] {
+		t.Fatalf("the session is %+v", session)
+	}
+	tick()
+	post("/api/tabs/close", "application/json", `{"ids":["`+docs[0]+`"]}`)
+	if after := viewed(); sp.State.LoadSession().ActiveID() != docs[2] || after[docs[2]] <= before[docs[0]] {
+		t.Errorf("the tab made active by a close is stamped %d, the closed one was %d", after[docs[2]], before[docs[0]])
+	}
+
+	tick()
+	post("/api/note", "", "")
+	session = sp.State.LoadSession()
+	if fresh := session.Tabs[session.ActiveIdx]; fresh.LastViewed <= viewed()[docs[2]] {
+		t.Errorf("a new note's tab is stamped %d", fresh.LastViewed)
+	}
+	_, body := do(t, http.MethodGet, srv.URL+"/ui/views/tabs", "", "")
+	if want := fmt.Sprintf(`data-tab-viewed="%d"`, viewed()[docs[2]]); !strings.Contains(body, want) {
+		t.Errorf("the strip lacks %s:\n%s", want, body)
+	}
+}
+
+// A synced notebook's tab and the Live view's carry their own menus, and a notebook with no name
+// and no title from its tablet reads as an untitled notebook, never as its kind.
+func TestTabStrip_NotebookTabsCarryTheirOwnMenus(t *testing.T) {
+	srv, sp, _, _ := newItemServerCountingJobs(t)
+	block.RegisterProcessor(ink.NewDigitalNoteKind())
+	c, err := sp.Containers.Create(ink.KindDigitalNote, map[string]interface{}{"title": ""})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	status, body := do(t, http.MethodPost, srv.URL+"/api/container/open/"+c.UUID(), "", "")
+	if status != http.StatusOK {
+		t.Fatalf("open: %d %s", status, body)
+	}
+	if tab := sp.State.LoadSession().Tabs[0]; tab.DisplayName != "Untitled notebook" {
+		t.Errorf("an untitled notebook's tab reads %q", tab.DisplayName)
+	}
+	session := sp.State.LoadSession()
+	session.Tabs = append(session.Tabs, domain.Tab{ID: "v-live", Kind: ink.KindLive, DisplayName: "Live"})
+	if err := sp.State.SaveSession(session); err != nil {
+		t.Fatal(err)
+	}
+	_, body = do(t, http.MethodGet, srv.URL+"/ui/views/tabs", "", "")
+	for _, want := range []string{
+		`data-ctx-id="` + c.UUID() + `"
+     data-ctx-type="notebook"
+     data-ctx-name="Untitled notebook"`,
+		`data-ctx-id="v-live"
+     data-ctx-type="inkLive"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the strip lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, ">digital-note<") {
+		t.Errorf("a tab reads its kind:\n%s", body)
 	}
 }

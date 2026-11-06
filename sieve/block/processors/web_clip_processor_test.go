@@ -52,13 +52,13 @@ func TestWebClipProcessor_RunJob_stampsPageAttr(t *testing.T) {
 	sourceURL := "https://example.com/suzuka"
 
 	p := NewWebClipBlockProcessor(block.BlockServices{AI: aiSvc, Documents: ds, State: state})
-	runJob := func(t *testing.T, id, source string) (*block.SieveBlock, error) {
+	runJob := func(t *testing.T, id, source string) (*domain.SieveBlock, error) {
 		t.Helper()
 		attrs := p.InitAttrs(id, map[string]interface{}{"source": source, "mode": "summarise"})
 		if attrs["page"] != "" {
 			t.Errorf("InitAttrs page = %v, want empty string", attrs["page"])
 		}
-		blk := &block.SieveBlock{ID: id, Kind: "web-clip", Attrs: attrs}
+		blk := &domain.SieveBlock{ID: id, Kind: "web-clip", Attrs: attrs}
 		job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: uuid, Block: blk})
 		res, werr := job.Work()
 		if werr != nil {

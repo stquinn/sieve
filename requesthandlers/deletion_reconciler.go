@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sieve/sieve"
 	"sieve/sieve/domain"
+	"time"
 )
 
 // deletionReconciler is the half of a deletion that is the same whichever
@@ -57,11 +58,11 @@ func (d deletionReconciler) reconcile(w http.ResponseWriter, deleted ...string) 
 	// its whole refresh-trigger set, and replacing that host with a div spelled
 	// here would strip both for the rest of the session. The wrapper below is
 	// discarded by htmx — only its children land — so the host survives and the
-	// tree is already fresh, with no follow-up request. (RenderSidebar re-sets
-	// the same two headers this response already carries; they are no-ops now
-	// that the tab strip is written, and they agree.)
+	// tree is already fresh, with no follow-up request. (Render re-sets the
+	// same two headers this response already carries; they are no-ops now that
+	// the tab strip is written, and they agree.)
 	fmt.Fprint(w, `<div hx-swap-oob="innerHTML:#htmx-sidebar">`)
-	RenderSidebar(w, d.sp.Documents, d.sp.State, d.tmpl)
+	SideBarHandler{d.sp, d.tmpl}.Render(w)
 	fmt.Fprint(w, `</div>`)
 
 	activeTab := session.Tabs[session.ActiveIdx]
@@ -84,6 +85,7 @@ func (d deletionReconciler) reconcile(w http.ResponseWriter, deleted ...string) 
 // closes up onto.
 func (d deletionReconciler) pruneSession(deleted []string) domain.Session {
 	session := d.sp.State.LoadSession()
+	wasActive := session.ActiveID()
 
 	gone := make(map[string]bool, len(deleted))
 	for _, uuid := range deleted {
@@ -115,11 +117,15 @@ func (d deletionReconciler) pruneSession(deleted []string) domain.Session {
 		newNote, _ := d.sp.Documents.New()
 		session.Tabs = []domain.Tab{{
 			ID:          newNote.UUID(),
+			Kind:        string(newNote.Kind()),
 			Mode:        "wysiwyg",
 			DisplayName: newNote.Meta().DisplayName(),
 			Status:      "unfiled",
 		}}
 		session.ActiveIdx = 0
+	}
+	if session.ActiveID() != wasActive {
+		session.Activate(session.ActiveIdx, time.Now())
 	}
 
 	_ = d.sp.State.SaveSession(session)

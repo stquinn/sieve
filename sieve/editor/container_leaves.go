@@ -26,9 +26,9 @@ const assetKind = "asset"
 // the same string in turn and the first hit wins.
 type containerLeaves struct {
 	addr     domain.Address
-	doc      domain.Document
+	owner    store.MetaStorable
 	registry block.ProcessorRegistry
-	blocks   []block.SieveBlock
+	blocks   []domain.SieveBlock
 }
 
 // newContainerLeaves indexes a container for leaf lookup. body must be the
@@ -43,7 +43,7 @@ func newContainerLeaves(addr domain.Address, doc domain.Document, body string) (
 	if err != nil {
 		return nil, fmt.Errorf("container %s: parse body: %w", addr.Container, err)
 	}
-	return &containerLeaves{addr: addr, doc: doc, registry: registry, blocks: blocks}, nil
+	return &containerLeaves{addr: addr, owner: doc.Storable(), registry: registry, blocks: blocks}, nil
 }
 
 // resolve dereferences the address's leaf against the three indexes, in order:
@@ -67,8 +67,8 @@ func (c *containerLeaves) resolve() (domain.NodeDescriptor, error) {
 // alias second. Both lookups fold case (ids through ident.Canonical), with an
 // exact match beating a folded one within each. The two lookups are ordered,
 // not merged: an exact alias hit does not outrank a folded id hit.
-func (c *containerLeaves) blockNamed(leaf string) (block.SieveBlock, bool) {
-	var foldedID, exactAlias, foldedAlias *block.SieveBlock
+func (c *containerLeaves) blockNamed(leaf string) (domain.SieveBlock, bool) {
+	var foldedID, exactAlias, foldedAlias *domain.SieveBlock
 	canonical := ident.Canonical(leaf)
 	for i := range c.blocks {
 		b := &c.blocks[i]
@@ -88,12 +88,12 @@ func (c *containerLeaves) blockNamed(leaf string) (block.SieveBlock, bool) {
 			}
 		}
 	}
-	for _, hit := range []*block.SieveBlock{foldedID, exactAlias, foldedAlias} {
+	for _, hit := range []*domain.SieveBlock{foldedID, exactAlias, foldedAlias} {
 		if hit != nil {
 			return *hit, true
 		}
 	}
-	return block.SieveBlock{}, false
+	return domain.SieveBlock{}, false
 }
 
 // assetNamed finds the asset a leaf names by its full key — the filename,
@@ -108,7 +108,7 @@ func (c *containerLeaves) blockNamed(leaf string) (block.SieveBlock, bool) {
 // mean.
 func (c *containerLeaves) assetNamed(leaf string) (store.AssetStorable, bool) {
 	var folded store.AssetStorable
-	for _, owned := range c.doc.Storable().Owns() {
+	for _, owned := range c.owner.Owns() {
 		asset, ok := owned.(store.AssetStorable)
 		if !ok {
 			continue
@@ -127,7 +127,7 @@ func (c *containerLeaves) assetNamed(leaf string) (store.AssetStorable, bool) {
 // the block's markdown representation, not its on-disk Serialize form, which
 // wraps every kind in fenced YAML. A kind with no registered processor
 // contributes an empty body.
-func (c *containerLeaves) blockNode(b block.SieveBlock) domain.NodeDescriptor {
+func (c *containerLeaves) blockNode(b domain.SieveBlock) domain.NodeDescriptor {
 	body := ""
 	if p := c.registry.Get(b.Kind); p != nil {
 		body = p.MarkdownRepresentation(b, c.addr.Container)
@@ -139,6 +139,7 @@ func (c *containerLeaves) blockNode(b block.SieveBlock) domain.NodeDescriptor {
 		Title:   strings.TrimSpace(b.StringAttr("title")),
 		Summary: strings.TrimSpace(b.StringAttr("summary")),
 		Body:    body,
+		Attrs:   b.Attrs,
 	}
 }
 
@@ -156,8 +157,8 @@ func (c *containerLeaves) assetNode(a store.AssetStorable) domain.NodeDescriptor
 		Kind:    assetKind,
 		Title:   a.Key(),
 		Summary: "A file.",
-		Path:    path.Join(c.doc.Storable().ExternalRef(), a.Key()),
-		Bytes:   len(a.Body()),
+		Path:    path.Join(c.owner.ExternalRef(), a.Key()),
+		Bytes:   int(a.Size()),
 	}
 }
 

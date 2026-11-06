@@ -20,12 +20,12 @@ type AssetURIMigrator struct{}
 // Migrate returns the tree with smart-image, diagram and web-clip asset references
 // rewritten to absolute sieve addresses, plus whether anything changed. The input is never
 // mutated.
-func (m AssetURIMigrator) Migrate(blocks []SieveBlock, documentUUID string) ([]SieveBlock, bool) {
+func (m AssetURIMigrator) Migrate(blocks []domain.SieveBlock, documentUUID string) ([]domain.SieveBlock, bool) {
 	if len(blocks) == 0 {
 		return blocks, false
 	}
 	changed := false
-	out := make([]SieveBlock, len(blocks))
+	out := make([]domain.SieveBlock, len(blocks))
 	for i, b := range blocks {
 		switch b.Kind {
 		case "smart-image":

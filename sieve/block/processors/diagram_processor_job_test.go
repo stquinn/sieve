@@ -83,6 +83,7 @@ func (f fakeAssetStorable) Versions() []store.VersionRef { return nil }
 func (f fakeAssetStorable) IsModified() bool             { return false }
 func (f fakeAssetStorable) Encoding() store.Encoding     { return store.Raw }
 func (f fakeAssetStorable) BlkID() string                { return f.ref }
+func (f fakeAssetStorable) Size() int64                  { return 0 }
 
 // darkState/lightState build a processor whose backend theme is dark/light.
 func darkState() fakeState {
@@ -92,8 +93,8 @@ func lightState() fakeState {
 	return fakeState{settings: domain.DefaultSettings(), theme: domain.ThemeVars{"bg": "#ffffff"}}
 }
 
-func plantumlBlock(source, mode, renderedHash string) *block.SieveBlock {
-	return &block.SieveBlock{
+func plantumlBlock(source, mode, renderedHash string) *domain.SieveBlock {
+	return &domain.SieveBlock{
 		ID:   "di-0001",
 		Kind: "diagram",
 		Attrs: map[string]interface{}{
@@ -109,7 +110,7 @@ func plantumlBlock(source, mode, renderedHash string) *block.SieveBlock {
 // describeDocUUID is the document every describe()d job renders into.
 const describeDocUUID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a00"
 
-func describe(p *DiagramProcessor, blk *block.SieveBlock) *block.ProcessorJob {
+func describe(p *DiagramProcessor, blk *domain.SieveBlock) *block.ProcessorJob {
 	return p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: describeDocUUID, Block: blk})
 }
 
@@ -297,7 +298,7 @@ func TestDiagramProcessor_DescribeJob_emptySourceNoDispatch(t *testing.T) {
 
 func TestDiagramProcessor_DescribeJob_mermaidNeverDispatches(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{State: darkState()})
-	blk := &block.SieveBlock{
+	blk := &domain.SieveBlock{
 		ID:    "di-m",
 		Kind:  "diagram",
 		Attrs: map[string]interface{}{"diagramType": "mermaid", "source": "graph TD\nA-->B", "mode": "render"},
@@ -593,7 +594,7 @@ func TestDiagramProcessor_TransformSieveCopyStripsRenderState(t *testing.T) {
 		Assets:    assets,
 		Documents: &fakeDocuments{},
 	})
-	blk := &block.SieveBlock{ID: "di-new", Kind: "diagram", Attrs: attrs}
+	blk := &domain.SieveBlock{ID: "di-new", Kind: "diagram", Attrs: attrs}
 	job := describe(p2, blk)
 	if job == nil {
 		t.Fatal("copy must dispatch its own render job, not reuse the original's cached hash/asset")
@@ -602,7 +603,7 @@ func TestDiagramProcessor_TransformSieveCopyStripsRenderState(t *testing.T) {
 
 func TestDiagramProcessor_MarkdownRepresentation_plantuml(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
-	blk := block.SieveBlock{Attrs: map[string]interface{}{"source": "A -> B", "diagramType": "plantuml"}}
+	blk := domain.SieveBlock{Attrs: map[string]interface{}{"source": "A -> B", "diagramType": "plantuml"}}
 	if got := p.MarkdownRepresentation(blk, ""); got != "```plantuml\nA -> B\n```" {
 		t.Errorf("MarkdownRepresentation plantuml: got %q", got)
 	}
@@ -610,7 +611,7 @@ func TestDiagramProcessor_MarkdownRepresentation_plantuml(t *testing.T) {
 
 func TestDiagramProcessor_MarkdownRepresentation_emptyTypeDefaultsMermaid(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
-	blk := block.SieveBlock{Attrs: map[string]interface{}{"source": "graph TD\nA-->B"}}
+	blk := domain.SieveBlock{Attrs: map[string]interface{}{"source": "graph TD\nA-->B"}}
 	if got := p.MarkdownRepresentation(blk, ""); got != "```mermaid\ngraph TD\nA-->B\n```" {
 		t.Errorf("empty diagramType must default to mermaid fence; got %q", got)
 	}
@@ -618,7 +619,7 @@ func TestDiagramProcessor_MarkdownRepresentation_emptyTypeDefaultsMermaid(t *tes
 
 func TestDiagramProcessor_BuildContext_plantumlFence(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
-	blk := block.SieveBlock{ID: "di-1", Attrs: map[string]interface{}{"source": "A -> B", "diagramType": "plantuml"}}
+	blk := domain.SieveBlock{ID: "di-1", Attrs: map[string]interface{}{"source": "A -> B", "diagramType": "plantuml"}}
 	if got := p.BuildContext(blk, block.DocView{}, map[string]bool{}).String(); !strings.Contains(got, "```plantuml") {
 		t.Errorf("BuildContext must use the plantuml fence; got %q", got)
 	}
@@ -635,7 +636,7 @@ func TestDiagramProcessor_BuildContext_plantumlFence(t *testing.T) {
 
 func TestDiagramProcessor_OnChange_engineSwitchToPlantumlArmsPending(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{State: darkState()})
-	blk := &block.SieveBlock{
+	blk := &domain.SieveBlock{
 		ID:   "di-0001",
 		Kind: "diagram",
 		Attrs: map[string]interface{}{
@@ -663,7 +664,7 @@ func TestDiagramProcessor_OnChange_engineSwitchToPlantumlArmsPending(t *testing.
 
 func TestDiagramProcessor_OnChange_editModeNoOp(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{State: darkState()})
-	blk := &block.SieveBlock{
+	blk := &domain.SieveBlock{
 		ID:   "di-0001",
 		Kind: "diagram",
 		Attrs: map[string]interface{}{
@@ -683,7 +684,7 @@ func TestDiagramProcessor_OnChange_editModeNoOp(t *testing.T) {
 func TestDiagramProcessor_OnChange_unchangedHashNoOp(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{State: darkState()})
 	hash := p.renderHash(p.effectiveSource("A -> B"))
-	blk := &block.SieveBlock{
+	blk := &domain.SieveBlock{
 		ID:   "di-0001",
 		Kind: "diagram",
 		Attrs: map[string]interface{}{
@@ -702,7 +703,7 @@ func TestDiagramProcessor_OnChange_unchangedHashNoOp(t *testing.T) {
 
 func TestDiagramProcessor_OnChange_dispatchedNotClobbered(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{State: darkState()})
-	blk := &block.SieveBlock{
+	blk := &domain.SieveBlock{
 		ID:   "di-0001",
 		Kind: "diagram",
 		Attrs: map[string]interface{}{
@@ -725,7 +726,7 @@ func TestDiagramProcessor_OnChange_dispatchedNotClobbered(t *testing.T) {
 
 func TestDiagramProcessor_OnChange_mermaidNoOp(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{State: darkState()})
-	blk := &block.SieveBlock{
+	blk := &domain.SieveBlock{
 		ID:   "di-m",
 		Kind: "diagram",
 		Attrs: map[string]interface{}{
@@ -748,7 +749,7 @@ func TestDiagramProcessor_OnChange_mermaidNoOp(t *testing.T) {
 // counts as needing a render.
 func TestDiagramProcessor_OnChange_thenDescribeJob(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{State: darkState()})
-	blk := &block.SieveBlock{
+	blk := &domain.SieveBlock{
 		ID:   "di-0001",
 		Kind: "diagram",
 		Attrs: map[string]interface{}{
@@ -765,5 +766,42 @@ func TestDiagramProcessor_OnChange_thenDescribeJob(t *testing.T) {
 	}
 	if job := describe(p, blk); job == nil {
 		t.Error("DescribeJob must dispatch a job for a block OnChange just armed PENDING")
+	}
+}
+
+// ── Drawn outside the job ───────────────────────────────────────────────────
+
+// A diagram drawn by a service outside its job is given what the job would render, and records
+// what the job's Apply records, or the error state the framework writes; a diagram the job would
+// not render has nothing to draw.
+func TestDiagramProcessor_DrawnElsewhereRecordsWhatTheJobWould(t *testing.T) {
+	p := NewDiagramProcessor(block.BlockServices{State: darkState()})
+	var _ block.DrawnElsewhere = p
+	for _, tc := range []struct {
+		name string
+		blk  *domain.SieveBlock
+	}{
+		{"mermaid", &domain.SieveBlock{ID: "di-m", Kind: "diagram", Attrs: map[string]interface{}{"diagramType": "mermaid", "source": "graph TD\nA-->B", "mode": "render"}}},
+		{"plantuml in edit mode", plantumlBlock("A -> B", "edit", "")},
+		{"plantuml with no source", plantumlBlock("", "render", "")},
+	} {
+		if src, ok := p.DrawingSource(*tc.blk); ok {
+			t.Errorf("%s: drawing source %q", tc.name, src)
+		}
+	}
+
+	blk := plantumlBlock("A -> B", "render", "")
+	src, ok := p.DrawingSource(*blk)
+	if !ok || src != p.effectiveSource("A -> B") {
+		t.Fatalf("drawing source %q, %v", src, ok)
+	}
+	p.Drawn(blk, "sieve://c/k.svg")
+	if blk.Attrs["svgAsset"] != "sieve://c/k.svg" || blk.Attrs["renderedHash"] != p.renderHash(src) ||
+		blk.Attrs["status"] != block.BlockStatusComplete || blk.Attrs["error"] != "" {
+		t.Errorf("drawn: %v", blk.Attrs)
+	}
+	p.NotDrawn(blk, errors.New("no server"))
+	if blk.Attrs["status"] != block.BlockStatusError || blk.Attrs["error"] != "no server" {
+		t.Errorf("not drawn: %v", blk.Attrs)
 	}
 }

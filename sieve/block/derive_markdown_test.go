@@ -3,6 +3,8 @@ package block
 import (
 	"strings"
 	"testing"
+
+	"sieve/sieve/domain"
 )
 
 // The drift bug Task 3 fixes: an id=="doc" AI ask in WYSIWYG mode must reflect
@@ -12,13 +14,13 @@ import (
 func TestDeriveMarkdown_WysiwygReflectsLiveTree(t *testing.T) {
 	shadow := &ShadowDocument{
 		UUID: "u",
-		Blocks: []SieveBlock{
+		Blocks: []domain.SieveBlock{
 			{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Original prose."}},
 		},
 	}
 
 	// Mutate the tree the way an edit would — no Markdown field to keep in sync.
-	shadow.MergeBlock(SieveBlock{ID: "ab-1", Kind: "ai-block", Attrs: map[string]interface{}{
+	shadow.MergeBlock(domain.SieveBlock{ID: "ab-1", Kind: "ai-block", Attrs: map[string]interface{}{
 		"id": "ab-1", "response": "fresh answer",
 	}})
 

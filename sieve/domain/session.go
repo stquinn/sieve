@@ -3,11 +3,19 @@ package domain
 import (
 	"encoding/json"
 	"strings"
+	"time"
 )
+
+// TabKindPrompt is the kind of a tab showing a prompt.
+const TabKindPrompt = "prompt"
 
 // Tab represents one open tab in a session.
 type Tab struct {
-	ID          string `json:"id"` // UUID (or "prompt:name" for prompts)
+	ID string `json:"id"` // UUID (or "prompt:name" for prompts)
+	// Kind is the shown container's own noun: a DocumentKind, a block kind, or
+	// TabKindPrompt. A session written before tabs carried one leaves it empty, so
+	// read it through ContainerKind.
+	Kind        string `json:"kind,omitempty"`
 	Scroll      int    `json:"scroll"`
 	Active      bool   `json:"active"`
 	Mode        string `json:"mode"`                  // "wysiwyg" or "markdown"
@@ -15,6 +23,31 @@ type Tab struct {
 	Status      string `json:"status,omitempty"`      // "unfiled" or "filed"
 	UserIntent  string `json:"userIntent,omitempty"`  // "keep" or "trash"
 	Presenting  bool   `json:"presenting,omitempty"`  // left in Presentation Mode
+	// LastViewed is when the tab last became the active one, in Unix milliseconds; 0 for a tab
+	// never made active since tabs carried it. Session.Activate stamps it.
+	LastViewed int64 `json:"lastViewed,omitempty"`
+}
+
+// ContainerKind is the kind of container the tab shows. A tab saved without a kind
+// is a prompt tab when its id is a prompt id, and otherwise a document: a filed
+// one is a note, anything else a buffer.
+func (t Tab) ContainerKind() string {
+	switch {
+	case t.Kind != "":
+		return t.Kind
+	case strings.HasPrefix(t.ID, "prompt:"):
+		return TabKindPrompt
+	case t.Status == KindNote.FiledStatus():
+		return string(KindNote)
+	default:
+		return string(KindBuffer)
+	}
+}
+
+// IsDocument reports whether the tab shows a document, which is what a close
+// files and a status refresh re-reads.
+func (t Tab) IsDocument() bool {
+	return DocumentKind(t.ContainerKind()).IsDocument()
 }
 
 // Window holds the saved window position and size.
@@ -82,6 +115,40 @@ func (s Session) Marshal() ([]byte, error) {
 	return json.MarshalIndent(s, "", "  ")
 }
 
+// Tab is the tab of id, and whether the session has one.
+func (s Session) Tab(id string) (Tab, bool) {
+	for _, t := range s.Tabs {
+		if t.ID == id {
+			return t, true
+		}
+	}
+	return Tab{}, false
+}
+
+// ActiveID is the id of the active tab, "" when there is none.
+func (s Session) ActiveID() string {
+	if s.ActiveIdx < 0 || s.ActiveIdx >= len(s.Tabs) {
+		return ""
+	}
+	return s.Tabs[s.ActiveIdx].ID
+}
+
+// Activate makes the tab at idx the active one, viewed at at. An idx with no tab changes nothing.
+func (s *Session) Activate(idx int, at time.Time) {
+	if idx < 0 || idx >= len(s.Tabs) {
+		return
+	}
+	s.ActiveIdx = idx
+	s.Tabs[idx].LastViewed = at.UnixMilli()
+}
+
+// ShowsNonDocument reports whether the session's tab of id shows something other
+// than a document: false when it shows a document or there is no such tab.
+func (s Session) ShowsNonDocument(id string) bool {
+	tab, open := s.Tab(id)
+	return open && !tab.IsDocument()
+}
+
 // CloseTabs removes every tab whose ID is in ids and keeps ActiveIdx pointing at
 // the SAME active tab when it survives — otherwise the nearest surviving tab to
 // its right (clamped left when the active tab was the last). This is the one
@@ -104,7 +171,7 @@ func (s *Session) CloseTabs(ids []string) []string {
 			if i < oldIdx {
 				removedBefore++
 			}
-			if !strings.HasPrefix(t.ID, "prompt:") {
+			if t.IsDocument() {
 				filed = append(filed, t.ID)
 			}
 			continue

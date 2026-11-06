@@ -236,6 +236,16 @@ body.presenting #table-toolbar {
 
 .tb-group { display: flex; align-items: center; gap: 1px; }
 
+/* The toolbar's places. The start and the end share the room the middle leaves, so the
+   middle sits between them and the end's items against the right edge; neither is drawn
+   narrower than its items, so the strip wraps a place to the next row before it clips one.
+   A start that is the only place is no box at all: its items are the strip's own. */
+.tb-place { display: flex; align-items: center; gap: 2px; }
+.tb-place--start, .tb-place--end { flex: 1 1 0; }
+.tb-place--middle { flex: 0 0 auto; }
+.tb-place--end { justify-content: flex-end; }
+.tb-place--start:only-child { display: contents; }
+
 /* P4.D: the editor-owned toolbar wraps the surface's formatting groups in a
    .tb-surface-section span (so the editor can re-render ONLY that section on a mode
    flip). display:contents dissolves the wrapper from layout — its child .tb-group /
@@ -278,6 +288,53 @@ body.presenting #table-toolbar {
   display: flex; align-items: center; gap: 2px;
 }
 .tb-help { margin-left: 4px; }
+
+/* A button that says what it does in words, and text that is not a button. */
+.tb-btn.tb-text { padding: 0 8px; font-size: 0.9em; font-weight: 500; }
+.tb-btn:disabled { opacity: 0.4; cursor: default; }
+.tb-btn:disabled:hover { background: transparent; }
+.tb-btn:focus-visible { outline: 2px solid var(--theme-accentPrimary); outline-offset: -2px; }
+.tb-readout {
+  display: flex; align-items: center; height: 35px; padding: 0 6px;
+  color: var(--theme-text); font-size: 0.9em; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.tb-readout.tb-notice { color: var(--theme-accentYellow); }
+.tb-readout.tb-status { display: block; max-width: 18em; overflow: hidden; text-overflow: ellipsis; line-height: 35px; }
+/* At the end of the strip what came of an action takes what room is left, up to 18em, and
+   is the first thing to give way: it counts for nothing when the strip decides to wrap. */
+.tb-place--end > .tb-readout.tb-status { flex: 1 1 auto; width: 0; min-width: 0; text-align: right; }
+.tb-btn.tb-page-turn { min-width: 28px; font-size: 1.3em; }
+
+/* A drop-down: a transparent native <select> laid over a face saying what is chosen. */
+.tb-select {
+  position: relative; display: inline-flex; align-items: center; flex-shrink: 0;
+  height: 29px; min-width: 4.5em; margin-right: 6px; padding: 0 22px 0 8px;
+  border: 1px solid var(--theme-border2); border-radius: 4px;
+  color: var(--theme-text); font-size: 0.9em; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.tb-select::after {
+  content: ''; position: absolute; right: 8px; top: 50%; margin-top: -2px;
+  border: 4px solid transparent; border-top-color: var(--theme-textDim); border-bottom-width: 0;
+  pointer-events: none;
+}
+.tb-select:hover { background: var(--theme-border); }
+.tb-select:has(.tb-select__control:focus-visible) { outline: 2px solid var(--theme-accentPrimary); outline-offset: -2px; }
+.tb-select__control {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; cursor: pointer; font: inherit;
+  color: var(--theme-text); background: var(--theme-bgAlt);
+}
+
+/* What is waiting to be seen, and a note being written now, are led by a dot. */
+.tb-btn.tb-attention::before,
+.tb-btn.tb-live::before {
+  content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 6px;
+  border-radius: 50%; background: var(--theme-accentPrimary);
+}
+.tb-btn.tb-live::before { background: var(--theme-accentRed); }
+.tb-btn.tb-live::after { content: ' ↗'; white-space: pre; }
 
 .tb-ai {
   font-size: 0.8em; font-weight: 700; letter-spacing: .02em;

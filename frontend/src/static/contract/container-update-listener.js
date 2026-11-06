@@ -15,6 +15,9 @@
  * arrives whether this lens's verb, another lens, or a background job caused
  * the replacement.
  *
+ * A change naming no block and no order change is a change to the container
+ * itself — what it is called — and a lens re-reads that as it re-reads a block.
+ *
  * @typedef {object} ContainerChange
  * @property {ReadonlyArray<string>} blockIds   ids whose node arrived, changed or left
  * @property {boolean} orderChanged

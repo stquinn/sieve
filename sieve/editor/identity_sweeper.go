@@ -88,7 +88,7 @@ func (s *IdentitySweeper) sweepOne(uuid string) (bool, int, error) {
 
 // countReidentified counts positions whose id moved. The migrator preserves
 // order, so a positional comparison is exact.
-func (s *IdentitySweeper) countReidentified(before, after []block.SieveBlock) int {
+func (s *IdentitySweeper) countReidentified(before, after []domain.SieveBlock) int {
 	n := 0
 	for i := range after {
 		if i < len(before) && before[i].ID != after[i].ID {

@@ -24,7 +24,7 @@ func TestOpen_MintsHandlelessProseIntoShadow(t *testing.T) {
 	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	shadow := es.shadows[uuid]
+	shadow := es.shadowFor(uuid)
 	if shadow == nil || len(shadow.Blocks) != 1 {
 		t.Fatalf("unexpected shadow doc: %+v", shadow)
 	}
@@ -47,7 +47,7 @@ func TestOpen_PersistedHandleSurvivesReopen(t *testing.T) {
 	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open 1: %v", err)
 	}
-	first := es.shadows[uuid].Blocks[0].ID
+	first := es.shadowFor(uuid).Blocks[0].ID
 	if err := es.Flush(uuid); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestOpen_PersistedHandleSurvivesReopen(t *testing.T) {
 	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open 2: %v", err)
 	}
-	second := es.shadows[uuid].Blocks[0].ID
+	second := es.shadowFor(uuid).Blocks[0].ID
 	if second != first {
 		t.Fatalf("handle not stable across reopen: %q -> %q", first, second)
 	}
@@ -82,7 +82,7 @@ func TestOpen_MigratesLegacyBlockIDs(t *testing.T) {
 	}
 	defer waitJobs(t, es, uuid)
 
-	blocks := es.shadows[uuid].SnapshotBlocks()
+	blocks := es.shadowFor(uuid).SnapshotBlocks()
 	if len(blocks) != 2 {
 		t.Fatalf("want 2 blocks, got %d", len(blocks))
 	}
@@ -114,7 +114,7 @@ func TestOpen_MigrationPersistsImmediately(t *testing.T) {
 	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	inMemory := es.shadows[uuid].Blocks[0].ID
+	inMemory := es.shadowFor(uuid).Blocks[0].ID
 
 	reloaded, err := ds.LoadByUUID(uuid)
 	if err != nil {
@@ -144,13 +144,13 @@ func TestOpen_Idempotent_ReusesShadow(t *testing.T) {
 	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open 1: %v", err)
 	}
-	shadow1 := es.shadows[uuid]
+	shadow1 := es.shadowFor(uuid)
 	id1 := shadow1.Blocks[0].ID
 
 	if err := es.Open(uuid); err != nil {
 		t.Fatalf("Open 2: %v", err)
 	}
-	shadow2 := es.shadows[uuid]
+	shadow2 := es.shadowFor(uuid)
 	if shadow2 != shadow1 {
 		t.Fatal("second Open replaced the shadow instead of reusing it")
 	}

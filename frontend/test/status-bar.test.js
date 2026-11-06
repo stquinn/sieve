@@ -11,6 +11,7 @@ import { StatusBar } from '../src/static/shell/status-bar.js'
 function mountStatusDom() {
   document.body.innerHTML = `
     <div class="status-bar">
+      <div class="status-bar__message"></div>
       <div class="status-bar__save"></div>
       <div class="status-bar__blockid"></div>
       <div class="status-bar__stats"></div>
@@ -77,6 +78,19 @@ describe('StatusBar (P4.D)', () => {
     expect(document.documentElement.style.getPropertyValue('--line-digits')).toBe('3') // "128" → 3 digits
   })
 
+  it("stats carrying a readout paint its cells, text as text, in place of chars/lines", () => {
+    mountStatusDom()
+    const readout = [{ text: 'Page 2 of 5', title: 'Page' }, { text: '<b>7</b> strokes', title: 'Strokes on this page' }]
+    const ws = fakeWorkspace()
+    ws._tab = fakeTab(fakeEditor({ chars: 0, lines: 0, blockCount: 0, readout }))
+    new StatusBar(ws)
+    const cells = [...document.querySelectorAll('.status-bar__stats > span')]
+    expect(cells.map((c) => [c.textContent, c.title, c.className])).toEqual([
+      ['Page 2 of 5', 'Page', ''],
+      ['<b>7</b> strokes', 'Strokes on this page', 'status-bar__sep'],
+    ])
+  })
+
   it('COLD BOOT: subscribes at the TAB level, so a stats seed emitted AFTER the editor attaches still paints', () => {
     mountStatusDom()
     const ws = fakeWorkspace()
@@ -141,6 +155,23 @@ describe('StatusBar (P4.D)', () => {
       ws._tab = fakeTab(fakeEditor(), 'note-1')
       new StatusBar(ws)
       dirty({ dirty: true })
+      expect(label()).toContain('Unsaved')
+    })
+
+    it("shows each tab's own save state on a switch, and none for a tab whose lens reported none", () => {
+      mountStatusDom()
+      const ws = fakeWorkspace()
+      const note = fakeTab(fakeEditor(), 'note-1')
+      const ink = fakeTab(fakeEditor(), 'ink-1')
+      ws._tab = note
+      new StatusBar(ws)
+      dirty({ dirty: false, uuid: 'note-1' })
+      expect(label()).toContain('Saved')
+      ws.setActive(ink)
+      expect(label()).toBe('')
+      dirty({ dirty: true, uuid: 'note-1' })
+      expect(label()).toBe('')
+      ws.setActive(note)
       expect(label()).toContain('Unsaved')
     })
 
@@ -250,5 +281,26 @@ describe('StatusBar (P4.D)', () => {
     const slot = document.querySelector('.status-bar__stats')
     expect(slot.innerHTML).toContain('5 chars')
     expect(slot.innerHTML).toContain('2 lines')
+  })
+
+  it('says a status message, an error in red, and clears it after a while', () => {
+    vi.useFakeTimers()
+    try {
+      mountStatusDom()
+      new StatusBar(fakeWorkspace())
+      const slot = /** @type {HTMLElement} */ (document.querySelector('.status-bar__message'))
+      document.dispatchEvent(new CustomEvent('sieve:status-message', { detail: { text: 'Naming Ideas…' } }))
+      expect(slot.textContent).toBe('Naming Ideas…')
+      vi.advanceTimersByTime(StatusBar.MESSAGE_MS - 1)
+      document.dispatchEvent(new CustomEvent('sieve:status-message', { detail: { text: 'No tablet connected', error: true } }))
+      expect(slot.textContent).toBe('No tablet connected')
+      expect(slot.style.color).toBe('var(--theme-accentRed)')
+      vi.advanceTimersByTime(StatusBar.MESSAGE_MS - 1)
+      expect(slot.textContent).toBe('No tablet connected')
+      vi.advanceTimersByTime(1)
+      expect(slot.textContent).toBe('')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

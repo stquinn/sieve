@@ -5,15 +5,11 @@
 // selection listener. It never constructs a lens — which lens a container gets
 // is a workspace decision. A closed binding is spent; a re-mount builds a new one.
 //
-// WHICH PROVIDER a container gets is decided here, from its kind, because the
-// provider TYPE is the container's capability and the host is what knows it: a
-// prompt is text and nothing else (WholeContentAdapter), a note is a block tree
-// that can also project itself as text (BlockProviderAdapter). A lens declares
-// which of those it demands by what its constructor asks for.
+// WHICH PROVIDER a container gets is its kind's Mounting (shell/lens-table.js):
+// the provider TYPE is the container's capability, and the host is what knows
+// it. A lens declares which provider it demands by what its constructor asks for.
 
 import { ContainerModelFeed } from '../container/container-model-feed.js'
-import { BlockProviderAdapter } from '../container/block-provider-adapter.js'
-import { WholeContentAdapter } from '../container/whole-content-adapter.js'
 import { ContractViolation } from '../contract/sieve-block.js'
 
 /** The outcome a write that never reached the wire reports, spelled as the ack
@@ -33,7 +29,7 @@ export class MountBinding {
   /** @type {import('../container/document-service.js').DocumentService} */ #documents
   /** @type {ContainerModelFeed} */ #feed
   /** @type {import('../container/container-model.js').ContainerModel} */ #model
-  /** @type {WholeContentAdapter} */ #provider
+  /** @type {any} */ #provider
   /** @type {Array<(context: Readonly<any>) => void>} */ #advertListeners = []
   /** @type {Readonly<any>|null} */ #lastAdvert = null
   /** @type {boolean} */ #channelOpen = false
@@ -45,20 +41,22 @@ export class MountBinding {
    * @param {import('../container/document-service.js').DocumentService} documentService
    * @param {ContainerModelFeed} feed
    *   shared across mounts: one feed per workspace, one model per container
-   * @param {string} [kind] the container's kind as a DATA word ('note' / 'prompt')
+   * @param {string} kind the container's kind as a DATA word
+   * @param {Readonly<import('./lens-table.js').Mounting>} mounting what the kind is
+   *   mounted with: the provider is built from it, and only a container on a
+   *   channel announces membership — one without changes through its own lens alone
    */
-  constructor(uuid, documentService, feed, kind) {
+  constructor(uuid, documentService, feed, kind, mounting) {
     if (!uuid) throw new ContractViolation('MountBinding: uuid is required')
     if (!documentService) throw new ContractViolation('MountBinding: construct over the DocumentService')
     if (!(feed instanceof ContainerModelFeed)) throw new ContractViolation('MountBinding: construct over a ContainerModelFeed')
+    if (!mounting || typeof mounting.provider !== 'function') throw new ContractViolation("MountBinding: construct with the kind's Mounting")
     this.#uuid = uuid
     this.#documents = documentService
     this.#feed = feed
     this.#model = feed.open(uuid, kind)
-    this.#provider = kind === 'prompt'
-      ? new WholeContentAdapter(this.#model, documentService)
-      : new BlockProviderAdapter(this.#model, documentService)
-    if (kind !== 'prompt') {
+    this.#provider = new mounting.provider(this.#model, documentService)
+    if (mounting.channel) {
       let seeded = false
       this.#membership = { onChanged: (change) => { if (seeded && change.orderChanged) this.#announceMembership() } }
       this.#model.subscribe(this.#membership)
@@ -81,7 +79,7 @@ export class MountBinding {
    * The one business dependency a lens is constructed against. The model behind
    * it is #private all the way down, so this hands out the read surface and the
    * verbs and nothing else.
-   * @returns {WholeContentAdapter}
+   * @returns {any}
    */
   get provider() { return this.#provider }
 

@@ -27,8 +27,7 @@ type VersionRef struct {
 type VersionedStorable struct {
 	// Ref identifies which snapshot this is.
 	Ref VersionRef
-	// Body is the raw content at the time of the snapshot, with frontmatter
-	// stripped for MetaStorables.
+	// Body is the raw content at the time of the snapshot.
 	Body []byte
 	// Meta is the metadata map at the time of the snapshot. Nil for plain
 	// Storables (settings, session).

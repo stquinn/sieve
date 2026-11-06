@@ -4,12 +4,14 @@ name: Release (macOS)
 # build agent on the Forgejo runners. Everything else — CI and the Linux
 # release — lives in .forgejo/workflows/ and runs on the self-hosted Forgejo.
 # The GitHub mirror receives the same v* tag and this workflow attaches the
-# macOS zip to a GitHub release for that tag.
+# macOS zip to a GitHub release for that tag. A mac-test-* tag builds the
+# same zip as a workflow artifact only, and publishes no release.
 
 on:
   push:
     tags:
       - 'v*'
+      - 'mac-test-*'
 
 jobs:
   build-macos:
@@ -53,6 +55,7 @@ jobs:
 
   release:
     needs: [build-macos]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write

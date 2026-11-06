@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"sieve/ident"
 	"sieve/sieve/ai"
 	"sieve/sieve/domain"
 	"sieve/sieve/fencedblock"
@@ -197,8 +198,13 @@ func (e ContentEntry) AsAttrsForNewBlock(p BlockProcessor) map[string]interface{
 			dst[k] = v
 		}
 	}
+	// A pasted container is a new block, and so is every element inside it: an
+	// id is never copied.
 	if parent, isParent := p.(BlockParent); isParent {
-		NewSieveBlock(p.Kind(), "", dst).RenewElementIDs(parent)
+		blk := domain.NewSieveBlock(p.Kind(), "", dst)
+		for _, el := range parent.Children(&blk) {
+			el.Reidentify(ident.New())
+		}
 	}
 	return dst
 }
@@ -292,6 +298,10 @@ const KindProse = "prose"
 // element edge and the code that harvests one agree on the spelling.
 const KindReference = "reference"
 
+// KindDiagram is the diagram kind name: a Mermaid or PlantUML diagram, its engine
+// the `diagramType` attr.
+const KindDiagram = "diagram"
+
 // RelTarget and RelAttach are the two roles a reference can declare in its `rel`
 // attr: what the reference IS to whatever holds it. A target names material the
 // holder is about; an attachment names material the holder was handed.
@@ -312,7 +322,7 @@ type JobContext struct {
 	Ctx    context.Context
 	UUID   string
 	Doc    DocView // immutable, lock-free snapshot of the document
-	Block  *SieveBlock
+	Block  *domain.SieveBlock
 	Notify func(blockID string, attrs map[string]interface{})
 }
 
@@ -423,23 +433,23 @@ type BlockProcessor interface {
 	DescribeJob(jctx JobContext) *ProcessorJob
 	// OnChange reacts synchronously to a user edit of this block (e.g. re-run
 	// heuristics). Setting status to PENDING schedules a follow-up RunJob.
-	OnChange(block *SieveBlock)
+	OnChange(block *domain.SieveBlock)
 	// Mode reports how this kind renders and persists: block or prose.
 	Mode() BlockMode
 	// BuildContext produces this block's contribution to AI context. seen guards
 	// against ref cycles when a block pulls in others.
-	BuildContext(block SieveBlock, doc DocView, seen map[string]bool) AIContext
+	BuildContext(block domain.SieveBlock, doc DocView, seen map[string]bool) AIContext
 	// MarkdownRepresentation renders the block as human/AI-facing markdown (e.g. a
 	// diagram → ```mermaid …```). Distinct from Serialize, which is the on-disk form.
 	// uuid is the document context — needed by asset-bearing kinds to build a served
 	// URL (/ui/assets/<uuid>/<filename>); kinds with no asset reference ignore it.
-	MarkdownRepresentation(block SieveBlock, uuid string) string
+	MarkdownRepresentation(block domain.SieveBlock, uuid string) string
 	// Serialize renders the block to its on-disk form. THIS is the whole point of
 	// the block-document model: each flavour owns how its kind persists, and the
 	// save spine just walks blocks and asks each one. Structured (YAML) kinds share
 	// one implementation (FencedSerializer, embedded — free); prose owns the custom
 	// content + <!--s:ID--> marker form (ProseProcessor). No kind-switch in the spine.
-	Serialize(block SieveBlock) (string, error)
+	Serialize(block domain.SieveBlock) (string, error)
 	// Accepts reports whether this flavour claims a parsed region (the recognition
 	// half of deserialization) — by its own Kind OR any declared alias. Deserialize
 	// then builds the block(s) — the inverse of Serialize, always canonicalising to
@@ -447,7 +457,7 @@ type BlockProcessor interface {
 	// Structured kinds share one impl (FencedDeserializer, embedded); prose is the
 	// terminal mop-up (ProseProcessor). No kind-switch in the codec.
 	Accepts(region Region) bool
-	Deserialize(region Region) ([]SieveBlock, error)
+	Deserialize(region Region) ([]domain.SieveBlock, error)
 	// Shapes returns the kind-qualified delimiter pairs this flavour's regions use
 	// on disk — the segmentation half of recognition — one per head token this
 	// flavour answers to: its own Kind FIRST, then one per declared alias, in
@@ -464,7 +474,17 @@ type FencedSerializer struct{}
 // Serialize renders any block-mode kind as ```kind\n<yaml>\n``` using the shared
 // literal-style machinery — registry-free, so it serializes code, diagram, etc.
 // uniformly without needing a BlockProcessor.
-func (FencedSerializer) Serialize(block SieveBlock) (string, error) {
+func (f FencedSerializer) Serialize(block domain.SieveBlock) (string, error) {
+	body, err := f.SerializeAttrs(block)
+	if err != nil {
+		return "", err
+	}
+	return "```" + block.Kind + "\n" + body + "\n```", nil
+}
+
+// SerializeAttrs renders the block's YAML map: the interior of its fence, and the
+// whole body of a block container. It does not name the kind.
+func (FencedSerializer) SerializeAttrs(block domain.SieveBlock) (string, error) {
 	attrs := block.Attrs
 	// Aliases live on the STRUCT, not in Attrs — unlike id: Merge replaces
 	// Aliases wholesale, so a mirrored copy in Attrs would go stale. They are
@@ -477,11 +497,7 @@ func (FencedSerializer) Serialize(block SieveBlock) (string, error) {
 		}
 		attrs["aliases"] = append([]string(nil), block.Aliases...)
 	}
-	body, err := fencedblock.SerializeYaml(attrs)
-	if err != nil {
-		return "", err
-	}
-	return "```" + block.Kind + "\n" + body + "\n```", nil
+	return fencedblock.SerializeYaml(attrs)
 }
 
 // FencedDeserializer is the ONE shared deserialization for YAML/fenced flavours —
@@ -517,22 +533,31 @@ func (d FencedDeserializer) Accepts(region Region) bool {
 	return false
 }
 
-func (d FencedDeserializer) Deserialize(region Region) ([]SieveBlock, error) {
+func (d FencedDeserializer) Deserialize(region Region) ([]domain.SieveBlock, error) {
 	// region.Body == region.Raw (shape-driven scanner: verbatim span).
 	// Strip the opening fence line ("```kind\n") and closing fence line ("```"
 	// with optional trailing newline) to recover the YAML interior.
-	body := d.fencedBody(region.Raw)
-	attrs, err := fencedblock.DeserializeYaml(body)
+	blk, err := d.DeserializeAttrs(d.fencedBody(region.Raw))
 	if err != nil {
 		return nil, err
+	}
+	return []domain.SieveBlock{blk}, nil
+}
+
+// DeserializeAttrs is the inverse of FencedSerializer.SerializeAttrs: it builds a
+// block of this flavour's Kind from its YAML map.
+func (d FencedDeserializer) DeserializeAttrs(body string) (domain.SieveBlock, error) {
+	attrs, err := fencedblock.DeserializeYaml(body)
+	if err != nil {
+		return domain.SieveBlock{}, err
 	}
 	id, _ := attrs["id"].(string)
 	// Lift aliases BEFORE NewSieveBlock: it may clone attrs when the id differs,
 	// and the delete must land on the map that gets cloned.
 	aliases := d.liftAliases(attrs)
-	blk := NewSieveBlock(d.Kind, id, attrs)
+	blk := domain.NewSieveBlock(d.Kind, id, attrs)
 	blk.Aliases = aliases
-	return []SieveBlock{blk}, nil
+	return blk, nil
 }
 
 // liftAliases REMOVES the persisted aliases key from attrs and returns it as the
@@ -736,12 +761,24 @@ type HeldAssetPlacer interface {
 	PlacesHeldAssets() bool
 }
 
+// DrawnElsewhere is the optional interface a processor implements when a block of
+// its kind is drawn by a drawing service outside its own job, for a block that
+// lives in no document. DrawingSource is the text the service draws for b, and
+// false when b has nothing to draw; Drawn records on b that its drawing is kept
+// at address, an absolute sieve:// address; NotDrawn records that it could not
+// be drawn, and why.
+type DrawnElsewhere interface {
+	DrawingSource(b domain.SieveBlock) (string, bool)
+	Drawn(b *domain.SieveBlock, address string)
+	NotDrawn(b *domain.SieveBlock, err error)
+}
+
 // RawContenter is the optional interface a processor implements to expose the raw
 // source text its block was built from. Used by "Undo Smart Paste" to recover the
 // pre-detection text, and lets prose embedding avoid hard-coding source-bearing kinds
 // by name. A kind that has no raw text simply does not implement it.
 type RawContenter interface {
-	RawContent(blk SieveBlock) string
+	RawContent(blk domain.SieveBlock) string
 }
 
 // ContentMaterialiser is the optional interface a processor implements when its
@@ -801,7 +838,7 @@ func MaterialiseEntries(uuid string, entries []ContentEntry) []ContentEntry {
 // map — the one stored inside the parent's payload — so an attr written through
 // an element lands in what the parent persists; the list itself is a fresh read.
 type BlockParent interface {
-	Children(blk *SieveBlock) []*SieveBlock
+	Children(blk *domain.SieveBlock) []*domain.SieveBlock
 }
 
 // TextBearer is the optional capability a processor implements when its block's
@@ -828,7 +865,7 @@ type BlockParent interface {
 // owes nothing. Everything between — an inspector, the engine, the wire, the client —
 // copies the locator verbatim, and only the processor that minted it reads it.
 type TextBearer interface {
-	NormalisedText(blk *SieveBlock) []domain.TextSegment
+	NormalisedText(blk *domain.SieveBlock) []domain.TextSegment
 }
 
 // TextBearerFor returns kind's processor as a TextBearer, or false when the kind
@@ -893,7 +930,7 @@ var ErrTextMalformed = errors.New("text: the request names nothing this processo
 // merges the resulting attrs, so a value that is not written is left as it was
 // and a key cannot be removed this way.
 type TextUpdater interface {
-	UpdateText(blk *SieveBlock, edits []domain.TextEdit) error
+	UpdateText(blk *domain.SieveBlock, edits []domain.TextEdit) error
 }
 
 // TextUpdaterFor returns kind's processor as a TextUpdater, or false when the
@@ -905,6 +942,26 @@ func TextUpdaterFor(kind string) (TextUpdater, bool) {
 	return updater, ok
 }
 
+// FaceBearer is the optional capability a processor implements when a block of
+// its kind, held as a block container, shows fields in the container's .meta, so
+// a listing reads them without parsing the body. A kind that does not implement
+// it shows none.
+//
+// Face is computed from the block alone. Its keys must not be ones the store
+// itself writes to .meta (uuid, type, kind, version, created, modified and the
+// other fields the store names).
+type FaceBearer interface {
+	Face(blk domain.SieveBlock) map[string]string
+}
+
+// ContainerNamer is the optional capability a processor implements when a
+// container of its kind is called something other than its block's title.
+// ContainerName is that name, read from the block and the container's .meta; a
+// kind that does not implement it is called by its block's title.
+type ContainerNamer interface {
+	ContainerName(blk domain.SieveBlock, meta map[string]string) string
+}
+
 // MarkdownContenter is the optional interface a processor implements when a given
 // block's raw content can itself BE document markdown (e.g. a code block whose
 // language is markdown). Prose embedding ("Embed in Document") consults it to
@@ -912,7 +969,7 @@ func TextUpdaterFor(kind string) (TextUpdater, bool) {
 // representation — the escape hatch for markdown captured as a code block.
 // Pairs with RawContenter, which supplies the content to unwrap.
 type MarkdownContenter interface {
-	ContentIsMarkdown(blk SieveBlock) bool
+	ContentIsMarkdown(blk domain.SieveBlock) bool
 }
 
 // wrapsAnyShaper is the optional capability FirstPasteMatch's pass 1b uses to
