@@ -61,7 +61,7 @@ export class LiveSurface extends AbstractSurface {
     this.#provider = provider
     this.#host = host
     rendererStyles.register(PageSurface)
-    this.#sheet = new InkSheet(provider, { onSheetChanged: () => this.#measured() }, InkSheet.Policy.MIRROR, InkSheet.Scale.WHOLE)
+    this.#sheet = new InkSheet(provider, { onSheetChanged: () => this.#measured() }, InkSheet.Policy.MIRROR, InkSheet.Scale.PAGE)
     this.#root = this.#el('div', 'ink-page ink-page--mirror')
     this.#root.append(this.#sheet.element)
   }

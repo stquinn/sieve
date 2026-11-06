@@ -272,7 +272,7 @@ describe('LiveInkLens', () => {
   it('fits the whole of a fixed sheet in view', async () => {
     const { root } = await presented(liveAttrs())
     const surround = /** @type {HTMLElement} */ (root.querySelector('.ink-page__surround'))
-    expect([surround.dataset.scale, svgOf(root).style.width]).toEqual(['whole', '100%'])
+    expect([surround.dataset.scale, svgOf(root).style.width]).toEqual(['page', '100%'])
   })
 
   it('reloads the page shown when the log restarts', async () => {

@@ -110,13 +110,12 @@ export class InkSheet {
   })
 
   /**
-   * The fits a fixed page's sheet can be sized by: whole within the surround, to
-   * the surround's width, or whole within the surround but never under half its
-   * width. Each follows the surround's size as it changes. A sheet's scale is
-   * one of these or a percentage, at which one grid unit is that percentage of a
-   * CSS pixel.
+   * The fits a fixed page's sheet can be sized by: whole within the surround, or
+   * to the surround's width. Each follows the surround's size as it changes. A
+   * sheet's scale is one of these or a percentage, at which one grid unit is that
+   * percentage of a CSS pixel.
    */
-  static Scale = Object.freeze({ PAGE: 'page', FIT: 'fit', WHOLE: 'whole' })
+  static Scale = Object.freeze({ PAGE: 'page', FIT: 'fit' })
 
   /** The percentages a fixed page steps through, smallest first. */
   static LEVELS = Object.freeze([25, 50, 75, 100, 150, 200])
@@ -138,15 +137,10 @@ export class InkSheet {
   .ink-page__surround[data-scale="fit"] .ink-page__sheet { width: auto; max-width: 100%; }
 
   .ink-page__surround[data-scale="page"],
-  .ink-page__surround[data-scale="whole"],
   .ink-page__surround[data-bounds="unbounded"] { container-type: size; min-height: 240px; }
 
   .ink-page__surround[data-scale="page"] .ink-page__sheet {
     width: min(100cqw, calc(100cqh * var(--ink-aspect, 1)));
-  }
-
-  .ink-page__surround[data-scale="whole"] .ink-page__sheet {
-    width: max(50cqw, min(100cqw, calc(100cqh * var(--ink-aspect, 1))));
   }
 
   .ink-page__surround[data-bounds="unbounded"] { overflow: hidden; }

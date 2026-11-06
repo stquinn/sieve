@@ -453,8 +453,9 @@ mirror: the reader cannot turn its pages, move or zoom its window, or scroll it 
   tablet's. There is no pager, no zoom or scale control, no Fit all and no edge mark; a drag and the wheel,
   Ctrl or Cmd held or not, move nothing.
 - **What it shows.** The page the tablet writes on, changing as the tablet turns or changes note. A
-  fixed page is shown whole in the surround, but never narrower than half the surround's width: a
-  page longer than that scrolls, and while the stroke under the pen runs out of view the surround
+  fixed page is shown whole in the surround, sized as a note's Fit page sizes it, so it gives way to
+  whatever shares the window with it. Should the surround be too small to hold the page it
+  scrolls, and while the stroke under the pen runs out of view the surround
   scrolls the least that brings the pen back within 48 px of its edge, unless the reader has
   scrolled it in the last 0.8 s. A whiteboard is shown through the tablet's window (one sheet at one
   to one, where the tablet says its view is, or where its last stroke began while it has said
