@@ -92,9 +92,12 @@ func TestTab_ContainerKind(t *testing.T) {
 		{string(KindBuffer), true},
 	} {
 		tab := legacy.Tabs[i]
-		if tab.ContainerKind() != want.kind || tab.IsDocument() != want.document {
+		if tab.ContainerKind() != want.kind || tab.IsDocument() != want.document || legacy.ShowsNonDocument(tab.ID) == want.document {
 			t.Errorf("%s: kind %q document %v, want %q %v", tab.ID, tab.ContainerKind(), tab.IsDocument(), want.kind, want.document)
 		}
+	}
+	if legacy.ShowsNonDocument("no-such-tab") || !round.ShowsNonDocument("c-1") {
+		t.Error("ShowsNonDocument: a tab nobody has open is not a non-document; a code tab is one")
 	}
 }
 

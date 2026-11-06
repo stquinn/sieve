@@ -1,9 +1,10 @@
 // @ts-check
-// The window an unbounded page is shown through: a rectangle of the plane with
-// the note's page aspect, placed by its top-left and its zoom. Zoom 1 is the
-// tablet's own view, one sheet of the plane at one to one; zoom 2 shows half a
-// sheet's width. It also holds the extent of every committed stroke, which
-// framing all ink and finding ink outside the window are computed from.
+// The window an unbounded page is shown through: a rectangle of the plane,
+// placed by its top-left and its zoom, whose shape is the note's page aspect
+// unless it is given another. Zoom 1 is one sheet's width across the window,
+// which at the page aspect is the tablet's own view; zoom 2 shows half a sheet's
+// width. It also holds the extent of every committed stroke, which framing all
+// ink and finding ink outside the window are computed from.
 
 /** @typedef {import('../../renderers/ink-renderer.js').InkWindow} InkWindow */
 
@@ -20,9 +21,11 @@ export class PlaneWindow {
   static MARGIN = 0.05
 
   /** @type {number} page width / page height */ #aspect
+  /** @type {number} window width / window height */ #shape
   /** @type {number} */ #x0 = 0
   /** @type {number} */ #y0 = 0
   /** @type {number} */ #zoom = 1
+  /** @type {boolean} whether the window is where fitAll put it */ #fitted = false
   /** @type {Map<string, InkWindow>} each committed stroke's extent, by stroke id */ #extents = new Map()
   /** @type {InkWindow|null|undefined} the union of the extents; undefined while out of date */ #ink = null
   /** @type {{x: number, y: number}|null} the top-left of the tablet's view; null until one is heard */ #tablet = null
@@ -31,10 +34,31 @@ export class PlaneWindow {
   /** @param {number} aspect the note's pageAspect, > 0 */
   constructor(aspect) {
     this.#aspect = aspect
+    this.#shape = aspect
   }
 
-  /** @returns {number} */
+  /** @returns {number} the note's page aspect */
   get aspect() { return this.#aspect }
+
+  /** @returns {number} the window's width over its height */
+  get shape() { return this.#shape }
+
+  /**
+   * Gives the window another shape, keeping its zoom: one framing all ink is
+   * framed again, any other keeps its centre.
+   * @param {number} shape width over height, > 0
+   */
+  set shape(shape) {
+    if (!(shape > 0) || shape === this.#shape) return
+    const w = this.window
+    this.#shape = shape
+    if (this.#fitted) {
+      this.fitAll()
+      return
+    }
+    const half = 1 / this.#zoom / 2
+    this.#place((w.x0 + w.x1) / 2 - half, (w.y0 + w.y1) / 2 - half / shape, this.#zoom)
+  }
 
   /** @returns {number} */
   get zoom() { return this.#zoom }
@@ -42,14 +66,7 @@ export class PlaneWindow {
   /** @returns {InkWindow} the part of the plane shown */
   get window() {
     const w = 1 / this.#zoom
-    return Object.freeze({ x0: this.#x0, y0: this.#y0, x1: this.#x0 + w, y1: this.#y0 + w / this.#aspect })
-  }
-
-  /** @returns {InkWindow|null} the tablet's view, a sheet at its top-left; null until one is heard */
-  get tablet() {
-    if (!this.#tablet) return null
-    const { x, y } = this.#tablet
-    return Object.freeze({ x0: x, y0: y, x1: x + 1, y1: y + 1 / this.#aspect })
+    return Object.freeze({ x0: this.#x0, y0: this.#y0, x1: this.#x0 + w, y1: this.#y0 + w / this.#shape })
   }
 
   /** @returns {boolean} whether the tablet has said where its view is */
@@ -116,12 +133,21 @@ export class PlaneWindow {
     const ink = this.#inkBox()
     if (!ink) {
       this.#place(0, 0, 1)
-      return
+    } else {
+      const zoom = this.#fitZoom(ink)
+      const cx = (ink.x0 + ink.x1) / 2
+      const cy = (ink.y0 + ink.y1) / 2
+      this.#place(cx - 1 / (2 * zoom), cy - 1 / (2 * zoom * this.#shape), zoom)
     }
-    const zoom = this.#fitZoom(ink)
-    const cx = (ink.x0 + ink.x1) / 2
-    const cy = (ink.y0 + ink.y1) / 2
-    this.#place(cx - 1 / (2 * zoom), cy - 1 / (2 * zoom * this.#aspect), zoom)
+    this.#fitted = true
+  }
+
+  /**
+   * Puts the window's top-left at (x0, y0) at a zoom, within the zoom's limits.
+   * @param {number} x0 @param {number} y0 page units @param {number} zoom
+   */
+  place(x0, y0, zoom) {
+    this.#place(x0, y0, Math.min(PlaneWindow.MAX_ZOOM, Math.max(this.minZoom, zoom)))
   }
 
   /** @returns {number} the farthest zoom: all ink framed, or a sheet when that is closer */
@@ -188,7 +214,7 @@ export class PlaneWindow {
 
   /** @param {InkWindow} box @returns {number} the zoom whose window just holds the box, at most MAX_ZOOM */
   #fitZoom(box) {
-    return Math.min(PlaneWindow.MAX_ZOOM, 1 / (box.x1 - box.x0), 1 / ((box.y1 - box.y0) * this.#aspect))
+    return Math.min(PlaneWindow.MAX_ZOOM, 1 / (box.x1 - box.x0), 1 / ((box.y1 - box.y0) * this.#shape))
   }
 
   /** @param {number} x0 @param {number} y0 @param {number} zoom */
@@ -196,5 +222,6 @@ export class PlaneWindow {
     this.#x0 = x0
     this.#y0 = y0
     this.#zoom = zoom
+    this.#fitted = false
   }
 }

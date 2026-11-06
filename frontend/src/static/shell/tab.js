@@ -34,6 +34,14 @@ export class SieveTab {
    */
   #presenting = null
 
+  /**
+   * The reader's view of the container as the last editor left it — what its
+   * `viewState` answered when it was destroyed — handed to the next editor over
+   * it. Opaque here. null until an editor has been destroyed.
+   * @type {unknown}
+   */
+  #viewState = null
+
   /** @type {(() => void)|null} unsubscribe from the attached editor's event stream */
   #unsubEditor = null
 
@@ -94,6 +102,15 @@ export class SieveTab {
    * @param {boolean} presenting
    */
   recordPresenting(presenting) { this.#presenting = !!presenting }
+
+  /** @returns {unknown} the view state recorded last; null before one is */
+  get viewState() { return this.#viewState }
+
+  /**
+   * Records the reader's view of the container, for the next editor over it.
+   * @param {unknown} viewState
+   */
+  recordViewState(viewState) { this.#viewState = viewState ?? null }
 
   /** @returns {AbstractEditor|null} null before one mounts */
   get editor() { return this.#editor }

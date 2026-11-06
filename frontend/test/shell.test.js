@@ -1376,6 +1376,17 @@ describe('SieveWorkspace.activateDocument editor lifecycle (P2.A fix wave)', () 
     expect(w.activeTab).toBe(tabB)
   })
 
+  it("tab switch: the outgoing editor's view state is kept on its tab and handed to that tab's next editor", () => {
+    const w = loggingWorkspace([])
+    const tabA = w.activateDocument('doc-a', edOpts)
+    const state = Object.freeze({ page: 'p2' })
+    Object.defineProperty(tabA.editor, 'viewState', { get: () => state })
+    w.activateDocument('doc-b', edOpts)
+    expect(tabA.viewState).toBe(state)
+    w.activateDocument('doc-a', edOpts)
+    expect([tabA.editor.viewState, w.getTab('doc-b').viewState]).toEqual([state, null])
+  })
+
   it('same-uuid re-activation keeps the editor instance and its socket', () => {
     const log = []
     const w = loggingWorkspace(log)

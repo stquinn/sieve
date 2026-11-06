@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 
 	"sieve/sieve"
@@ -20,6 +24,7 @@ import (
 	"sieve/sieve/ink/link"
 	"sieve/sieve/ink/radio"
 	"sieve/sieve/protocol"
+	"sieve/store"
 )
 
 // The companion's ids in these tests.
@@ -51,6 +56,50 @@ func inkStrokeAdd(page, stroke link.ID) link.Record {
 		Points: []link.Point{{X: 0.25, Y: 0.5, Pressure: 0.75}}}
 }
 
+// inkWhiteboardLog is a note whose one page, inkPage1, is a whiteboard.
+func inkWhiteboardLog() []link.Record {
+	return []link.Record{
+		{Seq: 1, Op: link.OpNoteHeader, Note: inkNoteID, CreatedMillis: 1_700_000_000_000, Title: "Board", PageAspect: 0.75,
+			Device: link.Device{ID: "d", Name: "Note Air 2", Model: "ONYX"}},
+		{Seq: 2, Op: link.OpPageAdd, Page: inkPage1, Bounds: link.BoundsUnbounded},
+	}
+}
+
+// liveBegin is a live BEGIN of stroke n whose origin is (x, y) in page units.
+func liveBegin(n uint32, x, y float64) []byte {
+	le := binary.LittleEndian
+	b := le.AppendUint32([]byte{byte(link.LiveBegin)}, n)
+	b = append(b, byte(link.ToolPen), 2)
+	b = le.AppendUint32(b, 100)
+	b = le.AppendUint32(b, uint32(int32(x*32768)))
+	return le.AppendUint32(b, uint32(int32(y*32768)))
+}
+
+// liveView is a live VIEW whose top-left is (x, y) in page units.
+func liveView(x, y float64) []byte {
+	le := binary.LittleEndian
+	b := le.AppendUint32([]byte{byte(link.LiveView)}, uint32(int32(x*32768)))
+	return le.AppendUint32(b, uint32(int32(y*32768)))
+}
+
+// nextInk reads c until n ink frames have come, and returns them.
+func nextInk(t *testing.T, c *websocket.Conn, n int) []map[string]interface{} {
+	t.Helper()
+	var out []map[string]interface{}
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for len(out) < n {
+		_, raw, err := c.ReadMessage()
+		if err != nil {
+			t.Fatalf("read after %v: %v", out, err)
+		}
+		var f map[string]interface{}
+		if json.Unmarshal(raw, &f) == nil && strings.HasPrefix(fmt.Sprint(f["type"]), "ink-") {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // inkWire is the document wire's harness with Ink enabled over a scripted companion reached
 // through the TCP radio on a loopback socket.
 type inkWire struct {
@@ -65,7 +114,13 @@ type inkWire struct {
 
 func newInkWire(t *testing.T, records []link.Record) *inkWire {
 	t.Helper()
-	srv, sp, h, _ := newWsTestServer(t)
+	return newInkWireOver(t, records, newTestFileStore(t))
+}
+
+// newInkWireOver is newInkWire over the store st.
+func newInkWireOver(t *testing.T, records []link.Record, st store.Store) *inkWire {
+	t.Helper()
+	srv, sp, h, _ := newWsTestServerOver(t, 0, nil, st)
 	block.RegisterProcessor(ink.NewDigitalNoteKind())
 	w := &inkWire{t: t, srv: srv, sp: sp, h: h, companion: link.NewScriptedCompanion(inkKey, inkNoteID, inkPage1, records)}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -573,6 +628,248 @@ func TestWS_Ink_TheLiveViewFollowsTheTabletFromNoteToNote(t *testing.T) {
 		t.Error("the note no longer live is still held for the Live view")
 	}
 	closeAndSettle(live)
+}
+
+// On the Live view's socket an answer for the live page is followed by its live page and then by
+// the tablet's window — the last VIEW's top-left, or before any VIEW the last BEGIN's origin —
+// every time it is asked, so a mirror mounted after the tablet last moved is put where the tablet
+// is. A note's own socket is never told it, and the window is forgotten once the page stops being
+// live.
+func TestWS_Ink_TheLiveViewIsToldTheTabletsWindowAfterAnAnswer(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		feed []byte
+		x, y float64
+	}{
+		{"a view", liveView(-3, -1.75), -3, -1.75},
+		{"a begin's origin, before any view", liveBegin(7, 2, 1.5), 2, 1.5},
+		{"the view, over a later begin", append(liveView(-3, -1.75), liveBegin(7, 2, 1.5)...), -3, -1.75},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			records := inkWhiteboardLog()
+			w := newInkWire(t, records)
+			w.session(records)
+			uuid := w.container()
+			own := dialWS(t, w.srv, uuid)
+			w.askPage(own, inkPage1.String())
+			w.companion.Live, w.companion.Ink = true, c.feed
+			if err := w.sp.Ink.Start(); err != nil {
+				t.Fatal(err)
+			}
+			readUntil(t, own, protocol.TypeInkLive, 5*time.Second)
+
+			live := dialWS(t, w.srv, w.sp.Ink.LiveView().UUID())
+			for _, ask := range []string{"the first answer", "a later answer"} {
+				w.askPage(live, inkPage1.String())
+				got := nextInk(t, live, 2)
+				records, _ := got[1]["records"].([]interface{})
+				view, _ := records[0].(map[string]interface{})
+				if got[0]["type"] != protocol.TypeInkLivePage || got[0]["pageId"] != inkPage1.String() ||
+					got[1]["type"] != protocol.TypeInkLive || len(records) != 1 ||
+					view["record"] != protocol.InkLiveView || view["x"] != c.x || view["y"] != c.y {
+					t.Errorf("after %s the Live view's socket heard %v", ask, got)
+				}
+			}
+			w.askPage(own, inkPage1.String())
+			readUntil(t, own, protocol.TypeInkLivePage, 2*time.Second)
+			expectNoMessage(t, own, `"type":"ink-live"`, 300*time.Millisecond)
+
+			w.sp.Ink.Stop()
+			untilNotLive(t, live)
+			w.askPage(live, inkPage1.String())
+			expectNoMessage(t, live, `"type":"ink-live`, 300*time.Millisecond)
+			closeAndSettle(own)
+			closeAndSettle(live)
+		})
+	}
+}
+
+// The tablet's window is the live page's: once the tablet has gone to another note and back,
+// the window it had is not replayed until it says again where it is.
+func TestWS_Ink_TheTabletsWindowIsForgottenWhenAnotherNoteIsLive(t *testing.T) {
+	other := inkID(0xb0)
+	otherLog := []link.Record{
+		{Seq: 1, Op: link.OpNoteHeader, Note: other, CreatedMillis: 1_700_000_000_000, Title: "Other", PageAspect: 0.75,
+			Device: link.Device{ID: "d", Name: "Note Air 2", Model: "ONYX"}},
+		{Seq: 2, Op: link.OpPageAdd, Page: inkPage2, Bounds: link.BoundsFixed},
+	}
+	records := inkWhiteboardLog()
+	w := newInkWire(t, records)
+	w.companion.SetNote(other, otherLog)
+	if err := w.sp.Ink.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(w.sp.Ink.Status().Notes) == 2 }, "both notes to land")
+	w.sp.Ink.Stop()
+	var board, elsewhere string
+	for _, n := range w.sp.Ink.Status().Notes {
+		if n.Title == "Board" {
+			board = n.UUID
+		} else {
+			elsewhere = n.UUID
+		}
+	}
+
+	own := dialWS(t, w.srv, board)
+	w.askPage(own, inkPage1.String())
+	w.companion.Live, w.companion.Ink = true, liveView(-3, -1.75)
+	if err := w.sp.Ink.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer w.sp.Ink.Stop()
+	readUntil(t, own, protocol.TypeInkLive, 5*time.Second)
+	live := dialWS(t, w.srv, w.sp.Ink.LiveView().UUID())
+	w.askPage(live, inkPage1.String())
+	if got := nextInk(t, live, 2); got[1]["type"] != protocol.TypeInkLive {
+		t.Fatalf("the window was not replayed: %v", got)
+	}
+	for _, uuid := range []string{elsewhere, board} {
+		if result, err := w.sp.Ink.OpenOnTablet(uuid); err != nil || result.Outcome != ink.OpenOpened {
+			t.Fatalf("open %s on the tablet: %v %v", uuid, result, err)
+		}
+		readUntil(t, live, protocol.TypeInkLivePage, 5*time.Second)
+	}
+	waitFor(t, func() bool { return w.sp.Ink.Live().Container == board }, "the Board to be live again")
+	w.askPage(live, inkPage1.String())
+	if got := nextInk(t, live, 1); got[0]["type"] != protocol.TypeInkLivePage {
+		t.Errorf("after the answer: %v", got)
+	}
+	expectNoMessage(t, live, `"type":"ink-live"`, 300*time.Millisecond)
+	closeAndSettle(own)
+	closeAndSettle(live)
+}
+
+// uuidGuardStore is a store that records every call naming the uuid it guards, which is a uuid no
+// store holds: each such call is a lookup a file store answers by scanning the disk.
+type uuidGuardStore struct {
+	store.Store
+	mu      sync.Mutex
+	guarded string
+	asked   []string
+}
+
+func (g *uuidGuardStore) guard(uuid string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.guarded = uuid
+}
+
+func (g *uuidGuardStore) note(call, uuid string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if uuid != "" && uuid == g.guarded {
+		g.asked = append(g.asked, call)
+	}
+}
+
+func (g *uuidGuardStore) calls() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]string(nil), g.asked...)
+}
+
+func (g *uuidGuardStore) LoadByUUID(uuid string) (store.Storable, error) {
+	g.note("LoadByUUID", uuid)
+	return g.Store.LoadByUUID(uuid)
+}
+
+func (g *uuidGuardStore) Load(cat store.Category, key string) (store.Storable, error) {
+	g.note("Load", key)
+	return g.Store.Load(cat, key)
+}
+
+func (g *uuidGuardStore) LoadAsset(cat store.Category, uuid, key string) (store.AssetStorable, error) {
+	g.note("LoadAsset", uuid)
+	return g.Store.LoadAsset(cat, uuid, key)
+}
+
+func (g *uuidGuardStore) AppendAsset(cat store.Category, uuid, key string, data []byte) (store.AssetStorable, error) {
+	g.note("AppendAsset", uuid)
+	return g.Store.AppendAsset(cat, uuid, key, data)
+}
+
+func (g *uuidGuardStore) CreateAsset(cat store.Category, parent, id string, body []byte) (store.AssetStorable, error) {
+	g.note("CreateAsset", parent)
+	return g.Store.CreateAsset(cat, parent, id, body)
+}
+
+func (g *uuidGuardStore) DeleteAsset(cat store.Category, uuid, key string) error {
+	g.note("DeleteAsset", uuid)
+	return g.Store.DeleteAsset(cat, uuid, key)
+}
+
+func (g *uuidGuardStore) LoadFolder(cat store.Category, key string) (store.FolderStorable, error) {
+	g.note("LoadFolder", key)
+	return g.Store.LoadFolder(cat, key)
+}
+
+// No path a Live tab takes asks the store for the Live view's uuid, which no store holds: opening
+// it, its channel's open and load, switching to another tab and back, its meta panel by uuid and
+// as the active tab, the tab strip's status refresh, the dwell ping, the Ink and Library sidebars
+// and the view's own refresh each decide by what the tab or node is first.
+func TestWS_Ink_NoPathOfALiveTabAsksTheStoreForIt(t *testing.T) {
+	guard := &uuidGuardStore{Store: newTestFileStore(t)}
+	records := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)))
+	w := newInkWireOver(t, records, guard)
+	w.session(records)
+	note := w.container()
+	view := w.sp.Ink.LiveView().UUID()
+	guard.guard(view)
+	w.companion.Live = true
+	if err := w.sp.Ink.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer w.sp.Ink.Stop()
+	waitFor(t, func() bool { _, present := w.sp.Ink.LiveView().Mirrors(); return present }, "the Live view")
+
+	tmpl, err := NewTemplates(os.DirFS(".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := chi.NewRouter()
+	(&NoteHandler{ServiceProvider: w.sp, Tmpl: tmpl}).RegisterPaths(r)
+	(&MetaHandler{ServiceProvider: w.sp, Tmpl: tmpl, EmitNotesChanged: func() {}}).RegisterPaths(r)
+	(&TabHandler{ServiceProvider: w.sp, Tmpl: tmpl}).RegisterPaths(r)
+	(&SideBarHandler{ServiceProvider: w.sp, Tmpl: tmpl}).RegisterPaths(r)
+	(&InkHandler{ServiceProvider: w.sp, Tmpl: tmpl}).RegisterPaths(r)
+	views := httptest.NewServer(r)
+	defer views.Close()
+	get := func(path string) {
+		t.Helper()
+		if status, body := do(t, http.MethodGet, views.URL+path, "", ""); status != http.StatusOK {
+			t.Fatalf("GET %s: %d %s", path, status, body)
+		}
+	}
+	open := func(uuid string) {
+		t.Helper()
+		if status, body := do(t, http.MethodPost, views.URL+"/api/container/open/"+uuid, "", ""); status != http.StatusOK {
+			t.Fatalf("open %s: %d %s", uuid, status, body)
+		}
+	}
+
+	for i := 0; i < 3; i++ {
+		open(view)
+		c := dialWS(t, w.srv, view)
+		send(t, c, `{"type":"load","opId":"op-load"}`)
+		if loaded := readUntil(t, c, protocol.TypeLoadContent, 2*time.Second); loaded["kind"] != ink.KindLive {
+			t.Fatalf("the Live view loads %v", loaded)
+		}
+		w.askPage(c, inkPage1.String())
+		send(t, c, `{"type":"focus"}`)
+		get("/ui/views/meta?uuid=" + view)
+		get("/ui/views/meta")
+		get("/ui/views/tabs")
+		get("/ui/views/sidebar/ink")
+		get("/ui/views/sidebar")
+		if err := w.sp.Editor.Refresh(view); err != nil {
+			t.Fatal(err)
+		}
+		closeAndSettle(c)
+		open(note)
+	}
+	if asked := guard.calls(); len(asked) != 0 {
+		t.Errorf("the store was asked for the Live view's uuid by %v", asked)
+	}
 }
 
 // An ink-open-on-tablet is answered, by opId, with what came of it: the tablet going live on the

@@ -142,6 +142,44 @@ export class Frames {
   }
 }
 
+/**
+ * Stands in for ResizeObserver: an element observed takes `size` at once, as a
+ * browser reports the size of an element it starts observing, and the test says
+ * when it takes another.
+ */
+export class Resizes {
+  /** @type {[number, number]|null} the content size an element observed takes at once; null for none */ size = null
+  /** @type {Set<{cb: Function, targets: Set<Element>}>} */ #observers = new Set()
+
+  install() {
+    const resizes = this
+    const observers = this.#observers
+    vi.stubGlobal('ResizeObserver', class {
+      #entry
+      /** @param {Function} cb */
+      constructor(cb) { this.#entry = { cb, targets: new Set() }; observers.add(this.#entry) }
+      /** @param {Element} el */
+      observe(el) {
+        this.#entry.targets.add(el)
+        if (resizes.size) resizes.resize(el, ...resizes.size)
+      }
+      /** @param {Element} el */
+      unobserve(el) { this.#entry.targets.delete(el) }
+      disconnect() { observers.delete(this.#entry) }
+    })
+  }
+
+  /** @returns {number} the observers connected */
+  get observing() { return this.#observers.size }
+
+  /** @param {Element} el @param {number} width @param {number} height its content box */
+  resize(el, width, height) {
+    for (const o of [...this.#observers]) {
+      if (o.targets.has(el)) o.cb([{ target: el, contentRect: { width, height } }], o)
+    }
+  }
+}
+
 export const settle = async () => { for (let i = 0; i < 6; i++) await Promise.resolve() }
 
 export const renderer = new InkRenderer({ getStroke })

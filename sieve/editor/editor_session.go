@@ -99,6 +99,12 @@ func (c *containerSession) reload(es *EditorService) error {
 	return nil
 }
 
+func (c *containerSession) version() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.container.Version()
+}
+
 func (c *containerSession) uuid() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()

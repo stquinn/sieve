@@ -539,7 +539,10 @@ components:
       name: ink-live
       title: ink-live
       summary: InkLiveFrame is live records in the order the tablet sent them.
-      description: InkLiveFrame is live records in the order the tablet sent them.
+      description: |-
+        InkLiveFrame is live records in the order the tablet sent them. On the Live view's channel, an
+        answer for the live page is also followed, after its ink-live-page, by one carrying a single
+        view: the tablet's window on that page, when it is known.
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolInkLiveFrame'
@@ -1755,7 +1758,10 @@ components:
         - params
     ProtocolInkLiveFrame:
       type: object
-      description: InkLiveFrame is live records in the order the tablet sent them.
+      description: |-
+        InkLiveFrame is live records in the order the tablet sent them. On the Live view's channel, an
+        answer for the live page is also followed, after its ink-live-page, by one carrying a single
+        view: the tablet's window on that page, when it is known.
       properties:
         type:
           type: string

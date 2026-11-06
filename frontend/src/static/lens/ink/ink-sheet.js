@@ -14,7 +14,8 @@
 // An unbounded page is drawn through a PlaneWindow. Moving it rewrites the SVG's
 // viewBox, size and background and redraws the `ruling` group alone; every stroke
 // node stays where it is. Whether the window and the surround's scroll move on
-// their own is the sheet's SheetPolicy.
+// their own, and whether the window takes the surround's shape or the page's, is
+// the sheet's SheetPolicy.
 
 import { InkRenderer, INK_LAYERS, INK_RULES } from '../../renderers/ink-renderer.js'
 import { InkFeed } from '../../contract/ink-container-provider.js'
@@ -36,17 +37,26 @@ import { PlaneWindow, WindowEdge } from './plane-window.js'
 
 /**
  * What a sheet tells the surface showing it: that what it draws changed, which
- * is what the surface measures and labels.
+ * is what the surface measures and labels, and each page answer it has drawn.
  * @typedef {object} InkSheetHost
  * @property {() => void} onSheetChanged
+ * @property {(answer: import('../../contract/ink-container-provider.js').InkPageAnswer) => void} [onAnswered]
  */
 
 /**
- * Whether the view of a sheet moves on its own. One that follows the tablet puts
- * a whiteboard's window on the tablet's whenever the tablet says where it is, and
- * scrolls the surround to the stroke under the pen; one that marks edges shows,
- * at the edge of a whiteboard's window, where ink has landed out of view.
- * @typedef {Readonly<{followsTablet: boolean, marksEdges: boolean}>} SheetPolicy
+ * Whether the view of a sheet moves on its own, and its shape. One that follows
+ * the tablet puts a whiteboard's window on the tablet's whenever the tablet says
+ * where it is, shows the sheet at the origin until it has, and scrolls the
+ * surround to the stroke under the pen; one that marks edges shows, at the edge
+ * of a whiteboard's window, where ink has landed out of view; one that fills the
+ * surround gives a whiteboard's window the surround's shape rather than the
+ * page's, and opens it framing all the ink.
+ * @typedef {Readonly<{followsTablet: boolean, marksEdges: boolean, fillsSurround: boolean}>} SheetPolicy
+ */
+
+/**
+ * Where a whiteboard's window is: its top-left, in page units, and its zoom.
+ * @typedef {Readonly<{x0: number, y0: number, zoom: number}>} WindowPlacement
  */
 
 /**
@@ -80,9 +90,9 @@ export class InkSheet {
   /** The policies a sheet is built with. */
   static Policy = Object.freeze({
     /** @type {SheetPolicy} the reader's: nothing moves but by the reader */
-    READER: Object.freeze({ followsTablet: false, marksEdges: true }),
+    READER: Object.freeze({ followsTablet: false, marksEdges: true, fillsSurround: true }),
     /** @type {SheetPolicy} the mirror's: the view is the tablet's */
-    MIRROR: Object.freeze({ followsTablet: true, marksEdges: false }),
+    MIRROR: Object.freeze({ followsTablet: true, marksEdges: false, fillsSurround: false }),
   })
 
   /**
@@ -171,6 +181,10 @@ export class InkSheet {
   /** @type {Element|null} the SVG's white background */ #background = null
   /** @type {any} the template the drawn page is ruled with, as its answer gave it */ #template = null
   /** @type {PlaneWindow|null} the window an unbounded page is drawn through; null for a fixed page */ #plane = null
+  /** @type {number} the surround's width over its height; 0 while it is not measured */ #surroundShape = 0
+  /** @type {ResizeObserver|null} measures the surround while attached, when the window fills it */ #resizing = null
+  /** @type {{page: string, at: WindowPlacement}|null} where the window opens when that page is next drawn */ #placeNext = null
+  /** @type {Set<string>} the committed strokes on the shown page, drawn or not, by id */ #strokeIds = new Set()
   /** @type {boolean} whether the drawn SVG lags the plane window */ #windowStale = false
   /** @type {Set<string>} strokes the feed added outside the window, not yet in it */ #offWindow = new Set()
   /** @type {Map<string, Element>|null} the drawn SVG's layers by name; null while none is drawn for the shown page */ #layers = null
@@ -225,8 +239,9 @@ export class InkSheet {
   /** @returns {boolean} whether the shown page waits on its answer */
   get loading() { return this.#loading !== 0 }
 
-  /** @returns {number} the committed strokes drawn of the shown page; 0 while none is drawn */
-  get strokeCount() { return this.#layers ? this.#strokes.size : 0 }
+  /** @returns {number} the committed strokes on the shown page, a stroke that draws nothing
+   *  included; 0 while none is drawn */
+  get strokeCount() { return this.#layers ? this.#strokeIds.size : 0 }
 
   /** @returns {ReadonlyArray<PageEntry>} the note's pages */
   get pages() { return this.#pages }
@@ -236,6 +251,12 @@ export class InkSheet {
 
   /** @returns {InkWindow|null} the part of the plane shown; null for a fixed page */
   get window() { return this.#plane ? this.#plane.window : null }
+
+  /** @returns {WindowPlacement|null} where the window is; null for a fixed page */
+  get placement() {
+    const plane = this.#plane
+    return plane ? Object.freeze({ x0: plane.window.x0, y0: plane.window.y0, zoom: plane.zoom }) : null
+  }
 
   /** @returns {string} one of InkSheet.Scale */
   get scale() { return this.#scale }
@@ -262,16 +283,25 @@ export class InkSheet {
     this.#livePage = pageId
   }
 
-  /** Starts hearing the surround's scroll. */
+  /** Starts hearing the surround's scroll and, when the window fills it, its size. */
   attach() {
     this.#attached = true
     this.#surround.addEventListener('scroll', this.#onScroll)
+    if (this.#policy.fillsSurround && typeof ResizeObserver === 'function') {
+      this.#resizing = new ResizeObserver((entries) => {
+        const box = entries[entries.length - 1].contentRect
+        if (box.width > 0 && box.height > 0) this.#reshape(box.width / box.height)
+      })
+      this.#resizing.observe(this.#surround)
+    }
   }
 
   /** Stops hearing the surround, and drops every pending frame, timer and load. */
   detach() {
     this.#attached = false
     this.#surround.removeEventListener('scroll', this.#onScroll)
+    if (this.#resizing) this.#resizing.disconnect()
+    this.#resizing = null
     this.#clearLive()
     if (this.#frame) cancelAnimationFrame(this.#frame)
     this.#frame = 0
@@ -311,10 +341,13 @@ export class InkSheet {
    * Asks for a page and draws it when it comes. The SVG already shown stays until
    * then; stroke events for the page heard meanwhile are held and applied above
    * the seq the answer reflects. Null shows that there is no page, in `empty`'s words.
+   * A whiteboard newly drawn opens at `at` when given one.
    * @param {string|null} pageId
    * @param {string} empty what is said when pageId is null
+   * @param {WindowPlacement|null} [at]
    */
-  show(pageId, empty) {
+  show(pageId, empty, at = null) {
+    this.#placeNext = pageId !== null && at ? { page: pageId, at } : null
     if (pageId !== this.#shown) {
       this.#clearLive()
       this.#layers = null
@@ -334,6 +367,7 @@ export class InkSheet {
       this.#draw(answer.page)
       this.#seq = answer.seq
       this.#loading = 0
+      if (this.#host.onAnswered) this.#host.onAnswered(answer)
       const held = this.#held
       this.#held = []
       for (const event of held) this.#applyStroke(event)
@@ -504,22 +538,31 @@ export class InkSheet {
 
   /**
    * Draws the page. A whiteboard drawn again keeps the window it had; one newly
-   * shown is framed round all its ink, or put on the tablet's window when the
-   * policy follows the tablet and the tablet has said where it is.
+   * shown opens where it was asked to, or else, when the policy follows the
+   * tablet, on the tablet's window, or the sheet at the origin until the tablet
+   * has said where it is, and otherwise framed round all its ink.
    * @param {Readonly<InkPage>} page
    */
   #draw(page) {
+    const placeNext = this.#placeNext
+    this.#placeNext = null
     if (this.isUnbounded(this.#shown)) {
       const aspect = page.note.pageAspect
       const same = this.#plane !== null && this.#drawn === this.#shown && this.#plane.aspect === aspect
-      if (!same) this.#plane = new PlaneWindow(aspect)
+      if (!same) {
+        this.#plane = new PlaneWindow(aspect)
+        if (this.#policy.fillsSurround && this.#surroundShape) this.#plane.shape = this.#surroundShape
+      }
       const plane = /** @type {PlaneWindow} */ (this.#plane)
       plane.setStrokes(page.strokes)
-      if (!same) plane.fitAll()
+      if (!same && placeNext && placeNext.page === this.#shown) plane.place(placeNext.at.x0, placeNext.at.y0, placeNext.at.zoom)
+      else if (!same && this.#policy.followsTablet) plane.place(0, 0, 1)
+      else if (!same) plane.fitAll()
       if (this.#policy.followsTablet) plane.showTablet()
     } else {
       this.#plane = null
     }
+    this.#strokeIds = new Set(page.strokes.map((stroke) => stroke.id))
     this.#template = page.note.template ?? null
     this.#offWindow = new Set()
     this.#windowStale = false
@@ -601,6 +644,7 @@ export class InkSheet {
     if (e.type === InkFeed.STROKE_REMOVED) {
       for (const el of this.#strokes.get(e.strokeId) || []) el.remove()
       this.#strokes.delete(e.strokeId)
+      this.#strokeIds.delete(e.strokeId)
       if (this.#plane) {
         this.#plane.removeStroke(e.strokeId)
         this.#markEdges()
@@ -608,6 +652,7 @@ export class InkSheet {
       this.#host.onSheetChanged()
       return
     }
+    this.#strokeIds.add(e.stroke.id)
     const markup = this.#renderer.renderStroke(/** @type {any} */ (e.stroke))
     this.#append('pen', markup.pen)
     markup.bands.forEach((part, i) => this.#append(`b${i}`, part))
@@ -662,6 +707,17 @@ export class InkSheet {
   #windowMoved() {
     this.#windowStale = true
     this.#schedule()
+  }
+
+  /** The surround took another shape: a window that fills it takes the same one.
+   *  @param {number} shape width over height */
+  #reshape(shape) {
+    if (shape === this.#surroundShape) return
+    this.#surroundShape = shape
+    if (!this.#plane) return
+    this.#plane.shape = shape
+    this.#applyScale()
+    this.#windowMoved()
   }
 
   #schedule() {
@@ -752,7 +808,7 @@ export class InkSheet {
 
   #applyScale() {
     this.#surround.dataset.scale = this.#scale
-    const aspect = this.#plane ? this.#plane.aspect : Number(this.#note.pageAspect)
+    const aspect = this.#plane ? this.#plane.shape : Number(this.#note.pageAspect)
     if (this.#plane) this.#surround.dataset.bounds = 'unbounded'
     else delete this.#surround.dataset.bounds
     if (aspect > 0) this.#sheet.style.setProperty('--ink-aspect', String(aspect))

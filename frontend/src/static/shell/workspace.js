@@ -360,6 +360,7 @@ export class SieveWorkspace {
     // The ONE place a tab's editor goes away: pull its scroll coordinate and flush
     // it BEFORE the SelectionModel holding it is destroyed.
         this.#persistScroll(prev)
+        prev.recordViewState(prev.editor.viewState)
         prev.editor.destroy()
         prev.detachEditor()
       }
@@ -390,6 +391,7 @@ export class SieveWorkspace {
         mentionService: this.#mentionService,
         macroCatalog: this.#macroCatalog,
         codeFormattingService: this.#codeFormattingService,
+        viewState: tab.viewState,
       }, options)))
     }
     return tab

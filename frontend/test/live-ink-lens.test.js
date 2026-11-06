@@ -11,7 +11,7 @@ import { LiveInkLens } from '../src/static/lens/ink/live-ink-lens.js'
 import { LiveSurface } from '../src/static/lens/ink/live-surface.js'
 import { InkFeed } from '../src/static/contract/ink-container-provider.js'
 import {
-  ASPECT, DOTS, FakeInkProvider, Frames, GRID, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, points,
+  ASPECT, DOTS, FakeInkProvider, Frames, GRID, Resizes, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, points,
   renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, viewBoxOf, wheel, copiedImages, press,
 } from './helpers/ink-lens-rig.js'
 
@@ -164,6 +164,26 @@ describe('LiveInkLens', () => {
     }
     expect(Math.min(...centres.map(([x]) => x))).toBe(Math.round(Math.ceil((w.x0 * GRID - 3) / step) * step))
     expect(root.querySelector('.ink-page__edge')).toBeNull()
+  })
+
+  it("opens a whiteboard at the origin while the tablet's window is unknown, and a mirror mounted after the last VIEW takes the window replayed after the page's answer", async () => {
+    const resizes = new Resizes()
+    resizes.install()
+    resizes.size = [1200, 600]
+    const first = await whiteboard()
+    first.provider.emit({ type: InkFeed.LIVE, records: [view(-3, -1.75)] })
+    frames.run()
+    first.lens.destroy()
+    const lens = new LiveInkLens(LIVE, { provider: first.provider })
+    await lens.presentMode('wysiwyg', first.root)
+    await settle()
+    expect(svgOf(first.root).getAttribute('viewBox')).toBe(viewBoxOf(tabletWindow(0, 0)))
+    first.provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'w1', view: LIVE })
+    first.provider.emit({ type: InkFeed.LIVE, records: [view(-3, -1.75)] })
+    frames.run()
+    expect(svgOf(first.root).getAttribute('viewBox')).toBe(viewBoxOf(tabletWindow(-3, -1.75)))
+    expect(layer(first.root, 'ruling').children.length).toBeGreaterThan(0)
+    expect(resizes.observing).toBe(0)
   })
 
   it.each([

@@ -33,6 +33,9 @@ func (c documentContent) read(uuid string) (protocol.DocumentContent, bool) {
 		return protocol.DocumentContent{Body: body, Mode: "markdown", UUID: uuid, Kind: domain.TabKindPrompt, Scroll: tab.Scroll}, true
 	}
 
+	if !tab.IsDocument() {
+		return c.readContainer(uuid, tab)
+	}
 	doc, err := c.sp.Documents.LoadByUUID(uuid)
 	if err != nil {
 		return c.readContainer(uuid, tab)
@@ -81,25 +84,19 @@ func (c documentContent) readContainer(uuid string, tab domain.Tab) (protocol.Do
 		Scroll: tab.Scroll,
 		Blocks: blocks,
 	}
-	if c.sp.Containers != nil {
-		if container, err := c.sp.Containers.Load(uuid); err == nil {
-			content.Version = container.Version()
-		}
+	if version, stored := c.sp.Editor.ContainerVersion(uuid); stored {
+		content.Version = version
 	}
 	return content, true
 }
 
 // tab is uuid's session tab, or the zero Tab when there is none — a tab never
-// opened parks at the top and is not presenting, the same as a tab never
-// scrolled or presented, so they need no distinction.
+// opened parks at the top, is not presenting and is read as a document, the same
+// as a tab saved before tabs carried a kind.
 func (c documentContent) tab(uuid string) domain.Tab {
 	if c.sp.State == nil {
 		return domain.Tab{}
 	}
-	for _, t := range c.sp.State.LoadSession().Tabs {
-		if t.ID == uuid {
-			return t
-		}
-	}
-	return domain.Tab{}
+	tab, _ := c.sp.State.LoadSession().Tab(uuid)
+	return tab
 }

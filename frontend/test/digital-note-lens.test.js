@@ -14,7 +14,7 @@ import { ActionStatus } from '../src/static/lens/ink/action-status.js'
 import { ImageClipboard } from '../src/static/renderers/copy-image.js'
 import { InkFeed, InkOpening, InkRefusal } from '../src/static/contract/ink-container-provider.js'
 import {
-  ASPECT, DOTS, FakeInkProvider, Frames, GRID, UUID, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, pencil, points, press, renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, viewBoxOf, wheel,
+  ASPECT, DOTS, FakeInkProvider, Frames, GRID, Resizes, UUID, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, pencil, points, press, renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, viewBoxOf, wheel,
   copiedImages,
 } from './helpers/ink-lens-rig.js'
 
@@ -41,10 +41,13 @@ const openLive = (root) => /** @type {HTMLButtonElement} */ (root.querySelector(
 /** @param {HTMLElement} root @param {string} pageId */
 const dot = (root, pageId) => /** @type {HTMLElement} */ (root.querySelector(`[data-ink-page="${pageId}"]`))
 
-/** A whiteboard of these strokes, laid out 600 by 800 at (100, 50). @param {any[]} [strokes] */
+/** The reader's surround, and so a whiteboard's window, is twice as wide as it is high. */
+const SURROUND = Object.freeze({ width: 1000, height: 500 })
+
+/** A whiteboard of these strokes, laid out filling the surround at (100, 50). @param {any[]} [strokes] */
 async function whiteboard(strokes = [pen('a', 0.2, 0.2), pen('b', 2.4, 1.6)]) {
   const shown = await presented({ ids: ['w1'], bounds: 'unbounded', strokes, template: DOTS })
-  layOut(shown.root, {})
+  layOut(shown.root, SURROUND)
   return shown
 }
 
@@ -54,10 +57,14 @@ const edgeMarks = (root) => [...root.querySelectorAll('.ink-page__edge')].filter
 
 describe('DigitalNoteLens', () => {
   /** @type {Frames} */ let frames
+  /** @type {Resizes} */ let resizes
   beforeEach(() => {
     Object.assign(/** @type {any} */ (globalThis).TipTap, { getStroke })
     frames = new Frames()
     frames.install()
+    resizes = new Resizes()
+    resizes.install()
+    resizes.size = [SURROUND.width, SURROUND.height]
   })
   afterEach(() => {
     vi.useRealTimers()
@@ -272,8 +279,8 @@ describe('DigitalNoteLens', () => {
   ])('opens a whiteboard that is not live framing %s', async (_name, strokes) => {
     const { root } = await whiteboard(strokes)
     const w = shownWindow(root)
-    expect((w.x1 - w.x0) / (w.y1 - w.y0)).toBeCloseTo(ASPECT, 3)
-    if (!strokes.length) expectWindow(w, tabletWindow(0, 0))
+    expect((w.x1 - w.x0) / (w.y1 - w.y0)).toBeCloseTo(SURROUND.width / SURROUND.height, 3)
+    if (!strokes.length) expectWindow(w, { x0: 0, y0: 0, x1: 1, y1: SURROUND.height / SURROUND.width })
     const points = strokes.flatMap((s) => s.points)
     for (const p of points) {
       expect(p.x).toBeGreaterThan(w.x0)
@@ -305,26 +312,26 @@ describe('DigitalNoteLens', () => {
   /** The plane point under a client point of the laid-out sheet. */
   const planeAt = (/** @type {HTMLElement} */ root, /** @type {number} */ cx, /** @type {number} */ cy) => {
     const w = shownWindow(root)
-    return { x: w.x0 + (cx - 100) / 600 * (w.x1 - w.x0), y: w.y0 + (cy - 50) / 800 * (w.y1 - w.y0) }
+    return { x: w.x0 + (cx - 100) / SURROUND.width * (w.x1 - w.x0), y: w.y0 + (cy - 50) / SURROUND.height * (w.y1 - w.y0) }
   }
 
   it.each([
     ['dragging the sheet', (/** @type {HTMLElement} */ root) => drag(root, [[400, 400], [350, 380], [300, 350]]),
       (/** @type {any} */ before, /** @type {any} */ after) => {
-        const u = (before.x1 - before.x0) / 600
+        const u = (before.x1 - before.x0) / SURROUND.width
         expectWindow(after, { x0: before.x0 + 100 * u, y0: before.y0 + 50 * u, x1: before.x1 + 100 * u, y1: before.y1 + 50 * u })
       }],
     ['the wheel', (/** @type {HTMLElement} */ root) => expect(wheel(root, { deltaX: 30, deltaY: 120 }).defaultPrevented).toBe(true),
       (/** @type {any} */ before, /** @type {any} */ after) => {
-        const u = (before.x1 - before.x0) / 600
+        const u = (before.x1 - before.x0) / SURROUND.width
         expectWindow(after, { x0: before.x0 + 30 * u, y0: before.y0 + 120 * u, x1: before.x1 + 30 * u, y1: before.y1 + 120 * u })
       }],
     ['Ctrl and the wheel, about the pointer', (/** @type {HTMLElement} */ root) => wheel(root, { deltaY: -200, ctrlKey: true, clientX: 250, clientY: 300 }),
       (/** @type {any} */ before, /** @type {any} */ after, /** @type {HTMLElement} */ root) => {
         expect(after.x1 - after.x0).toBeCloseTo((before.x1 - before.x0) / Math.exp(0.4), 4)
         const p = planeAt(root, 250, 300)
-        expect(p.x).toBeCloseTo(before.x0 + 150 / 600 * (before.x1 - before.x0), 3)
-        expect(p.y).toBeCloseTo(before.y0 + 250 / 800 * (before.y1 - before.y0), 3)
+        expect(p.x).toBeCloseTo(before.x0 + 150 / SURROUND.width * (before.x1 - before.x0), 3)
+        expect(p.y).toBeCloseTo(before.y0 + 250 / SURROUND.height * (before.y1 - before.y0), 3)
       }],
     ['an arrow key', (/** @type {HTMLElement} */ root) => expect(key(root, 'ArrowRight').defaultPrevented).toBe(true),
       (/** @type {any} */ before, /** @type {any} */ after) => {
@@ -333,17 +340,17 @@ describe('DigitalNoteLens', () => {
       }],
     ['the + key', (/** @type {HTMLElement} */ root) => expect(key(root, '+', { shiftKey: true }).defaultPrevented).toBe(true),
       (/** @type {any} */ before, /** @type {any} */ after) => {
-        expect(after.x1 - after.x0).toBeCloseTo((before.x1 - before.x0) / 1.25, 4)
+        expect((before.x1 - before.x0) / (after.x1 - after.x0)).toBeCloseTo(1.25, 4)
         expect((after.x0 + after.x1) / 2).toBeCloseTo((before.x0 + before.x1) / 2, 4)
       }],
     ['the zoom out button, after two zooms in', (/** @type {HTMLElement} */ root) => { press(root, 'zoom-in'); press(root, 'zoom-in'); press(root, 'zoom-out') },
       (/** @type {any} */ before, /** @type {any} */ after) => {
-        expect(after.x1 - after.x0).toBeCloseTo((before.x1 - before.x0) / 1.25, 4)
+        expect((before.x1 - before.x0) / (after.x1 - after.x0)).toBeCloseTo(1.25, 4)
         expect((after.y0 + after.y1) / 2).toBeCloseTo((before.y0 + before.y1) / 2, 4)
       }],
     ['the 100% button', (/** @type {HTMLElement} */ root) => press(root, 'actual'),
       (/** @type {any} */ before, /** @type {any} */ after) => {
-        expect((after.x1 - after.x0) * GRID).toBeCloseTo(600, 1)
+        expect((after.x1 - after.x0) * GRID).toBeCloseTo(SURROUND.width, 1)
         expect((after.x0 + after.x1) / 2).toBeCloseTo((before.x0 + before.x1) / 2, 4)
       }],
     ['the fit all button', (/** @type {HTMLElement} */ root) => press(root, 'fit'),
@@ -402,7 +409,7 @@ describe('DigitalNoteLens', () => {
 
   it('marks no edge for a stroke added inside the window, and drops the mark of one removed', async () => {
     const { provider, root } = await whiteboard([pen('a', 0.2, 0.2)])
-    provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'w1', seq: 11, stroke: pen('near', 0.25, 0.3) })
+    provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'w1', seq: 11, stroke: pen('near', 0.25, 0.22) })
     provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'w1', seq: 12, stroke: pen('far', 6, 0.3) })
     expect(edgeMarks(root)).toEqual(['right'])
     provider.emit({ type: InkFeed.STROKE_REMOVED, pageId: 'w1', seq: 13, strokeId: 'far' })
@@ -458,6 +465,100 @@ describe('DigitalNoteLens', () => {
     expect(lens.stats().readout?.map((c) => c.text)).toEqual([readout[0], '1 stroke'])
     provider.emit({ type: InkFeed.STROKE_ADDED, pageId: opts.ids ? 'w1' : 'p1', seq: 11, stroke: pen('s2') })
     expect(seen.at(-1).readout.map((/** @type {any} */ c) => c.text)).toEqual(readout)
+  })
+
+  it('counts every stroke on the page, one that draws nothing included', async () => {
+    const dot = { ...pencil('dot'), points: pencil('dot').points.slice(0, 1) }
+    const { root, lens } = await presented({ strokes: [pen('s1'), dot] })
+    expect(strokeEls(root, 'dot')).toHaveLength(0)
+    expect(lens.stats().readout?.map((c) => c.text)).toEqual(['Page 1 of 2', '2 strokes'])
+  })
+
+  it("gives a whiteboard's window the surround's shape: framed again while it frames the ink, otherwise kept about its centre", async () => {
+    const { root } = await whiteboard()
+    const surround = /** @type {HTMLElement} */ (root.querySelector('.ink-page__surround'))
+    resizes.resize(surround, 600, 600)
+    frames.run()
+    const square = shownWindow(root)
+    expect((square.x1 - square.x0) / (square.y1 - square.y0)).toBeCloseTo(1, 3)
+    for (const [x, y] of [[0.2, 0.2], [2.51, 1.644]]) {
+      expect([x > square.x0, x < square.x1, y > square.y0, y < square.y1]).toEqual([true, true, true, true])
+    }
+    key(root, 'ArrowRight')
+    frames.run()
+    const moved = shownWindow(root)
+    resizes.resize(surround, SURROUND.width, SURROUND.height)
+    frames.run()
+    const wide = shownWindow(root)
+    expect((wide.x1 - wide.x0) / (wide.y1 - wide.y0)).toBeCloseTo(2, 3)
+    expect([(wide.x0 + wide.x1) / 2, (wide.y0 + wide.y1) / 2, wide.x1 - wide.x0])
+      .toEqual([(moved.x0 + moved.x1) / 2, (moved.y0 + moved.y1) / 2, moved.x1 - moved.x0].map((v) => expect.closeTo(v, 3)))
+  })
+
+  describe('across a tab switch', () => {
+    /**
+     * Destroys the lens, as a tab switch does, and presents another over the
+     * same note with the view state the first one reported.
+     * @param {{provider: FakeInkProvider, lens: DigitalNoteLens, root: HTMLElement}} shown
+     */
+    const remount = async (shown) => {
+      const viewState = shown.lens.viewState
+      shown.lens.destroy()
+      const lens = new DigitalNoteLens(UUID, { provider: shown.provider, viewState })
+      await lens.presentMode('wysiwyg', shown.root)
+      await settle()
+      return { ...shown, lens, surface: /** @type {PageSurface} */ (lens.surface) }
+    }
+    /** A stroke begun `startMillis` after the note was created. @param {string} id @param {number} startMillis */
+    const at = (id, startMillis) => ({ ...pen(id), startMillis })
+
+    it("keeps the page shown, the sheet's scale and the pages marked unseen", async () => {
+      const shown = await presented({ ids: ['p1', 'p2', 'p3'] })
+      shown.surface.turn(1)
+      shown.surface.toggleScale()
+      shown.provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p3', seq: 11, stroke: pen('s3') })
+      await settle()
+      const { surface, root, provider } = await remount(shown)
+      expect([surface.shownPage, surface.scale, [...surface.unseenPages]]).toEqual(['p2', PageSurface.Scale.ACTUAL, ['p3']])
+      expect([dot(root, 'p3').hasAttribute('data-unseen'), dot(root, 'p2').getAttribute('aria-current')]).toEqual([true, 'page'])
+      expect(provider.loads).toBe(3)
+    })
+
+    it("keeps a whiteboard's window", async () => {
+      const shown = await whiteboard()
+      key(shown.root, 'ArrowDown')
+      key(shown.root, '+', { shiftKey: true })
+      frames.run()
+      const before = shownWindow(shown.root)
+      const { root } = await remount(shown)
+      expectWindow(shownWindow(root), before)
+    })
+
+    it('marks the pages that took ink while it was away, and clears a mark only when its page is shown', async () => {
+      const shown = await presented({ ids: ['p1', 'p2', 'p3'], strokes: [at('old', 100)] })
+      shown.surface.turn(1)
+      await settle()
+      for (const id of ['p2', 'p3']) shown.provider.answers.set(id, { page: exportPage([at('old', 100)]), seq: 12 })
+      shown.provider.answers.set('p1', { page: exportPage([at('old', 100), at('new', 500)]), seq: 12 })
+      const { surface, root } = await remount(shown)
+      await settle()
+      expect([surface.shownPage, [...surface.unseenPages]]).toEqual(['p2', ['p1']])
+      expect(dot(root, 'p1').hasAttribute('data-unseen')).toBe(true)
+      surface.turn(1)
+      await settle()
+      expect([...surface.unseenPages]).toEqual(['p1'])
+      dot(root, 'p1').click()
+      await settle()
+      expect([surface.shownPage, [...surface.unseenPages]]).toEqual(['p1', []])
+    })
+
+    it('asks for no other page when nothing was written while it was away', async () => {
+      const shown = await presented({ ids: ['p1', 'p2', 'p3'] })
+      const before = shown.provider.loads
+      const { provider } = await remount(shown)
+      await settle()
+      expect(provider.loads - before).toBe(1)
+    })
   })
 
   it('counts the pages with unseen ink past twelve pages, and the count shows each in turn', async () => {

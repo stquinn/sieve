@@ -1223,6 +1223,9 @@ func TestInkService_TheLiveViewLastsFromTheFirstLiveNoteToTheGraceAfterTheLast(t
 			t.Errorf("%s resolved: %v", other.String(), err)
 		}
 	}
+	if !view.Claims(addr) || view.Claims(domain.NewContainerAddress(uuid)) {
+		t.Error("the view claims an address other than its own uuid's, or not its own")
+	}
 
 	rig.stopPromptly()
 	if want := uuid + " page=" + page(1).String() + " waiting=true"; heard.last() != want || !rig.svc.Status().Live.Waiting {
@@ -1237,8 +1240,8 @@ func TestInkService_TheLiveViewLastsFromTheFirstLiveNoteToTheGraceAfterTheLast(t
 
 	rig.stopPromptly()
 	timer.pass()
-	if _, err := view.Resolve(addr); !errors.Is(err, domain.ErrNodeNotFound) || heard.last() != "gone" || rig.svc.Status().Live.Present {
-		t.Errorf("after the grace: %v, last change %q", err, heard.last())
+	if _, err := view.Resolve(addr); !errors.Is(err, domain.ErrNodeNotFound) || heard.last() != "gone" || rig.svc.Status().Live.Present || !view.Claims(addr) {
+		t.Errorf("after the grace: %v, last change %q, claimed %t", err, heard.last(), view.Claims(addr))
 	}
 	rig.mu.Lock()
 	deleted, sessionChanges := rig.deleted, rig.sessionChanges

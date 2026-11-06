@@ -269,6 +269,15 @@ export class AbstractSurface {
   applyScroll(value) { /* base: nothing to scroll */ }
 
   /**
+   * The reader's view of the container, as a value the host keeps while no
+   * surface shows it and hands back to the next surface of the same lens over
+   * the same container. It is opaque to the host. Null when the surface keeps
+   * none.
+   * @returns {unknown}
+   */
+  viewState() { return null }
+
+  /**
    * Quote and truncate a snippet on a word boundary near 20 chars — the ONE
    * content-blind label helper both surfaces share. String-only: no PM or block
    * knowledge, so it belongs on the shared base.

@@ -3,6 +3,7 @@ package requesthandlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"net/http"
 	"sieve/sieve"
@@ -113,7 +114,7 @@ func (h *NoteHandler) tabFor(id string) (domain.Tab, error) {
 	if err != nil {
 		return domain.Tab{}, err
 	}
-	note, err := h.ServiceProvider.Documents.LoadByUUID(id)
+	note, err := h.documentOf(node)
 	if err != nil {
 		name := node.Title
 		if name == "" {
@@ -135,6 +136,15 @@ func (h *NoteHandler) tabFor(id string) (domain.Tab, error) {
 		tab.UserIntent = *note.Meta().UserIntent()
 	}
 	return tab, nil
+}
+
+// documentOf is the document node is, read from the store only when node is of a
+// document kind.
+func (h *NoteHandler) documentOf(node domain.NodeDescriptor) (domain.Document, error) {
+	if !domain.DocumentKind(node.Kind).IsDocument() {
+		return nil, fmt.Errorf("%s is a %s, not a document", node.ID, node.Kind)
+	}
+	return h.ServiceProvider.Documents.LoadByUUID(node.ID)
 }
 
 func (h *NoteHandler) handleNoteCreate(w http.ResponseWriter, r *http.Request) {

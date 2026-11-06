@@ -17,6 +17,9 @@ const (
 	KindNote   DocumentKind = "note"   // Library category
 )
 
+// IsDocument reports whether k names a document kind.
+func (k DocumentKind) IsDocument() bool { return k == KindNote || k == KindBuffer }
+
 // FiledStatus maps the kind to the tab/meta presentation status: a Note lives in
 // the Library (filed), everything else is an unfiled working copy. This is the
 // single owner of the filed/unfiled mapping — tab and note handlers derive their

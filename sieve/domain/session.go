@@ -43,8 +43,7 @@ func (t Tab) ContainerKind() string {
 // IsDocument reports whether the tab shows a document, which is what a close
 // files and a status refresh re-reads.
 func (t Tab) IsDocument() bool {
-	kind := t.ContainerKind()
-	return kind == string(KindNote) || kind == string(KindBuffer)
+	return DocumentKind(t.ContainerKind()).IsDocument()
 }
 
 // Window holds the saved window position and size.
@@ -110,6 +109,23 @@ func ParseSession(data []byte) Session {
 // Marshal serialises the session to indented JSON.
 func (s Session) Marshal() ([]byte, error) {
 	return json.MarshalIndent(s, "", "  ")
+}
+
+// Tab is the tab of id, and whether the session has one.
+func (s Session) Tab(id string) (Tab, bool) {
+	for _, t := range s.Tabs {
+		if t.ID == id {
+			return t, true
+		}
+	}
+	return Tab{}, false
+}
+
+// ShowsNonDocument reports whether the session's tab of id shows something other
+// than a document: false when it shows a document or there is no such tab.
+func (s Session) ShowsNonDocument(id string) bool {
+	tab, open := s.Tab(id)
+	return open && !tab.IsDocument()
 }
 
 // CloseTabs removes every tab whose ID is in ids and keeps ActiveIdx pointing at

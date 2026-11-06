@@ -935,6 +935,9 @@ func (h *WsHandler) handleExport(f inboundFrame) {
 // nothing: the count is read from the meta panel, never from this frame.
 func (h *WsHandler) handleFocus(f inboundFrame) {
 	h.ServiceProvider.Editor.SetFocusedDocument(f.uuid)
+	if h.ServiceProvider.State != nil && h.ServiceProvider.State.LoadSession().ShowsNonDocument(f.uuid) {
+		return
+	}
 	doc, err := h.ServiceProvider.Documents.LoadByUUID(f.uuid)
 	if err != nil {
 		logger.Debug("ws: focus for an unknown document", "uuid", f.uuid, "err", err)

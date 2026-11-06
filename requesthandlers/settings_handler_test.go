@@ -553,10 +553,12 @@ func TestInkSidebar_RendersEachState(t *testing.T) {
 		{"no notes", ink.Status{Enabled: true}, []string{">Ink<", "No synced notes yet"}, []string{"data-ink-live", "data-ink-note"}},
 		{"notes", ink.Status{Enabled: true, Notes: notes}, []string{
 			`data-ink-note="n-ideas"`, "Ideas", "2 pages", `data-ink-note="n-board"`, "Untitled note", "1 page",
-			`window.sieveWorkspace.open('n-ideas')`, "box-shadow:inset 2px 0 0 var(--theme-accentPrimary)",
+			`window.sieveWorkspace.open('n-ideas')`, `data-ink-note="n-board"
+    data-active`,
 		}, []string{"data-ink-live", "No synced notes yet"}},
 		{"live", ink.Status{Enabled: true, Notes: notes, Live: live}, []string{
-			`data-ink-live="live"`, "Live · Note Air 2", `window.sieveWorkspace.open('v-live')`, "var(--theme-accentRed)",
+			`data-ink-live="live"`, `ink-sidebar__label">Live · Note Air 2<`, `ink-sidebar__meta">Ideas<`,
+			`window.sieveWorkspace.open('v-live')`, "ink-icon--live",
 		}, []string{"waiting"}},
 		{"waiting", ink.Status{Enabled: true, Notes: notes, Live: ink.LiveStatus{Present: true, UUID: "v-live", Waiting: true}},
 			[]string{`data-ink-live="waiting"`, ">Live<", "waiting", "Waiting for the tablet"}, nil},

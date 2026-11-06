@@ -262,6 +262,57 @@ type inkStream struct {
 	// it holds none.
 	mirrorMu sync.Mutex
 	mirrored string
+
+	// window is the tablet's window on the live page, replayed to the Live view's socket.
+	window tabletWindow
+}
+
+// tabletWindow is where the tablet's window lies on the live page while it is known: the
+// top-left of the last VIEW, or before any VIEW the origin of the last BEGIN, which is the
+// window's top-left when the pen landed. It is forgotten when another page, or none, becomes
+// live. Its lock also orders the frames that carry it, so a replay never overtakes a newer
+// window on the same socket. It is safe for concurrent use.
+type tabletWindow struct {
+	mu sync.Mutex
+	// on is the live container and page the window is on; the zero LiveNote when none is live.
+	on     ink.LiveNote
+	known  bool
+	viewed bool
+	x, y   float64
+}
+
+// follow is live becoming the live note and page: a window on another page is forgotten.
+func (w *tabletWindow) follow(live ink.LiveNote) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if live.Container != w.on.Container || live.Page != w.on.Page {
+		w.on, w.known, w.viewed = live, false, false
+	}
+}
+
+// hear takes the window marks tell of, then sends while still holding the lock.
+func (w *tabletWindow) hear(marks []ink.LiveMark, send func()) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, m := range marks {
+		switch {
+		case m.Type == link.LiveView:
+			w.known, w.viewed, w.x, w.y = true, true, m.X, m.Y
+		case m.Type == link.LiveBegin && !w.viewed:
+			w.known, w.x, w.y = true, m.X, m.Y
+		}
+	}
+	send()
+}
+
+// replay sends through reply, as a view, the window on page of container while one is known.
+func (w *tabletWindow) replay(container string, page link.ID, reply func(interface{})) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.known || w.on.Container != container || w.on.Page != page {
+		return
+	}
+	reply(protocol.NewInkLiveFrame([]protocol.InkLiveRecord{{Record: protocol.InkLiveView, X: w.x, Y: w.y}}))
 }
 
 var _ ink.Listener = (*inkStream)(nil)
@@ -280,7 +331,8 @@ func (s *inkStream) close() { s.svc.Unsubscribe(s) }
 // answerPage answers an ink-page asked on socket through reply, from the note of the socket's
 // container or, on the Live view's socket, of the note it mirrors. The socket holds that note open
 // from now until it releases it. Every answer is followed by the live page while the note is the
-// live one.
+// live one and, on the Live view's socket when the page answered is the live page, by the
+// tablet's window while it is known.
 func (s *inkStream) answerPage(socket string, msg protocol.InkPageFrame, reply func(interface{})) {
 	refuse := func(err error) { reply(protocol.NewInkPageRefusedFrame(msg.OpID, msg.PageID, err)) }
 	page, err := link.ParseID(msg.PageID)
@@ -321,6 +373,9 @@ func (s *inkStream) answerPage(socket string, msg protocol.InkPageFrame, reply f
 	}
 	if live := s.svc.Live(); live.Container == container {
 		reply(protocol.NewInkLivePageFrame(live.Page.String(), s.view))
+		if socket == s.view && live.Page == page {
+			s.window.replay(container, page, reply)
+		}
 	}
 }
 
@@ -395,7 +450,7 @@ func (s *inkStream) strokeFrame(c ink.StrokeChange) (interface{}, error) {
 }
 
 // LiveInk sends records, as marks in page units, to the live container's socket and the Live
-// view's.
+// view's, and keeps the tablet's window they tell of.
 func (s *inkStream) LiveInk(records []link.LiveRecord) {
 	marks := s.pen.Marks(records)
 	if s.live == "" || len(marks) == 0 {
@@ -410,8 +465,10 @@ func (s *inkStream) LiveInk(records []link.LiveRecord) {
 		}
 	}
 	frame := protocol.NewInkLiveFrame(wire)
-	s.send(s.live, frame)
-	s.send(s.view, frame)
+	s.window.hear(marks, func() {
+		s.send(s.live, frame)
+		s.send(s.view, frame)
+	})
 }
 
 // LiveChanged tells the container that stops being live that it has, the live one which page,
@@ -419,6 +476,7 @@ func (s *inkStream) LiveInk(records []link.LiveRecord) {
 func (s *inkStream) LiveChanged(live ink.LiveNote) {
 	was := s.live
 	s.live = live.Container
+	s.window.follow(live)
 	page := ""
 	if live.Container != "" {
 		page = live.Page.String()

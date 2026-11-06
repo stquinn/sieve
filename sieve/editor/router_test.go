@@ -85,6 +85,48 @@ func TestRouter_ResolvesThroughTheFirstSourceThatAnswers(t *testing.T) {
 	}
 }
 
+// claimingSource is a fakeSource that claims every address of one container.
+type claimingSource struct {
+	fakeSource
+	claims string
+}
+
+func (c *claimingSource) Claims(addr domain.Address) bool { return addr.Container == c.claims }
+
+// A claimed address is resolved by its claimer alone, wherever it is registered, and dangles
+// there without any other source being asked; an address nobody claims is offered in order.
+func TestRouter_AClaimedAddressIsAskedOfItsClaimerAlone(t *testing.T) {
+	claimed, other := "sieve://"+testContainerUUID, "sieve://"+testMissingUUID
+	for _, c := range []struct {
+		name      string
+		uri       string
+		held      bool
+		wantFound bool
+		wantStore int
+	}{
+		{"claimed and held", claimed, true, true, 0},
+		{"claimed and gone", claimed, false, false, 0},
+		{"claimed by nobody", other, true, false, 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			stored := &fakeSource{name: "store"}
+			claimer := &claimingSource{fakeSource: fakeSource{name: "claimer", nodes: map[string]domain.NodeDescriptor{}}, claims: testContainerUUID}
+			if c.held {
+				claimer.nodes[claimed] = domain.NodeDescriptor{URI: claimed, ID: testContainerUUID, Kind: "live"}
+			}
+			r := NewRouter(stored, claimer)
+			addr := mustAddress(t, c.uri)
+			_, err := r.Resolve(addr)
+			if found := err == nil; found != c.wantFound || (!found && !errors.Is(err, domain.ErrNodeNotFound)) {
+				t.Errorf("Resolve: %v, want found %t", err, c.wantFound)
+			}
+			if len(stored.resolved) != c.wantStore || r.Claims(addr) != (c.uri == claimed) {
+				t.Errorf("the store source was asked %v; Claims %t", stored.resolved, r.Claims(addr))
+			}
+		})
+	}
+}
+
 // Dangling is a normal state, not a panic: the address was a real coordinate, no
 // source held it. Each source's reason for the miss survives into the error.
 func TestRouter_DanglingAddressIsATypedError(t *testing.T) {

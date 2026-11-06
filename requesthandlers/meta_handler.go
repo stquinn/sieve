@@ -267,7 +267,7 @@ func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanel
 		Now:        metaFmtTime(time.Now()),
 		InUseHint:  assetInUseMessage,
 	}
-	if isPrompt {
+	if isPrompt || (h.ServiceProvider.State != nil && h.ServiceProvider.State.LoadSession().ShowsNonDocument(uuidOrPromptName)) {
 		return data
 	}
 	if b, err := h.ServiceProvider.Documents.LoadByUUID(uuidOrPromptName); err == nil {

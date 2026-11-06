@@ -39,6 +39,13 @@ type NodeResolver interface {
 	Resolve(addr Address) (NodeDescriptor, error)
 }
 
+// NodeClaimer knows, from an address alone and without reading any store, the
+// addresses only it answers. A claimed address resolves through its claimer or
+// not at all.
+type NodeClaimer interface {
+	Claims(addr Address) bool
+}
+
 // OpenTarget is where a coordinate NAVIGATES: the container to bring up and,
 // when the address qualifies one, the block to reveal inside it.
 //

@@ -22,6 +22,8 @@ export class StatusBar {
   #unsubEditor = null
   /** @type {string} full id of the last hovered block — what click-to-copy yields */
   #hoveredBlockId = ''
+  /** @type {Map<string, boolean>} whether each container that has reported a save state is dirty, by uuid */
+  #dirtyBy = new Map()
 
   /** @param {import('./workspace.js').SieveWorkspace} ws */
   constructor(ws) {
@@ -45,6 +47,7 @@ export class StatusBar {
   #pointAt(tab) {
     if (this.#unsubEditor) { this.#unsubEditor(); this.#unsubEditor = null }
     if (!tab) return
+    this.#paintSave(this.#dirtyBy.get(tab.uuid))
     // Subscribe at the TAB level, not the editor: the tab-identity forward
     // survives an editor that attaches AFTER the tab is active. On COLD BOOT
     // openTab makes the tab active before activateDocument attaches the editor,
@@ -81,18 +84,33 @@ export class StatusBar {
   }
 
   /**
-   * Paints the save indicator and the #meta-dirty-dot. detail.dirty true → red
-   * "Unsaved"; false → green "Saved".
+   * Records a container's save state and paints it when the container is the
+   * active tab's. detail.dirty true → red "Unsaved"; false → green "Saved".
    *
    * THE BAR SPEAKS FOR THE ACTIVE TAB, AND ONLY IT. Several editing lenses are
    * live at once — a note and the Ask composer's draft, say — and each announces
    * its own dirty state, so a fact naming another container is not this bar's to
-   * paint. A fact naming NO container is addressed to whatever is active.
+   * paint. A fact naming NO container is addressed to whatever is active. A tab
+   * whose lens has reported no save state, having nothing to save, shows none.
    * @param {{ dirty?: boolean, uuid?: string }|null} detail
    */
   #onDirty(detail) {
-    if (!this.#isActive(detail && detail.uuid)) return
     const dirty = !!(detail && detail.dirty)
+    const uuid = (detail && detail.uuid) || (this.#ws.activeTab ? this.#ws.activeTab.uuid : '')
+    if (uuid) this.#dirtyBy.set(uuid, dirty)
+    if (this.#isActive(detail && detail.uuid)) this.#paintSave(dirty)
+  }
+
+  /**
+   * Paints the save indicator and the #meta-dirty-dot, or clears the indicator
+   * when there is no save state to show.
+   * @param {boolean|undefined} dirty
+   */
+  #paintSave(dirty) {
+    if (dirty === undefined) {
+      if (this.#saveSlot) this.#saveSlot.replaceChildren()
+      return
+    }
     const dot = document.getElementById('meta-dirty-dot')
     if (dot) {
       dot.classList.toggle('bg-tn-red', dirty)

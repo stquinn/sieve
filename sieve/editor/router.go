@@ -20,6 +20,10 @@ import (
 //
 // Resolve must report a target it does not hold as domain.ErrNodeNotFound; any
 // other error is a real failure and stops the federation.
+//
+// A source that also implements domain.NodeClaimer is asked alone for every
+// address it claims, whatever its place in the offer order, so a claimed address
+// never reaches a source that would read a store to find it is not there.
 type NodeSource interface {
 	Name() string
 	Search(query string, limit int) []domain.Candidate
@@ -58,6 +62,16 @@ func (r *Router) Register(source NodeSource) {
 // own reason for the miss. A source failing for any other reason surfaces as-is,
 // so a broken library is never mistaken for a deleted document.
 func (r *Router) Resolve(addr domain.Address) (domain.NodeDescriptor, error) {
+	if source := r.claimer(addr); source != nil {
+		node, err := source.Resolve(addr)
+		if errors.Is(err, domain.ErrNodeNotFound) {
+			return domain.NodeDescriptor{}, fmt.Errorf("source %s: %w", source.Name(), err)
+		}
+		if err != nil {
+			return domain.NodeDescriptor{}, fmt.Errorf("router: source %s: %w", source.Name(), err)
+		}
+		return node, nil
+	}
 	var misses []error
 	for _, source := range r.sources {
 		node, err := source.Resolve(addr)
@@ -73,6 +87,22 @@ func (r *Router) Resolve(addr domain.Address) (domain.NodeDescriptor, error) {
 		return domain.NodeDescriptor{}, fmt.Errorf("%w: %s", domain.ErrNodeNotFound, addr.String())
 	}
 	return domain.NodeDescriptor{}, errors.Join(misses...)
+}
+
+// Claims reports whether a source claims addr: it resolves through that source
+// alone, and no store is read to find it.
+func (r *Router) Claims(addr domain.Address) bool {
+	return r.claimer(addr) != nil
+}
+
+// claimer is the first source claiming addr, or nil.
+func (r *Router) claimer(addr domain.Address) NodeSource {
+	for _, source := range r.sources {
+		if c, ok := source.(domain.NodeClaimer); ok && c.Claims(addr) {
+			return source
+		}
+	}
+	return nil
 }
 
 // Target answers WHERE a coordinate opens: the container to bring up, plus the

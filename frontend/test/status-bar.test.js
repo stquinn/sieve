@@ -157,6 +157,23 @@ describe('StatusBar (P4.D)', () => {
       expect(label()).toContain('Unsaved')
     })
 
+    it("shows each tab's own save state on a switch, and none for a tab whose lens reported none", () => {
+      mountStatusDom()
+      const ws = fakeWorkspace()
+      const note = fakeTab(fakeEditor(), 'note-1')
+      const ink = fakeTab(fakeEditor(), 'ink-1')
+      ws._tab = note
+      new StatusBar(ws)
+      dirty({ dirty: false, uuid: 'note-1' })
+      expect(label()).toContain('Saved')
+      ws.setActive(ink)
+      expect(label()).toBe('')
+      dirty({ dirty: true, uuid: 'note-1' })
+      expect(label()).toBe('')
+      ws.setActive(note)
+      expect(label()).toContain('Unsaved')
+    })
+
     it('with no tab at all, only an unnamed fact paints', () => {
       mountStatusDom()
       new StatusBar(fakeWorkspace())

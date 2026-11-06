@@ -87,7 +87,9 @@ type InkLiveRecord struct {
 	TiltY      int8    `json:"tiltY" doc:"point only: degrees"`
 }
 
-// InkLiveFrame is live records in the order the tablet sent them.
+// InkLiveFrame is live records in the order the tablet sent them. On the Live view's channel, an
+// answer for the live page is also followed, after its ink-live-page, by one carrying a single
+// view: the tablet's window on that page, when it is known.
 type InkLiveFrame struct {
 	Type    string          `json:"type"`
 	Records []InkLiveRecord `json:"records" doc:"never empty"`

@@ -79,6 +79,9 @@ func (v *LiveView) Name() string { return KindLive }
 // Search offers nothing.
 func (v *LiveView) Search(string, int) []domain.Candidate { return nil }
 
+// Claims is addr naming the view's uuid, which no store holds.
+func (v *LiveView) Claims(addr domain.Address) bool { return addr.Container == v.uuid }
+
 // Resolve answers the view's own uuid at container grain while the view exists; anything else is
 // domain.ErrNodeNotFound.
 func (v *LiveView) Resolve(addr domain.Address) (domain.NodeDescriptor, error) {

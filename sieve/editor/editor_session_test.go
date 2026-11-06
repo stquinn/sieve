@@ -50,6 +50,9 @@ func TestContainerSession_OpensItsOneBlockWithoutAShadow(t *testing.T) {
 	if !ok || len(blocks) != 1 || blocks[0].ID != uuid || blocks[0].Kind != containerKind || blocks[0].Attrs["source"] != "x := 1" {
 		t.Fatalf("FrontendBlocks = %+v, %v; want the container's one block", blocks, ok)
 	}
+	if version, stored := es.ContainerVersion(uuid); !stored || version != c.Version() {
+		t.Errorf("ContainerVersion = %d, %t; want %d", version, stored, c.Version())
+	}
 
 	es.Close(uuid)
 	closed, err := es.Blocks(uuid)
@@ -115,8 +118,8 @@ func TestNodeSession_OpensTheNodesOneBlockAndClosesWhenItNoLongerResolves(t *tes
 	if !ok || len(blocks) != 1 || blocks[0].ID != nodes.uuid || blocks[0].Kind != nodeKind || blocks[0].Attrs["page"] != "p1" {
 		t.Fatalf("FrontendBlocks = %+v, %v; want the node's one block", blocks, ok)
 	}
-	if es.shadowFor(nodes.uuid) != nil || len(es.openUUIDs()) != 0 {
-		t.Error("a node opened as a document")
+	if _, stored := es.ContainerVersion(nodes.uuid); es.shadowFor(nodes.uuid) != nil || len(es.openUUIDs()) != 0 || stored {
+		t.Error("a node opened as a document or a stored container")
 	}
 
 	nodes.set(map[string]interface{}{"page": "p2"}, false)

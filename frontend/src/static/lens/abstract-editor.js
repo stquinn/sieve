@@ -53,6 +53,10 @@ const EVERY_CAPABILITY = Object.freeze({
  * @property {object|null} [codeFormattingService]
  *   what a code menu asks to pretty-print source. Optional: without it no Format
  *   is offered.
+ * @property {unknown} [viewState]
+ *   what `viewState` answered on an earlier editor of the same lens over the
+ *   same container, for the surface this editor creates to open where that one
+ *   was left. Optional: without it the surface opens as for a first reading.
  */
 
 export class AbstractEditor extends Lens {
@@ -97,6 +101,9 @@ export class AbstractEditor extends Lens {
 
   /** @type {object|null} what a code menu asks to pretty-print source. */
   #codeFormattingService = null
+
+  /** @type {unknown} the view state this editor was handed */
+  #viewState = null
 
   /** @type {AddressStatus|null} built on demand over the mention peer. */
   #addressStatus = null
@@ -144,6 +151,7 @@ export class AbstractEditor extends Lens {
     this.#commandService = options.commandService || null
     this.#triggerPlacement = options.triggerPlacement || null
     this.#codeFormattingService = options.codeFormattingService || null
+    this.#viewState = options.viewState ?? null
     this.#capabilities = this.#deriveCapabilities()
 
     // Subscribed before any surface mounts, so a save landing during the initial
@@ -163,6 +171,17 @@ export class AbstractEditor extends Lens {
    * @returns {string}
    */
   get uuid() { return this.#uuid }
+
+  /**
+   * The reader's view of the container: the surface's own while one is
+   * presented, else the one this editor was handed. The host keeps it across a
+   * tab switch and hands it to the next editor over the container.
+   * @returns {unknown}
+   */
+  get viewState() { return this.#surface ? this.#surface.viewState() : this.#viewState }
+
+  /** @protected @returns {unknown} the view state this editor was handed, for the surface it creates */
+  get _handedViewState() { return this.#viewState }
 
   /**
    * @override — the base's provider, WIDENED: which verbs are present IS the

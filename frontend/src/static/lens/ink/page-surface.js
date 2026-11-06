@@ -3,7 +3,8 @@
 // with the page chrome above it. It hears the container's feed itself, so the
 // page shown takes committed strokes as they arrive and the stroke under the pen
 // while it is the page being written; and it never moves the reader. Which page
-// is shown, and on a whiteboard which part of the plane, is the reader's alone.
+// is shown, and on a whiteboard which part of the plane, is the reader's alone,
+// and is handed to the next surface over the note as a ReaderView.
 
 import { AbstractSurface, SurfaceEvent, SurfaceIntent } from '../abstract-surface.js'
 import { INK_RULES } from '../../renderers/ink-renderer.js'
@@ -18,6 +19,16 @@ import { InkSheet } from './ink-sheet.js'
 /** @typedef {import('../../renderers/ink-renderer.js').InkWindow} InkWindow */
 /** @typedef {import('../abstract-surface.js').SurfaceStats} SurfaceStats */
 /** @typedef {import('./plane-window.js').PlaneWindow} PlaneWindow */
+/** @typedef {import('../../contract/ink-container-provider.js').InkPageAnswer} InkPageAnswer */
+
+/**
+ * The reader's view of a note: the page shown, where a whiteboard's window was,
+ * how a fixed page was sized, the pages marked unseen, and the highest log seq
+ * and stroke start every mark was decided against. A surface handed one opens
+ * where it says and marks the pages that took ink written after it.
+ * @typedef {Readonly<{page: string|null, window: import('./ink-sheet.js').WindowPlacement|null,
+ *   scale: string, unseen: ReadonlyArray<string>, seq: number, startMillis: number}>} ReaderView
+ */
 
 /**
  * What the surface asks of the lens that made it: the key claim, asked first
@@ -135,6 +146,11 @@ export class PageSurface extends AbstractSurface {
 
   .ink-page__chrome button:disabled { opacity: 0.4; cursor: default; }
 
+  .ink-page__chrome button:focus-visible {
+    outline: 2px solid var(--theme-accentPrimary);
+    outline-offset: 1px;
+  }
+
   .ink-page__position {
     font-variant-numeric: tabular-nums;
     color: var(--theme-text);
@@ -161,19 +177,20 @@ export class PageSurface extends AbstractSurface {
 
   .ink-page__dot[aria-current="page"]::before { background: var(--theme-text); }
 
-  .ink-page__dot[data-unseen]::after,
+  .ink-page__dot[data-unseen]::before { inset: 2px; background: var(--theme-accentPrimary); }
+
+  .ink-page__pager .ink-page__unseen { white-space: nowrap; color: var(--theme-text); }
+
   .ink-page__unseen::before {
     content: '';
-    position: absolute;
-    top: 0;
-    right: 0;
-    width: 5px;
-    height: 5px;
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 6px;
     border-radius: 50%;
     background: var(--theme-accentPrimary);
+    vertical-align: 0;
   }
-
-  .ink-page__pager .ink-page__unseen { position: relative; white-space: nowrap; }
 
   .ink-page__view { display: flex; align-items: center; gap: 2px; }
 
@@ -181,7 +198,18 @@ export class PageSurface extends AbstractSurface {
 
   .ink-page__status { flex-shrink: 100; color: var(--theme-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-  .ink-page__chrome .ink-page__open-live { color: var(--theme-muted); font-size: 0.9em; }
+  .ink-page__chrome .ink-page__open-live {
+    border-color: var(--theme-border2);
+    font-size: 0.9em;
+  }
+
+  .ink-page__chrome .ink-page__open-live:hover,
+  .ink-page__chrome .ink-page__open-live:focus-visible {
+    background: var(--theme-bgAlt);
+    color: var(--theme-text);
+  }
+
+  .ink-page__open-live::after { content: ' ↗'; }
 
   .ink-page__open-live::before,
   .ink-page__indicator::before {
@@ -227,6 +255,9 @@ export class PageSurface extends AbstractSurface {
 
   /** @type {boolean} whether a page, or the note's having none, has been shown */ #painted = false
   /** @type {Set<string>} pages with ink not seen since it arrived */ #unseen = new Set()
+  /** @type {ReaderView|null} the view handed to this surface, until its first page is drawn */ #restored = null
+  /** @type {number} the highest log seq heard, in a page answer or a stroke event */ #heardSeq = 0
+  /** @type {number} the latest stroke start heard, in a page answer or a stroke event; -1 before any */ #heardMillis = -1
   /** @type {string|null} the Live view mirroring this note while it is live; null when it is not */ #liveView = null
 
   /** @type {{id: number, x: number, y: number}|null} the pointer dragging the sheet */ #drag = null
@@ -236,13 +267,24 @@ export class PageSurface extends AbstractSurface {
    * @param {InkContainerProvider} provider the note's provider; its feed is heard
    *   from mount to unmount
    * @param {PageSurfaceHost} host
+   * @param {ReaderView|null} [view] where an earlier surface over the note left the reader
    */
-  constructor(provider, host) {
+  constructor(provider, host, view = null) {
     super()
     this.#provider = provider
     this.#host = host
     rendererStyles.register(PageSurface)
-    this.#sheet = new InkSheet(provider, { onSheetChanged: () => this.#sheetChanged() }, InkSheet.Policy.READER, InkSheet.Scale.FIT)
+    const scale = view && view.scale === PageSurface.Scale.ACTUAL ? PageSurface.Scale.ACTUAL : PageSurface.Scale.FIT
+    this.#sheet = new InkSheet(provider, {
+      onSheetChanged: () => this.#sheetChanged(),
+      onAnswered: (answer) => this.#answered(answer),
+    }, InkSheet.Policy.READER, scale)
+    if (view) {
+      this.#restored = view
+      this.#unseen = new Set(view.unseen)
+      this.#heardSeq = view.seq
+      this.#heardMillis = view.startMillis
+    }
     this.#root = this.#el('div', 'ink-page ink-page--reader')
     this.#root.tabIndex = 0
     const chrome = this.#el('header', 'ink-page__chrome')
@@ -270,9 +312,9 @@ export class PageSurface extends AbstractSurface {
       this.#button('actual', '100%', 'One grid unit to a pixel'),
       this.#button('fit', 'Fit all', 'Frame all the ink'),
     )
-    this.#openLive = this.#button('open-live', 'Live', 'Open the Live view')
+    this.#openLive = this.#button('open-live', 'Open Live view', '')
     this.#openLive.className = 'ink-page__open-live'
-    this.#openLive.title = 'This note is being written: open the Live view'
+    this.#openLive.title = 'This note is being written on the tablet: open the Live view'
     this.#openLive.hidden = true
     pager.append(this.#paging, this.#scaleButton, this.#viewTools, this.#openLive)
     const actions = this.#el('span', 'ink-page__actions')
@@ -321,6 +363,26 @@ export class PageSurface extends AbstractSurface {
 
   /** @returns {InkWindow|null} the part of the plane shown; null for a fixed page */
   get window() { return this.#sheet.window }
+
+  /** @returns {ReadonlySet<string>} the pages marked as holding ink not yet seen */
+  get unseenPages() { return this.#unseen }
+
+  /**
+   * Where the reader is, for the next surface over the note.
+   * @returns {ReaderView}
+   */
+  viewState() {
+    const sheet = this.#sheet
+    const drawn = sheet.drawn !== null && sheet.drawn === sheet.shown
+    return Object.freeze({
+      page: sheet.shown ?? (this.#restored ? this.#restored.page : null),
+      window: drawn ? sheet.placement : (this.#restored ? this.#restored.window : null),
+      scale: sheet.scale,
+      unseen: Object.freeze([...this.#unseen]),
+      seq: this.#heardSeq,
+      startMillis: this.#heardMillis,
+    })
+  }
 
   /**
    * Puts the page in the editor's root and starts hearing the feed, which is
@@ -405,6 +467,8 @@ export class PageSurface extends AbstractSurface {
   #target(index) {
     const pages = this.#sheet.pages
     if (this.#sheet.indexOf(this.#sheet.shown) >= 0) return this.#sheet.shown
+    const restored = this.#restored ? this.#restored.page : null
+    if (this.#sheet.shown === null && this.#sheet.indexOf(restored) >= 0) return restored
     const at = Math.min(Math.max(index, 0), pages.length - 1)
     return at >= 0 ? pages[at].id : null
   }
@@ -420,6 +484,7 @@ export class PageSurface extends AbstractSurface {
     switch (event.type) {
       case InkFeed.STROKE_ADDED:
       case InkFeed.STROKE_REMOVED:
+        this.#heard(event.seq, event.type === InkFeed.STROKE_ADDED ? [event.stroke] : [])
         if (!this.#sheet.takeStroke(event)) {
           this.#unseen.add(event.pageId)
           this.#renderChrome()
@@ -435,6 +500,7 @@ export class PageSurface extends AbstractSurface {
         break
       case InkFeed.LOG_RESTARTED:
         this.#unseen.clear()
+        this.#heardSeq = 0
         this.#sheet.restart(NO_PAGES)
         if (this.#sheet.shown === null && this.#sheet.pages.length) this.#show(this.#sheet.pages[0].id)
         break
@@ -578,8 +644,42 @@ export class PageSurface extends AbstractSurface {
   #show(pageId) {
     this.#painted = true
     if (pageId !== null) this.#unseen.delete(pageId)
-    this.#sheet.show(pageId, NO_PAGES)
+    const restored = this.#restored
+    this.#sheet.show(pageId, NO_PAGES, restored && restored.page === pageId ? restored.window : null)
     this.#renderChrome()
+  }
+
+  /**
+   * A page answer was drawn. The first after a ReaderView was handed over, when
+   * the log has moved past the seq the view was decided against, marks every
+   * other page holding a stroke begun after the latest stroke start it had heard.
+   * @param {InkPageAnswer} answer
+   */
+  #answered(answer) {
+    const restored = this.#restored
+    this.#restored = null
+    this.#heard(answer.seq, answer.page.strokes)
+    if (!restored || answer.seq <= restored.seq) return
+    const shown = this.#sheet.shown
+    for (const page of this.#sheet.pages) {
+      if (page.id === shown || this.#unseen.has(page.id)) continue
+      this.#provider.loadPage(page.id).then((other) => {
+        if (!this.#mounted) return
+        this.#heard(other.seq, other.page.strokes)
+        if (page.id === this.#sheet.shown || !other.page.strokes.some((s) => s.startMillis > restored.startMillis)) return
+        this.#unseen.add(page.id)
+        this.#renderChrome()
+      }, () => {})
+    }
+  }
+
+  /**
+   * Accounts a log seq and the strokes it brought as heard.
+   * @param {number} seq @param {ReadonlyArray<{startMillis: number}>} strokes
+   */
+  #heard(seq, strokes) {
+    this.#heardSeq = Math.max(this.#heardSeq, seq)
+    for (const stroke of strokes) this.#heardMillis = Math.max(this.#heardMillis, stroke.startMillis)
   }
 
   #sheetChanged() {

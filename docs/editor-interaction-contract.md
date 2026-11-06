@@ -265,15 +265,18 @@ Mode) and `Mod+Alt+P` (Presentation Mode) do nothing in it.
   does not scroll, so the lens also claims the bare arrows (move the window a tenth of its width or
   height) and `+`/`=` and `-`/`_` (zoom in and out by 1.25 about the window's centre; Shift is
   allowed, since it is how `+` is typed). Alt, Ctrl or Cmd leaves every key unclaimed.
-- **Pointer.** Previous and next; one dot per page (a click shows that page; a dot carries a mark
-  while its page has ink not yet seen), or, past twelve pages, one `n unseen` button, shown while
+- **Pointer.** Previous and next; one dot per page (a click shows that page; a page with ink not
+  yet seen has its dot drawn larger, in the accent colour), or, past twelve pages, one `n unseen`
+  button led by a dot in the accent colour, shown while
   any page has ink not yet seen, that shows the next such page after the one shown, from the first
   again past the last. A whiteboard of one page has no pager. A fixed page has fit-to-width ⇄ 100%
   (one grid unit to one CSS pixel, 1404 across) and scrolls in its surround. A whiteboard has `−`
   and `+` (zoom about the centre), `100%` (one grid unit to one CSS pixel, about the centre) and
   `Fit all` (frame all the ink with a margin; the sheet at the origin when there is none). While the
-  note is being written on the tablet, a quiet `Live` button opens the Live view in its own tab; it
-  is gone when the note is not live.
+  note is being written on the tablet, a quiet `Open Live view ↗` button, outlined and filled on
+  hover and focus, opens the Live view in its own tab; it is gone when the note is not live. Every
+  chrome button shows a focus ring when reached by keyboard, and chrome that does not apply (the
+  whiteboard's zoom on a fixed page, the unknown-template notice) is out of the Tab order.
 - **Copy page** puts the page shown on the clipboard as a PNG, 1404 pixels across: the white sheet,
   its ruling and its committed ink, pencil tone included, without the chrome or the stroke under the
   pen. A fixed page is copied whole, whatever its scroll or scale; a whiteboard is copied as its
@@ -289,8 +292,10 @@ Mode) and `Mod+Alt+P` (Presentation Mode) do nothing in it.
   `not-foreground`), `This note is not shared with this Sieve` (refused `not-offered`), `The tablet
   did not answer` (after five seconds), or `Could not ask the tablet`. It is offered only for a note
   that came from a tablet, and has no key.
-- **The whiteboard's window.** A whiteboard is shown through a window with the note's page aspect,
-  as large as fits the surround. Dragging the sheet with the primary button moves the window with
+- **The whiteboard's window.** A whiteboard is shown through a window that fills the surround and
+  takes its shape; when the surround changes shape the window keeps its zoom and its centre, or,
+  while it is still where `Fit all` put it, frames all the ink again. Dragging the sheet with the
+  primary button moves the window with
   the pointer; the wheel moves it (Shift turns a vertical wheel horizontal); Ctrl or Cmd with the
   wheel, and a trackpad pinch, zoom about the point under the pointer, which stays under it. Zoom
   runs from all the ink framed (or one sheet, whichever is farther) to a quarter of a sheet's width.
@@ -301,6 +306,10 @@ Mode) and `Mod+Alt+P` (Presentation Mode) do nothing in it.
   under the pen are drawn where they land, the surround is not scrolled to them, and the tablet's
   own window does not move the reader's. On a whiteboard, a stroke that arrives wholly outside the
   window marks the edge of the sheet it lies beyond, until the window shows it.
+- **The reader's place is kept.** Switching to another tab and back shows the same page, the same
+  fit-to-width or 100%, the same whiteboard window and the same pages marked, for as long as the tab
+  is open. Ink written while the tab was in the background marks the pages it landed on, as if it
+  had arrived while the tab was shown; a mark goes only when its page is shown.
 
 ### The Live view lens
 
@@ -320,7 +329,9 @@ mirror: the reader cannot turn its pages, move or zoom its window, or scroll it 
   scrolls the least that brings the pen back within 48 px of its edge, unless the reader has
   scrolled it in the last 0.8 s. A whiteboard is shown through the tablet's window (one sheet at one
   to one, where the tablet says its view is, or where its last stroke began while it has said
-  nothing), and moves with it; before the tablet has placed it, all its ink is framed.
+  nothing), and moves with it. A Live tab opened, or returned to, after the tablet last moved is
+  put on the tablet's window as soon as its page is drawn; while the tablet's window is not known
+  at all, the sheet is shown at the origin, one sheet at one to one.
 - **Chrome.** The device, the note's title, the page as `Page n / N` (or `Whiteboard`), and `Live`;
   while the tablet is not live and the view waits for it, `Waiting for the tablet…` and the last
   page written. Thirty seconds after the last live note the view, and its tab, are gone.

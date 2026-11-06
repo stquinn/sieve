@@ -306,6 +306,9 @@ func (es *EditorService) open(uuid string, recoverStuck bool) error {
 	if es.sessionFor(uuid) != nil {
 		return nil
 	}
+	if es.claimed(uuid) {
+		return es.openNode(uuid, fmt.Errorf("%w: %s", domain.ErrNodeNotFound, uuid))
+	}
 
 	doc, err := es.documents.LoadByUUID(uuid)
 	if err != nil {
@@ -397,6 +400,15 @@ func (es *EditorService) openNode(uuid string, notDocument error) error {
 	return nil
 }
 
+// claimed reports whether the resolver claims uuid (domain.NodeClaimer): a node no
+// store holds, which opens as a node without a store being asked for it.
+func (es *EditorService) claimed(uuid string) bool {
+	es.mu.RLock()
+	claimer, ok := es.nodes.(domain.NodeClaimer)
+	es.mu.RUnlock()
+	return ok && claimer.Claims(domain.NewContainerAddress(uuid))
+}
+
 // resolveNode is the node uuid names at container grain; domain.ErrNodeNotFound
 // when there is no resolver or it holds nothing there.
 func (es *EditorService) resolveNode(uuid string) (domain.NodeDescriptor, error) {
@@ -466,6 +478,16 @@ func (es *EditorService) FrontendBlocks(uuid string) ([]block.FrontendBlock, boo
 		return nil, false
 	}
 	return blocks, true
+}
+
+// ContainerVersion is the version of the stored block container open under uuid,
+// and false when what is open there is no stored block container, or nothing is.
+func (es *EditorService) ContainerVersion(uuid string) (int, bool) {
+	c, ok := es.sessionFor(uuid).(*containerSession)
+	if !ok {
+		return 0, false
+	}
+	return c.version(), true
 }
 
 // Blocks returns container uuid's current blocks: the open session's when it is

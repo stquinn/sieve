@@ -93,5 +93,7 @@ export class DigitalNoteLens extends AbstractEditor {
    * @param {string} _mode
    * @returns {PageSurface}
    */
-  _createSurface(_mode) { return new PageSurface(this.provider, this) }
+  _createSurface(_mode) {
+    return new PageSurface(this.provider, this, /** @type {import('./page-surface.js').ReaderView|null} */ (this._handedViewState))
+  }
 }
