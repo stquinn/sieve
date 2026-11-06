@@ -139,3 +139,27 @@ shorten the wait while testing, add `"settle_seconds": 30` inside `"ink"` in
   and 1.4 s in Chrome; with real GPU rendering it should be near the latter. If names never
   arrive and the log says a page was not drawn, that is this.
 - [ ] **No AI configured.** With the CLI unset, no job runs and notes keep the tablet's title.
+
+### Reading a page
+
+In a note's own tab, **Page | Reading** in the bar, or Mod+Enter, switches between the ink and its
+reading. A reading belongs to one page and is made only when asked for.
+
+- [ ] **Handwriting as text.** On a page of real handwriting: Reading → Read this page. The text is
+  faithful, headings and lists are kept, and a word the model could not read shows as `[?]`.
+- [ ] **A sketch as a diagram.** A page with a hand-drawn flow or boxes-and-arrows comes back with
+  a Mermaid diagram that draws. With a PlantUML server configured, a sequence sketch may come back
+  as PlantUML and should draw too; without one it shows its source under a short error.
+- [ ] **Read once.** Leave the page and come back, or restart Sieve: the reading is there with no
+  new job. There is no way to redo a reading of an unchanged page; say if that is wanted.
+- [ ] **Stale.** Write on that page on the Boox: the reading dims with "This page has changed since
+  it was read" and no reload. Read again replaces it, and the note's directory holds one
+  `reading-…json` for the page, not two.
+- [ ] **New document.** New document opens an ordinary note named "{name} — page n" holding the
+  text and diagrams. Edit it, file it, close it: it behaves like any note, and the ink note and its
+  reading are unchanged.
+- [ ] **The name in the bar.** A note open in a tab when it is named: the bar changes to the new
+  name without a reload.
+- [ ] **In the real window.** Mod+Enter switches modes and the keyboard follows (PageUp/PageDown
+  still turn pages in Reading). Only exercised in Chrome so far.
+- [ ] **No AI configured.** Reading says why and offers no button.
