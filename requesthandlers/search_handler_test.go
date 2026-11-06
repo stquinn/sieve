@@ -200,7 +200,7 @@ func TestSearchHandler_FindsANotebook(t *testing.T) {
 	for _, tc := range []struct{ path, badge string }{
 		{"/ui/views/sidebar/search?list_only=true&q=kitchen", `store-search__badge">Title`},
 		{"/ui/views/sidebar/search?list_only=true&q=budget", `store-search__badge">Summary`},
-		{"/ui/views/sidebar/search?list_only=true&q=extension", `store-search__badge">Tag Match`},
+		{"/ui/views/sidebar/search?list_only=true&q=extension", `store-search__badge">Tag`},
 		{"/ui/views/search?q=", ""},
 		{"/ui/views/search?q=plans", ""},
 	} {
