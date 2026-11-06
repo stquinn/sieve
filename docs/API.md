@@ -1376,6 +1376,7 @@ or another protocol's own transport.
 |---|---|---|
 | `DELETE` | `/api/document/{uuid}/asset/{key}` | typed (none) |
 | `DELETE` | `/api/folder/{id}` | — |
+| `DELETE` | `/api/ink/notes/{uuid}` | — |
 | `DELETE` | `/api/note/{id}` | — |
 | `DELETE` | `/mcp` | — |
 | `GET` | `/` | — |
