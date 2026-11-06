@@ -29,7 +29,7 @@
   {{else}}
   {{range .Entries}}{{template "entry" .}}{{end}}
   {{end}}
-  <div id="sidebar-buffers" class="buffers-tree" hx-get="/ui/views/sidebar/buffers" hx-trigger="sieve:invalidate-session from:document, sieve:invalidate-notes from:document" hx-swap="innerHTML">{{template "buffers_sidebar.html" .Buffers}}</div>
+  <div id="sidebar-buffers" class="buffers-tree">{{template "buffers_sidebar.html" .Buffers}}</div>
 </div>
 {{end}}
 

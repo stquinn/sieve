@@ -590,7 +590,7 @@ func TestBuffersSidebar_IsTheLastItemOfTheTreeAndListsEveryBuffer(t *testing.T) 
 		}
 		return body
 	}
-	mount := `<div id="sidebar-buffers" class="buffers-tree" hx-get="/ui/views/sidebar/buffers" hx-trigger="sieve:invalidate-session from:document, sieve:invalidate-notes from:document" hx-swap="innerHTML">`
+	mount := `<div id="sidebar-buffers" class="buffers-tree">`
 	tree := get("/ui/views/sidebar")
 	if at, empty := strings.Index(tree, mount), strings.Index(tree, "No filed documents yet"); empty < 0 || at < empty ||
 		!strings.Contains(tree, `buffers-tree__count">0<`) || !strings.Contains(get("/ui/views/sidebar/buffers"), ">Buffers<") {
