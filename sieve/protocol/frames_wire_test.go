@@ -324,6 +324,12 @@ func outboundWireCases() []wireCase {
 			golden:  `{"type":"ink-live-page","live":false}`,
 		},
 		{
+			name:    "ink-log-restarted",
+			channel: ChannelDocument,
+			frame:   NewInkLogRestartedFrame(),
+			golden:  `{"type":"ink-log-restarted"}`,
+		},
+		{
 			name:    "error",
 			channel: ChannelDocument,
 			frame:   NewErrorFrame("block-op create-block failed: nope"),

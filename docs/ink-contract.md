@@ -434,6 +434,12 @@ with pattern `ink-b{i}`; group `live`. Each group is `<g data-ink="{name}">`; `p
 pen stroke is `<path data-stroke="{id}">`; a pencil stroke is, in each band it touches,
 `<g data-stroke="{id}">` of one `<path>` per chunk.
 
+**Window.** An unbounded page is drawn through a window, a rectangle `x0 < x1`, `y0 < y1` of the
+plane in page units: the `viewBox` is the window in grid units, `x0·1404 y0·1404 (x1−x0)·1404
+(y1−y0)·1404` (each to one decimal), with `width` and `height` its two sizes; the white background
+is a `<rect>` filling exactly that box; and strokes and the ruling are placed on the plane, so they
+do not move when the window does. A fixed page is drawn with no window.
+
 **Path data.** For an outline o₀…oₘ: Douglas–Peucker with tolerance 0.25 grid units, vertices
 snapped to multiples of 0.2 and consecutive duplicates dropped; then `M o₀`, a quadratic with
 control o₀ to mid(o₀,o₁), and a smooth quadratic (`t`) through each following midpoint, so each

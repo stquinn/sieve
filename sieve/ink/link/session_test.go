@@ -17,6 +17,7 @@ type recorder struct {
 	mu        sync.Mutex
 	committed []uint32
 	live      []ID
+	aside     []ID
 	done      chan uint32
 }
 
@@ -34,6 +35,11 @@ func (r *recorder) Committed(_ ID, rec Record) {
 	defer r.mu.Unlock()
 	r.committed = append(r.committed, rec.Seq)
 }
+func (r *recorder) SetAside(note ID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.aside = append(r.aside, note)
+}
 func (r *recorder) Live(note, _ ID) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -46,6 +52,8 @@ type harness struct {
 	t         *testing.T
 	companion *ScriptedCompanion
 	replicas  *countingReplicas
+	// obs is the observer of the last run.
+	obs *recorder
 }
 
 // countingReplicas counts the replicas a session opens.
@@ -104,7 +112,8 @@ func (h *harness) run(key Key, p Plan) error {
 	}()
 	defer ours.Close()
 	done := make(chan error, 1)
-	go func() { done <- NewSession(ours, key, h.replicas, newRecorder(), p).Run() }()
+	h.obs = newRecorder()
+	go func() { done <- NewSession(ours, key, h.replicas, h.obs, p).Run() }()
 	select {
 	case err := <-done:
 		return err
@@ -199,6 +208,9 @@ func TestAReplicaTheCompanionDisownsIsSetAsideAndAskedForAgain(t *testing.T) {
 			}
 			if aside := h.held().Aside(); len(aside) != 1 || len(aside[0]) != c.aside {
 				t.Errorf("set aside %v", aside)
+			}
+			if heard := h.obs.aside; len(heard) != 1 || heard[0] != vectorNote {
+				t.Errorf("the observer heard %v set aside, want the note once", heard)
 			}
 			if got := h.held().Cursor().Seq; got != uint32(len(vectorRecords)) {
 				t.Errorf("held %d", got)

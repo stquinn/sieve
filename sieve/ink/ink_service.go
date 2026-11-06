@@ -77,6 +77,10 @@ type Listener interface {
 	LiveInk(records []link.LiveRecord)
 	// LiveChanged is the companion showing another note or page as live, or none.
 	LiveChanged(live LiveNote)
+	// LogRestarted is the replica of note, held in container, set aside: the container's log
+	// starts again from seq 1, and every record RecordCommitted reports for it from now on is the
+	// new log's.
+	LogRestarted(container string, note link.ID)
 }
 
 // SessionNumbers are one session's measurements. The catch-up runs from the first note the
@@ -168,8 +172,10 @@ type InkService struct {
 	numbers      SessionNumbers
 	hasNumbers   bool
 	invalidated  time.Time
-	feeds        []*listenerFeed
-	redial       redialPause
+	// live is the note a session's companion shows as being written now; the zero LiveNote when none.
+	live   LiveNote
+	feeds  []*listenerFeed
+	redial redialPause
 	// lastFailure is the error the last session ended on before connecting, "" after one connects.
 	lastFailure string
 }
@@ -267,11 +273,16 @@ func (s *InkService) NewKey() error {
 	return nil
 }
 
-// Subscribe adds l, which must be comparable, to the listeners; it hears events from now on.
+// Subscribe adds l, which must be comparable, to the listeners; it hears events from now on, first
+// of them LiveChanged for the note live now when one is.
 func (s *InkService) Subscribe(l Listener) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.feeds = append(s.feeds, &listenerFeed{listener: l})
+	feed := &listenerFeed{listener: l}
+	s.feeds = append(s.feeds, feed)
+	if live := s.live; live != (LiveNote{}) {
+		feed.push(func(l Listener) { l.LiveChanged(live) })
+	}
 }
 
 // Unsubscribe removes l. A call already running finishes; nothing queued for l is delivered.
@@ -305,6 +316,14 @@ func (s *InkService) Status() Status {
 	}
 	st.Notes, st.Companions = s.synced(open)
 	return st
+}
+
+// Live is the note and page a companion shows as being written now; the zero LiveNote when none
+// is. Listeners hear each change as LiveChanged after it has happened.
+func (s *InkService) Live() LiveNote {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.live
 }
 
 // ExportPage is the page at index page of the Digital Note in container uuid, in the §4.2 export
@@ -652,7 +671,20 @@ func (r *sessionRun) Live(note, page link.ID) {
 		live.Container = uuid
 	}
 	r.live = note != (link.ID{})
+	r.svc.mu.Lock()
+	r.svc.live = live
+	r.svc.mu.Unlock()
 	r.svc.publish(func(l Listener) { l.LiveChanged(live) })
+}
+
+func (r *sessionRun) SetAside(note link.ID) {
+	uuid, err := r.replicas.UUID(note)
+	if err != nil {
+		logger.Warn("ink: finding a set-aside note's container", "note", note.String(), "err", err.Error())
+	}
+	if uuid != "" {
+		r.svc.publish(func(l Listener) { l.LogRestarted(uuid, note) })
+	}
 }
 
 func (r *sessionRun) Ink(records []link.LiveRecord) {
@@ -689,6 +721,9 @@ func (r *sessionRun) measure() {
 // before connecting on the error the one before it ended on is logged at Debug.
 func (r *sessionRun) end(ctx context.Context, err error) bool {
 	if r.live {
+		r.svc.mu.Lock()
+		r.svc.live = LiveNote{}
+		r.svc.mu.Unlock()
 		r.svc.publish(func(l Listener) { l.LiveChanged(LiveNote{}) })
 	}
 	text := fmt.Sprint(err)

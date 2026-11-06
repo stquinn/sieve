@@ -86,6 +86,7 @@ const (
 	TypeInkStrokeRemoved        = "ink-stroke-removed"
 	TypeInkLive                 = "ink-live"
 	TypeInkLivePage             = "ink-live-page"
+	TypeInkLogRestarted         = "ink-log-restarted"
 
 	// Workspace channel, client → server.
 	TypeCommand        = "command"

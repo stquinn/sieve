@@ -133,17 +133,22 @@ export class InkRenderer {
   }
 
   /**
-   * The whole page as a standalone SVG document.
+   * The whole page as a standalone SVG document. Without a window the page is
+   * the sheet its aspect gives; with one, the viewBox is the window in grid
+   * units, the background fills it, and strokes and ruling sit on the plane.
    * @param {InkPage} page
+   * @param {InkWindow} [window] the part of the plane shown; an unbounded page needs one
    * @returns {string}
    */
-  renderPage(page) {
+  renderPage(page, window) {
     const aspect = page?.note?.pageAspect
     if (!(aspect > 0) || !Array.isArray(page.strokes)) {
       throw new ContractViolation('ink: a page needs note.pageAspect > 0 and a strokes array')
     }
-    const width = INK_RULES.grid
-    const height = Math.round(width / aspect)
+    if (window && !(window.x1 > window.x0 && window.y1 > window.y0)) {
+      throw new ContractViolation('ink: a window needs x0 < x1 and y0 < y1')
+    }
+    const g = INK_RULES.grid
     /** @type {string[][]} */
     const layers = INK_LAYERS.map(() => [])
     const pen = INK_LAYERS.indexOf('pen')
@@ -152,11 +157,26 @@ export class InkRenderer {
       if (markup.pen) layers[pen].push(markup.pen)
       markup.bands.forEach((part, i) => { if (part) layers[pen + 1 + i].push(part) })
     }
-    const ruling = this.renderRuling(page.note.template, { x0: 0, y0: 0, x1: 1, y1: 1 / aspect })
+    const ruling = this.renderRuling(page.note.template, window ?? { x0: 0, y0: 0, x1: 1, y1: 1 / aspect })
+    let frame
+    if (window) {
+      const [x, y] = [InkRenderer.#grid(window.x0 * g), InkRenderer.#grid(window.y0 * g)]
+      const [w, h] = [InkRenderer.#grid((window.x1 - window.x0) * g), InkRenderer.#grid((window.y1 - window.y0) * g)]
+      frame = [
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="${x} ${y} ${w} ${h}">`,
+        `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#fff"/>`,
+      ]
+    } else {
+      const height = Math.round(g / aspect)
+      frame = [
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${g}" height="${height}" viewBox="0 0 ${g} ${height}">`,
+        '<rect width="100%" height="100%" fill="#fff"/>',
+      ]
+    }
     return [
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+      frame[0],
       `<defs>${this.#patternDefs()}</defs>`,
-      '<rect width="100%" height="100%" fill="#fff"/>',
+      frame[1],
       ...INK_LAYERS.map((name, i) => (name === 'ruling' ? ruling : InkRenderer.#layer(name, layers[i]))),
       '</svg>',
     ].join('\n')

@@ -50,6 +50,29 @@ describe('InkRenderer renders the conformance set', () => {
   })
 })
 
+describe('InkRenderer.renderPage through a window', () => {
+  const page = () => loadPage('2026-10-31-boox-test-page')
+  const WINDOW = Object.freeze({ x0: -0.25, y0: -0.5, x1: 0.75, y1: 0.25 })
+
+  it('has the window in grid units as its viewBox, filled white, with the ruling over the window', () => {
+    const svg = renderer.renderPage(page(), WINDOW)
+    expect(svg.split('\n')[0]).toBe('<svg xmlns="http://www.w3.org/2000/svg" width="1404" height="1053" viewBox="-351 -702 1404 1053">')
+    expect(svg).toContain('<rect x="-351" y="-702" width="1404" height="1053" fill="#fff"/>')
+    expect(svg).toContain(renderer.renderRuling(page().note.template, WINDOW))
+  })
+
+  it('places every stroke on the plane exactly as a fixed page does', () => {
+    const fixed = renderer.renderPage(page()).split('\n').filter((line) => line.includes('data-stroke'))
+    const windowed = renderer.renderPage(page(), WINDOW).split('\n').filter((line) => line.includes('data-stroke'))
+    expect(windowed.length).toBeGreaterThan(0)
+    expect(windowed).toEqual(fixed)
+  })
+
+  it('refuses a window with no area', () => {
+    expect(() => renderer.renderPage(page(), { x0: 0, y0: 0, x1: 0, y1: 1 })).toThrow('window')
+  })
+})
+
 describe('InkRenderer.widthFor', () => {
   // Widths measured on the ladder fixture's tablet PNG (its README), in pixels
   // at a 1404-pixel page; the rule must land within a pixel of each.

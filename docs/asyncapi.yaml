@@ -65,6 +65,8 @@ channels:
         $ref: '#/components/messages/documentInkLive'
       documentInkLivePage:
         $ref: '#/components/messages/documentInkLivePage'
+      documentInkLogRestarted:
+        $ref: '#/components/messages/documentInkLogRestarted'
       documentInkPageContent:
         $ref: '#/components/messages/documentInkPageContent'
       documentInkStrokeAdded:
@@ -169,6 +171,7 @@ operations:
       - $ref: '#/channels/document/messages/documentExtractAck'
       - $ref: '#/channels/document/messages/documentInkLive'
       - $ref: '#/channels/document/messages/documentInkLivePage'
+      - $ref: '#/channels/document/messages/documentInkLogRestarted'
       - $ref: '#/channels/document/messages/documentInkPageContent'
       - $ref: '#/channels/document/messages/documentInkStrokeAdded'
       - $ref: '#/channels/document/messages/documentInkStrokeRemoved'
@@ -532,6 +535,17 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolInkLivePageFrame'
+    documentInkLogRestarted:
+      name: ink-log-restarted
+      title: ink-log-restarted
+      summary: InkLogRestartedFrame is the note's log started again from its first record in this channel's container.
+      description: |-
+        InkLogRestartedFrame is the note's log started again from its first record in this channel's
+        container. Every page answer and seq a client holds for the note is void: it asks for its pages
+        again, and the stroke frames that follow are numbered from the new log.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProtocolInkLogRestartedFrame'
     documentInkPageContent:
       name: ink-page-content
       title: ink-page-content
@@ -1786,6 +1800,17 @@ components:
         - tMillis
         - tiltX
         - tiltY
+    ProtocolInkLogRestartedFrame:
+      type: object
+      description: |-
+        InkLogRestartedFrame is the note's log started again from its first record in this channel's
+        container. Every page answer and seq a client holds for the note is void: it asks for its pages
+        again, and the stroke frames that follow are numbered from the new log.
+      properties:
+        type:
+          type: string
+      required:
+        - type
     ProtocolInkPageContentFrame:
       type: object
       description: |-

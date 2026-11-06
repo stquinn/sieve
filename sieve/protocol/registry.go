@@ -123,6 +123,7 @@ func (r *Registry) registerDocumentFrames() {
 	r.addFrame(ChannelDocument, Outbound, TypeInkStrokeRemoved, InkStrokeRemovedFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeInkLive, InkLiveFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeInkLivePage, InkLivePageFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeInkLogRestarted, InkLogRestartedFrame{})
 }
 
 func (r *Registry) registerWorkspaceFrames() {

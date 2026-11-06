@@ -474,7 +474,7 @@ export class DocumentService {
 
   /**
    * Subscribe to this container's ink frames — strokes added and removed, live
-   * records and the live page — as Go sent them, in arrival order. The page
+   * records, the live page and a restarted log — as Go sent them, in arrival order. The page
    * answer is correlated and is not among them.
    * @param {string} uuid @param {(msg: Record<string, any>) => void} observer
    * @returns {() => void} unsubscribe
@@ -492,6 +492,7 @@ export class DocumentService {
     DocumentFrame.INK_STROKE_REMOVED,
     DocumentFrame.INK_LIVE,
     DocumentFrame.INK_LIVE_PAGE,
+    DocumentFrame.INK_LOG_RESTARTED,
   ])
 
   /**

@@ -72,6 +72,7 @@ describe('InkProviderAdapter', () => {
     sock.driveMessage({ type: DocumentFrame.BLOCK_ATTRS_UPDATED, id: UUID, attrs: { title: 'Ideas' } })
     sock.driveMessage({ type: DocumentFrame.INK_STROKE_ADDED, pageId: 'p1', seq: 5, stroke: STROKE })
     sock.driveMessage({ type: DocumentFrame.INK_STROKE_REMOVED, pageId: 'p1', seq: 6, strokeId: 's1' })
+    sock.driveMessage({ type: DocumentFrame.INK_LOG_RESTARTED })
     sock.driveMessage({ type: DocumentFrame.INK_LIVE_PAGE, live: false })
     expect(heard).toEqual([
       { type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1' },
@@ -84,6 +85,7 @@ describe('InkProviderAdapter', () => {
       },
       { type: InkFeed.STROKE_ADDED, pageId: 'p1', seq: 5, stroke: STROKE },
       { type: InkFeed.STROKE_REMOVED, pageId: 'p1', seq: 6, strokeId: 's1' },
+      { type: InkFeed.LOG_RESTARTED },
       { type: InkFeed.LIVE_PAGE, live: false, pageId: null },
     ])
     expect(heard.every((e) => Object.isFrozen(e))).toBe(true)

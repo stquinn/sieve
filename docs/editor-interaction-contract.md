@@ -228,6 +228,7 @@ The resulting order for one keystroke, highest first:
 | Prompt (`PromptEditor`) | **nothing** | the matrix above, unchanged |
 | Composer (`ComposerEditor`) | `Mod+Enter` → send the message | the matrix above, unchanged |
 | Block container whose kind has no lens (`BlockLens`) | **nothing** | none of the matrix: there is no editing surface. The block is drawn read-only by its kind's renderer, which keeps its read affordances (selection, copy, pan, filters) and drops every edit |
+| Digital Note (`DigitalNoteLens`) | bare `PageUp` → previous page, bare `PageDown` → next page | none of the matrix: there is no editing surface (below) |
 
 **The composer is EDITOR-FIRST (revised 2026-08-28, #118):** it claims exactly
 one chord, `Mod+Enter`, and nothing else. Bare `Enter`, `Shift+Enter` and
@@ -249,6 +250,25 @@ this block's mode" in the note editor, and each mount's `claimKey` is the
 sole place either meaning is decided. `Escape` is unclaimed in the composer
 too — it belongs to the picker while one is open, and to the host panel
 otherwise (below).
+
+### The Digital Note lens
+
+`DigitalNoteLens` presents a Digital Note one page at a time, in its one mode, `page`. It is
+read-only: it declares no capability, has no verb that writes, and `Mod+Alt+M` (Toggle Editor
+Mode) and `Mod+Alt+P` (Presentation Mode) do nothing in it.
+
+- **Keys.** The page element is focusable (a click on the sheet focuses it). Its keydown asks the
+  lens's `claimKey` first, which claims bare `PageUp` (previous page) and bare `PageDown` (next
+  page) and nothing else; a turn at the first or last page does nothing. Any modifier leaves the
+  key unclaimed. Arrow keys, `Home`/`End` and `Space` are not claimed and scroll as the browser
+  scrolls.
+- **Pointer.** Previous and next, one dot per page (a click shows that page; a dot carries a mark
+  while its page has ink not yet seen), fit-to-width ⇄ 100% (one grid unit to one CSS pixel,
+  1404 across a fixed page), and, while the note is live, the live button.
+- **Following.** While the tablet shows a page of the note as being written, the lens shows that
+  page and follows it as it changes. Turning to another page by hand pauses following; turning
+  back to the live page by hand, or pressing the live button, resumes it. The live button shows
+  `Live` while following and `Back to live` while paused, and is gone when the note is not live.
 
 ## Policy declaration (revised 2026-07-29)
 

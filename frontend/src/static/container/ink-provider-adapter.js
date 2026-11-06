@@ -60,6 +60,8 @@ export class InkProviderAdapter extends ProviderAdapter {
         return { type: InkFeed.LIVE, records: (frame.records || []).map((/** @type {Record<string, any>} */ r) => this.#liveRecord(r)) }
       case DocumentFrame.INK_LIVE_PAGE:
         return { type: InkFeed.LIVE_PAGE, live: frame.live === true, pageId: frame.live === true ? String(frame.pageId) : null }
+      case DocumentFrame.INK_LOG_RESTARTED:
+        return { type: InkFeed.LOG_RESTARTED }
       default:
         return null
     }

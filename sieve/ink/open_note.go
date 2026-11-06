@@ -104,6 +104,21 @@ func (o *OpenNote) Commit(rec link.Record, send func(StrokeChange)) {
 	}
 }
 
+// Restart replays the note's log again as it now stands, which starts from seq 1 once its replica
+// has been set aside, and then calls send while the note is held, so every change handed out after
+// send is the new log's.
+func (o *OpenNote) Restart(send func()) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.note == nil {
+		return
+	}
+	if err := o.load(); err != nil {
+		logger.Error("ink: replaying a restarted note", "container", o.uuid, "err", err.Error())
+	}
+	send()
+}
+
 // OpenNotes are the Digital Notes held open for views, by container uuid. A note is held from the
 // first Open of its container to Release; a container not held costs nothing. It is safe for
 // concurrent use.
@@ -157,6 +172,17 @@ func (ns *OpenNotes) Commit(uuid string, rec link.Record, send func(StrokeChange
 	ns.mu.Unlock()
 	if ok {
 		o.Commit(rec, send)
+	}
+}
+
+// Restart restarts the note of container uuid from its log, if it is held, and calls send as
+// OpenNote.Restart does.
+func (ns *OpenNotes) Restart(uuid string, send func()) {
+	ns.mu.Lock()
+	o, ok := ns.notes[uuid]
+	ns.mu.Unlock()
+	if ok {
+		o.Restart(send)
 	}
 }
 

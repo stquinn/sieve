@@ -62,6 +62,7 @@ alone, so the token appears in no response header.
 | `extract-ack` | `protocol.AckFrame` | `opId` | AckFrame is the request-correlated outcome of a block-op or an extract. |
 | `ink-live` | `protocol.InkLiveFrame` | — | InkLiveFrame is live records in the order the tablet sent them. |
 | `ink-live-page` | `protocol.InkLivePageFrame` | — | InkLivePageFrame is which page of this channel's note the tablet shows as being written, or that none is. |
+| `ink-log-restarted` | `protocol.InkLogRestartedFrame` | — | InkLogRestartedFrame is the note's log started again from its first record in this channel's container. |
 | `ink-page-content` | `protocol.InkPageContentFrame` | `opId` | InkPageContentFrame answers an ink-page: the page in the export shape and the seq of the last record it reflects, or why there is none. |
 | `ink-stroke-added` | `protocol.InkStrokeAddedFrame` | — | InkStrokeAddedFrame is a stroke now present on a page, committed by the record of Seq. |
 | `ink-stroke-removed` | `protocol.InkStrokeRemovedFrame` | — | InkStrokeRemovedFrame is a stroke gone from a page, removed by the record of Seq. |
@@ -378,6 +379,14 @@ InkLivePageFrame is which page of this channel's note the tablet shows as being 
 | `type` | `string` | yes |  |
 | `live` | `bool` | yes | false when no page of this note is live any more |
 | `pageId` | `string` | no | the live page; absent when live is false |
+
+#### `ink-log-restarted` — server → client
+
+InkLogRestartedFrame is the note's log started again from its first record in this channel's container.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
 
 #### `ink-page-content` — server → client
 

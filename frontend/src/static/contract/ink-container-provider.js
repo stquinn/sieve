@@ -48,6 +48,7 @@ export const InkFeed = Object.freeze({
   STROKE_REMOVED: 'stroke-removed',
   LIVE: 'live',
   LIVE_PAGE: 'live-page',
+  LOG_RESTARTED: 'log-restarted',
 })
 
 /**
@@ -91,7 +92,13 @@ export const InkFeed = Object.freeze({
  * @typedef {Readonly<{type: 'live-page', live: boolean, pageId: string|null}>} InkLivePage
  */
 
-/** @typedef {InkStrokeAdded|InkStrokeRemoved|InkLive|InkLivePage} InkFeedEvent */
+/**
+ * The note's log started again from its first record: every page answer and
+ * seq held is void, and a page is asked for again to be drawn as it now stands.
+ * @typedef {Readonly<{type: 'log-restarted'}>} InkLogRestarted
+ */
+
+/** @typedef {InkStrokeAdded|InkStrokeRemoved|InkLive|InkLivePage|InkLogRestarted} InkFeedEvent */
 
 /**
  * The read minimum and the feed, plus the pages. `loadPage` REJECTS for a page

@@ -110,3 +110,15 @@ type InkLivePageFrame struct {
 func NewInkLivePageFrame(pageID string) InkLivePageFrame {
 	return InkLivePageFrame{Type: TypeInkLivePage, Live: pageID != "", PageID: pageID}
 }
+
+// InkLogRestartedFrame is the note's log started again from its first record in this channel's
+// container. Every page answer and seq a client holds for the note is void: it asks for its pages
+// again, and the stroke frames that follow are numbered from the new log.
+type InkLogRestartedFrame struct {
+	Type string `json:"type"`
+}
+
+// NewInkLogRestartedFrame builds the restarted-log push.
+func NewInkLogRestartedFrame() InkLogRestartedFrame {
+	return InkLogRestartedFrame{Type: TypeInkLogRestarted}
+}

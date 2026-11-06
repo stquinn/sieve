@@ -199,7 +199,8 @@ func newInkStream(svc *ink.InkService, send func(uuid string, frame interface{})
 func (s *inkStream) close() { s.svc.Unsubscribe(s) }
 
 // answerPage answers an ink-page for container uuid through reply, holding the container's note
-// open from now until release.
+// open from now until release. The answer that opens the note is followed by the live page when
+// the note is the live one.
 func (s *inkStream) answerPage(uuid string, msg protocol.InkPageFrame, reply func(interface{})) {
 	refuse := func(err error) { reply(protocol.NewInkPageRefusedFrame(msg.OpID, msg.PageID, err)) }
 	page, err := link.ParseID(msg.PageID)
@@ -207,10 +208,14 @@ func (s *inkStream) answerPage(uuid string, msg protocol.InkPageFrame, reply fun
 		refuse(fmt.Errorf("%w: page %q: %v", ink.ErrNoSuchPage, msg.PageID, err))
 		return
 	}
+	opening := !s.notes.Holds(uuid)
 	note, err := s.notes.Open(uuid)
 	if err != nil {
 		refuse(err)
 		return
+	}
+	if opening {
+		defer s.tellLive(uuid, reply)
 	}
 	err = note.AnswerPage(page, func(export []byte, seq uint32) error {
 		var decoded protocol.InkPageExport
@@ -222,6 +227,14 @@ func (s *inkStream) answerPage(uuid string, msg protocol.InkPageFrame, reply fun
 	})
 	if err != nil {
 		refuse(err)
+	}
+}
+
+// tellLive sends the live page through send when container uuid holds the note the service has
+// live now. A LiveChanged still queued for the stream follows it with what it says.
+func (s *inkStream) tellLive(uuid string, send func(interface{})) {
+	if live := s.svc.Live(); live.Container == uuid {
+		send(protocol.NewInkLivePageFrame(live.Page.String()))
 	}
 }
 
@@ -278,6 +291,12 @@ func (s *inkStream) LiveChanged(live ink.LiveNote) {
 	if live.Container != "" {
 		s.send(live.Container, protocol.NewInkLivePageFrame(live.Page.String()))
 	}
+}
+
+// LogRestarted starts the container's open note again from its restarted log and tells its
+// socket so, before any stroke frame of the new log.
+func (s *inkStream) LogRestarted(container string, _ link.ID) {
+	s.notes.Restart(container, func() { s.send(container, protocol.NewInkLogRestartedFrame()) })
 }
 
 // recordWord is a live mark's type as an ink-live record names it.

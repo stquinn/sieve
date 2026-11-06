@@ -34,6 +34,7 @@ func (o catchUpObserver) Done(note link.ID, _ uint32, _ int) {
 func (catchUpObserver) Live(link.ID, link.ID)   {}
 func (catchUpObserver) Ink([]link.LiveRecord)   {}
 func (catchUpObserver) Refused(link.ID, string) {}
+func (catchUpObserver) SetAside(link.ID)        {}
 
 // replicaRig is one Sieve's store and one companion serving noteID, synced by real sessions.
 type replicaRig struct {

@@ -543,6 +543,9 @@ func (l *recordingListener) RecordCommitted(container string, note link.ID, rec 
 	l.add("record %d held=%t", rec.Seq, container != "" && note == noteID)
 }
 func (l *recordingListener) LiveInk(records []link.LiveRecord) { l.add("ink %d", len(records)) }
+func (l *recordingListener) LogRestarted(container string, note link.ID) {
+	l.add("restarted held=%t", container != "" && note == noteID)
+}
 func (l *recordingListener) LiveChanged(live LiveNote) {
 	if live == (LiveNote{}) {
 		l.add("live none")
@@ -568,14 +571,30 @@ func TestInkService_ListenersHearEventsInOrderAndASlowOneStallsNothing(t *testin
 	rig.enable(linkKey)
 	rig.start()
 	rig.await("caught up", func(st Status) bool { return connected(st) && st.Session.Records == len(records)-2 })
+	if live := rig.svc.Live(); live.Note != noteID || live.Page != page(1) || live.Container == "" {
+		t.Errorf("live while the companion shows the note: %+v", live)
+	}
+	late := &recordingListener{}
+	rig.svc.Subscribe(late)
 	rig.stopPromptly()
+	if live := rig.svc.Live(); live != (LiveNote{}) {
+		t.Errorf("live after the session ended: %+v", live)
+	}
+	lateWant := []string{"live page=true held=true", "live none", "link off"}
+	deadline := time.Now().Add(2 * time.Second)
+	for len(late.heard()) < len(lateWant) && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := late.heard(); strings.Join(got, "\n") != strings.Join(lateWant, "\n") {
+		t.Errorf("a listener subscribed while live heard %v, want %v", got, lateWant)
+	}
 
 	want := []string{"link looking", "link connected", "live page=true held=true", "ink 1"}
 	for _, r := range records[2:] {
 		want = append(want, fmt.Sprintf("record %d held=true", r.Seq))
 	}
 	want = append(want, "live none", "link off")
-	deadline := time.Now().Add(2 * time.Second)
+	deadline = time.Now().Add(2 * time.Second)
 	for len(ours.heard()) < len(want) && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -590,6 +609,33 @@ func TestInkService_ListenersHearEventsInOrderAndASlowOneStallsNothing(t *testin
 	rig.stopPromptly()
 	if got := len(ours.heard()); got != len(want) {
 		t.Errorf("an unsubscribed listener heard %d more events", got-len(want))
+	}
+}
+
+// A replica the companion disowns is heard as the note's log restarting, before the records of the
+// new log.
+func TestInkService_ASetAsideReplicaIsHeardAsARestartedLog(t *testing.T) {
+	records := inkLog()
+	rig := newInkRig(t, records[:2])
+	if err := rig.sync(); err != nil {
+		t.Fatal(err)
+	}
+	rig.svc = rig.newService()
+	rig.companion.SetRecords(records)
+	rig.companion.CorruptHead = true
+	heard := &recordingListener{}
+	rig.svc.Subscribe(heard)
+	rig.enable(linkKey)
+	rig.start()
+	restarted := func() bool { return slices.Contains(heard.heard(), "restarted held=true") }
+	rig.await("set aside and caught up again", func(st Status) bool {
+		return connected(st) && restarted() && len(st.Notes) == 1 && st.Notes[0].Seq == uint32(len(records))
+	})
+	rig.stopPromptly()
+	got := heard.heard()
+	at := slices.Index(got, "restarted held=true")
+	if at < 0 || !slices.Contains(got[at:], "record 1 held=true") || slices.Contains(got[:at], "record 1 held=true") {
+		t.Errorf("heard %v, want the restart before the new log's records", got)
 	}
 }
 
@@ -901,6 +947,31 @@ func TestOpenNote_AStrokeCommittedAroundAnAnswerIsNeitherLostNorDoubled(t *testi
 	want := strokeIDs(ReadStrokeBasedNote("c", jsonlOf(t, records)), 0)
 	if fmt.Sprint(view.strokes) != fmt.Sprint(want) {
 		t.Errorf("the consumer holds %v, want %v", view.strokes, want)
+	}
+}
+
+// A restarted note replays its log as it now stands, answers from it, and takes the new log's
+// records from the seq it reaches; send runs once, and a note not held is not restarted.
+func TestOpenNote_ARestartedNoteAnswersFromTheNewLog(t *testing.T) {
+	old := strokesLog(4)
+	fresh := logOf(header("Again"), pageAdd(page(1), 0, nil, link.BoundsFixed), strokeAdd(page(1), stroke(7)), strokeAdd(page(1), stroke(8)))
+	served := old
+	notes := &OpenNotes{logs: logsFunc(func(string) ([]byte, error) { return jsonlOf(t, served), nil }), notes: map[string]*OpenNote{}}
+	note, err := notes.Open("c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	served = fresh[:3]
+	var sent int
+	notes.Restart("c", func() { sent++ })
+	notes.Restart("other", func() { sent++ })
+	var view pageView
+	if err := note.AnswerPage(page(1), func(export []byte, seq uint32) error { view.answer(t, export, seq); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	note.Commit(fresh[3], view.take)
+	if want := strokeIDs(ReadStrokeBasedNote("c", jsonlOf(t, fresh)), 0); sent != 1 || view.seq != 3 || fmt.Sprint(view.strokes) != fmt.Sprint(want) {
+		t.Errorf("sent %d; answered at seq %d holding %v, want seq 3 then %v", sent, view.seq, view.strokes, want)
 	}
 }
 

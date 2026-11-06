@@ -297,3 +297,69 @@ func TestWS_Ink_ASessionReachesTheSocketHoldingTheNote(t *testing.T) {
 	}
 	closeAndSettle(elsewhere)
 }
+
+// A socket that opens a note while the tablet is writing in it hears the live page after its first
+// page answer and not after a later one, and hears the page stop being live when the session ends.
+func TestWS_Ink_ANoteOpenedWhileLiveIsToldItsLivePage(t *testing.T) {
+	records := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)))
+	w := newInkWire(t, records)
+	w.session(records)
+	uuid := w.container()
+	w.companion.Live = true
+	if err := w.sp.Ink.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return w.sp.Ink.Live().Container == uuid }, "the note to be live")
+
+	c := dialWS(t, w.srv, uuid)
+	if answer := w.askPage(c, inkPage1.String()); answer["seq"] != float64(len(records)) {
+		t.Fatalf("answer %v", answer)
+	}
+	if live := readUntil(t, c, protocol.TypeInkLivePage, 2*time.Second); live["live"] != true || live["pageId"] != inkPage1.String() {
+		t.Errorf("after the first answer: %v", live)
+	}
+	w.askPage(c, inkPage1.String())
+
+	w.sp.Ink.Stop()
+	if next := readUntil(t, c, protocol.TypeInkLivePage, 2*time.Second); next["live"] != false {
+		t.Errorf("the next live page after a later answer: %v, want the session's end", next)
+	}
+	closeAndSettle(c)
+}
+
+// A note whose replica is set aside while its socket holds a page restarts from the new log: the
+// socket hears the log restart, and a page asked for again is answered from the new log at its head.
+func TestWS_Ink_ARestartedLogReachesTheSocketHoldingTheNote(t *testing.T) {
+	first := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)))
+	all := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)), inkStrokeAdd(inkPage1, inkStroke(2)), inkStrokeAdd(inkPage1, inkStroke(3)))
+	w := newInkWire(t, first)
+	w.session(first)
+	uuid := w.container()
+
+	c := dialWS(t, w.srv, uuid)
+	if answer := w.askPage(c, inkPage1.String()); answer["seq"] != float64(len(first)) {
+		t.Fatalf("answer %v", answer)
+	}
+	w.companion.SetRecords(all)
+	w.companion.CorruptHead = true
+	if err := w.sp.Ink.Start(); err != nil {
+		t.Fatal(err)
+	}
+	readUntil(t, c, protocol.TypeInkLogRestarted, 5*time.Second)
+	waitFor(t, func() bool {
+		notes := w.sp.Ink.Status().Notes
+		return len(notes) == 1 && notes[0].Seq == uint32(len(all))
+	}, "the new log to reach its head")
+	w.sp.Ink.Stop()
+
+	answer := w.askPage(c, inkPage1.String())
+	raw, _ := json.Marshal(answer["page"])
+	var page protocol.InkPageExport
+	if err := json.Unmarshal(raw, &page); err != nil {
+		t.Fatal(err)
+	}
+	if answer["seq"] != float64(len(all)) || len(page.Strokes) != 3 {
+		t.Errorf("answered at seq %v with %d strokes, want seq %d with 3", answer["seq"], len(page.Strokes), len(all))
+	}
+	closeAndSettle(c)
+}

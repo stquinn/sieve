@@ -50,6 +50,7 @@ export const DocumentFrame = Object.freeze({
   EXTRACT_ACK: 'extract-ack',
   INK_LIVE: 'ink-live',
   INK_LIVE_PAGE: 'ink-live-page',
+  INK_LOG_RESTARTED: 'ink-log-restarted',
   INK_PAGE_CONTENT: 'ink-page-content',
   INK_STROKE_ADDED: 'ink-stroke-added',
   INK_STROKE_REMOVED: 'ink-stroke-removed',

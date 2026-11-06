@@ -26,7 +26,7 @@ func TestRegistry_HoldsTheWholeVocabulary(t *testing.T) {
 			"remove-block", "order-changed", "error",
 			"load-content", "paste-ack", "detect-extractions-result", "export-content",
 			"text-marks", "text-replace-ack",
-			"ink-page-content", "ink-stroke-added", "ink-stroke-removed", "ink-live", "ink-live-page",
+			"ink-page-content", "ink-stroke-added", "ink-stroke-removed", "ink-live", "ink-live-page", "ink-log-restarted",
 		}},
 		{ChannelWorkspace, Inbound, []string{
 			"ping", "command", "command-cancel", "mention-query", "mention-resolve",

@@ -43,6 +43,9 @@ type Observer interface {
 	Ink(records []LiveRecord)
 	// Refused is a REFUSE of a note, with its reason.
 	Refused(note ID, reason string)
+	// SetAside is the note's replica set aside: its log starts again from seq 1, and the records
+	// Committed reports for it from now on are the new log's.
+	SetAside(note ID)
 }
 
 // Plan is what one session is to do after the handshake.
@@ -359,6 +362,7 @@ func (s *Session) checkHead(note ID, r Replica) error {
 	if err := r.SetAside(); err != nil {
 		return err
 	}
+	s.obs.SetAside(note)
 	return s.sendOpen(note)
 }
 
@@ -401,6 +405,7 @@ func (s *Session) onRefuse(note ID, reason string) (bool, error) {
 		if err := r.SetAside(); err != nil {
 			return false, err
 		}
+		s.obs.SetAside(note)
 		return false, s.sendOpen(note)
 	}
 	if s.current != nil && *s.current == note {
