@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -117,7 +116,8 @@ func (rig *imagesRig) image(page int) PageImage {
 // pageImages are the page images in the container's directory, sorted.
 func (rig *imagesRig) pageImages() []string {
 	rig.t.Helper()
-	entries, err := os.ReadDir(filepath.Join(rig.st.Root(), "testhost", domain.Blocks.Key, rig.uuid()))
+	dir, _ := rig.st.DocDirByUUID(rig.uuid())
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		rig.t.Fatal(err)
 	}

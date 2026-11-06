@@ -10,9 +10,10 @@ import (
 )
 
 // scanCategory walks the category directory and returns a flat list of all
-// Sieve-managed nodes. A directory is a node if it contains a .meta file.
-// Directories without .meta are ignored. Dot-prefixed entries are skipped.
-// Folders surface their children in the flat list for caller convenience.
+// Sieve-managed nodes. A directory is a node if it contains a .meta file. A
+// directory without one is read as a block shelf: the blocks it holds are listed
+// as if they sat in the category directory itself. Dot-prefixed entries are
+// skipped. Folders surface their children in the flat list for caller convenience.
 func (fs *FileStore) scanCategory(cat store.Category, prefix string) ([]store.Storable, error) {
 	root := fs.categoryDir(cat)
 	infos, err := os.ReadDir(root)
@@ -32,11 +33,15 @@ func (fs *FileStore) scanCategory(cat store.Category, prefix string) ([]store.St
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
+		metaPath := filepath.Join(root, name, ".meta")
+		if _, err := os.Stat(metaPath); os.IsNotExist(err) {
+			results = append(results, fs.scanShelf(cat, name, prefix)...)
+			continue
+		}
 		if prefix != "" && !strings.HasPrefix(name, prefix) {
 			continue
 		}
 
-		metaPath := filepath.Join(root, name, ".meta")
 		metaType, err := readMetaType(metaPath)
 		if err != nil {
 			continue // no .meta = not a Sieve node
@@ -65,6 +70,32 @@ func (fs *FileStore) scanCategory(cat store.Category, prefix string) ([]store.St
 		return results[i].Key() < results[j].Key()
 	})
 	return results, nil
+}
+
+// scanShelf returns the blocks on shelf, a directory of cat holding no .meta,
+// whose directory names start with prefix. Anything on it that is not a block is
+// not listed.
+func (fs *FileStore) scanShelf(cat store.Category, shelf, prefix string) []store.Storable {
+	infos, err := os.ReadDir(filepath.Join(fs.categoryDir(cat), shelf))
+	if err != nil {
+		return nil
+	}
+	var blocks []store.Storable
+	for _, info := range infos {
+		name := info.Name()
+		if !info.IsDir() || strings.HasPrefix(name, ".") || !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		key := shelf + "/" + name
+		dm, err := readMetaJSONFromPath(fs.metaPath(cat, key))
+		if err != nil || dm.Type != store.TypeBlock {
+			continue
+		}
+		if s := fs.buildDocStorable(cat, key, dm); s != nil {
+			blocks = append(blocks, s)
+		}
+	}
+	return blocks
 }
 
 // scanFolderNode reads a folder directory and returns a fileFolderStorable

@@ -634,6 +634,11 @@ re-encoded. The point is quarantine — the library's sidebar, search, triage an
 never see experimental Things until chosen — inside one store, so addresses resolve and a
 document can reference an ink note from day one.
 
+*Superseded by #216:* `Blocks` is now **`Shared`**. The file store keeps a container at
+`{root}/blocks/{kind}/{uuid}/`, one shelf per kind, and moves this host's
+`{root}/{hostname}/blocks/{uuid}/` there once at startup. Two Sieves never share a store,
+so the per-Sieve replica holds; callers still address a container by its uuid alone.
+
 **Identity.** The Thing's uuid is Sieve's, minted by `ident.New` like every id, and the
 companion's note id is held as a **property**, `note_source_id`, beside `note_companion`
 in the face. The two are deliberately not the same id: the replica on each machine

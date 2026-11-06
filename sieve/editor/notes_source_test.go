@@ -178,10 +178,13 @@ func TestNotesSource_DeletedAddressDangles(t *testing.T) {
 	}
 }
 
-// Offered = filed notes; resolved = any document. An unfiled buffer is never
-// offered, but its address resolves, reporting the buffer's own kind.
-func TestNotesSource_ResolvesButNeverOffersBuffers(t *testing.T) {
+// The source offers filed notes and buffers, a buffer only to a search that does
+// not ask for durable things, and every offer resolves to the kind it was
+// offered as.
+func TestNotesSource_OffersWhatItResolves(t *testing.T) {
 	src, ds := newTestNotesSource(t)
+	note := seedFiledNote(t, ds, "Auth Design", "design", []string{"security"},
+		"Token exchange rules.", "# Auth Design")
 	buf, err := ds.New()
 	if err != nil {
 		t.Fatalf("New buffer: %v", err)
@@ -191,18 +194,32 @@ func TestNotesSource_ResolvesButNeverOffersBuffers(t *testing.T) {
 		t.Fatalf("SaveMeta: %v", err)
 	}
 
-	uri := domain.NewContainerAddress(buf.UUID()).String()
-	node, err := src.Resolve(mustAddress(t, uri))
-	if err != nil {
-		t.Fatalf("Resolve(buffer): %v", err)
-	}
-	if node.ID != buf.UUID() || node.Kind != string(domain.KindBuffer) || node.Title != "Scratch Auth Notes" {
-		t.Errorf("node = %+v, want the buffer, kind %q", node, domain.KindBuffer)
-	}
-	for _, c := range src.Search("auth", 10) {
-		if c.URI == uri {
-			t.Fatalf("the notes source offered a buffer: %+v", c)
-		}
+	names := domain.SearchFields{domain.SearchName}
+	for _, tc := range []struct {
+		name     string
+		criteria domain.SearchCriteria
+		want     []string
+	}{
+		{"everything", domain.SearchCriteria{Terms: "auth", Fields: names}, []string{note.UUID(), buf.UUID()}},
+		{"durable only", domain.SearchCriteria{Terms: "auth", Fields: names, DurableOnly: true}, []string{note.UUID()}},
+		{"limit", domain.SearchCriteria{Terms: "auth", Fields: names, Limit: 1}, []string{note.UUID()}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			for _, c := range src.Search(tc.criteria) {
+				got = append(got, c.Container())
+				node, err := src.Resolve(mustAddress(t, c.URI))
+				if err != nil {
+					t.Fatalf("Resolve(%s): %v", c.URI, err)
+				}
+				if node.Kind != c.Kind || node.Title != c.Title {
+					t.Errorf("offered %+v, resolved %+v", c, node)
+				}
+			}
+			if strings.Join(got, " ") != strings.Join(tc.want, " ") {
+				t.Errorf("Search = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -212,52 +229,5 @@ func TestNotesSource_LeafOfAnUnheldContainerDangles(t *testing.T) {
 	src, _ := newTestNotesSource(t)
 	if _, err := src.Resolve(mustAddress(t, leafURI(testContainerUUID, testBlockUUID))); !errors.Is(err, domain.ErrNodeNotFound) {
 		t.Fatalf("err = %v, want ErrNodeNotFound", err)
-	}
-}
-
-func TestNotesSource_SearchOffersTitleSummaryAndTagMatches(t *testing.T) {
-	src, ds := newTestNotesSource(t)
-	auth := seedFiledNote(t, ds, "Auth Design", "design", []string{"security"},
-		"Token exchange rules.", "# Auth Design\n\nNothing else says the word.")
-	seedFiledNote(t, ds, "Grocery List", "", []string{"personal"}, "weekly shop", "milk, eggs")
-
-	// Title match — the gap this phase closes: "Auth Design" appears nowhere but
-	// the display name.
-	got := src.Search("auth design", 8)
-	if len(got) != 1 {
-		t.Fatalf("title query returned %+v, want the Auth note", got)
-	}
-	want := domain.NewContainerAddress(auth.UUID()).String()
-	if got[0].URI != want {
-		t.Errorf("uri = %q, want %q", got[0].URI, want)
-	}
-	if got[0].Title != "Auth Design" || got[0].Kind != "note" {
-		t.Errorf("candidate = %+v", got[0])
-	}
-	if !strings.Contains(got[0].Detail, "design") {
-		t.Errorf("detail = %q, want the folder in it (it is what disambiguates duplicate titles)", got[0].Detail)
-	}
-
-	// Summary match.
-	if got := src.Search("token exchange", 8); len(got) != 1 || got[0].Title != "Auth Design" {
-		t.Errorf("summary query returned %+v", got)
-	}
-
-	// Tag match.
-	if got := src.Search("security", 8); len(got) != 1 || got[0].Title != "Auth Design" {
-		t.Errorf("tag query returned %+v", got)
-	}
-}
-
-func TestNotesSource_SearchHonoursLimitAndEmptyQuery(t *testing.T) {
-	src, ds := newTestNotesSource(t)
-	seedFiledNote(t, ds, "Alpha Note", "", nil, "", "alpha")
-	seedFiledNote(t, ds, "Beta Note", "", nil, "", "beta")
-
-	if got := src.Search("note", 1); len(got) != 1 {
-		t.Errorf("limit ignored: %+v", got)
-	}
-	if got := src.Search("", 8); len(got) != 0 {
-		t.Errorf("empty query returned %+v, want nothing", got)
 	}
 }

@@ -9,8 +9,8 @@
 //	{root}/store/{note-name}/{uuid}.md     Content file; extension per .meta type
 //	{root}/store/{note-name}/.history/     Body-only snapshots
 //	{root}/store/{note-name}/.cache/       Derived data (sessions, links)
+//	{root}/blocks/{kind}/{uuid}/           Block containers (Shared), on their kind's shelf
 //	{root}/{hostname}/buffers/             WorkingCopy buffers (Isolated)
-//	{root}/{hostname}/blocks/{uuid}/       Block containers (Isolated)
 //	{root}/{hostname}/config/              State — settings, session (Isolated)
 //	{root}/.sieve                          Store marker / migration state
 //
@@ -22,6 +22,10 @@
 //	Library      "sub/my-note"      → {root}/store/sub/my-note/
 //	WorkingCopy  "buf-20240102-1504" → {root}/{hostname}/buffers/buf-20240102-1504/
 //	State        "settings.json"    → {root}/{hostname}/config/settings.json  (plain file)
+//
+// A block (.meta type "block") is the exception: its directory is not its key but
+// {kind}/{key}, on a shelf named by the .meta kind that holds no .meta of its own.
+// Callers address it by its uuid, which is its Key, and never see the shelf.
 //
 // # ExternalRef
 //
@@ -114,7 +118,11 @@ func (fs *FileStore) CreateTyped(cat store.Category, key, contentType string, me
 	if key == "" {
 		key = fs.generateKey(cat)
 	}
-	return fs.createContent(cat, key, contentType, cloneMeta(meta), body)
+	dir, err := fs.contentDirKey(key, contentType, meta[store.MetaKeyKind])
+	if err != nil {
+		return nil, err
+	}
+	return fs.createContent(cat, dir, contentType, cloneMeta(meta), body)
 }
 
 func (fs *FileStore) CreateAsset(cat store.Category, parentKey string, assetID string, body []byte) (store.AssetStorable, error) {
@@ -594,6 +602,29 @@ func (fs *FileStore) contentPath(cat store.Category, key, uuid, contentType stri
 // contentFileName returns the content file's name inside its directory.
 func (fs *FileStore) contentFileName(uuid, contentType string) string {
 	return uuid + contentExtensions[contentType]
+}
+
+// contentDirKey is the category-relative directory of a content storable created
+// at key. A block lives on the shelf of its kind, {kind}/{key}: one directory per
+// kind, holding no .meta of its own, with that kind's blocks flat inside it. Every
+// other type lives at key. A block's kind and key must each name one directory.
+func (fs *FileStore) contentDirKey(key, contentType, kind string) (string, error) {
+	if contentType != store.TypeBlock {
+		return key, nil
+	}
+	if !fs.isDirName(kind) {
+		return "", fmt.Errorf("filestore: create %s: block kind %q cannot name a shelf", key, kind)
+	}
+	if !fs.isDirName(key) {
+		return "", fmt.Errorf("filestore: create %s: a block key must name one directory", key)
+	}
+	return kind + "/" + key, nil
+}
+
+// isDirName reports whether name is one visible directory name: not empty, not
+// dot-prefixed, holding no path separator.
+func (fs *FileStore) isDirName(name string) bool {
+	return name != "" && !strings.HasPrefix(name, ".") && !strings.ContainsAny(name, `/\`)
 }
 
 // holdsContent reports whether contentType has a row in contentExtensions.

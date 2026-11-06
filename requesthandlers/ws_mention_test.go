@@ -2,6 +2,7 @@ package requesthandlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -17,21 +18,29 @@ import (
 // round-trip's input); it stays empty for the enumeration tests, where every
 // address is dangling by design.
 type stubSource struct {
-	offers    []domain.Candidate
-	nodes     map[string]domain.NodeDescriptor
-	resolved  []string
-	lastQuery string
-	lastLimit int
+	offers   []domain.Candidate
+	nodes    map[string]domain.NodeDescriptor
+	resolved []string
+	asked    []domain.SearchCriteria
 }
 
 func (s *stubSource) Name() string { return "stub" }
 
-func (s *stubSource) Search(query string, limit int) []domain.Candidate {
-	s.lastQuery, s.lastLimit = query, limit
-	if limit < len(s.offers) {
-		return s.offers[:limit]
+func (s *stubSource) Search(criteria domain.SearchCriteria) []domain.Candidate {
+	s.asked = append(s.asked, criteria)
+	if criteria.Limit < len(s.offers) {
+		return s.offers[:criteria.Limit]
 	}
 	return s.offers
+}
+
+// last is the criteria the source was last asked with.
+func (s *stubSource) last(t *testing.T) domain.SearchCriteria {
+	t.Helper()
+	if len(s.asked) == 0 {
+		t.Fatal("the source was never asked")
+	}
+	return s.asked[len(s.asked)-1]
 }
 
 func (s *stubSource) Resolve(addr domain.Address) (domain.NodeDescriptor, error) {
@@ -51,6 +60,7 @@ func newWsTestServerWithNodes(t *testing.T) (*httptest.Server, *sieve.ServicePro
 		{URI: "sieve://7a1c", Title: "Auth Retry RFC", Kind: "note", Detail: "rfc/"},
 	}}
 	sp.Nodes = editor.NewRouter(src)
+	sp.Search = sp.Nodes
 	return srv, sp, src
 }
 
@@ -81,8 +91,31 @@ func TestWS_MentionQuery_RoundTripsCandidates(t *testing.T) {
 		first["kind"] != "note" || first["detail"] != "design/ · #auth" {
 		t.Fatalf("candidate shape = %+v", first)
 	}
-	if src.lastQuery != "auth" || src.lastLimit != 8 {
-		t.Fatalf("router saw q=%q limit=%d", src.lastQuery, src.lastLimit)
+	// The picker asks for durable things only, on every field: a reference must
+	// outlive the moment it was made, so a buffer is never offered.
+	want := domain.SearchCriteria{
+		Terms:       "auth",
+		Fields:      domain.SearchFields{domain.SearchName, domain.SearchSummary, domain.SearchTags, domain.SearchContent},
+		DurableOnly: true,
+		Limit:       8,
+	}
+	if got := src.last(t); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("router was asked %+v, want %+v", got, want)
+	}
+}
+
+// A blank query offers nothing, and asks no source.
+func TestWS_MentionQuery_ABlankQueryOffersNothing(t *testing.T) {
+	srv, _, src := newWsTestServerWithNodes(t)
+	conn := dialWorkspaceWS(t, srv)
+	defer conn.Close()
+
+	if err := conn.WriteJSON(map[string]interface{}{"type": "mention-query", "q": "  ", "correlationId": "c-m6"}); err != nil {
+		t.Fatal(err)
+	}
+	frame := readFrame(t, conn, 2*time.Second)
+	if cands, ok := frame["candidates"].([]interface{}); !ok || len(cands) != 0 || len(src.asked) != 0 {
+		t.Fatalf("candidates = %#v after %d asks, want an empty list and none", frame["candidates"], len(src.asked))
 	}
 }
 
@@ -98,16 +131,16 @@ func TestWS_MentionQuery_LimitIsFlooredAndCapped(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = readFrame(t, conn, 2*time.Second)
-	if src.lastLimit != mentionDefaultLimit {
-		t.Errorf("absent limit = %d, want the default %d", src.lastLimit, mentionDefaultLimit)
+	if got := src.last(t).Limit; got != mentionDefaultLimit {
+		t.Errorf("absent limit = %d, want the default %d", got, mentionDefaultLimit)
 	}
 
 	if err := conn.WriteJSON(map[string]interface{}{"type": "mention-query", "q": "auth", "limit": 100000, "correlationId": "c-m3"}); err != nil {
 		t.Fatal(err)
 	}
 	_ = readFrame(t, conn, 2*time.Second)
-	if src.lastLimit != mentionMaxLimit {
-		t.Errorf("oversized limit = %d, want the cap %d", src.lastLimit, mentionMaxLimit)
+	if got := src.last(t).Limit; got != mentionMaxLimit {
+		t.Errorf("oversized limit = %d, want the cap %d", got, mentionMaxLimit)
 	}
 }
 
@@ -171,7 +204,7 @@ func TestWS_MentionResult_RoutesToRequester_NotChannelOwner(t *testing.T) {
 // empty list rather than hanging on a reply that never comes.
 func TestWS_MentionQuery_NoRouterStillReplies(t *testing.T) {
 	srv, sp, _, _ := newWsTestServer(t)
-	sp.Nodes = nil
+	sp.Nodes, sp.Search = nil, nil
 	conn := dialWorkspaceWS(t, srv)
 	defer conn.Close()
 

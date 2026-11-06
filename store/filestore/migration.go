@@ -229,3 +229,80 @@ func (fs *FileStore) migrateDocument(cat store.Category, mdPath string) error {
 	// 7. Remove original .md file.
 	return os.Remove(mdPath)
 }
+
+// MoveFromMachineFolder moves what this host's machine folder holds for cat,
+// {root}/{hostname}/{cat.Key}/, to where a Shared cat lays it out, and returns how
+// many storables it moved. It is for a category that was Isolated and is Shared
+// now; for an Isolated cat the machine folder is its directory and nothing moves.
+//
+// Each storable directory moves whole, by one rename, with its assets and
+// history, to the directory it would be created in under cat (a block onto the
+// shelf of its kind). A directory whose .meta cannot be read, that holds no
+// content, whose place cannot be derived or whose target already exists stays
+// where it is and is logged; nothing is deleted or overwritten, and one failure
+// does not stop the rest. The machine folder of cat is removed once it is empty.
+// Another host's machine folder is never read.
+func (fs *FileStore) MoveFromMachineFolder(cat store.Category) int {
+	if cat.Isolation != store.Shared {
+		return 0
+	}
+	machineDir := filepath.Join(fs.root, fs.hostname, cat.Key)
+	entries, err := os.ReadDir(machineDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			logger.Warn("filestore: cannot read machine folder", "dir", machineDir, "err", err)
+		}
+		return 0
+	}
+	moved := 0
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if fs.moveOutOfMachineFolder(cat, machineDir, e.Name()) {
+			moved++
+		}
+	}
+	if err := os.Remove(machineDir); err == nil {
+		logger.Info("filestore: machine folder emptied", "dir", machineDir)
+	}
+	if moved > 0 {
+		logger.Info("filestore: moved out of the machine folder", "category", cat.Key, "moved", moved)
+	}
+	return moved
+}
+
+// moveOutOfMachineFolder moves the storable directory name in machineDir into
+// cat, reporting whether it moved.
+func (fs *FileStore) moveOutOfMachineFolder(cat store.Category, machineDir, name string) bool {
+	src := filepath.Join(machineDir, name)
+	dm, err := readMetaJSONFromPath(filepath.Join(src, ".meta"))
+	if err != nil {
+		logger.Warn("filestore: left in machine folder: unreadable .meta", "dir", src, "err", err)
+		return false
+	}
+	if !fs.holdsContent(dm.Type) {
+		logger.Warn("filestore: left in machine folder: holds no content", "dir", src, "type", dm.Type)
+		return false
+	}
+	key, err := fs.contentDirKey(name, dm.Type, dm.Kind)
+	if err != nil {
+		logger.Warn("filestore: left in machine folder", "dir", src, "err", err)
+		return false
+	}
+	dst := fs.docDir(cat, key)
+	if _, err := os.Lstat(dst); !os.IsNotExist(err) {
+		logger.Warn("filestore: left in machine folder: target exists", "dir", src, "target", dst, "err", err)
+		return false
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		logger.Warn("filestore: left in machine folder", "dir", src, "err", err)
+		return false
+	}
+	if err := os.Rename(src, dst); err != nil {
+		logger.Warn("filestore: left in machine folder", "dir", src, "err", err)
+		return false
+	}
+	fs.indexDel(dm.UUID)
+	return true
+}

@@ -14,8 +14,9 @@ import (
 
 // BlockSource is the Router's face on block containers.
 //
-// OFFERED = NOTHING; RESOLVED = ANY CONTAINER. No lens opens a block container, so
-// Search offers none. Resolve dereferences one at container grain, and at
+// OFFERED = NOTHING; RESOLVED = ANY CONTAINER. A container is found through the
+// business service of its kind, and a kind with none is not found, so Search
+// offers nothing. Resolve dereferences one at container grain, and at
 // a leaf naming the block or an asset beside it, into a descriptor whose Kind is
 // the block's kind and whose Attrs carries its map.
 type BlockSource struct {
@@ -31,7 +32,7 @@ func NewBlockSource(containers *services.BlockContainerService) *BlockSource {
 func (s *BlockSource) Name() string { return "blocks" }
 
 // Search offers nothing.
-func (s *BlockSource) Search(string, int) []domain.Candidate { return nil }
+func (s *BlockSource) Search(domain.SearchCriteria) []domain.Candidate { return nil }
 
 // Resolve dereferences an address into the container it names, live or as of the
 // version it pins; at container grain its title is what the container is called

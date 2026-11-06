@@ -9,7 +9,7 @@ import "sieve/store"
 //	Library      Shared     "store"   {root}/store/
 //	WorkingCopy  Isolated   "buffers" {root}/{hostname}/buffers/
 //	State        Isolated   "config"  {root}/{hostname}/config/
-//	Blocks       Isolated   "blocks"  {root}/{hostname}/blocks/
+//	Blocks       Shared     "blocks"  {root}/blocks/
 //
 // Note: Library uses Key "store" rather than "library" to match the existing
 // on-disk layout. Renaming requires a storage migration — decision deferred.
@@ -18,9 +18,8 @@ var (
 	LibraryCategory = store.Category{Key: "store", DisplayName: "Library", MetaEnabled: true, Isolation: store.Shared}
 	// WorkingCopy holds in-progress buffers. Scoped to the current host.
 	WorkingCopy = store.Category{Key: "buffers", DisplayName: "Working Copy", MetaEnabled: true, Isolation: store.Isolated}
-	// Blocks holds block containers. Scoped to the current host: a container's
-	// replica is per Sieve.
-	Blocks = store.Category{Key: "blocks", DisplayName: "Blocks", MetaEnabled: true, Isolation: store.Isolated}
+	// Blocks holds block containers. Shared across all hosts.
+	Blocks = store.Category{Key: "blocks", DisplayName: "Blocks", MetaEnabled: true, Isolation: store.Shared}
 	// State holds application state (settings, session). Scoped to the current host.
 	State = store.Category{Key: "config", DisplayName: "State", MetaEnabled: false, Isolation: store.Isolated}
 	// Prompts holds prompt template overrides. Scoped to the current host.

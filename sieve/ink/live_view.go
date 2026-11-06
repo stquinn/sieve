@@ -78,7 +78,7 @@ func (v *LiveView) UUID() string { return v.uuid }
 func (v *LiveView) Name() string { return KindLive }
 
 // Search offers nothing.
-func (v *LiveView) Search(string, int) []domain.Candidate { return nil }
+func (v *LiveView) Search(domain.SearchCriteria) []domain.Candidate { return nil }
 
 // Claims is addr naming the view's uuid, which no store holds.
 func (v *LiveView) Claims(addr domain.Address) bool { return addr.Container == v.uuid }

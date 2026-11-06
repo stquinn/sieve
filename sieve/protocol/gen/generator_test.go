@@ -209,7 +209,7 @@ func TestGenerate_DocumentsReferencedPackages(t *testing.T) {
 		"FrontendBlock is the wire shape the WYSIWYG editor renders from",
 		"BlockOp is a granular mutation of the BlockDoc tree",
 		"SupportedActions is one processor's offer",
-		"Candidate is one offer from a source's enumeration face",
+		"Candidate is one hit of a search",
 		"Attachment is a live edge to another NodeDescriptor",
 		"JobInfo describes one background job",
 	} {

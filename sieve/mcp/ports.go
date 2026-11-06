@@ -20,3 +20,8 @@ import "sieve/sieve/domain"
 // domain.ErrBadAddress is raised BEFORE this port, at get_by_uri's own door,
 // where untrusted input is parsed.
 type NodeResolver = domain.NodeResolver
+
+// SearchService is the finding surface this server needs: criteria in, hits out.
+// editor.Router implements it and the composition root injects it; search asks
+// it and holds no matching of its own.
+type SearchService = domain.SearchService

@@ -2,6 +2,7 @@ package services
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -144,55 +145,110 @@ func TestDocumentService_FilePromotesBufferAndAssets(t *testing.T) {
 	}
 }
 
-// Search matched tags, summary and body but NOT the display name, so a note
-// called "Auth Design" was findable only if that string also appeared in its
-// body — which a name-keyed @-picker cannot live with.
-func TestDocumentService_SearchMatchesDisplayName(t *testing.T) {
-	ds, _ := newTestDocumentService(t)
-	note := seedFiledNote(t, ds, "Auth Design", "", []string{"security"},
-		"Token exchange rules.", "# Heading\n\nThe body never says the title.")
-
-	results, err := ds.Search("auth design")
+// seedBuffer creates an unfiled buffer with a name and a body, and a summary and
+// tags a buffer is not searched on.
+func seedBuffer(t *testing.T, ds *DocumentService, title, summary string, tags []string, body string) domain.Document {
+	t.Helper()
+	doc, err := ds.New()
 	if err != nil {
-		t.Fatalf("Search: %v", err)
+		t.Fatalf("New buffer: %v", err)
 	}
-	if len(results) != 1 {
-		t.Fatalf("got %d results, want the Auth note: %+v", len(results), results)
+	m := doc.Meta()
+	m.SetDisplayName(title)
+	m.SetSummary(&summary)
+	m.SetTags(tags)
+	doc.SetBody([]byte(body))
+	doc, err = ds.Save(doc)
+	if err != nil {
+		t.Fatalf("Save buffer: %v", err)
 	}
-	got := results[0]
-	if got.ID != note.UUID() {
-		t.Errorf("id = %q, want %q", got.ID, note.UUID())
-	}
-	if !got.IsTitleMatch {
-		t.Errorf("IsTitleMatch = false for a display-name hit: %+v", got)
-	}
-	if got.IsBodyMatch || got.IsSummaryMatch || got.IsTagMatch {
-		t.Errorf("only the title matched, got %+v", got)
+	return doc
+}
+
+// Search answers every document: filed notes on all four fields, buffers on name
+// and content only, notes first, under the criteria's kinds, durable-only,
+// folder and limit.
+func TestDocumentService_SearchAnswersTheCriteria(t *testing.T) {
+	ds, _ := newTestDocumentService(t)
+	seedFiledNote(t, ds, "Auth Design", "design/api", []string{"security"},
+		"Token exchange rules.", "# Heading\n\nA sentence about goroutines.")
+	seedFiledNote(t, ds, "Grocery List", "", []string{"personal"}, "weekly shop", "milk, eggs")
+	seedBuffer(t, ds, "Scratch Auth", "buffer summary words", []string{"buffertag"}, "scratch goroutines")
+
+	all := domain.SearchFields{domain.SearchName, domain.SearchSummary, domain.SearchTags, domain.SearchContent}
+	for _, tc := range []struct {
+		name     string
+		criteria domain.SearchCriteria
+		want     []string
+	}{
+		{"name", domain.SearchCriteria{Terms: "AUTH", Fields: domain.SearchFields{domain.SearchName}}, []string{"Auth Design", "Scratch Auth"}},
+		{"summary", domain.SearchCriteria{Terms: "token exchange", Fields: domain.SearchFields{domain.SearchSummary}}, []string{"Auth Design"}},
+		{"tags", domain.SearchCriteria{Terms: "personal", Fields: domain.SearchFields{domain.SearchTags}}, []string{"Grocery List"}},
+		{"content", domain.SearchCriteria{Terms: "goroutines", Fields: domain.SearchFields{domain.SearchContent}}, []string{"Auth Design", "Scratch Auth"}},
+		{"name is not content", domain.SearchCriteria{Terms: "milk", Fields: domain.SearchFields{domain.SearchName}}, nil},
+		{"name and content", domain.SearchCriteria{Terms: "milk", Fields: domain.SearchFields{domain.SearchName, domain.SearchContent}}, []string{"Grocery List"}},
+		{"terms with no field", domain.SearchCriteria{Terms: "auth"}, nil},
+		{"a buffer has no summary", domain.SearchCriteria{Terms: "buffer summary", Fields: all}, nil},
+		{"a buffer has no tags", domain.SearchCriteria{Terms: "buffertag", Fields: all}, nil},
+		{"no terms is everything", domain.SearchCriteria{Fields: all}, []string{"Auth Design", "Grocery List", "Scratch Auth"}},
+		{"kinds: notes", domain.SearchCriteria{Kinds: []string{"note"}}, []string{"Auth Design", "Grocery List"}},
+		{"kinds: buffers", domain.SearchCriteria{Kinds: []string{"buffer"}}, []string{"Scratch Auth"}},
+		{"kinds: none held here", domain.SearchCriteria{Kinds: []string{"digital-note"}}, nil},
+		{"durable only", domain.SearchCriteria{Terms: "auth", Fields: all, DurableOnly: true}, []string{"Auth Design"}},
+		{"folder", domain.SearchCriteria{Folder: "design"}, []string{"Auth Design"}},
+		{"folder nested and cased", domain.SearchCriteria{Folder: "/Design/API/"}, []string{"Auth Design"}},
+		{"folder is not a name prefix", domain.SearchCriteria{Folder: "des"}, nil},
+		{"folder leaves out buffers", domain.SearchCriteria{Terms: "scratch", Fields: all, Folder: "design"}, nil},
+		{"limit", domain.SearchCriteria{Limit: 2}, []string{"Auth Design", "Grocery List"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hits, err := ds.Search(tc.criteria)
+			if err != nil {
+				t.Fatalf("Search: %v", err)
+			}
+			var got []string
+			for _, h := range hits {
+				got = append(got, h.Title)
+			}
+			if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+				t.Errorf("Search = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
-// The existing match kinds keep their own flags — a title match is an addition,
-// not a replacement.
-func TestDocumentService_SearchKeepsBodySummaryAndTagMatches(t *testing.T) {
+// A hit carries what every consumer shows: its address, kind, the fields that
+// matched, the folder and snippet that disambiguate it, its own summary, tags
+// and when it changed.
+func TestDocumentService_SearchHitsCarryWhatConsumersShow(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
-	seedFiledNote(t, ds, "Notes", "", []string{"security"}, "Token exchange rules.",
-		"# Notes\n\nA sentence about goroutines.")
+	note := seedFiledNote(t, ds, "Auth Design", "design", []string{"security"},
+		"Token exchange rules.", "# Heading\n\nThe auth flow is here.")
+	buf := seedBuffer(t, ds, "Scratch", "", nil, "auth scribbles")
 
-	for _, tc := range []struct {
-		query string
-		check func(SearchResult) bool
-	}{
-		{"goroutines", func(r SearchResult) bool { return r.IsBodyMatch }},
-		{"token exchange", func(r SearchResult) bool { return r.IsSummaryMatch }},
-		{"security", func(r SearchResult) bool { return r.IsTagMatch }},
-	} {
-		results, err := ds.Search(tc.query)
-		if err != nil {
-			t.Fatalf("Search(%q): %v", tc.query, err)
-		}
-		if len(results) != 1 || !tc.check(results[0]) {
-			t.Errorf("Search(%q) = %+v, want the note flagged with its own match kind", tc.query, results)
-		}
+	hits, err := ds.Search(domain.SearchCriteria{Terms: "auth", Fields: domain.SearchFields{
+		domain.SearchContent, domain.SearchName, domain.SearchSummary, domain.SearchTags}})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("hits = %+v, want the note and the buffer", hits)
+	}
+	n, b := hits[0], hits[1]
+	if n.URI != domain.NewContainerAddress(note.UUID()).String() || n.Container() != note.UUID() || n.Kind != "note" {
+		t.Errorf("note hit = %+v", n)
+	}
+	if fmt.Sprint(n.Matched) != "[NAME CONTENT]" {
+		t.Errorf("note matched %v, want NAME then CONTENT", n.Matched)
+	}
+	if n.Folder != "design" || !strings.HasPrefix(n.Detail, "design · ") || !strings.Contains(n.Detail, "auth flow") {
+		t.Errorf("folder %q detail %q, want the folder then the content snippet", n.Folder, n.Detail)
+	}
+	if n.Summary != "Token exchange rules." || fmt.Sprint(n.Tags) != "[security]" || n.Modified == "" {
+		t.Errorf("note hit = %+v, want its summary, tags and modified time", n)
+	}
+	if b.Container() != buf.UUID() || b.Kind != "buffer" || b.Folder != "" || len(b.Tags) != 0 || fmt.Sprint(b.Matched) != "[CONTENT]" {
+		t.Errorf("buffer hit = %+v", b)
 	}
 }
 
@@ -372,11 +428,11 @@ func TestDocumentService_RefusesABlockInEveryCategory(t *testing.T) {
 				t.Errorf("AllUUIDs = %v, want only the note", uuids)
 			}
 
-			results, err := ds.Search("quarantined")
+			results, err := ds.Search(domain.SearchCriteria{Terms: "quarantined", Fields: domain.SearchFields{domain.SearchName, domain.SearchContent}})
 			if err != nil {
 				t.Fatalf("Search: %v", err)
 			}
-			if len(results) != 1 || results[0].ID != note.UUID() {
+			if len(results) != 1 || results[0].Container() != note.UUID() {
 				t.Errorf("Search = %+v, want only the note", results)
 			}
 

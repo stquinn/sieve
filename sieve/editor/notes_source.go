@@ -4,12 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"path"
-	"path/filepath"
 	"strconv"
-	"strings"
 
-	"sieve/ident"
 	"sieve/logger"
 	"sieve/sieve/domain"
 	"sieve/sieve/services"
@@ -18,9 +14,9 @@ import (
 
 // NotesSource is the Router's face on the library's documents.
 //
-// OFFERED = FILED NOTES; RESOLVED = ANY DOCUMENT. Search enumerates the library,
-// so an unfiled buffer is never offered; Resolve dereferences any document
-// DocumentService.LoadByUUID finds, buffer or note, at every grain.
+// It offers and resolves every document, filed note or buffer: Search answers
+// through DocumentService.Search, and Resolve dereferences any document
+// DocumentService.LoadByUUID finds, at every grain.
 type NotesSource struct {
 	documents *services.DocumentService
 }
@@ -33,29 +29,15 @@ func NewNotesSource(documents *services.DocumentService) *NotesSource {
 // Name identifies this source in Router diagnostics.
 func (s *NotesSource) Name() string { return "notes" }
 
-// Search offers the filed notes matching query, capped at limit, through
-// DocumentService.Search (title, summary, tags and body). Results come back in
-// library scan order, NOT relevance order.
-func (s *NotesSource) Search(query string, limit int) []domain.Candidate {
-	if limit <= 0 || strings.TrimSpace(query) == "" {
-		return nil
-	}
-	results, err := s.documents.Search(query)
+// Search offers the documents matching criteria. A store that cannot be listed
+// offers nothing.
+func (s *NotesSource) Search(criteria domain.SearchCriteria) []domain.Candidate {
+	hits, err := s.documents.Search(criteria)
 	if err != nil {
-		logger.Warn("notes source: search failed", "query", query, "err", err)
+		logger.Warn("notes source: search failed", "err", err)
 		return nil
 	}
-	out := make([]domain.Candidate, 0, min(limit, len(results))) // limit is caller-supplied
-	for _, r := range results {
-		if len(out) >= limit {
-			break
-		}
-		if !ident.Valid(r.ID) {
-			continue // no uuid = no address that parses = not offerable
-		}
-		out = append(out, s.candidateOf(r))
-	}
-	return out
+	return hits
 }
 
 // Resolve dereferences an address into the document it names, or into the leaf
@@ -122,46 +104,4 @@ func (s *NotesSource) bodyOf(addr domain.Address, doc domain.Document) (string, 
 		return "", err
 	}
 	return string(snapshot.Body), nil
-}
-
-// candidateOf projects a search hit into an offer. Summary is the NOTE's own
-// one-liner, so a reference minted from an accepted mention is born complete and
-// never resolves merely to render. Detail is a different sentence; see
-// domain.Candidate.
-func (s *NotesSource) candidateOf(r services.SearchResult) domain.Candidate {
-	return domain.Candidate{
-		URI:     domain.NewContainerAddress(r.ID).String(),
-		Title:   r.Name,
-		Kind:    string(domain.KindNote),
-		Detail:  s.detailOf(r),
-		Summary: r.Summary,
-	}
-}
-
-// detailOf builds the picker's disambiguation line: the folder first (two notes
-// may legitimately share a title — the folder is what tells them apart), then
-// whatever snippet the match produced.
-func (s *NotesSource) detailOf(r services.SearchResult) string {
-	var parts []string
-	if folder := s.folderOf(r.Path); folder != "" {
-		parts = append(parts, folder)
-	}
-	if snippet := strings.TrimSpace(r.Snippet); snippet != "" {
-		parts = append(parts, snippet)
-	}
-	return strings.Join(parts, " · ")
-}
-
-// folderOf derives a note's folder path from its store external ref by stripping
-// the leading category-key segment and taking the parent directory. A note at
-// the library root has none.
-func (s *NotesSource) folderOf(externalRef string) string {
-	ref := filepath.ToSlash(externalRef)
-	if i := strings.IndexByte(ref, '/'); i >= 0 {
-		ref = ref[i+1:] // drop the category key ("store/")
-	}
-	if dir := path.Dir(ref); dir != "." && dir != "/" && dir != "" {
-		return dir
-	}
-	return ""
 }

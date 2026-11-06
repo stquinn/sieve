@@ -3,6 +3,7 @@ package services_test
 import (
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -115,7 +116,7 @@ func TestBlockContainer_CreateSaveReloadKeepsVersionsAndAssets(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	dir := filepath.Join(st.Root(), "testhost", domain.Blocks.Key, uuid)
+	dir, _ := st.DocDirByUUID(uuid)
 	for _, name := range []string{uuid + ".block", ".history/" + uuid + ".1.block", ".history/" + uuid + ".2.block", "strokes.jsonl"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Errorf("expected %s on disk: %v", name, err)
@@ -307,7 +308,8 @@ func TestBlockContainer_SaveMetaWritesTheMetaAloneAndSaveKeepsIt(t *testing.T) {
 	}
 	stale := c
 	body := func() string {
-		raw, err := os.ReadFile(filepath.Join(st.Root(), "testhost", domain.Blocks.Key, c.UUID(), c.UUID()+".block"))
+		dir, _ := st.DocDirByUUID(c.UUID())
+		raw, err := os.ReadFile(filepath.Join(dir, c.UUID()+".block"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -466,13 +468,18 @@ func TestBlockContainer_RefusesWhatItDoesNotOwn(t *testing.T) {
 		"kinds disagree":   {stickyKind, "kind: another\na: b\n"},
 		"kind not text":    {stickyKind, "kind: [a]\na: b\n"},
 	} {
-		meta := map[string]string{}
-		if tc.metaKind != "" {
-			meta[store.MetaKeyKind] = tc.metaKind
-		}
-		ms, err := st.CreateTyped(domain.Blocks, strings.ReplaceAll(name, " ", "-"), store.TypeBlock, meta, []byte(tc.body))
+		ms, err := st.CreateTyped(domain.Blocks, strings.ReplaceAll(name, " ", "-"), store.TypeBlock,
+			map[string]string{store.MetaKeyKind: stickyKind}, []byte(tc.body))
 		if err != nil {
 			t.Fatalf("CreateTyped: %v", err)
+		}
+		if tc.metaKind == "" {
+			meta := maps.Clone(ms.Meta())
+			delete(meta, store.MetaKeyKind)
+			ms.SetMeta(meta)
+			if ms, err = st.SaveMeta(ms); err != nil {
+				t.Fatalf("SaveMeta: %v", err)
+			}
 		}
 		if _, err := containers.Load(ms.Key()); err == nil || errors.Is(err, domain.ErrNotBlockContainer) {
 			t.Errorf("%s: err = %v, want a parse failure", name, err)
@@ -505,7 +512,8 @@ func TestBlockContainer_VersionRefusesASnapshotNamingAnotherKind(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	snapshot := filepath.Join(st.Root(), "testhost", domain.Blocks.Key, c.UUID(), ".history", c.UUID()+".1.block")
+	dir, _ := st.DocDirByUUID(c.UUID())
+	snapshot := filepath.Join(dir, ".history", c.UUID()+".1.block")
 	if err := os.WriteFile(snapshot, []byte("kind: another\ntitle: v1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

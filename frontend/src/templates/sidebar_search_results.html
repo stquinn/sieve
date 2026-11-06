@@ -44,21 +44,21 @@
 {{define "sidebar_search_results_list.html"}}
   {{if .Results}}
     {{range .Results}}
-      <div class="store-search__item" onclick="window.sieveWorkspace.open('{{.ID}}')">
+      <div class="store-search__item" onclick="window.sieveWorkspace.open('{{.Container}}')">
         <div class="store-search__item-info" style="margin-bottom: 4px;">
           <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" class="store-search__item-icon" style="margin-right: 6px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          <span class="store-search__item-name" style="font-weight: 600; font-size: 14px;">{{.Name}}</span>
-        </div>
-        
-        <div class="store-search__item-badges" style="margin-bottom: 6px; justify-content: flex-start; gap: 6px;">
-          {{if .IsTitleMatch}}<span class="store-search__badge">Title</span>{{end}}
-          {{if .IsTagMatch}}<span class="store-search__badge">Tag Match</span>{{end}}
-          {{if .IsSummaryMatch}}<span class="store-search__badge">Summary</span>{{end}}
-          {{if .IsBodyMatch}}<span class="store-search__badge store-search__badge--text">Content</span>{{end}}
+          <span class="store-search__item-name" style="font-weight: 600; font-size: 14px;">{{.Title}}</span>
         </div>
 
-        {{if .Snippet}}
-          <div class="store-search__item-snippet" style="opacity: 0.8;">{{.Snippet}}</div>
+        <div class="store-search__item-badges" style="margin-bottom: 6px; justify-content: flex-start; gap: 6px;">
+          {{if .Matched.Has "NAME"}}<span class="store-search__badge">Title</span>{{end}}
+          {{if .Matched.Has "TAGS"}}<span class="store-search__badge">Tag Match</span>{{end}}
+          {{if .Matched.Has "SUMMARY"}}<span class="store-search__badge">Summary</span>{{end}}
+          {{if .Matched.Has "CONTENT"}}<span class="store-search__badge store-search__badge--text">Content</span>{{end}}
+        </div>
+
+        {{if .Detail}}
+          <div class="store-search__item-snippet" style="opacity: 0.8;">{{.Detail}}</div>
         {{end}}
       </div>
     {{end}}
