@@ -701,6 +701,7 @@ func TestSidebarDialog_KindPicksTheTemplate(t *testing.T) {
 	for _, dialog := range []struct{ kind, query, want string }{
 		{"rename", "?id=n1&name=Draft&type=note", "Rename Note"},
 		{"delete", "?id=" + folder + "&name=Doomed&type=folder", "Delete Folder"},
+		{"delete", "?id=n2&name=Board&type=notebook", "Delete Notebook"},
 		{"create-folder", "?parentId=f1", "Create New Folder"},
 	} {
 		status, body := do(t, http.MethodGet, srv.URL+"/ui/views/sidebar/dialog/"+dialog.kind+dialog.query, "", "")

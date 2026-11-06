@@ -576,8 +576,8 @@ func (a *App) InitVault(path string) error {
 
 // ── File manager ──────────────────────────────────────────────────────────────
 
-// ShowInFilesByID reveals a document or folder in the OS file manager.
-// id is a UUID (note/buffer), an opaque folder ID (ExternalRef), or "prompt:name".
+// ShowInFilesByID reveals a document, block container or folder in the OS file manager.
+// id is a UUID (note/buffer/block container), an opaque folder ID (ExternalRef), or "prompt:name".
 func (a *App) ShowInFilesByID(id string) error {
 	if strings.HasPrefix(id, "prompt:") {
 		return a.showInFiles(a.promptsDir())
@@ -585,6 +585,11 @@ func (a *App) ShowInFilesByID(id string) error {
 	if a.Documents != nil {
 		if doc, err := a.Documents.LoadByUUID(id); err == nil {
 			return a.showInFiles(doc.Storable().ExternalRef())
+		}
+	}
+	if a.ServiceProvider != nil && a.ServiceProvider.Containers != nil {
+		if c, err := a.ServiceProvider.Containers.Load(id); err == nil {
+			return a.showInFiles(c.Storable().ExternalRef())
 		}
 	}
 	// Folder: id is an ExternalRef (e.g. "store/my-folder") — resolvePath handles it.

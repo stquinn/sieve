@@ -850,13 +850,28 @@ describe('the notebook and Live menus', () => {
   const settle = () => new Promise((r) => setTimeout(r, 0))
 
   it.each([
-    ['a tree row', { type: 'notebook', id: 'n1', name: 'Ideas', isTab: false }, ['Open', 'Open on device', 'Refresh name and summary']],
+    ['a tree row', { type: 'notebook', id: 'n1', name: 'Ideas', isTab: false },
+      ['Open', 'Open on device', 'Refresh name and summary', 'Show in Files', 'Delete Notebook...']],
     ['a tab', { type: 'notebook', id: 'n1', name: 'Ideas', isTab: true },
-      ['Open on device', 'Refresh name and summary', 'Close Tab', 'Close Others', 'Close All Tabs']],
+      ['Open on device', 'Refresh name and summary', 'Show in Files', 'Delete Notebook...', 'Close Tab', 'Close Others', 'Close All Tabs']],
     ['the Live row', { type: 'inkLive', id: 'v1', name: 'Live', isTab: false }, ['Open this note']],
     ['the Live tab', { type: 'inkLive', id: 'v1', name: 'Live', isTab: true }, ['Open this note', 'Close Tab', 'Close Others', 'Close All Tabs']],
-  ])('%s offers its own items and nothing folder-like', (_, context, want) => {
+  ])('%s offers its own items', (_, context, want) => {
     expect(labelsOf(openOn(context))).toEqual(want)
+  })
+
+  it.each([
+    ['note', 'Delete Note...'],
+    ['folder', 'Delete Folder...'],
+    ['notebook', 'Delete Notebook...'],
+  ])('a %s offers every library item\'s Show in Files and Delete, in that order', (type, del) => {
+    const shown = vi.fn()
+    ;/** @type {any} */ (window).sieveShowInFiles = shown
+    const labels = labelsOf(openOn({ type, id: 'x1', name: 'Item', isTab: false }))
+    expect(labels.indexOf(del)).toBe(labels.indexOf('Show in Files') + 1)
+    itemNamed(openOn({ type, id: 'x1', name: 'Item', isTab: false }), 'Show in Files').click()
+    expect(shown).toHaveBeenCalledWith('x1')
+    delete (/** @type {any} */ (window)).sieveShowInFiles
   })
 
   it('Refresh name and summary posts the describe route and says it is naming, or the route\'s words', async () => {

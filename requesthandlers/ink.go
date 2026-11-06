@@ -27,8 +27,10 @@ import (
 // once and answer with the fragment, and the export of a synced note's page; and the Ink item of
 // the sidebar's tree.
 type InkHandler struct {
-	ServiceProvider *sieve.ServiceProvider
-	Tmpl            *template.Template
+	ServiceProvider    *sieve.ServiceProvider
+	Tmpl               *template.Template
+	EmitSessionChanged func()
+	EmitNotesChanged   func()
 }
 
 // inkView is the payload of ink_status.html.
@@ -85,10 +87,13 @@ type inkLiveItem struct {
 
 // inkNoteItem is a synced note as the sidebar lists it.
 type inkNoteItem struct {
-	UUID   string
-	Title  string
-	Pages  int
-	Active bool
+	UUID       string
+	Title      string
+	Pages      int
+	Active     bool
+	Whiteboard bool
+	// Absent is the note not on its tablet now (ink.SyncedNote.Absent).
+	Absent bool
 }
 
 // inkDescribeDrawWait bounds how long naming a note now waits for its first page to be drawn.
@@ -108,8 +113,32 @@ func (h *InkHandler) RegisterPaths(r chi.Router) {
 	r.Get("/api/ink/notes/{uuid}/pages/{page}/export", h.handleExport)
 	r.Get("/api/ink/notes/{uuid}/pages/{page}/image", h.handleImage)
 	r.Post("/api/ink/notes/{uuid}/describe", h.handleDescribe)
+	r.Delete("/api/ink/notes/{uuid}", h.handleDelete)
 	r.Post("/api/ink/notes/{uuid}/open-on-tablet", h.handleOpenOnTablet)
 	r.Get("/api/ink/live/note", h.handleLiveNote)
+}
+
+// handleDelete deletes Sieve's copy of a synced note and answers with the workspace, as a note's
+// delete does; a container that is not a Digital Note is 404.
+func (h *InkHandler) handleDelete(w http.ResponseWriter, r *http.Request) {
+	if h.ServiceProvider.Ink == nil {
+		http.Error(w, "Notebooks are unavailable.", http.StatusServiceUnavailable)
+		return
+	}
+	uuid := chi.URLParam(r, "uuid")
+	if err := h.ServiceProvider.Ink.Delete(uuid); err != nil {
+		if errors.Is(err, ink.ErrNoSuchPage) {
+			http.Error(w, "No such notebook.", http.StatusNotFound)
+			return
+		}
+		logger.Error("ink: deleting a note", "err", err.Error())
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	deletionReconciler{
+		sp: h.ServiceProvider, tmpl: h.Tmpl,
+		emitSessionChanged: h.EmitSessionChanged, emitNotesChanged: h.EmitNotesChanged,
+	}.reconcile(w, uuid)
 }
 
 // handleDescribe names a synced note now, answering 204 once its job is submitted or with why
@@ -209,7 +238,8 @@ func (v *inkSidebarView) show(st ink.Status, session domain.Session) {
 		if title == "" {
 			title = untitledNotebook
 		}
-		v.Notes = append(v.Notes, inkNoteItem{UUID: n.UUID, Title: title, Pages: n.Pages, Active: n.UUID == active})
+		v.Notes = append(v.Notes, inkNoteItem{UUID: n.UUID, Title: title, Pages: n.Pages, Active: n.UUID == active,
+			Whiteboard: n.Whiteboard, Absent: n.Absent})
 	}
 }
 
@@ -333,7 +363,7 @@ type inkStream struct {
 	svc *ink.InkService
 	// transcripts are the transcripts of the notes' pages; nil when there are none.
 	transcripts *ink.PageTranscripts
-	send     func(uuid string, frame interface{})
+	send        func(uuid string, frame interface{})
 	// notes are held by socket: a container's uuid, or the Live view's.
 	notes *ink.OpenNotes
 	// view is the Live view's uuid.
@@ -402,7 +432,7 @@ func (w *tabletWindow) replay(container string, page link.ID, reply func(interfa
 }
 
 var (
-	_ ink.Listener        = (*inkStream)(nil)
+	_ ink.Listener           = (*inkStream)(nil)
 	_ ink.TranscriptListener = (*inkStream)(nil)
 )
 
