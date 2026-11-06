@@ -544,7 +544,7 @@ func TestInkFragment_RendersEachState(t *testing.T) {
 // context type.
 func TestInkSidebar_RendersEachState(t *testing.T) {
 	h, _ := newTestSettingsHandler(t)
-	notes := []ink.SyncedNote{{UUID: "n-ideas", Name: "Ideas", Title: "Untitled 05/11", Pages: 2}, {UUID: "n-board", Pages: 1, Whiteboard: true, Absent: true}}
+	notes := []ink.SyncedNote{{UUID: "n-ideas", Name: "Ideas", Title: "Untitled 05/11", Pages: 2, Deletion: ink.DeleteReturns}, {UUID: "n-board", Pages: 1, Whiteboard: true, Absent: true, Deletion: ink.DeleteLast}}
 	live := ink.LiveStatus{Present: true, UUID: "v-live", Device: "Note Air 2", Note: "n-ideas", NoteTitle: "Ideas"}
 	waiting := ink.LiveStatus{Present: true, UUID: "v-live", Waiting: true}
 	collapsed := domain.Session{Tabs: []domain.Tab{{ID: "n-board", Kind: ink.KindDigitalNote}}}
