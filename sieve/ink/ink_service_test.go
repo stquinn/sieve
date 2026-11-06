@@ -96,6 +96,11 @@ type inkRig struct {
 	radio         *testRadio
 	invalidations atomic.Int32
 	svc           *InkService
+
+	mu sync.Mutex
+	// deleted and sessionChanges are what the rig was told besides InkChanged.
+	deleted        []string
+	sessionChanges int
 }
 
 func newInkRig(t *testing.T, records []link.Record) *inkRig {
@@ -111,6 +116,18 @@ func newInkRig(t *testing.T, records []link.Record) *inkRig {
 }
 
 func (rig *inkRig) InkChanged() { rig.invalidations.Add(1) }
+
+func (rig *inkRig) ContainerDeleted(uuid string) {
+	rig.mu.Lock()
+	defer rig.mu.Unlock()
+	rig.deleted = append(rig.deleted, uuid)
+}
+
+func (rig *inkRig) SessionChanged() {
+	rig.mu.Lock()
+	defer rig.mu.Unlock()
+	rig.sessionChanges++
+}
 
 // newService is a service over the rig, as a Sieve starting again builds it.
 func (rig *inkRig) newService() *InkService {
@@ -721,11 +738,13 @@ func openNotesOver(t *testing.T, log []link.Record) *OpenNotes {
 	return &OpenNotes{logs: logsFunc(func(string) ([]byte, error) { return jsonl, nil }), notes: map[string]*OpenNote{}}
 }
 
-// pageView is a page as a consumer holds it: the answer's strokes, then every change above the
-// answer's seq, changes at or below it dropped.
+// pageView is a page as a lens holds it: changes heard before the answer are held, then the
+// answer's strokes and every change above the answer's seq, changes at or below it dropped.
 type pageView struct {
-	seq     uint32
-	strokes []string
+	answered bool
+	held     []StrokeChange
+	seq      uint32
+	strokes  []string
 }
 
 func (v *pageView) answer(t *testing.T, export []byte, seq uint32) {
@@ -734,13 +753,22 @@ func (v *pageView) answer(t *testing.T, export []byte, seq uint32) {
 	if err := json.Unmarshal(export, &page); err != nil {
 		t.Fatal(err)
 	}
-	v.seq, v.strokes = seq, nil
+	v.answered, v.seq, v.strokes = true, seq, nil
 	for _, s := range page.Strokes {
 		v.strokes = append(v.strokes, s.ID)
+	}
+	held := v.held
+	v.held = nil
+	for _, c := range held {
+		v.take(c)
 	}
 }
 
 func (v *pageView) take(c StrokeChange) {
+	if !v.answered {
+		v.held = append(v.held, c)
+		return
+	}
 	if c.Seq <= v.seq {
 		return
 	}
@@ -800,7 +828,7 @@ func TestOpenNotes_AnswerAPageAtTheSeqItsLogReaches(t *testing.T) {
 				uuid = rig.container().UUID()
 			}
 			notes := NewOpenNotes(rig.svc)
-			note, err := notes.Open(uuid)
+			note, err := notes.Open(uuid, "socket")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -828,10 +856,10 @@ func TestOpenNotes_RefuseWhatIsNoDigitalNotePage(t *testing.T) {
 	}
 	notes := NewOpenNotes(rig.svc)
 	unknown := "0199aaaa-0000-7000-8000-000000000000"
-	if _, err := notes.Open(unknown); !errors.Is(err, ErrNoSuchPage) || notes.Holds(unknown) {
+	if _, err := notes.Open(unknown, "socket"); !errors.Is(err, ErrNoSuchPage) || notes.Holds(unknown) {
 		t.Errorf("an unknown container: %v, held %t", err, notes.Holds(unknown))
 	}
-	note, err := notes.Open(rig.container().UUID())
+	note, err := notes.Open(rig.container().UUID(), "socket")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -862,7 +890,7 @@ func TestOpenNote_CommitHandsOutEachStrokeChangeOnce(t *testing.T) {
 		{"a record already held", at(len(base), strokeAdd(page(1), stroke(2))), ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			note, err := openNotesOver(t, base).Open("c")
+			note, err := openNotesOver(t, base).Open("c", "socket")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -888,7 +916,7 @@ func TestOpenNote_ARecordPastAGapReplaysTheLog(t *testing.T) {
 	records := strokesLog(4)
 	served := records[:3]
 	notes := &OpenNotes{logs: logsFunc(func(string) ([]byte, error) { return jsonlOf(t, served), nil }), notes: map[string]*OpenNote{}}
-	note, err := notes.Open("c")
+	note, err := notes.Open("c", "socket")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -911,13 +939,13 @@ func TestOpenNote_AStrokeCommittedAroundAnAnswerIsNeitherLostNorDoubled(t *testi
 	records := strokesLog(3)
 	inLog := records[:4]
 	notes := &OpenNotes{logs: logsFunc(func(string) ([]byte, error) { return jsonlOf(t, inLog), nil }), notes: map[string]*OpenNote{}}
-	note, err := notes.Open("c")
+	note, err := notes.Open("c", "socket")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var view pageView
 	var mu sync.Mutex
-	take := func(c StrokeChange) {
+	take := func(_ []string, c StrokeChange) {
 		mu.Lock()
 		defer mu.Unlock()
 		view.take(c)
@@ -957,14 +985,14 @@ func TestOpenNote_ARestartedNoteAnswersFromTheNewLog(t *testing.T) {
 	fresh := logOf(header("Again"), pageAdd(page(1), 0, nil, link.BoundsFixed), strokeAdd(page(1), stroke(7)), strokeAdd(page(1), stroke(8)))
 	served := old
 	notes := &OpenNotes{logs: logsFunc(func(string) ([]byte, error) { return jsonlOf(t, served), nil }), notes: map[string]*OpenNote{}}
-	note, err := notes.Open("c")
+	note, err := notes.Open("c", "socket")
 	if err != nil {
 		t.Fatal(err)
 	}
 	served = fresh[:3]
 	var sent int
-	notes.Restart("c", func() { sent++ })
-	notes.Restart("other", func() { sent++ })
+	notes.Restart("c", func([]string) { sent++ })
+	notes.Restart("other", func([]string) { sent++ })
 	var view pageView
 	if err := note.AnswerPage(page(1), func(export []byte, seq uint32) error { view.answer(t, export, seq); return nil }); err != nil {
 		t.Fatal(err)
@@ -981,10 +1009,10 @@ func TestOpenNotes_ARecordCommittedWhileTheLogIsReadReachesTheNote(t *testing.T)
 	changes := make(chan StrokeChange, 1)
 	var notes *OpenNotes
 	notes = &OpenNotes{logs: logsFunc(func(uuid string) ([]byte, error) {
-		go notes.Commit(uuid, records[4], func(c StrokeChange) { changes <- c })
+		go notes.Commit(uuid, records[4], func(_ []string, c StrokeChange) { changes <- c })
 		return jsonlOf(t, records[:4]), nil
 	}), notes: map[string]*OpenNote{}}
-	if _, err := notes.Open("c"); err != nil {
+	if _, err := notes.Open("c", "socket"); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -1002,17 +1030,244 @@ func TestOpenNotes_HoldNothingUnaskedAndReleaseWhatWasAsked(t *testing.T) {
 	records := strokesLog(2)
 	notes := openNotesOver(t, records[:3])
 	var changes int
-	count := func(StrokeChange) { changes++ }
+	count := func([]string, StrokeChange) { changes++ }
 	notes.Commit("c", records[3], count)
 	if notes.Holds("c") || changes != 0 {
 		t.Fatalf("an unasked note: held %t, %d changes", notes.Holds("c"), changes)
 	}
-	if _, err := notes.Open("c"); err != nil {
+	if _, err := notes.Open("c", "socket"); err != nil {
 		t.Fatal(err)
 	}
-	notes.Release("c")
+	notes.Release("c", "socket")
 	notes.Commit("c", records[3], count)
 	if notes.Holds("c") || changes != 0 {
 		t.Errorf("a released note: held %t, %d changes", notes.Holds("c"), changes)
+	}
+}
+
+// Each change reaches every holder of the note once, and a holder that is answered after a change
+// it heard while waiting takes the page at that change's seq and drops the change, so both hold the
+// replay of the whole log. A note stops being held when its last holder releases it.
+func TestOpenNotes_EveryHolderTakesEachChangeOnceAtItsOwnSeq(t *testing.T) {
+	records := strokesLog(3)
+	served := records[:3]
+	notes := &OpenNotes{logs: logsFunc(func(string) ([]byte, error) { return jsonlOf(t, served), nil }), notes: map[string]*OpenNote{}}
+	views := map[string]*pageView{"note": {}, "live": {}}
+	heard := map[string]int{}
+	take := func(holders []string, c StrokeChange) {
+		for _, h := range holders {
+			heard[h]++
+			views[h].take(c)
+		}
+	}
+	answer := func(holder string) {
+		t.Helper()
+		note, err := notes.Open("c", holder)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := note.AnswerPage(page(1), func(export []byte, seq uint32) error { views[holder].answer(t, export, seq); return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	answer("note")
+	notes.Commit("c", records[3], take)
+	if _, err := notes.Open("c", "live"); err != nil {
+		t.Fatal(err)
+	}
+	notes.Commit("c", records[4], take)
+	answer("live")
+	if views["note"].seq != 3 || views["live"].seq != 5 || heard["note"] != 2 || heard["live"] != 1 {
+		t.Errorf("answered at seqs %d and %d; heard %v", views["note"].seq, views["live"].seq, heard)
+	}
+	want := fmt.Sprint(strokeIDs(ReadStrokeBasedNote("c", jsonlOf(t, records)), 0))
+	for holder, view := range views {
+		if fmt.Sprint(view.strokes) != want {
+			t.Errorf("%s holds %v, want %v", holder, view.strokes, want)
+		}
+	}
+	var restarted []string
+	notes.Restart("c", func(holders []string) { restarted = holders })
+	if fmt.Sprint(restarted) != "[note live]" {
+		t.Errorf("restart told %v", restarted)
+	}
+	notes.Release("c", "note")
+	if !notes.Holds("c") || notes.HeldBy("c", "note") || !notes.HeldBy("c", "live") {
+		t.Errorf("after the note's socket let go: held %t, by note %t, by live %t", notes.Holds("c"), notes.HeldBy("c", "note"), notes.HeldBy("c", "live"))
+	}
+	notes.ReleaseAll("live")
+	if notes.Holds("c") {
+		t.Error("a note nobody holds is still held")
+	}
+}
+
+// graceTimer is the Live view's clock, moved by the test: every grace asked for waits until the
+// test lets the time pass, and passing calls even a grace stopped since, as a timer whose stop
+// raced its firing does.
+type graceTimer struct {
+	mu      sync.Mutex
+	pending []func()
+	stopped int
+}
+
+func (g *graceTimer) afterFunc(_ time.Duration, f func()) func() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.pending = append(g.pending, f)
+	return func() bool {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		g.stopped++
+		return true
+	}
+}
+
+// pass lets every grace asked for so far run out.
+func (g *graceTimer) pass() {
+	g.mu.Lock()
+	due := g.pending
+	g.pending = nil
+	g.mu.Unlock()
+	for _, f := range due {
+		f()
+	}
+}
+
+// liveRecorder is the Live view's change listener: it resolves the view at each change and keeps
+// what it found as a line.
+type liveRecorder struct {
+	view *LiveView
+
+	mu    sync.Mutex
+	lines []string
+}
+
+func (r *liveRecorder) Refresh(uuid string) error {
+	node, err := r.view.Resolve(domain.NewContainerAddress(uuid))
+	line := "gone"
+	if err == nil {
+		live := node.Attrs["live"].(map[string]interface{})
+		line = fmt.Sprintf("%s page=%s waiting=%t", live["container"], live["page"], live["waiting"])
+	} else if !errors.Is(err, domain.ErrNodeNotFound) {
+		line = err.Error()
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lines = append(r.lines, line)
+	return nil
+}
+
+func (r *liveRecorder) last() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.lines) == 0 {
+		return ""
+	}
+	return r.lines[len(r.lines)-1]
+}
+
+// The Live view resolves from the first live note, mirroring the note, its page and its header as
+// the digital-note block holds them; through the grace after the tablet stops it still resolves,
+// waiting on the last page written; a note live again within the grace closes nothing, and a grace run out ends the view:
+// its tab is closed, its container is told deleted, the session and the views of ink are told, and
+// it resolves no more.
+func TestInkService_TheLiveViewLastsFromTheFirstLiveNoteToTheGraceAfterTheLast(t *testing.T) {
+	records := inkLog()
+	rig := newInkRig(t, records)
+	timer := &graceTimer{}
+	rig.svc.view.afterFunc = timer.afterFunc
+	view := rig.svc.LiveView()
+	heard := &liveRecorder{view: view}
+	rig.svc.SetChangeListener(heard)
+	addr := domain.NewContainerAddress(view.UUID())
+	if _, err := view.Resolve(addr); !errors.Is(err, domain.ErrNodeNotFound) {
+		t.Fatalf("before anything is live: %v", err)
+	}
+	session := rig.state.LoadSession()
+	session.Tabs, session.ActiveIdx = []domain.Tab{{ID: "a-note", Kind: "note"}, {ID: view.UUID(), Kind: KindLive}}, 1
+	if err := rig.state.SaveSession(session); err != nil {
+		t.Fatal(err)
+	}
+
+	rig.companion.Live = true
+	rig.enable(linkKey)
+	rig.start()
+	st := rig.await("live", func(st Status) bool {
+		return st.Live.Present && st.Live.Note != "" && len(st.Notes) == 1 && st.Notes[0].Seq == uint32(len(records))
+	})
+	uuid := rig.container().UUID()
+	if want := (LiveStatus{Present: true, UUID: view.UUID(), Device: aDevice.Name, Note: uuid, NoteTitle: "Ideas"}); st.Live != want {
+		t.Errorf("status %+v, want %+v", st.Live, want)
+	}
+	node, err := view.Resolve(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	note, _ := node.Attrs["note"].(map[string]interface{})
+	pages, _ := note["pages"].([]interface{})
+	device, _ := node.Attrs["note_device"].(map[string]interface{})
+	if node.Kind != KindLive || node.ID != view.UUID() || node.Title != "Live · "+aDevice.Name || node.Attrs["id"] != view.UUID() ||
+		len(pages) != 2 || device["name"] != aDevice.Name {
+		t.Errorf("node %+v", node)
+	}
+	if want := uuid + " page=" + page(1).String() + " waiting=false"; heard.last() != want {
+		t.Errorf("last change %q, want %q", heard.last(), want)
+	}
+	for _, other := range []domain.Address{domain.NewContainerAddress(uuid), domain.NewLeafAddress(view.UUID(), "x")} {
+		if _, err := view.Resolve(other); !errors.Is(err, domain.ErrNodeNotFound) {
+			t.Errorf("%s resolved: %v", other.String(), err)
+		}
+	}
+
+	rig.stopPromptly()
+	if want := uuid + " page=" + page(1).String() + " waiting=true"; heard.last() != want || !rig.svc.Status().Live.Waiting {
+		t.Errorf("after the tablet stopped: %q, %+v", heard.last(), rig.svc.Status().Live)
+	}
+	rig.start()
+	rig.await("live again", func(st Status) bool { return st.Live.Present && !st.Live.Waiting })
+	timer.pass()
+	if _, err := view.Resolve(addr); err != nil || timer.stopped == 0 {
+		t.Errorf("a note live again within the grace: %v, %d graces stopped", err, timer.stopped)
+	}
+
+	rig.stopPromptly()
+	timer.pass()
+	if _, err := view.Resolve(addr); !errors.Is(err, domain.ErrNodeNotFound) || heard.last() != "gone" || rig.svc.Status().Live.Present {
+		t.Errorf("after the grace: %v, last change %q", err, heard.last())
+	}
+	rig.mu.Lock()
+	deleted, sessionChanges := rig.deleted, rig.sessionChanges
+	rig.mu.Unlock()
+	if fmt.Sprint(deleted) != fmt.Sprint([]string{view.UUID()}) || sessionChanges != 1 {
+		t.Errorf("deleted %v, session told %d times", deleted, sessionChanges)
+	}
+	if tabs := rig.state.LoadSession().Tabs; len(tabs) != 1 || tabs[0].ID != "a-note" {
+		t.Errorf("tabs %+v, want the Live tab closed", tabs)
+	}
+}
+
+// The Live view follows the live note from page to page and from note to note, telling the change
+// listener of each move and the views of ink of each note it starts to mirror.
+func TestLiveView_FollowsTheLiveNoteFromPageToPageAndNoteToNote(t *testing.T) {
+	rig := newInkRig(t, nil)
+	view := rig.svc.LiveView()
+	heard := &liveRecorder{view: view}
+	rig.svc.SetChangeListener(heard)
+	other := testID(0xb0)
+	x1, x2 := LiveNote{Container: "x", Note: noteID, Page: page(1)}, LiveNote{Container: "x", Note: noteID, Page: page(2)}
+	y := LiveNote{Container: "y", Note: other, Page: page(3)}
+	for _, live := range []LiveNote{x1, x1, x2, y} {
+		view.follow(live)
+	}
+	want := []string{"x page=" + page(1).String() + " waiting=false", "x page=" + page(2).String() + " waiting=false",
+		"y page=" + page(3).String() + " waiting=false"}
+	if strings.Join(heard.lines, "\n") != strings.Join(want, "\n") {
+		t.Errorf("changes\n%s\nwant\n%s", strings.Join(heard.lines, "\n"), strings.Join(want, "\n"))
+	}
+	if container, present := view.Mirrors(); container != "y" || !present {
+		t.Errorf("mirrors %q, %t", container, present)
+	}
+	if n := rig.invalidations.Load(); n != 2 {
+		t.Errorf("%d invalidations, want one as each note began to be mirrored", n)
 	}
 }

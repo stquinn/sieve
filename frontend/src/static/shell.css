@@ -44,6 +44,17 @@ html, body {
     flex-shrink: 0;
 }
 
+#htmx-ink-sidebar {
+    flex-shrink: 0;
+    max-height: 40%;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    background-color: var(--theme-bgDark);
+}
+
+#htmx-ink-sidebar:empty { display: none; }
+
 #htmx-meta-panel { width: var(--meta-w); }
 
 #ask-panel { height: var(--ask-panel-h); }

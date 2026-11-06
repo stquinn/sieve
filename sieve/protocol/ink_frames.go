@@ -99,16 +99,22 @@ func NewInkLiveFrame(records []InkLiveRecord) InkLiveFrame {
 }
 
 // InkLivePageFrame is which page of this channel's note the tablet shows as being written, or
-// that none is. Live records reach the channel only while one is.
+// that none is, and the Live view that mirrors it. Live records reach the channel only while one
+// is.
 type InkLivePageFrame struct {
 	Type   string `json:"type"`
 	Live   bool   `json:"live" doc:"false when no page of this note is live any more"`
 	PageID string `json:"pageId,omitempty" doc:"the live page; absent when live is false"`
+	View   string `json:"view,omitempty" doc:"the uuid of the Live view mirroring the tablet; absent when live is false"`
 }
 
-// NewInkLivePageFrame builds the live-page push: pageID live, or none when it is "".
-func NewInkLivePageFrame(pageID string) InkLivePageFrame {
-	return InkLivePageFrame{Type: TypeInkLivePage, Live: pageID != "", PageID: pageID}
+// NewInkLivePageFrame builds the live-page push: pageID live in the Live view of uuid view, or
+// none when pageID is "".
+func NewInkLivePageFrame(pageID, view string) InkLivePageFrame {
+	if pageID == "" {
+		return InkLivePageFrame{Type: TypeInkLivePage}
+	}
+	return InkLivePageFrame{Type: TypeInkLivePage, Live: true, PageID: pageID, View: view}
 }
 
 // InkLogRestartedFrame is the note's log started again from its first record in this channel's

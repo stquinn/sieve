@@ -808,12 +808,17 @@ affordance: documents their tree, ink notes an Ink section, chats theirs later, 
 block kind its own section or a general Blocks bucket, so no block is ever invisible. The Ink
 section exists only when Ink is enabled in Settings, per machine and off by default; off, the
 service does not start and Bluetooth is not touched, notes stay on disk and addresses still
-resolve. Expanded, it shows **Current**, present only while a paired Boox is broadcasting, and
-below it the synced notes, filed in Sieve's own folders. Opening Current gives a tab that
-always shows what the Boox is broadcasting: when the Boox changes note, the Ink section asks
-the Workspace, through a generic "show this uuid in that tab" verb, to change what the tab
-shows. A note opened any other way stays on that note. Within a live note the view follows the
-page being written on.
+resolve. Expanded, it shows **Live**, present from the first live note until 30 seconds after the
+last, and below it the synced notes. Live is the tablet's live view, not a copy of any note: it
+is a container of its own, with a uuid minted for the run and stored nowhere, that the server
+feeds from whichever note is live. Its tab is a strict mirror of the tablet — the note being
+written, the page written on and, on a whiteboard, the tablet's window — that the reader cannot
+turn, pan or zoom, and it offers **Open this note**, which opens that note in a tab of its own.
+While the tablet is not live it says it is waiting and keeps the last page; when the 30 seconds
+run out the item and the tab go. A note's own tab is the reader's: ink arrives in it as it is
+written and pages with unseen ink are marked, but nothing moves the reader, and while the note
+is live a quiet affordance opens the Live view. There is no verb that shows another uuid in a
+tab.
 
 **Frontend: a lens and a renderer.** `lens/ink/` holds `DigitalNoteLens` extending
 `AbstractEditor` with its `page` and `reading` modes; `renderers/ink-renderer.js` is the

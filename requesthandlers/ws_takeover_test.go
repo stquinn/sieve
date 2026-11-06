@@ -72,7 +72,7 @@ func newWsTestServerWithJobs(t *testing.T, debounce time.Duration, jobs JobsSour
 		t.Fatalf("NewBlockContainerService: %v", err)
 	}
 	es.SetContainers(containers)
-	containers.SetSavedListener(es)
+	containers.SetChangeListener(es)
 	sp := &sieve.ServiceProvider{Store: fs, Documents: ds, Containers: containers, Editor: es, State: st}
 	// The composition root's own wiring, minus the settings read: every producer
 	// the app registers, spelling switched on, and the editor observing the engine

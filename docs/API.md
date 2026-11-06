@@ -61,7 +61,7 @@ alone, so the token appears in no response header.
 | `export-content` | `protocol.ExportContentFrame` | `opId` | ExportContentFrame carries the exported document. |
 | `extract-ack` | `protocol.AckFrame` | `opId` | AckFrame is the request-correlated outcome of a block-op or an extract. |
 | `ink-live` | `protocol.InkLiveFrame` | — | InkLiveFrame is live records in the order the tablet sent them. |
-| `ink-live-page` | `protocol.InkLivePageFrame` | — | InkLivePageFrame is which page of this channel's note the tablet shows as being written, or that none is. |
+| `ink-live-page` | `protocol.InkLivePageFrame` | — | InkLivePageFrame is which page of this channel's note the tablet shows as being written, or that none is, and the Live view that mirrors it. |
 | `ink-log-restarted` | `protocol.InkLogRestartedFrame` | — | InkLogRestartedFrame is the note's log started again from its first record in this channel's container. |
 | `ink-page-content` | `protocol.InkPageContentFrame` | `opId` | InkPageContentFrame answers an ink-page: the page in the export shape and the seq of the last record it reflects, or why there is none. |
 | `ink-stroke-added` | `protocol.InkStrokeAddedFrame` | — | InkStrokeAddedFrame is a stroke now present on a page, committed by the record of Seq. |
@@ -372,13 +372,14 @@ InkLiveFrame is live records in the order the tablet sent them.
 
 #### `ink-live-page` — server → client
 
-InkLivePageFrame is which page of this channel's note the tablet shows as being written, or that none is.
+InkLivePageFrame is which page of this channel's note the tablet shows as being written, or that none is, and the Live view that mirrors it.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
 | `type` | `string` | yes |  |
 | `live` | `bool` | yes | false when no page of this note is live any more |
 | `pageId` | `string` | no | the live page; absent when live is false |
+| `view` | `string` | no | the uuid of the Live view mirroring the tablet; absent when live is false |
 
 #### `ink-log-restarted` — server → client
 
@@ -1180,17 +1181,18 @@ or another protocol's own transport.
 | `GET` | `/ui/views/settings/ink` | — |
 | `GET` | `/ui/views/sidebar` | — |
 | `GET` | `/ui/views/sidebar/dialog/{kind}` | — |
+| `GET` | `/ui/views/sidebar/ink` | — |
 | `GET` | `/ui/views/sidebar/search` | — |
 | `GET` | `/ui/views/tabs` | — |
 | `PATCH` | `/api/folder/{id}` | typed (fragment) |
 | `PATCH` | `/api/note/{id}` | typed (fragment) |
+| `POST` | `/api/container/open/{id}` | — |
 | `POST` | `/api/document/save` | typed (json) |
 | `POST` | `/api/folder` | typed (fragment) |
 | `POST` | `/api/ink/enabled` | — |
 | `POST` | `/api/ink/key` | — |
 | `POST` | `/api/meta/restore` | — |
 | `POST` | `/api/note` | — |
-| `POST` | `/api/note/open/{id}` | — |
 | `POST` | `/api/session/layout` | — |
 | `POST` | `/api/session/toggle/{panel}` | — |
 | `POST` | `/api/settings` | — |

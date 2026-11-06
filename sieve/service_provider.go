@@ -138,16 +138,17 @@ func (s *ServiceProvider) CommandSet() []command.Command {
 // declare. Lives at the composition root — the only place that knows both the
 // ports and the concretes.
 var (
-	_ block.DocumentsPort             = (*services.DocumentService)(nil)
-	_ block.AssetsPort                = (*services.AssetService)(nil)
-	_ block.StatePort                 = (*services.StateService)(nil)
-	_ block.LinkPreviewPort           = (*services.LinkPreviewService)(nil)
-	_ block.PlantumlPort              = (*services.PlantumlService)(nil)
-	_ services.ContainableKinds       = block.Registry{}
-	_ services.ContainerSavedListener = (*editor.EditorService)(nil)
-	_ domain.NodeResolver             = (*editor.Router)(nil)
-	_ command.DocumentFiler           = (*editor.EditorService)(nil)
-	_ ai.DocumentMCPEndpoint          = (*mcp.Server)(nil)
+	_ block.DocumentsPort              = (*services.DocumentService)(nil)
+	_ block.AssetsPort                 = (*services.AssetService)(nil)
+	_ block.StatePort                  = (*services.StateService)(nil)
+	_ block.LinkPreviewPort            = (*services.LinkPreviewService)(nil)
+	_ block.PlantumlPort               = (*services.PlantumlService)(nil)
+	_ services.ContainableKinds        = block.Registry{}
+	_ services.ContainerChangeListener = (*editor.EditorService)(nil)
+	_ editor.NodeSource                = (*ink.LiveView)(nil)
+	_ domain.NodeResolver              = (*editor.Router)(nil)
+	_ command.DocumentFiler            = (*editor.EditorService)(nil)
+	_ ai.DocumentMCPEndpoint           = (*mcp.Server)(nil)
 )
 
 func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.FS) {
@@ -195,12 +196,19 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	s.Plantuml = services.NewPlantumlService(s.State)
 	settings := s.State.LoadSettings()
 	s.Ink = ink.NewInkService(s.State, s.Containers, s.InkRadio(settings.Ink), s.InkInvalidator)
+	s.Nodes.Register(s.Ink.LiveView())
+	// A Live view's uuid is minted per run, so a tab of one saved by an earlier run names nothing.
+	if _, err := s.State.CloseTabs(func(t domain.Tab) bool { return t.ContainerKind() == ink.KindLive }); err != nil {
+		logger.Error("sieve: could not close an earlier run's Live tabs", "err", err)
+	}
 	s.ApplyRetention(settings.MaxHistoryVersions)
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
 	s.Editor = editor.NewEditorService(s.Documents, block.NewDocumentCodec(block.GlobalRegistry()), autosave)
 	s.Editor.SetServices(s.BlockServices())
 	s.Editor.SetContainers(s.Containers)
-	s.Containers.SetSavedListener(s.Editor)
+	s.Editor.SetNodes(s.Nodes)
+	s.Containers.SetChangeListener(s.Editor)
+	s.Ink.SetChangeListener(s.Editor)
 	// The OS clipboard, read outside the webview. On a cgo-off build this is the
 	// package's no-op half, so a native-clipboard paste answers "nothing" rather
 	// than failing.

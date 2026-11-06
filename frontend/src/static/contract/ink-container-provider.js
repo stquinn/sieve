@@ -87,9 +87,10 @@ export const InkFeed = Object.freeze({
  */
 
 /**
- * Which page of this note the tablet shows as being written; `live` false and
- * `pageId` null when none is any more. Live records arrive only while one is.
- * @typedef {Readonly<{type: 'live-page', live: boolean, pageId: string|null}>} InkLivePage
+ * Which page of this note the tablet shows as being written, and the uuid of
+ * the Live view mirroring it; `live` false and `pageId` and `view` null when
+ * none is any more. Live records arrive only while one is.
+ * @typedef {Readonly<{type: 'live-page', live: boolean, pageId: string|null, view: string|null}>} InkLivePage
  */
 
 /**

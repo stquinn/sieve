@@ -229,6 +229,7 @@ The resulting order for one keystroke, highest first:
 | Composer (`ComposerEditor`) | `Mod+Enter` → send the message | the matrix above, unchanged |
 | Block container whose kind has no lens (`BlockLens`) | **nothing** | none of the matrix: there is no editing surface. The block is drawn read-only by its kind's renderer, which keeps its read affordances (selection, copy, pan, filters) and drops every edit |
 | Digital Note (`DigitalNoteLens`) | bare `PageUp` → previous page, bare `PageDown` → next page; on a whiteboard also the bare arrows → move the window, `+`/`=` and `-`/`_` → zoom | none of the matrix: there is no editing surface (below) |
+| Live view (`LiveInkLens`) | **nothing** | none of the matrix: there is no editing surface, and no reader gesture (below) |
 
 **The composer is EDITOR-FIRST (revised 2026-08-28, #118):** it claims exactly
 one chord, `Mod+Enter`, and nothing else. Bare `Enter`, `Shift+Enter` and
@@ -267,28 +268,45 @@ Mode) and `Mod+Alt+P` (Presentation Mode) do nothing in it.
 - **Pointer.** Previous and next; one dot per page (a click shows that page; a dot carries a mark
   while its page has ink not yet seen), or, past twelve pages, one `n unseen` button, shown while
   any page has ink not yet seen, that shows the next such page after the one shown, from the first
-  again past the last; and, while the note is live, the live button. A fixed page has fit-to-width ⇄
-  100% (one grid unit to one CSS pixel, 1404 across) and scrolls in its surround. A whiteboard has
-  `−` and `+` (zoom about the centre), `100%` (one grid unit to one CSS pixel, about the centre) and
-  `Fit all` (frame all the ink with a margin; the sheet at the origin when there is none).
+  again past the last. A whiteboard of one page has no pager. A fixed page has fit-to-width ⇄ 100%
+  (one grid unit to one CSS pixel, 1404 across) and scrolls in its surround. A whiteboard has `−`
+  and `+` (zoom about the centre), `100%` (one grid unit to one CSS pixel, about the centre) and
+  `Fit all` (frame all the ink with a margin; the sheet at the origin when there is none). While the
+  note is being written on the tablet, a quiet `Live` button opens the Live view in its own tab; it
+  is gone when the note is not live.
 - **The whiteboard's window.** A whiteboard is shown through a window with the note's page aspect,
   as large as fits the surround. Dragging the sheet with the primary button moves the window with
   the pointer; the wheel moves it (Shift turns a vertical wheel horizontal); Ctrl or Cmd with the
   wheel, and a trackpad pinch, zoom about the point under the pointer, which stays under it. Zoom
   runs from all the ink framed (or one sheet, whichever is farther) to a quarter of a sheet's width.
-  A whiteboard that is not live opens with all its ink framed.
-- **Following.** While the tablet shows a page of the note as being written, the lens shows that
-  page and follows it as it changes. Turning to another page by hand pauses following; turning
-  back to the live page by hand, or pressing the live button, resumes it. On a whiteboard following
-  also means the window is the tablet's (one sheet at one to one, where the tablet says its view
-  is, or where its last stroke began while it has said nothing), and moves with it; any move of the
-  window by the reader — drag, wheel, zoom, a key, a button — pauses following, and the live
-  button resumes it, putting the window back on the tablet's. The live button shows `Live` while
-  following and `Back to live` while paused, and is gone when the note is not live.
-- **Out of view.** While a fixed page is followed and the stroke under the pen runs out of the
-  surround's view, the surround scrolls the least that brings the pen back within 48 px of its
-  edge, unless the reader has scrolled it in the last 0.8 s. On a whiteboard, a stroke that arrives
-  wholly outside the window marks the edge of the sheet it lies beyond, until the window shows it.
+  A whiteboard opens with all its ink framed.
+- **The reader is never moved.** The page shown and the whiteboard's window change only by the
+  reader's hand. While the tablet writes on another page of the note, its ink arrives there unseen
+  and marks that page; while it writes on the page shown, the committed strokes and the stroke
+  under the pen are drawn where they land, the surround is not scrolled to them, and the tablet's
+  own window does not move the reader's. On a whiteboard, a stroke that arrives wholly outside the
+  window marks the edge of the sheet it lies beyond, until the window shows it.
+
+### The Live view lens
+
+`LiveInkLens` presents the Live view, in its one mode, `mirror`: whichever note the tablet is
+writing, on the page it is writing on. It is read-only as `DigitalNoteLens` is, and it is a strict
+mirror: the reader cannot turn its pages, move or zoom its window, or scroll it away from the nib.
+
+- **Keys.** None is claimed; no key moves the view.
+- **Pointer.** One button, **Open this note**, opens the note being mirrored in a tab of its own
+  (disabled before the note has reached this Sieve). There is no pager, no dot, no zoom or scale
+  button and no edge mark; a drag and the wheel move nothing.
+- **What it shows.** The page the tablet writes on, changing as the tablet turns or changes note. A
+  fixed page is shown whole in the surround, but never narrower than half the surround's width: a
+  page longer than that scrolls, and while the stroke under the pen runs out of view the surround
+  scrolls the least that brings the pen back within 48 px of its edge, unless the reader has
+  scrolled it in the last 0.8 s. A whiteboard is shown through the tablet's window (one sheet at one
+  to one, where the tablet says its view is, or where its last stroke began while it has said
+  nothing), and moves with it; before the tablet has placed it, all its ink is framed.
+- **Chrome.** The device, the note's title, the page as `Page n / N` (or `Whiteboard`), and `Live`;
+  while the tablet is not live and the view waits for it, `Waiting for the tablet…` and the last
+  page written. Thirty seconds after the last live note the view, and its tab, are gone.
 
 ## Policy declaration (revised 2026-07-29)
 

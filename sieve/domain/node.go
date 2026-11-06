@@ -26,6 +26,12 @@ type NodeDescriptor struct {
 	Attrs map[string]interface{}
 }
 
+// Block is the node as the one block a session over it holds: of the node's kind,
+// with its id, carrying a copy of its attrs.
+func (n NodeDescriptor) Block() SieveBlock {
+	return NewSieveBlock(n.Kind, n.ID, n.Attrs).Clone()
+}
+
 // NodeResolver dereferences a Sieve coordinate: address in, NodeDescriptor out.
 // editor.Router implements it; every consumer that resolves addresses takes it
 // by injection. ErrNodeNotFound is the dangling case.

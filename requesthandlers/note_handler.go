@@ -32,23 +32,23 @@ type NoteHandler struct {
 	EmitNotesChanged     func()
 }
 
-// RegisterPaths mounts the note's own lifecycle — create, open, rename, delete —
-// plus the tab operations that follow from it. A note is a RESOURCE here: the
-// method says what happens to it, so there is one path per note rather than one
-// path per verb.
+// RegisterPaths mounts the note's own lifecycle — create, rename, delete — the
+// opening of any container in a tab, and the tab operations that follow from it.
+// A note is a RESOURCE here: the method says what happens to it, so there is one
+// path per note rather than one path per verb.
 func (h *NoteHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/note", h.handleNoteCreate)
-	r.Post("/api/note/open/{id}", h.handleNoteOpen)
+	r.Post("/api/container/open/{id}", h.handleContainerOpen)
 	r.Patch("/api/note/{id}", h.handleNotePatch)
 	r.Delete("/api/note/{id}", h.handleNoteDelete)
 	r.Post("/api/tabs/close", h.handleTabsClose)
 	r.Post("/api/tabs/reorder", h.handleTabsReorder)
 }
 
-// handleNoteOpen opens a tab for any container — a prompt, a document or a block
-// container — or focuses the one already open, and answers with the tab strip and
-// the editor mount.
-func (h *NoteHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
+// handleContainerOpen opens a tab for any container — a prompt, a document, a
+// block container or another node the Router resolves — or focuses the one
+// already open, and answers with the tab strip and the editor mount.
+func (h *NoteHandler) handleContainerOpen(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	opened, err := h.tabFor(id)
@@ -94,7 +94,7 @@ func (h *NoteHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
 
 // tabFor builds the tab that opens id. A prompt id is a prompt; anything else is
 // what the Router resolves it to — a document, with its filed status, intent and
-// last mode, or a block container, with its block's kind and title.
+// last mode, or any other node, with its kind and title.
 func (h *NoteHandler) tabFor(id string) (domain.Tab, error) {
 	if name, isPrompt := strings.CutPrefix(id, "prompt:"); isPrompt {
 		displayName := name + " Prompt"

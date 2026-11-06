@@ -198,7 +198,7 @@ func (h *MetaHandler) handleRestore(w http.ResponseWriter, r *http.Request) {
 	// NOT a frontend setContent re-parse, which can't read <!--s:ID--> markers and
 	// would re-mint ids, then persist that corruption on save-back. Send only the
 	// uuid; the frontend asks its document channel to load again (the fresh shadow).
-	_ = h.ServiceProvider.Editor.ReloadFromDisk(doc.UUID())
+	_ = h.ServiceProvider.Editor.Refresh(doc.UUID())
 
 	trigger, _ := json.Marshal(map[string]interface{}{
 		"editor:restore": map[string]string{"uuid": doc.UUID()},

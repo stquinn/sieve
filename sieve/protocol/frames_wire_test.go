@@ -314,13 +314,13 @@ func outboundWireCases() []wireCase {
 		{
 			name:    "ink-live-page",
 			channel: ChannelDocument,
-			frame:   NewInkLivePageFrame("p1"),
-			golden:  `{"type":"ink-live-page","live":true,"pageId":"p1"}`,
+			frame:   NewInkLivePageFrame("p1", "v1"),
+			golden:  `{"type":"ink-live-page","live":true,"pageId":"p1","view":"v1"}`,
 		},
 		{
 			name:    "ink-live-page off",
 			channel: ChannelDocument,
-			frame:   NewInkLivePageFrame(""),
+			frame:   NewInkLivePageFrame("", "v1"),
 			golden:  `{"type":"ink-live-page","live":false}`,
 		},
 		{

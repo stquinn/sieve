@@ -400,9 +400,9 @@ func TestEditorService_ARefusedSaveAnnouncesNothing(t *testing.T) {
 // Version restore writes the good document straight to disk (ReplaceWithVersion),
 // behind the open shadow's back. Without a from-disk reload, the stale shadow (a)
 // is served by /api/editor/load and (b) overwrites the restored file on the next
-// flush — corrupting it. ReloadFromDisk must replace the shadow with the on-disk
+// flush — corrupting it. Refresh must replace the shadow with the on-disk
 // content (codec-parsed, so marker ids survive), so neither happens.
-func TestEditorService_ReloadFromDisk_replacesStaleShadowAndPreservesIDs(t *testing.T) {
+func TestEditorService_Refresh_replacesStaleShadowAndPreservesIDs(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), time.Hour)
 
@@ -420,8 +420,8 @@ func TestEditorService_ReloadFromDisk_replacesStaleShadowAndPreservesIDs(t *test
 	doc.SetBody([]byte("<!--s:co-1-->\nrestored\n<!--/s:co-1-->"))
 	_, _ = ds.Save(doc)
 
-	if err := es.ReloadFromDisk(uuid); err != nil {
-		t.Fatalf("ReloadFromDisk: %v", err)
+	if err := es.Refresh(uuid); err != nil {
+		t.Fatalf("Refresh: %v", err)
 	}
 
 	// Shadow now reflects the restored disk — marker id co-1 preserved.

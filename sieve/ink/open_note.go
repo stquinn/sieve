@@ -3,6 +3,7 @@ package ink
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sync"
 
 	"sieve/logger"
@@ -35,9 +36,9 @@ func (c StrokeChange) ExportStroke() ([]byte, error) {
 }
 
 // OpenNote is the full replay of one Digital Note and the seq it stands at, held while a view of
-// it is open. Page answers and stroke changes are handed out under one lock, each naming the seq
-// it reflects, so a consumer holding a page answered at seq S takes every change above S and
-// drops every one at or below it. It is safe for concurrent use.
+// it is open, and the destinations holding it. Page answers and stroke changes are handed out under
+// one lock, each naming the seq it reflects, so a consumer holding a page answered at seq S takes
+// every change above S and drops every one at or below it. It is safe for concurrent use.
 type OpenNote struct {
 	uuid string
 	logs noteLogs
@@ -45,6 +46,8 @@ type OpenNote struct {
 	mu   sync.Mutex
 	note *StrokeBasedNote
 	seq  uint32
+	// holders are the destinations holding the note, in the order they first held it.
+	holders []string
 }
 
 // load replays the note's whole log as it stands now. o.mu is held.
@@ -119,9 +122,26 @@ func (o *OpenNote) Restart(send func()) {
 	send()
 }
 
-// OpenNotes are the Digital Notes held open for views, by container uuid. A note is held from the
-// first Open of its container to Release; a container not held costs nothing. It is safe for
-// concurrent use.
+// hold adds holder to the note's holders. o.mu is held.
+func (o *OpenNote) hold(holder string) {
+	if !slices.Contains(o.holders, holder) {
+		o.holders = append(o.holders, holder)
+	}
+}
+
+// release takes holder from the note's holders and reports whether none is left.
+func (o *OpenNote) release(holder string) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.holders = slices.DeleteFunc(o.holders, func(h string) bool { return h == holder })
+	return len(o.holders) == 0
+}
+
+// OpenNotes are the Digital Notes held open for views, by container uuid, each by the destinations
+// that hold it: a destination is a name its caller chooses, such as the socket a view is on, and
+// every stroke change and restart of a note is handed out once for all of its holders. A note is
+// held from the first Open of its container by any destination until the last of them releases
+// it; a container not held costs nothing. It is safe for concurrent use.
 type OpenNotes struct {
 	logs noteLogs
 
@@ -134,11 +154,11 @@ func NewOpenNotes(svc *InkService) *OpenNotes {
 	return &OpenNotes{logs: svc, notes: map[string]*OpenNote{}}
 }
 
-// Open is the note of container uuid, replayed from its log on the first Open since its last
-// Release. The note is registered before its log is read, so a record committed while it is being
-// read reaches it through Commit; a failed read leaves nothing registered. A container that is
-// not a Digital Note is ErrNoSuchPage.
-func (ns *OpenNotes) Open(uuid string) (*OpenNote, error) {
+// Open is the note of container uuid, held by holder from now until it releases it, and replayed
+// from its log on the first Open since nobody held it. The note is registered before its log is
+// read, so a record committed while it is being read reaches it through Commit; a failed read
+// leaves nothing registered. A container that is not a Digital Note is ErrNoSuchPage.
+func (ns *OpenNotes) Open(uuid, holder string) (*OpenNote, error) {
 	ns.mu.Lock()
 	if o, ok := ns.notes[uuid]; ok {
 		ns.mu.Unlock()
@@ -147,9 +167,10 @@ func (ns *OpenNotes) Open(uuid string) (*OpenNote, error) {
 		if o.note == nil {
 			return nil, fmt.Errorf("%w: %s", ErrNoSuchPage, uuid)
 		}
+		o.hold(holder)
 		return o, nil
 	}
-	o := &OpenNote{uuid: uuid, logs: ns.logs}
+	o := &OpenNote{uuid: uuid, logs: ns.logs, holders: []string{holder}}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	ns.notes[uuid] = o
@@ -165,38 +186,60 @@ func (ns *OpenNotes) Open(uuid string) (*OpenNote, error) {
 	return o, nil
 }
 
-// Commit hands rec, committed to the note in container uuid, to that note if it is held.
-func (ns *OpenNotes) Commit(uuid string, rec link.Record, send func(StrokeChange)) {
-	ns.mu.Lock()
-	o, ok := ns.notes[uuid]
-	ns.mu.Unlock()
-	if ok {
-		o.Commit(rec, send)
+// Commit hands rec, committed to the note in container uuid, to that note if it is held, and calls
+// send with each stroke change it makes and the note's holders as they stand when it is made.
+func (ns *OpenNotes) Commit(uuid string, rec link.Record, send func(holders []string, c StrokeChange)) {
+	if o := ns.held(uuid); o != nil {
+		o.Commit(rec, func(c StrokeChange) { send(slices.Clone(o.holders), c) })
 	}
 }
 
-// Restart restarts the note of container uuid from its log, if it is held, and calls send as
-// OpenNote.Restart does.
-func (ns *OpenNotes) Restart(uuid string, send func()) {
-	ns.mu.Lock()
-	o, ok := ns.notes[uuid]
-	ns.mu.Unlock()
-	if ok {
-		o.Restart(send)
+// Restart restarts the note of container uuid from its log, if it is held, and calls send with its
+// holders as OpenNote.Restart calls its send.
+func (ns *OpenNotes) Restart(uuid string, send func(holders []string)) {
+	if o := ns.held(uuid); o != nil {
+		o.Restart(func() { send(slices.Clone(o.holders)) })
 	}
 }
 
-// Holds reports whether the note of container uuid is held open.
-func (ns *OpenNotes) Holds(uuid string) bool {
-	ns.mu.Lock()
-	defer ns.mu.Unlock()
-	_, ok := ns.notes[uuid]
-	return ok
+// Holds reports whether any destination holds the note of container uuid open.
+func (ns *OpenNotes) Holds(uuid string) bool { return ns.held(uuid) != nil }
+
+// HeldBy reports whether holder holds the note of container uuid open.
+func (ns *OpenNotes) HeldBy(uuid, holder string) bool {
+	o := ns.held(uuid)
+	if o == nil {
+		return false
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return slices.Contains(o.holders, holder)
 }
 
-// Release stops holding the note of container uuid.
-func (ns *OpenNotes) Release(uuid string) {
+// Release is holder no longer holding the note of container uuid; the note stops being held when
+// no destination does.
+func (ns *OpenNotes) Release(uuid, holder string) {
 	ns.mu.Lock()
 	defer ns.mu.Unlock()
-	delete(ns.notes, uuid)
+	if o, ok := ns.notes[uuid]; ok && o.release(holder) {
+		delete(ns.notes, uuid)
+	}
+}
+
+// ReleaseAll is holder no longer holding any note.
+func (ns *OpenNotes) ReleaseAll(holder string) {
+	ns.mu.Lock()
+	defer ns.mu.Unlock()
+	for uuid, o := range ns.notes {
+		if o.release(holder) {
+			delete(ns.notes, uuid)
+		}
+	}
+}
+
+// held is the note of container uuid when it is held, otherwise nil.
+func (ns *OpenNotes) held(uuid string) *OpenNote {
+	ns.mu.Lock()
+	defer ns.mu.Unlock()
+	return ns.notes[uuid]
 }

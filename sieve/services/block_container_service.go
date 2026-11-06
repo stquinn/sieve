@@ -32,10 +32,11 @@ type ContainableKinds interface {
 	ReadMap(kind, yaml string) (domain.SieveBlock, error)
 }
 
-// ContainerSavedListener hears that a container's content on disk changed behind
-// whoever holds it open. editor.EditorService implements it.
-type ContainerSavedListener interface {
-	ReloadFromDisk(uuid string) error
+// ContainerChangeListener is told that a container changed behind whoever holds it
+// open, so that an open session adopts what the container's owner now holds.
+// editor.EditorService implements it.
+type ContainerChangeListener interface {
+	Refresh(uuid string) error
 }
 
 // BlockContainerService owns every store.TypeBlock storable: it is to a
@@ -44,7 +45,7 @@ type ContainerSavedListener interface {
 type BlockContainerService struct {
 	store    store.Store
 	kinds    ContainableKinds
-	listener ContainerSavedListener
+	listener ContainerChangeListener
 }
 
 // NewBlockContainerService prepares the Blocks category and builds the service.
@@ -55,9 +56,9 @@ func NewBlockContainerService(st store.Store, kinds ContainableKinds) (*BlockCon
 	return &BlockContainerService{store: st, kinds: kinds}, nil
 }
 
-// SetSavedListener registers who hears each successful Save. It must be called
+// SetChangeListener registers who hears each successful Save. It must be called
 // before the service is shared: the field is read without a lock.
-func (s *BlockContainerService) SetSavedListener(l ContainerSavedListener) {
+func (s *BlockContainerService) SetChangeListener(l ContainerChangeListener) {
 	s.listener = l
 }
 
@@ -122,7 +123,7 @@ func (s *BlockContainerService) Save(c *domain.BlockContainer) (*domain.BlockCon
 		return nil, err
 	}
 	if s.listener != nil {
-		if err := s.listener.ReloadFromDisk(opened.UUID()); err != nil {
+		if err := s.listener.Refresh(opened.UUID()); err != nil {
 			logger.Warn("block container: listener could not reload", "uuid", opened.UUID(), "err", err)
 		}
 	}

@@ -103,6 +103,23 @@ func (ss *StateService) SaveSession(session domain.Session) error {
 	return err
 }
 
+// CloseTabs closes every session tab that close matches, as domain.Session.CloseTabs closes them,
+// and saves the session when any was. It reports whether any was.
+func (ss *StateService) CloseTabs(close func(domain.Tab) bool) (bool, error) {
+	session := ss.LoadSession()
+	var ids []string
+	for _, t := range session.Tabs {
+		if close(t) {
+			ids = append(ids, t.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return false, nil
+	}
+	session.CloseTabs(ids)
+	return true, ss.SaveSession(session)
+}
+
 // LoadSettings returns the current settings merged with defaults. If no
 // settings file exists yet, defaults are written to the Store so the user can
 // inspect and edit them.

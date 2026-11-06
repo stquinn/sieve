@@ -153,6 +153,21 @@ func (rs *NoteReplicas) log(uuid string) ([]byte, bool) {
 	return nil, false
 }
 
+// attrsOf are the block attrs of the open replica whose container is uuid, as its fold and cursor
+// stand now. False when no open replica holds that container.
+func (rs *NoteReplicas) attrsOf(uuid string) (map[string]interface{}, bool) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	for _, r := range rs.open {
+		if r.UUID() == uuid {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			return r.attrs(), true
+		}
+	}
+	return nil, false
+}
+
 // End writes every open replica's queue, then saves the block of each that changed since its
 // last save, and releases them all. A replica whose write failed is released unsaved, so its
 // block stays behind its asset. The next Have or Open looks for containers again.

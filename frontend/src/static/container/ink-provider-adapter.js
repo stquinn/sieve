@@ -59,7 +59,9 @@ export class InkProviderAdapter extends ProviderAdapter {
       case DocumentFrame.INK_LIVE:
         return { type: InkFeed.LIVE, records: (frame.records || []).map((/** @type {Record<string, any>} */ r) => this.#liveRecord(r)) }
       case DocumentFrame.INK_LIVE_PAGE:
-        return { type: InkFeed.LIVE_PAGE, live: frame.live === true, pageId: frame.live === true ? String(frame.pageId) : null }
+        return frame.live === true
+          ? { type: InkFeed.LIVE_PAGE, live: true, pageId: String(frame.pageId), view: frame.view ? String(frame.view) : null }
+          : { type: InkFeed.LIVE_PAGE, live: false, pageId: null, view: null }
       case DocumentFrame.INK_LOG_RESTARTED:
         return { type: InkFeed.LOG_RESTARTED }
       default:

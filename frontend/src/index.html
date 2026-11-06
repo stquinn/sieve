@@ -22,6 +22,7 @@
         {{template "session_layout.html" .}}
         <div id="sidebar-wrapper">
             <div id="htmx-sidebar" class="sidebar" hx-get="/ui/views/sidebar" hx-trigger="load, sieve:invalidate-session from:document, sieve:invalidate-notes from:document, session:changed from:body, notes:changed from:body"></div>
+            <div id="htmx-ink-sidebar" hx-get="/ui/views/sidebar/ink" hx-trigger="load, sieve:invalidate-ink from:document, sieve:invalidate-session from:document, session:changed from:body"></div>
             <div class="prompts-handle"></div>
             <div id="prompts-panel" hx-get="/ui/views/prompts" hx-trigger="load, sieve:invalidate-prompts from:document, sieve:invalidate-notes from:document, prompts:changed from:body, notes:changed from:body"></div>
         </div>

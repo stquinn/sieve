@@ -18,6 +18,8 @@ type ScriptedCompanion struct {
 
 	mu      sync.Mutex
 	records []Record
+	// others are the logs of the notes served beside Note's, by note.
+	others map[ID][]Record
 
 	// CorruptHead sends one HEAD whose hash does not hold.
 	CorruptHead bool
@@ -27,6 +29,8 @@ type ScriptedCompanion struct {
 	StaleBeforeHead bool
 	// Live sends LIVE of Note and Page after each NOTES.
 	Live bool
+	// LiveOf, when set, is the note a LIVE names in place of Note.
+	LiveOf ID
 	// Ink, when set, is sent as one INK frame after each LIVE.
 	Ink []byte
 	// GapAt skips the record of this seq.
@@ -51,6 +55,24 @@ func (c *ScriptedCompanion) SetRecords(records []Record) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.records = records
+}
+
+// SetNote serves records as the log of note, beside Note's, from the next LIST on.
+func (c *ScriptedCompanion) SetNote(note ID, records []Record) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.others == nil {
+		c.others = map[ID][]Record{}
+	}
+	c.others[note] = records
+}
+
+// log is the records served as note's log. c.mu is held.
+func (c *ScriptedCompanion) log(note ID) []Record {
+	if other, ok := c.others[note]; ok && note != c.Note {
+		return other
+	}
+	return c.records
 }
 
 // Serve runs the protocol until the link closes or the session misbehaves.
@@ -90,8 +112,8 @@ func (c *ScriptedCompanion) Serve(link io.ReadWriter) error {
 		case frameList:
 			err = c.sendNotes(stream)
 		case frameOpen:
-			in.id()
-			err = c.sendFrom(stream, in.u32())
+			note := in.id()
+			err = c.sendFrom(stream, note, in.u32())
 		case frameAck:
 			in.id()
 			c.Acks <- in.u32()
@@ -106,15 +128,22 @@ func (c *ScriptedCompanion) Serve(link io.ReadWriter) error {
 
 func (c *ScriptedCompanion) sendNotes(stream *frameStream) error {
 	c.mu.Lock()
-	head, live, ink := uint32(len(c.records)), c.Live, c.Ink
+	notes := newFrame(frameNotes).u32(uint32(1 + len(c.others))).id(c.Note).string("").u32(1).u32(uint32(len(c.records)))
+	for note, records := range c.others {
+		notes = notes.id(note).string("").u32(1).u32(uint32(len(records)))
+	}
+	live, ink, liveNote := c.Live, c.Ink, c.Note
+	if c.LiveOf != (ID{}) {
+		liveNote = c.LiveOf
+	}
 	c.mu.Unlock()
-	if err := stream.write(newFrame(frameNotes).u32(1).id(c.Note).string("").u32(1).u32(head).b); err != nil {
+	if err := stream.write(notes.b); err != nil {
 		return err
 	}
 	if !live {
 		return nil
 	}
-	if err := stream.write(newFrame(frameLive).id(c.Note).id(c.Page).b); err != nil {
+	if err := stream.write(newFrame(frameLive).id(liveNote).id(c.Page).b); err != nil {
 		return err
 	}
 	if len(ink) > 0 {
@@ -123,23 +152,23 @@ func (c *ScriptedCompanion) sendNotes(stream *frameStream) error {
 	return nil
 }
 
-func (c *ScriptedCompanion) sendFrom(stream *frameStream, have uint32) error {
+func (c *ScriptedCompanion) sendFrom(stream *frameStream, note ID, have uint32) error {
 	c.Opens <- have
 	c.mu.Lock()
-	records, corrupt, ahead, stale, gapAt := c.records, c.CorruptHead, c.RefuseAhead, c.StaleBeforeHead, c.GapAt
+	records, corrupt, ahead, stale, gapAt := c.log(note), c.CorruptHead, c.RefuseAhead, c.StaleBeforeHead, c.GapAt
 	c.CorruptHead, c.RefuseAhead = false, false
 	c.mu.Unlock()
 	if stale {
 		body, _ := Record{Seq: 99, Op: OpPageRemove, Page: c.Page}.Body()
-		if err := stream.write(newFrame(frameOp).id(c.Note).raw(NewLogFrame(body)).b); err != nil {
+		if err := stream.write(newFrame(frameOp).id(note).raw(NewLogFrame(body)).b); err != nil {
 			return err
 		}
-		if err := stream.write(newFrame(frameDone).id(c.Note).b); err != nil {
+		if err := stream.write(newFrame(frameDone).id(note).b); err != nil {
 			return err
 		}
 	}
 	if ahead {
-		return stream.write(newFrame(frameRefuse).id(c.Note).string(RefuseAhead).b)
+		return stream.write(newFrame(frameRefuse).id(note).string(RefuseAhead).b)
 	}
 	var cursor Cursor
 	bodies := make([][]byte, len(records))
@@ -150,16 +179,16 @@ func (c *ScriptedCompanion) sendFrom(stream *frameStream, have uint32) error {
 	if corrupt {
 		cursor.Hash[0] ^= 1
 	}
-	if err := stream.write(newFrame(frameHead).id(c.Note).u32(cursor.Seq).raw(cursor.Hash[:]).b); err != nil {
+	if err := stream.write(newFrame(frameHead).id(note).u32(cursor.Seq).raw(cursor.Hash[:]).b); err != nil {
 		return err
 	}
 	for i := int(have); i < len(bodies); i++ {
 		if uint32(i+1) == gapAt {
 			continue
 		}
-		if err := stream.write(newFrame(frameOp).id(c.Note).raw(NewLogFrame(bodies[i])).b); err != nil {
+		if err := stream.write(newFrame(frameOp).id(note).raw(NewLogFrame(bodies[i])).b); err != nil {
 			return err
 		}
 	}
-	return stream.write(newFrame(frameDone).id(c.Note).b)
+	return stream.write(newFrame(frameDone).id(note).b)
 }

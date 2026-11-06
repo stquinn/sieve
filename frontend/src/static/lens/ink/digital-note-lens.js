@@ -1,9 +1,9 @@
 // @ts-check
-// The lens of a Digital Note: one page at a time as the tablet drew it, the
-// committed strokes and the stroke under the pen arriving as they are written,
-// a whiteboard through a window the reader moves and zooms, and the page being
-// written, and the tablet's window, followed while the note is live. It is read-only
-// by construction: mounted over an InkContainerProvider, which has no verbs, it
+// The reader's lens of a Digital Note: one page at a time as the tablet drew it,
+// the committed strokes and the stroke under the pen arriving as they are written,
+// and a whiteboard through a window the reader moves and zooms. The reader is
+// never moved: what is shown changes only by the reader's hand. It is read-only by
+// construction: mounted over an InkContainerProvider, which has no verbs, it
 // declares no capability and writes nothing.
 
 import { AbstractEditor } from '../abstract-editor.js'

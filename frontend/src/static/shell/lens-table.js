@@ -20,6 +20,8 @@ import { ContractViolation } from '../contract/sieve-block.js'
  * @property {boolean} channel whether the container lives on a document channel;
  *   one without loads and saves over HTTP and hears of its changes only by
  *   invalidation
+ * @property {boolean} document whether the container is a document, which is
+ *   what has an export
  */
 
 export class LensTable {

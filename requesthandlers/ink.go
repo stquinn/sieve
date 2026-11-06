@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"sieve/logger"
@@ -19,7 +20,8 @@ import (
 )
 
 // InkHandler serves Settings → Ink: the status fragment, its two actions, which take effect at
-// once and answer with the fragment, and the export of a synced note's page.
+// once and answer with the fragment, and the export of a synced note's page; and the sidebar's Ink
+// section.
 type InkHandler struct {
 	ServiceProvider *sieve.ServiceProvider
 	Tmpl            *template.Template
@@ -50,11 +52,39 @@ type inkSessionView struct {
 	Throughput string
 }
 
+// inkSidebarView is the payload of ink_sidebar.html, which shows nothing while Ink is disabled.
+type inkSidebarView struct {
+	Enabled bool
+	// Live is the Live view while it exists, otherwise nil.
+	Live  *inkLiveItem
+	Notes []inkNoteItem
+}
+
+// inkLiveItem is the Live view as the sidebar lists it.
+type inkLiveItem struct {
+	UUID   string
+	Device string
+	// Note is the title of the note being written.
+	Note    string
+	Waiting bool
+	// Active is the Live view being the active tab.
+	Active bool
+}
+
+// inkNoteItem is a synced note as the sidebar lists it.
+type inkNoteItem struct {
+	UUID   string
+	Title  string
+	Pages  int
+	Active bool
+}
+
 // inkRateFloor is the shortest catch-up a throughput is shown for.
 const inkRateFloor = 50 * time.Millisecond
 
 func (h *InkHandler) RegisterPaths(r chi.Router) {
 	r.Get("/ui/views/settings/ink", h.handleStatus)
+	r.Get("/ui/views/sidebar/ink", h.handleSidebar)
 	r.Post("/api/ink/enabled", h.handleEnabled)
 	r.Post("/api/ink/key", h.handleNewKey)
 	r.Get("/api/ink/notes/{uuid}/pages/{page}/export", h.handleExport)
@@ -62,6 +92,41 @@ func (h *InkHandler) RegisterPaths(r chi.Router) {
 
 func (h *InkHandler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	h.render(w, "")
+}
+
+// handleSidebar writes the sidebar's Ink section.
+func (h *InkHandler) handleSidebar(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if h.ServiceProvider.Ink == nil || h.ServiceProvider.State == nil {
+		return
+	}
+	if err := h.Tmpl.ExecuteTemplate(w, "ink_sidebar.html", h.sidebarView(h.ServiceProvider.Ink.Status())); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// sidebarView is st as the sidebar's Ink section shows it, the active tab's item marked.
+func (h *InkHandler) sidebarView(st ink.Status) inkSidebarView {
+	if !st.Enabled {
+		return inkSidebarView{}
+	}
+	active := ""
+	if session := h.ServiceProvider.State.LoadSession(); session.ActiveIdx >= 0 && session.ActiveIdx < len(session.Tabs) {
+		active = session.Tabs[session.ActiveIdx].ID
+	}
+	v := inkSidebarView{Enabled: true, Notes: make([]inkNoteItem, 0, len(st.Notes))}
+	if live := st.Live; live.Present {
+		v.Live = &inkLiveItem{UUID: live.UUID, Device: live.Device, Note: live.NoteTitle, Waiting: live.Waiting, Active: live.UUID == active}
+	}
+	for _, n := range st.Notes {
+		title := n.Title
+		if title == "" {
+			title = "Untitled note"
+		}
+		v.Notes = append(v.Notes, inkNoteItem{UUID: n.UUID, Title: title, Pages: n.Pages, Active: n.UUID == active})
+	}
+	return v
 }
 
 // handleEnabled turns Ink on when the form carries ink_enabled, and off when it does not.
@@ -170,27 +235,41 @@ func (v *inkSessionView) duration(d time.Duration) string {
 	}
 }
 
-// inkStream carries one InkService's events to the document socket of the container each concerns,
-// and answers that socket's page requests from the notes it holds open for them. It is the
-// service's Listener, so its listener methods run one at a time on the service's goroutine for
-// it: a socket slow to take a frame holds back only this stream's queue, never the link.
+// inkStream carries one InkService's events to the document sockets they concern, and answers
+// those sockets' page requests from the notes it holds open for them. A note's events go to the
+// socket that has its container open and, while the Live view mirrors it, to the Live view's
+// socket; a page request on the Live view's socket is answered from the note it mirrors. Each
+// socket holds the notes it asked pages of until it releases them, so the page answers and stroke
+// frames each socket hears stay consistent by their seqs.
+//
+// It is the service's Listener, so its listener methods run one at a time on the service's
+// goroutine for it: a socket slow to take a frame holds back only this stream's queue, never the
+// link.
 type inkStream struct {
-	svc   *ink.InkService
-	send  func(uuid string, frame interface{})
+	svc  *ink.InkService
+	send func(uuid string, frame interface{})
+	// notes are held by socket: a container's uuid, or the Live view's.
 	notes *ink.OpenNotes
+	// view is the Live view's uuid.
+	view string
 
 	// pen and live are the listener's own, touched only by its methods.
 	pen ink.LivePen
 	// live is the container the service last named live, "" when none.
 	live string
+
+	// mirrorMu guards mirrored, the container whose note the Live view's socket holds; "" when
+	// it holds none.
+	mirrorMu sync.Mutex
+	mirrored string
 }
 
 var _ ink.Listener = (*inkStream)(nil)
 
-// newInkStream subscribes a stream to svc that sends through send, a container's uuid naming the
-// socket that has it open.
+// newInkStream subscribes a stream to svc that sends through send, a uuid naming the socket that
+// has it open.
 func newInkStream(svc *ink.InkService, send func(uuid string, frame interface{})) *inkStream {
-	s := &inkStream{svc: svc, send: send, notes: ink.NewOpenNotes(svc)}
+	s := &inkStream{svc: svc, send: send, notes: ink.NewOpenNotes(svc), view: svc.LiveView().UUID()}
 	svc.Subscribe(s)
 	return s
 }
@@ -198,24 +277,35 @@ func newInkStream(svc *ink.InkService, send func(uuid string, frame interface{})
 // close unsubscribes the stream.
 func (s *inkStream) close() { s.svc.Unsubscribe(s) }
 
-// answerPage answers an ink-page for container uuid through reply, holding the container's note
-// open from now until release. The answer that opens the note is followed by the live page when
-// the note is the live one.
-func (s *inkStream) answerPage(uuid string, msg protocol.InkPageFrame, reply func(interface{})) {
+// answerPage answers an ink-page asked on socket through reply, from the note of the socket's
+// container or, on the Live view's socket, of the note it mirrors. The socket holds that note open
+// from now until it releases it. Every answer is followed by the live page while the note is the
+// live one.
+func (s *inkStream) answerPage(socket string, msg protocol.InkPageFrame, reply func(interface{})) {
 	refuse := func(err error) { reply(protocol.NewInkPageRefusedFrame(msg.OpID, msg.PageID, err)) }
 	page, err := link.ParseID(msg.PageID)
 	if err != nil {
 		refuse(fmt.Errorf("%w: page %q: %v", ink.ErrNoSuchPage, msg.PageID, err))
 		return
 	}
-	opening := !s.notes.Holds(uuid)
-	note, err := s.notes.Open(uuid)
+	container := socket
+	if socket == s.view {
+		s.mirrorMu.Lock()
+		defer s.mirrorMu.Unlock()
+		mirrored, present := s.svc.LiveView().Mirrors()
+		if !present || mirrored == "" {
+			refuse(fmt.Errorf("%w: the Live view mirrors no note", ink.ErrNoSuchPage))
+			return
+		}
+		if s.mirrored != "" && s.mirrored != mirrored {
+			s.notes.Release(s.mirrored, socket)
+		}
+		s.mirrored, container = mirrored, mirrored
+	}
+	note, err := s.notes.Open(container, socket)
 	if err != nil {
 		refuse(err)
 		return
-	}
-	if opening {
-		defer s.tellLive(uuid, reply)
 	}
 	err = note.AnswerPage(page, func(export []byte, seq uint32) error {
 		var decoded protocol.InkPageExport
@@ -227,44 +317,58 @@ func (s *inkStream) answerPage(uuid string, msg protocol.InkPageFrame, reply fun
 	})
 	if err != nil {
 		refuse(err)
+		return
+	}
+	if live := s.svc.Live(); live.Container == container {
+		reply(protocol.NewInkLivePageFrame(live.Page.String(), s.view))
 	}
 }
 
-// tellLive sends the live page through send when container uuid holds the note the service has
-// live now. A LiveChanged still queued for the stream follows it with what it says.
-func (s *inkStream) tellLive(uuid string, send func(interface{})) {
-	if live := s.svc.Live(); live.Container == uuid {
-		send(protocol.NewInkLivePageFrame(live.Page.String()))
+// release stops socket holding any note open.
+func (s *inkStream) release(socket string) {
+	if socket == s.view {
+		s.mirrorMu.Lock()
+		s.mirrored = ""
+		s.mirrorMu.Unlock()
 	}
+	s.notes.ReleaseAll(socket)
 }
-
-// release stops holding container uuid's note open.
-func (s *inkStream) release(uuid string) { s.notes.Release(uuid) }
 
 func (s *inkStream) LinkChanged(ink.LinkState) {}
 
-// RecordCommitted sends the stroke change rec made, if any, to the container's socket when its
-// note is held open.
+// RecordCommitted sends the stroke change rec made, if any, to every socket holding the
+// container's note open.
 func (s *inkStream) RecordCommitted(container string, _ link.ID, rec link.Record) {
-	s.notes.Commit(container, rec, func(c ink.StrokeChange) {
-		if c.Added == nil {
-			s.send(container, protocol.NewInkStrokeRemovedFrame(c.Page.String(), c.Seq, c.Removed.String()))
-			return
-		}
-		raw, err := c.ExportStroke()
-		var stroke protocol.InkExportStroke
-		if err == nil {
-			err = json.Unmarshal(raw, &stroke)
-		}
+	s.notes.Commit(container, rec, func(holders []string, c ink.StrokeChange) {
+		frame, err := s.strokeFrame(c)
 		if err != nil {
 			logger.Error("ink: exporting a committed stroke", "container", container, "seq", c.Seq, "err", err.Error())
 			return
 		}
-		s.send(container, protocol.NewInkStrokeAddedFrame(c.Page.String(), c.Seq, stroke))
+		for _, socket := range holders {
+			s.send(socket, frame)
+		}
 	})
 }
 
-// LiveInk sends records, as marks in page units, to the live container's socket.
+// strokeFrame is the frame of a stroke change.
+func (s *inkStream) strokeFrame(c ink.StrokeChange) (interface{}, error) {
+	if c.Added == nil {
+		return protocol.NewInkStrokeRemovedFrame(c.Page.String(), c.Seq, c.Removed.String()), nil
+	}
+	raw, err := c.ExportStroke()
+	var stroke protocol.InkExportStroke
+	if err == nil {
+		err = json.Unmarshal(raw, &stroke)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return protocol.NewInkStrokeAddedFrame(c.Page.String(), c.Seq, stroke), nil
+}
+
+// LiveInk sends records, as marks in page units, to the live container's socket and the Live
+// view's.
 func (s *inkStream) LiveInk(records []link.LiveRecord) {
 	marks := s.pen.Marks(records)
 	if s.live == "" || len(marks) == 0 {
@@ -278,25 +382,43 @@ func (s *inkStream) LiveInk(records []link.LiveRecord) {
 			wire[i].Tool, wire[i].WidthClass = m.Tool.String(), m.WidthClass
 		}
 	}
-	s.send(s.live, protocol.NewInkLiveFrame(wire))
+	frame := protocol.NewInkLiveFrame(wire)
+	s.send(s.live, frame)
+	s.send(s.view, frame)
 }
 
-// LiveChanged tells the container that stops being live that it has, and the live one which page.
+// LiveChanged tells the container that stops being live that it has, the live one which page,
+// and the Live view's socket both; a Live view's socket that held another note stops holding it.
 func (s *inkStream) LiveChanged(live ink.LiveNote) {
 	was := s.live
 	s.live = live.Container
+	page := ""
+	if live.Container != "" {
+		page = live.Page.String()
+	}
 	if was != "" && was != live.Container {
-		s.send(was, protocol.NewInkLivePageFrame(""))
+		s.send(was, protocol.NewInkLivePageFrame("", s.view))
 	}
 	if live.Container != "" {
-		s.send(live.Container, protocol.NewInkLivePageFrame(live.Page.String()))
+		s.send(live.Container, protocol.NewInkLivePageFrame(page, s.view))
 	}
+	s.mirrorMu.Lock()
+	if live.Container != "" && s.mirrored != "" && s.mirrored != live.Container {
+		s.notes.Release(s.mirrored, s.view)
+		s.mirrored = ""
+	}
+	s.mirrorMu.Unlock()
+	s.send(s.view, protocol.NewInkLivePageFrame(page, s.view))
 }
 
-// LogRestarted starts the container's open note again from its restarted log and tells its
-// socket so, before any stroke frame of the new log.
+// LogRestarted starts the container's open note again from its restarted log and tells every
+// socket holding it so, before any stroke frame of the new log.
 func (s *inkStream) LogRestarted(container string, _ link.ID) {
-	s.notes.Restart(container, func() { s.send(container, protocol.NewInkLogRestartedFrame()) })
+	s.notes.Restart(container, func(holders []string) {
+		for _, socket := range holders {
+			s.send(socket, protocol.NewInkLogRestartedFrame())
+		}
+	})
 }
 
 // recordWord is a live mark's type as an ink-live record names it.

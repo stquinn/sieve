@@ -529,6 +529,89 @@ func TestInkFragment_RendersEachState(t *testing.T) {
 	}
 }
 
+// The sidebar's Ink section is nothing while Ink is disabled; enabled, it lists the synced notes,
+// or says there are none, with the Live view above them while it exists, the active tab's item
+// marked, and every item opening its container through the workspace's open.
+func TestInkSidebar_RendersEachState(t *testing.T) {
+	h, _ := newTestSettingsHandler(t)
+	sp := h.ServiceProvider
+	ih := &InkHandler{ServiceProvider: sp, Tmpl: h.Tmpl}
+	notes := []ink.SyncedNote{{UUID: "n-ideas", Title: "Ideas", Pages: 2}, {UUID: "n-board", Pages: 1}}
+	live := ink.LiveStatus{Present: true, UUID: "v-live", Device: "Note Air 2", Note: "n-ideas", NoteTitle: "Ideas"}
+	session := sp.State.LoadSession()
+	session.Tabs, session.ActiveIdx = []domain.Tab{{ID: "n-board", Kind: ink.KindDigitalNote}}, 0
+	if err := sp.State.SaveSession(session); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		status ink.Status
+		want   []string
+		absent []string
+	}{
+		{"disabled", ink.Status{Notes: notes, Live: live}, nil, nil},
+		{"no notes", ink.Status{Enabled: true}, []string{">Ink<", "No synced notes yet"}, []string{"data-ink-live", "data-ink-note"}},
+		{"notes", ink.Status{Enabled: true, Notes: notes}, []string{
+			`data-ink-note="n-ideas"`, "Ideas", "2 pages", `data-ink-note="n-board"`, "Untitled note", "1 page",
+			`window.sieveWorkspace.open('n-ideas')`, "box-shadow:inset 2px 0 0 var(--theme-accentPrimary)",
+		}, []string{"data-ink-live", "No synced notes yet"}},
+		{"live", ink.Status{Enabled: true, Notes: notes, Live: live}, []string{
+			`data-ink-live="live"`, "Live · Note Air 2", `window.sieveWorkspace.open('v-live')`, "var(--theme-accentRed)",
+		}, []string{"waiting"}},
+		{"waiting", ink.Status{Enabled: true, Notes: notes, Live: ink.LiveStatus{Present: true, UUID: "v-live", Waiting: true}},
+			[]string{`data-ink-live="waiting"`, ">Live<", "waiting", "Waiting for the tablet"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out strings.Builder
+			if err := h.Tmpl.ExecuteTemplate(&out, "ink_sidebar.html", ih.sidebarView(tc.status)); err != nil {
+				t.Fatal(err)
+			}
+			if tc.want == nil && out.String() != "" {
+				t.Errorf("disabled Ink renders %q, want nothing", out.String())
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("no %q in\n%s", want, out.String())
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(out.String(), absent) {
+					t.Errorf("%q in\n%s", absent, out.String())
+				}
+			}
+		})
+	}
+}
+
+// The section is served at its own path: empty while Ink is off, the section once it is on.
+func TestInkSidebar_IsServedOnlyWhileInkIsEnabled(t *testing.T) {
+	srv, sp := newInkServer(t)
+	get := func() string {
+		t.Helper()
+		resp, err := http.Get(srv.URL + "/ui/views/sidebar/ink")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
+			t.Fatalf("GET: %d %s", resp.StatusCode, body)
+		}
+		return string(body)
+	}
+	if body := get(); body != "" {
+		t.Errorf("Ink off serves %q", body)
+	}
+	settings := sp.State.LoadSettings()
+	settings.Ink.Enabled = true
+	if err := sp.State.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	if body := get(); !strings.Contains(body, "No synced notes yet") {
+		t.Errorf("Ink on serves %q", body)
+	}
+}
+
 // A session's numbers read in units that fit them, and a rate is shown only over a catch-up long
 // enough for one to mean anything.
 func TestInkSessionView_ShowsDurationsInFittingUnitsAndRatesOnlyWhenMeaningful(t *testing.T) {

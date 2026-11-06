@@ -15,6 +15,7 @@ import (
 	"sieve/sieve"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
+	"sieve/sieve/editor"
 	"sieve/sieve/ink"
 	"sieve/sieve/ink/link"
 	"sieve/sieve/ink/radio"
@@ -89,7 +90,20 @@ func newInkWire(t *testing.T, records []link.Record) *inkWire {
 	}
 	sp.Ink = ink.NewInkService(sp.State, sp.Containers, radio.NewTCP(listener.Addr().String(), "companion"), nil)
 	t.Cleanup(sp.Ink.Stop)
+	sp.Nodes = editor.NewRouter(editor.NewBlockSource(sp.Containers), sp.Ink.LiveView())
+	sp.Editor.SetNodes(sp.Nodes)
+	sp.Ink.SetChangeListener(sp.Editor)
 	return w
+}
+
+// untilNotLive reads c until a live-page frame says nothing is live.
+func untilNotLive(t *testing.T, c *websocket.Conn) {
+	t.Helper()
+	for {
+		if live := readUntil(t, c, protocol.TypeInkLivePage, 5*time.Second); live["live"] != true {
+			return
+		}
+	}
 }
 
 // session runs the companion's log to its head over one session, then stops the service.
@@ -298,8 +312,9 @@ func TestWS_Ink_ASessionReachesTheSocketHoldingTheNote(t *testing.T) {
 	closeAndSettle(elsewhere)
 }
 
-// A socket that opens a note while the tablet is writing in it hears the live page after its first
-// page answer and not after a later one, and hears the page stop being live when the session ends.
+// A socket that opens a note while the tablet is writing in it hears the live page, and the Live
+// view mirroring it, after every page answer, and hears the page stop being live when the session
+// ends.
 func TestWS_Ink_ANoteOpenedWhileLiveIsToldItsLivePage(t *testing.T) {
 	records := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)))
 	w := newInkWire(t, records)
@@ -315,14 +330,19 @@ func TestWS_Ink_ANoteOpenedWhileLiveIsToldItsLivePage(t *testing.T) {
 	if answer := w.askPage(c, inkPage1.String()); answer["seq"] != float64(len(records)) {
 		t.Fatalf("answer %v", answer)
 	}
-	if live := readUntil(t, c, protocol.TypeInkLivePage, 2*time.Second); live["live"] != true || live["pageId"] != inkPage1.String() {
-		t.Errorf("after the first answer: %v", live)
+	view := w.sp.Ink.LiveView().UUID()
+	for _, answer := range []string{"the first answer", "a later answer"} {
+		if answer != "the first answer" {
+			w.askPage(c, inkPage1.String())
+		}
+		if live := readUntil(t, c, protocol.TypeInkLivePage, 2*time.Second); live["live"] != true || live["pageId"] != inkPage1.String() || live["view"] != view {
+			t.Errorf("after %s: %v", answer, live)
+		}
 	}
-	w.askPage(c, inkPage1.String())
 
 	w.sp.Ink.Stop()
 	if next := readUntil(t, c, protocol.TypeInkLivePage, 2*time.Second); next["live"] != false {
-		t.Errorf("the next live page after a later answer: %v, want the session's end", next)
+		t.Errorf("the next live page: %v, want the session's end", next)
 	}
 	closeAndSettle(c)
 }
@@ -362,4 +382,192 @@ func TestWS_Ink_ARestartedLogReachesTheSocketHoldingTheNote(t *testing.T) {
 		t.Errorf("answered at seq %v with %d strokes, want seq %d with 3", answer["seq"], len(page.Strokes), len(all))
 	}
 	closeAndSettle(c)
+}
+
+// While a note is live, the Live view's socket loads a block of the Live kind naming that note,
+// is answered its pages from the note's own replay, and hears exactly what the note's own socket
+// hears, each once and in the tablet's order: the live page, the live records with a view among
+// them, the strokes committed above the seq each was answered at, the page added as the block's
+// attrs frame, and the page no longer live.
+func TestWS_Ink_TheLiveViewMirrorsTheLiveNoteBesideItsOwnSocket(t *testing.T) {
+	first := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)))
+	all := append(append([]link.Record(nil), first...),
+		inkStrokeAdd(inkPage1, inkStroke(2)),
+		link.Record{Op: link.OpStrokeRemove, Page: inkPage1, Stroke: inkStroke(1)},
+		link.Record{Op: link.OpPageAdd, Page: inkPage2, Index: 1, Bounds: link.BoundsFixed})
+	for i := range all {
+		all[i].Seq = uint32(i + 1)
+	}
+	w := newInkWire(t, first)
+	w.session(first)
+	uuid := w.container()
+	view := w.sp.Ink.LiveView().UUID()
+	w.companion.Live = true
+	if err := w.sp.Ink.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { mirrored, _ := w.sp.Ink.LiveView().Mirrors(); return mirrored == uuid }, "the Live view to mirror the note")
+
+	own, live := dialWS(t, w.srv, uuid), dialWS(t, w.srv, view)
+	send(t, live, `{"type":"load","opId":"op-load"}`)
+	reply := readUntil(t, live, protocol.TypeLoadContent, 2*time.Second)
+	blocks, _ := reply["blocks"].([]interface{})
+	first0, _ := blocks[0].(map[string]interface{})
+	attrs, _ := first0["attrs"].(map[string]interface{})
+	mirror, _ := attrs["live"].(map[string]interface{})
+	if reply["kind"] != ink.KindLive || len(blocks) != 1 || first0["id"] != view || mirror["container"] != uuid ||
+		mirror["page"] != inkPage1.String() || mirror["waiting"] != false {
+		t.Fatalf("the Live view loads %v", reply)
+	}
+	for _, c := range []*websocket.Conn{own, live} {
+		if answer := w.askPage(c, inkPage1.String()); answer["seq"] != float64(len(first)) || answer["error"] != nil {
+			t.Fatalf("answer %v", answer)
+		}
+	}
+	w.sp.Ink.Stop()
+	for _, c := range []*websocket.Conn{own, live} {
+		untilNotLive(t, c)
+	}
+
+	le := binary.LittleEndian
+	feed := []byte{byte(link.LiveBegin)}
+	feed = le.AppendUint32(feed, 7)
+	feed = append(feed, byte(link.ToolPen), 2)
+	feed = le.AppendUint32(feed, 100)
+	feed = le.AppendUint32(feed, uint32(16384))
+	feed = le.AppendUint32(feed, uint32(8192))
+	feed = append(feed, byte(link.LiveView))
+	feed = le.AppendUint32(feed, uint32(65536))
+	feed = le.AppendUint32(feed, uint32(65536))
+	w.companion.Ink = feed
+	w.session(all)
+
+	p1 := inkPage1.String()
+	want := []string{
+		"live true " + p1,
+		"begin 7 pen 2 (0.5, 0.25) 0 0",
+		"view 0  0 (2, 2) 0 0",
+		"added 4 " + p1 + " " + inkStroke(2).String(),
+		"removed 5 " + p1 + " " + inkStroke(1).String(),
+		"live false ",
+	}
+	for name, c := range map[string]*websocket.Conn{"the note's socket": own, "the Live view's socket": live} {
+		got, pages := inkFrames(t, c)
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Errorf("%s heard\n%s\nwant\n%s", name, strings.Join(got, "\n"), strings.Join(want, "\n"))
+		}
+		if pages != 2 {
+			t.Errorf("%s: the last attrs frame lists %d pages, want the page the session added", name, pages)
+		}
+	}
+	closeAndSettle(own)
+	if !w.holds(uuid) {
+		t.Error("the note was let go while the Live view's socket still held it")
+	}
+	closeAndSettle(live)
+	if w.holds(uuid) {
+		t.Error("the note is still held with both sockets closed")
+	}
+}
+
+// When the tablet moves from one note to another, the Live view's attrs name the new note, the
+// old note's strokes stop reaching the Live view's socket, and its pages are answered from the new
+// note alone.
+func TestWS_Ink_TheLiveViewFollowsTheTabletFromNoteToNote(t *testing.T) {
+	board, boardPage := inkID(0xb0), inkID(0x21)
+	boardLog := []link.Record{
+		{Seq: 1, Op: link.OpNoteHeader, Note: board, CreatedMillis: 1_700_000_000_000, Title: "Board", PageAspect: 0.75,
+			Device: link.Device{ID: "d", Name: "Note Air 2", Model: "ONYX"}},
+		{Seq: 2, Op: link.OpPageAdd, Page: boardPage, Bounds: link.BoundsUnbounded},
+	}
+	first := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)))
+	more := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)), inkStrokeAdd(inkPage1, inkStroke(5)))
+	w := newInkWire(t, first)
+	w.companion.SetNote(board, boardLog)
+	synced := func(seqs ...uint32) func() bool {
+		return func() bool {
+			notes := w.sp.Ink.Status().Notes
+			if len(notes) != len(seqs) {
+				return false
+			}
+			for i, n := range notes {
+				if n.Seq != seqs[i] {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	run := func(until func() bool, why string) {
+		t.Helper()
+		if err := w.sp.Ink.Start(); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, until, why)
+		w.sp.Ink.Stop()
+	}
+	run(synced(uint32(len(boardLog)), uint32(len(first))), "both notes to land")
+	notes := w.sp.Ink.Status().Notes
+	boardUUID, ideasUUID := notes[0].UUID, notes[1].UUID
+	view := w.sp.Ink.LiveView()
+
+	w.companion.Live = true
+	if err := w.sp.Ink.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { mirrored, _ := view.Mirrors(); return mirrored == ideasUUID }, "the Live view to mirror Ideas")
+	live := dialWS(t, w.srv, view.UUID())
+	if answer := w.askPage(live, inkPage1.String()); answer["error"] != nil {
+		t.Fatalf("answer %v", answer)
+	}
+	w.sp.Ink.Stop()
+	untilNotLive(t, live)
+
+	w.companion.LiveOf, w.companion.Page = board, boardPage
+	w.companion.SetRecords(more)
+	run(func() bool {
+		mirrored, _ := view.Mirrors()
+		return mirrored == boardUUID && synced(uint32(len(boardLog)), uint32(len(more)))()
+	}, "Ideas to take a stroke while the Board is live")
+
+	mirrored := ""
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_ = live.SetReadDeadline(deadline)
+		_, raw, err := live.ReadMessage()
+		if err != nil {
+			t.Fatalf("reading the Live view's socket: %v", err)
+		}
+		var f struct {
+			Type   string
+			Live   bool
+			Stroke struct{ ID string }
+			Attrs  struct {
+				Live struct{ Container string }
+			}
+		}
+		_ = json.Unmarshal(raw, &f)
+		if f.Type == protocol.TypeBlockAttrsUpdated {
+			mirrored = f.Attrs.Live.Container
+		}
+		if f.Type == protocol.TypeInkStrokeAdded {
+			t.Errorf("the Live view's socket heard a stroke of a note it no longer mirrors: %s", f.Stroke.ID)
+		}
+		if f.Type == protocol.TypeInkLivePage && !f.Live {
+			break
+		}
+	}
+	if mirrored != boardUUID {
+		t.Errorf("the Live view's attrs mirror %q, want the Board %q", mirrored, boardUUID)
+	}
+	if answer := w.askPage(live, boardPage.String()); answer["error"] != nil || answer["page"] == nil {
+		t.Errorf("the Board's page: %v", answer)
+	}
+	if refused := w.askPage(live, inkPage1.String()); refused["error"] == nil {
+		t.Errorf("a page of the note no longer live was answered: %v", refused)
+	}
+	if w.holds(ideasUUID) {
+		t.Error("the note no longer live is still held for the Live view")
+	}
+	closeAndSettle(live)
 }

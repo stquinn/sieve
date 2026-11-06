@@ -19,10 +19,15 @@ import (
 	"sieve/sieve/services"
 )
 
-// Invalidator is told that what Settings → Ink shows has changed: the link, the last session's
-// numbers or the synced notes.
+// Invalidator is told what changed that the views of ink show.
 type Invalidator interface {
+	// InkChanged is what Settings → Ink or the sidebar's Ink section shows having changed: the
+	// link, the last session's numbers, the synced notes or the Live view.
 	InkChanged()
+	// ContainerDeleted is container uuid no longer existing: the Live view, ended.
+	ContainerDeleted(uuid string)
+	// SessionChanged is the session's tabs having changed.
+	SessionChanged()
 }
 
 // LinkPhase is where the link to a companion stands.
@@ -126,7 +131,7 @@ type SyncedNote struct {
 	Device string
 }
 
-// Status is everything Settings → Ink shows.
+// Status is everything Settings → Ink and the sidebar's Ink section show.
 type Status struct {
 	Enabled bool
 	// Key is this Sieve's pairing key in groups of four, "" before Ink is first enabled.
@@ -142,6 +147,7 @@ type Status struct {
 	HasSession bool
 	Companions []Companion
 	Notes      []SyncedNote
+	Live       LiveStatus
 }
 
 // InkService makes this Sieve the central for SieveInk companions. While Ink is enabled it dials
@@ -173,22 +179,32 @@ type InkService struct {
 	hasNumbers   bool
 	invalidated  time.Time
 	// live is the note a session's companion shows as being written now; the zero LiveNote when none.
-	live   LiveNote
+	live LiveNote
+	// view is the Live view, which follows live.
+	view   *LiveView
 	feeds  []*listenerFeed
 	redial redialPause
 	// lastFailure is the error the last session ended on before connecting, "" after one connects.
 	lastFailure string
 }
 
-// NewInkService is the service over this machine's settings, the container store and r. inv,
-// which may be nil, hears every change Settings → Ink shows. It does nothing until Start.
+// NewInkService is the service over this machine's settings and session, the container store and
+// r. inv, which may be nil, hears every change the views of ink show. It does nothing until Start.
 func NewInkService(settings *services.StateService, containers *services.BlockContainerService, r radio.Radio, inv Invalidator) *InkService {
-	return &InkService{
+	s := &InkService{
 		settings: settings, containers: containers, radio: r, invalidator: inv,
 		throttle: time.Second, after: time.After, wake: make(chan struct{}, 1), state: LinkState{Phase: LinkOff},
 		redial: redialPause{base: time.Second, max: 30 * time.Second},
 	}
+	s.view = newLiveView(s)
+	return s
 }
+
+// LiveView is the service's Live view.
+func (s *InkService) LiveView() *LiveView { return s.view }
+
+// SetChangeListener registers who is told that the Live view's node changed.
+func (s *InkService) SetChangeListener(l services.ContainerChangeListener) { s.view.setListener(l) }
 
 // Start begins looking for a companion when Ink is enabled, minting the key if there is none; it
 // does nothing when Ink is disabled or the service is already running.
@@ -315,6 +331,7 @@ func (s *InkService) Status() Status {
 		open = run.replicas.Notes()
 	}
 	st.Notes, st.Companions = s.synced(open)
+	st.Live = s.view.Status()
 	return st
 }
 
@@ -364,6 +381,34 @@ func (s *InkService) noteLog(uuid string) ([]byte, error) {
 		return asset.Body(), nil
 	}
 	return nil, nil
+}
+
+// noteAttrs are the attrs of the Digital Note in container uuid as they stand now: its open
+// replica's, otherwise its block's; nil when no Digital Note is held there.
+func (s *InkService) noteAttrs(uuid string) map[string]interface{} {
+	if uuid == "" {
+		return nil
+	}
+	s.mu.Lock()
+	run := s.run
+	s.mu.Unlock()
+	if run != nil {
+		if attrs, ok := run.replicas.attrsOf(uuid); ok {
+			return attrs
+		}
+	}
+	c, err := s.digitalNote(uuid)
+	if err != nil {
+		return nil
+	}
+	return c.Block().Attrs
+}
+
+// liveEnded closes every session tab of the Live view uuid, which has ended.
+func (s *InkService) liveEnded(uuid string) {
+	if _, err := s.settings.CloseTabs(func(t domain.Tab) bool { return t.ID == uuid }); err != nil {
+		logger.Error("ink: closing the Live view's tabs", "err", err.Error())
+	}
 }
 
 // digitalNote is the container uuid, which must be a Digital Note; otherwise ErrNoSuchPage.
@@ -643,7 +688,17 @@ func (r *sessionRun) Committed(note link.ID, rec link.Record) {
 		logger.Warn("ink: finding a committed note's container", "note", note.String(), "err", err.Error())
 	}
 	r.svc.publish(func(l Listener) { l.RecordCommitted(uuid, note, rec) })
-	if len(r.pending) > 0 {
+	r.svc.mu.Lock()
+	live := r.svc.live
+	r.svc.mu.Unlock()
+	if live.Note == note && live.Container == "" && uuid != "" {
+		r.Live(note, live.Page)
+	}
+	structural := rec.Op != link.OpStrokeAdd && rec.Op != link.OpStrokeRemove
+	if structural {
+		r.svc.view.noteChanged(uuid)
+	}
+	if len(r.pending) > 0 || structural {
 		r.svc.invalidateSoon()
 	}
 }
@@ -674,6 +729,7 @@ func (r *sessionRun) Live(note, page link.ID) {
 	r.svc.mu.Lock()
 	r.svc.live = live
 	r.svc.mu.Unlock()
+	r.svc.view.follow(live)
 	r.svc.publish(func(l Listener) { l.LiveChanged(live) })
 }
 
@@ -724,6 +780,7 @@ func (r *sessionRun) end(ctx context.Context, err error) bool {
 		r.svc.mu.Lock()
 		r.svc.live = LiveNote{}
 		r.svc.mu.Unlock()
+		r.svc.view.follow(LiveNote{})
 		r.svc.publish(func(l Listener) { l.LiveChanged(LiveNote{}) })
 	}
 	text := fmt.Sprint(err)

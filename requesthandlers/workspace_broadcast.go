@@ -104,9 +104,15 @@ func (b *WorkspaceBroadcast) NotesChanged() {
 	b.Invalidate(protocol.TopicNotes)
 }
 
-// InkChanged satisfies ink.Invalidator: what Settings → Ink shows is stale.
+// InkChanged satisfies ink.Invalidator: what Settings → Ink and the sidebar's Ink
+// section show is stale.
 func (b *WorkspaceBroadcast) InkChanged() {
 	b.Invalidate(protocol.TopicInk)
+}
+
+// SessionChanged satisfies ink.Invalidator: the session's tabs changed.
+func (b *WorkspaceBroadcast) SessionChanged() {
+	b.Invalidate(protocol.TopicSession)
 }
 
 // ContainerDeleted tells every workspace socket that a container is gone —

@@ -53,6 +53,7 @@ type FocusListener interface {
 type EditorService struct {
 	documents  *services.DocumentService
 	containers *services.BlockContainerService // nil leaves block containers unopenable
+	nodes      domain.NodeResolver             // nil leaves every other node unopenable
 	codec      *block.DocumentCodec
 	services   block.BlockServices
 	jobs       *services.JobTracker // not a processor concern; EditorService tracks job spinners directly
@@ -101,6 +102,15 @@ func (es *EditorService) SetContainers(c *services.BlockContainerService) {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 	es.containers = c
+}
+
+// SetNodes registers the resolver a uuid that names neither a document nor a
+// block container opens through: the node it resolves to opens as a read-only
+// session holding the node's one block.
+func (es *EditorService) SetNodes(n domain.NodeResolver) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	es.nodes = n
 }
 
 // SetLifecycleListener registers the block lifecycle event listener.
@@ -342,19 +352,19 @@ func (es *EditorService) open(uuid string, recoverStuck bool) error {
 	return nil
 }
 
-// openContainer opens uuid as a block container: no shadow, no identity
-// migration, no job recovery. notDocument is why uuid did not open as a document,
-// and is what a uuid naming no container either answers.
+// openContainer opens uuid as a block container, and failing that as a node:
+// no shadow, no identity migration, no job recovery. notDocument is why uuid did
+// not open as a document, and is what a uuid naming neither answers.
 func (es *EditorService) openContainer(uuid string, notDocument error) error {
 	es.mu.RLock()
 	containers := es.containers
 	es.mu.RUnlock()
 	if containers == nil {
-		return notDocument
+		return es.openNode(uuid, notDocument)
 	}
 	c, err := containers.Load(uuid)
 	if errors.Is(err, domain.ErrNotBlockContainer) {
-		return notDocument
+		return es.openNode(uuid, notDocument)
 	}
 	if err != nil {
 		return err
@@ -366,6 +376,37 @@ func (es *EditorService) openContainer(uuid string, notDocument error) error {
 	es.mu.Unlock()
 	logger.Info("editor: open block container", "uuid", uuid, "kind", c.Kind())
 	return nil
+}
+
+// openNode opens uuid as the node the resolver resolves it to. notDocument is
+// what a uuid that resolves to nothing answers.
+func (es *EditorService) openNode(uuid string, notDocument error) error {
+	node, err := es.resolveNode(uuid)
+	if errors.Is(err, domain.ErrNodeNotFound) {
+		return notDocument
+	}
+	if err != nil {
+		return err
+	}
+	es.mu.Lock()
+	if _, ok := es.sessions[uuid]; !ok {
+		es.sessions[uuid] = &nodeSession{blk: node.Block()}
+	}
+	es.mu.Unlock()
+	logger.Info("editor: open node", "uuid", uuid, "kind", node.Kind)
+	return nil
+}
+
+// resolveNode is the node uuid names at container grain; domain.ErrNodeNotFound
+// when there is no resolver or it holds nothing there.
+func (es *EditorService) resolveNode(uuid string) (domain.NodeDescriptor, error) {
+	es.mu.RLock()
+	nodes := es.nodes
+	es.mu.RUnlock()
+	if nodes == nil {
+		return domain.NodeDescriptor{}, fmt.Errorf("%w: %s", domain.ErrNodeNotFound, uuid)
+	}
+	return nodes.Resolve(domain.NewContainerAddress(uuid))
 }
 
 // sessionFor returns uuid's open session, or nil.
@@ -812,19 +853,22 @@ func (es *EditorService) flushShadow(shadow *block.ShadowDocument, source string
 	})
 }
 
-// ReloadFromDisk is "this container changed on disk": an open session adopts what
-// is stored now. Used after an OUT-OF-BAND write such as a version restore or a
-// block container's own service saving it.
+// Refresh is "this container changed behind its open session": the session adopts
+// what the container's owner now holds. Used after an OUT-OF-BAND change such as a
+// version restore, a block container's own service saving it, or a node's owner
+// changing it.
 //
-// A document's shadow is reparsed through the codec (so marker ids survive — the
-// frontend can't recover them); without this the stale shadow is both served to
-// the editor AND overwrites the restored file on the next flush. The client is
-// not told: whoever wrote decides how it reloads. A block container's block is
-// read again and its attrs pushed to the client as a block attr update.
+// A document's shadow is reparsed from disk through the codec (so marker ids
+// survive — the frontend can't recover them); without this the stale shadow is
+// both served to the editor AND overwrites the restored file on the next flush.
+// The client is not told: whoever wrote decides how it reloads. A block
+// container's block is read again, and a node resolved again, and its attrs
+// pushed to the client as a block attr update; a node that no longer resolves
+// closes its session.
 //
-// No-op when nothing is open. It does NOT flush — the disk is already
+// No-op when nothing is open. It does NOT flush — the owner is already
 // authoritative.
-func (es *EditorService) ReloadFromDisk(uuid string) error {
+func (es *EditorService) Refresh(uuid string) error {
 	s := es.sessionFor(uuid)
 	if s == nil {
 		return nil

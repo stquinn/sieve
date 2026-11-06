@@ -76,7 +76,7 @@ func newItemServerCountingJobs(t *testing.T) (*httptest.Server, *sieve.ServicePr
 	}
 	es := editor.NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
 	es.SetContainers(containers)
-	containers.SetSavedListener(es)
+	containers.SetChangeListener(es)
 	jobs := services.NewJobTracker()
 	transitions := &atomic.Int32{}
 	jobs.Notify = func() { transitions.Add(1) }
@@ -401,12 +401,12 @@ func TestFolderDelete_HandsBackAWorkspaceWhenItTookTheActiveNote(t *testing.T) {
 	// Open a survivor first, then the doomed notes, so the active tab is one the
 	// folder takes and a tab that must SURVIVE sits ahead of them in the strip.
 	survivor := newSavedNote(t, sp)
-	if status, body := do(t, http.MethodPost, srv.URL+"/api/note/open/"+survivor, "", ""); status != http.StatusOK {
+	if status, body := do(t, http.MethodPost, srv.URL+"/api/container/open/"+survivor, "", ""); status != http.StatusOK {
 		t.Fatalf("open survivor status %d: %s", status, body)
 	}
 	var active string
 	for uuid := range held {
-		if status, body := do(t, http.MethodPost, srv.URL+"/api/note/open/"+uuid, "", ""); status != http.StatusOK {
+		if status, body := do(t, http.MethodPost, srv.URL+"/api/container/open/"+uuid, "", ""); status != http.StatusOK {
 			t.Fatalf("open doomed status %d: %s", status, body)
 		}
 		active = uuid
@@ -479,7 +479,7 @@ func TestFolderDelete_KeepsTheReaderOnTheNoteTheyWereReading(t *testing.T) {
 	reading := newSavedNote(t, sp)
 	trailing := newSavedNote(t, sp)
 	for _, uuid := range append(openUUIDs, reading, trailing, reading) {
-		if status, body := do(t, http.MethodPost, srv.URL+"/api/note/open/"+uuid, "", ""); status != http.StatusOK {
+		if status, body := do(t, http.MethodPost, srv.URL+"/api/container/open/"+uuid, "", ""); status != http.StatusOK {
 			t.Fatalf("open %s status %d: %s", uuid, status, body)
 		}
 	}
@@ -846,7 +846,7 @@ func TestContainerTab_OpensServesItsAssetAndClosesWithoutFiling(t *testing.T) {
 		t.Fatalf("SaveAsset: %v", err)
 	}
 
-	status, body := do(t, http.MethodPost, srv.URL+"/api/note/open/"+uuid, "", "")
+	status, body := do(t, http.MethodPost, srv.URL+"/api/container/open/"+uuid, "", "")
 	if status != http.StatusOK {
 		t.Fatalf("open: %d %s", status, body)
 	}

@@ -528,10 +528,11 @@ components:
     documentInkLivePage:
       name: ink-live-page
       title: ink-live-page
-      summary: InkLivePageFrame is which page of this channel's note the tablet shows as being written, or that none is.
+      summary: InkLivePageFrame is which page of this channel's note the tablet shows as being written, or that none is, and the Live view that mirrors it.
       description: |-
         InkLivePageFrame is which page of this channel's note the tablet shows as being written, or
-        that none is. Live records reach the channel only while one is.
+        that none is, and the Live view that mirrors it. Live records reach the channel only while one
+        is.
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolInkLivePageFrame'
@@ -1740,7 +1741,8 @@ components:
       type: object
       description: |-
         InkLivePageFrame is which page of this channel's note the tablet shows as being written, or
-        that none is. Live records reach the channel only while one is.
+        that none is, and the Live view that mirrors it. Live records reach the channel only while one
+        is.
       properties:
         type:
           type: string
@@ -1750,6 +1752,9 @@ components:
         pageId:
           type: string
           description: the live page; absent when live is false
+        view:
+          type: string
+          description: the uuid of the Live view mirroring the tablet; absent when live is false
       required:
         - type
         - live

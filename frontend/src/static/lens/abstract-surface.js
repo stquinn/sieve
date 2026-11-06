@@ -15,7 +15,7 @@
  * An editor-domain event a surface REPORTS OUTWARD via the host editor's
  * `onSurfaceEvent` handler — producer-named plain data, never a consumer name: a
  * surface must not know an Ask panel or toolbar exists.
- * @typedef {{type: string, feature?: string}} SurfaceEventMsg
+ * @typedef {{type: string, feature?: string, uuid?: string}} SurfaceEventMsg
  */
 /**
  * What a surface measures of what it shows, for the status bar. When `readout`
@@ -47,6 +47,16 @@ export const SurfaceEvent = Object.freeze({
    * re-derives the whole descriptor.
    */
   SCROLL_CHANGED: Object.freeze({ type: 'scroll-changed' }),
+})
+
+/**
+ * The `type` of each surface event that asks the host for something rather than
+ * reporting what happened. Each carries what the host needs to answer it:
+ *
+ *   open-container   uuid — open that container in a tab of its own
+ */
+export const SurfaceIntent = Object.freeze({
+  OPEN_CONTAINER: 'open-container',
 })
 
 export class AbstractSurface {

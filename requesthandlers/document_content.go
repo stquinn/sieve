@@ -19,8 +19,9 @@ type documentContent struct {
 // read returns the content for uuid, or false when nothing is stored under it.
 // A prompt id (prompt:{name}) resolves to its raw text in markdown mode; a note
 // resolves THROUGH the shadow, which mints prose handles, so the editor and the
-// shadow share block identity from the first render; a block container resolves
-// to its one block, through the same open session its channel reads.
+// shadow share block identity from the first render; a block container or any
+// other node the editor opens resolves to its one block, through the same open
+// session its channel reads.
 func (c documentContent) read(uuid string) (protocol.DocumentContent, bool) {
 	tab := c.tab(uuid)
 
@@ -62,28 +63,30 @@ func (c documentContent) read(uuid string) (protocol.DocumentContent, bool) {
 	return content, true
 }
 
-// readContainer returns block container uuid's content, or false when uuid names
-// no block container.
+// readContainer returns the content of uuid as the one block the editor opens it
+// to — a block container's, at its version, or another node's, unversioned — or
+// false when the editor opens nothing there.
 func (c documentContent) readContainer(uuid string, tab domain.Tab) (protocol.DocumentContent, bool) {
-	if c.sp.Containers == nil {
-		return protocol.DocumentContent{}, false
-	}
-	container, err := c.sp.Containers.Load(uuid)
-	if err != nil {
-		return protocol.DocumentContent{}, false
-	}
 	if err := c.sp.Editor.Open(uuid); err != nil {
 		return protocol.DocumentContent{}, false
 	}
-	blocks, _ := c.sp.Editor.FrontendBlocks(uuid)
-	return protocol.DocumentContent{
-		Mode:    "wysiwyg",
-		UUID:    uuid,
-		Kind:    container.Kind(),
-		Scroll:  tab.Scroll,
-		Version: container.Version(),
-		Blocks:  blocks,
-	}, true
+	blocks, ok := c.sp.Editor.FrontendBlocks(uuid)
+	if !ok || len(blocks) != 1 {
+		return protocol.DocumentContent{}, false
+	}
+	content := protocol.DocumentContent{
+		Mode:   "wysiwyg",
+		UUID:   uuid,
+		Kind:   blocks[0].Kind,
+		Scroll: tab.Scroll,
+		Blocks: blocks,
+	}
+	if c.sp.Containers != nil {
+		if container, err := c.sp.Containers.Load(uuid); err == nil {
+			content.Version = container.Version()
+		}
+	}
+	return content, true
 }
 
 // tab is uuid's session tab, or the zero Tab when there is none — a tab never

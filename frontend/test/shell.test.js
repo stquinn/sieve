@@ -53,6 +53,7 @@ import { ComposerEditor } from '../src/static/lens/document-editor/composer/comp
 import { PromptEditor } from '../src/static/lens/prompt/prompt-editor.js'
 import { BlockLens } from '../src/static/lens/block/block-lens.js'
 import { DigitalNoteLens } from '../src/static/lens/ink/digital-note-lens.js'
+import { LiveInkLens } from '../src/static/lens/ink/live-ink-lens.js'
 import { LensTable } from '../src/static/shell/lens-table.js'
 import { ProviderAdapter } from '../src/static/container/provider-adapter.js'
 import { InkProviderAdapter } from '../src/static/container/ink-provider-adapter.js'
@@ -951,18 +952,20 @@ describe('AbstractEditor.presentMode — the host names a mode, the lens fetches
 
 describe('the workspace LensTable — a kind decides the lens, never a uuid', () => {
   it.each([
-    ['note', NoteEditor, BlockProviderAdapter, true],
-    ['buffer', NoteEditor, BlockProviderAdapter, true],
-    ['prompt', PromptEditor, WholeContentAdapter, false],
-    ['code', BlockLens, ProviderAdapter, true],
-    ['digital-note', DigitalNoteLens, InkProviderAdapter, true],
-    ['a-kind-nothing-draws', BlockLens, ProviderAdapter, true],
-    ['', NoteEditor, BlockProviderAdapter, true],
-  ])('%j mounts its lens over its provider', (kind, lens, provider, channel) => {
+    ['note', NoteEditor, BlockProviderAdapter, true, true],
+    ['buffer', NoteEditor, BlockProviderAdapter, true, true],
+    ['prompt', PromptEditor, WholeContentAdapter, false, false],
+    ['code', BlockLens, ProviderAdapter, true, false],
+    ['digital-note', DigitalNoteLens, InkProviderAdapter, true, false],
+    ['ink-live', LiveInkLens, InkProviderAdapter, true, false],
+    ['a-kind-nothing-draws', BlockLens, ProviderAdapter, true, false],
+    ['', NoteEditor, BlockProviderAdapter, true, true],
+  ])('%j mounts its lens over its provider', (kind, lens, provider, channel, isDocument) => {
     const mounting = SieveWorkspace.lensTable.lookup(kind)
     expect(mounting.lens).toBe(lens)
     expect(mounting.provider).toBe(provider)
     expect(mounting.channel).toBe(channel)
+    expect(mounting.document).toBe(isDocument)
     expect(Object.isFrozen(mounting)).toBe(true)
   })
 
@@ -1754,6 +1757,47 @@ describe('SieveWorkspace container-deleted reconciliation (shell/workspace.js bo
     )).not.toThrow()
     expect(w.getTab('doc-active')).toBeNull()
     expect(w.activeTab).toBeNull()
+  })
+
+  describe('a deletion that took the active tab', () => {
+    let prevHtmx
+    beforeEach(() => {
+      prevHtmx = window.htmx
+      window.htmx = /** @type {any} */ ({
+        ajax: () => {
+          document.body.innerHTML = '<div id="tabs-area"><div data-tab-id="doc-next" data-tab-active="true"></div></div>'
+          return Promise.resolve()
+        },
+      })
+    })
+    afterEach(() => { window.htmx = prevHtmx; document.body.innerHTML = '' })
+
+    it.each([
+      ['nothing else has become active', false, ['doc-next']],
+      ['another tab became active before the strip landed', true, []],
+    ])('opens the tab the next strip marks active, once, when %s', async (_name, replaced, opened) => {
+      const w = new SieveWorkspace()
+      w.bootEditorLifecycle()
+      withEditor(w, 'doc-gone')
+      const open = vi.spyOn(w, 'open').mockResolvedValue(undefined)
+      document.dispatchEvent(new CustomEvent('sieve:container-deleted', { detail: { uuid: 'doc-gone' } }))
+      if (replaced) w.openTab('doc-mounted')
+      await w.loadTabs()
+      await w.loadTabs()
+      expect(open.mock.calls.map(([uuid]) => uuid)).toEqual(opened)
+    })
+
+    it('a background deletion reopens nothing', async () => {
+      const w = new SieveWorkspace()
+      w.bootEditorLifecycle()
+      withEditor(w, 'doc-bg')
+      w.openTab('doc-active')
+      const open = vi.spyOn(w, 'open').mockResolvedValue(undefined)
+      document.dispatchEvent(new CustomEvent('sieve:container-deleted', { detail: { uuid: 'doc-bg' } }))
+      w.closeTab('doc-active')
+      await w.loadTabs()
+      expect(open).not.toHaveBeenCalled()
+    })
   })
 
   it('a background reconciliation leaves the active tab standing', () => {
@@ -2841,10 +2885,11 @@ describe('SieveWorkspace.copyDocumentAs', () => {
     if (prevClip !== undefined) Object.defineProperty(navigator, 'clipboard', { value: prevClip, configurable: true })
   })
 
-  /** A workspace with one open tab whose mount answers a scripted export. */
-  function exporting(md) {
+  /** A workspace with one open tab, of `kind`, whose mount answers a scripted export.
+   *  @param {string|null} md @param {string} [kind] */
+  function exporting(md, kind) {
     const w = new SieveWorkspace()
-    const tab = w.openTab('doc-9')
+    const tab = w.openTab('doc-9', kind)
     const mount = hostMount('doc-9')
     vi.spyOn(mount, 'exportAs').mockResolvedValue(md)
     tab.attachMount(mount)
@@ -2878,6 +2923,17 @@ describe('SieveWorkspace.copyDocumentAs', () => {
     const { w } = exporting(null)
     await w.copyDocumentAs('markdown')
     expect(setText).not.toHaveBeenCalled()
+  })
+
+  it.each(['digital-note', 'ink-live', 'code', 'prompt'])('a %s tab holds no document: nothing is asked, copied or shown', async (kind) => {
+    const setText = vi.fn(() => Promise.resolve())
+    window.runtime = { ClipboardSetText: setText }
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    const { w, mount } = exporting('# never', kind)
+    const flush = vi.spyOn(w, 'flushSave')
+    await w.copyDocumentAs('markdown')
+    expect([mount.exportAs, flush, setText, alert].map((spy) => spy.mock.calls.length)).toEqual([0, 0, 0, 0])
+    alert.mockRestore()
   })
 
   it('no mount, nothing to copy — and no lens ever had this verb', async () => {
@@ -3065,10 +3121,18 @@ describe('SieveWorkspace tab-lifecycle verbs (P2.D facade)', () => {
       ids.map((id) => `<div data-tab-id="${id}"></div>`).join('') + '</div></div>'
   }
 
-  it('open posts to /api/note/open/{uuid} with the tabbar swap', () => {
+  it('open posts to /api/container/open/{uuid} with the tabbar swap', () => {
     ws.open('doc-1')
     expect(ajaxCalls).toEqual([
-      { method: 'POST', url: '/api/note/open/doc-1', opts: { target: '#htmx-tabbar', swap: 'innerHTML' } },
+      { method: 'POST', url: '/api/container/open/doc-1', opts: { target: '#htmx-tabbar', swap: 'innerHTML' } },
+    ])
+  })
+
+  it("opens the container a lens asks for, through the same open, and nothing for an intent naming none", () => {
+    ws.onEditorModeEvent({ type: 'open-container', uuid: 'note-x' })
+    ws.onEditorModeEvent({ type: 'open-container' })
+    expect(ajaxCalls).toEqual([
+      { method: 'POST', url: '/api/container/open/note-x', opts: { target: '#htmx-tabbar', swap: 'innerHTML' } },
     ])
   })
 

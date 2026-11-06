@@ -3,135 +3,17 @@
 // fake InkContainerProvider, so what is pinned is what reaches the mounted SVG:
 // a page as it is answered, every committed stroke added to and trimmed from
 // that same SVG, the stroke under the pen drawn once a frame and handed over to
-// its committed markup, the live page followed, and a whiteboard's window moved
-// by the tablet and by the reader without the page being drawn again.
+// its committed markup, and a whiteboard's window moved by the reader without
+// the page being drawn again — and never by the tablet.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { getStroke } from 'perfect-freehand'
 import { DigitalNoteLens } from '../src/static/lens/ink/digital-note-lens.js'
 import { PageSurface } from '../src/static/lens/ink/page-surface.js'
 import { InkFeed } from '../src/static/contract/ink-container-provider.js'
-import { InkRenderer } from '../src/static/renderers/ink-renderer.js'
-
-const UUID = '019a0000-0000-7000-8000-0000000000aa'
-const RULED = Object.freeze({ id: 'ruled', params: { spacing: 0.05, margin: 0.12 } })
-const DOTS = Object.freeze({ id: 'dots', params: { spacing: 0.04 } })
-const GRID = 1404
-const ASPECT = 0.75
-
-/** @param {any} value @returns {any} */
-const deepFrozen = (value) => {
-  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
-    Object.freeze(value)
-    for (const key of Object.keys(value)) deepFrozen(value[key])
-  }
-  return value
-}
-
-/** A pen stroke along a short line from (x, y). @param {string} id @param {number} [x] @param {number} [y] */
-const pen = (id, x = 0.2, y = 0.2) => ({
-  id, tool: 'pen', widthClass: 2, startMillis: 0,
-  points: Array.from({ length: 12 }, (_, i) => ({ x: x + i * 0.01, y: y + i * 0.004, pressure: 0.5, tMillis: i * 8, tiltX: 0, tiltY: 0, size: 0 })),
-})
-
-/** A pencil stroke whose pressure climbs, so its chunks fall in several tone bands. @param {string} id */
-const pencil = (id) => ({
-  id, tool: 'pencil', widthClass: 2, startMillis: 0,
-  points: Array.from({ length: 40 }, (_, i) => ({ x: 0.3 + i * 0.008, y: 0.6, pressure: 0.05 + i * 0.024, tMillis: i * 8, tiltX: 0, tiltY: 0, size: 0 })),
-})
-
-/** An export page. @param {any[]} strokes @param {any} [template] */
-const exportPage = (strokes, template = RULED) => ({
-  note: { id: 'n', created: '2026-11-05T00:00:00Z', title: 'Ideas', pageAspect: 0.75, template, device: { id: 'd', name: 'Note Air 2', model: 'ONYX' } },
-  strokes,
-})
-
-/** The note's block attrs for pages of these ids. @param {string[]} ids @param {string} [bounds] */
-const noteAttrs = (ids, bounds = 'fixed') => ({
-  id: UUID, title: 'Ideas', note_device: { id: 'd', name: 'Note Air 2', model: 'ONYX' },
-  note: { created: '2026-11-05T00:00:00Z', pageAspect: 0.75, template: RULED, pages: ids.map((id) => ({ id, template: null, bounds })) },
-})
-
-/** An InkContainerProvider over one block whose pages the test answers. */
-class FakeInkProvider {
-  /** @type {string[]} the provider calls, in order */ calls = []
-  /** @type {Set<any>} */ feedListeners = new Set()
-  /** @type {Set<any>} */ modelListeners = new Set()
-  /** @type {Map<string, {page: any, seq: number}>} what loadPage answers, by page */ answers = new Map()
-  /** @type {boolean} when set, loadPage answers only when the test resolves it from `waiting` */ defer = false
-  /** @type {Array<{pageId: string, resolve: (a: any) => void}>} */ waiting = []
-  /** @type {any} */ #block
-
-  /** @param {Record<string, any>} attrs */
-  constructor(attrs) { this.#block = deepFrozen({ id: UUID, kind: 'digital-note', attrs }) }
-
-  getUuid() { return UUID }
-  getKind() { return 'digital-note' }
-  getOrder() { return [UUID] }
-  /** @param {string} id */
-  getBlock(id) { return id === UUID ? this.#block : null }
-
-  /** @param {any} listener */
-  subscribe(listener) {
-    this.calls.push('subscribe')
-    this.modelListeners.add(listener)
-    listener.onChanged({ blockIds: [UUID], orderChanged: true, replaced: [] })
-  }
-
-  /** @param {any} listener */
-  unsubscribe(listener) { this.modelListeners.delete(listener) }
-
-  /** @param {any} listener */
-  subscribeFeed(listener) { this.calls.push('subscribeFeed'); this.feedListeners.add(listener) }
-
-  /** @param {any} listener */
-  unsubscribeFeed(listener) { this.feedListeners.delete(listener) }
-
-  /** @param {string} pageId */
-  loadPage(pageId) {
-    this.calls.push('loadPage ' + pageId)
-    if (this.defer) return new Promise((resolve) => this.waiting.push({ pageId, resolve }))
-    const answer = this.answers.get(pageId)
-    return answer ? Promise.resolve(deepFrozen(structuredClone(answer))) : Promise.reject(new Error('no page ' + pageId))
-  }
-
-  /** @returns {number} how many pages have been asked for */
-  get loads() { return this.calls.filter((c) => c.startsWith('loadPage')).length }
-
-  /** The block changes, and every follower is cued. @param {Record<string, any>} attrs */
-  setAttrs(attrs) {
-    this.#block = deepFrozen({ id: UUID, kind: 'digital-note', attrs })
-    for (const listener of [...this.modelListeners]) listener.onChanged({ blockIds: [UUID], orderChanged: false, replaced: [] })
-  }
-
-  /** @param {Record<string, any>} event */
-  emit(event) {
-    const frozen = deepFrozen(structuredClone(event))
-    for (const listener of [...this.feedListeners]) listener.onFeed(frozen)
-  }
-}
-
-/** Animation frames, run only when the test says. */
-class Frames {
-  /** @type {Map<number, FrameRequestCallback>} */ queued = new Map()
-  /** @type {number[]} */ cancelled = []
-  #next = 1
-
-  install() {
-    vi.stubGlobal('requestAnimationFrame', (/** @type {FrameRequestCallback} */ cb) => { const id = this.#next++; this.queued.set(id, cb); return id })
-    vi.stubGlobal('cancelAnimationFrame', (/** @type {number} */ id) => { this.cancelled.push(id); this.queued.delete(id) })
-  }
-
-  run() {
-    const due = [...this.queued.values()]
-    this.queued.clear()
-    for (const cb of due) cb(0)
-  }
-}
-
-const settle = async () => { for (let i = 0; i < 6; i++) await Promise.resolve() }
-
-const renderer = new InkRenderer({ getStroke })
+import {
+  ASPECT, DOTS, FakeInkProvider, Frames, GRID, UUID, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, pencil, points, press, renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, wheel,
+} from './helpers/ink-lens-rig.js'
 
 /**
  * A lens presented over a note of pages `ids`, each answered with `strokes` at seq 10.
@@ -150,46 +32,11 @@ async function presented(opts = {}) {
 }
 
 /** @param {HTMLElement} root */
-const svgOf = (root) => /** @type {SVGSVGElement} */ (root.querySelector('.ink-page__sheet > svg'))
-/** @param {HTMLElement} root @param {string} layer */
-const layer = (root, layer) => /** @type {Element} */ (root.querySelector(`g[data-ink="${layer}"]`))
-/** @param {HTMLElement} root @param {string} id */
-const strokeEls = (root, id) => [...root.querySelectorAll('[data-stroke]')].filter((el) => el.getAttribute('data-stroke') === id)
-/** @param {HTMLElement} root */
 const position = (root) => root.querySelector('.ink-page__position')?.textContent
 /** @param {HTMLElement} root */
-const liveButton = (root) => /** @type {HTMLButtonElement} */ (root.querySelector('[data-ink-action="live"]'))
+const openLive = (root) => /** @type {HTMLButtonElement} */ (root.querySelector('[data-ink-action="open-live"]'))
 /** @param {HTMLElement} root @param {string} pageId */
 const dot = (root, pageId) => /** @type {HTMLElement} */ (root.querySelector(`[data-ink-page="${pageId}"]`))
-
-/** @param {number} stroke @param {number} from @param {number} count */
-const points = (stroke, from, count) => Array.from({ length: count }, (_, i) => ({
-  record: 'point', stroke, tool: null, widthClass: 0, x: 0.5 + (from + i) * 0.01, y: 0.4, pressure: 0.5, tMillis: (from + i) * 8, tiltX: 0, tiltY: 0,
-}))
-/** @param {number} stroke @param {'pen'|'pencil'} [tool] @param {number} [x] @param {number} [y] the stroke's origin */
-const begin = (stroke, tool = 'pen', x = 0, y = 0) => ({ record: 'begin', stroke, tool, widthClass: 2, x, y, pressure: 0, tMillis: 0, tiltX: 0, tiltY: 0 })
-/** @param {number} x @param {number} y the top-left of the tablet's view */
-const view = (x, y) => ({ record: 'view', stroke: 0, tool: null, widthClass: 0, x, y, pressure: 0, tMillis: 0, tiltX: 0, tiltY: 0 })
-
-/** The tablet's window with its top-left at (x, y): one sheet at one to one. @param {number} x @param {number} y */
-const tabletWindow = (x, y) => ({ x0: x, y0: y, x1: x + 1, y1: y + 1 / ASPECT })
-
-/** @param {HTMLElement} root @returns {{x0: number, y0: number, x1: number, y1: number}} the viewBox, in page units */
-const shownWindow = (root) => {
-  const [x, y, w, h] = String(svgOf(root).getAttribute('viewBox')).split(' ').map(Number)
-  return { x0: x / GRID, y0: y / GRID, x1: (x + w) / GRID, y1: (y + h) / GRID }
-}
-
-/** @param {{x0: number, y0: number, x1: number, y1: number}} w @returns {string} the viewBox the renderer writes for it */
-const viewBoxOf = (w) => { const b = renderer.windowBox(w); return `${b.x} ${b.y} ${b.width} ${b.height}` }
-
-/** Lays the sheet's SVG out at a size, as a browser would. @param {HTMLElement} root @param {DOMRect|any} rect */
-const layOut = (root, rect) => {
-  const box = { left: 100, top: 50, width: 600, height: 800, ...rect }
-  Object.assign(box, { right: box.left + box.width, bottom: box.top + box.height, x: box.left, y: box.top })
-  svgOf(root).getBoundingClientRect = () => /** @type {DOMRect} */ (box)
-  return box
-}
 
 /** A whiteboard of these strokes, laid out 600 by 800 at (100, 50). @param {any[]} [strokes] */
 async function whiteboard(strokes = [pen('a', 0.2, 0.2), pen('b', 2.4, 1.6)]) {
@@ -198,53 +45,9 @@ async function whiteboard(strokes = [pen('a', 0.2, 0.2), pen('b', 2.4, 1.6)]) {
   return shown
 }
 
-/** A whiteboard that is live and following the tablet, whose view is at (2, 3). @param {Frames} frames */
-async function followedWhiteboard(frames) {
-  const shown = await whiteboard()
-  shown.provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'w1' })
-  shown.provider.emit({ type: InkFeed.LIVE, records: [view(2, 3)] })
-  frames.run()
-  return shown
-}
 
-/** @param {HTMLElement} root @param {string} action */
-const press = (root, action) => /** @type {HTMLButtonElement} */ (root.querySelector(`[data-ink-action="${action}"]`)).click()
-/** @param {HTMLElement} root @param {string} key @param {KeyboardEventInit} [mods] */
-const key = (root, key, mods = {}) => {
-  const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...mods })
-  const page = /** @type {HTMLElement} */ (root.querySelector('.ink-page'))
-  page.dispatchEvent(event)
-  return event
-}
-/** @param {HTMLElement} root @param {WheelEventInit} init */
-const wheel = (root, init) => {
-  const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, ...init })
-  // happy-dom's WheelEvent keeps only the deltas of its init.
-  for (const [name, value] of Object.entries(init)) {
-    if (/** @type {any} */ (event)[name] !== value) Object.defineProperty(event, name, { value })
-  }
-  const surround = /** @type {HTMLElement} */ (root.querySelector('.ink-page__surround'))
-  surround.dispatchEvent(event)
-  return event
-}
-/** Drags the sheet with the primary button. @param {HTMLElement} root @param {number[][]} path client points */
-const drag = (root, path) => {
-  const sheet = /** @type {HTMLElement} */ (root.querySelector('.ink-page__sheet'))
-  const at = (/** @type {string} */ type, /** @type {number[]} */ [clientX, clientY]) =>
-    sheet.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, clientX, clientY }))
-  at('pointerdown', path[0])
-  for (const p of path.slice(1)) at('pointermove', p)
-  at('pointerup', path[path.length - 1])
-}
 /** @param {HTMLElement} root @returns {string[]} the edges whose mark shows */
 const edgeMarks = (root) => [...root.querySelectorAll('.ink-page__edge')].filter((el) => !(/** @type {HTMLElement} */ (el)).hidden).map((el) => String(el.getAttribute('data-ink-edge')))
-
-/** @param {{x0: number, y0: number, x1: number, y1: number}} actual @param {{x0: number, y0: number, x1: number, y1: number}} expected */
-const expectWindow = (actual, expected) => {
-  for (const k of /** @type {const} */ (['x0', 'y0', 'x1', 'y1'])) expect(actual[k]).toBeCloseTo(expected[k], 3)
-}
-/** @param {'end'|'remove'} record @param {number} stroke */
-const mark = (record, stroke) => ({ record, stroke, tool: null, widthClass: 0, x: 0, y: 0, pressure: 0, tMillis: 0, tiltX: 0, tiltY: 0 })
 
 describe('DigitalNoteLens', () => {
   /** @type {Frames} */ let frames
@@ -334,7 +137,7 @@ describe('DigitalNoteLens', () => {
 
   it('draws the stroke under the pen in the live layer, once a frame', async () => {
     const { provider, root } = await presented()
-    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1' })
+    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1', view: 'live-view' })
     provider.emit({ type: InkFeed.LIVE, records: [begin(7), ...points(7, 0, 4)] })
     provider.emit({ type: InkFeed.LIVE, records: points(7, 4, 4) })
     provider.emit({ type: InkFeed.LIVE, records: points(7, 8, 4) })
@@ -352,7 +155,7 @@ describe('DigitalNoteLens', () => {
 
   it('keeps an ended live stroke until its committed stroke is drawn, and then only that', async () => {
     const { provider, root } = await presented()
-    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1' })
+    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1', view: 'live-view' })
     provider.emit({ type: InkFeed.LIVE, records: [begin(7), ...points(7, 0, 12), mark('end', 7)] })
     frames.run()
     expect(layer(root, 'live').children).toHaveLength(1)
@@ -364,7 +167,7 @@ describe('DigitalNoteLens', () => {
   it('takes an ended live stroke no committed stroke claims away after a while', async () => {
     const { provider, root } = await presented()
     vi.useFakeTimers()
-    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1' })
+    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1', view: 'live-view' })
     provider.emit({ type: InkFeed.LIVE, records: [begin(7, 'pencil'), ...points(7, 0, 12), mark('end', 7)] })
     frames.run()
     provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p1', seq: 11, stroke: pen('s7') })
@@ -375,7 +178,7 @@ describe('DigitalNoteLens', () => {
 
   it('drops a live stroke the tablet abandons', async () => {
     const { provider, root } = await presented()
-    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1' })
+    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1', view: 'live-view' })
     provider.emit({ type: InkFeed.LIVE, records: [begin(7), ...points(7, 0, 12)] })
     frames.run()
     provider.emit({ type: InkFeed.LIVE, records: [mark('remove', 7)] })
@@ -384,7 +187,7 @@ describe('DigitalNoteLens', () => {
 
   it('draws no live records while the page shown is not the live page', async () => {
     const { provider, root, surface } = await presented()
-    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1' })
+    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1', view: 'live-view' })
     surface.turn(1)
     await settle()
     provider.emit({ type: InkFeed.LIVE, records: [begin(7), ...points(7, 0, 12)] })
@@ -392,25 +195,33 @@ describe('DigitalNoteLens', () => {
     expect(layer(root, 'live').children).toHaveLength(0)
   })
 
-  it('follows the live page, pauses on a turn by hand, and the live affordance resumes it', async () => {
-    const { provider, root, surface } = await presented()
-    expect(liveButton(root).hidden).toBe(true)
-    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p2' })
+  it('never moves the reader off the page shown, marks the live page while it is written, and offers the Live view', async () => {
+    const { provider, root, surface, lens } = await presented()
+    /** @type {any[]} */
+    const intents = []
+    lens.onEvent((e) => { if (e.type === 'open-container') intents.push(e) })
+    expect(openLive(root).hidden).toBe(true)
+    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p2', view: 'live-view' })
+    provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p2', seq: 11, stroke: pen('s2') })
     await settle()
-    expect([position(root), surface.shownPage, liveButton(root).hidden, liveButton(root).textContent]).toEqual(['2 / 2', 'p2', false, 'Live'])
+    expect([surface.shownPage, position(root), provider.loads, dot(root, 'p2').hasAttribute('data-unseen')]).toEqual(['p1', '1 / 2', 1, true])
+    expect(openLive(root).hidden).toBe(false)
+    openLive(root).click()
+    expect(intents).toEqual([{ type: 'open-container', uuid: 'live-view' }])
 
-    surface.turn(-1)
+    surface.turn(1)
     await settle()
-    expect([surface.shownPage, liveButton(root).textContent]).toEqual(['p1', 'Back to live'])
-    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p2' })
-    expect(surface.shownPage).toBe('p1')
-
-    liveButton(root).click()
+    provider.emit({ type: InkFeed.LIVE, records: [begin(7), ...points(7, 0, 4)] })
+    frames.run()
+    expect([surface.shownPage, layer(root, 'live').children.length]).toEqual(['p2', 1])
+    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1', view: 'live-view' })
     await settle()
-    expect([surface.shownPage, liveButton(root).getAttribute('aria-pressed')]).toEqual(['p2', 'true'])
+    expect([surface.shownPage, provider.loads]).toEqual(['p2', 2])
 
-    provider.emit({ type: InkFeed.LIVE_PAGE, live: false, pageId: null })
-    expect(liveButton(root).hidden).toBe(true)
+    provider.emit({ type: InkFeed.LIVE_PAGE, live: false, pageId: null, view: null })
+    expect(openLive(root).hidden).toBe(true)
+    openLive(root).click()
+    expect(intents).toHaveLength(1)
   })
 
   it('reloads the shown page when the log restarts, and holds the new seq', async () => {
@@ -475,51 +286,16 @@ describe('DigitalNoteLens', () => {
     }
   })
 
-  it("moves the window onto the tablet's at a VIEW, redrawing only the ruling", async () => {
-    const { provider, root } = await whiteboard()
-    const svg = svgOf(root)
-    const nodes = [...root.querySelectorAll('[data-stroke]')]
-    const ruling = layer(root, 'ruling')
-    const marks = ruling.firstElementChild
-    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'w1' })
-    provider.emit({ type: InkFeed.LIVE, records: [view(-1.3, 2.17)] })
-    frames.run()
-    expect(svgOf(root)).toBe(svg)
-    expect([...root.querySelectorAll('[data-stroke]')]).toEqual(nodes)
-    expect(layer(root, 'ruling')).toBe(ruling)
-    expect(ruling.firstElementChild).not.toBe(marks)
-    const w = tabletWindow(-1.3, 2.17)
-    expect(svg.getAttribute('viewBox')).toBe(viewBoxOf(w))
-    const box = renderer.windowBox(w)
-    expect([svg.getAttribute('width'), svg.getAttribute('height')]).toEqual([box.width, box.height])
-    const background = /** @type {Element} */ ([...svg.children].find((el) => el.tagName.toLowerCase() === 'rect'))
-    expect([background.getAttribute('x'), background.getAttribute('y')]).toEqual([box.x, box.y])
-    const step = DOTS.params.spacing * GRID
-    const centres = [...String(ruling.firstElementChild?.getAttribute('d')).matchAll(/M(-?[\d.]+) (-?[\d.]+)m/g)].map((m) => [Number(m[1]), Number(m[2])])
-    expect(centres.length).toBeGreaterThan(100)
-    for (const [x, y] of centres) {
-      expect(x).toBe(Math.round(Math.round(x / step) * step))
-      expect(y).toBe(Math.round(Math.round(y / step) * step))
-      expect(x).toBeGreaterThan(w.x0 * GRID - 4)
-      expect(y).toBeLessThan(w.y1 * GRID + 4)
-    }
-    expect(Math.min(...centres.map(([x]) => x))).toBe(Math.round(Math.ceil((w.x0 * GRID - 3) / step) * step))
-  })
-
   it.each([
-    ['the last of several VIEWs heard in one frame', [[view(1, 1)], [view(2, 2)], [view(3, 4)]], tabletWindow(3, 4)],
-    ["a begin's origin while no VIEW is heard", [[begin(7, 'pen', -2, 0.5)]], tabletWindow(-2, 0.5)],
-    ["a VIEW over a later begin's origin", [[view(1, 2)], [begin(7, 'pen', 5, 5)]], tabletWindow(1, 2)],
-  ])('follows %s, in one update', async (_name, batches, expected) => {
+    ['a VIEW', [view(-1.3, 2.17)]],
+    ["a begin's origin", [begin(7, 'pen', -2, 0.5)]],
+  ])("keeps the reader's window when the tablet moves its own, by %s", async (_name, records) => {
     const { provider, root } = await whiteboard()
-    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'w1' })
-    const svg = svgOf(root)
-    const set = vi.spyOn(svg, 'setAttribute')
-    for (const records of batches) provider.emit({ type: InkFeed.LIVE, records })
-    expect(frames.queued.size).toBe(1)
+    const before = svgOf(root).getAttribute('viewBox')
+    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'w1', view: 'live-view' })
+    provider.emit({ type: InkFeed.LIVE, records })
     frames.run()
-    expect(set.mock.calls.filter(([name]) => name === 'viewBox')).toHaveLength(1)
-    expect(svg.getAttribute('viewBox')).toBe(viewBoxOf(expected))
+    expect(svgOf(root).getAttribute('viewBox')).toBe(before)
   })
 
   /** The plane point under a client point of the laid-out sheet. */
@@ -530,9 +306,15 @@ describe('DigitalNoteLens', () => {
 
   it.each([
     ['dragging the sheet', (/** @type {HTMLElement} */ root) => drag(root, [[400, 400], [350, 380], [300, 350]]),
-      (/** @type {any} */ before, /** @type {any} */ after) => expectWindow(after, { x0: before.x0 + 100 / 600, y0: before.y0 + 50 / 600, x1: before.x1 + 100 / 600, y1: before.y1 + 50 / 600 })],
+      (/** @type {any} */ before, /** @type {any} */ after) => {
+        const u = (before.x1 - before.x0) / 600
+        expectWindow(after, { x0: before.x0 + 100 * u, y0: before.y0 + 50 * u, x1: before.x1 + 100 * u, y1: before.y1 + 50 * u })
+      }],
     ['the wheel', (/** @type {HTMLElement} */ root) => expect(wheel(root, { deltaX: 30, deltaY: 120 }).defaultPrevented).toBe(true),
-      (/** @type {any} */ before, /** @type {any} */ after) => expectWindow(after, { x0: before.x0 + 30 / 600, y0: before.y0 + 120 / 600, x1: before.x1 + 30 / 600, y1: before.y1 + 120 / 600 })],
+      (/** @type {any} */ before, /** @type {any} */ after) => {
+        const u = (before.x1 - before.x0) / 600
+        expectWindow(after, { x0: before.x0 + 30 * u, y0: before.y0 + 120 * u, x1: before.x1 + 30 * u, y1: before.y1 + 120 * u })
+      }],
     ['Ctrl and the wheel, about the pointer', (/** @type {HTMLElement} */ root) => wheel(root, { deltaY: -200, ctrlKey: true, clientX: 250, clientY: 300 }),
       (/** @type {any} */ before, /** @type {any} */ after, /** @type {HTMLElement} */ root) => {
         expect(after.x1 - after.x0).toBeCloseTo((before.x1 - before.x0) / Math.exp(0.4), 4)
@@ -541,15 +323,18 @@ describe('DigitalNoteLens', () => {
         expect(p.y).toBeCloseTo(before.y0 + 250 / 800 * (before.y1 - before.y0), 3)
       }],
     ['an arrow key', (/** @type {HTMLElement} */ root) => expect(key(root, 'ArrowRight').defaultPrevented).toBe(true),
-      (/** @type {any} */ before, /** @type {any} */ after) => expectWindow(after, { ...before, x0: before.x0 + 0.1, x1: before.x1 + 0.1 })],
+      (/** @type {any} */ before, /** @type {any} */ after) => {
+        const step = 0.1 * (before.x1 - before.x0)
+        expectWindow(after, { ...before, x0: before.x0 + step, x1: before.x1 + step })
+      }],
     ['the + key', (/** @type {HTMLElement} */ root) => expect(key(root, '+', { shiftKey: true }).defaultPrevented).toBe(true),
       (/** @type {any} */ before, /** @type {any} */ after) => {
-        expect(after.x1 - after.x0).toBeCloseTo(0.8, 4)
+        expect(after.x1 - after.x0).toBeCloseTo((before.x1 - before.x0) / 1.25, 4)
         expect((after.x0 + after.x1) / 2).toBeCloseTo((before.x0 + before.x1) / 2, 4)
       }],
-    ['the zoom out button', (/** @type {HTMLElement} */ root) => press(root, 'zoom-out'),
+    ['the zoom out button, after two zooms in', (/** @type {HTMLElement} */ root) => { press(root, 'zoom-in'); press(root, 'zoom-in'); press(root, 'zoom-out') },
       (/** @type {any} */ before, /** @type {any} */ after) => {
-        expect(after.x1 - after.x0).toBeCloseTo(1.25, 4)
+        expect(after.x1 - after.x0).toBeCloseTo((before.x1 - before.x0) / 1.25, 4)
         expect((after.y0 + after.y1) / 2).toBeCloseTo((before.y0 + before.y1) / 2, 4)
       }],
     ['the 100% button', (/** @type {HTMLElement} */ root) => press(root, 'actual'),
@@ -562,25 +347,23 @@ describe('DigitalNoteLens', () => {
         expect(after.x0).toBeLessThan(0.2)
         expect(after.x1).toBeGreaterThan(2.51)
       }],
-  ])('%s moves the window and pauses following until the live button resumes it', async (_name, gesture, check) => {
-    const { provider, root } = await followedWhiteboard(frames)
+  ])('%s moves the window, redrawing only the ruling, and the tablet does not move it back', async (_name, gesture, check) => {
+    const { provider, root } = await whiteboard()
+    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'w1', view: 'live-view' })
+    provider.emit({ type: InkFeed.LIVE, records: [view(2, 3)] })
+    frames.run()
     const before = shownWindow(root)
-    expectWindow(before, tabletWindow(2, 3))
+    const svg = svgOf(root)
+    const nodes = [...root.querySelectorAll('[data-stroke]')]
+    const ruling = layer(root, 'ruling')
     gesture(root)
     frames.run()
     check(before, shownWindow(root), root)
-    expect([liveButton(root).textContent, liveButton(root).getAttribute('aria-pressed')]).toEqual(['Back to live', 'false'])
+    expect([svgOf(root), [...root.querySelectorAll('[data-stroke]')], layer(root, 'ruling')]).toEqual([svg, nodes, ruling])
     const moved = svgOf(root).getAttribute('viewBox')
     provider.emit({ type: InkFeed.LIVE, records: [view(-4, -4)] })
     frames.run()
     expect(svgOf(root).getAttribute('viewBox')).toBe(moved)
-    liveButton(root).click()
-    frames.run()
-    expect(svgOf(root).getAttribute('viewBox')).toBe(viewBoxOf(tabletWindow(-4, -4)))
-    expect(liveButton(root).getAttribute('aria-pressed')).toBe('true')
-    provider.emit({ type: InkFeed.LIVE, records: [view(1, 1)] })
-    frames.run()
-    expect(svgOf(root).getAttribute('viewBox')).toBe(viewBoxOf(tabletWindow(1, 1)))
   })
 
   it('holds zoom between a quarter of a sheet and all the ink', async () => {
@@ -638,38 +421,26 @@ describe('DigitalNoteLens', () => {
     expect(/** @type {HTMLElement} */ (root.querySelector('[data-ink-action="scale"]')).hidden).toBe(false)
   })
 
-  describe('a live stroke out of view on a followed fixed page', () => {
-    /** A fixed page laid out 1000 wide (1333 tall) in a surround showing its top 300 px, the scroll applied to the layout. */
-    const scrolled = async () => {
-      const shown = await presented()
-      const surround = /** @type {HTMLElement} */ (shown.root.querySelector('.ink-page__surround'))
-      const offset = { left: 0, top: 0 }
-      surround.getBoundingClientRect = () => /** @type {DOMRect} */ ({ left: 0, top: 0, width: 1000, height: 300, right: 1000, bottom: 300 })
-      const scrollTo = vi.fn((/** @type {number} */ left, /** @type {number} */ top) => { offset.left = left; offset.top = top })
-      surround.scrollTo = /** @type {any} */ (scrollTo)
-      svgOf(shown.root).getBoundingClientRect = () => /** @type {DOMRect} */ ({ left: -offset.left, top: -offset.top, width: 1000, height: 1000 / ASPECT, right: 1000, bottom: 1000 / ASPECT })
-      shown.provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1' })
-      return { ...shown, surround, scrollTo }
-    }
+  it('never scrolls the reader to a live stroke written out of view', async () => {
+    const { provider, root } = await presented()
+    const surround = /** @type {HTMLElement} */ (root.querySelector('.ink-page__surround'))
+    surround.getBoundingClientRect = () => /** @type {DOMRect} */ ({ left: 0, top: 0, width: 1000, height: 300, right: 1000, bottom: 300 })
+    const scrollTo = vi.fn()
+    surround.scrollTo = /** @type {any} */ (scrollTo)
+    svgOf(root).getBoundingClientRect = () => /** @type {DOMRect} */ ({ left: 0, top: 0, width: 1000, height: 1000 / ASPECT, right: 1000, bottom: 1000 / ASPECT })
+    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1', view: 'live-view' })
+    provider.emit({ type: InkFeed.LIVE, records: [begin(7), ...points(7, 0, 4)] })
+    frames.run()
+    expect(layer(root, 'live').children).toHaveLength(1)
+    expect(scrollTo).not.toHaveBeenCalled()
+  })
 
-    it('is scrolled into view the least needed, once', async () => {
-      const { provider, scrollTo } = await scrolled()
-      provider.emit({ type: InkFeed.LIVE, records: [begin(7), ...points(7, 0, 4)] })
-      frames.run()
-      provider.emit({ type: InkFeed.LIVE, records: points(7, 4, 4) })
-      frames.run()
-      expect(scrollTo).toHaveBeenCalledTimes(1)
-      const [left, top] = scrollTo.mock.calls[0]
-      expect([left, top]).toEqual([0, expect.closeTo(400 - 300 + 48, 6)])
-    })
-
-    it('is left alone while the reader is scrolling', async () => {
-      const { provider, surround, scrollTo } = await scrolled()
-      surround.dispatchEvent(new Event('scroll'))
-      provider.emit({ type: InkFeed.LIVE, records: [begin(7), ...points(7, 0, 4)] })
-      frames.run()
-      expect(scrollTo).not.toHaveBeenCalled()
-    })
+  it.each([
+    ['a whiteboard of one page', { ids: ['w1'], bounds: 'unbounded' }, true],
+    ['a note of several pages', {}, false],
+  ])('hides the pager on %s', async (_name, opts, hidden) => {
+    const { root } = await presented(opts)
+    expect(/** @type {HTMLElement} */ (root.querySelector('.ink-page__pages')).hidden).toBe(hidden)
   })
 
   it.each([
@@ -743,7 +514,7 @@ describe('DigitalNoteLens', () => {
   it('destroy stops hearing the feed and the block, and cancels its frame and timers', async () => {
     const { provider, lens, root } = await presented()
     vi.useFakeTimers()
-    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1' })
+    provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1', view: 'live-view' })
     provider.emit({ type: InkFeed.LIVE, records: [begin(7), ...points(7, 0, 12), mark('end', 7)] })
     expect(frames.queued.size).toBe(1)
     lens.destroy()

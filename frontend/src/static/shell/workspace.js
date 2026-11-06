@@ -18,6 +18,8 @@ import { NoteEditor } from '../lens/document-editor/note-editor.js'
 import { PromptEditor } from '../lens/prompt/prompt-editor.js'
 import { BlockLens } from '../lens/block/block-lens.js'
 import { DigitalNoteLens } from '../lens/ink/digital-note-lens.js'
+import { LiveInkLens } from '../lens/ink/live-ink-lens.js'
+import { SurfaceIntent } from '../lens/abstract-surface.js'
 import { SpellControl } from './spell-control.js'
 import { WorkspaceService } from './workspace-service.js'
 import { CommandService } from './command-service.js'
@@ -35,7 +37,7 @@ import { SidebarView } from './sidebar-view.js'
 import { AssetPlacement } from './asset-placement.js'
 
 /** A document: a block tree that also projects itself as text. */
-const DOCUMENT_MOUNTING = Object.freeze({ lens: NoteEditor, provider: BlockProviderAdapter, channel: true })
+const DOCUMENT_MOUNTING = Object.freeze({ lens: NoteEditor, provider: BlockProviderAdapter, channel: true, document: true })
 
 export class SieveWorkspace {
   /** How each container kind is mounted: one line per kind with a lens of its
@@ -43,9 +45,10 @@ export class SieveWorkspace {
   static #LENSES = new LensTable(Object.freeze({
     note: DOCUMENT_MOUNTING,
     buffer: DOCUMENT_MOUNTING,
-    prompt: Object.freeze({ lens: PromptEditor, provider: WholeContentAdapter, channel: false }),
-    'digital-note': Object.freeze({ lens: DigitalNoteLens, provider: InkProviderAdapter, channel: true }),
-  }), Object.freeze({ lens: BlockLens, provider: ProviderAdapter, channel: true }))
+    prompt: Object.freeze({ lens: PromptEditor, provider: WholeContentAdapter, channel: false, document: false }),
+    'digital-note': Object.freeze({ lens: DigitalNoteLens, provider: InkProviderAdapter, channel: true, document: false }),
+    'ink-live': Object.freeze({ lens: LiveInkLens, provider: InkProviderAdapter, channel: true, document: false }),
+  }), Object.freeze({ lens: BlockLens, provider: ProviderAdapter, channel: true, document: false }))
 
   /** @type {Map<string, SieveTab>} uuid → Tab */
   #tabs = new Map()
@@ -77,6 +80,10 @@ export class SieveWorkspace {
 
   /** @type {ReturnType<typeof setTimeout>|null} lazy scroll-persist debounce, for the active tab only */
   #scrollPersistTimer = null
+
+  /** @type {boolean} a deletion took the active tab away, and the next tab strip
+   *  rendered opens the tab it marks active unless something else is mounted by then */
+  #reopenAfterDeletion = false
 
   /** @type {string|null|undefined} the insert anchor `beginFileAttach` captured
    *  before the file picker blurred the editor, held for `attachFile` to spend.
@@ -211,7 +218,7 @@ export class SieveWorkspace {
     // RAW id in the path: chi.URLParam does not unescape and the Go handlers
     // compare against decoded ids, so a `prompt:` uuid must arrive with a literal
     // colon. Percent-encoding it makes prompt opens 404.
-    return this.#ajax('POST', '/api/note/open/' + uuid)
+    return this.#ajax('POST', '/api/container/open/' + uuid)
   }
 
   /**
@@ -297,10 +304,24 @@ export class SieveWorkspace {
   }
 
   /** Fetches and renders the tab strip. The boot and invalidation refetch entry
-   *  point — #htmx-tabbar carries no hx-get/hx-trigger of its own.
+   *  point — #htmx-tabbar carries no hx-get/hx-trigger of its own. After a
+   *  deletion took the active tab away, the strip's active tab is opened once it
+   *  lands, unless a tab has become active meanwhile.
    *  @returns {Promise<any>} */
   loadTabs() {
-    return this.#ajax('GET', '/ui/views/tabs')
+    return Promise.resolve(this.#ajax('GET', '/ui/views/tabs')).then((result) => {
+      this.#reopenActive()
+      return result
+    })
+  }
+
+  #reopenActive() {
+    if (!this.#reopenAfterDeletion) return
+    this.#reopenAfterDeletion = false
+    if (this.#activeTab) return
+    const active = /** @type {HTMLElement|null} */ (document.querySelector('#tabs-area [data-tab-active]'))
+    const uuid = active ? active.dataset.tabId : ''
+    if (uuid) this.open(uuid)
   }
 
   /**
@@ -537,11 +558,13 @@ export class SieveWorkspace {
   }
 
   /** The non-toolbar chrome reactions to the editor's view events: the body
-   *  `markdown-mode` class plus the tab-strip re-render, the failure alert, and
-   *  the body `presenting` class.
-   *  @param {{type: string, mode?: string, error?: unknown}} event */
+   *  `markdown-mode` class plus the tab-strip re-render, the failure alert, the
+   *  body `presenting` class, and a lens asking for a container to be opened.
+   *  @param {{type: string, mode?: string, error?: unknown, uuid?: string}} event */
   onEditorModeEvent(event) {
-    if (event.type === 'presenting-changed') {
+    if (event.type === SurfaceIntent.OPEN_CONTAINER) {
+      if (event.uuid) this.open(event.uuid)
+    } else if (event.type === 'presenting-changed') {
       this.#mirrorPresenting()
     } else if (event.type === 'mode-changed') {
       document.body.classList.toggle('markdown-mode', this.activeEditor?.mode === 'markdown')
@@ -580,7 +603,9 @@ export class SieveWorkspace {
     // RECONCILIATION, not an operation: the server broadcasts that a container is
     // already gone, and everything this workspace still holds for it goes too.
     // Deleting a BACKGROUND note reaches no element the delete's own response
-    // swaps, which is why the news arrives on the workspace wire.
+    // swaps, which is why the news arrives on the workspace wire. A container that
+    // goes with no response at all (the Live view ending) leaves the active tab
+    // to the next tab strip rendered.
     //
     // Tearing down a MOUNTED editor here is the ORDINARY path, and it is safe:
     // destroy() performs exactly the unmount and channel-close activateDocument
@@ -591,6 +616,7 @@ export class SieveWorkspace {
       if (!uuid) return
       const tab = this.getTab(uuid)
       if (!tab) return
+      if (this.#activeTab === tab) this.#reopenAfterDeletion = true
       if (tab.editor) {
         tab.editor.destroy()
         tab.detachEditor()
@@ -679,13 +705,15 @@ export class SieveWorkspace {
    *
    * A native menu click carries no DOM gesture and steals focus, so WebKit rejects
    * navigator.clipboard — the Wails pasteboard is primary, the browser API is the
-   * non-Wails dev fallback.
+   * non-Wails dev fallback. A tab whose kind is mounted as no document has nothing
+   * to export, and nothing is asked or shown.
    * @param {'markdown'|'confluence'|'confluence-cloud'} format the export format word Go renders
    * @returns {Promise<void>}
    */
   copyDocumentAs(format) {
-    const mount = this.#activeTab ? this.#activeTab.mount : null
-    if (!mount) return Promise.resolve()
+    const tab = this.#activeTab
+    const mount = tab ? tab.mount : null
+    if (!tab || !mount || !SieveWorkspace.#LENSES.lookup(tab.kind).document) return Promise.resolve()
     return this.flushSave()
       .then(() => mount.exportAs(format))
       .then((text) => {

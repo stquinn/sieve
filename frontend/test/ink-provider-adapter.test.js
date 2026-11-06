@@ -61,7 +61,7 @@ describe('InkProviderAdapter', () => {
     const { provider, sock } = rig()
     /** @type {any[]} */ const heard = []
     provider.subscribeFeed({ onFeed: (e) => heard.push(e) })
-    sock.driveMessage({ type: DocumentFrame.INK_LIVE_PAGE, live: true, pageId: 'p1' })
+    sock.driveMessage({ type: DocumentFrame.INK_LIVE_PAGE, live: true, pageId: 'p1', view: 'v1' })
     sock.driveMessage({
       type: DocumentFrame.INK_LIVE, records: [
         { record: 'begin', stroke: 3, tool: 'pencil', widthClass: 2, x: -0.5, y: 1.25, pressure: 0, tMillis: 0, tiltX: 0, tiltY: 0 },
@@ -75,7 +75,7 @@ describe('InkProviderAdapter', () => {
     sock.driveMessage({ type: DocumentFrame.INK_LOG_RESTARTED })
     sock.driveMessage({ type: DocumentFrame.INK_LIVE_PAGE, live: false })
     expect(heard).toEqual([
-      { type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1' },
+      { type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1', view: 'v1' },
       {
         type: InkFeed.LIVE, records: [
           { record: 'begin', stroke: 3, tool: 'pencil', widthClass: 2, x: -0.5, y: 1.25, pressure: 0, tMillis: 0, tiltX: 0, tiltY: 0 },
@@ -86,7 +86,7 @@ describe('InkProviderAdapter', () => {
       { type: InkFeed.STROKE_ADDED, pageId: 'p1', seq: 5, stroke: STROKE },
       { type: InkFeed.STROKE_REMOVED, pageId: 'p1', seq: 6, strokeId: 's1' },
       { type: InkFeed.LOG_RESTARTED },
-      { type: InkFeed.LIVE_PAGE, live: false, pageId: null },
+      { type: InkFeed.LIVE_PAGE, live: false, pageId: null, view: null },
     ])
     expect(heard.every((e) => Object.isFrozen(e))).toBe(true)
     expect(Object.isFrozen(heard[1].records[1])).toBe(true)
