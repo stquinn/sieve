@@ -1284,72 +1284,72 @@ func (pngDrawer) DrawPage(_ context.Context, page ink.PageDrawing) ([]byte, erro
 	return append([]byte("\x89PNG\r\n\x1a\n"), page.Key...), nil
 }
 
-// cannedReader reads every page as the same heading and Mermaid diagram, and counts its readings.
-type cannedReader struct {
+// cannedTranscriber transcribes every page as the same heading and Mermaid diagram, and counts its transcripts.
+type cannedTranscriber struct {
 	mu    sync.Mutex
-	reads int
+	calls int
 }
 
-func (r *cannedReader) Tier() domain.Tier { return domain.TierSmart }
-func (r *cannedReader) ReadPage(string, domain.Address) (domain.PageReading, error) {
+func (r *cannedTranscriber) Tier() domain.Tier { return domain.TierSmart }
+func (r *cannedTranscriber) TranscribePage(string, domain.Address) (domain.PageTranscript, error) {
 	r.mu.Lock()
-	r.reads++
+	r.calls++
 	r.mu.Unlock()
-	return domain.PageReading{Parts: []domain.ReadingPart{
-		{Type: domain.ReadingPartText, Markdown: "# Kitchen\n\nTiles [?] by Friday."},
-		{Type: domain.ReadingPartDiagram, Language: "mermaid", Source: "flowchart TD\n  A --> B"},
+	return domain.PageTranscript{Parts: []domain.TranscriptPart{
+		{Type: domain.TranscriptPartText, Markdown: "# Kitchen\n\nTiles [?] by Friday."},
+		{Type: domain.TranscriptPartDiagram, Language: "mermaid", Source: "flowchart TD\n  A --> B"},
 	}}, nil
 }
 
-func (r *cannedReader) count() int {
+func (r *cannedTranscriber) count() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.reads
+	return r.calls
 }
 
-// readingOf is the reading an ink-reading-content or ink-reading-changed carries, as "{state}
+// transcriptOf is the transcript an ink-transcript-content or ink-transcript-changed carries, as "{state}
 // running={bool} {kinds}".
-func readingOf(t *testing.T, frame map[string]interface{}) string {
+func transcriptOf(t *testing.T, frame map[string]interface{}) string {
 	t.Helper()
-	reading, _ := frame["reading"].(map[string]interface{})
-	if reading == nil {
-		t.Fatalf("no reading in %v", frame)
+	transcript, _ := frame["transcript"].(map[string]interface{})
+	if transcript == nil {
+		t.Fatalf("no transcript in %v", frame)
 	}
 	var kinds []string
-	blocks, _ := reading["blocks"].([]interface{})
+	blocks, _ := transcript["blocks"].([]interface{})
 	for _, b := range blocks {
 		kinds = append(kinds, fmt.Sprint(b.(map[string]interface{})["kind"]))
 	}
-	return fmt.Sprintf("%v running=%v %s", reading["state"], reading["running"], strings.Join(kinds, ","))
+	return fmt.Sprintf("%v running=%v %s", transcript["state"], transcript["running"], strings.Join(kinds, ","))
 }
 
-// Over the note's own socket a page's reading is asked, started and heard: none before, the
-// reading's start and end pushed with the read's own answer between, ready with its blocks when
+// Over the note's own socket a page's transcript is asked, started and heard: none before, the
+// transcript's start and end pushed with the answer to the transcribe request between, ready with its blocks when
 // asked again, and stale once a stroke lands on the page. New document answers a document of its
-// own, named for the note and the page, holding the reading's blocks, and leaves the note's
-// reading as it was. A page that is no id, and a channel holding no note, are refused.
-func TestWS_InkReading_IsAskedReadHeardAndCopied(t *testing.T) {
+// own, named for the note and the page, holding the transcript's blocks, and leaves the note's
+// transcript as it was. A page that is no id, and a channel holding no note, are refused.
+func TestWS_InkTranscript_IsAskedTranscribedHeardAndCopied(t *testing.T) {
 	block.RegisterProcessor(&processors.ProseProcessor{})
 	block.RegisterProcessor(processors.NewDiagramProcessor(block.BlockServices{}))
 	records := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)))
 	w := newInkWire(t, records)
 	w.session(records)
 	note := w.container()
-	reader := &cannedReader{}
-	w.sp.InkReadings = ink.NewPageReadings(w.sp.Ink, ink.NewPageImages(w.sp.Ink, pngDrawer{}), reader, nil,
+	transcriber := &cannedTranscriber{}
+	w.sp.InkTranscripts = ink.NewPageTranscripts(w.sp.Ink, ink.NewPageImages(w.sp.Ink, pngDrawer{}), transcriber, nil,
 		block.NewDocumentCodec(block.GlobalRegistry()), services.NewJobEngine(nil, 1, nil))
 	c := dialWS(t, w.srv, note)
 	ask := func(frameType string) map[string]interface{} {
 		t.Helper()
 		send(t, c, `{"type":"`+frameType+`","opId":"op-r","pageId":"`+inkPage1.String()+`"}`)
-		return readUntil(t, c, protocol.TypeInkReadingContent, 2*time.Second)
+		return readUntil(t, c, protocol.TypeInkTranscriptContent, 2*time.Second)
 	}
 
-	if got := ask(protocol.TypeInkReading); readingOf(t, got) != "none running=false " || got["opId"] != "op-r" ||
-		got["pageId"] != inkPage1.String() || got["reading"].(map[string]interface{})["available"] != true {
-		t.Errorf("before reading: %v", got)
+	if got := ask(protocol.TypeInkTranscript); transcriptOf(t, got) != "none running=false " || got["opId"] != "op-r" ||
+		got["pageId"] != inkPage1.String() || got["transcript"].(map[string]interface{})["available"] != true {
+		t.Errorf("before transcript: %v", got)
 	}
-	send(t, c, `{"type":"ink-read-page","opId":"op-read","pageId":"`+inkPage1.String()+`"}`)
+	send(t, c, `{"type":"ink-transcribe-page","opId":"op-transcribe","pageId":"`+inkPage1.String()+`"}`)
 	var heard []string
 	for len(heard) < 3 {
 		_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
@@ -1362,31 +1362,31 @@ func TestWS_InkReading_IsAskedReadHeardAndCopied(t *testing.T) {
 			continue
 		}
 		switch f["type"] {
-		case protocol.TypeInkReadingChanged:
-			heard = append(heard, "pushed "+readingOf(t, f))
-		case protocol.TypeInkReadingContent:
-			heard = append(heard, "answered "+readingOf(t, f))
+		case protocol.TypeInkTranscriptChanged:
+			heard = append(heard, "pushed "+transcriptOf(t, f))
+		case protocol.TypeInkTranscriptContent:
+			heard = append(heard, "answered "+transcriptOf(t, f))
 		}
 	}
 	if want := []string{"pushed none running=true ", "answered none running=true ", "pushed ready running=false prose,diagram"}; strings.Join(heard, "|") != strings.Join(want, "|") {
 		t.Errorf("heard\n%v\nwant\n%v", heard, want)
 	}
-	if got := ask(protocol.TypeInkReading); readingOf(t, got) != "ready running=false prose,diagram" {
+	if got := ask(protocol.TypeInkTranscript); transcriptOf(t, got) != "ready running=false prose,diagram" {
 		t.Errorf("asked again: %v", got)
 	}
-	if got := ask(protocol.TypeInkReadPage); readingOf(t, got) != "ready running=false prose,diagram" || reader.count() != 1 {
-		t.Errorf("read again: %v, %d readings", got, reader.count())
+	if got := ask(protocol.TypeInkTranscribePage); transcriptOf(t, got) != "ready running=false prose,diagram" || transcriber.count() != 1 {
+		t.Errorf("transcribe again: %v, %d transcripts", got, transcriber.count())
 	}
 
 	more := append(records, inkStrokeAdd(inkPage1, inkStroke(2)))
 	more[len(more)-1].Seq = uint32(len(more))
 	w.session(more)
-	if got := ask(protocol.TypeInkReading); readingOf(t, got) != "stale running=false prose,diagram" {
+	if got := ask(protocol.TypeInkTranscript); transcriptOf(t, got) != "stale running=false prose,diagram" {
 		t.Errorf("after a stroke: %v", got)
 	}
 
-	send(t, c, `{"type":"ink-reading-document","opId":"op-doc","pageId":"`+inkPage1.String()+`"}`)
-	made := readUntil(t, c, protocol.TypeInkReadingDocumentResult, 2*time.Second)
+	send(t, c, `{"type":"ink-transcript-document","opId":"op-doc","pageId":"`+inkPage1.String()+`"}`)
+	made := readUntil(t, c, protocol.TypeInkTranscriptDocumentResult, 2*time.Second)
 	uuid, _ := made["uuid"].(string)
 	if made["opId"] != "op-doc" || made["error"] != nil || uuid == "" || uuid == note {
 		t.Fatalf("new document: %v", made)
@@ -1404,19 +1404,19 @@ func TestWS_InkReading_IsAskedReadHeardAndCopied(t *testing.T) {
 		t.Errorf("the new document loads as %v", loaded)
 	}
 	closeAndSettle(d)
-	if got := ask(protocol.TypeInkReading); readingOf(t, got) != "stale running=false prose,diagram" {
-		t.Errorf("the note's reading after New document: %v", got)
+	if got := ask(protocol.TypeInkTranscript); transcriptOf(t, got) != "stale running=false prose,diagram" {
+		t.Errorf("the note's transcript after New document: %v", got)
 	}
 
-	send(t, c, `{"type":"ink-reading","opId":"op-x","pageId":"first"}`)
-	if got := readUntil(t, c, protocol.TypeInkReadingContent, 2*time.Second); got["error"] == nil || got["reading"] != nil {
+	send(t, c, `{"type":"ink-transcript","opId":"op-x","pageId":"first"}`)
+	if got := readUntil(t, c, protocol.TypeInkTranscriptContent, 2*time.Second); got["error"] == nil || got["transcript"] != nil {
 		t.Errorf("a page that is no id: %v", got)
 	}
 	closeAndSettle(c)
 	other := newContainerOnWire(t, w.sp)
 	o := dialWS(t, w.srv, other.UUID())
-	send(t, o, `{"type":"ink-reading-document","opId":"op-o","pageId":"`+inkPage1.String()+`"}`)
-	if got := readUntil(t, o, protocol.TypeInkReadingDocumentResult, 2*time.Second); got["error"] == nil || got["uuid"] != nil {
+	send(t, o, `{"type":"ink-transcript-document","opId":"op-o","pageId":"`+inkPage1.String()+`"}`)
+	if got := readUntil(t, o, protocol.TypeInkTranscriptDocumentResult, 2*time.Second); got["error"] == nil || got["uuid"] != nil {
 		t.Errorf("a code container answered %v", got)
 	}
 	closeAndSettle(o)

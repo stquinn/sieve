@@ -170,100 +170,100 @@ func NewInkOpenOnTabletFailedFrame(opID string, err error) InkOpenOnTabletResult
 	return InkOpenOnTabletResultFrame{Type: TypeInkOpenOnTabletResult, OpID: opID, Error: err.Error()}
 }
 
-// InkReadingFrame asks what is known of the reading of one page of this channel's Digital Note.
-type InkReadingFrame struct {
+// InkTranscriptFrame asks what is known of the transcript of one page of this channel's Digital Note.
+type InkTranscriptFrame struct {
 	Type   string `json:"type"`
-	OpID   string `json:"opId,omitempty" doc:"echoed on the ink-reading-content reply"`
+	OpID   string `json:"opId,omitempty" doc:"echoed on the ink-transcript-content reply"`
 	PageID string `json:"pageId" doc:"the page's id, as the block's note.pages lists it"`
 }
 
-// InkReadPageFrame asks for one page of this channel's Digital Note to be read, unless it has a
-// reading of what it holds now or is being read. It is answered at once with what is then known of
-// the page's reading; the reading's end arrives as an ink-reading-changed.
-type InkReadPageFrame struct {
+// InkTranscribePageFrame asks for one page of this channel's Digital Note to be transcribed, unless it has a
+// transcript of what it holds now or is being transcribed. It is answered at once with what is then known of
+// the page's transcript; the transcript's end arrives as an ink-transcript-changed.
+type InkTranscribePageFrame struct {
 	Type   string `json:"type"`
-	OpID   string `json:"opId,omitempty" doc:"echoed on the ink-reading-content reply"`
+	OpID   string `json:"opId,omitempty" doc:"echoed on the ink-transcript-content reply"`
 	PageID string `json:"pageId" doc:"the page's id, as the block's note.pages lists it"`
 }
 
-// InkReadingDocumentFrame asks for a new document made from the reading of one page of this
-// channel's Digital Note: an ordinary untitled note holding a copy of the reading's blocks, linked
-// to nothing. The note and its reading are not changed.
-type InkReadingDocumentFrame struct {
+// InkTranscriptDocumentFrame asks for a new document made from the transcript of one page of this
+// channel's Digital Note: an ordinary untitled note holding a copy of the transcript's blocks, linked
+// to nothing. The note and its transcript are not changed.
+type InkTranscriptDocumentFrame struct {
 	Type   string `json:"type"`
-	OpID   string `json:"opId,omitempty" doc:"echoed on the ink-reading-document-result reply"`
-	PageID string `json:"pageId" doc:"the page whose reading the document is made from"`
+	OpID   string `json:"opId,omitempty" doc:"echoed on the ink-transcript-document-result reply"`
+	PageID string `json:"pageId" doc:"the page whose transcript the document is made from"`
 }
 
-// The states of a page's reading.
+// The states of a page's transcript.
 const (
-	InkReadingNone  = "none"
-	InkReadingReady = "ready"
-	InkReadingStale = "stale"
+	InkTranscriptNone  = "none"
+	InkTranscriptReady = "ready"
+	InkTranscriptStale = "stale"
 )
 
-// InkReading is what is known of the reading of one page.
-type InkReading struct {
-	State       string                `json:"state" doc:"none | ready (a reading of the page as it is now) | stale (a reading of the page as it was before it changed)"`
-	Key         string                `json:"key,omitempty" doc:"the page key the reading is of; absent with none"`
-	Blocks      []block.FrontendBlock `json:"blocks,omitempty" doc:"the reading, in the page's order, in the shape a load's blocks take; absent with none"`
-	Running     bool                  `json:"running" doc:"a reading of the page is under way"`
-	Available   bool                  `json:"available" doc:"false while nothing can read a page"`
-	Unavailable string                `json:"unavailable,omitempty" doc:"why nothing can read a page; present only when available is false"`
-	Failed      string                `json:"failed,omitempty" doc:"what went wrong the last time the page was read; absent when nothing did"`
+// InkTranscript is what is known of the transcript of one page.
+type InkTranscript struct {
+	State       string                `json:"state" doc:"none | ready (a transcript of the page as it is now) | stale (a transcript of the page as it was before it changed)"`
+	Key         string                `json:"key,omitempty" doc:"the page key the transcript is of; absent with none"`
+	Blocks      []block.FrontendBlock `json:"blocks,omitempty" doc:"the transcript, in the page's order, in the shape a load's blocks take; absent with none"`
+	Running     bool                  `json:"running" doc:"a transcript of the page is under way"`
+	Available   bool                  `json:"available" doc:"false while nothing can transcribe a page"`
+	Unavailable string                `json:"unavailable,omitempty" doc:"why nothing can transcribe a page; present only when available is false"`
+	Failed      string                `json:"failed,omitempty" doc:"what went wrong the last time the page was transcribed; absent when nothing did"`
 }
 
-// InkReadingContentFrame answers an ink-reading or an ink-read-page with what is known of the
-// page's reading, or why there is none to say.
-type InkReadingContentFrame struct {
+// InkTranscriptContentFrame answers an ink-transcript or an ink-transcribe-page with what is known of the
+// page's transcript, or why there is none to say.
+type InkTranscriptContentFrame struct {
 	Type    string      `json:"type"`
 	OpID    string      `json:"opId,omitempty"`
 	PageID  string      `json:"pageId" doc:"the page asked of, echoed"`
-	Reading *InkReading `json:"reading" doc:"null when refused"`
+	Transcript *InkTranscript `json:"transcript" doc:"null when refused"`
 	Error   string      `json:"error,omitempty" doc:"present only when refused: the channel holds no Digital Note, the note has no page of that id, or ink is unavailable"`
 }
 
-// NewInkReadingContentFrame builds the answer carrying reading.
-func NewInkReadingContentFrame(opID, pageID string, reading InkReading) InkReadingContentFrame {
-	return InkReadingContentFrame{Type: TypeInkReadingContent, OpID: opID, PageID: pageID, Reading: &reading}
+// NewInkTranscriptContentFrame builds the answer carrying transcript.
+func NewInkTranscriptContentFrame(opID, pageID string, transcript InkTranscript) InkTranscriptContentFrame {
+	return InkTranscriptContentFrame{Type: TypeInkTranscriptContent, OpID: opID, PageID: pageID, Transcript: &transcript}
 }
 
-// NewInkReadingRefusedFrame builds the answer to an ink-reading or ink-read-page that names no
+// NewInkTranscriptRefusedFrame builds the answer to an ink-transcript or ink-transcribe-page that names no
 // page there is.
-func NewInkReadingRefusedFrame(opID, pageID string, err error) InkReadingContentFrame {
-	return InkReadingContentFrame{Type: TypeInkReadingContent, OpID: opID, PageID: pageID, Error: err.Error()}
+func NewInkTranscriptRefusedFrame(opID, pageID string, err error) InkTranscriptContentFrame {
+	return InkTranscriptContentFrame{Type: TypeInkTranscriptContent, OpID: opID, PageID: pageID, Error: err.Error()}
 }
 
-// InkReadingChangedFrame is what is known of the reading of a page of this channel's note now
-// that it has changed: a reading began, or ended in a reading kept or in a failure.
-type InkReadingChangedFrame struct {
+// InkTranscriptChangedFrame is what is known of the transcript of a page of this channel's note now
+// that it has changed: a transcript began, or ended in a transcript kept or in a failure.
+type InkTranscriptChangedFrame struct {
 	Type    string     `json:"type"`
 	PageID  string     `json:"pageId"`
-	Reading InkReading `json:"reading"`
+	Transcript InkTranscript `json:"transcript"`
 }
 
-// NewInkReadingChangedFrame builds the reading push.
-func NewInkReadingChangedFrame(pageID string, reading InkReading) InkReadingChangedFrame {
-	return InkReadingChangedFrame{Type: TypeInkReadingChanged, PageID: pageID, Reading: reading}
+// NewInkTranscriptChangedFrame builds the transcript push.
+func NewInkTranscriptChangedFrame(pageID string, transcript InkTranscript) InkTranscriptChangedFrame {
+	return InkTranscriptChangedFrame{Type: TypeInkTranscriptChanged, PageID: pageID, Transcript: transcript}
 }
 
-// InkReadingDocumentResultFrame answers an ink-reading-document with the new document's uuid, or
+// InkTranscriptDocumentResultFrame answers an ink-transcript-document with the new document's uuid, or
 // why none was made.
-type InkReadingDocumentResultFrame struct {
+type InkTranscriptDocumentResultFrame struct {
 	Type  string `json:"type"`
 	OpID  string `json:"opId,omitempty"`
 	UUID  string `json:"uuid,omitempty" doc:"the new document; absent with error"`
-	Error string `json:"error,omitempty" doc:"present only when no document was made: the page has no reading, or ink is unavailable"`
+	Error string `json:"error,omitempty" doc:"present only when no document was made: the page has no transcript, or ink is unavailable"`
 }
 
-// NewInkReadingDocumentResultFrame builds the answer naming the new document uuid.
-func NewInkReadingDocumentResultFrame(opID, uuid string) InkReadingDocumentResultFrame {
-	return InkReadingDocumentResultFrame{Type: TypeInkReadingDocumentResult, OpID: opID, UUID: uuid}
+// NewInkTranscriptDocumentResultFrame builds the answer naming the new document uuid.
+func NewInkTranscriptDocumentResultFrame(opID, uuid string) InkTranscriptDocumentResultFrame {
+	return InkTranscriptDocumentResultFrame{Type: TypeInkTranscriptDocumentResult, OpID: opID, UUID: uuid}
 }
 
-// NewInkReadingDocumentFailedFrame builds the answer to an ink-reading-document that made nothing.
-func NewInkReadingDocumentFailedFrame(opID string, err error) InkReadingDocumentResultFrame {
-	return InkReadingDocumentResultFrame{Type: TypeInkReadingDocumentResult, OpID: opID, Error: err.Error()}
+// NewInkTranscriptDocumentFailedFrame builds the answer to an ink-transcript-document that made nothing.
+func NewInkTranscriptDocumentFailedFrame(opID string, err error) InkTranscriptDocumentResultFrame {
+	return InkTranscriptDocumentResultFrame{Type: TypeInkTranscriptDocumentResult, OpID: opID, Error: err.Error()}
 }
 
 // InkDescribeFrame asks for this channel's Digital Note to be named now: its name, summary,

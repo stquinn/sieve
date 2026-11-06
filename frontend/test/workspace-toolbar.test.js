@@ -179,20 +179,20 @@ describe('ToolbarSelect', () => {
 
 describe('ActionList', () => {
   const PAGE = 'page'
-  const READING = 'reading'
+  const TRANSCRIPT = 'transcript'
   /** @param {{busy?: boolean, live?: boolean, label?: string}} state @param {string[]} ran */
   const list = (state, ran) => new ActionList([
     { id: 'copy', label: 'Copy page', title: 'Copy it', modes: [PAGE], run: () => ran.push('copy') },
-    { id: 'open', label: 'Open in e-ink', modes: [PAGE, READING], enabled: () => !state.busy, run: () => ran.push('open') },
+    { id: 'open', label: 'Open on device', modes: [PAGE, TRANSCRIPT], enabled: () => !state.busy, run: () => ran.push('open') },
     { id: 'live', label: 'Go to Live', short: 'Live', className: 'tb-live', modes: [PAGE], applies: () => !!state.live, run: () => ran.push('live') },
-    { id: 'read', label: () => String(state.label), modes: [READING], run: () => ran.push('read') },
-    { id: 'name', label: 'Refresh name', modes: [PAGE, READING], menuOnly: true, run: () => ran.push('name') },
+    { id: 'transcribe', label: () => String(state.label), modes: [TRANSCRIPT], run: () => ran.push('transcribe') },
+    { id: 'name', label: 'Refresh name', modes: [PAGE, TRANSCRIPT], menuOnly: true, run: () => ran.push('name') },
   ])
 
   it.each([
-    ['the page', PAGE, {}, ['copy', 'open', 'name'], ['Copy page', 'Open in e-ink', 'Refresh name']],
-    ['the page, while live', PAGE, { live: true }, ['copy', 'open', 'live', 'name'], ['Copy page', 'Open in e-ink', 'Go to Live', 'Refresh name']],
-    ['the reading', READING, { label: 'Read again' }, ['open', 'read', 'name'], ['Open in e-ink', 'Read again', 'Refresh name']],
+    ['the page', PAGE, {}, ['copy', 'open', 'name'], ['Copy page', 'Open on device', 'Refresh name']],
+    ['the page, while live', PAGE, { live: true }, ['copy', 'open', 'live', 'name'], ['Copy page', 'Open on device', 'Go to Live', 'Refresh name']],
+    ['the transcript', TRANSCRIPT, { label: 'Transcribe again' }, ['open', 'transcribe', 'name'], ['Open on device', 'Transcribe again', 'Refresh name']],
   ])('offers in %s only the actions of that mode that apply now: all in the menu, the menu-only ones not in the toolbar', (_name, mode, state, ids, labels) => {
     const actions = list(state, [])
     expect([actions.offered(mode).map((a) => a.id), actions.menuItems(mode).map((i) => /** @type {any} */ (i).label)]).toEqual([ids, labels])
@@ -216,16 +216,16 @@ describe('ActionList', () => {
   })
 
   it('draws an action that cannot run disabled in both, read again each time it is drawn', () => {
-    const state = { busy: true, label: 'Read this page' }
+    const state = { busy: true, label: 'Transcribe this page' }
     const actions = list(state, [])
-    const button = actions.toolbarButtons(READING)[0]
+    const button = actions.toolbarButtons(TRANSCRIPT)[0]
     button.refresh()
-    expect([button.el.disabled, /** @type {any} */ (actions.menuItems(READING)[0]).disabled]).toEqual([true, true])
+    expect([button.el.disabled, /** @type {any} */ (actions.menuItems(TRANSCRIPT)[0]).disabled]).toEqual([true, true])
     state.busy = false
     state.label = 'Try again'
     button.refresh()
-    expect([button.el.disabled, actions.menuItems(READING).map((i) => [/** @type {any} */ (i).label, /** @type {any} */ (i).disabled])])
-      .toEqual([false, [['Open in e-ink', false], ['Try again', false], ['Refresh name', false]]])
+    expect([button.el.disabled, actions.menuItems(TRANSCRIPT).map((i) => [/** @type {any} */ (i).label, /** @type {any} */ (i).disabled])])
+      .toEqual([false, [['Open on device', false], ['Try again', false], ['Refresh name', false]]])
   })
 
   it('is frozen: what was declared is what both draw', () => {
@@ -580,10 +580,10 @@ describe('the mode toggle', () => {
     const toggles = [note.el, ink.el].map((el) => /** @type {HTMLButtonElement} */ (el.querySelector('#tb-toggle-mode-btn')))
     expect(toggles.map((t) => [t.tagName, t.className.split(' ')[0], t.closest('.tb-group')?.firstElementChild === t]))
       .toEqual([['BUTTON', 'tb-btn', true], ['BUTTON', 'tb-btn', true]])
-    expect([toggles[0].title, toggles[1].textContent, toggles[1].title]).toEqual(['View Markdown Source', 'Reading', 'Show the page read as text and diagrams'])
+    expect([toggles[0].title, toggles[1].textContent, toggles[1].title]).toEqual(['View Markdown Source', 'Transcript', 'Show the transcript of the page as text and diagrams'])
     toggles[1].click()
     await settle()
-    expect([ink.lens.mode, ink.el.querySelector('#tb-toggle-mode-btn')?.textContent]).toEqual(['reading', 'Page'])
+    expect([ink.lens.mode, ink.el.querySelector('#tb-toggle-mode-btn')?.textContent]).toEqual(['transcript', 'Page'])
   })
 
   it.each([

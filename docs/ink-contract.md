@@ -247,14 +247,14 @@ directory. The block never carries ink.
   description is of) and `note_meta_sent_seq` (the `seq` of the description last sent as `META`).
   `title` stays what the tablet wrote. A note is shown by `display_name` when it has one, otherwise
   by `title`.
-- **Reading.** A page is read only when the reader asks. Its reading is the asset
-  `reading-{pageId}-{key}.json` beside the source, where `key` is the page key (16 hex digits of a
+- **Transcript.** A page is transcribed only when the reader asks. Its transcript is the asset
+  `transcript-{pageId}-{key}.json` beside the source, where `key` is the page key (16 hex digits of a
   SHA-256 of what is on the page, `StrokeBasedNote.PageKey`, as for its image
   `page-{pageId}-{key}.png`): `{"key": …, "blocks": [{"id",
   "kind", "attrs"}, …]}`, the page's text as `prose` blocks and its diagrams as `diagram` blocks, in
   the page's order, every id minted by `ident.New`. A PlantUML diagram's SVG is kept beside it as
-  `reading-{pageId}-{key}-{blockId}.svg`, and the block's `svgAsset` is its absolute address. A page
-  whose key has a reading is never read again. Keeping a reading removes the page's readings of
+  `transcript-{pageId}-{key}-{blockId}.svg`, and the block's `svgAsset` is its absolute address. A page
+  whose key has a transcript is never transcribed again. Keeping a transcript removes the page's transcripts of
   every other key, and their SVGs, while its key is still the page's. Neither the block nor the
   source changes.
 

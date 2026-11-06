@@ -306,44 +306,44 @@ func outboundWireCases() []wireCase {
 			golden:  `{"type":"ink-open-on-tablet-result","opId":"op-1","error":"no note"}`,
 		},
 		{
-			name:    "ink-reading-content",
+			name:    "ink-transcript-content",
 			channel: ChannelDocument,
-			frame: NewInkReadingContentFrame("op-1", "p1", InkReading{State: InkReadingReady, Key: "k1", Running: true, Available: true,
+			frame: NewInkTranscriptContentFrame("op-1", "p1", InkTranscript{State: InkTranscriptReady, Key: "k1", Running: true, Available: true,
 				Blocks: []block.FrontendBlock{{ID: "b1", Kind: "prose", Attrs: map[string]interface{}{"content": "# Kitchen"}}}}),
-			golden: `{"type":"ink-reading-content","opId":"op-1","pageId":"p1","reading":{"state":"ready","key":"k1",` +
+			golden: `{"type":"ink-transcript-content","opId":"op-1","pageId":"p1","transcript":{"state":"ready","key":"k1",` +
 				`"blocks":[{"id":"b1","kind":"prose","attrs":{"content":"# Kitchen"}}],"running":true,"available":true}}`,
 		},
 		{
-			// A reading that cannot be had says why, and a failed one what went wrong.
-			name:    "ink-reading-content unavailable and failed",
+			// A transcript that cannot be had says why, and a failed one what went wrong.
+			name:    "ink-transcript-content unavailable and failed",
 			channel: ChannelDocument,
-			frame:   NewInkReadingContentFrame("op-1", "p1", InkReading{State: InkReadingNone, Unavailable: "no AI", Failed: "timed out"}),
-			golden: `{"type":"ink-reading-content","opId":"op-1","pageId":"p1","reading":{"state":"none","running":false,"available":false,` +
+			frame:   NewInkTranscriptContentFrame("op-1", "p1", InkTranscript{State: InkTranscriptNone, Unavailable: "no AI", Failed: "timed out"}),
+			golden: `{"type":"ink-transcript-content","opId":"op-1","pageId":"p1","transcript":{"state":"none","running":false,"available":false,` +
 				`"unavailable":"no AI","failed":"timed out"}}`,
 		},
 		{
-			name:    "ink-reading-content refused",
+			name:    "ink-transcript-content refused",
 			channel: ChannelDocument,
-			frame:   NewInkReadingRefusedFrame("op-1", "p9", errors.New("no such page")),
-			golden:  `{"type":"ink-reading-content","opId":"op-1","pageId":"p9","reading":null,"error":"no such page"}`,
+			frame:   NewInkTranscriptRefusedFrame("op-1", "p9", errors.New("no such page")),
+			golden:  `{"type":"ink-transcript-content","opId":"op-1","pageId":"p9","transcript":null,"error":"no such page"}`,
 		},
 		{
-			name:    "ink-reading-changed",
+			name:    "ink-transcript-changed",
 			channel: ChannelDocument,
-			frame:   NewInkReadingChangedFrame("p1", InkReading{State: InkReadingStale, Key: "k0", Running: true, Available: true}),
-			golden:  `{"type":"ink-reading-changed","pageId":"p1","reading":{"state":"stale","key":"k0","running":true,"available":true}}`,
+			frame:   NewInkTranscriptChangedFrame("p1", InkTranscript{State: InkTranscriptStale, Key: "k0", Running: true, Available: true}),
+			golden:  `{"type":"ink-transcript-changed","pageId":"p1","transcript":{"state":"stale","key":"k0","running":true,"available":true}}`,
 		},
 		{
-			name:    "ink-reading-document-result",
+			name:    "ink-transcript-document-result",
 			channel: ChannelDocument,
-			frame:   NewInkReadingDocumentResultFrame("op-1", "doc-2"),
-			golden:  `{"type":"ink-reading-document-result","opId":"op-1","uuid":"doc-2"}`,
+			frame:   NewInkTranscriptDocumentResultFrame("op-1", "doc-2"),
+			golden:  `{"type":"ink-transcript-document-result","opId":"op-1","uuid":"doc-2"}`,
 		},
 		{
-			name:    "ink-reading-document-result failed",
+			name:    "ink-transcript-document-result failed",
 			channel: ChannelDocument,
-			frame:   NewInkReadingDocumentFailedFrame("op-1", errors.New("not read")),
-			golden:  `{"type":"ink-reading-document-result","opId":"op-1","error":"not read"}`,
+			frame:   NewInkTranscriptDocumentFailedFrame("op-1", errors.New("not read")),
+			golden:  `{"type":"ink-transcript-document-result","opId":"op-1","error":"not read"}`,
 		},
 		{
 			name:    "ink-describe-result",

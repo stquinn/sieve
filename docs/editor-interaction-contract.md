@@ -228,7 +228,7 @@ The resulting order for one keystroke, highest first:
 | Prompt (`PromptEditor`) | **nothing** | the matrix above, unchanged |
 | Composer (`ComposerEditor`) | `Mod+Enter` → send the message | the matrix above, unchanged |
 | Block container whose kind has no lens (`BlockLens`) | **nothing** | none of the matrix: there is no editing surface. The block is drawn read-only by its kind's renderer, which keeps its read affordances (selection, copy, pan, filters) and drops every edit |
-| Digital Note (`DigitalNoteLens`) | `Mod+Enter` → switch between `page` and `reading`; bare `PageUp` → previous page, bare `PageDown` → next page, in either mode; on a whiteboard shown as a page also the bare arrows → move the window, `+`/`=` and `-`/`_` → zoom | none of the matrix: there is no editing surface (below) |
+| Digital Note (`DigitalNoteLens`) | `Mod+Enter` → switch between `page` and `transcript`; bare `PageUp` → previous page, bare `PageDown` → next page, in either mode; on a whiteboard shown as a page also the bare arrows → move the window, `+`/`=` and `-`/`_` → zoom | none of the matrix: there is no editing surface (below) |
 | Live view (`LiveInkLens`) | **nothing** | none of the matrix: there is no editing surface, and no gesture moves the view (below) |
 
 **The composer is EDITOR-FIRST (revised 2026-08-28, #118):** it claims exactly
@@ -286,7 +286,7 @@ are drawn this way; view controls (a pager, a scale) are the toolbar's alone.
 modes, which steps to the lens's next mode exactly as Toggle Editor Mode (`Mod+Alt+M`) does; it is
 drawn with the face the lens gives the mode in force, saying what pressing it shows. A note shows
 the Markdown icon (`View Markdown Source`) in WYSIWYG and the eye (`Return to WYSIWYG`) in Markdown;
-a Digital Note shows `Reading` on the page and `Page` in its reading. A prompt, a block with no
+a Digital Note shows `Transcript` on the page and `Page` in its transcript. A prompt, a block with no
 lens of its own and the Live view have one mode and offer no toggle.
 
 | Lens | Start | Middle | End |
@@ -294,24 +294,24 @@ lens of its own and the Live view have one mode and offer no toggle.
 | Note / document (`NoteEditor`) | the WYSIWYG surface's formatting groups (none in Markdown), then the mode toggle and Spell check; insert code, diagram, web clip, attach; Explain, Ask; Help | | |
 | Prompt (`PromptEditor`) | nothing | | |
 | Block container whose kind has no lens (`BlockLens`) | nothing | | |
-| Digital Note, page | the pager (`‹`, the page drop-down, `›`, `n unseen`) and, for a template it cannot draw, its notice | the scale drop-down on a fixed page, or `−` `+` `100%` `Fit all` on a whiteboard | what came of the last action, `Open in e-ink`, `Copy page`, `Live ↗`; then the mode toggle, last |
-| Digital Note, reading | the pager | | what came of the last action, `Open in e-ink`, `New document` (once there is a reading of the page as it is); then the mode toggle, last |
+| Digital Note, page | the pager (`‹`, the page drop-down, `›`, `n unseen`) and, for a template it cannot draw, its notice | the scale drop-down on a fixed page, or `−` `+` `100%` `Fit all` on a whiteboard | what came of the last action, `Open on device`, `Copy page`, `Live ↗`; then the mode toggle, last |
+| Digital Note, transcript | the pager | | what came of the last action, `Open on device`, `New document` (once there is a transcript of the page as it is); then the mode toggle, last |
 | Live view (`LiveInkLens`) | `Open this note` | | what came of the last action, `Copy page` |
 
-A Digital Note's **Read this page** (with its reading's `Read again` and `Try again`) and **Refresh
-name and summary** are menu-only: on the page the mode toggle beside the actions shows the reading,
-and the reading's own row reads the page.
+A Digital Note's **Transcribe this page** (with its transcript's `Transcribe again` and `Try again`) and **Refresh
+name and summary** are menu-only: on the page the mode toggle beside the actions shows the transcript,
+and the transcript's own row transcribes the page.
 
 ### The Digital Note lens
 
 `DigitalNoteLens` presents a Digital Note one page at a time, in two modes: `page`, the page as the
-tablet drew it, and `reading`, the same page read as text and diagrams. It is read-only: it declares
+tablet drew it, and `transcript`, the same page as text and diagrams. It is read-only: it declares
 no capability and writes nothing of the note, and `Mod+Alt+P` (Presentation Mode) does nothing in
 it.
 
 - **Modes.** `Mod+Enter` (claimed by the lens, so it never reaches an editor core) and `Mod+Alt+M`
-  (Toggle Editor Mode) switch between `page` and `reading`, and so does the toolbar's mode toggle,
-  which says `Reading` on the page and `Page` in the reading. The keyboard goes to the surface the
+  (Toggle Editor Mode) switch between `page` and `transcript`, and so does the toolbar's mode toggle,
+  which says `Transcript` on the page and `Page` in the transcript. The keyboard goes to the surface the
   switch presents, and the toolbar is filled again for it. The page shown, the pages marked unseen
   and, for the page, its scale and whiteboard window carry from one mode to the other, and the mode
   is kept across a tab switch as the page is. Both modes have the pager in the toolbar and the bare
@@ -351,21 +351,21 @@ it.
   stays where it is, as far as the surround's scroll allows.
 - **Actions and the context menu.** What the lens can do is one list (`ActionList`, above), drawn
   at the end of the toolbar (bar the menu-only actions) and as the menu a right-click — or the menu key, which
-  places it at the surface's top-left — raises over the page or the reading, a block of the
-  reading included. The menu is the app's one context menu (`sieve:contextmenu`, the supplied-items
+  places it at the surface's top-left — raises over the page or the transcript, a block of the
+  transcript included. The menu is the app's one context menu (`sieve:contextmenu`, the supplied-items
   path); the browser's own never shows over the lens. It lists the actions that apply, in the
-  list's order, those that cannot run now disabled, then a divider and the mode toggle (`Reading`
-  or `Page`). On the page: **Open in e-ink** (a note from a tablet), **Copy page**, **Read this
+  list's order, those that cannot run now disabled, then a divider and the mode toggle (`Transcript`
+  or `Page`). On the page: **Open on device** (a note from a tablet), **Copy page**, **Transcribe this
   page**, **Go to Live** (while the note is being written on the tablet; `Live ↗` in the toolbar,
   led by a red dot, opening the Live view in its own tab) and **Refresh name and summary**. In the
-  reading: Open in e-ink, the reading's **Read this page**, **Read again** or **Try again**, or
-  **New document** (whichever the row above the reading offers, below), and Refresh name and
+  transcript: Open on device, the transcript's **Transcribe this page**, **Transcribe again** or **Try again**, or
+  **New document** (whichever the row above the transcript offers, below), and Refresh name and
   summary. What came of the last action is said in the toolbar before the actions, briefly, cut
   short with an ellipsis past 18em (or sooner, when the strip has less room), and carries across a
   mode switch.
-- **Read this page**, on the page, shows the reading and, once the host says the page has no
-  reading (and something can read it and it is not being read), has it read; a page that has one is
-  shown as it is. In the reading it does what the row's button of the same name does.
+- **Transcribe this page**, on the page, shows the transcript and, once the host says the page has no
+  transcript (and something can transcribe it and it is not being transcribed), has it transcribed; a page that has one is
+  shown as it is. In the transcript it does what the row's button of the same name does.
 - **Refresh name and summary** asks the host to name and summarise the note again from its ink. While
   it asks, the toolbar says `Asking for a new name and summary…` and the action is disabled; then,
   briefly, `A new name and summary were asked for`, or the reason the host gives that it cannot (no
@@ -378,7 +378,7 @@ it.
   applications is a named verb everywhere, as smart-image's **Copy Image** is). A brief `Copied`
   follows in the toolbar, or `Nothing to copy yet` while no page is drawn, or `Could not copy the
   page`.
-- **Open in e-ink** asks the tablet the note came from to open it at the page the reader is on, in
+- **Open on device** asks the tablet the note came from to open it at the page the reader is on, in
   either mode: the note's id and that page's id are sent, and only while that tablet is connected —
   nothing is queued. While it asks, the toolbar says `Opening on {device}…` and the button is
   disabled; then, briefly and beside it, `Opened on {device}`
@@ -414,27 +414,27 @@ it.
   is open. Ink written while the tab was in the background marks the pages it landed on, as if it
   had arrived while the tab was shown; a mark goes only when its page is shown.
 
-### The reading of a page
+### The transcript of a page
 
-In `reading` the lens shows the reading of the page the reader is on, on the editor's own background
+In `transcript` the lens shows the transcript of the page the reader is on, on the editor's own background
 and at its text width, its blocks drawn read-only by each kind's own renderer (a PlantUML diagram
 that could not be drawn shows its error and, beneath it, its source). Above the blocks one row says
-what is known of the page's reading, as the host tells it — the lens never decides whether a reading
+what is known of the page's transcript, as the host tells it — the lens never decides whether a transcript
 is current:
 
-| The page's reading | The row |
+| The page's transcript | The row |
 |---|---|
-| none | `This page has not been read yet. …` and **Read this page** |
-| under way | `Reading this page…`; no button (a stale reading stays drawn beneath) |
+| none | `This page has not been transcribed yet. …` and **Transcribe this page** |
+| under way | `Transcribing this page…`; no button (a stale transcript stays drawn beneath) |
 | of the page as it is | **New document** |
-| of the page before it changed | `This page has changed since it was read.` and **Read again**; the old reading drawn, dimmed |
-| nothing can read a page | why (no AI configured); no button |
-| the last reading failed | what went wrong, and **Try again** |
+| of the page before it changed | `This page has changed since it was transcribed.` and **Transcribe again**; the old transcript drawn, dimmed |
+| nothing can transcribe a page | why (no AI configured); no button |
+| the last transcribing failed | what went wrong, and **Try again** |
 
-A reading of the page as it is offers no **Read again**: a page is never read twice at one key.
-Ink that lands on the page shown asks the host again, which is how a reading becomes stale; ink on
+A transcript of the page as it is offers no **Transcribe again**: a page is never transcribed twice at one key.
+Ink that lands on the page shown asks the host again, which is how a transcript becomes stale; ink on
 another page marks that page unseen. **New document** makes an ordinary untitled note named
-`{note} — page {n}` holding a copy of the reading, linked to nothing, and opens it in its own tab,
+`{note} — page {n}` holding a copy of the transcript, linked to nothing, and opens it in its own tab,
 focused; while it is made the row says `Making a document…`, and `Could not make a document` if it
 fails. No key reads a page or makes a document.
 
@@ -449,7 +449,7 @@ mirror: the reader cannot turn its pages, move or zoom its window, or scroll it 
   the context menu a right-click or the menu key raises over the view (drawn from the same list, as
   the Digital Note lens's is, with no mode toggle), **Open this note** opens the note being mirrored in a tab of its own (disabled before the note
   has reached this Sieve). **Copy page** copies the page as the Digital Note lens's does, a
-  whiteboard as the tablet's window frames it. There is no Open in e-ink: the view is already the
+  whiteboard as the tablet's window frames it. There is no Open on device: the view is already the
   tablet's. There is no pager, no zoom or scale control, no Fit all and no edge mark; a drag and the wheel,
   Ctrl or Cmd held or not, move nothing.
 - **What it shows.** The page the tablet writes on, changing as the tablet turns or changes note. A

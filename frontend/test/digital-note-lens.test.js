@@ -12,14 +12,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { getStroke } from 'perfect-freehand'
 import { DigitalNoteLens } from '../src/static/lens/ink/digital-note-lens.js'
 import { PageSurface } from '../src/static/lens/ink/page-surface.js'
-import { ReadingSurface } from '../src/static/lens/ink/reading-surface.js'
+import { TranscriptSurface } from '../src/static/lens/ink/transcript-surface.js'
 import { SurfaceIntent } from '../src/static/lens/abstract-surface.js'
 import { ActionStatus } from '../src/static/lens/ink/action-status.js'
 import { ImageClipboard } from '../src/static/renderers/copy-image.js'
-import { InkFeed, InkOpening, InkReadingState, InkRefusal } from '../src/static/contract/ink-container-provider.js'
+import { InkFeed, InkOpening, InkTranscriptState, InkRefusal } from '../src/static/contract/ink-container-provider.js'
 import {
   ASPECT, DOTS, FakeInkProvider, Frames, GRID, Resizes, UUID, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, pencil, points, press, renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, viewBoxOf, wheel,
-  copiedImages, reading, READ_BLOCKS, item, tap, toolbarFor, toolbarIds, placesOf, faceOf, optionsOf, choose, rightClick, menuOf,
+  copiedImages, transcript, TRANSCRIPT_BLOCKS, item, tap, toolbarFor, toolbarIds, placesOf, faceOf, optionsOf, choose, rightClick, menuOf,
 } from './helpers/ink-lens-rig.js'
 
 /**
@@ -111,17 +111,17 @@ describe('DigitalNoteLens', () => {
         await unableToOpen(shown)
       },
       { start: [...PAGER, 'tb-page-unseen'], middle: ['tb-scale'], end: ['tb-ink-status', 'tb-open-on-tablet', 'tb-copy-page', 'tb-open-live', ...TOGGLE] }],
-    ['the reading', {}, (/** @type {Awaited<ReturnType<typeof presented>>} */ shown) => shown.lens.setMode(ReadingSurface.MODE),
+    ['the transcript', {}, (/** @type {Awaited<ReturnType<typeof presented>>} */ shown) => shown.lens.setMode(TranscriptSurface.MODE),
       { start: PAGER, middle: [], end: ['tb-open-on-tablet', ...TOGGLE] }],
-    ['the reading, after an action said what came of it', {},
-      async (/** @type {Awaited<ReturnType<typeof presented>>} */ shown) => { await unableToOpen(shown); await shown.lens.setMode(ReadingSurface.MODE) },
+    ['the transcript, after an action said what came of it', {},
+      async (/** @type {Awaited<ReturnType<typeof presented>>} */ shown) => { await unableToOpen(shown); await shown.lens.setMode(TranscriptSurface.MODE) },
       { start: PAGER, middle: [], end: ['tb-ink-status', 'tb-open-on-tablet', ...TOGGLE] }],
   ])('lays out the toolbar, for %s: the pager at the start, the sizing in the middle, the actions and then the mode toggle at the end', async (_name, opts, setup, places) => {
     const shown = await presented(opts)
     if (setup) await setup(shown)
     await settle()
     expect(placesOf(shown.bar)).toEqual(places)
-    expect(item(shown.bar, 'tb-toggle-mode-btn')?.textContent).toBe(shown.lens.mode === PageSurface.MODE ? 'Reading' : 'Page')
+    expect(item(shown.bar, 'tb-toggle-mode-btn')?.textContent).toBe(shown.lens.mode === PageSurface.MODE ? 'Transcript' : 'Page')
   })
 
   it.each([
@@ -739,7 +739,7 @@ describe('DigitalNoteLens', () => {
 
   it.each([
     ['page', null],
-    ['reading', ['Enter', { ctrlKey: true }]],
+    ['transcript', ['Enter', { ctrlKey: true }]],
   ])('in the %s, lists every page in the drop-down, shows the one chosen, and turns with ‹ ›', async (_mode, flip) => {
     const shown = await presented({ ids: FOURTEEN })
     if (flip) { key(shown.root, .../** @type {[string, any]} */ (flip)); await settle() }
@@ -922,7 +922,7 @@ describe('DigitalNoteLens', () => {
     expect([surface.shownPage, event.defaultPrevented]).toEqual([shows, claimed])
   })
 
-  describe('Open in e-ink', () => {
+  describe('Open on device', () => {
     /** @param {HTMLElement} bar */
     const action = (bar) => /** @type {HTMLButtonElement} */ (item(bar, 'tb-open-on-tablet'))
     /** @param {HTMLElement} bar @returns {string} what the toolbar says; '' when it says nothing */
@@ -966,7 +966,7 @@ describe('DigitalNoteLens', () => {
     it.each([
       ['the first page', [], 'p1'],
       ['the second page, turned to', [['PageDown']], 'p2'],
-      ['the page shown in reading', [['PageDown'], ['Enter', { ctrlKey: true }]], 'p2'],
+      ['the page shown in transcript', [['PageDown'], ['Enter', { ctrlKey: true }]], 'p2'],
     ])('asks for the page the reader is on: %s', async (_name, keys, page) => {
       const { provider, root, bar } = await presented()
       for (const [k, mods] of /** @type {Array<[string, any?]>} */ (keys)) {
@@ -989,53 +989,53 @@ describe('DigitalNoteLens', () => {
   })
 
   describe('its actions, in the toolbar and the context menu', () => {
-    // The Mermaid in a reading is drawn by a stand-in: the real one is a script the page loads.
+    // The Mermaid in a transcript is drawn by a stand-in: the real one is a script the page loads.
     beforeEach(() => {
       vi.stubGlobal('mermaid', { initialize() {}, render: () => Promise.resolve({ svg: '<svg xmlns="http://www.w3.org/2000/svg"/>' }) })
     })
 
     /** The ids of the action buttons in the toolbar, in order. @param {HTMLElement} bar */
-    const actionIds = (bar) => toolbarIds(bar).filter((id) => ['tb-open-on-tablet', 'tb-copy-page', 'tb-read-page', 'tb-new-document', 'tb-open-live', 'tb-refresh-description'].includes(id))
+    const actionIds = (bar) => toolbarIds(bar).filter((id) => ['tb-open-on-tablet', 'tb-copy-page', 'tb-transcribe-page', 'tb-new-document', 'tb-open-live', 'tb-refresh-description'].includes(id))
     /** Chooses the entry of the context menu that says `label`. @param {{lens: DigitalNoteLens, root: HTMLElement}} shown @param {string} label */
     const fromMenu = (shown, label) => {
-      const page = /** @type {Element} */ (shown.root.querySelector('.ink-page, .ink-reading'))
+      const page = /** @type {Element} */ (shown.root.querySelector('.ink-page, .ink-transcript'))
       rightClick(shown.lens, page).intents[0].items.find((/** @type {any} */ i) => i.label === label).action()
     }
     /** @param {{lens: DigitalNoteLens, root: HTMLElement}} shown @returns {string[]} the context menu's entries */
-    const menuNow = (shown) => menuOf(rightClick(shown.lens, /** @type {Element} */ (shown.root.querySelector('.ink-page, .ink-reading'))).intents[0])
+    const menuNow = (shown) => menuOf(rightClick(shown.lens, /** @type {Element} */ (shown.root.querySelector('.ink-page, .ink-transcript'))).intents[0])
 
     const { note_source_id: _source, ...NOT_FROM_A_TABLET } = noteAttrs(['p1', 'p2'])
-    const READ = reading('p1', { state: InkReadingState.READY, key: 'k1', blocks: READ_BLOCKS })
+    const TRANSCRIPT = transcript('p1', { state: InkTranscriptState.READY, key: 'k1', blocks: TRANSCRIPT_BLOCKS })
 
     it.each([
       ['the page', {}, null, null,
-        ['Open in e-ink', 'Copy page', 'Read this page', 'Refresh name and summary', '—', 'Reading']],
+        ['Open on device', 'Copy page', 'Transcribe this page', 'Refresh name and summary', '—', 'Transcript']],
       ['the page, while it is written on the tablet', {}, null, { type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1', view: 'live-view' },
-        ['Open in e-ink', 'Copy page', 'Read this page', 'Go to Live', 'Refresh name and summary', '—', 'Reading']],
+        ['Open on device', 'Copy page', 'Transcribe this page', 'Go to Live', 'Refresh name and summary', '—', 'Transcript']],
       ['the page of a note not from a tablet', { attrs: NOT_FROM_A_TABLET }, null, null,
-        ['Copy page', 'Read this page', 'Refresh name and summary', '—', 'Reading']],
-      ['an unread reading', { reading: true }, reading('p1'), null,
-        ['Open in e-ink', 'Read this page', 'Refresh name and summary', '—', 'Page']],
-      ['a reading', { reading: true }, READ, null,
-        ['Open in e-ink', 'New document', 'Refresh name and summary', '—', 'Page']],
-      ['a stale reading', { reading: true }, reading('p1', { state: InkReadingState.STALE, blocks: READ_BLOCKS }), null,
-        ['Open in e-ink', 'Read again', 'Refresh name and summary', '—', 'Page']],
-      ['a failed reading', { reading: true }, reading('p1', { failed: 'The model timed out.' }), null,
-        ['Open in e-ink', 'Try again', 'Refresh name and summary', '—', 'Page']],
-      ['a reading under way', { reading: true }, reading('p1', { running: true }), null,
-        ['Open in e-ink', 'Refresh name and summary', '—', 'Page']],
+        ['Copy page', 'Transcribe this page', 'Refresh name and summary', '—', 'Transcript']],
+      ['a page with no transcript', { transcript: true }, transcript('p1'), null,
+        ['Open on device', 'Transcribe this page', 'Refresh name and summary', '—', 'Page']],
+      ['a transcript', { transcript: true }, TRANSCRIPT, null,
+        ['Open on device', 'New document', 'Refresh name and summary', '—', 'Page']],
+      ['a stale transcript', { transcript: true }, transcript('p1', { state: InkTranscriptState.STALE, blocks: TRANSCRIPT_BLOCKS }), null,
+        ['Open on device', 'Transcribe again', 'Refresh name and summary', '—', 'Page']],
+      ['a failed transcript', { transcript: true }, transcript('p1', { failed: 'The model timed out.' }), null,
+        ['Open on device', 'Try again', 'Refresh name and summary', '—', 'Page']],
+      ['a transcript under way', { transcript: true }, transcript('p1', { running: true }), null,
+        ['Open on device', 'Refresh name and summary', '—', 'Page']],
     ])('offers, on %s, the actions in the menu, and those not menu-only in the toolbar, from one list', async (_name, opts, answer, event, menu) => {
       const shown = await presented()
       if (opts.attrs) { shown.provider.setAttrs(opts.attrs); await settle() }
-      if (answer) shown.provider.readings.set('p1', answer)
-      if (opts.reading) { key(shown.root, 'Enter', { ctrlKey: true }); await settle() }
+      if (answer) shown.provider.transcripts.set('p1', answer)
+      if (opts.transcript) { key(shown.root, 'Enter', { ctrlKey: true }); await settle() }
       if (event) shown.provider.emit(event)
       const { intents, event: click, escaped } = rightClick(shown.lens, /** @type {Element} */ (shown.root.querySelector('.ink-page')))
       expect([click.defaultPrevented, escaped, intents.length]).toEqual([true, false, 1])
       expect(menuOf(intents[0])).toEqual(menu)
       const offered = shown.lens.actions.offered(shown.lens.mode)
       expect(actionIds(shown.bar)).toEqual(offered.filter((a) => !a.menuOnly).map((a) => 'tb-' + a.id))
-      expect(offered.filter((a) => a.menuOnly).map((a) => a.id)).toEqual(['read-page', 'refresh-description'].filter((id) => offered.some((a) => a.id === id)))
+      expect(offered.filter((a) => a.menuOnly).map((a) => a.id)).toEqual(['transcribe-page', 'refresh-description'].filter((id) => offered.some((a) => a.id === id)))
       expect(intents[0].items.slice(0, offered.length).map((/** @type {any} */ i) => i.label))
         .toEqual(offered.map((a) => (typeof a.label === 'function' ? a.label() : a.label)))
     })
@@ -1047,34 +1047,34 @@ describe('DigitalNoteLens', () => {
       provider.described = new Promise(() => {})
       const page = /** @type {Element} */ (root.querySelector('.ink-page'))
       const items = () => rightClick(lens, page).intents[0].items
-      items().find((/** @type {any} */ i) => i.label === 'Open in e-ink').action()
+      items().find((/** @type {any} */ i) => i.label === 'Open on device').action()
       items().find((/** @type {any} */ i) => i.label === 'Refresh name and summary').action()
-      expect(menuOf({ items: items() })).toEqual(['[Open in e-ink]', 'Copy page', 'Read this page', '[Refresh name and summary]', '—', 'Reading'])
+      expect(menuOf({ items: items() })).toEqual(['[Open on device]', 'Copy page', 'Transcribe this page', '[Refresh name and summary]', '—', 'Transcript'])
       expect([item(bar, 'tb-open-on-tablet')?.disabled, item(bar, 'tb-copy-page')?.disabled]).toEqual([true, false])
       expect(provider.calls.filter((c) => c.startsWith('openOnTablet') || c === 'refreshDescription')).toEqual(['openOnTablet p1', 'refreshDescription'])
       answer({ outcome: InkOpening.OPENED, reason: '' })
       await settle()
-      expect(menuOf({ items: items() })[0]).toBe('Open in e-ink')
+      expect(menuOf({ items: items() })[0]).toBe('Open on device')
       const copied = copiedImages()
       items().find((/** @type {any} */ i) => i.label === 'Copy page').action()
       await settle()
       expect([copied.length, item(bar, 'tb-ink-status')?.textContent]).toEqual([1, 'Copied'])
-      items().find((/** @type {any} */ i) => i.label === 'Reading').action()
+      items().find((/** @type {any} */ i) => i.label === 'Transcript').action()
       await settle()
-      expect(lens.mode).toBe(ReadingSurface.MODE)
+      expect(lens.mode).toBe(TranscriptSurface.MODE)
     })
 
     it.each([
-      ['the reading', '.ink-reading'],
-      ['a block of the reading', '.ink-reading__blocks > [data-kind="diagram"]'],
+      ['the transcript', '.ink-transcript'],
+      ['a block of the transcript', '.ink-transcript__blocks > [data-kind="diagram"]'],
     ])('raises the same menu from a right-click on %s', async (_name, selector) => {
       const shown = await presented()
-      shown.provider.readings.set('p1', READ)
+      shown.provider.transcripts.set('p1', TRANSCRIPT)
       key(shown.root, 'Enter', { ctrlKey: true })
       await settle()
       const { event, intents, escaped } = rightClick(shown.lens, /** @type {Element} */ (shown.root.querySelector(selector)), 410, 220)
       expect([event.defaultPrevented, escaped, intents[0].x, intents[0].y, menuOf(intents[0])])
-        .toEqual([true, false, 410, 220, ['Open in e-ink', 'New document', 'Refresh name and summary', '—', 'Page']])
+        .toEqual([true, false, 410, 220, ['Open on device', 'New document', 'Refresh name and summary', '—', 'Page']])
     })
 
     it("places the menu the menu key raises at the surface's corner", async () => {
@@ -1086,27 +1086,27 @@ describe('DigitalNoteLens', () => {
     })
 
     it.each([
-      ['unread, it is read', reading('p1'), ['readPage p1']],
-      ['read, it is shown as read', READ, []],
-      ['being read, it is left to finish', reading('p1', { running: true }), []],
-    ])('Read this page, on the page, shows its reading; %s', async (_name, answer, reads) => {
+      ['untranscribed, it is transcribed', transcript('p1'), ['transcribePage p1']],
+      ['transcribed, it is shown as it is', TRANSCRIPT, []],
+      ['being transcribed, it is left to finish', transcript('p1', { running: true }), []],
+    ])('Transcribe this page, on the page, shows its transcript; %s', async (_name, answer, transcribes) => {
       const shown = await presented()
-      shown.provider.readings.set('p1', answer)
-      fromMenu(shown, 'Read this page')
+      shown.provider.transcripts.set('p1', answer)
+      fromMenu(shown, 'Transcribe this page')
       await settle()
-      expect([shown.lens.mode, document.activeElement === shown.root.querySelector('.ink-page--reading')]).toEqual([ReadingSurface.MODE, true])
-      expect(shown.provider.calls.filter((c) => c.startsWith('readPage'))).toEqual(reads)
+      expect([shown.lens.mode, document.activeElement === shown.root.querySelector('.ink-page--transcript')]).toEqual([TranscriptSurface.MODE, true])
+      expect(shown.provider.calls.filter((c) => c.startsWith('transcribePage'))).toEqual(transcribes)
     })
 
-    it('Read again in the reading reads the page, as the button beside it does', async () => {
+    it('Transcribe again in the transcript transcribes the page, as the button beside it does', async () => {
       const shown = await presented()
-      shown.provider.readings.set('p1', reading('p1', { state: InkReadingState.STALE, blocks: READ_BLOCKS }))
+      shown.provider.transcripts.set('p1', transcript('p1', { state: InkTranscriptState.STALE, blocks: TRANSCRIPT_BLOCKS }))
       key(shown.root, 'Enter', { ctrlKey: true })
       await settle()
-      expect(menuNow(shown)).toContain('Read again')
-      fromMenu(shown, 'Read again')
+      expect(menuNow(shown)).toContain('Transcribe again')
+      fromMenu(shown, 'Transcribe again')
       await settle()
-      expect(shown.provider.calls.filter((c) => c.startsWith('readPage'))).toEqual(['readPage p1'])
+      expect(shown.provider.calls.filter((c) => c.startsWith('transcribePage'))).toEqual(['transcribePage p1'])
     })
 
     it.each([
@@ -1226,46 +1226,46 @@ describe('DigitalNoteLens', () => {
     expect(root.childElementCount).toBe(0)
   })
 
-  describe('the reading', () => {
+  describe('the transcript', () => {
     /** @param {HTMLElement} root @returns {string} */
     const notice = (root) => {
-      const el = /** @type {HTMLElement} */ (root.querySelector('.ink-reading__notice'))
+      const el = /** @type {HTMLElement} */ (root.querySelector('.ink-transcript__notice'))
       return el.hidden ? '' : String(el.textContent)
     }
     /** @param {HTMLElement} root @param {string} action @returns {string} what the button says; '' when hidden */
     const button = (root, action) => {
-      const el = /** @type {HTMLButtonElement|null} */ (root.querySelector(`.ink-reading__bar [data-ink-action="${action}"]`))
+      const el = /** @type {HTMLButtonElement|null} */ (root.querySelector(`.ink-transcript__bar [data-ink-action="${action}"]`))
       return el && !el.hidden ? String(el.textContent) : ''
     }
     /** @param {HTMLElement} root @returns {string[]} the kinds of the blocks drawn */
-    const drawn = (root) => [...root.querySelectorAll('.ink-reading__blocks > [data-kind]')].map((el) => String(el.getAttribute('data-kind')))
+    const drawn = (root) => [...root.querySelectorAll('.ink-transcript__blocks > [data-kind]')].map((el) => String(el.getAttribute('data-kind')))
     /** @param {HTMLElement} root @returns {string} */
-    const working = (root) => String(root.querySelector('.ink-reading__bar .ink-page__status')?.textContent || '')
+    const working = (root) => String(root.querySelector('.ink-transcript__bar .ink-page__status')?.textContent || '')
     /** @param {HTMLElement} bar */
     const toggle = (bar) => /** @type {HTMLButtonElement} */ (item(bar, 'tb-toggle-mode-btn'))
 
-    // The Mermaid in a reading is drawn by a stand-in: the real one is a script the page loads.
+    // The Mermaid in a transcript is drawn by a stand-in: the real one is a script the page loads.
     beforeEach(() => {
       vi.stubGlobal('mermaid', { initialize() {}, render: () => Promise.resolve({ svg: '<svg xmlns="http://www.w3.org/2000/svg"/>' }) })
     })
 
-    /** A lens presented over pages p1 and p2 and switched to its reading. */
-    async function reading_() {
+    /** A lens presented over pages p1 and p2 and switched to its transcript. */
+    async function transcript_() {
       const shown = await presented()
       key(shown.root, 'Enter', { ctrlKey: true })
       await settle()
-      return { ...shown, surface: /** @type {ReadingSurface} */ (shown.lens.surface) }
+      return { ...shown, surface: /** @type {TranscriptSurface} */ (shown.lens.surface) }
     }
 
-    it('Mod+Enter and the toolbar toggle switch between the page and its reading, the keyboard and the toolbar going with them', async () => {
+    it('Mod+Enter and the toolbar toggle switch between the page and its transcript, the keyboard and the toolbar going with them', async () => {
       const { lens, root, bar, provider } = await presented()
-      expect([toggle(bar).textContent, toggle(bar).title]).toEqual(['Reading', 'Show the page read as text and diagrams'])
+      expect([toggle(bar).textContent, toggle(bar).title]).toEqual(['Transcript', 'Show the transcript of the page as text and diagrams'])
       /** @type {string[]} */ const modes = []
       lens.onEvent((e) => { if (e.type === 'mode-changed') modes.push(String(e.mode)) })
       expect(key(root, 'Enter', { metaKey: true }).defaultPrevented).toBe(true)
       await settle()
-      expect(lens.mode).toBe(ReadingSurface.MODE)
-      expect(document.activeElement).toBe(root.querySelector('.ink-page--reading'))
+      expect(lens.mode).toBe(TranscriptSurface.MODE)
+      expect(document.activeElement).toBe(root.querySelector('.ink-page--transcript'))
       expect([toggle(bar).textContent, toggle(bar).title]).toEqual(['Page', 'Show the page as it was written'])
       expect(toolbarIds(bar)).toEqual(['tb-page-prev', 'tb-page-select', 'tb-page-next', 'tb-open-on-tablet', 'tb-toggle-mode-btn'])
       toggle(bar).click()
@@ -1273,94 +1273,94 @@ describe('DigitalNoteLens', () => {
       expect(lens.mode).toBe(PageSurface.MODE)
       expect(document.activeElement).toBe(root.querySelector('.ink-page--reader'))
       expect(item(bar, 'tb-scale')).not.toBeNull()
-      expect(modes).toEqual([ReadingSurface.MODE, PageSurface.MODE])
-      expect(provider.calls.filter((c) => c.startsWith('loadReading'))).toEqual(['loadReading p1'])
+      expect(modes).toEqual([TranscriptSurface.MODE, PageSurface.MODE])
+      expect(provider.calls.filter((c) => c.startsWith('loadTranscript'))).toEqual(['loadTranscript p1'])
       expect(key(root, 'Enter', { altKey: true, ctrlKey: true }).defaultPrevented).toBe(false)
     })
 
     it.each([
-      ['unread', reading('p1'), ReadingSurface.Words.INVITE, { read: 'Read this page', 'new-document': '' }, [], ''],
-      ['being read', reading('p1', { running: true }), '', { read: '', 'new-document': '' }, [], ReadingSurface.Words.RUNNING],
-      ['read', reading('p1', { state: InkReadingState.READY, key: 'k1', blocks: READ_BLOCKS }), '', { read: '', 'new-document': 'New document' }, ['prose', 'diagram'], ''],
-      ['read before the page changed', reading('p1', { state: InkReadingState.STALE, key: 'k0', blocks: READ_BLOCKS }), ReadingSurface.Words.STALE,
-        { read: 'Read again', 'new-document': '' }, ['prose', 'diagram'], ''],
-      ['being read again', reading('p1', { state: InkReadingState.STALE, key: 'k0', blocks: READ_BLOCKS, running: true }), ReadingSurface.Words.STALE,
-        { read: '', 'new-document': '' }, ['prose', 'diagram'], ReadingSurface.Words.RUNNING],
-      ['unreadable without an AI', reading('p1', { available: false, unavailable: 'No AI is configured.' }), 'No AI is configured.',
-        { read: '', 'new-document': '' }, [], ''],
-      ['failed', reading('p1', { failed: 'The model timed out.' }), 'The model timed out.', { read: 'Try again', 'new-document': '' }, [], ''],
+      ['untranscribed', transcript('p1'), TranscriptSurface.Words.INVITE, { transcribe: 'Transcribe this page', 'new-document': '' }, [], ''],
+      ['being transcribed', transcript('p1', { running: true }), '', { transcribe: '', 'new-document': '' }, [], TranscriptSurface.Words.RUNNING],
+      ['transcribed', transcript('p1', { state: InkTranscriptState.READY, key: 'k1', blocks: TRANSCRIPT_BLOCKS }), '', { transcribe: '', 'new-document': 'New document' }, ['prose', 'diagram'], ''],
+      ['transcribed before the page changed', transcript('p1', { state: InkTranscriptState.STALE, key: 'k0', blocks: TRANSCRIPT_BLOCKS }), TranscriptSurface.Words.STALE,
+        { transcribe: 'Transcribe again', 'new-document': '' }, ['prose', 'diagram'], ''],
+      ['being transcribed again', transcript('p1', { state: InkTranscriptState.STALE, key: 'k0', blocks: TRANSCRIPT_BLOCKS, running: true }), TranscriptSurface.Words.STALE,
+        { transcribe: '', 'new-document': '' }, ['prose', 'diagram'], TranscriptSurface.Words.RUNNING],
+      ['not transcribable without an AI', transcript('p1', { available: false, unavailable: 'No AI is configured.' }), 'No AI is configured.',
+        { transcribe: '', 'new-document': '' }, [], ''],
+      ['failed', transcript('p1', { failed: 'The model timed out.' }), 'The model timed out.', { transcribe: 'Try again', 'new-document': '' }, [], ''],
     ])('draws a page %s', async (_name, answer, said, buttons, kinds, work) => {
       const shown = await presented()
-      shown.provider.readings.set('p1', answer)
+      shown.provider.transcripts.set('p1', answer)
       key(shown.root, 'Enter', { ctrlKey: true })
       await settle()
       expect(notice(shown.root)).toBe(said)
-      expect({ read: button(shown.root, 'read'), 'new-document': button(shown.root, 'new-document') }).toEqual(buttons)
+      expect({ transcribe: button(shown.root, 'transcribe'), 'new-document': button(shown.root, 'new-document') }).toEqual(buttons)
       expect(drawn(shown.root)).toEqual(kinds)
       expect(working(shown.root)).toBe(work)
     })
 
-    it("draws the reading of the page the reader is on, a page's own, and turns with the pager and the page keys", async () => {
+    it("draws the transcript of the page the reader is on, a page's own, and turns with the pager and the page keys", async () => {
       const shown = await presented()
-      shown.provider.readings.set('p1', reading('p1', { state: InkReadingState.READY, blocks: READ_BLOCKS }))
+      shown.provider.transcripts.set('p1', transcript('p1', { state: InkTranscriptState.READY, blocks: TRANSCRIPT_BLOCKS }))
       key(shown.root, 'Enter', { ctrlKey: true })
       await settle()
       expect([position(shown.bar), drawn(shown.root)]).toEqual(['1 / 2', ['prose', 'diagram']])
       key(shown.root, 'PageDown')
       await settle()
-      expect([position(shown.bar), drawn(shown.root), notice(shown.root)]).toEqual(['2 / 2', [], ReadingSurface.Words.INVITE])
+      expect([position(shown.bar), drawn(shown.root), notice(shown.root)]).toEqual(['2 / 2', [], TranscriptSurface.Words.INVITE])
       tap(shown.bar, 'tb-page-prev')
       await settle()
       expect(drawn(shown.root)).toEqual(['prose', 'diagram'])
-      expect(shown.provider.calls.filter((c) => c.startsWith('loadReading'))).toEqual(['loadReading p1', 'loadReading p2', 'loadReading p1'])
+      expect(shown.provider.calls.filter((c) => c.startsWith('loadTranscript'))).toEqual(['loadTranscript p1', 'loadTranscript p2', 'loadTranscript p1'])
     })
 
-    it('reads the page when asked, and draws the reading the feed then brings', async () => {
-      const { provider, root } = await reading_()
-      press(root, 'read')
+    it('transcribes the page when asked, and draws the transcript the feed then brings', async () => {
+      const { provider, root } = await transcript_()
+      press(root, 'transcribe')
       await settle()
-      expect(provider.calls).toContain('readPage p1')
-      expect([working(root), button(root, 'read')]).toEqual([ReadingSurface.Words.RUNNING, ''])
-      provider.emit({ type: InkFeed.READING, reading: reading('p2', { state: InkReadingState.READY, blocks: READ_BLOCKS }) })
+      expect(provider.calls).toContain('transcribePage p1')
+      expect([working(root), button(root, 'transcribe')]).toEqual([TranscriptSurface.Words.RUNNING, ''])
+      provider.emit({ type: InkFeed.TRANSCRIPT, transcript: transcript('p2', { state: InkTranscriptState.READY, blocks: TRANSCRIPT_BLOCKS }) })
       expect(drawn(root)).toEqual([])
-      provider.emit({ type: InkFeed.READING, reading: reading('p1', { state: InkReadingState.READY, blocks: READ_BLOCKS }) })
+      provider.emit({ type: InkFeed.TRANSCRIPT, transcript: transcript('p1', { state: InkTranscriptState.READY, blocks: TRANSCRIPT_BLOCKS }) })
       expect([working(root), drawn(root), button(root, 'new-document')]).toEqual(['', ['prose', 'diagram'], 'New document'])
     })
 
-    it('asks again when ink lands on the page shown, which is how it learns the reading is stale; ink elsewhere marks its page', async () => {
-      const { provider, root, bar } = await reading_()
-      provider.readings.set('p1', reading('p1', { state: InkReadingState.READY, blocks: READ_BLOCKS }))
+    it('asks again when ink lands on the page shown, which is how it learns the transcript is stale; ink elsewhere marks its page', async () => {
+      const { provider, root, bar } = await transcript_()
+      provider.transcripts.set('p1', transcript('p1', { state: InkTranscriptState.READY, blocks: TRANSCRIPT_BLOCKS }))
       provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p1', seq: 11, stroke: pen('s2') })
       await settle()
       expect(button(root, 'new-document')).toBe('New document')
-      provider.readings.set('p1', reading('p1', { state: InkReadingState.STALE, blocks: READ_BLOCKS }))
+      provider.transcripts.set('p1', transcript('p1', { state: InkTranscriptState.STALE, blocks: TRANSCRIPT_BLOCKS }))
       provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p1', seq: 12, stroke: pen('s3') })
       await settle()
-      expect([notice(root), button(root, 'read'), drawn(root)]).toEqual([ReadingSurface.Words.STALE, 'Read again', ['prose', 'diagram']])
+      expect([notice(root), button(root, 'transcribe'), drawn(root)]).toEqual([TranscriptSurface.Words.STALE, 'Transcribe again', ['prose', 'diagram']])
       provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p2', seq: 13, stroke: pen('s4') })
       expect(unseenPage(bar, 2)).toBe(true)
-      expect(provider.calls.filter((c) => c === 'loadReading p1')).toHaveLength(3)
+      expect(provider.calls.filter((c) => c === 'loadTranscript p1')).toHaveLength(3)
     })
 
-    it('New document asks for a document from the reading and has the host open it', async () => {
+    it('New document asks for a document from the transcript and has the host open it', async () => {
       const shown = await presented()
-      shown.provider.readings.set('p1', reading('p1', { state: InkReadingState.READY, blocks: READ_BLOCKS }))
+      shown.provider.transcripts.set('p1', transcript('p1', { state: InkTranscriptState.READY, blocks: TRANSCRIPT_BLOCKS }))
       key(shown.root, 'Enter', { ctrlKey: true })
       await settle()
       /** @type {any[]} */ const opened = []
       shown.lens.onEvent((e) => { if (e.type === SurfaceIntent.OPEN_CONTAINER) opened.push(e.uuid) })
       press(shown.root, 'new-document')
       await settle()
-      expect([shown.provider.calls.at(-1), opened]).toEqual(['newDocumentFromReading p1', ['doc-new']])
+      expect([shown.provider.calls.at(-1), opened]).toEqual(['newDocumentFromTranscript p1', ['doc-new']])
       vi.spyOn(console, 'warn').mockImplementation(() => {})
-      shown.provider.made = new Error('not read')
+      shown.provider.made = new Error('not transcribed')
       press(shown.root, 'new-document')
       await settle()
-      expect([opened, working(shown.root)]).toEqual([['doc-new'], ReadingSurface.Words.NOT_MADE])
+      expect([opened, working(shown.root)]).toEqual([['doc-new'], TranscriptSurface.Words.NOT_MADE])
     })
 
     it('keeps its mode, page and marks across a tab switch, and hands them back to the page', async () => {
-      const shown = await reading_()
+      const shown = await transcript_()
       shown.surface.turn(1)
       shown.provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p1', seq: 11, stroke: pen('s9') })
       await settle()
@@ -1370,8 +1370,8 @@ describe('DigitalNoteLens', () => {
       shown.toolbar.show(lens)
       await lens.presentMode('wysiwyg', shown.root)
       await settle()
-      const surface = /** @type {ReadingSurface} */ (lens.surface)
-      expect([lens.mode, surface.shownPage, [...surface.unseenPages]]).toEqual([ReadingSurface.MODE, 'p2', ['p1']])
+      const surface = /** @type {TranscriptSurface} */ (lens.surface)
+      expect([lens.mode, surface.shownPage, [...surface.unseenPages]]).toEqual([TranscriptSurface.MODE, 'p2', ['p1']])
       await lens.toggleMode()
       await settle()
       const page = /** @type {PageSurface} */ (lens.surface)

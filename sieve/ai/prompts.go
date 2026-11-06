@@ -50,8 +50,8 @@ func (ps *PromptService) GetPromptContent(name string) (string, error) {
 		return DefaultImagePrompt, nil
 	case "note-meta":
 		return DefaultNoteMetaPrompt, nil
-	case "page-reading":
-		return DefaultPageReadingPrompt, nil
+	case "page-transcript":
+		return DefaultPageTranscriptPrompt, nil
 	case "refine":
 		return DefaultRefinePrompt, nil
 	case "web-clip-fetch":
@@ -80,7 +80,7 @@ func (ps *PromptService) DeletePrompt(name string) error {
 
 // ListPrompts returns all standard prompts with their virtualization status.
 func (ps *PromptService) ListPrompts() []PromptEntry {
-	names := []string{"file", "explain", "ask", "btw", "refine", "image", "note-meta", "page-reading", "web-clip-fetch", "web-clip-summarise"}
+	names := []string{"file", "explain", "ask", "btw", "refine", "image", "note-meta", "page-transcript", "web-clip-fetch", "web-clip-summarise"}
 	displayNames := map[string]string{
 		"file":               "Smart Filing",
 		"explain":            "Explain Content",
@@ -89,7 +89,7 @@ func (ps *PromptService) ListPrompts() []PromptEntry {
 		"refine":             "Language Detection",
 		"image":              "Describe Image",
 		"note-meta":          "Name Handwritten Note",
-		"page-reading":       "Read Handwritten Page",
+		"page-transcript":       "Transcribe Handwritten Page",
 		"web-clip-fetch":     "Web Clip — Fetch",
 		"web-clip-summarise": "Web Clip — Summarise",
 	}
@@ -329,7 +329,7 @@ Respond ONLY with raw JSON. DO NOT use markdown code fences (triple backticks). 
 }
 `
 
-const DefaultPageReadingPrompt = `The image file {page_file}, in this directory, is one page of a handwritten note.
+const DefaultPageTranscriptPrompt = `The image file {page_file}, in this directory, is one page of a handwritten note.
 
 Open it and read the whole page, from top to bottom, as a list of parts in the order they appear on the page.
 

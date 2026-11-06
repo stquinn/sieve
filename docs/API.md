@@ -45,9 +45,9 @@ alone, so the token appears in no response header.
 | `ink-describe` | `protocol.InkDescribeFrame` | `opId` | InkDescribeFrame asks for this channel's Digital Note to be named now: its name, summary, keywords and categories described again from its pages, whether or not they are of the note as it stands. |
 | `ink-open-on-tablet` | `protocol.InkOpenOnTabletFrame` | `opId` | InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it at a page. |
 | `ink-page` | `protocol.InkPageFrame` | `opId` | InkPageFrame asks for one page of this channel's Digital Note as it is drawn now. |
-| `ink-read-page` | `protocol.InkReadPageFrame` | `opId` | InkReadPageFrame asks for one page of this channel's Digital Note to be read, unless it has a reading of what it holds now or is being read. |
-| `ink-reading` | `protocol.InkReadingFrame` | `opId` | InkReadingFrame asks what is known of the reading of one page of this channel's Digital Note. |
-| `ink-reading-document` | `protocol.InkReadingDocumentFrame` | `opId` | InkReadingDocumentFrame asks for a new document made from the reading of one page of this channel's Digital Note: an ordinary untitled note holding a copy of the reading's blocks, linked to nothing. |
+| `ink-transcribe-page` | `protocol.InkTranscribePageFrame` | `opId` | InkTranscribePageFrame asks for one page of this channel's Digital Note to be transcribed, unless it has a transcript of what it holds now or is being transcribed. |
+| `ink-transcript` | `protocol.InkTranscriptFrame` | `opId` | InkTranscriptFrame asks what is known of the transcript of one page of this channel's Digital Note. |
+| `ink-transcript-document` | `protocol.InkTranscriptDocumentFrame` | `opId` | InkTranscriptDocumentFrame asks for a new document made from the transcript of one page of this channel's Digital Note: an ordinary untitled note holding a copy of the transcript's blocks, linked to nothing. |
 | `load` | `protocol.LoadFrame` | `opId` | LoadFrame asks for the document this channel is bound to, as the editor mounts it. |
 | `paste` | `protocol.PasteFrame` | `opId` | PasteFrame hands a clipboard to the server to make sense of. |
 | `ping` | `protocol.PingFrame` | — | PingFrame is a liveness probe, answered with a PongFrame. |
@@ -72,11 +72,11 @@ alone, so the token appears in no response header.
 | `ink-log-restarted` | `protocol.InkLogRestartedFrame` | — | InkLogRestartedFrame is the note's log started again from its first record in this channel's container. |
 | `ink-open-on-tablet-result` | `protocol.InkOpenOnTabletResultFrame` | `opId` | InkOpenOnTabletResultFrame answers an ink-open-on-tablet with what came of it, or why it could not be asked. |
 | `ink-page-content` | `protocol.InkPageContentFrame` | `opId` | InkPageContentFrame answers an ink-page: the page in the export shape and the seq of the last record it reflects, or why there is none. |
-| `ink-reading-changed` | `protocol.InkReadingChangedFrame` | — | InkReadingChangedFrame is what is known of the reading of a page of this channel's note now that it has changed: a reading began, or ended in a reading kept or in a failure. |
-| `ink-reading-content` | `protocol.InkReadingContentFrame` | `opId` | InkReadingContentFrame answers an ink-reading or an ink-read-page with what is known of the page's reading, or why there is none to say. |
-| `ink-reading-document-result` | `protocol.InkReadingDocumentResultFrame` | `opId` | InkReadingDocumentResultFrame answers an ink-reading-document with the new document's uuid, or why none was made. |
 | `ink-stroke-added` | `protocol.InkStrokeAddedFrame` | — | InkStrokeAddedFrame is a stroke now present on a page, committed by the record of Seq. |
 | `ink-stroke-removed` | `protocol.InkStrokeRemovedFrame` | — | InkStrokeRemovedFrame is a stroke gone from a page, removed by the record of Seq. |
+| `ink-transcript-changed` | `protocol.InkTranscriptChangedFrame` | — | InkTranscriptChangedFrame is what is known of the transcript of a page of this channel's note now that it has changed: a transcript began, or ended in a transcript kept or in a failure. |
+| `ink-transcript-content` | `protocol.InkTranscriptContentFrame` | `opId` | InkTranscriptContentFrame answers an ink-transcript or an ink-transcribe-page with what is known of the page's transcript, or why there is none to say. |
+| `ink-transcript-document-result` | `protocol.InkTranscriptDocumentResultFrame` | `opId` | InkTranscriptDocumentResultFrame answers an ink-transcript-document with the new document's uuid, or why none was made. |
 | `insert-block` | `protocol.InsertBlockFrame` | — | InsertBlockFrame is the render-back for a block the SERVER created: the client places this authoritative node at this index as a tracked transaction, and never computes a position of its own. |
 | `load-content` | `protocol.LoadContentFrame` | `opId` | LoadContentFrame answers a load. |
 | `markdown-content` | `protocol.MarkdownContentFrame` | `opId` | MarkdownContentFrame is the merged markdown that seeds the markdown editor after a mode switch. |
@@ -265,35 +265,35 @@ InkPageFrame asks for one page of this channel's Digital Note as it is drawn now
 | `opId` | `string` | no | echoed on the ink-page-content reply |
 | `pageId` | `string` | yes | the page's id, as the block's note.pages lists it |
 
-#### `ink-read-page` — client → server
+#### `ink-transcribe-page` — client → server
 
-InkReadPageFrame asks for one page of this channel's Digital Note to be read, unless it has a reading of what it holds now or is being read.
+InkTranscribePageFrame asks for one page of this channel's Digital Note to be transcribed, unless it has a transcript of what it holds now or is being transcribed.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
 | `type` | `string` | yes |  |
-| `opId` | `string` | no | echoed on the ink-reading-content reply |
+| `opId` | `string` | no | echoed on the ink-transcript-content reply |
 | `pageId` | `string` | yes | the page's id, as the block's note.pages lists it |
 
-#### `ink-reading` — client → server
+#### `ink-transcript` — client → server
 
-InkReadingFrame asks what is known of the reading of one page of this channel's Digital Note.
+InkTranscriptFrame asks what is known of the transcript of one page of this channel's Digital Note.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
 | `type` | `string` | yes |  |
-| `opId` | `string` | no | echoed on the ink-reading-content reply |
+| `opId` | `string` | no | echoed on the ink-transcript-content reply |
 | `pageId` | `string` | yes | the page's id, as the block's note.pages lists it |
 
-#### `ink-reading-document` — client → server
+#### `ink-transcript-document` — client → server
 
-InkReadingDocumentFrame asks for a new document made from the reading of one page of this channel's Digital Note: an ordinary untitled note holding a copy of the reading's blocks, linked to nothing.
+InkTranscriptDocumentFrame asks for a new document made from the transcript of one page of this channel's Digital Note: an ordinary untitled note holding a copy of the transcript's blocks, linked to nothing.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
 | `type` | `string` | yes |  |
-| `opId` | `string` | no | echoed on the ink-reading-document-result reply |
-| `pageId` | `string` | yes | the page whose reading the document is made from |
+| `opId` | `string` | no | echoed on the ink-transcript-document-result reply |
+| `pageId` | `string` | yes | the page whose transcript the document is made from |
 
 #### `load` — client → server
 
@@ -495,39 +495,6 @@ InkPageContentFrame answers an ink-page: the page in the export shape and the se
 | `page` | `*protocol.InkPageExport` | no | the page's strokes in the export shape; null when refused |
 | `error` | `string` | no | present only when there is no page: the channel holds no Digital Note, or the note has no page of that id |
 
-#### `ink-reading-changed` — server → client
-
-InkReadingChangedFrame is what is known of the reading of a page of this channel's note now that it has changed: a reading began, or ended in a reading kept or in a failure.
-
-| Field | Go type | Required | Description |
-|---|---|---|---|
-| `type` | `string` | yes |  |
-| `pageId` | `string` | yes |  |
-| `reading` | `protocol.InkReading` | yes |  |
-
-#### `ink-reading-content` — server → client
-
-InkReadingContentFrame answers an ink-reading or an ink-read-page with what is known of the page's reading, or why there is none to say.
-
-| Field | Go type | Required | Description |
-|---|---|---|---|
-| `type` | `string` | yes |  |
-| `opId` | `string` | no |  |
-| `pageId` | `string` | yes | the page asked of, echoed |
-| `reading` | `*protocol.InkReading` | no | null when refused |
-| `error` | `string` | no | present only when refused: the channel holds no Digital Note, the note has no page of that id, or ink is unavailable |
-
-#### `ink-reading-document-result` — server → client
-
-InkReadingDocumentResultFrame answers an ink-reading-document with the new document's uuid, or why none was made.
-
-| Field | Go type | Required | Description |
-|---|---|---|---|
-| `type` | `string` | yes |  |
-| `opId` | `string` | no |  |
-| `uuid` | `string` | no | the new document; absent with error |
-| `error` | `string` | no | present only when no document was made: the page has no reading, or ink is unavailable |
-
 #### `ink-stroke-added` — server → client
 
 InkStrokeAddedFrame is a stroke now present on a page, committed by the record of Seq.
@@ -549,6 +516,39 @@ InkStrokeRemovedFrame is a stroke gone from a page, removed by the record of Seq
 | `pageId` | `string` | yes |  |
 | `seq` | `uint32` | yes | the seq of the record that removed the stroke |
 | `strokeId` | `string` | yes |  |
+
+#### `ink-transcript-changed` — server → client
+
+InkTranscriptChangedFrame is what is known of the transcript of a page of this channel's note now that it has changed: a transcript began, or ended in a transcript kept or in a failure.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `pageId` | `string` | yes |  |
+| `transcript` | `protocol.InkTranscript` | yes |  |
+
+#### `ink-transcript-content` — server → client
+
+InkTranscriptContentFrame answers an ink-transcript or an ink-transcribe-page with what is known of the page's transcript, or why there is none to say.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | no |  |
+| `pageId` | `string` | yes | the page asked of, echoed |
+| `transcript` | `*protocol.InkTranscript` | no | null when refused |
+| `error` | `string` | no | present only when refused: the channel holds no Digital Note, the note has no page of that id, or ink is unavailable |
+
+#### `ink-transcript-document-result` — server → client
+
+InkTranscriptDocumentResultFrame answers an ink-transcript-document with the new document's uuid, or why none was made.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | no |  |
+| `uuid` | `string` | no | the new document; absent with error |
+| `error` | `string` | no | present only when no document was made: the page has no transcript, or ink is unavailable |
 
 #### `insert-block` — server → client
 
@@ -1295,19 +1295,19 @@ InkLiveRecord is one record about the stroke under the pen on the live page, or 
 | `tiltX` | `int8` | yes | point only: degrees |
 | `tiltY` | `int8` | yes | point only: degrees |
 
-### `protocol.InkReading`
+### `protocol.InkTranscript`
 
-InkReading is what is known of the reading of one page.
+InkTranscript is what is known of the transcript of one page.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
-| `state` | `string` | yes | none \| ready (a reading of the page as it is now) \| stale (a reading of the page as it was before it changed) |
-| `key` | `string` | no | the page key the reading is of; absent with none |
-| `blocks` | `[]block.FrontendBlock` | no | the reading, in the page's order, in the shape a load's blocks take; absent with none |
-| `running` | `bool` | yes | a reading of the page is under way |
-| `available` | `bool` | yes | false while nothing can read a page |
-| `unavailable` | `string` | no | why nothing can read a page; present only when available is false |
-| `failed` | `string` | no | what went wrong the last time the page was read; absent when nothing did |
+| `state` | `string` | yes | none \| ready (a transcript of the page as it is now) \| stale (a transcript of the page as it was before it changed) |
+| `key` | `string` | no | the page key the transcript is of; absent with none |
+| `blocks` | `[]block.FrontendBlock` | no | the transcript, in the page's order, in the shape a load's blocks take; absent with none |
+| `running` | `bool` | yes | a transcript of the page is under way |
+| `available` | `bool` | yes | false while nothing can transcribe a page |
+| `unavailable` | `string` | no | why nothing can transcribe a page; present only when available is false |
+| `failed` | `string` | no | what went wrong the last time the page was transcribed; absent when nothing did |
 
 ### `protocol.JobsSnapshot`
 

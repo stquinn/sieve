@@ -331,8 +331,8 @@ func (v *inkSessionView) duration(d time.Duration) string {
 // link.
 type inkStream struct {
 	svc *ink.InkService
-	// readings are the readings of the notes' pages; nil when there are none.
-	readings *ink.PageReadings
+	// transcripts are the transcripts of the notes' pages; nil when there are none.
+	transcripts *ink.PageTranscripts
 	send     func(uuid string, frame interface{})
 	// notes are held by socket: a container's uuid, or the Live view's.
 	notes *ink.OpenNotes
@@ -403,16 +403,16 @@ func (w *tabletWindow) replay(container string, page link.ID, reply func(interfa
 
 var (
 	_ ink.Listener        = (*inkStream)(nil)
-	_ ink.ReadingListener = (*inkStream)(nil)
+	_ ink.TranscriptListener = (*inkStream)(nil)
 )
 
-// newInkStream subscribes a stream to svc, and to readings when there are any, that sends through
+// newInkStream subscribes a stream to svc, and to transcripts when there are any, that sends through
 // send, a uuid naming the socket that has it open.
-func newInkStream(svc *ink.InkService, readings *ink.PageReadings, send func(uuid string, frame interface{})) *inkStream {
-	s := &inkStream{svc: svc, readings: readings, send: send, notes: ink.NewOpenNotes(svc), view: svc.LiveView().UUID()}
+func newInkStream(svc *ink.InkService, transcripts *ink.PageTranscripts, send func(uuid string, frame interface{})) *inkStream {
+	s := &inkStream{svc: svc, transcripts: transcripts, send: send, notes: ink.NewOpenNotes(svc), view: svc.LiveView().UUID()}
 	svc.Subscribe(s)
-	if readings != nil {
-		readings.Subscribe(s)
+	if transcripts != nil {
+		transcripts.Subscribe(s)
 	}
 	return s
 }
@@ -420,33 +420,33 @@ func newInkStream(svc *ink.InkService, readings *ink.PageReadings, send func(uui
 // close unsubscribes the stream.
 func (s *inkStream) close() {
 	s.svc.Unsubscribe(s)
-	if s.readings != nil {
-		s.readings.Unsubscribe(s)
+	if s.transcripts != nil {
+		s.transcripts.Unsubscribe(s)
 	}
 }
 
-// ReadingChanged sends what is now known of the reading of page to the socket of the container
+// TranscriptChanged sends what is now known of the transcript of page to the socket of the container
 // holding its note.
-func (s *inkStream) ReadingChanged(container string, page link.ID) {
-	reading, err := s.readings.Reading(container, page)
+func (s *inkStream) TranscriptChanged(container string, page link.ID) {
+	transcript, err := s.transcripts.Transcript(container, page)
 	if err != nil {
-		logger.Warn("ink: a changed reading could not be read", "container", container, "page", page.String(), "err", err.Error())
+		logger.Warn("ink: a changed transcript could not be read", "container", container, "page", page.String(), "err", err.Error())
 		return
 	}
-	s.send(container, protocol.NewInkReadingChangedFrame(page.String(), s.readingOf(reading)))
+	s.send(container, protocol.NewInkTranscriptChangedFrame(page.String(), s.transcriptOf(transcript)))
 }
 
-// readingOf is r as the wire carries it.
-func (s *inkStream) readingOf(r ink.Reading) protocol.InkReading {
+// transcriptOf is r as the wire carries it.
+func (s *inkStream) transcriptOf(r ink.Transcript) protocol.InkTranscript {
 	blocks, _ := block.BlockDocToFrontendBlocks(r.Blocks)
-	state := protocol.InkReadingNone
+	state := protocol.InkTranscriptNone
 	switch r.Status {
-	case ink.ReadingReady:
-		state = protocol.InkReadingReady
-	case ink.ReadingStale:
-		state = protocol.InkReadingStale
+	case ink.TranscriptReady:
+		state = protocol.InkTranscriptReady
+	case ink.TranscriptStale:
+		state = protocol.InkTranscriptStale
 	}
-	return protocol.InkReading{State: state, Key: r.Key, Blocks: blocks, Running: r.Running, Available: r.Available,
+	return protocol.InkTranscript{State: state, Key: r.Key, Blocks: blocks, Running: r.Running, Available: r.Available,
 		Unavailable: r.Unavailable, Failed: r.Failed}
 }
 

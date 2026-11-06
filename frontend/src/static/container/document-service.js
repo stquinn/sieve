@@ -500,7 +500,7 @@ export class DocumentService {
   }
 
   /**
-   * What is known of the reading of one page of this container's Digital Note,
+   * What is known of the transcript of one page of this container's Digital Note,
    * as the wire carries it.
    *
    * REJECTS when Go refuses — the container is no Digital Note, or the note has
@@ -508,35 +508,35 @@ export class DocumentService {
    * @param {string} uuid @param {string} pageId
    * @returns {Promise<Record<string, any>>}
    */
-  inkReading(uuid, pageId) {
-    return this.#readingReply(uuid, { type: DocumentFrame.INK_READING, pageId: pageId }, 'ink-reading ' + pageId)
+  inkTranscript(uuid, pageId) {
+    return this.#transcriptReply(uuid, { type: DocumentFrame.INK_TRANSCRIPT, pageId: pageId }, 'ink-transcript ' + pageId)
   }
 
   /**
-   * Starts reading one page of this container's Digital Note, unless it has a
-   * reading of what it holds now or is being read, and resolves what is then
-   * known of its reading, as the wire carries it. The reading's end arrives as an
-   * ink frame. Rejects as inkReading does.
+   * Starts transcript one page of this container's Digital Note, unless it has a
+   * transcript of what it holds now or is being read, and resolves what is then
+   * known of its transcript, as the wire carries it. The transcript's end arrives as an
+   * ink frame. Rejects as inkTranscript does.
    * @param {string} uuid @param {string} pageId
    * @returns {Promise<Record<string, any>>}
    */
-  inkReadPage(uuid, pageId) {
-    return this.#readingReply(uuid, { type: DocumentFrame.INK_READ_PAGE, pageId: pageId }, 'ink-read-page ' + pageId)
+  inkTranscribePage(uuid, pageId) {
+    return this.#transcriptReply(uuid, { type: DocumentFrame.INK_TRANSCRIBE_PAGE, pageId: pageId }, 'ink-transcribe-page ' + pageId)
   }
 
   /**
-   * Makes a new document from the reading of one page of this container's
+   * Makes a new document from the transcript of one page of this container's
    * Digital Note and resolves its uuid.
    *
-   * REJECTS when Go made nothing — the page has no reading, or ink is
+   * REJECTS when Go made nothing — the page has no transcript, or ink is
    * unavailable — on a timeout, and on a channel-less uuid.
    * @param {string} uuid @param {string} pageId
    * @returns {Promise<string>}
    */
-  inkReadingDocument(uuid, pageId) {
-    return this.#transport._awaitReply(uuid, { type: DocumentFrame.INK_READING_DOCUMENT, pageId: pageId }, 'ink-reading-document ' + pageId)
+  inkTranscriptDocument(uuid, pageId) {
+    return this.#transport._awaitReply(uuid, { type: DocumentFrame.INK_TRANSCRIPT_DOCUMENT, pageId: pageId }, 'ink-transcript-document ' + pageId)
       .then((reply) => {
-        if (reply.error || !reply.uuid) throw new Error('ink-reading-document refused: ' + (reply.error || 'no document'))
+        if (reply.error || !reply.uuid) throw new Error('ink-transcript-document refused: ' + (reply.error || 'no document'))
         return String(reply.uuid)
       })
   }
@@ -560,18 +560,18 @@ export class DocumentService {
   }
 
   /** @param {string} uuid @param {object} frame @param {string} label
-   *  @returns {Promise<Record<string, any>>} the reading of an ink-reading-content */
-  #readingReply(uuid, frame, label) {
+   *  @returns {Promise<Record<string, any>>} the transcript of an ink-transcript-content */
+  #transcriptReply(uuid, frame, label) {
     return this.#transport._awaitReply(uuid, frame, label)
       .then((reply) => {
-        if (reply.error || !reply.reading) throw new Error(label + ' refused: ' + (reply.error || 'no reading'))
-        return reply.reading
+        if (reply.error || !reply.transcript) throw new Error(label + ' refused: ' + (reply.error || 'no transcript'))
+        return reply.transcript
       })
   }
 
   /**
    * Subscribe to this container's ink frames — strokes added and removed, live
-   * records, the live page, a restarted log and a page's reading changed — as Go
+   * records, the live page, a restarted log and a page's transcript changed — as Go
    * sent them, in arrival order. The answers to an ask are correlated and are not
    * among them.
    * @param {string} uuid @param {(msg: Record<string, any>) => void} observer
@@ -591,7 +591,7 @@ export class DocumentService {
     DocumentFrame.INK_LIVE,
     DocumentFrame.INK_LIVE_PAGE,
     DocumentFrame.INK_LOG_RESTARTED,
-    DocumentFrame.INK_READING_CHANGED,
+    DocumentFrame.INK_TRANSCRIPT_CHANGED,
   ])
 
   /**

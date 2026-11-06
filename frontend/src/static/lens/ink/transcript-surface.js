@@ -1,16 +1,16 @@
 // @ts-check
-// The reader's surface of a Digital Note's reading: the page the reader is on,
-// read as text and diagrams, drawn read-only by the renderers every block kind
-// has, on the editor's own background and at its text width. Beside the reading
-// it offers to read the page, and to make a new document from what was read;
+// The reader's surface of a Digital Note's transcript: the page the reader is on,
+// the transcript as text and diagrams, drawn read-only by the renderers every block kind
+// has, on the editor's own background and at its text width. Beside the transcript
+// it offers to transcribe the page, and to make a new document from the transcript;
 // the workspace toolbar is offered its pager, and a right-click on it asks its
 // lens for the lens's menu.
-// What it draws is what the host says of the page's reading: it never decides
-// whether a reading is current, and hears the feed so that a reading that
+// What it draws is what the host says of the page's transcript: it never decides
+// whether a transcript is current, and hears the feed so that a transcript that
 // changes, or ink that lands on the page, is asked of the host again.
 
 import { AbstractSurface, SurfaceEvent, SurfaceIntent } from '../abstract-surface.js'
-import { InkFeed, InkReadingState } from '../../contract/ink-container-provider.js'
+import { InkFeed, InkTranscriptState } from '../../contract/ink-container-provider.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
 import { QuestionListView } from '../../renderers/question-list-view.js'
 import { ActionStatus } from './action-status.js'
@@ -19,37 +19,37 @@ import { PageSurface } from './page-surface.js'
 
 /** @typedef {import('../../contract/ink-container-provider.js').InkContainerProvider} InkContainerProvider */
 /** @typedef {import('../../contract/ink-container-provider.js').InkFeedEvent} InkFeedEvent */
-/** @typedef {import('../../contract/ink-container-provider.js').InkReading} InkReading */
+/** @typedef {import('../../contract/ink-container-provider.js').InkTranscript} InkTranscript */
 /** @typedef {import('./page-surface.js').ReaderView} ReaderView */
 /** @typedef {import('./page-surface.js').PageSurfaceHost} PageSurfaceHost */
 /** @typedef {import('../abstract-surface.js').SurfaceStats} SurfaceStats */
 /** @typedef {import('./note-pager.js').NotePage} NotePage */
 
-export class ReadingSurface extends AbstractSurface {
+export class TranscriptSurface extends AbstractSurface {
   /** The mode this surface presents. */
-  static MODE = 'reading'
+  static MODE = 'transcript'
 
-  /** What the surface says, by the state of the page's reading. */
+  /** What the surface says, by the state of the page's transcript. */
   static Words = Object.freeze({
     NO_PAGES: 'This note has no pages yet.',
-    INVITE: 'This page has not been read yet. Reading it turns the handwriting into text and the sketches into diagrams.',
-    RUNNING: 'Reading this page…',
-    STALE: 'This page has changed since it was read.',
-    LOADING: 'Asking for this page’s reading…',
-    UNANSWERED: 'The reading of this page could not be asked for.',
+    INVITE: 'This page has not been transcribed yet. Transcribing it turns the handwriting into text and the sketches into diagrams.',
+    RUNNING: 'Transcribing this page…',
+    STALE: 'This page has changed since it was transcribed.',
+    LOADING: 'Asking for this page’s transcript…',
+    UNANSWERED: 'The transcript of this page could not be asked for.',
     MAKING: 'Making a document…',
     NOT_MADE: 'Could not make a document',
   })
 
   static styles = /* css */ `
-  .ink-page--reading .ink-reading {
+  .ink-page--transcript .ink-transcript {
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
     background: var(--theme-bg);
   }
 
-  .ink-reading__page {
+  .ink-transcript__page {
     box-sizing: border-box;
     max-width: var(--theme-editorMeasure, 46rem);
     padding: 20px 24px 48px;
@@ -57,7 +57,7 @@ export class ReadingSurface extends AbstractSurface {
     color: var(--theme-text);
   }
 
-  .ink-reading__bar {
+  .ink-transcript__bar {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -68,15 +68,15 @@ export class ReadingSurface extends AbstractSurface {
     color: var(--theme-textDim);
   }
 
-  .ink-reading__bar [hidden] { display: none; }
+  .ink-transcript__bar [hidden] { display: none; }
 
-  .ink-reading__notice { flex: 1 1 auto; }
+  .ink-transcript__notice { flex: 1 1 auto; }
 
-  .ink-reading__bar .ink-page__status { color: var(--theme-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ink-transcript__bar .ink-page__status { color: var(--theme-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-  .ink-reading__notice[data-tone="warn"] { color: var(--theme-accentYellow); }
+  .ink-transcript__notice[data-tone="warn"] { color: var(--theme-accentYellow); }
 
-  .ink-reading__bar button {
+  .ink-transcript__bar button {
     border: 1px solid var(--theme-border2);
     border-radius: 4px;
     background: none;
@@ -86,22 +86,22 @@ export class ReadingSurface extends AbstractSurface {
     cursor: pointer;
   }
 
-  .ink-reading__bar button:hover { background: var(--theme-bgAlt); }
+  .ink-transcript__bar button:hover { background: var(--theme-bgAlt); }
 
-  .ink-reading__bar button:focus-visible {
+  .ink-transcript__bar button:focus-visible {
     outline: 2px solid var(--theme-accentPrimary);
     outline-offset: 1px;
   }
 
-  .ink-reading__blocks.tiptap {
+  .ink-transcript__blocks.tiptap {
     min-height: 0;
     padding: 0;
     max-width: none;
   }
 
-  .ink-reading__blocks > .ai-block__element + .ai-block__element { margin-top: 0.75rem; }
+  .ink-transcript__blocks > .ai-block__element + .ai-block__element { margin-top: 0.75rem; }
 
-  .ink-reading__blocks[data-stale] { opacity: 0.75; }
+  .ink-transcript__blocks[data-stale] { opacity: 0.75; }
 `
 
   /** @type {InkContainerProvider} */ #provider
@@ -116,7 +116,7 @@ export class ReadingSurface extends AbstractSurface {
   /** @type {HTMLElement} */ #bar
   /** @type {HTMLElement} */ #notice
   /** @type {HTMLButtonElement} */ #newDocument
-  /** @type {HTMLButtonElement} */ #read
+  /** @type {HTMLButtonElement} */ #transcribeButton
   /** @type {HTMLElement} */ #blocks
 
   /** @type {ReadonlyArray<NotePage>} the note's pages */ #pages = []
@@ -125,11 +125,11 @@ export class ReadingSurface extends AbstractSurface {
   /** @type {ReaderView|null} the view handed to this surface */ #handed
   /** @type {number} the highest log seq heard */ #heardSeq = 0
   /** @type {number} the latest stroke start heard; -1 before any */ #heardMillis = -1
-  /** @type {InkReading|null} the reading of the page shown, as last told */ #reading = null
+  /** @type {InkTranscript|null} the transcript of the page shown, as last told */ #transcript = null
   /** @type {number} numbers the asks, so only the answer to the latest is drawn */ #asked = 0
   /** @type {Promise<void>|null} the New document under way */ #making = null
-  /** @type {string} what the read button says; '' while the reading offers no read */ #readLabel = ''
-  /** @type {boolean} whether the page is to be read once its reading says it is unread */ #readOnArrival = false
+  /** @type {string} what the transcribe button says; '' while the transcript offers no transcribing */ #transcribeLabel = ''
+  /** @type {boolean} whether the page is to be transcribed once its transcript says there is none */ #transcribeOnArrival = false
 
   /**
    * @param {InkContainerProvider} provider the note's provider; its feed is heard
@@ -148,25 +148,25 @@ export class ReadingSurface extends AbstractSurface {
       this.#heardMillis = view.startMillis
     }
     rendererStyles.register(PageSurface)
-    rendererStyles.register(ReadingSurface)
+    rendererStyles.register(TranscriptSurface)
     this.#list = new QuestionListView(provider.getUuid())
-    this.#root = this.#element('div', 'ink-page ink-page--reading')
+    this.#root = this.#element('div', 'ink-page ink-page--transcript')
     this.#root.tabIndex = 0
-    const body = this.#element('div', 'ink-reading')
-    const page = this.#element('div', 'ink-reading__page')
-    this.#bar = this.#element('div', 'ink-reading__bar')
-    this.#notice = this.#element('span', 'ink-reading__notice')
-    this.#newDocument = this.#button('new-document', 'New document', 'Make an ordinary document from this reading')
-    this.#read = this.#button('read', 'Read this page', '')
-    this.#bar.append(this.#notice, this.#status.element, this.#newDocument, this.#read)
-    this.#blocks = this.#element('div', 'ink-reading__blocks tiptap')
+    const body = this.#element('div', 'ink-transcript')
+    const page = this.#element('div', 'ink-transcript__page')
+    this.#bar = this.#element('div', 'ink-transcript__bar')
+    this.#notice = this.#element('span', 'ink-transcript__notice')
+    this.#newDocument = this.#button('new-document', 'New document', 'Make an ordinary document from this transcript')
+    this.#transcribeButton = this.#button('transcribe', 'Transcribe this page', '')
+    this.#bar.append(this.#notice, this.#status.element, this.#newDocument, this.#transcribeButton)
+    this.#blocks = this.#element('div', 'ink-transcript__blocks tiptap')
     page.append(this.#bar, this.#blocks)
     body.append(page)
     this.#root.append(body)
   }
 
   /** @returns {string} */
-  get mode() { return ReadingSurface.MODE }
+  get mode() { return TranscriptSurface.MODE }
 
   /** @returns {string|null} the id of the page the reader is on */
   get shownPage() { return this.#shown }
@@ -174,17 +174,17 @@ export class ReadingSurface extends AbstractSurface {
   /** @returns {ReadonlySet<string>} the pages marked as holding ink not yet seen */
   get unseenPages() { return this.#unseen }
 
-  /** @returns {InkReading|null} the reading drawn, as the host last told it */
-  get reading() { return this.#reading }
+  /** @returns {InkTranscript|null} the transcript drawn, as the host last told it */
+  get transcript() { return this.#transcript }
 
-  /** @returns {string} what reading the page is offered as — `Read this page`,
-   *  `Read again` or `Try again` — by the reading drawn; '' while none is offered */
-  get readLabel() { return this.#readLabel }
+  /** @returns {string} what transcript the page is offered as — `Transcribe this page`,
+   *  `Transcribe again` or `Try again` — by the transcript drawn; '' while none is offered */
+  get transcribeLabel() { return this.#transcribeLabel }
 
-  /** @returns {boolean} whether the reading drawn is one a document can be made from */
+  /** @returns {boolean} whether the transcript drawn is one a document can be made from */
   get documentOffered() {
-    const reading = this.#reading
-    return !!reading && reading.state === InkReadingState.READY && !reading.running
+    const transcript = this.#transcript
+    return !!transcript && transcript.state === InkTranscriptState.READY && !transcript.running
   }
 
   /** @returns {boolean} whether a New document is under way */
@@ -198,12 +198,12 @@ export class ReadingSurface extends AbstractSurface {
   stats() {
     const index = this.#index()
     const where = index < 0 ? 'No pages' : `Page ${index + 1} of ${this.#pages.length}`
-    const count = this.#reading ? this.#reading.blocks.length : 0
+    const count = this.#transcript ? this.#transcript.blocks.length : 0
     return {
       chars: 0, lines: 0, blockCount: count,
       readout: Object.freeze([
         Object.freeze({ text: where, title: 'Page' }),
-        Object.freeze({ text: this.#reading && this.#reading.state !== InkReadingState.NONE ? `Read, ${count} block${count === 1 ? '' : 's'}` : 'Not read', title: 'Reading' }),
+        Object.freeze({ text: this.#transcript && this.#transcript.state !== InkTranscriptState.NONE ? `Transcript, ${count} block${count === 1 ? '' : 's'}` : 'No transcript', title: 'Transcript' }),
         ...(this.#device ? [Object.freeze({ text: this.#device, title: 'Written on' })] : []),
       ]),
     }
@@ -226,7 +226,7 @@ export class ReadingSurface extends AbstractSurface {
   viewState() {
     const handed = this.#handed
     return Object.freeze({
-      mode: ReadingSurface.MODE,
+      mode: TranscriptSurface.MODE,
       page: this.#shown ?? (handed ? handed.page : null),
       window: handed ? handed.window : null,
       scale: handed ? handed.scale : PageSurface.Scale.PAGE,
@@ -266,7 +266,7 @@ export class ReadingSurface extends AbstractSurface {
   flushPending() {}
 
   /**
-   * The note's block changed: the toolbar is asked again, and the reading asked
+   * The note's block changed: the toolbar is asked again, and the transcript asked
    * for again when the page to show is another one.
    * @param {unknown} _change @param {InkContainerProvider} provider
    */
@@ -274,7 +274,7 @@ export class ReadingSurface extends AbstractSurface {
     const before = this.#shown
     this.#readNote(provider)
     const target = this.#target()
-    if (target !== before || this.#reading === null) this.#show(target)
+    if (target !== before || this.#transcript === null) this.#show(target)
     else this.#toolbarChanged()
   }
 
@@ -286,7 +286,7 @@ export class ReadingSurface extends AbstractSurface {
 
   /**
    * One event of the note's feed. Ink on another page marks it unseen; ink on
-   * the page shown has the page's reading asked for again, which is how a reading
+   * the page shown has the page's transcript asked for again, which is how a transcript
    * of the page as it was becomes one of a page that has changed.
    * @param {InkFeedEvent} event
    */
@@ -303,8 +303,8 @@ export class ReadingSurface extends AbstractSurface {
           this.#toolbarChanged()
         }
         break
-      case InkFeed.READING:
-        if (event.reading.pageId === this.#shown) this.#draw(event.reading)
+      case InkFeed.TRANSCRIPT:
+        if (event.transcript.pageId === this.#shown) this.#draw(event.transcript)
         break
       case InkFeed.LOG_RESTARTED:
         this.#unseen.clear()
@@ -344,29 +344,29 @@ export class ReadingSurface extends AbstractSurface {
   }
 
   /**
-   * Has the page shown read if its reading says it has none, as soon as the
-   * reading is known; a page that has one, or is being read, is left as it is.
+   * Has the page shown transcribed if its transcript says it has none, as soon as the
+   * transcript is known; a page that has one, or is being transcribed, is left as it is.
    */
-  readIfUnread() {
-    this.#readOnArrival = true
-    if (this.#reading) this.#readOnArrivalCheck(this.#reading)
+  transcribeIfUntranscribed() {
+    this.#transcribeOnArrival = true
+    if (this.#transcript) this.#transcribeOnArrivalCheck(this.#transcript)
   }
 
   /**
-   * Asks for the page shown to be read, and draws what is then known of it.
+   * Asks for the page shown to be transcribed, and draws what is then known of it.
    * @returns {Promise<void>}
    */
-  readPage() {
+  transcribePage() {
     const page = this.#shown
     if (page === null) return Promise.resolve()
     const asked = ++this.#asked
-    return this.#provider.readPage(page).then(
-      (reading) => { if (asked === this.#asked) this.#draw(reading) },
+    return this.#provider.transcribePage(page).then(
+      (transcript) => { if (asked === this.#asked) this.#draw(transcript) },
       (err) => { if (asked === this.#asked) this.#unanswered(err) })
   }
 
   /**
-   * Asks for a new document made from the reading of the page shown and, once
+   * Asks for a new document made from the transcript of the page shown and, once
    * it is made, for the host to open it. A second ask while one is under way is
    * the same ask.
    * @returns {Promise<void>}
@@ -376,16 +376,16 @@ export class ReadingSurface extends AbstractSurface {
     const page = this.#shown
     if (page === null) return Promise.resolve()
     const status = this.#status
-    status.showPending(ReadingSurface.Words.MAKING)
+    status.showPending(TranscriptSurface.Words.MAKING)
     this.#newDocument.disabled = true
     this.#toolbarChanged()
-    this.#making = this.#provider.newDocumentFromReading(page)
+    this.#making = this.#provider.newDocumentFromTranscript(page)
       .then((uuid) => {
         status.clear()
         this.#host.onSurfaceEvent({ type: SurfaceIntent.OPEN_CONTAINER, uuid: uuid })
       }, (err) => {
-        console.warn('[ink] a document could not be made from the reading', err)
-        status.showResult(ReadingSurface.Words.NOT_MADE)
+        console.warn('[ink] a document could not be made from the transcript', err)
+        status.showResult(TranscriptSurface.Words.NOT_MADE)
       })
       .finally(() => {
         this.#making = null
@@ -423,101 +423,101 @@ export class ReadingSurface extends AbstractSurface {
   /** @param {string|null} pageId */
   #show(pageId) {
     if (pageId !== this.#shown) {
-      this.#reading = null
-      this.#readOnArrival = false
+      this.#transcript = null
+      this.#transcribeOnArrival = false
     }
     this.#shown = pageId
     if (pageId !== null) this.#unseen.delete(pageId)
     this.#toolbarChanged()
     if (pageId === null) {
-      this.#drawNothing(ReadingSurface.Words.NO_PAGES)
+      this.#drawNothing(TranscriptSurface.Words.NO_PAGES)
       return
     }
-    if (!this.#reading) this.#drawNothing(ReadingSurface.Words.LOADING)
+    if (!this.#transcript) this.#drawNothing(TranscriptSurface.Words.LOADING)
     this.#ask()
   }
 
-  /** Asks the host what is known of the reading of the page shown. */
+  /** Asks the host what is known of the transcript of the page shown. */
   #ask() {
     const page = this.#shown
     if (page === null) return
     const asked = ++this.#asked
-    this.#provider.loadReading(page).then(
-      (reading) => { if (asked === this.#asked && this.#mounted) this.#draw(reading) },
+    this.#provider.loadTranscript(page).then(
+      (transcript) => { if (asked === this.#asked && this.#mounted) this.#draw(transcript) },
       (err) => { if (asked === this.#asked && this.#mounted) this.#unanswered(err) })
   }
 
   /**
-   * Draws a reading of the page shown: what is known of it in the bar, and its
+   * Draws a transcript of the page shown: what is known of it in the bar, and its
    * blocks below.
-   * @param {InkReading} reading
+   * @param {InkTranscript} transcript
    */
-  #draw(reading) {
-    this.#reading = reading
-    const W = ReadingSurface.Words
-    const read = reading.state !== InkReadingState.NONE
+  #draw(transcript) {
+    this.#transcript = transcript
+    const W = TranscriptSurface.Words
+    const hasTranscript = transcript.state !== InkTranscriptState.NONE
     let notice = ''
     let tone = ''
-    let readLabel = ''
-    if (reading.running) this.#status.showPending(W.RUNNING)
+    let transcribeLabel = ''
+    if (transcript.running) this.#status.showPending(W.RUNNING)
     else if (!this.#making) this.#status.clear()
-    if (reading.running) {
-      notice = read && reading.state === InkReadingState.STALE ? W.STALE : ''
-    } else if (!reading.available) {
-      notice = reading.unavailable
-    } else if (reading.failed) {
-      notice = reading.failed
+    if (transcript.running) {
+      notice = hasTranscript && transcript.state === InkTranscriptState.STALE ? W.STALE : ''
+    } else if (!transcript.available) {
+      notice = transcript.unavailable
+    } else if (transcript.failed) {
+      notice = transcript.failed
       tone = 'warn'
-      readLabel = 'Try again'
-    } else if (reading.state === InkReadingState.STALE) {
+      transcribeLabel = 'Try again'
+    } else if (transcript.state === InkTranscriptState.STALE) {
       notice = W.STALE
       tone = 'warn'
-      readLabel = 'Read again'
-    } else if (!read) {
+      transcribeLabel = 'Transcribe again'
+    } else if (!hasTranscript) {
       notice = W.INVITE
-      readLabel = 'Read this page'
+      transcribeLabel = 'Transcribe this page'
     }
     this.#notice.textContent = notice
     this.#notice.hidden = notice === ''
     if (tone) this.#notice.dataset.tone = tone
     else delete this.#notice.dataset.tone
-    this.#readLabel = readLabel
-    this.#read.hidden = readLabel === ''
-    this.#read.textContent = readLabel
+    this.#transcribeLabel = transcribeLabel
+    this.#transcribeButton.hidden = transcribeLabel === ''
+    this.#transcribeButton.textContent = transcribeLabel
     this.#newDocument.hidden = !this.documentOffered
-    this.#fill(reading.blocks, reading.state === InkReadingState.STALE)
+    this.#fill(transcript.blocks, transcript.state === InkTranscriptState.STALE)
     this.#toolbarChanged()
-    this.#readOnArrivalCheck(reading)
+    this.#transcribeOnArrivalCheck(transcript)
   }
 
-  /** Reads the page when it was asked to be read if unread and `reading` says it is.
-   *  @param {InkReading} reading */
-  #readOnArrivalCheck(reading) {
-    if (!this.#readOnArrival) return
-    this.#readOnArrival = false
-    if (reading.state === InkReadingState.NONE && reading.available && !reading.running && !reading.failed) this.readPage()
+  /** Transcribes the page when it was asked to be, if it has none and `transcript` says it is.
+   *  @param {InkTranscript} transcript */
+  #transcribeOnArrivalCheck(transcript) {
+    if (!this.#transcribeOnArrival) return
+    this.#transcribeOnArrival = false
+    if (transcript.state === InkTranscriptState.NONE && transcript.available && !transcript.running && !transcript.failed) this.transcribePage()
   }
 
-  /** The reading could not be asked for. @param {unknown} err */
+  /** The transcript could not be asked for. @param {unknown} err */
   #unanswered(err) {
-    console.warn('[ink] the reading of a page could not be asked for', err)
-    this.#reading = null
-    this.#drawNothing(ReadingSurface.Words.UNANSWERED)
+    console.warn('[ink] the transcript of a page could not be asked for', err)
+    this.#transcript = null
+    this.#drawNothing(TranscriptSurface.Words.UNANSWERED)
   }
 
-  /** Draws no reading and says `text`. @param {string} text */
+  /** Draws no transcript and says `text`. @param {string} text */
   #drawNothing(text) {
     this.#notice.textContent = text
     this.#notice.hidden = false
     delete this.#notice.dataset.tone
-    this.#readLabel = ''
-    this.#read.hidden = true
+    this.#transcribeLabel = ''
+    this.#transcribeButton.hidden = true
     this.#newDocument.hidden = true
     this.#fill([], false)
     this.#toolbarChanged()
   }
 
-  /** @param {InkReading['blocks']} blocks @param {boolean} stale */
+  /** @param {InkTranscript['blocks']} blocks @param {boolean} stale */
   #fill(blocks, stale) {
     this.#list.fill(this.#blocks, blocks.map((b) => ({ kind: b.kind, attrs: b.attrs })))
     this.#blocks.hidden = blocks.length === 0
@@ -538,7 +538,7 @@ export class ReadingSurface extends AbstractSurface {
     const button = target && typeof target.closest === 'function' ? target.closest('button') : null
     if (!button || !this.#root.contains(button)) return
     switch (button.getAttribute('data-ink-action')) {
-      case 'read': this.readPage(); break
+      case 'transcribe': this.transcribePage(); break
       case 'new-document': this.newDocument(); break
     }
   }
@@ -548,7 +548,7 @@ export class ReadingSurface extends AbstractSurface {
     if (this.#host.claimKey(event)) event.preventDefault()
   }
 
-  /** A right-click, or the menu key, anywhere in the reading — on one of its
+  /** A right-click, or the menu key, anywhere in the transcript — on one of its
    *  blocks included — asks the lens for its menu. @param {MouseEvent} event */
   #onContextMenu = (event) => {
     event.preventDefault()

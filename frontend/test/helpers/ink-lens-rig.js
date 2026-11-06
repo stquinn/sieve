@@ -1,7 +1,7 @@
 // @ts-check
 // ink-lens-rig.js — what the ink lens suites share: an InkContainerProvider over
 // one block whose pages the test answers, animation frames run when the test
-// says, the strokes, pages and live records they feed, the reads of what the
+// says, the strokes, pages and live records they feed, the transcribes of what the
 // mounted SVG shows, the workspace toolbar a lens fills, and the images copied
 // from it.
 
@@ -51,18 +51,18 @@ export const noteAttrs = (ids, bounds = 'fixed') => ({
   note: { created: '2026-11-05T00:00:00Z', pageAspect: 0.75, template: RULED, pages: ids.map((id) => ({ id, template: null, bounds })) },
 })
 
-/** A reading of a page as the host answers it. @param {string} pageId @param {Record<string, any>} [over] */
-export const reading = (pageId, over = {}) => ({
+/** A transcript of a page as the host answers it. @param {string} pageId @param {Record<string, any>} [over] */
+export const transcript = (pageId, over = {}) => ({
   pageId, state: 'none', key: '', blocks: [], running: false, available: true, unavailable: '', failed: '', ...over,
 })
 
-/** The blocks of a ready reading: a heading and a Mermaid diagram. */
-export const READ_BLOCKS = Object.freeze([
+/** The blocks of a ready transcript: a heading and a Mermaid diagram. */
+export const TRANSCRIPT_BLOCKS = Object.freeze([
   { id: 'b1', kind: 'prose', attrs: { id: 'b1', content: '# Kitchen\n\nTiles [?] by Friday.' } },
   { id: 'b2', kind: 'diagram', attrs: { id: 'b2', source: 'flowchart TD\n  A --> B', diagramType: 'mermaid', mode: 'render', status: 'COMPLETE' } },
 ])
 
-/** An InkContainerProvider over one block whose pages and readings the test answers. */
+/** An InkContainerProvider over one block whose pages and transcripts the test answers. */
 export class FakeInkProvider {
   /** @type {string[]} the provider calls, in order */ calls = []
   /** @type {Set<any>} */ feedListeners = new Set()
@@ -72,9 +72,9 @@ export class FakeInkProvider {
   /** @type {Array<{pageId: string, resolve: (a: any) => void}>} */ waiting = []
   /** @type {any} what openOnTablet resolves with, or settles as when it is a promise; an Error rejects */ opening = { outcome: 'opened', reason: '' }
   /** @type {string} what the container is called */ name = ''
-  /** @type {Map<string, any>} what loadReading answers, by page; a page with none is unread */ readings = new Map()
-  /** @type {Map<string, any>} what readPage answers, by page; a page with none answers its reading running */ reads = new Map()
-  /** @type {any} what newDocumentFromReading resolves with; an Error rejects */ made = 'doc-new'
+  /** @type {Map<string, any>} what loadTranscript answers, by page; a page with none is unread */ transcripts = new Map()
+  /** @type {Map<string, any>} what transcribePage answers, by page; a page with none answers its transcript running */ transcribes = new Map()
+  /** @type {any} what newDocumentFromTranscript resolves with; an Error rejects */ made = 'doc-new'
   /** @type {any} what refreshDescription settles as when it is a promise; an Error or a string rejects */ described = undefined
   /** @type {any} */ #block
 
@@ -129,21 +129,21 @@ export class FakeInkProvider {
   }
 
   /** @param {string} pageId */
-  loadReading(pageId) {
-    this.calls.push('loadReading ' + pageId)
-    return Promise.resolve(deepFrozen(structuredClone(this.readings.get(pageId) || reading(pageId))))
+  loadTranscript(pageId) {
+    this.calls.push('loadTranscript ' + pageId)
+    return Promise.resolve(deepFrozen(structuredClone(this.transcripts.get(pageId) || transcript(pageId))))
   }
 
   /** @param {string} pageId */
-  readPage(pageId) {
-    this.calls.push('readPage ' + pageId)
-    const answer = this.reads.get(pageId) || reading(pageId, { running: true })
+  transcribePage(pageId) {
+    this.calls.push('transcribePage ' + pageId)
+    const answer = this.transcribes.get(pageId) || transcript(pageId, { running: true })
     return Promise.resolve(deepFrozen(structuredClone(answer)))
   }
 
   /** @param {string} pageId */
-  newDocumentFromReading(pageId) {
-    this.calls.push('newDocumentFromReading ' + pageId)
+  newDocumentFromTranscript(pageId) {
+    this.calls.push('newDocumentFromTranscript ' + pageId)
     return Promise.resolve(this.made).then((m) => {
       if (m instanceof Error) throw m
       return m

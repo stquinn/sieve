@@ -1,5 +1,5 @@
 // @ts-check
-// Open in e-ink: asks the tablet a note came from to open the note at a page,
+// Open on device: asks the tablet a note came from to open the note at a page,
 // saying in an ActionStatus that it is asking and then what came of it. A second
 // ask while one is under way is the same ask. It is offered only for a note that
 // came from a tablet, which the note's block says.

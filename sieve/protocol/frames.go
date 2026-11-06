@@ -59,9 +59,9 @@ const (
 	TypeSetPresenting      = "set-presenting"
 	TypeInkPage            = "ink-page"
 	TypeInkOpenOnTablet    = "ink-open-on-tablet"
-	TypeInkReading         = "ink-reading"
-	TypeInkReadPage        = "ink-read-page"
-	TypeInkReadingDocument = "ink-reading-document"
+	TypeInkTranscript         = "ink-transcript"
+	TypeInkTranscribePage        = "ink-transcribe-page"
+	TypeInkTranscriptDocument = "ink-transcript-document"
 	TypeInkDescribe        = "ink-describe"
 
 	// Both channels, client → server. Which channel a feature-control frame
@@ -93,9 +93,9 @@ const (
 	TypeInkLivePage              = "ink-live-page"
 	TypeInkLogRestarted          = "ink-log-restarted"
 	TypeInkOpenOnTabletResult    = "ink-open-on-tablet-result"
-	TypeInkReadingContent        = "ink-reading-content"
-	TypeInkReadingChanged        = "ink-reading-changed"
-	TypeInkReadingDocumentResult = "ink-reading-document-result"
+	TypeInkTranscriptContent        = "ink-transcript-content"
+	TypeInkTranscriptChanged        = "ink-transcript-changed"
+	TypeInkTranscriptDocumentResult = "ink-transcript-document-result"
 	TypeInkDescribeResult        = "ink-describe-result"
 	TypeContainerNamed           = "container-named"
 

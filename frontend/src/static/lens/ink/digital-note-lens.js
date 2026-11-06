@@ -2,33 +2,33 @@
 // The reader's lens of a Digital Note, in two modes. In `page`, one page at a time
 // as the tablet drew it, the committed strokes and the stroke under the pen
 // arriving as they are written, and a whiteboard through a window the reader
-// moves and zooms. In `reading`, the page the reader is on read as text and
+// moves and zooms. In `transcript`, the page the reader is on as text and
 // diagrams, which the reader asks for and can take away as a new document.
 // The reader is never moved: what is shown changes only by the reader's hand, and
 // the page and the marks carry from one mode to the other. What it can do — open
-// the page on the tablet, copy it, read it, make a document of the reading, go
+// the page on the tablet, copy it, transcribe it, make a document of the transcript, go
 // to the Live view, have the note named and summarised again — is one list,
-// drawn as its context menu and, reading and naming aside, in the toolbar. It
+// drawn as its context menu and, transcript and naming aside, in the toolbar. It
 // writes nothing of the note.
 
 import { InkLens } from './ink-lens.js'
 import { SurfaceEvent } from '../abstract-surface.js'
 import { ActionList } from '../../renderers/action-list.js'
 import { PageSurface } from './page-surface.js'
-import { ReadingSurface } from './reading-surface.js'
+import { TranscriptSurface } from './transcript-surface.js'
 import { TabletOpener } from './tablet-opener.js'
 
 /** The modes a note is presented in; neither needs a seed. */
-const MODES = Object.freeze([PageSurface.MODE, ReadingSurface.MODE])
+const MODES = Object.freeze([PageSurface.MODE, TranscriptSurface.MODE])
 
 /** How the mode toggle is drawn in each mode: what pressing it shows. */
 const MODE_TOGGLE = Object.freeze({
-  [PageSurface.MODE]: Object.freeze({ text: 'Reading', title: 'Show the page read as text and diagrams' }),
-  [ReadingSurface.MODE]: Object.freeze({ text: 'Page', title: 'Show the page as it was written' }),
+  [PageSurface.MODE]: Object.freeze({ text: 'Transcript', title: 'Show the transcript of the page as text and diagrams' }),
+  [TranscriptSurface.MODE]: Object.freeze({ text: 'Page', title: 'Show the page as it was written' }),
 })
 
 const PAGE_ONLY = Object.freeze([PageSurface.MODE])
-const READING_ONLY = Object.freeze([ReadingSurface.MODE])
+const TRANSCRIPT_ONLY = Object.freeze([TranscriptSurface.MODE])
 
 /** The page each page key turns by. */
 const PAGE_KEYS = Object.freeze({ PageUp: -1, PageDown: 1 })
@@ -62,7 +62,7 @@ export class DigitalNoteLens extends InkLens {
    *  @protected @returns {string} */
   get _defaultMode() {
     const view = /** @type {{mode?: string}|null} */ (this._handedViewState)
-    return view && view.mode === ReadingSurface.MODE ? ReadingSurface.MODE : PageSurface.MODE
+    return view && view.mode === TranscriptSurface.MODE ? TranscriptSurface.MODE : PageSurface.MODE
   }
 
   /** @protected @returns {string} */
@@ -77,11 +77,11 @@ export class DigitalNoteLens extends InkLens {
   /** @override @protected @returns {ActionList} */
   _declareActions() {
     const page = () => (this.surface instanceof PageSurface ? this.surface : null)
-    const reading = () => (this.surface instanceof ReadingSurface ? this.surface : null)
+    const transcript = () => (this.surface instanceof TranscriptSurface ? this.surface : null)
     const opener = this.#opener
     return new ActionList([
       {
-        id: 'open-on-tablet', label: 'Open in e-ink', title: 'Open this page on the tablet the note was written on', modes: MODES,
+        id: 'open-on-tablet', label: 'Open on device', title: 'Open this page on the tablet the note was written on', modes: MODES,
         applies: () => opener.offered, enabled: () => !opener.opening, run: () => this.openOnTablet(),
       },
       {
@@ -89,12 +89,12 @@ export class DigitalNoteLens extends InkLens {
         run: () => page()?.copyPage(),
       },
       {
-        id: 'read-page', label: () => reading()?.readLabel || 'Read this page', title: 'Read this page as text and diagrams', modes: MODES,
-        applies: () => (reading() ? reading()?.readLabel !== '' : page()?.shownPage != null), menuOnly: true, run: () => this.readThisPage(),
+        id: 'transcribe-page', label: () => transcript()?.transcribeLabel || 'Transcribe this page', title: 'Transcribe this page as text and diagrams', modes: MODES,
+        applies: () => (transcript() ? transcript()?.transcribeLabel !== '' : page()?.shownPage != null), menuOnly: true, run: () => this.transcribeThisPage(),
       },
       {
-        id: 'new-document', label: 'New document', title: 'Make an ordinary document from this reading', modes: READING_ONLY,
-        applies: () => !!reading()?.documentOffered, enabled: () => !reading()?.making, run: () => reading()?.newDocument(),
+        id: 'new-document', label: 'New document', title: 'Make an ordinary document from this transcript', modes: TRANSCRIPT_ONLY,
+        applies: () => !!transcript()?.documentOffered, enabled: () => !transcript()?.making, run: () => transcript()?.newDocument(),
       },
       {
         id: 'open-live', label: 'Go to Live', short: 'Live', className: 'tb-live', modes: PAGE_ONLY,
@@ -115,22 +115,22 @@ export class DigitalNoteLens extends InkLens {
    */
   openOnTablet() {
     const surface = this.surface
-    const shown = surface instanceof PageSurface || surface instanceof ReadingSurface ? surface.shownPage : null
+    const shown = surface instanceof PageSurface || surface instanceof TranscriptSurface ? surface.shownPage : null
     return this.#opener.open(shown)
   }
 
   /**
-   * Reads the page the reader is on: in the reading, as its read button does;
-   * on the page, by showing the reading, which has the page read when it has
-   * no reading yet.
+   * Transcribes the page the reader is on: in the transcript, as its transcribe button does;
+   * on the page, by showing the transcript, which has the page transcribed when it has
+   * no transcript yet.
    * @returns {Promise<void>}
    */
-  readThisPage() {
-    if (this.surface instanceof ReadingSurface) return this.surface.readPage()
-    return this.setMode(ReadingSurface.MODE).then((changed) => {
+  transcribeThisPage() {
+    if (this.surface instanceof TranscriptSurface) return this.surface.transcribePage()
+    return this.setMode(TranscriptSurface.MODE).then((changed) => {
       const surface = this.surface
-      if (!(surface instanceof ReadingSurface)) return
-      surface.readIfUnread()
+      if (!(surface instanceof TranscriptSurface)) return
+      surface.transcribeIfUntranscribed()
       if (changed) this.focus()
     })
   }
@@ -162,7 +162,7 @@ export class DigitalNoteLens extends InkLens {
   /** @override @protected @param {string} mode
    *  @returns {import('../abstract-editor.js').ModeToggleFace} */
   _modeToggleFace(mode) {
-    return mode === ReadingSurface.MODE ? MODE_TOGGLE[ReadingSurface.MODE] : MODE_TOGGLE[PageSurface.MODE]
+    return mode === TranscriptSurface.MODE ? MODE_TOGGLE[TranscriptSurface.MODE] : MODE_TOGGLE[PageSurface.MODE]
   }
 
   /**
@@ -180,7 +180,7 @@ export class DigitalNoteLens extends InkLens {
       return true
     }
     const surface = this.surface
-    if (!(surface instanceof PageSurface) && !(surface instanceof ReadingSurface)) return false
+    if (!(surface instanceof PageSurface) && !(surface instanceof TranscriptSurface)) return false
     if (event.altKey || event.ctrlKey || event.metaKey) return false
     const key = event.key
     if (surface instanceof PageSurface) {
@@ -210,11 +210,11 @@ export class DigitalNoteLens extends InkLens {
   /**
    * @protected
    * @param {string} mode
-   * @returns {PageSurface|ReadingSurface}
+   * @returns {PageSurface|TranscriptSurface}
    */
   _createSurface(mode) {
     const view = /** @type {import('./page-surface.js').ReaderView|null} */ (this._handedViewState)
-    if (mode === ReadingSurface.MODE) return new ReadingSurface(this.provider, this, view)
+    if (mode === TranscriptSurface.MODE) return new TranscriptSurface(this.provider, this, view)
     return new PageSurface(this.provider, this, view)
   }
 }

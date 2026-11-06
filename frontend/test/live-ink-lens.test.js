@@ -283,7 +283,7 @@ describe('LiveInkLens', () => {
     expect([strokeEls(root, 'n1').length, strokeEls(root, 's-p1').length, provider.loads]).toEqual([1, 0, 2])
   })
 
-  it("Copy page copies the page as the tablet's window frames it, and Open in e-ink is not offered", async () => {
+  it("Copy page copies the page as the tablet's window frames it, and Open on device is not offered", async () => {
     const { provider, bar } = await whiteboard()
     const copied = copiedImages()
     provider.emit({ type: InkFeed.LIVE, records: [view(2, 3)] })

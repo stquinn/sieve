@@ -850,9 +850,9 @@ describe('the notebook and Live menus', () => {
   const settle = () => new Promise((r) => setTimeout(r, 0))
 
   it.each([
-    ['a tree row', { type: 'notebook', id: 'n1', name: 'Ideas', isTab: false }, ['Open', 'Open in e-ink', 'Refresh name and summary']],
+    ['a tree row', { type: 'notebook', id: 'n1', name: 'Ideas', isTab: false }, ['Open', 'Open on device', 'Refresh name and summary']],
     ['a tab', { type: 'notebook', id: 'n1', name: 'Ideas', isTab: true },
-      ['Open in e-ink', 'Refresh name and summary', 'Close Tab', 'Close Others', 'Close All Tabs']],
+      ['Open on device', 'Refresh name and summary', 'Close Tab', 'Close Others', 'Close All Tabs']],
     ['the Live row', { type: 'inkLive', id: 'v1', name: 'Live', isTab: false }, ['Open this note']],
     ['the Live tab', { type: 'inkLive', id: 'v1', name: 'Live', isTab: true }, ['Open this note', 'Close Tab', 'Close Others', 'Close All Tabs']],
   ])('%s offers its own items and nothing folder-like', (_, context, want) => {
@@ -872,9 +872,9 @@ describe('the notebook and Live menus', () => {
     expect(said.at(-1)?.detail).toEqual({ text: 'No AI is configured in Settings, so nothing can name this notebook.', error: true })
   })
 
-  it('Open in e-ink posts the open-on-tablet route and says what came of it', async () => {
+  it('Open on device posts the open-on-tablet route and says what came of it', async () => {
     fetched.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ outcome: 'no-tablet', reason: '', message: 'No tablet connected' }) })
-    itemNamed(openOn({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: true }), 'Open in e-ink').click()
+    itemNamed(openOn({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: true }), 'Open on device').click()
     await settle()
     expect(fetched).toHaveBeenCalledWith('/api/ink/notes/n1/open-on-tablet', { method: 'POST' })
     expect(said.at(-1)?.detail).toEqual({ text: 'No tablet connected', error: true })

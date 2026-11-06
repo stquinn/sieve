@@ -117,9 +117,9 @@ func NewWsHandler(sp *sieve.ServiceProvider, broadcast *WorkspaceBroadcast, toke
 		protocol.TypeSetPresenting:      h.handleSetPresenting,
 		protocol.TypeInkPage:            h.handleInkPage,
 		protocol.TypeInkOpenOnTablet:    h.handleInkOpenOnTablet,
-		protocol.TypeInkReading:         h.handleInkReading,
-		protocol.TypeInkReadPage:        h.handleInkReadPage,
-		protocol.TypeInkReadingDocument: h.handleInkReadingDocument,
+		protocol.TypeInkTranscript:         h.handleInkTranscript,
+		protocol.TypeInkTranscribePage:        h.handleInkTranscribePage,
+		protocol.TypeInkTranscriptDocument: h.handleInkTranscriptDocument,
 		protocol.TypeInkDescribe:        h.handleInkDescribe,
 	}
 	h.workspaceFrames = map[string]frameHandler{
@@ -650,16 +650,16 @@ func (h *WsHandler) inkStream() *inkStream {
 	h.inkMu.Lock()
 	defer h.inkMu.Unlock()
 	var svc *ink.InkService
-	var readings *ink.PageReadings
+	var transcripts *ink.PageTranscripts
 	if h.ServiceProvider != nil {
-		svc, readings = h.ServiceProvider.Ink, h.ServiceProvider.InkReadings
+		svc, transcripts = h.ServiceProvider.Ink, h.ServiceProvider.InkTranscripts
 	}
-	if h.ink != nil && (h.ink.svc != svc || h.ink.readings != readings) {
+	if h.ink != nil && (h.ink.svc != svc || h.ink.transcripts != transcripts) {
 		h.ink.close()
 		h.ink = nil
 	}
 	if h.ink == nil && svc != nil {
-		h.ink = newInkStream(svc, readings, h.sendTo)
+		h.ink = newInkStream(svc, transcripts, h.sendTo)
 	}
 	return h.ink
 }
@@ -713,64 +713,64 @@ func (h *WsHandler) handleInkDescribe(f inboundFrame) {
 	go stream.describe(h.ServiceProvider.InkNamer, f.uuid, msg, f.reply)
 }
 
-// handleInkReading answers with what is known of the reading of a page of this channel's Digital
+// handleInkTranscript answers with what is known of the transcript of a page of this channel's Digital
 // Note.
-func (h *WsHandler) handleInkReading(f inboundFrame) {
-	var msg protocol.InkReadingFrame
+func (h *WsHandler) handleInkTranscript(f inboundFrame) {
+	var msg protocol.InkTranscriptFrame
 	if err := json.Unmarshal(f.raw, &msg); err != nil {
-		h.refuse(f, protocol.TypeInkReading, err)
+		h.refuse(f, protocol.TypeInkTranscript, err)
 		return
 	}
-	h.answerReading(f, msg.OpID, msg.PageID, func(s *inkStream, page link.ID) (ink.Reading, error) {
-		return s.readings.Reading(f.uuid, page)
+	h.answerTranscript(f, msg.OpID, msg.PageID, func(s *inkStream, page link.ID) (ink.Transcript, error) {
+		return s.transcripts.Transcript(f.uuid, page)
 	})
 }
 
-// handleInkReadPage starts reading a page of this channel's Digital Note and answers with what is
-// then known of its reading.
-func (h *WsHandler) handleInkReadPage(f inboundFrame) {
-	var msg protocol.InkReadPageFrame
+// handleInkTranscribePage starts transcribing a page of this channel's Digital Note and answers with what is
+// then known of its transcript.
+func (h *WsHandler) handleInkTranscribePage(f inboundFrame) {
+	var msg protocol.InkTranscribePageFrame
 	if err := json.Unmarshal(f.raw, &msg); err != nil {
-		h.refuse(f, protocol.TypeInkReadPage, err)
+		h.refuse(f, protocol.TypeInkTranscribePage, err)
 		return
 	}
-	h.answerReading(f, msg.OpID, msg.PageID, func(s *inkStream, page link.ID) (ink.Reading, error) {
-		return s.readings.Read(f.uuid, page)
+	h.answerTranscript(f, msg.OpID, msg.PageID, func(s *inkStream, page link.ID) (ink.Transcript, error) {
+		return s.transcripts.Transcribe(f.uuid, page)
 	})
 }
 
-// answerReading answers an ink-reading or ink-read-page for pageID with what ask says of its
-// reading, or refuses it.
-func (h *WsHandler) answerReading(f inboundFrame, opID, pageID string, ask func(*inkStream, link.ID) (ink.Reading, error)) {
+// answerTranscript answers an ink-transcript or ink-transcribe-page for pageID with what ask says of its
+// transcript, or refuses it.
+func (h *WsHandler) answerTranscript(f inboundFrame, opID, pageID string, ask func(*inkStream, link.ID) (ink.Transcript, error)) {
 	stream := h.inkStream()
-	if stream == nil || stream.readings == nil {
-		f.reply(protocol.NewInkReadingRefusedFrame(opID, pageID, errors.New("ink is unavailable")))
+	if stream == nil || stream.transcripts == nil {
+		f.reply(protocol.NewInkTranscriptRefusedFrame(opID, pageID, errors.New("ink is unavailable")))
 		return
 	}
 	page, err := link.ParseID(pageID)
 	if err != nil {
-		f.reply(protocol.NewInkReadingRefusedFrame(opID, pageID, fmt.Errorf("%w: page %q: %v", ink.ErrNoSuchPage, pageID, err)))
+		f.reply(protocol.NewInkTranscriptRefusedFrame(opID, pageID, fmt.Errorf("%w: page %q: %v", ink.ErrNoSuchPage, pageID, err)))
 		return
 	}
-	reading, err := ask(stream, page)
+	transcript, err := ask(stream, page)
 	if err != nil {
-		f.reply(protocol.NewInkReadingRefusedFrame(opID, pageID, err))
+		f.reply(protocol.NewInkTranscriptRefusedFrame(opID, pageID, err))
 		return
 	}
-	f.reply(protocol.NewInkReadingContentFrame(opID, pageID, stream.readingOf(reading)))
+	f.reply(protocol.NewInkTranscriptContentFrame(opID, pageID, stream.transcriptOf(transcript)))
 }
 
-// handleInkReadingDocument makes a new document from the reading of a page of this channel's
+// handleInkTranscriptDocument makes a new document from the transcript of a page of this channel's
 // Digital Note, named for the note and the page, and answers with its uuid.
-func (h *WsHandler) handleInkReadingDocument(f inboundFrame) {
-	var msg protocol.InkReadingDocumentFrame
+func (h *WsHandler) handleInkTranscriptDocument(f inboundFrame) {
+	var msg protocol.InkTranscriptDocumentFrame
 	if err := json.Unmarshal(f.raw, &msg); err != nil {
-		h.refuse(f, protocol.TypeInkReadingDocument, err)
+		h.refuse(f, protocol.TypeInkTranscriptDocument, err)
 		return
 	}
-	fail := func(err error) { f.reply(protocol.NewInkReadingDocumentFailedFrame(msg.OpID, err)) }
+	fail := func(err error) { f.reply(protocol.NewInkTranscriptDocumentFailedFrame(msg.OpID, err)) }
 	stream := h.inkStream()
-	if stream == nil || stream.readings == nil {
+	if stream == nil || stream.transcripts == nil {
 		fail(errors.New("ink is unavailable"))
 		return
 	}
@@ -779,18 +779,18 @@ func (h *WsHandler) handleInkReadingDocument(f inboundFrame) {
 		fail(fmt.Errorf("%w: page %q: %v", ink.ErrNoSuchPage, msg.PageID, err))
 		return
 	}
-	name, blocks, err := stream.readings.Copy(f.uuid, page)
+	name, blocks, err := stream.transcripts.Copy(f.uuid, page)
 	if err != nil {
 		fail(err)
 		return
 	}
 	uuid, err := h.ServiceProvider.Editor.NewDocument(name, f.uuid, blocks)
 	if err != nil {
-		logger.Error("ink: making a document from a page's reading", "container", f.uuid, "page", msg.PageID, "err", err.Error())
+		logger.Error("ink: making a document from a page's transcript", "container", f.uuid, "page", msg.PageID, "err", err.Error())
 		fail(err)
 		return
 	}
-	f.reply(protocol.NewInkReadingDocumentResultFrame(msg.OpID, uuid))
+	f.reply(protocol.NewInkTranscriptDocumentResultFrame(msg.OpID, uuid))
 }
 
 // handleSetPresenting records Presentation Mode on the session tab and answers

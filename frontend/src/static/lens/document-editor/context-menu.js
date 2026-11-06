@@ -962,7 +962,7 @@ import { selectNextScope } from './interaction-policy.js'
   function notebookActions(id, name) {
     var called = name || 'the notebook'
     return [
-      { icon: IC.externalLink, label: 'Open in e-ink', action: function () {
+      { icon: IC.externalLink, label: 'Open on device', action: function () {
         sayStatus('Opening ' + called + ' on the tablet…')
         notebookRequest('/api/ink/notes/' + id + '/open-on-tablet')
           .then(function (res) { return res.json() })
