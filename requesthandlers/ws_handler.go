@@ -1263,10 +1263,22 @@ func (h *WsHandler) handleMentionQuery(f inboundFrame) {
 	}
 
 	var candidates []domain.Candidate
-	if h.ServiceProvider.Nodes != nil {
-		candidates = h.ServiceProvider.Nodes.Search(msg.Q, limit)
+	if h.ServiceProvider.Search != nil && strings.TrimSpace(msg.Q) != "" {
+		candidates = h.ServiceProvider.Search.Search(h.mentionCriteria(msg.Q, limit))
 	}
 	h.replyTo(f.conn, protocol.NewMentionResultFrame(msg.CorrelationID, candidates))
+}
+
+// mentionCriteria is what the `@` picker asks for: anything durable whose name,
+// summary, tags or content hold the query. A reference outlives the moment it
+// was made, so it is never offered what has not proven durable.
+func (h *WsHandler) mentionCriteria(q string, limit int) domain.SearchCriteria {
+	return domain.SearchCriteria{
+		Terms:       q,
+		Fields:      domain.SearchFields{domain.SearchName, domain.SearchSummary, domain.SearchTags, domain.SearchContent},
+		DurableOnly: true,
+		Limit:       limit,
+	}
 }
 
 // handleMentionResolve answers "where does this coordinate open?" from the

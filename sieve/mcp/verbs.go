@@ -31,8 +31,8 @@ const (
 
 // SearchInput is the argument set for search.
 type SearchInput struct {
-	Query  string `json:"query" jsonschema:"the search text; matched case-insensitively against note titles, summaries and tags"`
-	Folder string `json:"folder,omitempty" jsonschema:"optional folder path to restrict results (e.g. projects/go)"`
+	Query  string `json:"query" jsonschema:"the search text; matched case-insensitively against names, summaries and tags, never bodies; empty lists everything"`
+	Folder string `json:"folder,omitempty" jsonschema:"optional folder path to restrict results to filed notes in it or beneath it (e.g. projects/go)"`
 	Limit  int    `json:"limit,omitempty" jsonschema:"maximum results to return (default 20, max 50)"`
 }
 
@@ -55,6 +55,7 @@ type FetchPageInput struct {
 // NoteSummary is one search hit: metadata only, never a body.
 type NoteSummary struct {
 	UUID     string   `json:"uuid"`
+	Kind     string   `json:"kind"` // "note" for a filed note, "buffer" for an unfiled one
 	Title    string   `json:"title"`
 	Folder   string   `json:"folder"`
 	Tags     []string `json:"tags"`
@@ -121,21 +122,10 @@ type Facets struct {
 
 // ── Verb handlers (transport-agnostic methods over the services) ──────────────
 
-// search scans the library, naive-substring-matches the query against
-// title/summary/tags, filters by folder, and caps at limit. Metadata only.
-//
-// V1 SCOPE / KNOWN LIMITATIONS (accepted for now; long-term not ideal):
-//   - METADATA ONLY, never body — search leans entirely on AI-generated
-//     summaries/tags, so a note whose body says the thing but whose metadata
-//     doesn't will not surface. Bodies come only from the two body-bearing
-//     verbs (get_note, get_by_uri), never from a search.
-//   - FILED NOTES ONLY (LibraryCategory) — buffers are excluded, and they carry
-//     no metadata anyway, so they'd be unfindable by a metadata match even if
-//     included. The AI can still reach the active buffer as direct context and
-//     read buffer files via the library --add-dir grant.
-//
-// The long-term fix for both is a real full-text index (#37): body-aware search
-// that can also span buffers, replacing this metadata-only, notes-only scan.
+// search asks the search service for everything whose name, summary or tags
+// hold the query, in the folder given, capped at limit. Metadata only: bodies
+// come only from the two body-bearing verbs (get_note, get_by_uri), never from a
+// search.
 func (s *Server) search(_ context.Context, _ *mcpsdk.CallToolRequest, in SearchInput) (*mcpsdk.CallToolResult, SearchResults, error) {
 	limit := in.Limit
 	if limit <= 0 {
@@ -144,28 +134,23 @@ func (s *Server) search(_ context.Context, _ *mcpsdk.CallToolRequest, in SearchI
 	if limit > searchMaxLimit {
 		limit = searchMaxLimit
 	}
-
-	notes, err := s.scan()
-	if err != nil {
-		return nil, SearchResults{}, err
+	if s.finder == nil {
+		return nil, SearchResults{}, fmt.Errorf("search: no search service is wired")
 	}
-
-	q := strings.ToLower(strings.TrimSpace(in.Query))
-	folder := strings.TrimSpace(in.Folder)
-
 	out := SearchResults{Results: []NoteSummary{}}
-	for _, n := range notes {
-		if folder != "" && !s.folderMatchesReq(n.folder, folder) {
-			continue
-		}
-		if q != "" && !s.matches(n, q) {
-			continue
-		}
-		if len(out.Results) >= limit {
-			out.Truncated = true
-			break
-		}
-		out.Results = append(out.Results, s.summaryOf(n))
+	folder := strings.TrimSpace(in.Folder)
+	// One more than the limit is asked for, so a cut can be told from an exact fit.
+	hits := s.finder.Search(domain.SearchCriteria{
+		Terms:  in.Query,
+		Fields: domain.SearchFields{domain.SearchName, domain.SearchSummary, domain.SearchTags},
+		Folder: folder,
+		Limit:  limit + 1,
+	})
+	if len(hits) > limit {
+		hits, out.Truncated = hits[:limit], true
+	}
+	for _, hit := range hits {
+		out.Results = append(out.Results, s.summaryOf(hit))
 	}
 	logger.Info("sieve mcp: search", "query", in.Query, "folder", folder, "results", len(out.Results), "truncated", out.Truncated)
 	return nil, out, nil
@@ -442,33 +427,15 @@ func (s *Server) collect(entries []services.NoteEntry, out *[]scannedNote) {
 	}
 }
 
-// matches reports whether q (already lowercased) substring-matches the note's
-// title, summary or any tag.
-func (s *Server) matches(n scannedNote, q string) bool {
-	meta := n.doc.Meta()
-	if strings.Contains(strings.ToLower(meta.DisplayName()), q) {
-		return true
-	}
-	if sum := meta.Summary(); sum != nil && strings.Contains(strings.ToLower(*sum), q) {
-		return true
-	}
-	for _, t := range meta.Tags() {
-		if strings.Contains(strings.ToLower(t), q) {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *Server) summaryOf(n scannedNote) NoteSummary {
-	meta := n.doc.Meta()
+func (s *Server) summaryOf(hit domain.Candidate) NoteSummary {
 	return NoteSummary{
-		UUID:     n.uuid,
-		Title:    meta.DisplayName(),
-		Folder:   n.folder,
-		Tags:     s.tagsOrEmpty(meta.Tags()),
-		Summary:  s.strVal(meta.Summary()),
-		Modified: s.timeStr(meta.Modified()),
+		UUID:     hit.Container(),
+		Kind:     hit.Kind,
+		Title:    hit.Title,
+		Folder:   hit.Folder,
+		Tags:     s.tagsOrEmpty(hit.Tags),
+		Summary:  hit.Summary,
+		Modified: hit.Modified,
 	}
 }
 
@@ -501,14 +468,6 @@ func (s *Server) folderOf(doc domain.Document) string {
 		return dir
 	}
 	return ""
-}
-
-// folderMatches reports whether noteFolder is the requested folder or nested
-// beneath it (case-insensitive).
-func (s *Server) folderMatchesReq(noteFolder, want string) bool {
-	nf := strings.ToLower(noteFolder)
-	w := strings.ToLower(strings.Trim(want, "/"))
-	return nf == w || strings.HasPrefix(nf, w+"/")
 }
 
 func (s *Server) strVal(p *string) string {

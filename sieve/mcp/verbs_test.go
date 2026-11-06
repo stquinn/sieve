@@ -64,7 +64,8 @@ func newTestServerWithStore(t *testing.T) (*Server, *services.DocumentService, *
 	block.ResetRegistry()
 	block.RegisterProcessor(&processors.ProseProcessor{})
 	t.Cleanup(block.ResetRegistry)
-	return NewServer(ds, editor.NewRouter(editor.NewNotesSource(ds)), services.NewLinkPreviewService()), ds, fs
+	router := editor.NewRouter(editor.NewNotesSource(ds))
+	return NewServer(ds, router, router, services.NewLinkPreviewService()), ds, fs
 }
 
 // seedNote creates a buffer, stamps metadata, and files it into folder.
@@ -97,64 +98,88 @@ func seedNote(t *testing.T, ds *services.DocumentService, title, folder, filenam
 	return filed.UUID()
 }
 
-func TestSearch_MatchesMetadataNeverBodies(t *testing.T) {
-	s := newTestServer(t)
-
-	// Title match.
-	_, res, err := s.search(context.Background(), nil, SearchInput{Query: "concurrency"})
+// search finds filed notes and buffers by name, summary and tags — never by body
+// — in its folder and under its limit.
+func TestSearch_FindsByNameSummaryAndTagsInAFolderUnderALimit(t *testing.T) {
+	s, ds := newTestServerWithDocs(t)
+	seedNote(t, ds, "Go Concurrency", "programming", "go-concurrency",
+		[]string{"go", "concurrency"}, "goroutines and channels",
+		"# Go Concurrency\n\nUse channels for coordination.")
+	seedNote(t, ds, "Python Tips", "programming", "python-tips",
+		[]string{"python"}, "list comprehensions",
+		"# Python Tips\n\nComprehensions are neat.")
+	seedNote(t, ds, "Grocery List", "", "grocery-list",
+		[]string{"personal"}, "weekly shop",
+		"# Grocery List\n\nmilk, eggs")
+	buf, err := ds.New()
 	if err != nil {
-		t.Fatalf("search: %v", err)
+		t.Fatalf("New buffer: %v", err)
 	}
-	if len(res.Results) != 1 || res.Results[0].Title != "Go Concurrency" {
-		t.Fatalf("query 'concurrency' = %+v, want the Go note", res.Results)
-	}
-	hit := res.Results[0]
-	if hit.Folder != "programming" {
-		t.Errorf("folder = %q, want programming", hit.Folder)
-	}
-	if hit.Summary != "goroutines and channels" {
-		t.Errorf("summary = %q", hit.Summary)
-	}
-	if len(hit.Tags) != 2 {
-		t.Errorf("tags = %v, want 2", hit.Tags)
-	}
-
-	// Tag match (query text appears only in a tag).
-	_, res, err = s.search(context.Background(), nil, SearchInput{Query: "python"})
-	if err != nil {
-		t.Fatalf("search python: %v", err)
-	}
-	if len(res.Results) != 1 || res.Results[0].Title != "Python Tips" {
-		t.Fatalf("query 'python' = %+v", res.Results)
+	buf.Meta().SetDisplayName("Scratch Channels")
+	buf.SetBody([]byte("unfiled thoughts about coordination"))
+	if _, err := ds.Save(buf); err != nil {
+		t.Fatalf("Save buffer: %v", err)
 	}
 
-	// Body-only text must NOT match — search is metadata-only.
-	_, res, err = s.search(context.Background(), nil, SearchInput{Query: "coordination"})
-	if err != nil {
-		t.Fatalf("search coordination: %v", err)
-	}
-	if len(res.Results) != 0 {
-		t.Errorf("body word 'coordination' matched %+v; search must be metadata-only", res.Results)
+	for _, tc := range []struct {
+		name      string
+		in        SearchInput
+		want      []string
+		truncated bool
+	}{
+		{"name", SearchInput{Query: "concurrency"}, []string{"Go Concurrency"}, false},
+		{"summary", SearchInput{Query: "comprehensions"}, []string{"Python Tips"}, false},
+		{"tags", SearchInput{Query: "personal"}, []string{"Grocery List"}, false},
+		{"never a body", SearchInput{Query: "coordination"}, nil, false},
+		{"a buffer by its name", SearchInput{Query: "channels"}, []string{"Go Concurrency", "Scratch Channels"}, false},
+		{"empty lists everything", SearchInput{}, []string{"Go Concurrency", "Python Tips", "Grocery List", "Scratch Channels"}, false},
+		{"folder", SearchInput{Folder: "programming"}, []string{"Go Concurrency", "Python Tips"}, false},
+		{"folder leaves out buffers", SearchInput{Query: "channels", Folder: "programming"}, []string{"Go Concurrency"}, false},
+		{"limit truncates", SearchInput{Limit: 1}, []string{"Go Concurrency"}, true},
+		{"an exact fit is not truncated", SearchInput{Limit: 4}, []string{"Go Concurrency", "Python Tips", "Grocery List", "Scratch Channels"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, res, err := s.search(context.Background(), nil, tc.in)
+			if err != nil {
+				t.Fatalf("search: %v", err)
+			}
+			var got []string
+			for _, r := range res.Results {
+				got = append(got, r.Title)
+			}
+			if strings.Join(got, "|") != strings.Join(tc.want, "|") || res.Truncated != tc.truncated {
+				t.Errorf("search(%+v) = %q truncated=%v, want %q truncated=%v", tc.in, got, res.Truncated, tc.want, tc.truncated)
+			}
+		})
 	}
 }
 
-func TestSearch_FolderFilterAndLimit(t *testing.T) {
-	s := newTestServer(t)
-
-	_, res, err := s.search(context.Background(), nil, SearchInput{Folder: "programming"})
+// A hit is metadata the model can act on: the uuid get_note takes, the kind, and
+// the note's own folder, tags, summary and modified time.
+func TestSearch_AHitIsTheTargetsMetadata(t *testing.T) {
+	s, ds := newTestServerWithDocs(t)
+	uuid := seedNote(t, ds, "Go Concurrency", "programming", "go-concurrency",
+		[]string{"go", "concurrency"}, "goroutines and channels", "# Go")
+	buf, err := ds.New()
 	if err != nil {
-		t.Fatalf("search: %v", err)
+		t.Fatalf("New buffer: %v", err)
 	}
-	if len(res.Results) != 2 {
-		t.Fatalf("folder=programming empty query = %d results, want 2", len(res.Results))
+	buf.Meta().SetDisplayName("Go scratch")
+	if _, err := ds.Save(buf); err != nil {
+		t.Fatalf("Save buffer: %v", err)
 	}
 
-	_, res, err = s.search(context.Background(), nil, SearchInput{Limit: 1})
-	if err != nil {
-		t.Fatalf("search limit: %v", err)
+	_, res, err := s.search(context.Background(), nil, SearchInput{Query: "go"})
+	if err != nil || len(res.Results) != 2 {
+		t.Fatalf("search = %+v, %v; want the note and the buffer", res, err)
 	}
-	if len(res.Results) != 1 || !res.Truncated {
-		t.Errorf("limit=1 = %d results truncated=%v, want 1 truncated", len(res.Results), res.Truncated)
+	note, scratch := res.Results[0], res.Results[1]
+	if note.UUID != uuid || note.Kind != "note" || note.Folder != "programming" ||
+		strings.Join(note.Tags, ",") != "go,concurrency" || note.Summary != "goroutines and channels" || note.Modified == "" {
+		t.Errorf("note hit = %+v", note)
+	}
+	if scratch.UUID != buf.UUID() || scratch.Kind != "buffer" || scratch.Folder != "" || scratch.Tags == nil || len(scratch.Tags) != 0 {
+		t.Errorf("buffer hit = %+v, want kind buffer, no folder and an empty tag list", scratch)
 	}
 }
 

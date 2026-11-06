@@ -5,6 +5,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/url"
+	"path"
+	"path/filepath"
+	"sieve/ident"
 	"sieve/logger"
 	"sieve/sieve/domain"
 	"sieve/store"
@@ -535,72 +538,144 @@ func (ds *DocumentService) Count() int {
 	return len(flattenDocs(storables))
 }
 
-// Search performs a full-text and frontmatter search over the LibraryCategory.
-// Backed by the Store — no direct filesystem access.
-func (ds *DocumentService) Search(query string) ([]SearchResult, error) {
-	if query == "" {
-		return nil, nil
-	}
-	storables, err := ds.store.List(domain.LibraryCategory, "")
-	if err != nil {
-		return nil, err
-	}
+// searchShelves are the documents Search reads, in the order it reads them: the
+// filed notes, durable and filed in folders, then the buffers of the working
+// copy, which are neither.
+var searchShelves = [...]struct {
+	kind     domain.DocumentKind
+	category store.Category
+	durable  bool
+}{
+	{domain.KindNote, domain.LibraryCategory, true},
+	{domain.KindBuffer, domain.WorkingCopy, false},
+}
 
-	queryLower := strings.ToLower(query)
-	var results []SearchResult
-
-	for _, ms := range flattenDocs(storables) {
-
-		meta := ms.Meta()
-		title := domain.NewDocumentMeta(ms.Meta(), ms.SetMeta).DisplayName()
-		body := string(ms.Body())
-		bodyLower := strings.ToLower(body)
-
-		// Title matching is what makes a note findable by NAME (the @-mention
-		// picker is name-keyed): without it "Auth Design" only surfaced when that
-		// string also happened to appear in the body.
-		isTitleMatch := strings.Contains(strings.ToLower(title), queryLower)
-		isTagMatch := strings.Contains(strings.ToLower(meta["tags"]), queryLower)
-		isSummaryMatch := strings.Contains(strings.ToLower(meta["summary"]), queryLower)
-		isBodyMatch := strings.Contains(bodyLower, queryLower)
-
-		if !isTitleMatch && !isTagMatch && !isSummaryMatch && !isBodyMatch {
+// Search answers a search over every document the store holds, in store scan
+// order, not relevance order: a filed note is matched on its name, summary,
+// tags and content, a buffer on its name and content only, since it has no
+// summary or tags yet. A document with no uuid has no address and is never a
+// hit.
+func (ds *DocumentService) Search(c domain.SearchCriteria) ([]domain.Candidate, error) {
+	var out []domain.Candidate
+	for _, shelf := range searchShelves {
+		if !c.Includes(string(shelf.kind), shelf.durable) {
 			continue
 		}
-
-		var snippet string
-		if isBodyMatch {
-			idx := strings.Index(bodyLower, queryLower)
-			start := max(0, idx-30)
-			end := min(len(body), idx+len(query)+30)
-			snippet = strings.ReplaceAll(body[start:end], "\n", " ")
-			if start > 0 {
-				snippet = "..." + snippet
-			}
-			if end < len(body) {
-				snippet = snippet + "..."
-			}
-		} else if isSummaryMatch {
-			sn := metaString(meta, "summary")
-			if len(sn) > 60 {
-				sn = sn[:60] + "..."
-			}
-			snippet = sn
+		storables, err := ds.store.List(shelf.category, "")
+		if err != nil {
+			return nil, fmt.Errorf("document: search %s: %w", shelf.category.Key, err)
 		}
-
-		results = append(results, SearchResult{
-			ID:             meta["uuid"],
-			Path:           ms.ExternalRef(),
-			Name:           title,
-			IsTitleMatch:   isTitleMatch,
-			IsTagMatch:     isTagMatch,
-			IsSummaryMatch: isSummaryMatch,
-			IsBodyMatch:    isBodyMatch,
-			Snippet:        strings.TrimSpace(snippet),
-			Summary:        strings.TrimSpace(metaString(meta, "summary")),
-		})
+		for _, ms := range flattenDocs(storables) {
+			if c.Full(len(out)) {
+				return out, nil
+			}
+			if hit, ok := ds.searchHit(c, shelf.kind, ms); ok {
+				out = append(out, hit)
+			}
+		}
 	}
-	return results, nil
+	return out, nil
+}
+
+// searchHit matches one document against c, answering the candidate it is when
+// it is a hit.
+func (ds *DocumentService) searchHit(c domain.SearchCriteria, kind domain.DocumentKind, ms store.MetaStorable) (domain.Candidate, bool) {
+	uuid := metaString(ms.Meta(), "uuid")
+	if !ident.Valid(uuid) {
+		return domain.Candidate{}, false
+	}
+	folder := ""
+	if kind == domain.KindNote {
+		folder = ds.folderOf(ms.ExternalRef())
+	}
+	if !c.InFolder(folder) {
+		return domain.Candidate{}, false
+	}
+	meta := domain.NewDocumentMeta(ms.Meta(), ms.SetMeta)
+	summary := strings.TrimSpace(metaString(ms.Meta(), "summary"))
+	faces := map[domain.SearchField][]string{domain.SearchName: {meta.DisplayName()}}
+	if c.Fields.Has(domain.SearchContent) {
+		faces[domain.SearchContent] = []string{string(ms.Body())}
+	}
+	var tags []string
+	if kind == domain.KindNote {
+		tags = meta.Tags()
+		faces[domain.SearchSummary] = []string{summary}
+		faces[domain.SearchTags] = tags
+	}
+	matched, ok := c.Match(faces)
+	if !ok {
+		return domain.Candidate{}, false
+	}
+	modified := ""
+	if t := meta.Modified(); !t.IsZero() {
+		modified = t.Format(time.RFC3339)
+	}
+	return domain.Candidate{
+		URI:      domain.NewContainerAddress(uuid).String(),
+		Title:    meta.DisplayName(),
+		Kind:     string(kind),
+		Detail:   ds.searchDetail(folder, ds.searchSnippet(c, matched, faces)),
+		Summary:  summary,
+		Folder:   folder,
+		Tags:     tags,
+		Modified: modified,
+		Matched:  matched,
+	}, true
+}
+
+// searchSnippet is where the terms were found: the content around them, or else
+// the summary, shortened.
+func (ds *DocumentService) searchSnippet(c domain.SearchCriteria, matched domain.SearchFields, faces map[domain.SearchField][]string) string {
+	terms := strings.ToLower(strings.TrimSpace(c.Terms))
+	switch {
+	case matched.Has(domain.SearchContent):
+		body := faces[domain.SearchContent][0]
+		idx := strings.Index(strings.ToLower(body), terms)
+		start := max(0, min(len(body), idx-30))
+		end := min(len(body), idx+len(terms)+30)
+		snippet := strings.ReplaceAll(body[start:end], "\n", " ")
+		if start > 0 {
+			snippet = "..." + snippet
+		}
+		if end < len(body) {
+			snippet += "..."
+		}
+		return strings.TrimSpace(snippet)
+	case matched.Has(domain.SearchSummary):
+		summary := faces[domain.SearchSummary][0]
+		if len(summary) > 60 {
+			summary = summary[:60] + "..."
+		}
+		return summary
+	}
+	return ""
+}
+
+// searchDetail is a hit's disambiguation line: the folder first, since two notes
+// may share a title, then the snippet.
+func (ds *DocumentService) searchDetail(folder, snippet string) string {
+	var parts []string
+	for _, part := range []string{folder, snippet} {
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, " · ")
+}
+
+// folderOf is the folder a filed note's store external ref places it in: the ref
+// without its leading category key, up to its parent directory. A note at the
+// library root has none.
+func (ds *DocumentService) folderOf(externalRef string) string {
+	ref := filepath.ToSlash(externalRef)
+	if i := strings.IndexByte(ref, '/'); i >= 0 {
+		ref = ref[i+1:]
+	}
+	if dir := path.Dir(ref); dir != "." && dir != "/" && dir != "" {
+		return dir
+	}
+	return ""
 }
 
 // nextUntitledNumber scans existing WorkingCopy buffers to find the highest
@@ -803,18 +878,4 @@ type NoteEntry struct {
 	UserIntent  string      `json:"userIntent,omitempty"`
 	IsDir       bool        `json:"isDir"`
 	Children    []NoteEntry `json:"children,omitempty"`
-}
-
-type SearchResult struct {
-	ID             string `json:"id"`
-	Path           string `json:"path"`
-	Name           string `json:"name"`
-	IsTitleMatch   bool   `json:"isTitleMatch"`
-	IsTagMatch     bool   `json:"isTagMatch"`
-	IsSummaryMatch bool   `json:"isSummaryMatch"`
-	IsBodyMatch    bool   `json:"isBodyMatch"`
-	Snippet        string `json:"snippet"`
-	// Summary is the note's OWN one-liner, not a match snippet. The scan already
-	// holds it, so carrying it here saves a caller a full document load per hit.
-	Summary string `json:"summary"`
 }

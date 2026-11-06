@@ -38,17 +38,18 @@ type fakeSource struct {
 	name       string
 	nodes      map[string]domain.NodeDescriptor
 	candidates []domain.Candidate
-	resolved   []string // every uri this source was asked to resolve
-	searched   []int    // every limit this source was asked for
-	failWith   error    // non-nil: Resolve returns this instead of looking up
+	resolved   []string                // every uri this source was asked to resolve
+	searched   []domain.SearchCriteria // every criteria this source was asked for
+	failWith   error                   // non-nil: Resolve returns this instead of looking up
+	overrun    bool                    // true: Search ignores its budget
 }
 
 func (f *fakeSource) Name() string { return f.name }
 
-func (f *fakeSource) Search(query string, limit int) []domain.Candidate {
-	f.searched = append(f.searched, limit)
-	if limit < len(f.candidates) {
-		return f.candidates[:limit]
+func (f *fakeSource) Search(criteria domain.SearchCriteria) []domain.Candidate {
+	f.searched = append(f.searched, criteria)
+	if !f.overrun && criteria.Limit > 0 && criteria.Limit < len(f.candidates) {
+		return f.candidates[:criteria.Limit]
 	}
 	return f.candidates
 }
@@ -222,42 +223,62 @@ func TestRouter_SourceFailureIsNotSilentlyDangling(t *testing.T) {
 	}
 }
 
-func TestRouter_SearchFansOutAndCapsAtTheTotalLimit(t *testing.T) {
-	a := &fakeSource{name: "a", candidates: []domain.Candidate{
-		{URI: "sieve://1", Title: "One"},
-		{URI: "sieve://2", Title: "Two"},
-	}}
-	b := &fakeSource{name: "b", candidates: []domain.Candidate{
-		{URI: "sieve://3", Title: "Three"},
-		{URI: "sieve://4", Title: "Four"},
-	}}
-	r := NewRouter(a)
-	r.Register(b)
+// The Router fans the criteria out in registration order and matches nothing
+// itself: every source is handed the criteria whole, the limit a total across
+// them, so each is asked only for the remaining budget.
+func TestRouter_SearchFansTheCriteriaOutUnderATotalLimit(t *testing.T) {
+	criteria := domain.SearchCriteria{
+		Terms:       "o",
+		Fields:      domain.SearchFields{domain.SearchName},
+		Kinds:       []string{"note"},
+		DurableOnly: true,
+		Folder:      "design",
+	}
+	for _, tc := range []struct {
+		name     string
+		limit    int
+		overrun  bool
+		want     []string
+		askedOfA int
+		askedOfB []int // nil: b is never asked
+	}{
+		{"total limit spans sources", 3, false, []string{"sieve://1", "sieve://2", "sieve://3"}, 3, []int{1}},
+		{"a source filling the budget ends the fan-out", 2, false, []string{"sieve://1", "sieve://2"}, 2, nil},
+		{"a source ignoring its budget is cut", 1, true, []string{"sieve://1"}, 1, nil},
+		{"no limit asks every source for everything", 0, false, []string{"sieve://1", "sieve://2", "sieve://3", "sieve://4"}, 0, []int{0}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &fakeSource{name: "a", overrun: tc.overrun, candidates: []domain.Candidate{{URI: "sieve://1"}, {URI: "sieve://2"}}}
+			b := &fakeSource{name: "b", candidates: []domain.Candidate{{URI: "sieve://3"}, {URI: "sieve://4"}}}
+			r := NewRouter(a)
+			r.Register(b)
 
-	got := r.Search("o", 3)
-	if len(got) != 3 {
-		t.Fatalf("got %d candidates, want the limit (3): %+v", len(got), got)
-	}
-	if got[0].URI != "sieve://1" || got[2].URI != "sieve://3" {
-		t.Errorf("registration order not preserved: %+v", got)
-	}
-	if len(b.searched) != 1 || b.searched[0] != 1 {
-		t.Errorf("the second source must be asked for the REMAINING budget, got %v", b.searched)
-	}
-}
-
-func TestRouter_SearchIgnoresEmptyQueries(t *testing.T) {
-	notes := &fakeSource{name: "notes", candidates: []domain.Candidate{{URI: "sieve://1"}}}
-	r := NewRouter(notes)
-
-	if got := r.Search("   ", 5); len(got) != 0 {
-		t.Errorf("empty query returned %+v, want nothing", got)
-	}
-	if got := r.Search("auth", 0); len(got) != 0 {
-		t.Errorf("zero limit returned %+v, want nothing", got)
-	}
-	if len(notes.searched) != 0 {
-		t.Errorf("no source should have been asked, got %v", notes.searched)
+			asked := criteria
+			asked.Limit = tc.limit
+			var got []string
+			for _, c := range r.Search(asked) {
+				got = append(got, c.URI)
+			}
+			if strings.Join(got, " ") != strings.Join(tc.want, " ") {
+				t.Errorf("Search = %v, want %v", got, tc.want)
+			}
+			if len(a.searched) != 1 || a.searched[0].Limit != tc.askedOfA {
+				t.Errorf("a was asked %+v, want one ask with limit %d", a.searched, tc.askedOfA)
+			}
+			var askedOfB []int
+			for _, c := range b.searched {
+				askedOfB = append(askedOfB, c.Limit)
+			}
+			if fmt.Sprint(askedOfB) != fmt.Sprint(tc.askedOfB) {
+				t.Errorf("b was asked for limits %v, want %v", askedOfB, tc.askedOfB)
+			}
+			for _, c := range append(a.searched, b.searched...) {
+				c.Limit = criteria.Limit
+				if fmt.Sprint(c) != fmt.Sprint(criteria) {
+					t.Errorf("a source was asked %+v, want the criteria whole %+v", c, criteria)
+				}
+			}
+		})
 	}
 }
 
@@ -387,7 +408,7 @@ func TestRouter_FederatesDocumentsAndBlockContainers(t *testing.T) {
 	if _, err := router.Target("sieve://" + testMissingUUID); !errors.Is(err, domain.ErrNodeNotFound) {
 		t.Errorf("missing uuid: err = %v, want ErrNodeNotFound", err)
 	}
-	if hits := router.Search("Sticky", 10); len(hits) != 0 {
-		t.Errorf("Search offered a block container: %+v", hits)
+	if hits := router.Search(domain.SearchCriteria{}); len(hits) != 1 || hits[0].Container() != note.UUID() {
+		t.Errorf("Search = %+v, want the note and never the block container", hits)
 	}
 }

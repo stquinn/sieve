@@ -3,13 +3,16 @@ package requesthandlers
 import (
 	"html/template"
 	"net/http"
-	"strings"
 
 	"sieve/sieve"
-	"sieve/sieve/services"
+	"sieve/sieve/domain"
+	"sieve/sieve/ink"
 
 	"github.com/go-chi/chi/v5"
 )
+
+// quickSwitchLimit caps the quick switcher's list.
+const quickSwitchLimit = 50
 
 type SearchHandler struct {
 	ServiceProvider *sieve.ServiceProvider
@@ -22,25 +25,47 @@ func (h *SearchHandler) RegisterPaths(r chi.Router) {
 	r.Get("/ui/views/sidebar/search", h.handleSidebarSearch)
 }
 
+// sidebarCriteria is what the sidebar search asks for: what the sidebar shows —
+// filed notes and notebooks — whose name, summary, tags or content hold q.
+func (h *SearchHandler) sidebarCriteria(q string) domain.SearchCriteria {
+	return domain.SearchCriteria{
+		Terms:  q,
+		Fields: domain.SearchFields{domain.SearchName, domain.SearchSummary, domain.SearchTags, domain.SearchContent},
+		Kinds:  []string{string(domain.KindNote), ink.KindDigitalNote},
+	}
+}
+
+// quickSwitchCriteria is what the quick switcher asks for: everything whose name
+// holds q, and with no q everything.
+func (h *SearchHandler) quickSwitchCriteria(q string) domain.SearchCriteria {
+	return domain.SearchCriteria{
+		Terms:  q,
+		Fields: domain.SearchFields{domain.SearchName},
+		Limit:  quickSwitchLimit,
+	}
+}
+
+// search asks the search service, finding nothing when none is wired.
+func (h *SearchHandler) search(criteria domain.SearchCriteria) []domain.Candidate {
+	if h.ServiceProvider.Search == nil {
+		return nil
+	}
+	return h.ServiceProvider.Search.Search(criteria)
+}
+
 func (h *SearchHandler) handleSidebarSearch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	query := r.URL.Query().Get("q")
-	var results []services.SearchResult
-	var err error
-
+	var results []domain.Candidate
 	if query != "" {
-		results, err = h.ServiceProvider.Documents.Search(query)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+		results = h.search(h.sidebarCriteria(query))
 	}
 
 	data := struct {
 		Query   string
-		Results []services.SearchResult
+		Results []domain.Candidate
 	}{
 		Query:   query,
 		Results: results,
@@ -56,33 +81,11 @@ func (h *SearchHandler) handleSidebarSearch(w http.ResponseWriter, r *http.Reque
 	}
 }
 
+// switchItem is one row of the quick switcher: a hit, and whether it is open in
+// a tab of the session.
 type switchItem struct {
-	ID          string
-	Name        string
-	DisplayPath string
-	Icon        string // "buffer" or "note"
-	IsOpen      bool
-}
-
-func flattenNotes(entries []services.NoteEntry, currentPath string) []switchItem {
-	var list []switchItem
-	for _, entry := range entries {
-		if entry.IsDir {
-			list = append(list, flattenNotes(entry.Children, currentPath+entry.Name+"/")...)
-		} else {
-			name := entry.DisplayName
-			if name == "" {
-				name = entry.Name
-			}
-			list = append(list, switchItem{
-				ID:          entry.ID,
-				Name:        name,
-				DisplayPath: currentPath + entry.Name + ".md",
-				Icon:        "note",
-			})
-		}
-	}
-	return list
+	domain.Candidate
+	IsOpen bool
 }
 
 func (h *SearchHandler) handleSearchPrompt(w http.ResponseWriter, r *http.Request) {
@@ -98,67 +101,15 @@ func (h *SearchHandler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	query := strings.ToLower(r.URL.Query().Get("q"))
+	query := r.URL.Query().Get("q")
 
-	session := h.ServiceProvider.State.LoadSession()
-	entries, err := h.ServiceProvider.Documents.List()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	open := make(map[string]bool)
+	for _, t := range h.ServiceProvider.State.LoadSession().Tabs {
+		open[t.ID] = true
 	}
-
-	openIDs := make(map[string]bool)
-	for _, t := range session.Tabs {
-		openIDs[t.ID] = true
-	}
-
-	var buffers []switchItem
-	for _, t := range session.Tabs {
-		if t.Status != "filed" {
-			name := t.DisplayName
-			if name == "" {
-				name = "Buffer"
-			}
-			buffers = append(buffers, switchItem{
-				ID:          t.ID,
-				Name:        name,
-				DisplayPath: "",
-				Icon:        "buffer",
-				IsOpen:      true,
-			})
-		}
-	}
-
-	allNotes := flattenNotes(entries, "")
-	for i := range allNotes {
-		if openIDs[allNotes[i].ID] {
-			allNotes[i].IsOpen = true
-		}
-	}
-
-	itemsMap := make(map[string]switchItem)
-	for _, b := range buffers {
-		itemsMap[b.ID] = b
-	}
-	for _, n := range allNotes {
-		if existing, ok := itemsMap[n.ID]; ok {
-			existing.IsOpen = true
-			itemsMap[n.ID] = existing
-		} else {
-			itemsMap[n.ID] = n
-		}
-	}
-
-	var allItems []switchItem
-	for _, item := range itemsMap {
-		if query == "" || strings.Contains(strings.ToLower(item.Name), query) || strings.Contains(strings.ToLower(item.DisplayPath), query) {
-			allItems = append(allItems, item)
-		}
-	}
-
-	// Cap results
-	if len(allItems) > 50 {
-		allItems = allItems[:50]
+	var items []switchItem
+	for _, hit := range h.search(h.quickSwitchCriteria(query)) {
+		items = append(items, switchItem{Candidate: hit, IsOpen: open[hit.Container()]})
 	}
 
 	data := struct {
@@ -166,7 +117,7 @@ func (h *SearchHandler) handleSearch(w http.ResponseWriter, r *http.Request) {
 		Items []switchItem
 	}{
 		Query: query,
-		Items: allItems,
+		Items: items,
 	}
 
 	if err := h.Tmpl.ExecuteTemplate(w, "quickswitcher_list.html", data); err != nil {

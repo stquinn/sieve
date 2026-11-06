@@ -1312,9 +1312,10 @@ components:
     DomainCandidate:
       type: object
       description: |-
-        Candidate is one offer from a source's enumeration face: what the picker shows
-        and what an accepted mention persists. A source may only offer what it can
-        also dereference.
+        Candidate is one hit of a search, and the one hit type every consumer reads:
+        what the picker, the sidebar, the quick switcher and MCP show, and what an
+        accepted mention persists. A source may only offer what it can also
+        dereference.
 
         Summary and Detail are different sentences and neither substitutes for the
         other: Detail disambiguates (folder · match snippet) and is discarded once a
@@ -1331,6 +1332,16 @@ components:
           type: string
         summary:
           type: string
+        folder:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        modified:
+          type: string
+        matched:
+          $ref: '#/components/schemas/DomainSearchFields'
       required:
         - uri
         - title
@@ -1364,6 +1375,14 @@ components:
         - jobId
         - label
         - spinTab
+    DomainSearchField:
+      type: string
+      description: SearchField is one face of a thing that a search's terms are matched against.
+    DomainSearchFields:
+      type: array
+      description: SearchFields is a set of SearchField.
+      items:
+        $ref: '#/components/schemas/DomainSearchField'
     ProtocolAckFrame:
       type: object
       description: |-

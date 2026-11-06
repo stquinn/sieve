@@ -1180,7 +1180,7 @@ Attachment is a live edge to another NodeDescriptor in the system: the address o
 
 ### `domain.Candidate`
 
-Candidate is one offer from a source's enumeration face: what the picker shows and what an accepted mention persists.
+Candidate is one hit of a search, and the one hit type every consumer reads: what the picker, the sidebar, the quick switcher and MCP show, and what an accepted mention persists.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
@@ -1189,6 +1189,10 @@ Candidate is one offer from a source's enumeration face: what the picker shows a
 | `kind` | `string` | yes |  |
 | `detail` | `string` | yes |  |
 | `summary` | `string` | yes |  |
+| `folder` | `string` | no |  |
+| `tags` | `[]string` | no |  |
+| `modified` | `string` | no |  |
+| `matched` | `domain.SearchFields` | no |  |
 
 ### `domain.JobInfo`
 
@@ -1202,6 +1206,14 @@ JobInfo describes one background job the UI can see: what the tab spinner and th
 | `spinTab` | `bool` | yes |  |
 | `state` | `string` | no |  |
 | `category` | `string` | no |  |
+
+### `domain.SearchField`
+
+SearchField is one face of a thing that a search's terms are matched against.
+
+### `domain.SearchFields`
+
+SearchFields is a set of SearchField.
 
 ### `protocol.CommandArgs`
 

@@ -53,7 +53,8 @@ func DocumentFromContext(ctx context.Context) string {
 // calling job's own document (and nowhere else), returning its NodeDescriptor.
 type Server struct {
 	documents    *services.DocumentService
-	nodes        NodeResolver // address → NodeDescriptor; the concrete Router is injected at the root
+	nodes        NodeResolver  // address → NodeDescriptor; the concrete Router is injected at the root
+	finder       SearchService // criteria → hits; the same Router
 	linkPreview  *services.LinkPreviewService
 	fetchTimeout time.Duration
 	audit        bodyReadAuditor // every body read, recorded at one place
@@ -69,14 +70,16 @@ type Server struct {
 // pageFetchTimeout is fetch_page's deadline for retrieving one page.
 const pageFetchTimeout = 15 * time.Second
 
-// NewServer builds the Sieve MCP over the document service, the node resolver
-// and the link-preview service fetch_page retrieves pages through, registers the
-// verbs, and prepares the streamable HTTP handler. The base URL is not known yet
-// (the listener binds after construction) — SetBaseURL supplies it.
-func NewServer(documents *services.DocumentService, nodes NodeResolver, linkPreview *services.LinkPreviewService) *Server {
+// NewServer builds the Sieve MCP over the document service, the node resolver,
+// the search service and the link-preview service fetch_page retrieves pages
+// through, registers the verbs, and prepares the streamable HTTP handler. The
+// base URL is not known yet (the listener binds after construction) —
+// SetBaseURL supplies it.
+func NewServer(documents *services.DocumentService, nodes NodeResolver, search SearchService, linkPreview *services.LinkPreviewService) *Server {
 	s := &Server{
 		documents:    documents,
 		nodes:        nodes,
+		finder:       search,
 		linkPreview:  linkPreview,
 		fetchTimeout: pageFetchTimeout,
 		audit:        logAuditor{},
@@ -90,8 +93,10 @@ func NewServer(documents *services.DocumentService, nodes NodeResolver, linkPrev
 	}, nil)
 
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
-		Name:        "search",
-		Description: "Search the knowledge base by a case-insensitive substring matched against note titles, summaries and tags. Returns metadata only (never note bodies). Optionally restrict to a folder.",
+		Name: "search",
+		Description: "Search the knowledge base by a case-insensitive substring matched against names, summaries and tags — never bodies. " +
+			"Finds filed notes (kind \"note\") and unfiled buffers (kind \"buffer\"); a buffer has no summary or tags, so it is found by its name alone. " +
+			"An empty query lists everything. Returns metadata only (never bodies). Optionally restrict to a folder, which leaves out buffers, as they have none.",
 	}, s.search)
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
 		Name: "get_meta",

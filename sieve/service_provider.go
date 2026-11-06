@@ -25,6 +25,7 @@ type ServiceProvider struct {
 	Documents   *services.DocumentService
 	Containers  *services.BlockContainerService
 	Nodes       *editor.Router
+	Search      domain.SearchService // what every consumer that finds things is handed: the Router, as the port
 	Assets      *services.AssetService
 	State       *services.StateService
 	Prompts     *ai.PromptService
@@ -156,10 +157,11 @@ var (
 	_ services.ContainerChangeListener = (*editor.EditorService)(nil)
 	_ editor.NodeSource                = (*ink.LiveView)(nil)
 	_ domain.NodeResolver              = (*editor.Router)(nil)
+	_ domain.SearchService             = (*editor.Router)(nil)
 	_ command.DocumentFiler            = (*editor.EditorService)(nil)
 	_ ai.DocumentMCPEndpoint           = (*mcp.Server)(nil)
 	_ ink.NoteDescriber                = (*ai.AIService)(nil)
-	_ ink.PageTranscriber                   = (*ai.AIService)(nil)
+	_ ink.PageTranscriber              = (*ai.AIService)(nil)
 	_ ink.DiagramDrawer                = (*services.PlantumlService)(nil)
 )
 
@@ -181,6 +183,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	// that makes a container kind addressable, and MCP get_by_uri reaches through
 	// this same Router.
 	s.Nodes = editor.NewRouter(editor.NewNotesSource(s.Documents), editor.NewBlockSource(s.Containers))
+	s.Search = s.Nodes
 	s.Assets = services.NewAssetService(store, storePath)
 	s.State, err = services.NewStateService(store, storePath, themesFS)
 	if err != nil {
@@ -199,10 +202,11 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	// port) is set from main once the listener binds; the AI service pulls the
 	// URL + a per-call bearer token from it at profile-render time.
 	//
-	// The Router goes in as mcp.NodeResolver — the one-method interface the MCP
-	// package declares for itself — so get_by_uri dereferences addresses through
-	// the same registry the @ picker offers them from.
-	s.MCP = mcp.NewServer(s.Documents, s.Nodes, s.LinkPreview)
+	// The Router goes in as mcp.NodeResolver and mcp.SearchService — the
+	// interfaces the MCP package declares for itself — so get_by_uri dereferences
+	// addresses through the same registry the @ picker offers them from, and
+	// search finds through the same search.
+	s.MCP = mcp.NewServer(s.Documents, s.Nodes, s.Search, s.LinkPreview)
 	s.AI.SetMCPEndpoint(s.MCP)
 	s.Commands = command.NewRegistry()
 	s.Plantuml = services.NewPlantumlService(s.State)

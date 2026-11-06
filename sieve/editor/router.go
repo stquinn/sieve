@@ -3,7 +3,6 @@ package editor
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	"sieve/sieve/domain"
 )
@@ -13,6 +12,10 @@ import (
 //
 // THE INVARIANT a source signs up to is that those two agree: it may only offer
 // candidates it can also dereference.
+//
+// Search answers for the fields its kinds have and ignores the rest; it holds
+// to the criteria's kinds, durable-only, folder and limit, and decides for each
+// hit whether it is durable.
 //
 // Resolve takes a domain.Address, never text — a source must not decode the
 // grammar itself, so parsing happens once, at whichever door the coordinate
@@ -26,14 +29,15 @@ import (
 // never reaches a source that would read a store to find it is not there.
 type NodeSource interface {
 	Name() string
-	Search(query string, limit int) []domain.Candidate
+	Search(criteria domain.SearchCriteria) []domain.Candidate
 	Resolve(addr domain.Address) (domain.NodeDescriptor, error)
 }
 
-// Router is the one address → NodeDescriptor resolver: a registry federating a
-// source per container kind, with two faces — resolution and enumeration. Adding
-// a kind is one Register call at the composition root; nothing outside Go learns
-// what kinds exist.
+// Router is the one address → NodeDescriptor resolver and the one
+// domain.SearchService: a registry federating a source per container kind, with
+// two faces — resolution and enumeration. It holds no matching of its own.
+// Adding a kind is one Register call at the composition root; nothing outside Go
+// learns what kinds exist.
 type Router struct {
 	sources []NodeSource
 }
@@ -135,22 +139,22 @@ func (r *Router) Target(uri string) (domain.OpenTarget, error) {
 	}, nil
 }
 
-// Search fans the query out over every registered source and returns what is
-// addressable. limit is a TOTAL across sources: each is asked only for the
-// remaining budget, in registration order.
-func (r *Router) Search(query string, limit int) []domain.Candidate {
-	if strings.TrimSpace(query) == "" || limit <= 0 {
-		return nil
-	}
+// Search fans the criteria out over every registered source, in registration
+// order, each answering in its own order. The criteria's limit is a TOTAL across
+// sources: each is asked only for the remaining budget.
+func (r *Router) Search(criteria domain.SearchCriteria) []domain.Candidate {
 	var out []domain.Candidate
 	for _, source := range r.sources {
-		remaining := limit - len(out)
-		if remaining <= 0 {
+		if criteria.Full(len(out)) {
 			break
 		}
-		offered := source.Search(query, remaining)
-		if len(offered) > remaining {
-			offered = offered[:remaining] // a source that ignores its budget
+		asked := criteria
+		if criteria.Limit > 0 {
+			asked.Limit = criteria.Limit - len(out)
+		}
+		offered := source.Search(asked)
+		if asked.Limit > 0 && len(offered) > asked.Limit {
+			offered = offered[:asked.Limit] // a source that ignores its budget
 		}
 		out = append(out, offered...)
 	}
