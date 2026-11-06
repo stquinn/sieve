@@ -7,6 +7,7 @@ import (
 	"sieve/logger"
 	"sieve/sieve"
 	"sieve/sieve/domain"
+	"sieve/sieve/ink"
 	"sieve/sieve/services"
 	"strings"
 
@@ -202,6 +203,10 @@ func (h *ContextMenuHandler) handleDialog(w http.ResponseWriter, r *http.Request
 		// os.RemoveAll and enumerates nothing, so the dialog has to be told before
 		// it asks — a confirmation that cannot name what it destroys is not one.
 		Contents services.FolderContents
+		// Refused is why a notebook may not be deleted now, "" when it may; Last is its copy here being
+		// the last, its tablet connected and no longer having it.
+		Last    bool
+		Refused string
 	}{
 		ID:       query.Get("id"),
 		Name:     query.Get("name"),
@@ -218,6 +223,17 @@ func (h *ContextMenuHandler) handleDialog(w http.ResponseWriter, r *http.Request
 			return
 		}
 		data.Contents = contents
+	}
+	if name == "delete.html" && data.Type == "notebook" && h.ServiceProvider.Ink != nil {
+		deletion, err := h.ServiceProvider.Ink.Deletion(data.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		data.Last = deletion == ink.DeleteLast
+		if deletion == ink.DeleteRefused {
+			data.Refused = inkDeleteRefused
+		}
 	}
 	if err := h.Tmpl.ExecuteTemplate(w, name, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

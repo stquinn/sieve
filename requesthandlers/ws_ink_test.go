@@ -1421,3 +1421,50 @@ func TestWS_InkTranscript_IsAskedTranscribedHeardAndCopied(t *testing.T) {
 	}
 	closeAndSettle(o)
 }
+
+// While its tablet is connected and offers it, a notebook's Delete is refused everywhere: its row
+// says why, the dialog says why and offers no Delete, and the route answers 409 with the same
+// words, leaving the container held.
+func TestInkDelete_IsRefusedWhileTheTabletOffersTheNotebook(t *testing.T) {
+	records := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)))
+	w := newInkWire(t, records)
+	tmpl, err := NewTemplates(os.DirFS(".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := chi.NewRouter()
+	(&InkHandler{ServiceProvider: w.sp, Tmpl: tmpl}).RegisterPaths(r)
+	(&ContextMenuHandler{ServiceProvider: w.sp, Tmpl: tmpl}).RegisterPaths(r)
+	routes := httptest.NewServer(r)
+	t.Cleanup(routes.Close)
+	if err := w.sp.Ink.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer w.sp.Ink.Stop()
+	waitFor(t, func() bool {
+		st := w.sp.Ink.Status()
+		return st.Link.Phase == ink.LinkConnected && len(st.Notes) == 1 && st.Notes[0].Seq == uint32(len(records))
+	}, "the session to catch up")
+	uuid := w.container()
+	session := w.sp.State.LoadSession()
+	session.OpenFolders = append(session.OpenFolders, inkTreeID)
+	if err := w.sp.State.SaveSession(session); err != nil {
+		t.Fatal(err)
+	}
+
+	refused := strings.ReplaceAll(inkDeleteRefused, "'", "&#39;")
+	if _, row := do(t, http.MethodGet, routes.URL+"/ui/views/sidebar/ink", "", ""); !strings.Contains(row, `data-ctx-delete-refused="`+refused+`"`) {
+		t.Errorf("the row does not say Delete is refused:\n%s", row)
+	}
+	status, body := do(t, http.MethodGet, routes.URL+"/ui/views/sidebar/dialog/delete?id="+uuid+"&name=Strokes&type=notebook", "", "")
+	if status != http.StatusOK || !strings.Contains(body, refused) || strings.Contains(body, `type="submit"`) {
+		t.Errorf("the dialog: %d\n%s", status, body)
+	}
+	status, body = do(t, http.MethodDelete, routes.URL+"/api/ink/notes/"+uuid, "", "")
+	if status != http.StatusConflict || strings.TrimSpace(body) != inkDeleteRefused {
+		t.Errorf("the route answered %d %q", status, body)
+	}
+	if _, err := w.sp.Containers.Load(uuid); err != nil {
+		t.Errorf("a refused delete removed the container: %v", err)
+	}
+}

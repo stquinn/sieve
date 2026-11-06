@@ -44,19 +44,26 @@ export class CommandCue {
 
   /**
    * Draws the command the draft resolves to, or takes the cue down when it
-   * resolves to none.
+   * resolves to none. With `refusal` set and no command, the cue says it and
+   * Send is disabled: the draft is an ask that cannot be answered here.
    * @param {{name: string, description?: string}|null} cmd
+   * @param {string} [refusal] why an ask cannot be sent; '' when it can
    */
-  show(cmd) {
+  show(cmd, refusal = '') {
+    const refused = !cmd && !!refusal
     const row = this.#row
     if (row) {
-      row.style.display = cmd ? 'flex' : 'none'
-      row.innerHTML = cmd ? CommandCue.#badge(cmd) : ''
+      row.style.display = cmd || refused ? 'flex' : 'none'
+      row.innerHTML = cmd ? CommandCue.#badge(cmd)
+        : refused ? '<span class="ask-popup__refusal">' + esc(refusal) + '</span>' : ''
     }
     const send = this.#send
     if (!send) return
     send.textContent = cmd ? 'Run /' + cmd.name : this.#askLabel
     send.classList.toggle(CommandCue.#SEND_ARMED, !!cmd)
+    if (send instanceof HTMLButtonElement) send.disabled = refused
+    if (refused) send.title = refusal
+    else send.removeAttribute('title')
   }
 
   /**

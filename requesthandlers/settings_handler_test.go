@@ -544,7 +544,7 @@ func TestInkFragment_RendersEachState(t *testing.T) {
 // context type.
 func TestInkSidebar_RendersEachState(t *testing.T) {
 	h, _ := newTestSettingsHandler(t)
-	notes := []ink.SyncedNote{{UUID: "n-ideas", Name: "Ideas", Title: "Untitled 05/11", Pages: 2}, {UUID: "n-board", Pages: 1}}
+	notes := []ink.SyncedNote{{UUID: "n-ideas", Name: "Ideas", Title: "Untitled 05/11", Pages: 2, Deletion: ink.DeleteReturns}, {UUID: "n-board", Pages: 1, Whiteboard: true, Absent: true, Deletion: ink.DeleteLast}}
 	live := ink.LiveStatus{Present: true, UUID: "v-live", Device: "Note Air 2", Note: "n-ideas", NoteTitle: "Ideas"}
 	waiting := ink.LiveStatus{Present: true, UUID: "v-live", Waiting: true}
 	collapsed := domain.Session{Tabs: []domain.Tab{{ID: "n-board", Kind: ink.KindDigitalNote}}}
@@ -562,6 +562,9 @@ func TestInkSidebar_RendersEachState(t *testing.T) {
 		{"collapsed", ink.Status{Enabled: true, Notes: notes}, collapsed,
 			append([]string{`aria-expanded="false"`, `{"open": true}`}, row...),
 			[]string{"data-ink-note", "data-ink-live", "data-ink-live-dot", "No synced notebooks yet", "data-ctx-id"}},
+		{"collapsed with a delete refused", ink.Status{Enabled: true, Notes: []ink.SyncedNote{{UUID: "n-ideas", Name: "Ideas", Pages: 2, Deletion: ink.DeleteRefused}}}, collapsed,
+			append([]string{`<span hidden data-ink-refused="n-ideas" data-ctx-delete-refused="` + inkDeleteRefused + `">`}, row...),
+			[]string{"data-ink-note", "data-ctx-id"}},
 		{"collapsed while live", ink.Status{Enabled: true, Notes: notes, Live: live}, collapsed,
 			append([]string{"data-ink-live-dot"}, row...), []string{`data-ink-live="live"`, "data-ink-note"}},
 		{"collapsed while waiting", ink.Status{Enabled: true, Notes: notes, Live: waiting}, collapsed,
@@ -570,14 +573,19 @@ func TestInkSidebar_RendersEachState(t *testing.T) {
 			append([]string{`aria-expanded="true"`, `{"open": false}`, "No synced notebooks yet"}, row...),
 			[]string{"data-ink-live", "data-ink-note"}},
 		{"notes", ink.Status{Enabled: true, Notes: notes}, expanded, []string{
-			`data-ink-note="n-ideas"`, `title="Ideas"`, "2 pages", `data-ink-note="n-board"`, `title="Untitled notebook"`, "1 page",
+			`data-ink-note="n-ideas"`, `title="Ideas"`, "2 pages", `data-ink-note="n-board"`, "1 page",
 			`window.sieveWorkspace.open('n-ideas')`, `data-ctx-name="Untitled notebook"
   data-active`, `padding-left:2.50rem;`,
 			`data-ink-note="n-ideas"
   data-ctx-id="n-ideas"
   data-ctx-type="notebook"
   data-ctx-name="Ideas"`,
-		}, []string{"data-ink-live", "No synced notebooks yet", "Untitled 05/11", "digital-note"}},
+			`data-ink-note="n-board"
+  data-ink-whiteboard
+  data-ink-absent`, "ink-icon--whiteboard", `title="Whiteboard: Untitled notebook (not on the tablet: deleted there or no longer shared)"`, ">not on tablet<",
+		}, []string{"data-ink-live", "No synced notebooks yet", "Untitled 05/11", "digital-note", `data-ink-note="n-ideas"
+  data-ink-whiteboard`, `data-ink-note="n-ideas"
+  data-ink-absent`}},
 		{"live", ink.Status{Enabled: true, Notes: notes, Live: live}, expanded, []string{
 			`data-ink-live="live"`, `ink-tree__label">Live · Note Air 2<`, `ink-tree__meta">Ideas<`,
 			`window.sieveWorkspace.open('v-live')`, "ink-icon--live",
@@ -666,6 +674,42 @@ func TestInkSidebar_IsTheFirstItemOfTheTreeWhileInkIsEnabled(t *testing.T) {
 	if page := get("/ui/views/settings"); !strings.Contains(page, `transition: all 0.2s;">Notebooks</button>`) ||
 		!strings.Contains(page, `margin-bottom: 1.5rem;">Notebooks</h3>`) || strings.Contains(page, ">Ink<") {
 		t.Error("Settings does not name the feature Notebooks")
+	}
+}
+
+// Deleting a notebook whose tablet is away asks, saying it comes back if the tablet still has it,
+// then removes Sieve's copy and answers with the workspace, its tab gone; what is
+// no Digital Note is 404.
+func TestInkDelete_RemovesSievesCopyAndItsTab(t *testing.T) {
+	srv, sp := newInkServer(t)
+	c, err := sp.Containers.Create(ink.KindDigitalNote, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := sp.State.LoadSession()
+	session.Tabs = append(session.Tabs, domain.Tab{ID: c.UUID(), Kind: ink.KindDigitalNote})
+	session.ActiveIdx = len(session.Tabs) - 1
+	if err := sp.State.SaveSession(session); err != nil {
+		t.Fatal(err)
+	}
+	status, body := do(t, http.MethodGet, srv.URL+"/ui/views/sidebar/dialog/delete?id="+c.UUID()+"&name=Ideas&type=notebook", "", "")
+	if status != http.StatusOK || !strings.Contains(body, "comes back at the next") || !strings.Contains(body, `type="submit"`) {
+		t.Errorf("the dialog with the tablet away: %d\n%s", status, body)
+	}
+	status, body = do(t, http.MethodDelete, srv.URL+"/api/ink/notes/"+c.UUID(), "", "")
+	if status != http.StatusOK || strings.Contains(body, c.UUID()) {
+		t.Fatalf("delete: %d\n%s", status, body)
+	}
+	if _, err := sp.Containers.Load(c.UUID()); err == nil {
+		t.Error("the container is still held")
+	}
+	for _, tab := range sp.State.LoadSession().Tabs {
+		if tab.ID == c.UUID() {
+			t.Error("its tab is still open")
+		}
+	}
+	if status, _ := do(t, http.MethodDelete, srv.URL+"/api/ink/notes/"+c.UUID(), "", ""); status != http.StatusNotFound {
+		t.Errorf("deleting it again: %d, want 404", status)
 	}
 }
 

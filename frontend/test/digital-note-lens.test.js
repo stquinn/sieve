@@ -151,6 +151,23 @@ describe('DigitalNoteLens', () => {
     expect(strokeEls(root, 's1')).toHaveLength(1)
   })
 
+  it('advertises where the reader is as its target\'s label — the page shown among the pages, and the mode — and mints no blocks', async () => {
+    const { lens, surface } = await presented({ ids: ['p1', 'p2', 'p3'] })
+    /** @type {any[]} */ const adverts = []
+    lens.setSelectionListener({ onSelectionChanged: (c) => adverts.push(c) })
+    expect(lens.getSelectionContext().target.label).toBe('Page 1 of 3')
+
+    surface.turn(1)
+    await settle()
+    expect(adverts.at(-1).target.label).toBe('Page 2 of 3')
+    expect(adverts.at(-1).docUuid).toBe(UUID)
+
+    await lens.toggleMode()
+    await settle()
+    expect(adverts.at(-1).target.label).toBe('Page 2 of 3, transcript')
+    expect(lens.getCapabilities().blocks).toBe(false)
+  })
+
   it("removes every element of a removed stroke, a pencil stroke's in every band", async () => {
     const { provider, root } = await presented({ strokes: [pencil('s1'), pen('s9')] })
     expect(strokeEls(root, 's1').length).toBeGreaterThan(1)

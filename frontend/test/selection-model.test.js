@@ -184,6 +184,20 @@ describe('SelectionModel — meaningful-change coalescing (P3.A)', () => {
     expect(fn).toHaveBeenCalledTimes(1)
   })
 
+  it('a change of the target\'s label alone emits, and the same label does not', () => {
+    const m = new SelectionModel(UUID)
+    const at = (/** @type {string} */ label) => raw({ selectionType: 'none', blockId: null, blockIds: [], blockKind: null,
+      target: { kind: 'document', ref: 'doc', range: null, label } })
+    m.ingest(at('Page 1 of 3'))
+    const fn = vi.fn()
+    m.onUpdate(fn)
+    m.ingest(at('Page 1 of 3'))
+    expect(fn).not.toHaveBeenCalled()
+    m.ingest(at('Page 2 of 3'))
+    m.ingest(at('Page 2 of 3, transcript'))
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
+
   it('an identical re-ingest does not emit', () => {
     const m = new SelectionModel(UUID)
     m.ingest(raw())

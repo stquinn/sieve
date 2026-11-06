@@ -44,6 +44,7 @@ func TestRouteTable(t *testing.T) {
 	want := []string{
 		"DELETE /api/document/{uuid}/asset/{key}",
 		"DELETE /api/folder/{id}",
+		"DELETE /api/ink/notes/{uuid}",
 		"DELETE /api/note/{id}",
 		"DELETE /mcp",
 		"GET /",

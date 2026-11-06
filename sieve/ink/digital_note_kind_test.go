@@ -29,6 +29,21 @@ func metaOf(t *testing.T, st *filestore.FileStore, uuid string) map[string]inter
 	return meta
 }
 
+// dropWhiteboard rewrites container uuid's .meta without note_whiteboard, as a face saved before
+// that field existed.
+func dropWhiteboard(t *testing.T, st *filestore.FileStore, uuid string) {
+	t.Helper()
+	meta := metaOf(t, st, uuid)
+	delete(meta["extra"].(map[string]interface{}), "note_whiteboard")
+	raw, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(st.Root(), "testhost", domain.Blocks.Key, uuid, ".meta"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDigitalNoteKind_AttrsFaceAndSourceThroughAContainer(t *testing.T) {
 	kind := NewDigitalNoteKind()
 	for _, tc := range []struct {
@@ -38,13 +53,13 @@ func TestDigitalNoteKind_AttrsFaceAndSourceThroughAContainer(t *testing.T) {
 		wantPages int
 	}{
 		{"an empty note", nil,
-			map[string]string{"note_title": "", "note_pages": "0", "note_device": "", "note_source": "strokes", "note_synced_seq": "0"}, 0},
+			map[string]string{"note_title": "", "note_pages": "0", "note_device": "", "note_source": "strokes", "note_synced_seq": "0", "note_whiteboard": "false"}, 0},
 		{"a note of two pages",
 			logOf(header("Ideas"), pageAdd(page(1), 0, ruled, link.BoundsFixed), pageAdd(page(2), 1, dots, link.BoundsFixed),
 				strokeAdd(page(1), stroke(1))),
-			map[string]string{"note_title": "Ideas", "note_pages": "2", "note_device": aDevice.Name, "note_source": "strokes", "note_synced_seq": "4"}, 2},
+			map[string]string{"note_title": "Ideas", "note_pages": "2", "note_device": aDevice.Name, "note_source": "strokes", "note_synced_seq": "4", "note_whiteboard": "false"}, 2},
 		{"a whiteboard", logOf(header("Board"), pageAdd(page(1), 0, nil, link.BoundsUnbounded)),
-			map[string]string{"note_title": "Board", "note_pages": "1", "note_device": aDevice.Name, "note_source": "strokes", "note_synced_seq": "2"}, 1},
+			map[string]string{"note_title": "Board", "note_pages": "1", "note_device": aDevice.Name, "note_source": "strokes", "note_synced_seq": "2", "note_whiteboard": "true"}, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			containers, st := newTestContainers(t)
@@ -98,6 +113,16 @@ func TestDigitalNoteKind_AttrsFaceAndSourceThroughAContainer(t *testing.T) {
 				if face[k] != v {
 					t.Errorf("face %s = %v, want %q", k, face[k], v)
 				}
+			}
+			before := map[string]string{}
+			for k, v := range face {
+				if s, ok := v.(string); ok && k != "note_whiteboard" {
+					before[k] = s
+				}
+			}
+			lifted := kind.Lifted(before, func() (domain.SieveBlock, error) { return loaded.Block(), nil })
+			if lifted["note_whiteboard"] != tc.wantFace["note_whiteboard"] || lifted["note_title"] != tc.wantFace["note_title"] {
+				t.Errorf("a face saved before note_whiteboard, lifted: %v", lifted)
 			}
 			if versions := len(saved.Versions()); versions != min(len(tc.log), 1) {
 				t.Errorf("%d versions; a save that changes nothing makes none, any other one", versions)

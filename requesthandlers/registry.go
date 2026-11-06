@@ -77,7 +77,16 @@ func (reg Registry) Mount(r chi.Router) {
 			},
 		},
 		&SettingsHandler{ServiceProvider: sp, Tmpl: tmpl},
-		&InkHandler{ServiceProvider: sp, Tmpl: tmpl},
+		&InkHandler{
+			ServiceProvider: sp,
+			Tmpl:            tmpl,
+			EmitSessionChanged: func() {
+				broadcast.Invalidate(protocol.TopicSession)
+			},
+			EmitNotesChanged: func() {
+				broadcast.Invalidate(protocol.TopicNotes)
+			},
+		},
 		&HelpHandler{Tmpl: tmpl, Version: reg.Version, Credits: reg.Credits},
 		&SearchHandler{ServiceProvider: sp, Tmpl: tmpl},
 		NewAssetHandler(sp, reg.Themes),

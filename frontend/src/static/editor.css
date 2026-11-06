@@ -2373,6 +2373,24 @@ pre.tiptap-code-block code {
   flex: 0 0 auto;
 }
 
+/* Why an ask cannot be sent from here: plain words, wrapping in the room the
+   footer has, beside a disabled Send. */
+.ask-panel .ask-popup__command:has(.ask-popup__refusal) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ask-panel .ask-popup__refusal {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--theme-textDim);
+}
+
+.ask-panel .ask-popup__send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .ask-panel .ask-command-chip {
   --chip-accent: var(--theme-accentPurple);
   --chip-padding: 2px 9px;

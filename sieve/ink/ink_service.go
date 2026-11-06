@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -160,7 +161,31 @@ type SyncedNote struct {
 	Companion string
 	// Device is the name of the device the note was written on.
 	Device string
+	// Whiteboard is a page of the note being unbounded.
+	Whiteboard bool
+	// Absent is the note missing from the last NOTES its companion sent in this run: deleted on
+	// the tablet or no longer shared with this Sieve. False until that companion has listed.
+	Absent bool
+	// Deletion is whether Sieve's copy may be deleted now, and what that means.
+	Deletion Deletion
 }
+
+// Deletion is whether Sieve's copy of a Digital Note may be deleted now, and what that means.
+type Deletion int
+
+const (
+	// DeleteRefused is the note's tablet connected and offering it, or not yet having listed what
+	// it offers: a deleted copy would come straight back.
+	DeleteRefused Deletion = iota
+	// DeleteLast is the note's tablet connected and no longer having it: this copy is the last.
+	DeleteLast
+	// DeleteReturns is the note's tablet not connected: the note comes back at its next sync if
+	// the tablet still has it.
+	DeleteReturns
+)
+
+// ErrStillOffered is a delete of a note whose Deletion is DeleteRefused.
+var ErrStillOffered = errors.New("ink: the tablet still offers this note")
 
 // Status is everything Settings → Ink and the sidebar's Ink section show.
 type Status struct {
@@ -221,6 +246,8 @@ type InkService struct {
 	lastFailure string
 	// namer names the notes while the service runs; nil when nothing names them.
 	namer *NoteNamer
+	// offered is, by companion identity, the notes its last NOTES listed in this run.
+	offered map[string]map[link.ID]bool
 	// sending is held while a note's description is sent to the tablet and recorded as sent.
 	sending sync.Mutex
 }
@@ -664,6 +691,71 @@ func (s *InkService) sendDescriptions(run *sessionRun) {
 	}
 }
 
+// offer records listed as what companion offers this Sieve now, and tells the invalidator when a
+// later listing changes it; the session being connected tells it of the first.
+func (s *InkService) offer(companion string, listed map[link.ID]bool) {
+	s.mu.Lock()
+	prior, had := s.offered[companion]
+	if s.offered == nil {
+		s.offered = map[string]map[link.ID]bool{}
+	}
+	s.offered[companion] = listed
+	s.mu.Unlock()
+	if had && !maps.Equal(prior, listed) {
+		s.invalidate()
+	}
+}
+
+// Deletion returns whether Sieve's copy of the Digital Note in container uuid may be deleted now,
+// and what its deletion means. A container that is not a Digital Note is ErrNoSuchPage.
+func (s *InkService) Deletion(uuid string) (Deletion, error) {
+	c, err := s.digitalNote(uuid)
+	if err != nil {
+		return DeleteRefused, err
+	}
+	face := NewDigitalNoteKind().Face(c.Block())
+	s.mu.Lock()
+	run := s.run
+	s.mu.Unlock()
+	return run.deletion(face), nil
+}
+
+// Delete removes Sieve's copy of the Digital Note in container uuid, closes its tabs and tells
+// the invalidator. A session holding the note open stops writing it. Nothing remembers the
+// deletion: a note its companion still has is synced again whole at its next listing. A note
+// whose Deletion is DeleteRefused is ErrStillOffered; a container that is not a Digital Note is
+// ErrNoSuchPage.
+func (s *InkService) Delete(uuid string) error {
+	c, err := s.digitalNote(uuid)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	run := s.run
+	s.mu.Unlock()
+	if run.deletion(NewDigitalNoteKind().Face(c.Block())) == DeleteRefused {
+		return fmt.Errorf("%w: %s", ErrStillOffered, uuid)
+	}
+	if run != nil {
+		restore := run.replicas.forget(uuid)
+		if err := s.containers.Delete(c); err != nil {
+			restore()
+			return err
+		}
+	} else if err := s.containers.Delete(c); err != nil {
+		return err
+	}
+	if _, err := s.settings.CloseTabs(func(t domain.Tab) bool { return t.ID == uuid }); err != nil {
+		logger.Error("ink: closing a deleted note's tabs", "err", err.Error())
+	}
+	logger.Info("ink: deleted a note", "container", uuid)
+	if s.invalidator != nil {
+		s.invalidator.ContainerDeleted(uuid)
+	}
+	s.invalidate()
+	return nil
+}
+
 // liveEnded closes every session tab of the Live view uuid, which has ended.
 func (s *InkService) liveEnded(uuid string) {
 	if _, err := s.settings.CloseTabs(func(t domain.Tab) bool { return t.ID == uuid }); err != nil {
@@ -733,7 +825,8 @@ func (s *InkService) wait(ctx context.Context, d time.Duration) bool {
 }
 
 // session dials once and, when a companion answers, runs one session over it to its end. It
-// reports whether the companion refused this Sieve's key or could not prove it.
+// reports whether the companion refused this Sieve's key or could not prove it. A session with the tablet
+// a held note came from tells the invalidator as it starts: that note may not be deleted from then.
 func (s *InkService) session(ctx context.Context) bool {
 	s.mu.Lock()
 	problem := s.state.Problem
@@ -765,7 +858,11 @@ func (s *InkService) session(ctx context.Context) bool {
 	s.mu.Lock()
 	run.session = link.NewSession(run, s.key, run.replicas, run, link.Plan{CatchUp: true, Follow: true})
 	s.run = run
+	delete(s.offered, l.Identity())
 	s.mu.Unlock()
+	if held, err := s.containers.Find(KindDigitalNote, map[string]string{"note_companion": l.Identity()}); err == nil && len(held) > 0 {
+		s.invalidate()
+	}
 	stop := context.AfterFunc(ctx, func() { l.Close() })
 	err = run.session.Run()
 	stop()
@@ -856,20 +953,37 @@ func (s *InkService) synced(open []SyncedNote) ([]SyncedNote, []Companion) {
 		logger.Error("ink: listing synced notes", "err", err.Error())
 		return nil, nil
 	}
+	kind := NewDigitalNoteKind()
 	byUUID := map[string]SyncedNote{}
 	for uuid, face := range found {
+		face = kind.Lifted(face, func() (domain.SieveBlock, error) {
+			c, err := s.containers.Load(uuid)
+			if err != nil {
+				return domain.SieveBlock{}, err
+			}
+			return c.Block(), nil
+		})
+		found[uuid] = face
 		pages, _ := strconv.Atoi(face["note_pages"])
 		seq, _ := strconv.ParseUint(face["note_synced_seq"], 10, 32)
 		byUUID[uuid] = SyncedNote{UUID: uuid, Title: face["note_title"], Pages: pages, Seq: uint32(seq),
-			Companion: face["note_companion"], Device: face["note_device"]}
+			Companion: face["note_companion"], Device: face["note_device"], Whiteboard: face["note_whiteboard"] == "true"}
 	}
 	for _, n := range open {
 		byUUID[n.UUID] = n
 	}
-	kind := NewDigitalNoteKind()
+	s.mu.Lock()
+	offered, run := maps.Clone(s.offered), s.run
+	s.mu.Unlock()
 	notes := make([]SyncedNote, 0, len(byUUID))
 	for uuid, n := range byUUID {
 		n.Name = kind.Name(found[uuid], n.Title)
+		n.Deletion = run.deletion(found[uuid])
+		if listed, ok := offered[n.Companion]; ok {
+			if source, err := link.ParseID(found[uuid]["note_source_id"]); err == nil {
+				n.Absent = !listed[source]
+			}
+		}
 		notes = append(notes, n)
 	}
 	sort.Slice(notes, func(i, j int) bool { return notes[i].UUID < notes[j].UUID })
@@ -909,6 +1023,9 @@ type sessionRun struct {
 	// listed is the head of each note the companion listed on this connection, by note.
 	listedMu sync.Mutex
 	listed   map[link.ID]uint32
+	// named are the notes LIVE named on this connection, which the companion offers as it offers
+	// what it listed.
+	named map[link.ID]bool
 
 	connected bool
 	// pending are the notes the catch-up has still to bring to their heads.
@@ -936,7 +1053,9 @@ func (r *sessionRun) Notes(notes []link.NoteEntry) {
 	for _, n := range notes {
 		r.listed[n.ID] = n.HeadSeq
 	}
+	offered := r.offeredLocked()
 	r.listedMu.Unlock()
+	r.svc.offer(r.link.Identity(), offered)
 	go r.svc.sendDescriptions(r)
 	if r.connected {
 		return
@@ -949,6 +1068,56 @@ func (r *sessionRun) Notes(notes []link.NoteEntry) {
 		}
 	}
 	r.svc.connected(r.link.Identity(), r.link.Elapsed())
+}
+
+// deletion is what deleting the note whose container face is face means while r runs; r may be
+// nil, when no session runs. It may be called from any goroutine.
+func (r *sessionRun) deletion(face map[string]string) Deletion {
+	if r == nil || r.link.Identity() != face["note_companion"] {
+		return DeleteReturns
+	}
+	source, err := link.ParseID(face["note_source_id"])
+	r.listedMu.Lock()
+	defer r.listedMu.Unlock()
+	if _, listed := r.listed[source]; r.listed == nil || (err == nil && (listed || r.named[source])) {
+		return DeleteRefused
+	}
+	return DeleteLast
+}
+
+// offeredLocked is every note the companion offers on this connection: those it listed and those
+// LIVE named. r.listedMu is held.
+func (r *sessionRun) offeredLocked() map[link.ID]bool {
+	offered := make(map[link.ID]bool, len(r.listed)+len(r.named))
+	for note := range r.listed {
+		offered[note] = true
+	}
+	for note := range r.named {
+		offered[note] = true
+	}
+	return offered
+}
+
+// name records note as named by LIVE, and so offered; once the companion has listed, the service
+// is told what it now offers.
+func (r *sessionRun) name(note link.ID) {
+	r.listedMu.Lock()
+	if r.named[note] {
+		r.listedMu.Unlock()
+		return
+	}
+	if r.named == nil {
+		r.named = map[link.ID]bool{}
+	}
+	r.named[note] = true
+	var offered map[link.ID]bool
+	if r.listed != nil {
+		offered = r.offeredLocked()
+	}
+	r.listedMu.Unlock()
+	if offered != nil {
+		r.svc.offer(r.link.Identity(), offered)
+	}
 }
 
 // listedHead is the head the companion listed note at on this connection; false when it did not
@@ -1003,6 +1172,7 @@ func (r *sessionRun) Done(note link.ID, _ uint32, records int) {
 func (r *sessionRun) Live(note, page link.ID) {
 	live := LiveNote{Note: note, Page: page}
 	if note != (link.ID{}) {
+		r.name(note)
 		uuid, err := r.replicas.UUID(note)
 		if err != nil {
 			logger.Warn("ink: finding the live note's container", "note", note.String(), "err", err.Error())

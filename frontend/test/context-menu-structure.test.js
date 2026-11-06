@@ -193,18 +193,25 @@ function openMenu(pane) {
   return /** @type {HTMLElement} */ (document.getElementById('sieve-context-menu'))
 }
 
+/** An item's label: its text without the hint it may carry.
+ *  @param {Element} b @returns {string} */
+function labelOf(b) {
+  const hint = b.querySelector('.ctx-item__hint')
+  return (b.textContent || '').slice(0, (b.textContent || '').length - (hint ? (hint.textContent || '').length : 0))
+}
+
 /** The labels of ONE list — a menu's own items, not a flyout's.
  *  @param {HTMLElement} root @returns {string[]} */
 function labelsOf(root) {
   return Array.from(root.children)
     .filter((el) => el.classList.contains('ctx-item'))
-    .map((b) => b.textContent)
+    .map(labelOf)
 }
 
 /** @param {HTMLElement} root @param {string} label @returns {HTMLElement} */
 function itemNamed(root, label) {
   const found = Array.from(root.querySelectorAll('.ctx-item'))
-    .find((b) => b.textContent.replace(/›$/, '') === label)
+    .find((b) => labelOf(b).replace(/›$/, '') === label)
   if (!found) throw new Error('no menu item labelled ' + label + ' in [' + labelsOf(root) + ']')
   return /** @type {HTMLElement} */ (found)
 }
@@ -850,13 +857,49 @@ describe('the notebook and Live menus', () => {
   const settle = () => new Promise((r) => setTimeout(r, 0))
 
   it.each([
-    ['a tree row', { type: 'notebook', id: 'n1', name: 'Ideas', isTab: false }, ['Open', 'Open on device', 'Refresh name and summary']],
+    ['a tree row', { type: 'notebook', id: 'n1', name: 'Ideas', isTab: false },
+      ['Open', 'Open on device', 'Refresh name and summary', 'Show in Files', 'Delete Notebook...']],
     ['a tab', { type: 'notebook', id: 'n1', name: 'Ideas', isTab: true },
-      ['Open on device', 'Refresh name and summary', 'Close Tab', 'Close Others', 'Close All Tabs']],
+      ['Open on device', 'Refresh name and summary', 'Show in Files', 'Delete Notebook...', 'Close Tab', 'Close Others', 'Close All Tabs']],
     ['the Live row', { type: 'inkLive', id: 'v1', name: 'Live', isTab: false }, ['Open this note']],
     ['the Live tab', { type: 'inkLive', id: 'v1', name: 'Live', isTab: true }, ['Open this note', 'Close Tab', 'Close Others', 'Close All Tabs']],
-  ])('%s offers its own items and nothing folder-like', (_, context, want) => {
+  ])('%s offers its own items', (_, context, want) => {
     expect(labelsOf(openOn(context))).toEqual(want)
+  })
+
+  it.each([
+    ['note', 'Delete Note...'],
+    ['folder', 'Delete Folder...'],
+    ['notebook', 'Delete Notebook...'],
+  ])('a %s offers every library item\'s Show in Files and Delete, in that order with a divider between', (type, del) => {
+    const shown = vi.fn()
+    ;/** @type {any} */ (window).sieveShowInFiles = shown
+    const labels = labelsOf(openOn({ type, id: 'x1', name: 'Item', isTab: false }))
+    expect(labels.indexOf(del)).toBe(labels.indexOf('Show in Files') + 1)
+    const shownItem = itemNamed(openOn({ type, id: 'x1', name: 'Item', isTab: false }), 'Show in Files')
+    expect(shownItem.nextElementSibling?.classList.contains('ctx-separator')).toBe(true)
+    expect(labelOf(/** @type {Element} */ (shownItem.nextElementSibling?.nextElementSibling))).toBe(del)
+    itemNamed(openOn({ type, id: 'x1', name: 'Item', isTab: false }), 'Show in Files').click()
+    expect(shown).toHaveBeenCalledWith('x1')
+    delete (/** @type {any} */ (window)).sieveShowInFiles
+  })
+
+  it('Delete on a notebook the tablet still offers is disabled and says why: a row from its own word, a tab from the Notebooks item\'s marker, expanded or collapsed', () => {
+    const why = 'The tablet still has this notebook.'
+    const refusedDelete = (/** @type {object} */ context) => itemNamed(openOn(context), 'Delete Notebook...')
+    const row = refusedDelete({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: false, deleteRefused: why })
+    expect(row.hasAttribute('disabled')).toBe(true)
+    expect([row.querySelector('.ctx-item__hint')?.textContent, row.title]).toEqual([why, why])
+
+    expect(refusedDelete({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: true }).hasAttribute('disabled')).toBe(false)
+    const marker = document.createElement('span')
+    marker.hidden = true
+    marker.setAttribute('data-ink-refused', 'n1')
+    marker.setAttribute('data-ctx-delete-refused', why)
+    document.body.appendChild(marker)
+    const tab = refusedDelete({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: true })
+    expect([tab.hasAttribute('disabled'), tab.querySelector('.ctx-item__hint')?.textContent]).toEqual([true, why])
+    marker.remove()
   })
 
   it('Refresh name and summary posts the describe route and says it is naming, or the route\'s words', async () => {

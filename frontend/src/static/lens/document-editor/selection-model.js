@@ -275,7 +275,8 @@ export class SelectionModel {
   /**
    * True iff a MEANINGFUL key differs between two contexts (identity/context —
    * NOT caret/range, which are coordinate noise). blockIds is compared by
-   * array-equality (same members, same order); the scalar keys by ===.
+   * array-equality (same members, same order), the target by its label, the
+   * scalar keys by ===.
    * @param {Readonly<SelectionContext>} a
    * @param {Readonly<SelectionContext>} b
    * @returns {boolean}
@@ -284,7 +285,7 @@ export class SelectionModel {
     for (const k of MEANINGFUL_KEYS) {
       if (a[k] !== b[k]) return true
     }
-    return !SelectionModel.#sameIds(a.blockIds, b.blockIds)
+    return !SelectionModel.#sameIds(a.blockIds, b.blockIds) || a.target.label !== b.target.label
   }
 
   /** @param {string[]} a @param {string[]} b @returns {boolean} */

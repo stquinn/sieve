@@ -279,6 +279,126 @@ func TestInkService_ASessionLandsNotesAndStatusListsThem(t *testing.T) {
 	}
 }
 
+// A held note its companion did not list is absent once that companion has listed, and a
+// whiteboard is told apart. Delete removes Sieve's copy, which the next listing brings back.
+// A notebook is deleted only where it would not come straight back: its tablet not connected, or
+// connected and no longer offering it. A note the tablet offers again after its copy was deleted
+// is synced from the start into a new container at the next session. Board's face predates
+// note_whiteboard, which is read from its block.
+func TestInkService_MarksWhatTheTabletNoLongerOffersAndDeletesSievesCopyOnlyWhereItStays(t *testing.T) {
+	records := inkLog()
+	rig := newInkRig(t, records)
+	board := NewNoteReplicas(rig.containers, companionID)
+	opened, err := board.Open(testID(0xb0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rec := range logOf(header("Board"), pageAdd(page(1), 0, nil, link.BoundsUnbounded)) {
+		body, err := rec.Body()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := opened.Append(rec, body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := board.End(); err != nil {
+		t.Fatal(err)
+	}
+	dropWhiteboard(t, rig.st, opened.(*NoteReplica).UUID())
+	byTitle := func(st Status) map[string]SyncedNote {
+		notes := map[string]SyncedNote{}
+		for _, n := range st.Notes {
+			notes[n.Title] = n
+		}
+		return notes
+	}
+	if n := byTitle(rig.svc.Status())["Board"]; n.Absent || !n.Whiteboard || n.Deletion != DeleteReturns {
+		t.Errorf("before any listing: %+v", n)
+	}
+
+	rig.enable(linkKey)
+	rig.start()
+	notes := byTitle(rig.await("caught up", func(st Status) bool { return connected(st) && st.Session.Records == len(records) }))
+	if !notes["Board"].Absent || notes["Ideas"].Absent || notes["Ideas"].Whiteboard {
+		t.Errorf("after the listing: %+v", notes)
+	}
+	if notes["Ideas"].Deletion != DeleteRefused || notes["Board"].Deletion != DeleteLast {
+		t.Errorf("deletions while connected: Ideas %v, Board %v", notes["Ideas"].Deletion, notes["Board"].Deletion)
+	}
+	ideas, boardUUID := notes["Ideas"].UUID, notes["Board"].UUID
+	if err := rig.svc.Delete(ideas); !errors.Is(err, ErrStillOffered) {
+		t.Errorf("deleting what the tablet offers: %v", err)
+	}
+	if _, err := reopen(t, rig.st).Load(ideas); err != nil {
+		t.Errorf("a refused delete removed the container: %v", err)
+	}
+
+	deleted := func(uuid string) {
+		t.Helper()
+		if err := rig.svc.Delete(uuid); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := reopen(t, rig.st).Load(uuid); err == nil {
+			t.Errorf("the deleted container %s is still held", uuid)
+		}
+		rig.mu.Lock()
+		announced := slices.Clone(rig.deleted)
+		rig.mu.Unlock()
+		if !slices.Contains(announced, uuid) {
+			t.Errorf("deletions announced %v, want %s among them", announced, uuid)
+		}
+		for _, n := range rig.svc.Status().Notes {
+			if n.UUID == uuid {
+				t.Errorf("listed after its delete: %+v", n)
+			}
+		}
+	}
+	deleted(boardUUID)
+
+	rig.stopPromptly()
+	if n := byTitle(rig.svc.Status())["Ideas"]; n.Deletion != DeleteReturns {
+		t.Errorf("deletion with the tablet away: %v", n.Deletion)
+	}
+	deleted(ideas)
+	rig.start()
+	back := byTitle(rig.await("synced at the next session", func(st Status) bool {
+		n, ok := byTitle(st)["Ideas"]
+		return ok && n.Seq == uint32(len(records))
+	}))["Ideas"]
+	if back.UUID == ideas {
+		t.Errorf("synced again into the deleted container %s", ideas)
+	}
+	if err := rig.svc.Delete("not-a-note"); !errors.Is(err, ErrNoSuchPage) {
+		t.Errorf("deleting what is no Digital Note: %v", err)
+	}
+}
+
+// A listing arriving while Status reads what the tablets offer is no concurrent map access.
+func TestInkService_AListingDuringStatusIsNoRace(t *testing.T) {
+	rig := newInkRig(t, inkLog())
+	if err := rig.sync(); err != nil {
+		t.Fatal(err)
+	}
+	stop, listed := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(listed)
+		for i := uint32(0); ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+				rig.svc.offer(companionID, map[link.ID]bool{noteID: i%2 == 0})
+			}
+		}
+	}()
+	for i := 0; i < 50; i++ {
+		rig.svc.Status()
+	}
+	close(stop)
+	<-listed
+}
+
 // While a session has a note open, Status shows it as its replica stands, ahead of its face;
 // otherwise as its face says.
 func TestInkService_StatusShowsAnOpenNoteAsItsReplicaStands(t *testing.T) {
@@ -305,7 +425,7 @@ func TestInkService_StatusShowsAnOpenNoteAsItsReplicaStands(t *testing.T) {
 		seq   uint32
 	}{
 		{"from the face", nil, 0, 0},
-		{"from the open replica", &sessionRun{replicas: replicas}, 1, uint32(len(records))},
+		{"from the open replica", &sessionRun{replicas: replicas, link: namedLink{identity: "another-companion"}}, 1, uint32(len(records))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rig.svc.mu.Lock()
@@ -596,6 +716,9 @@ func TestInkService_ListenersHearEventsInOrderAndASlowOneStallsNothing(t *testin
 	if live := rig.svc.Live(); live.Note != noteID || live.Page != page(1) || live.Container == "" {
 		t.Errorf("live while the companion shows the note: %+v", live)
 	}
+	if err := rig.svc.Delete(rig.svc.Live().Container); !errors.Is(err, ErrStillOffered) {
+		t.Errorf("deleting the live note: %v", err)
+	}
 	late := &recordingListener{}
 	rig.svc.Subscribe(late)
 	rig.stopPromptly()
@@ -824,7 +947,7 @@ func TestOpenNotes_AnswerAPageAtTheSeqItsLogReaches(t *testing.T) {
 					t.Fatal("the queue reached the asset")
 				}
 				rig.svc.mu.Lock()
-				rig.svc.run = &sessionRun{replicas: replicas}
+				rig.svc.run = &sessionRun{replicas: replicas, link: namedLink{identity: companionID}}
 				rig.svc.mu.Unlock()
 			} else {
 				if err := rig.sync(); err != nil {
@@ -1527,4 +1650,37 @@ func TestInkService_ADescriptionGoesToTheTabletItsNoteCameFrom(t *testing.T) {
 	if s := sent(uuid); s != "7" {
 		t.Errorf("recorded as sent at %q after the next session", s)
 	}
+}
+
+// namedLink is a link that is only ever asked whose it is.
+type namedLink struct {
+	radio.Link
+	identity string
+}
+
+func (l namedLink) Identity() string { return l.identity }
+
+// A note LIVE names that NOTES did not list is offered: its copy may not be deleted and it is not
+// marked as gone from the tablet.
+func TestInkService_ANoteNamedOnlyByLiveIsOffered(t *testing.T) {
+	records := inkLog()
+	rig := newInkRig(t, records)
+	written := testID(0xa7)
+	rig.companion.Live = true
+	rig.companion.LiveOf = written
+	rig.enable(linkKey)
+	rig.start()
+	st := rig.await("following the live note", func(st Status) bool {
+		return connected(st) && rig.svc.Live().Note == written && rig.svc.Live().Container != ""
+	})
+	uuid := rig.svc.Live().Container
+	for _, n := range st.Notes {
+		if n.UUID == uuid && (n.Absent || n.Deletion != DeleteRefused) {
+			t.Errorf("the note being written: %+v", n)
+		}
+	}
+	if err := rig.svc.Delete(uuid); !errors.Is(err, ErrStillOffered) {
+		t.Errorf("deleting the note being written: %v", err)
+	}
+	rig.stopPromptly()
 }

@@ -3,6 +3,7 @@ package ink
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 
@@ -98,12 +99,18 @@ func (k DigitalNoteKind) InitAttrs(id string, overrides map[string]interface{}) 
 	return attrs
 }
 
-// Face is title, page count, the device's name, source type, provenance and synced seq, for .meta.
+// Face is title, page count, whether a page is a whiteboard (unbounded), the device's name, source type, provenance and synced seq, for .meta.
 func (k DigitalNoteKind) Face(b domain.SieveBlock) map[string]string {
 	note, _ := b.Attrs["note"].(map[string]interface{})
 	pages, _ := note["pages"].([]interface{})
 	device, _ := b.Attrs["note_device"].(map[string]interface{})
 	name, _ := device["name"].(string)
+	whiteboard := false
+	for _, p := range pages {
+		if page, _ := p.(map[string]interface{}); page["bounds"] == link.BoundsUnbounded.String() {
+			whiteboard = true
+		}
+	}
 	return map[string]string{
 		"note_title":      b.StringAttr("title"),
 		"note_pages":      strconv.Itoa(len(pages)),
@@ -112,7 +119,24 @@ func (k DigitalNoteKind) Face(b domain.SieveBlock) map[string]string {
 		"note_source_id":  b.StringAttr("note_source_id"),
 		"note_companion":  b.StringAttr("note_companion"),
 		"note_synced_seq": fmt.Sprint(b.Attrs["note_synced_seq"]),
+		"note_whiteboard": strconv.FormatBool(whiteboard),
 	}
+}
+
+// Lifted is meta, a note's .meta as found, with note_whiteboard read from the block load gives
+// when meta lacks it: a face saved before that field existed. meta itself is returned when it has
+// note_whiteboard, and when load fails.
+func (k DigitalNoteKind) Lifted(meta map[string]string, load func() (domain.SieveBlock, error)) map[string]string {
+	if _, ok := meta["note_whiteboard"]; ok {
+		return meta
+	}
+	b, err := load()
+	if err != nil {
+		return meta
+	}
+	lifted := maps.Clone(meta)
+	lifted["note_whiteboard"] = k.Face(b)["note_whiteboard"]
+	return lifted
 }
 
 // Name is what a note is called wherever it is shown: the name Sieve gave it, the display_name of

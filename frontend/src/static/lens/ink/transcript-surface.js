@@ -14,6 +14,7 @@ import { InkFeed, InkTranscriptState } from '../../contract/ink-container-provid
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
 import { QuestionListView } from '../../renderers/question-list-view.js'
 import { ActionStatus } from './action-status.js'
+import { InkPlace } from './ink-place.js'
 import { NotePager } from './note-pager.js'
 import { PageSurface } from './page-surface.js'
 
@@ -170,6 +171,9 @@ export class TranscriptSurface extends AbstractSurface {
 
   /** @returns {string|null} the id of the page the reader is on */
   get shownPage() { return this.#shown }
+
+  /** @override @returns {Readonly<import('../document-editor/selection-model.js').RawSelectionDescriptor>} the page shown */
+  feedSelection() { return InkPlace.describe(this.mode, this.#index(), this.#pages.length) }
 
   /** @returns {ReadonlySet<string>} the pages marked as holding ink not yet seen */
   get unseenPages() { return this.#unseen }

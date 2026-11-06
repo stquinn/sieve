@@ -10,6 +10,7 @@
 import { AbstractSurface, SurfaceEvent, SurfaceIntent } from '../abstract-surface.js'
 import { InkFeed } from '../../contract/ink-container-provider.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
+import { InkPlace } from './ink-place.js'
 import { InkSheet } from './ink-sheet.js'
 import { PageSurface } from './page-surface.js'
 
@@ -71,6 +72,12 @@ export class LiveSurface extends AbstractSurface {
 
   /** @returns {string|null} the id of the page shown */
   get shownPage() { return this.#sheet.shown }
+
+  /** @override @returns {Readonly<import('../document-editor/selection-model.js').RawSelectionDescriptor>} the page shown */
+  feedSelection() {
+    const shown = this.#sheet.shown
+    return InkPlace.describe(this.mode, this.#sheet.indexOf(shown), this.#sheet.pages.length)
+  }
 
   /** @returns {Mirrored} what the view mirrors */
   get mirrored() { return this.#mirrored }

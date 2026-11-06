@@ -191,6 +191,53 @@ func (rs *NoteReplicas) writeMeta(uuid string, edit func(domain.DocumentMeta)) (
 	return false, nil
 }
 
+// errForgotten is the write of a replica whose container was deleted.
+var errForgotten = errors.New("ink: the note's container was deleted")
+
+// forget drops the open replica whose container is uuid, its queue unwritten, so that nothing it
+// is given reaches a container again, and looks for containers afresh at the next Have or Open.
+// restore puts back what forget dropped, as it stood, for a container whose delete failed.
+func (rs *NoteReplicas) forget(uuid string) (restore func()) {
+	type dropped struct {
+		note  link.ID
+		r     *NoteReplica
+		queue []byte
+		err   error
+	}
+	var gone []dropped
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	for note, r := range rs.open {
+		if r.UUID() != uuid {
+			continue
+		}
+		r.mu.Lock()
+		if r.timer != nil {
+			r.timer.Stop()
+			r.timer = nil
+		}
+		gone = append(gone, dropped{note: note, r: r, queue: r.queue, err: r.err})
+		r.queue, r.err = nil, errForgotten
+		r.mu.Unlock()
+		delete(rs.open, note)
+	}
+	rs.held = nil
+	return func() {
+		rs.mu.Lock()
+		defer rs.mu.Unlock()
+		for _, d := range gone {
+			d.r.mu.Lock()
+			d.r.queue, d.r.err = d.queue, d.err
+			if len(d.r.queue) > 0 && d.r.timer == nil {
+				d.r.timer = time.AfterFunc(rs.flushAfter, d.r.flushLater)
+			}
+			d.r.mu.Unlock()
+			rs.open[d.note] = d.r
+		}
+		rs.held = nil
+	}
+}
+
 // End writes every open replica's queue, then saves the block of each that changed since its
 // last save, and releases them all. A replica whose write failed is released unsaved, so its
 // block stays behind its asset. The next Have or Open looks for containers again.
@@ -462,8 +509,12 @@ func (r *NoteReplica) synced() (SyncedNote, bool) {
 	if r.container == nil {
 		return SyncedNote{}, false
 	}
+	whiteboard := false
+	for _, p := range r.fold.Pages() {
+		whiteboard = whiteboard || p.Bounds == link.BoundsUnbounded
+	}
 	return SyncedNote{UUID: r.container.UUID(), Title: r.fold.Title(), Pages: r.fold.PageCount(), Seq: r.cursor.Seq,
-		Companion: r.owner.companion, Device: r.fold.Header().Device.Name}, true
+		Companion: r.owner.companion, Device: r.fold.Header().Device.Name, Whiteboard: whiteboard}, true
 }
 
 // log is the asset followed by the queue, read under r.mu so no append falls between the two. r.mu
