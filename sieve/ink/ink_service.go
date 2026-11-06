@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -160,6 +161,11 @@ type SyncedNote struct {
 	Companion string
 	// Device is the name of the device the note was written on.
 	Device string
+	// Whiteboard is a page of the note being unbounded.
+	Whiteboard bool
+	// Absent is the note missing from the last NOTES its companion sent in this run: deleted on
+	// the tablet or no longer shared with this Sieve. False until that companion has listed.
+	Absent bool
 }
 
 // Status is everything Settings → Ink and the sidebar's Ink section show.
@@ -221,6 +227,8 @@ type InkService struct {
 	lastFailure string
 	// namer names the notes while the service runs; nil when nothing names them.
 	namer *NoteNamer
+	// offered is, by companion identity, the notes its last NOTES listed in this run.
+	offered map[string]map[link.ID]bool
 	// sending is held while a note's description is sent to the tablet and recorded as sent.
 	sending sync.Mutex
 }
@@ -664,6 +672,54 @@ func (s *InkService) sendDescriptions(run *sessionRun) {
 	}
 }
 
+// offer records notes as what companion offers this Sieve now, and tells the invalidator when a
+// later listing changes it; the session being connected tells it of the first.
+func (s *InkService) offer(companion string, notes []link.NoteEntry) {
+	listed := make(map[link.ID]bool, len(notes))
+	for _, n := range notes {
+		listed[n.ID] = true
+	}
+	s.mu.Lock()
+	prior, had := s.offered[companion]
+	if s.offered == nil {
+		s.offered = map[string]map[link.ID]bool{}
+	}
+	s.offered[companion] = listed
+	s.mu.Unlock()
+	if had && !maps.Equal(prior, listed) {
+		s.invalidate()
+	}
+}
+
+// Delete removes Sieve's copy of the Digital Note in container uuid, closes its tabs and tells
+// the invalidator. A session holding the note open stops writing it. Nothing remembers the
+// deletion: a note its companion still offers is synced again whole at its next listing. A
+// container that is not a Digital Note is ErrNoSuchPage.
+func (s *InkService) Delete(uuid string) error {
+	c, err := s.digitalNote(uuid)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	run := s.run
+	s.mu.Unlock()
+	if run != nil {
+		run.replicas.forget(uuid)
+	}
+	if err := s.containers.Delete(c); err != nil {
+		return err
+	}
+	if _, err := s.settings.CloseTabs(func(t domain.Tab) bool { return t.ID == uuid }); err != nil {
+		logger.Error("ink: closing a deleted note's tabs", "err", err.Error())
+	}
+	logger.Info("ink: deleted a note", "container", uuid)
+	if s.invalidator != nil {
+		s.invalidator.ContainerDeleted(uuid)
+	}
+	s.invalidate()
+	return nil
+}
+
 // liveEnded closes every session tab of the Live view uuid, which has ended.
 func (s *InkService) liveEnded(uuid string) {
 	if _, err := s.settings.CloseTabs(func(t domain.Tab) bool { return t.ID == uuid }); err != nil {
@@ -861,15 +917,23 @@ func (s *InkService) synced(open []SyncedNote) ([]SyncedNote, []Companion) {
 		pages, _ := strconv.Atoi(face["note_pages"])
 		seq, _ := strconv.ParseUint(face["note_synced_seq"], 10, 32)
 		byUUID[uuid] = SyncedNote{UUID: uuid, Title: face["note_title"], Pages: pages, Seq: uint32(seq),
-			Companion: face["note_companion"], Device: face["note_device"]}
+			Companion: face["note_companion"], Device: face["note_device"], Whiteboard: face["note_whiteboard"] == "true"}
 	}
 	for _, n := range open {
 		byUUID[n.UUID] = n
 	}
 	kind := NewDigitalNoteKind()
+	s.mu.Lock()
+	offered := s.offered
+	s.mu.Unlock()
 	notes := make([]SyncedNote, 0, len(byUUID))
 	for uuid, n := range byUUID {
 		n.Name = kind.Name(found[uuid], n.Title)
+		if listed, ok := offered[n.Companion]; ok {
+			if source, err := link.ParseID(found[uuid]["note_source_id"]); err == nil {
+				n.Absent = !listed[source]
+			}
+		}
 		notes = append(notes, n)
 	}
 	sort.Slice(notes, func(i, j int) bool { return notes[i].UUID < notes[j].UUID })
@@ -937,6 +1001,7 @@ func (r *sessionRun) Notes(notes []link.NoteEntry) {
 		r.listed[n.ID] = n.HeadSeq
 	}
 	r.listedMu.Unlock()
+	r.svc.offer(r.link.Identity(), notes)
 	go r.svc.sendDescriptions(r)
 	if r.connected {
 		return

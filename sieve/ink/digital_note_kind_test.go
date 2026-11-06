@@ -37,13 +37,13 @@ func TestDigitalNoteKind_AttrsFaceAndSourceThroughAContainer(t *testing.T) {
 		wantPages int
 	}{
 		{"an empty note", nil,
-			map[string]string{"note_title": "", "note_pages": "0", "note_device": "", "note_source": "strokes", "note_synced_seq": "0"}, 0},
+			map[string]string{"note_title": "", "note_pages": "0", "note_device": "", "note_source": "strokes", "note_synced_seq": "0", "note_whiteboard": "false"}, 0},
 		{"a note of two pages",
 			logOf(header("Ideas"), pageAdd(page(1), 0, ruled, link.BoundsFixed), pageAdd(page(2), 1, dots, link.BoundsFixed),
 				strokeAdd(page(1), stroke(1))),
-			map[string]string{"note_title": "Ideas", "note_pages": "2", "note_device": aDevice.Name, "note_source": "strokes", "note_synced_seq": "4"}, 2},
+			map[string]string{"note_title": "Ideas", "note_pages": "2", "note_device": aDevice.Name, "note_source": "strokes", "note_synced_seq": "4", "note_whiteboard": "false"}, 2},
 		{"a whiteboard", logOf(header("Board"), pageAdd(page(1), 0, nil, link.BoundsUnbounded)),
-			map[string]string{"note_title": "Board", "note_pages": "1", "note_device": aDevice.Name, "note_source": "strokes", "note_synced_seq": "2"}, 1},
+			map[string]string{"note_title": "Board", "note_pages": "1", "note_device": aDevice.Name, "note_source": "strokes", "note_synced_seq": "2", "note_whiteboard": "true"}, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			containers, st := newTestContainers(t)

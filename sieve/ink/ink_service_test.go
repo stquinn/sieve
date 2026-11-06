@@ -279,6 +279,76 @@ func TestInkService_ASessionLandsNotesAndStatusListsThem(t *testing.T) {
 	}
 }
 
+// A held note its companion did not list is absent once that companion has listed, and a
+// whiteboard is told apart. Delete removes Sieve's copy, which the next listing brings back.
+func TestInkService_MarksWhatTheTabletNoLongerOffersAndDeletesSievesCopy(t *testing.T) {
+	records := inkLog()
+	rig := newInkRig(t, records)
+	board := NewNoteReplicas(rig.containers, companionID)
+	opened, err := board.Open(testID(0xb0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rec := range logOf(header("Board"), pageAdd(page(1), 0, nil, link.BoundsUnbounded)) {
+		body, err := rec.Body()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := opened.Append(rec, body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := board.End(); err != nil {
+		t.Fatal(err)
+	}
+	byTitle := func(st Status) map[string]SyncedNote {
+		notes := map[string]SyncedNote{}
+		for _, n := range st.Notes {
+			notes[n.Title] = n
+		}
+		return notes
+	}
+	if n := byTitle(rig.svc.Status())["Board"]; n.Absent || !n.Whiteboard {
+		t.Errorf("before any listing: %+v", n)
+	}
+
+	rig.enable(linkKey)
+	rig.start()
+	notes := byTitle(rig.await("caught up", func(st Status) bool { return connected(st) && st.Session.Records == len(records) }))
+	if !notes["Board"].Absent || notes["Ideas"].Absent || notes["Ideas"].Whiteboard {
+		t.Errorf("after the listing: %+v", notes)
+	}
+
+	ideas := notes["Ideas"].UUID
+	if err := rig.svc.Delete(ideas); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reopen(t, rig.st).Load(ideas); err == nil {
+		t.Error("the deleted container is still held")
+	}
+	rig.mu.Lock()
+	deleted := slices.Clone(rig.deleted)
+	rig.mu.Unlock()
+	if !slices.Contains(deleted, ideas) {
+		t.Errorf("deletions announced %v", deleted)
+	}
+	if n, held := byTitle(rig.svc.Status())["Ideas"]; held {
+		t.Errorf("listed after its delete: %+v", n)
+	}
+
+	rig.radio.drop()
+	back := byTitle(rig.await("synced again", func(st Status) bool {
+		n, ok := byTitle(st)["Ideas"]
+		return ok && n.Seq == uint32(len(records))
+	}))["Ideas"]
+	if back.UUID == ideas {
+		t.Errorf("synced again into the deleted container %s", ideas)
+	}
+	if err := rig.svc.Delete("not-a-note"); !errors.Is(err, ErrNoSuchPage) {
+		t.Errorf("deleting what is no Digital Note: %v", err)
+	}
+}
+
 // While a session has a note open, Status shows it as its replica stands, ahead of its face;
 // otherwise as its face says.
 func TestInkService_StatusShowsAnOpenNoteAsItsReplicaStands(t *testing.T) {
