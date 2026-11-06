@@ -120,6 +120,7 @@ func NewWsHandler(sp *sieve.ServiceProvider, broadcast *WorkspaceBroadcast, toke
 		protocol.TypeInkReading:         h.handleInkReading,
 		protocol.TypeInkReadPage:        h.handleInkReadPage,
 		protocol.TypeInkReadingDocument: h.handleInkReadingDocument,
+		protocol.TypeInkDescribe:        h.handleInkDescribe,
 	}
 	h.workspaceFrames = map[string]frameHandler{
 		protocol.TypePing:           h.handlePing,
@@ -694,6 +695,22 @@ func (h *WsHandler) handleInkOpenOnTablet(f inboundFrame) {
 		return
 	}
 	go stream.openOnTablet(f.uuid, msg, f.reply)
+}
+
+// handleInkDescribe names this channel's Digital Note now, and answers once its job is submitted
+// or with why not; the channel goes on reading meanwhile.
+func (h *WsHandler) handleInkDescribe(f inboundFrame) {
+	var msg protocol.InkDescribeFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeInkDescribe, err)
+		return
+	}
+	stream := h.inkStream()
+	if stream == nil || h.ServiceProvider.InkNamer == nil {
+		f.reply(protocol.NewInkDescribeRefusedFrame(msg.OpID, "Notebooks are unavailable."))
+		return
+	}
+	go stream.describe(h.ServiceProvider.InkNamer, f.uuid, msg, f.reply)
 }
 
 // handleInkReading answers with what is known of the reading of a page of this channel's Digital

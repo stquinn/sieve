@@ -25,7 +25,8 @@ export class InkProviderAdapter extends ProviderAdapter {
   constructor(model, documentService) {
     super(model)
     if (!documentService || typeof documentService.inkPage !== 'function' || typeof documentService.observeInk !== 'function' ||
-      typeof documentService.inkOpenOnTablet !== 'function' || typeof documentService.inkReading !== 'function') {
+      typeof documentService.inkOpenOnTablet !== 'function' || typeof documentService.inkReading !== 'function' ||
+      typeof documentService.inkDescribe !== 'function') {
       throw new ContractViolation('InkProviderAdapter: construct over the DocumentService')
     }
     this.#documents = documentService
@@ -41,6 +42,11 @@ export class InkProviderAdapter extends ProviderAdapter {
   openOnTablet(pageId) {
     return this.#documents.inkOpenOnTablet(this.getUuid(), pageId)
       .then((answer) => /** @type {InkOpeningResult} */ (ProviderAdapter._frozen({ outcome: answer.outcome, reason: answer.reason })))
+  }
+
+  /** @returns {Promise<void>} */
+  refreshDescription() {
+    return this.#documents.inkDescribe(this.getUuid())
   }
 
   /** @param {string} pageId @returns {Promise<InkReading>} */

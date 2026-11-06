@@ -424,12 +424,12 @@ func (r *PageReadings) page(uuid string, page link.ID) (int, string, error) {
 	return 0, "", fmt.Errorf("%w: %s has no page %s", ErrNoSuchPage, uuid, page)
 }
 
-// noteName is what the note in uuid is called, or "Untitled note".
+// noteName is what the note in uuid is called, or "Untitled notebook".
 func (r *PageReadings) noteName(uuid string) string {
 	if name := strings.TrimSpace(r.notes.noteName(uuid)); name != "" {
 		return name
 	}
-	return "Untitled note"
+	return "Untitled notebook"
 }
 
 // tell tells every listener that the reading of page of uuid changed.

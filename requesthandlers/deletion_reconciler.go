@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sieve/sieve"
 	"sieve/sieve/domain"
+	"time"
 )
 
 // deletionReconciler is the half of a deletion that is the same whichever
@@ -84,6 +85,7 @@ func (d deletionReconciler) reconcile(w http.ResponseWriter, deleted ...string) 
 // closes up onto.
 func (d deletionReconciler) pruneSession(deleted []string) domain.Session {
 	session := d.sp.State.LoadSession()
+	wasActive := session.ActiveID()
 
 	gone := make(map[string]bool, len(deleted))
 	for _, uuid := range deleted {
@@ -121,6 +123,9 @@ func (d deletionReconciler) pruneSession(deleted []string) domain.Session {
 			Status:      "unfiled",
 		}}
 		session.ActiveIdx = 0
+	}
+	if session.ActiveID() != wasActive {
+		session.Activate(session.ActiveIdx, time.Now())
 	}
 
 	_ = d.sp.State.SaveSession(session)

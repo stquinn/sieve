@@ -9,7 +9,7 @@
   hx-target="#htmx-sidebar"
   hx-swap="innerHTML"
   hx-push-url="false"
-  title="Ink: the notes synced from your tablets"
+  title="Notebooks: the notebooks synced from your tablets"
 >
   <span class="ink-tree__chevron">
     {{if .Open}}
@@ -19,14 +19,17 @@
     {{end}}
   </span>
   {{template "ink_note_icon"}}
-  <span class="ink-tree__name">Ink</span>
+  <span class="ink-tree__name">Notebooks</span>
   {{if and (not .Open) .Live}}{{if not .Live.Waiting}}<span class="ink-tree__live-dot" data-ink-live-dot title="The tablet is writing"></span>{{end}}{{end}}
 </button>
 {{if .Open}}
 {{with .Live}}
 <button
   class="sidebar__file ink-tree__item ink-tree__item--live"
-  data-ink-live="{{if .Waiting}}waiting{{else}}live{{end}}"{{if .Active}}
+  data-ink-live="{{if .Waiting}}waiting{{else}}live{{end}}"
+  data-ctx-id="{{.UUID}}"
+  data-ctx-type="inkLive"
+  data-ctx-name="Live{{if .Device}} · {{.Device}}{{end}}"{{if .Active}}
   data-active{{end}}
   style="padding-left:{{fileIndent 1}};"
   onmousedown="window.sieveWorkspace.open('{{.UUID}}')"
@@ -35,17 +38,20 @@
   {{template "ink_live_icon"}}
   <span class="ink-tree__text">
     <span class="ink-tree__label">Live{{if .Device}} · {{.Device}}{{end}}</span>
-    <span class="ink-tree__meta">{{if .Waiting}}Waiting for the tablet{{else if .Note}}{{.Note}}{{else}}Untitled note{{end}}</span>
+    <span class="ink-tree__meta">{{if .Waiting}}Waiting for the tablet{{else if .Note}}{{.Note}}{{else}}Untitled notebook{{end}}</span>
   </span>
 </button>
 {{end}}
 {{if not .Notes}}
-<div class="sidebar__empty" style="padding-left:{{fileIndent 1}};">No synced notes yet</div>
+<div class="sidebar__empty" style="padding-left:{{fileIndent 1}};">No synced notebooks yet</div>
 {{else}}
 {{range .Notes}}
 <button
   class="sidebar__file ink-tree__item"
-  data-ink-note="{{.UUID}}"{{if .Active}}
+  data-ink-note="{{.UUID}}"
+  data-ctx-id="{{.UUID}}"
+  data-ctx-type="notebook"
+  data-ctx-name="{{.Title}}"{{if .Active}}
   data-active{{end}}
   style="padding-left:{{fileIndent 1}};"
   onmousedown="window.sieveWorkspace.open('{{.UUID}}')"

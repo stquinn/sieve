@@ -1,9 +1,11 @@
 package ink
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,7 +15,9 @@ import (
 	"sieve/sieve/services"
 )
 
-// fakeClock is the namer's clock, moved by the test: a timer fires when advance passes its time.
+// fakeClock is the namer's clock, moved by the test: a timer fires when advance passes its time. It
+// starts an hour ahead of the wall clock, so every save the store stamps during a test reads as
+// long past.
 type fakeClock struct {
 	mu     sync.Mutex
 	now    time.Time
@@ -26,7 +30,9 @@ type fakeTimer struct {
 	stopped bool
 }
 
-func newFakeClock() *fakeClock { return &fakeClock{now: time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)} }
+func newFakeClock() *fakeClock {
+	return &fakeClock{now: time.Now().Add(time.Hour).Truncate(time.Second)}
+}
 
 func (c *fakeClock) Now() time.Time {
 	c.mu.Lock()
@@ -118,7 +124,8 @@ var kitchen = domain.NoteMetadata{Title: "Kitchen extension planning", Keywords:
 	Categories: []string{"Home"}, Summary: "Plans for the kitchen. A rough budget."}
 
 // namerRig is an imagesRig whose note is named by a namer on a fake clock, with a settle time of
-// ten seconds, a fake describer and the real job engine.
+// ten seconds, a fake describer and the real job engine. The note's log last changed at the
+// clock's start.
 type namerRig struct {
 	*imagesRig
 	state     *services.StateService
@@ -146,8 +153,27 @@ func newNamerRig(t *testing.T, records ...link.Record) *namerRig {
 	}
 	rig.state, rig.svc.settings = state, state
 	rig.engine = services.NewJobEngine(nil, 2, rig.tracker)
+	rig.changedAt(rig.clock.Now())
 	rig.namer = rig.newNamer()
 	return rig
+}
+
+// changedAt makes the note's face say its block was last saved at at.
+func (rig *namerRig) changedAt(at time.Time) {
+	rig.t.Helper()
+	if _, err := rig.containers.SaveMeta(rig.uuid(), func(m domain.DocumentMeta) {
+		m.All()["modified"] = at.Local().Format("2006-01-02T15:04:05")
+	}); err != nil {
+		rig.t.Fatal(err)
+	}
+}
+
+// nameNow asks the namer to name the note now and waits until no naming job is queued or running.
+func (rig *namerRig) nameNow() error {
+	rig.t.Helper()
+	err := rig.namer.NameNow(context.Background(), rig.uuid())
+	rig.settled(0)
+	return err
 }
 
 // newNamer is a namer over the rig, started, as a Sieve starting again builds it.
@@ -194,8 +220,8 @@ func (rig *namerRig) meta() map[string]string {
 	return c.Storable().Meta()
 }
 
-// A note is named once it has gone the settle time without a record, counted from the namer's
-// start for one found on its face: one job, shown its pages in order, whose description is kept in
+// A note is named once it has gone the settle time without a record, counted from its face's last
+// save for one found there: one job, shown its pages in order, whose description is kept in
 // .meta, keywords whole and tags unbroken by a comma, the tablet's title left in the block, the
 // version unmoved, and every tab of the note renamed. A named, unchanged note is not named again,
 // by this namer or the next.
@@ -259,20 +285,128 @@ func TestNoteNamer_NamesANoteOnceItHasSettled(t *testing.T) {
 	}
 }
 
-// The live note never settles; once it is not live it is named as soon as its settle time from its
-// last record has passed.
-func TestNoteNamer_TheLiveNoteIsNotNamed(t *testing.T) {
+// A note is named whether or not the tablet shows it live.
+func TestNoteNamer_TheLiveNoteIsNamedToo(t *testing.T) {
 	rig := newNamerRig(t, inkLog()...)
 	rig.namer.LiveChanged(LiveNote{Container: rig.uuid(), Note: noteID, Page: page(1)})
 	rig.settled(0)
-	rig.settled(time.Minute)
-	if calls := rig.describer.calls(); len(calls) != 0 {
-		t.Fatalf("the live note was described %d times", len(calls))
-	}
-	rig.namer.LiveChanged(LiveNote{})
-	rig.settled(0)
+	rig.settled(testSettle)
 	if calls := rig.describer.calls(); len(calls) != 1 {
-		t.Errorf("a note no longer live, long settled, was described %d times", len(calls))
+		t.Errorf("the live note, settled, was described %d times", len(calls))
+	}
+}
+
+// A note found on its face when the namer starts settles the settle time after its block was last
+// saved, so one quiet for longer is named at once and one saved just before waits only the rest.
+func TestNoteNamer_SettlesFromTheFacesLastSaveAcrossARestart(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		saved time.Duration
+		// wait is how long after the new namer starts the note is named.
+		wait time.Duration
+	}{
+		{"quiet for an hour", -time.Hour, 0},
+		{"saved four seconds before", -4 * time.Second, testSettle - 4*time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newNamerRig(t, inkLog()...)
+			rig.namer.stop()
+			rig.changedAt(rig.clock.Now().Add(tc.saved))
+			rig.namer = rig.newNamer()
+			if tc.wait > 0 {
+				rig.settled(tc.wait - time.Second)
+				if calls := rig.describer.calls(); len(calls) != 0 {
+					t.Fatalf("described %d times before the note settled", len(calls))
+				}
+				rig.settled(time.Second)
+			} else {
+				rig.settled(0)
+			}
+			if calls := rig.describer.calls(); len(calls) != 1 {
+				t.Errorf("described %d times once settled, want 1", len(calls))
+			}
+		})
+	}
+}
+
+// NameNow names a note at once, unsettled and already described alike, and does nothing while its
+// job runs, nor does the note settling meanwhile.
+func TestNoteNamer_NameNowNamesANoteAtOnce(t *testing.T) {
+	rig := newNamerRig(t, inkLog()...)
+	if err := rig.nameNow(); err != nil {
+		t.Fatal(err)
+	}
+	if calls := rig.describer.calls(); len(calls) != 1 || rig.meta()["note_meta_seq"] != "6" {
+		t.Fatalf("an unsettled note asked for: %d descriptions, of seq %s", len(calls), rig.meta()["note_meta_seq"])
+	}
+	if err := rig.nameNow(); err != nil {
+		t.Fatal(err)
+	}
+	if calls := rig.describer.calls(); len(calls) != 2 {
+		t.Fatalf("a described note asked for again: %d descriptions, want 2", len(calls))
+	}
+
+	rig.commit(strokeAdd(page(1), stroke(9)))
+	hold := make(chan struct{})
+	rig.describer.set(func(d *fakeDescriber) { d.hold = hold })
+	if err := rig.namer.NameNow(context.Background(), rig.uuid()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(rig.describer.calls()) == 3 })
+	if err := rig.namer.NameNow(context.Background(), rig.uuid()); err != nil {
+		t.Fatal(err)
+	}
+	rig.clock.advance(testSettle)
+	for deadline := time.Now().Add(100 * time.Millisecond); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		if calls := rig.describer.calls(); len(calls) != 3 {
+			t.Fatalf("asked again while its job ran: %d descriptions, want 3", len(calls))
+		}
+	}
+	close(hold)
+	rig.settled(0)
+	if calls := rig.describer.calls(); len(calls) != 3 || rig.meta()["note_meta_seq"] != "7" {
+		t.Errorf("%d descriptions, of seq %s, want 3 of the record committed before the job", len(calls), rig.meta()["note_meta_seq"])
+	}
+}
+
+// NameNow refuses a note it cannot name now, submitting nothing, and Refusal says why in words.
+func TestNoteNamer_NameNowRefusesWhatItCannotName(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		log   []link.Record
+		block func(*namerRig)
+		uuid  func(*namerRig) string
+		want  error
+		says  string
+	}{
+		{"a dumb tier", inkLog(), func(rig *namerRig) { rig.describer.set(func(d *fakeDescriber) { d.tier = domain.TierDumb }) },
+			nil, ErrNamingUnavailable, "No AI is configured"},
+		{"no ink", logOf(header("Blank"), pageAdd(page(1), 0, nil, link.BoundsFixed)), func(*namerRig) {},
+			nil, ErrNoInk, "no ink"},
+		{"no drawer", inkLog(), func(rig *namerRig) { rig.drawer.err = fmt.Errorf("%w: no window", ErrNoDrawer) },
+			nil, ErrNoDrawer, "Open Sieve's window"},
+		{"not a note", inkLog(), func(*namerRig) {}, func(*namerRig) string { return "no-such-container" },
+			ErrNoSuchPage, "not a notebook"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newNamerRig(t, tc.log...)
+			tc.block(rig)
+			uuid := rig.uuid()
+			if tc.uuid != nil {
+				uuid = tc.uuid(rig)
+			}
+			err := rig.namer.NameNow(context.Background(), uuid)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("NameNow = %v, want %v", err, tc.want)
+			}
+			if says := rig.namer.Refusal(err); !strings.Contains(says, tc.says) {
+				t.Errorf("Refusal = %q, want it to say %q", says, tc.says)
+			}
+			rig.settled(0)
+			if calls := rig.describer.calls(); len(calls) != 0 {
+				t.Errorf("described %d times", len(calls))
+			}
+		})
 	}
 }
 

@@ -346,6 +346,18 @@ func outboundWireCases() []wireCase {
 			golden:  `{"type":"ink-reading-document-result","opId":"op-1","error":"not read"}`,
 		},
 		{
+			name:    "ink-describe-result",
+			channel: ChannelDocument,
+			frame:   NewInkDescribeResultFrame("op-1"),
+			golden:  `{"type":"ink-describe-result","opId":"op-1"}`,
+		},
+		{
+			name:    "ink-describe-result refused",
+			channel: ChannelDocument,
+			frame:   NewInkDescribeRefusedFrame("op-1", "No AI is configured."),
+			golden:  `{"type":"ink-describe-result","opId":"op-1","error":"No AI is configured."}`,
+		},
+		{
 			name:    "ink-stroke-added",
 			channel: ChannelDocument,
 			frame:   NewInkStrokeAddedFrame("p1", 8, inkStroke),
@@ -644,6 +656,12 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 			raw:  `{"type":"ink-open-on-tablet","opId":"op-7"}`,
 			into: &InkOpenOnTabletFrame{},
 			want: &InkOpenOnTabletFrame{Type: TypeInkOpenOnTablet, OpID: "op-7"},
+		},
+		{
+			name: "ink-describe",
+			raw:  `{"type":"ink-describe","opId":"op-7"}`,
+			into: &InkDescribeFrame{},
+			want: &InkDescribeFrame{Type: TypeInkDescribe, OpID: "op-7"},
 		},
 		{
 			name: "set-presenting",

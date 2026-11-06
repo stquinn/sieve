@@ -497,12 +497,12 @@ func TestInkFragment_RendersEachState(t *testing.T) {
 		absent []string
 	}{
 		{"off", ink.Status{Supported: true, Link: ink.LinkState{Phase: ink.LinkOff}, Notes: notes, Companions: companions},
-			[]string{`id="ink-enabled"`, "Ideas", "2 pages · seq 9", "Note Air 2", "1 note"},
+			[]string{`id="ink-enabled"`, "Sync notebooks from SieveInk", "Ideas", "2 pages · seq 9", "Note Air 2", "1 notebook", "Synced Notebooks"},
 			[]string{"checked", key, "New key", `id="ink-link"`, "Untitled 05/11"}},
 		{"looking", ink.Status{Enabled: true, Supported: true, Key: key, SieveID: "0123abcd",
 			Link: ink.LinkState{Phase: ink.LinkLooking}},
 			[]string{"checked", key, "Type this key into SieveInk under Pair new", "0123abcd", "New key",
-				"every tablet", "Looking for a companion", "No session yet", "No synced notes"},
+				"every tablet", "Looking for a companion", "No session yet", "No synced notebooks"},
 			[]string{`id="ink-problem"`}},
 		{"connected", ink.Status{Enabled: true, Supported: true, Key: key,
 			Link: ink.LinkState{Phase: ink.LinkConnected, Companion: "boox-1"}, HasSession: true,
@@ -535,12 +535,13 @@ func TestInkFragment_RendersEachState(t *testing.T) {
 	}
 }
 
-// The tree's Ink item is nothing while Ink is disabled. Enabled, it is a row that expands and
-// collapses as a folder's does, through the folder patch under its own id; collapsed it shows a
-// live dot while the tablet writes, and expanded it holds the Live view while it exists and the
-// synced notes by name, or says there are none, indented as a folder's children, each named in
-// full in its tooltip, the active tab's row marked, and every row opening its container through
-// the workspace's open.
+// The tree's Notebooks item is nothing while Ink is disabled. Enabled, it is a row that expands
+// and collapses as a folder's does, through the folder patch under its own id, and offers no menu;
+// collapsed it shows a live dot while the tablet writes, and expanded it holds the Live view while
+// it exists and the synced notebooks by name, or says there are none, indented as a folder's
+// children, each named in full in its tooltip, never by its kind, the active tab's row marked,
+// every row opening its container through the workspace's open and carrying the menu of its own
+// context type.
 func TestInkSidebar_RendersEachState(t *testing.T) {
 	h, _ := newTestSettingsHandler(t)
 	notes := []ink.SyncedNote{{UUID: "n-ideas", Name: "Ideas", Title: "Untitled 05/11", Pages: 2}, {UUID: "n-board", Pages: 1}}
@@ -549,7 +550,7 @@ func TestInkSidebar_RendersEachState(t *testing.T) {
 	collapsed := domain.Session{Tabs: []domain.Tab{{ID: "n-board", Kind: ink.KindDigitalNote}}}
 	expanded := collapsed
 	expanded.OpenFolders = []string{"a-folder", inkTreeID}
-	row := []string{">Ink<", `hx-patch="/api/folder/ink"`, `hx-target="#htmx-sidebar"`}
+	row := []string{">Notebooks<", `hx-patch="/api/folder/ink"`, `hx-target="#htmx-sidebar"`}
 	for _, tc := range []struct {
 		name    string
 		status  ink.Status
@@ -560,22 +561,29 @@ func TestInkSidebar_RendersEachState(t *testing.T) {
 		{"disabled", ink.Status{Notes: notes, Live: live}, expanded, nil, nil},
 		{"collapsed", ink.Status{Enabled: true, Notes: notes}, collapsed,
 			append([]string{`aria-expanded="false"`, `{"open": true}`}, row...),
-			[]string{"data-ink-note", "data-ink-live", "data-ink-live-dot", "No synced notes yet"}},
+			[]string{"data-ink-note", "data-ink-live", "data-ink-live-dot", "No synced notebooks yet", "data-ctx-id"}},
 		{"collapsed while live", ink.Status{Enabled: true, Notes: notes, Live: live}, collapsed,
 			append([]string{"data-ink-live-dot"}, row...), []string{`data-ink-live="live"`, "data-ink-note"}},
 		{"collapsed while waiting", ink.Status{Enabled: true, Notes: notes, Live: waiting}, collapsed,
 			row, []string{"data-ink-live-dot", "data-ink-live"}},
 		{"no notes", ink.Status{Enabled: true}, expanded,
-			append([]string{`aria-expanded="true"`, `{"open": false}`, "No synced notes yet"}, row...),
+			append([]string{`aria-expanded="true"`, `{"open": false}`, "No synced notebooks yet"}, row...),
 			[]string{"data-ink-live", "data-ink-note"}},
 		{"notes", ink.Status{Enabled: true, Notes: notes}, expanded, []string{
-			`data-ink-note="n-ideas"`, `title="Ideas"`, "2 pages", `data-ink-note="n-board"`, `title="Untitled note"`, "1 page",
-			`window.sieveWorkspace.open('n-ideas')`, `data-ink-note="n-board"
+			`data-ink-note="n-ideas"`, `title="Ideas"`, "2 pages", `data-ink-note="n-board"`, `title="Untitled notebook"`, "1 page",
+			`window.sieveWorkspace.open('n-ideas')`, `data-ctx-name="Untitled notebook"
   data-active`, `padding-left:2.50rem;`,
-		}, []string{"data-ink-live", "No synced notes yet", "Untitled 05/11"}},
+			`data-ink-note="n-ideas"
+  data-ctx-id="n-ideas"
+  data-ctx-type="notebook"
+  data-ctx-name="Ideas"`,
+		}, []string{"data-ink-live", "No synced notebooks yet", "Untitled 05/11", "digital-note"}},
 		{"live", ink.Status{Enabled: true, Notes: notes, Live: live}, expanded, []string{
 			`data-ink-live="live"`, `ink-tree__label">Live · Note Air 2<`, `ink-tree__meta">Ideas<`,
 			`window.sieveWorkspace.open('v-live')`, "ink-icon--live",
+			`data-ctx-id="v-live"
+  data-ctx-type="inkLive"
+  data-ctx-name="Live · Note Air 2"`,
 		}, []string{"waiting", "data-ink-live-dot"}},
 		{"waiting", ink.Status{Enabled: true, Notes: notes, Live: waiting}, expanded,
 			[]string{`data-ink-live="waiting"`, ">Live<", "Waiting for the tablet"}, []string{"data-ink-live-dot"}},
@@ -604,10 +612,11 @@ func TestInkSidebar_RendersEachState(t *testing.T) {
 	}
 }
 
-// The Ink item is the tree's first, above the library's folders and above an empty library's
-// line, and only while Ink is enabled; the tree holds it in a mount of its own that refreshes on
-// the ink invalidation, which is also where the item is served. Expanding it is remembered as a
-// folder's expansion is. The sidebar's search view does not show it.
+// The Notebooks item is the tree's first, above the library's folders and above an empty
+// library's line, and only while Ink is enabled; the tree holds it in a mount of its own that
+// refreshes on the ink invalidation, which is also where the item is served. Expanding it is
+// remembered as a folder's expansion is. The sidebar's search view does not show it. Settings
+// names the feature Notebooks too.
 func TestInkSidebar_IsTheFirstItemOfTheTreeWhileInkIsEnabled(t *testing.T) {
 	srv, sp := newInkServer(t)
 	get := func(path string) string {
@@ -640,19 +649,23 @@ func TestInkSidebar_IsTheFirstItemOfTheTreeWhileInkIsEnabled(t *testing.T) {
 	if at, folder := strings.Index(tree, "ink-tree__row"), strings.Index(tree, ">Work<"); at < 0 || folder < at {
 		t.Errorf("the Ink item is not above the folders:\n%s", tree)
 	}
-	if strings.Contains(get("/ui/views/sidebar/ink"), "No synced notes yet") {
+	if strings.Contains(get("/ui/views/sidebar/ink"), "No synced notebooks yet") {
 		t.Error("the Ink item starts expanded")
 	}
 
 	if status, body := do(t, http.MethodPatch, srv.URL+"/api/folder/ink", "application/x-www-form-urlencoded", "open=true"); status != http.StatusOK ||
-		!strings.Contains(body, "No synced notes yet") || !strings.Contains(body, ">Work<") {
+		!strings.Contains(body, "No synced notebooks yet") || !strings.Contains(body, ">Work<") {
 		t.Fatalf("expanding Ink: %d\n%s", status, body)
 	}
-	if !strings.Contains(get("/ui/views/sidebar/ink"), "No synced notes yet") || !strings.Contains(get("/ui/views/sidebar"), "No synced notes yet") {
+	if !strings.Contains(get("/ui/views/sidebar/ink"), "No synced notebooks yet") || !strings.Contains(get("/ui/views/sidebar"), "No synced notebooks yet") {
 		t.Error("Ink's expansion is not remembered")
 	}
 	if search := get("/ui/views/sidebar/search?q="); strings.Contains(search, "ink-tree") || strings.Contains(search, "sidebar-ink") {
 		t.Errorf("the search view shows Ink:\n%s", search)
+	}
+	if page := get("/ui/views/settings"); !strings.Contains(page, `transition: all 0.2s;">Notebooks</button>`) ||
+		!strings.Contains(page, `margin-bottom: 1.5rem;">Notebooks</h3>`) || strings.Contains(page, ">Ink<") {
+		t.Error("Settings does not name the feature Notebooks")
 	}
 }
 

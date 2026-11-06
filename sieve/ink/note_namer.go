@@ -3,6 +3,7 @@ package ink
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -39,14 +40,25 @@ const (
 	retryMax  = 10 * time.Minute
 )
 
-// NoteNamer gives Digital Notes their names. A note is settled when it is not the live note and
-// no record has been committed to it for the settle time (domain.InkSettings.Settle); for a note
-// that has had no record since the namer first started, the time counts from then. A settled note
-// whose log has moved past the seq its stored description is of is due, and is described by one
-// job in the AI pool, at most one per note at a time: the describer is shown images of its first
-// eight pages and InkService.keepDescription keeps what it answers, of the seq the log stood at
-// when the job began. A note that receives a record while its job runs is due again once it
-// settles again.
+// The errors NameNow returns for a note it cannot name now; NoteNamer.Refusal says each in words.
+var (
+	// ErrNamingUnavailable is the AI's tier being dumb.
+	ErrNamingUnavailable = errors.New("ink: no AI is configured to name a note")
+	// ErrNoInk is a note with no ink on any page.
+	ErrNoInk = errors.New("ink: the note has no ink")
+)
+
+// NoteNamer gives Digital Notes their names. A note is due when no record has been committed to it
+// for the settle time (domain.InkSettings.Settle) and its log has moved past the seq its stored
+// description is of, whether or not the tablet shows it live. The settle time counts from the last
+// record committed to it while the namer runs; for a note that has had none since the namer first
+// started, from when its block was last saved, the modified time of its face, which a replica
+// stamps whenever a session brings the note up to its head or ends; and from the namer's first
+// start when its face carries none. A due note is described by one job in the AI pool, at most one
+// per note at a time: the describer is shown images of its first eight pages and
+// InkService.keepDescription keeps what it answers, of the seq the log stood at when the job
+// began. A note that receives a record while its job runs is due again once it settles again.
+// NameNow describes a note at once, due or not.
 //
 // Which notes are due is read from the faces of the notes held, without reading their logs, when
 // the namer starts and whenever its one timer fires; the timer is set for the earliest moment a
@@ -66,9 +78,7 @@ type NoteNamer struct {
 	mu      sync.Mutex
 	running bool
 	started time.Time
-	// live is the container of the live note, "" when none is live.
-	live string
-	held map[string]*namedNote
+	held    map[string]*namedNote
 	// stopTimer stops the pending wake, due at wakeAt; nil when none is pending. wakes numbers the
 	// timers, so one that fires after another replaced it does nothing.
 	stopTimer func() bool
@@ -81,7 +91,7 @@ type namedNote struct {
 	// seq is the newest seq of the note's log known; described is the seq its stored description
 	// is of, or the seq it was last found to need none at.
 	seq, described uint32
-	// last is when a record was last committed to it, or when the namer started.
+	// last is when its log last changed, as far as the namer knows.
 	last time.Time
 	job  bool
 	// retryAt is when it may be tried again, after a pause of pause.
@@ -111,7 +121,7 @@ func (n *NoteNamer) start() {
 	if n.running {
 		return
 	}
-	n.running, n.live = true, ""
+	n.running = true
 	if n.started.IsZero() {
 		n.started = n.now()
 	}
@@ -132,6 +142,7 @@ func (n *NoteNamer) stop() {
 
 func (n *NoteNamer) LinkChanged(LinkState)        {}
 func (n *NoteNamer) LiveInk([]link.LiveRecord)    {}
+func (n *NoteNamer) LiveChanged(LiveNote)         {}
 func (n *NoteNamer) LogRestarted(string, link.ID) {}
 
 // RecordCommitted is a record committed to the note in container: it is not settled until the
@@ -145,20 +156,63 @@ func (n *NoteNamer) RecordCommitted(container string, _ link.ID, rec link.Record
 	if !n.running {
 		return
 	}
-	note := n.note(container)
+	note := n.note(container, time.Time{})
 	note.seq, note.last = max(note.seq, rec.Seq), n.now()
 	n.arm()
 }
 
-// LiveChanged is the note in live.Container live, and no other.
-func (n *NoteNamer) LiveChanged(live LiveNote) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if !n.running {
-		return
+// NameNow submits the job that describes the Digital Note in container uuid, whatever its settle
+// time and whether or not its description is of the seq its log stands at now; it does nothing
+// while that note's job runs. The note's first page is drawn before the job is submitted, so ctx
+// bounds that drawing. A container that is not a Digital Note is ErrNoSuchPage, a note with no
+// ink ErrNoInk, a dumb AI ErrNamingUnavailable, and nothing connected that can draw its pages
+// ErrNoDrawer; Refusal says each in words.
+func (n *NoteNamer) NameNow(ctx context.Context, uuid string) error {
+	if n.describer.Tier() == domain.TierDumb {
+		return ErrNamingUnavailable
 	}
-	n.live = live.Container
-	n.arm()
+	log, err := n.notes.noteLog(uuid)
+	if err != nil {
+		return err
+	}
+	note := NewStrokeBasedNote(uuid)
+	cursor, _ := note.Read(log)
+	if !note.Inked() {
+		return fmt.Errorf("%w: %s", ErrNoInk, uuid)
+	}
+	n.mu.Lock()
+	held := n.note(uuid, time.Time{})
+	if held.job {
+		n.mu.Unlock()
+		return nil
+	}
+	held.job = true
+	n.mu.Unlock()
+	if _, err := n.images.Image(ctx, uuid, 0); err != nil {
+		n.idle(uuid)
+		return err
+	}
+	logger.Info("ink: naming a note now, as asked", "container", uuid, "seq", cursor.Seq)
+	n.submit(uuid, cursor.Seq, min(note.PageCount(), maxNamedPages))
+	return nil
+}
+
+// Refusal is what a person asking NameNow is told of err, the error it returned.
+func (n *NoteNamer) Refusal(err error) string {
+	switch {
+	case errors.Is(err, ErrNamingUnavailable):
+		return "No AI is configured in Settings, so nothing can name this notebook."
+	case errors.Is(err, ErrNoInk):
+		return "This notebook has no ink to name it from."
+	case errors.Is(err, ErrNoDrawer):
+		return "Nothing is open that can draw this notebook's pages. Open Sieve's window and try again."
+	case errors.Is(err, ErrNoSuchPage):
+		return "This is not a notebook Sieve holds."
+	case errors.Is(err, context.DeadlineExceeded):
+		return "The window did not draw this notebook's pages in time. Try again."
+	default:
+		return "The notebook could not be named: " + err.Error()
+	}
 }
 
 // wake is the timer numbered wake firing: the notes held are read from their faces, a note no
@@ -183,14 +237,14 @@ func (n *NoteNamer) wake(wake uint64) {
 		}
 	}
 	for uuid, face := range faces {
-		note := n.note(uuid)
+		note := n.note(uuid, domain.NewDocumentMeta(face, nil).Modified())
 		note.seq = max(note.seq, kind.seq(face, "note_synced_seq"))
 		note.described = max(note.described, kind.DescribedSeq(face))
 	}
 	now, settle := n.now(), n.settle()
 	var ready []string
 	for uuid, note := range n.held {
-		if at, due := n.dueAt(uuid, note, settle); due && !now.Before(at) {
+		if at, due := n.dueAt(note, settle); due && !now.Before(at) {
 			note.job = true
 			ready = append(ready, uuid)
 		}
@@ -206,43 +260,49 @@ func (n *NoteNamer) wake(wake uint64) {
 // when none is to run.
 func (n *NoteNamer) name(uuid string) {
 	if n.describer.Tier() == domain.TierDumb {
-		n.retry(uuid)
+		n.retry(uuid, "ink: a note is not named while no AI is configured", nil)
 		return
 	}
 	log, err := n.notes.noteLog(uuid)
 	if err != nil {
-		logger.Warn("ink: reading a note to name it", "container", uuid, "err", err.Error())
-		n.retry(uuid)
+		n.retry(uuid, "ink: a note could not be read to name it", err)
 		return
 	}
 	note := NewStrokeBasedNote(uuid)
 	cursor, _ := note.Read(log)
 	if !note.Inked() {
+		logger.Info("ink: a note with no ink is not named", "container", uuid, "seq", cursor.Seq)
 		n.finished(uuid, cursor.Seq)
 		return
 	}
-	pages := min(note.PageCount(), maxNamedPages)
+	n.submit(uuid, cursor.Seq, min(note.PageCount(), maxNamedPages))
+}
+
+// submit submits the job that describes the note in uuid, whose job flag is set, from its first
+// pages pages, as its log stands at seq.
+func (n *NoteNamer) submit(uuid string, seq uint32, pages int) {
 	n.engine.Submit(services.JobDescriptor{
 		Category: block.CategoryAI,
 		Meta:     domain.JobInfo{JobID: "name-note:" + uuid, Label: "Naming " + n.notes.noteName(uuid), DocID: uuid},
 		Work:     func() (any, error) { return n.describe(uuid, pages) },
 		OnFinished: func(result any) {
-			if err := n.notes.keepDescription(uuid, cursor.Seq, result.(domain.NoteMetadata)); err != nil {
+			d := result.(domain.NoteMetadata)
+			if err := n.notes.keepDescription(uuid, seq, d); err != nil {
 				logger.Error("ink: keeping a note's description", "container", uuid, "err", err.Error())
-				n.retry(uuid)
+				n.retry(uuid, "", nil)
 				return
 			}
-			n.finished(uuid, cursor.Seq)
+			logger.Info("ink: named a note", "container", uuid, "seq", seq, "title", d.Title)
+			n.finished(uuid, seq)
 		},
 		OnError: func(err error) {
 			var drawing pageError
 			if errors.As(err, &drawing) {
-				logger.Info("ink: a note's pages could not be drawn to name it", "container", uuid, "err", err.Error())
-				n.retry(uuid)
+				n.retry(uuid, "ink: a note's pages could not be drawn to name it", err)
 				return
 			}
-			logger.Warn("ink: describing a note failed", "container", uuid, "err", err.Error())
-			n.finished(uuid, cursor.Seq)
+			logger.Warn("ink: describing a note failed", "container", uuid, "seq", seq, "err", err.Error())
+			n.finished(uuid, seq)
 		},
 	})
 }
@@ -265,25 +325,41 @@ func (n *NoteNamer) describe(uuid string, pages int) (domain.NoteMetadata, error
 func (n *NoteNamer) finished(uuid string, seq uint32) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	note := n.note(uuid)
+	note := n.note(uuid, time.Time{})
 	note.job, note.described, note.pause, note.retryAt = false, max(note.described, seq), 0, time.Time{}
 	n.arm()
 }
 
-// retry is the note in uuid not described now, to be tried again after its pause.
-func (n *NoteNamer) retry(uuid string) {
+// idle is the note in uuid with no job, and nothing else known of it changed.
+func (n *NoteNamer) idle(uuid string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	note := n.note(uuid)
+	n.note(uuid, time.Time{}).job = false
+	n.arm()
+}
+
+// retry is the note in uuid not described now, to be tried again after its pause. why, with err
+// when it is not nil, is logged when a run of pauses begins, not on each try within it; "" logs
+// nothing.
+func (n *NoteNamer) retry(uuid, why string, err error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	note := n.note(uuid, time.Time{})
+	if why != "" && note.pause == 0 {
+		if err != nil {
+			logger.Info(why, "container", uuid, "err", err.Error())
+		} else {
+			logger.Info(why, "container", uuid)
+		}
+	}
 	note.pause = min(max(2*note.pause, retryBase), retryMax)
 	note.job, note.retryAt = false, n.now().Add(note.pause)
 	n.arm()
 }
 
-// dueAt is when note, of container uuid, settles, and whether it is due and not live, with no job
-// running. n.mu is held.
-func (n *NoteNamer) dueAt(uuid string, note *namedNote, settle time.Duration) (time.Time, bool) {
-	if note.job || note.seq <= note.described || uuid == n.live {
+// dueAt is when note settles, and whether it is due, with no job running. n.mu is held.
+func (n *NoteNamer) dueAt(note *namedNote, settle time.Duration) (time.Time, bool) {
+	if note.job || note.seq <= note.described {
 		return time.Time{}, false
 	}
 	at := note.last.Add(settle)
@@ -301,8 +377,8 @@ func (n *NoteNamer) arm() {
 	}
 	var first time.Time
 	settle := n.settle()
-	for uuid, note := range n.held {
-		if at, due := n.dueAt(uuid, note, settle); due && (first.IsZero() || at.Before(first)) {
+	for _, note := range n.held {
+		if at, due := n.dueAt(note, settle); due && (first.IsZero() || at.Before(first)) {
 			first = at
 		}
 	}
@@ -323,12 +399,15 @@ func (n *NoteNamer) setTimer(at time.Time) {
 	n.stopTimer = n.afterFunc(max(at.Sub(n.now()), 0), func() { n.wake(wake) })
 }
 
-// note is what is known of the note in uuid, new as of the namer's start when nothing is. n.mu is
-// held.
-func (n *NoteNamer) note(uuid string) *namedNote {
+// note is what is known of the note in uuid. A note not yet known is new, its log last changed at
+// changed or, when that is the zero time, at the namer's first start. n.mu is held.
+func (n *NoteNamer) note(uuid string, changed time.Time) *namedNote {
 	note, ok := n.held[uuid]
 	if !ok {
-		note = &namedNote{last: n.started}
+		if changed.IsZero() {
+			changed = n.started
+		}
+		note = &namedNote{last: changed}
 		n.held[uuid] = note
 	}
 	return note

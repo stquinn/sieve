@@ -168,12 +168,34 @@ describe('DocumentService ink — a page asked for, and the ink frames observed'
     await expect(serviceRig({ uuid: null }).documentService.inkOpenOnTablet('doc-1', 'p1')).rejects.toThrow()
   })
 
+  it('asks for the note to be named now and resolves once Go accepted it, past the wire default 5s', async () => {
+    vi.useFakeTimers()
+    try {
+      const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+      const pending = documentService.inkDescribe('doc-1')
+      expect(sock.sentOfType('ink-describe')[0]).toEqual({ type: 'ink-describe', opId: lastOpId(sock, 'ink-describe') })
+      await vi.advanceTimersByTimeAsync(9000)
+      sock.driveMessage({ type: 'ink-describe-result', opId: lastOpId(sock, 'ink-describe') })
+      await expect(pending).resolves.toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('rejects an ink-describe that submitted nothing with Go\'s words, and with no channel', async () => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    const pending = documentService.inkDescribe('doc-1')
+    sock.driveMessage({ type: 'ink-describe-result', opId: lastOpId(sock, 'ink-describe'), error: 'No AI is configured in Settings.' })
+    await expect(pending).rejects.toThrow(/^No AI is configured in Settings\.$/)
+    await expect(serviceRig({ uuid: null }).documentService.inkDescribe('doc-1')).rejects.toThrow()
+  })
+
   it('observes the pushed ink frames, in order, and nothing else', () => {
     const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
     /** @type {string[]} */ const types = []
     const stop = documentService.observeInk('doc-1', (msg) => types.push(msg.type))
     for (const type of ['ink-live-page', 'insert-block', 'ink-live', 'ink-stroke-added', 'block-attrs-updated', 'ink-stroke-removed',
-      'ink-reading-changed', 'container-named', 'ink-log-restarted']) {
+      'ink-reading-changed', 'container-named', 'ink-describe-result', 'ink-log-restarted']) {
       sock.driveMessage({ type })
     }
     stop()

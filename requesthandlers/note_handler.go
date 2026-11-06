@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"sieve/sieve"
 	"sieve/sieve/domain"
+	"sieve/sieve/ink"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -62,7 +64,7 @@ func (h *NoteHandler) handleContainerOpen(w http.ResponseWriter, r *http.Request
 	exists := false
 	for i, t := range session.Tabs {
 		if t.ID == id {
-			session.ActiveIdx = i
+			session.Activate(i, time.Now())
 			exists = true
 			break
 		}
@@ -70,7 +72,7 @@ func (h *NoteHandler) handleContainerOpen(w http.ResponseWriter, r *http.Request
 
 	if !exists {
 		session.Tabs = append(session.Tabs, opened)
-		session.ActiveIdx = len(session.Tabs) - 1
+		session.Activate(len(session.Tabs)-1, time.Now())
 	}
 
 	_ = h.ServiceProvider.State.SaveSession(session)
@@ -118,7 +120,7 @@ func (h *NoteHandler) tabFor(id string) (domain.Tab, error) {
 	if err != nil {
 		name := node.Title
 		if name == "" {
-			name = node.Kind
+			name = h.untitled(node.Kind)
 		}
 		return domain.Tab{ID: id, Kind: node.Kind, DisplayName: name}, nil
 	}
@@ -136,6 +138,15 @@ func (h *NoteHandler) tabFor(id string) (domain.Tab, error) {
 		tab.UserIntent = *note.Meta().UserIntent()
 	}
 	return tab, nil
+}
+
+// untitled is what a tab of a container of kind with no title reads: "Untitled notebook" for a
+// synced Digital Note, otherwise the kind.
+func (h *NoteHandler) untitled(kind string) string {
+	if kind == ink.KindDigitalNote {
+		return untitledNotebook
+	}
+	return kind
 }
 
 // documentOf is the document node is, read from the store only when node is of a
@@ -161,7 +172,7 @@ func (h *NoteHandler) handleNoteCreate(w http.ResponseWriter, r *http.Request) {
 		DisplayName: newNote.Meta().DisplayName(),
 		Status:      "unfiled",
 	})
-	session.ActiveIdx = len(session.Tabs) - 1
+	session.Activate(len(session.Tabs)-1, time.Now())
 	_ = h.ServiceProvider.State.SaveSession(session)
 	if h.EmitSessionChanged != nil {
 		h.EmitSessionChanged()
@@ -199,11 +210,15 @@ func (h *NoteHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session := h.ServiceProvider.State.LoadSession()
+	wasActive := session.ActiveID()
 
 	// Smart Close background filing for every closed document — the SAME per-doc
 	// path a single close used.
 	for _, docID := range session.CloseTabs(payload.IDs) {
 		h.ServiceProvider.Editor.CloseDocument(docID)
+	}
+	if session.ActiveID() != wasActive {
+		session.Activate(session.ActiveIdx, time.Now())
 	}
 
 	if len(session.Tabs) == 0 {
@@ -219,7 +234,7 @@ func (h *NoteHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 			DisplayName: newNote.Meta().DisplayName(),
 			Status:      "unfiled",
 		}}
-		session.ActiveIdx = 0
+		session.Activate(0, time.Now())
 	}
 
 	_ = h.ServiceProvider.State.SaveSession(session)

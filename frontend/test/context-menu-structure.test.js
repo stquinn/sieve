@@ -825,3 +825,73 @@ describe("the fence's Format", () => {
       .not.toContain('Format')
   })
 })
+
+describe('the notebook and Live menus', () => {
+  /** @type {any} */ let fetched
+  /** @type {CustomEvent[]} */ let said
+  const say = (/** @type {Event} */ e) => said.push(/** @type {CustomEvent} */ (e))
+  beforeEach(() => {
+    said = []
+    document.addEventListener('sieve:status-message', say)
+    fetched = vi.fn()
+    vi.stubGlobal('fetch', fetched)
+    ;/** @type {any} */ (window).sieveWorkspace = { open: vi.fn(), close: vi.fn(), closeOthers: vi.fn(), closeAll: vi.fn() }
+  })
+  afterEach(() => {
+    document.removeEventListener('sieve:status-message', say)
+    vi.unstubAllGlobals()
+  })
+
+  /** @param {object} context @returns {HTMLElement} */
+  function openOn(context) {
+    document.dispatchEvent(new CustomEvent('sieve:contextmenu', { detail: { x: 10, y: 10, context } }))
+    return /** @type {HTMLElement} */ (document.getElementById('sieve-context-menu'))
+  }
+  const settle = () => new Promise((r) => setTimeout(r, 0))
+
+  it.each([
+    ['a tree row', { type: 'notebook', id: 'n1', name: 'Ideas', isTab: false }, ['Open', 'Open in e-ink', 'Refresh name and summary']],
+    ['a tab', { type: 'notebook', id: 'n1', name: 'Ideas', isTab: true },
+      ['Open in e-ink', 'Refresh name and summary', 'Close Tab', 'Close Others', 'Close All Tabs']],
+    ['the Live row', { type: 'inkLive', id: 'v1', name: 'Live', isTab: false }, ['Open this note']],
+    ['the Live tab', { type: 'inkLive', id: 'v1', name: 'Live', isTab: true }, ['Open this note', 'Close Tab', 'Close Others', 'Close All Tabs']],
+  ])('%s offers its own items and nothing folder-like', (_, context, want) => {
+    expect(labelsOf(openOn(context))).toEqual(want)
+  })
+
+  it('Refresh name and summary posts the describe route and says it is naming, or the route\'s words', async () => {
+    fetched.mockResolvedValueOnce({ ok: true, status: 204 })
+    itemNamed(openOn({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: false }), 'Refresh name and summary').click()
+    await settle()
+    expect(fetched).toHaveBeenCalledWith('/api/ink/notes/n1/describe', { method: 'POST' })
+    expect(said.at(-1)?.detail).toEqual({ text: 'Naming Ideas…', error: false })
+
+    fetched.mockResolvedValueOnce({ ok: false, status: 409, text: () => Promise.resolve('No AI is configured in Settings, so nothing can name this notebook.\n') })
+    itemNamed(openOn({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: false }), 'Refresh name and summary').click()
+    await settle()
+    expect(said.at(-1)?.detail).toEqual({ text: 'No AI is configured in Settings, so nothing can name this notebook.', error: true })
+  })
+
+  it('Open in e-ink posts the open-on-tablet route and says what came of it', async () => {
+    fetched.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ outcome: 'no-tablet', reason: '', message: 'No tablet connected' }) })
+    itemNamed(openOn({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: true }), 'Open in e-ink').click()
+    await settle()
+    expect(fetched).toHaveBeenCalledWith('/api/ink/notes/n1/open-on-tablet', { method: 'POST' })
+    expect(said.at(-1)?.detail).toEqual({ text: 'No tablet connected', error: true })
+  })
+
+  it('Open this note opens the notebook the Live view mirrors, and says when there is none', async () => {
+    const ws = /** @type {any} */ (window).sieveWorkspace
+    fetched.mockResolvedValueOnce({ json: () => Promise.resolve({ note: 'n1' }) })
+    itemNamed(openOn({ type: 'inkLive', id: 'v1', name: 'Live', isTab: true }), 'Open this note').click()
+    await settle()
+    expect(fetched).toHaveBeenCalledWith('/api/ink/live/note')
+    expect(ws.open).toHaveBeenCalledWith('n1')
+
+    fetched.mockResolvedValueOnce({ json: () => Promise.resolve({ note: '' }) })
+    itemNamed(openOn({ type: 'inkLive', id: 'v1', name: 'Live', isTab: false }), 'Open this note').click()
+    await settle()
+    expect(ws.open).toHaveBeenCalledTimes(1)
+    expect(said.at(-1)?.detail.error).toBe(true)
+  })
+})

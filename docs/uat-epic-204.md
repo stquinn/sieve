@@ -26,16 +26,16 @@ Editor → Enable Debug Mode shows the radio's found and connected lines.
     connected: Link stays "Connected", no "authentication failed", and the note's seq advances.
   - Leave a note open on the Boox and walk away: the tablet sleeps on its own timeout and the
     front light goes off.
-- [ ] **Wrong key.** Settings → Ink → New key, without re-pairing: Link reads "key rejected —
+- [ ] **Wrong key.** Settings → Notebooks → New key, without re-pairing: Link reads "key rejected —
   re-enter the key on the Boox", the redial slows down instead of repeating every second, nothing
   on disk changes. Re-pair with the new key and it connects.
 - [ ] **Throughput.** Catch-up ran at 27 kB/s against the spike's 63–75 kB/s. With a library of a
-  few hundred kB, note Settings → Ink → Last Session → Throughput on a fresh sync. Fine for a pen;
+  few hundred kB, note Settings → Notebooks → Last Session → Throughput on a fresh sync. Fine for a pen;
   wanted before the Mac's number is compared with it.
 - [ ] **The corporate Mac.** Install the `macos` artifact of the GitHub `Release (macOS)` run for
   the newest `mac-test-*` tag (`mac-test-4` or later; never `mac-test-2`, whose frontend is broken) (Actions tab; such a tag publishes no release). The tablet must be on
   the SDU-cap SieveInk build first.
-  - Settings → Ink → tick the toggle. macOS should ask whether Sieve may use Bluetooth; allow it.
+  - Settings → Notebooks → tick the toggle. macOS should ask whether Sieve may use Bluetooth; allow it.
     No prompt and Link reading "…not authorised to use Bluetooth…" means device management has
     refused it: stop and send the log. "Bluetooth is off": turn it on, it recovers by itself.
   - Pair, sync, write live, and drop and resume, as on Linux. Write down Time to connect and
@@ -47,14 +47,14 @@ Editor → Enable Debug Mode shows the radio's found and connected lines.
 
 ## Phase 4 — the lens and Live (#211)
 
-With Ink enabled, the library tree starts with an **Ink** item; expanded, it holds **Live** while
+With Ink enabled, the library tree starts with a **Notebooks** item; expanded, it holds **Live** while
 the tablet is writing, then the synced notes. Live is SieveInk's own view, whichever note that is; a note's own
 tab is the reader's.
 
 ### A note's own tab
 
 - [ ] **A synced page looks like the page.** Open a note with pen and pencil on a ruled page from
-  the Ink item. The sheet is white whatever the theme, the ruling sits under the ink, pen
+  the Notebooks item. The sheet is white whatever the theme, the ruling sits under the ink, pen
   strokes are solid and pencil strokes are grained, and it is recognisably what the tablet shows.
   Fit width ⇄ 100% both read well; PageUp and PageDown turn pages.
 - [ ] **It is the reader's.** With the note open on page 1, write on page 2 on the Boox: the tab
@@ -84,7 +84,7 @@ tab is the reader's.
 
 ### Live
 
-- [ ] **Live appears and goes.** Start writing: **Live · {device}** appears in the Ink item
+- [ ] **Live appears and goes.** Start writing: **Live · {device}** appears in the Notebooks item
   without a reload, with the note's name. Stop (close the note, or put the Boox to sleep): the Live
   tab says "Waiting for the tablet…" and keeps the last page. Resume within 30 seconds: nothing
   closes. Leave it for more than 30 seconds: the item and the tab go, and the note tabs stay.
@@ -94,7 +94,7 @@ tab is the reader's.
 - [ ] **A whiteboard, live.** The Live tab shows the tablet's own window and follows a pan
   smoothly, the ruling staying put on the plane while the ink slides. Open the Live tab after
   panning, or come back to it from another tab: it shows the tablet's window straight away.
-- [ ] **Beside the note.** Open the note being written from the Ink list while the Live tab is
+- [ ] **Beside the note.** Open the note being written from the Notebooks list while the Live tab is
   open: two tabs. **Open this note** in the Live tab goes to the note's tab; the note's tab offers
   a way back to Live.
 - [ ] **Restart.** Quit with a Live tab open and start again with the tablet idle: no Live tab, the
@@ -114,13 +114,13 @@ model: no real model has seen a page.
 
 ### A note names itself
 
-A note is named once it has gone quiet: not the live note, and no stroke for five minutes. To
+A note is named once it has gone quiet: no stroke for five minutes, whether or not the tablet still shows it. To
 shorten the wait while testing, add `"settle_seconds": 30` inside `"ink"` in
 `{store}/{hostname}/config/settings.json` and restart.
 
 - [ ] **A sensible name.** Write a note about something specific, close it on the Boox and wait.
-  One "Naming …" job appears in the status bar; afterwards the sidebar's Ink item, the note's
-  tab and Settings → Ink show a short, specific title instead of the tablet's "Untitled …".
+  One "Naming …" job appears in the status bar; afterwards the sidebar's Notebooks item, the note's
+  tab and Settings → Notebooks show a short, specific title instead of the tablet's "Untitled …".
   Judge the title, and the summary and keywords in the note's `.meta`.
 - [ ] **The model really sees the pages.** The name reflects what was written, not a guess. If it
   is generic, the model is not opening the page images: send the log around `name-note`.

@@ -75,6 +75,36 @@ type TabsCloseRequest struct {
 // and a page out of range are 404. The request has no body.
 type InkPageExportRequest struct{}
 
+// InkDescribeRequest names a synced Digital Note now: {uuid} is the note's block container, and
+// its name, summary, keywords and categories are described again from its pages, whether or not
+// they are of the note as it stands. 204 is the job submitted, or one already naming the note.
+// Otherwise the body is plain text a person can be shown: 404 for a container that is not a held
+// Digital Note, 409 when nothing can name it now (no AI is configured, the note has no ink, or
+// nothing is open that can draw its pages), 503 when ink is unavailable. The request has no body.
+type InkDescribeRequest struct{}
+
+// InkOpenOnTabletRequest asks the tablet a synced Digital Note came from to open it, leaving the
+// page to the tablet: {uuid} is the note's block container. It waits a few seconds at most for
+// the tablet. A container that is not a Digital Note from a tablet is 404, with a plain-text body,
+// and ink being unavailable 503. The request has no body.
+type InkOpenOnTabletRequest struct{}
+
+// InkOpenOnTabletResponse is what came of an InkOpenOnTabletRequest.
+type InkOpenOnTabletResponse struct {
+	Outcome string `json:"outcome" doc:"opened | no-tablet | other-tablet | refused | no-answer, as ink-open-on-tablet-result names them"`
+	Reason  string `json:"reason,omitempty" doc:"refused only: the tablet's reason, not-foreground | not-offered | another"`
+	Message string `json:"message" doc:"what came of it, in words a person can be shown"`
+}
+
+// InkLiveNoteRequest asks which synced Digital Note the Live view mirrors. The request has no
+// body.
+type InkLiveNoteRequest struct{}
+
+// InkLiveNoteResponse names the note the Live view mirrors.
+type InkLiveNoteResponse struct {
+	Note string `json:"note" doc:"the uuid of the block container holding the mirrored note; empty when there is no Live view or no container holds its note yet"`
+}
+
 // InkPageExport is one page of a Digital Note as the ink renderer takes it: the note's header and
 // the page's strokes in the order they were added.
 type InkPageExport struct {

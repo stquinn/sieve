@@ -14,6 +14,7 @@ import (
 	"sieve/sieve"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
+	"sieve/sieve/ink"
 	"sieve/store"
 
 	"github.com/go-chi/chi/v5"
@@ -47,6 +48,25 @@ type metaPanelData struct {
 	HasAssets  bool
 	// InUseHint is why an in-use asset's Delete is disabled.
 	InUseHint string
+	// Notebook is the synced Digital Note shown, nil for anything else. A notebook shows its Meta
+	// tab only.
+	Notebook *metaNotebookView
+}
+
+// metaNotebookView is a synced Digital Note as the Meta tab shows it.
+type metaNotebookView struct {
+	UUID string
+	// Name is what it is called; TabletTitle is the title the tablet wrote, "" when it is the name.
+	Name        string
+	TabletTitle string
+	Summary     string
+	Keywords    []string
+	Categories  []string
+	Device      string
+	Pages       int
+	Seq         uint32
+	// Described is the seq its description is of, 0 before it is named.
+	Described uint32
 }
 
 type metaViewData struct {
@@ -267,8 +287,17 @@ func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanel
 		Now:        metaFmtTime(time.Now()),
 		InUseHint:  assetInUseMessage,
 	}
-	if isPrompt || (h.ServiceProvider.State != nil && h.ServiceProvider.State.LoadSession().ShowsNonDocument(uuidOrPromptName)) {
+	if isPrompt {
 		return data
+	}
+	if h.ServiceProvider.State != nil {
+		session := h.ServiceProvider.State.LoadSession()
+		if tab, open := session.Tab(uuidOrPromptName); open && !tab.IsDocument() {
+			if nb := h.notebookView(tab); nb != nil {
+				data.Notebook, data.Tab, data.FileName = nb, "meta", nb.Name
+			}
+			return data
+		}
 	}
 	if b, err := h.ServiceProvider.Documents.LoadByUUID(uuidOrPromptName); err == nil {
 		data.UUID = b.UUID()
@@ -285,6 +314,28 @@ func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanel
 		return data
 	}
 	return data
+}
+
+// notebookView is the synced Digital Note tab shows as the Meta tab shows it; nil when tab shows
+// none.
+func (h *MetaHandler) notebookView(tab domain.Tab) *metaNotebookView {
+	if h.ServiceProvider.Ink == nil || tab.ContainerKind() != ink.KindDigitalNote {
+		return nil
+	}
+	uuid := tab.ID
+	note, d, described, err := h.ServiceProvider.Ink.Notebook(uuid)
+	if err != nil {
+		return nil
+	}
+	v := &metaNotebookView{UUID: uuid, Name: note.Name, Summary: d.Summary, Keywords: d.Keywords, Categories: d.Categories,
+		Device: note.Device, Pages: note.Pages, Seq: note.Seq, Described: described}
+	if v.Name == "" {
+		v.Name = untitledNotebook
+	}
+	if note.Title != "" && note.Title != v.Name {
+		v.TabletTitle = note.Title
+	}
+	return v
 }
 
 func toMetaView(d domain.Document) *metaViewData {

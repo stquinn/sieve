@@ -89,6 +89,17 @@ describe('InkProviderAdapter', () => {
     expect(Object.isFrozen(reading.blocks[0].attrs)).toBe(true)
   })
 
+  it('refreshDescription resolves once the host accepted it, and rejects with the host\'s words', async () => {
+    const { provider, sock } = rig()
+    const opId = () => sock.sentOfType(DocumentFrame.INK_DESCRIBE).at(-1).opId
+    const accepted = provider.refreshDescription()
+    sock.driveMessage({ type: DocumentFrame.INK_DESCRIBE_RESULT, opId: opId() })
+    await expect(accepted).resolves.toBeUndefined()
+    const refused = provider.refreshDescription()
+    sock.driveMessage({ type: DocumentFrame.INK_DESCRIBE_RESULT, opId: opId(), error: 'This notebook has no ink to name it from.' })
+    await expect(refused).rejects.toThrow('This notebook has no ink to name it from.')
+  })
+
   it('newDocumentFromReading resolves the new document\'s uuid', async () => {
     const { provider, sock } = rig()
     const pending = provider.newDocumentFromReading('p1')

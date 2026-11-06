@@ -4,10 +4,11 @@
 <div class="flex items-stretch shrink-0 w-[250px]"
      data-tab-id="{{$t.ID}}"
      data-tab-idx="{{$i}}"
-     data-tab-kind="{{$t.ContainerKind}}"{{if eq $i $.ActiveIdx}}
+     data-tab-kind="{{$t.ContainerKind}}"
+     data-tab-viewed="{{$t.LastViewed}}"{{if eq $i $.ActiveIdx}}
      data-tab-active="true"{{end}}
      data-ctx-id="{{$t.ID}}"
-     data-ctx-type="{{if $t.IsDocument}}note{{else if eq $t.ContainerKind "prompt"}}prompt{{else}}tab{{end}}"
+     data-ctx-type="{{if $t.IsDocument}}note{{else if eq $t.ContainerKind "prompt"}}prompt{{else if eq $t.ContainerKind "digital-note"}}notebook{{else if eq $t.ContainerKind "ink-live"}}inkLive{{else}}tab{{end}}"
      data-ctx-name="{{if $t.DisplayName}}{{$t.DisplayName}}{{else}}Untitled{{end}}"
      data-ctx-intent="{{$t.UserIntent}}"
      data-ctx-is-dir="false"
