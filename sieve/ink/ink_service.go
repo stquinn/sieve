@@ -151,7 +151,9 @@ type Companion struct {
 // SyncedNote is a Digital Note this Sieve holds: read from its replica while a session has it
 // open, otherwise from its container's face.
 type SyncedNote struct {
-	UUID      string
+	UUID string
+	// Name is what the note is called (DigitalNoteKind.Name); Title is the title the tablet wrote.
+	Name      string
 	Title     string
 	Pages     int
 	Seq       uint32
@@ -217,6 +219,10 @@ type InkService struct {
 	redial redialPause
 	// lastFailure is the error the last session ended on before connecting, "" after one connects.
 	lastFailure string
+	// namer names the notes while the service runs; nil when nothing names them.
+	namer *NoteNamer
+	// sending is held while a note's description is sent to the tablet and recorded as sent.
+	sending sync.Mutex
 }
 
 // NewInkService is the service over this machine's settings and session, the container store and
@@ -234,6 +240,17 @@ func NewInkService(settings *services.StateService, containers *services.BlockCo
 // LiveView is the service's Live view.
 func (s *InkService) LiveView() *LiveView { return s.view }
 
+// attachNamer makes namer the namer that runs while the service runs, and hears its events.
+func (s *InkService) attachNamer(namer *NoteNamer) {
+	s.Subscribe(namer)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.namer = namer
+	if s.cancel != nil {
+		namer.start()
+	}
+}
+
 // SetChangeListener registers who is told that the Live view's node changed.
 func (s *InkService) SetChangeListener(l services.ContainerChangeListener) { s.view.setListener(l) }
 
@@ -249,25 +266,33 @@ func (s *InkService) Start() error {
 		return err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.cancel != nil {
+		s.mu.Unlock()
 		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.key, s.cancel, s.done = key, cancel, make(chan struct{})
 	s.redial.reset()
+	if s.namer != nil {
+		s.namer.start()
+	}
 	go s.loop(ctx, s.done)
+	s.mu.Unlock()
 	return nil
 }
 
-// Stop ends the link and the loop, and returns once the open session's replicas are written.
+// Stop ends the link and the loop, and returns once the open session's replicas are written. A
+// naming job already running finishes and keeps what it finds.
 func (s *InkService) Stop() {
 	s.mu.Lock()
-	cancel, done := s.cancel, s.done
+	cancel, done, namer := s.cancel, s.done, s.namer
 	s.cancel, s.done = nil, nil
 	s.mu.Unlock()
 	if cancel == nil {
 		return
+	}
+	if namer != nil {
+		namer.stop()
 	}
 	cancel()
 	<-done
@@ -480,6 +505,114 @@ func (s *InkService) noteAttrs(uuid string) map[string]interface{} {
 	return c.Block().Attrs
 }
 
+// noteName is what the Digital Note in container uuid is called (DigitalNoteKind.Name), its
+// tablet's title read as noteAttrs reads it; "" when no Digital Note is held there.
+func (s *InkService) noteName(uuid string) string {
+	attrs := s.noteAttrs(uuid)
+	if attrs == nil {
+		return ""
+	}
+	title, _ := attrs["title"].(string)
+	var meta map[string]string
+	if c, err := s.containers.Load(uuid); err == nil {
+		meta = c.Storable().Meta()
+	}
+	return NewDigitalNoteKind().Name(meta, title)
+}
+
+// keepDescription keeps d as the description of the Digital Note in container uuid as its log
+// stood at seq, in its .meta, and then shows it: the ink views are invalidated, every session tab
+// of the note takes its name, the Live view is told when it mirrors the note, and the description
+// is sent to the tablet as sendDescription sends it. The block, and the title the tablet wrote in
+// it, are not touched.
+func (s *InkService) keepDescription(uuid string, seq uint32, d domain.NoteMetadata) error {
+	if err := s.writeNoteMeta(uuid, func(m domain.DocumentMeta) { NewDigitalNoteKind().Describe(m, d, seq) }); err != nil {
+		return err
+	}
+	s.invalidate()
+	renamed, err := s.settings.RenameTabs(uuid, s.noteName(uuid))
+	if err != nil {
+		logger.Error("ink: renaming a named note's tabs", "container", uuid, "err", err.Error())
+	}
+	if renamed && s.invalidator != nil {
+		s.invalidator.SessionChanged()
+	}
+	s.view.noteChanged(uuid)
+	s.sendDescription(uuid)
+	return nil
+}
+
+// writeNoteMeta applies edit to the .meta of container uuid: under the open replica holding it,
+// whose handle then holds what was written, when a session has one, otherwise directly.
+func (s *InkService) writeNoteMeta(uuid string, edit func(domain.DocumentMeta)) error {
+	s.mu.Lock()
+	run := s.run
+	s.mu.Unlock()
+	if run != nil {
+		if held, err := run.replicas.writeMeta(uuid, edit); held {
+			return err
+		}
+	}
+	_, err := s.containers.SaveMeta(uuid, edit)
+	return err
+}
+
+// sendDescription sends META of the Digital Note in container uuid, and records the seq sent, when
+// the session running now is with the tablet the note came from, that tablet listed the note on
+// this connection, and the note's stored description is of a later seq than the one last sent,
+// and not past the head the tablet listed. META carries the description's fields and seq, and
+// nothing else.
+func (s *InkService) sendDescription(uuid string) {
+	s.sending.Lock()
+	defer s.sending.Unlock()
+	c, err := s.digitalNote(uuid)
+	if err != nil {
+		return
+	}
+	kind, meta := NewDigitalNoteKind(), c.Storable().Meta()
+	d, seq, ok := kind.Description(meta)
+	if !ok || seq <= kind.SentSeq(meta) {
+		return
+	}
+	note, err := link.ParseID(meta["note_source_id"])
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	run := s.run
+	s.mu.Unlock()
+	if run == nil || run.session == nil || run.link.Identity() != meta["note_companion"] {
+		return
+	}
+	if head, listed := run.listedHead(note); !listed || seq > head {
+		return
+	}
+	m := link.Meta{Note: note, Title: d.Title, Keywords: d.Keywords, Categories: d.Categories, Summary: d.Summary, AsOfSeq: seq}
+	if err := run.session.SendMeta(m); err != nil {
+		logger.Info("ink: a note's description was not sent", "container", uuid, "err", err.Error())
+		return
+	}
+	if err := s.writeNoteMeta(uuid, func(m domain.DocumentMeta) { kind.MarkSent(m, seq) }); err != nil {
+		logger.Error("ink: recording a sent description", "container", uuid, "err", err.Error())
+	}
+}
+
+// sendDescriptions sends, as sendDescription does, the description of every note of run's tablet
+// whose stored description is of a later seq than the one last sent.
+func (s *InkService) sendDescriptions(run *sessionRun) {
+	found, err := s.containers.Find(KindDigitalNote, map[string]string{"note_companion": run.link.Identity()})
+	if err != nil {
+		logger.Error("ink: finding descriptions to send", "err", err.Error())
+		return
+	}
+	kind := NewDigitalNoteKind()
+	for uuid, meta := range found {
+		if kind.DescribedSeq(meta) > kind.SentSeq(meta) {
+			s.sendDescription(uuid)
+		}
+	}
+}
+
 // liveEnded closes every session tab of the Live view uuid, which has ended.
 func (s *InkService) liveEnded(uuid string) {
 	if _, err := s.settings.CloseTabs(func(t domain.Tab) bool { return t.ID == uuid }); err != nil {
@@ -664,7 +797,7 @@ func (s *InkService) invalidateSoon() {
 	}
 }
 
-// synced lists the held Digital Notes by title and the companions they came from: each note in
+// synced lists the held Digital Notes by name and the companions they came from: each note in
 // open as it stands there, every other from its face.
 func (s *InkService) synced(open []SyncedNote) ([]SyncedNote, []Companion) {
 	found, err := s.containers.Find(KindDigitalNote, nil)
@@ -682,8 +815,10 @@ func (s *InkService) synced(open []SyncedNote) ([]SyncedNote, []Companion) {
 	for _, n := range open {
 		byUUID[n.UUID] = n
 	}
+	kind := NewDigitalNoteKind()
 	notes := make([]SyncedNote, 0, len(byUUID))
-	for _, n := range byUUID {
+	for uuid, n := range byUUID {
+		n.Name = kind.Name(found[uuid], n.Title)
 		notes = append(notes, n)
 	}
 	sort.Slice(notes, func(i, j int) bool { return notes[i].UUID < notes[j].UUID })
@@ -704,7 +839,7 @@ func (s *InkService) synced(open []SyncedNote) ([]SyncedNote, []Companion) {
 			companions[i].Device = n.Device
 		}
 	}
-	sort.SliceStable(notes, func(i, j int) bool { return notes[i].Title < notes[j].Title })
+	sort.SliceStable(notes, func(i, j int) bool { return notes[i].Name < notes[j].Name })
 	sort.Slice(companions, func(i, j int) bool { return companions[i].Identity < companions[j].Identity })
 	return notes, companions
 }
@@ -719,6 +854,10 @@ type sessionRun struct {
 	replicas *NoteReplicas
 	// dropped marks a link the service closed on purpose, whose error is no failure.
 	dropped atomic.Bool
+
+	// listed is the head of each note the companion listed on this connection, by note.
+	listedMu sync.Mutex
+	listed   map[link.ID]uint32
 
 	connected bool
 	// pending are the notes the catch-up has still to bring to their heads.
@@ -737,9 +876,17 @@ var (
 func (r *sessionRun) Read(p []byte) (int, error)  { return r.received.Read(p) }
 func (r *sessionRun) Write(p []byte) (int, error) { return r.link.Write(p) }
 
-// Notes is the first sign the handshake held: the session is connected, and the notes past what
+// Notes is a NOTES frame: of the notes it lists, every description newer than the one last sent is
+// sent. The first is the sign the handshake held: the session is connected, and the notes past what
 // this Sieve holds are the catch-up.
 func (r *sessionRun) Notes(notes []link.NoteEntry) {
+	r.listedMu.Lock()
+	r.listed = make(map[link.ID]uint32, len(notes))
+	for _, n := range notes {
+		r.listed[n.ID] = n.HeadSeq
+	}
+	r.listedMu.Unlock()
+	go r.svc.sendDescriptions(r)
 	if r.connected {
 		return
 	}
@@ -751,6 +898,15 @@ func (r *sessionRun) Notes(notes []link.NoteEntry) {
 		}
 	}
 	r.svc.connected(r.link.Identity(), r.link.Elapsed())
+}
+
+// listedHead is the head the companion listed note at on this connection; false when it did not
+// list the note. It may be called from any goroutine.
+func (r *sessionRun) listedHead(note link.ID) (uint32, bool) {
+	r.listedMu.Lock()
+	defer r.listedMu.Unlock()
+	head, ok := r.listed[note]
+	return head, ok
 }
 
 func (r *sessionRun) Opened(note link.ID, _, _ uint32) {

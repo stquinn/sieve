@@ -1,6 +1,10 @@
 package block
 
-import "sieve/sieve/domain"
+import (
+	"strings"
+
+	"sieve/sieve/domain"
+)
 
 // Registry is the package-global processor registry as a value: the
 // ProcessorRegistry GlobalRegistry returns, and the owner of every reading of a
@@ -105,6 +109,15 @@ func (r Registry) Face(blk domain.SieveBlock) map[string]string {
 		return bearer.Face(blk)
 	}
 	return nil
+}
+
+// ContainerName is what a container holding blk, whose .meta is meta, is called:
+// its kind's ContainerName (ContainerNamer), otherwise blk's title.
+func (r Registry) ContainerName(blk domain.SieveBlock, meta map[string]string) string {
+	if namer, ok := r.Get(blk.Kind).(ContainerNamer); ok {
+		return namer.ContainerName(blk, meta)
+	}
+	return strings.TrimSpace(blk.StringAttr("title"))
 }
 
 // WriteMap renders blk as the YAML map a fenced block holds.

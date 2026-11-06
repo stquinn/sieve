@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"sieve/logger"
 )
@@ -66,6 +67,21 @@ type InkSettings struct {
 	Key string `json:"key,omitempty"`
 	// TCP, when set, is a host:port the companion is dialled at instead of over Bluetooth.
 	TCP string `json:"tcp,omitempty"`
+	// SettleSeconds, when above 0, is how long a note must go without a new record to be named;
+	// otherwise it is DefaultInkSettle.
+	SettleSeconds int `json:"settle_seconds,omitempty"`
+}
+
+// DefaultInkSettle is how long a note goes without a new record before it is named, unless
+// InkSettings.SettleSeconds says otherwise.
+const DefaultInkSettle = 5 * time.Minute
+
+// Settle is how long a note must go without a new record to be named.
+func (s InkSettings) Settle() time.Duration {
+	if s.SettleSeconds > 0 {
+		return time.Duration(s.SettleSeconds) * time.Second
+	}
+	return DefaultInkSettle
 }
 
 // DefaultMaxAttachmentBytes is the out-of-the-box attachment ceiling.

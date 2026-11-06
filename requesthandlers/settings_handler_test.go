@@ -482,7 +482,7 @@ func TestInkFragment_RendersEachState(t *testing.T) {
 	h, _ := newTestSettingsHandler(t)
 	ih := &InkHandler{ServiceProvider: h.ServiceProvider, Tmpl: h.Tmpl}
 	key := "MFRG GZDF MZTW Q2LK"
-	notes := []ink.SyncedNote{{UUID: "u", Title: "Ideas", Pages: 2, Seq: 9, Companion: "c"}}
+	notes := []ink.SyncedNote{{UUID: "u", Name: "Ideas", Title: "Untitled 05/11", Pages: 2, Seq: 9, Companion: "c"}}
 	companions := []ink.Companion{{Identity: "c", Device: "Note Air 2", Notes: 1}}
 	for _, tc := range []struct {
 		name   string
@@ -492,7 +492,7 @@ func TestInkFragment_RendersEachState(t *testing.T) {
 	}{
 		{"off", ink.Status{Supported: true, Link: ink.LinkState{Phase: ink.LinkOff}, Notes: notes, Companions: companions},
 			[]string{`id="ink-enabled"`, "Ideas", "2 pages · seq 9", "Note Air 2", "1 note"},
-			[]string{"checked", key, "New key", `id="ink-link"`}},
+			[]string{"checked", key, "New key", `id="ink-link"`, "Untitled 05/11"}},
 		{"looking", ink.Status{Enabled: true, Supported: true, Key: key, SieveID: "0123abcd",
 			Link: ink.LinkState{Phase: ink.LinkLooking}},
 			[]string{"checked", key, "Type this key into SieveInk under Pair new", "0123abcd", "New key",
@@ -529,14 +529,14 @@ func TestInkFragment_RendersEachState(t *testing.T) {
 	}
 }
 
-// The sidebar's Ink section is nothing while Ink is disabled; enabled, it lists the synced notes,
-// or says there are none, with the Live view above them while it exists, the active tab's item
+// The sidebar's Ink section is nothing while Ink is disabled; enabled, it lists the synced notes
+// by name, or says there are none, with the Live view above them while it exists, the active tab's item
 // marked, and every item opening its container through the workspace's open.
 func TestInkSidebar_RendersEachState(t *testing.T) {
 	h, _ := newTestSettingsHandler(t)
 	sp := h.ServiceProvider
 	ih := &InkHandler{ServiceProvider: sp, Tmpl: h.Tmpl}
-	notes := []ink.SyncedNote{{UUID: "n-ideas", Title: "Ideas", Pages: 2}, {UUID: "n-board", Pages: 1}}
+	notes := []ink.SyncedNote{{UUID: "n-ideas", Name: "Ideas", Title: "Untitled 05/11", Pages: 2}, {UUID: "n-board", Pages: 1}}
 	live := ink.LiveStatus{Present: true, UUID: "v-live", Device: "Note Air 2", Note: "n-ideas", NoteTitle: "Ideas"}
 	session := sp.State.LoadSession()
 	session.Tabs, session.ActiveIdx = []domain.Tab{{ID: "n-board", Kind: ink.KindDigitalNote}}, 0
@@ -555,7 +555,7 @@ func TestInkSidebar_RendersEachState(t *testing.T) {
 			`data-ink-note="n-ideas"`, "Ideas", "2 pages", `data-ink-note="n-board"`, "Untitled note", "1 page",
 			`window.sieveWorkspace.open('n-ideas')`, `data-ink-note="n-board"
     data-active`,
-		}, []string{"data-ink-live", "No synced notes yet"}},
+		}, []string{"data-ink-live", "No synced notes yet", "Untitled 05/11"}},
 		{"live", ink.Status{Enabled: true, Notes: notes, Live: live}, []string{
 			`data-ink-live="live"`, `ink-sidebar__label">Live · Note Air 2<`, `ink-sidebar__meta">Ideas<`,
 			`window.sieveWorkspace.open('v-live')`, "ink-icon--live",

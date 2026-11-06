@@ -62,7 +62,7 @@
   <div id="ink-notes" style="display: flex; flex-direction: column; gap: 0.5rem;">
     {{range .Notes}}
     <div style="display: flex; gap: 0.5rem; align-items: center; padding: 0.4rem 1rem; background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; font-size: 0.875rem;">
-      <span style="flex: 1; color: var(--theme-text);">{{if .Title}}{{.Title}}{{else}}Untitled{{end}}</span>
+      <span style="flex: 1; color: var(--theme-text);">{{if .Name}}{{.Name}}{{else}}Untitled{{end}}</span>
       <span style="color: var(--theme-textDim);">{{.Pages}} {{if eq .Pages 1}}page{{else}}pages{{end}} · seq {{.Seq}}</span>
     </div>
     {{else}}

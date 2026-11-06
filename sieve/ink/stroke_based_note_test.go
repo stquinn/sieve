@@ -354,11 +354,12 @@ func TestExportPageCarriesTheTemplateThePageIsDrawnWith(t *testing.T) {
 }
 
 // A page's key is the same for the same page on every run, and another for any change to what is
-// drawn on it or for another page. The pinned key is what any machine computes for that page.
+// drawn on it or for another page; what the note says of itself and not of the page leaves it
+// alone. The pinned key is what any machine computes for that page.
 func TestPageKeyNamesWhatIsOnThePage(t *testing.T) {
 	keyOf := func(t *testing.T, at int, ops ...link.Record) string {
 		t.Helper()
-		key, err := ReadStrokeBasedNote("c", jsonlOf(t, logOf(ops...))).PageKey(at)
+		key, err := ReadStrokeBasedNote("c", jsonlOf(t, logOf(append([]link.Record(nil), ops...)...))).PageKey(at)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -368,8 +369,13 @@ func TestPageKeyNamesWhatIsOnThePage(t *testing.T) {
 		pageAdd(page(2), 1, nil, link.BoundsFixed), strokeAdd(page(1), stroke(1))}
 	with := func(ops ...link.Record) []link.Record { return append(append([]link.Record(nil), base...), ops...) }
 	moved := strokeAdd(page(1), stroke(1), offSheet)
+	withHeader := func(change func(*link.Record)) link.Record {
+		h := header("n")
+		change(&h)
+		return h
+	}
 	baseKey := keyOf(t, 0, base...)
-	if baseKey != "2ce2e9cf31ae0dfe" {
+	if baseKey != "f5ebbae77fa15fef" {
 		t.Errorf("the page's key is %s on this machine", baseKey)
 	}
 	for _, tc := range []struct {
@@ -384,7 +390,13 @@ func TestPageKeyNamesWhatIsOnThePage(t *testing.T) {
 		{"a stroke removed", 0, with(strokeRemove(page(1), stroke(1))), false},
 		{"a stroke changed", 0, append([]link.Record{base[0], base[1], base[2]}, moved), false},
 		{"another template", 0, with(pageTemplate(page(1), dots)), false},
-		{"another title", 0, append(with(), header("renamed")), false},
+		{"another note template under a page that has none", 0, with(withHeader(func(h *link.Record) { h.Template = dots })), false},
+		{"another page aspect", 0, with(withHeader(func(h *link.Record) { h.PageAspect = 0.5 })), false},
+		{"another title", 0, with(header("renamed")), true},
+		{"another device", 0, with(withHeader(func(h *link.Record) { h.Device = link.Device{ID: "other", Name: "Tab Ultra"} })), true},
+		{"another created time", 0, with(withHeader(func(h *link.Record) { h.CreatedMillis++ })), true},
+		{"the same ink on an unbounded page", 0, []link.Record{base[0], pageAdd(page(1), 0, nil, link.BoundsUnbounded),
+			base[2], base[3]}, false},
 		{"another page with the same ink", 1, append([]link.Record{base[0], base[1], base[2]}, strokeAdd(page(2), stroke(1))), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1394,3 +1394,91 @@ func TestInkService_OpenOnTabletWaitsABoundedTimeAndHoldsNothingUp(t *testing.T)
 		})
 	}
 }
+
+// awaitMetas is the METAs the companion has received once it has received n, failing after five
+// seconds; a moment's wait shows none arrive beyond them.
+func (rig *inkRig) awaitMetas(n int) []link.Meta {
+	rig.t.Helper()
+	waitFor(rig.t, func() bool { return len(rig.companion.ReceivedMetas()) >= n })
+	time.Sleep(50 * time.Millisecond)
+	got := rig.companion.ReceivedMetas()
+	if len(got) != n {
+		rig.t.Fatalf("the companion received %d METAs, want %d: %+v", len(got), n, got)
+	}
+	return got
+}
+
+// A description kept for a note goes to the tablet it came from while that tablet is connected
+// and listed the note, as META of the description's fields and seq, and the seq sent is recorded:
+// never for another tablet's note or one this tablet did not list, and not again for the same seq.
+// A description kept while no tablet is connected goes once the tablet next lists the note.
+func TestInkService_ADescriptionGoesToTheTabletItsNoteCameFrom(t *testing.T) {
+	records := inkLog()
+	rig := newInkRig(t, records)
+	rig.enable(linkKey)
+	rig.start()
+	st := rig.await("caught up", func(st Status) bool {
+		return connected(st) && len(st.Notes) == 1 && st.Notes[0].Seq == uint32(len(records))
+	})
+	uuid := st.Notes[0].UUID
+	elsewhere := func(companion string, note link.ID) string {
+		t.Helper()
+		c, err := rig.svc.containers.Create(KindDigitalNote, map[string]interface{}{
+			"title": "Elsewhere", "note_companion": companion, "note_source_id": note.String(), "note_synced_seq": 3})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c.UUID()
+	}
+	others := []string{elsewhere("another-companion", noteID), elsewhere(companionID, testID(0xb0))}
+	for _, other := range others {
+		if err := rig.svc.keepDescription(other, 3, kitchen); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := rig.svc.keepDescription(uuid, uint32(len(records)), kitchen); err != nil {
+		t.Fatal(err)
+	}
+	if err := rig.svc.keepDescription(uuid, uint32(len(records)), kitchen); err != nil {
+		t.Fatal(err)
+	}
+	got := rig.awaitMetas(1)[0]
+	want := link.Meta{Note: noteID, Title: kitchen.Title, Keywords: kitchen.Keywords, Categories: kitchen.Categories,
+		Summary: kitchen.Summary, AsOfSeq: uint32(len(records))}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("META %+v, want %+v", got, want)
+	}
+	sent := func(uuid string) string {
+		c, err := reopen(t, rig.st).Load(uuid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c.Storable().Meta()["note_meta_sent_seq"]
+	}
+	if s := sent(uuid); s != "6" {
+		t.Errorf("recorded as sent at %q", s)
+	}
+	for _, other := range others {
+		if s := sent(other); s != "" {
+			t.Errorf("a note not this tablet's to hear of is recorded as sent at %q", s)
+		}
+	}
+
+	rig.stopPromptly()
+	next := append(append([]link.Record(nil), records...), strokeAdd(page(1), stroke(9)))
+	next[len(next)-1].Seq = uint32(len(next))
+	rig.companion.SetRecords(next)
+	renamed := domain.NoteMetadata{Title: "Kitchen, second pass", Keywords: []string{"extension"}, Summary: "Revised."}
+	if err := rig.svc.keepDescription(uuid, uint32(len(next)), renamed); err != nil {
+		t.Fatal(err)
+	}
+	rig.awaitMetas(1)
+	rig.start()
+	got = rig.awaitMetas(2)[1]
+	if got.Note != noteID || got.Title != renamed.Title || got.AsOfSeq != uint32(len(next)) || len(got.Categories) != 0 {
+		t.Errorf("META on the next session %+v", got)
+	}
+	if s := sent(uuid); s != "7" {
+		t.Errorf("recorded as sent at %q after the next session", s)
+	}
+}

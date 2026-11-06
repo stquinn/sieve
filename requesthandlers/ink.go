@@ -121,7 +121,7 @@ func (h *InkHandler) sidebarView(st ink.Status) inkSidebarView {
 		v.Live = &inkLiveItem{UUID: live.UUID, Device: live.Device, Note: live.NoteTitle, Waiting: live.Waiting, Active: live.UUID == active}
 	}
 	for _, n := range st.Notes {
-		title := n.Title
+		title := n.Name
 		if title == "" {
 			title = "Untitled note"
 		}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -419,6 +420,96 @@ func TestReplica_SavesWhenCaughtUpAndOnStructureButNeverPerStroke(t *testing.T) 
 				t.Errorf("%d versions after End, want %d", v, tc.ended)
 			}
 		})
+	}
+}
+
+// A replica's saves and a note's description, written through the service or straight to the
+// container, never undo each other: in either order, and at once, the block and its face are the
+// replica's last and the description is the last written. Writing the description moves no
+// version.
+func TestReplica_SavesAndADescriptionKeepEachOther(t *testing.T) {
+	kind := NewDigitalNoteKind()
+	for _, tc := range []struct {
+		name string
+		// direct writes the description straight to the container rather than through the service.
+		direct bool
+		// describedFirst describes before the replica's next save rather than after it.
+		describedFirst bool
+	}{
+		{"described during the session, then saved", false, true},
+		{"saved, then described", false, false},
+		{"described straight to the container, then saved", true, true},
+		{"saved, then described straight to the container", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newImagesRig(t, inkLog()...)
+			describe := func(seq uint32) {
+				t.Helper()
+				edit := func(m domain.DocumentMeta) { kind.Describe(m, kitchen, seq) }
+				var err error
+				if tc.direct {
+					_, err = rig.containers.SaveMeta(rig.uuid(), edit)
+				} else {
+					err = rig.svc.writeNoteMeta(rig.uuid(), edit)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := rig.container().Version()
+			if tc.describedFirst {
+				describe(6)
+				if v := rig.container().Version(); v != before {
+					t.Errorf("describing moved the version %d → %d", before, v)
+				}
+			}
+			rig.append(pageAdd(page(3), 2, nil, link.BoundsFixed))
+			if !tc.describedFirst {
+				describe(6)
+			}
+			if err := rig.replicas.End(); err != nil {
+				t.Fatal(err)
+			}
+			c := rig.container()
+			meta := c.Storable().Meta()
+			if meta["display_name"] != kitchen.Title || meta["note_meta_seq"] != "6" || meta["note_pages"] != "3" ||
+				meta["note_synced_seq"] != "7" || c.Block().Attrs["note_synced_seq"] != 7 || c.Version() != before+1 {
+				t.Errorf("version %d (from %d), .meta %v", c.Version(), before, meta)
+			}
+		})
+	}
+}
+
+// A replica saving its block on every page added while descriptions are written beside it ends
+// with its last block and face and the last description.
+func TestReplica_SavesAndDescriptionsAtOnceKeepEachOther(t *testing.T) {
+	const rounds = 40
+	rig := newImagesRig(t, inkLog()...)
+	kind := NewDigitalNoteKind()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < rounds; i++ {
+			rig.append(pageAdd(testID(0x80+byte(i)), uint32(2+i), nil, link.BoundsFixed))
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for seq := uint32(1); seq <= rounds; seq++ {
+			if err := rig.svc.writeNoteMeta(rig.uuid(), func(m domain.DocumentMeta) { kind.Describe(m, kitchen, seq) }); err != nil {
+				t.Error(err)
+			}
+		}
+	}()
+	wg.Wait()
+	if err := rig.replicas.End(); err != nil {
+		t.Fatal(err)
+	}
+	meta := rig.container().Storable().Meta()
+	if meta["note_meta_seq"] != strconv.Itoa(rounds) || meta["note_pages"] != strconv.Itoa(2+rounds) ||
+		meta["note_synced_seq"] != strconv.Itoa(6+rounds) || meta["display_name"] != kitchen.Title {
+		t.Errorf(".meta %v", meta)
 	}
 }
 

@@ -69,8 +69,6 @@ type Plan struct {
 	// Follow keeps the session open: a note the companion shows live is opened and its records
 	// and ink followed.
 	Follow bool
-	// Meta is sent once NOTES has come, followed by another LIST.
-	Meta *Meta
 }
 
 // Session is this Sieve's end of one connection to a companion. A Session is used once.
@@ -90,7 +88,6 @@ type Session struct {
 	// among them are ignored, since the HEAD starts it again from haveSeq.
 	requests  requests
 	following ID
-	metaSent  bool
 	ink       LiveDecoder
 
 	ackMu    sync.Mutex
@@ -126,7 +123,7 @@ func (s *Session) Run() error {
 	stop := make(chan struct{})
 	defer close(stop)
 	go s.ackLoop(stop)
-	if s.plan.List || s.plan.CatchUp || s.plan.Meta != nil {
+	if s.plan.List || s.plan.CatchUp {
 		if err := s.stream.write(listFrame{}.encode()); err != nil {
 			return err
 		}
@@ -252,17 +249,6 @@ func (s *Session) handle(frame []byte) (bool, error) {
 
 func (s *Session) onNotes(notes []NoteEntry) (bool, error) {
 	s.obs.Notes(notes)
-	if s.plan.Meta != nil && !s.metaSent {
-		s.metaSent = true
-		meta, err := s.plan.Meta.encode()
-		if err != nil {
-			return false, err
-		}
-		if err := s.stream.write(meta); err != nil {
-			return false, err
-		}
-		return false, s.stream.write(listFrame{}.encode())
-	}
 	if s.plan.CatchUp {
 		sort.Slice(notes, func(i, j int) bool { return bytes.Compare(notes[i].ID[:], notes[j].ID[:]) < 0 })
 		for _, n := range notes {
@@ -435,6 +421,26 @@ func (s *Session) OpenNote(note ID) (<-chan error, error) {
 	return answer, nil
 }
 
+// SendMeta sends META, m cut to the companion's limits by Meta.Truncated. It may be called from
+// any goroutine, the Observer's included, and is ErrNotRunning while the session is not running.
+// No answer comes: the companion drops a META of a note it did not offer on this connection, or
+// whose AsOfSeq is past the note's head.
+func (s *Session) SendMeta(m Meta) error {
+	frame, err := m.Truncated().encode()
+	if err != nil {
+		return err
+	}
+	running := false
+	err = s.stream.writeIf(func() bool {
+		running = s.requests.isRunning()
+		return running
+	}, frame)
+	if !running {
+		return ErrNotRunning
+	}
+	return err
+}
+
 func (s *Session) replica(note ID) (Replica, error) {
 	if r, ok := s.open[note]; ok {
 		return r, nil
@@ -526,6 +532,13 @@ func (r *requests) stop() {
 		}
 		delete(r.byNote, note)
 	}
+}
+
+// isRunning reports whether requests are taken: between start and stop.
+func (r *requests) isRunning() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.running
 }
 
 // add records a request of note about to be written, an OPEN when answer is nil, and reports

@@ -116,6 +116,16 @@ func (n *StrokeBasedNote) Strokes(page int) []link.Record {
 	return append([]link.Record(nil), n.pages[page].strokes...)
 }
 
+// Inked reports whether any page present holds a stroke; false for a note that keeps no strokes.
+func (n *StrokeBasedNote) Inked() bool {
+	for _, p := range n.pages {
+		if len(p.strokes) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // Effect is what applying one record did to a note.
 type Effect uint8
 
@@ -250,18 +260,35 @@ func (n *StrokeBasedNote) ExportPage(page int) ([]byte, error) {
 const pageKeyDigits = 16
 
 // PageKey names what is on the page at index page: the first 16 lowercase hex digits of the
-// SHA-256 of the page's id, a newline and its ExportPage. The export is deterministic, so an
-// unchanged page has the same key on every run and machine; a stroke added, removed or changed,
-// another template, a changed note header, or another page gives another key.
+// SHA-256 of the JSON of the page's id, the note's pageAspect, the template the page is drawn
+// with, its bounds and its strokes as ExportPage gives them, in that order. The JSON is
+// deterministic, so an unchanged page has the same key on every run and machine; a stroke added,
+// removed or changed, another aspect, template or bounds, or another page gives another key. The
+// note's title, created time and device are not on the page and do not move it.
 func (n *StrokeBasedNote) PageKey(page int) (string, error) {
-	export, err := n.ExportPage(page)
+	if page < 0 || page >= len(n.pages) {
+		return "", fmt.Errorf("ink: page %d of %d", page, len(n.pages))
+	}
+	p := n.pages[page]
+	content := pageContent{Page: p.ID.String(), PageAspect: n.header.PageAspect, Template: exportTemplate{n.PageTemplate(page)},
+		Bounds: p.Bounds.String(), Strokes: make([]exportStroke, 0, len(p.strokes))}
+	for _, s := range p.strokes {
+		content.Strokes = append(content.Strokes, newExportStroke(s))
+	}
+	raw, err := json.Marshal(content)
 	if err != nil {
 		return "", err
 	}
-	h := sha256.New()
-	h.Write([]byte(n.pages[page].ID.String() + "\n"))
-	h.Write(export)
-	return hex.EncodeToString(h.Sum(nil))[:pageKeyDigits], nil
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])[:pageKeyDigits], nil
+}
+
+type pageContent struct {
+	Page       string         `json:"page"`
+	PageAspect float32        `json:"pageAspect"`
+	Template   exportTemplate `json:"template"`
+	Bounds     string         `json:"bounds"`
+	Strokes    []exportStroke `json:"strokes"`
 }
 
 // newExportStroke is the stroke of stroke-add record s in the §4.2 export shape.

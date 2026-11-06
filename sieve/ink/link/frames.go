@@ -199,6 +199,14 @@ type NoteEntry struct {
 	HeadSeq uint32
 }
 
+// The limits a companion holds META to: it drops a META over any of them.
+const (
+	metaTitleBytes   = 512
+	metaSummaryBytes = 4096
+	metaTerms        = 64
+	metaTermBytes    = 128
+)
+
 // Meta is META: this Sieve's description of a note the companion offered. The companion drops
 // it unless the note was offered on this connection, AsOfSeq is not past the note's head, and
 // Title is at most 512 bytes, Summary 4 KiB, and Keywords and Categories at most 64 terms of
@@ -210,6 +218,38 @@ type Meta struct {
 	Categories []string
 	Summary    string
 	AsOfSeq    uint32
+}
+
+// Truncated is m cut to fit the companion's limits: Title to 512 bytes and Summary to 4 KiB,
+// Keywords and Categories to their first 64 terms and each term to 128 bytes, every cut on a rune
+// boundary. What fits is unchanged.
+func (m Meta) Truncated() Meta {
+	m.Title, m.Summary = m.cut(m.Title, metaTitleBytes), m.cut(m.Summary, metaSummaryBytes)
+	m.Keywords, m.Categories = m.terms(m.Keywords), m.terms(m.Categories)
+	return m
+}
+
+// terms is list cut to at most 64 terms of at most 128 bytes each, in a new slice.
+func (m Meta) terms(list []string) []string {
+	if list == nil {
+		return nil
+	}
+	out := make([]string, 0, min(len(list), metaTerms))
+	for _, t := range list[:min(len(list), metaTerms)] {
+		out = append(out, m.cut(t, metaTermBytes))
+	}
+	return out
+}
+
+// cut is s cut to at most n bytes, ending on a rune boundary.
+func (m Meta) cut(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 func (m Meta) encode() ([]byte, error) {

@@ -8,6 +8,7 @@ import (
 	"sieve/logger"
 	"sieve/sieve/domain"
 	"sieve/store"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -117,6 +118,23 @@ func (ss *StateService) CloseTabs(close func(domain.Tab) bool) (bool, error) {
 		return false, nil
 	}
 	session.CloseTabs(ids)
+	return true, ss.SaveSession(session)
+}
+
+// RenameTabs gives every session tab of id the display name name and saves the session when any
+// tab's name changed. It reports whether any did.
+func (ss *StateService) RenameTabs(id, name string) (bool, error) {
+	session := ss.LoadSession()
+	session.Tabs = slices.Clone(session.Tabs)
+	renamed := false
+	for i := range session.Tabs {
+		if session.Tabs[i].ID == id && session.Tabs[i].DisplayName != name {
+			session.Tabs[i].DisplayName, renamed = name, true
+		}
+	}
+	if !renamed {
+		return false, nil
+	}
 	return true, ss.SaveSession(session)
 }
 

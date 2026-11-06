@@ -23,6 +23,8 @@ const (
 
 // NoteReplicas is this Sieve's replicas of one companion's notes, each a digital-note block
 // container found by (note_companion, note_source_id) in its face. It implements link.Replicas.
+// A replica's saves write its block and face over the container's .meta as stored, so a
+// description written meanwhile, through writeMeta or not, is kept.
 //
 // A container is created on the first record appended to its replica, never on Open, with that
 // record folded in. The container's strokes.jsonl asset is the log and the truth; its block is a
@@ -166,6 +168,27 @@ func (rs *NoteReplicas) attrsOf(uuid string) (map[string]interface{}, bool) {
 		}
 	}
 	return nil, false
+}
+
+// writeMeta applies edit to the .meta of the container uuid under the lock of the open replica
+// holding it, whose handle then holds what was written. False, with nothing written, when no open
+// replica holds that container.
+func (rs *NoteReplicas) writeMeta(uuid string, edit func(domain.DocumentMeta)) (bool, error) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	for _, r := range rs.open {
+		if r.UUID() != uuid {
+			continue
+		}
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		saved, err := rs.containers.SaveMeta(uuid, edit)
+		if err == nil {
+			r.container = saved
+		}
+		return true, err
+	}
+	return false, nil
 }
 
 // End writes every open replica's queue, then saves the block of each that changed since its

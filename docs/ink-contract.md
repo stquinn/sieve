@@ -242,6 +242,12 @@ directory. The block never carries ink.
 - `note_device` is copied from the `note-header` and never edited. It says which device a note came
   from; `note_companion` remains the companion's identity on the link.
 - One Sieve holds at most one live container per `(note_companion, note_source_id)`.
+- **Description.** What Sieve says of a note is kept in `.meta` and never in the block: `display_name`
+  (its name), `summary`, `tags` (its keywords, a comma within one written as `;`), `note_keywords`
+  and `note_categories` (JSON arrays of strings, as described), `note_meta_seq` (the `seq` the
+  description is of) and `note_meta_sent_seq` (the `seq` of the description last sent as `META`).
+  `title` stays what the tablet wrote. A note is shown by `display_name` when it has one, otherwise
+  by `title`.
 
 ## 6. Templates
 

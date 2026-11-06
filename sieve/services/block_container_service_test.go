@@ -275,6 +275,81 @@ func TestBlockContainer_FaceIsStampedAndFound(t *testing.T) {
 	}
 }
 
+// SaveMeta writes .meta alone: the version, the snapshots and the body stay as
+// they were, the face and keys it was not asked to change are kept, and a Save of
+// a container loaded before it keeps what it wrote while laying its own face over.
+func TestBlockContainer_SaveMetaWritesTheMetaAloneAndSaveKeepsIt(t *testing.T) {
+	containers, st := newTestContainers(t)
+	c, err := containers.Create(facedKind, map[string]interface{}{"title": "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, err = containers.Save(c); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := containers.SaveMeta(c.UUID(), func(m domain.DocumentMeta) { m.All()["foreign"] = "kept" }); err != nil {
+		t.Fatal(err)
+	}
+	stale := c
+	body := func() string {
+		raw, err := os.ReadFile(filepath.Join(st.Root(), "testhost", domain.Blocks.Key, c.UUID(), c.UUID()+".block"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	before := body()
+
+	named, err := containers.SaveMeta(c.UUID(), func(m domain.DocumentMeta) {
+		m.SetDisplayName("Kitchen extension")
+		m.SetTags([]string{"extension", "budget"})
+	})
+	if err != nil {
+		t.Fatalf("SaveMeta: %v", err)
+	}
+	if named.Version() != c.Version() || len(named.Versions()) != len(c.Versions()) || body() != before {
+		t.Errorf("SaveMeta moved the version %d → %d, the snapshots %d → %d or the body", c.Version(), named.Version(),
+			len(c.Versions()), len(named.Versions()))
+	}
+	reloaded, err := reopen(t, st).Load(c.UUID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := reloaded.Storable().Meta()
+	if meta["display_name"] != "Kitchen extension" || meta["tags"] != "[extension, budget]" || meta["foreign"] != "kept" ||
+		meta["sticky_title"] != "a" || meta[store.MetaKeyKind] != facedKind {
+		t.Errorf("after SaveMeta .meta is %v", meta)
+	}
+	if _, err := containers.SaveMeta(missingUUID, func(domain.DocumentMeta) {}); !errors.Is(err, domain.ErrNotBlockContainer) {
+		t.Errorf("SaveMeta of no container: %v", err)
+	}
+
+	stale.Merge(map[string]interface{}{"title": "b"})
+	saved, err := containers.Save(stale)
+	if err != nil {
+		t.Fatalf("Save of a container loaded before SaveMeta: %v", err)
+	}
+	meta = saved.Storable().Meta()
+	if meta["display_name"] != "Kitchen extension" || meta["foreign"] != "kept" || meta["sticky_title"] != "b" ||
+		saved.Version() != c.Version()+1 {
+		t.Errorf("after Save .meta is %v", meta)
+	}
+}
+
+// reopen is a service over a fresh store at st's root, resolving everything from disk.
+func reopen(t *testing.T, st *filestore.FileStore) *services.BlockContainerService {
+	t.Helper()
+	fresh, err := filestore.NewFileStore(st.Root(), "testhost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	containers, err := services.NewBlockContainerService(fresh, block.GlobalRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return containers
+}
+
 // One map, two forms: what a document's fence holds and what a container's file
 // holds parse back to the same block.
 func TestBlockContainer_AttrsRoundTripFencedAndAsAContainer(t *testing.T) {

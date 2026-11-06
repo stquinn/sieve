@@ -1,6 +1,7 @@
 package requesthandlers
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -24,6 +25,7 @@ import (
 	"sieve/sieve/ink/link"
 	"sieve/sieve/ink/radio"
 	"sieve/sieve/protocol"
+	"sieve/sieve/services"
 	"sieve/store"
 )
 
@@ -924,4 +926,97 @@ func TestWS_InkOpenOnTablet_AnswersWithWhatCameOfIt(t *testing.T) {
 		t.Errorf("a code container answered %v", got)
 	}
 	closeAndSettle(other)
+}
+
+// namingImages answers every page of a note with an image address beside its log.
+type namingImages struct{}
+
+func (namingImages) Image(_ context.Context, uuid string, page int) (ink.PageImage, error) {
+	return ink.PageImage{Address: domain.NewLeafAddress(uuid, fmt.Sprintf("page-%d.png", page))}, nil
+}
+
+// namingDescriber names every note the same.
+type namingDescriber struct{}
+
+func (namingDescriber) Tier() domain.Tier { return domain.TierSmart }
+func (namingDescriber) DescribeNote(string, []domain.Address) (domain.NoteMetadata, error) {
+	return domain.NoteMetadata{Title: "Kitchen extension planning", Keywords: []string{"budget, rough"}}, nil
+}
+
+// A note is shown by its tablet's title until Sieve names it, and by that name after: in the
+// sidebar's Ink section, in Settings → Ink's list, in the tab strip, where a tab already open
+// takes the name, and in a tab opened afresh.
+func TestWS_Ink_ANoteIsShownByTheNameSieveGaveIt(t *testing.T) {
+	records := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)))
+	w := newInkWire(t, records)
+	w.session(records)
+	note := w.container()
+	tmpl, err := NewTemplates(os.DirFS(".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := chi.NewRouter()
+	(&NoteHandler{ServiceProvider: w.sp, Tmpl: tmpl}).RegisterPaths(r)
+	(&TabHandler{ServiceProvider: w.sp, Tmpl: tmpl}).RegisterPaths(r)
+	(&InkHandler{ServiceProvider: w.sp, Tmpl: tmpl}).RegisterPaths(r)
+	views := httptest.NewServer(r)
+	defer views.Close()
+	shown := func(path string) string {
+		t.Helper()
+		status, body := do(t, http.MethodGet, views.URL+path, "", "")
+		if status != http.StatusOK {
+			t.Fatalf("GET %s: %d %s", path, status, body)
+		}
+		return body
+	}
+	open := func() domain.Tab {
+		t.Helper()
+		if status, body := do(t, http.MethodPost, views.URL+"/api/container/open/"+note, "", ""); status != http.StatusOK {
+			t.Fatalf("open: %d %s", status, body)
+		}
+		for _, tab := range w.sp.State.LoadSession().Tabs {
+			if tab.ID == note {
+				return tab
+			}
+		}
+		t.Fatal("no tab of the note")
+		return domain.Tab{}
+	}
+	if tab := open(); tab.DisplayName != "Ideas" {
+		t.Errorf("an unnamed note's tab is %q", tab.DisplayName)
+	}
+	for _, path := range []string{"/ui/views/sidebar/ink", "/ui/views/settings/ink", "/ui/views/tabs"} {
+		if body := shown(path); !strings.Contains(body, "Ideas") {
+			t.Errorf("%s does not show the tablet's title:\n%s", path, body)
+		}
+	}
+
+	settings := w.sp.State.LoadSettings()
+	settings.Ink.SettleSeconds = 1
+	if err := w.sp.State.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	ink.NewNoteNamer(w.sp.Ink, namingImages{}, namingDescriber{}, services.NewJobEngine(nil, 1, nil))
+	if err := w.sp.Ink.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer w.sp.Ink.Stop()
+	waitFor(t, func() bool {
+		notes := w.sp.Ink.Status().Notes
+		return len(notes) == 1 && notes[0].Name == "Kitchen extension planning"
+	}, "the note to be named")
+	for _, path := range []string{"/ui/views/sidebar/ink", "/ui/views/settings/ink", "/ui/views/tabs"} {
+		if body := shown(path); !strings.Contains(body, "Kitchen extension planning") || strings.Contains(body, ">Ideas<") {
+			t.Errorf("%s does not show the note's name:\n%s", path, body)
+		}
+	}
+	if tab := open(); tab.DisplayName != "Kitchen extension planning" {
+		t.Errorf("a named note's tab is %q", tab.DisplayName)
+	}
+	if err := w.sp.State.SaveSession(domain.Session{}); err != nil {
+		t.Fatal(err)
+	}
+	if tab := open(); tab.DisplayName != "Kitchen extension planning" {
+		t.Errorf("a named note's tab opened afresh is %q", tab.DisplayName)
+	}
 }

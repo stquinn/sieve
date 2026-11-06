@@ -26,7 +26,8 @@ type LiveStatus struct {
 	// Device is the name of the device the mirrored note is written on, "" when it is not known.
 	Device string
 	// Note is the uuid of the container holding the mirrored note, "" before one holds it.
-	Note      string
+	Note string
+	// NoteTitle is what the mirrored note is called (DigitalNoteKind.Name).
 	NoteTitle string
 	// Waiting is the tablet not live, within LiveGrace of the last live note.
 	Waiting bool
@@ -113,7 +114,7 @@ func (v *LiveView) Status() LiveStatus {
 	}
 	note := v.svc.noteAttrs(live.Container)
 	return LiveStatus{Present: true, UUID: v.uuid, Device: v.deviceOf(note), Note: live.Container,
-		NoteTitle: v.titleOf(note), Waiting: waiting}
+		NoteTitle: v.svc.noteName(live.Container), Waiting: waiting}
 }
 
 // setListener registers who is told the view's node changed.
@@ -155,7 +156,7 @@ func (v *LiveView) follow(live LiveNote) {
 	v.svc.invalidate()
 }
 
-// noteChanged is the block of the note in container having changed: its title, its pages.
+// noteChanged is the note in container having changed: its title, its name, its pages.
 func (v *LiveView) noteChanged(container string) {
 	v.mu.Lock()
 	mirrored := v.present && container != "" && v.live.Container == container
@@ -221,7 +222,7 @@ func (v *LiveView) attrs(live LiveNote, waiting bool) map[string]interface{} {
 		"id":    v.uuid,
 		"title": title,
 		"live": map[string]interface{}{
-			"container": live.Container, "title": v.titleOf(note), "page": page, "waiting": waiting,
+			"container": live.Container, "title": v.svc.noteName(live.Container), "page": page, "waiting": waiting,
 		},
 		"note":        map[string]interface{}{},
 		"note_device": map[string]interface{}{},
@@ -239,10 +240,4 @@ func (v *LiveView) deviceOf(note map[string]interface{}) string {
 	device, _ := note["note_device"].(map[string]interface{})
 	name, _ := device["name"].(string)
 	return name
-}
-
-// titleOf is the title a note's attrs give, "" when they give none.
-func (v *LiveView) titleOf(note map[string]interface{}) string {
-	title, _ := note["title"].(string)
-	return title
 }

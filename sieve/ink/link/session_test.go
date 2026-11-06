@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -313,14 +315,72 @@ func TestFollowOpensTheLiveNote(t *testing.T) {
 	}
 }
 
-func TestMetaReachesTheCompanionBeforeThePlanEnds(t *testing.T) {
+// META sent while the session runs reaches the companion, cut to its limits; before the handshake
+// and after Run has returned it is ErrNotRunning and nothing is written.
+func TestSendMetaReachesTheCompanionOnlyWhileTheSessionRuns(t *testing.T) {
 	h := newHarness(t, vectorRecords)
-	meta := Meta{vectorNote, "A title", []string{"k"}, []string{"Work"}, "A line.", 6}
-	if err := h.run(testKey, Plan{Meta: &meta}); err != nil {
+	meta := Meta{vectorNote, strings.Repeat("t", 600), []string{"k", "budget, rough"}, []string{"Work"}, "A line.", 6}
+	unstarted := NewSession(&bytes.Buffer{}, testKey, NewMemoryReplicas(), newRecorder(), Plan{})
+	if err := unstarted.SendMeta(meta); !errors.Is(err, ErrNotRunning) {
+		t.Errorf("before the handshake: %v", err)
+	}
+
+	obs := newRecorder()
+	s, ended, link := h.start(testKey, Plan{List: true, Follow: true}, obs)
+	<-obs.notes
+	if err := s.SendMeta(meta); err != nil {
 		t.Fatal(err)
 	}
-	if got := <-h.companion.Metas; got.Title != "A title" || got.Categories[0] != "Work" || got.AsOfSeq != 6 {
-		t.Errorf("%+v", got)
+	select {
+	case got := <-h.companion.Metas:
+		want := meta.Truncated()
+		if got.Note != vectorNote || got.Title != want.Title || len(got.Title) != 512 || !slices.Equal(got.Keywords, meta.Keywords) ||
+			!slices.Equal(got.Categories, meta.Categories) || got.Summary != meta.Summary || got.AsOfSeq != 6 {
+			t.Errorf("the companion received %+v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no META reached the companion")
+	}
+	link.Close()
+	_ = h.end(ended)
+	if err := s.SendMeta(meta); !errors.Is(err, ErrNotRunning) {
+		t.Errorf("after Run returned: %v", err)
+	}
+	if got := h.companion.ReceivedMetas(); len(got) != 1 {
+		t.Errorf("the companion received %d METAs, want 1", len(got))
+	}
+}
+
+// Truncated cuts each field to the companion's limit on a rune boundary and leaves what fits as it
+// was.
+func TestMetaTruncatedFitsTheCompanionsLimits(t *testing.T) {
+	terms := func(n int, term string) []string { return slices.Repeat([]string{term}, n) }
+	for _, tc := range []struct {
+		name string
+		in   Meta
+		want Meta
+	}{
+		{"what fits", Meta{Title: "Kitchen", Keywords: []string{"a, b"}, Categories: []string{}, Summary: "One line."},
+			Meta{Title: "Kitchen", Keywords: []string{"a, b"}, Categories: []string{}, Summary: "One line."}},
+		{"a title at the limit", Meta{Title: strings.Repeat("t", 512)}, Meta{Title: strings.Repeat("t", 512)}},
+		{"a long title", Meta{Title: strings.Repeat("t", 513)}, Meta{Title: strings.Repeat("t", 512)}},
+		{"a title cut inside a rune", Meta{Title: strings.Repeat("t", 511) + "é"}, Meta{Title: strings.Repeat("t", 511)}},
+		{"a long summary", Meta{Summary: strings.Repeat("s", 5000)}, Meta{Summary: strings.Repeat("s", 4096)}},
+		{"a summary cut inside a rune", Meta{Summary: strings.Repeat("s", 4094) + "€"}, Meta{Summary: strings.Repeat("s", 4094)}},
+		{"too many terms", Meta{Keywords: terms(70, "k"), Categories: terms(65, "c")}, Meta{Keywords: terms(64, "k"), Categories: terms(64, "c")}},
+		{"a long term", Meta{Keywords: []string{strings.Repeat("k", 127) + "é", "short"}},
+			Meta{Keywords: []string{strings.Repeat("k", 127), "short"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.in.Truncated()
+			if got.Title != tc.want.Title || got.Summary != tc.want.Summary || !slices.Equal(got.Keywords, tc.want.Keywords) ||
+				!slices.Equal(got.Categories, tc.want.Categories) {
+				t.Errorf("Truncated = %+v", got)
+			}
+			if _, err := got.encode(); err != nil {
+				t.Errorf("the truncated META does not encode: %v", err)
+			}
+		})
 	}
 }
 

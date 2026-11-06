@@ -938,6 +938,14 @@ type FaceBearer interface {
 	Face(blk domain.SieveBlock) map[string]string
 }
 
+// ContainerNamer is the optional capability a processor implements when a
+// container of its kind is called something other than its block's title.
+// ContainerName is that name, read from the block and the container's .meta; a
+// kind that does not implement it is called by its block's title.
+type ContainerNamer interface {
+	ContainerName(blk domain.SieveBlock, meta map[string]string) string
+}
+
 // MarkdownContenter is the optional interface a processor implements when a given
 // block's raw content can itself BE document markdown (e.g. a code block whose
 // language is markdown). Prose embedding ("Embed in Document") consults it to

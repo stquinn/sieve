@@ -3,6 +3,7 @@ package services
 import (
 	"fmt"
 	"maps"
+	"sync"
 
 	"sieve/ident"
 	"sieve/logger"
@@ -46,6 +47,8 @@ type BlockContainerService struct {
 	store    store.Store
 	kinds    ContainableKinds
 	listener ContainerChangeListener
+	// writes is held while Save or SaveMeta reads a container's stored .meta and writes it.
+	writes sync.Mutex
 }
 
 // NewBlockContainerService prepares the Blocks category and builds the service.
@@ -88,37 +91,21 @@ func (s *BlockContainerService) Create(kind string, overrides map[string]interfa
 // ErrNotBlockContainer; a container whose body will not parse is a different
 // error, so a broken file never reads as a missing one.
 func (s *BlockContainerService) Load(uuid string) (*domain.BlockContainer, error) {
-	storable, err := s.store.LoadByUUID(uuid)
+	ms, err := s.stored(uuid)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", domain.ErrNotBlockContainer, uuid, err)
-	}
-	ms, ok := storable.(store.MetaStorable)
-	if !ok || ms.Type() != store.TypeBlock {
-		return nil, fmt.Errorf("%w: %s", domain.ErrNotBlockContainer, uuid)
+		return nil, err
 	}
 	return s.open(ms)
 }
 
 // Save writes the held block and its kind's face, bumping the version and
-// writing a snapshot. It returns the new container; c is stale.
+// writing a snapshot. The .meta written is the container's .meta as stored now
+// with the face laid over it: every key the face does not hold is the store's,
+// so what a SaveMeta wrote after c was loaded is kept, and c's own .meta gives
+// only the version it was loaded at. It returns the new container; c is stale.
 // store.ErrStaleStorable is surfaced.
 func (s *BlockContainerService) Save(c *domain.BlockContainer) (*domain.BlockContainer, error) {
-	body, err := s.render(c.Block())
-	if err != nil {
-		return nil, err
-	}
-	ms := c.Storable()
-	ms.SetMeta(s.withFace(ms.Meta(), c.Block()))
-	ms.SetBody(body)
-	saved, err := s.store.Save(ms)
-	if err != nil {
-		return nil, fmt.Errorf("block container %s: save: %w", c.UUID(), err)
-	}
-	savedMS, ok := saved.(store.MetaStorable)
-	if !ok {
-		return nil, fmt.Errorf("block container %s: save: not MetaStorable", c.UUID())
-	}
-	opened, err := s.open(savedMS)
+	opened, err := s.save(c)
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +115,76 @@ func (s *BlockContainerService) Save(c *domain.BlockContainer) (*domain.BlockCon
 		}
 	}
 	return opened, nil
+}
+
+// save is Save without telling the listener.
+func (s *BlockContainerService) save(c *domain.BlockContainer) (*domain.BlockContainer, error) {
+	body, err := s.render(c.Block())
+	if err != nil {
+		return nil, err
+	}
+	s.writes.Lock()
+	defer s.writes.Unlock()
+	ms := c.Storable()
+	meta := maps.Clone(ms.Meta())
+	if stored, err := s.stored(c.UUID()); err == nil {
+		meta = maps.Clone(stored.Meta())
+		meta["version"] = ms.Meta()["version"]
+	}
+	ms.SetMeta(s.withFace(meta, c.Block()))
+	ms.SetBody(body)
+	saved, err := s.store.Save(ms)
+	if err != nil {
+		return nil, fmt.Errorf("block container %s: save: %w", c.UUID(), err)
+	}
+	savedMS, ok := saved.(store.MetaStorable)
+	if !ok {
+		return nil, fmt.Errorf("block container %s: save: not MetaStorable", c.UUID())
+	}
+	return s.open(savedMS)
+}
+
+// SaveMeta applies edit to the .meta of container uuid as it is stored now and
+// writes the .meta alone: the block is not rendered, the version does not move
+// and no snapshot is written. Save and SaveMeta run one at a time and each starts
+// from the stored .meta, so neither loses what the other wrote. edit must not set
+// the keys the store writes or the kind's face. It returns the container as
+// stored after the write.
+func (s *BlockContainerService) SaveMeta(uuid string, edit func(domain.DocumentMeta)) (*domain.BlockContainer, error) {
+	s.writes.Lock()
+	defer s.writes.Unlock()
+	ms, err := s.stored(uuid)
+	if err != nil {
+		return nil, err
+	}
+	meta := maps.Clone(ms.Meta())
+	edit(domain.NewDocumentMeta(meta, func(map[string]string) {}))
+	ms.SetMeta(meta)
+	if _, err := s.store.SaveMeta(ms); err != nil {
+		return nil, fmt.Errorf("block container %s: save meta: %w", uuid, err)
+	}
+	reloaded, err := s.store.Load(ms.Category(), uuid)
+	if err != nil {
+		return nil, fmt.Errorf("block container %s: save meta: %w", uuid, err)
+	}
+	reloadedMS, ok := reloaded.(store.MetaStorable)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrNotBlockContainer, uuid)
+	}
+	return s.open(reloadedMS)
+}
+
+// stored is the storable of container uuid as the store holds it now.
+func (s *BlockContainerService) stored(uuid string) (store.MetaStorable, error) {
+	storable, err := s.store.LoadByUUID(uuid)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %v", domain.ErrNotBlockContainer, uuid, err)
+	}
+	ms, ok := storable.(store.MetaStorable)
+	if !ok || ms.Type() != store.TypeBlock {
+		return nil, fmt.Errorf("%w: %s", domain.ErrNotBlockContainer, uuid)
+	}
+	return ms, nil
 }
 
 // Delete removes the container, its history and its assets.

@@ -154,6 +154,7 @@ var (
 	_ domain.NodeResolver              = (*editor.Router)(nil)
 	_ command.DocumentFiler            = (*editor.EditorService)(nil)
 	_ ai.DocumentMCPEndpoint           = (*mcp.Server)(nil)
+	_ ink.NoteDescriber                = (*ai.AIService)(nil)
 )
 
 func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.FS) {
@@ -255,6 +256,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	s.Editor.SetEngine(s.Engine)
 	s.Editor.SetAI(s.AI)
 	s.Commands.SetEngine(s.Engine)
+	ink.NewNoteNamer(s.Ink, s.InkImages, s.AI, s.Engine)
 	for _, cmd := range s.CommandSet() {
 		s.Commands.Register(cmd)
 	}

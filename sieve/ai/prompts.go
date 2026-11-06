@@ -48,6 +48,8 @@ func (ps *PromptService) GetPromptContent(name string) (string, error) {
 		return DefaultBtwPrompt, nil
 	case "image":
 		return DefaultImagePrompt, nil
+	case "note-meta":
+		return DefaultNoteMetaPrompt, nil
 	case "refine":
 		return DefaultRefinePrompt, nil
 	case "web-clip-fetch":
@@ -76,7 +78,7 @@ func (ps *PromptService) DeletePrompt(name string) error {
 
 // ListPrompts returns all standard prompts with their virtualization status.
 func (ps *PromptService) ListPrompts() []PromptEntry {
-	names := []string{"file", "explain", "ask", "btw", "refine", "image", "web-clip-fetch", "web-clip-summarise"}
+	names := []string{"file", "explain", "ask", "btw", "refine", "image", "note-meta", "web-clip-fetch", "web-clip-summarise"}
 	displayNames := map[string]string{
 		"file":               "Smart Filing",
 		"explain":            "Explain Content",
@@ -84,6 +86,7 @@ func (ps *PromptService) ListPrompts() []PromptEntry {
 		"btw":                "Quick Answer (/btw)",
 		"refine":             "Language Detection",
 		"image":              "Describe Image",
+		"note-meta":          "Name Handwritten Note",
 		"web-clip-fetch":     "Web Clip — Fetch",
 		"web-clip-summarise": "Web Clip — Summarise",
 	}
@@ -301,6 +304,25 @@ Respond ONLY with valid JSON. No preamble.
 {
   "alt": "brief alt text for accessibility (30 words or fewer)",
   "summary": "1-2 sentence neutral description for search and context"
+}
+`
+
+const DefaultNoteMetaPrompt = `These image files, in this directory, are the pages of one handwritten note, in page order:
+{page_files}
+
+Open each one, read the handwriting and look at any drawings, then describe the note as a whole.
+
+- title: a short, specific title saying what the note is about, in at most eight words. Never a generic title such as "Notes", "Untitled" or "Meeting notes", and never a date alone.
+- keywords: up to 8 keywords or short phrases for what the note covers.
+- categories: from 0 to 3 categories, chosen only from these: {category_list}. Give none when none fits.
+- summary: two or three plain sentences saying what the note holds.
+
+Respond ONLY with raw JSON. DO NOT use markdown code fences (triple backticks). No preamble or explanation.
+{
+  "title": "Short specific title",
+  "keywords": ["keyword", "short phrase"],
+  "categories": ["category"],
+  "summary": "Two or three sentences."
 }
 `
 

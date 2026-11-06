@@ -17,7 +17,7 @@ var ErrNoWorkspaceClient = errors.New("no workspace client is connected")
 var ErrNoWorkspaceAnswer = errors.New("the workspace client did not answer")
 
 // workspaceAnswerWait is how long a request waits for its answer.
-const workspaceAnswerWait = 20 * time.Second
+const workspaceAnswerWait = 60 * time.Second
 
 // WorkspaceRequests is the asking side of the workspace wire: Go sends one connected client a
 // frame carrying a fresh correlation id, and waits for the frame that client answers with under

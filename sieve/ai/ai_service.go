@@ -284,6 +284,51 @@ func (s *AIService) DescribeImage(uuid string, src string, blkId string) (domain
 	return desc, nil
 }
 
+// DescribeNote describes the handwritten note in container uuid from images of
+// its pages: pages are their absolute addresses, in page order, and must all name
+// files in one directory, the CLI's working directory, which the prompt lists by
+// file name. The library's top-level folders are offered as the categories to
+// choose from. The answer is parsed and nothing else is checked of it.
+func (s *AIService) DescribeNote(uuid string, pages []domain.Address) (domain.NoteMetadata, error) {
+	settings := s.state.LoadSettings()
+	if settings.Tier() == domain.TierDumb {
+		return domain.NoteMetadata{}, fmt.Errorf("note description not available in dumb mode")
+	}
+	if len(pages) == 0 {
+		return domain.NoteMetadata{}, fmt.Errorf("note %s: no page images to describe", uuid)
+	}
+	cwd, files := "", make([]string, 0, len(pages))
+	for i, page := range pages {
+		path, err := s.assetPath(uuid, page.String())
+		if err != nil {
+			return domain.NoteMetadata{}, fmt.Errorf("note %s: page image %s: %w", uuid, page, err)
+		}
+		if i == 0 {
+			cwd = filepath.Dir(path)
+		} else if filepath.Dir(path) != cwd {
+			return domain.NoteMetadata{}, fmt.Errorf("note %s: page image %s is not beside %s", uuid, page, cwd)
+		}
+		files = append(files, fmt.Sprintf("%d. %s", i+1, filepath.Base(path)))
+	}
+	categories := strings.Join(s.libraryFolders(), ", ")
+	if categories == "" {
+		categories = "(none)"
+	}
+	prompt, _ := s.prompts.GetPromptContent("note-meta")
+	p := strings.ReplaceAll(prompt, "{page_files}", strings.Join(files, "\n"))
+	p = strings.ReplaceAll(p, "{category_list}", categories)
+	binary, dialect := settings.ResolveCLI()
+	resp, err := s.runner.Run("note-meta", binary, dialect, p, settings.Model, s.timeoutFor(settings, "note-meta"), cwd, s.profileForDoc(uuid), s.storePath)
+	if err != nil {
+		return domain.NoteMetadata{}, err
+	}
+	var meta domain.NoteMetadata
+	if err := json.Unmarshal([]byte(s.extractJSONFallback(resp)), &meta); err != nil {
+		return domain.NoteMetadata{}, fmt.Errorf("parse note description: %w", err)
+	}
+	return meta, nil
+}
+
 // assetPath is the absolute path of the asset file src names, read off the
 // NodeDescriptor the resolver returns for it.
 func (s *AIService) assetPath(uuid, src string) (string, error) {

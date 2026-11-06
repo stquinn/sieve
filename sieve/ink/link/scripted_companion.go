@@ -37,9 +37,12 @@ type ScriptedCompanion struct {
 	GapAt uint32
 	// openNote is how each OPEN-NOTE is answered; see SetOpenNoteAnswer.
 	openNote OpenNoteAnswer
+	// metas is every META received, in order.
+	metas []Meta
 
-	// Metas receives each META, Opens each OPEN's haveSeq, OpenNotes each OPEN-NOTE's note, and
-	// Acks each ACK's seq.
+	// Metas receives each META while it has room, Opens each OPEN's haveSeq, OpenNotes each
+	// OPEN-NOTE's note, and Acks each ACK's seq. ReceivedMetas holds every META whether or not
+	// Metas had room for it.
 	Metas     chan Meta
 	Opens     chan uint32
 	OpenNotes chan ID
@@ -83,6 +86,13 @@ func (c *ScriptedCompanion) SetOpenNoteAnswer(a OpenNoteAnswer) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.openNote = a
+}
+
+// ReceivedMetas is every META received, in the order it came; it may be called while serving.
+func (c *ScriptedCompanion) ReceivedMetas() []Meta {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]Meta(nil), c.metas...)
 }
 
 // log is the records served as note's log. c.mu is held.
@@ -136,13 +146,23 @@ func (c *ScriptedCompanion) Serve(link io.ReadWriter) error {
 			in.id()
 			c.Acks <- in.u32()
 		case frameMeta:
-			c.Metas <- Meta{in.id(), in.string(), in.strings(), in.strings(), in.string(), in.u32()}
+			c.receiveMeta(Meta{in.id(), in.string(), in.strings(), in.strings(), in.string(), in.u32()})
 		case frameOpenNote:
 			err = c.answerOpenNote(stream, in.id())
 		}
 		if err != nil {
 			return err
 		}
+	}
+}
+
+func (c *ScriptedCompanion) receiveMeta(m Meta) {
+	c.mu.Lock()
+	c.metas = append(c.metas, m)
+	c.mu.Unlock()
+	select {
+	case c.Metas <- m:
+	default:
 	}
 }
 

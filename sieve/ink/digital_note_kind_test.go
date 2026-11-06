@@ -2,6 +2,7 @@ package ink
 
 import (
 	"encoding/json"
+	"fmt"
 	"go/build"
 	"os"
 	"path/filepath"
@@ -140,6 +141,45 @@ func TestDigitalNoteKind_FoundByItsFaceWithoutItsBody(t *testing.T) {
 	}
 	if _, err := fresh.Load(ours.UUID()); err == nil {
 		t.Error("the broken body parsed: the test proves nothing")
+	}
+}
+
+// A note is called by the name Sieve gave it, otherwise by its tablet's title, and a description
+// reads back from .meta as it was written, of the seq it was written at.
+func TestDigitalNoteKind_NameAndDescriptionReadFromMeta(t *testing.T) {
+	kind := NewDigitalNoteKind()
+	for _, tc := range []struct {
+		name string
+		meta map[string]string
+		want string
+	}{
+		{"no .meta", nil, "Untitled 05/11"},
+		{"never named", map[string]string{"display_name": "null"}, "Untitled 05/11"},
+		{"named", map[string]string{"display_name": "Kitchen extension planning"}, "Kitchen extension planning"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := kind.Name(tc.meta, "Untitled 05/11"); got != tc.want {
+				t.Errorf("Name = %q", got)
+			}
+			blk := domain.NewSieveBlock(KindDigitalNote, "c", map[string]interface{}{"title": "Untitled 05/11"})
+			if got := kind.ContainerName(blk, tc.meta); got != tc.want {
+				t.Errorf("ContainerName = %q", got)
+			}
+		})
+	}
+
+	meta := map[string]string{}
+	if _, _, ok := kind.Description(meta); ok || kind.SentSeq(meta) != 0 {
+		t.Error("an undescribed note reads a description")
+	}
+	kind.Describe(domain.NewDocumentMeta(meta, func(map[string]string) {}), kitchen, 7)
+	d, seq, ok := kind.Description(meta)
+	if !ok || seq != 7 || fmt.Sprint(d) != fmt.Sprint(kitchen) {
+		t.Errorf("Description = %+v at %d, %t", d, seq, ok)
+	}
+	kind.MarkSent(domain.NewDocumentMeta(meta, func(map[string]string) {}), 7)
+	if kind.SentSeq(meta) != 7 || kind.DescribedSeq(meta) != 7 {
+		t.Errorf("sent %d, described %d", kind.SentSeq(meta), kind.DescribedSeq(meta))
 	}
 }
 
