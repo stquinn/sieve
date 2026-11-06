@@ -112,6 +112,8 @@ export class InkLens extends AbstractEditor {
 
   /**
    * A surface's context-menu intent reaches the host carrying the lens's menu.
+   * What a surface shows having changed is the reader's place having changed,
+   * which the lens advertises as its selection (InkPlace).
    * @override
    * @param {SurfaceEventMsg} event
    */
@@ -121,6 +123,10 @@ export class InkLens extends AbstractEditor {
       return
     }
     super.onSurfaceEvent(event)
+    const type = event && event.type
+    if (type === SurfaceEvent.TOOLBAR_CHANGED.type || type === SurfaceEvent.DOC_PROJECTED.type) {
+      super.onSurfaceEvent(SurfaceEvent.SELECTION_CHANGED)
+    }
   }
 
   /** @override */

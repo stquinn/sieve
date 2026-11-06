@@ -219,6 +219,7 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
       path.join('lens', 'ink', 'action-status.js'),
       path.join('lens', 'ink', 'digital-note-lens.js'),
       path.join('lens', 'ink', 'ink-lens.js'),
+      path.join('lens', 'ink', 'ink-place.js'),
       path.join('lens', 'ink', 'ink-sheet.js'),
       path.join('lens', 'ink', 'live-ink-lens.js'),
       path.join('lens', 'ink', 'live-surface.js'),

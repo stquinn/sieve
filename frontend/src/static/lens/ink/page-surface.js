@@ -13,6 +13,7 @@ import { INK_RULES } from '../../renderers/ink-renderer.js'
 import { InkFeed } from '../../contract/ink-container-provider.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
 import { ButtonGroup, ToolbarButton, ToolbarLabel, ToolbarPlace, ToolbarSelect } from '../../renderers/toolbar-button.js'
+import { InkPlace } from './ink-place.js'
 import { InkSheet } from './ink-sheet.js'
 import { NotePager } from './note-pager.js'
 
@@ -217,6 +218,12 @@ export class PageSurface extends AbstractSurface {
 
   /** @returns {string|null} the id of the page shown */
   get shownPage() { return this.#sheet.shown }
+
+  /** @override @returns {Readonly<import('../document-editor/selection-model.js').RawSelectionDescriptor>} the page shown */
+  feedSelection() {
+    const shown = this.#sheet.shown
+    return InkPlace.describe(this.mode, shown, this.#sheet.indexOf(shown), this.#sheet.pages.length)
+  }
 
   /** @returns {SheetScale} one of PageSurface.Scale or InkSheet.LEVELS */
   get scale() { return this.#sheet.scale }

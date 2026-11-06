@@ -1114,6 +1114,34 @@ describe('AskPanel — command mode is derived from the draft (#126)', () => {
     expect(composer.verb).toBeNull()
   })
 
+  it('WITH NOWHERE TO PUT AN ANSWER only a command runs: an ask is refused in words, a command still sent', () => {
+    vi.useFakeTimers()
+    mountPanelDom({ open: true })
+    const editor = fakeEditor()
+    const ws = fakeWorkspace(editor)
+    ws.activeBlockEditor = () => null
+    const plane = commandPlane()
+    const { composer } = build(ws, { commands: plane.service })
+    const sendButton = () => /** @type {HTMLButtonElement} */ (document.querySelector('.ask-popup__send'))
+    const refusal = () => document.querySelector('.ask-popup__refusal')
+
+    composer.type('what does this page say?')
+    settle()
+    expect(refusal()?.textContent).toBe(AskPanel.ASK_UNAVAILABLE)
+    expect(sendButton().disabled).toBe(true)
+    composer.submit()
+    expect(editor.askAi).not.toHaveBeenCalled()
+    expect(composer.resets).toBe(0)
+
+    composer.type('/uuid')
+    settle()
+    expect(refusal()).toBeNull()
+    expect(sendButton().disabled).toBe(false)
+    expect(sendLabel()).toBe('Run /uuid')
+    send()
+    expect(plane.frames).toHaveLength(1)
+  })
+
   it('a panel with no command service never arms — nothing resolves', () => {
     vi.useFakeTimers()
     mountPanelDom({ open: true })

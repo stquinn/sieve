@@ -17,6 +17,10 @@ import { ComposerMount } from './composer-mount.js'
 import { TargetChips } from './target-chips.js'
 
 export class AskPanel {
+  /** What the footer says while no mount can hold an answer, so only commands run. */
+  static ASK_UNAVAILABLE = 'This view is read-only, so there is nowhere to put an answer: only /commands run here. ' +
+    'To ask about a notebook page, make a document from its transcript and ask there.'
+
   /** @type {import('./workspace.js').SieveWorkspace} */
   #ws
   /** @type {import('./command-service.js').CommandService|null} */
@@ -108,6 +112,9 @@ export class AskPanel {
     // tab-switch, so the target chip refreshes on caret move, focus change AND
     // tab change.
     this.#ws.onSelectionUpdate((ctx) => this.#onSelectionUpdate(ctx))
+    // Whether an ask can be answered is a fact about the active mount, so the cue
+    // follows the active tab even when its lens has said nothing yet.
+    if (typeof this.#ws.onActiveTabChanged === 'function') this.#ws.onActiveTabChanged(() => this.#refreshCue())
     // INVARIANT: whenever the panel is VISIBLE, the draft is MOUNTED. A pinned
     // panel is visible from the stylesheet before open() ever runs — mount now so
     // the socket is never empty. Not a jump-in, so it must not touch
@@ -374,6 +381,8 @@ export class AskPanel {
       return
     }
 
+    // An ask is answered in the container asked from, so with no mount that can
+    // hold an answer the draft stays as written and the cue has said why.
     const ed = this.#ws.activeBlockEditor()
     if (!ed) return
     const context = this.#lastContext || ed.getSelectionContext()
@@ -465,7 +474,7 @@ export class AskPanel {
   #paintCue() {
     if (!this.#composer) return
     const command = this.#resolveDraftCommand(this.#composer.harvest())
-    if (this.#cue) this.#cue.show(command ? command.cmd : null)
+    if (this.#cue) this.#cue.show(command ? command.cmd : null, this.#canAsk() ? '' : AskPanel.ASK_UNAVAILABLE)
     this.#composer.setCommandVerb(command ? command.cmd.name : null)
   }
 
@@ -489,8 +498,14 @@ export class AskPanel {
    * @param {import('../lens/document-editor/selection-model.js').SelectionContext|null} ctx
    */
   #onSelectionUpdate(ctx) {
-    if (!ctx) return
     if (this.#panel && this.#panel.classList.contains('is-open')) this.#refreshLabel()
+  }
+
+  /** @returns {boolean} whether the active mount can hold an answer: its lens
+   *  mints blocks in its container. A panel over no workspace asks as before. */
+  #canAsk() {
+    if (!this.#ws || typeof this.#ws.activeBlockEditor !== 'function') return true
+    return !!this.#ws.activeBlockEditor()
   }
 
   /**
