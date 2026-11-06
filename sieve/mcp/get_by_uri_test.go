@@ -2,8 +2,10 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -139,8 +141,10 @@ func TestGetByURI_DereferencesABlockAddress(t *testing.T) {
 
 // An asset leaf is a SUCCESS that says where the file is. No verb reads bytes,
 // so the answer carries the library-root-relative path and the size instead —
-// whether the asset's document is a filed note or an unfiled buffer.
-func TestGetByURI_AnAssetLeafStatesWhereItsBytesAre(t *testing.T) {
+// whether the asset's document is a filed note or an unfiled buffer. The
+// container's own answer lists that asset under "assets" by the uri that
+// reaches it; the leaf's answer lists nothing.
+func TestGetByURI_AnAssetIsListedByItsContainerAndStatesWhereItsBytesAre(t *testing.T) {
 	const pdf = "%PDF-1.4 not really a pdf"
 	cases := []struct {
 		name     string
@@ -177,12 +181,32 @@ func TestGetByURI_AnAssetLeafStatesWhereItsBytesAre(t *testing.T) {
 				t.Fatalf("reload after attaching the asset: %v", err)
 			}
 
-			_, node, err := s.getByURI(context.Background(), nil,
-				URIInput{URI: domain.NewLeafAddress(uuid, "spec.pdf").String()})
+			assetURI := domain.NewLeafAddress(uuid, "spec.pdf").String()
+			wantPath := path.Join(doc.Storable().ExternalRef(), "spec.pdf")
+
+			_, container, err := s.getByURI(context.Background(), nil, URIInput{URI: uriOf(uuid)})
+			if err != nil {
+				t.Fatalf("get_by_uri on the container: %v", err)
+			}
+			want := []domain.NodeAsset{{URI: assetURI, Key: "spec.pdf", Path: wantPath, Bytes: len(pdf)}}
+			if !reflect.DeepEqual(container.Assets, want) {
+				t.Errorf("container assets = %+v, want %+v", container.Assets, want)
+			}
+			wire, err := json.Marshal(container)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !strings.Contains(string(wire), `"assets":[{"uri":"`+assetURI+`","key":"spec.pdf"`) {
+				t.Errorf("wire = %s, want the asset listed under \"assets\"", wire)
+			}
+
+			_, node, err := s.getByURI(context.Background(), nil, URIInput{URI: assetURI})
 			if err != nil {
 				t.Fatalf("get_by_uri on an asset leaf must succeed: %v", err)
 			}
-			wantPath := path.Join(doc.Storable().ExternalRef(), "spec.pdf")
+			if node.Assets != nil {
+				t.Errorf("leaf assets = %+v, want none: only a whole container lists them", node.Assets)
+			}
 			if node.Kind != "asset" || node.ID != "spec.pdf" || node.Path != wantPath || node.Bytes != len(pdf) {
 				t.Errorf("node = %+v, want kind asset, id spec.pdf, path %q, %d bytes", node, wantPath, len(pdf))
 			}
