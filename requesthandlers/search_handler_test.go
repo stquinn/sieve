@@ -27,13 +27,17 @@ func (s *recordingSearch) Search(criteria domain.SearchCriteria) []domain.Candid
 }
 
 // newSearchServer serves the search handler over a recording search, with a
-// session whose one tab is the uuid open.
-func newSearchServer(t *testing.T, search *recordingSearch, open string) *httptest.Server {
+// session whose tabs are the uuids open.
+func newSearchServer(t *testing.T, search *recordingSearch, open ...string) *httptest.Server {
 	t.Helper()
 	h, _ := newTestSettingsHandler(t)
 	sp := h.ServiceProvider
 	sp.Search = search
-	if err := sp.State.SaveSession(domain.Session{Tabs: []domain.Tab{{ID: open, Kind: string(domain.KindBuffer)}}}); err != nil {
+	var tabs []domain.Tab
+	for _, id := range open {
+		tabs = append(tabs, domain.Tab{ID: id})
+	}
+	if err := sp.State.SaveSession(domain.Session{Tabs: tabs}); err != nil {
 		t.Fatalf("SaveSession: %v", err)
 	}
 	r := chi.NewRouter()
@@ -67,11 +71,28 @@ func TestSearchHandler_EachViewAsksForWhatItShows(t *testing.T) {
 		{URI: domain.NewContainerAddress(buffer).String(), Title: "Scratch", Kind: "buffer"},
 	}
 	all := domain.SearchFields{domain.SearchName, domain.SearchSummary, domain.SearchTags, domain.SearchContent}
+
+	var many []domain.Candidate
+	var notes, buffers []string
+	for i := range quickSwitchLimit + 5 {
+		id := ident.New()
+		notes = append(notes, id)
+		many = append(many, domain.Candidate{URI: domain.NewContainerAddress(id).String(), Title: fmt.Sprintf("Note %d", i), Kind: "note"})
+	}
+	for i := range 3 {
+		id := ident.New()
+		buffers = append(buffers, id)
+		many = append(many, domain.Candidate{URI: domain.NewContainerAddress(id).String(), Title: fmt.Sprintf("Untitled %d", i+1), Kind: "buffer"})
+	}
+
 	for _, tc := range []struct {
 		name    string
 		path    string
+		hits    []domain.Candidate // defaults to hits
+		open    []string           // defaults to the buffer
 		asked   []domain.SearchCriteria
 		renders []string
+		rows    []string // when set, the uuids of the rows, in order
 	}{
 		{
 			name:  "sidebar search: what the sidebar shows, on every field",
@@ -89,21 +110,45 @@ func TestSearchHandler_EachViewAsksForWhatItShows(t *testing.T) {
 		{
 			name:    "quick switcher: everything by name",
 			path:    "/ui/views/search?q=Aut",
-			asked:   []domain.SearchCriteria{{Terms: "Aut", Fields: domain.SearchFields{domain.SearchName}, Limit: quickSwitchLimit}},
+			asked:   []domain.SearchCriteria{{Terms: "Aut", Fields: domain.SearchFields{domain.SearchName}}},
 			renders: []string{"open('" + note + "')", "open('" + buffer + "')", `quick-switch__path">design`},
 		},
 		{
 			name:    "quick switcher: no query lists everything",
 			path:    "/ui/views/search?q=",
-			asked:   []domain.SearchCriteria{{Fields: domain.SearchFields{domain.SearchName}, Limit: quickSwitchLimit}},
+			asked:   []domain.SearchCriteria{{Fields: domain.SearchFields{domain.SearchName}}},
 			renders: []string{"Auth Design", "Scratch"},
+		},
+		{
+			name:  "quick switcher: what is open leads, in the search's order, and the list is cut to the limit",
+			path:  "/ui/views/search?q=",
+			hits:  many,
+			open:  []string{buffers[1], notes[quickSwitchLimit+2], notes[3]},
+			asked: []domain.SearchCriteria{{Fields: domain.SearchFields{domain.SearchName}}},
+			rows: append([]string{notes[3], notes[quickSwitchLimit+2], buffers[1]},
+				append(notes[:3:3], notes[4:quickSwitchLimit-2]...)...),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			search := &recordingSearch{hits: hits}
-			body := getBody(t, newSearchServer(t, search, buffer), tc.path)
+			tcHits, tcOpen := hits, []string{buffer}
+			if tc.hits != nil {
+				tcHits, tcOpen = tc.hits, tc.open
+			}
+			search := &recordingSearch{hits: tcHits}
+			body := getBody(t, newSearchServer(t, search, tcOpen...), tc.path)
 			if fmt.Sprint(search.asked) != fmt.Sprint(tc.asked) {
 				t.Errorf("asked %+v, want %+v", search.asked, tc.asked)
+			}
+			if tc.rows != nil {
+				rows := strings.Split(body, `class="quick-switch__item"`)[1:]
+				if len(rows) != len(tc.rows) {
+					t.Fatalf("got %d rows, want %d", len(rows), len(tc.rows))
+				}
+				for i, id := range tc.rows {
+					if !strings.Contains(rows[i], "open('"+id+"')") {
+						t.Errorf("row %d is not %s:\n%s", i, id, rows[i])
+					}
+				}
 			}
 			for _, want := range tc.renders {
 				if !strings.Contains(body, want) {
@@ -128,7 +173,7 @@ func TestSearchHandler_QuickSwitcherMarksWhatIsOpen(t *testing.T) {
 	if len(rows) != 3 {
 		t.Fatalf("want two rows, got:\n%s", body)
 	}
-	filed, scratch := rows[1], rows[2]
+	scratch, filed := rows[1], rows[2]
 	if strings.Contains(filed, "quick-switch__badge") || !strings.Contains(scratch, "quick-switch__badge") {
 		t.Errorf("only the open buffer is marked open:\nfiled: %s\nscratch: %s", filed, scratch)
 	}

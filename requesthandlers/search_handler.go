@@ -3,6 +3,7 @@ package requesthandlers
 import (
 	"html/template"
 	"net/http"
+	"slices"
 
 	"sieve/sieve"
 	"sieve/sieve/domain"
@@ -36,12 +37,12 @@ func (h *SearchHandler) sidebarCriteria(q string) domain.SearchCriteria {
 }
 
 // quickSwitchCriteria is what the quick switcher asks for: everything whose name
-// holds q, and with no q everything.
+// holds q, and with no q everything. It sets no limit: the switcher cuts its list
+// only after putting what is open first.
 func (h *SearchHandler) quickSwitchCriteria(q string) domain.SearchCriteria {
 	return domain.SearchCriteria{
 		Terms:  q,
 		Fields: domain.SearchFields{domain.SearchName},
-		Limit:  quickSwitchLimit,
 	}
 }
 
@@ -88,6 +89,25 @@ type switchItem struct {
 	IsOpen bool
 }
 
+// openFirst orders the quick switcher's rows with those open in a tab first,
+// keeping the search's order within each group, and cuts them to quickSwitchLimit.
+func (h *SearchHandler) openFirst(items []switchItem) []switchItem {
+	slices.SortStableFunc(items, func(a, b switchItem) int {
+		switch {
+		case a.IsOpen == b.IsOpen:
+			return 0
+		case a.IsOpen:
+			return -1
+		default:
+			return 1
+		}
+	})
+	if len(items) > quickSwitchLimit {
+		items = items[:quickSwitchLimit]
+	}
+	return items
+}
+
 func (h *SearchHandler) handleSearchPrompt(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -111,6 +131,7 @@ func (h *SearchHandler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	for _, hit := range h.search(h.quickSwitchCriteria(query)) {
 		items = append(items, switchItem{Candidate: hit, IsOpen: open[hit.Container()]})
 	}
+	items = h.openFirst(items)
 
 	data := struct {
 		Query string
