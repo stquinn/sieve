@@ -17,9 +17,12 @@
 (?d)frontend/wailsjs
 
 // Git worktrees and test/coverage artifacts
-(?d).worktrees
+(?d).claude/worktrees
 (?d)*.test
 (?d)*.out
 
 // OS noise
 (?d)**/.DS_Store
+
+// Syncthing's own conflict copies: each machine keeps its own, none travel
+(?d)*.sync-conflict-*
