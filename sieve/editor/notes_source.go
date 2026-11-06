@@ -67,7 +67,7 @@ func (s *NotesSource) Resolve(addr domain.Address) (domain.NodeDescriptor, error
 }
 
 // nodeOf projects a loaded document into the kind-agnostic NodeDescriptor shape over
-// the body the address named.
+// the body the address named, listing the document's assets.
 //
 // A pinned descriptor is NOT uniformly historical: the body is the snapshot,
 // while title and summary are current, because snapshots are body-only.
@@ -84,6 +84,7 @@ func (s *NotesSource) nodeOf(addr domain.Address, doc domain.Document, body stri
 		Title:   meta.DisplayName(),
 		Summary: summary,
 		Body:    body,
+		Assets:  (&containerLeaves{addr: addr, owner: doc.Storable()}).assetList(),
 	}
 }
 

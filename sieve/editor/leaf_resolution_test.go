@@ -18,6 +18,7 @@ import (
 	"sieve/sieve/block/processors"
 	"sieve/sieve/domain"
 	"sieve/sieve/services"
+	"sieve/store"
 	"sieve/store/filestore"
 )
 
@@ -595,6 +596,92 @@ func TestRouter_ResolvesAnAssetAPasteJustSaved(t *testing.T) {
 			}
 			if got, err := os.ReadFile(filepath.Join(fs.Root(), node.Path)); err != nil || !bytes.Equal(got, encoded.Bytes()) {
 				t.Errorf("Path %q reads %d bytes, %v; want the pasted image", node.Path, len(got), err)
+			}
+		})
+	}
+}
+
+// A whole container's node lists every asset it owns, ordered by key, each at
+// its absolute unpinned address, whatever kind of container it is; a leaf lists
+// nothing.
+func TestRouter_ContainerNodeListsItsAssets(t *testing.T) {
+	containers, ds, fs := newTestContainers(t)
+	router := NewRouter(NewNotesSource(ds), NewBlockSource(containers))
+	owned := store.OwnedAssets{Store: fs}
+
+	note := seedNoteWithBlocks(t, ds, codeFence(testLowerBlockUUID, "source: backoff()"))
+	buffer, err := ds.New()
+	if err != nil {
+		t.Fatalf("New buffer: %v", err)
+	}
+	bare := seedFiledNote(t, ds, "Bare", "", nil, "No files.", "Nothing attached.")
+	c, err := containers.Create(containerKind, map[string]interface{}{"source": "x"})
+	if err != nil {
+		t.Fatalf("Create container: %v", err)
+	}
+	c.Merge(map[string]interface{}{"source": "y"})
+	if c, err = containers.Save(c); err != nil {
+		t.Fatalf("Save container: %v", err)
+	}
+	pinned := c.Versions()[0].ID
+
+	seed := map[string]map[string]string{
+		note.UUID():   {"zeta.png": "12345", "alpha.png": "12"},
+		buffer.UUID(): {"clip.txt": "abc"},
+	}
+	for uuid, files := range seed {
+		doc, err := ds.LoadByUUID(uuid)
+		if err != nil {
+			t.Fatalf("LoadByUUID: %v", err)
+		}
+		for key, data := range files {
+			if _, err := owned.Save(doc.Storable(), key, []byte(data)); err != nil {
+				t.Fatalf("Save asset %q: %v", key, err)
+			}
+		}
+	}
+	for key, data := range map[string]string{"transcript-1-k.json": "{}", "page-1-k.png": "png!"} {
+		if _, err := containers.SaveAsset(c, key, []byte(data)); err != nil {
+			t.Fatalf("SaveAsset %q: %v", key, err)
+		}
+	}
+
+	type want struct {
+		key   string
+		bytes int
+	}
+	for _, tc := range []struct {
+		name, container, uri string
+		want                 []want
+	}{
+		{"filed note", note.UUID(), "sieve://" + note.UUID(), []want{{"alpha.png", 2}, {"zeta.png", 5}}},
+		{"buffer", buffer.UUID(), "sieve://" + buffer.UUID(), []want{{"clip.txt", 3}}},
+		{"document with none", bare.UUID(), "sieve://" + bare.UUID(), nil},
+		{"block container", c.UUID(), "sieve://" + c.UUID(), []want{{"page-1-k.png", 4}, {"transcript-1-k.json", 2}}},
+		{"pinned block container", c.UUID(), "sieve://" + c.UUID() + "?version=" + pinned, []want{{"page-1-k.png", 4}, {"transcript-1-k.json", 2}}},
+		{"block leaf", note.UUID(), leafURI(note.UUID(), testLowerBlockUUID), nil},
+		{"asset leaf", note.UUID(), leafURI(note.UUID(), "zeta.png"), nil},
+		{"container's own block leaf", c.UUID(), leafURI(c.UUID(), c.UUID()), nil},
+		{"container asset leaf", c.UUID(), leafURI(c.UUID(), "page-1-k.png"), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			node, err := router.Resolve(mustAddress(t, tc.uri))
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			if len(node.Assets) != len(tc.want) {
+				t.Fatalf("assets = %+v, want %v", node.Assets, tc.want)
+			}
+			for i, w := range tc.want {
+				got := node.Assets[i]
+				wantURI := leafURI(tc.container, w.key)
+				if got.Key != w.key || got.Bytes != w.bytes || got.URI != wantURI || path.Base(got.Path) != w.key {
+					t.Errorf("assets[%d] = %+v, want key %q, %d bytes, uri %q", i, got, w.key, w.bytes, wantURI)
+				}
+				asset, err := router.Resolve(mustAddress(t, got.URI))
+				if err != nil || asset.Kind != assetKind || asset.Path != got.Path {
+					t.Errorf("listed uri %q resolves to %+v, %v; want the asset at %q", got.URI, asset, err, got.Path)
+				}
 			}
 		})
 	}
