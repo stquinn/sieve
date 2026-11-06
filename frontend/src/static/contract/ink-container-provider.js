@@ -161,13 +161,16 @@ export const InkRefusal = Object.freeze({
 
 /**
  * The read minimum and the feed, plus the pages, plus a query that asks the
- * tablet the note came from to open it — a command to the tablet that names the
- * note alone and changes nothing here — plus the readings of the pages.
+ * tablet the note came from to open it at a page — a command to the tablet that
+ * names the note and the page alone and changes nothing here — plus the readings
+ * of the pages.
  *
  * - `loadPage` REJECTS for a page the note does not have, and when the host
  *   cannot answer.
- * - `openOnTablet` REJECTS when nothing could be asked: the container holds no
- *   note from a tablet, or the host did not answer.
+ * - `openOnTablet` asks for the note at the page `pageId` names, the page shown
+ *   here; a page the note does not have leaves the page to the tablet. It
+ *   REJECTS when nothing could be asked: the container holds no note from a
+ *   tablet, or the host did not answer.
  * - `loadReading` answers what is known of a page's reading; `readPage` starts
  *   reading it, unless it has a reading of what it holds now or is being read,
  *   and answers what is then known, the reading's end arriving on the feed. Both
@@ -179,7 +182,7 @@ export const InkRefusal = Object.freeze({
  *
  * @typedef {import('./container-provider.js').ContainerProvider & {
  *   loadPage: (pageId: string) => Promise<InkPageAnswer>,
- *   openOnTablet: () => Promise<InkOpeningResult>,
+ *   openOnTablet: (pageId: string) => Promise<InkOpeningResult>,
  *   loadReading: (pageId: string) => Promise<InkReading>,
  *   readPage: (pageId: string) => Promise<InkReading>,
  *   newDocumentFromReading: (pageId: string) => Promise<string>,

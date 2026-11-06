@@ -88,7 +88,7 @@ func (h *ContextMenuHandler) handleIntent(w http.ResponseWriter, r *http.Request
 		h.EmitIntentChanged()
 	}
 	w.Header().Set("HX-Trigger", fmt.Sprintf(`{"intent:changed": {"uuid": "%s"}, "notes:changed": true}`, id))
-	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
+	SideBarHandler{h.ServiceProvider, h.Tmpl}.Render(w)
 }
 
 func (h *ContextMenuHandler) handleFolderCreate(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +102,7 @@ func (h *ContextMenuHandler) handleFolderCreate(w http.ResponseWriter, r *http.R
 		return
 	}
 	h.notesChanged(w)
-	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
+	SideBarHandler{h.ServiceProvider, h.Tmpl}.Render(w)
 }
 
 // handleFolderPatch changes a folder's properties: its name, its expanded
@@ -128,7 +128,7 @@ func (h *ContextMenuHandler) handleFolderPatch(w http.ResponseWriter, r *http.Re
 		session.SetFolderOpen(id, *req.Open)
 		_ = h.ServiceProvider.State.SaveSession(session)
 	}
-	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
+	SideBarHandler{h.ServiceProvider, h.Tmpl}.Render(w)
 }
 
 func (h *ContextMenuHandler) handleFolderDelete(w http.ResponseWriter, r *http.Request) {
@@ -266,5 +266,5 @@ func (h *ContextMenuHandler) handleMoveItem(w http.ResponseWriter, r *http.Reque
 		h.EmitNotesChanged()
 	}
 	w.Header().Set("HX-Trigger", "notes:changed")
-	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
+	SideBarHandler{h.ServiceProvider, h.Tmpl}.Render(w)
 }

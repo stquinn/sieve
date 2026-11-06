@@ -400,17 +400,18 @@ func (s *Session) onRefuse(note ID, reason string) (bool, error) {
 	return false, nil
 }
 
-// OpenNote sends OPEN-NOTE, asking the companion to show note. Its answer arrives on the channel,
-// once: nil when a LIVE names note, a *RefusedError when the companion refuses it, ErrNotRunning
+// OpenNote sends OPEN-NOTE, asking the companion to show note at page, or at the page it would
+// open note at by itself when page is the zero ID. Its answer arrives on the channel, once: nil
+// when a LIVE names note, a *RefusedError when the companion refuses it, ErrNotRunning
 // when the session ends first. It may be called from any goroutine, the Observer's included, and
 // is ErrNotRunning, with no channel, while the session is not running.
-func (s *Session) OpenNote(note ID) (<-chan error, error) {
+func (s *Session) OpenNote(note, page ID) (<-chan error, error) {
 	answer := make(chan error, 1)
 	running := false
 	err := s.stream.writeIf(func() bool {
 		running = s.requests.add(note, answer)
 		return running
-	}, openNoteFrame{note}.encode())
+	}, openNoteFrame{note, page}.encode())
 	switch {
 	case !running:
 		return nil, ErrNotRunning

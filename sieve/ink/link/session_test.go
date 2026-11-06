@@ -19,6 +19,7 @@ type recorder struct {
 	mu        sync.Mutex
 	committed []uint32
 	live      []ID
+	livePages []ID
 	aside     []ID
 	refused   []string
 	done      chan uint32
@@ -60,10 +61,11 @@ func (r *recorder) SetAside(note ID) {
 	defer r.mu.Unlock()
 	r.aside = append(r.aside, note)
 }
-func (r *recorder) Live(note, _ ID) {
+func (r *recorder) Live(note, page ID) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.live = append(r.live, note)
+	r.livePages = append(r.livePages, page)
 }
 
 // harness runs sessions against one companion over loopback sockets, which have a little room in
@@ -384,26 +386,32 @@ func TestMetaTruncatedFitsTheCompanionsLimits(t *testing.T) {
 	}
 }
 
-// An OPEN-NOTE sent while the session runs is answered by the LIVE it brings, which a following
-// session then catches up, or by the companion's refusal with its reason, which the observer never
-// hears as a refused OPEN.
+// An OPEN-NOTE sent while the session runs carries the page asked for and is answered by the LIVE
+// it brings, naming the page the companion now shows, which a following session then catches up;
+// or by the companion's refusal with its reason, which the observer never hears as a refused OPEN.
 func TestOpenNoteMidSessionIsAnsweredByLiveOrARefusal(t *testing.T) {
+	second := ID{0xee, 15: 2}
+	records := append(append([]Record{}, vectorRecords[:5]...), Record{Seq: 6, Op: OpPageAdd, Page: second, Bounds: BoundsFixed})
 	for _, c := range []struct {
-		name   string
-		answer OpenNoteAnswer
-		want   string
+		name     string
+		answer   OpenNoteAnswer
+		page     ID
+		want     string
+		livePage ID
 	}{
-		{"live", OpenNoteAnswer{}, ""},
-		{"not in front", OpenNoteAnswer{Refuse: RefuseNotForeground}, RefuseNotForeground},
-		{"not offered", OpenNoteAnswer{Refuse: RefuseNotOffered}, RefuseNotOffered},
+		{"live at the page asked for", OpenNoteAnswer{}, second, "", second},
+		{"live, no page asked for", OpenNoteAnswer{}, ID{}, "", vectorPage},
+		{"live, a page the note does not have", OpenNoteAnswer{}, ID{0xdd, 15: 3}, "", vectorPage},
+		{"not in front", OpenNoteAnswer{Refuse: RefuseNotForeground}, second, RefuseNotForeground, ID{}},
+		{"not offered", OpenNoteAnswer{Refuse: RefuseNotOffered}, second, RefuseNotOffered, ID{}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			h := newHarness(t, vectorRecords)
+			h := newHarness(t, records)
 			h.companion.SetOpenNoteAnswer(c.answer)
 			obs := newRecorder()
 			s, ended, link := h.start(testKey, Plan{List: true, Follow: true}, obs)
 			<-obs.notes
-			answer, err := s.OpenNote(vectorNote)
+			answer, err := s.OpenNote(vectorNote, c.page)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -416,12 +424,12 @@ func TestOpenNoteMidSessionIsAnsweredByLiveOrARefusal(t *testing.T) {
 				t.Errorf("answered %v, want refused %s", got, c.want)
 			}
 			if c.want == "" {
-				if seq := <-obs.done; seq != uint32(len(vectorRecords)) {
+				if seq := <-obs.done; seq != uint32(len(records)) {
 					t.Errorf("the note opened was caught up to %d", seq)
 				}
 			}
-			if note := <-h.companion.OpenNotes; note != vectorNote {
-				t.Errorf("OPEN-NOTE named %s", note)
+			if asked := <-h.companion.OpenNotes; asked != (OpenNoteRequest{vectorNote, c.page}) {
+				t.Errorf("OPEN-NOTE asked for %+v", asked)
 			}
 			link.Close()
 			_ = h.end(ended)
@@ -429,6 +437,9 @@ func TestOpenNoteMidSessionIsAnsweredByLiveOrARefusal(t *testing.T) {
 			defer obs.mu.Unlock()
 			if len(obs.refused) != 0 {
 				t.Errorf("the observer heard %v refused", obs.refused)
+			}
+			if c.want == "" && (len(obs.livePages) != 1 || obs.livePages[0] != c.livePage) {
+				t.Errorf("LIVE named pages %v, want %s", obs.livePages, c.livePage)
 			}
 		})
 	}
@@ -456,7 +467,7 @@ func TestARefusedOpenNoteDoesNotDisturbTheCatchUp(t *testing.T) {
 				if note != vectorNote {
 					return
 				}
-				answer, err := (<-sessions).OpenNote(c.target)
+				answer, err := (<-sessions).OpenNote(c.target, ID{})
 				if err != nil {
 					t.Error(err)
 				}
@@ -487,7 +498,7 @@ func TestARefusedOpenNoteDoesNotDisturbTheCatchUp(t *testing.T) {
 func TestOpenNoteOutsideARunningSessionIsErrNotRunning(t *testing.T) {
 	h := newHarness(t, vectorRecords)
 	unstarted := NewSession(&bytes.Buffer{}, testKey, NewMemoryReplicas(), newRecorder(), Plan{})
-	if _, err := unstarted.OpenNote(vectorNote); !errors.Is(err, ErrNotRunning) {
+	if _, err := unstarted.OpenNote(vectorNote, vectorPage); !errors.Is(err, ErrNotRunning) {
 		t.Errorf("before the handshake: %v", err)
 	}
 
@@ -497,7 +508,7 @@ func TestOpenNoteOutsideARunningSessionIsErrNotRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	link.Close()
-	if _, err := s.OpenNote(vectorNote); !errors.Is(err, ErrNotRunning) {
+	if _, err := s.OpenNote(vectorNote, vectorPage); !errors.Is(err, ErrNotRunning) {
 		t.Errorf("after Run returned: %v", err)
 	}
 
@@ -505,7 +516,7 @@ func TestOpenNoteOutsideARunningSessionIsErrNotRunning(t *testing.T) {
 	obs = newRecorder()
 	s, ended, link = h.start(testKey, Plan{List: true, Follow: true}, obs)
 	<-obs.notes
-	answer, err := s.OpenNote(vectorNote)
+	answer, err := s.OpenNote(vectorNote, ID{})
 	if err != nil {
 		t.Fatal(err)
 	}

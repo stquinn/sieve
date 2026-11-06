@@ -635,6 +635,12 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 		},
 		{
 			name: "ink-open-on-tablet",
+			raw:  `{"type":"ink-open-on-tablet","opId":"op-7","pageId":"019a0000-0000-7000-8000-000000000002"}`,
+			into: &InkOpenOnTabletFrame{},
+			want: &InkOpenOnTabletFrame{Type: TypeInkOpenOnTablet, OpID: "op-7", PageID: "019a0000-0000-7000-8000-000000000002"},
+		},
+		{
+			name: "ink-open-on-tablet naming no page",
 			raw:  `{"type":"ink-open-on-tablet","opId":"op-7"}`,
 			into: &InkOpenOnTabletFrame{},
 			want: &InkOpenOnTabletFrame{Type: TypeInkOpenOnTablet, OpID: "op-7"},

@@ -182,7 +182,7 @@ func TestSharedVectors(t *testing.T) {
 		{"ack", ackFrame{vectorNote, 6}.encode()},
 		{"done", newFrame(frameDone).id(vectorNote).b},
 		{"meta", meta},
-		{"open-note", openNoteFrame{vectorNote}.encode()},
+		{"open-note", openNoteFrame{vectorNote, vectorPage}.encode()},
 		{"live", newFrame(frameLive).id(vectorNote).id(vectorPage).b},
 		{"ink", newFrame(frameInk).raw(liveGolden).b},
 	} {
@@ -196,6 +196,17 @@ func TestSharedVectors(t *testing.T) {
 	head := &frameReader{b: v.bytes(t, "frame_head")[1:]}
 	if note, got := head.head(); head.finish() != nil || note != vectorNote || got != (headCheck{6, hash}) {
 		t.Errorf("frame_head decodes to %s %+v", note, got)
+	}
+	openNote := &frameReader{b: v.bytes(t, "frame_open-note")[1:]}
+	if note, page := openNote.id(), openNote.id(); openNote.finish() != nil || note != vectorNote || page != vectorPage {
+		t.Errorf("frame_open-note decodes to %s %s", note, page)
+	}
+	if nilPage := (openNoteFrame{vectorNote, ID{}}).encode(); len(nilPage) != 33 || ID(nilPage[17:]) != (ID{}) {
+		t.Errorf("OPEN-NOTE with no page is %x", nilPage)
+	}
+	noPage := &frameReader{b: v.bytes(t, "frame_open-note")[1:17]}
+	if noPage.id(); noPage.id() != (ID{}) || noPage.finish() == nil {
+		t.Error("an OPEN-NOTE without a page id was read")
 	}
 	if body, err := LogFrame(v.bytes(t, "frame_op")[17:]).Body(); err != nil || hex.EncodeToString(body) != v.values["body_2"] {
 		t.Errorf("frame_op carries %x, %v", body, err)

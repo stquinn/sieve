@@ -511,10 +511,11 @@ The use case: a search in Sieve found the ink note, and the user wants to add to
 Digital Note's lens offers **Open in e-ink**. Sieve sends
 
 ```
-Sieve → companion   OPEN-NOTE {noteId}
+Sieve → companion   OPEN-NOTE {noteId, pageId}
 ```
 
-for a note the companion already holds; the companion opens that note and starts its live
+for a note the companion already holds, at the page Sieve is showing; the companion opens that
+note at that page and starts its live
 sync to the Sieve that asked, under the consent that already exists for the pair. It is a
 command, not content: a note the Boox does not have cannot be sent to it, from any Sieve,
 because the boundary is only safe if it never depends on which Sieve is asking.

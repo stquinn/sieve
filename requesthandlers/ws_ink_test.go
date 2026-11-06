@@ -727,7 +727,7 @@ func TestWS_Ink_TheTabletsWindowIsForgottenWhenAnotherNoteIsLive(t *testing.T) {
 		t.Fatalf("the window was not replayed: %v", got)
 	}
 	for _, uuid := range []string{elsewhere, board} {
-		if result, err := w.sp.Ink.OpenOnTablet(uuid); err != nil || result.Outcome != ink.OpenOpened {
+		if result, err := w.sp.Ink.OpenOnTablet(uuid, ""); err != nil || result.Outcome != ink.OpenOpened {
 			t.Fatalf("open %s on the tablet: %v %v", uuid, result, err)
 		}
 		readUntil(t, live, protocol.TypeInkLivePage, 5*time.Second)
@@ -875,11 +875,12 @@ func TestWS_Ink_NoPathOfALiveTabAsksTheStoreForIt(t *testing.T) {
 	}
 }
 
-// An ink-open-on-tablet is answered, by opId, with what came of it: the tablet going live on the
-// note, its refusal and reason, a tablet connected that the note did not come from, or none
-// connected; a channel holding no Digital Note is answered with an error and no outcome.
+// An ink-open-on-tablet carries the page to the tablet and is answered, by opId, with what came of
+// it: the tablet going live on the note, its refusal and reason, a tablet connected that the note
+// did not come from, or none connected; a channel holding no Digital Note is answered with an
+// error and no outcome.
 func TestWS_InkOpenOnTablet_AnswersWithWhatCameOfIt(t *testing.T) {
-	records := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)))
+	records := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)), link.Record{Op: link.OpPageAdd, Page: inkPage2, Index: 1, Bounds: link.BoundsFixed})
 	w := newInkWire(t, records)
 	w.session(records)
 	uuid := w.container()
@@ -912,11 +913,16 @@ func TestWS_InkOpenOnTablet_AnswersWithWhatCameOfIt(t *testing.T) {
 			defer w.sp.Ink.Stop()
 			sock := dialWS(t, w.srv, uuid)
 			defer closeAndSettle(sock)
-			send(t, sock, `{"type":"ink-open-on-tablet","opId":"op-open"}`)
+			send(t, sock, `{"type":"ink-open-on-tablet","opId":"op-open","pageId":"`+inkPage2.String()+`"}`)
 			got := readUntil(t, sock, protocol.TypeInkOpenOnTabletResult, 5*time.Second)
 			reason, _ := got["reason"].(string)
 			if got["opId"] != "op-open" || got["outcome"] != c.outcome || reason != c.reason || got["error"] != nil {
 				t.Errorf("answered %v, want %s %q", got, c.outcome, c.reason)
+			}
+			if c.connect == "companion" {
+				if asked := <-w.companion.OpenNotes; asked != (link.OpenNoteRequest{Note: inkNoteID, Page: inkPage2}) {
+					t.Errorf("the tablet was asked for %+v", asked)
+				}
 			}
 		})
 	}
@@ -986,6 +992,11 @@ func TestWS_Ink_ANoteIsShownByTheNameSieveGaveIt(t *testing.T) {
 	}
 	if tab := open(); tab.DisplayName != "Ideas" {
 		t.Errorf("an unnamed note's tab is %q", tab.DisplayName)
+	}
+	expanded := w.sp.State.LoadSession()
+	expanded.SetFolderOpen(inkTreeID, true)
+	if err := w.sp.State.SaveSession(expanded); err != nil {
+		t.Fatal(err)
 	}
 	c := dialWS(t, w.srv, note)
 	defer closeAndSettle(c)

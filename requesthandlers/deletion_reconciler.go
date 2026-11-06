@@ -57,11 +57,11 @@ func (d deletionReconciler) reconcile(w http.ResponseWriter, deleted ...string) 
 	// its whole refresh-trigger set, and replacing that host with a div spelled
 	// here would strip both for the rest of the session. The wrapper below is
 	// discarded by htmx — only its children land — so the host survives and the
-	// tree is already fresh, with no follow-up request. (RenderSidebar re-sets
-	// the same two headers this response already carries; they are no-ops now
-	// that the tab strip is written, and they agree.)
+	// tree is already fresh, with no follow-up request. (Render re-sets the
+	// same two headers this response already carries; they are no-ops now that
+	// the tab strip is written, and they agree.)
 	fmt.Fprint(w, `<div hx-swap-oob="innerHTML:#htmx-sidebar">`)
-	RenderSidebar(w, d.sp.Documents, d.sp.State, d.tmpl)
+	SideBarHandler{d.sp, d.tmpl}.Render(w)
 	fmt.Fprint(w, `</div>`)
 
 	activeTab := session.Tabs[session.ActiveIdx]

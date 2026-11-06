@@ -452,11 +452,17 @@ func newInkServer(t *testing.T) (*httptest.Server, *sieve.ServiceProvider) {
 		t.Fatal(err)
 	}
 	sp.Containers = containers
+	if sp.Documents, err = services.NewDocumentService(sp.Store); err != nil {
+		t.Fatal(err)
+	}
 	sp.Ink = ink.NewInkService(sp.State, containers, holdingRadio{}, nil)
 	t.Cleanup(sp.Ink.Stop)
 	r := chi.NewRouter()
 	h.RegisterPaths(r)
 	(&InkHandler{ServiceProvider: sp, Tmpl: h.Tmpl}).RegisterPaths(r)
+	(&SideBarHandler{ServiceProvider: sp, Tmpl: h.Tmpl}).RegisterPaths(r)
+	(&SearchHandler{ServiceProvider: sp, Tmpl: h.Tmpl}).RegisterPaths(r)
+	(&ContextMenuHandler{ServiceProvider: sp, Tmpl: h.Tmpl}).RegisterPaths(r)
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 	return srv, sp
@@ -529,43 +535,56 @@ func TestInkFragment_RendersEachState(t *testing.T) {
 	}
 }
 
-// The sidebar's Ink section is nothing while Ink is disabled; enabled, it lists the synced notes
-// by name, or says there are none, with the Live view above them while it exists, the active tab's item
-// marked, and every item opening its container through the workspace's open.
+// The tree's Ink item is nothing while Ink is disabled. Enabled, it is a row that expands and
+// collapses as a folder's does, through the folder patch under its own id; collapsed it shows a
+// live dot while the tablet writes, and expanded it holds the Live view while it exists and the
+// synced notes by name, or says there are none, indented as a folder's children, each named in
+// full in its tooltip, the active tab's row marked, and every row opening its container through
+// the workspace's open.
 func TestInkSidebar_RendersEachState(t *testing.T) {
 	h, _ := newTestSettingsHandler(t)
-	sp := h.ServiceProvider
-	ih := &InkHandler{ServiceProvider: sp, Tmpl: h.Tmpl}
 	notes := []ink.SyncedNote{{UUID: "n-ideas", Name: "Ideas", Title: "Untitled 05/11", Pages: 2}, {UUID: "n-board", Pages: 1}}
 	live := ink.LiveStatus{Present: true, UUID: "v-live", Device: "Note Air 2", Note: "n-ideas", NoteTitle: "Ideas"}
-	session := sp.State.LoadSession()
-	session.Tabs, session.ActiveIdx = []domain.Tab{{ID: "n-board", Kind: ink.KindDigitalNote}}, 0
-	if err := sp.State.SaveSession(session); err != nil {
-		t.Fatal(err)
-	}
+	waiting := ink.LiveStatus{Present: true, UUID: "v-live", Waiting: true}
+	collapsed := domain.Session{Tabs: []domain.Tab{{ID: "n-board", Kind: ink.KindDigitalNote}}}
+	expanded := collapsed
+	expanded.OpenFolders = []string{"a-folder", inkTreeID}
+	row := []string{">Ink<", `hx-patch="/api/folder/ink"`, `hx-target="#htmx-sidebar"`}
 	for _, tc := range []struct {
-		name   string
-		status ink.Status
-		want   []string
-		absent []string
+		name    string
+		status  ink.Status
+		session domain.Session
+		want    []string
+		absent  []string
 	}{
-		{"disabled", ink.Status{Notes: notes, Live: live}, nil, nil},
-		{"no notes", ink.Status{Enabled: true}, []string{">Ink<", "No synced notes yet"}, []string{"data-ink-live", "data-ink-note"}},
-		{"notes", ink.Status{Enabled: true, Notes: notes}, []string{
-			`data-ink-note="n-ideas"`, "Ideas", "2 pages", `data-ink-note="n-board"`, "Untitled note", "1 page",
+		{"disabled", ink.Status{Notes: notes, Live: live}, expanded, nil, nil},
+		{"collapsed", ink.Status{Enabled: true, Notes: notes}, collapsed,
+			append([]string{`aria-expanded="false"`, `{"open": true}`}, row...),
+			[]string{"data-ink-note", "data-ink-live", "data-ink-live-dot", "No synced notes yet"}},
+		{"collapsed while live", ink.Status{Enabled: true, Notes: notes, Live: live}, collapsed,
+			append([]string{"data-ink-live-dot"}, row...), []string{`data-ink-live="live"`, "data-ink-note"}},
+		{"collapsed while waiting", ink.Status{Enabled: true, Notes: notes, Live: waiting}, collapsed,
+			row, []string{"data-ink-live-dot", "data-ink-live"}},
+		{"no notes", ink.Status{Enabled: true}, expanded,
+			append([]string{`aria-expanded="true"`, `{"open": false}`, "No synced notes yet"}, row...),
+			[]string{"data-ink-live", "data-ink-note"}},
+		{"notes", ink.Status{Enabled: true, Notes: notes}, expanded, []string{
+			`data-ink-note="n-ideas"`, `title="Ideas"`, "2 pages", `data-ink-note="n-board"`, `title="Untitled note"`, "1 page",
 			`window.sieveWorkspace.open('n-ideas')`, `data-ink-note="n-board"
-    data-active`,
+  data-active`, `padding-left:2.50rem;`,
 		}, []string{"data-ink-live", "No synced notes yet", "Untitled 05/11"}},
-		{"live", ink.Status{Enabled: true, Notes: notes, Live: live}, []string{
-			`data-ink-live="live"`, `ink-sidebar__label">Live · Note Air 2<`, `ink-sidebar__meta">Ideas<`,
+		{"live", ink.Status{Enabled: true, Notes: notes, Live: live}, expanded, []string{
+			`data-ink-live="live"`, `ink-tree__label">Live · Note Air 2<`, `ink-tree__meta">Ideas<`,
 			`window.sieveWorkspace.open('v-live')`, "ink-icon--live",
-		}, []string{"waiting"}},
-		{"waiting", ink.Status{Enabled: true, Notes: notes, Live: ink.LiveStatus{Present: true, UUID: "v-live", Waiting: true}},
-			[]string{`data-ink-live="waiting"`, ">Live<", "waiting", "Waiting for the tablet"}, nil},
+		}, []string{"waiting", "data-ink-live-dot"}},
+		{"waiting", ink.Status{Enabled: true, Notes: notes, Live: waiting}, expanded,
+			[]string{`data-ink-live="waiting"`, ">Live<", "Waiting for the tablet"}, []string{"data-ink-live-dot"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			var v inkSidebarView
+			v.show(tc.status, tc.session)
 			var out strings.Builder
-			if err := h.Tmpl.ExecuteTemplate(&out, "ink_sidebar.html", ih.sidebarView(tc.status)); err != nil {
+			if err := h.Tmpl.ExecuteTemplate(&out, "ink_sidebar.html", v); err != nil {
 				t.Fatal(err)
 			}
 			if tc.want == nil && out.String() != "" {
@@ -585,32 +604,55 @@ func TestInkSidebar_RendersEachState(t *testing.T) {
 	}
 }
 
-// The section is served at its own path: empty while Ink is off, the section once it is on.
-func TestInkSidebar_IsServedOnlyWhileInkIsEnabled(t *testing.T) {
+// The Ink item is the tree's first, above the library's folders and above an empty library's
+// line, and only while Ink is enabled; the tree holds it in a mount of its own that refreshes on
+// the ink invalidation, which is also where the item is served. Expanding it is remembered as a
+// folder's expansion is. The sidebar's search view does not show it.
+func TestInkSidebar_IsTheFirstItemOfTheTreeWhileInkIsEnabled(t *testing.T) {
 	srv, sp := newInkServer(t)
-	get := func() string {
+	get := func(path string) string {
 		t.Helper()
-		resp, err := http.Get(srv.URL + "/ui/views/sidebar/ink")
-		if err != nil {
-			t.Fatal(err)
+		status, body := do(t, http.MethodGet, srv.URL+path, "", "")
+		if status != http.StatusOK {
+			t.Fatalf("GET %s: %d %s", path, status, body)
 		}
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
-			t.Fatalf("GET: %d %s", resp.StatusCode, body)
-		}
-		return string(body)
+		return body
 	}
-	if body := get(); body != "" {
-		t.Errorf("Ink off serves %q", body)
+	mount := `<div id="sidebar-ink" class="ink-tree" hx-get="/ui/views/sidebar/ink" hx-trigger="sieve:invalidate-ink from:document" hx-swap="innerHTML">`
+	tree := get("/ui/views/sidebar")
+	if !strings.Contains(tree, mount+"</div>") || !strings.Contains(tree, "No filed documents yet") || get("/ui/views/sidebar/ink") != "" {
+		t.Errorf("Ink off: the tree is\n%s", tree)
 	}
+
 	settings := sp.State.LoadSettings()
 	settings.Ink.Enabled = true
 	if err := sp.State.SaveSettings(settings); err != nil {
 		t.Fatal(err)
 	}
-	if body := get(); !strings.Contains(body, "No synced notes yet") {
-		t.Errorf("Ink on serves %q", body)
+	tree = get("/ui/views/sidebar")
+	if at, empty := strings.Index(tree, "ink-tree__row"), strings.Index(tree, "No filed documents yet"); at < 0 || empty < at || !strings.Contains(tree, mount) {
+		t.Errorf("an empty library's tree is\n%s", tree)
+	}
+	if err := sp.Documents.NewFolder("Work"); err != nil {
+		t.Fatal(err)
+	}
+	tree = get("/ui/views/sidebar")
+	if at, folder := strings.Index(tree, "ink-tree__row"), strings.Index(tree, ">Work<"); at < 0 || folder < at {
+		t.Errorf("the Ink item is not above the folders:\n%s", tree)
+	}
+	if strings.Contains(get("/ui/views/sidebar/ink"), "No synced notes yet") {
+		t.Error("the Ink item starts expanded")
+	}
+
+	if status, body := do(t, http.MethodPatch, srv.URL+"/api/folder/ink", "application/x-www-form-urlencoded", "open=true"); status != http.StatusOK ||
+		!strings.Contains(body, "No synced notes yet") || !strings.Contains(body, ">Work<") {
+		t.Fatalf("expanding Ink: %d\n%s", status, body)
+	}
+	if !strings.Contains(get("/ui/views/sidebar/ink"), "No synced notes yet") || !strings.Contains(get("/ui/views/sidebar"), "No synced notes yet") {
+		t.Error("Ink's expansion is not remembered")
+	}
+	if search := get("/ui/views/sidebar/search?q="); strings.Contains(search, "ink-tree") || strings.Contains(search, "sidebar-ink") {
+		t.Errorf("the search view shows Ink:\n%s", search)
 	}
 }
 

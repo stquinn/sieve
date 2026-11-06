@@ -477,17 +477,18 @@ export class DocumentService {
   }
 
   /**
-   * Asks the tablet this container's Digital Note came from to open it, and
-   * resolves with what came of that: `outcome` as the wire names it and the
-   * tablet's `reason` ('' unless refused).
+   * Asks the tablet this container's Digital Note came from to open it at the
+   * page `pageId` names, and resolves with what came of that: `outcome` as the
+   * wire names it and the tablet's `reason` ('' unless refused). A page the note
+   * does not have leaves the page to the tablet.
    *
    * REJECTS when Go asked nothing — the container holds no note from a tablet, or
    * ink is unavailable — on a timeout, and on a channel-less uuid.
-   * @param {string} uuid
+   * @param {string} uuid @param {string} pageId
    * @returns {Promise<{outcome: string, reason: string}>}
    */
-  inkOpenOnTablet(uuid) {
-    return this.#transport._awaitReply(uuid, { type: DocumentFrame.INK_OPEN_ON_TABLET }, 'ink-open-on-tablet', OPEN_ON_TABLET_TIMEOUT_MS)
+  inkOpenOnTablet(uuid, pageId) {
+    return this.#transport._awaitReply(uuid, { type: DocumentFrame.INK_OPEN_ON_TABLET, pageId: pageId }, 'ink-open-on-tablet', OPEN_ON_TABLET_TIMEOUT_MS)
       .then((reply) => {
         if (reply.error || !reply.outcome) throw new Error('ink-open-on-tablet refused: ' + (reply.error || 'no outcome'))
         return { outcome: String(reply.outcome), reason: String(reply.reason || '') }

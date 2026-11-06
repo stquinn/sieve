@@ -57,15 +57,16 @@ describe('InkProviderAdapter', () => {
     await expect(pending).rejects.toThrow('no page p9')
   })
 
-  it('openOnTablet resolves what came of asking the tablet, frozen, and rejects what asked nothing', async () => {
+  it('openOnTablet asks for the page shown, resolves what came of asking the tablet, frozen, and rejects what asked nothing', async () => {
     const { provider, sock } = rig()
     const opId = () => sock.sentOfType(DocumentFrame.INK_OPEN_ON_TABLET).at(-1).opId
-    const pending = provider.openOnTablet()
+    const pending = provider.openOnTablet('p2')
+    expect(sock.sentOfType(DocumentFrame.INK_OPEN_ON_TABLET).at(-1).pageId).toBe('p2')
     sock.driveMessage({ type: DocumentFrame.INK_OPEN_ON_TABLET_RESULT, opId: opId(), outcome: InkOpening.OPENED })
     const result = await pending
     expect(result).toEqual({ outcome: InkOpening.OPENED, reason: '' })
     expect(Object.isFrozen(result)).toBe(true)
-    const refused = provider.openOnTablet()
+    const refused = provider.openOnTablet('p1')
     sock.driveMessage({ type: DocumentFrame.INK_OPEN_ON_TABLET_RESULT, opId: opId(), error: 'no note' })
     await expect(refused).rejects.toThrow('no note')
   })
