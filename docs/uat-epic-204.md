@@ -106,3 +106,36 @@ tab is the reader's.
   an ordinary note it still copies.
 - [ ] **A document and a prompt still behave.** Open, edit and save an ordinary note and a prompt
   beside an ink tab.
+
+## Phase 5 — names and the reading (#212)
+
+Needs an AI CLI configured (Settings → AI). Everything here was only ever run against a scripted
+model: no real model has seen a page.
+
+### A note names itself
+
+A note is named once it has gone quiet: not the live note, and no stroke for five minutes. To
+shorten the wait while testing, add `"settle_seconds": 30` inside `"ink"` in
+`{store}/{hostname}/config/settings.json` and restart.
+
+- [ ] **A sensible name.** Write a note about something specific, close it on the Boox and wait.
+  One "Naming …" job appears in the status bar; afterwards the sidebar's Ink section, the note's
+  tab and Settings → Ink show a short, specific title instead of the tablet's "Untitled …".
+  Judge the title, and the summary and keywords in the note's `.meta`.
+- [ ] **The model really sees the pages.** The name reflects what was written, not a guess. If it
+  is generic, the model is not opening the page images: send the log around `name-note`.
+  This matters most for a CLI other than claude, whose access to the note's directory is untested.
+- [ ] **On the Boox.** The name, keywords and summary arrive in SieveInk for that note. Check how
+  they look there, a keyword containing a comma included.
+- [ ] **Named again after more writing.** Write more on a named note and stop: about five minutes
+  after the last stroke it is named again, once, and the Boox gets the newer name.
+- [ ] **Named while the tablet is away.** Let a note settle with the Boox's Bluetooth off; the name
+  appears in Sieve. Turn Bluetooth on: the Boox gets it on connect.
+- [ ] **Nothing is named twice.** Restart Sieve with nothing new written: no "Naming …" job.
+- [ ] **A long note.** With eight or more dense pages, the job finishes inside the CLI timeout
+  (60 s). If it times out, set `"prompt_timeouts": {"note-meta": 180}` and say so.
+- [ ] **Page drawing in the real window.** Naming draws the pages in Sieve's own window, with no
+  tab open on the note. Under test this took 16–20 s a page in WebKitGTK with software rendering
+  and 1.4 s in Chrome; with real GPU rendering it should be near the latter. If names never
+  arrive and the log says a page was not drawn, that is this.
+- [ ] **No AI configured.** With the CLI unset, no job runs and notes keep the tablet's title.
