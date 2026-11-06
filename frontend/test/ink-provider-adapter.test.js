@@ -8,7 +8,7 @@ import { serviceRig, FakeSocket } from './helpers/service-rig.js'
 import { ContainerModel } from '../src/static/container/container-model.js'
 import { InkProviderAdapter } from '../src/static/container/ink-provider-adapter.js'
 import { ProviderAdapter } from '../src/static/container/provider-adapter.js'
-import { InkFeed, InkOpening } from '../src/static/contract/ink-container-provider.js'
+import { InkFeed, InkOpening, InkReadingState } from '../src/static/contract/ink-container-provider.js'
 import { DocumentFrame } from '../src/static/generated/protocol.js'
 import { ContractViolation } from '../src/static/contract/sieve-block.js'
 
@@ -70,6 +70,31 @@ describe('InkProviderAdapter', () => {
     await expect(refused).rejects.toThrow('no note')
   })
 
+  it.each([
+    ['loadReading', DocumentFrame.INK_READING],
+    ['readPage', DocumentFrame.INK_READ_PAGE],
+  ])('%s resolves the page\'s reading, frozen, every field said', async (verb, type) => {
+    const { provider, sock } = rig()
+    const pending = /** @type {any} */ (provider)[verb]('p1')
+    sock.driveMessage({
+      type: DocumentFrame.INK_READING_CONTENT, opId: sock.sentOfType(type).at(-1).opId, pageId: 'p1',
+      reading: { state: InkReadingState.STALE, key: 'k0', running: true, available: true, blocks: [{ id: 'b1', kind: 'prose', attrs: { content: 'hi' } }] },
+    })
+    const reading = await pending
+    expect(reading).toEqual({
+      pageId: 'p1', state: InkReadingState.STALE, key: 'k0', running: true, available: true, unavailable: '', failed: '',
+      blocks: [{ id: 'b1', kind: 'prose', attrs: { id: 'b1', content: 'hi' } }],
+    })
+    expect(Object.isFrozen(reading.blocks[0].attrs)).toBe(true)
+  })
+
+  it('newDocumentFromReading resolves the new document\'s uuid', async () => {
+    const { provider, sock } = rig()
+    const pending = provider.newDocumentFromReading('p1')
+    sock.driveMessage({ type: DocumentFrame.INK_READING_DOCUMENT_RESULT, opId: sock.sentOfType(DocumentFrame.INK_READING_DOCUMENT).at(-1).opId, uuid: 'doc-2' })
+    await expect(pending).resolves.toBe('doc-2')
+  })
+
   it('turns each ink frame into its event, in order, and nothing else into one', () => {
     const { provider, sock } = rig()
     /** @type {any[]} */ const heard = []
@@ -86,6 +111,7 @@ describe('InkProviderAdapter', () => {
     sock.driveMessage({ type: DocumentFrame.INK_STROKE_ADDED, pageId: 'p1', seq: 5, stroke: STROKE })
     sock.driveMessage({ type: DocumentFrame.INK_STROKE_REMOVED, pageId: 'p1', seq: 6, strokeId: 's1' })
     sock.driveMessage({ type: DocumentFrame.INK_LOG_RESTARTED })
+    sock.driveMessage({ type: DocumentFrame.INK_READING_CHANGED, pageId: 'p1', reading: { state: InkReadingState.NONE, running: true, available: true } })
     sock.driveMessage({ type: DocumentFrame.INK_LIVE_PAGE, live: false })
     expect(heard).toEqual([
       { type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1', view: 'v1' },
@@ -99,6 +125,10 @@ describe('InkProviderAdapter', () => {
       { type: InkFeed.STROKE_ADDED, pageId: 'p1', seq: 5, stroke: STROKE },
       { type: InkFeed.STROKE_REMOVED, pageId: 'p1', seq: 6, strokeId: 's1' },
       { type: InkFeed.LOG_RESTARTED },
+      {
+        type: InkFeed.READING,
+        reading: { pageId: 'p1', state: InkReadingState.NONE, key: '', blocks: [], running: true, available: true, unavailable: '', failed: '' },
+      },
       { type: InkFeed.LIVE_PAGE, live: false, pageId: null, view: null },
     ])
     expect(heard.every((e) => Object.isFrozen(e))).toBe(true)

@@ -853,6 +853,112 @@ type pasteState struct{}
 func (pasteState) LoadSettings() domain.Settings     { return domain.Settings{} }
 func (pasteState) ActiveThemeVars() domain.ThemeVars { return domain.ThemeVars{} }
 
+// drawnPlantuml draws every source as the same SVG.
+type drawnPlantuml struct{}
+
+func (drawnPlantuml) Render(string) ([]byte, error) { return []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), nil }
+
+// A new document made from blocks is an ordinary untitled note, named as asked, holding a copy of
+// each block in order under fresh ids, element ids included, as a paste of it copied out of the
+// source would: an image it holds of the source is the new document's own copy, and a PlantUML
+// diagram drawn for the source is drawn again by the copy's own job. The source is untouched, and
+// the new document opens, takes an edit and saves like any other.
+func TestEditorService_NewDocument_HoldsACopyOfTheBlocks(t *testing.T) {
+	var pngBuf bytes.Buffer
+	_ = png.Encode(&pngBuf, image.NewRGBA(image.Rect(0, 0, 4, 3)))
+	es, src := newDropEditor(t)
+	svc := es.services
+	svc.State, svc.Plantuml = pasteState{}, drawnPlantuml{}
+	es.SetServices(svc)
+	resetRegistry()
+	for _, p := range []block.BlockProcessor{processors.NewDiagramProcessor(svc), processors.NewSmartImageProcessor(svc), processors.NewAIBlockProcessor(svc)} {
+		block.RegisterProcessor(p)
+	}
+	for key, body := range map[string][]byte{"holiday.png": pngBuf.Bytes(), "drawn.svg": []byte("<svg/>")} {
+		if _, err := svc.Assets.Save(domain.WorkingCopy, src, key, body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srcDoc, _ := es.documents.LoadByUUID(src)
+	before := string(srcDoc.Body())
+	el := func(kind, id string, attrs map[string]interface{}) map[string]interface{} {
+		attrs["id"] = id
+		return map[string]interface{}{"kind": kind, "attrs": attrs}
+	}
+	blocks := []domain.SieveBlock{
+		domain.NewSieveBlock("prose", "p-1", map[string]interface{}{"content": "# Kitchen\n\n- tiles [?]"}),
+		domain.NewSieveBlock("diagram", "d-1", map[string]interface{}{"source": "flowchart TD\n  A --> B", "diagramType": "mermaid", "mode": "render", "status": "COMPLETE"}),
+		domain.NewSieveBlock("diagram", "d-2", map[string]interface{}{"source": "Alice -> Bob: hi", "diagramType": "plantuml", "mode": "render",
+			"status": "COMPLETE", "svgAsset": "sieve://" + src + "/drawn.svg", "renderedHash": "x"}),
+		domain.NewSieveBlock("smart-image", "i-1", map[string]interface{}{"src": "sieve://" + src + "/holiday.png", "status": "COMPLETE",
+			"title": "Holiday", "alt": "holiday.png", "summary": "A beach", "width": "4", "height": "3"}),
+		domain.NewSieveBlock("ai-block", "a-1", map[string]interface{}{"status": "COMPLETE", "type": "ASK",
+			"question": []interface{}{el("prose", "q-1", map[string]interface{}{"content": "why?"})},
+			"answer":   []interface{}{el("prose", "an-1", map[string]interface{}{"content": "because."})}}),
+	}
+
+	uuid, err := es.NewDocument("Ideas — page 1", src, blocks)
+	if err != nil {
+		t.Fatalf("NewDocument: %v", err)
+	}
+	es.WaitForJobs()
+	doc, err := es.documents.LoadByUUID(uuid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.Meta().DisplayName() != "Ideas — page 1" || doc.Kind() != domain.KindBuffer || doc.Kind().FiledStatus() != "unfiled" ||
+		doc.Meta().UserIntent() != nil {
+		t.Errorf("the new document is %q, a %s, %s, intent %v", doc.Meta().DisplayName(), doc.Kind(), doc.Kind().FiledStatus(), doc.Meta().UserIntent())
+	}
+	got, err := es.Blocks(uuid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	for _, b := range got {
+		kinds = append(kinds, b.Kind)
+		if !ident.Valid(b.ID) || b.Attrs["id"] != b.ID {
+			t.Errorf("%s: ID %q, attrs id %v", b.Kind, b.ID, b.Attrs["id"])
+		}
+	}
+	if want := []string{"prose", "diagram", "diagram", "smart-image", "ai-block"}; !reflect.DeepEqual(kinds, want) {
+		t.Fatalf("kinds %v, want %v", kinds, want)
+	}
+	if got[0].Content() != "# Kitchen\n\n- tiles [?]" || got[1].StringAttr("source") != "flowchart TD\n  A --> B" {
+		t.Errorf("content: %q, %q", got[0].Content(), got[1].StringAttr("source"))
+	}
+	own := "sieve://" + uuid + "/"
+	if svg := got[2].StringAttr("svgAsset"); !strings.HasPrefix(svg, own) || got[2].StringAttr("status") != block.BlockStatusComplete {
+		t.Errorf("the PlantUML copy is %v", got[2].Attrs)
+	}
+	if img := got[3].StringAttr("src"); !strings.HasPrefix(img, own) {
+		t.Errorf("the image copy names %q", img)
+	}
+	for _, slot := range []string{block.QuestionAttr, block.AnswerAttr} {
+		for _, e := range got[4].Elements(slot) {
+			if e.ID == "q-1" || e.ID == "an-1" || !ident.Valid(e.ID) || e.Attrs["id"] != e.ID {
+				t.Errorf("%s element ID %q, attrs id %v", slot, e.ID, e.Attrs["id"])
+			}
+		}
+	}
+	if srcDoc, _ := es.documents.LoadByUUID(src); string(srcDoc.Body()) != before {
+		t.Errorf("the source changed")
+	}
+
+	if err := es.Open(uuid); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := es.CreateBlock(uuid, "prose", map[string]interface{}{"content": "Typed afterwards."}, block.AppendIndex); err != nil {
+		t.Fatal(err)
+	}
+	if err := es.Flush(uuid); err != nil {
+		t.Fatal(err)
+	}
+	if saved, _ := es.documents.LoadByUUID(uuid); !strings.Contains(string(saved.Body()), "Typed afterwards.") {
+		t.Errorf("the edit was not saved:\n%s", saved.Body())
+	}
+}
+
 func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 	resetRegistry()
 	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))

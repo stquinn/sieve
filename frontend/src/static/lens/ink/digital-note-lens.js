@@ -1,19 +1,23 @@
 // @ts-check
-// The reader's lens of a Digital Note: one page at a time as the tablet drew it,
-// the committed strokes and the stroke under the pen arriving as they are written,
-// and a whiteboard through a window the reader moves and zooms. The reader is
-// never moved: what is shown changes only by the reader's hand. It is read-only by
-// construction: mounted over an InkContainerProvider, which has no verb that
-// writes, it declares no capability and writes nothing. Its chrome copies the page
-// as an image and asks the tablet the note came from to open it.
+// The reader's lens of a Digital Note, in two modes. In `page`, one page at a time
+// as the tablet drew it, the committed strokes and the stroke under the pen
+// arriving as they are written, and a whiteboard through a window the reader
+// moves and zooms; its chrome copies the page as an image and asks the tablet the
+// note came from to open it. In `reading`, the page the reader is on read as text
+// and diagrams, which the reader asks for and can take away as a new document.
+// The reader is never moved: what is shown changes only by the reader's hand, and
+// the page and the marks carry from one mode to the other. It is read-only by
+// construction: mounted over an InkContainerProvider, it declares no capability
+// and writes nothing of the note.
 
 import { AbstractEditor } from '../abstract-editor.js'
 import { LensCapability } from '../../contract/lens-capabilities.js'
 import { ContractViolation } from '../../contract/sieve-block.js'
 import { PageSurface } from './page-surface.js'
+import { ReadingSurface } from './reading-surface.js'
 
-/** The one mode a note is presented in. */
-const MODES = Object.freeze([PageSurface.MODE])
+/** The modes a note is presented in; neither needs a seed. */
+const MODES = Object.freeze([PageSurface.MODE, ReadingSurface.MODE])
 
 const NO_CAPABILITY = Object.freeze({
   [LensCapability.MARKDOWN]: false,
@@ -55,45 +59,72 @@ export class DigitalNoteLens extends AbstractEditor {
   /** @protected @returns {ReadonlyArray<string>} */
   get _modes() { return MODES }
 
-  /** @protected @returns {string} */
-  get _defaultMode() { return PageSurface.MODE }
+  /** The mode the reader left the note in, else `page`.
+   *  @protected @returns {string} */
+  get _defaultMode() {
+    const view = /** @type {{mode?: string}|null} */ (this._handedViewState)
+    return view && view.mode === ReadingSurface.MODE ? ReadingSurface.MODE : PageSurface.MODE
+  }
 
   /** @protected @returns {string} */
   get _blockMode() { return PageSurface.MODE }
+
+  /** @protected @returns {ReadonlyArray<string>} */
+  get _seedlessModes() { return MODES }
 
   /** @returns {string} */
   get placeholder() { return '' }
 
   /**
-   * Bare PageUp and PageDown turn the page. On a whiteboard, where the surround
-   * does not scroll, the bare arrows move the window and `+`/`=` and `-`/`_`
-   * zoom it, Shift allowed since it is how `+` is typed. Nothing with Alt, Ctrl
-   * or Cmd is claimed.
+   * Mod+Enter switches between the two modes. Bare PageUp and PageDown turn the
+   * page in either. On a whiteboard shown as a page, where the surround does not
+   * scroll, the bare arrows move the window and `+`/`=` and `-`/`_` zoom it,
+   * Shift allowed since it is how `+` is typed. Nothing else with Alt, Ctrl or
+   * Cmd is claimed.
    * @param {KeyboardEvent} event
    * @returns {boolean}
    */
   claimKey(event) {
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey) {
+      this.toggleMode()
+      return true
+    }
     const surface = this.surface
-    if (!(surface instanceof PageSurface)) return false
+    if (!(surface instanceof PageSurface) && !(surface instanceof ReadingSurface)) return false
     if (event.altKey || event.ctrlKey || event.metaKey) return false
     const key = event.key
-    if (Object.hasOwn(ZOOM_KEYS, key)) return surface.zoomBy(ZOOM_KEYS[/** @type {keyof typeof ZOOM_KEYS} */ (key)])
-    if (event.shiftKey) return false
-    if (Object.hasOwn(PAN_KEYS, key)) {
-      const [fx, fy] = PAN_KEYS[/** @type {keyof typeof PAN_KEYS} */ (key)]
-      return surface.panBy(fx, fy)
+    if (surface instanceof PageSurface) {
+      if (Object.hasOwn(ZOOM_KEYS, key)) return surface.zoomBy(ZOOM_KEYS[/** @type {keyof typeof ZOOM_KEYS} */ (key)])
+      if (event.shiftKey) return false
+      if (Object.hasOwn(PAN_KEYS, key)) {
+        const [fx, fy] = PAN_KEYS[/** @type {keyof typeof PAN_KEYS} */ (key)]
+        return surface.panBy(fx, fy)
+      }
     }
-    if (!Object.hasOwn(PAGE_KEYS, key)) return false
+    if (event.shiftKey || !Object.hasOwn(PAGE_KEYS, key)) return false
     surface.turn(PAGE_KEYS[/** @type {keyof typeof PAGE_KEYS} */ (key)])
     return true
   }
 
   /**
-   * @protected
-   * @param {string} _mode
-   * @returns {PageSurface}
+   * @override — the keyboard goes to the surface the flip presents.
+   * @returns {Promise<boolean>} whether the mode changed
    */
-  _createSurface(_mode) {
-    return new PageSurface(this.provider, this, /** @type {import('./page-surface.js').ReaderView|null} */ (this._handedViewState))
+  toggleMode() {
+    return super.toggleMode().then((changed) => {
+      if (changed) this.focus()
+      return changed
+    })
+  }
+
+  /**
+   * @protected
+   * @param {string} mode
+   * @returns {PageSurface|ReadingSurface}
+   */
+  _createSurface(mode) {
+    const view = /** @type {import('./page-surface.js').ReaderView|null} */ (this._handedViewState)
+    if (mode === ReadingSurface.MODE) return new ReadingSurface(this.provider, this, view)
+    return new PageSurface(this.provider, this, view)
   }
 }

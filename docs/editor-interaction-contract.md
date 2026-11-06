@@ -228,7 +228,7 @@ The resulting order for one keystroke, highest first:
 | Prompt (`PromptEditor`) | **nothing** | the matrix above, unchanged |
 | Composer (`ComposerEditor`) | `Mod+Enter` → send the message | the matrix above, unchanged |
 | Block container whose kind has no lens (`BlockLens`) | **nothing** | none of the matrix: there is no editing surface. The block is drawn read-only by its kind's renderer, which keeps its read affordances (selection, copy, pan, filters) and drops every edit |
-| Digital Note (`DigitalNoteLens`) | bare `PageUp` → previous page, bare `PageDown` → next page; on a whiteboard also the bare arrows → move the window, `+`/`=` and `-`/`_` → zoom | none of the matrix: there is no editing surface (below) |
+| Digital Note (`DigitalNoteLens`) | `Mod+Enter` → switch between `page` and `reading`; bare `PageUp` → previous page, bare `PageDown` → next page, in either mode; on a whiteboard shown as a page also the bare arrows → move the window, `+`/`=` and `-`/`_` → zoom | none of the matrix: there is no editing surface (below) |
 | Live view (`LiveInkLens`) | **nothing** | none of the matrix: there is no editing surface, and no gesture moves the view (below) |
 
 **The composer is EDITOR-FIRST (revised 2026-08-28, #118):** it claims exactly
@@ -254,9 +254,17 @@ otherwise (below).
 
 ### The Digital Note lens
 
-`DigitalNoteLens` presents a Digital Note one page at a time, in its one mode, `page`. It is
-read-only: it declares no capability, has no verb that writes, and `Mod+Alt+M` (Toggle Editor
-Mode) and `Mod+Alt+P` (Presentation Mode) do nothing in it.
+`DigitalNoteLens` presents a Digital Note one page at a time, in two modes: `page`, the page as the
+tablet drew it, and `reading`, the same page read as text and diagrams. It is read-only: it declares
+no capability and writes nothing of the note, and `Mod+Alt+P` (Presentation Mode) does nothing in
+it.
+
+- **Modes.** `Mod+Enter` (claimed by the lens, so it never reaches an editor core) and `Mod+Alt+M`
+  (Toggle Editor Mode) switch between `page` and `reading`, and so does the `Page | Reading` switch
+  in the chrome, which shows the mode in force pressed. The keyboard goes to the surface the switch
+  presents. The page shown, the pages marked unseen and, for the page, its scale and whiteboard
+  window carry from one mode to the other, and the mode is kept across a tab switch as the page is.
+  Both modes have the pager below and the bare `PageUp`/`PageDown` turns.
 
 - **Keys.** The page element is focusable (a click on the sheet focuses it). Its keydown asks the
   lens's `claimKey` first, which claims bare `PageUp` (previous page) and bare `PageDown` (next
@@ -264,7 +272,8 @@ Mode) and `Mod+Alt+P` (Presentation Mode) do nothing in it.
   arrow keys, `Home`/`End` and `Space` scroll as the browser scrolls. On a whiteboard the surround
   does not scroll, so the lens also claims the bare arrows (move the window a tenth of its width or
   height) and `+`/`=` and `-`/`_` (zoom in and out by 1.25 about the window's centre; Shift is
-  allowed, since it is how `+` is typed). Alt, Ctrl or Cmd leaves every key unclaimed.
+  allowed, since it is how `+` is typed). Alt, Ctrl or Cmd leaves every other key unclaimed
+  (`Mod+Enter` switches mode, above).
 - **Pointer.** Previous and next; one dot per page (a click shows that page; a page with ink not
   yet seen has its dot drawn larger, in the accent colour), or, past twelve pages, one `n unseen`
   button led by a dot in the accent colour, shown while
@@ -310,6 +319,30 @@ Mode) and `Mod+Alt+P` (Presentation Mode) do nothing in it.
   fit-to-width or 100%, the same whiteboard window and the same pages marked, for as long as the tab
   is open. Ink written while the tab was in the background marks the pages it landed on, as if it
   had arrived while the tab was shown; a mark goes only when its page is shown.
+
+### The reading of a page
+
+In `reading` the lens shows the reading of the page the reader is on, on the editor's own background
+and at its text width, its blocks drawn read-only by each kind's own renderer (a PlantUML diagram
+that could not be drawn shows its error and, beneath it, its source). Above the blocks one row says
+what is known of the page's reading, as the host tells it — the lens never decides whether a reading
+is current:
+
+| The page's reading | The row |
+|---|---|
+| none | `This page has not been read yet. …` and **Read this page** |
+| under way | `Reading this page…`; no button (a stale reading stays drawn beneath) |
+| of the page as it is | **New document** |
+| of the page before it changed | `This page has changed since it was read.` and **Read again**; the old reading drawn, dimmed |
+| nothing can read a page | why (no AI configured); no button |
+| the last reading failed | what went wrong, and **Try again** |
+
+A reading of the page as it is offers no **Read again**: a page is never read twice at one key.
+Ink that lands on the page shown asks the host again, which is how a reading becomes stale; ink on
+another page marks that page unseen. **New document** makes an ordinary untitled note named
+`{note} — page {n}` holding a copy of the reading, linked to nothing, and opens it in its own tab,
+focused; while it is made the row says `Making a document…`, and `Could not make a document` if it
+fails. No key reads a page or makes a document.
 
 ### The Live view lens
 

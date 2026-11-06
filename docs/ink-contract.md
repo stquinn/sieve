@@ -230,7 +230,6 @@ directory. The block never carries ink.
 | `note_companion` | the companion's identity (the GATT `identity` value) |
 | `note_source_id` | the companion's note id |
 | `note_synced_seq` | the `seq` of the last record of the source the block describes; the source holds at least that far, and the block may lag it between saves |
-| `reading` | the reading job's state; owned by the reading job |
 | `source` | the source asset's absolute address, `sieve://{container}/{key}` |
 
 - **StrokeBasedNote:** `source` is `strokes.jsonl` (§4.1).
@@ -248,6 +247,16 @@ directory. The block never carries ink.
   description is of) and `note_meta_sent_seq` (the `seq` of the description last sent as `META`).
   `title` stays what the tablet wrote. A note is shown by `display_name` when it has one, otherwise
   by `title`.
+- **Reading.** A page is read only when the reader asks. Its reading is the asset
+  `reading-{pageId}-{key}.json` beside the source, where `key` is the page key (16 hex digits of a
+  SHA-256 of what is on the page, `StrokeBasedNote.PageKey`, as for its image
+  `page-{pageId}-{key}.png`): `{"key": …, "blocks": [{"id",
+  "kind", "attrs"}, …]}`, the page's text as `prose` blocks and its diagrams as `diagram` blocks, in
+  the page's order, every id minted by `ident.New`. A PlantUML diagram's SVG is kept beside it as
+  `reading-{pageId}-{key}-{blockId}.svg`, and the block's `svgAsset` is its absolute address. A page
+  whose key has a reading is never read again. Keeping a reading removes the page's readings of
+  every other key, and their SVGs, while its key is still the page's. Neither the block nor the
+  source changes.
 
 ## 6. Templates
 

@@ -85,18 +85,30 @@ func (c *containerSession) blocks() []domain.SieveBlock {
 func (c *containerSession) close(*EditorService, string) {}
 
 // reload reads the container again and pushes its block's attrs to the client
-// through the same lifecycle event a document block's attr update takes.
+// through the same lifecycle event a document block's attr update takes, and its
+// name when that changed.
 func (c *containerSession) reload(es *EditorService) error {
 	loaded, err := es.containers.Load(c.uuid())
 	if err != nil {
 		logger.Warn("editor: block container reload failed", "uuid", c.uuid(), "err", err)
 		return err
 	}
+	was := c.name()
 	c.mu.Lock()
 	c.container = loaded
 	c.mu.Unlock()
 	es.pushBlockAttrs(loaded.UUID(), loaded.Block())
+	if now := c.name(); now != was {
+		es.notifyNamed(loaded.UUID(), now)
+	}
 	return nil
+}
+
+// name is what the container is called (block.Registry.ContainerName).
+func (c *containerSession) name() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return block.GlobalRegistry().ContainerName(c.container.Block(), c.container.Storable().Meta())
 }
 
 func (c *containerSession) version() int {

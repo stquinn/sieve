@@ -49,6 +49,9 @@ export class InMemoryContainerProvider {
   /** @returns {string} */
   getKind() { return this.#model.getKind() }
 
+  /** @returns {string} */
+  getName() { return this.#model.getName() }
+
   /** @returns {ReadonlyArray<string>} the child ids in container order */
   getOrder() { return this.#model.getOrder() }
 

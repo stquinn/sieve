@@ -305,6 +305,9 @@ components:
         kind:
           type: string
           description: 'the container''s own noun: note | buffer | prompt | a block kind; absent when nothing was found'
+        name:
+          type: string
+          description: what the container is called; absent when it has no name
         scroll:
           type: integer
           description: the tab's saved scroll offset; 0 parks at the top

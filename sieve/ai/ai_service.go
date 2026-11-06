@@ -329,6 +329,33 @@ func (s *AIService) DescribeNote(uuid string, pages []domain.Address) (domain.No
 	return meta, nil
 }
 
+// ReadPage reads one page of the handwritten note in container uuid from page,
+// the absolute address of an image of it, an asset of that container: the CLI
+// runs in the image's directory, which the prompt names it in. The answer is
+// parsed and nothing else is checked of it.
+func (s *AIService) ReadPage(uuid string, page domain.Address) (domain.PageReading, error) {
+	settings := s.state.LoadSettings()
+	if settings.Tier() == domain.TierDumb {
+		return domain.PageReading{}, fmt.Errorf("page reading not available in dumb mode")
+	}
+	path, err := s.assetPath(uuid, page.String())
+	if err != nil {
+		return domain.PageReading{}, fmt.Errorf("note %s: page image %s: %w", uuid, page, err)
+	}
+	prompt, _ := s.prompts.GetPromptContent("page-reading")
+	p := strings.ReplaceAll(prompt, "{page_file}", filepath.Base(path))
+	binary, dialect := settings.ResolveCLI()
+	resp, err := s.runner.Run("page-reading", binary, dialect, p, settings.Model, s.timeoutFor(settings, "page-reading"), filepath.Dir(path), s.profileForDoc(uuid), s.storePath)
+	if err != nil {
+		return domain.PageReading{}, err
+	}
+	var reading domain.PageReading
+	if err := json.Unmarshal([]byte(s.extractJSONFallback(resp)), &reading); err != nil {
+		return domain.PageReading{}, fmt.Errorf("parse page reading: %w", err)
+	}
+	return reading, nil
+}
+
 // assetPath is the absolute path of the asset file src names, read off the
 // NodeDescriptor the resolver returns for it.
 func (s *AIService) assetPath(uuid, src string) (string, error) {

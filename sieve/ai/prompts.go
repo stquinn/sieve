@@ -50,6 +50,8 @@ func (ps *PromptService) GetPromptContent(name string) (string, error) {
 		return DefaultImagePrompt, nil
 	case "note-meta":
 		return DefaultNoteMetaPrompt, nil
+	case "page-reading":
+		return DefaultPageReadingPrompt, nil
 	case "refine":
 		return DefaultRefinePrompt, nil
 	case "web-clip-fetch":
@@ -78,7 +80,7 @@ func (ps *PromptService) DeletePrompt(name string) error {
 
 // ListPrompts returns all standard prompts with their virtualization status.
 func (ps *PromptService) ListPrompts() []PromptEntry {
-	names := []string{"file", "explain", "ask", "btw", "refine", "image", "note-meta", "web-clip-fetch", "web-clip-summarise"}
+	names := []string{"file", "explain", "ask", "btw", "refine", "image", "note-meta", "page-reading", "web-clip-fetch", "web-clip-summarise"}
 	displayNames := map[string]string{
 		"file":               "Smart Filing",
 		"explain":            "Explain Content",
@@ -87,6 +89,7 @@ func (ps *PromptService) ListPrompts() []PromptEntry {
 		"refine":             "Language Detection",
 		"image":              "Describe Image",
 		"note-meta":          "Name Handwritten Note",
+		"page-reading":       "Read Handwritten Page",
 		"web-clip-fetch":     "Web Clip — Fetch",
 		"web-clip-summarise": "Web Clip — Summarise",
 	}
@@ -323,6 +326,23 @@ Respond ONLY with raw JSON. DO NOT use markdown code fences (triple backticks). 
   "keywords": ["keyword", "short phrase"],
   "categories": ["category"],
   "summary": "Two or three sentences."
+}
+`
+
+const DefaultPageReadingPrompt = `The image file {page_file}, in this directory, is one page of a handwritten note.
+
+Open it and read the whole page, from top to bottom, as a list of parts in the order they appear on the page.
+
+- Handwriting is a "text" part. Transcribe it faithfully as markdown. Keep headings, lists, emphasis and line structure where the writer clearly meant them. Correct nothing but obvious slips of the pen. Write a word you cannot read as [?].
+- A hand-drawn diagram (boxes and arrows, a flow, a sequence, a hierarchy) is a "diagram" part. Write it as a Mermaid diagram, with "language": "mermaid". Use PlantUML, with "language": "plantuml", only when Mermaid cannot express it. Keep the writer's labels as they are written.
+- A drawing that is not a diagram is a "text" part of one italic line saying what it shows.
+
+Respond ONLY with raw JSON. DO NOT use markdown code fences (triple backticks). No preamble or explanation.
+{
+  "parts": [
+    {"type": "text", "markdown": "# Heading\n\nWhat was written."},
+    {"type": "diagram", "language": "mermaid", "source": "flowchart TD\n  A --> B"}
+  ]
 }
 `
 

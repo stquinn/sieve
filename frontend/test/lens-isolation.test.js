@@ -223,8 +223,10 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
       path.join('lens', 'ink', 'ink-sheet.js'),
       path.join('lens', 'ink', 'live-ink-lens.js'),
       path.join('lens', 'ink', 'live-surface.js'),
+      path.join('lens', 'ink', 'note-chrome.js'),
       path.join('lens', 'ink', 'page-surface.js'),
       path.join('lens', 'ink', 'plane-window.js'),
+      path.join('lens', 'ink', 'reading-surface.js'),
       path.join('lens', 'lens.js'),
       path.join('lens', 'outline', 'outline-lens.js'),
       path.join('lens', 'prompt', 'prompt-editor.js'),
@@ -280,23 +282,30 @@ describe('the lens bases are not ProseMirror', () => {
     path.join('lens', 'abstract-editor.js'),
     path.join('lens', 'abstract-surface.js'),
     path.join('lens', 'block', 'block-lens.js'),
+    path.join('lens', 'ink', 'digital-note-lens.js'),
+    path.join('lens', 'ink', 'live-ink-lens.js'),
   ])('%s reaches no surface, no extensions.js and no tiptap-vendor.js', (entry) => {
     const reached = new ImportGraph([]).walk([path.join(STATIC, entry)]).reached
     expect(reached.filter((file) => PM_WORLD.some((pm) => file.startsWith(pm)))).toEqual([])
   })
 })
 
-describe('the fallback lens imports only the lens bases, contract/ and renderers/', () => {
+describe.each([
+  ['the fallback lens', 'block'],
+  ['the ink lenses', 'ink'],
+])('%s import only the lens bases, contract/, renderers/ and their own directory', (_name, dir) => {
   // A lens of its own kind sits beside the editor: what it may name is the wall,
   // the look-and-feel, and the two bases a lens is built on.
   const BASES = Object.freeze([path.join('lens', 'abstract-editor.js'), path.join('lens', 'abstract-surface.js')])
-  const ALLOWED = Object.freeze(['contract', 'renderers', path.join('lens', 'block')])
-  const files = ImportGraph.sources(path.join(LENS_DIR, 'block'))
+  const ALLOWED = Object.freeze(['contract', 'renderers', path.join('lens', dir)])
+  const files = ImportGraph.sources(path.join(LENS_DIR, dir))
 
   it.each(files.map((f) => [path.relative(STATIC, f), f]))('%s', (_rel, file) => {
-    const imported = [...readFileSync(file, 'utf8').matchAll(/\bfrom\s*['"]([^'"]+)['"]\s*;?\s*$/gm)]
+    const source = readFileSync(file, 'utf8')
+    const imported = [...source.matchAll(/\bfrom\s*['"]([^'"]+)['"]\s*;?\s*$/gm)]
       .map((m) => path.relative(STATIC, path.resolve(path.dirname(file), m[1])))
-    expect(imported.length).toBeGreaterThan(0)
+    // A file that imports must be seen to: the pattern finding nothing there is the pattern broken.
+    expect(imported.length > 0).toBe(/^import\s/m.test(source))
     expect(imported.filter((f) => !BASES.includes(f) && !ALLOWED.some((dir) => f.startsWith(dir + path.sep)))).toEqual([])
   })
 })

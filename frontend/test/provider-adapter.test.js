@@ -11,6 +11,7 @@ function seeded() {
   const model = new ContainerModel('doc-1', 'note')
   model.applyLoad({
     uuid: 'doc-1',
+    name: 'Kitchen notes',
     blocks: [
       { id: 'p1', kind: 'prose', attrs: { content: 'hello' } },
       { id: 'c1', kind: 'code', attrs: { source: 'x=1' } },
@@ -29,6 +30,7 @@ describe('ProviderAdapter', () => {
     const provider = new ProviderAdapter(seeded())
     expect(provider.getUuid()).toBe('doc-1')
     expect(provider.getKind()).toBe('note')
+    expect(provider.getName()).toBe('Kitchen notes')
     expect(provider.getOrder()).toEqual(['p1', 'c1'])
     expect(provider.getBlock('c1')).toEqual({ id: 'c1', kind: 'code', attrs: { source: 'x=1', id: 'c1' } })
     expect(provider.getBlock('nope')).toBeNull()
@@ -66,7 +68,7 @@ describe('ProviderAdapter', () => {
     // prototype member exposes the model a lens could fold or mutate directly.
     expect(Object.keys(provider)).toEqual([])
     expect([...Object.getOwnPropertyNames(Object.getPrototypeOf(provider))].sort()).toEqual([
-      '_startFeed', 'constructor', 'getBlock', 'getKind', 'getOrder', 'getUuid', 'subscribe', 'subscribeFeed',
+      '_startFeed', 'constructor', 'getBlock', 'getKind', 'getName', 'getOrder', 'getUuid', 'subscribe', 'subscribeFeed',
       'unsubscribe', 'unsubscribeFeed',
     ])
   })

@@ -59,7 +59,7 @@ func NewBlockContainerService(st store.Store, kinds ContainableKinds) (*BlockCon
 	return &BlockContainerService{store: st, kinds: kinds}, nil
 }
 
-// SetChangeListener registers who hears each successful Save. It must be called
+// SetChangeListener registers who hears each successful Save and SaveMeta. It must be called
 // before the service is shared: the field is read without a lock.
 func (s *BlockContainerService) SetChangeListener(l ContainerChangeListener) {
 	s.listener = l
@@ -149,8 +149,22 @@ func (s *BlockContainerService) save(c *domain.BlockContainer) (*domain.BlockCon
 // and no snapshot is written. Save and SaveMeta run one at a time and each starts
 // from the stored .meta, so neither loses what the other wrote. edit must not set
 // the keys the store writes or the kind's face. It returns the container as
-// stored after the write.
+// stored after the write. The listener hears it as it hears a Save.
 func (s *BlockContainerService) SaveMeta(uuid string, edit func(domain.DocumentMeta)) (*domain.BlockContainer, error) {
+	saved, err := s.saveMeta(uuid, edit)
+	if err != nil {
+		return nil, err
+	}
+	if s.listener != nil {
+		if err := s.listener.Refresh(uuid); err != nil {
+			logger.Warn("block container: listener could not reload", "uuid", uuid, "err", err)
+		}
+	}
+	return saved, nil
+}
+
+// saveMeta is SaveMeta without telling the listener.
+func (s *BlockContainerService) saveMeta(uuid string, edit func(domain.DocumentMeta)) (*domain.BlockContainer, error) {
 	s.writes.Lock()
 	defer s.writes.Unlock()
 	ms, err := s.stored(uuid)

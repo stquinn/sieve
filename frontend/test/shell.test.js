@@ -1165,6 +1165,40 @@ describe('NoteEditor.setMode — the flip is ONE lens using both of its containe
     await expect(ed.setMode('wysiwyg')).resolves.toBe(false)
   })
 
+  it('two modes that need no seed flip with no blocks capability, ask the container nothing, and hand the view over', async () => {
+    // A lens whose modes are two views of one container, neither a verbatim
+    // buffer: the flip is a surface swap, and the surface left says where the
+    // reader was to the one presented.
+    class TwoViews extends withFakeSurfaces(AbstractEditor) {
+      get _modes() { return ['first', 'second'] }
+      get _defaultMode() { return 'first' }
+      get _blockMode() { return 'first' }
+      get _seedlessModes() { return ['first', 'second'] }
+      get _innateCapabilities() { return { markdown: false, mentions: false, commands: false, blocks: false } }
+      _createSurface(mode) {
+        const s = super._createSurface(mode)
+        s.handed = this._handedViewState
+        s.viewState = () => ({ left: mode })
+        return s
+      }
+    }
+    const provider = wholeContentProvider()
+    const ed = new TwoViews('u', { provider, viewState: { left: 'before' } })
+    const root = document.createElement('div')
+    await ed.presentMode('first', root)
+    expect(ed.canEditBlocks).toBe(false)
+    /** @type {any[]} */ const events = []
+    ed.onEvent((e) => events.push(e.type))
+    await expect(ed.setMode('second')).resolves.toBe(true)
+    await expect(ed.toggleMode()).resolves.toBe(true)
+    expect(ed.made.map((m) => [m.mode, m.mountArgs[1], m.handed])).toEqual([
+      ['first', null, { left: 'before' }], ['second', null, { left: 'first' }], ['first', null, { left: 'second' }],
+    ])
+    expect(provider.getContents).not.toHaveBeenCalled()
+    expect(provider.setContents).not.toHaveBeenCalled()
+    expect(events.filter((t) => t === 'mode-changed')).toHaveLength(2)
+  })
+
   it('reentrant setMode while a flip is in flight coalesces to the same promise', async () => {
     const rig = flipRig('markdown')
     const held = deferred()

@@ -56,6 +56,8 @@ type ServiceProvider struct {
 	InkDrawer ink.PageDrawer
 	// InkImages keeps the images of synced notes' pages.
 	InkImages *ink.PageImages
+	// InkReadings keeps the readings of synced notes' pages.
+	InkReadings *ink.PageReadings
 }
 
 // InkRadio is the radio Ink dials: the TCP companion at settings.TCP when one is set, otherwise
@@ -155,6 +157,8 @@ var (
 	_ command.DocumentFiler            = (*editor.EditorService)(nil)
 	_ ai.DocumentMCPEndpoint           = (*mcp.Server)(nil)
 	_ ink.NoteDescriber                = (*ai.AIService)(nil)
+	_ ink.PageReader                   = (*ai.AIService)(nil)
+	_ ink.DiagramDrawer                = (*services.PlantumlService)(nil)
 )
 
 func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.FS) {
@@ -257,6 +261,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	s.Editor.SetAI(s.AI)
 	s.Commands.SetEngine(s.Engine)
 	ink.NewNoteNamer(s.Ink, s.InkImages, s.AI, s.Engine)
+	s.InkReadings = ink.NewPageReadings(s.Ink, s.InkImages, s.AI, s.Plantuml, block.NewDocumentCodec(block.GlobalRegistry()), s.Engine)
 	for _, cmd := range s.CommandSet() {
 		s.Commands.Register(cmd)
 	}

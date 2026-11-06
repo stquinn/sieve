@@ -62,6 +62,9 @@ func (PromptVarDocs) For(t string) []PromptVarDef {
 			{"{page_files}", "The page images' file names, numbered in page order"},
 			{"{category_list}", "Existing top-level library folders"},
 		},
+		"page-reading": {
+			{"{page_file}", "The file name of the image of the page to read"},
+		},
 		"web-clip-fetch": {
 			{"{source}", "URL to retrieve"},
 		},

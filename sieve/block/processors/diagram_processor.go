@@ -36,7 +36,7 @@ type DiagramProcessor struct {
 }
 
 func NewDiagramProcessor(svc block.BlockServices) *DiagramProcessor {
-	return &DiagramProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: "diagram"}}
+	return &DiagramProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: block.KindDiagram}}
 }
 
 func (p *DiagramProcessor) Kind() string { return p.FencedDeserializer.Kind }
@@ -258,6 +258,33 @@ func (p *DiagramProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJo
 			b.Attrs["status"] = block.BlockStatusComplete
 		},
 	}
+}
+
+// DrawingSource is what PlantUML is given for blk — the source DescribeJob would
+// render — and false for a block DescribeJob would not render.
+func (p *DiagramProcessor) DrawingSource(blk domain.SieveBlock) (string, bool) {
+	if !p.isRenderable(blk) {
+		return "", false
+	}
+	source, _ := blk.Attrs["source"].(string)
+	return p.effectiveSource(source), true
+}
+
+// Drawn records on blk what DescribeJob's Apply records: the SVG kept at address,
+// rendered from blk's current source.
+func (p *DiagramProcessor) Drawn(blk *domain.SieveBlock, address string) {
+	source, _ := blk.Attrs["source"].(string)
+	blk.Attrs["svgAsset"] = address
+	blk.Attrs["renderedHash"] = p.renderHash(p.effectiveSource(source))
+	blk.Attrs["status"] = block.BlockStatusComplete
+	blk.Attrs["error"] = ""
+}
+
+// NotDrawn records on blk the error state the framework writes when DescribeJob's
+// render fails.
+func (p *DiagramProcessor) NotDrawn(blk *domain.SieveBlock, err error) {
+	blk.Attrs["status"] = block.BlockStatusError
+	blk.Attrs["error"] = err.Error()
 }
 
 // effectiveSource is the actual render input: the theme preamble, then the user

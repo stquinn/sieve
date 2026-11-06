@@ -298,6 +298,10 @@ const KindProse = "prose"
 // element edge and the code that harvests one agree on the spelling.
 const KindReference = "reference"
 
+// KindDiagram is the diagram kind name: a Mermaid or PlantUML diagram, its engine
+// the `diagramType` attr.
+const KindDiagram = "diagram"
+
 // RelTarget and RelAttach are the two roles a reference can declare in its `rel`
 // attr: what the reference IS to whatever holds it. A target names material the
 // holder is about; an attachment names material the holder was handed.
@@ -755,6 +759,18 @@ type SelfExtractable interface {
 // is placed by the asset's address instead.
 type HeldAssetPlacer interface {
 	PlacesHeldAssets() bool
+}
+
+// DrawnElsewhere is the optional interface a processor implements when a block of
+// its kind is drawn by a drawing service outside its own job, for a block that
+// lives in no document. DrawingSource is the text the service draws for b, and
+// false when b has nothing to draw; Drawn records on b that its drawing is kept
+// at address, an absolute sieve:// address; NotDrawn records that it could not
+// be drawn, and why.
+type DrawnElsewhere interface {
+	DrawingSource(b domain.SieveBlock) (string, bool)
+	Drawn(b *domain.SieveBlock, address string)
+	NotDrawn(b *domain.SieveBlock, err error)
 }
 
 // RawContenter is the optional interface a processor implements to expose the raw

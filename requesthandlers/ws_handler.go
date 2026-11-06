@@ -20,6 +20,7 @@ import (
 	"sieve/sieve/domain"
 	"sieve/sieve/editor"
 	"sieve/sieve/ink"
+	"sieve/sieve/ink/link"
 	"sieve/sieve/protocol"
 
 	"github.com/go-chi/chi/v5"
@@ -98,24 +99,27 @@ func NewWsHandler(sp *sieve.ServiceProvider, broadcast *WorkspaceBroadcast, toke
 	// listed here, so the token entry beside it can never come back.
 	h.upgrader.Subprotocols = []string{protocol.WSSubprotocol}
 	h.documentFrames = map[string]frameHandler{
-		protocol.TypePing:              h.handlePing,
-		protocol.TypeDocUpdate:         h.handleDocUpdate,
-		protocol.TypeFlush:             h.handleFlush,
-		protocol.TypeEnterMarkdown:     h.handleEnterMarkdown,
-		protocol.TypeEnterWysiwyg:      h.handleEnterWysiwyg,
-		protocol.TypeRetryBlockJob:     h.handleRetryBlockJob,
-		protocol.TypeExtract:           h.handleExtract,
-		protocol.TypeBlockOp:           h.handleBlockOp,
-		protocol.TypeLoad:              h.handleLoad,
-		protocol.TypePaste:             h.handlePaste,
-		protocol.TypeDetectExtractions: h.handleDetectExtractions,
-		protocol.TypeExport:            h.handleExport,
-		protocol.TypeFocus:             h.handleFocus,
-		protocol.TypeTextReplace:       h.handleTextReplace,
-		protocol.TypeFeatureControl:    h.handleDocumentFeatureControl,
-		protocol.TypeSetPresenting:     h.handleSetPresenting,
-		protocol.TypeInkPage:           h.handleInkPage,
-		protocol.TypeInkOpenOnTablet:   h.handleInkOpenOnTablet,
+		protocol.TypePing:               h.handlePing,
+		protocol.TypeDocUpdate:          h.handleDocUpdate,
+		protocol.TypeFlush:              h.handleFlush,
+		protocol.TypeEnterMarkdown:      h.handleEnterMarkdown,
+		protocol.TypeEnterWysiwyg:       h.handleEnterWysiwyg,
+		protocol.TypeRetryBlockJob:      h.handleRetryBlockJob,
+		protocol.TypeExtract:            h.handleExtract,
+		protocol.TypeBlockOp:            h.handleBlockOp,
+		protocol.TypeLoad:               h.handleLoad,
+		protocol.TypePaste:              h.handlePaste,
+		protocol.TypeDetectExtractions:  h.handleDetectExtractions,
+		protocol.TypeExport:             h.handleExport,
+		protocol.TypeFocus:              h.handleFocus,
+		protocol.TypeTextReplace:        h.handleTextReplace,
+		protocol.TypeFeatureControl:     h.handleDocumentFeatureControl,
+		protocol.TypeSetPresenting:      h.handleSetPresenting,
+		protocol.TypeInkPage:            h.handleInkPage,
+		protocol.TypeInkOpenOnTablet:    h.handleInkOpenOnTablet,
+		protocol.TypeInkReading:         h.handleInkReading,
+		protocol.TypeInkReadPage:        h.handleInkReadPage,
+		protocol.TypeInkReadingDocument: h.handleInkReadingDocument,
 	}
 	h.workspaceFrames = map[string]frameHandler{
 		protocol.TypePing:           h.handlePing,
@@ -645,15 +649,16 @@ func (h *WsHandler) inkStream() *inkStream {
 	h.inkMu.Lock()
 	defer h.inkMu.Unlock()
 	var svc *ink.InkService
+	var readings *ink.PageReadings
 	if h.ServiceProvider != nil {
-		svc = h.ServiceProvider.Ink
+		svc, readings = h.ServiceProvider.Ink, h.ServiceProvider.InkReadings
 	}
-	if h.ink != nil && h.ink.svc != svc {
+	if h.ink != nil && (h.ink.svc != svc || h.ink.readings != readings) {
 		h.ink.close()
 		h.ink = nil
 	}
 	if h.ink == nil && svc != nil {
-		h.ink = newInkStream(svc, h.sendTo)
+		h.ink = newInkStream(svc, readings, h.sendTo)
 	}
 	return h.ink
 }
@@ -689,6 +694,86 @@ func (h *WsHandler) handleInkOpenOnTablet(f inboundFrame) {
 		return
 	}
 	go stream.openOnTablet(f.uuid, msg, f.reply)
+}
+
+// handleInkReading answers with what is known of the reading of a page of this channel's Digital
+// Note.
+func (h *WsHandler) handleInkReading(f inboundFrame) {
+	var msg protocol.InkReadingFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeInkReading, err)
+		return
+	}
+	h.answerReading(f, msg.OpID, msg.PageID, func(s *inkStream, page link.ID) (ink.Reading, error) {
+		return s.readings.Reading(f.uuid, page)
+	})
+}
+
+// handleInkReadPage starts reading a page of this channel's Digital Note and answers with what is
+// then known of its reading.
+func (h *WsHandler) handleInkReadPage(f inboundFrame) {
+	var msg protocol.InkReadPageFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeInkReadPage, err)
+		return
+	}
+	h.answerReading(f, msg.OpID, msg.PageID, func(s *inkStream, page link.ID) (ink.Reading, error) {
+		return s.readings.Read(f.uuid, page)
+	})
+}
+
+// answerReading answers an ink-reading or ink-read-page for pageID with what ask says of its
+// reading, or refuses it.
+func (h *WsHandler) answerReading(f inboundFrame, opID, pageID string, ask func(*inkStream, link.ID) (ink.Reading, error)) {
+	stream := h.inkStream()
+	if stream == nil || stream.readings == nil {
+		f.reply(protocol.NewInkReadingRefusedFrame(opID, pageID, errors.New("ink is unavailable")))
+		return
+	}
+	page, err := link.ParseID(pageID)
+	if err != nil {
+		f.reply(protocol.NewInkReadingRefusedFrame(opID, pageID, fmt.Errorf("%w: page %q: %v", ink.ErrNoSuchPage, pageID, err)))
+		return
+	}
+	reading, err := ask(stream, page)
+	if err != nil {
+		f.reply(protocol.NewInkReadingRefusedFrame(opID, pageID, err))
+		return
+	}
+	f.reply(protocol.NewInkReadingContentFrame(opID, pageID, stream.readingOf(reading)))
+}
+
+// handleInkReadingDocument makes a new document from the reading of a page of this channel's
+// Digital Note, named for the note and the page, and answers with its uuid.
+func (h *WsHandler) handleInkReadingDocument(f inboundFrame) {
+	var msg protocol.InkReadingDocumentFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeInkReadingDocument, err)
+		return
+	}
+	fail := func(err error) { f.reply(protocol.NewInkReadingDocumentFailedFrame(msg.OpID, err)) }
+	stream := h.inkStream()
+	if stream == nil || stream.readings == nil {
+		fail(errors.New("ink is unavailable"))
+		return
+	}
+	page, err := link.ParseID(msg.PageID)
+	if err != nil {
+		fail(fmt.Errorf("%w: page %q: %v", ink.ErrNoSuchPage, msg.PageID, err))
+		return
+	}
+	name, blocks, err := stream.readings.Copy(f.uuid, page)
+	if err != nil {
+		fail(err)
+		return
+	}
+	uuid, err := h.ServiceProvider.Editor.NewDocument(name, f.uuid, blocks)
+	if err != nil {
+		logger.Error("ink: making a document from a page's reading", "container", f.uuid, "page", msg.PageID, "err", err.Error())
+		fail(err)
+		return
+	}
+	f.reply(protocol.NewInkReadingDocumentResultFrame(msg.OpID, uuid))
 }
 
 // handleSetPresenting records Presentation Mode on the session tab and answers
@@ -778,6 +863,11 @@ func (h *WsHandler) OnBlockRemoved(uuid, blockID string) {
 // OnOrderChanged implements block.BlockLifecycleListener.
 func (h *WsHandler) OnOrderChanged(uuid string, order []string) {
 	h.sendTo(uuid, protocol.NewOrderChangedFrame(order))
+}
+
+// OnContainerNamed implements editor.ContainerNameListener.
+func (h *WsHandler) OnContainerNamed(uuid, name string) {
+	h.sendTo(uuid, protocol.NewContainerNamedFrame(name))
 }
 
 // TextMarks implements editor.TextMarksNotifier. Marks are a render-back, not an

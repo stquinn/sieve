@@ -295,6 +295,9 @@ type DocumentContent struct {
 	// Kind is what the host mounts the content with: a block container is drawn
 	// from its one block and edited by nobody.
 	Kind string `json:"kind,omitempty" doc:"the container's own noun: note | buffer | prompt | a block kind; absent when nothing was found"`
+	// Name is what the container is called. A block container's changes while it is
+	// open arrive as a container-named frame.
+	Name string `json:"name,omitempty" doc:"what the container is called; absent when it has no name"`
 	// Scroll is a per-user VIEW property, not document metadata, so it rides the
 	// session's tab list. Zero means park at top — the same answer for a tab never
 	// scrolled and a tab never opened, which need no distinction.
@@ -310,6 +313,17 @@ type DocumentContent struct {
 	// Blocks is what WYSIWYG renders from; markdown mode serves Body only and the
 	// client never builds blocks there.
 	Blocks []block.FrontendBlock `json:"blocks,omitempty" doc:"WYSIWYG only: the block list, already through the shadow so ids are stable"`
+}
+
+// ContainerNamedFrame is this channel's block container called something else now.
+type ContainerNamedFrame struct {
+	Type string `json:"type"`
+	Name string `json:"name" doc:"what the container is called now; empty when it has no name"`
+}
+
+// NewContainerNamedFrame builds the push that the container is now called name.
+func NewContainerNamedFrame(name string) ContainerNamedFrame {
+	return ContainerNamedFrame{Type: TypeContainerNamed, Name: name}
 }
 
 // LoadContentFrame answers a load. The content is EMBEDDED so its fields sit at

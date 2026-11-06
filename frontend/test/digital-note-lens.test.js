@@ -10,12 +10,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { getStroke } from 'perfect-freehand'
 import { DigitalNoteLens } from '../src/static/lens/ink/digital-note-lens.js'
 import { PageSurface } from '../src/static/lens/ink/page-surface.js'
+import { ReadingSurface } from '../src/static/lens/ink/reading-surface.js'
+import { SurfaceIntent } from '../src/static/lens/abstract-surface.js'
 import { ActionStatus } from '../src/static/lens/ink/action-status.js'
 import { ImageClipboard } from '../src/static/renderers/copy-image.js'
-import { InkFeed, InkOpening, InkRefusal } from '../src/static/contract/ink-container-provider.js'
+import { InkFeed, InkOpening, InkReadingState, InkRefusal } from '../src/static/contract/ink-container-provider.js'
 import {
   ASPECT, DOTS, FakeInkProvider, Frames, GRID, Resizes, UUID, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, pencil, points, press, renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, viewBoxOf, wheel,
-  copiedImages,
+  copiedImages, reading, READ_BLOCKS,
 } from './helpers/ink-lens-rig.js'
 
 /**
@@ -742,5 +744,166 @@ describe('DigitalNoteLens', () => {
     lens.destroy()
     expect([provider.feedListeners.size, provider.modelListeners.size, frames.queued.size, vi.getTimerCount()]).toEqual([0, 0, 0, 0])
     expect(root.childElementCount).toBe(0)
+  })
+
+  it("heads the page with what the note is called, the tablet's title until it has a name, and takes a name given while it is shown", async () => {
+    const { provider, root } = await presented()
+    expect(root.querySelector('.ink-page__title')?.textContent).toBe('Ideas')
+    provider.rename('Kitchen extension planning')
+    expect(root.querySelector('.ink-page__title')?.textContent).toBe('Kitchen extension planning')
+  })
+
+  describe('the reading', () => {
+    /** @param {HTMLElement} root @returns {string} */
+    const notice = (root) => {
+      const el = /** @type {HTMLElement} */ (root.querySelector('.ink-reading__notice'))
+      return el.hidden ? '' : String(el.textContent)
+    }
+    /** @param {HTMLElement} root @param {string} action @returns {string} what the button says; '' when hidden */
+    const button = (root, action) => {
+      const el = /** @type {HTMLButtonElement|null} */ (root.querySelector(`.ink-reading__bar [data-ink-action="${action}"]`))
+      return el && !el.hidden ? String(el.textContent) : ''
+    }
+    /** @param {HTMLElement} root @returns {string[]} the kinds of the blocks drawn */
+    const drawn = (root) => [...root.querySelectorAll('.ink-reading__blocks > [data-kind]')].map((el) => String(el.getAttribute('data-kind')))
+    /** @param {HTMLElement} root @returns {string} */
+    const working = (root) => String(root.querySelector('.ink-reading__bar .ink-page__status')?.textContent || '')
+    /** @param {HTMLElement} root @param {string} mode */
+    const modeButton = (root, mode) => /** @type {HTMLButtonElement} */ (root.querySelector(`[data-ink-action="mode"][data-ink-mode="${mode}"]`))
+    /** @param {HTMLElement} root @param {string} mode */
+    const pressed = (root, mode) => modeButton(root, mode).getAttribute('aria-pressed')
+
+    // The Mermaid in a reading is drawn by a stand-in: the real one is a script the page loads.
+    beforeEach(() => {
+      vi.stubGlobal('mermaid', { initialize() {}, render: () => Promise.resolve({ svg: '<svg xmlns="http://www.w3.org/2000/svg"/>' }) })
+    })
+
+    /** A lens presented over pages p1 and p2 and switched to its reading. */
+    async function reading_() {
+      const shown = await presented()
+      key(shown.root, 'Enter', { ctrlKey: true })
+      await settle()
+      return { ...shown, surface: /** @type {ReadingSurface} */ (shown.lens.surface) }
+    }
+
+    it('Mod+Enter and the chrome switch between the page and its reading, the keyboard going with them', async () => {
+      const { lens, root, provider } = await presented()
+      expect(pressed(root, 'page')).toBe('true')
+      /** @type {string[]} */ const modes = []
+      lens.onEvent((e) => { if (e.type === 'mode-changed') modes.push(String(e.mode)) })
+      expect(key(root, 'Enter', { metaKey: true }).defaultPrevented).toBe(true)
+      await settle()
+      expect(lens.mode).toBe(ReadingSurface.MODE)
+      expect(document.activeElement).toBe(root.querySelector('.ink-page--reading'))
+      expect([pressed(root, 'page'), pressed(root, 'reading')]).toEqual(['false', 'true'])
+      modeButton(root, 'page').click()
+      await settle()
+      expect(lens.mode).toBe(PageSurface.MODE)
+      expect(document.activeElement).toBe(root.querySelector('.ink-page--reader'))
+      modeButton(root, 'page').click()
+      await settle()
+      expect(modes).toEqual([ReadingSurface.MODE, PageSurface.MODE])
+      expect(provider.calls.filter((c) => c.startsWith('loadReading'))).toEqual(['loadReading p1'])
+      expect(key(root, 'Enter', { altKey: true, ctrlKey: true }).defaultPrevented).toBe(false)
+    })
+
+    it.each([
+      ['unread', reading('p1'), ReadingSurface.Words.INVITE, { read: 'Read this page', 'new-document': '' }, [], ''],
+      ['being read', reading('p1', { running: true }), '', { read: '', 'new-document': '' }, [], ReadingSurface.Words.RUNNING],
+      ['read', reading('p1', { state: InkReadingState.READY, key: 'k1', blocks: READ_BLOCKS }), '', { read: '', 'new-document': 'New document' }, ['prose', 'diagram'], ''],
+      ['read before the page changed', reading('p1', { state: InkReadingState.STALE, key: 'k0', blocks: READ_BLOCKS }), ReadingSurface.Words.STALE,
+        { read: 'Read again', 'new-document': '' }, ['prose', 'diagram'], ''],
+      ['being read again', reading('p1', { state: InkReadingState.STALE, key: 'k0', blocks: READ_BLOCKS, running: true }), ReadingSurface.Words.STALE,
+        { read: '', 'new-document': '' }, ['prose', 'diagram'], ReadingSurface.Words.RUNNING],
+      ['unreadable without an AI', reading('p1', { available: false, unavailable: 'No AI is configured.' }), 'No AI is configured.',
+        { read: '', 'new-document': '' }, [], ''],
+      ['failed', reading('p1', { failed: 'The model timed out.' }), 'The model timed out.', { read: 'Try again', 'new-document': '' }, [], ''],
+    ])('draws a page %s', async (_name, answer, said, buttons, kinds, work) => {
+      const shown = await presented()
+      shown.provider.readings.set('p1', answer)
+      key(shown.root, 'Enter', { ctrlKey: true })
+      await settle()
+      expect(notice(shown.root)).toBe(said)
+      expect({ read: button(shown.root, 'read'), 'new-document': button(shown.root, 'new-document') }).toEqual(buttons)
+      expect(drawn(shown.root)).toEqual(kinds)
+      expect(working(shown.root)).toBe(work)
+    })
+
+    it("draws the reading of the page the reader is on, a page's own, and turns with the pager and the page keys", async () => {
+      const shown = await presented()
+      shown.provider.readings.set('p1', reading('p1', { state: InkReadingState.READY, blocks: READ_BLOCKS }))
+      key(shown.root, 'Enter', { ctrlKey: true })
+      await settle()
+      expect([position(shown.root), drawn(shown.root)]).toEqual(['1 / 2', ['prose', 'diagram']])
+      key(shown.root, 'PageDown')
+      await settle()
+      expect([position(shown.root), drawn(shown.root), notice(shown.root)]).toEqual(['2 / 2', [], ReadingSurface.Words.INVITE])
+      press(shown.root, 'prev')
+      await settle()
+      expect(drawn(shown.root)).toEqual(['prose', 'diagram'])
+      expect(shown.provider.calls.filter((c) => c.startsWith('loadReading'))).toEqual(['loadReading p1', 'loadReading p2', 'loadReading p1'])
+    })
+
+    it('reads the page when asked, and draws the reading the feed then brings', async () => {
+      const { provider, root } = await reading_()
+      press(root, 'read')
+      await settle()
+      expect(provider.calls).toContain('readPage p1')
+      expect([working(root), button(root, 'read')]).toEqual([ReadingSurface.Words.RUNNING, ''])
+      provider.emit({ type: InkFeed.READING, reading: reading('p2', { state: InkReadingState.READY, blocks: READ_BLOCKS }) })
+      expect(drawn(root)).toEqual([])
+      provider.emit({ type: InkFeed.READING, reading: reading('p1', { state: InkReadingState.READY, blocks: READ_BLOCKS }) })
+      expect([working(root), drawn(root), button(root, 'new-document')]).toEqual(['', ['prose', 'diagram'], 'New document'])
+    })
+
+    it('asks again when ink lands on the page shown, which is how it learns the reading is stale; ink elsewhere marks its page', async () => {
+      const { provider, root } = await reading_()
+      provider.readings.set('p1', reading('p1', { state: InkReadingState.READY, blocks: READ_BLOCKS }))
+      provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p1', seq: 11, stroke: pen('s2') })
+      await settle()
+      expect(button(root, 'new-document')).toBe('New document')
+      provider.readings.set('p1', reading('p1', { state: InkReadingState.STALE, blocks: READ_BLOCKS }))
+      provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p1', seq: 12, stroke: pen('s3') })
+      await settle()
+      expect([notice(root), button(root, 'read'), drawn(root)]).toEqual([ReadingSurface.Words.STALE, 'Read again', ['prose', 'diagram']])
+      provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p2', seq: 13, stroke: pen('s4') })
+      expect(dot(root, 'p2').hasAttribute('data-unseen')).toBe(true)
+      expect(provider.calls.filter((c) => c === 'loadReading p1')).toHaveLength(3)
+    })
+
+    it('New document asks for a document from the reading and has the host open it', async () => {
+      const shown = await presented()
+      shown.provider.readings.set('p1', reading('p1', { state: InkReadingState.READY, blocks: READ_BLOCKS }))
+      key(shown.root, 'Enter', { ctrlKey: true })
+      await settle()
+      /** @type {any[]} */ const opened = []
+      shown.lens.onEvent((e) => { if (e.type === SurfaceIntent.OPEN_CONTAINER) opened.push(e.uuid) })
+      press(shown.root, 'new-document')
+      await settle()
+      expect([shown.provider.calls.at(-1), opened]).toEqual(['newDocumentFromReading p1', ['doc-new']])
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      shown.provider.made = new Error('not read')
+      press(shown.root, 'new-document')
+      await settle()
+      expect([opened, working(shown.root)]).toEqual([['doc-new'], ReadingSurface.Words.NOT_MADE])
+    })
+
+    it('keeps its mode, page and marks across a tab switch, and hands them back to the page', async () => {
+      const shown = await reading_()
+      shown.surface.turn(1)
+      shown.provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p1', seq: 11, stroke: pen('s9') })
+      await settle()
+      const viewState = shown.lens.viewState
+      shown.lens.destroy()
+      const lens = new DigitalNoteLens(UUID, { provider: shown.provider, viewState })
+      await lens.presentMode('wysiwyg', shown.root)
+      await settle()
+      const surface = /** @type {ReadingSurface} */ (lens.surface)
+      expect([lens.mode, surface.shownPage, [...surface.unseenPages]]).toEqual([ReadingSurface.MODE, 'p2', ['p1']])
+      await lens.toggleMode()
+      await settle()
+      const page = /** @type {PageSurface} */ (lens.surface)
+      expect([page.mode, page.shownPage, [...page.unseenPages]]).toEqual([PageSurface.MODE, 'p2', ['p1']])
+    })
   })
 })

@@ -10,8 +10,8 @@ import { AbstractSurface, SurfaceEvent, SurfaceIntent } from '../abstract-surfac
 import { INK_RULES } from '../../renderers/ink-renderer.js'
 import { InkFeed, InkOpening, InkRefusal } from '../../contract/ink-container-provider.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
-import { ActionStatus } from './action-status.js'
 import { InkSheet } from './ink-sheet.js'
+import { NoteChrome } from './note-chrome.js'
 
 /** @typedef {import('../../contract/ink-container-provider.js').InkContainerProvider} InkContainerProvider */
 /** @typedef {import('../../contract/ink-container-provider.js').InkFeedEvent} InkFeedEvent */
@@ -22,20 +22,23 @@ import { InkSheet } from './ink-sheet.js'
 /** @typedef {import('../../contract/ink-container-provider.js').InkPageAnswer} InkPageAnswer */
 
 /**
- * The reader's view of a note: the page shown, where a whiteboard's window was,
- * how a fixed page was sized, the pages marked unseen, and the highest log seq
- * and stroke start every mark was decided against. A surface handed one opens
- * where it says and marks the pages that took ink written after it.
- * @typedef {Readonly<{page: string|null, window: import('./ink-sheet.js').WindowPlacement|null,
+ * The reader's view of a note: the mode it was shown in, the page shown, where a
+ * whiteboard's window was, how a fixed page was sized, the pages marked unseen,
+ * and the highest log seq and stroke start every mark was decided against. A
+ * surface handed one opens where it says and marks the pages that took ink
+ * written after it.
+ * @typedef {Readonly<{mode: string, page: string|null, window: import('./ink-sheet.js').WindowPlacement|null,
  *   scale: string, unseen: ReadonlyArray<string>, seq: number, startMillis: number}>} ReaderView
  */
 
 /**
  * What the surface asks of the lens that made it: the key claim, asked first
- * for every key pressed in the surface, and where its events are reported.
+ * for every key pressed in the surface, where its events are reported, and the
+ * switch to the lens's other mode.
  * @typedef {object} PageSurfaceHost
  * @property {(event: KeyboardEvent) => boolean} claimKey
  * @property {(event: import('../abstract-surface.js').SurfaceEventMsg) => void} onSurfaceEvent
+ * @property {() => Promise<boolean>} toggleMode
  */
 
 /** The zoom factor of one press of a zoom key or button. */
@@ -46,9 +49,6 @@ const WHEEL_ZOOM = 0.002
 
 /** CSS pixels a wheel event counts per line when it reports lines. */
 const WHEEL_LINE_PX = 16
-
-/** The most pages the pager shows a dot each for; past it the pager counts the unseen ones. */
-const MAX_DOTS = 12
 
 /** What the sheet says when the note has no page. */
 const NO_PAGES = 'This note has no pages yet.'
@@ -68,7 +68,7 @@ const REFUSAL_WORDS = Object.freeze({
 
 export class PageSurface extends AbstractSurface {
   /** The mode this surface presents. */
-  static MODE = 'page'
+  static MODE = NoteChrome.Mode.PAGE
 
   /** How a fixed page's sheet is sized: to the surround's width, or one grid unit to a CSS pixel. */
   static Scale = Object.freeze({ FIT: InkSheet.Scale.FIT, ACTUAL: InkSheet.Scale.ACTUAL })
@@ -194,6 +194,21 @@ export class PageSurface extends AbstractSurface {
 
   .ink-page__view { display: flex; align-items: center; gap: 2px; }
 
+  .ink-page__modes {
+    display: flex;
+    border: 1px solid var(--theme-border2);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .ink-page__chrome .ink-page__modes button { border: none; border-radius: 0; padding: 2px 10px; }
+
+  .ink-page__chrome .ink-page__modes button[aria-pressed="true"] {
+    background: var(--theme-bgAlt);
+    color: var(--theme-text);
+    cursor: default;
+  }
+
   .ink-page__actions { display: flex; align-items: center; gap: 6px; }
 
   .ink-page__status { flex-shrink: 100; color: var(--theme-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -237,19 +252,12 @@ export class PageSurface extends AbstractSurface {
 
   /** @type {boolean} between mount and unmount */ #mounted = false
   /** @type {HTMLElement} */ #root
-  /** @type {HTMLElement} */ #title
-  /** @type {HTMLElement} */ #device
+  /** @type {NoteChrome} */ #chrome = new NoteChrome(PageSurface.MODE)
   /** @type {HTMLElement} */ #notice
-  /** @type {HTMLElement} the page turning: previous, position, next and the dots */ #paging
-  /** @type {HTMLElement} */ #position
-  /** @type {HTMLElement} */ #dots
-  /** @type {HTMLButtonElement} */ #prev
-  /** @type {HTMLButtonElement} */ #next
   /** @type {HTMLButtonElement} */ #scaleButton
   /** @type {HTMLElement} the whiteboard's zoom and framing buttons */ #viewTools
   /** @type {HTMLButtonElement} */ #openLive
   /** @type {HTMLButtonElement} */ #openOnTablet
-  /** @type {ActionStatus} */ #status = new ActionStatus()
   /** @type {string} the name of the device the note was written on; '' when unknown */ #deviceName = ''
   /** @type {Promise<void>|null} the Open in e-ink under way */ #opening = null
 
@@ -287,22 +295,10 @@ export class PageSurface extends AbstractSurface {
     }
     this.#root = this.#el('div', 'ink-page ink-page--reader')
     this.#root.tabIndex = 0
-    const chrome = this.#el('header', 'ink-page__chrome')
-    const heading = this.#el('div', 'ink-page__heading')
-    this.#title = this.#el('span', 'ink-page__title')
-    this.#device = this.#el('span', 'ink-page__device')
-    heading.append(this.#title, this.#device, this.#status.element)
     this.#notice = this.#el('span', 'ink-page__notice')
     this.#notice.hidden = true
     this.#notice.textContent = 'Unknown template, drawn blank'
-    const pager = this.#el('nav', 'ink-page__pager')
-    pager.setAttribute('aria-label', 'Pages')
-    this.#paging = this.#el('span', 'ink-page__pages')
-    this.#prev = this.#button('prev', '‹', 'Previous page')
-    this.#position = this.#el('span', 'ink-page__position')
-    this.#next = this.#button('next', '›', 'Next page')
-    this.#dots = this.#el('span', 'ink-page__dots')
-    this.#paging.append(this.#prev, this.#position, this.#next, this.#dots)
+    this.#chrome.addNotice(this.#notice)
     this.#scaleButton = this.#button('scale', '', '')
     this.#viewTools = this.#el('span', 'ink-page__view')
     this.#viewTools.hidden = true
@@ -316,16 +312,14 @@ export class PageSurface extends AbstractSurface {
     this.#openLive.className = 'ink-page__open-live'
     this.#openLive.title = 'This note is being written on the tablet: open the Live view'
     this.#openLive.hidden = true
-    pager.append(this.#paging, this.#scaleButton, this.#viewTools, this.#openLive)
-    const actions = this.#el('span', 'ink-page__actions')
+    this.#chrome.addToPager(this.#scaleButton, this.#viewTools, this.#openLive)
     const copy = this.#button('copy-page', 'Copy page', 'Copy the page as an image')
     copy.title = 'Copy the page as an image'
     this.#openOnTablet = this.#button('open-on-tablet', 'Open in e-ink', '')
     this.#openOnTablet.title = 'Open this note on the tablet it was written on'
     this.#openOnTablet.hidden = true
-    actions.append(copy, this.#openOnTablet)
-    chrome.append(heading, this.#notice, pager, actions)
-    this.#root.append(chrome, this.#sheet.element)
+    this.#chrome.addActions(copy, this.#openOnTablet)
+    this.#root.append(this.#chrome.element, this.#sheet.element)
   }
 
   /** @returns {string} */
@@ -375,6 +369,7 @@ export class PageSurface extends AbstractSurface {
     const sheet = this.#sheet
     const drawn = sheet.drawn !== null && sheet.drawn === sheet.shown
     return Object.freeze({
+      mode: PageSurface.MODE,
       page: sheet.shown ?? (this.#restored ? this.#restored.page : null),
       window: drawn ? sheet.placement : (this.#restored ? this.#restored.window : null),
       scale: sheet.scale,
@@ -415,7 +410,7 @@ export class PageSurface extends AbstractSurface {
     this.#provider.unsubscribeFeed(this)
     this.#mounted = false
     this.#sheet.detach()
-    this.#status.clear()
+    this.#chrome.status.clear()
     this.#drag = null
     this.#root.removeEventListener('click', this.#onClick)
     this.#root.removeEventListener('keydown', this.#onKeyDown)
@@ -474,6 +469,9 @@ export class PageSurface extends AbstractSurface {
   }
 
   flushPending() {}
+
+  /** Puts the keyboard on the page. */
+  focusEditor() { this.#root.focus() }
 
   /**
    * One event of the note's feed.
@@ -546,10 +544,10 @@ export class PageSurface extends AbstractSurface {
   copyPage() {
     const words = PageSurface.CopyWords
     return this.#sheet.copyPage().then(
-      (copied) => this.#status.showResult(copied ? words.COPIED : words.NOTHING),
+      (copied) => this.#chrome.status.showResult(copied ? words.COPIED : words.NOTHING),
       (err) => {
         console.warn('[ink] the page could not be copied', err)
-        this.#status.showResult(words.FAILED)
+        this.#chrome.status.showResult(words.FAILED)
       })
   }
 
@@ -563,11 +561,12 @@ export class PageSurface extends AbstractSurface {
     if (this.#opening) return this.#opening
     const device = this.#deviceName || 'the tablet'
     this.#openOnTablet.disabled = true
-    this.#status.showPending(`Opening on ${device}…`)
+    const status = this.#chrome.status
+    status.showPending(`Opening on ${device}…`)
     this.#opening = this.#provider.openOnTablet()
-      .then((result) => this.#status.showResult(this.#openingWords(result, device)), (err) => {
+      .then((result) => status.showResult(this.#openingWords(result, device)), (err) => {
         console.warn('[ink] the tablet could not be asked to open the note', err)
-        this.#status.showResult('Could not ask the tablet')
+        status.showResult('Could not ask the tablet')
       })
       .finally(() => {
         this.#opening = null
@@ -634,9 +633,8 @@ export class PageSurface extends AbstractSurface {
     const block = id ? provider.getBlock(id) : null
     const attrs = (block && block.attrs) || {}
     this.#sheet.setNote(attrs.note)
-    this.#title.textContent = String(attrs.title || 'Untitled note')
     this.#deviceName = String((attrs.note_device && attrs.note_device.name) || '')
-    this.#device.textContent = this.#deviceName
+    this.#chrome.setNote(provider.getName() || String(attrs.title || '') || 'Untitled note', this.#deviceName)
     this.#openOnTablet.hidden = !attrs.note_source_id
   }
 
@@ -689,43 +687,14 @@ export class PageSurface extends AbstractSurface {
 
   #renderChrome() {
     const sheet = this.#sheet
-    const pages = sheet.pages
-    const index = sheet.indexOf(sheet.shown)
-    const count = pages.length
     const whiteboard = sheet.isUnbounded(sheet.shown)
-    this.#paging.hidden = whiteboard && count === 1
-    this.#position.textContent = count ? `${index + 1} / ${count}` : '0 / 0'
-    this.#prev.disabled = index <= 0
-    this.#next.disabled = index < 0 || index >= count - 1
-    this.#dots.replaceChildren(...(count > MAX_DOTS ? this.#unseenCount() : this.#pageDots()))
+    this.#chrome.renderPager(sheet.pages, sheet.shown, this.#unseen, whiteboard && sheet.pages.length === 1)
     const actual = sheet.scale === PageSurface.Scale.ACTUAL
     this.#scaleButton.hidden = whiteboard
     this.#scaleButton.textContent = actual ? 'Fit width' : '100%'
     this.#scaleButton.title = actual ? 'Fit the page to the width' : 'Show the page at actual size'
     this.#viewTools.hidden = !whiteboard
     this.#openLive.hidden = this.#liveView === null
-  }
-
-  /** @returns {HTMLButtonElement[]} one dot per page */
-  #pageDots() {
-    return this.#sheet.pages.map((page, i) => {
-      const dot = this.#button('', '', `Page ${i + 1}`)
-      dot.className = 'ink-page__dot'
-      dot.dataset.inkPage = page.id
-      if (page.id === this.#sheet.shown) dot.setAttribute('aria-current', 'page')
-      if (this.#unseen.has(page.id)) dot.dataset.unseen = ''
-      return dot
-    })
-  }
-
-  /** @returns {HTMLButtonElement[]} the count of pages with unseen ink, as the button that
-   *  shows the next of them; none while there are none */
-  #unseenCount() {
-    const unseen = this.#sheet.pages.filter((page) => this.#unseen.has(page.id)).length
-    if (!unseen) return []
-    const button = this.#button('unseen', `${unseen} unseen`, `Show the next of ${unseen} pages with unseen ink`)
-    button.className = 'ink-page__unseen'
-    return [button]
   }
 
   /** Reports that what stats() measures may have changed. */
@@ -747,6 +716,7 @@ export class PageSurface extends AbstractSurface {
       return
     }
     switch (button.getAttribute('data-ink-action')) {
+      case 'mode': if (button.getAttribute('data-ink-mode') !== PageSurface.MODE) this.#host.toggleMode(); break
       case 'prev': this.turn(-1); break
       case 'next': this.turn(1); break
       case 'unseen': this.showNextUnseen(); break

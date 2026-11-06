@@ -27,6 +27,9 @@ export class ProviderAdapter {
   /** @returns {string} */
   getKind() { return this.#model.getKind() }
 
+  /** @returns {string} */
+  getName() { return this.#model.getName() }
+
   /** @returns {ReadonlyArray<string>} */
   getOrder() { return this.#model.getOrder() }
 

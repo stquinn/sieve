@@ -49,7 +49,18 @@ export const noteAttrs = (ids, bounds = 'fixed') => ({
   note: { created: '2026-11-05T00:00:00Z', pageAspect: 0.75, template: RULED, pages: ids.map((id) => ({ id, template: null, bounds })) },
 })
 
-/** An InkContainerProvider over one block whose pages the test answers. */
+/** A reading of a page as the host answers it. @param {string} pageId @param {Record<string, any>} [over] */
+export const reading = (pageId, over = {}) => ({
+  pageId, state: 'none', key: '', blocks: [], running: false, available: true, unavailable: '', failed: '', ...over,
+})
+
+/** The blocks of a ready reading: a heading and a Mermaid diagram. */
+export const READ_BLOCKS = Object.freeze([
+  { id: 'b1', kind: 'prose', attrs: { id: 'b1', content: '# Kitchen\n\nTiles [?] by Friday.' } },
+  { id: 'b2', kind: 'diagram', attrs: { id: 'b2', source: 'flowchart TD\n  A --> B', diagramType: 'mermaid', mode: 'render', status: 'COMPLETE' } },
+])
+
+/** An InkContainerProvider over one block whose pages and readings the test answers. */
 export class FakeInkProvider {
   /** @type {string[]} the provider calls, in order */ calls = []
   /** @type {Set<any>} */ feedListeners = new Set()
@@ -58,6 +69,10 @@ export class FakeInkProvider {
   /** @type {boolean} when set, loadPage answers only when the test resolves it from `waiting` */ defer = false
   /** @type {Array<{pageId: string, resolve: (a: any) => void}>} */ waiting = []
   /** @type {any} what openOnTablet resolves with, or settles as when it is a promise; an Error rejects */ opening = { outcome: 'opened', reason: '' }
+  /** @type {string} what the container is called */ name = ''
+  /** @type {Map<string, any>} what loadReading answers, by page; a page with none is unread */ readings = new Map()
+  /** @type {Map<string, any>} what readPage answers, by page; a page with none answers its reading running */ reads = new Map()
+  /** @type {any} what newDocumentFromReading resolves with; an Error rejects */ made = 'doc-new'
   /** @type {any} */ #block
 
   /** @type {string} */ #uuid
@@ -72,6 +87,7 @@ export class FakeInkProvider {
 
   getUuid() { return this.#uuid }
   getKind() { return this.#kind }
+  getName() { return this.name }
   getOrder() { return [this.#uuid] }
   /** @param {string} id */
   getBlock(id) { return id === this.#uuid ? this.#block : null }
@@ -106,6 +122,34 @@ export class FakeInkProvider {
       if (o instanceof Error) throw o
       return deepFrozen(structuredClone(o))
     })
+  }
+
+  /** @param {string} pageId */
+  loadReading(pageId) {
+    this.calls.push('loadReading ' + pageId)
+    return Promise.resolve(deepFrozen(structuredClone(this.readings.get(pageId) || reading(pageId))))
+  }
+
+  /** @param {string} pageId */
+  readPage(pageId) {
+    this.calls.push('readPage ' + pageId)
+    const answer = this.reads.get(pageId) || reading(pageId, { running: true })
+    return Promise.resolve(deepFrozen(structuredClone(answer)))
+  }
+
+  /** @param {string} pageId */
+  newDocumentFromReading(pageId) {
+    this.calls.push('newDocumentFromReading ' + pageId)
+    return Promise.resolve(this.made).then((m) => {
+      if (m instanceof Error) throw m
+      return m
+    })
+  }
+
+  /** The container is called `name` now, and every follower is cued. @param {string} name */
+  rename(name) {
+    this.name = name
+    for (const listener of [...this.modelListeners]) listener.onChanged({ blockIds: [], orderChanged: false, replaced: [] })
   }
 
   /** @returns {number} how many pages have been asked for */

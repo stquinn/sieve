@@ -768,3 +768,40 @@ func TestDiagramProcessor_OnChange_thenDescribeJob(t *testing.T) {
 		t.Error("DescribeJob must dispatch a job for a block OnChange just armed PENDING")
 	}
 }
+
+// ── Drawn outside the job ───────────────────────────────────────────────────
+
+// A diagram drawn by a service outside its job is given what the job would render, and records
+// what the job's Apply records, or the error state the framework writes; a diagram the job would
+// not render has nothing to draw.
+func TestDiagramProcessor_DrawnElsewhereRecordsWhatTheJobWould(t *testing.T) {
+	p := NewDiagramProcessor(block.BlockServices{State: darkState()})
+	var _ block.DrawnElsewhere = p
+	for _, tc := range []struct {
+		name string
+		blk  *domain.SieveBlock
+	}{
+		{"mermaid", &domain.SieveBlock{ID: "di-m", Kind: "diagram", Attrs: map[string]interface{}{"diagramType": "mermaid", "source": "graph TD\nA-->B", "mode": "render"}}},
+		{"plantuml in edit mode", plantumlBlock("A -> B", "edit", "")},
+		{"plantuml with no source", plantumlBlock("", "render", "")},
+	} {
+		if src, ok := p.DrawingSource(*tc.blk); ok {
+			t.Errorf("%s: drawing source %q", tc.name, src)
+		}
+	}
+
+	blk := plantumlBlock("A -> B", "render", "")
+	src, ok := p.DrawingSource(*blk)
+	if !ok || src != p.effectiveSource("A -> B") {
+		t.Fatalf("drawing source %q, %v", src, ok)
+	}
+	p.Drawn(blk, "sieve://c/k.svg")
+	if blk.Attrs["svgAsset"] != "sieve://c/k.svg" || blk.Attrs["renderedHash"] != p.renderHash(src) ||
+		blk.Attrs["status"] != block.BlockStatusComplete || blk.Attrs["error"] != "" {
+		t.Errorf("drawn: %v", blk.Attrs)
+	}
+	p.NotDrawn(blk, errors.New("no server"))
+	if blk.Attrs["status"] != block.BlockStatusError || blk.Attrs["error"] != "no server" {
+		t.Errorf("not drawn: %v", blk.Attrs)
+	}
+}

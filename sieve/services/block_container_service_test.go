@@ -275,11 +275,23 @@ func TestBlockContainer_FaceIsStampedAndFound(t *testing.T) {
 	}
 }
 
+// refreshes records every uuid the change listener is told of.
+type refreshes struct{ uuids []string }
+
+func (r *refreshes) Refresh(uuid string) error {
+	r.uuids = append(r.uuids, uuid)
+	return nil
+}
+
 // SaveMeta writes .meta alone: the version, the snapshots and the body stay as
 // they were, the face and keys it was not asked to change are kept, and a Save of
 // a container loaded before it keeps what it wrote while laying its own face over.
+// The change listener hears each SaveMeta as it hears each Save, and a SaveMeta
+// that fails tells it nothing.
 func TestBlockContainer_SaveMetaWritesTheMetaAloneAndSaveKeepsIt(t *testing.T) {
 	containers, st := newTestContainers(t)
+	heard := &refreshes{}
+	containers.SetChangeListener(heard)
 	c, err := containers.Create(facedKind, map[string]interface{}{"title": "a"})
 	if err != nil {
 		t.Fatal(err)
@@ -289,6 +301,9 @@ func TestBlockContainer_SaveMetaWritesTheMetaAloneAndSaveKeepsIt(t *testing.T) {
 	}
 	if _, err := containers.SaveMeta(c.UUID(), func(m domain.DocumentMeta) { m.All()["foreign"] = "kept" }); err != nil {
 		t.Fatal(err)
+	}
+	if strings.Join(heard.uuids, " ") != c.UUID()+" "+c.UUID() {
+		t.Errorf("the listener heard %v after a Save and a SaveMeta", heard.uuids)
 	}
 	stale := c
 	body := func() string {
@@ -320,8 +335,12 @@ func TestBlockContainer_SaveMetaWritesTheMetaAloneAndSaveKeepsIt(t *testing.T) {
 		meta["sticky_title"] != "a" || meta[store.MetaKeyKind] != facedKind {
 		t.Errorf("after SaveMeta .meta is %v", meta)
 	}
+	heard.uuids = nil
 	if _, err := containers.SaveMeta(missingUUID, func(domain.DocumentMeta) {}); !errors.Is(err, domain.ErrNotBlockContainer) {
 		t.Errorf("SaveMeta of no container: %v", err)
+	}
+	if len(heard.uuids) != 0 {
+		t.Errorf("a failed SaveMeta told the listener of %v", heard.uuids)
 	}
 
 	stale.Merge(map[string]interface{}{"title": "b"})

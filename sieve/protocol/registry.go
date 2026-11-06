@@ -102,6 +102,9 @@ func (r *Registry) registerDocumentFrames() {
 	r.addFrame(ChannelDocument, Inbound, TypeSetPresenting, SetPresentingFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeInkPage, InkPageFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeInkOpenOnTablet, InkOpenOnTabletFrame{})
+	r.addFrame(ChannelDocument, Inbound, TypeInkReading, InkReadingFrame{})
+	r.addFrame(ChannelDocument, Inbound, TypeInkReadPage, InkReadPageFrame{})
+	r.addFrame(ChannelDocument, Inbound, TypeInkReadingDocument, InkReadingDocumentFrame{})
 
 	r.addFrame(ChannelDocument, Outbound, TypePong, PongFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeMarkdownContent, MarkdownContentFrame{})
@@ -127,6 +130,10 @@ func (r *Registry) registerDocumentFrames() {
 	r.addFrame(ChannelDocument, Outbound, TypeInkLivePage, InkLivePageFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeInkLogRestarted, InkLogRestartedFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeInkOpenOnTabletResult, InkOpenOnTabletResultFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeInkReadingContent, InkReadingContentFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeInkReadingChanged, InkReadingChangedFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeInkReadingDocumentResult, InkReadingDocumentResultFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeContainerNamed, ContainerNamedFrame{})
 }
 
 func (r *Registry) registerWorkspaceFrames() {

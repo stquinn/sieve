@@ -19,6 +19,7 @@ func TestRegistry_HoldsTheWholeVocabulary(t *testing.T) {
 			"retry-block-job", "extract", "block-op",
 			"load", "paste", "detect-extractions", "export", "focus", "text-replace",
 			"feature-control", "set-presenting", "ink-page", "ink-open-on-tablet",
+			"ink-reading", "ink-read-page", "ink-reading-document",
 		}},
 		{ChannelDocument, Outbound, []string{
 			"pong", "markdown-content", "wysiwyg-content", "extract-ack",
@@ -27,7 +28,8 @@ func TestRegistry_HoldsTheWholeVocabulary(t *testing.T) {
 			"load-content", "paste-ack", "detect-extractions-result", "export-content",
 			"text-marks", "text-replace-ack",
 			"ink-page-content", "ink-stroke-added", "ink-stroke-removed", "ink-live", "ink-live-page", "ink-log-restarted",
-			"ink-open-on-tablet-result",
+			"ink-open-on-tablet-result", "ink-reading-content", "ink-reading-changed", "ink-reading-document-result",
+			"container-named",
 		}},
 		{ChannelWorkspace, Inbound, []string{
 			"ping", "command", "command-cancel", "mention-query", "mention-resolve",

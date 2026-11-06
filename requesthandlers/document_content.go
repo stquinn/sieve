@@ -49,6 +49,7 @@ func (c documentContent) read(uuid string) (protocol.DocumentContent, bool) {
 		Mode:       mode,
 		UUID:       doc.UUID(),
 		Kind:       string(doc.Kind()),
+		Name:       doc.Meta().DisplayName(),
 		Scroll:     tab.Scroll,
 		Version:    doc.Meta().Version(),
 		Presenting: tab.Presenting,
@@ -86,6 +87,9 @@ func (c documentContent) readContainer(uuid string, tab domain.Tab) (protocol.Do
 	}
 	if version, stored := c.sp.Editor.ContainerVersion(uuid); stored {
 		content.Version = version
+	}
+	if name, stored := c.sp.Editor.ContainerName(uuid); stored {
+		content.Name = name
 	}
 	return content, true
 }

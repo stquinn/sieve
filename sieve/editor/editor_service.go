@@ -2,6 +2,7 @@ package editor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -270,6 +271,34 @@ func (es *EditorService) notifyBlockRemoved(uuid, blockID string) {
 	if l != nil {
 		l.OnBlockRemoved(uuid, blockID)
 	}
+}
+
+// ContainerNameListener is the optional interface a lifecycle listener implements
+// to hear that an open block container is now called something else.
+type ContainerNameListener interface {
+	OnContainerNamed(uuid, name string)
+}
+
+// notifyNamed tells the lifecycle listener, when it hears names, that container
+// uuid is now called name.
+func (es *EditorService) notifyNamed(uuid, name string) {
+	es.mu.RLock()
+	l, ok := es.listener.(ContainerNameListener)
+	es.mu.RUnlock()
+	if ok {
+		l.OnContainerNamed(uuid, name)
+	}
+}
+
+// ContainerName is what the block container open under uuid is called
+// (block.Registry.ContainerName), and false when what is open there is no stored
+// block container, or nothing is.
+func (es *EditorService) ContainerName(uuid string) (string, bool) {
+	c, ok := es.sessionFor(uuid).(*containerSession)
+	if !ok {
+		return "", false
+	}
+	return c.name(), true
 }
 
 // notifyOrderChanged announces a reorder. order is read back from the shadow
@@ -1245,6 +1274,47 @@ func (es *EditorService) HandlePasteSlice(uuid string, slice [][]block.ContentEn
 		}
 	}
 	return created, nil
+}
+
+// NewDocument creates an untitled note, as a new note is created, called name
+// when name is not empty, holding a copy of blocks in their order, and answers
+// its uuid. Each block is placed as a paste of it copied out of container source
+// is: its kind's processor builds the copy from the block's own view, so every
+// block and element id is minted afresh and whatever the block holds of source is
+// the new document's own — an asset copied, or drawn again by the copy's own job.
+// A block no kind builds is left out. The new document is written to disk and
+// left open, so a job a copy dispatched finishes on it; nothing in source is
+// changed and nothing links the two.
+func (es *EditorService) NewDocument(name, source string, blocks []domain.SieveBlock) (string, error) {
+	doc, err := es.documents.New()
+	if err != nil {
+		return "", fmt.Errorf("new document: %w", err)
+	}
+	if strings.TrimSpace(name) != "" {
+		if doc, err = es.documents.Rename(doc, strings.TrimSpace(name)); err != nil {
+			return "", fmt.Errorf("new document: %w", err)
+		}
+	}
+	uuid := doc.UUID()
+	if err := es.Open(uuid); err != nil {
+		return "", fmt.Errorf("new document %s: %w", uuid, err)
+	}
+	slice := make([][]block.ContentEntry, 0, len(blocks))
+	for _, blk := range blocks {
+		view, err := json.Marshal(blk.Attrs)
+		if err != nil {
+			return "", fmt.Errorf("new document %s: block %s: %w", uuid, blk.ID, err)
+		}
+		slice = append(slice, []block.ContentEntry{{MIMEType: "sieve/" + blk.Kind, Content: string(view),
+			Context: map[string]interface{}{"container": source}}})
+	}
+	if _, err := es.HandlePasteSlice(uuid, slice, block.AppendIndex); err != nil {
+		return "", fmt.Errorf("new document %s: %w", uuid, err)
+	}
+	if err := es.Flush(uuid); err != nil {
+		return "", fmt.Errorf("new document %s: %w", uuid, err)
+	}
+	return uuid, nil
 }
 
 // HandlePaste runs paste matchers and delegates to CreateBlock on the first match.

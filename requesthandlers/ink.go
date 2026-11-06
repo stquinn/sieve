@@ -12,6 +12,7 @@ import (
 
 	"sieve/logger"
 	"sieve/sieve"
+	"sieve/sieve/block"
 	"sieve/sieve/ink"
 	"sieve/sieve/ink/link"
 	"sieve/sieve/protocol"
@@ -247,8 +248,10 @@ func (v *inkSessionView) duration(d time.Duration) string {
 // goroutine for it: a socket slow to take a frame holds back only this stream's queue, never the
 // link.
 type inkStream struct {
-	svc  *ink.InkService
-	send func(uuid string, frame interface{})
+	svc *ink.InkService
+	// readings are the readings of the notes' pages; nil when there are none.
+	readings *ink.PageReadings
+	send     func(uuid string, frame interface{})
 	// notes are held by socket: a container's uuid, or the Live view's.
 	notes *ink.OpenNotes
 	// view is the Live view's uuid.
@@ -316,18 +319,54 @@ func (w *tabletWindow) replay(container string, page link.ID, reply func(interfa
 	reply(protocol.NewInkLiveFrame([]protocol.InkLiveRecord{{Record: protocol.InkLiveView, X: w.x, Y: w.y}}))
 }
 
-var _ ink.Listener = (*inkStream)(nil)
+var (
+	_ ink.Listener        = (*inkStream)(nil)
+	_ ink.ReadingListener = (*inkStream)(nil)
+)
 
-// newInkStream subscribes a stream to svc that sends through send, a uuid naming the socket that
-// has it open.
-func newInkStream(svc *ink.InkService, send func(uuid string, frame interface{})) *inkStream {
-	s := &inkStream{svc: svc, send: send, notes: ink.NewOpenNotes(svc), view: svc.LiveView().UUID()}
+// newInkStream subscribes a stream to svc, and to readings when there are any, that sends through
+// send, a uuid naming the socket that has it open.
+func newInkStream(svc *ink.InkService, readings *ink.PageReadings, send func(uuid string, frame interface{})) *inkStream {
+	s := &inkStream{svc: svc, readings: readings, send: send, notes: ink.NewOpenNotes(svc), view: svc.LiveView().UUID()}
 	svc.Subscribe(s)
+	if readings != nil {
+		readings.Subscribe(s)
+	}
 	return s
 }
 
 // close unsubscribes the stream.
-func (s *inkStream) close() { s.svc.Unsubscribe(s) }
+func (s *inkStream) close() {
+	s.svc.Unsubscribe(s)
+	if s.readings != nil {
+		s.readings.Unsubscribe(s)
+	}
+}
+
+// ReadingChanged sends what is now known of the reading of page to the socket of the container
+// holding its note.
+func (s *inkStream) ReadingChanged(container string, page link.ID) {
+	reading, err := s.readings.Reading(container, page)
+	if err != nil {
+		logger.Warn("ink: a changed reading could not be read", "container", container, "page", page.String(), "err", err.Error())
+		return
+	}
+	s.send(container, protocol.NewInkReadingChangedFrame(page.String(), s.readingOf(reading)))
+}
+
+// readingOf is r as the wire carries it.
+func (s *inkStream) readingOf(r ink.Reading) protocol.InkReading {
+	blocks, _ := block.BlockDocToFrontendBlocks(r.Blocks)
+	state := protocol.InkReadingNone
+	switch r.Status {
+	case ink.ReadingReady:
+		state = protocol.InkReadingReady
+	case ink.ReadingStale:
+		state = protocol.InkReadingStale
+	}
+	return protocol.InkReading{State: state, Key: r.Key, Blocks: blocks, Running: r.Running, Available: r.Available,
+		Unavailable: r.Unavailable, Failed: r.Failed}
+}
 
 // answerPage answers an ink-page asked on socket through reply, from the note of the socket's
 // container or, on the Live view's socket, of the note it mirrors. The socket holds that note open

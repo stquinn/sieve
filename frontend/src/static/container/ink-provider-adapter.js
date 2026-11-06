@@ -6,13 +6,14 @@
 
 import { ProviderAdapter } from './provider-adapter.js'
 import { ContractViolation } from '../contract/sieve-block.js'
-import { InkFeed } from '../contract/ink-container-provider.js'
+import { InkFeed, InkReadingState } from '../contract/ink-container-provider.js'
 import { DocumentFrame } from '../generated/protocol.js'
 
 /** @typedef {import('../contract/ink-container-provider.js').InkPageAnswer} InkPageAnswer */
 /** @typedef {import('../contract/ink-container-provider.js').InkOpeningResult} InkOpeningResult */
 /** @typedef {import('../contract/ink-container-provider.js').InkFeedEvent} InkFeedEvent */
 /** @typedef {import('../contract/ink-container-provider.js').InkLiveRecord} InkLiveRecord */
+/** @typedef {import('../contract/ink-container-provider.js').InkReading} InkReading */
 
 export class InkProviderAdapter extends ProviderAdapter {
   /** @type {import('./document-service.js').DocumentService} */ #documents
@@ -24,7 +25,7 @@ export class InkProviderAdapter extends ProviderAdapter {
   constructor(model, documentService) {
     super(model)
     if (!documentService || typeof documentService.inkPage !== 'function' || typeof documentService.observeInk !== 'function' ||
-      typeof documentService.inkOpenOnTablet !== 'function') {
+      typeof documentService.inkOpenOnTablet !== 'function' || typeof documentService.inkReading !== 'function') {
       throw new ContractViolation('InkProviderAdapter: construct over the DocumentService')
     }
     this.#documents = documentService
@@ -40,6 +41,21 @@ export class InkProviderAdapter extends ProviderAdapter {
   openOnTablet() {
     return this.#documents.inkOpenOnTablet(this.getUuid())
       .then((answer) => /** @type {InkOpeningResult} */ (ProviderAdapter._frozen({ outcome: answer.outcome, reason: answer.reason })))
+  }
+
+  /** @param {string} pageId @returns {Promise<InkReading>} */
+  loadReading(pageId) {
+    return this.#documents.inkReading(this.getUuid(), pageId).then((wire) => this.#reading(pageId, wire))
+  }
+
+  /** @param {string} pageId @returns {Promise<InkReading>} */
+  readPage(pageId) {
+    return this.#documents.inkReadPage(this.getUuid(), pageId).then((wire) => this.#reading(pageId, wire))
+  }
+
+  /** @param {string} pageId @returns {Promise<string>} */
+  newDocumentFromReading(pageId) {
+    return this.#documents.inkReadingDocument(this.getUuid(), pageId)
   }
 
   /**
@@ -72,8 +88,32 @@ export class InkProviderAdapter extends ProviderAdapter {
           : { type: InkFeed.LIVE_PAGE, live: false, pageId: null, view: null }
       case DocumentFrame.INK_LOG_RESTARTED:
         return { type: InkFeed.LOG_RESTARTED }
+      case DocumentFrame.INK_READING_CHANGED:
+        return { type: InkFeed.READING, reading: this.#readingOf(String(frame.pageId), frame.reading || {}) }
       default:
         return null
+    }
+  }
+
+  /** A reading as the wire carries it, as the contract's frozen InkReading.
+   *  @param {string} pageId @param {Record<string, any>} wire @returns {InkReading} */
+  #reading(pageId, wire) {
+    return /** @type {InkReading} */ (ProviderAdapter._frozen(this.#readingOf(pageId, wire)))
+  }
+
+  /** @param {string} pageId @param {Record<string, any>} wire @returns {InkReading} */
+  #readingOf(pageId, wire) {
+    return {
+      pageId: pageId,
+      state: String(wire.state || InkReadingState.NONE),
+      key: String(wire.key || ''),
+      blocks: (wire.blocks || []).map((/** @type {Record<string, any>} */ b) => ({
+        id: String(b.id), kind: String(b.kind), attrs: Object.assign({}, b.attrs, { id: String(b.id) }),
+      })),
+      running: wire.running === true,
+      available: wire.available === true,
+      unavailable: String(wire.unavailable || ''),
+      failed: String(wire.failed || ''),
     }
   }
 

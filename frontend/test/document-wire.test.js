@@ -168,16 +168,54 @@ describe('DocumentService ink — a page asked for, and the ink frames observed'
     await expect(serviceRig({ uuid: null }).documentService.inkOpenOnTablet('doc-1')).rejects.toThrow()
   })
 
-  it('observes the four pushed ink frames, in order, and nothing else', () => {
+  it('observes the pushed ink frames, in order, and nothing else', () => {
     const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
     /** @type {string[]} */ const types = []
     const stop = documentService.observeInk('doc-1', (msg) => types.push(msg.type))
-    for (const type of ['ink-live-page', 'insert-block', 'ink-live', 'ink-stroke-added', 'block-attrs-updated', 'ink-stroke-removed']) {
+    for (const type of ['ink-live-page', 'insert-block', 'ink-live', 'ink-stroke-added', 'block-attrs-updated', 'ink-stroke-removed',
+      'ink-reading-changed', 'container-named', 'ink-log-restarted']) {
       sock.driveMessage({ type })
     }
     stop()
     sock.driveMessage({ type: 'ink-live' })
-    expect(types).toEqual(['ink-live-page', 'ink-live', 'ink-stroke-added', 'ink-stroke-removed'])
+    expect(types).toEqual(['ink-live-page', 'ink-live', 'ink-stroke-added', 'ink-stroke-removed', 'ink-reading-changed', 'ink-log-restarted'])
+  })
+
+  const reading = { state: 'ready', key: 'k1', blocks: [{ id: 'b1', kind: 'prose', attrs: { content: '# Kitchen' } }], running: false, available: true }
+
+  it.each([
+    ['inkReading', 'ink-reading'],
+    ['inkReadPage', 'ink-read-page'],
+  ])('%s sends {pageId} as %s and resolves the reading the answer carries', async (verb, type) => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    const pending = /** @type {any} */ (documentService)[verb]('doc-1', 'p1')
+    expect(sock.sentOfType(type)[0]).toEqual({ type, pageId: 'p1', opId: lastOpId(sock, type) })
+    sock.driveMessage({ type: 'ink-reading-content', opId: lastOpId(sock, type), pageId: 'p1', reading })
+    await expect(pending).resolves.toEqual(reading)
+  })
+
+  it.each([
+    ['inkReading', 'ink-reading'],
+    ['inkReadPage', 'ink-read-page'],
+  ])('%s rejects a refusal, naming why, and with no channel', async (verb, type) => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    const pending = /** @type {any} */ (documentService)[verb]('doc-1', 'p9')
+    sock.driveMessage({ type: 'ink-reading-content', opId: lastOpId(sock, type), pageId: 'p9', reading: null, error: 'no page p9' })
+    await expect(pending).rejects.toThrow('no page p9')
+    await expect(/** @type {any} */ (serviceRig({ uuid: null }).documentService)[verb]('doc-1', 'p1')).rejects.toThrow()
+  })
+
+  it('asks for a document from a page\'s reading and resolves its uuid, and rejects one made of nothing', async () => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    const pending = documentService.inkReadingDocument('doc-1', 'p1')
+    const opId = () => lastOpId(sock, 'ink-reading-document')
+    expect(sock.sentOfType('ink-reading-document')[0]).toEqual({ type: 'ink-reading-document', pageId: 'p1', opId: opId() })
+    sock.driveMessage({ type: 'ink-reading-document-result', opId: opId(), uuid: 'doc-2' })
+    await expect(pending).resolves.toBe('doc-2')
+    const refused = documentService.inkReadingDocument('doc-1', 'p2')
+    sock.driveMessage({ type: 'ink-reading-document-result', opId: opId(), error: 'not read' })
+    await expect(refused).rejects.toThrow('not read')
+    await expect(serviceRig({ uuid: null }).documentService.inkReadingDocument('doc-1', 'p1')).rejects.toThrow()
   })
 })
 

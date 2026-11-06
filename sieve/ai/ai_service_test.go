@@ -272,3 +272,69 @@ func TestAIService_DescribeNote_ShowsThePagesAndReadsTheAnswer(t *testing.T) {
 		})
 	}
 }
+
+// ReadPage runs in the directory of the page's image, names it to the model, uses the note's own
+// containment profile, and reads the model's parts bare or fenced, text and both diagram
+// languages alike. A page image that is no asset, or a dumb tier, is an error, and the CLI does
+// not run.
+func TestAIService_ReadPage_ShowsThePageAndReadsItsParts(t *testing.T) {
+	const note = "0197b1f4-5a5a-7000-8000-00000000d002"
+	answer := `{"parts": [{"type": "text", "markdown": "# Kitchen\n\n- tiles [?]"},` +
+		`{"type": "diagram", "language": "mermaid", "source": "flowchart TD\n  A --> B"},` +
+		`{"type": "diagram", "language": "plantuml", "source": "Alice -> Bob: hi"}]}`
+	image := domain.NewLeafAddress(note, "page-p1-k1.png")
+	resolver := pathResolver{image.String(): "blocks/" + note + "/page-p1-k1.png"}
+	want := domain.PageReading{Parts: []domain.ReadingPart{
+		{Type: domain.ReadingPartText, Markdown: "# Kitchen\n\n- tiles [?]"},
+		{Type: domain.ReadingPartDiagram, Language: "mermaid", Source: "flowchart TD\n  A --> B"},
+		{Type: domain.ReadingPartDiagram, Language: "plantuml", Source: "Alice -> Bob: hi"},
+	}}
+	for _, tc := range []struct {
+		name    string
+		reply   string
+		page    domain.Address
+		dumb    bool
+		wantErr bool
+	}{
+		{"a bare answer", answer, image, false, false},
+		{"a fenced answer", "```json\n" + answer + "\n```", image, false, false},
+		{"a page that is no asset", answer, domain.NewLeafAddress(note, "missing.png"), false, true},
+		{"a dumb tier", answer, image, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cap := &captureRunner{ret: tc.reply}
+			svc := newSmartTestService(t, cap)
+			svc.nodes = resolver
+			if tc.dumb {
+				settings := svc.state.LoadSettings()
+				settings.CLI, settings.CLIPath = "", ""
+				if err := svc.state.SaveSettings(settings); err != nil {
+					t.Fatal(err)
+				}
+			}
+			mcpEp := &fakeDocMCPEndpoint{url: "http://127.0.0.1:41234/mcp"}
+			svc.SetMCPEndpoint(mcpEp)
+
+			got, err := svc.ReadPage(note, tc.page)
+			if tc.wantErr {
+				if err == nil || cap.op != "" {
+					t.Fatalf("ReadPage = %+v, %v; the CLI ran %q", got, err, cap.op)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ReadPage: %v", err)
+			}
+			if fmt.Sprint(got) != fmt.Sprint(want) {
+				t.Errorf("ReadPage = %+v", got)
+			}
+			if cap.op != "page-reading" || cap.cwd != filepath.Join(svc.storePath, "blocks", note) || mcpEp.lastDoc != note {
+				t.Errorf("op %q, cwd %q, profile for %q", cap.op, cap.cwd, mcpEp.lastDoc)
+			}
+			template, _ := svc.prompts.GetPromptContent("page-reading")
+			if wantPrompt := strings.ReplaceAll(template, "{page_file}", "page-p1-k1.png"); cap.prompt != wantPrompt {
+				t.Errorf("prompt = %q, want %q", cap.prompt, wantPrompt)
+			}
+		})
+	}
+}

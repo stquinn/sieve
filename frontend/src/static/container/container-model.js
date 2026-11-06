@@ -60,6 +60,7 @@ import { DocumentFrame } from '../generated/protocol.js'
  *
  * @typedef {object} ContainerContent
  * @property {string} [uuid]  empty when Go found nothing, which seeds an empty container
+ * @property {string} [name]  what the container is called; absent from an answer that does not say, which leaves the name held
  * @property {Array<{id?: string, kind?: string, attrs?: Record<string, any>}>} [blocks]
  */
 
@@ -71,6 +72,7 @@ const DEFAULT_BLOCK_KIND = 'code'
 export class ContainerModel {
   /** @type {string} */ #uuid
   /** @type {string} */ #kind
+  /** @type {string} */ #name = ''
   /** @type {string[]} */ #order = []
   /** @type {Map<string, Readonly<BlockNode>>} */ #nodes = new Map()
   /** @type {Map<string, Map<string, ReadonlyArray<Readonly<SieveTextMark>>>>} feature →
@@ -101,6 +103,9 @@ export class ContainerModel {
 
   /** @returns {string} */
   getKind() { return this.#kind }
+
+  /** @returns {string} what the container is called; '' when it has no name */
+  getName() { return this.#name }
 
   /** @returns {ReadonlyArray<string>} the child ids in container order */
   getOrder() { return Object.freeze(this.#order.slice()) }
@@ -182,6 +187,7 @@ export class ContainerModel {
     }
     this.#order = order
     this.#nodes = nodes
+    if (typeof c.name === 'string') this.#name = c.name
     this.#emit(order, true)
   }
 
@@ -199,6 +205,16 @@ export class ContainerModel {
     else if (f.type === DocumentFrame.REMOVE_BLOCK) this.#applyRemove(f)
     else if (f.type === DocumentFrame.ORDER_CHANGED) this.#applyOrderChanged(f)
     else if (f.type === DocumentFrame.TEXT_MARKS) this.#applyMarks(f)
+    else if (f.type === DocumentFrame.CONTAINER_NAMED) this.#applyName(f)
+  }
+
+  /** Takes the container's new name; a name it already has changes nothing.
+   *  @param {Record<string, any>} f */
+  #applyName(f) {
+    const name = String(f.name || '')
+    if (name === this.#name) return
+    this.#name = name
+    this.#emit([], false)
   }
 
   /**

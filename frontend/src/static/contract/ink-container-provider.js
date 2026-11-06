@@ -1,8 +1,10 @@
 // @ts-check
 // What a host hands the lens of a Digital Note: the note's one block, read as
-// any block is, and the pages drawn on it. A page is asked for whole; every
-// later change to it arrives on the container's feed as one stroke added or one
-// removed, each naming the seq of the log record that made it.
+// any block is, the pages drawn on it, and the readings of those pages. A page
+// is asked for whole; every later change to it arrives on the container's feed
+// as one stroke added or one removed, each naming the seq of the log record
+// that made it. A page's reading is asked for, and each change to it arrives on
+// the feed whole.
 
 /**
  * One sampled pen point, in page units.
@@ -49,6 +51,7 @@ export const InkFeed = Object.freeze({
   LIVE: 'live',
   LIVE_PAGE: 'live-page',
   LOG_RESTARTED: 'log-restarted',
+  READING: 'reading',
 })
 
 /**
@@ -99,7 +102,34 @@ export const InkFeed = Object.freeze({
  * @typedef {Readonly<{type: 'log-restarted'}>} InkLogRestarted
  */
 
-/** @typedef {InkStrokeAdded|InkStrokeRemoved|InkLive|InkLivePage|InkLogRestarted} InkFeedEvent */
+/** Whether a page has a reading, and of what. */
+export const InkReadingState = Object.freeze({
+  /** no reading is kept */
+  NONE: 'none',
+  /** a reading of the page as it is now */
+  READY: 'ready',
+  /** a reading of the page as it was before it changed */
+  STALE: 'stale',
+})
+
+/**
+ * What is known of the reading of one page: its state, the key of the page it
+ * is of ('' with none), its blocks in the page's order (empty with none),
+ * whether a reading is under way, whether anything can read a page and, when
+ * nothing can, why, and what went wrong the last time the page was read ('' when
+ * nothing did).
+ * @typedef {Readonly<{pageId: string, state: string, key: string,
+ *   blocks: ReadonlyArray<Readonly<import('./container-provider.js').BlockData>>,
+ *   running: boolean, available: boolean, unavailable: string, failed: string}>} InkReading
+ */
+
+/**
+ * What is now known of the reading of a page: a reading of it began, or ended
+ * in a reading kept or in a failure.
+ * @typedef {Readonly<{type: 'reading', reading: InkReading}>} InkReadingChanged
+ */
+
+/** @typedef {InkStrokeAdded|InkStrokeRemoved|InkLive|InkLivePage|InkLogRestarted|InkReadingChanged} InkFeedEvent */
 
 /** What came of asking the tablet the note came from to open it. */
 export const InkOpening = Object.freeze({
@@ -132,13 +162,26 @@ export const InkRefusal = Object.freeze({
 /**
  * The read minimum and the feed, plus the pages, plus a query that asks the
  * tablet the note came from to open it — a command to the tablet that names the
- * note alone and changes nothing here. `loadPage` REJECTS for a page the note
- * does not have, and when the host cannot answer; `openOnTablet` REJECTS when
- * nothing could be asked: the container holds no note from a tablet, or the host
- * did not answer.
+ * note alone and changes nothing here — plus the readings of the pages.
+ *
+ * - `loadPage` REJECTS for a page the note does not have, and when the host
+ *   cannot answer.
+ * - `openOnTablet` REJECTS when nothing could be asked: the container holds no
+ *   note from a tablet, or the host did not answer.
+ * - `loadReading` answers what is known of a page's reading; `readPage` starts
+ *   reading it, unless it has a reading of what it holds now or is being read,
+ *   and answers what is then known, the reading's end arriving on the feed. Both
+ *   REJECT for a page the note does not have, and when the host cannot answer.
+ * - `newDocumentFromReading` makes an ordinary new document holding a copy of
+ *   the page's reading, linked to nothing, and resolves its uuid; it REJECTS when
+ *   the page has no reading, and when the host cannot answer. Nothing of the
+ *   note or its reading changes.
  *
  * @typedef {import('./container-provider.js').ContainerProvider & {
  *   loadPage: (pageId: string) => Promise<InkPageAnswer>,
  *   openOnTablet: () => Promise<InkOpeningResult>,
+ *   loadReading: (pageId: string) => Promise<InkReading>,
+ *   readPage: (pageId: string) => Promise<InkReading>,
+ *   newDocumentFromReading: (pageId: string) => Promise<string>,
  * }} InkContainerProvider
  */

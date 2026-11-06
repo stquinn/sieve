@@ -367,6 +367,18 @@ export class AbstractEditor extends Lens {
    */
   get _blockMode() { return null }
 
+  /**
+   * The modes whose surface needs no seed: it reads the container on its
+   * bootstrap cue, as the block mode's does. A lens whose other modes are further
+   * views of the container, rather than verbatim buffers, names them here too.
+   * Two seedless modes are flipped between without the container being asked for
+   * anything, so a lens that cannot edit blocks flips between them, and the
+   * surface it leaves hands the next one where the reader was.
+   * @protected
+   * @returns {ReadonlyArray<string>}
+   */
+  get _seedlessModes() { return this._blockMode === null ? [] : [this._blockMode] }
+
   /** @returns {unknown|null} the mounted surface's own editing engine, opaque to
    *  this class; null when no surface is mounted or the surface exposes none. */
   get editorPane() { return this.#surface ? this.#surface.editorPane : null }
@@ -536,7 +548,7 @@ export class AbstractEditor extends Lens {
    *
    * A verbatim buffer is seeded by the container's own projection — the ask that
    * also hands the container's text over to that buffer, which is why a buffer
-   * surface is never presented without it. The block mode reads the model on its
+   * surface is never presented without it. A seedless mode reads the model on its
    * bootstrap cue and needs no seed at all.
    *
    * REJECTS when the projection does not arrive: an unseeded verbatim buffer
@@ -545,7 +557,7 @@ export class AbstractEditor extends Lens {
    * @returns {Promise<string|null>}
    */
   #seedFor(mode) {
-    if (mode === this._blockMode) return Promise.resolve(null)
+    if (this._seedlessModes.includes(mode)) return Promise.resolve(null)
     return this.provider.getContents()
   }
 
@@ -737,9 +749,9 @@ export class AbstractEditor extends Lens {
    */
   setMode(target) {
     if (!this._modes.includes(target)) return Promise.resolve(false)
-    // A container with no block extension has one shape to be in — a prompt IS
-    // its text.
-    if (!this.canEditBlocks) return Promise.resolve(false)
+    // A container with no block extension has one shape to be in as text — a
+    // prompt IS its text — and flips only between views that need no seed.
+    if (!this.canEditBlocks && !this.#seedlessFlip(target)) return Promise.resolve(false)
     if (!this.#surface || target === this.mode) return Promise.resolve(false)
     if (this.#modeFlip) return this.#modeFlip
     this.#modeFlip = this.#flipTo(target).finally(() => { this.#modeFlip = null })
@@ -767,6 +779,12 @@ export class AbstractEditor extends Lens {
     // Flush pending edits BEFORE the handshake so Go's shadow is current.
     old.flushPending()
 
+    if (this.#seedlessFlip(target)) {
+      this.#viewState = old.viewState()
+      this.presentSurface(target, /** @type {HTMLElement} */ (this.host), null)
+      return true
+    }
+
     // Both directions speak WHOLE-CONTENT through the same provider.
     const provider = this.provider
     let payload
@@ -792,6 +810,13 @@ export class AbstractEditor extends Lens {
     // Success only — the swap is unreachable on timeout/error.
     this.presentSurface(target, /** @type {HTMLElement} */ (this.host), payload)
     return true
+  }
+
+  /** @param {string} target @returns {boolean} whether the mode in force and
+   *  `target` both need no seed */
+  #seedlessFlip(target) {
+    const seedless = this._seedlessModes
+    return seedless.includes(this.mode) && seedless.includes(target)
   }
 
   /**
@@ -900,7 +925,7 @@ export class AbstractEditor extends Lens {
   async reload() {
     const mode = this.mode
     if (!this._modes.includes(mode)) return
-    const painted = mode === this._blockMode
+    const painted = this._seedlessModes.includes(mode)
     if (painted && !this.#surface) return
     if (!this.#loadContainer) return // no loader: nothing to reload from
     this.#reloadInProgress = true

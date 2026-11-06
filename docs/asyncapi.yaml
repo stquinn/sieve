@@ -39,6 +39,12 @@ channels:
         $ref: '#/components/messages/documentInkOpenOnTablet'
       documentInkPage:
         $ref: '#/components/messages/documentInkPage'
+      documentInkReadPage:
+        $ref: '#/components/messages/documentInkReadPage'
+      documentInkReading:
+        $ref: '#/components/messages/documentInkReading'
+      documentInkReadingDocument:
+        $ref: '#/components/messages/documentInkReadingDocument'
       documentLoad:
         $ref: '#/components/messages/documentLoad'
       documentPaste:
@@ -55,6 +61,8 @@ channels:
         $ref: '#/components/messages/documentBlockAttrsUpdated'
       documentBlockOpAck:
         $ref: '#/components/messages/documentBlockOpAck'
+      documentContainerNamed:
+        $ref: '#/components/messages/documentContainerNamed'
       documentDetectExtractionsResult:
         $ref: '#/components/messages/documentDetectExtractionsResult'
       documentError:
@@ -73,6 +81,12 @@ channels:
         $ref: '#/components/messages/documentInkOpenOnTabletResult'
       documentInkPageContent:
         $ref: '#/components/messages/documentInkPageContent'
+      documentInkReadingChanged:
+        $ref: '#/components/messages/documentInkReadingChanged'
+      documentInkReadingContent:
+        $ref: '#/components/messages/documentInkReadingContent'
+      documentInkReadingDocumentResult:
+        $ref: '#/components/messages/documentInkReadingDocumentResult'
       documentInkStrokeAdded:
         $ref: '#/components/messages/documentInkStrokeAdded'
       documentInkStrokeRemoved:
@@ -160,6 +174,9 @@ operations:
       - $ref: '#/channels/document/messages/documentFocus'
       - $ref: '#/channels/document/messages/documentInkOpenOnTablet'
       - $ref: '#/channels/document/messages/documentInkPage'
+      - $ref: '#/channels/document/messages/documentInkReadPage'
+      - $ref: '#/channels/document/messages/documentInkReading'
+      - $ref: '#/channels/document/messages/documentInkReadingDocument'
       - $ref: '#/channels/document/messages/documentLoad'
       - $ref: '#/channels/document/messages/documentPaste'
       - $ref: '#/channels/document/messages/documentPing'
@@ -174,6 +191,7 @@ operations:
     messages:
       - $ref: '#/channels/document/messages/documentBlockAttrsUpdated'
       - $ref: '#/channels/document/messages/documentBlockOpAck'
+      - $ref: '#/channels/document/messages/documentContainerNamed'
       - $ref: '#/channels/document/messages/documentDetectExtractionsResult'
       - $ref: '#/channels/document/messages/documentError'
       - $ref: '#/channels/document/messages/documentExportContent'
@@ -183,6 +201,9 @@ operations:
       - $ref: '#/channels/document/messages/documentInkLogRestarted'
       - $ref: '#/channels/document/messages/documentInkOpenOnTabletResult'
       - $ref: '#/channels/document/messages/documentInkPageContent'
+      - $ref: '#/channels/document/messages/documentInkReadingChanged'
+      - $ref: '#/channels/document/messages/documentInkReadingContent'
+      - $ref: '#/channels/document/messages/documentInkReadingDocumentResult'
       - $ref: '#/channels/document/messages/documentInkStrokeAdded'
       - $ref: '#/channels/document/messages/documentInkStrokeRemoved'
       - $ref: '#/channels/document/messages/documentInsertBlock'
@@ -392,6 +413,42 @@ components:
         $ref: '#/components/correlationIds/opId'
       payload:
         $ref: '#/components/schemas/ProtocolInkPageFrame'
+    documentInkReadPage:
+      name: ink-read-page
+      title: ink-read-page
+      summary: InkReadPageFrame asks for one page of this channel's Digital Note to be read, unless it has a reading of what it holds now or is being read.
+      description: |-
+        InkReadPageFrame asks for one page of this channel's Digital Note to be read, unless it has a
+        reading of what it holds now or is being read. It is answered at once with what is then known of
+        the page's reading; the reading's end arrives as an ink-reading-changed.
+      contentType: application/json
+      correlationId:
+        $ref: '#/components/correlationIds/opId'
+      payload:
+        $ref: '#/components/schemas/ProtocolInkReadPageFrame'
+    documentInkReading:
+      name: ink-reading
+      title: ink-reading
+      summary: InkReadingFrame asks what is known of the reading of one page of this channel's Digital Note.
+      description: InkReadingFrame asks what is known of the reading of one page of this channel's Digital Note.
+      contentType: application/json
+      correlationId:
+        $ref: '#/components/correlationIds/opId'
+      payload:
+        $ref: '#/components/schemas/ProtocolInkReadingFrame'
+    documentInkReadingDocument:
+      name: ink-reading-document
+      title: ink-reading-document
+      summary: 'InkReadingDocumentFrame asks for a new document made from the reading of one page of this channel''s Digital Note: an ordinary untitled note holding a copy of the reading''s blocks, linked to nothing.'
+      description: |-
+        InkReadingDocumentFrame asks for a new document made from the reading of one page of this
+        channel's Digital Note: an ordinary untitled note holding a copy of the reading's blocks, linked
+        to nothing. The note and its reading are not changed.
+      contentType: application/json
+      correlationId:
+        $ref: '#/components/correlationIds/opId'
+      payload:
+        $ref: '#/components/schemas/ProtocolInkReadingDocumentFrame'
     documentLoad:
       name: load
       title: load
@@ -493,6 +550,14 @@ components:
         $ref: '#/components/correlationIds/opId'
       payload:
         $ref: '#/components/schemas/ProtocolAckFrame'
+    documentContainerNamed:
+      name: container-named
+      title: container-named
+      summary: ContainerNamedFrame is this channel's block container called something else now.
+      description: ContainerNamedFrame is this channel's block container called something else now.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProtocolContainerNamedFrame'
     documentDetectExtractionsResult:
       name: detect-extractions-result
       title: detect-extractions-result
@@ -600,6 +665,40 @@ components:
         $ref: '#/components/correlationIds/opId'
       payload:
         $ref: '#/components/schemas/ProtocolInkPageContentFrame'
+    documentInkReadingChanged:
+      name: ink-reading-changed
+      title: ink-reading-changed
+      summary: 'InkReadingChangedFrame is what is known of the reading of a page of this channel''s note now that it has changed: a reading began, or ended in a reading kept or in a failure.'
+      description: |-
+        InkReadingChangedFrame is what is known of the reading of a page of this channel's note now
+        that it has changed: a reading began, or ended in a reading kept or in a failure.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProtocolInkReadingChangedFrame'
+    documentInkReadingContent:
+      name: ink-reading-content
+      title: ink-reading-content
+      summary: InkReadingContentFrame answers an ink-reading or an ink-read-page with what is known of the page's reading, or why there is none to say.
+      description: |-
+        InkReadingContentFrame answers an ink-reading or an ink-read-page with what is known of the
+        page's reading, or why there is none to say.
+      contentType: application/json
+      correlationId:
+        $ref: '#/components/correlationIds/opId'
+      payload:
+        $ref: '#/components/schemas/ProtocolInkReadingContentFrame'
+    documentInkReadingDocumentResult:
+      name: ink-reading-document-result
+      title: ink-reading-document-result
+      summary: InkReadingDocumentResultFrame answers an ink-reading-document with the new document's uuid, or why none was made.
+      description: |-
+        InkReadingDocumentResultFrame answers an ink-reading-document with the new document's uuid, or
+        why none was made.
+      contentType: application/json
+      correlationId:
+        $ref: '#/components/correlationIds/opId'
+      payload:
+        $ref: '#/components/schemas/ProtocolInkReadingDocumentResultFrame'
     documentInkStrokeAdded:
       name: ink-stroke-added
       title: ink-stroke-added
@@ -1421,6 +1520,18 @@ components:
       required:
         - type
         - uuid
+    ProtocolContainerNamedFrame:
+      type: object
+      description: ContainerNamedFrame is this channel's block container called something else now.
+      properties:
+        type:
+          type: string
+        name:
+          type: string
+          description: what the container is called now; empty when it has no name
+      required:
+        - type
+        - name
     ProtocolContainerSavedFrame:
       type: object
       description: |-
@@ -2032,6 +2143,143 @@ components:
       required:
         - type
         - pageId
+    ProtocolInkReadPageFrame:
+      type: object
+      description: |-
+        InkReadPageFrame asks for one page of this channel's Digital Note to be read, unless it has a
+        reading of what it holds now or is being read. It is answered at once with what is then known of
+        the page's reading; the reading's end arrives as an ink-reading-changed.
+      properties:
+        type:
+          type: string
+        opId:
+          type: string
+          description: echoed on the ink-reading-content reply
+        pageId:
+          type: string
+          description: the page's id, as the block's note.pages lists it
+      required:
+        - type
+        - pageId
+    ProtocolInkReading:
+      type: object
+      description: InkReading is what is known of the reading of one page.
+      properties:
+        state:
+          type: string
+          description: none | ready (a reading of the page as it is now) | stale (a reading of the page as it was before it changed)
+        key:
+          type: string
+          description: the page key the reading is of; absent with none
+        blocks:
+          type: array
+          description: the reading, in the page's order, in the shape a load's blocks take; absent with none
+          items:
+            $ref: '#/components/schemas/BlockFrontendBlock'
+        running:
+          type: boolean
+          description: a reading of the page is under way
+        available:
+          type: boolean
+          description: false while nothing can read a page
+        unavailable:
+          type: string
+          description: why nothing can read a page; present only when available is false
+        failed:
+          type: string
+          description: what went wrong the last time the page was read; absent when nothing did
+      required:
+        - state
+        - running
+        - available
+    ProtocolInkReadingChangedFrame:
+      type: object
+      description: |-
+        InkReadingChangedFrame is what is known of the reading of a page of this channel's note now
+        that it has changed: a reading began, or ended in a reading kept or in a failure.
+      properties:
+        type:
+          type: string
+        pageId:
+          type: string
+        reading:
+          $ref: '#/components/schemas/ProtocolInkReading'
+      required:
+        - type
+        - pageId
+        - reading
+    ProtocolInkReadingContentFrame:
+      type: object
+      description: |-
+        InkReadingContentFrame answers an ink-reading or an ink-read-page with what is known of the
+        page's reading, or why there is none to say.
+      properties:
+        type:
+          type: string
+        opId:
+          type: string
+        pageId:
+          type: string
+          description: the page asked of, echoed
+        reading:
+          $ref: '#/components/schemas/ProtocolInkReading'
+        error:
+          type: string
+          description: 'present only when refused: the channel holds no Digital Note, the note has no page of that id, or ink is unavailable'
+      required:
+        - type
+        - pageId
+    ProtocolInkReadingDocumentFrame:
+      type: object
+      description: |-
+        InkReadingDocumentFrame asks for a new document made from the reading of one page of this
+        channel's Digital Note: an ordinary untitled note holding a copy of the reading's blocks, linked
+        to nothing. The note and its reading are not changed.
+      properties:
+        type:
+          type: string
+        opId:
+          type: string
+          description: echoed on the ink-reading-document-result reply
+        pageId:
+          type: string
+          description: the page whose reading the document is made from
+      required:
+        - type
+        - pageId
+    ProtocolInkReadingDocumentResultFrame:
+      type: object
+      description: |-
+        InkReadingDocumentResultFrame answers an ink-reading-document with the new document's uuid, or
+        why none was made.
+      properties:
+        type:
+          type: string
+        opId:
+          type: string
+        uuid:
+          type: string
+          description: the new document; absent with error
+        error:
+          type: string
+          description: 'present only when no document was made: the page has no reading, or ink is unavailable'
+      required:
+        - type
+    ProtocolInkReadingFrame:
+      type: object
+      description: InkReadingFrame asks what is known of the reading of one page of this channel's Digital Note.
+      properties:
+        type:
+          type: string
+        opId:
+          type: string
+          description: echoed on the ink-reading-content reply
+        pageId:
+          type: string
+          description: the page's id, as the block's note.pages lists it
+      required:
+        - type
+        - pageId
     ProtocolInkStrokeAddedFrame:
       type: object
       description: InkStrokeAddedFrame is a stroke now present on a page, committed by the record of Seq.
@@ -2154,6 +2402,9 @@ components:
         kind:
           type: string
           description: 'the container''s own noun: note | buffer | prompt | a block kind; absent when nothing was found'
+        name:
+          type: string
+          description: what the container is called; absent when it has no name
         scroll:
           type: integer
           description: the tab's saved scroll offset; 0 parks at the top

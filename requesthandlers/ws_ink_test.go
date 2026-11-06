@@ -19,6 +19,7 @@ import (
 
 	"sieve/sieve"
 	"sieve/sieve/block"
+	"sieve/sieve/block/processors"
 	"sieve/sieve/domain"
 	"sieve/sieve/editor"
 	"sieve/sieve/ink"
@@ -945,7 +946,8 @@ func (namingDescriber) DescribeNote(string, []domain.Address) (domain.NoteMetada
 
 // A note is shown by its tablet's title until Sieve names it, and by that name after: in the
 // sidebar's Ink section, in Settings → Ink's list, in the tab strip, where a tab already open
-// takes the name, and in a tab opened afresh.
+// takes the name, in a tab opened afresh, and on the note's own socket, which loads it under its
+// tablet's title and is told the name once it is given.
 func TestWS_Ink_ANoteIsShownByTheNameSieveGaveIt(t *testing.T) {
 	records := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)))
 	w := newInkWire(t, records)
@@ -985,6 +987,12 @@ func TestWS_Ink_ANoteIsShownByTheNameSieveGaveIt(t *testing.T) {
 	if tab := open(); tab.DisplayName != "Ideas" {
 		t.Errorf("an unnamed note's tab is %q", tab.DisplayName)
 	}
+	c := dialWS(t, w.srv, note)
+	defer closeAndSettle(c)
+	send(t, c, `{"type":"load","opId":"op-load"}`)
+	if loaded := readUntil(t, c, protocol.TypeLoadContent, 2*time.Second); loaded["name"] != "Ideas" {
+		t.Errorf("an unnamed note loads as %v", loaded["name"])
+	}
 	for _, path := range []string{"/ui/views/sidebar/ink", "/ui/views/settings/ink", "/ui/views/tabs"} {
 		if body := shown(path); !strings.Contains(body, "Ideas") {
 			t.Errorf("%s does not show the tablet's title:\n%s", path, body)
@@ -1005,6 +1013,9 @@ func TestWS_Ink_ANoteIsShownByTheNameSieveGaveIt(t *testing.T) {
 		notes := w.sp.Ink.Status().Notes
 		return len(notes) == 1 && notes[0].Name == "Kitchen extension planning"
 	}, "the note to be named")
+	if named := readUntil(t, c, protocol.TypeContainerNamed, 2*time.Second); named["name"] != "Kitchen extension planning" {
+		t.Errorf("the open note was told it is called %v", named["name"])
+	}
 	for _, path := range []string{"/ui/views/sidebar/ink", "/ui/views/settings/ink", "/ui/views/tabs"} {
 		if body := shown(path); !strings.Contains(body, "Kitchen extension planning") || strings.Contains(body, ">Ideas<") {
 			t.Errorf("%s does not show the note's name:\n%s", path, body)
@@ -1019,4 +1030,149 @@ func TestWS_Ink_ANoteIsShownByTheNameSieveGaveIt(t *testing.T) {
 	if tab := open(); tab.DisplayName != "Kitchen extension planning" {
 		t.Errorf("a named note's tab opened afresh is %q", tab.DisplayName)
 	}
+}
+
+// pngDrawer draws every page as the PNG signature and its key.
+type pngDrawer struct{}
+
+func (pngDrawer) DrawPage(_ context.Context, page ink.PageDrawing) ([]byte, error) {
+	return append([]byte("\x89PNG\r\n\x1a\n"), page.Key...), nil
+}
+
+// cannedReader reads every page as the same heading and Mermaid diagram, and counts its readings.
+type cannedReader struct {
+	mu    sync.Mutex
+	reads int
+}
+
+func (r *cannedReader) Tier() domain.Tier { return domain.TierSmart }
+func (r *cannedReader) ReadPage(string, domain.Address) (domain.PageReading, error) {
+	r.mu.Lock()
+	r.reads++
+	r.mu.Unlock()
+	return domain.PageReading{Parts: []domain.ReadingPart{
+		{Type: domain.ReadingPartText, Markdown: "# Kitchen\n\nTiles [?] by Friday."},
+		{Type: domain.ReadingPartDiagram, Language: "mermaid", Source: "flowchart TD\n  A --> B"},
+	}}, nil
+}
+
+func (r *cannedReader) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.reads
+}
+
+// readingOf is the reading an ink-reading-content or ink-reading-changed carries, as "{state}
+// running={bool} {kinds}".
+func readingOf(t *testing.T, frame map[string]interface{}) string {
+	t.Helper()
+	reading, _ := frame["reading"].(map[string]interface{})
+	if reading == nil {
+		t.Fatalf("no reading in %v", frame)
+	}
+	var kinds []string
+	blocks, _ := reading["blocks"].([]interface{})
+	for _, b := range blocks {
+		kinds = append(kinds, fmt.Sprint(b.(map[string]interface{})["kind"]))
+	}
+	return fmt.Sprintf("%v running=%v %s", reading["state"], reading["running"], strings.Join(kinds, ","))
+}
+
+// Over the note's own socket a page's reading is asked, started and heard: none before, the
+// reading's start and end pushed with the read's own answer between, ready with its blocks when
+// asked again, and stale once a stroke lands on the page. New document answers a document of its
+// own, named for the note and the page, holding the reading's blocks, and leaves the note's
+// reading as it was. A page that is no id, and a channel holding no note, are refused.
+func TestWS_InkReading_IsAskedReadHeardAndCopied(t *testing.T) {
+	block.RegisterProcessor(&processors.ProseProcessor{})
+	block.RegisterProcessor(processors.NewDiagramProcessor(block.BlockServices{}))
+	records := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)))
+	w := newInkWire(t, records)
+	w.session(records)
+	note := w.container()
+	reader := &cannedReader{}
+	w.sp.InkReadings = ink.NewPageReadings(w.sp.Ink, ink.NewPageImages(w.sp.Ink, pngDrawer{}), reader, nil,
+		block.NewDocumentCodec(block.GlobalRegistry()), services.NewJobEngine(nil, 1, nil))
+	c := dialWS(t, w.srv, note)
+	ask := func(frameType string) map[string]interface{} {
+		t.Helper()
+		send(t, c, `{"type":"`+frameType+`","opId":"op-r","pageId":"`+inkPage1.String()+`"}`)
+		return readUntil(t, c, protocol.TypeInkReadingContent, 2*time.Second)
+	}
+
+	if got := ask(protocol.TypeInkReading); readingOf(t, got) != "none running=false " || got["opId"] != "op-r" ||
+		got["pageId"] != inkPage1.String() || got["reading"].(map[string]interface{})["available"] != true {
+		t.Errorf("before reading: %v", got)
+	}
+	send(t, c, `{"type":"ink-read-page","opId":"op-read","pageId":"`+inkPage1.String()+`"}`)
+	var heard []string
+	for len(heard) < 3 {
+		_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+		_, raw, err := c.ReadMessage()
+		if err != nil {
+			t.Fatalf("after %v: %v", heard, err)
+		}
+		var f map[string]interface{}
+		if json.Unmarshal(raw, &f) != nil {
+			continue
+		}
+		switch f["type"] {
+		case protocol.TypeInkReadingChanged:
+			heard = append(heard, "pushed "+readingOf(t, f))
+		case protocol.TypeInkReadingContent:
+			heard = append(heard, "answered "+readingOf(t, f))
+		}
+	}
+	if want := []string{"pushed none running=true ", "answered none running=true ", "pushed ready running=false prose,diagram"}; strings.Join(heard, "|") != strings.Join(want, "|") {
+		t.Errorf("heard\n%v\nwant\n%v", heard, want)
+	}
+	if got := ask(protocol.TypeInkReading); readingOf(t, got) != "ready running=false prose,diagram" {
+		t.Errorf("asked again: %v", got)
+	}
+	if got := ask(protocol.TypeInkReadPage); readingOf(t, got) != "ready running=false prose,diagram" || reader.count() != 1 {
+		t.Errorf("read again: %v, %d readings", got, reader.count())
+	}
+
+	more := append(records, inkStrokeAdd(inkPage1, inkStroke(2)))
+	more[len(more)-1].Seq = uint32(len(more))
+	w.session(more)
+	if got := ask(protocol.TypeInkReading); readingOf(t, got) != "stale running=false prose,diagram" {
+		t.Errorf("after a stroke: %v", got)
+	}
+
+	send(t, c, `{"type":"ink-reading-document","opId":"op-doc","pageId":"`+inkPage1.String()+`"}`)
+	made := readUntil(t, c, protocol.TypeInkReadingDocumentResult, 2*time.Second)
+	uuid, _ := made["uuid"].(string)
+	if made["opId"] != "op-doc" || made["error"] != nil || uuid == "" || uuid == note {
+		t.Fatalf("new document: %v", made)
+	}
+	doc, err := w.sp.Documents.LoadByUUID(uuid)
+	if err != nil || doc.Meta().DisplayName() != "Ideas — page 1" {
+		t.Fatalf("the new document: %v, %v", doc, err)
+	}
+	d := dialWS(t, w.srv, uuid)
+	send(t, d, `{"type":"load","opId":"op-load"}`)
+	loaded := readUntil(t, d, protocol.TypeLoadContent, 2*time.Second)
+	blocks, _ := loaded["blocks"].([]interface{})
+	if loaded["name"] != "Ideas — page 1" || len(blocks) != 2 ||
+		blocks[0].(map[string]interface{})["attrs"].(map[string]interface{})["content"] != "# Kitchen\n\nTiles [?] by Friday." {
+		t.Errorf("the new document loads as %v", loaded)
+	}
+	closeAndSettle(d)
+	if got := ask(protocol.TypeInkReading); readingOf(t, got) != "stale running=false prose,diagram" {
+		t.Errorf("the note's reading after New document: %v", got)
+	}
+
+	send(t, c, `{"type":"ink-reading","opId":"op-x","pageId":"first"}`)
+	if got := readUntil(t, c, protocol.TypeInkReadingContent, 2*time.Second); got["error"] == nil || got["reading"] != nil {
+		t.Errorf("a page that is no id: %v", got)
+	}
+	closeAndSettle(c)
+	other := newContainerOnWire(t, w.sp)
+	o := dialWS(t, w.srv, other.UUID())
+	send(t, o, `{"type":"ink-reading-document","opId":"op-o","pageId":"`+inkPage1.String()+`"}`)
+	if got := readUntil(t, o, protocol.TypeInkReadingDocumentResult, 2*time.Second); got["error"] == nil || got["uuid"] != nil {
+		t.Errorf("a code container answered %v", got)
+	}
+	closeAndSettle(o)
 }

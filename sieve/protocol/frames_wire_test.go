@@ -175,14 +175,21 @@ func outboundWireCases() []wireCase {
 		},
 		{
 			// A block container is served as its one block, and says what kind of
-			// container it is so the host mounts it with that kind's lens.
+			// container it is so the host mounts it with that kind's lens, and what
+			// it is called.
 			name:    "load-content of a block container",
 			channel: ChannelDocument,
 			frame: NewLoadContentFrame(DocumentContent{
-				Mode: "wysiwyg", UUID: "c-1", Kind: "code", Version: 3,
+				Mode: "wysiwyg", UUID: "c-1", Kind: "code", Name: "a snippet", Version: 3,
 				Blocks: []block.FrontendBlock{{ID: "c-1", Kind: "code", Attrs: map[string]interface{}{"source": "x"}}},
 			}),
-			golden: `{"type":"load-content","body":"","mode":"wysiwyg","uuid":"c-1","kind":"code","scroll":0,"version":3,"blocks":[{"id":"c-1","kind":"code","attrs":{"source":"x"}}]}`,
+			golden: `{"type":"load-content","body":"","mode":"wysiwyg","uuid":"c-1","kind":"code","name":"a snippet","scroll":0,"version":3,"blocks":[{"id":"c-1","kind":"code","attrs":{"source":"x"}}]}`,
+		},
+		{
+			name:    "container-named",
+			channel: ChannelDocument,
+			frame:   NewContainerNamedFrame("Kitchen extension planning"),
+			golden:  `{"type":"container-named","name":"Kitchen extension planning"}`,
 		},
 		{
 			name:    "load-content of a tab left presenting",
@@ -297,6 +304,46 @@ func outboundWireCases() []wireCase {
 			channel: ChannelDocument,
 			frame:   NewInkOpenOnTabletFailedFrame("op-1", errors.New("no note")),
 			golden:  `{"type":"ink-open-on-tablet-result","opId":"op-1","error":"no note"}`,
+		},
+		{
+			name:    "ink-reading-content",
+			channel: ChannelDocument,
+			frame: NewInkReadingContentFrame("op-1", "p1", InkReading{State: InkReadingReady, Key: "k1", Running: true, Available: true,
+				Blocks: []block.FrontendBlock{{ID: "b1", Kind: "prose", Attrs: map[string]interface{}{"content": "# Kitchen"}}}}),
+			golden: `{"type":"ink-reading-content","opId":"op-1","pageId":"p1","reading":{"state":"ready","key":"k1",` +
+				`"blocks":[{"id":"b1","kind":"prose","attrs":{"content":"# Kitchen"}}],"running":true,"available":true}}`,
+		},
+		{
+			// A reading that cannot be had says why, and a failed one what went wrong.
+			name:    "ink-reading-content unavailable and failed",
+			channel: ChannelDocument,
+			frame:   NewInkReadingContentFrame("op-1", "p1", InkReading{State: InkReadingNone, Unavailable: "no AI", Failed: "timed out"}),
+			golden: `{"type":"ink-reading-content","opId":"op-1","pageId":"p1","reading":{"state":"none","running":false,"available":false,` +
+				`"unavailable":"no AI","failed":"timed out"}}`,
+		},
+		{
+			name:    "ink-reading-content refused",
+			channel: ChannelDocument,
+			frame:   NewInkReadingRefusedFrame("op-1", "p9", errors.New("no such page")),
+			golden:  `{"type":"ink-reading-content","opId":"op-1","pageId":"p9","reading":null,"error":"no such page"}`,
+		},
+		{
+			name:    "ink-reading-changed",
+			channel: ChannelDocument,
+			frame:   NewInkReadingChangedFrame("p1", InkReading{State: InkReadingStale, Key: "k0", Running: true, Available: true}),
+			golden:  `{"type":"ink-reading-changed","pageId":"p1","reading":{"state":"stale","key":"k0","running":true,"available":true}}`,
+		},
+		{
+			name:    "ink-reading-document-result",
+			channel: ChannelDocument,
+			frame:   NewInkReadingDocumentResultFrame("op-1", "doc-2"),
+			golden:  `{"type":"ink-reading-document-result","opId":"op-1","uuid":"doc-2"}`,
+		},
+		{
+			name:    "ink-reading-document-result failed",
+			channel: ChannelDocument,
+			frame:   NewInkReadingDocumentFailedFrame("op-1", errors.New("not read")),
+			golden:  `{"type":"ink-reading-document-result","opId":"op-1","error":"not read"}`,
 		},
 		{
 			name:    "ink-stroke-added",

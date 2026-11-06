@@ -285,3 +285,39 @@ func TestContainerSession_ASaveReachesTheOpenSessionAsAnAttrsUpdate(t *testing.T
 		t.Errorf("the session still holds %v", blocks[0].Attrs["source"])
 	}
 }
+
+// namingListener is a lifecycle listener that hears names.
+type namingListener struct {
+	mockLifecycleListener
+	named []string
+}
+
+func (l *namingListener) OnContainerNamed(uuid, name string) { l.named = append(l.named, uuid+" "+name) }
+
+// An open block container answers what it is called; a write that changes the name, a Save or a
+// SaveMeta alike, reaches the open session as the new name, and one that leaves it alone does not.
+func TestContainerSession_ANewNameReachesTheOpenSession(t *testing.T) {
+	es, containers, c, _ := newContainerEditor(t)
+	uuid := c.UUID()
+	heard := &namingListener{}
+	es.SetLifecycleListener(heard)
+	if _, open := es.ContainerName(uuid); open {
+		t.Error("a container no session holds has a name")
+	}
+	if err := es.Open(uuid); err != nil {
+		t.Fatal(err)
+	}
+	if name, open := es.ContainerName(uuid); !open || name != "a snippet" {
+		t.Errorf("ContainerName = %q, %v", name, open)
+	}
+	if _, err := containers.SaveMeta(uuid, func(m domain.DocumentMeta) { m.All()["foreign"] = "x" }); err != nil {
+		t.Fatal(err)
+	}
+	c.Merge(map[string]interface{}{"title": "renamed"})
+	if _, err := containers.Save(c); err != nil {
+		t.Fatal(err)
+	}
+	if name, _ := es.ContainerName(uuid); name != "renamed" || strings.Join(heard.named, ",") != uuid+" renamed" {
+		t.Errorf("ContainerName = %q, heard %v", name, heard.named)
+	}
+}

@@ -18,8 +18,8 @@
 // flushContents and setContents fall back to the HTTP save; getContents and exportAs
 // fall back to the load answer; focus, persist, retry and setFeature drop; the
 // membership verbs and extract resolve {ok:false}; detectExtractions resolves no
-// offers and replaceText resolves `error`. paste, inkPage and inkOpenOnTablet
-// REJECT, so a channel-less caller of any of them needs its own catch.
+// offers and replaceText resolves `error`. paste and the ink verbs REJECT, so a
+// channel-less caller of any of them needs its own catch.
 
 import { ContractViolation } from '../contract/sieve-block.js'
 import { DocumentFrame } from '../generated/protocol.js'
@@ -495,9 +495,62 @@ export class DocumentService {
   }
 
   /**
+   * What is known of the reading of one page of this container's Digital Note,
+   * as the wire carries it.
+   *
+   * REJECTS when Go refuses — the container is no Digital Note, or the note has
+   * no such page — on a timeout, and on a channel-less uuid.
+   * @param {string} uuid @param {string} pageId
+   * @returns {Promise<Record<string, any>>}
+   */
+  inkReading(uuid, pageId) {
+    return this.#readingReply(uuid, { type: DocumentFrame.INK_READING, pageId: pageId }, 'ink-reading ' + pageId)
+  }
+
+  /**
+   * Starts reading one page of this container's Digital Note, unless it has a
+   * reading of what it holds now or is being read, and resolves what is then
+   * known of its reading, as the wire carries it. The reading's end arrives as an
+   * ink frame. Rejects as inkReading does.
+   * @param {string} uuid @param {string} pageId
+   * @returns {Promise<Record<string, any>>}
+   */
+  inkReadPage(uuid, pageId) {
+    return this.#readingReply(uuid, { type: DocumentFrame.INK_READ_PAGE, pageId: pageId }, 'ink-read-page ' + pageId)
+  }
+
+  /**
+   * Makes a new document from the reading of one page of this container's
+   * Digital Note and resolves its uuid.
+   *
+   * REJECTS when Go made nothing — the page has no reading, or ink is
+   * unavailable — on a timeout, and on a channel-less uuid.
+   * @param {string} uuid @param {string} pageId
+   * @returns {Promise<string>}
+   */
+  inkReadingDocument(uuid, pageId) {
+    return this.#transport._awaitReply(uuid, { type: DocumentFrame.INK_READING_DOCUMENT, pageId: pageId }, 'ink-reading-document ' + pageId)
+      .then((reply) => {
+        if (reply.error || !reply.uuid) throw new Error('ink-reading-document refused: ' + (reply.error || 'no document'))
+        return String(reply.uuid)
+      })
+  }
+
+  /** @param {string} uuid @param {object} frame @param {string} label
+   *  @returns {Promise<Record<string, any>>} the reading of an ink-reading-content */
+  #readingReply(uuid, frame, label) {
+    return this.#transport._awaitReply(uuid, frame, label)
+      .then((reply) => {
+        if (reply.error || !reply.reading) throw new Error(label + ' refused: ' + (reply.error || 'no reading'))
+        return reply.reading
+      })
+  }
+
+  /**
    * Subscribe to this container's ink frames — strokes added and removed, live
-   * records, the live page and a restarted log — as Go sent them, in arrival order. The page
-   * answer is correlated and is not among them.
+   * records, the live page, a restarted log and a page's reading changed — as Go
+   * sent them, in arrival order. The answers to an ask are correlated and are not
+   * among them.
    * @param {string} uuid @param {(msg: Record<string, any>) => void} observer
    * @returns {() => void} unsubscribe
    */
@@ -515,6 +568,7 @@ export class DocumentService {
     DocumentFrame.INK_LIVE,
     DocumentFrame.INK_LIVE_PAGE,
     DocumentFrame.INK_LOG_RESTARTED,
+    DocumentFrame.INK_READING_CHANGED,
   ])
 
   /**
