@@ -3,6 +3,7 @@ package editor
 import (
 	"fmt"
 	"path"
+	"sort"
 	"strings"
 
 	"sieve/ident"
@@ -108,11 +109,7 @@ func (c *containerLeaves) blockNamed(leaf string) (domain.SieveBlock, bool) {
 // mean.
 func (c *containerLeaves) assetNamed(leaf string) (store.AssetStorable, bool) {
 	var folded store.AssetStorable
-	for _, owned := range c.owner.Owns() {
-		asset, ok := owned.(store.AssetStorable)
-		if !ok {
-			continue
-		}
+	for _, asset := range c.ownedAssets() {
 		if asset.Key() == leaf {
 			return asset, true
 		}
@@ -121,6 +118,43 @@ func (c *containerLeaves) assetNamed(leaf string) (store.AssetStorable, bool) {
 		}
 	}
 	return folded, folded != nil
+}
+
+// ownedAssets is every asset the container owns now, in the order Owns()
+// yields them.
+func (c *containerLeaves) ownedAssets() []store.AssetStorable {
+	var assets []store.AssetStorable
+	for _, owned := range c.owner.Owns() {
+		if asset, ok := owned.(store.AssetStorable); ok {
+			assets = append(assets, asset)
+		}
+	}
+	return assets
+}
+
+// assetList lists the container's assets for its container-grain node, ordered
+// by key. Each URI is the asset's absolute, unpinned address.
+func (c *containerLeaves) assetList() []domain.NodeAsset {
+	assets := c.ownedAssets()
+	if len(assets) == 0 {
+		return nil
+	}
+	list := make([]domain.NodeAsset, 0, len(assets))
+	for _, a := range assets {
+		list = append(list, domain.NodeAsset{
+			URI:   domain.NewLeafAddress(c.addr.Container, a.Key()).String(),
+			Key:   a.Key(),
+			Path:  c.assetPath(a),
+			Bytes: int(a.Size()),
+		})
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].Key < list[j].Key })
+	return list
+}
+
+// assetPath is where an asset's bytes are, relative to the library root.
+func (c *containerLeaves) assetPath(a store.AssetStorable) string {
+	return path.Join(c.owner.ExternalRef(), a.Key())
 }
 
 // blockNode projects a block into the kind-agnostic descriptor shape. Body is
@@ -157,7 +191,7 @@ func (c *containerLeaves) assetNode(a store.AssetStorable) domain.NodeDescriptor
 		Kind:    assetKind,
 		Title:   a.Key(),
 		Summary: "A file.",
-		Path:    path.Join(c.owner.ExternalRef(), a.Key()),
+		Path:    c.assetPath(a),
 		Bytes:   int(a.Size()),
 	}
 }

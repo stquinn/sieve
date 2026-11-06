@@ -98,9 +98,9 @@ func TestSearchHandler_EachViewAsksForWhatItShows(t *testing.T) {
 		{
 			name:  "sidebar search: what the sidebar shows, on every field",
 			path:  "/ui/views/sidebar/search?list_only=true&q=auth",
-			asked: []domain.SearchCriteria{{Terms: "auth", Fields: all, Kinds: []string{"note", "digital-note"}}},
+			asked: []domain.SearchCriteria{{Terms: "auth", Fields: all, Kinds: []string{"note", "digital-note", "buffer"}}},
 			renders: []string{"open('" + note + "')", "Auth Design", "design · the auth flow",
-				`store-search__badge">Title`, "Content</span>"},
+				`store-search__badge">Title`, "Content</span>", "open('" + buffer + "')", "Scratch"},
 		},
 		{
 			name:    "sidebar search: no query asks nothing",

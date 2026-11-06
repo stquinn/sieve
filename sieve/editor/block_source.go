@@ -49,9 +49,9 @@ func (s *BlockSource) Resolve(addr domain.Address) (domain.NodeDescriptor, error
 
 // Node dereferences an address into c, the container it names, already loaded:
 // at container grain c's block, live or as of the version the address pins,
-// titled with what the container is called (block.Registry.ContainerName); at a
-// leaf the block or an asset beside it. A version nobody wrote or a leaf c does not answer to is
-// domain.ErrNodeNotFound.
+// titled with what the container is called (block.Registry.ContainerName) and
+// listing the container's assets; at a leaf the block or an asset beside it. A
+// version nobody wrote or a leaf c does not answer to is domain.ErrNodeNotFound.
 func (s *BlockSource) Node(addr domain.Address, c *domain.BlockContainer) (domain.NodeDescriptor, error) {
 	var err error
 	blk := c.Block()
@@ -74,6 +74,7 @@ func (s *BlockSource) Node(addr domain.Address, c *domain.BlockContainer) (domai
 		node := leaves.blockNode(blk)
 		node.URI = addr.String()
 		node.Title = block.GlobalRegistry().ContainerName(blk, c.Storable().Meta())
+		node.Assets = leaves.assetList()
 		return node, nil
 	}
 	return leaves.resolve()

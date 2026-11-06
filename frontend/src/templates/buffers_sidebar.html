@@ -1,0 +1,47 @@
+{{define "buffer_icon"}}<svg class="buffers-icon" viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke-dasharray="3 3"/><polyline points="14 2 14 8 20 8"/></svg>{{end}}
+{{define "buffers_sidebar.html"}}<button
+  class="buffers-tree__row"
+  style="padding-left:{{indent 0}};"
+  aria-expanded="{{if .Open}}true{{else}}false{{end}}"
+  hx-patch="/api/folder/{{.ID}}"
+  hx-vals='{"open": {{if .Open}}false{{else}}true{{end}}}'
+  hx-target="#htmx-sidebar"
+  hx-swap="innerHTML"
+  hx-push-url="false"
+  title="Buffers: what you have written and not yet filed"
+>
+  <span class="buffers-tree__chevron">
+    {{if .Open}}
+    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+    {{else}}
+    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+    {{end}}
+  </span>
+  {{template "buffer_icon"}}
+  <span class="buffers-tree__name">Buffers</span>
+  <span class="buffers-tree__count">{{len .Buffers}}</span>
+</button>
+{{if .Open}}
+{{if not .Buffers}}
+<div class="sidebar__empty" style="padding-left:{{fileIndent 1}};">No buffers</div>
+{{else}}
+{{range .Buffers}}
+<button
+  class="sidebar__file buffers-tree__item"
+  data-ctx-id="{{.UUID}}"
+  data-ctx-type="note"
+  data-ctx-name="{{.Title}}"
+  data-ctx-intent="{{.Intent}}"
+  data-ctx-is-dir="false"{{if .Active}}
+  data-active{{end}}
+  style="padding-left:{{fileIndent 1}};"
+  onmousedown="window.sieveWorkspace.open('{{.UUID}}')"
+  title="{{.Title}}"
+>
+  {{template "buffer_icon"}}
+  {{if eq .Intent "trash"}}<span class="buffers-tree__trash" title="Marked as trash"></span>{{end}}
+  <span class="buffers-tree__label">{{.Title}}</span>
+</button>
+{{end}}
+{{end}}
+{{end}}{{end}}
