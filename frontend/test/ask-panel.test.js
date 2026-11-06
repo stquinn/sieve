@@ -174,6 +174,7 @@ function fakeWorkspace(editor) {
     },
     activeBlockEditor() { return this._editor || null },
     onSelectionUpdate: (fn) => { subs.push(fn); return () => {} },
+    onActiveTabChanged: () => () => {},
     emit: (ctx) => subs.forEach((fn) => fn(ctx)),
     getSelectionContext: vi.fn(() => (editor ? editor.getSelectionContext() : null)),
     setPosition: vi.fn(),
@@ -1140,6 +1141,24 @@ describe('AskPanel — command mode is derived from the draft (#126)', () => {
     expect(sendLabel()).toBe('Run /uuid')
     send()
     expect(plane.frames).toHaveLength(1)
+  })
+
+  it('a cue painted before the active tab\'s lens mounted is painted again at that lens\'s first advert', () => {
+    vi.useFakeTimers()
+    mountPanelDom({ open: true })
+    const editor = fakeEditor()
+    const ws = fakeWorkspace(editor)
+    ws.activeBlockEditor = () => null
+    const { composer } = build(ws, { commands: commandPlane().service })
+    const refusal = () => document.querySelector('.ask-popup__refusal')
+    composer.type('what is X?')
+    settle()
+    expect(refusal()?.textContent).toBe(AskPanel.ASK_UNAVAILABLE)
+
+    ws.activeBlockEditor = () => editor
+    ws.emit(editor.getSelectionContext())
+    settle()
+    expect(refusal()).toBeNull()
   })
 
   it('a panel with no command service never arms — nothing resolves', () => {

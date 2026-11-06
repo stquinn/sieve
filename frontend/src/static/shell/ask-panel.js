@@ -18,8 +18,7 @@ import { TargetChips } from './target-chips.js'
 
 export class AskPanel {
   /** What the footer says while no mount can hold an answer, so only commands run. */
-  static ASK_UNAVAILABLE = 'This view is read-only, so there is nowhere to put an answer: only /commands run here. ' +
-    'To ask about a notebook page, make a document from its transcript and ask there.'
+  static ASK_UNAVAILABLE = 'This view is read-only, so there is nowhere to put an answer: only /commands run here.'
 
   /** @type {import('./workspace.js').SieveWorkspace} */
   #ws
@@ -54,6 +53,8 @@ export class AskPanel {
   #labelTimeout = null
   /** @type {ReturnType<typeof setTimeout>|null} debounce for the command-cue repaint */
   #cueTimeout = null
+  /** @type {boolean|null} whether the cue last painted said an ask can be answered */
+  #cueCanAsk = null
   /** @type {import('../lens/document-editor/selection-model.js').SelectionContext|null} focus coordinate pulled on jump-in */
   #focusReturn = null
   /** @type {import('../lens/document-editor/selection-model.js').SelectionContext|null} the context CURRENTLY shown in the target chip — what send acts on */
@@ -114,7 +115,7 @@ export class AskPanel {
     this.#ws.onSelectionUpdate((ctx) => this.#onSelectionUpdate(ctx))
     // Whether an ask can be answered is a fact about the active mount, so the cue
     // follows the active tab even when its lens has said nothing yet.
-    if (typeof this.#ws.onActiveTabChanged === 'function') this.#ws.onActiveTabChanged(() => this.#refreshCue())
+    this.#ws.onActiveTabChanged(() => this.#refreshCue())
     // INVARIANT: whenever the panel is VISIBLE, the draft is MOUNTED. A pinned
     // panel is visible from the stylesheet before open() ever runs — mount now so
     // the socket is never empty. Not a jump-in, so it must not touch
@@ -474,7 +475,8 @@ export class AskPanel {
   #paintCue() {
     if (!this.#composer) return
     const command = this.#resolveDraftCommand(this.#composer.harvest())
-    if (this.#cue) this.#cue.show(command ? command.cmd : null, this.#canAsk() ? '' : AskPanel.ASK_UNAVAILABLE)
+    this.#cueCanAsk = this.#canAsk()
+    if (this.#cue) this.#cue.show(command ? command.cmd : null, this.#cueCanAsk ? '' : AskPanel.ASK_UNAVAILABLE)
     this.#composer.setCommandVerb(command ? command.cmd.name : null)
   }
 
@@ -494,17 +496,18 @@ export class AskPanel {
 
   /**
    * On a meaningful selection change, re-render the target chip when the panel
-   * is open.
+   * is open, and the cue when what it says of asking no longer holds: a tab made
+   * active before its lens mounted is painted again at that lens's first advert.
    * @param {import('../lens/document-editor/selection-model.js').SelectionContext|null} ctx
    */
   #onSelectionUpdate(ctx) {
     if (this.#panel && this.#panel.classList.contains('is-open')) this.#refreshLabel()
+    if (this.#canAsk() !== this.#cueCanAsk) this.#refreshCue()
   }
 
   /** @returns {boolean} whether the active mount can hold an answer: its lens
-   *  mints blocks in its container. A panel over no workspace asks as before. */
+   *  mints blocks in its container. */
   #canAsk() {
-    if (!this.#ws || typeof this.#ws.activeBlockEditor !== 'function') return true
     return !!this.#ws.activeBlockEditor()
   }
 

@@ -76,7 +76,7 @@ export class LiveSurface extends AbstractSurface {
   /** @override @returns {Readonly<import('../document-editor/selection-model.js').RawSelectionDescriptor>} the page shown */
   feedSelection() {
     const shown = this.#sheet.shown
-    return InkPlace.describe(this.mode, shown, this.#sheet.indexOf(shown), this.#sheet.pages.length)
+    return InkPlace.describe(this.mode, this.#sheet.indexOf(shown), this.#sheet.pages.length)
   }
 
   /** @returns {Mirrored} what the view mirrors */

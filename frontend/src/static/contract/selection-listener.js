@@ -43,9 +43,6 @@
  * @property {string|null} ref           block ref/anchor (ai-block re-chain)
  * @property {'editor'|'block-inner'|'ask'|'markdown'|'outside'} focusZone
  * @property {AiTarget} target
- * @property {{mode: string, page: string|null, pageIndex: number, pages: number}|null} [ink]
- *   where the reader is in a Digital Note — the lens mode, the page shown, its
- *   index and the note's page count; absent or null from every other lens.
  * @property {number|null} scroll        viewport scroll position
  * @property {object|null} blockCursor
  *   caret inside a block whose inner editor is not ProseMirror. Opaque: a host

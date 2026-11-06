@@ -27,14 +27,6 @@
  * @property {string} label                                       finished friendly display noun/snippet (ALWAYS populated; rich sieve labels preserved)
  */
 
-/**
- * @typedef {Object} InkPlace — where a reader is in a Digital Note
- * @property {string} mode                                        the mode of the surface shown: 'page', 'transcript' or 'mirror'
- * @property {string|null} page                                   the id of the page shown; null while none is
- * @property {number} pageIndex                                   its index among the note's pages; -1 while none is shown
- * @property {number} pages                                       how many pages the note has
- */
-
 /** The coherent 'none'/initial target: nothing selected ⇒ Ask targets the document. */
 const DOCUMENT_TARGET = Object.freeze({ kind: 'document', ref: 'doc', range: null, label: 'Document' })
 
@@ -53,7 +45,6 @@ const DOCUMENT_TARGET = Object.freeze({ kind: 'document', ref: 'doc', range: nul
  * @property {object|null} blockCursor                            FORWARD SEAM: the caret inside a block whose editor is NOT ProseMirror. Nothing populates it; `null` in practice. OPAQUE + CARET-LIKE (excluded from the meaningful diff). See the module header.
  * @property {ReadonlyArray<Record<string, any>>} textMarks       EVERY feature's text marks the surface DRAWS under this selection, one flat list, each carrying its blockId and the `feature` that drew it — consumers filter by feature, never by position in the list. CARET-CLASS: it moves with the caret, so it is excluded from the meaningful diff and rides the pulled snapshot. `[]` from a surface that draws none.
  * @property {AiTarget} target                                    resolved AI target + its friendly label (ALWAYS present)
- * @property {InkPlace|null} ink                                  where a reader is in a Digital Note; null from every other surface
  * @property {number|null} scroll                                 the surface's scroller position: CARET-CLASS like blockCursor — excluded from the meaningful diff, updated SILENTLY via `setScroll` (never through `ingest`, so an unrelated caret move can't stomp it). Pullable, never pushed — pure scrolling must never broadcast a selection-update. `null` until the surface's first debounced report.
  */
 
@@ -75,7 +66,6 @@ const DOCUMENT_TARGET = Object.freeze({ kind: 'document', ref: 'doc', range: nul
  * @property {object|null} [blockCursor]
  * @property {ReadonlyArray<Record<string, any>>} [textMarks]
  * @property {AiTarget} [target]
- * @property {InkPlace|null} [ink]
  */
 
 /** Keys whose change is MEANINGFUL (a push): identity/context, not the caret coordinate. */
@@ -114,7 +104,6 @@ export class SelectionModel {
       blockCursor: null,
       textMarks: [],
       target: DOCUMENT_TARGET,
-      ink: null,
       scroll: null,
     })
   }
@@ -161,7 +150,6 @@ export class SelectionModel {
       blockCursor: c.blockCursor,
       textMarks: c.textMarks,
       target: c.target,
-      ink: c.ink,
       scroll: c.scroll,
     })
     this.#commit(next)
@@ -191,7 +179,6 @@ export class SelectionModel {
       blockCursor: c.blockCursor,
       textMarks: c.textMarks,
       target: c.target,
-      ink: c.ink,
       scroll: value,
     })
     this.#commit(next)
@@ -259,7 +246,6 @@ export class SelectionModel {
         range: raw.target.range ? { from: raw.target.range.from, to: raw.target.range.to } : null,
         label: raw.target.label,
       } : DOCUMENT_TARGET,
-      ink: raw.ink ? { mode: raw.ink.mode, page: raw.ink.page, pageIndex: raw.ink.pageIndex, pages: raw.ink.pages } : null,
       // scroll rides its OWN channel (setScroll). Carry the CURRENT value through
       // so an unrelated caret/selection ingest can't stomp the last-known scroll.
       scroll: this.#current.scroll,
@@ -283,14 +269,14 @@ export class SelectionModel {
       if (ctx.target.range) Object.freeze(ctx.target.range)
       Object.freeze(ctx.target)
     }
-    if (ctx.ink) Object.freeze(ctx.ink)
     return Object.freeze(ctx)
   }
 
   /**
    * True iff a MEANINGFUL key differs between two contexts (identity/context —
    * NOT caret/range, which are coordinate noise). blockIds is compared by
-   * array-equality (same members, same order); the scalar keys by ===.
+   * array-equality (same members, same order), the target by its label, the
+   * scalar keys by ===.
    * @param {Readonly<SelectionContext>} a
    * @param {Readonly<SelectionContext>} b
    * @returns {boolean}
@@ -299,13 +285,7 @@ export class SelectionModel {
     for (const k of MEANINGFUL_KEYS) {
       if (a[k] !== b[k]) return true
     }
-    return !SelectionModel.#sameIds(a.blockIds, b.blockIds) || !SelectionModel.#samePlace(a.ink, b.ink)
-  }
-
-  /** @param {InkPlace|null} a @param {InkPlace|null} b @returns {boolean} */
-  static #samePlace(a, b) {
-    if (!a || !b) return a === b
-    return a.mode === b.mode && a.page === b.page && a.pageIndex === b.pageIndex && a.pages === b.pages
+    return !SelectionModel.#sameIds(a.blockIds, b.blockIds) || a.target.label !== b.target.label
   }
 
   /** @param {string[]} a @param {string[]} b @returns {boolean} */

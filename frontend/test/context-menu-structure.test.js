@@ -193,18 +193,25 @@ function openMenu(pane) {
   return /** @type {HTMLElement} */ (document.getElementById('sieve-context-menu'))
 }
 
+/** An item's label: its text without the hint it may carry.
+ *  @param {Element} b @returns {string} */
+function labelOf(b) {
+  const hint = b.querySelector('.ctx-item__hint')
+  return (b.textContent || '').slice(0, (b.textContent || '').length - (hint ? (hint.textContent || '').length : 0))
+}
+
 /** The labels of ONE list — a menu's own items, not a flyout's.
  *  @param {HTMLElement} root @returns {string[]} */
 function labelsOf(root) {
   return Array.from(root.children)
     .filter((el) => el.classList.contains('ctx-item'))
-    .map((b) => b.textContent)
+    .map(labelOf)
 }
 
 /** @param {HTMLElement} root @param {string} label @returns {HTMLElement} */
 function itemNamed(root, label) {
   const found = Array.from(root.querySelectorAll('.ctx-item'))
-    .find((b) => b.textContent.replace(/›$/, '') === label)
+    .find((b) => labelOf(b).replace(/›$/, '') === label)
   if (!found) throw new Error('no menu item labelled ' + label + ' in [' + labelsOf(root) + ']')
   return /** @type {HTMLElement} */ (found)
 }
@@ -864,14 +871,34 @@ describe('the notebook and Live menus', () => {
     ['note', 'Delete Note...'],
     ['folder', 'Delete Folder...'],
     ['notebook', 'Delete Notebook...'],
-  ])('a %s offers every library item\'s Show in Files and Delete, in that order', (type, del) => {
+  ])('a %s offers every library item\'s Show in Files and Delete, in that order with a divider between', (type, del) => {
     const shown = vi.fn()
     ;/** @type {any} */ (window).sieveShowInFiles = shown
     const labels = labelsOf(openOn({ type, id: 'x1', name: 'Item', isTab: false }))
     expect(labels.indexOf(del)).toBe(labels.indexOf('Show in Files') + 1)
+    const shownItem = itemNamed(openOn({ type, id: 'x1', name: 'Item', isTab: false }), 'Show in Files')
+    expect(shownItem.nextElementSibling?.classList.contains('ctx-separator')).toBe(true)
+    expect(labelOf(/** @type {Element} */ (shownItem.nextElementSibling?.nextElementSibling))).toBe(del)
     itemNamed(openOn({ type, id: 'x1', name: 'Item', isTab: false }), 'Show in Files').click()
     expect(shown).toHaveBeenCalledWith('x1')
     delete (/** @type {any} */ (window)).sieveShowInFiles
+  })
+
+  it('Delete on a notebook the tablet still offers is disabled and says why: a row from its own word, a tab from its row\'s', () => {
+    const why = 'The tablet still has this notebook.'
+    const refusedDelete = (/** @type {object} */ context) => itemNamed(openOn(context), 'Delete Notebook...')
+    const row = refusedDelete({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: false, deleteRefused: why })
+    expect(row.hasAttribute('disabled')).toBe(true)
+    expect([row.querySelector('.ctx-item__hint')?.textContent, row.title]).toEqual([why, why])
+
+    expect(refusedDelete({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: true }).hasAttribute('disabled')).toBe(false)
+    const sidebarRow = document.createElement('button')
+    sidebarRow.setAttribute('data-ink-note', 'n1')
+    sidebarRow.setAttribute('data-ctx-delete-refused', why)
+    document.body.appendChild(sidebarRow)
+    const tab = refusedDelete({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: true })
+    expect([tab.hasAttribute('disabled'), tab.querySelector('.ctx-item__hint')?.textContent]).toEqual([true, why])
+    sidebarRow.remove()
   })
 
   it('Refresh name and summary posts the describe route and says it is naming, or the route\'s words', async () => {

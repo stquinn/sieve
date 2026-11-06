@@ -173,7 +173,7 @@ export class TranscriptSurface extends AbstractSurface {
   get shownPage() { return this.#shown }
 
   /** @override @returns {Readonly<import('../document-editor/selection-model.js').RawSelectionDescriptor>} the page shown */
-  feedSelection() { return InkPlace.describe(this.mode, this.#shown, this.#index(), this.#pages.length) }
+  feedSelection() { return InkPlace.describe(this.mode, this.#index(), this.#pages.length) }
 
   /** @returns {ReadonlySet<string>} the pages marked as holding ink not yet seen */
   get unseenPages() { return this.#unseen }

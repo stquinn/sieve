@@ -51,8 +51,6 @@ describe('SelectionModel — initial context (P3.A)', () => {
       textMarks: [],
       // P3.C: 'none'/initial ⇒ the document target (label ALWAYS present).
       target: { kind: 'document', ref: 'doc', range: null, label: 'Document' },
-      // Only an ink surface says where a reader is in a Digital Note.
-      ink: null,
       // issue #51: no scroll report has arrived yet.
       scroll: null,
     })
@@ -186,19 +184,17 @@ describe('SelectionModel — meaningful-change coalescing (P3.A)', () => {
     expect(fn).toHaveBeenCalledTimes(1)
   })
 
-  it('an ink place is carried frozen, and a page or mode change emits while the same place does not', () => {
+  it('a change of the target\'s label alone emits, and the same label does not', () => {
     const m = new SelectionModel(UUID)
-    const place = (/** @type {object} */ o) => raw({ selectionType: 'none', blockId: null, blockIds: [], blockKind: null,
-      ink: Object.assign({ mode: 'page', page: 'p1', pageIndex: 0, pages: 3 }, o) })
-    m.ingest(place({}))
-    expect(m.getContext().ink).toEqual({ mode: 'page', page: 'p1', pageIndex: 0, pages: 3 })
-    expect(Object.isFrozen(m.getContext().ink)).toBe(true)
+    const at = (/** @type {string} */ label) => raw({ selectionType: 'none', blockId: null, blockIds: [], blockKind: null,
+      target: { kind: 'document', ref: 'doc', range: null, label } })
+    m.ingest(at('Page 1 of 3'))
     const fn = vi.fn()
     m.onUpdate(fn)
-    m.ingest(place({}))
+    m.ingest(at('Page 1 of 3'))
     expect(fn).not.toHaveBeenCalled()
-    m.ingest(place({ page: 'p2', pageIndex: 1 }))
-    m.ingest(place({ page: 'p2', pageIndex: 1, mode: 'transcript' }))
+    m.ingest(at('Page 2 of 3'))
+    m.ingest(at('Page 2 of 3, transcript'))
     expect(fn).toHaveBeenCalledTimes(2)
   })
 
