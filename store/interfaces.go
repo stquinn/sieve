@@ -10,7 +10,8 @@ const (
 )
 
 // MetaKeyKind is the metadata key naming a TypeBlock storable's block kind. The
-// Store persists it and never interprets it.
+// Store persists it. A store may lay the storable out by it; no caller depends on
+// where.
 const MetaKeyKind = "kind"
 
 // Storable is the base contract for anything the Store can persist. It is a
