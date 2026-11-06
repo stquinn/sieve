@@ -115,6 +115,7 @@ func NewWsHandler(sp *sieve.ServiceProvider, broadcast *WorkspaceBroadcast, toke
 		protocol.TypeFeatureControl:    h.handleDocumentFeatureControl,
 		protocol.TypeSetPresenting:     h.handleSetPresenting,
 		protocol.TypeInkPage:           h.handleInkPage,
+		protocol.TypeInkOpenOnTablet:   h.handleInkOpenOnTablet,
 	}
 	h.workspaceFrames = map[string]frameHandler{
 		protocol.TypePing:           h.handlePing,
@@ -670,6 +671,23 @@ func (h *WsHandler) handleInkPage(f inboundFrame) {
 		return
 	}
 	stream.answerPage(f.uuid, msg, f.reply)
+}
+
+// handleInkOpenOnTablet asks the tablet this channel's Digital Note came from to open it, and
+// answers with what came of that once the tablet has answered or the wait has run out; the
+// channel goes on reading meanwhile.
+func (h *WsHandler) handleInkOpenOnTablet(f inboundFrame) {
+	var msg protocol.InkOpenOnTabletFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeInkOpenOnTablet, err)
+		return
+	}
+	stream := h.inkStream()
+	if stream == nil {
+		f.reply(protocol.NewInkOpenOnTabletFailedFrame(msg.OpID, errors.New("ink is unavailable")))
+		return
+	}
+	go stream.openOnTablet(f.uuid, msg, f.reply)
 }
 
 // handleSetPresenting records Presentation Mode on the session tab and answers

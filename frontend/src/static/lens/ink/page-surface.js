@@ -7,12 +7,14 @@
 
 import { AbstractSurface, SurfaceEvent, SurfaceIntent } from '../abstract-surface.js'
 import { INK_RULES } from '../../renderers/ink-renderer.js'
-import { InkFeed } from '../../contract/ink-container-provider.js'
+import { InkFeed, InkOpening, InkRefusal } from '../../contract/ink-container-provider.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
+import { ActionStatus } from './action-status.js'
 import { InkSheet } from './ink-sheet.js'
 
 /** @typedef {import('../../contract/ink-container-provider.js').InkContainerProvider} InkContainerProvider */
 /** @typedef {import('../../contract/ink-container-provider.js').InkFeedEvent} InkFeedEvent */
+/** @typedef {import('../../contract/ink-container-provider.js').InkOpeningResult} InkOpeningResult */
 /** @typedef {import('../../renderers/ink-renderer.js').InkWindow} InkWindow */
 /** @typedef {import('../abstract-surface.js').SurfaceStats} SurfaceStats */
 /** @typedef {import('./plane-window.js').PlaneWindow} PlaneWindow */
@@ -40,12 +42,28 @@ const MAX_DOTS = 12
 /** What the sheet says when the note has no page. */
 const NO_PAGES = 'This note has no pages yet.'
 
+/** What is said of each outcome of Open in e-ink but opened and refused. */
+const OPENING_WORDS = Object.freeze({
+  [InkOpening.NO_TABLET]: 'No tablet connected',
+  [InkOpening.OTHER_TABLET]: 'Connected to another tablet',
+  [InkOpening.NO_ANSWER]: 'The tablet did not answer',
+})
+
+/** What is said of each reason the tablet gives for refusing Open in e-ink. */
+const REFUSAL_WORDS = Object.freeze({
+  [InkRefusal.NOT_FOREGROUND]: 'SieveInk is not open on the tablet',
+  [InkRefusal.NOT_OFFERED]: 'This note is not shared with this Sieve',
+})
+
 export class PageSurface extends AbstractSurface {
   /** The mode this surface presents. */
   static MODE = 'page'
 
   /** How a fixed page's sheet is sized: to the surround's width, or one grid unit to a CSS pixel. */
   static Scale = Object.freeze({ FIT: InkSheet.Scale.FIT, ACTUAL: InkSheet.Scale.ACTUAL })
+
+  /** What Copy page says: copied, no page drawn to copy, or the clipboard not taking it. */
+  static CopyWords = Object.freeze({ COPIED: 'Copied', NOTHING: 'Nothing to copy yet', FAILED: 'Could not copy the page' })
 
   static styles = /* css */ `
   .ink-page {
@@ -159,6 +177,10 @@ export class PageSurface extends AbstractSurface {
 
   .ink-page__view { display: flex; align-items: center; gap: 2px; }
 
+  .ink-page__actions { display: flex; align-items: center; gap: 6px; }
+
+  .ink-page__status { flex-shrink: 100; color: var(--theme-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
   .ink-page__chrome .ink-page__open-live { color: var(--theme-muted); font-size: 0.9em; }
 
   .ink-page__open-live::before,
@@ -198,6 +220,10 @@ export class PageSurface extends AbstractSurface {
   /** @type {HTMLButtonElement} */ #scaleButton
   /** @type {HTMLElement} the whiteboard's zoom and framing buttons */ #viewTools
   /** @type {HTMLButtonElement} */ #openLive
+  /** @type {HTMLButtonElement} */ #openOnTablet
+  /** @type {ActionStatus} */ #status = new ActionStatus()
+  /** @type {string} the name of the device the note was written on; '' when unknown */ #deviceName = ''
+  /** @type {Promise<void>|null} the Open in e-ink under way */ #opening = null
 
   /** @type {boolean} whether a page, or the note's having none, has been shown */ #painted = false
   /** @type {Set<string>} pages with ink not seen since it arrived */ #unseen = new Set()
@@ -223,7 +249,7 @@ export class PageSurface extends AbstractSurface {
     const heading = this.#el('div', 'ink-page__heading')
     this.#title = this.#el('span', 'ink-page__title')
     this.#device = this.#el('span', 'ink-page__device')
-    heading.append(this.#title, this.#device)
+    heading.append(this.#title, this.#device, this.#status.element)
     this.#notice = this.#el('span', 'ink-page__notice')
     this.#notice.hidden = true
     this.#notice.textContent = 'Unknown template, drawn blank'
@@ -249,7 +275,14 @@ export class PageSurface extends AbstractSurface {
     this.#openLive.title = 'This note is being written: open the Live view'
     this.#openLive.hidden = true
     pager.append(this.#paging, this.#scaleButton, this.#viewTools, this.#openLive)
-    chrome.append(heading, this.#notice, pager)
+    const actions = this.#el('span', 'ink-page__actions')
+    const copy = this.#button('copy-page', 'Copy page', 'Copy the page as an image')
+    copy.title = 'Copy the page as an image'
+    this.#openOnTablet = this.#button('open-on-tablet', 'Open in e-ink', '')
+    this.#openOnTablet.title = 'Open this note on the tablet it was written on'
+    this.#openOnTablet.hidden = true
+    actions.append(copy, this.#openOnTablet)
+    chrome.append(heading, this.#notice, pager, actions)
     this.#root.append(chrome, this.#sheet.element)
   }
 
@@ -320,6 +353,7 @@ export class PageSurface extends AbstractSurface {
     this.#provider.unsubscribeFeed(this)
     this.#mounted = false
     this.#sheet.detach()
+    this.#status.clear()
     this.#drag = null
     this.#root.removeEventListener('click', this.#onClick)
     this.#root.removeEventListener('keydown', this.#onKeyDown)
@@ -439,6 +473,56 @@ export class PageSurface extends AbstractSurface {
     if (this.#liveView) this.#host.onSurfaceEvent({ type: SurfaceIntent.OPEN_CONTAINER, uuid: this.#liveView })
   }
 
+  /**
+   * Puts the page shown on the clipboard as an image, and says so in place.
+   * @returns {Promise<void>}
+   */
+  copyPage() {
+    const words = PageSurface.CopyWords
+    return this.#sheet.copyPage().then(
+      (copied) => this.#status.showResult(copied ? words.COPIED : words.NOTHING),
+      (err) => {
+        console.warn('[ink] the page could not be copied', err)
+        this.#status.showResult(words.FAILED)
+      })
+  }
+
+  /**
+   * Asks the tablet the note came from to open it, saying in place that it is
+   * asking and then what came of it. A second ask while one is under way is the
+   * same ask.
+   * @returns {Promise<void>}
+   */
+  openOnTablet() {
+    if (this.#opening) return this.#opening
+    const device = this.#deviceName || 'the tablet'
+    this.#openOnTablet.disabled = true
+    this.#status.showPending(`Opening on ${device}…`)
+    this.#opening = this.#provider.openOnTablet()
+      .then((result) => this.#status.showResult(this.#openingWords(result, device)), (err) => {
+        console.warn('[ink] the tablet could not be asked to open the note', err)
+        this.#status.showResult('Could not ask the tablet')
+      })
+      .finally(() => {
+        this.#opening = null
+        this.#openOnTablet.disabled = false
+      })
+    return this.#opening
+  }
+
+  /** @param {InkOpeningResult} result @param {string} device @returns {string} */
+  #openingWords(result, device) {
+    if (result.outcome === InkOpening.OPENED) return `Opened on ${device}`
+    if (result.outcome === InkOpening.REFUSED) {
+      return Object.hasOwn(REFUSAL_WORDS, result.reason)
+        ? REFUSAL_WORDS[/** @type {keyof typeof REFUSAL_WORDS} */ (result.reason)]
+        : `The tablet refused (${result.reason || 'no reason given'})`
+    }
+    return Object.hasOwn(OPENING_WORDS, result.outcome)
+      ? OPENING_WORDS[/** @type {keyof typeof OPENING_WORDS} */ (result.outcome)]
+      : 'Could not ask the tablet'
+  }
+
   /** Switches a fixed page's sheet between fitting the surround's width and actual size. */
   toggleScale() {
     this.#sheet.scale = this.#sheet.scale === PageSurface.Scale.FIT ? PageSurface.Scale.ACTUAL : PageSurface.Scale.FIT
@@ -485,7 +569,9 @@ export class PageSurface extends AbstractSurface {
     const attrs = (block && block.attrs) || {}
     this.#sheet.setNote(attrs.note)
     this.#title.textContent = String(attrs.title || 'Untitled note')
-    this.#device.textContent = String((attrs.note_device && attrs.note_device.name) || '')
+    this.#deviceName = String((attrs.note_device && attrs.note_device.name) || '')
+    this.#device.textContent = this.#deviceName
+    this.#openOnTablet.hidden = !attrs.note_source_id
   }
 
   /** @param {string|null} pageId */
@@ -570,6 +656,8 @@ export class PageSurface extends AbstractSurface {
       case 'actual': this.showActualSize(); break
       case 'fit': this.fitAll(); break
       case 'open-live': this.openLive(); break
+      case 'copy-page': this.copyPage(); break
+      case 'open-on-tablet': this.openOnTablet(); break
     }
   }
 

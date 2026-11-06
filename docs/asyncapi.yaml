@@ -35,6 +35,8 @@ channels:
         $ref: '#/components/messages/documentFlush'
       documentFocus:
         $ref: '#/components/messages/documentFocus'
+      documentInkOpenOnTablet:
+        $ref: '#/components/messages/documentInkOpenOnTablet'
       documentInkPage:
         $ref: '#/components/messages/documentInkPage'
       documentLoad:
@@ -67,6 +69,8 @@ channels:
         $ref: '#/components/messages/documentInkLivePage'
       documentInkLogRestarted:
         $ref: '#/components/messages/documentInkLogRestarted'
+      documentInkOpenOnTabletResult:
+        $ref: '#/components/messages/documentInkOpenOnTabletResult'
       documentInkPageContent:
         $ref: '#/components/messages/documentInkPageContent'
       documentInkStrokeAdded:
@@ -150,6 +154,7 @@ operations:
       - $ref: '#/channels/document/messages/documentFeatureControl'
       - $ref: '#/channels/document/messages/documentFlush'
       - $ref: '#/channels/document/messages/documentFocus'
+      - $ref: '#/channels/document/messages/documentInkOpenOnTablet'
       - $ref: '#/channels/document/messages/documentInkPage'
       - $ref: '#/channels/document/messages/documentLoad'
       - $ref: '#/channels/document/messages/documentPaste'
@@ -172,6 +177,7 @@ operations:
       - $ref: '#/channels/document/messages/documentInkLive'
       - $ref: '#/channels/document/messages/documentInkLivePage'
       - $ref: '#/channels/document/messages/documentInkLogRestarted'
+      - $ref: '#/channels/document/messages/documentInkOpenOnTabletResult'
       - $ref: '#/channels/document/messages/documentInkPageContent'
       - $ref: '#/channels/document/messages/documentInkStrokeAdded'
       - $ref: '#/channels/document/messages/documentInkStrokeRemoved'
@@ -358,6 +364,18 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolFocusFrame'
+    documentInkOpenOnTablet:
+      name: ink-open-on-tablet
+      title: ink-open-on-tablet
+      summary: InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it.
+      description: |-
+        InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it. Only the
+        note's id reaches the tablet.
+      contentType: application/json
+      correlationId:
+        $ref: '#/components/correlationIds/opId'
+      payload:
+        $ref: '#/components/schemas/ProtocolInkOpenOnTabletFrame'
     documentInkPage:
       name: ink-page
       title: ink-page
@@ -547,6 +565,18 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolInkLogRestartedFrame'
+    documentInkOpenOnTabletResult:
+      name: ink-open-on-tablet-result
+      title: ink-open-on-tablet-result
+      summary: InkOpenOnTabletResultFrame answers an ink-open-on-tablet with what came of it, or why it could not be asked.
+      description: |-
+        InkOpenOnTabletResultFrame answers an ink-open-on-tablet with what came of it, or why it could
+        not be asked.
+      contentType: application/json
+      correlationId:
+        $ref: '#/components/correlationIds/opId'
+      payload:
+        $ref: '#/components/schemas/ProtocolInkOpenOnTabletResultFrame'
     documentInkPageContent:
       name: ink-page-content
       title: ink-page-content
@@ -1814,6 +1844,40 @@ components:
       properties:
         type:
           type: string
+      required:
+        - type
+    ProtocolInkOpenOnTabletFrame:
+      type: object
+      description: |-
+        InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it. Only the
+        note's id reaches the tablet.
+      properties:
+        type:
+          type: string
+        opId:
+          type: string
+          description: echoed on the ink-open-on-tablet-result reply
+      required:
+        - type
+    ProtocolInkOpenOnTabletResultFrame:
+      type: object
+      description: |-
+        InkOpenOnTabletResultFrame answers an ink-open-on-tablet with what came of it, or why it could
+        not be asked.
+      properties:
+        type:
+          type: string
+        opId:
+          type: string
+        outcome:
+          type: string
+          description: opened (the tablet shows the note, live) | no-tablet | other-tablet (a tablet is connected that the note did not come from) | refused | no-answer; absent with error
+        reason:
+          type: string
+          description: 'refused only: the tablet''s reason, not-foreground (SieveInk is not in front) | not-offered (the note is not in a folder this Sieve receives) | another'
+        error:
+          type: string
+          description: 'present only when nothing was asked: the channel holds no Digital Note from a tablet, or ink is unavailable'
       required:
         - type
     ProtocolInkPageContentFrame:

@@ -9,7 +9,7 @@
 import { registerSieveRenderer, sieveBlockFor } from '../sieve-block-extension.js'
 import { DiagramRenderer } from '../../../../renderers/diagram-renderer.js'
 import { SmartImageRenderer } from '../../../../renderers/smart-image-renderer.js'
-import { copyImageToClipboard } from '../../../../renderers/copy-image.js'
+import { ImageClipboard } from '../../../../renderers/copy-image.js'
 
 ;(function () {
   'use strict'
@@ -120,7 +120,7 @@ import { copyImageToClipboard } from '../../../../renderers/copy-image.js'
         { type: 'header', label: "Image"},
         { icon: window.SieveIcons.copy, label: 'Copy Image', action: function () {
           var src = SmartImageRenderer.resolveSrc(n.attrs.src, ctx && ctx.getEditor() && ctx.getEditor().uuid)
-          if (src) copyImageToClipboard(src)
+          if (src) new ImageClipboard().copySource(src)
         }},
         // Offered ONLY when there is a description — an item that reveals nothing
         // is a lie. The toggle persists showSummary, so the choice survives a

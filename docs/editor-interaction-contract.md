@@ -229,7 +229,7 @@ The resulting order for one keystroke, highest first:
 | Composer (`ComposerEditor`) | `Mod+Enter` → send the message | the matrix above, unchanged |
 | Block container whose kind has no lens (`BlockLens`) | **nothing** | none of the matrix: there is no editing surface. The block is drawn read-only by its kind's renderer, which keeps its read affordances (selection, copy, pan, filters) and drops every edit |
 | Digital Note (`DigitalNoteLens`) | bare `PageUp` → previous page, bare `PageDown` → next page; on a whiteboard also the bare arrows → move the window, `+`/`=` and `-`/`_` → zoom | none of the matrix: there is no editing surface (below) |
-| Live view (`LiveInkLens`) | **nothing** | none of the matrix: there is no editing surface, and no reader gesture (below) |
+| Live view (`LiveInkLens`) | **nothing** | none of the matrix: there is no editing surface, and no gesture moves the view (below) |
 
 **The composer is EDITOR-FIRST (revised 2026-08-28, #118):** it claims exactly
 one chord, `Mod+Enter`, and nothing else. Bare `Enter`, `Shift+Enter` and
@@ -274,6 +274,21 @@ Mode) and `Mod+Alt+P` (Presentation Mode) do nothing in it.
   `Fit all` (frame all the ink with a margin; the sheet at the origin when there is none). While the
   note is being written on the tablet, a quiet `Live` button opens the Live view in its own tab; it
   is gone when the note is not live.
+- **Copy page** puts the page shown on the clipboard as a PNG, 1404 pixels across: the white sheet,
+  its ruling and its committed ink, pencil tone included, without the chrome or the stroke under the
+  pen. A fixed page is copied whole, whatever its scroll or scale; a whiteboard is copied as its
+  window shows it. It is a named verb and has no key: Mod+C claims nothing here (a bitmap for other
+  applications is a named verb everywhere, as smart-image's **Copy Image** is), and a selection of
+  the chrome's text copies as text, natively. A brief `Copied` follows in the chrome, or
+  `Nothing to copy yet` while no page is drawn, or `Could not copy the page`.
+- **Open in e-ink** asks the tablet the note came from to open it: only the note's id is sent, and
+  only while that tablet is connected — nothing is queued. While it asks, the chrome says
+  `Opening on {device}…` and the button is disabled; then, briefly and in place, `Opened on {device}`
+  (the tablet shows the note and is live on it, so the sidebar's Live item appears), `No tablet
+  connected`, `Connected to another tablet`, `SieveInk is not open on the tablet` (refused
+  `not-foreground`), `This note is not shared with this Sieve` (refused `not-offered`), `The tablet
+  did not answer` (after five seconds), or `Could not ask the tablet`. It is offered only for a note
+  that came from a tablet, and has no key.
 - **The whiteboard's window.** A whiteboard is shown through a window with the note's page aspect,
   as large as fits the surround. Dragging the sheet with the primary button moves the window with
   the pointer; the wheel moves it (Shift turns a vertical wheel horizontal); Ctrl or Cmd with the
@@ -294,9 +309,11 @@ writing, on the page it is writing on. It is read-only as `DigitalNoteLens` is, 
 mirror: the reader cannot turn its pages, move or zoom its window, or scroll it away from the nib.
 
 - **Keys.** None is claimed; no key moves the view.
-- **Pointer.** One button, **Open this note**, opens the note being mirrored in a tab of its own
-  (disabled before the note has reached this Sieve). There is no pager, no dot, no zoom or scale
-  button and no edge mark; a drag and the wheel move nothing.
+- **Pointer.** **Open this note** opens the note being mirrored in a tab of its own (disabled before
+  the note has reached this Sieve). **Copy page** copies the page as the Digital Note lens's does, a
+  whiteboard as the tablet's window frames it. There is no Open in e-ink: the view is already the
+  tablet's. There is no pager, no dot, no zoom or scale button and no edge mark; a drag and the
+  wheel move nothing.
 - **What it shows.** The page the tablet writes on, changing as the tablet turns or changes note. A
   fixed page is shown whole in the surround, but never narrower than half the surround's width: a
   page longer than that scrolls, and while the stroke under the pen runs out of view the surround
@@ -647,7 +664,8 @@ The menu items, the editor menu's and the ai-block node menu's alike, run
 first selects its node), so the real ClipboardEvent reaches the same handler and
 the clipboard is the keyboard's, view for view.
 A kind may still offer a **named verb** that writes the clipboard — `Copy Link`,
-`Copy URL`, and `Copy source` on code and diagram — and those are not a second
+`Copy URL`, and `Copy source` on code and diagram (an ink lens's `Copy page` and
+smart-image's `Copy Image` write a PNG the same way) — and those are not a second
 mechanism: each writes one `text/plain` payload it names in its own label, picks
 no views and reads no selection. `Copy source` takes the block's inner text
 alone, no fence and no language line, and survives `readOnly`, because it

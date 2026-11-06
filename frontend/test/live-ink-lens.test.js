@@ -12,7 +12,7 @@ import { LiveSurface } from '../src/static/lens/ink/live-surface.js'
 import { InkFeed } from '../src/static/contract/ink-container-provider.js'
 import {
   ASPECT, DOTS, FakeInkProvider, Frames, GRID, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, points,
-  renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, viewBoxOf, wheel,
+  renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, viewBoxOf, wheel, copiedImages, press,
 } from './helpers/ink-lens-rig.js'
 
 const LIVE = '019a0000-0000-7000-8000-00000000live'
@@ -68,6 +68,7 @@ describe('LiveInkLens', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+    vi.restoreAllMocks()
     document.body.innerHTML = ''
   })
 
@@ -180,7 +181,7 @@ describe('LiveInkLens', () => {
     expect(svg.getAttribute('viewBox')).toBe(viewBoxOf(expected))
   })
 
-  it('offers the reader no gesture: no pager, zoom or scale, and the wheel, a drag and the keys move nothing', async () => {
+  it('offers the reader no gesture that moves the view: no pager, zoom or scale, and the wheel, a drag and the keys move nothing', async () => {
     const { provider, root, lens, surface } = await whiteboard()
     provider.emit({ type: InkFeed.LIVE, records: [view(2, 3)] })
     frames.run()
@@ -196,7 +197,7 @@ describe('LiveInkLens', () => {
     frames.run()
     expect(svgOf(root).getAttribute('viewBox')).toBe(before)
     expectWindow(shownWindow(root), tabletWindow(2, 3))
-    expect([...root.querySelectorAll('button')].map((b) => b.getAttribute('data-ink-action'))).toEqual(['open-note'])
+    expect([...root.querySelectorAll('button')].map((b) => b.getAttribute('data-ink-action'))).toEqual(['open-note', 'copy-page'])
     expect(surface.window).not.toBeNull()
   })
 
@@ -245,6 +246,21 @@ describe('LiveInkLens', () => {
     provider.emit({ type: InkFeed.LOG_RESTARTED })
     await settle()
     expect([strokeEls(root, 'n1').length, strokeEls(root, 's-p1').length, provider.loads]).toEqual([1, 0, 2])
+  })
+
+  it("Copy page copies the page as the tablet's window frames it, and Open in e-ink is not offered", async () => {
+    const { provider, root } = await whiteboard()
+    const copied = copiedImages()
+    provider.emit({ type: InkFeed.LIVE, records: [view(2, 3)] })
+    frames.run()
+    press(root, 'copy-page')
+    await settle()
+    expect(copied).toHaveLength(1)
+    expect(copied[0].svg).toContain(`viewBox="${viewBoxOf(tabletWindow(2, 3))}"`)
+    expect([copied[0].width, copied[0].height]).toEqual([GRID, Math.round(GRID / ASPECT)])
+    expect(text(root, '.ink-page__status')).toBe('Copied')
+    expect(root.querySelector('[data-ink-action="open-on-tablet"]')).toBeNull()
+    expect(provider.calls).not.toContain('openOnTablet')
   })
 
   it('is read-only by construction', async () => {

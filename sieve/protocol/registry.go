@@ -100,6 +100,7 @@ func (r *Registry) registerDocumentFrames() {
 	r.addFrame(ChannelDocument, Inbound, TypeFeatureControl, FeatureControlFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeSetPresenting, SetPresentingFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeInkPage, InkPageFrame{})
+	r.addFrame(ChannelDocument, Inbound, TypeInkOpenOnTablet, InkOpenOnTabletFrame{})
 
 	r.addFrame(ChannelDocument, Outbound, TypePong, PongFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeMarkdownContent, MarkdownContentFrame{})
@@ -124,6 +125,7 @@ func (r *Registry) registerDocumentFrames() {
 	r.addFrame(ChannelDocument, Outbound, TypeInkLive, InkLiveFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeInkLivePage, InkLivePageFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeInkLogRestarted, InkLogRestartedFrame{})
+	r.addFrame(ChannelDocument, Outbound, TypeInkOpenOnTabletResult, InkOpenOnTabletResultFrame{})
 }
 
 func (r *Registry) registerWorkspaceFrames() {

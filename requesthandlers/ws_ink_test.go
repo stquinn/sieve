@@ -59,6 +59,8 @@ type inkWire struct {
 	sp        *sieve.ServiceProvider
 	h         *WsHandler
 	companion *link.ScriptedCompanion
+	// addr is where the companion listens.
+	addr string
 }
 
 func newInkWire(t *testing.T, records []link.Record) *inkWire {
@@ -71,6 +73,7 @@ func newInkWire(t *testing.T, records []link.Record) *inkWire {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { listener.Close() })
+	w.addr = listener.Addr().String()
 	go func() {
 		for {
 			conn, err := listener.Accept()
@@ -570,4 +573,58 @@ func TestWS_Ink_TheLiveViewFollowsTheTabletFromNoteToNote(t *testing.T) {
 		t.Error("the note no longer live is still held for the Live view")
 	}
 	closeAndSettle(live)
+}
+
+// An ink-open-on-tablet is answered, by opId, with what came of it: the tablet going live on the
+// note, its refusal and reason, a tablet connected that the note did not come from, or none
+// connected; a channel holding no Digital Note is answered with an error and no outcome.
+func TestWS_InkOpenOnTablet_AnswersWithWhatCameOfIt(t *testing.T) {
+	records := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)))
+	w := newInkWire(t, records)
+	w.session(records)
+	uuid := w.container()
+	ours := w.sp.Ink
+	for _, c := range []struct {
+		name    string
+		answer  link.OpenNoteAnswer
+		connect string
+		outcome string
+		reason  string
+	}{
+		{"live", link.OpenNoteAnswer{}, "companion", protocol.InkOpenOpened, ""},
+		{"not in front", link.OpenNoteAnswer{Refuse: link.RefuseNotForeground}, "companion", protocol.InkOpenRefused, link.RefuseNotForeground},
+		{"not offered", link.OpenNoteAnswer{Refuse: link.RefuseNotOffered}, "companion", protocol.InkOpenRefused, link.RefuseNotOffered},
+		{"another tablet", link.OpenNoteAnswer{}, "another-companion", protocol.InkOpenOtherTablet, ""},
+		{"no tablet", link.OpenNoteAnswer{}, "", protocol.InkOpenNoTablet, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w.companion.SetOpenNoteAnswer(c.answer)
+			w.sp.Ink = ours
+			if c.connect != "" && c.connect != "companion" {
+				w.sp.Ink = ink.NewInkService(w.sp.State, w.sp.Containers, radio.NewTCP(w.addr, c.connect), nil)
+			}
+			if c.connect != "" {
+				if err := w.sp.Ink.Start(); err != nil {
+					t.Fatal(err)
+				}
+				waitFor(t, func() bool { return w.sp.Ink.Status().Link.Phase == ink.LinkConnected }, "the tablet to connect")
+			}
+			defer w.sp.Ink.Stop()
+			sock := dialWS(t, w.srv, uuid)
+			defer closeAndSettle(sock)
+			send(t, sock, `{"type":"ink-open-on-tablet","opId":"op-open"}`)
+			got := readUntil(t, sock, protocol.TypeInkOpenOnTabletResult, 5*time.Second)
+			reason, _ := got["reason"].(string)
+			if got["opId"] != "op-open" || got["outcome"] != c.outcome || reason != c.reason || got["error"] != nil {
+				t.Errorf("answered %v, want %s %q", got, c.outcome, c.reason)
+			}
+		})
+	}
+
+	other := dialWS(t, w.srv, newContainerOnWire(t, w.sp).UUID())
+	send(t, other, `{"type":"ink-open-on-tablet","opId":"op-open"}`)
+	if got := readUntil(t, other, protocol.TypeInkOpenOnTabletResult, 2*time.Second); got["error"] == nil || got["outcome"] != nil {
+		t.Errorf("a code container answered %v", got)
+	}
+	closeAndSettle(other)
 }

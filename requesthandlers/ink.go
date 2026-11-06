@@ -324,6 +324,33 @@ func (s *inkStream) answerPage(socket string, msg protocol.InkPageFrame, reply f
 	}
 }
 
+// openOnTablet asks the tablet to open the Digital Note in container, and answers through reply
+// with what came of it. It waits for the tablet, so it runs on a goroutine of its own.
+func (s *inkStream) openOnTablet(container string, msg protocol.InkOpenOnTabletFrame, reply func(interface{})) {
+	result, err := s.svc.OpenOnTablet(container)
+	if err != nil {
+		reply(protocol.NewInkOpenOnTabletFailedFrame(msg.OpID, err))
+		return
+	}
+	reply(protocol.NewInkOpenOnTabletResultFrame(msg.OpID, s.outcomeWord(result.Outcome), result.Reason))
+}
+
+// outcomeWord is an outcome as an ink-open-on-tablet-result names it.
+func (s *inkStream) outcomeWord(o ink.OpenOutcome) string {
+	switch o {
+	case ink.OpenOpened:
+		return protocol.InkOpenOpened
+	case ink.OpenOtherTablet:
+		return protocol.InkOpenOtherTablet
+	case ink.OpenRefused:
+		return protocol.InkOpenRefused
+	case ink.OpenNoAnswer:
+		return protocol.InkOpenNoAnswer
+	default:
+		return protocol.InkOpenNoTablet
+	}
+}
+
 // release stops socket holding any note open.
 func (s *inkStream) release(socket string) {
 	if socket == s.view {

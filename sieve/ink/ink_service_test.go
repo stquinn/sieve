@@ -26,6 +26,7 @@ import (
 // the TCP radio. Loopback sockets have room in them as a real link has, so neither side's write
 // waits for the other to read.
 type testRadio struct {
+	addr  string
 	tcp   radio.Radio
 	dials atomic.Int32
 	// hold makes every Dial wait for its context, as a scan that finds nothing does.
@@ -43,7 +44,7 @@ func newTestRadio(t *testing.T, companion *link.ScriptedCompanion) *testRadio {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &testRadio{tcp: radio.NewTCP(listener.Addr().String(), companionID)}
+	r := &testRadio{addr: listener.Addr().String(), tcp: radio.NewTCP(listener.Addr().String(), companionID)}
 	t.Cleanup(func() {
 		listener.Close()
 		r.drop()
@@ -77,6 +78,10 @@ func (r *testRadio) Dial(ctx context.Context) (radio.Link, error) {
 	}
 	return r.tcp.Dial(ctx)
 }
+
+// speakAs makes every link from now on the companion's of identity; it must not be called while a
+// Dial runs.
+func (r *testRadio) speakAs(identity string) { r.tcp = radio.NewTCP(r.addr, identity) }
 
 // drop closes the companion's end of every link, as the companion going out of range does.
 func (r *testRadio) drop() {
@@ -1269,5 +1274,120 @@ func TestLiveView_FollowsTheLiveNoteFromPageToPageAndNoteToNote(t *testing.T) {
 	}
 	if n := rig.invalidations.Load(); n != 2 {
 		t.Errorf("%d invalidations, want one as each note began to be mirrored", n)
+	}
+}
+
+// OpenOnTablet sends the note's id to the tablet it came from and words the tablet's answer: live
+// on the note, or refused with its reason. With no tablet connected, or another tablet than the
+// note's, nothing is sent; a container that is no Digital Note is ErrNoSuchNote.
+func TestInkService_OpenOnTabletAnswersWithTheTabletsOutcome(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		answer  link.OpenNoteAnswer
+		connect bool
+		as      string
+		want    OpenResult
+	}{
+		{"live", link.OpenNoteAnswer{}, true, "", OpenResult{Outcome: OpenOpened}},
+		{"not in front", link.OpenNoteAnswer{Refuse: link.RefuseNotForeground}, true, "", OpenResult{Outcome: OpenRefused, Reason: link.RefuseNotForeground}},
+		{"not offered", link.OpenNoteAnswer{Refuse: link.RefuseNotOffered}, true, "", OpenResult{Outcome: OpenRefused, Reason: link.RefuseNotOffered}},
+		{"another tablet", link.OpenNoteAnswer{}, true, "another-companion", OpenResult{Outcome: OpenOtherTablet}},
+		{"no tablet", link.OpenNoteAnswer{}, false, "", OpenResult{Outcome: OpenNoTablet}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			records := inkLog()
+			rig := newInkRig(t, records)
+			if err := rig.sync(); err != nil {
+				t.Fatal(err)
+			}
+			uuid := rig.container().UUID()
+			rig.companion.SetOpenNoteAnswer(c.answer)
+			if c.as != "" {
+				rig.radio.speakAs(c.as)
+			}
+			if c.connect {
+				rig.enable(linkKey)
+				rig.start()
+				rig.await("connected", connected)
+			}
+			got, err := rig.svc.OpenOnTablet(uuid)
+			if err != nil || got != c.want {
+				t.Fatalf("%+v, %v; want %+v", got, err, c.want)
+			}
+			sent := 0
+			for len(rig.companion.OpenNotes) > 0 {
+				if note := <-rig.companion.OpenNotes; note != noteID {
+					t.Errorf("OPEN-NOTE of %s", note)
+				}
+				sent++
+			}
+			if wantSent := map[bool]int{true: 1, false: 0}[c.want.Outcome == OpenOpened || c.want.Outcome == OpenRefused]; sent != wantSent {
+				t.Errorf("%d OPEN-NOTEs sent, want %d", sent, wantSent)
+			}
+			if c.want.Outcome == OpenOpened {
+				rig.await("the note live", func(st Status) bool { return rig.svc.Live().Container == uuid })
+			}
+		})
+	}
+
+	rig := newInkRig(t, nil)
+	if _, err := rig.svc.OpenOnTablet("no-such-container"); !errors.Is(err, ErrNoSuchNote) {
+		t.Errorf("a container that is no Digital Note: %v", err)
+	}
+}
+
+// OpenOnTablet waits for the tablet's answer on its own goroutine, never the session's: while it
+// waits the link stays usable and stops promptly, and the wait ends with the session or once the
+// injected clock says its few seconds are up.
+func TestInkService_OpenOnTabletWaitsABoundedTimeAndHoldsNothingUp(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		end  func(rig *inkRig, fire chan time.Time)
+		want OpenOutcome
+	}{
+		{"the wait runs out", func(_ *inkRig, fire chan time.Time) { fire <- time.Now() }, OpenNoAnswer},
+		{"the session ends", func(rig *inkRig, _ chan time.Time) { rig.stopPromptly() }, OpenNoTablet},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			records := inkLog()
+			rig := newInkRig(t, records)
+			if err := rig.sync(); err != nil {
+				t.Fatal(err)
+			}
+			uuid := rig.container().UUID()
+			rig.companion.SetOpenNoteAnswer(link.OpenNoteAnswer{Silent: true})
+			waits, fire := make(chan time.Duration, 1), make(chan time.Time, 1)
+			rig.svc.answerWait = func(d time.Duration) <-chan time.Time {
+				waits <- d
+				return fire
+			}
+			rig.enable(linkKey)
+			rig.start()
+			rig.await("connected", connected)
+			result := make(chan OpenResult, 1)
+			go func() {
+				r, err := rig.svc.OpenOnTablet(uuid)
+				if err != nil {
+					t.Error(err)
+				}
+				result <- r
+			}()
+			if d := <-waits; d != openAnswerWait {
+				t.Errorf("waits %v", d)
+			}
+			<-rig.companion.OpenNotes
+			if st := rig.svc.Status(); !connected(st) || len(st.Notes) != 1 {
+				t.Errorf("while waiting: %+v", st.Link)
+			}
+			c.end(rig, fire)
+			select {
+			case r := <-result:
+				if r.Outcome != c.want {
+					t.Errorf("%+v, want %s", r, c.want)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the wait did not end")
+			}
+		})
 	}
 }

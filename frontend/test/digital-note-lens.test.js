@@ -10,9 +10,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { getStroke } from 'perfect-freehand'
 import { DigitalNoteLens } from '../src/static/lens/ink/digital-note-lens.js'
 import { PageSurface } from '../src/static/lens/ink/page-surface.js'
-import { InkFeed } from '../src/static/contract/ink-container-provider.js'
+import { ActionStatus } from '../src/static/lens/ink/action-status.js'
+import { ImageClipboard } from '../src/static/renderers/copy-image.js'
+import { InkFeed, InkOpening, InkRefusal } from '../src/static/contract/ink-container-provider.js'
 import {
-  ASPECT, DOTS, FakeInkProvider, Frames, GRID, UUID, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, pencil, points, press, renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, wheel,
+  ASPECT, DOTS, FakeInkProvider, Frames, GRID, UUID, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, pencil, points, press, renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, viewBoxOf, wheel,
+  copiedImages,
 } from './helpers/ink-lens-rig.js'
 
 /**
@@ -59,6 +62,7 @@ describe('DigitalNoteLens', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+    vi.restoreAllMocks()
     document.body.innerHTML = ''
   })
 
@@ -500,6 +504,123 @@ describe('DigitalNoteLens', () => {
     page.dispatchEvent(event)
     await settle()
     expect([surface.shownPage, event.defaultPrevented]).toEqual([shows, claimed])
+  })
+
+  describe('Open in e-ink', () => {
+    /** @param {HTMLElement} root */
+    const action = (root) => /** @type {HTMLButtonElement} */ (root.querySelector('[data-ink-action="open-on-tablet"]'))
+    /** @param {HTMLElement} root */
+    const status = (root) => /** @type {HTMLElement} */ (root.querySelector('.ink-page__status'))
+
+    it.each([
+      ['the tablet goes live', { outcome: InkOpening.OPENED, reason: '' }, 'Opened on Note Air 2'],
+      ['no tablet connected', { outcome: InkOpening.NO_TABLET, reason: '' }, 'No tablet connected'],
+      ['another tablet connected', { outcome: InkOpening.OTHER_TABLET, reason: '' }, 'Connected to another tablet'],
+      ['SieveInk not in front', { outcome: InkOpening.REFUSED, reason: InkRefusal.NOT_FOREGROUND }, 'SieveInk is not open on the tablet'],
+      ['the note not shared', { outcome: InkOpening.REFUSED, reason: InkRefusal.NOT_OFFERED }, 'This note is not shared with this Sieve'],
+      ['refused for another reason', { outcome: InkOpening.REFUSED, reason: 'busy' }, 'The tablet refused (busy)'],
+      ['no answer', { outcome: InkOpening.NO_ANSWER, reason: '' }, 'The tablet did not answer'],
+      ['nothing could be asked', new Error('no note'), 'Could not ask the tablet'],
+    ])('words %s in place, briefly', async (_, opening, words) => {
+      const { provider, root } = await presented()
+      provider.opening = opening
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      vi.useFakeTimers()
+      action(root).click()
+      expect(status(root).textContent).toBe('Opening on Note Air 2…')
+      await vi.advanceTimersByTimeAsync(0)
+      expect([status(root).hidden, status(root).textContent, action(root).disabled]).toEqual([false, words, false])
+      expect(provider.calls.filter((c) => c === 'openOnTablet')).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(ActionStatus.SHOWN_MS)
+      expect(status(root).hidden).toBe(true)
+    })
+
+    it('is one ask while one is under way, disabled meanwhile', async () => {
+      const { provider, root, surface } = await presented()
+      /** @type {(v: any) => void} */ let answer = () => {}
+      provider.opening = new Promise((resolve) => { answer = resolve })
+      action(root).click()
+      const again = surface.openOnTablet()
+      expect([action(root).disabled, provider.calls.filter((c) => c === 'openOnTablet').length]).toEqual([true, 1])
+      answer({ outcome: InkOpening.OPENED, reason: '' })
+      await again
+      expect([action(root).disabled, status(root).textContent]).toEqual([false, 'Opened on Note Air 2'])
+    })
+
+    it('is offered only for a note that came from a tablet', async () => {
+      const { provider, root } = await presented()
+      expect(action(root).hidden).toBe(false)
+      const { note_source_id: _, ...attrs } = noteAttrs(['p1', 'p2'])
+      provider.setAttrs(attrs)
+      await settle()
+      expect(action(root).hidden).toBe(true)
+    })
+  })
+
+  describe('Copy page', () => {
+    /** @param {HTMLElement} root */
+    const status = (root) => root.querySelector('.ink-page__status')?.textContent
+    /** @param {string} svg @returns {Element} the SVG document's root, as HTML parses inline SVG */
+    const parsed = (svg) => {
+      const template = document.createElement('template')
+      template.innerHTML = svg
+      return /** @type {Element} */ (template.content.firstElementChild)
+    }
+
+    it('copies the page drawn as a self-contained SVG, the whole sheet 1404 across, pencil tone and all, without the pen', async () => {
+      const { provider, root } = await presented({ strokes: [pen('s1'), pencil('t1')] })
+      const copied = copiedImages()
+      provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1', view: 'live-view' })
+      provider.emit({ type: InkFeed.LIVE, records: [begin(7), ...points(7, 0, 12)] })
+      frames.run()
+      expect(layer(root, 'live').children.length).toBe(1)
+      press(root, 'copy-page')
+      await settle()
+      expect(copied).toHaveLength(1)
+      const { svg, width, height } = copied[0]
+      expect([width, height]).toEqual([GRID, Math.round(GRID / ASPECT)])
+      expect(svg.startsWith('<svg xmlns="http://www.w3.org/2000/svg"')).toBe(true)
+      const doc = parsed(svg)
+      expect([doc.getAttribute('width'), doc.getAttribute('height'), doc.getAttribute('viewBox')])
+        .toEqual([String(GRID), String(Math.round(GRID / ASPECT)), `0 0 ${GRID} ${Math.round(GRID / ASPECT)}`])
+      expect(doc.hasAttribute('style')).toBe(false)
+      expect(doc.querySelectorAll('defs pattern').length).toBe(7)
+      expect(doc.querySelector('g[data-ink="ruling"]')?.children.length).toBeGreaterThan(0)
+      expect(doc.querySelectorAll('[data-stroke="s1"]')).toHaveLength(1)
+      expect([...doc.querySelectorAll('[data-stroke="t1"]')].some((g) => /^url\(#ink-b\d\)$/.test(String(g.parentElement?.getAttribute('fill'))))).toBe(true)
+      expect(doc.querySelector('g[data-ink="live"]')?.children.length).toBe(0)
+      expect(svg).not.toMatch(/<image|<style|<foreignObject|href=|@import|font-family|class=/)
+      expect(layer(root, 'live').children.length).toBe(1)
+      expect(status(root)).toBe('Copied')
+    })
+
+    it("copies a whiteboard's window as it is shown, 1404 across", async () => {
+      const { root, surface } = await whiteboard()
+      const copied = copiedImages()
+      surface.zoomBy(2)
+      press(root, 'copy-page')
+      await settle()
+      const w = /** @type {any} */ (surface.window)
+      const doc = parsed(copied[0].svg)
+      expect(doc.getAttribute('viewBox')).toBe(viewBoxOf(w))
+      expect([copied[0].width, copied[0].height]).toEqual([GRID, Math.round(GRID * (w.y1 - w.y0) / (w.x1 - w.x0))])
+    })
+
+    it('says when there is nothing to copy, and when the clipboard does not take it', async () => {
+      const { provider, root } = await presented({ ids: [] })
+      copiedImages()
+      press(root, 'copy-page')
+      await settle()
+      expect(status(root)).toBe(PageSurface.CopyWords.NOTHING)
+      provider.answers.set('p1', { page: exportPage([pen('s1')]), seq: 10 })
+      provider.setAttrs(noteAttrs(['p1']))
+      await settle()
+      vi.spyOn(ImageClipboard.prototype, 'copySvg').mockRejectedValue(new Error('denied'))
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      press(root, 'copy-page')
+      await settle()
+      expect(status(root)).toBe(PageSurface.CopyWords.FAILED)
+    })
   })
 
   it('is read-only by construction', async () => {

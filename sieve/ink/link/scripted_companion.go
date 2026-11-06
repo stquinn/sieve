@@ -35,18 +35,29 @@ type ScriptedCompanion struct {
 	Ink []byte
 	// GapAt skips the record of this seq.
 	GapAt uint32
+	// openNote is how each OPEN-NOTE is answered; see SetOpenNoteAnswer.
+	openNote OpenNoteAnswer
 
-	// Metas receives each META, Opens each OPEN's haveSeq, and Acks each ACK's seq.
-	Metas chan Meta
-	Opens chan uint32
-	Acks  chan uint32
+	// Metas receives each META, Opens each OPEN's haveSeq, OpenNotes each OPEN-NOTE's note, and
+	// Acks each ACK's seq.
+	Metas     chan Meta
+	Opens     chan uint32
+	OpenNotes chan ID
+	Acks      chan uint32
+}
+
+// OpenNoteAnswer is how a ScriptedCompanion answers OPEN-NOTE: with LIVE of the note and Page
+// when Refuse is "", otherwise with REFUSE of the note for Refuse; not at all when Silent.
+type OpenNoteAnswer struct {
+	Refuse string
+	Silent bool
 }
 
 // NewScriptedCompanion serves records as the log of note, under key.
 func NewScriptedCompanion(key Key, note, page ID, records []Record) *ScriptedCompanion {
 	return &ScriptedCompanion{
 		Key: key, Note: note, Page: page, records: records,
-		Metas: make(chan Meta, 8), Opens: make(chan uint32, 64), Acks: make(chan uint32, 4096),
+		Metas: make(chan Meta, 8), Opens: make(chan uint32, 64), OpenNotes: make(chan ID, 64), Acks: make(chan uint32, 4096),
 	}
 }
 
@@ -65,6 +76,13 @@ func (c *ScriptedCompanion) SetNote(note ID, records []Record) {
 		c.others = map[ID][]Record{}
 	}
 	c.others[note] = records
+}
+
+// SetOpenNoteAnswer sets how each OPEN-NOTE from now on is answered; it may be called while serving.
+func (c *ScriptedCompanion) SetOpenNoteAnswer(a OpenNoteAnswer) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.openNote = a
 }
 
 // log is the records served as note's log. c.mu is held.
@@ -119,6 +137,8 @@ func (c *ScriptedCompanion) Serve(link io.ReadWriter) error {
 			c.Acks <- in.u32()
 		case frameMeta:
 			c.Metas <- Meta{in.id(), in.string(), in.strings(), in.strings(), in.string(), in.u32()}
+		case frameOpenNote:
+			err = c.answerOpenNote(stream, in.id())
 		}
 		if err != nil {
 			return err
@@ -150,6 +170,21 @@ func (c *ScriptedCompanion) sendNotes(stream *frameStream) error {
 		return stream.write(newFrame(frameInk).raw(ink).b)
 	}
 	return nil
+}
+
+func (c *ScriptedCompanion) answerOpenNote(stream *frameStream, note ID) error {
+	c.OpenNotes <- note
+	c.mu.Lock()
+	answer := c.openNote
+	c.mu.Unlock()
+	switch {
+	case answer.Silent:
+		return nil
+	case answer.Refuse != "":
+		return stream.write(newFrame(frameRefuse).id(note).string(answer.Refuse).b)
+	default:
+		return stream.write(newFrame(frameLive).id(note).id(c.Page).b)
+	}
 }
 
 func (c *ScriptedCompanion) sendFrom(stream *frameStream, note ID, have uint32) error {

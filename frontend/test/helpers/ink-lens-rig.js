@@ -1,12 +1,13 @@
 // @ts-check
 // ink-lens-rig.js — what the ink lens suites share: an InkContainerProvider over
 // one block whose pages the test answers, animation frames run when the test
-// says, the strokes, pages and live records they feed, and the reads of what
-// the mounted SVG shows.
+// says, the strokes, pages and live records they feed, the reads of what the
+// mounted SVG shows, and the images copied from it.
 
 import { vi, expect } from 'vitest'
 import { getStroke } from 'perfect-freehand'
 import { InkRenderer } from '../../src/static/renderers/ink-renderer.js'
+import { ImageClipboard } from '../../src/static/renderers/copy-image.js'
 
 export const UUID = '019a0000-0000-7000-8000-0000000000aa'
 export const RULED = Object.freeze({ id: 'ruled', params: { spacing: 0.05, margin: 0.12 } })
@@ -44,6 +45,7 @@ export const exportPage = (strokes, template = RULED) => ({
 /** The note's block attrs for pages of these ids. @param {string[]} ids @param {string} [bounds] */
 export const noteAttrs = (ids, bounds = 'fixed') => ({
   id: UUID, title: 'Ideas', note_device: { id: 'd', name: 'Note Air 2', model: 'ONYX' },
+  note_companion: 'companion', note_source_id: '019a0000-0000-7000-8000-0000000000a0',
   note: { created: '2026-11-05T00:00:00Z', pageAspect: 0.75, template: RULED, pages: ids.map((id) => ({ id, template: null, bounds })) },
 })
 
@@ -55,6 +57,7 @@ export class FakeInkProvider {
   /** @type {Map<string, {page: any, seq: number}>} what loadPage answers, by page */ answers = new Map()
   /** @type {boolean} when set, loadPage answers only when the test resolves it from `waiting` */ defer = false
   /** @type {Array<{pageId: string, resolve: (a: any) => void}>} */ waiting = []
+  /** @type {any} what openOnTablet resolves with, or settles as when it is a promise; an Error rejects */ opening = { outcome: 'opened', reason: '' }
   /** @type {any} */ #block
 
   /** @type {string} */ #uuid
@@ -95,6 +98,14 @@ export class FakeInkProvider {
     if (this.defer) return new Promise((resolve) => this.waiting.push({ pageId, resolve }))
     const answer = this.answers.get(pageId)
     return answer ? Promise.resolve(deepFrozen(structuredClone(answer))) : Promise.reject(new Error('no page ' + pageId))
+  }
+
+  openOnTablet() {
+    this.calls.push('openOnTablet')
+    return Promise.resolve(this.opening).then((o) => {
+      if (o instanceof Error) throw o
+      return deepFrozen(structuredClone(o))
+    })
   }
 
   /** @returns {number} how many pages have been asked for */
@@ -206,3 +217,17 @@ export const expectWindow = (actual, expected) => {
 /** @param {'end'|'remove'} record @param {number} stroke */
 export const mark = (record, stroke) => ({ record, stroke, tool: null, widthClass: 0, x: 0, y: 0, pressure: 0, tMillis: 0, tiltX: 0, tiltY: 0 })
 
+/**
+ * Stands in for the clipboard's PNG write: every image an ink lens copies is
+ * kept, as the SVG it would be drawn from and the size it would be drawn at.
+ * @returns {Array<{svg: string, width: number, height: number}>}
+ */
+export const copiedImages = () => {
+  /** @type {Array<{svg: string, width: number, height: number}>} */
+  const copied = []
+  vi.spyOn(ImageClipboard.prototype, 'copySvg').mockImplementation((svg, width, height) => {
+    copied.push({ svg, width, height })
+    return Promise.resolve()
+  })
+  return copied
+}

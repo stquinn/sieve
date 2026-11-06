@@ -146,6 +146,28 @@ describe('DocumentService ink — a page asked for, and the ink frames observed'
     await expect(documentService.inkPage('doc-1', 'p1')).rejects.toThrow()
   })
 
+  it('asks the tablet to open the note and resolves the outcome and reason, past the wire default 5s', async () => {
+    vi.useFakeTimers()
+    try {
+      const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+      const pending = documentService.inkOpenOnTablet('doc-1')
+      expect(sock.sentOfType('ink-open-on-tablet')[0]).toEqual({ type: 'ink-open-on-tablet', opId: lastOpId(sock, 'ink-open-on-tablet') })
+      await vi.advanceTimersByTimeAsync(5500)
+      sock.driveMessage({ type: 'ink-open-on-tablet-result', opId: lastOpId(sock, 'ink-open-on-tablet'), outcome: 'refused', reason: 'not-foreground' })
+      await expect(pending).resolves.toEqual({ outcome: 'refused', reason: 'not-foreground' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('rejects an ink-open-on-tablet that asked nothing, and with no channel', async () => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    const pending = documentService.inkOpenOnTablet('doc-1')
+    sock.driveMessage({ type: 'ink-open-on-tablet-result', opId: lastOpId(sock, 'ink-open-on-tablet'), error: 'no note' })
+    await expect(pending).rejects.toThrow('no note')
+    await expect(serviceRig({ uuid: null }).documentService.inkOpenOnTablet('doc-1')).rejects.toThrow()
+  })
+
   it('observes the four pushed ink frames, in order, and nothing else', () => {
     const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
     /** @type {string[]} */ const types = []

@@ -10,6 +10,7 @@ import { InkFeed } from '../contract/ink-container-provider.js'
 import { DocumentFrame } from '../generated/protocol.js'
 
 /** @typedef {import('../contract/ink-container-provider.js').InkPageAnswer} InkPageAnswer */
+/** @typedef {import('../contract/ink-container-provider.js').InkOpeningResult} InkOpeningResult */
 /** @typedef {import('../contract/ink-container-provider.js').InkFeedEvent} InkFeedEvent */
 /** @typedef {import('../contract/ink-container-provider.js').InkLiveRecord} InkLiveRecord */
 
@@ -22,7 +23,8 @@ export class InkProviderAdapter extends ProviderAdapter {
    */
   constructor(model, documentService) {
     super(model)
-    if (!documentService || typeof documentService.inkPage !== 'function' || typeof documentService.observeInk !== 'function') {
+    if (!documentService || typeof documentService.inkPage !== 'function' || typeof documentService.observeInk !== 'function' ||
+      typeof documentService.inkOpenOnTablet !== 'function') {
       throw new ContractViolation('InkProviderAdapter: construct over the DocumentService')
     }
     this.#documents = documentService
@@ -32,6 +34,12 @@ export class InkProviderAdapter extends ProviderAdapter {
   loadPage(pageId) {
     return this.#documents.inkPage(this.getUuid(), pageId)
       .then((answer) => /** @type {InkPageAnswer} */ (ProviderAdapter._frozen({ page: answer.page, seq: answer.seq })))
+  }
+
+  /** @returns {Promise<InkOpeningResult>} */
+  openOnTablet() {
+    return this.#documents.inkOpenOnTablet(this.getUuid())
+      .then((answer) => /** @type {InkOpeningResult} */ (ProviderAdapter._frozen({ outcome: answer.outcome, reason: answer.reason })))
   }
 
   /**

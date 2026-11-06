@@ -42,6 +42,7 @@ alone, so the token appears in no response header.
 | `feature-control` | `protocol.FeatureControlFrame` | — | FeatureControlFrame switches one text-service feature on or off, and says what it is to work with. |
 | `flush` | `protocol.FlushFrame` | — | FlushFrame asks the shadow document to persist now rather than on its debounce. |
 | `focus` | `protocol.FocusFrame` | — | FocusFrame is the dwell ping: the user is looking at this document, which raises its focus count. |
+| `ink-open-on-tablet` | `protocol.InkOpenOnTabletFrame` | `opId` | InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it. |
 | `ink-page` | `protocol.InkPageFrame` | `opId` | InkPageFrame asks for one page of this channel's Digital Note as it is drawn now. |
 | `load` | `protocol.LoadFrame` | `opId` | LoadFrame asks for the document this channel is bound to, as the editor mounts it. |
 | `paste` | `protocol.PasteFrame` | `opId` | PasteFrame hands a clipboard to the server to make sense of. |
@@ -63,6 +64,7 @@ alone, so the token appears in no response header.
 | `ink-live` | `protocol.InkLiveFrame` | — | InkLiveFrame is live records in the order the tablet sent them. |
 | `ink-live-page` | `protocol.InkLivePageFrame` | — | InkLivePageFrame is which page of this channel's note the tablet shows as being written, or that none is, and the Live view that mirrors it. |
 | `ink-log-restarted` | `protocol.InkLogRestartedFrame` | — | InkLogRestartedFrame is the note's log started again from its first record in this channel's container. |
+| `ink-open-on-tablet-result` | `protocol.InkOpenOnTabletResultFrame` | `opId` | InkOpenOnTabletResultFrame answers an ink-open-on-tablet with what came of it, or why it could not be asked. |
 | `ink-page-content` | `protocol.InkPageContentFrame` | `opId` | InkPageContentFrame answers an ink-page: the page in the export shape and the seq of the last record it reflects, or why there is none. |
 | `ink-stroke-added` | `protocol.InkStrokeAddedFrame` | — | InkStrokeAddedFrame is a stroke now present on a page, committed by the record of Seq. |
 | `ink-stroke-removed` | `protocol.InkStrokeRemovedFrame` | — | InkStrokeRemovedFrame is a stroke gone from a page, removed by the record of Seq. |
@@ -222,6 +224,15 @@ FocusFrame is the dwell ping: the user is looking at this document, which raises
 | Field | Go type | Required | Description |
 |---|---|---|---|
 | `type` | `string` | yes |  |
+
+#### `ink-open-on-tablet` — client → server
+
+InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | no | echoed on the ink-open-on-tablet-result reply |
 
 #### `ink-page` — client → server
 
@@ -388,6 +399,18 @@ InkLogRestartedFrame is the note's log started again from its first record in th
 | Field | Go type | Required | Description |
 |---|---|---|---|
 | `type` | `string` | yes |  |
+
+#### `ink-open-on-tablet-result` — server → client
+
+InkOpenOnTabletResultFrame answers an ink-open-on-tablet with what came of it, or why it could not be asked.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `opId` | `string` | no |  |
+| `outcome` | `string` | no | opened (the tablet shows the note, live) \| no-tablet \| other-tablet (a tablet is connected that the note did not come from) \| refused \| no-answer; absent with error |
+| `reason` | `string` | no | refused only: the tablet's reason, not-foreground (SieveInk is not in front) \| not-offered (the note is not in a folder this Sieve receives) \| another |
+| `error` | `string` | no | present only when nothing was asked: the channel holds no Digital Note from a tablet, or ink is unavailable |
 
 #### `ink-page-content` — server → client
 

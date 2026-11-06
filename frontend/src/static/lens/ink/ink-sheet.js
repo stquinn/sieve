@@ -16,9 +16,10 @@
 // node stays where it is. Whether the window and the surround's scroll move on
 // their own is the sheet's SheetPolicy.
 
-import { InkRenderer, INK_LAYERS } from '../../renderers/ink-renderer.js'
+import { InkRenderer, INK_LAYERS, INK_RULES } from '../../renderers/ink-renderer.js'
 import { InkFeed } from '../../contract/ink-container-provider.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
+import { ImageClipboard } from '../../renderers/copy-image.js'
 import { PlaneWindow, WindowEdge } from './plane-window.js'
 
 /** @typedef {import('../../contract/ink-container-provider.js').InkContainerProvider} InkContainerProvider */
@@ -148,6 +149,7 @@ export class InkSheet {
   /** @type {InkSheetHost} */ #host
   /** @type {SheetPolicy} */ #policy
   /** @type {InkRenderer} */ #renderer = new InkRenderer()
+  /** @type {ImageClipboard} */ #clipboard = new ImageClipboard()
 
   /** @type {boolean} between attach and detach */ #attached = false
   /** @type {HTMLElement} */ #surround
@@ -446,6 +448,43 @@ export class InkSheet {
   /** @returns {boolean} whether the drawn page shows a template it cannot draw */
   get unknownTemplate() {
     return !!this.#svg && !!this.#svg.querySelector('g[data-ink="ruling"][data-ink-template="unknown"]')
+  }
+
+  /**
+   * The page as the sheet draws it, as a self-contained SVG document to make an
+   * image of: the white sheet, the ruling and the committed ink — of the whole
+   * page for a fixed page, of the window for a whiteboard — without the stroke
+   * under the pen or the sheet's own styling, sized INK_RULES.grid pixels across.
+   * Null while the page shown is not drawn.
+   * @returns {{svg: string, width: number, height: number}|null}
+   */
+  pageImage() {
+    if (!this.#svg || !this.#layers || this.#drawn !== this.#shown) return null
+    if (this.#windowStale) {
+      this.#windowStale = false
+      this.#applyWindow()
+    }
+    const copy = /** @type {SVGSVGElement} */ (this.#svg.cloneNode(true))
+    copy.removeAttribute('style')
+    copy.querySelector('g[data-ink="live"]')?.replaceChildren()
+    const [, , w, h] = String(copy.getAttribute('viewBox')).trim().split(/\s+/).map(Number)
+    if (!(w > 0 && h > 0)) return null
+    const width = INK_RULES.grid
+    const height = Math.max(1, Math.round(width * h / w))
+    copy.setAttribute('width', String(width))
+    copy.setAttribute('height', String(height))
+    return { svg: new XMLSerializer().serializeToString(copy), width, height }
+  }
+
+  /**
+   * Puts the page as pageImage draws it on the clipboard as a PNG.
+   * @returns {Promise<boolean>} false when no page is drawn; rejects when the
+   *   clipboard does not take the image
+   */
+  copyPage() {
+    const image = this.pageImage()
+    if (!image) return Promise.resolve(false)
+    return this.#clipboard.copySvg(image.svg, image.width, image.height).then(() => true)
   }
 
   /** @param {string} text */

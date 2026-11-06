@@ -361,6 +361,9 @@ count + strings; a seq is u32, at most 2³¹−1. Everything after `OK` is seale
 ### 7.3 Behaviour
 
 - The companion sends `CHALLENGE` on accept.
+- A companion answers a note's requests in the order it reads them: `HEAD` or `REFUSE` for an
+  `OPEN`, `LIVE` or `REFUSE` for an `OPEN-NOTE`. A `REFUSE` names the note and not the request,
+  so that order is how a Sieve tells which request was refused.
 - `LIVE` names the note and page being written, and is sent only for notes this Sieve receives.
   After it names a note, the Sieve sends `OPEN` with its cursor; committed records then keep
   following after `DONE` until the note stops being live, and `OPEN` is needed again next time.

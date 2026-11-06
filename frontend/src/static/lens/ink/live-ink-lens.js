@@ -1,9 +1,9 @@
 // @ts-check
 // The lens of the Live view: a strict mirror of the tablet — the note being
 // written, the page written on and, on a whiteboard, the tablet's window — that
-// the reader cannot turn, pan or zoom. Its one gesture asks the host to open the
-// note in a tab of its own. Mounted over an InkContainerProvider, it declares no
-// capability and writes nothing.
+// the reader cannot turn, pan or zoom. Its gestures ask the host to open the
+// note in a tab of its own and copy the page as an image. Mounted over an
+// InkContainerProvider, it declares no capability and writes nothing.
 
 import { AbstractEditor } from '../abstract-editor.js'
 import { LensCapability } from '../../contract/lens-capabilities.js'

@@ -218,6 +218,7 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
       path.join('lens', 'document-editor', 'surfaces', 'wysiwyg-surface.js'),
       path.join('lens', 'document-editor', 'toolbar-button.js'),
       path.join('lens', 'extensions.js'),
+      path.join('lens', 'ink', 'action-status.js'),
       path.join('lens', 'ink', 'digital-note-lens.js'),
       path.join('lens', 'ink', 'ink-sheet.js'),
       path.join('lens', 'ink', 'live-ink-lens.js'),

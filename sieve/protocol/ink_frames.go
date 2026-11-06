@@ -128,3 +128,39 @@ type InkLogRestartedFrame struct {
 func NewInkLogRestartedFrame() InkLogRestartedFrame {
 	return InkLogRestartedFrame{Type: TypeInkLogRestarted}
 }
+
+// InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it. Only the
+// note's id reaches the tablet.
+type InkOpenOnTabletFrame struct {
+	Type string `json:"type"`
+	OpID string `json:"opId,omitempty" doc:"echoed on the ink-open-on-tablet-result reply"`
+}
+
+// What came of an ink-open-on-tablet.
+const (
+	InkOpenOpened      = "opened"
+	InkOpenNoTablet    = "no-tablet"
+	InkOpenOtherTablet = "other-tablet"
+	InkOpenRefused     = "refused"
+	InkOpenNoAnswer    = "no-answer"
+)
+
+// InkOpenOnTabletResultFrame answers an ink-open-on-tablet with what came of it, or why it could
+// not be asked.
+type InkOpenOnTabletResultFrame struct {
+	Type    string `json:"type"`
+	OpID    string `json:"opId,omitempty"`
+	Outcome string `json:"outcome,omitempty" doc:"opened (the tablet shows the note, live) | no-tablet | other-tablet (a tablet is connected that the note did not come from) | refused | no-answer; absent with error"`
+	Reason  string `json:"reason,omitempty" doc:"refused only: the tablet's reason, not-foreground (SieveInk is not in front) | not-offered (the note is not in a folder this Sieve receives) | another"`
+	Error   string `json:"error,omitempty" doc:"present only when nothing was asked: the channel holds no Digital Note from a tablet, or ink is unavailable"`
+}
+
+// NewInkOpenOnTabletResultFrame builds the answer carrying outcome and, when refused, reason.
+func NewInkOpenOnTabletResultFrame(opID, outcome, reason string) InkOpenOnTabletResultFrame {
+	return InkOpenOnTabletResultFrame{Type: TypeInkOpenOnTabletResult, OpID: opID, Outcome: outcome, Reason: reason}
+}
+
+// NewInkOpenOnTabletFailedFrame builds the answer to an ink-open-on-tablet that asked nothing.
+func NewInkOpenOnTabletFailedFrame(opID string, err error) InkOpenOnTabletResultFrame {
+	return InkOpenOnTabletResultFrame{Type: TypeInkOpenOnTabletResult, OpID: opID, Error: err.Error()}
+}

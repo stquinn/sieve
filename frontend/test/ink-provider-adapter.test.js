@@ -8,7 +8,7 @@ import { serviceRig, FakeSocket } from './helpers/service-rig.js'
 import { ContainerModel } from '../src/static/container/container-model.js'
 import { InkProviderAdapter } from '../src/static/container/ink-provider-adapter.js'
 import { ProviderAdapter } from '../src/static/container/provider-adapter.js'
-import { InkFeed } from '../src/static/contract/ink-container-provider.js'
+import { InkFeed, InkOpening } from '../src/static/contract/ink-container-provider.js'
 import { DocumentFrame } from '../src/static/generated/protocol.js'
 import { ContractViolation } from '../src/static/contract/sieve-block.js'
 
@@ -55,6 +55,19 @@ describe('InkProviderAdapter', () => {
     const pending = provider.loadPage('p9')
     sock.driveMessage({ type: DocumentFrame.INK_PAGE_CONTENT, opId: pageOpId(sock), pageId: 'p9', seq: 0, page: null, error: 'no page p9' })
     await expect(pending).rejects.toThrow('no page p9')
+  })
+
+  it('openOnTablet resolves what came of asking the tablet, frozen, and rejects what asked nothing', async () => {
+    const { provider, sock } = rig()
+    const opId = () => sock.sentOfType(DocumentFrame.INK_OPEN_ON_TABLET).at(-1).opId
+    const pending = provider.openOnTablet()
+    sock.driveMessage({ type: DocumentFrame.INK_OPEN_ON_TABLET_RESULT, opId: opId(), outcome: InkOpening.OPENED })
+    const result = await pending
+    expect(result).toEqual({ outcome: InkOpening.OPENED, reason: '' })
+    expect(Object.isFrozen(result)).toBe(true)
+    const refused = provider.openOnTablet()
+    sock.driveMessage({ type: DocumentFrame.INK_OPEN_ON_TABLET_RESULT, opId: opId(), error: 'no note' })
+    await expect(refused).rejects.toThrow('no note')
   })
 
   it('turns each ink frame into its event, in order, and nothing else into one', () => {

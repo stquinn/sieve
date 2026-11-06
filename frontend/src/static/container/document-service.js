@@ -18,8 +18,8 @@
 // flushContents and setContents fall back to the HTTP save; getContents and exportAs
 // fall back to the load answer; focus, persist, retry and setFeature drop; the
 // membership verbs and extract resolve {ok:false}; detectExtractions resolves no
-// offers and replaceText resolves `error`. paste and inkPage REJECT, so a
-// channel-less caller of either needs its own catch.
+// offers and replaceText resolves `error`. paste, inkPage and inkOpenOnTablet
+// REJECT, so a channel-less caller of any of them needs its own catch.
 
 import { ContractViolation } from '../contract/sieve-block.js'
 import { DocumentFrame } from '../generated/protocol.js'
@@ -34,6 +34,10 @@ const PASTE_ACK_TIMEOUT_MS = 12000
 // it. The other two words — applied, and the anchor no longer resolves — are read
 // by nobody here: both mean the container is now what Go says it is.
 const TEXT_REPLACE_ERROR = 'error'
+
+// Go waits at most five seconds for the tablet before it answers an
+// ink-open-on-tablet; the reply must not be given up on before that.
+const OPEN_ON_TABLET_TIMEOUT_MS = 8000
 
 /** @typedef {import('./container-transport.js').ChannelDelegate} ChannelDelegate */
 
@@ -469,6 +473,24 @@ export class DocumentService {
       .then((reply) => {
         if (reply.error || !reply.page) throw new Error('ink-page ' + pageId + ' refused: ' + (reply.error || 'no page'))
         return { page: reply.page, seq: reply.seq || 0 }
+      })
+  }
+
+  /**
+   * Asks the tablet this container's Digital Note came from to open it, and
+   * resolves with what came of that: `outcome` as the wire names it and the
+   * tablet's `reason` ('' unless refused).
+   *
+   * REJECTS when Go asked nothing — the container holds no note from a tablet, or
+   * ink is unavailable — on a timeout, and on a channel-less uuid.
+   * @param {string} uuid
+   * @returns {Promise<{outcome: string, reason: string}>}
+   */
+  inkOpenOnTablet(uuid) {
+    return this.#transport._awaitReply(uuid, { type: DocumentFrame.INK_OPEN_ON_TABLET }, 'ink-open-on-tablet', OPEN_ON_TABLET_TIMEOUT_MS)
+      .then((reply) => {
+        if (reply.error || !reply.outcome) throw new Error('ink-open-on-tablet refused: ' + (reply.error || 'no outcome'))
+        return { outcome: String(reply.outcome), reason: String(reply.reason || '') }
       })
   }
 

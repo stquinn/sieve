@@ -58,6 +58,7 @@ const (
 	TypeTextReplace       = "text-replace"
 	TypeSetPresenting     = "set-presenting"
 	TypeInkPage           = "ink-page"
+	TypeInkOpenOnTablet   = "ink-open-on-tablet"
 
 	// Both channels, client → server. Which channel a feature-control frame
 	// arrives on IS the scope it speaks for: the workspace wire controls a
@@ -87,6 +88,7 @@ const (
 	TypeInkLive                 = "ink-live"
 	TypeInkLivePage             = "ink-live-page"
 	TypeInkLogRestarted         = "ink-log-restarted"
+	TypeInkOpenOnTabletResult   = "ink-open-on-tablet-result"
 
 	// Workspace channel, client → server.
 	TypeCommand        = "command"

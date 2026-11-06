@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -23,7 +24,14 @@ var (
 	ErrRefused = errors.New("the companion refused the handshake")
 	// ErrBadCompanion is a companion whose proof does not hold: it does not hold this Sieve's key.
 	ErrBadCompanion = errors.New("the companion's proof does not hold")
+	// ErrNotRunning is a request to a session whose handshake has not held, or whose Run has returned.
+	ErrNotRunning = errors.New("the session is not running")
 )
+
+// RefusedError is the companion's REFUSE of a request, with its reason.
+type RefusedError struct{ Reason string }
+
+func (e *RefusedError) Error() string { return "the companion refused: " + e.Reason }
 
 // Observer is told what a session sees, on the session's goroutine. A method must not block for
 // long: the link waits while it runs.
@@ -41,7 +49,8 @@ type Observer interface {
 	Live(note, page ID)
 	// Ink is the live records of one INK frame.
 	Ink(records []LiveRecord)
-	// Refused is a REFUSE of a note, with its reason.
+	// Refused is a REFUSE of an OPEN of note, with its reason. A REFUSE of an OPEN-NOTE is answered
+	// to the caller of OpenNote instead.
 	Refused(note ID, reason string)
 	// SetAside is the note's replica set aside: its log starts again from seq 1, and the records
 	// Committed reports for it from now on are the new log's.
@@ -62,8 +71,6 @@ type Plan struct {
 	Follow bool
 	// Meta is sent once NOTES has come, followed by another LIST.
 	Meta *Meta
-	// OpenNote is sent once NOTES has come, after any Meta, followed by another LIST.
-	OpenNote *ID
 }
 
 // Session is this Sieve's end of one connection to a companion. A Session is used once.
@@ -79,12 +86,12 @@ type Session struct {
 	open     map[ID]Replica
 	heads    map[ID]headCheck
 	received map[ID]int
-	// awaitingHead counts each note's OPENs not yet answered by HEAD or REFUSE; OP and DONE of the
-	// note are ignored meanwhile, since the HEAD starts it again from haveSeq.
-	awaitingHead map[ID]int
-	following    ID
-	metaSent     bool
-	ink          LiveDecoder
+	// requests are the OPENs and OPEN-NOTEs not yet answered. OP and DONE of a note with an OPEN
+	// among them are ignored, since the HEAD starts it again from haveSeq.
+	requests  requests
+	following ID
+	metaSent  bool
+	ink       LiveDecoder
 
 	ackMu    sync.Mutex
 	unacked  map[ID]uint32
@@ -102,8 +109,8 @@ type headCheck struct {
 func NewSession(link io.ReadWriter, key Key, replicas Replicas, obs Observer, p Plan) *Session {
 	return &Session{
 		key: key, replicas: replicas, stream: newFrameStream(link), obs: obs, plan: p,
-		open: map[ID]Replica{}, heads: map[ID]headCheck{}, received: map[ID]int{}, awaitingHead: map[ID]int{},
-		unacked: map[ID]uint32{},
+		open: map[ID]Replica{}, heads: map[ID]headCheck{}, received: map[ID]int{},
+		unacked: map[ID]uint32{}, requests: requests{byNote: map[ID][]chan error{}},
 	}
 }
 
@@ -114,10 +121,12 @@ func (s *Session) Run() error {
 	if err := s.handshake(); err != nil {
 		return err
 	}
+	s.requests.start()
+	defer s.requests.stop()
 	stop := make(chan struct{})
 	defer close(stop)
 	go s.ackLoop(stop)
-	if s.plan.List || s.plan.CatchUp || s.plan.Meta != nil || s.plan.OpenNote != nil {
+	if s.plan.List || s.plan.CatchUp || s.plan.Meta != nil {
 		if err := s.stream.write(listFrame{}.encode()); err != nil {
 			return err
 		}
@@ -254,14 +263,6 @@ func (s *Session) onNotes(notes []NoteEntry) (bool, error) {
 		}
 		return false, s.stream.write(listFrame{}.encode())
 	}
-	if s.plan.OpenNote != nil {
-		note := *s.plan.OpenNote
-		s.plan.OpenNote = nil
-		if err := s.stream.write(openNoteFrame{note}.encode()); err != nil {
-			return false, err
-		}
-		return false, s.stream.write(listFrame{}.encode())
-	}
 	if s.plan.CatchUp {
 		sort.Slice(notes, func(i, j int) bool { return bytes.Compare(notes[i].ID[:], notes[j].ID[:]) < 0 })
 		for _, n := range notes {
@@ -300,18 +301,11 @@ func (s *Session) sendOpen(note ID) error {
 	if err != nil {
 		return err
 	}
-	s.awaitingHead[note]++
-	return s.stream.write(openFrame{note, r.Cursor().Seq}.encode())
-}
-
-func (s *Session) answered(note ID) {
-	if s.awaitingHead[note] > 0 {
-		s.awaitingHead[note]--
-	}
+	return s.stream.writeIf(func() bool { return s.requests.add(note, nil) }, openFrame{note, r.Cursor().Seq}.encode())
 }
 
 func (s *Session) onHead(note ID, head headCheck) error {
-	s.answered(note)
+	s.requests.answerOpen(note)
 	s.heads[note] = head
 	r, err := s.replica(note)
 	if err != nil {
@@ -322,7 +316,7 @@ func (s *Session) onHead(note ID, head headCheck) error {
 }
 
 func (s *Session) onOp(note ID, frame LogFrame) error {
-	if s.awaitingHead[note] > 0 {
+	if s.requests.awaitingHead(note) {
 		return nil
 	}
 	body, err := frame.Body()
@@ -367,7 +361,7 @@ func (s *Session) checkHead(note ID, r Replica) error {
 }
 
 func (s *Session) onDone(note ID) (bool, error) {
-	if s.awaitingHead[note] > 0 {
+	if s.requests.awaitingHead(note) {
 		return false, nil
 	}
 	r, err := s.replica(note)
@@ -382,6 +376,9 @@ func (s *Session) onDone(note ID) (bool, error) {
 }
 
 func (s *Session) onLive(note, page ID) error {
+	if note != (ID{}) {
+		s.requests.live(note)
+	}
 	previous := s.following
 	s.following = note
 	s.obs.Live(note, page)
@@ -392,8 +389,10 @@ func (s *Session) onLive(note, page ID) error {
 }
 
 func (s *Session) onRefuse(note ID, reason string) (bool, error) {
+	if s.requests.refuse(note, reason) {
+		return false, nil
+	}
 	s.obs.Refused(note, reason)
-	s.answered(note)
 	if s.following == note {
 		s.following = ID{}
 	}
@@ -413,6 +412,27 @@ func (s *Session) onRefuse(note ID, reason string) (bool, error) {
 		return s.openNext()
 	}
 	return false, nil
+}
+
+// OpenNote sends OPEN-NOTE, asking the companion to show note. Its answer arrives on the channel,
+// once: nil when a LIVE names note, a *RefusedError when the companion refuses it, ErrNotRunning
+// when the session ends first. It may be called from any goroutine, the Observer's included, and
+// is ErrNotRunning, with no channel, while the session is not running.
+func (s *Session) OpenNote(note ID) (<-chan error, error) {
+	answer := make(chan error, 1)
+	running := false
+	err := s.stream.writeIf(func() bool {
+		running = s.requests.add(note, answer)
+		return running
+	}, openNoteFrame{note}.encode())
+	switch {
+	case !running:
+		return nil, ErrNotRunning
+	case err != nil:
+		s.requests.forget(note, answer)
+		return nil, err
+	}
+	return answer, nil
 }
 
 func (s *Session) replica(note ID) (Replica, error) {
@@ -474,4 +494,129 @@ func (s *Session) ackLoop(stop <-chan struct{}) {
 			}
 		}
 	}
+}
+
+// requests are the OPENs and OPEN-NOTEs a running session has written and the companion has not
+// answered, each note's in the order they were written: an OPEN as nil, an OPEN-NOTE as the
+// channel its answer goes to. The companion answers a note's requests in the order it reads them:
+// an OPEN with HEAD, an OPEN-NOTE with LIVE, either with REFUSE. It is safe for concurrent use.
+type requests struct {
+	mu      sync.Mutex
+	running bool
+	byNote  map[ID][]chan error
+}
+
+// start takes requests from now on.
+func (r *requests) start() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.running = true
+}
+
+// stop takes no more requests, and answers every OPEN-NOTE still awaited with ErrNotRunning.
+func (r *requests) stop() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.running = false
+	for note, waiting := range r.byNote {
+		for _, answer := range waiting {
+			if answer != nil {
+				answer <- ErrNotRunning
+			}
+		}
+		delete(r.byNote, note)
+	}
+}
+
+// add records a request of note about to be written, an OPEN when answer is nil, and reports
+// whether it may be: false once stopped.
+func (r *requests) add(note ID, answer chan error) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.running {
+		r.byNote[note] = append(r.byNote[note], answer)
+	}
+	return r.running
+}
+
+// forget drops the OPEN-NOTE answer, which was never written.
+func (r *requests) forget(note ID, answer chan error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.drop(note, slices.Index(r.byNote[note], answer))
+}
+
+// awaitingHead is whether an OPEN of note is unanswered.
+func (r *requests) awaitingHead(note ID) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Contains(r.byNote[note], nil)
+}
+
+// answerOpen drops the oldest OPEN of note, which a HEAD answers.
+func (r *requests) answerOpen(note ID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.drop(note, slices.Index(r.byNote[note], nil))
+}
+
+// live answers every OPEN-NOTE of note with nil: a LIVE names it.
+func (r *requests) live(note ID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	opens := 0
+	for _, a := range r.byNote[note] {
+		if a == nil {
+			opens++
+		} else {
+			a <- nil
+		}
+	}
+	if opens == 0 {
+		delete(r.byNote, note)
+		return
+	}
+	r.byNote[note] = make([]chan error, opens)
+}
+
+// refuse drops the request a REFUSE of note for reason answers and reports whether it was an
+// OPEN-NOTE, which is answered with the refusal. Only an OPEN is refused as ahead, and an OPEN-NOTE
+// is the one refused as not-foreground; any other refusal answers the note's oldest request.
+func (r *requests) refuse(note ID, reason string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	waiting := r.byNote[note]
+	i := 0
+	switch reason {
+	case RefuseAhead:
+		i = slices.Index(waiting, nil)
+	case RefuseNotForeground:
+		if j := slices.IndexFunc(waiting, func(a chan error) bool { return a != nil }); j >= 0 {
+			i = j
+		}
+	}
+	if i < 0 || i >= len(waiting) {
+		return false
+	}
+	answer := waiting[i]
+	r.drop(note, i)
+	if answer == nil {
+		return false
+	}
+	answer <- &RefusedError{reason}
+	return true
+}
+
+// drop removes the request at i of note, none when i is out of range, and forgets a note left
+// with none. r.mu is held.
+func (r *requests) drop(note ID, i int) {
+	waiting := r.byNote[note]
+	if i >= 0 && i < len(waiting) {
+		waiting = slices.Delete(waiting, i, i+1)
+	}
+	if len(waiting) == 0 {
+		delete(r.byNote, note)
+		return
+	}
+	r.byNote[note] = waiting
 }

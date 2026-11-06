@@ -101,11 +101,44 @@ export const InkFeed = Object.freeze({
 
 /** @typedef {InkStrokeAdded|InkStrokeRemoved|InkLive|InkLivePage|InkLogRestarted} InkFeedEvent */
 
+/** What came of asking the tablet the note came from to open it. */
+export const InkOpening = Object.freeze({
+  /** the tablet shows the note, live */
+  OPENED: 'opened',
+  /** no tablet is connected */
+  NO_TABLET: 'no-tablet',
+  /** a tablet is connected that the note did not come from */
+  OTHER_TABLET: 'other-tablet',
+  /** the tablet refused, for a reason */
+  REFUSED: 'refused',
+  /** the tablet did not answer in time */
+  NO_ANSWER: 'no-answer',
+})
+
+/** The reasons the tablet gives for refusing; it may give another. */
+export const InkRefusal = Object.freeze({
+  /** SieveInk is not the app in front on the tablet */
+  NOT_FOREGROUND: 'not-foreground',
+  /** the note is not in a folder the tablet shares with this Sieve */
+  NOT_OFFERED: 'not-offered',
+})
+
 /**
- * The read minimum and the feed, plus the pages. `loadPage` REJECTS for a page
- * the note does not have, and when the host cannot answer.
+ * What came of asking the tablet to open the note: one of InkOpening, and the
+ * tablet's reason ('' unless refused).
+ * @typedef {Readonly<{outcome: string, reason: string}>} InkOpeningResult
+ */
+
+/**
+ * The read minimum and the feed, plus the pages, plus a query that asks the
+ * tablet the note came from to open it — a command to the tablet that names the
+ * note alone and changes nothing here. `loadPage` REJECTS for a page the note
+ * does not have, and when the host cannot answer; `openOnTablet` REJECTS when
+ * nothing could be asked: the container holds no note from a tablet, or the host
+ * did not answer.
  *
  * @typedef {import('./container-provider.js').ContainerProvider & {
  *   loadPage: (pageId: string) => Promise<InkPageAnswer>,
+ *   openOnTablet: () => Promise<InkOpeningResult>,
  * }} InkContainerProvider
  */

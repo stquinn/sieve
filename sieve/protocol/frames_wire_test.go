@@ -287,6 +287,18 @@ func outboundWireCases() []wireCase {
 			golden:  `{"type":"ink-page-content","opId":"op-1","pageId":"p9","seq":0,"page":null,"error":"no such page"}`,
 		},
 		{
+			name:    "ink-open-on-tablet-result",
+			channel: ChannelDocument,
+			frame:   NewInkOpenOnTabletResultFrame("op-1", InkOpenRefused, "not-foreground"),
+			golden:  `{"type":"ink-open-on-tablet-result","opId":"op-1","outcome":"refused","reason":"not-foreground"}`,
+		},
+		{
+			name:    "ink-open-on-tablet-result failed",
+			channel: ChannelDocument,
+			frame:   NewInkOpenOnTabletFailedFrame("op-1", errors.New("no note")),
+			golden:  `{"type":"ink-open-on-tablet-result","opId":"op-1","error":"no note"}`,
+		},
+		{
 			name:    "ink-stroke-added",
 			channel: ChannelDocument,
 			frame:   NewInkStrokeAddedFrame("p1", 8, inkStroke),
@@ -552,6 +564,12 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 			raw:  `{"type":"ink-page","opId":"op-7","pageId":"019a0000-0000-7000-8000-000000000011"}`,
 			into: &InkPageFrame{},
 			want: &InkPageFrame{Type: TypeInkPage, OpID: "op-7", PageID: "019a0000-0000-7000-8000-000000000011"},
+		},
+		{
+			name: "ink-open-on-tablet",
+			raw:  `{"type":"ink-open-on-tablet","opId":"op-7"}`,
+			into: &InkOpenOnTabletFrame{},
+			want: &InkOpenOnTabletFrame{Type: TypeInkOpenOnTablet, OpID: "op-7"},
 		},
 		{
 			name: "set-presenting",

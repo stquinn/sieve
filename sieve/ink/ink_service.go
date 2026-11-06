@@ -49,6 +49,35 @@ const (
 // does not have.
 var ErrNoSuchPage = errors.New("ink: no such note page")
 
+// ErrNoSuchNote is a request about a container that is not a held Digital Note from a companion.
+var ErrNoSuchNote = errors.New("ink: no such note")
+
+// openAnswerWait is how long OpenOnTablet waits for the tablet's answer.
+const openAnswerWait = 5 * time.Second
+
+// OpenOutcome is what came of asking the tablet to open a note.
+type OpenOutcome string
+
+const (
+	// OpenOpened is the tablet showing the note, live.
+	OpenOpened OpenOutcome = "opened"
+	// OpenNoTablet is no tablet connected.
+	OpenNoTablet OpenOutcome = "no-tablet"
+	// OpenOtherTablet is a tablet connected that is not the one the note came from.
+	OpenOtherTablet OpenOutcome = "other-tablet"
+	// OpenRefused is the tablet refusing, for OpenResult.Reason.
+	OpenRefused OpenOutcome = "refused"
+	// OpenNoAnswer is the tablet not answering in time.
+	OpenNoAnswer OpenOutcome = "no-answer"
+)
+
+// OpenResult is what came of asking the tablet to open a note: the outcome and, when the tablet
+// refused, its REFUSE reason (link.RefuseNotForeground, link.RefuseNotOffered or another).
+type OpenResult struct {
+	Outcome OpenOutcome
+	Reason  string
+}
+
 // LinkState is the link as the user sees it.
 type LinkState struct {
 	Phase LinkPhase
@@ -162,6 +191,8 @@ type InkService struct {
 	throttle    time.Duration
 	// after is the clock the loop waits on between sessions.
 	after func(time.Duration) <-chan time.Time
+	// answerWait is the clock OpenOnTablet waits on for the tablet's answer.
+	answerWait func(time.Duration) <-chan time.Time
 	// wake cuts the loop's wait short, to wait the base pause instead.
 	wake chan struct{}
 
@@ -193,7 +224,7 @@ type InkService struct {
 func NewInkService(settings *services.StateService, containers *services.BlockContainerService, r radio.Radio, inv Invalidator) *InkService {
 	s := &InkService{
 		settings: settings, containers: containers, radio: r, invalidator: inv,
-		throttle: time.Second, after: time.After, wake: make(chan struct{}, 1), state: LinkState{Phase: LinkOff},
+		throttle: time.Second, after: time.After, answerWait: time.After, wake: make(chan struct{}, 1), state: LinkState{Phase: LinkOff},
 		redial: redialPause{base: time.Second, max: 30 * time.Second},
 	}
 	s.view = newLiveView(s)
@@ -361,6 +392,51 @@ func (s *InkService) ExportPage(uuid string, page int) ([]byte, error) {
 	return note.ExportPage(page)
 }
 
+// OpenOnTablet asks the tablet the Digital Note in container uuid came from to open it, sending it
+// the note's id and nothing else, and waits a few seconds at most for its answer. The tablet must
+// be connected now: nothing is queued for a later session. A container that is not a Digital Note
+// from a companion is ErrNoSuchNote. It may be called from any goroutine and never holds up the
+// session.
+func (s *InkService) OpenOnTablet(uuid string) (OpenResult, error) {
+	attrs := s.noteAttrs(uuid)
+	if attrs == nil {
+		return OpenResult{}, fmt.Errorf("%w: %s", ErrNoSuchNote, uuid)
+	}
+	companion, _ := attrs["note_companion"].(string)
+	source, _ := attrs["note_source_id"].(string)
+	note, err := link.ParseID(source)
+	if err != nil || companion == "" {
+		return OpenResult{}, fmt.Errorf("%w: %s came from no companion", ErrNoSuchNote, uuid)
+	}
+	s.mu.Lock()
+	run, wait := s.run, s.answerWait
+	s.mu.Unlock()
+	if run == nil || run.session == nil {
+		return OpenResult{Outcome: OpenNoTablet}, nil
+	}
+	if run.link.Identity() != companion {
+		return OpenResult{Outcome: OpenOtherTablet}, nil
+	}
+	answer, err := run.session.OpenNote(note)
+	if err != nil {
+		return OpenResult{Outcome: OpenNoTablet}, nil
+	}
+	select {
+	case err := <-answer:
+		var refused *link.RefusedError
+		switch {
+		case err == nil:
+			return OpenResult{Outcome: OpenOpened}, nil
+		case errors.As(err, &refused):
+			return OpenResult{Outcome: OpenRefused, Reason: refused.Reason}, nil
+		default:
+			return OpenResult{Outcome: OpenNoTablet}, nil
+		}
+	case <-wait(openAnswerWait):
+		return OpenResult{Outcome: OpenNoAnswer}, nil
+	}
+}
+
 // noteLog is the whole log of the Digital Note in container uuid as it stands now: the open
 // session's replica of it, queue included, otherwise its asset. A container that is not a
 // Digital Note is ErrNoSuchPage.
@@ -503,11 +579,11 @@ func (s *InkService) session(ctx context.Context) bool {
 	run := &sessionRun{svc: s, link: l, received: &countedReader{r: l},
 		replicas: NewNoteReplicas(s.containers, l.Identity())}
 	s.mu.Lock()
+	run.session = link.NewSession(run, s.key, run.replicas, run, link.Plan{CatchUp: true, Follow: true})
 	s.run = run
-	key := s.key
 	s.mu.Unlock()
 	stop := context.AfterFunc(ctx, func() { l.Close() })
-	err = link.NewSession(run, key, run.replicas, run, link.Plan{CatchUp: true, Follow: true}).Run()
+	err = run.session.Run()
 	stop()
 	l.Close()
 	if endErr := run.replicas.End(); endErr != nil {
@@ -637,6 +713,7 @@ func (s *InkService) synced(open []SyncedNote) ([]SyncedNote, []Companion) {
 // is the session's Observer and is called on the session's goroutine only.
 type sessionRun struct {
 	svc      *InkService
+	session  *link.Session
 	link     radio.Link
 	received *countedReader
 	replicas *NoteReplicas

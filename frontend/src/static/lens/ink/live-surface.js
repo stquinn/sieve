@@ -4,11 +4,13 @@
 // stroke under the pen — under a chrome that names the device, the note and the
 // page and says whether the tablet is live. The Live view's block says which
 // note and page those are; the container's feed brings what is drawn on them.
-// Nothing here turns, pans or zooms: the reader's only gesture is Open this note.
+// Nothing here turns, pans or zooms: the reader's gestures are Open this note and
+// Copy page.
 
 import { AbstractSurface, SurfaceEvent, SurfaceIntent } from '../abstract-surface.js'
 import { InkFeed } from '../../contract/ink-container-provider.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
+import { ActionStatus } from './action-status.js'
 import { InkSheet } from './ink-sheet.js'
 import { PageSurface } from './page-surface.js'
 
@@ -56,6 +58,7 @@ export class LiveSurface extends AbstractSurface {
   /** @type {HTMLElement} */ #position
   /** @type {HTMLElement} */ #indicator
   /** @type {HTMLButtonElement} */ #openNote
+  /** @type {ActionStatus} */ #status = new ActionStatus()
 
   /** @type {Mirrored} */ #mirrored = Object.freeze({ container: '', title: '', page: '', waiting: false })
   /** @type {boolean} whether a page, or there being none, has been shown */ #painted = false
@@ -77,14 +80,21 @@ export class LiveSurface extends AbstractSurface {
     const heading = this.#el('div', 'ink-page__heading')
     this.#title = this.#el('span', 'ink-page__title')
     this.#device = this.#el('span', 'ink-page__device')
-    heading.append(this.#title, this.#device)
+    heading.append(this.#title, this.#device, this.#status.element)
     this.#position = this.#el('span', 'ink-page__position')
     this.#indicator = this.#el('span', 'ink-page__indicator')
     this.#openNote = document.createElement('button')
     this.#openNote.type = 'button'
     this.#openNote.dataset.inkAction = 'open-note'
     this.#openNote.textContent = 'Open this note'
-    chrome.append(heading, this.#position, this.#indicator, this.#openNote)
+    const copy = document.createElement('button')
+    copy.type = 'button'
+    copy.dataset.inkAction = 'copy-page'
+    copy.textContent = 'Copy page'
+    copy.title = 'Copy the page as an image'
+    const actions = this.#el('span', 'ink-page__actions')
+    actions.append(this.#openNote, copy)
+    chrome.append(heading, this.#position, this.#indicator, actions)
     this.#root.append(chrome, this.#sheet.element)
   }
 
@@ -138,6 +148,7 @@ export class LiveSurface extends AbstractSurface {
     this.#provider.unsubscribeFeed(this)
     this.#mounted = false
     this.#sheet.detach()
+    this.#status.clear()
     this.#root.removeEventListener('click', this.#onClick)
     this.#root.remove()
   }
@@ -196,6 +207,21 @@ export class LiveSurface extends AbstractSurface {
     if (container) this.#host.onSurfaceEvent({ type: SurfaceIntent.OPEN_CONTAINER, uuid: container })
   }
 
+  /**
+   * Puts the page shown, as the tablet's window frames it, on the clipboard as an
+   * image, and says so in place.
+   * @returns {Promise<void>}
+   */
+  copyPage() {
+    const words = PageSurface.CopyWords
+    return this.#sheet.copyPage().then(
+      (copied) => this.#status.showResult(copied ? words.COPIED : words.NOTHING),
+      (err) => {
+        console.warn('[ink] the page could not be copied', err)
+        this.#status.showResult(words.FAILED)
+      })
+  }
+
   /** @returns {string|null} the page to show: the page named while the note lists it */
   #target() {
     const page = this.#mirrored.page
@@ -247,7 +273,9 @@ export class LiveSurface extends AbstractSurface {
   #onClick = (event) => {
     const target = /** @type {Element} */ (event.target)
     const button = target && typeof target.closest === 'function' ? target.closest('button') : null
-    if (button && button.getAttribute('data-ink-action') === 'open-note') this.openNote()
+    const action = button ? button.getAttribute('data-ink-action') : null
+    if (action === 'open-note') this.openNote()
+    else if (action === 'copy-page') this.copyPage()
   }
 
   /** @param {string} tag @param {string} className @returns {HTMLElement} */

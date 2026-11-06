@@ -3,8 +3,9 @@
 // the committed strokes and the stroke under the pen arriving as they are written,
 // and a whiteboard through a window the reader moves and zooms. The reader is
 // never moved: what is shown changes only by the reader's hand. It is read-only by
-// construction: mounted over an InkContainerProvider, which has no verbs, it
-// declares no capability and writes nothing.
+// construction: mounted over an InkContainerProvider, which has no verb that
+// writes, it declares no capability and writes nothing. Its chrome copies the page
+// as an image and asks the tablet the note came from to open it.
 
 import { AbstractEditor } from '../abstract-editor.js'
 import { LensCapability } from '../../contract/lens-capabilities.js'

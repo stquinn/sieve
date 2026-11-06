@@ -44,8 +44,17 @@ func (s *frameStream) upgrade(sessionKey []byte, sending, receiving Direction) e
 
 // write sends one frame with one write to the stream.
 func (s *frameStream) write(frame []byte) error {
+	return s.writeIf(func() bool { return true }, frame)
+}
+
+// writeIf sends frame as write does when ok, asked under the write lock, says it may be sent; so
+// what ok records is in the order frames are written. ok must not write.
+func (s *frameStream) writeIf(ok func() bool, frame []byte) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if !ok() {
+		return nil
+	}
 	payload := frame
 	if s.seal != nil {
 		payload = s.seal.seal(s.sending, s.sendCount, frame)
