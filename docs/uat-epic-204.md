@@ -33,7 +33,7 @@ Editor → Enable Debug Mode shows the radio's found and connected lines.
   few hundred kB, note Settings → Ink → Last Session → Throughput on a fresh sync. Fine for a pen;
   wanted before the Mac's number is compared with it.
 - [ ] **The corporate Mac.** Install the `macos` artifact of the GitHub `Release (macOS)` run for
-  the newest `mac-test-*` tag (Actions tab; such a tag publishes no release). The tablet must be on
+  the newest `mac-test-*` tag (`mac-test-4` or later; never `mac-test-2`, whose frontend is broken) (Actions tab; such a tag publishes no release). The tablet must be on
   the SDU-cap SieveInk build first.
   - Settings → Ink → tick the toggle. macOS should ask whether Sieve may use Bluetooth; allow it.
     No prompt and Link reading "…not authorised to use Bluetooth…" means device management has
