@@ -69,7 +69,7 @@ tab is the reader's.
     of texture is acceptable.
 - [ ] **Erase and undo.** Erase a stroke on the Boox: it goes in Sieve. Undo: it returns.
 - [ ] **Pages.** Add a page on the Boox and write on it: the page count grows in Sieve.
-- [ ] **A whiteboard in its own tab** opens framed around all its ink and uses the editor's width.
+- [x] **A whiteboard in its own tab** (confirmed by hand 2026-11-06, no issues found) opens framed around all its ink and uses the editor's width.
   Drag pans, Ctrl+wheel and the − / + buttons zoom, Fit all frames everything, and ink that lands
   outside the window is marked at the nearest edge. Nothing the tablet does moves it.
 - [ ] **Open in e-ink.** On a note's tab, with SieveInk in front on the Boox: the Boox opens that
@@ -91,7 +91,7 @@ tab is the reader's.
 - [ ] **The Live tab mirrors the tablet.** It shows the page being written, whole. Turn the page on
   the Boox: it follows. Switch to another note on the Boox: it becomes that note. Wheel, drag and
   keys do nothing in it.
-- [ ] **A whiteboard, live.** The Live tab shows the tablet's own window and follows a pan
+- [x] **A whiteboard, live.** (confirmed by hand 2026-11-06) The Live tab shows the tablet's own window and follows a pan
   smoothly, the ruling staying put on the plane while the ink slides. Open the Live tab after
   panning, or come back to it from another tab: it shows the tablet's window straight away.
 - [ ] **Beside the note.** Open the note being written from the Notebooks list while the Live tab is
@@ -163,3 +163,44 @@ reading. A reading belongs to one page and is made only when asked for.
 - [ ] **In the real window.** Mod+Enter switches modes and the keyboard follows (PageUp/PageDown
   still turn pages in Reading). Only exercised in Chrome so far.
 - [ ] **No AI configured.** Reading says why and offers no button.
+
+## After the first hands-on session (2026-11-06)
+
+Confirmed by hand in the real window that day: the workspace toolbar on a notebook tab, Fit page,
+the pencil drawing with its grain while the pen is down, and whiteboards.
+
+Built since, never seen in the real window, and some of it never run in a browser at all:
+
+- [ ] **The toolbar's layout.** On a notebook tab: pager on the left, scale in the middle, actions
+  and the Page | Reading toggle on the right, on one row at your usual window width, with a status
+  message, "n unseen" and "Live ↗" showing. An ordinary note's toolbar looks exactly as it did.
+- [ ] **Scale drop-down.** 25 to 200 %, Fit width, Fit page. The list opens and closes, and
+  PageUp/PageDown work straight after choosing with the mouse. Ctrl+wheel and a trackpad pinch
+  step through the percentages.
+- [ ] **Page drop-down.** Lists the pages, shows "9 / 14" closed, marks pages with ink you have not
+  seen, and "n unseen" jumps to the next one.
+- [ ] **Right-click on the page, the reading and the Live view** shows the notebook's actions; the
+  menu key (or Shift+F10) raises it too. Read this page and Refresh name and summary are here and
+  not in the toolbar.
+- [ ] **Fit all keeps fitting.** A whiteboard opens framing all its ink and keeps re-framing as you
+  draw beyond it, the Fit all button shown pressed. Pan or zoom and it stops; ink outside then
+  shows the edge marker; Fit all starts it again.
+- [ ] **Open in e-ink goes to the page you are on** (needs SieveInk's `open-note-page` build on the
+  tablet; against the older build the link drops and reconnects). Also with the notebook already
+  open on another page, and already on that page.
+- [ ] **Notebooks in the tree.** First item of the library tree, collapsed by default, remembered
+  across a restart; a red dot on it while the tablet is writing and it is collapsed; folders stay
+  expanded and the scroll holds while ink arrives. Watch for a notebook opening by itself when
+  Notebooks is first expanded: seen once in testing, never reproduced.
+- [ ] **Naming you can predict.** Leave a notebook open on the tablet and stop writing: it is named
+  five minutes later, open or not. Restart Sieve with a quiet unnamed notebook: named within about
+  half a minute. The log says `ink: named a note`, or why it was not.
+- [ ] **Refresh name and summary** from a notebook's tree row, its tab, the page's menu and the
+  Meta panel names it again at once. With no AI configured it says so in the status bar, in red.
+- [ ] **The Meta panel on a notebook** shows name, summary, keywords, categories, device, pages and
+  what the description is of. An ordinary note's panel is unchanged.
+- [ ] **Tabs stay in sight.** In a window narrow enough that tabs overflow: opening anything puts
+  its tab in the right-most visible slot and the tab that leaves is the one you used longest ago;
+  clicking a visible tab moves nothing; two overflow tabs flicked between both stay visible; a
+  dragged tab stays where it is dropped. **Not proven:** dragging the active tab to the far end,
+  past the fold — in testing it was moved back once.
