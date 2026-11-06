@@ -818,10 +818,8 @@ export class AbstractEditor extends Lens {
    * @returns {ToolbarButton|null}
    */
   modeToggle() {
-    const modes = this._modes
-    if (modes.length < 2) return null
-    const next = modes[(modes.indexOf(this.mode) + 1) % modes.length]
-    const face = this._modeToggleFace(this.mode) || { text: next, title: 'Show ' + next }
+    const face = this.modeToggleFace
+    if (!face) return null
     return new ToolbarButton({
       id: 'tb-toggle-mode-btn',
       iconHtml: face.iconHtml,
@@ -829,6 +827,18 @@ export class AbstractEditor extends Lens {
       title: face.title,
       onClick: () => { this.toggleMode() },
     })
+  }
+
+  /**
+   * How the mode toggle is drawn now: the face the lens gives the mode in force,
+   * else the next mode's name. Null for a lens of one mode.
+   * @returns {ModeToggleFace|null}
+   */
+  get modeToggleFace() {
+    const modes = this._modes
+    if (modes.length < 2) return null
+    const next = modes[(modes.indexOf(this.mode) + 1) % modes.length]
+    return this._modeToggleFace(this.mode) || { text: next, title: 'Show ' + next }
   }
 
   /**

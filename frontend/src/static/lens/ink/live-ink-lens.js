@@ -1,41 +1,18 @@
 // @ts-check
 // The lens of the Live view: a strict mirror of the tablet — the note being
 // written, the page written on and, on a whiteboard, the tablet's window — that
-// the reader cannot turn, pan or zoom. Its gestures ask the host to open the
-// note in a tab of its own and copy the page as an image. Mounted over an
-// InkContainerProvider, it declares no capability and writes nothing.
+// the reader cannot turn, pan or zoom. What it can do is open the note in a tab
+// of its own and copy the page as an image, from the toolbar or its context
+// menu.
 
-import { AbstractEditor } from '../abstract-editor.js'
-import { LensCapability } from '../../contract/lens-capabilities.js'
-import { ContractViolation } from '../../contract/sieve-block.js'
+import { InkLens } from './ink-lens.js'
+import { ActionList } from '../../renderers/action-list.js'
 import { LiveSurface } from './live-surface.js'
 
 /** The one mode the Live view is presented in. */
 const MODES = Object.freeze([LiveSurface.MODE])
 
-const NO_CAPABILITY = Object.freeze({
-  [LensCapability.MARKDOWN]: false,
-  [LensCapability.MENTIONS]: false,
-  [LensCapability.COMMANDS]: false,
-  [LensCapability.BLOCKS]: false,
-})
-
-export class LiveInkLens extends AbstractEditor {
-  /**
-   * @param {string} uuid the Live view's container
-   * @param {import('../abstract-editor.js').AbstractEditorOptions} [options]
-   *   `provider` must be an InkContainerProvider
-   */
-  constructor(uuid, options = {}) {
-    super(uuid, options)
-    if (typeof this.provider.loadPage !== 'function') {
-      throw new ContractViolation('LiveInkLens: construct with an InkContainerProvider')
-    }
-  }
-
-  /** @protected @returns {Readonly<import('../../contract/lens-capabilities.js').LensCapabilities>} */
-  get _innateCapabilities() { return NO_CAPABILITY }
-
+export class LiveInkLens extends InkLens {
   /** @protected @returns {ReadonlyArray<string>} */
   get _modes() { return MODES }
 
@@ -47,6 +24,21 @@ export class LiveInkLens extends AbstractEditor {
 
   /** @returns {string} */
   get placeholder() { return '' }
+
+  /** @override @protected @returns {ActionList} */
+  _declareActions() {
+    const live = () => (this.surface instanceof LiveSurface ? this.surface : null)
+    return new ActionList([
+      {
+        id: 'open-note', label: 'Open this note', title: 'Open the note being written in a tab of its own', modes: MODES,
+        enabled: () => !!live()?.mirrored.container, run: () => live()?.openNote(),
+      },
+      {
+        id: 'copy-page', label: 'Copy page', title: 'Copy the page as an image', modes: MODES,
+        run: () => live()?.copyPage(),
+      },
+    ])
+  }
 
   /**
    * @protected

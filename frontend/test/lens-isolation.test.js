@@ -218,6 +218,7 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
       path.join('lens', 'extensions.js'),
       path.join('lens', 'ink', 'action-status.js'),
       path.join('lens', 'ink', 'digital-note-lens.js'),
+      path.join('lens', 'ink', 'ink-lens.js'),
       path.join('lens', 'ink', 'ink-sheet.js'),
       path.join('lens', 'ink', 'live-ink-lens.js'),
       path.join('lens', 'ink', 'live-surface.js'),
@@ -281,6 +282,7 @@ describe('the lens bases are not ProseMirror', () => {
     path.join('lens', 'abstract-editor.js'),
     path.join('lens', 'abstract-surface.js'),
     path.join('lens', 'block', 'block-lens.js'),
+    path.join('lens', 'ink', 'ink-lens.js'),
     path.join('lens', 'ink', 'digital-note-lens.js'),
     path.join('lens', 'ink', 'live-ink-lens.js'),
   ])('%s reaches no surface, no extensions.js and no tiptap-vendor.js', (entry) => {
@@ -316,6 +318,7 @@ describe('the workspace toolbar and its widgets name no lens and no ProseMirror'
   // only as the surface contract's event word.
   it.each([
     [path.join('renderers', 'toolbar-button.js'), [path.join('renderers', 'toolbar-button.js')]],
+    [path.join('renderers', 'action-list.js'), [path.join('renderers', 'action-list.js'), path.join('renderers', 'toolbar-button.js')]],
     [path.join('shell', 'workspace-toolbar.js'), [path.join('lens', 'abstract-surface.js'), path.join('shell', 'workspace-toolbar.js')]],
   ])('%s reaches only %j', (entry, closure) => {
     expect(new ImportGraph([]).walk([path.join(STATIC, entry)]).reached).toEqual(closure)

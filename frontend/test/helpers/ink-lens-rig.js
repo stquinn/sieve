@@ -75,6 +75,7 @@ export class FakeInkProvider {
   /** @type {Map<string, any>} what loadReading answers, by page; a page with none is unread */ readings = new Map()
   /** @type {Map<string, any>} what readPage answers, by page; a page with none answers its reading running */ reads = new Map()
   /** @type {any} what newDocumentFromReading resolves with; an Error rejects */ made = 'doc-new'
+  /** @type {any} what refreshDescription settles as when it is a promise; an Error or a string rejects */ described = undefined
   /** @type {any} */ #block
 
   /** @type {string} */ #uuid
@@ -146,6 +147,13 @@ export class FakeInkProvider {
     return Promise.resolve(this.made).then((m) => {
       if (m instanceof Error) throw m
       return m
+    })
+  }
+
+  refreshDescription() {
+    this.calls.push('refreshDescription')
+    return Promise.resolve(this.described).then((d) => {
+      if (d instanceof Error || typeof d === 'string') throw d
     })
   }
 
@@ -277,6 +285,36 @@ export const toolbarFor = (lens) => {
 export const item = (bar, id) => /** @type {HTMLButtonElement|null} */ (bar.querySelector(`[id="${id}"]`))
 /** @param {HTMLElement} bar @param {string} id */
 export const tap = (bar, id) => /** @type {HTMLButtonElement} */ (item(bar, id)).click()
+/** @param {HTMLElement} bar @param {string} id @returns {string|undefined} what the drop-down of that id says while closed */
+export const faceOf = (bar, id) => item(bar, id)?.closest('.tb-select')?.querySelector('.tb-select__face')?.textContent ?? undefined
+/** @param {HTMLElement} bar @param {string} id @returns {string[]} the texts of the drop-down's options, in order */
+export const optionsOf = (bar, id) => [.../** @type {HTMLSelectElement} */ (/** @type {unknown} */ (item(bar, id))).options].map((o) => String(o.textContent))
+/** Chooses `value` in the drop-down of that id, as the reader does. @param {HTMLElement} bar @param {string} id @param {string} value */
+export const choose = (bar, id, value) => {
+  const select = /** @type {HTMLSelectElement} */ (/** @type {unknown} */ (item(bar, id)))
+  select.value = value
+  select.dispatchEvent(new Event('change', { bubbles: true }))
+}
+/**
+ * Right-clicks `target` at a client point (0, 0 is the menu key's), and returns
+ * the event and the context-menu intents the lens raised.
+ * @param {any} lens @param {Element} target @param {number} [clientX] @param {number} [clientY]
+ */
+export const rightClick = (lens, target, clientX = 300, clientY = 200) => {
+  /** @type {any[]} */
+  const intents = []
+  const off = lens.onEvent((/** @type {any} */ e) => { if (e.type === 'context-menu') intents.push(e) })
+  const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX, clientY })
+  let escaped = false
+  const outside = () => { escaped = true }
+  document.addEventListener('contextmenu', outside)
+  target.dispatchEvent(event)
+  document.removeEventListener('contextmenu', outside)
+  off()
+  return { event, intents, escaped }
+}
+/** @param {{items: ReadonlyArray<any>}} intent @returns {string[]} its entries, a divider as `—` and a disabled entry in brackets */
+export const menuOf = (intent) => intent.items.map((i) => (i.type === 'divider' ? '—' : i.disabled ? `[${i.label}]` : i.label))
 /** @param {HTMLElement} bar @returns {string[]} the ids of the toolbar's items, in order, each group's own in it */
 export const toolbarIds = (bar) => [...bar.querySelectorAll('[id]')].map((el) => el.id)
 /** @param {HTMLElement} root @param {string} action */

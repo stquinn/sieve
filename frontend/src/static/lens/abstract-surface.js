@@ -15,7 +15,8 @@
  * An editor-domain event a surface REPORTS OUTWARD via the host editor's
  * `onSurfaceEvent` handler — producer-named plain data, never a consumer name: a
  * surface must not know an Ask panel or toolbar exists.
- * @typedef {{type: string, feature?: string, uuid?: string}} SurfaceEventMsg
+ * @typedef {{type: string, feature?: string, uuid?: string, x?: number, y?: number,
+ *   items?: ReadonlyArray<import('../renderers/action-list.js').ContextMenuItem>}} SurfaceEventMsg
  */
 /**
  * What a surface measures of what it shows, for the status bar. When `readout`
@@ -57,9 +58,13 @@ export const SurfaceEvent = Object.freeze({
  * reporting what happened. Each carries what the host needs to answer it:
  *
  *   open-container   uuid — open that container in a tab of its own
+ *   context-menu     x, y, items — show the app's context menu of `items` at
+ *                    that client point. A surface raises it with no items; the
+ *                    lens it reports to supplies them.
  */
 export const SurfaceIntent = Object.freeze({
   OPEN_CONTAINER: 'open-container',
+  CONTEXT_MENU: 'context-menu',
 })
 
 export class AbstractSurface {
@@ -279,6 +284,20 @@ export class AbstractSurface {
    * @returns {unknown}
    */
   viewState() { return null }
+
+  /**
+   * The context-menu intent for a `contextmenu` event on this surface, at the
+   * event's point; one raised from the keyboard, which has none, at the top-left
+   * of `el`, inset.
+   * @param {MouseEvent} event
+   * @param {HTMLElement} el the surface's own element
+   * @returns {SurfaceEventMsg}
+   */
+  contextMenuIntent(event, el) {
+    if (event.clientX || event.clientY) return { type: SurfaceIntent.CONTEXT_MENU, x: event.clientX, y: event.clientY }
+    const box = el.getBoundingClientRect()
+    return { type: SurfaceIntent.CONTEXT_MENU, x: box.left + 16, y: box.top + 16 }
+  }
 
   /**
    * Quote and truncate a snippet on a word boundary near 20 chars — the ONE

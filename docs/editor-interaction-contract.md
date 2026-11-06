@@ -262,7 +262,18 @@ offered); a lens that offers nothing, or no lens, leaves it empty. Buttons refle
 (pressed, disabled) on every event the lens reports, a caret-only move included. Pressing a toolbar
 button never takes the keyboard from the lens: its `mousedown` is cancelled, so the caret or the
 focused page stays where it was. A button reached by Tab shows a focus ring, and keeps the focus
-when the toolbar is redrawn under it.
+when the toolbar is redrawn under it. A drop-down (`ToolbarSelect`) is a native `<select>` laid
+transparent over a face saying what is chosen: the list, its keys and what assistive technology
+reads are the platform's. Opening it with the pointer takes the keyboard for the choice, and choosing
+hands it back to whatever held it before (the caret, or the focused page); a choice made from the
+keyboard leaves the focus on the drop-down.
+
+**Actions are declared once.** A lens whose verbs are offered both in the toolbar and in a context
+menu declares them as one `ActionList` (`renderers/action-list.js`): each action names the modes it
+belongs to, whether it applies now (one that does not is absent from both) and whether it can run
+now (one that cannot is drawn disabled in both). Both drawings are made from that list each time
+they are drawn, so an action added to it appears in both. The ink lenses are drawn this way; view
+controls (a pager, a scale) are the toolbar's alone.
 
 **The mode toggle** is one button, `#tb-toggle-mode-btn`, offered by every lens with two or more
 modes, which steps to the lens's next mode exactly as Toggle Editor Mode (`Mod+Alt+M`) does; it is
@@ -276,8 +287,8 @@ lens of its own and the Live view have one mode and offer no toggle.
 | Note / document (`NoteEditor`) | the WYSIWYG surface's formatting groups (none in Markdown), then the mode toggle and Spell check; insert code, diagram, web clip, attach; Explain, Ask; Help |
 | Prompt (`PromptEditor`) | nothing |
 | Block container whose kind has no lens (`BlockLens`) | nothing |
-| Digital Note, page | the pager; `Fit page` / `Fit width` / `100%` on a fixed page, or `−` `+` `100%` `Fit all` on a whiteboard; `Copy page`, `Open in e-ink`, `Live`, and what came of the last of them; then the mode toggle |
-| Digital Note, reading | the pager; `Open in e-ink` and what came of it; then the mode toggle |
+| Digital Note, page | the pager; the scale drop-down on a fixed page, or `−` `+` `100%` `Fit all` on a whiteboard; `Open in e-ink`, `Copy page`, `Read this page`, `Live`, `Refresh name` (Refresh name and summary), and what came of the last action; then the mode toggle |
+| Digital Note, reading | the pager; `Open in e-ink`, the reading's `Read this page` / `Read again` / `Try again` or `New document`, `Refresh name`, and what came of the last action; then the mode toggle |
 | Live view (`LiveInkLens`) | `Open this note`, `Copy page`, and what came of it |
 
 ### The Digital Note lens
@@ -304,21 +315,50 @@ it.
   allowed, since it is how `+` is typed). Alt, Ctrl or Cmd leaves every other key unclaimed
   (`Mod+Enter` switches mode, above).
 - **Pointer.** Every control is in the workspace toolbar (above); the lens draws no bar of its own.
-  The pager is previous, the page's place (`n / N`), next, and one dot per page (a click shows that
-  page; a page with ink not yet seen has its dot drawn larger, in the accent colour), or, past
-  twelve pages, one `n unseen` button led by a dot in the accent colour, shown while any page has
-  ink not yet seen, that shows the next such page after the one shown, from the first again past
-  the last; previous and next are disabled at the first and last page. A whiteboard of one page has
-  no pager. A fixed page is sized by one of `Fit page` (the whole page in the surround, both ways,
-  following the surround as the window or the Ask panel changes it), `Fit width` (the surround's
-  width; the page scrolls) and `100%` (one grid unit to one CSS pixel, 1404 across; the page
-  scrolls), the one in force shown pressed; a note opens at `Fit page` until the reader chooses
-  otherwise. A whiteboard has `−` and `+` (zoom about the centre), `100%` (one grid unit to one CSS
-  pixel, about the centre) and `Fit all` (frame all the ink with a margin; the sheet at the origin
-  when there is none). While the note is being written on the tablet, `Live ↗`, led by a red dot,
-  opens the Live view in its own tab; it is gone when the note is not live. A template the lens
-  cannot draw is said in the toolbar (`Unknown template, drawn blank`). The device the note was
-  written on is the last cell of the status bar's readout, after the page and its strokes.
+  The pager is previous, a drop-down of every page, and next; previous and next are disabled at the
+  first and last page. The drop-down's closed face is the page's place (`3 / 12`); its list names
+  each page by the name the note's page list gives it, else `Page n`, and a page with ink not yet
+  seen is led by `● `. While any page other than the one shown has ink not yet seen, an `n unseen`
+  button led by a dot in the accent colour follows the pager and shows the next such page after the
+  one shown, from the first again past the last. The pager is the same in both modes. A whiteboard
+  of one page has no pager. A fixed page is sized by the scale drop-down: `25%`, `50%`, `75%`,
+  `100%`, `150%`, `200%` (at `100%` one grid unit is one CSS pixel, 1404 across; at N%, N% of that;
+  the page scrolls), `Fit width` (the surround's width; the page scrolls) and `Fit page` (the whole
+  page in the surround, both ways); both fits follow the surround as the window or the Ask panel
+  changes it. A note opens at `Fit page` until the reader chooses otherwise. A whiteboard has `−`
+  and `+` (zoom about the centre), `100%` (one grid unit to one CSS pixel, about the centre) and
+  `Fit all` (frame all the ink with a margin; the sheet at the origin when there is none), and no
+  scale drop-down. A template the lens cannot draw is said in the toolbar (`Unknown template, drawn
+  blank`). The device the note was written on is the last cell of the status bar's readout, after
+  the page and its strokes.
+- **Zooming a fixed page.** The wheel scrolls it. Ctrl or Cmd with the wheel steps the scale one
+  level for every 40 px of travel (at most one level an event; a change of direction starts the
+  count again): up for larger, down for smaller. A WebKit trackpad pinch steps one level each time
+  it spreads or closes by a fifth since the last step. From a fit, the step is to the nearest level
+  beyond the size the fit shows the page at, in that direction; at `200%` larger, and at `25%`
+  smaller, nothing changes, nor does a fit with no level beyond it. The point under the pointer
+  stays where it is, as far as the surround's scroll allows.
+- **Actions and the context menu.** What the lens can do is one list (`ActionList`, above), drawn
+  in the toolbar after the view controls and as the menu a right-click — or the menu key, which
+  places it at the surface's top-left — raises over the page or the reading, a block of the
+  reading included. The menu is the app's one context menu (`sieve:contextmenu`, the supplied-items
+  path); the browser's own never shows over the lens. It lists the actions that apply, in the
+  list's order, those that cannot run now disabled, then a divider and the mode toggle (`Reading`
+  or `Page`). On the page: **Open in e-ink** (a note from a tablet), **Copy page**, **Read this
+  page**, **Go to Live** (while the note is being written on the tablet; `Live ↗` in the toolbar,
+  led by a red dot, opening the Live view in its own tab) and **Refresh name and summary**. In the
+  reading: Open in e-ink, the reading's **Read this page**, **Read again** or **Try again**, or
+  **New document** (whichever the row above the reading offers, below), and Refresh name and
+  summary. What came of the last action is said in the toolbar after the actions, briefly, cut
+  short with an ellipsis past 18em, and carries across a mode switch.
+- **Read this page**, on the page, shows the reading and, once the host says the page has no
+  reading (and something can read it and it is not being read), has it read; a page that has one is
+  shown as it is. In the reading it does what the row's button of the same name does.
+- **Refresh name and summary** asks the host to name and summarise the note again from its ink. While
+  it asks, the toolbar says `Asking for a new name and summary…` and the action is disabled; then,
+  briefly, `A new name and summary were asked for`, or the reason the host gives that it cannot (no
+  AI configured, no ink, no window to draw), or `Could not ask for a new name and summary`. The new
+  name arrives as any rename does.
 - **Copy page** puts the page shown on the clipboard as a PNG, 1404 pixels across: the white sheet,
   its ruling and its committed ink, pencil tone included, without the stroke under the
   pen. A fixed page is copied whole, whatever its scroll or scale; a whiteboard is copied as its
@@ -350,7 +390,7 @@ it.
   own window does not move the reader's. On a whiteboard, a stroke that arrives wholly outside the
   window marks the edge of the sheet it lies beyond, until the window shows it.
 - **The reader's place is kept.** Switching to another tab and back shows the same page, the same
-  `Fit page`, `Fit width` or `100%`, the same whiteboard window and the same pages marked, for as long as the tab
+  scale, the same whiteboard window and the same pages marked, for as long as the tab
   is open. Ink written while the tab was in the background marks the pages it landed on, as if it
   had arrived while the tab was shown; a mark goes only when its page is shown.
 
@@ -385,11 +425,13 @@ writing, on the page it is writing on. It is read-only as `DigitalNoteLens` is, 
 mirror: the reader cannot turn its pages, move or zoom its window, or scroll it away from the nib.
 
 - **Keys.** None is claimed; no key moves the view.
-- **Pointer.** In the workspace toolbar, **Open this note** opens the note being mirrored in a tab
-  of its own (disabled before the note has reached this Sieve). **Copy page** copies the page as the Digital Note lens's does, a
+- **Pointer.** In the workspace toolbar, and in the context menu a right-click or the menu key raises
+  over the view (drawn from the same list, as the Digital Note lens's is, with no mode toggle),
+  **Open this note** opens the note being mirrored in a tab of its own (disabled before the note
+  has reached this Sieve). **Copy page** copies the page as the Digital Note lens's does, a
   whiteboard as the tablet's window frames it. There is no Open in e-ink: the view is already the
-  tablet's. There is no pager, no dot, no zoom or scale button and no edge mark; a drag and the
-  wheel move nothing.
+  tablet's. There is no pager, no zoom or scale control and no edge mark; a drag and the wheel,
+  Ctrl or Cmd held or not, move nothing.
 - **What it shows.** The page the tablet writes on, changing as the tablet turns or changes note. A
   fixed page is shown whole in the surround, but never narrower than half the surround's width: a
   page longer than that scrolls, and while the stroke under the pen runs out of view the surround
@@ -1091,7 +1133,10 @@ claims the gesture for the one whose fixture contains the target. A lens
 publishes the element it was mounted in, so the resolution names no mount and a
 third arrangement needs no third listener. Inside a claimed mount the browser's
 own menu is always suppressed; a sieve block raises its own menu instead and the
-editor menu stands down.
+editor menu stands down. A lens that draws its own surface (the ink lenses) raises
+its own menu the same way: its surface asks its lens with the `context-menu`
+surface intent, the lens supplies the entries from its `ActionList`, and the
+shell shows them through the supplied-items path — no second menu exists.
 
 **An ELEMENT raises no menu of its own.** A sieve node living inside another
 sieve block's content — the blocks an ai-block's answer is composed of, projected

@@ -3,7 +3,8 @@
 // read as text and diagrams, drawn read-only by the renderers every block kind
 // has, on the editor's own background and at its text width. Beside the reading
 // it offers to read the page, and to make a new document from what was read;
-// the workspace toolbar is offered its pager and Open in e-ink.
+// the workspace toolbar is offered its pager, and a right-click on it asks its
+// lens for the lens's menu.
 // What it draws is what the host says of the page's reading: it never decides
 // whether a reading is current, and hears the feed so that a reading that
 // changes, or ink that lands on the page, is asked of the host again.
@@ -12,11 +13,9 @@ import { AbstractSurface, SurfaceEvent, SurfaceIntent } from '../abstract-surfac
 import { InkFeed, InkReadingState } from '../../contract/ink-container-provider.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
 import { QuestionListView } from '../../renderers/question-list-view.js'
-import { ButtonGroup, ToolbarLabel } from '../../renderers/toolbar-button.js'
 import { ActionStatus } from './action-status.js'
 import { NotePager } from './note-pager.js'
 import { PageSurface } from './page-surface.js'
-import { TabletOpener } from './tablet-opener.js'
 
 /** @typedef {import('../../contract/ink-container-provider.js').InkContainerProvider} InkContainerProvider */
 /** @typedef {import('../../contract/ink-container-provider.js').InkFeedEvent} InkFeedEvent */
@@ -24,6 +23,7 @@ import { TabletOpener } from './tablet-opener.js'
 /** @typedef {import('./page-surface.js').ReaderView} ReaderView */
 /** @typedef {import('./page-surface.js').PageSurfaceHost} PageSurfaceHost */
 /** @typedef {import('../abstract-surface.js').SurfaceStats} SurfaceStats */
+/** @typedef {import('./note-pager.js').NotePage} NotePage */
 
 export class ReadingSurface extends AbstractSurface {
   /** The mode this surface presents. */
@@ -108,9 +108,8 @@ export class ReadingSurface extends AbstractSurface {
   /** @type {PageSurfaceHost} */ #host
   /** @type {QuestionListView} */ #list
   /** @type {ActionStatus} what is under way, or came of the last New document */ #status = new ActionStatus()
-  /** @type {ActionStatus} what came of Open in e-ink */ #opened = new ActionStatus(() => this.#toolbarChanged())
-  /** @type {TabletOpener} */ #opener
   /** @type {NotePager} */ #pager = new NotePager(this)
+  /** @type {string} the name of the device the note was written on; '' when unknown */ #device = ''
 
   /** @type {boolean} between mount and unmount */ #mounted = false
   /** @type {HTMLElement} */ #root
@@ -120,7 +119,7 @@ export class ReadingSurface extends AbstractSurface {
   /** @type {HTMLButtonElement} */ #read
   /** @type {HTMLElement} */ #blocks
 
-  /** @type {ReadonlyArray<Readonly<{id: string}>>} the note's pages */ #pages = []
+  /** @type {ReadonlyArray<NotePage>} the note's pages */ #pages = []
   /** @type {string|null} the page the reader is on */ #shown = null
   /** @type {Set<string>} pages with ink not seen since it arrived */ #unseen = new Set()
   /** @type {ReaderView|null} the view handed to this surface */ #handed
@@ -129,6 +128,8 @@ export class ReadingSurface extends AbstractSurface {
   /** @type {InkReading|null} the reading of the page shown, as last told */ #reading = null
   /** @type {number} numbers the asks, so only the answer to the latest is drawn */ #asked = 0
   /** @type {Promise<void>|null} the New document under way */ #making = null
+  /** @type {string} what the read button says; '' while the reading offers no read */ #readLabel = ''
+  /** @type {boolean} whether the page is to be read once its reading says it is unread */ #readOnArrival = false
 
   /**
    * @param {InkContainerProvider} provider the note's provider; its feed is heard
@@ -140,7 +141,6 @@ export class ReadingSurface extends AbstractSurface {
     super()
     this.#provider = provider
     this.#host = host
-    this.#opener = new TabletOpener(provider, this.#opened, () => this.#toolbarChanged())
     this.#handed = view
     if (view) {
       this.#unseen = new Set(view.unseen)
@@ -177,6 +177,19 @@ export class ReadingSurface extends AbstractSurface {
   /** @returns {InkReading|null} the reading drawn, as the host last told it */
   get reading() { return this.#reading }
 
+  /** @returns {string} what reading the page is offered as — `Read this page`,
+   *  `Read again` or `Try again` — by the reading drawn; '' while none is offered */
+  get readLabel() { return this.#readLabel }
+
+  /** @returns {boolean} whether the reading drawn is one a document can be made from */
+  get documentOffered() {
+    const reading = this.#reading
+    return !!reading && reading.state === InkReadingState.READY && !reading.running
+  }
+
+  /** @returns {boolean} whether a New document is under way */
+  get making() { return this.#making !== null }
+
   /**
    * Where the reader is, how much of the page was read, and the device the note
    * was written on, when it is known.
@@ -191,24 +204,17 @@ export class ReadingSurface extends AbstractSurface {
       readout: Object.freeze([
         Object.freeze({ text: where, title: 'Page' }),
         Object.freeze({ text: this.#reading && this.#reading.state !== InkReadingState.NONE ? `Read, ${count} block${count === 1 ? '' : 's'}` : 'Not read', title: 'Reading' }),
-        ...(this.#opener.device ? [Object.freeze({ text: this.#opener.device, title: 'Written on' })] : []),
+        ...(this.#device ? [Object.freeze({ text: this.#device, title: 'Written on' })] : []),
       ]),
     }
   }
 
   /**
-   * What the surface offers the toolbar: the pager, then Open in e-ink for a
-   * note from a tablet and what came of it.
-   * @returns {ButtonGroup[]}
+   * What the surface offers the toolbar: the pager.
+   * @returns {import('../../renderers/toolbar-button.js').ButtonGroup[]}
    */
   toolbarContents() {
-    const groups = [this.#pager.group(this.#pages, this.#shown, this.#unseen)]
-    /** @type {Array<import('../../renderers/toolbar-button.js').ToolbarItem>} */
-    const actions = []
-    if (this.#opener.offered) actions.push(this.#opener.button(() => this.#shown))
-    if (this.#opened.text) actions.push(new ToolbarLabel({ id: 'tb-ink-status', text: () => this.#opened.text, live: true }))
-    if (actions.length) groups.push(new ButtonGroup(actions))
-    return groups
+    return [this.#pager.group(this.#pages, this.#shown, this.#unseen)]
   }
 
   /**
@@ -235,6 +241,7 @@ export class ReadingSurface extends AbstractSurface {
   mount(rootEl) {
     this.#root.addEventListener('click', this.#onClick)
     this.#root.addEventListener('keydown', this.#onKeyDown)
+    this.#root.addEventListener('contextmenu', this.#onContextMenu)
     rootEl.appendChild(this.#root)
     this.#mounted = true
     this.#provider.subscribeFeed(this)
@@ -246,10 +253,10 @@ export class ReadingSurface extends AbstractSurface {
     this.#mounted = false
     this.#asked++
     this.#status.clear()
-    this.#opened.clear()
     this.#list.destroy()
     this.#root.removeEventListener('click', this.#onClick)
     this.#root.removeEventListener('keydown', this.#onKeyDown)
+    this.#root.removeEventListener('contextmenu', this.#onContextMenu)
     this.#root.remove()
   }
 
@@ -313,12 +320,6 @@ export class ReadingSurface extends AbstractSurface {
   }
 
   /**
-   * Asks the tablet the note came from to open it at the page shown.
-   * @returns {Promise<void>}
-   */
-  openOnTablet() { return this.#opener.open(this.#shown) }
-
-  /**
    * Shows the page `delta` pages on from the shown one, clamped to the note.
    * @param {number} delta
    */
@@ -340,6 +341,15 @@ export class ReadingSurface extends AbstractSurface {
         return
       }
     }
+  }
+
+  /**
+   * Has the page shown read if its reading says it has none, as soon as the
+   * reading is known; a page that has one, or is being read, is left as it is.
+   */
+  readIfUnread() {
+    this.#readOnArrival = true
+    if (this.#reading) this.#readOnArrivalCheck(this.#reading)
   }
 
   /**
@@ -368,6 +378,7 @@ export class ReadingSurface extends AbstractSurface {
     const status = this.#status
     status.showPending(ReadingSurface.Words.MAKING)
     this.#newDocument.disabled = true
+    this.#toolbarChanged()
     this.#making = this.#provider.newDocumentFromReading(page)
       .then((uuid) => {
         status.clear()
@@ -379,7 +390,9 @@ export class ReadingSurface extends AbstractSurface {
       .finally(() => {
         this.#making = null
         this.#newDocument.disabled = false
+        this.#toolbarChanged()
       })
+    this.#toolbarChanged()
     return this.#making
   }
 
@@ -389,8 +402,9 @@ export class ReadingSurface extends AbstractSurface {
     const block = id ? provider.getBlock(id) : null
     const attrs = (block && block.attrs) || {}
     const pages = attrs.note && Array.isArray(attrs.note.pages) ? attrs.note.pages : []
-    this.#pages = pages.map((/** @type {Record<string, any>} */ p) => Object.freeze({ id: String(p.id) }))
-    this.#opener.setNote(attrs)
+    this.#pages = pages.filter((/** @type {any} */ p) => p && p.id)
+      .map((/** @type {Record<string, any>} */ p) => Object.freeze({ id: String(p.id), name: typeof p.name === 'string' ? p.name : '' }))
+    this.#device = String((attrs.note_device && attrs.note_device.name) || '')
   }
 
   /** @returns {string|null} the page to show: the page shown while the note lists it,
@@ -408,7 +422,10 @@ export class ReadingSurface extends AbstractSurface {
 
   /** @param {string|null} pageId */
   #show(pageId) {
-    if (pageId !== this.#shown) this.#reading = null
+    if (pageId !== this.#shown) {
+      this.#reading = null
+      this.#readOnArrival = false
+    }
     this.#shown = pageId
     if (pageId !== null) this.#unseen.delete(pageId)
     this.#toolbarChanged()
@@ -464,11 +481,21 @@ export class ReadingSurface extends AbstractSurface {
     this.#notice.hidden = notice === ''
     if (tone) this.#notice.dataset.tone = tone
     else delete this.#notice.dataset.tone
+    this.#readLabel = readLabel
     this.#read.hidden = readLabel === ''
     this.#read.textContent = readLabel
-    this.#newDocument.hidden = reading.state !== InkReadingState.READY || reading.running
+    this.#newDocument.hidden = !this.documentOffered
     this.#fill(reading.blocks, reading.state === InkReadingState.STALE)
-    this.#host.onSurfaceEvent(SurfaceEvent.DOC_PROJECTED)
+    this.#toolbarChanged()
+    this.#readOnArrivalCheck(reading)
+  }
+
+  /** Reads the page when it was asked to be read if unread and `reading` says it is.
+   *  @param {InkReading} reading */
+  #readOnArrivalCheck(reading) {
+    if (!this.#readOnArrival) return
+    this.#readOnArrival = false
+    if (reading.state === InkReadingState.NONE && reading.available && !reading.running && !reading.failed) this.readPage()
   }
 
   /** The reading could not be asked for. @param {unknown} err */
@@ -483,9 +510,11 @@ export class ReadingSurface extends AbstractSurface {
     this.#notice.textContent = text
     this.#notice.hidden = false
     delete this.#notice.dataset.tone
+    this.#readLabel = ''
     this.#read.hidden = true
     this.#newDocument.hidden = true
     this.#fill([], false)
+    this.#toolbarChanged()
   }
 
   /** @param {InkReading['blocks']} blocks @param {boolean} stale */
@@ -517,6 +546,14 @@ export class ReadingSurface extends AbstractSurface {
   /** @param {KeyboardEvent} event */
   #onKeyDown = (event) => {
     if (this.#host.claimKey(event)) event.preventDefault()
+  }
+
+  /** A right-click, or the menu key, anywhere in the reading — on one of its
+   *  blocks included — asks the lens for its menu. @param {MouseEvent} event */
+  #onContextMenu = (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    this.#host.onSurfaceEvent(this.contextMenuIntent(event, this.#root))
   }
 
   /** @param {string} tag @param {string} className @returns {HTMLElement} */

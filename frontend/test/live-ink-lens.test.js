@@ -2,8 +2,8 @@
 // LiveInkLens — the Live view drawn by the real InkRenderer over a fake
 // InkContainerProvider: it shows the page its block names, of the note its
 // block names, moves when the block moves, follows the tablet's window and the
-// nib, offers the workspace toolbar no gesture but Open this note and Copy page,
-// and says when it is waiting for the tablet.
+// nib, offers the workspace toolbar and its context menu no gesture but Open
+// this note and Copy page, and says when it is waiting for the tablet.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { getStroke } from 'perfect-freehand'
@@ -13,6 +13,7 @@ import { InkFeed } from '../src/static/contract/ink-container-provider.js'
 import {
   ASPECT, DOTS, FakeInkProvider, Frames, GRID, Resizes, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, points,
   renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, viewBoxOf, wheel, copiedImages, item, tap, toolbarFor, toolbarIds,
+  rightClick, menuOf,
 } from './helpers/ink-lens-rig.js'
 
 const LIVE = '019a0000-0000-7000-8000-00000000live'
@@ -132,6 +133,20 @@ describe('LiveInkLens', () => {
     surface.openNote()
     expect(intents).toHaveLength(1)
     expect(root.querySelector('.ink-page__empty')?.textContent).toMatch(/Nothing has been written/)
+  })
+
+  it.each([
+    ['while a note is mirrored', liveAttrs(), ['Open this note', 'Copy page'], 1],
+    ['before one is', liveAttrs({ container: '', title: '', page: '', ids: [] }), ['[Open this note]', 'Copy page'], 0],
+  ])('offers in its context menu, %s, what its toolbar offers, and no mode toggle', async (_name, attrs, menu, opened) => {
+    const { lens, root, bar } = await presented(attrs)
+    /** @type {any[]} */
+    const intents = []
+    lens.onEvent((e) => { if (e.type === 'open-container') intents.push(e) })
+    const { event, intents: menus, escaped } = rightClick(lens, /** @type {Element} */ (root.querySelector('.ink-page')))
+    expect([event.defaultPrevented, escaped, menuOf(menus[0]), toolbarIds(bar)]).toEqual([true, false, menu, ['tb-open-note', 'tb-copy-page']])
+    menus[0].items[0].action()
+    expect(intents).toHaveLength(opened)
   })
 
   it("puts a whiteboard's window on the tablet's at a VIEW, redrawing only the ruling", async () => {

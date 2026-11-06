@@ -1,6 +1,7 @@
 // @ts-check
 // The reader's surface of a Digital Note: one page at a time on an InkSheet,
-// its pager, scale and actions offered to the workspace toolbar. It hears the
+// its pager and scale offered to the workspace toolbar, a right-click on it
+// asking its lens for the lens's menu. It hears the
 // container's feed itself, so the page shown takes committed strokes as they
 // arrive and the stroke under the pen while it is the page being written; and it
 // never moves the reader. Which page
@@ -11,17 +12,16 @@ import { AbstractSurface, SurfaceEvent, SurfaceIntent } from '../abstract-surfac
 import { INK_RULES } from '../../renderers/ink-renderer.js'
 import { InkFeed } from '../../contract/ink-container-provider.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
-import { ButtonGroup, ToolbarButton, ToolbarLabel } from '../../renderers/toolbar-button.js'
-import { ActionStatus } from './action-status.js'
+import { ButtonGroup, ToolbarButton, ToolbarLabel, ToolbarSelect } from '../../renderers/toolbar-button.js'
 import { InkSheet } from './ink-sheet.js'
 import { NotePager } from './note-pager.js'
-import { TabletOpener } from './tablet-opener.js'
 
 /** @typedef {import('../../contract/ink-container-provider.js').InkContainerProvider} InkContainerProvider */
 /** @typedef {import('../../contract/ink-container-provider.js').InkFeedEvent} InkFeedEvent */
 /** @typedef {import('../../renderers/ink-renderer.js').InkWindow} InkWindow */
 /** @typedef {import('../abstract-surface.js').SurfaceStats} SurfaceStats */
 /** @typedef {import('./plane-window.js').PlaneWindow} PlaneWindow */
+/** @typedef {import('./ink-sheet.js').SheetScale} SheetScale */
 /** @typedef {import('../../contract/ink-container-provider.js').InkPageAnswer} InkPageAnswer */
 
 /**
@@ -31,15 +31,17 @@ import { TabletOpener } from './tablet-opener.js'
  * surface handed one opens where it says and marks the pages that took ink
  * written after it.
  * @typedef {Readonly<{mode: string, page: string|null, window: import('./ink-sheet.js').WindowPlacement|null,
- *   scale: string, unseen: ReadonlyArray<string>, seq: number, startMillis: number}>} ReaderView
+ *   scale: SheetScale, unseen: ReadonlyArray<string>, seq: number, startMillis: number}>} ReaderView
  */
 
 /**
  * What the surface asks of the lens that made it: the key claim, asked first
- * for every key pressed in the surface, and where its events are reported.
+ * for every key pressed in the surface, where its events are reported, and
+ * where what came of an action is said.
  * @typedef {object} PageSurfaceHost
  * @property {(event: KeyboardEvent) => boolean} claimKey
  * @property {(event: import('../abstract-surface.js').SurfaceEventMsg) => void} onSurfaceEvent
+ * @property {import('./action-status.js').ActionStatus} actionStatus
  */
 
 /** The zoom factor of one press of a zoom key or button. */
@@ -47,6 +49,12 @@ const ZOOM_STEP = 1.25
 
 /** Zoom per pixel of wheel travel with Ctrl or Cmd held: a factor of exp(-deltaY · this). */
 const WHEEL_ZOOM = 0.002
+
+/** Pixels of wheel travel, with Ctrl or Cmd held, that step a fixed page one level. */
+const WHEEL_STEP_PX = 40
+
+/** The pinch, as a factor of its scale since the last step, that steps a fixed page one level. */
+const PINCH_STEP = 1.2
 
 /** CSS pixels a wheel event counts per line when it reports lines. */
 const WHEEL_LINE_PX = 16
@@ -58,15 +66,15 @@ export class PageSurface extends AbstractSurface {
   /** The mode this surface presents. */
   static MODE = 'page'
 
-  /** How a fixed page's sheet is sized: whole in the surround, to the surround's
-   *  width, or one grid unit to a CSS pixel. */
-  static Scale = Object.freeze({ PAGE: InkSheet.Scale.PAGE, FIT: InkSheet.Scale.FIT, ACTUAL: InkSheet.Scale.ACTUAL })
+  /** The fits a fixed page's sheet is sized by: whole in the surround, or to the
+   *  surround's width. Its scale is one of these or one of InkSheet.LEVELS. */
+  static Scale = Object.freeze({ PAGE: InkSheet.Scale.PAGE, FIT: InkSheet.Scale.FIT })
 
-  /** The scale control's choices, in order, and what each is called. */
+  /** The scale drop-down's choices, in order: each level, then the fits. */
   static SCALES = Object.freeze([
-    Object.freeze({ scale: InkSheet.Scale.PAGE, id: 'tb-scale-page', text: 'Fit page', title: 'Show the whole page' }),
-    Object.freeze({ scale: InkSheet.Scale.FIT, id: 'tb-scale-width', text: 'Fit width', title: 'Fit the page to the width' }),
-    Object.freeze({ scale: InkSheet.Scale.ACTUAL, id: 'tb-scale-actual', text: '100%', title: 'Show the page at actual size' }),
+    ...InkSheet.LEVELS.map((level) => Object.freeze({ scale: level, label: `${level}%` })),
+    Object.freeze({ scale: InkSheet.Scale.FIT, label: 'Fit width' }),
+    Object.freeze({ scale: InkSheet.Scale.PAGE, label: 'Fit page' }),
   ])
 
   /** What Copy page says: copied, no page drawn to copy, or the clipboard not taking it. */
@@ -98,9 +106,8 @@ export class PageSurface extends AbstractSurface {
 
   /** @type {boolean} between mount and unmount */ #mounted = false
   /** @type {HTMLElement} */ #root
-  /** @type {ActionStatus} what came of Copy page and Open in e-ink */ #status = new ActionStatus(() => this.#toolbarChanged())
-  /** @type {TabletOpener} */ #opener
   /** @type {NotePager} */ #pager = new NotePager(this)
+  /** @type {string} the name of the device the note was written on; '' when unknown */ #device = ''
 
   /** @type {boolean} whether a page, or the note's having none, has been shown */ #painted = false
   /** @type {Set<string>} pages with ink not seen since it arrived */ #unseen = new Set()
@@ -111,6 +118,7 @@ export class PageSurface extends AbstractSurface {
 
   /** @type {{id: number, x: number, y: number}|null} the pointer dragging the sheet */ #drag = null
   /** @type {number} the scale the last WebKit gesture event reported */ #gestureScale = 1
+  /** @type {number} Ctrl or Cmd wheel travel on a fixed page not yet stepped by, in CSS pixels */ #wheelTravel = 0
 
   /**
    * @param {InkContainerProvider} provider the note's provider; its feed is heard
@@ -123,7 +131,6 @@ export class PageSurface extends AbstractSurface {
     this.#provider = provider
     this.#host = host
     rendererStyles.register(PageSurface)
-    this.#opener = new TabletOpener(provider, this.#status, () => this.#toolbarChanged())
     const scale = view && PageSurface.#isScale(view.scale) ? view.scale : PageSurface.Scale.PAGE
     this.#sheet = new InkSheet(provider, {
       onSheetChanged: () => this.#sheetChanged(),
@@ -161,16 +168,15 @@ export class PageSurface extends AbstractSurface {
       readout: Object.freeze([
         Object.freeze({ text: where, title: 'Page' }),
         Object.freeze({ text: `${count} stroke${count === 1 ? '' : 's'}`, title: 'Strokes on this page' }),
-        ...(this.#opener.device ? [Object.freeze({ text: this.#opener.device, title: 'Written on' })] : []),
+        ...(this.#device ? [Object.freeze({ text: this.#device, title: 'Written on' })] : []),
       ]),
     }
   }
 
   /**
    * What the surface offers the toolbar: the pager (but on a whiteboard of one
-   * page), the scale on a fixed page or the window on a whiteboard, then Copy
-   * page, Open in e-ink for a note from a tablet, Live while the note is being
-   * written, what came of the last of those, and that the template is unknown.
+   * page), the scale on a fixed page or the window on a whiteboard, and that the
+   * template is unknown.
    * @returns {ButtonGroup[]}
    */
   toolbarContents() {
@@ -180,32 +186,20 @@ export class PageSurface extends AbstractSurface {
     const groups = []
     if (!(whiteboard && sheet.pages.length === 1)) groups.push(this.#pager.group(sheet.pages, sheet.shown, this.#unseen))
     groups.push(whiteboard ? this.#windowGroup() : this.#scaleGroup())
-    /** @type {Array<ToolbarButton|ToolbarLabel>} */
-    const actions = [new ToolbarButton({
-      id: 'tb-copy-page', text: 'Copy page', title: 'Copy the page as an image', onClick: () => { this.copyPage() },
-    })]
-    if (this.#opener.offered) actions.push(this.#opener.button(() => this.#sheet.shown))
-    if (this.#liveView !== null) {
-      actions.push(new ToolbarButton({
-        id: 'tb-open-live', text: 'Live', className: 'tb-live',
-        title: 'This note is being written on the tablet: open the Live view', onClick: () => this.openLive(),
-      }))
-    }
-    if (this.#status.text) actions.push(new ToolbarLabel({ id: 'tb-ink-status', text: () => this.#status.text, live: true }))
     if (sheet.unknownTemplate) {
-      actions.push(new ToolbarLabel({ id: 'tb-ink-notice', className: 'tb-notice', text: () => 'Unknown template, drawn blank' }))
+      groups.push(new ButtonGroup([new ToolbarLabel({ id: 'tb-ink-notice', className: 'tb-notice', text: () => 'Unknown template, drawn blank' })]))
     }
-    groups.push(new ButtonGroup(actions))
     return groups
   }
 
-  /** @returns {ButtonGroup} Fit page, Fit width and 100%, the one in force active */
+  /** @returns {ButtonGroup} the scale drop-down, the scale in force chosen */
   #scaleGroup() {
-    return new ButtonGroup(PageSurface.SCALES.map((choice) => new ToolbarButton({
-      id: choice.id, text: choice.text, title: choice.title,
-      active: () => this.#sheet.scale === choice.scale,
-      onClick: () => this.setScale(choice.scale),
-    })), { className: 'tb-segmented', label: 'Size' })
+    return new ButtonGroup([new ToolbarSelect({
+      id: 'tb-scale', title: 'Size',
+      options: PageSurface.SCALES.map((choice) => ({ value: String(choice.scale), label: choice.label })),
+      value: () => String(this.#sheet.scale),
+      onChange: (value) => this.setScale(/^\d+$/.test(value) ? Number(value) : value),
+    })], { label: 'Size' })
   }
 
   /** @returns {ButtonGroup} a whiteboard's zoom and framing */
@@ -221,8 +215,11 @@ export class PageSurface extends AbstractSurface {
   /** @returns {string|null} the id of the page shown */
   get shownPage() { return this.#sheet.shown }
 
-  /** @returns {string} one of PageSurface.Scale */
+  /** @returns {SheetScale} one of PageSurface.Scale or InkSheet.LEVELS */
   get scale() { return this.#sheet.scale }
+
+  /** @returns {string|null} the Live view mirroring this note while it is live; null when it is not */
+  get liveView() { return this.#liveView }
 
   /** @returns {boolean} whether the page shown is drawn through a window the reader can move */
   get pannable() { return this.#sheet.pannable }
@@ -261,6 +258,7 @@ export class PageSurface extends AbstractSurface {
     const surround = this.#sheet.element
     this.#root.addEventListener('click', this.#onClick)
     this.#root.addEventListener('keydown', this.#onKeyDown)
+    this.#root.addEventListener('contextmenu', this.#onContextMenu)
     sheet.addEventListener('pointerdown', this.#onPointerDown)
     sheet.addEventListener('pointermove', this.#onPointerMove)
     sheet.addEventListener('pointerup', this.#onPointerUp)
@@ -282,10 +280,10 @@ export class PageSurface extends AbstractSurface {
     this.#provider.unsubscribeFeed(this)
     this.#mounted = false
     this.#sheet.detach()
-    this.#status.clear()
     this.#drag = null
     this.#root.removeEventListener('click', this.#onClick)
     this.#root.removeEventListener('keydown', this.#onKeyDown)
+    this.#root.removeEventListener('contextmenu', this.#onContextMenu)
     sheet.removeEventListener('pointerdown', this.#onPointerDown)
     sheet.removeEventListener('pointermove', this.#onPointerMove)
     sheet.removeEventListener('pointerup', this.#onPointerUp)
@@ -420,28 +418,36 @@ export class PageSurface extends AbstractSurface {
    */
   copyPage() {
     const words = PageSurface.CopyWords
+    const status = this.#host.actionStatus
     return this.#sheet.copyPage().then(
-      (copied) => this.#status.showResult(copied ? words.COPIED : words.NOTHING),
+      (copied) => status.showResult(copied ? words.COPIED : words.NOTHING),
       (err) => {
         console.warn('[ink] the page could not be copied', err)
-        this.#status.showResult(words.FAILED)
+        status.showResult(words.FAILED)
       })
   }
 
-  /**
-   * Asks the tablet the note came from to open it at the page shown.
-   * @returns {Promise<void>}
-   */
-  openOnTablet() { return this.#opener.open(this.#sheet.shown) }
+  /** @param {unknown} scale @returns {boolean} whether it is one of PageSurface.SCALES */
+  static #isScale(scale) { return PageSurface.SCALES.some((choice) => choice.scale === scale) }
 
-  /** @param {string} scale @returns {boolean} whether it is one of PageSurface.Scale */
-  static #isScale(scale) { return /** @type {ReadonlyArray<string>} */ (Object.values(PageSurface.Scale)).includes(scale) }
-
-  /** @param {string} scale one of PageSurface.Scale: how a fixed page is sized from now on */
+  /** @param {SheetScale} scale one of PageSurface.SCALES: how a fixed page is sized from now on */
   setScale(scale) {
     if (!PageSurface.#isScale(scale) || scale === this.#sheet.scale) return
     this.#sheet.scale = scale
     this.#toolbarChanged()
+  }
+
+  /**
+   * Shows a fixed page at the next level in `direction`, keeping the point
+   * under the pointer where it is as far as the surround's scroll allows.
+   * @param {number} direction above 0 for larger
+   * @param {number} clientX @param {number} clientY
+   * @returns {boolean} false at either end, and on a whiteboard
+   */
+  stepScale(direction, clientX, clientY) {
+    if (!this.#sheet.stepScale(direction, clientX, clientY)) return false
+    this.#toolbarChanged()
+    return true
   }
 
   /**
@@ -483,7 +489,7 @@ export class PageSurface extends AbstractSurface {
     const block = id ? provider.getBlock(id) : null
     const attrs = (block && block.attrs) || {}
     this.#sheet.setNote(attrs.note)
-    this.#opener.setNote(attrs)
+    this.#device = String((attrs.note_device && attrs.note_device.name) || '')
   }
 
   /** @param {string|null} pageId */
@@ -586,15 +592,25 @@ export class PageSurface extends AbstractSurface {
   /**
    * On a whiteboard a wheel moves the window, and with Ctrl or Cmd held (which
    * is also how a trackpad pinch arrives) zooms it about the pointer. On a fixed
-   * page the wheel scrolls.
+   * page the wheel scrolls, and with Ctrl or Cmd held steps the scale a level
+   * for every WHEEL_STEP_PX of travel, about the pointer.
    * @param {WheelEvent} event
    */
   #onWheel = (event) => {
-    if (!this.pannable) return
+    const zoom = event.ctrlKey || event.metaKey
+    if (!this.pannable && !(zoom && this.#sheet.drawn !== null)) return
     event.preventDefault()
     const px = event.deltaMode === 1 ? WHEEL_LINE_PX : event.deltaMode === 2 ? this.#sheet.element.clientHeight : 1
     let [dx, dy] = [event.deltaX * px, event.deltaY * px]
-    if (event.ctrlKey || event.metaKey) {
+    if (!this.pannable) {
+      if (Math.sign(dy) !== Math.sign(this.#wheelTravel)) this.#wheelTravel = 0
+      this.#wheelTravel += dy
+      if (Math.abs(this.#wheelTravel) < WHEEL_STEP_PX) return
+      this.stepScale(this.#wheelTravel < 0 ? 1 : -1, event.clientX, event.clientY)
+      this.#wheelTravel = 0
+      return
+    }
+    if (zoom) {
       this.#zoomAt(Math.exp(-dy * WHEEL_ZOOM), event.clientX, event.clientY)
       return
     }
@@ -604,11 +620,13 @@ export class PageSurface extends AbstractSurface {
   }
 
   /**
-   * WebKit's pinch: `scale` is the pinch's total since it began.
+   * WebKit's pinch: `scale` is the pinch's total since it began. On a whiteboard
+   * it zooms the window with the fingers; on a fixed page it steps the scale a
+   * level each time it grows or shrinks by PINCH_STEP since the last step.
    * @param {Event} event
    */
   #onGesture = (event) => {
-    if (!this.pannable) return
+    if (!this.pannable && this.#sheet.drawn === null) return
     event.preventDefault()
     const e = /** @type {any} */ (event)
     const scale = Number(e.scale) || 1
@@ -616,8 +634,22 @@ export class PageSurface extends AbstractSurface {
       this.#gestureScale = scale
       return
     }
-    this.#zoomAt(scale / this.#gestureScale, Number(e.clientX), Number(e.clientY))
-    this.#gestureScale = scale
+    const factor = scale / this.#gestureScale
+    if (this.pannable) {
+      this.#zoomAt(factor, Number(e.clientX), Number(e.clientY))
+      this.#gestureScale = scale
+    } else if (factor >= PINCH_STEP || factor <= 1 / PINCH_STEP) {
+      this.stepScale(factor > 1 ? 1 : -1, Number(e.clientX), Number(e.clientY))
+      this.#gestureScale = scale
+    }
+  }
+
+  /** A right-click, or the menu key, asks the lens for its menu, and nothing
+   *  else is offered over the page. @param {MouseEvent} event */
+  #onContextMenu = (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    this.#host.onSurfaceEvent(this.contextMenuIntent(event, this.#root))
   }
 
   /** @param {number} factor @param {number} clientX @param {number} clientY */

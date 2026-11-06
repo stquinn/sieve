@@ -4,14 +4,12 @@
 // stroke under the pen. The Live view's block says which note and page those
 // are; the container's feed brings what is drawn on them. Whether the tablet is
 // live, the note, the page and the device are its readout. Nothing here turns,
-// pans or zooms: the reader's gestures, offered to the workspace toolbar, are
-// Open this note and Copy page.
+// pans or zooms; it offers the toolbar nothing of its own, and a right-click on
+// it asks its lens for the lens's menu.
 
 import { AbstractSurface, SurfaceEvent, SurfaceIntent } from '../abstract-surface.js'
 import { InkFeed } from '../../contract/ink-container-provider.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
-import { ButtonGroup, ToolbarButton, ToolbarLabel } from '../../renderers/toolbar-button.js'
-import { ActionStatus } from './action-status.js'
 import { InkSheet } from './ink-sheet.js'
 import { PageSurface } from './page-surface.js'
 
@@ -21,9 +19,11 @@ import { PageSurface } from './page-surface.js'
 /** @typedef {import('../abstract-surface.js').SurfaceStats} SurfaceStats */
 
 /**
- * What the surface asks of the lens that made it.
+ * What the surface asks of the lens that made it: where its events are
+ * reported, and where what came of an action is said.
  * @typedef {object} LiveSurfaceHost
  * @property {(event: import('../abstract-surface.js').SurfaceEventMsg) => void} onSurfaceEvent
+ * @property {import('./action-status.js').ActionStatus} actionStatus
  */
 
 /**
@@ -47,7 +47,6 @@ export class LiveSurface extends AbstractSurface {
   /** @type {boolean} between mount and unmount */ #mounted = false
   /** @type {HTMLElement} */ #root
   /** @type {string} the name of the device the note is written on; '' when unknown */ #device = ''
-  /** @type {ActionStatus} what came of Copy page */ #status = new ActionStatus(() => this.#toolbarChanged())
 
   /** @type {Mirrored} */ #mirrored = Object.freeze({ container: '', title: '', page: '', waiting: false })
   /** @type {boolean} whether a page, or there being none, has been shown */ #painted = false
@@ -104,30 +103,11 @@ export class LiveSurface extends AbstractSurface {
   }
 
   /**
-   * What the surface offers the toolbar: Open this note (disabled before a note
-   * is mirrored), Copy page, and what came of it.
-   * @returns {ButtonGroup[]}
-   */
-  toolbarContents() {
-    /** @type {Array<ToolbarButton|ToolbarLabel>} */
-    const actions = [
-      new ToolbarButton({
-        id: 'tb-open-note', text: 'Open this note', title: 'Open the note being written in a tab of its own',
-        enabled: () => this.#mirrored.container !== '', onClick: () => this.openNote(),
-      }),
-      new ToolbarButton({
-        id: 'tb-copy-page', text: 'Copy page', title: 'Copy the page as an image', onClick: () => { this.copyPage() },
-      }),
-    ]
-    if (this.#status.text) actions.push(new ToolbarLabel({ id: 'tb-ink-status', text: () => this.#status.text, live: true }))
-    return [new ButtonGroup(actions)]
-  }
-
-  /**
    * Puts the view in the editor's root and starts hearing the feed.
    * @param {HTMLElement} rootEl
    */
   mount(rootEl) {
+    this.#root.addEventListener('contextmenu', this.#onContextMenu)
     rootEl.appendChild(this.#root)
     this.#mounted = true
     this.#sheet.attach()
@@ -139,7 +119,7 @@ export class LiveSurface extends AbstractSurface {
     this.#provider.unsubscribeFeed(this)
     this.#mounted = false
     this.#sheet.detach()
-    this.#status.clear()
+    this.#root.removeEventListener('contextmenu', this.#onContextMenu)
     this.#root.remove()
   }
 
@@ -204,11 +184,12 @@ export class LiveSurface extends AbstractSurface {
    */
   copyPage() {
     const words = PageSurface.CopyWords
+    const status = this.#host.actionStatus
     return this.#sheet.copyPage().then(
-      (copied) => this.#status.showResult(copied ? words.COPIED : words.NOTHING),
+      (copied) => status.showResult(copied ? words.COPIED : words.NOTHING),
       (err) => {
         console.warn('[ink] the page could not be copied', err)
-        this.#status.showResult(words.FAILED)
+        status.showResult(words.FAILED)
       })
   }
 
@@ -248,6 +229,13 @@ export class LiveSurface extends AbstractSurface {
   /** Reports that what stats() measures may have changed. */
   #measured() {
     this.#host.onSurfaceEvent(SurfaceEvent.DOC_PROJECTED)
+  }
+
+  /** A right-click, or the menu key, asks the lens for its menu. @param {MouseEvent} event */
+  #onContextMenu = (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    this.#host.onSurfaceEvent(this.contextMenuIntent(event, this.#root))
   }
 
   /** @param {string} tag @param {string} className @returns {HTMLElement} */

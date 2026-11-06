@@ -56,6 +56,11 @@ import { PlaneWindow, WindowEdge } from './plane-window.js'
  */
 
 /**
+ * How a fixed page is sized: one of InkSheet.Scale, or a percentage.
+ * @typedef {string|number} SheetScale
+ */
+
+/**
  * Where a whiteboard's window is: its top-left, in page units, and its zoom.
  * @typedef {Readonly<{x0: number, y0: number, zoom: number}>} WindowPlacement
  */
@@ -100,12 +105,16 @@ export class InkSheet {
   })
 
   /**
-   * How a fixed page's sheet is sized: whole within the surround, to the
-   * surround's width, one grid unit to a CSS pixel, or whole within the surround
-   * but never under half its width. The two that fit the surround follow its
-   * size as it changes.
+   * The fits a fixed page's sheet can be sized by: whole within the surround, to
+   * the surround's width, or whole within the surround but never under half its
+   * width. Each follows the surround's size as it changes. A sheet's scale is
+   * one of these or a percentage, at which one grid unit is that percentage of a
+   * CSS pixel.
    */
-  static Scale = Object.freeze({ PAGE: 'page', FIT: 'fit', ACTUAL: 'actual', WHOLE: 'whole' })
+  static Scale = Object.freeze({ PAGE: 'page', FIT: 'fit', WHOLE: 'whole' })
+
+  /** The percentages a fixed page steps through, smallest first. */
+  static LEVELS = Object.freeze([25, 50, 75, 100, 150, 200])
 
   static styles = /* css */ `
   .ink-page__surround {
@@ -180,7 +189,7 @@ export class InkSheet {
 
   /** @type {ReadonlyArray<PageEntry>} */ #pages = []
   /** @type {any} the note header's attrs: pageAspect, template */ #note = {}
-  /** @type {string} one of InkSheet.Scale, for a fixed page */ #scale
+  /** @type {SheetScale} how a fixed page is sized */ #scale
 
   /** @type {string|null} the page shown, null when none is */ #shown = null
   /** @type {number} the seq of the log the shown page reflects */ #seq = 0
@@ -213,7 +222,7 @@ export class InkSheet {
    * @param {InkContainerProvider} provider what pages are asked of
    * @param {InkSheetHost} host
    * @param {SheetPolicy} policy
-   * @param {string} scale one of InkSheet.Scale, how a fixed page is sized at first
+   * @param {SheetScale} scale how a fixed page is sized at first
    */
   constructor(provider, host, policy, scale) {
     this.#provider = provider
@@ -269,13 +278,47 @@ export class InkSheet {
     return plane ? Object.freeze({ x0: plane.window.x0, y0: plane.window.y0, zoom: plane.zoom }) : null
   }
 
-  /** @returns {string} one of InkSheet.Scale */
+  /** @returns {SheetScale} */
   get scale() { return this.#scale }
 
-  /** @param {string} scale one of InkSheet.Scale */
+  /** @param {SheetScale} scale */
   set scale(scale) {
     this.#scale = scale
     this.#applyScale()
+  }
+
+  /**
+   * Sizes a fixed page at the next of LEVELS in `direction` from the size it is
+   * shown at, a fit's included, keeping the point under (`clientX`, `clientY`)
+   * where it is as far as the surround's scroll allows. At either end, or on a
+   * whiteboard, nothing changes.
+   * @param {number} direction above 0 for larger
+   * @param {number} clientX @param {number} clientY
+   * @returns {boolean} whether the scale changed
+   */
+  stepScale(direction, clientX, clientY) {
+    const svg = this.#svg
+    if (this.#plane || !svg || !direction) return false
+    const now = this.#percent(svg)
+    const levels = InkSheet.LEVELS
+    const to = direction > 0 ? levels.find((l) => l > now + 0.5) : [...levels].reverse().find((l) => l < now - 0.5)
+    if (to === undefined) return false
+    const before = svg.getBoundingClientRect()
+    this.scale = to
+    const after = svg.getBoundingClientRect()
+    if (before.width && before.height && after.width && after.height) {
+      this.#surround.scrollLeft += after.left + (clientX - before.left) / before.width * after.width - clientX
+      this.#surround.scrollTop += after.top + (clientY - before.top) / before.height * after.height - clientY
+    }
+    return true
+  }
+
+  /** @param {SVGSVGElement} svg @returns {number} the percentage the page is shown at; 100 while it is not laid out */
+  #percent(svg) {
+    if (typeof this.#scale === 'number') return this.#scale
+    const natural = Number(svg.getAttribute('width'))
+    const shown = this.laidOutWidth
+    return natural > 0 && shown > 0 ? shown / natural * 100 : 100
   }
 
   /** @returns {string|null} the page the tablet shows as written */
@@ -845,7 +888,7 @@ export class InkSheet {
   }
 
   #applyScale() {
-    this.#surround.dataset.scale = this.#scale
+    this.#surround.dataset.scale = String(this.#scale)
     const aspect = this.#plane ? this.#plane.shape : Number(this.#note.pageAspect)
     if (this.#plane) this.#surround.dataset.bounds = 'unbounded'
     else delete this.#surround.dataset.bounds
@@ -853,7 +896,8 @@ export class InkSheet {
     else this.#sheet.style.removeProperty('--ink-aspect')
     const svg = this.#svg
     if (!svg) return
-    svg.style.width = this.#plane || this.#scale !== InkSheet.Scale.ACTUAL ? '100%' : `${svg.getAttribute('width')}px`
+    const scale = this.#scale
+    svg.style.width = this.#plane || typeof scale !== 'number' ? '100%' : `${Number(svg.getAttribute('width')) * scale / 100}px`
   }
 
   #onScroll = () => {

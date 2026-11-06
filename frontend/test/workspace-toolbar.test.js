@@ -1,5 +1,6 @@
 // workspace-toolbar.test.js — the workspace toolbar and what fills it: the
-// widget family (ToolbarButton / ToolbarLabel / ToolbarSeparator / ButtonGroup),
+// widget family (ToolbarButton / ToolbarLabel / ToolbarSeparator / ButtonGroup /
+// ToolbarSelect), the ActionList a lens draws as buttons and as menu entries,
 // the surfaces' groups, the WorkspaceToolbar drawing the active lens's answer
 // (asked again on `toolbar-changed`, refreshed on the lens's RAW event stream),
 // NoteEditor's answer button for button, and the one mode toggle every lens
@@ -7,7 +8,8 @@
 // ProseMirror.
 
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { ToolbarButton, ToolbarLabel, ToolbarSeparator, ButtonGroup } from '../src/static/renderers/toolbar-button.js'
+import { ToolbarButton, ToolbarLabel, ToolbarSeparator, ButtonGroup, ToolbarSelect } from '../src/static/renderers/toolbar-button.js'
+import { ActionList } from '../src/static/renderers/action-list.js'
 import { WorkspaceToolbar } from '../src/static/shell/workspace-toolbar.js'
 import { WysiwygSurface } from '../src/static/lens/document-editor/surfaces/wysiwyg-surface.js'
 import { MarkdownSurface } from '../src/static/lens/document-editor/surfaces/markdown-surface.js'
@@ -126,6 +128,94 @@ describe('ButtonGroup', () => {
     const b = new ToolbarButton({ onClick: () => {}, active: () => true })
     new ButtonGroup([a, b]).refresh()
     expect([a.el.classList.contains('active'), b.el.classList.contains('active')]).toEqual([true, true])
+  })
+})
+
+describe('ToolbarSelect', () => {
+  const OPTIONS = Object.freeze([{ value: 'a', label: 'Alpha' }, { value: 'b', label: 'Beta', mark: true }, { value: 'c', label: 'Gamma' }])
+  /** @param {HTMLElement} el */
+  const face = (el) => el.querySelector('.tb-select__face')?.textContent
+
+  it.each([
+    ["the chosen option's label", undefined, 'Alpha', 'Gamma'],
+    ['what its face closure says', (/** @type {string} */ v) => () => `${v} of 3`, 'a of 3', 'c of 3'],
+  ])('is a native <select> of its options, a marked one led by ●, its face saying %s', (_name, faceFor, before, after) => {
+    let value = 'a'
+    const s = new ToolbarSelect({ id: 'pick', title: 'Pick', options: OPTIONS, value: () => value, onChange: () => {}, face: faceFor && (() => faceFor(value)()) })
+    expect([s.el.className, s.select.id, s.select.getAttribute('aria-label'), [...s.select.options].map((o) => o.textContent), s.select.value, face(s.el)])
+      .toEqual(['tb-select', 'pick', 'Pick', ['Alpha', '● Beta', 'Gamma'], 'a', before])
+    value = 'c'
+    s.refresh()
+    expect([s.select.value, face(s.el)]).toEqual(['c', after])
+  })
+
+  it.each([
+    ['opened with the pointer, hands the keyboard back to what held it', true, 'lens'],
+    ['chosen from the keyboard, keeps it', false, 'pick'],
+  ])('tells onChange the value chosen and, %s', (_name, pointer, focused) => {
+    const lens = document.createElement('div')
+    lens.id = 'lens'
+    lens.tabIndex = 0
+    const s = new ToolbarSelect({ id: 'pick', options: OPTIONS, value: () => 'a', onChange: (v) => chosen.push(v) })
+    /** @type {string[]} */ const chosen = []
+    document.body.append(lens, s.el)
+    lens.focus()
+    if (pointer) s.select.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    s.select.focus()
+    s.select.value = 'b'
+    s.select.dispatchEvent(new Event('change', { bubbles: true }))
+    expect([chosen, document.activeElement?.id]).toEqual([['b'], focused])
+  })
+})
+
+describe('ActionList', () => {
+  const PAGE = 'page'
+  const READING = 'reading'
+  /** @param {{busy?: boolean, live?: boolean, label?: string}} state @param {string[]} ran */
+  const list = (state, ran) => new ActionList([
+    { id: 'copy', label: 'Copy page', title: 'Copy it', modes: [PAGE], run: () => ran.push('copy') },
+    { id: 'open', label: 'Open in e-ink', modes: [PAGE, READING], enabled: () => !state.busy, run: () => ran.push('open') },
+    { id: 'live', label: 'Go to Live', short: 'Live', className: 'tb-live', modes: [PAGE], applies: () => !!state.live, run: () => ran.push('live') },
+    { id: 'read', label: () => String(state.label), modes: [READING], run: () => ran.push('read') },
+  ])
+
+  it.each([
+    ['the page', PAGE, {}, ['copy', 'open'], ['Copy page', 'Open in e-ink']],
+    ['the page, while live', PAGE, { live: true }, ['copy', 'open', 'live'], ['Copy page', 'Open in e-ink', 'Go to Live']],
+    ['the reading', READING, { label: 'Read again' }, ['open', 'read'], ['Open in e-ink', 'Read again']],
+  ])('offers in %s only the actions of that mode that apply now', (_name, mode, state, ids, labels) => {
+    const actions = list(state, [])
+    expect([actions.offered(mode).map((a) => a.id), actions.menuItems(mode).map((i) => /** @type {any} */ (i).label)]).toEqual([ids, labels])
+    expect(actions.toolbarButtons(mode).map((b) => b.el.id)).toEqual(ids.map((id) => 'tb-' + id))
+  })
+
+  it('draws each as a toolbar button saying its short face, and as a menu entry saying its label, both running it', () => {
+    /** @type {string[]} */ const ran = []
+    const actions = list({ live: true }, ran)
+    const live = actions.toolbarButtons(PAGE)[2]
+    expect([live.el.textContent, live.el.className, actions.toolbarButtons(PAGE)[0].el.title]).toEqual(['Live', 'tb-btn tb-text tb-live', 'Copy it'])
+    const copy = /** @type {any} */ (actions.menuItems(PAGE)[0])
+    live.el.click()
+    copy.action()
+    expect(ran).toEqual(['live', 'copy'])
+  })
+
+  it('draws an action that cannot run disabled in both, read again each time it is drawn', () => {
+    const state = { busy: true, label: 'Read this page' }
+    const actions = list(state, [])
+    const button = actions.toolbarButtons(READING)[0]
+    button.refresh()
+    expect([button.el.disabled, /** @type {any} */ (actions.menuItems(READING)[0]).disabled]).toEqual([true, true])
+    state.busy = false
+    state.label = 'Try again'
+    button.refresh()
+    expect([button.el.disabled, actions.menuItems(READING).map((i) => [/** @type {any} */ (i).label, /** @type {any} */ (i).disabled])])
+      .toEqual([false, [['Open in e-ink', false], ['Try again', false]]])
+  })
+
+  it('is frozen: what was declared is what both draw', () => {
+    const actions = list({}, [])
+    expect([Object.isFrozen(actions.actions), Object.isFrozen(actions.actions[0]), Object.isFrozen(actions.actions[0].modes)]).toEqual([true, true, true])
   })
 })
 

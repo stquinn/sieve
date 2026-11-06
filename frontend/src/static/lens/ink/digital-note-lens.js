@@ -2,19 +2,20 @@
 // The reader's lens of a Digital Note, in two modes. In `page`, one page at a time
 // as the tablet drew it, the committed strokes and the stroke under the pen
 // arriving as they are written, and a whiteboard through a window the reader
-// moves and zooms; it copies the page as an image and asks the tablet the note
-// came from to open it at the page. In `reading`, the page the reader is on read as text
-// and diagrams, which the reader asks for and can take away as a new document.
+// moves and zooms. In `reading`, the page the reader is on read as text and
+// diagrams, which the reader asks for and can take away as a new document.
 // The reader is never moved: what is shown changes only by the reader's hand, and
-// the page and the marks carry from one mode to the other. It is read-only by
-// construction: mounted over an InkContainerProvider, it declares no capability
-// and writes nothing of the note.
+// the page and the marks carry from one mode to the other. What it can do — open
+// the page on the tablet, copy it, read it, make a document of the reading, go
+// to the Live view, have the note named and summarised again — is one list,
+// drawn in the toolbar and as its context menu. It writes nothing of the note.
 
-import { AbstractEditor } from '../abstract-editor.js'
-import { LensCapability } from '../../contract/lens-capabilities.js'
-import { ContractViolation } from '../../contract/sieve-block.js'
+import { InkLens } from './ink-lens.js'
+import { SurfaceEvent } from '../abstract-surface.js'
+import { ActionList } from '../../renderers/action-list.js'
 import { PageSurface } from './page-surface.js'
 import { ReadingSurface } from './reading-surface.js'
+import { TabletOpener } from './tablet-opener.js'
 
 /** The modes a note is presented in; neither needs a seed. */
 const MODES = Object.freeze([PageSurface.MODE, ReadingSurface.MODE])
@@ -25,12 +26,8 @@ const MODE_TOGGLE = Object.freeze({
   [ReadingSurface.MODE]: Object.freeze({ text: 'Page', title: 'Show the page as it was written' }),
 })
 
-const NO_CAPABILITY = Object.freeze({
-  [LensCapability.MARKDOWN]: false,
-  [LensCapability.MENTIONS]: false,
-  [LensCapability.COMMANDS]: false,
-  [LensCapability.BLOCKS]: false,
-})
+const PAGE_ONLY = Object.freeze([PageSurface.MODE])
+const READING_ONLY = Object.freeze([ReadingSurface.MODE])
 
 /** The page each page key turns by. */
 const PAGE_KEYS = Object.freeze({ PageUp: -1, PageDown: 1 })
@@ -46,21 +43,16 @@ const PAN_KEYS = Object.freeze({
 /** The factor each zoom key zooms a whiteboard's window by, about its centre. */
 const ZOOM_KEYS = Object.freeze({ '+': 1.25, '=': 1.25, '-': 0.8, '_': 0.8 })
 
-export class DigitalNoteLens extends AbstractEditor {
-  /**
-   * @param {string} uuid the note's container
-   * @param {import('../abstract-editor.js').AbstractEditorOptions} [options]
-   *   `provider` must be an InkContainerProvider
-   */
-  constructor(uuid, options = {}) {
-    super(uuid, options)
-    if (typeof this.provider.loadPage !== 'function') {
-      throw new ContractViolation('DigitalNoteLens: construct with an InkContainerProvider')
-    }
-  }
+export class DigitalNoteLens extends InkLens {
+  /** What Refresh name and summary says: asking, asked, or that nothing could be asked. */
+  static RefreshWords = Object.freeze({
+    ASKING: 'Asking for a new name and summary…',
+    ASKED: 'A new name and summary were asked for',
+    FAILED: 'Could not ask for a new name and summary',
+  })
 
-  /** @protected @returns {Readonly<import('../../contract/lens-capabilities.js').LensCapabilities>} */
-  get _innateCapabilities() { return NO_CAPABILITY }
+  /** @type {TabletOpener} */ #opener = new TabletOpener(this.provider, this.actionStatus, () => this.onSurfaceEvent(SurfaceEvent.TOOLBAR_CHANGED))
+  /** @type {Promise<void>|null} the Refresh name and summary under way */ #refreshing = null
 
   /** @protected @returns {ReadonlyArray<string>} */
   get _modes() { return MODES }
@@ -80,6 +72,91 @@ export class DigitalNoteLens extends AbstractEditor {
 
   /** @returns {string} */
   get placeholder() { return '' }
+
+  /** @override @protected @returns {ActionList} */
+  _declareActions() {
+    const page = () => (this.surface instanceof PageSurface ? this.surface : null)
+    const reading = () => (this.surface instanceof ReadingSurface ? this.surface : null)
+    const opener = this.#opener
+    return new ActionList([
+      {
+        id: 'open-on-tablet', label: 'Open in e-ink', title: 'Open this page on the tablet the note was written on', modes: MODES,
+        applies: () => opener.offered, enabled: () => !opener.opening, run: () => this.openOnTablet(),
+      },
+      {
+        id: 'copy-page', label: 'Copy page', title: 'Copy the page as an image', modes: PAGE_ONLY,
+        run: () => page()?.copyPage(),
+      },
+      {
+        id: 'read-page', label: () => reading()?.readLabel || 'Read this page', title: 'Read this page as text and diagrams', modes: MODES,
+        applies: () => (reading() ? reading()?.readLabel !== '' : page()?.shownPage != null), run: () => this.readThisPage(),
+      },
+      {
+        id: 'new-document', label: 'New document', title: 'Make an ordinary document from this reading', modes: READING_ONLY,
+        applies: () => !!reading()?.documentOffered, enabled: () => !reading()?.making, run: () => reading()?.newDocument(),
+      },
+      {
+        id: 'open-live', label: 'Go to Live', short: 'Live', className: 'tb-live', modes: PAGE_ONLY,
+        title: 'This note is being written on the tablet: open the Live view',
+        applies: () => !!page()?.liveView, run: () => page()?.openLive(),
+      },
+      {
+        id: 'refresh-description', label: 'Refresh name and summary', short: 'Refresh name', modes: MODES,
+        title: 'Ask for the note to be named and summarised again from its ink',
+        enabled: () => this.#refreshing === null, run: () => this.refreshDescription(),
+      },
+    ])
+  }
+
+  /**
+   * Asks the tablet the note came from to open it at the page the reader is on.
+   * @returns {Promise<void>}
+   */
+  openOnTablet() {
+    const surface = this.surface
+    const shown = surface instanceof PageSurface || surface instanceof ReadingSurface ? surface.shownPage : null
+    return this.#opener.open(shown)
+  }
+
+  /**
+   * Reads the page the reader is on: in the reading, as its read button does;
+   * on the page, by showing the reading, which has the page read when it has
+   * no reading yet.
+   * @returns {Promise<void>}
+   */
+  readThisPage() {
+    if (this.surface instanceof ReadingSurface) return this.surface.readPage()
+    return this.setMode(ReadingSurface.MODE).then((changed) => {
+      const surface = this.surface
+      if (!(surface instanceof ReadingSurface)) return
+      surface.readIfUnread()
+      if (changed) this.focus()
+    })
+  }
+
+  /**
+   * Asks for the note to be named and summarised again, saying in the action
+   * status that it is asking and then what came of it. A second ask while one is
+   * under way is the same ask.
+   * @returns {Promise<void>}
+   */
+  refreshDescription() {
+    if (this.#refreshing) return this.#refreshing
+    const W = DigitalNoteLens.RefreshWords
+    const status = this.actionStatus
+    this.#refreshing = new Promise((resolve) => { resolve(this.provider.refreshDescription()) })
+      .then(() => status.showResult(W.ASKED), (err) => {
+        console.warn('[ink] the note could not be named again', err)
+        const said = typeof err === 'string' ? err : err instanceof Error ? err.message : ''
+        status.showResult(said || W.FAILED)
+      })
+      .finally(() => {
+        this.#refreshing = null
+        this.onSurfaceEvent(SurfaceEvent.TOOLBAR_CHANGED)
+      })
+    status.showPending(W.ASKING)
+    return this.#refreshing
+  }
 
   /** @override @protected @param {string} mode
    *  @returns {import('../abstract-editor.js').ModeToggleFace} */

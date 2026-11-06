@@ -3180,6 +3180,21 @@ describe('SieveWorkspace tab-lifecycle verbs (P2.D facade)', () => {
     ])
   })
 
+  it.each([
+    ['its items at its point', { x: 120, y: 80, items: [{ label: 'Copy page', action: () => {} }] }, { x: 120, y: 80, labels: ['Copy page'] }],
+    ['an empty menu for an intent with none', { x: 5, y: 6 }, { x: 5, y: 6, labels: [] }],
+  ])("shows the menu a lens asks for through the app's one context menu: %s", (_name, intent, shown) => {
+    /** @type {any[]} */
+    const raised = []
+    const hear = (/** @type {any} */ e) => raised.push(e.detail)
+    document.addEventListener('sieve:contextmenu', hear)
+    ws.onEditorModeEvent({ type: 'context-menu', ...intent })
+    document.removeEventListener('sieve:contextmenu', hear)
+    expect(raised.map((d) => ({ x: d.x, y: d.y, type: d.context.type, labels: d.context.items.map((/** @type {any} */ i) => i.label) })))
+      .toEqual([{ x: shown.x, y: shown.y, type: 'sieveBlock', labels: shown.labels }])
+    expect(ajaxCalls).toEqual([])
+  })
+
   it('newNote posts to /api/note with the tabbar swap', () => {
     ws.newNote()
     expect(ajaxCalls).toEqual([

@@ -573,11 +573,16 @@ export class SieveWorkspace {
 
   /** The non-toolbar chrome reactions to the editor's view events: the body
    *  `markdown-mode` class plus the tab-strip re-render, the failure alert, the
-   *  body `presenting` class, and a lens asking for a container to be opened.
-   *  @param {{type: string, mode?: string, error?: unknown, uuid?: string}} event */
+   *  body `presenting` class, a lens asking for a container to be opened, and a
+   *  lens asking for its own menu, which the app's one context menu shows.
+   *  @param {{type: string, mode?: string, error?: unknown, uuid?: string, x?: number, y?: number, items?: ReadonlyArray<any>}} event */
   onEditorModeEvent(event) {
     if (event.type === SurfaceIntent.OPEN_CONTAINER) {
       if (event.uuid) this.open(event.uuid)
+    } else if (event.type === SurfaceIntent.CONTEXT_MENU) {
+      document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
+        detail: { x: event.x || 0, y: event.y || 0, context: { type: 'sieveBlock', items: [...(event.items || [])] } },
+      }))
     } else if (event.type === 'presenting-changed') {
       this.#mirrorPresenting()
     } else if (event.type === 'mode-changed') {
