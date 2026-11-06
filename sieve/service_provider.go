@@ -51,6 +51,11 @@ type ServiceProvider struct {
 	// InkInvalidator hears every change Settings → Ink shows. Set by the composition root before
 	// Init, for the reason Invalidator is.
 	InkInvalidator ink.Invalidator
+	// InkDrawer draws a note's page as a PNG. Set by the composition root before Init, for the
+	// reason Invalidator is; nil is nothing that can draw.
+	InkDrawer ink.PageDrawer
+	// InkImages keeps the images of synced notes' pages.
+	InkImages *ink.PageImages
 }
 
 // InkRadio is the radio Ink dials: the TCP companion at settings.TCP when one is set, otherwise
@@ -197,6 +202,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	settings := s.State.LoadSettings()
 	s.Ink = ink.NewInkService(s.State, s.Containers, s.InkRadio(settings.Ink), s.InkInvalidator)
 	s.Nodes.Register(s.Ink.LiveView())
+	s.InkImages = ink.NewPageImages(s.Ink, s.InkDrawer)
 	// A Live view's uuid is minted per run, so a tab of one saved by an earlier run names nothing.
 	if _, err := s.State.CloseTabs(func(t domain.Tab) bool { return t.ContainerKind() == ink.KindLive }); err != nil {
 		logger.Error("sieve: could not close an earlier run's Live tabs", "err", err)

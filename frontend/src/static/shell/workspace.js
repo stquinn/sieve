@@ -25,6 +25,7 @@ import { WorkspaceService } from './workspace-service.js'
 import { CommandService } from './command-service.js'
 import { MentionService } from './mention-service.js'
 import { InvalidationService } from './invalidation-service.js'
+import { InkPageDrawer } from './ink-page-drawer.js'
 import { CommandBadges } from './command-badges.js'
 import { AskPanel } from './ask-panel.js'
 import { InsertDialogs } from './insert-dialogs.js'
@@ -120,6 +121,9 @@ export class SieveWorkspace {
    *  alive: it claims its frames and republishes them as DOM events. */
   #invalidationService
 
+  /** @type {InkPageDrawer} the plane's tenant that draws a note's page when the server asks. */
+  #inkPageDrawer
+
   /** @type {SpellControl} the workspace's spelling verbs, and the toggle's state. */
   #spell
 
@@ -146,6 +150,7 @@ export class SieveWorkspace {
     // lazily: the server pushes the jobs snapshot the instant a socket connects,
     // and a tenant registering later would have that first frame dropped.
     this.#invalidationService = new InvalidationService(this.#workspaceService)
+    this.#inkPageDrawer = new InkPageDrawer(this.#workspaceService)
     this.#spell = new SpellControl(this.#workspaceService,
       typeof window !== 'undefined' ? /** @type {any} */ (window).__sieveSpellcheckEnabled !== false : true)
     this.#macroCatalog = new MacroCatalog(this)

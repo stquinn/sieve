@@ -67,6 +67,7 @@ import { buildAiContext, applyTargetHighlight } from '../src/static/lens/extensi
 import { MountBinding } from '../src/static/shell/mount-binding.js'
 import { ContainerModelFeed } from '../src/static/container/container-model-feed.js'
 import { serviceRig, FakeSocket } from './helpers/service-rig.js'
+import { WorkspaceFrame } from '../src/static/generated/protocol.js'
 
 // ── Test doubles ─────────────────────────────────────────────────────────────
 
@@ -438,6 +439,11 @@ describe('SieveWorkspace', () => {
     expect(window.SieveTab).toBe(SieveTab)
     expect(window.SieveEditor).toBe(SieveEditor)
     expect(window.SieveSurface).toBe(AbstractSurface)
+  })
+
+  it('the workspace channel has a tenant drawing ink pages from construction', () => {
+    const claim = () => ws.workspaceService.registerTenant({ frameTypes: [WorkspaceFrame.INK_DRAW_PAGE], onFrame() {} })
+    expect(claim).toThrow(/already claimed: ink-draw-page/)
   })
 
   it('workspace.activeTab.editor.uuid chain works', () => {

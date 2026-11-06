@@ -26,6 +26,7 @@ const (
 	ResponseJSON     ResponseKind = "json"     // a typed body, described by the entry's Response type
 	ResponseFragment ResponseKind = "fragment" // HTML for HTMX to swap in; the template is its contract
 	ResponseNone     ResponseKind = "none"     // 204, or a body no caller reads
+	ResponseImage    ResponseKind = "image"    // a PNG, image/png
 )
 
 // EndpointEntry is one HTTP operation whose contract is typed data. Request
@@ -138,6 +139,7 @@ func (r *Registry) registerWorkspaceFrames() {
 	r.addFrame(ChannelWorkspace, Inbound, TypeSpellIgnore, SpellIgnoreFrame{})
 	r.addFrame(ChannelWorkspace, Inbound, TypeSpellLearn, SpellLearnFrame{})
 	r.addFrame(ChannelWorkspace, Inbound, TypeFeatureControl, FeatureControlFrame{})
+	r.addFrame(ChannelWorkspace, Inbound, TypeInkPageDrawn, InkPageDrawnFrame{})
 
 	r.addFrame(ChannelWorkspace, Outbound, TypePong, PongFrame{})
 	r.addFrame(ChannelWorkspace, Outbound, TypeCommandResult, CommandResultFrame{})
@@ -147,6 +149,7 @@ func (r *Registry) registerWorkspaceFrames() {
 	r.addFrame(ChannelWorkspace, Outbound, TypeJobsChanged, JobsChangedFrame{})
 	r.addFrame(ChannelWorkspace, Outbound, TypeContainerDeleted, ContainerDeletedFrame{})
 	r.addFrame(ChannelWorkspace, Outbound, TypeContainerSaved, ContainerSavedFrame{})
+	r.addFrame(ChannelWorkspace, Outbound, TypeInkDrawPage, InkDrawPageFrame{})
 }
 
 func (r *Registry) registerEndpoints() {
@@ -190,6 +193,10 @@ func (r *Registry) registerEndpoints() {
 		Method: "GET", Path: "/api/ink/notes/{uuid}/pages/{page}/export",
 		Request: reflect.TypeOf(InkPageExportRequest{}), Response: reflect.TypeOf(InkPageExport{}),
 		ResponseKind: ResponseJSON,
+	})
+	r.addEndpoint(EndpointEntry{
+		Method: "GET", Path: "/api/ink/notes/{uuid}/pages/{page}/image",
+		Request: reflect.TypeOf(InkPageImageRequest{}), ResponseKind: ResponseImage,
 	})
 }
 

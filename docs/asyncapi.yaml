@@ -109,6 +109,8 @@ channels:
         $ref: '#/components/messages/workspaceCommandCancel'
       workspaceFeatureControl:
         $ref: '#/components/messages/workspaceFeatureControl'
+      workspaceInkPageDrawn:
+        $ref: '#/components/messages/workspaceInkPageDrawn'
       workspaceMentionQuery:
         $ref: '#/components/messages/workspaceMentionQuery'
       workspaceMentionResolve:
@@ -127,6 +129,8 @@ channels:
         $ref: '#/components/messages/workspaceContainerDeleted'
       workspaceContainerSaved:
         $ref: '#/components/messages/workspaceContainerSaved'
+      workspaceInkDrawPage:
+        $ref: '#/components/messages/workspaceInkDrawPage'
       workspaceInvalidate:
         $ref: '#/components/messages/workspaceInvalidate'
       workspaceJobsChanged:
@@ -201,6 +205,7 @@ operations:
       - $ref: '#/channels/workspace/messages/workspaceCommand'
       - $ref: '#/channels/workspace/messages/workspaceCommandCancel'
       - $ref: '#/channels/workspace/messages/workspaceFeatureControl'
+      - $ref: '#/channels/workspace/messages/workspaceInkPageDrawn'
       - $ref: '#/channels/workspace/messages/workspaceMentionQuery'
       - $ref: '#/channels/workspace/messages/workspaceMentionResolve'
       - $ref: '#/channels/workspace/messages/workspacePing'
@@ -216,6 +221,7 @@ operations:
       - $ref: '#/channels/workspace/messages/workspaceCommandResult'
       - $ref: '#/channels/workspace/messages/workspaceContainerDeleted'
       - $ref: '#/channels/workspace/messages/workspaceContainerSaved'
+      - $ref: '#/channels/workspace/messages/workspaceInkDrawPage'
       - $ref: '#/channels/workspace/messages/workspaceInvalidate'
       - $ref: '#/channels/workspace/messages/workspaceJobsChanged'
       - $ref: '#/channels/workspace/messages/workspaceMentionResolved'
@@ -810,6 +816,18 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolFeatureControlFrame'
+    workspaceInkPageDrawn:
+      name: ink-page-drawn
+      title: ink-page-drawn
+      summary: InkPageDrawnFrame answers an ink-draw-page with the page as a PNG, or why it could not be drawn.
+      description: |-
+        InkPageDrawnFrame answers an ink-draw-page with the page as a PNG, or why it could not be drawn.
+        Only the client that was asked may answer.
+      contentType: application/json
+      correlationId:
+        $ref: '#/components/correlationIds/correlationId'
+      payload:
+        $ref: '#/components/schemas/ProtocolInkPageDrawnFrame'
     workspaceMentionQuery:
       name: mention-query
       title: mention-query
@@ -952,6 +970,21 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolContainerSavedFrame'
+    workspaceInkDrawPage:
+      name: ink-draw-page
+      title: ink-draw-page
+      summary: InkDrawPageFrame asks one workspace client to draw a page of a Digital Note as a PNG, and is answered by an ink-page-drawn carrying the same correlation id.
+      description: |-
+        InkDrawPageFrame asks one workspace client to draw a page of a Digital Note as a PNG, and is
+        answered by an ink-page-drawn carrying the same correlation id. It carries everything the
+        drawing needs: the client fetches nothing and needs no tab open. A fixed page is drawn whole,
+        1404 pixels wide; an unbounded page is drawn framed to all its ink with a margin, its longer
+        side at most 4096 pixels. Only committed ink is drawn.
+      contentType: application/json
+      correlationId:
+        $ref: '#/components/correlationIds/correlationId'
+      payload:
+        $ref: '#/components/schemas/ProtocolInkDrawPageFrame'
     workspaceInvalidate:
       name: invalidate
       title: invalidate
@@ -1649,6 +1682,42 @@ components:
           type: string
       required:
         - type
+    ProtocolInkDrawPageFrame:
+      type: object
+      description: |-
+        InkDrawPageFrame asks one workspace client to draw a page of a Digital Note as a PNG, and is
+        answered by an ink-page-drawn carrying the same correlation id. It carries everything the
+        drawing needs: the client fetches nothing and needs no tab open. A fixed page is drawn whole,
+        1404 pixels wide; an unbounded page is drawn framed to all its ink with a margin, its longer
+        side at most 4096 pixels. Only committed ink is drawn.
+      properties:
+        type:
+          type: string
+        correlationId:
+          type: string
+          description: echoed on the ink-page-drawn answer
+        container:
+          type: string
+          description: the uuid of the note's block container
+        pageId:
+          type: string
+          description: the page's id, as the block's note.pages lists it
+        pageKey:
+          type: string
+          description: the hash of what is on the page, which the image is kept under
+        bounds:
+          type: string
+          description: fixed | unbounded
+        page:
+          $ref: '#/components/schemas/ProtocolInkPageExport'
+      required:
+        - type
+        - correlationId
+        - container
+        - pageId
+        - pageKey
+        - bounds
+        - page
     ProtocolInkExportDevice:
       type: object
       description: InkExportDevice is the tablet the note was written on.
@@ -1907,6 +1976,26 @@ components:
         - type
         - pageId
         - seq
+    ProtocolInkPageDrawnFrame:
+      type: object
+      description: |-
+        InkPageDrawnFrame answers an ink-draw-page with the page as a PNG, or why it could not be drawn.
+        Only the client that was asked may answer.
+      properties:
+        type:
+          type: string
+        correlationId:
+          type: string
+          description: the ink-draw-page's, echoed
+        png:
+          type: string
+          description: the image, base64; absent with error
+        error:
+          type: string
+          description: present only when the page could not be drawn
+      required:
+        - type
+        - correlationId
     ProtocolInkPageExport:
       type: object
       description: |-

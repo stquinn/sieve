@@ -70,6 +70,7 @@ func TestRouteTable(t *testing.T) {
 		"GET /ui/views/settings",
 		"GET /ui/views/settings/ink",
 		"GET /api/ink/notes/{uuid}/pages/{page}/export",
+		"GET /api/ink/notes/{uuid}/pages/{page}/image",
 		"GET /ui/views/sidebar",
 		"GET /ui/views/sidebar/dialog/{kind}",
 		"GET /ui/views/sidebar/ink",

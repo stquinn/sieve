@@ -386,6 +386,7 @@ func TestOpenAPI_PublishesEveryRegisteredEndpointInItsDeclaredKind(t *testing.T)
 	want := map[protocol.ResponseKind]string{
 		protocol.ResponseJSON:     "application/json",
 		protocol.ResponseFragment: "text/html",
+		protocol.ResponseImage:    "image/png",
 	}
 	for _, entry := range protocol.NewRegistry().Endpoints() {
 		media, published := want[entry.ResponseKind]
