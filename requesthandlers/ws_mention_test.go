@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"sieve/sieve"
+	"sieve/sieve/block"
 	"sieve/sieve/domain"
 	"sieve/sieve/editor"
+	"sieve/sieve/ink"
 )
 
 // stubSource is a NodeSource double: it records what the Router asked for and
@@ -101,6 +103,52 @@ func TestWS_MentionQuery_RoundTripsCandidates(t *testing.T) {
 	}
 	if got := src.last(t); fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("router was asked %+v, want %+v", got, want)
+	}
+}
+
+// The picker offers a notebook found through the composition root's sources, with its name and
+// summary, which seed the reference accepting it mints; and the reference opens the notebook as a
+// container of its own kind.
+func TestWS_MentionQuery_OffersANotebookThatOpensAsItself(t *testing.T) {
+	srv, sp, _, _ := newWsTestServer(t)
+	block.RegisterProcessor(ink.NewDigitalNoteKind())
+	sp.Ink = ink.NewInkService(sp.State, sp.Containers, holdingRadio{}, nil)
+	t.Cleanup(sp.Ink.Stop)
+	sp.Nodes = editor.NewRouter()
+	sp.RegisterNodeSources()
+	sp.Search = sp.Nodes
+	c, err := sp.Containers.Create(ink.KindDigitalNote, map[string]interface{}{"title": "Untitled 05/11"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sp.Containers.SaveMeta(c.UUID(), func(m domain.DocumentMeta) {
+		ink.NewDigitalNoteKind().Describe(m, domain.NoteMetadata{Title: "Kitchen plans", Summary: "A rough budget."}, 3)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	conn := dialWorkspaceWS(t, srv)
+	defer conn.Close()
+
+	if err := conn.WriteJSON(map[string]interface{}{"type": "mention-query", "q": "kitch", "correlationId": "c-nb"}); err != nil {
+		t.Fatal(err)
+	}
+	frame := readFrame(t, conn, 2*time.Second)
+	cands, _ := frame["candidates"].([]interface{})
+	if len(cands) != 1 {
+		t.Fatalf("candidates = %+v, want the notebook", frame["candidates"])
+	}
+	uri := domain.NewContainerAddress(c.UUID()).String()
+	if got, _ := cands[0].(map[string]interface{}); got["uri"] != uri || got["kind"] != ink.KindDigitalNote ||
+		got["title"] != "Kitchen plans" || got["summary"] != "A rough budget." {
+		t.Errorf("candidate = %+v", got)
+	}
+
+	if err := conn.WriteJSON(map[string]interface{}{"type": "mention-resolve", "uri": uri, "correlationId": "c-nb-open"}); err != nil {
+		t.Fatal(err)
+	}
+	frame = readFrame(t, conn, 2*time.Second)
+	if frame["found"] != true || frame["uuid"] != c.UUID() || frame["kind"] != ink.KindDigitalNote || frame["title"] != "Kitchen plans" {
+		t.Errorf("resolved = %+v", frame)
 	}
 }
 

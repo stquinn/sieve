@@ -77,8 +77,26 @@ func (v *LiveView) UUID() string { return v.uuid }
 // Name identifies this source in Router diagnostics.
 func (v *LiveView) Name() string { return KindLive }
 
-// Search offers nothing.
-func (v *LiveView) Search(domain.SearchCriteria) []domain.Candidate { return nil }
+// Search offers the view, while it exists, to a search matching its name that admits kind
+// KindLive and what is not durable, under its address and the title Resolve gives it; anything
+// else offers nothing. The view has no folder.
+func (v *LiveView) Search(c domain.SearchCriteria) []domain.Candidate {
+	if !c.Fields.Has(domain.SearchName) || !c.Includes(KindLive, false) || !c.InFolder("") {
+		return nil
+	}
+	v.mu.Lock()
+	present, live, waiting := v.present, v.live, v.waiting
+	v.mu.Unlock()
+	if !present {
+		return nil
+	}
+	title := v.attrs(live, waiting)["title"].(string)
+	matched, ok := c.Match(map[domain.SearchField][]string{domain.SearchName: {title}})
+	if !ok {
+		return nil
+	}
+	return []domain.Candidate{{URI: domain.NewContainerAddress(v.uuid).String(), Title: title, Kind: KindLive, Matched: matched}}
+}
 
 // Claims is addr naming the view's uuid, which no store holds.
 func (v *LiveView) Claims(addr domain.Address) bool { return addr.Container == v.uuid }

@@ -34,11 +34,8 @@ func (s *BlockSource) Name() string { return "blocks" }
 // Search offers nothing.
 func (s *BlockSource) Search(domain.SearchCriteria) []domain.Candidate { return nil }
 
-// Resolve dereferences an address into the container it names, live or as of the
-// version it pins; at container grain its title is what the container is called
-// (block.Registry.ContainerName). Anything that is not a block container, a
-// version nobody wrote or a leaf the container does not answer to is
-// domain.ErrNodeNotFound.
+// Resolve loads the container an address names and dereferences the address as
+// Node does. Anything that is not a block container is domain.ErrNodeNotFound.
 func (s *BlockSource) Resolve(addr domain.Address) (domain.NodeDescriptor, error) {
 	c, err := s.containers.Load(addr.Container)
 	if errors.Is(err, domain.ErrNotBlockContainer) {
@@ -47,6 +44,16 @@ func (s *BlockSource) Resolve(addr domain.Address) (domain.NodeDescriptor, error
 	if err != nil {
 		return domain.NodeDescriptor{}, err
 	}
+	return s.Node(addr, c)
+}
+
+// Node dereferences an address into c, the container it names, already loaded:
+// at container grain c's block, live or as of the version the address pins,
+// titled with what the container is called (block.Registry.ContainerName); at a
+// leaf the block or an asset beside it. A version nobody wrote or a leaf c does not answer to is
+// domain.ErrNodeNotFound.
+func (s *BlockSource) Node(addr domain.Address, c *domain.BlockContainer) (domain.NodeDescriptor, error) {
+	var err error
 	blk := c.Block()
 	if addr.IsPinned() {
 		blk, err = s.containers.Version(c, store.VersionRef{ID: strconv.Itoa(addr.Version)})

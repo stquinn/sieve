@@ -144,7 +144,7 @@ func (h *NoteHandler) tabFor(id string) (domain.Tab, error) {
 // synced Digital Note, otherwise the kind.
 func (h *NoteHandler) untitled(kind string) string {
 	if kind == ink.KindDigitalNote {
-		return untitledNotebook
+		return ink.UntitledNotebook
 	}
 	return kind
 }

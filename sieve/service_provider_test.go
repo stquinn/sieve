@@ -87,3 +87,47 @@ func TestServiceProvider_InitClosesAnEarlierRunsLiveTabs(t *testing.T) {
 		t.Errorf("a Live view nothing is live in resolved: %+v, %v", node, err)
 	}
 }
+
+// The Router the composition root builds finds documents first and then notebooks, offers a
+// notebook to a durable-only search and never a buffer, and opens a notebook as a container of its
+// own kind with its name.
+func TestServiceProvider_TheSearchFindsDocumentsThenNotebooks(t *testing.T) {
+	dir := t.TempDir()
+	fs, err := filestore.NewFileStore(dir, "testhost")
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	s := &ServiceProvider{Jobs: services.NewJobTracker()}
+	s.Init(fs, dir, nil)
+	t.Cleanup(s.Editor.CloseAll)
+	t.Cleanup(block.ResetRegistry)
+	buffer, err := s.Documents.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.Containers.Create(ink.KindDigitalNote, map[string]interface{}{"title": "Untitled 05/11"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Containers.SaveMeta(c.UUID(), func(m domain.DocumentMeta) {
+		ink.NewDigitalNoteKind().Describe(m, domain.NoteMetadata{Title: "Kitchen plans", Summary: "A rough budget."}, 3)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	name := domain.SearchFields{domain.SearchName}
+	var found []string
+	for _, hit := range s.Search.Search(domain.SearchCriteria{Fields: name}) {
+		found = append(found, hit.Kind+" "+hit.Container())
+	}
+	if want := []string{"buffer " + buffer.UUID(), ink.KindDigitalNote + " " + c.UUID()}; !reflect.DeepEqual(found, want) {
+		t.Errorf("everything by name: %v, want %v", found, want)
+	}
+	durable := s.Search.Search(domain.SearchCriteria{Terms: "budget", Fields: domain.SearchFields{domain.SearchSummary}, DurableOnly: true})
+	if len(durable) != 1 || durable[0].Title != "Kitchen plans" || durable[0].Summary != "A rough budget." {
+		t.Errorf("durable only: %+v", durable)
+	}
+	target, err := s.Nodes.Target("sieve://" + c.UUID())
+	if err != nil || target.UUID != c.UUID() || target.Kind != ink.KindDigitalNote || target.Title != "Kitchen plans" {
+		t.Errorf("Target = %+v, %v", target, err)
+	}
+}

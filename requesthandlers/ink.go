@@ -104,9 +104,6 @@ const inkDeleteRefused = "The tablet still has this notebook. Delete it there, o
 // inkDescribeDrawWait bounds how long naming a note now waits for its first page to be drawn.
 const inkDescribeDrawWait = 10 * time.Second
 
-// untitledNotebook is what a synced note with no name and no title from its tablet is called.
-const untitledNotebook = "Untitled notebook"
-
 // inkRateFloor is the shortest catch-up a throughput is shown for.
 const inkRateFloor = 50 * time.Millisecond
 
@@ -246,7 +243,7 @@ func (v *inkSidebarView) show(st ink.Status, session domain.Session) {
 	for _, n := range st.Notes {
 		title := n.Name
 		if title == "" {
-			title = untitledNotebook
+			title = ink.UntitledNotebook
 		}
 		refused := ""
 		if n.Deletion == ink.DeleteRefused {

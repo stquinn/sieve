@@ -424,12 +424,12 @@ func (r *PageTranscripts) page(uuid string, page link.ID) (int, string, error) {
 	return 0, "", fmt.Errorf("%w: %s has no page %s", ErrNoSuchPage, uuid, page)
 }
 
-// noteName is what the note in uuid is called, or "Untitled notebook".
+// noteName is what the note in uuid is called, or UntitledNotebook.
 func (r *PageTranscripts) noteName(uuid string) string {
 	if name := strings.TrimSpace(r.notes.noteName(uuid)); name != "" {
 		return name
 	}
-	return "Untitled notebook"
+	return UntitledNotebook
 }
 
 // tell tells every listener that the transcript of page of uuid changed.

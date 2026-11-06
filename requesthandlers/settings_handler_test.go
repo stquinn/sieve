@@ -441,7 +441,7 @@ func (holdingRadio) Dial(ctx context.Context) (radio.Link, error) {
 }
 
 // newInkServer serves the settings and Ink handlers over one store, with Ink built over a radio
-// that never finds a companion.
+// that never finds a companion, and the search the composition root builds.
 func newInkServer(t *testing.T) (*httptest.Server, *sieve.ServiceProvider) {
 	t.Helper()
 	h, _ := newTestSettingsHandler(t)
@@ -457,6 +457,9 @@ func newInkServer(t *testing.T) (*httptest.Server, *sieve.ServiceProvider) {
 	}
 	sp.Ink = ink.NewInkService(sp.State, containers, holdingRadio{}, nil)
 	t.Cleanup(sp.Ink.Stop)
+	sp.Nodes = editor.NewRouter()
+	sp.RegisterNodeSources()
+	sp.Search = sp.Nodes
 	r := chi.NewRouter()
 	h.RegisterPaths(r)
 	(&InkHandler{ServiceProvider: sp, Tmpl: h.Tmpl}).RegisterPaths(r)

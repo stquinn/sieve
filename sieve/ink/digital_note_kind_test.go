@@ -39,7 +39,8 @@ func dropWhiteboard(t *testing.T, st *filestore.FileStore, uuid string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(st.Root(), "testhost", domain.Blocks.Key, uuid, ".meta"), raw, 0o644); err != nil {
+	dir, _ := st.DocDirByUUID(uuid)
+	if err := os.WriteFile(filepath.Join(dir, ".meta"), raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

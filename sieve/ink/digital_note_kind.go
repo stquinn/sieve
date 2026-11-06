@@ -148,6 +148,17 @@ func (k DigitalNoteKind) Name(meta map[string]string, tablet string) string {
 	return tablet
 }
 
+// UntitledNotebook is what a Digital Note with no name and no title from its tablet is called.
+const UntitledNotebook = "Untitled notebook"
+
+// Called is Name, or UntitledNotebook when that is blank.
+func (k DigitalNoteKind) Called(meta map[string]string, tablet string) string {
+	if name := strings.TrimSpace(k.Name(meta, tablet)); name != "" {
+		return name
+	}
+	return UntitledNotebook
+}
+
 // ContainerName is Name, with the tablet's title read from the block.
 func (k DigitalNoteKind) ContainerName(b domain.SieveBlock, meta map[string]string) string {
 	return k.Name(meta, b.StringAttr("title"))
@@ -176,12 +187,9 @@ func (k DigitalNoteKind) Describe(meta domain.DocumentMeta, d domain.NoteMetadat
 	all[metaDescribed] = strconv.FormatUint(uint64(seq), 10)
 }
 
-// Description is the description meta holds and the seq it is of; false when it holds none.
+// Description is the description meta holds and the seq it is of; false when it is of no seq.
 func (k DigitalNoteKind) Description(meta map[string]string) (domain.NoteMetadata, uint32, bool) {
 	seq := k.seq(meta, metaDescribed)
-	if seq == 0 {
-		return domain.NoteMetadata{}, 0, false
-	}
 	d := domain.NoteMetadata{Title: meta["display_name"], Summary: meta["summary"]}
 	if d.Title == "null" {
 		d.Title = ""
@@ -191,7 +199,7 @@ func (k DigitalNoteKind) Description(meta map[string]string) (domain.NoteMetadat
 	}
 	_ = json.Unmarshal([]byte(meta[metaKeywords]), &d.Keywords)
 	_ = json.Unmarshal([]byte(meta[metaCategories]), &d.Categories)
-	return d, seq, true
+	return d, seq, seq > 0
 }
 
 // DescribedSeq is the seq of the log meta's description is of, 0 when it holds none.
