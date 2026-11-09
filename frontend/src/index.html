@@ -250,7 +250,7 @@
     <script type="module" src="/ui/static/ui/tabbar.js"></script>
     <script src="/ui/static/ui/sidebar.js"></script>
     <script type="module" src="/ui/static/lens/document-editor/context-menu.js"></script>
-    <script src="/ui/static/ui/layout.js"></script>
+    <script type="module" src="/ui/static/ui/layout.js"></script>
 
     <script>
     window.__sieveDevServerPort = {{.DevServerPort}};
@@ -267,38 +267,6 @@
         if (!e) return false;
         return navigator.platform.includes('Mac') ? e.metaKey : e.ctrlKey;
     };
-
-    // Intercept Mod+Alt+I (Cmd+Option+I on macOS) before WebKit opens Web Inspector
-    window.addEventListener('keydown', function(e) {
-        if (window.isMod(e) && e.altKey && (e.key === 'i' || e.key === 'I')) {
-            e.preventDefault();
-            if (window.htmx) {
-                window.htmx.ajax('POST', '/api/session/toggle/meta', { swap: 'none' });
-            }
-        }
-    }, { capture: true });
-
-    function syncSessionLayout(layoutEl) {
-        var appRoot = document.getElementById('app-root');
-        var layout = layoutEl || document.getElementById('session-layout');
-        if (!appRoot || !layout || !layout.dataset) return;
-        if (layout.dataset.meta) {
-            appRoot.setAttribute('data-meta', layout.dataset.meta);
-        }
-    }
-    window.addEventListener('DOMContentLoaded', function() { syncSessionLayout(); });
-    document.addEventListener('htmx:load', function(e) {
-        var el = (e.detail && e.detail.elt) || e.target;
-        if (el && (el.id === 'session-layout' || (el.querySelector && el.querySelector('#session-layout')))) {
-            syncSessionLayout(el.id === 'session-layout' ? el : el.querySelector('#session-layout'));
-        }
-    });
-    document.addEventListener('htmx:afterSettle', function(e) {
-        var target = (e.detail && e.detail.target) || e.target;
-        if (target && (target.id === 'session-layout' || (target.querySelector && target.querySelector('#session-layout')))) {
-            syncSessionLayout();
-        }
-    });
 
     window.sieveSidebarSearch = function() {
         var treeInput = document.getElementById('sidebar-search-input');

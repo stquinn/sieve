@@ -68,6 +68,13 @@ import { MountBinding } from '../src/static/shell/mount-binding.js'
 import { ContainerModelFeed } from '../src/static/container/container-model-feed.js'
 import { serviceRig, FakeSocket } from './helpers/service-rig.js'
 import { WorkspaceFrame } from '../src/static/generated/protocol.js'
+import { SessionLayout } from '../src/static/ui/layout.js'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const shellCss = fs.readFileSync(path.resolve(__dirname, '../src/static/shell.css'), 'utf-8')
 
 // ── Test doubles ─────────────────────────────────────────────────────────────
 
@@ -3301,5 +3308,186 @@ describe('SieveWorkspace tab-lifecycle verbs (P2.D facade)', () => {
     expect(() => ws.closeAll()).not.toThrow()
     expect(() => ws.reorder(0, 1)).not.toThrow()
     expect(() => ws.loadTabs()).not.toThrow()
+  })
+})
+
+describe('SessionLayout', () => {
+  describe('isToggleMetaChord', () => {
+    it('matches macOS Cmd+Option+I when key is dead key or circumflex (Option+I dead key on macOS)', () => {
+      const deadEvent = /** @type {KeyboardEvent} */ ({
+        code: 'KeyI',
+        key: 'Dead',
+        metaKey: true,
+        altKey: true,
+        ctrlKey: false,
+        shiftKey: false,
+      })
+      window.isMod = (e) => Boolean(e.metaKey)
+      expect(SessionLayout.isToggleMetaChord(deadEvent)).toBe(true)
+
+      const circumflexEvent = /** @type {KeyboardEvent} */ ({
+        code: 'KeyI',
+        key: 'ˆ',
+        metaKey: true,
+        altKey: true,
+        ctrlKey: false,
+        shiftKey: false,
+      })
+      expect(SessionLayout.isToggleMetaChord(circumflexEvent)).toBe(true)
+    })
+
+    it('matches Cmd+Option+I / Ctrl+Alt+I with key "i" or "I"', () => {
+      const lowerEvent = /** @type {KeyboardEvent} */ ({
+        code: 'KeyI',
+        key: 'i',
+        ctrlKey: true,
+        altKey: true,
+        metaKey: false,
+        shiftKey: false,
+      })
+      window.isMod = (e) => Boolean(e.ctrlKey)
+      expect(SessionLayout.isToggleMetaChord(lowerEvent)).toBe(true)
+
+      const upperEvent = /** @type {KeyboardEvent} */ ({
+        code: 'KeyI',
+        key: 'I',
+        ctrlKey: true,
+        altKey: true,
+        metaKey: false,
+        shiftKey: false,
+      })
+      expect(SessionLayout.isToggleMetaChord(upperEvent)).toBe(true)
+    })
+
+    it('rejects events missing modifiers or with other keys', () => {
+      window.isMod = (e) => Boolean(e.metaKey)
+      // Missing alt
+      expect(SessionLayout.isToggleMetaChord(/** @type {KeyboardEvent} */ ({
+        code: 'KeyI', key: 'i', metaKey: true, altKey: false,
+      }))).toBe(false)
+      // Missing mod
+      expect(SessionLayout.isToggleMetaChord(/** @type {KeyboardEvent} */ ({
+        code: 'KeyI', key: 'i', metaKey: false, altKey: true,
+      }))).toBe(false)
+      // Other key (e.g. Mod+Alt+B for toolbar)
+      expect(SessionLayout.isToggleMetaChord(/** @type {KeyboardEvent} */ ({
+        code: 'KeyB', key: 'b', metaKey: true, altKey: true,
+      }))).toBe(false)
+    })
+  })
+
+  describe('handleKeyDown', () => {
+    it('prevents default and executes htmx toggle when chord matches', () => {
+      let prevented = false
+      const ajaxSpy = vi.fn()
+      window.htmx = { ajax: ajaxSpy }
+      window.isMod = (e) => Boolean(e.metaKey)
+
+      const layout = new SessionLayout()
+      const event = /** @type {KeyboardEvent} */ ({
+        code: 'KeyI',
+        key: 'Dead',
+        metaKey: true,
+        altKey: true,
+        preventDefault: () => { prevented = true },
+      })
+
+      const handled = layout.handleKeyDown(event)
+      expect(handled).toBe(true)
+      expect(prevented).toBe(true)
+      expect(ajaxSpy).toHaveBeenCalledWith('POST', '/api/session/toggle/meta', { swap: 'none' })
+    })
+
+    it('ignores non-matching key combinations', () => {
+      let prevented = false
+      const ajaxSpy = vi.fn()
+      window.htmx = { ajax: ajaxSpy }
+      window.isMod = (e) => Boolean(e.metaKey)
+
+      const layout = new SessionLayout()
+      const event = /** @type {KeyboardEvent} */ ({
+        code: 'KeyB',
+        key: 'b',
+        metaKey: true,
+        altKey: true,
+        preventDefault: () => { prevented = true },
+      })
+
+      const handled = layout.handleKeyDown(event)
+      expect(handled).toBe(false)
+      expect(prevented).toBe(false)
+      expect(ajaxSpy).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('sync', () => {
+    it('syncs data-meta attribute from #session-layout to #app-root', () => {
+      document.body.innerHTML = `
+        <div id="app-root" data-meta="on">
+          <div id="session-layout" data-meta="off"></div>
+        </div>
+      `
+      const appRoot = document.getElementById('app-root')
+      const layoutEl = document.getElementById('session-layout')
+      const layout = new SessionLayout(appRoot)
+
+      layout.sync(layoutEl)
+      expect(appRoot?.getAttribute('data-meta')).toBe('off')
+    })
+  })
+
+  describe('meta panel CSS visibility rules', () => {
+    let styleEl
+
+    beforeEach(() => {
+      styleEl = document.createElement('style')
+      styleEl.textContent = shellCss
+      document.head.appendChild(styleEl)
+    })
+
+    afterEach(() => {
+      if (styleEl && styleEl.parentNode) {
+        styleEl.parentNode.removeChild(styleEl)
+      }
+      document.body.innerHTML = ''
+    })
+
+    it('hides #htmx-meta-panel and .meta-handle when #app-root has data-meta="off"', () => {
+      document.body.innerHTML = `
+        <div id="app-root" data-meta="off">
+          <div id="right-panel">
+            <div class="editor-area">
+              <div id="editor-col"></div>
+              <div class="meta-handle"></div>
+              <div id="htmx-meta-panel" class="flex flex-col"></div>
+            </div>
+          </div>
+        </div>
+      `
+      const metaPanel = document.getElementById('htmx-meta-panel')
+      const metaHandle = document.querySelector('.meta-handle')
+
+      expect(window.getComputedStyle(metaPanel).display).toBe('none')
+      expect(window.getComputedStyle(metaHandle).display).toBe('none')
+    })
+
+    it('shows #htmx-meta-panel and .meta-handle when #app-root has data-meta="on"', () => {
+      document.body.innerHTML = `
+        <div id="app-root" data-meta="on">
+          <div id="right-panel">
+            <div class="editor-area">
+              <div id="editor-col"></div>
+              <div class="meta-handle"></div>
+              <div id="htmx-meta-panel" class="flex flex-col"></div>
+            </div>
+          </div>
+        </div>
+      `
+      const metaPanel = document.getElementById('htmx-meta-panel')
+      const metaHandle = document.querySelector('.meta-handle')
+
+      expect(window.getComputedStyle(metaPanel).display).not.toBe('none')
+      expect(window.getComputedStyle(metaHandle).display).not.toBe('none')
+    })
   })
 })

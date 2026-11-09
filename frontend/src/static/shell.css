@@ -62,8 +62,6 @@ html, body {
 
 #session-layout[data-sidebar="off"] ~ #sidebar-wrapper,
 #session-layout[data-sidebar="off"] ~ .sidebar-handle,
-#session-layout[data-meta="off"] ~ * #htmx-meta-panel,
-#session-layout[data-meta="off"] ~ * .meta-handle,
 #session-layout[data-prompts="off"] ~ * #prompts-panel,
 #session-layout[data-prompts="off"] ~ * .prompts-handle,
 #session-layout[data-toolbar="off"] ~ * #editor-toolbar,
