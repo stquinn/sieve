@@ -18,7 +18,7 @@
 </head>
 <body>
     {{if .StoreRoot}}
-    <div id="app-root" class="theme-{{.ThemeName}}" style="--sidebar-w: {{.SidebarWidth}}px; --meta-w: {{.MetaWidth}}px; --prompts-h: {{.PromptsHeight}}px; --ask-panel-h: {{.AskPanelHeight}}px; --wails-drop-target: drop;">
+    <div id="app-root" class="theme-{{.ThemeName}}" data-meta="{{if .ShowMeta}}on{{else}}off{{end}}" style="--sidebar-w: {{.SidebarWidth}}px; --meta-w: {{.MetaWidth}}px; --prompts-h: {{.PromptsHeight}}px; --ask-panel-h: {{.AskPanelHeight}}px; --wails-drop-target: drop;">
         {{template "session_layout.html" .}}
         <div id="sidebar-wrapper">
             <div id="htmx-sidebar" class="sidebar" hx-get="/ui/views/sidebar" hx-trigger="load, sieve:invalidate-session from:document, sieve:invalidate-notes from:document, session:changed from:body, notes:changed from:body"></div>
@@ -267,6 +267,38 @@
         if (!e) return false;
         return navigator.platform.includes('Mac') ? e.metaKey : e.ctrlKey;
     };
+
+    // Intercept Mod+Alt+I (Cmd+Option+I on macOS) before WebKit opens Web Inspector
+    window.addEventListener('keydown', function(e) {
+        if (window.isMod(e) && e.altKey && (e.key === 'i' || e.key === 'I')) {
+            e.preventDefault();
+            if (window.htmx) {
+                window.htmx.ajax('POST', '/api/session/toggle/meta', { swap: 'none' });
+            }
+        }
+    }, { capture: true });
+
+    function syncSessionLayout(layoutEl) {
+        var appRoot = document.getElementById('app-root');
+        var layout = layoutEl || document.getElementById('session-layout');
+        if (!appRoot || !layout || !layout.dataset) return;
+        if (layout.dataset.meta) {
+            appRoot.setAttribute('data-meta', layout.dataset.meta);
+        }
+    }
+    window.addEventListener('DOMContentLoaded', function() { syncSessionLayout(); });
+    document.addEventListener('htmx:load', function(e) {
+        var el = (e.detail && e.detail.elt) || e.target;
+        if (el && (el.id === 'session-layout' || (el.querySelector && el.querySelector('#session-layout')))) {
+            syncSessionLayout(el.id === 'session-layout' ? el : el.querySelector('#session-layout'));
+        }
+    });
+    document.addEventListener('htmx:afterSettle', function(e) {
+        var target = (e.detail && e.detail.target) || e.target;
+        if (target && (target.id === 'session-layout' || (target.querySelector && target.querySelector('#session-layout')))) {
+            syncSessionLayout();
+        }
+    });
 
     window.sieveSidebarSearch = function() {
         var treeInput = document.getElementById('sidebar-search-input');

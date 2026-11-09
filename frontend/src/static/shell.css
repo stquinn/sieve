@@ -55,6 +55,11 @@ html, body {
     border-top: 1px solid var(--theme-border2);
 }
 
+#app-root[data-meta="off"] #htmx-meta-panel,
+#app-root[data-meta="off"] .meta-handle {
+    display: none !important;
+}
+
 #session-layout[data-sidebar="off"] ~ #sidebar-wrapper,
 #session-layout[data-sidebar="off"] ~ .sidebar-handle,
 #session-layout[data-meta="off"] ~ * #htmx-meta-panel,

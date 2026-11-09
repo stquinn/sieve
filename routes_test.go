@@ -9,6 +9,8 @@ import (
 
 	"sieve/requesthandlers"
 	"sieve/sieve"
+	"sieve/sieve/services"
+	"sieve/store/filestore"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -173,5 +175,51 @@ func TestRouteTable_UIIsReadOnly(t *testing.T) {
 		if strings.HasPrefix(route, "/ui/") && method != "GET" {
 			t.Errorf("%s %s: /ui routes must be GET", method, route)
 		}
+	}
+}
+
+// handleIndex seeds the initial panel layout state (including data-meta)
+// directly onto #app-root for fast boot and WebKit invalidation.
+func TestHandleIndex_RendersDataMeta(t *testing.T) {
+	broadcast := requesthandlers.NewWorkspaceBroadcast(nil)
+	dir := t.TempDir()
+	store, err := filestore.NewFileStore(dir, "testhost")
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	state, err := services.NewStateService(store, "", nil)
+	if err != nil {
+		t.Fatalf("NewStateService: %v", err)
+	}
+	ds, err := services.NewDocumentService(store)
+	if err != nil {
+		t.Fatalf("NewDocumentService: %v", err)
+	}
+	sp := &sieve.ServiceProvider{
+		State:     state,
+		Documents: ds,
+	}
+	app := NewApp(t.TempDir(), themes, broadcast, sp, nil)
+	app.storePath = dir
+	app.hostname = "testhost"
+	app.State = state
+	app.Documents = ds
+
+	api, err := newAPIHandler(app, broadcast, sp)
+	if err != nil {
+		t.Fatalf("newAPIHandler: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	api.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="app-root"`) {
+		t.Fatalf("expected #app-root in rendered html: %s", body)
+	}
+	if !strings.Contains(body, `data-meta="`) {
+		t.Errorf("handleIndex did not render data-meta on app-root: %s", body)
 	}
 }
