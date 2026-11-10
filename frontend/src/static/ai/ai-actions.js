@@ -18,19 +18,22 @@
     var frag = document.createDocumentFragment();
 
     if (ids.length > 0) {
+      var labels = ids.map(function (id) { return activeJobs[id].label || 'Working…'; });
       var active = document.createElement('span');
       active.className = 'status-bar__job-active';
+      active.title = labels.join('\n');
       var spinner = document.createElement('span');
       spinner.className = 'status-bar__spinner';
       var task = document.createElement('span');
       task.className = 'status-bar__task';
-      task.textContent = activeJobs[ids[0]].label || 'Working…';
+      task.textContent = labels[0];
       active.appendChild(spinner);
       active.appendChild(task);
       if (ids.length > 1) {
         var more = document.createElement('span');
         more.className = 'status-bar__job-more';
         more.textContent = '+' + (ids.length - 1) + ' more';
+        more.title = labels.slice(1).join('\n');
         active.appendChild(more);
       }
       frag.appendChild(active);
