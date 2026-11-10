@@ -707,6 +707,21 @@ func TestSessionLayout_ResizeBroadcastsSessionChange(t *testing.T) {
 	}
 }
 
+// The layout view is refetched at one URL after every toggle, so a webview that
+// may cache it would keep showing the first answer.
+func TestSessionLayoutView_IsNeverCached(t *testing.T) {
+	srv, _ := newItemServer(t)
+
+	resp, err := http.Get(srv.URL + "/ui/views/session/layout")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+}
+
 // The layout view renders each session flag as its own data-* attribute, and the
 // tier as data-tier.
 func TestSessionLayoutView_RendersTheSessionFlags(t *testing.T) {

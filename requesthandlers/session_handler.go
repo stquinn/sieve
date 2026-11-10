@@ -119,6 +119,7 @@ func (h *SessionHandler) handleSessionLayout(w http.ResponseWriter, r *http.Requ
 func (h *SessionHandler) handleLayoutView(w http.ResponseWriter, r *http.Request) {
 	view := NewSessionLayoutView(h.ServiceProvider.State.LoadSession(), h.ServiceProvider.State.LoadSettings().Tier())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	if err := h.Tmpl.ExecuteTemplate(w, "session_layout.html", view); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
