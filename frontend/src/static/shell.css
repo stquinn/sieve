@@ -126,29 +126,6 @@ body.presenting #app-root .status-bar {
     background: var(--theme-accentPrimary);
 }
 
-.status-bar {
-    height: 32px;
-    min-height: 32px;
-    background-color: var(--theme-bgDark);
-    border-top: 1px solid var(--theme-border);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0 1rem;
-    font-size: 12px;
-    color: var(--theme-muted);
-    flex-shrink: 0;
-    position: relative;
-    z-index: 201;
-}
-
-/* Library chip and AI-job spinner sit side by side; each owns its own slot. */
-.status-bar__left {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-}
-
 dialog {
     color: var(--theme-text);
 }
