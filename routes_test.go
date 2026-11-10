@@ -3,12 +3,15 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
 
 	"sieve/requesthandlers"
 	"sieve/sieve"
+	"sieve/sieve/services"
+	"sieve/store/filestore"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -23,9 +26,14 @@ func walkRoutes(t *testing.T) []string {
 	if err != nil {
 		t.Fatalf("newAPIHandler: %v", err)
 	}
+	return routesOf(t, api)
+}
 
+// routesOf returns every route api mounts as "METHOD /path", sorted.
+func routesOf(t *testing.T, api *apiHandler) []string {
+	t.Helper()
 	var got []string
-	err = chi.Walk(api.routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+	err := chi.Walk(api.routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		got = append(got, method+" "+route)
 		return nil
 	})
@@ -173,5 +181,41 @@ func TestRouteTable_UIIsReadOnly(t *testing.T) {
 		if strings.HasPrefix(route, "/ui/") && method != "GET" {
 			t.Errorf("%s %s: /ui routes must be GET", method, route)
 		}
+	}
+}
+
+// Every view is refetched at a fixed URL, so a webview allowed to cache one keeps
+// showing its first answer. The header is required whatever the status: a view
+// asked without its parameters must not be cached either.
+func TestViews_AreNeverCached(t *testing.T) {
+	dir := t.TempDir()
+	store, err := filestore.NewFileStore(dir, "testhost")
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	broadcast := requesthandlers.NewWorkspaceBroadcast(nil)
+	sp := &sieve.ServiceProvider{Jobs: services.NewJobTracker()}
+	sp.Init(store, dir, themes)
+	api, err := newAPIHandler(NewApp(dir, themes, broadcast, sp, nil), broadcast, sp)
+	if err != nil {
+		t.Fatalf("newAPIHandler: %v", err)
+	}
+
+	param := regexp.MustCompile(`\{[^}]+\}`)
+	views := 0
+	for _, entry := range routesOf(t, api) {
+		method, route, _ := strings.Cut(entry, " ")
+		if method != http.MethodGet || !strings.HasPrefix(route, "/ui/views/") {
+			continue
+		}
+		views++
+		rec := httptest.NewRecorder()
+		api.routes.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, param.ReplaceAllString(route, "x"), nil))
+		if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s: Cache-Control = %q (status %d), want no-store", route, got, rec.Code)
+		}
+	}
+	if views == 0 {
+		t.Fatal("no /ui/views routes were walked")
 	}
 }

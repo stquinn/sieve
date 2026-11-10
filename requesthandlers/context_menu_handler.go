@@ -183,6 +183,7 @@ func (h *ContextMenuHandler) notesChanged(w http.ResponseWriter) {
 // one route with the dialog as a parameter — an unknown kind is a 404 rather
 // than an empty dialog.
 func (h *ContextMenuHandler) handleDialog(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	templates := map[string]string{
 		"create-folder": "create_folder.html",
 		"delete":        "delete.html",

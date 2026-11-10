@@ -176,6 +176,7 @@ func (h *MetaHandler) handleMeta(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *MetaHandler) handleRestorePrompt(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	uuid := r.URL.Query().Get("uuid")
 	versionID := r.URL.Query().Get("version")
 
@@ -229,6 +230,7 @@ func (h *MetaHandler) handleRestore(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *MetaHandler) handleDeleteAssetPrompt(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	data := struct {
 		UUID string
 		Key  string
