@@ -35,6 +35,7 @@ export const DocumentFrame = Object.freeze({
   FLUSH: 'flush',
   FOCUS: 'focus',
   INK_DESCRIBE: 'ink-describe',
+  INK_KEEP_DRAWING: 'ink-keep-drawing',
   INK_OPEN_ON_TABLET: 'ink-open-on-tablet',
   INK_PAGE: 'ink-page',
   INK_TRANSCRIBE_PAGE: 'ink-transcribe-page',

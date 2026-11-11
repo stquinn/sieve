@@ -521,15 +521,16 @@ export class PageSurface extends AbstractSurface {
   #answered(answer) {
     const restored = this.#restored
     this.#restored = null
-    this.#heard(answer.seq, answer.page.strokes)
+    this.#heard(answer.seq, [{ startMillis: this.#sheet.newestStart }])
     if (!restored || answer.seq <= restored.seq) return
     const shown = this.#sheet.shown
     for (const page of this.#sheet.pages) {
       if (page.id === shown || this.#unseen.has(page.id)) continue
       this.#provider.loadPage(page.id).then((other) => {
         if (!this.#mounted) return
-        this.#heard(other.seq, other.page.strokes)
-        if (page.id === this.#sheet.shown || !other.page.strokes.some((s) => s.startMillis > restored.startMillis)) return
+        const strokes = other.page ? other.page.strokes : []
+        this.#heard(other.seq, strokes)
+        if (page.id === this.#sheet.shown || !strokes.some((s) => s.startMillis > restored.startMillis)) return
         this.#unseen.add(page.id)
         this.#toolbarChanged()
       }, () => {})

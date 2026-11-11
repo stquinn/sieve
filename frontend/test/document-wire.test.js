@@ -130,8 +130,18 @@ describe('DocumentService ink — a page asked for, and the ink frames observed'
     const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
     const pending = documentService.inkPage('doc-1', 'p1')
     expect(sock.sentOfType('ink-page')[0]).toEqual({ type: 'ink-page', pageId: 'p1', opId: lastOpId(sock, 'ink-page') })
-    sock.driveMessage({ type: 'ink-page-content', opId: lastOpId(sock, 'ink-page'), pageId: 'p1', seq: 7, page })
-    await expect(pending).resolves.toEqual({ page, seq: 7 })
+    sock.driveMessage({ type: 'ink-page-content', opId: lastOpId(sock, 'ink-page'), pageId: 'p1', seq: 7, key: 'k7', page })
+    await expect(pending).resolves.toEqual({ page, drawing: null, seq: 7, key: 'k7' })
+  })
+
+  it('names its renderer when given one, resolves the kept drawing answered in place of the page, and hands a drawing over', async () => {
+    const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
+    const pending = documentService.inkPage('doc-1', 'p1', '2')
+    expect(sock.sentOfType('ink-page')[0]).toEqual({ type: 'ink-page', pageId: 'p1', renderer: '2', opId: lastOpId(sock, 'ink-page') })
+    sock.driveMessage({ type: 'ink-page-content', opId: lastOpId(sock, 'ink-page'), pageId: 'p1', seq: 7, key: 'k7', page: null, drawing: '<svg/>' })
+    await expect(pending).resolves.toEqual({ page: null, drawing: '<svg/>', seq: 7, key: 'k7' })
+    documentService.inkKeepDrawing('doc-1', 'p1', 'k7', '<svg/>')
+    expect(sock.sentOfType('ink-keep-drawing')).toEqual([{ type: 'ink-keep-drawing', pageId: 'p1', key: 'k7', drawing: '<svg/>' }])
   })
 
   it('rejects a refusal, naming why', async () => {

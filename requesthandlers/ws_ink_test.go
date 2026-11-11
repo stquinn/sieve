@@ -1468,3 +1468,84 @@ func TestInkDelete_IsRefusedWhileTheTabletOffersTheNotebook(t *testing.T) {
 		t.Errorf("a refused delete removed the container: %v", err)
 	}
 }
+
+// A page asked by a view that names its renderer is answered with the drawing that renderer kept
+// of it while the note stands as it did when the drawing was made, and with the page otherwise.
+func TestWS_InkPage_AnswersWithTheDrawingKeptWhileTheNoteStands(t *testing.T) {
+	records := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)))
+	w := newInkWire(t, records)
+	w.session(records)
+	c := dialWS(t, w.srv, w.container())
+
+	ask := func(renderer string) map[string]interface{} {
+		t.Helper()
+		send(t, c, `{"type":"ink-page","opId":"op-page","pageId":"`+inkPage1.String()+`","renderer":"`+renderer+`"}`)
+		return readUntil(t, c, protocol.TypeInkPageContent, 2*time.Second)
+	}
+	drawing := func(key, renderer string) string {
+		return `<svg xmlns="http://www.w3.org/2000/svg" data-ink-key="` + key + `" data-ink-renderer="` + renderer + `"><g/></svg>`
+	}
+	keep := func(key, svg string) {
+		t.Helper()
+		frame, _ := json.Marshal(map[string]string{"type": protocol.TypeInkKeepDrawing, "pageId": inkPage1.String(), "key": key, "drawing": svg})
+		send(t, c, string(frame))
+	}
+
+	first := ask("2")
+	key, _ := first["key"].(string)
+	if key == "" || first["page"] == nil || first["drawing"] != nil {
+		t.Fatalf("with nothing kept: key %q, page %v, drawing %v", key, first["page"] != nil, first["drawing"])
+	}
+
+	keep("00ff-1-1", drawing("00ff-1-1", "2"))
+	keep(key, drawing("00ff-1-1", "2"))
+	keep(key, `<svg xmlns="http://www.w3.org/2000/svg"><g/></svg>`)
+	if a := ask("2"); a["drawing"] != nil || a["page"] == nil {
+		t.Fatalf("a drawing of another key, or one that does not say its key, was kept: %v", a["drawing"])
+	}
+
+	keep(key, drawing(key, "2"))
+	for _, tc := range []struct {
+		name, renderer string
+		kept           bool
+	}{
+		{"the renderer that kept it", "2", true},
+		{"another renderer", "3", false},
+		{"a view that names no renderer", "", false},
+	} {
+		a := ask(tc.renderer)
+		if a["key"] != key || a["seq"] != first["seq"] {
+			t.Errorf("%s: key %v seq %v, want %v %v", tc.name, a["key"], a["seq"], key, first["seq"])
+		}
+		if tc.kept && (a["drawing"] != drawing(key, "2") || a["page"] != nil) {
+			t.Errorf("%s: drawing %v, page %v", tc.name, a["drawing"], a["page"])
+		}
+		if !tc.kept && (a["drawing"] != nil || a["page"] == nil) {
+			t.Errorf("%s: drawing %v, page %v", tc.name, a["drawing"], a["page"] != nil)
+		}
+	}
+
+	all := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)), inkStrokeAdd(inkPage1, inkStroke(2)))
+	w.session(all)
+	moved := ask("2")
+	if moved["key"] == key || moved["key"] == "" || moved["drawing"] != nil || moved["page"] == nil || moved["seq"] != float64(len(all)) {
+		t.Errorf("after the note changed: key %v (was %v), seq %v, drawing %v, page %v", moved["key"], key, moved["seq"], moved["drawing"], moved["page"] != nil)
+	}
+
+	// A note nobody holds is opened afresh: it has the key its records gave it one at a time, and
+	// is answered with the drawing kept at that key.
+	movedKey, _ := moved["key"].(string)
+	keep(movedKey, drawing(movedKey, "2"))
+	if a := ask("2"); a["drawing"] != drawing(movedKey, "2") {
+		t.Fatalf("the drawing kept after the note changed: %v", a["drawing"])
+	}
+	c.Close()
+	waitFor(t, func() bool { return !w.holds(w.container()) }, "the note to be released")
+	c = dialWS(t, w.srv, w.container())
+	if again := ask("2"); again["key"] != movedKey || again["drawing"] != drawing(movedKey, "2") || again["seq"] != float64(len(all)) {
+		t.Errorf("opened afresh: key %v (want %v), seq %v, drawing %v", again["key"], movedKey, again["seq"], again["drawing"])
+	}
+	if full := ask(""); full["key"] != movedKey || full["page"] == nil || full["seq"] != float64(len(all)) {
+		t.Errorf("the page asked in full of a note answered from its drawing: key %v, seq %v, page %v", full["key"], full["seq"], full["page"] != nil)
+	}
+}

@@ -965,7 +965,7 @@ func TestOpenNotes_AnswerAPageAtTheSeqItsLogReaches(t *testing.T) {
 			replay := ReadStrokeBasedNote(uuid, jsonlOf(t, records))
 			for i, p := range replay.Pages() {
 				var view pageView
-				if err := note.AnswerPage(p.ID, func(export []byte, seq uint32) error { view.answer(t, export, seq); return nil }); err != nil {
+				if err := note.AnswerPage(p.ID, nil, func(a PageAnswer) error { view.answer(t, a.Export, a.Seq); return nil }); err != nil {
 					t.Fatal(err)
 				}
 				if view.seq != uint32(len(records)) || fmt.Sprint(view.strokes) != fmt.Sprint(strokeIDs(replay, i)) {
@@ -994,7 +994,7 @@ func TestOpenNotes_RefuseWhatIsNoDigitalNotePage(t *testing.T) {
 		t.Fatal(err)
 	}
 	called := false
-	if err := note.AnswerPage(page(9), func([]byte, uint32) error { called = true; return nil }); !errors.Is(err, ErrNoSuchPage) || called {
+	if err := note.AnswerPage(page(9), nil, func(PageAnswer) error { called = true; return nil }); !errors.Is(err, ErrNoSuchPage) || called {
 		t.Errorf("an absent page: %v, answered %t", err, called)
 	}
 }
@@ -1054,7 +1054,7 @@ func TestOpenNote_ARecordPastAGapReplaysTheLog(t *testing.T) {
 	var changes int
 	note.Commit(records[5], func(StrokeChange) { changes++ })
 	var view pageView
-	if err := note.AnswerPage(page(1), func(export []byte, seq uint32) error { view.answer(t, export, seq); return nil }); err != nil {
+	if err := note.AnswerPage(page(1), nil, func(a PageAnswer) error { view.answer(t, a.Export, a.Seq); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if changes != 0 || view.seq != 6 || len(view.strokes) != 4 {
@@ -1081,9 +1081,9 @@ func TestOpenNote_AStrokeCommittedAroundAnAnswerIsNeitherLostNorDoubled(t *testi
 		view.take(c)
 	}
 	sent := make(chan struct{})
-	err = note.AnswerPage(page(1), func(export []byte, seq uint32) error {
+	err = note.AnswerPage(page(1), nil, func(a PageAnswer) error {
 		mu.Lock()
-		view.answer(t, export, seq)
+		view.answer(t, a.Export, a.Seq)
 		mu.Unlock()
 		// The record before the answer is heard only now; the next is committed while it is sent.
 		go func() {
@@ -1124,7 +1124,7 @@ func TestOpenNote_ARestartedNoteAnswersFromTheNewLog(t *testing.T) {
 	notes.Restart("c", func([]string) { sent++ })
 	notes.Restart("other", func([]string) { sent++ })
 	var view pageView
-	if err := note.AnswerPage(page(1), func(export []byte, seq uint32) error { view.answer(t, export, seq); return nil }); err != nil {
+	if err := note.AnswerPage(page(1), nil, func(a PageAnswer) error { view.answer(t, a.Export, a.Seq); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	note.Commit(fresh[3], view.take)
@@ -1196,7 +1196,7 @@ func TestOpenNotes_EveryHolderTakesEachChangeOnceAtItsOwnSeq(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := note.AnswerPage(page(1), func(export []byte, seq uint32) error { views[holder].answer(t, export, seq); return nil }); err != nil {
+		if err := note.AnswerPage(page(1), nil, func(a PageAnswer) error { views[holder].answer(t, a.Export, a.Seq); return nil }); err != nil {
 			t.Fatal(err)
 		}
 	}

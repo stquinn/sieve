@@ -67,7 +67,9 @@ export class FakeInkProvider {
   /** @type {string[]} the provider calls, in order */ calls = []
   /** @type {Set<any>} */ feedListeners = new Set()
   /** @type {Set<any>} */ modelListeners = new Set()
-  /** @type {Map<string, {page: any, seq: number}>} what loadPage answers, by page */ answers = new Map()
+  /** @type {Map<string, {page?: any, drawing?: string, seq: number, key?: string}>} what loadPage answers, by page */ answers = new Map()
+  /** @type {Array<string|undefined>} the renderer each loadPage named, in order */ renderers = []
+  /** @type {Array<{pageId: string, key: string, drawing: string}>} the drawings handed over, in order */ kept = []
   /** @type {boolean} when set, loadPage answers only when the test resolves it from `waiting` */ defer = false
   /** @type {Array<{pageId: string, resolve: (a: any) => void}>} */ waiting = []
   /** @type {any} what openOnTablet resolves with, or settles as when it is a promise; an Error rejects */ opening = { outcome: 'opened', reason: '' }
@@ -111,13 +113,20 @@ export class FakeInkProvider {
   /** @param {any} listener */
   unsubscribeFeed(listener) { this.feedListeners.delete(listener) }
 
-  /** @param {string} pageId */
-  loadPage(pageId) {
+  /** A page answers as the wire does: its kept drawing only to an asker naming a renderer, the page otherwise.
+   *  @param {string} pageId @param {string} [renderer] */
+  loadPage(pageId, renderer) {
     this.calls.push('loadPage ' + pageId)
+    this.renderers.push(renderer)
     if (this.defer) return new Promise((resolve) => this.waiting.push({ pageId, resolve }))
     const answer = this.answers.get(pageId)
-    return answer ? Promise.resolve(deepFrozen(structuredClone(answer))) : Promise.reject(new Error('no page ' + pageId))
+    if (!answer) return Promise.reject(new Error('no page ' + pageId))
+    const drawing = renderer && answer.drawing ? answer.drawing : null
+    return Promise.resolve(deepFrozen(structuredClone({ page: drawing ? null : answer.page, drawing, seq: answer.seq, key: answer.key || '' })))
   }
+
+  /** @param {string} pageId @param {string} key @param {string} drawing */
+  keepDrawing(pageId, key, drawing) { this.kept.push({ pageId, key, drawing }) }
 
   /** @param {string|null} pageId */
   openOnTablet(pageId) {

@@ -1,9 +1,14 @@
 package ink
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 
 	"sieve/logger"
@@ -35,70 +40,187 @@ func (c StrokeChange) ExportStroke() ([]byte, error) {
 	return json.Marshal(newExportStroke(*c.Added))
 }
 
-// OpenNote is the full replay of one Digital Note and the seq it stands at, held while a view of
-// it is open, and the destinations holding it. Page answers and stroke changes are handed out under
-// one lock, each naming the seq it reflects, so a consumer holding a page answered at seq S takes
-// every change above S and drops every one at or below it. It is safe for concurrent use.
+// PageAnswer is one page of an open note as it stands at Seq. Key names the log the answer
+// reflects: every byte of it up to the record at Seq, so two answers share a key exactly when
+// nothing in the note changed between them. Exactly one of Export and Drawing is set: Export is the
+// page in the §4.2 export shape; Drawing is the page's kept drawing, made at Key.
+type PageAnswer struct {
+	Seq     uint32
+	Key     string
+	Export  []byte
+	Drawing []byte
+}
+
+// logKey names a log: the SHA-256 of its bytes, their length, and the seq of its last record. It
+// is written "{hex sum}-{length}-{seq}".
+type logKey struct {
+	sum    [sha256.Size]byte
+	length int
+	seq    uint32
+}
+
+// parseLogKey reads a key as String writes it.
+func parseLogKey(key string) (logKey, bool) {
+	parts := strings.Split(key, "-")
+	if len(parts) != 3 {
+		return logKey{}, false
+	}
+	sum, err := hex.DecodeString(parts[0])
+	length, lerr := strconv.Atoi(parts[1])
+	seq, serr := strconv.ParseUint(parts[2], 10, 32)
+	if err != nil || len(sum) != sha256.Size || lerr != nil || serr != nil || length < 0 {
+		return logKey{}, false
+	}
+	k := logKey{length: length, seq: uint32(seq)}
+	copy(k.sum[:], sum)
+	return k, true
+}
+
+func (k logKey) String() string {
+	return hex.EncodeToString(k.sum[:]) + "-" + strconv.Itoa(k.length) + "-" + strconv.FormatUint(uint64(k.seq), 10)
+}
+
+// names reports whether k is the key of log, whole.
+func (k logKey) names(log []byte) bool {
+	return len(log) == k.length && sha256.Sum256(log) == k.sum
+}
+
+// OpenNote is one Digital Note held while a view of it is open, the seq it stands at, and the
+// destinations holding it. Page answers and stroke changes are handed out under one lock, each
+// naming the seq it reflects, so a consumer holding a page answered at seq S takes every change
+// above S and drops every one at or below it.
+//
+// The note's log is replayed only when something needs the replay. A page answered with its kept
+// drawing needs none: the note then stands at the drawing's key with no replay, and is replayed up
+// to exactly that key when a record is committed or a page must be exported. It is safe for
+// concurrent use.
 type OpenNote struct {
 	uuid string
 	logs noteLogs
 
-	mu   sync.Mutex
+	mu sync.Mutex
+	// note is the replay; nil until one is needed.
 	note *StrokeBasedNote
-	seq  uint32
+	// at names the log the note stands at; the zero key before any page is answered.
+	at logKey
+	// sum is the running SHA-256 of the log up to at; nil while there is no replay.
+	sum hash.Hash
 	// holders are the destinations holding the note, in the order they first held it.
 	holders []string
 }
 
-// load replays the note's whole log as it stands now. o.mu is held.
+// load replays the note's log: up to the key the note stands at when it stands at one and the log
+// still starts with what that key names, otherwise whole as it stands now. o.mu is held.
 func (o *OpenNote) load() error {
 	log, err := o.logs.noteLog(o.uuid)
 	if err != nil {
 		return err
 	}
+	if o.at.length > 0 && o.at.length <= len(log) && o.at.names(log[:o.at.length]) {
+		log = log[:o.at.length]
+	}
 	note := NewStrokeBasedNote(o.uuid)
-	cursor, _ := note.Read(log)
-	o.note, o.seq = note, cursor.Seq
+	cursor, read := note.Read(log)
+	o.note, o.sum = note, sha256.New()
+	o.sum.Write(log[:read])
+	o.at = logKey{length: read, seq: cursor.Seq}
+	o.sum.Sum(o.at.sum[:0])
 	return nil
 }
 
-// AnswerPage calls send with page's export page and the seq it reflects, and returns what send
-// returns. An absent page is ErrNoSuchPage and send is not called. send runs while the note is
-// held, so no change is handed out between the answer being built and send returning; it must not
-// call back into the note.
-func (o *OpenNote) AnswerPage(page link.ID, send func(export []byte, seq uint32) error) error {
+// AnswerPage calls send with page as the note stands, and returns what send returns. kept, which
+// may be nil, is asked for the page's kept drawing and the key it says it was made at: when the
+// note stands at that key the drawing is the answer's Drawing, and otherwise the answer is the
+// page's Export. A note not yet replayed whose log is the one a kept drawing's key names is
+// answered with the drawing and stays unreplayed. An absent page is ErrNoSuchPage and send is not
+// called. kept and send run while the note is held, so no change is handed out between the answer
+// being built and send returning; neither may call back into the note.
+func (o *OpenNote) AnswerPage(page link.ID, kept func() (drawing []byte, key string), send func(PageAnswer) error) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	var drawing []byte
+	var madeAt string
+	if kept != nil {
+		drawing, madeAt = kept()
+	}
+	if o.note == nil && drawing != nil {
+		if key, ok := parseLogKey(madeAt); ok && (o.at == key || o.at == logKey{}) {
+			log, err := o.logs.noteLog(o.uuid)
+			if err != nil {
+				return err
+			}
+			if key.names(log) {
+				o.at = key
+				return send(PageAnswer{Seq: key.seq, Key: madeAt, Drawing: drawing})
+			}
+		}
+	}
+	if o.note == nil {
+		if err := o.load(); err != nil {
+			return err
+		}
+	}
 	i := o.note.present(page)
 	if i < 0 {
 		return fmt.Errorf("%w: %s has no page %s", ErrNoSuchPage, o.uuid, page)
+	}
+	answer := PageAnswer{Seq: o.at.seq, Key: o.at.String()}
+	if drawing != nil && madeAt == answer.Key {
+		answer.Drawing = drawing
+		return send(answer)
 	}
 	export, err := o.note.ExportPage(i)
 	if err != nil {
 		return err
 	}
-	return send(export, o.seq)
+	answer.Export = export
+	return send(answer)
+}
+
+// WhileAt calls keep while the note is held, and only when the note is replayed, still stands at
+// key and has page; it reports whether it called it. keep must not call back into the note.
+func (o *OpenNote) WhileAt(key string, page link.ID, keep func()) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.note == nil || o.at.String() != key || o.note.present(page) < 0 {
+		return false
+	}
+	keep()
+	return true
 }
 
 // Commit applies rec, the record committed after the last one the note holds, and calls send with
-// the stroke change it made, if any. A record at or below the note's seq is already held and
-// changes nothing. A record past the next seq means records were missed: the note replays its log
-// again and hands out nothing for the records in between. send runs while the note is held, as
-// AnswerPage's does.
+// the stroke change it made, if any, replaying the note first when it has not been. A record at or
+// below the note's seq is already held and changes nothing. A record past the next seq means
+// records were missed: the note replays its log again and hands out nothing for the records in
+// between. send runs while the note is held, as AnswerPage's does.
 func (o *OpenNote) Commit(rec link.Record, send func(StrokeChange)) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.note == nil || rec.Seq <= o.seq {
+	if o.note != nil && rec.Seq <= o.at.seq {
 		return
 	}
-	if rec.Seq != o.seq+1 {
-		logger.Warn("ink: an open note missed records, replaying its log", "container", o.uuid, "seq", o.seq, "got", rec.Seq)
+	if o.note == nil {
+		if err := o.load(); err != nil {
+			logger.Error("ink: replaying an open note", "container", o.uuid, "err", err.Error())
+			return
+		}
+		if rec.Seq <= o.at.seq {
+			return
+		}
+	}
+	line, err := rec.JSONLine()
+	if err != nil || rec.Seq != o.at.seq+1 {
+		logger.Warn("ink: an open note missed records, replaying its log", "container", o.uuid, "seq", o.at.seq, "got", rec.Seq)
+		o.at = logKey{}
 		if err := o.load(); err != nil {
 			logger.Error("ink: replaying an open note", "container", o.uuid, "err", err.Error())
 		}
 		return
 	}
-	o.seq = rec.Seq
+	o.sum.Write(line)
+	o.at = logKey{length: o.at.length + len(line), seq: rec.Seq}
+	o.sum.Sum(o.at.sum[:0])
 	switch o.note.Apply(rec) {
 	case StrokeAdded:
 		send(StrokeChange{Page: rec.Page, Seq: rec.Seq, Added: &rec})
@@ -107,17 +229,18 @@ func (o *OpenNote) Commit(rec link.Record, send func(StrokeChange)) {
 	}
 }
 
-// Restart replays the note's log again as it now stands, which starts from seq 1 once its replica
-// has been set aside, and then calls send while the note is held, so every change handed out after
-// send is the new log's.
+// Restart forgets where the note stood, replays its log again as it now stands when it had been
+// replayed, which starts from seq 1 once its replica has been set aside, and then calls send while
+// the note is held, so every change handed out after send is the new log's.
 func (o *OpenNote) Restart(send func()) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.note == nil {
-		return
-	}
-	if err := o.load(); err != nil {
-		logger.Error("ink: replaying a restarted note", "container", o.uuid, "err", err.Error())
+	replayed := o.note != nil
+	o.note, o.sum, o.at = nil, nil, logKey{}
+	if replayed {
+		if err := o.load(); err != nil {
+			logger.Error("ink: replaying a restarted note", "container", o.uuid, "err", err.Error())
+		}
 	}
 	send()
 }
@@ -154,19 +277,16 @@ func NewOpenNotes(svc *InkService) *OpenNotes {
 	return &OpenNotes{logs: svc, notes: map[string]*OpenNote{}}
 }
 
-// Open is the note of container uuid, held by holder from now until it releases it, and replayed
-// from its log on the first Open since nobody held it. The note is registered before its log is
-// read, so a record committed while it is being read reaches it through Commit; a failed read
-// leaves nothing registered. A container that is not a Digital Note is ErrNoSuchPage.
+// Open is the note of container uuid, held by holder from now until it releases it. Opening
+// replays nothing: the log is only read, to find that the container holds a note. The note is
+// registered before that read, so a record committed during it reaches the note through Commit; a
+// failed read leaves nothing registered. A container that is not a Digital Note is ErrNoSuchPage.
 func (ns *OpenNotes) Open(uuid, holder string) (*OpenNote, error) {
 	ns.mu.Lock()
 	if o, ok := ns.notes[uuid]; ok {
 		ns.mu.Unlock()
 		o.mu.Lock()
 		defer o.mu.Unlock()
-		if o.note == nil {
-			return nil, fmt.Errorf("%w: %s", ErrNoSuchPage, uuid)
-		}
 		o.hold(holder)
 		return o, nil
 	}
@@ -175,7 +295,7 @@ func (ns *OpenNotes) Open(uuid, holder string) (*OpenNote, error) {
 	defer o.mu.Unlock()
 	ns.notes[uuid] = o
 	ns.mu.Unlock()
-	if err := o.load(); err != nil {
+	if _, err := ns.logs.noteLog(uuid); err != nil {
 		ns.mu.Lock()
 		if ns.notes[uuid] == o {
 			delete(ns.notes, uuid)
@@ -200,6 +320,13 @@ func (ns *OpenNotes) Restart(uuid string, send func(holders []string)) {
 	if o := ns.held(uuid); o != nil {
 		o.Restart(func() { send(slices.Clone(o.holders)) })
 	}
+}
+
+// WhileAt calls keep while the note of container uuid is held open and stands at key with page, as
+// OpenNote.WhileAt does, and reports whether it called it.
+func (ns *OpenNotes) WhileAt(uuid, key string, page link.ID, keep func()) bool {
+	o := ns.held(uuid)
+	return o != nil && o.WhileAt(key, page, keep)
 }
 
 // Holds reports whether any destination holds the note of container uuid open.

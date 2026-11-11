@@ -45,9 +45,9 @@ describe('InkProviderAdapter', () => {
     const page = { note: { pageAspect: 0.75 }, strokes: [STROKE] }
     const copies = vi.spyOn(globalThis, 'structuredClone')
     const pending = provider.loadPage('p1')
-    sock.driveMessage({ type: DocumentFrame.INK_PAGE_CONTENT, opId: pageOpId(sock), pageId: 'p1', seq: 4, page })
+    sock.driveMessage({ type: DocumentFrame.INK_PAGE_CONTENT, opId: pageOpId(sock), pageId: 'p1', seq: 4, key: 'k4', page })
     const answer = await pending
-    expect(answer).toEqual({ page, seq: 4 })
+    expect(answer).toEqual({ page, drawing: null, seq: 4, key: 'k4' })
     expect(copies).not.toHaveBeenCalled()
     copies.mockRestore()
     expect(Object.isFrozen(answer.page.strokes[0].points[0])).toBe(true)

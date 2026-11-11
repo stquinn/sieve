@@ -13,28 +13,48 @@ import (
 
 // InkPageFrame asks for one page of this channel's Digital Note as it is drawn now.
 type InkPageFrame struct {
-	Type   string `json:"type"`
-	OpID   string `json:"opId,omitempty" doc:"echoed on the ink-page-content reply"`
-	PageID string `json:"pageId" doc:"the page's id, as the block's note.pages lists it"`
+	Type     string `json:"type"`
+	OpID     string `json:"opId,omitempty" doc:"echoed on the ink-page-content reply"`
+	PageID   string `json:"pageId" doc:"the page's id, as the block's note.pages lists it"`
+	Renderer string `json:"renderer,omitempty" doc:"the version of the asker's ink renderer; present when the asker takes, in place of the page, a drawing of it that renderer kept"`
 }
 
-// InkPageContentFrame answers an ink-page: the page in the export shape and the seq of the last
-// record it reflects, or why there is none. A client holding the page drops every stroke frame for
-// it whose seq is at or below Seq; every later change to the page arrives as a stroke frame above
-// it.
+// InkPageContentFrame answers an ink-page: the page and the seq of the last record it reflects, or
+// why there is none. The page is carried in the export shape or, for an asker that named its
+// renderer, as the drawing kept of it when one was kept at Key by that renderer; never both. A
+// client holding the page drops every stroke frame for it whose seq is at or below Seq; every later
+// change to the page arrives as a stroke frame above it.
 type InkPageContentFrame struct {
-	Type   string          `json:"type"`
-	OpID   string          `json:"opId,omitempty"`
-	PageID string          `json:"pageId" doc:"the page asked for, echoed"`
-	Seq    uint32          `json:"seq" doc:"the seq of the last record of the note's log the page reflects; 0 when refused"`
-	Page   json.RawMessage `json:"page" doc:"the page in the export shape, an InkPageExport; null when refused"`
-	Error  string          `json:"error,omitempty" doc:"present only when there is no page: the channel holds no Digital Note, or the note has no page of that id"`
+	Type    string          `json:"type"`
+	OpID    string          `json:"opId,omitempty"`
+	PageID  string          `json:"pageId" doc:"the page asked for, echoed"`
+	Seq     uint32          `json:"seq" doc:"the seq of the last record of the note's log the page reflects; 0 when refused"`
+	Key     string          `json:"key,omitempty" doc:"names the note's whole log as it stood at seq: two answers share a key exactly when nothing in the note changed between them; absent when refused"`
+	Page    json.RawMessage `json:"page" doc:"the page in the export shape, an InkPageExport; null when refused or when the answer is a drawing"`
+	Drawing string          `json:"drawing,omitempty" doc:"the page's kept drawing, an SVG document, in place of the page"`
+	Error   string          `json:"error,omitempty" doc:"present only when there is no page: the channel holds no Digital Note, or the note has no page of that id"`
 }
 
 // NewInkPageContentFrame builds the answer carrying page, the JSON of an InkPageExport, as it
-// stood at seq. The frame holds page and does not copy it.
-func NewInkPageContentFrame(opID, pageID string, seq uint32, page json.RawMessage) InkPageContentFrame {
-	return InkPageContentFrame{Type: TypeInkPageContent, OpID: opID, PageID: pageID, Seq: seq, Page: page}
+// stood at seq, where the note's key was key. The frame holds page and does not copy it.
+func NewInkPageContentFrame(opID, pageID string, seq uint32, key string, page json.RawMessage) InkPageContentFrame {
+	return InkPageContentFrame{Type: TypeInkPageContent, OpID: opID, PageID: pageID, Seq: seq, Key: key, Page: page}
+}
+
+// NewInkPageDrawingFrame builds the answer carrying the page's kept drawing, made at key, which
+// is the note's key at seq.
+func NewInkPageDrawingFrame(opID, pageID string, seq uint32, key, drawing string) InkPageContentFrame {
+	return InkPageContentFrame{Type: TypeInkPageContent, OpID: opID, PageID: pageID, Seq: seq, Key: key, Drawing: drawing}
+}
+
+// InkKeepDrawingFrame hands over the drawing of one page of this channel's Digital Note, for the
+// next asker of the page to be answered with while the note stands as it did. It is not answered,
+// and a drawing made at a key the note no longer stands at is dropped.
+type InkKeepDrawingFrame struct {
+	Type    string `json:"type"`
+	PageID  string `json:"pageId" doc:"the page drawn, as the block's note.pages lists it"`
+	Key     string `json:"key" doc:"the key of the ink-page-content the drawing was made from"`
+	Drawing string `json:"drawing" doc:"the page as an SVG document, whose root element carries data-ink-key, this key, and then data-ink-renderer, the version of the renderer that drew it"`
 }
 
 // NewInkPageRefusedFrame builds the answer to an ink-page that names no page there is.

@@ -467,17 +467,35 @@ export class DocumentService {
    * shape, and the seq of the last record of the note's log it reflects. Every
    * later change to the page arrives as an ink frame naming a seq above it.
    *
+   * Given `renderer`, the version of the asker's ink renderer, Go may answer
+   * with the drawing that renderer kept of the page (`drawing`, an SVG document)
+   * in place of the page; exactly one of `page` and `drawing` is set. `key` names
+   * the note's whole log as it stood at `seq`.
+   *
    * REJECTS when Go refuses — the container is no Digital Note, or the note has
    * no such page — on a timeout, and on a channel-less uuid.
-   * @param {string} uuid @param {string} pageId
-   * @returns {Promise<{page: Record<string, any>, seq: number}>}
+   * @param {string} uuid @param {string} pageId @param {string} [renderer]
+   * @returns {Promise<{page: Record<string, any>|null, drawing: string|null, seq: number, key: string}>}
    */
-  inkPage(uuid, pageId) {
-    return this.#transport._awaitReply(uuid, { type: DocumentFrame.INK_PAGE, pageId: pageId }, 'ink-page ' + pageId)
+  inkPage(uuid, pageId, renderer) {
+    /** @type {Record<string, any>} */
+    const ask = { type: DocumentFrame.INK_PAGE, pageId: pageId }
+    if (renderer) ask.renderer = renderer
+    return this.#transport._awaitReply(uuid, ask, 'ink-page ' + pageId)
       .then((reply) => {
-        if (reply.error || !reply.page) throw new Error('ink-page ' + pageId + ' refused: ' + (reply.error || 'no page'))
-        return { page: reply.page, seq: reply.seq || 0 }
+        if (reply.error || (!reply.page && !reply.drawing)) throw new Error('ink-page ' + pageId + ' refused: ' + (reply.error || 'no page'))
+        return { page: reply.page || null, drawing: reply.page ? null : reply.drawing, seq: reply.seq || 0, key: reply.key || '' }
       })
+  }
+
+  /**
+   * Hands Go the drawing made of one page of this container's Digital Note from
+   * the ink-page answer whose key is `key`. Fire-and-forget: Go keeps it while
+   * the note still stands at that key and drops it otherwise.
+   * @param {string} uuid @param {string} pageId @param {string} key @param {string} drawing an SVG document
+   */
+  inkKeepDrawing(uuid, pageId, key, drawing) {
+    this.#transport._send(uuid, { type: DocumentFrame.INK_KEEP_DRAWING, pageId: pageId, key: key, drawing: drawing })
   }
 
   /**

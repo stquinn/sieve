@@ -400,6 +400,8 @@ type inkStream struct {
 	send        func(uuid string, frame interface{})
 	// notes are held by socket: a container's uuid, or the Live view's.
 	notes *ink.OpenNotes
+	// drawings are the drawings kept of the notes' pages.
+	drawings *ink.PageDrawings
 	// view is the Live view's uuid.
 	view string
 
@@ -473,7 +475,8 @@ var (
 // newInkStream subscribes a stream to svc, and to transcripts when there are any, that sends through
 // send, a uuid naming the socket that has it open.
 func newInkStream(svc *ink.InkService, transcripts *ink.PageTranscripts, send func(uuid string, frame interface{})) *inkStream {
-	s := &inkStream{svc: svc, transcripts: transcripts, send: send, notes: ink.NewOpenNotes(svc), view: svc.LiveView().UUID()}
+	s := &inkStream{svc: svc, transcripts: transcripts, send: send, notes: ink.NewOpenNotes(svc), drawings: ink.NewPageDrawings(svc),
+		view: svc.LiveView().UUID()}
 	svc.Subscribe(s)
 	if transcripts != nil {
 		transcripts.Subscribe(s)
@@ -516,7 +519,9 @@ func (s *inkStream) transcriptOf(r ink.Transcript) protocol.InkTranscript {
 
 // answerPage answers an ink-page asked on socket through reply, from the note of the socket's
 // container or, on the Live view's socket, of the note it mirrors. The socket holds that note open
-// from now until it releases it. Every answer is followed by the live page while the note is the
+// from now until it releases it. An asker that names its renderer is answered with the drawing
+// that renderer kept of the page as the note stands, when there is one. Every answer is followed
+// by the live page while the note is the
 // live one and, on the Live view's socket when the page answered is the live page, by the
 // tablet's window while it is known.
 func (s *inkStream) answerPage(socket string, msg protocol.InkPageFrame, reply func(interface{})) {
@@ -545,8 +550,16 @@ func (s *inkStream) answerPage(socket string, msg protocol.InkPageFrame, reply f
 		refuse(err)
 		return
 	}
-	err = note.AnswerPage(page, func(export []byte, seq uint32) error {
-		reply(protocol.NewInkPageContentFrame(msg.OpID, msg.PageID, seq, export))
+	var kept func() ([]byte, string)
+	if msg.Renderer != "" {
+		kept = func() ([]byte, string) { return s.drawings.Kept(container, page, msg.Renderer) }
+	}
+	err = note.AnswerPage(page, kept, func(a ink.PageAnswer) error {
+		if a.Drawing != nil {
+			reply(protocol.NewInkPageDrawingFrame(msg.OpID, msg.PageID, a.Seq, a.Key, string(a.Drawing)))
+			return nil
+		}
+		reply(protocol.NewInkPageContentFrame(msg.OpID, msg.PageID, a.Seq, a.Key, a.Export))
 		return nil
 	})
 	if err != nil {
@@ -559,6 +572,21 @@ func (s *inkStream) answerPage(socket string, msg protocol.InkPageFrame, reply f
 			s.window.replay(container, page, reply)
 		}
 	}
+}
+
+// keepDrawing keeps the drawing msg carries of a page of the Digital Note in container, while the
+// note is held open and still stands at the key the drawing was made at. The Live view's socket
+// keeps none.
+func (s *inkStream) keepDrawing(container string, msg protocol.InkKeepDrawingFrame) {
+	page, err := link.ParseID(msg.PageID)
+	if err != nil || container == s.view {
+		return
+	}
+	s.notes.WhileAt(container, msg.Key, page, func() {
+		if err := s.drawings.Keep(container, page, msg.Key, []byte(msg.Drawing)); err != nil {
+			logger.Warn("ink: a page's drawing was not kept", "container", container, "page", msg.PageID, "err", err.Error())
+		}
+	})
 }
 
 // openOnTablet asks the tablet to open the Digital Note in container at the page msg names, and

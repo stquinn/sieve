@@ -58,6 +58,7 @@ const (
 	TypeTextReplace        = "text-replace"
 	TypeSetPresenting      = "set-presenting"
 	TypeInkPage            = "ink-page"
+	TypeInkKeepDrawing     = "ink-keep-drawing"
 	TypeInkOpenOnTablet    = "ink-open-on-tablet"
 	TypeInkTranscript         = "ink-transcript"
 	TypeInkTranscribePage        = "ink-transcribe-page"

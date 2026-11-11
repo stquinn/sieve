@@ -16,6 +16,14 @@
 // another one, a change to its own entry in the note, a restarted log — draws
 // the SVG again.
 //
+// A sheet whose policy does not follow the tablet asks for a fixed page naming
+// its renderer, and may be answered with the drawing that renderer kept of the
+// page instead of the page: that SVG goes on the sheet as it is once it is found
+// to hold nothing but what the renderer writes. Each band's kept path is then a
+// fixed base that later strokes follow, and its pencil strokes have no data of
+// their own, so removing one asks for the page in full. A page drawn in full is
+// handed back as its drawing.
+//
 // An unbounded page is drawn through a PlaneWindow. Moving it rewrites the SVG's
 // viewBox, size and background and redraws the `ruling` group alone; every stroke
 // node stays where it is. Whether the window and the surround's scroll move on
@@ -104,6 +112,18 @@ const REVEAL_MARGIN_PX = 48
 
 /** A window more template spacings across than this is drawn without its template's marks. */
 const MAX_RULING_SPACINGS = 60
+
+/** The key, in a band's stroke data, of the path a kept drawing brought for the band. */
+const KEPT_BASE = ''
+
+/** The elements a kept drawing may hold, and the attributes they may carry. */
+const KEPT_ELEMENTS = Object.freeze(new Set(['svg', 'defs', 'pattern', 'rect', 'g', 'path']))
+const KEPT_ATTRIBUTES = Object.freeze(new Set([
+  'xmlns', 'width', 'height', 'viewbox', 'x', 'y', 'fill', 'd', 'id', 'patternunits', 'stroke', 'stroke-width', 'stroke-linecap',
+  'data-ink', 'data-stroke', 'data-ink-template', 'data-ink-key', 'data-ink-renderer', 'data-ink-strokes', 'data-ink-newest',
+]))
+/** What a `fill` or `stroke` of a kept drawing may be: a colour, or one of the tone patterns. */
+const KEPT_PAINT = /^(#[0-9a-f]{3,8}|url\(#ink-b\d\))$/i
 
 export class InkSheet {
   /** The policies a sheet is built with. */
@@ -208,7 +228,9 @@ export class InkSheet {
   /** @type {number} the surround's width over its height; 0 while it is not measured */ #surroundShape = 0
   /** @type {ResizeObserver|null} measures the surround while attached, when the window fills it */ #resizing = null
   /** @type {{page: string, at: WindowPlacement}|null} where the window opens when that page is next drawn */ #placeNext = null
-  /** @type {Set<string>} the committed strokes on the shown page, drawn or not, by id */ #strokeIds = new Set()
+  /** @type {Set<string>} the committed strokes on the shown page the sheet knows by id, drawn or not */ #strokeIds = new Set()
+  /** @type {number} the strokes of a kept drawing that have no node, so are not known by id */ #keptUnknown = 0
+  /** @type {number} the latest startMillis among the strokes of the page as it was answered; -1 with none */ #newestStart = -1
   /** @type {boolean} whether the drawn SVG lags the plane window */ #windowStale = false
   /** @type {Set<string>} strokes the feed added outside the window, not yet in it */ #offWindow = new Set()
   /** @type {Map<string, Element>|null} the drawn SVG's layers by name; null while none is drawn for the shown page */ #layers = null
@@ -267,7 +289,10 @@ export class InkSheet {
 
   /** @returns {number} the committed strokes on the shown page, a stroke that draws nothing
    *  included; 0 while none is drawn */
-  get strokeCount() { return this.#layers ? this.#strokeIds.size : 0 }
+  get strokeCount() { return this.#layers ? this.#strokeIds.size + this.#keptUnknown : 0 }
+
+  /** @returns {number} the latest startMillis among the strokes of the page as it was last answered; -1 with none */
+  get newestStart() { return this.#newestStart }
 
   /** @returns {ReadonlyArray<PageEntry>} the note's pages */
   get pages() { return this.#pages }
@@ -425,21 +450,46 @@ export class InkSheet {
       return
     }
     this.#loading = load
-    this.#provider.loadPage(pageId).then((answer) => {
+    this.#ask(pageId, load, this.#keeps(pageId))
+  }
+
+  /** @param {string} pageId @returns {boolean} whether the page's drawing is kept: a fixed page, read rather than mirrored */
+  #keeps(pageId) {
+    return !this.#policy.followsTablet && !this.isUnbounded(pageId)
+  }
+
+  /**
+   * Asks for the page load `load` waits on and draws the answer: the page, or its
+   * kept drawing when `kept` allows one. A kept drawing that cannot go on the
+   * sheet is asked for again as the page.
+   * @param {string} pageId @param {number} load @param {boolean} kept
+   */
+  #ask(pageId, load, kept) {
+    this.#provider.loadPage(pageId, kept ? InkRenderer.VERSION : undefined).then((answer) => {
       if (load !== this.#loads || !this.#attached) return
-      this.#draw(answer.page)
+      if (answer.page) this.#draw(answer.page)
+      else if (!answer.drawing || !this.#drawKept(answer.drawing)) return this.#ask(pageId, load, false)
       this.#seq = answer.seq
       this.#loading = 0
+      if (answer.page && answer.key && this.#keeps(pageId)) this.#provider.keepDrawing(pageId, answer.key, this.#drawing(answer.key))
       if (this.#host.onAnswered) this.#host.onAnswered(answer)
       const held = this.#held
       this.#held = []
-      for (const event of held) this.#applyStroke(event)
+      for (const event of held) this.takeStroke(event)
     }, (err) => {
       if (load !== this.#loads || !this.#attached) return
       console.warn('[ink] the page could not be loaded', pageId, err)
       this.#loading = 0
       this.#showEmpty('This page could not be loaded.')
     })
+  }
+
+  /** Asks for the shown page again, in full, holding the stroke events heard meanwhile. */
+  #reload() {
+    const load = ++this.#loads
+    this.#loading = load
+    this.#held = []
+    this.#ask(/** @type {string} */ (this.#shown), load, false)
   }
 
   /**
@@ -571,9 +621,7 @@ export class InkSheet {
       this.#windowStale = false
       this.#applyWindow()
     }
-    const copy = /** @type {SVGSVGElement} */ (this.#svg.cloneNode(true))
-    copy.removeAttribute('style')
-    copy.querySelector('g[data-ink="live"]')?.replaceChildren()
+    const copy = this.#still()
     const [, , w, h] = String(copy.getAttribute('viewBox')).trim().split(/\s+/).map(Number)
     if (!(w > 0 && h > 0)) return null
     const width = INK_RULES.grid
@@ -581,6 +629,28 @@ export class InkSheet {
     copy.setAttribute('width', String(width))
     copy.setAttribute('height', String(height))
     return { svg: new XMLSerializer().serializeToString(copy), width, height }
+  }
+
+  /** @returns {SVGSVGElement} a copy of the SVG on the sheet without the stroke under the pen or the sheet's styling */
+  #still() {
+    const copy = /** @type {SVGSVGElement} */ (/** @type {SVGSVGElement} */ (this.#svg).cloneNode(true))
+    copy.removeAttribute('style')
+    copy.querySelector('g[data-ink="live"]')?.replaceChildren()
+    return copy
+  }
+
+  /**
+   * The fixed page on the sheet as the drawing kept of it at `key`: the SVG as
+   * drawn, its root saying what it was made at and what it draws.
+   * @param {string} key @returns {string}
+   */
+  #drawing(key) {
+    const copy = this.#still()
+    copy.setAttribute('data-ink-key', key)
+    copy.setAttribute('data-ink-renderer', InkRenderer.VERSION)
+    copy.setAttribute('data-ink-strokes', String(this.strokeCount))
+    copy.setAttribute('data-ink-newest', String(this.#newestStart))
+    return new XMLSerializer().serializeToString(copy)
   }
 
   /**
@@ -641,6 +711,8 @@ export class InkSheet {
       this.#plane = null
     }
     this.#strokeIds = new Set(page.strokes.map((stroke) => stroke.id))
+    this.#keptUnknown = 0
+    this.#newestStart = page.strokes.reduce((newest, stroke) => Math.max(newest, Number(stroke.startMillis) || 0), -1)
     this.#template = page.note.template ?? null
     this.#offWindow = new Set()
     this.#windowStale = false
@@ -657,6 +729,11 @@ export class InkSheet {
     this.#paintBands()
     if (this.#plane && this.#policy.marksEdges) this.#sheet.replaceChildren(svg, this.#edges)
     else this.#sheet.replaceChildren(svg)
+    this.#drew()
+  }
+
+  /** The SVG now on the sheet is the shown page's: the sheet is sized and the strokes under the pen drawn into it. */
+  #drew() {
     this.#markEdges()
     if (this.#drawn !== this.#shown) this.#surround.scrollTo(0, 0)
     this.#drawn = this.#shown
@@ -665,6 +742,50 @@ export class InkSheet {
     for (const stroke of this.#live.values()) Object.assign(stroke, { el: null, settled: 0, bands: new Map(), tail: null })
     this.#schedule()
     this.#host.onSheetChanged()
+  }
+
+  /**
+   * Puts the kept drawing of the shown fixed page on the sheet as it is. Refused,
+   * and nothing changed, when it was made by another renderer, lacks a layer, or
+   * holds anything but the elements, attributes and paints the renderer writes.
+   * @param {string} drawing an SVG document
+   * @returns {boolean} whether it was drawn
+   */
+  #drawKept(drawing) {
+    const svg = /** @type {SVGSVGElement|undefined} */ (this.#parse(drawing)[0])
+    if (!svg || svg.tagName.toLowerCase() !== 'svg' || svg.getAttribute('data-ink-renderer') !== InkRenderer.VERSION) return false
+    for (const el of [svg, ...svg.querySelectorAll('*')]) {
+      if (!KEPT_ELEMENTS.has(el.tagName.toLowerCase())) return false
+      for (const attr of el.attributes) {
+        if (!KEPT_ATTRIBUTES.has(attr.name.toLowerCase())) return false
+        if ((attr.name === 'fill' || attr.name === 'stroke') && !KEPT_PAINT.test(attr.value)) return false
+      }
+    }
+    const layers = new Map(INK_LAYERS.map((name) => [name, svg.querySelector(`g[data-ink="${name}"]`)]))
+    if ([...layers.values()].some((group) => !group)) return false
+    this.#placeNext = null
+    this.#plane = null
+    this.#template = null
+    this.#offWindow = new Set()
+    this.#windowStale = false
+    this.#svg = svg
+    this.#background = [...svg.children].find((el) => el.tagName.toLowerCase() === 'rect') ?? null
+    this.#layers = /** @type {Map<string, Element>} */ (layers)
+    this.#strokes = new Map()
+    this.#staleBands.clear()
+    this.#bands = INK_RULES.tone.keep.map((_, i) => {
+      const d = /** @type {Element} */ (layers.get(`b${i}`)).firstElementChild?.getAttribute('d')
+      return new Map(d ? [[KEPT_BASE, d]] : [])
+    })
+    const [pen, live] = [/** @type {Element} */ (layers.get('pen')), /** @type {Element} */ (layers.get('live'))]
+    for (const el of pen.children) this.#index(el)
+    live.replaceChildren()
+    this.#strokeIds = new Set(this.#strokes.keys())
+    this.#keptUnknown = Math.max(0, (Number(svg.getAttribute('data-ink-strokes')) || 0) - this.#strokeIds.size)
+    this.#newestStart = Number(svg.getAttribute('data-ink-newest') ?? -1)
+    this.#sheet.replaceChildren(svg)
+    this.#drew()
+    return true
   }
 
   /**
@@ -720,6 +841,10 @@ export class InkSheet {
     if (!this.#layers || e.seq <= this.#seq) return
     this.#seq = e.seq
     if (e.type === InkFeed.STROKE_REMOVED) {
+      if (this.#keptUnknown && !this.#strokeIds.has(e.strokeId)) {
+        this.#reload()
+        return
+      }
       for (const el of this.#strokes.get(e.strokeId) || []) el.remove()
       this.#strokes.delete(e.strokeId)
       this.#bands.forEach((band, i) => { if (band.delete(e.strokeId)) this.#staleBands.add(i) })

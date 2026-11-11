@@ -43,6 +43,7 @@ alone, so the token appears in no response header.
 | `flush` | `protocol.FlushFrame` | — | FlushFrame asks the shadow document to persist now rather than on its debounce. |
 | `focus` | `protocol.FocusFrame` | — | FocusFrame is the dwell ping: the user is looking at this document, which raises its focus count. |
 | `ink-describe` | `protocol.InkDescribeFrame` | `opId` | InkDescribeFrame asks for this channel's Digital Note to be named now: its name, summary, keywords and categories described again from its pages, whether or not they are of the note as it stands. |
+| `ink-keep-drawing` | `protocol.InkKeepDrawingFrame` | — | InkKeepDrawingFrame hands over the drawing of one page of this channel's Digital Note, for the next asker of the page to be answered with while the note stands as it did. |
 | `ink-open-on-tablet` | `protocol.InkOpenOnTabletFrame` | `opId` | InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it at a page. |
 | `ink-page` | `protocol.InkPageFrame` | `opId` | InkPageFrame asks for one page of this channel's Digital Note as it is drawn now. |
 | `ink-transcribe-page` | `protocol.InkTranscribePageFrame` | `opId` | InkTranscribePageFrame asks for one page of this channel's Digital Note to be transcribed, unless it has a transcript of what it holds now or is being transcribed. |
@@ -71,7 +72,7 @@ alone, so the token appears in no response header.
 | `ink-live-page` | `protocol.InkLivePageFrame` | — | InkLivePageFrame is which page of this channel's note the tablet shows as being written, or that none is, and the Live view that mirrors it. |
 | `ink-log-restarted` | `protocol.InkLogRestartedFrame` | — | InkLogRestartedFrame is the note's log started again from its first record in this channel's container. |
 | `ink-open-on-tablet-result` | `protocol.InkOpenOnTabletResultFrame` | `opId` | InkOpenOnTabletResultFrame answers an ink-open-on-tablet with what came of it, or why it could not be asked. |
-| `ink-page-content` | `protocol.InkPageContentFrame` | `opId` | InkPageContentFrame answers an ink-page: the page in the export shape and the seq of the last record it reflects, or why there is none. |
+| `ink-page-content` | `protocol.InkPageContentFrame` | `opId` | InkPageContentFrame answers an ink-page: the page and the seq of the last record it reflects, or why there is none. |
 | `ink-stroke-added` | `protocol.InkStrokeAddedFrame` | — | InkStrokeAddedFrame is a stroke now present on a page, committed by the record of Seq. |
 | `ink-stroke-removed` | `protocol.InkStrokeRemovedFrame` | — | InkStrokeRemovedFrame is a stroke gone from a page, removed by the record of Seq. |
 | `ink-transcript-changed` | `protocol.InkTranscriptChangedFrame` | — | InkTranscriptChangedFrame is what is known of the transcript of a page of this channel's note now that it has changed: a transcript began, or ended in a transcript kept or in a failure. |
@@ -245,6 +246,17 @@ InkDescribeFrame asks for this channel's Digital Note to be named now: its name,
 | `type` | `string` | yes |  |
 | `opId` | `string` | no | echoed on the ink-describe-result reply |
 
+#### `ink-keep-drawing` — client → server
+
+InkKeepDrawingFrame hands over the drawing of one page of this channel's Digital Note, for the next asker of the page to be answered with while the note stands as it did.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `pageId` | `string` | yes | the page drawn, as the block's note.pages lists it |
+| `key` | `string` | yes | the key of the ink-page-content the drawing was made from |
+| `drawing` | `string` | yes | the page as an SVG document, whose root element carries data-ink-key, this key, and then data-ink-renderer, the version of the renderer that drew it |
+
 #### `ink-open-on-tablet` — client → server
 
 InkOpenOnTabletFrame asks the tablet this channel's Digital Note came from to open it at a page.
@@ -264,6 +276,7 @@ InkPageFrame asks for one page of this channel's Digital Note as it is drawn now
 | `type` | `string` | yes |  |
 | `opId` | `string` | no | echoed on the ink-page-content reply |
 | `pageId` | `string` | yes | the page's id, as the block's note.pages lists it |
+| `renderer` | `string` | no | the version of the asker's ink renderer; present when the asker takes, in place of the page, a drawing of it that renderer kept |
 
 #### `ink-transcribe-page` — client → server
 
@@ -484,7 +497,7 @@ InkOpenOnTabletResultFrame answers an ink-open-on-tablet with what came of it, o
 
 #### `ink-page-content` — server → client
 
-InkPageContentFrame answers an ink-page: the page in the export shape and the seq of the last record it reflects, or why there is none.
+InkPageContentFrame answers an ink-page: the page and the seq of the last record it reflects, or why there is none.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
@@ -492,7 +505,9 @@ InkPageContentFrame answers an ink-page: the page in the export shape and the se
 | `opId` | `string` | no |  |
 | `pageId` | `string` | yes | the page asked for, echoed |
 | `seq` | `uint32` | yes | the seq of the last record of the note's log the page reflects; 0 when refused |
-| `page` | `json.RawMessage` | yes | the page in the export shape, an InkPageExport; null when refused |
+| `key` | `string` | no | names the note's whole log as it stood at seq: two answers share a key exactly when nothing in the note changed between them; absent when refused |
+| `page` | `json.RawMessage` | yes | the page in the export shape, an InkPageExport; null when refused or when the answer is a drawing |
+| `drawing` | `string` | no | the page's kept drawing, an SVG document, in place of the page |
 | `error` | `string` | no | present only when there is no page: the channel holds no Digital Note, or the note has no page of that id |
 
 #### `ink-stroke-added` — server → client

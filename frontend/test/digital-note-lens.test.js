@@ -16,6 +16,7 @@ import { TranscriptSurface } from '../src/static/lens/ink/transcript-surface.js'
 import { SurfaceIntent } from '../src/static/lens/abstract-surface.js'
 import { ActionStatus } from '../src/static/lens/ink/action-status.js'
 import { ImageClipboard } from '../src/static/renderers/copy-image.js'
+import { InkRenderer } from '../src/static/renderers/ink-renderer.js'
 import { InkFeed, InkOpening, InkTranscriptState, InkRefusal } from '../src/static/contract/ink-container-provider.js'
 import {
   ASPECT, DOTS, bandData, FakeInkProvider, Frames, GRID, Resizes, UUID, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, pencil, points, press, renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, viewBoxOf, wheel,
@@ -29,7 +30,7 @@ import {
 async function presented(opts = {}) {
   const ids = opts.ids || ['p1', 'p2']
   const provider = new FakeInkProvider(noteAttrs(ids, opts.bounds))
-  for (const id of ids) provider.answers.set(id, { page: exportPage(opts.strokes || [pen('s1')], opts.template), seq: 10 })
+  for (const id of ids) provider.answers.set(id, { page: exportPage(opts.strokes || [pen('s1')], opts.template), seq: 10, key: opts.key, drawing: opts.drawing })
   const lens = new DigitalNoteLens(UUID, { provider })
   const root = document.createElement('div')
   document.body.appendChild(root)
@@ -179,6 +180,62 @@ describe('DigitalNoteLens', () => {
     expect([strokeEls(root, 's8').length, strokeEls(root, 's9').length]).toEqual([0, 1])
     provider.emit({ type: InkFeed.STROKE_REMOVED, pageId: 'p1', seq: 13, strokeId: 's2' })
     expect(bandData(root)).toEqual(bands.map(() => ''))
+  })
+
+  it('hands back the drawing of a fixed page it drew in full, saying what it was made at, and none of a whiteboard', async () => {
+    const { provider } = await presented({ strokes: [pen('s1'), pencil('t1')], key: 'ab12' })
+    expect(provider.renderers).toEqual([InkRenderer.VERSION])
+    expect(provider.kept.map((k) => [k.pageId, k.key])).toEqual([['p1', 'ab12']])
+    const drawing = provider.kept[0].drawing
+    expect(drawing).toMatch(new RegExp(`^<svg\\b[^>]*\\sdata-ink-key="ab12"[^>]*\\sdata-ink-renderer="${InkRenderer.VERSION}"`))
+    expect(drawing).toMatch(/\sdata-ink-strokes="2"[^>]*\sdata-ink-newest="0"/)
+    expect(drawing).not.toMatch(/\sstyle=/)
+
+    const board = await presented({ ids: ['w1'], bounds: 'unbounded', key: 'ab12' })
+    expect([board.provider.renderers, board.provider.kept]).toEqual([[undefined], []])
+  })
+
+  it('puts a kept drawing on the sheet as it is, adds strokes after it, and asks for the page in full to remove a stroke it cannot tell apart', async () => {
+    const strokes = [pen('s1'), pencil('t1')]
+    const full = await presented({ strokes, key: 'ab12' })
+    const bands = bandData(full.root)
+    const { provider, root } = await presented({ strokes, key: 'ab12', drawing: full.provider.kept[0].drawing })
+    expect([provider.loads, provider.kept]).toEqual([1, []])
+    expect(bandData(root)).toEqual(bands)
+    expect(strokeEls(root, 's1')).toHaveLength(1)
+    expect(layer(root, 'ruling').children.length).toBeGreaterThan(0)
+
+    const more = renderer.renderStroke(/** @type {any} */ (pencil('t2'))).bands
+    provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p1', seq: 11, stroke: pencil('t2') })
+    expect(bandData(root)).toEqual(bands.map((d, i) => d + more[i]))
+    provider.emit({ type: InkFeed.STROKE_REMOVED, pageId: 'p1', seq: 12, strokeId: 's1' })
+    provider.emit({ type: InkFeed.STROKE_REMOVED, pageId: 'p1', seq: 13, strokeId: 't2' })
+    expect([strokeEls(root, 's1').length, bandData(root), provider.loads]).toEqual([0, bands, 1])
+
+    provider.answers.set('p1', { page: exportPage([]), seq: 14, key: 'cd34' })
+    provider.emit({ type: InkFeed.STROKE_REMOVED, pageId: 'p1', seq: 14, strokeId: 't1' })
+    await settle()
+    expect([provider.loads, provider.renderers.at(-1)]).toEqual([2, undefined])
+    expect(bandData(root)).toEqual(bands.map(() => ''))
+    expect(provider.kept.map((k) => k.key)).toEqual(['cd34'])
+  })
+
+  it.each([
+    ['made by another renderer', (/** @type {string} */ d) => d.replace(`data-ink-renderer="${InkRenderer.VERSION}"`, 'data-ink-renderer="0"')],
+    ['holding an element the renderer never writes', (/** @type {string} */ d) => d.replace('</defs>', '</defs><image href="x"/>')],
+    ['holding an attribute the renderer never writes', (/** @type {string} */ d) => d.replace('<g data-ink="pen"', '<g onclick="x()" data-ink="pen"')],
+    ['painted with anything but a colour or a tone', (/** @type {string} */ d) => d.replace('fill="#000"', 'fill="url(http://x/y)"')],
+    ['missing a layer', (/** @type {string} */ d) => d.replace('data-ink="live"', 'data-ink="other"')],
+    ['no SVG', () => '<p>x</p>'],
+  ])('asks for the page in full when its kept drawing is %s', async (_name, spoil) => {
+    const strokes = [pen('s1'), pencil('t1')]
+    const full = await presented({ strokes, key: 'ab12' })
+    const drawing = spoil(full.provider.kept[0].drawing)
+    expect(drawing).not.toBe(full.provider.kept[0].drawing)
+    const { provider, root } = await presented({ strokes, key: 'ab12', drawing })
+    expect(provider.renderers).toEqual([InkRenderer.VERSION, undefined])
+    expect([strokeEls(root, 's1').length, bandData(root)]).toEqual([1, bandData(full.root)])
+    expect(provider.kept).toHaveLength(1)
   })
 
   it('applies the stroke events heard while a page loads above the seq it is answered at', async () => {

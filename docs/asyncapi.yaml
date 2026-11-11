@@ -37,6 +37,8 @@ channels:
         $ref: '#/components/messages/documentFocus'
       documentInkDescribe:
         $ref: '#/components/messages/documentInkDescribe'
+      documentInkKeepDrawing:
+        $ref: '#/components/messages/documentInkKeepDrawing'
       documentInkOpenOnTablet:
         $ref: '#/components/messages/documentInkOpenOnTablet'
       documentInkPage:
@@ -177,6 +179,7 @@ operations:
       - $ref: '#/channels/document/messages/documentFlush'
       - $ref: '#/channels/document/messages/documentFocus'
       - $ref: '#/channels/document/messages/documentInkDescribe'
+      - $ref: '#/channels/document/messages/documentInkKeepDrawing'
       - $ref: '#/channels/document/messages/documentInkOpenOnTablet'
       - $ref: '#/channels/document/messages/documentInkPage'
       - $ref: '#/channels/document/messages/documentInkTranscribePage'
@@ -411,6 +414,17 @@ components:
         $ref: '#/components/correlationIds/opId'
       payload:
         $ref: '#/components/schemas/ProtocolInkDescribeFrame'
+    documentInkKeepDrawing:
+      name: ink-keep-drawing
+      title: ink-keep-drawing
+      summary: InkKeepDrawingFrame hands over the drawing of one page of this channel's Digital Note, for the next asker of the page to be answered with while the note stands as it did.
+      description: |-
+        InkKeepDrawingFrame hands over the drawing of one page of this channel's Digital Note, for the
+        next asker of the page to be answered with while the note stands as it did. It is not answered,
+        and a drawing made at a key the note no longer stands at is dropped.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProtocolInkKeepDrawingFrame'
     documentInkOpenOnTablet:
       name: ink-open-on-tablet
       title: ink-open-on-tablet
@@ -686,12 +700,13 @@ components:
     documentInkPageContent:
       name: ink-page-content
       title: ink-page-content
-      summary: 'InkPageContentFrame answers an ink-page: the page in the export shape and the seq of the last record it reflects, or why there is none.'
+      summary: 'InkPageContentFrame answers an ink-page: the page and the seq of the last record it reflects, or why there is none.'
       description: |-
-        InkPageContentFrame answers an ink-page: the page in the export shape and the seq of the last
-        record it reflects, or why there is none. A client holding the page drops every stroke frame for
-        it whose seq is at or below Seq; every later change to the page arrives as a stroke frame above
-        it.
+        InkPageContentFrame answers an ink-page: the page and the seq of the last record it reflects, or
+        why there is none. The page is carried in the export shape or, for an asker that named its
+        renderer, as the drawing kept of it when one was kept at Key by that renderer; never both. A
+        client holding the page drops every stroke frame for it whose seq is at or below Seq; every later
+        change to the page arrives as a stroke frame above it.
       contentType: application/json
       correlationId:
         $ref: '#/components/correlationIds/opId'
@@ -2017,6 +2032,29 @@ components:
       required:
         - id
         - params
+    ProtocolInkKeepDrawingFrame:
+      type: object
+      description: |-
+        InkKeepDrawingFrame hands over the drawing of one page of this channel's Digital Note, for the
+        next asker of the page to be answered with while the note stands as it did. It is not answered,
+        and a drawing made at a key the note no longer stands at is dropped.
+      properties:
+        type:
+          type: string
+        pageId:
+          type: string
+          description: the page drawn, as the block's note.pages lists it
+        key:
+          type: string
+          description: the key of the ink-page-content the drawing was made from
+        drawing:
+          type: string
+          description: the page as an SVG document, whose root element carries data-ink-key, this key, and then data-ink-renderer, the version of the renderer that drew it
+      required:
+        - type
+        - pageId
+        - key
+        - drawing
     ProtocolInkLiveFrame:
       type: object
       description: |-
@@ -2153,10 +2191,11 @@ components:
     ProtocolInkPageContentFrame:
       type: object
       description: |-
-        InkPageContentFrame answers an ink-page: the page in the export shape and the seq of the last
-        record it reflects, or why there is none. A client holding the page drops every stroke frame for
-        it whose seq is at or below Seq; every later change to the page arrives as a stroke frame above
-        it.
+        InkPageContentFrame answers an ink-page: the page and the seq of the last record it reflects, or
+        why there is none. The page is carried in the export shape or, for an asker that named its
+        renderer, as the drawing kept of it when one was kept at Key by that renderer; never both. A
+        client holding the page drops every stroke frame for it whose seq is at or below Seq; every later
+        change to the page arrives as a stroke frame above it.
       properties:
         type:
           type: string
@@ -2168,8 +2207,14 @@ components:
         seq:
           type: integer
           description: the seq of the last record of the note's log the page reflects; 0 when refused
+        key:
+          type: string
+          description: 'names the note''s whole log as it stood at seq: two answers share a key exactly when nothing in the note changed between them; absent when refused'
         page:
-          description: the page in the export shape, an InkPageExport; null when refused
+          description: the page in the export shape, an InkPageExport; null when refused or when the answer is a drawing
+        drawing:
+          type: string
+          description: the page's kept drawing, an SVG document, in place of the page
         error:
           type: string
           description: 'present only when there is no page: the channel holds no Digital Note, or the note has no page of that id'
@@ -2225,6 +2270,9 @@ components:
         pageId:
           type: string
           description: the page's id, as the block's note.pages lists it
+        renderer:
+          type: string
+          description: the version of the asker's ink renderer; present when the asker takes, in place of the page, a drawing of it that renderer kept
       required:
         - type
         - pageId

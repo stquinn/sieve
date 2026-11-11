@@ -18,7 +18,7 @@ func TestRegistry_HoldsTheWholeVocabulary(t *testing.T) {
 			"ping", "doc-update", "flush", "enter-markdown", "enter-wysiwyg",
 			"retry-block-job", "extract", "block-op",
 			"load", "paste", "detect-extractions", "export", "focus", "text-replace",
-			"feature-control", "set-presenting", "ink-page", "ink-open-on-tablet",
+			"feature-control", "set-presenting", "ink-page", "ink-keep-drawing", "ink-open-on-tablet",
 			"ink-transcript", "ink-transcribe-page", "ink-transcript-document", "ink-describe",
 		}},
 		{ChannelDocument, Outbound, []string{

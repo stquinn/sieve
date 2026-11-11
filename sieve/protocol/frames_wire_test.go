@@ -285,10 +285,17 @@ func outboundWireCases() []wireCase {
 		{
 			name:    "ink-page-content",
 			channel: ChannelDocument,
-			frame:   NewInkPageContentFrame("op-1", "p1", 7, inkPageJSON),
-			golden: `{"type":"ink-page-content","opId":"op-1","pageId":"p1","seq":7,"page":{"note":{"id":"n1","created":"2023-11-14T22:13:20Z",` +
+			frame:   NewInkPageContentFrame("op-1", "p1", 7, "ab12", inkPageJSON),
+			golden: `{"type":"ink-page-content","opId":"op-1","pageId":"p1","seq":7,"key":"ab12","page":{"note":{"id":"n1","created":"2023-11-14T22:13:20Z",` +
 				`"title":"Ideas","pageAspect":0.75,"template":{"id":"ruled","params":{"spacing":0.05}},"device":{"id":"d","name":"Note Air 2","model":"ONYX"}},` +
 				`"strokes":[` + inkStrokeJSON + `]}}`,
+		},
+		{
+			// A kept drawing is told apart from a page by its drawing and its null page.
+			name:    "ink-page-content as a kept drawing",
+			channel: ChannelDocument,
+			frame:   NewInkPageDrawingFrame("op-1", "p1", 7, "ab12", `<svg data-ink-key="ab12"/>`),
+			golden:  `{"type":"ink-page-content","opId":"op-1","pageId":"p1","seq":7,"key":"ab12","page":null,"drawing":"\u003csvg data-ink-key=\"ab12\"/\u003e"}`,
 		},
 		{
 			// A refusal is told apart from a page by its error and its null page.
@@ -636,6 +643,18 @@ func TestInboundFrames_DecodeFromCurrentClientJSON(t *testing.T) {
 			raw:  `{"type":"ink-page","opId":"op-7","pageId":"019a0000-0000-7000-8000-000000000011"}`,
 			into: &InkPageFrame{},
 			want: &InkPageFrame{Type: TypeInkPage, OpID: "op-7", PageID: "019a0000-0000-7000-8000-000000000011"},
+		},
+		{
+			name: "ink-page that takes a kept drawing",
+			raw:  `{"type":"ink-page","opId":"op-7","pageId":"019a0000-0000-7000-8000-000000000011","renderer":"2"}`,
+			into: &InkPageFrame{},
+			want: &InkPageFrame{Type: TypeInkPage, OpID: "op-7", PageID: "019a0000-0000-7000-8000-000000000011", Renderer: "2"},
+		},
+		{
+			name: "ink-keep-drawing",
+			raw:  `{"type":"ink-keep-drawing","pageId":"019a0000-0000-7000-8000-000000000011","key":"ab12","drawing":"<svg data-ink-key=\"ab12\" data-ink-renderer=\"2\"></svg>"}`,
+			into: &InkKeepDrawingFrame{},
+			want: &InkKeepDrawingFrame{Type: TypeInkKeepDrawing, PageID: "019a0000-0000-7000-8000-000000000011", Key: "ab12", Drawing: `<svg data-ink-key="ab12" data-ink-renderer="2"></svg>`},
 		},
 		{
 			name: "ink-page-drawn",

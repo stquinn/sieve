@@ -101,6 +101,13 @@ export const INK_LAYERS = Object.freeze([
 ])
 
 export class InkRenderer {
+  /**
+   * Names what this renderer emits: markup kept from one version is not this
+   * version's. It moves with every change to the rendering rules or the document
+   * they are written as (docs/ink-contract.md §8).
+   */
+  static VERSION = '2'
+
   /** @type {OutlineFn|undefined} */ #outline
   /** @type {string|undefined} */ #defs
 

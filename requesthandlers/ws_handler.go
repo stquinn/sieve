@@ -116,6 +116,7 @@ func NewWsHandler(sp *sieve.ServiceProvider, broadcast *WorkspaceBroadcast, toke
 		protocol.TypeFeatureControl:     h.handleDocumentFeatureControl,
 		protocol.TypeSetPresenting:      h.handleSetPresenting,
 		protocol.TypeInkPage:            h.handleInkPage,
+		protocol.TypeInkKeepDrawing:     h.handleInkKeepDrawing,
 		protocol.TypeInkOpenOnTablet:    h.handleInkOpenOnTablet,
 		protocol.TypeInkTranscript:         h.handleInkTranscript,
 		protocol.TypeInkTranscribePage:        h.handleInkTranscribePage,
@@ -678,6 +679,18 @@ func (h *WsHandler) handleInkPage(f inboundFrame) {
 		return
 	}
 	stream.answerPage(f.uuid, msg, f.reply)
+}
+
+// handleInkKeepDrawing keeps the drawing a view made of a page of this channel's Digital Note.
+func (h *WsHandler) handleInkKeepDrawing(f inboundFrame) {
+	var msg protocol.InkKeepDrawingFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeInkKeepDrawing, err)
+		return
+	}
+	if stream := h.inkStream(); stream != nil {
+		stream.keepDrawing(f.uuid, msg)
+	}
 }
 
 // handleInkOpenOnTablet asks the tablet this channel's Digital Note came from to open it, and

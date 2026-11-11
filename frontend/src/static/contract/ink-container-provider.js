@@ -40,8 +40,13 @@
 
 /**
  * A page and the seq of the last record of the note's log it reflects. A lens
- * holding it drops every stroke event for the page at or below `seq`.
- * @typedef {Readonly<{page: Readonly<InkPage>, seq: number}>} InkPageAnswer
+ * holding it drops every stroke event for the page at or below `seq`. The page
+ * comes as `page` or, to an asker that named its renderer, as `drawing`: the SVG
+ * document that renderer kept of it, whose root element carries `data-ink-key`,
+ * `data-ink-renderer`, `data-ink-strokes` (how many strokes it draws) and
+ * `data-ink-newest` (the latest `startMillis` among them, -1 with none). Exactly
+ * one of the two is set. `key` names the note's whole log as it stood at `seq`.
+ * @typedef {Readonly<{page: Readonly<InkPage>|null, drawing: string|null, seq: number, key: string}>} InkPageAnswer
  */
 
 /** The `type` of each event an ink container's feed delivers. */
@@ -166,7 +171,13 @@ export const InkRefusal = Object.freeze({
  * of the pages.
  *
  * - `loadPage` REJECTS for a page the note does not have, and when the host
- *   cannot answer.
+ *   cannot answer. Given `renderer`, the version of the asker's ink renderer, it
+ *   may answer with the drawing that renderer kept of the page in place of the
+ *   page; without one it answers the page.
+ * - `keepDrawing` hands over the drawing made of a page from the answer whose
+ *   key is `key`, for a later `loadPage` to answer with while the note stands as
+ *   it did. Nothing answers it, and a drawing of a note that has moved on is
+ *   dropped.
  * - `openOnTablet` asks for the note at the page `pageId` names, the page shown
  *   here; a page the note does not have leaves the page to the tablet. It
  *   REJECTS when nothing could be asked: the container holds no note from a
@@ -188,7 +199,8 @@ export const InkRefusal = Object.freeze({
  *   or the host did not answer. The new name arrives as the container's name.
  *
  * @typedef {import('./container-provider.js').ContainerProvider & {
- *   loadPage: (pageId: string) => Promise<InkPageAnswer>,
+ *   loadPage: (pageId: string, renderer?: string) => Promise<InkPageAnswer>,
+ *   keepDrawing: (pageId: string, key: string, drawing: string) => void,
  *   openOnTablet: (pageId: string) => Promise<InkOpeningResult>,
  *   loadTranscript: (pageId: string) => Promise<InkTranscript>,
  *   transcribePage: (pageId: string) => Promise<InkTranscript>,

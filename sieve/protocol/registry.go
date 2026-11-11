@@ -101,6 +101,7 @@ func (r *Registry) registerDocumentFrames() {
 	r.addFrame(ChannelDocument, Inbound, TypeFeatureControl, FeatureControlFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeSetPresenting, SetPresentingFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeInkPage, InkPageFrame{})
+	r.addFrame(ChannelDocument, Inbound, TypeInkKeepDrawing, InkKeepDrawingFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeInkOpenOnTablet, InkOpenOnTabletFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeInkTranscript, InkTranscriptFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeInkTranscribePage, InkTranscribePageFrame{})

@@ -25,6 +25,7 @@ export class InkProviderAdapter extends ProviderAdapter {
   constructor(model, documentService) {
     super(model)
     if (!documentService || typeof documentService.inkPage !== 'function' || typeof documentService.observeInk !== 'function' ||
+      typeof documentService.inkKeepDrawing !== 'function' ||
       typeof documentService.inkOpenOnTablet !== 'function' || typeof documentService.inkTranscript !== 'function' ||
       typeof documentService.inkDescribe !== 'function') {
       throw new ContractViolation('InkProviderAdapter: construct over the DocumentService')
@@ -32,10 +33,15 @@ export class InkProviderAdapter extends ProviderAdapter {
     this.#documents = documentService
   }
 
-  /** @param {string} pageId @returns {Promise<InkPageAnswer>} */
-  loadPage(pageId) {
-    return this.#documents.inkPage(this.getUuid(), pageId)
-      .then((answer) => /** @type {InkPageAnswer} */ (ProviderAdapter._frozenInPlace({ page: answer.page, seq: answer.seq })))
+  /** @param {string} pageId @param {string} [renderer] @returns {Promise<InkPageAnswer>} */
+  loadPage(pageId, renderer) {
+    return this.#documents.inkPage(this.getUuid(), pageId, renderer)
+      .then((answer) => /** @type {InkPageAnswer} */ (ProviderAdapter._frozenInPlace({ page: answer.page, drawing: answer.drawing, seq: answer.seq, key: answer.key })))
+  }
+
+  /** @param {string} pageId @param {string} key @param {string} drawing */
+  keepDrawing(pageId, key, drawing) {
+    this.#documents.inkKeepDrawing(this.getUuid(), pageId, key, drawing)
   }
 
   /** @param {string} pageId @returns {Promise<InkOpeningResult>} */
