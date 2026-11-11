@@ -239,6 +239,12 @@ export const svgOf = (root) => /** @type {SVGSVGElement} */ (root.querySelector(
 export const layer = (root, layer) => /** @type {Element} */ (root.querySelector(`g[data-ink="${layer}"]`))
 /** @param {HTMLElement} root @param {string} id */
 export const strokeEls = (root, id) => [...root.querySelectorAll('[data-stroke]')].filter((el) => el.getAttribute('data-stroke') === id)
+/** @param {ParentNode} root @returns {string[]} the path data of each tone band's layer, lightest first; '' for a band that draws nothing */
+export const bandData = (root) => [0, 1, 2, 3, 4, 5, 6].map((i) => {
+  const paths = root.querySelectorAll(`g[data-ink="b${i}"] > *`)
+  expect(paths.length).toBeLessThanOrEqual(1)
+  return paths.length ? String(paths[0].getAttribute('d')) : ''
+})
 /** @param {number} stroke @param {number} from @param {number} count */
 export const points = (stroke, from, count) => Array.from({ length: count }, (_, i) => ({
   record: 'point', stroke, tool: null, widthClass: 0, x: 0.5 + (from + i) * 0.01, y: 0.4, pressure: 0.5, tMillis: (from + i) * 8, tiltX: 0, tiltY: 0,

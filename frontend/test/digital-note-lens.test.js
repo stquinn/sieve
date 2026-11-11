@@ -18,7 +18,7 @@ import { ActionStatus } from '../src/static/lens/ink/action-status.js'
 import { ImageClipboard } from '../src/static/renderers/copy-image.js'
 import { InkFeed, InkOpening, InkTranscriptState, InkRefusal } from '../src/static/contract/ink-container-provider.js'
 import {
-  ASPECT, DOTS, FakeInkProvider, Frames, GRID, Resizes, UUID, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, pencil, points, press, renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, viewBoxOf, wheel,
+  ASPECT, DOTS, bandData, FakeInkProvider, Frames, GRID, Resizes, UUID, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, pencil, points, press, renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, viewBoxOf, wheel,
   copiedImages, transcript, TRANSCRIPT_BLOCKS, item, tap, toolbarFor, toolbarIds, placesOf, faceOf, optionsOf, choose, rightClick, menuOf,
 } from './helpers/ink-lens-rig.js'
 
@@ -126,7 +126,7 @@ describe('DigitalNoteLens', () => {
 
   it.each([
     ['a pen stroke', pen('s2', 0.5, 0.5)],
-    ['a pencil stroke, in each band it touches', pencil('s2')],
+    ['a pencil stroke, to the one path of each band it touches', pencil('s2')],
   ])('adds %s above the held seq into the same SVG', async (_name, stroke) => {
     const { provider, root } = await presented()
     const svg = svgOf(root)
@@ -136,7 +136,7 @@ describe('DigitalNoteLens', () => {
     expect(svgOf(root)).toBe(svg)
     expect(strokeEls(root, 's1')[0]).toBe(existing)
     expect(strokeEls(layer(root, 'pen'), 's2')).toHaveLength(markup.pen ? 1 : 0)
-    markup.bands.forEach((part, i) => expect(strokeEls(layer(root, `b${i}`), 's2')).toHaveLength(part ? 1 : 0))
+    expect(bandData(root)).toEqual(markup.bands)
     if (stroke.tool === 'pencil') expect(markup.bands.filter(Boolean).length).toBeGreaterThan(1)
   })
 
@@ -168,12 +168,17 @@ describe('DigitalNoteLens', () => {
     expect(lens.getCapabilities().blocks).toBe(false)
   })
 
-  it("removes every element of a removed stroke, a pencil stroke's in every band", async () => {
-    const { provider, root } = await presented({ strokes: [pencil('s1'), pen('s9')] })
-    expect(strokeEls(root, 's1').length).toBeGreaterThan(1)
+  it("removes a removed stroke, a pencil stroke's part of every band's one path, and leaves the rest", async () => {
+    const { provider, root } = await presented({ strokes: [pencil('s1'), pencil('s2'), pen('s8'), pen('s9')] })
+    const bands = renderer.renderStroke(/** @type {any} */ (pencil('s1'))).bands
+    expect(bands.filter(Boolean).length).toBeGreaterThan(1)
+    expect(bandData(root)).toEqual(bands.map((d) => d + d))
     provider.emit({ type: InkFeed.STROKE_REMOVED, pageId: 'p1', seq: 11, strokeId: 's1' })
-    expect(strokeEls(root, 's1')).toHaveLength(0)
-    expect(strokeEls(root, 's9')).toHaveLength(1)
+    provider.emit({ type: InkFeed.STROKE_REMOVED, pageId: 'p1', seq: 12, strokeId: 's8' })
+    expect(bandData(root)).toEqual(bands)
+    expect([strokeEls(root, 's8').length, strokeEls(root, 's9').length]).toEqual([0, 1])
+    provider.emit({ type: InkFeed.STROKE_REMOVED, pageId: 'p1', seq: 13, strokeId: 's2' })
+    expect(bandData(root)).toEqual(bands.map(() => ''))
   })
 
   it('applies the stroke events heard while a page loads above the seq it is answered at', async () => {
@@ -233,15 +238,12 @@ describe('DigitalNoteLens', () => {
     expect(layer(root, 'live').firstElementChild?.getAttribute('d')).not.toBe(first?.getAttribute('d'))
   })
 
-  it('draws a pencil stroke under the pen in its tone, each settled chunk once, and its commit changes nothing drawn', async () => {
+  it('draws a pencil stroke under the pen in its tone, one path per band and its tail, and its commit changes nothing drawn', async () => {
     const { provider, root } = await presented()
     const stroke = { ...pencil('s7'), points: pencil('s7').points.slice(0, 36) }
     const records = stroke.points.map((q) => ({ record: 'point', stroke: 7, tool: null, widthClass: 0, ...q }))
-    /** @param {Element} scope @returns {string[]} each path's band and outline */
-    const toned = (scope) => [...scope.querySelectorAll('path')].map((el) => {
-      const fill = el.getAttribute('fill') || String(el.closest('[fill]')?.getAttribute('fill'))
-      return `${fill} ${el.getAttribute('d')}`
-    }).sort()
+    /** @param {Element} scope @returns {string[]} the path data drawn in each band's tone, lightest first */
+    const toned = (scope) => [0, 1, 2, 3, 4, 5, 6].map((i) => [...scope.querySelectorAll(`path[fill="url(#ink-b${i})"]`)].map((el) => el.getAttribute('d')).join(''))
     provider.emit({ type: InkFeed.LIVE_PAGE, live: true, pageId: 'p1', view: 'live-view' })
     provider.emit({ type: InkFeed.LIVE, records: [{ ...begin(7, 'pencil'), widthClass: stroke.widthClass }, ...records.slice(0, 12)] })
     frames.run()
@@ -253,12 +255,12 @@ describe('DigitalNoteLens', () => {
     }
     expect(layer(root, 'live').querySelector('path')).toBe(first)
     const live = toned(layer(root, 'live'))
+    expect(live.filter(Boolean).length).toBeGreaterThan(1)
+    expect(layer(root, 'live').querySelectorAll('path').length).toBeLessThanOrEqual(live.filter(Boolean).length + 1)
     provider.emit({ type: InkFeed.LIVE, records: [mark('end', 7)] })
     provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p1', seq: 11, stroke })
     expect(layer(root, 'live').children).toHaveLength(0)
-    const drawn = strokeEls(root, 's7')
-    expect(drawn.length).toBeGreaterThan(1)
-    expect(drawn.flatMap((g) => toned(g)).sort()).toEqual(live)
+    expect(bandData(root)).toEqual(live)
   })
 
   it('keeps an ended live stroke until its committed stroke is drawn, and then only that', async () => {
@@ -1187,7 +1189,8 @@ describe('DigitalNoteLens', () => {
       expect(doc.querySelectorAll('defs pattern').length).toBe(7)
       expect(doc.querySelector('g[data-ink="ruling"]')?.children.length).toBeGreaterThan(0)
       expect(doc.querySelectorAll('[data-stroke="s1"]')).toHaveLength(1)
-      expect([...doc.querySelectorAll('[data-stroke="t1"]')].some((g) => /^url\(#ink-b\d\)$/.test(String(g.parentElement?.getAttribute('fill'))))).toBe(true)
+      expect(bandData(doc)).toEqual(renderer.renderStroke(/** @type {any} */ (pencil('t1'))).bands)
+      expect(doc.querySelector('g[data-ink="b3"]')?.getAttribute('fill')).toBe('url(#ink-b3)')
       expect(doc.querySelector('g[data-ink="live"]')?.children.length).toBe(0)
       expect(svg).not.toMatch(/<image|<style|<foreignObject|href=|@import|font-family|class=/)
       expect(layer(root, 'live').children.length).toBe(1)

@@ -429,7 +429,8 @@ one outline at the chunk's mean pressure p̄: `size` = the pencil width at p̄ i
 **Tone** is dot density. A chunk's darkness is `min(1, 0.10 + 0.95·p̄^1.3)`; its band is
 the first of the keep fractions `0.12, 0.22, 0.34, 0.48, 0.64, 0.82, 0.96` that is ≥ the
 darkness (the last band otherwise). Each band is one group filled with one pattern of round
-black dots covering that fraction of its area. The tone is geometry, never a filter: a filter
+black dots covering that fraction of its area, and all its chunks are one path: a renderer
+pays for every element a pattern fills, so the cost of a page must not follow its chunk count. The tone is geometry, never a filter: a filter
 is rasterised at the display's pixel size, so its stipple changes with zoom, while a dot
 pattern scales with the page.
 
@@ -458,8 +459,10 @@ A band whose keep fraction is ≥ 0.96 (the last) is a solid tile:
 page's template marks (§6); group `pen`; groups `b0`…`b6`, each filled
 with pattern `ink-b{i}`; group `live`. Each group is `<g data-ink="{name}">`; `pen` carries
 `fill="#000"` and `b{i}` carries `fill="url(#ink-b{i})"`, which every path in it inherits. A
-pen stroke is `<path data-stroke="{id}">`; a pencil stroke is, in each band it touches,
-`<g data-stroke="{id}">` of one `<path>` per chunk.
+pen stroke is `<path data-stroke="{id}">`. A band's group holds one `<path>` and no more: its
+`d` is the path data of every chunk in the band, strokes in page order and each stroke's chunks
+in stroke order, one closed subpath after another; a band with no chunk is an empty group. A
+pencil stroke therefore has no element of its own.
 
 **Window.** An unbounded page is drawn through a window, a rectangle `x0 < x1`, `y0 < y1` of the
 plane in page units: the `viewBox` is the window in grid units, `x0·1404 y0·1404 (x1−x0)·1404
@@ -476,10 +479,12 @@ nothing.
 
 **Live.** A stroke under the pen is drawn in the `live` group from the points so far: a pen
 stroke exactly as it will commit; a pencil stroke as `<g data-stroke="{id}">` of one `<path>` per
-chunk, each with `fill="url(#ink-b{i})"` of its band, toned from its first points. A chunk all of
-whose points (`max(0, i−1) .. i+10`) have arrived is exactly the outline, in exactly the band, it
-commits with, so it is drawn once and kept; only the last chunk, still growing, may differ. At END
-the live markup is replaced by the committed markup, which draws the same.
+band it touches, lightest first, each with `fill="url(#ink-b{i})"` of its band and the path data of
+its chunks there, toned from its first points. A chunk all of whose points (`max(0, i−1) .. i+10`)
+have arrived is exactly the outline, in exactly the band, it commits with, so it is computed once
+and kept; only the last chunk, still growing, may differ, and a view may hold it in a path of its
+own after the bands'. At END the live markup is replaced by the committed markup, which draws the
+same.
 
 ## 9. Conformance set
 

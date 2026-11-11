@@ -5,12 +5,16 @@
 // the stroke events for it that arrive meanwhile; it chooses no page and draws no
 // chrome.
 //
-// The SVG is built once per page shown and is then only added to and trimmed:
-// a committed stroke's markup is parsed into nodes and appended to its layers, a
-// removed stroke's nodes are taken out, and a live stroke is drawn in the `live`
-// layer: a pen stroke's one path swapped, a pencil stroke's settled chunks kept
-// and only its growing tail swapped. Only showing a page — another one, a change to its own
-// entry in the note, a restarted log — draws the SVG again.
+// The SVG is built once per page shown and is then only added to and trimmed.
+// A committed pen stroke is a node of its own in the `pen` layer, appended and
+// taken out. A tone band is ONE path however many pencil strokes are in it,
+// because a renderer pays for every node a pattern fills: the sheet holds each
+// pencil stroke's path data per band and rewrites the path of the bands a
+// stroke added or removed touches. A live stroke is drawn in the `live` layer:
+// a pen stroke's one path swapped, a pencil stroke's settled chunks kept in one
+// path per band and only its growing tail swapped. Only showing a page —
+// another one, a change to its own entry in the note, a restarted log — draws
+// the SVG again.
 //
 // An unbounded page is drawn through a PlaneWindow. Moving it rewrites the SVG's
 // viewBox, size and background and redraws the `ruling` group alone; every stroke
@@ -72,8 +76,8 @@ import { PlaneWindow, WindowEdge } from './plane-window.js'
 
 /**
  * A stroke under the pen: what its begin said, the points so far, and what is
- * drawn for it — a pen stroke's path, or a pencil stroke's group, which holds the
- * `settled` chunks drawn so far and then its `tail`.
+ * drawn for it — a pen stroke's path, or a pencil stroke's group, which holds one
+ * path per band of `bands`, drawing the `settled` chunks so far, and then its `tail`.
  * @typedef {object} LiveStroke
  * @property {'pen'|'pencil'} tool
  * @property {1|2|3} widthClass
@@ -81,6 +85,7 @@ import { PlaneWindow, WindowEdge } from './plane-window.js'
  * @property {boolean} ended
  * @property {Element|null} el
  * @property {number} settled
+ * @property {Map<number, {el: Element, d: string}>} bands
  * @property {Element|null} tail
  * @property {ReturnType<typeof setTimeout>|null} linger
  */
@@ -207,7 +212,9 @@ export class InkSheet {
   /** @type {boolean} whether the drawn SVG lags the plane window */ #windowStale = false
   /** @type {Set<string>} strokes the feed added outside the window, not yet in it */ #offWindow = new Set()
   /** @type {Map<string, Element>|null} the drawn SVG's layers by name; null while none is drawn for the shown page */ #layers = null
-  /** @type {Map<string, Element[]>} every drawn element of each committed stroke, by stroke id */ #strokes = new Map()
+  /** @type {Map<string, Element[]>} the node of each committed pen stroke, by stroke id */ #strokes = new Map()
+  /** @type {Map<string, string>[]} per tone band, the path data of each committed stroke in it, by stroke id, in commit order */ #bands = []
+  /** @type {Set<number>} the tone bands whose path lags #bands */ #staleBands = new Set()
 
   /** @type {string|null} the page the tablet shows as written; null when none */ #livePage = null
   /** @type {Map<number, LiveStroke>} the strokes under the pen, in the order they began */ #live = new Map()
@@ -474,7 +481,7 @@ export class InkSheet {
           this.#live.set(r.stroke, {
             tool: r.tool === 'pencil' ? 'pencil' : 'pen',
             widthClass: /** @type {1|2|3} */ ([1, 2, 3].includes(r.widthClass) ? r.widthClass : 2),
-            points: [], ended: false, el: null, settled: 0, tail: null, linger: null,
+            points: [], ended: false, el: null, settled: 0, bands: new Map(), tail: null, linger: null,
           })
           break
         case 'point': {
@@ -595,6 +602,8 @@ export class InkSheet {
     this.#background = null
     this.#plane = null
     this.#strokes = new Map()
+    this.#bands = []
+    this.#staleBands.clear()
     const empty = this.#el('p', 'ink-page__empty')
     empty.textContent = text
     this.#sheet.replaceChildren(empty)
@@ -636,16 +645,16 @@ export class InkSheet {
     this.#offWindow = new Set()
     this.#windowStale = false
     const window = this.#plane ? this.#plane.window : undefined
-    const ruled = window ? { ...page, note: { ...page.note, template: this.#rulingTemplate(window) } } : page
-    const svg = /** @type {SVGSVGElement} */ (this.#parse(this.#renderer.renderPage(/** @type {any} */ (ruled), window))[0])
+    const note = window ? { ...page.note, template: this.#rulingTemplate(window) } : page.note
+    const svg = /** @type {SVGSVGElement} */ (this.#parse(this.#renderer.renderPage(/** @type {any} */ ({ note, strokes: [] }), window))[0])
     this.#svg = svg
     this.#background = [...svg.children].find((el) => el.tagName.toLowerCase() === 'rect') ?? null
     this.#layers = new Map(INK_LAYERS.map((name) => [name, /** @type {Element} */ (svg.querySelector(`g[data-ink="${name}"]`))]))
     this.#strokes = new Map()
-    for (const name of INK_LAYERS) {
-      if (name === 'live' || name === 'ruling') continue
-      for (const el of /** @type {Element} */ (this.#layers.get(name)).children) this.#index(el)
-    }
+    this.#bands = INK_RULES.tone.keep.map(() => new Map())
+    this.#staleBands.clear()
+    this.#append('pen', page.strokes.map((stroke) => this.#hold(stroke)).join(''))
+    this.#paintBands()
     if (this.#plane && this.#policy.marksEdges) this.#sheet.replaceChildren(svg, this.#edges)
     else this.#sheet.replaceChildren(svg)
     this.#markEdges()
@@ -653,7 +662,7 @@ export class InkSheet {
     this.#drawn = this.#shown
     this.#applyScale()
     for (const n of this.#live.keys()) this.#stale.add(n)
-    for (const stroke of this.#live.values()) Object.assign(stroke, { el: null, settled: 0, tail: null })
+    for (const stroke of this.#live.values()) Object.assign(stroke, { el: null, settled: 0, bands: new Map(), tail: null })
     this.#schedule()
     this.#host.onSheetChanged()
   }
@@ -713,6 +722,8 @@ export class InkSheet {
     if (e.type === InkFeed.STROKE_REMOVED) {
       for (const el of this.#strokes.get(e.strokeId) || []) el.remove()
       this.#strokes.delete(e.strokeId)
+      this.#bands.forEach((band, i) => { if (band.delete(e.strokeId)) this.#staleBands.add(i) })
+      this.#paintBands()
       this.#strokeIds.delete(e.strokeId)
       if (this.#plane) {
         this.#plane.removeStroke(e.strokeId)
@@ -723,9 +734,8 @@ export class InkSheet {
       return
     }
     this.#strokeIds.add(e.stroke.id)
-    const markup = this.#renderer.renderStroke(/** @type {any} */ (e.stroke))
-    this.#append('pen', markup.pen)
-    markup.bands.forEach((part, i) => this.#append(`b${i}`, part))
+    this.#append('pen', this.#hold(e.stroke))
+    this.#paintBands()
     if (this.#shown === this.#livePage) this.#claimLive(e.stroke)
     if (this.#plane) {
       this.#plane.addStroke(e.stroke)
@@ -735,6 +745,31 @@ export class InkSheet {
       this.#markEdges()
     }
     this.#host.onSheetChanged()
+  }
+
+  /**
+   * Takes a committed stroke's tone-band path data into #bands, leaving those
+   * bands stale.
+   * @param {Readonly<InkPageStroke>} stroke
+   * @returns {string} the markup of its node in the `pen` layer; '' when it has none
+   */
+  #hold(stroke) {
+    const markup = this.#renderer.renderStroke(/** @type {any} */ (stroke))
+    markup.bands.forEach((part, i) => {
+      if (!part) return
+      this.#bands[i].set(stroke.id, part)
+      this.#staleBands.add(i)
+    })
+    return markup.pen
+  }
+
+  /** Rewrites the one path of every stale tone band from the strokes it holds. */
+  #paintBands() {
+    for (const i of this.#staleBands) {
+      const group = /** @type {Element} */ (/** @type {Map<string, Element>} */ (this.#layers).get(`b${i}`))
+      group.replaceChildren(...this.#fragment(this.#renderer.bandPath(this.#bands[i].values())))
+    }
+    this.#staleBands.clear()
   }
 
   /** @param {string} layer @param {string} markup */
@@ -852,7 +887,8 @@ export class InkSheet {
 
   /**
    * Adds the chunks of a pencil stroke under the pen that settled since it was
-   * last drawn, and swaps its tail: a settled chunk is drawn once.
+   * last drawn to the path of each one's band, and swaps its tail: a settled
+   * chunk is computed once.
    * @param {LiveStroke} stroke
    * @param {import('../../renderers/ink-renderer.js').InkStroke} drawn
    * @param {Element} group the `live` layer
@@ -867,9 +903,26 @@ export class InkSheet {
       stroke.el = /** @type {Element} */ (this.#fragment(`<g data-stroke="${drawn.id}"></g>`)[0])
       group.appendChild(stroke.el)
     }
-    const els = this.#fragment(settled.join('') + tail)
-    stroke.el.append(...els)
-    if (tail) stroke.tail = els[els.length - 1]
+    /** @type {Set<number>} */
+    const grown = new Set()
+    for (const chunk of settled) {
+      const band = stroke.bands.get(chunk.band)
+      if (band) {
+        band.d += chunk.d
+        grown.add(chunk.band)
+      } else {
+        const el = this.#fragment(this.#renderer.tonedPath(chunk.band, chunk.d))[0]
+        stroke.el.appendChild(el)
+        stroke.bands.set(chunk.band, { el, d: chunk.d })
+      }
+    }
+    for (const n of grown) {
+      const band = /** @type {{el: Element, d: string}} */ (stroke.bands.get(n))
+      band.el.setAttribute('d', band.d)
+    }
+    if (!tail) return
+    stroke.tail = this.#fragment(this.#renderer.tonedPath(tail.band, tail.d))[0]
+    stroke.el.appendChild(stroke.tail)
   }
 
   /**

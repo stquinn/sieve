@@ -63,9 +63,12 @@ describe('InkRenderer.renderPage through a window', () => {
   })
 
   it('places every stroke on the plane exactly as a fixed page does', () => {
-    const fixed = renderer.renderPage(page()).split('\n').filter((line) => line.includes('data-stroke'))
-    const windowed = renderer.renderPage(page(), WINDOW).split('\n').filter((line) => line.includes('data-stroke'))
-    expect(windowed.length).toBeGreaterThan(0)
+    /** @param {string} svg @returns {string[]} the pen layer and each tone band's, whole */
+    const ink = (svg) => svg.match(/<g data-ink="(pen|b\d)"[^>]*>[^]*?<\/g>/g) ?? []
+    const fixed = ink(renderer.renderPage(page()))
+    const windowed = ink(renderer.renderPage(page(), WINDOW))
+    expect(windowed).toHaveLength(8)
+    expect(windowed.filter((group) => group.includes('<path ')).length).toBeGreaterThan(2)
     expect(windowed).toEqual(fixed)
   })
 
@@ -125,24 +128,29 @@ describe('InkRenderer.renderLiveStroke', () => {
     expect(svg).toContain(live)
   })
 
-  /** @param {string} markup @returns {string[]} each path's band and outline, as `b{band} {d}` */
-  const toned = (markup) => [...markup.matchAll(/<path fill="url\(#ink-b(\d)\)" d="([^"]*)"\/>/g)].map((m) => `b${m[1]} ${m[2]}`)
-  /** @param {any} stroke @returns {string[]} the committed chunks, as `toned` reads live ones, sorted */
-  const committed = (stroke) => renderer.renderStroke(stroke).bands
-    .flatMap((part, i) => [...part.matchAll(/<path d="([^"]*)"\/>/g)].map((m) => `b${i} ${m[1]}`))
-    .sort()
+  /** @param {ReadonlyArray<{band: number, d: string}|null>} chunks @returns {string[]} the path data per band, as `renderStroke` gives it */
+  const banded = (chunks) => INK_RULES.tone.keep.map((_, i) => chunks.map((c) => (c && c.band === i ? c.d : '')).join(''))
 
-  it('draws a whole pencil stroke as a group of its chunks, each in its band\'s tone, exactly as the page does', () => {
+  it('draws a whole pencil stroke as a group of one path per band it touches, each in its band\'s tone, exactly as the page does', () => {
     const live = renderer.renderLiveStroke(pencil)
     expect(live).toMatch(new RegExp(`^<g data-stroke="${pencil.id}">`))
-    expect(toned(live).length).toBeGreaterThan(1)
-    expect(new Set(toned(live).map((p) => p.slice(0, 2))).size).toBeGreaterThan(1)
-    expect([...toned(live)].sort()).toEqual(committed(pencil))
+    const paths = [...live.matchAll(/<path fill="url\(#ink-b(\d)\)" d="([^"]*)"\/>/g)].map((m) => ({ band: Number(m[1]), d: m[2] }))
+    expect(paths.length).toBeGreaterThan(1)
+    expect(new Set(paths.map((p) => p.band)).size).toBe(paths.length)
+    expect(banded(paths)).toEqual(renderer.renderStroke(pencil).bands)
+    expect(paths.map((p) => renderer.tonedPath(p.band, p.d)).join('')).toBe(live.slice(live.indexOf('>') + 1, -'</g>'.length))
   })
 
-  it.each([1, 3, 10, 37])('settles each pencil chunk, arriving %i points at a time, exactly as it will commit, and draws it once', (batch) => {
+  it('writes a band as one path of its strokes\' path data in order, and nothing for a band with none', () => {
+    const [light, dark] = renderer.renderStroke(pencil).bands.filter(Boolean)
+    expect(renderer.bandPath([light, '', dark])).toBe(`<path d="${light}${dark}"/>`)
+    expect(renderer.bandPath(['', ''])).toBe('')
+    expect(svg).toContain(renderer.bandPath(page.strokes.map((s) => renderer.renderStroke(s).bands[6])))
+  })
+
+  it.each([1, 3, 10, 37])('settles each pencil chunk, arriving %i points at a time, exactly as it will commit, and gives it once', (batch) => {
     const chunk = INK_RULES.pencil.chunk
-    /** @type {string[]} */ const drawn = []
+    /** @type {{band: number, d: string}[]} */ const drawn = []
     let next = 0
     for (let n = batch; ; n = Math.min(n + batch, pencil.points.length)) {
       const sofar = { ...pencil, points: pencil.points.slice(0, n) }
@@ -155,7 +163,7 @@ describe('InkRenderer.renderLiveStroke', () => {
       if (n === pencil.points.length) break
     }
     const commit = renderer.renderLivePencil(pencil, 0)
-    expect([...toned(drawn.join('')), ...toned(commit.tail)].sort()).toEqual(committed(pencil))
+    expect(banded([...drawn, commit.tail])).toEqual(renderer.renderStroke(pencil).bands)
   })
   it('draws nothing from a single point', () => {
     expect(renderer.renderLiveStroke({ ...pencil, points: pencil.points.slice(0, 1) })).toBe('')

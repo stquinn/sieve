@@ -52,11 +52,13 @@ import { ContractViolation } from '../contract/sieve-block.js'
  */
 
 /**
- * One stroke's committed markup, split by the layer each part is appended to:
- * `pen` goes in the `pen` layer; `bands[i]` goes in layer `b{i}`. Parts a
- * stroke does not use are ''.
+ * One committed stroke, split by the layer each part belongs to: `pen` is the
+ * markup of its node in the `pen` layer; `bands[i]` is the path data it adds to
+ * the one path of layer `b{i}`. Parts a stroke does not use are ''.
  * @typedef {Readonly<{pen: string, bands: ReadonlyArray<string>}>} InkStrokeMarkup
  */
+
+/** One chunk of a pencil stroke: its tone band and its outline's path data. @typedef {Readonly<{band: number, d: string}>} InkChunk */
 
 /** @typedef {(points: number[][], options: object) => number[][]} OutlineFn */
 
@@ -152,11 +154,17 @@ export class InkRenderer {
     /** @type {string[][]} */
     const layers = INK_LAYERS.map(() => [])
     const pen = INK_LAYERS.indexOf('pen')
+    /** @type {string[][]} */
+    const bands = INK_RULES.tone.keep.map(() => [])
     for (const stroke of page.strokes) {
       const markup = this.renderStroke(stroke)
       if (markup.pen) layers[pen].push(markup.pen)
-      markup.bands.forEach((part, i) => { if (part) layers[pen + 1 + i].push(part) })
+      markup.bands.forEach((part, i) => bands[i].push(part))
     }
+    bands.forEach((parts, i) => {
+      const path = this.bandPath(parts)
+      if (path) layers[pen + 1 + i].push(path)
+    })
     const ruling = this.renderRuling(page.note.template, window ?? { x0: 0, y0: 0, x1: 1, y1: 1 / aspect })
     let frame
     if (window) {
@@ -263,8 +271,8 @@ export class InkRenderer {
   }
 
   /**
-   * One stroke's committed markup: a pen stroke is one `<path>`; a pencil
-   * stroke is a `<g data-stroke>` of chunk paths per tone band it touches.
+   * One committed stroke: a pen stroke is one `<path data-stroke>`; a pencil
+   * stroke is, for each tone band it touches, the path data of its chunks there.
    * @param {InkStroke} stroke
    * @returns {InkStrokeMarkup}
    */
@@ -274,58 +282,72 @@ export class InkRenderer {
     if (stroke.tool === 'pen') {
       return Object.freeze({ pen: this.#penPath(stroke), bands: Object.freeze(bands) })
     }
-    /** @type {string[][]} */
-    const byBand = bands.map(() => [])
-    for (const chunk of this.#pencilChunks(stroke)) {
-      byBand[chunk.band].push(`<path d="${chunk.d}"/>`)
-    }
-    byBand.forEach((paths, i) => {
-      if (paths.length) bands[i] = `<g data-stroke="${esc(stroke.id)}">${paths.join('')}</g>`
-    })
+    for (const chunk of this.#pencilChunks(stroke)) bands[chunk.band] += chunk.d
     return Object.freeze({ pen: '', bands: Object.freeze(bands) })
+  }
+
+  /**
+   * The one `<path>` of a tone band's layer: the path data of every stroke in
+   * the band, in the order given. It carries no fill; the layer gives it.
+   * @param {Iterable<string>} parts each stroke's path data for the band
+   * @returns {string} '' when no part draws anything
+   */
+  bandPath(parts) {
+    const d = [...parts].join('')
+    return d ? `<path d="${d}"/>` : ''
+  }
+
+  /**
+   * A `<path>` filled with a band's tone itself, for the `live` layer, which has
+   * no fill of its own.
+   * @param {number} band @param {string} d path data
+   * @returns {string}
+   */
+  tonedPath(band, d) {
+    return `<path fill="url(#ink-b${band})" d="${d}"/>`
   }
 
   /**
    * A stroke still under the pen, for the `live` layer: a pen stroke as one
    * `<path>`, exactly as it will commit; a pencil stroke as a `<g data-stroke>`
-   * of its chunks as `renderLivePencil` draws them.
+   * of one toned path per band its chunks so far touch, lightest band first.
    * @param {InkStroke} stroke the points received so far
    * @returns {string} '' while there are too few points to draw
    */
   renderLiveStroke(stroke) {
     if (stroke.tool === 'pen') return this.#penPath(stroke)
     const { settled, tail } = this.renderLivePencil(stroke, 0)
-    const paths = tail ? [...settled, tail] : settled
-    return paths.length ? `<g data-stroke="${esc(stroke.id)}">${paths.join('')}</g>` : ''
+    const bands = INK_RULES.tone.keep.map(() => '')
+    for (const chunk of tail ? [...settled, tail] : settled) bands[chunk.band] += chunk.d
+    const paths = bands.map((d, band) => (d ? this.tonedPath(band, d) : '')).join('')
+    return paths ? `<g data-stroke="${esc(stroke.id)}">${paths}</g>` : ''
   }
 
   /**
-   * The chunks of a pencil stroke under the pen from chunk `from` on, each one
-   * `<path>` filled with its band's tone, the same outline in the same band as
-   * `renderStroke` draws it. A chunk is SETTLED once every point it spans has
-   * arrived: it is then exactly as it will commit, and a caller holding it never
-   * needs it again. Only the chunk after the settled ones, the tail, may still
-   * change.
+   * The chunks of a pencil stroke under the pen from chunk `from` on, each the
+   * same outline in the same band as `renderStroke` gives it. A chunk is SETTLED
+   * once every point it spans has arrived: it is then exactly as it will commit,
+   * and a caller holding it never needs it again. Only the chunk after the
+   * settled ones, the tail, may still change.
    * @param {InkStroke} stroke the points received so far
    * @param {number} from the first chunk wanted, by its index in the stroke
-   * @returns {Readonly<{settled: ReadonlyArray<string>, next: number, tail: string}>}
+   * @returns {Readonly<{settled: ReadonlyArray<InkChunk>, next: number, tail: InkChunk|null}>}
    *   `settled`: the settled chunks from `from` on that draw anything; `next`: the
-   *   index of the first chunk not settled; `tail`: that chunk, '' when it draws
+   *   index of the first chunk not settled; `tail`: that chunk, null when it draws
    *   nothing or there is none
    */
   renderLivePencil(stroke, from) {
     const { chunk } = INK_RULES.pencil
     const points = stroke.points
     const slots = Math.ceil(points.length / chunk)
-    const path = (/** @type {{band: number, d: string}|null} */ c) => (c ? `<path fill="url(#ink-b${c.band})" d="${c.d}"/>` : '')
-    /** @type {string[]} */
+    /** @type {InkChunk[]} */
     const settled = []
     let k = Math.max(0, from)
     for (; k < slots && points.length >= (k + 1) * chunk + 1; k++) {
-      const markup = path(this.#pencilChunk(stroke, k))
-      if (markup) settled.push(markup)
+      const c = this.#pencilChunk(stroke, k)
+      if (c) settled.push(c)
     }
-    const tail = k < slots ? path(this.#pencilChunk(stroke, k)) : ''
+    const tail = k < slots ? this.#pencilChunk(stroke, k) : null
     return Object.freeze({ settled: Object.freeze(settled), next: k, tail })
   }
 
@@ -343,7 +365,7 @@ export class InkRenderer {
    * Fixed-length runs of a pencil stroke, each overlapping its neighbours by a
    * point, at the run's mean pressure and in the band that tone selects.
    * @param {InkStroke} stroke
-   * @returns {{band: number, d: string}[]}
+   * @returns {InkChunk[]}
    */
   #pencilChunks(stroke) {
     const chunks = []
@@ -358,7 +380,7 @@ export class InkRenderer {
    * Chunk `k` of a pencil stroke: the points `max(0, k·chunk − 1) .. (k+1)·chunk`
    * of those it has, or null when that is under two points or draws nothing.
    * @param {InkStroke} stroke @param {number} k
-   * @returns {{band: number, d: string}|null}
+   * @returns {InkChunk|null}
    */
   #pencilChunk(stroke, k) {
     const { chunk, smoothing, streamline } = INK_RULES.pencil
@@ -371,7 +393,7 @@ export class InkRenderer {
     const d = this.#pathData(this.#strokeOutline(run, {
       size, thinning: 0, smoothing, streamline, simulatePressure: false, last: true, start: caps, end: caps,
     }))
-    return d ? { band: InkRenderer.#band(pressure), d } : null
+    return d ? Object.freeze({ band: InkRenderer.#band(pressure), d }) : null
   }
 
   /**
