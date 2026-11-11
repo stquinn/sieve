@@ -1,6 +1,7 @@
 package ink
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -85,6 +86,11 @@ func (k logKey) names(log []byte) bool {
 	return len(log) == k.length && sha256.Sum256(log) == k.sum
 }
 
+// heads reports whether log is the log k names followed by more.
+func (k logKey) heads(log []byte) bool {
+	return len(log) > k.length && k.names(log[:k.length])
+}
+
 // OpenNote is one Digital Note held while a view of it is open, the seq it stands at, and the
 // destinations holding it. Page answers and stroke changes are handed out under one lock, each
 // naming the seq it reflects, so a consumer holding a page answered at seq S takes every change
@@ -92,8 +98,9 @@ func (k logKey) names(log []byte) bool {
 //
 // The note's log is replayed only when something needs the replay. A page answered with its kept
 // drawing needs none: the note then stands at the drawing's key with no replay, and is replayed up
-// to exactly that key when a record is committed or a page must be exported. It is safe for
-// concurrent use.
+// to exactly that key when a record is committed or a page must be exported. A drawing kept before
+// the log grew by strokes alone is still the answer: it is sent first, and the note is then
+// replayed and the strokes after the drawing handed out as changes. It is safe for concurrent use.
 type OpenNote struct {
 	uuid string
 	logs noteLogs
@@ -132,10 +139,14 @@ func (o *OpenNote) load() error {
 // may be nil, is asked for the page's kept drawing and the key it says it was made at: when the
 // note stands at that key the drawing is the answer's Drawing, and otherwise the answer is the
 // page's Export. A note not yet replayed whose log is the one a kept drawing's key names is
-// answered with the drawing and stays unreplayed. An absent page is ErrNoSuchPage and send is not
-// called. kept and send run while the note is held, so no change is handed out between the answer
-// being built and send returning; neither may call back into the note.
-func (o *OpenNote) AnswerPage(page link.ID, kept func() (drawing []byte, key string), send func(PageAnswer) error) error {
+// answered with the drawing and stays unreplayed. One whose log is that log followed by stroke
+// records alone is answered with the drawing at the drawing's seq, and after send returns changed
+// is called with each stroke change those records make, on any page; with a nil changed, or any
+// other record after the drawing, the answer is the page's Export. An absent page is ErrNoSuchPage
+// and send is not called. kept, send and changed run while the note is held, so no other change is
+// handed out between the answer being built and the last of them returning; none may call back
+// into the note.
+func (o *OpenNote) AnswerPage(page link.ID, kept func() (drawing []byte, key string), send func(PageAnswer) error, changed func(StrokeChange)) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	var drawing []byte
@@ -152,6 +163,19 @@ func (o *OpenNote) AnswerPage(page link.ID, kept func() (drawing []byte, key str
 			if key.names(log) {
 				o.at = key
 				return send(PageAnswer{Seq: key.seq, Key: madeAt, Drawing: drawing})
+			}
+			if tail, ok := o.strokesAfter(key, log); ok && changed != nil && (o.at == logKey{}) {
+				o.at = key
+				if err := send(PageAnswer{Seq: key.seq, Key: madeAt, Drawing: drawing}); err != nil {
+					return err
+				}
+				if err := o.load(); err != nil {
+					return err
+				}
+				for _, rec := range tail {
+					o.take(rec, changed)
+				}
+				return nil
 			}
 		}
 	}
@@ -209,6 +233,35 @@ func (o *OpenNote) Commit(rec link.Record, send func(StrokeChange)) {
 			return
 		}
 	}
+	o.take(rec, send)
+}
+
+// strokesAfter are the records of log after the log key names, when log is that log followed by
+// whole stroke-add and stroke-remove lines and nothing else.
+func (o *OpenNote) strokesAfter(key logKey, log []byte) ([]link.Record, bool) {
+	if !key.heads(log) {
+		return nil, false
+	}
+	var tail []link.Record
+	for rest := log[key.length:]; len(rest) > 0; {
+		end := bytes.IndexByte(rest, '\n')
+		if end < 0 {
+			return nil, false
+		}
+		rec, err := link.ParseJSONLine(rest[:end+1])
+		if err != nil || (rec.Op != link.OpStrokeAdd && rec.Op != link.OpStrokeRemove) {
+			return nil, false
+		}
+		tail = append(tail, rec)
+		rest = rest[end+1:]
+	}
+	return tail, true
+}
+
+// take applies rec to the replayed note and calls send with the stroke change it made, if any. A
+// record that is not the next one means records were missed: the note replays its whole log again
+// and hands out nothing. o.mu is held.
+func (o *OpenNote) take(rec link.Record, send func(StrokeChange)) {
 	line, err := rec.JSONLine()
 	if err != nil || rec.Seq != o.at.seq+1 {
 		logger.Warn("ink: an open note missed records, replaying its log", "container", o.uuid, "seq", o.at.seq, "got", rec.Seq)

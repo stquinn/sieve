@@ -1548,4 +1548,33 @@ func TestWS_InkPage_AnswersWithTheDrawingKeptWhileTheNoteStands(t *testing.T) {
 	if full := ask(""); full["key"] != movedKey || full["page"] == nil || full["seq"] != float64(len(all)) {
 		t.Errorf("the page asked in full of a note answered from its drawing: key %v, seq %v, page %v", full["key"], full["seq"], full["page"] != nil)
 	}
+
+	// The log grows by a stroke while nobody holds the note: the drawing kept before it is still
+	// the answer, at its own seq, and the stroke follows as a change.
+	reopen := func(records []link.Record) {
+		t.Helper()
+		c.Close()
+		waitFor(t, func() bool { return !w.holds(w.container()) }, "the note to be released")
+		w.session(records)
+		c = dialWS(t, w.srv, w.container())
+	}
+	grown := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)), inkStrokeAdd(inkPage1, inkStroke(2)), inkStrokeAdd(inkPage1, inkStroke(3)))
+	reopen(grown)
+	if a := ask("2"); a["key"] != movedKey || a["drawing"] != drawing(movedKey, "2") || a["seq"] != float64(len(all)) {
+		t.Fatalf("after the log grew by a stroke: key %v, seq %v, drawing %v", a["key"], a["seq"], a["drawing"])
+	}
+	added := readUntil(t, c, protocol.TypeInkStrokeAdded, 2*time.Second)
+	if stroke, _ := added["stroke"].(map[string]interface{}); added["seq"] != float64(len(grown)) || stroke["id"] != inkStroke(3).String() {
+		t.Errorf("the stroke after the drawing: %v", added)
+	}
+	if now := ask("2"); now["key"] == movedKey || now["page"] == nil || now["seq"] != float64(len(grown)) {
+		t.Errorf("asked again once the stroke was taken: key %v, seq %v, page %v", now["key"], now["seq"], now["page"] != nil)
+	}
+
+	// Anything but strokes after the drawing, and the page is answered in full.
+	paged := append(grown[:len(grown):len(grown)], link.Record{Seq: uint32(len(grown) + 1), Op: link.OpPageAdd, Page: inkPage2, Index: 1, Bounds: link.BoundsFixed})
+	reopen(paged)
+	if a := ask("2"); a["drawing"] != nil || a["page"] == nil || a["seq"] != float64(len(paged)) {
+		t.Errorf("after a page was added: drawing %v, page %v, seq %v", a["drawing"], a["page"] != nil, a["seq"])
+	}
 }

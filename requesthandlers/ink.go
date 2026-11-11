@@ -561,6 +561,13 @@ func (s *inkStream) answerPage(socket string, msg protocol.InkPageFrame, reply f
 		}
 		reply(protocol.NewInkPageContentFrame(msg.OpID, msg.PageID, a.Seq, a.Key, a.Export))
 		return nil
+	}, func(c ink.StrokeChange) {
+		frame, err := s.strokeFrame(c)
+		if err != nil {
+			logger.Error("ink: exporting a stroke after a kept drawing", "container", container, "seq", c.Seq, "err", err.Error())
+			return
+		}
+		reply(frame)
 	})
 	if err != nil {
 		refuse(err)
