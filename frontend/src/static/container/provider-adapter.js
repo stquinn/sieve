@@ -84,6 +84,17 @@ export class ProviderAdapter {
     return ProviderAdapter.#freeze(structuredClone(value))
   }
 
+  /**
+   * A value of plain data frozen where it is, all the way down. Only for a value
+   * nothing else holds: whoever else held it would find it frozen.
+   * @protected
+   * @template T
+   * @param {T} value @returns {Readonly<T>}
+   */
+  static _frozenInPlace(value) {
+    return ProviderAdapter.#freeze(value)
+  }
+
   /** A throwing listener is isolated: the others still hear the event.
    *  @param {Record<string, any>} event */
   #deliver(event) {

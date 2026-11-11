@@ -3,7 +3,7 @@
 // over the container's channel, and its ink frames as the feed's events. The
 // feed's delivery itself is the base adapter's (provider-adapter.test.js).
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { serviceRig, FakeSocket } from './helpers/service-rig.js'
 import { ContainerModel } from '../src/static/container/container-model.js'
 import { InkProviderAdapter } from '../src/static/container/ink-provider-adapter.js'
@@ -40,13 +40,16 @@ describe('InkProviderAdapter', () => {
     expect(provider.getBlock(UUID)?.attrs.title).toBe('Ideas')
   })
 
-  it('loadPage resolves the page and the seq it reflects, frozen', async () => {
+  it('loadPage resolves the page the wire carried and the seq it reflects, frozen where it is', async () => {
     const { provider, sock } = rig()
     const page = { note: { pageAspect: 0.75 }, strokes: [STROKE] }
+    const copies = vi.spyOn(globalThis, 'structuredClone')
     const pending = provider.loadPage('p1')
     sock.driveMessage({ type: DocumentFrame.INK_PAGE_CONTENT, opId: pageOpId(sock), pageId: 'p1', seq: 4, page })
     const answer = await pending
     expect(answer).toEqual({ page, seq: 4 })
+    expect(copies).not.toHaveBeenCalled()
+    copies.mockRestore()
     expect(Object.isFrozen(answer.page.strokes[0].points[0])).toBe(true)
   })
 

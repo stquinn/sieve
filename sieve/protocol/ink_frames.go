@@ -1,6 +1,10 @@
 package protocol
 
-import "sieve/sieve/block"
+import (
+	"encoding/json"
+
+	"sieve/sieve/block"
+)
 
 // The ink frames ride the document channel of a Digital Note's block container. The page list,
 // the title and every other page-level fact are the block's attrs and arrive as the block's attrs
@@ -19,17 +23,18 @@ type InkPageFrame struct {
 // it whose seq is at or below Seq; every later change to the page arrives as a stroke frame above
 // it.
 type InkPageContentFrame struct {
-	Type   string         `json:"type"`
-	OpID   string         `json:"opId,omitempty"`
-	PageID string         `json:"pageId" doc:"the page asked for, echoed"`
-	Seq    uint32         `json:"seq" doc:"the seq of the last record of the note's log the page reflects; 0 when refused"`
-	Page   *InkPageExport `json:"page" doc:"the page's strokes in the export shape; null when refused"`
-	Error  string         `json:"error,omitempty" doc:"present only when there is no page: the channel holds no Digital Note, or the note has no page of that id"`
+	Type   string          `json:"type"`
+	OpID   string          `json:"opId,omitempty"`
+	PageID string          `json:"pageId" doc:"the page asked for, echoed"`
+	Seq    uint32          `json:"seq" doc:"the seq of the last record of the note's log the page reflects; 0 when refused"`
+	Page   json.RawMessage `json:"page" doc:"the page in the export shape, an InkPageExport; null when refused"`
+	Error  string          `json:"error,omitempty" doc:"present only when there is no page: the channel holds no Digital Note, or the note has no page of that id"`
 }
 
-// NewInkPageContentFrame builds the answer carrying page as it stood at seq.
-func NewInkPageContentFrame(opID, pageID string, seq uint32, page InkPageExport) InkPageContentFrame {
-	return InkPageContentFrame{Type: TypeInkPageContent, OpID: opID, PageID: pageID, Seq: seq, Page: &page}
+// NewInkPageContentFrame builds the answer carrying page, the JSON of an InkPageExport, as it
+// stood at seq. The frame holds page and does not copy it.
+func NewInkPageContentFrame(opID, pageID string, seq uint32, page json.RawMessage) InkPageContentFrame {
+	return InkPageContentFrame{Type: TypeInkPageContent, OpID: opID, PageID: pageID, Seq: seq, Page: page}
 }
 
 // NewInkPageRefusedFrame builds the answer to an ink-page that names no page there is.

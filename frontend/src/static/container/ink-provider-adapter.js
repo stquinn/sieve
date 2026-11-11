@@ -35,7 +35,7 @@ export class InkProviderAdapter extends ProviderAdapter {
   /** @param {string} pageId @returns {Promise<InkPageAnswer>} */
   loadPage(pageId) {
     return this.#documents.inkPage(this.getUuid(), pageId)
-      .then((answer) => /** @type {InkPageAnswer} */ (ProviderAdapter._frozen({ page: answer.page, seq: answer.seq })))
+      .then((answer) => /** @type {InkPageAnswer} */ (ProviderAdapter._frozenInPlace({ page: answer.page, seq: answer.seq })))
   }
 
   /** @param {string} pageId @returns {Promise<InkOpeningResult>} */

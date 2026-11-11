@@ -492,7 +492,7 @@ InkPageContentFrame answers an ink-page: the page in the export shape and the se
 | `opId` | `string` | no |  |
 | `pageId` | `string` | yes | the page asked for, echoed |
 | `seq` | `uint32` | yes | the seq of the last record of the note's log the page reflects; 0 when refused |
-| `page` | `*protocol.InkPageExport` | no | the page's strokes in the export shape; null when refused |
+| `page` | `json.RawMessage` | yes | the page in the export shape, an InkPageExport; null when refused |
 | `error` | `string` | no | present only when there is no page: the channel holds no Digital Note, or the note has no page of that id |
 
 #### `ink-stroke-added` — server → client

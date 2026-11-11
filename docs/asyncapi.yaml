@@ -2169,7 +2169,7 @@ components:
           type: integer
           description: the seq of the last record of the note's log the page reflects; 0 when refused
         page:
-          $ref: '#/components/schemas/ProtocolInkPageExport'
+          description: the page in the export shape, an InkPageExport; null when refused
         error:
           type: string
           description: 'present only when there is no page: the channel holds no Digital Note, or the note has no page of that id'
@@ -2177,6 +2177,7 @@ components:
         - type
         - pageId
         - seq
+        - page
     ProtocolInkPageDrawnFrame:
       type: object
       description: |-

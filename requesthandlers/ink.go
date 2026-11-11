@@ -546,11 +546,7 @@ func (s *inkStream) answerPage(socket string, msg protocol.InkPageFrame, reply f
 		return
 	}
 	err = note.AnswerPage(page, func(export []byte, seq uint32) error {
-		var decoded protocol.InkPageExport
-		if err := json.Unmarshal(export, &decoded); err != nil {
-			return err
-		}
-		reply(protocol.NewInkPageContentFrame(msg.OpID, msg.PageID, seq, decoded))
+		reply(protocol.NewInkPageContentFrame(msg.OpID, msg.PageID, seq, export))
 		return nil
 	})
 	if err != nil {

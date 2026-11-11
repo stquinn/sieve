@@ -47,6 +47,10 @@ func outboundWireCases() []wireCase {
 			Device:   InkExportDevice{ID: "d", Name: "Note Air 2", Model: "ONYX"}},
 		Strokes: []InkExportStroke{inkStroke},
 	}
+	inkPageJSON, err := json.Marshal(inkPage)
+	if err != nil {
+		panic(err)
+	}
 
 	return []wireCase{
 		{
@@ -281,7 +285,7 @@ func outboundWireCases() []wireCase {
 		{
 			name:    "ink-page-content",
 			channel: ChannelDocument,
-			frame:   NewInkPageContentFrame("op-1", "p1", 7, inkPage),
+			frame:   NewInkPageContentFrame("op-1", "p1", 7, inkPageJSON),
 			golden: `{"type":"ink-page-content","opId":"op-1","pageId":"p1","seq":7,"page":{"note":{"id":"n1","created":"2023-11-14T22:13:20Z",` +
 				`"title":"Ideas","pageAspect":0.75,"template":{"id":"ruled","params":{"spacing":0.05}},"device":{"id":"d","name":"Note Air 2","model":"ONYX"}},` +
 				`"strokes":[` + inkStrokeJSON + `]}}`,
