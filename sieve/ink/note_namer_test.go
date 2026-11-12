@@ -573,6 +573,53 @@ func TestNoteNamer_AFailedDescriptionWaitsForTheNoteToChange(t *testing.T) {
 	}
 }
 
+// A job the namer began by itself answers for every seq known when it began, so a log that reads
+// short of the seq the namer was told is described once, until a later record is committed.
+func TestNoteNamer_ALogThatReadsShortIsDescribedOnce(t *testing.T) {
+	rig := newNamerRig(t, inkLog()...)
+	rig.settled(0)
+	rig.namer.RecordCommitted(rig.uuid(), noteID, link.Record{Seq: 8})
+	rig.settled(testSettle)
+	for i := 0; i < 5; i++ {
+		rig.settled(time.Hour)
+	}
+	if calls := rig.describer.calls(); len(calls) != 1 || rig.meta()["note_meta_seq"] != "6" {
+		t.Fatalf("described %d times, of seq %s; want once, of the seq read", len(calls), rig.meta()["note_meta_seq"])
+	}
+	rig.namer.RecordCommitted(rig.uuid(), noteID, link.Record{Seq: 9})
+	rig.settled(testSettle)
+	if calls := rig.describer.calls(); len(calls) != 2 {
+		t.Errorf("described %d times after a later record, want 2", len(calls))
+	}
+}
+
+// A note due again is not due sooner than a settle time after the namer last asked the describer
+// of it, and the namer records that asking for a job it began by itself and not for NameNow.
+func TestNoteNamer_AsksOfANoteAtMostOnceInASettleTime(t *testing.T) {
+	rig := newNamerRig(t, inkLog()...)
+	if err := rig.nameNow(); err != nil {
+		t.Fatal(err)
+	}
+	held := func() namedNote {
+		rig.namer.mu.Lock()
+		defer rig.namer.mu.Unlock()
+		return *rig.namer.held[rig.uuid()]
+	}
+	if asked := held().asked; !asked.IsZero() {
+		t.Fatalf("NameNow counted as the namer asking, at %v", asked)
+	}
+	rig.commit(strokeAdd(page(1), stroke(8)))
+	rig.settled(testSettle)
+	asked := rig.clock.Now()
+	if got := held().asked; !got.Equal(asked) {
+		t.Fatalf("the namer's own job asked at %v, want %v", got, asked)
+	}
+	due := namedNote{seq: 9, described: 7, last: asked.Add(-time.Hour), asked: asked}
+	if at, ok := rig.namer.dueAt(&due, testSettle); !ok || !at.Equal(asked.Add(testSettle)) {
+		t.Errorf("due at %v (%v), want a settle time after the describer was asked, %v", at, ok, asked.Add(testSettle))
+	}
+}
+
 // The job is named for the note and shown where jobs are while it runs.
 func TestNoteNamer_TheJobIsLabelledWithTheNote(t *testing.T) {
 	rig := newNamerRig(t, inkLog()...)

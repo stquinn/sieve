@@ -61,6 +61,12 @@ var (
 // NameNow describes a note at once, due or not. A note a person named keeps that name: what is
 // described of it is its summary, keywords and categories.
 //
+// A job the namer began by itself is the last for every seq known when it began, whatever seq the
+// log it read stood at and whether or not it succeeded: the note is due again only when a later
+// record is committed or the namer starts again. And the describer is asked of one note, by the
+// namer itself, at most once in a settle time; NameNow, and a person clearing a name given by
+// hand, are not held to that.
+//
 // Which notes are due is read from the faces of the notes held, without reading their logs, when
 // the namer starts and whenever its one timer fires; the timer is set for the earliest moment a
 // due note can settle. Nothing is described while the AI's tier is dumb, a note with no ink is
@@ -95,6 +101,12 @@ type namedNote struct {
 	// last is when its log last changed, as far as the namer knows.
 	last time.Time
 	job  bool
+	// auto is the job running, or the last run, being one the namer began by itself, when the
+	// newest seq known was known.
+	auto  bool
+	known uint32
+	// asked is when the describer was last asked of the note by a job the namer began by itself.
+	asked time.Time
 	// retryAt is when it may be tried again, after a pause of pause.
 	retryAt time.Time
 	pause   time.Duration
@@ -187,7 +199,7 @@ func (n *NoteNamer) NameNow(ctx context.Context, uuid string) error {
 		n.mu.Unlock()
 		return nil
 	}
-	held.job = true
+	held.job, held.auto = true, false
 	n.mu.Unlock()
 	if _, err := n.images.Image(ctx, uuid, 0); err != nil {
 		n.idle(uuid)
@@ -204,7 +216,7 @@ func (n *NoteNamer) undescribed(uuid string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if held, ok := n.held[uuid]; ok {
-		held.described = 0
+		held.described, held.asked = 0, time.Time{}
 	}
 	if n.running {
 		n.setTimer(n.now())
@@ -259,7 +271,7 @@ func (n *NoteNamer) wake(wake uint64) {
 	var ready []string
 	for uuid, note := range n.held {
 		if at, due := n.dueAt(note, settle); due && !now.Before(at) {
-			note.job = true
+			note.job, note.auto, note.known = true, true, note.seq
 			ready = append(ready, uuid)
 		}
 	}
@@ -331,15 +343,27 @@ func (n *NoteNamer) describe(uuid string, pages int) (domain.NoteMetadata, error
 		}
 		addresses = append(addresses, img.Address)
 	}
+	n.mu.Lock()
+	if note := n.note(uuid, time.Time{}); note.auto {
+		note.asked = n.now()
+	}
+	n.mu.Unlock()
 	return n.describer.DescribeNote(uuid, addresses)
 }
 
 // finished is the job of the note in uuid over with the note described, or found to need no
-// description, as of seq.
+// description, as of seq, the seq of the log the job read. A job the namer began by itself also
+// answers for every seq known when it began.
 func (n *NoteNamer) finished(uuid string, seq uint32) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	note := n.note(uuid, time.Time{})
+	if note.auto {
+		if seq < note.known {
+			logger.Warn("ink: a note's log read short of the seq known when it was named", "container", uuid, "read", seq, "known", note.known)
+		}
+		seq = max(seq, note.known)
+	}
 	note.job, note.described, note.pause, note.retryAt = false, max(note.described, seq), 0, time.Time{}
 	n.arm()
 }
@@ -371,7 +395,8 @@ func (n *NoteNamer) retry(uuid, why string, err error) {
 	n.arm()
 }
 
-// dueAt is when note settles, and whether it is due, with no job running. n.mu is held.
+// dueAt is when note settles, no sooner than a settle time after the describer was last asked of
+// it by the namer itself, and whether it is due, with no job running. n.mu is held.
 func (n *NoteNamer) dueAt(note *namedNote, settle time.Duration) (time.Time, bool) {
 	if note.job || note.seq <= note.described {
 		return time.Time{}, false
@@ -379,6 +404,9 @@ func (n *NoteNamer) dueAt(note *namedNote, settle time.Duration) (time.Time, boo
 	at := note.last.Add(settle)
 	if note.retryAt.After(at) {
 		at = note.retryAt
+	}
+	if !note.asked.IsZero() && note.asked.Add(settle).After(at) {
+		at = note.asked.Add(settle)
 	}
 	return at, true
 }
