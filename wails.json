@@ -5,6 +5,7 @@
   "frontend:dir": "frontend",
   "frontend:install": "npm install",
   "frontend:build": "npm run build",
+  "frontend:dev:build": "npm run css",
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "",
   "author": {

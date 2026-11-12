@@ -85,6 +85,10 @@ go build ./...   # compile check — no npm step required
 
 **Tailwind:** `npx tailwindcss -i frontend/src/static/input.css -o frontend/src/static/tailwind.css`
 — content paths must include `frontend/src/templates/**/*.html` and `frontend/src/index.html`.
+`wails dev` runs `npm run css` (`frontend:dev:build`), not the full `npm run build`, so it never
+rebuilds the vendor bundles; `css`, `build` and the `dev` watcher all write the same minified file.
+`tailwind.css` is committed: Tailwind scans `src/static/**/*.js` too, so a JS change can alter it —
+commit the regenerated file with the change that caused it.
 
 **TipTap bundle:** rebuild only when TipTap core/deps change: `npm run bundle:tiptap` in `frontend/`.
 Custom extensions live in `extensions.js` (vanilla JS) — they are NOT in the bundle.
