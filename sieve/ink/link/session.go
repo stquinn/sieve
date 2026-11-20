@@ -43,7 +43,7 @@ type Observer interface {
 	// Committed is a record appended to the note's replica.
 	Committed(note ID, r Record)
 	// Done is a DONE: the companion has sent the note to its head, which the replica holds to seq,
-	// after records records in this session.
+	// after records records in this session. The replica has settled.
 	Done(note ID, seq uint32, records int)
 	// Live is a LIVE: the note and page being written, both zero when none is.
 	Live(note, page ID)
@@ -52,9 +52,9 @@ type Observer interface {
 	// Refused is a REFUSE of an OPEN of note, with its reason. A REFUSE of an OPEN-NOTE is answered
 	// to the caller of OpenNote instead.
 	Refused(note ID, reason string)
-	// SetAside is the note's replica set aside: its log starts again from seq 1, and the records
-	// Committed reports for it from now on are the new log's.
-	SetAside(note ID)
+	// Rewound is the note's replica rewound to seq, and the note opened again from there: the
+	// records Committed reports for it from now on follow seq.
+	Rewound(note ID, seq uint32)
 }
 
 // Plan is what one session is to do after the handshake.
@@ -79,8 +79,10 @@ type Session struct {
 	obs      Observer
 	plan     Plan
 
-	queue    []ID
-	current  *ID
+	queue   []ID
+	current *ID
+	// open are the replicas this session has opened, by note.
+	openMu   sync.Mutex
 	open     map[ID]Replica
 	heads    map[ID]headCheck
 	received map[ID]int
@@ -298,6 +300,9 @@ func (s *Session) onHead(note ID, head headCheck) error {
 		return err
 	}
 	s.obs.Opened(note, head.seq, r.Cursor().Seq)
+	if err := r.Begin(head.seq); err != nil {
+		return fmt.Errorf("note %s: %w", note, err)
+	}
 	return s.checkHead(note, r)
 }
 
@@ -317,7 +322,9 @@ func (s *Session) onOp(note ID, frame LogFrame) error {
 	if err != nil {
 		return err
 	}
-	if err := r.Append(rec, body); err != nil {
+	if err := r.Append(rec, body); errors.Is(err, ErrRewound) {
+		return s.rewound(note, r)
+	} else if err != nil {
 		return fmt.Errorf("note %s: %w", note, err)
 	}
 	s.received[note]++
@@ -327,8 +334,8 @@ func (s *Session) onOp(note ID, frame LogFrame) error {
 }
 
 // checkHead compares the replica's chain with the note's HEAD once its cursor stands at the HEAD's
-// seq. A mismatch means the replica is wrong in a way contiguity could not see: it is set aside
-// and the note opened again from nothing.
+// seq. A mismatch means the replica is wrong in a way contiguity could not see: it is rewound to
+// nothing and the note opened again from there.
 func (s *Session) checkHead(note ID, r Replica) error {
 	head, ok := s.heads[note]
 	cursor := r.Cursor()
@@ -339,11 +346,28 @@ func (s *Session) checkHead(note ID, r Replica) error {
 	if cursor.Hash == head.hash {
 		return nil
 	}
-	if err := r.SetAside(); err != nil {
+	return s.rewindToStart(note, r)
+}
+
+// rewindToStart rewinds the note's replica to nothing, tells the observer, and opens the note again.
+func (s *Session) rewindToStart(note ID, r Replica) error {
+	if err := r.Rewind(0); err != nil {
+		return fmt.Errorf("note %s: %w", note, err)
+	}
+	s.obs.Rewound(note, r.Cursor().Seq)
+	return s.sendOpen(note)
+}
+
+// rewound answers a replica that is ErrRewound: the note is opened again from the replica's cursor
+// and the observer told, unless an OPEN of the note is already unanswered, whose HEAD begins the
+// replica again.
+func (s *Session) rewound(note ID, r Replica) error {
+	sent, err := s.openOnce(note)
+	if err != nil || !sent {
 		return err
 	}
-	s.obs.SetAside(note)
-	return s.sendOpen(note)
+	s.obs.Rewound(note, r.Cursor().Seq)
+	return nil
 }
 
 func (s *Session) onDone(note ID) (bool, error) {
@@ -353,6 +377,11 @@ func (s *Session) onDone(note ID) (bool, error) {
 	r, err := s.replica(note)
 	if err != nil {
 		return false, err
+	}
+	if err := r.Settle(); errors.Is(err, ErrRewound) {
+		return false, s.rewound(note, r)
+	} else if err != nil {
+		return false, fmt.Errorf("note %s: %w", note, err)
 	}
 	s.obs.Done(note, r.Cursor().Seq, s.received[note])
 	if s.current != nil && *s.current == note {
@@ -387,11 +416,7 @@ func (s *Session) onRefuse(note ID, reason string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if err := r.SetAside(); err != nil {
-			return false, err
-		}
-		s.obs.SetAside(note)
-		return false, s.sendOpen(note)
+		return false, s.rewindToStart(note, r)
 	}
 	if s.current != nil && *s.current == note {
 		s.current = nil
@@ -442,7 +467,37 @@ func (s *Session) SendMeta(m Meta) error {
 	return err
 }
 
+// Reopen sends OPEN of note from its replica's cursor, so the companion sends again what the
+// replica no longer holds; nothing is sent while an OPEN of the note is unanswered, since its HEAD
+// starts the note from the replica's cursor as it then stands. It may be called from any goroutine,
+// the Observer's included, and is ErrNotRunning while the session is not running.
+func (s *Session) Reopen(note ID) error {
+	_, err := s.openOnce(note)
+	return err
+}
+
+// openOnce sends OPEN of note from its replica's cursor unless an OPEN of it is unanswered, and
+// reports whether it sent one; ErrNotRunning while the session is not running.
+func (s *Session) openOnce(note ID) (bool, error) {
+	r, err := s.replica(note)
+	if err != nil {
+		return false, err
+	}
+	sent, running := false, false
+	err = s.stream.writeIf(func() bool {
+		sent, running = s.requests.addOpen(note)
+		return sent
+	}, openFrame{note, r.Cursor().Seq}.encode())
+	if !running {
+		return false, ErrNotRunning
+	}
+	return sent, err
+}
+
+// replica is the note's replica, opened once per session. It may be called from any goroutine.
 func (s *Session) replica(note ID) (Replica, error) {
+	s.openMu.Lock()
+	defer s.openMu.Unlock()
 	if r, ok := s.open[note]; ok {
 		return r, nil
 	}
@@ -457,7 +512,10 @@ func (s *Session) replica(note ID) (Replica, error) {
 // have is the seq the note's replica holds at least: its cursor when this session has it open,
 // otherwise what Replicas.Have reports without opening it.
 func (s *Session) have(note ID) (uint32, error) {
-	if r, ok := s.open[note]; ok {
+	s.openMu.Lock()
+	r, ok := s.open[note]
+	s.openMu.Unlock()
+	if ok {
 		return r.Cursor().Seq, nil
 	}
 	return s.replicas.Have(note)
@@ -551,6 +609,18 @@ func (r *requests) add(note ID, answer chan error) bool {
 		r.byNote[note] = append(r.byNote[note], answer)
 	}
 	return r.running
+}
+
+// addOpen records an OPEN of note about to be written unless one is unanswered, and reports
+// whether it did and whether requests are taken.
+func (r *requests) addOpen(note ID) (added, running bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.running || slices.Contains(r.byNote[note], nil) {
+		return false, r.running
+	}
+	r.byNote[note] = append(r.byNote[note], nil)
+	return true, true
 }
 
 // forget drops the OPEN-NOTE answer, which was never written.

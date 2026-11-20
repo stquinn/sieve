@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"slices"
 	"time"
 
@@ -213,6 +214,11 @@ func (n *StrokeBasedNote) present(page link.ID) int {
 // they reach and the length of the prefix they fill. It stops at the first line that has no
 // "\n", does not parse, or is not the next seq, and leaves that line and what follows unread.
 func (n *StrokeBasedNote) Read(jsonl []byte) (link.Cursor, int) {
+	return n.ReadTo(jsonl, math.MaxUint32)
+}
+
+// ReadTo is Read stopping also before the first record whose seq is past last.
+func (n *StrokeBasedNote) ReadTo(jsonl []byte, last uint32) (link.Cursor, int) {
 	var cursor link.Cursor
 	read := 0
 	for read < len(jsonl) {
@@ -221,7 +227,7 @@ func (n *StrokeBasedNote) Read(jsonl []byte) (link.Cursor, int) {
 			break
 		}
 		r, err := link.ParseJSONLine(jsonl[read : read+end+1])
-		if err != nil {
+		if err != nil || r.Seq > last {
 			break
 		}
 		body, err := r.Body()

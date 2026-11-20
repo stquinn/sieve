@@ -49,6 +49,22 @@
  * @typedef {Readonly<{page: Readonly<InkPage>|null, drawing: string|null, seq: number, key: string}>} InkPageAnswer
  */
 
+/**
+ * What `loadPage` rejects with while the note has no published log: its first
+ * records are still arriving from the tablet. The feed delivers a
+ * `log-restarted` when they are published, and the page can then be asked for
+ * again.
+ */
+export class InkNoteSyncing extends Error {
+  /** @param {string} pageId the page asked for */
+  constructor(pageId) {
+    super('ink-page ' + pageId + ': the note is syncing from its tablet')
+    this.name = 'InkNoteSyncing'
+    /** @type {string} */
+    this.pageId = pageId
+  }
+}
+
 /** The `type` of each event an ink container's feed delivers. */
 export const InkFeed = Object.freeze({
   STROKE_ADDED: 'stroke-added',
@@ -171,9 +187,12 @@ export const InkRefusal = Object.freeze({
  * of the pages.
  *
  * - `loadPage` REJECTS for a page the note does not have, and when the host
- *   cannot answer. Given `renderer`, the version of the asker's ink renderer, it
+ *   cannot answer; while the note has no published log it REJECTS with an
+ *   InkNoteSyncing, whatever page is asked. Given `renderer`, the version of the asker's ink renderer, it
  *   may answer with the drawing that renderer kept of the page in place of the
  *   page; without one it answers the page.
+ * - `noteSyncing` resolves true while the note has no published log, which a
+ *   lens whose note lists no page asks; it REJECTS when the host cannot answer.
  * - `keepDrawing` hands over the drawing made of a page from the answer whose
  *   key is `key`, for a later `loadPage` to answer with while the note stands as
  *   it did. Nothing answers it, and a drawing of a note that has moved on is
@@ -200,6 +219,7 @@ export const InkRefusal = Object.freeze({
  *
  * @typedef {import('./container-provider.js').ContainerProvider & {
  *   loadPage: (pageId: string, renderer?: string) => Promise<InkPageAnswer>,
+ *   noteSyncing: () => Promise<boolean>,
  *   keepDrawing: (pageId: string, key: string, drawing: string) => void,
  *   openOnTablet: (pageId: string) => Promise<InkOpeningResult>,
  *   loadTranscript: (pageId: string) => Promise<InkTranscript>,

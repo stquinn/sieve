@@ -20,4 +20,8 @@ type JobInfo struct {
 	State string `json:"state,omitempty"`
 	// Category is the worker pool the job runs on — opaque routing data.
 	Category string `json:"category,omitempty"`
+	// Done and Total are how far the job has got, Done out of Total. Both are 0, and absent, for
+	// a job that does not say.
+	Done  int `json:"done,omitempty"`
+	Total int `json:"total,omitempty"`
 }

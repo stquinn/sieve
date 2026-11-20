@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"slices"
 	"sort"
 	"strconv"
@@ -113,9 +114,9 @@ type Listener interface {
 	LiveInk(records []link.LiveRecord)
 	// LiveChanged is the companion showing another note or page as live, or none.
 	LiveChanged(live LiveNote)
-	// LogRestarted is the replica of note, held in container, set aside: the container's log
-	// starts again from seq 1, and every record RecordCommitted reports for it from now on is the
-	// new log's.
+	// LogRestarted is the replica of note, held in container, rewound, or its first log
+	// published: the container's log starts again from an earlier record, and every record
+	// RecordCommitted reports for it from now on follows the log as it now stands.
 	LogRestarted(container string, note link.ID)
 }
 
@@ -191,6 +192,14 @@ var ErrNameTooLong = fmt.Errorf("ink: a notebook's name is at most %d bytes", Ma
 // ErrStillOffered is a delete of a note whose Deletion is DeleteRefused.
 var ErrStillOffered = errors.New("ink: the tablet still offers this note")
 
+// ErrNotOffered is a Resync of a note the tablet it came from does not list on a link open now.
+var ErrNotOffered = errors.New("ink: the note's tablet is not connected or does not list it")
+
+// ErrSyncing is a page asked of a Digital Note that has no published log yet: its first records
+// are still arriving from the tablet, and the note is heard as its log restarted when they are
+// published.
+var ErrSyncing = errors.New("ink: the note is syncing from its tablet")
+
 // Status is everything Settings → Ink and the sidebar's Ink section show.
 type Status struct {
 	Enabled bool
@@ -217,6 +226,8 @@ type Status struct {
 type InkService struct {
 	settings    *services.StateService
 	containers  *services.BlockContainerService
+	staging     *NoteStaging
+	jobs        *services.JobTracker
 	radio       radio.Radio
 	invalidator Invalidator
 	throttle    time.Duration
@@ -257,10 +268,11 @@ type InkService struct {
 }
 
 // NewInkService is the service over this machine's settings and session, the container store and
-// r. inv, which may be nil, hears every change the views of ink show. It does nothing until Start.
-func NewInkService(settings *services.StateService, containers *services.BlockContainerService, r radio.Radio, inv Invalidator) *InkService {
+// r, staging its catch-ups in staging and showing each sync as a job on jobs, which may be nil.
+// inv, which may be nil, hears every change the views of ink show. It does nothing until Start.
+func NewInkService(settings *services.StateService, containers *services.BlockContainerService, staging *NoteStaging, jobs *services.JobTracker, r radio.Radio, inv Invalidator) *InkService {
 	s := &InkService{
-		settings: settings, containers: containers, radio: r, invalidator: inv,
+		settings: settings, containers: containers, staging: staging, jobs: jobs, radio: r, invalidator: inv,
 		throttle: time.Second, after: time.After, answerWait: time.After, wake: make(chan struct{}, 1), state: LinkState{Phase: LinkOff},
 		redial: redialPause{base: time.Second, max: 30 * time.Second},
 	}
@@ -544,9 +556,9 @@ func (s *InkService) pageOf(uuid, pageID string) link.ID {
 	return page
 }
 
-// noteLog is the whole log of the Digital Note in container uuid as it stands now: the open
-// session's replica of it, queue included, otherwise its asset. A container that is not a
-// Digital Note is ErrNoSuchPage.
+// noteLog is the published log of the Digital Note in container uuid as it stands now: the open
+// session's replica of it, as NoteReplicas.log reads it, otherwise its asset; empty while the
+// note has none. A container that is not a Digital Note is ErrNoSuchPage.
 func (s *InkService) noteLog(uuid string) ([]byte, error) {
 	c, err := s.digitalNote(uuid)
 	if err != nil {
@@ -566,8 +578,96 @@ func (s *InkService) noteLog(uuid string) ([]byte, error) {
 	return nil, nil
 }
 
+// stands is the seq the published log of the Digital Note in container uuid is known to reach: its
+// open replica's, as NoteReplicas.publishedSeq reads it, otherwise its face's note_synced_seq;
+// false when no Digital Note is held there.
+func (s *InkService) stands(uuid string) (uint32, bool) {
+	s.mu.Lock()
+	run := s.run
+	s.mu.Unlock()
+	if run != nil {
+		if seq, ok := run.replicas.publishedSeq(uuid); ok {
+			return seq, true
+		}
+	}
+	c, err := s.digitalNote(uuid)
+	if err != nil {
+		return 0, false
+	}
+	seq, err := strconv.ParseUint(c.Storable().Meta()["note_synced_seq"], 10, 32)
+	return uint32(seq), err == nil
+}
+
+// rewind rewinds the replica of the Digital Note in container uuid to its last good record, as
+// rewindTo does, the refill a repair.
+func (s *InkService) rewind(uuid string) error {
+	return s.rewindTo(uuid, math.MaxUint32, syncRepair)
+}
+
+// Resync sets the log of the Digital Note in container uuid aside and syncs it again from its
+// first record. The tablet it came from must be connected now and list the note: otherwise it is
+// ErrNotOffered and nothing changes. A container that is not a Digital Note is ErrNoSuchPage.
+func (s *InkService) Resync(uuid string) error {
+	c, err := s.digitalNote(uuid)
+	if err != nil {
+		return err
+	}
+	face := c.Storable().Meta()
+	note, err := link.ParseID(face["note_source_id"])
+	s.mu.Lock()
+	run := s.run
+	s.mu.Unlock()
+	if err != nil || run == nil || run.session == nil || run.link.Identity() != face["note_companion"] {
+		return fmt.Errorf("%w: %s", ErrNotOffered, uuid)
+	}
+	if _, listed := run.listedHead(note); !listed {
+		return fmt.Errorf("%w: %s", ErrNotOffered, uuid)
+	}
+	return s.rewindTo(uuid, 0, syncResync)
+}
+
+// rewindTo rewinds the replica of the Digital Note in container uuid as NoteReplica.Rewind does to
+// seq, and the note is heard as its log restarted. While a session with the tablet it came from
+// runs, that session's replica is rewound and the note opened again from where it then stands, its
+// refill a sync of kind;
+// otherwise the rewind reaches the log and the face alone, and the next listing of the note catches
+// it up. A container that is not a Digital Note is ErrNoSuchPage.
+func (s *InkService) rewindTo(uuid string, seq uint32, kind syncKind) error {
+	c, err := s.digitalNote(uuid)
+	if err != nil {
+		return err
+	}
+	companion := c.Storable().Meta()["note_companion"]
+	s.mu.Lock()
+	run := s.run
+	s.mu.Unlock()
+	if run == nil || run.link.Identity() != companion {
+		replicas := NewNoteReplicas(s.containers, s.staging, companion)
+		note, _, err := replicas.Rewind(uuid, seq)
+		if endErr := replicas.End(); err == nil {
+			err = endErr
+		}
+		if err != nil {
+			return err
+		}
+		s.publish(func(l Listener) { l.LogRestarted(uuid, note) })
+		s.invalidateSoon()
+		return nil
+	}
+	note, _, err := run.replicas.Rewind(uuid, seq)
+	if err != nil {
+		return err
+	}
+	run.rewound(note, kind)
+	if err := run.session.Reopen(note); err != nil && !errors.Is(err, link.ErrNotRunning) {
+		return err
+	}
+	return nil
+}
+
 // noteAttrs are the attrs of the Digital Note in container uuid as they stand now: its open
-// replica's, otherwise its block's; nil when no Digital Note is held there.
+// replica's, as NoteReplicas.attrsOf reads them, otherwise its block's; nil when no Digital Note is
+// held there.
 func (s *InkService) noteAttrs(uuid string) map[string]interface{} {
 	if uuid == "" {
 		return nil
@@ -890,7 +990,8 @@ func (s *InkService) session(ctx context.Context) bool {
 	}
 	s.setRadioProblem("")
 	run := &sessionRun{svc: s, link: l, received: &countedReader{r: l},
-		replicas: NewNoteReplicas(s.containers, l.Identity())}
+		replicas: NewNoteReplicas(s.containers, s.staging, l.Identity())}
+	run.jobs = newSyncJobs(s.jobs, run.describe)
 	s.mu.Lock()
 	run.session = link.NewSession(run, s.key, run.replicas, run, link.Plan{CatchUp: true, Follow: true})
 	s.run = run
@@ -901,6 +1002,7 @@ func (s *InkService) session(ctx context.Context) bool {
 	}
 	stop := context.AfterFunc(ctx, func() { l.Close() })
 	err = run.session.Run()
+	run.jobs.finishAll()
 	stop()
 	l.Close()
 	if endErr := run.replicas.End(); endErr != nil {
@@ -1045,20 +1147,24 @@ func (s *InkService) synced(open []SyncedNote) ([]SyncedNote, []Companion) {
 	return notes, companions
 }
 
-// sessionRun is one session: the link it runs over, counted as it is read, and its replicas. It
-// is the session's Observer and is called on the session's goroutine only.
+// sessionRun is one session: the link it runs over, counted as it is read, its replicas and its
+// syncs' jobs. It is the session's Observer and is called on the session's goroutine only, but for
+// Rewound, which may be called from any goroutine.
 type sessionRun struct {
 	svc      *InkService
 	session  *link.Session
 	link     radio.Link
 	received *countedReader
 	replicas *NoteReplicas
+	jobs     *syncJobs
 	// dropped marks a link the service closed on purpose, whose error is no failure.
 	dropped atomic.Bool
 
-	// listed is the head of each note the companion listed on this connection, by note.
+	// listed is the head of each note the companion listed on this connection, and titles its
+	// title, by note.
 	listedMu sync.Mutex
 	listed   map[link.ID]uint32
+	titles   map[link.ID]string
 	// named are the notes LIVE named on this connection, which the companion offers as it offers
 	// what it listed.
 	named map[link.ID]bool
@@ -1086,8 +1192,9 @@ func (r *sessionRun) Write(p []byte) (int, error) { return r.link.Write(p) }
 func (r *sessionRun) Notes(notes []link.NoteEntry) {
 	r.listedMu.Lock()
 	r.listed = make(map[link.ID]uint32, len(notes))
+	r.titles = make(map[link.ID]string, len(notes))
 	for _, n := range notes {
-		r.listed[n.ID] = n.HeadSeq
+		r.listed[n.ID], r.titles[n.ID] = n.HeadSeq, n.Title
 	}
 	offered := r.offeredLocked()
 	r.listedMu.Unlock()
@@ -1101,6 +1208,7 @@ func (r *sessionRun) Notes(notes []link.NoteEntry) {
 	for _, n := range notes {
 		if have, err := r.replicas.Have(n.ID); err == nil && n.HeadSeq > have {
 			r.pending[n.ID] = true
+			r.jobs.queue(n.ID, syncCatchUp)
 		}
 	}
 	r.svc.connected(r.link.Identity(), r.link.Elapsed())
@@ -1165,24 +1273,52 @@ func (r *sessionRun) listedHead(note link.ID) (uint32, bool) {
 	return head, ok
 }
 
-func (r *sessionRun) Opened(note link.ID, _, _ uint32) {
+// describe is the note's container and its name, as a sync's job shows them: the name Sieve gives
+// the note once a container holds it, otherwise the title the companion listed it with. It may be
+// called from any goroutine.
+func (r *sessionRun) describe(note link.ID) (string, string) {
+	r.listedMu.Lock()
+	title := r.titles[note]
+	r.listedMu.Unlock()
+	uuid, err := r.replicas.UUID(note)
+	if err != nil || uuid == "" {
+		return "", title
+	}
+	if name := r.svc.noteName(uuid); name != "" {
+		return uuid, name
+	}
+	return uuid, title
+}
+
+// Opened is a HEAD: a note behind what the companion holds is being synced.
+func (r *sessionRun) Opened(note link.ID, head, have uint32) {
+	r.jobs.begin(note, head, have)
 	if r.pending[note] && r.started.IsZero() {
 		r.started, r.from = time.Now(), r.received.n.Load()
 	}
 }
 
+// Committed is a record appended to the note's replica: while the replica follows it is heard as
+// committed at once; while it catches up it is heard when the catch-up is published (Done).
 func (r *sessionRun) Committed(note link.ID, rec link.Record) {
 	uuid, err := r.replicas.UUID(note)
 	if err != nil {
 		logger.Warn("ink: finding a committed note's container", "note", note.String(), "err", err.Error())
 	}
-	r.svc.publish(func(l Listener) { l.RecordCommitted(uuid, note, rec) })
 	r.svc.mu.Lock()
 	live := r.svc.live
 	r.svc.mu.Unlock()
 	if live.Note == note && live.Container == "" && uuid != "" {
 		r.Live(note, live.Page)
 	}
+	r.jobs.progress(note, rec.Seq, uuid)
+	if !r.replicas.isFollowing(note) {
+		if len(r.pending) > 0 {
+			r.svc.invalidateSoon()
+		}
+		return
+	}
+	r.svc.publish(func(l Listener) { l.RecordCommitted(uuid, note, rec) })
 	structural := rec.Op != link.OpStrokeAdd && rec.Op != link.OpStrokeRemove
 	if structural {
 		r.svc.view.noteChanged(uuid)
@@ -1192,17 +1328,44 @@ func (r *sessionRun) Committed(note link.ID, rec link.Record) {
 	}
 }
 
-// Done is the note at its head: its replica saves what it holds, and the catch-up's numbers move.
+// Done is the note at its head, its replica settled: what the replica published is heard, and the
+// catch-up's numbers move.
 func (r *sessionRun) Done(note link.ID, _ uint32, records int) {
-	if err := r.replicas.CaughtUp(note); err != nil {
-		logger.Error("ink: saving a caught-up note", "note", note.String(), "err", err.Error())
-	}
+	r.jobs.finish(note)
+	r.published(note)
 	if !r.pending[note] {
 		return
 	}
 	delete(r.pending, note)
 	r.caughtUp += records
 	r.measure()
+}
+
+// published hands out what the note's replica published at its last Settle: a first log is
+// heard as the log restarted, and records published onto a log as committed, in order.
+func (r *sessionRun) published(note link.ID) {
+	p, ok := r.replicas.takePublished(note)
+	if !ok {
+		return
+	}
+	uuid, err := r.replicas.UUID(note)
+	if err != nil || uuid == "" {
+		logger.Warn("ink: finding a published note's container", "note", note.String(), "err", fmt.Sprint(err))
+		return
+	}
+	structural := p.First
+	if p.First {
+		r.svc.publish(func(l Listener) { l.LogRestarted(uuid, note) })
+	} else {
+		for _, rec := range p.Records {
+			r.svc.publish(func(l Listener) { l.RecordCommitted(uuid, note, rec) })
+			structural = structural || (rec.Op != link.OpStrokeAdd && rec.Op != link.OpStrokeRemove)
+		}
+	}
+	if structural {
+		r.svc.view.noteChanged(uuid)
+		r.svc.invalidateSoon()
+	}
 }
 
 func (r *sessionRun) Live(note, page link.ID) {
@@ -1223,14 +1386,26 @@ func (r *sessionRun) Live(note, page link.ID) {
 	r.svc.publish(func(l Listener) { l.LiveChanged(live) })
 }
 
-func (r *sessionRun) SetAside(note link.ID) {
+// Rewound is the note's replica rewound by the session, which found it damaged: its refill is a
+// repair, as rewound has it.
+func (r *sessionRun) Rewound(note link.ID, _ uint32) {
+	r.rewound(note, syncRepair)
+}
+
+// rewound is the note's replica rewound, its refill a sync of kind: the sync waits for the note's
+// HEAD and its log is heard as restarted. It may be called from any goroutine.
+func (r *sessionRun) rewound(note link.ID, kind syncKind) {
+	r.jobs.queue(note, kind)
 	uuid, err := r.replicas.UUID(note)
 	if err != nil {
-		logger.Warn("ink: finding a set-aside note's container", "note", note.String(), "err", err.Error())
+		logger.Warn("ink: finding a rewound note's container", "note", note.String(), "err", err.Error())
 	}
-	if uuid != "" {
-		r.svc.publish(func(l Listener) { l.LogRestarted(uuid, note) })
+	if uuid == "" {
+		return
 	}
+	r.svc.publish(func(l Listener) { l.LogRestarted(uuid, note) })
+	r.svc.view.noteChanged(uuid)
+	r.svc.invalidateSoon()
 }
 
 func (r *sessionRun) Ink(records []link.LiveRecord) {
@@ -1239,6 +1414,9 @@ func (r *sessionRun) Ink(records []link.LiveRecord) {
 
 func (r *sessionRun) Refused(note link.ID, reason string) {
 	logger.Warn("ink: the companion refused a note", "note", note.String(), "reason", reason)
+	if reason != link.RefuseAhead {
+		r.jobs.finish(note)
+	}
 	if reason != link.RefuseAhead && r.pending[note] {
 		delete(r.pending, note)
 		r.measure()

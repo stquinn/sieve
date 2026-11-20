@@ -83,6 +83,13 @@ type InkPageExportRequest struct{}
 // nothing is open that can draw its pages), 503 when ink is unavailable. The request has no body.
 type InkDescribeRequest struct{}
 
+// InkResyncRequest syncs a synced Digital Note again from its first record: {uuid} is the note's
+// block container, whose log is kept aside and pulled again from the tablet it came from. 204 is
+// the resync begun, the sync then a job of its own. Otherwise the body is plain text a person can
+// be shown: 404 for a container that is not a held Digital Note, 409 when the note's tablet is not
+// connected or does not list it, 503 when ink is unavailable. The request has no body.
+type InkResyncRequest struct{}
+
 // InkOpenOnTabletRequest asks the tablet a synced Digital Note came from to open it, leaving the
 // page to the tablet: {uuid} is the note's block container. It waits a few seconds at most for
 // the tablet. A container that is not a Digital Note from a tablet is 404, with a plain-text body,

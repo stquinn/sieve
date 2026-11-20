@@ -153,10 +153,26 @@ func (n *NoteNamer) stop() {
 	n.wakes++
 }
 
-func (n *NoteNamer) LinkChanged(LinkState)        {}
-func (n *NoteNamer) LiveInk([]link.LiveRecord)    {}
-func (n *NoteNamer) LiveChanged(LiveNote)         {}
-func (n *NoteNamer) LogRestarted(string, link.ID) {}
+func (n *NoteNamer) LinkChanged(LinkState)     {}
+func (n *NoteNamer) LiveInk([]link.LiveRecord) {}
+func (n *NoteNamer) LiveChanged(LiveNote)      {}
+
+// LogRestarted is the note in container having a new log, which stands at the seq its attrs now
+// give: it is not settled until the settle time has passed from now.
+func (n *NoteNamer) LogRestarted(container string, _ link.ID) {
+	if container == "" {
+		return
+	}
+	seq, _ := n.notes.noteAttrs(container)["note_synced_seq"].(int)
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if !n.running {
+		return
+	}
+	note := n.note(container, time.Time{})
+	note.seq, note.last = max(note.seq, uint32(seq)), n.now()
+	n.arm()
+}
 
 // RecordCommitted is a record committed to the note in container: it is not settled until the
 // settle time has passed from now.

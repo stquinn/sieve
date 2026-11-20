@@ -677,11 +677,11 @@ components:
     documentInkLogRestarted:
       name: ink-log-restarted
       title: ink-log-restarted
-      summary: InkLogRestartedFrame is the note's log started again from its first record in this channel's container.
+      summary: InkLogRestartedFrame is the note's log in this channel's container started again from an earlier record.
       description: |-
-        InkLogRestartedFrame is the note's log started again from its first record in this channel's
-        container. Every page answer and seq a client holds for the note is void: it asks for its pages
-        again, and the stroke frames that follow are numbered from the new log.
+        InkLogRestartedFrame is the note's log in this channel's container started again from an
+        earlier record. Every page answer and seq a client holds for the note is void: it asks for its
+        pages again, and the stroke frames that follow follow the log as it now stands.
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolInkLogRestartedFrame'
@@ -1386,6 +1386,10 @@ components:
           type: string
         category:
           type: string
+        done:
+          type: integer
+        total:
+          type: integer
       required:
         - jobId
         - label
@@ -2143,9 +2147,9 @@ components:
     ProtocolInkLogRestartedFrame:
       type: object
       description: |-
-        InkLogRestartedFrame is the note's log started again from its first record in this channel's
-        container. Every page answer and seq a client holds for the note is void: it asks for its pages
-        again, and the stroke frames that follow are numbered from the new log.
+        InkLogRestartedFrame is the note's log in this channel's container started again from an
+        earlier record. Every page answer and seq a client holds for the note is void: it asks for its
+        pages again, and the stroke frames that follow follow the log as it now stands.
       properties:
         type:
           type: string
@@ -2217,7 +2221,10 @@ components:
           description: the page's kept drawing, an SVG document, in place of the page
         error:
           type: string
-          description: 'present only when there is no page: the channel holds no Digital Note, or the note has no page of that id'
+          description: 'present only when there is no page: the channel holds no Digital Note, the note has no page of that id, or it has no published log yet'
+        reason:
+          type: string
+          description: 'present with error when the refusal is one a client waits out: syncing (the note has no published log yet; the socket holds the note, and an ink-log-restarted reaches it when its log is published)'
       required:
         - type
         - pageId
@@ -2269,7 +2276,7 @@ components:
           description: echoed on the ink-page-content reply
         pageId:
           type: string
-          description: the page's id, as the block's note.pages lists it
+          description: the page's id, as the block's note.pages lists it; empty asks of the note alone, which has no page to answer with and is refused, syncing while the note has no published log
         renderer:
           type: string
           description: the version of the asker's ink renderer; present when the asker takes, in place of the page, a drawing of it that renderer kept

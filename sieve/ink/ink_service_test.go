@@ -3,6 +3,7 @@ package ink
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,8 +32,10 @@ type testRadio struct {
 	addr  string
 	tcp   radio.Radio
 	dials atomic.Int32
-	// hold makes every Dial wait for its context, as a scan that finds nothing does.
-	hold atomic.Bool
+	// hold makes every Dial wait for its context, as a scan that finds nothing does; holdFrom, when
+	// not 0, makes every Dial from that one on wait so.
+	hold     atomic.Bool
+	holdFrom atomic.Int32
 	// fail, when set, is every Dial's error.
 	fail atomic.Pointer[error]
 
@@ -70,11 +73,11 @@ func newTestRadio(t *testing.T, companion *link.ScriptedCompanion) *testRadio {
 }
 
 func (r *testRadio) Dial(ctx context.Context) (radio.Link, error) {
-	r.dials.Add(1)
+	n := r.dials.Add(1)
 	if err := r.fail.Load(); err != nil {
 		return nil, *err
 	}
-	if r.hold.Load() {
+	if from := r.holdFrom.Load(); r.hold.Load() || (from != 0 && n >= from) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
@@ -103,6 +106,8 @@ type inkRig struct {
 	radio         *testRadio
 	invalidations atomic.Int32
 	svc           *InkService
+	// jobs is the tracker every service of the rig shows its syncs on.
+	jobs *jobRecorder
 
 	mu sync.Mutex
 	// deleted and sessionChanges are what the rig was told besides InkChanged.
@@ -112,7 +117,7 @@ type inkRig struct {
 
 func newInkRig(t *testing.T, records []link.Record) *inkRig {
 	t.Helper()
-	rig := &inkRig{replicaRig: newReplicaRig(t, records)}
+	rig := &inkRig{replicaRig: newReplicaRig(t, records), jobs: newJobRecorder()}
 	state, err := services.NewStateService(rig.st, "", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +143,7 @@ func (rig *inkRig) SessionChanged() {
 
 // newService is a service over the rig, as a Sieve starting again builds it.
 func (rig *inkRig) newService() *InkService {
-	svc := NewInkService(rig.state, reopen(rig.t, rig.st), rig.radio, rig)
+	svc := NewInkService(rig.state, reopen(rig.t, rig.st), rig.staging, rig.jobs.tracker, rig.radio, rig)
 	svc.redial.base = 10 * time.Millisecond
 	rig.t.Cleanup(svc.Stop)
 	return svc
@@ -290,7 +295,7 @@ func TestInkService_ASessionLandsNotesAndStatusListsThem(t *testing.T) {
 func TestInkService_MarksWhatTheTabletNoLongerOffersAndDeletesSievesCopyOnlyWhereItStays(t *testing.T) {
 	records := inkLog()
 	rig := newInkRig(t, records)
-	board := NewNoteReplicas(rig.containers, companionID)
+	board := NewNoteReplicas(rig.containers, rig.staging, companionID)
 	opened, err := board.Open(testID(0xb0))
 	if err != nil {
 		t.Fatal(err)
@@ -401,14 +406,17 @@ func TestInkService_AListingDuringStatusIsNoRace(t *testing.T) {
 	<-listed
 }
 
-// While a session has a note open, Status shows it as its replica stands, ahead of its face;
-// otherwise as its face says.
+// While a session has a note open, Status shows it as its replica stands, ahead of its face — a
+// catch-up's progress before it is published; otherwise as its face says.
 func TestInkService_StatusShowsAnOpenNoteAsItsReplicaStands(t *testing.T) {
 	rig := newInkRig(t, nil)
 	records := strokesLog(3)
-	replicas := NewNoteReplicas(rig.containers, companionID)
+	replicas := NewNoteReplicas(rig.containers, rig.staging, companionID)
 	opened, err := replicas.Open(noteID)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := opened.Begin(uint32(len(records))); err != nil {
 		t.Fatal(err)
 	}
 	for _, rec := range records {
@@ -463,7 +471,56 @@ func TestInkService_ADroppedLinkIsRedialledAndResumesFromTheCursor(t *testing.T)
 		t.Errorf("%d dials", n)
 	}
 	rig.stopPromptly()
-	rig.expectHeld(records)
+	c := rig.expectHeld(records)
+	if !rig.jobs.seenLine("queued Syncing ") || !rig.jobs.seenLine("active Syncing ", "in "+c.UUID(), fmt.Sprintf("/%d", len(records))) {
+		t.Errorf("no sync job queued and then active with its progress: %q", rig.jobs.shown)
+	}
+	if open := rig.jobs.open(); len(open) != 0 {
+		t.Errorf("jobs open after the sessions: %q", open)
+	}
+}
+
+// A session that ends mid catch-up finishes the job of every sync it had.
+func TestInkService_ALinkEndingMidCatchUpFinishesEveryJob(t *testing.T) {
+	records := inkLog()
+	rig := newInkRig(t, records)
+	rig.companion.GapAt = 3
+	rig.radio.holdFrom.Store(2)
+	rig.enable(linkKey)
+	rig.start()
+	waitFor(t, func() bool { return rig.radio.dials.Load() >= 2 })
+	if !rig.jobs.seenLine("active Syncing ", "in ", fmt.Sprintf("/%d", len(records))) {
+		t.Errorf("no sync job active with its progress: %q", rig.jobs.shown)
+	}
+	if open := rig.jobs.open(); len(open) != 0 {
+		t.Errorf("jobs open after the link ended: %q", open)
+	}
+	rig.stopPromptly()
+}
+
+// The session's observer reports each note's sync to its job: a HEAD behind makes one active, a
+// HEAD not behind none, a REFUSE ends it, a REFUSE ahead keeps it for the rewind that follows,
+// which queues it as a repair, and a DONE ends it.
+func TestSessionRun_ReportsEachSyncToItsJob(t *testing.T) {
+	rig := newInkRig(t, nil)
+	run := &sessionRun{svc: rig.svc, replicas: rig.replicas, link: namedLink{identity: companionID}}
+	run.jobs = newSyncJobs(rig.jobs.tracker, run.describe)
+	t.Cleanup(func() { _ = rig.replicas.End() })
+	refused, ahead, current, done := link.ID{1}, link.ID{2}, link.ID{3}, link.ID{4}
+	run.Opened(current, 4, 4)
+	run.Opened(refused, 9, 0)
+	run.Refused(refused, link.RefuseNotOffered)
+	run.Opened(ahead, 9, 3)
+	run.Refused(ahead, link.RefuseAhead)
+	if open := rig.jobs.open(); !slices.Equal(open, []string{"active Syncing a notebook 3/9"}) {
+		t.Errorf("after the refusals, jobs %q", open)
+	}
+	run.Rewound(ahead, 0)
+	run.Opened(done, 2, 0)
+	run.Done(done, 2, 2)
+	if open := rig.jobs.open(); !slices.Equal(open, []string{"queued Repairing a notebook"}) {
+		t.Errorf("after the rewind and the DONE, jobs %q", open)
+	}
 }
 
 func TestInkService_StopIsPrompt(t *testing.T) {
@@ -759,9 +816,9 @@ func TestInkService_ListenersHearEventsInOrderAndASlowOneStallsNothing(t *testin
 	}
 }
 
-// A replica the companion disowns is heard as the note's log restarting, before the records of the
-// new log.
-func TestInkService_ASetAsideReplicaIsHeardAsARestartedLog(t *testing.T) {
+// A replica the companion disowns is heard as the note's log restarting, and the log synced again
+// in its place, a first log published, as a restart again with no record of it heard one by one.
+func TestInkService_ARewoundReplicaIsHeardAsARestartedLog(t *testing.T) {
 	records := inkLog()
 	rig := newInkRig(t, records[:2])
 	if err := rig.sync(); err != nil {
@@ -779,10 +836,193 @@ func TestInkService_ASetAsideReplicaIsHeardAsARestartedLog(t *testing.T) {
 		return connected(st) && restarted() && len(st.Notes) == 1 && st.Notes[0].Seq == uint32(len(records))
 	})
 	rig.stopPromptly()
-	got := heard.heard()
-	at := slices.Index(got, "restarted held=true")
-	if at < 0 || !slices.Contains(got[at:], "record 1 held=true") || slices.Contains(got[:at], "record 1 held=true") {
-		t.Errorf("heard %v, want the restart before the new log's records", got)
+	var restarts, committed int
+	for _, e := range heard.heard() {
+		restarts += strings.Count(e, "restarted held=true")
+		committed += strings.Count(e, "record ")
+	}
+	if restarts != 2 || committed != 0 {
+		t.Errorf("heard %v, want the set-aside and the new log each heard as a restart", heard.heard())
+	}
+	if !rig.jobs.seenLine("active Repairing ") || len(rig.jobs.open()) != 0 {
+		t.Errorf("the refill was not a repair job that ended: %q", rig.jobs.shown)
+	}
+}
+
+// awaitLog waits until the published log of c is want, byte for byte.
+func (rig *inkRig) awaitLog(c *domain.BlockContainer, want []byte) {
+	rig.t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !bytes.Equal(rig.assetOrNil(c, StrokesKey), want) {
+		if time.Now().After(deadline) {
+			rig.t.Fatalf("the log never became the companion's: %q", rig.assetOrNil(c, StrokesKey))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// awaitHeard waits until l has heard want, and fails unless that is all it heard.
+func awaitHeard(t *testing.T, l *recordingListener, want []string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for len(l.heard()) < len(want) && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := l.heard(); !slices.Equal(got, want) {
+		t.Errorf("heard %v, want %v", got, want)
+	}
+}
+
+// A view whose replay of a note's published log ends short of the seq the note's face states,
+// with the tablet connected, has the log rewound to its last good record and the rest synced
+// again: the damaged file is kept aside, the tablet is asked from that record, the note is heard
+// as restarted and then each record refilled, and the log ends as the tablet's, byte for byte.
+func TestInkService_AnOpenNoteFindingItsLogShortHasItRewoundAndRefilled(t *testing.T) {
+	records := strokesLog(4)
+	for _, d := range logDamages {
+		t.Run(d.name, func(t *testing.T) {
+			rig := newInkRig(t, records)
+			if err := rig.sync(); err != nil {
+				t.Fatal(err)
+			}
+			rig.opens()
+			c := rig.container()
+			damaged := d.damage(t, records)
+			rig.writeLog(c, damaged)
+			rig.svc = rig.newService()
+			heard := &recordingListener{}
+			rig.enable(linkKey)
+			rig.start()
+			rig.await("connected", connected)
+			rig.svc.Subscribe(heard)
+			note, err := NewOpenNotes(rig.svc).Open(c.UUID(), "socket")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var answered uint32
+			if err := note.AnswerPage(page(1), nil, func(a PageAnswer) error { answered = a.Seq; return nil }, nil); err != nil {
+				t.Fatal(err)
+			}
+			if answered != d.good {
+				t.Errorf("answered at %d, want the short replay's %d", answered, d.good)
+			}
+			rig.awaitLog(c, jsonlOf(t, records))
+			want := []string{"restarted held=true"}
+			for _, r := range records[d.good:] {
+				want = append(want, fmt.Sprintf("record %d held=true", r.Seq))
+			}
+			awaitHeard(t, heard, want)
+			rig.stopPromptly()
+			if got := rig.opens(); len(got) != 1 || got[0] != d.good {
+				t.Errorf("OPENs asked from %v, want %d", got, d.good)
+			}
+			rig.expectAside(rig.expectHeld(records), damaged)
+			if !rig.jobs.seenLine("active Repairing ", fmt.Sprintf("%d/%d", d.good, len(records))) {
+				t.Errorf("the refill was no repair job from %d: %q", d.good, rig.jobs.shown)
+			}
+		})
+	}
+}
+
+// Resync sets a note's log aside and syncs it again from its first record while its tablet is
+// connected and lists it: the old log is kept aside, the tablet is asked from 0, the note is heard
+// as restarted twice — at the rewind and at the new log's publish — and the log ends as the
+// tablet's. A note whose tablet is not connected, or does not list it, is ErrNotOffered.
+func TestInkService_ResyncSyncsANoteAgainFromItsFirstRecord(t *testing.T) {
+	records := inkLog()
+	rig := newInkRig(t, records)
+	if err := rig.sync(); err != nil {
+		t.Fatal(err)
+	}
+	rig.opens()
+	c := rig.container()
+	rig.svc = rig.newService()
+	if err := rig.svc.Resync(c.UUID()); !errors.Is(err, ErrNotOffered) {
+		t.Errorf("Resync with no tablet: %v", err)
+	}
+	unlisted, err := rig.containers.Create(KindDigitalNote, NewDigitalNoteKind().Attrs(NewHeaderFold(""),
+		Provenance{Companion: companionID, SourceID: link.ID{0xfe, 15: 1}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	heard := &recordingListener{}
+	rig.enable(linkKey)
+	rig.start()
+	rig.await("connected", connected)
+	rig.svc.Subscribe(heard)
+	if err := rig.svc.Resync(unlisted.UUID()); !errors.Is(err, ErrNotOffered) {
+		t.Errorf("Resync of a note the tablet does not list: %v", err)
+	}
+	if err := rig.svc.Resync(c.UUID()); err != nil {
+		t.Fatal(err)
+	}
+	rig.awaitLog(c, jsonlOf(t, records))
+	awaitHeard(t, heard, []string{"restarted held=true", "restarted held=true"})
+	rig.stopPromptly()
+	if got := rig.opens(); len(got) != 1 || got[0] != 0 {
+		t.Errorf("OPENs asked from %v, want 0", got)
+	}
+	rig.expectAside(rig.expectHeld(records), jsonlOf(t, records))
+	if !rig.jobs.seenLine("queued Resyncing ") || !rig.jobs.seenLine("active Resyncing ", "in "+c.UUID()) || len(rig.jobs.open()) != 0 {
+		t.Errorf("the Resync was not a job that ended: %q", rig.jobs.shown)
+	}
+	if rig.jobs.seenLine("Resyncing a notebook") {
+		t.Errorf("the note lost its name while it was synced again: %q", rig.jobs.shown)
+	}
+}
+
+// A catch-up's records are heard when it is published, not as they arrive: after everything
+// heard before the DONE, a first log as the log restarting and records onto a published log as
+// committed, in order.
+func TestInkService_ACatchUpIsHeardWhenItIsPublished(t *testing.T) {
+	records := inkLog()
+	for _, tc := range []struct {
+		name   string
+		synced int
+		want   []string
+	}{
+		{"a note's first log", 0, []string{"restarted held=true"}},
+		{"records onto a published log", 2, []string{"record 3 held=true", "record 4 held=true", "record 5 held=true", "record 6 held=true"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newInkRig(t, records[:tc.synced])
+			if tc.synced > 0 {
+				if err := rig.sync(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			heard := &recordingListener{}
+			rig.svc.Subscribe(heard)
+			run := &sessionRun{svc: rig.svc, replicas: rig.replicas, link: namedLink{identity: companionID}}
+			opened, err := rig.replicas.Open(noteID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = rig.replicas.End() })
+			if err := opened.Begin(uint32(len(records))); err != nil {
+				t.Fatal(err)
+			}
+			for _, rec := range records[tc.synced:] {
+				body, _ := rec.Body()
+				if err := opened.Append(rec, body); err != nil {
+					t.Fatal(err)
+				}
+				run.Committed(noteID, rec)
+			}
+			rig.svc.publish(func(l Listener) { l.LinkChanged(LinkState{Phase: LinkConnected}) })
+			if err := opened.Settle(); err != nil {
+				t.Fatal(err)
+			}
+			run.Done(noteID, uint32(len(records)), len(records)-tc.synced)
+			want := append([]string{"link connected"}, tc.want...)
+			deadline := time.Now().Add(2 * time.Second)
+			for len(heard.heard()) < len(want) && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
+			if got := heard.heard(); !slices.Equal(got, want) {
+				t.Errorf("heard %v, want %v", got, want)
+			}
+		})
 	}
 }
 
@@ -857,10 +1097,47 @@ func TestInkService_ExportsAHeldPageInTheExportShape(t *testing.T) {
 	}
 }
 
-// logsFunc is a noteLogs that answers with a function.
+// logsFunc is a noteLogs that answers with a function, knows no seq a log stands at, and rewinds
+// nothing.
 type logsFunc func(uuid string) ([]byte, error)
 
 func (f logsFunc) noteLog(uuid string) ([]byte, error) { return f(uuid) }
+func (f logsFunc) stands(string) (uint32, bool)        { return 0, false }
+func (f logsFunc) rewind(string) error                 { return nil }
+
+// standingLogs is a noteLogs over one log known to stand at at, counting the rewinds asked of it.
+type standingLogs struct {
+	mu      sync.Mutex
+	log     []byte
+	at      uint32
+	rewinds int
+}
+
+func (l *standingLogs) noteLog(string) ([]byte, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.log, nil
+}
+
+func (l *standingLogs) stands(string) (uint32, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.at, true
+}
+
+func (l *standingLogs) rewind(string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.rewinds++
+	return nil
+}
+
+// set makes the log log, standing at at.
+func (l *standingLogs) set(log []byte, at uint32) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.log, l.at = log, at
+}
 
 // openNotesOver holds notes open over a log source that answers every container with log.
 func openNotesOver(t *testing.T, log []link.Record) *OpenNotes {
@@ -918,58 +1195,72 @@ func strokeIDs(n *StrokeBasedNote, i int) []string {
 	return ids
 }
 
-// A page is answered with the strokes the whole log puts on it and the seq that log reaches: the
-// asset when no session holds the note, the open replica's asset and queue when one does.
-func TestOpenNotes_AnswerAPageAtTheSeqItsLogReaches(t *testing.T) {
+// A page is answered with the strokes the published log puts on it and the seq that log reaches:
+// the asset when no session holds the note, the open replica's asset and queue while it follows,
+// and the asset alone while it catches up, whose records are not yet published.
+func TestOpenNotes_AnswerAPageAtTheSeqItsPublishedLogReaches(t *testing.T) {
 	records := inkLog()
 	for _, tc := range []struct {
 		name string
-		// hold opens the rig's note in a session that has written none of records to disk.
-		hold bool
-	}{{"from the asset", false}, {"from an open replica's unwritten queue", true}} {
+		// synced is how many records a finished session published; the rest are appended to the
+		// note's replica, open in a session, and written to neither the asset nor staging.
+		synced int
+		// catchUp appends the rest as a catch-up to the companion's head.
+		catchUp bool
+		// seen is how many records the answers stand on.
+		seen int
+	}{
+		{"from the asset", len(records), false, len(records)},
+		{"from a following replica's unwritten queue", 4, false, len(records)},
+		{"from the published log while the replica catches up", 4, true, 4},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			rig := newInkRig(t, records)
-			var uuid string
-			if tc.hold {
-				replicas := NewNoteReplicas(rig.containers, companionID)
-				replicas.flushBytes, replicas.flushAfter = 1<<30, time.Hour
-				opened, err := replicas.Open(noteID)
+			rig := newInkRig(t, records[:tc.synced])
+			if err := rig.sync(); err != nil {
+				t.Fatal(err)
+			}
+			uuid := rig.container().UUID()
+			if tc.synced < len(records) {
+				rig.replicas.flushBytes, rig.replicas.flushAfter = 1<<30, time.Hour
+				opened, err := rig.replicas.Open(noteID)
 				if err != nil {
 					t.Fatal(err)
 				}
-				for _, rec := range records {
+				if tc.catchUp {
+					if err := opened.Begin(uint32(len(records))); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for _, rec := range records[tc.synced:] {
 					body, _ := rec.Body()
 					if err := opened.Append(rec, body); err != nil {
 						t.Fatal(err)
 					}
 				}
-				t.Cleanup(func() { _ = replicas.End() })
-				uuid = opened.(*NoteReplica).UUID()
-				if _, err := rig.containers.LoadAsset(rig.container(), StrokesKey); err == nil {
-					t.Fatal("the queue reached the asset")
+				t.Cleanup(func() { _ = rig.replicas.End() })
+				if got := rig.asset(rig.container(), StrokesKey); !bytes.Equal(got, jsonlOf(t, records[:tc.synced])) {
+					t.Fatalf("the asset holds %q", got)
 				}
 				rig.svc.mu.Lock()
-				rig.svc.run = &sessionRun{replicas: replicas, link: namedLink{identity: companionID}}
+				rig.svc.run = &sessionRun{replicas: rig.replicas, link: namedLink{identity: companionID}}
 				rig.svc.mu.Unlock()
-			} else {
-				if err := rig.sync(); err != nil {
-					t.Fatal(err)
-				}
-				uuid = rig.container().UUID()
+			}
+			if got := rig.svc.noteAttrs(uuid)["note_synced_seq"]; got != tc.seen {
+				t.Errorf("the note's attrs stand at %v", got)
 			}
 			notes := NewOpenNotes(rig.svc)
 			note, err := notes.Open(uuid, "socket")
 			if err != nil {
 				t.Fatal(err)
 			}
-			replay := ReadStrokeBasedNote(uuid, jsonlOf(t, records))
+			replay := ReadStrokeBasedNote(uuid, jsonlOf(t, records[:tc.seen]))
 			for i, p := range replay.Pages() {
 				var view pageView
 				if err := note.AnswerPage(p.ID, nil, func(a PageAnswer) error { view.answer(t, a.Export, a.Seq); return nil }, nil); err != nil {
 					t.Fatal(err)
 				}
-				if view.seq != uint32(len(records)) || fmt.Sprint(view.strokes) != fmt.Sprint(strokeIDs(replay, i)) {
-					t.Errorf("page %d answered at seq %d with %v, want seq %d with %v", i, view.seq, view.strokes, len(records), strokeIDs(replay, i))
+				if view.seq != uint32(tc.seen) || fmt.Sprint(view.strokes) != fmt.Sprint(strokeIDs(replay, i)) {
+					t.Errorf("page %d answered at seq %d with %v, want seq %d with %v", i, view.seq, view.strokes, tc.seen, strokeIDs(replay, i))
 				}
 			}
 			if !notes.Holds(uuid) {
@@ -979,6 +1270,8 @@ func TestOpenNotes_AnswerAPageAtTheSeqItsLogReaches(t *testing.T) {
 	}
 }
 
+// A container that is no Digital Note, and a page the note does not have, are ErrNoSuchPage; any
+// page of a note with no published log is ErrSyncing, and the note stays held.
 func TestOpenNotes_RefuseWhatIsNoDigitalNotePage(t *testing.T) {
 	rig := newInkRig(t, inkLog())
 	if err := rig.sync(); err != nil {
@@ -996,6 +1289,22 @@ func TestOpenNotes_RefuseWhatIsNoDigitalNotePage(t *testing.T) {
 	called := false
 	if err := note.AnswerPage(page(9), nil, func(PageAnswer) error { called = true; return nil }, nil); !errors.Is(err, ErrNoSuchPage) || called {
 		t.Errorf("an absent page: %v, answered %t", err, called)
+	}
+	empty, err := rig.containers.Create(KindDigitalNote, NewDigitalNoteKind().Attrs(NewHeaderFold(""), Provenance{Companion: companionID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncing, err := notes.Open(empty.UUID(), "socket")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []link.ID{page(1), {}} {
+		if err := syncing.AnswerPage(p, nil, func(PageAnswer) error { called = true; return nil }, nil); !errors.Is(err, ErrSyncing) || called {
+			t.Errorf("page %s of a note with no published log: %v, answered %t", p, err, called)
+		}
+	}
+	if !notes.HeldBy(empty.UUID(), "socket") {
+		t.Error("a note refused as syncing is not held")
 	}
 }
 
@@ -1041,24 +1350,71 @@ func TestOpenNote_CommitHandsOutEachStrokeChangeOnce(t *testing.T) {
 	}
 }
 
-// A record past the next seq replays the log again, so the note stands where the log does.
-func TestOpenNote_ARecordPastAGapReplaysTheLog(t *testing.T) {
-	records := strokesLog(4)
-	served := records[:3]
-	notes := &OpenNotes{logs: logsFunc(func(string) ([]byte, error) { return jsonlOf(t, served), nil }), notes: map[string]*OpenNote{}}
-	note, err := notes.Open("c", "socket")
-	if err != nil {
-		t.Fatal(err)
-	}
-	served = records
-	var changes int
-	note.Commit(records[5], func(StrokeChange) { changes++ })
-	var view pageView
-	if err := note.AnswerPage(page(1), nil, func(a PageAnswer) error { view.answer(t, a.Export, a.Seq); return nil }, nil); err != nil {
-		t.Fatal(err)
-	}
-	if changes != 0 || view.seq != 6 || len(view.strokes) != 4 {
-		t.Errorf("%d changes; answered at seq %d with %d strokes", changes, view.seq, len(view.strokes))
+// A note whose replay ends short of where its log is known to stand — found by a page answered,
+// by a record committed past a gap, or by a kept drawing made of that log — asks for one rewind
+// and takes no record until it is restarted; restarted, it stands where the rewound log does and
+// takes the records that follow it.
+func TestOpenNote_AShortLogIsRewoundOnceAndTakesNothingUntilRestarted(t *testing.T) {
+	records := strokesLog(5)
+	published := records[:6]
+	for _, d := range logDamages {
+		for _, tc := range []struct {
+			name string
+			// find brings the note to replay its log.
+			find func(t *testing.T, note *OpenNote, logs *standingLogs)
+		}{
+			{"by a page answered", func(t *testing.T, note *OpenNote, _ *standingLogs) {
+				if err := note.AnswerPage(page(1), nil, func(PageAnswer) error { return nil }, nil); err != nil {
+					t.Fatal(err)
+				}
+			}},
+			{"by a record past a gap", func(t *testing.T, note *OpenNote, _ *standingLogs) {
+				note.Commit(records[6], func(StrokeChange) { t.Error("a record was taken by a short note") })
+			}},
+			{"by a kept drawing made of the short log", func(t *testing.T, note *OpenNote, logs *standingLogs) {
+				log, _ := logs.noteLog("c")
+				cursor, _ := NewStrokeBasedNote("c").Read(log)
+				key := logKey{sum: sha256.Sum256(log), length: len(log), seq: cursor.Seq}
+				var got PageAnswer
+				kept := func() ([]byte, string) { return []byte("<svg/>"), key.String() }
+				if err := note.AnswerPage(page(1), kept, func(a PageAnswer) error { got = a; return nil }, nil); err != nil {
+					t.Fatal(err)
+				}
+				if got.Drawing != nil {
+					t.Error("a kept drawing short of the log's seq was the answer")
+				}
+			}},
+		} {
+			t.Run(d.name+" "+tc.name, func(t *testing.T) {
+				logs := &standingLogs{log: d.damage(t, published), at: uint32(len(published))}
+				notes := &OpenNotes{logs: logs, notes: map[string]*OpenNote{}}
+				note, err := notes.Open("c", "socket")
+				if err != nil {
+					t.Fatal(err)
+				}
+				tc.find(t, note, logs)
+				var changes int
+				count := func(StrokeChange) { changes++ }
+				note.Commit(records[6], count)
+				note.Commit(records[d.good], count)
+				if err := note.AnswerPage(page(1), nil, func(PageAnswer) error { return nil }, nil); err != nil {
+					t.Fatal(err)
+				}
+				if logs.rewinds != 1 || changes != 0 {
+					t.Fatalf("%d rewinds and %d changes while short, want 1 and 0", logs.rewinds, changes)
+				}
+				logs.set(jsonlOf(t, records[:d.good]), d.good)
+				notes.Restart("c", func([]string) {})
+				var view pageView
+				if err := note.AnswerPage(page(1), nil, func(a PageAnswer) error { view.answer(t, a.Export, a.Seq); return nil }, nil); err != nil {
+					t.Fatal(err)
+				}
+				note.Commit(records[d.good], view.take)
+				if view.seq != d.good || len(view.strokes) != int(d.good)-1 || logs.rewinds != 1 {
+					t.Errorf("restarted: answered at %d holding %d strokes, %d rewinds", view.seq, len(view.strokes), logs.rewinds)
+				}
+			})
+		}
 	}
 }
 

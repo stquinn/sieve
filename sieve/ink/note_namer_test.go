@@ -593,6 +593,24 @@ func TestNoteNamer_ALogThatReadsShortIsDescribedOnce(t *testing.T) {
 	}
 }
 
+// A note whose log is published or restarted is not settled until a settle time after the namer
+// hears it, and is then due at the seq its attrs stand at.
+func TestNoteNamer_ARestartedLogSettlesFromWhenItIsHeard(t *testing.T) {
+	rig := newNamerRig(t, inkLog()...)
+	rig.settled(0)
+	rig.settled(testSettle)
+	rig.append(strokeAdd(page(1), stroke(9)))
+	rig.namer.LogRestarted(rig.uuid(), noteID)
+	rig.settled(testSettle / 2)
+	if calls := rig.describer.calls(); len(calls) != 1 {
+		t.Fatalf("described %d times before the restarted log settled", len(calls))
+	}
+	rig.settled(testSettle)
+	if calls := rig.describer.calls(); len(calls) != 2 || rig.meta()["note_meta_seq"] != "7" {
+		t.Errorf("after the restarted log settled: %d descriptions, of seq %s", len(calls), rig.meta()["note_meta_seq"])
+	}
+}
+
 // A note due again is not due sooner than a settle time after the namer last asked the describer
 // of it, and the namer records that asking for a job it began by itself and not for NameNow.
 func TestNoteNamer_AsksOfANoteAtMostOnceInASettleTime(t *testing.T) {

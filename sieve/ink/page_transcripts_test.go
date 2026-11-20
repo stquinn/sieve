@@ -19,12 +19,12 @@ import (
 // fakeTranscriber answers every page with transcript, or err. While hold is set each transcript waits for it
 // to close.
 type fakeTranscriber struct {
-	mu      sync.Mutex
-	tier    domain.Tier
+	mu         sync.Mutex
+	tier       domain.Tier
 	transcript domain.PageTranscript
-	err     error
-	hold    chan struct{}
-	read    []domain.Address
+	err        error
+	hold       chan struct{}
+	read       []domain.Address
 }
 
 func (f *fakeTranscriber) Tier() domain.Tier {
@@ -76,9 +76,9 @@ func (f *fakePlantuml) Render(source string) ([]byte, error) {
 // transcriptEars records every change it is told of, as "{page} {status} running={bool}" read back
 // at the moment it is told.
 type transcriptEars struct {
-	mu       sync.Mutex
+	mu          sync.Mutex
 	transcripts *PageTranscripts
-	heard    []string
+	heard       []string
 }
 
 func (e *transcriptEars) TranscriptChanged(container string, page link.ID) {
@@ -102,11 +102,11 @@ func (e *transcriptEars) told() []string {
 // fake drawer, on the real job engine, with the diagram kind registered and a listener told.
 type transcriptsRig struct {
 	*imagesRig
-	transcriber   *fakeTranscriber
-	plantuml *fakePlantuml
-	tracker  *services.JobTracker
+	transcriber *fakeTranscriber
+	plantuml    *fakePlantuml
+	tracker     *services.JobTracker
 	transcripts *PageTranscripts
-	ears     *transcriptEars
+	ears        *transcriptEars
 }
 
 // theTranscript is what the fake transcriber reads off every page.
@@ -228,7 +228,7 @@ func TestPageTranscripts_TranscribesAPageOnDemandAndKeepsIt(t *testing.T) {
 	if err != nil || again.Status != TranscriptReady || again.Running || len(rig.transcriber.calls()) != 1 {
 		t.Errorf("transcribe again: %+v, %v, %d transcripts", again, err, len(rig.transcriber.calls()))
 	}
-	restarted := NewPageTranscripts(NewInkService(nil, reopen(t, rig.st), nil, nil), rig.images, rig.transcriber, rig.plantuml,
+	restarted := NewPageTranscripts(NewInkService(nil, reopen(t, rig.st), rig.staging, nil, nil, nil), rig.images, rig.transcriber, rig.plantuml,
 		block.NewDocumentCodec(block.GlobalRegistry()), services.NewJobEngine(nil, 1, nil))
 	if st, err := restarted.Transcribe(rig.uuid(), page(1)); err != nil || st.Status != TranscriptReady || rig.shape(st.Blocks)[2] != want[2] {
 		t.Errorf("after a restart: %+v, %v", st, err)
@@ -338,10 +338,10 @@ func TestPageTranscripts_PartsBecomeBlocks(t *testing.T) {
 // in words the transcriber can act on.
 func TestPageTranscripts_AFailedTranscriptKeepsNothingAndSaysWhy(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		noDraw  bool
+		name          string
+		noDraw        bool
 		transcribeErr error
-		want    string
+		want          string
 	}{
 		{"nothing can draw the page", true, nil, TranscriptNoDrawer},
 		{"the transcriber fails", false, errors.New("the model timed out"), "The page could not be transcribed: the model timed out"},

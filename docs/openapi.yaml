@@ -261,6 +261,25 @@ paths:
               schema:
                 type: string
                 format: binary
+  /api/ink/notes/{uuid}/resync:
+    post:
+      operationId: postApiInkNotesUuidResync
+      summary: 'InkResyncRequest syncs a synced Digital Note again from its first record: {uuid} is the note''s block container, whose log is kept aside and pulled again from the tablet it came from.'
+      description: |-
+        InkResyncRequest syncs a synced Digital Note again from its first record: {uuid} is the note's
+        block container, whose log is kept aside and pulled again from the tablet it came from. 204 is
+        the resync begun, the sync then a job of its own. Otherwise the body is plain text a person can
+        be shown: 404 for a container that is not a held Digital Note, 409 when the note's tablet is not
+        connected or does not list it, 503 when ink is unavailable. The request has no body.
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: 204, or a body no caller reads
   /api/note/{id}:
     patch:
       operationId: patchApiNoteId
@@ -599,6 +618,14 @@ components:
         X-Sieve-Ink-Page-Key header. An unknown container, a container that is not a Digital Note and
         a page out of range are 404; no window connected to draw it is 503, and a window that does not
         answer in time is 504. The request has no body.
+    ProtocolInkResyncRequest:
+      type: object
+      description: |-
+        InkResyncRequest syncs a synced Digital Note again from its first record: {uuid} is the note's
+        block container, whose log is kept aside and pulled again from the tablet it came from. 204 is
+        the resync begun, the sync then a job of its own. Otherwise the body is plain text a person can
+        be shown: 404 for a container that is not a held Digital Note, 409 when the note's tablet is not
+        connected or does not list it, 503 when ink is unavailable. The request has no body.
     ProtocolNotePatchRequest:
       type: object
       description: NotePatchRequest changes a note's properties.

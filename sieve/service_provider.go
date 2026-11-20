@@ -2,6 +2,8 @@ package sieve
 
 import (
 	"io/fs"
+	"os"
+	"path/filepath"
 	"sieve/clipboard"
 	"sieve/logger"
 	"sieve/nativedrop"
@@ -226,7 +228,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	s.Commands = command.NewRegistry()
 	s.Plantuml = services.NewPlantumlService(s.State)
 	settings := s.State.LoadSettings()
-	s.Ink = ink.NewInkService(s.State, s.Containers, s.InkRadio(settings.Ink), s.InkInvalidator)
+	s.Ink = ink.NewInkService(s.State, s.Containers, ink.NewNoteStaging(filepath.Join(os.TempDir(), "sieve-ink")), s.Jobs, s.InkRadio(settings.Ink), s.InkInvalidator)
 	s.RegisterNodeSources()
 	s.InkImages = ink.NewPageImages(s.Ink, s.InkDrawer)
 	// A Live view's uuid is minted per run, so a tab of one saved by an earlier run names nothing.

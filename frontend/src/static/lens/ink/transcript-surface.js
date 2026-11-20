@@ -13,6 +13,7 @@ import { AbstractSurface, SurfaceEvent, SurfaceIntent } from '../abstract-surfac
 import { InkFeed, InkTranscriptState } from '../../contract/ink-container-provider.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
 import { QuestionListView } from '../../renderers/question-list-view.js'
+import { SyncingPanel } from '../../renderers/syncing-panel.js'
 import { ActionStatus } from './action-status.js'
 import { InkPlace } from './ink-place.js'
 import { NotePager } from './note-pager.js'
@@ -119,6 +120,7 @@ export class TranscriptSurface extends AbstractSurface {
   /** @type {HTMLButtonElement} */ #newDocument
   /** @type {HTMLButtonElement} */ #transcribeButton
   /** @type {HTMLElement} */ #blocks
+  /** @type {SyncingPanel} shown in place of the bar and the transcript while the note syncs */ #syncing = new SyncingPanel()
 
   /** @type {ReadonlyArray<NotePage>} the note's pages */ #pages = []
   /** @type {string|null} the page the reader is on */ #shown = null
@@ -161,7 +163,8 @@ export class TranscriptSurface extends AbstractSurface {
     this.#transcribeButton = this.#button('transcribe', 'Transcribe this page', '')
     this.#bar.append(this.#notice, this.#status.element, this.#newDocument, this.#transcribeButton)
     this.#blocks = this.#element('div', 'ink-transcript__blocks tiptap')
-    page.append(this.#bar, this.#blocks)
+    this.#syncing.element.hidden = true
+    page.append(this.#bar, this.#blocks, this.#syncing.element)
     body.append(page)
     this.#root.append(body)
   }
@@ -313,7 +316,8 @@ export class TranscriptSurface extends AbstractSurface {
       case InkFeed.LOG_RESTARTED:
         this.#unseen.clear()
         this.#heardSeq = 0
-        this.#ask()
+        if (this.#shown === null) this.#show(null)
+        else this.#ask()
         break
     }
   }
@@ -435,6 +439,10 @@ export class TranscriptSurface extends AbstractSurface {
     this.#toolbarChanged()
     if (pageId === null) {
       this.#drawNothing(TranscriptSurface.Words.NO_PAGES)
+      const asked = ++this.#asked
+      this.#provider.noteSyncing().then((syncing) => {
+        if (syncing && asked === this.#asked && this.#mounted) this.#drawSyncing()
+      }, (err) => console.warn('[ink] whether the note is syncing could not be asked', err))
       return
     }
     if (!this.#transcript) this.#drawNothing(TranscriptSurface.Words.LOADING)
@@ -457,6 +465,7 @@ export class TranscriptSurface extends AbstractSurface {
    * @param {InkTranscript} transcript
    */
   #draw(transcript) {
+    this.#showBar()
     this.#transcript = transcript
     const W = TranscriptSurface.Words
     const hasTranscript = transcript.state !== InkTranscriptState.NONE
@@ -511,6 +520,7 @@ export class TranscriptSurface extends AbstractSurface {
 
   /** Draws no transcript and says `text`. @param {string} text */
   #drawNothing(text) {
+    this.#showBar()
     this.#notice.textContent = text
     this.#notice.hidden = false
     delete this.#notice.dataset.tone
@@ -519,6 +529,20 @@ export class TranscriptSurface extends AbstractSurface {
     this.#newDocument.hidden = true
     this.#fill([], false)
     this.#toolbarChanged()
+  }
+
+  /** Shows, in place of the bar and the transcript, that the note is syncing from the tablet. */
+  #drawSyncing() {
+    this.#bar.hidden = true
+    this.#fill([], false)
+    this.#syncing.element.hidden = false
+    this.#toolbarChanged()
+  }
+
+  /** Shows the bar, and not the syncing panel. */
+  #showBar() {
+    this.#bar.hidden = false
+    this.#syncing.element.hidden = true
   }
 
   /** @param {InkTranscript['blocks']} blocks @param {boolean} stale */

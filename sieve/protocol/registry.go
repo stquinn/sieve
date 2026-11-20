@@ -213,6 +213,10 @@ func (r *Registry) registerEndpoints() {
 		Request: reflect.TypeOf(InkDescribeRequest{}), ResponseKind: ResponseNone,
 	})
 	r.addEndpoint(EndpointEntry{
+		Method: "POST", Path: "/api/ink/notes/{uuid}/resync",
+		Request: reflect.TypeOf(InkResyncRequest{}), ResponseKind: ResponseNone,
+	})
+	r.addEndpoint(EndpointEntry{
 		Method: "POST", Path: "/api/ink/notes/{uuid}/open-on-tablet",
 		Request: reflect.TypeOf(InkOpenOnTabletRequest{}), Response: reflect.TypeOf(InkOpenOnTabletResponse{}),
 		ResponseKind: ResponseJSON,

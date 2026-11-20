@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 
+	"sieve/ident"
 	"sieve/sieve"
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
@@ -149,7 +150,7 @@ func newInkWireOver(t *testing.T, records []link.Record, st store.Store) *inkWir
 	if err := sp.State.SaveSettings(settings); err != nil {
 		t.Fatal(err)
 	}
-	sp.Ink = ink.NewInkService(sp.State, sp.Containers, radio.NewTCP(listener.Addr().String(), "companion"), nil)
+	sp.Ink = ink.NewInkService(sp.State, sp.Containers, ink.NewNoteStaging(t.TempDir()), nil, radio.NewTCP(listener.Addr().String(), "companion"), nil)
 	t.Cleanup(sp.Ink.Stop)
 	sp.Nodes = editor.NewRouter(editor.NewBlockSource(sp.Containers), sp.Ink.LiveView())
 	sp.Editor.SetNodes(sp.Nodes)
@@ -304,6 +305,47 @@ func TestWS_InkPage_AnswersAPageAndRefusesWhatIsNone(t *testing.T) {
 	c = dialWS(t, w.srv, other.UUID())
 	if refused := w.askPage(c, inkPage1.String()); !strings.Contains(refused["error"].(string), "code") || refused["page"] != nil {
 		t.Errorf("a code container answered %v", refused)
+	}
+	closeAndSettle(c)
+}
+
+// A page asked of a note with no published log, the empty page among them, is refused as syncing,
+// and the socket holds the note: the restart of its log when the tablet's records are published
+// reaches it, and the page is then answered as the log stands.
+func TestWS_InkPage_ANoteWithNoPublishedLogIsSyncing(t *testing.T) {
+	records := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)))
+	w := newInkWire(t, records)
+	w.session(records)
+	uuid := w.container()
+	held, err := w.sp.Containers.Load(uuid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.sp.Containers.DeleteAsset(held, ink.StrokesKey); err != nil {
+		t.Fatal(err)
+	}
+
+	c := dialWS(t, w.srv, uuid)
+	for _, pageID := range []string{inkPage1.String(), ""} {
+		refused := w.askPage(c, pageID)
+		if refused["reason"] != protocol.InkPageSyncing || refused["error"] == nil || refused["page"] != nil {
+			t.Errorf("page %q answered %v", pageID, refused)
+		}
+	}
+	if !w.holds(uuid) {
+		t.Fatal("the socket refused as syncing does not hold the note")
+	}
+	if err := w.sp.Ink.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		notes := w.sp.Ink.Status().Notes
+		return len(notes) == 1 && notes[0].Seq == uint32(len(records))
+	}, "the log to be synced again")
+	w.sp.Ink.Stop()
+	readUntil(t, c, protocol.TypeInkLogRestarted, 5*time.Second)
+	if answer := w.askPage(c, inkPage1.String()); answer["seq"] != float64(len(records)) || answer["reason"] != nil {
+		t.Errorf("after the restart, answered %v", answer)
 	}
 	closeAndSettle(c)
 }
@@ -892,6 +934,55 @@ func TestWS_Ink_NoPathOfALiveTabAsksTheStoreForIt(t *testing.T) {
 	}
 }
 
+// POST /api/ink/notes/{uuid}/resync syncs a note again while its tablet is connected and lists it,
+// and otherwise answers why not: no tablet 409, a container that is no Digital Note 404, ink
+// unavailable 503.
+func TestInkResync_SyncsANoteAgainOrSaysWhyNot(t *testing.T) {
+	records := inkLog(inkStrokeAdd(inkPage1, inkStroke(1)))
+	w := newInkWire(t, records)
+	w.session(records)
+	uuid := w.container()
+	routes := w.routes()
+	ours := w.sp.Ink
+	for _, c := range []struct {
+		name      string
+		uuid      string
+		connected bool
+		noInk     bool
+		status    int
+	}{
+		{"no tablet", uuid, false, false, http.StatusConflict},
+		{"no such notebook", ident.New(), true, false, http.StatusNotFound},
+		{"ink unavailable", uuid, false, true, http.StatusServiceUnavailable},
+		{"resynced", uuid, true, false, http.StatusNoContent},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w.sp.Ink = ours
+			if c.noInk {
+				w.sp.Ink = nil
+			}
+			if c.connected {
+				if err := ours.Start(); err != nil {
+					t.Fatal(err)
+				}
+				waitFor(t, func() bool { return ours.Status().Link.Phase == ink.LinkConnected }, "the tablet to connect")
+			}
+			defer ours.Stop()
+			status, body := do(t, http.MethodPost, routes.URL+"/api/ink/notes/"+c.uuid+"/resync", "", "")
+			if status != c.status || (status != http.StatusNoContent && strings.TrimSpace(body) == "") {
+				t.Fatalf("answered %d %q, want %d", status, body, c.status)
+			}
+			if status == http.StatusNoContent {
+				waitFor(t, func() bool {
+					notes := ours.Status().Notes
+					return len(notes) == 1 && notes[0].Seq == uint32(len(records))
+				}, "the note to be synced again")
+			}
+		})
+	}
+	w.sp.Ink = ours
+}
+
 // An ink-open-on-tablet carries the page to the tablet and is answered, by opId, with what came of
 // it: the tablet going live on the note, its refusal and reason, a tablet connected that the note
 // did not come from, or none connected; a channel holding no Digital Note is answered with an
@@ -921,7 +1012,7 @@ func TestWS_InkOpenOnTablet_AnswersWithWhatCameOfIt(t *testing.T) {
 			w.companion.SetOpenNoteAnswer(c.answer)
 			w.sp.Ink = ours
 			if c.connect != "" && c.connect != "companion" {
-				w.sp.Ink = ink.NewInkService(w.sp.State, w.sp.Containers, radio.NewTCP(w.addr, c.connect), nil)
+				w.sp.Ink = ink.NewInkService(w.sp.State, w.sp.Containers, ink.NewNoteStaging(t.TempDir()), nil, radio.NewTCP(w.addr, c.connect), nil)
 			}
 			if c.connect != "" {
 				if err := w.sp.Ink.Start(); err != nil {

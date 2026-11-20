@@ -1,17 +1,35 @@
 package link
 
-import "sync"
+import (
+	"errors"
+	"sync"
+)
+
+// ErrRewound is a replica that stands at an earlier cursor than its caller last saw: it found what
+// it holds damaged and rewound itself, or it was rewound and no HEAD has begun it since. The note
+// must be opened again from the replica's cursor.
+var ErrRewound = errors.New("the replica was rewound")
 
 // Replica is this Sieve's copy of one note's log, however it is stored.
 type Replica interface {
 	// Cursor is how far the replica holds the log.
 	Cursor() Cursor
 	// Append stores one record, whose canonical body is body, if and only if Cursor.Accept takes
-	// it; on any error neither the stored log nor the cursor changes.
+	// it; on any other error neither the stored log nor the cursor changes. It is ErrRewound when
+	// the replica found what it holds damaged and rewound itself, and while it is rewound and has
+	// not been begun again.
 	Append(r Record, body []byte) error
-	// SetAside moves what the replica holds out of the way, keeping it, and starts the replica
-	// again from the zero Cursor.
-	SetAside() error
+	// Rewind keeps what the replica holds aside and starts it again from the cursor at seq, or the
+	// nearest one below it that what it holds still reaches. Every Append is ErrRewound until the
+	// next Begin.
+	Rewind(seq uint32) error
+	// Begin is a HEAD answering an OPEN of the note, which the companion holds to head: the
+	// records appended from now until Settle are a catch-up.
+	Begin(head uint32) error
+	// Settle is the note's DONE: what was appended since Begin is made durable, whole or not at
+	// all. It is ErrRewound when the replica found what it holds damaged and rewound itself, and
+	// while it is rewound.
+	Settle() error
 }
 
 // Replicas holds this Sieve's replicas of a companion's notes, by the companion's note id.
@@ -63,7 +81,9 @@ type MemoryReplica struct {
 	mu      sync.Mutex
 	cursor  Cursor
 	records []Record
+	bodies  [][]byte
 	aside   [][]Record
+	rewound bool
 }
 
 func (r *MemoryReplica) Cursor() Cursor {
@@ -75,20 +95,56 @@ func (r *MemoryReplica) Cursor() Cursor {
 func (r *MemoryReplica) Append(rec Record, body []byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.rewound {
+		return ErrRewound
+	}
 	next := r.cursor
 	if err := next.Accept(rec, body); err != nil {
 		return err
 	}
 	r.cursor = next
 	r.records = append(r.records, rec)
+	r.bodies = append(r.bodies, append([]byte(nil), body...))
 	return nil
 }
 
-func (r *MemoryReplica) SetAside() error {
+// Rewind keeps the whole log aside and holds its records up to seq.
+func (r *MemoryReplica) Rewind(seq uint32) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.aside = append(r.aside, r.records)
-	r.records, r.cursor = nil, Cursor{}
+	kept := 0
+	for kept < len(r.records) && r.records[kept].Seq <= seq {
+		kept++
+	}
+	r.records, r.bodies = append([]Record(nil), r.records[:kept]...), append([][]byte(nil), r.bodies[:kept]...)
+	r.cursor = Cursor{}
+	for i, rec := range r.records {
+		if err := r.cursor.Accept(rec, r.bodies[i]); err != nil {
+			return err
+		}
+	}
+	r.rewound = true
+	return nil
+}
+
+// Begin ends a rewind; otherwise it does nothing, since a MemoryReplica holds every record as it
+// is appended.
+func (r *MemoryReplica) Begin(uint32) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rewound = false
+	return nil
+}
+
+// Settle is ErrRewound while the replica is rewound; otherwise it does nothing, since a
+// MemoryReplica holds every record as it is appended.
+func (r *MemoryReplica) Settle() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rewound {
+		return ErrRewound
+	}
 	return nil
 }
 

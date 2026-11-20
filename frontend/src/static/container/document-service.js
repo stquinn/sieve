@@ -54,6 +54,12 @@ const DESCRIBE_TIMEOUT_MS = 15000
  */
 
 export class DocumentService {
+  /** Why Go refused an ink-page, as the `reason` of inkPage's rejection says it. */
+  static InkPageRefusal = Object.freeze({
+    /** the note has no published log yet; its socket hears ink-log-restarted when it has */
+    SYNCING: 'syncing',
+  })
+
   /** @type {import('./container-transport.js').ContainerTransport} */ #transport
   /** @type {Map<string, Set<(content: Record<string, any>) => void>>} uuid → whole-container-answer observers (see onContent) */ #contentListeners = new Map()
 
@@ -472,8 +478,13 @@ export class DocumentService {
    * in place of the page; exactly one of `page` and `drawing` is set. `key` names
    * the note's whole log as it stood at `seq`.
    *
-   * REJECTS when Go refuses — the container is no Digital Note, or the note has
-   * no such page — on a timeout, and on a channel-less uuid.
+   * An empty `pageId` asks of the note alone, which Go always refuses: as
+   * syncing while the note has no published log, otherwise as no page.
+   *
+   * REJECTS when Go refuses — the container is no Digital Note, the note has no
+   * such page, or it has no published log yet — on a timeout, and on a
+   * channel-less uuid. A refusal's Error carries Go's `reason` when Go gave one:
+   * one of DocumentService.InkPageRefusal.
    * @param {string} uuid @param {string} pageId @param {string} [renderer]
    * @returns {Promise<{page: Record<string, any>|null, drawing: string|null, seq: number, key: string}>}
    */
@@ -483,7 +494,9 @@ export class DocumentService {
     if (renderer) ask.renderer = renderer
     return this.#transport._awaitReply(uuid, ask, 'ink-page ' + pageId)
       .then((reply) => {
-        if (reply.error || (!reply.page && !reply.drawing)) throw new Error('ink-page ' + pageId + ' refused: ' + (reply.error || 'no page'))
+        if (reply.error || (!reply.page && !reply.drawing)) {
+          throw Object.assign(new Error('ink-page ' + pageId + ' refused: ' + (reply.error || 'no page')), { reason: String(reply.reason || '') })
+        }
         return { page: reply.page || null, drawing: reply.page ? null : reply.drawing, seq: reply.seq || 0, key: reply.key || '' }
       })
   }

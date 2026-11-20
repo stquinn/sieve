@@ -30,11 +30,13 @@ const liveAttrs = (opts = {}) => ({
 })
 
 /**
- * A Live lens presented over a view of `attrs`, every page of `pages` answered with `strokes` at seq 10.
- * @param {Record<string, any>} attrs @param {{pages?: string[], strokes?: any[], template?: any}} [opts]
+ * A Live lens presented over a view of `attrs`, every page of `pages` answered with `strokes` at
+ * seq 10, or mirroring a note with no published log when `syncing`.
+ * @param {Record<string, any>} attrs @param {{pages?: string[], strokes?: any[], template?: any, syncing?: boolean}} [opts]
  */
 async function presented(attrs, opts = {}) {
   const provider = new FakeInkProvider(attrs, LIVE, 'ink-live')
+  provider.syncing = opts.syncing === true
   for (const id of opts.pages || ['p1', 'p2', 'q1', 'w1']) {
     provider.answers.set(id, { page: exportPage(opts.strokes || [pen('s-' + id)], opts.template), seq: 10 })
   }
@@ -118,6 +120,20 @@ describe('LiveInkLens', () => {
     provider.emit({ type: InkFeed.LIVE, records: [begin(8), ...points(8, 0, 4)] })
     frames.run()
     expect([readout(lens)[0], layer(root, 'live').children.length, provider.loads]).toEqual(['Live', 1, 1])
+  })
+
+  it.each([
+    ['a page its note lists', ['p1', 'p2']],
+    ['a page its note does not list yet', []],
+  ])('says the note mirrored is syncing while it has no published log, writing on %s, and shows the page once the log restarts', async (_name, ids) => {
+    const { provider, root } = await presented(liveAttrs({ ids, page: 'p1' }), { syncing: true })
+    expect(root.querySelector('.ink-syncing')?.textContent).toMatch(/Syncing from the tablet/)
+    provider.syncing = false
+    provider.setAttrs(liveAttrs({ page: 'p1' }))
+    provider.emit({ type: InkFeed.LOG_RESTARTED })
+    await settle()
+    expect(root.querySelector('.ink-syncing')).toBeNull()
+    expect(strokeEls(root, 's-p1')).toHaveLength(1)
   })
 
   it('Open this note asks the host to open the mirrored note, and does nothing before one is mirrored', async () => {

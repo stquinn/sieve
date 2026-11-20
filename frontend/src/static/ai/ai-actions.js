@@ -2,7 +2,7 @@
 // republished as the sieve:jobs-changed DOM event). Exposes the window.SieveAI
 // namespace, and maintains window.__sieveActiveJobs for the close-guard.
 (function() {
-  // activeJobs: jobId → {label, docId, spinTab}. Replaced wholesale on every push.
+  // activeJobs: jobId → {label, docId, spinTab, done, total}. Replaced wholesale on every push.
   var activeJobs = {};
   var queuedJobs = [];
   window.__sieveActiveJobs = 0;
@@ -18,7 +18,7 @@
     var frag = document.createDocumentFragment();
 
     if (ids.length > 0) {
-      var labels = ids.map(function (id) { return activeJobs[id].label || 'Working…'; });
+      var labels = ids.map(function (id) { return jobText(activeJobs[id]); });
       var active = document.createElement('span');
       active.className = 'status-bar__job-active';
       active.title = labels.join('\n');
@@ -51,8 +51,14 @@
     sbLeft.appendChild(frag);
   }
 
+  // jobText — a job's label, followed by "done / total" when the job says how far it has got.
+  function jobText(job) {
+    var label = job.label || 'Working…';
+    return job.total > 0 ? label + ' ' + job.done + ' / ' + job.total : label;
+  }
+
   function setEvaluating(id, isEval) {
-    var tab = document.querySelector('.group[data-tab-id="' + id + '"]');
+    var tab = document.querySelector('[data-tab-id="' + id + '"]');
     if (tab) {
       var normal = tab.querySelector('.tab-icon-normal');
       var spinner = tab.querySelector('.tab-spinner');
@@ -85,7 +91,7 @@
     activeJobs = {};
     (payload.active || []).forEach(function(j) {
       if (!j.jobId) return;
-      activeJobs[j.jobId] = { label: j.label || 'Working...', docId: j.docId || '', spinTab: !!j.spinTab };
+      activeJobs[j.jobId] = { label: j.label || 'Working...', docId: j.docId || '', spinTab: !!j.spinTab, done: j.done || 0, total: j.total || 0 };
       if (j.spinTab && j.docId) setEvaluating(j.docId, true);
     });
     queuedJobs = (payload.queued || []).filter(function(j) { return !!j.jobId; });

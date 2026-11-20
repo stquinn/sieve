@@ -858,9 +858,9 @@ describe('the notebook and Live menus', () => {
 
   it.each([
     ['a tree row', { type: 'notebook', id: 'n1', name: 'Ideas', isTab: false },
-      ['Open', 'Open on device', 'Refresh name and summary', 'Rename...', 'Show in Files', 'Delete Notebook...']],
+      ['Open', 'Open on device', 'Resync', 'Refresh name and summary', 'Rename...', 'Show in Files', 'Delete Notebook...']],
     ['a tab', { type: 'notebook', id: 'n1', name: 'Ideas', isTab: true },
-      ['Open on device', 'Refresh name and summary', 'Rename...', 'Show in Files', 'Delete Notebook...', 'Close Tab', 'Close Others', 'Close All Tabs']],
+      ['Open on device', 'Resync', 'Refresh name and summary', 'Rename...', 'Show in Files', 'Delete Notebook...', 'Close Tab', 'Close Others', 'Close All Tabs']],
     ['the Live row', { type: 'inkLive', id: 'v1', name: 'Live', isTab: false }, ['Open this note']],
     ['the Live tab', { type: 'inkLive', id: 'v1', name: 'Live', isTab: true }, ['Open this note', 'Close Tab', 'Close Others', 'Close All Tabs']],
   ])('%s offers its own items', (_, context, want) => {
@@ -902,17 +902,20 @@ describe('the notebook and Live menus', () => {
     marker.remove()
   })
 
-  it('Refresh name and summary posts the describe route and says it is naming, or the route\'s words', async () => {
+  it.each([
+    ['Refresh name and summary', 'describe', 'Naming Ideas…', 'No AI is configured in Settings, so nothing can name this notebook.'],
+    ['Resync', 'resync', 'Resyncing Ideas from the tablet…', 'The tablet this notebook came from is not connected, or does not share it now.'],
+  ])('%s posts the %s route and says it has begun, or the route\'s words', async (label, route, begun, refused) => {
     fetched.mockResolvedValueOnce({ ok: true, status: 204 })
-    itemNamed(openOn({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: false }), 'Refresh name and summary').click()
+    itemNamed(openOn({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: false }), label).click()
     await settle()
-    expect(fetched).toHaveBeenCalledWith('/api/ink/notes/n1/describe', { method: 'POST' })
-    expect(said.at(-1)?.detail).toEqual({ text: 'Naming Ideas…', error: false })
+    expect(fetched).toHaveBeenCalledWith('/api/ink/notes/n1/' + route, { method: 'POST' })
+    expect(said.at(-1)?.detail).toEqual({ text: begun, error: false })
 
-    fetched.mockResolvedValueOnce({ ok: false, status: 409, text: () => Promise.resolve('No AI is configured in Settings, so nothing can name this notebook.\n') })
-    itemNamed(openOn({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: false }), 'Refresh name and summary').click()
+    fetched.mockResolvedValueOnce({ ok: false, status: 409, text: () => Promise.resolve(refused + '\n') })
+    itemNamed(openOn({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: true }), label).click()
     await settle()
-    expect(said.at(-1)?.detail).toEqual({ text: 'No AI is configured in Settings, so nothing can name this notebook.', error: true })
+    expect(said.at(-1)?.detail).toEqual({ text: refused, error: true })
   })
 
   it.each([

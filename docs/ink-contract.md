@@ -238,6 +238,16 @@ directory. The block never carries ink.
   the live feed go to an open lens only and never to the source.
 - The catch-up cursor is the `seq` the source replays to: replication resumes with `OPEN {noteId,
   haveSeq}` from there. `note_synced_seq` is a copy of it and is never ahead of the source.
+- During a catch-up — from a `HEAD` past the cursor to that note's `DONE` — the records that arrive
+  are kept outside the library, and the source is published at `DONE` in one write: the whole
+  source for a note that had none, otherwise one append. Until then the source, the cursor a view
+  reads and `note_synced_seq` stand where the catch-up began; a note with no source yet is shown as
+  syncing.
+- A source found damaged — a write that leaves it the wrong length, a replay that ends short of
+  `note_synced_seq`, staged records that do not replay to the cursor — is rewound: kept whole as
+  `strokes.aside-N.jsonl`, cut to its last good record, `note_synced_seq` set there, and the note
+  opened again with `OPEN` from it. A chain that does not hold against `HEAD`, a `REFUSE` `ahead`
+  and a Resync asked by hand rewind it to no record.
 - `note_device` is copied from the `note-header` and never edited. It says which device a note came
   from; `note_companion` remains the companion's identity on the link.
 - One Sieve holds at most one live container per `(note_companion, note_source_id)`.

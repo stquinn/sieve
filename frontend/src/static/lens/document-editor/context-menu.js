@@ -974,6 +974,11 @@ import { selectNextScope } from './interaction-policy.js'
           .then(function (answer) { sayStatus(answer.message, answer.outcome !== 'opened') })
           .catch(function (err) { sayStatus(err.message, true) })
       }},
+      { icon: IC.refresh, label: 'Resync', action: function () {
+        notebookRequest('/api/ink/notes/' + id + '/resync')
+          .then(function () { sayStatus('Resyncing ' + called + ' from the tablet…') })
+          .catch(function (err) { sayStatus(err.message, true) })
+      }},
       { icon: IC.refresh, label: 'Refresh name and summary', action: function () {
         notebookRequest('/api/ink/notes/' + id + '/describe')
           .then(function () { sayStatus('Naming ' + called + '…') })

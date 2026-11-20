@@ -112,7 +112,7 @@ func TestWS_MentionQuery_RoundTripsCandidates(t *testing.T) {
 func TestWS_MentionQuery_OffersANotebookThatOpensAsItself(t *testing.T) {
 	srv, sp, _, _ := newWsTestServer(t)
 	block.RegisterProcessor(ink.NewDigitalNoteKind())
-	sp.Ink = ink.NewInkService(sp.State, sp.Containers, holdingRadio{}, nil)
+	sp.Ink = ink.NewInkService(sp.State, sp.Containers, ink.NewNoteStaging(t.TempDir()), nil, holdingRadio{}, nil)
 	t.Cleanup(sp.Ink.Stop)
 	sp.Nodes = editor.NewRouter()
 	sp.RegisterNodeSources()

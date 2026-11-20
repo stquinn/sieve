@@ -11,7 +11,7 @@ function buildActiveJobsMap(active) {
   var map = {}
   ;(active || []).forEach(function (j) {
     if (!j.jobId) return
-    map[j.jobId] = { label: j.label || 'Working...', docId: j.docId || '', spinTab: !!j.spinTab }
+    map[j.jobId] = { label: j.label || 'Working...', docId: j.docId || '', spinTab: !!j.spinTab, done: j.done || 0, total: j.total || 0 }
   })
   return map
 }
@@ -27,7 +27,7 @@ describe('applyJobsSnapshot pure logic (mirrors ai-actions.js)', () => {
       queued: [{ jobId: 'j2' }],
     }
     var map = buildActiveJobsMap(payload.active)
-    expect(map['j1']).toEqual({ label: 'Filing...', docId: 'doc1', spinTab: true })
+    expect(map['j1']).toEqual({ label: 'Filing...', docId: 'doc1', spinTab: true, done: 0, total: 0 })
     expect(Object.keys(map)).toHaveLength(1)
   })
 
@@ -74,7 +74,7 @@ describe('applyJobsSnapshot pure logic (mirrors ai-actions.js)', () => {
       { jobId: 'cmd-1', category: 'commands', label: '/btw' },
       { jobId: 'j2', category: 'ai', label: 'Filing...' },
     ])
-    expect(map['cmd-1']).toEqual({ label: '/btw', docId: '', spinTab: false })
+    expect(map['cmd-1']).toEqual({ label: '/btw', docId: '', spinTab: false, done: 0, total: 0 })
     expect(map['j2']).toBeDefined()
     expect(Object.keys(map)).toHaveLength(2)
   })
@@ -142,6 +142,16 @@ describe('updateStatusBar (.status-bar__jobs DOM rendering)', () => {
     expect(more.textContent).toBe('+2 more')
     expect(more.title).toBe('Filing Architecture Notes…\nNaming Scratchpad…')
     expect(window.__sieveActiveJobs).toBe(3)
+  })
+
+  it.each([
+    ['a job that says how far it has got', { done: 140, total: 295 }, 'Syncing Field Notes 140 / 295'],
+    ['a job that does not', {}, 'Syncing Field Notes'],
+  ])('draws done / total beside the label of %s', (_name, progress, text) => {
+    pushSnapshot({ active: [{ jobId: 'j1', label: 'Syncing Field Notes', ...progress }], queued: [] })
+    const active = document.querySelector('.status-bar__jobs .status-bar__job-active')
+    expect(active.querySelector('.status-bar__task').textContent).toBe(text)
+    expect(active.title).toBe(text)
   })
 
   it('renders active, +N more, and queued cells together and clears when idle', () => {

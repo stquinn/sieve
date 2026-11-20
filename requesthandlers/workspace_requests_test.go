@@ -47,7 +47,7 @@ func newPageDrawing(t *testing.T) *pageDrawing {
 	t.Helper()
 	wires, sp, h, _ := newWsTestServer(t)
 	block.RegisterProcessor(ink.NewDigitalNoteKind())
-	sp.Ink = ink.NewInkService(sp.State, sp.Containers, holdingRadio{}, nil)
+	sp.Ink = ink.NewInkService(sp.State, sp.Containers, ink.NewNoteStaging(t.TempDir()), nil, holdingRadio{}, nil)
 	sp.InkImages = ink.NewPageImages(sp.Ink, NewInkPageDrawer(h.broadcast.Requests()))
 	sp.Nodes = editor.NewRouter(editor.NewBlockSource(sp.Containers))
 	p := &pageDrawing{t: t, wires: wires, sp: sp, h: h, clock: make(chan time.Time, 1)}

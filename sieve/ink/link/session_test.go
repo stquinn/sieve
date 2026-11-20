@@ -3,6 +3,7 @@ package link
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"slices"
@@ -14,17 +15,19 @@ import (
 
 var testKey = Key{'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'}
 
-// recorder is an Observer that keeps what it is told, and calls opened, when set, at each HEAD.
+// recorder is an Observer that keeps what it is told, and calls opened, when set, at each HEAD and
+// onCommit, when set, at each record committed.
 type recorder struct {
 	mu        sync.Mutex
 	committed []uint32
 	live      []ID
 	livePages []ID
-	aside     []ID
+	rewound   []string
 	refused   []string
 	done      chan uint32
 	notes     chan struct{}
 	opened    func(note ID)
+	onCommit  func(rec Record)
 }
 
 func newRecorder() *recorder {
@@ -53,13 +56,23 @@ func (r *recorder) Done(_ ID, seq uint32, _ int) {
 }
 func (r *recorder) Committed(_ ID, rec Record) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.committed = append(r.committed, rec.Seq)
+	r.mu.Unlock()
+	if r.onCommit != nil {
+		r.onCommit(rec)
+	}
 }
-func (r *recorder) SetAside(note ID) {
+func (r *recorder) Rewound(note ID, seq uint32) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.aside = append(r.aside, note)
+	r.rewound = append(r.rewound, fmt.Sprintf("%x to %d", note[0], seq))
+}
+
+// heardRewound is every rewind the recorder heard.
+func (r *recorder) heardRewound() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.rewound...)
 }
 func (r *recorder) Live(note, page ID) {
 	r.mu.Lock()
@@ -78,18 +91,83 @@ type harness struct {
 	obs *recorder
 }
 
-// countingReplicas counts the replicas a session opens.
+// countingReplicas counts the replicas a session opens, and traces each Begin and Settle of them
+// with the replica's cursor seq. When damageAt is set, the Append of the record at that seq, or
+// the first Settle when damageAt is settleDamaged, rewinds the replica to rewindTo and is
+// ErrRewound, once, as a replica finding its log damaged does.
 type countingReplicas struct {
 	*MemoryReplicas
-	mu     sync.Mutex
-	opened int
+	mu       sync.Mutex
+	opened   int
+	trace    []string
+	damageAt uint32
+	rewindTo uint32
+}
+
+// settleDamaged is a damageAt naming the first Settle.
+const settleDamaged = ^uint32(0)
+
+// damaged reports whether the event at seq is the damaged one, once, rewinding r if it is.
+func (c *countingReplicas) damaged(seq uint32, r Replica) (bool, error) {
+	c.mu.Lock()
+	hit := c.damageAt != 0 && c.damageAt == seq
+	if hit {
+		c.damageAt = 0
+	}
+	c.mu.Unlock()
+	if !hit {
+		return false, nil
+	}
+	return true, r.Rewind(c.rewindTo)
 }
 
 func (c *countingReplicas) Open(note ID) (Replica, error) {
 	c.mu.Lock()
 	c.opened++
 	c.mu.Unlock()
-	return c.MemoryReplicas.Open(note)
+	r, err := c.MemoryReplicas.Open(note)
+	return tracedReplica{r, c}, err
+}
+
+// takeTrace is the trace since it was last asked.
+func (c *countingReplicas) takeTrace() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t := c.trace
+	c.trace = nil
+	return t
+}
+
+func (c *countingReplicas) traced(event string, r Replica) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.trace = append(c.trace, fmt.Sprintf("%s at %d", event, r.Cursor().Seq))
+}
+
+// tracedReplica is a replica whose Begin and Settle are traced by its replicas.
+type tracedReplica struct {
+	Replica
+	replicas *countingReplicas
+}
+
+func (r tracedReplica) Begin(head uint32) error {
+	r.replicas.traced(fmt.Sprintf("begin %d", head), r.Replica)
+	return r.Replica.Begin(head)
+}
+
+func (r tracedReplica) Settle() error {
+	r.replicas.traced("settle", r.Replica)
+	if hit, err := r.replicas.damaged(settleDamaged, r.Replica); hit {
+		return errors.Join(ErrRewound, err)
+	}
+	return r.Replica.Settle()
+}
+
+func (r tracedReplica) Append(rec Record, body []byte) error {
+	if hit, err := r.replicas.damaged(rec.Seq, r.Replica); hit {
+		return errors.Join(ErrRewound, err)
+	}
+	return r.Replica.Append(rec, body)
 }
 
 // takeOpened is how many replicas were opened since it was last asked.
@@ -216,6 +294,31 @@ func TestCatchUpResumesFromTheCursor(t *testing.T) {
 	}
 }
 
+// Each HEAD begins its note's catch-up at the head it names, and its DONE settles the replica
+// holding every record before the observer hears it done.
+func TestAHeadBeginsTheCatchUpThatItsDoneSettles(t *testing.T) {
+	h := newHarness(t, vectorRecords[:2])
+	if err := h.run(testKey, Plan{CatchUp: true}); err != nil {
+		t.Fatal(err)
+	}
+	h.companion.SetRecords(vectorRecords)
+	h.obs = newRecorder()
+	_, ended, link := h.start(testKey, Plan{CatchUp: true}, h.obs)
+	defer link.Close()
+	all := uint32(len(vectorRecords))
+	if seq := <-h.obs.done; seq != all {
+		t.Errorf("done at %d", seq)
+	}
+	settled := h.replicas.takeTrace()
+	if err := h.end(ended); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"begin 2 at 0", "settle at 2", fmt.Sprintf("begin %d at 2", all), fmt.Sprintf("settle at %d", all)}
+	if !slices.Equal(settled, want) {
+		t.Errorf("traced %v by the second DONE, want %v", settled, want)
+	}
+}
+
 func TestAcksAreSentForWhatIsHeld(t *testing.T) {
 	h := newHarness(t, vectorRecords)
 	if err := h.run(testKey, Plan{CatchUp: true}); err != nil {
@@ -231,7 +334,7 @@ func TestAcksAreSentForWhatIsHeld(t *testing.T) {
 	}
 }
 
-func TestAReplicaTheCompanionDisownsIsSetAsideAndAskedForAgain(t *testing.T) {
+func TestAReplicaTheCompanionDisownsIsRewoundToNothingAndAskedForAgain(t *testing.T) {
 	for _, c := range []struct {
 		name  string
 		setup func(*ScriptedCompanion)
@@ -257,11 +360,78 @@ func TestAReplicaTheCompanionDisownsIsSetAsideAndAskedForAgain(t *testing.T) {
 			if aside := h.held().Aside(); len(aside) != 1 || len(aside[0]) != c.aside {
 				t.Errorf("set aside %v", aside)
 			}
-			if heard := h.obs.aside; len(heard) != 1 || heard[0] != vectorNote {
-				t.Errorf("the observer heard %v set aside, want the note once", heard)
+			if heard := h.obs.heardRewound(); !slices.Equal(heard, []string{fmt.Sprintf("%x to 0", vectorNote[0])}) {
+				t.Errorf("the observer heard %v rewound, want the note to 0 once", heard)
 			}
 			if got := h.held().Cursor().Seq; got != uint32(len(vectorRecords)) {
 				t.Errorf("held %d", got)
+			}
+		})
+	}
+}
+
+// A replica that is ErrRewound — it found its log damaged on an Append or a Settle, or was rewound
+// from another goroutine while records were in flight — has its note opened again from its cursor
+// and the link kept; the observer hears the rewind from the session only when the session sent
+// that OPEN, not when one was already unanswered.
+func TestARewoundReplicaIsOpenedAgainFromItsCursorAndTheLinkKept(t *testing.T) {
+	all := uint32(len(vectorRecords))
+	for _, c := range []struct {
+		name     string
+		damageAt uint32
+		// elsewhere rewinds from another goroutine at the record of this seq, and reopen then sends
+		// OPEN from there too.
+		elsewhere uint32
+		reopen    bool
+		rewindTo  uint32
+		heard     []string
+	}{
+		{"an Append finds the log damaged", 4, 0, false, 2, []string{fmt.Sprintf("%x to 2", vectorNote[0])}},
+		{"a Settle finds the staged records damaged", settleDamaged, 0, false, 2, []string{fmt.Sprintf("%x to 2", vectorNote[0])}},
+		{"a rewind elsewhere with records in flight", 0, 3, false, 1, []string{fmt.Sprintf("%x to 1", vectorNote[0])}},
+		{"a rewind and an OPEN elsewhere with records in flight", 0, 3, true, 1, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t, vectorRecords)
+			h.replicas.damageAt, h.replicas.rewindTo = c.damageAt, c.rewindTo
+			obs := newRecorder()
+			sessions := make(chan *Session, 1)
+			elsewhere := c.elsewhere
+			obs.onCommit = func(rec Record) {
+				if elsewhere == 0 || rec.Seq != elsewhere {
+					return
+				}
+				elsewhere = 0
+				s := <-sessions
+				done := make(chan error, 1)
+				go func() {
+					err := h.held().Rewind(c.rewindTo)
+					if err == nil && c.reopen {
+						err = s.Reopen(vectorNote)
+					}
+					done <- err
+				}()
+				if err := <-done; err != nil {
+					t.Error(err)
+				}
+			}
+			started, ended, link := h.start(testKey, Plan{CatchUp: true}, obs)
+			sessions <- started
+			defer link.Close()
+			if err := h.end(ended); err != nil {
+				t.Fatalf("the link was dropped: %v", err)
+			}
+			if have := h.opens(2); have[0] != 0 || have[1] != c.rewindTo {
+				t.Errorf("OPENs asked from %v, want 0 then %d", have, c.rewindTo)
+			}
+			if got := h.held().Records(); uint32(len(got)) != all || h.held().Cursor().Seq != all {
+				t.Errorf("held %d records at %d", len(got), h.held().Cursor().Seq)
+			}
+			if aside := h.held().Aside(); len(aside) != 1 {
+				t.Errorf("kept %d logs aside", len(aside))
+			}
+			if heard := obs.heardRewound(); !slices.Equal(heard, c.heard) {
+				t.Errorf("the observer heard %v rewound, want %v", heard, c.heard)
 			}
 		})
 	}
@@ -493,13 +663,16 @@ func TestARefusedOpenNoteDoesNotDisturbTheCatchUp(t *testing.T) {
 	}
 }
 
-// OPEN-NOTE is refused with ErrNotRunning before the handshake and after Run has returned, and an
+// OPEN-NOTE and Reopen are ErrNotRunning before the handshake and after Run has returned, and an
 // OPEN-NOTE still awaited when the session ends is answered ErrNotRunning.
 func TestOpenNoteOutsideARunningSessionIsErrNotRunning(t *testing.T) {
 	h := newHarness(t, vectorRecords)
 	unstarted := NewSession(&bytes.Buffer{}, testKey, NewMemoryReplicas(), newRecorder(), Plan{})
 	if _, err := unstarted.OpenNote(vectorNote, vectorPage); !errors.Is(err, ErrNotRunning) {
 		t.Errorf("before the handshake: %v", err)
+	}
+	if err := unstarted.Reopen(vectorNote); !errors.Is(err, ErrNotRunning) {
+		t.Errorf("Reopen before the handshake: %v", err)
 	}
 
 	obs := newRecorder()
@@ -510,6 +683,9 @@ func TestOpenNoteOutsideARunningSessionIsErrNotRunning(t *testing.T) {
 	link.Close()
 	if _, err := s.OpenNote(vectorNote, vectorPage); !errors.Is(err, ErrNotRunning) {
 		t.Errorf("after Run returned: %v", err)
+	}
+	if err := s.Reopen(vectorNote); !errors.Is(err, ErrNotRunning) {
+		t.Errorf("Reopen after Run returned: %v", err)
 	}
 
 	h.companion.SetOpenNoteAnswer(OpenNoteAnswer{Silent: true})

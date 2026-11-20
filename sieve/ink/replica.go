@@ -3,8 +3,8 @@ package ink
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -27,13 +27,18 @@ const (
 // description written meanwhile, through writeMeta or not, is kept.
 //
 // A container is created on the first record appended to its replica, never on Open, with that
-// record folded in. The container's strokes.jsonl asset is the log and the truth; its block is a
-// copy of the replica's fold and cursor, saved only after the queue has reached the asset, and so
-// its note_synced_seq is never ahead of the asset. The block is saved when the note is caught up
-// (CaughtUp), when a note-header or page record is appended after that, and by End when anything
-// changed since the last save; a stroke record alone never saves it. Call End after every session.
+// record folded in; until its first catch-up is published it holds no strokes.jsonl. The
+// container's strokes.jsonl asset is the published log and the truth; its block is a copy of the
+// replica's fold and cursor, saved only after the queue has reached the asset, and so its
+// note_synced_seq is never ahead of the asset. A catch-up — the records from a HEAD past the
+// replica's cursor to its DONE — is staged outside the library and published at the DONE (Settle)
+// in one write. The block is saved when the note settles, when a note-header or page record is
+// appended while it follows, and by End when anything published changed since the last save; a
+// stroke record alone never saves it. A log found damaged — on open, after a write, or by a reader
+// — is rewound (NoteReplica.Rewind) to its last good record. Call End after every session.
 type NoteReplicas struct {
 	containers *services.BlockContainerService
+	staging    *NoteStaging
 	kind       DigitalNoteKind
 	companion  string
 	flushBytes int
@@ -53,11 +58,12 @@ type heldNote struct {
 
 var _ link.Replicas = (*NoteReplicas)(nil)
 
-// NewNoteReplicas holds the replicas of the companion of identity companion in containers. The
-// digital-note kind must be registered in the registry containers was built over.
-func NewNoteReplicas(containers *services.BlockContainerService, companion string) *NoteReplicas {
+// NewNoteReplicas holds the replicas of the companion of identity companion in containers,
+// staging their catch-ups in staging. The digital-note kind must be registered in the registry
+// containers was built over.
+func NewNoteReplicas(containers *services.BlockContainerService, staging *NoteStaging, companion string) *NoteReplicas {
 	return &NoteReplicas{
-		containers: containers, kind: NewDigitalNoteKind(), companion: companion,
+		containers: containers, staging: staging, kind: NewDigitalNoteKind(), companion: companion,
 		flushBytes: flushBytes, flushAfter: flushAfter, open: map[link.ID]*NoteReplica{},
 	}
 }
@@ -76,9 +82,11 @@ func (rs *NoteReplicas) Have(note link.ID) (uint32, error) {
 	return rs.held[note].synced, nil
 }
 
-// Open returns the note's replica. A held note's asset is replayed to find its cursor, and a
-// damaged tail is cut off the asset there; an unknown note's replica is at the zero cursor with
-// nothing on disk. A replica whose write failed is dropped and opened again from its asset.
+// Open returns the note's replica. A held note's asset is replayed to find its cursor; a log that
+// does not replay whole, or to the seq its face states, is rewound to its last good record, and
+// otherwise a staged catch-up that follows it is resumed. An unknown note's replica is at the zero
+// cursor with nothing on disk. A replica whose write failed is dropped and opened again from its
+// asset.
 func (rs *NoteReplicas) Open(note link.ID) (link.Replica, error) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -114,17 +122,87 @@ func (rs *NoteReplicas) UUID(note link.ID) (string, error) {
 	return rs.held[note].uuid, nil
 }
 
-// CaughtUp is the companion having sent the note to its head: the open replica's queue is written
-// and its block saved if it changed since its last save, and from now on a note-header or page
-// record appended to it saves the block too. A note with no open replica is left alone.
-func (rs *NoteReplicas) CaughtUp(note link.ID) error {
+// Rewind rewinds the replica of the note held in container uuid, opening it if it is not open, as
+// NoteReplica.Rewind does to seq, and returns the note and the seq the replica then stands at. A
+// container that holds none of this companion's notes is ErrNoSuchNote.
+func (rs *NoteReplicas) Rewind(uuid string, seq uint32) (link.ID, uint32, error) {
+	note, ok, err := rs.noteOf(uuid)
+	if err != nil {
+		return link.ID{}, 0, err
+	}
+	if !ok {
+		return link.ID{}, 0, fmt.Errorf("%w: %s holds no note of %s", ErrNoSuchNote, uuid, rs.companion)
+	}
+	opened, err := rs.Open(note)
+	if err != nil {
+		return link.ID{}, 0, err
+	}
+	r := opened.(*NoteReplica)
+	if err := r.Rewind(seq); err != nil {
+		return link.ID{}, 0, err
+	}
+	return note, r.Cursor().Seq, nil
+}
+
+// noteOf is the note whose open replica or held container is uuid; false when none is.
+func (rs *NoteReplicas) noteOf(uuid string) (link.ID, bool, error) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	for note, r := range rs.open {
+		if r.UUID() == uuid {
+			return note, true, nil
+		}
+	}
+	if err := rs.find(); err != nil {
+		return link.ID{}, false, err
+	}
+	for note, h := range rs.held {
+		if h.uuid == uuid {
+			return note, true, nil
+		}
+	}
+	return link.ID{}, false, nil
+}
+
+// publishedSeq is the seq the published log of the open replica whose container is uuid stands
+// at: its cursor, except while it catches up, when it is the cursor the catch-up began at. False
+// when no open replica holds that container.
+func (rs *NoteReplicas) publishedSeq(uuid string) (uint32, bool) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	for _, r := range rs.open {
+		if r.UUID() == uuid {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			if r.state == stateCatchingUp {
+				return r.published.Seq, true
+			}
+			return r.cursor.Seq, true
+		}
+	}
+	return 0, false
+}
+
+// isFollowing reports whether the note's open replica follows, so that what is appended to it is
+// published as it is written; false while it catches up or is rewound, true for a note with no
+// open replica.
+func (rs *NoteReplicas) isFollowing(note link.ID) bool {
+	rs.mu.Lock()
+	r, ok := rs.open[note]
+	rs.mu.Unlock()
+	return !ok || r.isFollowing()
+}
+
+// takePublished is what the last Settle of the note's open replica published and nobody has yet
+// taken; false when there is none.
+func (rs *NoteReplicas) takePublished(note link.ID) (Publication, bool) {
 	rs.mu.Lock()
 	r, ok := rs.open[note]
 	rs.mu.Unlock()
 	if !ok {
-		return nil
+		return Publication{}, false
 	}
-	return r.caughtUp()
+	return r.takePublished()
 }
 
 // Notes are the open replicas that hold a container, as their folds and cursors stand, which may
@@ -141,8 +219,9 @@ func (rs *NoteReplicas) Notes() []SyncedNote {
 	return notes
 }
 
-// log is the whole log of the open replica whose container is uuid, as it stands now: its asset
-// followed by its queue, so it holds every record appended so far. False when no open replica
+// log is the published log of the open replica whose container is uuid, as it stands now: its
+// asset, followed by its queue while it follows, so it holds every record published or about to
+// be; a catch-up's records are not in it until they are published. False when no open replica
 // holds that container.
 func (rs *NoteReplicas) log(uuid string) ([]byte, bool) {
 	rs.mu.Lock()
@@ -156,7 +235,9 @@ func (rs *NoteReplicas) log(uuid string) ([]byte, bool) {
 }
 
 // attrsOf are the block attrs of the open replica whose container is uuid, as its fold and cursor
-// stand now. False when no open replica holds that container.
+// stand now while it follows, and as they stood at its published log while it catches up. False
+// when no open replica holds that container, and while the one that does has no published log: the
+// note is then what its block was last saved as.
 func (rs *NoteReplicas) attrsOf(uuid string) (map[string]interface{}, bool) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -164,6 +245,12 @@ func (rs *NoteReplicas) attrsOf(uuid string) (map[string]interface{}, bool) {
 		if r.UUID() == uuid {
 			r.mu.Lock()
 			defer r.mu.Unlock()
+			switch {
+			case r.state == stateCatchingUp && r.published.Seq == 0, r.state == stateRewound && r.cursor.Seq == 0:
+				return nil, false
+			case r.state == stateCatchingUp:
+				return r.publishedAttrs, true
+			}
 			return r.attrs(), true
 		}
 	}
@@ -238,15 +325,17 @@ func (rs *NoteReplicas) forget(uuid string) (restore func()) {
 	}
 }
 
-// End writes every open replica's queue, then saves the block of each that changed since its
-// last save, and releases them all. A replica whose write failed is released unsaved, so its
-// block stays behind its asset. The next Have or Open looks for containers again.
+// End writes every open replica's queue, then saves the block of each that follows and changed
+// since its last save, and releases them all. A replica catching up writes its queue to staging
+// and publishes nothing, so the next Open resumes it. A replica whose write failed is released
+// unsaved, so its block stays behind its asset; one whose write found its log damaged is rewound,
+// which is no error. The next Have or Open looks for containers again.
 func (rs *NoteReplicas) End() error {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	var errs []error
 	for note, r := range rs.open {
-		if err := r.end(); err != nil {
+		if err := r.end(); err != nil && !errors.Is(err, link.ErrRewound) {
 			errs = append(errs, fmt.Errorf("note %s: %w", note, err))
 		}
 	}
@@ -285,14 +374,18 @@ func (rs *NoteReplicas) find() error {
 }
 
 // NoteReplica is one note's replica: a digital-note container's strokes.jsonl, read once on
-// open and then only appended to. Appended lines are queued and reach the asset when the queue
-// passes its size, on a short timer, before every save of its block, and on Flush, SetAside or End;
-// a failed write is reported by every later Append and Flush. It is safe for concurrent use.
+// open and then only appended to, except by a rewind. Appended lines are queued and are written
+// when the queue passes its size, on a short timer, before every save of its block, and on Flush,
+// Settle or End: while the replica follows, to the asset, which must then be the length it was
+// left at plus what was written, or the replica is rewound to its last good record and the write
+// is link.ErrRewound; while it catches up, to staging. A failed write is reported by every later
+// Append and Flush. It is safe for concurrent use.
 type NoteReplica struct {
 	owner *NoteReplicas
 	note  link.ID
 
 	mu        sync.Mutex
+	state     replicaState
 	container *domain.BlockContainer
 	cursor    link.Cursor
 	fold      *StrokeBasedNote
@@ -301,8 +394,33 @@ type NoteReplica struct {
 	err       error
 	// changed is the fold or cursor having moved since the block was last saved.
 	changed bool
-	// following is the note caught up to its head, so that a structural record saves the block.
-	following bool
+	// length is how many bytes the published log was left at.
+	length int64
+	// published is the cursor the published log stands at, and publishedAttrs the block's attrs
+	// at it; both are kept only while the replica catches up.
+	published      link.Cursor
+	publishedAttrs map[string]interface{}
+	// publication is what the last Settle published, until it is taken.
+	publication *Publication
+}
+
+// replicaState is where a replica's appends go.
+type replicaState uint8
+
+const (
+	// stateFollowing publishes each append into the library as it is written.
+	stateFollowing replicaState = iota
+	// stateCatchingUp stages each append outside the library until Settle publishes them together.
+	stateCatchingUp
+	// stateRewound takes no append: the replica stands where a rewind left it until a Begin.
+	stateRewound
+)
+
+// Publication is the records one Settle published, in seq order. First is the published log
+// having been empty before them: the note had no log for a reader to stand on.
+type Publication struct {
+	Records []link.Record
+	First   bool
 }
 
 var _ link.Replica = (*NoteReplica)(nil)
@@ -324,15 +442,19 @@ func (r *NoteReplica) UUID() string {
 }
 
 // Append takes rec if Cursor.Accept does, folds it into the header and queues its line; the
-// first record taken creates the note's container with it folded in. Once the note is caught up, a
+// first record taken creates the note's container with it folded in. While the replica follows, a
 // note-header, page-add, page-remove or page-template record also writes the queue and saves the
-// block; a failure of that save is logged and left to the next save. Any error leaves the cursor as
-// it was.
+// block; a failure of that save is logged and left to the next save. A rewound replica takes
+// nothing and is link.ErrRewound, as is a write that finds the log damaged, which leaves the cursor
+// where the rewind put it; any other error leaves the cursor as it was.
 func (r *NoteReplica) Append(rec link.Record, body []byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.err != nil {
 		return r.err
+	}
+	if r.state == stateRewound {
+		return link.ErrRewound
 	}
 	next := r.cursor
 	if err := next.Accept(rec, body); err != nil {
@@ -359,8 +481,10 @@ func (r *NoteReplica) Append(rec link.Record, body []byte) error {
 	r.cursor = next
 	r.queue = append(r.queue, line...)
 	r.changed = true
-	if r.following && rec.Op != link.OpStrokeAdd && rec.Op != link.OpStrokeRemove {
-		if err := r.save(); err != nil {
+	if r.state == stateFollowing && rec.Op != link.OpStrokeAdd && rec.Op != link.OpStrokeRemove {
+		if err := r.save(); errors.Is(err, link.ErrRewound) {
+			return err
+		} else if err != nil {
 			logger.Error("ink: saving a note's block", "note", r.note.String(), "err", err.Error())
 		}
 		return nil
@@ -378,53 +502,180 @@ func (r *NoteReplica) Flush() error {
 	return r.flush()
 }
 
-// SetAside writes the queue, moves strokes.jsonl to an aside asset in the same container, kept,
-// and starts again from the zero cursor in the same container. The block's note_synced_seq is
-// saved as 0 before the asset moves.
-func (r *NoteReplica) SetAside() error {
+// Rewind starts the replica again from the cursor at seq, or the nearest one below it that the
+// published log still replays to. The queue and any catch-up under way, staged records and all,
+// are dropped. The block is saved at that cursor when its face stands elsewhere; then, when the
+// published log holds more than the records kept, the whole of it is kept as the next free
+// strokes.aside-N.jsonl asset and the records kept are published in its place, none at all as no
+// strokes.jsonl. The replica takes no append until its next Begin.
+func (r *NoteReplica) Rewind(seq uint32) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.err != nil {
+		return r.err
+	}
+	return r.rewind(seq)
+}
+
+// Begin starts a catch-up when head is past the cursor: the queue is written to the asset, and
+// what is appended from now until Settle is staged. A replica resumed from staging is catching up
+// already, whatever head is; a rewound one takes appends again.
+func (r *NoteReplica) Begin(head uint32) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.err != nil {
+		return r.err
+	}
+	if r.state == stateRewound {
+		r.state = stateFollowing
+	}
+	if r.state == stateCatchingUp || head <= r.cursor.Seq {
+		return nil
+	}
 	if err := r.flush(); err != nil {
 		return err
 	}
-	if r.container != nil {
-		if err := r.moveAside(); err != nil {
-			r.err = err
-			return err
-		}
-		logger.Warn("ink: replica set aside", "note", r.note.String(), "container", r.container.UUID())
-	}
-	r.cursor, r.fold, r.changed, r.following = link.Cursor{}, NewHeaderFold(r.uuid()), true, false
+	r.state, r.published, r.publishedAttrs = stateCatchingUp, r.cursor, r.attrs()
 	return nil
 }
 
-// moveAside saves the block at seq 0, copies the asset to the next free aside key and deletes
-// it. r.mu is held.
-func (r *NoteReplica) moveAside() error {
-	svc := r.owner.containers
-	r.container.Merge(map[string]interface{}{"note_synced_seq": 0})
-	saved, err := svc.Save(r.container)
-	if err != nil {
+// Settle is the note's DONE. A replica catching up writes its queue to staging, reads the staged
+// records back and replays them from the published cursor; they must reach the cursor the
+// replica holds, or the replica is rewound to its published log and Settle is link.ErrRewound.
+// They are then published into the container in one write — the whole log when there was none,
+// otherwise one append — the block is saved and the staged file dropped, and the replica follows.
+// A replica that follows saves its block if it changed. A rewound replica settles nothing and is
+// link.ErrRewound.
+func (r *NoteReplica) Settle() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.err != nil {
+		return r.err
+	}
+	switch r.state {
+	case stateFollowing:
+		return r.saveSettled()
+	case stateRewound:
+		return link.ErrRewound
+	}
+	r.stopTimer()
+	if err := r.flush(); err != nil {
 		return err
 	}
-	r.container = saved
-	asset, err := svc.LoadAsset(saved, StrokesKey)
-	if err != nil {
+	if r.container == nil {
+		r.state, r.publishedAttrs = stateFollowing, nil
 		return nil
 	}
-	aside := 1
-	for _, a := range saved.Assets() {
-		if strings.HasPrefix(a.Key(), "strokes.aside-") {
-			aside++
+	uuid := r.container.UUID()
+	staged, err := r.owner.staging.Resume(uuid, r.published)
+	if err != nil {
+		r.err = err
+		return err
+	}
+	if len(staged.Records) == 0 {
+		staged.Cursor = r.published
+	}
+	if staged.Cursor != r.cursor {
+		logger.Warn("ink: a note's staged catch-up does not reach its cursor", "note", r.note.String(), "container", uuid,
+			"reached", staged.Cursor.Seq, "cursor", r.cursor.Seq)
+		if err := r.rewind(r.published.Seq); err != nil {
+			return err
 		}
+		return link.ErrRewound
 	}
-	if _, err := svc.SaveAsset(saved, fmt.Sprintf("strokes.aside-%d.jsonl", aside), asset.Body()); err != nil {
+	first := r.published.Seq == 0
+	if len(staged.Records) > 0 {
+		if err := r.writeLog(staged.Bytes, first); err != nil {
+			return err
+		}
+		r.publication = &Publication{Records: staged.Records, First: first}
+		r.changed = true
+	}
+	r.state, r.publishedAttrs = stateFollowing, nil
+	if err := r.saveSettled(); err != nil {
 		return err
 	}
-	if err := svc.DeleteAsset(saved, StrokesKey); err != nil {
+	return r.owner.staging.Drop(uuid)
+}
+
+// saveSettled saves a settled replica's block. A failed write of the log, or one that found it
+// damaged, is returned; a failed save of the block alone is logged and left to the next save. r.mu
+// is held.
+func (r *NoteReplica) saveSettled() error {
+	if err := r.save(); err != nil {
+		if r.err != nil || errors.Is(err, link.ErrRewound) {
+			return err
+		}
+		logger.Error("ink: saving a settled note's block", "note", r.note.String(), "err", err.Error())
+	}
+	return nil
+}
+
+// rewind is Rewind. A failure sticks. r.mu is held.
+func (r *NoteReplica) rewind(seq uint32) error {
+	r.stopTimer()
+	r.queue = r.queue[:0]
+	r.state, r.published, r.publishedAttrs, r.publication = stateRewound, link.Cursor{}, nil, nil
+	if r.container == nil {
+		r.cursor, r.fold, r.length, r.changed = link.Cursor{}, NewHeaderFold(""), 0, false
+		return nil
+	}
+	uuid := r.container.UUID()
+	if err := r.owner.staging.Drop(uuid); err != nil {
+		r.err = err
 		return err
 	}
-	reloaded, err := svc.Load(saved.UUID())
+	var log []byte
+	if asset, err := r.owner.containers.LoadAsset(r.container, StrokesKey); err == nil {
+		log = asset.Body()
+	}
+	r.fold = NewHeaderFold(uuid)
+	cursor, read := r.fold.ReadTo(log, seq)
+	r.cursor, r.length = cursor, int64(read)
+	if err := r.cut(log, read); err != nil {
+		r.err = fmt.Errorf("ink: rewinding note %s: %w", r.note, err)
+		return r.err
+	}
+	logger.Warn("ink: a note's log rewound", "note", r.note.String(), "container", uuid, "seq", cursor.Seq, "cut", len(log)-read)
+	return nil
+}
+
+// cut saves the block at the cursor when its face stands elsewhere, changing nothing of it but
+// note_synced_seq when the cursor is at zero, so a note synced again keeps what it was until its
+// log is published, and, when log, the published
+// log, holds more than its first read bytes, keeps the whole of it aside and publishes those bytes
+// in its place. r.mu is held.
+func (r *NoteReplica) cut(log []byte, read int) error {
+	svc := r.owner.containers
+	if synced, _ := strconv.ParseUint(r.container.Storable().Meta()["note_synced_seq"], 10, 32); uint32(synced) != r.cursor.Seq {
+		attrs := r.attrs()
+		if r.cursor.Seq == 0 {
+			attrs = map[string]interface{}{"note_synced_seq": 0}
+		}
+		r.container.Merge(attrs)
+		saved, err := svc.Save(r.container)
+		if err != nil {
+			return err
+		}
+		r.container = saved
+	}
+	r.changed = false
+	if read == len(log) {
+		return nil
+	}
+	if _, err := svc.SaveAsset(r.container, r.asideKey(), log); err != nil {
+		return err
+	}
+	var err error
+	if read == 0 {
+		err = svc.DeleteAsset(r.container, StrokesKey)
+	} else {
+		_, err = svc.SaveAsset(r.container, StrokesKey, log[:read])
+	}
+	if err != nil {
+		return err
+	}
+	reloaded, err := svc.Load(r.container.UUID())
 	if err != nil {
 		return err
 	}
@@ -432,8 +683,24 @@ func (r *NoteReplica) moveAside() error {
 	return nil
 }
 
-// load opens the container uuid: its asset is replayed to the cursor, a damaged tail is cut off
-// the asset, and a block whose face is past the cursor is saved at the cursor.
+// asideKey is the first strokes.aside-N.jsonl, N from 1, the container does not hold. r.mu is
+// held.
+func (r *NoteReplica) asideKey() string {
+	held := map[string]bool{}
+	for _, a := range r.container.Assets() {
+		held[a.Key()] = true
+	}
+	for n := 1; ; n++ {
+		if key := fmt.Sprintf("strokes.aside-%d.jsonl", n); !held[key] {
+			return key
+		}
+	}
+}
+
+// load opens the container uuid: its asset is replayed to the cursor, and a log that does not
+// replay whole, or replays short of its face's note_synced_seq, is rewound to its last good record.
+// Otherwise a staged catch-up that follows the asset is then replayed on from it, and the replica
+// catches up from where it reaches; one that cannot be read is logged and left to the next Settle.
 func (r *NoteReplica) load(uuid string) error {
 	svc := r.owner.containers
 	c, err := svc.Load(uuid)
@@ -446,46 +713,69 @@ func (r *NoteReplica) load(uuid string) error {
 		log = asset.Body()
 	}
 	cursor, read := r.fold.Read(log)
-	r.cursor = cursor
-	if read < len(log) {
-		logger.Warn("ink: cutting a damaged log", "container", uuid, "seq", cursor.Seq, "bytes", len(log)-read)
-		if _, err := svc.SaveAsset(c, StrokesKey, log[:read]); err != nil {
-			return err
-		}
+	r.cursor, r.length = cursor, int64(read)
+	if synced, _ := strconv.ParseUint(c.Storable().Meta()["note_synced_seq"], 10, 32); read < len(log) || uint32(synced) > cursor.Seq {
+		logger.Warn("ink: a note's log is damaged", "container", uuid, "seq", cursor.Seq, "synced", synced, "unread", len(log)-read)
+		return r.rewind(math.MaxUint32)
 	}
-	if synced, _ := strconv.ParseUint(c.Storable().Meta()["note_synced_seq"], 10, 32); uint32(synced) > cursor.Seq {
-		c.Merge(r.attrs())
-		saved, err := svc.Save(c)
-		if err != nil {
-			return err
-		}
-		r.container = saved
+	staged, err := r.owner.staging.Resume(uuid, cursor)
+	if err != nil {
+		logger.Warn("ink: a staged catch-up could not be resumed", "container", uuid, "err", err.Error())
+		return nil
 	}
+	if len(staged.Records) == 0 {
+		return nil
+	}
+	r.state, r.published, r.publishedAttrs = stateCatchingUp, cursor, r.attrs()
+	for _, rec := range staged.Records {
+		r.fold.Apply(rec)
+	}
+	r.cursor, r.changed = staged.Cursor, true
 	return nil
 }
 
-// caughtUp saves the block and marks the note followed. r.mu is not held.
-func (r *NoteReplica) caughtUp() error {
+// isFollowing reports whether the replica follows. r.mu is not held.
+func (r *NoteReplica) isFollowing() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.following = true
-	return r.save()
+	return r.state == stateFollowing
 }
 
-// end writes the queue and saves the block. r.mu is not held.
+// takePublished is the publication of the last Settle, once. r.mu is not held.
+func (r *NoteReplica) takePublished() (Publication, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p := r.publication
+	r.publication = nil
+	if p == nil {
+		return Publication{}, false
+	}
+	return *p, true
+}
+
+// end writes the queue and, unless the replica catches up, saves the block. r.mu is not held.
 func (r *NoteReplica) end() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.state == stateCatchingUp {
+		r.stopTimer()
+		return r.flush()
+	}
 	return r.save()
 }
 
-// save writes the queue and, when the replica changed since its last save, saves its block. r.mu
-// is held.
-func (r *NoteReplica) save() error {
+// stopTimer stops the queue's timer. r.mu is held.
+func (r *NoteReplica) stopTimer() {
 	if r.timer != nil {
 		r.timer.Stop()
 		r.timer = nil
 	}
+}
+
+// save writes the queue and, when the replica changed since its last save, saves its block. It
+// is called only while the replica follows. r.mu is held.
+func (r *NoteReplica) save() error {
+	r.stopTimer()
 	if err := r.flush(); err != nil {
 		return err
 	}
@@ -517,8 +807,8 @@ func (r *NoteReplica) synced() (SyncedNote, bool) {
 		Companion: r.owner.companion, Device: r.fold.Header().Device.Name, Whiteboard: whiteboard}, true
 }
 
-// log is the asset followed by the queue, read under r.mu so no append falls between the two. r.mu
-// is not held.
+// log is the asset followed, while the replica follows, by the queue, read under r.mu so no
+// append falls between the two. r.mu is not held.
 func (r *NoteReplica) log() []byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -526,10 +816,14 @@ func (r *NoteReplica) log() []byte {
 	if asset, err := r.owner.containers.LoadAsset(r.container, StrokesKey); err == nil {
 		out = append(out, asset.Body()...)
 	}
+	if r.state == stateCatchingUp {
+		return out
+	}
 	return append(out, r.queue...)
 }
 
-// flush appends the queue to the asset; a failure sticks. r.mu is held.
+// flush writes the queue: to the asset while the replica follows, to staging while it catches
+// up; a failure sticks. r.mu is held.
 func (r *NoteReplica) flush() error {
 	if r.err != nil {
 		return r.err
@@ -537,11 +831,42 @@ func (r *NoteReplica) flush() error {
 	if len(r.queue) == 0 {
 		return nil
 	}
-	if _, err := r.owner.containers.AppendAsset(r.container, StrokesKey, r.queue); err != nil {
+	if r.state == stateCatchingUp {
+		if err := r.owner.staging.Append(r.container.UUID(), r.queue); err != nil {
+			r.err = fmt.Errorf("ink: writing note %s: %w", r.note, err)
+			return r.err
+		}
+	} else if err := r.writeLog(r.queue, false); err != nil {
+		return err
+	}
+	r.queue = r.queue[:0]
+	return nil
+}
+
+// writeLog writes data into the published log, as the whole log when replace and otherwise
+// appended to it. The asset must then be the length the log was left at plus data, or data alone
+// when replace; anything else is the log damaged under the replica, which is rewound to its last
+// good record, and is link.ErrRewound. A failed write sticks. r.mu is held.
+func (r *NoteReplica) writeLog(data []byte, replace bool) error {
+	svc := r.owner.containers
+	write, want := svc.AppendAsset, r.length+int64(len(data))
+	if replace {
+		write, want = svc.SaveAsset, int64(len(data))
+	}
+	asset, err := write(r.container, StrokesKey, data)
+	if err != nil {
 		r.err = fmt.Errorf("ink: writing note %s: %w", r.note, err)
 		return r.err
 	}
-	r.queue = r.queue[:0]
+	if got := asset.Size(); got != want {
+		logger.Warn("ink: a note's log is not the length it was left at", "note", r.note.String(), "container", r.uuid(),
+			"bytes", got, "want", want)
+		if err := r.rewind(math.MaxUint32); err != nil {
+			return err
+		}
+		return link.ErrRewound
+	}
+	r.length = want
 	return nil
 }
 

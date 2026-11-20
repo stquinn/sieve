@@ -118,6 +118,7 @@ func (h *InkHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/ink/notes/{uuid}/rename", h.handleRename)
 	r.Delete("/api/ink/notes/{uuid}", h.handleDelete)
 	r.Post("/api/ink/notes/{uuid}/open-on-tablet", h.handleOpenOnTablet)
+	r.Post("/api/ink/notes/{uuid}/resync", h.handleResync)
 	r.Get("/api/ink/live/note", h.handleLiveNote)
 }
 
@@ -192,6 +193,30 @@ func (h *InkHandler) handleDescribe(w http.ResponseWriter, r *http.Request) {
 	default:
 		logger.Error("ink: naming a note now", "err", err.Error())
 		http.Error(w, namer.Refusal(err), http.StatusInternalServerError)
+	}
+}
+
+// inkResyncRefused is why a notebook cannot be synced again now.
+const inkResyncRefused = "The tablet this notebook came from is not connected, or does not share it now."
+
+// handleResync syncs a synced note again from its first record, answering 204 once it has begun or
+// with why not in words.
+func (h *InkHandler) handleResync(w http.ResponseWriter, r *http.Request) {
+	if h.ServiceProvider.Ink == nil {
+		http.Error(w, "Notebooks are unavailable.", http.StatusServiceUnavailable)
+		return
+	}
+	err := h.ServiceProvider.Ink.Resync(chi.URLParam(r, "uuid"))
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, ink.ErrNoSuchPage):
+		http.Error(w, "No such notebook.", http.StatusNotFound)
+	case errors.Is(err, ink.ErrNotOffered):
+		http.Error(w, inkResyncRefused, http.StatusConflict)
+	default:
+		logger.Error("ink: resyncing a note", "err", err.Error())
+		http.Error(w, "Could not resync this notebook.", http.StatusInternalServerError)
 	}
 }
 
@@ -519,17 +544,28 @@ func (s *inkStream) transcriptOf(r ink.Transcript) protocol.InkTranscript {
 
 // answerPage answers an ink-page asked on socket through reply, from the note of the socket's
 // container or, on the Live view's socket, of the note it mirrors. The socket holds that note open
-// from now until it releases it. An asker that names its renderer is answered with the drawing
+// from now until it releases it, refused or not; a note with no published log is refused as
+// syncing, and the socket hears its log restarted when it is published. An asker that names its renderer is answered with the drawing
 // that renderer kept of the page as the note stands, when there is one. Every answer is followed
 // by the live page while the note is the
 // live one and, on the Live view's socket when the page answered is the live page, by the
 // tablet's window while it is known.
 func (s *inkStream) answerPage(socket string, msg protocol.InkPageFrame, reply func(interface{})) {
-	refuse := func(err error) { reply(protocol.NewInkPageRefusedFrame(msg.OpID, msg.PageID, err)) }
-	page, err := link.ParseID(msg.PageID)
-	if err != nil {
-		refuse(fmt.Errorf("%w: page %q: %v", ink.ErrNoSuchPage, msg.PageID, err))
-		return
+	refuse := func(err error) {
+		if errors.Is(err, ink.ErrSyncing) {
+			reply(protocol.NewInkPageSyncingFrame(msg.OpID, msg.PageID, err))
+			return
+		}
+		reply(protocol.NewInkPageRefusedFrame(msg.OpID, msg.PageID, err))
+	}
+	var page link.ID
+	if msg.PageID != "" {
+		parsed, err := link.ParseID(msg.PageID)
+		if err != nil {
+			refuse(fmt.Errorf("%w: page %q: %v", ink.ErrNoSuchPage, msg.PageID, err))
+			return
+		}
+		page = parsed
 	}
 	container := socket
 	if socket == s.view {

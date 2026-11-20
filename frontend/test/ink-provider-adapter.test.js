@@ -8,7 +8,7 @@ import { serviceRig, FakeSocket } from './helpers/service-rig.js'
 import { ContainerModel } from '../src/static/container/container-model.js'
 import { InkProviderAdapter } from '../src/static/container/ink-provider-adapter.js'
 import { ProviderAdapter } from '../src/static/container/provider-adapter.js'
-import { InkFeed, InkOpening, InkTranscriptState } from '../src/static/contract/ink-container-provider.js'
+import { InkFeed, InkNoteSyncing, InkOpening, InkTranscriptState } from '../src/static/contract/ink-container-provider.js'
 import { DocumentFrame } from '../src/static/generated/protocol.js'
 import { ContractViolation } from '../src/static/contract/sieve-block.js'
 
@@ -58,6 +58,26 @@ describe('InkProviderAdapter', () => {
     const pending = provider.loadPage('p9')
     sock.driveMessage({ type: DocumentFrame.INK_PAGE_CONTENT, opId: pageOpId(sock), pageId: 'p9', seq: 0, page: null, error: 'no page p9' })
     await expect(pending).rejects.toThrow('no page p9')
+    await expect(pending).rejects.not.toBeInstanceOf(InkNoteSyncing)
+  })
+
+  it('loadPage rejects with an InkNoteSyncing while the note has no published log', async () => {
+    const { provider, sock } = rig()
+    const pending = provider.loadPage('p1')
+    sock.driveMessage({ type: DocumentFrame.INK_PAGE_CONTENT, opId: pageOpId(sock), pageId: 'p1', seq: 0, page: null, error: 'syncing', reason: 'syncing' })
+    await expect(pending).rejects.toBeInstanceOf(InkNoteSyncing)
+    await expect(pending).rejects.toMatchObject({ pageId: 'p1' })
+  })
+
+  it.each([
+    ['the note has no published log', { error: 'syncing', reason: 'syncing' }, true],
+    ['it has one', { error: 'no page' }, false],
+  ])('noteSyncing asks of the note alone, and answers whether %s', async (_name, refusal, syncing) => {
+    const { provider, sock } = rig()
+    const pending = provider.noteSyncing()
+    expect(sock.sentOfType(DocumentFrame.INK_PAGE).at(-1).pageId).toBe('')
+    sock.driveMessage({ type: DocumentFrame.INK_PAGE_CONTENT, opId: pageOpId(sock), pageId: '', seq: 0, page: null, ...refusal })
+    expect(await pending).toBe(syncing)
   })
 
   it('openOnTablet asks for the page shown, resolves what came of asking the tablet, frozen, and rejects what asked nothing', async () => {

@@ -15,7 +15,7 @@ import (
 type InkPageFrame struct {
 	Type     string `json:"type"`
 	OpID     string `json:"opId,omitempty" doc:"echoed on the ink-page-content reply"`
-	PageID   string `json:"pageId" doc:"the page's id, as the block's note.pages lists it"`
+	PageID   string `json:"pageId" doc:"the page's id, as the block's note.pages lists it; empty asks of the note alone, which has no page to answer with and is refused, syncing while the note has no published log"`
 	Renderer string `json:"renderer,omitempty" doc:"the version of the asker's ink renderer; present when the asker takes, in place of the page, a drawing of it that renderer kept"`
 }
 
@@ -32,8 +32,14 @@ type InkPageContentFrame struct {
 	Key     string          `json:"key,omitempty" doc:"names the note's whole log as it stood at seq: two answers share a key exactly when nothing in the note changed between them; absent when refused"`
 	Page    json.RawMessage `json:"page" doc:"the page in the export shape, an InkPageExport; null when refused or when the answer is a drawing"`
 	Drawing string          `json:"drawing,omitempty" doc:"the page's kept drawing, an SVG document, in place of the page"`
-	Error   string          `json:"error,omitempty" doc:"present only when there is no page: the channel holds no Digital Note, or the note has no page of that id"`
+	Error   string          `json:"error,omitempty" doc:"present only when there is no page: the channel holds no Digital Note, the note has no page of that id, or it has no published log yet"`
+	Reason  string          `json:"reason,omitempty" doc:"present with error when the refusal is one a client waits out: syncing (the note has no published log yet; the socket holds the note, and an ink-log-restarted reaches it when its log is published)"`
 }
+
+// Why an ink-page was refused, when a client waits it out.
+const (
+	InkPageSyncing = "syncing"
+)
 
 // NewInkPageContentFrame builds the answer carrying page, the JSON of an InkPageExport, as it
 // stood at seq, where the note's key was key. The frame holds page and does not copy it.
@@ -45,6 +51,12 @@ func NewInkPageContentFrame(opID, pageID string, seq uint32, key string, page js
 // is the note's key at seq.
 func NewInkPageDrawingFrame(opID, pageID string, seq uint32, key, drawing string) InkPageContentFrame {
 	return InkPageContentFrame{Type: TypeInkPageContent, OpID: opID, PageID: pageID, Seq: seq, Key: key, Drawing: drawing}
+}
+
+// NewInkPageSyncingFrame builds the answer to an ink-page of a note that has no published log yet,
+// err saying so.
+func NewInkPageSyncingFrame(opID, pageID string, err error) InkPageContentFrame {
+	return InkPageContentFrame{Type: TypeInkPageContent, OpID: opID, PageID: pageID, Error: err.Error(), Reason: InkPageSyncing}
 }
 
 // InkKeepDrawingFrame hands over the drawing of one page of this channel's Digital Note, for the
@@ -146,9 +158,9 @@ func NewInkLivePageFrame(pageID, view string) InkLivePageFrame {
 	return InkLivePageFrame{Type: TypeInkLivePage, Live: true, PageID: pageID, View: view}
 }
 
-// InkLogRestartedFrame is the note's log started again from its first record in this channel's
-// container. Every page answer and seq a client holds for the note is void: it asks for its pages
-// again, and the stroke frames that follow are numbered from the new log.
+// InkLogRestartedFrame is the note's log in this channel's container started again from an
+// earlier record. Every page answer and seq a client holds for the note is void: it asks for its
+// pages again, and the stroke frames that follow follow the log as it now stands.
 type InkLogRestartedFrame struct {
 	Type string `json:"type"`
 }

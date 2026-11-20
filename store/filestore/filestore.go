@@ -157,7 +157,7 @@ func (fs *FileStore) CreateAsset(cat store.Category, parentKey string, assetID s
 	if err := os.MkdirAll(filepath.Dir(assetPath), 0o755); err != nil {
 		return nil, fmt.Errorf("filestore: create asset dir: %w", err)
 	}
-	if err := os.WriteFile(assetPath, body, 0o644); err != nil {
+	if err := writeAtomic(assetPath, body); err != nil {
 		return nil, fmt.Errorf("filestore: create asset %s: %w", filename, err)
 	}
 
@@ -1087,6 +1087,8 @@ func cloneMeta(m map[string]string) map[string]string {
 
 // ── Atomic write ──────────────────────────────────────────────────────────────
 
+// writeAtomic writes data to a temporary file beside path and renames it over path, so a reader
+// sees either the old file or the whole new one.
 func writeAtomic(path string, data []byte) error {
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {

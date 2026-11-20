@@ -129,9 +129,10 @@ first keystroke, and it recognises the block's arrival by the plain id it chose.
   nothing.
 - `ink-container-provider.js` — `InkContainerProvider`, a Digital Note's
   provider: the read minimum plus `loadPage(pageId)` (a query: the page in the
-  export shape and the seq it reflects), and the `InkFeed` event shapes its feed
-  delivers (a stroke added or removed above that seq, the live records, the live
-  page).
+  export shape and the seq it reflects, rejecting with `InkNoteSyncing` while
+  the note has no published log) and `noteSyncing()`, and the `InkFeed` event
+  shapes its feed delivers (a stroke added or removed above that seq, the live
+  records, the live page).
 - `selection-listener.js` — the one channel that flows the other way: a
   lens's selection/focus/caret advertisement, host-consumed.
 

@@ -3,6 +3,7 @@ package ink
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -18,25 +19,24 @@ import (
 	"sieve/store/filestore"
 )
 
-// catchUpObserver hears a session and keeps nothing; as InkService does, it tells the replicas
-// each note the companion has sent to its head.
+// catchUpObserver hears a session and keeps nothing but, when committed is set, calls it at each
+// record committed.
 type catchUpObserver struct {
-	t        *testing.T
-	replicas *NoteReplicas
+	committed func(link.Record)
 }
 
 func (catchUpObserver) Notes([]link.NoteEntry)         {}
 func (catchUpObserver) Opened(link.ID, uint32, uint32) {}
-func (catchUpObserver) Committed(link.ID, link.Record) {}
-func (o catchUpObserver) Done(note link.ID, _ uint32, _ int) {
-	if err := o.replicas.CaughtUp(note); err != nil {
-		o.t.Errorf("CaughtUp: %v", err)
+func (o catchUpObserver) Committed(_ link.ID, rec link.Record) {
+	if o.committed != nil {
+		o.committed(rec)
 	}
 }
-func (catchUpObserver) Live(link.ID, link.ID)   {}
-func (catchUpObserver) Ink([]link.LiveRecord)   {}
-func (catchUpObserver) Refused(link.ID, string) {}
-func (catchUpObserver) SetAside(link.ID)        {}
+func (catchUpObserver) Done(link.ID, uint32, int) {}
+func (catchUpObserver) Live(link.ID, link.ID)     {}
+func (catchUpObserver) Ink([]link.LiveRecord)     {}
+func (catchUpObserver) Refused(link.ID, string)   {}
+func (catchUpObserver) Rewound(link.ID, uint32)   {}
 
 // replicaRig is one Sieve's store and one companion serving noteID, synced by real sessions.
 type replicaRig struct {
@@ -45,11 +45,13 @@ type replicaRig struct {
 	containers *services.BlockContainerService
 	companion  *link.ScriptedCompanion
 	replicas   *NoteReplicas
+	// staging outlives a restart, as the machine's temporary directory does.
+	staging *NoteStaging
 }
 
 func newReplicaRig(t *testing.T, records []link.Record) *replicaRig {
 	containers, st := newTestContainers(t)
-	rig := &replicaRig{t: t, st: st, containers: containers,
+	rig := &replicaRig{t: t, st: st, containers: containers, staging: NewNoteStaging(t.TempDir()),
 		companion: link.NewScriptedCompanion(linkKey, noteID, page(1), records)}
 	rig.restart()
 	return rig
@@ -58,11 +60,17 @@ func newReplicaRig(t *testing.T, records []link.Record) *replicaRig {
 // restart is the Sieve starting again: a fresh store over the same disk, and fresh replicas.
 func (rig *replicaRig) restart() {
 	rig.containers = reopen(rig.t, rig.st)
-	rig.replicas = NewNoteReplicas(rig.containers, companionID)
+	rig.replicas = NewNoteReplicas(rig.containers, rig.staging, companionID)
 }
 
 // sync runs one catch-up session to its end, then ends the replicas' session.
 func (rig *replicaRig) sync() error {
+	rig.t.Helper()
+	return rig.syncHeard(catchUpObserver{})
+}
+
+// syncHeard is sync heard by obs.
+func (rig *replicaRig) syncHeard(obs catchUpObserver) error {
 	rig.t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -84,7 +92,7 @@ func (rig *replicaRig) sync() error {
 	}()
 	done := make(chan error, 1)
 	go func() {
-		done <- link.NewSession(ours, linkKey, rig.replicas, catchUpObserver{rig.t, rig.replicas}, link.Plan{CatchUp: true}).Run()
+		done <- link.NewSession(ours, linkKey, rig.replicas, obs, link.Plan{CatchUp: true}).Run()
 	}()
 	select {
 	case err = <-done:
@@ -149,6 +157,43 @@ func (rig *replicaRig) assetOrNil(c *domain.BlockContainer, key string) []byte {
 	return raw
 }
 
+// logDamage is what a sync agent can leave of a published log of strokesLog(6)'s first six
+// records: the bytes it leaves, and the seq of the last record they still replay to.
+type logDamage struct {
+	name   string
+	damage func(t *testing.T, published []link.Record) []byte
+	good   uint32
+}
+
+var logDamages = []logDamage{
+	{"lines removed from the middle", func(t *testing.T, p []link.Record) []byte {
+		return append(jsonlOf(t, p[:2]), jsonlOf(t, p[4:])...)
+	}, 2},
+	{"the tail cut", func(t *testing.T, p []link.Record) []byte {
+		b := jsonlOf(t, p)
+		return b[:len(b)-10]
+	}, 5},
+}
+
+// writeLog replaces the published log of c on disk with raw, under every replica.
+func (rig *replicaRig) writeLog(c *domain.BlockContainer, raw []byte) {
+	rig.t.Helper()
+	if err := os.WriteFile(filepath.Join(rig.dir(c), StrokesKey), raw, 0o644); err != nil {
+		rig.t.Fatal(err)
+	}
+}
+
+// expectAside checks that c keeps exactly one log aside, holding want.
+func (rig *replicaRig) expectAside(c *domain.BlockContainer, want []byte) {
+	rig.t.Helper()
+	if got := rig.assetOrNil(c, "strokes.aside-1.jsonl"); !bytes.Equal(got, want) {
+		rig.t.Errorf("the aside holds %q, want %q", got, want)
+	}
+	if extra := rig.assetOrNil(c, "strokes.aside-2.jsonl"); extra != nil {
+		rig.t.Errorf("a second aside holds %q", extra)
+	}
+}
+
 // expectHeld checks that the container holds exactly records: every line re-parses, their chain
 // is the companion's, and the block's synced seq and face agree with them.
 func (rig *replicaRig) expectHeld(records []link.Record) *domain.BlockContainer {
@@ -158,6 +203,9 @@ func (rig *replicaRig) expectHeld(records []link.Record) *domain.BlockContainer 
 		rig.t.Fatal("no container")
 	}
 	raw := rig.asset(c, StrokesKey)
+	if !bytes.Equal(raw, jsonlOf(rig.t, records)) {
+		rig.t.Errorf("the log is not the companion's, byte for byte")
+	}
 	lines := strings.SplitAfter(string(raw), "\n")
 	if lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
@@ -219,13 +267,15 @@ func TestReplica_ResumesFromWhatTheAssetHolds(t *testing.T) {
 		interrupt func(rig *replicaRig)
 		want      []uint32
 	}{
-		{"after a dropped session", func(rig *replicaRig) {
+		{"after a session dropped mid catch-up", func(rig *replicaRig) {
 			rig.companion.GapAt = 4
 			if err := rig.sync(); err == nil {
 				t.Fatal("a gap was taken")
 			}
 			rig.companion.GapAt = 0
-			rig.expectHeld(records[:3])
+			if c := rig.container(); rig.assetOrNil(c, StrokesKey) != nil || c.Storable().Meta()["note_synced_seq"] != "0" {
+				t.Errorf("a catch-up the link dropped reached the container: face %v", c.Storable().Meta())
+			}
 		}, []uint32{0, 3}},
 		{"with the asset ahead of the block", func(rig *replicaRig) {
 			rig.companion.SetRecords(records[:3])
@@ -238,20 +288,6 @@ func TestReplica_ResumesFromWhatTheAssetHolds(t *testing.T) {
 			}
 			rig.companion.SetRecords(records)
 		}, []uint32{0, 5}},
-		{"with a damaged tail", func(rig *replicaRig) {
-			rig.companion.SetRecords(records[:5])
-			if err := rig.sync(); err != nil {
-				t.Fatal(err)
-			}
-			c := rig.container()
-			raw := rig.asset(c, StrokesKey)
-			cut := len(jsonlOf(t, records[:3]))
-			damaged := append(append([]byte(nil), raw[:cut]...), bytes.Replace(raw[cut:], []byte(`"seq":4`), []byte(`"seq":9`), 1)...)
-			if err := os.WriteFile(filepath.Join(rig.dir(c), StrokesKey), damaged, 0o644); err != nil {
-				t.Fatal(err)
-			}
-			rig.companion.SetRecords(records)
-		}, []uint32{0, 3}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rig := newReplicaRig(t, records)
@@ -268,16 +304,248 @@ func TestReplica_ResumesFromWhatTheAssetHolds(t *testing.T) {
 	}
 }
 
-func TestReplica_ALogTheCompanionDisownsIsSetAsideAndReplayed(t *testing.T) {
+// A published log damaged under the replica — found when the replica opens it, or by the next
+// write following it, whose length is wrong — is rewound to its last good record: the whole
+// damaged file is kept aside, the note is asked for from that record, and the log ends as the
+// companion's, byte for byte.
+func TestReplica_ADamagedLogIsRewoundToItsLastGoodRecordAndRefilled(t *testing.T) {
+	records := strokesLog(6)
+	published := records[:6]
+	for _, d := range logDamages {
+		for _, tc := range []struct {
+			name string
+			// detect damages the log and brings the replica to find it, returning what the aside
+			// must hold.
+			detect func(t *testing.T, rig *replicaRig) []byte
+		}{
+			{"on open", func(t *testing.T, rig *replicaRig) []byte {
+				damaged := d.damage(t, published)
+				rig.writeLog(rig.container(), damaged)
+				return damaged
+			}},
+			{"on the next append", func(t *testing.T, rig *replicaRig) []byte {
+				opened, err := rig.replicas.Open(noteID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				r := opened.(*NoteReplica)
+				rig.replicas.flushBytes, rig.replicas.flushAfter = 1, time.Hour
+				damaged := d.damage(t, published)
+				rig.writeLog(rig.container(), damaged)
+				for i, rec := range records[6:] {
+					body, _ := rec.Body()
+					err := r.Append(rec, body)
+					if i == 0 && err != nil {
+						t.Fatal(err)
+					}
+					if i == 1 && !errors.Is(err, link.ErrRewound) {
+						t.Fatalf("the append after the damage: %v", err)
+					}
+				}
+				if got := r.Cursor().Seq; got != d.good {
+					t.Errorf("rewound to %d, want %d", got, d.good)
+				}
+				if err := rig.replicas.End(); err != nil {
+					t.Fatal(err)
+				}
+				return append(damaged, jsonlOf(t, records[6:7])...)
+			}},
+		} {
+			t.Run(d.name+" "+tc.name, func(t *testing.T) {
+				rig := newReplicaRig(t, published)
+				if err := rig.sync(); err != nil {
+					t.Fatal(err)
+				}
+				rig.opens()
+				rig.restart()
+				aside := tc.detect(t, rig)
+				rig.companion.SetRecords(records)
+				rig.restart()
+				if err := rig.sync(); err != nil {
+					t.Fatal(err)
+				}
+				if got := rig.opens(); len(got) != 1 || got[0] != d.good {
+					t.Errorf("OPENs asked from %v, want %d", got, d.good)
+				}
+				rig.expectAside(rig.expectHeld(records), aside)
+			})
+		}
+	}
+}
+
+// Staged records that do not replay to the cursor the replica was sent to are not published: the
+// replica is rewound to its published log, which is kept as it is, and Settle is ErrRewound.
+func TestReplica_AStagedCatchUpThatDoesNotReachItsCursorIsRewound(t *testing.T) {
+	records := strokesLog(4)
+	rig := newReplicaRig(t, records[:3])
+	if err := rig.sync(); err != nil {
+		t.Fatal(err)
+	}
+	rig.restart()
+	opened, err := rig.replicas.Open(noteID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := opened.(*NoteReplica)
+	if err := r.Begin(uint32(len(records))); err != nil {
+		t.Fatal(err)
+	}
+	for _, rec := range records[3:] {
+		body, _ := rec.Body()
+		if err := r.Append(rec, body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	uuid := r.UUID()
+	if err := os.WriteFile(filepath.Join(rig.staging.dir, uuid+".jsonl"), jsonlOf(t, records[3:4]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Settle(); !errors.Is(err, link.ErrRewound) {
+		t.Fatalf("Settle: %v", err)
+	}
+	body, _ := records[3].Body()
+	if err := r.Append(records[3], body); !errors.Is(err, link.ErrRewound) || r.Cursor().Seq != 3 {
+		t.Errorf("an append to the rewound replica: %v at %d", err, r.Cursor().Seq)
+	}
+	if err := rig.replicas.End(); err != nil {
+		t.Fatal(err)
+	}
+	c := rig.expectHeld(records[:3])
+	if aside := rig.assetOrNil(c, "strokes.aside-1.jsonl"); aside != nil {
+		t.Errorf("a whole published log was kept aside: %q", aside)
+	}
+}
+
+// A catch-up writes nothing into the container until its DONE, however often its queue is
+// written; at the DONE its records are published in one write — the whole log for a note that had
+// none, otherwise one append to the same file — and its staged file is dropped.
+func TestReplica_ACatchUpIsPublishedWholeAtItsDone(t *testing.T) {
+	records := strokesLog(8)
+	for _, tc := range []struct {
+		name string
+		// synced is how many records an earlier session published.
+		synced int
+	}{
+		{"a note's first catch-up", 0},
+		{"a catch-up onto a published log", 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newReplicaRig(t, records[:tc.synced])
+			var before os.FileInfo
+			if tc.synced > 0 {
+				if err := rig.sync(); err != nil {
+					t.Fatal(err)
+				}
+				info, err := os.Stat(filepath.Join(rig.dir(rig.container()), StrokesKey))
+				if err != nil {
+					t.Fatal(err)
+				}
+				before = info
+				rig.restart()
+			}
+			rig.companion.SetRecords(records)
+			rig.replicas.flushBytes = 1
+			var during []string
+			err := rig.syncHeard(catchUpObserver{committed: func(rec link.Record) {
+				if got := rig.assetOrNil(rig.container(), StrokesKey); !bytes.Equal(got, jsonlOf(t, records[:tc.synced])) {
+					during = append(during, fmt.Sprintf("seq %d: %d bytes", rec.Seq, len(got)))
+				}
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(during) > 0 {
+				t.Errorf("the container's log moved before the DONE: %v", during)
+			}
+			c := rig.expectHeld(records)
+			after, err := os.Stat(filepath.Join(rig.dir(c), StrokesKey))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if before != nil && !os.SameFile(before, after) {
+				t.Error("the published log was rewritten, not appended to")
+			}
+			if staged, _ := os.ReadDir(rig.staging.dir); len(staged) != 0 {
+				t.Errorf("staging holds %d files after the publish", len(staged))
+			}
+		})
+	}
+}
+
+// A staged catch-up is resumed only where it follows the published log and replays cleanly: one
+// complete before the link dropped is published by the next DONE with no record sent, and any
+// other staged file is deleted and the note asked for from its published log.
+func TestReplica_ResumesAStagedCatchUpOnlyWhereItFollowsThePublishedLog(t *testing.T) {
+	records := strokesLog(5)
+	all := uint32(len(records))
+	for _, tc := range []struct {
+		name   string
+		staged func(t *testing.T) []byte
+		// open is the haveSeq the next session's OPEN asks from.
+		open uint32
+	}{
+		{"the rest of the log, staged whole", func(t *testing.T) []byte { return jsonlOf(t, records[2:]) }, all},
+		{"part of the rest", func(t *testing.T) []byte { return jsonlOf(t, records[2:4]) }, 4},
+		{"records already published", func(t *testing.T) []byte { return jsonlOf(t, records[:4]) }, 2},
+		{"records past a gap", func(t *testing.T) []byte { return jsonlOf(t, records[3:]) }, 2},
+		{"a last line cut short", func(t *testing.T) []byte {
+			b := jsonlOf(t, records[2:])
+			return b[:len(b)-3]
+		}, 2},
+		{"garbage", func(*testing.T) []byte { return []byte("{not a record\n") }, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newReplicaRig(t, records[:2])
+			if err := rig.sync(); err != nil {
+				t.Fatal(err)
+			}
+			rig.opens()
+			uuid := rig.container().UUID()
+			if err := rig.staging.Append(uuid, tc.staged(t)); err != nil {
+				t.Fatal(err)
+			}
+			rig.companion.SetRecords(records)
+			rig.restart()
+			if err := rig.sync(); err != nil {
+				t.Fatal(err)
+			}
+			if got := rig.opens(); len(got) != 1 || got[0] != tc.open {
+				t.Errorf("OPENs asked from %v, want %d", got, tc.open)
+			}
+			rig.expectHeld(records)
+			if _, err := os.Stat(filepath.Join(rig.staging.dir, uuid+".jsonl")); !os.IsNotExist(err) {
+				t.Errorf("the staged file outlived the publish: %v", err)
+			}
+		})
+	}
+}
+
+// A log whose chain is not the companion's — a line altered, or a HEAD or REFUSE that disowns it —
+// is rewound to nothing and synced again whole: what is kept aside is the published log, and the
+// records of a catch-up under way are dropped.
+func TestReplica_ALogTheCompanionDisownsIsRewoundToNothingAndReplayed(t *testing.T) {
 	records := strokesLog(4)
 	for _, tc := range []struct {
-		name  string
-		setup func(*link.ScriptedCompanion)
-		// aside is how many records the log held when it was set aside.
-		aside int
+		name string
+		// setup returns what the published log holds once it has done its work.
+		setup func(t *testing.T, rig *replicaRig) []byte
 	}{
-		{"a HEAD whose chain differs", func(c *link.ScriptedCompanion) { c.CorruptHead = true }, len(records)},
-		{"REFUSE ahead", func(c *link.ScriptedCompanion) { c.RefuseAhead = true }, 2},
+		{"a HEAD whose chain differs", func(t *testing.T, rig *replicaRig) []byte {
+			rig.companion.CorruptHead = true
+			return jsonlOf(t, records[:2])
+		}},
+		{"REFUSE ahead", func(t *testing.T, rig *replicaRig) []byte {
+			rig.companion.RefuseAhead = true
+			return jsonlOf(t, records[:2])
+		}},
+		{"a line altered", func(t *testing.T, rig *replicaRig) []byte {
+			altered := bytes.Replace(jsonlOf(t, records[:2]), []byte(`"Strokes"`), []byte(`"Strokez"`), 1)
+			rig.writeLog(rig.container(), altered)
+			return altered
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rig := newReplicaRig(t, records[:2])
@@ -286,7 +554,7 @@ func TestReplica_ALogTheCompanionDisownsIsSetAsideAndReplayed(t *testing.T) {
 			}
 			first := rig.container()
 			rig.companion.SetRecords(records)
-			tc.setup(rig.companion)
+			published := tc.setup(t, rig)
 			rig.restart()
 			if err := rig.sync(); err != nil {
 				t.Fatal(err)
@@ -298,9 +566,7 @@ func TestReplica_ALogTheCompanionDisownsIsSetAsideAndReplayed(t *testing.T) {
 			if c.UUID() != first.UUID() {
 				t.Errorf("set aside into a new container %s", c.UUID())
 			}
-			if aside := rig.asset(c, "strokes.aside-1.jsonl"); !bytes.Equal(aside, jsonlOf(t, records[:tc.aside])) {
-				t.Errorf("aside asset holds %q", aside)
-			}
+			rig.expectAside(c, published)
 		})
 	}
 }
@@ -352,12 +618,12 @@ func TestReplica_SavesOncePerSessionAndSkipsWhatIsHeld(t *testing.T) {
 	}
 }
 
-// The first block of a note already describes its header. Once the note is caught up its block and
-// face equal what the asset holds, with the session still open; after that a structural record
-// saves the block at once and a stroke record never does, so End saves only what strokes moved.
-// A session's versions are at most one for the catch-up, one per structural record after it, and
-// one at End.
-func TestReplica_SavesWhenCaughtUpAndOnStructureButNeverPerStroke(t *testing.T) {
+// The first block of a note already describes its header, and its container holds no log until
+// the catch-up settles. Once it has, its block and face equal what the asset holds, with the
+// session still open; after that a structural record saves the block at once and a stroke record
+// never does, so End saves only what strokes moved. A session's versions are at most one for the
+// catch-up, one per structural record after it, and one at End.
+func TestReplica_SavesWhenSettledAndOnStructureButNeverPerStroke(t *testing.T) {
 	caughtUp := strokesLog(3)
 	strokes := func(from, n int) []link.Record {
 		var out []link.Record
@@ -386,6 +652,10 @@ func TestReplica_SavesWhenCaughtUpAndOnStructureButNeverPerStroke(t *testing.T) 
 				t.Fatal(err)
 			}
 			r := opened.(*NoteReplica)
+			r.owner.flushBytes = 1
+			if err := r.Begin(uint32(len(caughtUp))); err != nil {
+				t.Fatal(err)
+			}
 			appendAll := func(records []link.Record) {
 				for _, rec := range records {
 					body, err := rec.Body()
@@ -403,7 +673,10 @@ func TestReplica_SavesWhenCaughtUpAndOnStructureButNeverPerStroke(t *testing.T) 
 				t.Errorf("first block %v", c.Block().Attrs)
 			}
 			appendAll(all[1:len(caughtUp)])
-			if err := rig.replicas.CaughtUp(noteID); err != nil {
+			if log := rig.assetOrNil(rig.container(), StrokesKey); log != nil {
+				t.Errorf("the container holds %q before the catch-up settled", log)
+			}
+			if err := r.Settle(); err != nil {
 				t.Fatal(err)
 			}
 			c := rig.expectHeld(all[:len(caughtUp)])

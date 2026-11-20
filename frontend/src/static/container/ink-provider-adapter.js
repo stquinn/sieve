@@ -6,8 +6,9 @@
 
 import { ProviderAdapter } from './provider-adapter.js'
 import { ContractViolation } from '../contract/sieve-block.js'
-import { InkFeed, InkTranscriptState } from '../contract/ink-container-provider.js'
+import { InkFeed, InkNoteSyncing, InkTranscriptState } from '../contract/ink-container-provider.js'
 import { DocumentFrame } from '../generated/protocol.js'
+import { DocumentService } from './document-service.js'
 
 /** @typedef {import('../contract/ink-container-provider.js').InkPageAnswer} InkPageAnswer */
 /** @typedef {import('../contract/ink-container-provider.js').InkOpeningResult} InkOpeningResult */
@@ -36,7 +37,22 @@ export class InkProviderAdapter extends ProviderAdapter {
   /** @param {string} pageId @param {string} [renderer] @returns {Promise<InkPageAnswer>} */
   loadPage(pageId, renderer) {
     return this.#documents.inkPage(this.getUuid(), pageId, renderer)
-      .then((answer) => /** @type {InkPageAnswer} */ (ProviderAdapter._frozenInPlace({ page: answer.page, drawing: answer.drawing, seq: answer.seq, key: answer.key })))
+      .then((answer) => /** @type {InkPageAnswer} */ (ProviderAdapter._frozenInPlace({ page: answer.page, drawing: answer.drawing, seq: answer.seq, key: answer.key })),
+        (err) => { throw InkProviderAdapter.#syncing(err) ? new InkNoteSyncing(pageId) : err })
+  }
+
+  /** @returns {Promise<boolean>} */
+  noteSyncing() {
+    return this.#documents.inkPage(this.getUuid(), '').then(() => false, (err) => {
+      if (InkProviderAdapter.#syncing(err)) return true
+      if (err && /** @type {any} */ (err).reason !== undefined) return false
+      throw err
+    })
+  }
+
+  /** @param {unknown} err @returns {boolean} whether it is Go's refusal of a note with no published log */
+  static #syncing(err) {
+    return !!err && /** @type {any} */ (err).reason === DocumentService.InkPageRefusal.SYNCING
   }
 
   /** @param {string} pageId @param {string} key @param {string} drawing */

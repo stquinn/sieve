@@ -63,20 +63,23 @@ type imagesRig struct {
 	appended []link.Record
 }
 
-// newImagesRig opens the replica of noteID in a running session and appends records to it, caught
-// up, so its block is saved.
+// newImagesRig opens the replica of noteID in a running session and catches it up to records, so
+// they are published and its block is saved.
 func newImagesRig(t *testing.T, records ...link.Record) *imagesRig {
 	t.Helper()
 	rig := &imagesRig{replicaRig: newReplicaRig(t, nil), drawer: &fakeDrawer{}}
-	rig.svc = NewInkService(nil, rig.containers, nil, nil)
+	rig.svc = NewInkService(nil, rig.containers, rig.staging, nil, nil, nil)
 	rig.svc.run = &sessionRun{replicas: rig.replicas, link: namedLink{identity: companionID}}
 	opened, err := rig.replicas.Open(noteID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rig.replica = opened.(*NoteReplica)
+	if err := rig.replica.Begin(uint32(len(records))); err != nil {
+		t.Fatal(err)
+	}
 	rig.append(records...)
-	if err := rig.replicas.CaughtUp(noteID); err != nil {
+	if err := rig.replica.Settle(); err != nil {
 		t.Fatal(err)
 	}
 	rig.images = NewPageImages(rig.svc, rig.drawer)
@@ -190,7 +193,7 @@ func TestPageImages_DrawsAPageOnceAndKeepsItBesideTheLog(t *testing.T) {
 	if again := rig.image(0); again.Key != key || len(rig.drawer.drawings()) != 1 {
 		t.Errorf("asked again: %s, %d drawings", again.Key, len(rig.drawer.drawings()))
 	}
-	restarted := NewPageImages(NewInkService(nil, reopen(t, rig.st), nil, nil), rig.drawer)
+	restarted := NewPageImages(NewInkService(nil, reopen(t, rig.st), rig.staging, nil, nil, nil), rig.drawer)
 	if img, err := restarted.Image(context.Background(), rig.uuid(), 0); err != nil || img.Key != key || len(rig.drawer.drawings()) != 1 {
 		t.Errorf("after a restart: %v, %v, %d drawings", img.Key, err, len(rig.drawer.drawings()))
 	}

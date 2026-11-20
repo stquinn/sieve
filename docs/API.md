@@ -70,7 +70,7 @@ alone, so the token appears in no response header.
 | `ink-describe-result` | `protocol.InkDescribeResultFrame` | `opId` | InkDescribeResultFrame answers an ink-describe: the job submitted, or a note already being named, when Error is absent. |
 | `ink-live` | `protocol.InkLiveFrame` | — | InkLiveFrame is live records in the order the tablet sent them. |
 | `ink-live-page` | `protocol.InkLivePageFrame` | — | InkLivePageFrame is which page of this channel's note the tablet shows as being written, or that none is, and the Live view that mirrors it. |
-| `ink-log-restarted` | `protocol.InkLogRestartedFrame` | — | InkLogRestartedFrame is the note's log started again from its first record in this channel's container. |
+| `ink-log-restarted` | `protocol.InkLogRestartedFrame` | — | InkLogRestartedFrame is the note's log in this channel's container started again from an earlier record. |
 | `ink-open-on-tablet-result` | `protocol.InkOpenOnTabletResultFrame` | `opId` | InkOpenOnTabletResultFrame answers an ink-open-on-tablet with what came of it, or why it could not be asked. |
 | `ink-page-content` | `protocol.InkPageContentFrame` | `opId` | InkPageContentFrame answers an ink-page: the page and the seq of the last record it reflects, or why there is none. |
 | `ink-stroke-added` | `protocol.InkStrokeAddedFrame` | — | InkStrokeAddedFrame is a stroke now present on a page, committed by the record of Seq. |
@@ -275,7 +275,7 @@ InkPageFrame asks for one page of this channel's Digital Note as it is drawn now
 |---|---|---|---|
 | `type` | `string` | yes |  |
 | `opId` | `string` | no | echoed on the ink-page-content reply |
-| `pageId` | `string` | yes | the page's id, as the block's note.pages lists it |
+| `pageId` | `string` | yes | the page's id, as the block's note.pages lists it; empty asks of the note alone, which has no page to answer with and is refused, syncing while the note has no published log |
 | `renderer` | `string` | no | the version of the asker's ink renderer; present when the asker takes, in place of the page, a drawing of it that renderer kept |
 
 #### `ink-transcribe-page` — client → server
@@ -477,7 +477,7 @@ InkLivePageFrame is which page of this channel's note the tablet shows as being 
 
 #### `ink-log-restarted` — server → client
 
-InkLogRestartedFrame is the note's log started again from its first record in this channel's container.
+InkLogRestartedFrame is the note's log in this channel's container started again from an earlier record.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
@@ -508,7 +508,8 @@ InkPageContentFrame answers an ink-page: the page and the seq of the last record
 | `key` | `string` | no | names the note's whole log as it stood at seq: two answers share a key exactly when nothing in the note changed between them; absent when refused |
 | `page` | `json.RawMessage` | yes | the page in the export shape, an InkPageExport; null when refused or when the answer is a drawing |
 | `drawing` | `string` | no | the page's kept drawing, an SVG document, in place of the page |
-| `error` | `string` | no | present only when there is no page: the channel holds no Digital Note, or the note has no page of that id |
+| `error` | `string` | no | present only when there is no page: the channel holds no Digital Note, the note has no page of that id, or it has no published log yet |
+| `reason` | `string` | no | present with error when the refusal is one a client waits out: syncing (the note has no published log yet; the socket holds the note, and an ink-log-restarted reaches it when its log is published) |
 
 #### `ink-stroke-added` — server → client
 
@@ -916,6 +917,7 @@ inventory below instead.
 | `POST /api/ink/notes/{uuid}/open-on-tablet` | json | InkOpenOnTabletRequest asks the tablet a synced Digital Note came from to open it, leaving the page to the tablet: {uuid} is the note's block container. |
 | `GET /api/ink/notes/{uuid}/pages/{page}/export` | json | InkPageExportRequest reads one page of a synced Digital Note in the export shape of docs/ink-contract.md §4.2: {uuid} is the note's block container and {page} the page's index among the pages present, from 0. |
 | `GET /api/ink/notes/{uuid}/pages/{page}/image` | image | InkPageImageRequest reads one page of a synced Digital Note as a PNG, drawn by the app's window when no image of the page as it stands is kept: {uuid} is the note's block container and {page} the page's index among the pages present, from 0. |
+| `POST /api/ink/notes/{uuid}/resync` | none | InkResyncRequest syncs a synced Digital Note again from its first record: {uuid} is the note's block container, whose log is kept aside and pulled again from the tablet it came from. |
 | `PATCH /api/note/{id}` | fragment | NotePatchRequest changes a note's properties. |
 | `POST /api/tabs/close` | fragment | TabsCloseRequest closes every listed tab — the ONE close mechanism. |
 
@@ -1075,6 +1077,16 @@ InkPageImageRequest reads one page of a synced Digital Note as a PNG, drawn by t
 
 **Response** — a PNG, image/png.
 
+### `POST /api/ink/notes/{uuid}/resync`
+
+Path parameters: `uuid`
+
+**Request** — `protocol.InkResyncRequest`
+
+InkResyncRequest syncs a synced Digital Note again from its first record: {uuid} is the note's block container, whose log is kept aside and pulled again from the tablet it came from.
+
+**Response** — 204, or a body no caller reads.
+
 ### `PATCH /api/note/{id}`
 
 Path parameters: `id`
@@ -1221,6 +1233,8 @@ JobInfo describes one background job the UI can see: what the tab spinner and th
 | `spinTab` | `bool` | yes |  |
 | `state` | `string` | no |  |
 | `category` | `string` | no |  |
+| `done` | `int` | no |  |
+| `total` | `int` | no |  |
 
 ### `domain.SearchField`
 
@@ -1448,6 +1462,7 @@ or another protocol's own transport.
 | `POST` | `/api/ink/notes/{uuid}/describe` | typed (none) |
 | `POST` | `/api/ink/notes/{uuid}/open-on-tablet` | typed (json) |
 | `POST` | `/api/ink/notes/{uuid}/rename` | — |
+| `POST` | `/api/ink/notes/{uuid}/resync` | typed (none) |
 | `POST` | `/api/meta/restore` | — |
 | `POST` | `/api/note` | — |
 | `POST` | `/api/session/layout` | — |

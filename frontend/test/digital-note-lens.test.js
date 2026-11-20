@@ -24,12 +24,14 @@ import {
 } from './helpers/ink-lens-rig.js'
 
 /**
- * A lens presented over a note of pages `ids`, each answered with `strokes` at seq 10.
- * @param {{ids?: string[], strokes?: any[], bounds?: string, template?: any}} [opts]
+ * A lens presented over a note of pages `ids`, each answered with `strokes` at seq 10, or over
+ * a note with no published log when `syncing`.
+ * @param {{ids?: string[], strokes?: any[], bounds?: string, template?: any, syncing?: boolean}} [opts]
  */
 async function presented(opts = {}) {
   const ids = opts.ids || ['p1', 'p2']
   const provider = new FakeInkProvider(noteAttrs(ids, opts.bounds))
+  provider.syncing = opts.syncing === true
   for (const id of ids) provider.answers.set(id, { page: exportPage(opts.strokes || [pen('s1')], opts.template), seq: 10, key: opts.key, drawing: opts.drawing })
   const lens = new DigitalNoteLens(UUID, { provider })
   const root = document.createElement('div')
@@ -411,6 +413,27 @@ describe('DigitalNoteLens', () => {
     await settle()
     expect(position(bar)).toBe(shows)
     expect(provider.loads).toBe(loads)
+  })
+
+  it.each([
+    [PageSurface.MODE, 'a page it lists', ['p1']],
+    [PageSurface.MODE, 'no page', []],
+    [TranscriptSurface.MODE, 'no page', []],
+  ])('in %s, says a note with no published log listing %s is syncing, and shows its page once the log restarts', async (mode, _name, ids) => {
+    const shown = await presented({ ids, syncing: true })
+    await shown.lens.setMode(mode)
+    await settle()
+    const panel = () => /** @type {HTMLElement|null} */ (shown.root.querySelector('.ink-syncing'))
+    expect(panel()?.hidden).toBe(false)
+    expect(panel()?.textContent).toMatch(/Syncing from the tablet/)
+    shown.provider.syncing = false
+    shown.provider.answers.set('p1', { page: exportPage([pen('n1')]), seq: 3 })
+    shown.provider.setAttrs(noteAttrs(['p1']))
+    shown.provider.emit({ type: InkFeed.LOG_RESTARTED })
+    await settle()
+    expect(panel() === null || panel()?.hidden).toBe(true)
+    if (mode === PageSurface.MODE) expect(strokeEls(shown.root, 'n1')).toHaveLength(1)
+    else expect(shown.provider.calls).toContain('loadTranscript p1')
   })
 
   it('asks again for a page that could not be loaded when the block changes', async () => {

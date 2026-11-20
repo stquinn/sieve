@@ -8,6 +8,7 @@
 import { vi, expect } from 'vitest'
 import { getStroke } from 'perfect-freehand'
 import { InkRenderer } from '../../src/static/renderers/ink-renderer.js'
+import { InkNoteSyncing } from '../../src/static/contract/ink-container-provider.js'
 import { ImageClipboard } from '../../src/static/renderers/copy-image.js'
 import { WorkspaceToolbar } from '../../src/static/shell/workspace-toolbar.js'
 
@@ -71,6 +72,7 @@ export class FakeInkProvider {
   /** @type {Array<string|undefined>} the renderer each loadPage named, in order */ renderers = []
   /** @type {Array<{pageId: string, key: string, drawing: string}>} the drawings handed over, in order */ kept = []
   /** @type {boolean} when set, loadPage answers only when the test resolves it from `waiting` */ defer = false
+  /** @type {boolean} when set, the note has no published log: loadPage rejects with InkNoteSyncing and noteSyncing is true */ syncing = false
   /** @type {Array<{pageId: string, resolve: (a: any) => void}>} */ waiting = []
   /** @type {any} what openOnTablet resolves with, or settles as when it is a promise; an Error rejects */ opening = { outcome: 'opened', reason: '' }
   /** @type {string} what the container is called */ name = ''
@@ -118,12 +120,15 @@ export class FakeInkProvider {
   loadPage(pageId, renderer) {
     this.calls.push('loadPage ' + pageId)
     this.renderers.push(renderer)
+    if (this.syncing) return Promise.reject(new InkNoteSyncing(pageId))
     if (this.defer) return new Promise((resolve) => this.waiting.push({ pageId, resolve }))
     const answer = this.answers.get(pageId)
     if (!answer) return Promise.reject(new Error('no page ' + pageId))
     const drawing = renderer && answer.drawing ? answer.drawing : null
     return Promise.resolve(deepFrozen(structuredClone({ page: drawing ? null : answer.page, drawing, seq: answer.seq, key: answer.key || '' })))
   }
+
+  noteSyncing() { return Promise.resolve(this.syncing) }
 
   /** @param {string} pageId @param {string} key @param {string} drawing */
   keepDrawing(pageId, key, drawing) { this.kept.push({ pageId, key, drawing }) }

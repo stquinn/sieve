@@ -34,9 +34,10 @@
 // stays in view; a live point inside it moves nothing.
 
 import { InkRenderer, INK_LAYERS, INK_RULES } from '../../renderers/ink-renderer.js'
-import { InkFeed } from '../../contract/ink-container-provider.js'
+import { InkFeed, InkNoteSyncing } from '../../contract/ink-container-provider.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
 import { ImageClipboard } from '../../renderers/copy-image.js'
+import { SyncingPanel } from '../../renderers/syncing-panel.js'
 import { PlaneWindow, WindowEdge } from './plane-window.js'
 
 /** @typedef {import('../../contract/ink-container-provider.js').InkContainerProvider} InkContainerProvider */
@@ -160,6 +161,8 @@ export class InkSheet {
   }
 
   .ink-page__surround[data-scale="fit"] .ink-page__sheet { width: auto; max-width: 100%; }
+
+  .ink-page__surround .ink-page__sheet[data-notice] { width: auto; box-shadow: none; }
 
   .ink-page__surround[data-scale="page"],
   .ink-page__surround[data-bounds="unbounded"] { container-type: size; min-height: 240px; }
@@ -429,7 +432,8 @@ export class InkSheet {
    * Asks for a page and draws it when it comes. The SVG already shown stays until
    * then; stroke events for the page heard meanwhile are held and applied above
    * the seq the answer reflects. Null shows that there is no page, in `empty`'s words.
-   * A whiteboard newly drawn opens at `at` when given one.
+   * A whiteboard newly drawn opens at `at` when given one. While the note has no
+   * published log the sheet shows a SyncingPanel instead, null or not.
    * @param {string|null} pageId
    * @param {string} empty what is said when pageId is null
    * @param {WindowPlacement|null} [at]
@@ -447,6 +451,9 @@ export class InkSheet {
     if (pageId === null) {
       this.#loading = 0
       this.#showEmpty(empty)
+      this.#provider.noteSyncing().then((syncing) => {
+        if (syncing && load === this.#loads && this.#attached) this.#showSyncing()
+      }, (err) => console.warn('[ink] whether the note is syncing could not be asked', err))
       return
     }
     this.#loading = load
@@ -478,8 +485,12 @@ export class InkSheet {
       for (const event of held) this.takeStroke(event)
     }, (err) => {
       if (load !== this.#loads || !this.#attached) return
-      console.warn('[ink] the page could not be loaded', pageId, err)
       this.#loading = 0
+      if (err instanceof InkNoteSyncing) {
+        this.#showSyncing()
+        return
+      }
+      console.warn('[ink] the page could not be loaded', pageId, err)
       this.#showEmpty('This page could not be loaded.')
     })
   }
@@ -666,6 +677,26 @@ export class InkSheet {
 
   /** @param {string} text */
   #showEmpty(text) {
+    this.#clear()
+    const empty = this.#el('p', 'ink-page__empty')
+    empty.textContent = text
+    this.#sheet.dataset.notice = ''
+    this.#sheet.replaceChildren(empty)
+    this.#applyScale()
+    this.#host.onSheetChanged()
+  }
+
+  /** Shows, in place of any page, that the note is syncing from the tablet. */
+  #showSyncing() {
+    this.#clear()
+    this.#sheet.dataset.notice = ''
+    this.#sheet.replaceChildren(new SyncingPanel().element)
+    this.#applyScale()
+    this.#host.onSheetChanged()
+  }
+
+  /** Forgets every page drawn. */
+  #clear() {
     this.#layers = null
     this.#drawn = null
     this.#svg = null
@@ -674,11 +705,6 @@ export class InkSheet {
     this.#strokes = new Map()
     this.#bands = []
     this.#staleBands.clear()
-    const empty = this.#el('p', 'ink-page__empty')
-    empty.textContent = text
-    this.#sheet.replaceChildren(empty)
-    this.#applyScale()
-    this.#host.onSheetChanged()
   }
 
   /**
@@ -727,6 +753,7 @@ export class InkSheet {
     this.#staleBands.clear()
     this.#append('pen', page.strokes.map((stroke) => this.#hold(stroke)).join(''))
     this.#paintBands()
+    delete this.#sheet.dataset.notice
     if (this.#plane && this.#policy.marksEdges) this.#sheet.replaceChildren(svg, this.#edges)
     else this.#sheet.replaceChildren(svg)
     this.#drew()
@@ -783,6 +810,7 @@ export class InkSheet {
     this.#strokeIds = new Set(this.#strokes.keys())
     this.#keptUnknown = Math.max(0, (Number(svg.getAttribute('data-ink-strokes')) || 0) - this.#strokeIds.size)
     this.#newestStart = Number(svg.getAttribute('data-ink-newest') ?? -1)
+    delete this.#sheet.dataset.notice
     this.#sheet.replaceChildren(svg)
     this.#drew()
     return true

@@ -456,7 +456,7 @@ func newInkServer(t *testing.T) (*httptest.Server, *sieve.ServiceProvider) {
 	if sp.Documents, err = services.NewDocumentService(sp.Store); err != nil {
 		t.Fatal(err)
 	}
-	sp.Ink = ink.NewInkService(sp.State, containers, holdingRadio{}, nil)
+	sp.Ink = ink.NewInkService(sp.State, containers, ink.NewNoteStaging(t.TempDir()), nil, holdingRadio{}, nil)
 	t.Cleanup(sp.Ink.Stop)
 	sp.Nodes = editor.NewRouter()
 	sp.RegisterNodeSources()

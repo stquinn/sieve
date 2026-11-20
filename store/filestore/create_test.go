@@ -2,6 +2,9 @@ package filestore_test
 
 import (
 	"bytes"
+	"io"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"sieve/store"
@@ -53,6 +56,36 @@ func TestExplicitCreateAsset(t *testing.T) {
 		}
 		if as.Encoding() != store.Base64 {
 			t.Errorf("expected Base64 encoding for text data, got %v", as.Encoding())
+		}
+	})
+
+	// A replaced asset is a new file renamed over the old: a reader holding the old file still
+	// reads it whole, and nothing is left beside the asset.
+	t.Run("Replace_Renames_Over", func(t *testing.T) {
+		if _, err := fs.CreateAsset(testWorkingCopy, doc.Key(), "log.jsonl", []byte("old\n")); err != nil {
+			t.Fatal(err)
+		}
+		dir, ok := fs.DocDirByUUID(doc.Meta()["uuid"])
+		if !ok {
+			t.Fatal("no directory for the document")
+		}
+		held, err := os.Open(filepath.Join(dir, "log.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer held.Close()
+		as, err := fs.CreateAsset(testWorkingCopy, doc.Key(), "log.jsonl", []byte("new and longer\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if old, _ := io.ReadAll(held); string(old) != "old\n" {
+			t.Errorf("a reader of the old file read %q", old)
+		}
+		if string(as.Body()) != "new and longer\n" {
+			t.Errorf("the asset reads %q", as.Body())
+		}
+		if _, err := os.Stat(filepath.Join(dir, "log.jsonl.tmp")); !os.IsNotExist(err) {
+			t.Errorf("a temporary file was left: %v", err)
 		}
 	})
 }
