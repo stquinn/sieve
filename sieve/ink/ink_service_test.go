@@ -1885,8 +1885,9 @@ func newNotebook(t *testing.T, svc *InkService, title string, d *domain.NoteMeta
 // The notebooks source offers the Digital Notes a search asks for, in order of name, matched from
 // their .meta on the name they are called by, their summary, and their keywords and categories as
 // their tags; never on content, never for a folder, and never to a search for other kinds. Each is
-// durable. It resolves a Digital Note as the block source does, with its name and summary at
-// container grain, and nothing else.
+// durable, and says its type only when it is a diary chunk. It resolves a Digital Note as the block
+// source does, with its name and summary at container grain, and nothing else; an address of one of
+// its pages opens the note with the page as the leaf to reveal.
 func TestNotebooks_AreFoundByTheirFaceAndResolveAsTheirOwn(t *testing.T) {
 	rig := newInkRig(t, nil)
 	svc := rig.svc
@@ -1925,7 +1926,7 @@ func TestNotebooks_AreFoundByTheirFaceAndResolveAsTheirOwn(t *testing.T) {
 			var got []string
 			for _, hit := range hits {
 				got = append(got, hit.Container())
-				if hit.Kind != KindDigitalNote || fmt.Sprint(hit.Matched) != fmt.Sprint(tc.matched) || hit.Detail != "Note Air" {
+				if hit.Kind != KindDigitalNote || hit.Type != "" || fmt.Sprint(hit.Matched) != fmt.Sprint(tc.matched) || hit.Detail != "Note Air" {
 					t.Errorf("hit %+v", hit)
 				}
 			}
@@ -1938,6 +1939,14 @@ func TestNotebooks_AreFoundByTheirFaceAndResolveAsTheirOwn(t *testing.T) {
 	if hit.URI != "sieve://"+named || hit.Title != kitchen.Title || hit.Summary != kitchen.Summary ||
 		fmt.Sprint(hit.Tags) != fmt.Sprint([]string{"extension", "budget, rough", "Home"}) || hit.Modified == "" {
 		t.Errorf("the named notebook's hit %+v", hit)
+	}
+	chunk := newDiaryChunk(t, svc, "air", "2026-11", [2]string{"p1", "2026-11-20"})
+	if hits := source.Search(domain.SearchCriteria{Terms: "2026-11", Fields: all}); len(hits) != 1 || hits[0].Container() != chunk || hits[0].Type != diaryType {
+		t.Errorf("the diary chunk's hits %+v", hits)
+	}
+	page := domain.NewLeafAddress(chunk, "p1").String()
+	if target, err := editor.NewRouter(source).Target(page); err != nil || target.UUID != chunk || target.BlockID != "p1" || target.Kind != KindDigitalNote {
+		t.Errorf("Target(%s) = %+v, %v", page, target, err)
 	}
 
 	c, err := svc.containers.Load(named)
@@ -1966,6 +1975,115 @@ func TestNotebooks_AreFoundByTheirFaceAndResolveAsTheirOwn(t *testing.T) {
 		if node, err := source.Resolve(addr); !errors.Is(err, domain.ErrNodeNotFound) {
 			t.Errorf("Resolve(%s) = %+v, %v", addr.String(), node, err)
 		}
+	}
+}
+
+// newDiaryChunk is a diary chunk for period held by svc, written on the device deviceID and titled
+// by its period, its pages each {id, name} named by the date given, "" for none.
+func newDiaryChunk(t *testing.T, svc *InkService, deviceID, period string, pages ...[2]string) string {
+	t.Helper()
+	entries := make([]interface{}, len(pages))
+	for i, p := range pages {
+		entry := map[string]interface{}{"id": p[0]}
+		if p[1] != "" {
+			entry["name"] = p[1]
+		}
+		entries[i] = entry
+	}
+	c, err := svc.containers.Create(KindDigitalNote, map[string]interface{}{"title": period,
+		"note_device": map[string]interface{}{"id": deviceID, "name": "Note Air"},
+		"note": map[string]interface{}{"pages": entries, "properties": map[string]interface{}{
+			"type": []interface{}{diaryType}, "period": []interface{}{period}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c.UUID()
+}
+
+// The diaries are the diary chunks held, one per device, ordered by the device's name, each its
+// chunks by period and then by their headers' created time, and named by its newest chunk that names
+// its device; a note that is not a diary chunk is in none. A device's diary is found by its id, and
+// without one the diary newest written in. A diary opens at its newest chunk for the day's month,
+// else at its newest chunk.
+func TestStatus_DiariesAreTheChunksHeldByDevice(t *testing.T) {
+	first, later := time.Date(2026, 11, 1, 9, 0, 0, 0, time.Local), time.Date(2026, 11, 2, 9, 0, 0, 0, time.Local)
+	octAir := SyncedNote{UUID: "a0", Type: diaryType, DeviceID: "air", Device: "Old name", Period: "2026-10", Created: later}
+	novAir := SyncedNote{UUID: "a2", Type: diaryType, DeviceID: "air", Device: "Note Air", Period: "2026-11", Created: first}
+	novAirAgain := SyncedNote{UUID: "a1", Type: diaryType, DeviceID: "air", Period: "2026-11", Created: later}
+	sepTab := SyncedNote{UUID: "b1", Type: diaryType, DeviceID: "tab", Device: "Tab Ultra", Period: "2026-09"}
+	st := Status{Notes: []SyncedNote{novAirAgain, {UUID: "n", DeviceID: "air", Period: "2026-12"}, sepTab, octAir, novAir}}
+
+	want := []Diary{{DeviceID: "air", Device: "Note Air", Chunks: []SyncedNote{octAir, novAir, novAirAgain}},
+		{DeviceID: "tab", Device: "Tab Ultra", Chunks: []SyncedNote{sepTab}}}
+	if got := st.Diaries(); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("diaries %+v, want %+v", got, want)
+	}
+	if (Status{Notes: []SyncedNote{{UUID: "n"}}}).Diaries() != nil {
+		t.Error("a notebook makes a diary")
+	}
+	for _, tc := range []struct {
+		device string
+		want   string
+	}{{"tab", "tab"}, {"", "air"}, {"elsewhere", ""}} {
+		if d, ok := st.Diary(tc.device); d.DeviceID != tc.want || ok != (tc.want != "") {
+			t.Errorf("Diary(%q) = %q, %v; want %q", tc.device, d.DeviceID, ok, tc.want)
+		}
+	}
+	air := want[0]
+	for _, tc := range []struct {
+		name string
+		day  time.Time
+		want string
+	}{
+		{"a month held twice", time.Date(2026, 11, 20, 12, 0, 0, 0, time.Local), "a1"},
+		{"an older month", time.Date(2026, 10, 3, 12, 0, 0, 0, time.Local), "a0"},
+		{"a month not held", time.Date(2026, 12, 1, 12, 0, 0, 0, time.Local), "a1"},
+	} {
+		if chunk, ok := air.Chunk(tc.day); !ok || chunk.UUID != tc.want {
+			t.Errorf("%s: Chunk = %q, %v; want %q", tc.name, chunk.UUID, ok, tc.want)
+		}
+	}
+	if _, ok := (Diary{}).Chunk(first); ok {
+		t.Error("a diary with no chunks opens at one")
+	}
+}
+
+// A diary opens on a day, in the day's own zone, at its chunk for the day's month on the last page
+// named the day's date, else on that chunk's last page; at its newest chunk's last page when no
+// chunk holds the day's month; at a chunk with no pages as that chunk; and nowhere when it holds
+// none.
+func TestInkService_ADiaryOpensOnADay(t *testing.T) {
+	svc := newInkRig(t, nil).svc
+	nov := newDiaryChunk(t, svc, "air", "2026-11", [2]string{"p1", "2026-11-19"}, [2]string{"p2", "2026-11-20"},
+		[2]string{"p3", "2026-11-20"}, [2]string{"p4", ""}, [2]string{"p5", "2026-11-21"})
+	oct := newDiaryChunk(t, svc, "air", "2026-10", [2]string{"o1", "2026-10-01"}, [2]string{"o2", ""})
+	sep := newDiaryChunk(t, svc, "air", "2026-09")
+	newNotebook(t, svc, "Ideas", nil)
+	east := time.FixedZone("east", 13*3600)
+	for _, tc := range []struct {
+		name string
+		day  time.Time
+		want domain.Address
+	}{
+		{"a day of two pages", time.Date(2026, 11, 20, 8, 0, 0, 0, time.Local), domain.NewLeafAddress(nov, "p3")},
+		{"the day's own zone", time.Date(2026, 11, 21, 0, 30, 0, 0, east), domain.NewLeafAddress(nov, "p5")},
+		{"a day with no page", time.Date(2026, 11, 25, 8, 0, 0, 0, time.Local), domain.NewLeafAddress(nov, "p5")},
+		{"an older month", time.Date(2026, 10, 1, 8, 0, 0, 0, time.Local), domain.NewLeafAddress(oct, "o1")},
+		{"a month not held", time.Date(2027, 1, 1, 8, 0, 0, 0, time.Local), domain.NewLeafAddress(nov, "p5")},
+		{"a chunk with no pages", time.Date(2026, 9, 9, 8, 0, 0, 0, time.Local), domain.NewContainerAddress(sep)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, ok := svc.Status().Diary("air")
+			if !ok || len(d.Chunks) != 3 {
+				t.Fatalf("the diary %+v, %v", d, ok)
+			}
+			if got, err := svc.DiaryOn(d, tc.day); err != nil || got != tc.want {
+				t.Errorf("DiaryOn = %s, %v; want %s", got.String(), err, tc.want.String())
+			}
+		})
+	}
+	if _, err := svc.DiaryOn(Diary{DeviceID: "air"}, time.Date(2026, 11, 20, 8, 0, 0, 0, time.Local)); !errors.Is(err, ErrNoSuchPage) {
+		t.Errorf("a diary with no chunks: %v", err)
 	}
 }
 
@@ -2257,9 +2375,12 @@ func TestInkService_ADescriptionGoesToTheTabletItsNoteCameFrom(t *testing.T) {
 }
 
 // A diary chunk is named by its tablet: its description goes as META with an empty title, it is
-// listed by the tablet's title and as NamedByTablet, and Rename refuses it.
+// listed by the tablet's title and as NamedByTablet, and Rename refuses it. It is listed as a chunk
+// of its device's diary for its month with its header's created time, alike while its replica is
+// open and from its face once the session has ended.
 func TestInkService_ADiaryKeepsItsTabletsTitle(t *testing.T) {
-	records := logOf(header("November"), noteProperty("type", "diary"), pageAdd(page(1), 0, nil, link.BoundsFixed), strokeAdd(page(1), stroke(1)))
+	records := logOf(header("November"), noteProperty("type", "diary"), noteProperty("period", "2026-11"),
+		pageAdd(page(1), 0, nil, link.BoundsFixed), strokeAdd(page(1), stroke(1)))
 	rig := newInkRig(t, records)
 	rig.enable(linkKey)
 	rig.start()
@@ -2280,6 +2401,15 @@ func TestInkService_ADiaryKeepsItsTabletsTitle(t *testing.T) {
 	}
 	if err := rig.svc.Rename(uuid, "Mine"); !errors.Is(err, ErrNamedByTablet) {
 		t.Errorf("renaming a diary: %v", err)
+	}
+	open := rig.svc.Status().Notes[0]
+	if !open.DiaryChunk() || open.Period != "2026-11" || open.DeviceID != aDevice.ID || !open.Created.Equal(time.UnixMilli(1_700_000_000_000)) {
+		t.Errorf("listed from its replica as %+v", open)
+	}
+	rig.stopPromptly()
+	if faced := rig.svc.Status().Notes[0]; faced.Type != open.Type || faced.Period != open.Period ||
+		faced.DeviceID != open.DeviceID || !faced.Created.Equal(open.Created) {
+		t.Errorf("listed from its face as %+v, from its replica as %+v", faced, open)
 	}
 }
 

@@ -54,6 +54,7 @@ export class DigitalNoteLens extends InkLens {
 
   /** @type {TabletOpener} */ #opener = new TabletOpener(this.provider, this.actionStatus, () => this.onSurfaceEvent(SurfaceEvent.TOOLBAR_CHANGED))
   /** @type {Promise<void>|null} the Refresh name and summary under way */ #refreshing = null
+  /** @type {string|null} the page asked to be revealed before a surface was presented */ #revealing = null
 
   /** @protected @returns {ReadonlyArray<string>} */
   get _modes() { return MODES }
@@ -61,7 +62,7 @@ export class DigitalNoteLens extends InkLens {
   /** The mode the reader left the note in, else `page`.
    *  @protected @returns {string} */
   get _defaultMode() {
-    const view = /** @type {{mode?: string}|null} */ (this._handedViewState)
+    const view = /** @type {{mode?: string}|null} */ (this.viewState)
     return view && view.mode === TranscriptSurface.MODE ? TranscriptSurface.MODE : PageSurface.MODE
   }
 
@@ -208,13 +209,30 @@ export class DigitalNoteLens extends InkLens {
   }
 
   /**
+   * @override — brings the page `leaf` into view in whichever mode is showing;
+   * asked before a surface is presented, the surface presented next opens at it,
+   * once. A page the note does not list changes nothing.
+   * @param {string} leaf a page id
+   */
+  reveal(leaf) {
+    if (typeof leaf !== 'string' || !leaf) return
+    const surface = this.surface
+    if (surface instanceof PageSurface || surface instanceof TranscriptSurface) surface.reveal(leaf)
+    else this.#revealing = leaf
+  }
+
+  /**
    * @protected
    * @param {string} mode
    * @returns {PageSurface|TranscriptSurface}
    */
   _createSurface(mode) {
     const view = /** @type {import('./page-surface.js').ReaderView|null} */ (this._handedViewState)
-    if (mode === TranscriptSurface.MODE) return new TranscriptSurface(this.provider, this, view)
-    return new PageSurface(this.provider, this, view)
+    const surface = mode === TranscriptSurface.MODE
+      ? new TranscriptSurface(this.provider, this, view)
+      : new PageSurface(this.provider, this, view)
+    if (this.#revealing !== null) surface.reveal(this.#revealing)
+    this.#revealing = null
+    return surface
   }
 }

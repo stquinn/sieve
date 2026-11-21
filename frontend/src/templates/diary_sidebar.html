@@ -1,0 +1,40 @@
+{{define "diary_icon"}}<svg class="{{.}}" viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>{{end}}
+{{define "diary_open_today"}}fetch('/api/ink/diary/today?device=' + encodeURIComponent({{.}})).then(function (res) { return res.ok ? res.json() : null }).then(function (answer) { if (answer && answer.address) window.sieveWorkspace.openAddress(answer.address) }){{end}}
+{{define "diary_sidebar.html"}}{{if .Shown}}<div class="ink-tree__row" style="padding-left:{{indent 0}};">
+  <button
+    class="ink-tree__chevron diary-tree__toggle"
+    aria-expanded="{{if .Open}}true{{else}}false{{end}}"
+    hx-patch="/api/folder/{{.ID}}"
+    hx-vals='{"open": {{if .Open}}false{{else}}true{{end}}}'
+    hx-target="#htmx-sidebar"
+    hx-swap="innerHTML"
+    hx-push-url="false"
+    title="{{if .Open}}Collapse{{else}}Expand{{end}} the Diary"
+  >
+    {{if .Open}}
+    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+    {{else}}
+    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+    {{end}}
+  </button>
+  <button class="diary-tree__open" onclick="{{template "diary_open_today" .Device}}" title="Diary: open today's page">
+    {{template "diary_icon" "ink-icon"}}
+    <span class="ink-tree__name">Diary</span>
+  </button>
+</div>
+{{if .Open}}
+{{range .Chunks}}{{template "ink_note_row" .}}{{end}}
+{{range .Devices}}
+<button
+  class="sidebar__file ink-tree__item"
+  data-diary-device="{{.ID}}"
+  style="padding-left:{{fileIndent 1}};"
+  onclick="{{template "diary_open_today" .ID}}"
+  title="{{.Name}}: open today's page"
+>
+  {{template "diary_icon" "ink-icon"}}
+  <span class="ink-tree__label">{{.Name}}</span>
+</button>
+{{range .Chunks}}{{template "ink_note_row" .}}{{end}}
+{{end}}
+{{end}}{{end}}{{end}}

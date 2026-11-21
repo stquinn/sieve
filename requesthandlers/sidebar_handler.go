@@ -131,10 +131,11 @@ func prepSidebarEntries(entries []services.NoteEntry, openFolders map[string]boo
 	return out
 }
 
-// sidebarTree is the payload of sidebar.html: the Ink item above the library's
-// tree and the Buffers item below it.
+// sidebarTree is the payload of sidebar.html: the Ink and Diary items above the
+// library's tree and the Buffers item below it.
 type sidebarTree struct {
 	Ink     inkSidebarView
+	Diary   diarySidebarView
 	Entries []sidebarEntry
 	Buffers buffersSidebarView
 }
@@ -169,7 +170,9 @@ func (s SideBarHandler) Render(w http.ResponseWriter) {
 
 	data := sidebarTree{Entries: prepSidebarEntries(entries, openFolders, 0, "", activeID), Buffers: s.buffers(session)}
 	if s.ServiceProvider.Ink != nil {
-		data.Ink.show(s.ServiceProvider.Ink.Status(), session)
+		st := s.ServiceProvider.Ink.Status()
+		data.Ink.show(st, session)
+		data.Diary.show(st, session)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.Tmpl.ExecuteTemplate(w, "sidebar.html", data); err != nil {

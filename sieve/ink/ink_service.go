@@ -175,6 +175,14 @@ type SyncedNote struct {
 	Unreadable bool
 	// NamedBy is who gives the note its name.
 	NamedBy NamedBy
+	// Type is the note's type property, diary for a chunk of a diary; "" when it has none.
+	Type string
+	// Period is the note's period property when it is a YYYY-MM month, otherwise "".
+	Period string
+	// DeviceID is the id of the device the note was written on.
+	DeviceID string
+	// Created is the note-header's created time; zero before any header.
+	Created time.Time
 }
 
 // Deletion is whether Sieve's copy of a Digital Note may be deleted now, and what that means.
@@ -1120,7 +1128,9 @@ func (s *InkService) synced(open []SyncedNote) ([]SyncedNote, []Companion) {
 		pages, _ := strconv.Atoi(face["note_pages"])
 		seq, _ := strconv.ParseUint(face["note_synced_seq"], 10, 32)
 		byUUID[uuid] = SyncedNote{UUID: uuid, Title: face["note_title"], Pages: pages, Seq: uint32(seq),
-			Companion: face["note_companion"], Device: face["note_device"], Whiteboard: face["note_whiteboard"] == "true"}
+			Companion: face["note_companion"], Device: face["note_device"], Whiteboard: face["note_whiteboard"] == "true",
+			Type: face["note_type"], Period: face["note_period"], DeviceID: face["note_device_id"],
+			Created: kind.created(face["note_created"])}
 	}
 	for _, n := range open {
 		byUUID[n.UUID] = n

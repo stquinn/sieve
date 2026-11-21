@@ -84,7 +84,7 @@ func (s *InkService) searchNotebooks(c domain.SearchCriteria) []domain.Candidate
 			continue
 		}
 		out = append(out, domain.Candidate{
-			URI: domain.NewContainerAddress(uuid).String(), Title: face.name, Kind: KindDigitalNote,
+			URI: domain.NewContainerAddress(uuid).String(), Title: face.name, Kind: KindDigitalNote, Type: meta["note_type"],
 			Detail: meta["note_device"], Summary: face.summary, Tags: face.tags, Modified: face.modified, Matched: matched,
 		})
 	}

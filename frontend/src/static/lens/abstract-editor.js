@@ -111,7 +111,8 @@ export class AbstractEditor extends Lens {
   /** @type {object|null} what a code menu asks to pretty-print source. */
   #codeFormattingService = null
 
-  /** @type {unknown} the view state this editor was handed */
+  /** @type {unknown} the view state the next surface is handed: the one this editor was
+   *  handed, until a surface it replaced answered one */
   #viewState = null
 
   /** @type {AddressStatus|null} built on demand over the mention peer. */
@@ -183,13 +184,13 @@ export class AbstractEditor extends Lens {
 
   /**
    * The reader's view of the container: the surface's own while one is
-   * presented, else the one this editor was handed. The host keeps it across a
+   * presented, else the one the next surface is handed. The host keeps it across a
    * tab switch and hands it to the next editor over the container.
    * @returns {unknown}
    */
   get viewState() { return this.#surface ? this.#surface.viewState() : this.#viewState }
 
-  /** @protected @returns {unknown} the view state this editor was handed, for the surface it creates */
+  /** @protected @returns {unknown} the view state for the surface this editor creates next */
   get _handedViewState() { return this.#viewState }
 
   /**
@@ -493,13 +494,16 @@ export class AbstractEditor extends Lens {
   }
 
   /**
-   * Presents the input surface for a mode. The ONE place surfaces are swapped.
+   * Presents the input surface for a mode. The ONE place surfaces are swapped:
+   * the reader's view the outgoing surface answers, when it answers one, is what
+   * the new surface is handed.
    * @param {string} mode
    * @param {HTMLElement} rootEl  — the editor's root
    * @param {unknown}     content — surface seed (markdown string, or {body, blocks})
    * @returns {AbstractSurface} the mounted surface
    */
   presentSurface(mode, rootEl, content) {
+    if (this.#surface) this.#viewState = this.#surface.viewState() ?? this.#viewState
     if (this.isMounted) this.unmount()
     const next = this._createSurface(mode)
     if (!next || typeof next.mount !== 'function' || typeof next.unmount !== 'function') {
@@ -863,7 +867,6 @@ export class AbstractEditor extends Lens {
     old.flushPending()
 
     if (this.#seedlessFlip(target)) {
-      this.#viewState = old.viewState()
       this.presentSurface(target, /** @type {HTMLElement} */ (this.host), null)
       return true
     }

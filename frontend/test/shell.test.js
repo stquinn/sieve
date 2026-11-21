@@ -47,6 +47,7 @@ import { SieveEditor } from '../src/static/lens/document-editor/editor-shell.js'
 import { SieveTab } from '../src/static/shell/tab.js'
 import { SieveWorkspace } from '../src/static/shell/workspace.js'
 import { AbstractEditor } from '../src/static/lens/abstract-editor.js'
+import { Lens } from '../src/static/lens/lens.js'
 import { ProseMirrorEditor } from '../src/static/lens/document-editor/prosemirror-editor.js'
 import { NoteEditor } from '../src/static/lens/document-editor/note-editor.js'
 import { ComposerEditor } from '../src/static/lens/document-editor/composer/composer-editor.js'
@@ -1163,7 +1164,7 @@ describe('NoteEditor.setMode — the flip is ONE lens using both of its containe
     await expect(ed.setMode('wysiwyg')).resolves.toBe(false)
   })
 
-  it('two modes that need no seed flip with no blocks capability, ask the container nothing, and hand the view over', async () => {
+  it('two modes that need no seed flip with no blocks capability, ask the container nothing, and hand the view over, as presenting again does', async () => {
     // A lens whose modes are two views of one container, neither a verbatim
     // buffer: the flip is a surface swap, and the surface left says where the
     // reader was to the one presented.
@@ -1189,8 +1190,10 @@ describe('NoteEditor.setMode — the flip is ONE lens using both of its containe
     ed.onEvent((e) => events.push(e.type))
     await expect(ed.setMode('second')).resolves.toBe(true)
     await expect(ed.toggleMode()).resolves.toBe(true)
+    await ed.presentMode('second', root)
     expect(ed.made.map((m) => [m.mode, m.mountArgs[1], m.handed])).toEqual([
       ['first', null, { left: 'before' }], ['second', null, { left: 'first' }], ['first', null, { left: 'second' }],
+      ['second', null, { left: 'first' }],
     ])
     expect(provider.getContents).not.toHaveBeenCalled()
     expect(provider.setContents).not.toHaveBeenCalled()
@@ -1423,6 +1426,49 @@ describe('SieveWorkspace.activateDocument editor lifecycle (P2.A fix wave)', () 
     expect(tabA.viewState).toBe(state)
     w.activateDocument('doc-a', edOpts)
     expect([tabA.editor.viewState, w.getTab('doc-b').viewState]).toEqual([state, null])
+  })
+
+  // The leaf an address names reaches the lens of the container it opened at the
+  // activation that open causes — a new lens, or the one kept — and only there.
+  describe('openAddress reveals the leaf the address names', () => {
+    /** @param {SieveWorkspace} w @param {string} uuid @param {string} blockId */
+    const openAt = async (w, uuid, blockId) => {
+      vi.spyOn(w.mentionService, 'resolve').mockResolvedValue(/** @type {any} */ ({ found: true, uuid, blockId }))
+      expect(await w.openAddress('sieve://' + uuid + (blockId ? '/' + blockId : ''))).toBe(true)
+    }
+    let prevHtmx
+    beforeEach(() => {
+      prevHtmx = window.htmx
+      window.htmx = /** @type {any} */ ({ ajax: vi.fn(() => Promise.resolve()) })
+    })
+    afterEach(() => { window.htmx = prevHtmx })
+
+    it.each([
+      ['a container not open', [], 'doc-a', 'b7', [['doc-a', 'b7']]],
+      ['a container open in another tab', ['doc-a', 'doc-b'], 'doc-a', 'b7', [['doc-a', 'b7']]],
+      ['the active container', ['doc-a'], 'doc-a', 'b7', [['doc-a', 'b7']]],
+      ['a whole container', [], 'doc-a', '', []],
+    ])('%s', async (_name, before, uuid, blockId, want) => {
+      const w = loggingWorkspace([])
+      for (const id of before) w.activateDocument(id, edOpts)
+      /** @type {Array<[string, string]>} */ const revealed = []
+      vi.spyOn(Lens.prototype, 'reveal').mockImplementation(function (leaf) { revealed.push([this.uuid, leaf]) })
+      await openAt(w, uuid, blockId)
+      expect(revealed).toEqual([])
+      w.activateDocument(uuid, edOpts)
+      w.activateDocument(uuid, edOpts)
+      expect(revealed).toEqual(want)
+    })
+
+    it('another activation first discards it', async () => {
+      const w = loggingWorkspace([])
+      /** @type {string[]} */ const revealed = []
+      vi.spyOn(Lens.prototype, 'reveal').mockImplementation((leaf) => { revealed.push(leaf) })
+      await openAt(w, 'doc-a', 'b7')
+      w.activateDocument('doc-b', edOpts)
+      w.activateDocument('doc-a', edOpts)
+      expect(revealed).toEqual([])
+    })
   })
 
   it('same-uuid re-activation keeps the editor instance and its socket', () => {

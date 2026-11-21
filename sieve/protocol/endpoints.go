@@ -112,6 +112,18 @@ type InkLiveNoteResponse struct {
 	Note string `json:"note" doc:"the uuid of the block container holding the mirrored note; empty when there is no Live view or no container holds its note yet"`
 }
 
+// InkDiaryTodayRequest asks where a device's diary opens today: the chunk whose month holds
+// today, at its last page named today's date, else at its last page; the newest chunk, at its last
+// page, when no chunk holds today. No diary chunk held is 404, with a plain-text body.
+type InkDiaryTodayRequest struct {
+	Device string `json:"device" query:"device" doc:"the id of the device whose diary opens; empty for the diary whose newest chunk is the newest held. A query parameter, not a body field"`
+}
+
+// InkDiaryTodayResponse is where a diary opens today.
+type InkDiaryTodayResponse struct {
+	Address string `json:"address" doc:"the address to open: sieve://{chunk}/{page}, or sieve://{chunk} when the chunk has no pages"`
+}
+
 // InkPageExport is one page of a Digital Note as the ink renderer takes it: the note's header,
 // the page itself, and the page's strokes in the order they were added.
 type InkPageExport struct {

@@ -912,6 +912,7 @@ inventory below instead.
 | `DELETE /api/document/{uuid}/asset/{key}` | none | AssetDeleteRequest deletes one asset of a document, irreversibly: {uuid} is the document and {key} the asset's key, path-escaped. |
 | `POST /api/folder` | fragment | FolderCreateRequest makes a new folder. |
 | `PATCH /api/folder/{id}` | fragment | FolderPatchRequest changes a folder's properties. |
+| `GET /api/ink/diary/today` | json | InkDiaryTodayRequest asks where a device's diary opens today: the chunk whose month holds today, at its last page named today's date, else at its last page; the newest chunk, at its last page, when no chunk holds today. |
 | `GET /api/ink/live/note` | json | InkLiveNoteRequest asks which synced Digital Note the Live view mirrors. |
 | `POST /api/ink/notes/{uuid}/describe` | none | InkDescribeRequest names a synced Digital Note now: {uuid} is the note's block container, and its name, summary, keywords and categories are described again from its pages, whether or not they are of the note as it stands. |
 | `POST /api/ink/notes/{uuid}/open-on-tablet` | json | InkOpenOnTabletRequest asks the tablet a synced Digital Note came from to open it, leaving the page to the tablet: {uuid} is the note's block container. |
@@ -1007,6 +1008,24 @@ FolderPatchRequest changes a folder's properties.
 | `open` | `*bool` | no | whether the folder is expanded in the tree; absent leaves it alone |
 
 **Response** — HTML for HTMX to swap in; the template is its contract.
+
+### `GET /api/ink/diary/today`
+
+**Request** — `protocol.InkDiaryTodayRequest`
+
+InkDiaryTodayRequest asks where a device's diary opens today: the chunk whose month holds today, at its last page named today's date, else at its last page; the newest chunk, at its last page, when no chunk holds today.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `device` | `string` | yes | the id of the device whose diary opens; empty for the diary whose newest chunk is the newest held. A query parameter, not a body field |
+
+**Response** — `protocol.InkDiaryTodayResponse`
+
+InkDiaryTodayResponse is where a diary opens today.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `address` | `string` | yes | the address to open: sieve://{chunk}/{page}, or sieve://{chunk} when the chunk has no pages |
 
 ### `GET /api/ink/live/note`
 
@@ -1217,6 +1236,7 @@ Candidate is one hit of a search, and the one hit type every consumer reads: wha
 | `kind` | `string` | yes |  |
 | `detail` | `string` | yes |  |
 | `summary` | `string` | yes |  |
+| `type` | `string` | no |  |
 | `folder` | `string` | no |  |
 | `tags` | `[]string` | no |  |
 | `modified` | `string` | no |  |
@@ -1433,6 +1453,7 @@ or another protocol's own transport.
 | `DELETE` | `/mcp` | — |
 | `GET` | `/` | — |
 | `GET` | `/api/document/load` | typed (json) |
+| `GET` | `/api/ink/diary/today` | typed (json) |
 | `GET` | `/api/ink/live/note` | typed (json) |
 | `GET` | `/api/ink/notes/{uuid}/pages/{page}/export` | typed (json) |
 | `GET` | `/api/ink/notes/{uuid}/pages/{page}/image` | typed (image) |
@@ -1460,6 +1481,7 @@ or another protocol's own transport.
 | `GET` | `/ui/views/sidebar` | — |
 | `GET` | `/ui/views/sidebar/buffers` | — |
 | `GET` | `/ui/views/sidebar/dialog/{kind}` | — |
+| `GET` | `/ui/views/sidebar/diary` | — |
 | `GET` | `/ui/views/sidebar/ink` | — |
 | `GET` | `/ui/views/sidebar/search` | — |
 | `GET` | `/ui/views/tabs` | — |

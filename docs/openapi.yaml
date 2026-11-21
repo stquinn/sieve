@@ -148,6 +148,28 @@ paths:
             text/html:
               schema:
                 type: string
+  /api/ink/diary/today:
+    get:
+      operationId: getApiInkDiaryToday
+      summary: 'InkDiaryTodayRequest asks where a device''s diary opens today: the chunk whose month holds today, at its last page named today''s date, else at its last page; the newest chunk, at its last page, when no chunk holds today.'
+      description: |-
+        InkDiaryTodayRequest asks where a device's diary opens today: the chunk whose month holds
+        today, at its last page named today's date, else at its last page; the newest chunk, at its last
+        page, when no chunk holds today. No diary chunk held is 404, with a plain-text body.
+      parameters:
+        - name: device
+          in: query
+          required: true
+          description: the id of the device whose diary opens; empty for the diary whose newest chunk is the newest held. A query parameter, not a body field
+          schema:
+            type: string
+      responses:
+        "200":
+          description: a typed body, described by the entry's Response type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProtocolInkDiaryTodayResponse'
   /api/ink/live/note:
     get:
       operationId: getApiInkLiveNote
@@ -446,6 +468,15 @@ components:
         Otherwise the body is plain text a person can be shown: 404 for a container that is not a held
         Digital Note, 409 when nothing can name it now (no AI is configured, the note has no ink, or
         nothing is open that can draw its pages), 503 when ink is unavailable. The request has no body.
+    ProtocolInkDiaryTodayResponse:
+      type: object
+      description: InkDiaryTodayResponse is where a diary opens today.
+      properties:
+        address:
+          type: string
+          description: 'the address to open: sieve://{chunk}/{page}, or sieve://{chunk} when the chunk has no pages'
+      required:
+        - address
     ProtocolInkExportDevice:
       type: object
       description: InkExportDevice is the tablet the note was written on.

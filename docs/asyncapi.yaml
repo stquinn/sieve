@@ -1347,6 +1347,8 @@ components:
           type: string
         summary:
           type: string
+        type:
+          type: string
         folder:
           type: string
         tags:

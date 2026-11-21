@@ -128,6 +128,8 @@ export class TranscriptSurface extends AbstractSurface {
   /** @type {string|null} the page the reader is on */ #shown = null
   /** @type {Set<string>} pages with ink not seen since it arrived */ #unseen = new Set()
   /** @type {ReaderView|null} the view handed to this surface */ #handed
+  /** @type {boolean} whether a page, or the note's having none, has been shown */ #painted = false
+  /** @type {string|null} the page asked to be revealed before the note's pages were known */ #revealing = null
   /** @type {number} the highest log seq heard */ #heardSeq = 0
   /** @type {number} the latest stroke start heard; -1 before any */ #heardMillis = -1
   /** @type {InkTranscript|null} the transcript of the page shown, as last told */ #transcript = null
@@ -330,6 +332,16 @@ export class TranscriptSurface extends AbstractSurface {
   }
 
   /**
+   * Shows the page `pageId` when the note lists it. Asked before the note's
+   * pages are known, it is the page first shown, over the one handed over, once.
+   * @param {string} pageId
+   */
+  reveal(pageId) {
+    if (!this.#painted) this.#revealing = pageId
+    else if (this.#listed(pageId)) this.showPage(pageId)
+  }
+
+  /**
    * Shows the page `delta` pages on from the shown one, clamped to the note.
    * @param {number} delta
    */
@@ -417,21 +429,28 @@ export class TranscriptSurface extends AbstractSurface {
     this.#device = String((attrs.note_device && attrs.note_device.name) || '')
   }
 
-  /** @returns {string|null} the page to show: the page shown while the note lists it,
-   *  else the page handed over, else the first, else none */
+  /** @returns {string|null} the page to show: before any is shown, the page asked to be
+   *  revealed when the note lists it, which is then forgotten; the page shown while the note
+   *  lists it; else the page handed over, else the first, else none */
   #target() {
-    const listed = (/** @type {string|null} */ id) => id !== null && this.#pages.some((p) => p.id === id)
-    if (listed(this.#shown)) return this.#shown
+    const revealing = this.#revealing
+    this.#revealing = null
+    if (!this.#painted && this.#listed(revealing)) return revealing
+    if (this.#listed(this.#shown)) return this.#shown
     const handed = this.#handed ? this.#handed.page : null
-    if (listed(handed)) return handed
+    if (this.#listed(handed)) return handed
     return this.#pages.length ? this.#pages[0].id : null
   }
+
+  /** @param {string|null} id @returns {boolean} whether the note lists the page `id` */
+  #listed(id) { return id !== null && this.#pages.some((p) => p.id === id) }
 
   /** @returns {number} the index of the page shown; -1 when none is */
   #index() { return this.#pages.findIndex((p) => p.id === this.#shown) }
 
   /** @param {string|null} pageId */
   #show(pageId) {
+    this.#painted = true
     if (pageId !== this.#shown) {
       this.#transcript = null
       this.#transcribeOnArrival = false

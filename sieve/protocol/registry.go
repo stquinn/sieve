@@ -226,6 +226,11 @@ func (r *Registry) registerEndpoints() {
 		Request: reflect.TypeOf(InkLiveNoteRequest{}), Response: reflect.TypeOf(InkLiveNoteResponse{}),
 		ResponseKind: ResponseJSON,
 	})
+	r.addEndpoint(EndpointEntry{
+		Method: "GET", Path: "/api/ink/diary/today",
+		Request: reflect.TypeOf(InkDiaryTodayRequest{}), Response: reflect.TypeOf(InkDiaryTodayResponse{}),
+		ResponseKind: ResponseJSON,
+	})
 }
 
 func (r *Registry) addFrame(channel Channel, direction Direction, frameType string, payload interface{}) {

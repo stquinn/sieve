@@ -87,6 +87,11 @@ export class SieveWorkspace {
    *  rendered opens the tab it marks active unless something else is mounted by then */
   #reopenAfterDeletion = false
 
+  /** @type {{uuid: string, leaf: string}|null} the leaf `openAddress` asked revealed in the
+   *  container it opened, for the next activation to hand that container's lens; any
+   *  activation takes it, so one of another container discards it */
+  #pendingReveal = null
+
   /** @type {string|null|undefined} the insert anchor `beginFileAttach` captured
    *  before the file picker blurred the editor, held for `attachFile` to spend.
    *  `undefined` is "append", as every insert anchor reads it. */
@@ -233,9 +238,12 @@ export class SieveWorkspace {
   }
 
   /**
-   * Opens what a Sieve COORDINATE points at — the verb behind clicking a mention.
-   * `uri` is OPAQUE to every line of this file: Go owns the address grammar, so
-   * this asks rather than parses.
+   * Opens what a Sieve COORDINATE points at — the verb behind clicking a mention —
+   * and has the container's lens reveal the leaf the address names, if it names
+   * one. `uri` is OPAQUE to every line of this file: Go owns the address grammar,
+   * so this asks rather than parses, and the leaf is handed on as Go named it.
+   * The leaf reaches the lens at the activation the open causes, which follows
+   * `open` resolving.
    * @param {string} uri @returns {Promise<boolean>} whether a document was opened
    */
   async openAddress(uri) {
@@ -244,6 +252,7 @@ export class SieveWorkspace {
       if (uri) console.warn('[workspace] address opens nothing:', uri, target && target.error)
       return false
     }
+    this.#pendingReveal = target.blockId ? { uuid: target.uuid, leaf: target.blockId } : null
     await this.open(target.uuid)
     return true
   }
@@ -380,6 +389,9 @@ export class SieveWorkspace {
    * - TEARDOWN (uuid ''): the active editor is destroyed and its tab closed.
    * - Same-uuid re-activation: the editor and its live socket are KEPT.
    *
+   * The leaf an `openAddress` of this uuid asked revealed is handed to the tab's
+   * lens here, new or kept, before it is presented again.
+   *
    * @param {string} uuid — target container uuid, or '' to tear down
    * @param {object} [options] — passed to the lens constructor; the provider and
    *   loader are the host's own
@@ -387,6 +399,8 @@ export class SieveWorkspace {
    * @returns {SieveTab|null} the activated Tab, or null after a teardown
    */
   activateDocument(uuid, options, kind) {
+    const reveal = this.#pendingReveal
+    this.#pendingReveal = null
     const prev = this.#activeTab
     if (prev && prev.uuid !== uuid) {
       if (prev.editor) {
@@ -427,6 +441,7 @@ export class SieveWorkspace {
         viewState: tab.viewState,
       }, options)))
     }
+    if (reveal && reveal.uuid === uuid && tab.editor) tab.editor.reveal(reveal.leaf)
     this.#toolbar.show(tab.editor)
     return tab
   }

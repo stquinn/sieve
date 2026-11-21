@@ -295,10 +295,11 @@ directory. The block never carries ink.
   from; `note_companion` remains the companion's identity on the link.
 - One Sieve holds at most one live container per `(note_companion, note_source_id)`.
 - **Face.** `.meta` carries, beside `note_title`, `note_pages`, `note_device` (the device's name) and
-  `note_whiteboard`: `note_device_id` (the header's device id), `note_type` (the note's `type`),
-  `note_period` (its `period` when that is a `YYYY-MM` month) and `note_properties` (every note
-  property as one JSON object, keys ascending). Each is written on every save, `""` or `{}` when the
-  note has none, so a diary's chunks are found by `note_type` and `note_device_id` from `.meta` alone.
+  `note_whiteboard`: `note_created` (the header's `created`), `note_device_id` (the header's device
+  id), `note_type` (the note's `type`), `note_period` (its `period` when that is a `YYYY-MM` month)
+  and `note_properties` (every note property as one JSON object, keys ascending). Each is written on
+  every save, `""` or `{}` when the note has none, so a diary's chunks are found by `note_type` and
+  `note_device_id`, and ordered by `note_period` and `note_created`, from `.meta` alone.
   A container saved before these keys has none of them and is a notebook or a whiteboard.
 - **Unknown op.** A note whose catch-up meets an op this Sieve does not know keeps its records before
   that one staged and unpublished, as after a lost link; its source and `note_synced_seq` stay where

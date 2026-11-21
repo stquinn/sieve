@@ -25,6 +25,7 @@ import (
 	"sieve/sieve/editor"
 	"sieve/sieve/ink"
 	"sieve/sieve/ink/radio"
+	"sieve/sieve/protocol"
 	"sieve/sieve/services"
 	"sieve/store/filestore"
 )
@@ -441,8 +442,11 @@ func (holdingRadio) Dial(ctx context.Context) (radio.Link, error) {
 	return nil, ctx.Err()
 }
 
+// inkServerToday is the time now by the clock of newInkServer's Ink handler.
+var inkServerToday = time.Date(2026, 11, 20, 12, 0, 0, 0, time.Local)
+
 // newInkServer serves the settings and Ink handlers over one store, with Ink built over a radio
-// that never finds a companion, and the search the composition root builds.
+// that never finds a companion, the search the composition root builds, and a fixed clock.
 func newInkServer(t *testing.T) (*httptest.Server, *sieve.ServiceProvider) {
 	t.Helper()
 	h, _ := newTestSettingsHandler(t)
@@ -463,7 +467,7 @@ func newInkServer(t *testing.T) (*httptest.Server, *sieve.ServiceProvider) {
 	sp.Search = sp.Nodes
 	r := chi.NewRouter()
 	h.RegisterPaths(r)
-	(&InkHandler{ServiceProvider: sp, Tmpl: h.Tmpl}).RegisterPaths(r)
+	(&InkHandler{ServiceProvider: sp, Tmpl: h.Tmpl, now: func() time.Time { return inkServerToday }}).RegisterPaths(r)
 	(&SideBarHandler{ServiceProvider: sp, Tmpl: h.Tmpl}).RegisterPaths(r)
 	(&SearchHandler{ServiceProvider: sp, Tmpl: h.Tmpl}).RegisterPaths(r)
 	(&ContextMenuHandler{ServiceProvider: sp, Tmpl: h.Tmpl}).RegisterPaths(r)
@@ -548,9 +552,11 @@ func TestInkFragment_RendersEachState(t *testing.T) {
 // it exists and the synced notebooks by name, or says there are none, indented as a folder's
 // children, each named in full in its tooltip, never by its kind, the active tab's row marked,
 // every row opening its container through the workspace's open and carrying the menu of its own
-// context type.
+// context type. A diary chunk is not among its notebooks, but the facts a tab's menu reads of
+// every synced note, diary chunks too, are there however the item is shown.
 func TestInkSidebar_RendersEachState(t *testing.T) {
 	h, _ := newTestSettingsHandler(t)
+	diaryChunk := ink.SyncedNote{UUID: "n-diary", Name: "November", Pages: 2, Deletion: ink.DeleteReturns, NamedBy: ink.NamedByTablet, Type: "diary", Period: "2026-11"}
 	notes := []ink.SyncedNote{{UUID: "n-ideas", Name: "Ideas", Title: "Untitled 05/11", Pages: 2, Deletion: ink.DeleteReturns}, {UUID: "n-board", Pages: 1, Whiteboard: true, Absent: true, Deletion: ink.DeleteLast}}
 	live := ink.LiveStatus{Present: true, UUID: "v-live", Device: "Note Air 2", Note: "n-ideas", NoteTitle: "Ideas"}
 	waiting := ink.LiveStatus{Present: true, UUID: "v-live", Waiting: true}
@@ -572,13 +578,16 @@ func TestInkSidebar_RendersEachState(t *testing.T) {
 		{"collapsed with a delete refused", ink.Status{Enabled: true, Notes: []ink.SyncedNote{{UUID: "n-ideas", Name: "Ideas", Pages: 2, Deletion: ink.DeleteRefused}}}, collapsed,
 			append([]string{`<span hidden data-ink-facts="n-ideas" data-ctx-delete-refused="` + inkDeleteRefused + `">`}, row...),
 			[]string{"data-ink-note", "data-ctx-id", "data-ctx-name-fixed"}},
-		{"collapsed with a name its tablet gives", ink.Status{Enabled: true, Notes: []ink.SyncedNote{{UUID: "n-diary", Name: "November", Pages: 2, Deletion: ink.DeleteReturns, NamedBy: ink.NamedByTablet}}}, collapsed,
+		{"collapsed with a diary chunk", ink.Status{Enabled: true, Notes: []ink.SyncedNote{diaryChunk}}, collapsed,
 			append([]string{`<span hidden data-ink-facts="n-diary" data-ctx-name-fixed="true">`}, row...),
 			[]string{"data-ink-note", "data-ctx-delete-refused"}},
-		{"a name its tablet gives", ink.Status{Enabled: true, Notes: []ink.SyncedNote{{UUID: "n-diary", Name: "November", Pages: 2, Deletion: ink.DeleteReturns, NamedBy: ink.NamedByTablet}}}, expanded,
-			[]string{`data-ink-note="n-diary"
+		{"a diary chunk", ink.Status{Enabled: true, Notes: []ink.SyncedNote{diaryChunk, {UUID: "n-ideas", Name: "Ideas", Pages: 2, Deletion: ink.DeleteRefused}}}, expanded,
+			[]string{`<span hidden data-ink-facts="n-diary" data-ctx-name-fixed="true">`, `<span hidden data-ink-facts="n-ideas" data-ctx-delete-refused="`, `data-ink-note="n-ideas"`},
+			[]string{`data-ink-note="n-diary"`, "November", "No synced notebooks yet"}},
+		{"a name its tablet gives", ink.Status{Enabled: true, Notes: []ink.SyncedNote{{UUID: "n-named", Name: "Named", Pages: 2, Deletion: ink.DeleteReturns, NamedBy: ink.NamedByTablet}}}, expanded,
+			[]string{`data-ink-note="n-named"
   data-ctx-name-fixed="true"
-  data-ctx-id="n-diary"`}, nil},
+  data-ctx-id="n-named"`}, nil},
 		{"collapsed while live", ink.Status{Enabled: true, Notes: notes, Live: live}, collapsed,
 			append([]string{"data-ink-live-dot"}, row...), []string{`data-ink-live="live"`, "data-ink-note"}},
 		{"collapsed while waiting", ink.Status{Enabled: true, Notes: notes, Live: waiting}, collapsed,
@@ -628,6 +637,99 @@ func TestInkSidebar_RendersEachState(t *testing.T) {
 			for _, absent := range tc.absent {
 				if strings.Contains(out.String(), absent) {
 					t.Errorf("%q in\n%s", absent, out.String())
+				}
+			}
+		})
+	}
+}
+
+// The tree's Diary item is nothing while Ink is disabled or no diary chunk is held. Otherwise it is
+// a row whose chevron expands and collapses it as a folder's does, through the folder patch under
+// its own id, and whose name opens today through the workspace's openAddress. Expanded, it holds
+// the chunks newest first, each named by its month or else as a notebook is, a notebook row to the
+// menu that opens its chunk; with chunks of several devices, a row per device that opens that
+// device's today, its chunks beneath it.
+func TestDiarySidebar_RendersEachState(t *testing.T) {
+	h, _ := newTestSettingsHandler(t)
+	chunk := func(uuid, device, period string) ink.SyncedNote {
+		return ink.SyncedNote{UUID: uuid, Name: "Diary " + uuid, Pages: 3, Type: "diary", Period: period, DeviceID: device,
+			Device: "Device " + device, NamedBy: ink.NamedByTablet, Deletion: ink.DeleteRefused}
+	}
+	nov, oct, nameless := chunk("d-nov", "air", "2026-11"), chunk("d-oct", "air", "2026-10"), chunk("d-bad", "air", "")
+	sep := chunk("d-sep", "tab", "2026-09")
+	notebook := ink.SyncedNote{UUID: "n-ideas", Name: "Ideas"}
+	collapsed := domain.Session{Tabs: []domain.Tab{{ID: "d-oct", Kind: ink.KindDigitalNote}}}
+	expanded := collapsed
+	expanded.OpenFolders = []string{inkTreeID, diaryTreeID}
+	row := []string{">Diary<", `hx-patch="/api/folder/diary"`, `hx-target="#htmx-sidebar"`, `class="diary-tree__open" onclick="fetch('/api/ink/diary/today?device=' + encodeURIComponent(&#34;`}
+	for _, tc := range []struct {
+		name    string
+		status  ink.Status
+		session domain.Session
+		want    []string
+		absent  []string
+	}{
+		{"disabled", ink.Status{Notes: []ink.SyncedNote{nov}}, expanded, nil, nil},
+		{"no diary", ink.Status{Enabled: true, Notes: []ink.SyncedNote{notebook}}, expanded, nil, nil},
+		{"collapsed", ink.Status{Enabled: true, Notes: []ink.SyncedNote{nov, notebook}}, collapsed,
+			append([]string{`aria-expanded="false"`, `{"open": true}`, `encodeURIComponent(&#34;air&#34;)`}, row...),
+			[]string{"data-ink-note", "data-ink-facts", "data-diary-device"}},
+		{"one device", ink.Status{Enabled: true, Notes: []ink.SyncedNote{oct, notebook, nameless, nov}}, expanded,
+			append([]string{`aria-expanded="true"`, `{"open": false}`, `encodeURIComponent(&#34;air&#34;)`,
+				`data-ink-note="d-nov"
+  data-ctx-delete-refused="` + inkDeleteRefused + `"
+  data-ctx-name-fixed="true"
+  data-ctx-id="d-nov"
+  data-ctx-type="notebook"
+  data-ctx-name="November 2026"
+  style="padding-left:2.50rem;"
+  onmousedown="window.sieveWorkspace.open('d-nov')"`,
+				`data-ctx-name="October 2026"
+  data-active`, `ink-tree__label">Diary d-bad<`, "3 pages"}, row...),
+			[]string{"n-ideas", "data-ink-facts", "data-diary-device", "Device air"}},
+		{"two devices", ink.Status{Enabled: true, Notes: []ink.SyncedNote{sep, oct, nov}}, expanded,
+			append([]string{`encodeURIComponent(&#34;&#34;)`,
+				`data-diary-device="air"
+  style="padding-left:2.50rem;"
+  onclick="fetch('/api/ink/diary/today?device=' + encodeURIComponent(&#34;air&#34;))`,
+				`ink-tree__label">Device air<`, `data-diary-device="tab"`, `ink-tree__label">Device tab<`,
+				`data-ctx-name="September 2026"
+  style="padding-left:3.50rem;"`}, row...),
+			nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var v diarySidebarView
+			v.show(tc.status, tc.session)
+			var out strings.Builder
+			if err := h.Tmpl.ExecuteTemplate(&out, "diary_sidebar.html", v); err != nil {
+				t.Fatal(err)
+			}
+			got := out.String()
+			if tc.want == nil && got != "" {
+				t.Errorf("renders %q, want nothing", got)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("no %q in\n%s", want, got)
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(got, absent) {
+					t.Errorf("%q in\n%s", absent, got)
+				}
+			}
+			order := []string{"November 2026", "October 2026", "Diary d-bad"}
+			if tc.name == "two devices" {
+				order = []string{`data-diary-device="air"`, "November 2026", "October 2026", `data-diary-device="tab"`, "September 2026"}
+			}
+			if tc.want != nil && tc.session.OpenFolders != nil {
+				at := -1
+				for _, name := range order {
+					next := strings.Index(got, name)
+					if next < at {
+						t.Errorf("%q is out of order in\n%s", name, got)
+					}
+					at = next
 				}
 			}
 		})
@@ -758,6 +860,83 @@ func TestInkSidebar_IsTheFirstItemOfTheTreeWhileInkIsEnabled(t *testing.T) {
 	if page := get("/ui/views/settings"); !strings.Contains(page, `transition: all 0.2s;">Notebooks</button>`) ||
 		!strings.Contains(page, `margin-bottom: 1.5rem;">Notebooks</h3>`) || strings.Contains(page, ">Ink<") {
 		t.Error("Settings does not name the feature Notebooks")
+	}
+}
+
+// The Diary item follows Notebooks in the tree, in a mount of its own that refreshes on the ink
+// invalidation and is also where the item is served, and is empty until a diary chunk is held.
+// Expanding it is remembered as a folder's expansion is; the chunk is no longer among the
+// notebooks. Today, by the handler's clock, is answered as the address of the chunk's page named
+// today's date, and with no diary held is 404. The search view does not show the item, and draws a chunk it finds with the Diary's icon.
+func TestDiarySidebar_FollowsNotebooksWhileADiaryIsHeld(t *testing.T) {
+	srv, sp := newInkServer(t)
+	get := func(path string) string {
+		t.Helper()
+		status, body := do(t, http.MethodGet, srv.URL+path, "", "")
+		if status != http.StatusOK {
+			t.Fatalf("GET %s: %d %s", path, status, body)
+		}
+		return body
+	}
+	settings := sp.State.LoadSettings()
+	settings.Ink.Enabled = true
+	if err := sp.State.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	mount := `<div id="sidebar-diary" class="ink-tree" hx-get="/ui/views/sidebar/diary" hx-trigger="sieve:invalidate-ink from:document" hx-swap="innerHTML">`
+	if tree := get("/ui/views/sidebar"); !strings.Contains(tree, mount+"</div>") || get("/ui/views/sidebar/diary") != "" {
+		t.Errorf("no diary held: the tree is\n%s", tree)
+	}
+	if status, _ := do(t, http.MethodGet, srv.URL+"/api/ink/diary/today", "", ""); status != http.StatusNotFound {
+		t.Errorf("today with no diary: %d, want 404", status)
+	}
+
+	chunk, err := sp.Containers.Create(ink.KindDigitalNote, map[string]interface{}{"title": "November",
+		"note_device": map[string]interface{}{"id": "air", "name": "Note Air"},
+		"note": map[string]interface{}{"pages": []interface{}{map[string]interface{}{"id": "p1", "name": "2026-11-20"},
+			map[string]interface{}{"id": "p2", "name": "2026-11-21"}},
+			"properties": map[string]interface{}{"type": []interface{}{"diary"}, "period": []interface{}{"2026-11"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sp.Documents.NewFolder("Work"); err != nil {
+		t.Fatal(err)
+	}
+	tree := get("/ui/views/sidebar")
+	notebooks, diary, folder := strings.Index(tree, "ink-tree__row"), strings.Index(tree, mount+`<div class="ink-tree__row"`), strings.Index(tree, ">Work<")
+	if notebooks < 0 || diary < notebooks || folder < diary {
+		t.Errorf("the Diary item is not between Notebooks and the folders:\n%s", tree)
+	}
+	if strings.Contains(get("/ui/views/sidebar/diary"), "November 2026") {
+		t.Error("the Diary item starts expanded")
+	}
+	if status, body := do(t, http.MethodPatch, srv.URL+"/api/folder/diary", "application/x-www-form-urlencoded", "open=true"); status != http.StatusOK ||
+		!strings.Contains(body, "November 2026") || !strings.Contains(body, ">Work<") {
+		t.Fatalf("expanding the Diary: %d\n%s", status, body)
+	}
+	if !strings.Contains(get("/ui/views/sidebar/diary"), "November 2026") {
+		t.Error("the Diary's expansion is not remembered")
+	}
+	if status, _ := do(t, http.MethodPatch, srv.URL+"/api/folder/ink", "application/x-www-form-urlencoded", "open=true"); status != http.StatusOK {
+		t.Fatalf("expanding Notebooks: %d", status)
+	}
+	if notebooks := get("/ui/views/sidebar/ink"); strings.Contains(notebooks, `data-ink-note="`+chunk.UUID()+`"`) ||
+		!strings.Contains(notebooks, `data-ink-facts="`+chunk.UUID()+`"`) {
+		t.Errorf("Notebooks with a diary chunk held:\n%s", notebooks)
+	}
+
+	var today protocol.InkDiaryTodayResponse
+	status, body := do(t, http.MethodGet, srv.URL+"/api/ink/diary/today?device=air", "", "")
+	if err := json.Unmarshal([]byte(body), &today); status != http.StatusOK || err != nil || today.Address != "sieve://"+chunk.UUID()+"/p1" {
+		t.Errorf("today: %d %s", status, body)
+	}
+	if status, _ := do(t, http.MethodGet, srv.URL+"/api/ink/diary/today?device=elsewhere", "", ""); status != http.StatusNotFound {
+		t.Errorf("today of a device with no diary: %d, want 404", status)
+	}
+	search := get("/ui/views/sidebar/search?q=November")
+	if strings.Contains(search, "sidebar-diary") || strings.Contains(search, "diary-tree") ||
+		!strings.Contains(search, `<span style="display: flex; margin-right: 6px;"><svg class="store-search__item-icon" viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4"`) {
+		t.Errorf("the search view:\n%s", search)
 	}
 }
 

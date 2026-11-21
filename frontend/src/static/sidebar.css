@@ -216,6 +216,13 @@
 .ink-tree__item:hover .ink-tree__meta,
 .ink-tree__item[data-active] .ink-tree__meta { color: var(--theme-textDim); }
 
+/* ── Diary: the tree's item after Notebooks, drawn as the Ink item is ── */
+
+.diary-tree__toggle,
+.diary-tree__open { background: none; border: none; padding: 0; cursor: pointer; }
+
+.diary-tree__open { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; text-align: left; }
+
 /* ── Buffers: the tree's last item, what is written and not yet filed ── */
 
 .buffers-tree {

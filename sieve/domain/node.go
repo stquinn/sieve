@@ -91,6 +91,9 @@ type Candidate struct {
 	Kind    string `json:"kind"`    // the source's own noun: "note", "buffer", a block kind; what a consumer picks an icon from
 	Detail  string `json:"detail"`  // folder / snippet — how duplicate titles are told apart
 	Summary string `json:"summary"` // the target's own one-liner; seeds a minted reference's face
+	// Type is what the target is within its kind when its source says: a Digital Note's type
+	// property, diary for a chunk of a diary. Empty when its source says nothing.
+	Type string `json:"type,omitempty"`
 	// Folder is the folder the target is filed in; empty at the library root and
 	// for anything not filed.
 	Folder string `json:"folder,omitempty"`

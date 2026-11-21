@@ -79,6 +79,16 @@ export class Lens {
   }
 
   /**
+   * Brings the leaf of this container named `leaf` into view: the host's verb
+   * for opening an address at its leaf. `leaf` is opaque to the host — whatever
+   * the container named as the leaf to reveal — and may be asked before or after
+   * the lens is presented. A lens that has no such leaf, or cannot bring one into
+   * view, does nothing; this base does nothing.
+   * @param {string} leaf
+   */
+  reveal(leaf) {}
+
+  /**
    * Registers the host's presence sink, or clears it with null.
    * @param {import('../contract/selection-listener.js').SelectionListener|null} listener
    */

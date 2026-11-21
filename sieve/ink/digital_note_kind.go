@@ -143,8 +143,9 @@ func (k DigitalNoteKind) InitAttrs(id string, overrides map[string]interface{}) 
 	return attrs
 }
 
-// Face is title, page count, whether a page is a whiteboard (unbounded), the device's name and id,
-// source type, provenance, synced seq and the note's properties, for .meta: note_type is its type
+// Face is title, the header's created time (note_created, RFC 3339, "" before any header), page
+// count, whether a page is a whiteboard (unbounded), the device's name and id, source type,
+// provenance, synced seq and the note's properties, for .meta: note_type is its type
 // and note_period its period when that is a YYYY-MM month, each "" otherwise, and note_properties
 // all of them as one JSON object, keys ascending, {} for none. Every one of those keys is written
 // for every note, so a property removed leaves no stale value in .meta. A diary also carries
@@ -157,10 +158,7 @@ func (k DigitalNoteKind) Face(b domain.SieveBlock) map[string]string {
 	name, _ := device["name"].(string)
 	deviceID, _ := device["id"].(string)
 	props := k.properties(note)
-	period := props.One("period")
-	if _, err := time.Parse("2006-01", period); err != nil {
-		period = ""
-	}
+	period := k.period(props)
 	propsJSON, _ := json.Marshal(props)
 	whiteboard := false
 	for _, p := range pages {
@@ -168,8 +166,10 @@ func (k DigitalNoteKind) Face(b domain.SieveBlock) map[string]string {
 			whiteboard = true
 		}
 	}
+	created, _ := note["created"].(string)
 	face := map[string]string{
 		"note_title":      b.StringAttr("title"),
+		"note_created":    created,
 		"note_pages":      strconv.Itoa(len(pages)),
 		"note_device":     name,
 		"note_source":     "strokes",
@@ -201,6 +201,43 @@ func (k DigitalNoteKind) properties(note map[string]interface{}) Properties {
 		}
 	}
 	return props
+}
+
+// period is the period of a note with props when it is a YYYY-MM month, otherwise "".
+func (k DigitalNoteKind) period(props Properties) string {
+	period := props.One("period")
+	if _, err := time.Parse("2006-01", period); err != nil {
+		return ""
+	}
+	return period
+}
+
+// created is the time an RFC 3339 created stamp names; zero when it names none.
+func (k DigitalNoteKind) created(stamp string) time.Time {
+	t, err := time.Parse(time.RFC3339, stamp)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// pageFor is the id of the page a note whose attrs are attrs opens at for the day named day: its
+// last page named day, else its last page; "" when it has no pages.
+func (k DigitalNoteKind) pageFor(attrs map[string]interface{}, day string) string {
+	note, _ := attrs["note"].(map[string]interface{})
+	pages, _ := note["pages"].([]interface{})
+	last := ""
+	for i := len(pages) - 1; i >= 0; i-- {
+		page, _ := pages[i].(map[string]interface{})
+		id, _ := page["id"].(string)
+		if last == "" {
+			last = id
+		}
+		if name, _ := page["name"].(string); name == day && id != "" {
+			return id
+		}
+	}
+	return last
 }
 
 // Lifted is meta, a note's .meta as found, with note_whiteboard read from the block load gives

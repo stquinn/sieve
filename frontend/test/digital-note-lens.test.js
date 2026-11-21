@@ -784,6 +784,62 @@ describe('DigitalNoteLens', () => {
     /** A stroke begun `startMillis` after the note was created. @param {string} id @param {number} startMillis */
     const at = (id, startMillis) => ({ ...pen(id), startMillis })
 
+    describe.each([PageSurface.MODE, TranscriptSurface.MODE])('revealing a page in %s mode', (mode) => {
+      /** A note of three pages shown in `mode` at p2. */
+      const atP2 = async () => {
+        const shown = await presented({ ids: ['p1', 'p2', 'p3'] })
+        if (mode === TranscriptSurface.MODE) await shown.lens.toggleMode()
+        await settle()
+        const surface = /** @type {any} */ (shown.lens.surface)
+        surface.turn(1)
+        await settle()
+        return shown
+      }
+      /**
+       * Destroys the lens, as a tab switch does, and presents another over the same note with
+       * the view state the first one reported, asked to reveal `leaf` before it is presented.
+       * @param {any} shown @param {string} leaf
+       */
+      const reopened = async (shown, leaf) => {
+        const viewState = shown.lens.viewState
+        shown.lens.destroy()
+        const lens = new DigitalNoteLens(UUID, { provider: shown.provider, viewState })
+        lens.reveal(leaf)
+        shown.toolbar.show(lens)
+        const asked = shown.provider.calls.length
+        await lens.presentMode('wysiwyg', shown.root)
+        await settle()
+        return { lens, surface: /** @type {any} */ (lens.surface), asked: shown.provider.calls.slice(asked) }
+      }
+
+      it('opens at a page asked before it is presented, over the page it was left on, and then forgets it', async () => {
+        const shown = await atP2()
+        const { lens, surface, asked } = await reopened(shown, 'p3')
+        expect([lens.mode, surface.shownPage, chosenPage(shown.bar)]).toEqual([mode, 'p3', 'p3'])
+        expect(asked.filter((call) => call.endsWith(' p2'))).toEqual([])
+        surface.turn(-2)
+        await lens.toggleMode()
+        await settle()
+        expect(/** @type {any} */ (lens.surface).shownPage).toBe('p1')
+      })
+
+      it('opens where it was left when the page asked is not among its pages', async () => {
+        const { surface } = await reopened(await atP2(), 'p9')
+        expect(surface.shownPage).toBe('p2')
+      })
+
+      it('shows a page asked while it is presented, and keeps it when presented again', async () => {
+        const shown = await atP2()
+        shown.lens.reveal('p3')
+        shown.lens.reveal('p9')
+        await settle()
+        expect(/** @type {any} */ (shown.lens.surface).shownPage).toBe('p3')
+        await shown.lens.presentMode('wysiwyg', shown.root)
+        await settle()
+        expect([shown.lens.mode, /** @type {any} */ (shown.lens.surface).shownPage]).toEqual([mode, 'p3'])
+      })
+    })
+
     it("keeps the page shown, the sheet's scale and the pages marked unseen", async () => {
       const shown = await presented({ ids: ['p1', 'p2', 'p3'] })
       shown.surface.turn(1)

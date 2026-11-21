@@ -24,6 +24,7 @@
 </div>
 <div style="flex:1;overflow-y:auto;display:flex;flex-direction:column;min-height:0;">
   <div id="sidebar-ink" class="ink-tree" hx-get="/ui/views/sidebar/ink" hx-trigger="sieve:invalidate-ink from:document" hx-swap="innerHTML">{{template "ink_sidebar.html" .Ink}}</div>
+  <div id="sidebar-diary" class="ink-tree" hx-get="/ui/views/sidebar/diary" hx-trigger="sieve:invalidate-ink from:document" hx-swap="innerHTML">{{template "diary_sidebar.html" .Diary}}</div>
   {{if not .Entries}}
   <div class="sidebar__empty">No filed documents yet</div>
   {{else}}

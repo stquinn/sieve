@@ -115,6 +115,7 @@ export class PageSurface extends AbstractSurface {
   /** @type {boolean} whether a page, or the note's having none, has been shown */ #painted = false
   /** @type {Set<string>} pages with ink not seen since it arrived */ #unseen = new Set()
   /** @type {ReaderView|null} the view handed to this surface, until its first page is drawn */ #restored = null
+  /** @type {string|null} the page asked to be revealed before the note's pages were known */ #revealing = null
   /** @type {number} the highest log seq heard, in a page answer or a stroke event */ #heardSeq = 0
   /** @type {number} the latest stroke start heard, in a page answer or a stroke event; -1 before any */ #heardMillis = -1
   /** @type {string|null} the Live view mirroring this note while it is live; null when it is not */ #liveView = null
@@ -336,13 +337,18 @@ export class PageSurface extends AbstractSurface {
   }
 
   /**
-   * The page to show: the page shown while the note lists it, else the page now
-   * at the shown page's index (the first, before any is shown), else none.
+   * The page to show: before any is shown, the page asked to be revealed when the
+   * note lists it, which is then forgotten, else the page handed over; after, the
+   * page shown while the note lists it; else the page now at the shown page's
+   * index (the first, before any is shown), else none.
    * @param {number} index the shown page's index before the block changed
    * @returns {string|null}
    */
   #target(index) {
     const pages = this.#sheet.pages
+    const revealing = this.#revealing
+    this.#revealing = null
+    if (this.#sheet.shown === null && this.#sheet.indexOf(revealing) >= 0) return revealing
     if (this.#sheet.indexOf(this.#sheet.shown) >= 0) return this.#sheet.shown
     const restored = this.#restored ? this.#restored.page : null
     if (this.#sheet.shown === null && this.#sheet.indexOf(restored) >= 0) return restored
@@ -390,6 +396,16 @@ export class PageSurface extends AbstractSurface {
   /** Shows the page `pageId`. @param {string} pageId */
   showPage(pageId) {
     if (pageId !== this.#sheet.shown) this.#show(pageId)
+  }
+
+  /**
+   * Shows the page `pageId` when the note lists it. Asked before the note's
+   * pages are known, it is the page first shown, over the one handed over, once.
+   * @param {string} pageId
+   */
+  reveal(pageId) {
+    if (!this.#painted) this.#revealing = pageId
+    else if (this.#sheet.indexOf(pageId) >= 0) this.showPage(pageId)
   }
 
   /**

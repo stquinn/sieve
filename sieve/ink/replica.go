@@ -803,8 +803,11 @@ func (r *NoteReplica) synced() (SyncedNote, bool) {
 	for _, p := range r.fold.Pages() {
 		whiteboard = whiteboard || p.Bounds == link.BoundsUnbounded
 	}
+	kind, props := NewDigitalNoteKind(), r.fold.Properties()
+	device := r.fold.Header().Device
 	return SyncedNote{UUID: r.container.UUID(), Title: r.fold.Title(), Pages: r.fold.PageCount(), Seq: r.cursor.Seq,
-		Companion: r.owner.companion, Device: r.fold.Header().Device.Name, Whiteboard: whiteboard}, true
+		Companion: r.owner.companion, Device: device.Name, Whiteboard: whiteboard,
+		Type: props.One("type"), Period: kind.period(props), DeviceID: device.ID, Created: kind.created(r.fold.Created())}, true
 }
 
 // log is the asset followed, while the replica follows, by the queue, read under r.mu so no

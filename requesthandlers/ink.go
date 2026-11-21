@@ -31,6 +31,8 @@ type InkHandler struct {
 	Tmpl               *template.Template
 	EmitSessionChanged func()
 	EmitNotesChanged   func()
+	// now is the clock today is read from; nil reads time.Now.
+	now func() time.Time
 }
 
 // inkView is the payload of ink_status.html.
@@ -70,8 +72,11 @@ type inkSidebarView struct {
 	ID   string
 	Open bool
 	// Live is the Live view while it exists, otherwise nil.
-	Live  *inkLiveItem
+	Live *inkLiveItem
+	// Notes are the synced notes that are not diary chunks; Facts every synced note, diary chunks
+	// too, whose menu a tab's must be told of: one whose delete is refused or whose name is fixed.
 	Notes []inkNoteItem
+	Facts []inkNoteItem
 }
 
 // inkLiveItem is the Live view as the sidebar lists it.
@@ -98,6 +103,37 @@ type inkNoteItem struct {
 	DeleteRefused string
 	// NameFixed is the note not Renamable: its tablet names it.
 	NameFixed bool
+	// Diary is the note being a diary chunk.
+	Diary bool
+	// Depth is the row's depth in the tree.
+	Depth int
+}
+
+// diaryTreeID is the Diary item's id among the tree's expanded folders (domain.Session.OpenFolders).
+// A folder's id is a uuid, so it is never this.
+const diaryTreeID = "diary"
+
+// diarySidebarView is the payload of diary_sidebar.html, the Diary item after Notebooks, which
+// shows nothing while Ink is disabled or no diary chunk is held.
+type diarySidebarView struct {
+	Shown bool
+	// ID is the item's id among the expanded folders; Open is its being expanded.
+	ID   string
+	Open bool
+	// Device is the id of the device whose today the item's row opens, "" for the diary newest
+	// written in when there are several.
+	Device string
+	// Devices are the diaries, one row each, while there are several; Chunks the only diary's
+	// chunks otherwise. Both are newest first.
+	Devices []diaryDeviceItem
+	Chunks  []inkNoteItem
+}
+
+// diaryDeviceItem is one device's diary as the sidebar lists it.
+type diaryDeviceItem struct {
+	ID     string
+	Name   string
+	Chunks []inkNoteItem
 }
 
 // inkDeleteRefused is why Sieve's copy of a notebook its tablet still offers is not deleted.
@@ -115,6 +151,8 @@ const inkRateFloor = 50 * time.Millisecond
 func (h *InkHandler) RegisterPaths(r chi.Router) {
 	r.Get("/ui/views/settings/ink", h.handleStatus)
 	r.Get("/ui/views/sidebar/ink", h.handleSidebar)
+	r.Get("/ui/views/sidebar/diary", h.handleDiarySidebar)
+	r.Get("/api/ink/diary/today", h.handleDiaryToday)
 	r.Post("/api/ink/enabled", h.handleEnabled)
 	r.Post("/api/ink/key", h.handleNewKey)
 	r.Get("/api/ink/notes/{uuid}/pages/{page}/export", h.handleExport)
@@ -296,17 +334,115 @@ func (v *inkSidebarView) show(st ink.Status, session domain.Session) {
 		v.Live = &inkLiveItem{UUID: live.UUID, Device: live.Device, Note: live.NoteTitle, Waiting: live.Waiting, Active: live.UUID == active}
 	}
 	for _, n := range st.Notes {
-		title := n.Name
-		if title == "" {
-			title = ink.UntitledNotebook
+		var item inkNoteItem
+		item.show(n, active, 1)
+		if item.DeleteRefused != "" || item.NameFixed {
+			v.Facts = append(v.Facts, item)
 		}
-		refused := ""
-		if n.Deletion == ink.DeleteRefused {
-			refused = inkDeleteRefused
+		if !n.DiaryChunk() {
+			v.Notes = append(v.Notes, item)
 		}
-		v.Notes = append(v.Notes, inkNoteItem{UUID: n.UUID, Title: title, Pages: n.Pages, Active: n.UUID == active,
-			Whiteboard: n.Whiteboard, Absent: n.Absent, DeleteRefused: refused, NameFixed: !n.NamedBy.Renamable()})
 	}
+}
+
+// show fills the item with n as a row at depth shows it, marked when active is its uuid.
+func (it *inkNoteItem) show(n ink.SyncedNote, active string, depth int) {
+	title := n.Name
+	if title == "" {
+		title = ink.UntitledNotebook
+	}
+	refused := ""
+	if n.Deletion == ink.DeleteRefused {
+		refused = inkDeleteRefused
+	}
+	*it = inkNoteItem{UUID: n.UUID, Title: title, Pages: n.Pages, Active: n.UUID == active, Whiteboard: n.Whiteboard,
+		Absent: n.Absent, DeleteRefused: refused, NameFixed: !n.NamedBy.Renamable(), Diary: n.DiaryChunk(), Depth: depth}
+}
+
+// showChunk fills the item with the diary chunk n as a row at depth shows it: named by its period
+// as a month in English (November 2026), or as a note is when it has no period.
+func (it *inkNoteItem) showChunk(n ink.SyncedNote, active string, depth int) {
+	it.show(n, active, depth)
+	if month, err := time.Parse("2006-01", n.Period); err == nil {
+		it.Title = month.Format("January 2006")
+	}
+}
+
+// handleDiarySidebar writes the Diary item of the sidebar's tree, which the tree also renders in
+// place.
+func (h *InkHandler) handleDiarySidebar(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if h.ServiceProvider.Ink == nil || h.ServiceProvider.State == nil {
+		return
+	}
+	var v diarySidebarView
+	v.show(h.ServiceProvider.Ink.Status(), h.ServiceProvider.State.LoadSession())
+	if err := h.Tmpl.ExecuteTemplate(w, "diary_sidebar.html", v); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// show fills the view with the diaries of st as the tree's Diary item shows them in session:
+// expanded as session remembers it, the active tab's row marked, the chunks newest first, under a
+// row per device when there are several; nothing while Ink is disabled or no chunk is held.
+func (v *diarySidebarView) show(st ink.Status, session domain.Session) {
+	*v = diarySidebarView{}
+	diaries := st.Diaries()
+	if !st.Enabled || len(diaries) == 0 {
+		return
+	}
+	active := session.ActiveID()
+	v.Shown, v.ID, v.Open = true, diaryTreeID, slices.Contains(session.OpenFolders, diaryTreeID)
+	chunks := func(d ink.Diary, depth int) []inkNoteItem {
+		items := make([]inkNoteItem, len(d.Chunks))
+		for i, n := range d.Chunks {
+			items[len(items)-1-i].showChunk(n, active, depth)
+		}
+		return items
+	}
+	if len(diaries) == 1 {
+		v.Device, v.Chunks = diaries[0].DeviceID, chunks(diaries[0], 1)
+		return
+	}
+	for _, d := range diaries {
+		name := d.Device
+		if name == "" {
+			name = "Unnamed device"
+		}
+		v.Devices = append(v.Devices, diaryDeviceItem{ID: d.DeviceID, Name: name, Chunks: chunks(d, 2)})
+	}
+}
+
+// today is the time now by the handler's clock.
+func (h *InkHandler) today() time.Time {
+	if h.now == nil {
+		return time.Now()
+	}
+	return h.now()
+}
+
+// handleDiaryToday answers where a device's diary opens today, the diary named by the device
+// query parameter or, without one, the one newest written in; no such diary is 404.
+func (h *InkHandler) handleDiaryToday(w http.ResponseWriter, r *http.Request) {
+	svc := h.ServiceProvider.Ink
+	if svc == nil {
+		http.Error(w, "Notebooks are unavailable.", http.StatusServiceUnavailable)
+		return
+	}
+	diary, ok := svc.Status().Diary(r.URL.Query().Get("device"))
+	if !ok {
+		http.Error(w, "No diary is held.", http.StatusNotFound)
+		return
+	}
+	address, err := svc.DiaryOn(diary, h.today())
+	if err != nil {
+		http.Error(w, "No diary is held.", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(protocol.InkDiaryTodayResponse{Address: address.String()})
 }
 
 // handleEnabled turns Ink on when the form carries ink_enabled, and off when it does not.

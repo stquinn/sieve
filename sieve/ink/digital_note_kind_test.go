@@ -58,12 +58,12 @@ func TestDigitalNoteKind_AttrsFaceAndSourceThroughAContainer(t *testing.T) {
 		wantProperties map[string]interface{}
 	}{
 		{"an empty note", nil,
-			map[string]string{"note_title": "", "note_pages": "0", "note_device": "", "note_device_id": "", "note_source": "strokes", "note_synced_seq": "0",
+			map[string]string{"note_title": "", "note_created": "", "note_pages": "0", "note_device": "", "note_device_id": "", "note_source": "strokes", "note_synced_seq": "0",
 				"note_whiteboard": "false", "note_type": "", "note_period": "", "note_properties": "{}"}, 0, nil, nil},
 		{"a note of two pages",
 			logOf(header("Ideas"), pageAdd(page(1), 0, ruled, link.BoundsFixed), pageAdd(page(2), 1, dots, link.BoundsFixed),
 				strokeAdd(page(1), stroke(1))),
-			map[string]string{"note_title": "Ideas", "note_pages": "2", "note_device": aDevice.Name, "note_device_id": aDevice.ID, "note_source": "strokes",
+			map[string]string{"note_title": "Ideas", "note_created": "2023-11-14T22:13:20Z", "note_pages": "2", "note_device": aDevice.Name, "note_device_id": aDevice.ID, "note_source": "strokes",
 				"note_synced_seq": "4", "note_whiteboard": "false", "note_type": "", "note_period": "", "note_properties": "{}"}, 2, []string{"", ""}, nil},
 		{"a whiteboard", logOf(header("Board"), pageAdd(page(1), 0, nil, link.BoundsUnbounded)),
 			map[string]string{"note_title": "Board", "note_pages": "1", "note_device": aDevice.Name, "note_source": "strokes", "note_synced_seq": "2",
@@ -71,7 +71,7 @@ func TestDigitalNoteKind_AttrsFaceAndSourceThroughAContainer(t *testing.T) {
 		{"a diary chunk of named pages",
 			logOf(header("November"), noteProperty("type", "diary"), noteProperty("period", "2026-11"), noteProperty("x.later", "a", "b"),
 				pageAdd(page(1), 0, nil, link.BoundsFixed), pageProperty(page(1), "name", "2026-11-20"), pageAdd(page(2), 1, nil, link.BoundsFixed)),
-			map[string]string{"note_title": "November", "note_pages": "2", "note_whiteboard": "false", "note_device_id": aDevice.ID, "note_synced_seq": "7", "note_type": "diary",
+			map[string]string{"note_title": "November", "note_created": "2023-11-14T22:13:20Z", "note_pages": "2", "note_whiteboard": "false", "note_device_id": aDevice.ID, "note_synced_seq": "7", "note_type": "diary",
 				"note_period": "2026-11", "note_named_by": "tablet", "note_properties": `{"period":["2026-11"],"type":["diary"],"x.later":["a","b"]}`}, 2, []string{"2026-11-20", ""},
 			map[string]interface{}{"type": []interface{}{"diary"}, "period": []interface{}{"2026-11"}, "x.later": []interface{}{"a", "b"}}},
 		{"a period that is not a month", logOf(header("Q4"), noteProperty("period", "2026-Q4")),
