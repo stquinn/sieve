@@ -11,6 +11,7 @@
 import { AbstractSurface, SurfaceEvent, SurfaceIntent } from '../abstract-surface.js'
 import { INK_RULES } from '../../renderers/ink-renderer.js'
 import { InkFeed } from '../../contract/ink-container-provider.js'
+import { PageHeading } from '../../renderers/page-heading.js'
 import { PageNames } from '../../renderers/page-names.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
 import { ButtonGroup, ToolbarButton, ToolbarLabel, ToolbarPlace, ToolbarSelect } from '../../renderers/toolbar-button.js'
@@ -111,6 +112,7 @@ export class PageSurface extends AbstractSurface {
   /** @type {PageNames} */ #names = new PageNames()
   /** @type {NotePager} */ #pager = new NotePager(this, this.#names)
   /** @type {string} the name of the device the note was written on; '' when unknown */ #device = ''
+  /** @type {boolean} whether the note is a diary */ #diary = false
 
   /** @type {boolean} whether a page, or the note's having none, has been shown */ #painted = false
   /** @type {Set<string>} pages with ink not seen since it arrived */ #unseen = new Set()
@@ -340,7 +342,8 @@ export class PageSurface extends AbstractSurface {
    * The page to show: before any is shown, the page asked to be revealed when the
    * note lists it, which is then forgotten, else the page handed over; after, the
    * page shown while the note lists it; else the page now at the shown page's
-   * index (the first, before any is shown), else none.
+   * index, or before any is shown the page a reader starts at
+   * (`PageNames.startOf`), else none.
    * @param {number} index the shown page's index before the block changed
    * @returns {string|null}
    */
@@ -352,8 +355,13 @@ export class PageSurface extends AbstractSurface {
     if (this.#sheet.indexOf(this.#sheet.shown) >= 0) return this.#sheet.shown
     const restored = this.#restored ? this.#restored.page : null
     if (this.#sheet.shown === null && this.#sheet.indexOf(restored) >= 0) return restored
-    const at = Math.min(Math.max(index, 0), pages.length - 1)
+    const at = this.#sheet.shown === null ? this.#startIndex() : Math.min(Math.max(index, 0), pages.length - 1)
     return at >= 0 ? pages[at].id : null
+  }
+
+  /** @returns {number} the index of the page a reader of the note starts at; -1 for none */
+  #startIndex() {
+    return this.#names.startOf(this.#sheet.pages, this.#diary)
   }
 
   flushPending() {}
@@ -388,7 +396,7 @@ export class PageSurface extends AbstractSurface {
         this.#unseen.clear()
         this.#heardSeq = 0
         this.#sheet.restart(NO_PAGES)
-        if (this.#sheet.shown === null && this.#sheet.pages.length) this.#show(this.#sheet.pages[0].id)
+        if (this.#sheet.shown === null && this.#sheet.pages.length) this.#show(this.#sheet.pages[this.#startIndex()].id)
         break
     }
   }
@@ -518,6 +526,7 @@ export class PageSurface extends AbstractSurface {
     const block = id ? provider.getBlock(id) : null
     const attrs = (block && block.attrs) || {}
     this.#sheet.setNote(attrs.note)
+    this.#diary = PageHeading.isDiary(attrs.note && attrs.note.properties)
     this.#device = String((attrs.note_device && attrs.note_device.name) || '')
   }
 

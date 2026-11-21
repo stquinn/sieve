@@ -184,8 +184,9 @@ from its replay carries 0. A fixture that predates `device` has none, and no rul
 
 `note.properties` are the note's properties and `page.properties` the page's (§3). Keys of a
 properties object are written in ascending order. A writer always writes both, with
-`"properties": {}` when there are none, so every export page has one shape. A fixture that predates
-them has neither, and no rule of §8 reads them.
+`"properties": {}` when there are none, so every export page has one shape. The note's `type` and the
+page's `name` give a page its heading (§6); no other rule reads them. A fixture that predates them
+has neither, and no heading.
 
 ### 4.3 Binary — the live point feed
 
@@ -316,8 +317,8 @@ directory. The block never carries ink.
   named by its tablet, otherwise by `title`.
 - **Transcript.** A page is transcribed only when the reader asks. Its transcript is the asset
   `transcript-{pageId}-{key}.json` beside the source, where `key` is the page key (16 hex digits of a
-  SHA-256 of what is on the page, `StrokeBasedNote.PageKey`, as for its image
-  `page-{pageId}-{key}.png`): `{"key": …, "blocks": [{"id",
+  SHA-256 of what is on the page — its ink, template, bounds and heading (§6) —
+  `StrokeBasedNote.PageKey`, as for its image `page-{pageId}-{key}.png`): `{"key": …, "blocks": [{"id",
   "kind", "attrs"}, …]}`, the page's text as `prose` blocks and its diagrams as `diagram` blocks, in
   the page's order, every id minted by `ident.New`. A PlantUML diagram's SVG is kept beside it as
   `transcript-{pageId}-{key}-{blockId}.svg`, and the block's `svgAsset` is its absolute address. A page
@@ -352,6 +353,24 @@ A template is drawn under the strokes, in `#888888`, from these rules. Positions
   so marks never move with the viewer's window.
 - A mark is drawn where its extent overlaps what is shown: a line at the far edge of a fixed page lies
   outside it, and a dot centred on an edge is drawn and cut by it.
+
+**Heading.** A page of a note whose `type` is `diary` (§3) and whose `name` is a valid ISO date
+`yyyy-MM-dd` is headed with that date; every other page has no heading. Both sides draw it wherever
+they draw the page's template.
+
+- The text is the date in full in English: weekday, day of the month with no leading zero, month,
+  year — `Saturday 21 November 2026`. It is the date itself, never relative ("Today"), and its names
+  are English whatever the viewer's locale.
+- From the template the page is drawn with: s is its `spacing` when above 0, otherwise 0.05; m is its
+  `margin` when its id is `ruled` and the margin is above 0, otherwise 0. A page on a blank, unknown or
+  spacing-less template is headed as if ruled at 0.05 with no margin.
+- The text's left edge is at x = m + 0.02, its baseline at y = 0.8·s, its size 0.55·s, all in page
+  units. It is black (`#000000`), in a regular-weight sans-serif face. Glyph widths follow the face
+  and need not match between sides; position and size MUST. The SVG names the face `sans-serif`; a
+  Sieve view draws it in the reader's interface font.
+- It is drawn above the template's marks and below every stroke. It is print, never a stroke: it is
+  not in the log, not sent over the link, not selectable or erasable, and not counted or exported as
+  a stroke. A page whose name changes or is cleared is drawn with its new heading or with none.
 
 The companion offers these presets:
 
@@ -523,7 +542,9 @@ A band whose keep fraction is ≥ 0.96 (the last) is a solid tile:
 `<pattern …><rect width="96" height="96"/></pattern>`.
 
 **Document.** In paint order: a white background; group `ruling`, `<g data-ink="ruling">`, holding the
-page's template marks (§6); group `pen`; groups `b0`…`b6`, each filled
+page's template marks (§6) and then, when the page has one, its heading (§6) as
+`<text x y font-size font-family="sans-serif" fill="#000000">`, its position and size in grid units to
+one decimal; group `pen`; groups `b0`…`b6`, each filled
 with pattern `ink-b{i}`; group `live`. Each group is `<g data-ink="{name}">`; `pen` carries
 `fill="#000"` and `b{i}` carries `fill="url(#ink-b{i})"`, which every path in it inherits. A
 pen stroke is `<path data-stroke="{id}">`. A band's group holds one `<path>` and no more: its
@@ -564,7 +585,9 @@ same.
 | `boox-tablet-render.png` | what the tablet drew; the look-and-feel reference, judged by eye, never diffed |
 
 Current set: `2026-10-31-boox-test-page`, `2026-11-02-live-page`,
-`2026-11-02-width-tilt-pressure-ladder`. `frontend/test/ink-renderer.test.js` pins every
-SVG. A change that alters any fixture's SVG is a contract change and lands with this document
-and the regenerated SVGs in the same commit. SieveInk's obligation is to export pages
+`2026-11-02-width-tilt-pressure-ladder`, and `2026-11-21-diary-page`, a diary page named by a date on
+the default ruled template, whose SVG carries its heading; it was assembled rather than written, so
+has no tablet render. `frontend/test/ink-renderer.test.js` pins every SVG. A change that alters any
+fixture's SVG is a contract change and lands with this document and the regenerated SVGs in the same
+commit. SieveInk's obligation is to export pages
 faithfully; it has no SVG to match.

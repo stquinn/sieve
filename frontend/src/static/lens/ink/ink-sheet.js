@@ -34,6 +34,7 @@
 // stays in view; a live point inside it moves nothing.
 
 import { InkRenderer, INK_LAYERS, INK_RULES } from '../../renderers/ink-renderer.js'
+import { PageHeading } from '../../renderers/page-heading.js'
 import { InkFeed, InkNoteSyncing } from '../../contract/ink-container-provider.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
 import { ImageClipboard } from '../../renderers/copy-image.js'
@@ -118,9 +119,10 @@ const MAX_RULING_SPACINGS = 60
 const KEPT_BASE = ''
 
 /** The elements a kept drawing may hold, and the attributes they may carry. */
-const KEPT_ELEMENTS = Object.freeze(new Set(['svg', 'defs', 'pattern', 'rect', 'g', 'path']))
+const KEPT_ELEMENTS = Object.freeze(new Set(['svg', 'defs', 'pattern', 'rect', 'g', 'path', 'text']))
 const KEPT_ATTRIBUTES = Object.freeze(new Set([
   'xmlns', 'width', 'height', 'viewbox', 'x', 'y', 'fill', 'd', 'id', 'patternunits', 'stroke', 'stroke-width', 'stroke-linecap',
+  'font-size', 'font-family',
   'data-ink', 'data-stroke', 'data-ink-template', 'data-ink-key', 'data-ink-renderer', 'data-ink-strokes', 'data-ink-newest',
 ]))
 /** What a `fill` or `stroke` of a kept drawing may be: a colour, or one of the tone patterns. */
@@ -182,6 +184,8 @@ export class InkSheet {
 
   .ink-page__sheet > svg { display: block; height: auto; }
 
+  .ink-page__sheet > svg [data-ink="ruling"] text { font-family: var(--theme-uiFont); }
+
   .ink-page__edge {
     position: absolute;
     width: 0;
@@ -227,6 +231,7 @@ export class InkSheet {
   /** @type {SVGSVGElement|null} the SVG on the sheet */ #svg = null
   /** @type {Element|null} the SVG's white background */ #background = null
   /** @type {any} the template the drawn page is ruled with, as its answer gave it */ #template = null
+  /** @type {PageHeading|null} what the drawn page is headed with, as its answer gave it */ #heading = null
   /** @type {PlaneWindow|null} the window an unbounded page is drawn through; null for a fixed page */ #plane = null
   /** @type {number} the surround's width over its height; 0 while it is not measured */ #surroundShape = 0
   /** @type {ResizeObserver|null} measures the surround while attached, when the window fills it */ #resizing = null
@@ -414,7 +419,8 @@ export class InkSheet {
   drawnWith(pageId) {
     const entry = this.#pages[this.indexOf(pageId)]
     if (!entry) return ''
-    return JSON.stringify([entry.template ?? null, entry.bounds ?? null, this.#note.template ?? null, this.#note.pageAspect ?? null])
+    return JSON.stringify([entry.template ?? null, entry.bounds ?? null, this.#note.template ?? null, this.#note.pageAspect ?? null,
+      PageHeading.textOf(this.#note.properties, entry.name)])
   }
 
   /** @param {string|null} pageId @returns {number} -1 for a page the note does not list */
@@ -740,11 +746,12 @@ export class InkSheet {
     this.#keptUnknown = 0
     this.#newestStart = page.strokes.reduce((newest, stroke) => Math.max(newest, Number(stroke.startMillis) || 0), -1)
     this.#template = page.note.template ?? null
+    this.#heading = PageHeading.of(/** @type {any} */ (page))
     this.#offWindow = new Set()
     this.#windowStale = false
     const window = this.#plane ? this.#plane.window : undefined
     const note = window ? { ...page.note, template: this.#rulingTemplate(window) } : page.note
-    const svg = /** @type {SVGSVGElement} */ (this.#parse(this.#renderer.renderPage(/** @type {any} */ ({ note, strokes: [] }), window))[0])
+    const svg = /** @type {SVGSVGElement} */ (this.#parse(this.#renderer.renderPage(/** @type {any} */ ({ note, strokes: [] }), window, this.#heading))[0])
     this.#svg = svg
     this.#background = [...svg.children].find((el) => el.tagName.toLowerCase() === 'rect') ?? null
     this.#layers = new Map(INK_LAYERS.map((name) => [name, /** @type {Element} */ (svg.querySelector(`g[data-ink="${name}"]`))]))
@@ -793,6 +800,7 @@ export class InkSheet {
     this.#placeNext = null
     this.#plane = null
     this.#template = null
+    this.#heading = null
     this.#offWindow = new Set()
     this.#windowStale = false
     this.#svg = svg
@@ -844,7 +852,7 @@ export class InkSheet {
     if (this.#background) {
       for (const [name, value] of Object.entries(box)) this.#background.setAttribute(name, value)
     }
-    const fresh = this.#fragment(this.#renderer.renderRuling(this.#rulingTemplate(window), window))[0]
+    const fresh = this.#fragment(this.#renderer.renderRuling(this.#rulingTemplate(window), window, this.#heading))[0]
     ruling.replaceChildren(...fresh.childNodes)
     this.#markEdges()
   }

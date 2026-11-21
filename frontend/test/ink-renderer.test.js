@@ -8,13 +8,17 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { getStroke } from 'perfect-freehand'
 import { InkRenderer, INK_RULES } from '../src/static/renderers/ink-renderer.js'
+import { PageHeading } from '../src/static/renderers/page-heading.js'
 
 const ASSETS = path.resolve(process.cwd(), '../docs/design/specs/assets')
-const FIXTURES = Object.freeze([
+/** The fixtures of pages with no heading. */
+const HEADLESS = Object.freeze([
   '2026-10-31-boox-test-page',
   '2026-11-02-live-page',
   '2026-11-02-width-tilt-pressure-ladder',
 ])
+const DIARY = '2026-11-21-diary-page'
+const FIXTURES = Object.freeze([...HEADLESS, DIARY])
 const PX = 1 / INK_RULES.grid
 
 /** @param {string} fixture @returns {import('../src/static/renderers/ink-renderer.js').InkPage} */
@@ -44,12 +48,15 @@ describe('InkRenderer renders the conformance set', () => {
       .toMatchFileSnapshot(path.join(ASSETS, fixture, 'boox-page-strokes.svg'))
   })
 
-  it.each(FIXTURES)('%s renders the same bytes carrying the note\'s properties and its page', (fixture) => {
+  it.each(HEADLESS.flatMap((fixture) => [
+    [fixture, 'a diary page named by no date', { period: ['2026-11'], type: ['diary'] }, 'Kitchen'],
+    [fixture, 'a notebook page named by a date', {}, '2026-11-20'],
+  ]))('%s renders the same bytes as %s', (fixture, _, properties, name) => {
     const page = loadPage(fixture)
     const named = {
       ...page,
-      note: { ...page.note, properties: { period: ['2026-11'], type: ['diary'] } },
-      page: { id: '019a0000-0000-7000-8000-000000000002', properties: { name: ['2026-11-20'] } },
+      note: { ...page.note, properties },
+      page: { id: '019a0000-0000-7000-8000-000000000002', properties: { name: [name] } },
     }
     expect(renderer.renderPage(named)).toBe(renderer.renderPage(page))
   })
@@ -57,6 +64,45 @@ describe('InkRenderer renders the conformance set', () => {
   it.each(FIXTURES)('%s renders the same bytes from a fresh renderer', (fixture) => {
     const page = loadPage(fixture)
     expect(new InkRenderer({ getStroke }).renderPage(page)).toBe(renderer.renderPage(page))
+  })
+})
+
+describe('InkRenderer heads a diary page', () => {
+  const HEADING = '<text x="196.6" y="56.2" font-size="38.6" font-family="sans-serif" fill="#000000">Saturday 21 November 2026</text>'
+  /** @param {string} svg @returns {string} the ruling group, whole */
+  const rulingOf = (svg) => (svg.match(/<g data-ink="ruling"[^>]*>[^]*?<\/g>/) ?? [''])[0]
+
+  it('prints the date as the ruling group\'s last child, under every stroke', () => {
+    const svg = renderer.renderPage(loadPage(DIARY))
+    expect(rulingOf(svg).endsWith(`\n${HEADING}\n</g>`)).toBe(true)
+    expect(svg.match(/<text /g)).toHaveLength(1)
+    expect(svg.indexOf(HEADING)).toBeLessThan(svg.indexOf('data-ink="pen"'))
+  })
+
+  it.each([
+    ['another date', ['2026-12-01'], 'Tuesday 1 December 2026'],
+    ['no name', [], null],
+  ])('prints the page named by %s with its own heading', (_, name, want) => {
+    const page = loadPage(DIARY)
+    const svg = renderer.renderPage({ ...page, page: { ...page.page, properties: { name } } })
+    const texts = [...svg.matchAll(/<text [^>]*>([^<]*)<\/text>/g)].map((m) => m[1])
+    expect(texts).toEqual(want ? [want] : [])
+  })
+
+  it('prints a heading on a page with no marks, and draws it with the ruling of a window', () => {
+    const heading = PageHeading.at({ id: 'blank' }, 'Saturday 21 November 2026')
+    expect(renderer.renderRuling({ id: 'blank' }, PAGE, heading))
+      .toBe('<g data-ink="ruling" fill="#888888">\n<text x="28.1" y="56.2" font-size="38.6" font-family="sans-serif" fill="#000000">Saturday 21 November 2026</text>\n</g>')
+    const page = loadPage(DIARY)
+    const window = { x0: -0.5, y0: -0.5, x1: 0.5, y1: 0.5 }
+    expect(renderer.renderPage(page, window)).toContain(renderer.renderRuling(page.note.template, window, PageHeading.of(page)))
+    expect(renderer.renderRuling(page.note.template, window, PageHeading.of(page))).toContain(HEADING)
+  })
+
+  it('prints a heading it is handed in place of the page\'s own', () => {
+    const page = loadPage(DIARY)
+    expect(renderer.renderPage(page, undefined, null)).not.toContain('<text ')
+    expect(renderer.renderPage(loadPage(HEADLESS[0]), undefined, PageHeading.of(page))).toContain('Saturday 21 November 2026')
   })
 })
 

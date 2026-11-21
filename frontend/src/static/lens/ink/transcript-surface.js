@@ -12,6 +12,7 @@
 import { AbstractSurface, SurfaceEvent, SurfaceIntent } from '../abstract-surface.js'
 import { InkFeed, InkTranscriptState } from '../../contract/ink-container-provider.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
+import { PageHeading } from '../../renderers/page-heading.js'
 import { PageNames } from '../../renderers/page-names.js'
 import { QuestionListView } from '../../renderers/question-list-view.js'
 import { SyncingPanel } from '../../renderers/syncing-panel.js'
@@ -114,6 +115,7 @@ export class TranscriptSurface extends AbstractSurface {
   /** @type {PageNames} */ #names = new PageNames()
   /** @type {NotePager} */ #pager = new NotePager(this, this.#names)
   /** @type {string} the name of the device the note was written on; '' when unknown */ #device = ''
+  /** @type {boolean} whether the note is a diary */ #diary = false
 
   /** @type {boolean} between mount and unmount */ #mounted = false
   /** @type {HTMLElement} */ #root
@@ -426,12 +428,14 @@ export class TranscriptSurface extends AbstractSurface {
     const pages = attrs.note && Array.isArray(attrs.note.pages) ? attrs.note.pages : []
     this.#pages = pages.filter((/** @type {any} */ p) => p && p.id)
       .map((/** @type {Record<string, any>} */ p) => Object.freeze({ id: String(p.id), name: typeof p.name === 'string' ? p.name : '' }))
+    this.#diary = PageHeading.isDiary(attrs.note && attrs.note.properties)
     this.#device = String((attrs.note_device && attrs.note_device.name) || '')
   }
 
   /** @returns {string|null} the page to show: before any is shown, the page asked to be
    *  revealed when the note lists it, which is then forgotten; the page shown while the note
-   *  lists it; else the page handed over, else the first, else none */
+   *  lists it; else the page handed over, else the page a reader starts at
+   *  (`PageNames.startOf`), else none */
   #target() {
     const revealing = this.#revealing
     this.#revealing = null
@@ -439,7 +443,8 @@ export class TranscriptSurface extends AbstractSurface {
     if (this.#listed(this.#shown)) return this.#shown
     const handed = this.#handed ? this.#handed.page : null
     if (this.#listed(handed)) return handed
-    return this.#pages.length ? this.#pages[0].id : null
+    const start = this.#names.startOf(this.#pages, this.#diary)
+    return start >= 0 ? this.#pages[start].id : null
   }
 
   /** @param {string|null} id @returns {boolean} whether the note lists the page `id` */

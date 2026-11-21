@@ -11,7 +11,7 @@ import { LiveInkLens } from '../src/static/lens/ink/live-ink-lens.js'
 import { LiveSurface } from '../src/static/lens/ink/live-surface.js'
 import { InkFeed } from '../src/static/contract/ink-container-provider.js'
 import {
-  ASPECT, DOTS, FakeInkProvider, Frames, GRID, Resizes, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, points,
+  ASPECT, DOTS, asDiary, FakeInkProvider, headingOf, Frames, GRID, Resizes, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, points,
   renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, viewBoxOf, wheel, copiedImages, item, tap, toolbarFor, toolbarIds,
   placesOf, rightClick, menuOf,
 } from './helpers/ink-lens-rig.js'
@@ -90,6 +90,19 @@ describe('LiveInkLens', () => {
     attrs.note.pages = attrs.note.pages.map((p) => ({ ...p, name: 'Kitchen' }))
     const { lens } = await presented(attrs)
     expect(readout(lens)).toEqual(['Live', 'Ideas', 'Kitchen · 2 / 2', '1 stroke', 'Note Air 2'])
+  })
+
+  it('heads the diary page written with its date once it is named, and draws it again when it is renamed', async () => {
+    const { provider, root } = await presented(liveAttrs({ page: 'p1' }))
+    expect(headingOf(root)).toBeNull()
+    provider.answers.set('p1', { page: exportPage([pen('s-p1')], undefined, '2026-11-21'), seq: 10 })
+    provider.setAttrs(asDiary(liveAttrs({ page: 'p1' }), '2026-11-21'))
+    await settle()
+    expect([provider.loads, headingOf(root)]).toEqual([2, 'Saturday 21 November 2026'])
+    provider.answers.set('p1', { page: exportPage([pen('s-p1')], undefined, '2026-11-22'), seq: 11 })
+    provider.setAttrs(asDiary(liveAttrs({ page: 'p1' }), '2026-11-22'))
+    await settle()
+    expect([provider.loads, headingOf(root)]).toEqual([3, 'Sunday 22 November 2026'])
   })
 
   it('draws the committed strokes and the pen live on the page written, and nothing of another page', async () => {

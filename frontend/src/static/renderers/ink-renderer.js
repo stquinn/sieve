@@ -12,6 +12,7 @@
 import { T } from './vendor-libs.js'
 import { esc } from './html-escape.js'
 import { ContractViolation } from '../contract/sieve-block.js'
+import { PageHeading } from './page-heading.js'
 
 /**
  * @typedef {object} InkPoint
@@ -46,8 +47,9 @@ import { ContractViolation } from '../contract/sieve-block.js'
 
 /**
  * A page as SieveInk exports it: the note header, the page itself and the page's
- * strokes. A fixture that predates `note.properties` and `page` has neither, and
- * nothing drawn reads them.
+ * strokes. The note's `type` and the page's `name` give the page its heading
+ * (PageHeading); a fixture that predates `note.properties` and `page` has
+ * neither, and no heading.
  * @typedef {object} InkPage
  * @property {{pageAspect: number, template?: InkTemplate|null, properties?: Record<string, string[]>, [field: string]: any}} note
  * @property {{id: string, properties: Record<string, string[]>}} [page]
@@ -109,7 +111,7 @@ export class InkRenderer {
    * version's. It moves with every change to the rendering rules or the document
    * they are written as (docs/ink-contract.md §8).
    */
-  static VERSION = '2'
+  static VERSION = '3'
 
   /** @type {OutlineFn|undefined} */ #outline
   /** @type {string|undefined} */ #defs
@@ -150,9 +152,10 @@ export class InkRenderer {
    * units, the background fills it, and strokes and ruling sit on the plane.
    * @param {InkPage} page
    * @param {InkWindow} [window] the part of the plane shown; an unbounded page needs one
+   * @param {PageHeading|null} [heading] what the page is headed with; by default the page's own
    * @returns {string}
    */
-  renderPage(page, window) {
+  renderPage(page, window, heading = PageHeading.of(page)) {
     const aspect = page?.note?.pageAspect
     if (!(aspect > 0) || !Array.isArray(page.strokes)) {
       throw new ContractViolation('ink: a page needs note.pageAspect > 0 and a strokes array')
@@ -175,7 +178,7 @@ export class InkRenderer {
       const path = this.bandPath(parts)
       if (path) layers[pen + 1 + i].push(path)
     })
-    const ruling = this.renderRuling(page.note.template, window ?? { x0: 0, y0: 0, x1: 1, y1: 1 / aspect })
+    const ruling = this.renderRuling(page.note.template, window ?? { x0: 0, y0: 0, x1: 1, y1: 1 / aspect }, heading)
     let frame
     if (window) {
       const { x, y, width: w, height: h } = this.windowBox(window)
@@ -216,7 +219,8 @@ export class InkRenderer {
   }
 
   /**
-   * The `ruling` group: a template's marks over a window of the plane.
+   * The `ruling` group: a template's marks over a window of the plane, then the
+   * page's heading, when it has one, as its last child.
    *
    * A mark sits at `round(p · grid)` of its own position p = k·spacing (the
    * margin line at margin + k) for every integer k (and l), so it is where it
@@ -229,16 +233,21 @@ export class InkRenderer {
    * A null template, `blank`, and a missing or zero spacing draw no marks; the
    * group is always present. An id that is not a known template draws as
    * `blank` and the group carries `data-ink-template="unknown"`.
+   *
+   * A heading is one `<text x y font-size font-family="sans-serif"
+   * fill="#000000">`, its position and size in grid units to one decimal.
    * @param {InkTemplate|null|undefined} template
    * @param {InkWindow} window
+   * @param {PageHeading|null} [heading]
    * @returns {string} the group's markup
    */
-  renderRuling(template, window) {
+  renderRuling(template, window, heading = null) {
     const { color, dotRadius: r } = INK_RULES.ruling
     const known = !!template && ['blank', 'ruled', 'grid', 'dots'].includes(template.id)
     const attrs = ` fill="${color}"` + (template && !known ? ' data-ink-template="unknown"' : '')
     const spacing = Number(template?.params?.spacing)
-    if (!template || !known || !(spacing > 0)) return InkRenderer.#layer('ruling', [], attrs)
+    const print = heading ? [InkRenderer.#headingText(heading)] : []
+    if (!template || !known || !(spacing > 0)) return InkRenderer.#layer('ruling', print, attrs)
     const g = INK_RULES.grid
     const [x0, y0, x1, y1] = [window.x0 * g, window.y0 * g, window.x1 * g, window.y1 * g]
     const w = InkRenderer.#grid(x1 - x0)
@@ -257,7 +266,15 @@ export class InkRenderer {
       paths.push(this.#positions(spacing, 0, y0, y1, 0, line).map((y) => `M${InkRenderer.#grid(x0)} ${y}h${w}v${line}h-${w}z`).join(''))
       paths.push(verticals.map((x) => `M${x} ${InkRenderer.#grid(y0)}v${h}h${line}v-${h}z`).join(''))
     }
-    return InkRenderer.#layer('ruling', paths.filter(Boolean).map((d) => `<path d="${d}"/>`), attrs)
+    return InkRenderer.#layer('ruling', [...paths.filter(Boolean).map((d) => `<path d="${d}"/>`), ...print], attrs)
+  }
+
+  /** @param {PageHeading} heading @returns {string} its `<text>` */
+  static #headingText(heading) {
+    const g = INK_RULES.grid
+    const at = (/** @type {number} */ n) => InkRenderer.#grid(n * g)
+    return `<text x="${at(heading.x)}" y="${at(heading.baseline)}" font-size="${at(heading.size)}" font-family="sans-serif"`
+      + ` fill="${PageHeading.COLOR}">${esc(heading.text)}</text>`
   }
 
   /**

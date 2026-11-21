@@ -60,6 +60,26 @@ export class PageNames {
   }
 
   /**
+   * The page a reader of a note starts at when no page is asked for: a diary's
+   * last page named today's date in local time, else its last page; any other
+   * note's first page. The clock is read only for a diary with pages. This is
+   * the page the Diary opens a diary at on the same day.
+   * @param {ReadonlyArray<NamedPage>} pages
+   * @param {boolean} diary whether the note is a diary (`PageHeading.isDiary`)
+   * @returns {number} the page's index; -1 for a note of no pages
+   */
+  startOf(pages, diary) {
+    if (!pages.length) return -1
+    if (!diary) return 0
+    const today = this.#clock()
+    for (let index = pages.length - 1; index >= 0; index--) {
+      const date = PageNames.dateOf(this.#nameOf(pages[index]))
+      if (date && date.year === today.getFullYear() && date.month === today.getMonth() && date.day === today.getDate()) return index
+    }
+    return pages.length - 1
+  }
+
+  /**
    * A named page's `{label} · k / K`; null for an unnamed page.
    * @param {ReadonlyArray<NamedPage>} pages @param {number} index
    * @returns {string|null}
@@ -97,7 +117,7 @@ export class PageNames {
    * @returns {Date|null}
    */
   #today(pages) {
-    return pages.some((page) => this.#dateOf(this.#nameOf(page))) ? this.#clock() : null
+    return pages.some((page) => PageNames.dateOf(this.#nameOf(page))) ? this.#clock() : null
   }
 
   /**
@@ -106,7 +126,7 @@ export class PageNames {
    * @returns {string}
    */
   #label(name, today) {
-    const date = this.#dateOf(name)
+    const date = PageNames.dateOf(name)
     if (!date || !today) return name
     const days = Math.round((Date.UTC(date.year, date.month, date.day)
       - Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())) / PageNames.DAY_MS)
@@ -123,7 +143,7 @@ export class PageNames {
    * @param {string} name
    * @returns {{year: number, month: number, day: number}|null}
    */
-  #dateOf(name) {
+  static dateOf(name) {
     const match = PageNames.DATE.exec(name)
     if (!match) return null
     const [year, month, day] = [Number(match[1]), Number(match[2]) - 1, Number(match[3])]

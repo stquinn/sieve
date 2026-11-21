@@ -15,8 +15,10 @@ import { InkRenderer, INK_RULES } from '../src/static/renderers/ink-renderer.js'
 import { WorkspaceFrame } from '../src/static/generated/protocol.js'
 import { ContractViolation } from '../src/static/contract/sieve-block.js'
 
-const PAGE = JSON.parse(readFileSync(path.resolve(process.cwd(),
-  '../docs/design/specs/assets/2026-10-31-boox-test-page/boox-page-strokes.json'), 'utf8'))
+/** @param {string} fixture @returns {any} its export page */
+const fixturePage = (fixture) => JSON.parse(readFileSync(path.resolve(process.cwd(),
+  `../docs/design/specs/assets/${fixture}/boox-page-strokes.json`), 'utf8'))
+const PAGE = fixturePage('2026-10-31-boox-test-page')
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])
 
 /** A whiteboard page whose two strokes sit far apart on the plane. */
@@ -99,6 +101,10 @@ describe('InkPageDrawer', () => {
     expect(workspace.sent).toEqual([{
       type: WorkspaceFrame.INK_PAGE_DRAWN, correlationId: 'c-1', png: btoa(String.fromCharCode(...PNG_BYTES)),
     }])
+  })
+
+  it('draws a diary page with the heading its export page gives it', () => {
+    expect(drawer.imageOf(fixturePage('2026-11-21-diary-page'), 'fixed').svg).toContain('>Saturday 21 November 2026</text>')
   })
 
   it.each([

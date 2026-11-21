@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -331,7 +332,8 @@ func TestReadStopsAtTheFirstLineThatDoesNotFollow(t *testing.T) {
 }
 
 // The export page has the fixtures' keys and nesting, plus the device, the note's properties and
-// the page the contract adds, which are written whether or not the note and page have properties.
+// the page where a fixture has none of them, which are written whether or not the note and page have
+// properties. A properties object's keys are its data, so are not compared.
 func TestExportPageHasTheFixturesShape(t *testing.T) {
 	n := ReadStrokeBasedNote("c", jsonlOf(t, logOf(header("n"), pageAdd(page(1), 0, nil, link.BoundsUnbounded),
 		strokeAdd(page(1), stroke(1), aPoint, offSheet), pageAdd(page(2), 1, nil, link.BoundsUnbounded),
@@ -354,11 +356,16 @@ func TestExportPageHasTheFixturesShape(t *testing.T) {
 			t.Fatal(err)
 		}
 		theirs := keysOf(t, raw)
-		theirs["note"] = append(theirs["note"], "device", "properties")
-		theirs[""] = append(theirs[""], "page")
-		theirs["page"] = []string{"id", "properties"}
-		sort.Strings(theirs["note"])
-		sort.Strings(theirs[""])
+		for path, keys := range map[string][]string{"note": {"device", "properties"}, "": {"page"}, "page": {"id", "properties"}} {
+			for _, key := range keys {
+				if !slices.Contains(theirs[path], key) {
+					theirs[path] = append(theirs[path], key)
+				}
+			}
+			sort.Strings(theirs[path])
+		}
+		delete(theirs, "note.properties")
+		delete(theirs, "page.properties")
 		for path, keys := range theirs {
 			if fmt.Sprint(ours[path]) != fmt.Sprint(keys) {
 				t.Errorf("%s: %s has %v, ours %v", f, path, keys, ours[path])
@@ -435,7 +442,8 @@ func TestExportPageCarriesTheTemplateThePageIsDrawnWith(t *testing.T) {
 
 // A page's key is the same for the same page on every run, and another for any change to what is
 // drawn on it or for another page; what the note says of itself and not of the page leaves it
-// alone. The pinned key is what any machine computes for that page.
+// alone, but for a diary page's heading, which is drawn on it. The pinned key is what any machine
+// computes for that page.
 func TestPageKeyNamesWhatIsOnThePage(t *testing.T) {
 	keyOf := func(t *testing.T, at int, ops ...link.Record) string {
 		t.Helper()
@@ -477,6 +485,8 @@ func TestPageKeyNamesWhatIsOnThePage(t *testing.T) {
 		{"another created time", 0, with(withHeader(func(h *link.Record) { h.CreatedMillis++ })), true},
 		{"a note property", 0, with(noteProperty("type", "diary")), true},
 		{"a page name", 0, with(pageProperty(page(1), "name", "2026-11-20")), true},
+		{"a diary page named by no date", 0, with(noteProperty("type", "diary"), pageProperty(page(1), "name", "Kitchen")), true},
+		{"a diary page named by a date", 0, with(noteProperty("type", "diary"), pageProperty(page(1), "name", "2026-11-20")), false},
 		{"the same ink on an unbounded page", 0, []link.Record{base[0], pageAdd(page(1), 0, nil, link.BoundsUnbounded),
 			base[2], base[3]}, false},
 		{"another page with the same ink", 1, append([]link.Record{base[0], base[1], base[2]}, strokeAdd(page(2), stroke(1))), false},
@@ -491,8 +501,42 @@ func TestPageKeyNamesWhatIsOnThePage(t *testing.T) {
 			}
 		})
 	}
+	diaryDay := func(name string) string {
+		return keyOf(t, 0, with(noteProperty("type", "diary"), pageProperty(page(1), "name", name))...)
+	}
+	if diaryDay("2026-11-20") == diaryDay("2026-11-21") {
+		t.Error("a diary page has the same key named by another date")
+	}
 	if _, err := ReadStrokeBasedNote("c", jsonlOf(t, logOf(base...))).PageKey(2); err == nil {
 		t.Error("a page out of range has a key")
+	}
+}
+
+// A page is headed with its name's date in full when its note is a diary and the name is an ISO
+// date, and otherwise has no heading.
+func TestPageHeadingIsADiaryPageDate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ops  []link.Record
+		at   int
+		want string
+	}{
+		{"a diary page named by a date", []link.Record{noteProperty("type", "diary"), pageProperty(page(1), "name", "2026-11-21")}, 0, "Saturday 21 November 2026"},
+		{"a day with no leading zero", []link.Record{noteProperty("type", "diary"), pageProperty(page(1), "name", "2027-01-01")}, 0, "Friday 1 January 2027"},
+		{"a diary page named by no date", []link.Record{noteProperty("type", "diary"), pageProperty(page(1), "name", "Kitchen")}, 0, ""},
+		{"a day not in its month", []link.Record{noteProperty("type", "diary"), pageProperty(page(1), "name", "2026-02-30")}, 0, ""},
+		{"a date not in the strict form", []link.Record{noteProperty("type", "diary"), pageProperty(page(1), "name", "2026-11-2")}, 0, ""},
+		{"an unnamed diary page", []link.Record{noteProperty("type", "diary")}, 0, ""},
+		{"a notebook page named by a date", []link.Record{pageProperty(page(1), "name", "2026-11-21")}, 0, ""},
+		{"a note of two types", []link.Record{noteProperty("type", "diary", "other"), pageProperty(page(1), "name", "2026-11-21")}, 0, ""},
+		{"a page out of range", []link.Record{noteProperty("type", "diary")}, 1, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ops := append([]link.Record{header("n"), pageAdd(page(1), 0, nil, link.BoundsFixed)}, tc.ops...)
+			if got := ReadStrokeBasedNote("c", jsonlOf(t, logOf(ops...))).PageHeading(tc.at); got != tc.want {
+				t.Errorf("heading %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

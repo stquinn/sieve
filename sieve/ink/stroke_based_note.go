@@ -324,20 +324,34 @@ func (n *StrokeBasedNote) ExportPage(page int) ([]byte, error) {
 // pageKeyDigits is how many hex digits of its hash a page key keeps: 64 bits.
 const pageKeyDigits = 16
 
+// PageHeading is what is printed on the top line of the page at index page (contract §6): the
+// date its name gives, in full in English — "Saturday 21 November 2026" — when the note's type is
+// diary and the page's name is an ISO date; "" for any other page or a page out of range.
+func (n *StrokeBasedNote) PageHeading(page int) string {
+	if page < 0 || page >= len(n.pages) || n.properties.One("type") != diaryType {
+		return ""
+	}
+	date, err := time.Parse(time.DateOnly, n.pages[page].Name())
+	if err != nil {
+		return ""
+	}
+	return date.Format("Monday 2 January 2006")
+}
+
 // PageKey names what is on the page at index page: the first 16 lowercase hex digits of the
 // SHA-256 of the JSON of the page's id, the note's pageAspect, the template the page is drawn
-// with, its bounds and its strokes as ExportPage gives them, in that order. The JSON is
-// deterministic, so an unchanged page has the same key on every run and machine; a stroke added,
-// removed or changed, another aspect, template or bounds, or another page gives another key. The
-// note's title, created time, device and properties, and the page's properties, are not on the
-// page and do not move it.
+// with, its bounds, its strokes as ExportPage gives them and, when it has one, its PageHeading,
+// in that order. The JSON is deterministic, so an unchanged page has the same key on every run and
+// machine; a stroke added, removed or changed, another aspect, template, bounds or heading, or
+// another page gives another key. The note's title, created time, device and properties, and the
+// page's properties, move it only through the heading they give it.
 func (n *StrokeBasedNote) PageKey(page int) (string, error) {
 	if page < 0 || page >= len(n.pages) {
 		return "", fmt.Errorf("ink: page %d of %d", page, len(n.pages))
 	}
 	p := n.pages[page]
 	content := pageContent{Page: p.ID.String(), PageAspect: n.header.PageAspect, Template: exportTemplate{n.PageTemplate(page)},
-		Bounds: p.Bounds.String(), Strokes: make([]exportStroke, 0, len(p.strokes))}
+		Bounds: p.Bounds.String(), Strokes: make([]exportStroke, 0, len(p.strokes)), Heading: n.PageHeading(page)}
 	for _, s := range p.strokes {
 		content.Strokes = append(content.Strokes, newExportStroke(s))
 	}
@@ -355,6 +369,8 @@ type pageContent struct {
 	Template   exportTemplate `json:"template"`
 	Bounds     string         `json:"bounds"`
 	Strokes    []exportStroke `json:"strokes"`
+	// Heading is left out when empty: a page without one is keyed by the rest alone.
+	Heading string `json:"heading,omitempty"`
 }
 
 // newExportStroke is the stroke of stroke-add record s in the §4.2 export shape.

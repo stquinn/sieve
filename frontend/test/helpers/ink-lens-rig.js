@@ -39,11 +39,29 @@ export const pencil = (id) => ({
   points: Array.from({ length: 40 }, (_, i) => ({ x: 0.3 + i * 0.008, y: 0.6, pressure: 0.05 + i * 0.024, tMillis: i * 8, tiltX: 0, tiltY: 0, size: 0 })),
 })
 
-/** An export page. @param {any[]} strokes @param {any} [template] */
-export const exportPage = (strokes, template = RULED) => ({
-  note: { id: 'n', created: '2026-11-05T00:00:00Z', title: 'Ideas', pageAspect: 0.75, template, device: { id: 'd', name: 'Note Air 2', model: 'ONYX' } },
+/**
+ * An export page; with `day`, a page of a diary named `day`.
+ * @param {any[]} strokes @param {any} [template] @param {string} [day]
+ */
+export const exportPage = (strokes, template = RULED, day) => ({
+  note: { id: 'n', created: '2026-11-05T00:00:00Z', title: 'Ideas', pageAspect: 0.75, template, device: { id: 'd', name: 'Note Air 2', model: 'ONYX' },
+    ...(day === undefined ? {} : { properties: DIARY }) },
+  ...(day === undefined ? {} : { page: { id: 'p', properties: day ? { name: [day] } : {} } }),
   strokes,
 })
+
+/** A diary's note properties. */
+export const DIARY = Object.freeze({ type: Object.freeze(['diary']), period: Object.freeze(['2026-11']) })
+
+/**
+ * Block attrs made a diary's: the note's properties are DIARY's and its pages are named `days`, in order.
+ * @param {any} attrs noteAttrs, or attrs built on them @param {...string} days
+ */
+export const asDiary = (attrs, ...days) => {
+  attrs.note.properties = DIARY
+  attrs.note.pages = attrs.note.pages.map((/** @type {any} */ p, /** @type {number} */ i) => (days[i] ? { ...p, name: days[i] } : p))
+  return attrs
+}
 
 /** The note's block attrs for pages of these ids. @param {string[]} ids @param {string} [bounds] */
 export const noteAttrs = (ids, bounds = 'fixed') => ({
@@ -251,6 +269,8 @@ export const renderer = new InkRenderer({ getStroke })
 export const svgOf = (root) => /** @type {SVGSVGElement} */ (root.querySelector('.ink-page__sheet > svg'))
 /** @param {HTMLElement} root @param {string} layer */
 export const layer = (root, layer) => /** @type {Element} */ (root.querySelector(`g[data-ink="${layer}"]`))
+/** @param {ParentNode} root @returns {string|null} the text printed at the head of the page drawn; null for none */
+export const headingOf = (root) => root.querySelector('g[data-ink="ruling"] > text')?.textContent ?? null
 /** @param {HTMLElement} root @param {string} id */
 export const strokeEls = (root, id) => [...root.querySelectorAll('[data-stroke]')].filter((el) => el.getAttribute('data-stroke') === id)
 /** @param {ParentNode} root @returns {string[]} the path data of each tone band's layer, lightest first; '' for a band that draws nothing */

@@ -47,6 +47,40 @@ describe('PageNames', () => {
     expect(clock).toHaveBeenCalledTimes(2)
   })
 
+  it.each([
+    ['2026-11-21', { year: 2026, month: 10, day: 21 }],
+    ['2028-02-29', { year: 2028, month: 1, day: 29 }],
+    ['2026-02-30', null],
+    ['2026-11-2', null],
+    [' 2026-11-21', null],
+    ['Kitchen', null],
+  ])('reads %j as a calendar date', (name, want) => {
+    expect(PageNames.dateOf(name)).toEqual(want)
+  })
+
+  it.each([
+    ["a diary with pages of today's date", true, pagesNamed('2026-11-19', '2026-11-20', '2026-11-20', '2026-11-21'), 2],
+    ['a diary with no page of today', true, pagesNamed('2026-11-18', '2026-11-19', undefined), 2],
+    ['a diary of no pages', true, [], -1],
+    ['an ordinary note', false, pagesNamed('Kitchen', undefined), 0],
+    ['an ordinary note whose pages are named by dates', false, pagesNamed('2026-11-19', '2026-11-20'), 0],
+    ['an ordinary note of no pages', false, [], -1],
+  ])('starts a reader of %s at the page it starts at', (_name, diary, pages, want) => {
+    expect(names.startOf(pages, diary)).toBe(want)
+  })
+
+  it('reads the clock when a diary is started, and only then', () => {
+    const clock = vi.fn(() => TODAY)
+    const counted = new PageNames(clock)
+    const pages = pagesNamed('2026-11-20', '2026-11-21')
+    expect(counted.startOf(pages, false)).toBe(0)
+    expect(clock).not.toHaveBeenCalled()
+    expect(counted.startOf(pages, true)).toBe(0)
+    clock.mockReturnValue(new Date(2026, 10, 21, 0, 5))
+    expect(counted.startOf(pages, true)).toBe(1)
+    expect(clock).toHaveBeenCalledTimes(2)
+  })
+
   it('places a note of no pages at 0 / 0', () => {
     expect([names.listed([]), names.face([], -1)]).toEqual([[], '0 / 0'])
   })

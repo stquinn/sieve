@@ -19,21 +19,26 @@ import { ImageClipboard } from '../src/static/renderers/copy-image.js'
 import { InkRenderer } from '../src/static/renderers/ink-renderer.js'
 import { InkFeed, InkOpening, InkTranscriptState, InkRefusal } from '../src/static/contract/ink-container-provider.js'
 import {
-  ASPECT, DOTS, bandData, FakeInkProvider, Frames, GRID, Resizes, UUID, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, pencil, points, press, renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, viewBoxOf, wheel,
+  ASPECT, DOTS, asDiary, bandData, FakeInkProvider, headingOf, Frames, GRID, Resizes, UUID, begin, drag, expectWindow, exportPage, key, layOut, layer, mark, noteAttrs, pen, pencil, points, press, renderer, settle, shownWindow, strokeEls, svgOf, tabletWindow, view, viewBoxOf, wheel,
   copiedImages, transcript, TRANSCRIPT_BLOCKS, item, tap, toolbarFor, toolbarIds, placesOf, faceOf, optionsOf, choose, rightClick, menuOf,
 } from './helpers/ink-lens-rig.js'
 
 /**
  * A lens presented over a note of pages `ids`, each answered with `strokes` at seq 10, or over
- * a note with no published log when `syncing`.
- * @param {{ids?: string[], strokes?: any[], bounds?: string, template?: any, syncing?: boolean}} [opts]
+ * a note with no published log when `syncing`; with `days`, a diary whose pages are named those days;
+ * handed `viewState` and asked to reveal `reveal` before it is presented.
+ * @param {{ids?: string[], strokes?: any[], bounds?: string, template?: any, syncing?: boolean, key?: string, drawing?: string, days?: string[], viewState?: any, reveal?: string}} [opts]
  */
 async function presented(opts = {}) {
   const ids = opts.ids || ['p1', 'p2']
-  const provider = new FakeInkProvider(noteAttrs(ids, opts.bounds))
+  const days = opts.days
+  const provider = new FakeInkProvider(days ? asDiary(noteAttrs(ids, opts.bounds), ...days) : noteAttrs(ids, opts.bounds))
   provider.syncing = opts.syncing === true
-  for (const id of ids) provider.answers.set(id, { page: exportPage(opts.strokes || [pen('s1')], opts.template), seq: 10, key: opts.key, drawing: opts.drawing })
-  const lens = new DigitalNoteLens(UUID, { provider })
+  ids.forEach((id, i) => provider.answers.set(id, {
+    page: exportPage(opts.strokes || [pen('s1')], opts.template, days ? days[i] ?? '' : undefined), seq: 10, key: opts.key, drawing: opts.drawing,
+  }))
+  const lens = new DigitalNoteLens(UUID, { provider, viewState: opts.viewState })
+  if (opts.reveal) lens.reveal(opts.reveal)
   const root = document.createElement('div')
   document.body.appendChild(root)
   const { bar, toolbar } = toolbarFor(lens)
@@ -220,6 +225,28 @@ describe('DigitalNoteLens', () => {
     expect([provider.loads, provider.renderers.at(-1)]).toEqual([2, undefined])
     expect(bandData(root)).toEqual(bands.map(() => ''))
     expect(provider.kept.map((k) => k.key)).toEqual(['cd34'])
+  })
+
+  it('heads a diary page with its date, in the drawing it hands back and from that drawing kept', async () => {
+    const full = await presented({ days: ['2026-11-21'], key: 'ab12' })
+    expect(headingOf(full.root)).toBe('Saturday 21 November 2026')
+    expect(full.provider.kept[0].drawing).toContain('>Saturday 21 November 2026</text>')
+    const { provider, root } = await presented({ days: ['2026-11-21'], key: 'ab12', drawing: full.provider.kept[0].drawing })
+    expect([provider.loads, provider.renderers, headingOf(root)]).toEqual([1, [InkRenderer.VERSION], 'Saturday 21 November 2026'])
+  })
+
+  it.each([
+    ['a diary page renamed by another date', true, '2026-11-22', 2, 'Sunday 22 November 2026'],
+    ['a diary page whose name is cleared', true, '', 2, null],
+    ['a notebook page renamed', false, '2026-11-22', 1, null],
+  ])('draws %s again only when its heading changes', async (_name, diary, day, loads, heading) => {
+    const shown = await presented({ ids: ['p1'], days: diary ? ['2026-11-21'] : undefined })
+    shown.provider.answers.set('p1', { page: exportPage([pen('s1')], undefined, diary ? day : undefined), seq: 11 })
+    const attrs = noteAttrs(['p1'])
+    attrs.note.pages = [{ ...attrs.note.pages[0], name: day }]
+    shown.provider.setAttrs(diary ? asDiary(attrs, day) : attrs)
+    await settle()
+    expect([shown.provider.loads, headingOf(shown.root)]).toEqual([loads, heading])
   })
 
   it.each([
@@ -837,6 +864,27 @@ describe('DigitalNoteLens', () => {
         await shown.lens.presentMode('wysiwyg', shown.root)
         await settle()
         expect([shown.lens.mode, /** @type {any} */ (shown.lens.surface).shownPage]).toEqual([mode, 'p3'])
+      })
+    })
+
+    describe.each([PageSurface.MODE, TranscriptSurface.MODE])('the page a note opens at in %s mode', (mode) => {
+      /** The view a lens is handed: `mode`, at `page`. @param {string|null} page */
+      const handed = (page) => ({ mode, page, window: null, scale: PageSurface.Scale.PAGE, unseen: [], seq: 0, startMillis: -1 })
+      const DIARY_IDS = ['p1', 'p2', 'p3', 'p4']
+      beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['Date'] })
+        vi.setSystemTime(new Date(2026, 10, 21, 15, 0))
+      })
+
+      it.each([
+        ["a diary, at the last of today's pages", DIARY_IDS, ['2026-11-20', '2026-11-21', '2026-11-21', '2026-11-22'], {}, 'p3'],
+        ['a diary with no page of today, at its last page', DIARY_IDS, ['2026-11-18', '2026-11-19', '2026-11-20', ''], {}, 'p4'],
+        ['a diary, at a page revealed', DIARY_IDS, ['2026-11-20', '2026-11-21', '2026-11-21', '2026-11-22'], { reveal: 'p1' }, 'p1'],
+        ['a diary, at the page of the view restored', DIARY_IDS, ['2026-11-20', '2026-11-21', '2026-11-21', '2026-11-22'], { page: 'p4' }, 'p4'],
+        ['an ordinary notebook, at its first page', ['p1', 'p2', 'p3'], undefined, {}, 'p1'],
+      ])('opens %s', async (_name, ids, days, ask, want) => {
+        const { lens } = await presented({ ids, days, viewState: handed(ask.page ?? null), reveal: ask.reveal })
+        expect([lens.mode, /** @type {any} */ (lens.surface).shownPage]).toEqual([mode, want])
       })
     })
 
