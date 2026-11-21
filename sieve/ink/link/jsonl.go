@@ -70,6 +70,13 @@ func (r Record) JSONLine() ([]byte, error) {
 	case OpStrokeRemove:
 		w.field("page").str(r.Page.String())
 		w.field("id").str(r.Stroke.String())
+	case OpNoteProperty:
+		w.field("key").str(r.Key)
+		w.field("values").strings(r.Values)
+	case OpPageProperty:
+		w.field("page").str(r.Page.String())
+		w.field("key").str(r.Key)
+		w.field("values").strings(r.Values)
 	}
 	w.end('}')
 	w.b = append(w.b, '\n')
@@ -94,7 +101,7 @@ func ParseJSONLine(line []byte) (Record, error) {
 		}
 	}
 	if in.err == nil && r.Op == 0 {
-		return r, fmt.Errorf("unknown op %q", name)
+		return r, fmt.Errorf("%w %q", ErrUnknownOp, name)
 	}
 	switch r.Op {
 	case OpNoteHeader:
@@ -166,6 +173,18 @@ func ParseJSONLine(line []byte) (Record, error) {
 		r.Page = in.id()
 		in.key("id")
 		r.Stroke = in.id()
+	case OpNoteProperty:
+		in.key("key")
+		r.Key = in.str()
+		in.key("values")
+		r.Values = in.strings()
+	case OpPageProperty:
+		in.key("page")
+		r.Page = in.id()
+		in.key("key")
+		r.Key = in.str()
+		in.key("values")
+		r.Values = in.strings()
 	}
 	in.delim('}')
 	in.eof()
@@ -225,6 +244,14 @@ func (w *jsonWriter) created(ms int64) {
 		layout = createdSeconds
 	}
 	w.str(time.UnixMilli(ms).UTC().Format(layout))
+}
+
+func (w *jsonWriter) strings(list []string) {
+	w.begin('[')
+	for _, s := range list {
+		w.elem().str(s)
+	}
+	w.end(']')
 }
 
 func (w *jsonWriter) template(t *Template) {
@@ -386,6 +413,17 @@ func (in *jsonReader) template() *Template {
 	in.delim('}')
 	in.delim('}')
 	return tpl
+}
+
+// strings reads an array of strings, an empty slice for none.
+func (in *jsonReader) strings() []string {
+	out := []string{}
+	in.delim('[')
+	for in.err == nil && in.dec.More() {
+		out = append(out, in.str())
+	}
+	in.delim(']')
+	return out
 }
 
 func (in *jsonReader) points() []Point {

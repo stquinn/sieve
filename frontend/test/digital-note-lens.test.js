@@ -857,16 +857,18 @@ describe('DigitalNoteLens', () => {
   })
 
   it.each([
-    ['no page named', {}, ['Page 1', 'Page 2', 'Page 3']],
-    ['a page named, the others numbered', { 1: 'Kitchen' }, ['Page 1', 'Kitchen', 'Page 3']],
-    ['a blank name, numbered', { 0: '  ' }, ['Page 1', 'Page 2', 'Page 3']],
-  ])('calls each page in the list by its name, else its place: %s', async (_name, names, labels) => {
-    const { provider, bar } = await presented({ ids: ['p1', 'p2', 'p3'] })
+    ['no page named', {}, ['Page 1', 'Page 2', 'Page 3'], '1 / 3', 'Page 1 of 3'],
+    ['a page named, the others numbered', { 1: 'Kitchen' }, ['Page 1', 'Kitchen', 'Page 3'], '1 / 3', 'Page 1 of 3'],
+    ['a blank name, numbered', { 0: '  ' }, ['Page 1', 'Page 2', 'Page 3'], '1 / 3', 'Page 1 of 3'],
+    ['the page shown named, one of a run', { 0: 'Kitchen', 1: 'Kitchen' }, ['Kitchen · 1 / 2', 'Kitchen · 2 / 2', 'Page 3'], 'Kitchen · 1 / 2', 'Kitchen · 1 / 2'],
+  ])('calls each page by its name, else its place, in the list, on its face, in the readout and as the place: %s', async (_name, names, labels, face, place) => {
+    const { provider, bar, lens } = await presented({ ids: ['p1', 'p2', 'p3'] })
     const attrs = noteAttrs(['p1', 'p2', 'p3'])
     attrs.note.pages = attrs.note.pages.map((p, i) => (Object.hasOwn(names, i) ? { ...p, name: /** @type {any} */ (names)[i] } : p))
     provider.setAttrs(attrs)
     await settle()
-    expect([optionsOf(bar, 'tb-page-select'), position(bar)]).toEqual([labels, '1 / 3'])
+    expect([optionsOf(bar, 'tb-page-select'), position(bar)]).toEqual([labels, face])
+    expect([lens.stats().readout?.[0].text, lens.getSelectionContext().target.label]).toEqual([place, place])
   })
 
   it('marks each page with unseen ink in the list, and counts them beside it, the count showing each in turn', async () => {

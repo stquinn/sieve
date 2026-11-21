@@ -20,7 +20,13 @@ const (
 	OpPageTemplate Op = 19
 	OpStrokeAdd    Op = 20
 	OpStrokeRemove Op = 21
+	OpNoteProperty Op = 22
+	OpPageProperty Op = 23
 )
+
+// ErrUnknownOp is a record whose op this Sieve does not know: a later contract's record, which
+// every codec here refuses.
+var ErrUnknownOp = errors.New("unknown op")
 
 var opNames = map[Op]string{
 	OpNoteHeader:   "note-header",
@@ -29,7 +35,16 @@ var opNames = map[Op]string{
 	OpPageTemplate: "page-template",
 	OpStrokeAdd:    "stroke-add",
 	OpStrokeRemove: "stroke-remove",
+	OpNoteProperty: "note-property",
+	OpPageProperty: "page-property",
 }
+
+// The limits §3 holds a property record to.
+const (
+	maxPropertyKey    = 64
+	maxPropertyValues = 64
+	maxPropertyValue  = 128
+)
 
 // String is the op's JSON Lines name, or a placeholder for an unknown op.
 func (o Op) String() string {
@@ -109,7 +124,10 @@ type Point struct {
 //	page-template  Page, Template
 //	stroke-add     Page, Stroke, Tool, WidthClass, StartMillis, Points
 //	stroke-remove  Page, Stroke
+//	note-property  Key, Values
+//	page-property  Page, Key, Values
 //
+// A property record's Values is never nil once decoded: an empty list is an empty slice.
 // Every Record a codec here returns can be encoded by every other codec here, and a body decoded
 // and encoded again, through either codec, is byte-identical.
 type Record struct {
@@ -132,6 +150,9 @@ type Record struct {
 	WidthClass  uint8
 	StartMillis uint64
 	Points      []Point
+
+	Key    string
+	Values []string
 }
 
 // maxLogBody is the longest body a log frame may declare.
@@ -148,7 +169,8 @@ var (
 
 // ParseBody decodes a record's §4.4 body. A body that is short, carries trailing bytes, an unknown
 // op, a tool, bounds or template flag other than 0 or 1, a string that is not UTF-8, a float that
-// is not finite, or a created time outside RFC 3339's years does not decode.
+// is not finite, a created time outside RFC 3339's years, or a property outside §3's limits does
+// not decode. An unknown op is ErrUnknownOp, and the Record returned then holds its Op and Seq.
 func ParseBody(body []byte) (Record, error) {
 	in := &frameReader{b: body}
 	r := Record{Op: Op(in.u8()), Seq: in.u32()}
@@ -184,8 +206,13 @@ func ParseBody(body []byte) (Record, error) {
 		}
 	case OpStrokeRemove:
 		r.Page, r.Stroke = in.id(), in.id()
+	case OpNoteProperty:
+		r.Key, r.Values = in.string(), in.strings()
+	case OpPageProperty:
+		r.Page = in.id()
+		r.Key, r.Values = in.string(), in.strings()
 	default:
-		return r, fmt.Errorf("unknown op %d", byte(r.Op))
+		return r, fmt.Errorf("%w %d", ErrUnknownOp, byte(r.Op))
 	}
 	if err := in.finish(); err != nil {
 		return r, err
@@ -220,6 +247,10 @@ func (r Record) Body() ([]byte, error) {
 		}
 	case OpStrokeRemove:
 		w.id(r.Page).id(r.Stroke)
+	case OpNoteProperty:
+		w.string(r.Key).strings(r.Values)
+	case OpPageProperty:
+		w.id(r.Page).string(r.Key).strings(r.Values)
 	}
 	body, err := w.finish()
 	if err == nil && len(body) > maxLogBody {
@@ -231,7 +262,12 @@ func (r Record) Body() ([]byte, error) {
 // check holds what every codec needs of a record to encode it so that it decodes the same.
 func (r Record) check() error {
 	if _, ok := opNames[r.Op]; !ok {
-		return fmt.Errorf("unknown op %d", byte(r.Op))
+		return fmt.Errorf("%w %d", ErrUnknownOp, byte(r.Op))
+	}
+	if r.Op == OpNoteProperty || r.Op == OpPageProperty {
+		if err := r.checkProperty(); err != nil {
+			return err
+		}
 	}
 	if r.Tool > ToolPencil {
 		return fmt.Errorf("unknown tool %d", byte(r.Tool))
@@ -268,6 +304,28 @@ func (r Record) check() error {
 		}
 		if len(s) > math.MaxUint16 {
 			return fmt.Errorf("a string of %d bytes is over the limit of %d", len(s), math.MaxUint16)
+		}
+	}
+	return nil
+}
+
+// checkProperty holds a property record to §3: a key of 1 to 64 bytes of a-z, 0-9, - and .,
+// beginning with a letter, and at most 64 values of at most 128 bytes of UTF-8 each.
+func (r Record) checkProperty() error {
+	valid := len(r.Key) > 0 && len(r.Key) <= maxPropertyKey && r.Key[0] >= 'a' && r.Key[0] <= 'z'
+	for i := 1; valid && i < len(r.Key); i++ {
+		c := r.Key[i]
+		valid = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.'
+	}
+	if !valid {
+		return fmt.Errorf("a property key %q", r.Key)
+	}
+	if len(r.Values) > maxPropertyValues {
+		return fmt.Errorf("a property of %d values is over the limit of %d", len(r.Values), maxPropertyValues)
+	}
+	for _, v := range r.Values {
+		if len(v) > maxPropertyValue || !utf8.ValidString(v) {
+			return fmt.Errorf("a property value of %d bytes that is over the limit of %d or not UTF-8", len(v), maxPropertyValue)
 		}
 	}
 	return nil

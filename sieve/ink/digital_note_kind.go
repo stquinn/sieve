@@ -6,6 +6,7 @@ import (
 	"maps"
 	"strconv"
 	"strings"
+	"time"
 
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
@@ -20,7 +21,7 @@ const StrokesKey = "strokes.jsonl"
 
 // The .meta keys of a note's description beside display_name, summary and tags: its keywords and
 // categories as JSON arrays of strings, the seq of the log the description is of, the seq of the
-// description last sent to the tablet, and who gave its name, namedByHand when a person did.
+// description last sent to the tablet, and who gave its name (NamedBy).
 const (
 	metaKeywords   = "note_keywords"
 	metaCategories = "note_categories"
@@ -29,8 +30,27 @@ const (
 	metaNamedBy    = "note_named_by"
 )
 
-// namedByHand is the note_named_by of a note a person named.
-const namedByHand = "hand"
+// NamedBy is who gives a Digital Note the name it is called by, as its .meta note_named_by holds
+// it: the namer, from its pages, unless a person or its tablet does.
+type NamedBy string
+
+const (
+	// NamedByNamer is a note the namer names, its name the display_name of its description.
+	NamedByNamer NamedBy = ""
+	// NamedByHand is a note a person named, its name their display_name.
+	NamedByHand NamedBy = "hand"
+	// NamedByTablet is a note called by the title its tablet wrote, which has no display_name.
+	NamedByTablet NamedBy = "tablet"
+)
+
+// Kept is whether the namer keeps the note's name and describes only the rest.
+func (n NamedBy) Kept() bool { return n != NamedByNamer }
+
+// Renamable is whether a person may name the note.
+func (n NamedBy) Renamable() bool { return n != NamedByTablet }
+
+// diaryType is the type property of a diary chunk, which its tablet names.
+const diaryType = "diary"
 
 // MaxNameBytes is the longest name META carries to the tablet (docs/ink-contract.md §7.3).
 const MaxNameBytes = 512
@@ -48,8 +68,9 @@ type Provenance struct {
 
 // DigitalNoteKind is the BlockProcessor of kind digital-note: a block that describes a note and
 // carries none of its ink (contract §5). Its attrs are title, note (created, pageAspect,
-// template, pages), note_device, note_companion, note_source_id, note_synced_seq and source,
-// the absolute address of the source asset. It is held as a block container, is never built
+// template, pages, each {id, template, bounds} and its name when it has one, and the note's
+// properties when it has any), note_device, note_companion, note_source_id, note_synced_seq and
+// source, the absolute address of the source asset. It is held as a block container, is never built
 // from pasted content and runs no job.
 type DigitalNoteKind struct {
 	block.FencedSerializer
@@ -75,18 +96,34 @@ func (k DigitalNoteKind) Attrs(note *StrokeBasedNote, p Provenance) map[string]i
 	h := note.Header()
 	pages := make([]interface{}, 0, note.PageCount())
 	for _, page := range note.Pages() {
-		pages = append(pages, map[string]interface{}{
+		entry := map[string]interface{}{
 			"id": page.ID.String(), "template": k.template(page.Template), "bounds": page.Bounds.String(),
-		})
+		}
+		if name := page.Name(); name != "" {
+			entry["name"] = name
+		}
+		pages = append(pages, entry)
+	}
+	header := map[string]interface{}{
+		"created":    note.Created(),
+		"pageAspect": k.number(h.PageAspect),
+		"template":   k.template(h.Template),
+		"pages":      pages,
+	}
+	if props := note.Properties(); len(props) > 0 {
+		attr := make(map[string]interface{}, len(props))
+		for key, values := range props {
+			list := make([]interface{}, len(values))
+			for i, v := range values {
+				list[i] = v
+			}
+			attr[key] = list
+		}
+		header["properties"] = attr
 	}
 	return map[string]interface{}{
-		"title": h.Title,
-		"note": map[string]interface{}{
-			"created":    note.Created(),
-			"pageAspect": k.number(h.PageAspect),
-			"template":   k.template(h.Template),
-			"pages":      pages,
-		},
+		"title":           h.Title,
+		"note":            header,
 		"note_device":     map[string]interface{}{"id": h.Device.ID, "name": h.Device.Name, "model": h.Device.Model},
 		"note_companion":  p.Companion,
 		"note_source_id":  p.SourceID.String(),
@@ -106,19 +143,32 @@ func (k DigitalNoteKind) InitAttrs(id string, overrides map[string]interface{}) 
 	return attrs
 }
 
-// Face is title, page count, whether a page is a whiteboard (unbounded), the device's name, source type, provenance and synced seq, for .meta.
+// Face is title, page count, whether a page is a whiteboard (unbounded), the device's name and id,
+// source type, provenance, synced seq and the note's properties, for .meta: note_type is its type
+// and note_period its period when that is a YYYY-MM month, each "" otherwise, and note_properties
+// all of them as one JSON object, keys ascending, {} for none. Every one of those keys is written
+// for every note, so a property removed leaves no stale value in .meta. A diary also carries
+// note_named_by NamedByTablet; no other note carries note_named_by in its face, so the face never
+// replaces who named it.
 func (k DigitalNoteKind) Face(b domain.SieveBlock) map[string]string {
 	note, _ := b.Attrs["note"].(map[string]interface{})
 	pages, _ := note["pages"].([]interface{})
 	device, _ := b.Attrs["note_device"].(map[string]interface{})
 	name, _ := device["name"].(string)
+	deviceID, _ := device["id"].(string)
+	props := k.properties(note)
+	period := props.One("period")
+	if _, err := time.Parse("2006-01", period); err != nil {
+		period = ""
+	}
+	propsJSON, _ := json.Marshal(props)
 	whiteboard := false
 	for _, p := range pages {
 		if page, _ := p.(map[string]interface{}); page["bounds"] == link.BoundsUnbounded.String() {
 			whiteboard = true
 		}
 	}
-	return map[string]string{
+	face := map[string]string{
 		"note_title":      b.StringAttr("title"),
 		"note_pages":      strconv.Itoa(len(pages)),
 		"note_device":     name,
@@ -127,7 +177,30 @@ func (k DigitalNoteKind) Face(b domain.SieveBlock) map[string]string {
 		"note_companion":  b.StringAttr("note_companion"),
 		"note_synced_seq": fmt.Sprint(b.Attrs["note_synced_seq"]),
 		"note_whiteboard": strconv.FormatBool(whiteboard),
+		"note_device_id":  deviceID,
+		"note_type":       props.One("type"),
+		"note_period":     period,
+		"note_properties": string(propsJSON),
 	}
+	if props.One("type") == diaryType {
+		face[metaNamedBy] = string(NamedByTablet)
+	}
+	return face
+}
+
+// properties are the note's properties as the note attr holds them, none when it holds none.
+func (k DigitalNoteKind) properties(note map[string]interface{}) Properties {
+	held, _ := note["properties"].(map[string]interface{})
+	props := Properties{}
+	for key, v := range held {
+		list, _ := v.([]interface{})
+		for _, value := range list {
+			if text, ok := value.(string); ok {
+				props[key] = append(props[key], text)
+			}
+		}
+	}
+	return props
 }
 
 // Lifted is meta, a note's .meta as found, with note_whiteboard read from the block load gives
@@ -146,13 +219,22 @@ func (k DigitalNoteKind) Lifted(meta map[string]string, load func() (domain.Siev
 	return lifted
 }
 
-// Name is what a note is called wherever it is shown: the name Sieve gave it, the display_name of
-// its .meta, when there is one, otherwise tablet, the title the tablet wrote.
+// Name is what a note is called wherever it is shown: the name Sieve gave it (given), when there is
+// one, otherwise tablet, the title the tablet wrote.
 func (k DigitalNoteKind) Name(meta map[string]string, tablet string) string {
-	if given := meta["display_name"]; given != "" && given != "null" {
+	if given := k.given(meta); given != "" {
 		return given
 	}
 	return tablet
+}
+
+// given is the name Sieve gave the note, the display_name of meta; "" when there is none or the
+// note is NamedByTablet.
+func (k DigitalNoteKind) given(meta map[string]string) string {
+	if given := meta["display_name"]; given != "null" && k.NamedBy(meta) != NamedByTablet {
+		return given
+	}
+	return ""
 }
 
 // UntitledNotebook is what a Digital Note with no name and no title from its tablet is called.
@@ -172,11 +254,11 @@ func (k DigitalNoteKind) ContainerName(b domain.SieveBlock, meta map[string]stri
 }
 
 // Describe writes d into meta as the description of the note's log to seq: Title as display_name,
-// unless a person named the note, Summary, Keywords as tags, and Keywords and Categories whole
+// unless the note's NamedBy is Kept, Summary, Keywords as tags, and Keywords and Categories whole
 // under the kind's own keys. A comma in a keyword is a semicolon in tags, whose stored form splits
 // on commas.
 func (k DigitalNoteKind) Describe(meta domain.DocumentMeta, d domain.NoteMetadata, seq uint32) {
-	if !k.HandNamed(meta.All()) {
+	if !k.NamedBy(meta.All()).Kept() {
 		meta.SetDisplayName(strings.TrimSpace(d.Title))
 	}
 	summary := strings.TrimSpace(d.Summary)
@@ -205,32 +287,29 @@ func (k DigitalNoteKind) NameByHand(meta domain.DocumentMeta, name string) {
 	all := meta.All()
 	delete(all, metaSent)
 	if name != "" {
-		all[metaNamedBy] = namedByHand
+		all[metaNamedBy] = string(NamedByHand)
 		return
 	}
 	delete(all, metaNamedBy)
 	delete(all, metaDescribed)
 }
 
-// HandNamed is whether a person gave the note the name meta holds.
-func (k DigitalNoteKind) HandNamed(meta map[string]string) bool {
-	return meta[metaNamedBy] == namedByHand
+// NamedBy is who gives the note whose .meta is meta its name.
+func (k DigitalNoteKind) NamedBy(meta map[string]string) NamedBy {
+	return NamedBy(meta[metaNamedBy])
 }
 
-// Description is the description meta holds and the seq it is of; false when it is of no seq and
-// no person named the note.
+// Description is the description meta holds and the seq it is of, its Title the name Sieve gave
+// the note (given); false when it is of no seq and no person named the note.
 func (k DigitalNoteKind) Description(meta map[string]string) (domain.NoteMetadata, uint32, bool) {
 	seq := k.seq(meta, metaDescribed)
-	d := domain.NoteMetadata{Title: meta["display_name"], Summary: meta["summary"]}
-	if d.Title == "null" {
-		d.Title = ""
-	}
+	d := domain.NoteMetadata{Title: k.given(meta), Summary: meta["summary"]}
 	if d.Summary == "null" {
 		d.Summary = ""
 	}
 	_ = json.Unmarshal([]byte(meta[metaKeywords]), &d.Keywords)
 	_ = json.Unmarshal([]byte(meta[metaCategories]), &d.Categories)
-	return d, seq, seq > 0 || k.HandNamed(meta)
+	return d, seq, seq > 0 || k.NamedBy(meta) == NamedByHand
 }
 
 // DescribedSeq is the seq of the log meta's description is of, 0 when it holds none.

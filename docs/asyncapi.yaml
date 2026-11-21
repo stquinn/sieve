@@ -1965,12 +1965,37 @@ components:
           $ref: '#/components/schemas/ProtocolInkExportTemplate'
         device:
           $ref: '#/components/schemas/ProtocolInkExportDevice'
+        properties:
+          type: object
+          description: the note's properties, each key to its values; {} when it has none
+          additionalProperties:
+            type: array
+            items:
+              type: string
       required:
         - id
         - created
         - title
         - pageAspect
         - device
+        - properties
+    ProtocolInkExportPage:
+      type: object
+      description: InkExportPage is the page an export is of.
+      properties:
+        id:
+          type: string
+          description: the companion's page id
+        properties:
+          type: object
+          description: the page's properties, each key to its values; {} when it has none
+          additionalProperties:
+            type: array
+            items:
+              type: string
+      required:
+        - id
+        - properties
     ProtocolInkExportPoint:
       type: object
       description: InkExportPoint is one sampled pen point, in page units.
@@ -2253,17 +2278,20 @@ components:
     ProtocolInkPageExport:
       type: object
       description: |-
-        InkPageExport is one page of a Digital Note as the ink renderer takes it: the note's header and
-        the page's strokes in the order they were added.
+        InkPageExport is one page of a Digital Note as the ink renderer takes it: the note's header,
+        the page itself, and the page's strokes in the order they were added.
       properties:
         note:
           $ref: '#/components/schemas/ProtocolInkExportNote'
+        page:
+          $ref: '#/components/schemas/ProtocolInkExportPage'
         strokes:
           type: array
           items:
             $ref: '#/components/schemas/ProtocolInkExportStroke'
       required:
         - note
+        - page
         - strokes
     ProtocolInkPageFrame:
       type: object

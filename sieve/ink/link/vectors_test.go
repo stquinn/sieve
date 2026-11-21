@@ -21,7 +21,7 @@ var (
 	vectorStroke  = ID{0x01, 0x9a, 0x00, 0x00, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03}
 )
 
-// vectorRecords is one log of each op; their bodies are body_1 to body_6.
+// vectorRecords is one log of each op; their bodies are body_1 to body_8.
 var vectorRecords = []Record{
 	{Seq: 1, Op: OpNoteHeader, Note: vectorNote, CreatedMillis: 1_700_000_000_000, PageAspect: 0.75,
 		Template: &Template{ID: "ruled", Params: []TemplateParam{{"spacing", 0.05}, {"margin", 0.12}}},
@@ -32,6 +32,8 @@ var vectorRecords = []Record{
 	{Seq: 4, Op: OpPageTemplate, Page: vectorPage},
 	{Seq: 5, Op: OpStrokeRemove, Page: vectorPage, Stroke: vectorStroke},
 	{Seq: 6, Op: OpPageRemove, Page: vectorPage},
+	{Seq: 7, Op: OpNoteProperty, Key: "type", Values: []string{"diary"}},
+	{Seq: 8, Op: OpPageProperty, Page: vectorPage, Key: "name", Values: []string{"2026-11-20"}},
 }
 
 // vectorFile is testdata/vectors.txt, remembering which entries a test has checked.

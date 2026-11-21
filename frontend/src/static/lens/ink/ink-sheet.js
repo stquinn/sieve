@@ -49,7 +49,7 @@ import { PlaneWindow, WindowEdge } from './plane-window.js'
 
 /**
  * A page as the note's header lists it.
- * @typedef {Readonly<{id: string, template?: any, bounds?: string}>} PageEntry
+ * @typedef {Readonly<{id: string, template?: any, bounds?: string, name?: string}>} PageEntry
  */
 
 /**

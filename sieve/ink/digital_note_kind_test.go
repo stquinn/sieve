@@ -52,15 +52,31 @@ func TestDigitalNoteKind_AttrsFaceAndSourceThroughAContainer(t *testing.T) {
 		log       []link.Record
 		wantFace  map[string]string
 		wantPages int
+		// wantNames are the names the block's pages carry, "" for a page with none.
+		wantNames []string
+		// wantProperties is the note attr's properties, nil when it has none.
+		wantProperties map[string]interface{}
 	}{
 		{"an empty note", nil,
-			map[string]string{"note_title": "", "note_pages": "0", "note_device": "", "note_source": "strokes", "note_synced_seq": "0", "note_whiteboard": "false"}, 0},
+			map[string]string{"note_title": "", "note_pages": "0", "note_device": "", "note_device_id": "", "note_source": "strokes", "note_synced_seq": "0",
+				"note_whiteboard": "false", "note_type": "", "note_period": "", "note_properties": "{}"}, 0, nil, nil},
 		{"a note of two pages",
 			logOf(header("Ideas"), pageAdd(page(1), 0, ruled, link.BoundsFixed), pageAdd(page(2), 1, dots, link.BoundsFixed),
 				strokeAdd(page(1), stroke(1))),
-			map[string]string{"note_title": "Ideas", "note_pages": "2", "note_device": aDevice.Name, "note_source": "strokes", "note_synced_seq": "4", "note_whiteboard": "false"}, 2},
+			map[string]string{"note_title": "Ideas", "note_pages": "2", "note_device": aDevice.Name, "note_device_id": aDevice.ID, "note_source": "strokes",
+				"note_synced_seq": "4", "note_whiteboard": "false", "note_type": "", "note_period": "", "note_properties": "{}"}, 2, []string{"", ""}, nil},
 		{"a whiteboard", logOf(header("Board"), pageAdd(page(1), 0, nil, link.BoundsUnbounded)),
-			map[string]string{"note_title": "Board", "note_pages": "1", "note_device": aDevice.Name, "note_source": "strokes", "note_synced_seq": "2", "note_whiteboard": "true"}, 1},
+			map[string]string{"note_title": "Board", "note_pages": "1", "note_device": aDevice.Name, "note_source": "strokes", "note_synced_seq": "2",
+				"note_whiteboard": "true", "note_type": "", "note_properties": "{}"}, 1, []string{""}, nil},
+		{"a diary chunk of named pages",
+			logOf(header("November"), noteProperty("type", "diary"), noteProperty("period", "2026-11"), noteProperty("x.later", "a", "b"),
+				pageAdd(page(1), 0, nil, link.BoundsFixed), pageProperty(page(1), "name", "2026-11-20"), pageAdd(page(2), 1, nil, link.BoundsFixed)),
+			map[string]string{"note_title": "November", "note_pages": "2", "note_whiteboard": "false", "note_device_id": aDevice.ID, "note_synced_seq": "7", "note_type": "diary",
+				"note_period": "2026-11", "note_named_by": "tablet", "note_properties": `{"period":["2026-11"],"type":["diary"],"x.later":["a","b"]}`}, 2, []string{"2026-11-20", ""},
+			map[string]interface{}{"type": []interface{}{"diary"}, "period": []interface{}{"2026-11"}, "x.later": []interface{}{"a", "b"}}},
+		{"a period that is not a month", logOf(header("Q4"), noteProperty("period", "2026-Q4")),
+			map[string]string{"note_title": "Q4", "note_whiteboard": "false", "note_type": "", "note_period": "", "note_properties": `{"period":["2026-Q4"]}`}, 0, nil,
+			map[string]interface{}{"period": []interface{}{"2026-Q4"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			containers, st := newTestContainers(t)
@@ -99,8 +115,19 @@ func TestDigitalNoteKind_AttrsFaceAndSourceThroughAContainer(t *testing.T) {
 			if len(attrs) != 8 {
 				t.Errorf("attrs beyond the contract's: %v", attrs)
 			}
-			if pages := attrs["note"].(map[string]interface{})["pages"].([]interface{}); len(pages) != tc.wantPages {
+			header := attrs["note"].(map[string]interface{})
+			pages := header["pages"].([]interface{})
+			if len(pages) != tc.wantPages {
 				t.Errorf("pages %v", pages)
+			}
+			for i, p := range pages {
+				name, named := p.(map[string]interface{})["name"]
+				if want := tc.wantNames[i]; named != (want != "") || (named && name != want) {
+					t.Errorf("page %d is named %v, want %q", i, name, want)
+				}
+			}
+			if got, held := header["properties"]; held != (tc.wantProperties != nil) || (held && !reflect.DeepEqual(got, tc.wantProperties)) {
+				t.Errorf("note properties %#v, want %#v", got, tc.wantProperties)
 			}
 
 			source, err := domain.ParseAddress(loaded.Block().StringAttr("source"))
@@ -114,6 +141,9 @@ func TestDigitalNoteKind_AttrsFaceAndSourceThroughAContainer(t *testing.T) {
 				if face[k] != v {
 					t.Errorf("face %s = %v, want %q", k, face[k], v)
 				}
+			}
+			if _, named := face[metaNamedBy]; named != (tc.wantFace[metaNamedBy] != "") {
+				t.Errorf("face note_named_by = %v, want %q", face[metaNamedBy], tc.wantFace[metaNamedBy])
 			}
 			before := map[string]string{}
 			for k, v := range face {
@@ -156,6 +186,7 @@ func TestDigitalNoteKind_FoundByItsFaceWithoutItsBody(t *testing.T) {
 		{"this companion's note", map[string]string{"note_companion": companionID, "note_source_id": noteID.String()}, 1},
 		{"every companion's", map[string]string{"note_source_id": noteID.String()}, 2},
 		{"another note", map[string]string{"note_companion": companionID, "note_source_id": testID(1).String()}, 0},
+		{"a diary chunk", map[string]string{"note_type": "diary"}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			found, err := fresh.Find(KindDigitalNote, tc.face)
@@ -169,6 +200,26 @@ func TestDigitalNoteKind_FoundByItsFaceWithoutItsBody(t *testing.T) {
 	}
 	if _, err := fresh.Load(ours.UUID()); err == nil {
 		t.Error("the broken body parsed: the test proves nothing")
+	}
+
+	diary := NewHeaderFold("")
+	for _, r := range logOf(header("November"), noteProperty("type", "diary"), noteProperty("period", "2026-11")) {
+		diary.Apply(r)
+	}
+	chunk, err := fresh.Create(KindDigitalNote, kind.Attrs(diary, Provenance{Companion: companionID, SourceID: testID(2)}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found, err := fresh.Find(KindDigitalNote, map[string]string{"note_type": "diary", "note_device_id": aDevice.ID}); err != nil || len(found) != 1 || found[chunk.UUID()] == nil {
+		t.Errorf("the diary chunk found as %v, %v", found, err)
+	}
+	diary.Apply(link.Record{Seq: 4, Op: link.OpNoteProperty, Key: "type"})
+	chunk.Merge(kind.Attrs(diary, Provenance{Companion: companionID, SourceID: testID(2)}))
+	if _, err := fresh.Save(chunk); err != nil {
+		t.Fatal(err)
+	}
+	if found, err := fresh.Find(KindDigitalNote, map[string]string{"note_type": "diary"}); err != nil || len(found) != 0 {
+		t.Errorf("a note whose type was removed is still found as a diary chunk: %v, %v", found, err)
 	}
 }
 
@@ -184,6 +235,7 @@ func TestDigitalNoteKind_NameAndDescriptionReadFromMeta(t *testing.T) {
 		{"no .meta", nil, "Untitled 05/11"},
 		{"never named", map[string]string{"display_name": "null"}, "Untitled 05/11"},
 		{"named", map[string]string{"display_name": "Kitchen extension planning"}, "Kitchen extension planning"},
+		{"named by its tablet", map[string]string{"display_name": "Kitchen extension planning", "note_named_by": "tablet"}, "Untitled 05/11"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := kind.Name(tc.meta, "Untitled 05/11"); got != tc.want {
@@ -225,7 +277,7 @@ func TestDigitalNoteKind_ANameGivenByHand(t *testing.T) {
 
 	fresh := map[string]string{}
 	kind.NameByHand(edit(fresh), "Mine")
-	if d, seq, ok := kind.Description(fresh); !ok || seq != 0 || d.Title != "Mine" || !kind.Unsent(fresh) || !kind.HandNamed(fresh) {
+	if d, seq, ok := kind.Description(fresh); !ok || seq != 0 || d.Title != "Mine" || !kind.Unsent(fresh) || kind.NamedBy(fresh) != NamedByHand {
 		t.Errorf("an undescribed note named by hand: %+v at %d, %t, unsent %t", d, seq, ok, kind.Unsent(fresh))
 	}
 
@@ -242,7 +294,7 @@ func TestDigitalNoteKind_ANameGivenByHand(t *testing.T) {
 	}
 
 	kind.NameByHand(edit(meta), "")
-	if _, seq, ok := kind.Description(meta); kind.Name(meta, "Ideas") != "Ideas" || ok || seq != 0 || kind.HandNamed(meta) || kind.Unsent(meta) {
+	if _, seq, ok := kind.Description(meta); kind.Name(meta, "Ideas") != "Ideas" || ok || seq != 0 || kind.NamedBy(meta) != NamedByNamer || kind.Unsent(meta) {
 		t.Errorf("cleared: called %q, a description of %d (%t)", kind.Name(meta, "Ideas"), seq, ok)
 	}
 	kind.Describe(edit(meta), kitchen, 9)
@@ -253,6 +305,38 @@ func TestDigitalNoteKind_ANameGivenByHand(t *testing.T) {
 
 // The package sits below the editor and the AI subsystem: EditorService and the
 // composition root call it, never the reverse.
+// Who names a note decides whether the namer keeps its name and whether a person may rename it.
+// A note its tablet names is called by the tablet's title: Describe writes the rest and no
+// display_name, its description's title is empty, and it is unsent only once described.
+func TestDigitalNoteKind_ANoteItsTabletNames(t *testing.T) {
+	for _, tc := range []struct {
+		by              NamedBy
+		kept, renamable bool
+	}{
+		{NamedByNamer, false, true},
+		{NamedByHand, true, true},
+		{NamedByTablet, true, false},
+	} {
+		if tc.by.Kept() != tc.kept || tc.by.Renamable() != tc.renamable {
+			t.Errorf("%q: kept %t, renamable %t", tc.by, tc.by.Kept(), tc.by.Renamable())
+		}
+	}
+
+	kind := NewDigitalNoteKind()
+	meta := map[string]string{"note_named_by": "tablet"}
+	if _, _, ok := kind.Description(meta); ok || kind.Unsent(meta) {
+		t.Error("an undescribed note its tablet names reads a description")
+	}
+	kind.Describe(domain.NewDocumentMeta(meta, func(map[string]string) {}), kitchen, 7)
+	d, seq, ok := kind.Description(meta)
+	if _, given := meta["display_name"]; given || kind.Name(meta, "November") != "November" {
+		t.Errorf("described: display_name %q, called %q", meta["display_name"], kind.Name(meta, "November"))
+	}
+	if !ok || seq != 7 || d.Title != "" || d.Summary != kitchen.Summary || fmt.Sprint(d.Keywords) != fmt.Sprint(kitchen.Keywords) || !kind.Unsent(meta) {
+		t.Errorf("Description = %+v at %d, %t, unsent %t", d, seq, ok, kind.Unsent(meta))
+	}
+}
+
 func TestDigitalNoteKind_PackageImportsNothingAboveBlockContainers(t *testing.T) {
 	pkg, err := build.ImportDir(".", 0)
 	if err != nil {

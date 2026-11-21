@@ -11,6 +11,7 @@
 import { AbstractSurface, SurfaceEvent, SurfaceIntent } from '../abstract-surface.js'
 import { INK_RULES } from '../../renderers/ink-renderer.js'
 import { InkFeed } from '../../contract/ink-container-provider.js'
+import { PageNames } from '../../renderers/page-names.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
 import { ButtonGroup, ToolbarButton, ToolbarLabel, ToolbarPlace, ToolbarSelect } from '../../renderers/toolbar-button.js'
 import { InkPlace } from './ink-place.js'
@@ -107,7 +108,8 @@ export class PageSurface extends AbstractSurface {
 
   /** @type {boolean} between mount and unmount */ #mounted = false
   /** @type {HTMLElement} */ #root
-  /** @type {NotePager} */ #pager = new NotePager(this)
+  /** @type {PageNames} */ #names = new PageNames()
+  /** @type {NotePager} */ #pager = new NotePager(this, this.#names)
   /** @type {string} the name of the device the note was written on; '' when unknown */ #device = ''
 
   /** @type {boolean} whether a page, or the note's having none, has been shown */ #painted = false
@@ -162,7 +164,7 @@ export class PageSurface extends AbstractSurface {
     const index = this.#sheet.indexOf(shown)
     const where = index < 0 ? 'No pages'
       : this.#sheet.isUnbounded(shown) ? 'Whiteboard'
-        : `Page ${index + 1} of ${this.#sheet.pages.length}`
+        : this.#names.place(this.#sheet.pages, index)
     const count = this.#sheet.strokeCount
     return {
       chars: 0, lines: 0, blockCount: 0,
@@ -222,7 +224,7 @@ export class PageSurface extends AbstractSurface {
   /** @override @returns {Readonly<import('../document-editor/selection-model.js').RawSelectionDescriptor>} the page shown */
   feedSelection() {
     const shown = this.#sheet.shown
-    return InkPlace.describe(this.mode, this.#sheet.indexOf(shown), this.#sheet.pages.length)
+    return InkPlace.describe(this.mode, this.#names, this.#sheet.pages, this.#sheet.indexOf(shown))
   }
 
   /** @returns {SheetScale} one of PageSurface.Scale or InkSheet.LEVELS */

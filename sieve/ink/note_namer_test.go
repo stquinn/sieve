@@ -406,6 +406,28 @@ func TestNoteNamer_KeepsANameGivenByHandUntilItIsCleared(t *testing.T) {
 	named("Kitchen, again", "Revised.", "6")
 }
 
+// A diary keeps its tablet's title, by the namer and by NameNow alike, while they keep its summary
+// current.
+func TestNoteNamer_KeepsADiarysTabletTitle(t *testing.T) {
+	rig := newNamerRig(t, logOf(header("November"), noteProperty("type", "diary"), pageAdd(page(1), 0, nil, link.BoundsFixed), strokeAdd(page(1), stroke(1)))...)
+	named := func(summary string) {
+		t.Helper()
+		kind, meta := NewDigitalNoteKind(), rig.meta()
+		d, _, _ := kind.Description(meta)
+		if kind.Name(meta, "November") != "November" || (meta["display_name"] != "" && meta["display_name"] != "null") || d.Summary != summary || kind.NamedBy(meta) != NamedByTablet {
+			t.Errorf("named %q (display_name %q, by %q), summary %q; want the tablet's, %q", kind.Name(meta, "November"), meta["display_name"], kind.NamedBy(meta), d.Summary, summary)
+		}
+	}
+	rig.settled(testSettle)
+	named(kitchen.Summary)
+
+	rig.describer.set(func(d *fakeDescriber) { d.answer = domain.NoteMetadata{Title: "Kitchen, again", Summary: "Revised."} })
+	if err := rig.nameNow(); err != nil {
+		t.Fatal(err)
+	}
+	named("Revised.")
+}
+
 // NameNow refuses a note it cannot name now, submitting nothing, and Refusal says why in words.
 func TestNoteNamer_NameNowRefusesWhatItCannotName(t *testing.T) {
 	for _, tc := range []struct {

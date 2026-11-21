@@ -9,6 +9,7 @@ import (
 
 // ScriptedCompanion is the companion's end of the protocol, enough to drive a Session in a
 // test: it proves itself with its key and serves one note's log, misbehaving as its fields say.
+// A record of an op the codecs here do not know is served as a body of its op and seq alone.
 // Set the fields before Serve and between sessions, never while one is serving.
 type ScriptedCompanion struct {
 	Key  Key
@@ -254,7 +255,7 @@ func (c *ScriptedCompanion) sendFrom(stream *frameStream, note ID, have uint32) 
 	var cursor Cursor
 	bodies := make([][]byte, len(records))
 	for i, r := range records {
-		bodies[i], _ = r.Body()
+		bodies[i] = c.body(r)
 		_ = cursor.Accept(r, bodies[i])
 	}
 	if corrupt {
@@ -272,4 +273,13 @@ func (c *ScriptedCompanion) sendFrom(stream *frameStream, note ID, have uint32) 
 		}
 	}
 	return stream.write(newFrame(frameDone).id(note).b)
+}
+
+// body is r's §4.4 body, or its op and seq alone for an op the codecs do not know.
+func (c *ScriptedCompanion) body(r Record) []byte {
+	if _, known := opNames[r.Op]; !known {
+		return newFrame(byte(r.Op)).u32(r.Seq).b
+	}
+	body, _ := r.Body()
+	return body
 }

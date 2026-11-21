@@ -32,11 +32,12 @@ func (o catchUpObserver) Committed(_ link.ID, rec link.Record) {
 		o.committed(rec)
 	}
 }
-func (catchUpObserver) Done(link.ID, uint32, int) {}
-func (catchUpObserver) Live(link.ID, link.ID)     {}
-func (catchUpObserver) Ink([]link.LiveRecord)     {}
-func (catchUpObserver) Refused(link.ID, string)   {}
-func (catchUpObserver) Rewound(link.ID, uint32)   {}
+func (catchUpObserver) Done(link.ID, uint32, int)       {}
+func (catchUpObserver) Live(link.ID, link.ID)           {}
+func (catchUpObserver) Ink([]link.LiveRecord)           {}
+func (catchUpObserver) Refused(link.ID, string)         {}
+func (catchUpObserver) Rewound(link.ID, uint32)         {}
+func (catchUpObserver) Parked(link.ID, uint32, link.Op) {}
 
 // replicaRig is one Sieve's store and one companion serving noteID, synced by real sessions.
 type replicaRig struct {

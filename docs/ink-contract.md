@@ -28,6 +28,7 @@ Note
   pageAspect  number > 0, page width / page height (Note Air 2 portrait: 1404/1872)
   template    TemplateRef | null          the note default
   device      DeviceInfo                  the device it was written on, for the note's life
+  properties  map of key to list of string, empty when nothing has been set (§3)
   pages       ordered list of Page
 
 DeviceInfo
@@ -39,6 +40,7 @@ Page
   id          uuid
   template    TemplateRef | null          null = the note default
   bounds      "fixed" | "unbounded"
+  properties  map of key to list of string, empty when nothing has been set (§3)
   strokes     ordered list of Stroke      the replay of the log, never stored as such
 
 Stroke
@@ -82,6 +84,8 @@ than the previous; the first record is `seq` 1.
 | `page-template` | `page`, `template` | |
 | `stroke-add` | `page`, and the Stroke's `id`, `tool`, `widthClass`, `startMillis`, `points` | |
 | `stroke-remove` | `page`, `id` | |
+| `note-property` | `key`, `values` | |
+| `page-property` | `page`, `key`, `values` | |
 
 Replay rules:
 
@@ -99,6 +103,35 @@ Replay rules:
 7. A `page-add` of a removed page's id restores that page with the strokes it had and takes the
    record's `template`. A `page-add` of an id present is a no-op. A stroke record naming a page not
    currently present is a no-op.
+8. A property record sets `key` to `values`, replacing what the key held; the last record wins. An
+   empty `values` removes the key.
+9. A `page-property` naming a page not currently present is a no-op. A removed page keeps its
+   properties, and a `page-add` that restores it restores them with its strokes.
+
+Properties:
+
+- A `key` is 1 to 64 bytes of `a-z`, `0-9`, `-` and `.`, beginning with a letter. `values` holds at
+  most 64 strings, each at most 128 bytes of UTF-8.
+- **A reader MUST keep and otherwise ignore a key it does not know.** New keys are added to the table
+  below without a contract bump. A key in the table means what the table says and nothing else.
+- A Sieve that meets an op it does not know stops replicating that note, says so, and carries on
+  with every other note.
+
+| scope | key | values |
+|---|---|---|
+| note | `type` | one value. `diary`. Absent: a notebook or a whiteboard, told apart by its page bounds as before. Set, if at all, before the note's first stroke, and never changed. |
+| note | `period` | one value, the calendar period the chunk covers, as an ISO 8601 year and month: `2026-11`. No other form is written; a reader treats any other value as a key it does not know. Periods order as text. |
+| page | `name` | one value: the page's name. Absent: the page is shown by its 1-based number. Names need not be unique within a note. |
+
+- A device has one diary: the set of notes with `type` = `diary` whose `note-header` carries the same
+  device id, in `period` order, and where two have the same `period`, in the order of their headers'
+  `created`. Nothing names the diary and no chunk refers to another. A consumer SHOULD present them as
+  one diary.
+- In a diary a page's `name` is its date as an ISO date (`2026-11-20`). Adjacent pages with the same
+  name are one day. A viewer MAY show a date name relatively ("Today", "Yesterday") from the stored
+  date and the actual date, and never stores the label.
+- A diary chunk's title is the companion's. Sieve does not rename it and sends an empty `title` in
+  `META`; it still describes it and sends summary, keywords and categories.
 
 ## 4. Codecs
 
@@ -127,6 +160,8 @@ of the device and the radio (§4.4).
 {"seq":N,"op":"page-template","page":U,"template":R}
 {"seq":N,"op":"stroke-add","page":U,"id":U,"tool":"pen"|"pencil","widthClass":1|2|3,"startMillis":I,"points":[P,…]}
 {"seq":N,"op":"stroke-remove","page":U,"id":U}
+{"seq":N,"op":"note-property","key":S,"values":[S,…]}
+{"seq":N,"op":"page-property","page":U,"key":S,"values":[S,…]}
 
 P = [x, y, pressure, tMillis, tiltX, tiltY]
 D = {"id": S, "name": S, "model": S}
@@ -138,13 +173,19 @@ What SieveInk's Export writes and what the renderer takes: one page, already rep
 
 ```json
 {"note": {"id": U, "created": T, "title": S, "pageAspect": F, "template": R,
-          "device": {"id": S, "name": S, "model": S}},
+          "device": {"id": S, "name": S, "model": S}, "properties": {S: [S, …], …}},
+ "page": {"id": U, "properties": {S: [S, …], …}},
  "strokes": [{"id": U, "tool": "pen", "widthClass": 2, "startMillis": I,
               "points": [{"x": F, "y": F, "pressure": F, "tMillis": I, "tiltX": I, "tiltY": I, "size": F}]}]}
 ```
 
 `size` is the Onyx touch size. It is not part of the record, no rule reads it, and a page exported
 from its replay carries 0. A fixture that predates `device` has none, and no rule reads that either.
+
+`note.properties` are the note's properties and `page.properties` the page's (§3). Keys of a
+properties object are written in ascending order. A writer always writes both, with
+`"properties": {}` when there are none, so every export page has one shape. A fixture that predates
+them has neither, and no rule of §8 reads them.
 
 ### 4.3 Binary — the live point feed
 
@@ -198,11 +239,13 @@ body      := op u8, seq u32, fields
 | 19 | page-template | page id, template |
 | 20 | stroke-add | page id, stroke id, tool u8 (0 pen, 1 pencil), widthClass u8, startMillis u64, count u32, count × (x f32, y f32, pressure f32, tMillis u32, tiltX i8, tiltY i8) |
 | 21 | stroke-remove | page id, stroke id |
+| 22 | note-property | key string, values list |
+| 23 | page-property | page id, key string, values list |
 
 An id is its 16 RFC 9562 bytes, most significant first. A string is u16 byte length + UTF-8. f32 is
 IEEE 754 binary32. A template is u8 0 for null, or u8 1, id string, u8 count, count × (name string,
-value f32), params in the order §6 lists them. A device is its id, name and model, each a string. Op
-values do not overlap §4.3's type bytes.
+value f32), params in the order §6 lists them. A device is its id, name and model, each a string. A
+list is u8 count + strings, as in §7.2. Op values do not overlap §4.3's type bytes.
 
 The magic's last byte is the format's version. A log of another version is refused, not truncated,
 and is left unaltered.
@@ -225,7 +268,7 @@ directory. The block never carries ink.
 | `id` | the container's uuid, Sieve's own (`ident.New`), never the companion's note id |
 | `kind` | `digital-note`, the file's first line |
 | `title` | the note title |
-| `note` | the header: `created`, `pageAspect`, `template`, and `pages`, a list of `{id, template, bounds}` |
+| `note` | the header: `created`, `pageAspect`, `template`, `pages`, a list of `{id, template, bounds}` each with `name` when the page has one, and `properties`, the note's properties as a map of key to list of strings, only when it has any |
 | `note_device` | the note's `device` from its header: `{id, name, model}` |
 | `note_companion` | the companion's identity (the GATT `identity` value) |
 | `note_source_id` | the companion's note id |
@@ -251,12 +294,25 @@ directory. The block never carries ink.
 - `note_device` is copied from the `note-header` and never edited. It says which device a note came
   from; `note_companion` remains the companion's identity on the link.
 - One Sieve holds at most one live container per `(note_companion, note_source_id)`.
+- **Face.** `.meta` carries, beside `note_title`, `note_pages`, `note_device` (the device's name) and
+  `note_whiteboard`: `note_device_id` (the header's device id), `note_type` (the note's `type`),
+  `note_period` (its `period` when that is a `YYYY-MM` month) and `note_properties` (every note
+  property as one JSON object, keys ascending). Each is written on every save, `""` or `{}` when the
+  note has none, so a diary's chunks are found by `note_type` and `note_device_id` from `.meta` alone.
+  A container saved before these keys has none of them and is a notebook or a whiteboard.
+- **Unknown op.** A note whose catch-up meets an op this Sieve does not know keeps its records before
+  that one staged and unpublished, as after a lost link; its source and `note_synced_seq` stay where
+  the catch-up began, and a Sieve that knows the op takes it up from there.
 - **Description.** What Sieve says of a note is kept in `.meta` and never in the block: `display_name`
   (its name), `summary`, `tags` (its keywords, a comma within one written as `;`), `note_keywords`
   and `note_categories` (JSON arrays of strings, as described), `note_meta_seq` (the `seq` the
-  description is of) and `note_meta_sent_seq` (the `seq` of the description last sent as `META`).
-  `title` stays what the tablet wrote. A note is shown by `display_name` when it has one, otherwise
-  by `title`.
+  description is of), `note_meta_sent_seq` (the `seq` of the description last sent as `META`) and
+  `note_named_by`, who names the note when Sieve's describer does not: `hand` for a name a person
+  gave, kept as `display_name` and sent as `META` `title`; `tablet` for a diary chunk, which the
+  face writes on every save of one, has no `display_name`, is sent with an empty `title` and is not
+  renamed. Absent, the describer names it. Either way the describer still writes the rest.
+  `title` stays what the tablet wrote. A note is shown by `display_name` when it has one and is not
+  named by its tablet, otherwise by `title`.
 - **Transcript.** A page is transcribed only when the reader asks. Its transcript is the asset
   `transcript-{pageId}-{key}.json` beside the source, where `key` is the page key (16 hex digits of a
   SHA-256 of what is on the page, `StrokeBasedNote.PageKey`, as for its image

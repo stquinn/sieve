@@ -45,9 +45,12 @@ import { ContractViolation } from '../contract/sieve-block.js'
  */
 
 /**
- * A page as SieveInk exports it: the note header and the page's strokes.
+ * A page as SieveInk exports it: the note header, the page itself and the page's
+ * strokes. A fixture that predates `note.properties` and `page` has neither, and
+ * nothing drawn reads them.
  * @typedef {object} InkPage
- * @property {{pageAspect: number, template?: InkTemplate|null, [field: string]: any}} note
+ * @property {{pageAspect: number, template?: InkTemplate|null, properties?: Record<string, string[]>, [field: string]: any}} note
+ * @property {{id: string, properties: Record<string, string[]>}} [page]
  * @property {InkStroke[]} strokes
  */
 

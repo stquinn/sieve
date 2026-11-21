@@ -112,21 +112,29 @@ type InkLiveNoteResponse struct {
 	Note string `json:"note" doc:"the uuid of the block container holding the mirrored note; empty when there is no Live view or no container holds its note yet"`
 }
 
-// InkPageExport is one page of a Digital Note as the ink renderer takes it: the note's header and
-// the page's strokes in the order they were added.
+// InkPageExport is one page of a Digital Note as the ink renderer takes it: the note's header,
+// the page itself, and the page's strokes in the order they were added.
 type InkPageExport struct {
 	Note    InkExportNote     `json:"note"`
+	Page    InkExportPage     `json:"page"`
 	Strokes []InkExportStroke `json:"strokes"`
+}
+
+// InkExportPage is the page an export is of.
+type InkExportPage struct {
+	ID         string              `json:"id" doc:"the companion's page id"`
+	Properties map[string][]string `json:"properties" doc:"the page's properties, each key to its values; {} when it has none"`
 }
 
 // InkExportNote is the header of the note a page belongs to.
 type InkExportNote struct {
-	ID         string             `json:"id" doc:"the companion's note id"`
-	Created    string             `json:"created" doc:"RFC 3339 in UTC"`
-	Title      string             `json:"title"`
-	PageAspect float32            `json:"pageAspect" doc:"page width over page height"`
-	Template   *InkExportTemplate `json:"template" doc:"the note's default page template; null when it has none"`
-	Device     InkExportDevice    `json:"device"`
+	ID         string              `json:"id" doc:"the companion's note id"`
+	Created    string              `json:"created" doc:"RFC 3339 in UTC"`
+	Title      string              `json:"title"`
+	PageAspect float32             `json:"pageAspect" doc:"page width over page height"`
+	Template   *InkExportTemplate  `json:"template" doc:"the note's default page template; null when it has none"`
+	Device     InkExportDevice     `json:"device"`
+	Properties map[string][]string `json:"properties" doc:"the note's properties, each key to its values; {} when it has none"`
 }
 
 // InkExportTemplate is a page template: its id and its parameters by name.

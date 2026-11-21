@@ -58,6 +58,12 @@ func strokeAdd(p, s link.ID, points ...link.Point) link.Record {
 func strokeRemove(p, s link.ID) link.Record {
 	return link.Record{Op: link.OpStrokeRemove, Page: p, Stroke: s}
 }
+func noteProperty(key string, values ...string) link.Record {
+	return link.Record{Op: link.OpNoteProperty, Key: key, Values: values}
+}
+func pageProperty(p link.ID, key string, values ...string) link.Record {
+	return link.Record{Op: link.OpPageProperty, Page: p, Key: key, Values: values}
+}
 
 // strokesLog is a note of one fixed page holding n strokes.
 func strokesLog(n int) []link.Record {
@@ -187,11 +193,12 @@ func TestReplayFollowsTheContractRules(t *testing.T) {
 	}
 }
 
-// Each record reports what it did on top of a note of two pages, page 1 holding stroke 1 and page
-// 2 removed holding stroke 2.
+// Each record reports what it did on top of a note of type diary and two pages, page 1 named Mon
+// holding stroke 1 and page 2 named Tue, removed, holding stroke 2.
 func TestApplyReportsWhatEachRecordDid(t *testing.T) {
-	before := []link.Record{header("n"), pageAdd(page(1), 0, nil, link.BoundsFixed), strokeAdd(page(1), stroke(1)),
-		pageAdd(page(2), 1, nil, link.BoundsFixed), strokeAdd(page(2), stroke(2)), pageRemove(page(2))}
+	before := []link.Record{header("n"), noteProperty("type", "diary"), pageAdd(page(1), 0, nil, link.BoundsFixed),
+		strokeAdd(page(1), stroke(1)), pageProperty(page(1), "name", "Mon"), pageAdd(page(2), 1, nil, link.BoundsFixed),
+		strokeAdd(page(2), stroke(2)), pageProperty(page(2), "name", "Tue"), pageRemove(page(2))}
 	for _, tc := range []struct {
 		name string
 		rec  link.Record
@@ -214,6 +221,15 @@ func TestApplyReportsWhatEachRecordDid(t *testing.T) {
 		{"a page-template of a present page", pageTemplate(page(1), dots), NoteChanged, NoteChanged},
 		{"a page-template of a removed page", pageTemplate(page(2), dots), NoEffect, NoEffect},
 		{"a note-header", header("again"), NoteChanged, NoteChanged},
+		{"a note-property of a new key", noteProperty("period", "2026-11"), NoteChanged, NoteChanged},
+		{"a note-property changing a key", noteProperty("type", "diary", "more"), NoteChanged, NoteChanged},
+		{"a note-property of the values a key holds", noteProperty("type", "diary"), NoEffect, NoEffect},
+		{"a note-property removing a key", noteProperty("type"), NoteChanged, NoteChanged},
+		{"a note-property removing an absent key", noteProperty("period"), NoEffect, NoEffect},
+		{"a page-property of a present page", pageProperty(page(1), "name", "Wed"), NoteChanged, NoteChanged},
+		{"a page-property of the values a key holds", pageProperty(page(1), "name", "Mon"), NoEffect, NoEffect},
+		{"a page-property on a removed page", pageProperty(page(2), "name", "Wed"), NoEffect, NoEffect},
+		{"a page-property on an unknown page", pageProperty(page(9), "name", "Wed"), NoEffect, NoEffect},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, n := range []struct {
@@ -231,8 +247,53 @@ func TestApplyReportsWhatEachRecordDid(t *testing.T) {
 	}
 	n := ReadStrokeBasedNote("c", jsonlOf(t, logOf(before...)))
 	n.Apply(pageAdd(page(2), 1, nil, link.BoundsFixed))
-	if got := shape(n); got != "p1[- fixed]:1 p2[- fixed]:2" {
-		t.Errorf("a restored page holds %q", got)
+	if got := shape(n); got != "p1[- fixed]:1 p2[- fixed]:2" || n.Pages()[1].Name() != "Tue" {
+		t.Errorf("a restored page holds %q, named %q", got, n.Pages()[1].Name())
+	}
+}
+
+// The note's and each page's properties are what the last record of each key left, a key of no
+// values removed, a key this Sieve does not know kept, in the replay and in the header fold alike.
+func TestReplayKeepsTheNoteAndPageProperties(t *testing.T) {
+	base := []link.Record{header("n"), pageAdd(page(1), 0, nil, link.BoundsFixed), pageAdd(page(2), 1, nil, link.BoundsFixed)}
+	for _, tc := range []struct {
+		name  string
+		ops   []link.Record
+		note  string
+		pages string
+	}{
+		{"none", nil, "map[]", "[map[] map[]]"},
+		{"the last record of a key wins", []link.Record{noteProperty("type", "diary"), noteProperty("period", "2026-10"),
+			noteProperty("period", "2026-11"), pageProperty(page(2), "name", "a"), pageProperty(page(2), "name", "b")},
+			"map[period:[2026-11] type:[diary]]", "[map[] map[name:[b]]]"},
+		{"no values remove a key", []link.Record{noteProperty("type", "diary"), noteProperty("type"),
+			pageProperty(page(1), "name", "a"), pageProperty(page(1), "name")}, "map[]", "[map[] map[]]"},
+		{"unknown keys are kept", []link.Record{noteProperty("x.later-key", "1", "2"), pageProperty(page(1), "colour", "red")},
+			"map[x.later-key:[1 2]]", "[map[colour:[red]] map[]]"},
+		{"a page not present is a no-op", []link.Record{pageRemove(page(2)), pageProperty(page(2), "name", "a"),
+			pageAdd(page(2), 1, nil, link.BoundsFixed)}, "map[]", "[map[] map[]]"},
+		{"a removed page keeps its properties", []link.Record{pageProperty(page(2), "name", "a"), pageRemove(page(2)),
+			pageAdd(page(2), 1, nil, link.BoundsFixed)}, "map[]", "[map[] map[name:[a]]]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			log := logOf(append(append([]link.Record(nil), base...), tc.ops...)...)
+			fold := NewHeaderFold("c")
+			for _, r := range log {
+				fold.Apply(r)
+			}
+			for _, n := range []*StrokeBasedNote{ReadStrokeBasedNote("c", jsonlOf(t, log)), fold} {
+				var pages []Properties
+				for _, p := range n.Pages() {
+					pages = append(pages, p.Properties)
+				}
+				if got := fmt.Sprint(n.Properties()); got != tc.note {
+					t.Errorf("note properties %s, want %s", got, tc.note)
+				}
+				if got := fmt.Sprint(pages); got != tc.pages {
+					t.Errorf("page properties %s, want %s", got, tc.pages)
+				}
+			}
+		})
 	}
 }
 
@@ -269,15 +330,17 @@ func TestReadStopsAtTheFirstLineThatDoesNotFollow(t *testing.T) {
 	}
 }
 
-// The export page has the fixtures' keys and nesting, plus the device the contract adds.
+// The export page has the fixtures' keys and nesting, plus the device, the note's properties and
+// the page the contract adds, which are written whether or not the note and page have properties.
 func TestExportPageHasTheFixturesShape(t *testing.T) {
 	n := ReadStrokeBasedNote("c", jsonlOf(t, logOf(header("n"), pageAdd(page(1), 0, nil, link.BoundsUnbounded),
-		strokeAdd(page(1), stroke(1), aPoint, offSheet))))
+		strokeAdd(page(1), stroke(1), aPoint, offSheet), pageAdd(page(2), 1, nil, link.BoundsUnbounded),
+		noteProperty("type", "diary"), noteProperty("period", "2026-11"), pageProperty(page(2), "name", "2026-11-20"))))
 	exported, err := n.ExportPage(0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := n.ExportPage(1); err == nil {
+	if _, err := n.ExportPage(2); err == nil {
 		t.Error("a page out of range exported")
 	}
 	ours := keysOf(t, exported)
@@ -291,8 +354,11 @@ func TestExportPageHasTheFixturesShape(t *testing.T) {
 			t.Fatal(err)
 		}
 		theirs := keysOf(t, raw)
-		theirs["note"] = append(theirs["note"], "device")
+		theirs["note"] = append(theirs["note"], "device", "properties")
+		theirs[""] = append(theirs[""], "page")
+		theirs["page"] = []string{"id", "properties"}
 		sort.Strings(theirs["note"])
+		sort.Strings(theirs[""])
 		for path, keys := range theirs {
 			if fmt.Sprint(ours[path]) != fmt.Sprint(keys) {
 				t.Errorf("%s: %s has %v, ours %v", f, path, keys, ours[path])
@@ -318,6 +384,20 @@ func TestExportPageHasTheFixturesShape(t *testing.T) {
 	}
 	if p := page.Strokes[0].Points[1]; p.X != -1.5 || p.Y != -2.25 || p.Size != 0 {
 		t.Errorf("point %+v", p)
+	}
+	for at, want := range []string{
+		`"properties":{"period":["2026-11"],"type":["diary"]}},"page":{"id":"019a0000-0000-7000-8000-000000000011","properties":{}},"strokes":[{`,
+		`"properties":{"period":["2026-11"],"type":["diary"]}},"page":{"id":"019a0000-0000-7000-8000-000000000012","properties":{"name":["2026-11-20"]}},"strokes":[]}`,
+	} {
+		exported, err := n.ExportPage(at)
+		if err != nil || !strings.Contains(string(exported), want) {
+			t.Errorf("page %d exports %s, %v; want it to hold %s", at, exported, err, want)
+		}
+	}
+
+	bare, _ := ReadStrokeBasedNote("c", jsonlOf(t, logOf(header("n"), pageAdd(testID(0x11), 0, nil, link.BoundsFixed)))).ExportPage(0)
+	if !strings.Contains(string(bare), `"properties":{}},"page":{"id":"019a0000-0000-7000-8000-000000000011","properties":{}},"strokes":[]}`) {
+		t.Errorf("a page of a note without properties exports %s", bare)
 	}
 }
 
@@ -395,6 +475,8 @@ func TestPageKeyNamesWhatIsOnThePage(t *testing.T) {
 		{"another title", 0, with(header("renamed")), true},
 		{"another device", 0, with(withHeader(func(h *link.Record) { h.Device = link.Device{ID: "other", Name: "Tab Ultra"} })), true},
 		{"another created time", 0, with(withHeader(func(h *link.Record) { h.CreatedMillis++ })), true},
+		{"a note property", 0, with(noteProperty("type", "diary")), true},
+		{"a page name", 0, with(pageProperty(page(1), "name", "2026-11-20")), true},
 		{"the same ink on an unbounded page", 0, []link.Record{base[0], pageAdd(page(1), 0, nil, link.BoundsUnbounded),
 			base[2], base[3]}, false},
 		{"another page with the same ink", 1, append([]link.Record{base[0], base[1], base[2]}, strokeAdd(page(2), stroke(1))), false},

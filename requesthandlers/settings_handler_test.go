@@ -502,7 +502,7 @@ func TestInkFragment_RendersEachState(t *testing.T) {
 	}{
 		{"off", ink.Status{Supported: true, Link: ink.LinkState{Phase: ink.LinkOff}, Notes: notes, Companions: companions},
 			[]string{`id="ink-enabled"`, "Sync notebooks from SieveInk", "Ideas", "2 pages · seq 9", "Note Air 2", "1 notebook", "Synced Notebooks"},
-			[]string{"checked", key, "New key", `id="ink-link"`, "Untitled 05/11"}},
+			[]string{"checked", key, "New key", `id="ink-link"`, "Untitled 05/11", "ink-note-unreadable"}},
 		{"looking", ink.Status{Enabled: true, Supported: true, Key: key, SieveID: "0123abcd",
 			Link: ink.LinkState{Phase: ink.LinkLooking}},
 			[]string{"checked", key, "Type this key into SieveInk under Pair new", "0123abcd", "New key",
@@ -519,6 +519,9 @@ func TestInkFragment_RendersEachState(t *testing.T) {
 		{"unsupported", ink.Status{Enabled: true, Key: key, Link: ink.LinkState{Phase: ink.LinkLooking}},
 			[]string{"Bluetooth ink is not supported on this computer"},
 			[]string{"Looking for a companion"}},
+		{"a note this Sieve cannot read", ink.Status{Supported: true, Link: ink.LinkState{Phase: ink.LinkOff},
+			Notes: []ink.SyncedNote{{UUID: "u", Name: "Ideas", Pages: 2, Seq: 9, Unreadable: true}, {UUID: "v", Name: "Board", Pages: 1, Seq: 2}}},
+			[]string{"Ideas", "holds records this Sieve does not understand: a newer Sieve is needed to sync it"}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out strings.Builder
@@ -567,8 +570,15 @@ func TestInkSidebar_RendersEachState(t *testing.T) {
 			append([]string{`aria-expanded="false"`, `{"open": true}`}, row...),
 			[]string{"data-ink-note", "data-ink-live", "data-ink-live-dot", "No synced notebooks yet", "data-ctx-id"}},
 		{"collapsed with a delete refused", ink.Status{Enabled: true, Notes: []ink.SyncedNote{{UUID: "n-ideas", Name: "Ideas", Pages: 2, Deletion: ink.DeleteRefused}}}, collapsed,
-			append([]string{`<span hidden data-ink-refused="n-ideas" data-ctx-delete-refused="` + inkDeleteRefused + `">`}, row...),
-			[]string{"data-ink-note", "data-ctx-id"}},
+			append([]string{`<span hidden data-ink-facts="n-ideas" data-ctx-delete-refused="` + inkDeleteRefused + `">`}, row...),
+			[]string{"data-ink-note", "data-ctx-id", "data-ctx-name-fixed"}},
+		{"collapsed with a name its tablet gives", ink.Status{Enabled: true, Notes: []ink.SyncedNote{{UUID: "n-diary", Name: "November", Pages: 2, Deletion: ink.DeleteReturns, NamedBy: ink.NamedByTablet}}}, collapsed,
+			append([]string{`<span hidden data-ink-facts="n-diary" data-ctx-name-fixed="true">`}, row...),
+			[]string{"data-ink-note", "data-ctx-delete-refused"}},
+		{"a name its tablet gives", ink.Status{Enabled: true, Notes: []ink.SyncedNote{{UUID: "n-diary", Name: "November", Pages: 2, Deletion: ink.DeleteReturns, NamedBy: ink.NamedByTablet}}}, expanded,
+			[]string{`data-ink-note="n-diary"
+  data-ctx-name-fixed="true"
+  data-ctx-id="n-diary"`}, nil},
 		{"collapsed while live", ink.Status{Enabled: true, Notes: notes, Live: live}, collapsed,
 			append([]string{"data-ink-live-dot"}, row...), []string{`data-ink-live="live"`, "data-ink-note"}},
 		{"collapsed while waiting", ink.Status{Enabled: true, Notes: notes, Live: waiting}, collapsed,
@@ -789,7 +799,8 @@ func TestInkDelete_RemovesSievesCopyAndItsTab(t *testing.T) {
 
 // Renaming a notebook offers the rename dialog posting its own route, which answers 204 and gives
 // the name the tab, the sidebar's Notebooks item and the search read; an empty name gives back the
-// tablet's title; a name too long for the tablet is 400 and what is no Digital Note 404.
+// tablet's title; a name too long for the tablet is 400, a diary its tablet names 409 and what is no
+// Digital Note 404.
 func TestInkRename_NamesTheNotebookEverywhereItIsShown(t *testing.T) {
 	srv, sp := newInkServer(t)
 	settings := sp.State.LoadSettings()
@@ -840,6 +851,14 @@ func TestInkRename_NamesTheNotebookEverywhereItIsShown(t *testing.T) {
 	}
 	if status, _ := do(t, http.MethodPost, srv.URL+"/api/ink/notes/"+ident.New()+"/rename", "application/x-www-form-urlencoded", "name=x"); status != http.StatusNotFound {
 		t.Errorf("renaming what is no notebook: %d, want 404", status)
+	}
+	diary, err := sp.Containers.Create(ink.KindDigitalNote, map[string]interface{}{"title": "November",
+		"note": map[string]interface{}{"properties": map[string]interface{}{"type": []interface{}{"diary"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, body := do(t, http.MethodPost, srv.URL+"/api/ink/notes/"+diary.UUID()+"/rename", "application/x-www-form-urlencoded", "name=x"); status != http.StatusConflict || !strings.Contains(body, inkNameFixed) {
+		t.Errorf("renaming a diary: %d %q, want 409", status, body)
 	}
 }
 

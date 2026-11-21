@@ -99,12 +99,13 @@
     var name = target.dataset.ctxName || '';
     var intent = target.dataset.ctxIntent || '';
     var deleteRefused = target.dataset.ctxDeleteRefused || '';
+    var nameFixed = target.dataset.ctxNameFixed === 'true';
     var ctxType = target.dataset.ctxType || 'note';
     if (isDir) ctxType = 'folder';
     document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
       detail: {
         x: e.clientX, y: e.clientY,
-        context: { type: ctxType, id: id, name: name, intent: intent, isTab: isTab, isVirtual: isVirtual, deleteRefused: deleteRefused }
+        context: { type: ctxType, id: id, name: name, intent: intent, isTab: isTab, isVirtual: isVirtual, deleteRefused: deleteRefused, nameFixed: nameFixed }
       }
     }));
   });

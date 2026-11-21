@@ -44,6 +44,16 @@ describe('InkRenderer renders the conformance set', () => {
       .toMatchFileSnapshot(path.join(ASSETS, fixture, 'boox-page-strokes.svg'))
   })
 
+  it.each(FIXTURES)('%s renders the same bytes carrying the note\'s properties and its page', (fixture) => {
+    const page = loadPage(fixture)
+    const named = {
+      ...page,
+      note: { ...page.note, properties: { period: ['2026-11'], type: ['diary'] } },
+      page: { id: '019a0000-0000-7000-8000-000000000002', properties: { name: ['2026-11-20'] } },
+    }
+    expect(renderer.renderPage(named)).toBe(renderer.renderPage(page))
+  })
+
   it.each(FIXTURES)('%s renders the same bytes from a fresh renderer', (fixture) => {
     const page = loadPage(fixture)
     expect(new InkRenderer({ getStroke }).renderPage(page)).toBe(renderer.renderPage(page))

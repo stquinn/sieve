@@ -12,6 +12,7 @@
 import { AbstractSurface, SurfaceEvent, SurfaceIntent } from '../abstract-surface.js'
 import { InkFeed, InkTranscriptState } from '../../contract/ink-container-provider.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
+import { PageNames } from '../../renderers/page-names.js'
 import { QuestionListView } from '../../renderers/question-list-view.js'
 import { SyncingPanel } from '../../renderers/syncing-panel.js'
 import { ActionStatus } from './action-status.js'
@@ -110,7 +111,8 @@ export class TranscriptSurface extends AbstractSurface {
   /** @type {PageSurfaceHost} */ #host
   /** @type {QuestionListView} */ #list
   /** @type {ActionStatus} what is under way, or came of the last New document */ #status = new ActionStatus()
-  /** @type {NotePager} */ #pager = new NotePager(this)
+  /** @type {PageNames} */ #names = new PageNames()
+  /** @type {NotePager} */ #pager = new NotePager(this, this.#names)
   /** @type {string} the name of the device the note was written on; '' when unknown */ #device = ''
 
   /** @type {boolean} between mount and unmount */ #mounted = false
@@ -176,7 +178,7 @@ export class TranscriptSurface extends AbstractSurface {
   get shownPage() { return this.#shown }
 
   /** @override @returns {Readonly<import('../document-editor/selection-model.js').RawSelectionDescriptor>} the page shown */
-  feedSelection() { return InkPlace.describe(this.mode, this.#index(), this.#pages.length) }
+  feedSelection() { return InkPlace.describe(this.mode, this.#names, this.#pages, this.#index()) }
 
   /** @returns {ReadonlySet<string>} the pages marked as holding ink not yet seen */
   get unseenPages() { return this.#unseen }
@@ -204,7 +206,7 @@ export class TranscriptSurface extends AbstractSurface {
    */
   stats() {
     const index = this.#index()
-    const where = index < 0 ? 'No pages' : `Page ${index + 1} of ${this.#pages.length}`
+    const where = index < 0 ? 'No pages' : this.#names.place(this.#pages, index)
     const count = this.#transcript ? this.#transcript.blocks.length : 0
     return {
       chars: 0, lines: 0, blockCount: count,

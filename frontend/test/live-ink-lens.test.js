@@ -85,6 +85,13 @@ describe('LiveInkLens', () => {
     expect(readout(lens)).toEqual(['Live', 'Ideas', 'Page 2 of 2', '1 stroke', 'Note Air 2'])
   })
 
+  it('reads out the name of the page the tablet is on', async () => {
+    const attrs = liveAttrs({ page: 'p2' })
+    attrs.note.pages = attrs.note.pages.map((p) => ({ ...p, name: 'Kitchen' }))
+    const { lens } = await presented(attrs)
+    expect(readout(lens)).toEqual(['Live', 'Ideas', 'Kitchen · 2 / 2', '1 stroke', 'Note Air 2'])
+  })
+
   it('draws the committed strokes and the pen live on the page written, and nothing of another page', async () => {
     const { provider, root } = await presented(liveAttrs())
     provider.emit({ type: InkFeed.STROKE_ADDED, pageId: 'p2', seq: 11, stroke: pen('elsewhere') })

@@ -9,6 +9,7 @@
 
 import { AbstractSurface, SurfaceEvent, SurfaceIntent } from '../abstract-surface.js'
 import { InkFeed } from '../../contract/ink-container-provider.js'
+import { PageNames } from '../../renderers/page-names.js'
 import { rendererStyles } from '../../renderers/renderer-style-registry.js'
 import { InkPlace } from './ink-place.js'
 import { InkSheet } from './ink-sheet.js'
@@ -44,6 +45,7 @@ export class LiveSurface extends AbstractSurface {
   /** @type {InkContainerProvider} */ #provider
   /** @type {LiveSurfaceHost} */ #host
   /** @type {InkSheet} */ #sheet
+  /** @type {PageNames} */ #names = new PageNames()
 
   /** @type {boolean} between mount and unmount */ #mounted = false
   /** @type {HTMLElement} */ #root
@@ -76,7 +78,7 @@ export class LiveSurface extends AbstractSurface {
   /** @override @returns {Readonly<import('../document-editor/selection-model.js').RawSelectionDescriptor>} the page shown */
   feedSelection() {
     const shown = this.#sheet.shown
-    return InkPlace.describe(this.mode, this.#sheet.indexOf(shown), this.#sheet.pages.length)
+    return InkPlace.describe(this.mode, this.#names, this.#sheet.pages, this.#sheet.indexOf(shown))
   }
 
   /** @returns {Mirrored} what the view mirrors */
@@ -95,7 +97,7 @@ export class LiveSurface extends AbstractSurface {
     const index = this.#sheet.indexOf(shown)
     const where = index < 0 ? 'No page'
       : this.#sheet.isUnbounded(shown) ? 'Whiteboard'
-        : `Page ${index + 1} of ${this.#sheet.pages.length}`
+        : this.#names.place(this.#sheet.pages, index)
     const count = this.#sheet.strokeCount
     return {
       chars: 0, lines: 0, blockCount: 0,

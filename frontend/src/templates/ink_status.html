@@ -63,6 +63,7 @@
     {{range .Notes}}
     <div style="display: flex; gap: 0.5rem; align-items: center; padding: 0.4rem 1rem; background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; font-size: 0.875rem;">
       <span style="flex: 1; color: var(--theme-text);">{{if .Name}}{{.Name}}{{else}}Untitled notebook{{end}}</span>
+      {{if .Unreadable}}<span class="ink-note-unreadable" style="color: var(--theme-accentRed);">holds records this Sieve does not understand: a newer Sieve is needed to sync it</span>{{end}}
       <span style="color: var(--theme-textDim);">{{.Pages}} {{if eq .Pages 1}}page{{else}}pages{{end}} · seq {{.Seq}}</span>
     </div>
     {{else}}

@@ -861,6 +861,8 @@ describe('the notebook and Live menus', () => {
       ['Open', 'Open on device', 'Resync', 'Refresh name and summary', 'Rename...', 'Show in Files', 'Delete Notebook...']],
     ['a tab', { type: 'notebook', id: 'n1', name: 'Ideas', isTab: true },
       ['Open on device', 'Resync', 'Refresh name and summary', 'Rename...', 'Show in Files', 'Delete Notebook...', 'Close Tab', 'Close Others', 'Close All Tabs']],
+    ['a tree row of a notebook its tablet names', { type: 'notebook', id: 'n1', name: 'November', isTab: false, nameFixed: true },
+      ['Open', 'Open on device', 'Resync', 'Refresh name and summary', 'Show in Files', 'Delete Notebook...']],
     ['the Live row', { type: 'inkLive', id: 'v1', name: 'Live', isTab: false }, ['Open this note']],
     ['the Live tab', { type: 'inkLive', id: 'v1', name: 'Live', isTab: true }, ['Open this note', 'Close Tab', 'Close Others', 'Close All Tabs']],
   ])('%s offers its own items', (_, context, want) => {
@@ -884,6 +886,17 @@ describe('the notebook and Live menus', () => {
     delete (/** @type {any} */ (window)).sieveShowInFiles
   })
 
+  it('a tab of a notebook its tablet names offers no Rename..., as the Notebooks item\'s marker says', () => {
+    const marker = document.createElement('span')
+    marker.hidden = true
+    marker.setAttribute('data-ink-facts', 'n1')
+    marker.setAttribute('data-ctx-name-fixed', 'true')
+    document.body.appendChild(marker)
+    const labels = labelsOf(openOn({ type: 'notebook', id: 'n1', name: 'November', isTab: true }))
+    expect([labels.includes('Rename...'), labels.includes('Refresh name and summary')]).toEqual([false, true])
+    marker.remove()
+  })
+
   it('Delete on a notebook the tablet still offers is disabled and says why: a row from its own word, a tab from the Notebooks item\'s marker, expanded or collapsed', () => {
     const why = 'The tablet still has this notebook.'
     const refusedDelete = (/** @type {object} */ context) => itemNamed(openOn(context), 'Delete Notebook...')
@@ -894,7 +907,7 @@ describe('the notebook and Live menus', () => {
     expect(refusedDelete({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: true }).hasAttribute('disabled')).toBe(false)
     const marker = document.createElement('span')
     marker.hidden = true
-    marker.setAttribute('data-ink-refused', 'n1')
+    marker.setAttribute('data-ink-facts', 'n1')
     marker.setAttribute('data-ctx-delete-refused', why)
     document.body.appendChild(marker)
     const tab = refusedDelete({ type: 'notebook', id: 'n1', name: 'Ideas', isTab: true })

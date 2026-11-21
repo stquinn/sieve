@@ -498,6 +498,64 @@ func TestInkService_ALinkEndingMidCatchUpFinishesEveryJob(t *testing.T) {
 	rig.stopPromptly()
 }
 
+// A note holding a record of an op this Sieve does not know stops there: its catch-up stays
+// staged and unpublished, its job finishes, Settings shows it as needing a newer Sieve, and the
+// link stays up for the diary chunk queued after it, whose properties reach its block and face.
+func TestInkService_ANoteHoldingAnUnknownOpIsParkedAndTheNextReplicates(t *testing.T) {
+	records := inkLog()
+	rig := newInkRig(t, records[:2])
+	if err := rig.sync(); err != nil {
+		t.Fatal(err)
+	}
+	ideas := rig.container()
+	rig.companion.SetRecords(append(append([]link.Record(nil), records[:3]...), link.Record{Seq: 4, Op: 24}))
+	chunk := testID(0xb1)
+	chunkLog := logOf(header("November"), noteProperty("type", "diary"), noteProperty("period", "2026-11"),
+		pageAdd(page(1), 0, nil, link.BoundsFixed), pageProperty(page(1), "name", "2026-11-20"), strokeAdd(page(1), stroke(1)))
+	rig.companion.SetNote(chunk, chunkLog)
+	rig.enable(linkKey)
+	rig.start()
+	st := rig.await("the diary chunk synced", func(st Status) bool {
+		for _, n := range st.Notes {
+			if n.Title == "November" && n.Seq == uint32(len(chunkLog)) {
+				return true
+			}
+		}
+		return false
+	})
+	for _, n := range st.Notes {
+		if (n.UUID == ideas.UUID()) != n.Unreadable {
+			t.Errorf("listed %+v", n)
+		}
+	}
+	if !connected(st) || rig.radio.dials.Load() != 1 {
+		t.Errorf("the link was dropped: %+v after %d dials", st.Link, rig.radio.dials.Load())
+	}
+	waitFor(t, func() bool { return len(rig.jobs.open()) == 0 })
+	rig.stopPromptly()
+
+	if got := rig.asset(ideas, StrokesKey); !bytes.Equal(got, jsonlOf(t, records[:2])) {
+		t.Errorf("the parked note's log is %s", got)
+	}
+	if staged, err := rig.staging.Resume(ideas.UUID(), chainOf(t, records[:2])); err != nil || len(staged.Records) != 1 || staged.Records[0].Seq != 3 {
+		t.Errorf("staged %+v, %v; want the record before the unknown one", staged.Records, err)
+	}
+	found, err := reopen(t, rig.st).Find(KindDigitalNote, map[string]string{"note_type": "diary", "note_device_id": aDevice.ID})
+	if err != nil || len(found) != 1 {
+		t.Fatalf("diary chunks %v, %v", found, err)
+	}
+	for uuid, face := range found {
+		c, err := reopen(t, rig.st).Load(uuid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pages := c.Block().Attrs["note"].(map[string]interface{})["pages"].([]interface{})
+		if face["note_period"] != "2026-11" || pages[0].(map[string]interface{})["name"] != "2026-11-20" {
+			t.Errorf("the chunk's face %v and pages %v", face, pages)
+		}
+	}
+}
+
 // The session's observer reports each note's sync to its job: a HEAD behind makes one active, a
 // HEAD not behind none, a REFUSE ends it, a REFUSE ahead keeps it for the rewind that follows,
 // which queues it as a repair, and a DONE ends it.
@@ -1658,7 +1716,7 @@ func (r *liveRecorder) last() string {
 // its tab is closed, its container is told deleted, the session and the views of ink are told, and
 // it resolves no more.
 func TestInkService_TheLiveViewLastsFromTheFirstLiveNoteToTheGraceAfterTheLast(t *testing.T) {
-	records := inkLog()
+	records := logOf(append(inkLog(), pageProperty(page(1), "name", "2026-11-20"))...)
 	rig := newInkRig(t, records)
 	timer := &graceTimer{}
 	rig.svc.view.afterFunc = timer.afterFunc
@@ -1693,7 +1751,7 @@ func TestInkService_TheLiveViewLastsFromTheFirstLiveNoteToTheGraceAfterTheLast(t
 	pages, _ := note["pages"].([]interface{})
 	device, _ := node.Attrs["note_device"].(map[string]interface{})
 	if node.Kind != KindLive || node.ID != view.UUID() || node.Title != "Live · "+aDevice.Name || node.Attrs["id"] != view.UUID() ||
-		len(pages) != 2 || device["name"] != aDevice.Name {
+		len(pages) != 2 || pages[0].(map[string]interface{})["name"] != "2026-11-20" || device["name"] != aDevice.Name {
 		t.Errorf("node %+v", node)
 	}
 	if want := uuid + " page=" + page(1).String() + " waiting=false"; heard.last() != want {
@@ -2195,6 +2253,33 @@ func TestInkService_ADescriptionGoesToTheTabletItsNoteCameFrom(t *testing.T) {
 	rig.awaitMetas(3)
 	if tab := rig.state.LoadSession().Tabs[0]; tab.DisplayName != "Ideas" {
 		t.Errorf("cleared, the tab reads %q", tab.DisplayName)
+	}
+}
+
+// A diary chunk is named by its tablet: its description goes as META with an empty title, it is
+// listed by the tablet's title and as NamedByTablet, and Rename refuses it.
+func TestInkService_ADiaryKeepsItsTabletsTitle(t *testing.T) {
+	records := logOf(header("November"), noteProperty("type", "diary"), pageAdd(page(1), 0, nil, link.BoundsFixed), strokeAdd(page(1), stroke(1)))
+	rig := newInkRig(t, records)
+	rig.enable(linkKey)
+	rig.start()
+	st := rig.await("caught up", func(st Status) bool {
+		return connected(st) && len(st.Notes) == 1 && st.Notes[0].Seq == uint32(len(records))
+	})
+	uuid := st.Notes[0].UUID
+	if err := rig.svc.keepDescription(uuid, uint32(len(records)), kitchen); err != nil {
+		t.Fatal(err)
+	}
+	got := rig.awaitMetas(1)[0]
+	want := link.Meta{Note: noteID, Keywords: kitchen.Keywords, Categories: kitchen.Categories, Summary: kitchen.Summary, AsOfSeq: uint32(len(records))}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("META %+v, want %+v", got, want)
+	}
+	if n := rig.svc.Status().Notes[0]; n.Name != "November" || n.NamedBy != NamedByTablet {
+		t.Errorf("listed as %q, named by %q", n.Name, n.NamedBy)
+	}
+	if err := rig.svc.Rename(uuid, "Mine"); !errors.Is(err, ErrNamedByTablet) {
+		t.Errorf("renaming a diary: %v", err)
 	}
 }
 

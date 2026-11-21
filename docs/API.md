@@ -1060,11 +1060,12 @@ InkPageExportRequest reads one page of a synced Digital Note in the export shape
 
 **Response** — `protocol.InkPageExport`
 
-InkPageExport is one page of a Digital Note as the ink renderer takes it: the note's header and the page's strokes in the order they were added.
+InkPageExport is one page of a Digital Note as the ink renderer takes it: the note's header, the page itself, and the page's strokes in the order they were added.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
 | `note` | `protocol.InkExportNote` | yes |  |
+| `page` | `protocol.InkExportPage` | yes |  |
 | `strokes` | `[]protocol.InkExportStroke` | yes |  |
 
 ### `GET /api/ink/notes/{uuid}/pages/{page}/image`
@@ -1283,6 +1284,16 @@ InkExportNote is the header of the note a page belongs to.
 | `pageAspect` | `float32` | yes | page width over page height |
 | `template` | `*protocol.InkExportTemplate` | no | the note's default page template; null when it has none |
 | `device` | `protocol.InkExportDevice` | yes |  |
+| `properties` | `map[string][]string` | yes | the note's properties, each key to its values; {} when it has none |
+
+### `protocol.InkExportPage`
+
+InkExportPage is the page an export is of.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `id` | `string` | yes | the companion's page id |
+| `properties` | `map[string][]string` | yes | the page's properties, each key to its values; {} when it has none |
 
 ### `protocol.InkExportPoint`
 

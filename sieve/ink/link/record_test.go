@@ -2,8 +2,10 @@ package link
 
 import (
 	"bytes"
+	"errors"
 	"math"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -32,7 +34,10 @@ func TestEveryRecordRoundTripsThroughBothCodecs(t *testing.T) {
 				{float32(math.Copysign(0, -1)), 1.0 / 3.0, 1, 0, 0, -1},
 				{math.SmallestNonzeroFloat32, math.MaxFloat32, 0.1, 17, 90, -90},
 			}},
-		"stroke-add without points": {Seq: 3, Op: OpStrokeAdd, Page: vectorPage, Stroke: vectorStroke, Tool: ToolPencil, WidthClass: 2, Points: []Point{}},
+		"stroke-add without points":      {Seq: 3, Op: OpStrokeAdd, Page: vectorPage, Stroke: vectorStroke, Tool: ToolPencil, WidthClass: 2, Points: []Point{}},
+		"note-property removing its key": {Seq: 9, Op: OpNoteProperty, Key: "period", Values: []string{}},
+		"page-property at its limits": {Seq: 9, Op: OpPageProperty, Page: vectorPage, Key: "a" + strings.Repeat("-.9z", 15) + "abc",
+			Values: append(slices.Repeat([]string{strings.Repeat("é", 64)}, 63), "")},
 	} {
 		cases[name] = r
 	}
@@ -83,6 +88,9 @@ func TestJSONLinesAreWrittenInTheContractsForm(t *testing.T) {
 		{vectorRecords[3], `{"seq":4,"op":"page-template","page":"019a0000-0000-7000-8000-000000000002","template":null}`},
 		{vectorRecords[4], `{"seq":5,"op":"stroke-remove","page":"019a0000-0000-7000-8000-000000000002","id":"019a0000-0000-7000-8000-000000000003"}`},
 		{vectorRecords[5], `{"seq":6,"op":"page-remove","page":"019a0000-0000-7000-8000-000000000002"}`},
+		{vectorRecords[6], `{"seq":7,"op":"note-property","key":"type","values":["diary"]}`},
+		{vectorRecords[7], `{"seq":8,"op":"page-property","page":"019a0000-0000-7000-8000-000000000002","key":"name","values":["2026-11-20"]}`},
+		{Record{Seq: 9, Op: OpNoteProperty, Key: "period"}, `{"seq":9,"op":"note-property","key":"period","values":[]}`},
 		{Record{Seq: 2, Op: OpPageAdd, Page: vectorPage, Index: 1, Template: &Template{ID: "blank"}, Bounds: BoundsUnbounded},
 			`{"seq":2,"op":"page-add","page":"019a0000-0000-7000-8000-000000000002","index":1,"template":{"id":"blank","params":{}},"bounds":"unbounded"}`},
 	} {
@@ -116,6 +124,10 @@ func TestParseJSONLineRejects(t *testing.T) {
 		{"a created time finer than a millisecond", `{"seq":1,"op":"note-header","id":"019a0000-0000-7000-8000-000000000001","created":"2023-11-14T22:13:20.1234Z","title":"","pageAspect":0.75,"template":null,"device":{"id":"","name":"","model":""}}`},
 		{"a created time that is not RFC 3339", `{"seq":1,"op":"note-header","id":"019a0000-0000-7000-8000-000000000001","created":"1700000000000","title":"","pageAspect":0.75,"template":null,"device":{"id":"","name":"","model":""}}`},
 		{"not JSON", `seq 6`},
+		{"a property key with a capital", `{"seq":7,"op":"note-property","key":"Type","values":["diary"]}`},
+		{"a property without values", `{"seq":7,"op":"note-property","key":"type"}`},
+		{"a property value that is not a string", `{"seq":7,"op":"note-property","key":"type","values":[1]}`},
+		{"a page-property without its page", `{"seq":8,"op":"page-property","key":"name","values":["x"]}`},
 	} {
 		if r, err := ParseJSONLine([]byte(c.line)); err == nil {
 			t.Errorf("%s: took %+v", c.name, r)
@@ -127,6 +139,7 @@ func TestParseBodyRejects(t *testing.T) {
 	header, _ := vectorRecords[0].Body()
 	stroke, _ := vectorRecords[2].Body()
 	pageAdd, _ := vectorRecords[1].Body()
+	noteProperty, _ := vectorRecords[6].Body()
 	with := func(body []byte, at int, b byte) []byte {
 		out := append([]byte{}, body...)
 		out[at] = b
@@ -146,10 +159,18 @@ func TestParseBodyRejects(t *testing.T) {
 		{"a title that is not UTF-8", append(append(append([]byte{}, header[:titleAt]...), 1, 0, 0xff), header[titleAt+2:]...)},
 		{"a page aspect that is not finite", append(append(append([]byte{}, header[:titleAt+2]...), 0, 0, 0xc0, 0x7f), header[titleAt+6:]...)},
 		{"more points than bytes", with(stroke, 1+4+32+2+8, 0xff)},
+		{"a property key that is not §3's", with(noteProperty, 1+4+2, 'T')},
+		{"a property value that is not UTF-8", with(noteProperty, len(noteProperty)-1, 0xff)},
+		{"more property values than bytes", with(noteProperty, 1+4+2+4, 2)},
 	} {
 		if r, err := ParseBody(c.body); err == nil {
 			t.Errorf("%s: took %+v", c.name, r)
+		} else if errors.Is(err, ErrUnknownOp) != (c.name == "an unknown op") {
+			t.Errorf("%s: %v", c.name, err)
 		}
+	}
+	if r, err := ParseBody(with(pageAdd, 0, 24)); !errors.Is(err, ErrUnknownOp) || r.Op != 24 || r.Seq != 2 {
+		t.Errorf("a later op: %+v, %v", r, err)
 	}
 }
 
@@ -164,9 +185,19 @@ func TestARecordThatNoCodecCanCarryIsNotEncoded(t *testing.T) {
 		{"a NaN pressure", Record{Seq: 1, Op: OpStrokeAdd, Points: []Point{{Pressure: float32(math.NaN())}}}},
 		{"tool 2", Record{Seq: 1, Op: OpStrokeAdd, Tool: 2}},
 		{"too many params", Record{Seq: 1, Op: OpPageTemplate, Template: &Template{ID: "t", Params: make([]TemplateParam, 256)}}},
+		{"an empty property key", Record{Seq: 1, Op: OpNoteProperty, Values: []string{"a"}}},
+		{"a property key beginning with a digit", Record{Seq: 1, Op: OpNoteProperty, Key: "1key"}},
+		{"a property key with an underscore", Record{Seq: 1, Op: OpPageProperty, Key: "a_b"}},
+		{"a property key too long", Record{Seq: 1, Op: OpNoteProperty, Key: strings.Repeat("a", 65)}},
+		{"too many property values", Record{Seq: 1, Op: OpNoteProperty, Key: "a", Values: make([]string, 65)}},
+		{"a property value too long", Record{Seq: 1, Op: OpPageProperty, Key: "a", Values: []string{strings.Repeat("x", 129)}}},
+		{"a property value that is not UTF-8", Record{Seq: 1, Op: OpNoteProperty, Key: "a", Values: []string{"\xff\xfe"}}},
 	} {
 		if _, err := c.record.Body(); err == nil {
 			t.Errorf("%s: a body was written", c.name)
+		}
+		if _, err := c.record.Body(); errors.Is(err, ErrUnknownOp) != (c.record.Op == 99) {
+			t.Errorf("%s: %v", c.name, err)
 		}
 		if _, err := c.record.JSONLine(); err == nil {
 			t.Errorf("%s: a JSON line was written", c.name)

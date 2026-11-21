@@ -964,9 +964,10 @@ import { selectNextScope } from './interaction-policy.js'
     })
   }
 
-  function notebookActions(id, name) {
+  // A notebook's own actions; Rename... only when its name is not fixed.
+  function notebookActions(id, name, nameFixed) {
     var called = name || 'the notebook'
-    return [
+    var items = [
       { icon: IC.externalLink, label: 'Open on device', action: function () {
         sayStatus('Opening ' + called + ' on the tablet…')
         notebookRequest('/api/ink/notes/' + id + '/open-on-tablet')
@@ -984,35 +985,42 @@ import { selectNextScope } from './interaction-policy.js'
           .then(function () { sayStatus('Naming ' + called + '…') })
           .catch(function (err) { sayStatus(err.message, true) })
       }},
-      { icon: IC.edit, label: 'Rename...', action: function () {
-        hx('GET', '/ui/views/sidebar/dialog/rename?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name || '') + '&type=notebook',
-          { target: '#rename-dialog-content', swap: 'innerHTML' }
-        ).then(function () { document.getElementById('rename-dialog').showModal() })
-      }},
     ]
+    if (!nameFixed) items.push({ icon: IC.edit, label: 'Rename...', action: function () {
+      hx('GET', '/ui/views/sidebar/dialog/rename?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name || '') + '&type=notebook',
+        { target: '#rename-dialog-content', swap: 'innerHTML' }
+      ).then(function () { document.getElementById('rename-dialog').showModal() })
+    }})
+    return items
   }
 
-  // Why Delete is refused on a notebook, "" when it is allowed: the row's own
-  // word, or on a tab the word of the Notebooks item's refusal marker for it,
-  // which the item carries expanded or collapsed and redraws whenever ink
-  // changes. Where the item is not shown the delete dialog asks the server.
-  function notebookDeleteRefused(ctx) {
-    if (!ctx.isTab) return ctx.deleteRefused || ''
-    var marker = document.querySelector('[data-ink-refused="' + ctx.id + '"]')
-    return (marker && marker.getAttribute('data-ctx-delete-refused')) || ''
+  // A notebook's facts the Notebooks item states: on a row its own data
+  // attributes, on a tab those of the item's facts marker for it, which the
+  // item carries expanded or collapsed and redraws whenever ink changes.
+  // deleteRefused is why Delete is refused, "" when it is allowed (where the
+  // item is not shown the delete dialog asks the server); nameFixed is its
+  // tablet naming it, so it is not renamed here.
+  function notebookFacts(ctx) {
+    if (!ctx.isTab) return { deleteRefused: ctx.deleteRefused || '', nameFixed: !!ctx.nameFixed }
+    var marker = document.querySelector('[data-ink-facts="' + ctx.id + '"]')
+    return {
+      deleteRefused: (marker && marker.getAttribute('data-ctx-delete-refused')) || '',
+      nameFixed: !!marker && marker.getAttribute('data-ctx-name-fixed') === 'true',
+    }
   }
 
   // A synced notebook, as a row of the tree or as a tab: its own actions, every
   // library item's, and on a tab every tab's verbs.
   function buildNotebookItems(ctx) {
+    var facts = notebookFacts(ctx)
     var items = []
     if (ctx.name) items.push({ type: 'header', label: ctx.name })
     if (!ctx.isTab) {
       items.push({ icon: IC.eye, label: 'Open', action: function () { window.sieveWorkspace.open(ctx.id) } })
     }
-    items = items.concat(notebookActions(ctx.id, ctx.name))
+    items = items.concat(notebookActions(ctx.id, ctx.name, facts.nameFixed))
     items.push({ type: 'divider' })
-    items = items.concat(libraryItems(ctx.id, ctx.name, 'notebook', 'Notebook', notebookDeleteRefused(ctx)))
+    items = items.concat(libraryItems(ctx.id, ctx.name, 'notebook', 'Notebook', facts.deleteRefused))
     if (ctx.isTab) items = items.concat(tabItems(ctx.id))
     return items
   }

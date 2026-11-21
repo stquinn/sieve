@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"time"
@@ -25,9 +26,50 @@ type DigitalNote interface {
 
 // Page is one page of a note, without its strokes.
 type Page struct {
-	ID       link.ID
-	Template *link.Template
-	Bounds   link.Bounds
+	ID         link.ID
+	Template   *link.Template
+	Bounds     link.Bounds
+	Properties Properties
+}
+
+// Name is the page's name property, "" when it has none.
+func (p Page) Name() string { return p.Properties.One("name") }
+
+// Properties are the properties of a note or a page (contract §3): each key set, with its values,
+// none of them empty. Keys this Sieve does not know are kept with the rest.
+type Properties map[string][]string
+
+// One is the key's value when it holds exactly one, otherwise "".
+func (p Properties) One(key string) string {
+	if values := p[key]; len(values) == 1 {
+		return values[0]
+	}
+	return ""
+}
+
+// clone is a copy of p, never nil.
+func (p Properties) clone() Properties {
+	out := Properties{}
+	maps.Copy(out, p)
+	return out
+}
+
+// set applies a property record to *p: values replace what key held, and none remove it. It
+// reports whether anything changed.
+func (p *Properties) set(key string, values []string) bool {
+	held, ok := (*p)[key]
+	if len(values) == 0 {
+		delete(*p, key)
+		return ok
+	}
+	if ok && slices.Equal(held, values) {
+		return false
+	}
+	if *p == nil {
+		*p = Properties{}
+	}
+	(*p)[key] = slices.Clone(values)
+	return true
 }
 
 // StrokeBasedNote is the replay of a note's log (contract §3). Built by NewStrokeBasedNote it
@@ -37,6 +79,7 @@ type StrokeBasedNote struct {
 	id          string
 	keepStrokes bool
 	header      link.Record
+	properties  Properties
 	pages       []*notePage
 	removed     map[link.ID]*notePage
 }
@@ -87,11 +130,15 @@ func (n *StrokeBasedNote) Created() string {
 	return t.Format("2006-01-02T15:04:05.000Z")
 }
 
-// Pages are the pages currently present, in order.
+// Properties are the note's properties, as the last record of each key left them.
+func (n *StrokeBasedNote) Properties() Properties { return n.properties.clone() }
+
+// Pages are the pages currently present, in order, each with its properties.
 func (n *StrokeBasedNote) Pages() []Page {
 	out := make([]Page, len(n.pages))
 	for i, p := range n.pages {
 		out[i] = p.Page
+		out[i].Properties = p.Properties.clone()
 	}
 	return out
 }
@@ -137,17 +184,19 @@ const (
 	StrokeAdded
 	// StrokeRemoved is the record's stroke gone from the record's page.
 	StrokeRemoved
-	// NoteChanged is the header or the page list changed: a page added, removed, restored or
-	// given another template, or a note-header. A restored page's strokes are present again.
+	// NoteChanged is the header, the note's properties or the page list changed: a page added,
+	// removed, restored, given another template or another property, or a note-header. A restored
+	// page's strokes and properties are present again.
 	NoteChanged
 )
 
 // Apply replays one record and reports what it did. Records the rules make no-ops change
 // nothing: a stroke-add of an id the page holds, a removal of what is absent, a page-add of a
-// present page, and any page or stroke record naming a page not currently present. A page-add of
-// a removed page restores it with its strokes and the record's template; a page is inserted at
-// its index, clamped to the pages present, and never moved after. A note that keeps no strokes
-// reports no stroke effect.
+// present page, a property record that leaves the key as it was, and any page or stroke record
+// naming a page not currently present. A property record sets its key to its values, and one of
+// no values removes the key. A page-add of a removed page restores it with its strokes, its
+// properties and the record's template; a page is inserted at its index, clamped to the pages
+// present, and never moved after. A note that keeps no strokes reports no stroke effect.
 func (n *StrokeBasedNote) Apply(r link.Record) Effect {
 	switch r.Op {
 	case link.OpNoteHeader:
@@ -183,6 +232,14 @@ func (n *StrokeBasedNote) Apply(r link.Record) Effect {
 			n.pages[i].strokes = append(n.pages[i].strokes, r)
 			n.pages[i].held[r.Stroke] = true
 			return StrokeAdded
+		}
+	case link.OpNoteProperty:
+		if n.properties.set(r.Key, r.Values) {
+			return NoteChanged
+		}
+	case link.OpPageProperty:
+		if i := n.present(r.Page); i >= 0 && n.pages[i].Properties.set(r.Key, r.Values) {
+			return NoteChanged
 		}
 	case link.OpStrokeRemove:
 		if i := n.present(r.Page); i >= 0 && n.pages[i].held[r.Stroke] {
@@ -244,8 +301,8 @@ func (n *StrokeBasedNote) ReadTo(jsonl []byte, last uint32) (link.Cursor, int) {
 }
 
 // ExportPage is the page at index page in the §4.2 export shape, which the ink renderer takes:
-// the note header, with the template that page is drawn with, and the page's strokes, each point
-// carrying size 0.
+// the note header, with the template that page is drawn with, and the note's properties; the
+// page's id and properties; and the page's strokes, each point carrying size 0.
 func (n *StrokeBasedNote) ExportPage(page int) ([]byte, error) {
 	if page < 0 || page >= len(n.pages) {
 		return nil, fmt.Errorf("ink: page %d of %d", page, len(n.pages))
@@ -253,7 +310,9 @@ func (n *StrokeBasedNote) ExportPage(page int) ([]byte, error) {
 	h := n.header
 	out := exportPage{
 		Note: exportNote{ID: h.Note.String(), Created: n.Created(), Title: h.Title, PageAspect: h.PageAspect,
-			Template: exportTemplate{n.PageTemplate(page)}, Device: exportDevice{h.Device.ID, h.Device.Name, h.Device.Model}},
+			Template: exportTemplate{n.PageTemplate(page)}, Device: exportDevice{h.Device.ID, h.Device.Name, h.Device.Model},
+			Properties: n.Properties()},
+		Page:    exportPageOf{ID: n.pages[page].ID.String(), Properties: n.pages[page].Properties.clone()},
 		Strokes: []exportStroke{},
 	}
 	for _, s := range n.pages[page].strokes {
@@ -270,7 +329,8 @@ const pageKeyDigits = 16
 // with, its bounds and its strokes as ExportPage gives them, in that order. The JSON is
 // deterministic, so an unchanged page has the same key on every run and machine; a stroke added,
 // removed or changed, another aspect, template or bounds, or another page gives another key. The
-// note's title, created time and device are not on the page and do not move it.
+// note's title, created time, device and properties, and the page's properties, are not on the
+// page and do not move it.
 func (n *StrokeBasedNote) PageKey(page int) (string, error) {
 	if page < 0 || page >= len(n.pages) {
 		return "", fmt.Errorf("ink: page %d of %d", page, len(n.pages))
@@ -310,6 +370,7 @@ func newExportStroke(s link.Record) exportStroke {
 type (
 	exportPage struct {
 		Note    exportNote     `json:"note"`
+		Page    exportPageOf   `json:"page"`
 		Strokes []exportStroke `json:"strokes"`
 	}
 	exportNote struct {
@@ -319,6 +380,12 @@ type (
 		PageAspect float32        `json:"pageAspect"`
 		Template   exportTemplate `json:"template"`
 		Device     exportDevice   `json:"device"`
+		Properties Properties     `json:"properties"`
+	}
+	// exportPageOf is the page an export page is of: its id and properties, never null.
+	exportPageOf struct {
+		ID         string     `json:"id"`
+		Properties Properties `json:"properties"`
 	}
 	exportDevice struct {
 		ID    string `json:"id"`

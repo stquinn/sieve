@@ -55,6 +55,10 @@ type Observer interface {
 	// Rewound is the note's replica rewound to seq, and the note opened again from there: the
 	// records Committed reports for it from now on follow seq.
 	Rewound(note ID, seq uint32)
+	// Parked is the record at seq of note holding op, which this Sieve does not know: the session
+	// takes nothing more of the note, and its replica stands where that record found it. It is
+	// told once per note and session.
+	Parked(note ID, seq uint32, op Op)
 }
 
 // Plan is what one session is to do after the handshake.
@@ -91,6 +95,8 @@ type Session struct {
 	requests  requests
 	following ID
 	ink       LiveDecoder
+	// parked are the notes a record of an unknown op stopped; the session ignores them from then on.
+	parked map[ID]bool
 
 	ackMu    sync.Mutex
 	unacked  map[ID]uint32
@@ -108,14 +114,16 @@ type headCheck struct {
 func NewSession(link io.ReadWriter, key Key, replicas Replicas, obs Observer, p Plan) *Session {
 	return &Session{
 		key: key, replicas: replicas, stream: newFrameStream(link), obs: obs, plan: p,
-		open: map[ID]Replica{}, heads: map[ID]headCheck{}, received: map[ID]int{},
+		open: map[ID]Replica{}, heads: map[ID]headCheck{}, received: map[ID]int{}, parked: map[ID]bool{},
 		unacked: map[ID]uint32{}, requests: requests{byNote: map[ID][]chan error{}},
 	}
 }
 
 // Run does the handshake and the plan. It returns nil when a plan that does not follow has
 // finished. Any error means the link must be dropped; a later session resumes from each
-// replica's cursor. To end a following session, close the link.
+// replica's cursor. A record of an op this Sieve does not know is no error: its note is parked
+// (Observer.Parked) and the session goes on with the others. To end a following session, close
+// the link.
 func (s *Session) Run() error {
 	if err := s.handshake(); err != nil {
 		return err
@@ -219,7 +227,7 @@ func (s *Session) handle(frame []byte) (bool, error) {
 		if err := in.finish(); err != nil {
 			return false, err
 		}
-		return false, s.onOp(note, logFrame)
+		return s.onOp(note, logFrame)
 	case frameDone:
 		note := in.id()
 		if err := in.finish(); err != nil {
@@ -270,10 +278,14 @@ func (s *Session) onNotes(notes []NoteEntry) (bool, error) {
 	return !s.plan.Follow, nil
 }
 
-// openNext opens the next queued note; the plan is finished when none is left and it does not follow.
+// openNext opens the next queued note that is not parked; the plan is finished when none is left
+// and it does not follow.
 func (s *Session) openNext() (bool, error) {
 	if s.current != nil {
 		return false, nil
+	}
+	for len(s.queue) > 0 && s.parked[s.queue[0]] {
+		s.queue = s.queue[1:]
 	}
 	if len(s.queue) == 0 {
 		return !s.plan.Follow, nil
@@ -285,6 +297,9 @@ func (s *Session) openNext() (bool, error) {
 }
 
 func (s *Session) sendOpen(note ID) error {
+	if s.parked[note] {
+		return nil
+	}
 	r, err := s.replica(note)
 	if err != nil {
 		return err
@@ -294,6 +309,9 @@ func (s *Session) sendOpen(note ID) error {
 
 func (s *Session) onHead(note ID, head headCheck) error {
 	s.requests.answerOpen(note)
+	if s.parked[note] {
+		return nil
+	}
 	s.heads[note] = head
 	r, err := s.replica(note)
 	if err != nil {
@@ -306,31 +324,47 @@ func (s *Session) onHead(note ID, head headCheck) error {
 	return s.checkHead(note, r)
 }
 
-func (s *Session) onOp(note ID, frame LogFrame) error {
-	if s.requests.awaitingHead(note) {
-		return nil
+func (s *Session) onOp(note ID, frame LogFrame) (bool, error) {
+	if s.parked[note] || s.requests.awaitingHead(note) {
+		return false, nil
 	}
 	body, err := frame.Body()
 	if err != nil {
-		return fmt.Errorf("note %s: %w", note, err)
+		return false, fmt.Errorf("note %s: %w", note, err)
 	}
 	rec, err := ParseBody(body)
-	if err != nil {
-		return fmt.Errorf("note %s: %w", note, err)
+	if errors.Is(err, ErrUnknownOp) {
+		return s.park(note, rec)
+	} else if err != nil {
+		return false, fmt.Errorf("note %s: %w", note, err)
 	}
 	r, err := s.replica(note)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := r.Append(rec, body); errors.Is(err, ErrRewound) {
-		return s.rewound(note, r)
+		return false, s.rewound(note, r)
 	} else if err != nil {
-		return fmt.Errorf("note %s: %w", note, err)
+		return false, fmt.Errorf("note %s: %w", note, err)
 	}
 	s.received[note]++
 	s.obs.Committed(note, rec)
 	s.noteAck(note, rec.Seq)
-	return s.checkHead(note, r)
+	return false, s.checkHead(note, r)
+}
+
+// park stops the note at rec, a record of an op this Sieve does not know: nothing more of the note
+// is taken in this session, its record is not acked, the observer is told, and the catch-up opens
+// its next note as it would after the note's DONE.
+func (s *Session) park(note ID, rec Record) (bool, error) {
+	s.parked[note] = true
+	delete(s.heads, note)
+	s.obs.Parked(note, rec.Seq, rec.Op)
+	if s.current != nil && *s.current == note {
+		s.current = nil
+		return s.openNext()
+	}
+	return false, nil
 }
 
 // checkHead compares the replica's chain with the note's HEAD once its cursor stands at the HEAD's
@@ -371,7 +405,7 @@ func (s *Session) rewound(note ID, r Replica) error {
 }
 
 func (s *Session) onDone(note ID) (bool, error) {
-	if s.requests.awaitingHead(note) {
+	if s.parked[note] || s.requests.awaitingHead(note) {
 		return false, nil
 	}
 	r, err := s.replica(note)

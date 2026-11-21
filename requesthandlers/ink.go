@@ -96,10 +96,15 @@ type inkNoteItem struct {
 	Absent bool
 	// DeleteRefused is why Delete is refused now, "" when it is allowed.
 	DeleteRefused string
+	// NameFixed is the note not Renamable: its tablet names it.
+	NameFixed bool
 }
 
 // inkDeleteRefused is why Sieve's copy of a notebook its tablet still offers is not deleted.
 const inkDeleteRefused = "The tablet still has this notebook. Delete it there, or stop sharing it, first."
+
+// inkNameFixed is why a notebook its tablet names is not renamed.
+const inkNameFixed = "This notebook is named on its tablet."
 
 // inkDescribeDrawWait bounds how long naming a note now waits for its first page to be drawn.
 const inkDescribeDrawWait = 10 * time.Second
@@ -164,6 +169,8 @@ func (h *InkHandler) handleRename(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, ink.ErrNameTooLong):
 		http.Error(w, fmt.Sprintf("A notebook's name can be at most %d bytes long.", ink.MaxNameBytes), http.StatusBadRequest)
+	case errors.Is(err, ink.ErrNamedByTablet):
+		http.Error(w, inkNameFixed, http.StatusConflict)
 	case errors.Is(err, ink.ErrNoSuchPage):
 		http.Error(w, "No such notebook.", http.StatusNotFound)
 	default:
@@ -298,7 +305,7 @@ func (v *inkSidebarView) show(st ink.Status, session domain.Session) {
 			refused = inkDeleteRefused
 		}
 		v.Notes = append(v.Notes, inkNoteItem{UUID: n.UUID, Title: title, Pages: n.Pages, Active: n.UUID == active,
-			Whiteboard: n.Whiteboard, Absent: n.Absent, DeleteRefused: refused})
+			Whiteboard: n.Whiteboard, Absent: n.Absent, DeleteRefused: refused, NameFixed: !n.NamedBy.Renamable()})
 	}
 }
 

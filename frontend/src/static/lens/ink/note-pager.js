@@ -2,10 +2,11 @@
 // The page turning a Digital Note's surfaces offer the toolbar: previous, a
 // drop-down of every page, next, and, while some page other than the one shown
 // holds ink not yet seen, a count of those pages that shows the next of them.
-// The drop-down's closed face is the page's place (`3 / 12`); its list names
-// each page by its own name, else `Page n`, a page with unseen ink marked. What
-// each control does is the reader's: the pager draws, the reader turns.
+// The drop-down's closed face and its list call each page as PageNames does, a
+// page with unseen ink marked in the list. What each control does is the
+// reader's: the pager draws, the reader turns.
 
+import { PageNames } from '../../renderers/page-names.js'
 import { ButtonGroup, ToolbarButton, ToolbarSelect } from '../../renderers/toolbar-button.js'
 
 /** @typedef {Readonly<{id: string, name?: string}>} NotePage */
@@ -20,20 +21,12 @@ import { ButtonGroup, ToolbarButton, ToolbarSelect } from '../../renderers/toolb
 
 export class NotePager {
   /** @type {PageReader} */ #reader
+  /** @type {PageNames} */ #names
 
-  /** @param {PageReader} reader */
-  constructor(reader) {
+  /** @param {PageReader} reader @param {PageNames} [names] what the pages are called */
+  constructor(reader, names = new PageNames()) {
     this.#reader = reader
-  }
-
-  /**
-   * What the list calls a page: its name, else its place from 1.
-   * @param {NotePage} page @param {number} index
-   * @returns {string}
-   */
-  static label(page, index) {
-    const name = typeof page.name === 'string' ? page.name.trim() : ''
-    return name || `Page ${index + 1}`
+    this.#names = names
   }
 
   /**
@@ -48,6 +41,8 @@ export class NotePager {
     const count = pages.length
     const reader = this.#reader
     const others = pages.filter((page) => page.id !== shown && unseen.has(page.id)).length
+    const labels = this.#names.listed(pages)
+    const face = this.#names.face(pages, index)
     return new ButtonGroup([
       new ToolbarButton({
         id: 'tb-page-prev', text: '‹', title: 'Previous page', className: 'tb-page-turn',
@@ -55,9 +50,9 @@ export class NotePager {
       }),
       new ToolbarSelect({
         id: 'tb-page-select', title: 'Page',
-        options: pages.map((page, i) => ({ value: page.id, label: NotePager.label(page, i), mark: unseen.has(page.id) })),
+        options: pages.map((page, i) => ({ value: page.id, label: labels[i], mark: unseen.has(page.id) })),
         value: () => shown ?? '',
-        face: () => (count ? `${index + 1} / ${count}` : '0 / 0'),
+        face: () => face,
         onChange: (pageId) => { if (pageId !== shown) reader.showPage(pageId) },
       }),
       new ToolbarButton({

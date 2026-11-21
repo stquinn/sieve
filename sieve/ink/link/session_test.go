@@ -24,6 +24,7 @@ type recorder struct {
 	livePages []ID
 	rewound   []string
 	refused   []string
+	parked    []string
 	done      chan uint32
 	notes     chan struct{}
 	opened    func(note ID)
@@ -66,6 +67,12 @@ func (r *recorder) Rewound(note ID, seq uint32) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.rewound = append(r.rewound, fmt.Sprintf("%x to %d", note[0], seq))
+}
+
+func (r *recorder) Parked(note ID, seq uint32, op Op) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.parked = append(r.parked, fmt.Sprintf("%x at %d, %s", note[0], seq, op))
 }
 
 // heardRewound is every rewind the recorder heard.
@@ -457,6 +464,73 @@ func TestAGapDropsTheLinkAndKeepsTheContiguousRecords(t *testing.T) {
 	if got := h.held().Cursor().Seq; got != 2 {
 		t.Errorf("held %d", got)
 	}
+}
+
+// A record of an op this Sieve does not know parks its note: nothing of it from there is taken or
+// acked, the observer hears it once, and the link is kept for the other note, which the catch-up
+// still brings to its head and verifies against its HEAD, whether it is queued after the parked note
+// or before it.
+func TestARecordOfAnUnknownOpParksItsNoteAndKeepsTheLink(t *testing.T) {
+	later := append(append(append([]Record{}, vectorRecords[:2]...), Record{Seq: 3, Op: 24}), vectorRecords[3:]...)
+	for _, c := range []struct {
+		name   string
+		parked ID
+	}{
+		{"the first note queued", vectorNote},
+		{"the last note queued", ID{0xff, 15: 1}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t, vectorRecords)
+			other := ID{0xff, 15: 1}
+			h.companion.SetNote(other, vectorRecords)
+			if c.parked == vectorNote {
+				h.companion.SetRecords(later)
+			} else {
+				h.companion.SetNote(other, later)
+			}
+			if err := h.run(testKey, Plan{CatchUp: true}); err != nil {
+				t.Fatalf("the link was dropped: %v", err)
+			}
+			good := vectorNote
+			if c.parked == vectorNote {
+				good = other
+			}
+			if parked, held := h.replicas.Replica(c.parked).Cursor().Seq, h.replicas.Replica(good).Cursor(); parked != 2 || held != chainOf(t, vectorRecords) {
+				t.Errorf("held the parked note to %d and the other to %d", parked, held.Seq)
+			}
+			want := []string{fmt.Sprintf("%x at 3, op(24)", c.parked[0])}
+			h.obs.mu.Lock()
+			parked, rewound := h.obs.parked, h.obs.rewound
+			h.obs.mu.Unlock()
+			if !slices.Equal(parked, want) || len(rewound) != 0 {
+				t.Errorf("heard %v parked and %v rewound, want %v parked", parked, rewound, want)
+			}
+			if len(h.obs.done) != 1 {
+				t.Errorf("heard %d notes done, want the other one", len(h.obs.done))
+			}
+			for len(h.companion.Acks) > 0 {
+				if seq := <-h.companion.Acks; seq != 2 && seq != uint32(len(vectorRecords)) {
+					t.Errorf("acked %d", seq)
+				}
+			}
+		})
+	}
+}
+
+// chainOf is the cursor a replica holding records stands at.
+func chainOf(t *testing.T, records []Record) Cursor {
+	t.Helper()
+	var c Cursor
+	for _, r := range records {
+		body, err := r.Body()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.Accept(r, body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return c
 }
 
 func TestFollowOpensTheLiveNote(t *testing.T) {

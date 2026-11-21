@@ -30,11 +30,15 @@
 
 /**
  * A page in the export shape: the note's header, with the template this page is
- * drawn with, and the page's strokes in the order they were added.
+ * drawn with, and the note's properties; the page's id and properties; and the
+ * page's strokes in the order they were added. A properties object maps each key
+ * to its values, `{}` when there are none.
  * @typedef {object} InkPage
  * @property {Readonly<{id: string, created: string, title: string, pageAspect: number,
  *   template: Readonly<{id: string, params: Readonly<Record<string, number>>}>|null,
- *   device: Readonly<{id: string, name: string, model: string}>}>} note
+ *   device: Readonly<{id: string, name: string, model: string}>,
+ *   properties: Readonly<Record<string, ReadonlyArray<string>>>}>} note
+ * @property {Readonly<{id: string, properties: Readonly<Record<string, ReadonlyArray<string>>>}>} page
  * @property {ReadonlyArray<Readonly<InkPageStroke>>} strokes
  */
 

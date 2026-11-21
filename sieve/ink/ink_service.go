@@ -170,6 +170,11 @@ type SyncedNote struct {
 	Absent bool
 	// Deletion is whether Sieve's copy may be deleted now, and what that means.
 	Deletion Deletion
+	// Unreadable is the note holding records this Sieve does not understand: it stopped syncing
+	// at the first of them, and a newer Sieve is needed to take the rest.
+	Unreadable bool
+	// NamedBy is who gives the note its name.
+	NamedBy NamedBy
 }
 
 // Deletion is whether Sieve's copy of a Digital Note may be deleted now, and what that means.
@@ -188,6 +193,9 @@ const (
 
 // ErrNameTooLong is a name given by hand longer than MaxNameBytes.
 var ErrNameTooLong = fmt.Errorf("ink: a notebook's name is at most %d bytes", MaxNameBytes)
+
+// ErrNamedByTablet is a Rename of a note its tablet names.
+var ErrNamedByTablet = errors.New("ink: the notebook is named by its tablet")
 
 // ErrStillOffered is a delete of a note whose Deletion is DeleteRefused.
 var ErrStillOffered = errors.New("ink: the tablet still offers this note")
@@ -263,6 +271,9 @@ type InkService struct {
 	namer *NoteNamer
 	// offered is, by companion identity, the notes its last NOTES listed in this run.
 	offered map[string]map[link.ID]bool
+	// unreadable are the containers whose note a session parked, until a later session brings
+	// that note to its DONE.
+	unreadable map[string]bool
 	// sending is held while a note's description is sent to the tablet and recorded as sent.
 	sending sync.Mutex
 }
@@ -274,7 +285,7 @@ func NewInkService(settings *services.StateService, containers *services.BlockCo
 	s := &InkService{
 		settings: settings, containers: containers, staging: staging, jobs: jobs, radio: r, invalidator: inv,
 		throttle: time.Second, after: time.After, answerWait: time.After, wake: make(chan struct{}, 1), state: LinkState{Phase: LinkOff},
-		redial: redialPause{base: time.Second, max: 30 * time.Second},
+		redial: redialPause{base: time.Second, max: 30 * time.Second}, unreadable: map[string]bool{},
 	}
 	s.view = newLiveView(s)
 	return s
@@ -717,15 +728,19 @@ func (s *InkService) keepDescription(uuid string, seq uint32, d domain.NoteMetad
 // keepDescription shows a description: the namer then keeps the note's summary and keywords
 // current and never its name, and the name is sent to the tablet as a description is. A blank name
 // hands naming back to the namer, which names the note when it is next due; meanwhile it is called
-// by its tablet's title. A name longer than MaxNameBytes is ErrNameTooLong; a container that is not
-// a Digital Note is ErrNoSuchPage.
+// by its tablet's title. A name longer than MaxNameBytes is ErrNameTooLong; a note that is not
+// Renamable is ErrNamedByTablet; a container that is not a Digital Note is ErrNoSuchPage.
 func (s *InkService) Rename(uuid, name string) error {
 	name = strings.TrimSpace(name)
 	if len(name) > MaxNameBytes {
 		return fmt.Errorf("%w: %d bytes", ErrNameTooLong, len(name))
 	}
-	if _, err := s.digitalNote(uuid); err != nil {
+	c, err := s.digitalNote(uuid)
+	if err != nil {
 		return err
+	}
+	if !NewDigitalNoteKind().NamedBy(c.Storable().Meta()).Renamable() {
+		return fmt.Errorf("%w: %s", ErrNamedByTablet, uuid)
 	}
 	if err := s.writeNoteMeta(uuid, func(m domain.DocumentMeta) { NewDigitalNoteKind().NameByHand(m, name) }); err != nil {
 		return err
@@ -774,8 +789,8 @@ func (s *InkService) writeNoteMeta(uuid string, edit func(domain.DocumentMeta)) 
 // sendDescription sends META of the Digital Note in container uuid, and records the seq sent, when
 // the session running now is with the tablet the note came from, that tablet listed the note on
 // this connection, and the note's stored description is unsent (DigitalNoteKind.Unsent) and not
-// past the head the tablet listed. META carries the description's fields, its name the one a
-// person gave when one did, and its seq, and nothing else.
+// past the head the tablet listed. META carries the description's fields, its title the name Sieve
+// gave the note, empty for one NamedByTablet, and its seq, and nothing else.
 func (s *InkService) sendDescription(uuid string) {
 	s.sending.Lock()
 	defer s.sending.Unlock()
@@ -1111,12 +1126,13 @@ func (s *InkService) synced(open []SyncedNote) ([]SyncedNote, []Companion) {
 		byUUID[n.UUID] = n
 	}
 	s.mu.Lock()
-	offered, run := maps.Clone(s.offered), s.run
+	offered, run, unreadable := maps.Clone(s.offered), s.run, maps.Clone(s.unreadable)
 	s.mu.Unlock()
 	notes := make([]SyncedNote, 0, len(byUUID))
 	for uuid, n := range byUUID {
-		n.Name = kind.Name(found[uuid], n.Title)
+		n.Name, n.NamedBy = kind.Name(found[uuid], n.Title), kind.NamedBy(found[uuid])
 		n.Deletion = run.deletion(found[uuid])
+		n.Unreadable = unreadable[uuid]
 		if listed, ok := offered[n.Companion]; ok {
 			if source, err := link.ParseID(found[uuid]["note_source_id"]); err == nil {
 				n.Absent = !listed[source]
@@ -1333,6 +1349,7 @@ func (r *sessionRun) Committed(note link.ID, rec link.Record) {
 func (r *sessionRun) Done(note link.ID, _ uint32, records int) {
 	r.jobs.finish(note)
 	r.published(note)
+	r.markUnreadable(note, false)
 	if !r.pending[note] {
 		return
 	}
@@ -1406,6 +1423,40 @@ func (r *sessionRun) rewound(note link.ID, kind syncKind) {
 	r.svc.publish(func(l Listener) { l.LogRestarted(uuid, note) })
 	r.svc.view.noteChanged(uuid)
 	r.svc.invalidateSoon()
+}
+
+// Parked is the note stopped at a record of an op this Sieve does not know: its sync is over, a
+// catch-up under way stays staged as after a lost link, and Settings shows the note as needing a
+// newer Sieve.
+func (r *sessionRun) Parked(note link.ID, seq uint32, op link.Op) {
+	logger.Warn("ink: a note holds a record this Sieve does not understand; a newer Sieve is needed to sync it",
+		"note", note.String(), "seq", seq, "op", op.String())
+	r.jobs.finish(note)
+	r.markUnreadable(note, true)
+	if r.pending[note] {
+		delete(r.pending, note)
+		r.measure()
+	}
+}
+
+// markUnreadable records whether the container of note holds records this Sieve does not
+// understand, and has the views of ink shown again when that changed.
+func (r *sessionRun) markUnreadable(note link.ID, unreadable bool) {
+	uuid, err := r.replicas.UUID(note)
+	if err != nil || uuid == "" {
+		return
+	}
+	r.svc.mu.Lock()
+	changed := r.svc.unreadable[uuid] != unreadable
+	if unreadable {
+		r.svc.unreadable[uuid] = true
+	} else {
+		delete(r.svc.unreadable, uuid)
+	}
+	r.svc.mu.Unlock()
+	if changed {
+		r.svc.invalidateSoon()
+	}
 }
 
 func (r *sessionRun) Ink(records []link.LiveRecord) {

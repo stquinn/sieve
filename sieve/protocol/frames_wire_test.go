@@ -43,8 +43,10 @@ func outboundWireCases() []wireCase {
 	inkStrokeJSON := `{"id":"s1","tool":"pen","widthClass":2,"startMillis":5,"points":[{"x":0.25,"y":0.5,"pressure":0.75,"tMillis":0,"tiltX":30,"tiltY":-30,"size":0}]}`
 	inkPage := InkPageExport{
 		Note: InkExportNote{ID: "n1", Created: "2023-11-14T22:13:20Z", Title: "Ideas", PageAspect: 0.75,
-			Template: &InkExportTemplate{ID: "ruled", Params: map[string]float64{"spacing": 0.05}},
-			Device:   InkExportDevice{ID: "d", Name: "Note Air 2", Model: "ONYX"}},
+			Template:   &InkExportTemplate{ID: "ruled", Params: map[string]float64{"spacing": 0.05}},
+			Device:     InkExportDevice{ID: "d", Name: "Note Air 2", Model: "ONYX"},
+			Properties: map[string][]string{"type": {"diary"}}},
+		Page:    InkExportPage{ID: "p1", Properties: map[string][]string{}},
 		Strokes: []InkExportStroke{inkStroke},
 	}
 	inkPageJSON, err := json.Marshal(inkPage)
@@ -287,8 +289,8 @@ func outboundWireCases() []wireCase {
 			channel: ChannelDocument,
 			frame:   NewInkPageContentFrame("op-1", "p1", 7, "ab12", inkPageJSON),
 			golden: `{"type":"ink-page-content","opId":"op-1","pageId":"p1","seq":7,"key":"ab12","page":{"note":{"id":"n1","created":"2023-11-14T22:13:20Z",` +
-				`"title":"Ideas","pageAspect":0.75,"template":{"id":"ruled","params":{"spacing":0.05}},"device":{"id":"d","name":"Note Air 2","model":"ONYX"}},` +
-				`"strokes":[` + inkStrokeJSON + `]}}`,
+				`"title":"Ideas","pageAspect":0.75,"template":{"id":"ruled","params":{"spacing":0.05}},"device":{"id":"d","name":"Note Air 2","model":"ONYX"},` +
+				`"properties":{"type":["diary"]}},"page":{"id":"p1","properties":{}},"strokes":[` + inkStrokeJSON + `]}}`,
 		},
 		{
 			// A kept drawing is told apart from a page by its drawing and its null page.
@@ -534,7 +536,8 @@ func outboundWireCases() []wireCase {
 			golden: `{"type":"ink-draw-page","correlationId":"c-1","container":"0198f3c1-1b2a-7000-8000-000000000001",` +
 				`"pageId":"p1","pageKey":"2ce2e9cf31ae0dfe","bounds":"fixed","page":{"note":{"id":"n1","created":"2023-11-14T22:13:20Z",` +
 				`"title":"Ideas","pageAspect":0.75,"template":{"id":"ruled","params":{"spacing":0.05}},` +
-				`"device":{"id":"d","name":"Note Air 2","model":"ONYX"}},"strokes":[` + inkStrokeJSON + `]}}`,
+				`"device":{"id":"d","name":"Note Air 2","model":"ONYX"},"properties":{"type":["diary"]}},"page":{"id":"p1","properties":{}},` +
+				`"strokes":[` + inkStrokeJSON + `]}}`,
 		},
 	}
 }
