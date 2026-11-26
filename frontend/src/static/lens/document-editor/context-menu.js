@@ -1083,6 +1083,8 @@ import { selectNextScope } from './interaction-policy.js'
     render(d.x, d.y, items)
   })
 
+  // Dismissal is click-outside and Escape only. A document 'contextmenu'
+  // listener would run for the very event that opened the menu and close it.
   document.addEventListener('click', function (e) {
     var menu = document.getElementById('sieve-context-menu')
     if (menu && !menu.contains(e.target)) menu.remove()
