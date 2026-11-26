@@ -1,5 +1,14 @@
 # Wails v3 Migration Plan
 
+> **PARKED.** A port to Wails v3 alpha.87 worked (services, HTMX, window management) but its Linux
+> menu system does not: `setAccelerator` is a no-op stub, so no shortcut is shown or works, and
+> `attachMenuHandler` in `linux_cgo.go` stores a pointer to a Go stack variable in GTK object data,
+> so menu click callbacks never fire. Replacing `g_object_set_data` with a Go
+> `widgetToMenuItemID map[uintptr]uint` in the module cache fixed the callbacks; accelerators have
+> no fix. Resume when upstream fixes both. `UseApplicationMenu: true` in `WebviewWindowOptions` is
+> required for a Linux menu bar. The plan below predates the removal of React and SSE and its
+> "do before feature work" status no longer holds.
+
 **Status:** Pre-sprint tech debt — do before feature work begins  
 **Estimated effort:** 3–5 hours  
 **Goal:** Clean Go-as-controller architecture with native menus, dialogs, and events
