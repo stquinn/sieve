@@ -285,6 +285,59 @@ delivery than any page injection — no other process can observe it), owns the 
 hosts the island. The Go side loses almost nothing; extraction was always priced at about
 a day, and the AI containment never knew the wrapper existed.
 
+### The retrospective (2026-08-24, during #96)
+
+Recorded as the architect's reading of how Sieve got here. It has not had the proper
+session it needs, so it is a position to test, not a plan of record.
+
+**The editor was the event horizon; everything since has been containment.** Had Sieve
+stayed a small web app with Go as the source of truth, none of the web-app support would
+have been built. The WYSIWYG editor pulled it in: contentEditable → ProseMirror → client
+state → a wire. The work since — transport-blind surfaces, the OOP-JS discipline, the
+interaction contract, the Lens↔Host wall — has been constraining that. The wall makes the
+containment structural: the JS app that must exist is exactly the lens side of the
+contract, fenced by suite-failing tests, not by review vigilance. The measure for any
+proposal that grows the JS app: **does it grow the contract surface?**
+
+**The shadow-app problem.** Had the Go services been called directly from JS (Wails bind),
+the request handlers, the WebSocket, the protocol layer and the multilayer JS client would
+not exist. The proper application already existed in Go, and the JS side rebuilt a shadow
+of it. The vanilla-JS rebuild answered "React turned horrendous" by rebuilding the same
+app-shape in better material without asking whether an app was needed. The confirmed
+value-add is the **block renderers** — the layer every future wants, and the one that got
+the least investment relative to plumbing.
+
+Counterweights, on the same record:
+
+- The wire is the price of frontend replaceability. A sidecar, a phone, a browser and MCP
+  all need a process-external client; bind forecloses all of them.
+- The felt performance pain is the WebKitGTK engine (DOM, layout, contentEditable), not
+  the wire. Bind would not speed up paint, and Wails v2's JSON script-message bridge is
+  often slower than a loopback WebSocket for chunky payloads.
+
+**The shell never earned the wire tax.** The wire was only ever justified for what is kept
+forever. Session persistence, settings and sidebar population are per-frontend disposable
+chrome — every future frontend rebuilds its own shell natively — yet they got the full
+apparatus: HTMX fragments, invalidation topics, workspace-wire plumbing.
+
+**`ContainerProvider` is effectively a wrapper around `EditorService`.** The contract
+converged independently on the real Go object's shape, which says the interface is right
+and every implementation of it is disposable. Under bind, the provider adapter would wrap
+the bound `EditorService` directly and `ContainerModel` would shrink to a thin sync-read
+cache — its one honest residual job, since bind calls are Promises and the contract's
+reads are synchronous.
+
+**Replaceability flips from inventory to option.** Before the wall: carry the general
+wire, protocol and client stack permanently so that a second frontend could someday exist.
+After it: the contract is the stable asset and a transport is a commodity binding written
+when a future arrives — bind for a webview-only present, a thin fresh WebSocket host
+mapping frames straight onto Go services if a remote frontend returns, an IPC bridge for
+shell-hosted renderers. **The keep-forever set is `lens/` + `renderers/` + `contract/`.**
+
+**The experiment this suggests, not yet run:** a bind-transport prototype, shell traffic
+first (no replaceability cost, the most machinery deleted per feature), measuring op
+round-trip, load and typing latency so the island's transport is settled with data.
+
 ---
 
 ## 8. Corollaries, not causes
