@@ -22,7 +22,6 @@ export class DiagramTheme {
     border: 1px solid var(--theme-border);
     border-radius: 6px;
     background: var(--theme-bgDark);
-    margin: 4px 0;
     /* overflow: hidden removed — it clips the block-chrome-host gutter (left: -48px).
        SVG overflow is contained by .sieve-block__body below instead. */
     transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;

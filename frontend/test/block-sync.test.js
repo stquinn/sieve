@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeBlockSync, seedBaseline, dedupeActions, proseOp } from '../src/static/lens/document-editor/block-sync.js'
+import { computeBlockSync, seedBaseline, dedupeActions } from '../src/static/lens/document-editor/block-sync.js'
 
 describe('dedupeActions', () => {
   it('returns nothing when every id is unique and non-empty', () => {
@@ -54,10 +54,11 @@ describe('seedBaseline', () => {
 //   prev: { [id]: sig } change-signatures from the last sync, or null on the
 //         first call (baseline only — never emits ops).
 // Returns { ops, next } — always granular block-ops, NO fallback.
-//   prose create: id in curr not in prev → create-block {blockId, kind, …, index}
-//   prose update: changed sig            → update-block {blockId, kind, …}
-//   delete (any kind): id in prev gone   → delete-block {blockId}
-//   structured create/change             → no op (synced via its own channels)
+//   create (any kind): id in curr not in prev → create-block {blockId, kind, attrs, index}
+//   prose update: changed sig                 → update-block {blockId, kind, …}
+//   delete (any kind): id in prev gone        → delete-block {blockId}
+//   structured attrs change                   → no op (synced via its own channels)
+//   kind change under one id (any kinds)      → replace-block {blockId, kind, attrs}
 //   order-only (same ids+sigs)           → no ops (drag-reorder keeps its move path)
 
 describe('computeBlockSync', () => {
@@ -100,15 +101,73 @@ describe('computeBlockSync', () => {
     expect(r.ops).toEqual([])
   })
 
-  it('emits NOTHING when a structured block is created (Go created it via editor:insert-block)', () => {
-    const prev = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'A' }], null).next
-    const added = computeBlockSync([
-      { id: 'pr-1', kind: 'prose', content: 'A' },
-      { id: 'co-1', kind: 'code', content: '{"id":"co-1"}' },
-    ], prev)
-    expect(added.ops).toEqual([])
-    // ...but it IS baselined, so a later delete is detected.
-    expect(added.next).toHaveProperty('co-1')
+  // An undo or redo of a transform puts a block of ANOTHER kind back under the same
+  // id. No attrs merge can say that, so the observer states the block whole —
+  // whichever kinds are involved, prose among them.
+  it.each([
+    ['structured → structured', { id: 'b-1', kind: 'code', content: '{"source":"x"}', attrs: { source: 'x' } },
+      { id: 'b-1', kind: 'ai-block', content: '{"answer":[]}', attrs: { answer: [] } },
+      { type: 'replace-block', blockId: 'b-1', kind: 'ai-block', attrs: { answer: [] } }],
+    ['prose → structured', { id: 'b-1', kind: 'prose', content: 'Embedded' },
+      { id: 'b-1', kind: 'ai-block', content: '{"answer":[]}', attrs: { answer: [] } },
+      { type: 'replace-block', blockId: 'b-1', kind: 'ai-block', attrs: { answer: [] } }],
+    ['structured → prose', { id: 'b-1', kind: 'code', content: '{"source":"x"}', attrs: { source: 'x' } },
+      { id: 'b-1', kind: 'prose', content: 'x' },
+      { type: 'replace-block', blockId: 'b-1', kind: 'prose', attrs: { content: 'x' } }],
+  ])('states a block whose kind changed under its id whole (%s)', (_, before, after, op) => {
+    const prev = computeBlockSync([before], null).next
+    const r = computeBlockSync([after], prev)
+    expect(r.ops).toEqual([op])
+    expect(computeBlockSync([after], r.next).ops).toEqual([])
+  })
+
+  // A block Go created is baselined when the editor places it (seedBaseline over
+  // that one block), so it is never stated back to Go.
+  it('emits nothing for a block Go created once it is baselined at placement', () => {
+    const placed = { id: 'co-1', kind: 'code', content: '{"id":"co-1"}', attrs: { id: 'co-1' } }
+    const prev = Object.assign(
+      computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'A' }], null).next,
+      seedBaseline([placed]),
+    )
+    const r = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'A' }, placed], prev)
+    expect(r.ops).toEqual([])
+    expect(r.next).toHaveProperty('co-1')
+  })
+
+  // An undo or a redo changes the block list with no verb behind it. Whatever the
+  // kind, a block the editor shows again is stated to Go as a create at its index,
+  // and one it stops showing as a delete.
+  describe.each([
+    ['prose', { id: 'b-1', kind: 'prose', content: 'Embedded' }, { content: 'Embedded' }],
+    ['code', { id: 'b-1', kind: 'code', content: '{"source":"x"}', attrs: { id: 'b-1', source: 'x' } }, { id: 'b-1', source: 'x' }],
+    ['diagram', { id: 'b-1', kind: 'diagram', content: '{"source":"graph TD"}', attrs: { id: 'b-1', source: 'graph TD' } }, { id: 'b-1', source: 'graph TD' }],
+    ['ai-block', { id: 'b-1', kind: 'ai-block', content: '{"answer":[]}', attrs: { id: 'b-1', status: 'COMPLETE', answer: [] } }, { id: 'b-1', status: 'COMPLETE', answer: [] }],
+    ['reference', { id: 'b-1', kind: 'reference', content: '{"uri":"sieve://9f2b"}', attrs: { id: 'b-1', uri: 'sieve://9f2b' } }, { id: 'b-1', uri: 'sieve://9f2b' }],
+    ['log', { id: 'b-1', kind: 'log', content: '{"source":"10:00 ERROR x"}', attrs: { id: 'b-1', source: '10:00 ERROR x' } }, { id: 'b-1', source: '10:00 ERROR x' }],
+    ['smart-card', { id: 'b-1', kind: 'smart-card', content: '{"href":"https://go.dev"}', attrs: { id: 'b-1', href: 'https://go.dev' } }, { id: 'b-1', href: 'https://go.dev' }],
+    ['web-clip', { id: 'b-1', kind: 'web-clip', content: '{"source":"https://go.dev"}', attrs: { id: 'b-1', source: 'https://go.dev', mode: 'summarise' } }, { id: 'b-1', source: 'https://go.dev', mode: 'summarise' }],
+    ['smart-image', { id: 'b-1', kind: 'smart-image', content: '{"src":"sieve://9f2b/chart.png"}', attrs: { id: 'b-1', src: 'sieve://9f2b/chart.png', summary: 'A chart' } }, { id: 'b-1', src: 'sieve://9f2b/chart.png', summary: 'A chart' }],
+  ])('the block list an undo or redo leaves (%s)', (_, blk, attrs) => {
+    const pr1 = { id: 'pr-1', kind: 'prose', content: 'A' }
+    const create = { type: 'create-block', blockId: 'b-1', kind: blk.kind, attrs: attrs, index: 1 }
+    const remove = { type: 'delete-block', blockId: 'b-1' }
+
+    it('redo of an undone block Go created states it again', () => {
+      const placed = Object.assign(computeBlockSync([pr1], null).next, seedBaseline([blk]))
+      const undone = computeBlockSync([pr1], placed)
+      expect(undone.ops).toEqual([remove])
+      const redone = computeBlockSync([pr1, blk], undone.next)
+      expect(redone.ops).toEqual([create])
+      expect(computeBlockSync([pr1, blk], redone.next).ops).toEqual([])
+    })
+
+    it('undo of a deleted block states it again', () => {
+      const held = computeBlockSync([pr1, blk], null).next
+      const deleted = computeBlockSync([pr1], held)
+      expect(deleted.ops).toEqual([remove])
+      const undone = computeBlockSync([pr1, blk], deleted.next)
+      expect(undone.ops).toEqual([create])
+    })
   })
 
   it('emits delete-block when a structured block is removed', () => {
@@ -286,12 +345,13 @@ describe('computeBlockSync', () => {
 
   it('treats a STRUCTURED block after an empty prose as content (empty prose is structural, not trailing)', () => {
     const prev = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'A' }], null).next
+    const image = { id: 'im-1', kind: 'smart-image', content: '{"id":"im-1"}' }
     const r = computeBlockSync([
       { id: 'pr-1', kind: 'prose', content: 'A' },
       { id: 'pr-2', kind: 'prose', content: '' }, // blank before an image → structural
-      { id: 'im-1', kind: 'smart-image', content: '{"id":"im-1"}' },
-    ], prev)
-    // pr-2 persists (image follows); the structured block emits nothing of its own.
+      image,
+    ], Object.assign(prev, seedBaseline([image])))
+    // pr-2 persists (image follows); the image Go placed emits nothing of its own.
     expect(r.ops).toEqual([
       { type: 'create-block', blockId: 'pr-2', kind: 'prose', attrs: { content: '' }, index: 1 },
     ])

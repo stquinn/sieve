@@ -1,6 +1,7 @@
 package block
 
 import (
+	"fmt"
 	"time"
 
 	"sieve/logger"
@@ -13,8 +14,8 @@ import (
 // under s.mu internally. EditorService orchestrates (processor dispatch, listener
 // notify, persistence) by CALLING these — it never touches s.mu or s's fields.
 
-// SnapshotBlock returns a deep copy of the block with id (fresh Attrs map), or
-// false if absent. The copy is safe to read/mutate outside the lock.
+// SnapshotBlock returns a deep copy of the block with id — a top-level block or
+// an element of one — (fresh Attrs map), or false if absent. The copy is safe to read/mutate outside the lock.
 func (s *ShadowDocument) SnapshotBlock(id string) (domain.SieveBlock, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -40,7 +41,7 @@ func (s *ShadowDocument) SnapshotBlocks() []domain.SieveBlock {
 }
 
 // SnapshotForJob captures, under ONE lock, both a deep copy of the target block
-// (for the processor to mutate) and an immutable DocView of the whole document
+// — a top-level block or an element of one — (for the processor to mutate) and an immutable DocView of the whole document
 // (for the job to resolve any block by id). Returns false if the block is absent.
 //
 // The DocView is READ-ONLY, job-creation-time context: a background job (any async
@@ -65,13 +66,7 @@ func (s *ShadowDocument) SnapshotForJob(blockID string) (domain.SieveBlock, DocV
 			logger.Warn("editor: markdown-mode snapshot reparse failed", "uuid", s.UUID, "err", err)
 		}
 	}
-	var target *domain.SieveBlock
-	for i := range blocks {
-		if blocks[i].ID == blockID {
-			target = &blocks[i]
-			break
-		}
-	}
+	target, _ := s.locate(blocks, blockID)
 	if target == nil {
 		return domain.SieveBlock{}, DocView{}, false
 	}
@@ -100,17 +95,40 @@ func (s *ShadowDocument) TryDispatch(id string) (domain.SieveBlock, bool) {
 	return b.Clone(), true
 }
 
-// ResetStuckDispatched flips every DISPATCHED block older than threshold (or with
-// no createdAt) back to PENDING and returns their ids, so the caller can re-queue
-// their jobs. Used on (re)open to recover jobs stranded by a crash/restart.
+// AppendElement adds el to the end of the element list the block with id holds
+// under key, or makes it the whole list when startOver is set, and returns a deep
+// copy of the block as it now stands. It refuses a block that is absent or whose
+// job is not running: elements are written into a slot only while its block is
+// being answered. It does not schedule an autosave; the job's end saves.
+func (s *ShadowDocument) AppendElement(id, key string, el domain.SieveBlock, startOver bool) (domain.SieveBlock, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b := s.findBlock(id)
+	if b == nil {
+		return domain.SieveBlock{}, fmt.Errorf("block %q is not in this document", id)
+	}
+	if status := b.Status(); status != BlockStatusDispatched {
+		return domain.SieveBlock{}, fmt.Errorf("block %q is not being answered (status %s)", id, status)
+	}
+	var list domain.Elements
+	if !startOver {
+		list = append(list, domain.DecodeElements(b.Attrs[key])...)
+	}
+	b.SetElements(key, append(list, el))
+	return b.Clone(), nil
+}
+
+// ResetStuckDispatched flips every DISPATCHED block — top-level or an element of
+// one — older than threshold (or with no createdAt) back to PENDING and returns
+// their ids, so the caller can re-queue their jobs. Used on (re)open to recover
+// jobs stranded by a crash/restart.
 func (s *ShadowDocument) ResetStuckDispatched(threshold time.Duration) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var stuck []string
-	for i := range s.Blocks {
-		blk := &s.Blocks[i]
+	s.eachBlock(func(blk *domain.SieveBlock) {
 		if blk.Status() != BlockStatusDispatched {
-			continue
+			return
 		}
 		createdAt := blk.StringAttr("createdAt")
 		stale := createdAt == ""
@@ -123,7 +141,7 @@ func (s *ShadowDocument) ResetStuckDispatched(threshold time.Duration) []string 
 			blk.Attrs["status"] = BlockStatusPending
 			stuck = append(stuck, blk.ID)
 		}
-	}
+	})
 	return stuck
 }
 

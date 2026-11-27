@@ -62,6 +62,7 @@ func (s RegionShape) Wraps(content string) bool {
 //	filename   the name a dropped file arrived under
 //	parentId   the composite block a nested source was rendered inside
 //	holderId   the block whose held content this entry carries (framework-stamped)
+//	readOnly   true when the entry is a view of a whole block that is read-only
 //	container  the document a copied sieve/<kind> view was copied from
 type ContentEntry struct {
 	MIMEType string                 `json:"mimeType"`
@@ -122,6 +123,13 @@ func (e ContentEntry) HolderID() (string, bool) {
 	return "", false
 }
 
+// ReadOnly reports whether this entry is a view of a whole block that says it
+// is read-only (Context["readOnly"]); see ContentEntries.Convertible.
+func (e ContentEntry) ReadOnly() bool {
+	ro, _ := e.Context["readOnly"].(bool)
+	return ro
+}
+
 // SourceContainer reports the uuid of the document a copied sieve/<kind> view
 // came from (the clipboard stamps Context["container"]). ok is false when the
 // entry does not say — an extract, which never leaves its document, or a
@@ -153,6 +161,26 @@ func (e ContentEntry) heldBy(blockID string) ContentEntry {
 
 // ContentEntries is one paste's views, in the order the clipboard carried them.
 type ContentEntries []ContentEntry
+
+// Convertible reports whether a processor may make a block of its kind from
+// these entries. A whole ai-block cannot be converted, recognised by its own
+// sieve/ai-block view whether or not its entries say they are read-only, and
+// neither can any whole block whose entries say it is read-only. Entries naming
+// content nested in a block (ContentEntry.NestedParentID) are convertible
+// whatever their host is: a copy lifted out of a block consumes nothing of it.
+func (es ContentEntries) Convertible() bool {
+	whole := true
+	unconvertible := false
+	for _, e := range es {
+		if _, nested := e.NestedParentID(); nested {
+			whole = false
+		}
+		if kind, _, isView := e.SieveAttrs(); (isView && kind == KindAIBlock) || e.ReadOnly() {
+			unconvertible = true
+		}
+	}
+	return !whole || !unconvertible
+}
 
 // ViewFirst returns the entries with every sieve/<kind> view of kind moved to
 // the front, the rest in their carried order. A processor reads entries in order
@@ -267,17 +295,17 @@ func (s SupportedActions) Builds(a Action) bool {
 	return s.Has(a) || (a == ActionPlace && s.Has(ActionPaste))
 }
 
-// asAdditive returns a copy of this offer with any in-place TRANSFORM demoted to an
-// additive EXTRACT. Used for a source nested inside a composite (entries carry a
-// parentId): TRANSFORM would ReplaceBlock(parentId) and clobber the whole composite —
-// its only addressable id is the parent's. Extracting a copy alongside the surviving
-// parent is the only safe mechanic. The label the user sees ("Convert to X") is
-// unchanged; only the mechanic goes additive.
+// asAdditive returns a copy of this offer with every in-place action dropped and a
+// TRANSFORM demoted to an additive EXTRACT. Used for a source nested inside a
+// composite (entries carry a parentId): an in-place action would ReplaceBlock(parentId)
+// and clobber the whole composite — its only addressable id is the parent's.
+// Extracting a copy alongside the surviving parent is the only safe mechanic. The
+// label the user sees ("Convert to X") is unchanged; only the mechanic goes additive.
 func (s SupportedActions) asAdditive() SupportedActions {
 	out := SupportedActions{Kind: s.Kind}
 	for _, a := range s.Actions {
-		if a == ActionTransform {
-			continue // drop the in-place transform
+		if a == ActionTransform || a == ActionUndoSmartPaste {
+			continue
 		}
 		out.Actions = append(out.Actions, a)
 	}
@@ -297,6 +325,10 @@ const KindProse = "prose"
 // It names the one kind an edge can be carried as, so the code that mints an
 // element edge and the code that harvests one agree on the spelling.
 const KindReference = "reference"
+
+// KindAIBlock is the ai-block kind name: an exchange with a model, its question
+// and answer each a list of blocks.
+const KindAIBlock = "ai-block"
 
 // KindDiagram is the diagram kind name: a Mermaid or PlantUML diagram, its engine
 // the `diagramType` attr.
@@ -761,6 +793,15 @@ type HeldAssetPlacer interface {
 	PlacesHeldAssets() bool
 }
 
+// EntryAcquirer is the optional interface a processor implements when its
+// Transform acquires what entries denote — downloading, decoding, storing bytes
+// as an asset of document uuid — and so can fail for a reason worth telling.
+// Acquire is that Transform, reporting why it failed: the overrides, or an
+// error. Transform returns what Acquire does, nil in place of its error.
+type EntryAcquirer interface {
+	Acquire(entries []ContentEntry, uuid, blockID string, action Action) (map[string]any, error)
+}
+
 // DrawnElsewhere is the optional interface a processor implements when a block of
 // its kind is drawn by a drawing service outside its own job, for a block that
 // lives in no document. DrawingSource is the text the service draws for b, and
@@ -1066,7 +1107,8 @@ func FirstPasteMatch(entries []ContentEntry, action Action) (kind string, proces
 
 // DetectExtractions composes the affordance offer: for each registered kind that can
 // build from these entries via extract/transform, its SupportedActions. The frontend
-// renders the menu from this. Self-kind is skipped unless AllowSelfExtraction.
+// renders the menu from this. Self-kind is skipped unless AllowSelfExtraction, or
+// unless the source is a block of that kind nested in a composite.
 func DetectExtractions(sourceKind string, entries []ContentEntry) []SupportedActions {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
@@ -1075,6 +1117,10 @@ func DetectExtractions(sourceKind string, entries []ContentEntry) []SupportedAct
 	// replace the parent and clobber it (defect #1, data loss). Demote every offer to
 	// additive-only when any entry carries a parentId.
 	nested := false
+	// nestedSelf: the source IS a block of sourceKind nested in a composite (its own
+	// sieve/<kind> view carries the parentId), so a copy of its own kind is the one
+	// form of it the document can hold on its own, and self-kind is offered.
+	nestedSelf := false
 	// unheld is the entry set MINUS content a source is merely holding — what an
 	// in-place TRANSFORM would still have to work from once the source it replaced
 	// (and the file that reached it) is gone.
@@ -1082,6 +1128,9 @@ func DetectExtractions(sourceKind string, entries []ContentEntry) []SupportedAct
 	for _, e := range entries {
 		if _, ok := e.NestedParentID(); ok {
 			nested = true
+			if kind, _, isView := e.SieveAttrs(); isView && kind == sourceKind {
+				nestedSelf = true
+			}
 		}
 		if _, isHeld := e.HolderID(); !isHeld {
 			unheld = append(unheld, e)
@@ -1091,7 +1140,7 @@ func DetectExtractions(sourceKind string, entries []ContentEntry) []SupportedAct
 
 	var offers []SupportedActions
 	for _, pm := range pasteMatchers {
-		if pm.Kind == sourceKind {
+		if pm.Kind == sourceKind && !nestedSelf {
 			allowSelf := false
 			if se, ok := pm.Processor.(SelfExtractable); ok {
 				allowSelf = se.AllowSelfExtraction()

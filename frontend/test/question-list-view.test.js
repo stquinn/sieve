@@ -13,7 +13,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import jsyaml from 'js-yaml'
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import MarkdownIt from 'markdown-it'
 import { AiBlockRenderer } from '../src/static/renderers/ai-block-renderer.js'
 import { QuestionListView } from '../src/static/renderers/question-list-view.js'
@@ -440,5 +440,104 @@ describe('the ai-block question — what it draws and what it leaves alone', () 
     document.body.appendChild(el)
     expect(document.querySelectorAll('img').length).toBe(0)
     expect(el.textContent).toContain('<img src=x onerror="alert(1)">')
+  })
+})
+
+// ── The answer's spacing ─────────────────────────────────────────────────────
+// The answer's list owns the gap between its elements, in a document and in a
+// popup alike: one gap between any two neighbours, a nested block's own outer
+// margin — the framework's, or one a kind sets on its root — not added, and
+// nothing above the first element or below the last. Prose inside one element
+// keeps the document's own rhythm.
+describe("the ai-block answer's spacing", () => {
+  const GAP = '16px' // --answer-gap, 1rem
+
+  // The document's cascade the answer has to beat, a kind's own root margin
+  // included, and the document's prose rhythm it has to keep.
+  function installAnswerCascade() {
+    const el = document.createElement('style')
+    el.textContent = `
+      .sieve-block, .sieve-node { margin-top: 1.5rem; margin-bottom: 2rem; }
+      .sieve-block--diagram { margin: 4px 0; }
+      .tiptap > * + * { margin-top: 0.4em; }
+      .tiptap p { margin: 0; }
+      .tiptap h2 { margin-top: 1.4em; margin-bottom: 0; }
+      .tiptap ul { margin: 0.5rem 0; }
+    `
+    document.head.appendChild(el)
+    return el
+  }
+
+  /** An answered ai-block drawn, and its body emptied for the test to fill. */
+  function answerBody() {
+    const dom = new AiBlockRenderer(new SieveBlock('ai-block', {
+      id: '0198c1a0-0000-7000-8000-000000000020', type: 'ASK', status: 'COMPLETE', question: 'why?', answer: [],
+    })).render()
+    const body = /** @type {HTMLElement} */ (Array.from(dom.children).find((c) => c.classList.contains('sieve-block__content')))
+    body.innerHTML = ''
+    document.body.appendChild(dom)
+    return body
+  }
+
+  /** @param {Element} el */
+  const margins = (el) => [getComputedStyle(el).marginTop, getComputedStyle(el).marginBottom]
+
+  /** @type {HTMLStyleElement} */ let cascade
+  beforeAll(() => {
+    Object.assign(/** @type {any} */ (globalThis).TipTap, { MarkdownIt })
+    installMermaidStub()
+  })
+  afterAll(() => { delete /** @type {any} */ (globalThis).TipTap.MarkdownIt })
+  beforeEach(() => { cascade = installAnswerCascade() })
+  afterEach(() => { cascade.remove(); document.body.innerHTML = '' })
+
+  // In a document the body holds what ProseMirror projects: a structured
+  // element is one .sieve-node, a prose element a run of native nodes.
+  it('in a document: one gap on each side of a block, and none set between prose and prose', () => {
+    const body = answerBody()
+    body.innerHTML = [
+      '<h2>Why</h2>', '<p>The pool ran out.</p>',
+      '<div class="sieve-node sieve-block sieve-block--diagram" data-kind="diagram"></div>',
+      '<div class="sieve-node sieve-block sieve-block--code" data-kind="code"></div>',
+      '<p>Raise the ceiling.</p>', '<p>Then retry.</p>',
+      '<div class="sieve-node reference-block" data-kind="reference"></div>',
+    ].join('')
+    const [h2, p1, diagram, code, p2, p3, reference] = Array.from(body.children)
+    expect(margins(h2)[0]).toBe('0px')
+    expect(margins(p1)[1]).toBe('0px')
+    expect(margins(diagram)).toEqual([GAP, '0px'])
+    expect(margins(code)).toEqual([GAP, '0px'])
+    expect(margins(p2)[0]).toBe(GAP)
+    expect(margins(p3)[0]).not.toBe(GAP)
+    expect(margins(reference)).toEqual([GAP, '0px'])
+  })
+
+  it('in a document: nothing above an answer that opens with a block, nor below one that closes with prose', () => {
+    const body = answerBody()
+    body.innerHTML = '<div class="sieve-node sieve-block sieve-block--diagram" data-kind="diagram"></div><p>after</p>'
+    expect(margins(/** @type {Element} */ (body.firstElementChild))[0]).toBe('0px')
+    expect(margins(/** @type {Element} */ (body.lastElementChild))[1]).toBe('0px')
+  })
+
+  // In a popup the answer is drawn as rows, one per element, each the kind's
+  // own rendering of a whole block.
+  it('in a popup: one gap between rows whatever their kinds, no block margin inside a row', () => {
+    const body = answerBody()
+    new QuestionListView().fill(body, [
+      { kind: 'prose', attrs: { content: 'The pool ran out.\n\n## Why\n\n- one\n- two' } },
+      { kind: 'diagram', attrs: { diagramType: 'mermaid', mode: 'render', source: 'graph TD; a-->b' } },
+      { kind: 'code', attrs: { language: 'go', source: 'x := 1' } },
+      { kind: 'prose', attrs: { content: 'Raise the ceiling.' } },
+    ])
+    const rows = Array.from(body.children)
+    expect(rows.map((r) => margins(r)[0])).toEqual(['0px', GAP, GAP, GAP])
+    for (const row of rows) {
+      expect(margins(/** @type {Element} */ (row.firstElementChild))).toEqual(['0px', '0px'])
+    }
+    const prose = Array.from(/** @type {Element} */ (rows[0].querySelector('.sieve-block__content')).children)
+    expect(prose.map((el) => el.tagName)).toEqual(['P', 'H2', 'UL'])
+    expect(margins(prose[0])[0]).toBe('0px')
+    expect(margins(prose[1])[0]).toBe('22.4px') // the document's heading rhythm
+    expect(margins(prose[2])).toEqual(['8px', '0px'])
   })
 })

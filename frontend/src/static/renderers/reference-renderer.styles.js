@@ -28,7 +28,6 @@ export const referenceStyles = /* css */ `
      spanning the whole column. Every other kind is a full-width surface and wants
      that; a reference is a label and does not. */
   .reference-block {
-    margin: 4px 0;
     width: max-content;
     max-width: 100%;
   }

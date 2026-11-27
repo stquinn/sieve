@@ -43,6 +43,39 @@ func (p *DiagramProcessor) Kind() string { return p.FencedDeserializer.Kind }
 
 func (p *DiagramProcessor) Mode() block.BlockMode { return block.BlockModeBlock }
 
+// AnswerCard offers a diagram to a model writing an answer (block.AnswerKind):
+// Mermaid, which the reader draws, or PlantUML, which lands PENDING and its own
+// render job draws.
+func (p *DiagramProcessor) AnswerCard() domain.AnswerCard {
+	return domain.AnswerCard{
+		Use: "a diagram — flow, sequence, state, class, entity-relationship — drawn from Mermaid or PlantUML source",
+		Attrs: map[string]string{
+			"source":      "the diagram source, without markdown fences",
+			"diagramType": "optional: mermaid (the default) or plantuml",
+		},
+		Example: map[string]any{"source": "graph TD\n    A[request] --> B{cached?}\n    B -->|yes| C[serve]\n    B -->|no| D[fetch]"},
+		Waits:   "a PlantUML diagram, which is drawn on the server",
+	}
+}
+
+// AnswerSource takes a diagram element's source and engine, drawn in render
+// mode (block.AnswerKind).
+func (p *DiagramProcessor) AnswerSource(attrs block.AnswerAttrs) (block.AnswerSource, error) {
+	s, err := attrs.StringsWith([]string{"source"}, "diagramType")
+	if err != nil {
+		return block.AnswerSource{}, err
+	}
+	engine := strings.ToLower(strings.TrimSpace(s["diagramType"]))
+	switch engine {
+	case "":
+		engine = "mermaid"
+	case "mermaid", "plantuml":
+	default:
+		return block.AnswerSource{}, fmt.Errorf("diagramType must be mermaid or plantuml, not %q", s["diagramType"])
+	}
+	return block.AnswerSource{Overrides: map[string]any{"source": s["source"], "diagramType": engine, "mode": "render"}}, nil
+}
+
 func (p *DiagramProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
 		"id":                id,
@@ -89,6 +122,9 @@ func (p *DiagramProcessor) defaultDiagramType() string {
 }
 
 func (p *DiagramProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
+	if !block.ContentEntries(entries).Convertible() {
+		return block.SupportedActions{Kind: p.Kind()}
+	}
 	for _, e := range entries {
 		if mermaidFenceRe.MatchString(e.Content) || plantumlFenceRe.MatchString(e.Content) {
 			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionTransform}}

@@ -190,3 +190,22 @@ func TestBuildArgs_DeduplicatesRepeatedGrants(t *testing.T) {
 		})
 	}
 }
+
+// The AI RESPONSE header says what became of the final message whenever the
+// run's note says anything, so a discarded message is not read as the answer.
+func TestExecCLIRunner_ResponseLabelCarriesTheNote(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		note ResponseNote
+		want string
+	}{
+		{"no note", nil, "AI RESPONSE ▸ ask (12ms, 34 bytes)"},
+		{"a note that says nothing", func() string { return "" }, "AI RESPONSE ▸ ask (12ms, 34 bytes)"},
+		{"a discarded message", func() string { return "discarded: the answer was written with add_to_answer (4 blocks)" },
+			"AI RESPONSE ▸ ask (12ms, 34 bytes) ▸ discarded: the answer was written with add_to_answer (4 blocks)"},
+	} {
+		if got := (execCLIRunner{}).responseLabel("ask", 12, 34, tc.note); got != tc.want {
+			t.Errorf("%s: label = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

@@ -176,7 +176,10 @@ var (
 	_ domain.NodeResolver              = (*editor.Router)(nil)
 	_ domain.SearchService             = (*editor.Router)(nil)
 	_ command.DocumentFiler            = (*editor.EditorService)(nil)
-	_ ai.DocumentMCPEndpoint           = (*mcp.Server)(nil)
+	_ ai.MCPEndpoint                   = (*mcp.Server)(nil)
+	_ mcp.AnswerVocabulary             = block.Registry{}
+	_ mcp.AnswerWriter                 = (*editor.EditorService)(nil)
+	_ mcp.AnswerWriter                 = (*command.Registry)(nil)
 	_ ink.NoteDescriber                = (*ai.AIService)(nil)
 	_ ink.PageTranscriber              = (*ai.AIService)(nil)
 	_ ink.DiagramDrawer                = (*services.PlantumlService)(nil)
@@ -299,6 +302,10 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	block.RegisterProcessor(ink.NewDigitalNoteKind())
 
 	block.RegisterProcessor(processors.NewAIBlockProcessor(svc))
+	s.MCP.OpenAnswers(block.GlobalRegistry(), map[domain.AnswerHolder]mcp.AnswerWriter{
+		domain.HeldInDocument: s.Editor,
+		domain.HeldByCommand:  s.Commands,
+	})
 }
 
 // ApplyRetention pushes the history-retention limit into the concrete store so

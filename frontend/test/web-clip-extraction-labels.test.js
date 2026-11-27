@@ -72,4 +72,9 @@ describe('web-clip extraction menu items', () => {
     items.forEach((/** @type {any} */ i) => i.action())
     expect(played).toEqual([{ mode: 'fetch' }, { mode: 'summarise' }])
   })
+
+  it('a source that is already a web clip offers no mode: it is copied as it stands', () => {
+    const entries = [{ mimeType: 'sieve/web-clip', content: '{"source":"https://go.dev"}' }]
+    expect(adapter.getExtractionMenuItems(null, entries, () => {}, { operation: 'extract' })).toBeNull()
+  })
 })

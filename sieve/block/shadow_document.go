@@ -51,7 +51,18 @@ type ShadowDocument struct {
 	flushMu sync.Mutex
 	timer   *time.Timer
 	onFlush func()
+	// kept holds every block that has left Blocks — deleted, or replaced under
+	// its id by a transform (ReplaceBlock) or a replace-block op — by its id and
+	// kind, the last one to leave under each. A create-block or replace-block
+	// naming a kept id and kind puts that block back whole, as Go stored it, and
+	// the op's attrs are not read. In memory only, for the shadow's lifetime;
+	// guarded by mu.
+	kept map[keptKey]domain.SieveBlock
 }
+
+// keptKey names a kept block: a client states a block by its id and kind, so a
+// slot that held blocks of several kinds keeps one of each.
+type keptKey struct{ id, kind string }
 
 func NewShadow(uuid, body string, codec *DocumentCodec, debounce time.Duration, onFlush func()) *ShadowDocument {
 	// codec.Deserialize constructs every block via NewSieveBlock, which mints
@@ -142,7 +153,8 @@ func (s *ShadowDocument) SetMarkdown(md string) {
 	s.resetDebounce()
 }
 
-// MergeBlock creates or patches the named block, applying the merge semantic
+// MergeBlock creates or patches the named block — a top-level block or an
+// element of one — applying the merge semantic
 // (SieveBlock.Merge: attrs additive, aliases replaced when present). For a new id
 // it appends a fresh block. kind is only used when creating the entry; subsequent
 // merges preserve the existing Kind. The locked entry point for external callers;
@@ -160,6 +172,22 @@ func (s *ShadowDocument) MergeBlock(patch domain.SieveBlock) {
 	s.resetDebounce()
 }
 
+// PatchBlock merges patch into the block it names — a top-level block or an
+// element of one — when the document still holds it, and reports whether it
+// did. Unlike MergeBlock it never creates one: a job's result for a block that
+// has since gone has nowhere to land.
+func (s *ShadowDocument) PatchBlock(patch domain.SieveBlock) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b := s.findBlock(patch.ID)
+	if b == nil {
+		return false
+	}
+	b.Merge(patch)
+	s.resetDebounce()
+	return true
+}
+
 // ReplaceBlock swaps the block with id for newBlock AT THE SAME INDEX, preserving
 // its document position. It is the primitive promote-to-prose needs: update-block
 // cannot change a block's Kind, and delete+insert would lose position. Returns
@@ -169,12 +197,35 @@ func (s *ShadowDocument) ReplaceBlock(id string, newBlock domain.SieveBlock) boo
 	defer s.mu.Unlock()
 	for i := range s.Blocks {
 		if s.Blocks[i].ID == id {
+			s.keep(s.Blocks[i])
 			s.Blocks[i] = newBlock
 			s.resetDebounce()
 			return true
 		}
 	}
 	return false
+}
+
+// keep records b, which is leaving Blocks, as the block kept under its id and
+// kind. Caller holds s.mu.
+func (s *ShadowDocument) keep(b domain.SieveBlock) {
+	if s.kept == nil {
+		s.kept = map[keptKey]domain.SieveBlock{}
+	}
+	s.kept[keptKey{b.ID, b.Kind}] = b
+}
+
+// stated is the block a create-block or replace-block op puts in the list: the
+// block kept under the op's id and kind when there is one, which is taken out of
+// kept, and otherwise one built from the op's kind, id and attrs. Caller holds
+// s.mu.
+func (s *ShadowDocument) stated(op BlockOp) (domain.SieveBlock, bool) {
+	key := keptKey{op.BlockID, op.Kind}
+	if b, ok := s.kept[key]; ok {
+		delete(s.kept, key)
+		return b, true
+	}
+	return domain.NewSieveBlock(op.Kind, op.BlockID, op.Attrs), false
 }
 
 // IndexOfBlock returns the top-level position of id, or -1 if this document does
@@ -289,10 +340,77 @@ func (s *ShadowDocument) BlockIDs() []string {
 }
 
 // findBlock returns a pointer to the block with the given ID within the live
-// tree, or nil. ASSUMES s.mu is held by the caller — the returned pointer
-// aliases the live slice and the caller must mutate it under that lock.
+// tree — a top-level block or an element of one — or nil. ASSUMES s.mu is held
+// by the caller. A top-level pointer aliases the live slice; an element's
+// carries the attrs map stored in its parent's payload, so an attr written
+// through it lands in what the parent persists, and nothing else of it does.
 func (s *ShadowDocument) findBlock(id string) *domain.SieveBlock {
-	return s.findBlockIn(id)
+	b, _ := s.locate(s.Blocks, id)
+	return b
+}
+
+// locate finds the block id among blocks — at the top level, or as an element
+// of one, at any depth — and returns it with the top-level block that is it or
+// holds it, or nil. Caller holds s.mu when blocks is the live tree.
+func (s *ShadowDocument) locate(blocks []domain.SieveBlock, id string) (found, top *domain.SieveBlock) {
+	for i := range blocks {
+		if blocks[i].ID == id {
+			return &blocks[i], &blocks[i]
+		}
+	}
+	for i := range blocks {
+		if el := s.elementOf(&blocks[i], id); el != nil {
+			return el, &blocks[i]
+		}
+	}
+	return nil, nil
+}
+
+// elementOf finds the element id among the elements parent holds, at any
+// depth, or nil.
+func (s *ShadowDocument) elementOf(parent *domain.SieveBlock, id string) *domain.SieveBlock {
+	holder, ok := GetProcessor(parent.Kind).(BlockParent)
+	if !ok {
+		return nil
+	}
+	for _, el := range holder.Children(parent) {
+		if el.ID == id {
+			return el
+		}
+		if deeper := s.elementOf(el, id); deeper != nil {
+			return deeper
+		}
+	}
+	return nil
+}
+
+// SnapshotHolder returns a deep copy of the top-level block that is id or holds
+// it as an element, or false if the document holds neither. It is the block a
+// change to an element is told to the client as.
+func (s *ShadowDocument) SnapshotHolder(id string) (domain.SieveBlock, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, top := s.locate(s.Blocks, id); top != nil {
+		return top.Clone(), true
+	}
+	return domain.SieveBlock{}, false
+}
+
+// eachBlock calls fn for every block of the live tree, top-level blocks and
+// their elements at any depth. Caller holds s.mu.
+func (s *ShadowDocument) eachBlock(fn func(b *domain.SieveBlock)) {
+	var walk func(b *domain.SieveBlock)
+	walk = func(b *domain.SieveBlock) {
+		fn(b)
+		if holder, ok := GetProcessor(b.Kind).(BlockParent); ok {
+			for _, el := range holder.Children(b) {
+				walk(el)
+			}
+		}
+	}
+	for i := range s.Blocks {
+		walk(&s.Blocks[i])
+	}
 }
 
 // AppendIndex is the document position meaning "after everything else".
@@ -318,7 +436,7 @@ type Anchor struct {
 // BlockOp is a granular mutation of the BlockDoc tree, carried over the wire
 // (Stage C, spec §4). One op == one user-visible block change.
 type BlockOp struct {
-	Type    string `json:"type"` // "create-block","update-block","delete-block","move","set-order"
+	Type    string `json:"type"` // "create-block","update-block","replace-block","delete-block","move","set-order"
 	BlockID string `json:"blockId"`
 	Kind    string `json:"kind,omitempty"`
 	// Attrs is the block's payload bag — uniform across kinds. Every kind's body
@@ -358,23 +476,44 @@ func (s *ShadowDocument) applyOpTo(op BlockOp) error {
 		b.Merge(domain.SieveBlock{Attrs: op.Attrs, Aliases: op.Aliases})
 		return nil
 
+	case "replace-block":
+		// The slot takes the stated block whole — a change of kind cannot be a
+		// merge, because the old kind's payload means nothing to the new one. A
+		// block built from the op keeps the slot's aliases.
+		b := s.findBlockIn(op.BlockID)
+		if b == nil {
+			return fmt.Errorf("replace-block: block %q not found", op.BlockID)
+		}
+		current := *b
+		var restored bool
+		if *b, restored = s.stated(op); !restored {
+			b.Aliases = current.Aliases
+		}
+		s.keep(current)
+		return nil
+
 	case "create-block":
 		// create-block is a construction point: route through the factory so an
 		// op with no blockId gets one minted (given an id or generate one) rather
 		// than admitting an id-less block. The frontend normally supplies the id.
-		// The payload (incl. prose's content) rides in op.Attrs.
+		// The payload (incl. prose's content) rides in op.Attrs; a kept block is
+		// put back instead, with its own aliases.
 		if op.ParentID != "" {
 			return fmt.Errorf("create-block: nesting into parent %q is Stage E (no Children yet)", op.ParentID)
 		}
-		nb := domain.NewSieveBlock(op.Kind, op.BlockID, op.Attrs)
-		nb.Aliases = op.Aliases
+		nb, restored := s.stated(op)
+		if !restored {
+			nb.Aliases = op.Aliases
+		}
 		s.insertBlockAt(op.Index, nb)
 		return nil
 
 	case "delete-block":
-		if _, ok := s.removeBlock(op.BlockID); !ok {
+		removed, ok := s.removeBlock(op.BlockID)
+		if !ok {
 			return fmt.Errorf("delete-block: block %q not found", op.BlockID)
 		}
+		s.keep(removed)
 		return nil
 
 	case "set-order":
@@ -452,8 +591,8 @@ func (s *ShadowDocument) insertBlockAt(index int, b domain.SieveBlock) {
 	s.Blocks[index] = b
 }
 
-// findBlockIn returns a pointer to the block with the given ID, or nil. The
-// pointer aliases the live slice so callers can mutate it.
+// findBlockIn returns a pointer to the top-level block with the given ID, or
+// nil. The pointer aliases the live slice so callers can mutate it.
 func (s *ShadowDocument) findBlockIn(id string) *domain.SieveBlock {
 	for i := range s.Blocks {
 		if s.Blocks[i].ID == id {

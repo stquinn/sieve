@@ -209,6 +209,9 @@ func (p *ReferenceProcessor) heldAddress(attrs map[string]interface{}) (domain.A
 // paste-match pipeline a paste does, and this kind takes the files nobody else
 // claims.
 func (p *ReferenceProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
+	if !block.ContentEntries(entries).Convertible() {
+		return block.SupportedActions{Kind: p.Kind()}
+	}
 	for _, e := range entries {
 		if e.IsSieveType(p) {
 			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionExtract}}
@@ -528,23 +531,66 @@ func (p *ReferenceProcessor) resolveJob(uri string) *block.ProcessorJob {
 				b.Attrs["error"] = f.dangling
 			} else {
 				face := p.ensureFace(b.Attrs)
-				if f.node.Title != "" {
-					face["title"] = f.node.Title
-				}
-				// A pointer's mime names Sieve's own space, not a media type: this
-				// block points at a note, it does not hold one.
-				face["mime"] = "sieve/" + f.node.Kind
-				if f.node.Summary != "" {
-					face["summary"] = f.node.Summary
-				} else {
-					delete(face, "summary")
-				}
+				p.pointAt(face, f.node)
 				p.stampFace(face)
 				b.Attrs["error"] = ""
 			}
 			p.complete(b.Attrs)
 		},
 	}
+}
+
+// pointAt fills face with what node, the target a pointer resolved to, is called
+// and is. A pointer's mime names Sieve's own space, not a media type: the block
+// points at a note, it does not hold one.
+func (p *ReferenceProcessor) pointAt(face map[string]interface{}, node domain.NodeDescriptor) {
+	if node.Title != "" {
+		face["title"] = node.Title
+	}
+	face["mime"] = "sieve/" + node.Kind
+	if node.Summary != "" {
+		face["summary"] = node.Summary
+	} else {
+		delete(face, "summary")
+	}
+}
+
+// AnswerCard offers a reference to a model writing an answer (block.AnswerKind).
+func (p *ReferenceProcessor) AnswerCard() domain.AnswerCard {
+	return domain.AnswerCard{
+		Use: "a citation of something you actually read in Sieve — a note, a block or an asset — by the sieve:// address you read it at; " +
+			"the reader sees its title and opens it",
+		Attrs:   map[string]string{"uri": "the absolute sieve:// address you read it at, exactly as a tool gave it"},
+		Example: map[string]any{"uri": "sieve://0198c1a0-0001-7000-8000-000000000001"},
+	}
+}
+
+// AnswerSource takes a reference element's address and resolves it now, so
+// the element is born wearing its target's face and never waits on a resolve
+// job; an address that is malformed, relative or answered by nothing is
+// refused (block.AnswerKind).
+func (p *ReferenceProcessor) AnswerSource(attrs block.AnswerAttrs) (block.AnswerSource, error) {
+	s, err := attrs.Strings("uri")
+	if err != nil {
+		return block.AnswerSource{}, err
+	}
+	addr, err := domain.ParseAddress(strings.TrimSpace(s["uri"]))
+	if err != nil {
+		return block.AnswerSource{}, fmt.Errorf("uri must be an absolute sieve:// address: %v", err)
+	}
+	if p.svc.Nodes == nil {
+		return block.AnswerSource{}, fmt.Errorf("no address can be resolved here")
+	}
+	node, err := p.svc.Nodes.Resolve(addr)
+	if errors.Is(err, domain.ErrNodeNotFound) {
+		return block.AnswerSource{}, fmt.Errorf("nothing answers for %s; cite only an address you read", addr)
+	}
+	if err != nil {
+		return block.AnswerSource{}, err
+	}
+	face := map[string]interface{}{}
+	p.pointAt(face, node)
+	return block.AnswerSource{Overrides: map[string]any{"uri": addr.String(), "cache": face}}, nil
 }
 
 // sniffMIME decides what a held file is. The table below is consulted BEFORE the

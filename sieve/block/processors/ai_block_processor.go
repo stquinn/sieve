@@ -6,6 +6,7 @@ import (
 
 	"sieve/ident"
 	"sieve/logger"
+	"sieve/sieve/ai"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
 )
@@ -18,7 +19,7 @@ type AIBlockProcessor struct {
 }
 
 func NewAIBlockProcessor(svc block.BlockServices) *AIBlockProcessor {
-	return &AIBlockProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: "ai-block"}}
+	return &AIBlockProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: block.KindAIBlock}}
 }
 
 func (p *AIBlockProcessor) Kind() string { return p.FencedDeserializer.Kind }
@@ -562,21 +563,29 @@ func (p *AIBlockProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJo
 	content, history, questionCtx := p.buildPrompt(blk, jctx.Doc)
 
 	isExplain := blockType == "EXPLAIN"
+	ex := domain.Exchange{Container: uuid, Block: blk.ID}
 	return &block.ProcessorJob{
 		Category: block.CategoryAI,
 		Label:    p.aiBlockLabel(blk),
 		Work: func() (any, error) {
 			if isExplain {
-				return p.svc.AI.RunExplain(content, history, questionCtx, uuid)
+				return p.svc.AI.RunExplain(content, history, questionCtx, ex)
 			}
-			return p.svc.AI.RunAsk(content, history, questionCtx, uuid)
+			return p.svc.AI.RunAsk(content, history, questionCtx, ex)
 		},
-		Apply: func(result any, b *domain.SieveBlock) {
-			b.Attrs["status"] = block.BlockStatusComplete
-			b.SetElements(block.AnswerAttr, p.foldAnswer(result))
-			b.Attrs["completedAt"] = time.Now().UTC().Format(time.RFC3339)
-		},
+		Apply: p.settle,
 	}
+}
+
+// settle completes the exchange b with the run's result. An answer the model
+// wrote into the exchange is already its answer slot, so the final message is
+// discarded; otherwise the final message is folded into the answer.
+func (p *AIBlockProcessor) settle(result any, b *domain.SieveBlock) {
+	b.Attrs["status"] = block.BlockStatusComplete
+	if answer, _ := result.(ai.Answer); !answer.Written {
+		b.SetElements(block.AnswerAttr, p.foldAnswer(answer.Text))
+	}
+	b.Attrs["completedAt"] = time.Now().UTC().Format(time.RFC3339)
 }
 
 // MarkdownRepresentation renders an ANSWERED exchange as ordinary document

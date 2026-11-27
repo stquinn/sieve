@@ -31,6 +31,29 @@ func NewCodeBlockProcessor(svc block.BlockServices) *CodeBlockProcessor {
 
 func (p *CodeBlockProcessor) Kind() string { return p.FencedDeserializer.Kind }
 
+// AnswerCard offers code to a model writing an answer (block.AnswerKind).
+func (p *CodeBlockProcessor) AnswerCard() domain.AnswerCard {
+	return domain.AnswerCard{
+		Use: "source code, a command or a config file the reader may copy",
+		Attrs: map[string]string{
+			"source":   "the code itself, without markdown fences",
+			"language": "its language, e.g. go, python, sql, bash, yaml",
+		},
+		Example: map[string]any{"language": "go", "source": "func main() {\n\tfmt.Println(\"hello\")\n}"},
+	}
+}
+
+// AnswerSource takes a code element's source and language; the language is
+// the author's word, so it is stamped as a manual pick and nothing refines it
+// (block.AnswerKind).
+func (p *CodeBlockProcessor) AnswerSource(attrs block.AnswerAttrs) (block.AnswerSource, error) {
+	s, err := attrs.Strings("source", "language")
+	if err != nil {
+		return block.AnswerSource{}, err
+	}
+	return block.AnswerSource{Overrides: map[string]any{"source": s["source"], "language": strings.TrimSpace(s["language"]), "detectionMethod": "manual"}}, nil
+}
+
 func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
 		"id":                id,
@@ -62,8 +85,9 @@ func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface
 	// Complete-vs-pending predicate MUST mirror DescribeJob: an empty-source block
 	// has no async refine job, so it is born COMPLETE (never dispatched); the hint,
 	// having been consumed for heuristic detection above, is dropped as the settle
-	// path used to do.
-	if strings.TrimSpace(source) == "" {
+	// path used to do. A block whose language was named by hand is born COMPLETE
+	// too: a refine job's Apply would only settle its status.
+	if method, _ := attrs["detectionMethod"].(string); strings.TrimSpace(source) == "" || method == "manual" {
 		attrs["status"] = block.BlockStatusComplete
 		delete(attrs, "hint")
 	}
@@ -71,6 +95,9 @@ func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface
 }
 
 func (p *CodeBlockProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
+	if !block.ContentEntries(entries).Convertible() {
+		return block.SupportedActions{Kind: p.Kind()}
+	}
 	for _, e := range entries {
 		m := codeFenceRe.FindStringSubmatch(e.Content)
 		if m != nil {

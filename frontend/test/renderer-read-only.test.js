@@ -10,6 +10,8 @@ import { CodeRenderer } from '../src/static/renderers/code-renderer.js'
 import { LogRenderer } from '../src/static/renderers/log-renderer.js'
 import { DiagramRenderer } from '../src/static/renderers/diagram-renderer.js'
 import { ProseRenderer } from '../src/static/renderers/prose-renderer.js'
+import { WebClipRenderer } from '../src/static/renderers/web-clip-renderer.js'
+import { SmartImageRenderer } from '../src/static/renderers/smart-image-renderer.js'
 import { SieveBlock } from '../src/static/contract/sieve-block.js'
 
 /** A provider that records every outbound verb it is asked to perform. */
@@ -100,6 +102,30 @@ describe('the kinds that honour it', () => {
     expect(record.textContent).toContain('Format: syslog')     // a fact about the log
     // The raw/explore toggle is the one control that changes the BLOCK.
     expect(record.querySelector('.log-block__toggle')).toBeNull()
+  })
+
+  it('web clip: a failed, timed-out or interrupted clip says so, and offers no Retry', () => {
+    const stale = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+    for (const attrs of [
+      { status: 'ERROR', error: 'the page did not load' },
+      { status: 'TIMEOUT' },
+      { status: 'DISPATCHED', createdAt: stale },
+    ]) {
+      const block = new SieveBlock('web-clip', Object.assign({ id: 'w1', source: 'https://go.dev' }, attrs))
+      expect(new WebClipRenderer(block).render().querySelector('.web-clip-block__retry')).toBeTruthy()
+      const record = new WebClipRenderer(block, null, undefined, READ_ONLY).render()
+      expect(record.querySelector('.web-clip-block__label')?.textContent).toBeTruthy()
+      expect(record.querySelector('.web-clip-block__retry')).toBeNull()
+    }
+  })
+
+  it('smart image: the image and its status stay, the resize handles go', () => {
+    const block = new SieveBlock('smart-image', { id: 'i1', src: 'sieve://c/chart.png', width: '4', height: '3', status: 'COMPLETE' })
+    expect(new SmartImageRenderer(block).render().querySelectorAll('.image-resizer').length).toBe(3)
+    const record = new SmartImageRenderer(block, null, undefined, READ_ONLY).render()
+    expect(record.querySelector('img')).toBeTruthy()
+    expect(record.querySelector('.smart-image-status')).toBeTruthy()
+    expect(record.querySelectorAll('.image-resizer').length).toBe(0)
   })
 
   // A RECORD SHOWS WHAT PROCESSING ALREADY PRODUCED. `parsedAssetRef` is the

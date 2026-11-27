@@ -92,6 +92,9 @@ func (p *SmartImageProcessor) InitAttrs(id string, overrides map[string]interfac
 }
 
 func (p *SmartImageProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
+	if !block.ContentEntries(entries).Convertible() {
+		return block.SupportedActions{Kind: p.Kind()}
+	}
 	native := []block.Action{block.ActionPaste, block.ActionTransform}
 	sieve := []block.Action{block.ActionPaste, block.ActionExtract}
 	for _, e := range entries {
@@ -129,21 +132,66 @@ func (p *SmartImageProcessor) IsSupportedContent(entries []block.ContentEntry) b
 	return block.SupportedActions{Kind: p.Kind()}
 }
 
-// Transform is ONE shape for every ingest path — clipboard paste (raster or SVG
+// AnswerCard offers an image from the web to a model writing an answer
+// (block.AnswerKind): it is built as a paste of its URL builds one, downloaded
+// into the note, and lands PENDING for its own job to describe it.
+func (p *SmartImageProcessor) AnswerCard() domain.AnswerCard {
+	return domain.AnswerCard{
+		Use:         "an image on the web — a diagram, chart, photo or screenshot — downloaded into the note and shown in the answer",
+		Attrs:       map[string]string{"url": "the image's absolute http or https URL, its path ending in .png, .jpg, .jpeg, .gif, .webp or .svg"},
+		Example:     map[string]any{"url": "https://go.dev/images/gophers/ladder.svg"},
+		Waits:       "every image, which is downloaded into the note and described",
+		WaitsAlways: true,
+	}
+}
+
+// AnswerSource takes an image's URL, which must be an absolute http or https
+// URL, as the content a paste of it is (block.AnswerKind).
+func (p *SmartImageProcessor) AnswerSource(attrs block.AnswerAttrs) (block.AnswerSource, error) {
+	s, err := attrs.Strings("url")
+	if err != nil {
+		return block.AnswerSource{}, err
+	}
+	raw := strings.TrimSpace(s["url"])
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return block.AnswerSource{}, fmt.Errorf("url must be an absolute http or https URL")
+	}
+	return block.AnswerSource{Entries: []block.ContentEntry{{MIMEType: "text/uri-list", Content: raw}}}, nil
+}
+
+// Transform is Acquire with its failure logged (block.EntryAcquirer).
+func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string, action block.Action) map[string]interface{} {
+	attrs, err := p.Acquire(entries, uuid, blockID, action)
+	if err != nil {
+		if !errors.Is(err, errEntryNotImage) {
+			logger.Warn("smart-image: transform failed", "block", blockID, "err", err)
+		}
+		return nil
+	}
+	return attrs
+}
+
+// Acquire is ONE shape for every ingest path — clipboard paste (raster or SVG
 // data URI), locally-rendered SVG (the diagram→image convert), URL download, HTML
 // <img>, and an already-stored sieve asset. Each path only ACQUIRES the image;
-// persistence and, crucially, sizing happen in a SINGLE place afterwards. Before
-// #53 every branch hand-built its own attr map and only the raw-SVG one carried a
-// dimension, so paste and convert landed unsized (an SVG has no intrinsic pixel
-// size, so unsized means zero — a bare resize handle).
-func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string, action block.Action) map[string]interface{} {
+// persistence and sizing happen in a SINGLE place afterwards
+// (block.EntryAcquirer).
+func (p *SmartImageProcessor) Acquire(entries []block.ContentEntry, uuid string, blockID string, action block.Action) (map[string]interface{}, error) {
 	for _, e := range entries {
-		if e.IsSieveType(p) {
-			if action == block.ActionPlace {
-				return p.placeStored(e, uuid, blockID)
-			}
-			return p.copyStored(e, uuid, blockID)
+		if !e.IsSieveType(p) {
+			continue
 		}
+		var attrs map[string]interface{}
+		if action == block.ActionPlace {
+			attrs = p.placeStored(e, uuid, blockID)
+		} else {
+			attrs = p.copyStored(e, uuid, blockID)
+		}
+		if attrs == nil {
+			return nil, fmt.Errorf("the image it copies could not be read")
+		}
+		return attrs, nil
 	}
 	for _, e := range entries {
 		data, ref, err := p.acquire(e, uuid, blockID)
@@ -151,8 +199,7 @@ func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid strin
 			continue
 		}
 		if err != nil {
-			logger.Warn("smart-image: transform failed", "block", blockID, "err", err)
-			return nil
+			return nil, err
 		}
 
 		// A pre-stored asset is a pure REFERENCE: there are no bytes to persist and
@@ -165,12 +212,10 @@ func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid strin
 		if src == "" {
 			var ok bool
 			if width, height, ok = p.measure(data); !ok {
-				logger.Warn("smart-image: entry is not a usable image", "block", blockID, "bytes", len(data))
-				return nil
+				return nil, fmt.Errorf("its %d bytes are not an image this note can show", len(data))
 			}
 			if src, err = p.assets.mint(uuid, p.preferredName(e), data); err != nil {
-				logger.Warn("smart-image: transform save failed", "block", blockID, "err", err)
-				return nil
+				return nil, fmt.Errorf("the image could not be saved: %w", err)
 			}
 		}
 
@@ -184,9 +229,9 @@ func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid strin
 		if height > 0 {
 			attrs["height"] = strconv.Itoa(height)
 		}
-		return attrs
+		return attrs, nil
 	}
-	return nil
+	return nil, errEntryNotImage
 }
 
 // defaultImageName is the key stem of an ingested image that arrived under no name.

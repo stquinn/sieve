@@ -7,7 +7,6 @@ export const smartCardStyles = /* css */ `
     border: 1px solid var(--theme-border);
     border-radius: 8px;
     padding: 12px;
-    margin: 4px 0;
     cursor: pointer;
     transition: border-color 0.15s ease;
     background: var(--theme-bgDark);

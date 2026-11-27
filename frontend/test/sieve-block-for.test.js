@@ -3,8 +3,8 @@
 // (issue #96). The node's id resolves the mounted container's follower model
 // (what Go holds); on a hit the container's attrs are the base with the
 // kind-owned overlay applied on top (overlay wins). On a miss — no provider, no
-// id, an id the container does not hold — it falls back to SieveBlock.from(node),
-// the PM-resurrect path.
+// id, an id the container does not hold or holds as another kind — it falls back
+// to SieveBlock.from(node), the PM-resurrect path.
 //
 // The provider is a tiny stub exposing only getBlock (the one method the seam
 // calls), so this stays a pure unit of the choke point.
@@ -45,6 +45,15 @@ describe('sieveBlockFor — model-first', () => {
     expect(env.payload.foo).toBe('bar')      // node attrs carried (resurrect)
     expect(env.payload.source).toBe('LIVE')  // overlay wins
     expect(env.payload.id).toBe('l1')
+  })
+
+  it('container holds the id under ANOTHER kind (a transform undone): resurrect fallback from the node', () => {
+    const question = [{ kind: 'prose', attrs: { content: 'What is it?' } }]
+    const provider = { getBlock: () => ({ id: 'a1', kind: 'prose', attrs: { id: 'a1', content: 'embedded answer' } }) }
+    const env = sieveBlockFor(node('sieve-ai-block', { id: 'a1', question }), undefined, provider)
+    expect(env.kind).toBe('ai-block')
+    expect(env.payload.question).toEqual(question)
+    expect(env.payload.content).toBeUndefined()
   })
 
   it('no provider: resurrect fallback (never consults a container)', () => {

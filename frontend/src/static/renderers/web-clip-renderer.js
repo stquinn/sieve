@@ -11,7 +11,7 @@
 //
 // Status chrome is mount-once/patch: buildHeader() builds the ENTIRE chrome DOM
 // once (badge, [spinner|icon][label], the COMPLETE-only [status][link] pair, the
-// retry button) and caches refs; update() only toggles hidden/class and writes
+// retry button, which a read-only clip does not draw) and caches refs; update() only toggles hidden/class and writes
 // attrs-derived text via textContent (href via property assignment) — keeping a
 // hostile fetched title/URL/error string inert.
 
@@ -111,11 +111,15 @@ export class WebClipRenderer extends BlockRenderer {
 
     renderEl.appendChild(header)
 
-    const retryBtn = document.createElement('button')
-    retryBtn.className = 'web-clip-block__retry'
-    retryBtn.textContent = 'Retry'
-    retryBtn.addEventListener('click', () => { this.retry() })
-    renderEl.appendChild(retryBtn)
+    /** @type {HTMLButtonElement|null} */
+    let retryBtn = null
+    if (!this.readOnly) {
+      retryBtn = document.createElement('button')
+      retryBtn.className = 'web-clip-block__retry'
+      retryBtn.textContent = 'Retry'
+      retryBtn.addEventListener('click', () => { this.retry() })
+      renderEl.appendChild(retryBtn)
+    }
 
     this.#spinnerEl = spinnerEl
     this.#iconEl = iconEl
@@ -161,7 +165,7 @@ export class WebClipRenderer extends BlockRenderer {
   #updateChrome(attrs) {
     const spinnerEl = this.#spinnerEl, iconEl = this.#iconEl, labelEl = this.#labelEl
     const statusEl = this.#statusEl, linkEl = this.#linkEl, retryBtn = this.#retryBtn
-    if (!spinnerEl || !iconEl || !labelEl || !statusEl || !linkEl || !retryBtn) return
+    if (!spinnerEl || !iconEl || !labelEl || !statusEl || !linkEl) return
 
     const domain = attrs.source || ''
     const modeLabel = attrs.mode === 'summarise' ? 'Summarising' : 'Fetching'
@@ -173,7 +177,7 @@ export class WebClipRenderer extends BlockRenderer {
       iconEl.hidden = true
       iconEl.className = 'web-clip-block__icon'
       labelEl.hidden = true
-      retryBtn.hidden = true
+      if (retryBtn) retryBtn.hidden = true
 
       statusEl.hidden = false
       statusEl.textContent = completeModeLabel + ' — '
@@ -193,7 +197,7 @@ export class WebClipRenderer extends BlockRenderer {
     iconEl.textContent = chrome.glyph
     labelEl.hidden = false
     labelEl.textContent = chrome.label(domain, modeLabel, attrs)
-    retryBtn.hidden = !chrome.retry
+    if (retryBtn) retryBtn.hidden = !chrome.retry
   }
 
   // destroy(): base no-op is correct — this class owns no timers/observers.

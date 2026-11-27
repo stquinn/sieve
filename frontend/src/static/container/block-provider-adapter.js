@@ -72,6 +72,16 @@ export class BlockProviderAdapter extends WholeContentAdapter {
   }
 
   /**
+   * States a block whole under `kind`, which may not be the kind the model holds:
+   * the lens is ahead of Go here, holding a block it put back itself.
+   * @param {string} blockId @param {string} kind @param {Record<string, any>} attrs the whole payload
+   */
+  requestReplaceBlock(blockId, kind, attrs) {
+    if (!this.#model.getBlock(blockId)) return this.#drop('requestReplaceBlock', blockId)
+    this.#settle(this._documents.replaceBlock(this.getUuid(), blockId, kind, attrs || {}), 'requestReplaceBlock')
+  }
+
+  /**
    * Asks for a block to leave the container. Void like its siblings: the block
    * leaves this lens's view when Go's `remove-block` echo reaches the fold, which
    * is when it leaves every other lens watching the same container.

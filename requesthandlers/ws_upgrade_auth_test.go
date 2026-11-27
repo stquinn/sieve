@@ -8,6 +8,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"sieve/sieve/domain"
 	"sieve/sieve/mcp"
 	"sieve/sieve/protocol"
 )
@@ -114,7 +115,7 @@ func TestWS_AnMCPTokenCannotOpenAWire(t *testing.T) {
 
 	mcpServer := mcp.NewServer(sp.Documents, nil, nil, sp.LinkPreview)
 	mcpServer.SetBaseURL(srv.URL)
-	_, mcpToken := mcpServer.Endpoint()
+	_, mcpToken := mcpServer.EndpointFor(domain.Exchange{})
 	if mcpToken == "" {
 		t.Fatal("the MCP server issued no token: the disjointness claim is untested")
 	}

@@ -2,6 +2,7 @@ package ai
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -224,5 +225,43 @@ func TestBtw_NoAttachments_PromptIsByteIdenticalToTheTemplate(t *testing.T) {
 			"{doc_uuid}", "",
 		).Replace(DefaultBtwPrompt) {
 		t.Fatalf("the attachment-less /btw prompt changed:\n%s", prompt)
+	}
+}
+
+// Every AI-family command answers into its OWN block: the run's MCP token is
+// bound to the command's exchange, the run ends once its CLI exits, and when the
+// model wrote the answer with the tool the completion carries none of its own
+// and the response log says the final message was discarded.
+func TestAIFamily_AnswersIntoTheCommandsOwnBlock(t *testing.T) {
+	ex := domain.Exchange{Container: "0197b1f4-5a5a-7000-8000-00000000e001", Block: "c-1", Holder: domain.HeldByCommand}
+	for _, tc := range aiFamily() {
+		for _, written := range []int{0, 2} {
+			t.Run(fmt.Sprintf("%s, %d written", tc.name, written), func(t *testing.T) {
+				cap := &captureRunner{ret: "the final message"}
+				svc := newSmartTestService(t, cap)
+				mcpEp := &fakeDocMCPEndpoint{url: "http://127.0.0.1:41234/mcp", written: written}
+				svc.SetMCPEndpoint(mcpEp)
+				ctx := command.NewContext(nil, nil, nil)
+				ctx.Exchange = ex
+
+				_, done, _ := runFamilyCommand(t, tc.make(svc), tc.text, ctx, cap)
+
+				if mcpEp.lastEx != ex || len(mcpEp.ended) != 1 {
+					t.Fatalf("token bound to %+v and %d runs ended, want %+v and one", mcpEp.lastEx, len(mcpEp.ended), ex)
+				}
+				if written == 0 {
+					if got := popupAnswerOf(t, done); got != "the final message" {
+						t.Errorf("answer = %q, want the final message", got)
+					}
+					return
+				}
+				if _, has := done["answer"]; has || done["status"] != "COMPLETE" {
+					t.Errorf("a written answer's completion = %+v, want COMPLETE with no answer of its own", done)
+				}
+				if !strings.Contains(cap.noted, "discarded") {
+					t.Errorf("the response log was told %q, want the final message discarded", cap.noted)
+				}
+			})
+		}
 	}
 }

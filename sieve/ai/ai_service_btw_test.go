@@ -49,9 +49,9 @@ func newSmartTestService(t *testing.T, cap *captureRunner) *AIService {
 func TestRunBtw_PromptAssemblyAndOp(t *testing.T) {
 	cap := &captureRunner{ret: "answer"}
 	svc := newSmartTestService(t, cap)
-	out, err := svc.RunBtw("what is KISS", "the selected words", "My Doc", "a summary", "uuid-1")
-	if err != nil || out != "answer" {
-		t.Fatalf("unexpected: %v %q", err, out)
+	out, err := svc.RunBtw("what is KISS", "the selected words", "My Doc", "a summary", domain.Exchange{Container: "uuid-1"})
+	if err != nil || out.Text != "answer" {
+		t.Fatalf("unexpected: %v %q", err, out.Text)
 	}
 	if cap.op != "btw" {
 		t.Fatalf("op = %q, want btw", cap.op)
@@ -74,7 +74,7 @@ func TestRunBtw_TierDumbFails(t *testing.T) {
 	if err := svc.state.SaveSettings(settings); err != nil {
 		t.Fatal(err)
 	}
-	_, err := svc.RunBtw("question", "", "", "", "")
+	_, err := svc.RunBtw("question", "", "", "", domain.Exchange{})
 	if err == nil || !strings.Contains(err.Error(), "dumb mode") {
 		t.Fatalf("expected dumb mode error, got %v", err)
 	}
@@ -83,7 +83,7 @@ func TestRunBtw_TierDumbFails(t *testing.T) {
 func TestRunBtw_NoDocUsesStorePathCwd(t *testing.T) {
 	cap := &captureRunner{ret: "answer"}
 	svc := newSmartTestService(t, cap)
-	_, err := svc.RunBtw("question", "", "", "", "")
+	_, err := svc.RunBtw("question", "", "", "", domain.Exchange{})
 	if err != nil {
 		t.Fatal(err)
 	}

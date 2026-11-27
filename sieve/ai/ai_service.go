@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"sieve/logger"
@@ -17,21 +18,27 @@ import (
 	"golang.org/x/net/html"
 )
 
-// MCPEndpoint resolves the runtime URL + a freshly issued per-call bearer token
-// for the internal Sieve MCP server. It is the seam the AI service uses to fill
-// the builtin MCP grant in the containment profile at render time (URL and token
-// are runtime-only, never persisted). An empty URL means no server is reachable,
-// so the profile renders without MCP flags. The internal MCP server satisfies it.
+// MCPEndpoint issues the runtime URL and a per-run bearer token for the
+// internal Sieve MCP server, and ends a run. EndpointFor binds the token to an
+// exchange: verbs that write into a document (such as fetch_page) touch only
+// its container, and an answer written through the MCP lands only in its block;
+// an empty Exchange grants neither. An empty URL means no server is reachable,
+// so the profile renders without MCP flags. EndRun ends the run holding token
+// once its CLI has exited, however it ended: the token is refused from then on,
+// and EndRun returns how many elements of the exchange's answer the run wrote.
+// The internal MCP server satisfies it.
 type MCPEndpoint interface {
-	Endpoint() (url, token string)
+	EndpointFor(ex domain.Exchange) (url, token string)
+	EndRun(token string) (written int)
 }
 
-// DocumentMCPEndpoint extends MCPEndpoint with document-scoped token issuance,
-// binding the bearer token to a single document UUID so verbs that write into a
-// document (such as fetch_page) can only touch the owning job's document.
-type DocumentMCPEndpoint interface {
-	MCPEndpoint
-	EndpointForDoc(docUUID string) (url, token string)
+// Answer is what an answering run produced — an Ask, an Explain or a popup
+// command: the CLI's final message, and whether the model wrote its answer into
+// the exchange through the MCP. When it
+// did, the written elements are the answer and Text is not shown.
+type Answer struct {
+	Text    string
+	Written bool
 }
 
 // AIService owns all AI evaluation and filing operations. It resolves prompt
@@ -58,41 +65,27 @@ func NewAIService(state *services.StateService, prompts *PromptService, document
 }
 
 // SetMCPEndpoint wires the internal Sieve MCP endpoint. Once set, every AI call's
-// containment profile carries the live server URL + a fresh per-call bearer token
-// in its builtin MCP grant, so the contained CLI can query the knowledge base.
+// containment profile carries the live server URL + a bearer token issued for
+// that run in its builtin MCP grant, so the contained CLI can query the
+// knowledge base.
 func (s *AIService) SetMCPEndpoint(e MCPEndpoint) { s.mcp = e }
 
 // SetRunner overrides the CLI execution seam.
 func (s *AIService) SetRunner(r CLIRunner) { s.runner = r }
 
-// profile returns the containment floor for a CLI call: the default baseline,
-// with the builtin Sieve MCP grant's runtime URL + per-call token filled in when
-// an endpoint is wired and reachable. When no endpoint is running the builtin
-// grant keeps its empty URL and the backend renders no MCP flags.
-func (s *AIService) profile() domain.ContainmentProfile {
-	return s.profileForDoc("")
-}
-
-// profileForDoc returns the containment floor for a CLI call scoped to docUUID:
-// when docUUID is non-empty and the wired MCP endpoint implements
-// DocumentMCPEndpoint, the per-call bearer token is bound to docUUID.
-func (s *AIService) profileForDoc(docUUID string) domain.ContainmentProfile {
+// profileFor returns the containment floor for a CLI call scoped to ex, and the
+// bearer token it carries ("" when no MCP is reachable): the builtin Sieve MCP
+// grant's runtime URL and a token bound to ex are filled in when an endpoint is
+// wired and reachable. When none is, the builtin grant keeps its empty URL and
+// the backend renders no MCP flags.
+func (s *AIService) profileFor(ex domain.Exchange) (domain.ContainmentProfile, string) {
 	p := s.savedProfile()
 	if s.mcp == nil {
-		return p
+		return p, ""
 	}
-	var url, token string
-	if docUUID != "" {
-		if dmcp, ok := s.mcp.(DocumentMCPEndpoint); ok {
-			url, token = dmcp.EndpointForDoc(docUUID)
-		} else {
-			url, token = s.mcp.Endpoint()
-		}
-	} else {
-		url, token = s.mcp.Endpoint()
-	}
+	url, token := s.mcp.EndpointFor(ex)
 	if url == "" {
-		return p
+		return p, ""
 	}
 	// LoadSettings returns a cached Settings whose McpServers slice is shared —
 	// copy it before filling the builtin's runtime URL + per-call bearer so the
@@ -106,7 +99,67 @@ func (s *AIService) profileForDoc(docUUID string) domain.ContainmentProfile {
 		}
 	}
 	p.McpServers = servers
-	return p
+	return p, token
+}
+
+// run runs the CLI once for the prompt named op: prompt, in cwd, under the
+// containment floor with its MCP token bound to ex. Every CLI run takes this
+// path: the token is issued for the run alone and ended once the CLI has
+// exited, however it exited, and the response log is told when the final
+// message was discarded for a written answer. The Answer says whether the
+// model wrote ex's answer through the MCP.
+func (s *AIService) run(settings domain.Settings, op, prompt, cwd string, ex domain.Exchange) (Answer, error) {
+	binary, dialect := settings.ResolveCLI()
+	profile, token := s.profileFor(ex)
+	held := s.runOf(token)
+	text, err := s.runner.Run(op, binary, dialect, prompt, settings.Model, s.timeoutFor(settings, op), cwd, profile, s.storePath, held.responseNote)
+	written := held.end()
+	if err != nil {
+		return Answer{}, err
+	}
+	return Answer{Text: text, Written: written > 0}, nil
+}
+
+// mcpRun is a run's hold on its MCP token. It ends once: when the response log
+// asks what became of the final message, or when the CLI exited without one;
+// from then on it knows how many elements of its exchange's answer the run
+// wrote.
+type mcpRun struct {
+	mcp     MCPEndpoint // nil when the run holds no token
+	token   string
+	once    sync.Once
+	written int
+}
+
+// runOf is the run holding token, a token profileFor issued.
+func (s *AIService) runOf(token string) *mcpRun {
+	if token == "" {
+		return &mcpRun{}
+	}
+	return &mcpRun{mcp: s.mcp, token: token}
+}
+
+// end ends the run on its first call and returns how many answer elements it wrote.
+func (r *mcpRun) end() int {
+	r.once.Do(func() {
+		if r.mcp != nil {
+			r.written = r.mcp.EndRun(r.token)
+		}
+	})
+	return r.written
+}
+
+// responseNote ends the run and says, when it wrote its answer with the tool,
+// that its final message is discarded. A ResponseNote.
+func (r *mcpRun) responseNote() string {
+	switch n := r.end(); n {
+	case 0:
+		return ""
+	case 1:
+		return "discarded: the answer was written with add_to_answer (1 block)"
+	default:
+		return fmt.Sprintf("discarded: the answer was written with add_to_answer (%d blocks)", n)
+	}
 }
 
 // savedProfile is the user's SAVED profile (baseline + their additions), which
@@ -180,16 +233,16 @@ func (s *AIService) EvaluateBuffer(meta domain.DocumentMeta, body []byte) (*doma
 	return s.runEvaluateBuffer(meta, body, settings)
 }
 
-// RunExplain asks the AI to explain the given content and returns a markdown
-// response. noteUUID identifies the owning document (used to resolve the working
-// directory for the CLI process). imageStorePaths are store-relative image paths.
-func (s *AIService) RunExplain(content, history, question, noteUUID string) (string, error) {
+// RunExplain asks the AI to explain the given content for the exchange ex. The
+// CLI runs in the directory of ex's container, and its MCP grant is bound to ex,
+// so the model may write its answer into ex's block.
+func (s *AIService) RunExplain(content, history, question string, ex domain.Exchange) (Answer, error) {
 	settings := s.state.LoadSettings()
 	if settings.Tier() == domain.TierDumb {
-		return "", fmt.Errorf("explain not available in dumb mode")
+		return Answer{}, fmt.Errorf("explain not available in dumb mode")
 	}
 	prompt, _ := s.prompts.GetPromptContent("explain")
-	noteCwd := s.noteDir(noteUUID)
+	noteCwd := s.noteDir(ex.Container)
 
 	contentType := s.detectContentType(content)
 	p := strings.ReplaceAll(prompt, "{type}", contentType)
@@ -197,20 +250,18 @@ func (s *AIService) RunExplain(content, history, question, noteUUID string) (str
 	p = strings.ReplaceAll(p, "{history}", history)
 	p = strings.ReplaceAll(p, "{action}", question)
 
-	binary, dialect := settings.ResolveCLI()
-	return s.runner.Run("explain", binary, dialect, p, settings.Model, s.timeoutFor(settings, "explain"), noteCwd, s.profileForDoc(noteUUID), s.storePath)
+	return s.run(settings, "explain", p, noteCwd, ex)
 }
 
 // RunAsk asks the AI a question with the given content as context. history may
-// be empty for first-turn asks. noteUUID and imageStorePaths follow the same
-// conventions as RunExplain.
-func (s *AIService) RunAsk(content, history, question, noteUUID string) (string, error) {
+// be empty for first-turn asks. ex follows the same conventions as RunExplain.
+func (s *AIService) RunAsk(content, history, question string, ex domain.Exchange) (Answer, error) {
 	settings := s.state.LoadSettings()
 	if settings.Tier() == domain.TierDumb {
-		return "", fmt.Errorf("ask not available in dumb mode")
+		return Answer{}, fmt.Errorf("ask not available in dumb mode")
 	}
 	prompt, _ := s.prompts.GetPromptContent("ask")
-	noteCwd := s.noteDir(noteUUID)
+	noteCwd := s.noteDir(ex.Container)
 
 	contentType := s.detectContentType(content)
 	p := strings.ReplaceAll(prompt, "{type}", contentType)
@@ -218,30 +269,30 @@ func (s *AIService) RunAsk(content, history, question, noteUUID string) (string,
 	p = strings.ReplaceAll(p, "{history}", history)
 	p = strings.ReplaceAll(p, "{action}", question)
 
-	binary, dialect := settings.ResolveCLI()
-	return s.runner.Run("ask", binary, dialect, p, settings.Model, s.timeoutFor(settings, "ask"), noteCwd, s.profileForDoc(noteUUID), s.storePath)
+	return s.run(settings, "ask", p, noteCwd, ex)
 }
 
-// RunBtw answers a quick /btw side-question. The document is pointer context
-// only (meta strings — this path never touches the ShadowDoc); empty docUUID
-// is the floor (no open tab) and falls back to the store root as cwd.
-func (s *AIService) RunBtw(question, selection, docTitle, docSummary, docUUID string) (string, error) {
+// RunBtw answers a popup command's question for the exchange ex, the command's
+// own block. The document ex.Container is pointer context only (meta strings —
+// this path never touches the ShadowDoc); an empty one is the floor (no open
+// tab) and falls back to the store root as cwd. The run's MCP grant is bound to
+// ex, so the model may write its answer into the command's block.
+func (s *AIService) RunBtw(question, selection, docTitle, docSummary string, ex domain.Exchange) (Answer, error) {
 	settings := s.state.LoadSettings()
 	if settings.Tier() == domain.TierDumb {
-		return "", fmt.Errorf("btw not available in dumb mode")
+		return Answer{}, fmt.Errorf("btw not available in dumb mode")
 	}
 	prompt, _ := s.prompts.GetPromptContent("btw")
 	cwd := s.storePath
-	if docUUID != "" {
-		cwd = s.noteDir(docUUID)
+	if ex.Container != "" {
+		cwd = s.noteDir(ex.Container)
 	}
 	p := strings.ReplaceAll(prompt, "{question}", question)
 	p = strings.ReplaceAll(p, "{selection}", selection)
 	p = strings.ReplaceAll(p, "{doc_title}", docTitle)
 	p = strings.ReplaceAll(p, "{doc_summary}", docSummary)
-	p = strings.ReplaceAll(p, "{doc_uuid}", docUUID)
-	binary, dialect := settings.ResolveCLI()
-	return s.runner.Run("btw", binary, dialect, p, settings.Model, s.timeoutFor(settings, "btw"), cwd, s.profileForDoc(docUUID), s.storePath)
+	p = strings.ReplaceAll(p, "{doc_uuid}", ex.Container)
+	return s.run(settings, "btw", p, cwd, ex)
 }
 
 // Tier exposes the current capability tier so AI-backed commands can fail
@@ -269,13 +320,12 @@ func (s *AIService) DescribeImage(uuid string, src string, blkId string) (domain
 	logger.Info("About to Describe", "path", imagePath)
 	p := strings.ReplaceAll(prompt, "{image_filename}", filepath.Base(imagePath))
 	cwd := filepath.Dir(imagePath)
-	binary, dialect := settings.ResolveCLI()
-	resp, err := s.runner.Run("image", binary, dialect, p, settings.Model, s.timeoutFor(settings, "image"), cwd, s.profileForDoc(uuid), s.storePath)
+	resp, err := s.run(settings, "image", p, cwd, domain.Exchange{Container: uuid})
 	if err != nil {
 		return domain.ImageDesc{}, err
 	}
 
-	cleaned := s.extractJSONFallback(resp)
+	cleaned := s.extractJSONFallback(resp.Text)
 	var desc domain.ImageDesc
 	if err := json.Unmarshal([]byte(cleaned), &desc); err != nil {
 		return domain.ImageDesc{}, fmt.Errorf("parse image desc: %w", err)
@@ -317,13 +367,12 @@ func (s *AIService) DescribeNote(uuid string, pages []domain.Address) (domain.No
 	prompt, _ := s.prompts.GetPromptContent("note-meta")
 	p := strings.ReplaceAll(prompt, "{page_files}", strings.Join(files, "\n"))
 	p = strings.ReplaceAll(p, "{category_list}", categories)
-	binary, dialect := settings.ResolveCLI()
-	resp, err := s.runner.Run("note-meta", binary, dialect, p, settings.Model, s.timeoutFor(settings, "note-meta"), cwd, s.profileForDoc(uuid), s.storePath)
+	resp, err := s.run(settings, "note-meta", p, cwd, domain.Exchange{Container: uuid})
 	if err != nil {
 		return domain.NoteMetadata{}, err
 	}
 	var meta domain.NoteMetadata
-	if err := json.Unmarshal([]byte(s.extractJSONFallback(resp)), &meta); err != nil {
+	if err := json.Unmarshal([]byte(s.extractJSONFallback(resp.Text)), &meta); err != nil {
 		return domain.NoteMetadata{}, fmt.Errorf("parse note description: %w", err)
 	}
 	return meta, nil
@@ -344,13 +393,12 @@ func (s *AIService) TranscribePage(uuid string, page domain.Address) (domain.Pag
 	}
 	prompt, _ := s.prompts.GetPromptContent("page-transcript")
 	p := strings.ReplaceAll(prompt, "{page_file}", filepath.Base(path))
-	binary, dialect := settings.ResolveCLI()
-	resp, err := s.runner.Run("page-transcript", binary, dialect, p, settings.Model, s.timeoutFor(settings, "page-transcript"), filepath.Dir(path), s.profileForDoc(uuid), s.storePath)
+	resp, err := s.run(settings, "page-transcript", p, filepath.Dir(path), domain.Exchange{Container: uuid})
 	if err != nil {
 		return domain.PageTranscript{}, err
 	}
 	var transcript domain.PageTranscript
-	if err := json.Unmarshal([]byte(s.extractJSONFallback(resp)), &transcript); err != nil {
+	if err := json.Unmarshal([]byte(s.extractJSONFallback(resp.Text)), &transcript); err != nil {
 		return domain.PageTranscript{}, fmt.Errorf("parse page transcript: %w", err)
 	}
 	return transcript, nil
@@ -388,13 +436,12 @@ func (s *AIService) RefineLanguage(content, currentLanguage, detectionMethod str
 	// cwd is never unset: refine has no note context, so fall back to the library
 	// root rather than the process cwd (which on a Finder/Dock-launched macOS app
 	// is /). #41.
-	binary, dialect := settings.ResolveCLI()
-	resp, err := s.runner.Run("refine", binary, dialect, p, settings.Model, s.timeoutFor(settings, "refine"), s.storePath, s.profile(), s.storePath)
+	resp, err := s.run(settings, "refine", p, s.storePath, domain.Exchange{})
 	if err != nil {
 		return "", err
 	}
 
-	lang := strings.ToLower(strings.TrimSpace(resp))
+	lang := strings.ToLower(strings.TrimSpace(resp.Text))
 	if fields := strings.Fields(lang); len(fields) > 0 {
 		lang = fields[0]
 	}
@@ -518,13 +565,12 @@ func (s *AIService) runEvaluateBuffer(meta domain.DocumentMeta, body []byte, set
 	// cwd is never unset: the filing evaluation reads no note files, so fall back
 	// to the library root rather than the process cwd (/ on a Finder-launched
 	// macOS app). #41.
-	binary, dialect := settings.ResolveCLI()
-	respText, err := s.runner.Run("file", binary, dialect, p, settings.Model, s.timeoutFor(settings, "file"), s.storePath, s.profile(), s.storePath)
+	resp, err := s.run(settings, "file", p, s.storePath, domain.Exchange{})
 	if err != nil {
 		return nil, err
 	}
 
-	jsonBlock := s.extractJSONFallback(respText)
+	jsonBlock := s.extractJSONFallback(resp.Text)
 	var rec domain.FilingRecommendation
 	if err := json.Unmarshal([]byte(jsonBlock), &rec); err != nil {
 		return nil, fmt.Errorf("could not parse AI json response: %v\nJSON was: %s", err, jsonBlock)
@@ -683,13 +729,12 @@ func (s *AIService) RunWebClip(uuid, id, source, mode, docContent string) (title
 		cwd = docDir
 	}
 
-	binary, dialect := settings.ResolveCLI()
-	raw, err := s.runner.Run(promptName, binary, dialect, prompt, settings.Model, s.timeoutFor(settings, promptName), cwd, s.profileForDoc(uuid), s.storePath)
+	raw, err := s.run(settings, promptName, prompt, cwd, domain.Exchange{Container: uuid})
 	if err != nil {
 		return "", "", err
 	}
 
-	content = localiseImages(raw, docDir, uuid)
+	content = localiseImages(raw.Text, docDir, uuid)
 	title = s.extractFirstHeading(content)
 	if title == "" {
 		if t, err2 := s.GetLinkTitle(source); err2 == nil {

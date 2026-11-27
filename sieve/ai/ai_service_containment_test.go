@@ -12,8 +12,14 @@ import (
 
 type fakeMCPEndpoint struct{ url, token string }
 
-func (f fakeMCPEndpoint) Endpoint() (string, string) { return f.url, f.token }
-func (f fakeMCPEndpoint) Ready() bool                { return f.url != "" }
+func (f fakeMCPEndpoint) EndpointFor(domain.Exchange) (string, string) { return f.url, f.token }
+func (f fakeMCPEndpoint) EndRun(string) int                            { return 0 }
+
+// profileOf is the profile a run answering nothing renders.
+func profileOf(svc *AIService) domain.ContainmentProfile {
+	p, _ := svc.profileFor(domain.Exchange{})
+	return p
+}
 
 func hasName(xs []string, want string) bool {
 	for _, x := range xs {
@@ -24,7 +30,7 @@ func hasName(xs []string, want string) bool {
 	return false
 }
 
-// profile() MUST render the user's SAVED containment profile (baseline + their
+// profileFor MUST render the user's SAVED containment profile (baseline + their
 // additions), not a bare DefaultContainmentProfile(). This drives the seam that
 // an earlier bug skipped — the renderer ignored settings.ai.containment, so
 // user-added tools/dirs/MCP servers silently never reached the AI call. The test
@@ -53,7 +59,7 @@ func TestProfile_RendersSavedUserAdditions(t *testing.T) {
 	}
 
 	svc := &AIService{state: state, storePath: root}
-	p := svc.profile()
+	p := profileOf(svc)
 
 	if !hasName(p.ToolNames(), "Write") {
 		t.Errorf("profile dropped user tool Write; tools=%v", p.ToolNames())
@@ -101,7 +107,7 @@ func TestProfile_DoesNotLeakBearerIntoCachedSettings(t *testing.T) {
 	}
 
 	svc := &AIService{state: state, storePath: root, mcp: fakeMCPEndpoint{url: "http://127.0.0.1:9/mcp", token: "SEKRIT-TOKEN"}}
-	got := svc.profile()
+	got := profileOf(svc)
 
 	// The returned profile carries the token (so the call works)...
 	gotToken := false
@@ -183,10 +189,14 @@ type captureRunner struct {
 	profile                                             domain.ContainmentProfile
 	ret                                                 string
 	err                                                 error
+	noted                                               string // what the run's ResponseNote said, asked as the real runner asks it
 }
 
-func (c *captureRunner) Run(op, binary, dialect, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string) (string, error) {
+func (c *captureRunner) Run(op, binary, dialect, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string, note ResponseNote) (string, error) {
 	c.op, c.binary, c.dialect, c.prompt, c.model, c.cwd, c.libraryDir, c.profile = op, binary, dialect, prompt, model, cwd, libraryDir, profile
+	if c.err == nil && note != nil {
+		c.noted = note()
+	}
 	return c.ret, c.err
 }
 

@@ -2,6 +2,7 @@ package editor
 
 import (
 	"crypto/sha1"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -366,6 +367,264 @@ func TestHandleBlockOp_moveEchoesTheResultingOrder(t *testing.T) {
 	}
 }
 
+// A replace-block is how a client states a change of KIND it made itself — the
+// undo or redo of a transform. With no block of that kind kept under its id,
+// the block keeps its id, slot and aliases, takes the op's kind and attrs
+// whole, persists, and echoes as the create a client already holds rather than as
+// a host rewrite it would place again.
+func TestHandleBlockOp_replaceBlockTakesTheStatedKindInItsSlot(t *testing.T) {
+	resetRegistry()
+	for _, kind := range []string{"probe", "probe-b"} {
+		block.RegisterProcessor(&onChangeProbeProcessor{
+			testRunJobProcessor: testRunJobProcessor{FencedDeserializer: block.FencedDeserializer{Kind: kind}},
+		})
+	}
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+	uuid := seedProse(t, es, ds, fixtureID("pr-1"), fixtureID("pr-2"), fixtureID("pr-3"))
+	if err := es.HandleBlockOp(uuid, block.BlockOp{
+		Type: "update-block", Kind: "prose", BlockID: fixtureID("pr-2"),
+		Attrs: map[string]interface{}{"content": "pr-2"}, Aliases: []string{"named"},
+	}); err != nil {
+		t.Fatalf("alias the block: %v", err)
+	}
+
+	type echo struct{ kind, id string }
+	var created []echo
+	var replaced, removed int
+	es.SetLifecycleListener(&mockLifecycleListener{
+		onCreated:  func(_, kind, id, _ string) { created = append(created, echo{kind: kind, id: id}) },
+		onReplaced: func(string, string, string, string, map[string]interface{}, string) { replaced++ },
+		onRemoved:  func(string, string) { removed++ },
+	})
+
+	for _, step := range []struct {
+		kind  string
+		attrs map[string]interface{}
+		key   string
+	}{
+		{kind: "probe", attrs: map[string]interface{}{"keep": "probe body"}, key: "keep"},
+		{kind: "probe-b", attrs: map[string]interface{}{"keep": "second body"}, key: "keep"},
+	} {
+		if err := es.HandleBlockOp(uuid, block.BlockOp{
+			Type: "replace-block", BlockID: fixtureID("pr-2"), Kind: step.kind, Attrs: step.attrs,
+		}); err != nil {
+			t.Fatalf("replace-block → %s: %v", step.kind, err)
+		}
+		blk := frontendBlockByID(t, es, uuid, fixtureID("pr-2"))
+		if blk.Kind != step.kind || blk.Attrs[step.key] != step.attrs[step.key] {
+			t.Errorf("after replace → %s the block is %s %v", step.kind, blk.Kind, blk.Attrs)
+		}
+		if len(blk.Aliases) != 1 || blk.Aliases[0] != "named" {
+			t.Errorf("replace → %s lost the block's aliases: %v", step.kind, blk.Aliases)
+		}
+		if got := frontendIDs(t, es, uuid); !reflect.DeepEqual(got, []string{fixtureID("pr-1"), fixtureID("pr-2"), fixtureID("pr-3")}) {
+			t.Errorf("replace → %s moved the block: %v", step.kind, got)
+		}
+		if err := es.Flush(uuid); err != nil {
+			t.Fatalf("Flush: %v", err)
+		}
+		saved, _ := ds.LoadByUUID(uuid)
+		if body := string(saved.Body()); !strings.Contains(body, step.attrs[step.key].(string)) {
+			t.Errorf("replace → %s did not reach disk:\n%s", step.kind, body)
+		}
+	}
+
+	want := []echo{{kind: "probe", id: fixtureID("pr-2")}, {kind: "probe-b", id: fixtureID("pr-2")}}
+	if !reflect.DeepEqual(created, want) {
+		t.Errorf("echoes: %v, want %v", created, want)
+	}
+	if replaced != 0 || removed != 0 {
+		t.Errorf("a client-led replace echoed %d host replacement(s) and %d removal(s)", replaced, removed)
+	}
+}
+
+// An undo or a redo is an in-place edit the editor states as block ops: a block
+// it shows again is created, one it no longer shows is deleted, and one whose kind
+// changed is replaced. Those ops carry what the editor's node holds — the stored
+// attrs it models, less those it does not, plus its own defaults — so Go puts back
+// the block it kept when that block left the document, and the stored form after
+// the undo is the one before the gesture, byte for byte, and after the redo the
+// one the gesture made.
+func TestHandleBlockOp_undoAndRedoRestoreTheStoredForm(t *testing.T) {
+	resetRegistry()
+	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(processors.NewDiagramProcessor(block.BlockServices{}))
+	block.RegisterProcessor(processors.NewReferenceProcessor(block.BlockServices{}))
+	block.RegisterProcessor(processors.NewLogProcessor(block.BlockServices{}))
+	block.RegisterProcessor(processors.NewSmartCardProcessor(block.BlockServices{LinkPreview: fakeLinkPreview{}}))
+	block.RegisterProcessor(processors.NewWebClipBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(processors.NewSmartImageProcessor(block.BlockServices{}))
+	block.RegisterProcessor(processors.NewAIBlockProcessor(block.BlockServices{}))
+	t.Cleanup(resetRegistry)
+
+	asEditorHoldsIt := func(blk domain.SieveBlock) map[string]interface{} {
+		if blk.Kind == block.KindProse {
+			return map[string]interface{}{"content": blk.Content()}
+		}
+		attrs := map[string]interface{}{"attachments": []interface{}{}, "ref": "doc", "smartPaste": false}
+		for k, v := range blk.Attrs {
+			if k != "completedAt" && k != "createdAt" {
+				attrs[k] = v
+			}
+		}
+		return attrs
+	}
+	sieveEntry := func(blk domain.SieveBlock) []block.ContentEntry {
+		attrs, _ := json.Marshal(blk.Attrs)
+		return []block.ContentEntry{{MIMEType: "sieve/" + blk.Kind, Content: string(attrs)}}
+	}
+	after := fixtureID("pr-1")
+	stateCreate := func(blk domain.SieveBlock) block.BlockOp {
+		return block.BlockOp{Type: "create-block", BlockID: blk.ID, Kind: blk.Kind, Attrs: asEditorHoldsIt(blk),
+			Anchor: block.Anchor{AfterBlockID: after}}
+	}
+	stateDelete := func(blk domain.SieveBlock) block.BlockOp {
+		return block.BlockOp{Type: "delete-block", BlockID: blk.ID}
+	}
+	stateReplace := func(blk domain.SieveBlock) block.BlockOp {
+		return block.BlockOp{Type: "replace-block", BlockID: blk.ID, Kind: blk.Kind, Attrs: asEditorHoldsIt(blk)}
+	}
+
+	// A gesture changes the block at id, which is present beforehand unless the
+	// gesture creates it, and answers the ops an undo and a redo of it send.
+	type gesture struct {
+		present bool
+		act     func(t *testing.T, es *EditorService, uuid, id string, held func() domain.SieveBlock) (undo, redo block.BlockOp)
+	}
+	createdByGo := func(kind string, attrs map[string]interface{}) gesture {
+		return gesture{act: func(t *testing.T, es *EditorService, uuid, id string, held func() domain.SieveBlock) (block.BlockOp, block.BlockOp) {
+			if _, _, err := es.createBlockWithID(uuid, kind, id, attrs, nil, es.ResolveAnchor(uuid, block.Anchor{AfterBlockID: after})); err != nil {
+				t.Fatalf("create: %v", err)
+			}
+			created := held()
+			return stateDelete(created), stateCreate(created)
+		}}
+	}
+	deletedInTheEditor := gesture{present: true, act: func(t *testing.T, es *EditorService, uuid, id string, held func() domain.SieveBlock) (block.BlockOp, block.BlockOp) {
+		source := held()
+		if err := es.HandleBlockOp(uuid, stateDelete(source)); err != nil {
+			t.Fatalf("delete: %v", err)
+		}
+		return stateCreate(source), stateDelete(source)
+	}}
+	transformedInto := func(into string, entries func(domain.SieveBlock) []block.ContentEntry) gesture {
+		return gesture{present: true, act: func(t *testing.T, es *EditorService, uuid, id string, held func() domain.SieveBlock) (block.BlockOp, block.BlockOp) {
+			source := held()
+			if _, _, err := es.CreateBlockFromEntries(uuid, into, entries(source), block.ActionTransform, id); err != nil {
+				t.Fatalf("transform: %v", err)
+			}
+			result := held()
+			if result.Kind != into {
+				t.Fatalf("the transform made a %s, want %s", result.Kind, into)
+			}
+			return stateReplace(source), stateReplace(result)
+		}}
+	}
+
+	kinds := []struct {
+		kind  string
+		attrs map[string]interface{}
+	}{
+		{kind: block.KindProse, attrs: map[string]interface{}{"content": "```go\nx := 1\n```"}},
+		{kind: "code", attrs: map[string]interface{}{"language": "mermaid", "source": "graph TD\n  A --> B", "status": block.BlockStatusComplete, "completedAt": "2026-11-26T10:00:00Z"}},
+		{kind: "diagram", attrs: map[string]interface{}{"language": "mermaid", "source": "graph TD\n  A --> B", "status": block.BlockStatusComplete, "completedAt": "2026-11-26T10:00:00Z"}},
+		{kind: "reference", attrs: map[string]interface{}{
+			"uri": "sieve://0198c1a0-0001-7000-8000-000000000001", "status": block.BlockStatusComplete, "completedAt": "2026-11-26T10:00:00Z",
+			"cache": map[string]interface{}{"title": "Auth design", "mime": "sieve/note", "cachedAt": "2026-11-26T10:00:00Z"},
+		}},
+		{kind: "ai-block", attrs: map[string]interface{}{
+			"status": block.BlockStatusComplete, "completedAt": "2026-11-26T10:00:00Z",
+			block.QuestionAttr: []interface{}{map[string]interface{}{"kind": block.KindProse, "attrs": map[string]interface{}{"content": "What is it?"}}},
+			block.AnswerAttr:   []interface{}{map[string]interface{}{"kind": block.KindProse, "attrs": map[string]interface{}{"content": "It is **this**."}}},
+		}},
+		{kind: "log", attrs: map[string]interface{}{"source": "2026-11-26T10:00:02Z ERROR pool exhausted", "parsedAssetRef": "sieve://0198c1a0-0001-7000-8000-0000000000aa/log-parsed", "logFormatName": "ISO", "status": block.BlockStatusComplete, "completedAt": "2026-11-26T10:00:00Z"}},
+		{kind: "smart-card", attrs: map[string]interface{}{"href": "https://go.dev/doc/effective_go", "title": "Effective Go", "siteName": "go.dev", "status": block.BlockStatusComplete, "completedAt": "2026-11-26T10:00:00Z"}},
+		{kind: "web-clip", attrs: map[string]interface{}{"source": "https://go.dev/blog/go1.22", "mode": "summarise", "title": "Go 1.22 is released", "content": "## Go 1.22\n\nLoop variables are per-iteration.", "status": block.BlockStatusComplete, "completedAt": "2026-11-26T10:00:00Z"}},
+		{kind: "smart-image", attrs: map[string]interface{}{"src": "sieve://0198c1a0-0001-7000-8000-0000000000aa/chart.png", "width": "4", "height": "3", "summary": "A bar chart of pool use.", "alt": "bar chart", "status": block.BlockStatusComplete}},
+	}
+	type row struct {
+		name    string
+		kind    string
+		attrs   map[string]interface{}
+		gesture gesture
+	}
+	var rows []row
+	for _, k := range kinds {
+		rows = append(rows,
+			row{name: k.kind + " created by Go", kind: k.kind, attrs: k.attrs, gesture: createdByGo(k.kind, k.attrs)},
+			row{name: k.kind + " deleted", kind: k.kind, attrs: k.attrs, gesture: deletedInTheEditor},
+		)
+	}
+	rows = append(rows,
+		row{name: "prose → code", kind: kinds[0].kind, attrs: kinds[0].attrs, gesture: transformedInto("code",
+			func(blk domain.SieveBlock) []block.ContentEntry {
+				return []block.ContentEntry{{MIMEType: "text/plain", Content: blk.Content()}}
+			})},
+		row{name: "code → diagram", kind: kinds[1].kind, attrs: kinds[1].attrs, gesture: transformedInto("diagram", sieveEntry)},
+		row{name: "ai-block → prose", kind: kinds[4].kind, attrs: kinds[4].attrs, gesture: transformedInto(block.KindProse, sieveEntry)},
+	)
+
+	for _, tc := range rows {
+		t.Run(tc.name, func(t *testing.T) {
+			ds, _ := newTestDocumentService(t)
+			es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+			es.SetLifecycleListener(&mockLifecycleListener{})
+			uuid := seedProse(t, es, ds, after, fixtureID("pr-3"))
+			id := fixtureID("src")
+			if tc.gesture.present {
+				if err := es.HandleBlockOp(uuid, block.BlockOp{
+					Type: "create-block", Kind: tc.kind, BlockID: id, Attrs: tc.attrs, Aliases: []string{"named"},
+					Anchor: block.Anchor{AfterBlockID: after},
+				}); err != nil {
+					t.Fatalf("create the source: %v", err)
+				}
+			}
+			stored := func() string {
+				t.Helper()
+				waitJobs(t, es, uuid)
+				if err := es.Flush(uuid); err != nil {
+					t.Fatalf("Flush: %v", err)
+				}
+				saved, _ := ds.LoadByUUID(uuid)
+				return string(saved.Body())
+			}
+			held := func() domain.SieveBlock {
+				t.Helper()
+				blk, ok := es.shadowFor(uuid).SnapshotBlock(id)
+				if !ok {
+					t.Fatalf("block %q is gone", id)
+				}
+				return blk
+			}
+
+			before := stored()
+			undo, redo := tc.gesture.act(t, es, uuid, id, held)
+			made := stored()
+			if made == before {
+				t.Fatalf("the gesture changed nothing:\n%s", made)
+			}
+			for _, step := range []struct {
+				name string
+				op   block.BlockOp
+				want string
+			}{
+				{name: "undo", op: undo, want: before},
+				{name: "redo", op: redo, want: made},
+				{name: "second undo", op: undo, want: before},
+			} {
+				if err := es.HandleBlockOp(uuid, step.op); err != nil {
+					t.Fatalf("%s: %v", step.name, err)
+				}
+				if got := stored(); got != step.want {
+					t.Errorf("after the %s the document is\n%s\nwant\n%s", step.name, got, step.want)
+				}
+			}
+		})
+	}
+}
+
 // An op that did not apply changed nothing, so it must echo nothing: a client
 // that repainted on a refused delete would drop a block the document still holds.
 func TestHandleBlockOp_refusedStructuralOpsEchoNothing(t *testing.T) {
@@ -379,10 +638,17 @@ func TestHandleBlockOp_refusedStructuralOpsEchoNothing(t *testing.T) {
 	es.SetLifecycleListener(&mockLifecycleListener{
 		onRemoved: func(string, string) { echoes++ },
 		onOrder:   func(string, []string) { echoes++ },
+		onCreated: func(string, string, string, string) { echoes++ },
 	})
 
 	if err := es.HandleBlockOp(uuid, block.BlockOp{Type: "delete-block", BlockID: "ghost"}); err == nil {
 		t.Fatal("deleting an unheld block was accepted")
+	}
+	if err := es.HandleBlockOp(uuid, block.BlockOp{Type: "replace-block", BlockID: "ghost", Kind: "prose"}); err == nil {
+		t.Fatal("replacing an unheld block was accepted")
+	}
+	if err := es.HandleBlockOp(uuid, block.BlockOp{Type: "replace-block", BlockID: fixtureID("pr-1"), Kind: "no-such-kind"}); err == nil {
+		t.Fatal("replacing a block with a kind no processor owns was accepted")
 	}
 	// set-order refuses anything but a permutation — this one drops pr-2.
 	if err := es.HandleBlockOp(uuid, block.BlockOp{Type: "set-order", Order: []string{fixtureID("pr-1")}}); err == nil {

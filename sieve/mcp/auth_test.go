@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"sieve/sieve/domain"
+
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -61,7 +63,7 @@ func TestAuth_AcceptsIssuedToken(t *testing.T) {
 	s := newTestServer(t)
 	s.SetBaseURL("http://127.0.0.1:34115")
 
-	url, token := s.Endpoint()
+	url, token := s.EndpointFor(domain.Exchange{})
 	if url != "http://127.0.0.1:34115/mcp" {
 		t.Fatalf("Endpoint url = %q", url)
 	}
@@ -78,7 +80,7 @@ func TestAuth_AcceptsIssuedToken(t *testing.T) {
 
 func TestEndpoint_EmptyWhenNoBaseURL(t *testing.T) {
 	s := newTestServer(t)
-	url, token := s.Endpoint()
+	url, token := s.EndpointFor(domain.Exchange{})
 	if url != "" || token != "" {
 		t.Errorf("no base URL: Endpoint = (%q, %q), want empty", url, token)
 	}
@@ -95,7 +97,7 @@ func (b bearerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	return b.base.RoundTrip(clone)
 }
 
-func TestAuth_EndpointForDocBindsDocumentOverHTTP(t *testing.T) {
+func TestAuth_EndpointForBindsDocumentOverHTTP(t *testing.T) {
 	pageSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.Write([]byte(`<!DOCTYPE html><html><head><title>Scoped Page</title></head><body><article><p>Article body over HTTP transport.</p></article></body></html>`))
@@ -116,7 +118,7 @@ func TestAuth_EndpointForDocBindsDocumentOverHTTP(t *testing.T) {
 	defer mcpSrv.Close()
 	s.SetBaseURL(mcpSrv.URL)
 
-	mcpURL, token := s.EndpointForDoc(doc.UUID())
+	mcpURL, token := s.EndpointFor(domain.Exchange{Container: doc.UUID()})
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test-cli", Version: "v1"}, nil)
 	session, err := client.Connect(context.Background(), &mcpsdk.StreamableClientTransport{
 		Endpoint: mcpURL,
@@ -142,5 +144,53 @@ func TestAuth_EndpointForDocBindsDocumentOverHTTP(t *testing.T) {
 	reloaded, _ := ds.LoadByUUID(doc.UUID())
 	if len(reloaded.Storable().Owns()) != 1 {
 		t.Fatalf("document owns %d assets after HTTP fetch_page, want 1", len(reloaded.Storable().Owns()))
+	}
+}
+
+// Over the real transport, add_to_answer writes into the exchange the bearer
+// token was issued for: the call names no target. Once the run has ended, its
+// token is refused as unauthorised.
+func TestAuth_EndpointForBindsTheExchangeOverHTTP(t *testing.T) {
+	ex := domain.Exchange{Container: "0198c1a0-0001-7000-8000-000000000001", Block: "0198c1a0-0001-7000-8000-000000000020"}
+	s, w, _ := newAnswerServer(t, domain.Exchange{})
+	mcpSrv := httptest.NewServer(s)
+	defer mcpSrv.Close()
+	s.SetBaseURL(mcpSrv.URL)
+
+	mcpURL, token := s.EndpointFor(ex)
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test-cli", Version: "v1"}, nil)
+	session, err := client.Connect(context.Background(), &mcpsdk.StreamableClientTransport{
+		Endpoint:   mcpURL,
+		HTTPClient: &http.Client{Transport: bearerRoundTripper{token: token, base: http.DefaultTransport}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer session.Close()
+
+	res, err := session.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name:      "add_to_answer",
+		Arguments: map[string]any{"content_type": "sieve/prose", "attrs": map[string]any{"content": "Go compiles."}},
+	})
+	if err != nil || res.IsError {
+		t.Fatalf("CallTool(add_to_answer) = %+v, %v", res, err)
+	}
+	if len(w.calls) != 1 || w.calls[0].ex != ex {
+		t.Errorf("appends = %+v, want one into %+v", w.calls, ex)
+	}
+
+	if written := s.EndRun(token); written != 1 {
+		t.Errorf("EndRun = %d written, want 1", written)
+	}
+	req, _ := http.NewRequest(http.MethodPost, mcpURL, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST after EndRun: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("a request bearing an ended run's token got %d, want 401", resp.StatusCode)
 	}
 }

@@ -17,8 +17,6 @@ export const aiBlockStyles = /* css */ `
     border: 1px solid var(--theme-aiBlockBorder);
     border-radius: 8px;
     background: var(--theme-aiBlockBg);
-    margin-top: 1.5rem;
-    margin-bottom: 2rem;
     padding: 1.25rem 1.5rem;
     position: relative;
     transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
@@ -187,6 +185,98 @@ export const aiBlockStyles = /* css */ `
     font-weight: 500;
     -webkit-box-decoration-break: clone;
     box-decoration-break: clone;
+  }
+
+  /* ── The answer — the BODY region ─────────────────────────────────────────
+     SPACING BETWEEN ELEMENTS IS THE LIST'S here too: one gap, --answer-gap,
+     between any two neighbouring elements, wherever the answer is drawn. In a
+     document the body holds what ProseMirror projects — a structured element is
+     one .sieve-node, a prose element a run of native prose nodes, spaced among
+     themselves as a document spaces prose — so a block is set the gap from
+     whatever neighbours it, its own outer margin not added. In a popup each
+     element is a row. The body hugs its content: nothing above its first child
+     or below its last. The gap is less than the footer's, so the footer still
+     reads apart from the answer. */
+  .ai-block {
+    --answer-gap: 1rem;
+  }
+
+  .ai-block > .sieve-block__content > .sieve-node,
+  .ai-block > .sieve-block__content > .ai-block__element {
+    margin-top: var(--answer-gap);
+    margin-bottom: 0;
+  }
+
+  .ai-block > .sieve-block__content > .sieve-node + :not(.sieve-node) {
+    margin-top: var(--answer-gap);
+  }
+
+  .ai-block > .sieve-block__content > .ai-block__element > :first-child {
+    margin-top: 0;
+    margin-bottom: 0;
+  }
+
+  .ai-block > .sieve-block__content > :first-child {
+    margin-top: 0;
+  }
+
+  .ai-block > .sieve-block__content > :last-child,
+  .ai-block > .sieve-block__content > .ai-block__element:last-child > :last-child {
+    margin-bottom: 0;
+  }
+
+  /* A prose element drawn as a record keeps the document's prose rhythm, which
+     its .tiptap ancestor gives it; only its first child's leading margin and
+     its last child's trailing one go, so the row's gap is the only space at its
+     edges. */
+  .ai-block > .sieve-block__content > .ai-block__element .sieve-block__content > :first-child {
+    margin-top: 0;
+  }
+
+  .ai-block > .sieve-block__content > .ai-block__element .sieve-block__content > :last-child {
+    margin-bottom: 0;
+  }
+
+  /* ── The answer's status — the top of the FOOTER region ───────────────────
+     Thinking, still thinking, or cut short: a status of the exchange, not a line
+     of its answer, so it is set apart from the last answer block. While no block
+     has landed (.ai-block--awaiting) the body is empty and hidden, and the status
+     sits directly under the question's rule, where the first block will. */
+  .ai-block__status {
+    margin-top: 1.25rem;
+    font-style: italic;
+    color: var(--theme-accentPurple);
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* The dots after thinking and still thinking, shown one more at a time. They
+     are clipped, never resized, so the row is not laid out again as they run. */
+  .ai-block__status--working::after {
+    content: '...';
+    display: inline-block;
+    font-family: var(--theme-monoFont);
+    clip-path: inset(0 100% 0 0);
+    animation: ai-block-status-dots 1.4s steps(4, jump-none) infinite;
+  }
+
+  @keyframes ai-block-status-dots {
+    to { clip-path: inset(0 0 0 0); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ai-block__status--working::after {
+      animation: none;
+      clip-path: none;
+    }
+  }
+
+  .ai-block--awaiting > .sieve-block__content {
+    display: none;
+  }
+
+  .ai-block--awaiting .ai-block__status {
+    margin-top: 0;
   }
 
   /* ── Attachment chips — the FOOTER region ─────────────────────────────────

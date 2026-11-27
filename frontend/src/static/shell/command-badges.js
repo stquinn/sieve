@@ -17,9 +17,15 @@ import { commandBadgesStyles } from './command-badges.styles.js'
  * @property {HTMLElement} el
  * @property {import('./command-service.js').DispatchHandle} handle
  * @property {string} state
- * @property {{cmd: string, text: string, error?: string}} meta
+ * @property {import('./command-popup.js').CommandMeta} meta
  * @property {SieveBlock|null} block
  * @property {CommandPopup|null} popup
+ */
+
+/**
+ * Places a copy of `element`, a block of the answer held by `holderId`, in the
+ * document `docUuid`, reporting whether it could.
+ * @typedef {(docUuid: string, element: {kind: string, attrs: Record<string, any>}, holderId: string) => boolean} AddToDocument
  */
 
 export class CommandBadges {
@@ -27,16 +33,23 @@ export class CommandBadges {
 
   /** @type {HTMLElement|null} */ #slot
   /** @type {Map<string, BadgeEntry>} */ #entries = new Map()
+  /** @type {AddToDocument|null} */ #addToDocument
 
-  /** @param {HTMLElement|null} [slot] the .status-bar__command-badges element */
-  constructor(slot) {
+  /**
+   * @param {HTMLElement|null} [slot] the .status-bar__command-badges element
+   * @param {AddToDocument} [addToDocument] places a copy of an answer block in a
+   *   document; absent, a popup's blocks offer no Add to Document
+   */
+  constructor(slot, addToDocument) {
     rendererStyles.register(CommandBadges)
     this.#slot = slot || (typeof document !== 'undefined' ? document.querySelector('.status-bar__command-badges') : null)
+    this.#addToDocument = addToDocument || null
   }
 
   /**
    * @param {import('./command-service.js').DispatchHandle} handle
-   * @param {{cmd: string, text: string}} meta
+   * @param {import('./command-popup.js').CommandMeta} meta  `docUuid` names the
+   *   document the command was run over, where its blocks are added
    */
   track(handle, meta) {
     if (!this.#slot) return
@@ -101,7 +114,13 @@ export class CommandBadges {
   /** @param {BadgeEntry} entry */
   #summon(entry) {
     if (!entry.popup) {
-      entry.popup = new CommandPopup({ anchor: entry.el, onDelete: () => this.#delete(entry) })
+      const place = this.#addToDocument
+      const docUuid = entry.meta.docUuid
+      entry.popup = new CommandPopup({
+        anchor: entry.el,
+        onDelete: () => this.#delete(entry),
+        onAddToDocument: place && docUuid ? (element, holderId) => place(docUuid, element, holderId) : undefined,
+      })
     }
     entry.popup.show(entry.block, entry.meta)
   }

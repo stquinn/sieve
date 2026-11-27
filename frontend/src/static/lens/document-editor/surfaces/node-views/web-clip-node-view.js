@@ -49,7 +49,10 @@ import { WebClipRenderer } from '../../../../renderers/web-clip-renderer.js'
     // choice — the "(Fetch)" / "(Summarise)" suffix — is all this kind owns. The
     // VERB is DERIVED from labelForAction, the single verb map, and never restated
     // here, which is what keeps this kind's wording from drifting from every other.
+    // A source that is already a web clip is copied as it stands, so it has no
+    // choice to offer and takes the framework's own item.
     getExtractionMenuItems: function(sourceNode, entries, defaultAction, opts) {
+      if ((entries || []).some(function (e) { return e && e.mimeType === 'sieve/web-clip' })) return null
       var IC = window.SieveIcons || {}
       var action = (opts && opts.operation) || 'extract'
       // sourceKind is deliberately not passed: labelForAction's source-sensitive

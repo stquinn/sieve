@@ -1,7 +1,8 @@
 // @ts-check
 // AiBlockRenderer — the ai-block kind's look-and-feel: the block shell, the
-// status BADGE (its header), the question TITLE, the answer/status BODY and
-// the attachment chip row (its footer), plus this kind's stylesheet.
+// status BADGE (its header), the question TITLE, the answer BODY and
+// the footer — the answer's status line above the attachment chip row — plus
+// this kind's stylesheet.
 //
 // THE QUESTION IS A LIST OF BLOCKS, folded once and read in three places, one
 // per slot: what it is ABOUT becomes the chain of local handles on the root and
@@ -54,7 +55,8 @@ export class AiBlockRenderer extends BlockRenderer {
   /** @type {HTMLElement|null} */ #badge = null
   /** @type {HTMLElement|null} */ #titleEl = null
   /** @type {HTMLElement|null} */ #contentEl = null
-  /** @type {HTMLElement|null} the attachment chip row (the FOOTER region) */ #attachmentsEl = null
+  /** @type {HTMLElement|null} the answer's status line, in the FOOTER region */ #statusEl = null
+  /** @type {HTMLElement|null} the attachment chip row, in the FOOTER region */ #attachmentsEl = null
   /** @type {QuestionListView|null} draws the question; built with the title */ #questionView = null
   /** @type {any} the question the title currently shows */ #drawnQuestion = null
   /** @type {any} the attachments the title's mention marks were made from */ #drawnAttachments = null
@@ -96,18 +98,29 @@ export class AiBlockRenderer extends BlockRenderer {
   }
 
   /**
-   * The ATTACHMENTS the question carried, as chips — the FOOTER region. The row
-   * is built ALWAYS and hidden when empty, never conditionally returned: a
+   * The FOOTER region: the status of an exchange that is not settled
+   * (statusLine()), then the ATTACHMENTS the question carried, as chips.
+   * Both are built ALWAYS and hidden when empty, never conditionally returned: a
    * region that was never built cannot appear on the update() that brings them.
+   * The footer lies outside the body, so in the editor lens it is the
+   * renderer's, never ProseMirror content.
    * @returns {HTMLElement}
    */
   buildFooter() {
+    const footer = document.createElement('div')
+    footer.className = 'ai-block__footer'
+    // setAttribute, not the IDL property: the ATTRIBUTE is what a DOM parser reads.
+    footer.setAttribute('contenteditable', 'false')
+    this.#statusEl = document.createElement('div')
+    this.#statusEl.className = 'ai-block__status'
     this.#attachmentsEl = document.createElement('div')
     this.#attachmentsEl.className = 'ai-block__attachments'
-    // setAttribute, not the IDL property: the ATTRIBUTE is what a DOM parser reads.
     this.#attachmentsEl.setAttribute('contenteditable', 'false')
-    this.#fillAttachments(/** @type {AiBlockAttrs} */ (this.block.payload))
-    return this.#attachmentsEl
+    footer.append(this.#statusEl, this.#attachmentsEl)
+    const attrs = /** @type {AiBlockAttrs} */ (this.block.payload)
+    this.#fillStatus()
+    this.#fillAttachments(attrs)
+    return footer
   }
 
   /**
@@ -134,41 +147,78 @@ export class AiBlockRenderer extends BlockRenderer {
   }
 
   /**
-   * The BLOCKS the body shows, or null when the body is a status line rather
-   * than an answer.
+   * The BLOCKS the body shows, or null when the body is a failure's message
+   * rather than an answer.
    *
    * A host that can draw whole blocks — the editor lens, which projects each
    * element as a node of its own kind — takes this in preference to
    * bodyMarkdown(); a host that can only draw text falls back to that. An answer
    * element is a SETTLED record and carries no job of its own, so one that names
    * no status is complete rather than pending.
+   *
+   * An exchange that holds answer blocks shows them whatever its status, and
+   * one still being answered shows the blocks it holds, none at first: its
+   * status is the footer's (statusLine()), never the body's. Only an exchange
+   * that ended unsettled holding none says so in the body.
    * @returns {import('./question-list.js').QuestionElement[]|null}
    */
   bodyElements() {
     const attrs = /** @type {AiBlockAttrs} */ (this.block.payload)
-    if ((attrs.status || 'PENDING') !== 'COMPLETE') return null
-    return QuestionList.elementsOf(attrs.answer).map((el) => ({
+    const answer = QuestionList.elementsOf(attrs.answer).map((el) => ({
       kind: el.kind,
       attrs: Object.assign({ status: 'COMPLETE' }, el.attrs),
     }))
+    if ((attrs.status || 'PENDING') === 'COMPLETE' || answer.length > 0 || AiBlockRenderer.#answering(attrs)) return answer
+    return null
   }
 
   /**
-   * The markdown the BODY shows — the answer when complete, else a status line.
-   * The renderer OWNS this mapping.
+   * The status of an exchange that is not settled, as the footer shows it:
+   * thinking while the job runs and no answer block has landed, still thinking
+   * once one has, cut short once a job that wrote some failed, timed out or was
+   * given up on. '' for a settled exchange and for one that ended holding no
+   * answer, whose failure the body shows instead.
+   * @returns {string}
+   */
+  statusLine() {
+    const attrs = /** @type {AiBlockAttrs} */ (this.block.payload)
+    if ((attrs.status || 'PENDING') === 'COMPLETE') return ''
+    const held = QuestionList.elementsOf(attrs.answer).length > 0
+    if (AiBlockRenderer.#answering(attrs)) return held ? AiBlockRenderer.STILL_THINKING : AiBlockRenderer.THINKING
+    return held ? AiBlockRenderer.CUT_SHORT : ''
+  }
+
+  /** The footer's status while the job runs and no answer block has landed. */
+  static THINKING = 'thinking'
+
+  /** The footer's status while the job runs and answer blocks have landed. */
+  static STILL_THINKING = 'still thinking'
+
+  /** The footer's status once an answer that holds blocks ended unsettled. */
+  static CUT_SHORT = 'The answer was cut short. Right-click to Retry.'
+
+  /** Whether the exchange's job is running and not yet given up on.
+   *  @param {AiBlockAttrs} attrs @returns {boolean} */
+  static #answering(attrs) {
+    const status = attrs.status || 'PENDING'
+    return (status === 'PENDING' || status === 'DISPATCHED') && !isJobStale(attrs.createdAt, attrs.id)
+  }
+
+  /**
+   * The markdown the BODY shows — the answer whenever bodyElements() offers it,
+   * '' while nothing has landed, else the failure's message. The renderer OWNS
+   * this mapping.
    *
-   * Still the whole story for a host that draws text: the status lines, and the
-   * answer wherever no richer projection is available (a bare page, and the
+   * Still the whole story for a host that draws text: the failure messages, and
+   * the answer wherever no richer projection is available (a bare page, and the
    * self-filled buildBody above).
    * @returns {string}
    */
   bodyMarkdown() {
     const attrs = /** @type {AiBlockAttrs} */ (this.block.payload)
     const status = attrs.status || 'PENDING'
-    if (status === 'COMPLETE') return AiBlockRenderer.answerMarkdown(attrs.answer)
-    if (status === 'PENDING' || status === 'DISPATCHED') {
-      return isJobStale(attrs.createdAt, attrs.id) ? 'Request timed out. (Right-click to Retry)' : '*(thinking…)*'
-    }
+    if (this.bodyElements()) return AiBlockRenderer.answerMarkdown(attrs.answer)
+    if (status === 'PENDING' || status === 'DISPATCHED') return 'Request timed out. (Right-click to Retry)'
     return (attrs.error || 'Request failed. (Right-click to Retry)').trim()
   }
 
@@ -256,6 +306,7 @@ export class AiBlockRenderer extends BlockRenderer {
     this.#syncRoot(attrs)
     this.#renderBadge(attrs)
     this.#fillQuestion(attrs)
+    this.#fillStatus()
     this.#fillAttachments(attrs)
     // Body patch is REF-GUARDED — a claimed body recorded no #contentEl.
     if (this.#contentEl) this.fillBody(this.#contentEl, this.bodyMarkdown())
@@ -284,6 +335,19 @@ export class AiBlockRenderer extends BlockRenderer {
     this.#drawnAttachments = attrs.attachments
     el.style.display = view.fill(el, this.#slots(attrs.question).body) ? '' : 'none'
     MentionTokens.mark(el, this.#attachmentsOf(attrs).map((a) => a && a.title), 'ai-block__mention')
+  }
+
+  /** Redraws the footer's status line, hidden when there is none, and marks the
+   *  root `ai-block--awaiting` while thinking holds no block: the body is empty
+   *  then, and the status line stands in its place under the question. */
+  #fillStatus() {
+    const el = this.#statusEl
+    if (!el) return
+    const line = this.statusLine()
+    el.textContent = line
+    el.style.display = line ? '' : 'none'
+    el.classList.toggle('ai-block__status--working', line === AiBlockRenderer.THINKING || line === AiBlockRenderer.STILL_THINKING)
+    if (this.root) this.root.classList.toggle('ai-block--awaiting', line === AiBlockRenderer.THINKING)
   }
 
   /**

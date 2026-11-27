@@ -27,6 +27,34 @@ func (p *SmartCardProcessor) Kind() string { return p.FencedDeserializer.Kind }
 
 func (p *SmartCardProcessor) Mode() block.BlockMode { return block.BlockModeBlock }
 
+// AnswerCard offers a link card to a model writing an answer (block.AnswerKind):
+// it lands PENDING and its own fetch job gives it the page's title, description
+// and image.
+func (p *SmartCardProcessor) AnswerCard() domain.AnswerCard {
+	return domain.AnswerCard{
+		Use:         "a web page the reader should visit, shown as a card with its title, description and image",
+		Attrs:       map[string]string{"href": "the page's absolute http or https URL"},
+		Example:     map[string]any{"href": "https://go.dev/doc/effective_go"},
+		Waits:       "every link card, whose page is fetched",
+		WaitsAlways: true,
+	}
+}
+
+// AnswerSource takes a link card's URL, which must be an absolute http or
+// https URL (block.AnswerKind).
+func (p *SmartCardProcessor) AnswerSource(attrs block.AnswerAttrs) (block.AnswerSource, error) {
+	s, err := attrs.Strings("href")
+	if err != nil {
+		return block.AnswerSource{}, err
+	}
+	href := strings.TrimSpace(s["href"])
+	u, err := url.Parse(href)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return block.AnswerSource{}, fmt.Errorf("href must be an absolute http or https URL")
+	}
+	return block.AnswerSource{Overrides: map[string]any{"href": href, "title": href}}, nil
+}
+
 func (p *SmartCardProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
 		"id":                id,
@@ -62,6 +90,9 @@ func (p *SmartCardProcessor) InitAttrs(id string, overrides map[string]interface
 // markdown link, and the card is reached by an explicit Transform (#67). Image URLs
 // belong to smart-image.
 func (p *SmartCardProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
+	if !block.ContentEntries(entries).Convertible() {
+		return block.SupportedActions{Kind: p.Kind()}
+	}
 	for _, e := range entries {
 		if e.IsSieveType(p) {
 			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionExtract}}

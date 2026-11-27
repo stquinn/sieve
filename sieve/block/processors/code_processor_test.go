@@ -58,7 +58,8 @@ func TestCodeBlockProcessor_InitAttrs_heuristicsApplied(t *testing.T) {
 }
 
 // A language the block arrives with is kept: Go source carrying "rust" (a copied
-// block whose language was picked) is not re-detected as go.
+// block whose language was picked) is not re-detected as go, and a language
+// picked by hand leaves nothing to refine, so the block is born COMPLETE.
 func TestCodeBlockProcessor_InitAttrs_suppliedLanguageIsKept(t *testing.T) {
 	p := NewCodeBlockProcessor(block.BlockServices{})
 	attrs := p.InitAttrs("co-0005", map[string]interface{}{
@@ -66,6 +67,9 @@ func TestCodeBlockProcessor_InitAttrs_suppliedLanguageIsKept(t *testing.T) {
 	})
 	if attrs["language"] != "rust" || attrs["detectionMethod"] != "manual" {
 		t.Errorf("language = %v (%v), want the supplied rust (manual)", attrs["language"], attrs["detectionMethod"])
+	}
+	if attrs["status"] != block.BlockStatusComplete {
+		t.Errorf("status = %v, want COMPLETE for a hand-picked language", attrs["status"])
 	}
 }
 

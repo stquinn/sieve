@@ -22,6 +22,46 @@ func NewWebClipBlockProcessor(svc block.BlockServices) *WebClipBlockProcessor {
 
 func (p *WebClipBlockProcessor) Kind() string { return p.FencedDeserializer.Kind }
 
+// AnswerCard offers a web clip to a model writing an answer (block.AnswerKind):
+// it lands PENDING and its own job has an AI run fetch the page and summarise it,
+// or bring it in whole.
+func (p *WebClipBlockProcessor) AnswerCard() domain.AnswerCard {
+	return domain.AnswerCard{
+		Use: "a web page clipped into the answer: its content fetched and summarised for the reader to read here " +
+			"(a link card only previews a page the reader should visit)",
+		Attrs: map[string]string{
+			"source": "the page's absolute http or https URL",
+			"mode":   "optional: summarise (the default), a summary aimed at this note, or fetch, the page's whole content",
+		},
+		Example:     map[string]any{"source": "https://go.dev/blog/go1.22"},
+		Waits:       "every web clip, whose page is fetched and summarised",
+		WaitsAlways: true,
+	}
+}
+
+// AnswerSource takes a web clip's URL, which must be an absolute http or
+// https URL, and its mode (block.AnswerKind).
+func (p *WebClipBlockProcessor) AnswerSource(attrs block.AnswerAttrs) (block.AnswerSource, error) {
+	s, err := attrs.StringsWith([]string{"source"}, "mode")
+	if err != nil {
+		return block.AnswerSource{}, err
+	}
+	source := strings.TrimSpace(s["source"])
+	u, err := url.Parse(source)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return block.AnswerSource{}, fmt.Errorf("source must be an absolute http or https URL")
+	}
+	mode := strings.ToLower(strings.TrimSpace(s["mode"]))
+	switch mode {
+	case "":
+		mode = "summarise"
+	case "summarise", "fetch":
+	default:
+		return block.AnswerSource{}, fmt.Errorf("mode must be summarise or fetch, not %q", s["mode"])
+	}
+	return block.AnswerSource{Overrides: map[string]any{"source": source, "mode": mode}}, nil
+}
+
 func (p *WebClipBlockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
 		"id":                id,
@@ -51,6 +91,9 @@ func (p *WebClipBlockProcessor) InitAttrs(id string, overrides map[string]interf
 // TRANSFORM only. A pasted URL is NOT claimed for paste: it stays an ordinary
 // markdown link, and the clip is reached by an explicit Transform (#67).
 func (p *WebClipBlockProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
+	if !block.ContentEntries(entries).Convertible() {
+		return block.SupportedActions{Kind: p.Kind()}
+	}
 	for _, e := range entries {
 		if e.IsSieveType(p) {
 			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionExtract}}
@@ -148,8 +191,10 @@ func (p *WebClipBlockProcessor) DescribeJob(jctx block.JobContext) *block.Proces
 	}
 
 	var docContent string
-	if doc, err := p.svc.Documents.LoadByUUID(uuid); err == nil {
-		docContent = string(doc.Body())
+	if p.svc.Documents != nil {
+		if doc, err := p.svc.Documents.LoadByUUID(uuid); err == nil {
+			docContent = string(doc.Body())
+		}
 	}
 
 	type webClipResult struct {

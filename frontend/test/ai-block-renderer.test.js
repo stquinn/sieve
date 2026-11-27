@@ -280,17 +280,40 @@ describe('AiBlockRenderer — the answer the body shows', () => {
       .toBe('real')
   })
 
-  it('the answer is read ONLY when the block is complete — the status arms are untouched', () => {
-    const answer = prose('an answer that arrived late')
-    const pending = new AiBlockRenderer(blk({ id: 'ai-a1b2', status: 'PENDING', createdAt: new Date().toISOString(), answer }))
-    expect(pending.bodyMarkdown()).toBe('*(thinking…)*')
-
+  // The body holds only the answer, or a failure's message when none landed;
+  // the footer's status line says what the answer's state is, so neither is
+  // ever drawn in the other. While thinking holds no block the root is marked
+  // awaiting, which empties the body out of the way of the status line.
+  it('the body is the answer or a failure, and the footer says the exchange is thinking, still thinking or was cut short', () => {
+    const answer = prose('an answer arriving')
+    const now = new Date().toISOString()
     const stale = new Date(Date.now() - 10 * 60 * 1000).toISOString()
-    const timedOut = new AiBlockRenderer(blk({ id: 'ai-a1b2', status: 'DISPATCHED', createdAt: stale, answer }))
-    expect(timedOut.bodyMarkdown()).toBe('Request timed out. (Right-click to Retry)')
+    for (const [name, attrs, wantBody, wantStatus] of /** @type {[string, any, string, string][]} */ ([
+      ['complete', { status: 'COMPLETE', answer }, 'an answer arriving', ''],
+      ['running, nothing written', { status: 'PENDING', createdAt: now }, '', 'thinking'],
+      ['running, blocks written', { status: 'DISPATCHED', createdAt: now, answer }, 'an answer arriving', 'still thinking'],
+      ['given up on, nothing written', { status: 'DISPATCHED', createdAt: stale }, 'Request timed out. (Right-click to Retry)', ''],
+      ['failed, nothing written', { status: 'ERROR', error: 'the CLI timed out' }, 'the CLI timed out', ''],
+      ['given up on, blocks written', { status: 'DISPATCHED', createdAt: stale, answer }, 'an answer arriving', AiBlockRenderer.CUT_SHORT],
+      ['failed, blocks written', { status: 'ERROR', error: 'the CLI failed', answer }, 'an answer arriving', AiBlockRenderer.CUT_SHORT],
+      ['timed out, blocks written', { status: 'TIMEOUT', error: 'cli timeout', answer }, 'an answer arriving', AiBlockRenderer.CUT_SHORT],
+    ])) {
+      const { renderer, dom } = mount({ id: 'ai-a1b2', ...attrs })
+      expect(renderer.bodyMarkdown(), name).toBe(wantBody)
+      expect(renderer.statusLine(), name).toBe(wantStatus)
+      const status = /** @type {HTMLElement} */ (dom.querySelector('.sieve-block__footer .ai-block__status'))
+      expect(status.textContent, name).toBe(wantStatus)
+      expect(status.style.display, name).toBe(wantStatus ? '' : 'none')
+      expect(dom.querySelector('.sieve-block__content')?.textContent, name).not.toContain('thinking')
+      expect(dom.classList.contains('ai-block--awaiting'), name).toBe(wantStatus === 'thinking')
+    }
+  })
 
-    const failed = new AiBlockRenderer(blk({ id: 'ai-a1b2', status: 'ERROR', error: 'the CLI timed out', answer }))
-    expect(failed.bodyMarkdown()).toBe('the CLI timed out')
+  it('the status line goes when the answer settles', () => {
+    const answer = prose('an answer arriving')
+    const { renderer, dom } = mount({ id: 'ai-a1b2', status: 'DISPATCHED', createdAt: new Date().toISOString(), answer })
+    renderer.update(blk({ id: 'ai-a1b2', status: 'COMPLETE', answer }))
+    expect(/** @type {HTMLElement} */ (dom.querySelector('.ai-block__status')).style.display).toBe('none')
   })
 
   it('the drawn body carries the answer the list composed', () => {
@@ -394,9 +417,9 @@ describe('AiBlockRenderer — the attachment chip row', () => {
 
   it('the row is not editable — it is chrome inside a PM-managed block', () => {
     const { dom } = mount(withAttachments([{ uri: 'container:9f2b', title: 'Auth Design' }]))
-    const row = /** @type {HTMLElement} */ (dom.querySelector('.ai-block__attachments'))
+    const row = /** @type {HTMLElement} */ (dom.querySelector('.sieve-block__footer > .ai-block__attachments'))
     expect(row.getAttribute('contenteditable')).toBe('false')
-    expect(row.className).toContain('sieve-block__footer')
+    expect(dom.querySelector('.sieve-block__footer')?.getAttribute('contenteditable')).toBe('false')
   })
 })
 

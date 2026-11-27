@@ -26,9 +26,17 @@ import (
 // renderer (buildBaseArgs). They are usually equal (a bare provider name), but a
 // user-configured CLIPath wrapper makes binary a script path while dialect keeps
 // following the provider dropdown — see Settings.ResolveCLI.
+//
+// note, when non-nil, is asked once the CLI has exited with a response, and what
+// it says is logged on that response's header.
 type CLIRunner interface {
-	Run(op, binary, dialect, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string) (string, error)
+	Run(op, binary, dialect, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string, note ResponseNote) (string, error)
 }
+
+// ResponseNote says what became of a run's final message, when that is not
+// simply that it is the run's result (for one, that it was discarded); "" says
+// nothing.
+type ResponseNote func() string
 
 // execCLIRunner is the real CLIRunner: it renders the containment profile to args
 // and spawns the CLI subprocess.
@@ -59,7 +67,7 @@ func floorCwd(cwd, libraryDir string) string {
 // profile is the containment floor rendered to CLI args (never config files);
 // libraryDir resolves the profile's symbolic "library" directory grant to the
 // concrete --add-dir path. The note directory is the cwd and needs no grant.
-func (execCLIRunner) Run(op, binary, dialect, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string) (string, error) {
+func (r execCLIRunner) Run(op, binary, dialect, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string, note ResponseNote) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
@@ -118,10 +126,20 @@ func (execCLIRunner) Run(op, binary, dialect, prompt, model string, timeoutSecs 
 	}
 
 	out := stdout.String()
-	logger.LogBlock(
-		fmt.Sprintf("AI RESPONSE ▸ %s (%dms, %d bytes)", op, elapsedMs, len(out)),
-		out)
+	logger.LogBlock(r.responseLabel(op, elapsedMs, len(out), note), out)
 	return out, nil
+}
+
+// responseLabel is the header of the AI RESPONSE log block: the op, how long the
+// CLI took, how many bytes it answered, and what note says of them.
+func (execCLIRunner) responseLabel(op string, elapsedMs int64, size int, note ResponseNote) string {
+	label := fmt.Sprintf("AI RESPONSE ▸ %s (%dms, %d bytes)", op, elapsedMs, size)
+	if note != nil {
+		if said := note(); said != "" {
+			label += " ▸ " + said
+		}
+	}
+	return label
 }
 
 // redactedCommand renders the exact command line that was executed, with the MCP

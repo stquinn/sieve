@@ -9,13 +9,24 @@
 // Block contract: the popup reads the block's TYPED getters (block.kind /
 // block.status). The opaque payload is the kind renderer's business, so Copy
 // pulls its text from the renderer (copyText), never by reaching into payload.
+//
+// The popup is a host that draws whole blocks: it claims the BODY region of a
+// renderer that offers bodyElements() and draws those elements there, each
+// whole and read-only by its kind's renderer (QuestionListView), or the
+// renderer's markdown body while it offers none. The answer grows as steps of a
+// running command arrive; the renderer's footer says it is still being written,
+// or was cut short. When the host can place a block in the document the popup
+// was opened over (onAddToDocument), each drawn block offers Add to Document: a
+// copy of that one block. Copy, on the bar, takes the whole answer as text.
 
 import { AiBlockRenderer } from '../renderers/ai-block-renderer.js'
 import { rendererStyles } from '../renderers/renderer-style-registry.js'
 import { commandPopupStyles } from './command-popup.styles.js'
 import { CommandResultRenderer } from '../renderers/command-result-renderer.js'
+import { QuestionListView } from '../renderers/question-list-view.js'
+import { REGION } from '../renderers/block-renderer.js'
 
-/** @typedef {{ cmd: string, text: string, error?: string }} CommandMeta */
+/** @typedef {{ cmd: string, text: string, error?: string, docUuid?: string }} CommandMeta */
 
 /**
  * Kind → renderer resolution for command-result blocks. A new command result
@@ -35,21 +46,28 @@ export class CommandPopup {
 
   /** @type {HTMLElement} */ #anchor
   /** @type {() => void} */ #onDelete
+  /** @type {((element: {kind: string, attrs: Record<string, any>}, holderId: string) => boolean)|null} */ #onAddToDocument
   /** @type {HTMLElement|null} */ #root = null
   /** @type {import('../renderers/block-renderer.js').BlockRenderer|null} */ #renderer = null
   /** @type {import('../contract/sieve-block.js').SieveBlock|null} */ #block = null
   /** @type {CommandMeta} */ #meta = { cmd: '', text: '' }
   /** @type {HTMLElement|null} */ #bodyEl = null
   /** @type {HTMLElement|null} */ #titleEl = null
+  /** @type {HTMLElement|null} the renderer's BODY region, claimed and drawn here */ #answerEl = null
+  /** @type {QuestionListView|null} draws the answer's blocks into #answerEl */ #answerView = null
   /** @type {Array<() => void>} */ #unlisten = []
 
   /**
-   * @param {{ anchor: HTMLElement, onDelete: () => void }} options
+   * @param {{ anchor: HTMLElement, onDelete: () => void, onAddToDocument?: (element: {kind: string, attrs: Record<string, any>}, holderId: string) => boolean }} options
+   *   onAddToDocument places a copy of one answer block in the document the
+   *   popup was opened over, reporting whether it could; absent, no block
+   *   offers it.
    */
-  constructor({ anchor, onDelete }) {
+  constructor({ anchor, onDelete, onAddToDocument }) {
     rendererStyles.register(CommandPopup)
     this.#anchor = anchor
     this.#onDelete = onDelete
+    this.#onAddToDocument = onAddToDocument || null
   }
 
   get visible() { return !!this.#root }
@@ -87,7 +105,7 @@ export class CommandPopup {
         const text = this.#answerText()
         if (text && navigator.clipboard) {
           navigator.clipboard.writeText(text)
-          this.#flashCopied(btn)
+          this.#flash(btn, 'Copied ✓')
         }
       }),
       this.#barButton('hide', 'Hide (answer stays on the badge)', 'Hide', () => this.hide()),
@@ -160,6 +178,7 @@ export class CommandPopup {
     if (!this.#bodyEl) return
 
     if (!this.#block) {
+      this.#releaseAnswer()
       this.#renderer = null
       if (this.#meta.error) this.#renderStatus(true, '⚠', 'Command failed', this.#meta.error)
       else this.#renderStatus(false, null, '/' + this.#meta.cmd + ' is working…', this.#meta.text)
@@ -168,6 +187,7 @@ export class CommandPopup {
 
     const RendererClass = COMMAND_RENDERERS[this.#block.kind]
     if (!RendererClass) {
+      this.#releaseAnswer()
       this.#renderer = null
       this.#renderStatus(true, '⚠', 'Unsupported result kind', this.#block.kind)
       return
@@ -176,11 +196,72 @@ export class CommandPopup {
     if (this.#renderer instanceof RendererClass) {
       this.#renderer.update(this.#block)
     } else {
+      this.#releaseAnswer()
       this.#bodyEl.innerHTML = ''
-      this.#renderer = new RendererClass(this.#block)
+      this.#renderer = new RendererClass(this.#block, undefined, (r, region, container) => this.#claim(r, region, container))
       const rendered = this.#renderer.render()
       if (rendered) this.#bodyEl.appendChild(rendered)
     }
+    this.#drawAnswer()
+  }
+
+  /**
+   * The renderer's region interceptor: claims the BODY of a renderer that offers
+   * its body as blocks, leaving every other region, and every other renderer's
+   * body, to the renderer.
+   * @param {import('../renderers/block-renderer.js').BlockRenderer} renderer
+   * @param {string} region @param {HTMLElement} container
+   * @returns {boolean} false when claimed
+   */
+  #claim(renderer, region, container) {
+    if (region !== REGION.BODY || typeof (/** @type {any} */ (renderer)).bodyElements !== 'function') return true
+    container.className = 'sieve-block__content tiptap'
+    this.#answerEl = container
+    this.#answerView = new QuestionListView()
+    return false
+  }
+
+  /** Redraws the claimed body from the mounted renderer: its blocks when it
+   *  offers them, else its markdown body. */
+  #drawAnswer() {
+    const r = /** @type {any} */ (this.#renderer)
+    const el = this.#answerEl
+    if (!r || !el || !this.#answerView) return
+    const elements = r.bodyElements()
+    if (elements) {
+      this.#answerView.fill(el, elements)
+      this.#offerAddToDocument(el, elements)
+    } else {
+      this.#answerView.destroy()
+      r.fillBody(el, r.bodyMarkdown())
+    }
+  }
+
+  /**
+   * Gives each drawn block its Add to Document button, when the host can place
+   * one. A row is one element, in the order the answer holds them.
+   * @param {HTMLElement} el @param {ReadonlyArray<{kind: string, attrs: Record<string, any>}>} elements
+   */
+  #offerAddToDocument(el, elements) {
+    const place = this.#onAddToDocument
+    const holderId = this.#block ? this.#block.id : ''
+    if (!place || !holderId) return
+    const rows = Array.from(el.children).filter((row) => row.classList.contains('ai-block__element'))
+    rows.forEach((row, i) => {
+      const element = elements[i]
+      if (!element) return
+      row.appendChild(this.#barButton('add', 'Add a copy of this block to the note', 'Add to Document', (btn) => {
+        if (place(element, holderId)) this.#flash(btn, 'Added ✓')
+        else this.#flash(btn, 'Open the note first')
+      }))
+    })
+  }
+
+  /** Releases the claimed body and what it drew. */
+  #releaseAnswer() {
+    if (this.#answerView) this.#answerView.destroy()
+    this.#answerView = null
+    this.#answerEl = null
   }
 
   /**
@@ -238,6 +319,7 @@ export class CommandPopup {
       this.#root.remove()
       this.#root = null
     }
+    this.#releaseAnswer()
     this.#renderer = null
     this.#bodyEl = null
     this.#titleEl = null
@@ -248,15 +330,15 @@ export class CommandPopup {
   }
 
   /**
-   * Copy micro-feedback: flashes the button for 1.2s. The scrimless popup has no
-   * toast channel, so the button is the confirmation surface.
-   * @param {HTMLButtonElement} btn
+   * Button micro-feedback: shows `text` on the button for 1.2s. The scrimless
+   * popup has no toast channel, so the button is the confirmation surface.
+   * @param {HTMLButtonElement} btn @param {string} text
    */
-  #flashCopied(btn) {
+  #flash(btn, text) {
     if (btn.classList.contains('command-popup__btn--copied')) return
     const label = btn.textContent
     btn.classList.add('command-popup__btn--copied')
-    btn.textContent = 'Copied ✓'
+    btn.textContent = text
     setTimeout(() => {
       btn.classList.remove('command-popup__btn--copied')
       btn.textContent = label

@@ -17,8 +17,9 @@
 //
 // A node whose content HOSTS BLOCKS is a container, and a range lying inside one
 // names its ELEMENTS, not the container: each is composed as a block of its own,
-// exactly as a top-level node is. A range covering the container whole names the
-// one block it is.
+// exactly as a top-level node is, its text/plain the element as the container
+// shows it when the container says (an answer's code fenced by its language). A
+// range covering the container whole names the one block it is.
 //
 // Cut is copy plus a deletion, so this also names the range a cut may remove.
 // That is NOT always the range the text views were read from: a highlight in a
@@ -26,16 +27,13 @@
 // actually highlighted, and no transaction can delete such a highlight.
 
 import { sieveBlockEntries, rendererFor } from './surfaces/sieve-block-extension.js'
-import { getBlockKind } from '../../renderers/block-kinds.js'
+import { getBlockKind, hostsBlocks } from '../../renderers/block-kinds.js'
 import { BlockSelection } from './block-selection.js'
 import { ContractViolation } from '../../contract/sieve-block.js'
 import { ClipboardText } from './clipboard-text.js'
 
 const SIEVE_PREFIX = 'sieve-'
 const SIEVE_VIEW_PREFIX = 'sieve/'
-// The schema group every sieve block belongs to. A node type whose content admits
-// it hosts BLOCKS — the document top level, and any container kind.
-const SIEVE_GROUP = 'sieveBlock'
 
 /**
  * @typedef {object} ClipboardSliceInput
@@ -204,7 +202,7 @@ export class ClipboardSlice {
    * @returns {boolean}
    */
   #descendsInto(node, from, to, dom) {
-    if (!ClipboardSlice.#hostsBlocks(node)) return false
+    if (!hostsBlocks(node)) return false
     if (this.#range.from <= from || this.#range.to >= to) return false
     if (!BlockSelection.unownedText(this.#domSelection, dom)) return true
     // The highlight sits in DOM PM does not own. An ELEMENT's own read-only region
@@ -244,11 +242,11 @@ export class ClipboardSlice {
     const highlighted = BlockSelection.unownedText(this.#domSelection, dom)
     const whole = highlighted
       ? highlighted.trim() === ClipboardText.ofNode(node).trim()
-      : this.#coversWhole(from, nodeEnd)
+      : this.#coversWhole(node, from, nodeEnd, level.node !== this.#view.state.doc)
     const covered = whole
       ? level.node.slice(from - level.base, nodeEnd - level.base)
       : level.node.slice(Math.max(this.#range.from, from) - level.base, Math.min(this.#range.to, nodeEnd) - level.base)
-    const text = highlighted || (whole ? ClipboardText.ofNode(node) : ClipboardText.ofSlice(covered))
+    const text = highlighted || (whole ? (this.#elementText(level.node, node) || ClipboardText.ofNode(node)) : ClipboardText.ofSlice(covered))
     if (!whole && !text) return
 
     const entries = whole ? this.#entriesOf(node) : this.#entriesOf(this.#characters(node, from, text))
@@ -260,24 +258,14 @@ export class ClipboardSlice {
     else out.html.push(ClipboardSlice.#pick(entries, 'text/html') || ClipboardSlice.#blockHTML(dom))
   }
 
-  /** Does this sieve node's content host BLOCKS — a list of them, as the document
-   *  top level does? Read off the schema, by walking the content expression's own
-   *  match graph for a sieveBlock the node admits ANYWHERE: a container that
-   *  declares a caption before its blocks hosts blocks just as much as one that
-   *  opens with them.
-   *  @param {any} node @returns {boolean} */
-  static #hostsBlocks(node) {
-    if (String(node.type.name).indexOf(SIEVE_PREFIX) !== 0) return false
-    /** @type {any[]} */ const reachable = [node.type.contentMatch]
-    for (let i = 0; i < reachable.length; i++) {
-      const match = reachable[i]
-      for (let e = 0; e < match.edgeCount; e++) {
-        const edge = match.edge(e)
-        if (String(edge.type.spec.group || '').split(' ').indexOf(SIEVE_GROUP) >= 0) return true
-        if (reachable.indexOf(edge.next) < 0) reachable.push(edge.next)
-      }
-    }
-    return false
+  /** The text/plain of `node` covered whole as the container holding it shows
+   *  it, or '' when `node` is no container's element or the container leaves it
+   *  to the element's own views. @param {any} container @param {any} node
+   *  @returns {string} */
+  #elementText(container, node) {
+    if (container === this.#view.state.doc) return ''
+    const adapter = rendererFor(container.attrs.kind)
+    return (adapter && typeof adapter.elementText === 'function' && adapter.elementText(node)) || ''
   }
 
   /** The prose holding the characters a range covers of one block: a prose node
@@ -319,10 +307,39 @@ export class ClipboardSlice {
 
   /** Does the range cover this block whole? An empty range names the caret's
    *  block, and a NodeSelection's range always spans its node.
-   *  @param {number} from @param {number} to */
-  #coversWhole(from, to) {
+   *
+   *  An ELEMENT is also covered whole by a range covering all of its text. A
+   *  container's content is a list of blocks and a text position cannot lie
+   *  between two of them, so a range over that list starts or ends inside the
+   *  first or last element that holds text, at the edge of that text — however
+   *  deep in the element that text lies.
+   *  @param {any} node @param {number} from @param {number} to
+   *  @param {boolean} element whether `node` is an element of a container */
+  #coversWhole(node, from, to, element) {
     if (this.#range.to <= this.#range.from) return true
-    return this.#range.from <= from && this.#range.to >= to
+    if (this.#range.from <= from && this.#range.to >= to) return true
+    if (!element) return false
+    const text = ClipboardSlice.#textBounds(node, from)
+    return !!text && this.#range.from <= text.from && this.#range.to >= text.to
+  }
+
+  /** The positions where the text `node` holds starts and ends: the start of its
+   *  first textblock's content and the end of its last's, `node` itself being one
+   *  when its content is inline. Null when it holds no textblock.
+   *  @param {any} node @param {number} from the position before `node`
+   *  @returns {{from: number, to: number}|null} */
+  static #textBounds(node, from) {
+    if (node.content.size === 0) return null
+    if (node.inlineContent) return { from: from + 1, to: from + 1 + node.content.size }
+    /** @type {{from: number, to: number}|null} */
+    let bounds = null
+    node.descendants((/** @type {any} */ child, /** @type {number} */ pos) => {
+      if (!child.isTextblock) return true
+      const start = from + 1 + pos + 1
+      bounds = { from: bounds ? bounds.from : start, to: start + child.content.size }
+      return false
+    })
+    return bounds
   }
 
   /**

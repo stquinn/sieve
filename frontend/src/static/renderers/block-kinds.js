@@ -66,6 +66,31 @@ export function containsChildBlocks(node) {
   return !!node && !node.type.isLeaf && !node.type.inlineContent
 }
 
+// The schema group every sieve block belongs to. A node type whose content admits
+// it hosts BLOCKS — the document top level, and any container kind.
+var SIEVE_GROUP = 'sieveBlock'
+
+// hostsBlocks reports whether a sieve node's content hosts BLOCKS — a list of
+// them, as the document top level does (ai-block), rather than prose alone
+// (web-clip). Each child of such a node is an ELEMENT: a block of its own kind,
+// a native prose node being prose. Read off the schema, by walking the content
+// expression's own match graph for a sieveBlock the node admits ANYWHERE: a
+// container that declares a caption before its blocks hosts blocks just as much
+// as one that opens with them.
+export function hostsBlocks(node) {
+  if (!node || String(node.type.name).indexOf('sieve-') !== 0) return false
+  var reachable = [node.type.contentMatch]
+  for (var i = 0; i < reachable.length; i++) {
+    var match = reachable[i]
+    for (var e = 0; e < match.edgeCount; e++) {
+      var edge = match.edge(e)
+      if (String(edge.type.spec.group || '').split(' ').indexOf(SIEVE_GROUP) >= 0) return true
+      if (reachable.indexOf(edge.next) < 0) reachable.push(edge.next)
+    }
+  }
+  return false
+}
+
 // getBlockBehaviour returns the object that holds a kind's behaviour hooks
 // (asContentEntry, resolveEntries, …) for ANY block. A native def (prose) IS its
 // own behaviour holder; a structured def delegates to its `renderer`. Callers

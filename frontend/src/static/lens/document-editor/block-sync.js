@@ -1,12 +1,17 @@
 // The thin-observer diff core (pure). computeBlockSync is an id-keyed diff over the
-// top-level blocks that emits create-block / update-block / delete-block ops —
-// granular, never a whole-document markdown blob.
+// top-level blocks that emits create-block / update-block / replace-block /
+// delete-block ops — granular, never a whole-document markdown blob.
 //
-// SCOPE: the observer owns PROSE block content. Structured (sieve-*) blocks sync
-// through their own channels, and their change-signature is a hash of their attrs
-// (the frontend never serialises them to markdown), so this emits no create/update
-// content op for one — they are tracked only for the baseline and for DELETE
-// detection (a delete-block is kind-agnostic).
+// The top-level block LIST is stated the same way whatever the kind: a block the
+// editor shows that the baseline lacks is created, one the baseline holds that the
+// editor no longer shows is deleted, and one whose kind changed under its id is
+// replaced whole. A block Go created and the editor placed is baselined when it is
+// placed, so it is never stated back.
+//
+// CONTENT is the observer's for PROSE only. A structured (sieve-*) block's attrs
+// change through its own channels, and its change-signature is a hash of its
+// attrs (the frontend never serialises it to markdown), so an attrs change emits
+// no update for one.
 //
 // There is NO whole-document fallback: every WYSIWYG edit is a granular block-op,
 // and markdown mode is a separate verbatim breakglass buffer. An id-less node is
@@ -19,21 +24,25 @@ function blockSig(b) {
   return b.kind + '\x00' + (b.content || '') + '\x00' + ((b.aliases || []).join(','))
 }
 
-// proseOp builds a create/update entry for a prose block, the batch's only
-// content-bearing shape. Prose's body rides in attrs.content. A CREATE states the
-// id the LENS minted: a UUIDv7 is unique without coordination, so the block is born
-// with the name Go will know it by and there is no handle to correlate afterwards.
-// Go validates the name and adopts it.
-export function proseOp(type, b, index) {
-  var op = { type: type, blockId: b.id || '', kind: 'prose', attrs: { content: b.content || '' } }
+// sigKind is the kind a change-signature was taken under.
+function sigKind(sig) {
+  return sig.slice(0, sig.indexOf('\x00'))
+}
+
+// stateOp states a block whole under the kind it now has: prose's body is its
+// markdown at attrs.content, a structured block's is its attrs. A create also
+// names the block's document index.
+function stateOp(type, b, index) {
+  var attrs = b.kind === 'prose' ? { content: b.content || '' } : (b.attrs || {})
+  var op = { type: type, blockId: b.id || '', kind: b.kind, attrs: attrs }
   if (b.aliases && b.aliases.length) op.aliases = b.aliases
   if (type === 'create-block') op.index = index
   return op
 }
 
-// curr: [{ id, kind, content, aliases? }] in document order. For prose, content
-// is markdown; for structured, content is the attrs-JSON hash (used only as a
-// change-signature, never emitted as an op here).
+// curr: [{ id, kind, content, attrs?, aliases? }] in document order. For prose,
+// content is markdown; for structured, content is the attrs-JSON hash (used only
+// as a change-signature) and attrs the bag a replace-block carries.
 // prev: { [id]: sig } from the last successful sync, or null on the first call.
 // → { mode: 'ops' | 'fallback', ops: [BlockOp], next: { [id]: sig } }
 // isEmptyProse reports a prose block whose content is empty — a blank paragraph.
@@ -107,11 +116,11 @@ export function computeBlockSync(curr, prev) {
   var ops = []
   for (var k = 0; k < curr.length; k++) {
     var p = curr[k]
-    if (p.kind !== 'prose') continue
     if (!p.id) continue                      // the trailing editing surface
     if (!(p.id in next)) continue            // ephemeral blank, not baselined
-    if (!(p.id in prev)) ops.push(proseOp('create-block', p, k))
-    else if (prev[p.id] !== next[p.id]) ops.push(proseOp('update-block', p, k))
+    if (!(p.id in prev)) { ops.push(stateOp('create-block', p, k)); continue }
+    if (sigKind(prev[p.id]) !== p.kind) { ops.push(stateOp('replace-block', p, k)); continue }
+    if (p.kind === 'prose' && prev[p.id] !== next[p.id]) ops.push(stateOp('update-block', p, k))
   }
   // Deletes are kind-agnostic. Every id here is one Go was told about — a block
   // reaches the baseline only by being loaded or created.

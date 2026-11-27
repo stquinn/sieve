@@ -90,6 +90,10 @@
  * appends. A block the lens already drew passes the UUIDv7 it minted as
  * `attrs.id`; one it has not drawn omits it.
  *
+ * `requestSetBlock` sends a DELTA under the kind the container holds;
+ * `requestReplaceBlock` states a block WHOLE under a kind the lens names, for a
+ * block the lens holds as another kind than the container does.
+ *
  * `requestSetOrder` states the COMPLETE child order rather than moving one block
  * relative to another, so a duplicate or late request is idempotent.
  *
@@ -107,6 +111,7 @@
  * @typedef {ContainerProvider & {
  *   requestAddBlock: (kind: string, attrs: Record<string, any>, afterBlockId?: string|null) => void,
  *   requestSetBlock: (blockId: string, patch: Record<string, any>) => void,
+ *   requestReplaceBlock: (blockId: string, kind: string, attrs: Record<string, any>) => void,
  *   requestRemoveBlock: (blockId: string) => void,
  *   requestSetOrder: (order: ReadonlyArray<string>) => void,
  *   requestTransform: (blockId: string, targetKind: string, operation: string, entries: ContentEntry[]) => void,

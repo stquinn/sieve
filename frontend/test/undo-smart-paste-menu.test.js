@@ -22,6 +22,12 @@ describe('action menu labels', () => {
     expect(labelForAction('extract', 'Text', { kind: 'prose' }, 'code'))
       .toBe('Extract as Text')
   })
+  it.each([
+    ['prose', 'Text'], ['code', 'Code'], ['diagram', 'Diagram'],
+  ])('labels a nested %s block extracted as its own kind "Add to Document"', (kind, pretty) => {
+    expect(labelForAction('extract', pretty, { kind }, kind, true)).toBe('Add to Document')
+    expect(labelForAction('extract', pretty, { kind }, kind, false)).toBe('Extract as ' + pretty)
+  })
   it('keeps generic prose transform as "Embed in Document"', () => {
     expect(labelForAction('transform', 'Text', { kind: 'prose' }, 'smart-image'))
       .toBe('Embed in Document')

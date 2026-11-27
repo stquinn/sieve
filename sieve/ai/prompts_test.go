@@ -174,3 +174,25 @@ func TestDefaultBtwPrompt_RoutesEachRetrievalVerbToItsArgument(t *testing.T) {
 		}
 	}
 }
+
+// An Ask, Explain or popup command answer may be written as blocks through
+// add_to_answer, whose use discards the final message; every prompt whose run
+// may write one carries the one wording of it, and none restricts the answer to
+// a markdown final message.
+func TestDefaultAnswerPrompts_OfferTheAnswerTool(t *testing.T) {
+	for name, prompt := range map[string]string{"ask": DefaultAskPrompt, "explain": DefaultExplainPrompt, "btw": DefaultBtwPrompt} {
+		if strings.Count(prompt, answerToolGuidance) != 1 {
+			t.Errorf("the %s prompt must carry the answer tool's guidance once", name)
+		}
+		for _, want := range []string{"add_to_answer", "describe_answer", "final message is not shown"} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("the %s prompt must state %q", name, want)
+			}
+		}
+		for _, contradiction := range []string{"Respond in plain markdown", "directly, in markdown"} {
+			if strings.Contains(prompt, contradiction) {
+				t.Errorf("the %s prompt restricts the answer to a markdown final message: %q", name, contradiction)
+			}
+		}
+	}
+}

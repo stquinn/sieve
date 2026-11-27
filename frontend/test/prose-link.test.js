@@ -362,6 +362,28 @@ describe('converting a prose link (#67 playback)', () => {
     expect(sent).toHaveLength(1)
   })
 
+  // A block of a popup answer is held by no block of the document, so its copy
+  // is placed by the caret rather than after a host: after the block the caret
+  // is in, else at the end. It is the same additive extract of its own kind,
+  // stamped with its holder.
+  it.each([
+    ['after the block the caret is in', ['p-1', 'p-2'], 'p-2'],
+    ['at the end, with no caret', [], 'p-3'],
+  ])('a block of a popup answer is added %s', async (_name, caretIds, anchor) => {
+    const extract = vi.fn(() => Promise.resolve())
+    const editor = {
+      getSelectionContext: () => ({ blockId: caretIds[0] || null, blockIds: caretIds }),
+      provider: { getOrder: () => ['p-1', 'p-2', 'p-3'] },
+      extract,
+    }
+    const element = { kind: 'code', attrs: { language: 'go', source: 'x := 1' } }
+    await NoteEditor.prototype.addToDocument.call(editor, element, 'c-1')
+    expect(extract).toHaveBeenCalledWith({
+      blockId: anchor, targetKind: 'code', operation: 'extract',
+      entries: [{ mimeType: 'sieve/code', content: JSON.stringify(element.attrs), context: { parentId: 'c-1' } }],
+    })
+  })
+
   it('leaves ordinary block sources on the in-place TRANSFORM verb', async () => {
     pane = makePane('hello')
     const { ed, sent } = makeEditor(pane)

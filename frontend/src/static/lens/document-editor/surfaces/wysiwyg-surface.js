@@ -1176,19 +1176,9 @@ export class WysiwygSurface extends AbstractSurface {
     // cursorIndex+i, each render-backing via insert-block. A single-block slice
     // falls through to the smart-paste pipeline below.
     var sliceData = event.clipboardData.getData('sieve/slice')
-    if (sliceData && this.#pasteProvider()) {
-      try {
-        var slice = JSON.parse(sliceData)
-        if (Array.isArray(slice) && slice.length > 1) {
-          event.preventDefault()
-          this.#pasteProvider()
-            .paste({ kind: 'slice', slice: slice }, this.#host.insertAnchorForBlock())
-            .catch(function (err) { console.error('[wysiwyg-surface] paste-slice failed', err) })
-          return true
-        }
-      } catch (e) {
-        console.error('[wysiwyg-surface] failed to parse a sieve/slice paste', e)
-      }
+    if (this.#pasteSlice(sliceData)) {
+      event.preventDefault()
+      return true
     }
 
     // Two shapes leave through Go: gestures the webview can see but not READ.
@@ -1249,6 +1239,9 @@ export class WysiwygSurface extends AbstractSurface {
             var hit = read.find(function (r) { return r.mimeType === mime })
             return (hit && hit.content) || ''
           }
+          // WebKitGTK can withhold the slice from the synchronous getData and
+          // deliver it here, among the items.
+          if (!sliceData && self.#pasteSlice(readView('sieve/slice'))) return
           var replayHTML = readView('text/html') || html
           var replayText = readView('text/plain') || text
           var provider = self.#pasteProvider()
@@ -1269,6 +1262,29 @@ export class WysiwygSurface extends AbstractSurface {
     }
 
     return false
+  }
+
+  /**
+   * Pastes `sliceData` as the blocks it lists when it lists more than one, at the
+   * caret: Go reconstructs each item as a block of its own. A slice of one block
+   * is not taken here, so its flat views reach the smart paste.
+   * @param {string} sliceData a `sieve/slice` payload, or ''
+   * @returns {boolean} whether it was pasted as a slice
+   */
+  #pasteSlice(sliceData) {
+    if (!sliceData || !this.#pasteProvider()) return false
+    var slice
+    try {
+      slice = JSON.parse(sliceData)
+    } catch (e) {
+      console.error('[wysiwyg-surface] failed to parse a sieve/slice paste', e)
+      return false
+    }
+    if (!Array.isArray(slice) || slice.length < 2) return false
+    this.#pasteProvider()
+      .paste({ kind: 'slice', slice: slice }, this.#host.insertAnchorForBlock())
+      .catch(function (err) { console.error('[wysiwyg-surface] paste-slice failed', err) })
+    return true
   }
 
   /**
@@ -1914,7 +1930,8 @@ export class WysiwygSurface extends AbstractSurface {
 
   /** Places the host's block over the one the doc holds for that id — a
    *  transform, or a text rewrite Go executed. Tracked: insertContentAt(range, …)
-   *  is undoable, and the observer propagates an undo to the backend.
+   *  is undoable, and the observer propagates an undo to the backend — one that
+   *  puts back another kind as a replace-block.
    *  @param {string} id @param {{id: string, kind: string, attrs: Record<string, any>}} node */
   #replaceBlockNode(id, node) {
     var ed = /** @type {any} */ (this.editorPane)
@@ -2145,6 +2162,8 @@ export class WysiwygSurface extends AbstractSurface {
    * Serialize one top-level block to the (id, kind, content) the sync diff needs.
    * A structured sieve block's `content` is a change-SIGNATURE only, never emitted
    * as an op: the JSON of its attrs, which changes iff its persistent state does.
+   * Its `attrs` are its payload as a create-block or replace-block states it:
+   * every attr the node holds a value for, less `kind`, which the op names itself.
    * Every other top-level node is a prose block, whose content is its CLEAN
    * markdown — native nodes never embed markers, and Go re-wraps on save.
    * @param {any} ed @param {any} node
@@ -2152,7 +2171,10 @@ export class WysiwygSurface extends AbstractSurface {
   #topBlockTriple(ed, node) {
     var name = node.type.name
     if (name.indexOf('sieve-') === 0) {
-      return { id: node.attrs.id || '', kind: node.attrs.kind || name, content: JSON.stringify(sieveBlockAttrs(node)) }
+      var all = sieveBlockAttrs(node)
+      var attrs = {}
+      for (var k in all) if (k !== 'kind' && all[k] !== null) attrs[k] = all[k]
+      return { id: node.attrs.id || '', kind: node.attrs.kind || name, content: JSON.stringify(all), attrs: attrs }
     }
     var content = (serializeNode(ed, node) || '').trim()
     return { id: node.attrs.id || '', kind: 'prose', content: content }
@@ -2236,6 +2258,8 @@ export class WysiwygSurface extends AbstractSurface {
         provider.requestAddBlock(op.kind, attrs, this.#anchorBefore(curr, op.index))
       } else if (op.type === 'update-block') {
         provider.requestSetBlock(op.blockId, op.attrs)
+      } else if (op.type === 'replace-block') {
+        provider.requestReplaceBlock(op.blockId, op.kind, op.attrs)
       } else if (op.type === 'delete-block') {
         provider.requestRemoveBlock(op.blockId)
       } else if (op.type === 'set-order') {

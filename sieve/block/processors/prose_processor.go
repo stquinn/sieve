@@ -250,12 +250,34 @@ func (p *ProseProcessor) InitAttrs(id string, overrides map[string]interface{}) 
 	return attrs
 }
 
+// AnswerCard offers prose to a model writing an answer (block.AnswerKind).
+func (p *ProseProcessor) AnswerCard() domain.AnswerCard {
+	return domain.AnswerCard{
+		Use:     "text: paragraphs, lists, tables and headings, written in markdown",
+		Attrs:   map[string]string{"content": "the markdown text"},
+		Example: map[string]any{"content": "Go compiles to a **single native binary**, so deployment is one file."},
+	}
+}
+
+// AnswerSource takes a prose element's markdown content (block.AnswerKind).
+func (p *ProseProcessor) AnswerSource(attrs block.AnswerAttrs) (block.AnswerSource, error) {
+	s, err := attrs.Strings("content")
+	if err != nil {
+		return block.AnswerSource{}, err
+	}
+	return block.AnswerSource{Overrides: map[string]any{"content": s["content"]}}, nil
+}
+
 // IsSupportedContent claims any `sieve/<kind>` view — prose is the universal sink.
 // A copied prose block (sieve/prose) round-trips on paste AND can be embedded via
 // transform. Any other sieve block source offers only transform (structured kinds
 // claim their own sieve view first; prose is registered LAST). Never a non-sieve
 // mime: inline text paste is untouched. SieveAttrs() is used (not HasPrefix) so the
 // "sieve/slice" JSON-array entry (which is not a block object) is never matched.
+//
+// Embedding is not conversion, so prose does not ask ContentEntries.Convertible:
+// a whole block that cannot be converted, an ai-block among them, is embedded by
+// the same transform, and that embed is the one offer such a block receives.
 func (p *ProseProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
 	for _, e := range entries {
 		if e.IsSieveType(p) {

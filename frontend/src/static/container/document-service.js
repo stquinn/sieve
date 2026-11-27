@@ -352,6 +352,16 @@ export class DocumentService {
     return this.#awaitBlockOp(uuid, this.#blockOp('update-block', blockId, kind, patch), 'update-block ' + blockId)
   }
 
+  /** MEMBERSHIP: one block stated WHOLE under the kind it now has — the same id,
+   *  slot and aliases, `attrs` its entire payload. The change of kind an attrs
+   *  delta cannot express. Never rejects.
+   *  @param {string} uuid @param {string} blockId @param {string} kind
+   *  @param {Record<string, any>} attrs
+   *  @returns {Promise<{ok: boolean, error?: string}>} */
+  replaceBlock(uuid, blockId, kind, attrs) {
+    return this.#awaitBlockOp(uuid, this.#blockOp('replace-block', blockId, kind, attrs), 'replace-block ' + blockId)
+  }
+
   /** MEMBERSHIP: remove a block. Go answers with a `remove-block` echo, which is how
    *  every follower learns the block is gone; the ack only reports whether the
    *  request was accepted. Never rejects.

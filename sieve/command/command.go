@@ -57,6 +57,10 @@ type Context struct {
 	// Body is everything the composer wrote after the verb line, in order. A
 	// command consumes it or ignores it; an empty body is the ordinary case.
 	Body Blocks `json:"-"`
+	// Exchange is the command's own block as an answer a run may write: held by
+	// the running command, its id the correlation id, over DocUUID. Dispatch
+	// sets it, never the wire.
+	Exchange domain.Exchange `json:"-"`
 }
 
 // NewContext decodes the lens-authored context JSON and attaches what the
@@ -209,16 +213,126 @@ type Job struct {
 }
 
 type Registry struct {
-	engine *services.JobEngine
-	mu     sync.RWMutex
-	cmds   map[string]Command
-	order  []string
+	engine  *services.JobEngine
+	mu      sync.RWMutex
+	cmds    map[string]Command
+	order   []string
+	running map[string]*runningCommand // correlation id → the command whose Work has not ended
 }
 
 func NewRegistry() *Registry {
 	return &Registry{
-		cmds: make(map[string]Command),
+		cmds:    make(map[string]Command),
+		running: make(map[string]*runningCommand),
 	}
+}
+
+// answerAttr is the attrs key an ai-block's answer lives under: block.AnswerAttr,
+// spelled here for the reason Blocks spells its kinds.
+const answerAttr = "answer"
+
+// runningCommand is a dispatched command whose Work has not ended: the block it
+// was announced with, the answer written to that block so far, and where its
+// lifecycle steps go. Its mutex orders answer writes with the terminal step,
+// after which none is taken.
+type runningCommand struct {
+	mu      sync.Mutex
+	pending Block
+	answer  domain.Elements
+	ended   bool
+	emit    func(Outcome)
+}
+
+// block is the running command's block as it now stands: the pending block with
+// the answer written to it, in a bag of its own so a step already emitted never
+// changes under its reader.
+func (rc *runningCommand) block() *Block {
+	b := domain.SieveBlock{Kind: rc.pending.Kind, Attrs: make(map[string]interface{}, len(rc.pending.Attrs)+1)}
+	for k, v := range rc.pending.Attrs {
+		b.Attrs[k] = v
+	}
+	b.SetElements(answerAttr, rc.answer)
+	return &Block{Kind: b.Kind, Attrs: b.Attrs}
+}
+
+// settle returns the terminal step out as the client is to see it: a block's
+// written answer is its answer, replacing whatever the result carried under
+// that key, and a failure after any of it was written carries the block with
+// that answer and the failure on it.
+func (rc *runningCommand) settle(out Outcome) Outcome {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	rc.ended = true
+	if len(rc.answer) == 0 {
+		return out
+	}
+	switch {
+	case out.Status == StatusComplete && out.Block != nil:
+		b := domain.SieveBlock{Kind: out.Block.Kind, Attrs: out.Block.Attrs}
+		b.SetElements(answerAttr, rc.answer)
+		out.Block = &Block{Kind: b.Kind, Attrs: b.Attrs}
+	case out.Status == StatusError:
+		out.Block = rc.block()
+		out.Block.Attrs["status"] = StatusError
+		out.Block.Attrs["error"] = out.Err
+	}
+	return out
+}
+
+// AnswerHolding is what a running command's answer takes: its block enters no
+// document, so it runs no block's job and keeps no file one makes.
+func (r *Registry) AnswerHolding() domain.AnswerHolding {
+	return domain.AnswerHolding{NoJobs: "this answer is shown in a popup and kept in no note, so nothing runs that work or keeps the files it makes"}
+}
+
+// AppendToAnswer adds el to the answer of the running command whose block
+// ex names, and emits that block as it now stands as a PENDING step;
+// startOver makes el the whole answer. A command that is not running — never
+// dispatched, finished, failed or cancelled — is refused. When the command
+// completes, the answer written here is its block's answer. Implements the
+// MCP's AnswerWriter for domain.HeldByCommand.
+func (r *Registry) AppendToAnswer(ex domain.Exchange, el domain.SieveBlock, startOver bool) error {
+	r.mu.RLock()
+	rc := r.running[ex.Block]
+	r.mu.RUnlock()
+	if rc == nil {
+		return fmt.Errorf("command %q is not being answered", ex.Block)
+	}
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	if rc.ended {
+		return fmt.Errorf("command %q is not being answered", ex.Block)
+	}
+	if startOver {
+		rc.answer = nil
+	}
+	rc.answer = append(rc.answer, el)
+	rc.emit(Outcome{Status: StatusPending, Block: rc.block()})
+	return nil
+}
+
+// track registers a dispatched command as running and returns the function
+// that ends it, emitting its terminal step.
+func (r *Registry) track(correlationID string, pending *Block, emit func(Outcome)) func(Outcome) {
+	if pending == nil {
+		return emit
+	}
+	rc := &runningCommand{pending: *pending, emit: emit}
+	r.mu.Lock()
+	r.running[correlationID] = rc
+	r.mu.Unlock()
+	return func(out Outcome) {
+		r.untrack(correlationID)
+		emit(rc.settle(out))
+	}
+}
+
+// untrack forgets the running command correlationID, so no answer is written
+// to it from then on.
+func (r *Registry) untrack(correlationID string) {
+	r.mu.Lock()
+	delete(r.running, correlationID)
+	r.mu.Unlock()
 }
 
 func (r *Registry) SetEngine(e *services.JobEngine) {
@@ -266,6 +380,10 @@ func (r *Registry) lookup(name string) Command {
 // Build → PENDING → submit → terminal emit. It knows nothing of AI, tiers, or
 // documents.
 //
+// While its Work runs, a command with a pending block is running: its block's
+// answer may be written (AppendToAnswer), each write emitting the block again
+// as a PENDING step, and the terminal step carries the answer written.
+//
 // expectedFamily is the family the CALLER believes it invoked (off the wire
 // envelope). It is an INTEGRITY check — "you invoked the verb you think you
 // invoked" — not a policy gate: a non-empty value that disagrees with the
@@ -289,6 +407,7 @@ func (r *Registry) Dispatch(cmd, expectedFamily, text string, ctx Context, corre
 			"family mismatch for /%s: sent %q, registered %q", cmd, expectedFamily, c.Family())})
 		return
 	}
+	ctx.Exchange = domain.Exchange{Container: ctx.DocUUID, Block: correlationID, Holder: domain.HeldByCommand}
 	job, err := c.Build(text, ctx)
 	if err != nil {
 		emit(Outcome{Status: StatusError, Err: err.Error()})
@@ -309,6 +428,7 @@ func (r *Registry) Dispatch(cmd, expectedFamily, text string, ctx Context, corre
 	// can match this block against the server's active/queued job sets.
 	job.Pending.stampIdentity(correlationID)
 	emit(Outcome{Status: StatusPending, Block: job.Pending})
+	end := r.track(correlationID, job.Pending, emit)
 
 	eng.Submit(services.JobDescriptor{
 		Category: Category,
@@ -320,15 +440,16 @@ func (r *Registry) Dispatch(cmd, expectedFamily, text string, ctx Context, corre
 				b.stampIdentity(correlationID)
 				out.Block = &b
 			}
-			emit(out)
+			end(out)
 		},
 		OnError: func(err error) {
-			emit(Outcome{Status: StatusError, Err: err.Error()})
+			end(Outcome{Status: StatusError, Err: err.Error()})
 		},
 	})
 }
 
 func (r *Registry) Cancel(correlationID string) {
+	r.untrack(correlationID)
 	r.mu.RLock()
 	eng := r.engine
 	r.mu.RUnlock()

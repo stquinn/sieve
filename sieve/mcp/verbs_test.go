@@ -1,7 +1,12 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"image"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"path"
@@ -12,6 +17,7 @@ import (
 
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
+	"sieve/sieve/command"
 	"sieve/sieve/domain"
 	"sieve/sieve/editor"
 	"sieve/sieve/services"
@@ -472,5 +478,208 @@ func TestFetchPage_RefusesWhenSessionHasNoDocument(t *testing.T) {
 	_, _, err := s.fetchPage(context.Background(), nil, FetchPageInput{URL: "https://example.com"})
 	if err == nil || !strings.HasPrefix(err.Error(), "cannot retrieve:") {
 		t.Fatalf("unscoped fetch_page err = %v, want 'cannot retrieve:' refusal", err)
+	}
+}
+
+// answerAppend is one call an AnswerWriter received.
+type answerAppend struct {
+	ex        domain.Exchange
+	kind      string
+	startOver bool
+}
+
+// stubAnswerWriter records every append it is asked for, refusing them all with
+// refuse when it is set, and holds its answers as holding says.
+type stubAnswerWriter struct {
+	calls   []answerAppend
+	refuse  error
+	holding domain.AnswerHolding
+}
+
+func (w *stubAnswerWriter) AnswerHolding() domain.AnswerHolding { return w.holding }
+
+func (w *stubAnswerWriter) AppendToAnswer(ex domain.Exchange, el domain.SieveBlock, startOver bool) error {
+	if w.refuse != nil {
+		return w.refuse
+	}
+	w.calls = append(w.calls, answerAppend{ex: ex, kind: el.Kind, startOver: startOver})
+	return nil
+}
+
+// holdings are the real holdings of each holder an answer can live in, as their
+// writers declare them.
+var holdings = map[domain.AnswerHolder]domain.AnswerHolding{
+	domain.HeldInDocument: (&editor.EditorService{}).AnswerHolding(),
+	domain.HeldByCommand:  command.NewRegistry().AnswerHolding(),
+}
+
+// newAnswerServer is a server with answers opened over the real registry (prose
+// and code registered) and a stub writer for ex's holder alone, holding as that
+// holder's real writer does, and a token bound to ex.
+func newAnswerServer(t *testing.T, ex domain.Exchange) (*Server, *stubAnswerWriter, string) {
+	t.Helper()
+	s, _ := newTestServerWithDocs(t)
+	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
+	w := &stubAnswerWriter{holding: holdings[ex.Holder]}
+	s.OpenAnswers(block.GlobalRegistry(), map[domain.AnswerHolder]AnswerWriter{ex.Holder: w})
+	s.SetBaseURL("http://127.0.0.1:34115")
+	_, token := s.EndpointFor(ex)
+	return s, w, token
+}
+
+// add_to_answer builds each block through the kind and appends it to the
+// exchange its token is bound to, the run's first block replacing an earlier
+// run's answer. A refusal — of the type, the map, the token or the write —
+// writes nothing and leaves the run with no written answer. Once the run has
+// ended, a call still holding its grant writes nothing.
+func TestAddToAnswer_AppendsToTheTokensExchange(t *testing.T) {
+	exchange := domain.Exchange{Container: "0198c1a0-0001-7000-8000-000000000001", Block: "0198c1a0-0001-7000-8000-000000000020"}
+	held := domain.Exchange{Block: "0198c1a0-0001-7000-8000-000000000021", Holder: domain.HeldByCommand}
+	prose := AddToAnswerInput{ContentType: "sieve/prose", Attrs: map[string]any{"content": "Go compiles."}}
+	code := AddToAnswerInput{ContentType: "sieve/code", Attrs: map[string]any{"source": "func main() {}", "language": "go"}}
+
+	for _, tc := range []struct {
+		name      string
+		bound     domain.Exchange
+		refuse    error
+		calls     []AddToAnswerInput
+		wantErr   []string
+		wantCalls []answerAppend
+	}{
+		{name: "blocks append in order", bound: exchange, calls: []AddToAnswerInput{prose, code},
+			wantCalls: []answerAppend{{exchange, "prose", true}, {exchange, "code", false}}},
+		{name: "an unknown content type answers with the catalogue", bound: exchange,
+			calls: []AddToAnswerInput{{ContentType: "sieve/table", Attrs: map[string]any{"rows": 2}}}, wantErr: []string{"sieve/table", "sieve/prose", "sieve/code"}},
+		{name: "a refused map answers with the kind's example", bound: exchange,
+			calls: []AddToAnswerInput{{ContentType: "sieve/code", Attrs: map[string]any{"source": "x := 1"}}}, wantErr: []string{"language", "example"}},
+		{name: "a deleted exchange is refused and the model told to stop", bound: exchange, refuse: errors.New(`block "x" is not in this document`),
+			calls: []AddToAnswerInput{prose}, wantErr: []string{"not in this document", "stop"}},
+		{name: "a running command's block is written by its holder's writer", bound: held, calls: []AddToAnswerInput{prose, code},
+			wantCalls: []answerAppend{{held, "prose", true}, {held, "code", false}}},
+		{name: "a token bound to a document alone answers nothing", bound: domain.Exchange{Container: exchange.Container},
+			calls: []AddToAnswerInput{prose}, wantErr: []string{"not answering"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, w, token := newAnswerServer(t, tc.bound)
+			w.refuse = tc.refuse
+			g, _ := s.grantOf(token)
+			ctx := g.bind(context.Background())
+
+			var err error
+			for i, in := range tc.calls {
+				var out AnswerAdded
+				if _, out, err = s.addToAnswer(ctx, nil, in); err == nil && out.Blocks != i+1 {
+					t.Errorf("call %d reports %d blocks, want %d", i, out.Blocks, i+1)
+				}
+			}
+			if tc.wantErr == nil && err != nil {
+				t.Fatalf("add_to_answer: %v", err)
+			}
+			for _, want := range tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Errorf("err = %v, want it to carry %q", err, want)
+				}
+			}
+			if fmt.Sprint(w.calls) != fmt.Sprint(tc.wantCalls) {
+				t.Errorf("appends = %+v, want %+v", w.calls, tc.wantCalls)
+			}
+			if got := s.EndRun(token); got != len(tc.wantCalls) {
+				t.Errorf("EndRun = %d written, want %d", got, len(tc.wantCalls))
+			}
+			if _, _, err := s.addToAnswer(ctx, nil, prose); err == nil || len(w.calls) != len(tc.wantCalls) {
+				t.Errorf("an add_to_answer after the run ended was taken (err %v)", err)
+			}
+		})
+	}
+}
+
+// The holder an answer lives in decides what a run may write into it: an answer
+// held in a document takes every kind, one held by a popup command refuses a
+// block that lands waiting on work — every log, link card, web clip and image,
+// a PlantUML diagram — with the reason and the types it takes, and describe_answer lists
+// exactly what this run is offered. A type no kind offers is refused apart.
+func TestAnswerHolders_DecideWhatARunMayWrite(t *testing.T) {
+	kinds := []struct {
+		name  string
+		in    AddToAnswerInput
+		waits bool // its every block waits on work, so the popup does not list it
+	}{
+		{"prose", AddToAnswerInput{ContentType: "sieve/prose", Attrs: map[string]any{"content": "Go compiles."}}, false},
+		{"code", AddToAnswerInput{ContentType: "sieve/code", Attrs: map[string]any{"source": "x := 1", "language": "go"}}, false},
+		{"mermaid", AddToAnswerInput{ContentType: "sieve/diagram", Attrs: map[string]any{"source": "graph TD\n  A --> B"}}, false},
+		{"plantuml", AddToAnswerInput{ContentType: "sieve/diagram", Attrs: map[string]any{"source": "A -> B", "diagramType": "plantuml"}}, false},
+		{"log", AddToAnswerInput{ContentType: "sieve/log", Attrs: map[string]any{"source": "2026-11-26T10:00:02Z ERROR pool exhausted"}}, true},
+		{"link card", AddToAnswerInput{ContentType: "sieve/smart-card", Attrs: map[string]any{"href": "https://go.dev"}}, true},
+		{"web clip", AddToAnswerInput{ContentType: "sieve/web-clip", Attrs: map[string]any{"source": "https://go.dev/blog/go1.22"}}, true},
+		{"image", AddToAnswerInput{ContentType: "sieve/smart-image", Attrs: map[string]any{"url": "{web}/chart.png"}}, true},
+	}
+	for _, holder := range []struct {
+		name    string
+		ex      domain.Exchange
+		refused map[string]string // kind → what its refusal says
+	}{
+		{name: "an answer in a document", ex: domain.Exchange{Container: "0198c1a0-0001-7000-8000-000000000001", Block: "0198c1a0-0001-7000-8000-000000000020"}},
+		{name: "a popup command's answer", ex: domain.Exchange{Block: "0198c1a0-0001-7000-8000-000000000021", Holder: domain.HeldByCommand},
+			refused: map[string]string{"plantuml": "a PlantUML diagram", "log": "every log", "link card": "every link card", "web clip": "every web clip", "image": "every image"}},
+	} {
+		t.Run(holder.name, func(t *testing.T) {
+			s, w, token := newAnswerServer(t, holder.ex)
+			block.RegisterProcessor(processors.NewDiagramProcessor(block.BlockServices{}))
+			block.RegisterProcessor(processors.NewLogProcessor(block.BlockServices{}))
+			block.RegisterProcessor(processors.NewSmartCardProcessor(block.BlockServices{}))
+			block.RegisterProcessor(processors.NewWebClipBlockProcessor(block.BlockServices{}))
+			images, err := filestore.NewFileStore(t.TempDir(), "testhost")
+			if err != nil {
+				t.Fatalf("NewFileStore: %v", err)
+			}
+			block.RegisterProcessor(processors.NewSmartImageProcessor(block.BlockServices{Assets: services.NewAssetService(images, "")}))
+			var chart bytes.Buffer
+			_ = png.Encode(&chart, image.NewRGBA(image.Rect(0, 0, 4, 3)))
+			web := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(chart.Bytes()) }))
+			defer web.Close()
+			g, _ := s.grantOf(token)
+			ctx := g.bind(context.Background())
+
+			_, cat, err := s.describeAnswer(ctx, nil, struct{}{})
+			if err != nil {
+				t.Fatalf("describe_answer: %v", err)
+			}
+			listed := map[string]bool{}
+			for _, card := range cat.ContentTypes {
+				listed[card.ContentType] = true
+			}
+			if (cat.Note != "") != (holder.refused != nil) {
+				t.Errorf("note = %q, want one exactly when the holder refuses blocks", cat.Note)
+			}
+			for _, k := range kinds {
+				if want := !(k.waits && holder.refused != nil); listed[k.in.ContentType] != want {
+					t.Errorf("%s: listed = %v, want %v", k.name, listed[k.in.ContentType], want)
+				}
+				if u, _ := k.in.Attrs["url"].(string); u != "" {
+					k.in.Attrs = map[string]any{"url": strings.Replace(u, "{web}", web.URL, 1)}
+				}
+				_, _, err := s.addToAnswer(ctx, nil, k.in)
+				reason, refused := holder.refused[k.name]
+				switch {
+				case !refused && err != nil:
+					t.Errorf("%s: refused: %v", k.name, err)
+				case refused && err == nil:
+					t.Errorf("%s: taken, want it refused", k.name)
+				case refused:
+					for _, want := range []string{k.in.ContentType + " cannot be used in this answer", reason, "popup", "Available here: sieve/prose"} {
+						if !strings.Contains(err.Error(), want) {
+							t.Errorf("%s: refusal %q does not say %q", k.name, err, want)
+						}
+					}
+				}
+			}
+			if want := len(kinds) - len(holder.refused); len(w.calls) != want {
+				t.Errorf("%d blocks written, want %d", len(w.calls), want)
+			}
+			_, _, err = s.addToAnswer(ctx, nil, AddToAnswerInput{ContentType: "sieve/table", Attrs: map[string]any{"rows": 2}})
+			if err == nil || !strings.Contains(err.Error(), "not a content type") || !strings.Contains(err.Error(), "Available here") {
+				t.Errorf("an unknown type: %v, want it refused as no content type, naming what is available", err)
+			}
+		})
 	}
 }

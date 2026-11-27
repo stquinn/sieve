@@ -111,6 +111,21 @@ describe('BlockProviderAdapter', () => {
     })
   })
 
+  describe('requestReplaceBlock', () => {
+    it('states the block whole under the kind the CALLER names, not the one the model holds', () => {
+      provider.requestReplaceBlock('c1', 'ai-block', { answer: [] })
+      expect(documents.replaceBlock).toHaveBeenCalledWith(UUID, 'c1', 'ai-block', { answer: [] })
+      expect(snapshot(model)).toEqual(before)
+    })
+
+    it('drops an unknown id rather than throwing mid-gesture', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      expect(() => provider.requestReplaceBlock('ghost', 'prose', {})).not.toThrow()
+      expect(documents.replaceBlock).not.toHaveBeenCalled()
+      warn.mockRestore()
+    })
+  })
+
   describe('requestRemoveBlock', () => {
     it('names the block to Go and says nothing else', () => {
       provider.requestRemoveBlock('c1')

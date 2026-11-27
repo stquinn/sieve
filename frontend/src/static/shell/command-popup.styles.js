@@ -96,6 +96,13 @@ export const commandPopupStyles = `
     background: color-mix(in srgb, var(--theme-accentRed) 15%, transparent);
     border-color: var(--theme-accentRed);
   }
+  /* A block's own Add to Document, under the block it copies. */
+  .command-popup__btn--add {
+    display: block;
+    margin: 4px 0 8px auto;
+    padding: 2px 8px;
+    font-size: 11px;
+  }
   /* Copy micro-feedback: the button announces success itself (flash class set
      by CommandPopup for ~1.2s) — the scrimless popup has no toast channel. */
   .command-popup__btn--copied,

@@ -651,6 +651,8 @@ func (es *EditorService) HandleBlockOp(uuid string, op block.BlockOp) error {
 		// processor's OnChange, notify, dispatch any job. The per-kind behaviour lives
 		// in the processor — this path does not branch on kind.
 		return es.applyBlockUpdate(uuid, op)
+	case "replace-block":
+		return es.replaceBlock(uuid, op)
 	}
 
 	shadow, err := es.documentOf(uuid)
@@ -1202,7 +1204,9 @@ func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides
 // (insert-block): true for all create paths (the frontend inserts the new block
 // positionally as a tracked PM transaction, preserving undo). aliases carries the
 // block's lineage when a create op brings it (usually nil — lineage normally accrues
-// via gc/merge).
+// via gc/merge). A block the document kept under blockID and kind is put back as
+// Go stored it instead of one built from overrides (see ShadowDocument's kept),
+// and its job dispatches only if it was left PENDING.
 func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[string]interface{}, aliases []string, index int, notify bool) (id string, rawYaml string, err error) {
 	defer func() {
 		if err == nil {
@@ -1223,11 +1227,11 @@ func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[s
 	}
 	id = blockID
 	attrs := processor.InitAttrs(id, overrides)
-	sieveBlock := domain.SieveBlock{ID: id, Kind: kind, Attrs: attrs, Aliases: aliases}
 	if err = shadow.ApplyOp(block.BlockOp{Type: "create-block", BlockID: id, Kind: kind, Attrs: attrs, Aliases: aliases, Index: index}); err != nil {
 		return "", "", err
 	}
-	rawYaml, err = fencedblock.SerializeYaml[map[string]interface{}](attrs)
+	sieveBlock, _ := shadow.SnapshotBlock(id)
+	rawYaml, err = fencedblock.SerializeYaml[map[string]interface{}](sieveBlock.Attrs)
 	if err != nil {
 		return "", "", err
 	}
@@ -1461,6 +1465,36 @@ func (es *EditorService) applyBlockUpdate(uuid string, op block.BlockOp) error {
 	return nil
 }
 
+// replaceBlock installs a block the CLIENT already holds in place of the one Go
+// holds under that id. It is how a client states a change of kind it made itself
+// — the undo or redo of a transform — which no attrs merge can express. A block
+// the document kept under that id and kind is put back as Go stored it and the
+// op's attrs are not read (see ShadowDocument's kept); otherwise the block keeps
+// its id, slot and aliases and takes the op's kind and the attrs that kind's
+// InitAttrs makes of the op's.
+//
+// It renders back as a CREATE: the client led and is holding the result, so the
+// echo only brings followers to the new kind. A host rewrite's replace-block echo
+// would have the client place the block again over the one it holds.
+func (es *EditorService) replaceBlock(uuid string, op block.BlockOp) error {
+	shadow, err := es.documentOf(uuid)
+	if err != nil {
+		return fmt.Errorf("replace-block: %w", err)
+	}
+	processor := block.GetProcessor(op.Kind)
+	if processor == nil {
+		return fmt.Errorf("replace-block: no processor registered for kind %q", op.Kind)
+	}
+	op.Attrs = processor.InitAttrs(op.BlockID, op.Attrs)
+	if err := shadow.ApplyOp(op); err != nil {
+		return err
+	}
+	blk, _ := shadow.SnapshotBlock(op.BlockID)
+	es.notifyBlockCreated(uuid, blk, shadow.IndexOfBlock(op.BlockID))
+	es.DispatchJobIfNeeded(uuid, op.BlockID)
+	return nil
+}
+
 // mergeAndReact is the half of a granular mutation that every caller shares:
 // merge the patch into the live tree (attrs additive, aliases replaced when
 // present), let the processor react via OnChange, and merge back only what
@@ -1515,8 +1549,10 @@ func (es *EditorService) mergeAndReact(uuid string, op block.BlockOp) (blk domai
 	return domain.SieveBlock{ID: op.BlockID, Kind: op.Kind, Attrs: blkFinal.Attrs}, true, nil
 }
 
-// DispatchJobIfNeeded checks if the block has status PENDING. If so, it transitions the block
-// to DISPATCHED, notifies the listener of the transition, flushes to disk, and runs the job.
+// DispatchJobIfNeeded checks if the block — a top-level block or an element of one
+// — has status PENDING. If so, it transitions the block to DISPATCHED, notifies the
+// listener of the transition (as the top-level block that is it or holds it),
+// flushes to disk, and runs the job.
 func (es *EditorService) DispatchJobIfNeeded(uuid, blockID string) {
 	shadow := es.shadowFor(uuid)
 	if shadow == nil {
@@ -1525,11 +1561,12 @@ func (es *EditorService) DispatchJobIfNeeded(uuid, blockID string) {
 
 	// Atomically claim the block (PENDING -> DISPATCHED). If it wasn't PENDING,
 	// nothing to do — guarantees the job dispatches exactly once.
-	blkCopy, ok := shadow.TryDispatch(blockID)
-	if !ok {
+	if _, ok := shadow.TryDispatch(blockID); !ok {
 		return
 	}
-	es.notifyBlockUpdated(uuid, blkCopy)
+	if holder, ok := shadow.SnapshotHolder(blockID); ok {
+		es.notifyBlockUpdated(uuid, holder)
+	}
 
 	// Flush state to disk
 	_ = es.Flush(uuid)
@@ -1580,7 +1617,7 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 	}
 
 	if len(updates) > 0 {
-		shadow.MergeBlock(domain.SieveBlock{ID: blockID, Kind: kind, Attrs: updates})
+		shadow.PatchBlock(domain.SieveBlock{ID: blockID, Kind: kind, Attrs: updates})
 	}
 	for _, k := range deletes {
 		shadow.DeleteBlockAttr(blockID, k)
@@ -1589,14 +1626,43 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 		_ = es.flushShadow(shadow, flushReason)
 	}
 
-	if blk, ok := shadow.SnapshotBlock(blockID); ok {
-		es.notifyBlockUpdated(uuid, domain.SieveBlock{ID: blockID, Kind: kind, Attrs: blk.Attrs})
+	// An element's change is told as the top-level block holding it.
+	if holder, ok := shadow.SnapshotHolder(blockID); ok {
+		es.notifyBlockUpdated(uuid, holder)
 	}
 
 	if openedTransiently {
 		// Close flushes (reason "close") and removes the shadow from the map.
 		es.Close(uuid)
 	}
+}
+
+// AnswerHolding is what an answer held in a document takes: any block, a job a
+// block lands waiting on run by the engine and what it makes kept by the
+// document.
+func (es *EditorService) AnswerHolding() domain.AnswerHolding {
+	return domain.AnswerHolding{RunsJobs: true}
+}
+
+// AppendToAnswer adds el to the answer of the exchange being answered, in its
+// open document, and tells the client; startOver makes el the whole answer,
+// replacing whatever an earlier run left there. An element born PENDING has its
+// kind's job dispatched as any block's is, its result merged into the element;
+// otherwise nothing is saved, and the exchange's job's end saves the answer. An
+// exchange whose document is not open, that is gone, or whose job is not running
+// is refused.
+func (es *EditorService) AppendToAnswer(ex domain.Exchange, el domain.SieveBlock, startOver bool) error {
+	shadow, err := es.documentOf(ex.Container)
+	if err != nil {
+		return fmt.Errorf("the note holding this exchange: %w", err)
+	}
+	blk, err := shadow.AppendElement(ex.Block, block.AnswerAttr, el, startOver)
+	if err != nil {
+		return err
+	}
+	es.notifyBlockUpdated(ex.Container, blk)
+	es.DispatchJobIfNeeded(ex.Container, el.ID)
+	return nil
 }
 
 // RunJob asks the block's processor to DESCRIBE its job (DescribeJob), then routes

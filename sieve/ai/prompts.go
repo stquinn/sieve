@@ -89,7 +89,7 @@ func (ps *PromptService) ListPrompts() []PromptEntry {
 		"refine":             "Language Detection",
 		"image":              "Describe Image",
 		"note-meta":          "Name Handwritten Note",
-		"page-transcript":       "Transcribe Handwritten Page",
+		"page-transcript":    "Transcribe Handwritten Page",
 		"web-clip-fetch":     "Web Clip — Fetch",
 		"web-clip-summarise": "Web Clip — Summarise",
 	}
@@ -205,6 +205,13 @@ Content:
 
 `
 
+// answerToolGuidance is what every prompt whose run may write its answer with
+// add_to_answer tells the model of the tool: Ask, Explain and the popup
+// commands' btw template.
+const answerToolGuidance = `- ANSWER IN BLOCKS OR TEXT: You may write your answer as Sieve blocks with the add_to_answer tool, one block per call, in reading order. Whenever the answer holds anything richer than running text (a diagram, code, a table, other structured content), consider the block type that fits it; describe_answer lists them. A plain text answer may simply be your final message, in clean markdown. Once you have used add_to_answer your final message is not shown, so the whole answer must then be written with the tool.
+
+- DIRECT ANSWER ONLY: The answer must only contain the answer to the user's question: no commentary on your work, the tools you used or your search.`
+
 const DefaultExplainPrompt = `
 [PERSONA]
 Act as a highly efficient research assistant. Provide the answer concisely with insight, drawing connections from the available files, but never explain your search process. If you find a connection, present it as a finished thought.
@@ -213,14 +220,13 @@ Act as a highly efficient research assistant. Provide the answer concisely with 
 
 - SILENT OPERATION: Perform all file searches, MCP tool calls, and image analysis silently. Do not list the files you are checking, the tools you are calling, or your internal reasoning steps.
 
-- DIRECT ANSWER ONLY: Your final output must only contain the answer to the user's question in clean markdown.
+` + answerToolGuidance + `
 
 - SYNTHESIZE: If information is gathered from multiple files (e.g., the knowledge base and the image), merge them into a single, cohesive response without citing the specific filenames unless they are requested.
 
 [TASK]
 You are part of an ongoing analysis thread. The user will provide a TARGET (the root piece of content), a THREAD (the history of questions and explanations about that target), and an ACTION to perform.
 Your task is to explain the specific node requested in the ACTION clearly and concisely.
-Respond in plain markdown suitable for inline display.
 Do not repeat the content. Just explain the requested node.
 
 Each THREAD entry has a NODE ID, a label indicating what it refers to (QUESTION ABOUT: <id> =question asked specifically about that prior node; EXPLAIN NODE: <id> = an explanation of that prior node), and an **ANSWER:** showing the response. The ACTION entry has the same structure but no answer yet — that's what you provide.
@@ -261,14 +267,13 @@ Act as a highly efficient research assistant. Provide the answer concisely with 
 
 - SILENT OPERATION: Perform all file searches, MCP tool calls, and image analysis silently. Do not list the files you are checking, the tools you are calling, or your internal reasoning steps.
 
-- DIRECT ANSWER ONLY: Your final output must only contain the answer to the user's question in clean markdown.
+` + answerToolGuidance + `
 
 - SYNTHESIZE: If information is gathered from multiple files (e.g., the knowledge base and the image), merge them into a single, cohesive response without citing the specific filenames unless they are requested.
 
 [TASK]
 You are part of an ongoing analysis thread. The user will provide a TARGET (the root piece of content), a THREAD (the history of questions and explanations about that target), and an ACTION to perform.
 Your task is to answer the user's question clearly and concisely.
-Respond in plain markdown suitable for inline display.
 
 Each THREAD entry has a NODE ID, a label indicating what it refers to (QUESTION ABOUT: <id> =question asked specifically about that prior node;  EXPLAIN NODE: <id> = an explanation of that prior node), and an **ANSWER:** showing the response. The ACTION entry has the same structure but no answer yet — that's what you provide.
 
@@ -376,7 +381,7 @@ const DefaultWebClipSummarisePrompt = `Please retrieve the content at the follow
   {document}
   `
 
-const DefaultBtwPrompt = `You are answering a quick side-question a writer asked ("/btw") while working on a document. Answer the question concisely and directly, in markdown.
+const DefaultBtwPrompt = `You are answering a quick side-question a writer asked ("/btw") while working on a document. Answer the question concisely and directly.
 
 QUESTION:
 {question}
@@ -391,5 +396,6 @@ BACKGROUND — ambient context for disambiguation only. Do not analyze the docum
 
 If, and only if, the question genuinely requires the document's actual content, call the Sieve MCP tool get_note with the bare uuid above to read it. Anything attached to this turn is addressed by a sieve:// uri instead, and those go to get_by_uri verbatim. Prefer answering directly without either.
 
-Keep the answer short: a few sentences, or a compact list or snippet when clearer. No preamble, no closing questions.`
+Keep the answer short: a few sentences, or a compact list or snippet when clearer. No preamble, no closing questions.
 
+` + answerToolGuidance

@@ -100,6 +100,19 @@ export class InMemoryContainerProvider {
     })
   }
 
+  /**
+   * Takes a block whole under `kind`, in its slot. It cues as the wire's echo
+   * does — the block arriving again — because the lens already holds it.
+   * @param {string} blockId @param {string} kind @param {Record<string, any>} attrs the whole payload
+   */
+  requestReplaceBlock(blockId, kind, attrs) {
+    if (!this.#holds(blockId, 'requestReplaceBlock')) return
+    this.#model.applyFrame({
+      type: DocumentFrame.INSERT_BLOCK, id: blockId, kind: kind, attrs: Object.assign({}, attrs),
+      index: this.#model.getOrder().indexOf(blockId),
+    })
+  }
+
   /** @param {string} blockId */
   requestRemoveBlock(blockId) {
     if (!this.#holds(blockId, 'requestRemoveBlock')) return

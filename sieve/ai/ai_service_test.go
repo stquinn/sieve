@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -117,18 +118,144 @@ func TestAIService_DescribeImage_resolvesTheSrcThroughTheResolver(t *testing.T) 
 	}
 }
 
+// fakeDocMCPEndpoint issues "tok-doc-{container}" for a scoped run and records
+// the last exchange it was asked for and the runs ended; written is how many
+// answer elements EndRun reports for the last token issued.
 type fakeDocMCPEndpoint struct {
 	url     string
 	lastDoc string
+	lastEx  domain.Exchange
+	written int
+	ended   []string
 }
 
-func (f *fakeDocMCPEndpoint) Endpoint() (string, string) {
-	return f.url, "tok-unscoped"
+func (f *fakeDocMCPEndpoint) EndpointFor(ex domain.Exchange) (string, string) {
+	f.lastDoc, f.lastEx = ex.Container, ex
+	return f.url, "tok-doc-" + ex.Container
 }
 
-func (f *fakeDocMCPEndpoint) EndpointForDoc(docUUID string) (string, string) {
-	f.lastDoc = docUUID
-	return f.url, "tok-doc-" + docUUID
+func (f *fakeDocMCPEndpoint) EndRun(token string) int {
+	f.ended = append(f.ended, token)
+	if token != "tok-doc-"+f.lastDoc {
+		return 0
+	}
+	return f.written
+}
+
+// RunAsk, RunExplain and RunBtw bind the run's MCP token to the exchange they answer,
+// end the run once the CLI has exited however it ended, and report whether the
+// model wrote the answer through it; the final message is returned either way,
+// and the response log is told it was discarded when the answer was written.
+func TestAIService_AnsweringRuns_BindTheExchangeAndReportAWrittenAnswer(t *testing.T) {
+	ex := domain.Exchange{Container: "0197b1f4-5a5a-7000-8000-00000000e001", Block: "0197b1f4-5a5a-7000-8000-00000000e002"}
+	held := domain.Exchange{Container: ex.Container, Block: "0197b1f4-5a5a-7000-8000-00000000e003", Holder: domain.HeldByCommand}
+	for _, tc := range []struct {
+		name    string
+		run     func(*AIService) (Answer, error)
+		written int
+		fails   error
+		noted   string
+		ex      domain.Exchange
+	}{
+		{"ask, never written", func(s *AIService) (Answer, error) { return s.RunAsk("c", "", "q", ex) }, 0, nil, "", ex},
+		{"ask, written", func(s *AIService) (Answer, error) { return s.RunAsk("c", "", "q", ex) }, 2, nil,
+			"discarded: the answer was written with add_to_answer (2 blocks)", ex},
+		{"explain, written", func(s *AIService) (Answer, error) { return s.RunExplain("c", "", "q", ex) }, 1, nil,
+			"discarded: the answer was written with add_to_answer (1 block)", ex},
+		{"ask, the CLI fails", func(s *AIService) (Answer, error) { return s.RunAsk("c", "", "q", ex) }, 1, errors.New("cli timeout after 60 seconds"), "", ex},
+		{"a popup command, never written", func(s *AIService) (Answer, error) { return s.RunBtw("q", "", "", "", held) }, 0, nil, "", held},
+		{"a popup command, written", func(s *AIService) (Answer, error) { return s.RunBtw("q", "", "", "", held) }, 3, nil,
+			"discarded: the answer was written with add_to_answer (3 blocks)", held},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cap := &captureRunner{ret: "the final message", err: tc.fails}
+			svc := newSmartTestService(t, cap)
+			mcpEp := &fakeDocMCPEndpoint{url: "http://127.0.0.1:41234/mcp", written: tc.written}
+			svc.SetMCPEndpoint(mcpEp)
+
+			got, err := tc.run(svc)
+			if fmt.Sprint(mcpEp.ended) != fmt.Sprint([]string{"tok-doc-" + ex.Container}) {
+				t.Errorf("runs ended = %q, want the run's own token, once", mcpEp.ended)
+			}
+			if cap.noted != tc.noted {
+				t.Errorf("the response log was told %q, want %q", cap.noted, tc.noted)
+			}
+			if tc.fails != nil {
+				if err == nil {
+					t.Fatalf("run succeeded, want %v", tc.fails)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if want := (Answer{Text: "the final message", Written: tc.written > 0}); got != want {
+				t.Errorf("answer = %+v, want %+v", got, want)
+			}
+			if mcpEp.lastEx != tc.ex {
+				t.Errorf("token bound to %+v, want %+v", mcpEp.lastEx, tc.ex)
+			}
+			args := buildBaseArgs(cap.dialect, cap.model, cap.prompt, cap.profile, cap.cwd, cap.libraryDir)
+			if cfg := flagValue(args, "--mcp-config"); !strings.Contains(cfg, "Bearer tok-doc-"+ex.Container) {
+				t.Errorf("--mcp-config missing the exchange's bearer token: %s", cfg)
+			}
+		})
+	}
+}
+
+// Every CLI run is issued a token of its own, bound to what it works on, and
+// ends it once the CLI has exited, whether or not the run answers anything.
+func TestAIService_EveryRunEndsItsToken(t *testing.T) {
+	const doc = "0197b1f4-5a5a-7000-8000-00000000f001"
+	page := domain.NewLeafAddress(doc, "page-1.png")
+	ex := domain.Exchange{Container: doc, Block: "0197b1f4-5a5a-7000-8000-00000000f002"}
+	for _, tc := range []struct {
+		op    string
+		run   func(*AIService) error
+		bound domain.Exchange
+	}{
+		{"ask", func(s *AIService) error { _, err := s.RunAsk("c", "", "q", ex); return err }, ex},
+		{"btw", func(s *AIService) error { _, err := s.RunBtw("q", "", "", "", ex); return err }, ex},
+		{"image", func(s *AIService) error { _, err := s.DescribeImage(doc, page.String(), "b"); return err }, domain.Exchange{Container: doc}},
+		{"note-meta", func(s *AIService) error { _, err := s.DescribeNote(doc, []domain.Address{page}); return err }, domain.Exchange{Container: doc}},
+		{"page-transcript", func(s *AIService) error { _, err := s.TranscribePage(doc, page); return err }, domain.Exchange{Container: doc}},
+		{"refine", func(s *AIService) error { _, err := s.RefineLanguage("x := 1", "", ""); return err }, domain.Exchange{}},
+		{"file", func(s *AIService) error {
+			note, err := s.documents.New()
+			if err != nil {
+				return err
+			}
+			_, err = s.EvaluateBuffer(note.Meta(), []byte("body"))
+			return err
+		}, domain.Exchange{}},
+		{"web-clip-fetch", func(s *AIService) error {
+			_, _, err := s.RunWebClip(doc, "w", "https://example.com", "fetch", "")
+			return err
+		}, domain.Exchange{Container: doc}},
+	} {
+		t.Run(tc.op, func(t *testing.T) {
+			cap := &captureRunner{ret: "{}"}
+			svc := newSmartTestService(t, cap)
+			svc.nodes = pathResolver{page.String(): "blocks/" + doc + "/page-1.png"}
+			ds, err := services.NewDocumentService(svc.state.Store())
+			if err != nil {
+				t.Fatalf("NewDocumentService: %v", err)
+			}
+			svc.documents = ds
+			mcpEp := &fakeDocMCPEndpoint{url: "http://127.0.0.1:41234/mcp"}
+			svc.SetMCPEndpoint(mcpEp)
+
+			if err := tc.run(svc); err != nil {
+				t.Fatalf("%s: %v", tc.op, err)
+			}
+			if cap.op != tc.op || mcpEp.lastEx != tc.bound {
+				t.Errorf("ran %q bound to %+v, want %q bound to %+v", cap.op, mcpEp.lastEx, tc.op, tc.bound)
+			}
+			if want := []string{"tok-doc-" + tc.bound.Container}; fmt.Sprint(mcpEp.ended) != fmt.Sprint(want) {
+				t.Errorf("runs ended = %q, want the run's own token, once", mcpEp.ended)
+			}
+		})
+	}
 }
 
 func TestAIService_RunWebClip_PromptAssemblyAndDocScopedProfile(t *testing.T) {
@@ -168,7 +295,7 @@ func TestAIService_RunWebClip_PromptAssemblyAndDocScopedProfile(t *testing.T) {
 				t.Errorf("got title=%q content=%q", title, content)
 			}
 			if mcpEp.lastDoc != uuid {
-				t.Errorf("EndpointForDoc called with %q, want %q", mcpEp.lastDoc, uuid)
+				t.Errorf("EndpointFor called with %q, want %q", mcpEp.lastDoc, uuid)
 			}
 			template, _ := svc.prompts.GetPromptContent("web-clip-" + mode)
 			want := strings.ReplaceAll(strings.ReplaceAll(template, "{source}", sourceURL), "{document}", "# My Trip Notes")

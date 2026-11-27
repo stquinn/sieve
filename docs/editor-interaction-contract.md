@@ -46,6 +46,7 @@ for why the mechanism is precedence rather than a policy flag.
   | Caret in | 1st press | 2nd press | 3rd press |
   |---|---|---|---|
   | A sieve block, or a native `codeBlock` | the block's text | the document | — |
+  | A sieve block that hosts blocks (an answer) | every element of it, the first and last whatever their kind | the document | — |
   | A table cell | the cell's text | the whole table | the document |
   | Prose | the document | — | — |
 
@@ -72,6 +73,12 @@ for why the mechanism is precedence rather than a policy flag.
   emacs line-start key away. The physical `KeyA` is honoured only where
   `event.key` is not an ASCII character, as prosemirror-keymap does it: on AZERTY
   that key types `q`.
+
+  The answer rung is a `content` selection — from the start of the container's
+  content to its end — because no text selection can begin before an atom at the
+  content's start or end after one at its end, and a copy of it would leave such
+  an element out. Its DOM range is placed on the first and last editable text in
+  the container's content, as the next paragraph describes for the other two.
 
   The DOM range of the document rung and of the table rung is placed by
   `BlockChrome`, not left where ProseMirror puts it. ProseMirror sets an
@@ -764,6 +771,19 @@ into its own document:
   type, size, excerpt) is read from the stored bytes, within the attachment
   size ceiling. The same address pasted as text stays text.
 
+## Undo and redo of blocks
+
+`Mod+Z` and `Mod+Shift+Z` change the top-level block list in place, as any edit
+does, and the block-sync states the result to Go the same way whatever the
+kind: a block the step shows again is created at its place, a block it takes
+away is deleted, and a block whose kind it changes (the undo or redo of a
+transform) is replaced. Go puts back the block exactly as it stored it when the
+block left the document — attrs the editor does not hold, aliases and job status
+included — so a saved file matches what the editor shows, and a block that had
+finished its job does not run it again. A block Go created and the editor
+placed is never stated back. The undo history lives as long as the tab's
+editor: switching to another tab or closing the note discards it.
+
 ## Converting a prose link (decided 2026-07-27, #67)
 
 A link is ordinary markdown, so it is a **mark over a text range**, not a block:
@@ -836,7 +856,7 @@ its blocks is one too — and declaring that content is the whole declaration. O
 |---|---|
 | Partial PM range inside a LEAF block's content (code, diagram, log, prose, web-clip — any non-atom, non-container kind) | text/plain + text/html are the selected CHARACTERS, and NOTHING else: no `sieve/slice`, no `sieve/<kind>`. For a native prose node (a paragraph, a list, a `codeBlock`), text/html is ProseMirror's clipboard serialization of the covered slice (`view.serializeForClipboard`), structure and marks kept, with its `data-pm-slice` open depth; for a sieve kind it is the escaped characters. A paste reads them as it reads the same text copied from any other application — prose, or a block where smart paste is confident (R-3). NEVER deferred to native PM copy — a slice inside a `defining`/`code` block re-wraps the whole node, so native copied everything. |
 | A range over several blocks, some covered only in part | When NO block is covered whole, it is characters only: text/plain + text/html, no `sieve/slice`, so the paste is ProseMirror's own (inline at the caret, a code block as one). Otherwise one `sieve/slice` item per block. A block covered whole carries its own views; a block covered in part carries its characters as PROSE (`sieve/prose` + text/plain: a prose node cut to the range, or a paragraph of another kind's covered characters), never a view of the block it was cut from. |
-| Partial PM range inside a CONTAINER's content (ai-block) | Each covered ELEMENT is composed by the rows above, one per ProseMirror node of the body (an answer's prose element renders as several — a `<p>`, a `<pre>` for its fence). Its text/html is each element's own text/html in order, a prose element's being ProseMirror's clipboard serialization of the slice of it covered, structure and marks kept; the first element's `data-pm-slice` governs a native paste. When some element is covered whole there is one `sieve/slice` item per element — whole is its own kind, in part is its characters as prose — and the container contributes no item of its own, so a paste rebuilds the elements, not the container. When none is, it is characters only, as above. |
+| Partial PM range inside a CONTAINER's content (ai-block) | Each covered ELEMENT is composed by the rows above, one per ProseMirror node of the body (an answer's prose element renders as several — a `<p>`, a `<pre>` for its fence). Its text/html is each element's own text/html in order, a prose element's being ProseMirror's clipboard serialization of the slice of it covered, structure and marks kept; the first element's `data-pm-slice` governs a native paste. An element is covered whole when the range covers the element itself OR all of its text: a text position cannot lie between two elements, so a range over the answer (Mod+A inside it) starts or ends at the edge of the text of the first or last element that holds text, and that element is still covered whole. A range starting or ending part-way through an element's text covers it in part. When some element is covered whole there is one `sieve/slice` item per element — whole is its own kind, in part is its characters as prose — and the container contributes no item of its own, so a paste rebuilds the elements, not the container. The text/plain of a structured element covered whole is the element as the container shows it (an answer's: its source fenced by its kind), for a FOREIGN application. When none is, it is characters only, as above. |
 | A highlight in a block's READ-ONLY region (contentEditable=false DOM PM cannot track — the ai-block question title, the log Explore table) | text/plain + text/html follow the highlight. The highlight names the whole block only when its text IS the block's whole text view; otherwise it is part of the block, and the rows above apply. A container is NOT descended into, because a highlight PM cannot track names no range to pick elements by. PM's own selection stays on whatever block last held the caret, so where PM's selection is elsewhere the visited range is re-targeted onto the highlighted block (`BlockSelection.blockRange`). A CUT here still writes the clipboard, but removes nothing — the highlight is real selected content that is simply not PM's to delete. |
 | A highlight PM DOES own, spanning more than one block or element | Each block's text views follow the DOCUMENT range, so each contributes its own covered characters exactly once. The DOM highlight is read only where PM owns no position for it — `contentEditable=false` DOM, and the whole highlight confined to one such region (`BlockSelection.unownedText`). Read off the DOM anywhere else, one highlight reports itself in full for the first block and every later block adds its share again. |
 | Single whole sieve block (gutter / NodeSelection) | text/plain + text/html + `sieve/slice` + `sieve/<kind>` + renderer custom views |
@@ -871,7 +891,7 @@ plugin, and would answer before the policy's.
 | Anywhere | the context-menu **Paste** | a TEXT paste: the clipboard's `text/plain`, and its `text/html` where `navigator.clipboard.read()` offers it (no engine exposes a custom type there, and `execCommand('paste')` is refused by the webview), down the same smart path as a Mod+V holding only those views, then ProseMirror's own paste. A block is rebuilt from its `sieve/*` view by Mod+V alone. |
 | Anywhere but a read-only region | **Paste as plain text** — Mod+Shift+V, or the context-menu item | the clipboard's `text/plain`, LITERAL, at the caret: no smart paste, no markdown parse, no paste rule. One paragraph per line, the first and last joining the caret's paragraph; in a code block or a table cell, inside it. The transaction carries `paste` but not `uiEvent: 'paste'`, which is what TipTap's paste rules (`**b**` → bold) run on. The chord arms a one-shot flag and is left to the browser: the paste event the engine delivers for it is consumed and its text/plain pasted; with no paste event within 250 ms the clipboard is read through `navigator.clipboard.readText()`. |
 | Raw-text block (code/diagram-edit) | anything | literal text (PM `code: true` on the node — NOT a policy read; the old `rawText` flag claimed this and never implemented it) |
-| Anywhere | `sieve/slice` (>1) | Go paste-slice reconstructs blocks |
+| Anywhere | `sieve/slice` (>1) | Go paste-slice reconstructs blocks — whether `getData` answers it or WebKitGTK delivers it only among the clipboard's string items |
 | Anywhere | `sieve/<kind>` (a single block) | The kind's own processor rebuilds it from that view (`FirstPasteMatch` pass 1), never by detecting what its text looks like. The copy is a NEW block: a kind whose job OUTPUT is its own — a diagram's render, a smart-card's fetched image — drops that output so the copy produces its own, rather than reading an asset stored under the original block's id. |
 | Anywhere | ```` ```ai-block ```` fence | ai-block re-import |
 | Anywhere | a `text/uri-list` of `file:` URIs (a file-manager COPY) | Forwarded verbatim as a `native-drop` paste and read by Go — the same ingestion a desktop drag takes, at the CARET index rather than a drop coordinate. |
@@ -1167,6 +1187,60 @@ on one is left to bubble, and the block HOSTING it raises the menu. The same
 suppression covers the click that makes a block the selection owner. This is a
 framework decision taken once, at the NodeView factory, from the node's position;
 no kind opts in or out of it.
+
+**The host's menu over an element leads with that element.** When the right-click
+lands on what an element of a block that hosts blocks draws — a sieve node of the
+answer, or a native prose node of it, which is prose — the menu opens with a
+**FROM ⟨element⟩** section (`FROM CODE`, `FROM DIAGRAM`, `FROM TEXT`), then the
+host's own items, then the host's section, named for the whole block it acts on
+(`FROM THE WHOLE ASK AI`: Embed in Document). The element section is the
+element's own views (`sieve/<kind>` and its kind's custom views), every entry
+stamped `context.parentId` = the host's id, so detection offers only additive
+EXTRACTs and offers the element's OWN kind too. That offer reads **Add to
+Document**: a copy of the element — a new id, the same kind and content (a
+diagram's source and engine, drawn again) — created by Go and placed as an
+ordinary top-level block directly after the host; the answer is untouched, undo
+removes the copy and redo puts it back. The menu opens once both sections' offers have arrived,
+so nothing moves under the pointer.
+
+What the right-click landed on is decided structurally, for every kind alike. A
+fence, image or link is a sub-source of its own — the unchanged FROM IMAGE / FROM
+LINK section after the host's items, with no element section — only where it is
+content of PROSE: inside a native prose element of the answer, or inside a prose
+child of a structured element (a web clip's body). Anywhere in a structured
+element's own drawing — a smart image's `<img>`, a diagram's SVG, a code or log
+listing, a reference chip — names that element. A press on a structured
+element's ROOT itself counts as its drawing only where the root paints (a
+background or a visible border, as a code, log, diagram, web clip or card box
+does); where it paints nothing — the row beside a smart image's frame — it is
+empty space. Empty space of the host, that row and the answer's padding and gaps
+included, gives the host's menu alone: its items, then **FROM THE WHOLE ASK AI**.
+A popup command's answer raises no context menu; its blocks carry their own Add
+to Document control.
+
+**A whole ai-block is not converted.** Each consuming processor judges its
+input, and asks the entries one question, `ContentEntries.Convertible`: a whole
+ai-block (its own `sieve/ai-block` view among entries none of which names a
+`parentId`) cannot be converted, and neither can a whole block whose entries carry
+`context.readOnly: true`. Every processor but prose then declines it, so the
+exchange's own section — on its chrome, or under an element — offers **Embed in
+Document** alone: prose's in-place replacement of the exchange by its markdown,
+which is what making a read-only record ordinary document content is. The
+ai-block names no other kind. Content nested in the answer — an element, or a
+fence, image or link inside its prose — carries `parentId`, is convertible, and is
+offered as a copy placed after the exchange as before. No Go guard refuses an
+in-place transform; the offer is the rule.
+
+**A block of a popup answer offers Add to Document too.** A popup command's
+answer is held by the command, not by a block of the document, so each of its
+blocks carries its own **Add to Document** button in the popup rather than a menu.
+It is the same additive extract of the block's own kind, its `sieve/<kind>` view
+stamped `context.parentId` = the popup block's id, and Go builds the copy with an
+id of its own. With no host block to follow, the copy lands **directly after the
+top-level block the caret is in, or at the end of the document** when there is no
+caret, and only in the document the command was run over while it is the active
+editor. The popup's **Copy** takes the whole answer as text; Add to Document takes
+one block, whole.
 
 **What is offered follows the mount, not the mount's name.** Three gates, and
 only three:

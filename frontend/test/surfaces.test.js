@@ -360,6 +360,7 @@ function wyHost(overrides = {}) {
       detectExtractions: vi.fn(() => Promise.resolve([])),
       requestAddBlock: vi.fn(),
       requestSetBlock: vi.fn(),
+      requestReplaceBlock: vi.fn(),
       requestRemoveBlock: vi.fn(),
       requestSetOrder: vi.fn(),
       subscribe: vi.fn(),
@@ -1023,9 +1024,11 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     host.provider.requestAddBlock = vi.fn((...a) => order.push(['add', ...a]))
     host.provider.requestSetBlock = vi.fn((...a) => order.push(['set', ...a]))
     host.provider.requestRemoveBlock = vi.fn((...a) => order.push(['remove', ...a]))
+    host.provider.requestReplaceBlock = vi.fn((...a) => order.push(['replace', ...a]))
     vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [
       { type: 'create-block', blockId: 'pr-new', kind: 'prose', attrs: { content: 'new' }, index: 1 },
       { type: 'update-block', blockId: 'b1', kind: 'prose', attrs: { content: 'x' } },
+      { type: 'replace-block', blockId: 'b3', kind: 'ai-block', attrs: { answer: [] } },
       { type: 'delete-block', blockId: 'b2' },
     ] })
     const doc = fxSchema.nodes.doc.create(null, [build.p('one', 'b1')])
@@ -1044,6 +1047,7 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     expect(order).toEqual([
       ['add', 'prose', { content: 'new', id: 'pr-new' }, 'b1'],
       ['set', 'b1', { content: 'x' }],
+      ['replace', 'b3', 'ai-block', { answer: [] }],
       ['remove', 'b2'],
     ])
   })
@@ -1390,6 +1394,23 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     expect(handled).toBe(true)
     expect(event.preventDefault).toHaveBeenCalled()
     expect(host.provider.paste).toHaveBeenCalledWith({ kind: 'slice', slice }, 'b-7')
+  })
+
+  // WebKitGTK can withhold a flavour of its own from the synchronous getData and
+  // deliver it only as an item. A multi-block slice among them is still the
+  // blocks it lists — an answer copied whole is its elements, never the
+  // text/html that flattens each one into prose.
+  it('a multi-block slice delivered only among the items is still pasted as its blocks', async () => {
+    const host = wyHost({ insertAnchorForBlock: vi.fn(() => 'b-7'), peekInsertAnchorForBlock: vi.fn(() => ({ afterBlockId: 'b-7', anchor: null })) })
+    const { props } = mountPaste(host, 'doc-1')
+    const slice = [[{ mimeType: 'sieve/prose', content: '{"content":"a"}' }], [{ mimeType: 'sieve/code', content: '{"source":"b"}' }]]
+    const str = (type, value) => ({ kind: 'string', type, getAsString: (cb) => cb(value) })
+    const items = [str('text/plain', 'a\n\nb'), str('text/html', '<p>a</p><pre><code class="language-go">b</code></pre>'), str('sieve/slice', JSON.stringify(slice))]
+    const event = { clipboardData: Object.assign(clip({ text: 'a\n\nb', items }), { items }), target: {}, preventDefault: vi.fn() }
+    expect(props.handlePaste({}, event)).toBe(true)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(host.provider.paste).toHaveBeenCalledWith({ kind: 'slice', slice }, 'b-7')
+    expect(pasteKinds(host)).toEqual(['slice'])
   })
 
   // ── The NATIVE CLIPBOARD (#87) ───────────────────────────────────────────────

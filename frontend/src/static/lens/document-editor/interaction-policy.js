@@ -14,7 +14,7 @@
 // shell/workspace.js's document-level CAPTURE-phase click listener, which calls
 // stopPropagation — so a Mod+Click handler added here would be dead code.
 
-import { getBlockBehaviour } from '../../renderers/block-kinds.js'
+import { getBlockBehaviour, hostsBlocks } from '../../renderers/block-kinds.js'
 import { expandBlock } from '../../ui/media-lightbox.js'
 import { MODE } from '../../contract/sieve-block.js'
 import { sieveBlockFor, HOST_BODY_SYNC } from './surfaces/sieve-block-extension.js'
@@ -569,7 +569,74 @@ export function selectNextScope(view) {
   if (sel.$from.depth < 1) return false
   var top = { node: sel.$from.node(1), pos: sel.$from.before(1) }
   if (kindFromTypeName(top.node.type.name) === 'prose') return false
+  if (hostsBlocks(top.node) && top.node.content.size) return selectTarget(view, ContentSelections.at(state.doc, top.pos))
   return selectScope(view, { from: top.pos + 1, to: top.pos + top.node.nodeSize - 1 })
+}
+
+/**
+ * The selection of every element of one block-hosting container (an answer):
+ * from the start of its content to its end, so its first and last elements are
+ * selected whatever their kind. A TextSelection cannot express it: a text
+ * position cannot lie before an atom at the content's start or after one at its
+ * end. Its JSON type is `content`, and BlockChrome places its DOM range.
+ */
+class ContentSelections {
+  /** @type {any} the ContentSelection class, made once over the vendor's Selection */
+  static #type = null
+
+  /**
+   * The selection of the content of the container at `pos`.
+   * @param {any} doc @param {number} pos @returns {any}
+   */
+  static at(doc, pos) {
+    return new (ContentSelections.#make())(doc, pos)
+  }
+
+  /** @returns {any} */
+  static #make() {
+    if (ContentSelections.#type) return ContentSelections.#type
+    var Base = TT.Selection
+    /** @param {any} doc @param {number} pos */
+    var holds = function (doc, pos) {
+      var node = pos >= 0 && pos < doc.content.size ? doc.nodeAt(pos) : null
+      return !!node && hostsBlocks(node) && node.content.size > 0
+    }
+    class ContentSelection extends Base {
+      /** @param {any} doc @param {number} pos the position before the container */
+      constructor(doc, pos) {
+        var node = doc.nodeAt(pos)
+        super(doc.resolve(pos + 1), doc.resolve(pos + 1 + node.content.size))
+        this.pos = pos
+      }
+      /** @param {any} doc @param {any} mapping */
+      map(doc, mapping) {
+        var mapped = mapping.mapResult(this.pos, 1)
+        if (!mapped.deleted && holds(doc, mapped.pos)) return new ContentSelection(doc, mapped.pos)
+        return Base.near(doc.resolve(Math.min(mapped.pos, doc.content.size)))
+      }
+      /** @param {any} other */
+      eq(other) { return other instanceof ContentSelection && other.pos === this.pos }
+      toJSON() { return { type: 'content', pos: this.pos } }
+      getBookmark() { return new ContentBookmark(this.pos) }
+      /** @param {any} doc @param {any} json */
+      static fromJSON(doc, json) { return new ContentSelection(doc, json.pos) }
+    }
+    class ContentBookmark {
+      /** @param {number} pos */
+      constructor(pos) { this.pos = pos }
+      /** @param {any} mapping */
+      map(mapping) { return new ContentBookmark(mapping.map(this.pos, 1)) }
+      /** @param {any} doc */
+      resolve(doc) {
+        return holds(doc, this.pos) ? new ContentSelection(doc, this.pos) : Base.near(doc.resolve(Math.min(this.pos, doc.content.size)))
+      }
+    }
+    // A second copy of this module (a test resetting its modules) meets the id
+    // already taken by the first; that copy's class serves JSON for both.
+    try { Base.jsonID('content', ContentSelection) } catch (e) { /* already registered */ }
+    ContentSelections.#type = ContentSelection
+    return ContentSelection
+  }
 }
 
 /** The nearest ancestor of `$pos` satisfying `match`, with its document position.
@@ -625,17 +692,24 @@ function rangeCovers(ranges, from, to) {
 }
 
 /**
- * Take a rung, unless the selection is already on it — the ONE place the ladder
- * both computes a scope and asks whether it is reached, so the two can never
- * read different ranges. `between` rather than `create`, because a scope's
- * bounds sit just inside a container, which is not a text position; the snapped
- * result is what both the dispatch and the comparison use.
+ * Take the text rung of `range`, unless the selection is already on it.
+ * `between` rather than `create`, because a scope's bounds sit just inside a
+ * container, which is not a text position; the snapped result is what both the
+ * dispatch and the comparison use.
  * @param {any} view @param {{from: number, to: number}} range
  * @returns {boolean} true = taken, false = already covered, escalate
  */
 function selectScope(view, range) {
   var doc = view.state.doc
-  var target = TT.TextSelection.between(doc.resolve(range.from), doc.resolve(range.to))
+  return selectTarget(view, TT.TextSelection.between(doc.resolve(range.from), doc.resolve(range.to)))
+}
+
+/** Take the rung `target` is, unless the selection already covers it — the ONE
+ *  place the ladder both dispatches a rung and asks whether it is reached, so
+ *  the two can never read different ranges.
+ *  @param {any} view @param {any} target
+ *  @returns {boolean} true = taken, false = already covered, escalate */
+function selectTarget(view, target) {
   if (covers(view.state.selection, target)) return false
   view.dispatch(view.state.tr.setSelection(target).scrollIntoView())
   return true

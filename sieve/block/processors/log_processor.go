@@ -62,6 +62,27 @@ func NewLogProcessor(svc block.BlockServices) *LogProcessor {
 	return &LogProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: "log"}}
 }
 
+// AnswerCard offers a log to a model writing an answer (block.AnswerKind): it
+// lands PENDING and its own parse job settles it.
+func (p *LogProcessor) AnswerCard() domain.AnswerCard {
+	return domain.AnswerCard{
+		Use:         "log output, a stack trace or a run of timestamped lines the reader filters and reads as a table",
+		Attrs:       map[string]string{"source": "the log lines, verbatim, without markdown fences"},
+		Example:     map[string]any{"source": "2026-11-26T10:00:00Z INFO server started\n2026-11-26T10:00:02Z ERROR pool exhausted"},
+		Waits:       "every log, which is parsed",
+		WaitsAlways: true,
+	}
+}
+
+// AnswerSource takes a log element's lines (block.AnswerKind).
+func (p *LogProcessor) AnswerSource(attrs block.AnswerAttrs) (block.AnswerSource, error) {
+	s, err := attrs.Strings("source")
+	if err != nil {
+		return block.AnswerSource{}, err
+	}
+	return block.AnswerSource{Overrides: map[string]any{"source": s["source"]}}, nil
+}
+
 func (p *LogProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
 		"id":                id,
@@ -86,6 +107,9 @@ func (p *LogProcessor) InitAttrs(id string, overrides map[string]interface{}) ma
 }
 
 func (p *LogProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
+	if !block.ContentEntries(entries).Convertible() {
+		return block.SupportedActions{Kind: p.Kind()}
+	}
 	custom := p.customParsers()
 	for _, e := range entries {
 		if e.IsSieveType(p) {

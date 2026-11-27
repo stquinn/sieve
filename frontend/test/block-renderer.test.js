@@ -78,3 +78,23 @@ describe('BlockRenderer default fillTitle/fillBody', () => {
     expect(/** @type {any} */ (window).__pwnedBody).toBeUndefined()
   })
 })
+
+// A block's OUTER margin is the framework's (editor.css .sieve-block,
+// .sieve-node), one value for every kind: no kind's stylesheet sets one on its
+// root. Its inner parts' margins are its own.
+describe("a kind's root outer margin", () => {
+  it.each(['ai-block', 'code', 'command-result', 'diagram', 'log', 'prose', 'reference', 'smart-card', 'smart-image', 'web-clip'])(
+    '%s sets none on its root', async (kind) => {
+      const { getBlockRenderer } = await import('../src/static/renderers/block-renderers.js')
+      const Renderer = /** @type {any} */ (getBlockRenderer(kind))
+      const roots = String(Renderer.rootClass).split(/\s+/).filter(Boolean).map((c) => '.' + c)
+      const sheet = String(Renderer.styles).replace(/\/\*[\s\S]*?\*\//g, '')
+      /** @type {string[]} */
+      const found = []
+      for (const [, selectors, body] of sheet.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+        const onRoot = selectors.split(',').some((sel) => roots.includes(sel.trim()))
+        if (onRoot && /(^|;|\s)margin(-top|-bottom)?\s*:/.test(body)) found.push(selectors.trim())
+      }
+      expect(found).toEqual([])
+    })
+})

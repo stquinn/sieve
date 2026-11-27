@@ -25,6 +25,13 @@ vi.mock('../src/static/lens/document-editor/surfaces/sieve-block-extension.js', 
 // smart-image-node-view.js): code a whole-source text/plain, an image only the
 // address its asset is at.
 const RENDERERS = vi.hoisted(() => ({
+  // The answer's own reading of an element (ai-block-node-view.js): source text
+  // fenced by its kind.
+  'ai-block': {
+    elementText: (/** @type {any} */ node) => node.type.name.indexOf('sieve-') === 0
+      ? '```' + (node.attrs.language || node.attrs.diagramType || '') + '\n' + node.textContent + '\n```'
+      : '',
+  },
   code: {
     asContentEntry: (/** @type {any} */ node) => {
       const src = node.textContent || node.attrs.source
@@ -88,6 +95,11 @@ const schema = new Schema({
       group: 'sieveBlock', content: 'block+',
       attrs: { kind: { default: 'web-clip' }, id: { default: 'w1' } },
       toDOM: () => ['div', 0],
+    },
+    'sieve-reference': {
+      group: 'sieveBlock', atom: true, selectable: true,
+      attrs: { kind: { default: 'reference' }, id: { default: 'r1' }, uri: { default: '' } },
+      toDOM: (n) => ['div', { 'data-uri': n.attrs.uri }],
     },
     'sieve-smart-image': {
       group: 'sieveBlock', atom: true, selectable: true,
@@ -384,8 +396,9 @@ describe('a range inside a block-hosting container', () => {
     // The container itself is not one of the items, and so cannot be rebuilt whole.
     expect(JSON.stringify(items)).not.toContain('sieve/ai-block')
     expect(data.data['sieve/ai-block']).toBeUndefined()
-    // Each element's own covered characters, once.
-    expect(data.data['text/plain']).toBe('he prose\n\nfmt.Println(1)')
+    // Each element's covered characters, once; the code covered whole as the
+    // answer shows it.
+    expect(data.data['text/plain']).toBe('he prose\n\n```go\nfmt.Println(1)\n```')
   })
 
   it('carries an element covered whole as that element\'s own kind', () => {
@@ -396,7 +409,101 @@ describe('a range inside a block-hosting container', () => {
       .write(/** @type {any} */ (data))
     expect(JSON.parse(data.data['sieve/slice'])).toHaveLength(1)
     expect(data.data['sieve/code']).toBe(JSON.stringify({ kind: 'code', id: 'c1', language: 'go' }))
-    expect(data.data['text/plain']).toBe('fmt.Println(1)')
+    expect(data.data['text/plain']).toBe('```go\nfmt.Println(1)\n```')
+  })
+
+  // Every kind an answer can hold, as the element it is projected as, the view
+  // that kind's own block is rebuilt from, and how deep in it its text starts.
+  // A new kind joins with a row.
+  const ELEMENTS = [
+    ['prose', () => schema.nodes.paragraph.create(null, schema.text('the prose')), 'sieve/prose', 1],
+    ['code', () => schema.nodes['sieve-code'].create(null, schema.text('fmt.Println(1)')), 'sieve/code', 1],
+    ['diagram', () => schema.nodes['sieve-diagram'].create(null, schema.text('graph TD;\nA-->B')), 'sieve/diagram', 1],
+    ['log', () => schema.nodes['sieve-log'].create(null, schema.text(LOG)), 'sieve/log', 1],
+    ['web-clip', () => schema.nodes['sieve-web-clip'].create(null, [schema.nodes.paragraph.create(null, schema.text('the clipped summary'))]), 'sieve/web-clip', 2],
+  ]
+
+  /** An answer whose first and last elements are of one kind, a paragraph between. */
+  function answerAround(make) {
+    const first = make()
+    const between = schema.nodes.paragraph.create(null, schema.text('between'))
+    const last = make()
+    const ai = schema.nodes['sieve-ai-block'].create(null, [first, between, last])
+    return { ai, first, last, firstFrom: 1, lastFrom: 1 + first.nodeSize + between.nodeSize }
+  }
+
+  /** The views of every item, as mimes, and the text each item's prose view holds. */
+  function itemsOf(data) {
+    return JSON.parse(data.data['sieve/slice']).map((/** @type {any[]} */ item) => {
+      const prose = item.find((e) => e.mimeType === 'sieve/prose')
+      return { mimes: item.map((e) => e.mimeType), prose: prose ? JSON.parse(prose.content).content : null }
+    })
+  }
+
+  // Mod+A selects the answer's content as a TextSelection, and a text position
+  // cannot lie between two elements: an element that holds text at either end
+  // of the answer has the range start or end INSIDE it, at the edge of its text.
+  it.each(ELEMENTS)('carries a %s element whose whole text the range covers as that element\'s own kind', (_kind, make, own) => {
+    const { ai } = answerAround(make)
+    const view = viewOf([ai], (doc) => TextSelection.between(doc.resolve(1), doc.resolve(ai.nodeSize - 1)))
+    const data = clip()
+    expect(slice(view, { editor }).write(/** @type {any} */ (data))).toBe(true)
+    const items = itemsOf(data)
+    expect(items[0].mimes).toContain(own)
+    expect(items[1].prose).toBe('between')
+    expect(items[2].mimes).toContain(own)
+  })
+
+  // Mod+A over an answer of [prose, diagram, code], highlighted as ProseMirror
+  // writes it — from the prose's text into a read-only element's: each element
+  // goes as a block of its own kind, and the text a FOREIGN application reads is
+  // the answer's markdown, its structured elements fenced by kind.
+  it('carries an answer of prose, a diagram and code as those three blocks, its text/plain the answer\'s markdown', () => {
+    const para = schema.nodes.paragraph.create(null, schema.text('the prose'))
+    const dia = schema.nodes['sieve-diagram'].create(null, schema.text('graph TD;\nA-->B'))
+    const code = schema.nodes['sieve-code'].create(null, schema.text('fmt.Println(1)'))
+    const ai = schema.nodes['sieve-ai-block'].create(null, [para, dia, code])
+    const view = viewOf([ai], (doc) => TextSelection.between(doc.resolve(1), doc.resolve(ai.nodeSize - 1)))
+    const diaFrom = 1 + para.nodeSize
+    const codeFrom = diaFrom + dia.nodeSize
+    for (const pos of [diaFrom, codeFrom]) view.doms[pos].querySelector('pre').setAttribute('contenteditable', 'false')
+    highlightAcross(view.doms[1].querySelector('pre'), view.doms[codeFrom].querySelector('pre'))
+    const data = clip()
+    expect(slice(view, { editor }).write(/** @type {any} */ (data))).toBe(true)
+    expect(itemsOf(data).map((item) => item.mimes.find((m) => m.indexOf('sieve/') === 0))).toEqual(['sieve/prose', 'sieve/diagram', 'sieve/code'])
+    expect(data.data['sieve/ai-block']).toBeUndefined()
+    expect(data.data['text/plain']).toBe('the prose\n\n```mermaid\ngraph TD;\nA-->B\n```\n\n```go\nfmt.Println(1)\n```')
+  })
+
+  // The content rung covers the answer's elements themselves, so an atom at
+  // either end — which no text position reaches — is carried too. Every atom an
+  // answer can hold has a row.
+  it.each([
+    ['reference', () => schema.nodes['sieve-reference'].create({ uri: 'sieve://0198c1a0-0001-7000-8000-000000000001' })],
+    ['smart-image', () => schema.nodes['sieve-smart-image'].create({ src: 'sieve://0198c1a0-0001-7000-8000-000000000001/chart.png' })],
+  ])('carries a %s at either end of the answer when the range is its content', (kind, make) => {
+    const ai = schema.nodes['sieve-ai-block'].create(null, [make(), schema.nodes.paragraph.create(null, schema.text('between')), make()])
+    const view = viewOf([ai])
+    const data = clip()
+    slice(view, { editor, range: { from: 1, to: ai.nodeSize - 1 } }).write(/** @type {any} */ (data))
+    expect(itemsOf(data).map((item) => item.mimes.find((m) => m.indexOf('sieve/') === 0))).toEqual(['sieve/' + kind, 'sieve/prose', 'sieve/' + kind])
+  })
+
+  // A range that starts or ends part-way through an element's text covers that
+  // element in part: its characters, as prose. This schema has no hard break, so
+  // a line end in them reads as a space.
+  it.each(ELEMENTS)('carries a %s element the range starts or ends inside as its characters', (_kind, make, _own, depth) => {
+    const { ai, first, last, firstFrom, lastFrom } = answerAround(make)
+    const startsInside = viewOf([ai], (doc) => TextSelection.create(doc, firstFrom + depth + 2, lastFrom + last.nodeSize))
+    const head = clip()
+    slice(startsInside, { editor }).write(/** @type {any} */ (head))
+    expect(itemsOf(head)[0]).toEqual({ mimes: ['sieve/prose', 'text/plain'], prose: first.textContent.slice(2).replace(/\n/g, ' ') })
+
+    document.body.innerHTML = ''
+    const endsInside = viewOf([ai], (doc) => TextSelection.create(doc, firstFrom, lastFrom + depth + 2))
+    const tail = clip()
+    slice(endsInside, { editor }).write(/** @type {any} */ (tail))
+    expect(itemsOf(tail)[2]).toEqual({ mimes: ['sieve/prose', 'text/plain'], prose: last.textContent.slice(0, 2).replace(/\n/g, ' ') })
   })
 
   it('composes the container as ONE item when the range covers it whole', () => {
@@ -582,3 +689,4 @@ describe('empty', () => {
     expect(slice(view).empty).toBe(false)
   })
 })
+

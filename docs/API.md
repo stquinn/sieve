@@ -809,8 +809,8 @@ CommandResultFrame reports one step of a command's lifecycle.
 | `type` | `string` | yes |  |
 | `correlationId` | `string` | yes |  |
 | `cmd` | `string` | yes |  |
-| `status` | `string` | yes | PENDING \| COMPLETE \| ERROR |
-| `block` | `*protocol.CommandBlock` | no | present when this step produced a block to render |
+| `status` | `string` | yes | PENDING (accepted, and again with the block each time it changes while running) \| COMPLETE \| ERROR |
+| `block` | `*protocol.CommandBlock` | no | present when this step produced a block to render; each step's block replaces the one before |
 | `error` | `string` | no | present on ERROR |
 
 #### `container-deleted` — server → client

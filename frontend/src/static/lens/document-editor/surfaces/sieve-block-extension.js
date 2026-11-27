@@ -35,6 +35,9 @@
 // @property {(type: any) => any[]} [buildPlugins]           per-kind ProseMirror plugins.
 // @property {(node: any) => ({mimeType: string, content: string, context?: object}[]|null)} [asContentEntry]
 //   the kind's own clipboard/text views (code → source, diagram → mermaid, …).
+// @property {(element: any) => string} [elementText]
+//   a container's: the text/plain of one of its ELEMENTS covered whole, as the
+//   container shows that element ('' to leave it to the element's own views).
 // @property {(arg: {node: any, editorPane: any, getPos: Function, provider: any, getEditor: Function}) => any[]} [buildContextMenuItems]
 //   kind-specific context-menu items, prepended before the framework items.
 // @property {(node: any) => ({contextLabel?: string, imageIds?: string[]})} [buildAiCtx]
@@ -66,7 +69,7 @@ import { isJobStale } from '../../../renderers/job-status.js'
 import { getLowlight, applyHighlighting } from '../../../renderers/highlighting.js'
 import { renderSanctionedMarkdown } from '../../../renderers/sanctioned-markdown.js'
 import { T } from './tiptap-vendor.js'
-import { registerBlockKind, getBlockBehaviour, containsChildBlocks } from '../../../renderers/block-kinds.js'
+import { registerBlockKind, getBlockBehaviour, containsChildBlocks, hostsBlocks } from '../../../renderers/block-kinds.js'
 import { BlockIdentity } from '../../../renderers/block-identity.js'
 import { labelForAction } from '../../../renderers/action-label.js'
 import { expandBlock } from '../../../ui/media-lightbox.js'
@@ -77,9 +80,10 @@ import { BlockSelection } from '../block-selection.js'
 // The SEAM's block constructor for adapters. MODEL-FIRST: the node's id resolves
 // the mounted container's follower model — what Go holds — and on a hit that
 // block's attrs are the base, with the kind-owned live overlay applied on top. On
-// a MISS (no provider, no id, or an id the container does not hold) it falls back
-// to SieveBlock.from(node), the PM-RESURRECT path. Overlay precedence is uniform
-// across both: overlay > model.
+// a MISS (no provider, no id, or an id the container does not hold, or holds as
+// another kind — the node a transform's undo or redo puts back, before the
+// container hears of it) it falls back to SieveBlock.from(node), the PM-RESURRECT
+// path. Overlay precedence is uniform across both: overlay > model.
 /**
  * @param {{ type: { name: string }, attrs: Record<string, any> }} node
  * @param {Record<string, any>} [overlay]  kind-owned live fields (e.g. {source: textContent})
@@ -90,8 +94,9 @@ import { BlockSelection } from '../block-selection.js'
 export function sieveBlockFor(node, overlay, provider) {
   const id = node && node.attrs && node.attrs.id
   const hit = (provider && id) ? provider.getBlock(id) : null
-  if (hit) return new SieveBlock(hit.kind, Object.assign({}, hit.attrs, overlay || {}))
-  return SieveBlock.from(node, overlay)
+  const resurrected = SieveBlock.from(node, overlay)
+  if (hit && hit.kind === resurrected.kind) return new SieveBlock(hit.kind, Object.assign({}, hit.attrs, overlay || {}))
+  return resurrected
 }
 
 // The TITLE slot's fill decision (pure DOM, no PM). TITLE rendering is
@@ -350,20 +355,32 @@ class NodeViewRegistry {
   // sourceRange says the source is a RANGE INSIDE a block rather than the block
   // itself — a prose link, which has no block id. It is carried untouched to
   // editor.extract, which owns the playback difference.
-  detectAndAppendExtractions({ sourceNode, sourceKind, entries, blockId, sourcePos, sourceRange, extractSourceLabel, editor }) {
+  detectAndAppendExtractions(spec) {
+    return this.extractionItems(spec).then(function (items) {
+      if (!items.length || !window.SieveContextMenu || !window.SieveContextMenu.appendItems) return
+      window.SieveContextMenu.appendItems([{ type: 'divider' }].concat(items))
+    })
+  }
+
+  // The menu section one source's offers make: a FROM <source> header, then an
+  // item per offered (kind, action). Resolves [] when nothing is offered, and
+  // never rejects — discovery is an offer, and its failure must not take the menu
+  // down.
+  /** @returns {Promise<any[]>} */
+  extractionItems({ sourceNode, sourceKind, entries, blockId, sourcePos, sourceRange, extractSourceLabel, editor }) {
     // Capability discovery is a facade QUERY: the lens asks its container which
     // kinds this content could become, and is answered with offers — never with
     // document content, and never over a transport it can see.
     var self = this
     var provider = editor && editor.provider
-    if (!provider || typeof provider.detectExtractions !== 'function') return
-    provider.detectExtractions(sourceKind, entries).then(function (offers) {
-      if (!offers || offers.length === 0) return
-      if (!window.SieveContextMenu || !window.SieveContextMenu.appendItems) return
+    if (!provider || typeof provider.detectExtractions !== 'function') return Promise.resolve([])
+    var nested = (entries || []).some(function (en) { return !!(en && en.context && en.context.parentId) })
+    return provider.detectExtractions(sourceKind, entries).then(function (offers) {
+      if (!offers || offers.length === 0) return []
 
       var IC = window.SieveIcons || {}
       var headerLabel = 'FROM ' + (extractSourceLabel || sourceKind).toUpperCase().replace('-', ' ')
-      var extraItems = [{ type: 'divider' }, { type: 'header', label: headerLabel }]
+      var extraItems = [{ type: 'header', label: headerLabel }]
 
       var FRIENDLY = { prose: 'Text' }
       offers.forEach(function (offer) {
@@ -401,16 +418,104 @@ class NodeViewRegistry {
           var isEmbed = offer.kind === 'prose' && action === 'transform'
           extraItems.push({
             icon: isEmbed ? (IC.promote || icon) : icon,
-            label: (labelForAction || function (a, k) { return a + ' ' + k })(action, prettyKind, offer, sourceKind),
+            label: (labelForAction || function (a, k) { return a + ' ' + k })(action, prettyKind, offer, sourceKind, nested),
             action: function () { dispatch({}) }
           })
         })
       })
-      window.SieveContextMenu.appendItems(extraItems)
+      return extraItems
       // Discovery is an OFFER: a document with no channel answers none, so the only
       // way here is a wire timeout or a broken menu build. Neither should take the
       // menu down, but neither is "nothing to extract" either.
-    }).catch(function (err) { console.warn('[sieve-block] extraction offers unavailable', err) })
+    }).catch(function (err) {
+      console.warn('[sieve-block] extraction offers unavailable', err)
+      return []
+    })
+  }
+
+  // What a right-click on `target` names when it lands on an ELEMENT of the
+  // block-hosting node `host` at getPos(). `source` is that element as a block of
+  // its own kind — a native prose node being prose — with every entry stamped
+  // with the host's id as its parentId, so the backend offers it only as a copy
+  // placed after the host. `onProse` is true when the target is inside a native
+  // prose node — the element itself, or a prose child of a structured element —
+  // which is the only place a raw image, link or fence is sub-content of its own.
+  //
+  // Null when the target is on no element, or on a structured element's root
+  // where that root draws nothing (see drawsAt): the gap beside a narrow block
+  // is the host's.
+  /** @param {any} editorPane @param {any} host @param {any} getPos @param {any} target
+   *  @returns {{source: any, onProse: boolean}|null} */
+  nestedSourceAt(editorPane, host, getPos, target) {
+    if (!hostsBlocks(host) || !host.attrs.id || typeof getPos !== 'function' || !target) return null
+    var view = editorPane && editorPane.view
+    if (!view || typeof view.nodeDOM !== 'function') return null
+    /** @param {any} node @param {number} start @returns {{node: any, dom: any, pos: number}|null} */
+    var childHolding = function (node, start) {
+      var hit = null
+      node.forEach(function (/** @type {any} */ child, /** @type {number} */ offset) {
+        if (hit) return
+        var dom = view.nodeDOM(start + offset)
+        if (dom && typeof dom.contains === 'function' && dom.contains(target)) hit = { node: child, dom: dom, pos: start + offset }
+      })
+      return hit
+    }
+    var hit = childHolding(host, getPos() + 1)
+    if (!hit) return null
+    var element = hit.node
+
+    var sieve = String(element.type.name).indexOf('sieve-') === 0
+    var onProse = !sieve
+    if (sieve && containsChildBlocks(element)) {
+      var inner = childHolding(element, hit.pos + 1)
+      onProse = !!inner && String(inner.node.type.name).indexOf('sieve-') !== 0
+    }
+    if (sieve && !onProse && !NodeViewRegistry.drawsAt(hit.dom, target)) return null
+
+    return { source: this.#elementSource(editorPane, host, element, sieve), onProse: onProse }
+  }
+
+  // Does `target` land on something the block rooted at `root` draws? Anything
+  // inside the root is drawn; the root itself only where it paints — a background
+  // or a visible border — so a root that spans the row around narrower content
+  // leaves the rest of that row empty.
+  /** @param {Element} root @param {Element} target @returns {boolean} */
+  static drawsAt(root, target) {
+    if (!root || !target || !root.contains(target)) return false
+    if (target !== root) return true
+    var win = root.ownerDocument && root.ownerDocument.defaultView
+    if (!win || typeof win.getComputedStyle !== 'function') return false
+    var style = win.getComputedStyle(root)
+    /** @param {string} c */
+    var clear = function (c) { return !c || c === 'transparent' || /^rgba\(.*,\s*0(\.0+)?\)$/.test(c) }
+    if (!clear(style.backgroundColor) || (style.backgroundImage && style.backgroundImage !== 'none')) return true
+    return ['Top', 'Right', 'Bottom', 'Left'].some(function (side) {
+      var s = /** @type {any} */ (style)
+      return parseFloat(s['border' + side + 'Width']) > 0 &&
+        s['border' + side + 'Style'] !== 'none' && !clear(s['border' + side + 'Color'])
+    })
+  }
+
+  /** @param {any} editorPane @param {any} host @param {any} element @param {boolean} sieve */
+  #elementSource(editorPane, host, element, sieve) {
+    var kind = sieve ? element.attrs.kind : 'prose'
+    var adapter = sieve ? this.adapterFor(kind) : null
+    var prose = sieve ? null : getBlockBehaviour && getBlockBehaviour('prose')
+    var own = sieve
+      ? sieveBlockEntries(element, adapter)
+      : ((prose && typeof prose.asContentEntry === 'function' && prose.asContentEntry(element, editorPane)) || [])
+    var parentId = host.attrs.id
+    return {
+      sourceNode: element,
+      sourceKind: kind,
+      entries: own.map(function (en) {
+        return Object.assign({}, en, { context: Object.assign({}, en.context, { parentId: parentId }) })
+      }),
+      blockId: parentId,
+      extractSourceLabel: sieve
+        ? ((adapter && typeof adapter.getFriendlyName === 'function') ? adapter.getFriendlyName(element) : kind)
+        : 'Text',
+    }
   }
 
   // Is the node at this position an ELEMENT — a block living inside another
@@ -627,6 +732,9 @@ class NodeViewRegistry {
             // Migrated renderers stamp their own identity data-* from the block;
             // this fallback covers any kind whose DOM the framework assembles.
             if (!view.dom.hasAttribute('data-kind')) view.dom.setAttribute('data-kind', kind)
+            // Marks the root of a structured block, which the framework spaces
+            // (editor.css .sieve-node); a native prose node never carries it.
+            view.dom.classList.add('sieve-node')
 
             // Explicitly non-editable: this stops the block root inheriting
             // contentEditable="true" from the ProseMirror root, which would break
@@ -714,11 +822,24 @@ class NodeViewRegistry {
                 ])
               }
 
-              document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
-                detail: { x: e.clientX, y: e.clientY, context: { type: 'sieveBlock', items: items } },
-              }))
+              var x = e.clientX, y = e.clientY
+              var openMenu = function (/** @type {any[]} */ menuItems) {
+                document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
+                  detail: { x: x, y: y, context: { type: 'sieveBlock', items: menuItems } },
+                }))
+              }
 
-              var { entries, extractSourceLabel } = NodeViewRegistry.extractContentEntryFromEditor( e, editorPane);
+              // A right-click on an ELEMENT of this block names that element, so
+              // its own section leads the menu and this block's follows. In a
+              // block hosting elements, a raw image, link or fence is sub-content
+              // only inside prose; elsewhere it is the element's own drawing.
+              var hostsElements = hostsBlocks(n)
+              var hit = hostsElements ? self.nestedSourceAt(editorPane, n, getPos, e.target) : null
+              var { entries, extractSourceLabel } = (!hostsElements || (hit && hit.onProse))
+                ? NodeViewRegistry.extractContentEntryFromEditor(e, editorPane)
+                : { entries: null, extractSourceLabel: '' }
+              var sub = !!entries
+              var nested = (hit && !sub) ? hit.source : null
 
               if(entries == undefined || !entries) {
                 extractSourceLabel = renderer.getFriendlyName ? renderer.getFriendlyName(n) : n.attrs.kind || 'block';
@@ -742,16 +863,31 @@ class NodeViewRegistry {
               // A renderer may have no content entry, so ensure an array.
               if (!entries) entries = [];
 
-              if (entries) {
-                self.detectAndAppendExtractions({
-                  sourceNode: n,
-                  sourceKind: n.attrs.kind,
-                  entries: entries,
-                  blockId: n.attrs.id,
-                  extractSourceLabel: extractSourceLabel,
-                  editor: blockCtx.getEditor()
-                })
+              var hostSource = {
+                sourceNode: n,
+                sourceKind: n.attrs.kind,
+                entries: entries,
+                blockId: n.attrs.id,
+                extractSourceLabel: extractSourceLabel,
+                editor: blockCtx.getEditor()
               }
+              // A block hosting elements names its own section for the whole of
+              // it, whether or not an element's section stands beside it.
+              var wholeHost = hostsElements && !sub
+              if (wholeHost) hostSource.extractSourceLabel = 'the whole ' + hostSource.extractSourceLabel
+              if (!nested) {
+                openMenu(items)
+                self.detectAndAppendExtractions(hostSource)
+                return
+              }
+              // Both sections are awaited, so the menu opens whole and nothing
+              // moves under the pointer once it is shown.
+              nested.editor = hostSource.editor
+              Promise.all([self.extractionItems(nested), self.extractionItems(hostSource)]).then(function (sections) {
+                var all = sections[0].length ? sections[0].concat([{ type: 'divider' }], items) : items
+                if (sections[1].length) all = all.concat([{ type: 'divider' }], sections[1])
+                openMenu(all)
+              })
             })
 
             // A click anywhere in the block makes it the caret/selection owner, so
@@ -843,11 +979,15 @@ class NodeViewRegistry {
               var cur = pmDoc.nodeAt(pos)
               if (!cur || !cur.type.name.startsWith('sieve-')) return
               var tr = editorPane.state.tr
-              tr.replace(pos + 1, pos + 1 + cur.content.size, slice)
+              // The parsed nodes replace the body CLOSED. parseSlice hands them
+              // back open at either end, and an open slice is fitted into the
+              // content it replaces: a body opening or ending in a block that
+              // hosts blocks of its own would be joined into the old body's
+              // paragraph and vanish.
+              tr.replaceWith(pos + 1, pos + 1 + cur.content.size, slice.content)
               // A body the replace leaves identical is never dispatched: the
               // change would recreate this view, whose construction projects
-              // again, and nothing in that cycle ends it. Compared on the RESULT
-              // rather than the slice, which parseSlice hands back open-ended.
+              // again, and nothing in that cycle ends it.
               var next = tr.doc.nodeAt(pos)
               if (next && next.content.eq(cur.content)) return
               tr.setMeta(HOST_BODY_SYNC, true)

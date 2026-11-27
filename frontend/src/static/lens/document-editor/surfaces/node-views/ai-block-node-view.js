@@ -106,6 +106,16 @@ import { AiBlockRenderer } from '../../../../renderers/ai-block-renderer.js'
       return [{ mimeType: 'text/plain', content: md }]
     },
 
+    // One structured element of the answer, for a FOREIGN application, as the
+    // answer's markdown shows it: a kind holding source text fenced by its kind.
+    // The element's text lives in its node's content, not its attrs. Prose is
+    // left to its own views.
+    elementText: function (element) {
+      if (String(element.type.name).indexOf('sieve-') !== 0) return ''
+      var attrs = Object.assign({}, element.attrs, { source: element.textContent || element.attrs.source })
+      return AiBlockRenderer.answerMarkdown([{ kind: element.attrs.kind, attrs: attrs }])
+    },
+
     parseAttrs: function (data) {
       return {
         ref:      data.ref      || 'doc',

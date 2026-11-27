@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"sieve/sieve/ai"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
 )
@@ -206,30 +207,46 @@ func TestAIBlockAnswer_IngestFoldsEveryProducerShape(t *testing.T) {
 }
 
 // The job writes the answer list and nothing else: `response` is gone from the
-// runtime vocabulary, so a completed exchange must not grow one back.
+// runtime vocabulary, so a completed exchange must not grow one back. A final
+// message is folded into the answer only when the model did not write the answer
+// through the tool; when it did, the written answer stands and the message is
+// discarded.
 func TestAIBlockAnswer_ApplyWritesTheList(t *testing.T) {
 	registerAnswerKinds(t)
 	p := NewAIBlockProcessor(block.BlockServices{})
+	written := domain.Elements{foldProse("written through the tool")}
 
-	blk := domain.NewSieveBlock("ai-block", answerAskID, map[string]interface{}{"type": "ASK"})
-	job := p.DescribeJob(block.JobContext{Block: &blk, UUID: foldDocUUID, Doc: block.DocView{UUID: foldDocUUID}})
-	if job == nil {
-		t.Fatal("an ai-block always has async work")
-	}
-	job.Apply(answerText, &blk)
+	for _, tc := range []struct {
+		name     string
+		result   ai.Answer
+		wantText string
+	}{
+		{"tool never used: the final message is the answer", ai.Answer{Text: answerText}, answerText},
+		{"tool used: the final message is discarded", ai.Answer{Text: answerText, Written: true}, "written through the tool"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			blk := domain.NewSieveBlock("ai-block", answerAskID, map[string]interface{}{"type": "ASK"})
+			blk.SetElements(block.AnswerAttr, written)
+			job := p.DescribeJob(block.JobContext{Block: &blk, UUID: foldDocUUID, Doc: block.DocView{UUID: foldDocUUID}})
+			if job == nil {
+				t.Fatal("an ai-block always has async work")
+			}
+			job.Apply(tc.result, &blk)
 
-	if blk.Attrs["status"] != block.BlockStatusComplete || blk.Attrs["completedAt"] == "" {
-		t.Errorf("the completion envelope was not stamped: %+v", blk.Attrs)
-	}
-	if v, present := blk.Attrs["response"]; present {
-		t.Errorf("the retired `response` attr came back: %v", v)
-	}
-	els := blk.Elements(block.AnswerAttr)
-	if len(els) != 1 || els[0].Kind != block.KindProse || els[0].Content() != answerText {
-		t.Fatalf("answer = %+v, want one prose element", els)
-	}
-	if els[0].ID == "" || els[0].Attrs["id"] != els[0].ID {
-		t.Errorf("the ingested element is not identified: ID=%q Attrs[id]=%v", els[0].ID, els[0].Attrs["id"])
+			if blk.Attrs["status"] != block.BlockStatusComplete || blk.Attrs["completedAt"] == "" {
+				t.Errorf("the completion envelope was not stamped: %+v", blk.Attrs)
+			}
+			if v, present := blk.Attrs["response"]; present {
+				t.Errorf("the retired `response` attr came back: %v", v)
+			}
+			els := blk.Elements(block.AnswerAttr)
+			if len(els) != 1 || els[0].Kind != block.KindProse || els[0].Content() != tc.wantText {
+				t.Fatalf("answer = %+v, want one prose element %q", els, tc.wantText)
+			}
+			if els[0].ID == "" || els[0].Attrs["id"] != els[0].ID {
+				t.Errorf("the element is not identified: ID=%q Attrs[id]=%v", els[0].ID, els[0].Attrs["id"])
+			}
+		})
 	}
 }
 

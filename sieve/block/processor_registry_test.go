@@ -302,16 +302,17 @@ func TestDetectExtractions_returnsActionsPerKind(t *testing.T) {
 }
 
 // A source nested inside a composite (its entries carry Context["parentId"]) must
-// never be offered an in-place TRANSFORM: TRANSFORM replaces the source block by
-// id, and the only id available is the parent composite's — replacing it would
-// clobber the whole composite. DetectExtractions maps any Transform -> Extract for
-// nested sources, so the extracted copy lands after a surviving parent.
+// never be offered an in-place action: TRANSFORM and UNDO-SMART-PASTE replace the
+// source block by id, and the only id available is the parent composite's —
+// replacing it would clobber the whole composite. DetectExtractions maps any
+// Transform -> Extract for nested sources and drops the rest, so the extracted copy
+// lands after a surviving parent.
 func TestDetectExtractions_nestedSourceNeverOffersTransform(t *testing.T) {
 	ResetRegistry()
 	mock := &mockProcessor{
 		FencedDeserializer: FencedDeserializer{Kind: "diagram"},
 		actionsFn: func(entries []ContentEntry) SupportedActions {
-			return SupportedActions{Kind: "diagram", Actions: []Action{ActionExtract, ActionTransform}}
+			return SupportedActions{Kind: "diagram", Actions: []Action{ActionExtract, ActionTransform, ActionUndoSmartPaste}}
 		},
 	}
 	RegisterProcessor(mock)
@@ -327,12 +328,41 @@ func TestDetectExtractions_nestedSourceNeverOffersTransform(t *testing.T) {
 		t.Fatal("expected at least one offer, got none")
 	}
 	for _, o := range offers {
-		if o.Has(ActionTransform) {
-			t.Errorf("nested source (parentId set) must not be offered TRANSFORM; got %v for kind %q", o.Actions, o.Kind)
+		if o.Has(ActionTransform) || o.Has(ActionUndoSmartPaste) {
+			t.Errorf("nested source (parentId set) must not be offered an in-place action; got %v for kind %q", o.Actions, o.Kind)
 		}
 		if !o.Has(ActionExtract) {
 			t.Errorf("nested source must still be offered EXTRACT (additive); got %v for kind %q", o.Actions, o.Kind)
 		}
+	}
+}
+
+// Convertible: a whole ai-block, recognised by its own view, and a whole block
+// that says it is read-only cannot be converted; content nested in either can.
+func TestContentEntries_Convertible(t *testing.T) {
+	exchange := ContentEntry{MIMEType: "sieve/" + KindAIBlock, Content: `{"answer":[]}`}
+	readOnly := map[string]interface{}{"readOnly": true}
+	nested := map[string]interface{}{"parentId": "host"}
+	for _, tc := range []struct {
+		name    string
+		entries ContentEntries
+		want    bool
+	}{
+		{name: "a whole ai-block", entries: ContentEntries{{MIMEType: "text/plain", Content: "x"}, exchange}, want: false},
+		{name: "a whole block that says it is read-only", entries: ContentEntries{
+			{MIMEType: "text/plain", Content: "x", Context: readOnly},
+			{MIMEType: "sieve/exhibit", Content: `{}`, Context: readOnly},
+		}, want: false},
+		{name: "a whole block that does not", entries: ContentEntries{{MIMEType: "sieve/exhibit", Content: `{}`}}, want: true},
+		{name: "a block nested in an ai-block", entries: ContentEntries{{MIMEType: "sieve/code", Content: `{}`, Context: nested}}, want: true},
+		{name: "a fence in an ai-block's prose", entries: ContentEntries{{MIMEType: "text/plain", Content: "x", Context: nested}, exchange}, want: true},
+		{name: "nested content stamped read-only", entries: ContentEntries{{MIMEType: "sieve/code", Content: `{}`, Context: map[string]interface{}{"parentId": "host", "readOnly": true}}}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.entries.Convertible(); got != tc.want {
+				t.Errorf("Convertible() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

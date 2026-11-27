@@ -25,3 +25,32 @@ type NodeResolver = domain.NodeResolver
 // editor.Router implements it and the composition root injects it; search asks
 // it and holds no matching of its own.
 type SearchService = domain.SearchService
+
+// AnswerVocabulary is what add_to_answer and describe_answer need of the kinds
+// an answer can be written in: their cards, and an element built from a content
+// type and the map a model supplied, through the kind's own processor, for an
+// answer held in document container ("" when none holds it). A refusal
+// is an error whose text the model is shown. block.Registry implements it and the
+// composition root injects it.
+//
+// Waits reports whether an element it built lands waiting on work its kind's
+// job does.
+type AnswerVocabulary interface {
+	AnswerCards() []domain.AnswerCard
+	BuildAnswerElement(container, contentType string, attrs map[string]any) (domain.SieveBlock, error)
+	Waits(el domain.SieveBlock) bool
+}
+
+// AnswerWriter appends one element to the answer of an exchange being answered,
+// in whatever holds its block; startOver makes the element the whole answer. A
+// refusal (the holder no longer holds the block, or it is not being answered) is
+// an error whose text the model is shown. Each AnswerHolder has its own writer:
+// editor.EditorService writes a block held in an open document, command.Registry
+// one held by a running command, and the composition root injects both.
+//
+// AnswerHolding declares what an answer the writer holds can take, which
+// decides the content types a run answering into it is offered.
+type AnswerWriter interface {
+	AppendToAnswer(ex domain.Exchange, el domain.SieveBlock, startOver bool) error
+	AnswerHolding() domain.AnswerHolding
+}

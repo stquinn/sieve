@@ -376,7 +376,7 @@ export class AskPanel {
       )
       const badges = this.#badges || (this.#ws && /** @type {any} */ (this.#ws).commandBadges)
       if (badges) {
-        badges.track(handle, { cmd: command.cmd.name, text: command.text })
+        badges.track(handle, { cmd: command.cmd.name, text: command.text, docUuid: (context && context.docUuid) || '' })
       }
       this.#clearComposer()
       return

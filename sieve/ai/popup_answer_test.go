@@ -30,11 +30,16 @@ func popupAnswerOf(t *testing.T, attrs map[string]interface{}) string {
 }
 
 // The completion is the envelope plus the answer, and the envelope it was built
-// from is left alone: the client is already rendering that map.
+// from is left alone: the client is already rendering that map. An answer the
+// model wrote into the block leaves the final message out: the completion
+// carries no answer of its own.
 func TestPopupAnswer_CompletesWithoutDisturbingThePendingEnvelope(t *testing.T) {
 	pending := map[string]interface{}{"status": "PENDING", "type": "BTW", "question": "why?"}
 
-	done := popupAnswer{}.complete(pending, "because")
+	if written := (popupAnswer{}).complete(pending, Answer{Text: "a remark about the task", Written: true}); written.Attrs["answer"] != nil {
+		t.Errorf("a written answer's completion carries the final message: %+v", written.Attrs["answer"])
+	}
+	done := popupAnswer{}.complete(pending, Answer{Text: "because"})
 
 	if done.Kind != "ai-block" {
 		t.Errorf("kind = %q, want ai-block", done.Kind)

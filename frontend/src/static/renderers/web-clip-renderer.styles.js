@@ -25,8 +25,6 @@ export const webClipStyles = /* css */ `
     border: 1px solid var(--theme-aiBlockBorder);
     border-radius: 8px;
     background: var(--theme-aiBlockBg);
-    margin-top: 1.5rem;
-    margin-bottom: 2rem;
     padding: 1.25rem 1.5rem;
     position: relative;
     transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;

@@ -25,11 +25,12 @@
 // what is faked is only the editor PANE, so a NodeView can be built and its
 // transactions counted without an EditorView.
 
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, vi } from 'vitest'
+import MarkdownIt from 'markdown-it'
 import { DOMParser as PMDOMParser } from '@tiptap/pm/model'
 import { EditorState, NodeSelection, TextSelection } from '@tiptap/pm/state'
 import { buildSieveSchema } from './helpers/sieve-pm-schema.js'
-import { getBlockKind } from '../src/static/renderers/block-kinds.js'
+import { getBlockKind, registerBlockKind } from '../src/static/renderers/block-kinds.js'
 import { AiBlockRenderer } from '../src/static/renderers/ai-block-renderer.js'
 import { SieveBlock } from '../src/static/contract/sieve-block.js'
 import { computeBlockSync, seedBaseline } from '../src/static/lens/document-editor/block-sync.js'
@@ -37,7 +38,7 @@ import { computeBlockSync, seedBaseline } from '../src/static/lens/document-edit
 const VENDOR = /** @type {any} */ (globalThis).TipTap
 
 /** The kinds the showcase answer spans, plus the block hosting it. */
-const KINDS = ['ai-block', 'code', 'log', 'diagram', 'reference']
+const KINDS = ['ai-block', 'code', 'log', 'diagram', 'reference', 'web-clip', 'smart-image']
 
 /** The answer of the committed showcase document, verbatim:
  *  sieve/block/processors/testdata/answer-list-showcase/…-000000000001.md */
@@ -134,6 +135,7 @@ beforeAll(async () => {
     Plugin: class Plugin { constructor(/** @type {any} */ spec) { Object.assign(this, spec) } },
     ProseMirrorDOMParser: PMDOMParser,
     NodeSelection: NodeSelection,
+    MarkdownIt,
   })
   // Node.create hands back the raw config, which the schema helper transcribes.
   VENDOR.Node = { create: (/** @type {any} */ cfg) => cfg }
@@ -191,6 +193,23 @@ describe('the answer projects as element-mode sieve nodes', () => {
     expect(nodes[4].attrs.uri).toBe(SHOWCASE_ANSWER[4].attrs.uri)
   })
 
+  // An element landed waiting on its kind's job carries its own status, so its
+  // kind draws that state, and the answer projects again when the job's result
+  // arrives in it. Every kind an answer can hold waiting has a row.
+  it.each([
+    ['log', { kind: 'log', attrs: { id: 'l-el', status: 'DISPATCHED', source: '10:00 ERROR pool exhausted' } }, 'sieve-log'],
+    ['diagram', { kind: 'diagram', attrs: { id: 'd-el', status: 'PENDING', diagramType: 'plantuml', mode: 'render', source: 'A -> B' } }, 'sieve-diagram'],
+    ['web-clip', { kind: 'web-clip', attrs: { id: 'w-el', status: 'PENDING', source: 'https://go.dev/blog/go1.22', mode: 'summarise' } }, 'sieve-web-clip'],
+    ['smart-image', { kind: 'smart-image', attrs: { id: 'i-el', status: 'PENDING', src: 'sieve://0198c1a0-0001-7000-8000-000000000001/chart.png', width: '4', height: '3' } }, 'sieve-smart-image'],
+  ])('a %s element still waiting on its job projects with its own status', (_kind, element, type) => {
+    const waiting = new AiBlockRenderer(new SieveBlock('ai-block', { id: AI_ID, status: 'COMPLETE', answer: [element] })).bodyElements()
+    const [node] = parseNodes(registry.elementsHTML(waiting))
+    expect([node.type.name, node.attrs.status]).toEqual([type, element.attrs.status])
+    const done = new AiBlockRenderer(new SieveBlock('ai-block', { id: AI_ID, status: 'COMPLETE',
+      answer: [{ kind: element.kind, attrs: Object.assign({}, element.attrs, { status: 'COMPLETE' }) }] })).bodyElements()
+    expect(parseNodes(registry.elementsHTML(done))[0].attrs.status).toBe('COMPLETE')
+  })
+
   it('literal source text survives the costume verbatim, newlines and inner fences included', () => {
     const nodes = parseNodes(registry.elementsHTML(SHOWCASE_ANSWER))
     expect(nodes[1].textContent).toBe(SHOWCASE_ANSWER[1].attrs.source)
@@ -226,14 +245,44 @@ describe('the answer projects as element-mode sieve nodes', () => {
     expect(/** @type {any} */ (filled).firstChild.type.name).toBe('paragraph')
   })
 
-  it('only a COMPLETE answer projects as blocks; a status line stays text', () => {
-    const pending = new AiBlockRenderer(
-      new SieveBlock('ai-block', { id: AI_ID, status: 'PENDING', answer: SHOWCASE_ANSWER }),
-    )
-    expect(pending.bodyElements()).toBeNull()
-    // Null is what sends the seam down the MARKDOWN branch, and what it finds
-    // there is the status line, never the answer waiting behind it.
-    expect(pending.bodyMarkdown()).not.toContain('connection pool')
+  it('an answer still being written projects its blocks so far and nothing after them', () => {
+    const now = new Date().toISOString()
+    const running = new AiBlockRenderer(
+      new SieveBlock('ai-block', { id: AI_ID, status: 'DISPATCHED', createdAt: now, answer: SHOWCASE_ANSWER.slice(0, 2) }),
+    ).bodyElements()
+    const nodes = parseNodes(registry.elementsHTML(running))
+    expect(nodes.map((n) => n.type.name)).toEqual(['paragraph', 'sieve-code'])
+    expect(nodes.map((n) => n.textContent).join('')).not.toContain('thinking')
+  })
+
+  it('an answer nothing has landed in yet projects no blocks, and no status line either', () => {
+    const r = new AiBlockRenderer(new SieveBlock('ai-block', { id: AI_ID, status: 'PENDING', createdAt: new Date().toISOString() }))
+    expect(r.bodyElements()).toEqual([])
+    expect(registry.elementsHTML(r.bodyElements())).toBe('')
+  })
+
+  it('a failure stays text: a job given up on, a failure', () => {
+    const stale = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+    for (const attrs of [
+      { status: 'DISPATCHED', createdAt: stale },
+      { status: 'ERROR', error: 'the CLI timed out' },
+    ]) {
+      const r = new AiBlockRenderer(new SieveBlock('ai-block', { id: AI_ID, ...attrs }))
+      // Null is what sends the seam down the MARKDOWN branch, to the failure's message.
+      expect(r.bodyElements()).toBeNull()
+    }
+  })
+
+  it('an answer cut short projects the blocks that landed', () => {
+    const stale = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+    for (const attrs of [
+      { status: 'DISPATCHED', createdAt: stale, answer: SHOWCASE_ANSWER.slice(0, 2) },
+      { status: 'ERROR', error: 'the CLI timed out', answer: SHOWCASE_ANSWER.slice(0, 2) },
+      { status: 'TIMEOUT', error: 'cli timeout after 60 seconds', answer: SHOWCASE_ANSWER.slice(0, 2) },
+    ]) {
+      const elements = new AiBlockRenderer(new SieveBlock('ai-block', { id: AI_ID, ...attrs })).bodyElements()
+      expect(parseNodes(registry.elementsHTML(elements)).map((n) => n.type.name)).toEqual(['paragraph', 'sieve-code'])
+    }
   })
 })
 
@@ -341,6 +390,13 @@ describe('element mode: what the seam takes away, and from whom', () => {
     expect(element.dom.querySelector('.block-chrome-host')).toBeNull()
   })
 
+  it('a document block and an element alike are marked as a structured block, which the framework spaces', () => {
+    const pane = twoPlaces()
+    for (const id of ['top-level-block', 'nested-element']) {
+      expect(nodeViewAt('sieve-probe', pane, posOf(pane.state.doc, (n) => n.attrs.id === id)).dom.classList.contains('sieve-node')).toBe(true)
+    }
+  })
+
   it('an element offers no context menu of its own — the gesture reaches its host', () => {
     const pane = twoPlaces()
     const element = nodeViewAt('sieve-probe', pane, posOf(pane.state.doc, (n) => n.attrs.id === 'nested-element'))
@@ -357,6 +413,155 @@ describe('element mode: what the seam takes away, and from whom', () => {
     } finally {
       document.removeEventListener('sieve:contextmenu', listen)
     }
+  })
+
+  // A right-click on what an element draws names that element: its own section
+  // leads the menu, offering it as a copy of its own kind, and the host's menu
+  // follows with its whole-exchange verbs still under their own heading. Every
+  // kind an answer can hold has a row; a new kind joins by adding one. The views
+  // are each kind's real NodeView, so "what it draws" is the kind's own DOM.
+  describe('a right-click on an element', () => {
+    /** What the backend offers: a raw image a smart image; a nested source its
+     *  own kind as a copy; the whole exchange its Embed in Document alone, in place. */
+    const detectExtractions = (/** @type {string} */ kind, /** @type {any[]} */ entries) => Promise.resolve(
+      entries.some((e) => e.mimeType === 'text/uri-list') && kind === 'ai-block'
+        ? [{ kind: 'smart-image', actions: ['extract'] }]
+        : entries.some((e) => e.context && e.context.parentId)
+          ? [{ kind, actions: ['extract'] }]
+          : [{ kind: 'prose', actions: ['transform'] }])
+
+    /** The element's own view: prose's is the markdown its serializer writes. */
+    const ownView = (/** @type {any} */ node) => node.type.name.indexOf('sieve-') === 0
+      ? sieveBlockAttrs(node)
+      : { content: node.textContent }
+
+    beforeAll(() => {
+      if (!getBlockKind('prose')) {
+        registerBlockKind({
+          kind: 'prose', native: true,
+          asContentEntry: (/** @type {any} */ node) => [{ mimeType: 'sieve/prose', content: JSON.stringify({ content: node.textContent }) }],
+        })
+      }
+    })
+
+    const IMAGE_SRC = 'sieve://0198c1a0-0001-7000-8000-000000000001/chart.png'
+    const paragraph = (/** @type {string} */ text) => schema.nodes.paragraph.create(null, schema.text(text))
+    const smartImage = () => schema.nodes['sieve-smart-image'].create({ kind: 'smart-image', id: 'i-el', src: IMAGE_SRC, status: 'COMPLETE' })
+    const clipOf = (/** @type {any} */ body) => schema.nodes['sieve-web-clip'].create({ kind: 'web-clip', id: 'w-el', source: 'https://go.dev/blog/go1.22', status: 'COMPLETE' }, [body])
+
+    /**
+     * Right-clicks inside an ai-block whose answer holds `element`, drawn by its
+     * kind's NodeView (a prose node as the <p> ProseMirror draws), on the target
+     * `pick` chooses. A structured element hosting prose draws its first child as
+     * a <p> in its contentDOM. Resolves the whole menu, appended sections included.
+     * @param {any} element
+     * @param {(parts: {host: HTMLElement, element: HTMLElement, inner: HTMLElement|null}) => Element} pick
+     */
+    async function rightClick(element, pick) {
+      const doc = docOf([schema.nodes['sieve-ai-block'].create({ id: AI_ID, kind: 'ai-block', status: 'COMPLETE', answer: [] }, [element])])
+      const pane = fakePane(EditorState.create({ schema, doc }))
+      const extract = vi.fn()
+      pane.sieveHost = { provider: { detectExtractions }, extract }
+      const host = nodeViewAt('sieve-ai-block', pane, 0)
+      pane.view.dom.appendChild(host.dom)
+      const sieve = element.type.name.indexOf('sieve-') === 0
+      const elementView = sieve ? nodeViewAt(element.type.name, pane, 1) : { dom: document.createElement('p'), contentDOM: null }
+      ;(host.contentDOM || host.dom).appendChild(elementView.dom)
+      /** @type {HTMLElement|null} */
+      let inner = null
+      if (sieve && element.childCount && element.firstChild.type.name === 'paragraph') {
+        inner = document.createElement('p')
+        ;(elementView.contentDOM || elementView.dom).appendChild(inner)
+      }
+      pane.view.nodeDOM = (/** @type {number} */ pos) => (pos === 1 ? elementView.dom : pos === 2 ? inner : null)
+      await settle()
+      const target = pick({ host: host.dom, element: elementView.dom, inner })
+
+      /** @type {any[]} */
+      let items = []
+      const listen = (/** @type {any} */ e) => { items = e.detail.context.items }
+      const menu = /** @type {any} */ (window)
+      menu.SieveContextMenu = { appendItems: (/** @type {any[]} */ more) => { items = items.concat(more) } }
+      document.addEventListener('sieve:contextmenu', listen)
+      try {
+        target.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+        await settle()
+      } finally {
+        document.removeEventListener('sieve:contextmenu', listen)
+        delete menu.SieveContextMenu
+      }
+      const labels = items.map((it) => it.type === 'header' ? '# ' + it.label : (it.label || '—'))
+      return { items, labels, extract }
+    }
+
+    /** The exchange's own menu: its items, then its whole-block section alone. */
+    const EXCHANGE = ['# Ask AI', '—', 'Ask AI…', 'Explain', '—', 'Delete', '—', 'Replay', '—', '# FROM THE WHOLE ASK AI', 'Embed in Document']
+
+    it.each([
+      ['prose', 'TEXT', () => paragraph('Raise the pool ceiling first.'), (/** @type {any} */ p) => p.element],
+      ['code', 'CODE', () => schema.nodes['sieve-code'].create({ kind: 'code', id: 'c-el', language: 'go' }, schema.text('x := 1')),
+        (/** @type {any} */ p) => p.element.querySelector('code')],
+      ['diagram', 'DIAGRAM', () => schema.nodes['sieve-diagram'].create({ kind: 'diagram', id: 'd-el', diagramType: 'mermaid', mode: 'render', status: 'COMPLETE' }, schema.text('graph TD\n  A --> B')),
+        (/** @type {any} */ p) => p.element.querySelector('svg')],
+      ['reference', 'REFERENCE', () => schema.nodes['sieve-reference'].create({ kind: 'reference', id: 'r-el', uri: 'sieve://0198c1a0-0001-7000-8000-000000000001' }),
+        (/** @type {any} */ p) => p.element.querySelector('.reference-block__line')],
+      ['log', 'LOG', () => schema.nodes['sieve-log'].create({ kind: 'log', id: 'l-el' }, schema.text('10:00 ERROR pool exhausted')),
+        (/** @type {any} */ p) => p.element.querySelector('code')],
+      // Pressed on a paragraph of the clip's own body: the clip is the element named.
+      ['web-clip', 'WEB CLIP', () => clipOf(paragraph('Loop variables are per-iteration.')), (/** @type {any} */ p) => p.inner],
+      ['smart-image', 'IMAGE', smartImage, (/** @type {any} */ p) => p.element.querySelector('img')],
+    ])('on a %s element offers it as a copy above its host\'s menu', async (kind, label, make, pick) => {
+      const element = make()
+      const { items, labels, extract } = await rightClick(element, pick)
+      expect(labels.slice(0, 3)).toEqual(['# FROM ' + label, 'Add to Document', '—'])
+      expect(labels).toContain('Ask AI…')
+      expect(labels.slice(labels.indexOf('# FROM THE WHOLE ASK AI'))).toEqual(['# FROM THE WHOLE ASK AI', 'Embed in Document'])
+
+      items[1].action()
+      expect(extract).toHaveBeenCalledTimes(1)
+      const call = extract.mock.calls[0][0]
+      expect(call).toMatchObject({ blockId: AI_ID, targetKind: kind, operation: 'extract' })
+      const view = call.entries.find((/** @type {any} */ e) => e.mimeType === 'sieve/' + kind)
+      expect(JSON.parse(view.content)).toEqual(ownView(element))
+      expect(call.entries.every((/** @type {any} */ e) => e.context.parentId === AI_ID)).toBe(true)
+
+      items.find((it) => it.label === 'Embed in Document').action()
+      expect(extract.mock.calls[1][0]).toMatchObject({ blockId: AI_ID, targetKind: 'prose', operation: 'transform' })
+    })
+
+    // Where nothing an element draws was pressed, the exchange is what was named:
+    // the row beside a narrow block, and the answer's own padding.
+    it.each([
+      ["beside a nested image, on its block's bare root", smartImage, (/** @type {any} */ p) => p.element],
+      ["on the answer's padding", smartImage, (/** @type {any} */ p) => p.host],
+    ])('%s gives the exchange\'s menu alone', async (_where, make, pick) => {
+      const { labels } = await rightClick(make(), pick)
+      expect(labels).toEqual(EXCHANGE)
+    })
+
+    // A raw image, link or fence is sub-content of its own only inside PROSE.
+    it.each([
+      ['a prose element', () => paragraph('see the chart'), (/** @type {any} */ p) => p.element],
+      ['a nested web clip', () => clipOf(paragraph('see the chart')), (/** @type {any} */ p) => p.inner],
+    ])('an image inside %s keeps its sub-content section', async (_where, make, pick) => {
+      const { labels } = await rightClick(make(), (parts) => {
+        const img = document.createElement('img')
+        img.src = 'https://example.com/chart.png'
+        return pick(parts).appendChild(img)
+      })
+      expect(labels).not.toContain('Add to Document')
+      expect(labels).not.toContain('# FROM THE WHOLE ASK AI')
+      expect(labels.slice(0, EXCHANGE.length - 2)).toEqual(EXCHANGE.slice(0, -2))
+      expect(labels[EXCHANGE.length - 2]).toBe('# FROM IMAGE')
+    })
+  })
+
+  it('an image element is drawn without its resize handles', () => {
+    const img = schema.nodes['sieve-smart-image'].create({ kind: 'smart-image', id: 'i-el', src: 'sieve://0198c1a0-0001-7000-8000-000000000001/chart.png', status: 'COMPLETE' })
+    const pane = fakePane(EditorState.create({ schema, doc: docOf([aiBlock([], [img])]) }))
+    const view = nodeViewAt('sieve-smart-image', pane, posOf(pane.state.doc, (n) => n.type.name === 'sieve-smart-image'))
+    expect(view.dom.querySelector('img')).toBeTruthy()
+    expect(view.dom.querySelectorAll('.image-resizer').length).toBe(0)
   })
 
   it('an element does not claim the selection — the click belongs to its host', () => {
@@ -419,6 +624,71 @@ describe('a content-bearing node keeps its contentDOM attached in every mode', (
     expect(view.dom.contains(view.contentDOM)).toBe(true)
     expect(render.hidden).toBe(false)
     expect(edit.hidden).toBe(true)
+  })
+})
+
+// ── A block hosting blocks, nested in a block hosting blocks ─────────────────
+
+describe('a web clip element draws its own body inside the answer', () => {
+  const SOURCE = 'https://go.dev/blog/go1.22'
+  const SUMMARY = '## Go 1.22\n\nLoop variables are per-iteration.'
+
+  /** A web clip element of `attrs`. @param {Record<string, any>} attrs */
+  const clip = (attrs) => ({ kind: 'web-clip', attrs: Object.assign({ id: 'w-el', source: SOURCE, mode: 'summarise' }, attrs) })
+
+  /** A pane whose ai-block holds `el` projected, the clip's position, and its view
+   *  built where ProseMirror builds it. @param {any} el */
+  function clipIn(el) {
+    const pane = fakePane(EditorState.create({ schema, doc: docOf([aiBlock([el], parseNodes(registry.elementsHTML([el])))]) }))
+    const pos = posOf(pane.state.doc, (n) => n.type.name === 'sieve-web-clip')
+    return { pane, pos, view: nodeViewAt('sieve-web-clip', pane, pos) }
+  }
+
+  /** @param {any} view @param {string} sel @returns {HTMLElement} */
+  const part = (view, sel) => /** @type {HTMLElement} */ (view.dom.querySelector(sel))
+
+  it('waiting on its job, it draws its own pending state', () => {
+    const { view } = clipIn(clip({ status: 'PENDING', createdAt: new Date().toISOString() }))
+    expect(part(view, '.web-clip-block__spinner').hidden).toBe(false)
+    expect(part(view, '.web-clip-block__label').textContent).toBe('Summarising from ' + SOURCE + '…')
+    expect(view.dom.querySelector('.web-clip-block__retry')).toBeNull()
+  })
+
+  it('its job result merged, it draws its title and its summary as its own body, read-only', async () => {
+    const done = clip({ status: 'COMPLETE', title: 'Go 1.22 is released', content: SUMMARY })
+    const { pane, pos, view } = clipIn(done)
+    await settle()
+    const body = pane.state.doc.nodeAt(pos)
+    /** @type {string[]} */
+    const hosted = []
+    body.forEach((/** @type {any} */ n) => hosted.push(n.type.name))
+    expect(hosted).toEqual(['heading', 'paragraph'])
+    expect(body.textContent).toBe('Go 1.22Loop variables are per-iteration.')
+    expect(() => pane.state.doc.check()).not.toThrow()
+    expect(view.dom.textContent).toContain('Go 1.22 is released')
+    expect(part(view, '.web-clip-block__source-link').textContent).toBe(SOURCE)
+    expect(view.dom.hasAttribute('data-id')).toBe(false)
+    expect(view.dom.querySelector('.block-chrome-host')).toBeNull()
+  })
+
+  it("the clip's body and the answer's projection settle: the host writes nothing back over it", async () => {
+    const done = clip({ status: 'COMPLETE', title: 'Go 1.22 is released', content: SUMMARY })
+    const pane = fakePane(EditorState.create({ schema, doc: docOf([aiBlock([done])]) }))
+    const host = nodeViewAt('sieve-ai-block', pane, 0)
+    await settle()
+    nodeViewAt('sieve-web-clip', pane, posOf(pane.state.doc, (n) => n.type.name === 'sieve-web-clip'))
+    await settle()
+    const written = pane.dispatched.length
+    expect(written).toBe(2)
+    host.update(pane.state.doc.nodeAt(0))
+    await settle()
+    expect(pane.dispatched.length).toBe(written)
+  })
+
+  it('its job failed, it says so and offers no Retry: an element has no block to retry', () => {
+    const { view } = clipIn(clip({ status: 'ERROR', error: 'the page did not load' }))
+    expect(part(view, '.web-clip-block__label').textContent).toBe('the page did not load')
+    expect(view.dom.querySelector('.web-clip-block__retry')).toBeNull()
   })
 })
 

@@ -5,13 +5,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/png"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"sieve/ident"
+	"sieve/sieve/ai"
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
 	"sieve/sieve/domain"
+	"sieve/sieve/services"
+	"sieve/store/filestore"
 	"strconv"
 	"strings"
 	"sync"
@@ -856,7 +862,9 @@ func (pasteState) ActiveThemeVars() domain.ThemeVars { return domain.ThemeVars{}
 // drawnPlantuml draws every source as the same SVG.
 type drawnPlantuml struct{}
 
-func (drawnPlantuml) Render(string) ([]byte, error) { return []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), nil }
+func (drawnPlantuml) Render(string) ([]byte, error) {
+	return []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), nil
+}
 
 // A new document made from blocks is an ordinary untitled note, named as asked, holding a copy of
 // each block in order under fresh ids, element ids included, as a paste of it copied out of the
@@ -1409,6 +1417,284 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 	// Check preserved concurrent edit
 	if blk.Attrs["source"] != "concurrent user edit" {
 		t.Errorf("expected concurrent user edit to be preserved, got %v", blk.Attrs["source"])
+	}
+}
+
+// An answer written while its exchange's job runs lands in the open document a
+// block at a time — the run's first block replacing an earlier run's answer —
+// tells the client each time, is saved once when the job ends, and survives the
+// job's end: its settle, and a failure or timeout, which marks the exchange
+// with its error and keeps the blocks that landed. An exchange that is not
+// being answered is refused.
+func TestEditorService_AppendToAnswer_WritesWhileTheJobRuns(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		ends       error
+		wantStatus string
+	}{
+		{"the job settles", nil, block.BlockStatusComplete},
+		{"the job fails", errors.New("cli exited with status 1"), block.BlockStatusError},
+		{"the job times out", errors.New("cli timeout after 60 seconds"), block.BlockStatusTimeout},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetRegistry()
+			ds, _ := newTestDocumentService(t)
+			es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+			doc, _ := ds.New()
+			doc.SetBody([]byte("# Test"))
+			doc, _ = ds.Save(doc)
+			uuid := doc.UUID()
+			_ = es.Open(uuid)
+
+			var drawn []int
+			es.SetLifecycleListener(&mockLifecycleListener{onUpdated: func(_, _ string, attrs map[string]interface{}) {
+				drawn = append(drawn, len(domain.DecodeElements(attrs[block.AnswerAttr])))
+			}})
+			el := func(text string) domain.SieveBlock {
+				return domain.NewSieveBlock(block.KindProse, ident.New(), map[string]interface{}{"content": text})
+			}
+			var blockID, savedMidRun string
+			block.RegisterProcessor(&testRunJobProcessor{
+				FencedDeserializer: block.FencedDeserializer{Kind: "mock-ask"},
+				describe: func(jctx block.JobContext) *block.ProcessorJob {
+					return &block.ProcessorJob{
+						Work: func() (any, error) {
+							ex := domain.Exchange{Container: uuid, Block: blockID}
+							for i, text := range []string{"first block", "second block"} {
+								if err := es.AppendToAnswer(ex, el(text), i == 0); err != nil {
+									return nil, err
+								}
+							}
+							d, _ := ds.LoadByUUID(uuid)
+							savedMidRun = string(d.Body())
+							return nil, tc.ends
+						},
+						Apply: func(_ any, b *domain.SieveBlock) { b.Attrs["status"] = block.BlockStatusComplete },
+					}
+				},
+			})
+			blockID, _, err := es.CreateBlock(uuid, "mock-ask", map[string]interface{}{
+				"status": block.BlockStatusDispatched, block.AnswerAttr: domain.Elements{el("an earlier run's answer")},
+			}, -1)
+			if err != nil {
+				t.Fatalf("CreateBlock: %v", err)
+			}
+
+			es.RunJob(context.Background(), uuid, blockID)
+
+			blk, _ := es.shadowFor(uuid).SnapshotBlock(blockID)
+			var got []string
+			for _, a := range blk.Elements(block.AnswerAttr) {
+				got = append(got, a.Content())
+			}
+			if strings.Join(got, "|") != "first block|second block" || blk.Attrs["status"] != tc.wantStatus {
+				t.Errorf("answer = %q (status %v), want the two written blocks, status %s", got, blk.Attrs["status"], tc.wantStatus)
+			}
+			if tc.ends != nil && blk.Attrs["error"] != tc.ends.Error() {
+				t.Errorf("error = %v, want %q", blk.Attrs["error"], tc.ends.Error())
+			}
+			if len(drawn) < 2 || drawn[0] != 1 || drawn[1] != 2 {
+				t.Errorf("the client was told answers of %v blocks, want 1 then 2", drawn)
+			}
+			if strings.Contains(savedMidRun, "first block") {
+				t.Errorf("a written block was saved before the job ended:\n%s", savedMidRun)
+			}
+			if saved, _ := ds.LoadByUUID(uuid); !strings.Contains(string(saved.Body()), "second block") || strings.Contains(string(saved.Body()), "earlier run") {
+				t.Errorf("the job's end did not save the written answer:\n%s", saved.Body())
+			}
+
+			for name, ex := range map[string]domain.Exchange{
+				"an exchange no longer answered": {Container: uuid, Block: blockID},
+				"a deleted exchange":             {Container: uuid, Block: ident.New()},
+				"a note that is shut":            {Container: ident.New(), Block: blockID},
+			} {
+				if err := es.AppendToAnswer(ex, el("late"), false); err == nil {
+					t.Errorf("%s: the append was taken", name)
+				}
+			}
+		})
+	}
+}
+
+// answeringHost is a kind whose answer holds elements (block.BlockParent).
+type answeringHost struct{ *testRunJobProcessor }
+
+func (answeringHost) Children(b *domain.SieveBlock) []*domain.SieveBlock {
+	return b.Elements(block.AnswerAttr)
+}
+
+// describedImage is the smart-image kind with its describe job's AI run
+// stubbed: the job, on the AI pool, describes every image alike.
+type describedImage struct {
+	*processors.SmartImageProcessor
+}
+
+func (describedImage) DescribeJob(block.JobContext) *block.ProcessorJob {
+	return &block.ProcessorJob{
+		Category: block.CategoryAI,
+		Label:    "Describing image…",
+		Work: func() (any, error) {
+			return domain.ImageDesc{Summary: "A bar chart of pool use.", Alt: "bar chart"}, nil
+		},
+		Apply: func(result any, b *domain.SieveBlock) {
+			desc := result.(domain.ImageDesc)
+			b.Attrs["summary"], b.Attrs["alt"], b.Attrs["status"] = desc.Summary, desc.Alt, block.BlockStatusComplete
+		},
+	}
+}
+
+// cannedCLI is a CLI runner answering every run with its text.
+type cannedCLI string
+
+func (c cannedCLI) Run(_, _, _, _, _ string, _ int, _ string, _ domain.ContainmentProfile, _ string, _ ai.ResponseNote) (string, error) {
+	return string(c), nil
+}
+
+// An element born PENDING gets its kind's job from the engine as any block
+// does: dispatched when it lands, its result merged into THAT element inside
+// its parent, the parent told to the client, and the result saved. A stale
+// DISPATCHED element is reset for its job to run again, as a block is. Each
+// kind an answer offers waiting on a job has a row, its job's backend stubbed.
+func TestEditorService_AppendToAnswer_AnElementsJobLandsInTheElement(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		register func(t *testing.T, ds *services.DocumentService, fs *filestore.FileStore)
+		element  func(t *testing.T, uuid string) domain.SieveBlock
+		landed   map[string]string // attr → what the job left in the element
+		saved    string
+	}{
+		{
+			name: "a kind of the test's own",
+			register: func(*testing.T, *services.DocumentService, *filestore.FileStore) {
+				block.RegisterProcessor(&testRunJobProcessor{
+					FencedDeserializer: block.FencedDeserializer{Kind: "tally"},
+					describe: func(jctx block.JobContext) *block.ProcessorJob {
+						lines := strings.Count(jctx.Block.StringAttr("source"), "\n") + 1
+						return &block.ProcessorJob{
+							Category: block.CategoryDefault,
+							Label:    "Counting…",
+							Work:     func() (any, error) { return lines, nil },
+							Apply: func(n any, b *domain.SieveBlock) {
+								b.Attrs["lines"] = fmt.Sprint(n)
+								b.Attrs["status"] = block.BlockStatusComplete
+							},
+						}
+					},
+				})
+			},
+			element: func(*testing.T, string) domain.SieveBlock {
+				return domain.NewSieveBlock("tally", ident.New(), map[string]interface{}{"status": block.BlockStatusPending, "source": "a\nb\nc"})
+			},
+			landed: map[string]string{"lines": "3"},
+			saved:  `lines: "3"`,
+		},
+		{
+			name: "a web clip, its AI run stubbed",
+			register: func(t *testing.T, ds *services.DocumentService, fs *filestore.FileStore) {
+				state, err := services.NewStateService(fs, "", nil)
+				if err != nil {
+					t.Fatalf("NewStateService: %v", err)
+				}
+				prompts, err := ai.NewPromptService(fs)
+				if err != nil {
+					t.Fatalf("NewPromptService: %v", err)
+				}
+				aiSvc := ai.NewAIService(state, prompts, ds, nil, t.TempDir())
+				aiSvc.SetRunner(cannedCLI("# Go 1.22 is released\n\nLoop variables are per-iteration."))
+				block.RegisterProcessor(processors.NewWebClipBlockProcessor(block.BlockServices{AI: aiSvc, Documents: ds, State: state}))
+			},
+			element: func(t *testing.T, uuid string) domain.SieveBlock {
+				el, err := block.GlobalRegistry().BuildAnswerElement(uuid, "sieve/web-clip", map[string]any{"source": "https://go.dev/blog/go1.22"})
+				if err != nil {
+					t.Fatalf("build: %v", err)
+				}
+				return el
+			},
+			landed: map[string]string{"title": "Go 1.22 is released", "mode": "summarise",
+				"content": "# Go 1.22 is released\n\nLoop variables are per-iteration."},
+			saved: "Loop variables are per-iteration.",
+		},
+		{
+			name: "an image, downloaded from a stand-in for the web and its describe job stubbed",
+			register: func(t *testing.T, ds *services.DocumentService, fs *filestore.FileStore) {
+				svc := block.BlockServices{Documents: ds, Assets: services.NewAssetService(fs, "")}
+				block.RegisterProcessor(describedImage{processors.NewSmartImageProcessor(svc)})
+			},
+			element: func(t *testing.T, uuid string) domain.SieveBlock {
+				var chart bytes.Buffer
+				_ = png.Encode(&chart, image.NewRGBA(image.Rect(0, 0, 4, 3)))
+				web := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(chart.Bytes()) }))
+				t.Cleanup(web.Close)
+				el, err := block.GlobalRegistry().BuildAnswerElement(uuid, "sieve/smart-image", map[string]any{"url": web.URL + "/chart.png"})
+				if err != nil {
+					t.Fatalf("build: %v", err)
+				}
+				return el
+			},
+			landed: map[string]string{"summary": "A bar chart of pool use.", "alt": "bar chart", "width": "4"},
+			saved:  "A bar chart of pool use.",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetRegistry()
+			t.Cleanup(resetRegistry)
+			ds, fs := newTestDocumentService(t)
+			es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+			doc, _ := ds.New()
+			doc.SetBody([]byte("# Test"))
+			doc, _ = ds.Save(doc)
+			uuid := doc.UUID()
+			_ = es.Open(uuid)
+
+			var told []string
+			es.SetLifecycleListener(&mockLifecycleListener{onUpdated: func(_, id string, _ map[string]interface{}) { told = append(told, id) }})
+			block.RegisterProcessor(answeringHost{&testRunJobProcessor{FencedDeserializer: block.FencedDeserializer{Kind: "mock-ask"}}})
+			tc.register(t, ds, fs)
+			host, _, err := es.CreateBlock(uuid, "mock-ask", map[string]interface{}{"status": block.BlockStatusDispatched}, -1)
+			if err != nil {
+				t.Fatalf("CreateBlock: %v", err)
+			}
+			el := tc.element(t, uuid)
+			told = nil
+			if err := es.AppendToAnswer(domain.Exchange{Container: uuid, Block: host}, el, true); err != nil {
+				t.Fatalf("AppendToAnswer: %v", err)
+			}
+			es.WaitForJobs()
+
+			blk, _ := es.shadowFor(uuid).SnapshotBlock(host)
+			answer := blk.Elements(block.AnswerAttr)
+			if len(answer) != 1 || answer[0].ID != el.ID || answer[0].Status() != block.BlockStatusComplete {
+				t.Fatalf("answer = %+v, want the one element, settled by its job", answer)
+			}
+			for k, want := range tc.landed {
+				if got := answer[0].StringAttr(k); got != want {
+					t.Errorf("element %s = %q, want %q", k, got, want)
+				}
+			}
+			if top := es.shadowFor(uuid).SnapshotBlocks(); len(top) != 2 {
+				t.Errorf("the document holds %d blocks, want the heading and the host alone", len(top))
+			}
+			for _, id := range told {
+				if id != host {
+					t.Errorf("the client was told of %q, want only the host %q", id, host)
+				}
+			}
+			if len(told) < 2 {
+				t.Errorf("the client was told %d times, want the append, the dispatch and the result", len(told))
+			}
+			if err := es.Flush(uuid); err != nil {
+				t.Fatalf("Flush: %v", err)
+			}
+			if saved, _ := ds.LoadByUUID(uuid); !strings.Contains(string(saved.Body()), tc.saved) {
+				t.Errorf("the element's job result was not saved:\n%s", saved.Body())
+			}
+
+			shadow := es.shadowFor(uuid)
+			shadow.PatchBlock(domain.SieveBlock{ID: el.ID, Attrs: map[string]interface{}{"status": block.BlockStatusDispatched, "createdAt": ""}})
+			if stuck := shadow.ResetStuckDispatched(time.Minute); fmt.Sprint(stuck) != fmt.Sprint([]string{host, el.ID}) {
+				t.Errorf("stuck = %v, want the stale host and its stale element", stuck)
+			}
+		})
 	}
 }
 

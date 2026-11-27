@@ -470,14 +470,16 @@ describe('DocumentService membership verbs — the block-op envelope (FROZEN)', 
   // Every membership verb rides ONE envelope, and the structured edits a NodeView
   // makes converge on the same `update-block` op prose edits ride: one wire op for
   // every block update, whatever drew it.
-  it('envelopes create + update + delete, in order, each naming the document', () => {
+  it('envelopes create + update + replace + delete, in order, each naming the document', () => {
     const { documentService, sock } = serviceRig({ uuid: 'doc-1' })
     documentService.createBlock('doc-1', 'prose', { content: 'hi' }, { afterBlockId: 'b1' })
     documentService.updateBlock('doc-1', 'co-1', 'code', { source: 'x = 1' })
+    documentService.replaceBlock('doc-1', 'co-1', 'ai-block', { answer: [] })
     documentService.deleteBlock('doc-1', 'b9')
     expect(sock.sentOfType('block-op')).toEqual([
       { type: 'block-op', uuid: 'doc-1', opId: OPID, op: { type: 'create-block', blockId: '', kind: 'prose', attrs: { content: 'hi' }, afterBlockId: 'b1' } },
       { type: 'block-op', uuid: 'doc-1', opId: OPID, op: { type: 'update-block', blockId: 'co-1', kind: 'code', attrs: { source: 'x = 1' } } },
+      { type: 'block-op', uuid: 'doc-1', opId: OPID, op: { type: 'replace-block', blockId: 'co-1', kind: 'ai-block', attrs: { answer: [] } } },
       { type: 'block-op', uuid: 'doc-1', opId: OPID, op: { type: 'delete-block', blockId: 'b9' } },
     ])
   })

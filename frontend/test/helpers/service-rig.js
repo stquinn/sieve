@@ -61,6 +61,7 @@ export function stubDocumentService(overrides = {}) {
   return Object.assign({
     createBlock: vi.fn(() => Promise.resolve({ ok: true })),
     updateBlock: vi.fn(() => Promise.resolve({ ok: true })),
+    replaceBlock: vi.fn(() => Promise.resolve({ ok: true })),
     deleteBlock: vi.fn(() => Promise.resolve({ ok: true })),
     setBlockOrder: vi.fn(() => Promise.resolve({ ok: true })),
     extract: vi.fn(() => Promise.resolve({ ok: true })),

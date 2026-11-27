@@ -121,7 +121,10 @@ type CommandBlock struct {
 }
 
 // CommandResultFrame reports one step of a command's lifecycle. A command emits
-// several: PENDING when the work is accepted, then COMPLETE or ERROR.
+// several: PENDING when the work is accepted, PENDING again each time its
+// running block changes — the block as it now stands, its answer grown by a
+// block the model wrote — then COMPLETE or ERROR. An ERROR after any of the
+// answer was written carries the block, cut short, with what was written.
 //
 // It is correlated and therefore ack-shaped: it goes back on the socket the
 // request arrived on, never to whichever socket currently owns the workspace
@@ -130,8 +133,8 @@ type CommandResultFrame struct {
 	Type          string        `json:"type"`
 	CorrelationID string        `json:"correlationId"`
 	Cmd           string        `json:"cmd"`
-	Status        string        `json:"status" doc:"PENDING | COMPLETE | ERROR"`
-	Block         *CommandBlock `json:"block,omitempty" doc:"present when this step produced a block to render"`
+	Status        string        `json:"status" doc:"PENDING (accepted, and again with the block each time it changes while running) | COMPLETE | ERROR"`
+	Block         *CommandBlock `json:"block,omitempty" doc:"present when this step produced a block to render; each step's block replaces the one before"`
 	Error         string        `json:"error,omitempty" doc:"present on ERROR"`
 }
 

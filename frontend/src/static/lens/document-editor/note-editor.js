@@ -201,6 +201,36 @@ export class NoteEditor extends ProseMirrorEditor {
   }
 
   /**
+   * Adds a copy of a block held outside this document — an element of an answer
+   * whose holder is not a block here (a popup command's block, `holderId`) — as
+   * a top-level block: directly after the block the caret is in, else at the
+   * end. It is the nested source's Add to Document: the element's own
+   * `sieve/<kind>` view stamped with its holder as `parentId`, played back as an
+   * additive extract of its own kind, which Go builds with an id of its own and
+   * places after the anchor; the editor places it as a tracked transaction.
+   * @param {{kind: string, attrs: Record<string, any>}} element
+   * @param {string} holderId
+   * @returns {Promise<void>}
+   */
+  addToDocument(element, holderId) {
+    const ctx = this.getSelectionContext()
+    const ids = (ctx && ctx.blockIds && ctx.blockIds.length) ? ctx.blockIds : (ctx && ctx.blockId ? [ctx.blockId] : [])
+    const order = this.provider.getOrder()
+    const anchorId = ids.length ? ids[ids.length - 1] : order[order.length - 1]
+    if (!anchorId) return Promise.resolve()
+    return this.extract({
+      blockId: anchorId,
+      targetKind: element.kind,
+      operation: 'extract',
+      entries: [{
+        mimeType: 'sieve/' + element.kind,
+        content: JSON.stringify(element.attrs || {}),
+        context: { parentId: holderId },
+      }],
+    })
+  }
+
+  /**
    * Consumes a RANGE SOURCE and returns the block index its replacement is created
    * at: delete the range, then the enclosing paragraph too if that emptied it
    * (never the doc's sole child — schema-invalid). Both are TRACKED prose edits,

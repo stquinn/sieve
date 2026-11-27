@@ -119,6 +119,7 @@ describe.each(ARRANGEMENTS)('$name provider — the verbs a lens may call', ({ m
   it('answers no correlation — every verb is void', () => {
     expect(provider.requestAddBlock('prose', {}, null)).toBeUndefined()
     expect(provider.requestSetBlock('p1', {})).toBeUndefined()
+    expect(provider.requestReplaceBlock('p1', 'prose', {})).toBeUndefined()
     expect(provider.requestRemoveBlock('c1')).toBeUndefined()
     expect(provider.requestSetOrder(['p2', 'p1', 'c1'])).toBeUndefined()
     expect(provider.requestRetry('c1')).toBeUndefined()
@@ -134,6 +135,7 @@ describe.each(ARRANGEMENTS)('$name provider — the verbs a lens may call', ({ m
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect(() => provider.requestSetBlock('ghost', { content: 'x' })).not.toThrow()
     expect(() => provider.requestRemoveBlock('ghost')).not.toThrow()
+    expect(() => provider.requestReplaceBlock('ghost', 'prose', {})).not.toThrow()
     expect(() => provider.flush('ghost', 'x')).not.toThrow()
     expect(lens.cues).toEqual([])
     warn.mockRestore()
@@ -206,6 +208,12 @@ describe('the in-memory provider IS the authority — a draft has nothing behind
     provider.requestSetBlock('c1', { source: 'x=2' })
     expect(provider.getBlock('c1').attrs).toEqual({ id: 'c1', source: 'x=2' })
     expect(lens.cues).toEqual([{ blockIds: ['c1'], orderChanged: false, replaced: [] }])
+  })
+
+  it('REPLACES a block whole under a new kind, in its slot', () => {
+    provider.requestReplaceBlock('c1', 'ai-block', { answer: [] })
+    expect(provider.getOrder()).toEqual(['p1', 'c1', 'p2'])
+    expect(provider.getBlock('c1')).toEqual({ id: 'c1', kind: 'ai-block', attrs: { answer: [], id: 'c1' } })
   })
 
   it('removes a block and says the order changed', () => {

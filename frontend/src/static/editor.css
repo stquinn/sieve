@@ -1056,6 +1056,15 @@ pre.tiptap-code-block code {
 .sieve-block {
   --sieve-focus-accent: var(--theme-accentGreen); /* default fallback */
   position: relative;
+}
+
+/* A structured block's OUTER margin: the framework's, one value for every
+   kind, on the root of every sieve NodeView (.sieve-node) and of every
+   renderer sharing the .sieve-block shell wherever it is drawn. A kind never
+   sets its root's outer margin. A native prose node carries neither class and
+   keeps the editor's own spacing. */
+.sieve-block,
+.sieve-node {
   margin-top: 1.5rem;
   margin-bottom: 2rem;
 }

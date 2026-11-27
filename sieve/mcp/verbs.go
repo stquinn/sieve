@@ -52,6 +52,27 @@ type FetchPageInput struct {
 	URL string `json:"url" jsonschema:"the http or https URL of the web page to fetch and store as an HTML asset in the job's document"`
 }
 
+// AddToAnswerInput is the argument set for add_to_answer. It names no target:
+// the run's token is bound to the exchange it answers.
+type AddToAnswerInput struct {
+	ContentType string         `json:"content_type" jsonschema:"the block's content type, e.g. sieve/prose; describe_answer lists them"`
+	Attrs       map[string]any `json:"attrs" jsonschema:"the block's map of attrs, e.g. {\"content\": \"…markdown…\"} for sieve/prose; describe_answer gives each type's attrs and an example"`
+}
+
+// AnswerAdded is what add_to_answer reports: the content type of the block just
+// added and how many blocks the answer now holds from this run.
+type AnswerAdded struct {
+	Added  string `json:"added"`
+	Blocks int    `json:"blocks"`
+}
+
+// AnswerCatalogue is what describe_answer returns: every content type this
+// run's answer can be written in, and what else its holder says of it.
+type AnswerCatalogue struct {
+	ContentTypes []domain.AnswerCard `json:"content_types"`
+	Note         string              `json:"note,omitempty"`
+}
+
 // NoteSummary is one search hit: metadata only, never a body.
 type NoteSummary struct {
 	UUID     string   `json:"uuid"`
@@ -366,6 +387,88 @@ func (s *Server) fetchPage(ctx context.Context, _ *mcpsdk.CallToolRequest, in Fe
 		Path:    node.Path,
 		Bytes:   node.Bytes,
 	}, nil
+}
+
+// addToAnswer builds one block from the content type and attrs given and appends
+// it to the answer of the exchange the caller's token is bound to. The run's
+// first block replaces whatever answer an earlier run left. A content type this
+// answer does not take, a refused build or a refused write returns the refusal
+// as a tool error and writes nothing.
+func (s *Server) addToAnswer(ctx context.Context, _ *mcpsdk.CallToolRequest, in AddToAnswerInput) (*mcpsdk.CallToolResult, AnswerAdded, error) {
+	g, _ := ctx.Value(grantContextKey{}).(*runGrant)
+	if g == nil || !g.exchange.Answers() {
+		return nil, AnswerAdded{}, fmt.Errorf("add_to_answer: this run is not answering a question")
+	}
+	writer, ok := s.answers[g.exchange.Holder]
+	if !ok {
+		return nil, AnswerAdded{}, fmt.Errorf("add_to_answer: nothing here holds this answer; stop writing this answer")
+	}
+	el, err := s.admitted(g.exchange, writer.AnswerHolding(), in)
+	if err != nil {
+		logger.Warn("sieve mcp: add_to_answer refused", "container", g.exchange.Container, "block", g.exchange.Block, "holder", g.exchange.Holder, "content_type", in.ContentType, "err", err)
+		return nil, AnswerAdded{}, fmt.Errorf("add_to_answer: %w", err)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.ended {
+		return nil, AnswerAdded{}, fmt.Errorf("add_to_answer: this run has ended; stop writing this answer")
+	}
+	if err := writer.AppendToAnswer(g.exchange, el, g.written == 0); err != nil {
+		logger.Warn("sieve mcp: add_to_answer refused", "container", g.exchange.Container, "block", g.exchange.Block, "holder", g.exchange.Holder, "err", err)
+		return nil, AnswerAdded{}, fmt.Errorf("add_to_answer: %w; stop writing this answer", err)
+	}
+	g.written++
+	logger.Info("sieve mcp: add_to_answer", "container", g.exchange.Container, "block", g.exchange.Block, "holder", g.exchange.Holder, "kind", el.Kind, "blocks", g.written)
+	return nil, AnswerAdded{Added: in.ContentType, Blocks: g.written}, nil
+}
+
+// admitted builds the block in describes for ex's answer when an answer held so
+// takes it: a content type no kind offers, one the holding refuses, or a block
+// as built that the holding refuses, is refused naming the content types it
+// takes.
+func (s *Server) admitted(ex domain.Exchange, holding domain.AnswerHolding, in AddToAnswerInput) (domain.SieveBlock, error) {
+	var available []string
+	for _, card := range holding.Offers(s.vocabulary.AnswerCards()) {
+		available = append(available, card.ContentType)
+	}
+	card, known := s.cardOf(in.ContentType)
+	if !known {
+		return domain.SieveBlock{}, fmt.Errorf("%q is not a content type an answer can be written in. Available here: %s",
+			in.ContentType, strings.Join(available, ", "))
+	}
+	if err := holding.Admit(card, card.WaitsAlways, available); err != nil {
+		return domain.SieveBlock{}, err
+	}
+	el, err := s.vocabulary.BuildAnswerElement(ex.AnswerDocument(), in.ContentType, in.Attrs)
+	if err != nil {
+		return domain.SieveBlock{}, err
+	}
+	if err := holding.Admit(card, s.vocabulary.Waits(el), available); err != nil {
+		return domain.SieveBlock{}, err
+	}
+	return el, nil
+}
+
+// cardOf is the card of contentType, when a kind offers it.
+func (s *Server) cardOf(contentType string) (domain.AnswerCard, bool) {
+	for _, card := range s.vocabulary.AnswerCards() {
+		if card.ContentType == strings.TrimSpace(contentType) {
+			return card, true
+		}
+	}
+	return domain.AnswerCard{}, false
+}
+
+// describeAnswer lists the content types the caller's answer can be written in:
+// those its holder takes, and what the holder says beyond them.
+func (s *Server) describeAnswer(ctx context.Context, _ *mcpsdk.CallToolRequest, _ struct{}) (*mcpsdk.CallToolResult, AnswerCatalogue, error) {
+	holding := domain.AnswerHolding{RunsJobs: true}
+	if g, _ := ctx.Value(grantContextKey{}).(*runGrant); g != nil {
+		if writer, ok := s.answers[g.exchange.Holder]; ok {
+			holding = writer.AnswerHolding()
+		}
+	}
+	return nil, AnswerCatalogue{ContentTypes: holding.Offers(s.vocabulary.AnswerCards()), Note: holding.Note()}, nil
 }
 
 // htmlTitle returns the trimmed text of doc's first <title>, or empty when it

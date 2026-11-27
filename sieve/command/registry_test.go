@@ -2,10 +2,12 @@ package command
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"sieve/sieve/domain"
 	"sieve/sieve/services"
 )
 
@@ -375,5 +377,102 @@ func TestDispatch_EmptyFamilyIsTolerant(t *testing.T) {
 	second := <-ch
 	if second.Status != StatusComplete {
 		t.Fatalf("want COMPLETE (empty family tolerant), got %+v", second)
+	}
+}
+
+// A running command's block is an answer a run may write: Dispatch hands the
+// command its exchange, each append reaches the client as the block as it now
+// stands, a PENDING step, and the terminal step carries the answer written — a
+// completion's own answer replaced, a failure carrying the block cut short. Once
+// the command has ended, been cancelled or was never dispatched, a write is
+// refused.
+func TestDispatch_ARunningCommandsBlockTakesItsAnswer(t *testing.T) {
+	prose := func(text string) domain.SieveBlock {
+		return domain.NewSieveBlock("prose", "", map[string]interface{}{"content": text})
+	}
+	answerOf := func(b *Block) []string {
+		if b == nil {
+			return nil
+		}
+		var out []string
+		for _, el := range (domain.SieveBlock{Attrs: b.Attrs}).Elements("answer") {
+			out = append(out, el.Content())
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name       string
+		writes     []string
+		fails      bool
+		cancel     bool
+		wantStatus string
+		wantAnswer []string
+	}{
+		{name: "an unwritten command completes with its own answer", wantStatus: StatusComplete, wantAnswer: []string{"final message"}},
+		{name: "a written answer replaces the completion's", writes: []string{"one", "two"}, wantStatus: StatusComplete, wantAnswer: []string{"one", "two"}},
+		{name: "a failure after a write carries the block cut short", writes: []string{"one"}, fails: true, wantStatus: StatusError, wantAnswer: []string{"one"}},
+		{name: "a failure before any write carries no block", fails: true, wantStatus: StatusError},
+		{name: "a cancelled command takes no write", cancel: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := testRegistry(t)
+			gate := make(chan struct{})
+			var got domain.Exchange
+			r.Register(&fakeCommand{name: "ask", build: func(_ string, ctx Context) (Job, error) {
+				got = ctx.Exchange
+				return Job{
+					Label:   "/ask",
+					Pending: &Block{Kind: "ai-block", Attrs: map[string]interface{}{"status": "PENDING"}},
+					Work: func() (Block, error) {
+						<-gate
+						if tc.fails {
+							return Block{}, errors.New("cli timeout")
+						}
+						return Block{Kind: "ai-block", Attrs: map[string]interface{}{"status": "COMPLETE", "answer": []interface{}{
+							map[string]interface{}{"kind": "prose", "attrs": map[string]interface{}{"content": "final message"}},
+						}}}, nil
+					},
+				}, nil
+			}})
+			emit, ch := collector()
+			r.Dispatch("ask", "", "q", NewContext([]byte(`{"docUuid":"doc-1"}`), nil, nil), "c-1", emit)
+			<-ch
+			if want := (domain.Exchange{Container: "doc-1", Block: "c-1", Holder: domain.HeldByCommand}); got != want {
+				t.Fatalf("the command was handed %+v, want %+v", got, want)
+			}
+			if tc.cancel {
+				r.Cancel("c-1")
+			}
+			for i, text := range tc.writes {
+				if err := r.AppendToAnswer(got, prose(text), i == 0); err != nil {
+					t.Fatalf("append %q: %v", text, err)
+				}
+				step := <-ch
+				if step.Status != StatusPending || fmt.Sprint(answerOf(step.Block)) != fmt.Sprint(tc.writes[:i+1]) || step.Block.Attrs["id"] != "c-1" {
+					t.Fatalf("step after %q = %+v, want the block PENDING with the answer so far", text, step)
+				}
+			}
+			if tc.cancel {
+				if err := r.AppendToAnswer(got, prose("late"), true); err == nil {
+					t.Errorf("a cancelled command took a write")
+				}
+				close(gate)
+				return
+			}
+			close(gate)
+			out := <-ch
+			if out.Status != tc.wantStatus || fmt.Sprint(answerOf(out.Block)) != fmt.Sprint(tc.wantAnswer) {
+				t.Fatalf("terminal step = %+v (answer %v), want %s with %v", out, answerOf(out.Block), tc.wantStatus, tc.wantAnswer)
+			}
+			if tc.fails && out.Block != nil && (out.Block.Attrs["status"] != StatusError || out.Block.Attrs["error"] != "cli timeout") {
+				t.Errorf("the cut-short block does not carry its failure: %+v", out.Block.Attrs)
+			}
+			if err := r.AppendToAnswer(got, prose("late"), false); err == nil {
+				t.Errorf("an ended command took a write")
+			}
+		})
+	}
+	if err := testRegistry(t).AppendToAnswer(domain.Exchange{Block: "never", Holder: domain.HeldByCommand}, prose("x"), true); err == nil {
+		t.Errorf("a command never dispatched took a write")
 	}
 }

@@ -130,6 +130,30 @@ const SieveClip = Node.create({
   renderHTML() { return ['div', { class: 'sieve-clip' }, 0] },
 })
 
+// A container that hosts BLOCKS (the ai-block answer's shape): its content
+// admits the sieveBlock group, so each child is an element. A reference is the
+// atom an element can be.
+const SieveAnswer = Node.create({
+  name: 'sieve-answer',
+  group: 'block',
+  content: 'block+',
+  selectable: true,
+  defining: true,
+  addAttributes() { return { kind: { default: 'answer' }, id: { default: 'answer-1' } } },
+  parseHTML() { return [{ tag: 'div.sieve-answer' }] },
+  renderHTML() { return ['div', { class: 'sieve-answer' }, 0] },
+})
+
+const SieveReference = Node.create({
+  name: 'sieve-reference',
+  group: 'block sieveBlock',
+  atom: true,
+  selectable: true,
+  addAttributes() { return { kind: { default: 'reference' }, id: { default: 'ref-1' } } },
+  parseHTML() { return [{ tag: 'div.sieve-reference' }] },
+  renderHTML() { return ['div', { class: 'sieve-reference' }] },
+})
+
 let editor = null
 afterEach(() => { if (editor) { editor.destroy(); editor = null } })
 
@@ -150,7 +174,7 @@ function makeEditor(contentJSON, extraExtensions = [], clipboardHost = undefined
       StarterKit.configure({ trailingNode: true }), // mirrors editor.js (caret contract clause 1)
       Table.configure({ resizable: false }),
       TableRow, TableHeader, TableCell,
-      SieveCode, SieveDiagram, SieveLog, SieveClip,
+      SieveCode, SieveDiagram, SieveLog, SieveClip, SieveAnswer, SieveReference,
       buildInteractionPolicyExtension({ Extension, Plugin, Selection, TextSelection, NodeSelection, Decoration, DecorationSet }, clipboardHost),
       ...extraExtensions,
     ],
@@ -578,6 +602,29 @@ describe('Mod+A select-scope ladder (contract: Select-scope ladder, #153)', () =
     caretAt(3)
     expect(press('ф', { ctrlKey: true, code: 'KeyA' }).handled).toBe(true)
     expect(editor.state.doc.textBetween(sel().from, sel().to)).toBe('aa\nbb')
+  })
+
+  // An answer's elements are selected whole, first and last whatever their
+  // kind: an atom at either end is inside the rung, which a text selection
+  // would leave out. The next press is the document.
+  it.each([
+    ['references at both ends', ['ref', 'p', 'ref']],
+    ['prose at both ends', ['p', 'ref', 'p']],
+  ])('first press in an answer selects every element of it — %s', (_name, kinds) => {
+    const child = (k) => k === 'ref'
+      ? { type: 'sieve-reference' }
+      : { type: 'paragraph', content: [{ type: 'text', text: 'para' }] }
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-answer', content: kinds.map(child) },
+      { type: 'paragraph', content: [{ type: 'text', text: 'after' }] },
+    ] })
+    const answer = editor.state.doc.child(0)
+    caretAt(kinds[0] === 'p' ? 3 : 1 + answer.child(0).nodeSize + 2)
+    expect(modA().handled).toBe(true)
+    expect([sel().from, sel().to]).toEqual([1, 1 + answer.content.size])
+    expect(sel().toJSON()).toEqual({ type: 'content', pos: 0 })
+    expect(modA().handled).toBe(true)
+    expect(coversDoc()).toBe(true)
   })
 
   it('second press escalates to the document', () => {

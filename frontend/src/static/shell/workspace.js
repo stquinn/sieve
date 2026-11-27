@@ -939,7 +939,7 @@ export class SieveWorkspace {
   /** Constructs the Workspace-owned chrome children, once at module load. Each
    *  null-guards its structural DOM, so a headless import leaves writes no-ops. */
   bootChrome() {
-    if (!this.#commandBadges) this.#commandBadges = new CommandBadges()
+    if (!this.#commandBadges) this.#commandBadges = new CommandBadges(null, (docUuid, element, holderId) => this.#addToDocument(docUuid, element, holderId))
     if (!this.#askPanel) this.#askPanel = new AskPanel(this, this.#commandService, this.#commandBadges, this.#mentionService)
     if (!this.#insertDialogs) this.#insertDialogs = new InsertDialogs(this)
     if (!this.#findDialog) this.#findDialog = new FindDialog(this)
@@ -964,6 +964,19 @@ export class SieveWorkspace {
 
   /** @returns {CommandBadges|null} */
   get commandBadges() { return this.#commandBadges }
+
+  /**
+   * Places a copy of a block of a popup answer in the document docUuid, when
+   * that document is the active editor that can hold blocks.
+   * @param {string} docUuid @param {{kind: string, attrs: Record<string, any>}} element @param {string} holderId
+   * @returns {boolean} whether it was placed
+   */
+  #addToDocument(docUuid, element, holderId) {
+    const ed = this.activeBlockEditor()
+    if (!ed || ed.uuid !== docUuid) return false
+    ed.addToDocument(element, holderId)
+    return true
+  }
 
   /** @returns {AskPanel|null} the permanent Ask-panel child */
   get askPanel() { return this.#askPanel }

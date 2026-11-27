@@ -5,7 +5,7 @@
 //
 // The package depends only on services + domain; nothing depends back on it. It
 // is constructed at the composition root, mounted at /mcp on the chi router, and
-// its Endpoint() feeds the runtime URL + per-call bearer token into the
+// its EndpointFor() feeds the runtime URL + per-call bearer token into the
 // containment profile the AI service renders to CLI args.
 package mcp
 
@@ -19,16 +19,35 @@ import (
 	"time"
 
 	"sieve/logger"
+	"sieve/sieve/domain"
 	"sieve/sieve/services"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-type docContextKey struct{}
+type grantContextKey struct{}
+
+// runGrant is what one per-run bearer token is bound to: the exchange the run
+// may write into, how many elements it has written to that exchange's answer,
+// and whether the run has ended. Its mutex serialises a run's answer writes
+// with each other and with its end, so the first write is known and none lands
+// after the end.
+type runGrant struct {
+	exchange domain.Exchange
+
+	mu      sync.Mutex
+	written int
+	ended   bool
+}
+
+// bind returns ctx carrying g.
+func (g *runGrant) bind(ctx context.Context) context.Context {
+	return context.WithValue(ctx, grantContextKey{}, g)
+}
 
 // WithDocument binds a target document UUID to ctx for side-effecting MCP verbs.
 func WithDocument(ctx context.Context, docUUID string) context.Context {
-	return context.WithValue(ctx, docContextKey{}, strings.TrimSpace(docUUID))
+	return (&runGrant{exchange: domain.Exchange{Container: strings.TrimSpace(docUUID)}}).bind(ctx)
 }
 
 // DocumentFromContext returns the target document UUID bound to ctx, or empty string.
@@ -36,8 +55,10 @@ func DocumentFromContext(ctx context.Context) string {
 	if ctx == nil {
 		return ""
 	}
-	v, _ := ctx.Value(docContextKey{}).(string)
-	return v
+	if g, ok := ctx.Value(grantContextKey{}).(*runGrant); ok {
+		return g.exchange.Container
+	}
+	return ""
 }
 
 // Server is the internal Sieve MCP. It owns the transport-agnostic verb handlers
@@ -49,22 +70,27 @@ func DocumentFromContext(ctx context.Context) string {
 // and both MUST record the same bodyRead audit through one auditor, which is
 // what keeps bulk-read visible at a single boundary.
 //
-// Side-effecting verb: fetch_page writes a readable HTML asset into the
-// calling job's own document (and nowhere else), returning its NodeDescriptor.
+// Side-effecting verbs: fetch_page writes a readable HTML asset into the
+// calling job's own document (and nowhere else), returning its NodeDescriptor;
+// add_to_answer, once answers are opened (OpenAnswers), appends one block to the
+// answer of the exchange the run's token is bound to, and describe_answer lists
+// the content types it takes.
 type Server struct {
 	documents    *services.DocumentService
 	nodes        NodeResolver  // address → NodeDescriptor; the concrete Router is injected at the root
 	finder       SearchService // criteria → hits; the same Router
 	linkPreview  *services.LinkPreviewService
 	fetchTimeout time.Duration
-	audit        bodyReadAuditor // every body read, recorded at one place
+	audit        bodyReadAuditor                      // every body read, recorded at one place
+	vocabulary   AnswerVocabulary                     // content type + attrs → answer element; nil until OpenAnswers
+	answers      map[domain.AnswerHolder]AnswerWriter // appends an element to an exchange's answer, by its holder; nil until OpenAnswers
 
 	sdk     *mcpsdk.Server
 	handler http.Handler // StreamableHTTPHandler, built once
 
 	mu      sync.RWMutex
-	baseURL string            // e.g. "http://127.0.0.1:34115"; set once the listener is bound
-	tokens  map[string]string // valid per-run bearer tokens → bound document UUID ("" when unscoped)
+	baseURL string               // e.g. "http://127.0.0.1:34115"; set once the listener is bound
+	tokens  map[string]*runGrant // valid per-run bearer tokens → what each is bound to
 }
 
 // pageFetchTimeout is fetch_page's deadline for retrieving one page.
@@ -83,7 +109,7 @@ func NewServer(documents *services.DocumentService, nodes NodeResolver, search S
 		linkPreview:  linkPreview,
 		fetchTimeout: pageFetchTimeout,
 		audit:        logAuditor{},
-		tokens:       make(map[string]string),
+		tokens:       make(map[string]*runGrant),
 	}
 
 	sdk := mcpsdk.NewServer(&mcpsdk.Implementation{
@@ -133,6 +159,27 @@ func NewServer(documents *services.DocumentService, nodes NodeResolver, search S
 	return s
 }
 
+// OpenAnswers registers add_to_answer and describe_answer over vocabulary and
+// writers, the writer of each holder an exchange's block can live in. Which
+// content types a run may write is decided by its holder's writer
+// (AnswerHolding), so add_to_answer's description names none and points to
+// describe_answer, which lists this run's.
+func (s *Server) OpenAnswers(vocabulary AnswerVocabulary, writers map[domain.AnswerHolder]AnswerWriter) {
+	s.vocabulary, s.answers = vocabulary, writers
+	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
+		Name: "add_to_answer",
+		Description: "Write the next block of your answer. The answer is a document the reader keeps: each call appends one finished block of it, " +
+			"in order, exactly as you write it — never commentary on your work, a progress note, or a remark about the task. " +
+			"Once you have called this tool, your final message is not shown to anyone: the blocks you added are the whole answer. " +
+			"Call describe_answer first: it lists the content types THIS answer takes, with each one's attrs and an example; " +
+			"attrs is the block's map. A content type this answer does not take is refused with the reason and the ones it does.",
+	}, s.addToAnswer)
+	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
+		Name:        "describe_answer",
+		Description: "List the content types this answer is written in with add_to_answer: for each, when to use it, the attrs its map takes, a minimal example map, and which of its blocks wait on work after they land.",
+	}, s.describeAnswer)
+}
+
 // SetBaseURL records the origin the CLI subprocess reaches the app on (the
 // standalone localhost listener bound in main). Called after startup, when the
 // port is known; safe to call again on library switch.
@@ -142,61 +189,71 @@ func (s *Server) SetBaseURL(base string) {
 	s.mu.Unlock()
 }
 
-// Endpoint issues a fresh per-call bearer token, registers it, and returns the
-// /mcp URL + token to inject into the containment profile. An empty URL (no
-// listener yet) means no server is reachable, so the profile renders without MCP
-// flags. Implements the ai.MCPEndpoint seam.
-//
-// Tokens are not revoked after the call — they are localhost-only, bound to
-// 127.0.0.1, and live only for the app session. This is an accepted minor
-// accumulation for v1 (noted; revoke-on-completion is a future refinement).
-func (s *Server) Endpoint() (url, token string) {
-	return s.EndpointForDoc("")
-}
-
-// EndpointForDoc issues a per-call bearer token bound to docUUID so
-// side-effecting verbs (fetch_page) write only into that document's assets.
-func (s *Server) EndpointForDoc(docUUID string) (url, token string) {
+// EndpointFor issues a per-run bearer token bound to ex, registers it, and
+// returns the /mcp URL + token to inject into the containment profile, so
+// side-effecting verbs write only into ex's container (fetch_page) and ex's
+// answer (add_to_answer); an empty ex grants neither. An empty URL (no listener
+// yet) means no server is reachable, so the profile renders without MCP flags.
+// The token is valid until EndRun ends its run. Implements ai.MCPEndpoint.
+func (s *Server) EndpointFor(ex domain.Exchange) (url, token string) {
 	s.mu.RLock()
 	base := s.baseURL
 	s.mu.RUnlock()
 	if base == "" {
 		return "", ""
 	}
-	tok := s.issueToken(docUUID)
+	tok := s.issueToken(ex)
 	return base + "/mcp", tok
 }
 
-func (s *Server) issueToken(docUUID string) string {
+// EndRun revokes token, so a request bearing it is refused as unauthorised and
+// an add_to_answer already in flight on it writes nothing, and returns how many
+// elements of its exchange's answer the run wrote. A token that is unknown or
+// already ended wrote none. Implements ai.MCPEndpoint.
+func (s *Server) EndRun(token string) (written int) {
+	s.mu.Lock()
+	g, ok := s.tokens[token]
+	delete(s.tokens, token)
+	s.mu.Unlock()
+	if !ok {
+		return 0
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.ended = true
+	return g.written
+}
+
+func (s *Server) issueToken(ex domain.Exchange) string {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		logger.Error("sieve mcp: token generation failed", "err", err)
 		return ""
 	}
 	tok := hex.EncodeToString(buf)
+	ex.Container, ex.Block = strings.TrimSpace(ex.Container), strings.TrimSpace(ex.Block)
 	s.mu.Lock()
-	s.tokens[tok] = strings.TrimSpace(docUUID)
+	s.tokens[tok] = &runGrant{exchange: ex}
 	s.mu.Unlock()
 	return tok
 }
 
-func (s *Server) tokenDoc(tok string) (string, bool) {
+func (s *Server) grantOf(tok string) (*runGrant, bool) {
 	if tok == "" {
-		return "", false
+		return nil, false
 	}
 	s.mu.RLock()
-	docUUID, ok := s.tokens[tok]
+	g, ok := s.tokens[tok]
 	s.mu.RUnlock()
-	return docUUID, ok
+	return g, ok
 }
 
 // ServeHTTP authenticates the request against the per-run bearer token registry,
-// binds the token's document UUID into the request context when present, and
-// delegates to the streamable MCP handler. Unauthenticated requests are
-// rejected — only the CLI Sieve launched (holding the injected token) may reach
-// the knowledge base.
+// binds the token's grant into the request context, and delegates to the
+// streamable MCP handler. Unauthenticated requests are rejected — only the CLI
+// Sieve launched (holding the injected token) may reach the knowledge base.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	docUUID, ok := s.tokenDoc(s.bearerToken(r))
+	g, ok := s.grantOf(s.bearerToken(r))
 	if !ok {
 		// A hit on the localhost MCP without a valid per-run token is security-
 		// relevant (only the CLI Sieve launched should reach it) — surface it.
@@ -204,10 +261,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if docUUID != "" {
-		r = r.WithContext(WithDocument(r.Context(), docUUID))
-	}
-	s.handler.ServeHTTP(w, r)
+	s.handler.ServeHTTP(w, r.WithContext(g.bind(r.Context())))
 }
 
 // bearerToken extracts the token from an "Authorization: Bearer <token>" header.

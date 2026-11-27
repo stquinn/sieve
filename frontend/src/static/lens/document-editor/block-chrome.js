@@ -298,9 +298,10 @@ var DecorationSet = VENDOR.DecorationSet
     })
   }
 
-  /** Places the DOM selection of an AllSelection or a CellSelection on real text
-   *  nodes: the first and last editable text in the document, or in the selected
-   *  cells (row-major, skipping cells with no text). PM's own placement sits on
+  /** Places the DOM selection of an AllSelection, a CellSelection or the content
+   *  of a container that hosts blocks on real text nodes: the first and last
+   *  editable text in the document, in the selected cells (row-major, skipping
+   *  cells with no text), or in the container's content. PM's own placement sits on
    *  element boundaries — between this extension's contenteditable=false chrome
    *  widgets, or between table cells — which WebKit either leaves unpainted or
    *  refuses, keeping the previous range for the DOM observer to read back as
@@ -316,6 +317,7 @@ var DecorationSet = VENDOR.DecorationSet
       var roots
       if (type === 'all') roots = [view.dom]
       else if (type === 'cell') roots = selection.ranges.map(function (/** @type {any} */ r) { return view.nodeDOM(r.$from.pos - 1) })
+      else if (type === 'content') roots = [view.domAtPos(selection.from).node]
       else return
       var domSel = view.dom.ownerDocument.getSelection()
       if (!domSel) return

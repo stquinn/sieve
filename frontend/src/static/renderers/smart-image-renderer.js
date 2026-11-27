@@ -64,11 +64,12 @@ export class SmartImageRenderer extends BlockRenderer {
     badge.className = 'smart-image-status'
 
     // The image and its chrome live in a frame that hugs the image, so the resize
-    // handles and badge anchor to the IMAGE, not the full-width block root.
+    // handles and badge anchor to the IMAGE, not the full-width block root. A
+    // read-only image has no handles.
     const frame = document.createElement('div')
     frame.className = 'smart-image-frame'
     frame.appendChild(img)
-    for (const spec of RESIZE_HANDLES) {
+    for (const spec of this.readOnly ? [] : RESIZE_HANDLES) {
       const handle = document.createElement('div')
       handle.className = `image-resizer image-resizer--${spec.modifier}`
       this.#setupResize(img, handle, spec)
