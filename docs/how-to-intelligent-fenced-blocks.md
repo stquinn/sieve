@@ -596,6 +596,48 @@ if (!aiBlockId) {
 
 ---
 
+## Offering a Kind in an AI Answer
+
+A model answering an Ask, an Explain or a `/btw` writes its answer one block at a
+time through the MCP tool `add_to_answer(content_type, attrs)`; `describe_answer`
+lists the content types the answer it is writing takes (#124). A kind is offered
+when its processor implements `block.AnswerKind` (`sieve/block/answer_vocabulary.go`):
+
+```go
+type AnswerKind interface {
+    AnswerCard() domain.AnswerCard                          // what the model is told
+    AnswerSource(attrs AnswerAttrs) (AnswerSource, error)   // the model's map → what the block is built from
+}
+```
+
+- **The card** (`domain.AnswerCard`): `Use` says when to reach for the kind, `Attrs`
+  names each attr the map takes and what it holds, `Example` is a minimal map that
+  builds. The content type is `sieve/{kind}`; the registry names it.
+- **The source**: validate the map with `attrs.Strings(...)` / `StringsWith(...)`,
+  which refuse a missing, blank or unknown key. Return `Overrides` to seed the kind's
+  own `InitAttrs`, or `Entries` when the kind must acquire something, as a paste of
+  that content would (an image from its URL). An error is a tool error the model
+  sees, and nothing lands. The model supplies neither an id nor a status.
+- **A kind with a job** lands `PENDING` and its job runs on the job engine exactly
+  as a block a person created; the engine finds a block nested in another. Say so on
+  the card: `Waits` names in plain words which blocks wait ("every log", "a PlantUML
+  diagram"), `WaitsAlways` when it is every block of the kind. A holder that runs no
+  jobs refuses those with that wording.
+- **Where the answer is held decides what it takes** (`domain.AnswerHolding`,
+  declared by each holder's writer): a note's ai-block runs jobs and keeps files; a
+  running popup command does neither. A kind declares nothing about holders.
+- **A whole ai-block is not converted.** A processor's `IsSupportedContent` asks
+  `entries.Convertible()` first and declines a whole exchange; only prose takes one
+  (Embed in Document). A block nested in an answer is a nested source, and every
+  offer from it is a copy placed after the exchange.
+
+Give the kind its row in each kind table: the vocabulary
+(`answer_vocabulary_test.go`), the holders (`sieve/mcp/verbs_test.go`), Add to Document (`editor_service_action_test.go`),
+ranged copy (`clipboard-slice.test.js`), undo and redo (`editor_blockop_test.go`,
+`block-sync.test.js`).
+
+---
+
 ## Checklist: Building a New Intelligent Fenced Block
 
 **Go side**
@@ -604,6 +646,8 @@ if (!aiBlockId) {
 - [ ] HTTP handler: new block appends PENDING fence; retry reuses caller-supplied ID
 - [ ] Handler holds `*requesthandlers.JobTracker` (injected from the shared instance in `handlers.go`)
 - [ ] Background goroutine: calls `h.JobTracker.Start` + `hub.Broadcast("ai:job-started", ...)` at start; `h.JobTracker.End` + `hub.Broadcast("ai:job-ended", ...)` after SSE resolution broadcast
+
+- [ ] If a model may write the kind in an answer: `block.AnswerKind` (card + source), `Waits` when it has a job, a row in each kind table (see "Offering a Kind in an AI Answer")
 
 **JS side**
 - [ ] Extension file is `type="module"`; import shared utilities directly from `renderers/` (`esc` ← html-escape.js, `renderSanctionedMarkdown` ← sanctioned-markdown.js, `applyHighlighting` ← highlighting.js, `isStaleByTime`/`isJobActive` ← job-status.js — Rule 10)
