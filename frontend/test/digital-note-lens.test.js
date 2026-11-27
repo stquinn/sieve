@@ -228,10 +228,10 @@ describe('DigitalNoteLens', () => {
   })
 
   it('heads a diary page with its date, in the drawing it hands back and from that drawing kept', async () => {
-    const full = await presented({ days: ['2026-11-21'], key: 'ab12' })
+    const full = await presented({ ids: ['p1'], days: ['2026-11-21'], key: 'ab12' })
     expect(headingOf(full.root)).toBe('Saturday 21 November 2026')
     expect(full.provider.kept[0].drawing).toContain('>Saturday 21 November 2026</text>')
-    const { provider, root } = await presented({ days: ['2026-11-21'], key: 'ab12', drawing: full.provider.kept[0].drawing })
+    const { provider, root } = await presented({ ids: ['p1'], days: ['2026-11-21'], key: 'ab12', drawing: full.provider.kept[0].drawing })
     expect([provider.loads, provider.renderers, headingOf(root)]).toEqual([1, [InkRenderer.VERSION], 'Saturday 21 November 2026'])
   })
 
