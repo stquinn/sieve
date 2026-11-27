@@ -98,7 +98,7 @@ func TestComposerWire_AsksAboutABlockOfThisDocument(t *testing.T) {
 	q := (&AIBlockProcessor{}).foldQuestion(
 		composerBlock(t, "asks about a block of this document"), block.DocView{UUID: foldDocUUID})
 
-	if got := q.targets.names(); got != foldLeafID {
+	if got := q.targets.names(); got != foldSelfLeaf {
 		t.Errorf("target = %q, want the block the composer named", got)
 	}
 	if len(q.body) != 1 || q.body[0].StringAttr("content") != "why?" {
@@ -116,8 +116,8 @@ func TestComposerWire_AsksAboutTheWholeDocumentWithAnAttachment(t *testing.T) {
 	q := (&AIBlockProcessor{}).foldQuestion(
 		composerBlock(t, "asks about the whole document with an attachment"), block.DocView{UUID: foldDocUUID})
 
-	if got := q.targets.names(); got != block.WholeDocumentRef {
-		t.Errorf("target = %q, want the whole-document token", got)
+	if got := q.targets.names(); got != foldSelf {
+		t.Errorf("target = %q, want the whole-document address", got)
 	}
 	if len(q.attachments) != 1 || q.attachments[0].URI != foldOther || q.attachments[0].Title != "Auth Design" {
 		t.Errorf("attachments = %+v, want the attached document with its cached title", q.attachments)
@@ -130,8 +130,8 @@ func TestComposerWire_ExplainCarriesNoProse(t *testing.T) {
 	t.Cleanup(resetRegistry)
 
 	blk := composerBlock(t, "explain carries no prose")
-	header := (&AIBlockProcessor{}).qaHeader(blk, block.DocView{UUID: foldDocUUID})
-	if header != "EXPLAIN NODE: "+foldLeafID {
+	header := (&AIBlockProcessor{}).qaHeader(blk, foldDoc())
+	if header != "EXPLAIN NODE: "+foldSelfLeaf {
 		t.Errorf("header = %q", header)
 	}
 }

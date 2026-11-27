@@ -47,8 +47,8 @@ func TestGetByURI_ResolvesAContainerAddressAndReturnsItsContent(t *testing.T) {
 	if node.Title != "Auth Design" {
 		t.Errorf("title = %q", node.Title)
 	}
-	if node.URI != uriOf(uuid) || node.ID != uuid {
-		t.Errorf("node names the wrong target: uri=%q uuid=%q", node.URI, node.ID)
+	if node.URI != uriOf(uuid) {
+		t.Errorf("node names the wrong target: uri=%q, want %q", node.URI, uriOf(uuid))
 	}
 	if node.Kind != string(domain.KindNote) {
 		t.Errorf("kind = %q, want the source's own noun", node.Kind)
@@ -94,7 +94,7 @@ func TestBodyRead_BothBodyBearingVerbsAuditIdentically(t *testing.T) {
 	rec := auditing(s)
 	uuid := seedNote(t, ds, "Auth Design", "design", "auth-design", nil, "", "# Auth Design\n\nbody")
 
-	if _, _, err := s.getNote(context.Background(), nil, UUIDInput{UUID: uuid}); err != nil {
+	if _, _, err := s.getNote(context.Background(), nil, URIInput{URI: uriOf(uuid)}); err != nil {
 		t.Fatalf("get_note: %v", err)
 	}
 	if _, _, err := s.getByURI(context.Background(), nil, URIInput{URI: uriOf(uuid)}); err != nil {
@@ -128,8 +128,8 @@ func TestGetByURI_DereferencesABlockAddress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get_by_uri: %v", err)
 	}
-	if node.URI != uri || node.ID != blockUUID {
-		t.Errorf("node names the wrong target: uri=%q uuid=%q", node.URI, node.ID)
+	if node.URI != uri {
+		t.Errorf("node names the wrong target: uri=%q, want %q", node.URI, uri)
 	}
 	if !strings.Contains(node.Body, "Refresh needs the rotation window.") {
 		t.Errorf("body = %q, want the block's markdown", node.Body)
@@ -207,8 +207,8 @@ func TestGetByURI_AnAssetIsListedByItsContainerAndStatesWhereItsBytesAre(t *test
 			if node.Assets != nil {
 				t.Errorf("leaf assets = %+v, want none: only a whole container lists them", node.Assets)
 			}
-			if node.Kind != "asset" || node.ID != "spec.pdf" || node.Path != wantPath || node.Bytes != len(pdf) {
-				t.Errorf("node = %+v, want kind asset, id spec.pdf, path %q, %d bytes", node, wantPath, len(pdf))
+			if node.Kind != "asset" || node.URI != assetURI || node.Path != wantPath || node.Bytes != len(pdf) {
+				t.Errorf("node = %+v, want kind asset, uri %s, path %q, %d bytes", node, assetURI, wantPath, len(pdf))
 			}
 			if node.Body != "" {
 				t.Errorf("body = %q, want none: an asset's bytes are read from Path", node.Body)
@@ -220,7 +220,7 @@ func TestGetByURI_AnAssetIsListedByItsContainerAndStatesWhereItsBytesAre(t *test
 	}
 }
 
-// A leaf read is still greppable BY DOCUMENT. The audit's uuid names what was
+// A leaf read is still greppable BY DOCUMENT. The audit's id names what was
 // actually read — a block id, or an asset filename — so the container is recorded
 // beside it, or the document a leaf read came out of survives nowhere but inside
 // the uri string.
@@ -320,13 +320,128 @@ func TestGetByURI_CannotBeUsedToFetchTheWeb(t *testing.T) {
 			}
 			// The refusal must say what a coordinate looks like: the reader is a
 			// model, and "malformed address" alone teaches it nothing.
-			if !strings.Contains(err.Error(), "not a Sieve coordinate") {
+			if !strings.Contains(err.Error(), "not a Sieve address") {
 				t.Errorf("the refusal must be useful to a model: %v", err)
 			}
 		})
 	}
 	if counting.calls != 0 {
 		t.Errorf("the resolver was asked %d times; a non-coordinate must stop at the door", counting.calls)
+	}
+}
+
+// addressVerbs are the three verbs that take a sieve:// address, each reduced
+// to what it returned, so one table can drive them all.
+func addressVerbs(s *Server) map[string]func(arg string) (any, error) {
+	ctx := context.Background()
+	return map[string]func(string) (any, error){
+		"get_meta": func(arg string) (any, error) {
+			_, meta, err := s.getMeta(ctx, nil, URIInput{URI: arg})
+			return meta, err
+		},
+		"get_note": func(arg string) (any, error) {
+			_, note, err := s.getNote(ctx, nil, URIInput{URI: arg})
+			return note, err
+		},
+		"get_by_uri": func(arg string) (any, error) {
+			_, node, err := s.getByURI(ctx, nil, URIInput{URI: arg})
+			return node, err
+		},
+	}
+}
+
+// requireNoIdentityField fails if a verb's result carries a uuid or an id: a
+// result names its thing by uri alone.
+func requireNoIdentityField(t *testing.T, result any) {
+	t.Helper()
+	wire, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(wire, &fields); err != nil {
+		t.Fatalf("unmarshal %s: %v", wire, err)
+	}
+	if meta, ok := fields["meta"]; ok {
+		requireNoIdentityField(t, meta)
+	}
+	for _, name := range []string{"uuid", "id"} {
+		if _, ok := fields[name]; ok {
+			t.Errorf("result carries a %q field: %s", name, wire)
+		}
+	}
+}
+
+// Every verb that takes an address takes the container address of a note and
+// nothing spelled otherwise; the audit of the two body-reading verbs names the
+// document read and its address; a refusal reaches no read at all.
+func TestAddressVerbs_AcceptOnlyAnAddress(t *testing.T) {
+	s, ds := newTestServerWithDocs(t)
+	const blockUUID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4c03"
+	uuid := seedNote(t, ds, "Auth Design", "design", "auth-design", nil, "",
+		"<!--s:"+blockUUID+"-->\nRefresh needs the rotation window.\n<!--/s:"+blockUUID+"-->\n")
+
+	// refusal maps a verb to what its refusal wraps and names; a verb absent
+	// from the map accepts the spelling.
+	type refusal struct {
+		wraps  error
+		naming string
+	}
+	badAddress := refusal{domain.ErrBadAddress, "a bare id is not an address; an address is sieve://{container}"}
+	notWhole := refusal{nil, "get_by_uri"}
+	cases := []struct {
+		spelling string
+		arg      string
+		refused  map[string]refusal
+	}{
+		{"a container address", uriOf(uuid), nil},
+		{"a padded container address", "  " + uriOf(uuid) + "  ", nil},
+		{"a bare uuid", uuid, map[string]refusal{"get_meta": badAddress, "get_note": badAddress, "get_by_uri": badAddress}},
+		{"an upper-case uuid", strings.ToUpper(uuid), map[string]refusal{"get_meta": badAddress, "get_note": badAddress, "get_by_uri": badAddress}},
+		{"a leaf address", domain.NewLeafAddress(uuid, blockUUID).String(), map[string]refusal{"get_meta": notWhole, "get_note": notWhole}},
+		{"a pinned address", uriOf(uuid) + "?version=1", map[string]refusal{"get_meta": notWhole, "get_note": notWhole}},
+		{"a web address", "https://example.com/x", map[string]refusal{"get_meta": badAddress, "get_note": badAddress, "get_by_uri": badAddress}},
+		{"garbage", "not-an-address", map[string]refusal{"get_meta": badAddress, "get_note": badAddress, "get_by_uri": badAddress}},
+	}
+	for _, tc := range cases {
+		for verb, call := range addressVerbs(s) {
+			t.Run(verb+"/"+tc.spelling, func(t *testing.T) {
+				rec := auditing(s)
+				result, err := call(tc.arg)
+				want, refused := tc.refused[verb]
+				if refused {
+					if err == nil {
+						t.Fatalf("%s(%q) succeeded, want a refusal", verb, tc.arg)
+					}
+					if want.wraps != nil && !errors.Is(err, want.wraps) {
+						t.Errorf("err = %v, want it to wrap %v", err, want.wraps)
+					}
+					if !strings.Contains(err.Error(), verb) || !strings.Contains(err.Error(), want.naming) {
+						t.Errorf("err = %q, want it to name %q and %q", err, verb, want.naming)
+					}
+					if len(rec.reads) != 0 {
+						t.Errorf("a refusal was audited as a body read: %+v", rec.reads)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("%s(%q) = %v, want it to succeed", verb, tc.arg, err)
+				}
+				requireNoIdentityField(t, result)
+				if verb == "get_meta" {
+					if len(rec.reads) != 0 {
+						t.Errorf("get_meta read no body, yet was audited: %+v", rec.reads)
+					}
+					return
+				}
+				if len(rec.reads) != 1 {
+					t.Fatalf("body reads = %+v, want exactly 1", rec.reads)
+				}
+				if read := rec.reads[0]; read.verb != verb || read.container != uuid || read.uri != strings.TrimSpace(tc.arg) {
+					t.Errorf("audit = %+v, want the document %s read as %s", read, uuid, strings.TrimSpace(tc.arg))
+				}
+			})
+		}
 	}
 }
 

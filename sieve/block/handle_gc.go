@@ -29,6 +29,10 @@ import "sieve/sieve/domain"
 // recognise it before it looks a handle up.
 const WholeDocumentRef = "doc"
 
+// WholeDocumentKind is the Kind of an AIContext that speaks for the whole
+// document rather than one block.
+const WholeDocumentKind = "document"
+
 // collectHandles builds the resolution index over this document's blocks: every
 // block's primary ID plus its aliases. A ref resolves iff its target is here.
 func (s *ShadowDocument) collectHandles() map[string]bool {

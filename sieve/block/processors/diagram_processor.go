@@ -237,12 +237,12 @@ func (p *DiagramProcessor) needsRender(blk domain.SieveBlock) bool {
 	return prev != p.renderHash(p.effectiveSource(source))
 }
 
-func (p *DiagramProcessor) BuildContext(blk domain.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
+func (p *DiagramProcessor) BuildContext(blk domain.SieveBlock, doc block.DocView, _ map[string]bool) block.AIContext {
 	src, _ := blk.Attrs["source"].(string)
 	if strings.TrimSpace(src) == "" {
 		return block.AIContext{}
 	}
-	return block.AIContext{NodeIDs: []string{blk.ID}, Content: p.fence(blk, src)}
+	return doc.NodeContext(blk.ID, p.fence(blk, src))
 }
 
 // DescribeJob returns a PlantUML render job, or nil. Mermaid renders client-side

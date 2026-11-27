@@ -499,7 +499,7 @@ func (p *SmartImageProcessor) parseCSSLength(s string) float64 {
 
 func (p *SmartImageProcessor) OnChange(_ *domain.SieveBlock) {}
 
-func (p *SmartImageProcessor) BuildContext(blk domain.SieveBlock, _ block.DocView, seen map[string]bool) block.AIContext {
+func (p *SmartImageProcessor) BuildContext(blk domain.SieveBlock, doc block.DocView, seen map[string]bool) block.AIContext {
 	src, _ := blk.Attrs["src"].(string)
 	alt, _ := blk.Attrs["alt"].(string)
 	summary, _ := blk.Attrs["summary"].(string)
@@ -508,7 +508,7 @@ func (p *SmartImageProcessor) BuildContext(blk domain.SieveBlock, _ block.DocVie
 	}
 	var sb strings.Builder
 	sb.WriteString("Image: " + p.assets.filename(src) + "\n")
-	ctx := block.AIContext{NodeIDs: []string{blk.ID}, Content: sb.String()}
+	ctx := doc.NodeContext(blk.ID, sb.String())
 	ctx.Tags = []block.Tag{
 		{Label: "ALT", Values: []string{alt}},
 		{Label: "Summary", Values: []string{summary}},

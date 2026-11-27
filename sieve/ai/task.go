@@ -161,19 +161,17 @@ func (d ThreadData) Text() string {
 }
 
 // BtwData is the data of the btw task: the question, the selection it may be
-// about, and the open document as background. DocUUID is empty when no
-// document is open.
+// about, and the open document's title and summary as background.
 type BtwData struct {
 	Question   string
 	Selection  string
 	DocTitle   string
 	DocSummary string
-	DocUUID    string
 }
 
 func (d BtwData) Text() string {
-	return fmt.Sprintf("QUESTION:\n%s\n\nSELECTED TEXT:\n%s\n\nBACKGROUND:\n- Document title: %s\n- Document summary: %s\n- Document uuid: %s",
-		d.Question, d.Selection, d.DocTitle, d.DocSummary, d.DocUUID)
+	return fmt.Sprintf("QUESTION:\n%s\n\nSELECTED TEXT:\n%s\n\nBACKGROUND:\n- Document title: %s\n- Document summary: %s",
+		d.Question, d.Selection, d.DocTitle, d.DocSummary)
 }
 
 // ImageData is the data of the image task: the file name of the image, in the

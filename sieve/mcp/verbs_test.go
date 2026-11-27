@@ -160,7 +160,7 @@ func TestSearch_FindsByNameSummaryAndTagsInAFolderUnderALimit(t *testing.T) {
 	}
 }
 
-// A hit is metadata the model can act on: the uuid get_note takes, the kind, and
+// A hit is metadata the model can act on: its address, the kind, and
 // the note's own folder, tags, summary and modified time.
 func TestSearch_AHitIsTheTargetsMetadata(t *testing.T) {
 	s, ds := newTestServerWithDocs(t)
@@ -180,11 +180,17 @@ func TestSearch_AHitIsTheTargetsMetadata(t *testing.T) {
 		t.Fatalf("search = %+v, %v; want the note and the buffer", res, err)
 	}
 	note, scratch := res.Results[0], res.Results[1]
-	if note.UUID != uuid || note.Kind != "note" || note.Folder != "programming" ||
+	for _, hit := range res.Results {
+		requireNoIdentityField(t, hit)
+	}
+	if note.URI != uriOf(uuid) || res.Results[1].URI != uriOf(buf.UUID()) {
+		t.Errorf("hits carry no address: %+v", res.Results)
+	}
+	if note.Kind != "note" || note.Folder != "programming" ||
 		strings.Join(note.Tags, ",") != "go,concurrency" || note.Summary != "goroutines and channels" || note.Modified == "" {
 		t.Errorf("note hit = %+v", note)
 	}
-	if scratch.UUID != buf.UUID() || scratch.Kind != "buffer" || scratch.Folder != "" || scratch.Tags == nil || len(scratch.Tags) != 0 {
+	if scratch.Kind != "buffer" || scratch.Folder != "" || scratch.Tags == nil || len(scratch.Tags) != 0 {
 		t.Errorf("buffer hit = %+v, want kind buffer, no folder and an empty tag list", scratch)
 	}
 }
@@ -195,11 +201,14 @@ func TestGetMeta_NoBody(t *testing.T) {
 	if err != nil || len(res.Results) != 1 {
 		t.Fatalf("seed search: %v res=%+v", err, res)
 	}
-	uuid := res.Results[0].UUID
+	uri := res.Results[0].URI
 
-	_, meta, err := s.getMeta(context.Background(), nil, UUIDInput{UUID: uuid})
+	_, meta, err := s.getMeta(context.Background(), nil, URIInput{URI: uri})
 	if err != nil {
 		t.Fatalf("get_meta: %v", err)
+	}
+	if meta.URI != uri {
+		t.Errorf("meta names itself %q, want %q", meta.URI, uri)
 	}
 	if meta.Title != "Grocery List" {
 		t.Errorf("title = %q", meta.Title)
@@ -221,11 +230,14 @@ func TestGetNote_ReturnsBody(t *testing.T) {
 	if err != nil || len(res.Results) == 0 {
 		t.Fatalf("seed search: %v", err)
 	}
-	uuid := res.Results[0].UUID
+	uri := res.Results[0].URI
 
-	_, note, err := s.getNote(context.Background(), nil, UUIDInput{UUID: uuid})
+	_, note, err := s.getNote(context.Background(), nil, URIInput{URI: uri})
 	if err != nil {
 		t.Fatalf("get_note: %v", err)
+	}
+	if note.Meta.URI != uri {
+		t.Errorf("meta.uri = %q, want %q", note.Meta.URI, uri)
 	}
 	if note.Meta.Title != "Go Concurrency" {
 		t.Errorf("meta.title = %q", note.Meta.Title)
@@ -235,18 +247,19 @@ func TestGetNote_ReturnsBody(t *testing.T) {
 	}
 }
 
-// An id that loads no document — typically a block id or an asset key — is still
+// An address that names no note — a block or an asset key, typically — is still
 // an error, but one that points the model at the verb that reads those.
-func TestByUUIDVerbs_PointAWrongIDAtGetByURI(t *testing.T) {
+func TestNoteVerbs_PointAnAddressThatIsNoNoteAtGetByURI(t *testing.T) {
 	s := newTestServer(t)
 	const blockID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4c02"
+	uri := uriOf(blockID)
 	verbs := map[string]func() error{
 		"get_note": func() error {
-			_, _, err := s.getNote(context.Background(), nil, UUIDInput{UUID: blockID})
+			_, _, err := s.getNote(context.Background(), nil, URIInput{URI: uri})
 			return err
 		},
 		"get_meta": func() error {
-			_, _, err := s.getMeta(context.Background(), nil, UUIDInput{UUID: blockID})
+			_, _, err := s.getMeta(context.Background(), nil, URIInput{URI: uri})
 			return err
 		},
 	}
@@ -254,9 +267,9 @@ func TestByUUIDVerbs_PointAWrongIDAtGetByURI(t *testing.T) {
 		t.Run(verb, func(t *testing.T) {
 			err := call()
 			if err == nil {
-				t.Fatal("an id that names no document must be an error")
+				t.Fatal("an address that names no note must be an error")
 			}
-			for _, want := range []string{verb, blockID, "not a document", "get_by_uri", "sieve://"} {
+			for _, want := range []string{verb, uri, "not a note", "get_by_uri"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("err = %q, want it to contain %q", err, want)
 				}
@@ -334,17 +347,18 @@ func TestFetchPage_WritesHTMLAssetAndReusesOnSecondCall(t *testing.T) {
 	if node.Kind != "asset" {
 		t.Errorf("Kind = %q, want asset", node.Kind)
 	}
-	if node.ID != ds.PageAssetKey(pageURL) || !strings.HasSuffix(node.ID, ".html") {
-		t.Errorf("ID = %q, want the .html page asset key %q", node.ID, ds.PageAssetKey(pageURL))
+	key := ds.PageAssetKey(pageURL)
+	if !strings.HasSuffix(key, ".html") {
+		t.Errorf("page asset key = %q, want an .html key", key)
 	}
-	wantURI := domain.NewLeafAddress(uuid, node.ID).String()
+	wantURI := domain.NewLeafAddress(uuid, key).String()
 	if node.URI != wantURI {
 		t.Errorf("URI = %q, want %q", node.URI, wantURI)
 	}
 	if node.Title != "Verstappen Wins in Suzuka" {
 		t.Errorf("Title = %q, want %q", node.Title, "Verstappen Wins in Suzuka")
 	}
-	wantPath := path.Join(doc.Storable().ExternalRef(), node.ID)
+	wantPath := path.Join(doc.Storable().ExternalRef(), key)
 	if node.Path != wantPath {
 		t.Errorf("Path = %q, want %q", node.Path, wantPath)
 	}
@@ -361,13 +375,13 @@ func TestFetchPage_WritesHTMLAssetAndReusesOnSecondCall(t *testing.T) {
 	}
 	var savedBody string
 	for _, owned := range reloaded.Storable().Owns() {
-		if owned.Key() == node.ID {
+		if owned.Key() == key {
 			savedBody = string(owned.Body())
 			break
 		}
 	}
 	if savedBody == "" {
-		t.Fatalf("asset %q not found in document %s owns", node.ID, uuid)
+		t.Fatalf("asset %q not found in document %s owns", key, uuid)
 	}
 	if !strings.HasPrefix(savedBody, `<!doctype html><html><head><meta charset="utf-8"><title>Verstappen Wins in Suzuka</title></head><body>`) ||
 		!strings.Contains(savedBody, "Max Verstappen controlled the Japanese Grand Prix") {
@@ -385,7 +399,7 @@ func TestFetchPage_WritesHTMLAssetAndReusesOnSecondCall(t *testing.T) {
 	if hits.Load() != 1 {
 		t.Errorf("HTTP hits after second call = %d, want 1 (existing asset should be reused)", hits.Load())
 	}
-	if node2.URI != node.URI || node2.ID != node.ID || node2.Bytes != node.Bytes || node2.Title != node.Title {
+	if node2.URI != node.URI || node2.Bytes != node.Bytes || node2.Title != node.Title {
 		t.Errorf("second call descriptor = %+v, want %+v", node2, node)
 	}
 }

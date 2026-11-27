@@ -191,7 +191,7 @@ func (p *AIBlockProcessor) aiBlockLabel(blk *domain.SieveBlock) string {
 }
 
 // qaHeader renders the QUESTION-side of this block's Q&A WITHOUT its own answer:
-// "EXPLAIN NODE: <ref>" or "QUESTION ABOUT: <ref>\n<question>", followed by this
+// "EXPLAIN NODE: <address>" or "QUESTION ABOUT: <address>\n<question>", followed by this
 // turn's ATTACHED DOCUMENTS section when it has one. It is the ACTION
 // assembly — the block being asked must never carry its own prior answer, or a
 // retry (where the doc snapshot already holds a stale answer) biases the new answer.
@@ -205,14 +205,15 @@ func (p *AIBlockProcessor) aiBlockLabel(blk *domain.SieveBlock) string {
 func (p *AIBlockProcessor) qaHeader(blk domain.SieveBlock, doc block.DocView) string {
 	q := p.foldQuestion(blk, doc)
 	t, _ := blk.Attrs["type"].(string)
+	named := q.targets.shown(doc)
 
 	var sb strings.Builder
 	if t == "EXPLAIN" {
 		sb.WriteString("EXPLAIN NODE: ")
-		sb.WriteString(q.targets.names())
+		sb.WriteString(named.names())
 	} else {
 		sb.WriteString("QUESTION ABOUT: ")
-		sb.WriteString(q.targets.names())
+		sb.WriteString(named.names())
 		if text := strings.TrimSpace(p.questionText(q.body, doc)); text != "" {
 			sb.WriteString("\n")
 			sb.WriteString(text)
@@ -331,14 +332,20 @@ func (t questionTargets) address(el *domain.SieveBlock) string {
 	return uri
 }
 
-// names spells the slot the way the header does: a local target by the handle
-// the chain resolves it by, any other by the address it carries, comma-separated
-// in list order.
+// names spells the slot the way the header does, comma-separated in list order:
+// a local target by its absolute address in this container (the container's own
+// address for the whole document, else sieve://{container}/{leaf}, the leaf being
+// the handle the chain resolves it by), so it equals the ADDRESS header of the
+// entry it points at; any other by the address it carries.
 func (t questionTargets) names() string {
 	out := make([]string, 0, len(t.els))
 	for _, el := range t.els {
 		if token, local := t.localToken(el); local {
-			out = append(out, token)
+			if token == block.WholeDocumentRef {
+				out = append(out, t.own.String())
+			} else {
+				out = append(out, domain.NewLeafAddress(t.own.Container, token).String())
+			}
 		} else {
 			out = append(out, el.StringAttr("uri"))
 		}
@@ -346,13 +353,32 @@ func (t questionTargets) names() string {
 	return strings.Join(out, ",")
 }
 
+// shown returns the targets worth naming: those the TARGET slot has something
+// to show for. A local target whose block renders as a context that says nothing
+// (an empty paragraph) or that no longer exists is left out, by the same rule
+// block.ContextSeries applies to its entries. A target elsewhere and the whole
+// document are always kept, as is a local ai-block, which always has a question.
+// Order is preserved.
+func (t questionTargets) shown(doc block.DocView) questionTargets {
+	out := questionTargets{own: t.own}
+	for _, el := range t.els {
+		token, local := t.localToken(el)
+		if local && token != block.WholeDocumentRef &&
+			!block.BuildContextForID(token, doc, map[string]bool{}, nil).Speaks() {
+			continue
+		}
+		out.els = append(out.els, el)
+	}
+	return out
+}
+
 // elementContexts renders elements through the registered per-kind AI seam, in
 // list order — the ONE way an element becomes prompt text, so a question or a
 // target composed of any kind reads the way that kind reads to a model.
 //
-// THE NODE ID IS DROPPED. A provider names the block it renders, and an element
-// is not in the document tree: nothing resolves its id, so publishing one would
-// hand the model a handle it cannot use. What a reference element IS reachable
+// THE ADDRESS HEADER IS DROPPED. A provider names the block it renders, and an
+// element is not in the document tree: nothing resolves its address, so
+// publishing one would hand the model a coordinate that names nothing. What a reference element IS reachable
 // by — its address — the reference kind already renders as a trailer.
 //
 // doc is forwarded to each provider as the snapshot it renders against; an
@@ -366,8 +392,8 @@ func (p *AIBlockProcessor) elementContexts(els []*domain.SieveBlock, doc block.D
 			continue
 		}
 		ctx := cp.BuildContext(*el, doc, map[string]bool{})
-		ctx.NodeIDs = nil
-		out = append(out, ctx)
+		ctx.Addresses = nil
+		out = append(out, ctx.OfKind(el.Kind))
 	}
 	return out
 }
@@ -380,7 +406,7 @@ func (p *AIBlockProcessor) questionText(body []*domain.SieveBlock, doc block.Doc
 }
 
 // BuildContext returns a Q&A summary for when this block appears in another block's
-// ref chain. The NODE ID header is rendered by AIContext.String (from NodeIDs); the
+// ref chain. The ADDRESS header is rendered by AIContext.String (from Addresses); the
 // QUESTION ABOUT / EXPLAIN NODE line stays in Content because it is a header before
 // the Q&A, not a mergeable trailer. Unlike the ACTION assembly (qaHeader) this DOES
 // append the block's own answer — a ref-chain / THREAD entry is conversation history.
@@ -398,7 +424,7 @@ func (p *AIBlockProcessor) BuildContext(blk domain.SieveBlock, doc block.DocView
 		sb.WriteString(answer)
 	}
 
-	return block.AIContext{NodeIDs: []string{blk.ID}, Content: sb.String()}
+	return doc.NodeContext(blk.ID, sb.String())
 }
 
 // chainWalk is the target graph resolved: the terminal MANY the chain bottoms
@@ -477,19 +503,20 @@ func (p *AIBlockProcessor) resolveChain(blk domain.SieveBlock, doc block.DocView
 	return w
 }
 
-// buildTargets renders the terminal MANY by asking each member for its AIContext
-// and MERGING them into one — node ids concat into a single header, contents
-// append, and the "Specifically regarding" trailers union into ONE focus line.
-// Type-agnostic: a multi-block selection, a single block, or "doc" all merge the
-// same way; empty contexts drop out.
+// buildTargets renders the terminal MANY as a TARGET: each member is its own
+// entry, in order, opened by a "===== BLOCK n of m · kind =====" line and headed
+// by its ADDRESS (block.ContextSeries.Blocks), and the "Specifically regarding"
+// trailers of all members union into ONE focus line after the last entry. Empty
+// contexts drop out and are not counted; no members renders as "".
 //
-// The MANY has two kinds of member and one merge. A member in THIS document is
-// resolved by handle (BuildContextForID) and its content is inlined. A member
-// elsewhere is a foreign element that resolves to nothing here, so it renders as
-// the reference it is — address plus cached face — and the model dereferences it
-// through the MCP verb if it needs the content.
+// The MANY has two kinds of member. A member in THIS document is resolved by
+// handle (BuildContextForID) and its content is inlined; the whole document is
+// the member of kind "document". A member elsewhere is a foreign element that
+// resolves to nothing here, so it renders as the reference it is, carrying its own
+// kind, with no ADDRESS line (nothing here resolves its address); the model
+// dereferences it through the MCP verb if it needs the content.
 func (p *AIBlockProcessor) buildTargets(w chainWalk, doc block.DocView) string {
-	var ctxs []block.AIContext
+	var ctxs block.ContextSeries
 	// Exclude this processor's own kind: when a target is the whole doc, its derived
 	// markdown must not carry prior ai-block answers — an ai-block serializes as its
 	// raw YAML fence (question + answer), and including prior answers makes the
@@ -498,16 +525,10 @@ func (p *AIBlockProcessor) buildTargets(w chainWalk, doc block.DocView) string {
 	// specific-block target ignores the filter (returned as-is).
 	noSelfKind := func(b domain.SieveBlock) bool { return b.Kind != p.Kind() }
 	for _, id := range w.local {
-		if c := block.BuildContextForID(id, doc, map[string]bool{}, noSelfKind); !c.IsEmpty() {
-			ctxs = append(ctxs, c)
-		}
+		ctxs = append(ctxs, block.BuildContextForID(id, doc, map[string]bool{}, noSelfKind))
 	}
-	for _, c := range p.elementContexts(w.foreign, doc) {
-		if !c.IsEmpty() {
-			ctxs = append(ctxs, c)
-		}
-	}
-	return block.MergeContexts(ctxs).String()
+	ctxs = append(ctxs, p.elementContexts(w.foreign, doc)...)
+	return ctxs.Blocks()
 }
 
 // buildPrompt assembles the three prompt slots from the immutable job snapshot,
@@ -517,11 +538,12 @@ func (p *AIBlockProcessor) buildTargets(w chainWalk, doc block.DocView) string {
 //     asked about.
 //   - history — the THREAD: the interior nodes oldest-first, each rendered as
 //     its own Q&A entry (NOT merged — distinct entries keeping their own
-//     trailers, and their own attachments).
+//     trailers, and their own attachments) under a "===== TURN n of m ====="
+//     line, which is what separates one entry from the next.
 //   - question — the ACTION: this block's own question-side. It must NOT carry
 //     its own prior answer: on a retry the doc snapshot already holds a
-//     stale answer, and leaking it into the ACTION biases the new one. The NODE
-//     ID header is preserved via NodeIDs.
+//     stale answer, and leaking it into the ACTION biases the new one. The ADDRESS
+//     header is preserved.
 //
 // Split out of DescribeJob so the assembled prompt is assertable without running
 // a job or reaching a CLI.
@@ -531,17 +553,15 @@ func (p *AIBlockProcessor) buildPrompt(blk *domain.SieveBlock, doc block.DocView
 	content = p.buildTargets(w, doc)
 
 	seen := map[string]bool{blk.ID: true}
-	var historyParts []string
+	var thread block.ContextSeries
 	for _, id := range w.thread {
 		// THREAD resolution is untouched (nil filter): interior nodes are ai-blocks
 		// resolved by id — the conversation history must keep prior answers verbatim.
-		if ctx := block.BuildContextForID(id, doc, seen, nil); !ctx.IsEmpty() {
-			historyParts = append(historyParts, ctx.String())
-		}
+		thread = append(thread, block.BuildContextForID(id, doc, seen, nil))
 	}
-	history = strings.Join(historyParts, "\n\n---\n\n")
+	history = thread.Turns()
 
-	question = block.AIContext{NodeIDs: []string{blk.ID}, Content: p.qaHeader(*blk, doc)}.String()
+	question = doc.NodeContext(blk.ID, p.qaHeader(*blk, doc)).String()
 	return content, history, question
 }
 

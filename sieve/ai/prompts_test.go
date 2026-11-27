@@ -197,7 +197,7 @@ func TestNewPromptService_RemovesOldOverrides(t *testing.T) {
 		t.Errorf("Addendum(ask) = %q; the old override was read", got)
 	}
 	task, _ := ps.Task("ask")
-	if p := ps.Prompt(task, BtwData{}, false); !p.Addendum.IsEmpty() || p.Brief != task.Brief {
+	if p := ps.Prompt(task, BtwData{}, "", false); !p.Addendum.IsEmpty() || p.Brief != task.Brief {
 		t.Errorf("a removed override reached the prompt: %+v", p)
 	}
 }
@@ -238,6 +238,9 @@ func TestPromptService_DeclaresTheTasks(t *testing.T) {
 	}
 	placeholder := regexp.MustCompile(`\{[a-z_]+\}`)
 	data := WebClipFetchData{Source: "https://example.com"}
+	if !strings.Contains(sieveBackground, "a block's address is its container's address, a /, and the block's id") || strings.Contains(sieveBackground, "never construct") {
+		t.Error("the Background does not say how an address is formed, or still forbids constructing one")
+	}
 	tools := []string{"add_to_answer", "describe_answer", "get_note", "get_by_uri", "MCP", "Sieve tools"}
 	for i, w := range want {
 		t.Run(w.name, func(t *testing.T) {
@@ -263,48 +266,50 @@ func TestPromptService_DeclaresTheTasks(t *testing.T) {
 				if err := ps.SaveAddendum(w.name, addendum); err != nil {
 					t.Fatal(err)
 				}
-				for _, sieveTools := range []bool{true, false} {
-					prompt := ps.Prompt(task, data, sieveTools)
-					background, delivery := sieveBackground, ""
-					if sieveTools {
-						background += "\n\n" + sieveToolsBackground
-					}
-					switch {
-					case w.output == Content && sieveTools:
-						delivery = answerToolGuidance
-					case w.output == Content:
-						delivery = answerPlainGuidance
-					}
-					wantPrompt := Prompt{
-						Background: Layer{Heading: "# Sieve", Text: background},
-						Brief:      task.Brief,
-						Data:       Layer{Heading: "# Data", Text: data.Text()},
-					}
-					if delivery != "" {
-						wantPrompt.Delivery = Layer{Heading: "# Answer", Text: delivery}
-					}
-					if addendum != "" {
-						wantPrompt.Addendum = Layer{Heading: "# Addendum", Text: addendum}
-					}
-					if prompt != wantPrompt {
-						t.Errorf("with the Sieve tools %v and addendum %q, prompt =\n%s\nwant\n%s", sieveTools, addendum, prompt, wantPrompt)
-					}
-					if prompt.String() != prompt.System()+"\n\n"+prompt.Input() {
-						t.Errorf("System() + Input() is not the whole prompt:\n%s\n---\n%s", prompt.System(), prompt.Input())
-					}
-					if got := strings.Contains(prompt.Input(), "# Addendum"); got != (addendum != "") {
-						t.Errorf("addendum %q: Input() carries an Addendum layer: %v", addendum, got)
-					}
-					if strings.Contains(prompt.System(), "# Addendum") || !strings.HasSuffix(prompt.Input(), prompt.Data.String()) {
-						t.Errorf("the addendum is not between the brief and the data, in the input alone:\n%s", prompt)
-					}
-					for _, tool := range tools {
-						if said := strings.Contains(prompt.String(), tool); !sieveTools && said {
-							t.Errorf("a run without the Sieve tools is told of %q", tool)
+				for _, c := range []struct{ container, dataLine string }{{"", ""}, {"uuid-1", "Container: sieve://uuid-1\n\n"}} {
+					for _, sieveTools := range []bool{true, false} {
+						prompt := ps.Prompt(task, data, c.container, sieveTools)
+						background, delivery := sieveBackground, ""
+						if sieveTools {
+							background += "\n\n" + sieveToolsBackground
 						}
-					}
-					if offered := strings.Contains(prompt.String(), "add_to_answer"); offered != (sieveTools && w.output == Content) {
-						t.Errorf("with the Sieve tools %v, add_to_answer offered: %v", sieveTools, offered)
+						switch {
+						case w.output == Content && sieveTools:
+							delivery = answerToolGuidance
+						case w.output == Content:
+							delivery = answerPlainGuidance
+						}
+						wantPrompt := Prompt{
+							Background: Layer{Heading: "# Sieve", Text: background},
+							Brief:      task.Brief,
+							Data:       Layer{Heading: "# Data", Text: c.dataLine + data.Text()},
+						}
+						if delivery != "" {
+							wantPrompt.Delivery = Layer{Heading: "# Answer", Text: delivery}
+						}
+						if addendum != "" {
+							wantPrompt.Addendum = Layer{Heading: "# Addendum", Text: addendum}
+						}
+						if prompt != wantPrompt {
+							t.Errorf("with the container %q, the Sieve tools %v and addendum %q, prompt =\n%s\nwant\n%s", c.container, sieveTools, addendum, prompt, wantPrompt)
+						}
+						if prompt.String() != prompt.System()+"\n\n"+prompt.Input() {
+							t.Errorf("System() + Input() is not the whole prompt:\n%s\n---\n%s", prompt.System(), prompt.Input())
+						}
+						if got := strings.Contains(prompt.Input(), "# Addendum"); got != (addendum != "") {
+							t.Errorf("addendum %q: Input() carries an Addendum layer: %v", addendum, got)
+						}
+						if strings.Contains(prompt.System(), "# Addendum") || !strings.HasSuffix(prompt.Input(), prompt.Data.String()) {
+							t.Errorf("the addendum is not between the brief and the data, in the input alone:\n%s", prompt)
+						}
+						for _, tool := range tools {
+							if said := strings.Contains(prompt.String(), tool); !sieveTools && said {
+								t.Errorf("a run without the Sieve tools is told of %q", tool)
+							}
+						}
+						if offered := strings.Contains(prompt.String(), "add_to_answer"); offered != (sieveTools && w.output == Content) {
+							t.Errorf("with the Sieve tools %v, add_to_answer offered: %v", sieveTools, offered)
+						}
 					}
 				}
 			}
@@ -364,8 +369,8 @@ func TestTaskData_RendersEveryValueVerbatim(t *testing.T) {
 			[]string{"Existing folders: (none yet)", "- Created: unknown", "- Modified: unknown", "- Focus Signal: 0", "- Iteration: 1"}},
 		{"ask and explain", ThreadData{ContentType: "go", Content: verbatim, History: "the thread", Action: "the action {content}"},
 			[]string{"Content type: go", "TARGET:\n" + verbatim, "THREAD:\nthe thread", "ACTION:\nthe action {content}"}},
-		{"btw", BtwData{Question: verbatim, Selection: "the selection", DocTitle: "My Doc", DocSummary: "a summary", DocUUID: "uuid-1"},
-			[]string{"QUESTION:\n" + verbatim, "SELECTED TEXT:\nthe selection", "- Document title: My Doc", "- Document summary: a summary", "- Document uuid: uuid-1"}},
+		{"btw", BtwData{Question: verbatim, Selection: "the selection", DocTitle: "My Doc", DocSummary: "a summary"},
+			[]string{"QUESTION:\n" + verbatim, "SELECTED TEXT:\nthe selection", "- Document title: My Doc", "- Document summary: a summary"}},
 		{"image", ImageData{File: "shot {content}.png"}, []string{"Image file: shot {content}.png"}},
 		{"note-meta", NoteMetaData{Pages: []string{"page-b-2.png", "page-a-1.png"}, Categories: []string{"Home", "Work"}},
 			[]string{"Page files:\n1. page-b-2.png\n2. page-a-1.png", "Categories: Home, Work"}},
@@ -384,7 +389,7 @@ func TestTaskData_RendersEveryValueVerbatim(t *testing.T) {
 					t.Errorf("the data does not render %q:\n%s", want, text)
 				}
 			}
-			prompt := ps.Prompt(Task{Brief: Layer{Heading: briefHeading, Text: "the brief"}}, tc.data, false)
+			prompt := ps.Prompt(Task{Brief: Layer{Heading: briefHeading, Text: "the brief"}}, tc.data, "", false)
 			if prompt.Data != (Layer{Heading: dataHeading, Text: text}) || !strings.HasSuffix(prompt.String(), "# Data\n\n"+strings.TrimSpace(text)) {
 				t.Errorf("the prompt does not end with the data verbatim:\n%s", prompt)
 			}

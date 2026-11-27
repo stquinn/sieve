@@ -47,9 +47,10 @@ func newSmartTestService(t *testing.T, cap *captureRunner) *AIService {
 }
 
 // assertRan fails t unless the captured run was the task named name, as ps
-// declares it, sent the prompt ps builds for it with data, speaking of the
-// Sieve tools exactly when the run carries them.
-func (c *captureRunner) assertRan(t *testing.T, ps *PromptService, name string, data TaskData) {
+// declares it, sent the prompt ps builds for it with data on container (empty
+// when the run has none), speaking of the Sieve tools exactly when the run
+// carries them.
+func (c *captureRunner) assertRan(t *testing.T, ps *PromptService, name, container string, data TaskData) {
 	t.Helper()
 	task, err := ps.Task(name)
 	if err != nil {
@@ -58,7 +59,7 @@ func (c *captureRunner) assertRan(t *testing.T, ps *PromptService, name string, 
 	if c.run.Task != task {
 		t.Errorf("ran task %+v, want %+v", c.run.Task, task)
 	}
-	if want := ps.Prompt(task, data, c.run.carriesSieveTools()); c.run.Prompt != want {
+	if want := ps.Prompt(task, data, container, c.run.carriesSieveTools()); c.run.Prompt != want {
 		t.Errorf("prompt =\n%s\nwant\n%s", c.run.Prompt, want)
 	}
 }
@@ -70,7 +71,7 @@ func TestRunBtw_PromptAssemblyAndOp(t *testing.T) {
 	if err != nil || out.Text != "answer" {
 		t.Fatalf("unexpected: %v %q", err, out.Text)
 	}
-	cap.assertRan(t, svc.prompts, "btw", BtwData{Question: "what is KISS", Selection: "the selected words", DocTitle: "My Doc", DocSummary: "a summary", DocUUID: "uuid-1"})
+	cap.assertRan(t, svc.prompts, "btw", "uuid-1", BtwData{Question: "what is KISS", Selection: "the selected words", DocTitle: "My Doc", DocSummary: "a summary"})
 }
 
 func TestRunBtw_TierDumbFails(t *testing.T) {

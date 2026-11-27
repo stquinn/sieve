@@ -78,7 +78,7 @@ func DocumentFromContext(ctx context.Context) string {
 // bearer-token registry that authenticates the CLI Sieve launches.
 //
 // Read verbs: search, get_meta, get_note, get_by_uri, list_facets. TWO verbs
-// return bodies — get_note names its target by uuid, get_by_uri by coordinate —
+// return bodies — get_note names its target by address, get_by_uri likewise —
 // and both MUST record the same bodyRead audit through one auditor, which is
 // what keeps bulk-read visible at a single boundary.
 //
@@ -139,25 +139,27 @@ func NewServer(documents *services.DocumentService, nodes NodeResolver, search S
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
 		Name: s.readVerb("search"),
 		Description: "Search the knowledge base by a case-insensitive substring matched against names, summaries and tags — never bodies. " +
-			"Finds filed notes (kind \"note\") and unfiled buffers (kind \"buffer\"); a buffer has no summary or tags, so it is found by its name alone. " +
-			"An empty query lists everything. Returns metadata only (never bodies). Optionally restrict to a folder, which leaves out buffers, as they have none.",
+			"Finds filed notes (kind \"note\"), unfiled buffers (kind \"buffer\"), notebooks written on a SieveInk device (kind \"digital-note\"; found by name, summary and keywords) and the Live view while it exists (kind \"ink-live\"; found by name). " +
+			"A buffer has no summary or tags, so it is found by its name alone. " +
+			"An empty query lists everything. Returns metadata only (never bodies); each hit is named by its address (uri), which get_meta, get_note and get_by_uri take as given. " +
+			"Optionally restrict to a folder, which leaves out everything but filed notes, as nothing else has one.",
 	}, s.search)
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
 		Name: s.readVerb("get_meta"),
-		Description: "Return the full metadata for one note by uuid (title, folder, tags, summary, timestamps, version, AI evaluation). No body. " +
-			"Takes a bare uuid only: a sieve:// uri belongs to get_by_uri.",
+		Description: "Return the full metadata for one note (title, folder, tags, summary, timestamps, version, AI evaluation). No body. " +
+			"Takes a note's address, sieve://{container}. An address naming a block or file inside a note, sieve://{container}/{leaf}, belongs to get_by_uri.",
 	}, s.getMeta)
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
 		Name: s.readVerb("get_note"),
-		Description: "Return one note by uuid: its metadata plus the full markdown body. " +
-			"Use this when you have a bare uuid; a sieve:// uri belongs to get_by_uri, which takes it verbatim.",
+		Description: "Return one note: its metadata plus the full markdown body. " +
+			"Takes a note's address, sieve://{container}. An address naming a block or file inside a note, sieve://{container}/{leaf}, belongs to get_by_uri.",
 	}, s.getNote)
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
 		Name: s.readVerb("get_by_uri"),
-		Description: "Return whatever a Sieve uri points at: its title, metadata and full markdown body. " +
-			"Pass the uri exactly as it appears in an ATTACHED DOCUMENTS manifest (e.g. sieve://{uuid}) — copy it, never construct one. " +
-			"A uri naming a file answers with kind \"asset\", no body, its size in bytes, and a path relative to the library root (a directory you are granted): read that path from disk, as no tool returns a file's bytes. " +
-			"A uri naming a whole container (sieve://{uuid}) also lists, under \"assets\", every file it holds — images, attachments, a notebook's page images and transcripts — each with its own uri to pass back here, its key, its size in bytes and its path.",
+		Description: "Return whatever a sieve:// address names: its title, metadata and full markdown body. " +
+			"Takes an address: sieve://{container} for a note or other container, sieve://{container}/{leaf} for a block or file inside one. " +
+			"An address naming a file answers with kind \"asset\", no body, its size in bytes, and a path relative to the library root (a directory you are granted): read that path from disk, as no tool returns a file's bytes. " +
+			"An address naming a whole container also lists, under \"assets\", every file it holds — images, attachments, a notebook's page images and transcripts — each with its own uri to pass back here, its key, its size in bytes and its path.",
 	}, s.getByURI)
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
 		Name:        s.readVerb("list_facets"),

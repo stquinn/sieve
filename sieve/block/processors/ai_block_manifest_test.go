@@ -163,7 +163,7 @@ func TestAIBlock_NoAttachments_PromptUnchanged(t *testing.T) {
 	if strings.Contains(question, "ATTACHED") {
 		t.Fatalf("an attachment-less turn grew a section:\n%s", question)
 	}
-	if question != (block.AIContext{NodeIDs: []string{"ab-1"}, Content: "QUESTION ABOUT: doc\nplain question?"}).String() {
+	if question != addressHeader(chainDocUUID, "ab-1")+"QUESTION ABOUT: "+domain.NewContainerAddress(chainDocUUID).String()+"\nplain question?" {
 		t.Fatalf("the attachment-less prompt changed shape:\n%q", question)
 	}
 }

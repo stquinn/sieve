@@ -118,15 +118,15 @@ func TestDiagramProcessor_BuildContext_withSource(t *testing.T) {
 		Kind:  "diagram",
 		Attrs: map[string]interface{}{"source": "graph TD\n  A-->B"},
 	}
-	ctx := p.BuildContext(blk, block.DocView{}, map[string]bool{})
+	ctx := p.BuildContext(blk, block.DocView{UUID: describeDocUUID}, map[string]bool{})
 	if ctx.IsEmpty() {
 		t.Error("BuildContext must return non-empty string when source is set")
 	}
 	if !strings.Contains(ctx.String(), "```mermaid") {
 		t.Error("BuildContext must include mermaid fence")
 	}
-	if !strings.Contains(ctx.String(), "di-0001") {
-		t.Error("BuildContext must include NODE ID")
+	if !strings.Contains(ctx.String(), leafAddress(describeDocUUID, "di-0001")) {
+		t.Error("BuildContext must head the context with the block's ADDRESS")
 	}
 }
 

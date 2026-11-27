@@ -130,7 +130,7 @@ func (s *AIService) run(settings domain.Settings, name string, data TaskData, cw
 		Cwd:        cwd,
 		LibraryDir: s.storePath,
 	}
-	run.Prompt = s.prompts.Prompt(task, data, run.carriesSieveTools())
+	run.Prompt = s.prompts.Prompt(task, data, ex.Container, run.carriesSieveTools())
 	text, err := s.runner.Run(run, held.responseNote)
 	written := held.end()
 	if err != nil {
@@ -227,7 +227,7 @@ func (s *AIService) EvaluateAndFileDoc(id string, fileAfter bool, allowDiscard b
 	settings := s.state.LoadSettings()
 	evaluated := false
 	if settings.Tier() != domain.TierDumb {
-		rec, err := s.runEvaluateBuffer(meta, body, settings)
+		rec, err := s.runEvaluateBuffer(id, meta, body, settings)
 		if err != nil {
 			return FilingOutcome{}, fmt.Errorf("filing: eval %s: %w", doc.Storable().ExternalRef(), err)
 		}
@@ -249,7 +249,7 @@ func (s *AIService) EvaluateBuffer(meta domain.DocumentMeta, body []byte) (*doma
 	if settings.Tier() == domain.TierDumb {
 		return nil, fmt.Errorf("AI evaluation not available in Dumb mode")
 	}
-	return s.runEvaluateBuffer(meta, body, settings)
+	return s.runEvaluateBuffer("", meta, body, settings)
 }
 
 // RunExplain asks the AI to explain the given content for the exchange ex. The
@@ -286,10 +286,10 @@ func (s *AIService) RunBtw(question, selection, docTitle, docSummary string, ex 
 		return Answer{}, fmt.Errorf("btw not available in dumb mode")
 	}
 	cwd := s.storePath
+	data := BtwData{Question: question, Selection: selection, DocTitle: docTitle, DocSummary: docSummary}
 	if ex.Container != "" {
 		cwd = s.noteDir(ex.Container)
 	}
-	data := BtwData{Question: question, Selection: selection, DocTitle: docTitle, DocSummary: docSummary, DocUUID: ex.Container}
 	return s.run(settings, "btw", data, cwd, ex)
 }
 
@@ -513,7 +513,9 @@ func (s *AIService) timeoutFor(settings domain.Settings, promptName string) int 
 	return settings.CLITimeoutLong
 }
 
-func (s *AIService) runEvaluateBuffer(meta domain.DocumentMeta, body []byte, settings domain.Settings) (*domain.FilingRecommendation, error) {
+// runEvaluateBuffer runs the filing evaluation of the document id, which may be
+// empty when the caller holds only its meta and body.
+func (s *AIService) runEvaluateBuffer(id string, meta domain.DocumentMeta, body []byte, settings domain.Settings) (*domain.FilingRecommendation, error) {
 	data := FilingData{
 		Folders:    s.libraryFolders(),
 		Now:        time.Now(),
@@ -526,7 +528,7 @@ func (s *AIService) runEvaluateBuffer(meta domain.DocumentMeta, body []byte, set
 	// cwd is never unset: the filing evaluation reads no note files, so fall back
 	// to the library root rather than the process cwd (/ on a Finder-launched
 	// macOS app). #41.
-	resp, err := s.run(settings, "file", data, s.storePath, domain.Exchange{})
+	resp, err := s.run(settings, "file", data, s.storePath, domain.Exchange{Container: id})
 	if err != nil {
 		return nil, err
 	}

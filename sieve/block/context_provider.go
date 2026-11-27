@@ -59,7 +59,7 @@ func BuildContextForID(id string, doc DocView, seen map[string]bool, filter Bloc
 	}
 	seen[id] = true
 	if id == WholeDocumentRef {
-		return AIContext{Content: doc.deriveMarkdownFiltered(filter)}
+		return doc.DocumentContext(doc.deriveMarkdownFiltered(filter)).OfKind(WholeDocumentKind)
 	}
 	// Uniform dispatch: every block — prose included — resolves by id (GetBlock) and
 	// routes to its kind's registered ContextProvider. Prose is NOT special-cased
@@ -71,7 +71,7 @@ func BuildContextForID(id string, doc DocView, seen map[string]bool, filter Bloc
 			logger.Warn("ContextProvider: no provider registered for block kind %q", b.Kind)
 			return AIContext{}
 		}
-		return cp.BuildContext(domain.SieveBlock{ID: b.ID, Kind: b.Kind, Attrs: b.Attrs}, doc, seen)
+		return cp.BuildContext(domain.SieveBlock{ID: b.ID, Kind: b.Kind, Attrs: b.Attrs}, doc, seen).OfKind(b.Kind)
 	}
 	// Fallback: structured blocks parseable straight from markdown (markdown mode).
 	found, ok := NewDocumentCodec(GlobalRegistry()).findBlockByID(doc.deriveMarkdown(), id)
@@ -84,5 +84,5 @@ func BuildContextForID(id string, doc DocView, seen map[string]bool, filter Bloc
 		logger.Warn("ContextProvider: no provider registered for block kind %q", found.Kind)
 		return AIContext{}
 	}
-	return cp.BuildContext(found, doc, seen)
+	return cp.BuildContext(found, doc, seen).OfKind(found.Kind)
 }

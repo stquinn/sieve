@@ -252,13 +252,13 @@ func (p *CodeBlockProcessor) OnChange(blk *domain.SieveBlock) {
 	blk.Attrs["status"] = block.BlockStatusPending
 }
 
-func (p *CodeBlockProcessor) BuildContext(blk domain.SieveBlock, _ block.DocView, seen map[string]bool) block.AIContext {
+func (p *CodeBlockProcessor) BuildContext(blk domain.SieveBlock, doc block.DocView, seen map[string]bool) block.AIContext {
 	src, _ := blk.Attrs["source"].(string)
 	language, _ := blk.Attrs["language"].(string)
 	if src == "" {
 		return block.AIContext{}
 	}
-	ctx := block.AIContext{NodeIDs: []string{blk.ID}, Content: "```" + language + "\n" + src + "\n```"}
+	ctx := doc.NodeContext(blk.ID, "```"+language+"\n"+src+"\n```")
 	return ctx
 }
 

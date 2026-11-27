@@ -8,6 +8,7 @@ import (
 )
 
 const (
+	migrationSelf     = "sieve://" + migrationDocUUID
 	migrationDocUUID  = "0197b1f4-aaaa-7888-8999-aaaabbbbcccc"
 	migrationProseID  = "0197b1f4-bbbb-7888-8999-aaaabbbbcccc"
 	migrationProseTwo = "0197b1f4-dddd-7888-8999-aaaabbbbcccc"
@@ -78,10 +79,10 @@ type migrationCase struct {
 	target string
 }
 
-// action is the ACTION slot this case rendered: the block's own NODE ID header,
+// action is the ACTION slot this case rendered: the block's own ADDRESS header,
 // the target line, the question text an ASK carries, then the manifest.
 func (c migrationCase) action() string {
-	head := "NODE ID: " + migrationAskID + "\n" + c.header
+	head := addressHeader(migrationDocUUID, migrationAskID) + c.header
 	if c.blockType == "EXPLAIN" {
 		return head + "\n" + migrationManifest
 	}
@@ -96,17 +97,20 @@ func (c migrationCase) action() string {
 // one — and byte-identity is owed to canonical records; a hand-spaced "a, b"
 // normalises to "a,b" on conversion.
 var migrationCases = []migrationCase{
-	{"whole document", "doc", "ASK", "QUESTION ABOUT: doc\n",
-		"<!--s:" + migrationProseID + "-->\nthe grass is green\n<!--/s:" + migrationProseID + "-->\n\n" +
+	{"whole document", "doc", "ASK", "QUESTION ABOUT: " + migrationSelf + "\n",
+		blockMarker(1, 1, block.WholeDocumentKind) + documentHeader(migrationDocUUID) +
+			"<!--s:" + migrationProseID + "-->\nthe grass is green\n<!--/s:" + migrationProseID + "-->\n\n" +
 			"<!--s:" + migrationProseTwo + "-->\nthe sky is blue\n<!--/s:" + migrationProseTwo + "-->"},
 	{"detached", "", "ASK", "QUESTION ABOUT: \n", ""},
-	{"one block", migrationProseID, "ASK", "QUESTION ABOUT: " + migrationProseID + "\n",
-		"NODE ID: " + migrationProseID + "\nthe grass is green"},
+	{"one block", migrationProseID, "ASK", "QUESTION ABOUT: " + leafAddress(migrationDocUUID, migrationProseID) + "\n",
+		blockMarker(1, 1, "prose") + addressHeader(migrationDocUUID, migrationProseID) + "the grass is green"},
 	{"many blocks", migrationProseID + "," + migrationProseTwo, "ASK",
-		"QUESTION ABOUT: " + migrationProseID + "," + migrationProseTwo + "\n",
-		"NODE ID: " + migrationProseID + "," + migrationProseTwo + "\nthe grass is green\n\nthe sky is blue"},
-	{"explain one block", migrationProseID, "EXPLAIN", "EXPLAIN NODE: " + migrationProseID + "\n",
-		"NODE ID: " + migrationProseID + "\nthe grass is green"},
+		"QUESTION ABOUT: " + leafAddress(migrationDocUUID, migrationProseID) + "," + leafAddress(migrationDocUUID, migrationProseTwo) + "\n",
+		targetEntries(
+			blockMarker(1, 2, "prose")+addressHeader(migrationDocUUID, migrationProseID)+"the grass is green",
+			blockMarker(2, 2, "prose")+addressHeader(migrationDocUUID, migrationProseTwo)+"the sky is blue")},
+	{"explain one block", migrationProseID, "EXPLAIN", "EXPLAIN NODE: " + leafAddress(migrationDocUUID, migrationProseID) + "\n",
+		blockMarker(1, 1, "prose") + addressHeader(migrationDocUUID, migrationProseID) + "the grass is green"},
 }
 
 // Converting a question into elements must not move the prompt: the record read

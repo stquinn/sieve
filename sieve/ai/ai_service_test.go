@@ -270,6 +270,9 @@ func TestAIService_EveryRunEndsItsToken(t *testing.T) {
 			if cap.run.Task.Name != tc.op || mcpEp.lastEx != tc.bound {
 				t.Errorf("ran %q bound to %+v, want %q bound to %+v", cap.run.Task.Name, mcpEp.lastEx, tc.op, tc.bound)
 			}
+			if got, want := strings.HasPrefix(cap.run.Prompt.Data.Text, "Container: "+domain.NewContainerAddress(tc.bound.Container).String()+"\n\n"), tc.bound.Container != ""; got != want || strings.Contains(cap.run.Prompt.Data.Text, "Container:") != want {
+				t.Errorf("%s sent the data %q, want the Container line exactly when it has a container (%v)", tc.op, cap.run.Prompt.Data.Text, want)
+			}
 			if want := []string{"tok-doc-" + tc.bound.Container}; fmt.Sprint(mcpEp.ended) != fmt.Sprint(want) {
 				t.Errorf("runs ended = %q, want the run's own token, once", mcpEp.ended)
 			}
@@ -284,6 +287,39 @@ func TestAIService_EveryRunEndsItsToken(t *testing.T) {
 				t.Errorf("--allowedTools = %s, want it to end with %s and no wildcard", allow, want)
 			}
 		})
+	}
+}
+
+// Filing a stored document runs on that document, so its prompt names the
+// container.
+func TestAIService_EvaluateAndFileDoc_RunsOnItsDocument(t *testing.T) {
+	cap := &captureRunner{ret: `{"worth_keeping": true}`}
+	svc := newSmartTestService(t, cap)
+	fs, err := filestore.NewFileStore(svc.storePath, "testhost")
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	ds, err := services.NewDocumentService(fs)
+	if err != nil {
+		t.Fatalf("NewDocumentService: %v", err)
+	}
+	svc.documents = ds
+	mcpEp := &fakeDocMCPEndpoint{url: "http://127.0.0.1:41234/mcp"}
+	svc.SetMCPEndpoint(mcpEp)
+	doc, err := ds.New()
+	if err != nil {
+		t.Fatalf("New doc: %v", err)
+	}
+	doc.SetBody([]byte("# Worth a look"))
+	if doc, err = ds.Save(doc); err != nil {
+		t.Fatalf("Save doc: %v", err)
+	}
+	_, _ = svc.EvaluateAndFileDoc(doc.UUID(), false, false)
+	if cap.run.Task.Name != "file" || mcpEp.lastEx != (domain.Exchange{Container: doc.UUID()}) {
+		t.Errorf("ran %q bound to %+v, want file bound to the document", cap.run.Task.Name, mcpEp.lastEx)
+	}
+	if want := "Container: sieve://" + doc.UUID() + "\n\n"; !strings.HasPrefix(cap.run.Prompt.Data.Text, want) {
+		t.Errorf("data = %q, want it to open with %q", cap.run.Prompt.Data.Text, want)
 	}
 }
 
@@ -327,9 +363,9 @@ func TestAIService_RunWebClip_PromptAssemblyAndDocScopedProfile(t *testing.T) {
 				t.Errorf("EndpointFor called with %q, want %q", mcpEp.lastDoc, uuid)
 			}
 			if mode == "fetch" {
-				cap.assertRan(t, svc.prompts, "web-clip-fetch", WebClipFetchData{Source: sourceURL})
+				cap.assertRan(t, svc.prompts, "web-clip-fetch", uuid, WebClipFetchData{Source: sourceURL})
 			} else {
-				cap.assertRan(t, svc.prompts, "web-clip-summarise", WebClipSummariseData{Source: sourceURL, Document: "# My Trip Notes"})
+				cap.assertRan(t, svc.prompts, "web-clip-summarise", uuid, WebClipSummariseData{Source: sourceURL, Document: "# My Trip Notes"})
 			}
 			args := cap.run.args()
 			if cfg := flagValue(args, "--mcp-config"); !strings.Contains(cfg, "Bearer tok-doc-"+uuid) {
@@ -420,7 +456,7 @@ func TestAIService_DescribeNote_ShowsThePagesAndReadsTheAnswer(t *testing.T) {
 			if cap.run.Task.Name != "note-meta" || cap.run.Cwd != filepath.Join(svc.storePath, "blocks", note) || mcpEp.lastDoc != note {
 				t.Errorf("op %q, cwd %q, profile for %q", cap.run.Task.Name, cap.run.Cwd, mcpEp.lastDoc)
 			}
-			cap.assertRan(t, svc.prompts, "note-meta", NoteMetaData{Pages: []string{"page-b-2.png", "page-a-1.png"}, Categories: []string{"Home", "Work"}})
+			cap.assertRan(t, svc.prompts, "note-meta", note, NoteMetaData{Pages: []string{"page-b-2.png", "page-a-1.png"}, Categories: []string{"Home", "Work"}})
 		})
 	}
 }
@@ -483,7 +519,7 @@ func TestAIService_TranscribePage_ShowsThePageAndParsesItsParts(t *testing.T) {
 			if cap.run.Task.Name != "page-transcript" || cap.run.Cwd != filepath.Join(svc.storePath, "blocks", note) || mcpEp.lastDoc != note {
 				t.Errorf("op %q, cwd %q, profile for %q", cap.run.Task.Name, cap.run.Cwd, mcpEp.lastDoc)
 			}
-			cap.assertRan(t, svc.prompts, "page-transcript", PageTranscriptData{File: "page-p1-k1.png"})
+			cap.assertRan(t, svc.prompts, "page-transcript", note, PageTranscriptData{File: "page-p1-k1.png"})
 		})
 	}
 }

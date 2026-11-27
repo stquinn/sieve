@@ -34,6 +34,15 @@ func foldReference(uri, rel, title string) domain.SieveBlock {
 	return domain.NewSieveBlock(block.KindReference, "", attrs)
 }
 
+// foldDoc is the document the fold fixtures live in: foldDocUUID holding the one
+// block, foldLeafID, that foldTarget names. A target that is not in the document
+// is not named by a question's header.
+func foldDoc() block.DocView {
+	return block.DocView{UUID: foldDocUUID, Blocks: []domain.SieveBlock{
+		{ID: foldLeafID, Kind: block.KindProse, Attrs: map[string]interface{}{"content": "leaf"}},
+	}}
+}
+
 // foldTarget builds a reference element naming a block in THIS document — the
 // current form of a legacy `ref` token.
 func foldTarget(blockID string) domain.SieveBlock {
@@ -65,24 +74,24 @@ func TestAIBlockFold_ReferenceRoleDecidesTheSlot(t *testing.T) {
 		name string
 		uri  string
 		rel  string
-		// wantName is what the header calls this element, "" when it is not a
+		// wantName is what the header calls this element (a local target by its absolute address), "" when it is not a
 		// target at all; wantLocal is the handle the local chain walks it by.
 		wantName   string
 		wantLocal  string
 		wantAttach string // the attachment uri this element contributes, "" for none
 	}{
-		{"declared target, own container", foldSelf, block.RelTarget, block.WholeDocumentRef, block.WholeDocumentRef, ""},
-		{"declared target, local leaf", foldSelfLeaf, block.RelTarget, foldLeafID, foldLeafID, ""},
+		{"declared target, own container", foldSelf, block.RelTarget, foldSelf, block.WholeDocumentRef, ""},
+		{"declared target, local leaf", foldSelfLeaf, block.RelTarget, foldSelfLeaf, foldLeafID, ""},
 		{"declared target, leaf elsewhere", foldOtherLeaf, block.RelTarget, foldOtherLeaf, "", ""},
 		{"declared target, another document", foldOther, block.RelTarget, foldOther, "", ""},
 		{"declared attach, another document", foldOther, block.RelAttach, "", "", foldOther},
 		{"declared attach, own container", foldSelf, block.RelAttach, "", "", foldSelf},
 		{"declared attach, local leaf", foldSelfLeaf, block.RelAttach, "", "", foldSelfLeaf},
-		{"undeclared, own container", foldSelf, "", block.WholeDocumentRef, block.WholeDocumentRef, ""},
-		{"undeclared, local leaf", foldSelfLeaf, "", foldLeafID, foldLeafID, ""},
+		{"undeclared, own container", foldSelf, "", foldSelf, block.WholeDocumentRef, ""},
+		{"undeclared, local leaf", foldSelfLeaf, "", foldSelfLeaf, foldLeafID, ""},
 		{"undeclared, another document", foldOther, "", "", "", foldOther},
 		{"undeclared, leaf elsewhere", foldOtherLeaf, "", "", "", foldOtherLeaf},
-		{"unrecognised rel, local leaf", foldSelfLeaf, "quote", foldLeafID, foldLeafID, ""},
+		{"unrecognised rel, local leaf", foldSelfLeaf, "quote", foldSelfLeaf, foldLeafID, ""},
 		{"unrecognised rel, another document", foldOther, "quote", "", "", foldOther},
 		{"undeclared, unaddressable", foldUnparsable, "", "", "", foldUnparsable},
 		{"declared target, unaddressable", foldUnparsable, block.RelTarget, foldUnparsable, "", ""},
@@ -145,7 +154,7 @@ func TestAIBlockFold_AForeignTargetRendersInPlace(t *testing.T) {
 	// does, and the reference renders that.
 	target := blk.Elements(block.QuestionAttr)[0]
 	if strings.Contains(content, target.ID) {
-		t.Errorf("an element id was published as a NODE ID:\n%s", content)
+		t.Errorf("an element id was published:\n%s", content)
 	}
 	if !strings.Contains(question, "QUESTION ABOUT: "+foldOtherLeaf) {
 		t.Errorf("the header did not name the foreign target:\n%s", question)
@@ -180,7 +189,7 @@ func TestAIBlockFold_BodyRendersEveryKindThroughItsOwnSeam(t *testing.T) {
 		domain.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": "why is this slow?"}),
 		domain.NewSieveBlock("code", "", map[string]interface{}{"source": "for {}", "language": "go"}),
 		domain.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": "be brief"}),
-	), block.DocView{UUID: foldDocUUID})
+	), foldDoc())
 
 	if len(q.body) != 3 {
 		t.Fatalf("body holds %d elements, want 3", len(q.body))
@@ -202,9 +211,9 @@ func TestAIBlockFold_EachSlotReachesItsPromptShape(t *testing.T) {
 		foldReference(foldSelfLeaf, block.RelTarget, ""),
 		domain.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": "compare these"}),
 		foldReference(foldOther, block.RelAttach, "Auth Design"),
-	), block.DocView{UUID: foldDocUUID})
+	), foldDoc())
 
-	if !strings.HasPrefix(header, "QUESTION ABOUT: "+foldLeafID+"\ncompare these") {
+	if !strings.HasPrefix(header, "QUESTION ABOUT: "+foldSelfLeaf+"\ncompare these") {
 		t.Errorf("targets and body did not reach the header:\n%s", header)
 	}
 	if !strings.Contains(header, "ATTACHED DOCUMENTS") || !strings.Contains(header, "Auth Design") {

@@ -217,7 +217,7 @@ func TestBtw_NoAttachments_PromptIsTheBriefAndTheQuestion(t *testing.T) {
 	svc := newSmartTestService(t, cap)
 
 	runFamilyCommand(t, NewBtwCommand(svc, nil), "what is SRP", command.NewContext(nil, nil, nil), cap)
-	cap.assertRan(t, svc.prompts, "btw", BtwData{Question: "what is SRP"})
+	cap.assertRan(t, svc.prompts, "btw", "", BtwData{Question: "what is SRP"})
 }
 
 // Every AI-family command answers into its OWN block: the run's MCP token is

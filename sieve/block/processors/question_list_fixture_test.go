@@ -120,7 +120,7 @@ func TestShowcase_FoldsIntoThreeSlots(t *testing.T) {
 	}
 	q := p.foldQuestion(blk, doc)
 
-	if got := q.targets.names(); got != block.WholeDocumentRef+","+showcaseProseID+","+showcaseForeign {
+	if got := q.targets.names(); got != "sieve://"+showcaseUUID+","+leafAddress(showcaseUUID, showcaseProseID)+","+showcaseForeign {
 		t.Errorf("target slot = %q", got)
 	}
 	// rel:attach on a self-container address is an attachment — the one thing an
@@ -184,13 +184,15 @@ func TestShowcase_AssemblesTheFullPrompt(t *testing.T) {
 	registerShowcaseKinds(t)
 	_, shadow := loadShowcase(t)
 
-	const wantTarget = "NODE ID: " + showcaseProseID + "\n" +
-		"<!--s:" + showcaseProseID + "-->\nThe retry loop backs off exponentially, doubling each attempt.\n<!--/s:" + showcaseProseID + "-->\n\n" +
-		"The retry loop backs off exponentially, doubling each attempt.\n\n" +
-		"Reference: Retry RFC §4\n\n\nAddress: \"" + showcaseForeign + "\""
+	wantTarget := targetEntries(
+		blockMarker(1, 3, block.WholeDocumentKind)+documentHeader(showcaseUUID)+
+			"<!--s:"+showcaseProseID+"-->\nThe retry loop backs off exponentially, doubling each attempt.\n<!--/s:"+showcaseProseID+"-->",
+		blockMarker(2, 3, "prose")+addressHeader(showcaseUUID, showcaseProseID)+
+			"The retry loop backs off exponentially, doubling each attempt.",
+		blockMarker(3, 3, "reference")+"Reference: Retry RFC §4\n\n\nAddress: \""+showcaseForeign+"\"")
 
-	const wantAction = "NODE ID: " + showcaseFollow + "\n" +
-		"QUESTION ABOUT: " + showcaseAskID + "\nNow give me the counter-argument."
+	wantAction := addressHeader(showcaseUUID, showcaseFollow) +
+		"QUESTION ABOUT: " + leafAddress(showcaseUUID, showcaseAskID) + "\nNow give me the counter-argument."
 
 	p := NewAIBlockProcessor(block.BlockServices{})
 	blk, doc, ok := shadow.SnapshotForJob(showcaseFollow)
@@ -208,8 +210,8 @@ func TestShowcase_AssemblesTheFullPrompt(t *testing.T) {
 	// THREAD is the parent exchange rendered whole: its own question — every
 	// element of it — its manifest, then its answer.
 	for _, want := range []string{
-		"NODE ID: " + showcaseAskID,
-		"QUESTION ABOUT: " + block.WholeDocumentRef + "," + showcaseProseID + "," + showcaseForeign,
+		addressHeader(showcaseUUID, showcaseAskID),
+		"QUESTION ABOUT: sieve://" + showcaseUUID + "," + leafAddress(showcaseUUID, showcaseProseID) + "," + showcaseForeign,
 		"```log\n2026-08-27 11:04:02 WARN",
 		"ATTACHED DOCUMENTS",
 		"\"title\": \"Rate Limits\"",

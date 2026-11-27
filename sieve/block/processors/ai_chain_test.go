@@ -162,8 +162,173 @@ func TestAIBlockBuildContext_questionAboutUsesFullDirectRef(t *testing.T) {
 
 	p := &AIBlockProcessor{}
 	blk := chainAsk("ai-cef2", "Multi span", "pr-c2dc", "pr-e51a", "pr-f405")
-	ctx := p.BuildContext(blk, block.DocView{UUID: chainUUID}, map[string]bool{})
-	if !strings.Contains(ctx.String(), "pr-c2dc,pr-e51a,pr-f405") {
+	doc := block.DocView{UUID: chainUUID}
+	for _, id := range []string{"pr-c2dc", "pr-e51a", "pr-f405"} {
+		doc.Blocks = append(doc.Blocks, domain.SieveBlock{ID: id, Kind: block.KindProse, Attrs: map[string]interface{}{"content": id}})
+	}
+	ctx := p.BuildContext(blk, doc, map[string]bool{})
+	want := leafAddress(chainUUID, "pr-c2dc") + "," + leafAddress(chainUUID, "pr-e51a") + "," + leafAddress(chainUUID, "pr-f405")
+	if !strings.Contains(ctx.String(), want) {
 		t.Fatalf("QUESTION ABOUT should reference the full direct ref, got: %q", ctx)
+	}
+}
+
+// A local target is named by the very address that heads the entry it points
+// at, so a model matches the two by plain equality; a context built against no
+// container prints no header at all.
+func TestBuildPrompt_TargetNameEqualsTheHeaderOfItsEntry(t *testing.T) {
+	resetRegistry()
+	block.RegisterProcessor(NewAIBlockProcessor(block.BlockServices{}))
+	t.Cleanup(resetRegistry)
+
+	blocks := []domain.SieveBlock{
+		chainAsk("ai-8af1", "q2", "pr-1"),
+		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "alpha"}},
+	}
+	p := NewAIBlockProcessor(block.BlockServices{})
+	ask := chainAsk("ai-d8ce", "q3", "ai-8af1")
+
+	cases := []struct {
+		name       string
+		doc        block.DocView
+		wantHeader bool
+	}{
+		{"a container", block.DocView{UUID: chainUUID, Blocks: blocks}, true},
+		{"no container", block.DocView{Blocks: blocks}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, history, action := p.buildPrompt(&ask, tc.doc)
+			if !tc.wantHeader {
+				for slot, got := range map[string]string{"THREAD": history, "ACTION": action} {
+					if strings.Contains(got, "ADDRESS:") || strings.Contains(got, "ai-d8ce") {
+						t.Errorf("%s printed a header or a bare id with no container: %q", slot, got)
+					}
+				}
+				return
+			}
+			target := leafAddress(chainUUID, "ai-8af1")
+			if !strings.HasPrefix(history, "===== TURN 1 of 1 =====\nADDRESS: "+target+"\n") {
+				t.Errorf("THREAD entry is not headed by %q: %q", target, history)
+			}
+			if want := "ADDRESS: " + leafAddress(chainUUID, "ai-d8ce") + "\nQUESTION ABOUT: " + target + "\nq3"; action != want {
+				t.Errorf("ACTION = %q, want %q", action, want)
+			}
+		})
+	}
+}
+
+// Each THREAD entry opens with its own numbered line, oldest first, and that
+// line is the only thing between one entry and the next.
+func TestBuildPrompt_ThreadEntriesAreNumberedAndSeparated(t *testing.T) {
+	resetRegistry()
+	block.RegisterProcessor(NewAIBlockProcessor(block.BlockServices{}))
+	t.Cleanup(resetRegistry)
+
+	doc := block.DocView{UUID: chainUUID, Blocks: []domain.SieveBlock{
+		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "alpha"}},
+		chainAsk("ai-8af1", "q1", "pr-1"),
+		chainAsk("ai-9bf2", "q2", "ai-8af1"),
+	}}
+	ask := chainAsk("ai-d8ce", "q3", "ai-9bf2")
+
+	_, history, _ := NewAIBlockProcessor(block.BlockServices{}).buildPrompt(&ask, doc)
+
+	first := "===== TURN 1 of 2 =====\nADDRESS: " + leafAddress(chainUUID, "ai-8af1") + "\n"
+	second := "\n\n===== TURN 2 of 2 =====\nADDRESS: " + leafAddress(chainUUID, "ai-9bf2") + "\n"
+	if !strings.HasPrefix(history, first) || !strings.Contains(history, second) {
+		t.Errorf("THREAD = %q, want it to open with %q and hold %q", history, first, second)
+	}
+	if strings.Contains(history, "---") {
+		t.Errorf("THREAD separates its entries with a rule: %q", history)
+	}
+}
+
+// Each TARGET member is its own entry: numbered, typed by its kind and headed by
+// its own address, with a blank line the only thing between entries.
+func TestBuildPrompt_TargetMembersAreNumberedEntriesOfTheirOwnKind(t *testing.T) {
+	registerAnswerKinds(t)
+	doc := block.DocView{UUID: chainUUID, Blocks: []domain.SieveBlock{
+		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "We add the region column first."}},
+		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"language": "sql", "source": "select 1"}},
+	}}
+	ask := chainAsk("ai-x", "q", "pr-1", "co-1")
+
+	target, _, _ := NewAIBlockProcessor(block.BlockServices{}).buildPrompt(&ask, doc)
+
+	first := blockMarker(1, 2, block.KindProse) + addressHeader(chainUUID, "pr-1") + "We add the region column first."
+	second := "\n\n" + blockMarker(2, 2, "code") + addressHeader(chainUUID, "co-1") + "```sql\nselect 1\n```"
+	if !strings.HasPrefix(target, first) || !strings.Contains(target, second) {
+		t.Errorf("TARGET = %q, want it to open with %q and hold %q", target, first, second)
+	}
+}
+
+// Highlights from several prose targets are one trailer after the last entry; no
+// entry carries a trailer of its own.
+func TestBuildPrompt_TargetHighlightsUnionIntoOneTrailingFocusLine(t *testing.T) {
+	resetRegistry()
+	t.Cleanup(resetRegistry)
+	doc := block.DocView{UUID: chainUUID, Blocks: []domain.SieveBlock{
+		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "the ==first== one"}},
+		{ID: "pr-2", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "the ==second== one"}},
+	}}
+	ask := chainAsk("ai-x", "q", "pr-1", "pr-2")
+
+	target, _, _ := NewAIBlockProcessor(block.BlockServices{}).buildPrompt(&ask, doc)
+
+	want := targetEntries(
+		blockMarker(1, 2, block.KindProse)+addressHeader(chainUUID, "pr-1")+"the ==first== one",
+		blockMarker(2, 2, block.KindProse)+addressHeader(chainUUID, "pr-2")+"the ==second== one") +
+		"\n\n" + `Specifically regarding: "first", "second"`
+	if target != want {
+		t.Errorf("TARGET:\n got: %q\nwant: %q", target, want)
+	}
+}
+
+// A member that renders to nothing is not an entry, is not counted, and is not
+// named by the ACTION: the names are exactly the entries, and their number is
+// the m of "BLOCK n of m".
+func TestBuildPrompt_EmptyTargetMemberIsNotCounted(t *testing.T) {
+	resetRegistry()
+	t.Cleanup(resetRegistry)
+	doc := block.DocView{UUID: chainUUID, Blocks: []domain.SieveBlock{
+		{ID: "pr-empty", Kind: block.KindProse, Attrs: map[string]interface{}{"content": ""}},
+		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "alpha"}},
+		{ID: "pr-blank", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "  "}},
+		{ID: "pr-2", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "beta"}},
+	}}
+	ask := chainAsk("ai-x", "q", "pr-empty", "pr-1", "pr-blank", "pr-2")
+	doc.Blocks = append(doc.Blocks, ask)
+
+	target, _, action := NewAIBlockProcessor(block.BlockServices{}).buildPrompt(&ask, doc)
+
+	if want := targetEntries(
+		blockMarker(1, 2, block.KindProse)+addressHeader(chainUUID, "pr-1")+"alpha",
+		blockMarker(2, 2, block.KindProse)+addressHeader(chainUUID, "pr-2")+"beta"); target != want {
+		t.Errorf("TARGET:\n got: %q\nwant: %q", target, want)
+	}
+	want := "QUESTION ABOUT: " + leafAddress(chainUUID, "pr-1") + "," + leafAddress(chainUUID, "pr-2")
+	if !strings.Contains(action, want+"\nq") {
+		t.Errorf("ACTION should name exactly the two members with entries:\n got: %q\nwant it to contain: %q", action, want)
+	}
+}
+
+// A question whose every target is empty is headed as a question with no targets.
+func TestBuildPrompt_AllTargetsEmptyNamesNone(t *testing.T) {
+	resetRegistry()
+	t.Cleanup(resetRegistry)
+	doc := block.DocView{UUID: chainUUID, Blocks: []domain.SieveBlock{
+		{ID: "pr-empty", Kind: block.KindProse, Attrs: map[string]interface{}{"content": ""}},
+	}}
+	ask := chainAsk("ai-x", "q", "pr-empty")
+	doc.Blocks = append(doc.Blocks, ask)
+	detached := chainAsk("ai-y", "q")
+	doc.Blocks = append(doc.Blocks, detached)
+
+	p := NewAIBlockProcessor(block.BlockServices{})
+	_, _, got := p.buildPrompt(&ask, doc)
+	_, _, want := p.buildPrompt(&detached, doc)
+	if strings.Replace(got, "ai-x", "ai-y", -1) != want {
+		t.Errorf("all-empty header differs from the no-target header:\n got: %q\nwant: %q", got, want)
 	}
 }

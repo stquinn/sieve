@@ -36,15 +36,10 @@ type SearchInput struct {
 	Limit  int    `json:"limit,omitempty" jsonschema:"maximum results to return (default 20, max 50)"`
 }
 
-// UUIDInput is the argument set for get_meta and get_note.
-type UUIDInput struct {
-	UUID string `json:"uuid" jsonschema:"the note's uuid — a bare uuid, never a sieve:// uri (pass one of those to get_by_uri instead)"`
-}
-
-// URIInput is the argument set for get_by_uri: a Sieve coordinate, copied
-// verbatim from wherever the model was given it.
+// URIInput is the argument set for get_meta, get_note and get_by_uri: a
+// sieve:// address.
 type URIInput struct {
-	URI string `json:"uri" jsonschema:"a Sieve coordinate, e.g. sieve://{uuid}; copy it exactly as it was given (an attachment manifest lists them) rather than constructing one"`
+	URI string `json:"uri" jsonschema:"a sieve:// address: sieve://{container} for a note or other container, sieve://{container}/{leaf} for a block or file inside one"`
 }
 
 // FetchPageInput is the argument set for fetch_page.
@@ -74,9 +69,15 @@ type AnswerCatalogue struct {
 }
 
 // NoteSummary is one search hit: metadata only, never a body.
+//
+// Kind is the source's own noun: "note" for a filed note, "buffer" for an
+// unfiled one, "digital-note" for a notebook written on a SieveInk device, and
+// "ink-live" for the Live view while it exists. Only a note has a folder; a
+// notebook carries its own summary and keywords as Summary and Tags, and the
+// Live view only a title.
 type NoteSummary struct {
-	UUID     string   `json:"uuid"`
-	Kind     string   `json:"kind"` // "note" for a filed note, "buffer" for an unfiled one
+	URI      string   `json:"uri"` // the hit's absolute sieve:// address, to pass to any verb that takes one
+	Kind     string   `json:"kind"`
 	Title    string   `json:"title"`
 	Folder   string   `json:"folder"`
 	Tags     []string `json:"tags"`
@@ -92,7 +93,7 @@ type SearchResults struct {
 
 // NoteMeta is the full distilled metadata for one note. No body.
 type NoteMeta struct {
-	UUID           string   `json:"uuid"`
+	URI            string   `json:"uri"` // the note's absolute sieve:// address
 	Title          string   `json:"title"`
 	Folder         string   `json:"folder"`
 	Filename       string   `json:"filename"`
@@ -115,8 +116,7 @@ type NoteContent struct {
 // wire projection of domain.NodeDescriptor. It is kind-AGNOSTIC — it says what
 // the thing calls itself rather than assuming a note.
 type NodeContent struct {
-	URI     string `json:"uri"`  // the coordinate it was resolved from
-	ID      string `json:"id"`   // the target's identity; for an asset, its key
+	URI     string `json:"uri"`  // the address it was resolved from
 	Kind    string `json:"kind"` // the source's own noun, e.g. "note"
 	Title   string `json:"title"`
 	Summary string `json:"summary"`
@@ -180,27 +180,36 @@ func (s *Server) search(_ context.Context, _ *mcpsdk.CallToolRequest, in SearchI
 	return nil, out, nil
 }
 
-// getMeta returns the full metadata for one note. No body.
-func (s *Server) getMeta(_ context.Context, _ *mcpsdk.CallToolRequest, in UUIDInput) (*mcpsdk.CallToolResult, NoteMeta, error) {
-	doc, err := s.documents.LoadByUUID(strings.TrimSpace(in.UUID))
+// getMeta returns the full metadata for the note an address names. No body.
+func (s *Server) getMeta(_ context.Context, _ *mcpsdk.CallToolRequest, in URIInput) (*mcpsdk.CallToolResult, NoteMeta, error) {
+	addr, err := s.noteAddress("get_meta", in.URI)
 	if err != nil {
-		logger.Warn("sieve mcp: get_meta not found", "uuid", in.UUID, "err", err)
-		return nil, NoteMeta{}, s.notADocument("get_meta", in.UUID, err)
+		logger.Warn("sieve mcp: get_meta refused", "uri", in.URI, "err", err)
+		return nil, NoteMeta{}, err
+	}
+	doc, err := s.documents.LoadByUUID(addr.Container)
+	if err != nil {
+		logger.Warn("sieve mcp: get_meta not found", "uri", in.URI, "err", err)
+		return nil, NoteMeta{}, s.notADocument("get_meta", in.URI, err)
 	}
 	meta := s.metaOf(scannedNote{uuid: doc.UUID(), folder: s.folderOf(doc), doc: doc})
-	logger.Info("sieve mcp: get_meta", "uuid", in.UUID, "title", meta.Title)
+	logger.Info("sieve mcp: get_meta", "uri", in.URI, "title", meta.Title)
 	return nil, meta, nil
 }
 
-// getNote returns metadata plus the markdown body for a note named by uuid — one
-// of the two body-bearing verbs. Every read it performs is recorded as a
-// bodyRead, which is what keeps bulk-read auditable at one boundary.
-func (s *Server) getNote(_ context.Context, _ *mcpsdk.CallToolRequest, in UUIDInput) (*mcpsdk.CallToolResult, NoteContent, error) {
-	uuid := strings.TrimSpace(in.UUID)
-	doc, err := s.documents.LoadByUUID(uuid)
+// getNote returns metadata plus the markdown body for the note an address
+// names — one of the two body-bearing verbs. Every read it performs is recorded
+// as a bodyRead, which is what keeps bulk-read auditable at one boundary.
+func (s *Server) getNote(_ context.Context, _ *mcpsdk.CallToolRequest, in URIInput) (*mcpsdk.CallToolResult, NoteContent, error) {
+	addr, err := s.noteAddress("get_note", in.URI)
 	if err != nil {
-		logger.Warn("sieve mcp: get_note not found", "uuid", in.UUID, "err", err)
-		return nil, NoteContent{}, s.notADocument("get_note", uuid, err)
+		logger.Warn("sieve mcp: get_note refused", "uri", in.URI, "err", err)
+		return nil, NoteContent{}, err
+	}
+	doc, err := s.documents.LoadByUUID(addr.Container)
+	if err != nil {
+		logger.Warn("sieve mcp: get_note not found", "uri", in.URI, "err", err)
+		return nil, NoteContent{}, s.notADocument("get_note", in.URI, err)
 	}
 	n := scannedNote{uuid: doc.UUID(), folder: s.folderOf(doc), doc: doc}
 	body := string(doc.Body())
@@ -218,21 +227,48 @@ func (s *Server) getNote(_ context.Context, _ *mcpsdk.CallToolRequest, in UUIDIn
 	return nil, NoteContent{Meta: meta, Body: body}, nil
 }
 
-// notADocument is the error a by-uuid verb returns when the id loads no
-// document. It names the verb that does reach a block or a file, because the id
-// a model passes in that case is usually one of those.
-func (s *Server) notADocument(verb, id string, err error) error {
-	return fmt.Errorf("%s: %q is not a document (%w); a block or file inside a document is read with get_by_uri, passing the sieve:// uri its context gives", verb, id, err)
+// addressOf is what a verb makes of its argument: the sieve:// address it
+// spells. Anything else, a bare uuid or a web address included, is
+// domain.ErrBadAddress, so the parse is the verb's door for untrusted input.
+func (s *Server) addressOf(verb, arg string) (domain.Address, error) {
+	arg = strings.TrimSpace(arg)
+	addr, err := domain.ParseAddress(arg)
+	if err != nil {
+		return domain.Address{}, fmt.Errorf("%s %q: not a Sieve address: a bare id is not an address; an address is sieve://{container} for a note or other container, or sieve://{container}/{leaf} for a block or file inside one: %w", verb, arg, err)
+	}
+	return addr, nil
+}
+
+// noteAddress is addressOf for a verb that reads a whole note: an address with
+// a leaf or a version pin names something that verb does not read, and is
+// refused with the verb that does.
+func (s *Server) noteAddress(verb, arg string) (domain.Address, error) {
+	addr, err := s.addressOf(verb, arg)
+	if err != nil {
+		return domain.Address{}, err
+	}
+	if !addr.IsContainer() || addr.IsPinned() {
+		return domain.Address{}, fmt.Errorf("%s: %q names a leaf or a pinned version, not a whole note; read it with get_by_uri", verb, strings.TrimSpace(arg))
+	}
+	return addr, nil
+}
+
+// notADocument is the error a whole-note verb returns when the address names no
+// note. It names the verb that does reach a block, a file or anything else an
+// address can name.
+func (s *Server) notADocument(verb, uri string, err error) error {
+	return fmt.Errorf("%s: %q is not a note (%w); anything else a sieve:// address names is read with get_by_uri", verb, uri, err)
 }
 
 // getByURI is the Router exposed as a tool: it dereferences a Sieve coordinate
 // and returns what that address names, body included — the second body-bearing
 // verb, audited identically to get_note.
 //
-// It PARSES at its own door and checks nothing else. The uri arrives in a model's
-// prompt, so the parse is where untrusted input stops being text, and it is what
-// makes this verb structurally incapable of fetching an https address. Everything
-// past the parse — version pins, leaf grains, dangling targets — is the Router's
+// It PARSES at its own door (addressOf) and checks nothing else. The argument
+// arrives in a model's prompt, so the parse is where untrusted input stops being
+// text, and it is what makes this verb structurally incapable of fetching an
+// https address. Everything past the parse — version pins, leaf grains,
+// dangling targets — is the Router's
 // judgement; refusals are surfaced as tool errors naming the verb and the
 // reason.
 func (s *Server) getByURI(_ context.Context, _ *mcpsdk.CallToolRequest, in URIInput) (*mcpsdk.CallToolResult, NodeContent, error) {
@@ -241,10 +277,10 @@ func (s *Server) getByURI(_ context.Context, _ *mcpsdk.CallToolRequest, in URIIn
 		logger.Error("sieve mcp: get_by_uri has no resolver wired", "uri", uri)
 		return nil, NodeContent{}, fmt.Errorf("get_by_uri %q: no resolver is wired", uri)
 	}
-	addr, err := domain.ParseAddress(uri)
+	addr, err := s.addressOf("get_by_uri", uri)
 	if err != nil {
 		logger.Warn("sieve mcp: get_by_uri refused", "uri", uri, "err", err)
-		return nil, NodeContent{}, fmt.Errorf("get_by_uri %q: not a Sieve coordinate (expected sieve://{container}[/{leaf}][?version={n}]): %w", uri, err)
+		return nil, NodeContent{}, err
 	}
 	node, err := s.nodes.Resolve(addr)
 	if err != nil {
@@ -264,7 +300,6 @@ func (s *Server) getByURI(_ context.Context, _ *mcpsdk.CallToolRequest, in URIIn
 	})
 	return nil, NodeContent{
 		URI:     node.URI,
-		ID:      node.ID,
 		Kind:    node.Kind,
 		Title:   node.Title,
 		Summary: node.Summary,
@@ -349,7 +384,6 @@ func (s *Server) fetchPage(ctx context.Context, _ *mcpsdk.CallToolRequest, in Fe
 			}
 			return nil, NodeContent{
 				URI:     node.URI,
-				ID:      node.ID,
 				Kind:    node.Kind,
 				Title:   title,
 				Summary: node.Summary,
@@ -379,7 +413,6 @@ func (s *Server) fetchPage(ctx context.Context, _ *mcpsdk.CallToolRequest, in Fe
 	logger.Info("sieve mcp: fetch_page", "url", rawURL, "doc", doc.UUID(), "asset", key, "bytes", node.Bytes)
 	return nil, NodeContent{
 		URI:     node.URI,
-		ID:      node.ID,
 		Kind:    node.Kind,
 		Title:   title,
 		Summary: node.Summary,
@@ -542,7 +575,7 @@ func (s *Server) collect(entries []services.NoteEntry, out *[]scannedNote) {
 
 func (s *Server) summaryOf(hit domain.Candidate) NoteSummary {
 	return NoteSummary{
-		UUID:     hit.Container(),
+		URI:      domain.NewContainerAddress(hit.Container()).String(),
 		Kind:     hit.Kind,
 		Title:    hit.Title,
 		Folder:   hit.Folder,
@@ -555,7 +588,7 @@ func (s *Server) summaryOf(hit domain.Candidate) NoteSummary {
 func (s *Server) metaOf(n scannedNote) NoteMeta {
 	meta := n.doc.Meta()
 	return NoteMeta{
-		UUID:           n.uuid,
+		URI:            domain.NewContainerAddress(n.uuid).String(),
 		Title:          meta.DisplayName(),
 		Folder:         n.folder,
 		Filename:       s.strVal(meta.Filename()),

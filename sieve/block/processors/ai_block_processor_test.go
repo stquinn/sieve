@@ -103,7 +103,7 @@ func TestAIBlock_qaHeader_ASK_omitsOwnAnswer(t *testing.T) {
 	t.Cleanup(resetRegistry)
 
 	p := &AIBlockProcessor{}
-	doc := block.DocView{UUID: foldDocUUID}
+	doc := foldDoc()
 	blk := domain.NewSieveBlock("ai-block", "ai-retry", map[string]interface{}{
 		block.AnswerAttr: "STALE-PRIOR-ANSWER-a-compiled-language",
 		"type":           "ASK",
@@ -111,7 +111,7 @@ func TestAIBlock_qaHeader_ASK_omitsOwnAnswer(t *testing.T) {
 	blk.SetElements(block.QuestionAttr, domain.Elements{foldTarget(foldLeafID), foldProse("What is Go?")})
 
 	header := p.qaHeader(blk, doc)
-	if !strings.Contains(header, "QUESTION ABOUT: "+foldLeafID) {
+	if !strings.Contains(header, "QUESTION ABOUT: "+leafAddress(foldDocUUID, foldLeafID)) {
 		t.Errorf("qaHeader lost the QUESTION ABOUT ref header; got %q", header)
 	}
 	if !strings.Contains(header, "What is Go?") {
@@ -135,7 +135,7 @@ func TestAIBlock_qaHeader_EXPLAIN_omitsOwnAnswer(t *testing.T) {
 	t.Cleanup(resetRegistry)
 
 	p := &AIBlockProcessor{}
-	doc := block.DocView{UUID: foldDocUUID}
+	doc := foldDoc()
 	blk := domain.NewSieveBlock("ai-block", "ai-exp", map[string]interface{}{
 		block.AnswerAttr: "STALE-EXPLANATION-do-not-reuse",
 		"type":           "EXPLAIN",
@@ -143,7 +143,7 @@ func TestAIBlock_qaHeader_EXPLAIN_omitsOwnAnswer(t *testing.T) {
 	blk.SetElements(block.QuestionAttr, domain.Elements{foldTarget(foldLeafID)})
 
 	header := p.qaHeader(blk, doc)
-	if !strings.Contains(header, "EXPLAIN NODE: "+foldLeafID) {
+	if !strings.Contains(header, "EXPLAIN NODE: "+leafAddress(foldDocUUID, foldLeafID)) {
 		t.Errorf("qaHeader lost the EXPLAIN NODE ref header; got %q", header)
 	}
 	if strings.Contains(header, "STALE-EXPLANATION-do-not-reuse") || strings.Contains(header, "**ANSWER:**") {
@@ -157,8 +157,8 @@ func TestAIBlock_qaHeader_EXPLAIN_omitsOwnAnswer(t *testing.T) {
 
 // The ACTION context assembled in DescribeJob (questionCtx, captured by Work) must
 // exclude the block's own answer. We prove it via the seam DescribeJob uses: the
-// ACTION is qaHeader wrapped in an AIContext with the block's own NODE ID header.
-func TestAIBlock_actionContext_hasNodeIdHeaderButNoOwnAnswer(t *testing.T) {
+// ACTION is qaHeader wrapped in an AIContext with the block's own ADDRESS header.
+func TestAIBlock_actionContext_hasAddressHeaderButNoOwnAnswer(t *testing.T) {
 	resetRegistry()
 	t.Cleanup(resetRegistry)
 
@@ -169,10 +169,10 @@ func TestAIBlock_actionContext_hasNodeIdHeaderButNoOwnAnswer(t *testing.T) {
 	})
 	blk.SetElements(block.QuestionAttr, domain.Elements{foldTarget(foldLeafID), foldProse("Follow up?")})
 
-	actionCtx := block.AIContext{NodeIDs: []string{blk.ID},
-		Content: p.qaHeader(blk, block.DocView{UUID: foldDocUUID})}.String()
-	if !strings.Contains(actionCtx, "NODE ID: ai-act") {
-		t.Errorf("ACTION lost its NODE ID header; got %q", actionCtx)
+	doc := block.DocView{UUID: foldDocUUID}
+	actionCtx := doc.NodeContext(blk.ID, p.qaHeader(blk, doc)).String()
+	if !strings.HasPrefix(actionCtx, addressHeader(foldDocUUID, "ai-act")) {
+		t.Errorf("ACTION lost its ADDRESS header; got %q", actionCtx)
 	}
 	if !strings.Contains(actionCtx, "Follow up?") {
 		t.Errorf("ACTION lost the question; got %q", actionCtx)

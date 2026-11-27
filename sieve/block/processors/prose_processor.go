@@ -55,9 +55,9 @@ func (p *ProseProcessor) Serialize(blk domain.SieveBlock) (string, error) {
 // appended to the string here. The framework's collection merge unions that Tag
 // across a multi-block target into ONE focus line, rendered once via
 // AIContext.String.
-func (p *ProseProcessor) BuildContext(blk domain.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
+func (p *ProseProcessor) BuildContext(blk domain.SieveBlock, doc block.DocView, _ map[string]bool) block.AIContext {
 	content := blk.Content()
-	ctx := block.AIContext{NodeIDs: []string{blk.ID}, Content: content}
+	ctx := doc.NodeContext(blk.ID, content)
 	if targets := extractTargets(content); len(targets) > 0 {
 		ctx.Tags = []block.Tag{{Label: "Specifically regarding", Values: targets}}
 	}

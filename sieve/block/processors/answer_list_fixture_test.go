@@ -106,8 +106,8 @@ func TestAnswerShowcase_RendersEveryKindIntoTheThreadEntry(t *testing.T) {
 		t.Fatalf("SnapshotForJob(%s) not found", answerShowcaseAskID)
 	}
 
-	want := "NODE ID: " + answerShowcaseAskID + "\n" +
-		"QUESTION ABOUT: " + answerShowcaseProseID + "\n" +
+	want := addressHeader(answerShowcaseUUID, answerShowcaseAskID) +
+		"QUESTION ABOUT: " + leafAddress(answerShowcaseUUID, answerShowcaseProseID) + "\n" +
 		"Why did the retry loop give up before the ceiling?\n\n" +
 		"**ANSWER:** " + answerShowcaseBody
 	if got := p.BuildContext(blk, doc, map[string]bool{}).String(); got != want {

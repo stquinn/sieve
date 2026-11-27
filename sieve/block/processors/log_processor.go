@@ -170,12 +170,12 @@ func (p *LogProcessor) Transform(entries []block.ContentEntry, uuid string, bloc
 
 func (p *LogProcessor) OnChange(_ *domain.SieveBlock) {}
 
-func (p *LogProcessor) BuildContext(blk domain.SieveBlock, _ block.DocView, seen map[string]bool) block.AIContext {
+func (p *LogProcessor) BuildContext(blk domain.SieveBlock, doc block.DocView, seen map[string]bool) block.AIContext {
 	src, _ := blk.Attrs["source"].(string)
 	if strings.TrimSpace(src) == "" {
 		return block.AIContext{}
 	}
-	return block.AIContext{NodeIDs: []string{blk.ID}, Content: "```log\n" + src + "\n```"}
+	return doc.NodeContext(blk.ID, "```log\n"+src+"\n```")
 }
 
 // logParseResult is Work's result: the saved parsed-asset ref plus format metadata.

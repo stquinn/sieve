@@ -12,8 +12,8 @@ import (
 const (
 	answerAskID   = "0197b2aa-5555-7888-8999-aaaabbbbcccc"
 	answerText    = "A compiled language."
-	answerNodeHdr = "NODE ID: " + answerAskID + "\n"
-	answerAskHdr  = answerNodeHdr + "QUESTION ABOUT: " + foldLeafID + "\nWhat is Go?"
+	answerNodeHdr = "ADDRESS: sieve://" + foldDocUUID + "/" + answerAskID + "\n"
+	answerAskHdr  = answerNodeHdr + "QUESTION ABOUT: sieve://" + foldDocUUID + "/" + foldLeafID + "\nWhat is Go?"
 )
 
 // answered builds the ai-block under test: an exchange of blockType whose
@@ -58,7 +58,7 @@ func registerAnswerKinds(t *testing.T) {
 func TestAIBlockAnswer_SingleProseRendersAsTheStringDid(t *testing.T) {
 	registerAnswerKinds(t)
 	p := NewAIBlockProcessor(block.BlockServices{})
-	doc := block.DocView{UUID: foldDocUUID}
+	doc := foldDoc()
 
 	forms := []struct {
 		name   string
@@ -70,7 +70,7 @@ func TestAIBlockAnswer_SingleProseRendersAsTheStringDid(t *testing.T) {
 	}
 	types := []struct{ blockType, want string }{
 		{"ASK", answerAskHdr + "\n\n**ANSWER:** " + answerText},
-		{"EXPLAIN", answerNodeHdr + "EXPLAIN NODE: " + foldLeafID + "\n**ANSWER:** " + answerText},
+		{"EXPLAIN", answerNodeHdr + "EXPLAIN NODE: " + foldSelfLeaf + "\n**ANSWER:** " + answerText},
 	}
 
 	for _, form := range forms {
@@ -91,7 +91,7 @@ func TestAIBlockAnswer_SingleProseRendersAsTheStringDid(t *testing.T) {
 func TestAIBlockAnswer_BlankAndPaddedAnswers(t *testing.T) {
 	registerAnswerKinds(t)
 	p := NewAIBlockProcessor(block.BlockServices{})
-	doc := block.DocView{UUID: foldDocUUID}
+	doc := foldDoc()
 
 	for _, tc := range []struct {
 		name   string
@@ -119,7 +119,7 @@ func TestAIBlockAnswer_BlankAndPaddedAnswers(t *testing.T) {
 func TestAIBlockAnswer_MixedKindsRenderThroughTheirOwnSeams(t *testing.T) {
 	registerAnswerKinds(t)
 	p := NewAIBlockProcessor(block.BlockServices{})
-	doc := block.DocView{UUID: foldDocUUID}
+	doc := foldDoc()
 
 	answer := []interface{}{
 		answerElement(block.KindProse, map[string]interface{}{"content": "Go compiles to a native binary."}),

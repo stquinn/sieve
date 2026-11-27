@@ -53,6 +53,37 @@ func (d DocView) GetBlock(id string) (*domain.SieveBlock, bool) {
 	return nil, false
 }
 
+// AddressOf is the absolute address of the block id in this document:
+// sieve://{UUID}/{id}. It is the zero Address when the view names no container.
+func (d DocView) AddressOf(id string) domain.Address {
+	if d.UUID == "" {
+		return domain.Address{}
+	}
+	return domain.NewLeafAddress(d.UUID, id)
+}
+
+// NodeContext is the AIContext of the block id carrying content, headed by the
+// block's absolute address. A view with no container yields a context with no
+// address, hence no header.
+func (d DocView) NodeContext(id, content string) AIContext {
+	ctx := AIContext{Content: content}
+	if addr := d.AddressOf(id); addr.Container != "" {
+		ctx.Addresses = []string{addr.String()}
+	}
+	return ctx
+}
+
+// DocumentContext is the AIContext of the whole document carrying content,
+// headed by the document's own address, sieve://{UUID}. A view with no
+// container yields a context with no address, hence no header.
+func (d DocView) DocumentContext(content string) AIContext {
+	ctx := AIContext{Content: content}
+	if d.UUID != "" {
+		ctx.Addresses = []string{domain.NewContainerAddress(d.UUID).String()}
+	}
+	return ctx
+}
+
 // deriveMarkdown returns the whole-doc markdown a consumer needs (save, an
 // id=="doc" AI ask, block context). Mode-aware, stores nothing: in
 // markdown mode the raw buffer IS the document; in WYSIWYG the tree is serialized

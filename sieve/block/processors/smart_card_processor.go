@@ -157,7 +157,7 @@ type smartCardFetch struct {
 	imageRef string
 }
 
-func (p *SmartCardProcessor) BuildContext(blk domain.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
+func (p *SmartCardProcessor) BuildContext(blk domain.SieveBlock, doc block.DocView, _ map[string]bool) block.AIContext {
 	href, _ := blk.Attrs["href"].(string)
 	if href == "" {
 		return block.AIContext{}
@@ -177,7 +177,7 @@ func (p *SmartCardProcessor) BuildContext(blk domain.SieveBlock, _ block.DocView
 	if desc != "" {
 		sb.WriteString("Description: " + desc + "\n")
 	}
-	return block.AIContext{NodeIDs: []string{blk.ID}, Content: sb.String()}
+	return doc.NodeContext(blk.ID, sb.String())
 }
 
 // DescribeJob declares the OG-metadata fetch job, or nil when there is no href to

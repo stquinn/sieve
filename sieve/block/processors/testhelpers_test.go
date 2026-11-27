@@ -1,9 +1,12 @@
 package processors
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"sieve/sieve/services"
 	"sieve/store/filestore"
 )
@@ -43,4 +46,38 @@ func blockIDOfKind(t *testing.T, shadow *block.ShadowDocument, kind string) stri
 	}
 	t.Fatalf("no %q block in shadow", kind)
 	return ""
+}
+
+// leafAddress is the absolute address of block id in the document doc: what a
+// model is shown for that block.
+func leafAddress(doc, id string) string {
+	return domain.NewLeafAddress(doc, id).String()
+}
+
+// blockMarker is the line opening TARGET entry n of m of the given kind,
+// newline-terminated.
+func blockMarker(n, m int, kind string) string {
+	return "===== BLOCK " + strconv.Itoa(n) + " of " + strconv.Itoa(m) + " \u00b7 " + kind + " =====\n"
+}
+
+// targetEntries is a TARGET of the given entries, each already opened by its
+// blockMarker: entries are separated by a blank line.
+func targetEntries(entries ...string) string {
+	return strings.Join(entries, "\n\n")
+}
+
+// addressHeader is the ADDRESS header line a context headed by the blocks ids of
+// the document doc renders, newline-terminated.
+func addressHeader(doc string, ids ...string) string {
+	addrs := make([]string, len(ids))
+	for i, id := range ids {
+		addrs[i] = leafAddress(doc, id)
+	}
+	return "ADDRESS: " + strings.Join(addrs, ",") + "\n"
+}
+
+// documentHeader is the ADDRESS header line of the whole document doc,
+// newline-terminated.
+func documentHeader(doc string) string {
+	return "ADDRESS: " + domain.NewContainerAddress(doc).String() + "\n"
 }

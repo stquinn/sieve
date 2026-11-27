@@ -139,7 +139,7 @@ func (p *WebClipBlockProcessor) Transform(entries []block.ContentEntry, uuid, bl
 
 func (p *WebClipBlockProcessor) OnChange(_ *domain.SieveBlock) {}
 
-func (p *WebClipBlockProcessor) BuildContext(blk domain.SieveBlock, _ block.DocView, seen map[string]bool) block.AIContext {
+func (p *WebClipBlockProcessor) BuildContext(blk domain.SieveBlock, doc block.DocView, seen map[string]bool) block.AIContext {
 	source, _ := blk.Attrs["source"].(string)
 	title, _ := blk.Attrs["title"].(string)
 	content, _ := blk.Attrs["content"].(string)
@@ -150,7 +150,7 @@ func (p *WebClipBlockProcessor) BuildContext(blk domain.SieveBlock, _ block.DocV
 	if content != "" {
 		sb.WriteString("\n" + content)
 	}
-	ctx := block.AIContext{NodeIDs: []string{blk.ID}, Content: sb.String()}
+	ctx := doc.NodeContext(blk.ID, sb.String())
 	ctx.Tags = []block.Tag{
 		{Label: "URL", Values: []string{source}},
 		{Label: "Title", Values: []string{title}},

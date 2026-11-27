@@ -783,16 +783,14 @@ func (p *ReferenceProcessor) BuildContext(blk domain.SieveBlock, doc block.DocVi
 	// AIContext.String drops a tag whose values are all blank, so an unsummarised
 	// or untyped reference — or a pointer, which has no file — needs no branch
 	// here.
-	return block.AIContext{
-		NodeIDs: []string{blk.ID},
-		Content: "Reference: " + p.label(blk.Attrs, uri) + "\n",
-		Tags: []block.Tag{
-			{Label: "File", Values: []string{p.heldFilePath(blk.Attrs, doc.UUID)}},
-			{Label: "Address", Values: []string{uri}},
-			{Label: "Type", Values: []string{p.typeLine(blk.Attrs)}},
-			{Label: "Summary", Values: []string{summary}},
-		},
+	ctx := doc.NodeContext(blk.ID, "Reference: "+p.label(blk.Attrs, uri)+"\n")
+	ctx.Tags = []block.Tag{
+		{Label: "File", Values: []string{p.heldFilePath(blk.Attrs, doc.UUID)}},
+		{Label: "Address", Values: []string{uri}},
+		{Label: "Type", Values: []string{p.typeLine(blk.Attrs)}},
+		{Label: "Summary", Values: []string{summary}},
 	}
+	return ctx
 }
 
 // heldFilePath is where a held file's bytes are on disk, as the CLI can open

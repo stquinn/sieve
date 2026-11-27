@@ -67,14 +67,20 @@ func (ps *PromptService) Task(name string) (Task, error) {
 
 // Prompt is task's prompt for one run with data: the framework's Background,
 // a Delivery layer when the task answers (Task.Answers), the task's brief, its
-// addendum when it has one, and data's values. sieveTools says whether the run
-// carries the Sieve tools; the framework's layers speak of them only when it
-// does.
-func (ps *PromptService) Prompt(task Task, data TaskData, sieveTools bool) Prompt {
+// addendum when it has one, and data's values. container is the id of the
+// container the run works on, empty when it has none: the Data layer then opens
+// with the line "Container: sieve://{container}" before data's values.
+// sieveTools says whether the run carries the Sieve tools; the framework's
+// layers speak of them only when it does.
+func (ps *PromptService) Prompt(task Task, data TaskData, container string, sieveTools bool) Prompt {
+	dataText := data.Text()
+	if container != "" {
+		dataText = "Container: " + domain.NewContainerAddress(container).String() + "\n\n" + dataText
+	}
 	p := Prompt{
 		Background: Layer{Heading: backgroundHeading, Text: sieveBackground},
 		Brief:      task.Brief,
-		Data:       Layer{Heading: dataHeading, Text: data.Text()},
+		Data:       Layer{Heading: dataHeading, Text: dataText},
 	}
 	if text := ps.loadAddendum(task.Name); text != "" {
 		p.Addendum = Layer{Heading: addendumHeading, Text: text}
@@ -159,7 +165,7 @@ func (ps *PromptService) ListPrompts() []PromptEntry {
 // sieveBackground is the Background layer of every prompt: what Sieve is and
 // how a run reads. sieveToolsBackground follows it when the run carries the
 // Sieve tools.
-const sieveBackground = `You are working inside Sieve, a personal tool for notes and thinking. What Sieve keeps is made of blocks: prose, code, a diagram, an image, a link card and others. A note is an ordered list of blocks; the other things Sieve keeps, such as a handwritten notebook or a conversation, hold blocks in their own way. Everything in Sieve has a sieve:// address. Use an address exactly as you were given it; never construct one.
+const sieveBackground = `You are working inside Sieve, a personal tool for notes and thinking. What Sieve keeps is made of blocks: prose, code, a diagram, an image, a link card and others. A note is an ordered list of blocks; the other things Sieve keeps, such as a handwritten notebook or a conversation, hold blocks in their own way. Everything in Sieve has a sieve:// address, a standard URI: sieve://{container}/{leaf}. A container is a note or anything else Sieve keeps whole, and its own address is sieve://{container}. A leaf is a block or a file inside it. Every block has an id and sits in a container, so a block's address is its container's address, a /, and the block's id. In a note's markdown a block's id is in its <!--s:{id}--> marker or the id: line of its fenced block.
 
 Work silently: do not describe your searches, tool calls or reasoning.
 
@@ -276,7 +282,9 @@ You are part of an ongoing analysis thread. The user will provide a TARGET (the 
 Your task is to explain the specific node requested in the ACTION clearly and concisely.
 Do not repeat the content. Just explain the requested node.
 
-Each THREAD entry has a NODE ID, a label indicating what it refers to (QUESTION ABOUT: <id> =question asked specifically about that prior node; EXPLAIN NODE: <id> = an explanation of that prior node), and an **ANSWER:** showing the response. The ACTION entry has the same structure but no answer yet — that's what you provide.
+TARGET is one or more blocks, each opened by a "===== BLOCK n of m · kind =====" line and headed by its ADDRESS.
+
+THREAD entries are oldest first, each opened by a "===== TURN n of m =====" line. Each THREAD entry has an ADDRESS, a label indicating what it refers to (QUESTION ABOUT: <address> =question asked specifically about that prior node; EXPLAIN NODE: <address> = an explanation of that prior node), and an **ANSWER:** showing the response. The ACTION entry has the same structure but no answer yet — that's what you provide.
 
 TARGET is the subject of the question and the sole source of document truth; ground anything you say about the document in TARGET as it stands now.
 THREAD is the conversation so far about this TARGET. Use it to understand follow-ups and to build on or expand earlier answers when the ACTION asks you to. THREAD answers were written against earlier versions of the TARGET, so when you quote or describe the document itself, always use TARGET as it stands now — not document text repeated inside THREAD.
@@ -294,7 +302,9 @@ Act as a highly efficient research assistant. Provide the answer concisely with 
 You are part of an ongoing analysis thread. The user will provide a TARGET (the root piece of content), a THREAD (the history of questions and explanations about that target), and an ACTION to perform.
 Your task is to answer the user's question clearly and concisely.
 
-Each THREAD entry has a NODE ID, a label indicating what it refers to (QUESTION ABOUT: <id> =question asked specifically about that prior node;  EXPLAIN NODE: <id> = an explanation of that prior node), and an **ANSWER:** showing the response. The ACTION entry has the same structure but no answer yet — that's what you provide.
+TARGET is one or more blocks, each opened by a "===== BLOCK n of m · kind =====" line and headed by its ADDRESS.
+
+THREAD entries are oldest first, each opened by a "===== TURN n of m =====" line. Each THREAD entry has an ADDRESS, a label indicating what it refers to (QUESTION ABOUT: <address> =question asked specifically about that prior node;  EXPLAIN NODE: <address> = an explanation of that prior node), and an **ANSWER:** showing the response. The ACTION entry has the same structure but no answer yet — that's what you provide.
 
 TARGET is the subject of the question and the sole source of document truth; ground anything you say about the document in TARGET as it stands now.
 THREAD is the conversation so far about this TARGET. Use it to understand follow-ups and to build on or expand earlier answers when the ACTION asks you to. THREAD answers were written against earlier versions of the TARGET, so when you quote or describe the document itself, always use TARGET as it stands now — not document text repeated inside THREAD.
